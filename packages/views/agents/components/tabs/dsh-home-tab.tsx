@@ -6,6 +6,7 @@ import { dshHomeOptions, useEnsureDSHHome, useDSHNativeEntry, type DSHNativeEntr
 import { Button, buttonVariants } from "@multica/ui/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { useT } from "../../../i18n";
+import { DshProfileStatus } from "./dsh-profile-status";
 
 export function DshHomeTab({ workspaceId, agentId }: {
   workspaceId: string;
@@ -92,6 +93,7 @@ export function DshHomeTab({ workspaceId, agentId }: {
           {t(($) => $.tab_body.dsh_home.refresh)}
         </Button>
       </div>
+      <DshProfileStatus workspaceId={workspaceId} agentId={agentId} />
     </section>
   );
 }

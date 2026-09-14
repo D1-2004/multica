@@ -11,6 +11,7 @@ import { DshHomeTab } from "./dsh-home-tab";
 
 const calls = vi.hoisted(() => ({ get: vi.fn(), ensure: vi.fn(), entry: vi.fn() }));
 vi.mock("@multica/core/api", () => ({ api: {
+  getDSHProfile: async () => ({ state: "unprepared", current: false, desiredRevision: "", appliedRevision: "", builds: [] }),
   getDSHHome: (...args: unknown[]) => calls.get(...args),
   ensureDSHHome: (...args: unknown[]) => calls.ensure(...args),
   issueDSHNativeEntry: (...args: unknown[]) => calls.entry(...args),

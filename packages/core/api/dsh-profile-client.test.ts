@@ -33,4 +33,21 @@ describe("employee Profile receipts", () => {
     }))));
     expect(await new ApiClient("https://pre.example.test").getDSHProfile("workspace", "agent")).toMatchObject({ current: false, appliedRevision: "2", state: "configuration_changed" });
   });
+  it("reports a failed dependency without claiming Host application", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      state: "build_failed", desired_revision: "7", current: false, applied_generation: 0,
+      builds: [{ package_name: "fixture", version: "1.0.0", state: "failed" }],
+    }))));
+    expect(await new ApiClient("https://pre.example.test").getDSHProfile("workspace", "agent"))
+      .toMatchObject({ state: "build_failed", current: false, builds: [{ packageName: "fixture", version: "1.0.0", state: "failed" }] });
+  });
+
+  it("rejects an applied receipt with a failed dependency", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      state: "applied", desired_revision: "7", applied_revision: "7", current: true, applied_generation: 1, applied_sandbox_id: "sandbox",
+      builds: [{ package_name: "fixture", version: "1.0.0", state: "failed" }],
+    }))));
+    expect(await new ApiClient("https://pre.example.test").getDSHProfile("workspace", "agent")).toBeNull();
+  });
+
 });

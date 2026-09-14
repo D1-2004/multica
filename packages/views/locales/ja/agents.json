@@ -1352,6 +1352,25 @@
       "native_preparing": "DSH を準備中…",
       "native_enter": "DSH を開く",
       "native_unconfirmed": "DSH を開けませんでした。Home の状態を更新しました。準備ができたら再試行してください。"
+    },
+    "dsh_profile": {
+      "title": "設定の適用状況",
+      "loading": "設定の状態を確認中...",
+      "unavailable": "設定の状態を確認できません。更新してください。",
+      "unprepared": "設定は保存済みですが、DSH 用の準備はまだです。",
+      "changed": "保存済み設定が変更されました。新しい設定バージョンを準備してください。",
+      "building": "プラグインの依存関係を準備中です。設定は未適用です。",
+      "failed": "プラグインの準備に失敗しました。バージョンを確認するか管理者に連絡してください。設定は未適用です。",
+      "pending": "プラグインの準備が完了しました。ホストによる設定の確認を待っています。",
+      "applied": "実行中の DSH ホストがこの設定を確認しました。",
+      "desired": "目標バージョン",
+      "last_applied": "前回確認したバージョン",
+      "build_ready": "準備完了",
+      "build_failed": "失敗",
+      "build_waiting": "準備中",
+      "prepare_unconfirmed": "準備結果を確認できません。更新して保存済みの状態を確認してください。",
+      "prepare": "設定を準備",
+      "refresh": "設定を更新"
     }
   },
   "char_counter": {

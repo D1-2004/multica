@@ -1548,6 +1548,25 @@
       "native_preparing": "正在准备 DSH…",
       "native_enter": "进入 DSH",
       "native_unconfirmed": "暂时无法打开 DSH，已刷新 Home 状态。就绪后请重试。"
+    },
+    "dsh_profile": {
+      "title": "配置生效状态",
+      "loading": "正在检查配置状态...",
+      "unavailable": "暂时无法确认配置状态，请刷新重试。",
+      "unprepared": "已保存配置，尚未为 DSH 准备配置版本。",
+      "changed": "保存的配置有更新，请准备新的配置版本。",
+      "building": "正在准备插件依赖，配置尚未生效。",
+      "failed": "插件准备失败，配置尚未生效。请检查插件版本或联系管理员。",
+      "pending": "插件已就绪，等待员工宿主确认配置生效。",
+      "applied": "运行中的 DSH 已确认此配置生效。",
+      "desired": "目标版本",
+      "last_applied": "上次确认版本",
+      "build_ready": "已就绪",
+      "build_failed": "准备失败",
+      "build_waiting": "准备中",
+      "prepare_unconfirmed": "暂时无法确认准备结果，请刷新查看已保存的状态。",
+      "prepare": "准备配置",
+      "refresh": "刷新配置"
     }
   },
   "char_counter": {

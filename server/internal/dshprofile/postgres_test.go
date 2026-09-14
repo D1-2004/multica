@@ -120,6 +120,14 @@ func TestProfilePostgresRevisionsAndFencing(t *testing.T) {
 	if err := a.QueryRow(ctx, `SELECT count(*) FROM dsh_plugin_build WHERE workspace_id=$1`, key.WorkspaceID).Scan(&count); err != nil || count != 1 {
 		t.Fatal("build intent duplicated", err, count)
 	}
+
+	if _, err := a.Exec(ctx, `UPDATE dsh_plugin_build SET state='failed' WHERE workspace_id=$1`, key.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := stores[1].Status(ctx, key)
+	if err != nil || failed.State != "build_failed" || failed.Current || len(failed.Builds) != 1 {
+		t.Fatal("failed build not visible across replicas", err)
+	}
 	if _, err := a.Exec(ctx, `UPDATE dsh_plugin_build SET state='ready',build_digest=$2,artifact_key='fixture/object' WHERE workspace_id=$1`, key.WorkspaceID, strings.Repeat("b", 64)); err != nil {
 		t.Fatal(err)
 	}

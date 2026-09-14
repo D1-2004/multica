@@ -1569,6 +1569,25 @@
       "native_preparing": "Preparing DSH...",
       "native_enter": "Enter DSH",
       "native_unconfirmed": "DSH could not be opened. Home status has been refreshed; try again when it is ready."
+    },
+    "dsh_profile": {
+      "title": "Configuration status",
+      "loading": "Checking configuration status...",
+      "unavailable": "Configuration status is unavailable. Refresh to check again.",
+      "unprepared": "Saved settings have not been prepared for DSH.",
+      "changed": "Saved settings have changed. Prepare a new configuration version.",
+      "building": "Preparing plugin dependencies. The configuration is not active yet.",
+      "failed": "Plugin preparation failed. Check the plugin version or contact an administrator. The configuration is not active.",
+      "pending": "Plugins are ready. Waiting for the employee host to confirm this configuration.",
+      "applied": "The running DSH host has confirmed this configuration.",
+      "desired": "Desired version",
+      "last_applied": "Last confirmed version",
+      "build_ready": "Ready",
+      "build_failed": "Failed",
+      "build_waiting": "Preparing",
+      "prepare_unconfirmed": "Preparation could not be confirmed. Refresh to check the saved status.",
+      "prepare": "Prepare configuration",
+      "refresh": "Refresh configuration"
     }
   },
   "char_counter": {

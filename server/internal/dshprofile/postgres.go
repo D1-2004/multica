@@ -171,13 +171,50 @@ func (s Store) Acknowledge(ctx context.Context, host dshhost.Host, revision Revi
 }
 
 type Status struct {
-	State             string `json:"state"`
-	DesiredRevision   string `json:"desired_revision,omitempty"`
-	AppliedRevision   string `json:"applied_revision,omitempty"`
-	AppliedGeneration int64  `json:"applied_generation"`
-	AppliedSandboxID  string `json:"applied_sandbox_id,omitempty"`
-	Current           bool   `json:"current"`
-	SourceDigest      string `json:"-"`
+	State             string        `json:"state"`
+	DesiredRevision   string        `json:"desired_revision,omitempty"`
+	AppliedRevision   string        `json:"applied_revision,omitempty"`
+	AppliedGeneration int64         `json:"applied_generation"`
+	AppliedSandboxID  string        `json:"applied_sandbox_id,omitempty"`
+	Current           bool          `json:"current"`
+	SourceDigest      string        `json:"-"`
+	Builds            []BuildStatus `json:"builds,omitempty"`
+}
+
+type BuildStatus struct {
+	PackageName string `json:"package_name"`
+	Version     string `json:"version"`
+	State       string `json:"state"`
+}
+
+func (s Store) statusBuilds(ctx context.Context, key dshhost.Key, revision int64) ([]BuildStatus, error) {
+	source, err := s.PrivateSource(ctx, key, revision)
+	if err != nil {
+		return nil, err
+	}
+	keys := []string{}
+	for _, plugin := range source.Plugins {
+		if plugin.Enabled {
+			keys = append(keys, BuildKey(source.TemplateID, plugin))
+		}
+	}
+	if len(keys) == 0 {
+		return []BuildStatus{}, nil
+	}
+	var raw []byte
+	err = s.DB.QueryRow(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object('package_name',package_name,'version',package_version,'state',state) ORDER BY package_name),'[]'::jsonb)
+ FROM dsh_plugin_build WHERE workspace_id=$1 AND template_id=$2 AND build_key=ANY($3)`, key.WorkspaceID, source.TemplateID, keys).Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+	var builds []BuildStatus
+	if err := json.Unmarshal(raw, &builds); err != nil {
+		return nil, errors.New("invalid employee build status")
+	}
+	if len(builds) != len(keys) {
+		return nil, errors.New("employee build status incomplete")
+	}
+	return builds, nil
 }
 
 func (s Store) Status(ctx context.Context, key dshhost.Key) (Status, error) {
@@ -197,9 +234,19 @@ func (s Store) Status(ctx context.Context, key dshhost.Key) (Status, error) {
 		return Status{}, err
 	}
 	if desired > 0 {
+		value.Builds, err = s.statusBuilds(ctx, key, desired)
+		if err != nil {
+			return Status{}, err
+		}
 		value.DesiredRevision = strconv.FormatInt(desired, 10)
 		value.State = "waiting_for_builds"
-		if descriptor != "" {
+		buildsReady := len(value.Builds) > 0
+		for _, build := range value.Builds {
+			if build.State != "ready" {
+				buildsReady = false
+			}
+		}
+		if descriptor != "" || buildsReady {
 			value.State = "pending_host"
 		}
 	}
@@ -210,6 +257,12 @@ func (s Store) Status(ctx context.Context, key dshhost.Key) (Status, error) {
 		value.State = "applied"
 	} else {
 		value.Current = false
+	}
+	for _, build := range value.Builds {
+		if build.State == "failed" {
+			value.State, value.Current = "build_failed", false
+			break
+		}
 	}
 	return value, nil
 }

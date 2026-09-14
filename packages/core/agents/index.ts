@@ -24,3 +24,4 @@ export * from "./package-mutations";
 
 export { agentPackageErrorDetails } from "./package-error";
 export * from "./dsh-home";
+export * from "./dsh-profile";

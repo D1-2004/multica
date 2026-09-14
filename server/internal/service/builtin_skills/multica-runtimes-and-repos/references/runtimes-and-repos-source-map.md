@@ -101,7 +101,9 @@
 
 ## Durable employee Profile revisions
 
-- `server/internal/dshprofile/profile.go` and `postgres.go`: configuration-sensitive immutable revisions, credential-independent build keys, parent/publication locks, queued build intents and exact generation/configuration receipt fencing. Public status excludes private descriptors.
+- `packages/core/agents/dsh-profile.ts` and `packages/views/agents/components/tabs/dsh-profile-status.tsx`: workspace/employee-scoped status reads, explicit preparation, desired versus confirmed versions and failed build display. Plugin edits and native entry attempts invalidate the receipt cache.
+
+- `server/internal/dshprofile/profile.go` and `postgres.go`: configuration-sensitive immutable revisions, credential-independent build keys, parent/publication locks, queued build intents and exact generation/configuration receipt fencing. Public status excludes private descriptors and includes employee-scoped package build states, including failures.
 - `server/migrations/9241_dsh_employee_profile.*.sql` through `9244_dsh_plugin_build_identity.*.sql`: durable Profile/build state and separately created concurrent unique indexes. Workspace teardown removes these rows in the parent transaction.
 - `server/internal/handler/dsh_profile.go`, `server/internal/service/fc_e2b_dsh_profile.go`: human manager-only status/preparation, transaction-bound effective employee settings and shared Runtime/employee lock order. No endpoint fabricates a Host receipt or starts a build/Host on read.
 - `packages/core/api/dsh-profile-schema.ts` and `dsh-profile-client.test.ts`: exact string revisions, workspace-bound requests and malformed receipt rejection.

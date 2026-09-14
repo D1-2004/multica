@@ -227,7 +227,10 @@ of unchanged settings reuses the revision; changing credentials changes the
 Profile revision without rebuilding identical package bytes. Status contains
 `state`, string-valued `desired_revision` and `applied_revision`,
 `applied_generation`, `applied_sandbox_id` and `current`, without configuration.
-`waiting_for_builds` and `pending_host` are not successful application. A historical
+`waiting_for_builds`, `build_failed` and `pending_host` are not successful application.
+The DSH Home page shows desired/last-confirmed versions and per-package build
+status. A failed package is shown as failed, not as indefinite preparation.
+The status API exposes package/version/state only, never the private settings. A historical
 receipt after a saved edit is `configuration_changed`; a retired/replaced Host
 cannot be current. Preparation does not start a Host. The durable receipt store
 requires matching live Host generation, exact descriptor and fresh configuration

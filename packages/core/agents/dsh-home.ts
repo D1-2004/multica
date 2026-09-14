@@ -1,5 +1,6 @@
 import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { dshProfileKeys } from "./dsh-profile";
 import type { DSHNativeEntry } from "../api/dsh-native-schema";
 export type { DSHNativeEntry } from "../api/dsh-native-schema";
 export type { DSHHomeStatus } from "../api/dsh-home-schema";
@@ -57,6 +58,9 @@ export function useDSHNativeEntry(workspaceId: string, agentId: string) {
       // The component owns the short-lived URL; the mutation cache gets metadata only.
       return { accessId: entry.accessId, expiresAt: entry.expiresAt };
     },
-    onSettled: () => client.invalidateQueries({ queryKey: dshHomeKeys.detail(workspaceId, agentId) }),
+    onSettled: () => Promise.all([
+      client.invalidateQueries({ queryKey: dshHomeKeys.detail(workspaceId, agentId) }),
+      client.invalidateQueries({ queryKey: dshProfileKeys.detail(workspaceId, agentId) }),
+    ]),
   });
 }

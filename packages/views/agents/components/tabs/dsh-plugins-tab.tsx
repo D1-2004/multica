@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { api, ApiError } from "@multica/core/api";
+import { dshProfileKeys } from "@multica/core/agents";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   agentDshPluginsOptions,
@@ -68,6 +69,7 @@ export function DshPluginsTab({
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: dshPluginKeys.all(wsId) });
+    void queryClient.invalidateQueries({ queryKey: dshProfileKeys.detail(wsId, agent.id) });
   };
 
   const save = useMutation({
@@ -81,7 +83,10 @@ export function DshPluginsTab({
           : t(($) => $.tab_body.dsh_plugins.save_failed_toast),
       );
     },
-    onSettled: () => setBusyId(null),
+    onSettled: () => {
+      setBusyId(null);
+      void queryClient.invalidateQueries({ queryKey: dshProfileKeys.detail(wsId, agent.id) });
+    },
   });
 
   // The endpoint replaces the whole set, so every mutation sends the full list
