@@ -25,6 +25,7 @@ type stableChannelResponse struct {
 }
 
 type createStableReleaseRequest struct {
+	ProviderScope       string `json:"provider_scope"`
 	SandboxBackend      string `json:"sandbox_backend"`
 	ArtifactRef         string `json:"artifact_ref"`
 	ArtifactBuildID     string `json:"artifact_build_id"`
@@ -79,7 +80,12 @@ func (h *Handler) getCloudSandboxStableChannel(
 		writeError(w, http.StatusServiceUnavailable, "cloud sandbox stable channel is unavailable")
 		return
 	}
-	channel, err := h.FCE2BStable.GetChannel(r.Context(), backend)
+	scope := r.URL.Query().Get("provider_scope")
+	if err := service.ValidateStableProviderScope(backend, scope); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	channel, err := h.FCE2BStable.GetProviderChannel(r.Context(), backend, scope)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load cloud sandbox stable channel")
 		return
@@ -115,10 +121,24 @@ func (h *Handler) listCloudSandboxStableRuntimes(
 		writeError(w, http.StatusServiceUnavailable, "cloud sandbox stable channel is unavailable")
 		return
 	}
+	scope := r.URL.Query().Get("provider_scope")
+	if err := service.ValidateStableProviderScope(backend, scope); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	runtimes, err := h.FCE2BStable.ListRuntimeOverview(r.Context(), backend)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load cloud sandbox stable runtimes")
 		return
+	}
+	if scope != "" {
+		filtered := make([]service.FCE2BStableRuntimeOverview, 0)
+		for _, runtime := range runtimes {
+			if runtime.Provider == scope {
+				filtered = append(filtered, runtime)
+			}
+		}
+		runtimes = filtered
 	}
 	writeJSON(w, http.StatusOK, runtimes)
 }
@@ -181,6 +201,10 @@ func (h *Handler) createCloudSandboxStableRelease(
 		writeError(w, http.StatusBadRequest, "sandbox_backend must be 'aliyun_fc' or 'asb'")
 		return
 	}
+	if err := service.ValidateStableProviderScope(backend, req.ProviderScope); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	if len(req.Note) > 2000 {
 		writeError(w, http.StatusBadRequest, "note is too long")
 		return
@@ -200,6 +224,7 @@ func (h *Handler) createCloudSandboxStableRelease(
 		artifactBuiltAt = &parsed
 	}
 	release, _, err := h.FCE2BStable.CreateRelease(r.Context(), service.CreateFCE2BStableReleaseInput{
+		ProviderScope:       req.ProviderScope,
 		IdempotencyKey:      idempotencyKey,
 		SandboxBackend:      backend,
 		ArtifactRef:         req.ArtifactRef,
@@ -301,7 +326,16 @@ func (h *Handler) listCloudSandboxStableReleases(
 		writeError(w, http.StatusBadRequest, "status is too long")
 		return
 	}
-	releases, err := h.FCE2BStable.ListReleases(r.Context(), backend, status, limit)
+	var scope *string
+	if r.URL.Query().Has("provider_scope") {
+		value := r.URL.Query().Get("provider_scope")
+		if err := service.ValidateStableProviderScope(backend, value); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		scope = &value
+	}
+	releases, err := h.FCE2BStable.ListReleases(r.Context(), backend, status, limit, scope)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load stable releases")
 		return

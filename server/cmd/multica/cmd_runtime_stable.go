@@ -80,6 +80,7 @@ func init() {
 		runtimeStableReleaseListCmd,
 	} {
 		command.Flags().String("backend", "asb", "Sandbox backend: asb or aliyun_fc")
+		command.Flags().String("provider", "", "Independent FC provider channel, for example dsh")
 		command.Flags().String("output", "table", "Output format: table or json")
 	}
 	runtimeStableReleaseGetCmd.Flags().String("output", "json", "Output format: table or json")
@@ -87,6 +88,7 @@ func init() {
 	runtimeStableReleaseListCmd.Flags().Int("limit", 20, "Maximum releases to return (1-100)")
 
 	runtimeStableReleaseCreateCmd.Flags().String("backend", "asb", "Sandbox backend: asb or aliyun_fc")
+	runtimeStableReleaseCreateCmd.Flags().String("provider", "", "Publish only this FC provider; other providers retain their channels")
 	runtimeStableReleaseCreateCmd.Flags().String("artifact-ref", "", "Immutable ASB OCI image reference")
 	runtimeStableReleaseCreateCmd.Flags().String("artifact-build-id", "", "Artifact build identifier")
 	runtimeStableReleaseCreateCmd.Flags().String("artifact-built-at", "", "ASB artifact build time in RFC3339 format")
@@ -156,6 +158,9 @@ func runRuntimeStableChannel(cmd *cobra.Command, _ []string) error {
 
 	var response map[string]any
 	path := "/api/runtimes/cloud-sandbox/stable-channel?sandbox_backend=" + url.QueryEscape(backend)
+	if provider, _ := cmd.Flags().GetString("provider"); provider != "" {
+		path += "&provider_scope=" + url.QueryEscape(provider)
+	}
 	if err := client.GetJSON(ctx, path, &response); err != nil {
 		return fmt.Errorf("get stable channel: %w", err)
 	}
@@ -198,6 +203,9 @@ func runRuntimeStableRuntimes(cmd *cobra.Command, _ []string) error {
 
 	var runtimes []map[string]any
 	path := "/api/runtimes/cloud-sandbox/stable-runtimes?sandbox_backend=" + url.QueryEscape(backend)
+	if provider, _ := cmd.Flags().GetString("provider"); provider != "" {
+		path += "&provider_scope=" + url.QueryEscape(provider)
+	}
 	if err := client.GetJSON(ctx, path, &runtimes); err != nil {
 		return fmt.Errorf("list stable runtimes: %w", err)
 	}
@@ -234,6 +242,9 @@ func runRuntimeStableReleaseList(cmd *cobra.Command, _ []string) error {
 	query := url.Values{
 		"sandbox_backend": {backend},
 		"limit":           {strconv.Itoa(limit)},
+	}
+	if provider, _ := cmd.Flags().GetString("provider"); provider != "" {
+		query.Set("provider_scope", provider)
 	}
 	if status = strings.TrimSpace(status); status != "" {
 		query.Set("status", status)
@@ -295,6 +306,7 @@ func runRuntimeStableReleaseCreate(cmd *cobra.Command, _ []string) error {
 		"git-commit":           "git_commit",
 		"provider-fingerprint": "provider_fingerprint",
 		"template-id":          "template_id",
+		"provider":             "provider_scope",
 		"note":                 "note",
 	} {
 		value, _ := cmd.Flags().GetString(flag)
@@ -362,13 +374,14 @@ func printRuntimeStableRelease(cmd *cobra.Command, release map[string]any) error
 }
 
 func stableReleaseHeaders() []string {
-	return []string{"ID", "BACKEND", "STATUS", "ARTIFACT", "BUILT_AT", "BATCH", "UPDATED", "FAILED", "ERROR"}
+	return []string{"ID", "BACKEND", "PROVIDER_SCOPE", "STATUS", "ARTIFACT", "BUILT_AT", "BATCH", "UPDATED", "FAILED", "ERROR"}
 }
 
 func stableReleaseRow(release map[string]any) []string {
 	return []string{
 		strVal(release, "id"),
 		strVal(release, "sandbox_backend"),
+		strVal(release, "provider_scope"),
 		strVal(release, "status"),
 		strVal(release, "artifact_ref"),
 		strVal(release, "artifact_built_at"),

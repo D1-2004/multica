@@ -202,6 +202,7 @@ export interface FCE2BStableRolloutMilestone {
 }
 
 export interface FCE2BStableRelease {
+  provider_scope?: string;
   sandbox_backend: SandboxBackend;
   artifact_kind: "e2b_template" | "oci_image";
   artifact_ref: string;
@@ -272,11 +273,13 @@ export interface FCE2BStableRuntimeOverview {
 }
 
 export interface CreateFCE2BStableReleaseRequest {
+  provider_scope?: string;
 	template_id: string;
 	note?: string;
 }
 
 export interface CreateCloudSandboxStableReleaseRequest {
+  provider_scope?: string;
   sandbox_backend: SandboxBackend;
   artifact_ref?: string;
   artifact_build_id?: string;

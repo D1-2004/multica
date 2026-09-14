@@ -1912,6 +1912,7 @@ export const FCE2BStableRolloutMilestoneSchema = z.object({
 
 export const FCE2BStableReleaseSchema = z
   .object({
+    provider_scope: z.string().default(""),
     sandbox_backend: z.enum(["aliyun_fc", "asb"]).default("aliyun_fc"),
     artifact_kind: z
       .enum(["e2b_template", "oci_image"])
