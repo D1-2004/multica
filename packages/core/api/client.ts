@@ -2152,8 +2152,10 @@ export class ApiClient {
 
   async getCloudSandboxStableChannel(
     backend: SandboxBackend,
+    providerScope?: string,
   ): Promise<FCE2BStableChannel> {
     const search = new URLSearchParams({ sandbox_backend: backend });
+    if (providerScope !== undefined) search.set("provider_scope", providerScope);
     const raw = await this.fetch<unknown>(
       `/api/runtimes/cloud-sandbox/stable-channel?${search.toString()}`,
     );
@@ -2220,11 +2222,13 @@ export class ApiClient {
   async listCloudSandboxStableReleases(
     backend: SandboxBackend,
     limit = 20,
+    providerScope?: string,
   ): Promise<FCE2BStableRelease[]> {
     const search = new URLSearchParams({
       sandbox_backend: backend,
       limit: String(limit),
     });
+    if (providerScope !== undefined) search.set("provider_scope", providerScope);
     const raw = await this.fetch<unknown>(
       `/api/runtimes/cloud-sandbox/stable-releases?${search.toString()}`,
     );
@@ -2244,8 +2248,10 @@ export class ApiClient {
 
   async listCloudSandboxStableRuntimes(
     backend: SandboxBackend,
+    providerScope?: string,
   ): Promise<FCE2BStableRuntimeOverview[]> {
     const search = new URLSearchParams({ sandbox_backend: backend });
+    if (providerScope !== undefined) search.set("provider_scope", providerScope);
     const raw = await this.fetch<unknown>(
       `/api/runtimes/cloud-sandbox/stable-runtimes?${search.toString()}`,
     );

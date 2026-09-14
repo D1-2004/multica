@@ -221,10 +221,12 @@ func (h *Handler) createAliyunFCRuntime(
 			return
 		}
 		defer func() { _ = stableTx.Rollback(context.Background()) }()
+		creationProvider := strings.ToLower(strings.TrimSpace(req.Provider))
 		current, err := h.FCE2BStable.LockCurrentArtifactForRuntimeCreation(
 			r.Context(),
 			stableTx,
 			service.SandboxBackendAliyunFC,
+			creationProvider,
 		)
 		if errors.Is(err, service.ErrFCE2BStableChannelUninitialized) {
 			writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -233,6 +235,22 @@ func (h *Handler) createAliyunFCRuntime(
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to resolve FC/E2B stable template")
 			return
+		}
+		if creationProvider == "" {
+			// Preserve the shared template's default provider, then resolve that
+			// provider's independently published pointer under the same lock.
+			base, found := selectFCE2BTemplateByID(templates, current.TemplateID)
+			selectedProvider, supported := resolveFCE2BProvider("", base)
+			if !found || !supported {
+				writeError(w, http.StatusServiceUnavailable, "stable template has no available default provider")
+				return
+			}
+			current, err = h.FCE2BStable.LockCurrentArtifactForRuntimeCreation(r.Context(), stableTx, service.SandboxBackendAliyunFC, selectedProvider)
+			if err != nil {
+				writeError(w, http.StatusServiceUnavailable, "failed to resolve provider stable template")
+				return
+			}
+			req.Provider = selectedProvider
 		}
 		runtimeQueries = h.Queries.WithTx(stableTx)
 		templateRef = current.TemplateID
@@ -401,6 +419,7 @@ func (h *Handler) createASBRuntime(
 			r.Context(),
 			runtimeTx,
 			service.SandboxBackendASB,
+			"",
 		); err != nil {
 			if errors.Is(err, service.ErrFCE2BStableChannelUninitialized) {
 				writeError(w, http.StatusServiceUnavailable, err.Error())

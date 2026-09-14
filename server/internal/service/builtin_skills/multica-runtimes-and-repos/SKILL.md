@@ -65,6 +65,39 @@ multica repo checkout <url> --ref <branch-or-sha>
 
 `repo checkout` requires both `MULTICA_DAEMON_PORT` and the task-scoped `MULTICA_TOKEN`; it is intended to run inside an authorized daemon task. If either is absent, you are not in the normal agent checkout path. The daemon accepts the token only while that exact task is running and binds checkout to its workspace, prepared workdir, and visible repo list. When a project `github_repo` resource has `resource_ref.ref`, `repo checkout <url>` uses that ref by default for the current task; an explicit `repo checkout <url> --ref <branch-or-sha>` overrides it.
 
+## FC stable provider channels
+
+Operators with stable publication permission can select an independent FC
+provider channel. Always specify `--backend aliyun_fc`; the CLI default is ASB.
+
+```bash
+multica runtime stable channel --backend aliyun_fc --provider dsh --output json
+multica runtime stable runtimes --backend aliyun_fc --provider dsh --output json
+multica runtime stable release list --backend aliyun_fc --provider dsh --output json
+multica runtime stable release create --backend aliyun_fc --provider dsh --template-id <immutable-template-id> --idempotency-key <operation-id> --output json
+```
+
+`--provider` maps to the API's `provider_scope`. Without it, channel/create use
+the shared channel and release history includes all scopes. An explicit empty
+`provider_scope` history query selects only shared releases. Named scopes are FC
+only. A provider inherits the shared pointer until its first scoped release
+creates an independent pointer. That release must complete the normal validation,
+drain, rollout and observation gates. Future shared releases exclude independent
+providers; new stable Runtimes resolve their provider's pointer. The artifact's
+`providers` still describes its real capabilities; `target_providers` describes
+the release selection. Never relabel artifact capabilities to limit a rollout.
+
+Only one release per backend may be active, including across scopes. Deploy
+scope-aware servers to every replica before creating a scoped release. During a
+mixed-version deployment, database guards reject cross-scope targets, publication
+and stale shared-template creation; an old worker may stall a release and is not
+an acceptable operator for it. Use release-ID actions to pause, resume, advance,
+complete observation or roll back. Active-release rollback restores each target's
+previous artifact. After completion, publish the previous immutable artifact as
+a new release with the same provider scope. Never delete the independent channel
+or its history to simulate rollback. Scoped operator controls are currently in
+the CLI/API; the shared-channel UI does not select provider channels.
+
 ## Task CLI boundary
 
 The daemon injects a task-scoped `mat_` credential for Multica API commands and a private task-local Multica configuration root. Inside that managed task context:

@@ -102,6 +102,7 @@ type FCE2BStableRolloutMilestone struct {
 }
 
 type FCE2BStableRelease struct {
+	ProviderScope               string                        `json:"provider_scope"`
 	SandboxBackend              string                        `json:"sandbox_backend"`
 	ArtifactKind                string                        `json:"artifact_kind"`
 	ArtifactRef                 string                        `json:"artifact_ref"`
@@ -146,6 +147,7 @@ type FCE2BStableRelease struct {
 }
 
 type CreateFCE2BStableReleaseInput struct {
+	ProviderScope       string
 	IdempotencyKey      string
 	SandboxBackend      SandboxBackendKind
 	ArtifactRef         string
@@ -278,17 +280,30 @@ func (s *FCE2BStableService) GetChannel(
 	if err != nil {
 		return FCE2BStableChannel{}, err
 	}
+	return s.GetProviderChannel(ctx, backend, "")
+}
+
+func (s *FCE2BStableService) GetProviderChannel(ctx context.Context, backend SandboxBackendKind, scope string) (FCE2BStableChannel, error) {
+	if s == nil || s.Pool == nil {
+		return FCE2BStableChannel{}, errors.New("stable channel service unavailable")
+	}
+	if err := ValidateStableProviderScope(backend, scope); err != nil {
+		return FCE2BStableChannel{}, err
+	}
+	var err error
 	var result FCE2BStableChannel
 	var current FCE2BStableTemplateBinding
+	resolvedChannel := stableProviderChannel(scope)
 	err = s.Pool.QueryRow(ctx, `
 		SELECT sandbox_backend, artifact_kind, current_artifact_ref,
 		       current_artifact_build_id, current_template_alias,
 		       current_artifact_digest, current_template_id,
 		       current_template_alias,
-		       current_release_id::text
+		       current_release_id::text, channel
 		FROM fc_e2b_stable_channel
-		WHERE sandbox_backend = $1 AND channel = 'stable'
-	`, backend).Scan(
+		WHERE sandbox_backend = $1 AND channel IN ('stable',$2)
+		ORDER BY (channel=$2) DESC LIMIT 1
+	`, backend, stableProviderChannel(scope)).Scan(
 		&current.SandboxBackend,
 		&current.ArtifactKind,
 		&current.ArtifactRef,
@@ -298,6 +313,7 @@ func (s *FCE2BStableService) GetChannel(
 		&current.TemplateID,
 		&current.TemplateAlias,
 		&current.ReleaseID,
+		&resolvedChannel,
 	)
 	switch {
 	case err == nil:
@@ -309,7 +325,11 @@ func (s *FCE2BStableService) GetChannel(
 	default:
 		return FCE2BStableChannel{}, fmt.Errorf("load FC/E2B stable channel: %w", err)
 	}
-	active, err := s.getActiveRelease(ctx, backend)
+	resolvedScope := strings.TrimPrefix(resolvedChannel, "stable:")
+	if resolvedChannel == "stable" {
+		resolvedScope = ""
+	}
+	active, err := s.getActiveRelease(ctx, backend, resolvedScope)
 	if err != nil {
 		return FCE2BStableChannel{}, err
 	}
@@ -333,6 +353,7 @@ func (s *FCE2BStableService) ListReleases(
 	backend SandboxBackendKind,
 	status string,
 	limit int,
+	scope *string,
 ) ([]FCE2BStableRelease, error) {
 	if s == nil || s.Pool == nil {
 		return nil, errors.New("FC/E2B stable channel service is unavailable")
@@ -348,9 +369,10 @@ func (s *FCE2BStableService) ListReleases(
 	rows, err := s.Pool.Query(ctx, stableReleaseSelect+`
 		WHERE release.sandbox_backend = $1
 		  AND ($2 = '' OR release.status = $2)
+		  AND ($4::text IS NULL OR release.provider_scope = $4)
 		ORDER BY release.created_at DESC
 		LIMIT $3
-	`, backend, status, limit)
+	`, backend, status, limit, scope)
 	if err != nil {
 		return nil, fmt.Errorf("list stable releases: %w", err)
 	}
@@ -389,6 +411,7 @@ func (s *FCE2BStableService) LockCurrentArtifactForRuntimeCreation(
 	ctx context.Context,
 	tx pgx.Tx,
 	backend SandboxBackendKind,
+	scope string,
 ) (FCE2BStableTemplateBinding, error) {
 	if s == nil || tx == nil {
 		return FCE2BStableTemplateBinding{}, errors.New("FC/E2B stable channel service is unavailable")
@@ -405,6 +428,9 @@ func (s *FCE2BStableService) LockCurrentArtifactForRuntimeCreation(
 	); err != nil {
 		return FCE2BStableTemplateBinding{}, fmt.Errorf("lock cloud sandbox stable channel for runtime creation: %w", err)
 	}
+	if err := ValidateStableProviderScope(backend, scope); err != nil {
+		return FCE2BStableTemplateBinding{}, err
+	}
 	var current FCE2BStableTemplateBinding
 	err = tx.QueryRow(ctx, `
 		SELECT sandbox_backend, artifact_kind, current_artifact_ref,
@@ -413,8 +439,9 @@ func (s *FCE2BStableService) LockCurrentArtifactForRuntimeCreation(
 		       current_template_alias,
 		       current_release_id::text
 		FROM fc_e2b_stable_channel
-		WHERE sandbox_backend = $1 AND channel = 'stable'
-	`, backend).Scan(
+		WHERE sandbox_backend = $1 AND channel IN ('stable',$2)
+		ORDER BY (channel=$2) DESC LIMIT 1
+	`, backend, stableProviderChannel(scope)).Scan(
 		&current.SandboxBackend,
 		&current.ArtifactKind,
 		&current.ArtifactRef,
@@ -441,14 +468,15 @@ func (s *FCE2BStableService) LockCurrentTemplateForRuntimeCreation(
 	ctx context.Context,
 	tx pgx.Tx,
 ) (FCE2BStableTemplateBinding, error) {
-	return s.LockCurrentArtifactForRuntimeCreation(ctx, tx, SandboxBackendAliyunFC)
+	return s.LockCurrentArtifactForRuntimeCreation(ctx, tx, SandboxBackendAliyunFC, "")
 }
 
 func (s *FCE2BStableService) CurrentArtifact(
 	ctx context.Context,
 	backend SandboxBackendKind,
+	scope string,
 ) (FCE2BStableTemplateBinding, error) {
-	channel, err := s.GetChannel(ctx, backend)
+	channel, err := s.GetProviderChannel(ctx, backend, scope)
 	if err != nil {
 		return FCE2BStableTemplateBinding{}, err
 	}
@@ -459,7 +487,7 @@ func (s *FCE2BStableService) CurrentArtifact(
 }
 
 func (s *FCE2BStableService) CurrentASBArtifact(ctx context.Context) (ASBArtifact, error) {
-	current, err := s.CurrentArtifact(ctx, SandboxBackendASB)
+	current, err := s.CurrentArtifact(ctx, SandboxBackendASB, "")
 	if err != nil {
 		return ASBArtifact{}, err
 	}
@@ -536,9 +564,9 @@ func (s *FCE2BStableService) ListRuntimeOverview(
 			runtime.metadata
 		FROM agent_runtime runtime
 		JOIN workspace ON workspace.id = runtime.workspace_id
-		LEFT JOIN fc_e2b_stable_channel channel
-		  ON channel.sandbox_backend = $1
-		 AND channel.channel = 'stable'
+		LEFT JOIN LATERAL (SELECT * FROM fc_e2b_stable_channel c
+		 WHERE c.sandbox_backend=$1 AND c.channel IN ('stable','stable:'||runtime.provider)
+		 ORDER BY (c.channel<>'stable') DESC LIMIT 1) channel ON true
 		LEFT JOIN fc_e2b_stable_release active ON active.id = channel.active_release_id
 		LEFT JOIN fc_e2b_stable_release_target target
 		  ON target.release_id = active.id
@@ -621,6 +649,9 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 		return FCE2BStableRelease{}, false, err
 	}
 	input.SandboxBackend = backend
+	if err := ValidateStableProviderScope(backend, input.ProviderScope); err != nil {
+		return FCE2BStableRelease{}, false, err
+	}
 	artifactKind := CloudSandboxArtifactE2BTemplate
 	switch backend {
 	case SandboxBackendAliyunFC:
@@ -660,14 +691,23 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1,$2)", fcE2BStableChannelLockClass, stableChannelLockKey(backend)); err != nil {
+		return FCE2BStableRelease{}, false, err
+	}
+	if err := initializeStableProviderChannel(ctx, tx, backend, input.ProviderScope); err != nil {
+		return FCE2BStableRelease{}, false, err
+	}
 	var channelExists bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM fc_e2b_stable_channel
-			WHERE sandbox_backend = $1 AND channel = 'stable'
+			WHERE sandbox_backend = $1 AND channel = $2
 		)
-	`, backend).Scan(&channelExists); err != nil {
+	`, backend, stableProviderChannel(input.ProviderScope)).Scan(&channelExists); err != nil {
 		return FCE2BStableRelease{}, false, fmt.Errorf("check stable channel: %w", err)
+	}
+	if input.ProviderScope != "" && !channelExists {
+		return FCE2BStableRelease{}, false, ErrFCE2BStableChannelUninitialized
 	}
 	input.Bootstrap = !channelExists
 	fingerprint := stableReleaseFingerprint(input)
@@ -707,13 +747,13 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 			manifest,
 			note,
 			actor_user_id,
-			bootstrap
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
+			bootstrap, provider_scope
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15)
 		RETURNING id
 	`, input.IdempotencyKey, fingerprint, input.TemplateID,
 		backend, artifactKind, input.ArtifactRef, input.ArtifactBuildID,
 		input.ArtifactBuiltAt, input.ArtifactDigest, input.GitCommit, string(initialManifestJSON), input.Note,
-		input.ActorUserID, input.Bootstrap,
+		input.ActorUserID, input.Bootstrap, input.ProviderScope,
 	).Scan(&releaseID)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -736,8 +776,8 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 		if _, err := tx.Exec(ctx, `
 			UPDATE fc_e2b_stable_channel
 			SET active_release_id = $1, updated_at = now()
-			WHERE sandbox_backend = $2 AND channel = 'stable'
-		`, releaseID, backend); err != nil {
+			WHERE sandbox_backend = $2 AND channel = $3
+		`, releaseID, backend, stableProviderChannel(input.ProviderScope)); err != nil {
 			return FCE2BStableRelease{}, false, fmt.Errorf("set active stable release: %w", err)
 		}
 	}
@@ -1117,7 +1157,7 @@ func (s *FCE2BStableService) Terminate(ctx context.Context, releaseID pgtype.UUI
 	if _, err := tx.Exec(ctx, `
 		UPDATE fc_e2b_stable_channel
 		SET active_release_id = NULL, updated_at = now()
-		WHERE channel = 'stable' AND active_release_id = $1
+		WHERE active_release_id = $1
 	`, releaseID); err != nil {
 		return FCE2BStableRelease{}, fmt.Errorf("clear terminated stable release: %w", err)
 	}
@@ -1255,6 +1295,9 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 			string(SandboxBackendAliyunFC): append([]string(nil), selected.Capabilities...),
 		},
 	}
+	if err := s.applyProviderScope(ctx, release, manifest); err != nil {
+		return s.failValidation(ctx, release.ID, token, err)
+	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
@@ -1293,7 +1336,7 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 			release.ID, token, selected.ID, release.ArtifactDigest)
 		return err
 	}
-	current, err := s.CurrentTemplate(ctx)
+	current, err := s.CurrentArtifact(ctx, SandboxBackendAliyunFC, release.ProviderScope)
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
 	}
@@ -1420,7 +1463,7 @@ func (s *FCE2BStableService) validateASBRelease(
 			release.ArtifactRef, release.ArtifactBuildID, release.ArtifactDigest)
 		return err
 	}
-	current, err := s.CurrentArtifact(ctx, SandboxBackendASB)
+	current, err := s.CurrentArtifact(ctx, SandboxBackendASB, "")
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
 	}
@@ -1902,11 +1945,11 @@ func (s *FCE2BStableService) finalizeObservation(
 		    active_release_id = NULL,
 		    updated_at = now()
 		WHERE sandbox_backend = $8
-		  AND channel = 'stable'
+		  AND channel = $9
 		  AND active_release_id = $7
 	`, release.ArtifactKind, release.ArtifactRef, release.ArtifactBuildID,
 		release.ArtifactDigest, release.TemplateID,
-		release.ArtifactAlias, release.ID, release.SandboxBackend)
+		release.ArtifactAlias, release.ID, release.SandboxBackend, stableProviderChannel(release.ProviderScope))
 	if err != nil {
 		return false, err
 	}
@@ -1986,7 +2029,7 @@ func stableRuntimeMissingForRelease(
 ) bool {
 	metadata, eligible := stableRuntimeMetadataForBackend(runtime, backend)
 	if !eligible || !containsAllStrings(
-		stringSliceMetadataValue(release.Manifest, "providers"),
+		stableReleaseProviders(release.Manifest),
 		metadata.Provider,
 	) {
 		return false
@@ -2103,7 +2146,7 @@ func (s *FCE2BStableService) rollbackRelease(ctx context.Context, release FCE2BS
 	if _, err := tx.Exec(ctx, `
 		UPDATE fc_e2b_stable_channel
 		SET active_release_id = NULL, updated_at = now()
-		WHERE channel = 'stable' AND active_release_id = $1
+		WHERE active_release_id = $1
 	`, release.ID); err != nil {
 		return err
 	}
@@ -2319,7 +2362,7 @@ func (s *FCE2BStableService) removeStaleStableTargets(
 			SandboxBackendKind(release.SandboxBackend),
 		)
 		if !eligible || !containsAllStrings(
-			stringSliceMetadataValue(release.Manifest, "providers"),
+			stableReleaseProviders(release.Manifest),
 			metadata.Provider,
 		) {
 			invalidRuntimeIDs = append(invalidRuntimeIDs, runtime.ID)
@@ -2421,7 +2464,7 @@ func stableTargetsForManifest(
 	targets []stableRuntimeTarget,
 	manifest map[string]any,
 ) []stableRuntimeTarget {
-	providers := stringSliceMetadataValue(manifest, "providers")
+	providers := stableReleaseProviders(manifest)
 	allowed := make(map[string]struct{}, len(providers))
 	for _, provider := range providers {
 		allowed[strings.ToLower(strings.TrimSpace(provider))] = struct{}{}
@@ -3191,7 +3234,7 @@ func (s *FCE2BStableService) failValidation(ctx context.Context, releaseID strin
 	_, err = s.Pool.Exec(ctx, `
 		UPDATE fc_e2b_stable_channel
 		SET active_release_id = NULL, updated_at = now()
-		WHERE channel = 'stable' AND active_release_id = $1
+		WHERE active_release_id = $1
 	`, releaseID)
 	return err
 }
@@ -3211,16 +3254,9 @@ func (s *FCE2BStableService) releaseLease(ctx context.Context, releaseID string,
 	return err
 }
 
-func (s *FCE2BStableService) getActiveRelease(
-	ctx context.Context,
-	backends ...SandboxBackendKind,
-) (*FCE2BStableRelease, error) {
-	backend, err := stableSandboxBackend(backends...)
-	if err != nil {
-		return nil, err
-	}
+func (s *FCE2BStableService) getActiveRelease(ctx context.Context, backend SandboxBackendKind, scope string) (*FCE2BStableRelease, error) {
 	release, err := s.scanRelease(s.Pool.QueryRow(ctx, stableReleaseSelect+`
-		WHERE sandbox_backend = $1
+		WHERE sandbox_backend = $1 AND provider_scope = $2
 		  AND status IN (
 		    'validating',
 		    'developer_rollout',
@@ -3232,7 +3268,7 @@ func (s *FCE2BStableService) getActiveRelease(
 		)
 		ORDER BY created_at
 		LIMIT 1
-	`, backend))
+	`, backend, scope))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -3275,6 +3311,7 @@ func (s *FCE2BStableService) scanRelease(row rowScanner) (FCE2BStableRelease, er
 	var rolloutStartedAt, batchStartedAt, nextBatchAt, completedAt pgtype.Timestamptz
 	err := row.Scan(
 		&release.ID,
+		&release.ProviderScope,
 		&release.SandboxBackend,
 		&release.ArtifactKind,
 		&release.ArtifactRef,
@@ -3351,7 +3388,7 @@ func (s *FCE2BStableService) scanRelease(row rowScanner) (FCE2BStableRelease, er
 }
 
 func stableReleaseFingerprint(input CreateFCE2BStableReleaseInput) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
+	parts := []string{
 		string(input.SandboxBackend),
 		input.ArtifactRef,
 		input.TemplateID,
@@ -3366,7 +3403,11 @@ func stableReleaseFingerprint(input CreateFCE2BStableReleaseInput) string {
 		input.GitCommit,
 		input.ProviderFingerprint,
 		input.Note,
-	}, "\x00")))
+	}
+	if input.ProviderScope != "" {
+		parts = append(parts, "provider_scope", input.ProviderScope)
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -3505,6 +3546,7 @@ func isUniqueViolation(err error) bool {
 
 const stableReleaseColumns = `
 	release.id::text,
+	release.provider_scope,
 	release.sandbox_backend,
 	release.artifact_kind,
 	release.artifact_ref,

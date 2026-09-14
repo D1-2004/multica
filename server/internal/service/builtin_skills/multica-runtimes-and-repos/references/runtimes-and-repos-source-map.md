@@ -59,3 +59,14 @@
 - `server/internal/service/fc_e2b_dsh_authority.go`: backend-initiated authorization polling, deployment signing, exact-Host decisions and bounded connection lifetime; no writer lifecycle mutations.
 
 - `packages/core/api/dsh-native-schema.ts`, `packages/core/agents/dsh-home.ts`, `packages/views/agents/components/tabs/dsh-home-tab.tsx`: scoped human native-entry request, credential-safe parsing, explicit Prepare/Enter flow and ephemeral component-owned entry URL.
+
+## FC stable provider scope
+
+- `server/cmd/multica/cmd_runtime_stable.go`: explicit `--backend aliyun_fc --provider dsh` channel, Runtime, history and release operations; release-ID lifecycle actions preserve persisted scope.
+- `server/internal/handler/runtime_fc_e2b_stable.go`: validates query/body `provider_scope`; history filters before limiting results.
+- `server/internal/service/fc_e2b_stable_scope.go`, `fc_e2b_stable.go`: independent pointer initialization under the backend lock, inherited shared lookup, actual artifact capabilities separated from release targets, late-join filtering and scoped publication/rollback.
+- `server/internal/handler/runtime_fc_e2b.go`: new stable Runtime resolves the selected provider pointer under the creation/publication lock, preserving the shared template's default provider when omitted.
+- `server/migrations/9239_fc_stable_provider_scope.*.sql`: persisted scope and old-worker target/publication/creation guards; downgrade refuses to discard independent channel history.
+- `server/internal/service/fc_e2b_stable_scope_test.go`: target/capability separation, late joins, explicit empty selection and idempotency scope.
+- `server/internal/service/fc_e2b_stable_scope_database_test.go`: opt-in real preproduction test, temporary tables and transaction rollback against installed migration functions. Requires `DSH_STABLE_SCOPE_TEST_DATABASE_URL`; never runs local database services.
+- `packages/core/api/client.ts`, `schemas.ts`, `stable-provider-scope-schema.test.ts`: optional provider query, release scope parsing and malformed/historical response checks. Existing shared-channel UI does not provide scoped publishing controls.
