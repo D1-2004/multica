@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/dshprofile"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -909,6 +911,15 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := qtx.LockWorkspaceForDelete(r.Context(), requester.WorkspaceID); err != nil {
 		failWorkspaceDelete(w, r, workspaceID, "lock workspace", err)
+		return
+	}
+
+	if err := dshprofile.GuardBuildDeletion(r.Context(), tx, uuid.UUID(requester.WorkspaceID.Bytes)); err != nil {
+		if errors.Is(err, dshprofile.ErrBuildCleanupPending) {
+			writeError(w, http.StatusConflict, "plugin builds must finish cleanup before deleting this workspace")
+		} else {
+			failWorkspaceDelete(w, r, workspaceID, "lock plugin builds", err)
+		}
 		return
 	}
 

@@ -233,3 +233,11 @@ cannot be current. Preparation does not start a Host. The durable receipt store
 requires matching live Host generation, exact descriptor and fresh configuration
 under transaction locks. Host admission, artifact distribution and the build
 worker must still be connected before these endpoints prove live application.
+
+The plugin build ledger separates creation, remote execution, object verification
+and cleanup. A replacement claimant reconciles the saved create intent rather
+than creating another sandbox. A build becomes ready only after reading back the
+stored archive and matching its digest and length; sandbox cleanup still requires
+confirmed absence. Workspace deletion returns a conflict while a build has an
+active or unresolved cloud intent, preserving the recovery record. The ledger and
+state machine do not themselves provide an FC execution adapter or start a worker.

@@ -24,7 +24,9 @@ func profilePools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 		t.Skip("requires an explicitly configured real preproduction test database")
 	}
 	ctx := context.Background()
-	admin, err := pgx.Connect(ctx, url)
+	connectCtx, cancelConnect := context.WithTimeout(ctx, 15*time.Second)
+	defer cancelConnect()
+	admin, err := pgx.Connect(connectCtx, url)
 	if err != nil {
 		t.Fatal("cannot connect to configured test database")
 	}
@@ -56,7 +58,7 @@ func profilePools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 		return result
 	}
 	a, b := pool(), pool()
-	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9241_dsh_employee_profile", "9242_dsh_employee_profile_identity", "9243_dsh_profile_revision_identity", "9244_dsh_plugin_build_identity"} {
+	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9241_dsh_employee_profile", "9242_dsh_employee_profile_identity", "9243_dsh_profile_revision_identity", "9244_dsh_plugin_build_identity", "9245_dsh_plugin_build_worker", "9246_dsh_plugin_build_due"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
