@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRuntime } from "../types";
 import {
+  FC_E2B_RUNTIME_PROVIDERS,
   fcE2BProviderForTemplate,
   filterRuntimesForSandboxBackend,
   filterPhysicalRuntimes,
@@ -94,6 +95,35 @@ describe("parseFCE2BRuntimeMetadata", () => {
 });
 
 describe("parseCloudSandboxRuntimeMetadata", () => {
+  it.each(FC_E2B_RUNTIME_PROVIDERS)("recognizes migrated FC template metadata for %s", (provider) => {
+    const runtime = makeRuntime({ provider, metadata: {
+      kind: "cloud-sandbox", sandbox_backend: "aliyun_fc", provider,
+      template_id: "immutable-template", template: "display-alias",
+      template_alias: "stable-display", template_channel: "stable",
+    } });
+    expect(parseCloudSandboxRuntimeMetadata(runtime)).toMatchObject({
+      kind: "cloud-sandbox", sandboxBackend: "aliyun_fc", artifactKind: "e2b_template",
+      artifactRef: "immutable-template", artifactAlias: "stable-display", artifactChannel: "stable",
+    });
+    expect(isFCE2BRuntime(runtime)).toBe(true);
+    expect(isASBRuntime(runtime)).toBe(false);
+  });
+
+  it.each([
+    { template_id: undefined, template: "alias-only" },
+    { template_id: ["invalid"] },
+    { artifact_kind: "e2b_template" },
+    { artifact_ref: "partial-artifact" },
+    { artifact_kind: [] },
+    { sandbox_backend: "asb" },
+    { provider: "unknown" },
+  ])("rejects incomplete or mismatched migrated FC metadata %j", (overrides) => {
+    expect(parseCloudSandboxRuntimeMetadata(makeRuntime({ provider: "dsh", metadata: {
+      kind: "cloud-sandbox", sandbox_backend: "aliyun_fc", provider: "dsh",
+      template_id: "immutable-template", ...overrides,
+    } }))).toBeNull();
+  });
+
   it("parses an ASB OCI runtime without treating it as FC/E2B", () => {
     const runtime = makeRuntime({
       provider: "pi",
