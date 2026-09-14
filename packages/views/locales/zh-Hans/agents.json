@@ -1520,12 +1520,16 @@
       "running": "宿主正在运行。",
       "retiring": "正在回收旧宿主，文件仍保存在 Home 中。",
       "starting": "正在启动宿主。",
-      "offline": "执行任务时会启动宿主。",
+      "offline": "打开 DSH 或执行任务时会启动宿主。",
       "unconfirmed": "尚未确认准备结果，已重新查询状态。如仍无法推进，请联系工作区管理员。",
       "preparing": "正在准备...",
       "continue": "继续准备",
       "prepare": "准备 Home",
-      "refresh": "刷新状态"
+      "refresh": "刷新状态",
+      "native_prepare": "准备 DSH",
+      "native_preparing": "正在准备 DSH…",
+      "native_enter": "进入 DSH",
+      "native_unconfirmed": "暂时无法打开 DSH，已刷新 Home 状态。就绪后请重试。"
     }
   },
   "char_counter": {

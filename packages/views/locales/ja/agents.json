@@ -1328,12 +1328,16 @@
       "running": "ホストは実行中です。",
       "retiring": "以前のホストを終了中です。ファイルは Home に保持されます。",
       "starting": "ホストを起動中です。",
-      "offline": "作業が必要になったときにホストを起動します。",
+      "offline": "DSH を開くかタスクを実行するとホストが起動します。",
       "unconfirmed": "準備の結果を確認できませんでした。状態を再確認しています。進まない場合はワークスペース管理者に連絡してください。",
       "preparing": "準備中...",
       "continue": "準備を続行",
       "prepare": "Home を準備",
-      "refresh": "状態を更新"
+      "refresh": "状態を更新",
+      "native_prepare": "DSH を準備",
+      "native_preparing": "DSH を準備中…",
+      "native_enter": "DSH を開く",
+      "native_unconfirmed": "DSH を開けませんでした。Home の状態を更新しました。準備ができたら再試行してください。"
     }
   },
   "char_counter": {

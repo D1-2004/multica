@@ -1,3 +1,4 @@
+import { DSHNativeEntrySchema, type DSHNativeEntry } from "./dsh-native-schema";
 import { DSHHomeSchema, type DSHHomeStatus } from "./dsh-home-schema";
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
 import type { ReusableDingTalkIdentity } from "../types/dingtalk-account-binding";
@@ -3756,6 +3757,18 @@ export class ApiClient {
       [] as DshPluginRegistryResult[],
       { endpoint: "GET /api/dsh-plugins/registry-search" },
     );
+  }
+
+  async issueDSHNativeEntry(workspaceId: string, agentId: string): Promise<DSHNativeEntry | null> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/dsh-native/access`, {
+      method: "POST",
+      body: "{}",
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<DSHNativeEntry | null>(raw, DSHNativeEntrySchema, null, {
+      endpoint: "POST /api/agents/{id}/dsh-native/access",
+      includeReceived: false,
+    });
   }
 
   async getDSHHome(agentId: string, signal?: AbortSignal): Promise<DSHHomeStatus | null> {
