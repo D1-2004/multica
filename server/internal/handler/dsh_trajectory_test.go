@@ -121,7 +121,12 @@ func TestValidateDSHTrajectoryNativeV3Root(t *testing.T) {
 	if err != nil || header.Version != 3 || count != 3 {
 		t.Fatalf("native v3 root rejected: header=%+v count=%d err=%v", header, count, err)
 	}
+	withoutDepth := strings.Replace(ledger, `,"delegationDepth":0`, "", 1)
+	if header, _, err := validateDSHTrajectory([]byte(withoutDepth), "ses_test-1"); err != nil || header.DelegationDepth != 0 {
+		t.Fatalf("official root without optional depth rejected: %v", err)
+	}
 	for name, invalid := range map[string]string{
+		"null depth":           strings.Replace(ledger, `"delegationDepth":0`, `"delegationDepth":null`, 1),
 		"missing seed flag":    strings.Replace(ledger, `"isSeeded":false,`, "", 1),
 		"null seed flag":       strings.Replace(ledger, `"isSeeded":false`, `"isSeeded":null`, 1),
 		"seeded root":          strings.Replace(ledger, `"isSeeded":false`, `"isSeeded":true`, 1),

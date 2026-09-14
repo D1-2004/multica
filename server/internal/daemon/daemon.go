@@ -5792,6 +5792,25 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{}, fmt.Errorf("no agent configured for provider %q", provider)
 	}
 
+	nativeDSH, err := loadManagedDSHNativeConfig(d.cfg.LaunchedBy, provider, entry.Path, usesCustomProfileCommand, task)
+	if err != nil {
+		return TaskResult{}, err
+	}
+	var backend agent.Backend
+	if nativeDSH != nil {
+		release, err := acquireNativeDSHWorkspace(prepareCtx, nativeDSH)
+		if err != nil {
+			return TaskResult{}, err
+		}
+		defer func() {
+			confirmed := false
+			if receipt, ok := backend.(interface{ NativeHostTaskQuiescent() bool }); ok {
+				confirmed = receipt.NativeHostTaskQuiescent()
+			}
+			release(confirmed)
+		}()
+	}
+
 	stopPrepareLease := d.startTaskPrepareLeaseExtender(prepareCtx, task, taskLog)
 	defer stopPrepareLease()
 
@@ -6034,7 +6053,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			defer d.unmarkActiveStore(store)
 		}
 	}
-	if shouldReusePriorWorkdir(task, localAssignment, d.cfg.WorkspacesRoot) {
+	if nativeDSH == nil && shouldReusePriorWorkdir(task, localAssignment, d.cfg.WorkspacesRoot) {
 		var err error
 		env, err = d.reuseExecutionEnvironment(prepareCtx, execenv.ReuseParams{
 			WorkspacesRoot:        d.cfg.WorkspacesRoot,
@@ -6084,6 +6103,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		if localAssignment != nil {
 			prepParams.LocalWorkDir = localAssignment.AbsPath
 		}
+		if nativeDSH != nil {
+			if localAssignment != nil {
+				return TaskResult{}, errors.New("native DSH workspace conflicts with local_directory assignment")
+			}
+			prepParams.PersistentWorkDir = nativeDSH.WorkDir
+		}
 		env, err = d.prepareExecutionEnvironment(prepareCtx, prepParams)
 		if err != nil {
 			return TaskResult{}, fmt.Errorf("prepare execution environment: %w", err)
@@ -6125,6 +6150,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	cancelPrepare()
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)
 
+	if nativeDSH != nil && task.PriorSessionID == nativeDSH.SessionID && task.PriorWorkDir == nativeDSH.WorkDir {
+		env.ResumeContextCompatible = true
+	}
 	reused := gateResumeToCompatibleWorkdir(&task, &taskCtx, env.WorkDir, env.ResumeContextCompatible, taskLog)
 	// A reused workdir is necessary but not sufficient for a Codex resume: the
 	// prior thread's rollout must actually be present in this task's CODEX_HOME
@@ -6352,7 +6380,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 		taskLog.Warn("dws send shim not installed", "error", shimErr)
 	}
-	if task.A2AManagedRuntimeV2 {
+	if task.A2AManagedRuntimeV2 && nativeDSH == nil {
 		if err := configureManagedA2AV2ProviderEnv(agentEnv, provider, env.RootDir, runtimeBrief, taskCtx.AgentSkills); err != nil {
 			return TaskResult{}, err
 		}
@@ -6380,12 +6408,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err := configureCodexTaskShellEnvironment(provider, env.CodexHome, os.Environ(), agentEnv, agentCustomEnv, d.logger); err != nil {
 		return TaskResult{}, err
 	}
-	// Resolve the backend through the unified runtime resolver: built-in
-	// runtime identities (e.g. "omp") dispatch through NewRuntime, protocol
-	// families go through New. This is the single production boundary — the
-	// daemon never calls agent.New or agent.NewRuntime directly, so the two
-	// factories stay meaning exactly one thing each.
-	backend, err := agent.ResolveBackend(provider, agent.Config{
+	// Managed DSH tasks attach to their existing employee Host. Other runtime
+	// identities and protocol families continue through the unified resolver.
+	backendConfig := agent.Config{
 		ExecutablePath: entry.Path,
 		CLIVersion:     resolvedVersion,
 		Env:            agentEnv,
@@ -6395,7 +6420,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		DaemonVersion:  d.cfg.CLIVersion,
 		CodexVersion:   codexVersion,
 		BuiltinRuntime: !usesCustomProfileCommand,
-	})
+	}
+	if nativeDSH != nil {
+		nativeDSH.ToolEnv = nativeDSHToolEnvironment(agentEnv)
+		backend, err = agent.NewDSHNativeHostBackend(backendConfig, *nativeDSH)
+	} else {
+		backend, err = agent.ResolveBackend(provider, backendConfig)
+	}
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
 	}
@@ -6439,6 +6470,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if model == "" {
 		model = entry.Model
+	}
+	if nativeDSH != nil {
+		model = nativeDSH.ModelID
 	}
 	thinkingLevel := ""
 	serviceTier := ""
@@ -6607,7 +6641,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var retiredSessionID string
 	defer func() { taskResult.RetiredSessionID = retiredSessionID }()
 
-	if shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
+	if nativeDSH == nil && shouldRetryWithFreshSession(result, task.PriorSessionID, tools, provider) {
 		firstResult := result
 		firstUsage := result.Usage
 		firstTools := tools

@@ -61,11 +61,13 @@ describe("native v3 root trajectory", () => {
     expect(result.header.version).toBe(3);
     expect(result.header.isSeeded).toBe(false);
     expect(result.events).toEqual(parseDSHTrajectory(fixture).events);
+    expect(parseDSHTrajectory(native.replace(',"delegationDepth":0', '')).header.delegationDepth).toBeUndefined();
   });
   it.each([
     native.replace('"isSeeded":false,', ''),
     native.replace('"isSeeded":false', '"isSeeded":null'),
     native.replace('"isSeeded":false', '"isSeeded":true'),
+    native.replace('"delegationDepth":0', '"delegationDepth":null'),
     native.replace('"version":3', '"version":4'),
     native.replace('"seq":0', '"seq":100'),
     native.replace('"time":1010', '"time":-1'),

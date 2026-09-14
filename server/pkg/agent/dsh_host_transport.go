@@ -63,7 +63,9 @@ func (c *dshHostClient) open(ctx context.Context, method string, request any) (n
 }
 
 func dshHostRead(conn net.Conn, reader *bufio.Reader) (json.RawMessage, error) {
-	if err := conn.SetReadDeadline(time.Now().Add(40 * time.Second)); err != nil {
+	// The peer may close after writing several complete frames. Drain frames
+	// already buffered before treating a closed transport as interruption.
+	if err := conn.SetReadDeadline(time.Now().Add(40 * time.Second)); err != nil && reader.Buffered() == 0 {
 		return nil, errors.New("DSH Host read deadline unavailable")
 	}
 	// ReadSlice bounds memory independently of the peer's framing. EOF,

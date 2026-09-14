@@ -69,9 +69,14 @@ func validateDSHTrajectory(data []byte, expectedSessionID string) (dshTrajectory
 	// separately authorized lineage, so this task-root endpoint rejects them.
 	supportedVersion := rawHeader.Version != nil && (*rawHeader.Version == 0 ||
 		(*rawHeader.Version == 3 && rawHeader.IsSeeded != nil && !*rawHeader.IsSeeded))
+	var headerFields map[string]json.RawMessage
+	_ = json.Unmarshal(bytes.TrimSpace(lines[0]), &headerFields)
+	_, depthPresent := headerFields["delegationDepth"]
+	validDepth := rawHeader.DelegationDepth != nil && *rawHeader.DelegationDepth == 0 ||
+		!depthPresent && rawHeader.Version != nil && *rawHeader.Version == 3
 	if rawHeader.Type != "session" || !supportedVersion ||
 		rawHeader.CreatedAt == nil || *rawHeader.CreatedAt < 0 || *rawHeader.CreatedAt > maxJSONSafeInteger ||
-		rawHeader.DelegationDepth == nil || *rawHeader.DelegationDepth != 0 ||
+		!validDepth ||
 		rawHeader.ParentSession != "" || rawHeader.Origin != "" {
 		return dshTrajectoryHeader{}, 0, errors.New("invalid session header")
 	}
@@ -83,7 +88,7 @@ func validateDSHTrajectory(data []byte, expectedSessionID string) (dshTrajectory
 		Version:         *rawHeader.Version,
 		ID:              rawHeader.ID,
 		CreatedAt:       *rawHeader.CreatedAt,
-		DelegationDepth: *rawHeader.DelegationDepth,
+		DelegationDepth: 0,
 	}
 
 	var eventCount int32

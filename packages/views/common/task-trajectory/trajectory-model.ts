@@ -8,7 +8,7 @@ export interface DSHTrajectoryHeader {
   seedLength?: number;
   isSeeded?: boolean;
   origin?: "subagent";
-  delegationDepth: number;
+  delegationDepth?: number;
   agentPreset?: string;
 }
 
@@ -45,8 +45,8 @@ export function parseDSHTrajectory(jsonl: string): DSHTrajectoryDocument {
       (rawHeader.version === 3 && rawHeader.isSeeded === false)) ||
     !Number.isSafeInteger(rawHeader.createdAt) ||
     Number(rawHeader.createdAt) < 0 ||
-    !Number.isSafeInteger(rawHeader.delegationDepth) ||
-    rawHeader.delegationDepth !== 0 ||
+    !(rawHeader.delegationDepth === 0 ||
+      (rawHeader.version === 3 && rawHeader.delegationDepth === undefined)) ||
     rawHeader.parentSession !== undefined ||
     rawHeader.origin !== undefined
   ) {
