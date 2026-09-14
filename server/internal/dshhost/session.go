@@ -34,34 +34,45 @@ func validSessionScope(scope SessionScope) bool {
 		(scope.Kind == "chat" || scope.Kind == "issue" || scope.Kind == "task")
 }
 
-// AdoptNativeExecution must share the transaction that creates the platform
-// task and its input. It records the browser's exact identities before a runner
-// can observe that task. A scope, task or request already owned elsewhere is
-// rejected; no conflict handler overwrites an existing binding.
-func (s PostgresStore) AdoptNativeExecution(ctx context.Context, scope SessionScope, taskID uuid.UUID, sessionID string, requestID uuid.UUID) (Execution, error) {
+// AdoptNativeSession shares the transaction that creates the platform scope.
+// It never moves an existing native Session to a different scope or employee.
+func (s PostgresStore) AdoptNativeSession(ctx context.Context, scope SessionScope, sessionID string) error {
 	if _, ok := s.DB.(pgx.Tx); !ok {
-		return Execution{}, errors.New("native DSH admission requires a task transaction")
+		return errors.New("native DSH admission requires a transaction")
 	}
-	if !validSessionScope(scope) || taskID == uuid.Nil || requestID == uuid.Nil || !ValidSessionID(sessionID) {
-		return Execution{}, errors.New("invalid native DSH execution identity")
+	if !validSessionScope(scope) || !ValidSessionID(sessionID) {
+		return errors.New("invalid native DSH session identity")
 	}
 	_, err := s.DB.Exec(ctx, `INSERT INTO dsh_employee_session
  (workspace_id,agent_id,scope_kind,scope_id,session_id) VALUES ($1,$2,$3,$4,$5)
  ON CONFLICT (workspace_id,agent_id,scope_kind,scope_id) DO NOTHING`,
 		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, sessionID)
 	if err != nil {
-		return Execution{}, err
+		return err
 	}
 	var current string
 	if err := s.DB.QueryRow(ctx, `SELECT session_id FROM dsh_employee_session
  WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4`,
 		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID).Scan(&current); err != nil {
-		return Execution{}, err
+		return err
 	}
 	if current != sessionID {
-		return Execution{}, ErrChanged
+		return ErrChanged
 	}
-	_, err = s.DB.Exec(ctx, `INSERT INTO dsh_task_binding
+	return nil
+}
+
+// AdoptNativeExecution must share the transaction that creates the platform
+// task and its input. A scope, task or request already owned elsewhere is
+// rejected; no conflict handler overwrites an existing binding.
+func (s PostgresStore) AdoptNativeExecution(ctx context.Context, scope SessionScope, taskID uuid.UUID, sessionID string, requestID uuid.UUID) (Execution, error) {
+	if taskID == uuid.Nil || requestID == uuid.Nil {
+		return Execution{}, errors.New("invalid native DSH execution identity")
+	}
+	if err := s.AdoptNativeSession(ctx, scope, sessionID); err != nil {
+		return Execution{}, err
+	}
+	_, err := s.DB.Exec(ctx, `INSERT INTO dsh_task_binding
  (workspace_id,agent_id,task_id,session_id,request_id) VALUES ($1,$2,$3,$4,$5)
  ON CONFLICT (workspace_id,agent_id,task_id) DO NOTHING`,
 		scope.WorkspaceID, scope.AgentID, taskID, sessionID, requestID)

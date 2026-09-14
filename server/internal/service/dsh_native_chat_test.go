@@ -68,19 +68,19 @@ func TestDSHNativeChatInputPreservesCanonicalWorkdir(t *testing.T) {
 	a, _, _ := nativeChatTestIdentity()
 	for _, sid := range []string{a.input.SessionID, "session-" + a.input.SessionID} {
 		input := DSHNativeChatInput{SessionID: sid, RequestID: uuid.New(), Workdir: dshhost.MountPath + "/workspaces/" + sid}
-		if err := input.validate("你好"); err != nil {
+		if err := input.Validate("你好"); err != nil {
 			t.Fatal(err)
 		}
 		for _, path := range []string{"/tmp", input.Workdir + "/..", strings.ToUpper(input.Workdir), input.Workdir + "/"} {
 			bad := input
 			bad.Workdir = path
-			if bad.validate("prompt") == nil {
+			if bad.Validate("prompt") == nil {
 				t.Fatalf("accepted workdir %q", path)
 			}
 		}
 	}
 	for _, content := range []string{"", " \n", "nul\x00text", string([]byte{0xff}), strings.Repeat("x", 256*1024+1)} {
-		if a.input.validate(content) == nil {
+		if a.input.Validate(content) == nil {
 			t.Fatal("accepted invalid content")
 		}
 	}
@@ -88,13 +88,13 @@ func TestDSHNativeChatInputPreservesCanonicalWorkdir(t *testing.T) {
 		bad := a.input
 		bad.SessionID = sid
 		bad.Workdir = dshhost.MountPath + "/workspaces/" + sid
-		if bad.validate("prompt") == nil {
+		if bad.Validate("prompt") == nil {
 			t.Fatal("accepted invalid session")
 		}
 	}
 	bad := a.input
 	bad.RequestID = uuid.Nil
-	if bad.validate("prompt") == nil {
+	if bad.Validate("prompt") == nil {
 		t.Fatal("accepted missing request ID")
 	}
 }
@@ -145,13 +145,13 @@ func nativeChatDatabaseFixture(t *testing.T) (*TaskService, dshNativeChatAdmissi
 			sql string
 			id  pgtype.UUID
 		}{
-			{`DELETE FROM chat_message WHERE chat_session_id=$1`, session.ID},
+			{`DELETE FROM chat_message WHERE chat_session_id IN (SELECT id FROM chat_session WHERE agent_id=$1)`, aid},
 			{`DELETE FROM dsh_task_binding WHERE agent_id=$1`, aid},
 			{`DELETE FROM dsh_employee_session WHERE agent_id=$1`, aid},
 			{`DELETE FROM dsh_native_access WHERE agent_id=$1`, aid},
 			{`DELETE FROM dsh_employee_host WHERE agent_id=$1`, aid},
 			{`DELETE FROM agent_task_queue WHERE agent_id=$1`, aid},
-			{`DELETE FROM chat_session WHERE id=$1`, session.ID},
+			{`DELETE FROM chat_session WHERE agent_id=$1`, aid},
 			{`DELETE FROM agent WHERE id=$1`, aid},
 			{`DELETE FROM agent_runtime WHERE id=$1`, rid},
 			{`DELETE FROM member WHERE workspace_id=$1`, ws},
