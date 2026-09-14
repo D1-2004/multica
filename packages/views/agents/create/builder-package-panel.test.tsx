@@ -105,3 +105,19 @@ it("uploads an existing Agent ZIP, invalidates changed files and requires confir
   fireEvent.click(screen.getByRole("button", {name:"Confirm publication"}));
   await waitFor(() => expect(mocked.confirm).toHaveBeenCalledWith("agent-1", "zip-preview", {secrets:{}, deferred_bindings:[]}));
 });
+
+it("shows only the parsed ZIP's resource declarations and clears them when the file changes", async () => {
+  mocked.previewZIP.mockResolvedValue({ preview_id:"zip-preview", resolved_sha:"hash", configuration_changes:[], warnings:[], requirements: { ...requirements, binding_declarations:[{path:"/bindings/github_identity", declaration:{ref:"new-maintainer"}}, {path:"/bindings/runner", declaration:null}] } });
+  mount(true);
+  expect(screen.queryByText("new-maintainer", {exact:false})).toBeNull();
+  fireEvent.change(screen.getByLabelText("Agent ZIP package"), {target:{files:[new File(["zip"],"agent.zip")]}});
+  fireEvent.click(screen.getByRole("button", {name:"Preview changes"}));
+  await screen.findByRole("dialog", {name:"Preview changes"});
+  fireEvent.click(screen.getByRole("button", {name:"Close"}));
+  expect(screen.getByText("new-maintainer", {exact:false})).toBeDefined();
+  expect(screen.getByText("/bindings/runner")).toBeDefined();
+  expect(screen.queryByText("/bindings/bots")).toBeNull();
+  fireEvent.change(screen.getByLabelText("Agent ZIP package"), {target:{files:[new File(["zip2"],"new.zip")]}});
+  expect(screen.queryByText("new-maintainer", {exact:false})).toBeNull();
+  expect(mocked.confirm).not.toHaveBeenCalled();
+});

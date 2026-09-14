@@ -261,3 +261,12 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
   `SourceChangesDialog` after a successful preview. Tests verify one global
   dialog and no inline diff. Reason: make Preview changes open the full view
   directly while preserving explicit publication confirmation.
+
+- 2026-09-14: `internal/handler/agent_package_configuration.go` emits only the
+  parsed package's `requirements.binding_declarations`, rendered by
+  `packages/views/agents/create/package-requirements-form.tsx`.
+  `TestPackageRequirementsExposeOnlyDeclaredResources` covers omitted fields and
+  explicit clears; `agent-package.test.ts`, `builder-package-panel.test.tsx`,
+  `publish-tab.test.tsx` and `agent-overview-pane.test.tsx` cover API validation,
+  preview invalidation and collapsed prior bindings. Reason: prevent previous
+  import state from appearing as the newly selected package's resource needs.

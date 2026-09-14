@@ -394,6 +394,14 @@ multipart `file`, maximum 40 MiB), or acquire the same directory from GitHub via
 the selected workspace GitHub App installation, not the Agent's execution identity.
 Both produce an immutable, actor-bound `preview_id` valid for 30 minutes.
 
+`requirements.binding_declarations` lists the resource paths and JSON declarations
+present in this parsed package, including explicit null or empty-list requests.
+ZIP, Git and Builder previews use the same parser result. This metadata contains
+portable references, not destination credentials. The form shows these declarations
+only after preview succeeds and clears them when the selected file or Git ref changes.
+Previously imported resource bindings remain in a separate, initially collapsed
+section below the publication form; they do not describe the pending package.
+
 After the user reviews the instructions, configuration and skill files, both
 creation methods confirm through `POST /api/workspaces/{id}/agent-packages` with
 `preview_id`, the destination `runtime_id`, and optional `name` / `description`.
@@ -514,3 +522,7 @@ Configuration and implementation map to `event_trigger.go`, `agent_event_trigger
 - 2026-09-14: Open successful publication previews directly in a global dialog.
   Reason: show the full comparison after one click without an embedded viewer
   or a second expand action.
+
+- 2026-09-14: Expose the current preview's resource declarations and separate
+  previously imported bindings into a collapsed section. Reason: display the
+  selected package's requirements without carrying over an older package's list.

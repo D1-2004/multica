@@ -22,6 +22,18 @@ describe("Agent package upload", () => {
     expect(result.requirements.secrets).toEqual(["token"]);
   });
 
+  it("retains resource declarations from the selected package, including explicit unbinding", async () => {
+    const declarations = [{ path: "/bindings/github_identity", declaration: { ref: "new-maintainer" } }, { path: "/bindings/runner", declaration: null }];
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...preview, requirements: { ...preview.requirements, binding_declarations: declarations } }))));
+    const result = await new ApiClient("https://api.example.test").previewAgentPackage("workspace", new Blob(["zip"]));
+    expect(result.requirements).toHaveProperty("binding_declarations", declarations);
+  });
+
+  it("rejects an incomplete resource declaration instead of hiding it", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...preview, requirements: { ...preview.requirements, binding_declarations: [{ path: "/bindings/runner" }] } }))));
+    await expect(new ApiClient("https://api.example.test").previewAgentPackage("workspace", new Blob(["zip"]))).rejects.toThrow("Invalid Agent package preview response");
+  });
+
   it.each([{ ...preview, preview_id: "" }, { ...preview, requirements: null }, { ...preview, skills: [{ name: "bad", enabled: "false" }] }])("fails closed on malformed previews", async (response) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(response))));
     await expect(new ApiClient("https://api.example.test").previewAgentPackage("workspace", new Blob(["zip"]))).rejects.toThrow("Invalid Agent package preview response");

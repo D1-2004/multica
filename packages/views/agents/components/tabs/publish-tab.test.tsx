@@ -28,6 +28,7 @@ const preview: AgentSourceSyncPreview = {
   ref: "release/v2", base_sha: "a".repeat(40), resolved_sha: "b".repeat(40), changed: true, warnings: [],
   git_changes: [{ path: "agent/AGENTS.md", status: "modified", before: "old instructions", after: "new instructions" }],
   configuration_changes: [{ path: "instructions", status: "modified", before: "old instructions", after: "new instructions" }],
+  requirements: { secrets: [], deferred_bindings: [], runtime_provider: "", binding_declarations: [{ path: "/bindings/github_identity", declaration: { ref: "branch-maintainer" } }] },
 };
 
 function mount(canEdit = true) {
@@ -68,12 +69,15 @@ describe("Git source import and export tab", () => {
 
   it("invalidates a preview when the selected branch changes", async () => {
     mount();
+    expect(screen.queryByText("branch-maintainer", { exact: false })).toBeNull();
     fireEvent.change(screen.getByLabelText("Branch or commit"), { target: { value: "release/v2" } });
     fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
     await screen.findByRole("dialog", { name: "Preview changes" });
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.getByText("branch-maintainer", { exact: false })).toBeDefined();
     fireEvent.change(screen.getByLabelText("Branch or commit"), { target: { value: "main" } });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm publication" })).toBeNull());
+    expect(screen.queryByText("branch-maintainer", { exact: false })).toBeNull();
     expect(mocked.confirm).not.toHaveBeenCalled();
   });
 

@@ -2935,6 +2935,10 @@ export const AgentPackageRequirementsSchema = z.object({
   secrets: NullableStringArraySchema,
   deferred_bindings: NullableStringArraySchema,
   runtime_provider: z.string().default(""),
+  binding_declarations: z.array(z.object({
+    path: z.string().min(1),
+    declaration: z.unknown().refine((value) => value !== undefined, "required"),
+  })).optional(),
 });
 
 export const AgentPackagePreviewSchema = z.object({

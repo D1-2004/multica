@@ -15,6 +15,20 @@ export function PackageRequirementsForm({ requirements, secrets, onSecretsChange
 }) {
   const { t } = useT("agents");
   return <div className="space-y-4">
+              {!!requirements?.binding_declarations?.length && <section className="space-y-3 rounded-md border p-4" aria-label={t(($) => $.package_bindings.declarations_title)}>
+                <h3 className="text-title-sm font-medium">{t(($) => $.package_bindings.declarations_title)}</h3>
+                <p className="text-caption text-muted-foreground">{t(($) => $.package_bindings.declarations_description)}</p>
+                <dl className="space-y-3">
+                  {requirements.binding_declarations.map((item) => <div key={item.path} className="space-y-1 text-caption">
+                    <dt className="break-all font-mono">{item.path}</dt>
+                    <dd>
+                      {item.declaration === null || (Array.isArray(item.declaration) && item.declaration.length === 0)
+                        ? <p className="text-muted-foreground">{t(($) => $.package_bindings.declaration_clear)}</p>
+                        : <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-muted p-2">{JSON.stringify(item.declaration, null, 2)}</pre>}
+                    </dd>
+                  </div>)}
+                </dl>
+              </section>}
               {requirements?.secrets.map((ref) => <div className="space-y-2" key={ref}>
                 <Label htmlFor={`package-secret-${ref}`}>{t(($) => $.creation_studio.local.secret, { ref })}</Label>
                 <Input id={`package-secret-${ref}`} type="password" autoComplete="new-password" value={secrets[ref] ?? ""} disabled={disabled} onChange={(event) => onSecretsChange({ ...secrets, [ref]: event.target.value })} />
