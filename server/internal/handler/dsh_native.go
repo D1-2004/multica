@@ -77,11 +77,19 @@ func (h *Handler) IssueDSHNativeAccess(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	host, err := (dshhost.PostgresStore{DB: h.DB}).Get(ctx, key)
-	if err != nil || host.State != "running" {
-		writeError(w, http.StatusConflict, "DSH employee Host is not running")
+	if err := h.checkDSHNativeManage(ctx, key, uuid.UUID(userID.Bytes)); err != nil {
+		writeError(w, http.StatusForbidden, "DSH native entry is unavailable or no longer authorized")
+		return
+	}
+	if _, err := (dshhost.PostgresStore{DB: h.DB}).Get(ctx, key); err != nil {
+		writeError(w, http.StatusConflict, "prepare DSH employee Home before opening the native interface")
+		return
+	}
+	host, err := h.FCE2BLauncher.EnsureDSHEmployeeHost(ctx, key)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "DSH employee startup is unconfirmed; refresh Home status before retrying")
 		return
 	}
 	origin, err := h.FCE2BLauncher.EnsureDSHNativeAuthority(ctx, host, h.dshNativeAccessManager())

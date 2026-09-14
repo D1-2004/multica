@@ -62,7 +62,7 @@ func dshLaunchPools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 		return pool
 	}
 	a, b := newPool(), newPool()
-	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space"} {
+	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9235_dsh_native_access"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
@@ -230,11 +230,14 @@ func resolveDSHTest(t *testing.T, l *FCE2BLauncher, rt db.AgentRuntime, task db.
 		return dshhost.Host{}, err
 	}
 	defer release()
-	trace, err := chattrace.ForTask(task.Context, uuid.UUID(task.ID.Bytes).String(), time.Now())
+	trace := chattrace.New("dsh_native_entry")
+	if task.ID.Valid {
+		trace, err = chattrace.ForTask(task.Context, uuid.UUID(task.ID.Bytes).String(), time.Now())
+	}
 	if err != nil {
 		return dshhost.Host{}, err
 	}
-	h, _, err := l.resolveDSHEmployeeSandbox(ctx, task, rt, template, conn, trace)
+	h, _, err := l.resolveDSHEmployeeSandbox(ctx, dshhost.Key{WorkspaceID: uuid.UUID(rt.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}, task.ID, rt, template, conn, trace)
 	return h, err
 }
 
@@ -370,6 +373,60 @@ func TestDSHEmployeeCapabilityIsNotAdvertisedForOtherProviders(t *testing.T) {
 		}
 		if found != (provider == "dsh") {
 			t.Errorf("provider=%s capabilities=%v", provider, caps)
+		}
+	}
+}
+
+// Runs only against an explicitly configured remote test database. Native
+// startup excludes no task, and an active UI grant must protect its generation.
+func TestDSHNativeStartupSharesWriterAndDrainsNativeGrants(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	native := task
+	native.ID = pgtype.UUID{}
+	first, err := resolveDSHTest(t, l, rt, native, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	same, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || same.SandboxID != first.SandboxID || provider.creates != 1 {
+		t.Fatal("platform and native did not share one writer", err)
+	}
+	ctx := context.Background()
+	if _, err = pool.Exec(ctx, `INSERT INTO agent_task_queue VALUES($1,$2,'running')`, task.ID, task.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = resolveDSHTest(t, l, rt, native, "template-2"); !errors.Is(err, errDSHHostWaiting) {
+		t.Fatal("native startup ignored active task", err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE agent_task_queue SET status='completed'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO dsh_native_access(id,workspace_id,agent_id,user_id,generation,sandbox_id,kind,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,'session',$7,now()+interval '1 minute')`, uuid.New(), rt.WorkspaceID, task.AgentID, uuid.New(), first.Generation, first.SandboxID, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = resolveDSHTest(t, l, rt, task, "template-2"); !errors.Is(err, errDSHHostWaiting) {
+		t.Fatal("template replacement ignored live native session", err)
+	}
+	if provider.creates != 1 {
+		t.Fatal("replaced an admitted writer")
+	}
+	if _, err = pool.Exec(ctx, `UPDATE dsh_native_access SET kind='revoked'`); err != nil {
+		t.Fatal(err)
+	}
+	next, err := resolveDSHTest(t, l, rt, native, "template-2")
+	if err != nil || next.Generation != first.Generation+1 {
+		t.Fatal("drained native host did not recover", err)
+	}
+}
+
+func TestDSHNativeStartupRejectsMissingIdentityAndDisabledDeployment(t *testing.T) {
+	ctx := context.Background()
+	key := dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}
+	for _, launcher := range []*FCE2BLauncher{nil, {}, {Config: FCE2BConfig{Enabled: true}}} {
+		if _, err := launcher.EnsureDSHEmployeeHost(ctx, key); err == nil {
+			t.Fatal("unconfigured native startup accepted")
 		}
 	}
 }
