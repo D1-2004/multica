@@ -1,3 +1,4 @@
+import { DSHHomeSchema, type DSHHomeStatus } from "./dsh-home-schema";
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
 import type { ReusableDingTalkIdentity } from "../types/dingtalk-account-binding";
 import type { AgentPackagePreview, CreateAgentPackageRequest } from "../types/agent-package";
@@ -3711,6 +3712,25 @@ export class ApiClient {
       [] as DshPluginRegistryResult[],
       { endpoint: "GET /api/dsh-plugins/registry-search" },
     );
+  }
+
+  async getDSHHome(agentId: string, signal?: AbortSignal): Promise<DSHHomeStatus | null> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/dsh-home`, { signal });
+    return parseWithFallback<DSHHomeStatus | null>(raw, DSHHomeSchema, null, {
+      endpoint: "GET /api/agents/{id}/dsh-home",
+      includeReceived: false,
+    });
+  }
+
+  async ensureDSHHome(agentId: string): Promise<DSHHomeStatus | null> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/dsh-home`, {
+      method: "POST",
+      body: "{}",
+    });
+    return parseWithFallback<DSHHomeStatus | null>(raw, DSHHomeSchema, null, {
+      endpoint: "POST /api/agents/{id}/dsh-home",
+      includeReceived: false,
+    });
   }
 
   async listAgentDshPlugins(agentId: string): Promise<AgentDshPlugin[]> {

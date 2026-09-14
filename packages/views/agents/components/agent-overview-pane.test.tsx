@@ -584,3 +584,17 @@ it("shows separate export and publish sections on a manually created Agent", () 
   fireEvent.click(screen.getByRole("tab", { name: "Export" }));
   expect(screen.getByText("export-tab")).toBeDefined();
 });
+
+
+it.each([
+  ["dsh", "cloud", "fc-e2b", true, true],
+  ["dsh", "cloud", "asb", true, false],
+  ["dsh", "local", "fc-e2b", true, false],
+  ["hermes", "cloud", "fc-e2b", true, false],
+  ["dsh", "cloud", "fc-e2b", false, false],
+])("gates DSH Home for %s/%s/%s manage=%s", (provider, mode, kind, canEdit, visible) => {
+  const runtime = { ...makeRuntime(provider), runtime_mode: mode as "local" | "cloud", metadata: { kind } };
+  renderPane([runtime], { canEdit, agentOverrides: { runtime_mode: mode as "local" | "cloud" } });
+  openConfiguration();
+  expect(screen.queryByRole("tab", { name: "DSH Home" }) != null).toBe(visible);
+});

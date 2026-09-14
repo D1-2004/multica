@@ -342,7 +342,8 @@
     "discard_confirm": "Discard changes",
     "identity": "Identity",
     "llm_trace": "LLM Trace",
-    "inbound": "Inbound conversations"
+    "inbound": "Inbound conversations",
+    "dsh_home": "DSH Home"
   },
   "creation_studio": {
     "schema": {
@@ -1486,6 +1487,23 @@
       "flag_bootstrap": "Warm up",
       "flag_ui": "Show list",
       "ui_off": "Turn on Show list to see memory for each DM and group."
+    },
+    "dsh_home": {
+      "intro": "Each agent has an independent Home for files, configuration and sessions. Prepare it before starting the first task.",
+      "loading": "Checking Home...",
+      "unavailable": "Home status is unavailable. Refresh to check again.",
+      "ready": "Storage is ready",
+      "pending": "Storage preparation is in progress. Continue to check and advance the existing request.",
+      "unprovisioned": "Storage has not been prepared",
+      "running": "The host is running.",
+      "retiring": "The previous host is being retired. Files remain in Home.",
+      "starting": "The host is starting.",
+      "offline": "The host will start when a task needs it.",
+      "unconfirmed": "Preparation was not confirmed. Status has been requested again; contact a workspace administrator if it cannot advance.",
+      "preparing": "Preparing...",
+      "continue": "Continue preparation",
+      "prepare": "Prepare Home",
+      "refresh": "Refresh status"
     }
   },
   "char_counter": {
