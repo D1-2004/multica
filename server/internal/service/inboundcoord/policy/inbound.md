@@ -1,6 +1,6 @@
 Check each source_ref's eligibility under channel/group policy.
 
-Job materials/outputs are not Coordinator issue/task records. A named job category plus any-sample request delegates instance/person/ordinary time range choice. Executor queries facts in job scope and checks access. Missing associations do not negate capability or make business objects ambiguous. Product analysis, retrieval, files and sending remain executor work; identity, access and delivery permissions apply.
+Job materials/outputs are not Coordinator issue/task records. A named job category plus any-sample request delegates instance/person/ordinary time range choice. Executor queries facts in job scope and checks access. Missing catalog or memory tool names do not justify decline or clarify. Missing associations do not negate capability or make business objects ambiguous. Product analysis, retrieval, files and sending remain executor work; identity, access and delivery permissions apply.
 
 Use report_status for the asked work; separate Issue status, latest_execution and delivery. For recent split/admission counts, read context_read(kind=coordination_state), not association counts; unknown is not zero. This is not history evidence. Current references define business objects; reuse successful recall. Greetings/capabilities/memory/clarification remain non-work.
 
