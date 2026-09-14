@@ -50,3 +50,5 @@
 - `server/internal/service/fc_e2b_dsh_host.go`: injects the deployment-owned gateway authority, sandbox origin and sandbox ID into the employee supervisor. Gateway readiness remains separate from native prompt/task admission.
 
 - `server/internal/service/fc_e2b.go` / `fc_e2b_dsh_host.go`: mandatory DSH employee admission lock and real Home/Host receipt verification, independent of provider-derived catalog capability labels.
+
+- `server/internal/service/fc_e2b_dsh_authority.go`: backend-initiated authorization polling, deployment signing, exact-Host decisions and bounded connection lifetime; no writer lifecycle mutations.

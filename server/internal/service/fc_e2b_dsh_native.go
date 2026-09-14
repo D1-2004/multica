@@ -59,12 +59,13 @@ type dshNativeGatewayReceipt struct {
 	SandboxID   string `json:"sandbox_id"`
 	Port        int    `json:"port"`
 	Authority   string `json:"authority"`
+	PublicKey   string `json:"public_key"`
 	Origin      string `json:"origin"`
 }
 
-func validateDSHNativeGatewayReceipt(out string, host dshhost.Host, origin, authority string) error {
+func validateDSHNativeGatewayReceipt(out string, host dshhost.Host, origin, authority, publicKey string) error {
 	var receipt dshNativeGatewayReceipt
-	if len(out) > 4096 || json.Unmarshal([]byte(out), &receipt) != nil || receipt.Version != 1 || !receipt.Ready || receipt.WorkspaceID != host.WorkspaceID.String() || receipt.AgentID != host.AgentID.String() || receipt.Generation != host.Generation || receipt.SandboxID != host.SandboxID || receipt.Port != DSHNativeGatewayPort || receipt.Authority != authority || receipt.Origin != origin {
+	if len(out) > 4096 || json.Unmarshal([]byte(out), &receipt) != nil || receipt.Version != 2 || !receipt.Ready || receipt.WorkspaceID != host.WorkspaceID.String() || receipt.AgentID != host.AgentID.String() || receipt.Generation != host.Generation || receipt.SandboxID != host.SandboxID || receipt.Port != DSHNativeGatewayPort || receipt.Authority != authority || receipt.Origin != origin || receipt.PublicKey != publicKey || len(publicKey) != 64 {
 		return errors.New("DSH native gateway did not confirm the current employee Host and authority")
 	}
 	return nil
@@ -81,18 +82,22 @@ func (l *FCE2BLauncher) DSHNativeGatewayURL(ctx context.Context, host dshhost.Ho
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	out, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=",
-		"-e", "DSH_HOME=" + dshhost.MountPath + "/home",
-		"-e", "MULTICA_DSH_WORKSPACE_ID=" + host.WorkspaceID.String(),
-		"-e", "MULTICA_DSH_AGENT_ID=" + host.AgentID.String(),
-		"-e", "MULTICA_DSH_HOST_GENERATION=" + strconv.FormatInt(host.Generation, 10), host.SandboxID, "--", "/usr/local/libexec/multica-dsh-host", "--gateway-health"})
+	out, err := l.dshGatewayControl(ctx, host, "--gateway-health")
 	if err != nil {
 		return "", errors.New("DSH native gateway readiness is unconfirmed")
 	}
-	if err := validateDSHNativeGatewayReceipt(out, host, origin, authority); err != nil {
+	if err := validateDSHNativeGatewayReceipt(out, host, origin, authority, l.nativeAuthority.publicKey()); err != nil {
 		return "", err
 	}
 	return origin, nil
+}
+
+func (l *FCE2BLauncher) dshGatewayControl(ctx context.Context, host dshhost.Host, command string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return l.runE2BCommand(ctx, []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=",
+		"-e", "DSH_HOME=" + dshhost.MountPath + "/home",
+		"-e", "MULTICA_DSH_WORKSPACE_ID=" + host.WorkspaceID.String(),
+		"-e", "MULTICA_DSH_AGENT_ID=" + host.AgentID.String(),
+		"-e", "MULTICA_DSH_HOST_GENERATION=" + strconv.FormatInt(host.Generation, 10), host.SandboxID, "--", "/usr/local/libexec/multica-dsh-host", command})
 }

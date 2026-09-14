@@ -943,6 +943,7 @@ type FCE2BLauncher struct {
 	sleep              func(context.Context, time.Duration) error
 	jitter             func(time.Duration) time.Duration
 	dshProvider        func(dshhost.Storage) (dshhost.Provider, error)
+	nativeAuthority    *dshNativeAuthorityBridge
 
 	// LLMTraceCaptureAlways turns on sandbox model request/response capture
 	// for every task on a capable runtime image, independent of Router
@@ -1113,6 +1114,7 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 		Runner:           runner,
 		AgentIdentity:    agentidentityhsf.NewClient(),
 		IdentityBindings: q,
+		nativeAuthority:  newDSHNativeAuthorityBridge(os.Getenv("JWT_SECRET")),
 		sleep:            sleepWithContext,
 		jitter:           runtimeStartRetryJitter,
 	}
