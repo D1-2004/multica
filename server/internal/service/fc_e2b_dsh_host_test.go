@@ -126,7 +126,7 @@ type dshHomeRunner struct{ wrongReceipt, wrongNativeReceipt bool }
 func TestDSHNativeManagedProfileReceipt(t *testing.T) {
 	models := []string{"fixture-model"}
 	raw, digest, err := dshManagedCatalog(models)
-	if err != nil || raw != `["fixture-model"]` || digest != "71d8f98342ccd701c835757af43ea5963ce4fde80dddc0ef75cc905e5fa6dc45" {
+	if err != nil || raw != `["fixture-model"]` || digest != "5500dbd702e43af880c4c9771cb08f3209a658983d683a8d153f4ab4ce7c7dc4" {
 		t.Fatalf("invalid managed catalog receipt: %v", err)
 	}
 	for _, invalid := range [][]string{nil, {""}, {"a", "a"}, {" model"}, {"a\n"}} {

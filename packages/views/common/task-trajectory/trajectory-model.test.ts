@@ -53,3 +53,23 @@ describe("DSH trajectory model", () => {
     ).toThrow("invalid DSH trajectory header");
   });
 });
+
+describe("native v3 root trajectory", () => {
+  const native = fixture.replace('"version":0', '"version":3,"isSeeded":false');
+  it("retains the actual format version and all native event identities", () => {
+    const result = parseDSHTrajectory(native);
+    expect(result.header.version).toBe(3);
+    expect(result.header.isSeeded).toBe(false);
+    expect(result.events).toEqual(parseDSHTrajectory(fixture).events);
+  });
+  it.each([
+    native.replace('"isSeeded":false,', ''),
+    native.replace('"isSeeded":false', '"isSeeded":null'),
+    native.replace('"isSeeded":false', '"isSeeded":true'),
+    native.replace('"version":3', '"version":4'),
+    native.replace('"seq":0', '"seq":100'),
+    native.replace('"time":1010', '"time":-1'),
+  ])("rejects unsupported or incomplete ledgers", (invalid) => {
+    expect(() => parseDSHTrajectory(invalid)).toThrow();
+  });
+});

@@ -54,6 +54,7 @@ func validateDSHTrajectory(data []byte, expectedSessionID string) (dshTrajectory
 	var rawHeader struct {
 		Type            string `json:"type"`
 		Version         *int32 `json:"version"`
+		IsSeeded        *bool  `json:"isSeeded"`
 		ID              string `json:"id"`
 		CreatedAt       *int64 `json:"createdAt"`
 		ParentSession   string `json:"parentSession"`
@@ -63,7 +64,12 @@ func validateDSHTrajectory(data []byte, expectedSessionID string) (dshTrajectory
 	if err := json.Unmarshal(bytes.TrimSpace(lines[0]), &rawHeader); err != nil {
 		return dshTrajectoryHeader{}, 0, fmt.Errorf("invalid session header: %w", err)
 	}
-	if rawHeader.Type != "session" || rawHeader.Version == nil || *rawHeader.Version != 0 ||
+	// v3 is the physical JSONL header emitted by the pinned native Host.
+	// Keep v0 readable for existing tasks. Seeded and delegated ledgers need a
+	// separately authorized lineage, so this task-root endpoint rejects them.
+	supportedVersion := rawHeader.Version != nil && (*rawHeader.Version == 0 ||
+		(*rawHeader.Version == 3 && rawHeader.IsSeeded != nil && !*rawHeader.IsSeeded))
+	if rawHeader.Type != "session" || !supportedVersion ||
 		rawHeader.CreatedAt == nil || *rawHeader.CreatedAt < 0 || *rawHeader.CreatedAt > maxJSONSafeInteger ||
 		rawHeader.DelegationDepth == nil || *rawHeader.DelegationDepth != 0 ||
 		rawHeader.ParentSession != "" || rawHeader.Origin != "" {
