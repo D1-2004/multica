@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS dsh_storage_provision_identity_idx;

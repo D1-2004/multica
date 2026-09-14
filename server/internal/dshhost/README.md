@@ -1,9 +1,11 @@
 # Employee DSH host coordination
 
 This package owns employee storage and native execution identities for FC DSH.
-The FC launcher now uses it for employee admission, mount initialization and
-native Host readiness. The task adapter and native UI gateway are still being
-integrated; the new image capability is not advertised or deployed yet.
+The FC launcher uses it for employee admission, mount initialization and native
+Host readiness. The native task adapter is integrated; the native UI gateway
+and employee storage provisioning entry point remain unfinished. The FC image
+advertises the capability on the candidate branch; deployment and acceptance
+must be checked against the actual template catalog.
 
 AgenticFS was mounted as NFS v3 with `nolock,local_lock=all` in the real FC probe.
 File and SQLite locks do not exclude a writer in a different sandbox. The
@@ -80,3 +82,27 @@ editable Profile revision, which still needs its durable lifecycle.
 Before deployment, complete provisioning intents, native activity draining,
 credentials scoped to executions, the persistent task adapter, profile revisions
 and the native gateway, then verify the full chain in FC and pre-release.
+
+## Storage provisioning intent
+
+`Provisioner` records operator-owned placement in `dsh_storage_provision` before
+any cloud mutation. Each of Space, access point, role, policy, policy attachment
+and volume has a separate conditional `planned -> creating -> planned` step.
+The intent and step form the provider correlation key. Lost create responses or
+failed receipt writes leave `creating` in place; another replica only looks up
+the original object. A missing lookup does not authorize another create.
+
+Role creation and permission attachment deliberately have different crash
+boundaries. An identity alone does not prove its permissions were applied.
+After all six receipts, the provider must verify the complete resource chain,
+employee root, enforced RAM access, role restrictions, UID/GID and volume team.
+Only then may immutable `BindStorage` expose the Home to the launcher. Final
+binding is idempotent if the status write is lost. Placement changes do not
+rewrite an existing provisioning intent.
+
+This state machine is not yet wired to an authenticated product entry point or
+a concrete NAS/RAM/FC storage provider. No employee storage has been provisioned
+by this code yet. Unit tests cover ambiguous outcomes at every step, hidden
+listings, lost database receipts, cancellation and failed ownership verification.
+`TestProvisionPostgresCompetingReplicas` additionally requires the real
+preproduction database; a local skip is not evidence for its SQL behavior.
