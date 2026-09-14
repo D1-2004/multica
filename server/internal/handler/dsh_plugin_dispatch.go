@@ -3,7 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -64,17 +64,13 @@ func (h *Handler) composeAgentDshPluginSet(ctx context.Context, agentID, workspa
 		// A patch replaces a loader row's config wholesale, so an empty config
 		// must not be emitted: it would wipe the defaults the plugin's own
 		// bundle layer supplies.
-		var config map[string]any
-		if len(row.Config) > 0 {
-			if err := json.Unmarshal(row.Config, &config); err != nil {
-				slog.Warn("failed to decode a DSH plugin config",
-					"plugin", row.PackageName, "error", err)
-				continue
-			}
+		config, err := effectiveAgentDshPluginConfig(row)
+		if err != nil {
+			return "", fmt.Errorf("invalid DSH plugin configuration for %s", row.PackageName)
 		}
-		if len(config) > 0 {
-			entry.Config = config
-			entry.RowID = row.ConfigRow
+		if len(config.Config) > 0 {
+			entry.Config = config.Config
+			entry.RowID = config.RowID
 		}
 		entries = append(entries, entry)
 	}

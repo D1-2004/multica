@@ -164,3 +164,17 @@ export interface DshPluginFileContent {
   size: number;
   content: string;
 }
+
+export interface AgentDshPluginConfig {
+  agentId: string;
+  pluginId: string;
+  revision: number;
+  inherited: boolean;
+  rowId: string;
+  config: Record<string, unknown>;
+}
+
+export interface UpdateAgentDshPluginConfig {
+  expectedRevision: number;
+  override: { rowId: string; config: Record<string, unknown> } | null;
+}

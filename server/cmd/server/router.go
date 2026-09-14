@@ -2576,6 +2576,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// Which DSH plugins this agent boots with. The daemon
 					// composes these into the profile the sandbox builds.
 					r.Get("/dsh-plugins", h.ListAgentDshPlugins)
+					r.With(handler.RequireHumanActor).Get("/dsh-plugins/{pluginId}/config", h.GetAgentDshPluginConfig)
+					r.With(handler.RequireHumanActor).Put("/dsh-plugins/{pluginId}/config", h.UpdateAgentDshPluginConfig)
 					r.With(handler.RequireHumanActor).Get("/dsh-home", h.GetDSHHome)
 					r.With(handler.RequireHumanActor).Post("/dsh-home", h.EnsureDSHHome)
 					r.With(handler.RequireHumanActor).Post("/dsh-native/access", h.IssueDSHNativeAccess)

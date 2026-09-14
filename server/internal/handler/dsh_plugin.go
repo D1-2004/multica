@@ -775,15 +775,28 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	qtx := h.Queries.WithTx(tx)
+	// Preserve private overrides when old clients replace only IDs/enabled.
+	previous, err := qtx.ListDshPluginsForAgent(r.Context(), db.ListDshPluginsForAgentParams{AgentID: agent.ID, WorkspaceID: agent.WorkspaceID})
+	if err != nil {
+		writeError(w, 500, "failed to read plugin configuration")
+		return
+	}
+	previousByID := map[pgtype.UUID]db.ListDshPluginsForAgentRow{}
+	for _, row := range previous {
+		previousByID[row.ID] = row
+	}
+
 	if err := qtx.DeleteAgentDshPluginsByAgent(r.Context(), agent.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to clear the agent's DSH plugins")
 		return
 	}
 	for _, entry := range bindings {
 		if err := qtx.AddAgentDshPlugin(r.Context(), db.AddAgentDshPluginParams{
-			AgentID:     agent.ID,
-			DshPluginID: entry.id,
-			Enabled:     entry.enabled,
+			AgentID:        agent.ID,
+			DshPluginID:    entry.id,
+			Enabled:        entry.enabled,
+			ConfigOverride: previousByID[entry.id].ConfigOverride,
+			ConfigRevision: previousByID[entry.id].ConfigRevision,
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to attach a DSH plugin")
 			return
@@ -813,7 +826,17 @@ func (h *Handler) RemoveAgentDshPlugin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	affected, err := h.Queries.RemoveAgentDshPlugin(r.Context(), db.RemoveAgentDshPluginParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "failed to detach plugin")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if _, err := tx.Exec(r.Context(), "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", "agent_dsh_plugin:"+uuidToString(agent.ID)); err != nil {
+		writeError(w, 500, "failed to lock plugin bindings")
+		return
+	}
+	affected, err := h.Queries.WithTx(tx).RemoveAgentDshPlugin(r.Context(), db.RemoveAgentDshPluginParams{
 		AgentID:     agent.ID,
 		DshPluginID: pluginUUID,
 	})
@@ -823,6 +846,10 @@ func (h *Handler) RemoveAgentDshPlugin(w http.ResponseWriter, r *http.Request) {
 	}
 	if affected == 0 {
 		writeError(w, http.StatusNotFound, "that DSH plugin is not attached to this agent")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "failed to detach plugin")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

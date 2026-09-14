@@ -2112,10 +2112,12 @@ type WorkspaceInvitation struct {
 
 // DSH plugin asset, its per-agent binding, and the cached community catalog.
 type AgentDshPlugin struct {
-	AgentID     pgtype.UUID        `json:"agent_id"`
-	DshPluginID pgtype.UUID        `json:"dsh_plugin_id"`
-	Enabled     bool               `json:"enabled"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	AgentID        pgtype.UUID        `json:"agent_id"`
+	DshPluginID    pgtype.UUID        `json:"dsh_plugin_id"`
+	Enabled        bool               `json:"enabled"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ConfigOverride []byte             `json:"config_override"`
+	ConfigRevision int64              `json:"config_revision"`
 }
 
 type DshPlugin struct {

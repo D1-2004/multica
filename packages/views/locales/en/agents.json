@@ -1239,7 +1239,21 @@
       "no_description": "No description",
       "toggle_aria": "Enable {{name}}",
       "remove_aria": "Detach {{name}}",
-      "save_failed_toast": "Could not update the agent's plugins."
+      "save_failed_toast": "Could not update the agent's plugins.",
+      "config_action": "Configure",
+      "config_title": "Configure {{name}}",
+      "config_hint": "Settings saved here apply only to this agent. Reading settings is audited. A saved revision does not confirm that the running host has applied it.",
+      "config_reveal": "Read settings",
+      "config_inherited": "Workspace defaults",
+      "config_private": "Agent settings",
+      "config_revision": "Revision {{revision}}",
+      "config_row": "Loader row",
+      "config_json": "Configuration (JSON)",
+      "config_save": "Save for this agent",
+      "config_reset": "Use workspace defaults",
+      "config_saved": "Settings saved. Host application still needs verification.",
+      "config_invalid": "Enter a JSON object.",
+      "config_failed": "Could not access plugin settings."
     },
     "integrations": {
       "intro": "Connect this agent to chat platforms as a bot. Digital employee accounts are managed separately.",

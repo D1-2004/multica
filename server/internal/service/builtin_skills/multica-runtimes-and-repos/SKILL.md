@@ -191,3 +191,17 @@ The gateway authority is the deployment app origin (`web.app_url` in Diamond or 
 Gateway v3 uses `/_multica/inputs` with its own control-only transport token and `multica-dsh-native-input-v1` signature domain. Input polls carry one request at a time, with a 4 MiB frame bound and at most 8 MiB of pending native input; authorization polls retain their smaller independent budget. Only the backend can sign the durable task admission. The gateway returns native `accepted:true` only after a correlated platform receipt, never after a timeout, and never falls back to direct Host prompting. A lost input response must be retried with the same native request ID. Opening an entry establishes both reverse lanes; neither lane holds a writer lease. Native Session creation defaults to a generated Session and `/mnt/multica-dsh/workspaces/<session_id>`; arbitrary workspaces/cwd are refused. Fork/adoption of existing different directories, active steering, queue projection and real browser parity remain pending. Gateway v2 candidates cannot satisfy v3 readiness and require the normal drained sandbox replacement.
 
 Employee Host support is established by the fixed Home initialization and native supervisor receipts during launch. FC template catalog capabilities are derived from provider fingerprints and do not read arbitrary Docker labels. Do not treat a missing `dsh_employee_host_v1` catalog flag as proof that a template lacks the protocol, or a manually supplied flag as proof that it supports it; older images must still fail the actual fixed-command checks.
+
+Human employee owners and workspace owners/admins can manage private plugin settings
+through `GET/PUT /api/agents/{id}/dsh-plugins/{pluginId}/config`. The plugin must
+already be attached in that workspace. Reads and writes are audited without values;
+agent actors cannot use this credential-management surface. PUT requires
+`expected_revision` from a fresh read and `config_override` containing `row_id`
+and an object `config`. A null override explicitly inherits workspace settings;
+an empty config selects package bundle defaults. Overrides replace the chosen row
+wholesale, never merge another employee's identity. Stale writes return 409, including
+a detach/re-attach cycle. Replacing the attached set preserves retained overrides.
+The normal plugin list contains no employee overrides. These revisions describe
+persisted configuration, not a Host/Profile application receipt. Current recipe
+export/import still defers plugin bindings and does not preserve private overrides;
+full plugin recipe rebinding and live Profile application remain acceptance gates.
