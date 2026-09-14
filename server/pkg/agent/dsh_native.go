@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -18,6 +19,7 @@ import (
 // DSHNativeHostConfig comes from the trusted FC launch receipt. It is kept in
 // the daemon, outside the environment inherited by an Agent's tools.
 type DSHNativeHostConfig struct {
+	Prompt                                        *protocol.DSHNativePrompt
 	WorkspaceID, AgentID                          string
 	Generation                                    int64
 	SessionID, RequestID, WorkDir                 string
@@ -57,6 +59,13 @@ func NewDSHNativeHostBackend(cfg Config, native DSHNativeHostConfig) (Backend, e
 	if strings.ContainsRune(native.ContextText, 0) || len(native.ContextText) > 1<<20 {
 		return nil, errors.New("invalid managed DSH task context")
 	}
+	if native.Prompt != nil {
+		copy, err := native.Prompt.Clone()
+		if err != nil || copy.SessionID != native.SessionID || copy.RequestID != native.RequestID {
+			return nil, errors.New("managed DSH input identity mismatch")
+		}
+		native.Prompt = copy
+	}
 	copied := map[string]string{}
 	for key, value := range native.ToolEnv {
 		copied[key] = value
@@ -70,7 +79,7 @@ func (b *dshNativeBackend) Execute(ctx context.Context, prompt string, opts Exec
 	if opts.Cwd != b.native.WorkDir || (opts.ResumeSessionID != "" && opts.ResumeSessionID != b.native.SessionID) {
 		return nil, errors.New("managed DSH Session or workspace mismatch")
 	}
-	if strings.TrimSpace(prompt) == "" {
+	if b.native.Prompt == nil && strings.TrimSpace(prompt) == "" {
 		return nil, errors.New("managed DSH prompt is empty")
 	}
 	if len(opts.InputImages) > 0 || len(opts.CustomArgs) > 0 || len(opts.ExtraArgs) > 0 {
@@ -195,6 +204,13 @@ func (b *dshNativeBackend) admit(ctx context.Context, prompt string, opts ExecOp
 	request := b.taskIdentity()
 	request["mode"] = "queue"
 	request["content"] = []map[string]string{{"type": "text", "text": prompt}}
+	if b.native.Prompt != nil {
+		request["mode"] = b.native.Prompt.Mode
+		request["content"] = b.native.Prompt.Content
+		if b.native.Prompt.ClientTimeZone != nil {
+			request["clientTimeZone"] = *b.native.Prompt.ClientTimeZone
+		}
+	}
 	raw, err := b.client.call(ctx, "prompt", request)
 	if err != nil {
 		return err

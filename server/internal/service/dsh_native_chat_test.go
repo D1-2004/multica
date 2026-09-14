@@ -370,3 +370,94 @@ func TestDSHNativeChatRechecksGrantAndInvocationInsideTransaction(t *testing.T) 
 		})
 	}
 }
+
+func TestDSHNativeChatSourceReplayComparesFullInput(t *testing.T) {
+	a, _, _ := nativeChatTestIdentity()
+	text := "input"
+	data := "aGVsbG8="
+	mime := "image/png"
+	receipt := "upload"
+	zone := "Asia/Shanghai"
+	p := &protocol.DSHNativePrompt{SessionID: a.input.SessionID, RequestID: a.input.RequestID.String(), Mode: "queue", Content: []protocol.DSHNativePromptPart{{Type: "text", Text: &text}, {Type: "image", MediaType: &mime, Data: &data}, {Type: "file", ReceiptID: &receipt}}, ClientTimeZone: &zone}
+	a.input.Prompt = p
+	if a.input.Validate(p.DisplayText()) != nil {
+		t.Fatal("valid typed admission rejected")
+	}
+	if a.input.Validate("altered summary") == nil {
+		t.Fatal("display input detached from native input")
+	}
+	raw, err := dshNativeSource(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameDSHNativeSource(raw, p) || sameDSHNativeSource(raw, nil) || sameDSHNativeSource(nil, p) {
+		t.Fatal("typed replay lost presence semantics")
+	}
+	for _, field := range []string{"mode", "image", "file", "zone", "request", "session"} {
+		t.Run(field, func(t *testing.T) {
+			changed, err := p.Clone()
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch field {
+			case "mode":
+				changed.Mode = "steer"
+			case "image":
+				*changed.Content[1].Data = "d29ybGQ="
+			case "file":
+				*changed.Content[2].ReceiptID = "other"
+			case "zone":
+				*changed.ClientTimeZone = "UTC"
+			case "request":
+				changed.RequestID = uuid.NewString()
+			case "session":
+				changed.SessionID = uuid.NewString()
+			}
+			if sameDSHNativeSource(raw, changed) {
+				t.Fatal("changed native input treated as replay")
+			}
+		})
+	}
+	if !sameDSHNativeSource([]byte(`{"other":"metadata"}`), nil) {
+		t.Fatal("legacy source rejected")
+	}
+	if sameDSHNativeSource([]byte(`{"dsh_native_prompt":null}`), nil) {
+		t.Fatal("malformed typed input treated as legacy")
+	}
+}
+
+func TestDSHNativeChatTypedPersistenceAndBusySteer(t *testing.T) {
+	s, a, session, agent, pool, count := nativeChatDatabaseFixture(t)
+	ctx := context.Background()
+	receipt := "fixture-session-upload"
+	zone := "Asia/Shanghai"
+	a.input.Prompt = &protocol.DSHNativePrompt{SessionID: a.input.SessionID, RequestID: a.input.RequestID.String(), Mode: "queue", Content: []protocol.DSHNativePromptPart{{Type: "file", ReceiptID: &receipt}}, ClientTimeZone: &zone}
+	content := a.input.Prompt.DisplayText()
+	result, err := s.SendDSHNativeChatMessage(ctx, session, agent, a.access, a.input, content, chattrace.New("native_test"), a.invoke)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := s.Queries.GetChatMessage(ctx, result.Message.ID)
+	if err != nil || !sameDSHNativeSource(stored.SourcePayload, a.input.Prompt) {
+		t.Fatal("complete native payload was not persisted")
+	}
+	replay, err := s.SendDSHNativeChatMessage(ctx, session, agent, a.access, a.input, content, chattrace.New("native_test"), a.invoke)
+	if err != nil || !replay.Replayed || replay.Task.ID != result.Task.ID || count.Load() != 1 {
+		t.Fatal("typed retry duplicated task")
+	}
+	receipt = "changed-receipt"
+	if _, err := s.SendDSHNativeChatMessage(ctx, session, agent, a.access, a.input, content, chattrace.New("native_test"), a.invoke); !errors.Is(err, dshhost.ErrChanged) {
+		t.Fatalf("changed receipt replay: %v", err)
+	}
+	receipt = "fixture-session-upload"
+	a.input.RequestID = uuid.New()
+	a.input.Prompt.RequestID = a.input.RequestID.String()
+	a.input.Prompt.Mode = "steer"
+	if _, err := s.SendDSHNativeChatMessage(ctx, session, agent, a.access, a.input, content, chattrace.New("native_test"), a.invoke); !errors.Is(err, ErrDSHNativeSteerBusy) {
+		t.Fatalf("busy steer silently queued: %v", err)
+	}
+	var tasks int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE chat_session_id=$1`, session.ID).Scan(&tasks); err != nil || tasks != 1 || count.Load() != 1 {
+		t.Fatal("rejected steer left a task or event")
+	}
+}

@@ -192,6 +192,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilityA2AInvocationV2,
 		protocol.DaemonCapabilityRunnerMCPMountsV1,
 		protocol.DaemonCapabilityManagedMCPRelayRoutesV1,
+		protocol.DaemonCapabilityDSHNativePromptV1,
 	}
 	// Windows does not install the Unix DWS shim and must not attest it.
 	if runtime.GOOS != "windows" {

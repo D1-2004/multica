@@ -3,10 +3,10 @@ package dshhost
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type SessionScope struct {
@@ -24,9 +24,7 @@ type Execution struct {
 // ValidSessionID accepts both the official browser's UUID and platform-created
 // native identities. Preserve their spelling: changing it changes the log.
 func ValidSessionID(value string) bool {
-	raw := strings.TrimPrefix(value, "session-")
-	id, err := uuid.Parse(raw)
-	return err == nil && id != uuid.Nil && raw == id.String()
+	return protocol.ValidDSHSessionID(value)
 }
 
 func validSessionScope(scope SessionScope) bool {

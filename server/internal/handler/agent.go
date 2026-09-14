@@ -625,15 +625,16 @@ type ProjectResourceData struct {
 type ConnectedAppData = runtimeapps.ConnectedApp
 
 type AgentTaskResponse struct {
-	ID                   string `json:"id"`
-	AgentID              string `json:"agent_id"`
-	RuntimeID            string `json:"runtime_id"`
-	IssueID              string `json:"issue_id"`
-	IssueIdentifier      string `json:"issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123), resolved on claim so the agent can embed it when creating external approvals
-	WorkspaceID          string `json:"workspace_id"`
-	Instruction          string `json:"instruction,omitempty"` // daemon-claim only: trusted per-task instruction prepended to the generated task prompt
-	TraceID              string `json:"trace_id,omitempty"`
-	TraceStartedAtUnixMS int64  `json:"trace_started_at_unix_ms,omitempty"`
+	DSHNativePrompt      *protocol.DSHNativePrompt `json:"dsh_native_prompt,omitempty"`
+	ID                   string                    `json:"id"`
+	AgentID              string                    `json:"agent_id"`
+	RuntimeID            string                    `json:"runtime_id"`
+	IssueID              string                    `json:"issue_id"`
+	IssueIdentifier      string                    `json:"issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123), resolved on claim so the agent can embed it when creating external approvals
+	WorkspaceID          string                    `json:"workspace_id"`
+	Instruction          string                    `json:"instruction,omitempty"` // daemon-claim only: trusted per-task instruction prepended to the generated task prompt
+	TraceID              string                    `json:"trace_id,omitempty"`
+	TraceStartedAtUnixMS int64                     `json:"trace_started_at_unix_ms,omitempty"`
 	// DingTalkMessagePolicy is a trusted per-claim snapshot, independent of custom_env.
 	DingTalkMessagePolicy *protocol.DingTalkMessagePolicy `json:"dingtalk_message_policy,omitempty"`
 	// WorkspaceContext is the workspace-level system prompt set in workspace

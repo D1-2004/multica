@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func managedDSHNativeConfig(launchedBy, provider, executable string, custom bool, task Task, getenv func(string) string) (*agent.DSHNativeHostConfig, error) {
@@ -17,16 +18,22 @@ func managedDSHNativeConfig(launchedBy, provider, executable string, custom bool
 		present = present || getenv(key) != ""
 	}
 	if !present {
+		if task.DSHNativePrompt != nil {
+			return nil, errors.New("native DSH input requires a managed Host")
+		}
 		return nil, nil
 	}
 	if launchedBy != "fc-e2b" || provider != "opencode" || custom || executable != "/usr/local/libexec/multica-dsh" || getenv("MULTICA_RUNNER_PROVIDER") != "dsh" || getenv("MULTICA_CLOUD_SANDBOX_BACKEND") != "aliyun_fc" || getenv("DSH_HOME") != "/mnt/multica-dsh/home" {
 		return nil, errors.New("invalid native DSH launch boundary")
 	}
 	value := &agent.DSHNativeHostConfig{WorkspaceID: getenv("MULTICA_DSH_WORKSPACE_ID"), AgentID: getenv("MULTICA_DSH_AGENT_ID"), SessionID: getenv("MULTICA_DSH_SESSION_ID"), RequestID: getenv("MULTICA_DSH_REQUEST_ID"), WorkDir: getenv("MULTICA_DSH_WORKDIR")}
-	for _, id := range []string{value.WorkspaceID, value.AgentID, value.SessionID, value.RequestID} {
-		if _, err := uuid.Parse(id); err != nil {
+	for _, id := range []string{value.WorkspaceID, value.AgentID, value.RequestID} {
+		if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil || parsed.String() != id {
 			return nil, errors.New("invalid native DSH launch identity")
 		}
+	}
+	if !protocol.ValidDSHSessionID(value.SessionID) {
+		return nil, errors.New("invalid native DSH Session identity")
 	}
 	if task.WorkspaceID != value.WorkspaceID || task.AgentID != value.AgentID || (getenv("MULTICA_TASK_ID") != "" && getenv("MULTICA_TASK_ID") != task.ID) {
 		return nil, errors.New("native DSH launch does not match claimed task")
@@ -36,6 +43,13 @@ func managedDSHNativeConfig(launchedBy, provider, executable string, custom bool
 		return nil, errors.New("invalid native DSH Host generation")
 	}
 	value.Generation = generation
+	if task.DSHNativePrompt != nil {
+		copy, err := task.DSHNativePrompt.Clone()
+		if err != nil || copy.SessionID != value.SessionID || copy.RequestID != value.RequestID {
+			return nil, errors.New("native DSH input does not match claimed binding")
+		}
+		value.Prompt = copy
+	}
 	if value.WorkDir != filepath.Join("/mnt/multica-dsh/workspaces", value.SessionID) {
 		return nil, errors.New("invalid native DSH workspace binding")
 	}
