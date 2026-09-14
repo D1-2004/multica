@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/pkg/dshtrajectory"
 )
 
 // Explicit cloud-only acceptance entry point. Local runs only compile it.
@@ -28,9 +30,28 @@ func TestDSHNativeRealHostExecution(t *testing.T) {
 	if mcp {
 		expectedTools++
 	}
+	var artifactLock sync.Mutex
+	artifacts := map[string][32]byte{}
 	execute := func(value DSHNativeHostConfig, requestID, generation string, timeout time.Duration) (Result, int) {
 		value.RequestID = requestID
 		value.ProviderGeneration = generation
+		value.TrajectorySink = func(_ context.Context, data []byte) error {
+			doc, err := dshtrajectory.Parse(data)
+			if err != nil {
+				return err
+			}
+			if doc.Scope.SessionID != value.SessionID || doc.Scope.RequestID != requestID {
+				t.Error("trajectory scope changed")
+			}
+			digest := sha256.Sum256(data)
+			artifactLock.Lock()
+			defer artifactLock.Unlock()
+			if prior, exists := artifacts[requestID]; exists && prior != digest {
+				t.Error("replayed native trajectory changed")
+			}
+			artifacts[requestID] = digest
+			return nil
+		}
 		var mcpConfig json.RawMessage
 		var pidPath string
 		if mcp {
@@ -71,6 +92,12 @@ func TestDSHNativeRealHostExecution(t *testing.T) {
 		result := <-session.Result
 		if !backend.(interface{ NativeHostTaskQuiescent() bool }).NativeHostTaskQuiescent() {
 			t.Fatal("native task cleanup did not confirm quiescence")
+		}
+		artifactLock.Lock()
+		_, artifactPresent := artifacts[requestID]
+		artifactLock.Unlock()
+		if !artifactPresent {
+			t.Error("native task did not deliver its complete trajectory")
 		}
 		if mcp {
 			pid, err := os.ReadFile(pidPath)

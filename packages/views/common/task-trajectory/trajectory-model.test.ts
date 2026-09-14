@@ -75,3 +75,33 @@ describe("native v3 root trajectory", () => {
     expect(() => parseDSHTrajectory(invalid)).toThrow();
   });
 });
+
+describe("task-scoped native trajectory", () => {
+  const rows = [
+    { type: "multica/task-trajectory", version: 1, sessionId: "session", requestId: "mine", firstSeq: 40, lastSeq: 44 },
+    { type: "session", version: 3, id: "session", createdAt: 1, isSeeded: false },
+    { type: "turn/start", seq: 40, time: 2, data: { turn: 9 } },
+    { type: "user/message", seq: 41, time: 3, data: { source: { kind: "plugin" }, content: "current context" } },
+    { type: "user/message", seq: 42, time: 4, data: { source: { kind: "user", rpcId: "mine" }, content: "current prompt" } },
+    { type: "assistant/message", seq: 43, time: 5, data: { message: { content: [] } } },
+    { type: "turn/end", seq: 44, time: 6, data: { turn: 9, reason: { kind: "completed" } } },
+  ];
+  const scoped = rows.map(row => JSON.stringify(row)).join("\n");
+  it("keeps original sequence numbers and the complete task turn", () => {
+    const doc = parseDSHTrajectory(scoped);
+    expect(doc.scope).toEqual({ sessionId: "session", requestId: "mine", firstSeq: 40, lastSeq: 44 });
+    expect(doc.events.map(event => event.seq)).toEqual([40, 41, 42, 43, 44]);
+    expect(trajectoryEventSummary(doc.events[1]!)).toBe("current context");
+  });
+  it.each([
+    scoped.replace('"rpcId":"mine"', '"rpcId":"other"'),
+    scoped.replace('"kind":"plugin"', '"kind":"user","rpcId":"other"'),
+    scoped.replace('"seq":41', '"seq":99'),
+    scoped.replace('"firstSeq":40', '"firstSeq":null'),
+    scoped.replace('"id":"session"', '"id":"other"'),
+    scoped.replace('"type":"turn/end"', '"type":"assistant/message"'),
+    scoped.replace('"turn":9,"reason"', '"turn":8,"reason"'),
+  ])("rejects a mismatched, mixed or incomplete export", invalid => {
+    expect(() => parseDSHTrajectory(invalid)).toThrow();
+  });
+});

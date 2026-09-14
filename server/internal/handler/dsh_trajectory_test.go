@@ -14,6 +14,34 @@ const validDSHTrajectory = `{"type":"session","version":0,"id":"ses_test-1","cre
 {"type":"turn/end","seq":2,"time":1720000000003,"data":{"turn":1,"reason":{"kind":"completed"}}}
 `
 
+func TestDSHUploadBindingRejectsOtherRequestsAndWholeManagedSessions(t *testing.T) {
+	const scoped = `{"type":"multica/task-trajectory","version":1,"sessionId":"session","requestId":"mine","firstSeq":10,"lastSeq":12}
+{"type":"session","version":3,"id":"session","createdAt":1,"isSeeded":false}
+{"type":"turn/start","seq":10,"time":2,"data":{"turn":9}}
+{"type":"user/message","seq":11,"time":3,"data":{"source":{"kind":"user","rpcId":"mine"}}}
+{"type":"turn/end","seq":12,"time":4,"data":{"turn":9,"reason":{"kind":"completed"}}}
+`
+	for _, item := range []struct {
+		session, request string
+		bound, valid     bool
+	}{
+		{"session", "mine", true, true}, {"session", "other", true, false}, {"other", "mine", true, false}, {"session", "mine", false, false},
+	} {
+		if err := validateDSHUploadBinding([]byte(scoped), item.session, item.request, item.bound); (err == nil) != item.valid {
+			t.Fatalf("binding accepted=%t expected=%t", err == nil, item.valid)
+		}
+	}
+	if err := validateDSHUploadBinding([]byte(validDSHTrajectory), "session", "mine", true); err == nil {
+		t.Fatal("managed task accepted whole Session export")
+	}
+	if err := validateDSHUploadBinding([]byte(validDSHTrajectory), "", "", false); err != nil {
+		t.Fatal("legacy trajectory rejected", err)
+	}
+	if header, count, err := validateDSHTrajectory([]byte(scoped), "session"); err != nil || header.Version != 3 || count != 3 {
+		t.Fatalf("scoped artifact rejected: %v", err)
+	}
+}
+
 func TestValidateDSHTrajectoryAcceptsNativeJSONL(t *testing.T) {
 	header, count, err := validateDSHTrajectory([]byte(validDSHTrajectory), "ses_test-1")
 	if err != nil {
