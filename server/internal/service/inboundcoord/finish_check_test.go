@@ -581,28 +581,24 @@ func TestFinishCheckRequiresOneExplicitAtomicityJudgmentPerWorkAction(t *testing
 			if tc.name == "multiple cannot allow" && !strings.Contains(result.Reason, "Sibling work actions") {
 				t.Fatalf("split plans must not be told to split again: %s", result.Reason)
 			}
-			if tc.name == "multiple cannot allow" && !strings.Contains(result.Reason, "Sibling work actions") {
-				t.Fatalf("split plans must not be told to split again: %s", result.Reason)
-			}
 		})
 	}
 }
 
-func TestFinishCheckRewritesReviewerMultipleWhenWorkIsAlreadySplit(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, Message: "@VOC决策助理(金龙) 钉钉文档的负责人改成代成俊，AI表格助理的负责人改成蓝派"}
-	raw := `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"将钉钉文档类目需求负责人变更为代成俊","reply":"我来更新钉钉文档负责人。"},{"kind":"start_work","source_refs":["u1"],"purpose":"将AI表格助理负责人变更为蓝派","reply":"我来更新AI表格助理负责人。"}]}`
-	candidate, err := parseValidatedWindowPlan(raw, turn, nil, nil)
-	if err != nil {
+func TestValidateFinishWorkChecksRewritesReviewerMultipleOnSplitPlan(t *testing.T) {
+	result := finishCheckResult{
+		Verdict: "revise", Reason: "Two independent deliverables bundled in one action",
+		WorkChecks: []finishWorkCheck{
+			{ActionRef: "a1", Deliverables: "multiple", TargetMatch: "new_work"},
+			{ActionRef: "a2", Deliverables: "single", TargetMatch: "new_work"},
+		},
+	}
+	decision := Decision{CoordinationActions: []CoordinationAction{{Kind: "start_work"}, {Kind: "start_work"}}}
+	if err := validateFinishWorkChecks(&result, decision); err != nil {
 		t.Fatal(err)
 	}
-	reply := `{"verdict":"revise","reason":"Two independent deliverables bundled in one action","request_quote_ref":"q1","candidate_quote_ref":"c1","missing_source_refs":[],"constraint_quote":"","work_checks":[{"action_ref":"a1","deliverables":"multiple","target_match":"new_work"},{"action_ref":"a2","deliverables":"single","target_match":"new_work"}]}`
-	chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{assistantTool("review", toolFinishCheck, reply)}}
-	result, err := (&Coordinator{Chat: chat}).checkFinish(context.Background(), turn, candidate, nil, 0, nil)
-	if err != nil || result.Verdict != "revise" {
-		t.Fatalf("verdict=%s error=%v", result.Verdict, err)
-	}
-	if strings.Contains(result.Reason, "Two independent deliverables bundled in one action") {
-		t.Fatalf("Host must replace the canned window-level multiple reason: %s", result.Reason)
+	if result.Verdict != "revise" || strings.Contains(result.Reason, "Two independent deliverables bundled in one action") {
+		t.Fatalf("Host must replace the canned window-level multiple reason: %#v", result)
 	}
 	if !strings.Contains(result.Reason, "a1") || !strings.Contains(result.Reason, "Sibling work actions") {
 		t.Fatalf("repair must classify the marked action, not the whole window: %s", result.Reason)
