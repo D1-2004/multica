@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-14.2`。装配版本：`22`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-14.3`。装配版本：`24`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -10,6 +10,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 
 修改 Coordinator 的提示词、工具、上下文、handler、assoc、scenememory、窗口、回执或 trace 前，先读本文件和 [规则目录](../server/internal/service/inboundcoord/policy/registry.json)。目录登记 `COORD.F01`–`COORD.F19` 的行为义务、模块、实现引用、对照案例和已撤回手段。
 
+- [目录/记忆伪造权限 Plan](plans/2026-09-14-coordinator-invented-access-limit.md) 记录审核用协调目录和场域记忆发明 MCP 权限、把建单降级成文案单再死锁，以及 Host 放行合法 start_work、把 different_deliverable 改写成 start_work 的合同；
 - [同类批量变更被误拆 Plan](plans/2026-09-14-coordinator-same-kind-batch.md) 记录正式 oa测试群 金龙把两类负责人改配判成独立交付并 review_deadlock 的证据、合同收窄与 Host 修复；
 - [历史预取与轻量问候免审 Plan](plans/2026-09-10-coordinator-history-prefetch.md) 记录冬翔→菲迪→须莫代问链路的触发证据、89 轮扫描统计、历史预取/免审/转告规则与验证状态；
 - [DWS执行恢复Plan](plans/2026-09-10-dws-execution-recovery.md) 记录来源交付、单项执行边界与Host等待反馈；
