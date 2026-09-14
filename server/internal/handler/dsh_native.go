@@ -92,7 +92,7 @@ func (h *Handler) IssueDSHNativeAccess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "DSH employee startup is unconfirmed; refresh Home status before retrying")
 		return
 	}
-	origin, err := h.FCE2BLauncher.EnsureDSHNativeAuthority(ctx, host, h.dshNativeAccessManager())
+	origin, err := h.FCE2BLauncher.EnsureDSHNativeAuthority(ctx, host, h.dshNativeAccessManager(), h.submitDSHNativePrompt)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "DSH native gateway is not ready")
 		return

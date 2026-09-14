@@ -65,7 +65,7 @@ type dshNativeGatewayReceipt struct {
 
 func validateDSHNativeGatewayReceipt(out string, host dshhost.Host, origin, authority, publicKey string) error {
 	var receipt dshNativeGatewayReceipt
-	if len(out) > 4096 || json.Unmarshal([]byte(out), &receipt) != nil || receipt.Version != 2 || !receipt.Ready || receipt.WorkspaceID != host.WorkspaceID.String() || receipt.AgentID != host.AgentID.String() || receipt.Generation != host.Generation || receipt.SandboxID != host.SandboxID || receipt.Port != DSHNativeGatewayPort || receipt.Authority != authority || receipt.Origin != origin || receipt.PublicKey != publicKey || len(publicKey) != 64 {
+	if len(out) > 4096 || json.Unmarshal([]byte(out), &receipt) != nil || receipt.Version != 3 || !receipt.Ready || receipt.WorkspaceID != host.WorkspaceID.String() || receipt.AgentID != host.AgentID.String() || receipt.Generation != host.Generation || receipt.SandboxID != host.SandboxID || receipt.Port != DSHNativeGatewayPort || receipt.Authority != authority || receipt.Origin != origin || receipt.PublicKey != publicKey || len(publicKey) != 64 {
 		return errors.New("DSH native gateway did not confirm the current employee Host and authority")
 	}
 	return nil
