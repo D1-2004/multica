@@ -1,8 +1,9 @@
 # Employee DSH host coordination
 
-This package is the storage ownership foundation for FC DSH integration. It is
-not yet wired into task admission, the FC launcher, or the native UI gateway.
-Do not enable a shared writable Home through the existing per-chat launcher.
+This package owns employee storage and native execution identities for FC DSH.
+The FC launcher now uses it for employee admission, mount initialization and
+native Host readiness. The task adapter and native UI gateway are still being
+integrated; the new image capability is not advertised or deployed yet.
 
 AgenticFS was mounted as NFS v3 with `nolock,local_lock=all` in the real FC probe.
 File and SQLite locks do not exclude a writer in a different sandbox. The
@@ -24,8 +25,19 @@ Retirement must be called after task admissions stop and tasks drain. A DELETE
 acknowledgement is insufficient: a subsequent GET of the exact sandbox must
 return 404 before the store permits a new generation. Old generation receipts
 cannot clear a replacement. Storage registration is immutable and unique by
-volume and access point. Provisioning must additionally verify the backing
-AgenticSpace belongs exclusively to this employee.
+volume, access point and file-system/AgenticSpace pair. Provisioning must verify
+the provider-side resources and employee authorization before registration.
+
+`BindExecution` commits a native Session per employee and conversation scope,
+then an immutable request ID per task, before external prompt admission. All
+replicas and replacement sandboxes reuse those records. Issue scope has the
+same precedence as task serialization; chat scope follows it. Unscoped tasks
+receive separate Sessions. Native working directories derive from the persisted
+Session ID under the employee mount. Rebinding an existing task to a different
+Session fails. Prompt retry must use the persisted request ID, since native DSH
+checks that identity against accepted user messages. The binding itself is not
+proof that a prompt was admitted or completed; task receipt and trajectory
+reconciliation remain required.
 
 ## FC API behavior verified on 2026-09-14
 
@@ -53,6 +65,6 @@ process environment, and the `DSH_TEST_*` settings listed in `fc_test.go`. Use a
 authorized probe volume only. It creates two temporary sandboxes and destroys
 them; it does not execute DSH or prove application-level recovery.
 
-Before production use, complete provisioning intents, task admission/draining,
-mount and UID checks, host process startup, credentials scoped to executions,
-session recovery, and the native gateway. These remain separate acceptance gates.
+Before deployment, complete provisioning intents, native activity draining,
+credentials scoped to executions, the persistent task adapter, profile revisions
+and the native gateway, then verify the full chain in FC and pre-release.

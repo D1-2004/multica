@@ -246,6 +246,23 @@ func TestDSHNativeHostFailureRequiresConfirmedSandboxRetirement(t *testing.T) {
 	}
 }
 
+func TestDSHExecutionScopeMatchesConversationIsolation(t *testing.T) {
+	u := func() pgtype.UUID { return pgtype.UUID{Bytes: uuid.New(), Valid: true} }
+	key := dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}
+	task := db.AgentTaskQueue{ID: u(), ChatSessionID: u(), IssueID: u(), AutopilotRunID: u()}
+	if got := dshExecutionScope(key, task); got.Kind != "issue" || got.ID != uuid.UUID(task.IssueID.Bytes) || got.Key != key {
+		t.Fatal("issue scope does not follow task serialization")
+	}
+	task.IssueID = pgtype.UUID{}
+	if got := dshExecutionScope(key, task); got.Kind != "chat" || got.ID != uuid.UUID(task.ChatSessionID.Bytes) {
+		t.Fatal("chat scope is not stable")
+	}
+	task.ChatSessionID = pgtype.UUID{}
+	if got := dshExecutionScope(key, task); got.Kind != "task" || got.ID != uuid.UUID(task.ID.Bytes) {
+		t.Fatal("unscoped tasks accidentally share a Session")
+	}
+}
+
 func TestDSHLaunchDrainsSubmittedQueuedTasksBeforeTemplateReplacement(t *testing.T) {
 	a, _ := dshLaunchPools(t)
 	provider := &dshLaunchProvider{}

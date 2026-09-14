@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -1622,6 +1624,10 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	}
 	extraEnv = hardenCloudSandboxA2ARunnerEnv(task, runtime, extraEnv)
 	if employeeHost != nil {
+		binding, err := (dshhost.PostgresStore{DB: runtimeLockConn}).BindExecution(ctx, dshExecutionScope(employeeHost.Key, task), uuid.UUID(task.ID.Bytes))
+		if err != nil {
+			return fcE2BLaunchSubmission{}, false, fmt.Errorf("bind DSH native execution: %w", err)
+		}
 		if extraEnv == nil {
 			extraEnv = make(map[string]string)
 		}
@@ -1629,6 +1635,9 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		extraEnv["MULTICA_DSH_WORKSPACE_ID"] = employeeHost.WorkspaceID.String()
 		extraEnv["MULTICA_DSH_AGENT_ID"] = employeeHost.AgentID.String()
 		extraEnv["MULTICA_DSH_HOST_GENERATION"] = strconv.FormatInt(employeeHost.Generation, 10)
+		extraEnv["MULTICA_DSH_SESSION_ID"] = binding.SessionID
+		extraEnv["MULTICA_DSH_REQUEST_ID"] = binding.RequestID.String()
+		extraEnv["MULTICA_DSH_WORKDIR"] = binding.Workdir
 	}
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "daemon_token_preparing"); err != nil {
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B daemon token stage: %w", err)
@@ -2808,6 +2817,9 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 		"MULTICA_DSH_WORKSPACE_ID",
 		"MULTICA_DSH_AGENT_ID",
 		"MULTICA_DSH_HOST_GENERATION",
+		"MULTICA_DSH_SESSION_ID",
+		"MULTICA_DSH_REQUEST_ID",
+		"MULTICA_DSH_WORKDIR",
 		"DWS_CONFIG_DIR",
 		"GH_CONFIG_DIR",
 		"XDG_CONFIG_HOME",

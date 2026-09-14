@@ -26,6 +26,18 @@ const dshEmployeeLockClass int32 = 0x44534831
 var errDSHHostWaiting = errors.New("DSH employee host is awaiting reconciliation or task drain")
 var dshAccessPointPattern = regexp.MustCompile(`^acs:nas:[a-z0-9-]+:[0-9]+:accesspoint/(ap-[a-z0-9]+)$`)
 
+func dshExecutionScope(key dshhost.Key, task db.AgentTaskQueue) dshhost.SessionScope {
+	// Match task serialization precedence. Unscoped/autopilot tasks get their
+	// own Session instead of accidentally joining an unrelated conversation.
+	if task.IssueID.Valid {
+		return dshhost.SessionScope{Key: key, Kind: "issue", ID: uuid.UUID(task.IssueID.Bytes)}
+	}
+	if task.ChatSessionID.Valid {
+		return dshhost.SessionScope{Key: key, Kind: "chat", ID: uuid.UUID(task.ChatSessionID.Bytes)}
+	}
+	return dshhost.SessionScope{Key: key, Kind: "task", ID: uuid.UUID(task.ID.Bytes)}
+}
+
 func lockDSHEmployee(ctx context.Context, conn *pgxpool.Conn, workspace, agent pgtype.UUID) (func(), error) {
 	if conn == nil || !workspace.Valid || !agent.Valid {
 		return nil, errors.New("DSH employee coordination requires a database connection and identity")
