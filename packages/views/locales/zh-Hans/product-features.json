@@ -1,0 +1,30 @@
+{
+  "page": {
+    "title": "功能动态",
+    "tagline": "了解最新功能与功能迭代",
+    "search_placeholder": "搜索功能",
+    "loading": "正在加载功能动态",
+    "error_title": "功能动态加载失败",
+    "error_retry": "重试",
+    "empty_title": "没有找到功能动态",
+    "empty_description": "请尝试其他关键词。"
+  },
+  "release": {
+    "new": "新功能",
+    "improvement": "功能迭代",
+    "version": "版本 {{version}}"
+  },
+  "detail": {
+    "back": "全部功能动态",
+    "description": "功能描述",
+    "use_cases": "使用场景",
+    "usage_guide": "使用方式",
+    "image_requirement": "镜像要求",
+    "image_none": "无需升级镜像",
+    "image_latest_at_publish": "需要升级到发布时的最新镜像",
+    "image_min_version": "需要升级到不低于此版本的镜像",
+    "previous_version": "前一个版本",
+    "not_found": "未找到这条功能动态",
+    "error_title": "功能详情加载失败"
+  }
+}

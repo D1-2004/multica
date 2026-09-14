@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS product_feature_release_id_unique;

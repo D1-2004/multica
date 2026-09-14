@@ -1,0 +1,30 @@
+{
+  "page": {
+    "title": "기능 업데이트",
+    "tagline": "새 기능과 개선 사항을 최신순으로 확인하세요",
+    "search_placeholder": "기능 검색",
+    "loading": "기능 업데이트 불러오는 중",
+    "error_title": "기능 업데이트를 불러오지 못했습니다",
+    "error_retry": "다시 시도",
+    "empty_title": "기능 업데이트를 찾지 못했습니다",
+    "empty_description": "다른 키워드로 검색해 보세요."
+  },
+  "release": {
+    "new": "새 기능",
+    "improvement": "개선",
+    "version": "버전 {{version}}"
+  },
+  "detail": {
+    "back": "모든 기능 업데이트",
+    "description": "설명",
+    "use_cases": "사용 사례",
+    "usage_guide": "사용 방법",
+    "image_requirement": "이미지 요구 사항",
+    "image_none": "이미지 업그레이드가 필요하지 않습니다",
+    "image_latest_at_publish": "게시 시점의 최신 이미지로 업그레이드하세요",
+    "image_min_version": "최소한 이 이미지 버전으로 업그레이드하세요",
+    "previous_version": "이전 버전",
+    "not_found": "기능 업데이트를 찾을 수 없습니다",
+    "error_title": "기능 업데이트를 불러오지 못했습니다"
+  }
+}

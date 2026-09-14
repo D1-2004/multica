@@ -175,6 +175,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     runners: () => "/acme/runners",
     skills: () => "/acme/skills",
     dshPlugins: () => "/acme/dsh-plugins",
+    featureUpdates: () => "/acme/features",
     settings: () => "/acme/settings",
     settingsIntegrations: () => "/acme/settings?tab=integrations",
     issueDetail: (id: string) => `/acme/issues/${id}`,
@@ -300,6 +301,15 @@ describe("workspace navigation groups", () => {
         'button[data-href="/acme/agents"] [data-primary-agent-entry]',
       ),
     ).not.toBeNull();
+  });
+
+  it("shows feature updates in the configuration group", () => {
+    const { container } = render(<AppSidebar />);
+
+    expect(
+      container.querySelector('button[data-href="/acme/features"]'),
+    ).not.toBeNull();
+    expect(screen.getByText("Feature updates")).toBeInTheDocument();
   });
 
   it("keeps Settings selected for the Application Integrations page", () => {

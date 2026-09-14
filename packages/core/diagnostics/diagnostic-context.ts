@@ -82,6 +82,8 @@ const WORKSPACE_ROUTES: readonly RoutePattern[] = [
   ["skills", ":id"],
   ["dsh-plugins"],
   ["dsh-plugins", ":id"],
+  ["features"],
+  ["features", ":id"],
   // `sites` was added to paths.ts without a pattern here, so every hosted-site
   // URL fell back to the `/:slug/*` mask in diagnostics.
   ["sites"],

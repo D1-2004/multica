@@ -35,6 +35,7 @@ export type RouteIconName =
   | "Server"
   | "BookOpenText"
   | "Blocks"
+  | "Megaphone"
   | "Settings"
   | "File"
   | "FileText"
@@ -61,6 +62,7 @@ export type NavLabelKey =
   | "runners"
   | "skills"
   | "dsh_plugins"
+  | "feature_updates"
   | "settings";
 
 /** Stable identifier for each workspace navigation page. */
@@ -79,6 +81,7 @@ export type WorkspacePageKey =
   | "runners"
   | "skills"
   | "dshPlugins"
+  | "featureUpdates"
   | "settings";
 
 export interface WorkspacePage {
@@ -112,6 +115,11 @@ export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
     segment: "dsh-plugins",
     icon: "Blocks",
     navKey: "dsh_plugins",
+  },
+  featureUpdates: {
+    segment: "features",
+    icon: "Megaphone",
+    navKey: "feature_updates",
   },
   settings: { segment: "settings", icon: "Settings", navKey: "settings" },
 };

@@ -31,6 +31,8 @@
     "./sitehosting": "./sitehosting/index.ts",
     "./sitehosting/queries": "./sitehosting/queries.ts",
     "./sitehosting/mutations": "./sitehosting/mutations.ts",
+    "./product-features": "./product-features/index.ts",
+    "./product-features/queries": "./product-features/queries.ts",
     "./issues": "./issues/index.ts",
     "./issues/batch": "./issues/batch.ts",
     "./issues/canonical-id": "./issues/canonical-id.ts",

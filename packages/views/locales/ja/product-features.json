@@ -1,0 +1,30 @@
+{
+  "page": {
+    "title": "機能アップデート",
+    "tagline": "新機能と改善を新しい順に表示します",
+    "search_placeholder": "機能を検索",
+    "loading": "機能アップデートを読み込み中",
+    "error_title": "機能アップデートを読み込めませんでした",
+    "error_retry": "再試行",
+    "empty_title": "機能アップデートが見つかりません",
+    "empty_description": "別のキーワードをお試しください。"
+  },
+  "release": {
+    "new": "新機能",
+    "improvement": "改善",
+    "version": "バージョン {{version}}"
+  },
+  "detail": {
+    "back": "すべての機能アップデート",
+    "description": "説明",
+    "use_cases": "利用シーン",
+    "usage_guide": "使い方",
+    "image_requirement": "イメージ要件",
+    "image_none": "イメージの更新は不要です",
+    "image_latest_at_publish": "公開時点の最新イメージに更新してください",
+    "image_min_version": "少なくともこのイメージバージョンに更新してください",
+    "previous_version": "前のバージョン",
+    "not_found": "機能アップデートが見つかりません",
+    "error_title": "機能アップデートを読み込めませんでした"
+  }
+}

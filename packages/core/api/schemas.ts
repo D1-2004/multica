@@ -99,6 +99,11 @@ import type {
 import type { CreateFeedbackResponse } from "../feedback/types";
 import type { HostedSite } from "../sitehosting/types";
 import type {
+  ProductFeatureRelease,
+  ProductFeatureReleasePage,
+  ProductFeatureReleaseSummary,
+} from "../product-features/types";
+import type {
   AgentDshPlugin,
   DshPlugin,
   DshPluginBinding,
@@ -147,6 +152,109 @@ export const HostedSiteSchema = z
   );
 
 export const HostedSiteListSchema = z.array(HostedSiteSchema);
+
+const ProductFeatureReleaseSummarySchema = z
+  .object({
+    id: z.string(),
+    title: z.string(),
+    version_label: z.string(),
+    published_at: z.string(),
+  })
+  .loose()
+  .transform(
+    (release): ProductFeatureReleaseSummary => ({
+      id: release.id,
+      title: release.title,
+      versionLabel: release.version_label,
+      publishedAt: release.published_at,
+    }),
+  );
+
+export const ProductFeatureReleaseSchema = z
+  .object({
+    id: z.string(),
+    feature_id: z.string(),
+    feature_slug: z.string(),
+    release_type: z.enum(["new", "improvement"]).catch("improvement"),
+    title: z.string(),
+    description: z.string(),
+    use_cases: z.string(),
+    usage_guide: z.string(),
+    version_label: z.string(),
+    image_requirement: z
+      .enum(["none", "latest_at_publish", "min_version"])
+      .catch("none"),
+    required_image_version: z.string().nullable(),
+    requires_image_upgrade: z.boolean().optional(),
+    previous_release_id: z.string().nullable(),
+    previous_release: ProductFeatureReleaseSummarySchema.nullable().optional(),
+    published_at: z.string(),
+    created_at: z.string(),
+  })
+  .loose()
+  .transform(
+    (release): ProductFeatureRelease => ({
+      id: release.id,
+      featureId: release.feature_id,
+      featureSlug: release.feature_slug,
+      releaseType: release.release_type,
+      title: release.title,
+      description: release.description,
+      useCases: release.use_cases,
+      usageGuide: release.usage_guide,
+      versionLabel: release.version_label,
+      imageRequirement: release.image_requirement,
+      requiredImageVersion: release.required_image_version,
+      requiresImageUpgrade: release.requires_image_upgrade === true,
+      previousReleaseId: release.previous_release_id,
+      previousRelease: release.previous_release ?? null,
+      publishedAt: release.published_at,
+      createdAt: release.created_at,
+    }),
+  );
+
+export const ProductFeatureReleasePageSchema = z
+  .object({
+    releases: z.array(ProductFeatureReleaseSchema),
+    total: z.number(),
+    limit: z.number(),
+    offset: z.number(),
+  })
+  .loose()
+  .transform(
+    (page): ProductFeatureReleasePage => ({
+      releases: page.releases,
+      total: page.total,
+      limit: page.limit,
+      offset: page.offset,
+    }),
+  );
+
+export const EMPTY_PRODUCT_FEATURE_RELEASE: ProductFeatureRelease = {
+  id: "",
+  featureId: "",
+  featureSlug: "",
+  releaseType: "new",
+  title: "",
+  description: "",
+  useCases: "",
+  usageGuide: "",
+  versionLabel: "",
+  imageRequirement: "none",
+  requiredImageVersion: null,
+  requiresImageUpgrade: false,
+  previousReleaseId: null,
+  previousRelease: null,
+  publishedAt: "",
+  createdAt: "",
+};
+
+export const EMPTY_PRODUCT_FEATURE_RELEASE_PAGE: ProductFeatureReleasePage = {
+  releases: [],
+  total: 0,
+  limit: 30,
+  offset: 0,
+};
 
 const DingTalkBindingErrorSchema = z
   .object({
