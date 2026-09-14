@@ -137,7 +137,12 @@ func (c CloudStorageProvider) PrepareStorageResource(ctx context.Context, p Prov
 		case ProvisionSpace:
 			return result.AgenticSpaceID, nil
 		case ProvisionAccessPoint:
-			return result.AccessPoint.ARN, nil
+			// CreateAccessPoint returns ID/domain, while DescribeAccessPoint
+			// returns ARN. Preserve the known ID instead of losing its receipt.
+			if !regexp.MustCompile(`^ap-[a-z0-9]+$`).MatchString(result.AccessPoint.AccessPointID) {
+				return "", errors.New("DSH access point create returned no valid ID")
+			}
+			return "acs:nas:" + p.Spec.Region + ":" + p.Spec.AccountID + ":accesspoint/" + result.AccessPoint.AccessPointID, nil
 		case ProvisionRole:
 			return result.Role.Arn, nil
 		case ProvisionPolicy:

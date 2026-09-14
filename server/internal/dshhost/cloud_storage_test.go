@@ -38,8 +38,10 @@ func (f *storageAPIFixture) Call(_ context.Context, c CloudCall, out any) error 
 		r = map[string]any{"AgenticSpace": space}
 	case "DescribeAgenticSpaces":
 		r = map[string]any{"AgenticSpaces": map[string]any{"AgenticSpace": []any{space}}}
-	case "DescribeAccessPoint", "CreateAccessPoint":
+	case "DescribeAccessPoint":
 		r = map[string]any{"AccessPoint": ap}
+	case "CreateAccessPoint":
+		r = map[string]any{"AccessPoint": map[string]any{"AccessPointId": "ap-abc", "AccessPointDomain": ap["DomainName"]}}
 	case "ListAccessPoints":
 		r = map[string]any{"AccessPoints": []any{ap}}
 	case "GetRole", "CreateRole":
