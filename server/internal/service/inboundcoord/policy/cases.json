@@ -101,6 +101,19 @@
       "verification": "not_run"
     },
     {
+      "id": "f07_status_ping_quoted_self_vs_continue_work",
+      "rule_ids": [
+        "COORD.F07",
+        "COORD.F03"
+      ],
+      "context_a": "用户引用本员工更早的接单回复作背景，当前只问「你抽完了吗」；work_state 已是 blocked/completed。",
+      "context_b": "同一事项用户补充了新的听记链接或明确要求重跑抽取。",
+      "expected_effects": "A用report_status引用已加载state_refs，不能continue_work/basis=answer，Host在no_advancement时必须点名改kind而不能让模型只改reply。B才是continue_work(change/retry)或新start_work。",
+      "verification": "host_tests_passed; live_delivery_pending",
+      "evidence_status": "production_incident",
+      "evidence_note": "2026-09-14 prod coord_trace_id=f990ea5b-39eb-4f02-83d3-7157d68e47ef：三轮 continue_work 被标 status ping/no_advancement，Host hint 写成修字段，模型只改回复；第5轮才 report_status。"
+    },
+    {
       "id": "f08_contrast",
       "rule_ids": [
         "COORD.F08"

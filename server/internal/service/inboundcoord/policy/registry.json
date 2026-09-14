@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-14.1",
-  "assembly_version": "22",
+  "policy_version": "2026-09-14.2",
+  "assembly_version": "23",
   "modules": [
     {
       "id": "core",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "22",
+      "version": "23",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -60,8 +60,8 @@
         "COORD.F10",
         "COORD.F03"
       ],
-      "budget_characters": 3200,
-      "content_sha256": "bede13394bbba5baa44dacb2daf4f72399c431c75f00f236138d99202d2dac33"
+      "budget_characters": 3400,
+      "content_sha256": "bd0f056de4cf9c053abb83bd8f30cc065393299a89001615b4b7182c96bd9aa9"
     },
     {
       "id": "channel",
@@ -249,7 +249,7 @@
     },
     {
       "id": "finish_check_work",
-      "version": "17",
+      "version": "18",
       "file": "finish_check_work.md",
       "applies_when": "finish_check_work",
       "requires": [
@@ -272,7 +272,7 @@
         "COORD.F19"
       ],
       "budget_characters": 3400,
-      "content_sha256": "ca372396fde74045120ea41999430b20c62f228f2b17c36ee843447a0596e1dc"
+      "content_sha256": "05cb9e028c4c37df14eb61fe7509359a33c3d37b1a0e271b53cdfe4e9918f95b"
     }
   ],
   "obligations": [
@@ -436,6 +436,7 @@
         "f19_memory_commit_observation",
         "f04_product_answer_vs_capability",
         "f03_review_greeting_status_memory",
+        "f07_status_ping_quoted_self_vs_continue_work",
         "f03_status_refs_vs_title",
         "f12_exact_result_report",
         "f16_bounded_coordination_reads",
@@ -677,7 +678,7 @@
     {
       "id": "COORD.F07",
       "family": "F07",
-      "obligation": "续接必须同一交付物且当前实质推进；单卡、同人、排名、忙、旧承诺都不充分；时间本身不否决明确续接。短确认续接时交付物以用户原话为准，不得把员工未获点名的加工步骤当成同一交付物。 当前明确请求/引用定义工作对象，旧purpose仅是匹配线索，不覆盖用户最新目标。 同一交付物须是用户/历史锚定的同一产物实例，不能仅凭主题/人/任务标题；新的未锚定取样或最新查询不作为旧产物的answer。",
+      "obligation": "续接必须同一交付物且当前实质推进；单卡、同人、排名、忙、旧承诺都不充分；时间本身不否决明确续接。短确认续接时交付物以用户原话为准，不得把员工未获点名的加工步骤当成同一交付物。 当前明确请求/引用定义工作对象，旧purpose仅是匹配线索，不覆盖用户最新目标。 同一交付物须是用户/历史锚定的同一产物实例，不能仅凭主题/人/任务标题；新的未锚定取样或最新查询不作为旧产物的answer。 询问已有工作是否完成用report_status，引用本员工更早回复作背景不是新执行输入，不能continue_work；Host对no_advancement须点名改kind，禁止只改reply。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -688,6 +689,7 @@
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f07_contrast",
+        "f07_status_ping_quoted_self_vs_continue_work",
         "f05_yes_more_copies",
         "f05_pending_answer_vs_report_redelivery",
         "f07_explicit_reference_controls_current_work",
@@ -722,6 +724,7 @@
         "server/internal/service/inboundcoord/history_handoff_test.go",
         "server/internal/service/inboundcoord/finish_work_target.go",
         "server/internal/service/inboundcoord/finish_work_target_test.go",
+        "server/internal/service/inboundcoord/finish_work_target_test.go#TestValidateFinishWorkChecksRewritesReviewerNoAdvancement",
         "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
         "server/internal/service/inboundcoord/issue_description_test.go",
         "server/internal/handler/agent_dispatch_v2.go#buildDispatchIssueRelayInstruction",
