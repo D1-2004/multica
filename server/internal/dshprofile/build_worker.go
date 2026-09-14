@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"time"
 
@@ -136,6 +137,12 @@ func (w BuildWorker) Step(ctx context.Context) error {
 			return err
 		}
 		job = next
+		slog.InfoContext(ctx, "dsh_plugin_build_transition",
+			"workspace_id", job.WorkspaceID.String(), "build_id", job.BuildID.String(),
+			"phase", job.Phase, "state", job.State, "template_id", job.TemplateID,
+			"sandbox_id", job.SandboxID, "build_digest", job.Artifact.BuildDigest,
+			"archive_sha256", job.Artifact.ArchiveSHA256, "archive_size", job.Artifact.ArchiveSize,
+			"error_code", job.ErrorCode)
 		return nil
 	}
 	fail := func(code string) error {
