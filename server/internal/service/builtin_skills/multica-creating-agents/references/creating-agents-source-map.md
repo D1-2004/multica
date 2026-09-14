@@ -288,3 +288,5 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - These paths save configuration; they do not prove Host/Profile application or live plugin execution.
 
 - Pre-release publication integration: `agent_package_service.go` and `agent_package_section_codecs.go` keep the single paired import/export registry; the DSH plugin codec applies explicit mappings and exports the current pinned private configuration. ZIP, Git, builder and rollback use this same transaction. `agent_package_reuse.go` requires explicit plugin secret inputs even when an environment alias matches.
+
+- `agent_source_sync.go`: explicit secret/plugin inputs force transactional application and publication even for unchanged package bytes; actual ZIP rebinding regression is a preproduction acceptance gate.

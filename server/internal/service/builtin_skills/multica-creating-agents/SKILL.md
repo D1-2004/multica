@@ -568,3 +568,5 @@ Configuration and implementation map to `event_trigger.go`, `agent_event_trigger
   reviewed snapshot rollback; Git Agents no longer accept new ZIP publications.
   Reason: preserve repository provenance and make previous configurations
   recoverable without depending on moving Git refs or copying credentials.
+
+Explicit secret or plugin binding choices are applied and recorded as a publication even when package bytes are unchanged. They are never acknowledged as a no-op solely because the redacted definition matches.

@@ -128,7 +128,10 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	configurationChanged := len(diffPackageState(current, sourceDefinitionFiles(resolved.bundle))) > 0
-	changed := configurationChanged || lockedSource.Ref != resolved.ref || lockedSource.SyncedCommitSha != resolved.sha
+	// Explicit credential or plugin choices are writes even when the package
+	// bytes and redacted definition are unchanged. Never acknowledge them
+	// without applying the transaction and recording its new publication.
+	changed := configurationChanged || lockedSource.Ref != resolved.ref || lockedSource.SyncedCommitSha != resolved.sha || len(request.Secrets) > 0 || len(request.DshPluginBindings) > 0
 	if changed {
 		if err := (agentPackageService{handler: h}).Import(r.Context(), tx, agent, lockedSource, resolved, request.Secrets, request.DeferredBindings, request.DshPluginBindings, parseUUID(requestUserID(r)), false); err != nil {
 			writeAgentSourceDatabaseError(w, err)
