@@ -11,12 +11,28 @@ import (
 	"time"
 )
 
+func TestDSHNativeAuthorityFromEnvironment(t *testing.T) {
+	t.Setenv("MULTICA_FC_E2B_SERVER_URL", "https://production-relay.test")
+	t.Setenv("MULTICA_APP_URL", "https://pre.multica.test/")
+	config := FCE2BConfigFromEnv()
+	if config.DSHNativeAuthority != "https://pre.multica.test" || config.ServerURL != "https://production-relay.test" {
+		t.Fatal("DSH authority and task relay were conflated")
+	}
+	t.Setenv("MULTICA_APP_URL", "")
+	if FCE2BConfigFromEnv().DSHNativeAuthority != "" {
+		t.Fatal("missing DSH authority fell back to the task relay")
+	}
+}
+
 func TestDSHNativeGatewayRequiresExactLiveReceipt(t *testing.T) {
 	host := dshhost.Host{Key: dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, State: "running", Generation: 3, SandboxID: "sbx-fixture"}
-	config := FCE2BConfig{ServerURL: "https://pre.multica.test", Domain: "fc.example.test", APIKey: "fixture", APIURL: "https://api.fc.example.test"}
+	config := FCE2BConfig{ServerURL: "https://production-relay.test", DSHNativeAuthority: "https://pre.multica.test", Domain: "fc.example.test", APIKey: "fixture", APIURL: "https://api.fc.example.test"}
 	origin, authority, err := dshNativeGatewayAddress(config, host)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if authority != "https://pre.multica.test" {
+		t.Fatal("native capability was routed to the task relay")
 	}
 	receipt := dshNativeGatewayReceipt{Version: 1, Ready: true, WorkspaceID: host.WorkspaceID.String(), AgentID: host.AgentID.String(), Generation: host.Generation, SandboxID: host.SandboxID, Port: DSHNativeGatewayPort, Authority: authority, Origin: origin}
 	encode := func(r dshNativeGatewayReceipt) string { b, _ := json.Marshal(r); return string(b) }
@@ -51,16 +67,20 @@ func TestDSHNativeGatewayRequiresExactLiveReceipt(t *testing.T) {
 func TestDSHNativeGatewayRejectsUntrustedAddresses(t *testing.T) {
 	host := dshhost.Host{Key: dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, State: "running", Generation: 1, SandboxID: "sbx-fixture"}
 	for _, config := range []FCE2BConfig{
-		{ServerURL: "http://api.test", Domain: "fc.test"}, {ServerURL: "https://user@api.test", Domain: "fc.test"},
-		{ServerURL: "https://api.test/path", Domain: "fc.test"}, {ServerURL: "https://api.test?x=1", Domain: "fc.test"},
-		{ServerURL: "https://api.test#fragment", Domain: "fc.test"}, {ServerURL: "https://api.test", Domain: "fc.test/redirect"},
-		{ServerURL: "https://api.test", Domain: "fc.test:443"}, {ServerURL: "https://api.test", Domain: "fc..test"},
+		{ServerURL: "https://production-relay.test", Domain: "fc.test"},
+		{DSHNativeAuthority: "https://api.test:443", Domain: "fc.test"},
+		{DSHNativeAuthority: "https://API.test", Domain: "fc.test"},
+		{DSHNativeAuthority: "https://api.test?", Domain: "fc.test"},
+		{DSHNativeAuthority: "http://api.test", Domain: "fc.test"}, {DSHNativeAuthority: "https://user@api.test", Domain: "fc.test"},
+		{DSHNativeAuthority: "https://api.test/path", Domain: "fc.test"}, {DSHNativeAuthority: "https://api.test?x=1", Domain: "fc.test"},
+		{DSHNativeAuthority: "https://api.test#fragment", Domain: "fc.test"}, {DSHNativeAuthority: "https://api.test", Domain: "fc.test/redirect"},
+		{DSHNativeAuthority: "https://api.test", Domain: "fc.test:443"}, {DSHNativeAuthority: "https://api.test", Domain: "fc..test"},
 	} {
 		if _, _, err := dshNativeGatewayAddress(config, host); err == nil {
 			t.Fatal("unsafe configuration accepted")
 		}
 	}
-	config := FCE2BConfig{ServerURL: "https://api.test", Domain: "fc.test"}
+	config := FCE2BConfig{DSHNativeAuthority: "https://api.test", Domain: "fc.test"}
 	host.SandboxID = "../other"
 	if _, _, err := dshNativeGatewayAddress(config, host); err == nil {
 		t.Fatal("unsafe sandbox identity accepted")

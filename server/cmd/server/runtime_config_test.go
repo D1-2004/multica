@@ -1,12 +1,45 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
+
+func TestAppRuntimeConfigDSHAuthorityDoesNotUseTaskRelay(t *testing.T) {
+	raw, err := os.ReadFile("../../../docs/runtime-config.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := runtimeconfig.ParseStrict(raw, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Runtime.FCE2B.ServerURL = "https://production-relay.test"
+	cfg.Web.AppURL = "https://pre.multica.test"
+	remote, err := runtimeconfig.NewStatic(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &appRuntimeConfig{remote: remote}
+	if got := app.fce2b(); got.DSHNativeAuthority != cfg.Web.AppURL || got.ServerURL != cfg.Runtime.FCE2B.ServerURL {
+		t.Fatal("DSH authority and task relay were conflated")
+	}
+	cfg.Web.AppURL = "https://updated-pre.multica.test"
+	updated, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := remote.ApplyJSON(updated); err != nil {
+		t.Fatal(err)
+	}
+	if got := app.fce2b(); got.DSHNativeAuthority != cfg.Web.AppURL || got.ServerURL != cfg.Runtime.FCE2B.ServerURL {
+		t.Fatal("DSH authority did not follow the current app origin")
+	}
+}
 
 func TestAppRuntimeConfigReadsCurrentSiteConnectSrc(t *testing.T) {
 	raw, err := os.ReadFile("../../../docs/runtime-config.example.json")

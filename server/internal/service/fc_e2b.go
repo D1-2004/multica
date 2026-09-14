@@ -107,6 +107,7 @@ type FCE2BConfig struct {
 	Enabled                           bool
 	Template                          string
 	ServerURL                         string
+	DSHNativeAuthority                string
 	APIKey                            string
 	APIURL                            string
 	Domain                            string
@@ -142,6 +143,7 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		Enabled:                           envBool("MULTICA_FC_E2B_ENABLED"),
 		Template:                          strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TEMPLATE")),
 		ServerURL:                         strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_SERVER_URL")), "/"),
+		DSHNativeAuthority:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_APP_URL")), "/"),
 		APIKey:                            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_KEY")),
 		APIURL:                            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_URL")), "/"),
 		Domain:                            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),

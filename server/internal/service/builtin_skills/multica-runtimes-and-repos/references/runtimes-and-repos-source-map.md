@@ -43,7 +43,7 @@
 ## Native browser authorization
 
 - `server/internal/handler/dsh_native.go`: human entry/revocation, capability exchange/check and fresh workspace management checks.
-- `server/internal/service/fc_e2b_dsh_native.go`: deployment-owned FC origin and bounded exact gateway readiness verification; no Host lifecycle mutations.
+- `server/internal/service/fc_e2b_dsh_native.go`: deployment-owned FC origin, application authority independent of the task relay, and bounded exact gateway readiness verification; no Host lifecycle mutations.
 - `server/internal/dshhost/native_access*.go`: digest-only durable access, one-time exchange and running Host predicates.
 - `server/internal/handler/dsh_native_test.go`, `server/internal/service/fc_e2b_dsh_native_test.go`: callback replay, identity and permission boundaries, readiness mismatch and old-image rejection. Runtime/browser and PostgreSQL acceptance must run in preproduction.
 
