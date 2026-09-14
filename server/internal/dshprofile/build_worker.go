@@ -122,10 +122,11 @@ func (w BuildWorker) Step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	delay := 5 * time.Second
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_ = w.Ledger.Release(cleanup, job, 5*time.Second)
+		_ = w.Ledger.Release(cleanup, job, delay)
 	}()
 	if !job.valid() || (job.Phase != "queued" && job.Scope != w.Driver.Scope()) {
 		return errors.New("DSH build execution identity mismatch")
@@ -145,6 +146,7 @@ func (w BuildWorker) Step(ctx context.Context) error {
 	switch job.Phase {
 	case "queued":
 		if err := w.Driver.Preflight(ctx, job); err != nil {
+			delay = time.Minute
 			return errors.New("DSH build prerequisites unavailable")
 		}
 		next := job

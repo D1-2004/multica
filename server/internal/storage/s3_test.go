@@ -299,6 +299,40 @@ func TestS3StoragePresignGet(t *testing.T) {
 	}
 }
 
+func TestS3StoragePresignPutUsesPublicEndpointAndTransientCredentials(t *testing.T) {
+	options := s3.Options{Region: "us-east-1", Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider("AKID", "SECRET", "SESSION")),
+		BaseEndpoint: aws.String("https://private.example"), UsePathStyle: true}
+	private := s3.New(options)
+	options.BaseEndpoint = aws.String("https://objects.example")
+	store := &S3Storage{client: private, presignClient: s3.New(options), bucket: "test-bucket"}
+	key := "dsh-plugin-builds/workspace/build/intent/tree.tgz"
+	got, err := store.PresignPut(context.Background(), key, "application/gzip", 30*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(got)
+	if err != nil || parsed.Host != "objects.example" || parsed.Path != "/test-bucket/"+key {
+		t.Fatal("upload URL is not scoped to the exact public object")
+	}
+	query := parsed.Query()
+	if query.Get("X-Amz-Expires") != "1800" || query.Get("X-Amz-Security-Token") != "SESSION" || query.Get("X-Amz-Signature") == "" {
+		t.Fatal("upload signature omitted its expiration or session credential")
+	}
+	for name := range query {
+		if strings.Contains(strings.ToLower(name), "checksum") {
+			t.Fatal("upload signature fixed an empty body checksum")
+		}
+	}
+	if strings.Contains(query.Get("X-Amz-SignedHeaders"), "x-amz-checksum") {
+		t.Fatal("upload signature requires a checksum that the worker was not given")
+	}
+	for _, duration := range []time.Duration{0, -time.Second, 2 * time.Hour} {
+		if _, err := store.PresignPut(context.Background(), key, "application/gzip", duration); err == nil {
+			t.Fatal("unbounded or invalid upload grant accepted")
+		}
+	}
+}
+
 func TestS3StoragePresignGetWithContentDisposition(t *testing.T) {
 	store := &S3Storage{
 		client: s3.New(s3.Options{

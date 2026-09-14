@@ -231,13 +231,21 @@ Profile revision without rebuilding identical package bytes. Status contains
 receipt after a saved edit is `configuration_changed`; a retired/replaced Host
 cannot be current. Preparation does not start a Host. The durable receipt store
 requires matching live Host generation, exact descriptor and fresh configuration
-under transaction locks. Host admission, artifact distribution and the build
-worker must still be connected before these endpoints prove live application.
+under transaction locks. Host admission, artifact delivery into the employee
+Home and live acknowledgement must still be connected before these endpoints
+prove live application.
 
 The plugin build ledger separates creation, remote execution, object verification
 and cleanup. A replacement claimant reconciles the saved create intent rather
 than creating another sandbox. A build becomes ready only after reading back the
 stored archive and matching its digest and length; sandbox cleanup still requires
 confirmed absence. Workspace deletion returns a conflict while a build has an
-active or unresolved cloud intent, preserving the recovery record. The ledger and
-state machine do not themselves provide an FC execution adapter or start a worker.
+active or unresolved cloud intent, preserving the recovery record. Every backend
+replica runs the shared PostgreSQL worker. Only an immutable FC template declaring
+`dsh_plugin_build_worker_v1` can build dependencies. The disposable build sandbox
+has no employee Home, employee role or employee configuration. Its fixed helper
+receives short-lived HTTPS grants for exactly the saved source and artifact keys;
+neither URLs nor employee credentials enter the ledger or helper receipts.
+Repeated starts reconcile the same sandbox receipt without rebuilding; failed
+uploads are cleaned up by the saved object key after sandbox absence is confirmed.
+Code wiring and queued revisions do not prove cloud build or employee activation.

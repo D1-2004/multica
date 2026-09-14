@@ -39,6 +39,18 @@ type FCProvider struct {
 }
 
 func NewFCProvider(config FCConfig) (*FCProvider, error) {
+	if config.VPCID == "" || config.SecurityGroupID == "" || len(config.VSwitchIDs) == 0 {
+		return nil, errors.New("incomplete DSH FC VPC configuration")
+	}
+	for _, id := range config.VSwitchIDs {
+		if strings.TrimSpace(id) == "" {
+			return nil, errors.New("empty DSH FC vSwitch")
+		}
+	}
+	return newFCTransport(config)
+}
+
+func newFCTransport(config FCConfig) (*FCProvider, error) {
 	u, err := url.Parse(config.APIURL)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return nil, errors.New("invalid DSH FC API URL")
@@ -47,13 +59,8 @@ func NewFCProvider(config FCConfig) (*FCProvider, error) {
 	if u.Scheme != "https" && !(u.Scheme == "http" && loopback != nil && loopback.IsLoopback()) {
 		return nil, errors.New("DSH FC API requires HTTPS")
 	}
-	if config.APIKey == "" || config.VPCID == "" || config.SecurityGroupID == "" || len(config.VSwitchIDs) == 0 || config.TimeoutSeconds < 60 {
-		return nil, errors.New("incomplete DSH FC API, VPC or lifetime configuration")
-	}
-	for _, id := range config.VSwitchIDs {
-		if strings.TrimSpace(id) == "" {
-			return nil, errors.New("empty DSH FC vSwitch")
-		}
+	if config.APIKey == "" || config.TimeoutSeconds < 60 {
+		return nil, errors.New("incomplete DSH FC API or lifetime configuration")
 	}
 	config.APIURL = strings.TrimRight(config.APIURL, "/")
 	return &FCProvider{config, &http.Client{
@@ -196,7 +203,11 @@ func matches(info sandboxInfo, h Host) bool {
 }
 
 func (p *FCProvider) FindCreated(ctx context.Context, h Host) (string, error) {
-	query := url.Values{"metadata": {url.Values{"multica.dsh.intent": {h.CreateIntent.String()}}.Encode()}, "limit": {"100"}}
+	return p.findSandbox(ctx, "multica.dsh.intent", h.CreateIntent.String(), func(info sandboxInfo) bool { return matches(info, h) })
+}
+
+func (p *FCProvider) findSandbox(ctx context.Context, label, value string, match func(sandboxInfo) bool) (string, error) {
+	query := url.Values{"metadata": {url.Values{label: {value}}.Encode()}, "limit": {"100"}}
 	found := ""
 	seen := map[string]bool{}
 	for page := 0; page < 100; page++ {
@@ -209,10 +220,10 @@ func (p *FCProvider) FindCreated(ctx context.Context, h Host) (string, error) {
 			return "", errors.New("invalid DSH FC sandbox listing")
 		}
 		for _, info := range infos {
-			if info.Metadata["multica.dsh.intent"] != h.CreateIntent.String() {
+			if info.Metadata[label] != value {
 				continue
 			}
-			if !matches(info, h) || found != "" {
+			if !match(info) || found != "" {
 				return "", errors.New("ambiguous DSH FC create intent identity")
 			}
 			found = info.ID
@@ -228,7 +239,7 @@ func (p *FCProvider) FindCreated(ctx context.Context, h Host) (string, error) {
 				return "", err
 			}
 			var info sandboxInfo
-			if err := json.Unmarshal(data, &info); err != nil || !matches(info, h) {
+			if err := json.Unmarshal(data, &info); err != nil || !match(info) {
 				return "", ErrPending
 			}
 			return found, nil

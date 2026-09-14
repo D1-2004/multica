@@ -573,6 +573,9 @@ func main() {
 	// GitHub PR-card API snapshot pipeline (MUL-5265): worker pool + TTL sweeper.
 	// No-op when unconfigured (no App private key).
 	h.PRRefresh.Start(sweepCtx)
+	if h.FCE2BLauncher != nil {
+		go h.FCE2BLauncher.RunDSHBuildWorker(sweepCtx, h.Storage)
+	}
 
 	// Channel inbound supervisor (MUL-3620): holds the §4.4 WS lease per
 	// installation and drives each channel.Channel. It is built

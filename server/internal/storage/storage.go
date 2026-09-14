@@ -30,6 +30,12 @@ type Presigner interface {
 	PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
 
+// PutPresigner grants one immutable-object upload path without exposing the
+// application's storage credentials to a disposable cloud build worker.
+type PutPresigner interface {
+	PresignPut(ctx context.Context, key string, contentType string, ttl time.Duration) (string, error)
+}
+
 type DownloadPresigner interface {
 	PresignGetWithContentDisposition(ctx context.Context, key string, ttl time.Duration, contentDisposition string) (string, error)
 }

@@ -506,7 +506,7 @@ func FCE2BTemplateCapabilities(provider string, template FCE2BTemplate) []string
 			if provider != "pi" {
 				continue
 			}
-		case DSHTrajectoryCapability, DSHEmployeeHostCapability:
+		case DSHTrajectoryCapability, DSHEmployeeHostCapability, DSHPluginBuildCapability:
 			if provider != "dsh" {
 				continue
 			}

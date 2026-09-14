@@ -354,6 +354,30 @@ func (s *S3Storage) PresignGet(ctx context.Context, key string, ttl time.Duratio
 	return s.PresignGetWithContentDisposition(ctx, key, ttl, "")
 }
 
+func (s *S3Storage) PresignPut(ctx context.Context, key, contentType string, ttl time.Duration) (string, error) {
+	if key == "" || contentType == "" || ttl <= 0 || ttl > time.Hour {
+		return "", fmt.Errorf("s3 PresignPut: invalid object, content type or expiration")
+	}
+	signer := s.client
+	if s.presignClient != nil {
+		signer = s.presignClient
+	}
+	out, err := s3.NewPresignClient(signer).PresignPutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(s.bucket), Key: aws.String(key), ContentType: aws.String(contentType),
+	}, func(opts *s3.PresignOptions) {
+		opts.Expires = ttl
+		// The remote worker supplies a bounded fixed-length body. Signing an
+		// absent local body must not freeze the checksum of an empty object.
+		opts.ClientOptions = append(opts.ClientOptions, func(options *s3.Options) {
+			options.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		})
+	})
+	if err != nil {
+		return "", fmt.Errorf("s3 PresignPutObject failed")
+	}
+	return out.URL, nil
+}
+
 func (s *S3Storage) PresignGetWithContentDisposition(ctx context.Context, key string, ttl time.Duration, contentDisposition string) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("s3 PresignGet: empty key")
