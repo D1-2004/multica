@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { AgentSource, AgentSourceSyncPreview } from "@multica/core/types";
@@ -47,13 +47,21 @@ beforeEach(() => {
 
 describe("Git source import and export tab", () => {
   it("previews the selected branch and publishes only after explicit confirmation", async () => {
-    mount();
+    const view = mount();
     fireEvent.change(screen.getByLabelText("Branch or commit"), { target: { value: "release/v2" } });
     fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
-    await screen.findByRole("button", { name: "Confirm publication" });
+    const dialog = await screen.findByRole("dialog", { name: "Preview changes" });
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(view.container.querySelector('[role="tabpanel"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: "Expand preview" })).toBeNull();
     expect(mocked.preview).toHaveBeenCalledWith("agent-1", "release/v2");
     expect(mocked.confirm).not.toHaveBeenCalled();
-    expect(screen.getByText("Git file changes (1)")).toBeDefined();
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Git file changes (1)" }));
+    expect(within(dialog).getByRole("tab", { name: "agent/AGENTS.md" })).toBeDefined();
+    fireEvent.click(within(dialog).getByRole("tab", { name: "Configuration changes (1)" }));
+    expect(within(dialog).getByRole("tab", { name: "instructions" })).toBeDefined();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Confirm publication" }));
     await waitFor(() => expect(mocked.confirm).toHaveBeenCalledWith("agent-1", "preview-1", { secrets: {}, deferred_bindings: [] }));
   });
@@ -62,7 +70,8 @@ describe("Git source import and export tab", () => {
     mount();
     fireEvent.change(screen.getByLabelText("Branch or commit"), { target: { value: "release/v2" } });
     fireEvent.click(screen.getByRole("button", { name: "Preview changes" }));
-    await screen.findByRole("button", { name: "Confirm publication" });
+    await screen.findByRole("dialog", { name: "Preview changes" });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.change(screen.getByLabelText("Branch or commit"), { target: { value: "main" } });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Confirm publication" })).toBeNull());
     expect(mocked.confirm).not.toHaveBeenCalled();

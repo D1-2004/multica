@@ -256,3 +256,8 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
   diffs. Tests in `source-change-list.test.tsx` cover selection, enlarged view,
   additions/deletions and unavailable content. Reason: align the UI source map
   with the file-based review workflow.
+
+- 2026-09-14: `publish-tab.tsx` and `zip-publish-tab.tsx` open the shared
+  `SourceChangesDialog` after a successful preview. Tests verify one global
+  dialog and no inline diff. Reason: make Preview changes open the full view
+  directly while preserving explicit publication confirmation.

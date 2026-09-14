@@ -86,17 +86,22 @@ it("does not allow another create while the committed Agent's Builder is being a
 });
 
 it("uploads an existing Agent ZIP, invalidates changed files and requires confirmation", async () => {
-  mount(true);
+  const view = mount(true);
   const first = new File(["zip"], "agent.zip", {type:"application/zip"});
   fireEvent.change(screen.getByLabelText("Agent ZIP package"), {target:{files:[first]}});
   fireEvent.click(screen.getByRole("button", {name:"Preview changes"}));
-  await screen.findByRole("tabpanel", {name:"instructions"});
+  await screen.findByRole("dialog", {name:"Preview changes"});
+  expect(view.container.querySelector('[role="tabpanel"]')).toBeNull();
+  expect(screen.queryByRole("button", {name:"Expand preview"})).toBeNull();
+  expect(screen.getByRole("tabpanel", {name:"instructions"})).toBeDefined();
   expect(mocked.previewZIP).toHaveBeenCalledWith("agent-1", first);
   expect(mocked.confirm).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", {name:"Close"}));
   fireEvent.change(screen.getByLabelText("Agent ZIP package"), {target:{files:[new File(["zip2"], "new.zip")]}});
   expect(screen.queryByRole("button", {name:"Confirm publication"})).toBeNull();
   fireEvent.click(screen.getByRole("button", {name:"Preview changes"}));
-  await screen.findByRole("button", {name:"Confirm publication"});
+  await screen.findByRole("dialog", {name:"Preview changes"});
+  fireEvent.click(screen.getByRole("button", {name:"Close"}));
   fireEvent.click(screen.getByRole("button", {name:"Confirm publication"}));
   await waitFor(() => expect(mocked.confirm).toHaveBeenCalledWith("agent-1", "zip-preview", {secrets:{}, deferred_bindings:[]}));
 });

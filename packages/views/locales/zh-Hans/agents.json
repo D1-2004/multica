@@ -1,6 +1,5 @@
 {
   "package_diff": {
-    "expand": "放大预览",
     "description": "选择文件，左右对比当前版本与待发布版本。",
     "files": "变更文件",
     "before": "当前版本",

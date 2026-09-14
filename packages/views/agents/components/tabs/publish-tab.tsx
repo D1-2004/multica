@@ -13,7 +13,7 @@ import { PackageRequirementsForm } from "../../create/package-requirements-form"
 import { useT } from "../../../i18n";
 import { PackageError } from "../../create/package-error";
 import { ZIPPublishTab } from "./zip-publish-tab";
-import { ChangeList } from "./source-change-list";
+import { SourceChangesDialog } from "./source-change-list";
 
 export function PublishTab({ agentId, source, canEdit }: { agentId: string; source: AgentSource | null; canEdit: boolean }) {
   const { t } = useT("agents");
@@ -36,6 +36,7 @@ function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: bool
   const previewMutation = usePreviewAgentSourceSync(source.agent_id);
   const syncMutation = useSyncAgentSource(workspaceId, source.agent_id);
   const preview = previewMutation.data;
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [deferBindings, setDeferBindings] = useState(false);
   const requirementsReady = (preview?.requirements?.secrets ?? []).every((ref) => Object.hasOwn(secrets, ref)) && (!preview?.requirements?.deferred_bindings.length || deferBindings);
@@ -44,7 +45,9 @@ function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: bool
   const handlePreview = async () => {
     try {
       setSecrets({}); setDeferBindings(false); syncMutation.reset();
+      setPreviewOpen(false); previewMutation.reset();
       await previewMutation.mutateAsync(ref.trim());
+      setPreviewOpen(true);
     } catch { /* The persistent error panel retains the complete response. */ }
   };
 
@@ -98,8 +101,10 @@ function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: bool
           <p className="break-all font-mono text-caption">{preview.base_sha.slice(0, 12)} → {preview.resolved_sha.slice(0, 12)} · {preview.ref}</p>
           {preview.warnings?.map((warning) => <p key={warning} className="text-caption text-muted-foreground">{warning}</p>)}
           <PackageRequirementsForm requirements={preview.requirements} secrets={secrets} onSecretsChange={setSecrets} deferBindings={deferBindings} onDeferChange={setDeferBindings} disabled={pending} />
-          <ChangeList title={t(($) => $.tab_body.publish.git_changes)} changes={preview.git_changes ?? []} />
-          <ChangeList title={t(($) => $.tab_body.publish.configuration_changes)} changes={preview.configuration_changes ?? []} />
+          <SourceChangesDialog key={preview.preview_id} open={previewOpen} onOpenChange={setPreviewOpen} groups={[
+            { id: "configuration", title: t(($) => $.tab_body.publish.configuration_changes), changes: preview.configuration_changes ?? [] },
+            { id: "git", title: t(($) => $.tab_body.publish.git_changes), changes: preview.git_changes ?? [] },
+          ]} />
           {preview.changed === true ? (
             <div className="space-y-3">
               <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.publish.confirm_hint)}</p>
