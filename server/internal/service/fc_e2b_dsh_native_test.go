@@ -34,10 +34,11 @@ func TestDSHNativeGatewayRequiresExactLiveReceipt(t *testing.T) {
 	if authority != "https://pre.multica.test" {
 		t.Fatal("native capability was routed to the task relay")
 	}
-	receipt := dshNativeGatewayReceipt{Version: 1, Ready: true, WorkspaceID: host.WorkspaceID.String(), AgentID: host.AgentID.String(), Generation: host.Generation, SandboxID: host.SandboxID, Port: DSHNativeGatewayPort, Authority: authority, Origin: origin}
+	bridge := newDSHNativeAuthorityBridge("test-secret")
+	receipt := dshNativeGatewayReceipt{PublicKey: bridge.publicKey(), Version: 2, Ready: true, WorkspaceID: host.WorkspaceID.String(), AgentID: host.AgentID.String(), Generation: host.Generation, SandboxID: host.SandboxID, Port: DSHNativeGatewayPort, Authority: authority, Origin: origin}
 	encode := func(r dshNativeGatewayReceipt) string { b, _ := json.Marshal(r); return string(b) }
 	for _, mutate := range []func(*dshNativeGatewayReceipt){
-		func(r *dshNativeGatewayReceipt) { r.Version = 2 }, func(r *dshNativeGatewayReceipt) { r.Ready = false },
+		func(r *dshNativeGatewayReceipt) { r.Version = 1 }, func(r *dshNativeGatewayReceipt) { r.Ready = false },
 		func(r *dshNativeGatewayReceipt) { r.WorkspaceID = uuid.NewString() }, func(r *dshNativeGatewayReceipt) { r.AgentID = uuid.NewString() },
 		func(r *dshNativeGatewayReceipt) { r.Generation++ }, func(r *dshNativeGatewayReceipt) { r.SandboxID = "sbx-other" },
 		func(r *dshNativeGatewayReceipt) { r.Port++ }, func(r *dshNativeGatewayReceipt) { r.Authority = "https://other.test" },
@@ -45,12 +46,12 @@ func TestDSHNativeGatewayRequiresExactLiveReceipt(t *testing.T) {
 	} {
 		changed := receipt
 		mutate(&changed)
-		if validateDSHNativeGatewayReceipt(encode(changed), host, origin, authority) == nil {
+		if validateDSHNativeGatewayReceipt(encode(changed), host, origin, authority, bridge.publicKey()) == nil {
 			t.Fatal("mismatched receipt accepted")
 		}
 	}
 	runner := &fakeCommandRunner{out: []string{encode(receipt)}}
-	launcher := &FCE2BLauncher{ConfigProvider: func() FCE2BConfig { return config }, Runner: runner}
+	launcher := &FCE2BLauncher{nativeAuthority: bridge, ConfigProvider: func() FCE2BConfig { return config }, Runner: runner}
 	got, err := launcher.DSHNativeGatewayURL(context.Background(), host)
 	if err != nil || got != origin {
 		t.Fatal("valid receipt failed", err)

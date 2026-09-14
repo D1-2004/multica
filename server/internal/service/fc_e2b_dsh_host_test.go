@@ -135,7 +135,7 @@ func TestDSHNativeManagedProfileReceipt(t *testing.T) {
 		}
 	}
 	host := dshhost.Host{Key: dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, Generation: 2, SandboxID: "sandbox"}
-	out, err := (dshHomeRunner{}).Run(context.Background(), "", dshNativeHostEnsureArgs(host, raw, "https://pre.multica.test", "https://33124-sandbox.fc.test"), nil)
+	out, err := (dshHomeRunner{}).Run(context.Background(), "", dshNativeHostEnsureArgs(host, raw, "https://pre.multica.test", "https://33124-sandbox.fc.test", strings.Repeat("a", 64)), nil)
 	if err != nil || validateDSHNativeHostReceipt(out, host, digest) != nil {
 		t.Fatalf("matching managed profile rejected: %v", err)
 	}
@@ -212,7 +212,7 @@ func dshLaunchFixture(t *testing.T, pool *pgxpool.Pool, p *dshLaunchProvider) (*
 	u := func(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
 	rt := db.AgentRuntime{ID: u(uuid.New()), WorkspaceID: u(workspace)}
 	task := db.AgentTaskQueue{ID: u(uuid.New()), AgentID: u(agent), RuntimeID: rt.ID}
-	launcher := &FCE2BLauncher{Pool: pool, Runner: dshHomeRunner{}, Config: FCE2BConfig{ServerURL: "https://production-relay.test", DSHNativeAuthority: "https://pre.multica.test", Domain: "fc.test", APIURL: httpServer.URL, APIKey: "test-key", LLMModels: []string{"fixture-model"}, SandboxReadyTimeout: time.Second}, dshProvider: func(dshhost.Storage) (dshhost.Provider, error) { return p, nil }}
+	launcher := &FCE2BLauncher{nativeAuthority: newDSHNativeAuthorityBridge("test-secret"), Pool: pool, Runner: dshHomeRunner{}, Config: FCE2BConfig{ServerURL: "https://production-relay.test", DSHNativeAuthority: "https://pre.multica.test", Domain: "fc.test", APIURL: httpServer.URL, APIKey: "test-key", LLMModels: []string{"fixture-model"}, SandboxReadyTimeout: time.Second}, dshProvider: func(dshhost.Storage) (dshhost.Provider, error) { return p, nil }}
 	return launcher, rt, task
 }
 

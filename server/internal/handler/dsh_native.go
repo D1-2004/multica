@@ -84,7 +84,7 @@ func (h *Handler) IssueDSHNativeAccess(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "DSH employee Host is not running")
 		return
 	}
-	origin, err := h.FCE2BLauncher.DSHNativeGatewayURL(ctx, host)
+	origin, err := h.FCE2BLauncher.EnsureDSHNativeAuthority(ctx, host, h.dshNativeAccessManager())
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "DSH native gateway is not ready")
 		return
