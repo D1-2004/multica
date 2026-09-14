@@ -188,6 +188,14 @@ func InjectRuntimeConfig(workDir, provider string, ctx TaskContextForEnv) (strin
 	return content, writeRuntimeConfigFile(path, content)
 }
 
+// BuildNativeDSHContext is registered with the official per-Agent dynamic
+// context service, so every task replaces the previous runtime snapshot.
+func BuildNativeDSHContext(ctx TaskContextForEnv, directory string) string {
+	return buildMetaSkillContent("dsh", ctx) + "\n\nCurrent task metadata directory: " + directory +
+		"\nResolve Multica-generated .agent_context and .multica/project metadata paths relative to this directory. " +
+		"Project files and commands use the persistent Session working directory.\n"
+}
+
 // runtimeConfigPath returns the absolute path to the runtime config file that
 // InjectRuntimeConfig writes for the given provider, or "" when the provider
 // has no file-based config target. Centralising the mapping keeps Inject /

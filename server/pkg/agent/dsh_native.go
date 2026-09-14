@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net"
@@ -21,6 +23,8 @@ type DSHNativeHostConfig struct {
 	SessionID, RequestID, WorkDir                 string
 	ModelBaseURL, ModelAPIKey, ProviderGeneration string
 	ModelID                                       string
+	SkillDirectory                                string
+	ContextText                                   string
 	ExpiresAt                                     time.Time
 	ToolEnv                                       map[string]string
 }
@@ -45,6 +49,12 @@ func NewDSHNativeHostBackend(cfg Config, native DSHNativeHostConfig) (Backend, e
 	}
 	if native.Generation < 1 || native.WorkDir != filepath.Join("/mnt/multica-dsh/workspaces", native.SessionID) || !native.ExpiresAt.After(time.Now()) || native.ExpiresAt.After(time.Now().Add(24*time.Hour)) {
 		return nil, errors.New("invalid managed DSH execution scope")
+	}
+	if native.SkillDirectory != "" && (!filepath.IsAbs(native.SkillDirectory) || filepath.Clean(native.SkillDirectory) != native.SkillDirectory || strings.ContainsRune(native.SkillDirectory, 0)) {
+		return nil, errors.New("invalid managed DSH Skill directory")
+	}
+	if strings.ContainsRune(native.ContextText, 0) || len(native.ContextText) > 1<<20 {
+		return nil, errors.New("invalid managed DSH task context")
 	}
 	copied := map[string]string{}
 	for key, value := range native.ToolEnv {
@@ -139,16 +149,25 @@ func (b *dshNativeBackend) admit(ctx context.Context, prompt string, opts ExecOp
 		request["expiresAt"] = b.native.ExpiresAt.UnixMilli()
 		request["toolEnv"] = b.native.ToolEnv
 		request["mcpServers"] = mcp
+		request["skillDirectory"] = b.native.SkillDirectory
+		request["contextText"] = b.native.ContextText
 		request["model"] = map[string]string{"baseURL": b.native.ModelBaseURL, "apiKey": b.native.ModelAPIKey, "providerGeneration": b.native.ProviderGeneration}
 		raw, err := b.client.call(ctx, "task.bind", request)
 		if err != nil {
 			return err
 		}
 		var receipt struct {
-			SessionID string `json:"sessionId"`
-			RequestID string `json:"requestId"`
+			SessionID      string `json:"sessionId"`
+			RequestID      string `json:"requestId"`
+			SkillDirectory string `json:"skillDirectory"`
+			ContextDigest  string `json:"contextDigest"`
 		}
-		if json.Unmarshal(raw, &receipt) != nil || receipt.SessionID != b.native.SessionID || receipt.RequestID != b.native.RequestID {
+		expectedContextDigest := ""
+		if b.native.ContextText != "" {
+			digest := sha256.Sum256([]byte(b.native.ContextText))
+			expectedContextDigest = hex.EncodeToString(digest[:])
+		}
+		if json.Unmarshal(raw, &receipt) != nil || receipt.SessionID != b.native.SessionID || receipt.RequestID != b.native.RequestID || receipt.SkillDirectory != b.native.SkillDirectory || receipt.ContextDigest != expectedContextDigest {
 			return errors.New("invalid native DSH binding receipt")
 		}
 	case "ready": // Same immutable binding: replay the request ID, never its keys.

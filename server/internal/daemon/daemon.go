@@ -6164,7 +6164,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
-	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
+	var runtimeBrief string
+	if nativeDSH != nil {
+		// Retire only a prior Multica marker block; employee-authored AGENTS.md
+		// remains owned by the employee and the official instructions plugin.
+		if err := execenv.CleanupRuntimeConfig(env.WorkDir, "dsh"); err != nil {
+			return TaskResult{}, fmt.Errorf("retire native DSH legacy task brief: %w", err)
+		}
+		runtimeBrief = execenv.BuildNativeDSHContext(taskCtx, env.TaskContextDirectory)
+	} else {
+		runtimeBrief, err = execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
+	}
 	if err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
@@ -6423,6 +6433,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if nativeDSH != nil {
 		nativeDSH.ToolEnv = nativeDSHToolEnvironment(agentEnv)
+		nativeDSH.SkillDirectory = env.TaskSkillDirectory
+		nativeDSH.ContextText = runtimeBrief
 		backend, err = agent.NewDSHNativeHostBackend(backendConfig, *nativeDSH)
 	} else {
 		backend, err = agent.ResolveBackend(provider, backendConfig)
