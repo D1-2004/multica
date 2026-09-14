@@ -3,7 +3,9 @@ package agent
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -20,6 +22,7 @@ type nativeBackendPeer struct {
 	live     []json.RawMessage
 	prompted chan struct{}
 	hold     bool
+	receipt  map[string]string
 }
 
 func (p *nativeBackendPeer) client() *dshHostClient {
@@ -56,7 +59,11 @@ func (p *nativeBackendPeer) client() *dshHostClient {
 				p.mu.Lock()
 				p.state = "ready"
 				p.mu.Unlock()
-				write(map[string]string{"sessionId": "session", "requestId": "mine"})
+				if p.receipt != nil {
+					write(p.receipt)
+				} else {
+					write(map[string]string{"sessionId": "session", "requestId": "mine"})
+				}
 			case "prompt":
 				write(map[string]bool{"accepted": true})
 				close(p.prompted)
@@ -98,6 +105,39 @@ func (p *nativeBackendPeer) client() *dshHostClient {
 		}()
 		return local, nil
 	}}
+}
+func TestDSHNativeBackendRequiresSkillAndContextReceiptBeforePrompt(t *testing.T) {
+	const directory, brief = "/scratch/task/skills", "Current task {{literal}}"
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(brief)))
+	for _, mode := range []string{"valid", "missing-skills", "wrong-skills", "missing-context", "wrong-context"} {
+		t.Run(mode, func(t *testing.T) {
+			receipt := map[string]string{"sessionId": "session", "requestId": "mine", "skillDirectory": directory, "contextDigest": digest}
+			switch mode {
+			case "missing-skills":
+				delete(receipt, "skillDirectory")
+			case "wrong-skills":
+				receipt["skillDirectory"] = "/scratch/previous/skills"
+			case "missing-context":
+				delete(receipt, "contextDigest")
+			case "wrong-context":
+				receipt["contextDigest"] = fmt.Sprintf("%x", sha256.Sum256([]byte("previous task")))
+			}
+			peer := &nativeBackendPeer{calls: map[string]int{}, state: "absent", prompted: make(chan struct{}), receipt: receipt}
+			backend := &dshNativeBackend{native: DSHNativeHostConfig{SessionID: "session", RequestID: "mine", SkillDirectory: directory, ContextText: brief}, client: peer.client()}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			err := backend.admit(ctx, "fixture", ExecOptions{}, nil)
+			peer.mu.Lock()
+			defer peer.mu.Unlock()
+			if mode == "valid" {
+				if err != nil || peer.calls["prompt"] != 1 {
+					t.Fatalf("affirmative receipt did not admit prompt: %v", err)
+				}
+			} else if err == nil || peer.calls["prompt"] != 0 {
+				t.Fatal("unconfirmed task resources admitted a prompt")
+			}
+		})
+	}
 }
 func TestDSHNativeBackendExecutesOnHostAndReplaysCompletedRequest(t *testing.T) {
 	for _, retry := range []bool{false, true} {

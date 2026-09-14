@@ -242,6 +242,9 @@ type Environment struct {
 	// the GC loop never deletes the user's directory.
 	LocalDirectory    bool
 	PersistentWorkDir bool
+	// TaskSkillDirectory is a task-owned catalog registered on the native Host.
+	TaskSkillDirectory   string
+	TaskContextDirectory string
 	// MulticaConfigRoot is the private per-task config directory exported to
 	// child CLI invocations. It prevents implicit discovery of the daemon
 	// owner's ~/.multica profile without changing the provider-facing HOME.
@@ -385,7 +388,26 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// and avoids a conditional that would silently disable cleanup if the
 	// local_directory detection logic ever drifts.
 	manifest := &sidecarManifest{}
-	if err := writeContextFiles(workDir, params.Provider, params.Task, manifest); err != nil {
+	contextWorkDir := workDir
+	if params.PersistentWorkDir != "" {
+		env.TaskContextDirectory = filepath.Join(envRoot, "dsh-context")
+		if err := os.Mkdir(env.TaskContextDirectory, 0700); err != nil {
+			return nil, fmt.Errorf("execenv: create task context directory: %w", err)
+		}
+		contextWorkDir = env.TaskContextDirectory
+		// Keep only the credential-free daemon marker in the persistent tree.
+		if err := writeTaskContextMarker(workDir, params.Task, manifest); err != nil {
+			return nil, err
+		}
+		if err := EnsureWorkspacesRootMarker(filepath.Dir(workDir)); err != nil {
+			return nil, err
+		}
+		env.TaskSkillDirectory = filepath.Join(envRoot, "dsh-skills")
+		if err := os.Mkdir(env.TaskSkillDirectory, 0700); err != nil {
+			return nil, fmt.Errorf("execenv: create task Skill catalog: %w", err)
+		}
+	}
+	if err := writeContextFilesWithSkills(contextWorkDir, params.Provider, params.Task, manifest, env.TaskSkillDirectory); err != nil {
 		return nil, fmt.Errorf("execenv: write context files: %w", err)
 	}
 

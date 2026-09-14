@@ -235,6 +235,10 @@ func writeWorkspacesRootMarkerAtomic(path string, data []byte) error {
 // cloud-mode tasks whose envRoot is wiped wholesale by the GC loop — may
 // pass nil to skip the bookkeeping entirely.
 func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
+	return writeContextFilesWithSkills(workDir, provider, ctx, manifest, "")
+}
+
+func writeContextFilesWithSkills(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest, taskSkillDirectory string) error {
 	if err := writeTaskContextMarker(workDir, ctx, manifest); err != nil {
 		return err
 	}
@@ -266,7 +270,13 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 		// workdir-local skills dir at all — skip the resolve too, to avoid
 		// leaving an empty .agent_context/skills/ behind.
 		if provider != "hermes" {
-			skillsDir, err := resolveSkillsDir(workDir, provider, manifest)
+			skillsDir := taskSkillDirectory
+			var err error
+			if skillsDir == "" {
+				skillsDir, err = resolveSkillsDir(workDir, provider, manifest)
+			} else {
+				err = recordMkdirAll(skillsDir, 0o755, manifest)
+			}
 			if err != nil {
 				return fmt.Errorf("resolve skills dir: %w", err)
 			}
