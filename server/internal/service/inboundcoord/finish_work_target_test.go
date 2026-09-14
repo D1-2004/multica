@@ -57,6 +57,9 @@ func TestFinishRevisionHintNamesKindChangeForStatusPing(t *testing.T) {
 	if !strings.Contains(hint, "Change the action kind") || strings.Contains(hint, "Repair the diagnosed action/field") {
 		t.Fatalf("status-ping repair must not tell the model to reword the same kind: %s", hint)
 	}
+	if !finishRevisionRequiresKindChange(noAdvancementRepairReason("a1")) {
+		t.Fatal("report_status repair must count as a kind change")
+	}
 }
 
 func TestFinishWorkTargetCannotAllowAnUnloadedOriginalGoal(t *testing.T) {

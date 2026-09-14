@@ -343,6 +343,20 @@ func noAdvancementRepairReason(actionRef string) string {
 	return "Work action " + actionRef + " is a status ping on already accepted work. Use report_status with loaded state_refs; do not continue_work or only reword its reply."
 }
 
+// applyFinishWorkCheckKindRepair rewrites Host reasons that require a different
+// action kind. It runs for both allow and revise, including release builds that
+// later discard work_checks on revise — those builds must call this first.
+func applyFinishWorkCheckKindRepair(result *finishCheckResult, check finishWorkCheck, siblingWorkActions bool) {
+	if check.TargetMatch == "no_advancement" {
+		result.Verdict = "revise"
+		result.Reason = noAdvancementRepairReason(check.ActionRef)
+	}
+	if check.Deliverables == "multiple" {
+		result.Verdict = "revise"
+		result.Reason = multipleDeliverableRepairReason(check.ActionRef, siblingWorkActions)
+	}
+}
+
 func multipleDeliverableRepairReason(actionRef string, siblingWorkActions bool) string {
 	if siblingWorkActions {
 		return "Work action " + actionRef + " was marked multiple; classify only that action's own purpose. Sibling work actions already cover other requests and do not make this one multiple. Split only if THIS purpose still mixes unrelated kinds of output."
@@ -481,17 +495,12 @@ func validateFinishWorkChecks(result *finishCheckResult, decision Decision) erro
 		if expected[check.ActionRef] == "continue_work" {
 			wantMatch = "same_deliverable"
 		}
-		if check.TargetMatch == "no_advancement" {
-			result.Verdict = "revise"
-			result.Reason = noAdvancementRepairReason(check.ActionRef)
-		} else if result.Verdict == "allow" && check.TargetMatch != wantMatch {
+		applyFinishWorkCheckKindRepair(result, check, len(expected) > 1)
+		if result.Verdict == "allow" && check.TargetMatch != wantMatch && check.TargetMatch != "no_advancement" {
 			result.Verdict = "revise"
 			result.Reason = "Work action " + check.ActionRef + " target_match=" + check.TargetMatch + " does not support " + expected[check.ActionRef] + "; an independent deliverable needs start_work, and continuation requires evidence of the same original output. Preserve all requests."
 		}
-		if check.Deliverables == "multiple" {
-			result.Verdict = "revise"
-			result.Reason = multipleDeliverableRepairReason(check.ActionRef, len(expected) > 1)
-		} else if result.Verdict == "allow" && check.Deliverables != "single" {
+		if result.Verdict == "allow" && check.Deliverables != "single" && check.Deliverables != "multiple" {
 			result.Verdict = "revise"
 			result.Reason = "Work action " + check.ActionRef + " has no executable deliverable; repair its scope or use the appropriate non-work action."
 		}

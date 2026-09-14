@@ -867,7 +867,7 @@
         "server/internal/service/inboundcoord/policy.go",
         "server/internal/service/inboundcoord/policy_test.go#TestPolicyMixedTerminalReviewLoadsBothCanonicalModules",
         "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckMixedActionsReviewBothScopesOnce",
-        "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckRewritesReviewerMultipleWhenWorkIsAlreadySplit",
+        "server/internal/service/inboundcoord/finish_check_test.go#TestValidateFinishWorkChecksRewritesReviewerMultipleOnSplitPlan",
         "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckAllowsSameKindOwnerBatchAsSingleDeliverable"
       ],
       "case_file": "cases.json"

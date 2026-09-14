@@ -227,7 +227,11 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 								if n := ledger.recordReviewReason(check.Reason, call.Arguments); n >= repeatedReviewReasonBudget {
 									return failWith(loopStopReviewDeadlock, fmt.Errorf("review repeated the same reason %d times: %s", n, check.Reason))
 								} else if n > 1 {
-									callErr = repeatHint(callErr, n, "The reviewer has given this reason before; repair exactly that defect or choose a different action kind.")
+									repeat := "The reviewer has given this reason before; repair exactly that defect or choose a different action kind."
+									if finishRevisionRequiresKindChange(check.Reason) {
+										repeat = "The reviewer has given this reason before; change the action kind. Do not resubmit continue_work with a different reply."
+									}
+									callErr = repeatHint(callErr, n, repeat)
 								}
 							}
 						}
