@@ -10,6 +10,8 @@ export const DSHProfileSchema = z.object({
   applied_sandbox_id: z.string().optional(),
   current: z.boolean(),
   builds: z.array(z.object({
+    id: z.string().uuid().optional(),
+    can_retry: z.boolean().optional(),
     package_name: z.string().min(1).max(214),
     version: z.string().min(1),
     state: z.enum(["queued", "ready", "failed"]),
@@ -29,7 +31,7 @@ export const DSHProfileSchema = z.object({
   appliedGeneration: value.applied_generation,
   appliedSandboxId: value.applied_sandbox_id ?? "",
   current: value.current,
-  builds: (value.builds ?? []).map((build) => ({ packageName: build.package_name, version: build.version, state: build.state })),
+  builds: (value.builds ?? []).map((build) => ({ id: build.id ?? "", canRetry: build.can_retry === true && build.state === "failed" && !!build.id, packageName: build.package_name, version: build.version, state: build.state })),
 }));
 
 export type DSHProfileStatus = z.infer<typeof DSHProfileSchema>;

@@ -28,3 +28,14 @@ export function usePrepareDSHProfile(workspaceId: string, agentId: string) {
     onSettled: () => client.invalidateQueries({ queryKey }),
   });
 }
+
+export function useRetryDSHProfileBuild(workspaceId: string, agentId: string) {
+  const client = useQueryClient();
+  const queryKey = dshProfileKeys.detail(workspaceId, agentId);
+  return useMutation({
+    mutationKey: queryKey,
+    mutationFn: ({ revision, buildId }: { revision: string; buildId: string }) => api.retryDSHProfileBuild(workspaceId, agentId, revision, buildId),
+    retry: false,
+    onSettled: () => client.invalidateQueries({ queryKey }),
+  });
+}

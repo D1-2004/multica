@@ -4,6 +4,27 @@ import { ApiClient } from "./client";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("employee Profile receipts", () => {
+  it("binds retry to an observed attempt and workspace without sending configuration", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ accepted: true }), { status: 202 }));
+    vi.stubGlobal("fetch", fetch);
+    await new ApiClient("https://pre.example.test").retryDSHProfileBuild("workspace", "agent/id", "9", "attempt-id");
+    expect(fetch).toHaveBeenCalledWith("https://pre.example.test/api/agents/agent%2Fid/dsh-profile/retry",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ revision: "9", build_id: "attempt-id" }), headers: expect.objectContaining({ "X-Workspace-ID": "workspace" }) }));
+  });
+
+  it.each([
+    { state: "failed", id: "5f28f5d4-40db-4f11-83be-4181f4ee0a31", can_retry: true, expected: true },
+    { state: "failed", can_retry: true, expected: false },
+    { state: "queued", id: "5f28f5d4-40db-4f11-83be-4181f4ee0a31", can_retry: true, expected: false },
+    { state: "failed", id: "5f28f5d4-40db-4f11-83be-4181f4ee0a31", expected: false },
+  ])("requires a failed attempt identity and cleanup signal for retry", async ({ expected, ...build }) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      state: "build_failed", current: false, desired_revision: "9", applied_generation: 0,
+      builds: [{ package_name: "fixture", version: "1.0.0", ...build }],
+    }))));
+    const result = await new ApiClient("https://pre.example.test").getDSHProfile("workspace", "agent");
+    expect(result?.builds[0]?.canRetry).toBe(expected);
+  });
   it("keeps preparation pending and sends only workspace identity", async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       state: "pending_host", desired_revision: "9223372036854775807", applied_generation: 0, current: false,
@@ -22,6 +43,7 @@ describe("employee Profile receipts", () => {
     { state: "applied", current: true, desired_revision: "2", applied_revision: "2", applied_generation: 0, applied_sandbox_id: "sandbox" },
     { state: "pending_host", current: true, desired_revision: "2", applied_generation: 1 },
     { state: "future_state", current: false, applied_generation: 0 },
+    { state: "build_failed", desired_revision: "9", current: false, applied_generation: 0, builds: [{ package_name: "fixture", version: "1", state: "failed", can_retry: "true" }] },
   ])("does not turn malformed status into applied", async (body) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
     expect(await new ApiClient("https://pre.example.test").getDSHProfile("workspace", "agent")).toBeNull();

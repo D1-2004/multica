@@ -1550,6 +1550,8 @@
       "native_unconfirmed": "暂时无法打开 DSH，已刷新 Home 状态。就绪后请重试。"
     },
     "dsh_profile": {
+      "retry_build": "重试构建",
+      "retry_unconfirmed": "尚未确认重试结果。请先刷新配置状态，再决定是否重试。",
       "title": "配置生效状态",
       "loading": "正在检查配置状态...",
       "unavailable": "暂时无法确认配置状态，请刷新重试。",

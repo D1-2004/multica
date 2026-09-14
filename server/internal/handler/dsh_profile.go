@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -48,6 +49,51 @@ func (h *Handler) GetDSHProfile(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handler) PrepareDSHProfile(w http.ResponseWriter, r *http.Request) {
 	h.manageDSHProfile(w, r, true)
+}
+
+func (h *Handler) RetryDSHProfileBuild(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	var input struct {
+		Revision string `json:"revision"`
+		BuildID  string `json:"build_id"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || !errors.Is(decoder.Decode(&struct{}{}), io.EOF) {
+		writeError(w, http.StatusBadRequest, "retry requires a revision and observed build ID")
+		return
+	}
+	revision, err := strconv.ParseInt(input.Revision, 10, 64)
+	if err != nil || revision < 1 || strconv.FormatInt(revision, 10) != input.Revision {
+		writeError(w, http.StatusBadRequest, "invalid Profile revision")
+		return
+	}
+	buildID, ok := parseUUIDOrBadRequest(w, input.BuildID, "build_id")
+	if !ok {
+		return
+	}
+	if uuid.UUID(buildID.Bytes) == uuid.Nil {
+		writeError(w, http.StatusBadRequest, "invalid build_id")
+		return
+	}
+	key, ok := h.dshHomeKey(w, r)
+	if !ok {
+		return
+	}
+	if h.FCE2BLauncher == nil {
+		writeError(w, http.StatusServiceUnavailable, "employee Profile service is unavailable")
+		return
+	}
+	err = h.FCE2BLauncher.RetryDSHEmployeeBuild(r.Context(), key, revision, uuid.UUID(buildID.Bytes))
+	if errors.Is(err, dshprofile.ErrChanged) {
+		writeError(w, http.StatusConflict, "build or Profile changed, or cleanup is not confirmed; refresh before retrying")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "build retry could not be confirmed; refresh its status")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]bool{"accepted": true})
 }
 
 func (h *Handler) manageDSHProfile(w http.ResponseWriter, r *http.Request, prepare bool) {

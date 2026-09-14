@@ -38,6 +38,26 @@ func TestDSHProfileRejectsMachineAndCallerDescriptors(t *testing.T) {
 	}
 }
 
+func TestDSHBuildRetryRejectsMachineAndMalformedInput(t *testing.T) {
+	h := &Handler{}
+	for _, actor := range []string{"task_token", "cloud_pat", "workspace_access_token"} {
+		r := httptest.NewRequest(http.MethodPost, "/api/agents/id/dsh-profile/retry", strings.NewReader(`{}`))
+		r.Header.Set("X-Actor-Source", actor)
+		w := httptest.NewRecorder()
+		RequireHumanActor(http.HandlerFunc(h.RetryDSHProfileBuild)).ServeHTTP(w, r)
+		if w.Code != http.StatusForbidden {
+			t.Fatal("machine retry admitted", actor, w.Code)
+		}
+	}
+	for _, body := range []string{`{}`, `null`, `[]`, `{"revision":"01","build_id":"bad"}`, `{"revision":"1","build_id":"bad"}`, `{"revision":"1","descriptor":{}}`, `{} {}`, strings.Repeat(" ", 1025)} {
+		w := httptest.NewRecorder()
+		h.RetryDSHProfileBuild(w, httptest.NewRequest(http.MethodPost, "/api/agents/id/dsh-profile/retry", strings.NewReader(body)))
+		if w.Code != http.StatusBadRequest {
+			t.Fatal("invalid retry input admitted", w.Code)
+		}
+	}
+}
+
 func TestDSHProfileUsesEmployeeOverrideAndChecksActiveRows(t *testing.T) {
 	row := db.ListDshPluginsForAgentRow{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, PackageName: "test-plugin", ResolvedVersion: "1.0.0", Integrity: "sha256-" + strings.Repeat("a", 64), Enabled: true, ConfigRevision: 7, BundleRows: []byte(`["declared"]`), ConfigRow: "declared", Config: []byte(`{"value":"workspace"}`), ConfigOverride: []byte(`{"row_id":"declared","config":{"value":"employee"}}`)}
 	source, err := dshProfileSource("template", []db.ListDshPluginsForAgentRow{row})

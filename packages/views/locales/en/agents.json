@@ -1571,6 +1571,8 @@
       "native_unconfirmed": "DSH could not be opened. Home status has been refreshed; try again when it is ready."
     },
     "dsh_profile": {
+      "retry_build": "Retry build",
+      "retry_unconfirmed": "Retry was not confirmed. Refresh the configuration status before trying again.",
       "title": "Configuration status",
       "loading": "Checking configuration status...",
       "unavailable": "Configuration status is unavailable. Refresh to check again.",

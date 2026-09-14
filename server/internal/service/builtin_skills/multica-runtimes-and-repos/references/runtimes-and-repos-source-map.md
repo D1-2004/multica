@@ -117,3 +117,10 @@
 - `server/migrations/9245_dsh_plugin_build_worker.*.sql` and `9246_dsh_plugin_build_due.*.sql`: additive execution metadata and a separate concurrent due-work index; old Profile readers remain compatible.
 - `server/internal/handler/workspace.go` and `GuardBuildDeletion`: workspace-parent then build-row locking prevents deleting the recovery ledger while cloud execution is active or unresolved.
 - `server/internal/dshprofile/build_worker_test.go`: simulated lost create/SQL receipts, stale claims, scope changes, malformed artifact receipts, object byte mismatch and cleanup failures. `build_postgres_test.go` uses two real preproduction pools for concurrent claims and deletion fencing; local runs skip it.
+
+### Explicit failed dependency build retry
+
+- `server/internal/dshprofile/retry.go`: saved revision/source and exact attempt CAS; only failed/done rows reset, archived attempt metadata stays in PostgreSQL.
+- `server/migrations/9247_dsh_plugin_build_attempts.up.sql`: attempt history on the existing workspace-owned build row.
+- `server/internal/handler/dsh_profile.go`: human employee management boundary and strict retry request; 409 on changed or uncleaned attempts.
+- `packages/views/agents/components/tabs/dsh-profile-status.tsx`: explicit retry, no automatic mutation retry, status refresh after uncertain receipt.

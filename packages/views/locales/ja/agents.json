@@ -1354,6 +1354,8 @@
       "native_unconfirmed": "DSH を開けませんでした。Home の状態を更新しました。準備ができたら再試行してください。"
     },
     "dsh_profile": {
+      "retry_build": "ビルドを再試行",
+      "retry_unconfirmed": "再試行の結果を確認できませんでした。再試行する前に設定の状態を更新してください。",
       "title": "設定の適用状況",
       "loading": "設定の状態を確認中...",
       "unavailable": "設定の状態を確認できません。更新してください。",

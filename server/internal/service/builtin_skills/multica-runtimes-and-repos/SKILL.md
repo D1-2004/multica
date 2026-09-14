@@ -230,7 +230,13 @@ Profile revision without rebuilding identical package bytes. Status contains
 `waiting_for_builds`, `build_failed` and `pending_host` are not successful application.
 The DSH Home page shows desired/last-confirmed versions and per-package build
 status. A failed package is shown as failed, not as indefinite preparation.
-The status API exposes package/version/state only, never the private settings. A historical
+The status API exposes package/version/state, attempt `id` and `can_retry`, never private settings.
+Human managers may `POST /api/agents/{id}/dsh-profile/retry` with the observed
+`revision` and `build_id`. Only a failed build with confirmed sandbox/artifact
+cleanup can be retried. The transaction archives the old intent and gives the
+new attempt a new ID; stale requests return 409 and cannot retry a later failure.
+The Home page offers Retry build only for an eligible failed attempt. Refresh
+after an uncertain response; never automatically repeat a retry request. A historical
 receipt after a saved edit is `configuration_changed`; a retired/replaced Host
 cannot be current. Preparation does not start a Host. The durable receipt store
 requires matching live Host generation, exact descriptor and fresh configuration

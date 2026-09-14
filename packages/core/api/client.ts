@@ -3800,6 +3800,13 @@ export class ApiClient {
     });
   }
 
+  async retryDSHProfileBuild(workspaceId: string, agentId: string, revision: string, buildId: string): Promise<void> {
+    await this.fetch<void>(`/api/agents/${encodeURIComponent(agentId)}/dsh-profile/retry`, {
+      method: "POST", body: JSON.stringify({ revision, build_id: buildId }),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+  }
+
   async getDSHHome(agentId: string, signal?: AbortSignal): Promise<DSHHomeStatus | null> {
     const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/dsh-home`, { signal });
     return parseWithFallback<DSHHomeStatus | null>(raw, DSHHomeSchema, null, {

@@ -182,6 +182,8 @@ type Status struct {
 }
 
 type BuildStatus struct {
+	ID          string `json:"id,omitempty"`
+	CanRetry    bool   `json:"can_retry"`
 	PackageName string `json:"package_name"`
 	Version     string `json:"version"`
 	State       string `json:"state"`
@@ -202,7 +204,7 @@ func (s Store) statusBuilds(ctx context.Context, key dshhost.Key, revision int64
 		return []BuildStatus{}, nil
 	}
 	var raw []byte
-	err = s.DB.QueryRow(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object('package_name',package_name,'version',package_version,'state',state) ORDER BY package_name),'[]'::jsonb)
+	err = s.DB.QueryRow(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object('id',id,'can_retry',state='failed' AND worker_phase='done','package_name',package_name,'version',package_version,'state',state) ORDER BY package_name),'[]'::jsonb)
  FROM dsh_plugin_build WHERE workspace_id=$1 AND template_id=$2 AND build_key=ANY($3)`, key.WorkspaceID, source.TemplateID, keys).Scan(&raw)
 	if err != nil {
 		return nil, err

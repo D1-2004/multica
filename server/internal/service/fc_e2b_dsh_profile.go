@@ -4,11 +4,23 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dshprofile"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func (l *FCE2BLauncher) RetryDSHEmployeeBuild(ctx context.Context, key dshhost.Key, revision int64, buildID uuid.UUID) error {
+	l = l.withCurrentConfig()
+	if l == nil || l.ReadDSHProfileSource == nil {
+		return errors.New("employee Profile source unavailable")
+	}
+	return l.withDSHEmployee(ctx, key, func(conn *pgxpool.Conn, _ db.AgentRuntime, template string) error {
+		return (dshprofile.Store{DB: conn}).RetryBuild(ctx, key, template, l.ReadDSHProfileSource, revision, buildID)
+	})
+}
 
 // DSHEmployeeProfile prepares durable build intents only when requested. Reading
 // status never starts a sandbox or publishes a new revision. Neither operation

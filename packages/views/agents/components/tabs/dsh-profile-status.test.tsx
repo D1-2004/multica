@@ -8,10 +8,11 @@ import { dshProfileKeys } from "@multica/core/agents";
 import enAgents from "../../../locales/en/agents.json";
 import { DshProfileStatus } from "./dsh-profile-status";
 
-const calls = vi.hoisted(() => ({ get: vi.fn(), prepare: vi.fn() }));
+const calls = vi.hoisted(() => ({ get: vi.fn(), prepare: vi.fn(), retry: vi.fn() }));
 vi.mock("@multica/core/api", () => ({ api: {
   getDSHProfile: (...args: unknown[]) => calls.get(...args),
   prepareDSHProfile: (...args: unknown[]) => calls.prepare(...args),
+  retryDSHProfileBuild: (...args: unknown[]) => calls.retry(...args),
 } }));
 const pending = { state: "pending_host", current: false, desiredRevision: "7", appliedRevision: "4", builds: [] };
 const clients: QueryClient[] = [];
@@ -60,4 +61,28 @@ it("does not show cached applied status when the status request fails", async ()
   show();
   await screen.findByText("Configuration status is unavailable. Refresh to check again.");
   expect(screen.queryByText("The running DSH host has confirmed this configuration.")).toBeNull();
+});
+
+it("retries only an explicitly selected cleaned attempt and refreshes after an unknown receipt", async () => {
+  calls.get.mockResolvedValue({ ...pending, state: "build_failed", builds: [{ id: "attempt-a", canRetry: true, packageName: "fixture", version: "1.0.0", state: "failed" }] });
+  calls.retry.mockImplementation(async () => {
+    calls.get.mockResolvedValue({ ...pending, state: "waiting_for_builds", builds: [{ id: "attempt-b", canRetry: false, packageName: "fixture", version: "1.0.0", state: "queued" }] });
+    throw new Error("receipt lost");
+  });
+  show();
+  const button = await screen.findByRole("button", { name: "Retry build" });
+  expect(calls.retry).not.toHaveBeenCalled();
+  await userEvent.click(button);
+  await screen.findByRole("alert");
+  await screen.findByText("Preparing plugin dependencies. The configuration is not active yet.");
+  expect(calls.retry).toHaveBeenCalledExactlyOnceWith("workspace", "employee", "7", "attempt-a");
+  expect(screen.queryByRole("button", { name: "Retry build" })).toBeNull();
+});
+
+it.each([false, undefined])("does not offer retry before cleanup is confirmed (%s)", async (canRetry) => {
+  calls.get.mockResolvedValue({ ...pending, state: "build_failed", builds: [{ id: "attempt-a", canRetry, packageName: "fixture", version: "1.0.0", state: "failed" }] });
+  show();
+  await screen.findByText("fixture · 1.0.0");
+  expect(screen.queryByRole("button", { name: "Retry build" })).toBeNull();
+  expect(calls.retry).not.toHaveBeenCalled();
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { dshProfileOptions, usePrepareDSHProfile } from "@multica/core/agents";
+import { dshProfileOptions, usePrepareDSHProfile, useRetryDSHProfileBuild } from "@multica/core/agents";
 import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "../../../i18n";
 
@@ -9,6 +9,7 @@ export function DshProfileStatus({ workspaceId, agentId }: { workspaceId: string
   const { t } = useT("agents");
   const query = useQuery(dshProfileOptions(workspaceId, agentId));
   const prepare = usePrepareDSHProfile(workspaceId, agentId);
+  const retry = useRetryDSHProfileBuild(workspaceId, agentId);
   const status = query.data;
   const unavailable = query.isError || (!query.isPending && !status);
   const description = () => {
@@ -42,10 +43,16 @@ export function DshProfileStatus({ workspaceId, agentId }: { workspaceId: string
       {!!status.builds?.length && <ul className="space-y-1 text-caption">
         {(status.builds ?? []).map((build) => <li key={build.packageName} className="flex flex-wrap justify-between gap-2">
           <span>{build.packageName} · {build.version}</span><span>{buildLabel(build.state)}</span>
+          {status.state === "build_failed" && build.state === "failed" && build.canRetry === true && build.id && status.desiredRevision &&
+            <Button size="sm" variant="outline" disabled={retry.isPending || prepare.isPending || query.isFetching}
+              onClick={() => retry.mutate({ revision: status.desiredRevision, buildId: build.id })}>
+              {t(($) => $.tab_body.dsh_profile.retry_build)}
+            </Button>}
         </li>)}
       </ul>}
     </>}
     {prepare.isError && <p role="alert" className="text-caption text-destructive">{t(($) => $.tab_body.dsh_profile.prepare_unconfirmed)}</p>}
+    {retry.isError && <p role="alert" className="text-caption text-destructive">{t(($) => $.tab_body.dsh_profile.retry_unconfirmed)}</p>}
     <div className="flex gap-2">
       {(status?.state === "unprepared" || status?.state === "configuration_changed") && !unavailable &&
         <Button size="sm" onClick={() => prepare.mutate()} disabled={prepare.isPending || query.isFetching}>
