@@ -29,6 +29,8 @@
 - `docs/security/asb-dws-network-audit.md` maps DWS direct-transfer, OSS, mail, Stream and distribution dependencies to reviewed default rules; only two managed transfer families accept wildcards at the creation boundary.
 # DSH employee Home provisioning
 
+- `server/internal/dshhost/session.go` and migration `9238_dsh_browser_session_identity`: preserve official UUID and platform-prefixed Session identities; transactional native adoption refuses remapping and duplicate request ownership. The native prompt ingress still requires separate task-service and gateway wiring.
+
 - `server/internal/handler/dsh_home.go`: human/manage-authorized status and provisioning endpoints for FC DSH agents.
 - `server/internal/dshhost/provision.go` and `provision_postgres.go`: durable placement, per-resource intent, receipt reconciliation and immutable binding.
 - `server/internal/dshhost/cloud_storage.go` and `cloud_api.go`: NAS/RAM/FC calls, resource-chain verification and bounded ACS transport using the official signer.

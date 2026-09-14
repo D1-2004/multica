@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 type SessionScope struct {
@@ -20,17 +21,72 @@ type Execution struct {
 	Workdir   string
 }
 
+// Both the official browser's UUID and platform-created session-UUID are
+// native identities. Preserve their spelling: changing it changes the log.
+func validSessionID(value string) bool {
+	raw := strings.TrimPrefix(value, "session-")
+	id, err := uuid.Parse(raw)
+	return err == nil && id != uuid.Nil && raw == id.String()
+}
+
+func validSessionScope(scope SessionScope) bool {
+	return scope.WorkspaceID != uuid.Nil && scope.AgentID != uuid.Nil && scope.ID != uuid.Nil &&
+		(scope.Kind == "chat" || scope.Kind == "issue" || scope.Kind == "task")
+}
+
+// AdoptNativeExecution must share the transaction that creates the platform
+// task and its input. It records the browser's exact identities before a runner
+// can observe that task. A scope, task or request already owned elsewhere is
+// rejected; no conflict handler overwrites an existing binding.
+func (s PostgresStore) AdoptNativeExecution(ctx context.Context, scope SessionScope, taskID uuid.UUID, sessionID string, requestID uuid.UUID) (Execution, error) {
+	if _, ok := s.DB.(pgx.Tx); !ok {
+		return Execution{}, errors.New("native DSH admission requires a task transaction")
+	}
+	if !validSessionScope(scope) || taskID == uuid.Nil || requestID == uuid.Nil || !validSessionID(sessionID) {
+		return Execution{}, errors.New("invalid native DSH execution identity")
+	}
+	_, err := s.DB.Exec(ctx, `INSERT INTO dsh_employee_session
+ (workspace_id,agent_id,scope_kind,scope_id,session_id) VALUES ($1,$2,$3,$4,$5)
+ ON CONFLICT (workspace_id,agent_id,scope_kind,scope_id) DO NOTHING`,
+		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, sessionID)
+	if err != nil {
+		return Execution{}, err
+	}
+	var current string
+	if err := s.DB.QueryRow(ctx, `SELECT session_id FROM dsh_employee_session
+ WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4`,
+		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID).Scan(&current); err != nil {
+		return Execution{}, err
+	}
+	if current != sessionID {
+		return Execution{}, ErrChanged
+	}
+	_, err = s.DB.Exec(ctx, `INSERT INTO dsh_task_binding
+ (workspace_id,agent_id,task_id,session_id,request_id) VALUES ($1,$2,$3,$4,$5)
+ ON CONFLICT (workspace_id,agent_id,task_id) DO NOTHING`,
+		scope.WorkspaceID, scope.AgentID, taskID, sessionID, requestID)
+	if err != nil {
+		return Execution{}, err
+	}
+	var binding Execution
+	if err := s.DB.QueryRow(ctx, `SELECT session_id,request_id FROM dsh_task_binding
+ WHERE workspace_id=$1 AND agent_id=$2 AND task_id=$3`,
+		scope.WorkspaceID, scope.AgentID, taskID).Scan(&binding.SessionID, &binding.RequestID); err != nil {
+		return Execution{}, err
+	}
+	if binding.SessionID != sessionID || binding.RequestID != requestID {
+		return Execution{}, ErrChanged
+	}
+	binding.Workdir = MountPath + "/workspaces/" + sessionID
+	return binding, nil
+}
+
 // BindExecution commits native identities before any external prompt admission.
 // A lost response, server replica change, or rebuilt Host must reuse the same
 // Session and request ID. Native DSH deduplicates prompts by that request ID.
 func (s PostgresStore) BindExecution(ctx context.Context, scope SessionScope, taskID uuid.UUID) (Execution, error) {
-	if scope.WorkspaceID == uuid.Nil || scope.AgentID == uuid.Nil || scope.ID == uuid.Nil || taskID == uuid.Nil {
+	if !validSessionScope(scope) || taskID == uuid.Nil {
 		return Execution{}, errors.New("DSH session binding requires employee, scope and task identities")
-	}
-	switch scope.Kind {
-	case "chat", "issue", "task":
-	default:
-		return Execution{}, errors.New("invalid DSH session scope")
 	}
 	_, err := s.DB.Exec(ctx, `INSERT INTO dsh_employee_session
  (workspace_id,agent_id,scope_kind,scope_id,session_id) VALUES ($1,$2,$3,$4,$5)
@@ -48,8 +104,7 @@ func (s PostgresStore) BindExecution(ctx context.Context, scope SessionScope, ta
 	if err != nil {
 		return Execution{}, err
 	}
-	parsed, err := uuid.Parse(strings.TrimPrefix(sessionID, "session-"))
-	if err != nil || parsed == uuid.Nil || sessionID != "session-"+parsed.String() {
+	if !validSessionID(sessionID) {
 		return Execution{}, errors.New("invalid persisted DSH session identity")
 	}
 	_, err = s.DB.Exec(ctx, `INSERT INTO dsh_task_binding

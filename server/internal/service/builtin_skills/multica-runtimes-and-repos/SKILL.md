@@ -30,6 +30,13 @@ package are deployment-owned. A pending create must reconcile its persisted
 intent; never work around it by sharing another employee's volume. A provisioned
 Home does not by itself prove that a native Host or business task is running.
 
+DSH Session identity is preserved exactly: official browser UUIDs and platform
+`session-UUID` identities are distinct valid names. The internal native adoption
+primitive requires the same PostgreSQL transaction as task/input creation and
+rejects scope, task or request conflicts. This storage primitive does not yet
+connect native browser prompts to task admission. Do not claim native chat is
+available from the entry page or this schema support alone.
+
 A runtime is the execution target behind an agent. A daemon owns local runtime processes and claims queued tasks from the server.
 
 The chain is:
