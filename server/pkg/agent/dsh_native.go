@@ -27,6 +27,7 @@ type DSHNativeHostConfig struct {
 	ContextText                                   string
 	ExpiresAt                                     time.Time
 	ToolEnv                                       map[string]string
+	TrajectorySink                                func(context.Context, []byte) error
 }
 type dshNativeBackend struct {
 	cfg       Config
@@ -220,6 +221,7 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 	}
 	emit(Message{Type: MessageStatus, Status: "running", SessionID: b.native.SessionID})
 	history := dshNativeTaskHistory{requestID: b.native.RequestID}
+	var trajectoryHeader json.RawMessage
 	opened := false
 	err = b.client.follow(ctx, map[string]any{"address": map[string]string{"kind": "session", "sessionId": b.native.SessionID}}, func(raw json.RawMessage) (bool, error) {
 		var frame struct {
@@ -230,10 +232,11 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 			return false, errors.New("invalid native DSH follow frame")
 		}
 		if !opened {
-			_, events, err := readDSHNativeBaseline(ctx, b.client.call, raw, b.native.SessionID, b.native.WorkDir)
+			snapshot, events, err := readDSHNativeBaseline(ctx, b.client.call, raw, b.native.SessionID, b.native.WorkDir)
 			if err != nil {
 				return false, err
 			}
+			trajectoryHeader = snapshot.Header
 			for _, event := range events {
 				if err := history.accept(event); err != nil {
 					return false, err
@@ -277,6 +280,42 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 		return failure(cleanupErr)
 	}
 	b.quiescent.Store(true)
+	if b.native.TrajectorySink != nil {
+		artifactCtx, stopArtifact := context.WithTimeout(context.Background(), 30*time.Second)
+		defer stopArtifact()
+		// Cancellation can close follow before the native terminal is committed.
+		// Resource release has now confirmed idle; read the durable log again.
+		if ctx.Err() != nil && history.terminal == "" && opened {
+			var restored dshNativeTaskHistory
+			restored.requestID = b.native.RequestID
+			recoveryErr := b.client.follow(artifactCtx, map[string]any{"address": map[string]string{"kind": "session", "sessionId": b.native.SessionID}}, func(raw json.RawMessage) (bool, error) {
+				snapshot, events, readErr := readDSHNativeBaseline(artifactCtx, b.client.call, raw, b.native.SessionID, b.native.WorkDir)
+				if readErr != nil {
+					return false, readErr
+				}
+				for _, event := range events {
+					if readErr := restored.accept(event); readErr != nil {
+						return false, readErr
+					}
+				}
+				trajectoryHeader = snapshot.Header
+				return true, nil
+			})
+			if recoveryErr != nil {
+				return failure(errors.New("native DSH cancellation trajectory could not be recovered"))
+			}
+			history = restored
+		}
+		if history.found {
+			artifact, artifactErr := history.trajectory(trajectoryHeader, b.native.SessionID)
+			if artifactErr != nil {
+				return failure(artifactErr)
+			}
+			if artifactErr = b.native.TrajectorySink(artifactCtx, artifact); artifactErr != nil {
+				return failure(errors.New("native DSH task trajectory upload was not confirmed"))
+			}
+		}
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			status := "cancelled"

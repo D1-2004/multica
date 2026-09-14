@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dshtrajectory"
 )
 
 const (
@@ -47,6 +48,20 @@ type dshTrajectoryEvent struct {
 }
 
 func validateDSHTrajectory(data []byte, expectedSessionID string) (dshTrajectoryHeader, int32, error) {
+	if dshtrajectory.IsRange(data) {
+		doc, err := dshtrajectory.Parse(data)
+		if err != nil {
+			return dshTrajectoryHeader{}, 0, err
+		}
+		if doc.Scope.SessionID != expectedSessionID {
+			return dshTrajectoryHeader{}, 0, errors.New("session id does not match trajectory scope")
+		}
+		var header dshTrajectoryHeader
+		if err := json.Unmarshal(doc.Header, &header); err != nil {
+			return header, 0, err
+		}
+		return header, int32(len(doc.Events)), nil
+	}
 	lines := bytes.Split(data, []byte{'\n'})
 	if len(lines) == 0 || len(bytes.TrimSpace(lines[0])) == 0 {
 		return dshTrajectoryHeader{}, 0, errors.New("invalid session header")
@@ -117,6 +132,21 @@ func validateDSHTrajectory(data []byte, expectedSessionID string) (dshTrajectory
 		expectedSeq++
 	}
 	return header, eventCount, nil
+}
+
+func validateDSHUploadBinding(data []byte, sessionID, requestID string, bound bool) error {
+	if dshtrajectory.IsRange(data) {
+		doc, err := dshtrajectory.Parse(data)
+		if err != nil {
+			return err
+		}
+		if !bound || sessionID != doc.Scope.SessionID || requestID != doc.Scope.RequestID {
+			return errors.New("trajectory does not match the persisted DSH task binding")
+		}
+	} else if bound {
+		return errors.New("managed DSH tasks require a task-scoped trajectory")
+	}
+	return nil
 }
 
 func sealDSHTrajectory(data []byte) (sealed, key []byte, err error) {
@@ -267,6 +297,18 @@ func (h *Handler) UploadDSHTrajectory(w http.ResponseWriter, r *http.Request) {
 	header, eventCount, err := validateDSHTrajectory(data, sessionID)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// A managed employee Session may contain many tasks. Its immutable platform
+	// binding, never an uploader-supplied header, authorizes the exported range.
+	var boundSession, boundRequest string
+	bindingErr := h.DB.QueryRow(r.Context(), `SELECT session_id,request_id::text FROM dsh_task_binding WHERE workspace_id=$1 AND agent_id=$2 AND task_id=$3`, workspaceID, task.AgentID, task.ID).Scan(&boundSession, &boundRequest)
+	if bindingErr != nil && !errors.Is(bindingErr, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to inspect DSH task binding")
+		return
+	}
+	if err := validateDSHUploadBinding(data, boundSession, boundRequest, bindingErr == nil); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 

@@ -6435,6 +6435,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		nativeDSH.ToolEnv = nativeDSHToolEnvironment(agentEnv)
 		nativeDSH.SkillDirectory = env.TaskSkillDirectory
 		nativeDSH.ContextText = runtimeBrief
+		if !task.A2AInvocation {
+			nativeDSH.TrajectorySink = func(uploadCtx context.Context, data []byte) error {
+				err := d.client.uploadDSHTrajectory(uploadCtx, task.ID, task.WorkspaceID, agentToken, data)
+				if err != nil {
+					taskLog.Error("native DSH trajectory upload failed", "error", err)
+				}
+				return err
+			}
+		}
 		backend, err = agent.NewDSHNativeHostBackend(backendConfig, *nativeDSH)
 	} else {
 		backend, err = agent.ResolveBackend(provider, backendConfig)

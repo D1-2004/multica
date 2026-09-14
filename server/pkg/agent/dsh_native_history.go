@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/multica-ai/multica/server/pkg/dshtrajectory"
 )
 
 // Native history is a zero-based log. Its sequence numbers and request IDs
@@ -132,15 +134,17 @@ func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.Raw
 // are not completion evidence. Mixed-request turns fail instead of exporting
 // somebody else's output into this task.
 type dshNativeTaskHistory struct {
-	requestID string
-	nextSeq   int64
-	turn      int64
-	inTurn    bool
-	foreign   bool
-	found     bool
-	ownTurn   int64
-	terminal  string
-	ownEvents []json.RawMessage
+	requestID     string
+	nextSeq       int64
+	turn          int64
+	inTurn        bool
+	foreign       bool
+	found         bool
+	ownTurn       int64
+	terminal      string
+	ownEvents     []json.RawMessage
+	pendingEvents []json.RawMessage
+	turnBytes     int
 }
 
 func (h *dshNativeTaskHistory) accept(raw json.RawMessage) error {
@@ -162,6 +166,8 @@ func (h *dshNativeTaskHistory) accept(raw json.RawMessage) error {
 			return errors.New("invalid native DSH turn start")
 		}
 		h.turn, h.inTurn, h.foreign = *data.Turn, true, false
+		h.pendingEvents = nil
+		h.turnBytes = 0
 	case "user/message":
 		var data struct {
 			Source struct {
@@ -208,9 +214,46 @@ func (h *dshNativeTaskHistory) accept(raw json.RawMessage) error {
 		h.inTurn = false
 	}
 	if h.found && h.ownTurn == h.turn && !wasTerminal {
+		if len(h.ownEvents) == 0 {
+			h.ownEvents = append(h.ownEvents, h.pendingEvents...)
+			h.pendingEvents = nil
+		}
 		h.ownEvents = append(h.ownEvents, raw)
+	} else if !h.found && h.inTurn {
+		h.pendingEvents = append(h.pendingEvents, raw)
+	}
+	if !wasTerminal && (!h.found || h.ownTurn == h.turn) {
+		h.turnBytes += len(raw) + 1
+		if h.turnBytes > dshtrajectory.MaxBytes {
+			return errors.New("native DSH task trajectory exceeds 32 MiB")
+		}
 	}
 	return nil
+}
+
+func (h *dshNativeTaskHistory) trajectory(header json.RawMessage, sessionID string) ([]byte, error) {
+	if !h.found || h.terminal == "" || len(h.ownEvents) == 0 {
+		return nil, errors.New("native DSH task has no complete trajectory")
+	}
+	// follow returns the logical header, without the physical JSONL type tag.
+	var physical map[string]json.RawMessage
+	if json.Unmarshal(header, &physical) != nil || physical == nil {
+		return nil, errors.New("invalid native DSH trajectory header")
+	}
+	physical["type"] = json.RawMessage(`"session"`)
+	raw, err := json.Marshal(physical)
+	if err != nil {
+		return nil, err
+	}
+	first, err := decodeDSHNativeEvent(h.ownEvents[0])
+	if err != nil {
+		return nil, err
+	}
+	last, err := decodeDSHNativeEvent(h.ownEvents[len(h.ownEvents)-1])
+	if err != nil {
+		return nil, err
+	}
+	return dshtrajectory.Encode(dshtrajectory.Scope{Type: dshtrajectory.RangeType, Version: 1, SessionID: sessionID, RequestID: h.requestID, FirstSeq: *first.Seq, LastSeq: *last.Seq}, raw, h.ownEvents)
 }
 func (h *dshNativeTaskHistory) result(sessionID string) (Result, error) {
 	if !h.found || h.terminal == "" {

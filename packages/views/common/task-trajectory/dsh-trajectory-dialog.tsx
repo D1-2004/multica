@@ -345,7 +345,7 @@ export function DSHTrajectoryDialog({
                     data={visibleEvents}
                     initialTopMostItemIndex={visibleEvents.length - 1}
                     itemContent={(_, event) => {
-                      const prior = document.events[event.seq - 1];
+                      const prior = document.events[event.seq - (document.events[0]?.seq ?? 0) - 1];
                       const turnStart =
                         event.type === "turn/start" ||
                         (trajectoryEventTurn(event) !== null &&
