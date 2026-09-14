@@ -522,3 +522,39 @@ func TestDSHNativeStartupRejectsMissingIdentityAndDisabledDeployment(t *testing.
 		}
 	}
 }
+
+func TestDSHProfileFailureDoesNotStrandExistingLifecycle(t *testing.T) {
+	for _, initial := range []string{"creating", "retiring"} {
+		t.Run(initial, func(t *testing.T) {
+			a, _ := dshLaunchPools(t)
+			provider := &dshLaunchProvider{failCreate: initial == "creating"}
+			l, rt, task := dshLaunchFixture(t, a, provider)
+			if initial == "retiring" {
+				l.Runner = dshHomeRunner{wrongNativeReceipt: true, profiles: &sync.Map{}}
+			}
+			if _, err := resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) {
+				t.Fatal(err)
+			}
+			l.ReadDSHProfileSource = func(context.Context, *db.Queries, dshhost.Key, string) (dshprofile.Source, error) {
+				return dshprofile.Source{}, errors.New("invalid saved plugin settings")
+			}
+			if _, err := resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) {
+				t.Fatal(err)
+			}
+			key := dshhost.Key{WorkspaceID: uuid.UUID(rt.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}
+			host, err := (dshhost.PostgresStore{DB: a}).Get(context.Background(), key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if provider.creates != 1 {
+				t.Fatal("invalid Profile admitted a replacement")
+			}
+			if initial == "creating" && (host.State != "running" || host.SandboxID != "sbx-1") {
+				t.Fatal("unknown create not reconciled")
+			}
+			if initial == "retiring" && (host.State == "retiring" || len(provider.live) != 0) {
+				t.Fatal("retirement stranded by invalid Profile")
+			}
+		})
+	}
+}

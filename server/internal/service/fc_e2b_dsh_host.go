@@ -134,13 +134,20 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshho
 	if err != nil {
 		return dshhost.Host{}, false, err
 	}
-	if l.ReadDSHProfileSource == nil {
-		return dshhost.Host{}, false, errors.New("DSH employee Profile source unavailable")
-	}
 	profiles := dshprofile.Store{DB: conn}
-	revision, err := profiles.Prepare(ctx, key, template, l.ReadDSHProfileSource)
+	var revision dshprofile.Revision
+	if l.ReadDSHProfileSource == nil {
+		err = errors.New("DSH employee Profile source unavailable")
+	} else {
+		revision, err = profiles.Prepare(ctx, key, template, l.ReadDSHProfileSource)
+	}
 	if err != nil {
-		return dshhost.Host{}, false, err
+		if before.State != "creating" && before.State != "retiring" {
+			return dshhost.Host{}, false, err
+		}
+		// Invalid new settings cannot strand an uncertain create or prevent
+		// confirmed retirement. An empty descriptor forbids any new admission.
+		revision = dshprofile.Revision{}
 	}
 	if revision.Descriptor == "" && before.State != "creating" && before.State != "retiring" {
 		return dshhost.Host{}, false, errDSHHostWaiting
