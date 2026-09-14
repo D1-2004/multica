@@ -438,6 +438,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		agentIdentityControlBaseURLProvider = opts.RuntimeConfig.agentIdentityControlBaseURL
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	if provision, err := dshStorageProvisioning(pool); err != nil {
+		slog.Error("DSH storage provisioning configuration unavailable", "error", err)
+	} else {
+		h.ProvisionDSHStorage = provision
+	}
 	h.Assoc = assoc.NewService(assoc.NewSQLStore(pool))
 	h.SiteHosting = sitehosting.NewService(
 		sitehosting.NewPostgresStore(pool),
@@ -2542,6 +2547,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// Which DSH plugins this agent boots with. The daemon
 					// composes these into the profile the sandbox builds.
 					r.Get("/dsh-plugins", h.ListAgentDshPlugins)
+					r.With(handler.RequireHumanActor).Get("/dsh-home", h.GetDSHHome)
+					r.With(handler.RequireHumanActor).Post("/dsh-home", h.EnsureDSHHome)
 					r.Put("/dsh-plugins", h.SetAgentDshPlugins)
 					r.Delete("/dsh-plugins/{pluginId}", h.RemoveAgentDshPlugin)
 					// OKRs materialize as workspace labels the agent tags

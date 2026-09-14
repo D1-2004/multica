@@ -2,8 +2,8 @@
 
 This package owns employee storage and native execution identities for FC DSH.
 The FC launcher uses it for employee admission, mount initialization and native
-Host readiness. The native task adapter is integrated; the native UI gateway
-and employee storage provisioning entry point remain unfinished. The FC image
+Host readiness. The native task adapter and storage provisioning entry point
+are integrated in the feature branch; the native UI gateway remains unfinished. The FC image
 advertises the capability on the candidate branch; deployment and acceptance
 must be checked against the actual template catalog.
 
@@ -100,9 +100,24 @@ Only then may immutable `BindStorage` expose the Home to the launcher. Final
 binding is idempotent if the status write is lost. Placement changes do not
 rewrite an existing provisioning intent.
 
-This state machine is not yet wired to an authenticated product entry point or
-a concrete NAS/RAM/FC storage provider. No employee storage has been provisioned
-by this code yet. Unit tests cover ambiguous outcomes at every step, hidden
+The human-only `GET/POST /api/agents/{id}/dsh-home` entry point additionally
+requires employee management permission and an FC DSH runtime. The POST accepts
+no placement, resource IDs or credentials. `MULTICA_DSH_STORAGE_CONFIG` selects
+one frozen placement and an Aone-managed `credential_resource` access-package
+URN for the same account. The application binding and least-privilege cloud
+authorization must be provisioned before enabling this configuration. The
+setting is passed through the Aone entrypoint and takes effect on deployment.
+
+`CloudStorageProvider` implements NAS, RAM and FC POP operations; `ACSClient`
+uses the official SDK signer with request cancellation, bounded response sizes,
+no redirect and no operation retry. Dependency readiness checks precede the
+conditional creation claim. Reconciliation rejects duplicates and malformed or
+cyclic pagination. Final verification compares the employee root and quota,
+active AP with RAM enabled, FC-only role trust, its exact AP-scoped policy and
+exclusive policy attachment, and the available volume's Team and UID/GID.
+
+No employee storage has been provisioned by this code yet. Unit tests cover
+ambiguous outcomes at every step, hidden
 listings, lost database receipts, cancellation and failed ownership verification.
 `TestProvisionPostgresCompetingReplicas` additionally requires the real
 preproduction database; a local skip is not evidence for its SQL behavior.

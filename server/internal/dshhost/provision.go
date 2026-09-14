@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,7 +39,14 @@ type ProvisionSpec struct {
 func (s ProvisionSpec) valid() bool {
 	return s.AccountID != "" && s.Region != "" && s.Zone != "" && s.TeamID != "" &&
 		s.FileSystemID != "" && s.VPCID != "" && s.SecurityGroupID != "" &&
-		len(s.VSwitchIDs) > 0 && !slices.Contains(s.VSwitchIDs, "") && s.SizeLimit > 0 && s.FileCountLimit > 0
+		len(s.VSwitchIDs) > 0 && !slices.Contains(s.VSwitchIDs, "") && s.SizeLimit >= 10<<30 && s.FileCountLimit >= 10000 && strings.HasPrefix(s.Zone, s.Region+"-")
+}
+
+func (s ProvisionSpec) Validate() error {
+	if !s.valid() {
+		return errors.New("incomplete DSH cloud placement or invalid storage quota")
+	}
+	return nil
 }
 
 type Provision struct {
@@ -69,10 +77,13 @@ type ProvisionStore interface {
 }
 
 type StorageProvider interface {
+	// Resolve dependencies and readiness before claiming the durable write.
+	// The returned closure performs only the prepared mutation. A failed
+	// prerequisite must not strand an intent that was never sent to the cloud.
 	// Each create must attach StepIntent and employee identity atomically to
 	// the object, or use the provider's request idempotency key. Never apply
 	// ownership labels in a second request after creation.
-	CreateStorageResource(context.Context, Provision) (string, error)
+	PrepareStorageResource(context.Context, Provision) (func(context.Context) (string, error), error)
 	// An empty/eventually consistent listing never permits another create.
 	// Require exactly one object matching intent, placement and dependencies.
 	FindStorageResource(context.Context, Provision) (string, error)
@@ -104,11 +115,18 @@ func (m Provisioner) Ensure(ctx context.Context, key Key, spec ProvisionSpec) (H
 		var id string
 		switch p.State {
 		case "planned":
+			create, prepareErr := m.Provider.PrepareStorageResource(ctx, p)
+			if prepareErr != nil {
+				return Host{}, prepareErr
+			}
+			if create == nil {
+				return Host{}, errors.New("missing DSH storage creation operation")
+			}
 			p, err = m.Store.ClaimProvisionStep(ctx, p)
 			if err != nil {
 				return Host{}, err
 			}
-			id, err = m.Provider.CreateStorageResource(ctx, p)
+			id, err = create(ctx)
 		case "creating":
 			id, err = m.Provider.FindStorageResource(ctx, p)
 		default:

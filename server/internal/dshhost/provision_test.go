@@ -12,7 +12,7 @@ import (
 )
 
 func provisionSpec() ProvisionSpec {
-	return ProvisionSpec{AccountID: "123", Region: "cn-beijing", Zone: "cn-beijing-k", TeamID: "team", FileSystemID: "fs", VPCID: "vpc", SecurityGroupID: "sg", VSwitchIDs: []string{"vsw"}, SizeLimit: 10, FileCountLimit: 10000}
+	return ProvisionSpec{AccountID: "123", Region: "cn-beijing", Zone: "cn-beijing-k", TeamID: "team", FileSystemID: "fs", VPCID: "vpc", SecurityGroupID: "sg", VSwitchIDs: []string{"vsw"}, SizeLimit: 10 << 30, FileCountLimit: 10000}
 }
 
 type provisionMemory struct {
@@ -70,6 +70,10 @@ type provisionCloud struct {
 	hidden          bool
 	badVerification bool
 	onCreate        context.CancelFunc
+}
+
+func (c *provisionCloud) PrepareStorageResource(_ context.Context, p Provision) (func(context.Context) (string, error), error) {
+	return func(ctx context.Context) (string, error) { return c.CreateStorageResource(ctx, p) }, nil
 }
 
 func (c *provisionCloud) CreateStorageResource(_ context.Context, p Provision) (string, error) {

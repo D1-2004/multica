@@ -12,6 +12,10 @@ import (
 
 const provisionColumns = `workspace_id, agent_id, spec, intent, step, state, resources`
 
+func (s PostgresStore) GetProvision(ctx context.Context, key Key) (Provision, error) {
+	return readProvision(s.DB.QueryRow(ctx, `SELECT `+provisionColumns+` FROM dsh_storage_provision WHERE workspace_id=$1 AND agent_id=$2`, key.WorkspaceID, key.AgentID))
+}
+
 func readProvision(row pgx.Row) (Provision, error) {
 	var p Provision
 	var spec []byte

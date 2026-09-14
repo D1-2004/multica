@@ -22,6 +22,14 @@ Daemon start, restart, and stop are unavailable from inside a daemon-managed age
 
 ## Core model
 
+FC DSH employees require an independently provisioned AgenticFS Home before
+their first task. Human owners and workspace administrators can inspect or
+advance provisioning through `GET/POST /api/agents/{id}/dsh-home`; this is an
+operator action, unavailable to task tokens. Placement and the cloud access
+package are deployment-owned. A pending create must reconcile its persisted
+intent; never work around it by sharing another employee's volume. A provisioned
+Home does not by itself prove that a native Host or business task is running.
+
 A runtime is the execution target behind an agent. A daemon owns local runtime processes and claims queued tasks from the server.
 
 The chain is:
