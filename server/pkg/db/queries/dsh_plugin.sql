@@ -57,7 +57,7 @@ WHERE id = $1 AND workspace_id = $2;
 -- name: ListDshPluginsForAgent :many
 -- The composed plugin set for one agent, in a stable order so the profile
 -- manifest a task boots is reproducible.
-SELECT p.*, b.enabled
+SELECT p.*, b.enabled, b.config_override, b.config_revision
 FROM dsh_plugin p
 JOIN agent_dsh_plugin b ON b.dsh_plugin_id = p.id
 WHERE b.agent_id = $1 AND p.workspace_id = $2
@@ -72,9 +72,19 @@ JOIN dsh_plugin p ON p.id = b.dsh_plugin_id
 WHERE p.workspace_id = $1;
 
 -- name: AddAgentDshPlugin :exec
-INSERT INTO agent_dsh_plugin (agent_id, dsh_plugin_id, enabled)
-VALUES ($1, $2, $3)
+INSERT INTO agent_dsh_plugin (agent_id, dsh_plugin_id, enabled, config_override, config_revision)
+VALUES ($1, $2, $3, $4, CASE WHEN sqlc.arg(config_revision)::bigint = 0 THEN nextval('agent_dsh_plugin_config_revision_seq') ELSE sqlc.arg(config_revision)::bigint END)
 ON CONFLICT (agent_id, dsh_plugin_id) DO UPDATE SET enabled = EXCLUDED.enabled;
+
+-- name: UpdateAgentDshPluginConfig :one
+UPDATE agent_dsh_plugin b SET
+    config_override = sqlc.narg(config_override)::jsonb,
+    config_revision = nextval('agent_dsh_plugin_config_revision_seq')
+FROM dsh_plugin p
+WHERE b.agent_id = sqlc.arg(agent_id) AND b.dsh_plugin_id = sqlc.arg(plugin_id)
+    AND p.id = b.dsh_plugin_id AND p.workspace_id = sqlc.arg(workspace_id)
+    AND b.config_revision = sqlc.arg(expected_revision)
+RETURNING b.config_revision;
 
 -- name: RemoveAgentDshPlugin :execrows
 DELETE FROM agent_dsh_plugin

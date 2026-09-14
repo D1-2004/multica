@@ -1,5 +1,6 @@
 "use client";
 
+import { DshPluginConfigDialog } from "./dsh-plugin-config-dialog";
 import { useMemo, useState } from "react";
 import { Blocks, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -49,6 +50,7 @@ export function DshPluginsTab({
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
+  const [configPlugin, setConfigPlugin] = useState<AgentDshPlugin | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const attached = useQuery(agentDshPluginsOptions(wsId, agent.id));
@@ -188,11 +190,14 @@ export function DshPluginsTab({
                 anyBusy={busyId !== null}
                 onToggle={(enabled) => handleToggle(plugin.id, enabled)}
                 onRemove={() => handleRemove(plugin.id)}
+                onConfigure={() => setConfigPlugin(plugin)}
               />
             ))}
           </ul>
         )}
       </section>
+
+      {configPlugin && canEdit && <DshPluginConfigDialog key={`${agent.id}:${configPlugin.id}`} wsId={wsId} agentId={agent.id} plugin={configPlugin} onClose={() => setConfigPlugin(null)} />}
 
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent>
@@ -249,6 +254,7 @@ function AttachedRow({
   anyBusy,
   onToggle,
   onRemove,
+  onConfigure,
 }: {
   plugin: AgentDshPlugin;
   canEdit: boolean;
@@ -256,6 +262,7 @@ function AttachedRow({
   anyBusy: boolean;
   onToggle: (enabled: boolean) => void;
   onRemove: () => void;
+  onConfigure: () => void;
 }) {
   const { t } = useT("agents");
   return (
@@ -288,6 +295,7 @@ function AttachedRow({
       </span>
       {canEdit && (
         <>
+          <Button variant="outline" size="sm" onClick={onConfigure} disabled={anyBusy}>{t(($) => $.tab_body.dsh_plugins.config_action)}</Button>
           {busy ? (
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
           ) : (

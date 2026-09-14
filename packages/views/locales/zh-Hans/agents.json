@@ -1183,7 +1183,21 @@
       "no_description": "没有描述",
       "toggle_aria": "启用 {{name}}",
       "remove_aria": "移除 {{name}}",
-      "save_failed_toast": "更新智能体的插件失败。"
+      "save_failed_toast": "更新智能体的插件失败。",
+      "config_action": "配置",
+      "config_title": "配置 {{name}}",
+      "config_hint": "这里保存的配置仅用于此智能体。读取配置会记录审计日志。保存版本不代表运行中的宿主已采用该版本。",
+      "config_reveal": "读取配置",
+      "config_inherited": "工作区默认配置",
+      "config_private": "智能体专属配置",
+      "config_revision": "版本 {{revision}}",
+      "config_row": "加载行",
+      "config_json": "配置（JSON）",
+      "config_save": "保存专属配置",
+      "config_reset": "使用工作区默认配置",
+      "config_saved": "配置已保存，宿主是否采用仍待验证。",
+      "config_invalid": "请输入 JSON 对象。",
+      "config_failed": "无法访问插件配置。"
     },
     "integrations": {
       "intro": "将智能体作为机器人接入外部聊天平台。数字员工账号在“数字员工”中单独管理。",

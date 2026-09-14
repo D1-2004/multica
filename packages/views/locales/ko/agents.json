@@ -1010,7 +1010,21 @@
       "no_description": "설명 없음",
       "toggle_aria": "{{name}} 사용",
       "remove_aria": "{{name}} 연결 해제",
-      "save_failed_toast": "에이전트의 플러그인을 업데이트하지 못했습니다."
+      "save_failed_toast": "에이전트의 플러그인을 업데이트하지 못했습니다.",
+      "config_action": "설정",
+      "config_title": "{{name}} 설정",
+      "config_hint": "여기에 저장한 설정은 이 에이전트에만 적용됩니다. 읽기는 감사 로그에 기록됩니다. 저장된 버전이 실행 중인 호스트에 적용되었다는 뜻은 아닙니다.",
+      "config_reveal": "설정 읽기",
+      "config_inherited": "워크스페이스 기본값",
+      "config_private": "에이전트 설정",
+      "config_revision": "버전 {{revision}}",
+      "config_row": "로더 행",
+      "config_json": "설정 (JSON)",
+      "config_save": "전용 설정 저장",
+      "config_reset": "워크스페이스 기본값 사용",
+      "config_saved": "설정이 저장되었습니다. 호스트 적용은 아직 확인되지 않았습니다.",
+      "config_invalid": "JSON 객체를 입력하세요.",
+      "config_failed": "플러그인 설정에 접근할 수 없습니다."
     },
     "integrations": {
       "intro": "이 에이전트를 봇으로 외부 채팅 플랫폼에 연결합니다. 디지털 직원 계정은 별도로 관리합니다.",

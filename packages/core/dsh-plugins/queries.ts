@@ -1,7 +1,7 @@
-import { queryOptions } from "@tanstack/react-query";
+import { queryOptions, useMutation } from "@tanstack/react-query";
 import { api } from "../api";
 import type { Agent } from "../types";
-import type { DshPluginBinding } from "./types";
+import type { DshPluginBinding, UpdateAgentDshPluginConfig } from "./types";
 
 /**
  * Query keys for the DSH plugin surfaces.
@@ -145,4 +145,21 @@ export function dshPluginFileOptions(wsId: string, pluginId: string, path: strin
     enabled: !!wsId && !!pluginId && !!path,
     staleTime: 10 * 60 * 1000,
   });
+}
+
+/** Explicit audited access; private values never enter a reusable query cache. */
+export function useAgentDshPluginConfig(wsId: string, agentId: string, pluginId: string) {
+  const load = useMutation({
+    mutationKey: ["workspaces", wsId, "agent-plugin-config", agentId, pluginId, "reveal"],
+    mutationFn: () => api.getAgentDshPluginConfig(agentId, pluginId, wsId),
+    gcTime: 0,
+    retry: false,
+  });
+  const save = useMutation({
+    mutationKey: ["workspaces", wsId, "agent-plugin-config", agentId, pluginId, "update"],
+    mutationFn: (input: UpdateAgentDshPluginConfig) => api.updateAgentDshPluginConfig(agentId, pluginId, input, wsId),
+    gcTime: 0,
+    retry: false,
+  });
+  return { load, save };
 }

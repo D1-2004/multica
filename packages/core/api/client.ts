@@ -1,3 +1,5 @@
+import { AgentDshPluginConfigSchema } from "./agent-dsh-plugin-config-schema";
+import type { AgentDshPluginConfig, UpdateAgentDshPluginConfig } from "../dsh-plugins/types";
 import { DSHNativeEntrySchema, type DSHNativeEntry } from "./dsh-native-schema";
 import { DSHHomeSchema, type DSHHomeStatus } from "./dsh-home-schema";
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
@@ -3750,6 +3752,30 @@ export class ApiClient {
       endpoint: "POST /api/agents/{id}/dsh-home",
       includeReceived: false,
     });
+  }
+
+  async getAgentDshPluginConfig(agentId: string, pluginId: string, workspaceId?: string): Promise<AgentDshPluginConfig | null> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/dsh-plugins/${encodeURIComponent(pluginId)}/config`, {
+      headers: workspaceId ? { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } : undefined,
+    });
+    const value = parseWithFallback<AgentDshPluginConfig | null>(raw, AgentDshPluginConfigSchema, null, {
+      endpoint: "GET /api/agents/{id}/dsh-plugins/{pluginId}/config", includeReceived: false,
+    });
+    return value?.agentId === agentId && value.pluginId === pluginId ? value : null;
+  }
+
+  async updateAgentDshPluginConfig(agentId: string, pluginId: string, input: UpdateAgentDshPluginConfig, workspaceId?: string): Promise<AgentDshPluginConfig | null> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/dsh-plugins/${encodeURIComponent(pluginId)}/config`, {
+      method: "PUT",
+      headers: workspaceId ? { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } : undefined,
+      body: JSON.stringify({ expected_revision: input.expectedRevision, config_override: input.override === null ? null : {
+        row_id: input.override.rowId, config: input.override.config,
+      } }),
+    });
+    const value = parseWithFallback<AgentDshPluginConfig | null>(raw, AgentDshPluginConfigSchema, null, {
+      endpoint: "PUT /api/agents/{id}/dsh-plugins/{pluginId}/config", includeReceived: false,
+    });
+    return value?.agentId === agentId && value.pluginId === pluginId ? value : null;
   }
 
   async listAgentDshPlugins(agentId: string): Promise<AgentDshPlugin[]> {

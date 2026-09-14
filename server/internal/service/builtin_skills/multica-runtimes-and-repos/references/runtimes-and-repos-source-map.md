@@ -78,3 +78,11 @@
 - `packages/core/api/client.ts`, `schemas.ts`, `stable-provider-scope-schema.test.ts`: optional provider query, release scope parsing and malformed/historical response checks. Existing shared-channel UI does not provide scoped publishing controls.
 
 - `server/internal/service/fc_e2b_dsh_input.go` signs correlated input receipts after current grant authorization and the shared handler admission callback. `fc_e2b_dsh_authority.go` starts independent input and access workers, bounds input polls and exposes no signing key to FC. `fc_e2b_dsh_input_test.go` covers refusal, replay, unknown outcomes, signature domains and a blocked input with concurrent successful access checks. Gateway readiness requires version 3; real preproduction/native acceptance remains pending.
+
+## Employee plugin configuration
+
+- `server/internal/handler/agent_dsh_plugin_config.go`: human owner/admin gate, audited reveal/write, bounded row validation and revision conflict checks. `dsh_plugin.go` preserves overrides on set replacement and serializes detach with configuration writes.
+- `server/migrations/9240_agent_dsh_plugin_config.*.sql`, `server/pkg/db/queries/dsh_plugin.sql`: employee binding overrides and sequence revisions that cannot repeat after detach/re-attach. `scripts/generate-dsh-plugin-sqlc.py` regenerates only this query/model without modifying historical migration ordering.
+- `server/internal/handler/dsh_plugin_dispatch.go`: effective employee configuration replaces workspace defaults; invalid configuration rejects the claim rather than silently dropping a plugin.
+- `packages/core/api/agent-dsh-plugin-config-schema.ts`, `packages/core/dsh-plugins/queries.ts`, `packages/views/agents/components/tabs/dsh-plugin-config-dialog.tsx`: explicit audited read, ephemeral editor, revision-aware writes and no automatic retry. Saved configuration is not displayed as applied to the running Host.
+- `server/internal/handler/agent_dsh_plugin_config_test.go`, `packages/core/api/agent-dsh-plugin-config-client.test.ts`, `packages/views/agents/components/tabs/dsh-plugins-tab.test.tsx`: isolation, malformed configuration/response, secret-safe errors and explicit read/save/conflict tests. Real preproduction persistence, concurrent writes and Host application require separate evidence.

@@ -1002,7 +1002,21 @@
       "no_description": "説明なし",
       "toggle_aria": "{{name}} を有効化",
       "remove_aria": "{{name}} の紐付けを解除",
-      "save_failed_toast": "エージェントのプラグインを更新できませんでした。"
+      "save_failed_toast": "エージェントのプラグインを更新できませんでした。",
+      "config_action": "設定",
+      "config_title": "{{name}} の設定",
+      "config_hint": "ここで保存する設定は、このエージェントにのみ適用されます。読み取りは監査されます。保存済みバージョンは実行中のホストへの適用を保証しません。",
+      "config_reveal": "設定を読む",
+      "config_inherited": "ワークスペースの既定値",
+      "config_private": "エージェントの設定",
+      "config_revision": "バージョン {{revision}}",
+      "config_row": "ローダー行",
+      "config_json": "設定 (JSON)",
+      "config_save": "専用設定を保存",
+      "config_reset": "ワークスペースの既定値を使う",
+      "config_saved": "設定を保存しました。ホストへの適用は未確認です。",
+      "config_invalid": "JSON オブジェクトを入力してください。",
+      "config_failed": "プラグイン設定にアクセスできません。"
     },
     "integrations": {
       "intro": "このエージェントを Bot として外部チャットプラットフォームに接続します。デジタル従業員アカウントは別に管理します。",

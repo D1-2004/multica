@@ -13,6 +13,8 @@ const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
 
 const mockListDshPlugins = vi.hoisted(() => vi.fn());
 const mockListAgentDshPlugins = vi.hoisted(() => vi.fn());
+const mockGetConfig = vi.hoisted(() => vi.fn());
+const mockUpdateConfig = vi.hoisted(() => vi.fn());
 const mockSetAgentDshPlugins = vi.hoisted(() => vi.fn());
 
 const { ApiError } = vi.hoisted(() => {
@@ -34,6 +36,8 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("@multica/core/api", () => ({
   api: {
+    getAgentDshPluginConfig: (...args: unknown[]) => mockGetConfig(...args),
+    updateAgentDshPluginConfig: (...args: unknown[]) => mockUpdateConfig(...args),
     listDshPlugins: (...args: unknown[]) => mockListDshPlugins(...args),
     listAgentDshPlugins: (...args: unknown[]) => mockListAgentDshPlugins(...args),
     setAgentDshPlugins: (...args: unknown[]) => mockSetAgentDshPlugins(...args),
@@ -256,5 +260,38 @@ describe("DshPluginsTab on a runtime that does not load plugins", () => {
     expect(
       screen.queryByText(enAgents.tab_body.dsh_plugins.local_runtime_notice),
     ).not.toBeInTheDocument();
+  });
+});
+
+
+describe("employee plugin settings", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockListDshPlugins.mockResolvedValue([plugin("p-1", "dsh-mcp-lens")]);
+    mockListAgentDshPlugins.mockResolvedValue([plugin("p-1", "dsh-mcp-lens")]);
+    mockGetConfig.mockResolvedValue({ agentId: "agent-1", pluginId: "p-1", revision: 12, inherited: false, rowId: "a-row", config: { token: "fixture-private" } });
+    mockUpdateConfig.mockResolvedValue({ agentId: "agent-1", pluginId: "p-1", revision: 14, inherited: false, rowId: "a-row", config: { token: "fixture-private" } });
+  });
+  it("reveals only on explicit read and saves with the observed revision", async () => {
+    renderTab();
+    await userEvent.click(await screen.findByRole("button", { name: "Configure" }));
+    expect(mockGetConfig).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Read settings" }));
+    const config = await screen.findByLabelText("Configuration (JSON)");
+    expect((config as HTMLTextAreaElement).value).toContain("fixture-private");
+    await userEvent.click(screen.getByRole("button", { name: "Save for this agent" }));
+    await waitFor(() => expect(mockUpdateConfig).toHaveBeenCalledWith("agent-1", "p-1", { expectedRevision: 12, override: { rowId: "a-row", config: { token: "fixture-private" } } }, "ws-1"));
+    expect(await screen.findByText("Settings saved. Host application still needs verification.")).toBeTruthy();
+  });
+  it("shows a conflict without retrying or claiming success", async () => {
+    mockUpdateConfig.mockRejectedValue(new ApiError("Reload settings", 409, "Conflict"));
+    renderTab();
+    await userEvent.click(await screen.findByRole("button", { name: "Configure" }));
+    await userEvent.click(screen.getByRole("button", { name: "Read settings" }));
+    await screen.findByLabelText("Configuration (JSON)");
+    await userEvent.click(screen.getByRole("button", { name: "Save for this agent" }));
+    expect(await screen.findByText("Reload settings")).toBeTruthy();
+    expect(mockUpdateConfig).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Settings saved. Host application still needs verification.")).toBeNull();
   });
 });
