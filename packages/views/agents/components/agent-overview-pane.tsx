@@ -8,6 +8,8 @@ import type {
   AgentRuntime,
   MemberWithUser,
 } from "@multica/core/types";
+import { DshHomeTab } from "./tabs/dsh-home-tab";
+import { isFCE2BRuntime } from "@multica/core/runtimes";
 import { runtimeSupportsMcpConfig } from "@multica/core/agents";
 import { useFeatureEnabled } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
@@ -177,6 +179,10 @@ export function AgentOverviewPane({
       ...group,
       items: group.items.filter((item) => {
         if (item.id === "mcp_config") return showMcp;
+        if (item.id === "dsh_home") {
+          return canEdit && agent.runtime_mode === "cloud" &&
+            runtime?.provider === "dsh" && isFCE2BRuntime(runtime);
+        }
         if (item.id === "dsh_plugins") return runtime?.provider === "dsh";
         if (item.id === "composio_mcp") return showComposioMcp;
         if (item.id === "integrations") return botIntegrationsConfigured;
@@ -484,6 +490,9 @@ export function AgentOverviewPane({
                       runtime={runtime}
                       canEdit={canEdit}
                     />
+                  )}
+                  {effectiveView === "dsh_home" && (
+                    <DshHomeTab key={agent.id} workspaceId={wsId} agentId={agent.id} />
                   )}
                   {effectiveView === "dsh_plugins" && (
                     <DshPluginsTab

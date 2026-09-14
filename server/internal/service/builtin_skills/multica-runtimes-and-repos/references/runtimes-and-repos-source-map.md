@@ -27,3 +27,15 @@
 - `server/internal/service/asb_network_policy.go` composes default-deny ASB policies from platform dependencies, Agent configuration and Runtime metadata. `asb_client.go` enforces deny at creation; `asb_launcher.go` refuses warm reuse after a policy change.
 - `server/internal/handler/runtime_asb_network.go` serves owner/admin-only GET/PUT `/api/runtimes/{runtimeId}/asb-network-policy`; `packages/views/runtimes/components/asb-network-policy-section.tsx` edits exact additional targets.
 - `docs/security/asb-dws-network-audit.md` maps DWS direct-transfer, OSS, mail, Stream and distribution dependencies to reviewed default rules; only two managed transfer families accept wildcards at the creation boundary.
+# DSH employee Home provisioning
+
+- `server/internal/handler/dsh_home.go`: human/manage-authorized status and provisioning endpoints for FC DSH agents.
+- `server/internal/dshhost/provision.go` and `provision_postgres.go`: durable placement, per-resource intent, receipt reconciliation and immutable binding.
+- `server/internal/dshhost/cloud_storage.go` and `cloud_api.go`: NAS/RAM/FC calls, resource-chain verification and bounded ACS transport using the official signer.
+- `server/cmd/server/dsh_storage_options.go`: deployment-owned placement and the Aone-managed cloud access package; no task-supplied credentials.
+
+## Employee DSH Home UI
+
+- `packages/core/agents/dsh-home.ts`: workspace/employee-scoped status queries and explicit provisioning mutation with post-response reconciliation.
+- `packages/views/agents/components/tabs/dsh-home-tab.tsx`: storage and host status, preparation and retry controls; owner/admin FC DSH visibility through `agent-overview-pane.tsx`.
+- `packages/core/api/dsh-home-client.test.ts`, `packages/views/agents/components/tabs/dsh-home-tab.test.tsx`: malformed response, accepted/pending, unknown write outcome, no implicit writes and cache isolation checks.

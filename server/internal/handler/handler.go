@@ -25,6 +25,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/githubapp"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
@@ -222,6 +223,7 @@ type Handler struct {
 	A2AProtocol              http.Handler
 	A2APushWorker            *service.A2APushWorker
 	FCE2BLauncher            *service.FCE2BLauncher
+	ProvisionDSHStorage      func(context.Context, dshhost.Key) (dshhost.Host, error)
 	ASBLauncher              *service.ASBLauncher
 	EnterpriseIdentity       enterpriseIdentityService
 	FCE2BStable              *service.FCE2BStableService

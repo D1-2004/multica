@@ -365,7 +365,8 @@
     "discard_confirm": "放弃修改",
     "identity": "身份",
     "llm_trace": "LLM Trace",
-    "inbound": "入站会话"
+    "inbound": "入站会话",
+    "dsh_home": "DSH Home"
   },
   "creation_studio": {
     "package": {
@@ -1508,6 +1509,23 @@
       "flag_bootstrap": "预热",
       "flag_ui": "显示列表",
       "ui_off": "打开「显示列表」后，这里会出现每个单聊和群聊的记忆。"
+    },
+    "dsh_home": {
+      "intro": "每个智能体都有独立的 Home，用于保存文件、配置和会话。首次执行任务前请先准备存储。",
+      "loading": "正在查询 Home...",
+      "unavailable": "暂时无法查询 Home 状态，请刷新重试。",
+      "ready": "存储已就绪",
+      "pending": "存储正在准备中。点击继续，查询并推进已有请求。",
+      "unprovisioned": "尚未准备存储",
+      "running": "宿主正在运行。",
+      "retiring": "正在回收旧宿主，文件仍保存在 Home 中。",
+      "starting": "正在启动宿主。",
+      "offline": "执行任务时会启动宿主。",
+      "unconfirmed": "尚未确认准备结果，已重新查询状态。如仍无法推进，请联系工作区管理员。",
+      "preparing": "正在准备...",
+      "continue": "继续准备",
+      "prepare": "准备 Home",
+      "refresh": "刷新状态"
     }
   },
   "char_counter": {

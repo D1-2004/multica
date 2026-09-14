@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/pkg/dshtrajectory"
 	"testing"
 )
 
@@ -93,6 +94,14 @@ func TestDSHNativeTaskHistoryKeepsPluginContextInOwnedTurn(t *testing.T) {
 	result, err := h.result("session")
 	if err != nil || result.Output != "mine" {
 		t.Fatalf("plugin context changed task ownership: %+v %v", result, err)
+	}
+	artifact, err := h.trajectory(json.RawMessage(`{"version":3,"id":"session","cwd":"/persistent/session","createdAt":1,"isSeeded":false}`), "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := dshtrajectory.Parse(artifact)
+	if err != nil || doc.Scope.FirstSeq != 0 || doc.Scope.LastSeq != 5 || len(doc.Events) != 6 {
+		t.Fatalf("owned trajectory lost context or included the next task: %v", err)
 	}
 }
 func TestDSHNativeTaskHistoryRejectsMixedDuplicateAndBrokenLogs(t *testing.T) {

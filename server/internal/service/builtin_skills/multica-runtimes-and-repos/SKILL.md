@@ -22,6 +22,14 @@ Daemon start, restart, and stop are unavailable from inside a daemon-managed age
 
 ## Core model
 
+FC DSH employees require an independently provisioned AgenticFS Home before
+their first task. Human owners and workspace administrators can inspect or
+advance provisioning through `GET/POST /api/agents/{id}/dsh-home`; this is an
+operator action, unavailable to task tokens. Placement and the cloud access
+package are deployment-owned. A pending create must reconcile its persisted
+intent; never work around it by sharing another employee's volume. A provisioned
+Home does not by itself prove that a native Host or business task is running.
+
 A runtime is the execution target behind an agent. A daemon owns local runtime processes and claims queued tasks from the server.
 
 The chain is:
@@ -127,3 +135,5 @@ Changes apply at the next task launch: sandboxes using an older policy are
 replaced, so files stored only in that sandbox do not carry over. Active tasks
 finish with their existing policy. Ask the user to configure a missing
 destination; do not try to bypass the sandbox network policy.
+
+Human owners/admins can use the employee Configuration → Execution → DSH Home page to prepare storage and read its persisted status. The page distinguishes storage readiness from host running state and never creates resources on render. Interrupted or pending requests are reconciled through the same employee intent; credentials and placement remain deployment-owned.
