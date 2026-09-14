@@ -36,6 +36,12 @@ const (
 )
 
 func TestMain(m *testing.M) {
+	// Local development may explicitly select pure unit tests without opening
+	// a database connection. Use -run to select tests that do not need fixtures;
+	// database integration tests remain an explicit preproduction operation.
+	if os.Getenv("MULTICA_HANDLER_UNIT_TESTS_ONLY") == "1" {
+		os.Exit(m.Run())
+	}
 	ctx := context.Background()
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
