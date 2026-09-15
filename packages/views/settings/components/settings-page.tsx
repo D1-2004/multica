@@ -43,6 +43,7 @@ import { MCPConnectionsTab } from "./mcp-connections-tab";
 import { WorkspaceTab } from "./workspace-tab";
 import { MembersTab } from "./members-tab";
 import { RepositoriesTab } from "./repositories-tab";
+import { GitRepoTab } from "./git-repo-tab";
 import { GitHubTab } from "./github-tab";
 import { IntegrationsTab } from "./integrations-tab";
 import { LabsTab } from "./labs-tab";
@@ -83,6 +84,7 @@ const ACCOUNT_TAB_ICONS = {
 const WORKSPACE_TAB_KEYS = [
   "general",
   "repositories",
+  "git",
   "github",
   "integrations",
   "labs",
@@ -96,6 +98,7 @@ const WORKSPACE_TAB_KEYS = [
 const WORKSPACE_TAB_VALUES = {
   general: "workspace",
   repositories: "repositories",
+  git: "git",
   github: "github",
   integrations: "integrations",
   labs: "labs",
@@ -109,6 +112,7 @@ const WORKSPACE_TAB_VALUES = {
 const WORKSPACE_TAB_ICONS = {
   general: Settings,
   repositories: FolderGit2,
+  git: FolderGit2,
   github: GitHubMark,
   integrations: Plug,
   labs: FlaskConical,
@@ -318,6 +322,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="repositories">
             <RepositoriesTab />
           </TabsContent>
+          <TabsContent value="git"><GitRepoTab /></TabsContent>
           <TabsContent value="github">
             <GitHubTab />
           </TabsContent>

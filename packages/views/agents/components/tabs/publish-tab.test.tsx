@@ -20,9 +20,9 @@ vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
 vi.mock("sonner", () => ({ toast: { error: mocked.error, success: mocked.success, warning: vi.fn() } }));
 
 const source: AgentSource = {
-  agent_id: "agent-1", source_type: "github", installation_id: "installation-1",
-  repository: "acme/reviewer", ref: "main", manifest_path: "agent.json",
-  synced_commit_sha: "a".repeat(40), sync_status: "ready", github_connected: true, can_sync: true,
+  agent_id: "agent-1", source_type: "git", connection_id: "installation-1",
+  repository: "acme/reviewer", repository_url: "https://github.com/acme/reviewer", ref: "main", manifest_path: "agent.json",
+  synced_commit_sha: "a".repeat(40), sync_status: "ready", connected: true, can_sync: true,
   last_sync_error: null, last_sync_attempt_at: null, last_synced_at: "",
 };
 const preview: AgentSourceSyncPreview = {
@@ -46,7 +46,7 @@ beforeEach(() => {
   mocked.branches.mockResolvedValue({ repository: "acme/reviewer", repository_url: "https://github.com/acme/reviewer", default_branch: "main", branches: [] });
   mocked.preview.mockResolvedValue(preview);
   mocked.rollback.mockResolvedValue({ ...preview, ref: "main", resolved_sha: "c".repeat(40) });
-  mocked.history.mockResolvedValue({ publications: [{ id: "release-1", source_type: "github", repository_url: "https://github.com/acme/reviewer", ref: "main", commit_sha: "c".repeat(40), published_at: "2026-09-14T12:00:00Z", published_by: "user-1", author_name: "Owner", changed: true, rollback_of: "", has_configuration_snapshot: true, initial_publication: true }], next_cursor: null });
+  mocked.history.mockResolvedValue({ publications: [{ id: "release-1", source_type: "git", repository_url: "https://github.com/acme/reviewer", ref: "main", commit_sha: "c".repeat(40), published_at: "2026-09-14T12:00:00Z", published_by: "user-1", author_name: "Owner", changed: true, rollback_of: "", has_configuration_snapshot: true, initial_publication: true }], next_cursor: null });
   mocked.confirm.mockResolvedValue({ source: { ...source, ref: "release/v2", synced_commit_sha: "b".repeat(40) }, changed: true, warnings: [] });
 });
 

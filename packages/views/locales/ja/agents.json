@@ -176,9 +176,9 @@
     "assign_work": "作業を割り当てる",
     "more_actions_aria": "エージェントの操作",
     "updated": "{{when}}に更新",
-    "source_sync_succeeded": "GitHub ソースを同期しました",
-    "source_already_current": "GitHub ソースは最新です",
-    "source_sync_failed": "GitHub ソースを同期できませんでした",
+    "source_sync_succeeded": "設定を公開しました",
+    "source_already_current": "設定は最新です",
+    "source_sync_failed": "設定を公開できませんでした",
     "owner_left": "ワークスペースを離れました",
     "owner_none": "オーナーなし",
     "owner_search_placeholder": "メンバーを検索…",
@@ -257,7 +257,7 @@
     "attention_queued_other": "ランタイムが利用できないため、{{count}}件の task が待機中です。",
     "package_hash": "パッケージハッシュ",
     "package_imported_at": "インポート日時",
-    "source_title": "GitHub ソース",
+    "source_title": "Git ソース",
     "source_ref": "Ref",
     "source_commit": "コミット",
     "source_synced_at": "最終同期",
@@ -596,7 +596,7 @@
       "workspace_notes_label": "ワークスペースの補足",
       "workspace_notes_intro": "チームのコンテキストや好みを下に追加してください。Multica がこのエージェント向けに管理している指示の上に適用されます。Markdown が使えます。",
       "workspace_notes_placeholder": "このエージェントが常に知っておくべきことを書きます。\n\n# 例\nメインリポジトリは github.com/acme/platform です。\nチャットが日本語でも、タスクは英語で書いてください。\n金曜日はデプロイしません。",
-      "github_managed": "この System Prompt は接続された GitHub リポジトリで管理されています。更新するにはソースを同期してください。"
+      "git_managed": "この System Prompt は接続された Git リポジトリで管理されています。更新するにはソースを同期してください。"
     },
     "dispatch": {
       "dialog_title": "受信プロンプト",
@@ -1504,8 +1504,10 @@
     "git": {
       "disabled_skill": "無効",
       "step": "リポジトリを選択してプレビュー",
-      "description": "ワークスペースの GitHub 接続、リポジトリ URL、ブランチを選択し、内容を確認して作成します。",
-      "connection_required": "ワークスペースの owner または admin が GitHub を接続し、リポジトリへのアクセスを許可する必要があります。",
+      "description": "リポジトリ URL を入力すると、ワークスペースの ID が自動的に選ばれます。ブランチ、タグ、コミットを選択してプレビューしてください。",
+      "connection_required": "ワークスペースの owner または admin が、このリポジトリにアクセスできる ID を接続する必要があります。",
+      "read_repository": "Read repository",
+      "auto_connection": "Automatic identity",
       "manage_connections": "接続を管理",
       "connection": "GitHub 接続",
       "default_branch": "リポジトリの既定ブランチ",

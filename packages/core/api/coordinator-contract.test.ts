@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentResponseSchema, AgentTemplateSchema, CoordinatorContractSchema, GitHubAgentPreviewSchema, StoredAgentDraftSchema } from "./schemas";
+import { AgentResponseSchema, AgentTemplateSchema, CoordinatorContractSchema, GitAgentPreviewSchema, StoredAgentDraftSchema } from "./schemas";
 
 const contract = {
   version: 1 as const,
@@ -25,6 +25,6 @@ describe("coordinator contract API boundaries", () => {
   });
   it("keeps the field in template and Git preview payloads", () => {
     expect(AgentTemplateSchema.parse({slug:"x",name:"x",description:"",skills:[],instructions:"job",coordinator_contract:contract}).coordinator_contract).toEqual(contract);
-    expect(GitHubAgentPreviewSchema.parse({installation_id:"1",repository:"a/b",ref:"main",resolved_sha:"sha",name:"x",coordinator_contract:contract}).coordinator_contract).toEqual(contract);
+    expect(GitAgentPreviewSchema.parse({connection_id:"1",repository:"a/b",ref:"main",resolved_sha:"sha",name:"x",coordinator_contract:contract}).coordinator_contract).toEqual(contract);
   });
 });

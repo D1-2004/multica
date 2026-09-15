@@ -4,8 +4,6 @@ import { api } from "../api";
 export const githubKeys = {
   all: (wsId: string) => ["github", wsId] as const,
   installations: (wsId: string) => [...githubKeys.all(wsId), "installations"] as const,
-  agentRepositories: (wsId: string, installationId: string) =>
-    [...githubKeys.all(wsId), "agent-repositories", installationId] as const,
   repositories: (wsId: string, installationId: string) =>
     [...githubKeys.all(wsId), "installations", installationId, "repositories"] as const,
   pullRequests: (issueId: string) => ["github", "pull-requests", issueId] as const,
@@ -39,18 +37,4 @@ export const issuePullRequestsOptions = (issueId: string) =>
     queryKey: githubKeys.pullRequests(issueId),
     queryFn: () => api.listIssuePullRequests(issueId),
     enabled: !!issueId,
-  });
-
-export const githubAgentRepositoriesOptions = (wsId: string, installationId: string) =>
-  queryOptions({
-    queryKey: githubKeys.agentRepositories(wsId, installationId),
-    queryFn: () => api.listGitHubAgentRepositories(wsId, installationId),
-    enabled: !!wsId && !!installationId,
-  });
-
-export const githubAgentBranchesOptions = (wsId: string, installationId: string, repository: string) =>
-  queryOptions({
-    queryKey: [...githubKeys.all(wsId), "agent-branches", installationId, repository],
-    queryFn: () => api.listGitHubAgentBranches(wsId, installationId, repository),
-    enabled: !!wsId && !!installationId && !!repository,
   });

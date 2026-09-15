@@ -33,8 +33,8 @@ export type SkillOriginType =
   | "manual"
   | "runtime_local"
   | "clawhub"
-  | "skills_sh"
-  | "github";
+
+  | "git";
 
 /** Multi-select filter state. Empty array per dimension = inactive. */
 export interface SkillListFilters {

@@ -16,7 +16,7 @@ import { GitRevisionSelect } from "../git-revision-select";
 import { AgentPublicationHistory } from "./agent-publication-history";
 
 export function PublishTab({ agentId, source, canEdit }: { agentId: string; source: AgentSource | null; canEdit: boolean }) {
-  return source?.source_type === "github" ? <GitPublishTab source={source} canEdit={canEdit} /> : <ZIPPublishTab agentId={agentId} canEdit={canEdit} />;
+  return source?.source_type === "git" ? <GitPublishTab source={source} canEdit={canEdit} /> : <ZIPPublishTab agentId={agentId} canEdit={canEdit} />;
 }
 
 function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: boolean }) {
@@ -24,7 +24,7 @@ function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: bool
   const workspaceId = useWorkspaceId();
   const [ref, setRef] = useState(source.ref);
   const [revisionReady, setRevisionReady] = useState(!!source.ref);
-  const canSync = canEdit && source.github_connected === true && source.can_sync !== false;
+  const canSync = canEdit && source.connected === true && source.can_sync !== false;
   const branches = useQuery({ ...agentSourceBranchesOptions(workspaceId, source.agent_id), enabled: canSync });
   const previewMutation = usePreviewAgentSourceSync(source.agent_id);
   const rollbackMutation = usePreviewAgentPublicationRollback(source.agent_id);
@@ -72,7 +72,7 @@ function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: bool
       <dl className="grid gap-3 text-caption">
         <div className="space-y-1">
           <dt className="text-muted-foreground">{t(($) => $.tab_body.publish.repository)}</dt>
-          <dd className="break-all"><a className="underline underline-offset-4" href={source.repository_url || `https://github.com/${source.repository}`} target="_blank" rel="noreferrer">{source.repository_url || `https://github.com/${source.repository}`}</a></dd>
+          <dd className="break-all"><a className="underline underline-offset-4" href={source.repository_url ?? ""} target="_blank" rel="noreferrer">{source.repository_url ?? ""}</a></dd>
         </div>
         <div className="space-y-1">
           <dt className="text-muted-foreground">{t(($) => $.tab_body.publish.deployed)}</dt>

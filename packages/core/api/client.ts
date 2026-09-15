@@ -1,3 +1,5 @@
+import type { GitRepositoryIdentity, GitConnection, GitConnections, ConnectGitRepositoryRequest } from "../types/git-repo";
+import { GitRepositoryIdentitySchema, GitConnectionSchema, GitConnectionsSchema } from "./schemas";
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
 import type { ReusableDingTalkIdentity } from "../types/dingtalk-account-binding";
 import type { AgentPackageBindingReport, ConfirmAgentPackageBindingRequest, AgentPackagePreview, CreateAgentPackageRequest } from "../types/agent-package";
@@ -179,11 +181,10 @@ import type {
   ListGitHubInstallationsResponse,
   ListGitHubRepositoriesResponse,
   GitHubConnectResponse,
-  GitHubAgentPreviewRequest,
-  GitHubAgentPreview,
-  ListGitHubAgentRepositoriesResponse,
-  CreateGitHubAgentRequest,
-  CreateGitHubAgentResponse,
+  GitAgentPreviewRequest,
+  GitAgentPreview,
+
+  CreateAgentPackageResponse,
   AgentSource,
   AgentSourceSyncPreview,
   AgentSourceBranches,
@@ -479,10 +480,10 @@ import {
   EMPTY_RESOURCE_LABELS_RESPONSE,
   LabelUsageResponseSchema,
   EMPTY_LABEL_USAGE_RESPONSE,
-  GitHubAgentPreviewSchema,
+  GitAgentPreviewSchema,
   GitHubInstallationSchema,
   ListGitHubInstallationsResponseSchema,
-  ListGitHubAgentRepositoriesResponseSchema,
+
   AgentSourceSchema,
   AgentManifestSchemaDownloadSchema,
   AgentSourceSyncPreviewSchema,
@@ -490,14 +491,14 @@ import {
   AgentPublicationListSchema,
   EMPTY_AGENT_SOURCE_SYNC_PREVIEW,
   EMPTY_AGENT_SOURCE_BRANCHES,
-  CreateGitHubAgentResponseSchema,
+  CreateAgentPackageResponseSchema,
   SyncAgentSourceResponseSchema,
-  EMPTY_GITHUB_AGENT_PREVIEW,
+  EMPTY_GIT_AGENT_PREVIEW,
   EMPTY_GITHUB_INSTALLATION,
   EMPTY_GITHUB_INSTALLATIONS,
-  EMPTY_GITHUB_AGENT_REPOSITORIES,
+
   EMPTY_AGENT_SOURCE,
-  EMPTY_CREATE_GITHUB_AGENT_RESPONSE,
+  EMPTY_CREATE_AGENT_PACKAGE_RESPONSE,
   EMPTY_SYNC_AGENT_SOURCE_RESPONSE,
   BeginDingTalkAccountBindingResponseSchema,
   DingTalkAccountBindingsResponseSchema,
@@ -3770,7 +3771,7 @@ export class ApiClient {
     await this.fetch(`/api/skills/${id}`, { method: "DELETE" });
   }
 
-  async importSkill(data: { url: string }): Promise<Skill> {
+  async importSkill(data: { url: string; connection_id?: string; ref?: string; path?: string }): Promise<Skill> {
     return this.fetch("/api/skills/import", {
       method: "POST",
       body: JSON.stringify(data),
@@ -5577,52 +5578,46 @@ export class ApiClient {
     );
   }
 
-  async listGitHubAgentRepositories(
-    workspaceId: string,
-    installationId: string,
-  ): Promise<ListGitHubAgentRepositoriesResponse> {
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/github/repositories?installation_id=${encodeURIComponent(installationId)}`,
-    );
-    return parseWithFallback(
-      raw,
-      ListGitHubAgentRepositoriesResponseSchema,
-      EMPTY_GITHUB_AGENT_REPOSITORIES,
-      { endpoint: "GET /api/workspaces/:id/github/repositories" },
-    );
+  async resolveGitRepository(wsId: string, repository: string): Promise<GitRepositoryIdentity> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${wsId}/git/repository?repository=${encodeURIComponent(repository)}`);
+    const result = parseWithFallback<GitRepositoryIdentity | null>(raw, GitRepositoryIdentitySchema, null, { endpoint: "GET /git/repository", includeReceived: false });
+    if (!result) throw new Error("Invalid Git repository response");
+    return result;
   }
 
-  async previewGitHubAgent(
+  async listGitConnections(wsId: string): Promise<GitConnections> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${wsId}/git/connections`);
+    const result = parseWithFallback<GitConnections | null>(raw, GitConnectionsSchema, null, { endpoint: "GET /git/connections", includeReceived: false });
+    if (!result) throw new Error("Invalid Git connections response");
+    return result;
+  }
+
+  async connectGitRepository(wsId: string, request: ConnectGitRepositoryRequest): Promise<GitConnection> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${wsId}/git/connections`, { method: "POST", body: JSON.stringify(request) });
+    const result = parseWithFallback<GitConnection | null>(raw, GitConnectionSchema, null, { endpoint: "POST /git/connections", includeReceived: false });
+    if (!result) throw new Error("Invalid Git connection response");
+    return result;
+  }
+
+  async deleteGitConnection(wsId: string, id: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${wsId}/git/connections/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async previewGitAgent(
     workspaceId: string,
-    data: GitHubAgentPreviewRequest,
-  ): Promise<GitHubAgentPreview> {
+    data: GitAgentPreviewRequest,
+  ): Promise<GitAgentPreview> {
     const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/github/agent-preview`,
+      `/api/workspaces/${workspaceId}/git/agent-preview`,
       { method: "POST", body: JSON.stringify(data) },
     );
     return parseWithFallback(
       raw,
-      GitHubAgentPreviewSchema,
-      EMPTY_GITHUB_AGENT_PREVIEW,
+      GitAgentPreviewSchema,
+      EMPTY_GIT_AGENT_PREVIEW,
       {
-        endpoint: "POST /api/workspaces/:id/github/agent-preview",
+        endpoint: "POST /api/workspaces/:id/git/agent-preview",
       },
-    );
-  }
-
-  async createGitHubAgent(
-    workspaceId: string,
-    data: CreateGitHubAgentRequest,
-  ): Promise<CreateGitHubAgentResponse> {
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/github/agents`,
-      { method: "POST", body: JSON.stringify(data) },
-    );
-    return parseWithFallback(
-      raw,
-      CreateGitHubAgentResponseSchema,
-      EMPTY_CREATE_GITHUB_AGENT_RESPONSE,
-      { endpoint: "POST /api/workspaces/:id/github/agents" },
     );
   }
 
@@ -5687,10 +5682,10 @@ export class ApiClient {
     return result;
   }
 
-  async createAgentFromPackage(workspaceId: string, data: CreateAgentPackageRequest): Promise<CreateGitHubAgentResponse> {
+  async createAgentFromPackage(workspaceId: string, data: CreateAgentPackageRequest): Promise<CreateAgentPackageResponse> {
     if (!data.preview_id) throw new Error("Preview the Agent package before creating it");
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/agent-packages`, { method: "POST", body: JSON.stringify(data) });
-    const result = parseWithFallback(raw, CreateGitHubAgentResponseSchema, EMPTY_CREATE_GITHUB_AGENT_RESPONSE, { endpoint: "POST /api/workspaces/:id/agent-packages", includeReceived: false });
+    const result = parseWithFallback(raw, CreateAgentPackageResponseSchema, EMPTY_CREATE_AGENT_PACKAGE_RESPONSE, { endpoint: "POST /api/workspaces/:id/agent-packages", includeReceived: false });
     if (!result.agent.id || !result.source.synced_commit_sha) throw new Error("Invalid Agent package creation response");
     return result;
   }
@@ -5747,11 +5742,11 @@ export class ApiClient {
     });
   }
 
-  async listGitHubAgentBranches(workspaceId: string, installationId: string, repository: string): Promise<AgentSourceBranches> {
-    const params = new URLSearchParams({ installation_id: installationId, repository });
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/github/branches?${params}`);
+  async listGitAgentBranches(workspaceId: string, connectionId: string, repository: string): Promise<AgentSourceBranches> {
+    const params = new URLSearchParams({ connection_id: connectionId, repository });
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/git/refs?${params}`);
     return parseWithFallback(raw, AgentSourceBranchesSchema, EMPTY_AGENT_SOURCE_BRANCHES, {
-      endpoint: "GET /api/workspaces/:id/github/branches",
+      endpoint: "GET /api/workspaces/:id/git/refs",
     });
   }
 

@@ -241,6 +241,7 @@
       "tokens": "API トークン",
       "general": "一般",
       "repositories": "リポジトリ",
+      "git": "Git",
       "github": "GitHub",
       "integrations": "アプリ連携",
       "labs": "ラボ",
@@ -1320,5 +1321,19 @@
     "secret_warning": "このキーは一度だけ表示され、後から復元できません。承認済みの秘密情報受け渡し手段だけで共有してください。",
     "secret_confirm": "キーをコピーして安全に保存しました",
     "close": "閉じる"
+  },
+  "git_repo": {
+    "token_label": "アクセストークン",
+    "title": "Git リポジトリ ID",
+    "description": "エージェントやスキルのインポートと公開バージョンの読み取りに使う、ワークスペースの ID を管理します。",
+    "github": "GitHub App の認証を管理",
+    "connect": "Code ID を接続",
+    "replace": "トークンを更新",
+    "disconnect": "接続を解除",
+    "repository": "アクセス権を確認するリポジトリ URL",
+    "token_hint": "リポジトリの読み取り権限を持つ Code トークンを使用してください。暗号化して保存し、設定パッケージやエージェントには渡しません。",
+    "save": "検証して保存",
+    "cancel": "更新をキャンセル",
+    "unavailable": "Git 認証情報の暗号化キーが未設定です。管理者に連絡してください。"
   }
 }

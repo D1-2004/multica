@@ -184,9 +184,9 @@
     "assign_work": "작업 할당",
     "more_actions_aria": "에이전트 작업",
     "updated": "{{when}} 업데이트됨",
-    "source_sync_succeeded": "GitHub 소스를 동기화했습니다",
-    "source_already_current": "GitHub 소스가 이미 최신입니다",
-    "source_sync_failed": "GitHub 소스를 동기화하지 못했습니다",
+    "source_sync_succeeded": "설정을 게시했습니다",
+    "source_already_current": "설정이 최신 상태입니다",
+    "source_sync_failed": "설정 게시에 실패했습니다",
     "owner_left": "워크스페이스를 나감",
     "owner_none": "소유자 없음",
     "owner_search_placeholder": "멤버 검색…",
@@ -265,7 +265,7 @@
     "attention_queued_other": "런타임을 사용할 수 없어 {{count}}개의 task가 대기 중입니다.",
     "package_hash": "패키지 해시",
     "package_imported_at": "가져온 시간",
-    "source_title": "GitHub 소스",
+    "source_title": "Git 소스",
     "source_ref": "Ref",
     "source_commit": "커밋",
     "source_synced_at": "마지막 동기화",
@@ -604,7 +604,7 @@
       "workspace_notes_label": "워크스페이스 메모",
       "workspace_notes_intro": "팀의 컨텍스트와 선호를 아래에 추가하세요. Multica가 이 에이전트를 위해 관리하는 지침 위에 적용됩니다. Markdown을 지원합니다.",
       "workspace_notes_placeholder": "이 에이전트가 항상 알아야 할 내용을 적으세요.\n\n# 예시\n메인 저장소는 github.com/acme/platform입니다.\n채팅은 한국어로 해도 태스크는 영어로 작성하세요.\n금요일에는 배포하지 않습니다.",
-      "github_managed": "이 System Prompt는 연결된 GitHub 저장소에서 관리합니다. 업데이트하려면 소스를 동기화하세요."
+      "git_managed": "이 System Prompt는 연결된 Git 저장소에서 관리합니다. 업데이트하려면 소스를 동기화하세요."
     },
     "dispatch": {
       "dialog_title": "수신 프롬프트",
@@ -1504,8 +1504,10 @@
     "git": {
       "disabled_skill": "비활성",
       "step": "저장소 선택 및 미리보기",
-      "description": "워크스페이스 GitHub 연결, 저장소 URL, 브랜치를 선택한 뒤 내용을 확인하고 에이전트를 만드세요.",
-      "connection_required": "워크스페이스 owner 또는 admin이 GitHub를 연결하고 저장소 접근을 허용해야 합니다.",
+      "description": "저장소 URL을 입력하면 워크스페이스 계정이 자동으로 연결됩니다. 브랜치, 태그 또는 커밋을 선택하고 미리 보세요.",
+      "connection_required": "워크스페이스 소유자 또는 관리자가 이 저장소에 접근할 수 있는 계정을 연결해야 합니다.",
+      "read_repository": "Read repository",
+      "auto_connection": "Automatic identity",
       "manage_connections": "연결 관리",
       "connection": "GitHub 연결",
       "default_branch": "저장소 기본 브랜치",

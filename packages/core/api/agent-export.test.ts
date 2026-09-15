@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient } from "./client";
-import { GitHubAgentPreviewSchema } from "./schemas";
+import { GitAgentPreviewSchema } from "./schemas";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -25,8 +25,8 @@ describe("Agent source export boundary", () => {
     await expect(new ApiClient("https://api.example.test").exportAgent("agent-1")).rejects.toThrow("Invalid agent export response");
   });
   it("preserves disabled skills and rejects malformed enabled fields in previews", () => {
-    const preview = { installation_id: "i", repository: "acme/agent", ref: "main", resolved_sha: "sha", name: "agent", description: "", instructions: "", skills: [{ source_path: "skills/one", name: "one", enabled: false }] };
-    expect(GitHubAgentPreviewSchema.parse(preview).skills[0]?.enabled).toBe(false);
-    expect(GitHubAgentPreviewSchema.safeParse({ ...preview, skills: [{ ...preview.skills[0], enabled: "false" }] }).success).toBe(false);
+    const preview = { connection_id: "i", repository: "acme/agent", ref: "main", resolved_sha: "sha", name: "agent", description: "", instructions: "", skills: [{ source_path: "skills/one", name: "one", enabled: false }] };
+    expect(GitAgentPreviewSchema.parse(preview).skills[0]?.enabled).toBe(false);
+    expect(GitAgentPreviewSchema.safeParse({ ...preview, skills: [{ ...preview.skills[0], enabled: "false" }] }).success).toBe(false);
   });
 });

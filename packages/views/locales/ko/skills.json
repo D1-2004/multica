@@ -245,6 +245,8 @@
       "toast_created": "스킬을 만들었습니다"
     },
     "url": {
+      "git_identity": "Git identity",
+      "git_settings": "Manage Git identities",
       "url_label": "스킬 URL",
       "supported_sources": "지원 출처",
       "import": "가져오기",

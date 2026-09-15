@@ -567,10 +567,10 @@ describe("AgentOverviewPane Plugins tab visibility", () => {
 
 it("shows publishing in Configuration for a Git-created Agent", () => {
   renderPane([], { source: {
-    agent_id: "agent-1", source_type: "github", installation_id: "installation",
+    agent_id: "agent-1", source_type: "git", connection_id: "installation",
     repository: "acme/agent", ref: "main", manifest_path: "dingtalk-agent.json",
     synced_commit_sha: "a".repeat(40), sync_status: "ready", last_sync_error: null,
-    last_sync_attempt_at: null, last_synced_at: "", github_connected: true,
+    last_sync_attempt_at: null, last_synced_at: "", connected: true,
   } });
   openConfiguration();
   fireEvent.click(screen.getByRole("tab", { name: "Publish" }));

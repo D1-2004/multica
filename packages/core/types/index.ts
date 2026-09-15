@@ -229,20 +229,6 @@ export type {
   GitHubRepository,
   ListGitHubRepositoriesResponse,
   GitHubConnectResponse,
-  GitHubAgentRepository,
-  ListGitHubAgentRepositoriesResponse,
-  GitHubAgentSkillPreview,
-  GitHubAgentPreviewRequest,
-  GitHubAgentPreview,
-  CreateGitHubAgentRequest,
-  CreateGitHubAgentResponse,
-  AgentSource,
-  AgentSourceSyncPreview,
-  AgentSourceFileChange,
-  AgentSourceBranches,
-  AgentPublication,
-  AgentPublicationList,
-  SyncAgentSourceResponse,
 } from "./github";
 export type {
   VCSProvider,
@@ -374,3 +360,5 @@ export type {
 } from "./billing";
 
 export type { AgentPackageRequirements, AgentPackagePreview, CreateAgentPackageRequest } from "./agent-package";
+
+export * from "./git-repo";

@@ -109,6 +109,7 @@
     "./billing": "./billing/index.ts",
     "./billing/queries": "./billing/queries.ts",
     "./billing/mutations": "./billing/mutations.ts",
+    "./git-repo": "./git-repo/index.ts",
     "./github": "./github/index.ts",
     "./github/queries": "./github/queries.ts",
     "./vcs": "./vcs/index.ts",

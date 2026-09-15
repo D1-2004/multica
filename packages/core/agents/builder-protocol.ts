@@ -1,5 +1,5 @@
 import { CoordinatorContractSchema } from "../api/schemas";
-import type { GitHubAgentPreview, RuntimeDevice, RuntimeModel } from "../types";
+import type { GitAgentPreview, RuntimeDevice, RuntimeModel } from "../types";
 import type { AgentDraft } from "./draft";
 
 /**
@@ -20,7 +20,7 @@ import type { AgentDraft } from "./draft";
 const BUILDER_INPUT_PREFIX = "MULTICA_AGENT_BUILDER_INPUT\n";
 
 export function isGitHubRuntimeCompatible(
-  preview: Pick<GitHubAgentPreview, "compatible_providers"> | null,
+  preview: Pick<GitAgentPreview, "compatible_providers"> | null,
   runtime: Pick<RuntimeDevice, "provider"> | null,
 ): boolean {
   if (!preview || !runtime) return false;

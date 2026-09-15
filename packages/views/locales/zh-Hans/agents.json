@@ -184,9 +184,9 @@
     "assign_work": "分配工作",
     "more_actions_aria": "智能体操作",
     "updated": "{{when}}更新",
-    "source_sync_succeeded": "GitHub 来源已同步",
-    "source_already_current": "GitHub 来源已是最新版本",
-    "source_sync_failed": "同步 GitHub 来源失败",
+    "source_sync_succeeded": "配置已发布",
+    "source_already_current": "配置已是最新版本",
+    "source_sync_failed": "发布配置失败",
     "owner_left": "已离开",
     "owner_none": "无所有者",
     "owner_search_placeholder": "搜索成员…",
@@ -265,7 +265,7 @@
     "attention_queued_other": "运行时不可用，当前有 {{count}} 个 task 正在排队。",
     "package_hash": "配置包摘要",
     "package_imported_at": "导入时间",
-    "source_title": "GitHub 来源",
+    "source_title": "Git 来源",
     "source_ref": "Ref",
     "source_commit": "Commit",
     "source_synced_at": "最近同步",
@@ -387,10 +387,12 @@
     "git": {
       "disabled_skill": "已停用",
       "step": "选择仓库并预览",
-      "description": "选择工作区 GitHub 连接，填写仓库地址并选择分支。确认该版本的内容后创建智能体。",
-      "connection_required": "需要工作区 owner 或 admin 连接 GitHub，并授予仓库访问权限。",
+      "description": "输入仓库地址，Multica 自动匹配工作区身份；再选择分支、tag 或 commit 并预览版本。",
+      "connection_required": "需要工作区 owner 或 admin 绑定具有该仓库访问权限的身份。",
+      "read_repository": "读取仓库",
+      "auto_connection": "自动选择身份",
       "manage_connections": "管理连接",
-      "connection": "GitHub 连接",
+      "connection": "Git 连接",
       "default_branch": "仓库默认分支",
       "preview": "预览智能体",
       "confirm_hint": "确认后按清单创建智能体，导入配置、指令和专属 skills。"
@@ -410,7 +412,7 @@
     "modes": {
       "git": {
         "title": "从 Git 创建",
-        "description": "从包含 agent.json 和引用文件的 GitHub 仓库导入智能体配置。"
+        "description": "从包含 agent.json 和引用文件的 Git 仓库导入智能体配置。"
       },
       "blank": {
         "title": "从空白开始",
@@ -426,7 +428,7 @@
       },
       "github": {
         "title": "从 GitHub 导入",
-        "description": "从包含 agent.json 和引用文件的 GitHub 仓库导入智能体配置。"
+        "description": "从包含 agent.json 和引用文件的 Git 仓库导入智能体配置。"
       },
       "local": {
         "title": "从本地导入",
@@ -788,7 +790,7 @@
       "workspace_notes_label": "工作区补充",
       "workspace_notes_intro": "在下面补充你们团队的上下文和偏好，它们会叠加在 Multica 为这个智能体维护的指令之上。支持 Markdown。",
       "workspace_notes_placeholder": "写下这个智能体应该始终知道的上下文。\n\n# 示例\n我们的主仓库是 github.com/acme/platform。\n即使聊天用中文，任务也一律用英文写。\n周五不部署。",
-      "github_managed": "此 System Prompt 由关联的 GitHub 仓库管理；请同步来源来更新内容。"
+      "git_managed": "此 System Prompt 由关联的 Git 仓库管理；请同步来源来更新内容。"
     },
     "dispatch": {
       "dialog_title": "入站提示词",

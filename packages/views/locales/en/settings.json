@@ -241,6 +241,7 @@
       "tokens": "API Tokens",
       "general": "General",
       "repositories": "Repositories",
+    "git": "Git",
       "github": "GitHub",
       "integrations": "App Integrations",
       "labs": "Labs",
@@ -1322,5 +1323,19 @@
     "secret_warning": "This key is shown only once. Send it only through your approved secret-delivery channel; it cannot be recovered later.",
     "secret_confirm": "I have copied and stored this key safely",
     "close": "Close"
+  },
+  "git_repo": {
+    "token_label": "Access token",
+    "title": "Git repository identities",
+    "description": "Workspace identities for importing Agents and skills and reading publication revisions. Access uses the connected identity’s repository permissions.",
+    "github": "Manage GitHub App authorization",
+    "connect": "Connect Code identity",
+    "replace": "Replace token",
+    "disconnect": "Disconnect",
+    "repository": "Repository URL to verify access",
+    "token_hint": "Use a Code access token with repository read permission. It is encrypted at rest and excluded from packages and Agent execution.",
+    "save": "Verify and save",
+    "cancel": "Cancel replacement",
+    "unavailable": "Git credential encryption is not configured. Contact your administrator."
   }
 }

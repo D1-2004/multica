@@ -75,6 +75,7 @@ export function GitHubTab() {
       toast.error(t(($) => $.github[githubConnectionErrorField(error)]));
     } else {
       void qc.invalidateQueries({ queryKey: ["github", wsId] });
+      void qc.invalidateQueries({ queryKey: ["git-repo", wsId] });
       toast.success(t(($) => $.github.toast_connected));
     }
     const next = new URLSearchParams(navigation.searchParams);
@@ -135,6 +136,7 @@ export function GitHubTab() {
     try {
       await api.reuseGitHubInstallation(wsId, sourceInstallationId);
       await qc.invalidateQueries({ queryKey: ["github", wsId] });
+      await qc.invalidateQueries({ queryKey: ["git-repo", wsId] });
       toast.success(t(($) => $.github.toast_reused));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t(($) => $.github.toast_reuse_failed));
@@ -149,6 +151,7 @@ export function GitHubTab() {
     try {
       await api.deleteGitHubInstallation(wsId, disconnectTarget);
       await qc.invalidateQueries({ queryKey: ["github", wsId] });
+      await qc.invalidateQueries({ queryKey: ["git-repo", wsId] });
       toast.success(t(($) => $.github.toast_disconnected));
       setDisconnectTarget(null);
     } catch (e) {

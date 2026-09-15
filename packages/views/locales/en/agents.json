@@ -192,9 +192,9 @@
     "assign_work": "Assign work",
     "more_actions_aria": "Agent actions",
     "updated": "Updated {{when}}",
-    "source_sync_succeeded": "GitHub source synced",
-    "source_already_current": "GitHub source is already current",
-    "source_sync_failed": "Failed to sync GitHub source",
+    "source_sync_succeeded": "Configuration published",
+    "source_already_current": "Configuration is already up to date",
+    "source_sync_failed": "Failed to publish configuration",
     "owner_left": "Left workspace",
     "owner_none": "No owner",
     "owner_search_placeholder": "Search members…",
@@ -274,7 +274,7 @@
     "attention_queued_other": "{{count}} tasks are queued while the runtime is unavailable.",
     "package_hash": "Package hash",
     "package_imported_at": "Imported at",
-    "source_title": "GitHub source",
+    "source_title": "Git source",
     "source_ref": "Ref",
     "source_commit": "Commit",
     "source_synced_at": "Last synced",
@@ -396,10 +396,12 @@
     "git": {
       "disabled_skill": "Disabled",
       "step": "Select a repository and preview",
-      "description": "Select a workspace GitHub connection, paste the repository URL, then choose a branch. Review the pinned version before creating the agent.",
-      "connection_required": "A workspace owner or admin must connect GitHub and grant access to the repository.",
+      "description": "Paste a repository URL. Multica matches its workspace identity automatically; then choose a branch, tag or commit and preview the version.",
+      "connection_required": "A workspace owner or admin must connect an identity with access to this repository.",
+      "read_repository": "Read repository",
+      "auto_connection": "Automatic identity",
       "manage_connections": "Manage connections",
-      "connection": "GitHub connection",
+      "connection": "Git connection",
       "default_branch": "Repository default branch",
       "preview": "Preview agent",
       "confirm_hint": "Confirmation creates an Agent with the manifest configuration, instructions and exclusive skills."
@@ -419,7 +421,7 @@
     "modes": {
       "git": {
         "title": "From Git",
-        "description": "Import Agent configuration from a GitHub repository containing agent.json and its referenced files."
+        "description": "Import Agent configuration from a Git repository containing agent.json and its referenced files."
       },
       "blank": {
         "title": "Start blank",
@@ -435,7 +437,7 @@
       },
       "github": {
         "title": "Import from GitHub",
-        "description": "Import Agent configuration from a GitHub repository containing agent.json and its referenced files."
+        "description": "Import Agent configuration from a Git repository containing agent.json and its referenced files."
       },
       "local": {
         "title": "Import from local",
@@ -798,7 +800,7 @@
       "workspace_notes_label": "Workspace notes",
       "workspace_notes_intro": "Add your team's context and preferences below. They apply on top of the instructions Multica maintains for this agent. Markdown is supported.",
       "workspace_notes_placeholder": "Add context this agent should always have.\n\n# Example\nOur main repository is github.com/acme/platform.\nWrite issues in English even when we chat in Chinese.\nWe do not deploy on Fridays.",
-      "github_managed": "This system prompt is managed by the connected GitHub repository. Sync the source to update it."
+      "git_managed": "This system prompt is managed by the connected Git repository. Sync the source to update it."
     },
     "dispatch": {
       "dialog_title": "Inbound prompt",

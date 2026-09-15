@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useCreateAgentPackage, usePreviewAgentPackage } from "@multica/core/agents";
-import { githubInstallationsOptions, githubAgentRepositoriesOptions, githubAgentBranchesOptions, usePreviewGitHubAgent } from "@multica/core/github";
+import { gitRepositoryOptions, gitAgentBranchesOptions, usePreviewGitAgent } from "@multica/core/git-repo";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { Button } from "@multica/ui/components/ui/button";
@@ -31,16 +31,15 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
   const back = useBackOrReplace();
   const squadId = navigation.searchParams.get("squad");
   const form = useCreateAgentForm();
-  const [installation, setInstallation] = useState("");
+  const [connectionId, setConnectionId] = useState("");
   const [repository, setRepository] = useState("");
   const [ref, setRef] = useState("");
   const [revisionReady, setRevisionReady] = useState(true);
-  const installations = useQuery({ ...githubInstallationsOptions(wsId), enabled: !local });
-  const installationId = installation || installations.data?.installations?.[0]?.id || "";
-  const canManage = local ? form.members.some((member) => member.user_id === form.currentUserId && (member.role === "owner" || member.role === "admin")) : installations.data?.can_manage === true;
-  const repositories = useQuery({ ...githubAgentRepositoriesOptions(wsId, installationId), enabled: !local && canManage && !!installationId });
-  const branches = useQuery({ ...githubAgentBranchesOptions(wsId, installationId, repository.trim()), enabled: !local && canManage && !!installationId && !!repository.trim() });
-  const previewMutation = usePreviewGitHubAgent(wsId);
+  const [loadedRepository, setLoadedRepository] = useState("");
+  const connections = useQuery({ ...gitRepositoryOptions(wsId, loadedRepository), enabled: !local && !!loadedRepository });
+  const canManage = form.members.some((member) => member.user_id === form.currentUserId && (member.role === "owner" || member.role === "admin"));
+  const branches = useQuery({ ...gitAgentBranchesOptions(wsId, connectionId, loadedRepository), enabled: !local && canManage && !!loadedRepository && !!connections.data && (!!connectionId || connections.data.connections.length < 2) });
+  const previewMutation = usePreviewGitAgent(wsId);
   const uploadMutation = usePreviewAgentPackage(wsId);
   const createMutation = useCreateAgentPackage(wsId, squadId);
   const [file, setFile] = useState<File | null>(null);
@@ -52,13 +51,13 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
   const runtimeCompatible = !requirements?.runtime_provider || form.selectedRuntime?.provider === requirements.runtime_provider;
   const pending = previewMutation.isPending || uploadMutation.isPending || createMutation.isPending;
   const canCreate = canManage && !!preview?.preview_id && !previewMutation.data?.blockers?.length && requirementsReady && runtimeCompatible && form.draftReady && !!form.draft.name.trim() && !pending && !createMutation.isSuccess;
-  const error = createMutation.error ?? uploadMutation.error ?? previewMutation.error ?? (!local ? installations.error : null);
+  const error = createMutation.error ?? uploadMutation.error ?? previewMutation.error ?? (!local ? connections.error : null);
 
   const invalidatePreview = () => { previewMutation.reset(); uploadMutation.reset(); createMutation.reset(); setSecrets({}); setDeferBindings(false); };
   const handlePreview = async () => {
     try {
       invalidatePreview();
-      const result = local && file ? await uploadMutation.mutateAsync(file) : await previewMutation.mutateAsync({ installation_id: installationId, repository: repository.trim(), ref: ref.trim() || undefined });
+      const result = local && file ? await uploadMutation.mutateAsync(file) : await previewMutation.mutateAsync({ connection_id: connectionId || branches.data?.connection_id || undefined, repository: repository.trim(), ref: ref.trim() || undefined });
       form.setDraft((current) => ({ ...current, name: result.name, description: result.description }));
     } catch { /* The form renders the mutation error. */ }
   };
@@ -81,10 +80,7 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl space-y-6 px-5 py-8">
           <p className="text-body text-muted-foreground">{local ? t(($) => $.creation_studio.local.description) : t(($) => $.creation_studio.git.description)}</p>
-          {!local && installations.isLoading && <p>{t(($) => $.tab_body.publish.loading)}</p>}
-          {!local && !installations.isLoading && (!canManage || !installationId) && (
-            <p className="text-body text-muted-foreground">{t(($) => $.creation_studio.git.connection_required)} <AppLink className="underline" href={`${paths.settings()}?tab=github`}>{t(($) => $.creation_studio.git.manage_connections)}</AppLink></p>
-          )}
+          {!local && <p className="text-body text-muted-foreground"><AppLink className="underline" href={`${paths.settings()}?tab=git`}>{t(($) => $.creation_studio.git.manage_connections)}</AppLink></p>}
           {local && <div className="space-y-3">
             <Label htmlFor="agent-package-file">{t(($) => $.creation_studio.local.file)}</Label>
             <Input id="agent-package-file" type="file" accept=".zip,application/zip" disabled={pending || createMutation.isSuccess} onChange={(event) => { invalidatePreview(); setFile(event.target.files?.[0] ?? null); }} />
@@ -93,23 +89,23 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
           </div>}
           {!local && <fieldset disabled={!canManage || pending || createMutation.isSuccess} className="space-y-4 disabled:opacity-60">
             <div className="space-y-2">
-              <Label htmlFor="git-installation">{t(($) => $.creation_studio.git.connection)}</Label>
-              <select id="git-installation" value={installationId} className="h-9 w-full rounded-md border bg-background px-3 text-body" onChange={(event) => { setInstallation(event.target.value); setRepository(""); setRef(""); setRevisionReady(true); invalidatePreview(); }}>
-                <option value="" disabled>{t(($) => $.creation_studio.git.connection)}</option>
-                {installations.data?.installations?.map((item) => <option key={item.id} value={item.id}>{item.account_login}</option>)}
-              </select>
-            </div>
-            <div className="space-y-2">
               <Label htmlFor="git-repository">{t(($) => $.tab_body.publish.repository)}</Label>
-              <Input id="git-repository" list="git-repositories" placeholder="https://github.com/owner/agent" value={repository} onChange={(event) => { setRepository(event.target.value); setRef(""); setRevisionReady(true); invalidatePreview(); }} />
-              <datalist id="git-repositories">{repositories.data?.repositories?.map((item) => <option key={item.full_name} value={item.full_name} />)}</datalist>
-              {repositories.isError && <p role="alert" className="text-caption text-destructive">{repositories.error.message}</p>}
+              <Input id="git-repository" placeholder="https://…/team/agent" value={repository} onChange={(event) => { setRepository(event.target.value); setLoadedRepository(""); setConnectionId(""); setRef(""); setRevisionReady(true); invalidatePreview(); }} />
+              <Button variant="outline" disabled={!repository.trim()} onClick={() => setLoadedRepository(repository.trim())}>{t(($) => $.creation_studio.git.read_repository)}</Button>
+              {branches.isError && <p role="alert" className="text-caption text-destructive">{branches.error.message}</p>}
             </div>
+            {loadedRepository && (connections.data?.connections.length ?? 0) > 1 && <div className="space-y-2">
+              <Label htmlFor="git-connection">{t(($) => $.creation_studio.git.connection)}</Label>
+              <select id="git-connection" value={connectionId} className="h-9 w-full rounded-md border bg-background px-3 text-body" onChange={(event) => { setConnectionId(event.target.value); setRef(""); invalidatePreview(); }}>
+                <option value="">{t(($) => $.creation_studio.git.auto_connection)}</option>
+                {connections.data?.connections.map((item) => <option key={item.id} value={item.id}>{item.account_login} · {item.provider}</option>)}
+              </select>
+            </div>}
             <div className="space-y-2">
-              <GitRevisionSelect key={`${installationId}:${repository}`} id="git-ref" value={ref} revisions={branches.data} allowDefault onReadyChange={setRevisionReady} onChange={(value) => { setRef(value); invalidatePreview(); }} />
+              <GitRevisionSelect key={`${connectionId}:${repository}`} id="git-ref" value={ref} revisions={branches.data} allowDefault onReadyChange={setRevisionReady} onChange={(value) => { setRef(value); invalidatePreview(); }} />
               {branches.isError && <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.publish.branches_failed)}</p>}
             </div>
-            <Button variant="outline" disabled={!installationId || !repository.trim() || !revisionReady || pending} onClick={() => void handlePreview()}>{t(($) => $.creation_studio.git.preview)}</Button>
+            <Button variant="outline" disabled={!loadedRepository || !branches.data || branches.isFetching || !revisionReady || pending} onClick={() => void handlePreview()}>{t(($) => $.creation_studio.git.preview)}</Button>
           </fieldset>}
           {preview && (
             <div className="space-y-4 rounded-lg border p-4">

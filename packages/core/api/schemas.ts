@@ -33,14 +33,14 @@ import type {
   AgentEnterpriseIdentityStatusResponse,
   BeginAgentEnterpriseIdentityBindingResponse,
   GroupedIssuesResponse,
-  GitHubAgentPreview,
+  GitAgentPreview,
   GitHubInstallation,
-  ListGitHubAgentRepositoriesResponse,
+
   ListGitHubInstallationsResponse,
   AgentSource,
   AgentSourceSyncPreview,
   AgentSourceBranches,
-  CreateGitHubAgentResponse,
+  CreateAgentPackageResponse,
   SyncAgentSourceResponse,
   FDEOnboardingState,
   ProvisionFDEOnboardingResponse,
@@ -2842,27 +2842,6 @@ export const EMPTY_AGENT_BUILDER_SESSION: AgentBuilderSession = {
   runtime_id: "",
 };
 
-export const GitHubAgentRepositorySchema = z
-  .object({
-    installation_id: z.string(),
-    full_name: z.string(),
-    private: z.boolean().default(false),
-    default_branch: z.string().default(""),
-    html_url: z.string().default(""),
-  })
-  .loose();
-
-export const ListGitHubAgentRepositoriesResponseSchema = z
-  .object({
-    repositories: z.array(GitHubAgentRepositorySchema).default([]),
-  })
-  .loose();
-
-export const EMPTY_GITHUB_AGENT_REPOSITORIES: ListGitHubAgentRepositoriesResponse =
-  {
-    repositories: [],
-  };
-
 export const GitHubInstallationSchema = z
   .object({
     id: z.string(),
@@ -2916,7 +2895,7 @@ export const EMPTY_GITHUB_INSTALLATIONS: ListGitHubInstallationsResponse = {
   can_manage: false,
 };
 
-const GitHubAgentSkillPreviewSchema = z
+const GitAgentSkillPreviewSchema = z
   .object({
     enabled: z.boolean().optional(),
     source_path: z.string(),
@@ -2952,21 +2931,21 @@ export const AgentPackagePreviewSchema = z.object({
   instructions: z.string().default(""),
   // A preview is a confirmation boundary: reject malformed authored constraints.
   coordinator_contract: CoordinatorContractSchema.nullish(),
-  skills: z.array(GitHubAgentSkillPreviewSchema).default([]),
+  skills: z.array(GitAgentSkillPreviewSchema).default([]),
   manifest_fields: NullableStringArraySchema,
   configuration_fields: NullableStringArraySchema,
   warnings: NullableStringArraySchema,
   requirements: AgentPackageRequirementsSchema,
 });
 
-export const GitHubAgentPreviewSchema = z
+export const GitAgentPreviewSchema = z
   .object({
     requirements: AgentPackageRequirementsSchema.optional(),
     definition: z.record(z.string(), z.unknown()).optional(),
     preview_id: z.string().optional(),
     expires_at: z.string().optional(),
     repository_url: z.string().optional(),
-    installation_id: z.string(),
+    connection_id: z.string(),
     repository: z.string(),
     ref: z.string(),
     resolved_sha: z.string(),
@@ -2975,7 +2954,7 @@ export const GitHubAgentPreviewSchema = z
     instructions: z.string().default(""),
     coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     skills: z
-      .array(GitHubAgentSkillPreviewSchema)
+      .array(GitAgentSkillPreviewSchema)
       .nullish()
       .transform((value) => value ?? []),
     compatible_providers: NullableStringArraySchema,
@@ -2984,8 +2963,8 @@ export const GitHubAgentPreviewSchema = z
   })
   .loose();
 
-export const EMPTY_GITHUB_AGENT_PREVIEW: GitHubAgentPreview = {
-  installation_id: "",
+export const EMPTY_GIT_AGENT_PREVIEW: GitAgentPreview = {
+  connection_id: "",
   repository: "",
   ref: "",
   resolved_sha: "",
@@ -3011,7 +2990,7 @@ export const AgentSourceSchema = z
     configuration_scope: NullableStringArraySchema,
     agent_id: z.string(),
     source_type: z.string(),
-    installation_id: z.string().nullable().default(null),
+    connection_id: z.string().nullable().default(null),
     repository: z.string(),
     ref: z.string(),
     manifest_path: z.string().default("dingtalk-agent.json"),
@@ -3020,14 +2999,14 @@ export const AgentSourceSchema = z
     last_sync_error: z.string().nullable().default(null),
     last_sync_attempt_at: z.string().nullable().default(null),
     last_synced_at: z.string().default(""),
-    github_connected: z.boolean().default(false),
+    connected: z.boolean().default(false),
   })
   .loose();
 
 export const EMPTY_AGENT_SOURCE: AgentSource = {
   agent_id: "",
-  source_type: "github",
-  installation_id: null,
+  source_type: "git",
+  connection_id: null,
   repository: "",
   ref: "",
   manifest_path: "dingtalk-agent.json",
@@ -3036,10 +3015,10 @@ export const EMPTY_AGENT_SOURCE: AgentSource = {
   last_sync_error: null,
   last_sync_attempt_at: null,
   last_synced_at: "",
-  github_connected: false,
+  connected: false,
 };
 
-export const CreateGitHubAgentResponseSchema = z
+export const CreateAgentPackageResponseSchema = z
   .object({
     agent: MinimalAgentSchema,
     source: AgentSourceSchema,
@@ -3047,7 +3026,7 @@ export const CreateGitHubAgentResponseSchema = z
   })
   .loose();
 
-export const EMPTY_CREATE_GITHUB_AGENT_RESPONSE: CreateGitHubAgentResponse = {
+export const EMPTY_CREATE_AGENT_PACKAGE_RESPONSE: CreateAgentPackageResponse = {
   agent: { id: "" } as Agent,
   source: EMPTY_AGENT_SOURCE,
   warnings: [],
@@ -3098,6 +3077,7 @@ export const EMPTY_AGENT_SOURCE_SYNC_PREVIEW: AgentSourceSyncPreview = {
 };
 
 export const AgentSourceBranchesSchema = z.object({
+  connection_id: z.string().optional(),
   repository: z.string(),
   repository_url: z.string(),
   default_branch: z.string(),
@@ -4710,3 +4690,8 @@ export const AgentPackageBindingReportSchema = z.object({
   })),
   resources: z.array(z.object({ ref: z.string().min(1), kind: z.string(), label: z.string() })),
 });
+
+export const GitConnectionSchema = z.object({ id: z.string().min(1), provider: z.string(), account_login: z.string(), created_at: z.string() });
+export const GitConnectionsSchema = z.object({ connections: z.array(GitConnectionSchema), token_connections_available: z.boolean().default(false) });
+
+export const GitRepositoryIdentitySchema = z.object({ repository_url: z.string(), provider: z.string(), connections: z.array(GitConnectionSchema) });

@@ -1,5 +1,5 @@
 import type { CoordinatorContract } from "./agent";
-import type { GitHubAgentSkillPreview } from "./github";
+import type { GitAgentSkillPreview } from "./git-repo";
 
 export interface AgentPackageRequirements {
   secrets: string[];
@@ -18,7 +18,7 @@ export interface AgentPackagePreview {
   description: string;
   instructions: string;
   coordinator_contract?: CoordinatorContract | null;
-  skills: GitHubAgentSkillPreview[];
+  skills: GitAgentSkillPreview[];
   manifest_fields: string[];
   configuration_fields: string[];
   warnings: string[];
