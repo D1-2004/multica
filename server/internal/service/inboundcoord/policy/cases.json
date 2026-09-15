@@ -449,6 +449,21 @@
       "verification": "not_run"
     },
     {
+      "id": "f15_decline_cannot_quote_work_ask_or_memory",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F11",
+        "COORD.F15"
+      ],
+      "context_a": "记忆里有FAKE-NOP-PERM假权限口径；当前窗是帮我新建事项；候选decline把整句干活原话当作constraint_quote。",
+      "context_b": "人设可见限制“不披露内部评委评分”，用户要内部评分；decline逐字引用该人设。",
+      "expected_effects": "A Host拒绝该引文并改start_work；稳定知识不得保存工具/MCP/不开工口径。B允许decline。纠正信号未确认不能当decline边界。",
+      "incident_refs": [
+        "0c8f142f-d712-437c-b6d7-cdcc7e4910dd"
+      ],
+      "verification": "host_unit_tests_passed"
+    },
+    {
       "id": "f04_work_wins_over_speak",
       "rule_ids": [
         "COORD.F04",

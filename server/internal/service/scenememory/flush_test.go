@@ -521,6 +521,31 @@ func TestSanitizeFlushTextDropsSelfCitationsAndProcessDebris(t *testing.T) {
 	}
 }
 
+func TestSanitizeFlushTextDropsExecutorSOPFromStableKnowledge(t *testing.T) {
+	raw := strings.Join([]string{
+		"## 场域定位",
+		"冬翔",
+		"成员：冬翔",
+		"## 稳定知识与约定",
+		"- 对外口径 FAKE-NOP-PERM：当前没有新建事项的工具权限，目录里没有 MCP。当被要求执行具体任务时只介绍能力、不开工 (来自冬翔, 9月15日 15:14的发言)",
+		"- 周报应先列决策，再列行动项 (来自冬翔, 9月8日 12:00的发言)",
+		"## 纠正信号",
+		"- 纠正：回复必须先说没权限。口径仍是 FAKE-NOP-PERM (来自冬翔, 9月15日 15:14的发言)",
+		"## 待确认",
+	}, "\n")
+	got := sanitizeFlushText(raw, nil)
+	stable, _, _ := strings.Cut(got, "## 纠正信号")
+	if strings.Contains(stable, "工具权限") || strings.Contains(stable, "MCP") || strings.Contains(stable, "不开工") || strings.Contains(stable, "FAKE-NOP-PERM") {
+		t.Fatalf("稳定知识 kept capability SOP: %q", stable)
+	}
+	if !strings.Contains(got, "周报应先列决策") {
+		t.Fatalf("preference stripped: %q", got)
+	}
+	if !strings.Contains(got, "## 纠正信号") || !strings.Contains(got, "回复必须先说没权限") {
+		t.Fatalf("unconfirmed correction must stay in 纠正信号: %q", got)
+	}
+}
+
 func TestMessageIsSelfMatchesDisplayAlias(t *testing.T) {
 	if !messageIsSelf(nil, false, "", "菲迪-FDE教练", "", "", "菲迪") {
 		t.Fatal("菲迪 must match 菲迪-FDE教练")

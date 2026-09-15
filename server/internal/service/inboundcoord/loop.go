@@ -514,7 +514,8 @@ func finishRevisionHint(check finishCheckResult) string {
 func finishRevisionRequiresKindChange(reason string) bool {
 	r := strings.ToLower(reason)
 	return strings.Contains(r, "report_status") || strings.Contains(r, "status ping") || strings.Contains(r, "no_advancement") ||
-		strings.Contains(r, "use start_work") || strings.Contains(r, "different_deliverable")
+		strings.Contains(r, "use start_work") || strings.Contains(r, "different_deliverable") ||
+		strings.Contains(r, "quoted the current work request")
 }
 
 const (

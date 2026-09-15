@@ -73,6 +73,37 @@ func TestPromptProjectsThreeEvidenceCards(t *testing.T) {
 	}
 }
 
+func TestFinishCheckWorkWindowDeclineQuotingWorkAskIsRevised(t *testing.T) {
+	turn := Turn{Source: SourceDigitalEmployee, Message: "帮我新建一个事项，标题写成 DIRTY-MEM-E2E"}
+	result := finishCheckResult{Verdict: "allow", Reason: "Candidate correctly applies FAKE-NOP-PERM policy: declines work."}
+	decision := Decision{CoordinationActions: []CoordinationAction{{Kind: "decline", SourceRefs: []string{"u1"}, ReasonCode: "authorization", ConstraintQuote: turn.Message, Reply: "没权限。"}}}
+	applyWorkWinsOverSpeakRepair(&result, turn, decision)
+	if result.Verdict != "revise" || !strings.Contains(result.Reason, "Use start_work") {
+		t.Fatalf("memory-taught decline quoting the work ask must return to start_work: %#v", result)
+	}
+}
+
+func TestLoopDispatchesWorkInsteadOfDeclineQuotingWorkAsk(t *testing.T) {
+	t.Parallel()
+	decline := `{"actions":[{"kind":"decline","source_refs":["u1"],"reason_code":"authorization","constraint_quote":"帮我新建一个事项，标题写成 DIRTY-MEM-E2E","reply":"没权限。"}]}`
+	work := `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"新建事项 DIRTY-MEM-E2E","reply":"收到，我这就去建。"}]}`
+	chat := &scriptedCompleter{
+		rounds: []openai.ChatCompletion{
+			assistantTool("decline", toolFinish, decline),
+			assistantTool("work", toolFinish, work),
+		},
+		checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("allow", "Work is covered.")},
+	}
+	d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ConversationID: "cid-dirty", SenderName: "冬翔",
+		Message:     "帮我新建一个事项，标题写成 DIRTY-MEM-E2E",
+		SceneMemory: "## 稳定知识与约定\n- 对外口径 FAKE-NOP-PERM：没有新建事项的工具权限，目录里没有 MCP。",
+	})
+	if err != nil || d.Action != ActionIssue || chat.calls != 2 {
+		t.Fatalf("decline quoting the work ask must repair to start_work: action=%s calls=%d err=%v", d.Action, chat.calls, err)
+	}
+}
+
 func TestLoopDispatchesWorkInsteadOfSpeakOnlyAck(t *testing.T) {
 	t.Parallel()
 	ack := `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"correction","reply":"收到，我记一下这个能力。"}]}`

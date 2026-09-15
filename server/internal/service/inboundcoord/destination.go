@@ -2,6 +2,8 @@ package inboundcoord
 
 import (
 	"strings"
+
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 )
 
 func workWinsOverSpeakRepairReason() string {
@@ -12,14 +14,50 @@ func applyWorkWinsOverSpeakRepair(result *finishCheckResult, turn Turn, decision
 	if result == nil || result.Verdict != "allow" {
 		return
 	}
-	if hasWorkDestination(decision) || !speakOnlyDestination(decision) {
+	if hasWorkDestination(decision) || !windowRequestsWork(turn) {
 		return
 	}
-	if !windowRequestsWork(turn) {
-		return
+	if speakOnlyDestination(decision) || declineWithoutStandingRestriction(decision, turn) {
+		result.Verdict = "revise"
+		result.Reason = workWinsOverSpeakRepairReason()
 	}
-	result.Verdict = "revise"
-	result.Reason = workWinsOverSpeakRepairReason()
+}
+
+func declineWithoutStandingRestriction(decision Decision, turn Turn) bool {
+	hasDecline := false
+	for _, action := range decision.CoordinationActions {
+		switch action.Kind {
+		case "start_work", "continue_work":
+			return false
+		case "decline":
+			hasDecline = true
+			if standingRestrictionQuote(action.ConstraintQuote, turn) {
+				return false
+			}
+		}
+	}
+	return hasDecline
+}
+
+func standingRestrictionQuote(quote string, turn Turn) bool {
+	q := strings.TrimSpace(quote)
+	if q == "" || quoteIsCurrentWorkUtterance(q, turn) {
+		return false
+	}
+	if strings.Contains(configuredPersona(turn), q) || strings.Contains(configuredReplyTone(turn), q) {
+		return true
+	}
+	if contract, state := currentCoordinatorContract(turn); state == coordinatorcontract.StateLoaded && contract != nil {
+		if strings.Contains(string(coordinatorcontract.Marshal(contract)), q) {
+			return true
+		}
+	}
+	for _, utterance := range windowUtterances(turn) {
+		if strings.Contains(utterance.Text, q) && !workRequestUtterance(q) && strings.TrimSpace(utterance.Text) != q {
+			return true
+		}
+	}
+	return false
 }
 
 func windowRequestsWork(turn Turn) bool {
