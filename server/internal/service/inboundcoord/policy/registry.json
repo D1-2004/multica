@@ -1,10 +1,10 @@
 {
-  "policy_version": "2026-09-14.3",
-  "assembly_version": "24",
+  "policy_version": "2026-09-14.4",
+  "assembly_version": "25",
   "modules": [
     {
       "id": "core",
-      "version": "5",
+      "version": "6",
       "file": "core.md",
       "applies_when": "always",
       "requires": [],
@@ -23,8 +23,8 @@
         "COORD.F17",
         "COORD.F18"
       ],
-      "budget_characters": 1179,
-      "content_sha256": "d3f30b16ea8e734eb4cc80091b5a13c6644e6a5d440eeb118e24e6f687e31287"
+      "budget_characters": 1300,
+      "content_sha256": "0f97e3f64dd21509decdd39666f2a5fc1d53147150040de2c95c151596b23d9f"
     },
     {
       "id": "voice",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "24",
+      "version": "25",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -60,8 +60,8 @@
         "COORD.F10",
         "COORD.F03"
       ],
-      "budget_characters": 3400,
-      "content_sha256": "4b3b0f69695b744b9a3b10cd8b159e0f1ffb7b39b3d73d5127f9b1fa541f76f1"
+      "budget_characters": 3737,
+      "content_sha256": "c3c619ff94bc1e2cee32f0728cf04d8f28494de558e6cb9f57fb36116fba601d"
     },
     {
       "id": "channel",
@@ -133,7 +133,7 @@
     },
     {
       "id": "memory",
-      "version": "6",
+      "version": "7",
       "file": "memory.md",
       "applies_when": "scene_memory_available",
       "requires": [
@@ -144,8 +144,8 @@
         "COORD.F03",
         "COORD.F11"
       ],
-      "budget_characters": 900,
-      "content_sha256": "3d6b9ea4bebee102951c529247d87b1828866a80811c61652e9f99408ba70ef7"
+      "budget_characters": 950,
+      "content_sha256": "22599847c9400ca586a44cdefe09c4a230ecd314b57c942dd5a562757dfcb3a2"
     },
     {
       "id": "skills",
@@ -538,7 +538,8 @@
         "f04_declared_skill_synopsis_vs_managed_marker",
         "f04_single_work_does_not_authorize_environment_repair",
         "f15_catalog_not_authorization_vs_quoted_job_limit",
-        "f11_memory_capability_claim_vs_catalog"
+        "f11_memory_capability_claim_vs_catalog",
+        "f04_work_wins_over_speak"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -561,7 +562,10 @@
         "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
         "server/internal/service/inboundcoord/issue_description_test.go",
         "docs/plans/2026-09-14-coordinator-invented-access-limit.md",
-        "server/internal/service/inboundcoord/finish_invented_capability_test.go"
+        "server/internal/service/inboundcoord/finish_invented_capability_test.go",
+        "server/internal/service/inboundcoord/destination.go",
+        "server/internal/service/inboundcoord/finish_destination_test.go",
+        "server/internal/service/inboundcoord/prompt.go"
       ],
       "case_file": "cases.json"
     },
@@ -986,7 +990,8 @@
         "f16_state_snapshot_feedback_preserves_open_constraints",
         "f13_tool_schema_lists_validatable_values",
         "f15_catalog_not_authorization_vs_quoted_job_limit",
-        "f07_different_deliverable_forces_start_work_kind"
+        "f07_different_deliverable_forces_start_work_kind",
+        "f04_work_wins_over_speak"
       ],
       "verification": {
         "status": "integration_replay_pending",

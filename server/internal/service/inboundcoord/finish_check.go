@@ -296,6 +296,9 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 				protocolErr = validateFinishParticipationChecks(&result, turn, decision)
 			}
 			if protocolErr == nil && result.Verdict == "allow" {
+				applyWorkWinsOverSpeakRepair(&result, turn, decision)
+			}
+			if protocolErr == nil && result.Verdict == "allow" {
 				for _, action := range actions {
 					if action.Kind == "continue_work" && action.ExistingWork.ReadStatus != "loaded" {
 						result.Verdict = "revise"

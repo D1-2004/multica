@@ -449,6 +449,17 @@
       "verification": "not_run"
     },
     {
+      "id": "f04_work_wins_over_speak",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F13"
+      ],
+      "context_a": "用户要新建Aone工单，候选只用acknowledge(correction)说「我记一下这个能力」。",
+      "context_b": "用户只说「你好」，候选acknowledge(greeting)。",
+      "expected_effects": "A Host revise为start_work/continue_work，人话挂在工作reply上；B允许说话。describe_capabilities仅用于能力问句且没有夹带干活。",
+      "verification": "host_unit_tests_passed"
+    },
+    {
       "id": "f15_catalog_not_authorization_vs_quoted_job_limit",
       "rule_ids": [
         "COORD.F04",
