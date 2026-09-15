@@ -47,6 +47,7 @@ var asbBuiltinNetworkTargets = []string{
 	// Verified against ASB Hangzhou with default-deny egress on 2026-09-15.
 	"140.205.109.26", "140.205.109.30",
 	"aone.alibaba-inc.com", "code.alibaba-inc.com", "sandbox.aone.alibaba-inc.com",
+	"a1-server.alibaba-inc.com", "buc.alibaba-inc.com", "goproxy.alibaba-inc.com",
 	"registry.npmjs.org", "registry.npmmirror.com", "pypi.org", "files.pythonhosted.org",
 }
 
