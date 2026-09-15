@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/githubapp"
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -54,9 +54,9 @@ func newGitSourceFixture(t *testing.T) *gitSourceFixture {
 		case strings.HasSuffix(p, "/access_tokens"):
 			writeJSON(w, http.StatusCreated, map[string]any{"token":"fixture-token", "expires_at":time.Now().Add(time.Hour)})
 		case p == "/installation/repositories":
-			repositories := []githubapp.Repository{}
+			repositories := []gitrepo.Repository{}
 			if f.accessible {
-				repositories = append(repositories, githubapp.Repository{ID: 42, FullName: "acme/reviewer", DefaultBranch: "main", HTMLURL: "https://github.com/acme/reviewer"})
+				repositories = append(repositories, gitrepo.Repository{ID: 42, FullName: "acme/reviewer", DefaultBranch: "main", HTMLURL: "https://github.com/acme/reviewer"})
 			}
 			writeJSON(w, http.StatusOK, map[string]any{"repositories":repositories})
 		case p == "/repos/acme/reviewer/branches":
@@ -69,6 +69,7 @@ func newGitSourceFixture(t *testing.T) *gitSourceFixture {
 			writeJSON(w,http.StatusOK,[]map[string]any{{"name":"v1.0","commit":map[string]string{"sha":gitSourceSHA1}}})
 		case strings.HasPrefix(p, "/repos/acme/reviewer/commits/"):
 			ref := strings.TrimPrefix(p, "/repos/acme/reviewer/commits/")
+			ref = strings.TrimPrefix(ref,"heads/")
 			sha := f.refs[ref]
 			if f.files[ref] != nil { sha = ref }
 			if sha == "" { http.NotFound(w, r); return }
@@ -78,12 +79,12 @@ func newGitSourceFixture(t *testing.T) *gitSourceFixture {
 			writeJSON(w, http.StatusOK, map[string]any{"tree":map[string]string{"sha":sha}})
 		case strings.HasPrefix(p, "/repos/acme/reviewer/git/trees/"):
 			sha := strings.TrimPrefix(p, "/repos/acme/reviewer/git/trees/")
-			entries := []githubapp.TreeEntry{}
+			entries := []gitrepo.TreeEntry{}
 			for path, content := range f.files[sha] {
 				digest := sha1.Sum([]byte(content))
-				entries = append(entries, githubapp.TreeEntry{Path:path, Type:"blob", Mode:"100644", SHA:hex.EncodeToString(digest[:]), Size:int64(len(content))})
+				entries = append(entries, gitrepo.TreeEntry{Path:path, Type:"blob", Mode:"100644", SHA:hex.EncodeToString(digest[:]), Size:int64(len(content))})
 			}
-			writeJSON(w, http.StatusOK, githubapp.Tree{SHA:sha, Entries:entries})
+			writeJSON(w, http.StatusOK, gitrepo.Tree{SHA:sha, Entries:entries})
 		case strings.HasPrefix(p, "/repos/acme/reviewer/git/blobs/"):
 			sha := strings.TrimPrefix(p, "/repos/acme/reviewer/git/blobs/")
 			for _, files := range f.files {
@@ -103,7 +104,7 @@ func newGitSourceFixture(t *testing.T) *gitSourceFixture {
 	t.Cleanup(server.Close)
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil { t.Fatal(err) }
-	client, err := githubapp.New(githubapp.Config{AppID:"123", PrivateKey:string(pem.EncodeToMemory(&pem.Block{Type:"RSA PRIVATE KEY", Bytes:x509.MarshalPKCS1PrivateKey(key)})), APIBase:server.URL})
+	client, err := gitrepo.NewGitHubApp(gitrepo.GitHubAppConfig{AppID:"123", PrivateKey:string(pem.EncodeToMemory(&pem.Block{Type:"RSA PRIVATE KEY", Bytes:x509.MarshalPKCS1PrivateKey(key)})), APIBase:server.URL})
 	if err != nil { t.Fatal(err) }
 	copyHandler := *testHandler
 	copyHandler.GitHubApp = client
@@ -114,6 +115,9 @@ func newGitSourceFixture(t *testing.T) *gitSourceFixture {
 	})
 	if err != nil { t.Fatal(err) }
 	f.installationID = uuidToString(installation.ID)
+	t.Cleanup(func() {
+		_ = f.handler.Queries.DeleteGitHubInstallation(context.Background(), db.DeleteGitHubInstallationParams{ID:installation.ID, WorkspaceID:parseUUID(testWorkspaceID)})
+	})
 	return f
 }
 
@@ -138,17 +142,17 @@ func rawString(t *testing.T, value json.RawMessage) string {
 
 func TestGitHubSourceCreateFromURLPinsPreviewAndIsIdempotent(t *testing.T) {
 	f := newGitSourceFixture(t)
-	preview := f.request(t, f.handler.PreviewGitHubAgent, testWorkspaceID, map[string]any{
-		"installation_id":f.installationID, "repository":"https://github.com/acme/reviewer", "ref":"main",
+	preview := f.request(t, f.handler.PreviewGitAgent, testWorkspaceID, map[string]any{
+		"connection_id":f.installationID, "repository":"https://github.com/acme/reviewer", "ref":"main",
 	}, http.StatusOK)
 	previewID := rawString(t, preview["preview_id"])
 	f.refs["main"] = gitSourceSHA2
 	body := map[string]any{"preview_id":previewID, "runtime_id":testRuntimeID, "name":"Pinned source " + previewID}
-	created := f.request(t, f.handler.CreateGitHubAgent, testWorkspaceID, body, http.StatusCreated)
+	created := f.request(t, f.handler.CreateAgentFromPackage, testWorkspaceID, body, http.StatusCreated)
 	var agent struct { ID string `json:"id"`; Instructions string `json:"instructions"` }
 	if err := json.Unmarshal(created["agent"], &agent); err != nil { t.Fatal(err) }
 	if agent.Instructions != "Review code v1" { t.Fatalf("instructions = %q", agent.Instructions) }
-	replayed := f.request(t, f.handler.CreateGitHubAgent, testWorkspaceID, body, http.StatusOK)
+	replayed := f.request(t, f.handler.CreateAgentFromPackage, testWorkspaceID, body, http.StatusOK)
 	var replayAgent struct { ID string `json:"id"` }
 	if err := json.Unmarshal(replayed["agent"], &replayAgent); err != nil { t.Fatal(err) }
 	if replayAgent.ID != agent.ID { t.Fatal("confirmation created a second Agent") }
@@ -156,8 +160,9 @@ func TestGitHubSourceCreateFromURLPinsPreviewAndIsIdempotent(t *testing.T) {
 
 func TestGitHubSourceSkillCanBeEditedAndDeletedButNotReassigned(t *testing.T) {
 	f := newGitSourceFixture(t)
-	created := f.request(t, f.handler.CreateGitHubAgent, testWorkspaceID, map[string]any{
-		"installation_id":f.installationID, "repository":"acme/reviewer", "ref":"main", "resolved_sha":gitSourceSHA1,
+	preview := f.request(t,f.handler.PreviewGitAgent,testWorkspaceID,map[string]any{"connection_id":f.installationID,"repository":"https://github.com/acme/reviewer","ref":"main"},http.StatusOK)
+	created := f.request(t, f.handler.CreateAgentFromPackage, testWorkspaceID, map[string]any{
+		"preview_id":rawString(t,preview["preview_id"]),
 		"runtime_id":testRuntimeID, "name":"Editable source " + f.installationID,
 	}, http.StatusCreated)
 	var agent struct { ID string `json:"id"` }
@@ -167,7 +172,7 @@ func TestGitHubSourceSkillCanBeEditedAndDeletedButNotReassigned(t *testing.T) {
 	skillID := uuidToString(skills[0].ID)
 	f.request(t, f.handler.UpdateSkill, skillID, map[string]any{"content":"Local change", "config":map[string]any{"custom":"retained"}}, http.StatusOK)
 	updated, err := testHandler.Queries.GetSkill(t.Context(), skills[0].ID)
-	if err != nil || !strings.Contains(string(updated.Config), "github_agent_source") { t.Fatal("editing removed the source ownership metadata") }
+	if err != nil || !strings.Contains(string(updated.Config), "git_agent_source") { t.Fatal("editing removed the source ownership metadata") }
 	otherAgentID := createHandlerTestAgent(t, "Other " + f.installationID, nil)
 	f.request(t, f.handler.AddAgentSkills, otherAgentID, map[string]any{"skill_ids":[]string{skillID}}, http.StatusBadRequest)
 	f.request(t, f.handler.DeleteSkill, skillID, nil, http.StatusNoContent)
@@ -176,8 +181,9 @@ func TestGitHubSourceSkillCanBeEditedAndDeletedButNotReassigned(t *testing.T) {
 
 func (f *gitSourceFixture) create(t *testing.T) string {
 	t.Helper()
-	created := f.request(t, f.handler.CreateGitHubAgent, testWorkspaceID, map[string]any{
-		"installation_id":f.installationID, "repository":"acme/reviewer", "ref":"main", "resolved_sha":gitSourceSHA1,
+	preview := f.request(t,f.handler.PreviewGitAgent,testWorkspaceID,map[string]any{"connection_id":f.installationID,"repository":"https://github.com/acme/reviewer","ref":"main"},http.StatusOK)
+	created := f.request(t, f.handler.CreateAgentFromPackage, testWorkspaceID, map[string]any{
+		"preview_id":rawString(t,preview["preview_id"]),
 		"runtime_id":testRuntimeID, "name":fmt.Sprintf("Source %s %d", f.installationID, time.Now().UnixNano()),
 	}, http.StatusCreated)
 	var agent struct { ID string `json:"id"` }
@@ -243,8 +249,8 @@ func TestGitHubSourceSyncRechecksRepositoryPermission(t *testing.T) {
 
 func TestGitHubSourceConcurrentConfirmationsCreateOneAgent(t *testing.T) {
 	f := newGitSourceFixture(t)
-	preview := f.request(t, f.handler.PreviewGitHubAgent, testWorkspaceID, map[string]any{
-		"installation_id":f.installationID, "repository":"https://github.com/acme/reviewer",
+	preview := f.request(t, f.handler.PreviewGitAgent, testWorkspaceID, map[string]any{
+		"connection_id":f.installationID, "repository":"https://github.com/acme/reviewer",
 	}, http.StatusOK)
 	previewID := rawString(t, preview["preview_id"])
 	start := make(chan struct{})
@@ -256,7 +262,7 @@ func TestGitHubSourceConcurrentConfirmationsCreateOneAgent(t *testing.T) {
 			defer workers.Done()
 			<-start
 			w := httptest.NewRecorder()
-			f.handler.CreateGitHubAgent(w, withURLParam(newRequest(http.MethodPost, "/", map[string]any{
+			f.handler.CreateAgentFromPackage(w, withURLParam(newRequest(http.MethodPost, "/", map[string]any{
 				"preview_id":previewID, "runtime_id":testRuntimeID, "name":"Concurrent " + previewID,
 			}), "id", testWorkspaceID))
 			results <- w

@@ -30,7 +30,7 @@ func TestLocalAndGitPackagesCreateTheSameConfiguration(t *testing.T) {
 		"AGENTS.md":"Review package contents.", "skills/review/SKILL.md":"Review carefully.", "skills/review/references/check.md":"Preserve this reference.",
 	}
 	f.files[gitSourceSHA1] = files
-	git := f.request(t, f.handler.PreviewGitHubAgent, testWorkspaceID, map[string]any{"installation_id":f.installationID,"repository":"acme/reviewer","ref":"main"}, http.StatusOK)
+	git := f.request(t, f.handler.PreviewGitAgent, testWorkspaceID, map[string]any{"connection_id":f.installationID,"repository":"https://github.com/acme/reviewer","ref":"main"}, http.StatusOK)
 	localResponse := httptest.NewRecorder()
 	f.handler.PreviewAgentPackage(localResponse, agentPackageRequest(t, zipPackageFiles(t,files), true))
 	if localResponse.Code != http.StatusOK { t.Fatalf("local preview: %d %s",localResponse.Code,localResponse.Body.String()) }
@@ -48,7 +48,7 @@ func TestLocalAndGitPackagesCreateTheSameConfiguration(t *testing.T) {
 		if !strings.Contains(string(row.CustomEnv),"test-value") || !row.DispatchAlwaysNewIssue || !strings.Contains(string(row.DispatchPromptOverrides),"Inspect safely") { t.Fatal("runtime configuration lost") }
 		skills, err := testHandler.Queries.ListAgentSkillSummaries(t.Context(),row.ID); if err != nil || len(skills) != 1 || skills[0].Enabled { t.Fatalf("disabled skill lost: %v",err) }
 		origin, err := testHandler.Queries.GetAgentSourceByAgentID(t.Context(),row.ID); if err != nil { t.Fatal(err) }
-		if index == 0 && (origin.SourceType != "local" || origin.GithubInstallationID.Valid) { t.Fatal("local upload acquired Git provenance") }
+		if index == 0 && (origin.SourceType != "local" || origin.GitConnectionID.Valid) { t.Fatal("local upload acquired Git provenance") }
 		files, err := testHandler.Queries.ListSkillFiles(t.Context(),skills[0].ID); if err != nil || len(files) != 1 || files[0].Content != "Preserve this reference." { t.Fatal("supporting file lost") }
 		other := createHandlerTestAgent(t,"Cannot reassign " + id,nil)
 		f.request(t,f.handler.AddAgentSkills,other,map[string]any{"skill_ids":[]string{uuidToString(skills[0].ID)}},http.StatusBadRequest)

@@ -25,7 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/githubapp"
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -175,8 +175,8 @@ type GitHubRepositoriesResponse struct {
 	NextPage     *int                       `json:"next_page"`
 }
 
-func githubInstallationToResponse(i db.GithubInstallation) GitHubInstallationResponse {
-	instID := i.InstallationID
+func githubInstallationToResponse(i db.GitConnection) GitHubInstallationResponse {
+	instID := i.InstallationID.Int64
 	return GitHubInstallationResponse{
 		ID:               uuidToString(i.ID),
 		WorkspaceID:      uuidToString(i.WorkspaceID),
@@ -195,7 +195,7 @@ func githubInstallationToResponse(i db.GithubInstallation) GitHubInstallationRes
 // the list endpoint to recover the management handle. The frontend uses
 // these events only to invalidate the installations query, so it does not
 // read `installation_id` off the broadcast.
-func githubInstallationToBroadcast(i db.GithubInstallation) GitHubInstallationResponse {
+func githubInstallationToBroadcast(i db.GitConnection) GitHubInstallationResponse {
 	resp := githubInstallationToResponse(i)
 	resp.InstallationID = nil
 	return resp
@@ -610,8 +610,8 @@ func (h *Handler) persistGitHubSetup(w http.ResponseWriter,r *http.Request,works
 	http.Redirect(w, r, settingsURL+"&github_connected=1", http.StatusFound)
 }
 
-func (h *Handler) consumePendingGitHubInstallation(ctx context.Context, inst db.GithubInstallation) (db.GithubInstallation, error) {
-	pending, err := h.Queries.GetPendingGitHubInstallation(ctx, inst.InstallationID)
+func (h *Handler) consumePendingGitHubInstallation(ctx context.Context, inst db.GitConnection) (db.GitConnection, error) {
+	pending, err := h.Queries.GetPendingGitHubInstallation(ctx, inst.InstallationID.Int64)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return inst, nil
@@ -620,16 +620,16 @@ func (h *Handler) consumePendingGitHubInstallation(ctx context.Context, inst db.
 	}
 	refreshed, err := h.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
 		WorkspaceID:      inst.WorkspaceID,
-		InstallationID:   inst.InstallationID,
+		InstallationID:   inst.InstallationID.Int64,
 		AccountLogin:     pending.AccountLogin,
 		AccountType:      coalesce(pending.AccountType, "User"),
 		AccountAvatarUrl: pending.AccountAvatarUrl,
-		ConnectedByID:    inst.ConnectedByID,
+		ConnectedByID:    inst.CreatedBy,
 	})
 	if err != nil {
 		return inst, err
 	}
-	if err := h.Queries.DeletePendingGitHubInstallation(ctx, inst.InstallationID); err != nil {
+	if err := h.Queries.DeletePendingGitHubInstallation(ctx, inst.InstallationID.Int64); err != nil {
 		return inst, err
 	}
 	return refreshed, nil
@@ -712,7 +712,7 @@ func fetchInstallationAccount(ctx context.Context, installationID int64) (login,
 // time.Now().
 func signGitHubAppJWT(now time.Time) (string, error) {
 	appID := strings.TrimSpace(os.Getenv("GITHUB_APP_ID"))
-	pemKey := githubapp.NormalizePrivateKeyPEM(os.Getenv("GITHUB_APP_PRIVATE_KEY"))
+	pemKey := gitrepo.NormalizePrivateKeyPEM(os.Getenv("GITHUB_APP_PRIVATE_KEY"))
 	if appID == "" || pemKey == "" {
 		return "", nil
 	}
@@ -849,7 +849,7 @@ func (h *Handler) ReuseGitHubInstallation(w http.ResponseWriter, r *http.Request
 	}
 	inst, err := h.Queries.CreateGitHubInstallation(r.Context(), db.CreateGitHubInstallationParams{
 		WorkspaceID:      targetUUID,
-		InstallationID:   source.InstallationID,
+		InstallationID:   source.InstallationID.Int64,
 		AccountLogin:     source.AccountLogin,
 		AccountType:      source.AccountType,
 		AccountAvatarUrl: source.AccountAvatarUrl,
@@ -908,7 +908,7 @@ func (h *Handler) ListGitHubInstallationRepositories(w http.ResponseWriter, r *h
 
 	repositories, err := fetchGitHubInstallationRepositories(
 		r.Context(),
-		row.InstallationID,
+		row.InstallationID.Int64,
 		page,
 		perPage,
 	)
@@ -1072,7 +1072,7 @@ func (h *Handler) DeleteGitHubInstallation(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if err := h.Queries.MarkAgentSourcesDisconnectedByInstallation(r.Context(), idUUID); err != nil {
+	if err := h.Queries.MarkAgentSourcesDisconnectedByConnection(r.Context(), idUUID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to mark GitHub agent sources disconnected")
 		return
 	}
@@ -1278,7 +1278,7 @@ func (h *Handler) handleInstallationEvent(ctx context.Context, body []byte) {
 			return
 		}
 		for _, binding := range bindings {
-			if err := h.Queries.MarkAgentSourcesDisconnectedByInstallation(ctx, binding.ID); err != nil {
+			if err := h.Queries.MarkAgentSourcesDisconnectedByConnection(ctx, binding.ID); err != nil {
 				slog.Warn("github: mark agent sources disconnected failed", "err", err, "installation_id", p.Installation.ID, "binding_id", uuidToString(binding.ID))
 				return
 			}
@@ -1423,7 +1423,7 @@ func (h *Handler) handlePullRequestEvent(ctx context.Context, body []byte) {
 	// workspace.repos registry — that list is "code the agent clones", not a
 	// webhook subscription (MUL-4343).
 	for _, inst := range insts {
-		h.mirrorPullRequestForWorkspace(ctx, inst.WorkspaceID, inst.InstallationID, &p)
+		h.mirrorPullRequestForWorkspace(ctx, inst.WorkspaceID, inst.InstallationID.Int64, &p)
 	}
 	// The PR row(s) now carry the new head; ask the API pipeline for the
 	// authoritative CI + mergeability snapshot for that head. The webhook is

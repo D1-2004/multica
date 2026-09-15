@@ -452,3 +452,9 @@ Configuration and implementation map to `event_trigger.go`, `agent_event_trigger
 - 2026-09-14: Corrected GitHub connection authorization, empty-plugin readiness
   and absent A2A endpoint reimports. Moved detailed package guidance into
   `references/agent-packages.md` to keep this entry point within its size budget.
+
+## Protocol history
+
+- 2026-09-15: Agent repository acquisition now uses GitRepo for GitHub and Code.
+  Read `references/agent-packages.md` for unified URLs, workspace credentials and
+  preview-only confirmation; this keeps repository access separate from execution.

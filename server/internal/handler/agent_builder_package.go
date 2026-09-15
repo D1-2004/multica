@@ -58,9 +58,9 @@ func (h *Handler) DownloadPreparedAgentPackage(w http.ResponseWriter, r *http.Re
 	id, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id"); if !ok { return }
 	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok { return }
 	preview, err := h.readAgentSourcePreview(r, id, chi.URLParam(r, "previewId"))
-	if err != nil { writeGitHubSourceError(w, err); return }
+	if err != nil { writeGitRepoError(w, err); return }
 	resolved, err := h.resolveAgentSourcePreview(r.Context(), preview)
-	if err != nil { writeGitHubSourceError(w, err); return }
+	if err != nil { writeGitRepoError(w, err); return }
 	manifest, exists := resolved.snapshot.Files[agentsource.PortableManifestPath]
 	if !exists { writeError(w, http.StatusBadRequest, "this preview has no downloadable authored package"); return }
 	files := map[string]string{}

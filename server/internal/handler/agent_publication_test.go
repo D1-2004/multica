@@ -99,8 +99,8 @@ func TestGitPublicationSupportsBranchesTagsAndCommits(t *testing.T) {
 func TestGitPublicationHistoryPaginationDoesNotExposeOtherAgents(t *testing.T) {
 	f := newGitSourceFixture(t)
 	id := f.create(t)
-	if _,err := testPool.Exec(t.Context(),`INSERT INTO agent_source_preview (workspace_id,created_by,agent_id,agent_source_id,github_installation_id,repository,ref,resolved_sha,snapshot,applied_at,applied_source)
-SELECT workspace_id,created_by,agent_id,agent_source_id,github_installation_id,repository,ref,resolved_sha,snapshot,clock_timestamp() + n * interval '1 microsecond',applied_source
+	if _,err := testPool.Exec(t.Context(),`INSERT INTO agent_source_preview (workspace_id,created_by,agent_id,agent_source_id,git_connection_id,repository,ref,resolved_sha,snapshot,applied_at,applied_source)
+SELECT workspace_id,created_by,agent_id,agent_source_id,git_connection_id,repository,ref,resolved_sha,snapshot,clock_timestamp() + n * interval '1 microsecond',applied_source
 FROM agent_source_preview CROSS JOIN generate_series(1,51) AS n WHERE agent_id=$1 AND applied_at IS NOT NULL`,id); err != nil { t.Fatal(err) }
 	first := f.request(t,f.handler.ListAgentPublications,id,nil,http.StatusOK)
 	var rows []map[string]json.RawMessage

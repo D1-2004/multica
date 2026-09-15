@@ -22,7 +22,7 @@ func TestPortableContractSourcePreviewRejectsConcurrentChangeAndClearsOnSync(t *
 		"agent.json": `{"$schema":"agent.schema.json","version":"multica.agent/v2","name":"After contract","description":"Published profile","instructions":"AGENTS.md","skills":[]}`,
 		"AGENTS.md":  " \nExecutor SOP.\n ",
 	}
-	preview := f.request(t, f.handler.PreviewGitHubAgent, testWorkspaceID, map[string]any{"installation_id": f.installationID, "repository": "acme/reviewer", "ref": "main"}, http.StatusOK)
+	preview := f.request(t, f.handler.PreviewGitAgent, testWorkspaceID, map[string]any{"installation_id": f.installationID, "repository": "acme/reviewer", "ref": "main"}, http.StatusOK)
 	if _, state := coordinatorcontract.Resolve(preview["coordinator_contract"], f.files[gitSourceSHA1]["AGENTS.md"]); state != coordinatorcontract.StateLoaded {
 		t.Fatalf("Git preview lost bound contract: %s", state)
 	}

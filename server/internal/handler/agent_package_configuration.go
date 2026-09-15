@@ -124,7 +124,7 @@ func packageRequirements(bundle agentsource.Bundle) PackageRequirements {
 	return result
 }
 
-func preparePackageConfiguration(request *CreateGitHubAgentRequest, raw map[string]json.RawMessage, bundle agentsource.Bundle) (packageConfiguration, error) {
+func preparePackageConfiguration(request *CreateAgentPackageRequest, raw map[string]json.RawMessage, bundle agentsource.Bundle) (packageConfiguration, error) {
 	result := packageConfiguration{}
 	if bundle.Definition == nil { return result, nil }
 	requirements := packageRequirements(bundle)

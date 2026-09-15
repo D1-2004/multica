@@ -2453,7 +2453,7 @@ func TestUpdateAgentMcpConfigAbsentPreservesValue(t *testing.T) {
 	assertJSONEqual(t, fetchAgentMcpConfig(t, agentID), `{"preset":"keep"}`)
 }
 
-func TestUpdateGitHubSourcedAgentAllowsLocalProfileButRejectsInstructions(t *testing.T) {
+func TestUpdateGitSourcedAgentAllowsLocalProfileButRejectsInstructions(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "Git source profile original", nil)
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO agent_source (
@@ -2488,7 +2488,7 @@ func TestUpdateGitHubSourcedAgentAllowsLocalProfileButRejectsInstructions(t *tes
 	if w.Code != http.StatusConflict {
 		t.Fatalf("UpdateAgent instructions: expected 409, got %d: %s", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "instructions are managed by the GitHub source") {
+	if !strings.Contains(w.Body.String(), "instructions are managed by the source") {
 		t.Fatalf("unexpected instructions error: %s", w.Body.String())
 	}
 

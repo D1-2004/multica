@@ -12,18 +12,12 @@ import (
 )
 
 const createGitHubInstallation = `-- name: CreateGitHubInstallation :one
-INSERT INTO github_installation (
-    workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id
-) VALUES (
-    $1, $2, $3, $4, $5, $6
-)
+INSERT INTO git_connection (workspace_id, provider, installation_id, account_login, account_type, account_avatar_url, created_by)
+VALUES ($1, 'github', $2::bigint, $3, $4, $5, $6)
 ON CONFLICT (workspace_id, installation_id) DO UPDATE SET
-    account_login = EXCLUDED.account_login,
-    account_type = EXCLUDED.account_type,
-    account_avatar_url = EXCLUDED.account_avatar_url,
-    connected_by_id = EXCLUDED.connected_by_id,
-    updated_at = now()
-RETURNING id, workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id, created_at, updated_at
+    account_login = EXCLUDED.account_login, account_type = EXCLUDED.account_type,
+    account_avatar_url = EXCLUDED.account_avatar_url, created_by = EXCLUDED.created_by, updated_at = now()
+RETURNING id, workspace_id, provider, account_login, account_type, account_avatar_url, installation_id, token_ciphertext, created_by, created_at, updated_at
 `
 
 type CreateGitHubInstallationParams struct {
@@ -35,7 +29,7 @@ type CreateGitHubInstallationParams struct {
 	ConnectedByID    pgtype.UUID `json:"connected_by_id"`
 }
 
-func (q *Queries) CreateGitHubInstallation(ctx context.Context, arg CreateGitHubInstallationParams) (GithubInstallation, error) {
+func (q *Queries) CreateGitHubInstallation(ctx context.Context, arg CreateGitHubInstallationParams) (GitConnection, error) {
 	row := q.db.QueryRow(ctx, createGitHubInstallation,
 		arg.WorkspaceID,
 		arg.InstallationID,
@@ -44,15 +38,17 @@ func (q *Queries) CreateGitHubInstallation(ctx context.Context, arg CreateGitHub
 		arg.AccountAvatarUrl,
 		arg.ConnectedByID,
 	)
-	var i GithubInstallation
+	var i GitConnection
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.InstallationID,
+		&i.Provider,
 		&i.AccountLogin,
 		&i.AccountType,
 		&i.AccountAvatarUrl,
-		&i.ConnectedByID,
+		&i.InstallationID,
+		&i.TokenCiphertext,
+		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -60,7 +56,8 @@ func (q *Queries) CreateGitHubInstallation(ctx context.Context, arg CreateGitHub
 }
 
 const deleteGitHubInstallation = `-- name: DeleteGitHubInstallation :exec
-DELETE FROM github_installation WHERE id = $1 AND workspace_id = $2
+WITH removed AS (DELETE FROM git_connection WHERE git_connection.id = $1 AND git_connection.workspace_id = $2 AND provider = 'github' RETURNING id)
+UPDATE agent_source SET sync_status = 'disconnected', last_sync_error = 'Git connection disconnected', updated_at = now() WHERE git_connection_id IN (SELECT id FROM removed)
 `
 
 type DeleteGitHubInstallationParams struct {
@@ -74,8 +71,9 @@ func (q *Queries) DeleteGitHubInstallation(ctx context.Context, arg DeleteGitHub
 }
 
 const deleteGitHubInstallationByInstallationID = `-- name: DeleteGitHubInstallationByInstallationID :many
-DELETE FROM github_installation WHERE installation_id = $1
-RETURNING id, workspace_id
+WITH removed AS (DELETE FROM git_connection WHERE git_connection.installation_id = $1::bigint AND provider = 'github' RETURNING id, workspace_id),
+disconnected AS (UPDATE agent_source SET sync_status = 'disconnected', last_sync_error = 'Git connection disconnected', updated_at = now() WHERE git_connection_id IN (SELECT id FROM removed))
+SELECT id, workspace_id FROM removed
 `
 
 type DeleteGitHubInstallationByInstallationIDRow struct {
@@ -83,11 +81,8 @@ type DeleteGitHubInstallationByInstallationIDRow struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-// GitHub-side uninstall/suspend removes trust in the installation entirely, so
-// drop every workspace binding. Returns one row per deleted binding so the
-// handler can broadcast to each affected workspace.
-func (q *Queries) DeleteGitHubInstallationByInstallationID(ctx context.Context, installationID int64) ([]DeleteGitHubInstallationByInstallationIDRow, error) {
-	rows, err := q.db.Query(ctx, deleteGitHubInstallationByInstallationID, installationID)
+func (q *Queries) DeleteGitHubInstallationByInstallationID(ctx context.Context, dollar_1 int64) ([]DeleteGitHubInstallationByInstallationIDRow, error) {
+	rows, err := q.db.Query(ctx, deleteGitHubInstallationByInstallationID, dollar_1)
 	if err != nil {
 		return nil, err
 	}
@@ -107,30 +102,32 @@ func (q *Queries) DeleteGitHubInstallationByInstallationID(ctx context.Context, 
 }
 
 const deletePendingGitHubInstallation = `-- name: DeletePendingGitHubInstallation :exec
-DELETE FROM github_pending_installation WHERE installation_id = $1
+DELETE FROM github_pending_installation WHERE installation_id = $1::bigint
 `
 
-func (q *Queries) DeletePendingGitHubInstallation(ctx context.Context, installationID int64) error {
-	_, err := q.db.Exec(ctx, deletePendingGitHubInstallation, installationID)
+func (q *Queries) DeletePendingGitHubInstallation(ctx context.Context, dollar_1 int64) error {
+	_, err := q.db.Exec(ctx, deletePendingGitHubInstallation, dollar_1)
 	return err
 }
 
 const getGitHubInstallationByID = `-- name: GetGitHubInstallationByID :one
-SELECT id, workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id, created_at, updated_at FROM github_installation
-WHERE id = $1
+SELECT id, workspace_id, provider, account_login, account_type, account_avatar_url, installation_id, token_ciphertext, created_by, created_at, updated_at FROM git_connection
+WHERE provider = 'github' AND id = $1
 `
 
-func (q *Queries) GetGitHubInstallationByID(ctx context.Context, id pgtype.UUID) (GithubInstallation, error) {
+func (q *Queries) GetGitHubInstallationByID(ctx context.Context, id pgtype.UUID) (GitConnection, error) {
 	row := q.db.QueryRow(ctx, getGitHubInstallationByID, id)
-	var i GithubInstallation
+	var i GitConnection
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.InstallationID,
+		&i.Provider,
 		&i.AccountLogin,
 		&i.AccountType,
 		&i.AccountAvatarUrl,
-		&i.ConnectedByID,
+		&i.InstallationID,
+		&i.TokenCiphertext,
+		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -138,8 +135,8 @@ func (q *Queries) GetGitHubInstallationByID(ctx context.Context, id pgtype.UUID)
 }
 
 const getGitHubInstallationInWorkspace = `-- name: GetGitHubInstallationInWorkspace :one
-SELECT id, workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id, created_at, updated_at FROM github_installation
-WHERE id = $1 AND workspace_id = $2
+SELECT id, workspace_id, provider, account_login, account_type, account_avatar_url, installation_id, token_ciphertext, created_by, created_at, updated_at FROM git_connection
+WHERE provider = 'github' AND id = $1 AND workspace_id = $2
 `
 
 type GetGitHubInstallationInWorkspaceParams struct {
@@ -147,17 +144,19 @@ type GetGitHubInstallationInWorkspaceParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-func (q *Queries) GetGitHubInstallationInWorkspace(ctx context.Context, arg GetGitHubInstallationInWorkspaceParams) (GithubInstallation, error) {
+func (q *Queries) GetGitHubInstallationInWorkspace(ctx context.Context, arg GetGitHubInstallationInWorkspaceParams) (GitConnection, error) {
 	row := q.db.QueryRow(ctx, getGitHubInstallationInWorkspace, arg.ID, arg.WorkspaceID)
-	var i GithubInstallation
+	var i GitConnection
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.InstallationID,
+		&i.Provider,
 		&i.AccountLogin,
 		&i.AccountType,
 		&i.AccountAvatarUrl,
-		&i.ConnectedByID,
+		&i.InstallationID,
+		&i.TokenCiphertext,
+		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -294,11 +293,11 @@ func (q *Queries) GetIssueReviewHeadSha(ctx context.Context, issueID pgtype.UUID
 }
 
 const getPendingGitHubInstallation = `-- name: GetPendingGitHubInstallation :one
-SELECT installation_id, account_login, account_type, account_avatar_url, received_at, updated_at FROM github_pending_installation WHERE installation_id = $1
+SELECT installation_id, account_login, account_type, account_avatar_url, received_at, updated_at FROM github_pending_installation WHERE installation_id = $1::bigint
 `
 
-func (q *Queries) GetPendingGitHubInstallation(ctx context.Context, installationID int64) (GithubPendingInstallation, error) {
-	row := q.db.QueryRow(ctx, getPendingGitHubInstallation, installationID)
+func (q *Queries) GetPendingGitHubInstallation(ctx context.Context, dollar_1 int64) (GithubPendingInstallation, error) {
+	row := q.db.QueryRow(ctx, getPendingGitHubInstallation, dollar_1)
 	var i GithubPendingInstallation
 	err := row.Scan(
 		&i.InstallationID,
@@ -312,13 +311,13 @@ func (q *Queries) GetPendingGitHubInstallation(ctx context.Context, installation
 }
 
 const getReusableGitHubInstallationForUser = `-- name: GetReusableGitHubInstallationForUser :one
-SELECT gi.id, gi.workspace_id, gi.installation_id, gi.account_login, gi.account_type, gi.account_avatar_url, gi.connected_by_id, gi.created_at, gi.updated_at
-FROM github_installation gi
+SELECT gi.id, gi.workspace_id, gi.provider, gi.account_login, gi.account_type, gi.account_avatar_url, gi.installation_id, gi.token_ciphertext, gi.created_by, gi.created_at, gi.updated_at
+FROM git_connection gi
 JOIN member source_member
   ON source_member.workspace_id = gi.workspace_id
  AND source_member.user_id = $1
  AND source_member.role IN ('owner', 'admin')
-WHERE gi.id = $2
+WHERE gi.provider = 'github' AND gi.id = $2
   AND gi.workspace_id <> $3
 `
 
@@ -331,17 +330,19 @@ type GetReusableGitHubInstallationForUserParams struct {
 // Resolve the source binding server-side so clients never get to assert a
 // numeric installation_id. The target workspace role is enforced by router
 // middleware; this query independently proves source-workspace management.
-func (q *Queries) GetReusableGitHubInstallationForUser(ctx context.Context, arg GetReusableGitHubInstallationForUserParams) (GithubInstallation, error) {
+func (q *Queries) GetReusableGitHubInstallationForUser(ctx context.Context, arg GetReusableGitHubInstallationForUserParams) (GitConnection, error) {
 	row := q.db.QueryRow(ctx, getReusableGitHubInstallationForUser, arg.UserID, arg.SourceInstallationID, arg.TargetWorkspaceID)
-	var i GithubInstallation
+	var i GitConnection
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
-		&i.InstallationID,
+		&i.Provider,
 		&i.AccountLogin,
 		&i.AccountType,
 		&i.AccountAvatarUrl,
-		&i.ConnectedByID,
+		&i.InstallationID,
+		&i.TokenCiphertext,
+		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -403,31 +404,33 @@ func (q *Queries) LinkIssueToPullRequest(ctx context.Context, arg LinkIssueToPul
 }
 
 const listGitHubInstallationsByInstallationID = `-- name: ListGitHubInstallationsByInstallationID :many
-SELECT id, workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id, created_at, updated_at FROM github_installation
-WHERE installation_id = $1
+SELECT id, workspace_id, provider, account_login, account_type, account_avatar_url, installation_id, token_ciphertext, created_by, created_at, updated_at FROM git_connection
+WHERE provider = 'github' AND installation_id = $1::bigint
 ORDER BY created_at ASC, id ASC
 `
 
 // One installation_id can be bound to several workspaces; webhook routing lists
 // every binding and fans the event out to each bound workspace. Ordered oldest
 // first so processing is deterministic and replay-stable.
-func (q *Queries) ListGitHubInstallationsByInstallationID(ctx context.Context, installationID int64) ([]GithubInstallation, error) {
-	rows, err := q.db.Query(ctx, listGitHubInstallationsByInstallationID, installationID)
+func (q *Queries) ListGitHubInstallationsByInstallationID(ctx context.Context, dollar_1 int64) ([]GitConnection, error) {
+	rows, err := q.db.Query(ctx, listGitHubInstallationsByInstallationID, dollar_1)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GithubInstallation{}
+	items := []GitConnection{}
 	for rows.Next() {
-		var i GithubInstallation
+		var i GitConnection
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkspaceID,
-			&i.InstallationID,
+			&i.Provider,
 			&i.AccountLogin,
 			&i.AccountType,
 			&i.AccountAvatarUrl,
-			&i.ConnectedByID,
+			&i.InstallationID,
+			&i.TokenCiphertext,
+			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -443,31 +446,33 @@ func (q *Queries) ListGitHubInstallationsByInstallationID(ctx context.Context, i
 
 const listGitHubInstallationsByWorkspace = `-- name: ListGitHubInstallationsByWorkspace :many
 
-SELECT id, workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id, created_at, updated_at FROM github_installation
-WHERE workspace_id = $1
+SELECT id, workspace_id, provider, account_login, account_type, account_avatar_url, installation_id, token_ciphertext, created_by, created_at, updated_at FROM git_connection
+WHERE provider = 'github' AND workspace_id = $1
 ORDER BY created_at ASC
 `
 
 // =====================
 // GitHub Installation
 // =====================
-func (q *Queries) ListGitHubInstallationsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]GithubInstallation, error) {
+func (q *Queries) ListGitHubInstallationsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]GitConnection, error) {
 	rows, err := q.db.Query(ctx, listGitHubInstallationsByWorkspace, workspaceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GithubInstallation{}
+	items := []GitConnection{}
 	for rows.Next() {
-		var i GithubInstallation
+		var i GitConnection
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkspaceID,
-			&i.InstallationID,
+			&i.Provider,
 			&i.AccountLogin,
 			&i.AccountType,
 			&i.AccountAvatarUrl,
-			&i.ConnectedByID,
+			&i.InstallationID,
+			&i.TokenCiphertext,
+			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -664,21 +669,21 @@ SELECT DISTINCT ON (gi.installation_id)
     gi.account_login,
     gi.account_type,
     gi.account_avatar_url,
-    gi.connected_by_id,
+    gi.created_by,
     gi.created_at,
     gi.updated_at,
     source_workspace.name AS source_workspace_name
-FROM github_installation gi
+FROM git_connection gi
 JOIN workspace source_workspace ON source_workspace.id = gi.workspace_id
 JOIN member source_member
   ON source_member.workspace_id = gi.workspace_id
  AND source_member.user_id = $1
  AND source_member.role IN ('owner', 'admin')
-WHERE gi.workspace_id <> $2
+WHERE gi.provider = 'github' AND gi.workspace_id <> $2
   AND NOT EXISTS (
       SELECT 1
-      FROM github_installation target
-      WHERE target.workspace_id = $2
+      FROM git_connection target
+      WHERE target.provider = 'github' AND target.workspace_id = $2
         AND target.installation_id = gi.installation_id
   )
 ORDER BY gi.installation_id, gi.created_at ASC, gi.id ASC
@@ -692,11 +697,11 @@ type ListReusableGitHubInstallationsForUserParams struct {
 type ListReusableGitHubInstallationsForUserRow struct {
 	ID                  pgtype.UUID        `json:"id"`
 	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
-	InstallationID      int64              `json:"installation_id"`
+	InstallationID      pgtype.Int8        `json:"installation_id"`
 	AccountLogin        string             `json:"account_login"`
 	AccountType         string             `json:"account_type"`
 	AccountAvatarUrl    pgtype.Text        `json:"account_avatar_url"`
-	ConnectedByID       pgtype.UUID        `json:"connected_by_id"`
+	CreatedBy           pgtype.UUID        `json:"created_by"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 	SourceWorkspaceName string             `json:"source_workspace_name"`
@@ -721,7 +726,7 @@ func (q *Queries) ListReusableGitHubInstallationsForUser(ctx context.Context, ar
 			&i.AccountLogin,
 			&i.AccountType,
 			&i.AccountAvatarUrl,
-			&i.ConnectedByID,
+			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.SourceWorkspaceName,
@@ -752,47 +757,42 @@ func (q *Queries) UnlinkIssueFromPullRequest(ctx context.Context, arg UnlinkIssu
 }
 
 const updateGitHubInstallationAccountByInstallationID = `-- name: UpdateGitHubInstallationAccountByInstallationID :many
-UPDATE github_installation
-SET account_login = $2,
-    account_type = $3,
-    account_avatar_url = $4,
-    updated_at = now()
-WHERE installation_id = $1
-RETURNING id, workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id, created_at, updated_at
+UPDATE git_connection SET account_login = $1, account_type = $2,
+    account_avatar_url = $3, updated_at = now()
+WHERE installation_id = $4::bigint AND provider = 'github' RETURNING id, workspace_id, provider, account_login, account_type, account_avatar_url, installation_id, token_ciphertext, created_by, created_at, updated_at
 `
 
 type UpdateGitHubInstallationAccountByInstallationIDParams struct {
-	InstallationID   int64       `json:"installation_id"`
 	AccountLogin     string      `json:"account_login"`
 	AccountType      string      `json:"account_type"`
 	AccountAvatarUrl pgtype.Text `json:"account_avatar_url"`
+	InstallationID   int64       `json:"installation_id"`
 }
 
-// Refresh the GitHub account display metadata across every workspace binding of
-// an installation (fired by installation.created/new_permissions_accepted/
-// unsuspend). Leaves workspace_id and connected_by_id untouched.
-func (q *Queries) UpdateGitHubInstallationAccountByInstallationID(ctx context.Context, arg UpdateGitHubInstallationAccountByInstallationIDParams) ([]GithubInstallation, error) {
+func (q *Queries) UpdateGitHubInstallationAccountByInstallationID(ctx context.Context, arg UpdateGitHubInstallationAccountByInstallationIDParams) ([]GitConnection, error) {
 	rows, err := q.db.Query(ctx, updateGitHubInstallationAccountByInstallationID,
-		arg.InstallationID,
 		arg.AccountLogin,
 		arg.AccountType,
 		arg.AccountAvatarUrl,
+		arg.InstallationID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GithubInstallation{}
+	items := []GitConnection{}
 	for rows.Next() {
-		var i GithubInstallation
+		var i GitConnection
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkspaceID,
-			&i.InstallationID,
+			&i.Provider,
 			&i.AccountLogin,
 			&i.AccountType,
 			&i.AccountAvatarUrl,
-			&i.ConnectedByID,
+			&i.InstallationID,
+			&i.TokenCiphertext,
+			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {

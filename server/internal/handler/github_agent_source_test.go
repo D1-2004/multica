@@ -20,19 +20,19 @@ func TestGitAgentInstanceProfileUsesManifestDefaultsAndRequestOverrides(t *testi
 		Name: "Manifest name", Description: "Manifest description",
 	}}}
 
-	name, description, err := gitAgentInstanceProfile(CreateGitHubAgentRequest{}, nil, bundle)
+	name, description, err := agentPackageInstanceProfile(CreateAgentPackageRequest{}, nil, bundle)
 	if err != nil || name != "Manifest name" || description != "Manifest description" {
 		t.Fatalf("defaults = (%q, %q, %v)", name, description, err)
 	}
 
-	name, description, err = gitAgentInstanceProfile(CreateGitHubAgentRequest{
+	name, description, err = agentPackageInstanceProfile(CreateAgentPackageRequest{
 		CreateAgentRequest: CreateAgentRequest{Name: " Instance name ", Description: ""},
 	}, map[string]json.RawMessage{"description": json.RawMessage(`""`)}, bundle)
 	if err != nil || name != "Instance name" || description != "" {
 		t.Fatalf("overrides = (%q, %q, %v)", name, description, err)
 	}
 
-	_, _, err = gitAgentInstanceProfile(CreateGitHubAgentRequest{
+	_, _, err = agentPackageInstanceProfile(CreateAgentPackageRequest{
 		CreateAgentRequest: CreateAgentRequest{Description: strings.Repeat("界", maxAgentDescriptionLength+1)},
 	}, map[string]json.RawMessage{"description": json.RawMessage(`"long"`)}, bundle)
 	if err == nil {
@@ -66,7 +66,7 @@ func TestSourceManagedSkillNameIsIsolatedPerAgentSource(t *testing.T) {
 
 func TestAgentSourceResponseKeepsPlatformGitSourceReadyWithoutInstallation(t *testing.T) {
 	response := agentSourceToResponse(db.AgentSource{
-		SourceType:       "github",
+		SourceType:       "git",
 		ManagedSourceKey: pgtype.Text{String: "fde-agent", Valid: true},
 		RepoOwner:        "keeperqaq",
 		RepoName:         "fde-agent",
@@ -75,12 +75,12 @@ func TestAgentSourceResponseKeepsPlatformGitSourceReadyWithoutInstallation(t *te
 	if response.SyncStatus != "ready" {
 		t.Fatalf("platform Git source status = %q, want ready", response.SyncStatus)
 	}
-	if response.GitHubConnected || response.InstallationID != nil {
+	if response.Connected || response.ConnectionID != nil {
 		t.Fatalf("platform Git source must not invent a GitHub installation: %#v", response)
 	}
 
 	disconnected := agentSourceToResponse(db.AgentSource{
-		SourceType: "github", RepoOwner: "acme", RepoName: "agent", SyncStatus: "ready",
+		SourceType: "git", RepoOwner: "acme", RepoName: "agent", SyncStatus: "ready",
 	})
 	if disconnected.SyncStatus != "disconnected" {
 		t.Fatalf("ordinary source without installation status = %q", disconnected.SyncStatus)
@@ -89,7 +89,7 @@ func TestAgentSourceResponseKeepsPlatformGitSourceReadyWithoutInstallation(t *te
 
 func TestWriteGitHubSourceErrorTreatsDTAProjectFailuresAsUnprocessable(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	writeGitHubSourceError(recorder, errors.New(`compile dingtalk-agent.json: agent.definition contains an unsafe path`))
+	writeGitRepoError(recorder, errors.New(`compile dingtalk-agent.json: agent.definition contains an unsafe path`))
 
 	if recorder.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
@@ -109,7 +109,7 @@ func TestGitAgentSourceSnapshotUpdatesAndClearsCoordinatorContract(t *testing.T)
 	if string(cleared.CoordinatorContract) != "null" {
 		t.Fatalf("missing source contract must explicitly clear stored contract, got %q", cleared.CoordinatorContract)
 	}
-	preview := GitHubAgentPreviewResponse{CoordinatorContract: bound}
+	preview := GitAgentPreviewResponse{CoordinatorContract: bound}
 	raw, err := json.Marshal(preview)
 	if err != nil || !strings.Contains(string(raw), `"coordinator_contract":{"version":1`) {
 		t.Fatalf("preview lost contract: %s, %v", raw, err)
@@ -118,7 +118,7 @@ func TestGitAgentSourceSnapshotUpdatesAndClearsCoordinatorContract(t *testing.T)
 
 func TestWriteGitHubSourceErrorTreatsBoundContractBudgetAsUnprocessable(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	writeGitHubSourceError(recorder, errors.New("spec.coordinator_contract: coordinator_contract must be 1600 characters or fewer including JSON fields and source hash"))
+	writeGitRepoError(recorder, errors.New("spec.coordinator_contract: coordinator_contract must be 1600 characters or fewer including JSON fields and source hash"))
 	if recorder.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}

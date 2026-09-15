@@ -407,45 +407,47 @@ type AgentSkill struct {
 }
 
 type AgentSource struct {
-	ID                   pgtype.UUID        `json:"id"`
-	AgentID              pgtype.UUID        `json:"agent_id"`
-	SourceType           string             `json:"source_type"`
-	GithubInstallationID pgtype.UUID        `json:"github_installation_id"`
-	RepoOwner            string             `json:"repo_owner"`
-	RepoName             string             `json:"repo_name"`
-	Ref                  string             `json:"ref"`
-	ManifestPath         string             `json:"manifest_path"`
-	SyncedCommitSha      string             `json:"synced_commit_sha"`
-	SyncStatus           string             `json:"sync_status"`
-	LastSyncError        pgtype.Text        `json:"last_sync_error"`
-	LastSyncAttemptAt    pgtype.Timestamptz `json:"last_sync_attempt_at"`
-	LastSyncedAt         pgtype.Timestamptz `json:"last_synced_at"`
-	CreatedBy            pgtype.UUID        `json:"created_by"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
-	ManagedSourceKey     pgtype.Text        `json:"managed_source_key"`
-	A2aClientMappings    []byte             `json:"a2a_client_mappings"`
+	ID                  pgtype.UUID        `json:"id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	SourceType          string             `json:"source_type"`
+	RepoOwner           string             `json:"repo_owner"`
+	RepoName            string             `json:"repo_name"`
+	Ref                 string             `json:"ref"`
+	ManifestPath        string             `json:"manifest_path"`
+	SyncedCommitSha     string             `json:"synced_commit_sha"`
+	SyncStatus          string             `json:"sync_status"`
+	LastSyncError       pgtype.Text        `json:"last_sync_error"`
+	LastSyncAttemptAt   pgtype.Timestamptz `json:"last_sync_attempt_at"`
+	LastSyncedAt        pgtype.Timestamptz `json:"last_synced_at"`
+	CreatedBy           pgtype.UUID        `json:"created_by"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	ManagedSourceKey    pgtype.Text        `json:"managed_source_key"`
+	A2aClientMappings   []byte             `json:"a2a_client_mappings"`
+	PackageBindingState []byte             `json:"package_binding_state"`
+	GitConnectionID     pgtype.UUID        `json:"git_connection_id"`
+	RepositoryUrl       string             `json:"repository_url"`
 }
 
 type AgentSourcePreview struct {
-	ID                   pgtype.UUID        `json:"id"`
-	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
-	CreatedBy            pgtype.UUID        `json:"created_by"`
-	AgentID              pgtype.UUID        `json:"agent_id"`
-	AgentSourceID        pgtype.UUID        `json:"agent_source_id"`
-	GithubInstallationID pgtype.UUID        `json:"github_installation_id"`
-	Repository           string             `json:"repository"`
-	Ref                  string             `json:"ref"`
-	ResolvedSha          string             `json:"resolved_sha"`
-	ExpectedSourceSha    string             `json:"expected_source_sha"`
-	ExpectedStateHash    string             `json:"expected_state_hash"`
-	Snapshot             []byte             `json:"snapshot"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	ExpiresAt            pgtype.Timestamptz `json:"expires_at"`
-	AppliedAt            pgtype.Timestamptz `json:"applied_at"`
-	AppliedSource        []byte             `json:"applied_source"`
-	AppliedChanged       bool               `json:"applied_changed"`
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	AgentSourceID     pgtype.UUID        `json:"agent_source_id"`
+	Repository        string             `json:"repository"`
+	Ref               string             `json:"ref"`
+	ResolvedSha       string             `json:"resolved_sha"`
+	ExpectedSourceSha string             `json:"expected_source_sha"`
+	ExpectedStateHash string             `json:"expected_state_hash"`
+	Snapshot          []byte             `json:"snapshot"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	AppliedAt         pgtype.Timestamptz `json:"applied_at"`
+	AppliedSource     []byte             `json:"applied_source"`
+	AppliedChanged    bool               `json:"applied_changed"`
+	GitConnectionID   pgtype.UUID        `json:"git_connection_id"`
 }
 
 type AgentSourceSkill struct {
@@ -1132,17 +1134,6 @@ type Feedback struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
-type GithubInstallation struct {
-	ID               pgtype.UUID        `json:"id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	InstallationID   int64              `json:"installation_id"`
-	AccountLogin     string             `json:"account_login"`
-	AccountType      string             `json:"account_type"`
-	AccountAvatarUrl pgtype.Text        `json:"account_avatar_url"`
-	ConnectedByID    pgtype.UUID        `json:"connected_by_id"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
-}
 
 type GithubPendingCheckSuite struct {
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -2157,4 +2148,19 @@ type DshPluginCatalogEntry struct {
 	AddedOn        pgtype.Date        `json:"added_on"`
 	CatalogVersion string             `json:"catalog_version"`
 	RefreshedAt    pgtype.Timestamptz `json:"refreshed_at"`
+}
+
+
+type GitConnection struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	Provider         string             `json:"provider"`
+	AccountLogin     string             `json:"account_login"`
+	AccountType      string             `json:"account_type"`
+	AccountAvatarUrl pgtype.Text        `json:"account_avatar_url"`
+	InstallationID   pgtype.Int8        `json:"installation_id"`
+	TokenCiphertext  []byte             `json:"token_ciphertext"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }

@@ -87,8 +87,8 @@ func TestGitHubReconnectVerifiesUserAndWorkspaceBeforeWriting(t *testing.T) {
 			t.Setenv("GITHUB_APP_CLIENT_SECRET","test-client-secret")
 			if tc.noConfig { t.Setenv("GITHUB_APP_CLIENT_SECRET","") }
 			const installationID int64 = 981901
-			_,err := testPool.Exec(t.Context(),`DELETE FROM github_installation WHERE workspace_id=$1 AND installation_id=$2`,testWorkspaceID,installationID); if err != nil { t.Fatal(err) }
-			t.Cleanup(func(){ _,_ = testPool.Exec(context.Background(),`DELETE FROM github_installation WHERE workspace_id=$1 AND installation_id=$2`,testWorkspaceID,installationID) })
+			_,err := testPool.Exec(t.Context(),`DELETE FROM git_connection WHERE provider = 'github' AND workspace_id=$1 AND installation_id=$2`,testWorkspaceID,installationID); if err != nil { t.Fatal(err) }
+			t.Cleanup(func(){ _,_ = testPool.Exec(context.Background(),`DELETE FROM git_connection WHERE provider = 'github' AND workspace_id=$1 AND installation_id=$2`,testWorkspaceID,installationID) })
 			codeCalls := 0
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
 				switch r.URL.Path {
@@ -116,7 +116,7 @@ func TestGitHubReconnectVerifiesUserAndWorkspaceBeforeWriting(t *testing.T) {
 			rec := httptest.NewRecorder(); testHandler.GitHubSetupCallback(rec,req)
 			assertBinding := func(want int){
 				t.Helper(); var count int
-				if err := testPool.QueryRow(t.Context(),`SELECT count(*) FROM github_installation WHERE workspace_id=$1 AND installation_id=$2`,testWorkspaceID,installationID).Scan(&count); err != nil || count != want { t.Fatalf("binding count=%d, want %d: %v",count,want,err) }
+				if err := testPool.QueryRow(t.Context(),`SELECT count(*) FROM git_connection WHERE provider = 'github' AND workspace_id=$1 AND installation_id=$2`,testWorkspaceID,installationID).Scan(&count); err != nil || count != want { t.Fatalf("binding count=%d, want %d: %v",count,want,err) }
 			}
 			assertBinding(0)
 			if tc.noConfig { if !strings.Contains(rec.Header().Get("Location"),"github_error=user_authorization_not_configured") { t.Fatal("missing OAuth configuration not reported") }; return }
@@ -139,7 +139,7 @@ func TestGitHubReconnectVerifiesUserAndWorkspaceBeforeWriting(t *testing.T) {
 			if !strings.Contains(rec.Header().Get("Location"),"/handler-tests/settings?tab=repositories&github_connected=1") { t.Fatal("success returned to the wrong workspace") }
 			if rec.Result().Cookies()[0].MaxAge != -1 { t.Fatal("completed browser context not cleared") }
 			var userID,login string
-			if err := testPool.QueryRow(t.Context(),`SELECT connected_by_id,account_login FROM github_installation WHERE workspace_id=$1 AND installation_id=$2`,testWorkspaceID,installationID).Scan(&userID,&login); err != nil || userID != testUserID || login != "authorized-org" { t.Fatalf("wrong connecting actor/account: %v",err) }
+			if err := testPool.QueryRow(t.Context(),`SELECT created_by,account_login FROM git_connection WHERE provider = 'github' AND workspace_id=$1 AND installation_id=$2`,testWorkspaceID,installationID).Scan(&userID,&login); err != nil || userID != testUserID || login != "authorized-org" { t.Fatalf("wrong connecting actor/account: %v",err) }
 			// Reusing the consumed OAuth code cannot write another binding.
 			rec = httptest.NewRecorder(); testHandler.GitHubAuthorizeCallback(rec,callback)
 			if !strings.Contains(rec.Header().Get("Location"),"github_error=installation_not_authorized") { t.Fatal("consumed OAuth code accepted") }

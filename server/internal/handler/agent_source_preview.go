@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/agentsource"
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -46,42 +47,42 @@ type AgentSourceSyncPreviewResponse struct {
 	Changed              bool                     `json:"changed"`
 }
 
-func (h *Handler) ListGitHubAgentBranches(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ListGitAgentBranches(w http.ResponseWriter, r *http.Request) {
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceIDFromURL(r, "id"), "workspace id")
 	if !ok {
 		return
 	}
-	h.listGitHubAgentBranches(w, r, wsUUID, GitHubAgentSourceInput{
-		InstallationID: r.URL.Query().Get("installation_id"), Repository: r.URL.Query().Get("repository"),
+	h.listGitAgentBranches(w, r, wsUUID, GitAgentSourceInput{
+		ConnectionID: r.URL.Query().Get("connection_id"), Repository: r.URL.Query().Get("repository"),
 	})
 }
 
 func (h *Handler) ListAgentSourceBranches(w http.ResponseWriter, r *http.Request) {
-	agent, source, ok := h.loadGitHubSourceForManage(w, r)
+	agent, source, ok := h.loadGitSourceForManage(w, r)
 	if !ok {
 		return
 	}
-	h.listGitHubAgentBranches(w, r, agent.WorkspaceID, GitHubAgentSourceInput{
-		InstallationID: uuidToString(source.GithubInstallationID), Repository: source.RepoOwner + "/" + source.RepoName,
+	h.listGitAgentBranches(w, r, agent.WorkspaceID, GitAgentSourceInput{
+		ConnectionID: uuidToString(source.GitConnectionID), Repository: source.RepositoryUrl,
 	})
 }
 
-func (h *Handler) listGitHubAgentBranches(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, input GitHubAgentSourceInput) {
-	resolved, err := h.resolveGitHubAgentRepository(r.Context(), workspaceID, input)
+func (h *Handler) listGitAgentBranches(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, input GitAgentSourceInput) {
+	resolved, err := h.resolveGitAgentRepository(r.Context(), workspaceID, input)
 	if err != nil {
-		writeGitHubSourceError(w, err)
+		writeGitRepoError(w, err)
 		return
 	}
-	branches, err := h.GitHubApp.ListBranches(r.Context(), resolved.installation.InstallationID, ownerFromFullName(resolved.repository.FullName), repoFromFullName(resolved.repository.FullName))
+	branches, err := resolved.remote.ListBranches(r.Context())
 	if err != nil {
-		writeGitHubSourceError(w, err)
+		writeGitRepoError(w, err)
 		return
 	}
-	tags, err := h.GitHubApp.ListTags(r.Context(), resolved.installation.InstallationID, ownerFromFullName(resolved.repository.FullName), repoFromFullName(resolved.repository.FullName))
-	if err != nil { writeGitHubSourceError(w, err); return }
+	tags, err := resolved.remote.ListTags(r.Context())
+	if err != nil { writeGitRepoError(w, err); return }
 	writeJSON(w, http.StatusOK, map[string]any{
-		"repository": resolved.repository.FullName, "repository_url": "https://github.com/" + resolved.repository.FullName,
-		"default_branch": resolved.repository.DefaultBranch, "branches": branches, "tags": tags,
+		"repository": resolved.repository.FullName, "repository_url": resolved.repository.HTMLURL,
+		"connection_id": uuidToString(resolved.connection.ID), "default_branch": resolved.repository.DefaultBranch, "branches": branches, "tags": tags,
 	})
 }
 
@@ -95,11 +96,11 @@ func (h *Handler) loadPackageSourceForManage(w http.ResponseWriter, r *http.Requ
 	return agent, source, true
 }
 
-func (h *Handler) loadGitHubSourceForManage(w http.ResponseWriter, r *http.Request) (db.Agent, db.AgentSource, bool) {
+func (h *Handler) loadGitSourceForManage(w http.ResponseWriter, r *http.Request) (db.Agent, db.AgentSource, bool) {
 	agent, source, ok := h.loadPackageSourceForManage(w, r)
 	if !ok { return agent, source, false }
 	if !source.ID.Valid { writeError(w, http.StatusNotFound, "agent source not found"); return agent, source, false }
-	if !source.GithubInstallationID.Valid { writeError(w, http.StatusConflict, "GitHub installation is disconnected"); return agent, source, false }
+	if source.SourceType != "git" || source.SyncStatus == "disconnected" { writeError(w, http.StatusConflict, "Git connection is disconnected"); return agent, source, false }
 	return agent, source, true
 }
 
@@ -117,7 +118,7 @@ func (h *Handler) saveAgentSourcePreview(r *http.Request, workspaceID pgtype.UUI
 	}
 	return h.Queries.CreateAgentSourcePreview(r.Context(), db.CreateAgentSourcePreviewParams{
 		WorkspaceID: workspaceID, CreatedBy: userID, AgentID: agent.ID, AgentSourceID: source.ID,
-		GithubInstallationID: resolved.installation.ID, Repository: resolved.repository.FullName, Ref: resolved.ref,
+		GitConnectionID: resolved.connection.ID, Repository: resolved.repository.HTMLURL, Ref: resolved.ref,
 		ResolvedSha: resolved.sha, ExpectedSourceSha: source.SyncedCommitSha, ExpectedStateHash: stateHash, Snapshot: snapshot,
 	})
 }
@@ -151,12 +152,12 @@ func (h *Handler) resolveAgentSourcePreview(ctx context.Context, preview db.Agen
 	if saved.RollbackOf != "" && saved.PublishedDefinition != nil { bundle = *saved.PublishedDefinition }
 	if err := agentsource.ValidateBundle(bundle); err != nil { return preparedAgentSource{}, err }
 	// Local previews have no external permission to recheck.
-	if !preview.GithubInstallationID.Valid {
+	if preview.Repository == "" {
 		return preparedAgentSource{snapshot:saved.RepositorySnapshot, bundle:bundle, sha:preview.ResolvedSha, rollbackOf:saved.RollbackOf, publicationDefinition:saved.PublishedDefinition}, nil
 	}
 	// Recheck current Git permission, but never resolve the branch a second time.
-	resolved, err := h.resolveGitHubAgentRepository(ctx, preview.WorkspaceID, GitHubAgentSourceInput{
-		InstallationID: uuidToString(preview.GithubInstallationID), Repository: preview.Repository, Ref: preview.Ref,
+	resolved, err := h.resolveGitAgentRepository(ctx, preview.WorkspaceID, GitAgentSourceInput{
+		ConnectionID: uuidToString(preview.GitConnectionID), Repository: preview.Repository, Ref: preview.Ref,
 	})
 	if err != nil {
 		return preparedAgentSource{}, err
@@ -337,14 +338,14 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 		PrivateConfig  [][]byte
 		Files          map[string]string
 		SourceID       pgtype.UUID
-		InstallationID pgtype.UUID
+		ConnectionID pgtype.UUID
 		Repository     string
 		Ref            string
 		SHA            string
 		RuntimeID      pgtype.UUID
 		OwnerID        pgtype.UUID
 		Mappings       []db.AgentSourceSkill
-	}{targets, bindingState, [][]byte{agent.CustomEnv, agent.CustomArgs, agent.RuntimeConfig, agent.McpConfig}, files, source.ID, source.GithubInstallationID, source.RepoOwner + "/" + source.RepoName, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
+	}{targets, bindingState, [][]byte{agent.CustomEnv, agent.CustomArgs, agent.RuntimeConfig, agent.McpConfig}, files, source.ID, source.GitConnectionID, source.RepositoryUrl, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return nil, "", err
@@ -356,7 +357,7 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request) {
 	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if mediaType == "application/zip" || mediaType == "multipart/form-data" { h.previewAgentPackagePublication(w, r); return }
-	agent, source, ok := h.loadGitHubSourceForManage(w, r)
+	agent, source, ok := h.loadGitSourceForManage(w, r)
 	if !ok {
 		return
 	}
@@ -379,16 +380,16 @@ func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request)
 	if request.Ref == "" {
 		request.Ref = source.Ref
 	}
-	resolved, err := h.resolveAndCompileGitHubAgent(r.Context(), agent.WorkspaceID, GitHubAgentSourceInput{
-		InstallationID: uuidToString(source.GithubInstallationID), Repository: source.RepoOwner + "/" + source.RepoName, Ref: request.Ref,
+	resolved, err := h.resolveAndCompileGitAgent(r.Context(), agent.WorkspaceID, GitAgentSourceInput{
+		ConnectionID: uuidToString(source.GitConnectionID), Repository: source.RepositoryUrl, Ref: request.Ref,
 	})
 	if err != nil {
-		writeGitHubSourceError(w, err)
+		writeGitRepoError(w, err)
 		return
 	}
-	base, err := h.publishedSourceSnapshot(r.Context(), agent, source, resolved.installation.InstallationID)
+	base, err := h.publishedSourceSnapshot(r.Context(), agent, source, resolved.remote)
 	if err != nil {
-		writeGitHubSourceError(w, err)
+		writeGitRepoError(w, err)
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -404,7 +405,7 @@ func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	lockedSource, err := queries.LockAgentSourceByAgentID(r.Context(), agent.ID)
-	if err != nil || lockedSource.SyncedCommitSha != source.SyncedCommitSha || lockedSource.Ref != source.Ref || lockedSource.GithubInstallationID != source.GithubInstallationID {
+	if err != nil || lockedSource.SyncedCommitSha != source.SyncedCommitSha || lockedSource.Ref != source.Ref || lockedSource.GitConnectionID != source.GitConnectionID {
 		writeError(w, http.StatusConflict, "Agent source changed while preparing preview")
 		return
 	}
@@ -426,14 +427,14 @@ func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request)
 	requirements, err := h.packageRequirementsForAgent(r.Context(),h.Queries,agent,requestUserID(r),resolved.bundle)
 	if err != nil { writeAgentSourceDatabaseError(w,err); return }
 	writeJSON(w, http.StatusOK, AgentSourceSyncPreviewResponse{
-		Requirements: requirements, PreviewID: uuidToString(preview.ID), ExpiresAt: timestampToString(preview.ExpiresAt), RepositoryURL: "https://github.com/" + resolved.repository.FullName,
+		Requirements: requirements, PreviewID: uuidToString(preview.ID), ExpiresAt: timestampToString(preview.ExpiresAt), RepositoryURL: resolved.repository.HTMLURL,
 		Ref: resolved.ref, BaseSHA: source.SyncedCommitSha, ResolvedSHA: resolved.sha,
 		GitChanges: agentsource.DiffRepository(packageDiffSnapshot(base), packageDiffSnapshot(resolved.snapshot)), ConfigurationChanges: changes, Warnings: resolved.bundle.Warnings,
 		Changed: len(changes) > 0 || source.Ref != resolved.ref || source.SyncedCommitSha != resolved.sha,
 	})
 }
 
-func (h *Handler) publishedSourceSnapshot(ctx context.Context, agent db.Agent, source db.AgentSource, installationID int64) (agentsource.RepositorySnapshot, error) {
+func (h *Handler) publishedSourceSnapshot(ctx context.Context, agent db.Agent, source db.AgentSource, remote gitrepo.Remote) (agentsource.RepositorySnapshot, error) {
 	previous, err := h.Queries.LatestAppliedAgentSourcePreview(ctx, db.LatestAppliedAgentSourcePreviewParams{AgentID: agent.ID, WorkspaceID: agent.WorkspaceID})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return agentsource.RepositorySnapshot{}, err
@@ -446,9 +447,7 @@ func (h *Handler) publishedSourceSnapshot(ctx context.Context, agent db.Agent, s
 		return snapshot, agentsource.ValidateBundle(snapshot.Definition)
 	}
 	// Sources created before previews existed have no stored Git baseline yet.
-	return agentsource.ReadAgentRepository(ctx, h.GitHubApp, agentsource.Source{
-		InstallationID:installationID, Owner:source.RepoOwner, Repository:source.RepoName, CommitSHA:source.SyncedCommitSha,
-	})
+	return agentsource.ReadAgentRepository(ctx, remote, agentsource.Source{CommitSHA:source.SyncedCommitSha})
 }
 
 func appendPackageStateFiles(files map[string]string, manifest map[string]any) {

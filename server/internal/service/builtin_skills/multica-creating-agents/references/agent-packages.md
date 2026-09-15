@@ -19,12 +19,14 @@ repacking guidance. Git imports still require `agent.json` at repository root.
 
 Workspace owners/admins can upload a ZIP through
 `POST /api/workspaces/{id}/agent-packages/preview` (`application/zip`, or one
-multipart `file`, maximum 40 MiB), or acquire the same directory from GitHub via
-`POST /api/workspaces/{id}/github/agent-preview`. Git reads a pinned commit using
-the selected workspace GitHub App installation, not the Agent's execution identity.
-A missing connection is configured by a human in Settings → GitHub. The browser
-connection flow verifies GitHub user access and workspace management permission;
-never send a bare installation ID to a setup callback or put OAuth credentials in a package.
+multipart `file`, maximum 40 MiB), or acquire the same directory from Git via
+`POST /api/workspaces/{id}/git/agent-preview` with `repository` (root URL),
+optional `connection_id`, and `ref`. The server infers GitHub or Alibaba Code
+and matches a workspace identity. GitHub uses App authorization; Code uses a
+workspace PAT encrypted on the Multica server. Configure identities in Settings
+→ Git. No credential belongs in the package or Agent execution environment.
+Use `/git/repository` to discover the matching identities and `/git/refs` for
+branches and tags. Multiple matching identities require a connection choice.
 Both produce an immutable, actor-bound `preview_id` valid for 30 minutes.
 
 `requirements.binding_declarations` lists the resource paths and JSON declarations
@@ -51,7 +53,7 @@ Repeat imports are allowed; updates reuse only the current Agent's exclusive lab
 An empty plugin declaration is ready when the Agent has no plugins. Reimporting
 disabled A2A with no card fields or clients does not create a default endpoint.
 
-Git creation records the repository URL, workspace GitHub installation, selected
+Git creation records the repository URL, workspace Git connection, selected
 ref and resolved commit. Creation and publication accept branches, tags and
 commit SHAs. Use `refs/heads/<branch>` or `refs/tags/<tag>` to distinguish
 same-named branches and tags. The repository/source branches endpoints also
@@ -133,3 +135,10 @@ fix the package and preview it again before confirmation.
 `file:line` on the current tree, the runtime effect, and a safe read-only
 verification command.
 
+
+## Protocol history
+
+- 2026-09-15: GitRepo replaces GitHub-specific Agent acquisition with URL-based
+  GitHub/Code resolution and workspace connections. Creation requires a preview;
+  direct SHA confirmation and old GitHub Agent routes were removed so all imports
+  share the reviewed package transaction.

@@ -27,7 +27,7 @@ type AgentPackagePreviewResponse struct {
 	Name                string                        `json:"name"`
 	Description         string                        `json:"description"`
 	Instructions        string                        `json:"instructions"`
-	Skills              []GitHubAgentSkillPreview     `json:"skills"`
+	Skills              []GitAgentSkillPreview     `json:"skills"`
 	ManifestFields      []string                      `json:"manifest_fields"`
 	ConfigurationFields []string                      `json:"configuration_fields"`
 	Warnings            []string                      `json:"warnings"`
@@ -61,7 +61,7 @@ func (h *Handler) PreviewAgentPackage(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) writeAgentPackagePreview(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, parsed agentsource.ParsedAgentPackage, files map[string]string) {
 	bundle, err := parsed.Bundle()
-	if err != nil { writeGitHubSourceError(w, err); return }
+	if err != nil { writeGitRepoError(w, err); return }
 	resolved := preparedAgentSource{bundle:bundle, sha:bundle.Hash, snapshot:agentsource.RepositorySnapshot{Definition:bundle, Files:files}}
 	preview, err := h.saveAgentSourcePreview(r, workspaceID, db.Agent{}, db.AgentSource{}, resolved, "")
 	if err != nil { writeError(w, http.StatusInternalServerError, "failed to save package preview"); return }
@@ -79,7 +79,7 @@ func (h *Handler) writeAgentPackagePreview(w http.ResponseWriter, r *http.Reques
 		CoordinatorContract: bundle.CoordinatorContract,
 		Definition:          packageDefinitionPreview(bundle), PreviewID: uuidToString(preview.ID), ExpiresAt: timestampToString(preview.ExpiresAt), Requirements: packageRequirements(bundle),
 		ManifestVersion: header.Version, PackageHash: bundle.Hash, Name: header.Name, Description: header.Description,
-		Instructions: parsed.Instructions, Skills: []GitHubAgentSkillPreview{}, ManifestFields: []string{}, ConfigurationFields: []string{}, Warnings: parsed.Warnings,
+		Instructions: parsed.Instructions, Skills: []GitAgentSkillPreview{}, ManifestFields: []string{}, ConfigurationFields: []string{}, Warnings: parsed.Warnings,
 	}
 	for name := range parsed.Manifest {
 		response.ManifestFields = append(response.ManifestFields, name)
@@ -97,7 +97,7 @@ func (h *Handler) writeAgentPackagePreview(w http.ResponseWriter, r *http.Reques
 	sort.Strings(response.ManifestFields)
 	sort.Strings(response.ConfigurationFields)
 	for _, skill := range parsed.Skills {
-		response.Skills = append(response.Skills, GitHubAgentSkillPreview{SourcePath: skill.SourcePath, Name: skill.Name, Description: skill.Description, Enabled: !skill.Disabled, FileCount: len(skill.Files)})
+		response.Skills = append(response.Skills, GitAgentSkillPreview{SourcePath: skill.SourcePath, Name: skill.Name, Description: skill.Description, Enabled: !skill.Disabled, FileCount: len(skill.Files)})
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, response)

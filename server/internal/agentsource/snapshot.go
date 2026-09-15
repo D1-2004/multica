@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/multica-ai/multica/server/internal/githubapp"
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 )
 
 // RepositorySnapshot is an internal record of a pinned Git read. It is never
@@ -13,7 +13,7 @@ import (
 type RepositorySnapshot struct {
 	Definition Bundle `json:"definition"`
 	Files map[string]string `json:"files"`
-	Tree []githubapp.TreeEntry `json:"tree"`
+	Tree []gitrepo.TreeEntry `json:"tree"`
 }
 
 type FileChange struct {
@@ -28,38 +28,38 @@ type FileChange struct {
 }
 
 type recordingRepository struct {
-	RepositoryClient
-	tree githubapp.Tree
+	gitrepo.Reader
+	tree gitrepo.Tree
 	treeLoaded bool
 	blobs map[string]string
 }
 
-func (r *recordingRepository) GetTree(ctx context.Context, installationID int64, owner, repo, sha string) (githubapp.Tree, error) {
+func (r *recordingRepository) GetTree(ctx context.Context, sha string) (gitrepo.Tree, error) {
 	if r.treeLoaded { return r.tree, nil }
-	tree, err := r.RepositoryClient.GetTree(ctx, installationID, owner, repo, sha)
+	tree, err := r.Reader.GetTree(ctx, sha)
 	if err == nil { r.tree = tree; r.treeLoaded = true }
 	return tree, err
 }
 
-func (r *recordingRepository) GetBlob(ctx context.Context, installationID int64, owner, repo, sha string) ([]byte, error) {
-	content, err := r.RepositoryClient.GetBlob(ctx, installationID, owner, repo, sha)
+func (r *recordingRepository) GetBlob(ctx context.Context, sha string) ([]byte, error) {
+	content, err := r.Reader.GetBlob(ctx, sha)
 	if err == nil && isText(content) && !isLFSPointer(content) { r.blobs[sha] = string(content) }
 	return content, err
 }
 
 // ReadAgentRepository uses the same agent.json protocol as uploaded ZIPs.
-func ReadAgentRepository(ctx context.Context, client RepositoryClient, source Source) (RepositorySnapshot, error) {
+func ReadAgentRepository(ctx context.Context, client gitrepo.Reader, source Source) (RepositorySnapshot, error) {
 	return readRepository(ctx, client, source, true)
 }
 
 // ReadDTARepository is retained only for pre-existing internal managed templates.
-func ReadDTARepository(ctx context.Context, client RepositoryClient, source Source) (RepositorySnapshot, error) {
+func ReadDTARepository(ctx context.Context, client gitrepo.Reader, source Source) (RepositorySnapshot, error) {
 	return readRepository(ctx, client, source, false)
 }
 
-func readRepository(ctx context.Context, client RepositoryClient, source Source, requireAgentManifest bool) (RepositorySnapshot, error) {
-	recorder := &recordingRepository{RepositoryClient:client, blobs:map[string]string{}}
-	tree, err := recorder.GetTree(ctx, source.InstallationID, source.Owner, source.Repository, source.CommitSHA)
+func readRepository(ctx context.Context, client gitrepo.Reader, source Source, requireAgentManifest bool) (RepositorySnapshot, error) {
+	recorder := &recordingRepository{Reader:client, blobs:map[string]string{}}
+	tree, err := recorder.GetTree(ctx, source.CommitSHA)
 	if err != nil { return RepositorySnapshot{}, err }
 	entries := repositoryEntries(tree)
 	_, portable := entries[PortableManifestPath]
@@ -81,8 +81,8 @@ func readRepository(ctx context.Context, client RepositoryClient, source Source,
 // Text is included for files read by the importer; other files still have Git
 // object/mode changes, without pretending a missing text patch is an empty file.
 func DiffRepository(before, after RepositorySnapshot) []FileChange {
-	oldEntries := map[string]githubapp.TreeEntry{}
-	newEntries := map[string]githubapp.TreeEntry{}
+	oldEntries := map[string]gitrepo.TreeEntry{}
+	newEntries := map[string]gitrepo.TreeEntry{}
 	paths := map[string]struct{}{}
 	for _, entry := range before.Tree {
 		if entry.Type != "tree" { oldEntries[entry.Path] = entry; paths[entry.Path] = struct{}{} }

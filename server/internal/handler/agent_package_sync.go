@@ -18,7 +18,7 @@ func (h *Handler) importPackageConfiguration(ctx context.Context, tx pgx.Tx, q *
 	raw := value
 	encoded, err := json.Marshal(value)
 	if err != nil { return err }
-	var request CreateGitHubAgentRequest
+	var request CreateAgentPackageRequest
 	var c UpdateAgentRequest
 	if err := json.Unmarshal(encoded, &request); err != nil { return err }
 	if err := json.Unmarshal(encoded, &c); err != nil { return err }

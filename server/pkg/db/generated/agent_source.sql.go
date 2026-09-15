@@ -162,46 +162,47 @@ func (q *Queries) ApplyManagedAgentOwnerChange(ctx context.Context, arg ApplyMan
 
 const createAgentSource = `-- name: CreateAgentSource :one
 INSERT INTO agent_source (
-    agent_id, workspace_id, source_type, github_installation_id, repo_owner, repo_name, ref,
-    manifest_path, synced_commit_sha, sync_status, last_sync_attempt_at,
+    agent_id, workspace_id, source_type, git_connection_id, repo_owner, repo_name, ref,
+    repository_url, manifest_path, synced_commit_sha, sync_status, last_sync_attempt_at,
     last_synced_at, created_by
 ) VALUES (
-    $1, $2, 'github', $3, $4, $5, $6,
-    $7, $8, 'ready', now(), now(), $9
+    $1, $2, 'git', $3, $4, $5, $6,
+    $10, $7, $8, 'ready', now(), now(), $9
 )
-RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key
+RETURNING id, agent_id, source_type, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key, a2a_client_mappings, package_binding_state, git_connection_id, repository_url
 `
 
 type CreateAgentSourceParams struct {
-	AgentID              pgtype.UUID `json:"agent_id"`
-	WorkspaceID          pgtype.UUID `json:"workspace_id"`
-	GithubInstallationID pgtype.UUID `json:"github_installation_id"`
-	RepoOwner            string      `json:"repo_owner"`
-	RepoName             string      `json:"repo_name"`
-	Ref                  string      `json:"ref"`
-	ManifestPath         string      `json:"manifest_path"`
-	SyncedCommitSha      string      `json:"synced_commit_sha"`
-	CreatedBy            pgtype.UUID `json:"created_by"`
+	AgentID         pgtype.UUID `json:"agent_id"`
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	GitConnectionID pgtype.UUID `json:"git_connection_id"`
+	RepoOwner       string      `json:"repo_owner"`
+	RepoName        string      `json:"repo_name"`
+	Ref             string      `json:"ref"`
+	ManifestPath    string      `json:"manifest_path"`
+	SyncedCommitSha string      `json:"synced_commit_sha"`
+	CreatedBy       pgtype.UUID `json:"created_by"`
+	RepositoryUrl   string      `json:"repository_url"`
 }
 
 func (q *Queries) CreateAgentSource(ctx context.Context, arg CreateAgentSourceParams) (AgentSource, error) {
 	row := q.db.QueryRow(ctx, createAgentSource,
 		arg.AgentID,
 		arg.WorkspaceID,
-		arg.GithubInstallationID,
+		arg.GitConnectionID,
 		arg.RepoOwner,
 		arg.RepoName,
 		arg.Ref,
 		arg.ManifestPath,
 		arg.SyncedCommitSha,
 		arg.CreatedBy,
+		arg.RepositoryUrl,
 	)
 	var i AgentSource
 	err := row.Scan(
 		&i.ID,
 		&i.AgentID,
 		&i.SourceType,
-		&i.GithubInstallationID,
 		&i.RepoOwner,
 		&i.RepoName,
 		&i.Ref,
@@ -216,6 +217,10 @@ func (q *Queries) CreateAgentSource(ctx context.Context, arg CreateAgentSourcePa
 		&i.UpdatedAt,
 		&i.WorkspaceID,
 		&i.ManagedSourceKey,
+		&i.A2aClientMappings,
+		&i.PackageBindingState,
+		&i.GitConnectionID,
+		&i.RepositoryUrl,
 	)
 	return i, err
 }
@@ -250,14 +255,14 @@ func (q *Queries) CreateAgentSourceSkill(ctx context.Context, arg CreateAgentSou
 
 const createManagedAgentSource = `-- name: CreateManagedAgentSource :one
 INSERT INTO agent_source (
-    agent_id, workspace_id, source_type, managed_source_key, repo_owner, repo_name,
+    agent_id, workspace_id, source_type, managed_source_key, repo_owner, repo_name, repository_url,
     ref, manifest_path, synced_commit_sha, sync_status, last_sync_attempt_at,
     last_synced_at, created_by
 ) VALUES (
-    $1, $2, 'github', $3, $4, $5,
+    $1, $2, 'git', $3, $4, $5, 'https://github.com/' || $4 || '/' || $5,
     $6, $7, $8, 'ready', now(), now(), $9
 )
-RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key
+RETURNING id, agent_id, source_type, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key, a2a_client_mappings, package_binding_state, git_connection_id, repository_url
 `
 
 type CreateManagedAgentSourceParams struct {
@@ -289,7 +294,6 @@ func (q *Queries) CreateManagedAgentSource(ctx context.Context, arg CreateManage
 		&i.ID,
 		&i.AgentID,
 		&i.SourceType,
-		&i.GithubInstallationID,
 		&i.RepoOwner,
 		&i.RepoName,
 		&i.Ref,
@@ -304,6 +308,10 @@ func (q *Queries) CreateManagedAgentSource(ctx context.Context, arg CreateManage
 		&i.UpdatedAt,
 		&i.WorkspaceID,
 		&i.ManagedSourceKey,
+		&i.A2aClientMappings,
+		&i.PackageBindingState,
+		&i.GitConnectionID,
+		&i.RepositoryUrl,
 	)
 	return i, err
 }
@@ -325,11 +333,11 @@ func (q *Queries) DeleteAgentSourceSkill(ctx context.Context, arg DeleteAgentSou
 
 const getAgentSourceByAgentID = `-- name: GetAgentSourceByAgentID :one
 
-SELECT id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key FROM agent_source
+SELECT id, agent_id, source_type, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key, a2a_client_mappings, package_binding_state, git_connection_id, repository_url FROM agent_source
 WHERE agent_id = $1
 `
 
-// GitHub-backed agent source ledger
+// Git-backed agent source ledger
 func (q *Queries) GetAgentSourceByAgentID(ctx context.Context, agentID pgtype.UUID) (AgentSource, error) {
 	row := q.db.QueryRow(ctx, getAgentSourceByAgentID, agentID)
 	var i AgentSource
@@ -337,7 +345,6 @@ func (q *Queries) GetAgentSourceByAgentID(ctx context.Context, agentID pgtype.UU
 		&i.ID,
 		&i.AgentID,
 		&i.SourceType,
-		&i.GithubInstallationID,
 		&i.RepoOwner,
 		&i.RepoName,
 		&i.Ref,
@@ -352,12 +359,16 @@ func (q *Queries) GetAgentSourceByAgentID(ctx context.Context, agentID pgtype.UU
 		&i.UpdatedAt,
 		&i.WorkspaceID,
 		&i.ManagedSourceKey,
+		&i.A2aClientMappings,
+		&i.PackageBindingState,
+		&i.GitConnectionID,
+		&i.RepositoryUrl,
 	)
 	return i, err
 }
 
 const getAgentSourceInWorkspace = `-- name: GetAgentSourceInWorkspace :one
-SELECT agent_source.id, agent_source.agent_id, agent_source.source_type, agent_source.github_installation_id, agent_source.repo_owner, agent_source.repo_name, agent_source.ref, agent_source.manifest_path, agent_source.synced_commit_sha, agent_source.sync_status, agent_source.last_sync_error, agent_source.last_sync_attempt_at, agent_source.last_synced_at, agent_source.created_by, agent_source.created_at, agent_source.updated_at, agent_source.workspace_id, agent_source.managed_source_key
+SELECT agent_source.id, agent_source.agent_id, agent_source.source_type, agent_source.repo_owner, agent_source.repo_name, agent_source.ref, agent_source.manifest_path, agent_source.synced_commit_sha, agent_source.sync_status, agent_source.last_sync_error, agent_source.last_sync_attempt_at, agent_source.last_synced_at, agent_source.created_by, agent_source.created_at, agent_source.updated_at, agent_source.workspace_id, agent_source.managed_source_key, agent_source.a2a_client_mappings, agent_source.package_binding_state, agent_source.git_connection_id, agent_source.repository_url
 FROM agent_source
 JOIN agent ON agent.id = agent_source.agent_id
 WHERE agent_source.agent_id = $1
@@ -377,7 +388,6 @@ func (q *Queries) GetAgentSourceInWorkspace(ctx context.Context, arg GetAgentSou
 		&i.ID,
 		&i.AgentID,
 		&i.SourceType,
-		&i.GithubInstallationID,
 		&i.RepoOwner,
 		&i.RepoName,
 		&i.Ref,
@@ -392,6 +402,10 @@ func (q *Queries) GetAgentSourceInWorkspace(ctx context.Context, arg GetAgentSou
 		&i.UpdatedAt,
 		&i.WorkspaceID,
 		&i.ManagedSourceKey,
+		&i.A2aClientMappings,
+		&i.PackageBindingState,
+		&i.GitConnectionID,
+		&i.RepositoryUrl,
 	)
 	return i, err
 }
@@ -416,7 +430,7 @@ func (q *Queries) GetAgentSourceSkillBySkillID(ctx context.Context, skillID pgty
 }
 
 const getManagedAgentSourceInWorkspace = `-- name: GetManagedAgentSourceInWorkspace :one
-SELECT id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key FROM agent_source
+SELECT id, agent_id, source_type, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key, a2a_client_mappings, package_binding_state, git_connection_id, repository_url FROM agent_source
 WHERE workspace_id = $1
   AND managed_source_key = $2
 `
@@ -433,7 +447,6 @@ func (q *Queries) GetManagedAgentSourceInWorkspace(ctx context.Context, arg GetM
 		&i.ID,
 		&i.AgentID,
 		&i.SourceType,
-		&i.GithubInstallationID,
 		&i.RepoOwner,
 		&i.RepoName,
 		&i.Ref,
@@ -448,6 +461,10 @@ func (q *Queries) GetManagedAgentSourceInWorkspace(ctx context.Context, arg GetM
 		&i.UpdatedAt,
 		&i.WorkspaceID,
 		&i.ManagedSourceKey,
+		&i.A2aClientMappings,
+		&i.PackageBindingState,
+		&i.GitConnectionID,
+		&i.RepositoryUrl,
 	)
 	return i, err
 }
@@ -486,7 +503,7 @@ func (q *Queries) ListAgentSourceSkills(ctx context.Context, agentSourceID pgtyp
 }
 
 const listOutdatedIdleManagedAgentSources = `-- name: ListOutdatedIdleManagedAgentSources :many
-SELECT source.id, source.agent_id, source.source_type, source.github_installation_id, source.repo_owner, source.repo_name, source.ref, source.manifest_path, source.synced_commit_sha, source.sync_status, source.last_sync_error, source.last_sync_attempt_at, source.last_synced_at, source.created_by, source.created_at, source.updated_at, source.workspace_id, source.managed_source_key
+SELECT source.id, source.agent_id, source.source_type, source.repo_owner, source.repo_name, source.ref, source.manifest_path, source.synced_commit_sha, source.sync_status, source.last_sync_error, source.last_sync_attempt_at, source.last_synced_at, source.created_by, source.created_at, source.updated_at, source.workspace_id, source.managed_source_key, source.a2a_client_mappings, source.package_binding_state, source.git_connection_id, source.repository_url
 FROM agent_source AS source
 WHERE source.managed_source_key = $1
   AND source.synced_commit_sha <> $2
@@ -526,7 +543,6 @@ func (q *Queries) ListOutdatedIdleManagedAgentSources(ctx context.Context, arg L
 			&i.ID,
 			&i.AgentID,
 			&i.SourceType,
-			&i.GithubInstallationID,
 			&i.RepoOwner,
 			&i.RepoName,
 			&i.Ref,
@@ -541,6 +557,10 @@ func (q *Queries) ListOutdatedIdleManagedAgentSources(ctx context.Context, arg L
 			&i.UpdatedAt,
 			&i.WorkspaceID,
 			&i.ManagedSourceKey,
+			&i.A2aClientMappings,
+			&i.PackageBindingState,
+			&i.GitConnectionID,
+			&i.RepositoryUrl,
 		); err != nil {
 			return nil, err
 		}
@@ -553,7 +573,7 @@ func (q *Queries) ListOutdatedIdleManagedAgentSources(ctx context.Context, arg L
 }
 
 const lockAgentSourceByAgentID = `-- name: LockAgentSourceByAgentID :one
-SELECT id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key FROM agent_source
+SELECT id, agent_id, source_type, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key, a2a_client_mappings, package_binding_state, git_connection_id, repository_url FROM agent_source
 WHERE agent_id = $1
 FOR UPDATE
 `
@@ -565,7 +585,6 @@ func (q *Queries) LockAgentSourceByAgentID(ctx context.Context, agentID pgtype.U
 		&i.ID,
 		&i.AgentID,
 		&i.SourceType,
-		&i.GithubInstallationID,
 		&i.RepoOwner,
 		&i.RepoName,
 		&i.Ref,
@@ -580,6 +599,10 @@ func (q *Queries) LockAgentSourceByAgentID(ctx context.Context, agentID pgtype.U
 		&i.UpdatedAt,
 		&i.WorkspaceID,
 		&i.ManagedSourceKey,
+		&i.A2aClientMappings,
+		&i.PackageBindingState,
+		&i.GitConnectionID,
+		&i.RepositoryUrl,
 	)
 	return i, err
 }
@@ -665,14 +688,14 @@ const markAgentSourceSyncFailed = `-- name: MarkAgentSourceSyncFailed :one
 UPDATE agent_source
 SET sync_status = CASE
         WHEN managed_source_key IS NOT NULL THEN 'failed'
-        WHEN github_installation_id IS NULL THEN 'disconnected'
+        WHEN git_connection_id IS NULL THEN 'disconnected'
         ELSE 'failed'
     END,
     last_sync_error = $2,
     last_sync_attempt_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key
+RETURNING id, agent_id, source_type, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key, a2a_client_mappings, package_binding_state, git_connection_id, repository_url
 `
 
 type MarkAgentSourceSyncFailedParams struct {
@@ -687,7 +710,6 @@ func (q *Queries) MarkAgentSourceSyncFailed(ctx context.Context, arg MarkAgentSo
 		&i.ID,
 		&i.AgentID,
 		&i.SourceType,
-		&i.GithubInstallationID,
 		&i.RepoOwner,
 		&i.RepoName,
 		&i.Ref,
@@ -702,6 +724,10 @@ func (q *Queries) MarkAgentSourceSyncFailed(ctx context.Context, arg MarkAgentSo
 		&i.UpdatedAt,
 		&i.WorkspaceID,
 		&i.ManagedSourceKey,
+		&i.A2aClientMappings,
+		&i.PackageBindingState,
+		&i.GitConnectionID,
+		&i.RepositoryUrl,
 	)
 	return i, err
 }
@@ -715,7 +741,7 @@ SET synced_commit_sha = $2,
     last_synced_at = now(),
     updated_at = now()
 WHERE id = $1
-RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key
+RETURNING id, agent_id, source_type, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key, a2a_client_mappings, package_binding_state, git_connection_id, repository_url
 `
 
 type MarkAgentSourceSyncSucceededParams struct {
@@ -730,7 +756,6 @@ func (q *Queries) MarkAgentSourceSyncSucceeded(ctx context.Context, arg MarkAgen
 		&i.ID,
 		&i.AgentID,
 		&i.SourceType,
-		&i.GithubInstallationID,
 		&i.RepoOwner,
 		&i.RepoName,
 		&i.Ref,
@@ -745,21 +770,25 @@ func (q *Queries) MarkAgentSourceSyncSucceeded(ctx context.Context, arg MarkAgen
 		&i.UpdatedAt,
 		&i.WorkspaceID,
 		&i.ManagedSourceKey,
+		&i.A2aClientMappings,
+		&i.PackageBindingState,
+		&i.GitConnectionID,
+		&i.RepositoryUrl,
 	)
 	return i, err
 }
 
-const markAgentSourcesDisconnectedByInstallation = `-- name: MarkAgentSourcesDisconnectedByInstallation :exec
+const markAgentSourcesDisconnectedByConnection = `-- name: MarkAgentSourcesDisconnectedByConnection :exec
 UPDATE agent_source
 SET sync_status = 'disconnected',
-    last_sync_error = 'GitHub installation disconnected',
+    last_sync_error = 'Git connection disconnected',
     last_sync_attempt_at = now(),
     updated_at = now()
-WHERE github_installation_id = $1
+WHERE git_connection_id = $1
 `
 
-func (q *Queries) MarkAgentSourcesDisconnectedByInstallation(ctx context.Context, githubInstallationID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, markAgentSourcesDisconnectedByInstallation, githubInstallationID)
+func (q *Queries) MarkAgentSourcesDisconnectedByConnection(ctx context.Context, gitConnectionID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, markAgentSourcesDisconnectedByConnection, gitConnectionID)
 	return err
 }
 
@@ -774,7 +803,7 @@ SET synced_commit_sha = $1,
     updated_at = now()
 WHERE id = $3
   AND managed_source_key IS NOT NULL
-RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key
+RETURNING id, agent_id, source_type, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key, a2a_client_mappings, package_binding_state, git_connection_id, repository_url
 `
 
 type MarkManagedAgentSourceSyncSucceededParams struct {
@@ -790,7 +819,6 @@ func (q *Queries) MarkManagedAgentSourceSyncSucceeded(ctx context.Context, arg M
 		&i.ID,
 		&i.AgentID,
 		&i.SourceType,
-		&i.GithubInstallationID,
 		&i.RepoOwner,
 		&i.RepoName,
 		&i.Ref,
@@ -805,6 +833,10 @@ func (q *Queries) MarkManagedAgentSourceSyncSucceeded(ctx context.Context, arg M
 		&i.UpdatedAt,
 		&i.WorkspaceID,
 		&i.ManagedSourceKey,
+		&i.A2aClientMappings,
+		&i.PackageBindingState,
+		&i.GitConnectionID,
+		&i.RepositoryUrl,
 	)
 	return i, err
 }

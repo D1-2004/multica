@@ -1551,6 +1551,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("composio integration disabled (COMPOSIO_API_KEY not set)")
 	}
 
+	if key, err := secretbox.LoadKey("MULTICA_GIT_REPO_SECRET_KEY"); err == nil {
+		h.GitRepoSecrets, err = secretbox.New(key)
+		clear(key)
+		if err != nil { slog.Error("Git credential encryption unavailable") }
+	}
+
 	// VCS at-rest encryption: the box encrypts per-workspace access tokens and
 	// webhook secrets for token-based providers (Forgejo / Gitea / GitLab).
 	// Without it, connect/webhook handlers return 503 (so a misconfigured
@@ -2055,6 +2061,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// the handler strips the management handle and adds a
 					// can_manage hint so the UI can gate connect/disconnect.
 					r.Get("/github/installations", h.ListGitHubInstallations)
+					r.Get("/git/connections", h.ListGitConnections)
+					r.Get("/git/repository", h.ResolveGitRepository)
 					// VCS connections (Forgejo / Gitea / GitLab) — member-visible
 					// for the same reason as GitHub installations; connect /
 					// disconnect are admin-gated in the group below.
@@ -2084,10 +2092,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Put("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Delete("/runtime-profiles/{profileId}", h.DeleteRuntimeProfile)
-					r.Get("/github/repositories", h.ListGitHubAgentRepositories)
-					r.Get("/github/branches", h.ListGitHubAgentBranches)
-					r.Post("/github/agent-preview", h.PreviewGitHubAgent)
-					r.Post("/github/agents", h.CreateGitHubAgent)
+					r.With(handler.RequireHumanActor).Post("/git/connections", h.ConnectGitRepository)
+					r.With(handler.RequireHumanActor).Delete("/git/connections/{connectionId}", h.DeleteGitConnection)
+					r.Get("/git/refs", h.ListGitAgentBranches)
+					r.Post("/git/agent-preview", h.PreviewGitAgent)
 					r.Post("/agent-packages/preview", h.PreviewAgentPackage)
 					r.Post("/agent-packages/prepare", h.PrepareAgentPackage)
 					r.Get("/agent-packages/{previewId}/download", h.DownloadPreparedAgentPackage)
