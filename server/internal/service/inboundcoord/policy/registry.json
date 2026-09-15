@@ -335,7 +335,7 @@
         "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
         "dialogue_history_guidance": "2026-09-10.6 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior.",
         "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending.",
-        "contextual_replies_2026_09_15": "pending: host checks and full pre E2E required; production f2370cf3 confirms UID matched but persona overrode recipient",
+        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
         "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback"
       },
       "implementation_refs": [
@@ -579,7 +579,7 @@
         "dws_execution_recovery_host_tests": "passed_local_2026-09-10",
         "dws_execution_recovery_live_delivery": "not_run",
         "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending.",
-        "contextual_replies_2026_09_15": "pending: host checks and full pre E2E required; production f2370cf3 confirms UID matched but persona overrode recipient"
+        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -975,8 +975,8 @@
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
-        "contextual_replies_2026_09_15": "pending: host checks and full pre E2E required; production f2370cf3 confirms UID matched but persona overrode recipient",
-        "work_receipt_2026_09_15": "pending: .7 live smoke duplicated work output; Host-owned receipt repair requires new deployment and live work regression"
+        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
+        "work_receipt_2026_09_15": ".8 pre run3108396520 original failed work case, modification, exact body resend and separate new work delivered once; frozen ACK database tests passed; see final E2E report for retained failures and versions"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/completion.md",
@@ -1061,9 +1061,9 @@
         "same_run_work_state_model_latency": "passed: frozen same-model 3v3 median 10.881s to 6.737s; pre trace2513240e2c8043edb7bc9e1894cb63a3 loop6.979s/2 primary rounds/1 work_state, IM admission14s; not a fleet SLA; cache-hit only Host-tested",
         "retry_budget_and_tool_contract_2026_09_10": "host_tests_passed_local; pre e2e pending",
         "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending.",
-        "contextual_replies_2026_09_15": "pending: host checks and full pre E2E required; production f2370cf3 confirms UID matched but persona overrode recipient",
+        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
         "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback",
-        "work_receipt_2026_09_15": "pending: .7 live smoke duplicated work output; Host-owned receipt repair requires new deployment and live work regression"
+        "work_receipt_2026_09_15": ".8 pre run3108396520 original failed work case, modification, exact body resend and separate new work delivered once; frozen ACK database tests passed; see final E2E report for retained failures and versions"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1142,7 +1142,7 @@
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "history_prefetch_2026_09_10": "host_tests_passed_local; pre e2e pending",
-        "contextual_replies_2026_09_15": "pending: host checks and full pre E2E required; production f2370cf3 confirms UID matched but persona overrode recipient"
+        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/voice.md",

@@ -1,5 +1,9 @@
 # UID 精确识别与连续对话预发验收
 
+## 最终结论
+
+源码f16fc54e0已提交并部署预发。11个正常场景产品效果完成验证；连续对话不再固定复读，工作接单与正文分开且只交付一次。S3首次环境拒绝后同题重试通过，恢复问候最终送达但耗时9分34秒，两项异常均保留。新CR36150735已明确通知须莫发布线上，尚未收到正式发布完成回执。
+
 ## 实现
 
 - 正式 @ 的 UID 与绑定接收 UID 精确比较；显示名、人设名称不作为覆盖 UID 的依据。
@@ -36,11 +40,11 @@ S1–S5同原问题复验通过；S3一次瞬态超时自动恢复的尾部延�
 
 ## 异常与恢复
 
-待正常复验后，唯一测试账号做一次可恢复的空回复约束故障注入，观察真实消息及trace；恢复空instructions并独立读回，再验证正常回应。未实际触发错误时不会写作错误兜底通过。
+已执行唯一测试账号的可恢复空回复约束注入并自动恢复，最终结果与证据边界见文末。
 
 ## 发布边界
 
-本次新候选只发布预发，正式发布尚未执行。平台制品扫描节点SUCCESS，但提示存在不强制阻断项、未提供详情；不将其写成零安全问题。
+本次新候选已确认预发成功，正式发布完成状态尚未确认。平台制品扫描节点SUCCESS，但提示存在不强制阻断项、未提供详情；不将其写成零安全问题。
 
 
 ### .7 已观察的恢复样本
@@ -51,4 +55,31 @@ S3首次社交整理请求超时，trace4371f53f-23a7-43d9-82bd-71ccbfa49df0先d
 
 Host独占工作接单文字，模型只能选择闭合展示语言，不能把完整产物塞入reply。缺省或畸形工作reply被丢弃而不阻断有效工作；purpose、source refs与权限检查不变。新计划与未发出的恢复计划规范化展示字段；已经冻结的ACK保留原payload与幂等效果。社交回复仍按上下文生成，混合窗口不会重复拼接工作收据。
 
-最终候选部署与11轮实时回归待完成，不宣称已经通过。
+最终候选源码f16fc54e0、policy2026-09-15.8/35，run3108396520于2026-09-16 00:15:29完成预发部署与集成测试，health成功。11个正常场景的产品效果均完成验证，所有4个工作task已completed；S3首次上游环境拒绝单列，同题重试通过，不宣称首次全绿。
+
+### .8 最终正常场景结果
+
+| 场景 | 实际结果 | 主要 trace |
+| --- | --- | --- |
+| S1–S5连续对话 | 按当前问题回应、没有固定复读或编造具体活动；S3首次环境拒绝后同题重试通过 | 339f090f / f4f14e7b / 8c778b2e / 0ee0da3b / 9a0d27d0 |
+| C1能力 | 介绍已安装技能，无派发 | 8ee7a2aa |
+| C2进度 | 读取W1真实状态，没有重跑 | 7c4518b4 |
+| W1原失败同题 | Host短接单，Executor一条稿件，task completed | c4841be9-a2dc-456b-a21c-35eb368f45d9 |
+| W2同稿修改 | 九点改十点，其余正文保留；同issue，唯一正文，task completed | 412a2fd9-a8da-44ab-a0c2-561c24d63735 |
+| R1原文重发 | 最新邀请正文不改字，终态后回读仍只有一次正文 | c4b04f50-5065-4b5f-9be7-49571c5082d1 |
+| W3独立工作 | 新issued688c158，与散步cbd99b80不同；唯一正文，task completed | 2083f38f-d76a-4017-a4d2-c35492dbe010 |
+
+完整实际原文、message ID、task终态与逐轮SLS在 `/tmp/coordinator-contextual-e2e-20260916-v8/REPORT-v8.md`。原S3上游环境错误及W1期间非本轮脚本发送的Hi分别保留；后者不归到W1消息或回包。
+
+### 异常证据边界
+
+- `.8` 临时空回复约束实际进入pre trace `c85b5074-9679-4fa0-a89c-659fd2e99ff1`，仍正常回复「您好，我在的，请讲。」；没有触发terminal error，因此不计作终止错误floor验证。配置由finally恢复，独立读回instructions空，active marker已删除。
+- 既有真实终止兜底：源码`1c10aa5af`/预发run`3108352363`，trace `7a400061-5327-48bc-ad0f-373ec8902f17`发生3次review revise→review_deadlock→loop_stop_fallback=true。20:25:47实际消息`msgx+OaMAAbcpymdDhcXPJ2UQ==`为「抱歉，这次没能处理好，我还没法确认这件事的结果。」；证据 `/tmp/coordinator-oldcases-20260915/C5-sls.json`、`C5-read.json`。该错误floor逻辑未改，删除的是正常ignore固定句。
+- worker重试耗尽后的coordinator_job_failed有Host/持久发送验证，本轮没有live故障证据；不扩大上述review_deadlock的证明范围。
+- `.8`恢复问候trace `fd09d907-b737-4da0-aa9a-9c609271fee2`最终实际送达：00:52:49，message `msgy5+y3fCEqFAvJ2OoyxGmCw==`。DWS独立关键词检索complete=true，CID、senderId、正文均精确匹配，证据RECOVER-search-later.json；对照的W3已知正文也被相同索引检出。入站00:43:15，端到端9分34秒，显著延迟保留为异常。两次chat-messages后端报错和首次两分钟搜索仅有人类输入的记录都未覆盖。
+
+Router trace `0a0125df4e17acf55f384e6742041c645a735d34f21dfd6df4f9c86a1c7fec54` / dispatch task `4038c377-c290-4e0c-9c99-d148a32658e6` 证实00:43:32.906已收到Multica完整正文及匹配UID/CID的dwsDelivery；后续到实际送达约9分16秒，落在Router/DWS投递或回执链路。现有证据不能继续区分具体阶段；firstReply=MISSING与真实回读不一致，不能代替实际送达事实。当前CR不宣称解决该投递延迟。
+
+## 线上发布交接
+
+2026-09-16 01:04:41 +08:00已以冬翔身份向须莫（何伟楠）明确发送「请协助把新CR36150735发布到线上，并回告正式发布run和结果」，附源码f16fc54e0、预发run、11场景结果、UID对照范围与9分34秒延迟线索。投递SUCCESS，消息`msgNOdsjSdEoAtsOhxwUBAQUQ==`，会话回读complete=true。原始证据notify/message.txt、delivery.json、read.json。DWS环境已恢复pre。此处证明发布请求已送达，不冒充新CR已在正式发布完成。
