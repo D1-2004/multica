@@ -88,6 +88,11 @@ func TestMentionRelationUsesOnlyTrustedUIDs(t *testing.T) {
 		{[]MessageMention{{UID: "other"}}, "employee", "other_only"},
 		{[]MessageMention{{UID: "other"}, {UID: "employee"}}, "employee", "includes_employee"},
 		{[]MessageMention{{OpenDingTalkID: "unresolved"}}, "employee", "unknown"},
+		{[]MessageMention{{OpenDingTalkID: "6899376218"}}, "6899376218", "includes_employee"},
+		{[]MessageMention{{UID: "other", OpenDingTalkID: "6899376218"}}, "6899376218", "other_only"},
+		{[]MessageMention{{UID: "6899376218", OpenDingTalkID: "opaque"}}, "6899376218", "includes_employee"},
+		{[]MessageMention{{OpenDingTalkID: "6899376219"}}, "6899376218", "unknown"},
+		{[]MessageMention{{OpenDingTalkID: "employee"}}, "employee", "unknown"},
 		{[]MessageMention{{UID: "other"}}, "", "unknown"},
 	}
 	for _, c := range cases {

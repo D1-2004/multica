@@ -1296,6 +1296,28 @@
       "context_b": "单条短问候，无快照、无召回、无可引用限制句",
       "expected_effects": "A：finish schema 中 source_refs 枚举 u1/u2，state_refs 枚举 r1，issue_id（finish 与 work_state）枚举已召回 id，memory_revision 固定为 3，constraint_quote 枚举可见来源的逐句选项且不含 Host 持有的完整岗位说明；每个选项都能通过 Host 出处校验。B：decline、report_status、continue_work 不出现在 kind 枚举里，而不是提交后再被驳回。",
       "verification": "not_run"
+    },
+    {
+      "id": "f01_receiving_mention_stale_name",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "相同问候，可信逐条@匹配接收账号，但绑定显示名过期",
+      "context_b": "相同问候，可信逐条@指向另一账号，无对话延续",
+      "expected_effects": "前者正常回应，不由旧昵称否决；后者不认领他人身份；缺失或冲突ID不猜测",
+      "verification": "not_run"
+    },
+    {
+      "id": "f04_other_recipient_work_keywords",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F13",
+        "COORD.F19"
+      ],
+      "context_a": "帮我查一下，明确交给另一个同事且无参与依据",
+      "context_b": "同一句工作请求明确交给本员工",
+      "expected_effects": "前者允许ignore而不被Host关键词强制派发；后者进入工作且不以口头接单替代执行",
+      "verification": "not_run"
     }
   ]
 }

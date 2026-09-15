@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-14.5`。装配版本：`26`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-15.1`。装配版本：`27`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -266,3 +266,7 @@ DWS 历史读取通过 `MULTICA_DWS_HISTORY_MCP_URL` 显式选择 MCP 环境，�
 `MULTICA_DWS_HISTORY_CROSS_ORG_RENEW_AGENT_IDS` 显式列出已获账号所有者同意续授的 Agent UUID（逗号分隔，默认空）。仅当这些 Agent 的历史读取返回 `CrossOrgPermissionDenied` 时，Host 使用本次隔离身份执行 `dws chat data-auth cross-org --all --grant-type timed --ttl 7d --yes`，确认限时读取授权成功后重试原查询一次。授权失败、其他错误或再次拒绝均保留失败；不改变绑定身份、会话范围和历史截止时间。
 
 因未读取历史而阻止静默的 Host 提示，在读取返回 loaded、empty 或 unavailable 后解除；empty/unavailable 仍是证据缺失，不证明没有对话，也不授权继续工作。语义审查提出的其他限制继续保留。
+
+### 2026-09-15 接收身份与失败兜底修复
+
+当前修复见 [Plan](plans/2026-09-15-coordinator-receiving-identity.md)。逐条可信 mention_relation 优先于可能过期的绑定显示名及岗位人设；显示名差异不能否定稳定ID匹配。Host不再按“帮我/查一下”等词覆盖独立审核通过的动作；先判断参与资格，再判断是否需要执行。来源、目标匹配及权限协议校验继续保留。新要求：发给员工的消息出现失败或无回复时须通过持久回执链路兜底，不能只在Multica界面记录；明确发给别人的群消息不借此获得执行授权。兜底使用固定自然短句，不暴露内部reason，不声称执行成功。运行验证与送达证据由Plan回填。

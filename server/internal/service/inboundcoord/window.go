@@ -3,6 +3,8 @@ package inboundcoord
 import (
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/util"
 )
 
 // SceneWindowMaxItems is how many distinct deliverables one Decide window
@@ -129,12 +131,12 @@ func mentionRelation(turn Turn, u WindowUtterance) string {
 	}
 	unknown := false
 	for _, m := range u.Mentions {
+		if util.DingTalkMentionMatchesUID(m.UID, m.OpenDingTalkID, turn.DWSUID) {
+			return "includes_employee"
+		}
 		if m.UID == "" || turn.DWSUID == "" {
 			unknown = true
 			continue
-		}
-		if m.UID == turn.DWSUID {
-			return "includes_employee"
 		}
 	}
 	if unknown {

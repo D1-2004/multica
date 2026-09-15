@@ -497,17 +497,34 @@ func (w *InboundCoordinatorJobWorker) fail(ctx context.Context, job db.InboundCo
 	return w.failWithDecision(ctx, job, command, reason, nil)
 }
 
+const coordinatorFailureReply = "抱歉，这次没能处理好，我还没法确认这件事的结果。"
+
 func failedCoordinatorDecision(command DispatchCommand, reason string, observed *inboundcoord.Decision) inboundcoord.Decision {
 	decision := inboundcoord.Decision{Action: inboundcoord.ActionContinue, Source: coordinatorSource(command)}
 	if observed != nil {
 		decision = *observed
 	}
-	decision.UserText = "本轮处理失败。"
+	decision.UserText = coordinatorFailureReply
 	decision.Reason = reason
 	decision.Steps = append(append([]protocol.ChatCoordinatorStep{}, decision.Steps...), protocol.ChatCoordinatorStep{
 		Seq: len(decision.Steps) + 1, Type: "error", Content: reason, Error: true,
 	})
 	return decision
+}
+
+func coordinatorFailureNeedsReply(command DispatchCommand) bool {
+	if command.TaskFinishedTaskID != "" {
+		return false
+	}
+	if !command.ProactiveConversation || dispatchMentionsEmployee(command) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(command.Event.Data.Conversation.Type)) {
+	case "single", "p2p", "direct":
+		return true
+	default:
+		return false
+	}
 }
 
 func (w *InboundCoordinatorJobWorker) failWithDecision(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand, reason string, observed *inboundcoord.Decision) error {
@@ -517,7 +534,13 @@ func (w *InboundCoordinatorJobWorker) failWithDecision(ctx context.Context, job 
 			callbacks = append(callbacks, *command.CompletionCallback)
 		}
 		for _, callback := range callbacks {
-			if err := w.handler.TaskService.EnqueueSynchronousTaskCompletion(ctx, callback.URL, callback.Target, job.AgentID, reason, "coordinator_job_failed"); err != nil {
+			reply := ""
+			// Only the primary callback owns the window's visible response.
+			// Collected callbacks must not repeat the same message in the group.
+			if command.CompletionCallback != nil && callback.URL == command.CompletionCallback.URL && coordinatorFailureNeedsReply(command) {
+				reply = coordinatorFailureReply
+			}
+			if err := w.handler.TaskService.EnqueueSynchronousTaskFailureReply(ctx, callback.URL, callback.Target, job.AgentID, reason, "coordinator_job_failed", reply); err != nil {
 				return fmt.Errorf("fail collected callback: %w", err)
 			}
 		}
