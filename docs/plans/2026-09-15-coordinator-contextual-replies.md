@@ -54,3 +54,9 @@
 思考模式协议验证：上游HTTP 400明确不支持thinking+tool_choice=required，因此仅受限社交阶段改为auto（仍只提供唯一回复工具，Host严格校验完整tool结果）；路由/审核继续无思考+required。社交阶段低思考、最多12秒/2048输出token，仍在原45秒总预算内。此兼容性来自真实错误，不通过放宽解析或扩大工具权限绕过。
 
 最终冻结回放结果：policy2026-09-15.5，低思考qwen3.8-max仅用于社交整理，当前actions最后、历史按稳定UID过滤。原6组全部通过校准硬边界；3条反馈具体承认重复/敷衍，不误认历史自我介绍；2条活动追问不编具体活动；业务对照正确派发。renderer约3.709–4.743秒，社交整轮约8.748–11.365秒，业务5.134秒，无协议错误或超时。尾部友好邀请不单独判失败，要求先完成当前交流。原始失败/部分通过对照均保留，不将此记作群IM E2E。私有证据 `/tmp/coord-contextual-replay-report-identity-filtered.json`。
+
+
+UID负向对照补修：相同显示名、不同可信UID的合成群问候曾被主模型/审核错误认作self。现在普通有@群与主动群都验证参与引文，other_only不能以正式@标签或内部截取的同名子串取得direct资格；支持DingTalk常见标签/括号及<@id>，不使用人名/业务词表。独立自然称呼、开放邀请、有据对话和受益人@不一刀切。Host正反测试通过，原6组+UID反例复跑后进入预发。
+
+
+负向审核协议闭环：单拦错误allow曾使审核用同一错误UID引文revise正确ignore，重现循环。现对allow/revise均验证UID引文矛盾，把无效结论交现有审核协议修复，维持一次/12秒上限，不直接放行或传递错误修复方向。真实反例最终为正常ignore，约15秒，无error/fallback，证据 `/tmp/coord-contextual-replay-report-other-uid-protocol.json`。正向6组另做最终防回归。

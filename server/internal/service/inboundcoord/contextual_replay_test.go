@@ -73,11 +73,14 @@ func TestCoordinatorContextualReplay(t *testing.T) {
 		Turn    Turn   `json:"turn"`
 		Recall  string `json:"recall"`
 		Cases   []struct {
-			ID        string `json:"id"`
-			Message   string `json:"message"`
-			Rename    string `json:"rename"`
-			Proactive bool   `json:"proactive"`
-			Work      bool   `json:"work"`
+			ID        string           `json:"id"`
+			Message   string           `json:"message"`
+			Rename    string           `json:"rename"`
+			Proactive bool             `json:"proactive"`
+			Work      bool             `json:"work"`
+			Ignore    bool             `json:"ignore"`
+			Addressed *bool            `json:"addressed"`
+			Mentions  []MessageMention `json:"mentions"`
 		} `json:"cases"`
 	}
 	body, err := os.ReadFile(path)
@@ -115,6 +118,12 @@ func TestCoordinatorContextualReplay(t *testing.T) {
 			turn.Utterances = append([]WindowUtterance(nil), fixture.Turn.Utterances...)
 			turn.CoordinationReads = append([]CoordinationRead(nil), fixture.Turn.CoordinationReads...)
 			turn.ProactiveConversation = tc.Proactive
+			if tc.Addressed != nil {
+				turn.Addressed = *tc.Addressed
+			}
+			if tc.Mentions != nil {
+				turn.Utterances[0].Mentions = append([]MessageMention(nil), tc.Mentions...)
+			}
 			if tc.Message != "" {
 				turn.Message = tc.Message
 				turn.Utterances[0].Text = tc.Message
@@ -132,6 +141,10 @@ func TestCoordinatorContextualReplay(t *testing.T) {
 			r.UpstreamErrors = completer.upstreamErrors
 			if callErr != nil {
 				r.Failure = "loop failed; inspect private model rounds"
+			} else if tc.Ignore {
+				if d.Action != ActionSilence || len(d.Items) != 0 {
+					r.Failure = "other-recipient control was not ignored"
+				}
 			} else if tc.Work {
 				if d.Action != ActionIssue || len(d.Items) == 0 {
 					r.Failure = "business request was not delegated"

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	openai "github.com/openai/openai-go/v3"
 )
@@ -17,7 +19,20 @@ type finishParticipationCheck struct {
 }
 
 func requiresParticipationCheck(turn Turn) bool {
-	return turn.Loop != LoopTaskFinished && turn.ProactiveConversation && strings.EqualFold(turn.ChatType, "group")
+	if turn.Loop == LoopTaskFinished || !strings.EqualFold(turn.ChatType, "group") {
+		return false
+	}
+	if turn.ProactiveConversation {
+		return true
+	}
+	if turn.Source == SourceDigitalEmployee {
+		for _, utterance := range windowUtterances(turn) {
+			if len(utterance.Mentions) > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func addParticipationCheckSchema(tool *openai.ChatCompletionToolUnionParam, refs []string) {
@@ -30,7 +45,7 @@ func addParticipationCheckSchema(tool *openai.ChatCompletionToolUnionParam, refs
 			"properties": map[string]any{
 				"source_refs":     map[string]any{"type": "array", "minItems": 1, "uniqueItems": true, "items": map[string]any{"type": "string", "enum": refs}},
 				"basis":           map[string]any{"type": "string", "enum": []string{"direct", "open_call", "dialogue", "existing_work", "other", "unknown"}, "description": "direct: this employee is the intended respondent; open_call: a current role/group invitation includes it; dialogue/existing_work require a loaded read_ref; other: another respondent; unknown: no grounded respondent. False explicit-mention metadata does not negate a natural name address."},
-				"recipient_quote": map[string]any{"type": "string", "maxLength": 160, "description": "For direct/open_call, quote only the exact words in this source identifying the requested respondent/role/group, not the request verb, the beneficiary or a name copied from configuration. For direct, a trusted includes_employee mention also proves the recipient and permits an empty quote. A presence query without a respondent expression or trusted mention supplies no such quote. For other, quote an explicit other respondent if present; otherwise empty."},
+				"recipient_quote": map[string]any{"type": "string", "maxLength": 160, "description": "For direct/open_call, quote the exact requested respondent/role, not a verb, beneficiary or configuration name. includes_employee proves direct and permits an empty quote. With other_only, formal @ labels and substrings inside them name other UIDs even when their display names match this employee; direct requires an independent quote outside those mention spans. Do not strip @ or brackets to reinterpret a formal mention as natural naming. For other, quote the other respondent if present; otherwise empty."},
 				"evidence_ref":    map[string]any{"type": "string", "description": "For dialogue/existing_work, copy a loaded history/work read_ref that grounds the relationship. Otherwise empty."},
 				"disposition":     map[string]any{"type": "string", "enum": []string{"ignore", "coordinate", "work"}, "description": "Required response to the ORIGINAL utterance, not a copy of candidate.kind. A greeting to the employee needs coordinate; other/unknown needs ignore. A status/presence reminder of accepted work needs coordinate, not another execution. Authorized substantive work needs work."},
 			}},
@@ -67,6 +82,9 @@ func validateFinishParticipationChecks(result *finishCheckResult, turn Turn, dec
 			grounded := true
 			if check.Basis == "direct" || check.Basis == "open_call" {
 				grounded = (check.Basis == "direct" && mentionRelation(turn, utterances[index]) == "includes_employee") || (strings.TrimSpace(check.RecipientQuote) != "" && strings.Contains(utterances[index].Text, check.RecipientQuote))
+			}
+			if check.Basis == "direct" && mentionRelation(turn, utterances[index]) == "other_only" && !recipientQuoteOutsideMentions(utterances[index].Text, check.RecipientQuote) {
+				return fmt.Errorf("source %s has trusted other_only mentions: the mentioned UIDs do not match receiving UID %q. direct recipient_quote %q has no occurrence outside the formal @ spans. Correct participation_checks using these UID facts and independent recipient evidence, then reconsider the candidate and verdict. Do not reinterpret the same-name @ label or its substrings as this employee", sourceRef, turn.DWSUID, check.RecipientQuote)
 			}
 			if check.Basis == "dialogue" || check.Basis == "existing_work" {
 				grounded = false
@@ -110,4 +128,99 @@ func validateFinishParticipationChecks(result *finishCheckResult, turn Turn, dec
 		return fmt.Errorf("participation_checks omitted current sources")
 	}
 	return nil
+}
+
+type formalMentionSpan struct{ start, end int }
+
+// formalMentionSpans identifies syntax only, never names or business intent.
+// Channel <@id> notation and bracketed labels have explicit closing bounds.
+// Bare multiword labels are ambiguous without provider spans: keep them whole
+// until a clear punctuation or line boundary rather than guessing a name end.
+func formalMentionSpans(text string) []formalMentionSpan {
+	var spans []formalMentionSpan
+	for i := 0; i < len(text); {
+		if strings.HasPrefix(text[i:], "<@") {
+			if end := strings.IndexByte(text[i+2:], '>'); end > 0 {
+				label := text[i+2 : i+2+end]
+				if strings.IndexFunc(label, unicode.IsSpace) < 0 {
+					end += i + 3
+					spans = append(spans, formalMentionSpan{i, end})
+					i = end
+					continue
+				}
+			}
+		}
+		r, size := utf8.DecodeRuneInString(text[i:])
+		if r != '@' {
+			i += size
+			continue
+		}
+		end := i + size
+		aliasDepth := 0
+		for end < len(text) {
+			r, n := utf8.DecodeRuneInString(text[end:])
+			if r == '(' || r == '（' || r == '[' || r == '【' {
+				aliasDepth++
+			}
+			if aliasDepth == 0 && formalMentionBoundary(r) {
+				break
+			}
+			closedAlias := false
+			if (r == ')' || r == '）' || r == ']' || r == '】') && aliasDepth > 0 {
+				aliasDepth--
+				closedAlias = aliasDepth == 0
+			}
+			end += n
+			if closedAlias {
+				break
+			}
+		}
+		if end > i+size {
+			spans = append(spans, formalMentionSpan{i, end})
+		}
+		i = end
+	}
+	return spans
+}
+
+func formalMentionBoundary(r rune) bool {
+	if r == '\n' || r == '\r' || r == '\u2028' || r == '\u2029' {
+		return true
+	}
+	switch r {
+	case '@', '<', '>', ',', '，', '、', '。', '!', '！', '?', '？', ';', '；', ':', '：', '[', ']', '【', '】', '"', '“', '”', '\'', '‘', '’', '\u200b':
+		return true
+	}
+	return false
+}
+
+// A quote can occur both inside an @ label and independently later in the
+// utterance. Only a wholly disjoint occurrence supplies natural-name evidence.
+func recipientQuoteOutsideMentions(text, quote string) bool {
+	quote = strings.TrimSpace(quote)
+	if quote == "" {
+		return false
+	}
+	spans := formalMentionSpans(text)
+	for offset := 0; offset <= len(text)-len(quote); {
+		index := strings.Index(text[offset:], quote)
+		if index < 0 {
+			return false
+		}
+		start := offset + index
+		end := start + len(quote)
+		independent := true
+		for _, span := range spans {
+			if start < span.end && end > span.start {
+				independent = false
+				break
+			}
+		}
+		if independent {
+			return true
+		}
+		_, size := utf8.DecodeRuneInString(text[start:])
+		offset = start + size
+	}
+	return false
 }

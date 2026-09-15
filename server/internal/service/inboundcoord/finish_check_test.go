@@ -40,7 +40,7 @@ func scriptedReferenceEnums(parameters map[string]any) (string, string) {
 	return first("request_quote_ref"), first("candidate_quote_ref")
 }
 
-func withScriptedFinishReferences(response openai.ChatCompletion, proposal, requestRef, candidateRef string) openai.ChatCompletion {
+func withScriptedFinishReferences(response openai.ChatCompletion, proposal, requestRef, candidateRef string, requiredParticipation ...bool) openai.ChatCompletion {
 	if len(response.Choices) != 1 {
 		return response
 	}
@@ -72,7 +72,11 @@ func withScriptedFinishReferences(response openai.ChatCompletion, proposal, requ
 		return response
 	}
 	if result["work_checks"] == scriptedWorkChecks {
-		if input.ReceivingContext.Proactive && input.ReceivingContext.ChatType == "group" {
+		participation := input.ReceivingContext.Proactive && input.ReceivingContext.ChatType == "group"
+		if len(requiredParticipation) > 0 {
+			participation = requiredParticipation[0]
+		}
+		if participation {
 			checks := []map[string]any{}
 			for _, u := range input.CurrentWindow {
 				disposition := "ignore"
@@ -133,7 +137,9 @@ func withScriptedFinishRequest(response openai.ChatCompletion, params openai.Cha
 		return response
 	}
 	requestRef, candidateRef := scriptedReferenceEnums(params.Tools[0].GetFunction().Parameters)
-	return withScriptedFinishReferences(response, last.Content, requestRef, candidateRef)
+	props, _ := params.Tools[0].GetFunction().Parameters["properties"].(map[string]any)
+	_, participation := props["participation_checks"]
+	return withScriptedFinishReferences(response, last.Content, requestRef, candidateRef, participation)
 }
 
 func TestFinishCheckRejectsUnsupportedAnswerBeforeSavingAndRepairsToWork(t *testing.T) {
