@@ -16,13 +16,16 @@ import (
 )
 
 type scriptedCompleter struct {
-	rounds      []openai.ChatCompletion
-	calls       int
-	params      []openai.ChatCompletionNewParams
-	checkRounds []openai.ChatCompletion
-	checkCalls  int
-	checkParams []openai.ChatCompletionNewParams
-	checkError  error
+	rounds             []openai.ChatCompletion
+	calls              int
+	params             []openai.ChatCompletionNewParams
+	checkRounds        []openai.ChatCompletion
+	checkCalls         int
+	checkParams        []openai.ChatCompletionNewParams
+	checkError         error
+	conversationRounds []openai.ChatCompletion
+	conversationCalls  int
+	conversationParams []openai.ChatCompletionNewParams
 }
 
 func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
@@ -43,6 +46,16 @@ func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
 }
 
 func (s *scriptedCompleter) Chat(_ context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+	if names := toolParamNames(params.Tools); len(names) == 1 && names[0] == toolConversationReplies {
+		s.conversationParams = append(s.conversationParams, params)
+		if s.conversationCalls >= len(s.conversationRounds) {
+			return nil, fmt.Errorf("unexpected conversation rendering call %d", s.conversationCalls)
+		}
+		out := s.conversationRounds[s.conversationCalls]
+		s.conversationCalls++
+		return &out, nil
+	}
+
 	if names := toolParamNames(params.Tools); len(names) == 1 && names[0] == "finish_check" {
 		s.checkParams = append(s.checkParams, params)
 		s.checkCalls++

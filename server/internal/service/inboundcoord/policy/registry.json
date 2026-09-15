@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-15.2",
-  "assembly_version": "28",
+  "policy_version": "2026-09-15.5",
+  "assembly_version": "31",
   "modules": [
     {
       "id": "core",
@@ -273,6 +273,21 @@
       ],
       "budget_characters": 3890,
       "content_sha256": "68294d56ba3e814e36cb668155039d58fbc965e1bcb69f2f6fd4f9d15174d5f1"
+    },
+    {
+      "id": "conversation_reply",
+      "version": "3",
+      "file": "conversation_reply.md",
+      "applies_when": "conversation_reply",
+      "requires": [],
+      "owns_rule_ids": [
+        "COORD.F01",
+        "COORD.F04",
+        "COORD.F13",
+        "COORD.F14"
+      ],
+      "budget_characters": 913,
+      "content_sha256": "fb645a803d87938c00188d6c2bd27021beddd3c45163862c6178dc959692c5c9"
     }
   ],
   "obligations": [
@@ -288,7 +303,8 @@
         "group",
         "window",
         "finish_check",
-        "finish_check_work"
+        "finish_check_work",
+        "conversation_reply"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -348,7 +364,9 @@
         "server/internal/service/inboundcoord/progressive_context.go",
         "server/internal/service/inboundcoord/response_requirement.go",
         "server/internal/service/inboundcoord/contextual_reply_test.go",
-        "docs/plans/2026-09-15-coordinator-contextual-replies.md"
+        "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+        "server/internal/service/inboundcoord/conversation_reply.go",
+        "server/internal/service/inboundcoord/policy/conversation_reply.md"
       ],
       "case_file": "cases.json"
     },
@@ -528,7 +546,8 @@
         "inbound",
         "skills",
         "finish_check",
-        "finish_check_work"
+        "finish_check_work",
+        "conversation_reply"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -580,7 +599,9 @@
         "server/internal/service/inboundcoord/prompt.go",
         "server/internal/service/inboundcoord/response_requirement.go",
         "server/internal/service/inboundcoord/contextual_reply_test.go",
-        "docs/plans/2026-09-15-coordinator-contextual-replies.md"
+        "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+        "server/internal/service/inboundcoord/conversation_reply.go",
+        "server/internal/service/inboundcoord/policy/conversation_reply.md"
       ],
       "case_file": "cases.json"
     },
@@ -974,7 +995,8 @@
         "recall_match",
         "completion",
         "finish_check",
-        "finish_check_work"
+        "finish_check_work",
+        "conversation_reply"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -1077,7 +1099,9 @@
         "server/internal/service/inboundcoord/tool_contract.go",
         "server/internal/service/inboundcoord/response_requirement.go",
         "server/internal/service/inboundcoord/contextual_reply_test.go",
-        "docs/plans/2026-09-15-coordinator-contextual-replies.md"
+        "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+        "server/internal/service/inboundcoord/conversation_reply.go",
+        "server/internal/service/inboundcoord/policy/conversation_reply.md"
       ],
       "case_file": "cases.json"
     },
@@ -1091,7 +1115,8 @@
         "channel",
         "web",
         "group",
-        "skills"
+        "skills",
+        "conversation_reply"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -1117,7 +1142,9 @@
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/response_requirement.go",
         "server/internal/service/inboundcoord/contextual_reply_test.go",
-        "docs/plans/2026-09-15-coordinator-contextual-replies.md"
+        "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+        "server/internal/service/inboundcoord/conversation_reply.go",
+        "server/internal/service/inboundcoord/policy/conversation_reply.md"
       ],
       "case_file": "cases.json"
     },
@@ -1447,6 +1474,9 @@
       "core",
       "finish_check",
       "finish_check_work"
+    ],
+    "conversation_reply_render": [
+      "conversation_reply"
     ]
   },
   "retired_implementations": [

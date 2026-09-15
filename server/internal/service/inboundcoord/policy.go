@@ -119,7 +119,9 @@ func policyHash(text string) string {
 func selectedPolicyModules(turn Turn, recalled bool) []policyModule {
 	finished := turn.Loop == LoopTaskFinished
 	selected := map[string]bool{"core": true}
-	if turn.Loop == LoopFinishCheck {
+	if turn.Loop == LoopConversationReply {
+		selected = map[string]bool{"conversation_reply": true}
+	} else if turn.Loop == LoopFinishCheck {
 		// Final review shares the same group participation boundary as routing.
 		if turn.Source != SourceWeb && strings.EqualFold(turn.ChatType, "group") {
 			selected["channel"], selected["group"] = true, true

@@ -14,7 +14,7 @@ func TestDirectIgnoreIsRepairedToConversation(t *testing.T) {
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("ignore", toolFinish, `{"actions":[{"kind":"ignore","source_refs":["u1"],"reason":"Different persona name"}]}`),
 		assistantTool("conversation", toolFinish, `{"actions":[{"kind":"acknowledge","ack_kind":"conversation","source_refs":["u1"],"reply":"你说得对，刚才一直重复确认，没回答到你的问题。"}]}`),
-	}, checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("allow", "Responds to feedback about visible dialogue.")}}
+	}, conversationRounds: []openai.ChatCompletion{assistantTool("render", toolConversationReplies, `{"replies":[{"action_ref":"a1","reply":"你说得对，刚才一直重复确认，没回答到你的问题。"}]}`)}, checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("allow", "Responds to feedback about visible dialogue.")}}
 	d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), turn)
 	if err != nil || d.Action != ActionReply || d.LoopStopFallback() || !strings.Contains(d.UserText, "没回答到") || chat.calls != 2 {
 		t.Fatalf("contextual repair failed: d=%+v calls=%d err=%v", d, chat.calls, err)

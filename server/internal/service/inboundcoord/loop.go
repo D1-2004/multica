@@ -54,6 +54,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	latestFeedbackNeedsHistoryAttempt := false
 	unresolvedReviewFeedback := ""
 	modelRounds := 0
+	conversationRepliesRendered := false
 	if turn.Loop != LoopTaskFinished && len(turn.History)+len(turn.DingTalkHistory) > 0 {
 		if _, err := rememberCoordinationRead(&turn, &readSequence, toolContextRead, `{"kind":"history"}`, "", nil); err != nil {
 			latestFeedback = coordinationRepairFeedback(toolContextRead, err)
@@ -208,6 +209,24 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 							callErr = repeatHint(callErr, n, "Change the action kind or the referenced fields; the same proposal cannot pass.")
 						}
 					}
+					if callErr == nil && !conversationRepliesRendered {
+						for _, action := range decision.CoordinationActions {
+							if action.Kind == "acknowledge" && action.AckKind == "conversation" {
+								if renderErr := c.renderConversationReplies(ctx, turn, &decision, round); renderErr != nil {
+									return fail(renderErr)
+								}
+								conversationRepliesRendered = true
+								// Review and repair the exact rendered proposal, never
+								// the routing draft that has not been sent.
+								body, marshalErr := json.Marshal(map[string]any{"actions": decision.CoordinationActions})
+								if marshalErr != nil {
+									return fail(marshalErr)
+								}
+								call.Arguments = string(body)
+								break
+							}
+						}
+					}
 					if callErr == nil && needsFinishCheck(turn, decision) {
 						check, checkErr := c.checkFinish(ctx, turn, decision, messages, round, finishChecks)
 						if checkErr != nil {
@@ -352,16 +371,26 @@ func (c *Coordinator) complete(ctx context.Context, messages []openai.ChatComple
 }
 
 func (c *Coordinator) completeWithLimit(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, limit int64, temp float64) (*openai.ChatCompletion, error) {
+	return c.completeWithModelLimit(ctx, coordinatorModel, messages, tools, limit, temp, shared.ReasoningEffortNone)
+}
+
+func (c *Coordinator) completeWithModelLimit(ctx context.Context, model string, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, limit int64, temp float64, reasoning shared.ReasoningEffort) (*openai.ChatCompletion, error) {
 	params := openai.ChatCompletionNewParams{
 		Messages:            messages,
-		Model:               shared.ChatModel(coordinatorModel),
+		Model:               shared.ChatModel(model),
 		Tools:               tools,
-		ReasoningEffort:     shared.ReasoningEffortNone,
+		ReasoningEffort:     reasoning,
 		MaxCompletionTokens: openai.Int(limit),
 	}
+	toolChoice := "required"
+	if reasoning != shared.ReasoningEffortNone {
+		// Qwen rejects forced tool choice in thinking mode. Callers still
+		// validate the exact response tool before applying any result.
+		toolChoice = "auto"
+	}
 	params.SetExtraFields(map[string]any{
-		"enable_thinking": false,
-		"tool_choice":     "required",
+		"enable_thinking": reasoning != shared.ReasoningEffortNone,
+		"tool_choice":     toolChoice,
 	})
 	params.Temperature = openai.Float(temp)
 	if c != nil && c.Chat != nil {
