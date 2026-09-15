@@ -13,3 +13,4 @@ export * from "./custom-pricing-store";
 export * from "./cloud-runtime";
 
 export * from "./network-policy";
+export * from "./asb-regions";

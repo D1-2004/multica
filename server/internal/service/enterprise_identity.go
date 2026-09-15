@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -1630,8 +1631,12 @@ func (s *EnterpriseIdentityService) rotateBUCTokensLocked(
 		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, err
 	}
 	now := s.Now()
+	idTokenFresh := bucIDTokenFreshThrough(stored.IDToken, now.Add(bucAccessTokenRefreshSkew))
 	refreshReason := "access_token_expiring"
-	if current.BucAccessExpiresAt.Valid &&
+	if !idTokenFresh {
+		refreshReason = "id_token_expiring"
+	}
+	if idTokenFresh && current.BucAccessExpiresAt.Valid &&
 		current.BucAccessExpiresAt.Time.After(now.Add(bucAccessTokenRefreshSkew)) {
 		employeeID, lookupErr := s.BUC.LookupAccessTokenEmployeeID(ctx, stored.AccessToken)
 		switch {
@@ -1657,13 +1662,12 @@ func (s *EnterpriseIdentityService) rotateBUCTokensLocked(
 	}
 	if strings.TrimSpace(refreshed.AccessToken) == "" ||
 		strings.TrimSpace(refreshed.RefreshToken) == "" ||
+		strings.TrimSpace(refreshed.IDToken) == "" ||
 		refreshed.ExpiresIn <= 0 {
 		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, errors.New("refreshed BUC OAuth token set is incomplete")
 	}
-	// BUC refresh_token.json returns a new access/refresh pair and omits id_token.
-	if strings.TrimSpace(refreshed.IDToken) == "" {
-		refreshed.IDToken = stored.IDToken
-	}
+	// Persist and attach the entire refreshed trio. The ID token has its own
+	// shorter lifetime and must never fall back to the previous token.
 	sealed, accessExpiresAt, err := s.sealBUCIdentityTokens(refreshed, now)
 	if err != nil {
 		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, err
@@ -1687,6 +1691,17 @@ func (s *EnterpriseIdentityService) rotateBUCTokensLocked(
 		"access_ttl_seconds", refreshed.ExpiresIn,
 	)
 	return updated, refreshed, nil
+}
+
+// bucIDTokenFreshThrough reads expiry only to schedule renewal of a token that
+// was already verified at OAuth binding or received from the trusted BUC token
+// endpoint and sealed in the database. It does not establish identity or trust.
+func bucIDTokenFreshThrough(raw string, threshold time.Time) bool {
+	var claims jwt.RegisteredClaims
+	if _, _, err := jwt.NewParser().ParseUnverified(raw, &claims); err != nil {
+		return false
+	}
+	return claims.ExpiresAt != nil && claims.ExpiresAt.Time.After(threshold)
 }
 
 func (s *EnterpriseIdentityService) rotateAuthXToken(

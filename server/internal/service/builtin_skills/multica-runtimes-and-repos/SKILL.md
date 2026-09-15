@@ -92,7 +92,13 @@ More source-backed details: `references/runtimes-and-repos-source-map.md`.
 ### ASB sandbox capacity
 
 Cold launches read current ASB allocations and use the regional API endpoint
-with the most free slots. New regional allocations and quota increases are
+with the most free slots among the Agent's selected execution regions.
+The Agent execution settings discover choices from `GET /api/runtimes/{id}/asb-regions`
+and save the selection as `runtime_config.asb_regions`. An absent or empty array
+means all API regions; a non-empty selection is a strict placement constraint.
+Full selected regions wait without failing over outside the selection. A warm
+sandbox in another or unknown region is replaced at the next launch. BUC users
+can select only `cn-hangzhou`. New regional allocations and quota increases are
 picked up on the next capacity check. A shared 30-second busy cooldown limits
 quota checks while full; upstream rate limits may extend that delay. An explicit `QUOTA_EXCEEDED`
 response tries other available regions, refreshes quotas once, then remains
@@ -119,7 +125,10 @@ ASB sandboxes deny outbound connections unless the destination is allowed.
 Required platform services and configured Agent MCP/service hosts are included
 automatically. Workspace owners/admins can add exact domains or individual IPs
 in the Runtime details page. Custom wildcards, URLs and CIDR ranges are rejected.
-Defaults include DWS signed file transfers, document OSS, mail and Stream.
+Defaults include DWS signed file transfers, document OSS, mail and Stream,
+and `tp-alilang.alibaba-inc.com` for BUC trust-device registration. The two
+managed WireGuard gateway IPs `140.205.109.26` and `140.205.109.30` are also
+allowed because tunnel handshakes use literal UDP destinations.
 Regional transfer subdomains under trans.dingtalk.com and down.dingtalk.com
 are managed defaults. Enterprise-specific storage and third-party download
 hosts still require an exact Runtime entry.

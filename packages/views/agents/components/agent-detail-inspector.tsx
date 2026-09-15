@@ -2,16 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type {
-  Agent,
-  AgentRuntime,
-  MemberWithUser,
-} from "@multica/core/types";
+import type { Agent, AgentRuntime, MemberWithUser } from "@multica/core/types";
 import {
   AGENT_MAX_CONCURRENT_TASKS_MAX,
   AGENT_MAX_CONCURRENT_TASKS_MIN,
 } from "@multica/core/agents";
-import { runtimeModelsOptions } from "@multica/core/runtimes";
+import { isASBRuntime, runtimeModelsOptions } from "@multica/core/runtimes";
 import { isImeComposing } from "@multica/core/utils";
 import { Input } from "@multica/ui/components/ui/input";
 import {
@@ -26,6 +22,7 @@ import {
   type ModelCatalog,
 } from "./inspector/model-change-cleanup";
 import { RuntimePicker } from "./inspector/runtime-picker";
+import { ASBRegionPicker } from "./inspector/asb-region-picker";
 import { ThinkingSettingField } from "./inspector/thinking-prop-row";
 import { ServiceTierSettingField } from "./inspector/service-tier-setting-field";
 import { GitHubIdentityBindingCard } from "./integrations/github-identity-binding";
@@ -89,7 +86,13 @@ export function AgentDetailInspector({
           catalog: modelCatalog,
         }),
       ),
-    [agent.service_tier, agent.thinking_level, modelCatalog, runtime?.provider, update],
+    [
+      agent.service_tier,
+      agent.thinking_level,
+      modelCatalog,
+      runtime?.provider,
+      update,
+    ],
   );
 
   return (
@@ -124,6 +127,19 @@ export function AgentDetailInspector({
               }
             />
           </SettingsRow>
+          {isASBRuntime(runtime) ? (
+            <SettingsRow
+              label={t(($) => $.asb_regions.title)}
+              size="select-wide"
+            >
+              <ASBRegionPicker
+                key={`${agent.id}:${agent.runtime_id}`}
+                agent={agent}
+                canEdit={canEdit}
+                onSave={update}
+              />
+            </SettingsRow>
+          ) : null}
           <SettingsRow
             label={t(($) => $.inspector.prop_model)}
             size="select-wide"

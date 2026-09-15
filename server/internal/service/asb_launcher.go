@@ -891,6 +891,17 @@ func (l *ASBLauncher) resolveSandbox(
 		settings.EffectiveTargets = uniqueASBTargets(append(settings.EffectiveTargets, asbConfiguredURLTargets(task.RuntimeMcpOverlay)...))
 	}
 	policy := settings.Policy()
+	var allowedRegions []string
+	if agentID.Valid {
+		agent, err := l.Queries.GetAgent(ctx, agentID)
+		if err != nil {
+			return "", false, ASBResolvedIdentity{}, fmt.Errorf("load ASB agent region selection: %w", err)
+		}
+		allowedRegions, err = ParseASBExecutionRegions(agent.RuntimeConfig)
+		if err != nil {
+			return "", false, ASBResolvedIdentity{}, err
+		}
+	}
 	if scoped {
 		release, err := l.lockSandboxScopeOnConnection(ctx, runtime, scope, runtimeLockConn)
 		if err != nil {
@@ -912,7 +923,7 @@ func (l *ASBLauncher) resolveSandbox(
 			if err != nil {
 				return "", false, ASBResolvedIdentity{}, fmt.Errorf("load ASB sandbox session: %w", err)
 			}
-			reusable, state, err := inspectReusableASBSandbox(ctx, l.Client, session.SandboxID, policy.Fingerprint())
+			reusable, state, err := inspectReusableASBSandbox(ctx, l.Client, session.SandboxID, policy.Fingerprint(), allowedRegions...)
 			if err != nil {
 				return "", false, ASBResolvedIdentity{}, fmt.Errorf(
 					"query reusable ASB sandbox: %w",
@@ -993,6 +1004,7 @@ func (l *ASBLauncher) resolveSandbox(
 			excludedTaskID,
 			runtimeLockConn,
 			ASBCreateSandboxInput{
+				AllowedRegions: allowedRegions,
 				NetworkPolicy:  policy,
 				ImageURI:       metadata.ArtifactRef,
 				TimeoutSeconds: l.Config.TimeoutSeconds,
@@ -1087,6 +1099,7 @@ func inspectReusableASBSandbox(
 	client *ASBClient,
 	sandboxID string,
 	expectedPolicy string,
+	allowedRegions ...string,
 ) (bool, string, error) {
 	live, exists, err := getLiveASBSandbox(ctx, client, sandboxID)
 	if err != nil {
@@ -1096,6 +1109,9 @@ func inspectReusableASBSandbox(
 		return false, "not_found", nil
 	}
 	state := strings.TrimSpace(live.Status.State)
+	if !asbRegionAllowed(live.Metadata[asbSandboxRegionKey], allowedRegions) {
+		return false, "execution_region_changed", nil
+	}
 	reusable := !isTerminalASBSandboxState(state) && !strings.EqualFold(state, "failed")
 	if reusable && (expectedPolicy == "" || live.Metadata[asbNetworkPolicyFingerprintKey] != expectedPolicy) {
 		return false, "network_policy_changed", nil

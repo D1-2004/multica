@@ -78,7 +78,7 @@ func TestASBNetworkPolicyMergesDependenciesAndKeepsSecretsOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"multica.example", "llm.example", "identity.example", "platform.example", "custom.example", "mcp.example", "mcp-gw.dingtalk.com"} {
+	for _, want := range []string{"multica.example", "llm.example", "identity.example", "platform.example", "custom.example", "mcp.example", "mcp-gw.dingtalk.com", "tp-alilang.alibaba-inc.com", "140.205.109.26", "140.205.109.30"} {
 		if !slices.Contains(settings.EffectiveTargets, want) {
 			t.Errorf("missing %s", want)
 		}

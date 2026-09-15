@@ -632,7 +632,7 @@ func (c *HTTPBUCOAuthClient) Refresh(ctx context.Context, refreshToken string) (
 		c.refreshURL,
 		form,
 		"refresh BUC OAuth token",
-		false,
+		true,
 	)
 }
 
