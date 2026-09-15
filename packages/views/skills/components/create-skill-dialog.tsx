@@ -358,7 +358,7 @@ function UrlForm({
             <option value="">{t(($) => $.create.url.git_identity)}</option>
             {identity.data.connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.account_login}</option>)}
           </select>}
-          <AppLink className="text-caption underline" href={`${paths.settings()}?tab=git`}>{t(($) => $.create.url.git_settings)}</AppLink>
+          <AppLink className="text-caption underline" href={`${paths.settings()}?tab=repositories&section=connections`}>{t(($) => $.create.url.git_settings)}</AppLink>
         </div>}
         <div>
           <p className="mb-2 text-caption text-muted-foreground">

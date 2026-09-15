@@ -3,11 +3,8 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ExternalLink, GitCommitHorizontal, Link2, PanelRight } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
-import { Label } from "@multica/ui/components/ui/label";
-import { Switch } from "@multica/ui/components/ui/switch";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,26 +18,17 @@ import {
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
-import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
+import { memberListOptions } from "@multica/core/workspace/queries";
 import {
-  deriveGitHubSettings,
   githubInstallationsOptions,
 } from "@multica/core/github";
 import { api } from "@multica/core/api";
-import type { Workspace } from "@multica/core/types";
-import { AppLink, useNavigation } from "../../navigation";
+import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
-import { SettingsTab } from "./settings-layout";
 import { GitHubMark } from "./github-mark";
 import { githubConnectionErrorField } from "./github-connection-error";
 
-type SettingsKey =
-  | "github_enabled"
-  | "github_pr_sidebar_enabled"
-  | "co_authored_by_enabled"
-  | "github_auto_link_prs_enabled";
-
-export function GitHubTab() {
+export function GitHubConnectionSection() {
   const { t } = useT("settings");
   const workspace = useCurrentWorkspace();
   const wsId = useWorkspaceId();
@@ -79,40 +67,18 @@ export function GitHubTab() {
       toast.success(t(($) => $.github.toast_connected));
     }
     const next = new URLSearchParams(navigation.searchParams);
+    next.set("tab", "repositories");
+    next.set("section", "connections");
     next.delete("github_error");
     next.delete("github_connected");
     const search = next.toString();
     navigation.replace(`${navigation.pathname}${search ? `?${search}` : ""}`);
   }, [navigation, qc, t, wsId]);
 
-  const flags = deriveGitHubSettings(workspace);
-  const [savingKey, setSavingKey] = useState<SettingsKey | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [reusingId, setReusingId] = useState<string | null>(null);
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState(false);
-
-  async function persistSetting(key: SettingsKey, next: boolean) {
-    if (!workspace || savingKey) return;
-    setSavingKey(key);
-    try {
-      const merged = {
-        ...((workspace.settings as Record<string, unknown>) ?? {}),
-        [key]: next,
-      };
-      const updated = await api.updateWorkspace(workspace.id, { settings: merged });
-      qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
-        old?.map((ws) => (ws.id === updated.id ? updated : ws)),
-      );
-      toast.success(t(($) => $.auto_save.toast_saved), {
-        id: "settings-auto-save",
-      });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : t(($) => $.github.toast_failed));
-    } finally {
-      setSavingKey(null);
-    }
-  }
 
   async function handleConnect() {
     setConnecting(true);
@@ -163,45 +129,9 @@ export function GitHubTab() {
 
   if (!workspace) return null;
 
-  const repositoriesHref = `${navigation.pathname}?tab=repositories`;
-
   return (
-    <SettingsTab
-      title={t(($) => $.page.tabs.github)}
-      description={t(($) => $.github.page_description)}
-    >
+    <div className="space-y-4">
       <section className="space-y-3">
-        <Card>
-          <CardContent>
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <div className="rounded-md border bg-muted/50 p-2 text-muted-foreground">
-                  <GitHubMark className="h-4 w-4" />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="github-master" className="text-body font-medium">
-                    {t(($) => $.github.section_master)}
-                  </Label>
-                  <p className="text-body text-muted-foreground">
-                    {flags.enabled
-                      ? t(($) => $.github.master_description_on)
-                      : t(($) => $.github.master_description_off)}
-                  </p>
-                </div>
-              </div>
-              <Switch
-                id="github-master"
-                checked={flags.enabled}
-                onCheckedChange={(v) => persistSetting("github_enabled", v)}
-                disabled={!canManage || savingKey === "github_enabled"}
-              />
-            </div>
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-body font-semibold">{t(($) => $.github.section_connection)}</h2>
         <Card>
           <CardContent className="space-y-4">
             <div className="flex items-start justify-between gap-4">
@@ -226,12 +156,7 @@ export function GitHubTab() {
                     </>
                   ) : canManage ? (
                     <p className="text-caption text-muted-foreground">
-                      {t(($) => $.github.connection_description_prefix)}{" "}
-                      <code className="rounded bg-muted px-1 py-0.5 text-micro">
-                        {t(($) => $.github.connection_identifier_example)}
-                      </code>{" "}
-                      {t(($) => $.github.connection_description_suffix)}{" "}
-                      <strong>{t(($) => $.github.connection_description_done)}</strong>.
+                      {t(($) => $.github.connection_description)}
                     </p>
                   ) : (
                     <p className="text-caption text-muted-foreground">
@@ -336,82 +261,6 @@ export function GitHubTab() {
           </CardContent>
         </Card>
       </section>
-
-      <section className="space-y-3">
-        <h2 className="text-body font-semibold">{t(($) => $.github.section_features)}</h2>
-        <Card className="gap-0 py-0">
-          <CardContent className="divide-y divide-surface-border px-0">
-            <FeatureRow
-              id="github-pr-sidebar"
-              icon={<PanelRight className="h-4 w-4" />}
-              label={t(($) => $.github.feature_pr_sidebar_label)}
-              description={
-                <p className="text-body text-muted-foreground">
-                  {t(($) => $.github.feature_pr_sidebar_description)}
-                </p>
-              }
-              checked={flags.prSidebar}
-              disabled={!canManage || !flags.enabled || savingKey === "github_pr_sidebar_enabled"}
-              onCheckedChange={(v) => persistSetting("github_pr_sidebar_enabled", v)}
-            />
-
-            <FeatureRow
-              id="github-coauthor"
-              icon={<GitCommitHorizontal className="h-4 w-4" />}
-              label={t(($) => $.github.feature_co_author_label)}
-              description={
-                <p className="text-body text-muted-foreground">
-                  {t(($) => $.github.feature_co_author_description_prefix)}{" "}
-                  <code className="rounded bg-muted px-1 py-0.5 text-caption">
-                    {"Co-authored-by: multica-agent <github@multica.ai>"}
-                  </code>{" "}
-                  {t(($) => $.github.feature_co_author_description_suffix)}
-                </p>
-              }
-              checked={flags.coAuthor}
-              disabled={!canManage || !flags.enabled || savingKey === "co_authored_by_enabled"}
-              onCheckedChange={(v) => persistSetting("co_authored_by_enabled", v)}
-            />
-
-            <FeatureRow
-              id="github-auto-link"
-              icon={<Link2 className="h-4 w-4" />}
-              label={t(($) => $.github.feature_auto_link_label)}
-              description={
-                <p className="text-body text-muted-foreground">
-                  {t(($) => $.github.feature_auto_link_description)}
-                </p>
-              }
-              checked={flags.autoLinkPRs}
-              disabled={!canManage || !flags.enabled || savingKey === "github_auto_link_prs_enabled"}
-              onCheckedChange={(v) => persistSetting("github_auto_link_prs_enabled", v)}
-            />
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="space-y-3">
-        <h2 className="text-body font-semibold">{t(($) => $.github.section_repositories)}</h2>
-        <Card>
-          <CardContent>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-body font-medium">
-                {t(($) => $.github.repositories_shortcut_label)}
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                render={<AppLink href={repositoriesHref} />}
-                nativeButton={false}
-              >
-                <ExternalLink className="h-3 w-3" />
-                {t(($) => $.github.repositories_shortcut_link)}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
-
       <AlertDialog
         open={!!disconnectTarget}
         onOpenChange={(v) => {
@@ -439,44 +288,6 @@ export function GitHubTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </SettingsTab>
-  );
-}
-
-function FeatureRow({
-  id,
-  icon,
-  label,
-  description,
-  checked,
-  disabled,
-  onCheckedChange,
-}: {
-  id: string;
-  icon: React.ReactNode;
-  label: string;
-  description: React.ReactNode;
-  checked: boolean;
-  disabled: boolean;
-  onCheckedChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 px-4 py-3.5">
-      <div className="flex items-start gap-3">
-        <div className="rounded-md border bg-muted/50 p-2 text-muted-foreground">{icon}</div>
-        <div className="space-y-1">
-          <Label htmlFor={id} className="text-body font-medium">
-            {label}
-          </Label>
-          {description}
-        </div>
-      </div>
-      <Switch
-        id={id}
-        checked={checked}
-        disabled={disabled}
-        onCheckedChange={onCheckedChange}
-      />
     </div>
   );
 }

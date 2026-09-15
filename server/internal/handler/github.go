@@ -468,7 +468,11 @@ func githubSettingsURL(frontend, returnTo string) string {
 	if !isAllowedGitHubReturnTo(returnTo) {
 		returnTo = githubReturnToGitHub
 	}
-	return strings.TrimRight(frontend, "/") + "/settings?tab=" + url.QueryEscape(returnTo)
+	destination := strings.TrimRight(frontend, "/") + "/settings?tab=repositories"
+	if returnTo == githubReturnToGitHub {
+		destination += "&section=connections"
+	}
+	return destination
 }
 
 // GitHubConnect (GET /api/workspaces/{id}/github/connect) returns the URL the

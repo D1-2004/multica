@@ -45,7 +45,7 @@ describe("Git creation", () => {
   it("links an unconnected workspace to Git settings", async () => {
     mocked.installations.mockResolvedValue({ connections: [] });
     mount();
-    expect(await screen.findByRole("link", { name: enAgents.creation_studio.git.manage_connections })).toHaveAttribute("href", "/acme/settings?tab=git");
+    expect(await screen.findByRole("link", { name: enAgents.creation_studio.git.manage_connections })).toHaveAttribute("href", "/acme/settings?tab=repositories&section=connections");
   });
 
   it.each(["github.com", "code.alibaba-inc.com"])("requires a new preview after changing branches and submits only the reviewed ID for %s", async (host) => {

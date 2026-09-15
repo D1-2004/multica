@@ -80,7 +80,7 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl space-y-6 px-5 py-8">
           <p className="text-body text-muted-foreground">{local ? t(($) => $.creation_studio.local.description) : t(($) => $.creation_studio.git.description)}</p>
-          {!local && <p className="text-body text-muted-foreground"><AppLink className="underline" href={`${paths.settings()}?tab=git`}>{t(($) => $.creation_studio.git.manage_connections)}</AppLink></p>}
+          {!local && <p className="text-body text-muted-foreground"><AppLink className="underline" href={`${paths.settings()}?tab=repositories&section=connections`}>{t(($) => $.creation_studio.git.manage_connections)}</AppLink></p>}
           {local && <div className="space-y-3">
             <Label htmlFor="agent-package-file">{t(($) => $.creation_studio.local.file)}</Label>
             <Input id="agent-package-file" type="file" accept=".zip,application/zip" disabled={pending || createMutation.isSuccess} onChange={(event) => { invalidatePreview(); setFile(event.target.files?.[0] ?? null); }} />

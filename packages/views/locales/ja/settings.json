@@ -721,15 +721,12 @@
   },
   "github": {
     "page_description": "GitHub App を接続し、Pull request が Multica 内でどう表示されるかを制御し、エージェントがコミット履歴に残す情報を設定します。",
-    "section_master": "GitHub 機能を有効にする",
-    "master_description_on": "オフにすると、すべての GitHub UI が非表示になり、新しい副作用が記録されなくなります。既存のデータはバックエンドに保持されます。開発チームではありませんか？ここでオフにできます。",
+    "section_master": "GitHub 連携を有効にする",
+    "master_description_on": "PR サイドバー、タスクの自動関連付け、コミット署名を設定します。リポジトリへのアクセスは「アクセス用アカウント」で管理します。",
     "master_description_off": "GitHub 機能はオフです。PR サイドバー、Co-authored-by トレーラー、自動リンクが一時停止されています。バックエンドのデータは削除されません。",
     "section_connection": "接続",
     "connection_title": "GitHub App",
-    "connection_description_prefix": "イシューを Pull request に自動でリンクします。ブランチ、タイトル、または本文に",
-    "connection_description_suffix": "を含む PR がマージされると、対応するイシューが次のステータスに移動します:",
-    "connection_description_done": "完了",
-    "connection_identifier_example": "MUL-123",
+    "connection_description": "このワークスペースに GitHub リポジトリへのアクセスを許可し、エージェントやスキルのインポート、Pull Request の連携に使用します。",
     "connected_to": "{{login}} に接続済み",
     "connect_github": "GitHub を接続",
     "connect_opening": "開いています…",
@@ -1322,7 +1319,17 @@
     "secret_confirm": "キーをコピーして安全に保存しました",
     "close": "閉じる"
   },
+  "repository_settings": {
+    "description": "ワークスペースのリポジトリ、アクセス用アカウント、連携機能を管理します。",
+    "sections": {
+      "repositories": "リポジトリ一覧",
+      "connections": "アクセス用アカウント",
+      "collaboration": "連携設定"
+    },
+    "collaboration_description": "GitHub のタスクと Pull Request の関連付け、PR サイドバー、コミット署名を設定します。"
+  },
   "git_repo": {
+    "code": "Alibaba Code",
     "token_label": "アクセストークン",
     "title": "Git リポジトリ ID",
     "description": "エージェントやスキルのインポートと公開バージョンの読み取りに使う、ワークスペースの ID を管理します。",

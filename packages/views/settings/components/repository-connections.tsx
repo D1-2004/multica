@@ -5,16 +5,14 @@ import { useQuery } from "@tanstack/react-query";
 import { gitConnectionsOptions, useConnectGitRepository, useDeleteGitConnection } from "@multica/core/git-repo";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentMember } from "@multica/core/permissions";
-import { useWorkspacePaths } from "@multica/core/paths";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
-import { AppLink } from "../../navigation";
+import { GitHubConnectionSection } from "./github-connection-section";
 import { useT } from "../../i18n";
 
-export function GitRepoTab() {
+export function RepositoryConnections() {
   const wsId = useWorkspaceId();
-  const paths = useWorkspacePaths();
   const { role } = useCurrentMember(wsId);
   const { t } = useT("settings");
   const connections = useQuery(gitConnectionsOptions(wsId));
@@ -33,13 +31,14 @@ export function GitRepoTab() {
     } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
     finally { connect.reset(); }
   };
-  return <div className="mx-auto max-w-3xl space-y-6 p-6">
-    <h2 className="text-title font-medium">{t(($) => $.git_repo.title)}</h2>
+  return <div className="space-y-6">
     <p className="text-body text-muted-foreground">{t(($) => $.git_repo.description)}</p>
-    <AppLink className="text-body underline" href={`${paths.settings()}?tab=github`}>{t(($) => $.git_repo.github)}</AppLink>
-    {connections.data?.connections.map((connection) => <div key={connection.id} className="flex flex-wrap items-center gap-3 rounded-md border p-3">
-      <span className="flex-1 break-all text-body">{connection.account_login} · {connection.provider}</span>
-      {canManage && connection.provider === "alibaba_code" && <Button variant="outline" onClick={() => { setReplaceId(connection.id); setToken(""); }}>{t(($) => $.git_repo.replace)}</Button>}
+    <GitHubConnectionSection />
+    <section className="space-y-3" aria-label={t(($) => $.git_repo.code)}>
+    <h3 className="text-body font-semibold">{t(($) => $.git_repo.code)}</h3>
+    {connections.data?.connections.filter((connection) => connection.provider === "alibaba_code").map((connection) => <div key={connection.id} className="flex flex-wrap items-center gap-3 rounded-md border p-3">
+      <span className="flex-1 break-all text-body">{connection.account_login}</span>
+      {canManage && <Button variant="outline" onClick={() => { setReplaceId(connection.id); setToken(""); }}>{t(($) => $.git_repo.replace)}</Button>}
       {canManage && <Button variant="outline" disabled={disconnect.isPending} onClick={() => { void disconnect.mutateAsync(connection.id).catch((failure: unknown) => setError(failure instanceof Error ? failure.message : String(failure))); }}>{t(($) => $.git_repo.disconnect)}</Button>}
     </div>)}
     {canManage && <fieldset disabled={!connections.data?.token_connections_available || connect.isPending} className="space-y-3 rounded-md border p-4 disabled:opacity-60">
@@ -53,6 +52,7 @@ export function GitRepoTab() {
       {replaceId && <Button variant="ghost" onClick={() => { setReplaceId(""); setToken(""); }}>{t(($) => $.git_repo.cancel)}</Button>}
     </fieldset>}
     {canManage && connections.data?.token_connections_available === false && <p className="text-body text-muted-foreground">{t(($) => $.git_repo.unavailable)}</p>}
+    </section>
     {(error || connections.error) && <p role="alert" className="break-words text-body text-destructive">{error || connections.error?.message}</p>}
   </div>;
 }

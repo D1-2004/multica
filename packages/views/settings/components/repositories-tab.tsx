@@ -59,7 +59,6 @@ import {
   SettingsCard,
   SettingsSaveState,
   SettingsSection,
-  SettingsTab,
 } from "./settings-layout";
 import { useAutoSave } from "./use-auto-save";
 import { GitHubMark } from "./github-mark";
@@ -364,7 +363,7 @@ export function RepositoriesTab() {
   if (!workspace) return null;
 
   return (
-    <SettingsTab title={t(($) => $.page.tabs.repositories)}>
+    <div className="space-y-6">
       <SettingsSection
         description={t(($) => $.repositories.description)}
         action={
@@ -691,6 +690,6 @@ export function RepositoriesTab() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </SettingsTab>
+    </div>
   );
 }

@@ -13,6 +13,12 @@ GitRepo 管理 Multica 服务端读取 Agent、skill 配置仓库所需的地址
 
 这不改变 Agent 执行时的 GitHub 身份、账号认证或沙箱网络。Code 访问只发生在 Multica 服务端，token 不发送给 Agent、CLI 或沙箱。
 
+## 设置入口
+
+工作区设置只保留「代码仓库」入口（`tab=repositories`），页内按职责分为「仓库列表」「访问身份」「协作设置」。访问身份统一展示 GitHub App 和 Alibaba Code PAT 连接；GitHub 的 PR 关联、侧栏和提交署名开关归入协作设置。Agent 与 skill 导入的连接管理链接统一进入 `tab=repositories&section=connections`。
+
+GitHub 授权回调按发起位置返回：身份管理返回「访问身份」，仓库选择返回「仓库列表」并继续选择仓库。旧 `tab=git`、`tab=github` 外部链接定位到同一个访问身份页面，不保留重复页面或侧栏入口。
+
 ## 身份与权限
 
 `git_connection` 是工作区 Git 身份的唯一存储。GitHub App 安装的授权回调、重用安装、仓库权限更新、卸载 webhook 都读写该表；旧 `github_installation` 表通过一次性迁移移除，没有双写和旧 API 别名。
@@ -73,3 +79,5 @@ Code API 契约核对自[官方 API 文档](https://pre-code.alibaba-inc.com/doc
 | 2026-09-15 | 抽出 GitRepo；GitHub 与 Code 统一连接、地址和配置读取；删除旧 GitHub Agent 路径及独立 skill 下载分支 | 让用户只提供仓库地址，同时消除多套凭据与发布逻辑 |
 
 - 2026-09-15 发布准备：本次迁移编号顺延至 9261–9266，避开预发集成分支已存在的迁移；这六份迁移尚未发布，无需旧编号兼容。
+
+- 2026-09-15 设置入口收敛：合并代码仓库、Git 和 GitHub 三个设置入口，统一授权回跳和导入链接，消除重复的身份展示。

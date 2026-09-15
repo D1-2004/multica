@@ -5,7 +5,7 @@ description: Connect a GitHub App once, then PRs whose branch, title, or body re
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Connect a GitHub account or organization once in **Settings → GitHub**. After that, any pull request whose branch name, title, or body contains an issue identifier (for example `MUL-123`) is **auto-linked** to that [issue](/issues), appears under **Pull requests** in the issue sidebar, and — when the PR is merged — moves the issue to **Done**.
+Connect a GitHub account or organization once in **Settings → Repositories → Access identities**. After that, any pull request whose branch name, title, or body contains an issue identifier (for example `MUL-123`) is **auto-linked** to that [issue](/issues), appears under **Pull requests** in the issue sidebar, and — when the PR is merged — moves the issue to **Done**.
 
 There is no per-issue setup. The whole flow is identifier-driven.
 
@@ -13,7 +13,7 @@ There is no per-issue setup. The whole flow is identifier-driven.
 
 | Surface | Behavior |
 |---|---|
-| **Settings → GitHub** | Workspace admins see the GitHub tab with a master toggle, **Connect GitHub** button, and feature switches (PR sidebar, Co-authored-by, auto-link). After install you bounce back to the GitHub tab. |
+| **Settings → Repositories → Access identities** | Workspace admins connect or disconnect GitHub under **Access identities**. Master and feature switches (PR sidebar, Co-authored-by, auto-link) are under **Collaboration settings**. Authorization returns to **Access identities**. |
 | **Issue sidebar → Pull requests** | Every PR auto-linked to this issue, with title, repo, state (`Open` / `Draft` / `Merged` / `Closed`), and author. Click a row to jump to the PR on GitHub. |
 | **Webhook (background)** | On every `pull_request` event, Multica upserts the PR row, scans the PR for issue identifiers, and (re)builds the link rows. Idempotent — replaying a delivery is a no-op. |
 | **Auto-status on merge** | When a PR transitions to `merged`, every linked issue not already `Done` or `Cancelled` is moved to `Done`. The status change is timeline-logged with source `github_pr_merged`. |
@@ -27,14 +27,14 @@ One GitHub App installation can be connected in **several** workspaces at once �
 - Each workspace mirrors the PR and auto-links it against **its own** [issue prefix](/workspaces) and GitHub feature switches. A PR that references `MUL-1` and `ENG-2` links `MUL-1` in the workspace whose prefix is `MUL` and `ENG-2` in the one whose prefix is `ENG` — neither sees the other's issues.
 - Disconnecting the installation from one workspace only stops **that** workspace from receiving events; the others keep working.
 
-When an installation is already connected to another workspace you manage, the new workspace's **Settings → GitHub** page shows it under **Available connections**. Choose **Use connection** to create a separate binding for the new workspace. You must be an owner/admin in both the source and target workspaces; the source workspace stays connected.
+When an installation is already connected to another workspace you manage, the new workspace's **Settings → Repositories → Access identities** page shows it under **Available connections**. Choose **Use connection** to create a separate binding for the new workspace. You must be an owner/admin in both the source and target workspaces; the source workspace stays connected.
 
 Do **not** uninstall and reinstall the GitHub App to connect a second workspace. A GitHub-side uninstall revokes the account-level grant and removes every Multica workspace binding for that installation.
 
 Repository scope is whatever you granted the GitHub App (all repositories, or a chosen subset). Connecting the installation in a workspace is itself the subscription — there is no separate per-repository selection inside Multica.
 
 <Callout type="warning">
-**Upgrading a self-host deployment:** event delivery is keyed on the GitHub connection, not on a workspace's code-repository list. If a workspace previously received a repo's PRs *without* connecting GitHub in that workspace (by listing the repo in its code-repositories entry alone), it will stop receiving events after this upgrade. To restore delivery, **connect the same GitHub installation** in that workspace under **Settings → GitHub**.
+**Upgrading a self-host deployment:** event delivery is keyed on the GitHub connection, not on a workspace's code-repository list. If a workspace previously received a repo's PRs *without* connecting GitHub in that workspace (by listing the repo in its code-repositories entry alone), it will stop receiving events after this upgrade. To restore delivery, **connect the same GitHub installation** in that workspace under **Settings → Repositories → Access identities**.
 </Callout>
 
 ## How identifiers are matched
@@ -103,7 +103,7 @@ Repository changes are **not applied automatically**. Open the Git Agent’s **C
 
 ## Disconnecting
 
-In **Settings → GitHub** there is no installation list — you manage existing installations from GitHub directly:
+In **Settings → Repositories → Access identities** there is no installation list — you manage existing installations from GitHub directly:
 
 - **From GitHub** — uninstall the Multica GitHub App at `https://github.com/settings/installations` (personal) or `https://github.com/organizations/<org>/settings/installations` (org). Multica receives the `installation.deleted` webhook and drops the row in real time; any open Settings tab updates without a refresh.
 - **Disconnect from inside Multica is admin-only** — the Disconnect control on the GitHub tab is hidden for non-admins. It stays available even when the master GitHub switch is off, so admins can still revoke a stale installation after one-click-disabling the feature.
@@ -177,7 +177,7 @@ GITHUB_APP_PRIVATE_KEY=<full PEM block, including BEGIN/END lines>
 
 `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are optional only when you use PR linking alone. Repository-backed agent creation and sync require both because Multica mints short-lived installation access tokens for GitHub's Contents API. The token is refreshed automatically and is never stored in the database. Generate the private key under **Private keys → Generate a private key** on the App's settings page; paste the full PEM block (including the `-----BEGIN/END RSA PRIVATE KEY-----` lines) into the env var, preserving newlines.
 
-`FRONTEND_ORIGIN` must be set and must proxy `/api/github/*` to this server. New connections return to `<FRONTEND_ORIGIN>/<workspace-slug>/settings?tab=github` (or `tab=repositories`).
+`FRONTEND_ORIGIN` must be set and must proxy `/api/github/*` to this server. New connections return to `<FRONTEND_ORIGIN>/<workspace-slug>/settings?tab=repositories&section=connections` (or `tab=repositories`).
 
 New connections require `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`, including updates to an existing installation. Multica opens `/api/github/install` first to save a signed, 15-minute browser context. If GitHub drops `state` during Configure, this context identifies the initiating workspace. The subsequent OAuth code exchange checks that the GitHub user can access the selected installation and that the initiating Multica user still manages the workspace before writing a connection. Tokens are not stored. Missing credentials produce a setup error; installation IDs alone never authorize this recovery flow. Existing workspace connections continue to work without reconnecting.
 
@@ -197,10 +197,10 @@ Three tables get created: `github_installation`, `github_pull_request`, `issue_p
 
 In Multica:
 
-1. Open **Settings → GitHub** as an owner or admin.
+1. Open **Settings → Repositories → Access identities** as an owner or admin.
 2. Click **Connect GitHub**. GitHub opens in a new tab.
 3. Pick the repositories to grant access to and **Install**.
-4. GitHub redirects back to `<api-host>/api/github/setup`, which records the installation and bounces you to `<FRONTEND_ORIGIN>/settings?tab=github&github_connected=1`.
+4. GitHub redirects back to `<api-host>/api/github/setup`, which records the installation and bounces you to `<FRONTEND_ORIGIN>/settings?tab=repositories&section=connections&github_connected=1`.
 
 After that, open any PR whose branch / title / body contains an issue identifier — within a few seconds the Pull requests block appears on that issue's detail page.
 

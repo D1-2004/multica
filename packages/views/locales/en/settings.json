@@ -723,15 +723,12 @@
   },
   "github": {
     "page_description": "Connect a GitHub App, control how Pull Requests show up inside Multica, and decide what your agents leave behind in commit history.",
-    "section_master": "Enable GitHub features",
-    "master_description_on": "When off, every GitHub UI affordance is hidden and no new side-effects are written. Existing data is kept on the backend. Not a development team? Just turn it off here.",
+    "section_master": "Enable GitHub collaboration",
+    "master_description_on": "Controls pull request visibility, automatic task linking, and commit attribution. Repository access identities are managed separately.",
     "master_description_off": "GitHub features are turned off. The PR sidebar, co-author trailer, and auto-link are paused. Data on the backend is not deleted.",
     "section_connection": "Connection",
     "connection_title": "GitHub App",
-    "connection_description_prefix": "Link issues to pull requests automatically. When a PR with",
-    "connection_description_suffix": "in its branch, title, or body is merged, the corresponding issue moves to",
-    "connection_description_done": "Done",
-    "connection_identifier_example": "MUL-123",
+    "connection_description": "Authorize GitHub repository access for this workspace to import agents and skills and connect pull requests.",
     "connected_to": "Connected to {{login}}",
     "connect_github": "Connect GitHub",
     "connect_opening": "Opening…",
@@ -1324,7 +1321,17 @@
     "secret_confirm": "I have copied and stored this key safely",
     "close": "Close"
   },
+  "repository_settings": {
+    "description": "Manage workspace repositories, access identities, and collaboration features.",
+    "sections": {
+      "repositories": "Repository list",
+      "connections": "Access identities",
+      "collaboration": "Collaboration settings"
+    },
+    "collaboration_description": "GitHub collaboration features for task and pull request linking and commit attribution."
+  },
   "git_repo": {
+    "code": "Alibaba Code",
     "token_label": "Access token",
     "title": "Git repository identities",
     "description": "Workspace identities for importing Agents and skills and reading publication revisions. Access uses the connected identity’s repository permissions.",
