@@ -227,3 +227,8 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - `server/internal/handler/inbound_coordinator_job.go`: single collection window and persisted decisions.
 - `server/internal/service/coordinator_follow_up.go`: busy Issue additions, identity-isolated batching, and actual comment delivery receipts.
 - Read-only verification: `GET /api/agents/{id}` and the Agent Coordinator conversations; historical Autopilot runs do not describe new proactive messages.
+
+## Coordinator work acceptance receipts
+
+- `server/internal/service/inboundcoord/work_receipt.go`: Host owns `start_work`/`continue_work` receipt text; only the executor delivers the requested work output. Receipts follow durable work admission and do not prove completion. Mixed conversational replies remain contextual.
+- `docs/inbound-coordinator-loop.md`: current receipt, UID response and recovery contracts; previously frozen outbox payloads remain immutable.

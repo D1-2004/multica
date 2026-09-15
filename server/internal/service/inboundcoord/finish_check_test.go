@@ -285,7 +285,7 @@ func TestFinishCheckRestrictsWorkPlanBeforeSaveAndAcceptsAuthorizedDraft(t *test
 	if err != nil || d.Action != ActionIssue || len(saved) != 1 || len(saved[0].Items) != 1 || chat.checkCalls != 2 {
 		t.Fatalf("only the reviewed draft plan may be saved: action=%s saves=%d checks=%d err=%v", d.Action, len(saved), chat.checkCalls, err)
 	}
-	if saved[0].Items[0].Purpose != "用户委托：只起草周五开会通知，未获批准不能发送" || saved[0].UserText != "我来起草通知，等你确认后再发送。" {
+	if saved[0].Items[0].Purpose != "用户委托：只起草周五开会通知，未获批准不能发送" || saved[0].UserText != hostWorkReceipt("start_work", "zh") {
 		t.Fatal("the unauthorized sending plan was saved")
 	}
 }
@@ -500,9 +500,9 @@ func TestFinishCheckDiscardsUnusableOptionalBoundaryWithoutDiscardingVerdict(t *
 }
 
 func TestFinishCheckRepairSeesRejectedProposalAndSpecificReasonWithoutForgedBoundary(t *testing.T) {
-	const bad = `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"起草周五下午三点全员例会通知正文","intent":"other","reply":"已经发给大家了。"}]}`
+	const bad = `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"起草并发送周五下午三点全员例会通知正文","intent":"other","reply":"已经发给大家了。"}]}`
 	const fixed = `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"起草周五下午三点全员例会通知正文","intent":"other","reply":"我来起草周五例会通知。"}]}`
-	const reason = "第1项reply虚报发送；保持起草purpose，只将reply改成起草承诺。"
+	const reason = "第1项purpose超出起草授权包含发送；改为只起草通知。"
 	revise, _ := json.Marshal(map[string]any{"request_quote_ref": scriptedRequestQuoteRef, "candidate_quote_ref": scriptedCandidateQuoteRef, "constraint_quote": "FORGED_POLICY_SENTINEL", "verdict": "revise", "reason": reason, "missing_source_refs": []string{}, "work_checks": scriptedWorkChecks})
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("bad", toolFinish, bad), assistantTool("fixed", toolFinish, fixed)}, checkRounds: []openai.ChatCompletion{assistantTool("review", toolFinishCheck, string(revise)), scriptedFinishVerdict("revise", reason), scriptedFinishVerdict("allow", "The drafting plan and its acknowledgement stay within scope.")}}
 	d, err := (&Coordinator{Chat: chat}).runLoop(context.Background(), Turn{Source: SourceWeb, Message: "帮我起草周五三点全员例会通知，先不发送。"})
@@ -510,7 +510,7 @@ func TestFinishCheckRepairSeesRejectedProposalAndSpecificReasonWithoutForgedBoun
 		t.Fatalf("repair did not complete: %#v calls=%d checks=%d err=%v", d, chat.calls, chat.checkCalls, err)
 	}
 	next, _ := json.Marshal(chat.params[1].Messages)
-	if !strings.Contains(string(next), reason) || !strings.Contains(string(next), "已经发给大家了。") || strings.Contains(string(next), "FORGED_POLICY_SENTINEL") {
+	if !strings.Contains(string(next), reason) || !strings.Contains(string(next), "起草并发送周五下午三点全员例会通知正文") || strings.Contains(string(next), "FORGED_POLICY_SENTINEL") {
 		t.Fatalf("repair lost the real defect or exposed a forged restriction: %s", next)
 	}
 }

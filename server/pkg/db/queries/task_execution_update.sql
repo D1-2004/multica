@@ -148,3 +148,6 @@ WHERE id = $1
   AND lease_token = $2
   AND status = 'queued'
 RETURNING *;
+
+-- name: GetTaskExecutionUpdateByRootTaskID :one
+SELECT * FROM task_execution_update_outbox WHERE root_task_id = $1;

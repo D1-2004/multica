@@ -465,3 +465,38 @@ func (q *Queries) RetryTaskExecutionUpdate(ctx context.Context, arg RetryTaskExe
 	)
 	return i, err
 }
+
+const getTaskExecutionUpdateByRootTaskID = `-- name: GetTaskExecutionUpdateByRootTaskID :one
+SELECT id, root_task_id, target_task_id, issue_id, issue_identifier, callback_url, target_identity, request_id, agent_id, target_agent_id, update_type, occurred_at, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, result_message, result_message_frozen FROM task_execution_update_outbox WHERE root_task_id = $1
+`
+
+func (q *Queries) GetTaskExecutionUpdateByRootTaskID(ctx context.Context, rootTaskID pgtype.UUID) (TaskExecutionUpdateOutbox, error) {
+	row := q.db.QueryRow(ctx, getTaskExecutionUpdateByRootTaskID, rootTaskID)
+	var i TaskExecutionUpdateOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.RootTaskID,
+		&i.TargetTaskID,
+		&i.IssueID,
+		&i.IssueIdentifier,
+		&i.CallbackUrl,
+		&i.TargetIdentity,
+		&i.RequestID,
+		&i.AgentID,
+		&i.TargetAgentID,
+		&i.UpdateType,
+		&i.OccurredAt,
+		&i.Status,
+		&i.AvailableAt,
+		&i.AttemptCount,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.LastError,
+		&i.DeliveredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ResultMessage,
+		&i.ResultMessageFrozen,
+	)
+	return i, err
+}

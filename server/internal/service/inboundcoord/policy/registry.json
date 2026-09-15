@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-15.7",
-  "assembly_version": "34",
+  "policy_version": "2026-09-15.8",
+  "assembly_version": "35",
   "modules": [
     {
       "id": "core",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "27",
+      "version": "28",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -60,8 +60,8 @@
         "COORD.F10",
         "COORD.F03"
       ],
-      "budget_characters": 4317,
-      "content_sha256": "6eb46e0f4e75ca4189bbca3d0b9e7084645a716933fee214d6d7e28208f8f7f0"
+      "budget_characters": 4396,
+      "content_sha256": "63307272709f5864b14074751ccfc2cb141d6ba79bc44a2c90e67f8ffd4dce86"
     },
     {
       "id": "channel",
@@ -249,7 +249,7 @@
     },
     {
       "id": "finish_check_work",
-      "version": "20",
+      "version": "21",
       "file": "finish_check_work.md",
       "applies_when": "finish_check_work",
       "requires": [
@@ -272,7 +272,7 @@
         "COORD.F19"
       ],
       "budget_characters": 3890,
-      "content_sha256": "68294d56ba3e814e36cb668155039d58fbc965e1bcb69f2f6fd4f9d15174d5f1"
+      "content_sha256": "e9528a5bb0a79cec169698ff224716c644f72130ea5bdf2ca44d6c73bfd274ef"
     },
     {
       "id": "conversation_reply",
@@ -975,7 +975,8 @@
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
-        "contextual_replies_2026_09_15": "pending: host checks and full pre E2E required; production f2370cf3 confirms UID matched but persona overrode recipient"
+        "contextual_replies_2026_09_15": "pending: host checks and full pre E2E required; production f2370cf3 confirms UID matched but persona overrode recipient",
+        "work_receipt_2026_09_15": "pending: .7 live smoke duplicated work output; Host-owned receipt repair requires new deployment and live work regression"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/completion.md",
@@ -983,7 +984,9 @@
         "server/internal/service/inboundcoord/wrapup.go",
         "server/internal/service/inboundcoord/response_requirement.go",
         "server/internal/service/inboundcoord/contextual_reply_test.go",
-        "docs/plans/2026-09-15-coordinator-contextual-replies.md"
+        "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+        "server/internal/service/inboundcoord/work_receipt.go",
+        "server/internal/service/inboundcoord/work_receipt_test.go"
       ],
       "case_file": "cases.json"
     },
@@ -1059,7 +1062,8 @@
         "retry_budget_and_tool_contract_2026_09_10": "host_tests_passed_local; pre e2e pending",
         "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending.",
         "contextual_replies_2026_09_15": "pending: host checks and full pre E2E required; production f2370cf3 confirms UID matched but persona overrode recipient",
-        "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback"
+        "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback",
+        "work_receipt_2026_09_15": "pending: .7 live smoke duplicated work output; Host-owned receipt repair requires new deployment and live work regression"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1107,7 +1111,9 @@
         "server/internal/service/inboundcoord/contextual_reply_test.go",
         "docs/plans/2026-09-15-coordinator-contextual-replies.md",
         "server/internal/service/inboundcoord/conversation_reply.go",
-        "server/internal/service/inboundcoord/policy/conversation_reply.md"
+        "server/internal/service/inboundcoord/policy/conversation_reply.md",
+        "server/internal/service/inboundcoord/work_receipt.go",
+        "server/internal/service/inboundcoord/work_receipt_test.go"
       ],
       "case_file": "cases.json"
     },

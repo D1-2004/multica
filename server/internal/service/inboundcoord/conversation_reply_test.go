@@ -136,3 +136,20 @@ func TestConversationReplySkipsOtherKindsAndPropagatesFailure(t *testing.T) {
 		t.Fatal("renderer error failed open or changed reply")
 	}
 }
+
+func TestConversationRendererKeepsHostWorkReceiptsDeduplicated(t *testing.T) {
+	turn := Turn{Source: SourceDigitalEmployee, ChatType: "single", Message: "这次请回应我的问题，也处理两件工作"}
+	d := Decision{Action: ActionIssue, CoordinationActions: []CoordinationAction{
+		{Kind: "start_work", SourceRefs: []string{"u1"}, Reply: "first artifact must not escape"},
+		{Kind: "acknowledge", AckKind: "conversation", SourceRefs: []string{"u1"}, Reply: "old social reply"},
+		{Kind: "start_work", SourceRefs: []string{"u1"}, Reply: "second artifact must not escape"},
+	}}
+	NormalizeWorkReceipts(turn, &d)
+	f := &conversationReplyCompleter{completion: assistantTool("response", toolConversationReplies, `{"replies":[{"action_ref":"a2","reply":"前面确实没回应到你的问题，这次按你说的来。"}]}`)}
+	if err := (&Coordinator{Chat: f}).renderConversationReplies(context.Background(), turn, &d, 0); err != nil {
+		t.Fatal(err)
+	}
+	if d.UserText != "收到，我来处理。\n\n前面确实没回应到你的问题，这次按你说的来。" {
+		t.Fatalf("mixed rendering repeated receipt or exposed artifact: %q", d.UserText)
+	}
+}

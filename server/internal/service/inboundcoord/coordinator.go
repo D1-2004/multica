@@ -385,6 +385,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 		}
 	}
 	if restored, ok := RestoredPlan(ctx); ok {
+		NormalizeWorkReceipts(turn, &restored)
 		return restored
 	}
 	if strings.TrimSpace(turn.Message) == "" {

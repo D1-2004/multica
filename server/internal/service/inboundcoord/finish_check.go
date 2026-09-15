@@ -139,10 +139,10 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		"history_status":               turn.HistoryStatus, "history_before": turn.HistoryBefore,
 		"scene_memory_status": turn.SceneMemoryStatus, "scene_memory_revision": turn.SceneMemoryRevision, "scene_memory": turn.SceneMemory,
 		"read_evidence":             finishReadEvidence(turn),
-		"reply_delivery_guarantees": "Work replies are delivered only after ALL work items are committed and tasks queued. Acceptance/queued acknowledgements are then true. This does not prove execution completed, business results, or external delivery. A clarify question handles its request for this window; the user answers in a later window.",
+		"reply_delivery_guarantees": "Host-fixed work acceptance receipts are delivered only after ALL work items are committed and tasks queued. Acceptance/queued acknowledgements are then true. This does not prove execution completed, business results, or external delivery. A clarify question handles its request for this window; the user answers in a later window.",
 	}
 	if turn.ProactiveConversation {
-		input["reply_delivery_guarantees"] = "Work acceptance is sent only after every work item is durably stored: new execution is queued; additions to a busy Issue wait in its durable follow-up queue. Neither state proves running, completion or external delivery."
+		input["reply_delivery_guarantees"] = "Host-fixed work acceptance is sent only after every work item is durably stored: new execution is queued; additions to a busy Issue wait in its durable follow-up queue. Neither state proves running, completion or external delivery."
 	}
 	if turn.Loop == LoopTaskFinished {
 		input["outstanding_follow_ups"] = turn.OutstandingFollowUps

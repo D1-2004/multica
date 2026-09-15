@@ -1349,7 +1349,7 @@
       ],
       "context_a": "已完成草稿要求原文重发，work reply已经贴完整正文",
       "context_b": "同一请求，work reply仅接单，执行器发一次原文",
-      "expected_effects": "前者审核revise防双重发送；后者准确交付一次；不重新研究或新建无关产物",
+      "expected_effects": "两者工作接单均由Host生成；模型正文丢弃，工作目标与授权仍完整审核；执行器准确交付一次，不重新研究或新建无关产物。恢复时保留已冻结ACK身份和原payload，不因收据变更重复发送。",
       "verification": "not_run"
     },
     {

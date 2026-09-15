@@ -525,14 +525,14 @@ func recalledIssueIDSchema(description string) map[string]any {
 const (
 	hintBindNeedsIssue  = "A new matter uses finish start_work; an existing recalled matter uses continue_work. Direct write tools are unavailable."
 	hintCopyIssueID     = "Call assoc_recall first, then copy items[].issue_id exactly. For progress read work_state and use report_status with its read_ref; for authorized substantive input use continue_work."
-	hintNewIssueFinish  = "Use finish start_work with source_refs, concrete purpose, intent and its own reply."
-	hintContinueComment = "Use finish continue_work with recalled issue_id, source_refs, purpose, intent, basis and its own reply. Status pings use report_status."
+	hintNewIssueFinish  = "Use finish start_work with source_refs, concrete purpose and intent. Host supplies the acceptance receipt."
+	hintContinueComment = "Use finish continue_work with recalled issue_id, source_refs, purpose, intent and basis. Host supplies the receipt. Status pings use report_status."
 )
 
 func finishRevisionHint(check finishCheckResult) string {
 	refs := "Missing current refs: " + strings.Join(check.MissingSourceRefs, ",") + ". "
 	if finishRevisionRequiresKindChange(check.Reason) {
-		return refs + "Change the action kind as the reason states; do not keep continue_work or only reword its reply. This review grants no new authority."
+		return refs + "Change the action kind as the reason states; do not keep continue_work by changing its receipt. This review grants no new authority."
 	}
 	if strings.TrimSpace(check.ConstraintQuote) == "" {
 		return refs + "This revision is not a supplied policy restriction. Repair the diagnosed action/field only. Do not decline, clarify a fake authorization gap, or invent a catalog/tool limit. This review grants no new authority."
@@ -548,14 +548,14 @@ func finishRevisionRequiresKindChange(reason string) bool {
 }
 
 const (
-	hintIssueText       = "Each work action needs its own short acknowledgement in reply."
+	hintIssueText       = "Host supplies work acceptance after durable admission; omit work reply."
 	hintPurpose         = "Rewrite purpose as {委托人}委托：{事件与目的}, e.g. 须莫🥥委托：向须莫v6询问明早有没有会议. Drop dws, data-auth, openConversationId, and 记录事项."
 	hintIntent          = "intent must be one of ask, confirm, notify, lookup, wait, other."
 	hintConversation    = "Pass conversation_id as the DingTalk openConversationId (cid…). The server fills the inbound cid if omitted."
 	hintReplyText       = "issue_comment_add is terminal. Set reply_text to the short IM acknowledgement for the current speaker."
 	hintRecallFirst     = "Call assoc_recall with the named conversation_id before finish. Do not answer from memory."
-	hintIssueSpokenText = "Set the work action.reply to its short acknowledgement; a work action without reply cannot submit."
-	hintIssueWorkItems  = "Use finish.actions with source_refs, purpose, intent and reply on each work action; every request needs a disposition."
+	hintIssueSpokenText = "Omit work action.reply; Host supplies its acceptance receipt after durable admission."
+	hintIssueWorkItems  = "Use finish.actions with source_refs, purpose and intent on each work action; Host supplies work receipts and every request needs a disposition."
 	hintIssueItemLimit  = "Keep at most 8 actions; never drop later requests."
 	hintPurposeRepair   = "Rewrite purpose as {委托人}委托：{事件与目的}, naming the concrete event and deliverable. Do not paste the inbound envelope."
 )

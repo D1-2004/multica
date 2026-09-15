@@ -163,13 +163,7 @@ func (c *Coordinator) renderConversationReplies(ctx context.Context, turn Turn, 
 			decision.CoordinationActions[i].Reply = reply
 		}
 	}
-	var combined []string
-	for _, action := range decision.CoordinationActions {
-		if action.Kind != "ignore" {
-			combined = append(combined, action.Reply)
-		}
-	}
-	decision.UserText = strings.Join(combined, "\n\n")
+	decision.UserText = ComposeDecisionReplies(decision.CoordinationActions)
 	slog.Info("inbound coordinator conversation reply rendered", append(coordinatorLogIndex(turn), "event", "inbound_coordinator_conversation_reply", "action_count", len(refs), "input_hash", inputHash, "elapsed_ms", time.Since(started).Milliseconds())...)
 	return nil
 }
