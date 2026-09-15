@@ -79,7 +79,7 @@ func (r Record) Validate() error {
 type Due struct {
 	Record
 	At        time.Time
-	Next      time.Time // Zero means that the one-shot reminder is consumed.
+	Next      time.Time // Zero means no representable future occurrence remains.
 	RequestID uuid.UUID
 }
 
@@ -105,7 +105,9 @@ func Plan(r Record, nextDue, now time.Time) (Due, error) {
 		at = first + ((now.UnixMilli()-first)/interval)*interval
 		following = time.UnixMilli(at + interval).UTC()
 		if !validInstant(following) {
-			return Due{}, ErrInvalid
+			// Match the official parser: deliver the last representable
+			// occurrence, then consume the recurring rule.
+			following = time.Time{}
 		}
 	}
 	occurrence := time.UnixMilli(at).UTC()

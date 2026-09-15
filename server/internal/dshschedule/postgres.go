@@ -44,7 +44,7 @@ func (s Store) List(ctx context.Context, workspace, agent uuid.UUID, session str
 	}
 	rows, err := s.Tx.Query(ctx, `SELECT schedule_id,owner_member_id,source_task_id,prompt,first_due_at,every_seconds,next_due_at,cancelled_at
  FROM dsh_schedule WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3
- AND cancelled_at IS NULL AND next_due_at IS NOT NULL ORDER BY first_due_at,schedule_id LIMIT 257`, workspace, agent, session)
+ AND cancelled_at IS NULL AND next_due_at IS NOT NULL ORDER BY created_at,schedule_id LIMIT 257`, workspace, agent, session)
 	if err != nil {
 		return nil, false, err
 	}

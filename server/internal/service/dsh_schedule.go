@@ -21,12 +21,14 @@ type DSHScheduleActor struct {
 }
 
 type DSHScheduleInput struct {
-	SourceTaskID string    `json:"source_task_id"`
-	SessionID    string    `json:"session_id"`
-	ScheduleID   string    `json:"schedule_id"`
-	Prompt       string    `json:"prompt"`
-	FirstDue     time.Time `json:"first_due_at"`
-	EverySeconds int64     `json:"every_seconds"`
+	SourceTaskID       string    `json:"source_task_id"`
+	Cancelled          bool      `json:"cancelled,omitempty"`
+	CancellationTaskID string    `json:"cancellation_task_id,omitempty"`
+	SessionID          string    `json:"session_id"`
+	ScheduleID         string    `json:"schedule_id"`
+	Prompt             string    `json:"prompt"`
+	FirstDue           time.Time `json:"first_due_at"`
+	EverySeconds       int64     `json:"every_seconds"`
 }
 
 type DSHScheduleView struct {
@@ -153,6 +155,33 @@ func (s *TaskService) RegisterDSHSchedule(ctx context.Context, actor DSHSchedule
 			return err
 		}
 		store := dshschedule.Store{Tx: tx}
+		if input.Cancelled {
+			cancelID, err := uuid.Parse(input.CancellationTaskID)
+			if err != nil || cancelID == uuid.Nil {
+				return dshschedule.ErrInvalid
+			}
+			if err := verifyDSHScheduleSource(ctx, tx, actor.Key, input.SessionID, cancelID, owner); err != nil {
+				return err
+			}
+		} else if input.CancellationTaskID != "" {
+			return dshschedule.ErrInvalid
+		}
+		finish := func(state dshschedule.State) error {
+			if input.Cancelled && state.NextDue.Valid && !state.CancelledAt.Valid {
+				// Publish the tombstone in the same transaction as the create.
+				// Recovery must never expose a due reminder between two HTTP calls.
+				if _, err := store.Cancel(ctx, r.Key); err != nil {
+					return err
+				}
+				var err error
+				state, err = store.Read(ctx, r.Key)
+				if err != nil {
+					return err
+				}
+			}
+			view = scheduleView(state, now)
+			return nil
+		}
 		existing, err := store.Read(ctx, r.Key)
 		if err == nil {
 			// Recovery may arrive under a fresh task. Preserve the original task
@@ -160,8 +189,7 @@ func (s *TaskService) RegisterDSHSchedule(ctx context.Context, actor DSHSchedule
 			if existing.OwnerMemberID != owner || existing.SourceTaskID != sourceID || existing.Prompt != r.Prompt || !existing.FirstDue.Equal(r.FirstDue) || existing.EverySeconds != r.EverySeconds {
 				return dshschedule.ErrConflict
 			}
-			view = scheduleView(existing, now)
-			return nil
+			return finish(existing)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
@@ -176,8 +204,7 @@ func (s *TaskService) RegisterDSHSchedule(ctx context.Context, actor DSHSchedule
 		if err != nil {
 			return err
 		}
-		view = scheduleView(state, now)
-		return nil
+		return finish(state)
 	})
 	return view, err
 }
@@ -196,6 +223,21 @@ func (s *TaskService) ListDSHSchedules(ctx context.Context, actor DSHScheduleAct
 		return nil
 	})
 	return result, err
+}
+
+// ReadDSHSchedule includes consumed and cancelled records, so native recovery
+// does not have to republish another member's immutable create to read its state.
+func (s *TaskService) ReadDSHSchedule(ctx context.Context, actor DSHScheduleActor, sessionID, scheduleID string, invoke DSHNativeInvokeCheck) (DSHScheduleView, error) {
+	var view DSHScheduleView
+	err := s.withDSHScheduleTask(ctx, actor, sessionID, invoke, func(tx pgx.Tx, _ uuid.UUID, now time.Time) error {
+		state, err := (dshschedule.Store{Tx: tx}).Read(ctx, dshschedule.Key{WorkspaceID: actor.WorkspaceID, AgentID: actor.AgentID, SessionID: sessionID, ScheduleID: scheduleID})
+		if err != nil {
+			return err
+		}
+		view = scheduleView(state, now)
+		return nil
+	})
+	return view, err
 }
 
 func (s *TaskService) CancelDSHSchedule(ctx context.Context, actor DSHScheduleActor, sessionID, scheduleID string, invoke DSHNativeInvokeCheck) (bool, error) {

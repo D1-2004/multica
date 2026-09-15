@@ -165,3 +165,32 @@ unverified in real preproduction. Native create/list/delete recovery, after/at
 rule metadata, local projection acknowledgement and delayed registration after
 an uncertain response remain explicit adapter work; the official parser will
 remain authoritative. No Runtime or production change was performed.
+
+
+## Consolidated native bridge batch (2026-09-15)
+
+This batch is accumulated with the remaining DSH implementation before the next
+preproduction deployment. Do not release these API changes alone.
+
+Individual GET reads lifecycle state under the current task and Session checks,
+including consumed and cancelled records. Recovery never needs to republish a
+known record merely to read its state. An unknown offline create/delete pair
+uses one POST with `cancelled` and `cancellation_task_id`; the original creator
+and cancelling task must independently resolve to the current owning member.
+The creation and cancellation share one transaction and the employee admission
+lock. A missing or foreign cancellation source rolls back without publishing a
+live reminder. Delayed uncancelled replays never resurrect a tombstone.
+
+The Runtime bridge keeps official rule parsing, strict tool schemas, native
+create/dispatch/delete events, and creation-ordered replay. A separate native
+intent stores original task IDs without credentials. Current task leases own all
+HTTP calls. Platform state determines recurring advancement; readback wall clock
+cannot skip an unadmitted occurrence. The final representable recurring occurrence
+is delivered and then consumed, matching the official four-digit-year protocol.
+New creates wait for prior intent reconciliation, preserving original publication
+order. The bounded management list is not used as a complete native-state fold.
+
+Runtime bridge and API tests are unit/compile checks; real preproduction database,
+Host restart, delayed HTTP response, cancellation competition and long-lived
+reminder delivery remain acceptance gates. Dispatch remains disabled until the
+combined candidate and these gates are ready.

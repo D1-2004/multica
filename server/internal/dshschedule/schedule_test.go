@@ -119,3 +119,18 @@ func TestCalendarRangeExceedsDurationWithoutOverflow(t *testing.T) {
 		t.Fatal("calendar arithmetic overflowed", err)
 	}
 }
+
+func TestRecurringFinalCalendarOccurrenceIsConsumed(t *testing.T) {
+	r := fixture()
+	r.FirstDue = time.Date(9999, 12, 31, 23, 54, 0, 0, time.UTC)
+	r.EverySeconds = 300
+	now := time.Date(9999, 12, 31, 23, 59, 59, 999000000, time.UTC)
+	due, err := Plan(r, r.FirstDue, now)
+	if err != nil || !due.At.Equal(r.FirstDue.Add(5*time.Minute)) || !due.Next.IsZero() {
+		t.Fatal("final occurrence was dropped", due, err)
+	}
+	batch, err := NewBatch([]Due{due})
+	if err != nil || len(batch.Reminders) != 1 {
+		t.Fatal("final occurrence cannot be reconstructed", err)
+	}
+}

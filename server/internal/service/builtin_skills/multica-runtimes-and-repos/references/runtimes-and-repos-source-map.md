@@ -133,7 +133,8 @@
   route/task/workspace cross-checks, strict body fields and private no-store replies.
 - `server/internal/service/dsh_schedule.go`: current bound task, employee/runtime,
   member and invocation checks under transaction locks; native Session isolation,
-  immutable retry, owner-only cancellation and bounded list projection.
+  immutable retry, independently verified create/cancel provenance, atomic cancelled
+  publication, individual lifecycle readback and bounded creation-ordered lists.
 - `server/internal/service/dsh_native_chat.go#lockDSHEmployeeAdmission`: shared
   Runtime-then-employee lock order; acquiring locks does not grant permission.
 - `server/internal/dshschedule`: durable registration, tombstones, due planning,

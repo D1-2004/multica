@@ -84,6 +84,30 @@ func TestDSHScheduleDatabaseRecoveryPreservesOriginalCreator(t *testing.T) {
 	if _, err := s.RegisterDSHSchedule(ctx, actor, changed, a.invoke); !errors.Is(err, dshschedule.ErrConflict) {
 		t.Fatal("replay replaced creating task", err)
 	}
+	// An offline create/delete pair is published as a tombstone in one commit.
+	cancelled := input
+	cancelled.ScheduleID = "schedule-3"
+	cancelled.Cancelled = true
+	cancelled.CancellationTaskID = unproven.String()
+	if _, err := s.RegisterDSHSchedule(ctx, actor, cancelled, a.invoke); !errors.Is(err, dshhost.ErrNativeAccessDenied) {
+		t.Fatal("unproven cancellation source accepted", err)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM dsh_schedule WHERE agent_id=$1 AND schedule_id='schedule-3'`, agent.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatal("failed cancellation published a live create", count, err)
+	}
+	cancelled.CancellationTaskID = current.String()
+	if result, err := s.RegisterDSHSchedule(ctx, actor, cancelled, a.invoke); err != nil || result.State != "cancelled" {
+		t.Fatal("atomic cancelled publication failed", result, err)
+	}
+	if result, err := s.ReadDSHSchedule(ctx, actor, input.SessionID, "schedule-3", a.invoke); err != nil || result.State != "cancelled" || result.SourceTaskID != source.String() {
+		t.Fatal("tombstone readback lost original provenance", result, err)
+	}
+	cancelled.Cancelled = false
+	cancelled.CancellationTaskID = ""
+	if result, err := s.RegisterDSHSchedule(ctx, actor, cancelled, a.invoke); err != nil || result.State != "cancelled" {
+		t.Fatal("late create resurrected atomic tombstone", result, err)
+	}
 	// Changing the historical source to another user must not transfer a pending
 	// native intent to the current task's owner, even if all bindings still match.
 	foreign := uuid.New()

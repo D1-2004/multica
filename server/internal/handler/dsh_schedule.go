@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dshschedule"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -47,6 +48,8 @@ func taskScheduleActor(w http.ResponseWriter, r *http.Request) (service.DSHSched
 
 func writeDSHScheduleError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		writeError(w, http.StatusNotFound, "DSH schedule was not found")
 	case errors.Is(err, dshhost.ErrNativeAccessDenied):
 		writeError(w, http.StatusForbidden, "DSH schedule authority is absent or no longer valid")
 	case errors.Is(err, dshschedule.ErrInvalid):
@@ -87,6 +90,11 @@ func (h *Handler) DSHSchedules(w http.ResponseWriter, r *http.Request) {
 	if _, ok := parseUUIDOrBadRequest(w, input.SourceTaskID, "source_task_id"); !ok {
 		return
 	}
+	if input.Cancelled || input.CancellationTaskID != "" {
+		if _, ok := parseUUIDOrBadRequest(w, input.CancellationTaskID, "cancellation_task_id"); !ok {
+			return
+		}
+	}
 	result, err := h.TaskService.RegisterDSHSchedule(r.Context(), actor, input, h.dshNativeInvoke)
 	if err != nil {
 		writeDSHScheduleError(w, err)
@@ -94,6 +102,24 @@ func (h *Handler) DSHSchedules(w http.ResponseWriter, r *http.Request) {
 	}
 	// The receipt confirms persistence, not a model turn or external delivery.
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) GetDSHSchedule(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	actor, ok := taskScheduleActor(w, r)
+	if !ok {
+		return
+	}
+	if h.TaskService == nil {
+		writeError(w, http.StatusServiceUnavailable, "DSH schedule storage is unavailable")
+		return
+	}
+	view, err := h.TaskService.ReadDSHSchedule(r.Context(), actor, r.URL.Query().Get("session_id"), chi.URLParam(r, "scheduleId"), h.dshNativeInvoke)
+	if err != nil {
+		writeDSHScheduleError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (h *Handler) DeleteDSHSchedule(w http.ResponseWriter, r *http.Request) {

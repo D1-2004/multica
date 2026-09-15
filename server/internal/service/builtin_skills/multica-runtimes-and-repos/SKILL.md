@@ -279,6 +279,13 @@ come from the short-lived task token. The original task must independently match
 the employee/Session and creator; it is provenance, never a grant. Responses retain
 `source_task_id`. A durable intent can be first published after its due instant
 under a fresh authorized task; an ended bearer task or another creator is denied.
+POST may include `cancelled: true` and `cancellation_task_id` for an offline
+create/delete pair. Both original creating and cancelling tasks must resolve to
+the currently authorized owner. Creation and the tombstone commit together; a
+late create retry cannot expose or reactivate it. `GET` on the individual
+`/schedules/{scheduleId}?session_id=...` path reads scheduled, consumed and
+cancelled state without republishing another owner's create. A missing record is
+404; this is not the same as a truncated active list.
 Do not retain a task token for a future reminder.
 
 Management requires an active dispatched/running FC DSH task bound to that exact

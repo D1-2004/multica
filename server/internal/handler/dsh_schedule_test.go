@@ -33,7 +33,7 @@ func TestDSHScheduleRejectsWrongAuthenticationBeforeDatabase(t *testing.T) {
 	} {
 		r := scheduleRequest(`{}`)
 		alter(r)
-		for _, handle := range []http.HandlerFunc{(&Handler{}).DSHSchedules, (&Handler{}).DeleteDSHSchedule} {
+		for _, handle := range []http.HandlerFunc{(&Handler{}).DSHSchedules, (&Handler{}).GetDSHSchedule, (&Handler{}).DeleteDSHSchedule} {
 			w := httptest.NewRecorder()
 			handle(w, r)
 			if w.Code != http.StatusForbidden {
@@ -46,6 +46,7 @@ func TestDSHScheduleRejectsWrongAuthenticationBeforeDatabase(t *testing.T) {
 func TestDSHScheduleRejectsMalformedOrCallerSuppliedAuthority(t *testing.T) {
 	h := &Handler{TaskService: &service.TaskService{}}
 	for _, body := range []string{`{`, `{} {}`, `{"first_due_at":"tomorrow"}`,
+		`{"source_task_id":"11111111-1111-4111-8111-111111111111","cancelled":true}`, `{"source_task_id":"11111111-1111-4111-8111-111111111111","cancellation_task_id":"fake"}`,
 		`{"owner_member_id":"fake"}`, `{"source_task_id":"fake"}`, `{"workspace_id":"fake"}`,
 		`{"agent_id":"fake"}`, `{"native_access":"fake"}`, `{"token":"fake"}`,
 		`{"prompt":"` + strings.Repeat("x", 65536) + `"}`} {
