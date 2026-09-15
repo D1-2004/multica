@@ -123,7 +123,7 @@ func (s *TaskService) DispatchDSHSchedule(ctx context.Context, key dshschedule.K
 			return dshhost.ErrChanged
 		}
 		var err error
-		receipt, err = (dshschedule.Store{Tx: tx}).Dispatch(ctx, key, func(ctx context.Context, tx pgx.Tx, due dshschedule.Due) (uuid.UUID, error) {
+		receipt, err = (dshschedule.Store{Tx: tx}).Dispatch(ctx, key, func(ctx context.Context, tx pgx.Tx, due dshschedule.Batch) (uuid.UUID, error) {
 			attr := attribution.TriggerOwner(owner, attribution.EvidenceDSHSchedule, pgtype.UUID{Bytes: due.RequestID, Valid: true})
 			source, _, kind, ref := attributionCreateParams(attr)
 			metadata, _ := json.Marshal(map[string]string{"type": dshschedule.EvidenceKind, "workspace_id": key.WorkspaceID.String()})
@@ -139,7 +139,7 @@ func (s *TaskService) DispatchDSHSchedule(ctx context.Context, key dshschedule.K
 				if err != nil {
 					return uuid.Nil, err
 				}
-				payload, _ := json.Marshal(map[string]any{"dsh_schedule": map[string]string{"schedule_id": due.ScheduleID, "request_id": due.RequestID.String()}})
+				payload, _ := json.Marshal(map[string]any{"dsh_schedule": map[string]string{"request_id": due.RequestID.String()}})
 				if _, err = q.CreateChatMessage(ctx, db.CreateChatMessageParams{ChatSessionID: task.ChatSessionID, TaskID: task.ID, Role: "user", Content: due.Framing(), SourcePayload: payload, MessageKind: pgtype.Text{String: protocol.ChatMessageKindMessage, Valid: true}}); err != nil {
 					return uuid.Nil, err
 				}
@@ -166,7 +166,7 @@ func (s *TaskService) DispatchDSHSchedule(ctx context.Context, key dshschedule.K
 	if err != nil {
 		return dshschedule.Receipt{}, err
 	}
-	slog.Info("DSH schedule task admitted", "workspace_id", key.WorkspaceID.String(), "agent_id", key.AgentID.String(), "session_id", key.SessionID, "schedule_id", key.ScheduleID, "request_id", receipt.RequestID.String(), "task_id", receipt.TaskID.String())
+	slog.Info("DSH schedule task admitted", "workspace_id", key.WorkspaceID.String(), "agent_id", key.AgentID.String(), "session_id", key.SessionID, "seed_schedule_id", key.ScheduleID, "request_id", receipt.RequestID.String(), "task_id", receipt.TaskID.String(), "reminder_count", len(receipt.Reminders))
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
 	return receipt, nil

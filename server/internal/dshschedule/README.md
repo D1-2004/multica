@@ -2,7 +2,7 @@
 
 This package is the PostgreSQL transaction core for native DSH reminders. It is
 wired to application task admission and the shared-database scheduler. The
-native Schedule tool adapter and recurring same-Session batching are still
+native Schedule tool adapter and real batch acceptance are still
 unfinished; its presence is not proof of reminder delivery.
 
 The task-authenticated management API is implemented in
@@ -54,13 +54,13 @@ generation and the old task lease. No execution token is stored in either table.
 
 One-shot reminders remain eligible while overdue. Recurring reminders select the
 latest overdue occurrence and keep their original creation anchor, matching the
-official Schedule semantics. The native adapter still needs to preserve official
-same-session recurring-batch framing and synchronize its local projection only
-after the platform's durable receipt.
+official Schedule semantics. The platform now admits the complete recurring batch with official framing; the
+native adapter must synchronize its local projection only after the platform's
+durable receipt.
 
 ## Validation boundaries
 
-`go test ./internal/dshschedule` runs pure rule/identity/framing tests. The three ledger
+`go test ./internal/dshschedule` runs pure rule/identity/framing tests. The four ledger
 PostgreSQL tests skip unless `DSH_SCHEDULE_TEST_DATABASE_URL` explicitly selects a
 real preproduction test database. They use an isolated schema and two independent
 pools to exercise atomic rollback, concurrent admission, cancellation, immutable
@@ -69,12 +69,13 @@ passing them alone is not application authorization or end-to-end delivery proof
 
 Outstanding integration gates: native create/list/delete acknowledgement;
 real application transaction validation; deletion cleanup;
-offline Host recovery; model-visible delivery in the original Session; periodic
-batch semantics; cancellation before/after admission; and lost-response replay.
+offline Host recovery; model-visible delivery in the original Session; real periodic
+batch delivery; cancellation before/after admission; and lost-response replay.
 
 ## Due worker and task transport
 
-`Queue.Candidates` discovers overdue records using database time. Failure deferral
+`Queue.Candidates` discovers one candidate per native Session and standing owner
+using database time. Failure deferral
 is persistent, bounded from 30 to 300 seconds, and compares the observed next due
 instant so a delayed error cannot postpone a successfully advanced occurrence.
 A cancelled/consumed reminder remains ineligible. `Sweep` examines at most 64
@@ -104,3 +105,35 @@ disabled; late reminders remain pending. The flag has not been enabled in
 preproduction. Before rolling back to a binary without this transport, disable
 dispatch and drain admitted reminder tasks. Native adapter/batch integration and
 its acceptance must also pass before exposing the complete feature to users.
+
+## Complete recurring batches
+
+The pinned official Schedule 0.1.5-rc.2 source (`types/runtime.js:dueDecision` and
+`types/domain.js:renderEveryReminderBatchFraming`) gives overdue one-shots priority,
+then batches one latest occurrence of every overdue recurring rule in target and
+creation order. `PlanBatch` and `Batch.Framing` preserve that contract. Rules with
+different standing owners remain separate because one task cannot impersonate
+multiple members. A single recurring rule still uses the official batch framing.
+
+`Store.Dispatch` takes a transaction-scoped native Session advisory lock, then
+locks the owner's complete due set with NOWAIT. It never skips a locked sibling.
+One task/native request owns the full ordered batch; every occurrence retains its
+individual ID and `batch_ordinal` (migration9254). All receipts and advances commit
+or roll back together. `LoadExecution` checks contiguous ordinals and recomputes
+the full batch request ID, detecting missing, repeated, reordered or foreign rows.
+The inherited native transport size bound is checked before admission; oversized
+batches are not clipped or consumed.
+
+Discovery groups by Session/owner and excludes a group while any due sibling is
+backing off. Failure defers the observed group, with the seed next-due and database
+observation time fencing records already advanced or changed by another replica.
+Migration9255 adds the concurrent partial Session/owner due index. Per-task wake
+still uses the standard durable queue and fresh credentials.
+
+Batch tests cover priority/order, identity, injection-resistant payload, full-set
+reconstruction and size rejection. The PostgreSQL fixture adds whole-batch
+rollback and a locked cancellation sibling; application fixtures admit two every
+rules as one task in chat/issue/standalone scopes. These real DB cases still skip
+locally and are not passing preproduction evidence. No Runtime source or native
+Schedule tool was changed in this batch implementation step. The dispatch gate
+remains off, and none of the Schedule commits has been deployed yet.

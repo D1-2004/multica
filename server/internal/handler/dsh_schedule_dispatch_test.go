@@ -19,13 +19,28 @@ import (
 )
 
 type scheduleClaimDB struct {
+	pgx.Rows
+	read bool
 	db.DBTX
 	values []any
 	err    error
 	calls  int
 }
 
-func (d *scheduleClaimDB) QueryRow(context.Context, string, ...any) pgx.Row { d.calls++; return d }
+func (d *scheduleClaimDB) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	d.calls++
+	d.read = false
+	return d, nil
+}
+func (d *scheduleClaimDB) Next() bool {
+	if d.read || d.err != nil {
+		return false
+	}
+	d.read = true
+	return true
+}
+func (d *scheduleClaimDB) Close()     {}
+func (d *scheduleClaimDB) Err() error { return d.err }
 func (d *scheduleClaimDB) Scan(dest ...any) error {
 	if d.err != nil {
 		return d.err
@@ -48,7 +63,7 @@ func TestDSHScheduleClaimRequiresReceiptAndNativeTransport(t *testing.T) {
 				t.Fatal(err)
 			}
 			task.TriggerEvidenceRefID = pgtype.UUID{Bytes: due.RequestID, Valid: true}
-			database := &scheduleClaimDB{values: []any{r.SessionID, r.ScheduleID, due.At, due.RequestID, r.OwnerMemberID, r.SourceTaskID, r.Prompt, r.FirstDue, r.EverySeconds, "task", r.SourceTaskID}}
+			database := &scheduleClaimDB{values: []any{r.SessionID, r.ScheduleID, due.At, due.RequestID, r.OwnerMemberID, r.SourceTaskID, r.Prompt, r.FirstDue, r.EverySeconds, "task", r.SourceTaskID, 0, due.RequestID}}
 			h := &Handler{DB: database}
 			request := httptest.NewRequest(http.MethodPost, "/claim", nil)
 			request.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityDSHNativePromptV1)

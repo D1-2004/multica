@@ -16,7 +16,7 @@ import (
 func TestDSHScheduleExecutionRetainsScopeWithoutHumanImpersonation(t *testing.T) {
 	u := func() pgtype.UUID { return pgtype.UUID{Bytes: uuid.New(), Valid: true} }
 	task := db.AgentTaskQueue{ID: u(), AgentID: u(), TriggerEvidenceKind: pgtype.Text{String: dshschedule.EvidenceKind, Valid: true}, TriggerEvidenceRefID: u(), OriginatorSource: pgtype.Text{String: string(attribution.SourceTriggerOwner), Valid: true}}
-	e := dshschedule.Execution{SessionScope: dshhost.SessionScope{Key: dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.UUID(task.AgentID.Bytes)}, Kind: "task", ID: uuid.New()}, Receipt: dshschedule.Receipt{TaskID: uuid.UUID(task.ID.Bytes), Due: dshschedule.Due{RequestID: uuid.UUID(task.TriggerEvidenceRefID.Bytes)}}}
+	e := dshschedule.Execution{SessionScope: dshhost.SessionScope{Key: dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.UUID(task.AgentID.Bytes)}, Kind: "task", ID: uuid.New()}, Receipt: dshschedule.Receipt{TaskID: uuid.UUID(task.ID.Bytes), Batch: dshschedule.Batch{RequestID: uuid.UUID(task.TriggerEvidenceRefID.Bytes)}}}
 	if !ScheduleExecutionMatches(task, e) || e.ID == uuid.UUID(task.ID.Bytes) {
 		t.Fatal("new standalone task did not retain prior scope")
 	}

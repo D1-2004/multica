@@ -291,8 +291,9 @@ completion or a delivered message. The branch implements management, persistent
 retry, fresh automatic task admission and original-Session native transport.
 Admission rechecks the owning member's current invocation permission and uses
 fresh task credentials. It does not pretend the owner sent another human message.
-The native tool adapter, recurring same-Session batching and real preproduction
-acceptance remain unfinished; do not advertise an available reminder feature.
+Complete recurring batches are now admitted as one task, with one latest
+occurrence per due rule and one-shot priority. Different standing owners are kept
+separate. The native tool adapter and real preproduction acceptance remain unfinished; do not advertise an available reminder feature.
 
 `MULTICA_DSH_SCHEDULE_DISPATCH_ENABLED` defaults off. Enable only after all
 application replicas support occurrence-aware native claim/launch, so older

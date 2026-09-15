@@ -3,6 +3,8 @@ package dshschedule
 import (
 	"context"
 	"errors"
+	"github.com/jackc/pgx/v5/pgconn"
+	"hash/fnv"
 	"time"
 
 	"github.com/google/uuid"
@@ -128,69 +130,109 @@ func (s Store) Cancel(ctx context.Context, key Key) (bool, error) {
 	return result.RowsAffected() == 1, nil
 }
 
-// Enqueue must recheck the standing owner's current authority, create a fresh
-// platform task and adopt its native execution with due.RequestID in this exact
-// transaction. It must not commit or dispatch externally. The return value is
-// checked against the persisted native binding before an occurrence is accepted.
-type Enqueue func(context.Context, pgx.Tx, Due) (uuid.UUID, error)
-
+// Enqueue must create one fresh task and adopt batch.RequestID in this exact
+// transaction, after rechecking the standing owner's current authority.
+type Enqueue func(context.Context, pgx.Tx, Batch) (uuid.UUID, error)
 type Receipt struct {
-	Due
+	Batch
 	TaskID uuid.UUID
 }
 
-// Dispatch locks one reminder across replicas through the task/occurrence commit.
-// SKIP LOCKED permits unrelated Sessions to advance without waiting. Database
-// time is sampled after the lock, and late one-shot reminders remain eligible.
+// Dispatch claims the seed's Session, then locks its complete due set. Never
+// SKIP LOCKED on siblings: that could split an official recurring batch. The
+// caller's employee authorization locks remain held through the final commit.
 func (s Store) Dispatch(ctx context.Context, key Key, enqueue Enqueue) (Receipt, error) {
 	if s.Tx == nil || !key.valid() || enqueue == nil {
 		return Receipt{}, ErrInvalid
 	}
-	state, err := readState(s.Tx.QueryRow(ctx, selectRecord+" AND (next_attempt_at IS NULL OR next_attempt_at<=clock_timestamp()) FOR UPDATE SKIP LOCKED", keyArgs(key)...), key)
-	if errors.Is(err, pgx.ErrNoRows) {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key.WorkspaceID.String() + key.AgentID.String() + key.SessionID))
+	var acquired bool
+	if err := s.Tx.QueryRow(ctx, `SELECT pg_try_advisory_xact_lock($1,$2)`, int32(0x44534853), int32(h.Sum32())).Scan(&acquired); err != nil {
+		return Receipt{}, err
+	}
+	if !acquired {
+		return Receipt{}, ErrNotDue
+	}
+	seed, err := readState(s.Tx.QueryRow(ctx, selectRecord+" FOR UPDATE NOWAIT", keyArgs(key)...), key)
+	if errors.Is(err, pgx.ErrNoRows) || scheduleLockBusy(err) {
 		return Receipt{}, ErrNotDue
 	}
 	if err != nil {
 		return Receipt{}, err
 	}
-	if state.CancelledAt.Valid || !state.NextDue.Valid {
+	if seed.CancelledAt.Valid || !seed.NextDue.Valid {
 		return Receipt{}, ErrNotDue
 	}
 	var now time.Time
 	if err := s.Tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return Receipt{}, err
 	}
-	due, err := Plan(state.Record, state.NextDue.Time, now)
+	rows, err := s.Tx.Query(ctx, `SELECT schedule_id,owner_member_id,source_task_id,prompt,first_due_at,every_seconds,next_due_at,cancelled_at,next_attempt_at
+ FROM dsh_schedule WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3 AND owner_member_id=$4
+ AND cancelled_at IS NULL AND next_due_at<=$5 ORDER BY created_at,schedule_id FOR UPDATE NOWAIT`, key.WorkspaceID, key.AgentID, key.SessionID, seed.OwnerMemberID, now)
+	if err != nil {
+		if scheduleLockBusy(err) {
+			return Receipt{}, ErrNotDue
+		}
+		return Receipt{}, err
+	}
+	var states []State
+	for rows.Next() {
+		state := State{Record: Record{Key: key}}
+		var retry pgtype.Timestamptz
+		if err := rows.Scan(&state.ScheduleID, &state.OwnerMemberID, &state.SourceTaskID, &state.Prompt, &state.FirstDue, &state.EverySeconds, &state.NextDue, &state.CancelledAt, &retry); err != nil {
+			rows.Close()
+			return Receipt{}, err
+		}
+		if retry.Valid && retry.Time.After(now) {
+			rows.Close()
+			return Receipt{}, ErrNotDue
+		}
+		states = append(states, state)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		if scheduleLockBusy(err) {
+			return Receipt{}, ErrNotDue
+		}
+		return Receipt{}, err
+	}
+	batch, err := PlanBatch(states, now)
 	if err != nil {
 		return Receipt{}, err
 	}
-	taskID, err := enqueue(ctx, s.Tx, due)
+	taskID, err := enqueue(ctx, s.Tx, batch)
 	if err != nil {
 		return Receipt{}, err
 	}
-	if taskID == uuid.Nil || taskID == state.SourceTaskID {
+	if taskID == uuid.Nil {
 		return Receipt{}, ErrInvalid
 	}
+	for _, due := range batch.Reminders {
+		if taskID == due.SourceTaskID {
+			return Receipt{}, ErrInvalid
+		}
+	}
 	var bound bool
-	err = s.Tx.QueryRow(ctx, `SELECT true FROM dsh_task_binding
- WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3 AND request_id=$4 AND task_id=$5 FOR SHARE`,
-		key.WorkspaceID, key.AgentID, key.SessionID, due.RequestID, taskID).Scan(&bound)
-	if err != nil {
+	if err := s.Tx.QueryRow(ctx, `SELECT true FROM dsh_task_binding WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3 AND request_id=$4 AND task_id=$5 FOR SHARE`, key.WorkspaceID, key.AgentID, key.SessionID, batch.RequestID, taskID).Scan(&bound); err != nil {
 		return Receipt{}, err
 	}
-	_, err = s.Tx.Exec(ctx, `INSERT INTO dsh_schedule_occurrence
- (workspace_id,agent_id,session_id,schedule_id,occurrence_at,request_id,task_id)
- VALUES($1,$2,$3,$4,$5,$6,$7)`, key.WorkspaceID, key.AgentID, key.SessionID,
-		key.ScheduleID, due.At, due.RequestID, taskID)
-	if err != nil {
-		return Receipt{}, err
+	for ordinal, due := range batch.Reminders {
+		_, err = s.Tx.Exec(ctx, `INSERT INTO dsh_schedule_occurrence(workspace_id,agent_id,session_id,schedule_id,occurrence_at,request_id,task_id,batch_ordinal)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, key.WorkspaceID, key.AgentID, key.SessionID, due.ScheduleID, due.At, due.RequestID, taskID, ordinal)
+		if err != nil {
+			return Receipt{}, err
+		}
+		_, err = s.Tx.Exec(ctx, `UPDATE dsh_schedule SET next_due_at=$5,next_attempt_at=NULL,failure_count=0,updated_at=clock_timestamp()
+ WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3 AND schedule_id=$4`, key.WorkspaceID, key.AgentID, key.SessionID, due.ScheduleID, pgtype.Timestamptz{Time: due.Next, Valid: !due.Next.IsZero()})
+		if err != nil {
+			return Receipt{}, err
+		}
 	}
-	_, err = s.Tx.Exec(ctx, `UPDATE dsh_schedule SET next_due_at=$5,next_attempt_at=NULL,failure_count=0,updated_at=clock_timestamp()
- WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3 AND schedule_id=$4`,
-		key.WorkspaceID, key.AgentID, key.SessionID, key.ScheduleID,
-		pgtype.Timestamptz{Time: due.Next, Valid: !due.Next.IsZero()})
-	if err != nil {
-		return Receipt{}, err
-	}
-	return Receipt{Due: due, TaskID: taskID}, nil
+	return Receipt{Batch: batch, TaskID: taskID}, nil
+}
+func scheduleLockBusy(err error) bool {
+	var pgerr *pgconn.PgError
+	return errors.As(err, &pgerr) && pgerr.Code == "55P03"
 }

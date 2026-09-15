@@ -7,52 +7,69 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/dshhost"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const EvidenceKind = string(attribution.EvidenceDSHSchedule)
 
-type RowReader interface {
-	QueryRow(context.Context, string, ...any) pgx.Row
+type ExecutionReader interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
 }
-
 type Execution struct {
 	dshhost.SessionScope
 	Receipt
 }
 
-// LoadExecution reconstructs task input from the committed occurrence and
-// immutable registration, never a caller-supplied context/prompt. Both launcher
-// and daemon use it, including unscoped follow-ups whose new task ID is different
-// from the task that originally created the native Session.
-func LoadExecution(ctx context.Context, db RowReader, key dshhost.Key, taskID uuid.UUID) (Execution, error) {
+// LoadExecution reconstructs the complete ordered prompt from its committed
+// occurrences. Missing or reordered rows cannot silently change the task input.
+// The launch and claim boundaries both use this database-derived native scope.
+func LoadExecution(ctx context.Context, db ExecutionReader, key dshhost.Key, taskID uuid.UUID) (Execution, error) {
 	var e Execution
 	if db == nil || key.WorkspaceID == uuid.Nil || key.AgentID == uuid.Nil || taskID == uuid.Nil {
 		return e, ErrInvalid
 	}
 	e.SessionScope.Key = key
-	e.Receipt.Due.Record.Key = Key{WorkspaceID: key.WorkspaceID, AgentID: key.AgentID}
 	e.TaskID = taskID
-	err := db.QueryRow(ctx, `SELECT o.session_id,o.schedule_id,o.occurrence_at,o.request_id,
- s.owner_member_id,s.source_task_id,s.prompt,s.first_due_at,s.every_seconds,m.scope_kind,m.scope_id
+	rows, err := db.Query(ctx, `SELECT o.session_id,o.schedule_id,o.occurrence_at,o.request_id,
+ s.owner_member_id,s.source_task_id,s.prompt,s.first_due_at,s.every_seconds,m.scope_kind,m.scope_id,o.batch_ordinal,b.request_id
  FROM dsh_schedule_occurrence o
  JOIN dsh_schedule s ON s.workspace_id=o.workspace_id AND s.agent_id=o.agent_id AND s.session_id=o.session_id AND s.schedule_id=o.schedule_id
- JOIN dsh_task_binding b ON b.workspace_id=o.workspace_id AND b.agent_id=o.agent_id AND b.task_id=o.task_id AND b.session_id=o.session_id AND b.request_id=o.request_id
+ JOIN dsh_task_binding b ON b.workspace_id=o.workspace_id AND b.agent_id=o.agent_id AND b.task_id=o.task_id AND b.session_id=o.session_id
  JOIN dsh_employee_session m ON m.workspace_id=o.workspace_id AND m.agent_id=o.agent_id AND m.session_id=o.session_id
- WHERE o.workspace_id=$1 AND o.agent_id=$2 AND o.task_id=$3`, key.WorkspaceID, key.AgentID, taskID).Scan(
-		&e.Receipt.SessionID, &e.ScheduleID, &e.At, &e.RequestID, &e.OwnerMemberID, &e.SourceTaskID, &e.Prompt, &e.FirstDue, &e.EverySeconds, &e.Kind, &e.ID)
+ WHERE o.workspace_id=$1 AND o.agent_id=$2 AND o.task_id=$3 ORDER BY o.batch_ordinal`, key.WorkspaceID, key.AgentID, taskID)
 	if err != nil {
 		return Execution{}, err
 	}
-	planned, err := Plan(e.Record, e.At, e.At)
-	if err != nil || planned.RequestID != e.RequestID || e.ID == uuid.Nil || (e.Kind != "chat" && e.Kind != "issue" && e.Kind != "task") {
+	defer rows.Close()
+	var reminders []Due
+	var requestID uuid.UUID
+	for rows.Next() {
+		due := Due{Record: Record{Key: Key{WorkspaceID: key.WorkspaceID, AgentID: key.AgentID}}}
+		var kind string
+		var scope, request uuid.UUID
+		var ordinal int
+		if err := rows.Scan(&due.SessionID, &due.ScheduleID, &due.At, &due.RequestID, &due.OwnerMemberID, &due.SourceTaskID, &due.Prompt, &due.FirstDue, &due.EverySeconds, &kind, &scope, &ordinal, &request); err != nil {
+			return Execution{}, err
+		}
+		if ordinal != len(reminders) || scope == uuid.Nil || (kind != "chat" && kind != "issue" && kind != "task") {
+			return Execution{}, ErrInvalid
+		}
+		if len(reminders) == 0 {
+			e.Kind, e.ID, requestID = kind, scope, request
+		} else if e.Kind != kind || e.ID != scope || requestID != request {
+			return Execution{}, ErrInvalid
+		}
+		reminders = append(reminders, due)
+	}
+	if err := rows.Err(); err != nil {
+		return Execution{}, err
+	}
+	if len(reminders) == 0 {
+		return Execution{}, pgx.ErrNoRows
+	}
+	batch, err := NewBatch(reminders)
+	if err != nil || batch.RequestID != requestID {
 		return Execution{}, ErrInvalid
 	}
+	e.Batch = batch
 	return e, nil
-}
-
-func (e Execution) NativePrompt() *protocol.DSHNativePrompt {
-	text := e.Due.Framing()
-	return &protocol.DSHNativePrompt{SessionID: e.Receipt.SessionID, RequestID: e.RequestID.String(), Mode: "queue",
-		Content: []protocol.DSHNativePromptPart{{Type: "text", Text: &text}}}
 }

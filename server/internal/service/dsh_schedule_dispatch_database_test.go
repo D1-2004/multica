@@ -70,7 +70,14 @@ func TestDSHScheduleDatabaseFreshAdmissionAcrossReplicas(t *testing.T) {
 			if _, err := (dshhost.PostgresStore{DB: tx}).AdoptNativeExecution(ctx, scope, sourceID, record.SessionID, uuid.New()); err != nil {
 				t.Fatal(err)
 			}
+			record.EverySeconds = 300
 			if _, err := (dshschedule.Store{Tx: tx}).Register(ctx, record); err != nil {
+				t.Fatal(err)
+			}
+			sibling := record
+			sibling.ScheduleID = "schedule-2"
+			sibling.EverySeconds = 600
+			if _, err := (dshschedule.Store{Tx: tx}).Register(ctx, sibling); err != nil {
 				t.Fatal(err)
 			}
 			if err := tx.Commit(ctx); err != nil {
@@ -123,6 +130,9 @@ func TestDSHScheduleDatabaseFreshAdmissionAcrossReplicas(t *testing.T) {
 					t.Fatal(result.err)
 				}
 				winners++
+				if len(result.receipt.Reminders) != 2 {
+					t.Fatal("application split complete batch")
+				}
 				task, err := s.Queries.GetAgentTask(ctx, pgtype.UUID{Bytes: result.receipt.TaskID, Valid: true})
 				if err != nil {
 					t.Fatal(err)

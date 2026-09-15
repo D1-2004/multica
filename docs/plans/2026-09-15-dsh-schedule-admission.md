@@ -120,7 +120,7 @@ execution, service, claim and scheduler code. The application database fixture
 covers chat/issue/standalone concurrent admissions with separate pools and a
 permission change between preflight and the write. It requires an explicitly
 selected migrated real preproduction database and is skipped locally. These
-changes are not deployed and the official recurring batch adapter remains open.
+changes are not deployed and the official native tool adapter remains open.
 
 Rollout gate: `MULTICA_DSH_SCHEDULE_DISPATCH_ENABLED` defaults to false and is
 preserved by `src/main.sh`. Deploy all replicas with the occurrence-aware claim
@@ -129,3 +129,31 @@ disabled; late reminders remain pending. The flag has not been enabled in
 preproduction. Before rolling back to a binary without this transport, disable
 dispatch and drain admitted reminder tasks. Native adapter/batch integration and
 its acceptance must also pass before exposing the complete feature to users.
+
+## Recurring batch correction
+
+The official installed dependency is `@deepseek-ai/dsh-schedule@0.1.5-rc.2`.
+Its source selects the earliest overdue one-shot before recurring work, otherwise
+all overdue recurring rules become one target/create-ordered prompt. The earlier
+single-record dispatcher did not yet satisfy this behavior.
+
+`batch.go` now plans and frames the full set. `postgres.go` acquires a Session
+transaction advisory lock and uses NOWAIT for all due siblings, so a locked
+cancellation cannot create a partial batch. Batch request identity differs from
+individual occurrence identities; migration9254 persists the occurrence ordinal.
+`execution.go` reconstructs every row in order and rejects missing/duplicated or
+reordered input. Native prompt size validation happens before task creation.
+`worker.go` selects and backs off by Session and owning member; migration9255
+supports that lookup. Automatic attribution still names one standing owner, so
+records of different members are never combined into one execution principal.
+
+Pure contrast tests now cover one-shot priority versus earlier periodic targets,
+creation-order ties versus lexical IDs, one-rule periodic batch framing, changed
+batch membership/order versus stable replay, hostile text versus fixed framing,
+and oversized complete input versus silent truncation. Database fixtures cover
+all-or-nothing task/occurrence writes, locked sibling cancellation, request reuse
+after rollback, and the three application scope types. Database tests remain
+unverified in real preproduction. Native create/list/delete recovery, after/at
+rule metadata, local projection acknowledgement and delayed registration after
+an uncertain response remain explicit adapter work; the official parser will
+remain authoritative. No Runtime or production change was performed.

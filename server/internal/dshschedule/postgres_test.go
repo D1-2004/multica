@@ -59,7 +59,7 @@ func schedulePools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 		return result
 	}
 	a, b := pool(), pool()
-	for _, stem := range []string{"9248_dsh_schedule", "9249_dsh_schedule_identity", "9250_dsh_schedule_due", "9251_dsh_schedule_occurrence_identity", "9252_dsh_schedule_retry", "9253_dsh_schedule_retry_scan"} {
+	for _, stem := range []string{"9248_dsh_schedule", "9249_dsh_schedule_identity", "9250_dsh_schedule_due", "9251_dsh_schedule_occurrence_identity", "9252_dsh_schedule_retry", "9253_dsh_schedule_retry_scan", "9254_dsh_schedule_batch_order", "9255_dsh_schedule_session_due"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
@@ -90,7 +90,7 @@ func inTransaction(ctx context.Context, pool *pgxpool.Pool, fn func(Store) error
 	return tx.Commit(ctx)
 }
 
-func enqueueFixture(ctx context.Context, tx pgx.Tx, due Due) (uuid.UUID, error) {
+func enqueueFixture(ctx context.Context, tx pgx.Tx, due Batch) (uuid.UUID, error) {
 	id := uuid.New()
 	if _, err := tx.Exec(ctx, `INSERT INTO admitted_task(id) VALUES($1)`, id); err != nil {
 		return uuid.Nil, err
@@ -211,7 +211,7 @@ func TestPostgresScheduleCancellationAndBindingFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := inTransaction(ctx, a, func(s Store) error {
-		_, err := s.Dispatch(ctx, r.Key, func(ctx context.Context, tx pgx.Tx, due Due) (uuid.UUID, error) {
+		_, err := s.Dispatch(ctx, r.Key, func(ctx context.Context, tx pgx.Tx, due Batch) (uuid.UUID, error) {
 			due.SessionID = uuid.NewString()
 			return enqueueFixture(ctx, tx, due)
 		})
@@ -264,6 +264,13 @@ func TestPostgresScheduleRetryDoesNotStarveOrDelayAdvancedOccurrence(t *testing.
 	for _, id := range []string{"schedule-1", "schedule-2"} {
 		record := r
 		record.ScheduleID = id
+		if id == "schedule-2" {
+			record.SessionID = uuid.NewString()
+			record.FirstDue = record.FirstDue.Add(time.Millisecond)
+			if _, err := a.Exec(ctx, `INSERT INTO dsh_task_binding(workspace_id,agent_id,session_id,request_id,task_id) VALUES($1,$2,$3,$4,$5)`, record.WorkspaceID, record.AgentID, record.SessionID, uuid.New(), record.SourceTaskID); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if err := inTransaction(ctx, a, func(s Store) error { _, err := s.Register(ctx, record); return err }); err != nil {
 			t.Fatal(err)
 		}
@@ -298,5 +305,89 @@ func TestPostgresScheduleRetryDoesNotStarveOrDelayAdvancedOccurrence(t *testing.
 	var reset bool
 	if err := a.QueryRow(ctx, `SELECT next_attempt_at IS NULL AND failure_count=0 AND next_due_at>$1 FROM dsh_schedule WHERE schedule_id='schedule-1'`, old.NextDue).Scan(&reset); err != nil || !reset {
 		t.Fatal("stale failure changed advanced record", err)
+	}
+}
+
+func TestPostgresScheduleBatchIsAtomicAndOneShotHasPriority(t *testing.T) {
+	a, b := schedulePools(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r := fixture()
+	r.EverySeconds = 300
+	if err := a.QueryRow(ctx, `SELECT date_trunc('milliseconds',clock_timestamp())-interval '1 hour'`).Scan(&r.FirstDue); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Exec(ctx, `INSERT INTO dsh_task_binding(workspace_id,agent_id,session_id,request_id,task_id) VALUES($1,$2,$3,$4,$5)`, r.WorkspaceID, r.AgentID, r.SessionID, uuid.New(), r.SourceTaskID); err != nil {
+		t.Fatal(err)
+	}
+	records := []Record{r, r, r}
+	records[1].ScheduleID = "schedule-2"
+	records[1].EverySeconds = 600
+	records[2].ScheduleID = "schedule-3"
+	records[2].EverySeconds = 0
+	records[2].FirstDue = r.FirstDue.Add(30 * time.Minute)
+	for _, record := range records {
+		if err := inTransaction(ctx, a, func(s Store) error { _, err := s.Register(ctx, record); return err }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var first Receipt
+	if err := inTransaction(ctx, a, func(s Store) error { var err error; first, err = s.Dispatch(ctx, r.Key, enqueueFixture); return err }); err != nil || len(first.Reminders) != 1 || first.Reminders[0].ScheduleID != "schedule-3" {
+		t.Fatal("one-shot priority failed", err)
+	}
+	// A late mutation failure rolls back every member of the recurring batch,
+	// including the task and each individual advancement/receipt.
+	forced := errors.New("rollback complete batch")
+	var rolledBack Receipt
+	if err := inTransaction(ctx, a, func(s Store) error {
+		var err error
+		rolledBack, err = s.Dispatch(ctx, r.Key, enqueueFixture)
+		if err != nil {
+			return err
+		}
+		return forced
+	}); !errors.Is(err, forced) {
+		t.Fatal(err)
+	}
+	if len(rolledBack.Reminders) != 2 {
+		t.Fatal("recurring rules split into separate prompts")
+	}
+	var tasks, receipts int
+	if err := a.QueryRow(ctx, `SELECT (SELECT count(*) FROM admitted_task),(SELECT count(*) FROM dsh_schedule_occurrence)`).Scan(&tasks, &receipts); err != nil || tasks != 1 || receipts != 1 {
+		t.Fatal("batch leaked before commit", tasks, receipts, err)
+	}
+	// Holding a cancellation on one sibling must prevent the other sibling
+	// from being delivered as a partial batch. Roll back to permit the full retry.
+	lock, err := b.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Rollback(ctx)
+	if _, err := (Store{Tx: lock}).Cancel(ctx, records[1].Key); err != nil {
+		t.Fatal(err)
+	}
+	if err := inTransaction(ctx, a, func(s Store) error { _, err := s.Dispatch(ctx, r.Key, enqueueFixture); return err }); !errors.Is(err, ErrNotDue) {
+		t.Fatal("locked sibling was skipped", err)
+	}
+	if err := lock.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var committed Receipt
+	if err := inTransaction(ctx, b, func(s Store) error {
+		var err error
+		committed, err = s.Dispatch(ctx, records[1].Key, enqueueFixture)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(committed.Reminders) != 2 || committed.RequestID != rolledBack.RequestID {
+		t.Fatal("batch retry changed identity")
+	}
+	if err := a.QueryRow(ctx, `SELECT count(*),count(DISTINCT task_id) FROM dsh_schedule_occurrence WHERE task_id=$1`, committed.TaskID).Scan(&receipts, &tasks); err != nil || receipts != 2 || tasks != 1 {
+		t.Fatal("recurring batch was not one task", err)
+	}
+	var ordinalCount int
+	if err := a.QueryRow(ctx, `SELECT count(DISTINCT batch_ordinal) FROM dsh_schedule_occurrence WHERE task_id=$1`, committed.TaskID).Scan(&ordinalCount); err != nil || ordinalCount != 2 {
+		t.Fatal("batch order not persisted", err)
 	}
 }

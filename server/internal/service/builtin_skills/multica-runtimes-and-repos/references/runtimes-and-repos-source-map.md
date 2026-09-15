@@ -155,3 +155,10 @@
 - `server/cmd/server/main.go` and `src/main.sh`: default-off
   `MULTICA_DSH_SCHEDULE_DISPATCH_ENABLED` deployment gate. All replicas must
   understand the scheduled native transport before dispatch is enabled.
+
+- `server/internal/dshschedule/batch.go`: official one-shot priority and complete
+  recurring batch framing/identity. Scope and standing ownership cannot mix.
+- `server/internal/dshschedule/postgres.go`: NOWAIT on complete due siblings,
+  per-occurrence ordinals, one task per batch, and atomic receipt/advancement.
+- `server/internal/dshschedule/execution.go`: complete ordered receipt readback;
+  changed membership, order or native request identity fails closed.

@@ -13,17 +13,30 @@ import (
 )
 
 type executionRow struct {
-	due   Due
-	scope uuid.UUID
-	kind  string
-	err   error
-	args  []any
+	pgx.Rows
+	read         bool
+	batchRequest uuid.UUID
+	due          Due
+	scope        uuid.UUID
+	kind         string
+	err          error
+	args         []any
 }
 
-func (r *executionRow) QueryRow(_ context.Context, _ string, args ...any) pgx.Row {
+func (r *executionRow) Query(_ context.Context, _ string, args ...any) (pgx.Rows, error) {
 	r.args = args
-	return r
+	r.read = false
+	return r, nil
 }
+func (r *executionRow) Next() bool {
+	if r.read || r.err != nil {
+		return false
+	}
+	r.read = true
+	return true
+}
+func (r *executionRow) Close()     {}
+func (r *executionRow) Err() error { return r.err }
 func (r *executionRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
@@ -39,6 +52,8 @@ func (r *executionRow) Scan(dest ...any) error {
 	*dest[8].(*int64) = r.due.EverySeconds
 	*dest[9].(*string) = r.kind
 	*dest[10].(*uuid.UUID) = r.scope
+	*dest[11].(*int) = 0
+	*dest[12].(*uuid.UUID) = r.batchRequest
 	return nil
 }
 func TestScheduleExecutionRejectsCorruptOccurrenceIdentity(t *testing.T) {
@@ -50,7 +65,8 @@ func TestScheduleExecutionRejectsCorruptOccurrenceIdentity(t *testing.T) {
 	}
 	key := dshhost.Key{WorkspaceID: record.WorkspaceID, AgentID: record.AgentID}
 	task := uuid.New()
-	row := &executionRow{due: due, scope: uuid.New(), kind: "task"}
+	batch, _ := NewBatch([]Due{due})
+	row := &executionRow{due: due, scope: uuid.New(), kind: "task", batchRequest: batch.RequestID}
 	e, err := LoadExecution(context.Background(), row, key, task)
 	if err != nil {
 		t.Fatal(err)
@@ -72,5 +88,54 @@ func TestScheduleExecutionRejectsCorruptOccurrenceIdentity(t *testing.T) {
 	row.err = pgx.ErrNoRows
 	if _, err := LoadExecution(context.Background(), row, key, task); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatal("missing receipt hidden", err)
+	}
+}
+
+type executionRows struct {
+	pgx.Rows
+	entries []*executionRow
+	pos     int
+	request uuid.UUID
+}
+
+func (r *executionRows) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	r.pos = -1
+	return r, nil
+}
+func (r *executionRows) Next() bool { r.pos++; return r.pos < len(r.entries) }
+func (r *executionRows) Scan(dest ...any) error {
+	if err := r.entries[r.pos].Scan(dest...); err != nil {
+		return err
+	}
+	*dest[11].(*int) = r.pos
+	*dest[12].(*uuid.UUID) = r.request
+	return nil
+}
+func (r *executionRows) Close()     {}
+func (r *executionRows) Err() error { return nil }
+
+func TestScheduleExecutionVerifiesCompleteCommittedBatch(t *testing.T) {
+	record := fixture()
+	record.EverySeconds = 300
+	a, _ := Plan(record, record.FirstDue, record.FirstDue)
+	record.ScheduleID = "schedule-2"
+	b, _ := Plan(record, record.FirstDue, record.FirstDue)
+	batch, _ := NewBatch([]Due{a, b})
+	scope := uuid.New()
+	rowA := &executionRow{due: a, scope: scope, kind: "task"}
+	rowB := &executionRow{due: b, scope: scope, kind: "task"}
+	key := dshhost.Key{WorkspaceID: record.WorkspaceID, AgentID: record.AgentID}
+	task := uuid.New()
+	for _, entries := range [][]*executionRow{{rowA, rowB}, {rowA}, {rowB, rowA}, {rowA, rowA}} {
+		reader := &executionRows{entries: entries, request: batch.RequestID}
+		got, err := LoadExecution(context.Background(), reader, key, task)
+		valid := len(entries) == 2 && entries[0] == rowA && entries[1] == rowB
+		if valid {
+			if err != nil || got.RequestID != batch.RequestID || got.Framing() != batch.Framing() {
+				t.Fatal("committed batch changed", err)
+			}
+		} else if !errors.Is(err, ErrInvalid) {
+			t.Fatal("partial/reordered batch accepted", err)
+		}
 	}
 }
