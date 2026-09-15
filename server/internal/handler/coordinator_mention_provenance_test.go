@@ -25,6 +25,11 @@ func TestDispatchMentionsEmployeeAcceptsDecimalUIDInOpenID(t *testing.T) {
 			if got := dispatchMentionsEmployee(command); got != tc.want {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}
+			command.Event.Data.Mentions = nil
+			command.Event.Data.Messages = []DispatchMessage{{Text: "@接收人 在吗", Mentions: []DispatchMention{tc.mention}}}
+			if got := dispatchMentionsEmployee(command); got != tc.want {
+				t.Fatalf("per-message mention: got %v, want %v", got, tc.want)
+			}
 			command.ExternalIdentity.DWS = nil
 			if dispatchMentionsEmployee(command) {
 				t.Fatal("matched without receiving identity")

@@ -18,6 +18,16 @@ func dispatchMentionsEmployee(c DispatchCommand) bool {
 			return true
 		}
 	}
+	for _, message := range c.Event.Data.Messages {
+		if message.Reaction != nil {
+			continue
+		}
+		for _, m := range message.Mentions {
+			if util.DingTalkMentionMatchesUID(m.UID, m.OpenDingTalkID, c.ExternalIdentity.DWS.UID) {
+				return true
+			}
+		}
+	}
 	return false
 }
 

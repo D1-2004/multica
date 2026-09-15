@@ -45,7 +45,7 @@ func loopStopFallback(turn Turn, decision Decision) (Decision, bool) {
 	decision.Intent = ""
 	decision.LookInto = ""
 	decision.PlanVersion = WindowPlanVersion
-	if !turn.Addressed {
+	if !directInboundReplyEligible(turn) {
 		decision.Action = ActionSilence
 		return decision, true
 	}
@@ -67,11 +67,7 @@ func ensureDirectInboundReply(turn Turn, decision Decision) Decision {
 	if turn.Source != SourceDigitalEmployee || turn.Loop == LoopTaskFinished || decision.Action != ActionSilence {
 		return decision
 	}
-	direct := strings.EqualFold(turn.ChatType, "p2p")
-	for _, utterance := range windowUtterances(turn) {
-		direct = direct || mentionRelation(turn, utterance) == "includes_employee"
-	}
-	if !direct {
+	if !directInboundReplyEligible(turn) {
 		return decision
 	}
 	decision.Action = ActionReply
@@ -81,4 +77,25 @@ func ensureDirectInboundReply(turn Turn, decision Decision) Decision {
 	decision.NonWorkRefs = nil
 	decision.PlanVersion = WindowPlanVersion
 	return decision
+}
+
+// Preserve an already trusted addressed verdict, and also recognize direct
+// conversations and per-message mentions when the event-level flag is absent.
+func directInboundReplyEligible(turn Turn) bool {
+	if turn.Addressed {
+		return true
+	}
+	if turn.Source != SourceDigitalEmployee {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(turn.ChatType)) {
+	case "p2p", "single", "direct":
+		return true
+	}
+	for _, utterance := range windowUtterances(turn) {
+		if mentionRelation(turn, utterance) == "includes_employee" {
+			return true
+		}
+	}
+	return false
 }
