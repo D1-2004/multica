@@ -1782,5 +1782,19 @@
     "legacy": "This older record only contains the package declaration; omitted configuration is preserved on restore.",
     "restore": "Restore this version",
     "more": "Load older publications"
+  },
+  "asb_regions": {
+    "title": "Execution regions",
+    "hint": "Choose one or more regions. Tasks wait when selected regions are full and never fall back outside your selection. For BUC identity, you can select only cn-hangzhou.",
+    "automatic": "All available regions (automatic)",
+    "loading": "Loading regions…",
+    "load_failed": "Could not load ASB regions. Your selection has not changed.",
+    "retry": "Retry",
+    "save": "Save regions",
+    "saving": "Saving…",
+    "save_failed": "Could not save regions.",
+    "unavailable": "Currently unavailable",
+    "selection_required": "Select at least one region.",
+    "empty": "ASB returned no regions for this Runtime."
   }
 }

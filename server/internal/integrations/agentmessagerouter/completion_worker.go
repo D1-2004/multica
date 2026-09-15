@@ -338,6 +338,12 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 			"failureReason":  completion.FailureReason.String,
 		},
 	}
+	if completion.ExecutionStatus == "failed" && completion.FailureReason.String == "coordinator_job_failed" && strings.TrimSpace(completion.ResultMessage) != "" {
+		shouldReply := true
+		result.ShouldReply = &shouldReply
+		result.ReplyReason = "coordinator_failure_reply"
+	}
+
 	saveDelivery := func(raw []byte) error {
 		_, err := w.queries.SaveTaskCompletionDWSDelivery(ctx, db.SaveTaskCompletionDWSDeliveryParams{
 			ID: completion.ID, LeaseToken: completion.LeaseToken, DwsDelivery: raw,

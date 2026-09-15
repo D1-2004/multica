@@ -4,6 +4,7 @@ import type { AgentDshPluginConfig, UpdateAgentDshPluginConfig } from "../dsh-pl
 import { DSHNativeEntrySchema, type DSHNativeEntry } from "./dsh-native-schema";
 import { DSHHomeSchema, type DSHHomeStatus } from "./dsh-home-schema";
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
+import { ASBRegionsSchema, EMPTY_ASB_REGIONS } from "./asb-regions-schema";
 import type { ReusableDingTalkIdentity } from "../types/dingtalk-account-binding";
 import type { AgentPackageBindingReport, ConfirmAgentPackageBindingRequest, AgentPackagePreview, CreateAgentPackageRequest } from "../types/agent-package";
 import { AgentPackageBindingReportSchema, AgentPackagePreviewSchema } from "./schemas";
@@ -2335,15 +2336,18 @@ export class ApiClient {
     return parseWithFallback(raw, ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY, { endpoint });
   }
 
+  async getASBRegions(runtimeId: string) {
+    const endpoint = `/api/runtimes/${encodeURIComponent(runtimeId)}/asb-regions`;
+    const raw = await this.fetch<unknown>(endpoint);
+    return parseWithFallback(raw, ASBRegionsSchema, EMPTY_ASB_REGIONS, { endpoint });
+  }
+
   async validateASBRuntimeCredential(
     data: ValidateASBRuntimeCredentialRequest,
   ): Promise<ValidateASBRuntimeCredentialResponse> {
     return this.fetch<ValidateASBRuntimeCredentialResponse>(
       "/api/runtimes/asb-credential/validate",
-      {
-        method: "POST",
-        body: JSON.stringify(data),
-      },
+      { method: "POST", body: JSON.stringify(data) },
     );
   }
 

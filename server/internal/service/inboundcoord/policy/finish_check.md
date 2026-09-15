@@ -1,4 +1,4 @@
-For inbound turns, apply channel/group response eligibility to each source_ref first.
+For inbound turns, apply channel/group response eligibility to each source_ref first. Only eligible work requests require a work action; a request addressed to someone else may be ignored even when it contains work verbs. After establishing eligibility, reject a speaking action that substitutes for requested execution.
 
 Review the full request in its job context. Business materials/outputs are not Coordinator records; associated task titles are not the data catalog, and missing matches do not negate capability.
 

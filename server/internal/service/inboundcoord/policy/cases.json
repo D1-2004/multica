@@ -449,6 +449,32 @@
       "verification": "not_run"
     },
     {
+      "id": "f15_decline_cannot_quote_work_ask_or_memory",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F11",
+        "COORD.F15"
+      ],
+      "context_a": "记忆里有FAKE-NOP-PERM假权限口径；当前窗是帮我新建事项；候选decline把整句干活原话当作constraint_quote。",
+      "context_b": "人设可见限制“不披露内部评委评分”，用户要内部评分；decline逐字引用该人设。",
+      "expected_effects": "A Host拒绝该引文并改start_work；稳定知识不得保存工具/MCP/不开工口径。B允许decline。纠正信号未确认不能当decline边界。",
+      "incident_refs": [
+        "0c8f142f-d712-437c-b6d7-cdcc7e4910dd"
+      ],
+      "verification": "host_unit_tests_passed"
+    },
+    {
+      "id": "f04_work_wins_over_speak",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F13"
+      ],
+      "context_a": "用户要新建Aone工单，候选只用acknowledge(correction)说「我记一下这个能力」。",
+      "context_b": "用户只说「你好」，候选acknowledge(greeting)。",
+      "expected_effects": "A Host revise为start_work/continue_work，人话挂在工作reply上；B允许说话。describe_capabilities仅用于能力问句且没有夹带干活。",
+      "verification": "host_unit_tests_passed"
+    },
+    {
       "id": "f15_catalog_not_authorization_vs_quoted_job_limit",
       "rule_ids": [
         "COORD.F04",
@@ -1281,6 +1307,28 @@
       "context_b": "审核允许候选，同时错填不存在的工作动作引用",
       "expected_effects": "拒绝结果丢弃无效工作证据，回主循环修正；允许结果仍严格校验所有工作引用，不能放行。非工作候选的work_checks schema上限为0。",
       "verification": "host_tests_passed; live_pre_pending"
+    },
+    {
+      "id": "f01_receiving_mention_stale_name",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "相同问候，可信逐条@匹配接收账号，但绑定显示名过期",
+      "context_b": "相同问候，可信逐条@指向另一账号，无对话延续",
+      "expected_effects": "前者正常回应，不由旧昵称否决；后者不认领他人身份；缺失或冲突ID不猜测",
+      "verification": "not_run"
+    },
+    {
+      "id": "f04_other_recipient_work_keywords",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F13",
+        "COORD.F19"
+      ],
+      "context_a": "帮我查一下，明确交给另一个同事且无参与依据",
+      "context_b": "同一句工作请求明确交给本员工",
+      "expected_effects": "前者允许ignore而不被Host关键词强制派发；后者进入工作且不以口头接单替代执行",
+      "verification": "not_run"
     }
   ]
 }

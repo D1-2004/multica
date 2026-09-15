@@ -332,7 +332,7 @@ INSERT INTO task_completion_outbox AS existing (
     error,
     failure_reason
 ) VALUES (
-    NULL, NULL, $1, $2, $3, $4, 'failed', '', $5, $6
+    NULL, NULL, $1, $2, $3, $4, 'failed', $7, $5, $6
 )
 ON CONFLICT (request_id) DO UPDATE
 SET updated_at = existing.updated_at
@@ -355,6 +355,7 @@ type EnqueueSynchronousTaskCompletionParams struct {
 	AgentID        pgtype.UUID `json:"agent_id"`
 	Error          pgtype.Text `json:"error"`
 	FailureReason  pgtype.Text `json:"failure_reason"`
+	ResultMessage  string      `json:"result_message"`
 }
 
 func (q *Queries) EnqueueSynchronousTaskCompletion(ctx context.Context, arg EnqueueSynchronousTaskCompletionParams) (TaskCompletionOutbox, error) {
@@ -365,6 +366,7 @@ func (q *Queries) EnqueueSynchronousTaskCompletion(ctx context.Context, arg Enqu
 		arg.AgentID,
 		arg.Error,
 		arg.FailureReason,
+		arg.ResultMessage,
 	)
 	var i TaskCompletionOutbox
 	err := row.Scan(

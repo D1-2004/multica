@@ -21,8 +21,8 @@ const asbNetworkPolicyFingerprintKey = "multica.network_policy_sha256"
 
 // Audited against DWS v1.0.62-beta.6 (e45f7ca9), including direct transfers
 // after MCP returns a signed URL. See docs/security/asb-dws-network-audit.md.
-// Regional file-transfer hosts are limited to the two managed families below;
-// never allow all DingTalk, Alibaba intranet, or shared OSS tenant domains.
+// Built-in domain families include the Alibaba intranet and DingTalk domains
+// requested for default access. Other shared tenant domains remain exact-only.
 var asbBuiltinNetworkTargets = []string{
 	"mcp.dingtalk.com", "pre-mcp.dingtalk.com", "mcp-gw.dingtalk.com", "pre-mcp-gw.dingtalk.com",
 	"open-dev.dingtalk.com", "pre-open-dev.dingtalk.com", "api.dingtalk.com", "oapi.dingtalk.com", "pre-oapi.dingtalk.com",
@@ -39,8 +39,15 @@ var asbBuiltinNetworkTargets = []string{
 	"github.com", "api.github.com", "raw.githubusercontent.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com", "gosspublic.alicdn.com",
 	"generativelanguage.googleapis.com",
 	"agent-identity.dingtalk.com", "pre-agent-identity.dingtalk.com",
+	"*.alibaba-inc.com", "*.dingtalk.com",
 	"login.alibaba-inc.com", "authx.alibaba-inc.com", "id-api.alibaba-inc.com",
+	"tp-alilang.alibaba-inc.com",
+	// WireGuard's managed gateways use literal destinations (UDP 11940), so
+	// allowing only the trust-device registration domain cannot establish BUC.
+	// Verified against ASB Hangzhou with default-deny egress on 2026-09-15.
+	"140.205.109.26", "140.205.109.30",
 	"aone.alibaba-inc.com", "code.alibaba-inc.com", "sandbox.aone.alibaba-inc.com",
+	"a1-server.alibaba-inc.com", "buc.alibaba-inc.com", "goproxy.alibaba-inc.com",
 	"registry.npmjs.org", "registry.npmmirror.com", "pypi.org", "files.pythonhosted.org",
 }
 
@@ -48,7 +55,7 @@ var asbBuiltinNetworkTargets = []string{
 // Custom Runtime/Agent/deployment configuration still accepts exact hosts only.
 func isASBManagedNetworkFamily(target string) bool {
 	switch target {
-	case "*.trans.dingtalk.com", "*.down.dingtalk.com":
+	case "*.trans.dingtalk.com", "*.down.dingtalk.com", "*.alibaba-inc.com", "*.dingtalk.com":
 		return true
 	default:
 		return false

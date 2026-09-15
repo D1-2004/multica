@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/util"
 )
 
 func dispatchMentionsEmployee(c DispatchCommand) bool {
@@ -13,8 +14,18 @@ func dispatchMentionsEmployee(c DispatchCommand) bool {
 		return false
 	}
 	for _, m := range c.Event.Data.Mentions {
-		if m.UID != "" && m.UID == c.ExternalIdentity.DWS.UID {
+		if util.DingTalkMentionMatchesUID(m.UID, m.OpenDingTalkID, c.ExternalIdentity.DWS.UID) {
 			return true
+		}
+	}
+	for _, message := range c.Event.Data.Messages {
+		if message.Reaction != nil {
+			continue
+		}
+		for _, m := range message.Mentions {
+			if util.DingTalkMentionMatchesUID(m.UID, m.OpenDingTalkID, c.ExternalIdentity.DWS.UID) {
+				return true
+			}
 		}
 	}
 	return false

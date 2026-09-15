@@ -114,7 +114,19 @@ func writePromptField(b *strings.Builder, name, value string) {
 	}
 }
 
+const (
+	evidenceHistoryCard = "evidence_history: Chat history is bounded dialogue in this conversation before the watermark. It proves who said what, quotes, and pending questions. It does not prove employee self-claims, tools, authorization, or issue_id."
+	evidenceMemoryCard  = "evidence_memory: Scene memory is committed preferences and relations. It proves standing preferences and confirmed conventions. It does not prove how to do work, tool inventory, permission to start work, unconfirmed corrections, or current open issues. 纠正信号 and 待确认 are unconfirmed and are not decline boundaries."
+	evidenceAssocCard   = "evidence_assoc: Associated issues are a bounded coordination view of this scene's work records. They prove start versus continue. They do not prove business answers, executor tools, or that a similar title is the same deliverable. Empty coverage is not all history."
+)
+
 func writeInboundContext(b *strings.Builder, turn Turn) {
+	b.WriteString(evidenceHistoryCard)
+	b.WriteByte('\n')
+	b.WriteString(evidenceMemoryCard)
+	b.WriteByte('\n')
+	b.WriteString(evidenceAssocCard)
+	b.WriteByte('\n')
 	skills := formatSkillSnapshots(turn.Skills)
 	skillState := promptContextState(turn.SkillsStatus, skills != "", false)
 	fmt.Fprintf(b, "skills_status: %s; scope=installed_agent_catalog\n", skillState)

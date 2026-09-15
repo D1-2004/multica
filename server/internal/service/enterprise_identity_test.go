@@ -1217,7 +1217,7 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sealedBUCID, err := box.Seal([]byte("buc-id"))
+	sealedBUCID, err := box.Seal([]byte(testBUCIDToken))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1280,7 +1280,7 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 		resolved.SourceRuntimeID != sourceRuntimeID ||
 		resolved.BUCTokens.AccessToken != "buc-access" ||
 		resolved.BUCTokens.RefreshToken != "buc-refresh" ||
-		resolved.BUCTokens.IDToken != "buc-id" ||
+		resolved.BUCTokens.IDToken != testBUCIDToken ||
 		len(resolved.Fingerprint) != 64 {
 		t.Fatalf("resolved = %#v", resolved)
 	}
@@ -1313,7 +1313,7 @@ func TestEnterpriseIdentityResolveRefreshesExpiredBUCAccessToken(t *testing.T) {
 	sealedBUCAccess, sealedBUCRefresh, sealedBUCID := mustSealBUCIdentityTokens(t, box, BUCIdentityTokens{
 		AccessToken:  "buc-access-old",
 		RefreshToken: "buc-refresh-old",
-		IDToken:      "buc-id",
+		IDToken:      testBUCIDToken,
 	})
 	store := &fakeEnterpriseIdentityStore{
 		current: db.AgentEnterpriseIdentity{
@@ -1340,6 +1340,7 @@ func TestEnterpriseIdentityResolveRefreshesExpiredBUCAccessToken(t *testing.T) {
 		refreshResult: BUCIdentityTokens{
 			AccessToken:  "buc-access-new",
 			RefreshToken: "buc-refresh-new",
+			IDToken:      "buc-id-refreshed",
 			ExpiresIn:    259200,
 		},
 	}
@@ -1374,7 +1375,7 @@ func TestEnterpriseIdentityResolveRefreshesExpiredBUCAccessToken(t *testing.T) {
 	if buc.refreshFrom != "buc-refresh-old" ||
 		resolved.BUCTokens.AccessToken != "buc-access-new" ||
 		resolved.BUCTokens.RefreshToken != "buc-refresh-new" ||
-		resolved.BUCTokens.IDToken != "buc-id" {
+		resolved.BUCTokens.IDToken != "buc-id-refreshed" {
 		t.Fatalf("resolved BUC tokens = %#v refresh_from=%q", resolved.BUCTokens, buc.refreshFrom)
 	}
 	openedRefresh, err := box.Open(store.current.BucRefreshTokenEncrypted)
@@ -1397,7 +1398,7 @@ func TestEnterpriseIdentityResolveRefreshesSupersededBUCAccessToken(t *testing.T
 	sealedAccess, sealedRefresh, sealedID := mustSealBUCIdentityTokens(t, box, BUCIdentityTokens{
 		AccessToken:  "buc-access-superseded",
 		RefreshToken: "buc-refresh-current",
-		IDToken:      "buc-id-current",
+		IDToken:      testBUCIDToken,
 	})
 	identity := db.AgentEnterpriseIdentity{
 		ID:                       util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
@@ -1424,6 +1425,7 @@ func TestEnterpriseIdentityResolveRefreshesSupersededBUCAccessToken(t *testing.T
 		refreshResult: BUCIdentityTokens{
 			AccessToken:  "buc-access-refreshed",
 			RefreshToken: "buc-refresh-refreshed",
+			IDToken:      "buc-id-refreshed",
 			ExpiresIn:    259200,
 		},
 	}
@@ -1446,7 +1448,7 @@ func TestEnterpriseIdentityResolveRefreshesSupersededBUCAccessToken(t *testing.T
 		buc.refreshFrom != "buc-refresh-current" ||
 		resolved.AccessToken != "buc-access-refreshed" ||
 		resolved.RefreshToken != "buc-refresh-refreshed" ||
-		resolved.IDToken != "buc-id-current" {
+		resolved.IDToken != "buc-id-refreshed" {
 		t.Fatalf(
 			"resolved BUC tokens = %#v lookup=%q refresh=%q",
 			resolved,
@@ -1480,7 +1482,7 @@ func TestEnterpriseIdentityResolveMarksNeedsReauthWhenBUCRefreshTokenIsInvalid(t
 	sealedBUCAccess, sealedBUCRefresh, sealedBUCID := mustSealBUCIdentityTokens(t, box, BUCIdentityTokens{
 		AccessToken:  "buc-access-old",
 		RefreshToken: "buc-refresh-old",
-		IDToken:      "buc-id",
+		IDToken:      testBUCIDToken,
 	})
 	store := &fakeEnterpriseIdentityStore{
 		current: db.AgentEnterpriseIdentity{
@@ -1696,7 +1698,7 @@ func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T)
 	bucTokens := BUCIdentityTokens{
 		AccessToken:  "buc-access",
 		RefreshToken: "buc-refresh",
-		IDToken:      "buc-id",
+		IDToken:      testBUCIDToken,
 		ExpiresIn:    259200,
 	}
 	sealedBUCAccess, sealedBUCRefresh, sealedBUCID := mustSealBUCIdentityTokens(t, box, bucTokens)
@@ -1789,7 +1791,7 @@ func TestEnterpriseIdentityForceRotateSourceUsesCurrentLockedCoordinate(t *testi
 	bucTokens := BUCIdentityTokens{
 		AccessToken:  "buc-access",
 		RefreshToken: "buc-refresh",
-		IDToken:      "buc-id",
+		IDToken:      testBUCIDToken,
 		ExpiresIn:    3600,
 	}
 	sealedBUCAccess, sealedBUCRefresh, sealedBUCID := mustSealBUCIdentityTokens(t, box, bucTokens)
@@ -1862,7 +1864,7 @@ func TestEnterpriseIdentityForceRotateSourceRejectsStalePredecessor(t *testing.T
 	sealedBUCAccess, sealedBUCRefresh, sealedBUCID := mustSealBUCIdentityTokens(t, box, BUCIdentityTokens{
 		AccessToken:  "buc-access",
 		RefreshToken: "buc-refresh",
-		IDToken:      "buc-id",
+		IDToken:      testBUCIDToken,
 	})
 	identity := db.AgentEnterpriseIdentity{
 		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
@@ -2043,7 +2045,7 @@ func TestHTTPBUCOAuthClientRefreshUsesDocumentedEndpointAndResponse(t *testing.T
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(
 			w,
-			`{"access_token":"buc-access-new","expires_in":259200,"refresh_token":"buc-refresh-new"}`,
+			`{"access_token":"buc-access-new","expires_in":259200,"refresh_token":"buc-refresh-new","id_token":"buc-id-new"}`,
 		)
 	}))
 	defer server.Close()
@@ -2069,7 +2071,7 @@ func TestHTTPBUCOAuthClientRefreshUsesDocumentedEndpointAndResponse(t *testing.T
 	}
 	if tokens.AccessToken != "buc-access-new" ||
 		tokens.RefreshToken != "buc-refresh-new" ||
-		tokens.IDToken != "" ||
+		tokens.IDToken != "buc-id-new" ||
 		tokens.ExpiresIn != 259200 {
 		t.Fatalf("refreshed BUC tokens = %#v", tokens)
 	}
@@ -2389,6 +2391,8 @@ func TestHTTPBUCOAuthClientVerifyIDTokenUsesBUCJWKSForRSA(t *testing.T) {
 		t.Fatalf("verified claims = %#v", claims)
 	}
 }
+
+const testBUCIDToken = "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4OTM0NTYwMDB9.dGVzdA"
 
 func mustSealBUCIdentityTokens(
 	t *testing.T,

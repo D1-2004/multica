@@ -62,6 +62,9 @@ func boundaryQuoteOptions(turn Turn) []string {
 		if n := utf8.RuneCountInString(sentence); n < 2 || n > 300 || seen[sentence] {
 			return len(out) < boundaryQuoteLimit
 		}
+		if workRequestUtterance(sentence) || quoteIsCurrentWorkUtterance(sentence, turn) {
+			return len(out) < boundaryQuoteLimit
+		}
 		seen[sentence] = true
 		out = append(out, sentence)
 		return len(out) < boundaryQuoteLimit

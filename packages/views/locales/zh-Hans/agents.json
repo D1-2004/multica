@@ -1756,5 +1756,19 @@
     "legacy": "此旧记录仅保存了包声明，回退时未声明的配置会保留当前值。",
     "restore": "回退到此版本",
     "more": "加载更早的记录"
+  },
+  "asb_regions": {
+    "title": "执行地域",
+    "hint": "可多选。已选地域满额时等待，不切换到其他地域。使用 BUC 身份时可只选杭州（cn-hangzhou）。",
+    "automatic": "全部可用地域（自动）",
+    "loading": "正在加载地域…",
+    "load_failed": "无法获取 ASB 地域，已保存的选择保持不变。",
+    "retry": "重试",
+    "save": "保存地域",
+    "saving": "保存中…",
+    "save_failed": "地域保存失败。",
+    "unavailable": "当前不可用",
+    "selection_required": "请至少选择一个地域。",
+    "empty": "ASB 未返回此 Runtime 的可用地域。"
   }
 }

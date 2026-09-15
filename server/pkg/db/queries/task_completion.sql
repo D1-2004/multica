@@ -167,7 +167,7 @@ INSERT INTO task_completion_outbox AS existing (
     error,
     failure_reason
 ) VALUES (
-    NULL, NULL, $1, $2, $3, $4, 'failed', '', $5, $6
+    NULL, NULL, $1, $2, $3, $4, 'failed', $7, $5, $6
 )
 ON CONFLICT (request_id) DO UPDATE
 SET updated_at = existing.updated_at

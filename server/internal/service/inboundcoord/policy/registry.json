@@ -1,10 +1,10 @@
 {
-  "policy_version": "2026-09-14.3",
-  "assembly_version": "24",
+  "policy_version": "2026-09-15.1",
+  "assembly_version": "27",
   "modules": [
     {
       "id": "core",
-      "version": "5",
+      "version": "6",
       "file": "core.md",
       "applies_when": "always",
       "requires": [],
@@ -23,8 +23,8 @@
         "COORD.F17",
         "COORD.F18"
       ],
-      "budget_characters": 1179,
-      "content_sha256": "d3f30b16ea8e734eb4cc80091b5a13c6644e6a5d440eeb118e24e6f687e31287"
+      "budget_characters": 1300,
+      "content_sha256": "0f97e3f64dd21509decdd39666f2a5fc1d53147150040de2c95c151596b23d9f"
     },
     {
       "id": "voice",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "24",
+      "version": "26",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -60,8 +60,8 @@
         "COORD.F10",
         "COORD.F03"
       ],
-      "budget_characters": 3400,
-      "content_sha256": "4b3b0f69695b744b9a3b10cd8b159e0f1ffb7b39b3d73d5127f9b1fa541f76f1"
+      "budget_characters": 3900,
+      "content_sha256": "b24ad006621938e37e45110db4dadbe8c2ca1ae58e8b3a621969413044f5d64d"
     },
     {
       "id": "channel",
@@ -96,7 +96,7 @@
     },
     {
       "id": "group",
-      "version": "11",
+      "version": "12",
       "file": "group.md",
       "applies_when": "group",
       "requires": [
@@ -110,8 +110,8 @@
         "COORD.F06",
         "COORD.F14"
       ],
-      "budget_characters": 4085,
-      "content_sha256": "adc3b353319ccc819e3a5c1d0c9bb42074b73877a2c40354b2566040289ccdd1"
+      "budget_characters": 4502,
+      "content_sha256": "79c9b1f06bc3252ca0cd07bf0fb9bfd13b36c2b6ad5715a07623573d3c4ac4d9"
     },
     {
       "id": "window",
@@ -133,7 +133,7 @@
     },
     {
       "id": "memory",
-      "version": "6",
+      "version": "8",
       "file": "memory.md",
       "applies_when": "scene_memory_available",
       "requires": [
@@ -144,8 +144,8 @@
         "COORD.F03",
         "COORD.F11"
       ],
-      "budget_characters": 900,
-      "content_sha256": "3d6b9ea4bebee102951c529247d87b1828866a80811c61652e9f99408ba70ef7"
+      "budget_characters": 1055,
+      "content_sha256": "32226a367b33424df381dce55540a50adb2e8bb193beaa96a42cab2ff9c19918"
     },
     {
       "id": "skills",
@@ -222,7 +222,7 @@
     },
     {
       "id": "finish_check",
-      "version": "20",
+      "version": "21",
       "file": "finish_check.md",
       "applies_when": "finish_check",
       "requires": [
@@ -244,8 +244,8 @@
         "COORD.F18",
         "COORD.F19"
       ],
-      "budget_characters": 2300,
-      "content_sha256": "b36f61d6514f6c620eafbf0f47f7b63c1266e521d69fc4dc9873e3054000b71e"
+      "budget_characters": 2542,
+      "content_sha256": "4827b879f0cddcae0021f4c466271db359cf8b7186181a43d6a7965a9b5a550c"
     },
     {
       "id": "finish_check_work",
@@ -303,7 +303,8 @@
         "f02_dialogue_elapsed_time",
         "f01_intervening_respondent",
         "f02_old_explicit_reply",
-        "f02_history_read_unknown"
+        "f02_history_read_unknown",
+        "f01_receiving_mention_stale_name"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -314,7 +315,8 @@
         "waiting_admission_and_direct_relay_live_delivery": "not_run",
         "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
         "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
-        "dialogue_history_guidance": "2026-09-10.6 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior."
+        "dialogue_history_guidance": "2026-09-10.6 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior.",
+        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -538,13 +540,17 @@
         "f04_declared_skill_synopsis_vs_managed_marker",
         "f04_single_work_does_not_authorize_environment_repair",
         "f15_catalog_not_authorization_vs_quoted_job_limit",
-        "f11_memory_capability_claim_vs_catalog"
+        "f11_memory_capability_claim_vs_catalog",
+        "f04_work_wins_over_speak",
+        "f15_decline_cannot_quote_work_ask_or_memory",
+        "f04_other_recipient_work_keywords"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "dws_execution_recovery_host_tests": "passed_local_2026-09-10",
-        "dws_execution_recovery_live_delivery": "not_run"
+        "dws_execution_recovery_live_delivery": "not_run",
+        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -561,7 +567,10 @@
         "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
         "server/internal/service/inboundcoord/issue_description_test.go",
         "docs/plans/2026-09-14-coordinator-invented-access-limit.md",
-        "server/internal/service/inboundcoord/finish_invented_capability_test.go"
+        "server/internal/service/inboundcoord/finish_invented_capability_test.go",
+        "server/internal/service/inboundcoord/destination.go",
+        "server/internal/service/inboundcoord/finish_destination_test.go",
+        "server/internal/service/inboundcoord/prompt.go"
       ],
       "case_file": "cases.json"
     },
@@ -897,7 +906,8 @@
         "f19_memory_commit_observation",
         "f11_memory_repair_budget",
         "f03_review_greeting_status_memory",
-        "f11_memory_capability_claim_vs_catalog"
+        "f11_memory_capability_claim_vs_catalog",
+        "f15_decline_cannot_quote_work_ask_or_memory"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -987,7 +997,9 @@
         "f13_tool_schema_lists_validatable_values",
         "f16_rejected_review_with_invented_work_check",
         "f15_catalog_not_authorization_vs_quoted_job_limit",
-        "f07_different_deliverable_forces_start_work_kind"
+        "f07_different_deliverable_forces_start_work_kind",
+        "f04_work_wins_over_speak",
+        "f04_other_recipient_work_keywords"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -1002,7 +1014,8 @@
         "same_run_work_state_host_tests": "passed: full inboundcoord package and 7 focused snapshot tests; partial/scope/retry/feedback/trace preserved",
         "same_run_work_state_model_latency": "passed: frozen same-model 3v3 median 10.881s to 6.737s; pre trace2513240e2c8043edb7bc9e1894cb63a3 loop6.979s/2 primary rounds/1 work_state, IM admission14s; not a fleet SLA; cache-hit only Host-tested",
         "retry_budget_and_tool_contract_2026_09_10": "host_tests_passed_local; pre e2e pending",
-        "rejected_review_recovery_2026_09_11": "host_tests_passed; live_pre_pending"
+        "rejected_review_recovery_2026_09_11": "host_tests_passed; live_pre_pending",
+        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1113,7 +1126,8 @@
         "f15_policy_revise_returns_repair_boundary",
         "f04_single_work_does_not_authorize_environment_repair",
         "f15_catalog_not_authorization_vs_quoted_job_limit",
-        "f11_memory_capability_claim_vs_catalog"
+        "f11_memory_capability_claim_vs_catalog",
+        "f15_decline_cannot_quote_work_ask_or_memory"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -1136,7 +1150,9 @@
         "server/internal/service/inboundcoord/window_plan.go",
         "server/internal/service/inboundcoord/configured_boundaries_test.go#TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence",
         "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
-        "server/internal/service/inboundcoord/issue_description_test.go"
+        "server/internal/service/inboundcoord/issue_description_test.go",
+        "server/internal/service/inboundcoord/destination.go",
+        "server/internal/service/scenememory/flush.go"
       ],
       "case_file": "cases.json"
     },
@@ -1354,13 +1370,15 @@
         "f15_contract_stale_copy",
         "f16_host_prefetch_nonwork_cost_and_skips",
         "f16_history_prefetch_before_first_model_call",
-        "f16_retry_budget_stops_identical_failures"
+        "f16_retry_budget_stops_identical_failures",
+        "f04_other_recipient_work_keywords"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "history_prefetch_2026_09_10": "host_tests_passed_local; pre e2e pending",
-        "retry_budget_and_tool_contract_2026_09_10": "host_tests_passed_local; pre e2e pending"
+        "retry_budget_and_tool_contract_2026_09_10": "host_tests_passed_local; pre e2e pending",
+        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/trace.go",
@@ -1602,6 +1620,16 @@
         "COORD.F07",
         "COORD.F13"
       ]
+    },
+    {
+      "id": "host_keyword_work_destination_override",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F01",
+        "COORD.F04",
+        "COORD.F13"
+      ],
+      "reason": "Production ba5f8899: work keywords rewrote an allowed ignore into mandatory dispatch while work review rejected participation. Eligibility and work intent belong to shared semantic review; Host retains provenance and judgment consistency checks."
     }
   ]
 }

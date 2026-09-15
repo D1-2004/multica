@@ -481,6 +481,15 @@ func (s *TaskService) EnqueueSynchronousTaskCompletion(
 	errMessage string,
 	failureReason string,
 ) error {
+	return s.EnqueueSynchronousTaskFailureReply(ctx, callbackURL, targetIdentity, agentID, errMessage, failureReason, "")
+}
+
+// EnqueueSynchronousTaskFailureReply retains a failed execution while durably
+// carrying its optional human-facing response through the same callback outbox.
+func (s *TaskService) EnqueueSynchronousTaskFailureReply(
+	ctx context.Context, callbackURL, targetIdentity string, agentID pgtype.UUID,
+	errMessage, failureReason, reply string,
+) error {
 	const prefix = "/api/v1/dispatch-tasks/"
 	const suffix = "/execution-result"
 	dispatchTaskID := strings.TrimSuffix(strings.TrimPrefix(callbackURL, prefix), suffix)
@@ -498,6 +507,7 @@ func (s *TaskService) EnqueueSynchronousTaskCompletion(
 		AgentID:        agentID,
 		Error:          pgtype.Text{String: redact.Text(errMessage), Valid: errMessage != ""},
 		FailureReason:  pgtype.Text{String: failureReason, Valid: failureReason != ""},
+		ResultMessage:  reply,
 	})
 	if err != nil {
 		return fmt.Errorf("enqueue synchronous task completion: %w", err)
