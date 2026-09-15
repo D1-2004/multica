@@ -38,6 +38,14 @@ func (k Key) valid() bool {
 		protocol.ValidDSHSessionID(k.SessionID) && scheduleIDPattern.MatchString(k.ScheduleID)
 }
 
+// Validate checks the complete tenant and native identity at service boundaries.
+func (k Key) Validate() error {
+	if !k.valid() {
+		return ErrInvalid
+	}
+	return nil
+}
+
 // Record is immutable provenance. OwnerMemberID and SourceTaskID must be
 // resolved from the authenticated creating task, never supplied by the model.
 // FirstDue is the already-resolved UTC instant from the official rule parser.

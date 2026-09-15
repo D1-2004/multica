@@ -287,7 +287,14 @@ Only the owning member can cancel it. Lists return an explicit `truncated` bit.
 
 A persistence receipt is not delivery. `scheduled`, `overdue`, `cancelled` and
 `consumed` distinguish the ledger state; consumed means task admission, not model
-completion or a delivered message. This branch has management and transaction
-storage implemented; the native tool adapter and scheduled application admission
-worker still need wiring and real preproduction acceptance before this can be
-advertised as an available reminder feature.
+completion or a delivered message. The branch implements management, persistent
+retry, fresh automatic task admission and original-Session native transport.
+Admission rechecks the owning member's current invocation permission and uses
+fresh task credentials. It does not pretend the owner sent another human message.
+The native tool adapter, recurring same-Session batching and real preproduction
+acceptance remain unfinished; do not advertise an available reminder feature.
+
+`MULTICA_DSH_SCHEDULE_DISPATCH_ENABLED` defaults off. Enable only after all
+application replicas support occurrence-aware native claim/launch, so older
+replicas cannot reinterpret reminders. Turning it off pauses discovery without
+consuming pending records. It is not enabled in preproduction yet.

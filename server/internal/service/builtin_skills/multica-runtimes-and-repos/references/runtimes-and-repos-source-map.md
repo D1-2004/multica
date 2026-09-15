@@ -140,3 +140,18 @@
   rows in workspace teardown under the existing parent transaction.
 - `docs/plans/2026-09-15-dsh-schedule-admission.md`: trigger evidence, authorization
   contract, contrast cases, integration and verification boundaries.
+
+- `server/internal/service/dsh_schedule_dispatch.go`: fresh automatic task admission
+  with current permission, immutable chat input, original native scope and wake
+  only after commit; no previous execution credential copied.
+- `server/internal/dshschedule/worker.go`: durable due discovery, bounded retry and
+  next-due compare fence for delayed errors from other replicas.
+- `server/internal/dshschedule/execution.go` and
+  `server/internal/handler/dsh_schedule_dispatch.go`: reconstruct native input
+  exclusively from committed occurrence evidence; refuse scope/capability drift.
+- `server/internal/scheduler/jobs_dsh_schedule.go`: shared PostgreSQL lease job;
+  `cmd/server/main.go` isolates its bounded scan loop from existing jobs.
+
+- `server/cmd/server/main.go` and `src/main.sh`: default-off
+  `MULTICA_DSH_SCHEDULE_DISPATCH_ENABLED` deployment gate. All replicas must
+  understand the scheduled native transport before dispatch is enabled.

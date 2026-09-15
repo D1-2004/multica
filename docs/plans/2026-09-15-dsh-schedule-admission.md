@@ -84,8 +84,48 @@ a separate cloud probe resolved DNS but timed out connecting to TCP5432. Neither
 transaction suite has passed against the real database. Both probe sandboxes were
 confirmed absent after cleanup. The application has not yet deployed these APIs.
 
-Outstanding: due-record discovery/retry through the shared scheduler; fresh task
+Outstanding: real preproduction validation of due discovery/retry and fresh task
 admission for chat/issue/task native scopes; full native create/list/delete adapter
 and durable receipt projection; recurring same-Session batch semantics; current
 permission and deletion races on real preproduction; offline Host recreation;
 model-visible and user-visible delivery; cancellation and uncertain commit tests.
+
+## Due admission implementation
+
+- `internal/dshschedule/worker.go`: database-time discovery, 64-record bound,
+  per-candidate timeout, persisted capped retry and stale-error next-due fence.
+- Migrations 9252/9253: nullable retry time and capped failure count; a separate
+  concurrent partial index supports retry ordering. Old writes default to no
+  deferral. Schedule creation is not enabled through native tools during rollout.
+- `internal/service/dsh_schedule_dispatch.go`: two authorization checks around
+  optional external overlay resolution, current parent and employee locks, fresh
+  task attribution, atomic chat input/native binding/receipt, post-commit wake.
+- `internal/attribution`: `dsh_schedule` evidence and trigger vocabulary. The
+  occurrence request ID identifies the cause; accountability is not impersonation.
+- `internal/dshschedule/execution.go`, `internal/service/fc_e2b.go`,
+  `internal/handler/dsh_schedule_dispatch.go`: durable occurrence-driven native
+  transport and standalone scope restoration. No task JSON controls Session
+  identity. Missing binding, wrong scope/provider/backend and missing capability
+  fail closed; a transient DB read is a retryable 503.
+- `internal/scheduler/jobs_dsh_schedule.go` and `cmd/server/main.go`: existing
+  PostgreSQL lease engine, 30-second scans in an independent loop, 20-second scan
+  timeout. Existing Autopilot/rollup job loops are unchanged.
+
+Additional contrasts: denied oldest record versus later healthy record; stale
+failure bookkeeping versus an already advanced periodic occurrence; automatic
+trigger versus fabricated direct human originator; original standalone scope
+versus new task scope; missing receipt versus temporary database failure; capable
+native DSH versus other providers/backends. Tests are colocated with worker,
+execution, service, claim and scheduler code. The application database fixture
+covers chat/issue/standalone concurrent admissions with separate pools and a
+permission change between preflight and the write. It requires an explicitly
+selected migrated real preproduction database and is skipped locally. These
+changes are not deployed and the official recurring batch adapter remains open.
+
+Rollout gate: `MULTICA_DSH_SCHEDULE_DISPATCH_ENABLED` defaults to false and is
+preserved by `src/main.sh`. Deploy all replicas with the occurrence-aware claim
+and launch paths before enabling it. Registration may persist while dispatch is
+disabled; late reminders remain pending. The flag has not been enabled in
+preproduction. Before rolling back to a binary without this transport, disable
+dispatch and drain admitted reminder tasks. Native adapter/batch integration and
+its acceptance must also pass before exposing the complete feature to users.

@@ -118,6 +118,9 @@ const (
 	// The dedicated chat_session_id column still exists for its own consumers;
 	// this makes the attribution UI's jump-to-evidence path uniform (MUL-4302 §2).
 	EvidenceChat EvidenceKind = "chat"
+	// EvidenceDSHSchedule refers to the durable occurrence request ID. The
+	// registered member owns the trigger but is not a fresh human originator.
+	EvidenceDSHSchedule EvidenceKind = "dsh_schedule"
 )
 
 // TriggerKind enumerates every path that can enqueue a run. Kept as an explicit
@@ -136,6 +139,7 @@ const (
 	KindStageWakeup       TriggerKind = "stage_wakeup"
 	KindQuickCreate       TriggerKind = "quick_create"
 	KindChat              TriggerKind = "chat"
+	KindDSHSchedule       TriggerKind = "dsh_schedule"
 	KindAutopilotSchedule TriggerKind = "autopilot_schedule"
 	KindAutopilotWebhook  TriggerKind = "autopilot_webhook"
 	KindAutopilotManual   TriggerKind = "autopilot_manual"

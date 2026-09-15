@@ -146,7 +146,7 @@ func (s Store) Dispatch(ctx context.Context, key Key, enqueue Enqueue) (Receipt,
 	if s.Tx == nil || !key.valid() || enqueue == nil {
 		return Receipt{}, ErrInvalid
 	}
-	state, err := readState(s.Tx.QueryRow(ctx, selectRecord+" FOR UPDATE SKIP LOCKED", keyArgs(key)...), key)
+	state, err := readState(s.Tx.QueryRow(ctx, selectRecord+" AND (next_attempt_at IS NULL OR next_attempt_at<=clock_timestamp()) FOR UPDATE SKIP LOCKED", keyArgs(key)...), key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Receipt{}, ErrNotDue
 	}
@@ -185,7 +185,7 @@ func (s Store) Dispatch(ctx context.Context, key Key, enqueue Enqueue) (Receipt,
 	if err != nil {
 		return Receipt{}, err
 	}
-	_, err = s.Tx.Exec(ctx, `UPDATE dsh_schedule SET next_due_at=$5,updated_at=clock_timestamp()
+	_, err = s.Tx.Exec(ctx, `UPDATE dsh_schedule SET next_due_at=$5,next_attempt_at=NULL,failure_count=0,updated_at=clock_timestamp()
  WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3 AND schedule_id=$4`,
 		key.WorkspaceID, key.AgentID, key.SessionID, key.ScheduleID,
 		pgtype.Timestamptz{Time: due.Next, Valid: !due.Next.IsZero()})

@@ -59,7 +59,7 @@ func schedulePools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 		return result
 	}
 	a, b := pool(), pool()
-	for _, stem := range []string{"9248_dsh_schedule", "9249_dsh_schedule_identity", "9250_dsh_schedule_due", "9251_dsh_schedule_occurrence_identity"} {
+	for _, stem := range []string{"9248_dsh_schedule", "9249_dsh_schedule_identity", "9250_dsh_schedule_due", "9251_dsh_schedule_occurrence_identity", "9252_dsh_schedule_retry", "9253_dsh_schedule_retry_scan"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
@@ -246,5 +246,57 @@ func TestPostgresScheduleCancellationAndBindingFence(t *testing.T) {
 	var count int
 	if err := a.QueryRow(ctx, `SELECT count(*) FROM admitted_task`).Scan(&count); err != nil || count != 0 {
 		t.Fatal("failed admission left a task", err)
+	}
+}
+
+func TestPostgresScheduleRetryDoesNotStarveOrDelayAdvancedOccurrence(t *testing.T) {
+	a, b := schedulePools(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r := fixture()
+	r.EverySeconds = 300
+	if err := a.QueryRow(ctx, `SELECT date_trunc('milliseconds',clock_timestamp())-interval '1 hour'`).Scan(&r.FirstDue); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Exec(ctx, `INSERT INTO dsh_task_binding(workspace_id,agent_id,session_id,request_id,task_id) VALUES($1,$2,$3,$4,$5)`, r.WorkspaceID, r.AgentID, r.SessionID, uuid.New(), r.SourceTaskID); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"schedule-1", "schedule-2"} {
+		record := r
+		record.ScheduleID = id
+		if err := inTransaction(ctx, a, func(s Store) error { _, err := s.Register(ctx, record); return err }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	q := Queue{DB: a}
+	rows, err := q.Candidates(ctx, 1)
+	if err != nil || len(rows) != 1 || rows[0].ScheduleID != "schedule-1" {
+		t.Fatal(rows, err)
+	}
+	old := rows[0]
+	if err := q.Defer(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = q.Candidates(ctx, 1)
+	if err != nil || len(rows) != 1 || rows[0].ScheduleID != "schedule-2" {
+		t.Fatal("failed oldest reminder starved next", rows, err)
+	}
+	if err := inTransaction(ctx, b, func(s Store) error { _, err := s.Dispatch(ctx, old.Key, enqueueFixture); return err }); !errors.Is(err, ErrNotDue) {
+		t.Fatal("dispatch bypassed retry time", err)
+	}
+	if _, err := a.Exec(ctx, `UPDATE dsh_schedule SET next_attempt_at=clock_timestamp()-interval '1 second' WHERE schedule_id='schedule-1'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := inTransaction(ctx, b, func(s Store) error { _, err := s.Dispatch(ctx, old.Key, enqueueFixture); return err }); err != nil {
+		t.Fatal(err)
+	}
+	// A delayed error from a losing replica must not defer the winner's next
+	// periodic occurrence, or reintroduce the prior failure count.
+	if err := q.Defer(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	var reset bool
+	if err := a.QueryRow(ctx, `SELECT next_attempt_at IS NULL AND failure_count=0 AND next_due_at>$1 FROM dsh_schedule WHERE schedule_id='schedule-1'`, old.NextDue).Scan(&reset); err != nil || !reset {
+		t.Fatal("stale failure changed advanced record", err)
 	}
 }

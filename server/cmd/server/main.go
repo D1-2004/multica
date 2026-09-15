@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/deploymentfence"
+	"github.com/multica-ai/multica/server/internal/dshschedule"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/langfuse"
@@ -626,6 +627,19 @@ func main() {
 	go func() {
 		_ = schedulerMgr.Run(sweepCtx)
 	}()
+	// Use the same shared-database lease engine in an independent loop so
+	// bounded DSH permission/overlay retries cannot delay existing jobs.
+	// Enable only after every replica can claim scheduled native input. A
+	// rolling old binary must never reinterpret a reminder as an issue run.
+	if envBool("MULTICA_DSH_SCHEDULE_DISPATCH_ENABLED", false) {
+		dshSchedulerMgr := scheduler.NewManager(pool, scheduler.Options{})
+		if err := dshSchedulerMgr.Register(scheduler.DSHScheduleDispatchJob(dshschedule.Queue{DB: pool}, h)); err != nil {
+			slog.Warn("scheduler: failed to register dsh_schedule_dispatch job", "error", err)
+		}
+		go func() {
+			_ = dshSchedulerMgr.Run(sweepCtx)
+		}()
+	}
 
 	if metricsServer != nil {
 		go func() {

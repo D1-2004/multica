@@ -1,8 +1,9 @@
 # Persistent native Schedule admission
 
 This package is the PostgreSQL transaction core for native DSH reminders. It is
-not yet wired to the native Schedule tools or the application scheduler. Its
-presence does not enable reminder delivery.
+wired to application task admission and the shared-database scheduler. The
+native Schedule tool adapter and recurring same-Session batching are still
+unfinished; its presence is not proof of reminder delivery.
 
 The task-authenticated management API is implemented in
 `internal/service/dsh_schedule.go` and `internal/handler/dsh_schedule.go`. It
@@ -59,7 +60,7 @@ after the platform's durable receipt.
 
 ## Validation boundaries
 
-`go test ./internal/dshschedule` runs pure rule/identity/framing tests. The two
+`go test ./internal/dshschedule` runs pure rule/identity/framing tests. The three ledger
 PostgreSQL tests skip unless `DSH_SCHEDULE_TEST_DATABASE_URL` explicitly selects a
 real preproduction test database. They use an isolated schema and two independent
 pools to exercise atomic rollback, concurrent admission, cancellation, immutable
@@ -67,6 +68,39 @@ replay and native binding checks. Their enqueue callback is a database fixture;
 passing them alone is not application authorization or end-to-end delivery proof.
 
 Outstanding integration gates: native create/list/delete acknowledgement;
-current-authority service admission; periodic wake/retry wiring; deletion cleanup;
+real application transaction validation; deletion cleanup;
 offline Host recovery; model-visible delivery in the original Session; periodic
 batch semantics; cancellation before/after admission; and lost-response replay.
+
+## Due worker and task transport
+
+`Queue.Candidates` discovers overdue records using database time. Failure deferral
+is persistent, bounded from 30 to 300 seconds, and compares the observed next due
+instant so a delayed error cannot postpone a successfully advanced occurrence.
+A cancelled/consumed reminder remains ineligible. `Sweep` examines at most 64
+records, bounds each attempt to 10 seconds and continues after denied or failed
+admissions. The registered job bounds each scan to 20 seconds and runs in its own
+instance of the existing lease scheduler to avoid delaying the older jobs.
+
+`service/dsh_schedule_dispatch.go` checks current member/employee/runtime/scope
+permission before resolving optional agent-owned connected apps and again inside
+the write transaction. It creates fresh automatic tasks with `trigger_owner` and
+`dsh_schedule` attribution. Originator and initiator stay NULL. Chat tasks own a
+new immutable input batch; issue and standalone tasks use the native prompt
+transport. The receipt, input, native binding and next due update commit together.
+The standard durable task queue supplies launch/recovery after commit.
+
+`LoadExecution` reconstructs a prompt from the occurrence and immutable record.
+Both the FC launcher and claim handler verify it against task scope and evidence.
+Standalone follow-ups keep the original task's mapped native Session. A missing
+receipt or incapable Runtime cannot silently fall back to generic task prompting.
+No old task context, token or credential is copied. These are implemented contracts;
+cloud/database behavior and native adapter delivery are still unverified.
+
+Rollout gate: `MULTICA_DSH_SCHEDULE_DISPATCH_ENABLED` defaults to false and is
+preserved by `src/main.sh`. Deploy all replicas with the occurrence-aware claim
+and launch paths before enabling it. Registration may persist while dispatch is
+disabled; late reminders remain pending. The flag has not been enabled in
+preproduction. Before rolling back to a binary without this transport, disable
+dispatch and drain admitted reminder tasks. Native adapter/batch integration and
+its acceptance must also pass before exposing the complete feature to users.

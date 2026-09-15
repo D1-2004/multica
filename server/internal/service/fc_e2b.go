@@ -29,6 +29,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dshprofile"
+	"github.com/multica-ai/multica/server/internal/dshschedule"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
@@ -1634,7 +1635,15 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	}
 	extraEnv = hardenCloudSandboxA2ARunnerEnv(task, runtime, extraEnv)
 	if employeeHost != nil {
-		binding, err := (dshhost.PostgresStore{DB: runtimeLockConn}).BindExecution(ctx, dshExecutionScope(employeeHost.Key, task), uuid.UUID(task.ID.Bytes))
+		scope := dshExecutionScope(employeeHost.Key, task)
+		if task.TriggerEvidenceKind.String == dshschedule.EvidenceKind {
+			execution, loadErr := dshschedule.LoadExecution(ctx, runtimeLockConn, employeeHost.Key, uuid.UUID(task.ID.Bytes))
+			if loadErr != nil || !ScheduleExecutionMatches(task, execution) {
+				return fcE2BLaunchSubmission{}, false, errors.New("DSH schedule execution binding is invalid")
+			}
+			scope = execution.SessionScope
+		}
+		binding, err := (dshhost.PostgresStore{DB: runtimeLockConn}).BindExecution(ctx, scope, uuid.UUID(task.ID.Bytes))
 		if err != nil {
 			return fcE2BLaunchSubmission{}, false, fmt.Errorf("bind DSH native execution: %w", err)
 		}

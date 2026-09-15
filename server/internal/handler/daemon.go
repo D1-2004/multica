@@ -2954,6 +2954,16 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 	}
 
+	// Scheduled input comes exclusively from its committed occurrence. It uses
+	// the native prompt transport for every scope, including standalone tasks,
+	// and cannot fall back to re-executing an old issue or quick-create prompt.
+	if failure := h.applyDSHScheduleClaim(r, *task, runtime, taskBackend, runtimeWorkspaceID, &resp); failure != nil {
+		if _, err := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); err != nil {
+			slog.Error("DSH schedule claim: requeue failed", "task_id", uuidToString(task.ID), "error", err)
+		}
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
+	}
+
 	// Workspace isolation check: the daemon uses this response's workspace_id
 	// as the only authority for MULTICA_WORKSPACE_ID in the agent env. An
 	// empty value would make the CLI silently fall back to the user-global
