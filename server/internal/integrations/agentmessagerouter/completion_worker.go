@@ -313,6 +313,12 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 			"failureReason":  completion.FailureReason.String,
 		},
 	}
+	if completion.ExecutionStatus == "failed" && completion.FailureReason.String == "coordinator_job_failed" && strings.TrimSpace(completion.ResultMessage) != "" {
+		shouldReply := true
+		result.ShouldReply = &shouldReply
+		result.ReplyReason = "coordinator_failure_reply"
+	}
+
 	if w.ResponseActions != nil {
 		var managed bool
 		managed, err = w.ResponseActions.PrepareExecutionResult(ctx, completion.CallbackUrl, result)

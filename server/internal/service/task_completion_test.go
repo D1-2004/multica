@@ -1003,3 +1003,28 @@ func TestEnqueueSynchronousTaskCompletionDurablyClosesNeedsBinding(t *testing.T)
 			count, rootTaskID, terminalTaskID, status, reason)
 	}
 }
+
+func TestEnqueueCoordinatorFailureReplyRemainsFailedAndIdempotent(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	svc := NewTaskService(db.New(pool), pool, nil, events.New())
+	agentID := pgtype.UUID{Bytes: [16]byte{22}, Valid: true}
+	callback := "/api/v1/dispatch-tasks/coordinator-failure-reply/execution-result"
+	requestID := "multica-terminal:sync:coordinator-failure-reply"
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), "DELETE FROM task_completion_outbox WHERE request_id=$1", requestID)
+	})
+	for range 2 {
+		if err := svc.EnqueueSynchronousTaskFailureReply(ctx, callback, taskCompletionTestTarget, agentID, "private diagnostic", "coordinator_job_failed", "抱歉，这次没能处理好。"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var status, text, diagnostic string
+	var count int
+	if err := pool.QueryRow(ctx, "SELECT execution_status,result_message,error,count(*) OVER () FROM task_completion_outbox WHERE request_id=$1", requestID).Scan(&status, &text, &diagnostic, &count); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || text != "抱歉，这次没能处理好。" || diagnostic != "private diagnostic" || count != 1 {
+		t.Fatalf("unexpected failure receipt: status=%s text=%q diagnostic=%q count=%d", status, text, diagnostic, count)
+	}
+}

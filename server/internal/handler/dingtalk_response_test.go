@@ -217,12 +217,16 @@ func TestDingTalkPrepareExecutionResultActions(t *testing.T) {
 		{"send", "completed", "Confirmed meeting time", "", "message.send", false},
 		{"silent", "completed", "hidden answer", "silent", "reaction.clear", true},
 		{"failed", "failed", "do not send this", "failed", "reaction.clear", false},
+		{"coordinator failure", "failed", coordinatorFailureReply, "", "message.send", false},
 		{"cancelled", "cancelled", "do not send this", "cancelled", "reaction.clear", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newDingTalkResponseFixture(t, testRouterTargetIdentity)
 			f.register(t)
 			result := agentmessagerouter.ExecutionResultRequest{RequestID: uuid.NewString(), AgentID: f.agentID, ExternalRunID: f.taskID, ExecutionStatus: tc.status, ResultMessage: tc.text}
+			if tc.name == "coordinator failure" {
+				result.ExecutionResult = map[string]any{"failureReason": "coordinator_job_failed"}
+			}
 			if tc.suppress {
 				value := false
 				result.ShouldReply = &value

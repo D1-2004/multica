@@ -118,6 +118,11 @@ func responseInputForResult(in dingtalkresponse.ActionInput, result agentmessage
 		in.CloseState = "cancelled"
 	case "failed":
 		in.CloseState = "failed"
+		// Execution failure and visible response delivery are independent.
+		// Only the Host-owned coordinator failure reply uses this route.
+		if result.ExecutionResult["failureReason"] == "coordinator_job_failed" && result.ResultMessage == coordinatorFailureReply {
+			in.Text, in.CloseState = coordinatorFailureReply, ""
+		}
 	default:
 		in.Text = stripReplyDecisionLeak(result.ResultMessage)
 		if (result.ShouldReply != nil && !*result.ShouldReply) || in.Text == "" {
