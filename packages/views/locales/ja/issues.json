@@ -553,6 +553,10 @@
     "note_estimate": "費用は公開モデル料金からの概算です（プロバイダーが独自の費用を返した分を除く）。"
   },
   "trajectory": {
+    "session": "セッション",
+    "root_session": "メインセッション",
+    "child_session": "子セッション {{number}}",
+    "interrupted": "中断",
     "title": "DSH ネイティブ軌跡",
     "open": "DSH 軌跡を表示",
     "read_only": "読み取り専用",

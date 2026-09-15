@@ -60,7 +60,7 @@ func validateDSHTrajectory(data []byte, expectedSessionID string) (dshTrajectory
 		if err := json.Unmarshal(doc.Header, &header); err != nil {
 			return header, 0, err
 		}
-		return header, int32(len(doc.Events)), nil
+		return header, int32(doc.EventCount()), nil
 	}
 	lines := bytes.Split(data, []byte{'\n'})
 	if len(lines) == 0 || len(bytes.TrimSpace(lines[0])) == 0 {

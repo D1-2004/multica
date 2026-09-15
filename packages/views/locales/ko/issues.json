@@ -553,6 +553,10 @@
     "note_estimate": "비용은 공개된 모델 요금 기준 추정치이며, 제공자가 자체 비용을 보고한 경우는 그 값을 사용합니다."
   },
   "trajectory": {
+    "session": "세션",
+    "root_session": "기본 세션",
+    "child_session": "하위 세션 {{number}}",
+    "interrupted": "중단됨",
     "title": "DSH 네이티브 궤적",
     "open": "DSH 궤적 보기",
     "read_only": "읽기 전용",

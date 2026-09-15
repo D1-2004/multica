@@ -29,6 +29,13 @@
 - `docs/security/asb-dws-network-audit.md` maps DWS direct-transfer, OSS, mail, Stream and distribution dependencies to reviewed default rules; only two managed transfer families accept wildcards at the creation boundary.
 # DSH employee Home provisioning
 
+## Task and child trajectories
+
+- `server/pkg/agent/dsh_native_children.go`: follows child references written by the native factory and selects the exact activation after task resources are released.
+- `server/pkg/dshtrajectory/children.go`: validates request identity, parent lineage and contiguous child intervals; counts all included events without copying seeded or unrelated task history.
+- `server/internal/handler/dsh_trajectory.go`: validates and stores the complete task artifact.
+- `packages/views/common/task-trajectory/trajectory-model.ts`, `dsh-trajectory-dialog.tsx`: parse the task bundle and select root or child events while retaining native sequence numbers and interruption state.
+
 - `server/pkg/protocol/dsh_native.go` validates and clones official native prompt content with bounded transport space; `dsh_native_test.go` covers attachment-only input, invalid unions, nulls and content preservation.
 - `server/internal/handler/dsh_native_claim.go` checks task-owned input, native binding and daemon capability before delivery. `daemon.go` requeues refused claims and excludes native attachments from generic callback text. Pure claim tests cover old daemons, changed scope, binding failures and unchanged ordinary inputs.
 - `server/internal/daemon/dsh_native.go` and `server/pkg/agent/dsh_native.go` preserve native Session spelling and deliver the complete typed request to the authenticated Host control socket. Protocol-peer tests inspect actual serialized control requests without starting a local Host.

@@ -579,6 +579,10 @@
     "note_estimate": "Cost is estimated from published model rates, except where the provider reported its own figure."
   },
   "trajectory": {
+    "session": "Session",
+    "root_session": "Main session",
+    "child_session": "Child session {{number}}",
+    "interrupted": "Interrupted",
     "title": "DSH native trajectory",
     "open": "View DSH trajectory",
     "read_only": "Read only",

@@ -14,6 +14,45 @@ const fixture = [
   { type: "step/end", seq: 4, time: 1110, data: { turn: 1, step: 1 } },
 ].map((row) => JSON.stringify(row)).join("\n");
 
+describe("task child trajectory bundle", () => {
+  const rows = [
+    { type: "multica/task-trajectory", version: 2, sessionId: "root", requestId: "task", firstSeq: 40, lastSeq: 43,
+      children: [{ sessionId: "child", parentSessionId: "root", activationId: "activation", firstSeq: 20, lastSeq: 22, closed: true }] },
+    { type: "session", version: 3, id: "root", createdAt: 1, isSeeded: false },
+    { type: "turn/start", seq: 40, time: 2, data: { turn: 1 } },
+    { type: "user/message", seq: 41, time: 3, data: { source: { kind: "user", rpcId: "task" } } },
+    { type: "multica/task-child", seq: 42, time: 4, data: { requestId: "task", childSessionId: "child", activationId: "activation", firstSeq: 20 } },
+    { type: "turn/end", seq: 43, time: 8, data: { turn: 1, reason: { kind: "completed" } } },
+    { type: "session", version: 3, id: "child", createdAt: 2, isSeeded: true, parentSession: "root", origin: "subagent", delegationDepth: 1 },
+    { type: "multica/task-child-start", seq: 20, time: 4, data: { requestId: "task", parentSessionId: "root", activationId: "activation" } },
+    { type: "tool/result", seq: 21, time: 5, data: { content: "CHILD_FILE_READ_OK" } },
+    { type: "multica/task-child-end", seq: 22, time: 6, data: { requestId: "task", parentSessionId: "root", activationId: "activation", firstSeq: 20 } },
+  ];
+  const encode = (value: unknown[]) => value.map((row) => JSON.stringify(row)).join("\n");
+  it("preserves root and child session identities and native tool output", () => {
+    const doc = parseDSHTrajectory(encode(rows));
+    expect(doc.events.map((event) => event.seq)).toEqual([40, 41, 42, 43]);
+    expect(doc.children?.[0]?.header.id).toBe("child");
+    expect(doc.children?.[0]?.events.map((event) => event.seq)).toEqual([20, 21, 22]);
+    expect(trajectoryEventSummary(doc.children![0]!.events[1]!)).toBe("CHILD_FILE_READ_OK");
+  });
+  it("rejects cross-task children, missing content, and forged lineage", () => {
+    const raw = encode(rows);
+    for (const invalid of [
+      encode(rows.slice(0, -1)),
+      raw.replace('"parentSession":"root"', '"parentSession":"other"'),
+      raw.replace('"requestId":"task","parentSessionId"', '"requestId":"other","parentSessionId"'),
+      raw.replace('"seq":21', '"seq":19'),
+      raw.replace('"closed":true', '"closed":false'),
+      raw + "\n" + JSON.stringify(rows[6]),
+    ]) expect(() => parseDSHTrajectory(invalid)).toThrow();
+  });
+  it("shows an explicitly interrupted child without inventing completion", () => {
+    const raw = encode(rows.slice(0, -1)).replace('"lastSeq":22,"closed":true', '"lastSeq":21,"closed":false');
+    expect(parseDSHTrajectory(raw).children?.[0]?.closed).toBe(false);
+  });
+});
+
 describe("DSH trajectory model", () => {
   it("parses the native JSONL ledger and keeps contiguous event identity", () => {
     const doc = parseDSHTrajectory(fixture);

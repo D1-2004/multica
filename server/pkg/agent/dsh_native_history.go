@@ -50,7 +50,7 @@ func decodeDSHNativeEvent(raw json.RawMessage) (dshNativeEvent, error) {
 // the complete prefix in source order. A partial page cannot prove that a
 // task's previous submission is absent. The caller opens follow first, so
 // events committed while pagination runs remain on the same subscription.
-func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.RawMessage, sessionID, cwd string) (dshNativeSnapshot, []json.RawMessage, error) {
+func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.RawMessage, sessionID, cwd string, childParent ...string) (dshNativeSnapshot, []json.RawMessage, error) {
 	var snapshot dshNativeSnapshot
 	fail := func() (dshNativeSnapshot, []json.RawMessage, error) {
 		return snapshot, nil, errors.New("incomplete or mismatched native DSH history")
@@ -68,12 +68,21 @@ func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.Raw
 		Origin          string `json:"origin"`
 	}
 	var headerFields map[string]json.RawMessage
-	if json.Unmarshal(snapshot.Header, &header) != nil || json.Unmarshal(snapshot.Header, &headerFields) != nil || header.ID != sessionID || header.Cwd != cwd || header.Version != 3 || header.IsSeeded == nil || *header.IsSeeded || header.ParentSession != "" || header.Origin != "" {
+	if json.Unmarshal(snapshot.Header, &header) != nil || json.Unmarshal(snapshot.Header, &headerFields) != nil || header.ID != sessionID || header.Cwd != cwd || header.Version != 3 || header.IsSeeded == nil {
 		return fail()
 	}
-	// Official root Sessions omit delegationDepth; explicit null is invalid.
-	if _, present := headerFields["delegationDepth"]; present && (header.DelegationDepth == nil || *header.DelegationDepth != 0) {
-		return fail()
+	if len(childParent) > 0 {
+		if len(childParent) != 1 || childParent[0] == "" || header.ParentSession != childParent[0] || header.Origin != "subagent" || header.DelegationDepth == nil || *header.DelegationDepth < 1 {
+			return fail()
+		}
+	} else {
+		if *header.IsSeeded || header.ParentSession != "" || header.Origin != "" {
+			return fail()
+		}
+		// Official root Sessions omit delegationDepth; explicit null is invalid.
+		if _, present := headerFields["delegationDepth"]; present && (header.DelegationDepth == nil || *header.DelegationDepth != 0) {
+			return fail()
+		}
 	}
 	pages := [][]json.RawMessage{}
 	records, more := snapshot.Records, *snapshot.HasMore
@@ -231,17 +240,11 @@ func (h *dshNativeTaskHistory) accept(raw json.RawMessage) error {
 	return nil
 }
 
-func (h *dshNativeTaskHistory) trajectory(header json.RawMessage, sessionID string) ([]byte, error) {
+func (h *dshNativeTaskHistory) trajectory(header json.RawMessage, sessionID string, children ...dshtrajectory.ChildDocument) ([]byte, error) {
 	if !h.found || h.terminal == "" || len(h.ownEvents) == 0 {
 		return nil, errors.New("native DSH task has no complete trajectory")
 	}
-	// follow returns the logical header, without the physical JSONL type tag.
-	var physical map[string]json.RawMessage
-	if json.Unmarshal(header, &physical) != nil || physical == nil {
-		return nil, errors.New("invalid native DSH trajectory header")
-	}
-	physical["type"] = json.RawMessage(`"session"`)
-	raw, err := json.Marshal(physical)
+	raw, err := dshPhysicalHeader(header)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +256,7 @@ func (h *dshNativeTaskHistory) trajectory(header json.RawMessage, sessionID stri
 	if err != nil {
 		return nil, err
 	}
-	return dshtrajectory.Encode(dshtrajectory.Scope{Type: dshtrajectory.RangeType, Version: 1, SessionID: sessionID, RequestID: h.requestID, FirstSeq: *first.Seq, LastSeq: *last.Seq}, raw, h.ownEvents)
+	return dshtrajectory.Encode(dshtrajectory.Scope{Type: dshtrajectory.RangeType, Version: 1, SessionID: sessionID, RequestID: h.requestID, FirstSeq: *first.Seq, LastSeq: *last.Seq}, raw, h.ownEvents, children...)
 }
 func (h *dshNativeTaskHistory) result(sessionID string) (Result, error) {
 	if !h.found || h.terminal == "" {

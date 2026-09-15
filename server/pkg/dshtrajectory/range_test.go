@@ -2,6 +2,7 @@ package dshtrajectory
 
 import (
 	"bytes"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -28,7 +29,7 @@ func TestTaskRangePreservesNativeEventsAndExplicitScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored, err := Parse(encoded)
-	if err != nil || restored.Scope != doc.Scope {
+	if err != nil || !reflect.DeepEqual(restored.Scope, doc.Scope) {
 		t.Fatalf("scope changed: %v", err)
 	}
 	for i := range doc.Events {

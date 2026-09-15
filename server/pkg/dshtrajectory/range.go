@@ -13,18 +13,20 @@ const MaxBytes = 32 << 20
 const maxSafe = 1<<53 - 1
 
 type Scope struct {
-	Type      string `json:"type"`
-	Version   int    `json:"version"`
-	SessionID string `json:"sessionId"`
-	RequestID string `json:"requestId"`
-	FirstSeq  int64  `json:"firstSeq"`
-	LastSeq   int64  `json:"lastSeq"`
+	Type      string       `json:"type"`
+	Version   int          `json:"version"`
+	SessionID string       `json:"sessionId"`
+	RequestID string       `json:"requestId"`
+	FirstSeq  int64        `json:"firstSeq"`
+	LastSeq   int64        `json:"lastSeq"`
+	Children  []ChildScope `json:"children,omitempty"`
 }
 
 type Document struct {
-	Scope  Scope
-	Header json.RawMessage
-	Events []json.RawMessage
+	Scope    Scope
+	Header   json.RawMessage
+	Events   []json.RawMessage
+	Children []ChildDocument
 }
 
 func IsRange(data []byte) bool {
@@ -37,7 +39,7 @@ func IsRange(data []byte) bool {
 
 // Parse accepts one complete root turn, with exactly one admitted user RPC.
 // Children need separately verified lineage and cannot enter this root range.
-func Parse(data []byte) (Document, error) {
+func parseRoot(data []byte) (Document, error) {
 	var doc Document
 	fail := func() (Document, error) { return Document{}, errors.New("invalid task-scoped DSH trajectory") }
 	if len(data) == 0 || len(data) > MaxBytes {
@@ -149,7 +151,14 @@ func Parse(data []byte) (Document, error) {
 }
 
 // Encode validates the same wire contract consumed by the upload endpoint.
-func Encode(scope Scope, header json.RawMessage, events []json.RawMessage) ([]byte, error) {
+func Encode(scope Scope, header json.RawMessage, events []json.RawMessage, children ...ChildDocument) ([]byte, error) {
+	if len(children) > 0 {
+		scope.Children = nil
+		scope.Version = 2
+		for _, child := range children {
+			scope.Children = append(scope.Children, child.Scope)
+		}
+	}
 	var out bytes.Buffer
 	raw, err := json.Marshal(scope)
 	if err != nil {
@@ -162,6 +171,14 @@ func Encode(scope Scope, header json.RawMessage, events []json.RawMessage) ([]by
 	for _, event := range events {
 		out.Write(event)
 		out.WriteByte('\n')
+	}
+	for _, child := range children {
+		out.Write(child.Header)
+		out.WriteByte('\n')
+		for _, event := range child.Events {
+			out.Write(event)
+			out.WriteByte('\n')
+		}
 	}
 	if _, err := Parse(out.Bytes()); err != nil {
 		return nil, err

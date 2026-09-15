@@ -28,13 +28,21 @@ export interface DSHTrajectoryDocument {
   header: DSHTrajectoryHeader;
   events: DSHTrajectoryEvent[];
   scope?: { sessionId: string; requestId: string; firstSeq: number; lastSeq: number };
+  children?: DSHTrajectoryChild[];
+}
+
+export interface DSHTrajectoryChild {
+  header: DSHTrajectoryHeader;
+  events: DSHTrajectoryEvent[];
+  activationId: string;
+  closed: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function parseDSHTrajectory(jsonl: string): DSHTrajectoryDocument {
+function parseRootTrajectory(jsonl: string): DSHTrajectoryDocument {
   const lines = jsonl.split(/\r?\n/).filter((line) => line.trim() !== "");
   if (lines.length === 0) throw new Error("empty DSH trajectory");
   const first: unknown = JSON.parse(lines[0]!);
@@ -118,6 +126,80 @@ export function parseDSHTrajectory(jsonl: string): DSHTrajectoryDocument {
     events,
     scope,
   };
+}
+
+// Keep native sequence numbers local to their Session. Child intervals are
+// admitted by references in this task's parent events, never by file presence.
+export function parseDSHTrajectory(jsonl: string): DSHTrajectoryDocument {
+  const lines = jsonl.split(/\r?\n/).filter((line) => line.trim() !== "");
+  const first: unknown = lines.length ? JSON.parse(lines[0]!) : null;
+  if (!isRecord(first) || first.type !== "multica/task-trajectory" || first.version !== 2) {
+    const root = parseRootTrajectory(jsonl);
+    if (root.scope && root.events.some((e) => e.type === "multica/task-child")) {
+      throw new Error("missing DSH child trajectory");
+    }
+    return root;
+  }
+  const fail = (): never => { throw new Error("invalid DSH child trajectory"); };
+  if (!Array.isArray(first.children) || first.children.length === 0 || first.children.length > 256 ||
+    !Number.isSafeInteger(first.firstSeq) || !Number.isSafeInteger(first.lastSeq)) fail();
+  const count = Number(first.lastSeq) - Number(first.firstSeq) + 1;
+  if (count < 1 || count > lines.length - 2) fail();
+  const root = parseRootTrajectory([JSON.stringify({ ...first, version: 1, children: undefined }), ...lines.slice(1, count + 2)].join("\n"));
+  const children: DSHTrajectoryChild[] = [];
+  const parents = [{ header: root.header, events: root.events, ancestry: new Set([root.header.id]) }];
+  const seen = new Set<string>();
+  const ranges = new Map<string, Array<[number, number]>>();
+  let offset = count + 2;
+  const scopes = first.children as unknown[];
+  for (let p = 0; p < parents.length; p += 1) {
+    const parent = parents[p]!;
+    for (const event of parent.events) {
+      if (event.type !== "multica/task-child") continue;
+      const ref = event.data;
+      const scope = scopes[children.length];
+      if (!isRecord(scope) || typeof scope.sessionId !== "string" || !scope.sessionId ||
+        typeof scope.activationId !== "string" || !scope.activationId || typeof scope.closed !== "boolean" ||
+        scope.parentSessionId !== parent.header.id || ref.requestId !== root.scope?.requestId ||
+        ref.childSessionId !== scope.sessionId || ref.activationId !== scope.activationId || ref.firstSeq !== scope.firstSeq ||
+        !Number.isSafeInteger(scope.firstSeq) || Number(scope.firstSeq) < 0 || !Number.isSafeInteger(scope.lastSeq) ||
+        Number(scope.lastSeq) < Number(scope.firstSeq) || seen.has(scope.activationId) || parent.ancestry.has(scope.sessionId)) fail();
+      const s = scope as Record<string, unknown> & { sessionId: string; activationId: string; closed: boolean };
+      const start = Number(s.firstSeq), end = Number(s.lastSeq);
+      if ((ranges.get(s.sessionId) ?? []).some(([a, b]) => start <= b && a <= end)) fail();
+      ranges.set(s.sessionId, [...(ranges.get(s.sessionId) ?? []), [start, end]]);
+      seen.add(s.activationId);
+      const size = end - start + 1;
+      if (size > lines.length - offset - 1) fail();
+      const header: unknown = JSON.parse(lines[offset]!);
+      if (!isRecord(header) || header.type !== "session" || header.version !== 3 || header.id !== s.sessionId ||
+        header.parentSession !== parent.header.id || header.origin !== "subagent" || typeof header.isSeeded !== "boolean" ||
+        header.cwd !== parent.header.cwd || !Number.isSafeInteger(header.createdAt) || Number(header.createdAt) < 0 ||
+        !Number.isSafeInteger(header.delegationDepth) || Number(header.delegationDepth) <= (parent.header.delegationDepth ?? 0)) fail();
+      const events: DSHTrajectoryEvent[] = [];
+      let closed = false;
+      for (let i = 0; i < size; i += 1) {
+        const raw: unknown = JSON.parse(lines[offset + 1 + i]!);
+        if (!isRecord(raw) || typeof raw.type !== "string" || !raw.type || raw.type === "session" ||
+          raw.seq !== start + i || !Number.isSafeInteger(raw.time) || Number(raw.time) < 0 || !isRecord(raw.data)) fail();
+        const e = raw as unknown as DSHTrajectoryEvent;
+        if (i === 0 && e.type !== "multica/task-child-start") fail();
+        if (e.type === "multica/task-child-start" || e.type === "multica/task-child-end") {
+          if (e.data.requestId !== root.scope?.requestId || e.data.parentSessionId !== parent.header.id || e.data.activationId !== s.activationId) fail();
+          if (e.type === "multica/task-child-start" ? i !== 0 : i !== size - 1 || e.data.firstSeq !== start) fail();
+          if (e.type === "multica/task-child-end") closed = true;
+        }
+        events.push(e);
+      }
+      if (closed !== s.closed) fail();
+      const child = { header: header as unknown as DSHTrajectoryHeader, events, activationId: s.activationId, closed };
+      children.push(child);
+      parents.push({ header: child.header, events, ancestry: new Set([...parent.ancestry, s.sessionId]) });
+      offset += size + 1;
+    }
+  }
+  if (children.length !== scopes.length || offset !== lines.length) fail();
+  return { ...root, children };
 }
 
 export function trajectoryCategory(type: string): TrajectoryCategory {

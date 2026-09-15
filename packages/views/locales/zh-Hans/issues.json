@@ -553,6 +553,10 @@
     "note_estimate": "费用按各模型公开价目估算；供应商回报实际费用时以回报值为准。"
   },
   "trajectory": {
+    "session": "会话",
+    "root_session": "主会话",
+    "child_session": "子会话 {{number}}",
+    "interrupted": "已中断",
     "title": "DSH 原生轨迹",
     "open": "查看 DSH 轨迹",
     "read_only": "只读",

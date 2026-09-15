@@ -137,6 +137,14 @@ Do not add a project resource just because `repo checkout` failed. First determi
 
 More source-backed details: `references/runtimes-and-repos-source-map.md`.
 
+### DSH task trajectories
+
+The task trajectory includes the root turn and its verified child activations.
+Use the session selector to inspect each child's native tools and output. Native
+sequence numbers belong to their own session; they are not a global task counter.
+A resumed child contributes only the activation belonging to this task, excluding
+seeded history and other tasks. An interrupted child is explicitly marked.
+
 ### ASB sandbox capacity
 
 Cold launches read current ASB allocations and use the regional API endpoint

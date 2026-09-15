@@ -323,7 +323,17 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 			history = restored
 		}
 		if history.found {
-			artifact, artifactErr := history.trajectory(trajectoryHeader, b.native.SessionID)
+			children, childErr := b.childTrajectories(artifactCtx, trajectoryHeader, history.ownEvents)
+			if childErr != nil {
+				return failure(childErr)
+			}
+			for _, child := range children {
+				if !child.Scope.Closed && result.Status == "completed" {
+					result.Status = "failed"
+					result.Error = "native DSH child activation was interrupted"
+				}
+			}
+			artifact, artifactErr := history.trajectory(trajectoryHeader, b.native.SessionID, children...)
 			if artifactErr != nil {
 				return failure(artifactErr)
 			}

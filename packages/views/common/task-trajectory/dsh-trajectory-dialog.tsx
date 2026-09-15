@@ -196,16 +196,18 @@ export function DSHTrajectoryDialog({
   const listRef = useRef<VirtuosoHandle>(null);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<TrajectoryCategory | "all">("all");
-  const document = useMemo(() => {
+  const bundle = useMemo(() => {
     const parsed = parseDSHTrajectory(artifact.jsonl);
     if (
       parsed.header.id !== artifact.session_id ||
-      parsed.events.length !== artifact.event_count
+      parsed.events.length + (parsed.children ?? []).reduce((sum, child) => sum + child.events.length, 0) !== artifact.event_count
     ) {
       throw new Error("DSH trajectory metadata does not match its native ledger");
     }
     return parsed;
   }, [artifact]);
+  const [selectedActivation, setSelectedActivation] = useState("root");
+  const document = bundle.children?.find((child) => child.activationId === selectedActivation) ?? bundle;
   const [selectedSeq, setSelectedSeq] = useState<number | null>(
     document.events.at(-1)?.seq ?? null,
   );
@@ -290,6 +292,29 @@ export function DSHTrajectoryDialog({
           </header>
 
           <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2">
+            {bundle.children && bundle.children.length > 0 && (
+              <select
+                aria-label={t(($) => $.trajectory.session)}
+                className="h-8 max-w-52 rounded border bg-background px-2 text-caption"
+                value={selectedActivation}
+                onChange={(event) => {
+                  const key = event.target.value;
+                  setSelectedActivation(key);
+                  const next = bundle.children?.find((child) => child.activationId === key) ?? bundle;
+                  setSelectedSeq(next.events.at(-1)?.seq ?? null);
+                  setQuery("");
+                  setCategory("all");
+                }}
+              >
+                <option value="root">{t(($) => $.trajectory.root_session)}</option>
+                {bundle.children.map((child, index) => (
+                  <option key={child.activationId} value={child.activationId}>
+                    {t(($) => $.trajectory.child_session, { number: index + 1 })}
+                    {!child.closed && ` · ${t(($) => $.trajectory.interrupted)}`}
+                  </option>
+                ))}
+              </select>
+            )}
             <div className="relative min-w-0 flex-1 sm:max-w-sm">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
