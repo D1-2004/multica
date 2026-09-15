@@ -586,9 +586,12 @@ func inventedExecutorToolReason(reason string) bool {
 	if containsAnyFold(r, "credential", "凭据", "密钥") {
 		return false
 	}
+	if containsAnyFold(r, "fake-nop", "口径", "job_policy", "forbids", "记忆") && containsAnyFold(r, "forbid", "限制", "declin", "权限", "不开工", "start_work") {
+		return true
+	}
 	inventory := containsAnyFold(r, "catalog", "catalog_complete", "agent_skills", "mcp", "create_workitem", "aonecoop", "工具清单", "installed skill", "tool list", "unavailable tool", "capability gap", "capability boundar")
 	toolish := containsAnyFold(r, "工具", "技能", "tool", "skill")
-	refusal := containsAnyFold(r, "权限", "permission", "unavailable", "cannot", "prevents authorization", "violating", "lack of", "not in the installed", "无对应", "无法", "没有直接", "无直接", "未安装")
+	refusal := containsAnyFold(r, "权限", "permission", "unavailable", "cannot", "prevents authorization", "violating", "lack of", "not in the installed", "无对应", "无法", "没有直接", "无直接", "未安装", "forbids")
 	return (inventory || toolish) && refusal
 }
 

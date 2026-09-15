@@ -41,7 +41,7 @@ func declineWithoutStandingRestriction(decision Decision, turn Turn) bool {
 
 func standingRestrictionQuote(quote string, turn Turn) bool {
 	q := strings.TrimSpace(quote)
-	if q == "" || quoteIsCurrentWorkUtterance(q, turn) {
+	if q == "" || quoteIsCurrentWorkUtterance(q, turn) || !looksLikeRestriction(q) {
 		return false
 	}
 	if strings.Contains(configuredPersona(turn), q) || strings.Contains(configuredReplyTone(turn), q) {
@@ -54,6 +54,16 @@ func standingRestrictionQuote(quote string, turn Turn) bool {
 	}
 	for _, utterance := range windowUtterances(turn) {
 		if strings.Contains(utterance.Text, q) && !workRequestUtterance(q) && strings.TrimSpace(utterance.Text) != q {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeRestriction(text string) bool {
+	t := strings.ToLower(text)
+	for _, needle := range []string{"不得", "禁止", "不披露", "不要发给", "未经授权", "仅起草", "never send", "do not send", "must not"} {
+		if strings.Contains(t, needle) {
 			return true
 		}
 	}

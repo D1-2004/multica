@@ -73,6 +73,16 @@ func TestPromptProjectsThreeEvidenceCards(t *testing.T) {
 	}
 }
 
+func TestWorkWindowDeclineCannotUsePersonaStyleAsRestriction(t *testing.T) {
+	turn := Turn{Source: SourceDigitalEmployee, Message: "帮我新建一个事项，标题写成 DIRTY-MEM-FIX", Persona: "你绑定的钉钉身份是 「东翔测试号」，你是冷静的协调人。对齐各方和事实，不站队，把事项说清楚。"}
+	result := finishCheckResult{Verdict: "allow", Reason: "FAKE-NOP-PERM restricts new work; decline is correct."}
+	decision := Decision{CoordinationActions: []CoordinationAction{{Kind: "decline", ReasonCode: "scope", ConstraintQuote: "你绑定的钉钉身份是 「东翔测试号」，你是冷静的协调人。对齐各方和事实，不站队，把事项说清楚。", Reply: "当前受 FAKE-NOP-PERM 限制，无法新建事项。"}}}
+	applyWorkWinsOverSpeakRepair(&result, turn, decision)
+	if result.Verdict != "revise" || !strings.Contains(result.Reason, "Use start_work") {
+		t.Fatalf("identity/style persona is not a work decline: %#v", result)
+	}
+}
+
 func TestFinishCheckWorkWindowDeclineQuotingWorkAskIsRevised(t *testing.T) {
 	turn := Turn{Source: SourceDigitalEmployee, Message: "帮我新建一个事项，标题写成 DIRTY-MEM-E2E"}
 	result := finishCheckResult{Verdict: "allow", Reason: "Candidate correctly applies FAKE-NOP-PERM policy: declines work."}
