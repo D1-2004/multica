@@ -105,6 +105,12 @@ func (s packageBindingState) exportDeclaration(path string, declaration, actual 
 	encoded, err := json.Marshal(value); if err != nil { return actual }; return encoded
 }
 func (s packageBindingState) ready(path string, declaration, actual json.RawMessage) bool {
+	// An explicitly empty plugin selection has no identities to authorize.
+	// Keep unavailable/null state and all nonempty selections receipt-gated.
+	if path == "/dsh_plugins" {
+		var wanted, configured []json.RawMessage
+		if json.Unmarshal(declaration,&wanted) == nil && wanted != nil && len(wanted) == 0 && json.Unmarshal(actual,&configured) == nil && configured != nil && len(configured) == 0 { return true }
+	}
 	receipt, exists := s.Receipts[path]
 	return exists && receipt.Declaration == packageValueHash(declaration) && packageValueHash(receipt.Actual) == packageValueHash(actual)
 }

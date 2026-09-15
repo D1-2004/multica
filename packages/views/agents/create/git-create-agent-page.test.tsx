@@ -42,6 +42,12 @@ beforeEach(() => {
 });
 
 describe("Git creation", () => {
+  it("links an unconnected workspace to GitHub settings", async () => {
+    mocked.installations.mockResolvedValue({ can_manage: true, installations: [] });
+    mount();
+    expect(await screen.findByRole("link", { name: enAgents.creation_studio.git.manage_connections })).toHaveAttribute("href", "/acme/settings?tab=github");
+  });
+
   it("requires a new preview after changing branches and submits only the reviewed ID", async () => {
     mount();
     await waitFor(() => expect(screen.getByLabelText("GitHub connection")).toHaveValue("install-1"));

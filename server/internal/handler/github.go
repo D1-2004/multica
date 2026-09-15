@@ -22,6 +22,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/githubapp"
@@ -474,6 +475,7 @@ func githubSettingsURL(frontend, returnTo string) string {
 // browser should open to install the Multica GitHub App against the caller's
 // repos. The state token binds the resulting setup callback to this workspace.
 func (h *Handler) GitHubConnect(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control","no-store")
 	workspaceID := chi.URLParam(r, "id")
 	if _, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id"); !ok {
 		return
@@ -490,23 +492,23 @@ func (h *Handler) GitHubConnect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid return target")
 		return
 	}
-	slug := githubAppSlug()
-	state, err := signStateForReturn(workspaceID, returnTo)
+	userID := requestUserID(r)
+	if _,err := parseStrictUUID(userID); err != nil { writeError(w,http.StatusUnauthorized,"authentication required"); return }
+	intent := githubConnectIntent{WorkspaceID:workspaceID,UserID:userID,ReturnTo:returnTo,RegisteredClaims:jwt.RegisteredClaims{Issuer:"multica-github-connect",ID:uuid.NewString(),ExpiresAt:jwt.NewNumericDate(time.Now().Add(githubConnectTTL))}}
+	state, err := signGitHubConnectIntent(intent)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to sign state")
 		return
 	}
-	installURL := fmt.Sprintf(
-		"https://github.com/apps/%s/installations/new?state=%s",
-		url.PathEscape(slug),
-		url.QueryEscape(state),
-	)
+	installURL := h.githubFrontend()+"/api/github/install?state="+url.QueryEscape(state)
 	writeJSON(w, http.StatusOK, GitHubConnectResponse{URL: installURL, Configured: true})
 }
 
 // GitHubSetupCallback (GET /api/github/setup) handles the redirect GitHub
-// sends after a user installs (or re-authorizes) the App. We expect
-// ?installation_id=<id>&state=<signed token>. We persist the installation
+// sends after a user installs (or re-authorizes) the App. New connections use
+// expiring browser context and verify GitHub user access before persistence.
+// The original signed-state path remains for already-issued legacy callbacks.
+// We persist the installation
 // row (workspace ↔ installation_id mapping), then bounce the user back to
 // the new Settings → GitHub tab in the web app (RFC MUL-2414 §4.1). The
 // previous destination was the catch-all Settings page, which after the
@@ -521,6 +523,23 @@ func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
 		frontend = "http://localhost:3000"
 	}
 	settingsURL := githubSettingsURL(frontend, githubReturnToGitHub)
+	w.Header().Set("Cache-Control","no-store")
+	w.Header().Set("Referrer-Policy","no-referrer")
+	cookie,cookieErr := r.Cookie(githubConnectCookie)
+	if cookieErr == nil || strings.HasPrefix(state,"eyJ") {
+		if state == "" && cookieErr == nil { state = cookie.Value }
+		intent,err := readGitHubConnectIntent(state)
+		if err != nil || cookieErr != nil || !hmac.Equal([]byte(cookie.Value),[]byte(state)) || intent.InstallationID != 0 {
+			http.Redirect(w,r,settingsURL+"&github_error=invalid_state",http.StatusFound); return
+		}
+		settingsURL = h.githubIntentSettingsURL(r.Context(),intent)
+		installationID,err := strconv.ParseInt(installationIDStr,10,64)
+		if err != nil || installationID <= 0 { http.Redirect(w,r,settingsURL+"&github_error=bad_installation_id",http.StatusFound); return }
+		if !h.githubIntentAllowed(r.Context(),intent) { h.setGitHubConnectCookie(w,""); http.Redirect(w,r,settingsURL+"&github_error=workspace_forbidden",http.StatusFound); return }
+		intent.InstallationID = installationID
+		h.beginGitHubUserAuthorization(w,r,intent)
+		return
+	}
 
 	if state == "" {
 		http.Redirect(w, r, settingsURL+"&github_error=missing_params", http.StatusFound)
@@ -537,11 +556,11 @@ func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	installationID, err := strconv.ParseInt(installationIDStr, 10, 64)
-	if err != nil {
+	if err != nil || installationID <= 0 {
 		http.Redirect(w, r, settingsURL+"&github_error=bad_installation_id", http.StatusFound)
 		return
 	}
-	wsUUID, err := parseStrictUUID(workspaceID)
+	_, err = parseStrictUUID(workspaceID)
 	if err != nil {
 		http.Redirect(w, r, settingsURL+"&github_error=bad_workspace", http.StatusFound)
 		return
@@ -562,8 +581,12 @@ func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.persistGitHubSetup(w,r,workspaceID,settingsURL,installationID,login,accountType,avatar,connectedBy)
+}
+
+func (h *Handler) persistGitHubSetup(w http.ResponseWriter,r *http.Request,workspaceID,settingsURL string,installationID int64,login,accountType string,avatar *string,connectedBy pgtype.UUID) {
 	inst, err := h.Queries.CreateGitHubInstallation(r.Context(), db.CreateGitHubInstallationParams{
-		WorkspaceID:      wsUUID,
+		WorkspaceID:      parseUUID(workspaceID),
 		InstallationID:   installationID,
 		AccountLogin:     login,
 		AccountType:      accountType,

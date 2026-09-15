@@ -1826,6 +1826,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
+	r.Get("/api/github/install", h.GitHubInstallStart)
+	r.Get("/api/github/authorize", h.GitHubAuthorizeCallback)
 	// Slack OAuth callback (no Multica auth in the path — it is hit by Slack's
 	// browser redirect; the workspace/agent/initiator are recovered from the
 	// sealed state). It exchanges the code, upserts the install, then bounces
@@ -2099,7 +2101,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// above so non-admins can see the workspace's connection state.
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
-					r.Get("/github/connect", h.GitHubConnect)
+					r.With(handler.RequireHumanActor).Get("/github/connect", h.GitHubConnect)
 					r.With(handler.RequireHumanActor).Post("/github/installations/reuse", h.ReuseGitHubInstallation)
 					r.Get("/github/installations/{installationId}/repositories", h.ListGitHubInstallationRepositories)
 					r.Delete("/github/installations/{installationId}", h.DeleteGitHubInstallation)

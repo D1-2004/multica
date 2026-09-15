@@ -120,7 +120,7 @@ After disconnect, mirrored PR rows stay in the database so historical issue side
 
 If you're running Multica on Multica Cloud, the integration is already configured — skip this section.
 
-For self-host, you create one GitHub App, point it at your server, and set two environment variables. The whole flow is below.
+For self-host, you create one GitHub App, point it at your server, and configure its server credentials. The whole flow is below.
 
 ### 1. Create a GitHub App
 
@@ -135,8 +135,8 @@ Fill in:
 |---|---|
 | **GitHub App name** | Anything recognizable, e.g. `Multica` or `Multica (staging)`. |
 | **Homepage URL** | Your Multica frontend, e.g. `https://multica.example.com`. |
-| **Callback URL** | Leave blank — Multica doesn't use OAuth user identity. |
-| **Setup URL** | `https://<api-host>/api/github/setup`. **Check "Redirect on update"**. |
+| **Callback URL** | `<FRONTEND_ORIGIN>/api/github/authorize` for GitHub user authorization. |
+| **Setup URL** | `<FRONTEND_ORIGIN>/api/github/setup`. **Check "Redirect on update"**. Both callbacks must use the same browser host so the pending connection cookie is available. |
 | **Webhook → Active** | Enabled. |
 | **Webhook URL** | `https://<api-host>/api/webhooks/github`. |
 | **Webhook secret** | Generate a long random string (e.g. `openssl rand -hex 32`). You'll paste the same value into Multica's env in step 2. |
@@ -152,7 +152,7 @@ After **Create GitHub App**, note two things from the App's detail page:
 - The **webhook secret** you just generated (you can't read it back from GitHub later — save it now).
 
 <Callout type="warning">
-**Webhook secret ≠ Client secret.** The App settings page has both fields stacked together. The **Webhook secret** is what signs `pull_request` payloads — that's the one Multica needs. The **Client secret** is for OAuth and is not used by this integration. Mixing them up produces a confusing `401 invalid signature` on every webhook delivery.
+**Webhook secret ≠ Client secret.** The App settings page has both fields stacked together. The **Webhook secret** is what signs `pull_request` payloads — that's the one Multica needs. The separate **Client secret** verifies GitHub user authorization when connecting an installation; configure it as `GITHUB_APP_CLIENT_SECRET`. Mixing them up produces a confusing `401 invalid signature` on every webhook delivery.
 </Callout>
 
 ### 2. Set environment variables
@@ -162,6 +162,8 @@ On the API server:
 ```dotenv
 GITHUB_APP_SLUG=multica-acme
 GITHUB_WEBHOOK_SECRET=<the webhook secret you generated>
+GITHUB_APP_CLIENT_ID=<Client ID from the same GitHub App>
+GITHUB_APP_CLIENT_SECRET=<Client secret from the same GitHub App>
 
 # Optional for PR linking, required for GitHub-backed agent creation and sync:
 GITHUB_APP_ID=<numeric App ID from the App's settings page>
@@ -175,7 +177,9 @@ GITHUB_APP_PRIVATE_KEY=<full PEM block, including BEGIN/END lines>
 
 `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` are optional only when you use PR linking alone. Repository-backed agent creation and sync require both because Multica mints short-lived installation access tokens for GitHub's Contents API. The token is refreshed automatically and is never stored in the database. Generate the private key under **Private keys → Generate a private key** on the App's settings page; paste the full PEM block (including the `-----BEGIN/END RSA PRIVATE KEY-----` lines) into the env var, preserving newlines.
 
-`FRONTEND_ORIGIN` must also be set (it already is for any production self-host); the setup callback bounces the user back to `<FRONTEND_ORIGIN>/settings?tab=github` after install.
+`FRONTEND_ORIGIN` must be set and must proxy `/api/github/*` to this server. New connections return to `<FRONTEND_ORIGIN>/<workspace-slug>/settings?tab=github` (or `tab=repositories`).
+
+New connections require `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`, including updates to an existing installation. Multica opens `/api/github/install` first to save a signed, 15-minute browser context. If GitHub drops `state` during Configure, this context identifies the initiating workspace. The subsequent OAuth code exchange checks that the GitHub user can access the selected installation and that the initiating Multica user still manages the workspace before writing a connection. Tokens are not stored. Missing credentials produce a setup error; installation IDs alone never authorize this recovery flow. Existing workspace connections continue to work without reconnecting.
 
 Restart the API after setting the env vars.
 
@@ -239,3 +243,5 @@ A few rough edges to be aware of today:
 ## Protocol history
 
 - 2026-09-08: Documented repository URL APIs and preview-before-confirm sync, replacing the previous direct-sync behavior and correcting the unavailable creation entry.
+
+- 2026-09-14: Added expiring browser connection context and GitHub user authorization for install/update callbacks, including workspace permission rechecks and scoped return paths. Reason: GitHub can omit state when configuring an existing installation; recovering that context must not grant access based only on an installation ID.

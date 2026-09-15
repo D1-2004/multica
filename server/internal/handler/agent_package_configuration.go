@@ -241,13 +241,18 @@ func (definition packageConfiguration) importA2A(ctx context.Context, q *db.Quer
 		a := definition.A2A
 		endpoint, err := q.GetAgentA2AEndpointByAgent(ctx, agent.ID)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) { return err }
+		// Export represents an absent endpoint as disabled with no clients.
+		// Reimporting that declaration must not invent a default agent card.
+		writeEndpoint := err == nil || (a.Enabled != nil && *a.Enabled) || a.CardName != nil || a.CardDescription != nil || a.CardVersion != nil || a.CardSkills != nil || len(a.Clients) > 0
 		if errors.Is(err, pgx.ErrNoRows) { endpoint.PublicAgentID = uuid.NewString(); endpoint.CardName = agent.Name; endpoint.CardVersion = "1.0.0"; endpoint.CardSkills = json.RawMessage(`[]`) }
 		if a.Enabled != nil { endpoint.Enabled = *a.Enabled }
 		if a.CardName != nil { endpoint.CardName = *a.CardName }
 		if a.CardDescription != nil { endpoint.CardDescription = *a.CardDescription }
 		if a.CardVersion != nil { endpoint.CardVersion = *a.CardVersion }
 		if a.CardSkills != nil { endpoint.CardSkills = a.CardSkills }
-		if _, err := q.UpsertAgentA2AEndpoint(ctx, db.UpsertAgentA2AEndpointParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID, OwnerUserID:agent.OwnerID, ActorUserID:actorID, PublicAgentID:endpoint.PublicAgentID, Enabled:endpoint.Enabled, CardName:endpoint.CardName, CardDescription:endpoint.CardDescription, CardVersion:endpoint.CardVersion, CardSkills:endpoint.CardSkills}); err != nil { return err }
+		if writeEndpoint {
+			if _, err := q.UpsertAgentA2AEndpoint(ctx, db.UpsertAgentA2AEndpointParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID, OwnerUserID:agent.OwnerID, ActorUserID:actorID, PublicAgentID:endpoint.PublicAgentID, Enabled:endpoint.Enabled, CardName:endpoint.CardName, CardDescription:endpoint.CardDescription, CardVersion:endpoint.CardVersion, CardSkills:endpoint.CardSkills}); err != nil { return err }
+		}
 		clients, err := q.ListAgentA2AClientsForOwner(ctx, db.ListAgentA2AClientsForOwnerParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID, OwnerUserID:agent.OwnerID})
 		if err != nil { return err }
 		mappings, err := readPackageClientMappings(ctx, q, agent.ID)

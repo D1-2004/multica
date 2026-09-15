@@ -303,7 +303,7 @@ func TestStateRoundTripWithRepositoryReturnTarget(t *testing.T) {
 func TestGitHubConnectRepositoryReturnTarget(t *testing.T) {
 	t.Setenv("GITHUB_APP_SLUG", "multica-test")
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret-123")
-	wsID := "11111111-2222-3333-4444-555555555555"
+	wsID := testWorkspaceID
 
 	req := httptest.NewRequest(
 		http.MethodGet,
@@ -311,8 +311,9 @@ func TestGitHubConnectRepositoryReturnTarget(t *testing.T) {
 		nil,
 	)
 	req = withURLParam(req, "id", wsID)
+	req.Header.Set("X-User-ID",testUserID)
 	rec := httptest.NewRecorder()
-	(&Handler{}).GitHubConnect(rec, req)
+	testHandler.GitHubConnect(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GitHubConnect: got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -324,10 +325,9 @@ func TestGitHubConnectRepositoryReturnTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse install URL: %v", err)
 	}
-	_, returnTo, ok := verifyStateWithReturn(installURL.Query().Get("state"))
-	if !ok || returnTo != githubReturnToRepositories {
-		t.Fatalf("signed return target = %q, valid=%v, want repositories", returnTo, ok)
-	}
+	if installURL.Path != "/api/github/install" { t.Fatalf("connect bypasses browser context setup: %s",installURL.Path) }
+	intent,err := readGitHubConnectIntent(installURL.Query().Get("state"))
+	if err != nil || intent.ReturnTo != githubReturnToRepositories || intent.WorkspaceID != wsID || intent.UserID != testUserID { t.Fatalf("invalid signed workspace context: %v",err) }
 
 	badReq := httptest.NewRequest(
 		http.MethodGet,
@@ -340,6 +340,20 @@ func TestGitHubConnectRepositoryReturnTarget(t *testing.T) {
 	if badRec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid return target: got %d, want 400", badRec.Code)
 	}
+}
+
+func TestGitHubSetupRecoversMissingStateFromBrowserContext(t *testing.T) {
+	t.Setenv("GITHUB_WEBHOOK_SECRET","test-secret-123")
+	contextToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256,jwt.MapClaims{
+		"iss":"multica-github-connect", "exp":time.Now().Add(15*time.Minute).Unix(),
+		"workspace_id":testWorkspaceID, "return_to":githubReturnToRepositories, "user_id":testUserID, "jti":"pending-test",
+	}).SignedString([]byte("test-secret-123"))
+	if err != nil { t.Fatal(err) }
+	req := httptest.NewRequest(http.MethodGet,"/api/github/setup?installation_id=not-a-number&setup_action=update",nil)
+	req.AddCookie(&http.Cookie{Name:"multica_github_connect",Value:contextToken})
+	rec := httptest.NewRecorder()
+	testHandler.GitHubSetupCallback(rec,req)
+	if location := rec.Header().Get("Location"); !strings.Contains(location,"tab=repositories&github_error=bad_installation_id") { t.Fatalf("lost pending workspace context: %s",location) }
 }
 
 func TestGitHubSetupCallbackRepositoryReturnTarget(t *testing.T) {
@@ -357,7 +371,7 @@ func TestGitHubSetupCallbackRepositoryReturnTarget(t *testing.T) {
 		nil,
 	)
 	rec := httptest.NewRecorder()
-	(&Handler{}).GitHubSetupCallback(rec, req)
+	(&Handler{cfg:Config{FrontendOrigin:"https://app.multica.test/"}}).GitHubSetupCallback(rec, req)
 	if rec.Code != http.StatusFound {
 		t.Fatalf("GitHubSetupCallback: got %d, want 302", rec.Code)
 	}
@@ -1963,7 +1977,7 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner", "admin"))
-			r.Get("/github/connect", testHandler.GitHubConnect)
+			r.With(RequireHumanActor).Get("/github/connect", testHandler.GitHubConnect)
 			r.Get("/github/installations/{installationId}/repositories", testHandler.ListGitHubInstallationRepositories)
 			r.Delete("/github/installations/{installationId}", testHandler.DeleteGitHubInstallation)
 		})
@@ -2007,6 +2021,15 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)
 		if code := exercise(t, http.MethodGet, "/api/workspaces/"+wsID+"/github/connect", outsiderUserID); code != http.StatusNotFound {
 			t.Errorf("outsider GET connect: want 404, got %d", code)
 		}
+	})
+
+	t.Run("GET connect rejects machine credentials", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,"/api/workspaces/"+wsID+"/github/connect",nil)
+		req.Header.Set("X-User-ID",adminUserID)
+		req.Header.Set("X-Actor-Source","task_token")
+		req.Header.Set("X-Workspace-ID",wsID)
+		rec := httptest.NewRecorder(); router.ServeHTTP(rec,req)
+		if rec.Code != http.StatusForbidden { t.Fatalf("machine connection start: %d",rec.Code) }
 	})
 
 	t.Run("GET repositories remains owner/admin only", func(t *testing.T) {
@@ -2981,15 +3004,25 @@ func TestReuseGitHubInstallationAcrossManagedWorkspaces(t *testing.T) {
 		t.Skip("handler test fixture not initialized (no DB?)")
 	}
 	ctx := context.Background()
+	suffix := fmt.Sprintf("%d",time.Now().UnixNano())
 
 	var userID string
 	if err := testPool.QueryRow(ctx, `
 INSERT INTO "user" (name, email)
-VALUES ('GitHub Reuse Admin', 'github-reuse-admin@multica.test')
+VALUES ('GitHub Reuse Admin', $1)
 RETURNING id
-`).Scan(&userID); err != nil {
+`, "github-reuse-admin-"+suffix+"@multica.test").Scan(&userID); err != nil {
 		t.Fatalf("create reuse user: %v", err)
 	}
+	var workspaceIDs []string
+	t.Cleanup(func() {
+		for _,id := range workspaceIDs {
+			_,_ = testPool.Exec(context.Background(),`DELETE FROM github_installation WHERE workspace_id=$1`,id)
+			_,_ = testPool.Exec(context.Background(),`DELETE FROM member WHERE workspace_id=$1`,id)
+			_,_ = testPool.Exec(context.Background(),`DELETE FROM workspace WHERE id=$1`,id)
+		}
+		_,_ = testPool.Exec(context.Background(),`DELETE FROM "user" WHERE id=$1`,userID)
+	})
 
 	createWorkspace := func(name, slug, prefix, role string) string {
 		t.Helper()
@@ -2998,9 +3031,10 @@ RETURNING id
 INSERT INTO workspace (name, slug, description, issue_prefix)
 VALUES ($1, $2, '', $3)
 RETURNING id
-`, name, slug, prefix).Scan(&id); err != nil {
+`, name, slug+"-"+suffix, prefix).Scan(&id); err != nil {
 			t.Fatalf("create workspace %s: %v", slug, err)
 		}
+		workspaceIDs = append(workspaceIDs,id)
 		if _, err := testPool.Exec(ctx, `
 INSERT INTO member (workspace_id, user_id, role)
 VALUES ($1, $2, $3)
@@ -3014,8 +3048,8 @@ VALUES ($1, $2, $3)
 	sourceWorkspaceID := createWorkspace("GitHub Reuse Source", "github-reuse-source", "GRS", "admin")
 	memberSourceWorkspaceID := createWorkspace("GitHub Reuse Member Source", "github-reuse-member-source", "GRM", "member")
 
-	const reusableNumericID int64 = 88001122
-	const forbiddenNumericID int64 = 88001123
+	reusableNumericID := time.Now().UnixNano()
+	forbiddenNumericID := reusableNumericID + 1
 	reusable, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
 		WorkspaceID:    parseUUID(sourceWorkspaceID),
 		InstallationID: reusableNumericID,
@@ -3034,10 +3068,6 @@ VALUES ($1, $2, $3)
 	if err != nil {
 		t.Fatalf("create member-only installation: %v", err)
 	}
-
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
-	})
 
 	router := chi.NewRouter()
 	router.Route("/api/workspaces/{id}", func(r chi.Router) {
@@ -3066,6 +3096,9 @@ VALUES ($1, $2, $3)
 		req.Header.Set("Content-Type", "application/json")
 		if actorSource != "" {
 			req.Header.Set("X-Actor-Source", actorSource)
+			// Mirror the authenticated task token's workspace binding so this
+			// test reaches the installation visibility/human-actor guards.
+			if actorSource == "task_token" { req.Header.Set("X-Workspace-ID",targetWorkspaceID) }
 		}
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)

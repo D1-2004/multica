@@ -12,6 +12,8 @@ const mockReuseInstallation = vi.hoisted(() => vi.fn());
 const mockGetConnectURL = vi.hoisted(() => vi.fn());
 const mockInvalidate = vi.hoisted(() => vi.fn());
 const mockNavPush = vi.hoisted(() => vi.fn());
+const mockNavReplace = vi.hoisted(() => vi.fn());
+const searchParamsRef = vi.hoisted(() => ({ current: new URLSearchParams("tab=github") }));
 const mockSetQueryData = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
@@ -118,10 +120,10 @@ vi.mock("@multica/core/auth", () => {
 vi.mock("../../navigation/context", () => ({
   useNavigation: () => ({
     push: mockNavPush,
-    replace: vi.fn(),
+    replace: mockNavReplace,
     back: vi.fn(),
     pathname: "/acme/settings",
-    searchParams: new URLSearchParams("tab=github"),
+    searchParams: searchParamsRef.current,
     getShareableUrl: (p: string) => `https://app.example${p}`,
   }),
 }));
@@ -146,6 +148,7 @@ function I18nWrapper({ children }: { children: ReactNode }) {
 
 function resetFixtures() {
   vi.clearAllMocks();
+  searchParamsRef.current = new URLSearchParams("tab=github");
   workspaceRef.current = {
     id: "workspace-1",
     name: "Acme",
@@ -164,6 +167,20 @@ function resetFixtures() {
 
 describe("GitHubTab", () => {
   beforeEach(resetFixtures);
+
+  it("reports missing GitHub user authorization configuration after callback", async () => {
+    searchParamsRef.current = new URLSearchParams("tab=github&github_error=user_authorization_not_configured");
+    render(<GitHubTab />, { wrapper: I18nWrapper });
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith("GitHub user authorization is not configured. Ask your administrator to complete the GitHub App setup."));
+    expect(mockNavReplace).toHaveBeenCalledWith("/acme/settings?tab=github");
+  });
+
+  it("refreshes installations after a successful connection callback", async () => {
+    searchParamsRef.current = new URLSearchParams("tab=github&github_connected=1");
+    render(<GitHubTab />, { wrapper: I18nWrapper });
+    await waitFor(() => expect(mockInvalidate).toHaveBeenCalledWith({ queryKey: ["github", "workspace-1"] }));
+    expect(mockNavReplace).toHaveBeenCalledWith("/acme/settings?tab=github");
+  });
 
   it("folds the non-dev hint into the master switch description (no separate callout)", () => {
     render(<GitHubTab />, { wrapper: I18nWrapper });

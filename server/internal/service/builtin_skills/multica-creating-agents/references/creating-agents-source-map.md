@@ -277,3 +277,14 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
   immutable snapshot rollback evidence, including old-server response checks.
   Reason: document the repository-based release boundary and make recovery
   auditable without treating a moving branch or tag as historical state.
+
+- 2026-09-14: `github_connect.go` handles expiring browser context and GitHub user
+  authorization before workspace installation writes. `github_connect_test.go`
+  covers lost state, wrong browser context, provider rejection and revoked workspace
+  membership. Package binding and publication regressions cover empty plugins and
+  unchanged A2A export after rollback. Reason: correct live Git acceptance failures
+  without treating package declarations or installation IDs as authorization.
+
+- 2026-09-14: Package procedure details now live in `agent-packages.md`, loaded
+  from the main skill before package work. Reason: preserve the complete protocol
+  while keeping the main skill within the enforced 500-line budget.

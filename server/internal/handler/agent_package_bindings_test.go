@@ -127,3 +127,18 @@ func TestPackageEventTriggerRoundTripAndRollback(t *testing.T) {
 	if err := tx.Rollback(t.Context()); err != nil { t.Fatal(err) }
 	enabled, err = f.handler.EventTriggers.Enabled(t.Context(),agent.ID,agent.WorkspaceID); if err != nil || !enabled { t.Fatal("event configuration escaped the package transaction") }
 }
+
+func TestEmptyPluginImportReportsReady(t *testing.T) {
+	f := newGitSourceFixture(t)
+	var manifest map[string]any
+	if err := json.Unmarshal([]byte(f.files[gitSourceSHA1]["agent.json"]),&manifest); err != nil { t.Fatal(err) }
+	manifest["dsh_plugins"] = []any{}
+	manifest["version"] = "multica.agent/v2"
+	encoded,err := json.Marshal(manifest); if err != nil { t.Fatal(err) }; f.files[gitSourceSHA1]["agent.json"] = string(encoded)
+	id := f.create(t)
+	response := f.request(t,f.handler.GetAgentPackageBindings,id,nil,http.StatusOK)
+	var report packageBindingReport
+	if err := json.Unmarshal(mustPackageJSON(t,response),&report); err != nil { t.Fatal(err) }
+	for _,binding := range report.Bindings { if binding.Path == "/dsh_plugins" { if binding.Status != "ready" { t.Fatalf("empty plugin binding is %s",binding.Status) }; return } }
+	t.Fatal("plugin declaration absent from binding report")
+}

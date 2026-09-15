@@ -1,5 +1,7 @@
 "use client";
 
+import { githubConnectionErrorField } from "./github-connection-error";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { LoaderCircle, Plus, Search, Trash2 } from "lucide-react";
 import { Input } from "@multica/ui/components/ui/input";
@@ -204,7 +206,7 @@ export function RepositoriesTab() {
     }
 
     if (githubError) {
-      toast.error(t(($) => $.repositories.github_connect_failed));
+      toast.error(t(($) => $.github[githubConnectionErrorField(githubError)]));
     } else if (githubInstallations.length > 0 && githubBrowseConfigured) {
       setSelectedInstallationID(githubInstallations[0]!.id);
       setGitHubPickerOpen(true);

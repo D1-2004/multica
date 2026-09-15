@@ -83,7 +83,7 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
           <p className="text-body text-muted-foreground">{local ? t(($) => $.creation_studio.local.description) : t(($) => $.creation_studio.git.description)}</p>
           {!local && installations.isLoading && <p>{t(($) => $.tab_body.publish.loading)}</p>}
           {!local && !installations.isLoading && (!canManage || !installationId) && (
-            <p className="text-body text-muted-foreground">{t(($) => $.creation_studio.git.connection_required)} <AppLink className="underline" href={paths.settingsIntegrations()}>{t(($) => $.creation_studio.git.manage_connections)}</AppLink></p>
+            <p className="text-body text-muted-foreground">{t(($) => $.creation_studio.git.connection_required)} <AppLink className="underline" href={`${paths.settings()}?tab=github`}>{t(($) => $.creation_studio.git.manage_connections)}</AppLink></p>
           )}
           {local && <div className="space-y-3">
             <Label htmlFor="agent-package-file">{t(($) => $.creation_studio.local.file)}</Label>

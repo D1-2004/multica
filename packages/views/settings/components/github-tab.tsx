@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ExternalLink, GitCommitHorizontal, Link2, PanelRight } from "lucide-react";
@@ -32,6 +32,7 @@ import { AppLink, useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { SettingsTab } from "./settings-layout";
 import { GitHubMark } from "./github-mark";
+import { githubConnectionErrorField } from "./github-connection-error";
 
 type SettingsKey =
   | "github_enabled"
@@ -65,6 +66,23 @@ export function GitHubTab() {
   const canManage = installationData?.can_manage === true;
   const connected = installations.length > 0;
   const primaryInstallation = installations[0] ?? null;
+
+  useEffect(() => {
+    const error = navigation.searchParams.get("github_error");
+    const connected = navigation.searchParams.get("github_connected") === "1";
+    if (!error && !connected) return;
+    if (error) {
+      toast.error(t(($) => $.github[githubConnectionErrorField(error)]));
+    } else {
+      void qc.invalidateQueries({ queryKey: ["github", wsId] });
+      toast.success(t(($) => $.github.toast_connected));
+    }
+    const next = new URLSearchParams(navigation.searchParams);
+    next.delete("github_error");
+    next.delete("github_connected");
+    const search = next.toString();
+    navigation.replace(`${navigation.pathname}${search ? `?${search}` : ""}`);
+  }, [navigation, qc, t, wsId]);
 
   const flags = deriveGitHubSettings(workspace);
   const [savingKey, setSavingKey] = useState<SettingsKey | null>(null);

@@ -120,7 +120,7 @@ Multica 校验 `project@1` 的稳定字段后，把所选 commit 编译为数据
 
 如果你在 Multica Cloud 上，集成已经配好——跳过本节。
 
-Self-Host 需要：建一个 GitHub App、指向你的 server、设两个环境变量。完整流程如下。
+Self-Host 需要：建一个 GitHub App、指向你的 server、配置服务端凭据。完整流程如下。
 
 ### 1. 创建一个 GitHub App
 
@@ -135,8 +135,8 @@ Self-Host 需要：建一个 GitHub App、指向你的 server、设两个环境�
 |---|---|
 | **GitHub App name** | 任何能辨识的名字，例如 `Multica` 或 `Multica (staging)` |
 | **Homepage URL** | 你的 Multica 前端，例如 `https://multica.example.com` |
-| **Callback URL** | 留空——本集成不使用 OAuth 用户身份 |
-| **Setup URL** | `https://<api-host>/api/github/setup`。**勾选 "Redirect on update"** |
+| **Callback URL** | `<FRONTEND_ORIGIN>/api/github/authorize`，用于 GitHub 用户授权 |
+| **Setup URL** | `<FRONTEND_ORIGIN>/api/github/setup`。**勾选 "Redirect on update"**。两个回调必须使用同一浏览器域名，以读取待连接 Cookie |
 | **Webhook → Active** | 启用 |
 | **Webhook URL** | `https://<api-host>/api/webhooks/github` |
 | **Webhook secret** | 生成一个长随机字符串（例如 `openssl rand -hex 32`）。这个值会同样填到 step 2 的 env 里 |
@@ -152,7 +152,7 @@ Self-Host 需要：建一个 GitHub App、指向你的 server、设两个环境�
 - 你刚生成的 **webhook secret**（GitHub 之后不会再让你读取这个值——现在就保存好）
 
 <Callout type="warning">
-**Webhook secret ≠ Client secret。** App 设置页里两个字段紧挨着。**Webhook secret** 用于签 `pull_request` payload，这才是 Multica 需要的那个；**Client secret** 是 OAuth 用的，和本集成无关。混淆这两个会得到「每条 webhook 都 `401 invalid signature`」的诡异症状。
+**Webhook secret ≠ Client secret。** App 设置页里两个字段紧挨着。**Webhook secret** 用于签 `pull_request` payload，这才是 Multica 需要的那个；独立的 **Client secret** 用于连接安装时核验 GitHub 用户授权，配置到 `GITHUB_APP_CLIENT_SECRET`。混淆这两个会得到「每条 webhook 都 `401 invalid signature`」的诡异症状。
 </Callout>
 
 ### 2. 配置环境变量
@@ -162,6 +162,8 @@ API server 上：
 ```dotenv
 GITHUB_APP_SLUG=multica-acme
 GITHUB_WEBHOOK_SECRET=<你刚生成的 webhook secret>
+GITHUB_APP_CLIENT_ID=<同一个 GitHub App 的 Client ID>
+GITHUB_APP_CLIENT_SECRET=<同一个 GitHub App 的 Client secret>
 
 # 仅做 PR 关联时可选；从 GitHub 创建和同步智能体时必填：
 GITHUB_APP_ID=<App 设置页上的数字 App ID>
@@ -175,7 +177,9 @@ GITHUB_APP_PRIVATE_KEY=<完整 PEM 块，包含 BEGIN/END 行>
 
 `GITHUB_APP_ID` 和 `GITHUB_APP_PRIVATE_KEY` 只有在单独使用 PR 关联时才是可选项。从仓库创建或同步智能体需要同时配置二者，因为 Multica 会用它们签发短效 installation access token 来读取 Contents API。token 会自动刷新，也不会写入数据库。私钥从 App 设置页 **Private keys → Generate a private key** 生成，把整段 PEM（含 `-----BEGIN/END RSA PRIVATE KEY-----` 两行）粘到 env 里，保留换行。
 
-`FRONTEND_ORIGIN` 也必须设置（任何生产 self-host 都已经设了）——setup 回调结束后用它把用户跳回 `<FRONTEND_ORIGIN>/settings?tab=github`。
+`FRONTEND_ORIGIN` 必须设置，并将 `/api/github/*` 代理到本服务。新连接完成后返回 `<FRONTEND_ORIGIN>/<workspace-slug>/settings?tab=github`，仓库入口则返回 `tab=repositories`。
+
+新连接和已有安装的更新都需要 `GITHUB_APP_CLIENT_ID`、`GITHUB_APP_CLIENT_SECRET`。浏览器先访问 `/api/github/install` 保存签名保护、15 分钟有效的连接上下文；GitHub Configure 丢失 `state` 时从中恢复发起的工作区。随后通过 OAuth 授权码核验 GitHub 用户可以访问所选安装，并重新检查发起人在 Multica 的工作区管理权限，全部通过后才写入连接。不保存用户 Token。缺少 OAuth 配置会提示配置错误，不能仅凭安装 ID 完成恢复。已经存在的工作区连接可继续使用。
 
 设完 env 重启 API。
 
@@ -239,3 +243,5 @@ curl -i -X POST https://<api-host>/api/webhooks/github \
 ## 协议历史
 
 - 2026-09-08：补充仓库链接 API 与预览后确认同步，替换原直接同步描述，并纠正尚未接入的创建页入口。
+
+- 2026-09-14：安装和更新回调增加限时浏览器上下文、GitHub 用户授权、工作区权限复核和工作区内跳转。原因：已有安装 Configure 可能丢失 state，恢复上下文不能仅凭安装 ID 授予访问权。
