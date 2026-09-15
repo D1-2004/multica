@@ -29,8 +29,9 @@ type S3Storage struct {
 	usePathStyle bool   // controls path-style S3 addressing
 	// presignClient signs URLs against an endpoint reachable from outside the
 	// server's own network. Nil when that is the same endpoint the client uses.
-	presignClient   *s3.Client
-	presignEndpoint string
+	presignClient      *s3.Client
+	presignEndpoint    string
+	presignCredentials aws.CredentialsProvider
 }
 
 // NewS3StorageFromEnv creates an S3Storage from environment variables.
@@ -52,7 +53,15 @@ type S3Storage struct {
 type S3Option func(*s3Options)
 
 type s3Options struct {
-	credentials aws.CredentialsProvider
+	credentials        aws.CredentialsProvider
+	presignCredentials aws.CredentialsProvider
+}
+
+// WithPresignCredentialsProvider separates external delegation from server-side
+// storage access. A managed OSS key can be network-restricted while its bound
+// STS role permits temporary object transfers from external workers.
+func WithPresignCredentialsProvider(p aws.CredentialsProvider) S3Option {
+	return func(o *s3Options) { o.presignCredentials = p }
 }
 
 // WithCredentialsProvider supplies credentials the SDK re-invokes, rather than
@@ -137,13 +146,14 @@ func NewS3StorageFromEnv(opts ...S3Option) *S3Storage {
 		presignEndpoint = publicEndpointFor(endpointURL)
 	}
 	storage := &S3Storage{
-		client:          s3.NewFromConfig(cfg, s3Opts...),
-		bucket:          bucket,
-		region:          region,
-		cdnDomain:       cdnDomain,
-		endpointURL:     endpointURL,
-		usePathStyle:    usePathStyle,
-		presignEndpoint: presignEndpoint,
+		client:             s3.NewFromConfig(cfg, s3Opts...),
+		bucket:             bucket,
+		region:             region,
+		cdnDomain:          cdnDomain,
+		endpointURL:        endpointURL,
+		usePathStyle:       usePathStyle,
+		presignEndpoint:    presignEndpoint,
+		presignCredentials: options.presignCredentials,
 	}
 	if presignEndpoint != "" && presignEndpoint != endpointURL {
 		presignOpts := []func(*s3.Options){func(o *s3.Options) {
@@ -360,13 +370,42 @@ func (s *S3Storage) PresignGet(ctx context.Context, key string, ttl time.Duratio
 	return s.PresignGetWithContentDisposition(ctx, key, ttl, "")
 }
 
+func (s *S3Storage) externalSigner(ctx context.Context, ttl time.Duration) (*s3.Client, time.Duration, error) {
+	signer := s.client
+	if s.presignClient != nil {
+		signer = s.presignClient
+	}
+	if s.presignCredentials == nil {
+		return signer, ttl, nil
+	}
+	credential, err := s.presignCredentials.Retrieve(ctx)
+	if err != nil {
+		// Provider errors can include signed requests. Do not expose them.
+		return nil, 0, fmt.Errorf("external storage credentials unavailable")
+	}
+	if credential.AccessKeyID == "" || credential.SecretAccessKey == "" || credential.SessionToken == "" || !credential.CanExpire {
+		return nil, 0, fmt.Errorf("external storage credentials are not temporary")
+	}
+	remaining := time.Until(credential.Expires) - time.Minute
+	if remaining < time.Second {
+		return nil, 0, fmt.Errorf("external storage credentials expire too soon")
+	}
+	if ttl > remaining {
+		ttl = remaining.Truncate(time.Second)
+	}
+	options := signer.Options()
+	// Freeze the exact credential whose expiry was checked for this signature.
+	options.Credentials = credentials.NewStaticCredentialsProvider(credential.AccessKeyID, credential.SecretAccessKey, credential.SessionToken)
+	return s3.New(options), ttl, nil
+}
+
 func (s *S3Storage) PresignPut(ctx context.Context, key, contentType string, ttl time.Duration) (string, error) {
 	if key == "" || contentType == "" || ttl <= 0 || ttl > time.Hour {
 		return "", fmt.Errorf("s3 PresignPut: invalid object, content type or expiration")
 	}
-	signer := s.client
-	if s.presignClient != nil {
-		signer = s.presignClient
+	signer, ttl, err := s.externalSigner(ctx, ttl)
+	if err != nil {
+		return "", err
 	}
 	out, err := s3.NewPresignClient(signer).PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket), Key: aws.String(key), ContentType: aws.String(contentType),
@@ -398,9 +437,9 @@ func (s *S3Storage) PresignGetWithContentDisposition(ctx context.Context, key st
 	if contentDisposition != "" {
 		input.ResponseContentDisposition = aws.String(contentDisposition)
 	}
-	signer := s.client
-	if s.presignClient != nil {
-		signer = s.presignClient
+	signer, ttl, err := s.externalSigner(ctx, ttl)
+	if err != nil {
+		return "", err
 	}
 	out, err := s3.NewPresignClient(signer).PresignGetObject(ctx, input, func(opts *s3.PresignOptions) {
 		opts.Expires = ttl

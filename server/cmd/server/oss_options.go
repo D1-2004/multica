@@ -23,10 +23,10 @@ const ossAuthzBucketEnv = "OSS_AUTHZ_BUCKET"
 // storage layer then falls back to static AWS_ACCESS_KEY_ID / SECRET, or to
 // local disk when S3_BUCKET is also unset).
 //
-// The bucket's policy only admits callers whose acs:AccessId is TMP.* or STS.*,
-// so static keys are not merely discouraged here — they are rejected outright.
-// The credentials it hands out expire, which is why this returns a provider the
-// AWS SDK re-invokes rather than one set of keys read at boot.
+// GetCredential supplies managed access keys, not necessarily STS credentials.
+// Internal network access can admit these keys while external presigned URLs
+// require the separate resource-bound STS provider. Re-fetch managed keys so
+// service-side rotation does not require an application restart.
 func ossCredentialsFromEnv() (aws.CredentialsProvider, error) {
 	bucket := strings.TrimSpace(os.Getenv(ossAuthzBucketEnv))
 	if bucket == "" {
@@ -80,10 +80,8 @@ func (p *ossCredentialsProvider) Retrieve(_ context.Context) (aws.Credentials, e
 		SecretAccessKey: credential.AccessKeySecret,
 		SessionToken:    credential.SecurityToken,
 		Source:          "aone-authz",
-		// The service does not report an expiry, but the token it mints is
-		// short-lived. Expire our copy well inside that window so the SDK
-		// re-fetches rather than signing with a token the bucket has stopped
-		// accepting — a stale token surfaces as an opaque 403 on upload.
+		// This is a refresh deadline, not a claimed credential expiry. The
+		// separate STS provider uses the service-reported expiration.
 		CanExpire: true,
 		Expires:   time.Now().Add(10 * time.Minute),
 	}, nil

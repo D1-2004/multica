@@ -11,9 +11,9 @@
 | Redis (Tair) | `dt-fde-multica-pre-redis` | 跨 pod 实时广播、daemon 唤醒、限流、各类缓存 | 须莫 |
 | OSS Bucket | `dt-fde-multica-oss`（cn-zhangjiakou，私有） | 附件 + 头像共享存储 | 须莫申请，我接入 |
 
-两者都走 **normandy 托管凭证**（CloudCenter 里做「应用授权」把 `dt-fde-multica` 绑到资源上），代码用 SDK 换 STS 临时凭证，**不落任何静态 AK/SK**。
+两者都走 **Normandy 托管凭据**（CloudCenter 应用资源绑定）。OSS 的 `GetCredential` 返回托管访问密钥，不保证已经是 STS；不将密钥写进应用配置或日志。
 
-OSS 的 bucket 策略明确只接受 `acs:AccessId` 为 `TMP.*`/`STS.*` 的调用者 —— **静态密钥会被直接拒绝**，所以这不是风格选择，是硬约束。
+2026-09-15 实测纠正：当前预发使用 `dt-fde-multica-prepub-oss`，上表及下方示例是历史资源。Bucket Policy 对来源网络和身份联合判断，并对 `TMP.*`/`STS.*` 临时身份设有例外；不能概括成所有托管密钥都被拒绝。真实 FC 下载诊断为 LTAI 签名、无 STS Token、HTTP 403 / EC `0003-00000101`；内网应用读取同一存储可以成功。
 
 ## 新增的运行时配置（预发 env-vars trait）
 
@@ -33,9 +33,11 @@ MULTICA_LOG_TAIL_TOKEN           # 远程日志端点
 
 2026-09-15 补充：代码对 OSS 区域端点默认使用桶名域名寻址，避免缺少
 `S3_USE_PATH_STYLE` 时生成路径式下载/上传签名。其他自定义存储保留原默认值，
-显式配置仍优先。签名客户端将 OSS 内网端点换成公网端点，继续使用托管临时凭证；
+显式配置仍优先。签名客户端将 OSS 内网端点换成公网端点；
 不改变桶的访问权限。该地址规则见 [OSS 请求格式](https://www.alibabacloud.com/help/en/oss/developer-reference/overview-24)。
-单测覆盖 GET/PUT 地址、会话凭证、到期时间与旧对象地址解析；云端传输结果另行验收。
+外部签名单独通过资源绑定的 `GetRelatedRoleArn` 和 `AssumeRole` 取得 STS，使用实际返回的到期时间缓存，并将 URL 有效期限制在凭据到期前。会话策略仅允许该桶的 GetObject/PutObject，worker 只收到指定对象的临时 URL；缺少绑定或角色扮演失败时停止签发，不回退到原访问密钥。内部上传、读取、清理继续使用原托管身份。
+
+单测覆盖 GET/PUT 地址、身份分离、真实到期时间限制、失败不回退和旧对象地址解析；云端传输结果另行验收。
 
 ## 提交清单（都在 develop 上）
 
