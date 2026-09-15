@@ -60,3 +60,5 @@ UID负向对照补修：相同显示名、不同可信UID的合成群问候曾�
 
 
 负向审核协议闭环：单拦错误allow曾使审核用同一错误UID引文revise正确ignore，重现循环。现对allow/revise均验证UID引文矛盾，把无效结论交现有审核协议修复，维持一次/12秒上限，不直接放行或传递错误修复方向。真实反例最终为正常ignore，约15秒，无error/fallback，证据 `/tmp/coord-contextual-replay-report-other-uid-protocol.json`。正向6组另做最终防回归。
+
+部署前最终结果：原6组正例全部通过，UID负例正常ignore通过（约15秒，不是fallback）；正例约8.4–10.9秒，无协议错误/超时。Coordinator整包再次通过；旧测试桩中“拒绝找他人”却自动生成direct引文的矛盾已改成显式other/direct证据，未删除验证。真实预发E2E在新部署SUCCESS后执行。

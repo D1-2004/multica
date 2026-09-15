@@ -26,12 +26,23 @@ func TestGroupReviewSharesParticipationPolicyAndTrustedIdentity(t *testing.T) {
 			t.Fatalf("review %s lost participation policy: %v", action, modules)
 		}
 	}
+	verdict := func(value, reason string) openai.ChatCompletion {
+		body, _ := json.Marshal(map[string]any{
+			"verdict": value, "reason": reason, "missing_source_refs": []string{},
+			"request_quote_ref": scriptedRequestQuoteRef, "candidate_quote_ref": scriptedCandidateQuoteRef,
+			"work_checks": []any{}, "participation_checks": []finishParticipationCheck{
+				{SourceRefs: []string{"u1"}, Basis: "other", RecipientQuote: "@小周", Disposition: "ignore"},
+				{SourceRefs: []string{"u2"}, Basis: "direct", RecipientQuote: "小助", Disposition: "coordinate"},
+			},
+		})
+		return assistantTool("review", toolFinishCheck, string(body))
+	}
 	// Protocol regression: a reviewer rejection must prevent the wrong reply
 	// from being saved; this scripted test does NOT certify model judgement.
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("bad", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1","u2"],"ack_kind":"greeting","reply":"小周和小助都在。"}]}`),
 		assistantTool("fixed", toolFinish, `{"actions":[{"kind":"ignore","source_refs":["u1"],"reason":"Addressed to another person."},{"kind":"acknowledge","source_refs":["u2"],"ack_kind":"greeting","reply":"小助在。"}]}`),
-	}, checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("revise", "u1 addresses another person, not this employee."), scriptedFinishVerdict("allow", "Only the employee's greeting is answered.")}}
+	}, checkRounds: []openai.ChatCompletion{verdict("revise", "u1 addresses another person, not this employee."), verdict("allow", "Only the employee's greeting is answered.")}}
 	var saved []Decision
 	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(d Decision) error { saved = append(saved, d); return nil })
 	d, err := (&Coordinator{Chat: chat}).runLoop(ctx, turn)
