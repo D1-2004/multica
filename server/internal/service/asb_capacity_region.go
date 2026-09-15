@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,56 @@ var (
 	asbRegionalAPIHost = regexp.MustCompile(`^((?:pre-|daily-)?)sandbox(?:-[a-z0-9-]+)?\.aone\.alibaba-inc\.com$`)
 	asbRegionName      = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)+$`)
 )
+
+const ASBExecutionRegionsKey = "asb_regions"
+const asbSandboxRegionKey = "multica.region"
+
+// An absent or empty selection preserves automatic placement across API regions.
+func ParseASBExecutionRegions(raw []byte) ([]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var config map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return nil, fmt.Errorf("invalid runtime_config: %w", err)
+	}
+	value, present := config[ASBExecutionRegionsKey]
+	if !present {
+		return nil, nil
+	}
+	var regions []string
+	if string(value) == "null" || json.Unmarshal(value, &regions) != nil {
+		return nil, errors.New("asb_regions must be an array of region IDs")
+	}
+	if len(regions) > 32 {
+		return nil, errors.New("asb_regions supports at most 32 regions")
+	}
+	seen := map[string]bool{}
+	result := make([]string, 0, len(regions))
+	for _, region := range regions {
+		if len(region) > 48 || !asbRegionName.MatchString(region) {
+			return nil, fmt.Errorf("invalid ASB region %q", region)
+		}
+		if !seen[region] {
+			result = append(result, region)
+			seen[region] = true
+		}
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func asbRegionAllowed(region string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	for _, candidate := range allowed {
+		if candidate == region {
+			return true
+		}
+	}
+	return false
+}
 
 // ASB selects the region from the API hostname, not the create body. Only
 // rewrite the known ASB service domain; custom gateways retain their routing.
@@ -55,6 +106,21 @@ func createASBSandboxInAvailableRegion(
 	input ASBCreateSandboxInput,
 	quotas []ASBSandboxQuota,
 ) (*ASBSandbox, error) {
+	if len(input.AllowedRegions) > 0 {
+		if asbRegionalAPIHost.FindStringSubmatch(strings.ToLower(client.baseURL.Hostname())) == nil {
+			return nil, errors.New("ASB regional selection requires a regional ASB service endpoint")
+		}
+		selected := make([]ASBSandboxQuota, 0, len(quotas))
+		for _, allocation := range quotas {
+			if asbRegionAllowed(allocation.Region, input.AllowedRegions) {
+				selected = append(selected, allocation)
+			}
+		}
+		if len(selected) == 0 {
+			return nil, errors.New("selected ASB regions are unavailable for this Runtime credential")
+		}
+		quotas = selected
+	}
 	if _, _, _, err := summarizeASBQuotas(quotas); err != nil {
 		return nil, err
 	}
@@ -86,7 +152,13 @@ func createASBSandboxInAvailableRegion(
 			"runtime_id", util.UUIDToString(runtimeID), "network_zone", allocation.NetworkZone,
 			"region", allocation.Region, "api_host", regional.baseURL.Host,
 			"quota", allocation.Quota, "usage", allocation.Usage)
-		sandbox, err := regional.CreateSandbox(ctx, input)
+		regionalInput := input
+		regionalInput.Metadata = make(map[string]string, len(input.Metadata)+1)
+		for key, value := range input.Metadata {
+			regionalInput.Metadata[key] = value
+		}
+		regionalInput.Metadata[asbSandboxRegionKey] = allocation.Region
+		sandbox, err := regional.CreateSandbox(ctx, regionalInput)
 		if err == nil {
 			slog.Info("ASB sandbox created in selected region", "event", "asb_capacity_region_created",
 				"runtime_id", util.UUIDToString(runtimeID), "sandbox_id", sandbox.ID,

@@ -44,7 +44,7 @@ func TestASBDWSDirectTransferPolicyReachesCreationBoundary(t *testing.T) {
 		if body.NetworkPolicy.DefaultAction != "deny" {
 			t.Fatal("DWS dependencies changed the default action")
 		}
-		for _, target := range []string{"sh-dualstack.trans.dingtalk.com", "*.trans.dingtalk.com", "down.dingtalk.com", "*.down.dingtalk.com", "alidocs2.oss-cn-zhangjiakou.aliyuncs.com", "alimail-cn.aliyuncs.com", "alimail-personal.aliyuncs.com", "wss-open-connection.dingtalk.com", "pre-mcp-gw.dingtalk.io"} {
+		for _, target := range []string{"sh-dualstack.trans.dingtalk.com", "*.trans.dingtalk.com", "down.dingtalk.com", "*.down.dingtalk.com", "alidocs2.oss-cn-zhangjiakou.aliyuncs.com", "alimail-cn.aliyuncs.com", "alimail-personal.aliyuncs.com", "wss-open-connection.dingtalk.com", "pre-mcp-gw.dingtalk.io", "*.alibaba-inc.com", "*.dingtalk.com"} {
 			if !slices.Contains(body.NetworkPolicy.Egress, ASBNetworkRule{Action: "allow", Target: target}) {
 				t.Errorf("missing DWS dependency %s", target)
 			}
@@ -61,7 +61,7 @@ func TestASBDWSDirectTransferPolicyReachesCreationBoundary(t *testing.T) {
 	if _, err := client.CreateSandbox(context.Background(), input); err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"*", "*.dingtalk.com", "*.aliyuncs.com", "*.alibaba-inc.com", "*.trans.dingtalk.com.evil.example", "*trans.dingtalk.com", "*.TRANS.dingtalk.com", "0.0.0.0/0"} {
+	for _, target := range []string{"*", "*.example.com", "*.aliyuncs.com", "*.alibaba-inc.com.evil.example", "*.dingtalk.com.evil.example", "*.trans.dingtalk.com.evil.example", "*trans.dingtalk.com", "*.TRANS.dingtalk.com", "0.0.0.0/0"} {
 		input.NetworkPolicy.Egress = []ASBNetworkRule{{Action: "allow", Target: target}}
 		if _, err := client.CreateSandbox(context.Background(), input); err == nil {
 			t.Errorf("accepted unreviewed service family %q", target)
@@ -78,7 +78,7 @@ func TestASBNetworkPolicyMergesDependenciesAndKeepsSecretsOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"multica.example", "llm.example", "identity.example", "platform.example", "custom.example", "mcp.example", "mcp-gw.dingtalk.com"} {
+	for _, want := range []string{"multica.example", "llm.example", "identity.example", "platform.example", "custom.example", "mcp.example", "mcp-gw.dingtalk.com", "tp-alilang.alibaba-inc.com", "*.alibaba-inc.com", "*.dingtalk.com", "140.205.109.26", "140.205.109.30"} {
 		if !slices.Contains(settings.EffectiveTargets, want) {
 			t.Errorf("missing %s", want)
 		}
@@ -129,7 +129,7 @@ func TestASBCreateAlwaysSendsDenyAndPolicyFingerprint(t *testing.T) {
 	if _, err = client.CreateSandbox(context.Background(), input); err == nil {
 		t.Fatal("accepted allow")
 	}
-	input.NetworkPolicy = ASBNetworkPolicy{DefaultAction: "deny", Egress: []ASBNetworkRule{{Action: "allow", Target: "*.alibaba-inc.com"}}}
+	input.NetworkPolicy = ASBNetworkPolicy{DefaultAction: "deny", Egress: []ASBNetworkRule{{Action: "allow", Target: "*.example.com"}}}
 	if _, err = client.CreateSandbox(context.Background(), input); err == nil {
 		t.Fatal("accepted wildcard")
 	}

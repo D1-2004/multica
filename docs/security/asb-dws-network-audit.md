@@ -47,15 +47,16 @@ user-configured. Those destinations must remain exact Runtime entries or
 configured Agent/service URL dependencies. Shared public OSS domains are not
 blanket-allowed: arbitrary tenants can own buckets there.
 
-Only `*.trans.dingtalk.com` and `*.down.dingtalk.com` are managed wildcard
-families, limited to regional nodes of the dedicated transfer services. Their
-apex hosts are separate rules. They are accepted only by the creation validator
-as code-reviewed constants; custom Runtime, Agent and deployment entries still
-reject wildcards, URLs and CIDRs. Broad *.dingtalk.com, *.aliyuncs.com and
-*.alibaba-inc.com remain rejected. Default action remains deny.
+The built-in wildcard families include `*.trans.dingtalk.com` and
+`*.down.dingtalk.com`. On 2026-09-15, the user additionally requested default
+access to `*.alibaba-inc.com` and `*.dingtalk.com`; these are accepted by the
+creation validator as explicit built-in constants. Apex hosts remain separate
+rules. Custom Runtime, Agent and deployment entries still reject wildcards,
+URLs and CIDRs. Other broad families such as `*.aliyuncs.com`, and lookalikes
+such as `*.dingtalk.com.evil.example`, remain rejected. Default action is deny.
 
 Validation includes creation-boundary regression tests (including rejection of
-broad/lookalike wildcards), fresh ASB tasks, required-host DNS checks, an actual
+unlisted/lookalike wildcards), fresh ASB tasks, required-host DNS checks, an actual
 DWS upload/download with a synthetic test file and SHA256 comparison, and an
 unlisted public-domain negative control. No DingTalk messages are sent.
 Policy fingerprints replace old sandboxes at the next task launch; active tasks

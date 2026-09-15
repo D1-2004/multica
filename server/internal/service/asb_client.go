@@ -65,6 +65,7 @@ type ASBImageSpec struct {
 }
 
 type ASBCreateSandboxInput struct {
+	AllowedRegions []string // Local scheduling constraint; never sent as an ASB extension.
 	NetworkPolicy  ASBNetworkPolicy
 	ImageURI       string
 	TimeoutSeconds int
