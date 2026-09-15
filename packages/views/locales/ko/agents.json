@@ -349,6 +349,7 @@
     "instructions": "지침",
     "okr": "OKR",
     "skills": "스킬",
+    "dsh": "DSH 설정",
     "dsh_plugins": "플러그인",
     "environment": "환경",
     "custom_args": "사용자 지정 인자",
@@ -1339,6 +1340,9 @@
       "flag_bootstrap": "워밍업",
       "flag_ui": "목록 표시",
       "ui_off": "「목록 표시」를 켜면 각 1:1과 그룹의 기억이 여기에 나타납니다."
+    },
+    "dsh_config": {
+      "home_title": "영구 저장소 및 네이티브 인터페이스"
     },
     "dsh_home": {
       "intro": "각 에이전트는 파일, 설정, 세션을 저장하는 독립된 Home을 갖습니다. 첫 작업을 시작하기 전에 저장소를 준비하세요.",

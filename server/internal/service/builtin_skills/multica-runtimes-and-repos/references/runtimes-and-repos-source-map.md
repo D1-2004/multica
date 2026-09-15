@@ -45,10 +45,12 @@
 - `server/internal/dshhost/cloud_storage.go` and `cloud_api.go`: NAS/RAM/FC calls, resource-chain verification and bounded ACS transport using the official signer.
 - `server/cmd/server/dsh_storage_options.go`: deployment-owned placement and the Aone-managed cloud access package; no task-supplied credentials.
 
-## Employee DSH Home UI
+## Employee DSH configuration UI
+
+- `packages/views/agents/components/tabs/dsh-config-tab.tsx`, `agent-config-navigation.ts`: one DSH configuration destination combining Home/native entry, Profile receipts and plugin management. Old `view=dsh_home` and `view=dsh_plugins` URLs normalize to `view=dsh`; non-DSH providers hide it, and Home still requires FC/cloud management permission.
 
 - `packages/core/agents/dsh-home.ts`: workspace/employee-scoped status queries and explicit provisioning mutation with post-response reconciliation.
-- `packages/views/agents/components/tabs/dsh-home-tab.tsx`: storage and host status, preparation and retry controls; owner/admin FC DSH visibility through `agent-overview-pane.tsx`.
+- `packages/views/agents/components/tabs/dsh-home-tab.tsx`: storage and host status, preparation and retry controls; owner/admin FC DSH visibility through `dsh-config-tab.tsx`.
 - `packages/core/api/dsh-home-client.test.ts`, `packages/views/agents/components/tabs/dsh-home-tab.test.tsx`: malformed response, accepted/pending, unknown write outcome, no implicit writes and cache isolation checks.
 
 ## Native browser authorization

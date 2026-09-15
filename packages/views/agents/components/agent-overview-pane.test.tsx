@@ -539,15 +539,15 @@ describe("AgentOverviewPane Environment tab visibility", () => {
 });
 
 describe("AgentOverviewPane Plugins tab visibility", () => {
-  it("shows Plugins for a DSH agent running in the cloud", () => {
+  it("shows DSH configuration for a DSH agent running in the cloud", () => {
     renderPane([makeRuntime("dsh")], { agentOverrides: { runtime_mode: "cloud" } });
     openConfiguration();
     expect(
-      screen.getByRole("tab", { name: /^Plugins$/i }),
+      screen.getByRole("tab", { name: /^DSH configuration$/i }),
     ).toBeInTheDocument();
   });
 
-  it("still shows Plugins for a DSH agent on a local daemon", () => {
+  it("still shows DSH configuration for a DSH agent on a local daemon", () => {
     // A local daemon does not load plugins, but hiding the tab would strand
     // whatever is already bound: invisible, unremovable, and live again the
     // moment the agent moves back to a cloud runtime. The tab stays and says
@@ -555,15 +555,15 @@ describe("AgentOverviewPane Plugins tab visibility", () => {
     renderPane([makeRuntime("dsh")], { agentOverrides: { runtime_mode: "local" } });
     openConfiguration();
     expect(
-      screen.getByRole("tab", { name: /^Plugins$/i }),
+      screen.getByRole("tab", { name: /^DSH configuration$/i }),
     ).toBeInTheDocument();
   });
 
-  it("hides Plugins for a cloud agent on any other provider", () => {
+  it("hides DSH configuration for a cloud agent on any other provider", () => {
     renderPane([makeRuntime("claude")], { agentOverrides: { runtime_mode: "cloud" } });
     openConfiguration();
     expect(
-      screen.queryByRole("tab", { name: /^Plugins$/i }),
+      screen.queryByRole("tab", { name: /^DSH configuration$/i }),
     ).not.toBeInTheDocument();
   });
 });
@@ -602,17 +602,27 @@ it.each([
   const runtime = { ...makeRuntime(provider), runtime_mode: mode as "local" | "cloud", metadata: { kind } };
   renderPane([runtime], { canEdit, agentOverrides: { runtime_mode: mode as "local" | "cloud" } });
   openConfiguration();
-  expect(screen.queryByRole("tab", { name: "DSH Home" }) != null).toBe(visible);
+  expect(screen.queryByRole("tab", { name: "DSH Home" })).not.toBeInTheDocument();
+  const dsh = screen.queryByRole("tab", { name: "DSH configuration" });
+  if (provider === "dsh") {
+    expect(dsh).toBeInTheDocument();
+    fireEvent.click(dsh!);
+    expect(screen.getByText("dsh-plugins-tab")).toBeInTheDocument();
+  } else {
+    expect(dsh).not.toBeInTheDocument();
+  }
+  expect(screen.queryByText("dsh-home-tab") != null).toBe(visible);
 });
 
-it("shows DSH Home for the migrated FC metadata returned by preproduction", () => {
+it("groups Home and plugins for the migrated FC metadata returned by preproduction", () => {
   const runtime = { ...makeRuntime("dsh"), runtime_mode: "cloud" as const, metadata: {
     kind: "cloud-sandbox", sandbox_backend: "aliyun_fc", provider: "dsh",
     template_id: "lk2nt02azvizzdjzjjxq", template: "lk2nt02azvizzdjzjjxq", template_channel: "stable",
   } };
   renderPane([runtime], { canEdit: true, agentOverrides: { runtime_mode: "cloud" } });
   openConfiguration();
-  expect(screen.getByRole("tab", { name: "DSH Home" })).toBeDefined();
-  fireEvent.click(screen.getByRole("tab", { name: "DSH Home" }));
+  expect(screen.getAllByRole("tab", { name: "DSH configuration" })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("tab", { name: "DSH configuration" }));
+  expect(screen.getByText("dsh-plugins-tab")).toBeInTheDocument();
   expect(screen.getByText("dsh-home-tab")).toBeDefined();
 });

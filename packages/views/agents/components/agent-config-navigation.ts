@@ -21,8 +21,7 @@ export type DetailTab =
   | "instructions"
   | "okr"
   | "skills"
-  | "dsh_plugins"
-  | "dsh_home"
+  | "dsh"
   | "mcp_config"
   | "composio_mcp"
   | "integrations"
@@ -48,8 +47,7 @@ export type AgentTabLabelKey =
   | "instructions"
   | "okr"
   | "skills"
-  | "dsh_plugins"
-  | "dsh_home"
+  | "dsh"
   | "mcp_config"
   | "composio_mcp"
   | "integrations"
@@ -91,7 +89,6 @@ export const AGENT_CONFIG_GROUPS: readonly AgentConfigGroup[] = [
     labelKey: "capabilities",
     items: [
       { id: "skills", labelKey: "skills" },
-      { id: "dsh_plugins", labelKey: "dsh_plugins" },
       { id: "mcp_config", labelKey: "mcp_config" },
       { id: "composio_mcp", labelKey: "composio_mcp" },
     ],
@@ -111,7 +108,7 @@ export const AGENT_CONFIG_GROUPS: readonly AgentConfigGroup[] = [
     items: [
       { id: "general", labelKey: "general" },
       { id: "runner", labelKey: "runner" },
-      { id: "dsh_home", labelKey: "dsh_home" },
+      { id: "dsh", labelKey: "dsh" },
       { id: "env", labelKey: "environment" },
       { id: "custom_args", labelKey: "custom_args" },
       { id: "runtime_config", labelKey: "runtime_config" },
@@ -144,6 +141,7 @@ const DETAIL_VIEWS = new Set<DetailTab>([
 ]);
 
 export function normalizeDetailView(value: string | null): DetailTab | null {
+  if (value === "dsh_plugins" || value === "dsh_home") return "dsh";
   if (value === "import_export") return "publish";
   if (value === "identity") return "digital_employee";
   if (value !== null && DETAIL_VIEWS.has(value as DetailTab)) {

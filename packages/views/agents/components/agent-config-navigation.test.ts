@@ -19,6 +19,9 @@ describe("agent configuration navigation", () => {
     expect(groupForConfigView("mcp_config")).toBe("capabilities");
     expect(groupForConfigView("integrations")).toBe("connections");
     expect(groupForConfigView("general")).toBe("execution");
+    expect(groupForConfigView("dsh")).toBe("execution");
+    expect(normalizeDetailView("dsh_plugins")).toBe("dsh");
+    expect(normalizeDetailView("dsh_home")).toBe("dsh");
     expect(groupForConfigView("llm_trace")).toBe("management");
     expect(groupForConfigView("publish")).toBe("management");
     expect(groupForConfigView("export")).toBe("management");

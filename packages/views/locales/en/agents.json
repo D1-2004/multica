@@ -358,6 +358,7 @@
     "instructions": "Instructions",
     "okr": "OKR",
     "skills": "Skills",
+    "dsh": "DSH configuration",
     "dsh_plugins": "Plugins",
     "environment": "Environment",
     "custom_args": "Custom Args",
@@ -1548,6 +1549,9 @@
       "flag_bootstrap": "Warm up",
       "flag_ui": "Show list",
       "ui_off": "Turn on Show list to see memory for each DM and group."
+    },
+    "dsh_config": {
+      "home_title": "Persistent storage and native interface"
     },
     "dsh_home": {
       "intro": "Each agent has an independent Home for files, configuration and sessions. Prepare it before starting the first task.",

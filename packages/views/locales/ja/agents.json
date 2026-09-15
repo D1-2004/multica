@@ -341,6 +341,7 @@
     "instructions": "指示",
     "okr": "OKR",
     "skills": "スキル",
+    "dsh": "DSH 設定",
     "dsh_plugins": "プラグイン",
     "environment": "環境",
     "custom_args": "カスタム引数",
@@ -1331,6 +1332,9 @@
       "flag_bootstrap": "ウォームアップ",
       "flag_ui": "リスト表示",
       "ui_off": "「リスト表示」をオンにすると、各1対1とグループの記憶がここに出ます。"
+    },
+    "dsh_config": {
+      "home_title": "永続ストレージとネイティブ画面"
     },
     "dsh_home": {
       "intro": "各エージェントには、ファイル、設定、セッションを保存する独立した Home があります。最初の作業を開始する前にストレージを準備してください。",

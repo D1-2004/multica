@@ -349,6 +349,7 @@
     "instructions": "指令",
     "okr": "OKR",
     "skills": "Skills",
+    "dsh": "DSH 配置",
     "dsh_plugins": "插件",
     "environment": "环境变量",
     "custom_args": "自定义参数",
@@ -1527,6 +1528,9 @@
       "flag_bootstrap": "预热",
       "flag_ui": "显示列表",
       "ui_off": "打开「显示列表」后，这里会出现每个单聊和群聊的记忆。"
+    },
+    "dsh_config": {
+      "home_title": "持久存储与原生界面"
     },
     "dsh_home": {
       "intro": "每个智能体都有独立的 Home，用于保存文件、配置和会话。首次执行任务前请先准备存储。",

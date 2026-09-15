@@ -8,8 +8,6 @@ import type {
   AgentRuntime,
   MemberWithUser,
 } from "@multica/core/types";
-import { DshHomeTab } from "./tabs/dsh-home-tab";
-import { isFCE2BRuntime } from "@multica/core/runtimes";
 import { runtimeSupportsMcpConfig } from "@multica/core/agents";
 import { useFeatureEnabled } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
@@ -37,7 +35,7 @@ import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
 import { AgentMcpTab } from "./tabs/agent-mcp-tab";
-import { DshPluginsTab } from "./tabs/dsh-plugins-tab";
+import { DshConfigTab } from "./tabs/dsh-config-tab";
 import { IntegrationsTab } from "./tabs/integrations-tab";
 import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
 import { LLMTraceTab } from "./tabs/llm-trace-tab";
@@ -179,11 +177,7 @@ export function AgentOverviewPane({
       ...group,
       items: group.items.filter((item) => {
         if (item.id === "mcp_config") return showMcp;
-        if (item.id === "dsh_home") {
-          return canEdit && agent.runtime_mode === "cloud" &&
-            runtime?.provider === "dsh" && isFCE2BRuntime(runtime);
-        }
-        if (item.id === "dsh_plugins") return runtime?.provider === "dsh";
+        if (item.id === "dsh") return runtime?.provider === "dsh";
         if (item.id === "composio_mcp") return showComposioMcp;
         if (item.id === "integrations") return botIntegrationsConfigured;
         if (item.id === "mcp_access" || item.id === "a2a") {
@@ -491,11 +485,10 @@ export function AgentOverviewPane({
                       canEdit={canEdit}
                     />
                   )}
-                  {effectiveView === "dsh_home" && (
-                    <DshHomeTab key={agent.id} workspaceId={wsId} agentId={agent.id} />
-                  )}
-                  {effectiveView === "dsh_plugins" && (
-                    <DshPluginsTab
+                  {effectiveView === "dsh" && (
+                    <DshConfigTab
+                      key={agent.id}
+                      workspaceId={wsId}
                       agent={agent}
                       runtime={runtime}
                       canEdit={canEdit}
