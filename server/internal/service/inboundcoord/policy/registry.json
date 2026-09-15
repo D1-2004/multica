@@ -951,7 +951,9 @@
         "server/internal/handler/dingtalk_origin_reply.go",
         "server/internal/service/dingtalkresponse/provider.go",
         "server/internal/dwsclient/send.go",
-        "server/internal/handler/dingtalk_response_test.go"
+        "server/internal/handler/dingtalk_response_test.go",
+        "server/internal/integrations/agentmessagerouter/dws_delivery.go",
+        "server/internal/integrations/agentmessagerouter/dws_delivery_test.go"
       ],
       "case_file": "cases.json"
     },

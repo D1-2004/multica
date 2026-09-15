@@ -6,9 +6,11 @@
 
 ## 根因与修复
 
-底层 DWS client 和托管响应 provider 已支持 `replyToOpenMsgID`，任务上下文也保留动作来源；缺口在入站 `response_route`：它冻结了CID、发送人、身份与回调，却遗漏触发消息 `openMsgId`。无task的Coordinator即时回复和部分同步接单无法从后续task/Issue补回，于是退化成普通发送。
+底层 DWS client 和托管响应 provider 已支持 `replyToOpenMsgID`，任务上下文也保留动作来源。第一个缺口在入站 `response_route`：它冻结了CID、发送人、身份与回调，却遗漏触发消息 `openMsgId`。无task的Coordinator即时回复和部分同步接单无法从后续task/Issue补回，于是退化成普通发送。
 
-在入站事务注册托管路由时，使用现有 `dispatchOriginOpenMsgID` 冻结触发消息ID。该函数优先动作已经选择的 `WindowEvidenceID`，否则取本次事件的可见文本消息，不从昵称、正文或历史猜测。后续普通回复、接单、最终结果和错误兜底复用已有 provider 引用发送能力。缺失ID时保持原普通发送退路；旧版本已冻结路由不改写。
+首次预发E2E进一步证明还有第二个所有权分支：当前测试订阅没有下发 `responsePolicy`，实际由 Router callback 返回 `dwsDelivery`。该对象已经精确携带 `sourceOpenMessageId`，兼容发送器却只用它解析收件人，没有设置 `ReplyToOpenMsgID`。所以正文成功送达但 `quotedMessage` 为空。Router trace `8d8af7e8357a864d3bd24e7a0648702495916e22143f22461c2c089237cbc359` 与钉钉消息 `msgT9YWsWf5gNuhJcAwoy9EQw==` 保留这次失败。
+
+在入站事务注册托管路由时，使用现有 `dispatchOriginOpenMsgID` 冻结触发消息ID。该函数优先动作已经选择的 `WindowEvidenceID`，否则取本次事件的可见文本消息，不从昵称、正文或历史猜测。后续普通回复、接单、最终结果和错误兜底复用已有 provider 引用发送能力。Router callback兼容发送器则把可信 `sourceOpenMessageId` 同时作为目标解析来源和引用消息ID，继续使用同一CID与幂等键。缺失ID时保持原普通发送退路；旧版本已冻结路由不改写。
 
 ## 验收
 
@@ -19,4 +21,4 @@
 
 ## 状态
 
-实现及本地Host/provider测试完成：响应路由保存默认触发消息和明确选择的 `WindowEvidenceID`，回调生成的托管action继续持有同一消息ID；reaction/空消息不被猜成触发消息；provider和DWS client使用 `+messages-reply --message-id`。policy结构检查通过。最新develop的全新本地库存在既有271/9025迁移顺序问题，本次测试在隔离worktree库中按仓库现有SQL补齐所需fork表后运行，不修改预发数据库。预发部署与真实引用回读待执行。
+实现及本地Host/provider测试完成：响应路由保存默认触发消息和明确选择的 `WindowEvidenceID`，回调生成的托管action继续持有同一消息ID；reaction/空消息不被猜成触发消息；托管provider和Router callback兼容发送器都使用 `+messages-reply --message-id`。policy结构检查通过。最新develop的全新本地库存在既有271/9025迁移顺序问题，本次测试在隔离worktree库中按仓库现有SQL补齐所需fork表后运行，不修改预发数据库。首次预发run3108400116部署成功，但普通对话回读没有引用，暴露并定位第二条兼容路径；修订后必须重新部署同一CR并复跑，不沿用该失败结果。
