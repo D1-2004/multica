@@ -135,16 +135,22 @@ func (s *TaskService) SendDSHNativeChatMessage(ctx context.Context, session db.C
 }
 
 func (a dshNativeChatAdmission) lockAdmission(ctx context.Context, tx pgx.Tx) error {
+	return lockDSHEmployeeAdmission(ctx, tx, a.access.Key, a.runtimeID)
+}
+
+// Shared ordering for native browser and durable plugin admissions. This only
+// acquires locks; callers must independently verify their authority afterward.
+func lockDSHEmployeeAdmission(ctx context.Context, tx pgx.Tx, key dshhost.Key, runtimeID pgtype.UUID) error {
 	if tx == nil {
 		return errors.New("DSH native chat requires a task transaction")
 	}
 	// Match Host startup and template cutover: Runtime, then employee, before
 	// domain row locks. Transaction-scoped locks release on every error path.
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock_shared($1,$2)", fcE2BRuntimeLockClass, fcE2BRuntimeLockKey(a.runtimeID)); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock_shared($1,$2)", fcE2BRuntimeLockClass, fcE2BRuntimeLockKey(runtimeID)); err != nil {
 		return err
 	}
 	_, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1,$2)", dshEmployeeLockClass,
-		dshEmployeeLockKey(pgtype.UUID{Bytes: a.access.WorkspaceID, Valid: true}, pgtype.UUID{Bytes: a.access.AgentID, Valid: true}))
+		dshEmployeeLockKey(pgtype.UUID{Bytes: key.WorkspaceID, Valid: true}, pgtype.UUID{Bytes: key.AgentID, Valid: true}))
 	return err
 }
 

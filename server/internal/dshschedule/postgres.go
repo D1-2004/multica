@@ -25,6 +25,44 @@ type State struct {
 	CancelledAt pgtype.Timestamptz
 }
 
+// Read returns immutable provenance and the current lifecycle state. The caller
+// must already hold the employee authorization locks for this transaction.
+func (s Store) Read(ctx context.Context, key Key) (State, error) {
+	if s.Tx == nil || !key.valid() {
+		return State{}, ErrInvalid
+	}
+	return readState(s.Tx.QueryRow(ctx, selectRecord+" FOR SHARE", keyArgs(key)...), key)
+}
+
+// List reads one authenticated native Session, with an explicit truncation bit.
+// Never turn a bounded list into a claim that the complete Session is empty.
+func (s Store) List(ctx context.Context, workspace, agent uuid.UUID, session string) ([]State, bool, error) {
+	if s.Tx == nil || !(Key{WorkspaceID: workspace, AgentID: agent, SessionID: session, ScheduleID: "schedule-1"}).valid() {
+		return nil, false, ErrInvalid
+	}
+	rows, err := s.Tx.Query(ctx, `SELECT schedule_id,owner_member_id,source_task_id,prompt,first_due_at,every_seconds,next_due_at,cancelled_at
+ FROM dsh_schedule WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3
+ AND cancelled_at IS NULL AND next_due_at IS NOT NULL ORDER BY first_due_at,schedule_id LIMIT 257`, workspace, agent, session)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	states := make([]State, 0, 256)
+	truncated := false
+	for rows.Next() {
+		state := State{Record: Record{Key: Key{WorkspaceID: workspace, AgentID: agent, SessionID: session}}}
+		if err := rows.Scan(&state.ScheduleID, &state.OwnerMemberID, &state.SourceTaskID, &state.Prompt, &state.FirstDue, &state.EverySeconds, &state.NextDue, &state.CancelledAt); err != nil {
+			return nil, false, err
+		}
+		if len(states) == 256 {
+			truncated = true
+			break
+		}
+		states = append(states, state)
+	}
+	return states, truncated, rows.Err()
+}
+
 const selectRecord = `SELECT owner_member_id,source_task_id,prompt,first_due_at,every_seconds,next_due_at,cancelled_at
  FROM dsh_schedule WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3 AND schedule_id=$4`
 

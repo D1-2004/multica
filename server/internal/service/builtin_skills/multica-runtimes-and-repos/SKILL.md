@@ -265,3 +265,29 @@ neither URLs nor employee credentials enter the ledger or helper receipts.
 Repeated starts reconcile the same sandbox receipt without rebuilding; failed
 uploads are cleaned up by the saved object key after sandbox absence is confirmed.
 Code wiring and queued revisions do not prove cloud build or employee activation.
+
+### Persistent native reminders
+
+The managed Schedule adapter uses task-authenticated
+`GET/POST /api/tasks/{taskId}/dsh/schedules` and
+`DELETE /api/tasks/{taskId}/dsh/schedules/{scheduleId}`. GET and DELETE select
+`session_id` in the query. POST accepts `session_id`, `schedule_id`, `prompt`,
+`first_due_at` (the resolved UTC instant) and `every_seconds` (zero for one-shot,
+otherwise at least 300). The actor, workspace, employee and creating task come
+from the short-lived task token, never from request fields or a native entry URL.
+Do not retain a task token for a future reminder.
+
+Management requires an active dispatched/running FC DSH task bound to that exact
+native Session and current member invocation permission. An automated parent
+must have a persisted Schedule occurrence to resolve standing ownership; an
+accountability field alone is insufficient. The same reminder identity and
+content can be retried under a later authorized task of the same owner. It keeps
+its original provenance and cannot resurrect a cancelled or consumed reminder.
+Only the owning member can cancel it. Lists return an explicit `truncated` bit.
+
+A persistence receipt is not delivery. `scheduled`, `overdue`, `cancelled` and
+`consumed` distinguish the ledger state; consumed means task admission, not model
+completion or a delivered message. This branch has management and transaction
+storage implemented; the native tool adapter and scheduled application admission
+worker still need wiring and real preproduction acceptance before this can be
+advertised as an available reminder feature.

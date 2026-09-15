@@ -2367,6 +2367,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Each handler re-applies its own transcript/trajectory authorization.
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 			r.Put("/api/tasks/{taskId}/dsh-trajectory", h.UploadDSHTrajectory)
+			r.Get("/api/tasks/{taskId}/dsh/schedules", h.DSHSchedules)
+			r.Post("/api/tasks/{taskId}/dsh/schedules", h.DSHSchedules)
+			r.Delete("/api/tasks/{taskId}/dsh/schedules/{scheduleId}", h.DeleteDSHSchedule)
 			r.Get("/api/tasks/{taskId}/dsh-trajectory", h.GetDSHTrajectory)
 
 			// DTA deployment load verification. These endpoints expose only

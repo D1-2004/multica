@@ -4,6 +4,13 @@ This package is the PostgreSQL transaction core for native DSH reminders. It is
 not yet wired to the native Schedule tools or the application scheduler. Its
 presence does not enable reminder delivery.
 
+The task-authenticated management API is implemented in
+`internal/service/dsh_schedule.go` and `internal/handler/dsh_schedule.go`. It
+derives standing ownership from the active bound task and current membership,
+rechecks invocation policy, and exposes registration/list/cancellation receipts.
+See `docs/plans/2026-09-15-dsh-schedule-admission.md` for remaining admission and
+native adapter work. These APIs have not yet been deployed to preproduction.
+
 The cloud failure motivating it is concrete: the original task completed and its
 context was released; the official in-process timer later called `agent.followup`
 and the model request failed with `task context is absent, unready or expired`.

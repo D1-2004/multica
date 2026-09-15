@@ -124,3 +124,19 @@
 - `server/migrations/9247_dsh_plugin_build_attempts.up.sql`: attempt history on the existing workspace-owned build row.
 - `server/internal/handler/dsh_profile.go`: human employee management boundary and strict retry request; 409 on changed or uncleaned attempts.
 - `packages/views/agents/components/tabs/dsh-profile-status.tsx`: explicit retry, no automatic mutation retry, status refresh after uncertain receipt.
+
+## Persistent DSH Schedule management
+
+- `server/internal/handler/dsh_schedule.go`: task-token-only management boundary;
+  route/task/workspace cross-checks, strict body fields and private no-store replies.
+- `server/internal/service/dsh_schedule.go`: current bound task, employee/runtime,
+  member and invocation checks under transaction locks; native Session isolation,
+  immutable retry, owner-only cancellation and bounded list projection.
+- `server/internal/service/dsh_native_chat.go#lockDSHEmployeeAdmission`: shared
+  Runtime-then-employee lock order; acquiring locks does not grant permission.
+- `server/internal/dshschedule`: durable registration, tombstones, due planning,
+  occurrence identity and same-transaction task/binding/receipt advancement.
+- `server/internal/handler/workspace.go`: removes reminder content and occurrence
+  rows in workspace teardown under the existing parent transaction.
+- `docs/plans/2026-09-15-dsh-schedule-admission.md`: trigger evidence, authorization
+  contract, contrast cases, integration and verification boundaries.
