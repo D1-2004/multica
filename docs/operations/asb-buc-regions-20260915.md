@@ -8,7 +8,7 @@ The production task `596bfdf0-b145-474b-b5ed-ce73e8febe5d` failed during BUC att
 
 Both Hangzhou and Zhangjiakou reproduced that failure with the existing default-deny policy. Adding the registration domain allowed device registration and TUN creation, but nftables still dropped the WireGuard handshake. A temporary trace in an owned diagnostic sandbox identified the literal destinations `140.205.109.26:11940` and `140.205.109.30:11940` (UDP). The trace table was removed after inspection.
 
-The default allowlist now adds exactly:
+The initial minimal correction added exactly:
 
 - `tp-alilang.alibaba-inc.com`
 - `140.205.109.26`
@@ -45,3 +45,12 @@ This is renewable authorization, not permanent authorization. The user's ASB sup
 - Service tests cover ID expiry independent of AT, full-trio replacement, missing-ID rejection, selected-region capacity/failover, and warm-session placement.
 - Frontend tests cover API-derived choices, preserving other runtime configuration, empty-selection rejection, and discovery failures. Schema tests cover malformed responses and new API regions.
 - Local checks are compilation, static analysis, and unit tests. Deployment and business acceptance are recorded separately against real preproduction.
+
+## Later default-domain expansion
+
+After the minimal-network acceptance, the user requested default access to
+`*.alibaba-inc.com` and `*.dingtalk.com`. Both are now built-in allow rules and
+accepted at the sandbox creation boundary. The two literal WireGuard gateway
+IPs remain necessary because domain wildcards do not cover IP-only traffic.
+Default action remains deny. Existing active sandboxes keep their policy until
+the next task boundary, when a mismatched policy fingerprint causes replacement.

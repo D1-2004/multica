@@ -121,6 +121,9 @@ or retry priority. Files stored only in an idle sandbox may be lost on reclaim.
 
 ### ASB network allowlist
 
+The default policy permits `*.alibaba-inc.com` and `*.dingtalk.com` as built-in
+domain families. Other destinations still require an allow rule under default deny.
+
 ASB sandboxes deny outbound connections unless the destination is allowed.
 Required platform services and configured Agent MCP/service hosts are included
 automatically. Workspace owners/admins can add exact domains or individual IPs
