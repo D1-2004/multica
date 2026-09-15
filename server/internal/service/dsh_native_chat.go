@@ -175,14 +175,16 @@ func (a dshNativeChatAdmission) checkGrantLocked(ctx context.Context, tx pgx.Tx,
 	}
 	// Hold the exact Host and grant until commit. Retirement, revocation and
 	// membership deletion cannot pass an admission that already holds these locks.
-	if err := tx.QueryRow(ctx, `SELECT h.agent_id FROM dsh_employee_host h
- JOIN dsh_native_access g ON g.workspace_id=h.workspace_id AND g.agent_id=h.agent_id
- WHERE h.workspace_id=$1 AND h.agent_id=$2 AND h.generation=$3 AND h.sandbox_id=$4 AND h.state='running'
- AND g.id=$5 AND g.user_id=$6 AND g.kind='session' AND g.expires_at>clock_timestamp()
- AND g.generation=h.generation AND g.sandbox_id=h.sandbox_id FOR SHARE OF h,g`,
+	if err := dshhost.LockRunningHost(ctx, tx, dshhost.Host{Key: a.access.Key, Generation: a.access.Generation, SandboxID: a.access.SandboxID}); err != nil {
+		return dshhost.ErrNativeAccessDenied
+	}
+	if err := tx.QueryRow(ctx, `SELECT agent_id FROM dsh_native_access
+ WHERE workspace_id=$1 AND agent_id=$2 AND generation=$3 AND sandbox_id=$4 AND id=$5
+ AND user_id=$6 AND kind='session' AND expires_at>clock_timestamp() FOR SHARE`,
 		a.access.WorkspaceID, a.access.AgentID, a.access.Generation, a.access.SandboxID, a.access.ID, userID).Scan(&id); err != nil {
 		return dshhost.ErrNativeAccessDenied
 	}
+
 	if err := tx.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE id=$1 AND workspace_id=$2 FOR SHARE`, agent.RuntimeID, agent.WorkspaceID).Scan(&id); err != nil {
 		return dshhost.ErrNativeAccessDenied
 	}
@@ -247,10 +249,24 @@ func (a dshNativeChatAdmission) replay(ctx context.Context, tx pgx.Tx, q *db.Que
 }
 
 func (a dshNativeChatAdmission) bind(ctx context.Context, tx pgx.Tx, session db.ChatSession, task db.AgentTaskQueue) error {
-	_, err := (dshhost.PostgresStore{DB: tx}).AdoptNativeExecution(ctx,
-		dshhost.SessionScope{Key: a.access.Key, Kind: "chat", ID: uuid.UUID(session.ID.Bytes)},
-		uuid.UUID(task.ID.Bytes), a.input.SessionID, a.input.RequestID)
-	return err
+	scope := dshhost.SessionScope{Key: a.access.Key, Kind: "chat", ID: uuid.UUID(session.ID.Bytes)}
+	store := dshhost.PostgresStore{DB: tx}
+	if _, err := store.AdoptNativeExecution(ctx, scope, uuid.UUID(task.ID.Bytes), a.input.SessionID, a.input.RequestID); err != nil {
+		return err
+	}
+	var hostScope uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT scope_id FROM employee_filesystem_host
+ WHERE workspace_id=$1 AND agent_id=$2 AND generation=$3 AND sandbox_id=$4 AND state='running'`, a.access.WorkspaceID, a.access.AgentID, a.access.Generation, a.access.SandboxID).Scan(&hostScope); err != nil {
+		return dshhost.ErrChanged
+	}
+	selected, err := store.BindSandboxScope(ctx, scope, hostScope)
+	if err != nil {
+		return err
+	}
+	if selected != hostScope {
+		return dshhost.ErrChanged
+	}
+	return nil
 }
 
 // The complete native input shares the immutable user-message transaction.

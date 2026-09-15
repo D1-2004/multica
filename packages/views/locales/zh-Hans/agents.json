@@ -367,7 +367,8 @@
     "identity": "身份",
     "llm_trace": "LLM Trace",
     "inbound": "入站会话",
-    "dsh_home": "DSH Home"
+    "dsh_home": "DSH Home",
+    "filesystem": "文件系统"
   },
   "creation_studio": {
     "package": {
@@ -1530,23 +1531,23 @@
       "ui_off": "打开「显示列表」后，这里会出现每个单聊和群聊的记忆。"
     },
     "dsh_config": {
-      "home_title": "持久存储与原生界面"
+      "home_title": "文件系统"
     },
     "dsh_home": {
-      "intro": "每个智能体都有独立的 Home，用于保存文件、配置和会话。首次执行任务前请先准备存储。",
-      "loading": "正在查询 Home...",
-      "unavailable": "暂时无法查询 Home 状态，请刷新重试。",
+      "intro": "每个 Agent 拥有独立的持久文件系统，所有 FC provider 均可使用。终端和文件工具可读写 $MULTICA_FS_ROOT/files（/mnt/multica/files）；DSH_HOME 只是其中供 DSH 使用的子目录。",
+      "loading": "正在检查文件系统…",
+      "unavailable": "无法获取文件系统状态，请刷新重试。",
       "ready": "存储已就绪",
       "pending": "存储正在准备中。点击继续，查询并推进已有请求。",
       "unprovisioned": "尚未准备存储",
       "running": "宿主正在运行。",
-      "retiring": "正在回收旧宿主，文件仍保存在 Home 中。",
+      "retiring": "正在回收旧沙箱，持久文件会保留。",
       "starting": "正在启动宿主。",
-      "offline": "打开 DSH 或执行任务时会启动宿主。",
+      "offline": "执行任务时会启动沙箱。",
       "unconfirmed": "尚未确认准备结果，已重新查询状态。如仍无法推进，请联系工作区管理员。",
       "preparing": "正在准备...",
       "continue": "继续准备",
-      "prepare": "准备 Home",
+      "prepare": "准备文件系统",
       "refresh": "刷新状态",
       "native_prepare": "准备 DSH",
       "native_preparing": "正在准备 DSH…",

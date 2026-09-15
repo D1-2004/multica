@@ -136,14 +136,12 @@ func (s Store) Acknowledge(ctx context.Context, host dshhost.Host, revision Revi
 	}
 	// Hold the exact Host generation through commit, including when retirement
 	// races this receipt on another replica.
-	var running bool
-	err = tx.QueryRow(ctx, `SELECT true FROM dsh_employee_host WHERE workspace_id=$1 AND agent_id=$2 AND state='running' AND generation=$3 AND sandbox_id=$4 AND template_id=$5 FOR SHARE`, host.WorkspaceID, host.AgentID, host.Generation, host.SandboxID, host.TemplateID).Scan(&running)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if err = dshhost.LockRunningHost(ctx, tx, host); errors.Is(err, dshhost.ErrChanged) {
 		return ErrChanged
-	}
-	if err != nil {
+	} else if err != nil {
 		return err
 	}
+
 	source, err := read(ctx, db.New(tx), host.Key, host.TemplateID)
 	if err != nil {
 		return err
@@ -159,7 +157,7 @@ func (s Store) Acknowledge(ctx context.Context, host dshhost.Host, revision Revi
 	err = tx.QueryRow(ctx, `UPDATE dsh_employee_profile p SET applied_revision=$3,applied_generation=$4,applied_sandbox_id=$5,applied_at=CASE WHEN applied_revision=$3 AND applied_generation=$4 AND applied_sandbox_id=$5 THEN applied_at ELSE now() END,updated_at=now()
  WHERE p.workspace_id=$1 AND p.agent_id=$2 AND p.desired_revision=$3
  AND EXISTS(SELECT 1 FROM dsh_profile_revision r WHERE r.workspace_id=$1 AND r.agent_id=$2 AND r.revision=$3 AND r.descriptor_digest=$6 AND r.template_id=$7 AND r.source_digest=$8 AND r.descriptor_json<>'')
- AND EXISTS(SELECT 1 FROM dsh_employee_host h WHERE h.workspace_id=$1 AND h.agent_id=$2 AND h.state='running' AND h.generation=$4 AND h.sandbox_id=$5 AND h.template_id=$7)
+ AND EXISTS(SELECT 1 FROM employee_filesystem_host h WHERE h.workspace_id=$1 AND h.agent_id=$2 AND h.state='running' AND h.generation=$4 AND h.sandbox_id=$5 AND h.template_id=$7)
  RETURNING applied_revision`, host.WorkspaceID, host.AgentID, revision.ID, host.Generation, host.SandboxID, revision.Digest, host.TemplateID, revision.SourceDigest).Scan(&applied)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrChanged
@@ -227,7 +225,7 @@ func (s Store) Status(ctx context.Context, key dshhost.Key) (Status, error) {
  COALESCE(r.source_digest,''),COALESCE(r.descriptor_digest,''),
  COALESCE(p.desired_revision>0 AND p.desired_revision=p.applied_revision AND h.state='running' AND h.generation=p.applied_generation AND h.sandbox_id=p.applied_sandbox_id AND h.template_id=r.template_id,false)
  FROM dsh_employee_profile p LEFT JOIN dsh_profile_revision r ON r.workspace_id=p.workspace_id AND r.agent_id=p.agent_id AND r.revision=p.desired_revision
- LEFT JOIN dsh_employee_host h ON h.workspace_id=p.workspace_id AND h.agent_id=p.agent_id
+ LEFT JOIN employee_filesystem_host h ON h.workspace_id=p.workspace_id AND h.agent_id=p.agent_id AND h.sandbox_id=p.applied_sandbox_id AND h.generation=p.applied_generation
  WHERE p.workspace_id=$1 AND p.agent_id=$2`, key.WorkspaceID, key.AgentID).Scan(&desired, &applied, &value.AppliedGeneration, &value.AppliedSandboxID, &value.SourceDigest, &descriptor, &value.Current)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return value, nil

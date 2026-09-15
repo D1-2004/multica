@@ -34,19 +34,19 @@ function show() {
 it("only provisions on an explicit action and distinguishes storage from the host", async () => {
   calls.ensure.mockImplementation(async () => { calls.get.mockResolvedValue(ready); return ready; });
   show();
-  const button = await screen.findByRole("button", { name: "Prepare Home" });
+  const button = await screen.findByRole("button", { name: "Prepare filesystem" });
   await waitFor(() => expect(button).not.toBeDisabled());
   expect(calls.ensure).not.toHaveBeenCalled();
   await userEvent.click(button);
   await screen.findByText("Storage is ready");
-  expect(screen.getByText("The host starts when you open DSH or run a task.")).toBeTruthy();
+  expect(screen.getByText("The sandbox starts when you run a task.")).toBeTruthy();
   expect(calls.ensure).toHaveBeenCalledTimes(1);
 });
 
 it("reads durable status after an interrupted creation without repeating the write", async () => {
   calls.ensure.mockImplementation(async () => { calls.get.mockResolvedValue(ready); throw new Error("connection lost"); });
   show();
-  const button = await screen.findByRole("button", { name: "Prepare Home" });
+  const button = await screen.findByRole("button", { name: "Prepare filesystem" });
   await waitFor(() => expect(button).not.toBeDisabled());
   await userEvent.click(button);
   await screen.findByText("Storage is ready");
@@ -57,8 +57,8 @@ it("reads durable status after an interrupted creation without repeating the wri
 it("disables provisioning if readiness cannot be parsed", async () => {
   calls.get.mockResolvedValue(null);
   show();
-  await screen.findByText("Home status is unavailable. Refresh to check again.");
-  expect(screen.getByRole("button", { name: "Prepare Home" })).toBeDisabled();
+  await screen.findByText("Filesystem status is unavailable. Refresh to check again.");
+  expect(screen.getByRole("button", { name: "Prepare filesystem" })).toBeDisabled();
   expect(calls.ensure).not.toHaveBeenCalled();
 });
 

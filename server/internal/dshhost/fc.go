@@ -18,7 +18,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const MountPath = "/mnt/multica-dsh"
+const MountPath = "/mnt/multica"
 
 var sandboxIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
@@ -82,7 +82,7 @@ type sandboxInfo struct {
 }
 
 func identity(h Host) map[string]string {
-	return map[string]string{
+	labels := map[string]string{
 		"multica.dsh.intent":       h.CreateIntent.String(),
 		"multica.dsh.workspace":    h.WorkspaceID.String(),
 		"multica.dsh.agent":        h.AgentID.String(),
@@ -94,6 +94,10 @@ func identity(h Host) map[string]string {
 		"multica.dsh.template-id":  h.TemplateID,
 		"multica.dsh.role-arn":     h.RoleARN,
 	}
+	if h.ScopeID != uuid.Nil {
+		labels["multica.filesystem.scope"] = h.ScopeID.String()
+	}
+	return labels
 }
 
 func (p *FCProvider) request(ctx context.Context, method, path string, body any) ([]byte, http.Header, int, error) {

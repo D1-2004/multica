@@ -46,7 +46,7 @@ func TestDSHNativeInputRequiresAuthorizationAndCorrelatedDurableReceipt(t *testi
 			}
 			submit := func(_ context.Context, access dshhost.NativeAccess, input DSHNativeChatInput, content string) (DSHNativePromptReceipt, error) {
 				called = true
-				if access.Key != host.Key || input.Prompt == nil || content != "original" || input.Workdir != "/mnt/multica-dsh/workspaces/"+input.SessionID {
+				if access.Key != host.Key || input.Prompt == nil || content != "original" || input.Workdir != "/mnt/multica/workspaces/"+input.SessionID {
 					t.Fatal("identity or native input changed")
 				}
 				receipt := inputReceipt(input)

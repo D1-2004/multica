@@ -3808,20 +3808,20 @@ export class ApiClient {
   }
 
   async getDSHHome(agentId: string, signal?: AbortSignal): Promise<DSHHomeStatus | null> {
-    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/dsh-home`, { signal });
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/filesystem`, { signal });
     return parseWithFallback<DSHHomeStatus | null>(raw, DSHHomeSchema, null, {
-      endpoint: "GET /api/agents/{id}/dsh-home",
+      endpoint: "GET /api/agents/{id}/filesystem",
       includeReceived: false,
     });
   }
 
   async ensureDSHHome(agentId: string): Promise<DSHHomeStatus | null> {
-    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/dsh-home`, {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/filesystem`, {
       method: "POST",
       body: "{}",
     });
     return parseWithFallback<DSHHomeStatus | null>(raw, DSHHomeSchema, null, {
-      endpoint: "POST /api/agents/{id}/dsh-home",
+      endpoint: "POST /api/agents/{id}/filesystem",
       includeReceived: false,
     });
   }

@@ -367,7 +367,8 @@
     "identity": "신원",
     "llm_trace": "LLM 추적",
     "inbound": "수신 대화",
-    "dsh_home": "DSH Home"
+    "dsh_home": "DSH Home",
+    "filesystem": "파일 시스템"
   },
   "create_dialog": {
     "title_create": "에이전트 만들기",
@@ -1342,23 +1343,23 @@
       "ui_off": "「목록 표시」를 켜면 각 1:1과 그룹의 기억이 여기에 나타납니다."
     },
     "dsh_config": {
-      "home_title": "영구 저장소 및 네이티브 인터페이스"
+      "home_title": "파일 시스템"
     },
     "dsh_home": {
-      "intro": "각 에이전트는 파일, 설정, 세션을 저장하는 독립된 Home을 갖습니다. 첫 작업을 시작하기 전에 저장소를 준비하세요.",
-      "loading": "Home 확인 중...",
-      "unavailable": "Home 상태를 확인할 수 없습니다. 새로고침하세요.",
+      "intro": "각 Agent는 모든 FC provider에서 사용할 수 있는 독립적인 영구 파일 시스템을 가집니다. 터미널과 파일 도구로 $MULTICA_FS_ROOT/files(/mnt/multica/files)를 읽고 쓸 수 있습니다. DSH_HOME은 DSH 전용 하위 디렉터리입니다.",
+      "loading": "파일 시스템 확인 중…",
+      "unavailable": "상태를 확인할 수 없습니다. 새로고침하세요.",
       "ready": "저장소 준비 완료",
       "pending": "저장소를 준비 중입니다. 계속하여 기존 요청을 확인하고 진행하세요.",
       "unprovisioned": "저장소가 아직 준비되지 않았습니다",
       "running": "호스트가 실행 중입니다.",
-      "retiring": "이전 호스트를 종료 중입니다. 파일은 Home에 유지됩니다.",
+      "retiring": "이전 샌드박스를 종료하는 중입니다. 영구 파일은 보존됩니다.",
       "starting": "호스트를 시작 중입니다.",
-      "offline": "DSH를 열거나 작업을 실행하면 호스트가 시작됩니다.",
+      "offline": "작업을 실행하면 샌드박스가 시작됩니다.",
       "unconfirmed": "준비 결과를 확인하지 못했습니다. 상태를 다시 조회했습니다. 진행되지 않으면 워크스페이스 관리자에게 문의하세요.",
       "preparing": "준비 중...",
       "continue": "준비 계속",
-      "prepare": "Home 준비",
+      "prepare": "파일 시스템 준비",
       "refresh": "상태 새로고침",
       "native_prepare": "DSH 준비",
       "native_preparing": "DSH 준비 중…",

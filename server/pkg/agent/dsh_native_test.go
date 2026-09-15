@@ -89,7 +89,7 @@ func (p *nativeBackendPeer) client() *dshHostClient {
 				if more {
 					events = events[4:]
 				}
-				if !write(map[string]any{"type": "snapshot", "header": map[string]any{"version": 3, "id": "session", "cwd": "/mnt/multica-dsh/workspaces/session", "isSeeded": false, "delegationDepth": 0}, "cursor": len(p.baseline) - 1, "records": nativeTestRecords(events), "hasMore": more}) {
+				if !write(map[string]any{"type": "snapshot", "header": map[string]any{"version": 3, "id": "session", "cwd": "/mnt/multica/workspaces/session", "isSeeded": false, "delegationDepth": 0}, "cursor": len(p.baseline) - 1, "records": nativeTestRecords(events), "hasMore": more}) {
 					return
 				}
 				if len(p.baseline) > 0 {
@@ -153,7 +153,7 @@ func TestDSHNativeBackendExecutesOnHostAndReplaysCompletedRequest(t *testing.T) 
 			if retry {
 				peer.baseline = append(nativeTestTurn(0, 1, "mine", "own output", "completed"), nativeTestTurn(4, 2, "other", "foreign output", "completed")...)
 			}
-			backend := &dshNativeBackend{native: DSHNativeHostConfig{SessionID: "session", RequestID: "mine", WorkDir: "/mnt/multica-dsh/workspaces/session", ExpiresAt: time.Now().Add(time.Minute)}, client: peer.client()}
+			backend := &dshNativeBackend{native: DSHNativeHostConfig{SessionID: "session", RequestID: "mine", WorkDir: "/mnt/multica/workspaces/session", ExpiresAt: time.Now().Add(time.Minute)}, client: peer.client()}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			session, err := backend.Execute(ctx, "fixture", ExecOptions{Cwd: backend.native.WorkDir})
@@ -184,7 +184,7 @@ func TestDSHNativeBackendCancelsItsRequestOnEOFAndCallerCancellation(t *testing.
 	for _, hold := range []bool{false, true} {
 		t.Run(map[bool]string{false: "EOF", true: "cancel"}[hold], func(t *testing.T) {
 			peer := &nativeBackendPeer{calls: map[string]int{}, state: "absent", prompted: make(chan struct{}), live: nativeTestTurn(0, 1, "mine", "partial", "completed")[:3], hold: hold}
-			backend := &dshNativeBackend{native: DSHNativeHostConfig{SessionID: "session", RequestID: "mine", WorkDir: "/mnt/multica-dsh/workspaces/session", ExpiresAt: time.Now().Add(time.Minute)}, client: peer.client()}
+			backend := &dshNativeBackend{native: DSHNativeHostConfig{SessionID: "session", RequestID: "mine", WorkDir: "/mnt/multica/workspaces/session", ExpiresAt: time.Now().Add(time.Minute)}, client: peer.client()}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			session, err := backend.Execute(ctx, "fixture", ExecOptions{Cwd: backend.native.WorkDir})
@@ -221,7 +221,7 @@ func TestDSHNativeBackendTransportsFullPrompt(t *testing.T) {
 			receipt := "upload-receipt"
 			zone := "Asia/Shanghai"
 			prompt := &protocol.DSHNativePrompt{SessionID: "session-31e58f19-8669-42f3-98f6-01bc71aa8ad0", RequestID: "91675c65-a8e3-4b25-85fc-5e82081af8af", Mode: mode, Content: []protocol.DSHNativePromptPart{{Type: "text", Text: &text}, {Type: "image", MediaType: &media, Data: &data}, {Type: "file", ReceiptID: &receipt}}, ClientTimeZone: &zone}
-			native := DSHNativeHostConfig{WorkspaceID: "workspace", AgentID: "employee", Generation: 1, SessionID: prompt.SessionID, RequestID: prompt.RequestID, WorkDir: "/mnt/multica-dsh/workspaces/" + prompt.SessionID, ModelBaseURL: "https://model.example", ModelAPIKey: "fixture", ProviderGeneration: "fixture", ExpiresAt: time.Now().Add(time.Hour), Prompt: prompt}
+			native := DSHNativeHostConfig{WorkspaceID: "workspace", AgentID: "employee", Generation: 1, SessionID: prompt.SessionID, RequestID: prompt.RequestID, WorkDir: "/mnt/multica/workspaces/" + prompt.SessionID, ModelBaseURL: "https://model.example", ModelAPIKey: "fixture", ProviderGeneration: "fixture", ExpiresAt: time.Now().Add(time.Hour), Prompt: prompt}
 			created, err := NewDSHNativeHostBackend(Config{}, native)
 			if err != nil {
 				t.Fatal(err)

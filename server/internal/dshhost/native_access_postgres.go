@@ -9,7 +9,7 @@ import (
 )
 
 const nativeAccessColumns = `g.id, g.workspace_id, g.agent_id, g.user_id, g.generation, g.sandbox_id, g.kind, g.expires_at`
-const nativeAccessRunningHost = `EXISTS (SELECT 1 FROM dsh_employee_host h WHERE
+const nativeAccessRunningHost = `EXISTS (SELECT 1 FROM employee_filesystem_host h WHERE
  h.workspace_id=g.workspace_id AND h.agent_id=g.agent_id AND h.generation=g.generation
  AND h.sandbox_id=g.sandbox_id AND h.state='running')`
 
@@ -26,7 +26,7 @@ func (s PostgresStore) InsertNativeAccess(ctx context.Context, access NativeAcce
 	return readNativeAccess(s.DB.QueryRow(ctx, `INSERT INTO dsh_native_access AS g
  (id,workspace_id,agent_id,user_id,generation,sandbox_id,kind,token_hash,expires_at)
  SELECT $1,$2,$3,$4,$5,$6,'entry',$7,clock_timestamp()+interval '1 minute'
- WHERE EXISTS (SELECT 1 FROM dsh_employee_host h WHERE h.workspace_id=$2 AND h.agent_id=$3
+ WHERE EXISTS (SELECT 1 FROM employee_filesystem_host h WHERE h.workspace_id=$2 AND h.agent_id=$3
  AND h.generation=$5 AND h.sandbox_id=$6 AND h.state='running')
  RETURNING `+nativeAccessColumns, access.ID, access.WorkspaceID, access.AgentID, access.UserID, access.Generation, access.SandboxID, hash))
 }

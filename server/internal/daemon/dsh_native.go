@@ -23,7 +23,7 @@ func managedDSHNativeConfig(launchedBy, provider, executable string, custom bool
 		}
 		return nil, nil
 	}
-	if launchedBy != "fc-e2b" || provider != "opencode" || custom || executable != "/usr/local/libexec/multica-dsh" || getenv("MULTICA_RUNNER_PROVIDER") != "dsh" || getenv("MULTICA_CLOUD_SANDBOX_BACKEND") != "aliyun_fc" || getenv("DSH_HOME") != "/mnt/multica-dsh/home" {
+	if launchedBy != "fc-e2b" || provider != "opencode" || custom || executable != "/usr/local/libexec/multica-dsh" || getenv("MULTICA_RUNNER_PROVIDER") != "dsh" || getenv("MULTICA_CLOUD_SANDBOX_BACKEND") != "aliyun_fc" || getenv("DSH_HOME") != "/mnt/multica/home" {
 		return nil, errors.New("invalid native DSH launch boundary")
 	}
 	value := &agent.DSHNativeHostConfig{WorkspaceID: getenv("MULTICA_DSH_WORKSPACE_ID"), AgentID: getenv("MULTICA_DSH_AGENT_ID"), SessionID: getenv("MULTICA_DSH_SESSION_ID"), RequestID: getenv("MULTICA_DSH_REQUEST_ID"), WorkDir: getenv("MULTICA_DSH_WORKDIR")}
@@ -50,7 +50,7 @@ func managedDSHNativeConfig(launchedBy, provider, executable string, custom bool
 		}
 		value.Prompt = copy
 	}
-	if value.WorkDir != filepath.Join("/mnt/multica-dsh/workspaces", value.SessionID) {
+	if value.WorkDir != filepath.Join("/mnt/multica/workspaces", value.SessionID) {
 		return nil, errors.New("invalid native DSH workspace binding")
 	}
 	value.ModelBaseURL, value.ModelAPIKey, value.ProviderGeneration = getenv("OPENAI_BASE_URL"), getenv("OPENAI_API_KEY"), getenv("MULTICA_TRACE_ID")

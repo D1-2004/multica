@@ -11,7 +11,7 @@ describe("DSH Home client", () => {
     vi.stubGlobal("fetch", request);
     const result = await new ApiClient("https://pre.example.test").ensureDSHHome("agent/id");
     expect(result).toMatchObject({ provisioned: false, state: "creating" });
-    expect(request).toHaveBeenCalledWith("https://pre.example.test/api/agents/agent%2Fid/dsh-home",
+    expect(request).toHaveBeenCalledWith("https://pre.example.test/api/agents/agent%2Fid/filesystem",
       expect.objectContaining({ method: "POST", body: "{}" }));
   });
 

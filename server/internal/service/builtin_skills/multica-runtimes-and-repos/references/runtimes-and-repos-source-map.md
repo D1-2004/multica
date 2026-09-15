@@ -167,3 +167,6 @@
   changed membership, order or native request identity fails closed.
 
 - `server/internal/service/dsh_schedule_recovery_database_test.go`: opt-in preproduction test for first publication after source completion/due time, fresh-current-task authority, original source preservation, unbound/accountability-only/foreign creator rejection and cancelled replay. Not executed locally.
+
+- `server/internal/dshhost/filesystem_sandbox.go`, migrations `9257`–`9260`, `server/internal/service/employee_filesystem_test.go`: employee storage shared across independently selected execution sandboxes; persistent native session host routing. Filesystem write conflict management is outside this feature.
+- `server/internal/handler/dsh_home.go`, `packages/views/agents/components/agent-overview-pane.tsx`: all-FC filesystem provisioning/configuration and representative host status, with DSH settings kept together.

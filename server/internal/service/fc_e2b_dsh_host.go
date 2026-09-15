@@ -25,9 +25,27 @@ import (
 
 const DSHEmployeeHostCapability = "dsh_employee_host_v1"
 const dshEmployeeLockClass int32 = 0x44534831
+const employeeFilesystemLockClass int32 = 0x46535331
 
 var errDSHHostWaiting = errors.New("DSH employee host is awaiting reconciliation or task drain")
 var dshAccessPointPattern = regexp.MustCompile(`^acs:nas:[a-z0-9-]+:[0-9]+:accesspoint/(ap-[a-z0-9]+)$`)
+
+func employeeFilesystemScopeID(scope dshhost.SessionScope) uuid.UUID {
+	return uuid.NewSHA1(scope.AgentID, []byte(scope.Kind+":"+scope.ID.String()))
+}
+
+func lockEmployeeFilesystemScope(ctx context.Context, conn *pgxpool.Conn, identity dshhost.Key, scopeID uuid.UUID) (func(), error) {
+	if conn == nil || identity.WorkspaceID == uuid.Nil || identity.AgentID == uuid.Nil || scopeID == uuid.Nil {
+		return nil, errors.New("filesystem scope coordination requires a database and identity")
+	}
+	key := dshEmployeeLockKey(pgtype.UUID{Bytes: identity.WorkspaceID, Valid: true}, pgtype.UUID{Bytes: scopeID, Valid: true})
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1,$2)", employeeFilesystemLockClass, key); err != nil {
+		return nil, fmt.Errorf("lock filesystem sandbox scope: %w", err)
+	}
+	return func() {
+		releaseFCE2BAdvisoryLock(conn, false, employeeFilesystemLockClass, key, "filesystem sandbox scope")
+	}, nil
+}
 
 func dshExecutionScope(key dshhost.Key, task db.AgentTaskQueue) dshhost.SessionScope {
 	// Match task serialization precedence. Unscoped/autopilot tasks get their
@@ -66,8 +84,22 @@ func (l *FCE2BLauncher) EnsureDSHEmployeeHost(ctx context.Context, key dshhost.K
 	l = l.withCurrentConfig()
 	var host dshhost.Host
 	err := l.withDSHEmployee(ctx, key, func(conn *pgxpool.Conn, runtime db.AgentRuntime, template string) error {
-		var err error
-		host, _, err = l.resolveDSHEmployeeSandbox(ctx, key, pgtype.UUID{}, runtime, template, conn, chattrace.New("dsh_native_entry"))
+		// Prefer the most recently used session host, so an entry opened after
+		// a platform task observes the same native process and live events.
+		var scopeID uuid.UUID
+		err := conn.QueryRow(ctx, `SELECT scope_id FROM employee_filesystem_sandbox
+ WHERE workspace_id=$1 AND agent_id=$2 ORDER BY updated_at DESC,scope_id LIMIT 1`, key.WorkspaceID, key.AgentID).Scan(&scopeID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if scopeID != uuid.Nil {
+			release, err := lockEmployeeFilesystemScope(ctx, conn, key, scopeID)
+			if err != nil {
+				return err
+			}
+			defer release()
+		}
+		host, _, err = l.resolveFilesystemScopeSandbox(ctx, key, scopeID, pgtype.UUID{}, runtime, template, conn, chattrace.New("dsh_native_entry"))
 		return err
 	})
 	return host, err
@@ -115,18 +147,27 @@ func (l *FCE2BLauncher) withDSHEmployee(ctx context.Context, key dshhost.Key, op
 	return operation(conn, runtime, template)
 }
 
-// The caller holds the employee admission lock through runner submission.
+// The caller holds the execution-scope admission lock through runner submission.
 // Native entries pass no excluded task, so every admitted task blocks retirement.
 // Storage operations reuse that connection, even when the pool has size one.
-func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshhost.Key, excludeTask pgtype.UUID, rt db.AgentRuntime, template string, conn *pgxpool.Conn, trace chattrace.Trace) (dshhost.Host, bool, error) {
+func (l *FCE2BLauncher) resolveEmployeeFilesystemSandbox(ctx context.Context, key dshhost.Key, excludeTask pgtype.UUID, rt db.AgentRuntime, template string, conn *pgxpool.Conn, trace chattrace.Trace) (dshhost.Host, bool, error) {
+	return l.resolveFilesystemScopeSandbox(ctx, key, uuid.Nil, excludeTask, rt, template, conn, trace)
+}
+
+func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key dshhost.Key, scopeID uuid.UUID, excludeTask pgtype.UUID, rt db.AgentRuntime, template string, conn *pgxpool.Conn, trace chattrace.Trace) (dshhost.Host, bool, error) {
 	if conn == nil || !rt.WorkspaceID.Valid || key.WorkspaceID != uuid.UUID(rt.WorkspaceID.Bytes) || key.AgentID == uuid.Nil {
 		return dshhost.Host{}, false, errors.New("invalid DSH employee launch identity")
 	}
-	catalog, profileDigest, err := dshManagedCatalog(l.Config.LLMModels)
-	if err != nil {
-		return dshhost.Host{}, false, err
+	isDSH := FCE2BRuntimeProvider(rt) == "dsh"
+	var catalog, profileDigest string
+	var store dshhost.Store = dshhost.PostgresStore{DB: conn}
+	if scopeID != uuid.Nil {
+		scopedStore := dshhost.FilesystemSandboxStore{DB: conn, ScopeID: scopeID}
+		if _, err := scopedStore.Bind(ctx, key); err != nil {
+			return dshhost.Host{}, false, fmt.Errorf("bind employee filesystem sandbox: %w", err)
+		}
+		store = scopedStore
 	}
-	store := dshhost.PostgresStore{DB: conn}
 	before, err := store.Get(ctx, key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return dshhost.Host{}, false, errors.New("DSH employee storage has not been provisioned")
@@ -136,21 +177,27 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshho
 	}
 	profiles := dshprofile.Store{DB: conn}
 	var revision dshprofile.Revision
-	if l.ReadDSHProfileSource == nil {
-		err = errors.New("DSH employee Profile source unavailable")
-	} else {
-		revision, err = profiles.Prepare(ctx, key, template, l.ReadDSHProfileSource)
-	}
-	if err != nil {
-		if before.State != "creating" && before.State != "retiring" {
+	if isDSH {
+		catalog, profileDigest, err = dshManagedCatalog(l.Config.LLMModels)
+		if err != nil {
 			return dshhost.Host{}, false, err
 		}
-		// Invalid new settings cannot strand an uncertain create or prevent
-		// confirmed retirement. An empty descriptor forbids any new admission.
-		revision = dshprofile.Revision{}
-	}
-	if revision.Descriptor == "" && before.State != "creating" && before.State != "retiring" {
-		return dshhost.Host{}, false, errDSHHostWaiting
+		if l.ReadDSHProfileSource == nil {
+			err = errors.New("DSH employee Profile source unavailable")
+		} else {
+			revision, err = profiles.Prepare(ctx, key, template, l.ReadDSHProfileSource)
+		}
+		if err != nil {
+			if before.State != "creating" && before.State != "retiring" {
+				return dshhost.Host{}, false, err
+			}
+			// Invalid new settings cannot strand an uncertain create or prevent
+			// confirmed retirement. An empty descriptor forbids any new admission.
+			revision = dshprofile.Revision{}
+		}
+		if revision.Descriptor == "" && before.State != "creating" && before.State != "retiring" {
+			return dshhost.Host{}, false, errDSHHostWaiting
+		}
 	}
 	var provider dshhost.Provider
 	if l.dshProvider != nil {
@@ -186,13 +233,14 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshho
 		err = conn.QueryRow(ctx, `SELECT EXISTS (
  SELECT 1 FROM agent_task_queue t JOIN agent a ON a.id=t.agent_id
  WHERE a.workspace_id=$1 AND t.agent_id=$2 AND t.id IS DISTINCT FROM $3::uuid
- AND (t.status IN ('dispatched','running','waiting_local_directory') OR
+ AND ((t.status IN ('dispatched','running','waiting_local_directory') AND ($7::uuid='00000000-0000-0000-0000-000000000000'::uuid OR EXISTS
+ (SELECT 1 FROM agent_task_runtime_start_attempt active WHERE active.task_id=t.id AND active.sandbox_id=$4))) OR
  (t.status='queued' AND EXISTS (SELECT 1 FROM agent_task_runtime_start_attempt s
  WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))
  OR ($5 AND EXISTS (SELECT 1 FROM dsh_native_access n
  WHERE n.workspace_id=$1 AND n.agent_id=$2 AND n.sandbox_id=$4 AND n.generation=$6
  AND n.kind IN ('entry','session') AND n.expires_at>now()))`,
-			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, before.SandboxID, before.State == "running", before.Generation).Scan(&busy)
+			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, before.SandboxID, before.State == "running", before.Generation, scopeID).Scan(&busy)
 		if err != nil {
 			return dshhost.Host{}, false, err
 		}
@@ -206,7 +254,7 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshho
 		if err = manager.Retire(ctx, key, current.Generation); err != nil {
 			return dshhost.Host{}, false, errDSHHostWaiting
 		}
-		if revision.Descriptor == "" {
+		if isDSH && revision.Descriptor == "" {
 			return dshhost.Host{}, false, errDSHHostWaiting
 		}
 		host, err = manager.Ensure(ctx, key, template)
@@ -217,7 +265,7 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshho
 	if err != nil {
 		return dshhost.Host{}, false, err
 	}
-	if revision.Descriptor == "" {
+	if isDSH && revision.Descriptor == "" {
 		return dshhost.Host{}, false, errDSHHostWaiting
 	}
 	cold := before.State != "running" || host.SandboxID != before.SandboxID
@@ -242,6 +290,10 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshho
 	}
 	if err = validateDSHHomeReceipt(out, host); err != nil {
 		return dshhost.Host{}, cold, err
+	}
+	if !isDSH {
+		chattrace.LogStage(slog.Default(), trace, "employee_filesystem", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "provider", FCE2BRuntimeProvider(rt))
+		return host, cold, nil
 	}
 	origin, authority, err := dshNativeGatewayAddress(l.Config, host)
 	if err != nil {

@@ -94,7 +94,7 @@ func TestDSHDeliveryScopesArtifactsAndRequiresInstallationReceipt(t *testing.T) 
 	if err := launcher.deliverDSHProfile(context.Background(), store, host, revision); err != nil {
 		t.Fatal(err)
 	}
-	if grants.getKey != build.ArtifactKey || strings.Contains(runner.request, "employee-secret-canary") || !strings.Contains(runner.request, "/mnt/multica-dsh/plugin-builds") {
+	if grants.getKey != build.ArtifactKey || strings.Contains(runner.request, "employee-secret-canary") || !strings.Contains(runner.request, "/mnt/multica/plugin-builds") {
 		t.Fatal("artifact delivery escaped package-only boundary")
 	}
 	runner.corrupt = true

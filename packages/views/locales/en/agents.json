@@ -376,7 +376,8 @@
     "identity": "Identity",
     "llm_trace": "LLM Trace",
     "inbound": "Inbound conversations",
-    "dsh_home": "DSH Home"
+    "dsh_home": "DSH Home",
+    "filesystem": "Filesystem"
   },
   "creation_studio": {
     "package": {
@@ -1551,23 +1552,23 @@
       "ui_off": "Turn on Show list to see memory for each DM and group."
     },
     "dsh_config": {
-      "home_title": "Persistent storage and native interface"
+      "home_title": "Filesystem"
     },
     "dsh_home": {
-      "intro": "Each agent has an independent Home for files, configuration and sessions. Prepare it before starting the first task.",
-      "loading": "Checking Home...",
-      "unavailable": "Home status is unavailable. Refresh to check again.",
+      "intro": "Each agent has an independent persistent filesystem, available to every FC provider. Use terminal and file tools to read or write $MULTICA_FS_ROOT/files (/mnt/multica/files). DSH_HOME is a subdirectory used by DSH.",
+      "loading": "Checking filesystem...",
+      "unavailable": "Filesystem status is unavailable. Refresh to check again.",
       "ready": "Storage is ready",
       "pending": "Storage preparation is in progress. Continue to check and advance the existing request.",
       "unprovisioned": "Storage has not been prepared",
       "running": "The host is running.",
-      "retiring": "The previous host is being retired. Files remain in Home.",
+      "retiring": "The previous sandbox is being retired. Persistent files are retained.",
       "starting": "The host is starting.",
-      "offline": "The host starts when you open DSH or run a task.",
+      "offline": "The sandbox starts when you run a task.",
       "unconfirmed": "Preparation was not confirmed. Status has been requested again; contact a workspace administrator if it cannot advance.",
       "preparing": "Preparing...",
       "continue": "Continue preparation",
-      "prepare": "Prepare Home",
+      "prepare": "Prepare filesystem",
       "refresh": "Refresh status",
       "native_prepare": "Prepare DSH",
       "native_preparing": "Preparing DSH...",

@@ -31,7 +31,7 @@ func TestDSHHomeRejectsMachineCredentialsAndClientPlacement(t *testing.T) {
 	}
 }
 
-func TestDSHHomeOwnerWorkflowAndProviderIsolation(t *testing.T) {
+func TestEmployeeFilesystemOwnerWorkflowAcrossProviders(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("requires the real preproduction database fixture")
 	}
@@ -51,8 +51,8 @@ func TestDSHHomeOwnerWorkflowAndProviderIsolation(t *testing.T) {
 		h.EnsureDSHHome(w, r)
 		return w
 	}
-	if w := request(ownerID); w.Code != http.StatusConflict || calls != 0 {
-		t.Fatal("non-DSH runtime triggered provisioning", w.Code)
+	if w := request(ownerID); w.Code != http.StatusOK || calls != 1 {
+		t.Fatal("FC provider could not provision employee filesystem", w.Code)
 	}
 	if _, err := testPool.Exec(context.Background(), `UPDATE agent_runtime SET provider='dsh' WHERE id=$1`, runtimeID); err != nil {
 		t.Fatal(err)

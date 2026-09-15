@@ -1,3 +1,5 @@
+> Current contract (2026-09-15): all FC providers can mount the employee filesystem at `/mnt/multica`. `employee_filesystem_sandbox` selects independent execution instances per session/task scope, sharing the same employee Space/AP/Volume. `DSH_HOME=/mnt/multica/home` is a subdirectory. Shared-file write conflicts are left to users and agents for this release; earlier employee-wide single-writer guarantees in this historical design are superseded. Instance lifecycle and native session routing remain durable and auditable.
+
 # Employee DSH host coordination
 
 This package owns employee storage and native execution identities for FC DSH.

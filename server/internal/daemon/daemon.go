@@ -6415,6 +6415,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// spelling the installed harness build reads.
 		agentEnv["DSH_TELEMETRY_MODE"] = "DISABLED"
 	}
+	if d.cfg.LaunchedBy == "fc-e2b" && os.Getenv("MULTICA_FS_ROOT") == "/mnt/multica" {
+		agentEnv["MULTICA_FS_ROOT"] = "/mnt/multica"
+	}
 	if err := configureCodexTaskShellEnvironment(provider, env.CodexHome, os.Environ(), agentEnv, agentCustomEnv, d.logger); err != nil {
 		return TaskResult{}, err
 	}

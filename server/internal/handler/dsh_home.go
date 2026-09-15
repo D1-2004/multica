@@ -32,7 +32,7 @@ func (h *Handler) dshHomeKey(w http.ResponseWriter, r *http.Request) (dshhost.Ke
 		return dshhost.Key{}, false
 	}
 	if !a.RuntimeID.Valid {
-		writeError(w, http.StatusConflict, "bind an FC DSH runtime before provisioning a Home")
+		writeError(w, http.StatusConflict, "bind an FC runtime before preparing the filesystem")
 		return dshhost.Key{}, false
 	}
 	rt, err := h.Queries.GetAgentRuntime(r.Context(), a.RuntimeID)
@@ -40,8 +40,8 @@ func (h *Handler) dshHomeKey(w http.ResponseWriter, r *http.Request) (dshhost.Ke
 		writeError(w, http.StatusConflict, "agent runtime is unavailable")
 		return dshhost.Key{}, false
 	}
-	if rt.WorkspaceID != a.WorkspaceID || rt.Provider != "dsh" || !service.IsFCE2BRuntime(rt) {
-		writeError(w, http.StatusConflict, "persistent DSH Home requires an FC DSH runtime")
+	if rt.WorkspaceID != a.WorkspaceID || !service.IsFCE2BRuntime(rt) {
+		writeError(w, http.StatusConflict, "persistent filesystem requires an FC runtime")
 		return dshhost.Key{}, false
 	}
 	return dshhost.Key{WorkspaceID: uuid.UUID(a.WorkspaceID.Bytes), AgentID: uuid.UUID(a.ID.Bytes)}, true
@@ -51,6 +51,14 @@ func (h *Handler) dshHomeStatus(ctx context.Context, key dshhost.Key) (DSHHomeRe
 	store := dshhost.PostgresStore{DB: h.DB}
 	host, err := store.Get(ctx, key)
 	if err == nil {
+		// Storage is employee-scoped; this is a representative execution host,
+		// not a claim that the employee owns only one sandbox.
+		err = h.DB.QueryRow(ctx, `SELECT state,generation,sandbox_id FROM employee_filesystem_host
+ WHERE workspace_id=$1 AND agent_id=$2
+ ORDER BY CASE state WHEN 'running' THEN 0 WHEN 'creating' THEN 1 WHEN 'retiring' THEN 2 ELSE 3 END,generation DESC,sandbox_id LIMIT 1`, key.WorkspaceID, key.AgentID).Scan(&host.State, &host.Generation, &host.SandboxID)
+		if err != nil {
+			return DSHHomeResponse{}, err
+		}
 		return DSHHomeResponse{Provisioned: true, State: host.State, Step: 6, Generation: host.Generation, SandboxID: host.SandboxID}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {

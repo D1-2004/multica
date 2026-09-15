@@ -21,6 +21,20 @@ type Execution struct {
 	Workdir   string
 }
 
+// BindSandboxScope preserves the execution location chosen when a session was
+// first admitted. A native browser prompt must run on the host serving that
+// browser; later platform turns and scheduled turns reuse the same scope.
+func (s PostgresStore) BindSandboxScope(ctx context.Context, scope SessionScope, preferred uuid.UUID) (uuid.UUID, error) {
+	if !validSessionScope(scope) {
+		return uuid.Nil, errors.New("invalid DSH session sandbox scope")
+	}
+	var selected uuid.UUID
+	err := s.DB.QueryRow(ctx, `UPDATE dsh_employee_session SET sandbox_scope_id=COALESCE(sandbox_scope_id,$5)
+ WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4 RETURNING sandbox_scope_id`,
+		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, preferred).Scan(&selected)
+	return selected, err
+}
+
 // ValidSessionID accepts both the official browser's UUID and platform-created
 // native identities. Preserve their spelling: changing it changes the log.
 func ValidSessionID(value string) bool {

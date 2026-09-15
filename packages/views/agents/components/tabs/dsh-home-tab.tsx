@@ -8,9 +8,10 @@ import { Loader2 } from "lucide-react";
 import { useT } from "../../../i18n";
 import { DshProfileStatus } from "./dsh-profile-status";
 
-export function DshHomeTab({ workspaceId, agentId }: {
+export function DshHomeTab({ workspaceId, agentId, nativeEnabled = true }: {
   workspaceId: string;
   agentId: string;
+  nativeEnabled?: boolean;
 }) {
   const { t } = useT("agents");
   const home = useQuery(dshHomeOptions(workspaceId, agentId));
@@ -62,7 +63,7 @@ export function DshHomeTab({ workspaceId, agentId }: {
         </p>
       )}
       <div className="flex flex-wrap gap-2">
-        {ready && !unavailable && (
+        {nativeEnabled && ready && !unavailable && (
           entry && Date.parse(entry.expiresAt) > Date.now() ? (
             <a className={buttonVariants({ size: "sm" })} href={entry.entryUrl}
               target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer"
@@ -93,7 +94,7 @@ export function DshHomeTab({ workspaceId, agentId }: {
           {t(($) => $.tab_body.dsh_home.refresh)}
         </Button>
       </div>
-      <DshProfileStatus workspaceId={workspaceId} agentId={agentId} />
+      {nativeEnabled && <DshProfileStatus workspaceId={workspaceId} agentId={agentId} />}
     </section>
   );
 }

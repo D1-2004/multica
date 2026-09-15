@@ -35,6 +35,8 @@ import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
 import { AgentMcpTab } from "./tabs/agent-mcp-tab";
+import { isFCE2BRuntime } from "@multica/core/runtimes";
+import { DshHomeTab } from "./tabs/dsh-home-tab";
 import { DshConfigTab } from "./tabs/dsh-config-tab";
 import { IntegrationsTab } from "./tabs/integrations-tab";
 import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
@@ -178,6 +180,7 @@ export function AgentOverviewPane({
       items: group.items.filter((item) => {
         if (item.id === "mcp_config") return showMcp;
         if (item.id === "dsh") return runtime?.provider === "dsh";
+        if (item.id === "filesystem") return canEdit && agent.runtime_mode === "cloud" && runtime?.provider !== "dsh" && !!runtime && isFCE2BRuntime(runtime);
         if (item.id === "composio_mcp") return showComposioMcp;
         if (item.id === "integrations") return botIntegrationsConfigured;
         if (item.id === "mcp_access" || item.id === "a2a") {
@@ -484,6 +487,9 @@ export function AgentOverviewPane({
                       runtime={runtime}
                       canEdit={canEdit}
                     />
+                  )}
+                  {effectiveView === "filesystem" && (
+                    <DshHomeTab workspaceId={wsId} agentId={agent.id} nativeEnabled={false} />
                   )}
                   {effectiveView === "dsh" && (
                     <DshConfigTab

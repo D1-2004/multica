@@ -1,6 +1,7 @@
-// Package dshhost coordinates the sole writable sandbox for an employee Home.
-// AgenticFS locks are local to a sandbox. Expiry or a failed health check must
-// never authorize another writer; replacement requires confirmed destruction.
+// Package dshhost coordinates persistent execution sandboxes. Independent
+// execution scopes may mount the same employee filesystem concurrently.
+// Replacing a scope's writer still requires confirmed destruction because its
+// session state must not be opened concurrently by an old and new process.
 package dshhost
 
 import (
@@ -38,6 +39,7 @@ type Storage struct {
 type Host struct {
 	Key
 	Storage
+	ScopeID      uuid.UUID
 	State        string
 	Generation   int64
 	CreateIntent uuid.UUID

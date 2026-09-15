@@ -50,7 +50,7 @@ func NewDSHNativeHostBackend(cfg Config, native DSHNativeHostConfig) (Backend, e
 	if err != nil || endpoint.Hostname() == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" || !(endpoint.Scheme == "https" || endpoint.Scheme == "http" && endpoint.Hostname() == "127.0.0.1") || native.ModelAPIKey == "" || strings.ContainsAny(native.ModelAPIKey, "\r\n\x00") {
 		return nil, errors.New("invalid managed DSH model configuration")
 	}
-	if native.Generation < 1 || native.WorkDir != filepath.Join("/mnt/multica-dsh/workspaces", native.SessionID) || !native.ExpiresAt.After(time.Now()) || native.ExpiresAt.After(time.Now().Add(24*time.Hour)) {
+	if native.Generation < 1 || native.WorkDir != filepath.Join("/mnt/multica/workspaces", native.SessionID) || !native.ExpiresAt.After(time.Now()) || native.ExpiresAt.After(time.Now().Add(24*time.Hour)) {
 		return nil, errors.New("invalid managed DSH execution scope")
 	}
 	if native.SkillDirectory != "" && (!filepath.IsAbs(native.SkillDirectory) || filepath.Clean(native.SkillDirectory) != native.SkillDirectory || strings.ContainsRune(native.SkillDirectory, 0)) {

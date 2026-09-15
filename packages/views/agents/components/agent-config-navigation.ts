@@ -22,6 +22,7 @@ export type DetailTab =
   | "okr"
   | "skills"
   | "dsh"
+  | "filesystem"
   | "mcp_config"
   | "composio_mcp"
   | "integrations"
@@ -48,6 +49,7 @@ export type AgentTabLabelKey =
   | "okr"
   | "skills"
   | "dsh"
+  | "filesystem"
   | "mcp_config"
   | "composio_mcp"
   | "integrations"
@@ -109,6 +111,7 @@ export const AGENT_CONFIG_GROUPS: readonly AgentConfigGroup[] = [
       { id: "general", labelKey: "general" },
       { id: "runner", labelKey: "runner" },
       { id: "dsh", labelKey: "dsh" },
+      { id: "filesystem", labelKey: "filesystem" },
       { id: "env", labelKey: "environment" },
       { id: "custom_args", labelKey: "custom_args" },
       { id: "runtime_config", labelKey: "runtime_config" },

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_filesystem_sandbox_scope_idx;

@@ -58,7 +58,7 @@ func profilePools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 		return result
 	}
 	a, b := pool(), pool()
-	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9241_dsh_employee_profile", "9242_dsh_employee_profile_identity", "9243_dsh_profile_revision_identity", "9244_dsh_plugin_build_identity", "9245_dsh_plugin_build_worker", "9246_dsh_plugin_build_due", "9247_dsh_plugin_build_attempts"} {
+	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host", "9241_dsh_employee_profile", "9242_dsh_employee_profile_identity", "9243_dsh_profile_revision_identity", "9244_dsh_plugin_build_identity", "9245_dsh_plugin_build_worker", "9246_dsh_plugin_build_due", "9247_dsh_plugin_build_attempts"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
 		if err != nil {
 			t.Fatal(err)

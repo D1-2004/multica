@@ -1516,12 +1516,45 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "template_resolved"); err != nil {
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B template stage: %w", err)
 	}
-	if FCE2BRuntimeProvider(runtime) == "dsh" {
-		// The catalog derives capabilities from provider fingerprints, not image
-		// labels. Employee Host support is required and verified by the fixed
-		// Home and supervisor commands in resolveDSHEmployeeSandbox; an old
-		// image cannot bypass those receipts or fall back to a temporary Home.
-		release, err := lockDSHEmployee(ctx, runtimeLockConn, runtime.WorkspaceID, task.AgentID)
+	useEmployeeFilesystem := FCE2BRuntimeProvider(runtime) == "dsh"
+	if useEmployeeFilesystem && runtimeLockConn == nil {
+		return fcE2BLaunchSubmission{}, false, errors.New("employee filesystem requires a database admission connection")
+	}
+	if !useEmployeeFilesystem && runtimeLockConn != nil {
+		if err := runtimeLockConn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM dsh_employee_host WHERE workspace_id=$1 AND agent_id=$2)`, runtime.WorkspaceID, task.AgentID).Scan(&useEmployeeFilesystem); err != nil {
+			return fcE2BLaunchSubmission{}, false, fmt.Errorf("read employee filesystem binding: %w", err)
+		}
+	}
+	filesystemScope := dshExecutionScope(dshhost.Key{WorkspaceID: uuid.UUID(runtime.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}, task)
+	if useEmployeeFilesystem && FCE2BRuntimeProvider(runtime) == "dsh" && task.TriggerEvidenceKind.String == dshschedule.EvidenceKind {
+		execution, loadErr := dshschedule.LoadExecution(ctx, runtimeLockConn, filesystemScope.Key, uuid.UUID(task.ID.Bytes))
+		if loadErr != nil || !ScheduleExecutionMatches(task, execution) {
+			return fcE2BLaunchSubmission{}, false, errors.New("DSH schedule execution binding is invalid")
+		}
+		filesystemScope = execution.SessionScope
+	}
+	filesystemScopeID := employeeFilesystemScopeID(filesystemScope)
+	var nativeBinding dshhost.Execution
+	if useEmployeeFilesystem && FCE2BRuntimeProvider(runtime) == "dsh" {
+		store := dshhost.PostgresStore{DB: runtimeLockConn}
+		nativeBinding, err = store.BindExecution(ctx, filesystemScope, uuid.UUID(task.ID.Bytes))
+		if err != nil {
+			return fcE2BLaunchSubmission{}, false, fmt.Errorf("bind DSH native execution: %w", err)
+		}
+		filesystemScopeID, err = store.BindSandboxScope(ctx, filesystemScope, filesystemScopeID)
+		if err != nil {
+			return fcE2BLaunchSubmission{}, false, fmt.Errorf("bind DSH sandbox scope: %w", err)
+		}
+	}
+	if useEmployeeFilesystem {
+		// Only this execution scope is coordinated. Other sessions may create
+		// sandboxes and mount the same filesystem while this one is starting.
+		var release func()
+		if filesystemScopeID == uuid.Nil {
+			release, err = lockDSHEmployee(ctx, runtimeLockConn, runtime.WorkspaceID, task.AgentID)
+		} else {
+			release, err = lockEmployeeFilesystemScope(ctx, runtimeLockConn, filesystemScope.Key, filesystemScopeID)
+		}
 		if err != nil {
 			return fcE2BLaunchSubmission{}, false, err
 		}
@@ -1554,15 +1587,16 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	var sandboxID string
 	var coldStart bool
 	var employeeHost *dshhost.Host
-	if FCE2BRuntimeProvider(runtime) == "dsh" {
+	if useEmployeeFilesystem {
 		var host dshhost.Host
-		host, coldStart, err = l.resolveDSHEmployeeSandbox(ctx, dshhost.Key{WorkspaceID: uuid.UUID(runtime.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}, task.ID, runtime, template, runtimeLockConn, trace)
+		host, coldStart, err = l.resolveFilesystemScopeSandbox(ctx, filesystemScope.Key, filesystemScopeID, task.ID, runtime, template, runtimeLockConn, trace)
 		if errors.Is(err, errDSHHostWaiting) {
 			return fcE2BLaunchSubmission{}, true, nil
 		}
 		sandboxID = host.SandboxID
 		employeeHost = &host
-		// DSH ownership is recorded by employee, never in the per-chat cache.
+		// The filesystem scope store owns this sandbox lifecycle; the ordinary
+		// ephemeral sandbox cache must not independently delete or reassign it.
 		scoped = false
 	} else {
 		sandboxID, coldStart, err = l.resolveSandboxOnConnection(ctx, runtime, scope, scoped, template, runtimeLockConn, trace)
@@ -1635,18 +1669,13 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	}
 	extraEnv = hardenCloudSandboxA2ARunnerEnv(task, runtime, extraEnv)
 	if employeeHost != nil {
-		scope := dshExecutionScope(employeeHost.Key, task)
-		if task.TriggerEvidenceKind.String == dshschedule.EvidenceKind {
-			execution, loadErr := dshschedule.LoadExecution(ctx, runtimeLockConn, employeeHost.Key, uuid.UUID(task.ID.Bytes))
-			if loadErr != nil || !ScheduleExecutionMatches(task, execution) {
-				return fcE2BLaunchSubmission{}, false, errors.New("DSH schedule execution binding is invalid")
-			}
-			scope = execution.SessionScope
+		if extraEnv == nil {
+			extraEnv = make(map[string]string)
 		}
-		binding, err := (dshhost.PostgresStore{DB: runtimeLockConn}).BindExecution(ctx, scope, uuid.UUID(task.ID.Bytes))
-		if err != nil {
-			return fcE2BLaunchSubmission{}, false, fmt.Errorf("bind DSH native execution: %w", err)
-		}
+		extraEnv["MULTICA_FS_ROOT"] = dshhost.MountPath
+	}
+	if employeeHost != nil && FCE2BRuntimeProvider(runtime) == "dsh" {
+		binding := nativeBinding
 		if extraEnv == nil {
 			extraEnv = make(map[string]string)
 		}
@@ -2832,6 +2861,7 @@ func sortedEnvKeys(env map[string]string) []string {
 func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 	switch key {
 	case "OPENAI_MODEL",
+		"MULTICA_FS_ROOT",
 		"DSH_HOME",
 		"MULTICA_DSH_WORKSPACE_ID",
 		"MULTICA_DSH_AGENT_ID",
