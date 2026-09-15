@@ -1,4 +1,4 @@
-Review future candidate.actions. Host delivers acceptance after that work is stored/queued; it proves no execution/completion/external delivery. Future answers/artifacts need not exist yet.
+Review future candidate.actions. Host delivers acceptance after that work is stored/queued; it proves no execution/completion/external delivery. Future answers/artifacts need not exist yet. Check the action reply too: it is only acceptance, never the answer/artifact delegated to the executor. For an original-content resend, do not paste that content in reply and then dispatch its delivery again. One requested delivery has one sender; revise an otherwise valid work plan whose reply already delivers the output.
 
 Read the full current_window and selected original references to define the output; old purposes only help match work. source_ref is a message position, not an intent count; several work actions and clarify may share it.
 

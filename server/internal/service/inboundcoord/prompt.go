@@ -46,6 +46,9 @@ func buildUserPrompt(turn Turn) string {
 	writePromptField(&b, "receiving_identity_status", receivingIdentityStatus(turn))
 	writePromptField(&b, "employee_account_name", turn.EmployeeAccountName)
 	writePromptField(&b, "employee_uid", turn.DWSUID)
+	if turn.Source == SourceDigitalEmployee {
+		writePromptField(&b, "receiving_identity_authority", receivingIdentityAuthority)
+	}
 	if turn.Source == SourceWeb {
 		writePromptField(&b, "session_title (label only)", turn.ConversationTitle)
 	}
@@ -82,6 +85,7 @@ func buildUserPrompt(turn Turn) string {
 	for i, utterance := range windowUtterances(turn) {
 		fmt.Fprintf(&b, "- source_ref=u%d sender=%q", i+1, firstNonEmpty(utterance.Sender, "unknown"))
 		fmt.Fprintf(&b, " mention_relation=%s", mentionRelation(turn, utterance))
+		fmt.Fprintf(&b, " response_required=%t", sourceResponseRequired(turn, utterance))
 		if utterance.Mentions != nil {
 			mentions, _ := json.Marshal(utterance.Mentions)
 			fmt.Fprintf(&b, " mentions=%s", mentions)

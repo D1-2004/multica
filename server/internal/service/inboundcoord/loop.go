@@ -237,7 +237,6 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 						}
 					}
 					if callErr == nil {
-						decision = ensureDirectInboundReply(turn, decision)
 						decision.Steps = steps
 						decision.ToolRounds = round + 1
 						decision.ToolsUsed = append([]string(nil), used...)

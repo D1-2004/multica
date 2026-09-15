@@ -30,7 +30,7 @@ func addParticipationCheckSchema(tool *openai.ChatCompletionToolUnionParam, refs
 			"properties": map[string]any{
 				"source_refs":     map[string]any{"type": "array", "minItems": 1, "uniqueItems": true, "items": map[string]any{"type": "string", "enum": refs}},
 				"basis":           map[string]any{"type": "string", "enum": []string{"direct", "open_call", "dialogue", "existing_work", "other", "unknown"}, "description": "direct: this employee is the intended respondent; open_call: a current role/group invitation includes it; dialogue/existing_work require a loaded read_ref; other: another respondent; unknown: no grounded respondent. False explicit-mention metadata does not negate a natural name address."},
-				"recipient_quote": map[string]any{"type": "string", "maxLength": 160, "description": "For direct/open_call, quote only the exact words in this source identifying the requested respondent/role/group, not the request verb, the beneficiary or a name copied from configuration. A presence query without a respondent expression supplies no such quote. For other, quote an explicit other respondent if present; otherwise empty."},
+				"recipient_quote": map[string]any{"type": "string", "maxLength": 160, "description": "For direct/open_call, quote only the exact words in this source identifying the requested respondent/role/group, not the request verb, the beneficiary or a name copied from configuration. For direct, a trusted includes_employee mention also proves the recipient and permits an empty quote. A presence query without a respondent expression or trusted mention supplies no such quote. For other, quote an explicit other respondent if present; otherwise empty."},
 				"evidence_ref":    map[string]any{"type": "string", "description": "For dialogue/existing_work, copy a loaded history/work read_ref that grounds the relationship. Otherwise empty."},
 				"disposition":     map[string]any{"type": "string", "enum": []string{"ignore", "coordinate", "work"}, "description": "Required response to the ORIGINAL utterance, not a copy of candidate.kind. A greeting to the employee needs coordinate; other/unknown needs ignore. A status/presence reminder of accepted work needs coordinate, not another execution. Authorized substantive work needs work."},
 			}},
@@ -66,7 +66,7 @@ func validateFinishParticipationChecks(result *finishCheckResult, turn Turn, dec
 			seen[sourceRef] = true
 			grounded := true
 			if check.Basis == "direct" || check.Basis == "open_call" {
-				grounded = strings.TrimSpace(check.RecipientQuote) != "" && strings.Contains(utterances[index].Text, check.RecipientQuote)
+				grounded = (check.Basis == "direct" && mentionRelation(turn, utterances[index]) == "includes_employee") || (strings.TrimSpace(check.RecipientQuote) != "" && strings.Contains(utterances[index].Text, check.RecipientQuote))
 			}
 			if check.Basis == "dialogue" || check.Basis == "existing_work" {
 				grounded = false

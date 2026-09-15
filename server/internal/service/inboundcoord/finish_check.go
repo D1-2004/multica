@@ -133,9 +133,10 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		"proactive_conversation": turn.ProactiveConversation,
 		"employee_account_name":  turn.EmployeeAccountName, "employee_uid": turn.DWSUID, "agent_name": conversationAgentName(turn),
 		"source": turn.Source, "chat_type": turn.ChatType, "conversation_id": turn.ConversationID, modelAddressingField(turn): turn.Addressed,
-		"receiving_identity_status": receivingIdentityStatus(turn),
-		"coordinator_contract":      coordinatorContractMetadata(turn),
-		"history_status":            turn.HistoryStatus, "history_before": turn.HistoryBefore,
+		"receiving_identity_status":    receivingIdentityStatus(turn),
+		"receiving_identity_authority": receivingIdentityAuthority,
+		"coordinator_contract":         coordinatorContractMetadata(turn),
+		"history_status":               turn.HistoryStatus, "history_before": turn.HistoryBefore,
 		"scene_memory_status": turn.SceneMemoryStatus, "scene_memory_revision": turn.SceneMemoryRevision, "scene_memory": turn.SceneMemory,
 		"read_evidence":             finishReadEvidence(turn),
 		"reply_delivery_guarantees": "Work replies are delivered only after ALL work items are committed and tasks queued. Acceptance/queued acknowledgements are then true. This does not prove execution completed, business results, or external delivery. A clarify question handles its request for this window; the user answers in a later window.",
@@ -201,7 +202,8 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	window := make([]map[string]any, 0, len(refs))
 	for i, utterance := range windowUtterances(turn) {
 		window = append(window, map[string]any{"source_ref": refs[i], "text": utterance.Text,
-			"sender": utterance.Sender, "sender_id": utterance.SenderID, "evidence_id": utterance.EvidenceID,
+			"response_required": sourceResponseRequired(turn, utterance),
+			"sender":            utterance.Sender, "sender_id": utterance.SenderID, "evidence_id": utterance.EvidenceID,
 			"timestamp": utterance.Timestamp, "mentions": utterance.Mentions, "mention_relation": mentionRelation(turn, utterance), "reply_to_sender_id": utterance.ReplyToSenderID, "reply_to_evidence_id": utterance.ReplyToEvidenceID, "quoted_context": utterance.ReplyToContent})
 	}
 	workRefs := finishWorkActionRefs(decision)
@@ -294,6 +296,9 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 			protocolErr = validateFinishWorkChecks(&result, decision)
 			if protocolErr == nil {
 				protocolErr = validateFinishParticipationChecks(&result, turn, decision)
+			}
+			if protocolErr == nil {
+				enforceRequiredResponses(&result, turn, decision)
 			}
 			if protocolErr == nil && result.Verdict == "allow" {
 				for _, action := range actions {

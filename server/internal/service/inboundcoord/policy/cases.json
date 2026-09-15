@@ -1318,6 +1318,39 @@
       "context_b": "同一句工作请求明确交给本员工",
       "expected_effects": "前者允许ignore而不被Host关键词强制派发；后者进入工作且不以口头接单替代执行",
       "verification": "not_run"
+    },
+    {
+      "id": "f01_uid_required_reply_rename",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F13"
+      ],
+      "context_a": "相同问候或追问，可信UID@当前员工，昵称和岗位自称不同",
+      "context_b": "相同正文，可信UID只@另一个人且没有本员工参与依据",
+      "expected_effects": "前者response_required=true，不能ignore，不用旧昵称推翻UID；后者不认领；每条来源独立",
+      "verification": "not_run"
+    },
+    {
+      "id": "f04_contextual_conversation",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F14"
+      ],
+      "context_a": "连续社交追问并抱怨之前一直重复确认",
+      "context_b": "相同对话后提出明确业务工作请求",
+      "expected_effects": "前者用acknowledge(conversation)回答本轮话意，不编造活动/故障或固定复读；后者仍派发工作，不用conversation抢答",
+      "verification": "not_run"
+    },
+    {
+      "id": "f12_redelivery_single_sender",
+      "rule_ids": [
+        "COORD.F12",
+        "COORD.F13"
+      ],
+      "context_a": "已完成草稿要求原文重发，work reply已经贴完整正文",
+      "context_b": "同一请求，work reply仅接单，执行器发一次原文",
+      "expected_effects": "前者审核revise防双重发送；后者准确交付一次；不重新研究或新建无关产物",
+      "verification": "not_run"
     }
   ]
 }

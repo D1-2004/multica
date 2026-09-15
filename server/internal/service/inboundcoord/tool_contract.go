@@ -19,18 +19,19 @@ import (
 // that were actually recalled, the current memory revision and the boundary
 // sentences a decline may quote.
 type toolContract struct {
-	sourceRefs     []string
-	stateRefs      []string
-	issueIDs       []string
-	memoryRevision int64
-	boundaryQuotes []string
+	sourceRefs           []string
+	requiredResponseRefs []string
+	stateRefs            []string
+	issueIDs             []string
+	memoryRevision       int64
+	boundaryQuotes       []string
 }
 
 // boundaryQuoteLimit bounds the decline quote options offered in the schema.
 const boundaryQuoteLimit = 24
 
 func toolContractFor(turn Turn) toolContract {
-	contract := toolContract{memoryRevision: turn.SceneMemoryRevision}
+	contract := toolContract{memoryRevision: turn.SceneMemoryRevision, requiredResponseRefs: requiredResponseRefs(turn)}
 	for i := range windowUtterances(turn) {
 		contract.sourceRefs = append(contract.sourceRefs, fmt.Sprintf("u%d", i+1))
 	}

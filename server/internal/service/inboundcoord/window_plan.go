@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -66,7 +67,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 	props := map[string]any{
 		"kind":        map[string]any{"type": "string", "enum": kinds},
 		"source_refs": map[string]any{"type": "array", "minItems": 1, "uniqueItems": true, "items": sourceRefSchema, "description": "Exact current-window uN refs. Every uN in current_message must be covered by at least one action, including non-work. Multiple intents may share a ref."},
-		"reply":       map[string]any{"type": "string", "description": "Required except ignore. Only user-facing communication belonging to this operation, never a business answer or internal routing narration. For work, briefly name what you will do. Host sends it after submission succeeds."},
+		"reply":       map[string]any{"type": "string", "description": "Required except ignore. Only user-facing communication belonging to this operation, never a business answer or internal routing narration. For work, briefly name what you will do; do not paste the artifact or original text that the executor will deliver, including redelivery. Host sends acceptance after submission succeeds."},
 		"reason":      map[string]any{"type": "string", "description": "Only ignore: why no response/work is needed."},
 	}
 	// A contract without window refs is the legacy unscoped schema used by
@@ -94,7 +95,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 		} else if strict {
 			kinds = removeKind(kinds, "report_status")
 		}
-		props["ack_kind"] = map[string]any{"type": "string", "enum": []string{"greeting", "thanks", "correction", "receipt"}, "description": "acknowledge only; never substitute for executable work."}
+		props["ack_kind"] = map[string]any{"type": "string", "enum": []string{"greeting", "thanks", "correction", "receipt", "conversation"}, "description": "acknowledge only. conversation answers everyday social follow-ups or feedback about this dialogue using supplied context; no invented activities, technical causes, business answers or work promises. Never substitute for executable work."}
 		revision := map[string]any{"type": "integer", "description": "report_memory only: copy scene_memory_revision; report only the supplied memory and its availability."}
 		if strict {
 			// Host requires the exact current revision, including 0.
@@ -118,6 +119,16 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 				props["basis"] = map[string]any{"type": "string", "enum": []string{"answer", "change", "retry"}, "description": "continue_work only. answer means this sender answers a real pending question, not that you will answer the user. Original-report resend or resumed authorized work needs an applicable retry or a new explicit delivery; status-only uses report_status. Do not turn missing question evidence into retry."}
 			}
 		}
+		props["kind"] = map[string]any{"type": "string", "enum": kinds}
+	}
+	ignorableRefs := make([]string, 0, len(contract.sourceRefs))
+	for _, ref := range contract.sourceRefs {
+		if !slices.Contains(contract.requiredResponseRefs, ref) {
+			ignorableRefs = append(ignorableRefs, ref)
+		}
+	}
+	if !taskFinished && strict && len(ignorableRefs) == 0 {
+		kinds = removeKind(kinds, "ignore")
 		props["kind"] = map[string]any{"type": "string", "enum": kinds}
 	}
 	variants := make([]any, 0, len(kinds))
@@ -149,11 +160,15 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 		case "report_result":
 			required = append(required, "result_ref")
 		}
-		variants = append(variants, map[string]any{"properties": map[string]any{"kind": map[string]any{"enum": []string{kind}}}, "required": required})
+		variantProps := map[string]any{"kind": map[string]any{"enum": []string{kind}}}
+		if kind == "ignore" && !taskFinished && strict {
+			variantProps["source_refs"] = map[string]any{"type": "array", "items": stringEnum(ignorableRefs)}
+		}
+		variants = append(variants, map[string]any{"properties": variantProps, "required": required})
 	}
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("First establish per-source participation: receiving a group message does not make it a request to this employee. Ignore requests/greetings directed only to others. Then finish coordination using 1-8 explicit actions. No generic reply action. Each action owns its reply and only its documented fields; ignore owns reason. Product/professional questions require start_work or continue_work, even if easy. Recall first before work. One work action per independent deliverable; same-kind batches stay in one action; do not bundle unrelated kinds of work into one purpose. Mixed work, clarification and acknowledgements are allowed; cover the full window. Never claim a proposed action already succeeded."),
+		Description: openai.String("First establish per-source participation: receiving a group message does not make it a request to this employee. Ignore requests/greetings directed only to others. A source marked response_required is addressed to this employee regardless of persona names; it cannot be ignored. Use acknowledge with ack_kind=conversation for everyday follow-ups and feedback, answering the current message. Then finish coordination using 1-8 explicit actions. No generic reply action. Each action owns its reply and only its documented fields; ignore owns reason. Product/professional questions require start_work or continue_work, even if easy. Recall first before work. One work action per independent deliverable; same-kind batches stay in one action; do not bundle unrelated kinds of work into one purpose. Mixed work, clarification and acknowledgements are allowed; cover the full window. Never claim a proposed action already succeeded."),
 		Parameters:  shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"actions"}, "properties": map[string]any{"actions": map[string]any{"type": "array", "minItems": 1, "maxItems": WindowPlanMaxItems, "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"kind"}, "properties": props, "oneOf": variants}}}},
 	})
 }
@@ -287,6 +302,11 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 		}
 		a.Reply = strings.TrimSpace(a.Reply)
 		if a.Kind == "ignore" {
+			for _, ref := range a.SourceRefs {
+				if sourceResponseRequired(turn, byRef[ref]) {
+					return Decision{}, hintErr("source "+ref+" requires a response to this employee; ignore is unavailable", "Respond to the current words with acknowledge(ack_kind=conversation) for social dialogue or feedback. Use the appropriate work/status/clarify action when needed. Receiving UID evidence outranks persona names; do not invent activity or internal failure reasons.")
+				}
+			}
 			if strings.TrimSpace(a.Reason) == "" || utf8.RuneCountInString(a.Reason) > 300 {
 				return Decision{}, fmt.Errorf("ignore requires a reason of at most 300 characters")
 			}
@@ -320,7 +340,7 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 				return Decision{}, fmt.Errorf("clarify requires explicit valid missing_fields")
 			}
 		case "acknowledge":
-			if !oneOf(a.AckKind, "greeting", "thanks", "correction", "receipt") {
+			if !oneOf(a.AckKind, "greeting", "thanks", "correction", "receipt", "conversation") {
 				return Decision{}, fmt.Errorf("acknowledge requires ack_kind")
 			}
 		case "report_memory":
