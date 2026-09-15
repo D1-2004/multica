@@ -43,6 +43,9 @@ func TestConversationReplyStageExcludesRoutingDataAndPreservesWork(t *testing.T)
 		t.Fatal("renderer exceeded bounded request budget")
 	}
 	raw, _ := json.Marshal(f.params[0].Messages)
+	if !strings.Contains(string(raw), "account_owner_biography") || !strings.Contains(string(raw), "not_supplied") {
+		t.Fatal("renderer lacks its factual author boundary")
+	}
 	if len(f.params[0].Messages) != 3 {
 		t.Fatal("renderer must separate policy, background and current request")
 	}

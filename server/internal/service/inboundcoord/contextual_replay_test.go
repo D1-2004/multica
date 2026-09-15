@@ -170,3 +170,70 @@ func TestCoordinatorContextualReplay(t *testing.T) {
 		})
 	}
 }
+
+// Repeats an already-selected real conversation action without rerouting it.
+// Suggestions versus unsupported autobiography remain a manual semantic check.
+func TestCoordinatorConversationFocusedReplay(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_CONTEXTUAL_REPLAY") != "1" {
+		t.Skip("real model replay requires explicit opt-in")
+	}
+	path, reportPath := os.Getenv("MULTICA_CONTEXTUAL_REPLAY_FIXTURE"), os.Getenv("MULTICA_CONTEXTUAL_REPLAY_REPORT")
+	if path == "" || reportPath == "" {
+		t.Skip("private fixture/report paths required")
+	}
+	var fixture struct {
+		TraceID string `json:"trace_id"`
+		Turn    Turn   `json:"turn"`
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || json.Unmarshal(body, &fixture) != nil {
+		t.Fatal("cannot read private fixture")
+	}
+	client := llm.New(llm.Config{APIKey: os.Getenv("MULTICA_LLM_API_KEY"), BaseURL: os.Getenv("MULTICA_LLM_BASE_URL"), DefaultModel: coordinatorModel, MaxRetries: -1})
+	if !client.Enabled() {
+		t.Skip("LLM credentials unavailable")
+	}
+	type trial struct {
+		Index          int                 `json:"index"`
+		Reply          string              `json:"reply"`
+		Verdict        string              `json:"verdict"`
+		Failure        string              `json:"failure,omitempty"`
+		ElapsedMS      int64               `json:"elapsed_ms"`
+		Rounds         []frozenReplayRound `json:"rounds"`
+		UpstreamErrors []string            `json:"upstream_errors,omitempty"`
+	}
+	report := struct {
+		TraceID       string  `json:"trace_id"`
+		PolicyVersion string  `json:"policy_version"`
+		Scope         string  `json:"scope"`
+		Trials        []trial `json:"trials"`
+	}{TraceID: fixture.TraceID, PolicyVersion: coordinatorPolicy.Version, Scope: "Frozen real message/history; three direct renderer generations followed by existing reviewer. Not live IM E2E. Advice versus autobiography requires manual review."}
+	for i := 1; i <= 3; i++ {
+		started := time.Now()
+		observer := &frozenReplayCompleter{client: client}
+		completer := &contextualReplayCompleter{observer: observer}
+		c := &Coordinator{Chat: completer}
+		d := Decision{Action: ActionReply, CoordinationActions: []CoordinationAction{{Kind: "acknowledge", AckKind: "conversation", SourceRefs: []string{"u1"}}}}
+		ctx, cancel := context.WithTimeout(context.Background(), decisionTimeout)
+		err := c.renderConversationReplies(ctx, fixture.Turn, &d, 0)
+		result := finishCheckResult{}
+		if err == nil {
+			result, err = c.checkFinish(ctx, fixture.Turn, d, nil, 0, nil)
+		}
+		cancel()
+		r := trial{Index: i, Reply: d.UserText, Verdict: result.Verdict, ElapsedMS: time.Since(started).Milliseconds(), Rounds: observer.rounds, UpstreamErrors: completer.upstreamErrors}
+		if err != nil {
+			r.Failure = "renderer or review failed; inspect private report"
+			t.Error(r.Failure)
+		} else if result.Verdict != "allow" {
+			r.Failure = "review did not allow candidate"
+			t.Error(r.Failure)
+		}
+		report.Trials = append(report.Trials, r)
+		out, _ := json.MarshalIndent(report, "", "  ")
+		if os.WriteFile(reportPath, out, 0600) != nil {
+			t.Fatal("cannot write private replay report")
+		}
+		t.Logf("trial=%d verdict=%s elapsed_ms=%d", i, r.Verdict, r.ElapsedMS)
+	}
+}

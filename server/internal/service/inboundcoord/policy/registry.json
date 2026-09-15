@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-15.6",
-  "assembly_version": "33",
+  "policy_version": "2026-09-15.7",
+  "assembly_version": "34",
   "modules": [
     {
       "id": "core",
@@ -276,7 +276,7 @@
     },
     {
       "id": "conversation_reply",
-      "version": "3",
+      "version": "4",
       "file": "conversation_reply.md",
       "applies_when": "conversation_reply",
       "requires": [],
@@ -286,8 +286,8 @@
         "COORD.F13",
         "COORD.F14"
       ],
-      "budget_characters": 913,
-      "content_sha256": "fb645a803d87938c00188d6c2bd27021beddd3c45163862c6178dc959692c5c9"
+      "budget_characters": 1027,
+      "content_sha256": "557f060241a7d463bfa8092668d6145ca21a858073fb83103ae4a92b6b3650be"
     }
   ],
   "obligations": [
@@ -570,7 +570,8 @@
         "f04_work_wins_over_speak",
         "f15_decline_cannot_quote_work_ask_or_memory",
         "f04_other_recipient_work_keywords",
-        "f04_contextual_conversation"
+        "f04_contextual_conversation",
+        "f14_advice_without_biography"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -1040,7 +1041,8 @@
         "f04_other_recipient_work_keywords",
         "f01_uid_required_reply_rename",
         "f12_redelivery_single_sender",
-        "f01_other_uid_same_name_quote"
+        "f01_other_uid_same_name_quote",
+        "f14_advice_without_biography"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -1127,7 +1129,8 @@
         "f14_contrast",
         "f04_light_coordination_vs_business_execution",
         "f14_dm_bare_acknowledgement_needs_no_reply",
-        "f04_contextual_conversation"
+        "f04_contextual_conversation",
+        "f14_advice_without_biography"
       ],
       "verification": {
         "status": "integration_replay_pending",

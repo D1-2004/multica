@@ -1362,6 +1362,18 @@
       "context_b": "同文可信UID为本员工；或@他人后另有独立自然称呼/开放邀请/有据对话",
       "expected_effects": "A不得把正式@片段及内部同名子串作为本员工direct依据，普通/主动群一致；B保留真实响应资格，不将other_only整句封禁",
       "verification": "not_run"
+    },
+    {
+      "id": "f14_advice_without_biography",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F13",
+        "COORD.F14"
+      ],
+      "context_a": "用户问雨天居家通常做什么，未提供任何账号主人的真实生活资料",
+      "context_b": "用户提供自己的经历并明确要求代写一段第一人称稿件",
+      "expected_effects": "A以建议或假设自然聊天，不包装为数字员工亲身习惯；B作为写作任务处理用户提供素材，不将素材冒充员工经历",
+      "verification": "not_run"
     }
   ]
 }
