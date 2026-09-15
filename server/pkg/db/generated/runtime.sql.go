@@ -175,6 +175,11 @@ WHERE status = 'offline'
     FROM agent
     WHERE agent.runtime_id = agent_runtime.id
   )
+  AND NOT (
+    provider = 'dsh' AND EXISTS (
+      SELECT 1 FROM agent_task_queue WHERE runtime_id = agent_runtime.id
+    )
+  )
 RETURNING id, workspace_id
 `
 
@@ -186,6 +191,8 @@ type DeleteStaleOfflineRuntimesRow struct {
 // Deletes runtimes that have been offline for longer than the TTL and have
 // no agents bound (active or archived). The FK constraint on agent.runtime_id
 // is ON DELETE RESTRICT, so we must exclude all agent references.
+// DSH task history and its encrypted trajectory index survive until explicit
+// parent cleanup. Test task existence, not a concurrently uploaded index.
 func (q *Queries) DeleteStaleOfflineRuntimes(ctx context.Context, staleSeconds float64) ([]DeleteStaleOfflineRuntimesRow, error) {
 	rows, err := q.db.Query(ctx, deleteStaleOfflineRuntimes, staleSeconds)
 	if err != nil {
@@ -207,7 +214,14 @@ func (q *Queries) DeleteStaleOfflineRuntimes(ctx context.Context, staleSeconds f
 }
 
 const deleteSystemAgentsByRuntime = `-- name: DeleteSystemAgentsByRuntime :exec
-DELETE FROM agent WHERE runtime_id = $1 AND kind = 'system'
+WITH target AS MATERIALIZED (
+    SELECT id FROM agent WHERE runtime_id = $1 AND kind = 'system'
+), deleted_dsh_trajectories AS (
+    DELETE FROM agent_task_dsh_trajectory WHERE task_id IN (
+        SELECT id FROM agent_task_queue WHERE agent_id IN (SELECT id FROM target)
+    )
+)
+DELETE FROM agent WHERE id IN (SELECT id FROM target)
 `
 
 // System agents are invisible execution infrastructure (for example the Agent

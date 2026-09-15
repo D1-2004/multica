@@ -989,6 +989,13 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteWorkspaceAutopilotRuns(ctx, requester.WorkspaceID) },
 		},
 		{
+			name: "delete DSH trajectory indexes",
+			run: func() error {
+				_, err := tx.Exec(ctx, deleteWorkspaceDSHTrajectories, requester.WorkspaceID)
+				return err
+			},
+		},
+		{
 			name: "delete tasks",
 			run:  func() error { return qtx.DeleteWorkspaceTasks(ctx, requester.WorkspaceID) },
 		},

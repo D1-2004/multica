@@ -3,7 +3,9 @@
 This package owns employee storage and native execution identities for FC DSH.
 The FC launcher uses it for employee admission, mount initialization and native
 Host readiness. The native task adapter and storage provisioning entry point
-are integrated in the feature branch; the native UI gateway remains unfinished. The FC image
+are integrated in the feature branch, including the HTTP/WS native gateway and
+platform prompt admission. Employee provisioning and full business acceptance
+remain pending. The FC image
 advertises the capability on the candidate branch; deployment and acceptance
 must be checked against the actual template catalog.
 
@@ -77,11 +79,13 @@ image overlay contract and model catalog. The supervisor also checks the live
 task-context plugin's catalog over the authenticated native API. A changed
 catalog requires draining and retiring the old sandbox; it never rewrites a
 running Host's configuration. This receipt is separate from the employee's
-editable Profile revision, which still needs its durable lifecycle.
+editable Profile revision. `internal/dshprofile` persists desired revisions and
+immutable build artifacts; `service/fc_e2b_dsh_profile.go` compares current saved
+configuration with the receipt before reporting it as applied.
 
-Before deployment, complete provisioning intents, native activity draining,
-credentials scoped to executions, the persistent task adapter, profile revisions
-and the native gateway, then verify the full chain in FC and pre-release.
+Before the consolidated deployment, finish the remaining native busy-steer,
+queue projection and full trajectory audit, and verify the complete chain in FC
+and pre-release. Implementation presence is not a live acceptance result.
 
 ## Storage provisioning intent
 
@@ -125,7 +129,9 @@ preproduction database; a local skip is not evidence for its SQL behavior.
 ## Native browser credentials
 
 `NativeAccessManager` and `dsh_native_access` implement the credential lifecycle
-for the pending native gateway. They are not exposed by a product route yet.
+for the native gateway. Human-only `/api/agents/{id}/dsh-native/access` routes
+issue and revoke access; `handler/dsh_native.go` checks permissions and ensures
+the exact employee Host and gateway before issuing a grant.
 After authenticated human management checks and actual gateway readiness, the
 caller may issue a 60-second entry bound to user, workspace, employee, exact
 sandbox ID and generation. PostgreSQL stores only a SHA-256 token digest. One
@@ -144,6 +150,39 @@ credentials must never be stored in trajectories, logs or employee profiles.
 Pure tests cover credential separation, employee/generation mismatch, permission
 revocation and uncertain exchange receipts. The PostgreSQL test uses 24 callers
 across two pools and checks expiry and Host retirement, but requires the actual
-preproduction test environment. HTTP handlers, native gateway cookie exchange,
-ongoing WebSocket revocation, unified prompt admission and live acceptance remain
-required before a browser entry can be exposed.
+preproduction test environment. HTTP handlers, gateway cookie exchange, ongoing
+WebSocket checks and durable prompt admission are implemented; their real
+employee browser and task acceptance remains required. Busy-session steer and
+platform queue projection are still open implementation items.
+
+
+## Trajectory persistence and deletion
+
+Object upload precedes a short application transaction that locks the workspace,
+runtime, optional issue, employee and task before committing an immutable index.
+Explicit workspace, issue and hidden system-agent deletion removes the matching
+indexes in the same transaction as parent deletion. Removing the per-object key
+makes retained ciphertext unreadable. An uncertain database commit must retain
+its ciphertext for a retry to reconcile; it is not a confirmed cleanup failure.
+Offline DSH Runtime GC retains runtimes with task history, including tasks whose
+first trajectory upload has not completed.
+
+Migration 9256 removes the historical task foreign key. The preproduction batch
+must drain and suspend DSH admissions before this migration and keep them closed
+until every backend replica runs the application cleanup code. An older writer
+cannot safely overlap a foreign-key-free index table. Rollback has the same
+DSH drain requirement; the down migration intentionally does not recreate a
+foreign key. Verify zero orphan indexes after migration, deletion races and
+rollback rehearsal before reopening admissions.
+
+Run the database case only on an authorized preproduction database path:
+
+```sh
+MULTICA_HANDLER_UNIT_TESTS_ONLY=1 DSH_TRAJECTORY_TEST_DATABASE_URL=... \
+  go test ./internal/handler -run TestDSHTrajectoryDatabaseDeletionAndUploadRace
+```
+
+It creates a private schema and checks competing parent locks, deletion/late
+upload, tenant and kind guards, immutable retries and offline GC. With no explicit
+database it skips; handler package success without the unit-only flag can also
+mean TestMain skipped every case and is not unit-test evidence.

@@ -98,8 +98,14 @@ RETURNING *;
 -- Builder sessions own their hidden execution agent. Deleting the session
 -- removes that carrier and its task rows; the kind guard prevents this cleanup
 -- path from ever deleting a user-authored agent.
-DELETE FROM agent
-WHERE id = $1 AND kind = 'system' AND system_key LIKE 'agent_builder:%';
+WITH target AS MATERIALIZED (
+    SELECT id FROM agent WHERE id = $1 AND kind = 'system' AND system_key LIKE 'agent_builder:%'
+), deleted_dsh_trajectories AS (
+    DELETE FROM agent_task_dsh_trajectory WHERE task_id IN (
+        SELECT id FROM agent_task_queue WHERE agent_id IN (SELECT id FROM target)
+    )
+)
+DELETE FROM agent WHERE id IN (SELECT id FROM target);
 
 -- name: RebindAgentBuilderRuntime :one
 -- Re-points a builder carrier at another runtime mid-conversation. The carrier

@@ -230,9 +230,8 @@ func filterStaleRuntimesByLiveness(ctx context.Context, candidates []db.SelectSt
 	return ids
 }
 
-// gcRuntimes deletes offline runtimes that have exceeded the TTL and have
-// no active (non-archived) agents. Before deleting, it cleans up any
-// archived agents so the FK constraint (ON DELETE RESTRICT) doesn't block.
+// gcRuntimes deletes expired offline runtimes with no bound agents. DSH
+// runtimes with retained task history require explicit application cleanup.
 func gcRuntimes(ctx context.Context, queries *db.Queries, bus *events.Bus) {
 	deleted, err := queries.DeleteStaleOfflineRuntimes(ctx, offlineRuntimeTTLSeconds)
 	if err != nil {

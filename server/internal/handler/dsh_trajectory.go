@@ -344,7 +344,7 @@ func (h *Handler) UploadDSHTrajectory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to store DSH trajectory")
 		return
 	}
-	persisted, err := h.Queries.PutAgentTaskDSHTrajectory(r.Context(), db.PutAgentTaskDSHTrajectoryParams{
+	persisted, err := h.persistDSHTrajectory(r.Context(), parseUUID(workspaceID), task, db.PutAgentTaskDSHTrajectoryParams{
 		TaskID:           taskUUID,
 		SessionID:        sessionID,
 		StorageKey:       storageKey,
@@ -358,10 +358,10 @@ func (h *Handler) UploadDSHTrajectory(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// The conditional upsert returns no row only when another digest won
-			// this task. Its content-addressed key is distinct and safe to remove.
+			// A conflicting digest or deleted parent cannot reference this
+			// attempt's distinct ciphertext key. This is a confirmed rollback.
 			h.Storage.Delete(r.Context(), storageKey)
-			writeError(w, http.StatusConflict, "a different DSH trajectory is already recorded for this task")
+			writeError(w, http.StatusConflict, "the DSH task was removed or has a different trajectory")
 			return
 		}
 		// Do not delete on an indeterminate database failure: a concurrent exact

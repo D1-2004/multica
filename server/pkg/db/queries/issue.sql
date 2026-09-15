@@ -239,6 +239,11 @@ LIMIT 1;
 WITH target AS (
     SELECT issue.id FROM issue WHERE issue.id = $1 AND issue.workspace_id = $2
 ),
+deleted_dsh_trajectories AS (
+    DELETE FROM agent_task_dsh_trajectory WHERE task_id IN (
+        SELECT id FROM agent_task_queue WHERE issue_id IN (SELECT id FROM target)
+    )
+),
 cleared_vcs_pr_links AS (
     DELETE FROM issue_vcs_pull_request WHERE issue_id IN (SELECT target.id FROM target)
 )

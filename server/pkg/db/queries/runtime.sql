@@ -436,7 +436,14 @@ DELETE FROM agent_runtime WHERE id = $1;
 -- System agents are invisible execution infrastructure (for example the Agent
 -- Builder). Remove them before deleting their runtime so the RESTRICT runtime
 -- FK cannot block an otherwise dependency-free delete.
-DELETE FROM agent WHERE runtime_id = $1 AND kind = 'system';
+WITH target AS MATERIALIZED (
+    SELECT id FROM agent WHERE runtime_id = $1 AND kind = 'system'
+), deleted_dsh_trajectories AS (
+    DELETE FROM agent_task_dsh_trajectory WHERE task_id IN (
+        SELECT id FROM agent_task_queue WHERE agent_id IN (SELECT id FROM target)
+    )
+)
+DELETE FROM agent WHERE id IN (SELECT id FROM target);
 
 -- name: CountActiveAgentsByRuntime :one
 SELECT count(*) FROM agent WHERE runtime_id = $1 AND archived_at IS NULL;
@@ -489,6 +496,8 @@ WHERE id = $1;
 -- Deletes runtimes that have been offline for longer than the TTL and have
 -- no agents bound (active or archived). The FK constraint on agent.runtime_id
 -- is ON DELETE RESTRICT, so we must exclude all agent references.
+-- DSH task history and its encrypted trajectory index survive until explicit
+-- parent cleanup. Test task existence, not a concurrently uploaded index.
 DELETE FROM agent_runtime
 WHERE status = 'offline'
   AND last_seen_at < now() - make_interval(secs => @stale_seconds::double precision)
@@ -496,5 +505,10 @@ WHERE status = 'offline'
     SELECT 1
     FROM agent
     WHERE agent.runtime_id = agent_runtime.id
+  )
+  AND NOT (
+    provider = 'dsh' AND EXISTS (
+      SELECT 1 FROM agent_task_queue WHERE runtime_id = agent_runtime.id
+    )
   )
 RETURNING id, workspace_id;
