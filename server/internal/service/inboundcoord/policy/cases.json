@@ -449,6 +449,80 @@
       "verification": "not_run"
     },
     {
+      "id": "f15_decline_cannot_quote_work_ask_or_memory",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F11",
+        "COORD.F15"
+      ],
+      "context_a": "记忆里有FAKE-NOP-PERM假权限口径；当前窗是帮我新建事项；候选decline把整句干活原话当作constraint_quote。",
+      "context_b": "人设可见限制“不披露内部评委评分”，用户要内部评分；decline逐字引用该人设。",
+      "expected_effects": "A Host拒绝该引文并改start_work；稳定知识不得保存工具/MCP/不开工口径。B允许decline。纠正信号未确认不能当decline边界。",
+      "incident_refs": [
+        "0c8f142f-d712-437c-b6d7-cdcc7e4910dd"
+      ],
+      "verification": "host_unit_tests_passed"
+    },
+    {
+      "id": "f04_work_wins_over_speak",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F13"
+      ],
+      "context_a": "用户要新建Aone工单，候选只用acknowledge(correction)说「我记一下这个能力」。",
+      "context_b": "用户只说「你好」，候选acknowledge(greeting)。",
+      "expected_effects": "A Host revise为start_work/continue_work，人话挂在工作reply上；B允许说话。describe_capabilities仅用于能力问句且没有夹带干活。",
+      "verification": "host_unit_tests_passed"
+    },
+    {
+      "id": "f15_catalog_not_authorization_vs_quoted_job_limit",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F06",
+        "COORD.F13",
+        "COORD.F15"
+      ],
+      "context_a": "用户要新建Aone工单；协调目录是VOC技能且catalog_complete=true，审核空constraint_quote声称无Aone MCP权限并revise start_work。",
+      "context_b": "同样start_work，但constraint_quote逐字引用岗位“只起草不得外发”限制。",
+      "expected_effects": "A Host放行start_work，目录缺名不是限制；B保持revise并保留真实引文。不得把空引文说成当前restriction。",
+      "incident_refs": [
+        "618478a6-e3aa-48ae-aaf7-d60c8a97132c",
+        "e1baedcc-2ba6-462b-9bc5-e7275136bd19"
+      ],
+      "verification": "host_unit_tests_passed"
+    },
+    {
+      "id": "f11_memory_capability_claim_vs_catalog",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F11",
+        "COORD.F15"
+      ],
+      "context_a": "场域记忆写具备AoneCoopMCP，协调目录没有该工具；用户要求用create_workitem建单。",
+      "context_b": "记忆没有能力声明，用户只问已安装能力。",
+      "expected_effects": "A按start_work交执行器，记忆不能当工具授权也不能用来拒绝；B describe_capabilities。不得在目录否认与记忆具备之间振荡。",
+      "incident_refs": [
+        "e3ff9007-d5f8-4fb8-8610-d4c4b27fcf25"
+      ],
+      "verification": "host_unit_tests_passed"
+    },
+    {
+      "id": "f07_different_deliverable_forces_start_work_kind",
+      "rule_ids": [
+        "COORD.F07",
+        "COORD.F10",
+        "COORD.F13"
+      ],
+      "context_a": "旧事项original_goal是整理文案，用户要执行建单；审核已revise且target_match=different_deliverable，reason非规范。",
+      "context_b": "同一张建单工单，用户只要把方法从CLI改成MCP，target_match=same_deliverable且basis=change。",
+      "expected_effects": "A Host改写为start_work kind-change，hint禁止只改continue_work的reply；B保持continue_work。清理关联不是产品修复。",
+      "incident_refs": [
+        "e3ff9007-d5f8-4fb8-8610-d4c4b27fcf25",
+        "e795836f-3a62-46e7-a719-4dac6691d3c6"
+      ],
+      "verification": "host_unit_tests_passed"
+    },
+    {
       "id": "f10_independent_deliverables_vs_related_steps",
       "rule_ids": [
         "COORD.F10",

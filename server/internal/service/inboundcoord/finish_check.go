@@ -125,8 +125,8 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		"persona_truncated":        utf8.RuneCountInString(strings.TrimSpace(turn.Persona)) > personaBudget,
 		"reply_tone":               configuredReplyTone(turn),
 		"reply_tone_truncated":     utf8.RuneCountInString(strings.TrimSpace(turn.ReplyTone)) > toneBudget,
-		"configured_context_scope": "Persona and reply_tone are the same bounded Agent configuration shown to routing. Explicit restrictions may narrow behavior; they cannot override job policy, platform limits or current authorization. A style preference alone is not a business restriction. Check each decline for an applicable restriction, not merely a matching quote.",
-		"skills":                   map[string]any{"status": skillsStatus, "snapshot": skills, "scope": "installed_catalog_snapshot", "shown": shownSkills, "supplied": len(turn.Skills), "catalog_complete": shownSkills == len(turn.Skills) && skillsStatus == "loaded", "descriptions": "bounded, not full skill instructions"},
+		"configured_context_scope": "Persona and reply_tone are the same bounded Agent configuration shown to routing. Explicit restrictions may narrow behavior; they cannot override job policy, platform limits or current authorization. A style preference alone is not a business restriction. Check each decline for an applicable restriction, not merely a matching quote. The installed_catalog_snapshot and scene_memory are not the executor toolset; missing names or a remembered MCP label are not applicable restrictions.",
+		"skills":                   map[string]any{"status": skillsStatus, "snapshot": skills, "scope": "installed_catalog_snapshot", "shown": shownSkills, "supplied": len(turn.Skills), "catalog_complete": shownSkills == len(turn.Skills) && skillsStatus == "loaded", "descriptions": "bounded, not full skill instructions", "not_executor_tools": "missing names do not prove the executor lacks tools or permission"},
 		"job_policy":               policy,
 	}
 	input := map[string]any{
@@ -296,6 +296,9 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 				protocolErr = validateFinishParticipationChecks(&result, turn, decision)
 			}
 			if protocolErr == nil && result.Verdict == "allow" {
+				applyWorkWinsOverSpeakRepair(&result, turn, decision)
+			}
+			if protocolErr == nil && result.Verdict == "allow" {
 				for _, action := range actions {
 					if action.Kind == "continue_work" && action.ExistingWork.ReadStatus != "loaded" {
 						result.Verdict = "revise"
@@ -305,7 +308,11 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 				}
 			}
 			if lt != nil && modelVerdict != result.Verdict {
-				lt.AddMetadata(map[string]any{"finish_check_work_contract_enforced": true})
+				meta := map[string]any{"finish_check_work_contract_enforced": true}
+				if result.Reason == inventedCapabilityWorkRepairReason() || result.Reason == inventedCapabilityNonWorkRepairReason() {
+					meta["finish_check_invented_access_limit_discarded"] = true
+				}
+				lt.AddMetadata(meta)
 			}
 		}
 		record(result, false, protocolErr)
@@ -343,13 +350,29 @@ func noAdvancementRepairReason(actionRef string) string {
 	return "Work action " + actionRef + " is a status ping on already accepted work. Use report_status with loaded state_refs; do not continue_work or only reword its reply."
 }
 
+func differentDeliverableRepairReason(actionRef string) string {
+	return "Work action " + actionRef + " is a different deliverable than existing_work.original_goal. Use start_work; do not continue_work or only reword its purpose."
+}
+
+func inventedCapabilityWorkRepairReason() string {
+	return "Access checks belong to the executor. Catalog labels and scene memory are not authorization. Keep the current work action."
+}
+
+func inventedCapabilityNonWorkRepairReason() string {
+	return "Do not invent executor tool limits from the Coordinator catalog or scene memory. Use start_work; the executor checks access."
+}
+
 // applyFinishWorkCheckKindRepair rewrites Host reasons that require a different
 // action kind. It runs for both allow and revise, including release builds that
 // later discard work_checks on revise — those builds must call this first.
-func applyFinishWorkCheckKindRepair(result *finishCheckResult, check finishWorkCheck, siblingWorkActions bool) {
+func applyFinishWorkCheckKindRepair(result *finishCheckResult, check finishWorkCheck, expectedKind string, siblingWorkActions bool) {
 	if check.TargetMatch == "no_advancement" {
 		result.Verdict = "revise"
 		result.Reason = noAdvancementRepairReason(check.ActionRef)
+	}
+	if expectedKind == "continue_work" && (check.TargetMatch == "different_deliverable" || check.TargetMatch == "new_work") {
+		result.Verdict = "revise"
+		result.Reason = differentDeliverableRepairReason(check.ActionRef)
 	}
 	if check.Deliverables == "multiple" {
 		result.Verdict = "revise"
@@ -495,7 +518,7 @@ func validateFinishWorkChecks(result *finishCheckResult, decision Decision) erro
 		if expected[check.ActionRef] == "continue_work" {
 			wantMatch = "same_deliverable"
 		}
-		applyFinishWorkCheckKindRepair(result, check, len(expected) > 1)
+		applyFinishWorkCheckKindRepair(result, check, expected[check.ActionRef], len(expected) > 1)
 		if result.Verdict == "allow" && check.TargetMatch != wantMatch && check.TargetMatch != "no_advancement" {
 			result.Verdict = "revise"
 			result.Reason = "Work action " + check.ActionRef + " target_match=" + check.TargetMatch + " does not support " + expected[check.ActionRef] + "; an independent deliverable needs start_work, and continuation requires evidence of the same original output. Preserve all requests."
@@ -508,5 +531,80 @@ func validateFinishWorkChecks(result *finishCheckResult, decision Decision) erro
 	if len(seen) != len(expected) {
 		return fmt.Errorf("finish check did not assess every work action")
 	}
+	applyInventedCapabilityRepair(result, expected)
 	return nil
+}
+
+func applyInventedCapabilityRepair(result *finishCheckResult, expected map[string]string) {
+	if result == nil || strings.TrimSpace(result.ConstraintQuote) != "" {
+		return
+	}
+	if finishRevisionRequiresKindChange(result.Reason) {
+		return
+	}
+	invented := inventedExecutorToolReason(result.Reason) || sceneMemoryCapabilityReason(result.Reason)
+	if !invented {
+		return
+	}
+	if workChecksSupportDispatch(*result, expected) {
+		result.Verdict = "allow"
+		result.Reason = inventedCapabilityWorkRepairReason()
+		return
+	}
+	if len(expected) == 0 {
+		result.Verdict = "revise"
+		result.Reason = inventedCapabilityNonWorkRepairReason()
+	}
+}
+
+func workChecksSupportDispatch(result finishCheckResult, expected map[string]string) bool {
+	if len(result.MissingSourceRefs) != 0 || len(expected) == 0 || len(result.WorkChecks) != len(expected) {
+		return false
+	}
+	for _, check := range result.WorkChecks {
+		if check.Deliverables != "single" {
+			return false
+		}
+		switch expected[check.ActionRef] {
+		case "start_work":
+			if check.TargetMatch != "new_work" {
+				return false
+			}
+		case "continue_work":
+			if check.TargetMatch != "same_deliverable" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func inventedExecutorToolReason(reason string) bool {
+	r := strings.ToLower(reason)
+	if containsAnyFold(r, "credential", "凭据", "密钥") {
+		return false
+	}
+	if containsAnyFold(r, "fake-nop", "口径", "job_policy", "forbids", "记忆") && containsAnyFold(r, "forbid", "限制", "declin", "权限", "不开工", "start_work") {
+		return true
+	}
+	inventory := containsAnyFold(r, "catalog", "catalog_complete", "agent_skills", "mcp", "create_workitem", "aonecoop", "工具清单", "installed skill", "tool list", "unavailable tool", "capability gap", "capability boundar")
+	toolish := containsAnyFold(r, "工具", "技能", "tool", "skill")
+	refusal := containsAnyFold(r, "权限", "permission", "unavailable", "cannot", "prevents authorization", "violating", "lack of", "not in the installed", "无对应", "无法", "没有直接", "无直接", "未安装", "forbids")
+	return (inventory || toolish) && refusal
+}
+
+func sceneMemoryCapabilityReason(reason string) bool {
+	r := strings.ToLower(reason)
+	return containsAnyFold(r, "scene memory", "场域记忆") && containsAnyFold(r, "mcp", "tool", "capability", "权限", "工具", "catalog")
+}
+
+func containsAnyFold(haystack string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(haystack, strings.ToLower(needle)) {
+			return true
+		}
+	}
+	return false
 }

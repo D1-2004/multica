@@ -446,6 +446,7 @@ For a DM, do not invent a purpose; name and 成员 (the other human) suffice unl
 ## 待确认
 
 Keep compact, declarative, human-sourced facts: who is who, standing preferences, scene terms/conventions, explicit human corrections, human [peer] "记住". Mark uncertainty [推断] or [待确认] rather than dropping useful background.
+稳定知识 is preferences, identity and scene terms only. Do not store tool inventory, MCP/catalog names, permission to start work, or "how to do the job". Put those in 纠正信号 or drop them. Do not promote 纠正信号 into 稳定知识 in the same flush; unconfirmed corrections are not facts.
 Human requests 去掉/删掉/干掉/不要记/从记忆里去掉 X: delete matching bullets from every section, without tombstones. 整理记忆: compact stale 待确认 and process notes, retaining durable background.
 
 Skip: this digital employee's speech (including uncited paraphrase of [self]/[agent]); other bots; open tasks/issue progress; git/pipeline/e2e; secrets; health/pay; trivial chit-chat; procedures (those are Issues/skills); easily rediscoverable public facts; raw dumps.
@@ -722,6 +723,17 @@ func looksLikeCoordinatorSelfLimit(line string) bool {
 		strings.Contains(line, "无法一次发两条")
 }
 
+func looksLikeExecutorCapabilitySOP(line string) bool {
+	l := strings.ToLower(line)
+	if strings.Contains(l, "mcp") || strings.Contains(l, "create_workitem") || strings.Contains(l, "aonecoop") {
+		return true
+	}
+	if strings.Contains(line, "工具权限") || strings.Contains(line, "目录里没有") || strings.Contains(line, "不开工") || strings.Contains(line, "只介绍能力") {
+		return true
+	}
+	return strings.Contains(line, "权限") && (strings.Contains(line, "工具") || strings.Contains(line, "开工") || strings.Contains(line, "新建事项"))
+}
+
 func locatingMembers(text string) []string {
 	in := false
 	seen := map[string]struct{}{}
@@ -873,6 +885,9 @@ func sanitizeFlushText(text string, batch []HistoryEvent, extraSelfNames ...stri
 				continue
 			}
 			if heading == "稳定知识与约定" && looksLikeAgentReplyStyle(trimmed) && citationSpeaker(trimmed) == "" {
+				continue
+			}
+			if heading == "稳定知识与约定" && looksLikeExecutorCapabilitySOP(trimmed) {
 				continue
 			}
 		}

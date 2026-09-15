@@ -60,6 +60,10 @@ func TestFinishRevisionHintNamesKindChangeForStatusPing(t *testing.T) {
 	if !finishRevisionRequiresKindChange(noAdvancementRepairReason("a1")) {
 		t.Fatal("report_status repair must count as a kind change")
 	}
+	empty := finishRevisionHint(finishCheckResult{Reason: "Coverage is incomplete.", MissingSourceRefs: []string{}})
+	if !strings.Contains(empty, "not a supplied policy restriction") || strings.Contains(empty, "preserving every request and current restriction") {
+		t.Fatalf("empty constraint_quote must not be laundered as a current restriction: %s", empty)
+	}
 }
 
 func TestFinishWorkTargetCannotAllowAnUnloadedOriginalGoal(t *testing.T) {
