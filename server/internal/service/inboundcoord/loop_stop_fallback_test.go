@@ -95,9 +95,8 @@ func TestDeterministicLoopStopFallsBackInsteadOfDeferring(t *testing.T) {
 	for reason, script := range loopStopScripts(t) {
 		for _, addressed := range []bool{true, false} {
 			chat, tools := script()
-			// Unaddressed turns that still reach the loop are proactive DMs
-			// or group turns the relevance gate let through.
-			turn := Turn{Source: SourceDigitalEmployee, Addressed: addressed, ProactiveConversation: !addressed, ChatType: "p2p", ConversationID: "cid-current", Message: "继续整理那条决策", SenderName: "冬翔"}
+			// An unaddressed proactive group can end silently; a DM cannot.
+			turn := Turn{Source: SourceDigitalEmployee, Addressed: addressed, ProactiveConversation: !addressed, ChatType: "group", ConversationID: "cid-current", Message: "继续整理那条决策", SenderName: "冬翔"}
 			var saved []Decision
 			ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(d Decision) error { saved = append(saved, d); return nil })
 			d := (&Coordinator{LLM: llm.New(llm.Config{APIKey: "test-key"}), Chat: chat, Tools: tools}).Decide(ctx, turn)
@@ -120,6 +119,20 @@ func TestLoopStopFallbackStaysDeferredWhenCheckpointFails(t *testing.T) {
 	d := (&Coordinator{LLM: llm.New(llm.Config{APIKey: "test-key"}), Chat: chat, Tools: tools}).Decide(ctx, turn)
 	if d.Action != ActionDeferred || d.UserText != "" || d.Reason != loopStopReviewDeadlock {
 		t.Fatalf("an unsaved fallback must not be spoken: %#v", d)
+	}
+}
+
+func TestLoopStopFallbackUsesDirectConversationAndPerMessageMention(t *testing.T) {
+	for _, turn := range []Turn{
+		{Source: SourceDigitalEmployee, ChatType: "p2p"},
+		{Source: SourceDigitalEmployee, ChatType: "group", DWSUID: "6899376218", Utterances: []WindowUtterance{{Text: "@新昵称 在吗", Mentions: []MessageMention{{OpenDingTalkID: "6899376218"}}}}},
+	} {
+		for reason := range loopStopScripts(t) {
+			d, ok := loopStopFallback(turn, Decision{Action: ActionDeferred, Reason: reason})
+			if !ok || d.Action != ActionReply || d.UserText != coordinatorFallbackReply {
+				t.Fatalf("direct turn lost fallback: turn=%+v decision=%+v", turn, d)
+			}
+		}
 	}
 }
 
@@ -147,7 +160,32 @@ func TestTaskFinishedLoopStopStaysDeferred(t *testing.T) {
 	if (Decision{Action: ActionIssue, Reason: loopStopReviewDeadlock}).LoopStopFallback() {
 		t.Fatal("only reply/silence verdicts are fallbacks")
 	}
-	if !strings.Contains(coordinatorFallbackReply, "再说一遍") {
-		t.Fatalf("fallback must ask the person to restate: %q", coordinatorFallbackReply)
+	if strings.Contains(coordinatorFallbackReply, "再说一遍") || strings.Contains(coordinatorFallbackReply, "reason") {
+		t.Fatalf("fallback must not expose diagnostics or encourage replay: %q", coordinatorFallbackReply)
+	}
+}
+
+func TestDirectInboundSilenceGetsVisibleReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		turn  Turn
+		reply bool
+	}{
+		{"direct message", Turn{Source: SourceDigitalEmployee, ChatType: "p2p"}, true},
+		{"trusted addressed group", Turn{Source: SourceDigitalEmployee, ChatType: "group", Addressed: true}, true},
+		{"direct alias", Turn{Source: SourceDigitalEmployee, ChatType: "direct"}, true},
+		{"stale name matched mention", Turn{Source: SourceDigitalEmployee, ChatType: "group", DWSUID: "6899376218", EmployeeAccountName: "旧昵称", Utterances: []WindowUtterance{{Text: "@新昵称 你怎么不说话", Mentions: []MessageMention{{OpenDingTalkID: "6899376218"}}}}}, true},
+		{"other colleague", Turn{Source: SourceDigitalEmployee, ChatType: "group", DWSUID: "6899376218", Utterances: []WindowUtterance{{Text: "@别人 帮我查一下", Mentions: []MessageMention{{UID: "other"}}}}}, false},
+		{"completion already delivered", Turn{Source: SourceDigitalEmployee, ChatType: "p2p", Loop: LoopTaskFinished}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := ensureDirectInboundReply(tc.turn, Decision{Action: ActionSilence, Reason: "internal reviewer detail", CoordinationActions: []CoordinationAction{{Kind: "ignore", SourceRefs: []string{"u1"}}}})
+			if (d.Action == ActionReply) != tc.reply {
+				t.Fatalf("unexpected decision: %+v", d)
+			}
+			if tc.reply && (d.UserText == "" || strings.Contains(d.UserText, "internal") || !d.LoopStopFallback() || len(d.CoordinationActions) > 0) {
+				t.Fatalf("invalid visible receipt: %+v", d)
+			}
+		})
 	}
 }

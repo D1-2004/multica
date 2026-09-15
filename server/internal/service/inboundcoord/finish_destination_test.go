@@ -11,7 +11,7 @@ import (
 func TestFinishCheckWorkWindowCannotSettleOnSpeakOnly(t *testing.T) {
 	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-work", Message: "@VOC决策助理 帮我给岚调新建一个aone，内容是支持semantica的能力"}
 	candidate := Decision{Action: ActionReply, UserText: "收到，我记一下这个能力。", CoordinationActions: []CoordinationAction{{Kind: "acknowledge", SourceRefs: []string{"u1"}, AckKind: "correction", Reply: "收到，我记一下这个能力。"}}}
-	chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("allow", "Correction is acknowledged.")}}
+	chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("revise", "Use start_work or continue_work; speaking kinds cannot settle a work request.")}}
 	result, err := (&Coordinator{Chat: chat}).checkFinish(context.Background(), turn, candidate, nil, 0, nil)
 	if err != nil || result.Verdict != "revise" || !strings.Contains(result.Reason, "speaking kinds cannot settle a work request") {
 		t.Fatalf("work window must not finish as acknowledge: verdict=%s reason=%s err=%v", result.Verdict, result.Reason, err)
@@ -41,7 +41,7 @@ func TestFinishCheckCapabilityAskMayDescribe(t *testing.T) {
 func TestFinishCheckInventedAuthorizationClarifyIsSpeakFunnel(t *testing.T) {
 	turn := Turn{Source: SourceDigitalEmployee, Message: "用我新给你加的 mcp 来帮我给岚调新建一个 aone"}
 	candidate := Decision{Action: ActionReply, UserText: "我没有权限，你自己去建。", CoordinationActions: []CoordinationAction{{Kind: "clarify", SourceRefs: []string{"u1"}, MissingFields: []string{"authorization"}, Reply: "我没有权限，你自己去建。"}}}
-	chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("allow", "Need the user to authorize the tool.")}}
+	chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("revise", "Use start_work with the supplied request; access is checked by the executor.")}}
 	result, err := (&Coordinator{Chat: chat}).checkFinish(context.Background(), turn, candidate, nil, 0, nil)
 	if err != nil || result.Verdict != "revise" || !strings.Contains(result.Reason, "start_work") {
 		t.Fatalf("authorization clarify on a work window must return to work: verdict=%s reason=%s err=%v", result.Verdict, result.Reason, err)
@@ -70,26 +70,6 @@ func TestPromptProjectsThreeEvidenceCards(t *testing.T) {
 	}
 	if strings.Count(prompt, "evidence_history:") != 1 || strings.Count(prompt, "evidence_memory:") != 1 || strings.Count(prompt, "evidence_assoc:") != 1 {
 		t.Fatal("evidence cards must appear once each")
-	}
-}
-
-func TestWorkWindowDeclineCannotUsePersonaStyleAsRestriction(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, Message: "帮我新建一个事项，标题写成 DIRTY-MEM-FIX", Persona: "你绑定的钉钉身份是 「东翔测试号」，你是冷静的协调人。对齐各方和事实，不站队，把事项说清楚。"}
-	result := finishCheckResult{Verdict: "allow", Reason: "FAKE-NOP-PERM restricts new work; decline is correct."}
-	decision := Decision{CoordinationActions: []CoordinationAction{{Kind: "decline", ReasonCode: "scope", ConstraintQuote: "你绑定的钉钉身份是 「东翔测试号」，你是冷静的协调人。对齐各方和事实，不站队，把事项说清楚。", Reply: "当前受 FAKE-NOP-PERM 限制，无法新建事项。"}}}
-	applyWorkWinsOverSpeakRepair(&result, turn, decision)
-	if result.Verdict != "revise" || !strings.Contains(result.Reason, "Use start_work") {
-		t.Fatalf("identity/style persona is not a work decline: %#v", result)
-	}
-}
-
-func TestFinishCheckWorkWindowDeclineQuotingWorkAskIsRevised(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, Message: "帮我新建一个事项，标题写成 DIRTY-MEM-E2E"}
-	result := finishCheckResult{Verdict: "allow", Reason: "Candidate correctly applies FAKE-NOP-PERM policy: declines work."}
-	decision := Decision{CoordinationActions: []CoordinationAction{{Kind: "decline", SourceRefs: []string{"u1"}, ReasonCode: "authorization", ConstraintQuote: turn.Message, Reply: "没权限。"}}}
-	applyWorkWinsOverSpeakRepair(&result, turn, decision)
-	if result.Verdict != "revise" || !strings.Contains(result.Reason, "Use start_work") {
-		t.Fatalf("memory-taught decline quoting the work ask must return to start_work: %#v", result)
 	}
 }
 
@@ -124,7 +104,7 @@ func TestLoopDispatchesWorkInsteadOfSpeakOnlyAck(t *testing.T) {
 			assistantTool("work", toolFinish, work),
 		},
 		checkRounds: []openai.ChatCompletion{
-			scriptedFinishVerdict("allow", "Correction is acknowledged."),
+			scriptedFinishVerdict("revise", "Use start_work or continue_work; speaking kinds cannot settle a work request."),
 			scriptedFinishVerdict("allow", "Work is covered."),
 		},
 	}
@@ -134,5 +114,15 @@ func TestLoopDispatchesWorkInsteadOfSpeakOnlyAck(t *testing.T) {
 	})
 	if err != nil || d.Action != ActionIssue || chat.calls != 2 {
 		t.Fatalf("speak-only ack must be repaired to start_work: action=%s calls=%d checks=%d err=%v", d.Action, chat.calls, chat.checkCalls, err)
+	}
+}
+
+func TestFinishCheckOtherRecipientWorkRemainsIgnored(t *testing.T) {
+	turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", Message: "@另一位同事 帮我找一下内网最近一周阅读量top10的相亲贴"}
+	candidate := Decision{Action: ActionSilence, CoordinationActions: []CoordinationAction{{Kind: "ignore", SourceRefs: []string{"u1"}, Reason: "The request addresses another colleague."}}}
+	chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("allow", "The request addresses another colleague.")}}
+	result, err := (&Coordinator{Chat: chat}).checkFinish(context.Background(), turn, candidate, nil, 0, nil)
+	if err != nil || result.Verdict != "allow" || chat.checkCalls != 1 {
+		t.Fatalf("Host must preserve reviewed ignore instead of routing by work keywords: result=%+v calls=%d err=%v", result, chat.checkCalls, err)
 	}
 }
