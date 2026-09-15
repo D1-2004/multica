@@ -18,6 +18,17 @@ func boundaryDecline(t *testing.T, quote string) string {
 	return string(b)
 }
 
+func TestDeclineCannotQuoteCurrentWorkRequest(t *testing.T) {
+	turn := Turn{Source: SourceDigitalEmployee, Message: "帮我新建一个事项，标题写成 DIRTY-MEM-E2E，内容写脏记忆验收。不要只介绍能力。"}
+	quote := turn.Message
+	if suppliedConstraintQuote(quote, turn) || !quoteIsCurrentWorkUtterance(quote, turn) {
+		t.Fatal("the current work ask is not a decline boundary")
+	}
+	if _, err := parseValidatedWindowPlan(boundaryDecline(t, quote), turn, nil, nil); err == nil {
+		t.Fatal("decline quoting the work request must not parse")
+	}
+}
+
 func TestConfiguredBoundaryProvenanceUsesVisibleSources(t *testing.T) {
 	const quote = "不披露内部评委的非公开评分。"
 	for _, source := range []string{"persona", "tone", "instructions", "current"} {

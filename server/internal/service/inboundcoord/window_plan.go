@@ -310,7 +310,10 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 				return Decision{}, fmt.Errorf("decline requires a reason_code and exact constraint_quote")
 			}
 			if !suppliedConstraintQuote(a.ConstraintQuote, turn) {
-				return Decision{}, hintErr("decline constraint_quote must quote an actual supplied boundary", "Use verbatim text from the current request, visible agent_persona/agent_reply_tone, or loaded contract. Do not repeat or paraphrase an unseen policy. If no applicable visible restriction supports decline, reassess the request; the independent review holds the full working policy. Missing evidence grants no new authority.")
+				if quoteIsCurrentWorkUtterance(a.ConstraintQuote, turn) {
+					return Decision{}, hintErr("decline constraint_quote quoted the current work request, not a restriction", "Use start_work or continue_work. Scene memory, history, and the current work ask are not decline boundaries. Put the human acknowledgement on the work action's reply.")
+				}
+				return Decision{}, hintErr("decline constraint_quote must quote an actual supplied boundary", "Use verbatim text from the current request, visible agent_persona/agent_reply_tone, or loaded contract. Do not repeat or paraphrase an unseen policy. Memory and history add no decline boundaries. If no applicable visible restriction supports decline, reassess the request; the independent review holds the full working policy. Missing evidence grants no new authority.")
 			}
 		case "clarify":
 			if !validEnumList(a.MissingFields, []string{"intent", "recipient", "message_body", "scope", "timing", "authorization", "work_target", "source_material"}) {

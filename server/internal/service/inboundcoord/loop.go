@@ -505,12 +505,17 @@ func finishRevisionHint(check finishCheckResult) string {
 	if finishRevisionRequiresKindChange(check.Reason) {
 		return refs + "Change the action kind as the reason states; do not keep continue_work or only reword its reply. This review grants no new authority."
 	}
+	if strings.TrimSpace(check.ConstraintQuote) == "" {
+		return refs + "This revision is not a supplied policy restriction. Repair the diagnosed action/field only. Do not decline, clarify a fake authorization gap, or invent a catalog/tool limit. This review grants no new authority."
+	}
 	return refs + "Repair the diagnosed action/field in the previous proposal while preserving every request and current restriction. This review grants no new authority."
 }
 
 func finishRevisionRequiresKindChange(reason string) bool {
 	r := strings.ToLower(reason)
-	return strings.Contains(r, "report_status") || strings.Contains(r, "status ping") || strings.Contains(r, "no_advancement")
+	return strings.Contains(r, "report_status") || strings.Contains(r, "status ping") || strings.Contains(r, "no_advancement") ||
+		strings.Contains(r, "use start_work") || strings.Contains(r, "different_deliverable") ||
+		strings.Contains(r, "quoted the current work request")
 }
 
 const (
