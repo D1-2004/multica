@@ -33,3 +33,28 @@
 - 终态失败把固定回复和failed状态写入同一completion outbox；主回调唯一发文字，合窗附属回调不重复发。managed response_action和legacy shouldReply均消费该文字，内部错误仅诊断。
 - 已通过 inboundcoord 全包、身份投影定向测试、handler/service/completion worker定向测试（含真实本地DB失败outbox幂等）；policy结构检查通过。
 - 本地managed response_action集成验证受缺失response_route/response_action/sandbox_send_receipt表阻塞；未手工修改预发库。没有本机模型凭证，尚未真实模型回放。真实IM送达尚未验收，不能把上述单测等同线上行为通过。
+
+## 预发部署与用户追加 E2E
+
+用户追加：修复提交部署后通知须莫协助发布，同时做预发 E2E。使用隔离测试群，以配角账号触发绑定测试员工，验证名称不一致时的 @ 闲聊和明确工作；DWS回读证明回复，SLS证明身份/决策，不把ACK当执行结果。失败兜底不靠破坏共享环境注入故障，当前先保留Host/持久回执测试证据。
+
+- 修复提交：`62d4624b3a`，补齐逐条提及资格：`1c10aa5af`。
+- Aone CR：36148131；最终 run：3108352363，源码快照 `1c10aa5afe0be8938c7f2f6f928ef22673dfa9b0`。
+- 构建、制品扫描、预发部署、预发集成测试全部SUCCESS，保留预发验证人工节点；未发布正式。
+- 共享release分支保留原有DSH/回执改造，与本次自然失败回执合并；集成后的编译与定向检查通过。其DB集成测试另受本地旧库缺dws_delivery字段阻塞，不误报通过。
+- 预发 `/health` 返回 `success`，HTTP 200。
+- 以冬翔向须莫发送修复说明、CR链接及协助发布请求；发送状态SUCCESS并在单聊回读到相同消息。消息ID `msgzFZRwNqOKxlpZ9JZBs4RJg==`，2026-09-15 19:50:42 +08:00。已说明E2E完成后再确认正式发布。
+- E2E：执行中，完成后补结果。
+
+## 真实 E2E 结果
+
+运行环境：预发，实际 Langfuse policy_version=`2026-09-15.1`、assembly_version=`27`。测试对象为既有预发测试智能体（钉钉东翔测试号），不在正式业务群演戏。
+
+- **PASS，真实静默兜底**：trace `54d70fba-117e-450d-ab61-7a92b0a235c6`。19:56:55 发送闲聊，模型ignore/review allow，Host `addressed_silence_fallback` 改为reply；19:57:08钉钉回读“我在，看到你的消息了。抱歉，刚才没接上。”无内部reason泄露。
+- **PASS，工作派发；首次交付FAIL保留**：trace `bde49fd0-e1c0-430e-8fab-072381141b48`，一轮start_work，target_match=new_work，FC任务真实启动；执行器20:00:38回信引用既有FAKE-NOP-PERM测试口径拒绝写草稿。不是静默兜底，也未将拒绝记为交付成功。
+- **PASS，明确纠正后的完整交付**：当前消息明确之前口径为已结束测试，仅要求原地回两句通知草稿，不改配置、不清记忆。trace `36553d1e-5062-472c-b7a1-5ad002c65894` 一轮start_work；20:04:40钉钉实际收到两句话会议通知，约96秒，消息ID `msgt2l3HEzD6/+/KI+AVOu0AA==`。
+- **BLOCKED，群 @ 全链路**：新二人群的真实@消息已回读，但截至观察结束无该cid的Host入站事件。不能据此判断UID匹配失败，也不能把群昵称链路记为E2E通过。稳定UID匹配、旧昵称优先级与冲突字段目前有Host/合同检查证据；群入站订阅/路由交由须莫协助核验。
+- 错误终态的自然回执有Host及outbox幂等验证，本次未破坏共享环境制造故障做真实发送。
+- 原始业务证据仅保存在 `/tmp/coordinator-e2e-20260915/`；发送给须莫的补充结果明确保留首次失败及群验证缺口。测试结束后恢复原DWS prod环境。
+
+结论：修复已提交并部署预发，真实兜底与纠正后的工作交付通过；群@上游未触发为遗留验证缺口，不声明全量E2E通过，正式发布由后续协助流程确认。
