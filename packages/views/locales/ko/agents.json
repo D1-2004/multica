@@ -1628,5 +1628,19 @@
   "actions": {
     "selected_other": "{{count}}개 선택됨",
     "clear_selection": "선택 해제"
+  },
+  "asb_regions": {
+    "title": "실행 리전",
+    "hint": "여러 리전을 선택할 수 있습니다. 선택한 리전이 가득 차면 기다리며 다른 리전으로 전환하지 않습니다. BUC 인증 사용 시 항저우(cn-hangzhou)만 선택할 수 있습니다.",
+    "automatic": "사용 가능한 모든 리전(자동)",
+    "loading": "리전 불러오는 중…",
+    "load_failed": "ASB 리전을 불러올 수 없습니다. 저장된 선택은 유지됩니다.",
+    "retry": "다시 시도",
+    "save": "리전 저장",
+    "saving": "저장 중…",
+    "save_failed": "리전을 저장하지 못했습니다.",
+    "unavailable": "현재 사용 불가",
+    "selection_required": "리전을 하나 이상 선택하세요.",
+    "empty": "ASB가 이 Runtime의 리전을 반환하지 않았습니다."
   }
 }

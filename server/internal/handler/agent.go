@@ -1629,6 +1629,9 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	if req.RuntimeConfig == nil {
 		rc = []byte("{}")
 	}
+	if !h.validateAgentASBRegions(w, r, runtime.ID, rc) {
+		return
+	}
 	ce, _ := json.Marshal(req.CustomEnv)
 	if req.CustomEnv == nil {
 		ce = []byte("{}")
@@ -2212,6 +2215,15 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
 		targetRuntimeID = runtime.ID
 		targetProvider = runtime.Provider
+	}
+	if req.RuntimeConfig != nil || req.RuntimeID != nil {
+		config := existing.RuntimeConfig
+		if params.RuntimeConfig != nil {
+			config = params.RuntimeConfig
+		}
+		if !h.validateAgentASBRegions(w, r, targetRuntimeID, config) {
+			return
+		}
 	}
 	// Invocation permission (MUL-3963). OWNER-ONLY write: access is the one
 	// agent property a workspace admin may NOT change (only the owner decides
