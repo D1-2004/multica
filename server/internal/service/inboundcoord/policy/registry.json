@@ -1,5 +1,5 @@
 {
-  "policy_version": "2026-09-15.1",
+  "policy_version": "2026-09-15.2",
   "assembly_version": "27",
   "modules": [
     {
@@ -935,16 +935,23 @@
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f12_contrast",
-        "f12_exact_result_report"
+        "f12_exact_result_report",
+        "f12_trigger_message_quote_reply"
       ],
       "verification": {
         "status": "integration_replay_pending",
-        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
+        "trigger_message_quote_reply_2026_09_16": "Host and provider tests passed locally; pre deployment and actual DingTalk quotedMessage readback pending."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/completion.md",
         "server/internal/handler/task_finished_loop.go",
-        "server/internal/service/inboundcoord/wrapup.go"
+        "server/internal/service/inboundcoord/wrapup.go",
+        "server/internal/handler/dingtalk_response.go",
+        "server/internal/handler/dingtalk_origin_reply.go",
+        "server/internal/service/dingtalkresponse/provider.go",
+        "server/internal/dwsclient/send.go",
+        "server/internal/handler/dingtalk_response_test.go"
       ],
       "case_file": "cases.json"
     },
