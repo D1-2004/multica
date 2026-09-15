@@ -5,6 +5,22 @@ import (
 	"testing"
 )
 
+func TestNativeDSHCustomEnvironmentUsesOnlyAuthorizedFinalValues(t *testing.T) {
+	configured := map[string]string{"APP_SECRET": "configured", "EMPTY": "", "GONE": "old", "DSH_HOME": "wrong", "DSH_MULTICA_REQUEST_ID": "wrong", "MULTICA_TOKEN": "wrong", "HOME": "wrong", "BAD=KEY": "wrong"}
+	child := map[string]string{"APP_SECRET": "final", "EMPTY": "", "AMBIENT_SECRET": "private", "OPENAI_API_KEY": "model-private", "DSH_HOME": "/mnt/multica/home", "DSH_MULTICA_REQUEST_ID": "request", "MULTICA_TOKEN": "mat_private", "HOME": "/home/agent", "BAD=KEY": "wrong"}
+	got := nativeDSHCustomEnvironment(child, configured)
+	if len(got) != 2 || got["APP_SECRET"] != "final" {
+		t.Fatal("custom environment did not select the authorized final snapshot")
+	}
+	if _, ok := got["EMPTY"]; !ok {
+		t.Fatal("explicit empty value was lost")
+	}
+	child["APP_SECRET"] = "changed"
+	if got["APP_SECRET"] != "final" || len(nativeDSHCustomEnvironment(child, nil)) != 0 {
+		t.Fatal("custom environment leaked across task snapshots")
+	}
+}
+
 func TestDSHNativeLaunchMatchesClaimAndNeverRestoresScrubbedIdentity(t *testing.T) {
 	const workspace = "dd996f77-e2fd-4a16-84d9-1032b55a05f1"
 	const employee = "8ddc9f0f-f9d7-4554-9c9c-dcd464867e4f"

@@ -29,6 +29,7 @@ type DSHNativeHostConfig struct {
 	ContextText                                   string
 	ExpiresAt                                     time.Time
 	ToolEnv                                       map[string]string
+	CustomEnv                                     map[string]string
 	TrajectorySink                                func(context.Context, []byte) error
 }
 type dshNativeBackend struct {
@@ -71,6 +72,11 @@ func NewDSHNativeHostBackend(cfg Config, native DSHNativeHostConfig) (Backend, e
 		copied[key] = value
 	}
 	native.ToolEnv = copied
+	custom := map[string]string{}
+	for key, value := range native.CustomEnv {
+		custom[key] = value
+	}
+	native.CustomEnv = custom
 	return &dshNativeBackend{cfg: cfg, native: native, client: &dshHostClient{identity: dshHostIdentity{WorkspaceID: native.WorkspaceID, AgentID: native.AgentID, Generation: native.Generation}, dial: func(ctx context.Context) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", "/tmp/multica-dsh-host/control.sock")
 	}}}, nil
@@ -158,6 +164,7 @@ func (b *dshNativeBackend) admit(ctx context.Context, prompt string, opts ExecOp
 		request := b.taskIdentity()
 		request["expiresAt"] = b.native.ExpiresAt.UnixMilli()
 		request["toolEnv"] = b.native.ToolEnv
+		request["customEnv"] = b.native.CustomEnv
 		request["mcpServers"] = mcp
 		request["skillDirectory"] = b.native.SkillDirectory
 		request["contextText"] = b.native.ContextText

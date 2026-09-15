@@ -4,7 +4,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -64,6 +66,25 @@ func nativeDSHToolEnvironment(child map[string]string) map[string]string {
 	result := map[string]string{}
 	for _, key := range []string{"MULTICA_TOKEN", "MULTICA_TASK_ID", "MULTICA_SERVER_URL", "MULTICA_WORKSPACE_ID", "MULTICA_DEAP_DWS_TOKEN", "MULTICA_A2A_INVOCATION", "DWS_CONFIG_DIR", "GH_CONFIG_DIR"} {
 		if value, ok := child[key]; ok {
+			result[key] = value
+		}
+	}
+	return result
+}
+
+var nativeDSHEnvironmentKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// Select only explicitly configured keys from the final task environment, never
+// the ambient daemon or Host environment. Managed shell identity stays owned by
+// the bridge even when an employee config contains an overlapping key.
+func nativeDSHCustomEnvironment(child, configured map[string]string) map[string]string {
+	result := map[string]string{}
+	for key := range configured {
+		upper := strings.ToUpper(key)
+		if !nativeDSHEnvironmentKey.MatchString(key) || isBlockedEnvKey(key) || upper == "DSH_HOME" || strings.HasPrefix(upper, "DSH_MULTICA_") {
+			continue
+		}
+		if value, ok := child[key]; ok && !strings.ContainsRune(value, 0) {
 			result[key] = value
 		}
 	}

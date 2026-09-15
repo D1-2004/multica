@@ -6436,6 +6436,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if nativeDSH != nil {
 		nativeDSH.ToolEnv = nativeDSHToolEnvironment(agentEnv)
+		nativeDSH.CustomEnv = nativeDSHCustomEnvironment(agentEnv, agentCustomEnv)
 		nativeDSH.SkillDirectory = env.TaskSkillDirectory
 		nativeDSH.ContextText = runtimeBrief
 		if !task.A2AInvocation {

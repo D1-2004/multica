@@ -20,6 +20,7 @@ type nativeBackendPeer struct {
 	mu             sync.Mutex
 	calls          map[string]int
 	promptRequests []json.RawMessage
+	boundCustomEnv map[string]string
 	state          string
 	baseline       []json.RawMessage
 	live           []json.RawMessage
@@ -61,6 +62,7 @@ func (p *nativeBackendPeer) client() *dshHostClient {
 			case "task.bind":
 				p.mu.Lock()
 				p.state = "ready"
+				_ = json.Unmarshal(request.Request["customEnv"], &p.boundCustomEnv)
 				p.mu.Unlock()
 				if p.receipt != nil {
 					write(p.receipt)
@@ -130,13 +132,16 @@ func TestDSHNativeBackendRequiresSkillAndContextReceiptBeforePrompt(t *testing.T
 				receipt["contextDigest"] = fmt.Sprintf("%x", sha256.Sum256([]byte("previous task")))
 			}
 			peer := &nativeBackendPeer{calls: map[string]int{}, state: "absent", prompted: make(chan struct{}), receipt: receipt}
-			backend := &dshNativeBackend{native: DSHNativeHostConfig{SessionID: "session", RequestID: "mine", SkillDirectory: directory, ContextText: brief}, client: peer.client()}
+			backend := &dshNativeBackend{native: DSHNativeHostConfig{SessionID: "session", RequestID: "mine", SkillDirectory: directory, ContextText: brief, CustomEnv: map[string]string{"APP_SECRET": "task-fixture"}}, client: peer.client()}
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			err := backend.admit(ctx, "fixture", ExecOptions{}, nil)
 			peer.mu.Lock()
 			defer peer.mu.Unlock()
 			if mode == "valid" {
+				if peer.boundCustomEnv["APP_SECRET"] != "task-fixture" {
+					t.Fatal("native binding dropped the explicit custom environment")
+				}
 				if err != nil || peer.calls["prompt"] != 1 {
 					t.Fatalf("affirmative receipt did not admit prompt: %v", err)
 				}
