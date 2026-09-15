@@ -207,8 +207,8 @@ RETURNING task.*;
 -- name: MarkAgentTaskRuntimeStartBlocked :one
 UPDATE agent_task_runtime_start_attempt
 SET status = 'blocked',
-    last_stage = 'task_serialization_blocked',
-    error_code = 'TASK-SERIALIZATION-BLOCKED',
+    last_stage = CASE WHEN last_stage = 'dsh_host_waiting' THEN last_stage ELSE 'task_serialization_blocked' END,
+    error_code = CASE WHEN last_stage = 'dsh_host_waiting' THEN 'DSH-HOST-WAITING' ELSE 'TASK-SERIALIZATION-BLOCKED' END,
     finished_at = now(),
     updated_at = now()
 WHERE id = @id
@@ -216,6 +216,29 @@ WHERE id = @id
   AND runtime_id = @runtime_id
   AND status = 'starting'
 RETURNING *;
+
+-- name: ListDSHHostWaitingTasks :many
+-- A Profile build or host reconciliation can finish without a running task
+-- or open browser to wake this queued launch. Reuse the normal launch lease.
+SELECT task.*
+FROM agent_task_queue AS task
+JOIN agent ON agent.id = task.agent_id AND agent.archived_at IS NULL
+JOIN LATERAL (
+    SELECT attempt.backend, attempt.status, attempt.error_code, attempt.finished_at
+    FROM agent_task_runtime_start_attempt AS attempt
+    WHERE attempt.task_id = task.id AND attempt.runtime_id = task.runtime_id
+    ORDER BY attempt.created_at DESC, attempt.id DESC
+    LIMIT 1
+) AS latest ON true
+WHERE task.status = 'queued'
+  AND latest.backend = 'aliyun_fc'
+  AND latest.status = 'blocked'
+  AND latest.error_code = 'DSH-HOST-WAITING'
+  AND latest.finished_at <= now() - interval '30 seconds'
+  AND (task.runtime_launch_lease_expires_at IS NULL OR task.runtime_launch_lease_expires_at <= now())
+  AND COALESCE(task.context->>'deap_dws_token_required', 'false') <> 'true'
+ORDER BY latest.finished_at, task.id
+LIMIT 32;
 
 -- name: MarkAgentTaskRuntimeStartCapacityWaiting :one
 -- Capacity pressure is not a task failure. Lock the queued task before its

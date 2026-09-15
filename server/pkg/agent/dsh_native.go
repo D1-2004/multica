@@ -323,7 +323,7 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 			history = restored
 		}
 		if history.found {
-			children, childErr := b.childTrajectories(artifactCtx, trajectoryHeader, history.ownEvents)
+			children, childErr := b.childTrajectories(artifactCtx, trajectoryHeader, history.ownEvents, history.childModes)
 			if childErr != nil {
 				return failure(childErr)
 			}

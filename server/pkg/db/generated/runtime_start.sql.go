@@ -562,11 +562,109 @@ func (q *Queries) ListASBCapacityWaitingTasks(ctx context.Context, arg ListASBCa
 	return items, nil
 }
 
+const listDSHHostWaitingTasks = `-- name: ListDSHHostWaitingTasks :many
+SELECT task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.chat_finalize_deferred_at, task.originator_source, task.delegated_from_task_id, task.retry_of_task_id, task.rerun_of_task_id, task.rule_version_id, task.trigger_evidence_kind, task.trigger_evidence_ref_id, task.accountable_user_id, task.session_rollout_missing, task.retired_session_id, task.quick_actions_disabled, task.regenerate_quick_actions_for, task.runtime_launch_lease_token, task.runtime_launch_lease_expires_at
+FROM agent_task_queue AS task
+JOIN agent ON agent.id = task.agent_id AND agent.archived_at IS NULL
+JOIN LATERAL (
+    SELECT attempt.backend, attempt.status, attempt.error_code, attempt.finished_at
+    FROM agent_task_runtime_start_attempt AS attempt
+    WHERE attempt.task_id = task.id AND attempt.runtime_id = task.runtime_id
+    ORDER BY attempt.created_at DESC, attempt.id DESC
+    LIMIT 1
+) AS latest ON true
+WHERE task.status = 'queued'
+  AND latest.backend = 'aliyun_fc'
+  AND latest.status = 'blocked'
+  AND latest.error_code = 'DSH-HOST-WAITING'
+  AND latest.finished_at <= now() - interval '30 seconds'
+  AND (task.runtime_launch_lease_expires_at IS NULL OR task.runtime_launch_lease_expires_at <= now())
+  AND COALESCE(task.context->>'deap_dws_token_required', 'false') <> 'true'
+ORDER BY latest.finished_at, task.id
+LIMIT 32
+`
+
+// A Profile build or host reconciliation can finish without a running task
+// or open browser to wake this queued launch. Reuse the normal launch lease.
+func (q *Queries) ListDSHHostWaitingTasks(ctx context.Context) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listDSHHostWaitingTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.ChatFinalizeDeferredAt,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
+			&i.AccountableUserID,
+			&i.SessionRolloutMissing,
+			&i.RetiredSessionID,
+			&i.QuickActionsDisabled,
+			&i.RegenerateQuickActionsFor,
+			&i.RuntimeLaunchLeaseToken,
+			&i.RuntimeLaunchLeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markAgentTaskRuntimeStartBlocked = `-- name: MarkAgentTaskRuntimeStartBlocked :one
 UPDATE agent_task_runtime_start_attempt
 SET status = 'blocked',
-    last_stage = 'task_serialization_blocked',
-    error_code = 'TASK-SERIALIZATION-BLOCKED',
+    last_stage = CASE WHEN last_stage = 'dsh_host_waiting' THEN last_stage ELSE 'task_serialization_blocked' END,
+    error_code = CASE WHEN last_stage = 'dsh_host_waiting' THEN 'DSH-HOST-WAITING' ELSE 'TASK-SERIALIZATION-BLOCKED' END,
     finished_at = now(),
     updated_at = now()
 WHERE id = $1

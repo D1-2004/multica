@@ -34,6 +34,13 @@ type dshNativePage struct {
 }
 type dshNativeCall func(context.Context, string, any) (json.RawMessage, error)
 
+func dshNativeHistoryAddress(sessionID string, childParent ...string) map[string]string {
+	if len(childParent) == 2 {
+		return map[string]string{"kind": "subagent", "parentSessionId": childParent[0], "childSessionId": sessionID, "mode": childParent[1]}
+	}
+	return map[string]string{"kind": "session", "sessionId": sessionID}
+}
+
 func decodeDSHNativeEvent(raw json.RawMessage) (dshNativeEvent, error) {
 	var event dshNativeEvent
 	if json.Unmarshal(raw, &event) != nil || event.Type == "" || event.Type == "session" || event.Seq == nil || *event.Seq < 0 || event.Time == nil || *event.Time < 0 || *event.Time > 1<<53-1 {
@@ -72,7 +79,7 @@ func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.Raw
 		return fail()
 	}
 	if len(childParent) > 0 {
-		if len(childParent) != 1 || childParent[0] == "" || header.ParentSession != childParent[0] || header.Origin != "subagent" || header.DelegationDepth == nil || *header.DelegationDepth < 1 {
+		if len(childParent) != 2 || childParent[0] == "" || (childParent[1] != "one-shot" && childParent[1] != "continuable") || header.ParentSession != childParent[0] || header.Origin != "subagent" || header.DelegationDepth == nil || *header.DelegationDepth < 1 {
 			return fail()
 		}
 	} else {
@@ -121,7 +128,7 @@ func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.Raw
 		if start == 0 {
 			return fail()
 		}
-		response, err := call(ctx, "page", map[string]any{"address": map[string]string{"kind": "session", "sessionId": sessionID}, "throughSeq": *snapshot.Cursor, "beforeSeq": start, "maxMessages": 50})
+		response, err := call(ctx, "page", map[string]any{"address": dshNativeHistoryAddress(sessionID, childParent...), "throughSeq": *snapshot.Cursor, "beforeSeq": start, "maxMessages": 50})
 		if err != nil {
 			return snapshot, nil, err
 		}
@@ -154,6 +161,7 @@ type dshNativeTaskHistory struct {
 	ownEvents     []json.RawMessage
 	pendingEvents []json.RawMessage
 	turnBytes     int
+	childModes    map[string]string
 }
 
 func (h *dshNativeTaskHistory) accept(raw json.RawMessage) error {
@@ -166,6 +174,12 @@ func (h *dshNativeTaskHistory) accept(raw json.RawMessage) error {
 		return errors.New("native DSH history sequence gap")
 	}
 	h.nextSeq++
+	if event.Type == "subagent/catalog" {
+		if h.childModes == nil {
+			h.childModes = map[string]string{}
+		}
+		rememberDSHChildMode(h.childModes, raw)
+	}
 	switch event.Type {
 	case "turn/start":
 		var data struct {

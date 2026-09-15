@@ -1591,6 +1591,9 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		var host dshhost.Host
 		host, coldStart, err = l.resolveFilesystemScopeSandbox(ctx, filesystemScope.Key, filesystemScopeID, task.ID, runtime, template, runtimeLockConn, trace)
 		if errors.Is(err, errDSHHostWaiting) {
+			if _, recordErr := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "dsh_host_waiting"); recordErr != nil {
+				return fcE2BLaunchSubmission{}, false, recordErr
+			}
 			return fcE2BLaunchSubmission{}, true, nil
 		}
 		sandboxID = host.SandboxID

@@ -453,7 +453,7 @@ func (s *TaskService) MarkRuntimeStartBlocked(ctx context.Context, attempt db.Ag
 	if err != nil {
 		return err
 	}
-	slog.Info("runtime start blocked by task serialization",
+	slog.Info("runtime start deferred",
 		"task_id", util.UUIDToString(updated.TaskID),
 		"runtime_id", util.UUIDToString(updated.RuntimeID),
 		"runtime_start_attempt_id", util.UUIDToString(updated.ID),
@@ -463,6 +463,22 @@ func (s *TaskService) MarkRuntimeStartBlocked(ctx context.Context, attempt db.Ag
 		"error_code", updated.ErrorCode,
 	)
 	return nil
+}
+
+// RecoverWaitingDSHHosts resumes the same queued tasks after asynchronous
+// Profile builds or host reconciliation, without depending on browser polling.
+func (s *TaskService) RecoverWaitingDSHHosts(ctx context.Context) {
+	if s == nil || s.Queries == nil || s.RuntimeLauncher == nil {
+		return
+	}
+	tasks, err := s.Queries.ListDSHHostWaitingTasks(ctx)
+	if err != nil {
+		slog.Warn("list waiting DSH host tasks failed", "error", err)
+		return
+	}
+	for _, task := range tasks {
+		s.RecoverQueuedFCE2BTask(ctx, task)
+	}
 }
 
 // MarkRuntimeStartCapacityWaiting closes one startup attempt without making the

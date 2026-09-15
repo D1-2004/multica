@@ -248,6 +248,9 @@ Profile revision without rebuilding identical package bytes. Status contains
 `state`, string-valued `desired_revision` and `applied_revision`,
 `applied_generation`, `applied_sandbox_id` and `current`, without configuration.
 `waiting_for_builds`, `build_failed` and `pending_host` are not successful application.
+Queued FC tasks waiting for Profile builds or host reconciliation are retried by
+the existing background sweeper under the normal per-task launch lease; an open
+browser is not required, and other session sandboxes remain independent.
 The DSH configuration page shows desired/last-confirmed versions and per-package build
 status. A failed package is shown as failed, not as indefinite preparation.
 The status API exposes package/version/state, attempt `id` and `can_retry`, never private settings.

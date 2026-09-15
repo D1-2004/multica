@@ -18,17 +18,18 @@ func dshPhysicalHeader(header json.RawMessage) (json.RawMessage, error) {
 
 // The parent references immutable activation offsets, not entire child files.
 // Follow/page freeze a prefix; a later activation cannot widen this task's range.
-func (b *dshNativeBackend) childTrajectories(ctx context.Context, rootHeader json.RawMessage, rootEvents []json.RawMessage) ([]dshtrajectory.ChildDocument, error) {
+func (b *dshNativeBackend) childTrajectories(ctx context.Context, rootHeader json.RawMessage, rootEvents []json.RawMessage, rootModes map[string]string) ([]dshtrajectory.ChildDocument, error) {
 	type parentRange struct {
 		id     string
 		header json.RawMessage
 		events []json.RawMessage
+		modes  map[string]string
 	}
 	physical, err := dshPhysicalHeader(rootHeader)
 	if err != nil {
 		return nil, err
 	}
-	parents := []parentRange{{b.native.SessionID, physical, rootEvents}}
+	parents := []parentRange{{b.native.SessionID, physical, rootEvents, rootModes}}
 	children := []dshtrajectory.ChildDocument{}
 	seen := map[string]bool{}
 	size := len(physical)
@@ -46,11 +47,20 @@ func (b *dshNativeBackend) childTrajectories(ctx context.Context, rootHeader jso
 				return nil, errors.New("invalid native DSH child graph")
 			}
 			seen[ref.ActivationID] = true
+			mode := parent.modes[ref.ChildSessionID]
+			if mode != "one-shot" && mode != "continuable" {
+				return nil, errors.New("native DSH child catalog is unavailable")
+			}
 			var child dshtrajectory.ChildDocument
-			err = b.client.follow(ctx, map[string]any{"address": map[string]string{"kind": "session", "sessionId": ref.ChildSessionID}}, func(raw json.RawMessage) (bool, error) {
-				snapshot, events, readErr := readDSHNativeBaseline(ctx, b.client.call, raw, ref.ChildSessionID, b.native.WorkDir, parent.id)
+			childModes := map[string]string{}
+			address := dshNativeHistoryAddress(ref.ChildSessionID, parent.id, mode)
+			err = b.client.follow(ctx, map[string]any{"address": address}, func(raw json.RawMessage) (bool, error) {
+				snapshot, events, readErr := readDSHNativeBaseline(ctx, b.client.call, raw, ref.ChildSessionID, b.native.WorkDir, parent.id, mode)
 				if readErr != nil {
 					return false, readErr
+				}
+				for _, event := range events {
+					rememberDSHChildMode(childModes, event)
 				}
 				child, readErr = selectDSHChildRange(snapshot.Header, events, parent.header, parent.id, ref)
 				return true, readErr
@@ -66,10 +76,26 @@ func (b *dshNativeBackend) childTrajectories(ctx context.Context, rootHeader jso
 				return nil, errors.New("native DSH task trajectories exceed artifact limit")
 			}
 			children = append(children, child)
-			parents = append(parents, parentRange{child.Scope.SessionID, child.Header, child.Events})
+			parents = append(parents, parentRange{child.Scope.SessionID, child.Header, child.Events, childModes})
 		}
 	}
 	return children, nil
+}
+
+// Official child history requires both its durable parent and catalog mode.
+// Keep catalog identity across turns so a later task can resume the child.
+func rememberDSHChildMode(modes map[string]string, raw json.RawMessage) {
+	var event struct {
+		Type string `json:"type"`
+		Data struct {
+			Version int    `json:"version"`
+			ChildID string `json:"childId"`
+			Mode    string `json:"mode"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(raw, &event) == nil && event.Type == "subagent/catalog" && event.Data.Version == 0 && event.Data.ChildID != "" {
+		modes[event.Data.ChildID] = event.Data.Mode
+	}
 }
 
 func selectDSHChildRange(header json.RawMessage, events []json.RawMessage, parentHeader json.RawMessage, parentID string, ref dshtrajectory.ChildReference) (dshtrajectory.ChildDocument, error) {

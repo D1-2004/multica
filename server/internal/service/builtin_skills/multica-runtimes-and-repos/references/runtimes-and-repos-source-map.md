@@ -39,7 +39,8 @@
 
 ## Task and child trajectories
 
-- `server/pkg/agent/dsh_native_children.go`: follows child references written by the native factory and selects the exact activation after task resources are released.
+- `server/pkg/agent/dsh_native_children.go`: follows child references using the official parent/child/mode address and selects the exact activation after task resources are released; pagination retains that same address.
+- `server/pkg/db/queries/runtime_start.sql`, `server/internal/service/runtime_start_attempt.go`, `server/cmd/server/runtime_sweeper.go`: persist and retry FC host-preparation waits without browser polling, through the existing task launch lease.
 - `server/pkg/dshtrajectory/children.go`: validates request identity, parent lineage and contiguous child intervals; counts all included events without copying seeded or unrelated task history.
 - `server/internal/handler/dsh_trajectory.go`: validates and stores the complete task artifact.
 - `packages/views/common/task-trajectory/trajectory-model.ts`, `dsh-trajectory-dialog.tsx`: parse the task bundle and select root or child events while retaining native sequence numbers and interruption state.
