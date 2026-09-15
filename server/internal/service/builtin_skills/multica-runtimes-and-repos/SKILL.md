@@ -272,9 +272,13 @@ The managed Schedule adapter uses task-authenticated
 `GET/POST /api/tasks/{taskId}/dsh/schedules` and
 `DELETE /api/tasks/{taskId}/dsh/schedules/{scheduleId}`. GET and DELETE select
 `session_id` in the query. POST accepts `session_id`, `schedule_id`, `prompt`,
-`first_due_at` (the resolved UTC instant) and `every_seconds` (zero for one-shot,
-otherwise at least 300). The actor, workspace, employee and creating task come
-from the short-lived task token, never from request fields or a native entry URL.
+`first_due_at` (the resolved UTC instant), `every_seconds` (zero for one-shot,
+otherwise at least 300) and `source_task_id` (the original creating task recorded
+by the private adapter). The current actor, workspace, employee and bearer task
+come from the short-lived task token. The original task must independently match
+the employee/Session and creator; it is provenance, never a grant. Responses retain
+`source_task_id`. A durable intent can be first published after its due instant
+under a fresh authorized task; an ended bearer task or another creator is denied.
 Do not retain a task token for a future reminder.
 
 Management requires an active dispatched/running FC DSH task bound to that exact

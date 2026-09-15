@@ -21,7 +21,9 @@ receipt and next-due advancement must share one transaction.
 
 `internal/service/dsh_schedule.go` and `internal/handler/dsh_schedule.go` add
 registration, bounded list and cancellation through the current task token.
-Workspace/employee/source task coordinates are server-derived. The service locks
+The current workspace/employee/task coordinates are server-derived. The private
+adapter supplies the original source task as provenance, verified against the
+same employee/native Session and resolved creator. The service locks
 Runtime, employee and workspace parents, checks the current active task and native
 binding, locks current membership, and applies the same invocation policy as
 native chat. Changed runtime, archived employee, ended task, absent member or
@@ -35,7 +37,13 @@ than pretend the owner sent a fresh human message or reuse their old task token.
 
 A retry under a fresh authorized task of the same owner may read the unchanged
 existing record, including cancelled/consumed state. It does not overwrite source
-provenance. New registration requires a future instant. Cancellation is restricted
+provenance. The official parser requires a future instant when creating the native
+intent; publication can arrive after that instant. First publication with a fresh
+task verifies the original bound task's human creator or full Schedule execution
+ledger against the current owner. A missing/foreign source or accountability-only
+source fails; a completed current bearer task still fails. The historical task
+never supplies execution credentials or current invocation permission.
+Cancellation is restricted
 to the record owner and does not claim to cancel an already admitted task.
 
 Workspace deletion removes both reminder tables in the parent transaction. The

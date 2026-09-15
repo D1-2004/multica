@@ -164,3 +164,5 @@
   per-occurrence ordinals, one task per batch, and atomic receipt/advancement.
 - `server/internal/dshschedule/execution.go`: complete ordered receipt readback;
   changed membership, order or native request identity fails closed.
+
+- `server/internal/service/dsh_schedule_recovery_database_test.go`: opt-in preproduction test for first publication after source completion/due time, fresh-current-task authority, original source preservation, unbound/accountability-only/foreign creator rejection and cancelled replay. Not executed locally.

@@ -23,8 +23,12 @@ fixes that lifecycle boundary.
 The integrating service must:
 
 1. Authenticate registration/cancellation through the currently bound task.
-   Derive employee, native Session, source task and standing member identity from
-   server-side attribution. Model arguments cannot choose those identities.
+   Derive the current employee/task and standing member identity from server-side
+   attribution. Verify the adapter's original source task against its persisted
+   native binding and creator; a recovered intent may name a completed source,
+   but only a fresh active task supplies current authorization. Never retain its
+   token. The official parser validates future time at native intent creation,
+   so first publication after that due time remains recoverable.
 2. Acquire the existing admission locks in their established order, retain parent
    locks through commit, and verify current invocation authority. Browser entry
    grants cannot become stored automation credentials.
@@ -37,7 +41,7 @@ The integrating service must:
 5. Call `Store.Dispatch` inside the authorized admission transaction. Its enqueue
    callback rechecks the standing owner's current permissions, creates a fresh
    task and input, and uses `AdoptNativeExecution` for the original Session and
-   `Due.RequestID`. The callback performs no cloud/HTTP dispatch and no commit.
+   `Batch.RequestID`. The callback performs no cloud/HTTP dispatch and no commit.
 6. Commit the task, native binding, occurrence receipt and next-due advancement
    together. Only after successful commit publish a wake hint or return a native
    dispatch receipt. Use the existing durable task dispatch/recovery machinery.

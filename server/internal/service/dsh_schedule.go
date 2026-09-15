@@ -21,6 +21,7 @@ type DSHScheduleActor struct {
 }
 
 type DSHScheduleInput struct {
+	SourceTaskID string    `json:"source_task_id"`
 	SessionID    string    `json:"session_id"`
 	ScheduleID   string    `json:"schedule_id"`
 	Prompt       string    `json:"prompt"`
@@ -29,6 +30,7 @@ type DSHScheduleInput struct {
 }
 
 type DSHScheduleView struct {
+	SourceTaskID string     `json:"source_task_id"`
 	SessionID    string     `json:"session_id"`
 	ScheduleID   string     `json:"schedule_id"`
 	Prompt       string     `json:"prompt"`
@@ -44,7 +46,7 @@ type DSHScheduleList struct {
 }
 
 func scheduleView(state dshschedule.State, now time.Time) DSHScheduleView {
-	view := DSHScheduleView{SessionID: state.SessionID, ScheduleID: state.ScheduleID,
+	view := DSHScheduleView{SourceTaskID: state.SourceTaskID.String(), SessionID: state.SessionID, ScheduleID: state.ScheduleID,
 		Prompt: state.Prompt, FirstDue: state.FirstDue, EverySeconds: state.EverySeconds, State: "consumed"}
 	if state.NextDue.Valid {
 		next := state.NextDue.Time
@@ -118,11 +120,11 @@ func (s *TaskService) withDSHScheduleTask(ctx context.Context, actor DSHSchedule
 			userID = task.OriginatorUserID
 			err = tx.QueryRow(ctx, `SELECT id FROM member WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, agent.WorkspaceID, userID).Scan(&memberID)
 		} else {
-			err = tx.QueryRow(ctx, `SELECT m.id,m.user_id FROM dsh_schedule_occurrence o
- JOIN dsh_schedule s ON s.workspace_id=o.workspace_id AND s.agent_id=o.agent_id AND s.session_id=o.session_id AND s.schedule_id=o.schedule_id
- JOIN member m ON m.id=s.owner_member_id AND m.workspace_id=s.workspace_id
- WHERE o.workspace_id=$1 AND o.agent_id=$2 AND o.task_id=$3 AND o.session_id=$4 FOR SHARE OF m`,
-				actor.WorkspaceID, actor.AgentID, actor.TaskID, sessionID).Scan(&memberID, &userID)
+			execution, loadErr := dshschedule.LoadExecution(ctx, tx, actor.Key, actor.TaskID)
+			if loadErr != nil || !ScheduleExecutionMatches(task, execution) {
+				return dshhost.ErrNativeAccessDenied
+			}
+			err = tx.QueryRow(ctx, `SELECT id,user_id FROM member WHERE id=$1 AND workspace_id=$2 FOR SHARE`, execution.OwnerMemberID, agent.WorkspaceID).Scan(&memberID, &userID)
 		}
 		if err != nil || !memberID.Valid || !userID.Valid {
 			return dshhost.ErrNativeAccessDenied
@@ -141,8 +143,12 @@ func (s *TaskService) withDSHScheduleTask(ctx context.Context, actor DSHSchedule
 func (s *TaskService) RegisterDSHSchedule(ctx context.Context, actor DSHScheduleActor, input DSHScheduleInput, invoke DSHNativeInvokeCheck) (DSHScheduleView, error) {
 	var view DSHScheduleView
 	err := s.withDSHScheduleTask(ctx, actor, input.SessionID, invoke, func(tx pgx.Tx, owner uuid.UUID, now time.Time) error {
+		sourceID, err := uuid.Parse(input.SourceTaskID)
+		if err != nil || sourceID == uuid.Nil {
+			return dshschedule.ErrInvalid
+		}
 		r := dshschedule.Record{Key: dshschedule.Key{WorkspaceID: actor.WorkspaceID, AgentID: actor.AgentID, SessionID: input.SessionID, ScheduleID: input.ScheduleID},
-			OwnerMemberID: owner, SourceTaskID: actor.TaskID, Prompt: input.Prompt, FirstDue: input.FirstDue, EverySeconds: input.EverySeconds}
+			OwnerMemberID: owner, SourceTaskID: sourceID, Prompt: input.Prompt, FirstDue: input.FirstDue, EverySeconds: input.EverySeconds}
 		if err := r.Validate(); err != nil {
 			return err
 		}
@@ -151,7 +157,7 @@ func (s *TaskService) RegisterDSHSchedule(ctx context.Context, actor DSHSchedule
 		if err == nil {
 			// Recovery may arrive under a fresh task. Preserve the original task
 			// provenance, require the same owner, and never reactivate a tombstone.
-			if existing.OwnerMemberID != owner || existing.Prompt != r.Prompt || !existing.FirstDue.Equal(r.FirstDue) || existing.EverySeconds != r.EverySeconds {
+			if existing.OwnerMemberID != owner || existing.SourceTaskID != sourceID || existing.Prompt != r.Prompt || !existing.FirstDue.Equal(r.FirstDue) || existing.EverySeconds != r.EverySeconds {
 				return dshschedule.ErrConflict
 			}
 			view = scheduleView(existing, now)
@@ -160,8 +166,11 @@ func (s *TaskService) RegisterDSHSchedule(ctx context.Context, actor DSHSchedule
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		if !input.FirstDue.After(now) {
-			return dshschedule.ErrInvalid
+		// A durable native create may outlive its first task before PostgreSQL
+		// sees it. Re-authorize with the current task and independently recover
+		// the original creator; the historical task is provenance, not a grant.
+		if err := verifyDSHScheduleSource(ctx, tx, actor.Key, input.SessionID, sourceID, owner); err != nil {
+			return err
 		}
 		state, err := store.Register(ctx, r)
 		if err != nil {
@@ -211,4 +220,37 @@ func (s *TaskService) CancelDSHSchedule(ctx context.Context, actor DSHScheduleAc
 		return err
 	})
 	return found, err
+}
+
+// verifyDSHScheduleSource accepts only an actually bound native task from the
+// same employee/Session and owner. AccountableUserID alone cannot establish a
+// creator. It is safe to name a completed task; its token is never reused.
+func verifyDSHScheduleSource(ctx context.Context, tx pgx.Tx, key dshhost.Key, session string, sourceID, owner uuid.UUID) error {
+	var locked uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT t.id FROM agent_task_queue t
+ JOIN dsh_task_binding b ON b.task_id=t.id AND b.agent_id=t.agent_id
+ WHERE b.workspace_id=$1 AND b.agent_id=$2 AND b.session_id=$3 AND t.id=$4 FOR SHARE OF t,b`,
+		key.WorkspaceID, key.AgentID, session, sourceID).Scan(&locked); err != nil {
+		return dshhost.ErrNativeAccessDenied
+	}
+	task, err := db.New(tx).GetAgentTask(ctx, pgtype.UUID{Bytes: sourceID, Valid: true})
+	if err != nil {
+		return err
+	}
+	var sourceOwner uuid.UUID
+	if task.OriginatorUserID.Valid {
+		if err := tx.QueryRow(ctx, `SELECT id FROM member WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, key.WorkspaceID, task.OriginatorUserID).Scan(&sourceOwner); err != nil {
+			return dshhost.ErrNativeAccessDenied
+		}
+	} else {
+		execution, err := dshschedule.LoadExecution(ctx, tx, key, sourceID)
+		if err != nil || !ScheduleExecutionMatches(task, execution) {
+			return dshhost.ErrNativeAccessDenied
+		}
+		sourceOwner = execution.OwnerMemberID
+	}
+	if sourceOwner != owner {
+		return dshhost.ErrNativeAccessDenied
+	}
+	return nil
 }

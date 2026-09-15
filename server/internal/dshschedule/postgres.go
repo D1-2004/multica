@@ -81,8 +81,9 @@ func readState(row pgx.Row, key Key) (State, error) {
 
 // Register is retry-safe even after cancellation or dispatch. A replay returns
 // the existing state; it cannot reactivate the reminder or change its owner.
-// The service validates future-time rules on first creation. A delayed retry of
-// the same durable native record remains valid after its due instant has passed.
+// The official parser checks future time when the native intent is created.
+// Publication may arrive later, but always needs current task authorization and
+// independently verified original task/owner provenance.
 func (s Store) Register(ctx context.Context, r Record) (State, error) {
 	if s.Tx == nil || r.Validate() != nil {
 		return State{}, ErrInvalid

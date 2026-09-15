@@ -84,6 +84,9 @@ func (h *Handler) DSHSchedules(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid DSH schedule payload")
 		return
 	}
+	if _, ok := parseUUIDOrBadRequest(w, input.SourceTaskID, "source_task_id"); !ok {
+		return
+	}
 	result, err := h.TaskService.RegisterDSHSchedule(r.Context(), actor, input, h.dshNativeInvoke)
 	if err != nil {
 		writeDSHScheduleError(w, err)

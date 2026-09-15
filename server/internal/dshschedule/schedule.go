@@ -47,7 +47,7 @@ func (k Key) Validate() error {
 }
 
 // Record is immutable provenance. OwnerMemberID and SourceTaskID must be
-// resolved from the authenticated creating task, never supplied by the model.
+// resolved from a verified creating task, never trusted from model input.
 // FirstDue is the already-resolved UTC instant from the official rule parser.
 // EverySeconds is zero for one-shot reminders and at least 300 otherwise.
 type Record struct {
