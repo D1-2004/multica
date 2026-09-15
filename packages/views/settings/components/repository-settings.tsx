@@ -30,8 +30,8 @@ export function RepositorySettings() {
   return (
     <SettingsTab title={t(($) => $.page.tabs.repositories)} description={t(($) => $.repository_settings.description)}>
       <Tabs value={activeSection} onValueChange={changeSection} className="min-w-0 gap-6">
-        <TabsList variant="line" className="max-w-full overflow-x-auto">
-          {SECTIONS.map((value) => <TabsTrigger key={value} value={value} className="shrink-0">
+        <TabsList className="max-w-full !h-9 !flex-row overflow-x-auto">
+          {SECTIONS.map((value) => <TabsTrigger key={value} value={value} className="shrink-0 !w-auto px-3 after:hidden">
             {t(($) => $.repository_settings.sections[value])}
           </TabsTrigger>)}
         </TabsList>
