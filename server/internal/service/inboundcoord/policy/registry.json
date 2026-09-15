@@ -941,7 +941,7 @@
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
-        "trigger_message_quote_reply_2026_09_16": "Host and provider tests passed locally; pre deployment and actual DingTalk quotedMessage readback pending."
+        "trigger_message_quote_reply_2026_09_16": "passed pre run3108401487: direct conversation reply, work acceptance and final result quoted the exact trigger message; first run3108400116 failure retained in report"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/completion.md",
@@ -953,7 +953,8 @@
         "server/internal/dwsclient/send.go",
         "server/internal/handler/dingtalk_response_test.go",
         "server/internal/integrations/agentmessagerouter/dws_delivery.go",
-        "server/internal/integrations/agentmessagerouter/dws_delivery_test.go"
+        "server/internal/integrations/agentmessagerouter/dws_delivery_test.go",
+        "docs/reports/2026-09-16-dingtalk-trigger-quoted-reply-e2e.md"
       ],
       "case_file": "cases.json"
     },

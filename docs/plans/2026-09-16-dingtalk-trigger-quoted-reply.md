@@ -21,4 +21,6 @@
 
 ## 状态
 
-实现及本地Host/provider测试完成：响应路由保存默认触发消息和明确选择的 `WindowEvidenceID`，回调生成的托管action继续持有同一消息ID；reaction/空消息不被猜成触发消息；托管provider和Router callback兼容发送器都使用 `+messages-reply --message-id`。policy结构检查通过。最新develop的全新本地库存在既有271/9025迁移顺序问题，本次测试在隔离worktree库中按仓库现有SQL补齐所需fork表后运行，不修改预发数据库。首次预发run3108400116部署成功，但普通对话回读没有引用，暴露并定位第二条兼容路径；修订后必须重新部署同一CR并复跑，不沿用该失败结果。
+完成。响应路由保存默认触发消息和明确选择的 `WindowEvidenceID`，回调生成的托管action继续持有同一消息ID；reaction/空消息不被猜成触发消息；托管provider和Router callback兼容发送器都使用 `+messages-reply --message-id`。缺失source消息的旧回调仍走原单聊退路。Host/provider/Router恢复与后端构建通过，policy结构检查通过。
+
+最新develop的全新本地库存在既有271/9025迁移顺序问题，本次测试在隔离worktree库中按仓库现有SQL补齐所需fork表后运行，不修改预发数据库。首次预发run3108400116部署成功，但普通对话回读没有引用，暴露并定位第二条兼容路径；该失败保留。修订源码516c06293在run3108401487重新部署，部署/集成测试及health成功。冬翔→东翔测试号真实单聊验证：普通回复、工作接单、工作最终正文的 `quotedMessage.messageId` 均精确等于各自触发消息；工作终态后二次回读没有重复正文。只有该单聊存在真实订阅，群聊由Host选择和DWS参数测试覆盖，不冒充群IM实测。详见 `docs/reports/2026-09-16-dingtalk-trigger-quoted-reply-e2e.md`。
