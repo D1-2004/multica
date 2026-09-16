@@ -78,7 +78,7 @@ func (s *TaskService) RegisterDSHNativeChatSession(ctx context.Context, agent db
 			if out.Session.Status != "active" {
 				return ErrChatSessionArchived
 			}
-			return nil
+			return (dshhost.PostgresStore{DB: tx}).BindWorkdir(ctx, dshhost.SessionScope{Key: access.Key, Kind: "chat", ID: uuid.UUID(out.Session.ID.Bytes)}, workdir, false)
 		}
 		out.Session, err = q.CreateChatSession(ctx, db.CreateChatSessionParams{
 			WorkspaceID: current.WorkspaceID, AgentID: current.ID, CreatorID: userID,
@@ -88,6 +88,9 @@ func (s *TaskService) RegisterDSHNativeChatSession(ctx context.Context, agent db
 		}
 		if err := (dshhost.PostgresStore{DB: tx}).AdoptNativeSession(ctx,
 			dshhost.SessionScope{Key: access.Key, Kind: "chat", ID: uuid.UUID(out.Session.ID.Bytes)}, sessionID); err != nil {
+			return err
+		}
+		if err := (dshhost.PostgresStore{DB: tx}).BindWorkdir(ctx, dshhost.SessionScope{Key: access.Key, Kind: "chat", ID: uuid.UUID(out.Session.ID.Bytes)}, workdir, true); err != nil {
 			return err
 		}
 		out.Created = true

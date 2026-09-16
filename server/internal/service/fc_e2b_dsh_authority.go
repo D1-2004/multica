@@ -41,6 +41,7 @@ type dshAuthorityRequest struct {
 	Token    string          `json:"token"`
 	Exchange bool            `json:"exchange"`
 	Prompt   json.RawMessage `json:"prompt,omitempty"`
+	Workdir  string          `json:"workdir,omitempty"`
 }
 type dshAuthorityPacket struct {
 	Payload   string `json:"payload"`

@@ -45,15 +45,12 @@ it("shows the failed plugin and does not present it as still preparing", async (
   expect(calls.prepare).not.toHaveBeenCalled();
 });
 
-it("prepares changed configuration only on explicit action and then reads its receipt", async () => {
+it("automatically applies changed configuration without a second prepare action", async () => {
   calls.get.mockResolvedValue({ ...pending, state: "configuration_changed" });
-  calls.prepare.mockImplementation(async () => { calls.get.mockResolvedValue(pending); return pending; });
   show();
-  const button = await screen.findByRole("button", { name: "Prepare configuration" });
+  await screen.findByText("Changes saved. Applying the configuration automatically.");
+  expect(screen.queryByRole("button", { name: "Prepare configuration" })).toBeNull();
   expect(calls.prepare).not.toHaveBeenCalled();
-  await userEvent.click(button);
-  await screen.findByText("Plugin dependencies are ready. Applying the configuration; active tasks finish first.");
-  expect(calls.prepare).toHaveBeenCalledExactlyOnceWith("workspace", "employee");
 });
 
 it("does not show cached applied status when the status request fails", async () => {

@@ -13,6 +13,7 @@ const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
 
 const mockListDshPlugins = vi.hoisted(() => vi.fn());
 const mockListAgentDshPlugins = vi.hoisted(() => vi.fn());
+const mockGetHome = vi.hoisted(() => vi.fn());
 const mockGetConfig = vi.hoisted(() => vi.fn());
 const mockUpdateConfig = vi.hoisted(() => vi.fn());
 const mockSetAgentDshPlugins = vi.hoisted(() => vi.fn());
@@ -36,6 +37,8 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("@multica/core/api", () => ({
   api: {
+    getDSHHome: (...args: unknown[]) => mockGetHome(...args),
+    getDSHProfile: async () => ({state: "applied", current: true, desiredRevision: "1", appliedRevision: "1", builds: []}),
     getAgentDshPluginConfig: (...args: unknown[]) => mockGetConfig(...args),
     updateAgentDshPluginConfig: (...args: unknown[]) => mockUpdateConfig(...args),
     listDshPlugins: (...args: unknown[]) => mockListDshPlugins(...args),
@@ -118,7 +121,7 @@ function plugin(id: string, packageName: string, enabled = true) {
   };
 }
 
-function renderTab(canEdit = true, agentOverrides: Partial<Agent> = {}) {
+function renderTab(canEdit = true, agentOverrides: Partial<Agent> = {}, runtime = dshRuntime) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -127,7 +130,7 @@ function renderTab(canEdit = true, agentOverrides: Partial<Agent> = {}) {
       <QueryClientProvider client={queryClient}>
         <DshPluginsTab
           agent={{ ...agent, ...agentOverrides }}
-          runtime={dshRuntime}
+          runtime={runtime}
           canEdit={canEdit}
         />
       </QueryClientProvider>
@@ -294,4 +297,16 @@ describe("employee plugin settings", () => {
     expect(mockUpdateConfig).toHaveBeenCalledTimes(1);
     expect(screen.queryByText("Settings saved. Host application still needs verification.")).toBeNull();
   });
+});
+
+it("disables all plugin writes until the employee filesystem is ready", async () => {
+  mockGetHome.mockResolvedValue({provisioned: false, state: "unprovisioned", step: 0});
+  mockListAgentDshPlugins.mockResolvedValue([plugin("one", "plugin-one")]);
+  mockListDshPlugins.mockResolvedValue([plugin("one", "plugin-one"), plugin("two", "plugin-two")]);
+  renderTab(true, {}, {...dshRuntime, metadata: {kind: "fc-e2b"}});
+  await screen.findByText("Open native DSH to prepare the filesystem before configuring plugins.");
+  await screen.findByText("plugin-one");
+  expect(screen.getByRole("switch")).toHaveAttribute("aria-disabled", "true");
+  for (const button of screen.getAllByRole("button")) expect(button).toBeDisabled();
+  expect(mockSetAgentDshPlugins).not.toHaveBeenCalled();
 });

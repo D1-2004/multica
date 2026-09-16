@@ -3,7 +3,6 @@ package daemon
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -52,7 +51,7 @@ func managedDSHNativeConfig(launchedBy, provider, executable string, custom bool
 		}
 		value.Prompt = copy
 	}
-	if value.WorkDir != filepath.Join("/mnt/multica/workspaces", value.SessionID) {
+	if !protocol.ValidDSHWorkdir(value.WorkDir) {
 		return nil, errors.New("invalid native DSH workspace binding")
 	}
 	value.ModelBaseURL, value.ModelAPIKey, value.ProviderGeneration = getenv("OPENAI_BASE_URL"), getenv("OPENAI_API_KEY"), getenv("MULTICA_TRACE_ID")

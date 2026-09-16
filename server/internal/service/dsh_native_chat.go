@@ -30,7 +30,7 @@ type DSHNativePromptReceipt struct {
 type DSHNativePromptSubmit func(context.Context, dshhost.NativeAccess, DSHNativeChatInput, string) (DSHNativePromptReceipt, error)
 
 // DSHNativeChatInput carries the exact native identity. The gateway must create
-// the Session in this canonical directory before asking to admit its prompt.
+// the Session in this persistent directory before asking to admit its prompt.
 // Model, tools and credentials are resolved by the platform task dispatcher.
 type DSHNativeChatInput struct {
 	SessionID string
@@ -80,7 +80,7 @@ func (a dshNativeChatAdmission) validateIdentity(session db.ChatSession, agent d
 }
 
 func validateDSHNativeSession(sessionID, workdir string) error {
-	if !dshhost.ValidSessionID(sessionID) || workdir != dshhost.MountPath+"/workspaces/"+sessionID {
+	if !dshhost.ValidSessionID(sessionID) || !protocol.ValidDSHWorkdir(workdir) {
 		return ErrDSHNativeInput
 	}
 	return nil
@@ -251,6 +251,9 @@ func (a dshNativeChatAdmission) replay(ctx context.Context, tx pgx.Tx, q *db.Que
 func (a dshNativeChatAdmission) bind(ctx context.Context, tx pgx.Tx, session db.ChatSession, task db.AgentTaskQueue) error {
 	scope := dshhost.SessionScope{Key: a.access.Key, Kind: "chat", ID: uuid.UUID(session.ID.Bytes)}
 	store := dshhost.PostgresStore{DB: tx}
+	if err := store.BindWorkdir(ctx, scope, a.input.Workdir, false); err != nil {
+		return err
+	}
 	if _, err := store.AdoptNativeExecution(ctx, scope, uuid.UUID(task.ID.Bytes), a.input.SessionID, a.input.RequestID); err != nil {
 		return err
 	}

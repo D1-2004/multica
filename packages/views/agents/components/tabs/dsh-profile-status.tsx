@@ -5,7 +5,7 @@ import { dshProfileOptions, usePrepareDSHProfile, useRetryDSHProfileBuild } from
 import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "../../../i18n";
 
-export function DshProfileStatus({ workspaceId, agentId }: { workspaceId: string; agentId: string }) {
+export function DshProfileStatus({ workspaceId, agentId, embedded = false }: { workspaceId: string; agentId: string; embedded?: boolean }) {
   const { t } = useT("agents");
   const query = useQuery(dshProfileOptions(workspaceId, agentId));
   const prepare = usePrepareDSHProfile(workspaceId, agentId);
@@ -33,8 +33,8 @@ export function DshProfileStatus({ workspaceId, agentId }: { workspaceId: string
       default: return t(($) => $.tab_body.dsh_profile.build_waiting);
     }
   };
-  return <section className="space-y-3 rounded-lg border p-4">
-    <h3 className="text-body font-medium">{t(($) => $.tab_body.dsh_profile.title)}</h3>
+  return <section className={embedded ? "space-y-3" : "space-y-3 rounded-lg border p-4"}>
+    {!embedded && <h3 className="text-body font-medium">{t(($) => $.tab_body.dsh_profile.title)}</h3>}
     <p role="status" aria-live="polite" className="text-caption text-muted-foreground">{description()}</p>
     {status && !unavailable && <>
       <dl className="grid grid-cols-2 gap-2 text-caption">
@@ -60,13 +60,13 @@ export function DshProfileStatus({ workspaceId, agentId }: { workspaceId: string
     {prepare.isError && <p role="alert" className="text-caption text-destructive">{t(($) => $.tab_body.dsh_profile.prepare_unconfirmed)}</p>}
     {retry.isError && <p role="alert" className="text-caption text-destructive">{t(($) => $.tab_body.dsh_profile.retry_unconfirmed)}</p>}
     <div className="flex gap-2">
-      {(status?.state === "unprepared" || status?.state === "configuration_changed" || status?.state === "apply_failed") && !unavailable &&
+      {(status?.state === "apply_failed") && !unavailable &&
         <Button size="sm" onClick={() => prepare.mutate()} disabled={prepare.isPending || query.isFetching}>
           {status?.state === "apply_failed" ? t(($) => $.tab_body.dsh_profile.retry_apply) : t(($) => $.tab_body.dsh_profile.prepare)}
         </Button>}
-      <Button size="sm" variant="outline" onClick={() => { void query.refetch(); }} disabled={prepare.isPending || query.isFetching}>
+      {unavailable && <Button size="sm" variant="outline" onClick={() => { void query.refetch(); }} disabled={prepare.isPending || query.isFetching}>
         {t(($) => $.tab_body.dsh_profile.refresh)}
-      </Button>
+      </Button>}
     </div>
   </section>;
 }

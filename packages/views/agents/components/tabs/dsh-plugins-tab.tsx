@@ -1,5 +1,7 @@
 "use client";
 
+import { DshProfileStatus } from "./dsh-profile-status";
+import { isFCE2BRuntime } from "@multica/core/runtimes";
 import { DshPluginConfigDialog } from "./dsh-plugin-config-dialog";
 import { useMemo, useState } from "react";
 import { Blocks, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react";
@@ -7,7 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { api, ApiError } from "@multica/core/api";
-import { dshProfileKeys } from "@multica/core/agents";
+import { dshProfileKeys, dshHomeOptions } from "@multica/core/agents";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   agentDshPluginsOptions,
@@ -54,6 +56,9 @@ export function DshPluginsTab({
   const [configPlugin, setConfigPlugin] = useState<AgentDshPlugin | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  const needsFilesystem = agent.runtime_mode === "cloud" && runtime != null && isFCE2BRuntime(runtime);
+  const home = useQuery({ ...dshHomeOptions(wsId, agent.id), enabled: needsFilesystem });
+  const filesystemReady = !needsFilesystem || (!home.isError && home.data?.provisioned === true && home.data.step === 6);
   const attached = useQuery(agentDshPluginsOptions(wsId, agent.id));
   const workspacePlugins = useQuery(dshPluginListOptions(wsId));
 
@@ -93,7 +98,7 @@ export function DshPluginsTab({
   // rather than a delta. That also makes an interrupted request harmless: it
   // either applies the new set or leaves the old one.
   const writeSet = (rows: { id: string; enabled: boolean }[]) =>
-    save.mutate(rows.map((row) => ({ id: row.id, enabled: row.enabled })));
+    filesystemReady && !save.isPending && save.mutate(rows.map((row) => ({ id: row.id, enabled: row.enabled })));
 
   const currentSet = () =>
     attachedRows.map((row) => ({ id: row.id, enabled: row.enabled }));
@@ -157,13 +162,16 @@ export function DshPluginsTab({
               variant="outline"
               size="sm"
               onClick={() => setShowAdd(true)}
-              disabled={available.length === 0}
+              disabled={!filesystemReady || available.length === 0 || save.isPending}
             >
               <Plus className="h-3.5 w-3.5" />
               {t(($) => $.tab_body.dsh_plugins.add_action)}
             </Button>
           ) : null}
         </div>
+
+        {!filesystemReady && <p role="status" className="text-caption text-muted-foreground">{t(($) => $.tab_body.dsh_plugins.filesystem_required)}</p>}
+        {filesystemReady && runsPlugins && canEdit && runtime && isFCE2BRuntime(runtime) && <DshProfileStatus workspaceId={wsId} agentId={agent.id} embedded />}
 
         {attached.isPending ? (
           <div className="flex items-center gap-2 rounded-lg border border-dashed px-4 py-6 text-caption text-muted-foreground">
@@ -192,7 +200,7 @@ export function DshPluginsTab({
                 plugin={plugin}
                 canEdit={canEdit}
                 busy={busyId === plugin.id}
-                anyBusy={busyId !== null}
+                anyBusy={!filesystemReady || busyId !== null}
                 onToggle={(enabled) => handleToggle(plugin.id, enabled)}
                 onRemove={() => handleRemove(plugin.id)}
                 onConfigure={() => setConfigPlugin(plugin)}
@@ -202,7 +210,7 @@ export function DshPluginsTab({
         )}
       </section>
 
-      {configPlugin && canEdit && <DshPluginConfigDialog key={`${agent.id}:${configPlugin.id}`} wsId={wsId} agentId={agent.id} plugin={configPlugin} onClose={() => setConfigPlugin(null)} />}
+      {configPlugin && canEdit && filesystemReady && <DshPluginConfigDialog key={`${agent.id}:${configPlugin.id}`} wsId={wsId} agentId={agent.id} plugin={configPlugin} onClose={() => setConfigPlugin(null)} />}
 
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent>
@@ -305,6 +313,7 @@ function AttachedRow({
             <Loader2 className="h-4 w-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
           ) : (
             <Switch
+              disabled={anyBusy}
               checked={plugin.enabled}
               onCheckedChange={onToggle}
               aria-label={t(($) => $.tab_body.dsh_plugins.toggle_aria, {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"path"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -36,6 +37,13 @@ type DSHNativePromptPart struct {
 	Data      *string `json:"data,omitempty"`
 	Name      *string `json:"name,omitempty"`
 	ReceiptID *string `json:"receiptId,omitempty"`
+}
+
+// ValidDSHWorkdir accepts canonical directories within the employee mount.
+// The native gateway resolves the Session's actual directory before admission.
+func ValidDSHWorkdir(value string) bool {
+	return utf8.ValidString(value) && !strings.ContainsAny(value, "\x00\r\n\\") && path.Clean(value) == value &&
+		(value == "/mnt/multica" || strings.HasPrefix(value, "/mnt/multica/"))
 }
 
 func ValidDSHSessionID(value string) bool {

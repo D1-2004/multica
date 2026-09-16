@@ -73,3 +73,16 @@ func TestDSHNativePromptRequiresMeaningfulContent(t *testing.T) {
 		t.Fatal("attachment-only prompt rejected")
 	}
 }
+
+func TestDSHNativePersistentWorkdir(t *testing.T) {
+	for _, value := range []string{"/mnt/multica", "/mnt/multica/files", "/mnt/multica/files/项目"} {
+		if !ValidDSHWorkdir(value) {
+			t.Fatalf("rejected %q", value)
+		}
+	}
+	for _, value := range []string{"", "/tmp", "/mnt/multica-other", "/mnt/multica/files/..", "/mnt/multica/files/", "/mnt/multica/\x00"} {
+		if ValidDSHWorkdir(value) {
+			t.Fatalf("accepted %q", value)
+		}
+	}
+}

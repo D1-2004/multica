@@ -74,6 +74,37 @@ func (s PostgresStore) AdoptNativeSession(ctx context.Context, scope SessionScop
 	return nil
 }
 
+// BindWorkdir pins the native directory during session registration. Existing
+// sessions cannot move, including sessions created before the workdir column.
+func (s PostgresStore) BindWorkdir(ctx context.Context, scope SessionScope, workdir string, created bool) error {
+	if !validSessionScope(scope) || !protocol.ValidDSHWorkdir(workdir) {
+		return ErrChanged
+	}
+	if created {
+		_, err := s.DB.Exec(ctx, `UPDATE dsh_employee_session SET workdir=$5 WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4 AND workdir IS NULL`, scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, workdir)
+		if err != nil {
+			return err
+		}
+	}
+	current, err := s.SessionWorkdir(ctx, scope)
+	if err != nil {
+		return err
+	}
+	if current != workdir {
+		return ErrChanged
+	}
+	return nil
+}
+
+func (s PostgresStore) SessionWorkdir(ctx context.Context, scope SessionScope) (string, error) {
+	var workdir string
+	err := s.DB.QueryRow(ctx, `SELECT COALESCE(workdir,'/mnt/multica/workspaces/' || session_id) FROM dsh_employee_session WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4`, scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID).Scan(&workdir)
+	if err == nil && !protocol.ValidDSHWorkdir(workdir) {
+		err = ErrChanged
+	}
+	return workdir, err
+}
+
 // AdoptNativeExecution must share the transaction that creates the platform
 // task and its input. A scope, task or request already owned elsewhere is
 // rejected; no conflict handler overwrites an existing binding.
@@ -100,8 +131,8 @@ func (s PostgresStore) AdoptNativeExecution(ctx context.Context, scope SessionSc
 	if binding.SessionID != sessionID || binding.RequestID != requestID {
 		return Execution{}, ErrChanged
 	}
-	binding.Workdir = MountPath + "/workspaces/" + sessionID
-	return binding, nil
+	binding.Workdir, err = s.SessionWorkdir(ctx, scope)
+	return binding, err
 }
 
 // BindExecution commits native identities before any external prompt admission.
@@ -146,6 +177,6 @@ func (s PostgresStore) BindExecution(ctx context.Context, scope SessionScope, ta
 	if binding.SessionID != sessionID {
 		return Execution{}, errors.New("DSH task cannot move to another native Session")
 	}
-	binding.Workdir = MountPath + "/workspaces/" + binding.SessionID
-	return binding, nil
+	binding.Workdir, err = s.SessionWorkdir(ctx, scope)
+	return binding, err
 }

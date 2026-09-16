@@ -41,7 +41,15 @@ func (b *dshNativeAuthorityBridge) answerInput(ctx context.Context, request dshA
 	if submit == nil {
 		return finish()
 	}
-	input := DSHNativeChatInput{SessionID: prompt.SessionID, RequestID: uuid.MustParse(prompt.RequestID), Workdir: dshhost.MountPath + "/workspaces/" + prompt.SessionID, Prompt: prompt}
+	workdir := request.Workdir
+	if workdir == "" {
+		workdir = dshhost.MountPath + "/workspaces/" + prompt.SessionID
+	}
+	if !protocol.ValidDSHWorkdir(workdir) {
+		result = map[string]any{"status": http.StatusBadRequest, "error": "Invalid DSH native workspace"}
+		return finish()
+	}
+	input := DSHNativeChatInput{SessionID: prompt.SessionID, RequestID: uuid.MustParse(prompt.RequestID), Workdir: workdir, Prompt: prompt}
 	receipt, err := submit(ctx, access, input, prompt.DisplayText())
 	if err != nil {
 		switch {

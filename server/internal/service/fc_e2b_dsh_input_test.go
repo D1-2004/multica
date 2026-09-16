@@ -195,3 +195,21 @@ func TestDSHNativeInputPollKeepsItsOwnSizeAndBatchLimits(t *testing.T) {
 		t.Fatal("input lane accepted an authorization request")
 	}
 }
+
+func TestDSHNativeInputSelectedWorkdir(t *testing.T) {
+	for _, workdir := range []string{"/mnt/multica/files", "/tmp/outside"} {
+		b, host, manager, request := inputBridgeFixture()
+		request.Workdir = workdir
+		called := false
+		b.answerInput(context.Background(), request, host, manager, "https://pre.test", func(_ context.Context, _ dshhost.NativeAccess, input DSHNativeChatInput, _ string) (DSHNativePromptReceipt, error) {
+			called = true
+			if input.Workdir != workdir {
+				t.Fatal("selected native directory was changed")
+			}
+			return inputReceipt(input), nil
+		})
+		if called != (workdir == "/mnt/multica/files") {
+			t.Fatal("unexpected admission for workspace")
+		}
+	}
+}
