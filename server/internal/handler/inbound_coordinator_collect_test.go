@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
@@ -194,22 +195,62 @@ func TestSameCoordinatorCollectKindSeparatesTaskFinished(t *testing.T) {
 	}
 }
 
-func TestShouldParkSceneCapacityDoesNotInferIntent(t *testing.T) {
-	ask := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
-		Sender:   DispatchSender{DisplayName: "测试号"},
-		Messages: []DispatchMessage{{Text: "问 dxxh 周五三点", SenderDisplayName: "测试号"}},
-	}}}
-	ack := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
-		Sender:   DispatchSender{DisplayName: "测试号"},
-		Messages: []DispatchMessage{{Text: "谢谢", SenderDisplayName: "测试号"}},
-	}}}
-	if !shouldParkSceneCapacity(ask, 2) {
-		t.Fatal("two active tasks must park a real ask")
+// A replica still running the old binary only recognises the pre-upgrade
+// wording, and the wording only stays true while the limit is two.
+func TestSceneCapacityReasonMatchesLimit(t *testing.T) {
+	if inboundcoord.SceneDelegatorMaxInFlightMatters != 2 {
+		t.Fatal("capacity limit changed: update sceneCapacityRejectReason wording with it")
 	}
-	if !shouldParkSceneCapacity(ack, 2) {
-		t.Fatal("already judged work must respect capacity regardless of wording")
+	if !strings.Contains(sceneCapacityRejectReason(), "scene already has two in-flight matters") {
+		t.Fatalf("rolling deploy needs the legacy prefix: %s", sceneCapacityRejectReason())
 	}
-	if shouldParkSceneCapacity(ask, 1) {
-		t.Fatal("one active task is under the cap")
+	if !isSceneCapacityReason("scene already has two in-flight matters") ||
+		!isSceneCapacityReason(sceneCapacityRejectReason()) {
+		t.Fatal("both the old and the new reason must be recognised as a capacity wait")
+	}
+	if isSceneCapacityReason("recalled issue already has a pending agent task") {
+		t.Fatal("same-issue busy must not be treated as a capacity wait")
+	}
+}
+
+// Two utterances of one person must land on one budget even when the messages
+// present their identifiers in a different order.
+func TestSceneDelegatorGroupsOneSpeakerOnce(t *testing.T) {
+	first := sceneDelegator{ConversationID: "cid", Keys: []string{"staff-1", "open-1"}}
+	second := sceneDelegator{ConversationID: "cid", Keys: []string{"open-1", "staff-1"}}
+	needs := addSceneDelegatorNeed(addSceneDelegatorNeed(nil, first), second)
+	if len(needs) != 1 || needs[0].needed != 2 {
+		t.Fatalf("one speaker must spend one budget: %+v", needs)
+	}
+	other := sceneDelegator{ConversationID: "cid", Keys: []string{"staff-2"}}
+	needs = addSceneDelegatorNeed(needs, other)
+	if len(needs) != 2 || needs[1].needed != 1 {
+		t.Fatalf("a second speaker keeps their own budget: %+v", needs)
+	}
+}
+
+func TestSceneDelegatorDoesNotInferIntent(t *testing.T) {
+	sender := func(text, staffID string) DispatchCommand {
+		return DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-delegator", Type: "group"},
+			Sender:       DispatchSender{DisplayName: "测试号", StaffID: staffID},
+			Messages:     []DispatchMessage{{Text: text, SenderDisplayName: "测试号", SenderStaffID: staffID}},
+		}}}
+	}
+	ask := dispatchSceneDelegator(sender("问 dxxh 周五三点", "staff-a"))
+	ack := dispatchSceneDelegator(sender("谢谢", "staff-a"))
+	if ask.key() == "" || ask.key() != ack.key() {
+		t.Fatalf("capacity must follow the person, not the wording: %q vs %q", ask.key(), ack.key())
+	}
+	other := dispatchSceneDelegator(sender("问 dxxh 周五三点", "staff-b"))
+	if other.key() == ask.key() {
+		t.Fatal("a different delegator must spend a different budget")
+	}
+	unknown := dispatchSceneDelegator(DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
+		Conversation: DispatchConversation{OpenConversationID: "cid-delegator", Type: "group"},
+		Messages:     []DispatchMessage{{Text: "问 dxxh 周五三点"}},
+	}}})
+	if len(unknown.Keys) != 0 {
+		t.Fatal("a missing identity must stay unattributed instead of guessing a person")
 	}
 }

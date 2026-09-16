@@ -842,7 +842,7 @@
     {
       "id": "COORD.F09",
       "family": "F09",
-      "obligation": "收集有4秒静默及12秒上限；封窗后不吸收；先判断后容量等待，忙时聊天及时；真实处理前不结完成。 已判断且持久化的未提交工作因容量/同Issue busy停放时可一次Host等待反馈；不改变先判断后等待、不提前关闭原callback，notice失败仍可继续park恢复。 等待IM资格按入站response_enabled/revision和可信目标独立冻结；collect资格变化拆窗，同群换发言人保留原接收目标。旧legacy无快照不补资格，显式disabled不回退旧managed路径。",
+      "obligation": "收集有4秒静默及12秒上限；封窗后不吸收；先判断后容量等待，忙时聊天及时；真实处理前不结完成。 执行容量按「场景×委托人」计，一个人的在飞事项不占同场景其他人的名额；在飞只含queued/dispatched/running/waiting_local_directory，定时待触发与超期未推进的非running事项不占名额，无人归属的事项计入每个委托人；身份按assoc_person_alias双向归一，续办他人事项按当前委托人补建归属。 一个窗口等待容量有上限，到期后本轮豁免容量直接执行并记录；重试前置检查按未完成计划项的委托人判断；同Issue busy不因等待时长豁免。 已判断且持久化的未提交工作因容量/同Issue busy停放时可一次Host等待反馈；等待说明只讲已记下、尚未开始及所等对象，不用名额/槽位等内部说法；不改变先判断后等待、不提前关闭原callback，notice失败仍可继续park恢复。 等待IM资格按入站response_enabled/revision和可信目标独立冻结；collect资格变化拆窗，同群换发言人保留原接收目标。旧legacy无快照不补资格，显式disabled不回退旧managed路径。",
       "status": "active",
       "runtime_modules": [
         "inbound"
@@ -854,7 +854,9 @@
         "f09_saved_work_wait_notice_is_nonterminal_once",
         "f17_wait_notice_cancels_when_resolved",
         "f09_legacy_wait_permission_is_admission_scoped",
-        "f09_wait_permission_change_splits_collect"
+        "f09_wait_permission_change_splits_collect",
+        "f09_scene_capacity_is_per_delegator",
+        "f09_capacity_wait_has_deadline"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -863,7 +865,9 @@
         "dws_execution_recovery_live_delivery": "not_run",
         "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
         "waiting_admission_and_direct_relay_live_delivery": "not_run",
-        "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification"
+        "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
+        "scene_capacity_per_delegator_host_tests": "passed_local_2026-09-16: handler capacity/wait tests; full ./internal/handler failure set identical to HEAD baseline",
+        "scene_capacity_per_delegator_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/inbound.md",
@@ -876,7 +880,10 @@
         "server/internal/service/dingtalkresponse/service.go",
         "server/internal/service/dingtalkresponse/worker.go",
         "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
-        "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery"
+        "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery",
+        "server/internal/handler/coordinator_capacity.go",
+        "server/pkg/db/queries/inbound_coordinator_job.sql",
+        "server/internal/handler/inbound_coordinator_window_integration_test.go"
       ],
       "case_file": "cases.json"
     },

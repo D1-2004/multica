@@ -128,8 +128,8 @@
       "rule_ids": [
         "COORD.F09"
       ],
-      "context_a": "两槽忙时你在吗",
-      "context_b": "两槽忙时第三项真实工作",
+      "context_a": "同一委托人两件在做时的问候",
+      "context_b": "同一委托人两件在做时的第三项真实工作",
       "expected_effects": "前者及时回复；后者判断后持久排队，不报完成",
       "verification": "not_run"
     },
@@ -1395,6 +1395,42 @@
       "context_b": "用户提供自己的经历并明确要求代写一段第一人称稿件",
       "expected_effects": "A以建议或假设自然聊天，不包装为数字员工亲身习惯；B作为写作任务处理用户提供素材，不将素材冒充员工经历",
       "verification": "not_run"
+    },
+    {
+      "id": "f09_scene_capacity_is_per_delegator",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F09"
+      ],
+      "context_a": "群里甲已有两件在执行，乙提出新工作；某件只是定时待触发或非running且长期未推进；同一人两句话分别带 staffId 与 openDingTalkId。",
+      "context_b": "甲自己再提新工作；在飞事项没有任何人归属；乙续办甲的历史事项。",
+      "expected_effects": "A按「场景×委托人」计容量：乙照常受理，定时待触发与超过在飞判定的非running事项不占名额；同一人的不同标识经 assoc_person_alias 双向归一到同一份预算，合窗里也只算一份。B甲等待下一窗口；无人归属的在飞事项计入每个委托人；乙续办他人事项时按当前委托人补建 task_person 归属，下一窗口按乙计费。缺失身份不凭措辞或显示名归属，整体退回按场景计数。容量只在执行时生效，不阻止新窗口判断聊天。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/inbound_coordinator_window_integration_test.go#TestCoordinatorSceneCapacityIsPerDelegatorAndBounded",
+        "server/internal/handler/inbound_coordinator_window_integration_test.go#TestSceneCapacityFollowsThePersonAcrossIdentifiers",
+        "server/internal/handler/inbound_coordinator_window_integration_test.go#TestCoordinatorFreshWindowJudgedAtCapacity",
+        "server/internal/handler/inbound_coordinator_collect_test.go#TestSceneDelegatorDoesNotInferIntent",
+        "server/internal/handler/inbound_coordinator_collect_test.go#TestSceneDelegatorGroupsOneSpeakerOnce"
+      ],
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "Host容量归属与在飞判定的协议测试已实现；真实预发投递证据由本次实施回填。无新增模型调用。"
+    },
+    {
+      "id": "f09_capacity_wait_has_deadline",
+      "rule_ids": [
+        "COORD.F09"
+      ],
+      "context_a": "因场景容量park的窗口等待超过上限，占用名额的执行不由本循环控制；或合窗里甲的事项已提交、只剩乙的未开始而乙有名额。",
+      "context_b": "仍在上限内；或park原因是同Issue已有未结束任务。",
+      "expected_effects": "A到期后停止继续park，本轮豁免容量直接执行并记录waived事件，仍只发一次等待说明，不追加第二条通知；重试前置检查按计划中未完成项的委托人判断，只要还有人能开工就不park。B继续按原节奏等待；同事项重复执行保护不因等待时长或豁免被放行。park原因同时识别升级前后的写法。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/inbound_coordinator_window_integration_test.go#TestCoordinatorSceneCapacityIsPerDelegatorAndBounded",
+        "server/internal/handler/inbound_coordinator_collect_test.go#TestSceneCapacityReasonMatchesLimit"
+      ],
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "等待上限为Host状态效果；预发真实等待到期证据由本次实施回填。"
     }
   ]
 }

@@ -189,6 +189,17 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	// Memory trigger recorded at enqueue time (coord_trace_id = job id) and
 	// the turn's SLS/Langfuse trace resolve to the same identifier.
 	jobCtx = inboundcoord.ContextWithTraceID(jobCtx, util.UUIDToString(job.ID))
+	if coordinatorCapacityWaitExpired(job) {
+		// Waiting longer cannot help this window: the occupied slots are held
+		// by work this loop does not control. Run it instead of parking again.
+		jobCtx = withSceneCapacityWaiver(jobCtx)
+		slog.Warn("inbound coordinator scene capacity wait expired",
+			"event", "inbound_coordinator_scene_capacity_waived",
+			"job_id", util.UUIDToString(job.ID),
+			"waited_ms", time.Since(job.CreatedAt.Time).Milliseconds(),
+			"reason", job.LastError.String,
+		)
+	}
 	jobCtx, err = w.handler.coordinatorCheckpointContext(jobCtx, job)
 	if err != nil {
 		return true, w.retry(ctx, job, err)
@@ -330,40 +341,18 @@ func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context,
 	if !job.LastError.Valid || !isCoordinatorBusyParkReason(job.LastError.String) {
 		return false, nil
 	}
-	active, err := w.handler.Queries.CountActiveTasksForConversation(ctx, db.CountActiveTasksForConversationParams{
-		WorkspaceID: job.WorkspaceID, AgentID: job.AgentID, ConversationID: cid,
-	})
-	if err != nil {
-		return false, w.retry(ctx, job, fmt.Errorf("count scene active tasks: %w", err))
+	// A window that already waited out the capacity deadline stops waiting.
+	// ProcessNext carries that waiver into this run's admission checks.
+	if coordinatorCapacityWaitExpired(job) {
+		return false, nil
 	}
-	if shouldParkSceneCapacity(command, active) {
-		return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, "scene already has two in-flight matters")
+	// Wait only while nobody with unstarted work in this window can proceed.
+	for _, delegator := range pendingWindowDelegators(job, command) {
+		if sceneCapacitySlots(ctx, w.handler, job.WorkspaceID, job.AgentID, delegator) > 0 {
+			return false, nil
+		}
 	}
-	return false, nil
-}
-
-func shouldParkSceneCapacity(_ DispatchCommand, active int64) bool {
-	return active >= int64(inboundcoord.SceneWindowMaxItems)
-}
-
-func sceneWindowCreateSlots(ctx context.Context, h *Handler, workspaceID, agentID pgtype.UUID, cid string) int {
-	slots := inboundcoord.SceneWindowMaxItems
-	if h == nil || h.Queries == nil || strings.TrimSpace(cid) == "" {
-		return slots
-	}
-	params := db.CountActiveTasksForConversationParams{
-		WorkspaceID: workspaceID, AgentID: agentID, ConversationID: cid,
-	}
-	active, err := h.Queries.CountActiveTasksForConversation(ctx, params)
-	if err != nil {
-		return slots
-	}
-	used := active
-	left := slots - int(used)
-	if left < 0 {
-		return 0
-	}
-	return left
+	return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, sceneCapacityRejectReason())
 }
 
 func (w *InboundCoordinatorJobWorker) park(ctx context.Context, job db.InboundCoordinatorJob, delay time.Duration, reason string) error {
@@ -400,7 +389,7 @@ func isCoordinatorBusyParkReason(reason string) bool {
 		strings.Contains(reason, "already has an active task") ||
 		strings.Contains(reason, "issue_busy") ||
 		strings.Contains(reason, "active duplicate") ||
-		strings.Contains(reason, "scene already has two in-flight matters")
+		isSceneCapacityReason(reason)
 }
 
 func shouldParkCoordinatorBusyResponse(status int, reason string) bool {

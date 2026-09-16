@@ -11,6 +11,12 @@ import (
 // may start or continue. A third real ask stays pending for the next window.
 const SceneWindowMaxItems = 2
 
+// SceneDelegatorMaxInFlightMatters bounds how many matters one delegator may
+// have executing in one scene at the same time. Capacity is counted per person
+// rather than per scene: one member's long run must not silence the rest of a
+// shared group, and a busy person still waits for their own earlier asks.
+const SceneDelegatorMaxInFlightMatters = 2
+
 // MessageMention preserves trusted channel mention targets; empty UID does not
 // prove who an open-id target is. Never infer identities from a display name.
 type MessageMention struct {

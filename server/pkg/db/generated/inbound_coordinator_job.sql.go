@@ -5,6 +5,7 @@ package db
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -128,7 +129,17 @@ type CountActiveTasksForConversationParams struct {
 	WorkspaceID    pgtype.UUID `json:"workspace_id"`
 	AgentID        pgtype.UUID `json:"agent_id"`
 	ConversationID string      `json:"conversation_id"`
+	StaleAfterSecs float64     `json:"stale_after_secs"`
 }
+
+const sceneInFlightTaskPredicate = `
+  AND agent_task_queue.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND (agent_task_queue.fire_at IS NULL OR agent_task_queue.fire_at <= now())
+  AND (
+    agent_task_queue.status = 'running'
+    OR COALESCE(agent_task_queue.started_at, agent_task_queue.dispatched_at, agent_task_queue.created_at)
+       > now() - make_interval(secs => $4::double precision)
+  )`
 
 func (q *Queries) CountActiveTasksForConversation(ctx context.Context, arg CountActiveTasksForConversationParams) (int64, error) {
 	row := q.db.QueryRow(ctx, `
@@ -151,9 +162,124 @@ WHERE assoc_edge.workspace_id=$1
   AND (
     (assoc_edge.dst_type='scene' AND assoc_edge.dst_id=$3)
     OR (assoc_edge.src_type='scene' AND assoc_edge.src_id=$3)
+  )`+sceneInFlightTaskPredicate,
+		arg.WorkspaceID, arg.AgentID, arg.ConversationID, arg.StaleAfterSecs)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
+type CountActiveDelegatorTasksForConversationParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AgentID        pgtype.UUID `json:"agent_id"`
+	ConversationID string      `json:"conversation_id"`
+	StaleAfterSecs float64     `json:"stale_after_secs"`
+	PersonKeys     []string    `json:"person_keys"`
+}
+
+type ResolveAssocPersonKeysParams struct {
+	PersonKeys  []string    `json:"person_keys"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+}
+
+// assocPersonKeyClosure resolves the given identifiers in both directions:
+// to the canonical person_key they alias to, and back to that person's other
+// aliases. assoc picks a canonical key per event, so one person can own older
+// edges under a different identifier.
+const assocPersonKeyClosure = `
+WITH seed AS (
+  SELECT DISTINCT btrim(key) AS key
+  FROM unnest(%[1]s::text[]) AS key
+  WHERE btrim(key) <> ''
+), canonical AS (
+  SELECT key FROM seed
+  UNION
+  SELECT assoc_person_alias.person_key
+  FROM assoc_person_alias
+  WHERE assoc_person_alias.workspace_id=%[2]s
+    AND assoc_person_alias.agent_id=%[3]s
+    AND assoc_person_alias.alias_key IN (SELECT key FROM seed)
+), delegator AS (
+  SELECT key FROM canonical
+  UNION
+  SELECT assoc_person_alias.alias_key
+  FROM assoc_person_alias
+  WHERE assoc_person_alias.workspace_id=%[2]s
+    AND assoc_person_alias.agent_id=%[3]s
+    AND assoc_person_alias.person_key IN (SELECT key FROM canonical)
+)`
+
+func (q *Queries) ResolveAssocPersonKeys(ctx context.Context, arg ResolveAssocPersonKeysParams) ([]string, error) {
+	rows, err := q.db.Query(ctx,
+		fmt.Sprintf(assocPersonKeyClosure, "$1", "$2", "$3")+"\nSELECT key FROM delegator ORDER BY 1",
+		arg.PersonKeys, arg.WorkspaceID, arg.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	keys := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+func (q *Queries) CountActiveDelegatorTasksForConversation(ctx context.Context, arg CountActiveDelegatorTasksForConversationParams) (int64, error) {
+	row := q.db.QueryRow(ctx, fmt.Sprintf(assocPersonKeyClosure, "$5", "$1", "$2")+`
+SELECT count(DISTINCT assoc_task.issue_id)::bigint
+FROM assoc_edge scene_edge
+JOIN assoc_task
+  ON assoc_task.workspace_id = scene_edge.workspace_id
+ AND assoc_task.agent_id = scene_edge.agent_id
+ AND (
+    (scene_edge.src_type = 'task' AND scene_edge.src_id = assoc_task.id::text)
+    OR (scene_edge.dst_type = 'task' AND scene_edge.dst_id = assoc_task.id::text)
+ )
+JOIN agent_task_queue
+  ON agent_task_queue.issue_id = assoc_task.issue_id
+ AND agent_task_queue.agent_id = scene_edge.agent_id
+WHERE scene_edge.workspace_id=$1
+  AND scene_edge.agent_id=$2
+  AND scene_edge.rel='task_scene'
+  AND scene_edge.status='open'
+  AND (
+    (scene_edge.dst_type='scene' AND scene_edge.dst_id=$3)
+    OR (scene_edge.src_type='scene' AND scene_edge.src_id=$3)
   )
-  AND agent_task_queue.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')`,
-		arg.WorkspaceID, arg.AgentID, arg.ConversationID)
+  AND (
+    EXISTS (
+      SELECT 1 FROM assoc_edge person_edge
+      WHERE person_edge.workspace_id = scene_edge.workspace_id
+        AND person_edge.agent_id = scene_edge.agent_id
+        AND person_edge.rel = 'task_person'
+        AND person_edge.status = 'open'
+        AND (
+          (person_edge.src_type = 'task' AND person_edge.src_id = assoc_task.id::text
+            AND person_edge.dst_type = 'person'
+            AND person_edge.dst_id IN (SELECT key FROM delegator))
+          OR (person_edge.dst_type = 'task' AND person_edge.dst_id = assoc_task.id::text
+            AND person_edge.src_type = 'person'
+            AND person_edge.src_id IN (SELECT key FROM delegator))
+        )
+    )
+    OR NOT EXISTS (
+      SELECT 1 FROM assoc_edge any_person
+      WHERE any_person.workspace_id = scene_edge.workspace_id
+        AND any_person.agent_id = scene_edge.agent_id
+        AND any_person.rel = 'task_person'
+        AND any_person.status = 'open'
+        AND (
+          (any_person.src_type = 'task' AND any_person.src_id = assoc_task.id::text)
+          OR (any_person.dst_type = 'task' AND any_person.dst_id = assoc_task.id::text)
+        )
+    )
+  )`+sceneInFlightTaskPredicate,
+		arg.WorkspaceID, arg.AgentID, arg.ConversationID, arg.StaleAfterSecs, arg.PersonKeys)
 	var n int64
 	err := row.Scan(&n)
 	return n, err
