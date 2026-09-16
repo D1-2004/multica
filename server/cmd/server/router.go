@@ -1551,11 +1551,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("composio integration disabled (COMPOSIO_API_KEY not set)")
 	}
 
-	if key, err := secretbox.LoadKey("MULTICA_GIT_REPO_SECRET_KEY"); err == nil {
-		h.GitRepoSecrets, err = secretbox.New(key)
-		clear(key)
-		if err != nil { slog.Error("Git credential encryption unavailable") }
-	}
 
 	// VCS at-rest encryption: the box encrypts per-workspace access tokens and
 	// webhook secrets for token-based providers (Forgejo / Gitea / GitLab).
@@ -2092,7 +2087,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Put("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Delete("/runtime-profiles/{profileId}", h.DeleteRuntimeProfile)
-					r.With(handler.RequireHumanActor).Post("/git/connections", h.ConnectGitRepository)
 					r.With(handler.RequireHumanActor).Delete("/git/connections/{connectionId}", h.DeleteGitConnection)
 					r.Get("/git/refs", h.ListGitAgentBranches)
 					r.Post("/git/agent-preview", h.PreviewGitAgent)

@@ -121,7 +121,6 @@ export interface AgentPublicationList {
 
 
 export interface GitConnection { id: string; provider: string; account_login: string; created_at: string; }
-export interface GitConnections { connections: GitConnection[]; token_connections_available: boolean; }
-export interface ConnectGitRepositoryRequest { repository_url: string; token: string; connection_id?: string; }
+export interface GitConnections { connections: GitConnection[]; }
 
 export interface GitRepositoryIdentity { repository_url: string; provider: string; connections: GitConnection[]; }

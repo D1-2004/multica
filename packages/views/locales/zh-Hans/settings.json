@@ -1329,18 +1329,6 @@
     "collaboration_description": "配置 GitHub 的任务与 Pull Request 关联、PR 侧栏和提交署名。"
   },
   "git_repo": {
-    "code": "Alibaba Code",
-    "token_label": "Access token",
-    "title": "Git 仓库身份",
-    "description": "用于在工作区导入智能体和 skill、读取发布版本。连接授权给当前工作区，访问时使用该身份在代码平台上的权限。",
-    "github": "管理 GitHub App 授权",
-    "connect": "绑定 Code 身份",
-    "replace": "更新 token",
-    "disconnect": "断开连接",
-    "repository": "用于验证访问权限的仓库地址",
-    "token_hint": "使用包含仓库读取权限的 Code access token。token 加密保存，不会写入配置包或传给智能体。",
-    "save": "验证并保存",
-    "cancel": "取消更新",
-    "unavailable": "服务端尚未配置 Git 凭据加密密钥，请联系管理员。"
+    "description": "用于在工作区导入智能体和 skill、读取发布版本。连接授权给当前工作区，访问时使用该身份在代码平台上的权限。"
   }
 }

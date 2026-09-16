@@ -27,7 +27,7 @@ func newSkillRepositoryFixture() *skillRepositoryFixture {
 
 func TestRepositorySkillUsesScopedDirectoryAndPinnedCommit(t *testing.T){
 	f:=newSkillRepositoryFixture()
-	address,err:=gitrepo.ParseAddress("https://code.alibaba-inc.com/team/repo/-/tree/release/v2/skills/review")
+	address,err:=gitrepo.ParseAddress("https://github.com/team/repo/tree/release/v2/skills/review")
 	if err!=nil{t.Fatal(err)}
 	result,err:=readRepositorySkill(t.Context(),f,address,"","","")
 	if err!=nil{t.Fatal(err)}

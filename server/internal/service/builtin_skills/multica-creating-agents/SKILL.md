@@ -379,7 +379,8 @@ An Agent package contains `agent.json`, `agent.schema.json`, instructions and
 skill files. Use `multica.agent/v2`; obtain the current Schema from
 `GET /api/agent-schema`. Local ZIP and Git files produce the same parsed bundle
 and share import/export logic. No DTA CLI build is required. Preview changes
-before confirmation; Git Agents publish from a branch, tag or commit. History
+before confirmation; Git acquisition supports GitHub only. Git Agents publish
+from a branch, tag or commit. History
 rollback uses the saved configuration snapshot, with current permission checks.
 Account credentials and authorization remain in the destination's configuration
 flows and never belong in the package or Builder output.
@@ -458,3 +459,7 @@ Configuration and implementation map to `event_trigger.go`, `agent_event_trigger
 - 2026-09-15: Agent repository acquisition now uses GitRepo for GitHub and Code.
   Read `references/agent-packages.md` for unified URLs, workspace credentials and
   preview-only confirmation; this keeps repository access separate from execution.
+
+- 2026-09-16: Removed Code repository access and token binding; GitHub is the only
+  supported repository host. Reason: internal Code access is outside the current
+  security boundary; keep Builder package guidance aligned with server validation.

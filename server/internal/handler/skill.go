@@ -839,14 +839,14 @@ func detectImportSource(raw string) (importSource, string, error) {
 		return sourceSkillsSh, normalized, nil
 	case host == "clawhub.ai" || host == "www.clawhub.ai":
 		return sourceClawHub, normalized, nil
-	case host == "github.com" || host == "www.github.com" || host == "code.alibaba-inc.com" || host == "gitlab.alibaba-inc.com" || host == "code.aone.alibaba-inc.com" || host == "code-sc.aone.alibaba-inc.com":
+	case host == "github.com" || host == "www.github.com":
 		if _, err := gitrepo.ParseAddress(normalized); err != nil { return 0,"",err }; return sourceGitRepo, normalized, nil
 	default:
 		// If no host (bare slug), default to clawhub
 		if !strings.Contains(raw, "/") || !strings.Contains(raw, ".") {
 			return sourceClawHub, raw, nil
 		}
-		return 0, "", fmt.Errorf("unsupported source: %s (supported: clawhub.ai, skills.sh, GitHub and Alibaba Code repository URLs)", host)
+		return 0, "", fmt.Errorf("unsupported source: %s (supported: clawhub.ai, skills.sh, GitHub repository URLs)", host)
 	}
 }
 

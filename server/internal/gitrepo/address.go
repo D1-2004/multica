@@ -7,7 +7,6 @@ import (
 )
 
 const GitHub = "github"
-const AlibabaCode = "alibaba_code"
 
 // Address contains only canonical public repository metadata, never credentials.
 type Address struct {
@@ -33,8 +32,7 @@ func ParseAddress(raw string) (Address, error) {
 	var host string
 	switch strings.ToLower(u.Hostname()) {
 	case "github.com", "www.github.com": result.Provider, host = GitHub, "github.com"
-	case "code.alibaba-inc.com", "gitlab.alibaba-inc.com", "code.aone.alibaba-inc.com", "code-sc.aone.alibaba-inc.com": result.Provider, host = AlibabaCode, "code.alibaba-inc.com"
-	default: return Address{}, errors.New("this Git repository host is not supported")
+	default: return Address{}, errors.New("only GitHub repositories are supported")
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	for _, part := range parts {
@@ -44,13 +42,12 @@ func ParseAddress(raw string) (Address, error) {
 	for i := 2; i < len(parts); i++ {
 		if parts[i] == "tree" || parts[i] == "blob" || parts[i] == "commit" {
 			repoEnd = i
-			if parts[i-1] == "-" { repoEnd-- }
 			result.LinkKind, result.LinkPath = parts[i], strings.Join(parts[i+1:], "/")
 			if result.LinkPath == "" { return Address{}, errors.New("repository revision is missing") }
 			break
 		}
 	}
-	if repoEnd < 2 || (result.Provider == GitHub && repoEnd != 2) { return Address{}, errors.New("repository URL must identify its namespace and repository") }
+	if repoEnd != 2 { return Address{}, errors.New("repository URL must identify its namespace and repository") }
 	parts[repoEnd-1] = strings.TrimSuffix(parts[repoEnd-1], ".git")
 	if parts[repoEnd-1] == "" { return Address{}, errors.New("repository name is missing") }
 	result.Repository = strings.Join(parts[:repoEnd], "/")

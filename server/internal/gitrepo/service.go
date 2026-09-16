@@ -7,7 +7,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/internal/util/secretbox"
 )
 
 // Service is the only repository acquisition boundary used by Agents and Skills.
@@ -16,8 +15,6 @@ import (
 type Service struct {
 	Queries *db.Queries
 	GitHub *GitHubAppClient
-	Code CodeConfig
-	Secrets *secretbox.Box
 }
 
 type Connection struct { ID pgtype.UUID; Provider, AccountLogin string }
@@ -50,26 +47,12 @@ func (s Service) Open(ctx context.Context, workspace pgtype.UUID, rawURL, connec
 			connection = candidate
 		}
 	}
-	var remote Remote
-	switch address.Provider {
-	case GitHub:
-		client := s.GitHub
-		if client == nil {
-			if connection.ID.Valid { return Access{}, ErrGitHubUnavailable }
-			client = PublicGitHub(nil)
-		}
-		remote, err = client.Open(ctx,address,connection.InstallationID.Int64)
-	case AlibabaCode:
-		if !connection.ID.Valid { return Access{}, &AccessError{http.StatusConflict,"connection_required","connect an Alibaba Code identity in workspace Git settings before reading this repository"} }
-		if s.Secrets == nil { return Access{}, &AccessError{http.StatusServiceUnavailable,"credentials_unavailable","Git credential encryption is not configured"} }
-		var token []byte
-		token, err = s.Secrets.Open(connection.TokenCiphertext)
-		if err != nil { return Access{}, errors.New("cannot decrypt Git connection; reconnect the identity") }
-		var client *CodeClient
-		client, err = NewCodeClient(s.Code,string(token))
-		clear(token)
-		if err == nil { remote, err = client.Open(ctx,address) }
+	client := s.GitHub
+	if client == nil {
+		if connection.ID.Valid { return Access{}, ErrGitHubUnavailable }
+		client = PublicGitHub(nil)
 	}
+	remote, err := client.Open(ctx,address,connection.InstallationID.Int64)
 	if err != nil { return Access{}, err }
 	return Access{Connection:Connection{ID:connection.ID,Provider:connection.Provider,AccountLogin:connection.AccountLogin}, Address:address, Remote:remote}, nil
 }

@@ -38,3 +38,7 @@
 - Live Code private-repository and preproduction network acceptance has not been performed. No commit, push or deployment was performed in this implementation phase.
 
 - 2026-09-15 发布准备：本次迁移编号顺延至 9261–9266，避开预发集成分支已存在的迁移；这六份迁移尚未发布，无需旧编号兼容。
+
+## 后续变更记录
+
+- 2026-09-16：因内部代码平台的安全边界，移除本计划中的 Aone Code 接入能力。当前 GitRepo 仅支持 GitHub，以 `docs/git-repositories.md` 为当前行为契约；以上勾选项保留为历史实施记录。

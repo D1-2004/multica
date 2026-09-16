@@ -21,10 +21,11 @@ Workspace owners/admins can upload a ZIP through
 `POST /api/workspaces/{id}/agent-packages/preview` (`application/zip`, or one
 multipart `file`, maximum 40 MiB), or acquire the same directory from Git via
 `POST /api/workspaces/{id}/git/agent-preview` with `repository` (root URL),
-optional `connection_id`, and `ref`. The server infers GitHub or Alibaba Code
-and matches a workspace identity. GitHub uses App authorization; Code uses a
-workspace PAT encrypted on the Multica server. Configure identities in Settings
-→ Git. No credential belongs in the package or Agent execution environment.
+optional `connection_id`, and `ref`. Repository acquisition supports GitHub only
+and matches a workspace GitHub App identity. Internal Code repository URLs and
+Code token binding are not supported. Configure identities in Settings → Code
+repositories → Access identities. No credential belongs in the package or Agent
+execution environment.
 Use `/git/repository` to discover the matching identities and `/git/refs` for
 branches and tags. Multiple matching identities require a connection choice.
 Both produce an immutable, actor-bound `preview_id` valid for 30 minutes.
@@ -142,3 +143,7 @@ verification command.
   GitHub/Code resolution and workspace connections. Creation requires a preview;
   direct SHA confirmation and old GitHub Agent routes were removed so all imports
   share the reviewed package transaction.
+
+## Change history
+
+- 2026-09-16: Removed Code repository and PAT instructions; Git acquisition now supports GitHub only. Reason: internal code platforms are outside the supported security boundary. ZIP packages and GitHub publication keep the same confirmation protocol.

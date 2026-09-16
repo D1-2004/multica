@@ -364,7 +364,7 @@ function UrlForm({
           <p className="mb-2 text-caption text-muted-foreground">
             {t(($) => $.create.url.supported_sources)}
           </p>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             <SourceCard
               label="ClawHub"
               exampleHost="clawhub.ai/owner/skill"
@@ -382,12 +382,6 @@ function UrlForm({
               exampleHost="github.com/owner/repo"
               browseUrl="https://github.com"
               active={identity.data?.provider === "github"}
-            />
-            <SourceCard
-              label="Alibaba Code"
-              exampleHost="code.alibaba-inc.com/team/repo"
-              browseUrl="https://code.alibaba-inc.com"
-              active={identity.data?.provider === "alibaba_code"}
             />
           </div>
         </div>

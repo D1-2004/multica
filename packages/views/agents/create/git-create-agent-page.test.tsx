@@ -48,17 +48,17 @@ describe("Git creation", () => {
     expect(await screen.findByRole("link", { name: enAgents.creation_studio.git.manage_connections })).toHaveAttribute("href", "/acme/settings?tab=repositories&section=connections");
   });
 
-  it.each(["github.com", "code.alibaba-inc.com"])("requires a new preview after changing branches and submits only the reviewed ID for %s", async (host) => {
-    mocked.installations.mockResolvedValue({ repository_url: `https://${host}/acme/agent`, provider: host === "github.com" ? "github" : "alibaba_code", connections: [{ id: "install-1", account_login: "acme" }] });
+  it("requires a new preview after changing branches and submits only the reviewed ID", async () => {
+    mocked.installations.mockResolvedValue({ repository_url: "https://github.com/acme/agent", provider: "github", connections: [{ id: "install-1", account_login: "acme" }] });
     mount();
-    fireEvent.change(screen.getByLabelText(enAgents.tab_body.publish.repository), { target: { value: `https://${host}/acme/agent` } });
+    fireEvent.change(screen.getByLabelText(enAgents.tab_body.publish.repository), { target: { value: "https://github.com/acme/agent" } });
     fireEvent.click(screen.getByRole("button", { name: "Read repository" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Preview agent" })).toBeEnabled());
     fireEvent.change(screen.getByLabelText("Branch, tag or commit"), { target: { value: "release/v2" } });
     expect(screen.getByRole("button", { name: enAgents.creation_studio.create_and_open })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Preview agent" }));
     await screen.findByText("Reviewed instructions");
-    expect(mocked.preview).toHaveBeenCalledWith("workspace-1", { connection_id: "install-1", repository: `https://${host}/acme/agent`, ref: "refs/heads/release/v2" });
+    expect(mocked.preview).toHaveBeenCalledWith("workspace-1", { connection_id: "install-1", repository: "https://github.com/acme/agent", ref: "refs/heads/release/v2" });
     fireEvent.change(screen.getByLabelText("Branch, tag or commit"), { target: { value: "main" } });
     expect(screen.getByRole("button", { name: enAgents.creation_studio.create_and_open })).toBeDisabled();
     expect(screen.queryByText("Reviewed instructions")).toBeNull();

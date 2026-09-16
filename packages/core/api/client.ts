@@ -1,5 +1,5 @@
-import type { GitRepositoryIdentity, GitConnection, GitConnections, ConnectGitRepositoryRequest } from "../types/git-repo";
-import { GitRepositoryIdentitySchema, GitConnectionSchema, GitConnectionsSchema } from "./schemas";
+import type { GitRepositoryIdentity, GitConnections } from "../types/git-repo";
+import { GitRepositoryIdentitySchema, GitConnectionsSchema } from "./schemas";
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
 import type { ReusableDingTalkIdentity } from "../types/dingtalk-account-binding";
 import type { AgentPackageBindingReport, ConfirmAgentPackageBindingRequest, AgentPackagePreview, CreateAgentPackageRequest } from "../types/agent-package";
@@ -5589,13 +5589,6 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/workspaces/${wsId}/git/connections`);
     const result = parseWithFallback<GitConnections | null>(raw, GitConnectionsSchema, null, { endpoint: "GET /git/connections", includeReceived: false });
     if (!result) throw new Error("Invalid Git connections response");
-    return result;
-  }
-
-  async connectGitRepository(wsId: string, request: ConnectGitRepositoryRequest): Promise<GitConnection> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${wsId}/git/connections`, { method: "POST", body: JSON.stringify(request) });
-    const result = parseWithFallback<GitConnection | null>(raw, GitConnectionSchema, null, { endpoint: "POST /git/connections", includeReceived: false });
-    if (!result) throw new Error("Invalid Git connection response");
     return result;
   }
 

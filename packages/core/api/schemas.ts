@@ -4692,6 +4692,6 @@ export const AgentPackageBindingReportSchema = z.object({
 });
 
 export const GitConnectionSchema = z.object({ id: z.string().min(1), provider: z.string(), account_login: z.string(), created_at: z.string() });
-export const GitConnectionsSchema = z.object({ connections: z.array(GitConnectionSchema), token_connections_available: z.boolean().default(false) });
+export const GitConnectionsSchema = z.object({ connections: z.array(GitConnectionSchema) });
 
 export const GitRepositoryIdentitySchema = z.object({ repository_url: z.string(), provider: z.string(), connections: z.array(GitConnectionSchema) });

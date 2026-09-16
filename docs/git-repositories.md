@@ -1,21 +1,21 @@
 # Git 仓库与配置导入
 
-GitRepo 管理 Multica 服务端读取 Agent、skill 配置仓库所需的地址、身份和版本。GitHub 与 Alibaba Code 使用同一业务入口；用户输入仓库地址，服务端识别平台并匹配当前工作区连接。
+GitRepo 管理 Multica 服务端读取 Agent、skill 配置仓库所需的地址、身份和版本。当前仅支持 GitHub；用户输入仓库地址，服务端校验主机并匹配当前工作区的 GitHub App 连接。Aone Code 支持已移除，内部 Code 域名在地址解析阶段拒绝。
 
 ## 模块边界
 
-- `server/internal/gitrepo`：地址规范化、身份选择、GitHub App / Code PAT 认证、分支和 tag、固定 commit 的 tree/blob 读取。`Remote` 不向调用方暴露凭据。
+- `server/internal/gitrepo`：地址规范化、身份选择、GitHub App 认证、分支和 tag、固定 commit 的 tree/blob 读取。`Remote` 不向调用方暴露凭据。
 - `server/internal/agentsource`：通过 `gitrepo.Reader` 解析配置目录，使用内置 JSON Schema 校验 manifest，生成 bundle 与文件快照。ZIP 解压和 Git 读取共享解析及写入流程。
 - `server/internal/handler/agent_package_create.go`：ZIP 与 Git 预览统一确认创建。
 - `server/internal/handler/git_agent_source.go`、`agent_source_preview.go`、`agent_source_sync.go`、`agent_publication.go`：创建、diff、确认发布、发布历史和历史节点回滚。
 - `server/internal/handler/git_skill.go`：独立 skill 与模板 skill 引用读取。skills.sh 链接解析到 Git 仓库后走相同读取模块。读取失败、截断树、过大文件、符号链接、子模块不作为完整 skill 写入。
 - `packages/core/git-repo`：API 查询和 mutation；共享创建页面、Git 身份设置页面、发布页面同时用于 Web/Desktop。
 
-这不改变 Agent 执行时的 GitHub 身份、账号认证或沙箱网络。Code 访问只发生在 Multica 服务端，token 不发送给 Agent、CLI 或沙箱。
+这不改变 Agent 执行时的 GitHub 身份、账号认证或沙箱网络。仓库读取使用的 GitHub App token 不发送给 Agent、CLI 或沙箱。
 
 ## 设置入口
 
-工作区设置只保留「代码仓库」入口（`tab=repositories`），页内按职责分为「仓库列表」「访问身份」「协作设置」。访问身份统一展示 GitHub App 和 Alibaba Code PAT 连接；GitHub 的 PR 关联、侧栏和提交署名开关归入协作设置。Agent 与 skill 导入的连接管理链接统一进入 `tab=repositories&section=connections`。
+工作区设置只保留「代码仓库」入口（`tab=repositories`），页内按职责分为「仓库列表」「访问身份」「协作设置」。访问身份仅展示 GitHub App 连接；GitHub 的 PR 关联、侧栏和提交署名开关归入协作设置。Agent 与 skill 导入的连接管理链接统一进入 `tab=repositories&section=connections`。
 
 GitHub 授权回调按发起位置返回：身份管理返回「访问身份」，仓库选择返回「仓库列表」并继续选择仓库。旧 `tab=git`、`tab=github` 外部链接定位到同一个访问身份页面，不保留重复页面或侧栏入口。
 
@@ -23,25 +23,22 @@ GitHub 授权回调按发起位置返回：身份管理返回「访问身份」�
 
 `git_connection` 是工作区 Git 身份的唯一存储。GitHub App 安装的授权回调、重用安装、仓库权限更新、卸载 webhook 都读写该表；旧 `github_installation` 表通过一次性迁移移除，没有双写和旧 API 别名。
 
-GitHub 使用 App JWT 换取安装 token；Code 使用人类工作区 owner/admin 绑定的 PAT。绑定时调用 Code 当前用户及目标仓库 API 验证身份和读取权限，然后用 AES-256-GCM 加密保存。重新绑定同一 Code 身份应更新其现有连接，不能借更新 token 更换账号。
+GitHub 使用 App JWT 换取安装 token，身份绑定通过 GitHub App 授权完成。服务端不接受 Code PAT，也没有 Code OAuth 或手动 token 绑定入口。
 
 连接授权给当前工作区，成员在其业务权限范围内使用。指定的连接必须属于当前工作区且匹配地址平台。自动匹配只有一个身份时使用它；多个匹配身份时要求选择连接。没有 GitHub 连接时允许匿名读取公开仓库；已经选择或自动匹配的连接失败时直接报错，不降级为匿名访问。删除连接保留 Agent 配置、发布历史和来源 ID，并标记来源断开。
 
-服务端需配置 `MULTICA_GIT_REPO_SECRET_KEY`：base64 编码的 32 字节密钥，所有副本一致，重启不能更换。没有配置时 Code 身份绑定和解密不可用，GitHub 功能仍可用。密钥通过安全配置传入；不得放入仓库、manifest、日志或聊天。
-
-Code PAT 应仅授予所需仓库及读取权限；不需要仓库写权限或 token 管理权限。PAT 过期、撤销、仓库授权移除后，下一次读取或确认发布会失败。API 返回账号标签和连接 ID，不返回 token、密文或 GitHub 安装 token。
+连接查询只返回 GitHub 身份；历史 Code 连接不会参与匹配。API 返回账号标签和连接 ID，不返回 GitHub 安装 token。Code 的凭据写入、解密和网络适配器均已删除，启动脚本不再加载其加密密钥。
 
 ## 地址和 API
 
-支持 GitHub HTTPS / SSH 仓库地址及 Alibaba Code 的 `code.alibaba-inc.com`、`gitlab.alibaba-inc.com`、`code.aone.alibaba-inc.com`、`code-sc.aone.alibaba-inc.com` 地址。Code 统一记录为 `https://code.alibaba-inc.com/<namespace>/<repo>`，支持嵌套 namespace。不接受其他主机、明文 HTTP、端口、URL 凭据、query、fragment、路径穿越。
+仅支持 `github.com`（含 `www.github.com`）的 HTTPS / SSH 仓库地址，统一记录为 `https://github.com/<owner>/<repo>`。不接受其他主机、明文 HTTP、端口、URL 凭据、query、fragment、路径穿越。
 
 Agent manifest 固定在仓库根目录的 `agent.json`，使用仓库根 URL，单独选择 ref。独立 skill 可使用 `ref` / `path` 或 tree/blob 链接；目录必须明确定位一个 `SKILL.md`，斜杠分支按实际 refs 解析，歧义报错。
 
 | API | 输入 / 返回 |
 | --- | --- |
-| `GET /api/workspaces/{id}/git/connections` | 当前工作区身份公开信息及 token 绑定是否可用 |
+| `GET /api/workspaces/{id}/git/connections` | 当前工作区 GitHub 身份公开信息 |
 | `GET /api/workspaces/{id}/git/repository?repository=URL` | 规范化地址、自动识别的平台、匹配的工作区身份；skill 的 skills.sh 地址也会先解析到 Git 仓库 |
-| `POST /api/workspaces/{id}/git/connections` | `repository_url`、`token`，可选 `connection_id` 更新同一身份 |
 | `DELETE /api/workspaces/{id}/git/connections/{connectionId}` | 断开工作区身份 |
 | `GET /api/workspaces/{id}/git/refs?repository=URL&connection_id=UUID` | 默认分支、分支及 tag；连接 ID 可省略，由服务端匹配 |
 | `POST /api/workspaces/{id}/git/agent-preview` | `repository` 为 URL，可选 `connection_id`、`ref`；返回固定 SHA 的 `preview_id` |
@@ -58,13 +55,13 @@ GitHub App 自身的 OAuth、安装和 PR 集成 API 仍属于 GitHub 适配器�
 
 发布历史保存 Git 地址、ref、commit、作者、时间、原始文件和发布后配置；回滚读取历史快照并产生新的发布记录。相同预览重复确认具有幂等性。skill 写入继续以 scope + skill ID 确定身份，并保持 Agent 专属关系；不会因 GitRepo 改造变成每次重新创建。
 
-## Code 协议证据与验收
+## 验收边界
 
-Code API 契约核对自[官方 API 文档](https://pre-code.alibaba-inc.com/doc.html)：项目使用 v3，分支分页使用 v3 的 `{amount,list}`，tag 分页使用 v4 的 `{amount,list}`，tree/blob 使用 v4。PAT 认证遵循[Code PAT 文档](https://aliyuque.antfin.com/alicode/docs/bcuxmsz48ls3e7ov)，只放在 `PRIVATE-TOKEN` 请求头；不跟随重定向，不读取响应提供的下载 URL。读取有超时、分页与内容大小限制。
+回归检查覆盖 GitHub 地址与读取、配置包解析、创建与发布预览、权限重新校验，以及 Code 的 HTTPS / SSH 地址在 Agent 和 skill 导入入口被拒绝。配置包所需的 Git LFS 内容暂不支持，须直接提交文件内容。
 
-自动测试使用模拟 HTTP 服务及隔离 PostgreSQL，覆盖 GitHub、Code 创建/发布/历史/回滚、预览固定 SHA、撤权拒绝写入、跨工作区/平台身份拒绝、分支分页和文件读取失败。真实 Code PAT 与预发到内网 Code 的网络连通性需要在预发单独验收。配置包所需的 Git LFS 内容暂不支持，须直接提交文件内容。
+## Code 移除的数据边界
 
-当前验证：Go 编译、GitRepo/配置包/托管 Agent 测试、相关 HTTP 与数据库流程、前端类型检查和定向测试、lint、sqlc 生成一致性均通过。全局迁移编号检查仍报告基线中两份 `9093` 的重号；本次 `9261`–`9266` 无重号，up/down 和 GitHub 身份保留已在隔离数据库验证。
+本次移除不新增数据库迁移，也不修改已经发布的迁移文件。历史 Code 连接和密文若存在，仍留在数据库，但服务端不再查询、解密或使用它们。已有 Code 来源的 Agent 返回 `connected: false`、`can_sync: false` 和 `sync_status: disconnected`，保留当前配置及发布历史。凭据的数据库清理与 Code 平台撤销不由本次代码删除执行。
 
 ## 升级与回滚
 
@@ -81,3 +78,5 @@ Code API 契约核对自[官方 API 文档](https://pre-code.alibaba-inc.com/doc
 - 2026-09-15 发布准备：本次迁移编号顺延至 9261–9266，避开预发集成分支已存在的迁移；这六份迁移尚未发布，无需旧编号兼容。
 
 - 2026-09-15 设置入口收敛：合并代码仓库、Git 和 GitHub 三个设置入口，统一授权回跳和导入链接，消除重复的身份展示。
+
+- 2026-09-16 安全范围收敛：移除 Aone Code 身份绑定、PAT 存取、仓库适配器、导入入口和运行配置，只保留 GitHub；删除 `POST /git/connections` 与 `token_connections_available` 响应字段。原因是内部代码平台暂不纳入 Agent / skill 配置仓库管理。保留已发布迁移和用户配置历史。

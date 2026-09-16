@@ -245,7 +245,7 @@ func (h *Handler) resolveAndCompileGitAgent(ctx context.Context, workspaceID pgt
 }
 
 func (h *Handler) gitRepositories() gitrepo.Service {
-	return gitrepo.Service{Queries:h.Queries, GitHub:h.GitHubApp, Code:h.GitRepoCodeConfig, Secrets:h.GitRepoSecrets}
+	return gitrepo.Service{Queries:h.Queries, GitHub:h.GitHubApp}
 }
 
 func (h *Handler) resolveGitAgentRepository(ctx context.Context, workspaceID pgtype.UUID, input GitAgentSourceInput) (preparedAgentSource, error) {
@@ -366,7 +366,8 @@ func (h *Handler) recordAgentSourceFailure(ctx context.Context, sourceID pgtype.
 
 func agentSourceToResponse(source db.AgentSource) AgentSourceResponse {
 	status := source.SyncStatus
-	connected := source.SourceType == "git" && !source.ManagedSourceKey.Valid && source.RepositoryUrl != "" && source.SyncStatus != "disconnected"
+	_, repositoryErr := gitrepo.ParseAddress(source.RepositoryUrl)
+	connected := source.SourceType == "git" && !source.ManagedSourceKey.Valid && repositoryErr == nil && source.SyncStatus != "disconnected"
 	if source.SourceType == "git" && !source.ManagedSourceKey.Valid && !connected {
 		status = "disconnected"
 	}

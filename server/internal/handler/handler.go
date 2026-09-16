@@ -280,8 +280,6 @@ type Handler struct {
 	DingTalkBindingTeardownRouter DingTalkBindingTeardownRouter
 	CloudRuntime                  cloudRuntimeProxy
 	GitHubApp                     *gitrepo.GitHubAppClient
-	GitRepoSecrets *secretbox.Box
-	GitRepoCodeConfig gitrepo.CodeConfig
 	AgentIdentityGitHub           *agentidentitygithub.Client
 	ManagedAgent                  *managedagent.Service
 	// Lark integration. All three are nil when the Lark master key

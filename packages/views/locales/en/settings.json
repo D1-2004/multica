@@ -1331,18 +1331,6 @@
     "collaboration_description": "GitHub collaboration features for task and pull request linking and commit attribution."
   },
   "git_repo": {
-    "code": "Alibaba Code",
-    "token_label": "Access token",
-    "title": "Git repository identities",
-    "description": "Workspace identities for importing Agents and skills and reading publication revisions. Access uses the connected identity’s repository permissions.",
-    "github": "Manage GitHub App authorization",
-    "connect": "Connect Code identity",
-    "replace": "Replace token",
-    "disconnect": "Disconnect",
-    "repository": "Repository URL to verify access",
-    "token_hint": "Use a Code access token with repository read permission. It is encrypted at rest and excluded from packages and Agent execution.",
-    "save": "Verify and save",
-    "cancel": "Cancel replacement",
-    "unavailable": "Git credential encryption is not configured. Contact your administrator."
+    "description": "Workspace identities for importing Agents and skills and reading publication revisions. Access uses the connected identity’s repository permissions."
   }
 }

@@ -289,7 +289,7 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
   from the main skill before package work. Reason: preserve the complete protocol
   while keeping the main skill within the enforced 500-line budget.
 
-## GitRepo protocol update — 2026-09-15
+## GitRepo protocol update — 2026-09-15 (historical; Code removed 2026-09-16)
 
 | Contract | Source | Verification |
 | --- | --- | --- |
@@ -300,3 +300,13 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 
 Reason: one repository boundary for GitHub and Alibaba Code, without duplicate
 credentials or GitHub-specific Agent import paths. Agent runtime identities are unchanged.
+
+## GitHub-only repository boundary — 2026-09-16
+
+| Contract | Source | Verification |
+| --- | --- | --- |
+| Only GitHub repository addresses are accepted | `internal/gitrepo/address.go`; `internal/handler/skill.go` | `TestParseAddressRejectsInternalCodeHosts`; `TestGitEndpointsRejectInternalCodeBeforeAccess` |
+| Only GitHub workspace identities are read; no Code token write endpoint | `pkg/db/queries/git_connection.sql`; `internal/handler/git_connection.go`; `cmd/server/router.go` | `TestGitConnectionsExcludeUnsupportedIdentities`; GitHub source flow tests |
+| Unsupported historical sources cannot sync | `internal/handler/git_agent_source.go` | `TestAgentSourceResponseDisablesUnsupportedRepository` |
+
+Reason: remove internal Code platform access from configuration management while preserving GitHub publication and existing Agent configuration/history. This supersedes the Code rows in the historical protocol update above.
