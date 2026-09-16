@@ -1516,14 +1516,14 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "template_resolved"); err != nil {
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B template stage: %w", err)
 	}
-	useEmployeeFilesystem := FCE2BRuntimeProvider(runtime) == "dsh"
-	if useEmployeeFilesystem && runtimeLockConn == nil {
+	if runtimeLockConn == nil {
 		return fcE2BLaunchSubmission{}, false, errors.New("employee filesystem requires a database admission connection")
 	}
-	if !useEmployeeFilesystem && runtimeLockConn != nil {
-		if err := runtimeLockConn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM dsh_employee_host WHERE workspace_id=$1 AND agent_id=$2)`, runtime.WorkspaceID, task.AgentID).Scan(&useEmployeeFilesystem); err != nil {
-			return fcE2BLaunchSubmission{}, false, fmt.Errorf("read employee filesystem binding: %w", err)
-		}
+	// DSH, like every other provider, opts into persistent storage only after
+	// provisioning. Existing employees must remain runnable before that step.
+	var useEmployeeFilesystem bool
+	if err := runtimeLockConn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM dsh_employee_host WHERE workspace_id=$1 AND agent_id=$2)`, runtime.WorkspaceID, task.AgentID).Scan(&useEmployeeFilesystem); err != nil {
+		return fcE2BLaunchSubmission{}, false, fmt.Errorf("read employee filesystem binding: %w", err)
 	}
 	filesystemScope := dshExecutionScope(dshhost.Key{WorkspaceID: uuid.UUID(runtime.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}, task)
 	if useEmployeeFilesystem && FCE2BRuntimeProvider(runtime) == "dsh" && task.TriggerEvidenceKind.String == dshschedule.EvidenceKind {
