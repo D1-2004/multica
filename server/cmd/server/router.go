@@ -440,7 +440,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		agentIdentityControlBaseURLProvider = opts.RuntimeConfig.agentIdentityControlBaseURL
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
-	if provision, err := dshStorageProvisioning(); err != nil {
+	if provision, err := dshStorageProvisioning(opts.RuntimeConfig); err != nil {
 		slog.Error("DSH storage provisioning configuration unavailable", "error", err)
 	} else {
 		h.FCE2BLauncher.ProvisionDSHStorage = provision

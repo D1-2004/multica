@@ -78,9 +78,24 @@ type FeatureConfig struct {
 }
 
 type RuntimeConfig struct {
-	LLM   LLMConfig   `json:"llm"`
-	FCE2B FCE2BConfig `json:"fc_e2b"`
-	ASB   ASBConfig   `json:"asb"`
+	AgenticFS AgenticFSConfig `json:"agentic_fs"`
+	LLM       LLMConfig       `json:"llm"`
+	FCE2B     FCE2BConfig     `json:"fc_e2b"`
+	ASB       ASBConfig       `json:"asb"`
+}
+
+// AgenticFSConfig contains live defaults for newly provisioned spaces, not
+// credentials or changes to an existing space's cloud quota.
+type AgenticFSConfig struct {
+	SizeLimit      int64 `json:"size_limit"`
+	FileCountLimit int64 `json:"file_count_limit"`
+}
+
+func (c AgenticFSConfig) Defaults() AgenticFSConfig {
+	if c == (AgenticFSConfig{}) {
+		return AgenticFSConfig{SizeLimit: 100 << 30, FileCountLimit: 1000000000}
+	}
+	return c
 }
 
 type LLMConfig struct {
@@ -188,6 +203,7 @@ func (c Config) Validate(production bool) error {
 }
 
 func (c Config) normalized() Config {
+	c.Runtime.AgenticFS = c.Runtime.AgenticFS.Defaults()
 	c.Web.AttachmentDownloadMode = strings.ToLower(strings.TrimSpace(c.Web.AttachmentDownloadMode))
 	c.Web.SiteConnectSrc = normalizedUnique(c.Web.SiteConnectSrc)
 	c.Web.CORSAllowedOrigins = normalizedUnique(c.Web.CORSAllowedOrigins)
@@ -308,6 +324,10 @@ func (c IntegrationsConfig) validate() error {
 }
 
 func (c RuntimeConfig) validate() error {
+	quota := c.AgenticFS.Defaults()
+	if quota.SizeLimit < 10<<30 || quota.SizeLimit%(1<<30) != 0 || quota.FileCountLimit < 10000 || quota.FileCountLimit > 1000000000 {
+		return fmt.Errorf("agentic_fs requires size_limit >= 10 GiB in whole GiB and file_count_limit between 10000 and 1000000000")
+	}
 	for _, fingerprint := range c.FCE2B.DWSMessagePolicyFingerprints {
 		if _, err := hex.DecodeString(fingerprint); err != nil || len(fingerprint) != 16 || fingerprint != strings.ToLower(fingerprint) {
 			return fmt.Errorf("fc_e2b.dws_message_policy_fingerprints must contain exact lowercase 16-character fingerprints")

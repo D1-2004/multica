@@ -70,6 +70,23 @@ The following legacy environment settings are represented by the runtime documen
 
 See [the complete example](runtime-config.example.json) for schema version 1.
 
+## AgenticFS quota defaults
+
+`runtime.agentic_fs` holds non-secret defaults for new employee filesystems:
+
+```json
+"agentic_fs": {
+  "size_limit": 107374182400,
+  "file_count_limit": 1000000000
+}
+```
+
+`size_limit` is bytes (100 GiB above). `file_count_limit` is a count (one billion above). Missing sections use these defaults. Every new provisioning request reads the current Diamond snapshot; accepted changes need no application restart. An existing provisioning intent retains its persisted quota across retries. Existing cloud spaces are unchanged; use the NAS quota API to resize those explicitly.
+
+Cloud placement and the managed credential resource binding remain in `MULTICA_DSH_STORAGE_CONFIG`. In Diamond mode its quota fields are ignored; credentials never enter Diamond. Environment-only deployments retain their configured quotas.
+
+For the initial schema rollout, deploy this binary against the existing document first, then add `runtime.agentic_fs` separately in `pre` and `sh`. Older binaries reject unknown fields, so do not publish the new section while older replicas might restart. Subsequent quota changes only require a Diamond configuration publication.
+
 ## Runtime provider catalog
 
 The second managed document maps one opaque 16-character fingerprint to one provider combination. FC reads the fingerprint from the display alias; ASB release inputs carry the same fingerprint explicitly. The key is never recomputed from component versions and is not an image-integrity check. Releasing another image with the same provider combination does not require a Diamond update. Adding a provider creates one new fingerprint entry while retaining old combinations.

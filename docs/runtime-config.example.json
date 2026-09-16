@@ -26,6 +26,7 @@
     "workspace_access_tokens": true
   },
   "runtime": {
+    "agentic_fs": {"size_limit": 107374182400, "file_count_limit": 1000000000},
     "llm": {
       "base_url": "https://llm.example.com/v1",
       "models": [
