@@ -30,7 +30,7 @@ func (l *FCE2BLauncher) syncDSHNativePlugins(ctx context.Context, conn *pgxpool.
 	if l.SyncDSHProfileSource == nil {
 		return nil
 	}
-	host, err := (dshhost.PostgresStore{DB: conn}).Get(ctx, key)
+	host, err := nativePluginSnapshotHost(ctx, conn, key)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -55,7 +55,10 @@ func (l *FCE2BLauncher) syncDSHNativePluginsOnHost(ctx context.Context, conn *pg
 	if err != nil {
 		// An expired sandbox must still reach ordinary lifecycle recovery. The
 		// persisted pointer is checked again once its replacement has mounted.
-		return nil
+		if l.checkSandboxReady(readCtx, host.SandboxID) != nil {
+			return nil
+		}
+		return errors.New("native plugin snapshot command failed on a running sandbox")
 	}
 	var availability struct {
 		Version   int    `json:"version"`
@@ -76,4 +79,16 @@ func (l *FCE2BLauncher) syncDSHNativePluginsOnHost(ctx context.Context, conn *pg
 		return errors.New("invalid native plugin snapshot")
 	}
 	return l.SyncDSHProfileSource(ctx, conn, key, template, snapshot)
+}
+
+// Human entries and tasks may now use session-scoped hosts. Reading only the
+// legacy employee row silently skips native edits for those existing agents.
+func nativePluginSnapshotHost(ctx context.Context, db dshhost.Database, key dshhost.Key) (dshhost.Host, error) {
+	host := dshhost.Host{Key: key}
+	err := db.QueryRow(ctx, `SELECT h.state,h.generation,h.sandbox_id,h.template_id
+ FROM employee_filesystem_host h LEFT JOIN dsh_employee_profile p
+ ON p.workspace_id=h.workspace_id AND p.agent_id=h.agent_id
+ WHERE h.workspace_id=$1 AND h.agent_id=$2 AND h.state='running' AND h.sandbox_id<>''
+ ORDER BY (h.sandbox_id=COALESCE(p.applied_sandbox_id,'')) DESC,h.generation DESC,h.sandbox_id LIMIT 1`, key.WorkspaceID, key.AgentID).Scan(&host.State, &host.Generation, &host.SandboxID, &host.TemplateID)
+	return host, err
 }
