@@ -3,19 +3,20 @@
 import { DshProfileStatus } from "./dsh-profile-status";
 import { isFCE2BRuntime } from "@multica/core/runtimes";
 import { DshPluginConfigDialog } from "./dsh-plugin-config-dialog";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Blocks, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { api, ApiError } from "@multica/core/api";
-import { dshProfileKeys, dshHomeOptions } from "@multica/core/agents";
+import { dshProfileKeys, dshHomeOptions, dshProfileOptions } from "@multica/core/agents";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   agentDshPluginsOptions,
   dshPluginKeys,
   dshPluginListOptions,
   type AgentDshPlugin,
+  useDshPluginDraftStore,
 } from "@multica/core/dsh-plugins";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
@@ -49,12 +50,18 @@ export function DshPluginsTab({
   runtime: AgentRuntime | null;
   canEdit?: boolean;
 }) {
-  const { t } = useT("agents");
   const wsId = useWorkspaceId();
+  return <DshPluginsEditor key={`${wsId}/${agent.id}`} agent={agent} runtime={runtime} canEdit={canEdit} wsId={wsId} />;
+}
+
+function DshPluginsEditor({agent, runtime, canEdit, wsId}: {agent: Agent; runtime: AgentRuntime | null; canEdit: boolean; wsId: string}) {
+  const { t } = useT("agents");
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [configPlugin, setConfigPlugin] = useState<AgentDshPlugin | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const {draft, setDraft, configChanges, setConfigChanges} = useDshPluginDraftStore();
+  const [targetRevision, setTargetRevision] = useState<string | null>(null);
+  const profile = useQuery({...dshProfileOptions(wsId, agent.id), enabled: agent.runtime_mode === "cloud" && runtime != null && isFCE2BRuntime(runtime), refetchInterval: targetRevision ? 2000 : 5000});
 
   const needsFilesystem = agent.runtime_mode === "cloud" && runtime != null && isFCE2BRuntime(runtime);
   const home = useQuery({ ...dshHomeOptions(wsId, agent.id), enabled: needsFilesystem });
@@ -62,7 +69,7 @@ export function DshPluginsTab({
   const attached = useQuery(agentDshPluginsOptions(wsId, agent.id));
   const workspacePlugins = useQuery(dshPluginListOptions(wsId));
 
-  const attachedRows = useMemo(() => attached.data ?? [], [attached.data]);
+  const attachedRows = useMemo(() => draft ?? attached.data ?? [], [draft, attached.data]);
   const attachedIds = useMemo(
     () => new Set(attachedRows.map((row) => row.id)),
     [attachedRows],
@@ -77,45 +84,47 @@ export function DshPluginsTab({
     void queryClient.invalidateQueries({ queryKey: dshProfileKeys.detail(wsId, agent.id) });
   };
 
+  const managed = agent.runtime_mode === "cloud" && runtime != null && isFCE2BRuntime(runtime);
+  const finish = () => { setDraft(null); setConfigChanges({}); setTargetRevision(null); invalidate(); };
   const save = useMutation({
-    mutationFn: (plugins: { id: string; enabled?: boolean }[]) =>
-      api.setAgentDshPlugins(agent.id, plugins),
-    onSuccess: invalidate,
-    onError: (error: unknown) => {
-      toast.error(
-        error instanceof ApiError && error.message
-          ? error.message
-          : t(($) => $.tab_body.dsh_plugins.save_failed_toast),
-      );
+    mutationFn: async () => {
+      await api.setAgentDshPlugins(agent.id, attachedRows.map(({id, enabled}) => ({id, enabled, ...(configChanges[id] ? {configChange: configChanges[id]} : {})})));
+      queryClient.setQueryData(agentDshPluginsOptions(wsId, agent.id).queryKey, attachedRows);
+      if (!managed) return null;
+      setTargetRevision("pending");
+      // Publish one desired revision for the entire submitted set. Waiting for
+      // this exact receipt prevents an older current=true response unlocking edits.
+      const result = await api.prepareDSHProfile(wsId, agent.id);
+      if (!result?.desiredRevision) throw new Error("Profile submission was not confirmed");
+      return result;
     },
-    onSettled: () => {
-      setBusyId(null);
-      void queryClient.invalidateQueries({ queryKey: dshProfileKeys.detail(wsId, agent.id) });
+    onSuccess: (status) => {
+      if (!status) { finish(); return; }
+      setTargetRevision(status.desiredRevision);
+      void queryClient.invalidateQueries({queryKey: dshProfileKeys.detail(wsId, agent.id)});
     },
+    onError: (error: unknown) => toast.error(error instanceof ApiError && error.message ? error.message : t(($) => $.tab_body.dsh_plugins.save_failed_toast)),
   });
-
-  // The endpoint replaces the whole set, so every mutation sends the full list
-  // rather than a delta. That also makes an interrupted request harmless: it
-  // either applies the new set or leaves the old one.
-  const writeSet = (rows: { id: string; enabled: boolean }[]) =>
-    filesystemReady && !save.isPending && save.mutate(rows.map((row) => ({ id: row.id, enabled: row.enabled })));
-
-  const currentSet = () =>
-    attachedRows.map((row) => ({ id: row.id, enabled: row.enabled }));
-
-  const handleToggle = (pluginId: string, enabled: boolean) => {
-    setBusyId(pluginId);
-    writeSet(currentSet().map((row) => (row.id === pluginId ? { ...row, enabled } : row)));
+  useEffect(() => {
+    if (targetRevision && profile.data?.current && profile.data.desiredRevision === targetRevision && profile.data.appliedRevision === targetRevision) finish();
+  }, [targetRevision, profile.data]);
+  const confirm = useMutation({
+    mutationFn: () => api.prepareDSHProfile(wsId, agent.id),
+    onSuccess: (status) => { if (status?.desiredRevision) setTargetRevision(status.desiredRevision); invalidate(); },
+  });
+  const applying = save.isPending || targetRevision !== null || (managed && !!profile.data?.desiredRevision && profile.data.desiredRevision !== "0" && !profile.data.current);
+  const locked = !filesystemReady || attached.isPending || applying || (managed && (profile.isPending || profile.isError));
+  const dirty = draft !== null || Object.keys(configChanges).length > 0;
+  const edit = (rows: AgentDshPlugin[]) => { if (!locked) setDraft(rows); };
+  const handleToggle = (id: string, enabled: boolean) => edit(attachedRows.map((row) => row.id === id ? {...row, enabled} : row));
+  const handleRemove = (id: string) => {
+    if (locked) return;
+    edit(attachedRows.filter((row) => row.id !== id));
+    setConfigChanges(({[id]: _removed, ...rest}) => rest);
   };
-
-  const handleRemove = (pluginId: string) => {
-    setBusyId(pluginId);
-    writeSet(currentSet().filter((row) => row.id !== pluginId));
-  };
-
-  const handleAttach = (pluginId: string) => {
-    setBusyId(pluginId);
-    writeSet([...currentSet(), { id: pluginId, enabled: true }]);
+  const handleAttach = (id: string) => {
+    const plugin = workspacePlugins.data?.find((row) => row.id === id);
+    if (!locked && plugin) edit([...attachedRows, {...plugin, enabled: true}]);
     setShowAdd(false);
   };
 
@@ -145,7 +154,16 @@ export function DshPluginsTab({
         </div>
       )}
 
-      <section className="space-y-3">
+      <section className="space-y-3" aria-busy={applying}>
+        {canEdit && <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
+          <Button size="sm" disabled={locked || !dirty} onClick={() => save.mutate()}>
+            {applying && <Loader2 className="size-4 animate-spin" />}
+            {applying ? t(($) => $.tab_body.dsh_plugins.submitting) : t(($) => $.tab_body.dsh_plugins.submit_changes)}
+          </Button>
+          {targetRevision === "pending" && save.isError && <Button size="sm" variant="outline" disabled={confirm.isPending} onClick={() => confirm.mutate()}>{t(($) => $.tab_body.dsh_profile.retry_apply)}</Button>}
+          {dirty && !applying && <Button size="sm" variant="ghost" onClick={() => {setDraft(null); setConfigChanges({});}}>{t(($) => $.tab_body.dsh_plugins.discard_changes)}</Button>}
+          <span role="status" aria-live="polite" className="text-caption text-muted-foreground">{applying ? t(($) => $.tab_body.dsh_plugins.waiting_confirmation) : dirty ? t(($) => $.tab_body.dsh_plugins.unsaved_changes) : t(($) => $.tab_body.dsh_plugins.no_changes)}</span>
+        </div>}
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-body font-medium">
@@ -162,7 +180,7 @@ export function DshPluginsTab({
               variant="outline"
               size="sm"
               onClick={() => setShowAdd(true)}
-              disabled={!filesystemReady || available.length === 0 || save.isPending}
+              disabled={locked || available.length === 0}
             >
               <Plus className="h-3.5 w-3.5" />
               {t(($) => $.tab_body.dsh_plugins.add_action)}
@@ -199,8 +217,8 @@ export function DshPluginsTab({
                 key={plugin.id}
                 plugin={plugin}
                 canEdit={canEdit}
-                busy={busyId === plugin.id}
-                anyBusy={!filesystemReady || busyId !== null}
+                busy={false}
+                anyBusy={locked}
                 onToggle={(enabled) => handleToggle(plugin.id, enabled)}
                 onRemove={() => handleRemove(plugin.id)}
                 onConfigure={() => setConfigPlugin(plugin)}
@@ -210,7 +228,7 @@ export function DshPluginsTab({
         )}
       </section>
 
-      {configPlugin && canEdit && filesystemReady && <DshPluginConfigDialog key={`${agent.id}:${configPlugin.id}`} wsId={wsId} agentId={agent.id} plugin={configPlugin} onClose={() => setConfigPlugin(null)} />}
+      {configPlugin && canEdit && !locked && <DshPluginConfigDialog key={`${agent.id}:${configPlugin.id}`} wsId={wsId} agentId={agent.id} plugin={configPlugin} attached={(attached.data ?? []).some((row) => row.id === configPlugin.id)} initialChange={configChanges[configPlugin.id]} onStage={(change) => {setConfigChanges((current) => ({...current, [configPlugin.id]: change})); setConfigPlugin(null);}} onClose={() => setConfigPlugin(null)} />}
 
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent>
@@ -246,7 +264,7 @@ export function DshPluginsTab({
                     size="sm"
                     variant="outline"
                     onClick={() => handleAttach(plugin.id)}
-                    disabled={save.isPending}
+                    disabled={locked}
                   >
                     {t(($) => $.tab_body.dsh_plugins.attach_action)}
                   </Button>

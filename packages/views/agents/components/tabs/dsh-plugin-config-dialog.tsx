@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useAgentDshPluginConfig, type AgentDshPlugin } from "@multica/core/dsh-plugins";
+import { useAgentDshPluginConfig, type AgentDshPlugin, type UpdateAgentDshPluginConfig } from "@multica/core/dsh-plugins";
 import { ApiError } from "@multica/core/api";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
@@ -9,17 +9,18 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { useT } from "../../../i18n";
 
-export function DshPluginConfigDialog({ wsId, agentId, plugin, onClose }: {
+export function DshPluginConfigDialog({ wsId, agentId, plugin, onClose, attached, initialChange, onStage }: {
   wsId: string; agentId: string; plugin: AgentDshPlugin; onClose: () => void;
+  attached: boolean; initialChange?: UpdateAgentDshPluginConfig; onStage: (change: UpdateAgentDshPluginConfig) => void;
 }) {
   const { t } = useT("agents");
-  const { load, save } = useAgentDshPluginConfig(wsId, agentId, plugin.id);
-  const [revision, setRevision] = useState<number | null>(null);
-  const [rowId, setRowId] = useState("");
-  const [draft, setDraft] = useState("{}");
-  const [inherited, setInherited] = useState(false);
+  const { load } = useAgentDshPluginConfig(wsId, agentId, plugin.id);
+  const [revision, setRevision] = useState<number | null>(initialChange?.expectedRevision ?? (attached ? null : 0));
+  const [rowId, setRowId] = useState(initialChange?.override?.rowId ?? plugin.configRow);
+  const [draft, setDraft] = useState(JSON.stringify(initialChange?.override?.config ?? (attached ? {} : plugin.config), null, 2));
+  const [inherited, setInherited] = useState(initialChange ? initialChange.override === null : !attached);
   const [message, setMessage] = useState("");
-  const busy = load.isPending || save.isPending;
+  const busy = load.isPending;
   const reportError = (error: unknown) => setMessage(error instanceof ApiError ? error.message : t(($) => $.tab_body.dsh_plugins.config_failed));
   const reveal = async () => {
     setMessage("");
@@ -40,12 +41,7 @@ export function DshPluginConfigDialog({ wsId, agentId, plugin, onClose }: {
         config = parsed as Record<string, unknown>;
       } catch { setMessage(t(($) => $.tab_body.dsh_plugins.config_invalid)); return; }
     }
-    try {
-      const value = await save.mutateAsync({ expectedRevision: revision, override: inherit ? null : { rowId, config } });
-      if (!value) throw new Error("invalid response");
-      setRevision(value.revision); setInherited(value.inherited); setRowId(value.rowId); setDraft(JSON.stringify(value.config, null, 2));
-      setMessage(t(($) => $.tab_body.dsh_plugins.config_saved));
-    } catch (error) { reportError(error); } finally { save.reset(); }
+    onStage({expectedRevision: revision, override: inherit ? null : {rowId, config}});
   };
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -54,7 +50,7 @@ export function DshPluginConfigDialog({ wsId, agentId, plugin, onClose }: {
           <DialogTitle>{t(($) => $.tab_body.dsh_plugins.config_title, { name: plugin.packageName })}</DialogTitle>
           <DialogDescription>{t(($) => $.tab_body.dsh_plugins.config_hint)}</DialogDescription>
         </DialogHeader>
-        <Button variant="outline" onClick={() => void reveal()} disabled={busy}>{t(($) => $.tab_body.dsh_plugins.config_reveal)}</Button>
+        {attached && <Button variant="outline" onClick={() => void reveal()} disabled={busy}>{t(($) => $.tab_body.dsh_plugins.config_reveal)}</Button>}
         {revision !== null && <>
           <p className="text-caption text-muted-foreground">{inherited ? t(($) => $.tab_body.dsh_plugins.config_inherited) : t(($) => $.tab_body.dsh_plugins.config_private)} · {t(($) => $.tab_body.dsh_plugins.config_revision, { revision })}</p>
           <label className="space-y-2 text-caption">

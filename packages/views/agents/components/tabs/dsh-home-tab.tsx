@@ -67,7 +67,8 @@ export function DshHomeTab({ workspaceId, agentId, nativeEnabled = true }: {
       }
       if (active.current !== identity) return;
       if (!nativeEnabled) { setPhase("idle"); return; }
-      await prepareProfile.mutateAsync();
+      const latest = await profile.refetch();
+      if (!latest.data?.current) await prepareProfile.mutateAsync();
       if (active.current === identity) setPhase("waiting");
     } catch { if (active.current === identity) setPhase("error"); }
   };

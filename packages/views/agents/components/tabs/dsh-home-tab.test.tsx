@@ -43,7 +43,7 @@ it("opens from one action after storage and profile preparation without caching 
   await userEvent.click(button);
   await waitFor(() => expect(calls.navigate).toHaveBeenCalledWith(entryUrl));
   expect(calls.ensure).toHaveBeenCalledTimes(1);
-  expect(calls.prepareProfile).toHaveBeenCalledTimes(1);
+  expect(calls.prepareProfile).not.toHaveBeenCalled();
   expect(calls.entry).toHaveBeenCalledTimes(1);
   expect(JSON.stringify(client.getMutationCache().getAll().map((m) => m.state.data))).not.toContain("dnge_");
   expect(screen.queryByRole("link")).toBeNull();
@@ -87,4 +87,14 @@ it("does not navigate a delayed result after switching employees", async () => {
   view.rerender(page("second"));
   await act(async () => complete({accessId: "access", entryUrl: "https://pre.example", expiresAt: new Date(Date.now()+60000).toISOString()}));
   expect(calls.navigate).not.toHaveBeenCalled();
+});
+
+it("reopens an already applied host without preparing storage or rescheduling configuration", async () => {
+  calls.get.mockResolvedValue({...ready,state:"running",sandboxId:"existing",generation:3});
+  calls.entry.mockResolvedValue({accessId:"access",entryUrl:"https://pre.example/native",expiresAt:new Date(Date.now()+60000).toISOString()});
+  show();
+  await userEvent.click(await screen.findByRole("button", {name:"Open native DSH"}));
+  await waitFor(() => expect(calls.navigate).toHaveBeenCalledTimes(1));
+  expect(calls.ensure).not.toHaveBeenCalled();
+  expect(calls.prepareProfile).not.toHaveBeenCalled();
 });

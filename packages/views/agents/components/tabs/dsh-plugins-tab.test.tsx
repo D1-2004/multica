@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -13,6 +13,8 @@ const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
 
 const mockListDshPlugins = vi.hoisted(() => vi.fn());
 const mockListAgentDshPlugins = vi.hoisted(() => vi.fn());
+const mockGetProfile = vi.hoisted(() => vi.fn());
+const mockPrepareProfile = vi.hoisted(() => vi.fn());
 const mockGetHome = vi.hoisted(() => vi.fn());
 const mockGetConfig = vi.hoisted(() => vi.fn());
 const mockUpdateConfig = vi.hoisted(() => vi.fn());
@@ -38,7 +40,8 @@ vi.mock("@multica/core/hooks", () => ({
 vi.mock("@multica/core/api", () => ({
   api: {
     getDSHHome: (...args: unknown[]) => mockGetHome(...args),
-    getDSHProfile: async () => ({state: "applied", current: true, desiredRevision: "1", appliedRevision: "1", builds: []}),
+    getDSHProfile: (...args: unknown[]) => mockGetProfile(...args),
+    prepareDSHProfile: (...args: unknown[]) => mockPrepareProfile(...args),
     getAgentDshPluginConfig: (...args: unknown[]) => mockGetConfig(...args),
     updateAgentDshPluginConfig: (...args: unknown[]) => mockUpdateConfig(...args),
     listDshPlugins: (...args: unknown[]) => mockListDshPlugins(...args),
@@ -125,7 +128,7 @@ function renderTab(canEdit = true, agentOverrides: Partial<Agent> = {}, runtime 
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const view = render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <DshPluginsTab
@@ -136,11 +139,13 @@ function renderTab(canEdit = true, agentOverrides: Partial<Agent> = {}, runtime 
       </QueryClientProvider>
     </I18nProvider>,
   );
+  return {...view, queryClient};
 }
 
 describe("DshPluginsTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetProfile.mockResolvedValue({state:"applied",current:true,desiredRevision:"1",appliedRevision:"1",builds:[]});
     mockSetAgentDshPlugins.mockResolvedValue(undefined);
   });
 
@@ -174,6 +179,8 @@ describe("DshPluginsTab", () => {
       within(row as HTMLElement).getByRole("button", { name: "Attach" }),
     );
 
+    expect(mockSetAgentDshPlugins).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", {name:"Submit configuration changes"}));
     // The endpoint replaces the set, so the already-attached plugin must be
     // re-sent. Sending only the new one would silently detach the other.
     await waitFor(() => {
@@ -200,6 +207,8 @@ describe("DshPluginsTab", () => {
       screen.getByRole("button", { name: "Detach dsh-mcp-lens" }),
     );
 
+    expect(mockSetAgentDshPlugins).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", {name:"Submit configuration changes"}));
     await waitFor(() => {
       expect(mockSetAgentDshPlugins).toHaveBeenCalledWith("agent-1", [
         { id: "p-2", enabled: true },
@@ -217,6 +226,8 @@ describe("DshPluginsTab", () => {
       screen.getByRole("switch", { name: "Enable dsh-mcp-lens" }),
     );
 
+    expect(mockSetAgentDshPlugins).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", {name:"Submit configuration changes"}));
     await waitFor(() => {
       expect(mockSetAgentDshPlugins).toHaveBeenCalledWith("agent-1", [
         { id: "p-1", enabled: false },
@@ -241,6 +252,7 @@ describe("DshPluginsTab", () => {
 describe("DshPluginsTab on a runtime that does not load plugins", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetProfile.mockResolvedValue({state:"applied",current:true,desiredRevision:"1",appliedRevision:"1",builds:[]});
     mockListDshPlugins.mockResolvedValue([]);
     mockListAgentDshPlugins.mockResolvedValue([]);
   });
@@ -270,6 +282,7 @@ describe("DshPluginsTab on a runtime that does not load plugins", () => {
 describe("employee plugin settings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetProfile.mockResolvedValue({state:"applied",current:true,desiredRevision:"1",appliedRevision:"1",builds:[]});
     mockListDshPlugins.mockResolvedValue([plugin("p-1", "dsh-mcp-lens")]);
     mockListAgentDshPlugins.mockResolvedValue([plugin("p-1", "dsh-mcp-lens")]);
     mockGetConfig.mockResolvedValue({ agentId: "agent-1", pluginId: "p-1", revision: 12, inherited: false, rowId: "a-row", config: { token: "fixture-private" } });
@@ -282,24 +295,29 @@ describe("employee plugin settings", () => {
     await userEvent.click(screen.getByRole("button", { name: "Read settings" }));
     const config = await screen.findByLabelText("Configuration (JSON)");
     expect((config as HTMLTextAreaElement).value).toContain("fixture-private");
-    await userEvent.click(screen.getByRole("button", { name: "Save for this agent" }));
-    await waitFor(() => expect(mockUpdateConfig).toHaveBeenCalledWith("agent-1", "p-1", { expectedRevision: 12, override: { rowId: "a-row", config: { token: "fixture-private" } } }, "ws-1"));
-    expect(await screen.findByText("Settings saved. Host application still needs verification.")).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Stage settings" }));
+    expect(mockUpdateConfig).not.toHaveBeenCalled();
+    expect(mockSetAgentDshPlugins).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", {name:"Submit configuration changes"}));
+    await waitFor(() => expect(mockSetAgentDshPlugins).toHaveBeenCalledWith("agent-1", [{id:"p-1",enabled:true,configChange:{expectedRevision:12,override:{rowId:"a-row",config:{token:"fixture-private"}}}}]));
   });
-  it("shows a conflict without retrying or claiming success", async () => {
-    mockUpdateConfig.mockRejectedValue(new ApiError("Reload settings", 409, "Conflict"));
+  it("keeps staged settings editable when the atomic submission fails", async () => {
+    mockSetAgentDshPlugins.mockRejectedValue(new ApiError("Reload settings", 409, "Conflict"));
     renderTab();
-    await userEvent.click(await screen.findByRole("button", { name: "Configure" }));
-    await userEvent.click(screen.getByRole("button", { name: "Read settings" }));
+    await userEvent.click(await screen.findByRole("button", {name:"Configure"}));
+    await userEvent.click(screen.getByRole("button", {name:"Read settings"}));
     await screen.findByLabelText("Configuration (JSON)");
-    await userEvent.click(screen.getByRole("button", { name: "Save for this agent" }));
-    expect(await screen.findByText("Reload settings")).toBeTruthy();
-    expect(mockUpdateConfig).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText("Settings saved. Host application still needs verification.")).toBeNull();
+    await userEvent.click(screen.getByRole("button", {name:"Stage settings"}));
+    await userEvent.click(screen.getByRole("button", {name:"Submit configuration changes"}));
+    await waitFor(() => expect(mockSetAgentDshPlugins).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("button", {name:"Submit configuration changes"})).not.toBeDisabled());
+    expect(mockUpdateConfig).not.toHaveBeenCalled();
+    expect(screen.getByText("You have unsubmitted changes")).toBeTruthy();
   });
 });
 
 it("disables all plugin writes until the employee filesystem is ready", async () => {
+  vi.clearAllMocks();
   mockGetHome.mockResolvedValue({provisioned: false, state: "unprovisioned", step: 0});
   mockListAgentDshPlugins.mockResolvedValue([plugin("one", "plugin-one")]);
   mockListDshPlugins.mockResolvedValue([plugin("one", "plugin-one"), plugin("two", "plugin-two")]);
@@ -309,4 +327,27 @@ it("disables all plugin writes until the employee filesystem is ready", async ()
   expect(screen.getByRole("switch")).toHaveAttribute("aria-disabled", "true");
   for (const button of screen.getAllByRole("button")) expect(button).toBeDisabled();
   expect(mockSetAgentDshPlugins).not.toHaveBeenCalled();
+});
+
+it("stages multiple operations in one submission and locks editing until the exact revision is confirmed", async () => {
+  vi.clearAllMocks();
+  mockGetHome.mockResolvedValue({provisioned:true,state:"running",step:6});
+  mockGetProfile.mockResolvedValue({state:"applied",current:true,desiredRevision:"10",appliedRevision:"10",builds:[]});
+  mockPrepareProfile.mockResolvedValue({state:"pending_host",current:false,desiredRevision:"11",appliedRevision:"10",builds:[]});
+  mockSetAgentDshPlugins.mockImplementation(async () => { mockListAgentDshPlugins.mockResolvedValue([plugin("p2","second",false)]); });
+  mockListDshPlugins.mockResolvedValue([plugin("p1","first"),plugin("p2","second")]);
+  mockListAgentDshPlugins.mockResolvedValue([plugin("p1","first"),plugin("p2","second")]);
+  const {queryClient} = renderTab(true,{}, {...dshRuntime,metadata:{kind:"fc-e2b"}});
+  await userEvent.click(await screen.findByRole("button",{name:"Detach first"}));
+  await userEvent.click(screen.getByRole("switch",{name:"Enable second"}));
+  expect(mockSetAgentDshPlugins).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button",{name:"Submit configuration changes"}));
+  await waitFor(() => expect(mockPrepareProfile).toHaveBeenCalledWith("ws-1","agent-1"));
+  expect(mockSetAgentDshPlugins).toHaveBeenCalledExactlyOnceWith("agent-1",[{id:"p2",enabled:false}]);
+  expect(screen.getByRole("button",{name:"Applying configuration…"})).toBeDisabled();
+  expect(screen.getByRole("button",{name:"Configure"})).toBeDisabled();
+  expect(screen.getByRole("switch")).toHaveAttribute("aria-disabled","true");
+  await act(async () => queryClient.setQueryData(["workspace","ws-1","agents","agent-1","dsh-profile"],{state:"applied",current:true,desiredRevision:"11",appliedRevision:"11",builds:[]}));
+  await waitFor(() => expect(screen.getByRole("button",{name:"Configure"})).not.toBeDisabled());
+  expect(screen.getByText("No pending configuration changes")).toBeTruthy();
 });

@@ -300,9 +300,15 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	if err != nil {
 		return dshhost.Host{}, cold, err
 	}
-	err = l.deliverDSHProfile(ctx, profiles, host, revision)
-	if err == nil {
-		err = l.stageDSHProfile(ctx, host, revision)
+	// An unchanged healthy host already owns this exact immutable Profile.
+	// Reopening it needs a live receipt, not another artifact delivery/staging pass.
+	status, statusErr := profiles.Status(ctx, key)
+	reusedProfile := statusErr == nil && status.Current && status.AppliedSandboxID == host.SandboxID && status.AppliedGeneration == host.Generation && status.AppliedRevision == strconv.FormatInt(revision.ID, 10)
+	if !reusedProfile {
+		err = l.deliverDSHProfile(ctx, profiles, host, revision)
+		if err == nil {
+			err = l.stageDSHProfile(ctx, host, revision)
+		}
 	}
 	if err == nil {
 		out, err = l.runE2BCommand(ctx, dshNativeHostEnsureArgs(host, catalog, authority, origin, l.nativeAuthority.publicKey(), revision))

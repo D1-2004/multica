@@ -28,3 +28,17 @@ describe("employee plugin configuration", () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 });
+
+it("submits the final plugin set and private settings atomically in one request", async () => {
+  const request = vi.fn().mockResolvedValue(new Response(null,{status:204}));
+  vi.stubGlobal("fetch",request);
+  await new ApiClient("https://pre.example.test").setAgentDshPlugins("agent",[
+    {id:"existing",enabled:false,configChange:{expectedRevision:7,override:null}},
+    {id:"new",enabled:true,configChange:{expectedRevision:0,override:{rowId:"loader",config:{option:true}}}},
+  ]);
+  expect(request).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(request.mock.calls[0]![1].body)).toEqual({plugins:[
+    {id:"existing",enabled:false,config_change:{expected_revision:7,config_override:null}},
+    {id:"new",enabled:true,config_change:{expected_revision:0,config_override:{row_id:"loader",config:{option:true}}}},
+  ]});
+});

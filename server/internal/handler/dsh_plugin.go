@@ -700,10 +700,16 @@ func (h *Handler) ListAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 }
 
 // SetAgentDshPluginsRequest replaces an agent's plugin set wholesale.
+type AgentDshPluginConfigChange struct {
+	ExpectedRevision *int64          `json:"expected_revision"`
+	Override         json.RawMessage `json:"config_override"`
+}
+
 type SetAgentDshPluginsRequest struct {
 	Plugins []struct {
-		ID      string `json:"id"`
-		Enabled *bool  `json:"enabled"`
+		ID           string                      `json:"id"`
+		Enabled      *bool                       `json:"enabled"`
+		ConfigChange *AgentDshPluginConfigChange `json:"config_change,omitempty"`
 	} `json:"plugins"`
 }
 
@@ -731,6 +737,17 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var configActor pgtype.UUID
+	for _, entry := range req.Plugins {
+		if entry.ConfigChange != nil {
+			_, member, allowed := h.authorizeAgentEnv(w, r)
+			if !allowed {
+				return
+			}
+			configActor = member.UserID
+			break
+		}
+	}
 	available, err := h.Queries.ListDshPluginsByWorkspace(r.Context(), agent.WorkspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read the workspace plugin set")
@@ -742,8 +759,9 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type binding struct {
-		id      pgtype.UUID
-		enabled bool
+		id           pgtype.UUID
+		enabled      bool
+		configChange *AgentDshPluginConfigChange
 	}
 	bindings := make([]binding, 0, len(req.Plugins))
 	seen := map[string]bool{}
@@ -762,7 +780,7 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 		if entry.Enabled != nil {
 			enabled = *entry.Enabled
 		}
-		bindings = append(bindings, binding{id: row.ID, enabled: enabled})
+		bindings = append(bindings, binding{id: row.ID, enabled: enabled, configChange: entry.ConfigChange})
 	}
 
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -815,6 +833,58 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 			ConfigRevision: previousByID[entry.id].ConfigRevision,
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to attach a DSH plugin")
+			return
+		}
+	}
+	// Apply private config edits inside the same transaction as the binding set.
+	// The Profile worker only ever observes the final submitted configuration.
+	for _, entry := range bindings {
+		change := entry.configChange
+		if change == nil {
+			continue
+		}
+		previous := previousByID[entry.id]
+		if change.ExpectedRevision == nil || *change.ExpectedRevision < 0 || len(change.Override) == 0 {
+			writeError(w, 400, "config_change requires expected_revision and config_override")
+			return
+		}
+		if previous.ConfigRevision != *change.ExpectedRevision {
+			writeError(w, 409, "plugin configuration changed; reload before submitting")
+			return
+		}
+		plugin := byID[uuidToString(entry.id)]
+		previous.PackageName = plugin.PackageName
+		previous.BundleRows = plugin.BundleRows
+		value, err := decodeAgentDshPluginOverride(change.Override, previous)
+		if err != nil {
+			writeError(w, 422, err.Error())
+			return
+		}
+		var encoded []byte
+		if value != nil {
+			encoded, err = json.Marshal(value)
+		}
+		if err != nil {
+			writeError(w, 400, "invalid plugin configuration")
+			return
+		}
+		expected := previous.ConfigRevision
+		if expected == 0 {
+			// A newly attached row receives its first revision during insertion.
+			if err := tx.QueryRow(r.Context(), `SELECT config_revision FROM agent_dsh_plugin WHERE agent_id=$1 AND dsh_plugin_id=$2`, agent.ID, entry.id).Scan(&expected); err != nil {
+				writeError(w, 500, "failed to read new plugin configuration")
+				return
+			}
+		}
+		if _, err := qtx.UpdateAgentDshPluginConfig(r.Context(), db.UpdateAgentDshPluginConfigParams{AgentID: agent.ID, PluginID: entry.id, WorkspaceID: agent.WorkspaceID, ConfigOverride: encoded, ExpectedRevision: expected}); err != nil {
+			writeError(w, 409, "plugin configuration changed; reload before submitting")
+			return
+		}
+	}
+	if configActor.Valid {
+		details, _ := json.Marshal(map[string]any{"agent_id": uuidToString(agent.ID), "plugin_count": len(bindings)})
+		if _, err := qtx.CreateActivity(r.Context(), db.CreateActivityParams{WorkspaceID: agent.WorkspaceID, ActorType: pgtype.Text{String: "member", Valid: true}, ActorID: configActor, Action: "agent_dsh_plugin_configuration_submitted", Details: details}); err != nil {
+			writeError(w, 500, "plugin configuration audit failed")
 			return
 		}
 	}
