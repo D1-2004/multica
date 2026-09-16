@@ -867,7 +867,7 @@
         "waiting_admission_and_direct_relay_live_delivery": "not_run",
         "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
         "scene_capacity_per_delegator_host_tests": "passed_local_2026-09-16: handler capacity/wait tests; full ./internal/handler failure set identical to HEAD baseline",
-        "scene_capacity_per_delegator_live_delivery": "not_run"
+        "scene_capacity_per_delegator_live_delivery": "pre_verified_2026-09-16: 预发群 cidVaO557dsSgYcgnvRNbwY4g== 真实对话；冬翔两件在飞后第三条 park 并收到新等待文案（coord_trace eef25125-53a8-4404-9e8f-489925abb925），dxxh 同群新请求不受影响直接受理（bfe2f1b2），dxxh 的任务完成不释放冬翔名额、冬翔自己的任务完成后排队窗口 15:19:21 自动开跑。等待上限豁免、deferred/fire_at 与 alias 归一仍只有本地数据库用例。"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/inbound.md",

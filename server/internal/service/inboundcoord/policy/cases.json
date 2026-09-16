@@ -1412,9 +1412,9 @@
         "server/internal/handler/inbound_coordinator_collect_test.go#TestSceneDelegatorDoesNotInferIntent",
         "server/internal/handler/inbound_coordinator_collect_test.go#TestSceneDelegatorGroupsOneSpeakerOnce"
       ],
-      "verification": "not_run",
-      "evidence_status": "pending_reference",
-      "evidence_note": "Host容量归属与在飞判定的协议测试已实现；真实预发投递证据由本次实施回填。无新增模型调用。"
+      "verification": "partially_verified_pre",
+      "evidence_status": "pre_release_conversation",
+      "evidence_note": "pre_verified_2026-09-16: 预发群 cidVaO557dsSgYcgnvRNbwY4g== 真实对话；冬翔两件在飞后第三条 park 并收到新等待文案（coord_trace eef25125-53a8-4404-9e8f-489925abb925），dxxh 同群新请求不受影响直接受理（bfe2f1b2），dxxh 的任务完成不释放冬翔名额、冬翔自己的任务完成后排队窗口 15:19:21 自动开跑。等待上限豁免、deferred/fire_at 与 alias 归一仍只有本地数据库用例。"
     },
     {
       "id": "f09_capacity_wait_has_deadline",
@@ -1430,7 +1430,7 @@
       ],
       "verification": "not_run",
       "evidence_status": "pending_reference",
-      "evidence_note": "等待上限为Host状态效果；预发真实等待到期证据由本次实施回填。"
+      "evidence_note": "重试前置检查与等待恢复已在预发观察到（park 8.5 分钟后自动开跑，未触发 10 分钟豁免）；豁免路径本身仍只有本地数据库用例，不记为通过。"
     }
   ]
 }
