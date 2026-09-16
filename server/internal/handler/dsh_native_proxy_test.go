@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -20,6 +21,7 @@ func TestDSHNativeProxyPageCookiesAndOrigin(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Disposition", "attachment")
+		w.Header().Set("Content-Security-Policy", "script-src 'unsafe-inline'")
 		http.SetCookie(w, &http.Cookie{Name: dshNativeGatewayCookie, Value: "new-session", Path: "/", Secure: true, HttpOnly: true})
 		_, _ = io.WriteString(w, `<!doctype html><html><head><script type="module" src="/assets/main.js"></script><script type="importmap">{"imports":{"plugin":"/modules/plugin.js"}}</script></head><body></body></html>`)
 	}))
@@ -28,6 +30,7 @@ func TestDSHNativeProxyPageCookiesAndOrigin(t *testing.T) {
 	r.Header.Set("Cookie", "workbench-secret=must-not-forward; "+dshNativeProxyCookie+"=native-session")
 	r.Header.Set("X-Workspace-ID", "must-not-forward")
 	w := httptest.NewRecorder()
+	w.Header().Set("Content-Security-Policy", "script-src 'self'")
 	serveDSHNativeProxy(w, r, upstream.URL, "https://pre.test", prefix)
 	if w.Code != 200 || w.Header().Get("Content-Disposition") != "" {
 		t.Fatal("native HTML still downloads", w.Code)
@@ -36,6 +39,14 @@ func TestDSHNativeProxyPageCookiesAndOrigin(t *testing.T) {
 		if !strings.Contains(w.Body.String(), expected) {
 			t.Fatal("native page lost a path/transport mapping", expected)
 		}
+	}
+	policies := w.Header().Values("Content-Security-Policy")
+	if len(policies) != 1 || strings.Contains(policies[0], "script-src 'unsafe-inline'") {
+		t.Fatal("native HTML retained conflicting or unrestricted script policies")
+	}
+	nonce := regexp.MustCompile(`'nonce-([^']+)'`).FindStringSubmatch(policies[0])
+	if !strings.Contains(policies[0], "script-src 'self' 'unsafe-eval' 'nonce-") || len(nonce) != 2 || strings.Count(w.Body.String(), `<script nonce="`+nonce[1]+`"`) != 3 {
+		t.Fatal("bootstrap, module and import map scripts must share the response nonce")
 	}
 	cookies := w.Result().Cookies()
 	if len(cookies) != 1 || cookies[0].Name != dshNativeProxyCookie || cookies[0].Path != prefix || !cookies[0].Secure || !cookies[0].HttpOnly {

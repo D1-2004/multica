@@ -2,6 +2,8 @@ package handler
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
@@ -112,6 +114,20 @@ func serveDSHNativeProxy(w http.ResponseWriter, r *http.Request, upstream, publi
 				return errors.New("native page unavailable")
 			}
 			body = rewriteDSHNativePage(body, prefix, kind == "text/html")
+			if kind == "text/html" {
+				var random [18]byte
+				if _, err := rand.Read(random[:]); err != nil {
+					return err
+				}
+				nonce := base64.RawStdEncoding.EncodeToString(random[:])
+				body = nativeScriptTag.ReplaceAll(body, []byte(`<script nonce="`+nonce+`"${1}`))
+				// Replace the workbench API policy and the upstream bootstrap
+				// policy with one nonce policy for this rewritten native document.
+				// The official Cordis client compiles expressions with Function at
+				// module boot; eval is confined to this native document policy.
+				response.Header.Del("Content-Security-Policy")
+				w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval' 'nonce-"+nonce+"'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; font-src 'self' data:; connect-src 'self' wss:; worker-src 'self' blob:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'")
+			}
 			response.Body = io.NopCloser(bytes.NewReader(body))
 			response.ContentLength = int64(len(body))
 			response.Header.Set("Content-Length", strconv.Itoa(len(body)))
@@ -125,6 +141,8 @@ func serveDSHNativeProxy(w http.ResponseWriter, r *http.Request, upstream, publi
 	}
 	proxy.ServeHTTP(w, r)
 }
+
+var nativeScriptTag = regexp.MustCompile(`(?i)<script(\s|>)`)
 
 var nativeRootReference = regexp.MustCompile(`(["'])/([^/])`)
 
