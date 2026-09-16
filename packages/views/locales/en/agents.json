@@ -1229,6 +1229,7 @@
       "add_failed_toast": "Failed to add skill"
     },
     "dsh_plugins": {
+      "sync_failed": "Native plugin synchronization is temporarily unavailable. Retrying; changes cannot be submitted yet.",
       "local_runtime_notice": "This agent runs on a local daemon, which does not load DSH plugins. Anything bound here is saved but will not run until the agent moves to a cloud runtime.",
       "intro": "Plugins this agent's DeepSeek Harness profile loads at the start of every task. Import plugins into the workspace first, then attach the ones this agent should boot with.",
       "attached_title": "Plugin configuration",

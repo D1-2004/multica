@@ -52,7 +52,10 @@ func (d *statusDatabase) QueryRow(_ context.Context, query string, args ...any) 
 			raw, _ := json.Marshal(d.source)
 			*dest[0].(*string) = string(raw)
 		case strings.Contains(query, "jsonb_agg"):
-			expected := []string{BuildKey(d.source.TemplateID, d.source.Plugins[0])}
+			expected := []string{}
+			for _, plugin := range d.source.Plugins {
+				expected = append(expected, BuildKey(d.source.TemplateID, plugin))
+			}
 			if args[1] != d.source.TemplateID || !reflect.DeepEqual(args[2], expected) {
 				return errors.New("unscoped build query")
 			}
@@ -71,10 +74,10 @@ func TestStatusShowsFailedBuildWithoutPrivateConfiguration(t *testing.T) {
 		{ID: uuid.New(), Enabled: true, PackageName: "fixture", Version: "1.0.0", Config: map[string]any{"secret": "private-canary"}},
 		{ID: uuid.New(), Enabled: false, PackageName: "disabled", Version: "1.0.0"},
 	}}
-	database := &statusDatabase{key: key, source: source, builds: []BuildStatus{{PackageName: "fixture", Version: "1.0.0", State: "failed"}}}
+	database := &statusDatabase{key: key, source: source, builds: []BuildStatus{{PackageName: "fixture", Version: "1.0.0", State: "failed"}, {PackageName: "disabled", Version: "1.0.0", State: "ready"}}}
 	store := Store{DB: database}
 	value, err := store.Status(context.Background(), key)
-	if err != nil || value.State != "build_failed" || value.Current || len(value.Builds) != 1 {
+	if err != nil || value.State != "build_failed" || value.Current || len(value.Builds) != 2 {
 		t.Fatalf("status=%+v err=%v", value, err)
 	}
 	raw, _ := json.Marshal(value)

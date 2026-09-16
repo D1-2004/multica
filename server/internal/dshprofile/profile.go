@@ -35,6 +35,15 @@ type SourcePlugin struct {
 	ArtifactKey    string         `json:"artifact_key"`
 	RowID          string         `json:"row_id"`
 	Config         map[string]any `json:"config"`
+	Rows           []RowOverride  `json:"rows,omitempty"`
+}
+
+// RowOverride retains native DSH settings for all rows owned by one bundle.
+// Expression nodes remain source JSON; only the DSH loader evaluates them.
+type RowOverride struct {
+	ID       string          `json:"id"`
+	Config   json.RawMessage `json:"config,omitempty"`
+	Disabled *bool           `json:"disabled,omitempty"`
 }
 
 type Source struct {
@@ -47,12 +56,14 @@ type Source struct {
 type ReadSource func(context.Context, *db.Queries, dshhost.Key, string) (Source, error)
 
 type Plugin struct {
+	Enabled     *bool          `json:"enabled,omitempty"`
 	PackageName string         `json:"package_name"`
 	Version     string         `json:"version"`
 	Integrity   string         `json:"integrity"`
 	BuildDigest string         `json:"build_digest"`
 	RowID       string         `json:"row_id"`
 	Config      map[string]any `json:"config"`
+	Rows        []RowOverride  `json:"rows,omitempty"`
 }
 
 type Descriptor struct {
@@ -98,6 +109,9 @@ func EncodeSource(source Source) (string, string, error) {
 			return "", "", invalid
 		}
 		seen[plugin.PackageName] = true
+		if err := ValidateRowOverrides(plugin.Rows, nil); err != nil {
+			return "", "", invalid
+		}
 	}
 	raw, err := json.Marshal(source)
 	if err != nil || len(raw) > 1024*1024 {
@@ -121,14 +135,11 @@ func Resolve(key dshhost.Key, revision int64, source Source, builds map[string]B
 	}
 	descriptor := Descriptor{Version: 1, WorkspaceID: key.WorkspaceID, AgentID: key.AgentID, Revision: strconv.FormatInt(revision, 10), Plugins: []Plugin{}}
 	for _, plugin := range source.Plugins {
-		if !plugin.Enabled {
-			continue
-		}
 		build, ok := builds[BuildKey(source.TemplateID, plugin)]
 		if !ok || build.State != "ready" || !digestPattern.MatchString(build.Digest) || build.ArtifactKey == "" {
 			return "", "", ErrPending
 		}
-		descriptor.Plugins = append(descriptor.Plugins, Plugin{PackageName: plugin.PackageName, Version: plugin.Version, Integrity: plugin.Integrity, BuildDigest: build.Digest, RowID: plugin.RowID, Config: plugin.Config})
+		descriptor.Plugins = append(descriptor.Plugins, Plugin{PackageName: plugin.PackageName, Version: plugin.Version, Integrity: plugin.Integrity, BuildDigest: build.Digest, RowID: plugin.RowID, Config: plugin.Config, Rows: plugin.Rows, Enabled: disabledMarker(plugin.Enabled)})
 	}
 	sort.Slice(descriptor.Plugins, func(i, j int) bool { return descriptor.Plugins[i].PackageName < descriptor.Plugins[j].PackageName })
 	raw, err := json.Marshal(descriptor)
@@ -136,4 +147,12 @@ func Resolve(key dshhost.Key, revision int64, source Source, builds map[string]B
 		return "", "", errors.New("invalid employee Profile descriptor")
 	}
 	return string(raw), hash(raw), nil
+}
+
+func disabledMarker(enabled bool) *bool {
+	if enabled {
+		return nil
+	}
+	disabled := false
+	return &disabled
 }

@@ -187,7 +187,7 @@ describe("DshPluginsTab", () => {
       expect(mockSetAgentDshPlugins).toHaveBeenCalledWith("agent-1", [
         { id: "p-1", enabled: true },
         { id: "p-2", enabled: true },
-      ]);
+      ], [plugin("p-1", "dsh-mcp-lens")]);
     });
   });
 
@@ -212,7 +212,7 @@ describe("DshPluginsTab", () => {
     await waitFor(() => {
       expect(mockSetAgentDshPlugins).toHaveBeenCalledWith("agent-1", [
         { id: "p-2", enabled: true },
-      ]);
+      ], [plugin("p-1", "dsh-mcp-lens"), plugin("p-2", "dsh-context")]);
     });
   });
 
@@ -231,7 +231,7 @@ describe("DshPluginsTab", () => {
     await waitFor(() => {
       expect(mockSetAgentDshPlugins).toHaveBeenCalledWith("agent-1", [
         { id: "p-1", enabled: false },
-      ]);
+      ], [plugin("p-1", "dsh-mcp-lens")]);
     });
   });
 
@@ -299,7 +299,7 @@ describe("employee plugin settings", () => {
     expect(mockUpdateConfig).not.toHaveBeenCalled();
     expect(mockSetAgentDshPlugins).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", {name:"Submit configuration changes"}));
-    await waitFor(() => expect(mockSetAgentDshPlugins).toHaveBeenCalledWith("agent-1", [{id:"p-1",enabled:true,configChange:{expectedRevision:12,override:{rowId:"a-row",config:{token:"fixture-private"}}}}]));
+    await waitFor(() => expect(mockSetAgentDshPlugins).toHaveBeenCalledWith("agent-1", [{id:"p-1",enabled:true,configChange:{expectedRevision:12,override:{rowId:"a-row",config:{token:"fixture-private"}}}}], [plugin("p-1", "dsh-mcp-lens")]));
   });
   it("keeps staged settings editable when the atomic submission fails", async () => {
     mockSetAgentDshPlugins.mockRejectedValue(new ApiError("Reload settings", 409, "Conflict"));
@@ -343,11 +343,26 @@ it("stages multiple operations in one submission and locks editing until the exa
   expect(mockSetAgentDshPlugins).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole("button",{name:"Submit configuration changes"}));
   await waitFor(() => expect(mockPrepareProfile).toHaveBeenCalledWith("ws-1","agent-1"));
-  expect(mockSetAgentDshPlugins).toHaveBeenCalledExactlyOnceWith("agent-1",[{id:"p2",enabled:false}]);
+  expect(mockSetAgentDshPlugins).toHaveBeenCalledExactlyOnceWith("agent-1",[{id:"p2",enabled:false}], [plugin("p1","first"),plugin("p2","second")]);
   expect(screen.getByRole("button",{name:"Applying configuration…"})).toBeDisabled();
   expect(screen.getByRole("button",{name:"Configure"})).toBeDisabled();
   expect(screen.getByRole("switch")).toHaveAttribute("aria-disabled","true");
   await act(async () => queryClient.setQueryData(["workspace","ws-1","agents","agent-1","dsh-profile"],{state:"applied",current:true,desiredRevision:"11",appliedRevision:"11",builds:[]}));
   await waitFor(() => expect(screen.getByRole("button",{name:"Configure"})).not.toBeDisabled());
   expect(screen.getByText("No pending configuration changes")).toBeTruthy();
+});
+
+it("keeps the observed base when native changes arrive while a draft is open", async () => {
+  vi.clearAllMocks();
+  mockGetHome.mockResolvedValue({provisioned:true,state:"running",step:6});
+  mockGetProfile.mockResolvedValue({state:"applied",current:true,desiredRevision:"10",appliedRevision:"10",builds:[]});
+  const original = {...plugin("p1","existing"),configRevision:11};
+  mockListAgentDshPlugins.mockResolvedValue([original]);
+  mockListDshPlugins.mockResolvedValue([original]);
+  mockSetAgentDshPlugins.mockResolvedValue(undefined);
+  const {queryClient} = renderTab();
+  await userEvent.click(await screen.findByRole("switch",{name:"Enable existing"}));
+  await act(async () => queryClient.setQueryData(["workspaces","ws-1","dsh-plugins","agent","agent-1"],[original,plugin("p2","native-installed")]));
+  await userEvent.click(screen.getByRole("button",{name:"Submit configuration changes"}));
+  await waitFor(() => expect(mockSetAgentDshPlugins).toHaveBeenCalledWith("agent-1",[{id:"p1",enabled:false}],[original]));
 });
