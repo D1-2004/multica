@@ -624,6 +624,9 @@ func attachASBBUCIdentityOnce(
 }
 
 func isASBWireGuardPostAttachCheckPending(err error) bool {
+	if asbIdentityReasonFromError(err) != nil {
+		return false
+	}
 	var httpErr *ASBHTTPError
 	if !errors.As(err, &httpErr) ||
 		httpErr.Operation != "attach_buc_identity" ||

@@ -197,6 +197,12 @@ func ClassifyRuntimeStartError(backend SandboxBackendKind, err error) RuntimeSta
 	if err == nil {
 		return ClassifyRuntimeStartFailure(backend, "")
 	}
+	var identityErr *asbIdentityStartError
+	if backend == SandboxBackendASB && errors.As(err, &identityErr) {
+		failure := NewRuntimeStartFailure(backend, identityErr.code, "sandbox_ready", false, identityErr.detail, identityErr.detail)
+		failure.hasUserDetail = true
+		return failure
+	}
 	detail := redact.Text(err.Error())
 	userDetail := runtimeStartUserDetailFromError(err)
 	if userDetail != "" && !strings.Contains(detail, userDetail) {

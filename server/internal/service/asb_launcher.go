@@ -1065,20 +1065,13 @@ func (l *ASBLauncher) resolveSandbox(
 				identity,
 				l.Config.WireGuardReadyTimeout,
 			); err != nil {
+				identityErr := l.asbIdentityStartError(ctx, sandbox.ID, err)
 				cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
 					runtime,
 					scope,
 					scoped,
 					identity.Fingerprint,
 					sandbox.ID,
-				)
-				userDetail := "ASB BUC identity attach did not become ready before task start."
-				if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
-					userDetail = "ASB enterprise identity did not match the bound employee after attach. Reauthorize the Agent enterprise identity and retry."
-				}
-				identityErr := withRuntimeStartUserDetail(
-					fmt.Errorf("attach ASB enterprise identity before task start: %w", err),
-					userDetail,
 				)
 				if cleanupErr != nil {
 					return "", true, ASBResolvedIdentity{}, errors.Join(identityErr, cleanupErr)
@@ -1485,7 +1478,7 @@ func probeASBTaskBUCIdentity(
 		)
 	}
 	if result.ExitCode == nil || *result.ExitCode != 0 || result.ErrorName != "" {
-		return &asbEnterpriseCLIIdentityProbeError{stage: "buc"}
+		return asbTaskBUCProbeError(result)
 	}
 	return nil
 }
@@ -1493,13 +1486,15 @@ func probeASBTaskBUCIdentity(
 func asbTaskBUCIdentityProbeCommand() string {
 	return "set -euo pipefail; " +
 		"printf 'probe_stage=buc\\n' >&2; " +
-		"curl -fsS --max-time 10 -X POST " +
+		"curl -sS --max-time 10 -X POST " +
 		"'https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json' | " +
 		"/opt/task-python/bin/python -c '" +
 		"import json,os,sys; p=json.load(sys.stdin); d=(p.get(\"content\") or {}).get(\"data\") or {}; " +
 		"emp=str(d.get(\"empId\") or \"\").strip(); agent=str(d.get(\"agentId\") or \"\").strip(); " +
 		"expected=os.environ[\"EXPECTED_EMP_ID\"].strip(); " +
-		"raise SystemExit(42 if emp and emp!=expected else 0 if p.get(\"success\") is True and str(p.get(\"errorCode\"))==\"0\" and emp==expected and agent else 1)" +
+		"status=42 if emp and emp!=expected else 0 if p.get(\"success\") is True and str(p.get(\"errorCode\"))==\"0\" and emp==expected and agent else 1; " +
+		"print(\"" + asbBUCProbeErrorPrefix + "\"+json.dumps({\"code\":str(p.get(\"errorCode\") or \"\"),\"message\":str(p.get(\"errorMsg\") or p.get(\"errorMessage\") or p.get(\"message\") or p.get(\"msg\") or \"identity response incomplete\")[:8192]})) if status==1 else None; " +
+		"raise SystemExit(status)" +
 		"'"
 }
 
