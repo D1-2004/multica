@@ -78,9 +78,39 @@ type FeatureConfig struct {
 }
 
 type RuntimeConfig struct {
-	LLM   LLMConfig   `json:"llm"`
-	FCE2B FCE2BConfig `json:"fc_e2b"`
-	ASB   ASBConfig   `json:"asb"`
+	AgenticFS AgenticFSConfig `json:"agentic_fs"`
+	LLM       LLMConfig       `json:"llm"`
+	FCE2B     FCE2BConfig     `json:"fc_e2b"`
+	ASB       ASBConfig       `json:"asb"`
+}
+
+// AgenticFSConfig contains live defaults for newly provisioned spaces, not
+// credentials or changes to an existing space's cloud quota.
+type AgenticFSConfig struct {
+	SizeLimit          int64               `json:"size_limit"`
+	FileCountLimit     int64               `json:"file_count_limit"`
+	Placement          *AgenticFSPlacement `json:"placement,omitempty"`
+	CredentialResource string              `json:"credential_resource,omitempty"`
+}
+
+// The resource reference selects a Normandy-managed access package; it is not
+// an access key. Secret material is only resolved by the credential provider.
+type AgenticFSPlacement struct {
+	AccountID       string   `json:"account_id"`
+	Region          string   `json:"region"`
+	Zone            string   `json:"zone"`
+	TeamID          string   `json:"team_id"`
+	FileSystemID    string   `json:"file_system_id"`
+	VPCID           string   `json:"vpc_id"`
+	SecurityGroupID string   `json:"security_group_id"`
+	VSwitchIDs      []string `json:"vswitch_ids"`
+}
+
+func (c AgenticFSConfig) Defaults() AgenticFSConfig {
+	if c.SizeLimit == 0 && c.FileCountLimit == 0 {
+		c.SizeLimit, c.FileCountLimit = 100<<30, 1000000000
+	}
+	return c
 }
 
 type LLMConfig struct {
@@ -188,6 +218,7 @@ func (c Config) Validate(production bool) error {
 }
 
 func (c Config) normalized() Config {
+	c.Runtime.AgenticFS = c.Runtime.AgenticFS.Defaults()
 	c.Web.AttachmentDownloadMode = strings.ToLower(strings.TrimSpace(c.Web.AttachmentDownloadMode))
 	c.Web.SiteConnectSrc = normalizedUnique(c.Web.SiteConnectSrc)
 	c.Web.CORSAllowedOrigins = normalizedUnique(c.Web.CORSAllowedOrigins)
@@ -308,6 +339,17 @@ func (c IntegrationsConfig) validate() error {
 }
 
 func (c RuntimeConfig) validate() error {
+	quota := c.AgenticFS.Defaults()
+	if quota.SizeLimit < 10<<30 || quota.SizeLimit%(1<<30) != 0 || quota.FileCountLimit < 10000 || quota.FileCountLimit > 1000000000 {
+		return fmt.Errorf("agentic_fs requires size_limit >= 10 GiB in whole GiB and file_count_limit between 10000 and 1000000000")
+	}
+	if p := c.AgenticFS.Placement; p != nil {
+		if p.AccountID == "" || p.Region == "" || !strings.HasPrefix(p.Zone, p.Region+"-") || p.TeamID == "" || p.FileSystemID == "" || p.VPCID == "" || p.SecurityGroupID == "" || len(p.VSwitchIDs) == 0 || slices.Contains(p.VSwitchIDs, "") || !strings.HasPrefix(c.AgenticFS.CredentialResource, "internal:acs:ram:"+p.AccountID+":user/") || !strings.HasSuffix(c.AgenticFS.CredentialResource, "/accesspack") {
+			return fmt.Errorf("agentic_fs requires complete placement and an account-matching managed credential resource")
+		}
+	} else if c.AgenticFS.CredentialResource != "" {
+		return fmt.Errorf("agentic_fs.credential_resource requires placement")
+	}
 	for _, fingerprint := range c.FCE2B.DWSMessagePolicyFingerprints {
 		if _, err := hex.DecodeString(fingerprint); err != nil || len(fingerprint) != 16 || fingerprint != strings.ToLower(fingerprint) {
 			return fmt.Errorf("fc_e2b.dws_message_policy_fingerprints must contain exact lowercase 16-character fingerprints")
