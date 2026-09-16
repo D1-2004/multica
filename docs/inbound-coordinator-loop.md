@@ -288,11 +288,32 @@ DWS 历史读取通过 `MULTICA_DWS_HISTORY_MCP_URL` 显式选择 MCP 环境，�
 [实施与验收](plans/2026-09-15-coordinator-contextual-replies.md)：逐条response_required来自可信单聊或接收UID匹配，主模型、schema与审核共用；缺失/冲突ID不从昵称补猜，人设/改名不能把已匹配的收件人解释为另一个人。合窗不把整窗@铺给每条，未被寻址的群消息仍可ignore。正常直接消息不得用ignore后静态收据代替回答，新增受限acknowledge(conversation)承接社交追问、连续对话与沟通反馈。它不能进行业务抢答，不能编造现实活动、失败原因或工作结果。真正异常保留已有持久化自然兜底。原稿重发的工作reply只能接单，不能提前贴正文再让执行器重复投递。
 
 
-社交措辞整理是独立的conversation_reply阶段：每轮至多一次，最多12秒/2048输出token（含低思考），只处理已经选中的acknowledge(conversation)。输入为当前来源、逐条UID回应事实、语气与最多6条/1800字历史；不带岗位SOP、人设姓名、旧卡、场域记忆或原草稿。未知历史作者不凭昵称补认，历史自述不能证明活动/执行。整理后的完整候选仍由原finish_check审核，审核修复轮不再次覆盖它；通过后SavePlan，再走既有发送路径。该阶段失败仍走现有异常处理，不能绕审核或直接执行。独立policy/hash及generation记录其成本与实际输入。
+社交措辞整理是独立的conversation_reply阶段：最多12秒/2048输出token，只处理已经选中的acknowledge(conversation)。输入为当前来源、逐条UID回应事实、语气与最多6条/1800字历史；不带岗位SOP、人设姓名、旧卡、场域记忆或原草稿。未知历史作者不凭昵称补认，历史自述不能证明活动/执行。整理后的完整候选仍由原finish_check审核，审核修复轮不再次覆盖它；通过后SavePlan，再走既有发送路径。该阶段失败仍走现有异常处理，不能绕审核或直接执行。独立policy/hash及generation记录其成本与实际输入。
 
 该受限社交阶段使用qwen3.8-max；路由及审核仍为qwen3.7-plus。真实同输入对比已记录事实边界和延迟，完整预发验收另记。沟通反馈本身是完整诉求，回复须完成本轮交流，不把抱怨反问成新需求；不解释系统记录可见性。
 
-社交整理历史只保留稳定SenderID匹配当前发言人或接收UID的行，未知作者不按昵称补认、不传给整理阶段；原路由及审核保留完整历史。身份过滤后的partial/空不表示之前没有交流。思考模式使用auto工具选择以符合上游协议，但仅开放唯一回复工具，返回仍须严格解析且通过原审核。
+社交整理历史只保留稳定SenderID匹配当前发言人或接收UID的行，未知作者不按昵称补认、不传给整理阶段；原路由及审核保留完整历史。身份过滤后的partial/空不表示之前没有交流。
+
+### 2026-09-16 社交整理的延迟处理
+
+正式trace `c8ef6a1ecbd34dce8689bbc965c882aa`（单聊「Hi」）整轮8567毫秒，其中路由2118、社交整理3247、终结审查2563，预取631；三次模型调用串行占92.5%。整理阶段输入仅1304 token却耗时3247毫秒，成本来自思考模式而非上下文。按§3既定方向处理延迟：不跳过任何覆盖检查，只改并行度与单次请求成本。
+
+1. **整理阶段取消思考模式。** 恢复`enable_thinking=false`与`tool_choice=required`（thinking+required的上游400不再适用），模型仍为qwen3.8-max，路由与审核不变。同fixture的历史对照：无思考约1389毫秒、低思考约3709–4743毫秒。**当前的事实边界（不编造活动/执行、不按昵称认人、不以亲历包装建议）是在低思考条件下冻结回放通过的，取消思考后必须用同一组正式输入复跑才算通过，本文不把旧条件的结论记作新条件的证据。**
+2. **整理与路由并行推测。** 整理请求的全部内容是(turn, 选中的conversation动作)的纯函数，不含任何路由判断。Host在两次预取完成后、首个路由请求的同时，按“单条acknowledge(conversation)覆盖全部response_required来源”的假设先发一次整理，并记录该请求的`input_hash`。路由返回后按真实提案重建请求：**逐字节哈希相同才复用推测结果，不同一律丢弃并正常重发**。推测无副作用，不改提案、不读工作状态、不接触任何效果路径；推测失败不是本轮裁决，同一问题在正常路径上重问一次，只有那次答案作数。
+3. **推测的成本被报告，不被隐藏。** `ack_kind`为greeting/thanks的回合和工作回合根本不进入整理，其推测必然作废；多条动作或不同来源集合的提案同样作废，该回合出现两次整理调用。Langfuse以`speculative=true`的`coordinator.conversation_reply.speculative` generation记录每次推测的真实输入与usage，根metadata记`conversation_reply_speculation=hit/miss/error/unused`，SLS事件为`inbound_coordinator_conversation_reply_speculation`。推测的observation由主协程开启、由推测协程结束，不并发写trace自身的metadata。
+4. **验收分层。** 已完成：Host协议与并发单测（含-race，四条推测用例在关闭推测后全部失败，证明其有效性）、policy结构检查。**未完成：真实模型回放与预发E2E。** 在这两项完成前，不得宣称事实边界在无思考条件下仍然成立，也不得把8.6秒→预计5秒的估算写成实测结果。
+
+回放命令（需操作者提供私有fixture与凭据，不写入仓库）：
+
+```bash
+cd server && MULTICA_RUN_CONTEXTUAL_REPLAY=1 \
+  MULTICA_CONTEXTUAL_REPLAY_FIXTURE=/tmp/coord-contextual-replay-fixture.json \
+  MULTICA_CONTEXTUAL_REPLAY_REPORT=/tmp/coord-contextual-replay-report-no-thinking.json \
+  MULTICA_LLM_API_KEY=... MULTICA_LLM_BASE_URL=... \
+  go test ./internal/service/inboundcoord -run TestCoordinatorContextualReplay -count=1 -v
+```
+
+UID负例fixture `/tmp/coord-contextual-replay-fixture-other-uid.json` 与S5 fixture 需同样复跑；正例6组与负例的对照结论按§7.7分层报告，不合并成一句“通过”。
 
 存在正式@元数据的普通数字员工群消息也进入参与引文校验。UID均为他人时，不能以@片段或其内部同名子串认成本员工；仅位置独立的自然称呼、开放邀请或已载对话仍可评估。解析@语法边界，不比较人名词表；缺少provider span的多词裸@保持保守，不靠空格推断另一个受话人。
 

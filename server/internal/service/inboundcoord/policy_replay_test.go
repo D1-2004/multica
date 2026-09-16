@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -294,8 +295,22 @@ type replayCompleter struct {
 	client        *llm.Client
 	readTools     *replayReadTools
 	modelOverride string
-	rounds        []coordinatorReplayRound
-	violations    []string
+	// The speculative conversation render shares this recorder with routing.
+	mu         sync.Mutex
+	rounds     []coordinatorReplayRound
+	violations []string
+}
+
+func (o *replayCompleter) recordedRounds() []coordinatorReplayRound {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]coordinatorReplayRound(nil), o.rounds...)
+}
+
+func (o *replayCompleter) recordedViolations() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.violations...)
 }
 
 var replayModulePattern = regexp.MustCompile(`\[policy:([^@\]]+)@[^\]]+\]`)
@@ -305,6 +320,8 @@ func (o *replayCompleter) Chat(ctx context.Context, params openai.ChatCompletion
 		params.Model = shared.ChatModel(model)
 	}
 	toolSchema, _ := json.Marshal(params.Tools)
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	round := coordinatorReplayRound{ToolSchemaHash: policyHash(string(toolSchema)), Round: len(o.rounds) + 1, RequestModel: string(params.Model), AllowedTools: toolParamNames(params.Tools), Modules: []string{}, CalledTools: []string{}}
 	if len(params.Messages) > 0 {
 		raw, _ := json.Marshal(params.Messages[0])
@@ -391,7 +408,7 @@ type coordinatorReplayReport struct {
 }
 
 func evaluateCoordinatorReplay(f coordinatorReplayFixture, d Decision, err error, observer *replayCompleter, reads *replayReadTools, history *replayHistory) coordinatorReplayResult {
-	r := coordinatorReplayResult{ID: f.ID, ContractID: f.ContractID, FixtureHash: policyHash(replayJSON(f)), Status: "PASS", Action: d.Action, Reply: d.UserText, Items: d.Items, NonWorkRefs: d.NonWorkRefs, HistoryReads: history.calls, ReadCalls: reads.calls, Rounds: observer.rounds, Assertions: []string{}, Failures: []string{}, Models: []string{}}
+	r := coordinatorReplayResult{ID: f.ID, ContractID: f.ContractID, FixtureHash: policyHash(replayJSON(f)), Status: "PASS", Action: d.Action, Reply: d.UserText, Items: d.Items, NonWorkRefs: d.NonWorkRefs, HistoryReads: history.calls, ReadCalls: reads.calls, Rounds: observer.recordedRounds(), Assertions: []string{}, Failures: []string{}, Models: []string{}}
 	assert := func(ok bool, message string) {
 		r.Assertions = append(r.Assertions, message)
 		if !ok {
@@ -442,19 +459,20 @@ func evaluateCoordinatorReplay(f coordinatorReplayFixture, d Decision, err error
 	if f.ForbidReads {
 		assert(history.calls == 0 && len(reads.calls) == 0, "direct inventory answer must use provided facts without extra reads")
 		routingRounds := 0
-		for _, round := range observer.rounds {
+		for _, round := range observer.recordedRounds() {
 			if !slices.Contains(round.AllowedTools, "finish_check") {
 				routingRounds++
 			}
 		}
 		assert(routingRounds == 1, "direct inventory answer must retain one routing round, plus independent terminal review")
 	}
-	for _, failure := range append(append(append([]string{}, observer.violations...), reads.violations...), history.violations...) {
+	for _, failure := range append(append(append([]string{}, observer.recordedViolations()...), reads.violations...), history.violations...) {
 		r.Failures = append(r.Failures, failure)
 	}
 	var input, output int64
-	allInput, allOutput := len(observer.rounds) > 0, len(observer.rounds) > 0
-	for _, round := range observer.rounds {
+	recorded := observer.recordedRounds()
+	allInput, allOutput := len(recorded) > 0, len(recorded) > 0
+	for _, round := range recorded {
 		model := firstNonEmpty(round.ResponseModel, round.RequestModel)
 		if !slices.Contains(r.Models, model) {
 			r.Models = append(r.Models, model)

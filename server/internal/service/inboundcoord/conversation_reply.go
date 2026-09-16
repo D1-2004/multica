@@ -117,46 +117,106 @@ func conversationReplyInput(turn Turn, decision Decision) ([]conversationReplyAc
 	return actions, history
 }
 
-// renderConversationReplies changes only selected conversation replies. The
-// caller must still run finish_check and persist the resulting plan before
-// sending; this helper provides no independent authority or effect path.
-func (c *Coordinator) renderConversationReplies(ctx context.Context, turn Turn, decision *Decision, round int) error {
-	if decision == nil || turn.Loop == LoopTaskFinished {
-		return nil
-	}
-	actions, history := conversationReplyInput(turn, *decision)
+// conversationReplyRequest is one exact render call. Every byte of it is a
+// pure function of the turn and the selected conversation actions, so two
+// requests carrying the same inputHash are the same question and accept the
+// same answer. That identity is what lets a render started before routing be
+// reused instead of repeated; nothing here reads a routing judgement.
+type conversationReplyRequest struct {
+	messages     []openai.ChatCompletionMessageParamUnion
+	tool         openai.ChatCompletionToolUnionParam
+	refs         []string
+	historyCount int
+	inputHash    string
+}
+
+func conversationReplyRequestFor(turn Turn, decision Decision) (*conversationReplyRequest, error) {
+	actions, history := conversationReplyInput(turn, decision)
 	if len(actions) == 0 {
-		return nil
+		return nil, nil
 	}
 	refs := make([]string, len(actions))
 	for i, action := range actions {
 		if len(action.Sources) == 0 {
-			return fmt.Errorf("conversation reply has no current sources")
+			return nil, fmt.Errorf("conversation reply has no current sources")
 		}
 		refs[i] = action.ActionRef
 	}
 	background, _ := json.Marshal(map[string]any{"history": history, "history_scope": "Partial identity-filtered earlier dialogue, never the current request. Only stable-ID matches to this employee or current speakers are included; omitted or empty history does not prove an exchange never happened.", "reply_tone": configuredReplyTone(turn), "reply_author": map[string]any{"kind": "digital_employee", "account_owner_biography": "not_supplied", "personal_life_or_habits": "not_supplied", "everyday_advice": "offer options to the user; not claims of personal experience"}, "receiving_identity": map[string]any{"this_employee_is_current_recipient": true, "stable_uid_available": strings.TrimSpace(turn.DWSUID) != "", "activity_and_execution_facts_available": false}})
 	current, _ := json.Marshal(map[string]any{"current_actions": actions, "scope": "Reply only to these current sources. Earlier history questions are not new requests. Each current action must be answered now."})
 	messages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPrompt(Turn{Loop: LoopConversationReply})), openai.UserMessage(string(background)), openai.UserMessage(string(current))}
-	messageBytes, _ := json.Marshal(messages)
-	inputHash := policyHash(string(messageBytes))
 	tool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: toolConversationReplies, Description: openai.String("Return only the requested conversation replies. This tool performs no work or delivery."), Parameters: shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"replies"}, "properties": map[string]any{"replies": map[string]any{"type": "array", "minItems": len(refs), "maxItems": len(refs), "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action_ref", "reply"}, "properties": map[string]any{"action_ref": stringEnum(refs), "reply": map[string]any{"type": "string", "minLength": 1, "maxLength": 600}}}}}}})
+	messageBytes, _ := json.Marshal(messages)
+	// The refs also decide the response schema, so they are part of the
+	// request identity even though the messages already name them.
+	return &conversationReplyRequest{messages: messages, tool: tool, refs: refs, historyCount: len(history),
+		inputHash: policyHash(string(messageBytes) + "\n" + strings.Join(refs, ","))}, nil
+}
+
+func (c *Coordinator) startConversationReplyGeneration(ctx context.Context, req *conversationReplyRequest, name string, speculative bool) *langfuse.Observation {
+	trace := langfuse.TraceFromContext(ctx)
+	if trace == nil {
+		return nil
+	}
+	manifest := policyManifest(Turn{Loop: LoopConversationReply})
+	return trace.StartObservation(langfuse.ObservationOptions{Type: langfuse.TypeGeneration, Name: name, Model: conversationReplyModel, Input: req.messages, ModelParameters: map[string]any{"max_completion_tokens": conversationReplyTokenBudget, "timeout_ms": conversationReplyTimeout.Milliseconds(), "temperature": 0, "reasoning_effort": "none", "enable_thinking": false, "tool_choice": "required"}, Metadata: map[string]any{"action_count": len(req.refs), "history_count": req.historyCount, "action_refs": req.refs, "speculative": speculative, "policy_version": manifest.PolicyVersion, "assembly_version": manifest.AssemblyVersion, "prompt_hash": manifest.PromptHash, "input_hash": req.inputHash, "modules": manifest.Modules}})
+}
+
+// executeConversationReply performs the single render request. The caller owns
+// the Langfuse observation so a speculative run can be opened on the main
+// goroutine and closed on its own without sharing mutable trace state.
+func (c *Coordinator) executeConversationReply(ctx context.Context, req *conversationReplyRequest, generation *langfuse.Observation) (map[string]string, error) {
 	readCtx, cancel := context.WithTimeout(ctx, conversationReplyTimeout)
 	defer cancel()
-	var generation *langfuse.Observation
-	if trace := langfuse.TraceFromContext(ctx); trace != nil {
-		manifest := policyManifest(Turn{Loop: LoopConversationReply})
-		generation = trace.StartObservation(langfuse.ObservationOptions{Type: langfuse.TypeGeneration, Name: fmt.Sprintf("coordinator.conversation_reply.%d", round+1), Model: conversationReplyModel, Input: messages, ModelParameters: map[string]any{"max_completion_tokens": conversationReplyTokenBudget, "timeout_ms": conversationReplyTimeout.Milliseconds(), "temperature": 0, "reasoning_effort": "low", "enable_thinking": true, "tool_choice": "auto"}, Metadata: map[string]any{"action_count": len(refs), "history_count": len(history), "action_refs": refs, "policy_version": manifest.PolicyVersion, "assembly_version": manifest.AssemblyVersion, "prompt_hash": manifest.PromptHash, "input_hash": inputHash, "modules": manifest.Modules}})
-	}
-	started := time.Now()
-	completion, err := c.completeWithModelLimit(readCtx, conversationReplyModel, messages, []openai.ChatCompletionToolUnionParam{tool}, conversationReplyTokenBudget, 0, shared.ReasoningEffortLow)
+	completion, err := c.completeWithModelLimit(readCtx, conversationReplyModel, req.messages, []openai.ChatCompletionToolUnionParam{req.tool}, conversationReplyTokenBudget, 0, shared.ReasoningEffortNone)
 	endRoundGeneration(generation, completion, err)
 	if err != nil {
-		return fmt.Errorf("conversation reply unavailable: %w", err)
+		return nil, fmt.Errorf("conversation reply unavailable: %w", err)
 	}
-	replies, err := parseConversationReplies(completion, refs)
-	if err != nil {
+	return parseConversationReplies(completion, req.refs)
+}
+
+// renderConversationReplies changes only selected conversation replies. The
+// caller must still run finish_check and persist the resulting plan before
+// sending; this helper provides no independent authority or effect path. A
+// supplied speculation is consumed only when it asked the identical question.
+func (c *Coordinator) renderConversationReplies(ctx context.Context, turn Turn, decision *Decision, round int, speculation *conversationReplySpeculation) error {
+	if decision == nil || turn.Loop == LoopTaskFinished {
+		return nil
+	}
+	req, err := conversationReplyRequestFor(turn, *decision)
+	if err != nil || req == nil {
 		return err
+	}
+	started := time.Now()
+	outcome := "none"
+	// The classification is reported on every exit, including the one where the
+	// normal render also fails: a turn that spent a speculation must say so.
+	defer func() {
+		if lt := langfuse.TraceFromContext(ctx); lt != nil {
+			lt.AddMetadata(map[string]any{"conversation_reply_speculation": outcome})
+		}
+		slog.Info("inbound coordinator conversation reply rendered", append(coordinatorLogIndex(turn), "event", "inbound_coordinator_conversation_reply", "action_count", len(req.refs), "input_hash", req.inputHash, "speculation", outcome, "elapsed_ms", time.Since(started).Milliseconds())...)
+	}()
+	var replies map[string]string
+	if speculation != nil {
+		outcome = "miss"
+		if speculation.inputHash == req.inputHash {
+			result := <-speculation.done
+			if result.err != nil {
+				// A speculative failure is not this turn's verdict: the same
+				// request is asked again on the normal path and only that
+				// answer decides the reply.
+				outcome = "error"
+			} else {
+				outcome, replies = "hit", result.replies
+			}
+		}
+	}
+	if replies == nil {
+		if replies, err = c.executeConversationReply(ctx, req, c.startConversationReplyGeneration(ctx, req, fmt.Sprintf("coordinator.conversation_reply.%d", round+1), false)); err != nil {
+			return err
+		}
 	}
 	for i := range decision.CoordinationActions {
 		if reply, ok := replies[fmt.Sprintf("a%d", i+1)]; ok {
@@ -164,7 +224,6 @@ func (c *Coordinator) renderConversationReplies(ctx context.Context, turn Turn, 
 		}
 	}
 	decision.UserText = ComposeDecisionReplies(decision.CoordinationActions)
-	slog.Info("inbound coordinator conversation reply rendered", append(coordinatorLogIndex(turn), "event", "inbound_coordinator_conversation_reply", "action_count", len(refs), "input_hash", inputHash, "elapsed_ms", time.Since(started).Milliseconds())...)
 	return nil
 }
 

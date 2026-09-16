@@ -54,6 +54,12 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory 
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		w.Header().Set("Content-Type", "application/json")
+		if len(body.Tools) == 1 && body.Tools[0].Function.Name == toolConversationReplies {
+			// The speculative render runs beside the first routing request and
+			// is not a routing round; these fixtures count rounds.
+			_, _ = io.WriteString(w, `{"id":"cmpl-render","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"r1","type":"function","function":{"name":"render_conversation_replies","arguments":"{\"replies\":[{\"action_ref\":\"a1\",\"reply\":\"我在。\"}]}"}}]},"finish_reason":"tool_calls"}]}`)
+			return
+		}
 		if len(body.Tools) == 1 && body.Tools[0].Function.Name == "finish_check" {
 			// This HTTP fixture verifies history transport and routing rounds;
 			// semantic verdicts have their own scripted and real-model tests.

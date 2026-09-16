@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -196,14 +197,15 @@ func TestCoordinatorFrozenTraceReplay(t *testing.T) {
 					r.Failure = "conversation-only control created work"
 				}
 			}
-			for _, round := range observer.rounds {
+			observer.waitSettled()
+			for _, round := range observer.recordedRounds() {
 				for _, tool := range round.AllowedTools {
 					if tool == toolAssocBind || tool == toolIssueCommentAdd {
 						r.Failure = "business-write tool exposed to replay"
 					}
 				}
 			}
-			r.ElapsedMS, r.Rounds, r.ToolCalls = time.Since(started).Milliseconds(), observer.rounds, reads.calls
+			r.ElapsedMS, r.Rounds, r.ToolCalls = time.Since(started).Milliseconds(), observer.recordedRounds(), reads.calls
 			if r.Failure != "" {
 				r.Status = "FAIL"
 				t.Error(r.Failure)
@@ -348,13 +350,58 @@ type frozenReplayRound struct {
 type frozenReplayCompleter struct {
 	client *llm.Client
 	model  string
-	rounds []frozenReplayRound
+	// The speculative conversation render shares this recorder with the
+	// routing request, so the ledger is serialized and in-flight calls are
+	// counted: a cost report that silently drops one is not evidence.
+	mu       sync.Mutex
+	inFlight int
+	settled  *sync.Cond
+	rounds   []frozenReplayRound
+}
+
+func (f *frozenReplayCompleter) enter() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.settled == nil {
+		f.settled = sync.NewCond(&f.mu)
+	}
+	f.inFlight++
+}
+
+func (f *frozenReplayCompleter) leave(round frozenReplayRound) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rounds = append(f.rounds, round)
+	f.inFlight--
+	if f.settled != nil {
+		f.settled.Broadcast()
+	}
+}
+
+// waitSettled blocks until no request is outstanding, so an unconsumed
+// speculation still lands in the report before the caller reads it.
+func (f *frozenReplayCompleter) waitSettled() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.settled == nil {
+		return
+	}
+	for f.inFlight > 0 {
+		f.settled.Wait()
+	}
+}
+
+func (f *frozenReplayCompleter) recordedRounds() []frozenReplayRound {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]frozenReplayRound(nil), f.rounds...)
 }
 
 func (f *frozenReplayCompleter) Chat(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
 	if f.model != "" {
 		params.Model = shared.ChatModel(f.model)
 	}
+	f.enter()
 	started := time.Now()
 	round := frozenReplayRound{Model: string(params.Model), AllowedTools: toolParamNames(params.Tools)}
 	body, _ := json.Marshal(params.Messages)
@@ -398,6 +445,6 @@ func (f *frozenReplayCompleter) Chat(ctx context.Context, params openai.ChatComp
 		}
 	}
 	round.ElapsedMS = time.Since(started).Milliseconds()
-	f.rounds = append(f.rounds, round)
+	f.leave(round)
 	return response, err
 }
