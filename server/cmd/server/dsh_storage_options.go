@@ -13,7 +13,7 @@ import (
 
 // Aone owns the access package binding and credential rotation. The deployment
 // selects one account's provisioning identity; task input cannot select it.
-func dshStorageProvisioning(db dshhost.Database) (func(context.Context, dshhost.Key) (dshhost.Host, error), error) {
+func dshStorageProvisioning() (func(context.Context, dshhost.Database, dshhost.Key) (dshhost.Host, error), error) {
 	raw := strings.TrimSpace(os.Getenv("MULTICA_DSH_STORAGE_CONFIG"))
 	if raw == "" {
 		return nil, nil
@@ -45,8 +45,9 @@ func dshStorageProvisioning(db dshhost.Database) (func(context.Context, dshhost.
 	if err != nil {
 		return nil, err
 	}
-	m := dshhost.Provisioner{Store: dshhost.PostgresStore{DB: db}, Provider: dshhost.CloudStorageProvider{API: api, Spec: cfg.Placement}}
-	return func(ctx context.Context, key dshhost.Key) (dshhost.Host, error) {
+	storageProvider := dshhost.CloudStorageProvider{API: api, Spec: cfg.Placement}
+	return func(ctx context.Context, db dshhost.Database, key dshhost.Key) (dshhost.Host, error) {
+		m := dshhost.Provisioner{Store: dshhost.PostgresStore{DB: db}, Provider: storageProvider}
 		return m.Ensure(ctx, key, cfg.Placement)
 	}, nil
 }

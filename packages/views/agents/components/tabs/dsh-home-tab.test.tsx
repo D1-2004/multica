@@ -37,7 +37,7 @@ it("opens from one action after storage and profile preparation without caching 
   const entryUrl = "https://pre-fde-workbench.dingtalk.com/api/dsh-native/ui/access/_multica/open#entry=dnge_fixture";
   calls.entry.mockResolvedValue({ accessId: "access", entryUrl, expiresAt: new Date(Date.now()+60000).toISOString() });
   const client = show();
-  const button = await screen.findByRole("button", { name: "Open native DSH" });
+  const button = await screen.findByRole("button", { name: "Initialize filesystem and open native DSH" });
   await waitFor(() => expect(button).not.toBeDisabled());
   expect(calls.ensure).not.toHaveBeenCalled();
   await userEvent.click(button);

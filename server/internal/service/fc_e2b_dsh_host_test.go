@@ -558,3 +558,49 @@ func TestDSHProfileFailureDoesNotStrandExistingLifecycle(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareDSHTaskFilesystem(t *testing.T) {
+	key := dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}
+	for _, tc := range []struct {
+		name         string
+		provisionErr error
+		wantWaiting  bool
+	}{
+		{"ready", nil, false},
+		{"unknown create", dshhost.ErrPending, true},
+		{"competing preparation", dshhost.ErrChanged, true},
+		{"preparation timeout", context.DeadlineExceeded, true},
+		{"unavailable credentials", errors.New("unavailable credentials"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			l := &FCE2BLauncher{ProvisionDSHStorage: func(ctx context.Context, db dshhost.Database, got dshhost.Key) (dshhost.Host, error) {
+				calls++
+				if got != key {
+					t.Fatal("employee identity changed")
+				}
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) > 45*time.Second {
+					t.Fatal("provisioning is not bounded")
+				}
+				return dshhost.Host{}, tc.provisionErr
+			}}
+			err := l.prepareDSHTaskFilesystem(context.Background(), nil, key)
+			if calls != 1 {
+				t.Fatalf("cloud provisioning replayed: %d", calls)
+			}
+			if errors.Is(err, errDSHHostWaiting) != tc.wantWaiting {
+				t.Fatalf("waiting=%v error=%v", tc.wantWaiting, err)
+			}
+			if tc.provisionErr == nil && err != nil {
+				t.Fatal(err)
+			}
+			if tc.provisionErr != nil && !tc.wantWaiting && !errors.Is(err, tc.provisionErr) {
+				t.Fatalf("provisioning failure lost: %v", err)
+			}
+		})
+	}
+	if err := (&FCE2BLauncher{}).prepareDSHTaskFilesystem(context.Background(), nil, key); err == nil {
+		t.Fatal("missing provisioning configuration must not allow ephemeral fallback")
+	}
+}

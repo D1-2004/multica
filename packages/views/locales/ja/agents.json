@@ -1363,6 +1363,7 @@
       "native_prepare": "DSH を準備",
       "native_preparing": "DSH を開いています…",
       "native_enter": "DSH ネイティブページを開く",
+      "initialize_and_enter": "ファイルシステムを初期化して DSH ネイティブ画面を開く",
       "native_unconfirmed": "DSH はまだ準備できていません。プラグイン設定の状態を確認して再試行してください。"
     },
     "dsh_profile": {

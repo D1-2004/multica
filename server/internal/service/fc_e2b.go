@@ -934,6 +934,7 @@ func firstString(obj map[string]any, keys ...string) string {
 
 type FCE2BLauncher struct {
 	ReadDSHProfileSource dshprofile.ReadSource
+	ProvisionDSHStorage  func(context.Context, dshhost.Database, dshhost.Key) (dshhost.Host, error)
 	DSHArtifactSigner    interface {
 		PresignGet(context.Context, string, time.Duration) (string, error)
 	}
@@ -1519,13 +1520,25 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	if runtimeLockConn == nil {
 		return fcE2BLaunchSubmission{}, false, errors.New("employee filesystem requires a database admission connection")
 	}
-	// DSH, like every other provider, opts into persistent storage only after
-	// provisioning. Existing employees must remain runnable before that step.
+	// DSH always uses persistent employee storage; other providers opt in.
 	var useEmployeeFilesystem bool
 	if err := runtimeLockConn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM dsh_employee_host WHERE workspace_id=$1 AND agent_id=$2)`, runtime.WorkspaceID, task.AgentID).Scan(&useEmployeeFilesystem); err != nil {
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("read employee filesystem binding: %w", err)
 	}
 	filesystemScope := dshExecutionScope(dshhost.Key{WorkspaceID: uuid.UUID(runtime.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}, task)
+	if !useEmployeeFilesystem && FCE2BRuntimeProvider(runtime) == "dsh" {
+		err := l.prepareDSHTaskFilesystem(ctx, runtimeLockConn, filesystemScope.Key)
+		if errors.Is(err, errDSHHostWaiting) {
+			if _, recordErr := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "dsh_host_waiting"); recordErr != nil {
+				return fcE2BLaunchSubmission{}, false, recordErr
+			}
+			return fcE2BLaunchSubmission{}, true, nil
+		}
+		if err != nil {
+			return fcE2BLaunchSubmission{}, false, err
+		}
+		useEmployeeFilesystem = true
+	}
 	if useEmployeeFilesystem && FCE2BRuntimeProvider(runtime) == "dsh" && task.TriggerEvidenceKind.String == dshschedule.EvidenceKind {
 		execution, loadErr := dshschedule.LoadExecution(ctx, runtimeLockConn, filesystemScope.Key, uuid.UUID(task.ID.Bytes))
 		if loadErr != nil || !ScheduleExecutionMatches(task, execution) {
