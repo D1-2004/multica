@@ -191,12 +191,16 @@ func (w *CompletionWorker) resumeDWSDelivery(ctx context.Context, raw []byte, sa
 			content = "<@" + d.AtOpenDingTalkID + "> " + content
 		}
 		conversationID := d.OpenConversationID
-		if d.RecipientOpenDingTalkID != "" {
+		recipientOpenDingTalkID := d.RecipientOpenDingTalkID
+		if d.SourceOpenMessageID != "" {
+			recipientOpenDingTalkID = ""
+		} else if recipientOpenDingTalkID != "" {
 			conversationID = ""
 		}
 		receipt, err := session.Send(ctx, dwsclient.SendRequest{
 			SourceOpenMessageID: d.SourceOpenMessageID, SourceConversationID: d.OpenConversationID,
-			ConversationID: conversationID, RecipientOpenDingTalkID: d.RecipientOpenDingTalkID,
+			ReplyToOpenMsgID: d.SourceOpenMessageID,
+			ConversationID:   conversationID, RecipientOpenDingTalkID: recipientOpenDingTalkID,
 			AtOpenDingTalkID: d.AtOpenDingTalkID, IdempotencyKey: d.IdempotencyKey, Title: d.Title, Content: content,
 		})
 		if err != nil {

@@ -412,6 +412,16 @@
       "verification": "not_run"
     },
     {
+      "id": "f12_trigger_message_quote_reply",
+      "rule_ids": [
+        "COORD.F12"
+      ],
+      "context_a": "当前数字员工入站消息有可信openMsgId，Coordinator返回接单或普通回复",
+      "context_b": "同一会话还有其他消息，或触发消息ID缺失",
+      "expected_effects": "A冻结并引用回复当前触发消息；合窗任务引用所选source_ref对应消息。B不得引用同会话其他消息或按正文/昵称猜ID；实际引用与送达由钉钉quotedMessage及回执验证。",
+      "verification": "pre_passed_2026_09_16_run3108401487"
+    },
+    {
       "id": "f15_contract_stale_copy",
       "rule_ids": [
         "COORD.F15",

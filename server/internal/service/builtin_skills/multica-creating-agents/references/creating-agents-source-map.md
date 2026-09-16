@@ -295,3 +295,9 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 
 - `server/internal/service/inboundcoord/work_receipt.go`: Host owns `start_work`/`continue_work` receipt text; only the executor delivers the requested work output. Receipts follow durable work admission and do not prove completion. Mixed conversational replies remain contextual.
 - `docs/inbound-coordinator-loop.md`: current receipt, UID response and recovery contracts; previously frozen outbox payloads remain immutable.
+
+## Managed DingTalk quoted replies
+
+- `server/internal/handler/dingtalk_response.go` freezes the triggering inbound `openMsgId` in each managed response route; `dingtalk_origin_reply.go` keeps per-work-item origin selection and task/Issue recovery.
+- `server/internal/service/dingtalkresponse/provider.go` and `server/internal/dwsclient/send.go` turn that frozen locator into `dws chat +messages-reply` for Coordinator replies, work acceptance, final results, and visible failure fallback. `server/internal/integrations/agentmessagerouter/dws_delivery.go` applies the same quote locator when Router callback owns the compatible DWS delivery.
+- Host tests verify exact route selection and CLI arguments. Live acceptance additionally requires a DingTalk readback whose `quotedMessage.messageId` equals the triggering message; a callback or assistant text alone is insufficient.

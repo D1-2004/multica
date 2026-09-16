@@ -417,6 +417,21 @@ buildDispatchIssueRelayInstruction. Contract tests are in
 server/internal/handler/coordinator_issue_relay_test.go; passing them would prove
 the projection and gates, not real recipient delivery.
 
+Managed response routes freeze the triggering inbound `openMsgId` together with
+the callback destination. Coordinator speech, work acceptance, terminal result,
+and visible failure fallback therefore use DWS quoted reply against that exact
+message. The route never derives an ID from display text or a nickname. For a
+window item, task context may provide the more specific selected evidence ID;
+already-frozen older routes are not rewritten. Acceptance remains distinct from
+delivery: verify the provider receipt and the DingTalk message's `quotedMessage`.
+
+When an older subscription does not supply a managed response policy, Router's
+callback response owns DWS delivery. Its immutable `sourceOpenMessageId` is both
+the source used to resolve the original sender and the `ReplyToOpenMsgID`; the
+callback worker keeps the source CID and invokes the same quoted-reply client.
+If an older callback does not contain this field, direct-message fallback keeps
+its previous target and does not invent a quote locator.
+
 ### Coordinator non-terminal waiting permission
 
 A new Coordinator job freezes a separate Host-only

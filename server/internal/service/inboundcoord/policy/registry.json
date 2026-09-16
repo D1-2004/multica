@@ -970,13 +970,15 @@
       "case_ids": [
         "f12_contrast",
         "f12_exact_result_report",
-        "f12_redelivery_single_sender"
+        "f12_redelivery_single_sender",
+        "f12_trigger_message_quote_reply"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
-        "work_receipt_2026_09_15": ".8 pre run3108396520 original failed work case, modification, exact body resend and separate new work delivered once; frozen ACK database tests passed; see final E2E report for retained failures and versions"
+        "work_receipt_2026_09_15": ".8 pre run3108396520 original failed work case, modification, exact body resend and separate new work delivered once; frozen ACK database tests passed; see final E2E report for retained failures and versions",
+        "trigger_message_quote_reply_2026_09_16": "passed pre run3108401487: direct conversation reply, work acceptance and final result quoted the exact trigger message; first run3108400116 failure retained in report"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/completion.md",
@@ -986,7 +988,15 @@
         "server/internal/service/inboundcoord/contextual_reply_test.go",
         "docs/plans/2026-09-15-coordinator-contextual-replies.md",
         "server/internal/service/inboundcoord/work_receipt.go",
-        "server/internal/service/inboundcoord/work_receipt_test.go"
+        "server/internal/service/inboundcoord/work_receipt_test.go",
+        "server/internal/handler/dingtalk_response.go",
+        "server/internal/handler/dingtalk_origin_reply.go",
+        "server/internal/service/dingtalkresponse/provider.go",
+        "server/internal/dwsclient/send.go",
+        "server/internal/handler/dingtalk_response_test.go",
+        "server/internal/integrations/agentmessagerouter/dws_delivery.go",
+        "server/internal/integrations/agentmessagerouter/dws_delivery_test.go",
+        "docs/reports/2026-09-16-dingtalk-trigger-quoted-reply-e2e.md"
       ],
       "case_file": "cases.json"
     },
