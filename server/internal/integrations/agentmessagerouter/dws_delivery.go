@@ -187,8 +187,8 @@ func (w *CompletionWorker) resumeDWSDelivery(ctx context.Context, raw []byte, sa
 	}
 	if state.OpenTaskID == "" {
 		content := d.Text
-		if d.AtOpenDingTalkID != "" {
-			content = "<@" + d.AtOpenDingTalkID + "> " + content
+		if mention := dwsclient.MentionToken(d.AtOpenDingTalkID); mention != "" && !strings.Contains(content, mention) {
+			content = mention + " " + content
 		}
 		conversationID := d.OpenConversationID
 		recipientOpenDingTalkID := d.RecipientOpenDingTalkID

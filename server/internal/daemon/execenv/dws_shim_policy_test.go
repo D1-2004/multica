@@ -228,3 +228,38 @@ func TestDWSMessagePolicyShimPinsExecutable(t *testing.T) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}
 }
+
+// The quote reply is auto-addressed to the quoted sender and takes no at list,
+// so the executor's own addressing placeholder must not double the mention.
+func TestRewriteDWSOriginReplyDropsDuplicateSenderMention(t *testing.T) {
+	t.Parallel()
+	policy := &protocol.DingTalkMessagePolicy{
+		ReplyToOpenMsgID: "msg-origin", ReplyConversationID: "cid-origin",
+		ReplyToSenderOpenDingTalkID: "asker",
+	}
+	send := []string{"chat", "message", "send", "--conversation-id", "cid-origin",
+		"--at-open-dingtalk-ids", "asker", "--content", "<@asker> 具体日期范围补充说明", "--idempotency-key", "k"}
+	want := []string{"chat", "+messages-reply", "--group", "cid-origin", "--message-id", "msg-origin",
+		"--content", "具体日期范围补充说明", "--idempotency-key", "k", "--yes", "--format", "json"}
+	if got := RewriteDWSOriginReply(send, policy); !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+	// A mention of anybody else cannot survive a quote reply, so keep the send.
+	for _, extra := range [][]string{
+		{"--at-open-dingtalk-ids", "asker,colleague"},
+		{"--at-all"},
+		{"--at-mobiles", "13800000000"},
+		{"--at-user-ids", "1234"},
+	} {
+		args := append([]string{"chat", "message", "send", "--conversation-id", "cid-origin", "--content", "结论"}, extra...)
+		if got := RewriteDWSOriginReply(args, policy); !reflect.DeepEqual(got, args) {
+			t.Fatalf("rewrote %v: %#v", extra, got)
+		}
+	}
+	// Without a known quoted sender an at list is equally unsafe to drop.
+	unknown := &protocol.DingTalkMessagePolicy{ReplyToOpenMsgID: "msg-origin", ReplyConversationID: "cid-origin"}
+	args := []string{"chat", "message", "send", "--conversation-id", "cid-origin", "--at-open-dingtalk-ids", "asker", "--content", "<@asker> 结论"}
+	if got := RewriteDWSOriginReply(args, unknown); !reflect.DeepEqual(got, args) {
+		t.Fatalf("rewrote unknown-sender send: %#v", got)
+	}
+}

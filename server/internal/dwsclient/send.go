@@ -106,6 +106,16 @@ func (c CLI) Send(ctx context.Context, configDir string, req SendRequest) (SendR
 			req.RecipientOpenDingTalkID = sender
 		}
 	}
+	if strings.TrimSpace(req.ReplyToOpenMsgID) != "" && req.AtOpenDingTalkID != "" {
+		// A quote reply carries the platform's own @ of the quoted sender and
+		// takes no at list. Drop the addressing placeholder so the reply does
+		// not mention the same person twice. A message that is nothing but
+		// that mention keeps it, because an empty reply cannot be sent.
+		if stripped := StripLeadingMention(req.Content, req.AtOpenDingTalkID); strings.TrimSpace(stripped) != "" {
+			req.Content = stripped
+		}
+		req.AtOpenDingTalkID = ""
+	}
 	args, err := sendArgs(req)
 	if err != nil {
 		return SendResult{}, err
