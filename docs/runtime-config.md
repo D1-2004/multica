@@ -83,7 +83,9 @@ See [the complete example](runtime-config.example.json) for schema version 1.
 
 `size_limit` is bytes (100 GiB above). `file_count_limit` is a count (one billion above). Missing sections use these defaults. Every new provisioning request reads the current Diamond snapshot; accepted changes need no application restart. An existing provisioning intent retains its persisted quota across retries. Existing cloud spaces are unchanged; use the NAS quota API to resize those explicitly.
 
-Cloud placement and the managed credential resource binding remain in `MULTICA_DSH_STORAGE_CONFIG`. In Diamond mode its quota fields are ignored; credentials never enter Diamond. Environment-only deployments retain their configured quotas.
+`runtime.agentic_fs.placement` contains `account_id`, `region`, `zone`, `team_id`, `file_system_id`, `vpc_id`, `security_group_id`, and `vswitch_ids`. `runtime.agentic_fs.credential_resource` contains the Normandy access-package resource reference, not key material. Actual credentials continue to resolve through the managed provider. When placement is present, the entire legacy `MULTICA_DSH_STORAGE_CONFIG` value is ignored, even if malformed. Logs explicitly record `source=diamond` and effective quotas.
+
+During initial migration, a missing placement permits the existing deployment configuration so rolling instances keep provisioning. After publishing complete placement and verifying `source=diamond`, remove `MULTICA_DSH_STORAGE_CONFIG` from both Aone environment traits. Subsequent starts and provisioning use Diamond without that environment variable. Environment-only/self-hosted deployments retain the existing explicit environment mode.
 
 For the initial schema rollout, deploy this binary against the existing document first, then add `runtime.agentic_fs` separately in `pre` and `sh`. Older binaries reject unknown fields, so do not publish the new section while older replicas might restart. Subsequent quota changes only require a Diamond configuration publication.
 

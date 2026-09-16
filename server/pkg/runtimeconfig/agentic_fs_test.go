@@ -18,12 +18,12 @@ func TestAgenticFSQuotaValidation(t *testing.T) {
 		quota AgenticFSConfig
 		valid bool
 	}{
-		{"maximum file count", AgenticFSConfig{100 << 30, 1000000000}, true},
-		{"over file maximum", AgenticFSConfig{100 << 30, 1000000001}, false},
-		{"below minimum", AgenticFSConfig{100 << 30, 9999}, false},
-		{"negative size", AgenticFSConfig{-1, 1000000000}, false},
-		{"fractional GiB", AgenticFSConfig{100<<30 + 1, 1000000000}, false},
-		{"partial config", AgenticFSConfig{100 << 30, 0}, false},
+		{"maximum file count", AgenticFSConfig{SizeLimit: 100 << 30, FileCountLimit: 1000000000}, true},
+		{"over file maximum", AgenticFSConfig{SizeLimit: 100 << 30, FileCountLimit: 1000000001}, false},
+		{"below minimum", AgenticFSConfig{SizeLimit: 100 << 30, FileCountLimit: 9999}, false},
+		{"negative size", AgenticFSConfig{SizeLimit: -1, FileCountLimit: 1000000000}, false},
+		{"fractional GiB", AgenticFSConfig{SizeLimit: 100<<30 + 1, FileCountLimit: 1000000000}, false},
+		{"partial config", AgenticFSConfig{SizeLimit: 100 << 30, FileCountLimit: 0}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			cfg.Runtime.AgenticFS = test.quota

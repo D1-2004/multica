@@ -215,6 +215,11 @@ func (s *Service) Close() error {
 
 func cloneSnapshot(in Snapshot) Snapshot {
 	out := in
+	if in.Config.Runtime.AgenticFS.Placement != nil {
+		placement := *in.Config.Runtime.AgenticFS.Placement
+		placement.VSwitchIDs = append([]string(nil), placement.VSwitchIDs...)
+		out.Config.Runtime.AgenticFS.Placement = &placement
+	}
 	out.Config.Web.SiteConnectSrc = append([]string(nil), in.Config.Web.SiteConnectSrc...)
 	out.Config.Web.CORSAllowedOrigins = append([]string(nil), in.Config.Web.CORSAllowedOrigins...)
 	out.Config.Web.LoginProviders = append([]string(nil), in.Config.Web.LoginProviders...)
