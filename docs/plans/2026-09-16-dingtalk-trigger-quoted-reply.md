@@ -39,4 +39,6 @@
 
 `ReplyToSenderOpenDingTalkID` 只从已冻结事件中与该 `openMsgId` 精确匹配的消息取，取不到保持未知。旧任务冻结的策略没有该字段，退化成“带 at 的发送不改写成引用回复”，不会产生双 @。
 
-验收：`dwsclient`、`execenv`、`agentmessagerouter`、`dingtalkresponse` 与 handler 的相关用例通过，`internal/handler` 失败集合与 `bcc139f68` 基线逐条相同（本地库既有问题）。执行器 shim 分支随沙箱镜像里的 `multica` 生效，本次服务端发布不覆盖它。预发群回归见下方发布记录。
+验收：`dwsclient`、`execenv`、`agentmessagerouter`、`dingtalkresponse` 与 handler 的相关用例通过，`internal/handler` 失败集合与 `bcc139f68` 基线逐条相同（本地库既有问题）。执行器 shim 分支随沙箱镜像里的 `multica` 生效，本次服务端发布不覆盖它，本轮未实测。
+
+CR 36159468 随 run 3108452697 部署预发成功（代码合并/构建/预发部署/预发集成测试全 SUCCESS，`/health` 正常）；发布分支 `releases/20260916101607562_r_release_342160_dt-fde-multica-code` 包含 `64e31751b`，且本次涉及文件与本地逐字节一致。预发群 `cidVaO557dsSgYcgnvRNbwY4g==` 回读四条托管出站（对话回复×2、工作接单回执、任务结果回报），`@` 均只出现一次且正文无 `<@...>` 占位符；修复前的平台行为对照实验一并保留。详见 `docs/reports/2026-09-16-dingtalk-trigger-quoted-reply-e2e.md` 的「群聊双@回归」。

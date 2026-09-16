@@ -305,4 +305,6 @@ start_work/continue_work的接单回复由Host生成，模型仅可选择闭合r
 
 现行合同：`purpose` 复述用户请求的交付物与对象原话，不设计方法，也不添加窗口未请求的处理、转交、评审或审批步骤；任何动作的 reply 同样不先替员工承诺某条处理路径。用户自己说明的方法照常保留，完整岗位工作流仍归执行器。工作审查（`finish_check_work`）对越界 purpose 返回 revise，在 reason 点名要去掉的步骤并要求回到被请求的结果；它只判断范围，不改写计划、不新增权限，也不因此放宽 single/target_match 校验。规则归属 COORD.F04，正反例见 `f04_requested_outcome_vs_invented_method`。
 
-本轮只做提示词与审查层收窄：模块 `inbound` 升 29、`finish_check_work` 升 22，预算相应上调，无工具 schema、Host 守卫或状态机变化。结构检查通过；模型回放与真实派工证据待预发回归回填，案例保持 `not_run`。
+本轮只做提示词与审查层收窄：模块 `inbound` 升 29、`finish_check_work` 升 22，预算相应上调，无工具 schema、Host 守卫或状态机变化。结构检查通过。
+
+预发同轮观察（2026-09-16 13:08/13:13，群 `cidVaO557dsSgYcgnvRNbwY4g==`）：「你去查一下到底什么原因」派出 WS-271 `冬翔委托：排查预发工作台登录转圈超时问题，定位具体原因`；与璟琦同形的纯抱怨「切工作区每次都要整个重新加载，慢…再不解决我天天跟你念叨」派出 WS-272 `冬翔委托：排查工作台切换工作区时全量重新加载导致的性能问题，定位具体原因`，都没有出现被发明的整理/提交/审批步骤。这是正样本观察，未对同一窗口跑修复前提示词做 A/B，模型回放仍缺，案例保持 `not_run`。证据见 `docs/reports/2026-09-16-dingtalk-trigger-quoted-reply-e2e.md`。
