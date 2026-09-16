@@ -75,14 +75,17 @@ func coordinatorWaitText(plan *inboundcoord.Decision, reason string) string {
 	if remaining == 0 {
 		return ""
 	}
-	prefix := "这次请求已保存，但新的执行还没开始。"
+	// Say what actually happened in the person's own terms: the request is
+	// recorded, nothing has started yet, and what it is waiting on. Internal
+	// wording like 名额/槽位 tells the user nothing they can act on.
+	prefix := "这条我记下了，还没开始做。"
 	if remaining < len(plan.Items) {
-		prefix = "剩余请求已保存，但剩余部分还没开始。"
+		prefix = "剩下的部分我记下了，还没开始做。"
 	}
-	if strings.Contains(reason, "two in-flight matters") {
-		return prefix + "当前处理名额已满，空出名额后会继续。"
+	if isSceneCapacityReason(reason) {
+		return prefix + "你前面交代的事我还在处理，忙完接着做这条。"
 	}
-	return prefix + "同一事项还有任务未结束，结束后会继续。"
+	return prefix + "同一件事上一轮还没结束，结束后接着做。"
 }
 
 // persistCoordinatorWait is a Host-only effect of a claimed, validated plan.

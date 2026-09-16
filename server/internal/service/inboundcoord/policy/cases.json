@@ -128,8 +128,8 @@
       "rule_ids": [
         "COORD.F09"
       ],
-      "context_a": "两槽忙时你在吗",
-      "context_b": "两槽忙时第三项真实工作",
+      "context_a": "同一委托人两件在做时的问候",
+      "context_b": "同一委托人两件在做时的第三项真实工作",
       "expected_effects": "前者及时回复；后者判断后持久排队，不报完成",
       "verification": "not_run"
     },
@@ -1406,6 +1406,42 @@
       "context_b": "用户明确说按VOC流程整理并提交审批",
       "expected_effects": "前者purpose只保留被请求的结果与对象，审查revise掉自造的整理/提交待审批步骤；后者保留用户自己说明的方法",
       "verification": "not_run"
+    },
+    {
+      "id": "f09_scene_capacity_is_per_delegator",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F09"
+      ],
+      "context_a": "群里甲已有两件在执行，乙提出新工作；某件只是定时待触发或非running且长期未推进；同一人两句话分别带 staffId 与 openDingTalkId。",
+      "context_b": "甲自己再提新工作；在飞事项没有任何人归属；乙续办甲的历史事项。",
+      "expected_effects": "A按「场景×委托人」计容量：乙照常受理，定时待触发与超过在飞判定的非running事项不占名额；同一人的不同标识经 assoc_person_alias 双向归一到同一份预算，合窗里也只算一份。B甲等待下一窗口；无人归属的在飞事项计入每个委托人；乙续办他人事项时按当前委托人补建 task_person 归属，下一窗口按乙计费。缺失身份不凭措辞或显示名归属，整体退回按场景计数。容量只在执行时生效，不阻止新窗口判断聊天。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/inbound_coordinator_window_integration_test.go#TestCoordinatorSceneCapacityIsPerDelegatorAndBounded",
+        "server/internal/handler/inbound_coordinator_window_integration_test.go#TestSceneCapacityFollowsThePersonAcrossIdentifiers",
+        "server/internal/handler/inbound_coordinator_window_integration_test.go#TestCoordinatorFreshWindowJudgedAtCapacity",
+        "server/internal/handler/inbound_coordinator_collect_test.go#TestSceneDelegatorDoesNotInferIntent",
+        "server/internal/handler/inbound_coordinator_collect_test.go#TestSceneDelegatorGroupsOneSpeakerOnce"
+      ],
+      "verification": "partially_verified_pre",
+      "evidence_status": "pre_release_conversation",
+      "evidence_note": "pre_verified_2026-09-16: 预发群 cidVaO557dsSgYcgnvRNbwY4g== 真实对话；冬翔两件在飞后第三条 park 并收到新等待文案（coord_trace eef25125-53a8-4404-9e8f-489925abb925），dxxh 同群新请求不受影响直接受理（bfe2f1b2），dxxh 的任务完成不释放冬翔名额、冬翔自己的任务完成后排队窗口 15:19:21 自动开跑。等待上限豁免、deferred/fire_at 与 alias 归一仍只有本地数据库用例。"
+    },
+    {
+      "id": "f09_capacity_wait_has_deadline",
+      "rule_ids": [
+        "COORD.F09"
+      ],
+      "context_a": "因场景容量park的窗口等待超过上限，占用名额的执行不由本循环控制；或合窗里甲的事项已提交、只剩乙的未开始而乙有名额。",
+      "context_b": "仍在上限内；或park原因是同Issue已有未结束任务。",
+      "expected_effects": "A到期后停止继续park，本轮豁免容量直接执行并记录waived事件，仍只发一次等待说明，不追加第二条通知；重试前置检查按计划中未完成项的委托人判断，只要还有人能开工就不park。B继续按原节奏等待；同事项重复执行保护不因等待时长或豁免被放行。park原因同时识别升级前后的写法。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/inbound_coordinator_window_integration_test.go#TestCoordinatorSceneCapacityIsPerDelegatorAndBounded",
+        "server/internal/handler/inbound_coordinator_collect_test.go#TestSceneCapacityReasonMatchesLimit"
+      ],
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "重试前置检查与等待恢复已在预发观察到（park 8.5 分钟后自动开跑，未触发 10 分钟豁免）；豁免路径本身仍只有本地数据库用例，不记为通过。"
     }
   ]
 }

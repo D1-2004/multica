@@ -1150,8 +1150,9 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	// only on execution, including the LLM-unavailable fallback.
 	if decision.Action == inboundcoord.ActionContinue && c.CompletionCallback != nil &&
 		c.Event.Domain == "channel" && c.Event.Type == "message.created" &&
-		!c.ProactiveConversation && sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c)) <= 0 {
-		writeError(w, http.StatusConflict, "scene already has two in-flight matters")
+		!c.ProactiveConversation &&
+		sceneCapacitySlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchSceneDelegator(c)) <= 0 {
+		writeError(w, http.StatusConflict, sceneCapacityRejectReason())
 		return
 	}
 
@@ -1200,7 +1201,9 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		}
 		decision.Items = items
 		pending := 0
-		newNeeded := 0
+		// Capacity is spent per delegator, so a collected window counts each
+		// speaker's new matters against that person's own slots.
+		var needs []sceneDelegatorNeed
 		for i, item := range items {
 			if planItemCompleted(decision, item.ActionKey) {
 				continue
@@ -1210,6 +1213,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			}
 			pending++
 			key := windowItemKey(idempotencyKey, item, i)
+			itemCommand := windowItemCommand(c, item)
 			if item.IssueID != "" {
 				_, lookupErr := h.Queries.GetExternalIssueFollowUpTaskID(r.Context(), db.GetExternalIssueFollowUpTaskIDParams{WorkspaceID: dispatchContext.WorkspaceID, AgentID: agent.ID, IdempotencyKey: key})
 				if lookupErr == nil {
@@ -1219,18 +1223,20 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 					writeError(w, 500, "cannot verify continuation admission")
 					return
 				}
-			} else {
-				itemCommand := windowItemCommand(c, item)
-				if _, _, _, ok := h.lookupCoordinatorWindowItem(r.Context(), agent.ID, key, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID); ok {
-					continue
+			} else if _, _, _, ok := h.lookupCoordinatorWindowItem(r.Context(), agent.ID, key, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID); ok {
+				continue
+			}
+			needs = addSceneDelegatorNeed(needs, resolveSceneDelegator(
+				r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchSceneDelegator(itemCommand),
+			))
+		}
+		if !c.ProactiveConversation {
+			for _, need := range needs {
+				if need.needed > sceneCapacitySlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, need.delegator) {
+					writeError(w, http.StatusConflict, sceneCapacityRejectReason())
+					return
 				}
 			}
-			newNeeded++
-		}
-		slots := sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c))
-		if !c.ProactiveConversation && newNeeded > slots {
-			writeError(w, http.StatusConflict, "scene already has two in-flight matters")
-			return
 		}
 		var firstIssueID, firstTaskID, firstIdentifier string
 		var firstIssue db.Issue
@@ -1279,6 +1285,14 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 					} else {
 						writeError(w, 500, "failed to commit coordinator continuation")
 					}
+					return
+				}
+				// The person who pushed this matter forward now owns an
+				// execution in this scene. Without this binding the matter
+				// keeps its original delegator, and capacity would admit the
+				// current one again on the next window.
+				if err := h.associateDispatchIssue(r.Context(), itemCommand, dispatchContext, result.IssueID, issue.Title, result.TaskID, item.Content, itemDecision); err != nil {
+					writeError(w, 500, "failed to bind coordinator continuation")
 					return
 				}
 				if err := recordPlanItem(r.Context(), &decision, item, result); err != nil {

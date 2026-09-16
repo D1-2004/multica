@@ -382,7 +382,7 @@ func TestCoordinatorWindowPlanRecoversCommittedEffectWithoutCheckpoint(t *testin
 	if count != 1 {
 		t.Fatalf("crash recovery duplicated %d tasks", count)
 	}
-	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, ConversationID: f.command.Event.Data.Conversation.OpenConversationID})
+	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, ConversationID: f.command.Event.Data.Conversation.OpenConversationID, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
 	if err != nil || active != 1 {
 		t.Fatalf("recovered work must repair scene binding for recall and capacity: active=%d err=%v", active, err)
 	}
@@ -418,7 +418,7 @@ func TestCoordinatorWindowPlanContinuationAlsoConsumesSceneCapacity(t *testing.T
 	}
 	f.plan(t, "", old)
 	first := f.dispatch(t)
-	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, ConversationID: f.command.Event.Data.Conversation.OpenConversationID})
+	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, ConversationID: f.command.Event.Data.Conversation.OpenConversationID, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
 	if first.Code != http.StatusConflict || err != nil || active > 2 {
 		t.Fatalf("new work plus an idle-Issue continuation need two execution slots: status=%d active=%d err=%v body=%s", first.Code, active, err, first.Body.String())
 	}

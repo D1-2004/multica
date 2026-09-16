@@ -10,6 +10,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 
 修改 Coordinator 的提示词、工具、上下文、handler、assoc、scenememory、窗口、回执或 trace 前，先读本文件和 [规则目录](../server/internal/service/inboundcoord/policy/registry.json)。目录登记 `COORD.F01`–`COORD.F19` 的行为义务、模块、实现引用、对照案例和已撤回手段。
 
+- [场景容量按委托人计 Plan](plans/2026-09-16-coordinator-scene-capacity-per-delegator.md) 记录正式 oa测试群 连发三条 VOC 诉求被「名额已满」挡住的证据、容量改按「场景×委托人」、在飞判定与等待上限；
 - [目录/记忆伪造权限 Plan](plans/2026-09-14-coordinator-invented-access-limit.md) 记录审核用协调目录和场域记忆发明 MCP 权限、把建单降级成文案单再死锁，以及 Host 放行合法 start_work、把 different_deliverable 改写成 start_work 的合同；
 - [同类批量变更被误拆 Plan](plans/2026-09-14-coordinator-same-kind-batch.md) 记录正式 oa测试群 金龙把两类负责人改配判成独立交付并 review_deadlock 的证据、合同收窄与 Host 修复；
 - [历史预取与轻量问候免审 Plan](plans/2026-09-10-coordinator-history-prefetch.md) 记录冬翔→菲迪→须莫代问链路的触发证据、89 轮扫描统计、历史预取/免审/转告规则与验证状态；
@@ -176,9 +177,13 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 自然语言意图由LLM判断并审查。Host不再用ACK、停止回复、工具名称或诊断编号词表决定静默、拆窗或工作关联；自发事件、监听范围、去重与持久化状态继续按协议事实检查。
 
-collect 只按入站来源和生命周期区分，普通提问与礼貌收尾可在同一窗口。collect 只合并正在输入的消息：4 秒静默，创建起最多 12 秒。封窗、已 claim、重试或挂起的窗口不再吸收新消息。同 scene 同时一个 Coordinator 窗口，沙箱执行仍受两槽保护；容量不能阻止新窗口判断聊天。collect/park 不提前 sync-silence 完成，回执随真实处理关闭。
+collect 只按入站来源和生命周期区分，普通提问与礼貌收尾可在同一窗口。collect 只合并正在输入的消息：4 秒静默，创建起最多 12 秒。封窗、已 claim、重试或挂起的窗口不再吸收新消息。同 scene 同时一个 Coordinator 窗口，沙箱执行仍受容量保护；容量不能阻止新窗口判断聊天。collect/park 不提前 sync-silence 完成，回执随真实处理关闭。
 
-已判断并保存的工作仍有未提交项，因容量或同Issue busy停放时，Host可提供一次真实等待说明：计划已保存、相关新执行尚未开始；部分成功只描述剩余项，不冒充任务已入队/运行。仅处理持有当前lease的job；主动会话及task_finished不新增该notice。每job的_coordinator_wait标记、本地message和具备冻结等待资格的响应outbox同事务、稳定键去重；不修改原计划/CompletedActionKeys，不消费原completion callback，也不使用终结coordinator消息类型。新job以Host字段_coordinator_wait_delivery v1冻结enabled、revision与发送input：要求response_enabled/inbound_coordinator开启、revision>=1，普通digital_employee/channel/message.created且DWS出站、非cancel/proactive/task_finished，可信DWS UID/org/CID及Host callback target齐全；单聊还需明确sender openID。入站查询在事务外最多2秒，失败冻结disabled。等待资格与legacy/managed最终结果归属独立，不能被公开wire提供。
+执行容量按「场景 × 委托人」计（`SceneDelegatorMaxInFlightMatters`，当前 2），归属取 assoc 的 `task_person` 边，人按 `assoc_person_alias` 双向归一（输入 → canonical person_key → 该人其它别名），所以同一人的 uid/staffId/openDingTalkId 算同一份预算，合窗内分组也用同一份闭包。续办他人事项成功后按当前委托人补建归属，否则准入算在当前发言人头上、执行却仍记在原委托人名下。一个人把自己的名额用满时只有他自己等待，同群其他人照常受理；合窗里每位发言人各自结算自己的新增事项。在飞只含 `queued/dispatched/running/waiting_local_directory`：`deferred` 与 `fire_at` 在未来的事项是排期或等外部输入，不占名额；非 running 的行超过在飞判定（2 小时）也不再占名额，running 由 daemon 心跳自证存活、长跑合法占用（真正卡死由 `cmd/server/runtime_sweeper.go` 负责失败）。没有任何 `task_person` 归属的在飞事项计入每个委托人，缺失身份不凭措辞或显示名归属；委托人身份不可信时退回按场景计数。单窗口一次最多起两项（`SceneWindowMaxItems`）不变。
+
+一个窗口等待容量有上限（10 分钟，从 job 创建起算）。到期后该轮通过 worker context 的容量豁免直接执行并记 `inbound_coordinator_scene_capacity_waived`，不再重复 5 秒 park；等待说明仍只发一次，不追加第二条通知。重试前置检查按持久化计划里未完成项各自的委托人判断，只要还有人有名额就进入逐项准入，不让合窗首位发言人的满额挡住其他人。豁免只针对场景容量：同 Issue 已有未结束任务的 park 是重复执行保护，不因等待时长放行，事务内的 active-task 检查仍是最终保护。新 park 原因保留旧前缀、新二进制同时识别两种写法，滚动发布期间旧副本按旧的场景总量语义继续工作。
+
+已判断并保存的工作仍有未提交项，因容量或同Issue busy停放时，Host可提供一次真实等待说明：计划已保存、相关新执行尚未开始；部分成功只描述剩余项，不冒充任务已入队/运行。说明用委托人能理解的话讲清已记下、尚未开始以及在等什么（容量说「你前面交代的事还在处理」，同事项busy说「同一件事上一轮还没结束」），不出现名额、槽位、队列等内部说法。真正开始执行时由该工作原本的接单回复回传，不另发一条「开始处理」。仅处理持有当前lease的job；主动会话及task_finished不新增该notice。每job的_coordinator_wait标记、本地message和具备冻结等待资格的响应outbox同事务、稳定键去重；不修改原计划/CompletedActionKeys，不消费原completion callback，也不使用终结coordinator消息类型。新job以Host字段_coordinator_wait_delivery v1冻结enabled、revision与发送input：要求response_enabled/inbound_coordinator开启、revision>=1，普通digital_employee/channel/message.created且DWS出站、非cancel/proactive/task_finished，可信DWS UID/org/CID及Host callback target齐全；单聊还需明确sender openID。入站查询在事务外最多2秒，失败冻结disabled。等待资格与legacy/managed最终结果归属独立，不能被公开wire提供。
 
 停放发送仅用此快照，复核workspace/Agent/CID、当前Host target及完整发送身份；disabled/未知版本不回退。旧无快照managed job仍可用原冻结route，旧legacy无快照只本地说明，不因后续开关开启追补IM。collect比较等待资格enabled/revision/身份/目标，变化或旧无快照则拆窗；同群不同发言人可合并但保留原冻结recipient。普通发送入口拒绝调用者自带等待标记；缺资格仅本地反馈，不绕过发送范围。
 
