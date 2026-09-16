@@ -206,12 +206,13 @@ type ASBBUCIdentityGrant struct {
 }
 
 type ASBHTTPError struct {
-	RetryAfter   time.Duration
-	Operation    string
-	StatusCode   int
-	RequestID    string
-	ErrorCode    string
-	ErrorMessage string
+	identityReason *asbIdentityFailureReason
+	RetryAfter     time.Duration
+	Operation      string
+	StatusCode     int
+	RequestID      string
+	ErrorCode      string
+	ErrorMessage   string
 }
 
 func (e *ASBHTTPError) Error() string {
@@ -226,6 +227,9 @@ func (e *ASBHTTPError) runtimeStartUserDetail() string {
 		return ""
 	}
 	diagnostics := make([]string, 0, 2)
+	if e.identityReason != nil {
+		return e.identityReason.detail + " " + e.Error()
+	}
 	if e.ErrorCode != "" {
 		diagnostics = append(diagnostics, "code="+e.ErrorCode)
 	}
@@ -995,13 +999,21 @@ func newASBHTTPError(operation string, response *http.Response, encoded []byte) 
 	if payload.Message == "" {
 		payload.Message = payload.Reason
 	}
+	var identityReason *asbIdentityFailureReason
+	if operation == "attach_buc_identity" {
+		// Extract the diagnostic signature before truncating the long wgclient
+		// exception. The root cause often follows the tunnel-check traceback.
+		identityReason = asbIdentityReason(payload.Code + " " + payload.Message)
+		payload.Message = sanitizeASBIdentityDetail(payload.Message)
+	}
 	return &ASBHTTPError{
-		RetryAfter:   parseASBRetryAfter(response.Header.Get("Retry-After"), time.Now()),
-		Operation:    operation,
-		StatusCode:   response.StatusCode,
-		RequestID:    sanitizeASBDiagnosticValue(requestID, 128),
-		ErrorCode:    sanitizeASBDiagnosticValue(payload.Code, 128),
-		ErrorMessage: sanitizeASBDiagnosticValue(payload.Message, 512),
+		identityReason: identityReason,
+		RetryAfter:     parseASBRetryAfter(response.Header.Get("Retry-After"), time.Now()),
+		Operation:      operation,
+		StatusCode:     response.StatusCode,
+		RequestID:      sanitizeASBDiagnosticValue(requestID, 128),
+		ErrorCode:      sanitizeASBDiagnosticValue(payload.Code, 128),
+		ErrorMessage:   sanitizeASBDiagnosticValue(payload.Message, 512),
 	}
 }
 
