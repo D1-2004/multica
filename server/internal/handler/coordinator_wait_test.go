@@ -184,12 +184,37 @@ func TestCoordinatorWaitFailureDoesNotBlockPark(t *testing.T) {
 func TestCoordinatorWaitTextDoesNotClaimAllWorkIsUnstartedAfterPartialCommit(t *testing.T) {
 	d := &inboundcoord.Decision{Action: inboundcoord.ActionIssue, Items: []inboundcoord.WindowItem{{ActionKey: "a"}, {ActionKey: "b"}}, CompletedActionKeys: []string{"a"}}
 	text := coordinatorWaitText(d, "issue_busy")
-	if !strings.Contains(text, "剩余部分") || strings.Contains(text, "已入队") || strings.Contains(text, "正在执行") {
+	if !strings.Contains(text, "剩下的部分") || strings.Contains(text, "已入队") || strings.Contains(text, "正在执行") {
 		t.Fatal(text)
 	}
 	d.CompletedActionKeys = []string{"a", "b"}
 	if coordinatorWaitText(d, "issue_busy") != "" {
 		t.Fatal("fully committed work emitted waiting notice")
+	}
+}
+
+// The waiting notice explains the wait in the delegator's own terms. Internal
+// capacity vocabulary (名额/槽位/队列) gives the user nothing to act on.
+func TestCoordinatorWaitTextExplainsTheWaitWithoutInternalVocabulary(t *testing.T) {
+	d := &inboundcoord.Decision{Action: inboundcoord.ActionIssue, Items: []inboundcoord.WindowItem{{ActionKey: "a"}}}
+	capacity := coordinatorWaitText(d, sceneCapacityRejectReason())
+	if !strings.Contains(capacity, "还没开始做") || !strings.Contains(capacity, "你前面交代的事") {
+		t.Fatal(capacity)
+	}
+	busy := coordinatorWaitText(d, "recalled issue already has a pending agent task")
+	if !strings.Contains(busy, "同一件事") {
+		t.Fatal(busy)
+	}
+	for _, text := range []string{capacity, busy} {
+		for _, banned := range []string{"名额", "槽", "队列", "并发"} {
+			if strings.Contains(text, banned) {
+				t.Fatalf("waiting notice leaked internal vocabulary %q: %s", banned, text)
+			}
+		}
+	}
+	// A pre-upgrade parked job still carries the old reason wording.
+	if coordinatorWaitText(d, "scene already has two in-flight matters") != capacity {
+		t.Fatal("legacy capacity reason must resolve to the same explanation")
 	}
 }
 
