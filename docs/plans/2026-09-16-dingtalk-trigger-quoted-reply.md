@@ -24,3 +24,21 @@
 完成。响应路由保存默认触发消息和明确选择的 `WindowEvidenceID`，回调生成的托管action继续持有同一消息ID；reaction/空消息不被猜成触发消息；托管provider和Router callback兼容发送器都使用 `+messages-reply --message-id`。缺失source消息的旧回调仍走原单聊退路。Host/provider/Router恢复与后端构建通过，policy结构检查通过。
 
 最新develop的全新本地库存在既有271/9025迁移顺序问题，本次测试在隔离worktree库中按仓库现有SQL补齐所需fork表后运行，不修改预发数据库。首次预发run3108400116部署成功，但普通对话回读没有引用，暴露并定位第二条兼容路径；该失败保留。修订源码516c06293在run3108401487重新部署，部署/集成测试及health成功。冬翔→东翔测试号真实单聊验证：普通回复、工作接单、工作最终正文的 `quotedMessage.messageId` 均精确等于各自触发消息；工作终态后二次回读没有重复正文。只有该单聊存在真实订阅，群聊由Host选择和DWS参数测试覆盖，不冒充群IM实测。详见 `docs/reports/2026-09-16-dingtalk-trigger-quoted-reply-e2e.md`。
+
+## 群聊双 @ 回归（2026-09-16）
+
+上面的验收只覆盖单聊，群聊路径留下一个未测事实：**引用回复自带被引用人的 @**。正式群「客户交付-数字员工小群」里 交付小助理 引用回复 笑曳 后正文出现 `@笑曳 @笑曳`。
+
+预发实测确认平台行为（群 `cidVaO557dsSgYcgnvRNbwY4g==`）：`dws chat +messages-reply` 不接受任何 at 参数，但渲染结果总是以被引用消息发送人的 @ 开头。正文不带占位符时读回 `@东翔测试号  实验A：正文里没有任何 at 占位符`；正文再带 `<@openDingTalkId>` 时读回 `@东翔测试号  <@DIBwz...> 实验B：…`，钉钉界面把这两处都渲染成 @。群聊托管回复本来就为 `--at-open-dingtalk-ids` 准备占位符，引用回复改造后占位符原样留在正文，于是每条群引用回复都稳定多出一个 @。
+
+修复按发送口径分三处，都只去掉“寻址前缀”，句中刻意的 @ 保留：
+
+- `dwsclient.Send`：`ReplyToOpenMsgID` 非空时剥掉正文开头指向 `AtOpenDingTalkID` 的占位符并清空该字段（引用回复本就不传 at 列表）。托管 provider 与 Router 兼容发送器都经此收口。
+- `dingtalkresponse` provider：引用回复分支不再补写占位符。
+- `execenv.RewriteDWSOriginReply`：把执行器的普通群发改写成引用回复时，按新冻结的 `DingTalkMessagePolicy.ReplyToSenderOpenDingTalkID` 剥掉同一个人的前缀；一旦该发送还 @ 了别人（`--at-all` / 其它 openDingTalkId / 手机号 / userId），或被引用发送人未知，就保持普通发送，不让引用回复吞掉别人的 @。
+
+`ReplyToSenderOpenDingTalkID` 只从已冻结事件中与该 `openMsgId` 精确匹配的消息取，取不到保持未知。旧任务冻结的策略没有该字段，退化成“带 at 的发送不改写成引用回复”，不会产生双 @。
+
+验收：`dwsclient`、`execenv`、`agentmessagerouter`、`dingtalkresponse` 与 handler 的相关用例通过，`internal/handler` 失败集合与 `bcc139f68` 基线逐条相同（本地库既有问题）。执行器 shim 分支随沙箱镜像里的 `multica` 生效，本次服务端发布不覆盖它，本轮未实测。
+
+CR 36159468 随 run 3108452697 部署预发成功（代码合并/构建/预发部署/预发集成测试全 SUCCESS，`/health` 正常）；发布分支 `releases/20260916101607562_r_release_342160_dt-fde-multica-code` 包含 `64e31751b`，且本次涉及文件与本地逐字节一致。预发群 `cidVaO557dsSgYcgnvRNbwY4g==` 回读四条托管出站（对话回复×2、工作接单回执、任务结果回报），`@` 均只出现一次且正文无 `<@...>` 占位符；修复前的平台行为对照实验一并保留。详见 `docs/reports/2026-09-16-dingtalk-trigger-quoted-reply-e2e.md` 的「群聊双@回归」。

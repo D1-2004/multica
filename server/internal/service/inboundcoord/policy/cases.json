@@ -1395,6 +1395,17 @@
       "context_b": "用户提供自己的经历并明确要求代写一段第一人称稿件",
       "expected_effects": "A以建议或假设自然聊天，不包装为数字员工亲身习惯；B作为写作任务处理用户提供素材，不将素材冒充员工经历",
       "verification": "not_run"
+    },
+    {
+      "id": "f04_requested_outcome_vs_invented_method",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F07"
+      ],
+      "context_a": "用户只抱怨人脸识别打卡太慢要求解决",
+      "context_b": "用户明确说按VOC流程整理并提交审批",
+      "expected_effects": "前者purpose只保留被请求的结果与对象，审查revise掉自造的整理/提交待审批步骤；后者保留用户自己说明的方法",
+      "verification": "not_run"
     }
   ]
 }

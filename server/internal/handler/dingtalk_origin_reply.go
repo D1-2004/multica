@@ -93,6 +93,26 @@ func dingTalkOriginFromStored(stored persistedDispatchContext) (openMsgID, conve
 	return openMsgID, conversationID
 }
 
+// dingTalkOriginSenderOpenDingTalkID is who wrote openMsgID, taken only from
+// the stored event. An unmatched id keeps the sender unknown rather than
+// guessing the window's first speaker.
+func dingTalkOriginSenderOpenDingTalkID(data DispatchEventData, openMsgID string) string {
+	openMsgID = strings.TrimSpace(openMsgID)
+	if openMsgID == "" {
+		return ""
+	}
+	for _, message := range data.Messages {
+		if strings.TrimSpace(message.OpenMsgID) != openMsgID {
+			continue
+		}
+		if id := strings.TrimSpace(message.SenderOpenDingTalkID); id != "" {
+			return id
+		}
+		break
+	}
+	return ""
+}
+
 func applyDingTalkOriginReply(policy *protocol.DingTalkMessagePolicy, stored persistedDispatchContext) {
 	if policy == nil {
 		return
@@ -100,6 +120,7 @@ func applyDingTalkOriginReply(policy *protocol.DingTalkMessagePolicy, stored per
 	openMsgID, conversationID := dingTalkOriginFromStored(stored)
 	policy.ReplyToOpenMsgID = openMsgID
 	policy.ReplyConversationID = conversationID
+	policy.ReplyToSenderOpenDingTalkID = dingTalkOriginSenderOpenDingTalkID(stored.EventData, openMsgID)
 }
 
 func fillDingTalkOriginReply(in dingtalkresponse.ActionInput, task db.AgentTaskQueue, issue db.Issue) dingtalkresponse.ActionInput {

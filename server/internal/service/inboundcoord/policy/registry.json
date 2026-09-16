@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-15.8",
-  "assembly_version": "35",
+  "policy_version": "2026-09-15.9",
+  "assembly_version": "36",
   "modules": [
     {
       "id": "core",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "28",
+      "version": "29",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -60,8 +60,8 @@
         "COORD.F10",
         "COORD.F03"
       ],
-      "budget_characters": 4396,
-      "content_sha256": "63307272709f5864b14074751ccfc2cb141d6ba79bc44a2c90e67f8ffd4dce86"
+      "budget_characters": 4600,
+      "content_sha256": "7afccd0d09d619f4f7bcea8e1177b97f8ea20ba612c766dbb5440579c813d47b"
     },
     {
       "id": "channel",
@@ -249,7 +249,7 @@
     },
     {
       "id": "finish_check_work",
-      "version": "21",
+      "version": "22",
       "file": "finish_check_work.md",
       "applies_when": "finish_check_work",
       "requires": [
@@ -271,8 +271,8 @@
         "COORD.F18",
         "COORD.F19"
       ],
-      "budget_characters": 3890,
-      "content_sha256": "e9528a5bb0a79cec169698ff224716c644f72130ea5bdf2ca44d6c73bfd274ef"
+      "budget_characters": 4060,
+      "content_sha256": "8a4ae4a830be9ded7ee2adc2aa3491274dab724e84cbcf6b99dc1a61938bc8a8"
     },
     {
       "id": "conversation_reply",
@@ -541,7 +541,7 @@
     {
       "id": "COORD.F04",
       "family": "F04",
-      "obligation": "能力说明使用describe_capabilities；实际工作通过start_work/continue_work交执行器。产品机制、专业分析、回源查证即使是短问句也属于执行，不能放入任何动作的reply字段；召回只证明关联和状态。无关场域禁令不能挡住正常授权工作。 岗位业务材料/产物与Coordinator自己的issue/task记录分开解释；取样/查看领域材料是岗位数据范围内的有界检索请求，关联缺名不否认能力。仅明确询问所做工作的执行/进度才使用任务元数据，并针对该工作。 明确单项工作遇依赖故障只记录步骤/原始错误/阻塞，不自行寻找修改凭证或扩展未经授权的登录/环境维修。 Coordinator技能目录与场域记忆不是执行器工具集；空constraint_quote的目录/MCP权限revise由Host放行合法工作。",
+      "obligation": "能力说明使用describe_capabilities；实际工作通过start_work/continue_work交执行器。产品机制、专业分析、回源查证即使是短问句也属于执行，不能放入任何动作的reply字段；召回只证明关联和状态。无关场域禁令不能挡住正常授权工作。 岗位业务材料/产物与Coordinator自己的issue/task记录分开解释；取样/查看领域材料是岗位数据范围内的有界检索请求，关联缺名不否认能力。仅明确询问所做工作的执行/进度才使用任务元数据，并针对该工作。 明确单项工作遇依赖故障只记录步骤/原始错误/阻塞，不自行寻找修改凭证或扩展未经授权的登录/环境维修。 Coordinator技能目录与场域记忆不是执行器工具集；空constraint_quote的目录/MCP权限revise由Host放行合法工作。  purpose 复述用户请求的交付物与对象原话，不替执行器设计方法，也不添加窗口未请求的处理、转交、评审或审批步骤；reply 同样不先替员工承诺某条处理路径。完整岗位工作流归执行器；用户自己说明的方法保留。工作审查对这类越界 purpose 返回 revise，点名要去掉的步骤并回到被请求的结果。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -571,7 +571,8 @@
         "f15_decline_cannot_quote_work_ask_or_memory",
         "f04_other_recipient_work_keywords",
         "f04_contextual_conversation",
-        "f14_advice_without_biography"
+        "f14_advice_without_biography",
+        "f04_requested_outcome_vs_invented_method"
       ],
       "verification": {
         "status": "integration_replay_pending",
