@@ -230,9 +230,9 @@ func (h *Handler) ImportDshPlugin(w http.ResponseWriter, r *http.Request) {
 	// the only way to guarantee the sandbox runs what was checked here.
 	artifactKey, storeErr := h.storeDshPluginArtifact(
 		r.Context(), workspaceUUID, resolved.PackageName, resolved.Archive)
-	if storeErr != nil {
-		slog.Warn("failed to store a DSH plugin artifact; the sandbox will fetch the source itself",
-			"package", resolved.PackageName, "error", storeErr)
+	if storeErr != nil || artifactKey == "" {
+		writeError(w, http.StatusServiceUnavailable, "the plugin package could not be stored; retry the import")
+		return
 	}
 
 	h.persistDshPlugin(w, r, dshPluginWrite{
@@ -494,9 +494,9 @@ func (h *Handler) UpdateDshPlugin(w http.ResponseWriter, r *http.Request) {
 			supersededKey = artifactKey
 			artifactKey = key
 			artifactSize = int64(len(resolved.Archive))
-		} else if err != nil {
-			slog.Warn("failed to store the updated DSH plugin artifact",
-				"package", resolved.PackageName, "error", err)
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "the plugin package could not be stored; the existing version was preserved")
+			return
 		}
 		sourceKind = string(source.Kind)
 		sourceSpec = pinned.Spec

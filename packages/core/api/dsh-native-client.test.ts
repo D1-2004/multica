@@ -3,7 +3,7 @@ import { ApiClient } from "./client";
 import { setSchemaLogger } from "./schema";
 import { noopLogger } from "../logger";
 
-const url = "https://33124-sbx-fixture.fc.test/_multica/open#entry=dnge_" + "A".repeat(43);
+const url = "https://pre.test/api/dsh-native/ui/00000000-0000-4000-8000-000000000001/_multica/open#entry=dnge_" + "A".repeat(43);
 const valid = { access_id: "00000000-0000-4000-8000-000000000001", entry_url: url, expires_at: new Date(Date.now() + 60000).toISOString() };
 afterEach(() => { vi.unstubAllGlobals(); setSchemaLogger(noopLogger); });
 
@@ -16,7 +16,7 @@ it("issues only the named employee and workspace with no browser placement", asy
 
 it.each([
   {}, { ...valid, access_id: "bad" }, { ...valid, expires_at: "bad" },
-  ...["javascript:alert(1)", url.replace("https:", "http:"), url.replace("33124-", "other-"), url.replace("/_multica/open", "/other"), url.replace("#entry=", "?entry="), url.replace("https://", "https://user:password@"), url + "&other=value"].map((entry_url) => ({ ...valid, entry_url })),
+  ...["javascript:alert(1)", url.replace("https:", "http:"), url.replace("pre.test", "other.test"), url.replace("000000000001", "000000000002"), url.replace("/_multica/open", "/other"), url.replace("#entry=", "?entry="), url.replace("https://", "https://user:password@"), url + "&other=value"].map((entry_url) => ({ ...valid, entry_url })),
 ])("rejects malformed native entries without logging credentials", async (response) => {
   const warn = vi.fn(); setSchemaLogger({ ...noopLogger, warn });
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(response), { status: 201 })));

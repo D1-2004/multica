@@ -79,6 +79,7 @@ func TestDSHBuildControlBindsIdentityAndScopesTransientGrants(t *testing.T) {
 	job := dshprofile.BuildJob{WorkspaceID: uuid.New(), BuildID: uuid.New(), Intent: uuid.New(), BuildKey: strings.Repeat("b", 64),
 		TemplateID: "immutable-template", SandboxID: "sbx-build",
 		Plugin: dshprofile.SourcePlugin{PackageName: "fixture-plugin", Version: "1.0.0", Integrity: "sha256-" + strings.Repeat("a", 64), ArtifactKey: "workspace/source.tgz", Config: map[string]any{"credential": "employee-secret-canary"}}}
+	job.Plugin.ArtifactKey = "dsh-plugins/" + job.WorkspaceID.String() + "/fixture/source.tgz"
 	job.ArtifactKey = "dsh-plugin-builds/" + job.WorkspaceID.String() + "/" + job.BuildKey + "/" + job.Intent.String() + "/tree.tgz"
 	if _, err := driver.control(context.Background(), job, "start", true); err != nil {
 		t.Fatal(err)

@@ -29,7 +29,7 @@ function show() {
 
 it("distinguishes desired and last confirmed revisions without starting a host", async () => {
   const client = show();
-  await screen.findByText("Plugins are ready. Waiting for the employee host to confirm this configuration.");
+  await screen.findByText("Plugin dependencies are ready. Applying the configuration; active tasks finish first.");
   expect(screen.getByText("7")).toBeTruthy();
   expect(screen.getByText("4")).toBeTruthy();
   expect(calls.prepare).not.toHaveBeenCalled();
@@ -52,7 +52,7 @@ it("prepares changed configuration only on explicit action and then reads its re
   const button = await screen.findByRole("button", { name: "Prepare configuration" });
   expect(calls.prepare).not.toHaveBeenCalled();
   await userEvent.click(button);
-  await screen.findByText("Plugins are ready. Waiting for the employee host to confirm this configuration.");
+  await screen.findByText("Plugin dependencies are ready. Applying the configuration; active tasks finish first.");
   expect(calls.prepare).toHaveBeenCalledExactlyOnceWith("workspace", "employee");
 });
 
@@ -85,4 +85,15 @@ it.each([false, undefined])("does not offer retry before cleanup is confirmed (%
   await screen.findByText("fixture · 1.0.0");
   expect(screen.queryByRole("button", { name: "Retry build" })).toBeNull();
   expect(calls.retry).not.toHaveBeenCalled();
+});
+
+
+it("ends startup waiting and lets the user retry the failed revision", async () => {
+  calls.get.mockResolvedValue({ ...pending, state: "apply_failed" });
+  calls.prepare.mockImplementation(async () => { calls.get.mockResolvedValue(pending); return pending; });
+  show();
+  await screen.findByText("The plugins were built, but DSH could not start. Check the plugin configuration and retry.");
+  await userEvent.click(await screen.findByRole("button", { name: "Retry startup" }));
+  await screen.findByText("Plugin dependencies are ready. Applying the configuration; active tasks finish first.");
+  expect(calls.prepare).toHaveBeenCalledExactlyOnceWith("workspace", "employee");
 });

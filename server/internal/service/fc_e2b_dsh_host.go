@@ -28,6 +28,7 @@ const dshEmployeeLockClass int32 = 0x44534831
 const employeeFilesystemLockClass int32 = 0x46535331
 
 var errDSHHostWaiting = errors.New("DSH employee host is awaiting reconciliation or task drain")
+var errDSHHostStartup = errors.New("DSH employee native startup failed")
 var dshAccessPointPattern = regexp.MustCompile(`^acs:nas:[a-z0-9-]+:[0-9]+:accesspoint/(ap-[a-z0-9]+)$`)
 
 func employeeFilesystemScopeID(scope dshhost.SessionScope) uuid.UUID {
@@ -320,7 +321,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			return dshhost.Host{}, cold, transitionErr
 		}
 		chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "waiting", "reason", "native_host_unavailable", "sandbox_id", host.SandboxID, "generation", host.Generation)
-		return dshhost.Host{}, cold, errDSHHostWaiting
+		return dshhost.Host{}, cold, errors.Join(errDSHHostWaiting, errDSHHostStartup)
 	}
 	chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "managed_profile_digest", profileDigest, "employee_profile_revision", revision.ID, "employee_profile_digest", revision.Digest)
 	return host, cold, nil

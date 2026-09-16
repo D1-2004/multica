@@ -3778,10 +3778,12 @@ export class ApiClient {
       body: "{}",
       headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
     });
-    return parseWithFallback<DSHNativeEntry | null>(raw, DSHNativeEntrySchema, null, {
+    const entry = parseWithFallback<DSHNativeEntry | null>(raw, DSHNativeEntrySchema, null, {
       endpoint: "POST /api/agents/{id}/dsh-native/access",
       includeReceived: false,
     });
+    if (entry && this.baseUrl && new URL(entry.entryUrl).origin !== new URL(this.baseUrl).origin) return null;
+    return entry;
   }
 
   async getDSHProfile(workspaceId: string, agentId: string, signal?: AbortSignal): Promise<DSHProfileStatus | null> {

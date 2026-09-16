@@ -250,6 +250,16 @@ func TestBuildWorkerPreflightScopeAndTimeout(t *testing.T) {
 	}
 }
 
+func TestBuildWorkerMissingPrerequisitesEndWithoutCreatingASandbox(t *testing.T) {
+	w, ledger, driver := workerFixture()
+	driver.preflightError = true
+	ledger.job.QueuedAt = w.now().Add(-11 * time.Minute)
+	advance(t, w, 1)
+	if ledger.job.State != "failed" || ledger.job.Phase != "done" || ledger.job.ErrorCode != "build_prerequisites_timeout" || driver.creates != 0 || driver.destroys != 0 {
+		t.Fatal("unavailable prerequisites left the plugin preparing forever")
+	}
+}
+
 type objectFixture struct{ value []byte }
 
 func (s objectFixture) GetReader(context.Context, string) (io.ReadCloser, error) {

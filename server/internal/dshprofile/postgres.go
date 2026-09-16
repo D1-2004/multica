@@ -70,7 +70,7 @@ func (s Store) Prepare(ctx context.Context, key dshhost.Key, template string, re
 		if err != nil {
 			return Revision{}, err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE dsh_employee_profile SET desired_revision=$3,updated_at=now() WHERE workspace_id=$1 AND agent_id=$2`, key.WorkspaceID, key.AgentID, revision.ID); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE dsh_employee_profile SET desired_revision=$3,apply_attempts=0,apply_error='',updated_at=now() WHERE workspace_id=$1 AND agent_id=$2`, key.WorkspaceID, key.AgentID, revision.ID); err != nil {
 			return Revision{}, err
 		}
 	}
@@ -177,6 +177,7 @@ type Status struct {
 	Current           bool          `json:"current"`
 	SourceDigest      string        `json:"-"`
 	Builds            []BuildStatus `json:"builds,omitempty"`
+	ApplyError        string        `json:"apply_error,omitempty"`
 }
 
 type BuildStatus struct {
@@ -185,6 +186,7 @@ type BuildStatus struct {
 	PackageName string `json:"package_name"`
 	Version     string `json:"version"`
 	State       string `json:"state"`
+	ErrorCode   string `json:"error_code,omitempty"`
 }
 
 func (s Store) statusBuilds(ctx context.Context, key dshhost.Key, revision int64) ([]BuildStatus, error) {
@@ -202,7 +204,7 @@ func (s Store) statusBuilds(ctx context.Context, key dshhost.Key, revision int64
 		return []BuildStatus{}, nil
 	}
 	var raw []byte
-	err = s.DB.QueryRow(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object('id',id,'can_retry',state='failed' AND worker_phase='done','package_name',package_name,'version',package_version,'state',state) ORDER BY package_name),'[]'::jsonb)
+	err = s.DB.QueryRow(ctx, `SELECT COALESCE(jsonb_agg(jsonb_build_object('id',id,'can_retry',state='failed' AND worker_phase='done','package_name',package_name,'version',package_version,'state',state,'error_code',worker_error) ORDER BY package_name),'[]'::jsonb)
  FROM dsh_plugin_build WHERE workspace_id=$1 AND template_id=$2 AND build_key=ANY($3)`, key.WorkspaceID, source.TemplateID, keys).Scan(&raw)
 	if err != nil {
 		return nil, err
@@ -221,12 +223,13 @@ func (s Store) Status(ctx context.Context, key dshhost.Key) (Status, error) {
 	value := Status{State: "unprepared"}
 	var desired, applied int64
 	var descriptor string
+	var applyAttempts int
 	err := s.DB.QueryRow(ctx, `SELECT p.desired_revision,p.applied_revision,p.applied_generation,p.applied_sandbox_id,
  COALESCE(r.source_digest,''),COALESCE(r.descriptor_digest,''),
- COALESCE(p.desired_revision>0 AND p.desired_revision=p.applied_revision AND h.state='running' AND h.generation=p.applied_generation AND h.sandbox_id=p.applied_sandbox_id AND h.template_id=r.template_id,false)
+ COALESCE(p.desired_revision>0 AND p.desired_revision=p.applied_revision AND h.state='running' AND h.generation=p.applied_generation AND h.sandbox_id=p.applied_sandbox_id AND h.template_id=r.template_id,false),p.apply_attempts,p.apply_error
  FROM dsh_employee_profile p LEFT JOIN dsh_profile_revision r ON r.workspace_id=p.workspace_id AND r.agent_id=p.agent_id AND r.revision=p.desired_revision
  LEFT JOIN employee_filesystem_host h ON h.workspace_id=p.workspace_id AND h.agent_id=p.agent_id AND h.sandbox_id=p.applied_sandbox_id AND h.generation=p.applied_generation
- WHERE p.workspace_id=$1 AND p.agent_id=$2`, key.WorkspaceID, key.AgentID).Scan(&desired, &applied, &value.AppliedGeneration, &value.AppliedSandboxID, &value.SourceDigest, &descriptor, &value.Current)
+ WHERE p.workspace_id=$1 AND p.agent_id=$2`, key.WorkspaceID, key.AgentID).Scan(&desired, &applied, &value.AppliedGeneration, &value.AppliedSandboxID, &value.SourceDigest, &descriptor, &value.Current, &applyAttempts, &value.ApplyError)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return value, nil
 	}
@@ -263,6 +266,9 @@ func (s Store) Status(ctx context.Context, key dshhost.Key) (Status, error) {
 			value.State, value.Current = "build_failed", false
 			break
 		}
+	}
+	if !value.Current && value.State == "pending_host" && applyAttempts >= 3 {
+		value.State = "apply_failed"
 	}
 	return value, nil
 }

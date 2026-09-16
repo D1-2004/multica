@@ -52,11 +52,22 @@ type DshPluginFilesResponse struct {
 
 // loadDshPluginArchive fetches the stored package bytes for one plugin.
 func (h *Handler) loadDshPluginArchive(ctx context.Context, row db.DshPlugin) ([]byte, error) {
-	if h.Storage == nil || row.ArtifactKey == "" {
+	if h.Storage == nil {
 		return nil, errNoStoredPackage
 	}
-	reader, err := h.Storage.GetReader(ctx, row.ArtifactKey)
+	key := row.ArtifactKey
+	if key == "" {
+		var err error
+		key, err = dshplugin.StoredArchiveKey(uuidToString(row.WorkspaceID), row.PackageName, row.Integrity)
+		if err != nil {
+			return nil, errNoStoredPackage
+		}
+	}
+	reader, err := h.Storage.GetReader(ctx, key)
 	if err != nil {
+		if row.ArtifactKey == "" {
+			return nil, errNoStoredPackage
+		}
 		return nil, err
 	}
 	defer reader.Close()

@@ -15,6 +15,7 @@ const MaxBuildArchiveBytes int64 = 2*1024*1024*1024 + 64*1024*1024
 
 var ErrBuildClaimLost = errors.New("DSH plugin build claim changed")
 var ErrNoBuildJob = errors.New("no due DSH plugin build")
+var ErrBuildSourceInvalid = errors.New("DSH plugin source archive cannot be recovered with its recorded identity")
 var workerFailureCode = regexp.MustCompile(`^(source_download|dependency_build|artifact_export|artifact_upload)_(failed|http_[45][0-9]{2})$`)
 
 var workerSandboxID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,160}$`)
@@ -50,6 +51,7 @@ type BuildJob struct {
 	ErrorCode   string
 	ClaimID     uuid.UUID
 	StartedAt   time.Time
+	QueuedAt    time.Time
 }
 
 func (j BuildJob) objectKey() string {
@@ -65,6 +67,10 @@ func (j BuildJob) valid() bool {
 	source := Source{TemplateID: j.TemplateID, Plugins: []SourcePlugin{j.Plugin}}
 	if _, _, err := EncodeSource(source); err != nil || len(j.Plugin.Config) != 0 || j.Plugin.ConfigRevision != 0 || j.Plugin.RowID != "" {
 		return false
+	}
+	if j.Phase == "done" && j.State == "failed" && j.Intent == uuid.Nil {
+		return j.SandboxID == "" && j.Scope == "" && j.ArtifactKey == "" &&
+			(j.ErrorCode == "source_archive_invalid" || j.ErrorCode == "build_prerequisites_timeout")
 	}
 	if j.Phase != "queued" && (j.Intent == uuid.Nil || j.Scope == "" || j.ArtifactKey != j.objectKey() || j.StartedAt.IsZero()) {
 		return false
@@ -156,6 +162,17 @@ func (w BuildWorker) Step(ctx context.Context) error {
 	switch job.Phase {
 	case "queued":
 		if err := w.Driver.Preflight(ctx, job); err != nil {
+			code := ""
+			if errors.Is(err, ErrBuildSourceInvalid) {
+				code = "source_archive_invalid"
+			} else if !job.QueuedAt.IsZero() && w.now().Sub(job.QueuedAt) > 10*time.Minute {
+				code = "build_prerequisites_timeout"
+			}
+			if code != "" {
+				next := job
+				next.Phase, next.State, next.ErrorCode = "done", "failed", code
+				return save(next)
+			}
 			delay = time.Minute
 			return errors.New("DSH build prerequisites unavailable")
 		}

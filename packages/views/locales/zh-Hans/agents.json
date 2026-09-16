@@ -1564,7 +1564,7 @@
       "changed": "保存的配置有更新，请准备新的配置版本。",
       "building": "正在准备插件依赖，配置尚未生效。",
       "failed": "插件准备失败，配置尚未生效。请检查插件版本或联系管理员。",
-      "pending": "插件已就绪，等待员工宿主确认配置生效。",
+      "pending": "插件依赖已就绪，正在应用配置；如有任务运行，会在任务结束后生效。",
       "applied": "运行中的 DSH 已确认此配置生效。",
       "desired": "目标版本",
       "last_applied": "上次确认版本",
@@ -1573,7 +1573,12 @@
       "build_waiting": "准备中",
       "prepare_unconfirmed": "暂时无法确认准备结果，请刷新查看已保存的状态。",
       "prepare": "准备配置",
-      "refresh": "刷新配置"
+      "refresh": "刷新配置",
+      "apply_failed": "插件已构建，但 DSH 启动失败。请检查插件配置后重试。",
+      "source_invalid": "安装包缺失且无法验证原始来源，请重新导入该插件。",
+      "prerequisites_failed": "安装包或构建环境持续不可用，请重试构建。",
+      "dependency_failed": "依赖安装或构建产物校验失败，请重试构建。",
+      "retry_apply": "重试启动"
     }
   },
   "char_counter": {

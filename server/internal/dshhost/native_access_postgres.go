@@ -39,6 +39,13 @@ func (s PostgresStore) GetNativeAccess(ctx context.Context, hash, kind string) (
  WHERE g.token_hash=$1 AND g.kind=$2 AND g.expires_at>clock_timestamp() AND `+nativeAccessRunningHost, hash, kind))
 }
 
+// LookupNativeAccess locates a proxy upstream, never authorizes an operation.
+// The sandbox gateway separately requires the entry token or session cookie.
+func (s PostgresStore) LookupNativeAccess(ctx context.Context, id uuid.UUID) (NativeAccess, error) {
+	return readNativeAccess(s.DB.QueryRow(ctx, `SELECT `+nativeAccessColumns+` FROM dsh_native_access g
+ WHERE g.id=$1 AND g.kind IN ('entry','session') AND g.expires_at>clock_timestamp() AND `+nativeAccessRunningHost, id))
+}
+
 func (s PostgresStore) ExchangeNativeAccess(ctx context.Context, access NativeAccess, entryHash, sessionHash string) (NativeAccess, error) {
 	return readNativeAccess(s.DB.QueryRow(ctx, `UPDATE dsh_native_access g SET
  token_hash=$2, kind='session', expires_at=clock_timestamp()+interval '15 minutes', exchanged_at=clock_timestamp()

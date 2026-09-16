@@ -116,6 +116,13 @@ func (h *Handler) manageDSHProfile(w http.ResponseWriter, r *http.Request, prepa
 		writeError(w, http.StatusServiceUnavailable, "employee Profile service is unavailable")
 		return
 	}
+	if prepare && h.DB != nil {
+		if _, err := h.DB.Exec(r.Context(), `UPDATE dsh_employee_profile SET apply_attempts=0,apply_error='',next_apply_at=now()
+ WHERE workspace_id=$1 AND agent_id=$2`, key.WorkspaceID, key.AgentID); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "employee Profile retry could not be scheduled")
+			return
+		}
+	}
 	status, err := h.FCE2BLauncher.DSHEmployeeProfile(r.Context(), key, prepare)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "employee Profile could not be confirmed; check the runtime and plugin configuration")

@@ -46,8 +46,8 @@ func dshPluginArtifactKey(workspaceID pgtype.UUID, packageName, digestHex string
 }
 
 // storeDshPluginArtifact uploads the validated bytes and returns the key.
-// An empty key with a nil error means storage is not configured, which is not
-// fatal for a plugin that has an upstream source to fall back on.
+// An empty key means storage is not configured. Import/update callers must
+// reject publication rather than record a package the build worker cannot use.
 func (h *Handler) storeDshPluginArtifact(
 	ctx context.Context, workspaceID pgtype.UUID, packageName string, data []byte,
 ) (string, error) {

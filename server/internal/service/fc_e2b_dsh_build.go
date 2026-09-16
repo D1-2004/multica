@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/dshhost"
+	"github.com/multica-ai/multica/server/internal/dshplugin"
 	"github.com/multica-ai/multica/server/internal/dshprofile"
 	"github.com/multica-ai/multica/server/internal/storage"
 )
@@ -55,8 +57,9 @@ func (*dshBuildDriver) frozenRequest(job dshprofile.BuildJob) map[string]any {
 func (d *dshBuildDriver) Scope() string { return d.provider.Scope() }
 
 func (d *dshBuildDriver) Preflight(ctx context.Context, job dshprofile.BuildJob) error {
-	if !strings.HasPrefix(job.Plugin.ArtifactKey, "dsh-plugins/"+job.WorkspaceID.String()+"/") {
-		return errors.New("DSH source archive is not scoped to the build workspace")
+	key, err := dshBuildSourceKey(job)
+	if err != nil {
+		return dshprofile.ErrBuildSourceInvalid
 	}
 	templates, err := ListFCE2BTemplates(ctx, d.launcher.Config, d.launcher.Runner)
 	if err != nil {
@@ -65,11 +68,22 @@ func (d *dshBuildDriver) Preflight(ctx context.Context, job dshprofile.BuildJob)
 	if !dshBuildTemplateReady(templates, job.TemplateID) {
 		return errors.New("DSH build template is not ready for this provider")
 	}
-	reader, err := d.objects.GetReader(ctx, job.Plugin.ArtifactKey)
-	if err != nil {
-		return errors.New("DSH source archive unavailable")
+	err = dshplugin.EnsureStoredArchive(ctx, d.objects, dshplugin.NewResolver(os.Getenv("MULTICA_DSH_PLUGIN_REGISTRY")), key,
+		job.Plugin.PackageName, job.Plugin.Version, job.Plugin.Integrity, job.Plugin.SourceSpec)
+	if errors.Is(err, dshplugin.ErrArchiveIdentity) {
+		return dshprofile.ErrBuildSourceInvalid
 	}
-	return reader.Close()
+	return err
+}
+
+func dshBuildSourceKey(job dshprofile.BuildJob) (string, error) {
+	if job.Plugin.ArtifactKey == "" {
+		return dshplugin.StoredArchiveKey(job.WorkspaceID.String(), job.Plugin.PackageName, job.Plugin.Integrity)
+	}
+	if !strings.HasPrefix(job.Plugin.ArtifactKey, "dsh-plugins/"+job.WorkspaceID.String()+"/") {
+		return "", dshprofile.ErrBuildSourceInvalid
+	}
+	return job.Plugin.ArtifactKey, nil
 }
 
 func dshBuildTemplateReady(templates []FCE2BTemplate, id string) bool {
@@ -112,7 +126,11 @@ func (d *dshBuildDriver) control(ctx context.Context, job dshprofile.BuildJob, o
 	}
 	request["operation"] = operation
 	if transfer {
-		source, err := d.get.PresignGet(ctx, job.Plugin.ArtifactKey, 30*time.Minute)
+		key, err := dshBuildSourceKey(job)
+		if err != nil {
+			return dshBuildControlReply{}, err
+		}
+		source, err := d.get.PresignGet(ctx, key, 30*time.Minute)
 		if err != nil {
 			return dshBuildControlReply{}, errors.New("DSH source transfer grant unavailable")
 		}

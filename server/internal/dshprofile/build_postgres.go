@@ -59,11 +59,11 @@ func (s PostgresBuildLedger) Claim(ctx context.Context) (BuildJob, error) {
  RETURNING b.workspace_id,b.id,b.build_key,b.template_id,b.plugin_id,b.package_name,b.package_version,
  b.package_integrity,b.source_kind,b.source_spec,b.source_artifact_key,b.state,b.worker_phase,b.create_intent,
  b.provider_scope,b.sandbox_id,b.artifact_key,b.build_digest,b.archive_sha256,b.archive_size,
- b.runtime_lock_sha256,b.worker_error,b.worker_started_at`, job.ClaimID).Scan(
+ b.runtime_lock_sha256,b.worker_error,b.worker_started_at,b.created_at`, job.ClaimID).Scan(
 		&job.WorkspaceID, &job.BuildID, &job.BuildKey, &job.TemplateID, &job.Plugin.ID, &job.Plugin.PackageName,
 		&job.Plugin.Version, &job.Plugin.Integrity, &job.Plugin.SourceKind, &job.Plugin.SourceSpec, &job.Plugin.ArtifactKey,
 		&job.State, &job.Phase, &intent, &job.Scope, &job.SandboxID, &job.ArtifactKey, &job.Artifact.BuildDigest,
-		&job.Artifact.ArchiveSHA256, &job.Artifact.ArchiveSize, &job.Artifact.RuntimeLockSHA256, &job.ErrorCode, &started)
+		&job.Artifact.ArchiveSHA256, &job.Artifact.ArchiveSize, &job.Artifact.RuntimeLockSHA256, &job.ErrorCode, &started, &job.QueuedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return BuildJob{}, ErrNoBuildJob
 	}
@@ -96,6 +96,10 @@ func validBuildTransition(old, next BuildJob) bool {
 	}
 	if old.Phase != "building" && old.Artifact != next.Artifact {
 		return false
+	}
+	if old.Phase == "queued" && next.Phase == "done" && next.State == "failed" {
+		return old.State == "queued" && next.Intent == uuid.Nil && next.SandboxID == "" &&
+			(next.ErrorCode == "source_archive_invalid" || next.ErrorCode == "build_prerequisites_timeout")
 	}
 	if next.Phase == "cleanup" && next.State == "failed" {
 		return old.State == "queued" && (old.Phase == "starting" || old.Phase == "building" || old.Phase == "publishing") &&

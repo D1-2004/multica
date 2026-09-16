@@ -6,13 +6,12 @@ export const DSHNativeEntrySchema = z.object({
     try {
       const url = new URL(value);
       return url.protocol === "https:" && !url.username && !url.password && !url.port &&
-        /^33124-[a-z0-9-]+\.[a-z0-9.-]+$/.test(url.hostname) &&
-        url.pathname === "/_multica/open" && !url.search &&
+        /^\/api\/dsh-native\/ui\/[0-9a-f-]{36}\/_multica\/open$/.test(url.pathname) && !url.search &&
         /^#entry=dnge_[A-Za-z0-9_-]{43}$/.test(url.hash);
     } catch { return false; }
   }, "Invalid native entry"),
   expires_at: z.string().datetime({ offset: true }),
-}).transform((value) => ({
+}).refine((value) => { try { return new URL(value.entry_url).pathname === `/api/dsh-native/ui/${value.access_id}/_multica/open`; } catch { return false; } }, "Native entry scope mismatch").transform((value) => ({
   accessId: value.access_id,
   entryUrl: value.entry_url,
   expiresAt: value.expires_at,

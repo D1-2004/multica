@@ -20,6 +20,7 @@ export function DshProfileStatus({ workspaceId, agentId }: { workspaceId: string
       case "configuration_changed": return t(($) => $.tab_body.dsh_profile.changed);
       case "waiting_for_builds": return t(($) => $.tab_body.dsh_profile.building);
       case "build_failed": return t(($) => $.tab_body.dsh_profile.failed);
+      case "apply_failed": return t(($) => $.tab_body.dsh_profile.apply_failed);
       case "pending_host": return t(($) => $.tab_body.dsh_profile.pending);
       case "applied": return status.current ? t(($) => $.tab_body.dsh_profile.applied) : t(($) => $.tab_body.dsh_profile.unavailable);
       default: return t(($) => $.tab_body.dsh_profile.unavailable);
@@ -43,6 +44,11 @@ export function DshProfileStatus({ workspaceId, agentId }: { workspaceId: string
       {!!status.builds?.length && <ul className="space-y-1 text-caption">
         {(status.builds ?? []).map((build) => <li key={build.packageName} className="flex flex-wrap justify-between gap-2">
           <span>{build.packageName} · {build.version}</span><span>{buildLabel(build.state)}</span>
+          {build.state === "failed" && <span className="w-full text-destructive">{
+            build.errorCode === "source_archive_invalid" ? t(($) => $.tab_body.dsh_profile.source_invalid) :
+            build.errorCode === "build_prerequisites_timeout" ? t(($) => $.tab_body.dsh_profile.prerequisites_failed) :
+            t(($) => $.tab_body.dsh_profile.dependency_failed)
+          }</span>}
           {status.state === "build_failed" && build.state === "failed" && build.canRetry === true && build.id && status.desiredRevision &&
             <Button size="sm" variant="outline" disabled={retry.isPending || prepare.isPending || query.isFetching}
               onClick={() => retry.mutate({ revision: status.desiredRevision, buildId: build.id })}>
@@ -54,9 +60,9 @@ export function DshProfileStatus({ workspaceId, agentId }: { workspaceId: string
     {prepare.isError && <p role="alert" className="text-caption text-destructive">{t(($) => $.tab_body.dsh_profile.prepare_unconfirmed)}</p>}
     {retry.isError && <p role="alert" className="text-caption text-destructive">{t(($) => $.tab_body.dsh_profile.retry_unconfirmed)}</p>}
     <div className="flex gap-2">
-      {(status?.state === "unprepared" || status?.state === "configuration_changed") && !unavailable &&
+      {(status?.state === "unprepared" || status?.state === "configuration_changed" || status?.state === "apply_failed") && !unavailable &&
         <Button size="sm" onClick={() => prepare.mutate()} disabled={prepare.isPending || query.isFetching}>
-          {t(($) => $.tab_body.dsh_profile.prepare)}
+          {status?.state === "apply_failed" ? t(($) => $.tab_body.dsh_profile.retry_apply) : t(($) => $.tab_body.dsh_profile.prepare)}
         </Button>}
       <Button size="sm" variant="outline" onClick={() => { void query.refetch(); }} disabled={prepare.isPending || query.isFetching}>
         {t(($) => $.tab_body.dsh_profile.refresh)}

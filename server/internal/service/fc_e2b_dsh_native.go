@@ -17,6 +17,14 @@ import (
 
 const DSHNativeGatewayPort = 33124
 
+func (l *FCE2BLauncher) DSHNativeProxyAddress(host dshhost.Host) (string, string, error) {
+	l = l.withCurrentConfig()
+	if l == nil {
+		return "", "", errors.New("DSH native gateway unavailable")
+	}
+	return dshNativeGatewayAddress(l.Config, host)
+}
+
 var dshGatewayLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // Gateway addresses are derived from deployment configuration and a persisted

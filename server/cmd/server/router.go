@@ -1801,6 +1801,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	nativeAccessRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_DSH_NATIVE_ACCESS", 2400), time.Minute, trustedProxies)
 	r.With(nativeAccessRL).Post("/api/dsh-native/access/exchange", h.ExchangeDSHNativeAccess)
 	r.With(nativeAccessRL).Post("/api/dsh-native/access/check", h.CheckDSHNativeAccess)
+	r.Handle("/api/dsh-native/ui/{accessId}/*", http.HandlerFunc(h.DSHNativeUI))
 	nativePromptRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_DSH_NATIVE_PROMPT", 120), time.Minute, trustedProxies)
 	r.With(nativePromptRL).Post("/api/dsh-native/prompts", h.SubmitDSHNativePrompt)
 

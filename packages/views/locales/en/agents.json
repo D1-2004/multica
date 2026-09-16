@@ -1585,7 +1585,7 @@
       "changed": "Saved settings have changed. Prepare a new configuration version.",
       "building": "Preparing plugin dependencies. The configuration is not active yet.",
       "failed": "Plugin preparation failed. Check the plugin version or contact an administrator. The configuration is not active.",
-      "pending": "Plugins are ready. Waiting for the employee host to confirm this configuration.",
+      "pending": "Plugin dependencies are ready. Applying the configuration; active tasks finish first.",
       "applied": "The running DSH host has confirmed this configuration.",
       "desired": "Desired version",
       "last_applied": "Last confirmed version",
@@ -1594,7 +1594,12 @@
       "build_waiting": "Preparing",
       "prepare_unconfirmed": "Preparation could not be confirmed. Refresh to check the saved status.",
       "prepare": "Prepare configuration",
-      "refresh": "Refresh configuration"
+      "refresh": "Refresh configuration",
+      "apply_failed": "The plugins were built, but DSH could not start. Check the plugin configuration and retry.",
+      "source_invalid": "The stored package is missing and the original source cannot be verified. Re-import this plugin.",
+      "prerequisites_failed": "The package or build environment remained unavailable. Retry the build.",
+      "dependency_failed": "Dependency installation or artifact verification failed. Retry the build.",
+      "retry_apply": "Retry startup"
     }
   },
   "char_counter": {

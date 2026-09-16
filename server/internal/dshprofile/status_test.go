@@ -43,6 +43,8 @@ func (d *statusDatabase) QueryRow(_ context.Context, query string, args ...any) 
 			*dest[4].(*string) = "source-digest"
 			*dest[5].(*string) = ""
 			*dest[6].(*bool) = false
+			*dest[7].(*int) = 0
+			*dest[8].(*string) = ""
 		case strings.Contains(query, "SELECT source_json"):
 			if args[1] != d.key.AgentID || args[2] != int64(7) {
 				return pgx.ErrNoRows

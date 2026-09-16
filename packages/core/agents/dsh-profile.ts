@@ -14,7 +14,7 @@ export function dshProfileOptions(workspaceId: string, agentId: string) {
     staleTime: 0,
     retry: false,
     refetchInterval: (query) => !query.state.error &&
-      ["waiting_for_builds", "pending_host"].includes(query.state.data?.state ?? "") ? 5000 : false,
+      ["waiting_for_builds", "pending_host", "configuration_changed"].includes(query.state.data?.state ?? "") ? 5000 : false,
   });
 }
 

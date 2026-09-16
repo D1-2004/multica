@@ -186,3 +186,6 @@
 
 - `server/internal/dshhost/filesystem_sandbox.go`, migrations `9257`–`9260`, `server/internal/service/employee_filesystem_test.go`: employee storage shared across independently selected execution sandboxes; persistent native session host routing. Filesystem write conflict management is outside this feature.
 - `server/internal/handler/dsh_home.go`, `packages/views/agents/components/agent-overview-pane.tsx`: all-FC filesystem provisioning/configuration and representative host status, with DSH settings kept together.
+
+- `server/internal/handler/dsh_native_proxy.go`: same-origin native page, scoped cookies, asset and transport path handling, FC attachment-header removal.
+- `server/internal/service/fc_e2b_dsh_profile_worker.go`, `internal/dshplugin/stored_archive.go`: automatic Profile reconciliation and integrity-checked recovery of missing pinned archives.

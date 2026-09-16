@@ -3,7 +3,7 @@ import { z } from "zod";
 const revision = z.string().regex(/^[1-9][0-9]{0,18}$/);
 
 export const DSHProfileSchema = z.object({
-  state: z.enum(["unprepared", "waiting_for_builds", "build_failed", "pending_host", "applied", "configuration_changed"]),
+  state: z.enum(["unprepared", "waiting_for_builds", "build_failed", "pending_host", "applied", "configuration_changed", "apply_failed"]),
   desired_revision: revision.optional(),
   applied_revision: revision.optional(),
   applied_generation: z.number().int().nonnegative(),
@@ -15,6 +15,7 @@ export const DSHProfileSchema = z.object({
     package_name: z.string().min(1).max(214),
     version: z.string().min(1),
     state: z.enum(["queued", "ready", "failed"]),
+    error_code: z.string().max(128).optional(),
   })).max(128).optional(),
 }).superRefine((value, ctx) => {
   if (value.current !== (value.state === "applied") ||
@@ -31,7 +32,7 @@ export const DSHProfileSchema = z.object({
   appliedGeneration: value.applied_generation,
   appliedSandboxId: value.applied_sandbox_id ?? "",
   current: value.current,
-  builds: (value.builds ?? []).map((build) => ({ id: build.id ?? "", canRetry: build.can_retry === true && build.state === "failed" && !!build.id, packageName: build.package_name, version: build.version, state: build.state })),
+  builds: (value.builds ?? []).map((build) => ({ id: build.id ?? "", canRetry: build.can_retry === true && build.state === "failed" && !!build.id, packageName: build.package_name, version: build.version, state: build.state, errorCode: build.error_code ?? "" })),
 }));
 
 export type DSHProfileStatus = z.infer<typeof DSHProfileSchema>;

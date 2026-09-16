@@ -71,7 +71,7 @@ func (s Store) RetryBuild(ctx context.Context, key dshhost.Key, template string,
  'worker_started_at',worker_started_at,'completed_at',updated_at,'retried_at',now())),
  id=$5,state='queued',worker_phase='queued',create_intent=NULL,provider_scope='',sandbox_id='',
  artifact_key='',build_digest='',archive_sha256='',archive_size=0,runtime_lock_sha256='',
- worker_error='',worker_started_at=NULL,claim_id=NULL,claim_expires_at=NULL,next_attempt_at=now(),updated_at=now()
+ worker_error='',worker_started_at=NULL,claim_id=NULL,claim_expires_at=NULL,next_attempt_at=now(),created_at=now(),updated_at=now()
  WHERE workspace_id=$1 AND template_id=$2 AND build_key=ANY($3) AND id=$4 AND state='failed' AND worker_phase='done'
  RETURNING true`, key.WorkspaceID, template, keys, buildID, uuid.New()).Scan(&updated)
 	if errors.Is(err, pgx.ErrNoRows) {
