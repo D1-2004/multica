@@ -90,7 +90,7 @@ export function DshHomeTab({ workspaceId, agentId, nativeEnabled = true }: {
     {phase === "error" && <p role="alert" className="text-caption text-destructive">{t(($) => $.tab_body.dsh_home.native_unconfirmed)}</p>}
     <Button size="sm" disabled={busy || home.isPending} aria-busy={busy} onClick={() => { void start(); }}>
       {busy && <Loader2 className="size-3.5 animate-spin" />}
-      {busy ? progress : nativeEnabled ? t(($) => $.tab_body.dsh_home.native_enter) : t(($) => $.tab_body.dsh_home.prepare)}
+      {busy ? progress : nativeEnabled ? (ready ? t(($) => $.tab_body.dsh_home.native_enter) : t(($) => $.tab_body.dsh_home.initialize_and_enter)) : t(($) => $.tab_body.dsh_home.prepare)}
     </Button>
   </section>;
 }

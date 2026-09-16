@@ -59,7 +59,8 @@
 - `server/internal/handler/dsh_home.go`: human/manage-authorized status and provisioning endpoints for FC DSH agents.
 - `server/internal/dshhost/provision.go` and `provision_postgres.go`: durable placement, per-resource intent, receipt reconciliation and immutable binding.
 - `server/internal/dshhost/cloud_storage.go` and `cloud_api.go`: NAS/RAM/FC calls, resource-chain verification and bounded ACS transport using the official signer.
-- `server/cmd/server/dsh_storage_options.go`: deployment-owned placement and the Aone-managed cloud access package; no task-supplied credentials.
+- `server/cmd/server/dsh_storage_options.go`: deployment-owned placement and the Aone-managed cloud access package; the UI and FC launcher share the same provisioning callback with their own database handle. No task-supplied credentials.
+- `server/internal/service/fc_e2b.go`, `fc_e2b_dsh_host.go`: first DSH task automatically provisions a missing filesystem binding; pending provisioning defers launch, errors block launch, and DSH never uses an ephemeral fallback.
 
 ## Employee DSH configuration UI
 

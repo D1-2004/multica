@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -417,6 +418,25 @@ func validateDSHHomeReceipt(out string, host dshhost.Host) error {
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &receipt); err != nil || receipt.Version != 1 || receipt.WorkspaceID != host.WorkspaceID.String() || receipt.AgentID != host.AgentID.String() || receipt.Generation != host.Generation || receipt.Mount != dshhost.MountPath || receipt.Home != dshhost.MountPath+"/home" || receipt.UID != 1000 || receipt.GID != 1000 {
 		return errors.New("DSH Home initialization did not confirm the expected employee, generation, mount and task user")
+	}
+	return nil
+}
+
+// Reuse the durable provisioning workflow and the admission connection. Unknown
+// cloud outcomes are reconciled on the next admission, never bypassed by a
+// temporary sandbox or retried as a second resource creation.
+func (l *FCE2BLauncher) prepareDSHTaskFilesystem(ctx context.Context, db dshhost.Database, key dshhost.Key) error {
+	if l.ProvisionDSHStorage == nil {
+		return errors.New("DSH storage provisioning is not configured")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	_, err := l.ProvisionDSHStorage(ctx, db, key)
+	if errors.Is(err, dshhost.ErrPending) || errors.Is(err, dshhost.ErrChanged) || errors.Is(err, context.DeadlineExceeded) {
+		return errDSHHostWaiting
+	}
+	if err != nil {
+		return fmt.Errorf("initialize DSH employee filesystem: %w", err)
 	}
 	return nil
 }
