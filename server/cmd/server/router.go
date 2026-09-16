@@ -28,6 +28,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/deploymentfence"
+	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
@@ -439,10 +440,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		agentIdentityControlBaseURLProvider = opts.RuntimeConfig.agentIdentityControlBaseURL
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
-	if provision, err := dshStorageProvisioning(pool); err != nil {
+	if provision, err := dshStorageProvisioning(); err != nil {
 		slog.Error("DSH storage provisioning configuration unavailable", "error", err)
 	} else {
-		h.ProvisionDSHStorage = provision
+		h.FCE2BLauncher.ProvisionDSHStorage = provision
+		if provision != nil {
+			h.ProvisionDSHStorage = func(ctx context.Context, key dshhost.Key) (dshhost.Host, error) {
+				return provision(ctx, pool, key)
+			}
+		}
 	}
 	h.Assoc = assoc.NewService(assoc.NewSQLStore(pool))
 	h.SiteHosting = sitehosting.NewService(

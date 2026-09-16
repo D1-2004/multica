@@ -22,10 +22,11 @@ Daemon start, restart, and stop are unavailable from inside a daemon-managed age
 
 ## Core model
 
-FC DSH employees require an independently provisioned AgenticFS Home before
-their first task. Human owners and workspace administrators can inspect or
-advance provisioning through `GET/POST /api/agents/{id}/dsh-home`; this is an
-operator action, unavailable to task tokens. Placement and the cloud access
+FC DSH task launch automatically provisions the employee AgenticFS Home when
+its binding is missing. Launch waits for the persisted provisioning intent to
+complete and never falls back to an ephemeral filesystem. Human owners and
+workspace administrators can also inspect or advance provisioning through
+`GET/POST /api/agents/{id}/dsh-home`; this operator API is unavailable to task tokens. Placement and the cloud access
 package are deployment-owned. A pending create must reconcile its persisted
 intent; never work around it by sharing another employee's volume. A provisioned
 Home does not by itself prove that a native Host or business task is running.
@@ -196,7 +197,7 @@ replaced, so files stored only in that sandbox do not carry over. Active tasks
 finish with their existing policy. Ask the user to configure a missing
 destination; do not try to bypass the sandbox network policy.
 
-Human owners/admins can use the employee Configuration → Execution → DSH configuration page to prepare storage and read its persisted status. The page distinguishes storage readiness from host running state and never creates resources on render. Interrupted or pending requests are reconciled through the same employee intent; credentials and placement remain deployment-owned.
+Human owners/admins can use the employee Configuration → Execution → DSH configuration page to read persisted storage status. The native-entry button initializes missing storage and opens DSH in one action; its label reflects storage readiness. The page distinguishes storage readiness from host running state and never creates resources on render. Interrupted or pending requests are reconciled through the same employee intent; credentials and placement remain deployment-owned.
 
 Native prompt admission is exposed through `POST /api/dsh-native/prompts` with a session Bearer capability and exactly `workspace_id`, `agent_id`, `generation`, `sandbox_id`, `session_id`, `request_id`, `workdir` and `content`. Request IDs are canonical nonzero UUIDs; workdir must be `/mnt/multica/workspaces/<session_id>`. The server derives the human from the grant and registers or resolves that human's platform chat session from the native identity. Registration creates the session and mapping together, without a task or synthetic input; a later admission failure can leave this empty session for a retry. Clients cannot select a platform chat ID, human, model or credentials.
 

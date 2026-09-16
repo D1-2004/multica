@@ -1580,6 +1580,7 @@
       "native_prepare": "Prepare DSH",
       "native_preparing": "Opening DSH…",
       "native_enter": "Open native DSH",
+      "initialize_and_enter": "Initialize filesystem and open native DSH",
       "native_unconfirmed": "DSH is not ready. Check the plugin configuration status and try again."
     },
     "dsh_profile": {

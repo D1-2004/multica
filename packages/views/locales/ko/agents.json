@@ -1371,6 +1371,7 @@
       "native_prepare": "DSH 준비",
       "native_preparing": "DSH 여는 중…",
       "native_enter": "DSH 기본 페이지 열기",
+      "initialize_and_enter": "파일 시스템 초기화 후 DSH 기본 화면 열기",
       "native_unconfirmed": "DSH가 아직 준비되지 않았습니다. 플러그인 설정 상태를 확인한 후 다시 시도하세요."
     },
     "dsh_profile": {
