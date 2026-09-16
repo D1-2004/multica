@@ -301,7 +301,7 @@ DWS 历史读取通过 `MULTICA_DWS_HISTORY_MCP_URL` 显式选择 MCP 环境，�
 1. **整理阶段取消思考模式。** 恢复`enable_thinking=false`与`tool_choice=required`（thinking+required的上游400不再适用），模型仍为qwen3.8-max，路由与审核不变。同fixture的历史对照：无思考约1389毫秒、低思考约3709–4743毫秒。**当前的事实边界（不编造活动/执行、不按昵称认人、不以亲历包装建议）是在低思考条件下冻结回放通过的，取消思考后必须用同一组正式输入复跑才算通过，本文不把旧条件的结论记作新条件的证据。**
 2. **整理与路由并行推测。** 整理请求的全部内容是(turn, 选中的conversation动作)的纯函数，不含任何路由判断。Host在两次预取完成后、首个路由请求的同时，按“单条acknowledge(conversation)覆盖全部response_required来源”的假设先发一次整理，并记录该请求的`input_hash`。路由返回后按真实提案重建请求：**逐字节哈希相同才复用推测结果，不同一律丢弃并正常重发**。推测无副作用，不改提案、不读工作状态、不接触任何效果路径；推测失败不是本轮裁决，同一问题在正常路径上重问一次，只有那次答案作数。
 3. **推测的成本被报告，不被隐藏。** `ack_kind`为greeting/thanks的回合和工作回合根本不进入整理，其推测必然作废；多条动作或不同来源集合的提案同样作废，该回合出现两次整理调用。Langfuse以`speculative=true`的`coordinator.conversation_reply.speculative` generation记录每次推测的真实输入与usage，根metadata记`conversation_reply_speculation=hit/miss/error/unused`，SLS事件为`inbound_coordinator_conversation_reply_speculation`。推测的observation由主协程开启、由推测协程结束，不并发写trace自身的metadata。
-4. **验收分层。** 已完成：Host协议与并发单测（含-race，四条推测用例在关闭推测后全部失败，证明其有效性）、policy结构检查。**未完成：真实模型回放与预发E2E。** 在这两项完成前，不得宣称事实边界在无思考条件下仍然成立，也不得把8.6秒→预计5秒的估算写成实测结果。
+4. **验收分层。** 已完成：Host协议与并发单测（含-race连跑3次，四条推测用例在关闭推测后全部失败）、policy结构检查、Codex静态审阅（3项已修）、**预发实时E2E 8/8通过**（2026-09-16 19:00–19:07，证据见[E2E报告](reports/2026-09-16-coordinator-reply-latency-e2e.md)）。实测社交整轮从基线9042/9538毫秒降到4940–7847毫秒，推测渲染1152–2633毫秒且全部短于同轮路由，正常渲染一次未发生。**仍未完成：冻结真实模型回放（本机无凭据）**，因此无思考条件下6组正例与UID负例的硬边界没有证据，只有5条活体社交对照；实时8轮出现6次hit、3次unused、**0次miss**，不命中与推测失败路径仅有单测覆盖。
 
 回放命令（需操作者提供私有fixture与凭据，不写入仓库）：
 
