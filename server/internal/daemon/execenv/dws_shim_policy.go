@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -162,6 +163,22 @@ func parseDWSCommand(args []string) dwsCommand {
 	return parsed
 }
 
+// dwsMentionsOnly reports whether the send addresses nobody but sender. Mobile
+// and userId at lists are opaque here, so any of them keeps the plain send.
+func dwsMentionsOnly(parsed dwsCommand, sender string) bool {
+	if parsed.values["at-all"] == "true" ||
+		strings.TrimSpace(parsed.values["at-mobiles"]) != "" ||
+		strings.TrimSpace(parsed.values["at-user-ids"]) != "" {
+		return false
+	}
+	for _, id := range strings.Split(parsed.values["at-open-dingtalk-ids"], ",") {
+		if id = strings.TrimSpace(id); id != "" && id != sender {
+			return false
+		}
+	}
+	return true
+}
+
 func dwsBooleanFlag(name string) bool {
 	switch name {
 	case "ai-tag", "at-all", "help", "debug", "dry-run", "mock", "verbose", "yes":
@@ -211,6 +228,13 @@ func RewriteDWSOriginReply(args []string, policy *protocol.DingTalkMessagePolicy
 	if parsed.values["message-id"] != "" || parsed.values["ref-msg-id"] != "" {
 		return args
 	}
+	sender := strings.TrimSpace(policy.ReplyToSenderOpenDingTalkID)
+	// A quote reply takes no at list; DingTalk addresses the quoted sender by
+	// itself. Mentions of anyone else would be silently dropped, so that send
+	// stays a plain one.
+	if !dwsMentionsOnly(parsed, sender) {
+		return args
+	}
 	content := parsed.values["content"]
 	if content == "" {
 		content = parsed.values["text"]
@@ -219,6 +243,10 @@ func RewriteDWSOriginReply(args []string, policy *protocol.DingTalkMessagePolicy
 		content = parsed.values["markdown"]
 	}
 	if content == "" {
+		return args
+	}
+	content = dwsclient.StripLeadingMention(content, sender)
+	if strings.TrimSpace(content) == "" {
 		return args
 	}
 	out := []string{"chat", "+messages-reply", "--group", cid, "--message-id", origin, "--content", content}

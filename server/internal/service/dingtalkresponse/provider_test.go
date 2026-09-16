@@ -114,6 +114,9 @@ if sys.argv[1:3] != ['chat','+messages-reply']:
     raise SystemExit(9)
 assert sys.argv[sys.argv.index('--message-id')+1]=='msg-origin'
 assert sys.argv[sys.argv.index('--group')+1]=='cid'
+# DingTalk addresses the quoted sender itself; a second mention is the bug.
+assert sys.argv[sys.argv.index('--content')+1]=='hello', sys.argv
+assert '--at-open-dingtalk-ids' not in sys.argv, sys.argv
 print(json.dumps({'success':True,'openTaskId':'quoted-task'}))
 `
 	if err := os.WriteFile(exe, []byte(script), 0700); err != nil {
@@ -125,6 +128,11 @@ print(json.dumps({'success':True,'openTaskId':'quoted-task'}))
 	result, err := p.Send(context.Background(), in, "stable-key")
 	if err != nil || result.OpenTaskID != "quoted-task" {
 		t.Fatalf("send=%+v err=%v", result, err)
+	}
+	// An addressing placeholder already in the text is the same duplicate.
+	in.Text = "<@sender> hello"
+	if result, err = p.Send(context.Background(), in, "stable-key"); err != nil || result.OpenTaskID != "quoted-task" {
+		t.Fatalf("pre-mentioned send=%+v err=%v", result, err)
 	}
 }
 

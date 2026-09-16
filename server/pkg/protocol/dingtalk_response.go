@@ -40,6 +40,9 @@ type DingTalkMessagePolicy struct {
 	PlatformManagedLifecycle bool   `json:"platform_managed_lifecycle"`
 	ReplyToOpenMsgID         string `json:"reply_to_open_msg_id,omitempty"`
 	ReplyConversationID      string `json:"reply_conversation_id,omitempty"`
+	// ReplyToSenderOpenDingTalkID is who wrote ReplyToOpenMsgID. A quote reply
+	// is auto-addressed to them, so the rewrite drops a duplicate placeholder.
+	ReplyToSenderOpenDingTalkID string `json:"reply_to_sender_open_dingtalk_id,omitempty"`
 }
 
 // DingTalkResponseReceipt reports delivery separately from task execution.

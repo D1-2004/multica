@@ -63,8 +63,11 @@ func (p *dwsProvider) Send(ctx context.Context, in ActionInput, key string) (dws
 		req.ConversationID = in.ConversationID
 		if in.IsGroup && in.SenderOpenDingTalkID != "" {
 			req.AtOpenDingTalkID = in.SenderOpenDingTalkID
-			mention := "<@" + in.SenderOpenDingTalkID + ">"
-			if !strings.Contains(req.Content, mention) {
+			// A quote reply is already addressed to this sender by DingTalk;
+			// CLI.Send drops any addressing placeholder there. Only a plain
+			// group send has to carry one.
+			mention := dwsclient.MentionToken(in.SenderOpenDingTalkID)
+			if req.ReplyToOpenMsgID == "" && !strings.Contains(req.Content, mention) {
 				req.Content = mention + " " + req.Content
 			}
 		}

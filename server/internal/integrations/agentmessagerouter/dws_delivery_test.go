@@ -234,3 +234,29 @@ func TestDWSReplyDuplicateWithoutReceiptRemainsUnconfirmedAndStopsSending(t *tes
 		t.Fatalf("wrong uncertainty or repeated send: state=%+v session=%+v", state, session)
 	}
 }
+
+// The delivery text may already address the mentioned member. Prefixing a
+// second placeholder would @ the same person twice in the group.
+func TestDWSReplyDoesNotRepeatAnExistingMention(t *testing.T) {
+	for _, tc := range []struct{ name, text, want string }{
+		{"already addressed", "<@sender-open> 在的。", "<@sender-open> 在的。"},
+		{"plain text", "在的。", "<@sender-open> 在的。"},
+	} {
+		d := testDWSDelivery("agent-1")
+		d.RecipientOpenDingTalkID = ""
+		d.AtOpenDingTalkID = "sender-open"
+		d.Text = tc.text
+		raw, err := freezeDWSDelivery(d, d.AgentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		session := &replySessionStub{status: replyReceipt{SendStatus: "delivered", OpenConversationID: "cid-1", OpenMessageID: "msg-1"}}
+		w := &CompletionWorker{dwsSender: &replySenderStub{session: session}}
+		if err := w.resumeDWSDelivery(context.Background(), raw, func([]byte) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if got := session.requests[0].Content; got != tc.want {
+			t.Fatalf("%s: content = %q want %q", tc.name, got, tc.want)
+		}
+	}
+}

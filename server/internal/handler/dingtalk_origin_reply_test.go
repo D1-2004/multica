@@ -125,3 +125,28 @@ func TestFillDingTalkOriginReplyPrefersTaskContext(t *testing.T) {
 		t.Fatalf("issue fallback = %+v", in)
 	}
 }
+
+func TestApplyDingTalkOriginReplyFreezesQuotedSender(t *testing.T) {
+	stored := persistedDispatchContext{
+		ReplyToOpenMsgID: "msg-origin",
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-origin"},
+			Messages: []DispatchMessage{
+				{OpenMsgID: "msg-earlier", Text: "前一句", SenderOpenDingTalkID: "colleague"},
+				{OpenMsgID: "msg-origin", Text: "查一下", SenderOpenDingTalkID: "asker"},
+			},
+		},
+	}
+	policy := &protocol.DingTalkMessagePolicy{}
+	applyDingTalkOriginReply(policy, stored)
+	if policy.ReplyToSenderOpenDingTalkID != "asker" {
+		t.Fatalf("quoted sender = %q", policy.ReplyToSenderOpenDingTalkID)
+	}
+	// An origin the stored window cannot explain stays unknown.
+	stored.ReplyToOpenMsgID = "msg-elsewhere"
+	policy = &protocol.DingTalkMessagePolicy{}
+	applyDingTalkOriginReply(policy, stored)
+	if policy.ReplyToSenderOpenDingTalkID != "" {
+		t.Fatalf("guessed quoted sender = %q", policy.ReplyToSenderOpenDingTalkID)
+	}
+}
