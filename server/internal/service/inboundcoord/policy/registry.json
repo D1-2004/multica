@@ -1,10 +1,10 @@
 {
-  "policy_version": "2026-09-15.1",
-  "assembly_version": "27",
+  "policy_version": "2026-09-15.8",
+  "assembly_version": "35",
   "modules": [
     {
       "id": "core",
-      "version": "6",
+      "version": "7",
       "file": "core.md",
       "applies_when": "always",
       "requires": [],
@@ -23,12 +23,12 @@
         "COORD.F17",
         "COORD.F18"
       ],
-      "budget_characters": 1300,
-      "content_sha256": "0f97e3f64dd21509decdd39666f2a5fc1d53147150040de2c95c151596b23d9f"
+      "budget_characters": 1411,
+      "content_sha256": "3914ddd66e5b132e3a97b124fcb7e6e2efc8e3adf4284c651a1c138f5753e18f"
     },
     {
       "id": "voice",
-      "version": "3",
+      "version": "4",
       "file": "voice.md",
       "applies_when": "always",
       "requires": [
@@ -38,12 +38,12 @@
         "COORD.F14",
         "COORD.F15"
       ],
-      "budget_characters": 600,
-      "content_sha256": "60ae36e6483b1dd668119908ec31ad90b7402b47b1d198670d1208aed4bf1778"
+      "budget_characters": 1023,
+      "content_sha256": "7c23a9ec060cb4a7b67040a0833e9036db2a841951bcf664387ee1d460cfd545"
     },
     {
       "id": "inbound",
-      "version": "26",
+      "version": "28",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -60,12 +60,12 @@
         "COORD.F10",
         "COORD.F03"
       ],
-      "budget_characters": 3900,
-      "content_sha256": "b24ad006621938e37e45110db4dadbe8c2ca1ae58e8b3a621969413044f5d64d"
+      "budget_characters": 4396,
+      "content_sha256": "63307272709f5864b14074751ccfc2cb141d6ba79bc44a2c90e67f8ffd4dce86"
     },
     {
       "id": "channel",
-      "version": "2",
+      "version": "3",
       "file": "channel.md",
       "applies_when": "dingtalk",
       "requires": [
@@ -77,7 +77,7 @@
         "COORD.F14"
       ],
       "budget_characters": 800,
-      "content_sha256": "b2f257ca9163902aebb70e838736b4ba95fba83123401bee6328a3529f584f56"
+      "content_sha256": "3011153cc5764669462ad45777f6a094f7be50e299b8e22848da153a97d00a9d"
     },
     {
       "id": "web",
@@ -96,7 +96,7 @@
     },
     {
       "id": "group",
-      "version": "12",
+      "version": "14",
       "file": "group.md",
       "applies_when": "group",
       "requires": [
@@ -110,8 +110,8 @@
         "COORD.F06",
         "COORD.F14"
       ],
-      "budget_characters": 4502,
-      "content_sha256": "79c9b1f06bc3252ca0cd07bf0fb9bfd13b36c2b6ad5715a07623573d3c4ac4d9"
+      "budget_characters": 4966,
+      "content_sha256": "40208ca8898c822dfb633eb7333ac87bf745c652f21adc0545a7d2e4450f15d9"
     },
     {
       "id": "window",
@@ -222,7 +222,7 @@
     },
     {
       "id": "finish_check",
-      "version": "21",
+      "version": "22",
       "file": "finish_check.md",
       "applies_when": "finish_check",
       "requires": [
@@ -244,12 +244,12 @@
         "COORD.F18",
         "COORD.F19"
       ],
-      "budget_characters": 2542,
-      "content_sha256": "4827b879f0cddcae0021f4c466271db359cf8b7186181a43d6a7965a9b5a550c"
+      "budget_characters": 2915,
+      "content_sha256": "763c7394574d8d4a31b18a1d9093e1c67547db4af3d27bb607cd61d3d7a1afc5"
     },
     {
       "id": "finish_check_work",
-      "version": "19",
+      "version": "21",
       "file": "finish_check_work.md",
       "applies_when": "finish_check_work",
       "requires": [
@@ -271,8 +271,23 @@
         "COORD.F18",
         "COORD.F19"
       ],
-      "budget_characters": 3550,
-      "content_sha256": "0e6639219e7d1525b07753bd742d47e0573f5425a2e0670b718239261ba853a3"
+      "budget_characters": 3890,
+      "content_sha256": "e9528a5bb0a79cec169698ff224716c644f72130ea5bdf2ca44d6c73bfd274ef"
+    },
+    {
+      "id": "conversation_reply",
+      "version": "4",
+      "file": "conversation_reply.md",
+      "applies_when": "conversation_reply",
+      "requires": [],
+      "owns_rule_ids": [
+        "COORD.F01",
+        "COORD.F04",
+        "COORD.F13",
+        "COORD.F14"
+      ],
+      "budget_characters": 1027,
+      "content_sha256": "557f060241a7d463bfa8092668d6145ca21a858073fb83103ae4a92b6b3650be"
     }
   ],
   "obligations": [
@@ -288,7 +303,8 @@
         "group",
         "window",
         "finish_check",
-        "finish_check_work"
+        "finish_check_work",
+        "conversation_reply"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -304,7 +320,9 @@
         "f01_intervening_respondent",
         "f02_old_explicit_reply",
         "f02_history_read_unknown",
-        "f01_receiving_mention_stale_name"
+        "f01_receiving_mention_stale_name",
+        "f01_uid_required_reply_rename",
+        "f01_other_uid_same_name_quote"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -316,7 +334,9 @@
         "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
         "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
         "dialogue_history_guidance": "2026-09-10.6 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior.",
-        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending."
+        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending.",
+        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
+        "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -343,7 +363,12 @@
         "server/internal/handler/agent_dispatch_v2.go#buildDispatchIssueRelayInstruction",
         "server/internal/handler/coordinator_issue_relay_test.go",
         "docs/agent-dispatch-v2-execution-contract.md",
-        "server/internal/service/inboundcoord/progressive_context.go"
+        "server/internal/service/inboundcoord/progressive_context.go",
+        "server/internal/service/inboundcoord/response_requirement.go",
+        "server/internal/service/inboundcoord/contextual_reply_test.go",
+        "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+        "server/internal/service/inboundcoord/conversation_reply.go",
+        "server/internal/service/inboundcoord/policy/conversation_reply.md"
       ],
       "case_file": "cases.json"
     },
@@ -523,7 +548,8 @@
         "inbound",
         "skills",
         "finish_check",
-        "finish_check_work"
+        "finish_check_work",
+        "conversation_reply"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -543,14 +569,17 @@
         "f11_memory_capability_claim_vs_catalog",
         "f04_work_wins_over_speak",
         "f15_decline_cannot_quote_work_ask_or_memory",
-        "f04_other_recipient_work_keywords"
+        "f04_other_recipient_work_keywords",
+        "f04_contextual_conversation",
+        "f14_advice_without_biography"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "dws_execution_recovery_host_tests": "passed_local_2026-09-10",
         "dws_execution_recovery_live_delivery": "not_run",
-        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending."
+        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending.",
+        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -570,7 +599,12 @@
         "server/internal/service/inboundcoord/finish_invented_capability_test.go",
         "server/internal/service/inboundcoord/destination.go",
         "server/internal/service/inboundcoord/finish_destination_test.go",
-        "server/internal/service/inboundcoord/prompt.go"
+        "server/internal/service/inboundcoord/prompt.go",
+        "server/internal/service/inboundcoord/response_requirement.go",
+        "server/internal/service/inboundcoord/contextual_reply_test.go",
+        "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+        "server/internal/service/inboundcoord/conversation_reply.go",
+        "server/internal/service/inboundcoord/policy/conversation_reply.md"
       ],
       "case_file": "cases.json"
     },
@@ -935,16 +969,34 @@
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f12_contrast",
-        "f12_exact_result_report"
+        "f12_exact_result_report",
+        "f12_redelivery_single_sender",
+        "f12_trigger_message_quote_reply"
       ],
       "verification": {
         "status": "integration_replay_pending",
-        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
+        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
+        "work_receipt_2026_09_15": ".8 pre run3108396520 original failed work case, modification, exact body resend and separate new work delivered once; frozen ACK database tests passed; see final E2E report for retained failures and versions",
+        "trigger_message_quote_reply_2026_09_16": "passed pre run3108401487: direct conversation reply, work acceptance and final result quoted the exact trigger message; first run3108400116 failure retained in report"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/completion.md",
         "server/internal/handler/task_finished_loop.go",
-        "server/internal/service/inboundcoord/wrapup.go"
+        "server/internal/service/inboundcoord/wrapup.go",
+        "server/internal/service/inboundcoord/response_requirement.go",
+        "server/internal/service/inboundcoord/contextual_reply_test.go",
+        "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+        "server/internal/service/inboundcoord/work_receipt.go",
+        "server/internal/service/inboundcoord/work_receipt_test.go",
+        "server/internal/handler/dingtalk_response.go",
+        "server/internal/handler/dingtalk_origin_reply.go",
+        "server/internal/service/dingtalkresponse/provider.go",
+        "server/internal/dwsclient/send.go",
+        "server/internal/handler/dingtalk_response_test.go",
+        "server/internal/integrations/agentmessagerouter/dws_delivery.go",
+        "server/internal/integrations/agentmessagerouter/dws_delivery_test.go",
+        "docs/reports/2026-09-16-dingtalk-trigger-quoted-reply-e2e.md"
       ],
       "case_file": "cases.json"
     },
@@ -959,7 +1011,8 @@
         "recall_match",
         "completion",
         "finish_check",
-        "finish_check_work"
+        "finish_check_work",
+        "conversation_reply"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -999,7 +1052,11 @@
         "f15_catalog_not_authorization_vs_quoted_job_limit",
         "f07_different_deliverable_forces_start_work_kind",
         "f04_work_wins_over_speak",
-        "f04_other_recipient_work_keywords"
+        "f04_other_recipient_work_keywords",
+        "f01_uid_required_reply_rename",
+        "f12_redelivery_single_sender",
+        "f01_other_uid_same_name_quote",
+        "f14_advice_without_biography"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -1015,7 +1072,10 @@
         "same_run_work_state_model_latency": "passed: frozen same-model 3v3 median 10.881s to 6.737s; pre trace2513240e2c8043edb7bc9e1894cb63a3 loop6.979s/2 primary rounds/1 work_state, IM admission14s; not a fleet SLA; cache-hit only Host-tested",
         "retry_budget_and_tool_contract_2026_09_10": "host_tests_passed_local; pre e2e pending",
         "rejected_review_recovery_2026_09_11": "host_tests_passed; live_pre_pending",
-        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending."
+        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending.",
+        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
+        "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback",
+        "work_receipt_2026_09_15": ".8 pre run3108396520 original failed work case, modification, exact body resend and separate new work delivered once; frozen ACK database tests passed; see final E2E report for retained failures and versions"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1059,7 +1119,14 @@
         "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery",
         "server/internal/service/inboundcoord/work_state_snapshot.go",
         "server/internal/service/inboundcoord/tool_contract.go",
-        "server/internal/service/inboundcoord/finish_check_recovery_test.go#TestRejectedProposalRepairsInMainLoopWithoutGrantingWork"
+        "server/internal/service/inboundcoord/finish_check_recovery_test.go#TestRejectedProposalRepairsInMainLoopWithoutGrantingWork",
+        "server/internal/service/inboundcoord/response_requirement.go",
+        "server/internal/service/inboundcoord/contextual_reply_test.go",
+        "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+        "server/internal/service/inboundcoord/conversation_reply.go",
+        "server/internal/service/inboundcoord/policy/conversation_reply.md",
+        "server/internal/service/inboundcoord/work_receipt.go",
+        "server/internal/service/inboundcoord/work_receipt_test.go"
       ],
       "case_file": "cases.json"
     },
@@ -1073,18 +1140,22 @@
         "channel",
         "web",
         "group",
-        "skills"
+        "skills",
+        "conversation_reply"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f14_contrast",
         "f04_light_coordination_vs_business_execution",
-        "f14_dm_bare_acknowledgement_needs_no_reply"
+        "f14_dm_bare_acknowledgement_needs_no_reply",
+        "f04_contextual_conversation",
+        "f14_advice_without_biography"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
-        "history_prefetch_2026_09_10": "host_tests_passed_local; pre e2e pending"
+        "history_prefetch_2026_09_10": "host_tests_passed_local; pre e2e pending",
+        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/voice.md",
@@ -1094,7 +1165,12 @@
         "server/internal/service/inboundcoord/policy/skills.md",
         "server/internal/service/inboundcoord/window_plan.go",
         "server/internal/service/inboundcoord/loop.go",
-        "server/internal/service/inboundcoord/finish_check.go"
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/response_requirement.go",
+        "server/internal/service/inboundcoord/contextual_reply_test.go",
+        "docs/plans/2026-09-15-coordinator-contextual-replies.md",
+        "server/internal/service/inboundcoord/conversation_reply.go",
+        "server/internal/service/inboundcoord/policy/conversation_reply.md"
       ],
       "case_file": "cases.json"
     },
@@ -1427,6 +1503,9 @@
       "core",
       "finish_check",
       "finish_check_work"
+    ],
+    "conversation_reply_render": [
+      "conversation_reply"
     ]
   },
   "retired_implementations": [
@@ -1630,6 +1709,16 @@
         "COORD.F13"
       ],
       "reason": "Production ba5f8899: work keywords rewrote an allowed ignore into mandatory dispatch while work review rejected participation. Eligibility and work intent belong to shared semantic review; Host retains provenance and judgment consistency checks."
+    },
+    {
+      "id": "successful_ignore_static_receipt",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F01",
+        "COORD.F04",
+        "COORD.F14"
+      ],
+      "reason": "A valid ignore replaced by fixed text repeats without answering the current message. Required-source schema/Host facts and bounded conversation actions repair normal decisions; genuine errors retain the durable fallback."
     }
   ]
 }

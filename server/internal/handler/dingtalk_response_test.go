@@ -199,13 +199,29 @@ func TestDingTalkResponseRouteSharesTransactionAndRejectsConflictingSnapshot(t *
 	f.register(t)
 	for _, callback := range []string{f.command.CompletionCallback.URL, f.command.CompletionCallback.UpdateURL} {
 		route, err := f.h.DingTalkResponses.FindRoute(ctx, callback)
-		if err != nil || route == nil || !route.Input.ShowAITag {
+		if err != nil || route == nil || !route.Input.ShowAITag || route.Input.ReplyToOpenMsgID != "message-1" {
 			t.Fatalf("missing committed route: %+v %v", route, err)
 		}
 	}
 	f.command.Event.Data.Conversation.OpenConversationID = "different-conversation"
 	if err := f.h.registerDingTalkResponseRoute(ctx, testPool, f.command, scope); err == nil {
 		t.Fatal("same callback overwrote its frozen destination")
+	}
+}
+
+func TestDingTalkResponseRouteQuotesSelectedWindowMessage(t *testing.T) {
+	f := newDingTalkResponseFixture(t, testRouterTargetIdentity)
+	f.command.Event.Data.Messages = append(f.command.Event.Data.Messages,
+		DispatchMessage{OpenMsgID: "message-2", Text: "Use this request"})
+	f.command.WindowEvidenceID = "message-2"
+	f.register(t)
+
+	route, err := f.h.DingTalkResponses.FindRoute(context.Background(), f.command.CompletionCallback.URL)
+	if err != nil || route == nil {
+		t.Fatalf("route=%+v err=%v", route, err)
+	}
+	if route.Input.ReplyToOpenMsgID != "message-2" {
+		t.Fatalf("quoted message=%q", route.Input.ReplyToOpenMsgID)
 	}
 }
 
@@ -253,7 +269,7 @@ func TestDingTalkPrepareExecutionResultActions(t *testing.T) {
 			if err := json.Unmarshal(raw, &in); err != nil {
 				t.Fatal(err)
 			}
-			if kind != tc.kind || in.CloseState != tc.closeState || (tc.closeState != "" && in.Text != "") || !in.ShowAITag {
+			if kind != tc.kind || in.CloseState != tc.closeState || (tc.closeState != "" && in.Text != "") || !in.ShowAITag || in.ReplyToOpenMsgID != "message-1" {
 				t.Fatalf("wrong action kind=%s input=%+v", kind, in)
 			}
 			result.AgentID = uuid.NewString()

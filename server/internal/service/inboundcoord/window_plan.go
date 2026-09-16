@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -24,6 +25,7 @@ type CoordinationAction struct {
 	Kind            string   `json:"kind"`
 	SourceRefs      []string `json:"source_refs,omitempty"`
 	Reply           string   `json:"reply,omitempty"`
+	ReceiptLanguage string   `json:"receipt_language,omitempty"`
 	Purpose         string   `json:"purpose,omitempty"`
 	Intent          string   `json:"intent,omitempty"`
 	Context         string   `json:"context,omitempty"`
@@ -66,7 +68,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 	props := map[string]any{
 		"kind":        map[string]any{"type": "string", "enum": kinds},
 		"source_refs": map[string]any{"type": "array", "minItems": 1, "uniqueItems": true, "items": sourceRefSchema, "description": "Exact current-window uN refs. Every uN in current_message must be covered by at least one action, including non-work. Multiple intents may share a ref."},
-		"reply":       map[string]any{"type": "string", "description": "Required except ignore. Only user-facing communication belonging to this operation, never a business answer or internal routing narration. For work, briefly name what you will do. Host sends it after submission succeeds."},
+		"reply":       map[string]any{"type": "string", "description": "Required for non-work operations except ignore. For start_work/continue_work, omit reply: Host owns and supplies the receipt after all work is committed. Any supplied work reply is discarded; never put a deliverable here. Non-work replies stay within their operation, without business answers or internal routing narration."},
 		"reason":      map[string]any{"type": "string", "description": "Only ignore: why no response/work is needed."},
 	}
 	// A contract without window refs is the legacy unscoped schema used by
@@ -94,7 +96,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 		} else if strict {
 			kinds = removeKind(kinds, "report_status")
 		}
-		props["ack_kind"] = map[string]any{"type": "string", "enum": []string{"greeting", "thanks", "correction", "receipt"}, "description": "acknowledge only; never substitute for executable work."}
+		props["ack_kind"] = map[string]any{"type": "string", "enum": []string{"greeting", "thanks", "correction", "receipt", "conversation"}, "description": "acknowledge only. conversation answers everyday social follow-ups or feedback about this dialogue using supplied context; no invented activities, technical causes, business answers or work promises. Never substitute for executable work."}
 		revision := map[string]any{"type": "integer", "description": "report_memory only: copy scene_memory_revision; report only the supplied memory and its availability."}
 		if strict {
 			// Host requires the exact current revision, including 0.
@@ -102,6 +104,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 		}
 		props["memory_revision"] = revision
 		if canPlanWork {
+			props["receipt_language"] = map[string]any{"type": "string", "enum": []string{"zh", "en", "ja", "ko"}, "description": "Optional work-only language selection for the fixed Host acceptance receipt, matching the current user. Omit when unsure. This field carries no response text or execution instruction."}
 			props["purpose"] = map[string]any{"type": "string", "minLength": 8, "maxLength": 240, "description": "Work only: ONE independently executable deliverable with its concrete target. A same-kind batch (same mutation/config change on several named objects) stays in one purpose. Separate unrelated kinds of work into separate actions; never hide those as a numbered list. Amendments or steps toward the same artifact may stay together. Host binds the speaker."}
 			props["intent"] = map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "default": "other", "description": "Optional classification only; omit when unsure. Defaults to other. Continuation basis answer/change/retry belongs in basis, not intent."}
 			props["context"] = map[string]any{"type": "string", "maxLength": 500, "description": "Work only: necessary context, without copying history or scene memory."}
@@ -120,6 +123,16 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 		}
 		props["kind"] = map[string]any{"type": "string", "enum": kinds}
 	}
+	ignorableRefs := make([]string, 0, len(contract.sourceRefs))
+	for _, ref := range contract.sourceRefs {
+		if !slices.Contains(contract.requiredResponseRefs, ref) {
+			ignorableRefs = append(ignorableRefs, ref)
+		}
+	}
+	if !taskFinished && strict && len(ignorableRefs) == 0 {
+		kinds = removeKind(kinds, "ignore")
+		props["kind"] = map[string]any{"type": "string", "enum": kinds}
+	}
 	variants := make([]any, 0, len(kinds))
 	for _, kind := range kinds {
 		required := []string{"kind"}
@@ -128,7 +141,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 		}
 		if kind == "ignore" {
 			required = append(required, "reason")
-		} else {
+		} else if !workCoordinationKind(kind) {
 			required = append(required, "reply")
 		}
 		switch kind {
@@ -149,11 +162,15 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 		case "report_result":
 			required = append(required, "result_ref")
 		}
-		variants = append(variants, map[string]any{"properties": map[string]any{"kind": map[string]any{"enum": []string{kind}}}, "required": required})
+		variantProps := map[string]any{"kind": map[string]any{"enum": []string{kind}}}
+		if kind == "ignore" && !taskFinished && strict {
+			variantProps["source_refs"] = map[string]any{"type": "array", "items": stringEnum(ignorableRefs)}
+		}
+		variants = append(variants, map[string]any{"properties": variantProps, "required": required})
 	}
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("First establish per-source participation: receiving a group message does not make it a request to this employee. Ignore requests/greetings directed only to others. Then finish coordination using 1-8 explicit actions. No generic reply action. Each action owns its reply and only its documented fields; ignore owns reason. Product/professional questions require start_work or continue_work, even if easy. Recall first before work. One work action per independent deliverable; same-kind batches stay in one action; do not bundle unrelated kinds of work into one purpose. Mixed work, clarification and acknowledgements are allowed; cover the full window. Never claim a proposed action already succeeded."),
+		Description: openai.String("First establish per-source participation: receiving a group message does not make it a request to this employee. Ignore requests/greetings directed only to others. A source marked response_required is addressed to this employee regardless of persona names; it cannot be ignored. Use acknowledge with ack_kind=conversation for everyday follow-ups and feedback, answering the current message. Then finish coordination using 1-8 explicit actions. No generic reply action. Host owns work receipts; non-work actions own their scoped reply and ignore owns reason. Use only documented fields. Product/professional questions require start_work or continue_work, even if easy. Recall first before work. One work action per independent deliverable; same-kind batches stay in one action; do not bundle unrelated kinds of work into one purpose. Mixed work, clarification and acknowledgements are allowed; cover the full window. Never claim a proposed action already succeeded."),
 		Parameters:  shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"actions"}, "properties": map[string]any{"actions": map[string]any{"type": "array", "minItems": 1, "maxItems": WindowPlanMaxItems, "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"kind"}, "properties": props, "oneOf": variants}}}},
 	})
 }
@@ -192,6 +209,20 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 		if err := json.Unmarshal(entry, &fields); err != nil {
 			return Decision{}, fmt.Errorf("invalid actions[%d]: %w", actionIndex, err)
 		}
+		var rawKind string
+		_ = json.Unmarshal(fields["kind"], &rawKind)
+		if workCoordinationKind(rawKind) {
+			// Work receipt text is Host-owned. Ignore even malformed legacy
+			// reply values before decoding the model-owned execution fields.
+			delete(fields, "reply")
+			if rawLanguage, ok := fields["receipt_language"]; ok {
+				var language string
+				if json.Unmarshal(rawLanguage, &language) != nil {
+					delete(fields, "receipt_language")
+				}
+			}
+			entry, _ = json.Marshal(fields)
+		}
 		if rawIntent, present := fields["intent"]; present {
 			var value string
 			if err := json.Unmarshal(rawIntent, &value); err != nil || strings.TrimSpace(string(rawIntent)) == "null" {
@@ -212,7 +243,7 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 		switch a.Kind {
 		case "start_work", "continue_work":
 			work = true
-			for _, k := range []string{"purpose", "intent", "context", "reply"} {
+			for _, k := range []string{"purpose", "intent", "context", "reply", "receipt_language"} {
 				allowed[k] = true
 			}
 			if a.Kind == "continue_work" {
@@ -287,11 +318,16 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 		}
 		a.Reply = strings.TrimSpace(a.Reply)
 		if a.Kind == "ignore" {
+			for _, ref := range a.SourceRefs {
+				if sourceResponseRequired(turn, byRef[ref]) {
+					return Decision{}, hintErr("source "+ref+" requires a response to this employee; ignore is unavailable", "Respond to the current words with acknowledge(ack_kind=conversation) for social dialogue or feedback. Use the appropriate work/status/clarify action when needed. Receiving UID evidence outranks persona names; do not invent activity or internal failure reasons.")
+				}
+			}
 			if strings.TrimSpace(a.Reason) == "" || utf8.RuneCountInString(a.Reason) > 300 {
 				return Decision{}, fmt.Errorf("ignore requires a reason of at most 300 characters")
 			}
 			d.Reason = a.Reason
-		} else {
+		} else if !work {
 			limit := 600
 			if a.Kind == "report_memory" || a.Kind == "report_result" {
 				limit = 1800
@@ -311,7 +347,7 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 			}
 			if !suppliedConstraintQuote(a.ConstraintQuote, turn) {
 				if quoteIsCurrentWorkUtterance(a.ConstraintQuote, turn) {
-					return Decision{}, hintErr("decline constraint_quote quoted the current work request, not a restriction", "Use start_work or continue_work. Scene memory, history, and the current work ask are not decline boundaries. Put the human acknowledgement on the work action's reply.")
+					return Decision{}, hintErr("decline constraint_quote quoted the current work request, not a restriction", "Use start_work or continue_work. Scene memory, history, and the current work ask are not decline boundaries. Host supplies the work receipt after commitment; no model work reply is needed.")
 				}
 				return Decision{}, hintErr("decline constraint_quote must quote an actual supplied boundary", "Use verbatim text from the current request, visible agent_persona/agent_reply_tone, or loaded contract. Do not repeat or paraphrase an unseen policy. Memory and history add no decline boundaries. If no applicable visible restriction supports decline, reassess the request; the independent review holds the full working policy. Missing evidence grants no new authority.")
 			}
@@ -320,7 +356,7 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 				return Decision{}, fmt.Errorf("clarify requires explicit valid missing_fields")
 			}
 		case "acknowledge":
-			if !oneOf(a.AckKind, "greeting", "thanks", "correction", "receipt") {
+			if !oneOf(a.AckKind, "greeting", "thanks", "correction", "receipt", "conversation") {
 				return Decision{}, fmt.Errorf("acknowledge requires ack_kind")
 			}
 		case "report_memory":
@@ -377,6 +413,8 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 				continued[a.IssueID] = true
 				basis = a.Basis
 			}
+			a.ReceiptLanguage = workReceiptLanguage(turn, a)
+			a.Reply = hostWorkReceipt(a.Kind, a.ReceiptLanguage)
 			first := byRef[a.SourceRefs[0]]
 			item, err := composeWindowItem(turn, firstNonEmpty(first.Sender, turn.SenderName, "用户"), "", a.Purpose, a.Intent, a.Context)
 			if err != nil {
@@ -415,6 +453,7 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 		sort.Strings(d.NonWorkRefs)
 	}
 	d.UserText = strings.Join(replies, "\n\n")
+	NormalizeWorkReceipts(turn, &d)
 	if utf8.RuneCountInString(d.UserText) > 2400 {
 		return Decision{}, fmt.Errorf("combined replies exceed 2400 characters")
 	}

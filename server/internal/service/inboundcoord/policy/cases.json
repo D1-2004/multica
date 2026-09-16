@@ -412,6 +412,16 @@
       "verification": "not_run"
     },
     {
+      "id": "f12_trigger_message_quote_reply",
+      "rule_ids": [
+        "COORD.F12"
+      ],
+      "context_a": "当前数字员工入站消息有可信openMsgId，Coordinator返回接单或普通回复",
+      "context_b": "同一会话还有其他消息，或触发消息ID缺失",
+      "expected_effects": "A冻结并引用回复当前触发消息；合窗任务引用所选source_ref对应消息。B不得引用同会话其他消息或按正文/昵称猜ID；实际引用与送达由钉钉quotedMessage及回执验证。",
+      "verification": "pre_passed_2026_09_16_run3108401487"
+    },
+    {
       "id": "f15_contract_stale_copy",
       "rule_ids": [
         "COORD.F15",
@@ -1328,6 +1338,62 @@
       "context_a": "帮我查一下，明确交给另一个同事且无参与依据",
       "context_b": "同一句工作请求明确交给本员工",
       "expected_effects": "前者允许ignore而不被Host关键词强制派发；后者进入工作且不以口头接单替代执行",
+      "verification": "not_run"
+    },
+    {
+      "id": "f01_uid_required_reply_rename",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F13"
+      ],
+      "context_a": "相同问候或追问，可信UID@当前员工，昵称和岗位自称不同",
+      "context_b": "相同正文，可信UID只@另一个人且没有本员工参与依据",
+      "expected_effects": "前者response_required=true，不能ignore，不用旧昵称推翻UID；后者不认领；每条来源独立",
+      "verification": "not_run"
+    },
+    {
+      "id": "f04_contextual_conversation",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F14"
+      ],
+      "context_a": "连续社交追问并抱怨之前一直重复确认",
+      "context_b": "相同对话后提出明确业务工作请求",
+      "expected_effects": "前者用acknowledge(conversation)回答本轮话意，不编造活动/故障或固定复读；后者仍派发工作，不用conversation抢答",
+      "verification": "not_run"
+    },
+    {
+      "id": "f12_redelivery_single_sender",
+      "rule_ids": [
+        "COORD.F12",
+        "COORD.F13"
+      ],
+      "context_a": "已完成草稿要求原文重发，work reply已经贴完整正文",
+      "context_b": "同一请求，work reply仅接单，执行器发一次原文",
+      "expected_effects": "两者工作接单均由Host生成；模型正文丢弃，工作目标与授权仍完整审核；执行器准确交付一次，不重新研究或新建无关产物。恢复时保留已冻结ACK身份和原payload，不因收据变更重复发送。",
+      "verification": "not_run"
+    },
+    {
+      "id": "f01_other_uid_same_name_quote",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F13"
+      ],
+      "context_a": "同一显示昵称，可信UID属于另一账号，只有对该@对象问候",
+      "context_b": "同文可信UID为本员工；或@他人后另有独立自然称呼/开放邀请/有据对话",
+      "expected_effects": "A不得把正式@片段及内部同名子串作为本员工direct依据，普通/主动群一致；B保留真实响应资格，不将other_only整句封禁",
+      "verification": "not_run"
+    },
+    {
+      "id": "f14_advice_without_biography",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F13",
+        "COORD.F14"
+      ],
+      "context_a": "用户问雨天居家通常做什么，未提供任何账号主人的真实生活资料",
+      "context_b": "用户提供自己的经历并明确要求代写一段第一人称稿件",
+      "expected_effects": "A以建议或假设自然聊天，不包装为数字员工亲身习惯；B作为写作任务处理用户提供素材，不将素材冒充员工经历",
       "verification": "not_run"
     }
   ]

@@ -1,4 +1,4 @@
-Review future candidate.actions. Host delivers acceptance after that work is stored/queued; it proves no execution/completion/external delivery. Future answers/artifacts need not exist yet.
+Review future candidate.actions. Host supplies work acceptance receipts and delivers them only after that work is stored/queued; they prove no execution/completion/external delivery. Model work reply text is discarded. Future answers/artifacts need not exist yet and belong to the executor's delivery, including original-content resend. Judge requested work scope and authority; do not revise a valid plan to reword the Host receipt.
 
 Read the full current_window and selected original references to define the output; old purposes only help match work. source_ref is a message position, not an intent count; several work actions and clarify may share it.
 

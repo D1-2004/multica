@@ -70,9 +70,10 @@ const (
 type Loop string
 
 const (
-	LoopInbound      Loop = "inbound"
-	LoopTaskFinished Loop = "task_finished"
-	LoopFinishCheck  Loop = "finish_check"
+	LoopInbound           Loop = "inbound"
+	LoopTaskFinished      Loop = "task_finished"
+	LoopFinishCheck       Loop = "finish_check"
+	LoopConversationReply Loop = "conversation_reply"
 )
 
 // Turn is the local context the loop is allowed to see.
@@ -384,6 +385,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 		}
 	}
 	if restored, ok := RestoredPlan(ctx); ok {
+		NormalizeWorkReceipts(turn, &restored)
 		return restored
 	}
 	if strings.TrimSpace(turn.Message) == "" {

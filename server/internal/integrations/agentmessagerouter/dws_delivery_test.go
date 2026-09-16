@@ -48,7 +48,7 @@ func (s *replySenderStub) Open(_ context.Context, d DWSDelivery) (DWSReplySessio
 	return s.session, nil
 }
 func testDWSDelivery(agentID string) *DWSDelivery {
-	return &DWSDelivery{IdempotencyKey: "router-reply:dispatch-1", AgentID: agentID, Environment: "staging", SenderUID: "1001", SenderOrgID: "2001", OpenConversationID: "cid-1", RecipientOpenDingTalkID: "sender-open", Text: "在的。", Title: "在的。"}
+	return &DWSDelivery{IdempotencyKey: "router-reply:dispatch-1", AgentID: agentID, Environment: "staging", SenderUID: "1001", SenderOrgID: "2001", OpenConversationID: "cid-1", RecipientOpenDingTalkID: "sender-open", SourceOpenMessageID: "msg-source", Text: "在的。", Title: "在的。"}
 }
 
 func TestDWSReplyResumesAcceptedSendWithoutResending(t *testing.T) {
@@ -77,7 +77,7 @@ func TestDWSReplyResumesAcceptedSendWithoutResending(t *testing.T) {
 	if session.sends != 1 || session.statuses != 2 || session.closes != 2 {
 		t.Fatalf("send/status/close counts: %+v", session)
 	}
-	if got := session.requests[0]; got.Content != d.Text || got.RecipientOpenDingTalkID != d.RecipientOpenDingTalkID || got.IdempotencyKey != d.IdempotencyKey {
+	if got := session.requests[0]; got.Content != d.Text || got.RecipientOpenDingTalkID != "" || got.IdempotencyKey != d.IdempotencyKey || got.ConversationID != d.OpenConversationID || got.ReplyToOpenMsgID != d.SourceOpenMessageID {
 		t.Fatalf("changed reply: %+v", got)
 	}
 	if err := w.resumeDWSDelivery(context.Background(), raw, save); err != nil {
@@ -85,6 +85,27 @@ func TestDWSReplyResumesAcceptedSendWithoutResending(t *testing.T) {
 	}
 	if session.statuses != 2 {
 		t.Fatal("delivered reply was queried or sent again")
+	}
+}
+
+func TestDWSReplyWithoutSourceMessageKeepsDirectMessageFallback(t *testing.T) {
+	d := testDWSDelivery("agent-1")
+	d.SourceOpenMessageID = ""
+	raw, err := freezeDWSDelivery(d, d.AgentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := &replySessionStub{statusErr: errors.New("stop after captured send")}
+	w := &CompletionWorker{dwsSender: &replySenderStub{session: session}}
+	if err := w.resumeDWSDelivery(context.Background(), raw, func([]byte) error { return nil }); err == nil {
+		t.Fatal("expected bounded status failure")
+	}
+	if len(session.requests) != 1 {
+		t.Fatalf("send requests=%d", len(session.requests))
+	}
+	got := session.requests[0]
+	if got.ReplyToOpenMsgID != "" || got.ConversationID != "" || got.RecipientOpenDingTalkID != d.RecipientOpenDingTalkID {
+		t.Fatalf("legacy direct-message fallback changed: %+v", got)
 	}
 }
 

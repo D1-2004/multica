@@ -28,6 +28,13 @@ func TestDispatchOriginOpenMsgIDUsesWindowEvidence(t *testing.T) {
 	if got := dispatchOriginOpenMsgID(command); got != "msg-u1" {
 		t.Fatalf("first remaining origin = %q", got)
 	}
+	command.Event.Data.Messages = []DispatchMessage{
+		{OpenMsgID: "reaction-message", Text: "not an inbound request", Reaction: &DispatchMessageReaction{EmotionName: "like", Action: "add"}},
+		{OpenMsgID: "blank-message", Text: "  "},
+	}
+	if got := dispatchOriginOpenMsgID(command); got != "" {
+		t.Fatalf("guessed origin from a non-request message: %q", got)
+	}
 }
 
 func TestDispatchRuntimeContextFreezesOriginOpenMsgID(t *testing.T) {

@@ -569,7 +569,13 @@ func (s *TaskService) EnqueueSynchronousCompleted(
 	agentID pgtype.UUID,
 	resultMessage string,
 ) error {
-	return s.enqueueSynchronousCompleted(ctx, callbackURL, targetIdentity, agentID, resultMessage, "sync-completed")
+	return s.enqueueSynchronousCompleted(ctx, callbackURL, targetIdentity, agentID, resultMessage, "sync-completed", false)
+}
+
+// EnqueueSynchronousWorkReceipt reuses an already frozen work acknowledgement
+// after plan restoration. Its original payload and delivery state remain intact.
+func (s *TaskService) EnqueueSynchronousWorkReceipt(ctx context.Context, callbackURL, targetIdentity string, agentID pgtype.UUID, resultMessage string) error {
+	return s.enqueueSynchronousCompleted(ctx, callbackURL, targetIdentity, agentID, resultMessage, "sync-completed", true)
 }
 
 // EnqueueSynchronousWrapup delivers the task-finished Coordinator reply on the
@@ -586,7 +592,7 @@ func (s *TaskService) EnqueueSynchronousWrapup(
 	if suffix == "" {
 		return errors.New("synchronous wrap-up task id is required")
 	}
-	return s.enqueueSynchronousCompleted(ctx, callbackURL, targetIdentity, agentID, resultMessage, "sync-wrapup:"+suffix)
+	return s.enqueueSynchronousCompleted(ctx, callbackURL, targetIdentity, agentID, resultMessage, "sync-wrapup:"+suffix, false)
 }
 
 func (s *TaskService) enqueueSynchronousCompleted(
@@ -596,6 +602,7 @@ func (s *TaskService) enqueueSynchronousCompleted(
 	agentID pgtype.UUID,
 	resultMessage string,
 	requestKind string,
+	reuseWorkReceipt bool,
 ) error {
 	const prefix = "/api/v1/dispatch-tasks/"
 	const suffix = "/execution-result"
@@ -616,13 +623,23 @@ func (s *TaskService) enqueueSynchronousCompleted(
 	if kind == "" {
 		kind = "sync-completed"
 	}
+	requestID := "multica-terminal:" + kind + ":" + dispatchTaskID
 	_, err := s.Queries.EnqueueSynchronousCompletedTaskCompletion(ctx, db.EnqueueSynchronousCompletedTaskCompletionParams{
 		CallbackUrl:    callbackURL,
 		TargetIdentity: targetIdentity,
-		RequestID:      "multica-terminal:" + kind + ":" + dispatchTaskID,
+		RequestID:      requestID,
 		AgentID:        agentID,
 		ResultMessage:  redact.Text(message),
 	})
+	if errors.Is(err, pgx.ErrNoRows) && reuseWorkReceipt {
+		existing, loadErr := s.Queries.GetTaskCompletionByRequestID(ctx, requestID)
+		if loadErr != nil {
+			return fmt.Errorf("load frozen work receipt: %w", loadErr)
+		}
+		if existing.RequestID == requestID && existing.CallbackUrl == callbackURL && existing.TargetIdentity == targetIdentity && existing.AgentID == agentID && !existing.RootTaskID.Valid && !existing.TerminalTaskID.Valid && existing.ExecutionStatus == "completed" && !existing.Error.Valid && !existing.FailureReason.Valid && strings.TrimSpace(existing.ResultMessage) != "" {
+			return nil
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("enqueue synchronous completed task: %w", err)
 	}
@@ -667,6 +684,15 @@ func (s *TaskService) EnqueueCoordinatorIssueAck(
 		UpdateType:      "delegated_to_issue",
 		ResultMessage:   pgtype.Text{String: redact.Text(message), Valid: true},
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		existing, loadErr := s.Queries.GetTaskExecutionUpdateByRootTaskID(ctx, issueTask.ID)
+		if loadErr != nil {
+			return fmt.Errorf("load frozen coordinator issue ack: %w", loadErr)
+		}
+		if existing.RootTaskID == issueTask.ID && existing.TargetTaskID == issueTask.ID && existing.IssueID == issue.ID && existing.IssueIdentifier == issueIdentifier && existing.CallbackUrl == updateURL && existing.TargetIdentity == targetIdentity && existing.RequestID == "multica-coord-issue:"+util.UUIDToString(issueTask.ID) && existing.AgentID == issueTask.AgentID && existing.TargetAgentID == issueTask.AgentID && existing.UpdateType == "delegated_to_issue" && existing.ResultMessageFrozen && existing.ResultMessage.Valid && strings.TrimSpace(existing.ResultMessage.String) != "" {
+			return nil
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("enqueue coordinator issue ack: %w", err)
 	}

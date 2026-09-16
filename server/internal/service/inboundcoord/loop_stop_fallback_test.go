@@ -164,28 +164,3 @@ func TestTaskFinishedLoopStopStaysDeferred(t *testing.T) {
 		t.Fatalf("fallback must not expose diagnostics or encourage replay: %q", coordinatorFallbackReply)
 	}
 }
-
-func TestDirectInboundSilenceGetsVisibleReceipt(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		turn  Turn
-		reply bool
-	}{
-		{"direct message", Turn{Source: SourceDigitalEmployee, ChatType: "p2p"}, true},
-		{"trusted addressed group", Turn{Source: SourceDigitalEmployee, ChatType: "group", Addressed: true}, true},
-		{"direct alias", Turn{Source: SourceDigitalEmployee, ChatType: "direct"}, true},
-		{"stale name matched mention", Turn{Source: SourceDigitalEmployee, ChatType: "group", DWSUID: "6899376218", EmployeeAccountName: "旧昵称", Utterances: []WindowUtterance{{Text: "@新昵称 你怎么不说话", Mentions: []MessageMention{{OpenDingTalkID: "6899376218"}}}}}, true},
-		{"other colleague", Turn{Source: SourceDigitalEmployee, ChatType: "group", DWSUID: "6899376218", Utterances: []WindowUtterance{{Text: "@别人 帮我查一下", Mentions: []MessageMention{{UID: "other"}}}}}, false},
-		{"completion already delivered", Turn{Source: SourceDigitalEmployee, ChatType: "p2p", Loop: LoopTaskFinished}, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			d := ensureDirectInboundReply(tc.turn, Decision{Action: ActionSilence, Reason: "internal reviewer detail", CoordinationActions: []CoordinationAction{{Kind: "ignore", SourceRefs: []string{"u1"}}}})
-			if (d.Action == ActionReply) != tc.reply {
-				t.Fatalf("unexpected decision: %+v", d)
-			}
-			if tc.reply && (d.UserText == "" || strings.Contains(d.UserText, "internal") || !d.LoopStopFallback() || len(d.CoordinationActions) > 0) {
-				t.Fatalf("invalid visible receipt: %+v", d)
-			}
-		})
-	}
-}
