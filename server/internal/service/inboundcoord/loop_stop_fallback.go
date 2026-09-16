@@ -61,24 +61,6 @@ func (d Decision) LoopStopFallback() bool {
 	return (d.Action == ActionReply || d.Action == ActionSilence) && (deterministicLoopStop(d.Reason) || d.Reason == "addressed_silence_fallback")
 }
 
-// A trusted direct inbound message must have a visible response even when
-// semantic review accepts silence. This receipt grants no work authority.
-func ensureDirectInboundReply(turn Turn, decision Decision) Decision {
-	if turn.Source != SourceDigitalEmployee || turn.Loop == LoopTaskFinished || decision.Action != ActionSilence {
-		return decision
-	}
-	if !directInboundReplyEligible(turn) {
-		return decision
-	}
-	decision.Action = ActionReply
-	decision.UserText = "我在，看到你的消息了。抱歉，刚才没接上。"
-	decision.Reason = "addressed_silence_fallback"
-	decision.CoordinationActions = nil
-	decision.NonWorkRefs = nil
-	decision.PlanVersion = WindowPlanVersion
-	return decision
-}
-
 // Preserve an already trusted addressed verdict, and also recognize direct
 // conversations and per-message mentions when the event-level flag is absent.
 func directInboundReplyEligible(turn Turn) bool {

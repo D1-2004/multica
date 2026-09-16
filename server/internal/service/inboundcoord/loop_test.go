@@ -16,13 +16,16 @@ import (
 )
 
 type scriptedCompleter struct {
-	rounds      []openai.ChatCompletion
-	calls       int
-	params      []openai.ChatCompletionNewParams
-	checkRounds []openai.ChatCompletion
-	checkCalls  int
-	checkParams []openai.ChatCompletionNewParams
-	checkError  error
+	rounds             []openai.ChatCompletion
+	calls              int
+	params             []openai.ChatCompletionNewParams
+	checkRounds        []openai.ChatCompletion
+	checkCalls         int
+	checkParams        []openai.ChatCompletionNewParams
+	checkError         error
+	conversationRounds []openai.ChatCompletion
+	conversationCalls  int
+	conversationParams []openai.ChatCompletionNewParams
 }
 
 func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
@@ -43,6 +46,16 @@ func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
 }
 
 func (s *scriptedCompleter) Chat(_ context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+	if names := toolParamNames(params.Tools); len(names) == 1 && names[0] == toolConversationReplies {
+		s.conversationParams = append(s.conversationParams, params)
+		if s.conversationCalls >= len(s.conversationRounds) {
+			return nil, fmt.Errorf("unexpected conversation rendering call %d", s.conversationCalls)
+		}
+		out := s.conversationRounds[s.conversationCalls]
+		s.conversationCalls++
+		return &out, nil
+	}
+
 	if names := toolParamNames(params.Tools); len(names) == 1 && names[0] == "finish_check" {
 		s.checkParams = append(s.checkParams, params)
 		s.checkCalls++
@@ -825,23 +838,19 @@ func TestWindowPlanCannotIntroduceUnrecalledTarget(t *testing.T) {
 	}
 }
 
-func TestWindowPlanEmptyTextHintDistinctFromItems(t *testing.T) {
+func TestWindowPlanWorkReceiptDoesNotRequireModelText(t *testing.T) {
 	t.Parallel()
 	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "106201", Message: "看下你的环境变量和dws身份 mcp和skills有什么"}
 	recalls := []recallCall{{ConversationID: turn.ConversationID}}
 	empty := `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup"}]}`
-	_, err := parseValidatedWindowPlan(empty, turn, recalls, nil)
-	if err == nil {
-		t.Fatal("missing per-action reply must fail")
-	}
-	raw := marshalToolFailure(err)
-	if !strings.Contains(raw, "start_work requires reply") || !strings.Contains(raw, "Set reply on this start_work action") {
-		t.Fatalf("missing reply needs a precise hint: %s", raw)
+	d, err := parseValidatedWindowPlan(empty, turn, recalls, nil)
+	if err != nil || d.Action != ActionIssue || len(d.Items) != 1 || d.UserText != hostWorkReceipt("start_work", "zh") {
+		t.Fatalf("optional model reply blocked valid work: %+v err=%v", d, err)
 	}
 	complete := strings.Replace(empty, `"kind":"start_work"`, `"kind":"start_work","reply":"我去查配置与身份并汇报。"`, 1)
-	d, err := parseValidatedWindowPlan(complete, turn, recalls, nil)
-	if err != nil || d.Action != ActionIssue || len(d.Items) != 1 {
-		t.Fatalf("DWS identity remains a valid deliverable: %#v %v", d, err)
+	supplied, err := parseValidatedWindowPlan(complete, turn, recalls, nil)
+	if err != nil || supplied.UserText != d.UserText || supplied.Items[0].Purpose != d.Items[0].Purpose {
+		t.Fatalf("legacy work reply changed execution or Host receipt: %+v err=%v", supplied, err)
 	}
 }
 
@@ -854,18 +863,18 @@ func TestWindowPlanAcceptsTechnicalSubject(t *testing.T) {
 	}
 }
 
-func TestFinishEmptyTextHintReachesNextModelRound(t *testing.T) {
+func TestFinishMissingWorkReplyDoesNotSpendRepairRound(t *testing.T) {
 	t.Parallel()
 	empty := `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup"}]}`
-	complete := strings.Replace(empty, `"kind":"start_work"`, `"kind":"start_work","reply":"我去查配置与身份并汇报。"`, 1)
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("r0", toolAssocRecall, `{"conversation_id":"cid-env"}`), assistantTool("f0", toolFinish, empty), assistantTool("f1", toolFinish, complete)}}
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("r0", toolAssocRecall, `{"conversation_id":"cid-env"}`), assistantTool("f0", toolFinish, empty)}}
 	d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "106201", Message: "看下你的环境变量和dws身份 mcp和skills有什么"})
-	if err != nil || d.Action != ActionIssue || chat.calls != 3 {
-		t.Fatalf("after reply repair: %s calls=%d err=%v", d.Action, chat.calls, err)
+	if err != nil || d.Action != ActionIssue || chat.calls != 2 || chat.checkCalls != 1 || d.UserText != hostWorkReceipt("start_work", "zh") {
+		t.Fatalf("unnecessary reply repair: %+v calls=%d err=%v", d, chat.calls, err)
 	}
-	raw, _ := json.Marshal(chat.params[2].Messages)
-	if !strings.Contains(string(raw), "start_work requires reply") || !strings.Contains(string(raw), "Set reply on this start_work action") {
-		t.Fatalf("repair is not visible: %s", raw)
+	for _, step := range d.Steps {
+		if step.Error {
+			t.Fatalf("optional work reply created a repair error: %+v", step)
+		}
 	}
 }
 
@@ -957,37 +966,17 @@ func TestLoopFinishTopLevelIssueIDIsRejectedThenScopedPlan(t *testing.T) {
 	}
 }
 
-func TestLoopFinishIssueEmptyTextIsRejectedThenSpoken(t *testing.T) {
+func TestLoopFinishIssueMissingModelReplyGetsHostReceipt(t *testing.T) {
 	t.Parallel()
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-
-		assistantTool("finish-empty", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"向冬翔确认今天吃什么","intent":"ask"}]}`),
-		assistantTool("finish-ok", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我去问冬翔今天想吃什么","purpose":"向冬翔确认今天吃什么","intent":"ask"}]}`),
-	}}
-	tools := &stubTools{recall: `{"items":[]}`}
-	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
-		Source:         SourceDigitalEmployee,
-		Message:        "问一下冬翔，今天想吃什么",
-		ConversationID: "cid-dongxiang",
-		SenderName:     "冬翔",
-	})
-	if err != nil {
-		t.Fatal(err)
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("finish", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"向冬翔确认今天吃什么","intent":"ask"}]}`)}}
+	got, err := (&Coordinator{Chat: chat, Tools: &stubTools{recall: `{"items":[]}`}}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Message: "问一下冬翔，今天想吃什么", ConversationID: "cid-dongxiang", SenderName: "冬翔"})
+	if err != nil || got.Action != ActionIssue || got.UserText != hostWorkReceipt("start_work", "zh") || got.IssueID != "" || chat.calls != 1 {
+		t.Fatalf("missing work text caused a repair: %+v err=%v", got, err)
 	}
-	if got.Action != ActionIssue || got.UserText != "我去问冬翔今天想吃什么" || got.IssueID != "" {
-		t.Fatalf("decision=%#v", got)
-	}
-	if strings.Contains(got.UserText, "核对") {
-		t.Fatalf("synthesized ack: %q", got.UserText)
-	}
-	sawHint := false
 	for _, step := range got.Steps {
-		if step.Tool == toolFinish && step.Error && strings.Contains(step.Output, "reply") {
-			sawHint = true
+		if step.Error {
+			t.Fatalf("missing model ACK must not fail: %+v", step)
 		}
-	}
-	if !sawHint {
-		t.Fatalf("empty issue text must be rejected, steps=%#v", got.Steps)
 	}
 }
 

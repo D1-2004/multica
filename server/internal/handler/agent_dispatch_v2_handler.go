@@ -1537,7 +1537,7 @@ func (h *Handler) enqueueCoordinatorIssueAckOrComplete(
 			text,
 		)
 	}
-	return h.TaskService.EnqueueSynchronousCompleted(
+	return h.TaskService.EnqueueSynchronousWorkReceipt(
 		ctx,
 		command.CompletionCallback.URL,
 		command.CompletionCallback.Target,
@@ -2099,7 +2099,7 @@ func (h *Handler) createAgentDispatchCommentWithCoordinatorV2(
 		h.TaskService != nil &&
 		c.CompletionCallback != nil &&
 		strings.TrimSpace(coordinatorDecision.UserText) != "" {
-		if err := h.TaskService.EnqueueSynchronousCompleted(
+		if err := h.TaskService.EnqueueSynchronousWorkReceipt(
 			r.Context(),
 			c.CompletionCallback.URL,
 			c.CompletionCallback.Target,

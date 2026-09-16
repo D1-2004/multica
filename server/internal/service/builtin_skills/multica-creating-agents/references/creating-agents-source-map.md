@@ -290,3 +290,8 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - Pre-release publication integration: `agent_package_service.go` and `agent_package_section_codecs.go` keep the single paired import/export registry; the DSH plugin codec applies explicit mappings and exports the current pinned private configuration. ZIP, Git, builder and rollback use this same transaction. `agent_package_reuse.go` requires explicit plugin secret inputs even when an environment alias matches.
 
 - `agent_source_sync.go`: explicit secret/plugin inputs force transactional application and publication even for unchanged package bytes; actual ZIP rebinding regression is a preproduction acceptance gate.
+
+## Coordinator work acceptance receipts
+
+- `server/internal/service/inboundcoord/work_receipt.go`: Host owns `start_work`/`continue_work` receipt text; only the executor delivers the requested work output. Receipts follow durable work admission and do not prove completion. Mixed conversational replies remain contextual.
+- `docs/inbound-coordinator-loop.md`: current receipt, UID response and recovery contracts; previously frozen outbox payloads remain immutable.

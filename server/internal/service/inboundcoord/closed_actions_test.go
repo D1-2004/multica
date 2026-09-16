@@ -112,7 +112,7 @@ func TestClosedActionsKeepEachExecutorContextOnItsOwnWork(t *testing.T) {
 		selected := d.ForWindowItem(item)
 		body := IssueDescription(selected, item.Content)
 		other := d.Items[1-i]
-		if selected.UserText != item.Reply || len(selected.Items) != 1 || len(selected.CoordinationActions) != 0 || strings.Contains(body, other.Reply) || strings.Contains(body, other.Content) || strings.Contains(body, other.LookInto) {
+		if selected.UserText != item.Reply || len(selected.Items) != 1 || len(selected.CoordinationActions) != 0 || strings.Contains(body, other.Content) || strings.Contains(body, other.LookInto) {
 			t.Fatalf("executor inherited another task's context: item=%d body=%s", i, body)
 		}
 		if !strings.Contains(body, item.Reply) || !strings.Contains(body, item.Content) {

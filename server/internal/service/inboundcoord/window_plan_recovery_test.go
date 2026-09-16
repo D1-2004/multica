@@ -88,7 +88,7 @@ func TestWorkIntentRecoverySchemaIsOptionalWithoutExpandingEnum(t *testing.T) {
 			continue
 		}
 		required := stringSlice(variant["required"])
-		if containsString(required, "intent") || !containsString(required, "purpose") || !containsString(required, "reply") || !containsString(required, "source_refs") {
+		if containsString(required, "intent") || !containsString(required, "purpose") || containsString(required, "reply") || !containsString(required, "source_refs") {
 			t.Fatalf("work obligations changed: kind=%s required=%v", kind, required)
 		}
 		if kind == "continue_work" && (!containsString(required, "basis") || !containsString(required, "issue_id")) {
