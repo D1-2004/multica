@@ -43,6 +43,10 @@ type DingTalkMessagePolicy struct {
 	// ReplyToSenderOpenDingTalkID is who wrote ReplyToOpenMsgID. A quote reply
 	// is auto-addressed to them, so the rewrite drops a duplicate placeholder.
 	ReplyToSenderOpenDingTalkID string `json:"reply_to_sender_open_dingtalk_id,omitempty"`
+	// ReplyToSenderDisplayName is that same person's name in the trusted
+	// inbound event. An executor writes the display form (`@冬翔`) rather than
+	// the placeholder, and only this person's own prefix may be dropped.
+	ReplyToSenderDisplayName string `json:"reply_to_sender_display_name,omitempty"`
 }
 
 // DingTalkResponseReceipt reports delivery separately from task execution.

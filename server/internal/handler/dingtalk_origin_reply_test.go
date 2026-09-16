@@ -132,21 +132,21 @@ func TestApplyDingTalkOriginReplyFreezesQuotedSender(t *testing.T) {
 		EventData: DispatchEventData{
 			Conversation: DispatchConversation{OpenConversationID: "cid-origin"},
 			Messages: []DispatchMessage{
-				{OpenMsgID: "msg-earlier", Text: "前一句", SenderOpenDingTalkID: "colleague"},
-				{OpenMsgID: "msg-origin", Text: "查一下", SenderOpenDingTalkID: "asker"},
+				{OpenMsgID: "msg-earlier", Text: "前一句", SenderOpenDingTalkID: "colleague", SenderDisplayName: "同事"},
+				{OpenMsgID: "msg-origin", Text: "查一下", SenderOpenDingTalkID: "asker", SenderDisplayName: "冬翔"},
 			},
 		},
 	}
 	policy := &protocol.DingTalkMessagePolicy{}
 	applyDingTalkOriginReply(policy, stored)
-	if policy.ReplyToSenderOpenDingTalkID != "asker" {
-		t.Fatalf("quoted sender = %q", policy.ReplyToSenderOpenDingTalkID)
+	if policy.ReplyToSenderOpenDingTalkID != "asker" || policy.ReplyToSenderDisplayName != "冬翔" {
+		t.Fatalf("quoted sender = %q/%q", policy.ReplyToSenderOpenDingTalkID, policy.ReplyToSenderDisplayName)
 	}
 	// An origin the stored window cannot explain stays unknown.
 	stored.ReplyToOpenMsgID = "msg-elsewhere"
 	policy = &protocol.DingTalkMessagePolicy{}
 	applyDingTalkOriginReply(policy, stored)
-	if policy.ReplyToSenderOpenDingTalkID != "" {
-		t.Fatalf("guessed quoted sender = %q", policy.ReplyToSenderOpenDingTalkID)
+	if policy.ReplyToSenderOpenDingTalkID != "" || policy.ReplyToSenderDisplayName != "" {
+		t.Fatalf("guessed quoted sender = %q/%q", policy.ReplyToSenderOpenDingTalkID, policy.ReplyToSenderDisplayName)
 	}
 }
