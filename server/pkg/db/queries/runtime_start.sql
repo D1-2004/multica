@@ -248,7 +248,7 @@ WHERE task.status = 'queued'
        AND latest.daemon_started_at IS NULL
        AND latest.claim_finalized_at IS NULL
        AND EXISTS (SELECT 1 FROM dsh_employee_session AS session
-                   WHERE session.workspace_id = task.workspace_id
+                   WHERE session.workspace_id = agent.workspace_id
                      AND session.agent_id = task.agent_id
                      AND session.scope_id = COALESCE(task.issue_id, task.chat_session_id, task.id)))
   )
