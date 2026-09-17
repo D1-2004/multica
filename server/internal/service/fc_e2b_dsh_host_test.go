@@ -157,6 +157,27 @@ func TestDSHNativeManagedProfileReceipt(t *testing.T) {
 	if err != nil || validateDSHNativeHostReceipt(out, host, digest, revision) != nil {
 		t.Fatalf("matching managed profile rejected: %v", err)
 	}
+	probe := &fakeCommandRunner{out: []string{out, out, out, out, "{}", out}, errs: []error{nil, nil, nil, nil, nil, errors.New("supervisor unavailable")}}
+	readOnlyLauncher := &FCE2BLauncher{Runner: probe}
+	if !readOnlyLauncher.dshNativeHostHasProfile(context.Background(), host, digest, revision) {
+		t.Fatal("live matching Profile was not reusable")
+	}
+	otherHost := host
+	otherHost.Generation++
+	otherRevision := revision
+	otherRevision.ID++
+	if readOnlyLauncher.dshNativeHostHasProfile(context.Background(), otherHost, digest, revision) ||
+		readOnlyLauncher.dshNativeHostHasProfile(context.Background(), host, digest, otherRevision) ||
+		readOnlyLauncher.dshNativeHostHasProfile(context.Background(), host, "another-catalog", revision) ||
+		readOnlyLauncher.dshNativeHostHasProfile(context.Background(), host, digest, revision) ||
+		readOnlyLauncher.dshNativeHostHasProfile(context.Background(), host, digest, revision) {
+		t.Fatal("unconfirmed or mismatched live Profile was reusable")
+	}
+	for i, call := range probe.calls {
+		if call.args[len(call.args)-1] != dshNativeHostHealthCommand || !probe.deadlines[i] || probe.timeouts[i] > 10*time.Second {
+			t.Fatal("live Profile probe did not use the bounded read-only control request")
+		}
+	}
 	_, changed, _ := dshManagedCatalog([]string{"other-model"})
 	if validateDSHNativeHostReceipt(out, host, changed, revision) == nil || validateDSHNativeHostReceipt(out, host, "", revision) == nil {
 		t.Fatal("a different or missing managed profile was accepted")
@@ -187,13 +208,23 @@ func TestDSHNativeManagedProfileReceipt(t *testing.T) {
 
 func (r dshHomeRunner) Run(_ context.Context, _ string, args []string, _ []string) (string, error) {
 	values := map[string]string{}
+	var sandbox string
 	for i := range len(args) - 1 {
 		values[args[i]] = args[i+1]
+		if args[i] == "--" && i > 0 {
+			sandbox = args[i-1]
+		}
 	}
 	for _, arg := range args {
 		if k, v, ok := strings.Cut(arg, "="); ok {
 			values[k] = v
 		}
+	}
+	if args[len(args)-1] == dshNativeHostHealthCommand {
+		if receipt, ok := r.profiles.Load("health/" + sandbox); ok {
+			return receipt.(string), nil
+		}
+		return "", errors.New("no running native Host")
 	}
 	if args[len(args)-1] == "--stage" {
 		if len(strings.Join(args, " ")) > 64000 {
@@ -262,7 +293,9 @@ func (r dshHomeRunner) Run(_ context.Context, _ string, args []string, _ []strin
 			return "", err
 		}
 		profileDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(profileRaw)))
-		return fmt.Sprintf(`{"version":1,"workspace_id":%q,"agent_id":%q,"generation":%s,"managed_profile_digest":%q,"employee_profile":{"revision":%q,"digest":%q}}`, values["MULTICA_DSH_WORKSPACE_ID"], values["MULTICA_DSH_AGENT_ID"], values["MULTICA_DSH_HOST_GENERATION"], digest, profile.Revision, profileDigest), nil
+		receipt := fmt.Sprintf(`{"version":1,"workspace_id":%q,"agent_id":%q,"generation":%s,"managed_profile_digest":%q,"employee_profile":{"revision":%q,"digest":%q}}`, values["MULTICA_DSH_WORKSPACE_ID"], values["MULTICA_DSH_AGENT_ID"], values["MULTICA_DSH_HOST_GENERATION"], digest, profile.Revision, profileDigest)
+		r.profiles.Store("health/"+sandbox, receipt)
+		return receipt, nil
 	}
 	if values["--agent"] == "" {
 		return "", nil
@@ -272,6 +305,38 @@ func (r dshHomeRunner) Run(_ context.Context, _ string, args []string, _ []strin
 		agent = uuid.NewString()
 	}
 	return fmt.Sprintf(`{"version":1,"workspace_id":%q,"agent_id":%q,"generation":%s,"mount":%q,"dsh_home":%q,"uid":1000,"gid":1000}`, values["--workspace"], agent, values["--generation"], dshhost.MountPath, dshhost.MountPath+"/home"), nil
+}
+
+type dshNoStagingRunner struct{ dshHomeRunner }
+
+func (r dshNoStagingRunner) Run(ctx context.Context, name string, args, env []string) (string, error) {
+	if args[len(args)-1] == "--stage" {
+		return "", errors.New("live native Host must not be restaged")
+	}
+	return r.dshHomeRunner.Run(ctx, name, args, env)
+}
+
+func TestDSHNativeReopenAfterAnotherSandboxAcknowledgesSameProfile(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	rt.Provider = "dsh"
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err = pool.Exec(ctx, `UPDATE dsh_employee_profile SET applied_sandbox_id='sbx-another-session',applied_generation=9 WHERE workspace_id=$1 AND agent_id=$2`, rt.WorkspaceID, task.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO dsh_native_access(id,workspace_id,agent_id,user_id,generation,sandbox_id,kind,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,'session',$7,now()+interval '1 minute')`, uuid.New(), rt.WorkspaceID, task.AgentID, uuid.New(), first.Generation, first.SandboxID, strings.Repeat("c", 64)); err != nil {
+		t.Fatal(err)
+	}
+	l.Runner = dshNoStagingRunner{l.Runner.(dshHomeRunner)}
+	reopened, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || reopened.SandboxID != first.SandboxID || reopened.Generation != first.Generation || provider.creates != 1 {
+		t.Fatal("same live Profile could not reopen without restaging or replacing the Host", reopened, err)
+	}
 }
 
 func dshLaunchFixture(t *testing.T, pool *pgxpool.Pool, p *dshLaunchProvider) (*FCE2BLauncher, db.AgentRuntime, db.AgentTaskQueue) {

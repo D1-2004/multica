@@ -320,6 +320,13 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	// Reopening it needs a live receipt, not another artifact delivery/staging pass.
 	status, statusErr := profiles.Status(ctx, key)
 	reusedProfile := statusErr == nil && status.Current && status.AppliedSandboxID == host.SandboxID && status.AppliedGeneration == host.Generation && status.AppliedRevision == strconv.FormatInt(revision.ID, 10)
+	if !reusedProfile && !cold {
+		// The employee acknowledgement records only the last sandbox. Another
+		// session may have acknowledged the same revision since this Host did.
+		// Prove this Host's live composition before treating its UI grant as a
+		// pending configuration change. This probe never starts or stages DSH.
+		reusedProfile = l.dshNativeHostHasProfile(ctx, host, profileDigest, revision)
+	}
 	if !reusedProfile {
 		// Native market edits are already hot-loaded in this Host. Importing
 		// them publishes the next immutable Profile for new task sandboxes;
