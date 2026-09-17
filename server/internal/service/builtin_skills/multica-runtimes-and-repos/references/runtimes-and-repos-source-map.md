@@ -190,3 +190,5 @@
 
 - `server/internal/handler/dsh_native_proxy.go`: same-origin native page, scoped cookies, asset and transport path handling, FC attachment-header removal.
 - `server/internal/service/fc_e2b_dsh_profile_worker.go`, `internal/dshplugin/stored_archive.go`: automatic Profile reconciliation and integrity-checked recovery of missing pinned archives.
+
+- `server/internal/service/fc_e2b_dsh_host.go`, `fc_e2b_dsh_native.go`: read-only live Profile receipt resolves cross-session acknowledgement drift before native-entry drain checks; `fc_e2b_dsh_host_test.go` covers reopening with an existing grant after another sandbox acknowledges the same revision, plus mismatched/unavailable receipts.
