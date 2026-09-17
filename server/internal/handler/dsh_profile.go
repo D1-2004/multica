@@ -39,7 +39,11 @@ func dshProfileSource(template string, rows []db.ListDshPluginsForAgentRow) (dsh
 		if err != nil {
 			return source, errors.New("employee plugin configuration requires repair")
 		}
-		source.Plugins = append(source.Plugins, dshprofile.SourcePlugin{ID: uuid.UUID(row.ID.Bytes), Enabled: row.Enabled, ConfigRevision: row.ConfigRevision, PackageName: row.PackageName, Version: row.ResolvedVersion, Integrity: row.Integrity, SourceKind: row.SourceKind, SourceSpec: row.SourceSpec, ArtifactKey: row.ArtifactKey, RowID: config.RowID, Config: config.Config})
+		plugin := dshprofile.SourcePlugin{ID: uuid.UUID(row.ID.Bytes), Enabled: row.Enabled, ConfigRevision: row.ConfigRevision, PackageName: row.PackageName, Version: row.ResolvedVersion, Integrity: row.Integrity, SourceKind: row.SourceKind, SourceSpec: row.SourceSpec, ArtifactKey: row.ArtifactKey, RowID: config.RowID, Config: config.Config, Rows: config.Rows}
+		if override := config.Package; override != nil {
+			plugin.Version, plugin.Integrity, plugin.SourceKind, plugin.SourceSpec, plugin.ArtifactKey = override.Version, override.Integrity, override.SourceKind, override.SourceSpec, override.ArtifactKey
+		}
+		source.Plugins = append(source.Plugins, plugin)
 	}
 	return source, nil
 }

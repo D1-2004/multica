@@ -1216,6 +1216,7 @@
       "add_failed_toast": "添加 skill 失败"
     },
     "dsh_plugins": {
+      "sync_failed": "暂时无法同步原生插件，正在重试。同步完成前不可提交修改。",
       "local_runtime_notice": "这个智能体跑在本地守护进程上，不会加载 DSH 插件。在这里绑定的插件会保存下来，但要等智能体切到云端运行时才会生效。",
       "intro": "这个智能体的 DeepSeek Harness Profile 在每次任务开始时加载的插件。请先把插件导入工作区，再在这里挂载需要随该智能体启动的插件。",
       "attached_title": "插件配置",

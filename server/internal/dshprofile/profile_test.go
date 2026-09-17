@@ -52,12 +52,13 @@ func TestProfileIdentityAndImmutableBuilds(t *testing.T) {
 		t.Fatal("build from another runtime admitted")
 	}
 	source.Plugins[0].Enabled = false
-	raw, _, err = Resolve(key, 1, source, nil)
+	builds[BuildKey(source.TemplateID, source.Plugins[0])] = Build{State: "ready", Digest: strings.Repeat("b", 64), ArtifactKey: "object"}
+	raw, _, err = Resolve(key, 1, source, builds)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(raw, `"plugins":[]`) || strings.Contains(raw, "synthetic-private-value") {
-		t.Fatal("disabled plugin leaked into executable Profile")
+	if !strings.Contains(raw, `"enabled":false`) {
+		t.Fatal("disabled plugin must remain installed but explicitly disabled")
 	}
 }
 

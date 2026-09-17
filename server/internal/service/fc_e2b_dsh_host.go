@@ -180,6 +180,9 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	profiles := dshprofile.Store{DB: conn}
 	var revision dshprofile.Revision
 	if isDSH {
+		if err := l.syncDSHNativePlugins(ctx, conn, key, template); err != nil {
+			return dshhost.Host{}, false, err
+		}
 		catalog, profileDigest, err = dshManagedCatalog(l.Config.LLMModels)
 		if err != nil {
 			return dshhost.Host{}, false, err
@@ -297,6 +300,18 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		chattrace.LogStage(slog.Default(), trace, "employee_filesystem", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "provider", FCE2BRuntimeProvider(rt))
 		return host, cold, nil
 	}
+	if cold && l.SyncDSHProfileSource != nil {
+		if err := l.syncDSHNativePluginsOnHost(ctx, conn, key, template, host); err != nil {
+			return dshhost.Host{}, cold, err
+		}
+		updated, err := profiles.Prepare(ctx, key, template, l.ReadDSHProfileSource)
+		if err != nil {
+			return dshhost.Host{}, cold, err
+		}
+		if updated.ID != revision.ID {
+			return dshhost.Host{}, cold, errDSHHostWaiting
+		}
+	}
 	origin, authority, err := dshNativeGatewayAddress(l.Config, host)
 	if err != nil {
 		return dshhost.Host{}, cold, err
@@ -306,6 +321,21 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	status, statusErr := profiles.Status(ctx, key)
 	reusedProfile := statusErr == nil && status.Current && status.AppliedSandboxID == host.SandboxID && status.AppliedGeneration == host.Generation && status.AppliedRevision == strconv.FormatInt(revision.ID, 10)
 	if !reusedProfile {
+		// Native market edits are already hot-loaded in this Host. Importing
+		// them publishes the next immutable Profile for new task sandboxes;
+		// it must not restart the browser's Host underneath its live grant.
+		// --ensure rejects a changed Profile, so waiting must happen before
+		// staging/ensure rather than turning that expected change into retirement.
+		var nativeActive bool
+		if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM dsh_native_access
+ WHERE workspace_id=$1 AND agent_id=$2 AND sandbox_id=$3 AND generation=$4
+ AND kind IN ('entry','session') AND expires_at>now())`,
+			key.WorkspaceID, key.AgentID, host.SandboxID, host.Generation).Scan(&nativeActive); err != nil {
+			return dshhost.Host{}, cold, err
+		}
+		if nativeActive {
+			return dshhost.Host{}, cold, errDSHHostWaiting
+		}
 		err = l.deliverDSHProfile(ctx, profiles, host, revision)
 		if err == nil {
 			err = l.stageDSHProfile(ctx, host, revision)

@@ -55,9 +55,7 @@ func (s Store) RetryBuild(ctx context.Context, key dshhost.Key, template string,
 	}
 	keys := []string{}
 	for _, plugin := range source.Plugins {
-		if plugin.Enabled {
-			keys = append(keys, BuildKey(template, plugin))
-		}
+		keys = append(keys, BuildKey(template, plugin))
 	}
 	// Only cleanup -> done proves the old sandbox is absent and its potential
 	// artifact was removed. Preserve the old intent before replacing the ID;

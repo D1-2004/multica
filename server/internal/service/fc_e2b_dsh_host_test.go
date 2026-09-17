@@ -523,6 +523,34 @@ func TestDSHNativeStartupRejectsMissingIdentityAndDisabledDeployment(t *testing.
 	}
 }
 
+func TestDSHPendingProfileDoesNotRetireLiveNativePage(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	rt.Provider = "dsh"
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err = pool.Exec(ctx, `UPDATE dsh_employee_profile SET applied_revision=0 WHERE workspace_id=$1 AND agent_id=$2`, rt.WorkspaceID, task.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO dsh_native_access(id,workspace_id,agent_id,user_id,generation,sandbox_id,kind,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,'session',$7,now()+interval '1 minute')`, uuid.New(), rt.WorkspaceID, task.AgentID, uuid.New(), first.Generation, first.SandboxID, strings.Repeat("b", 64)); err != nil {
+		t.Fatal(err)
+	}
+	// Calling ensure for a mismatched live Profile would return a startup
+	// error. A pending apply must wait without reaching that failure path.
+	l.Runner = dshHomeRunner{wrongNativeReceipt: true, profiles: &sync.Map{}}
+	if _, err = resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) || errors.Is(err, errDSHHostStartup) {
+		t.Fatal("pending Profile was treated as a failed live Host", err)
+	}
+	host, err := (dshhost.PostgresStore{DB: pool}).Get(ctx, first.Key)
+	if err != nil || host.State != "running" || host.SandboxID != first.SandboxID || provider.creates != 1 {
+		t.Fatal("native page lost its running generation", host, err)
+	}
+}
+
 func TestDSHProfileFailureDoesNotStrandExistingLifecycle(t *testing.T) {
 	for _, initial := range []string{"creating", "retiring"} {
 		t.Run(initial, func(t *testing.T) {

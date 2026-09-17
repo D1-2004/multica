@@ -79,9 +79,6 @@ func (s Store) Prepare(ctx context.Context, key dshhost.Key, template string, re
 	// Build rows contain package provenance only, never employee credentials.
 	builds := map[string]Build{}
 	for _, plugin := range source.Plugins {
-		if !plugin.Enabled {
-			continue
-		}
 		build := Build{Key: BuildKey(template, plugin)}
 		_, err = tx.Exec(ctx, `INSERT INTO dsh_plugin_build(workspace_id,build_key,id,plugin_id,template_id,package_name,package_version,package_integrity,source_kind,source_spec,source_artifact_key)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(workspace_id,build_key) DO NOTHING`, key.WorkspaceID, build.Key, uuid.New(), plugin.ID, template, plugin.PackageName, plugin.Version, plugin.Integrity, plugin.SourceKind, plugin.SourceSpec, plugin.ArtifactKey)
@@ -196,9 +193,7 @@ func (s Store) statusBuilds(ctx context.Context, key dshhost.Key, revision int64
 	}
 	keys := []string{}
 	for _, plugin := range source.Plugins {
-		if plugin.Enabled {
-			keys = append(keys, BuildKey(source.TemplateID, plugin))
-		}
+		keys = append(keys, BuildKey(source.TemplateID, plugin))
 	}
 	if len(keys) == 0 {
 		return []BuildStatus{}, nil

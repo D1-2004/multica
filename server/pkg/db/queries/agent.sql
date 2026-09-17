@@ -332,6 +332,14 @@ SELECT * FROM agent_task_queue
 WHERE agent_id = $1
 ORDER BY created_at DESC;
 
+-- name: ListAgentPendingTasks :many
+-- Launch arbitration only needs active work and queued predecessors. Historical
+-- rows can be large and must not be fetched on every launch or recovery tick.
+SELECT * FROM agent_task_queue
+WHERE agent_id = $1
+  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+ORDER BY created_at DESC;
+
 -- name: ListHumanVisibleAgentTasks :many
 -- External A2A principals share the execution engine but not the ordinary
 -- member Activity surface. Keep ListAgentTasks unfiltered for schedulers and
