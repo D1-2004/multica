@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"unicode/utf8"
 
@@ -15,7 +16,10 @@ import (
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
+// The speculative conversation render runs beside the routing request, so this
+// fixture is now reached from two goroutines and has to serialize its ledger.
 type scriptedCompleter struct {
+	mu                 sync.Mutex
 	rounds             []openai.ChatCompletion
 	calls              int
 	params             []openai.ChatCompletionNewParams
@@ -45,7 +49,15 @@ func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
 	}
 }
 
+func (s *scriptedCompleter) conversationCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conversationCalls
+}
+
 func (s *scriptedCompleter) Chat(_ context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if names := toolParamNames(params.Tools); len(names) == 1 && names[0] == toolConversationReplies {
 		s.conversationParams = append(s.conversationParams, params)
 		if s.conversationCalls >= len(s.conversationRounds) {

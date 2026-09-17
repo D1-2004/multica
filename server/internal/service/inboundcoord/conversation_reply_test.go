@@ -33,7 +33,7 @@ func TestConversationReplyStageExcludesRoutingDataAndPreservesWork(t *testing.T)
 	beforeWork := d.CoordinationActions[0]
 	f := &conversationReplyCompleter{completion: assistantTool("response", toolConversationReplies, `{"replies":[{"action_ref":"a2","reply":"你说得对，我没回答到你的问题。"}]}`)}
 	started := time.Now()
-	if err := (&Coordinator{Chat: f}).renderConversationReplies(context.Background(), turn, &d, 2); err != nil {
+	if err := (&Coordinator{Chat: f}).renderConversationReplies(context.Background(), turn, &d, 2, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.params) != 1 || string(f.params[0].Model) != conversationReplyModel || !reflect.DeepEqual(toolParamNames(f.params[0].Tools), []string{toolConversationReplies}) {
@@ -111,7 +111,7 @@ func TestConversationReplyRejectsInvalidOutputAtomically(t *testing.T) {
 	} {
 		d := Decision{UserText: "原聚合", CoordinationActions: []CoordinationAction{{Kind: "acknowledge", AckKind: "conversation", SourceRefs: []string{"u1"}, Reply: "原回复"}}}
 		f := &conversationReplyCompleter{completion: assistantTool("response", toolConversationReplies, raw)}
-		if err := (&Coordinator{Chat: f}).renderConversationReplies(context.Background(), Turn{Message: "问题"}, &d, 0); err == nil {
+		if err := (&Coordinator{Chat: f}).renderConversationReplies(context.Background(), Turn{Message: "问题"}, &d, 0, nil); err == nil {
 			t.Fatalf("accepted invalid renderer response: %s", raw)
 		}
 		if d.UserText != "原聚合" || d.CoordinationActions[0].Reply != "原回复" {
@@ -124,15 +124,15 @@ func TestConversationReplySkipsOtherKindsAndPropagatesFailure(t *testing.T) {
 	f := &conversationReplyCompleter{err: errors.New("unavailable")}
 	c := &Coordinator{Chat: f}
 	d := Decision{CoordinationActions: []CoordinationAction{{Kind: "acknowledge", AckKind: "greeting", Reply: "你好"}}}
-	if err := c.renderConversationReplies(context.Background(), Turn{}, &d, 0); err != nil || len(f.params) != 0 {
+	if err := c.renderConversationReplies(context.Background(), Turn{}, &d, 0, nil); err != nil || len(f.params) != 0 {
 		t.Fatal("greeting invoked conversational renderer")
 	}
 	d.CoordinationActions[0].AckKind = "conversation"
 	d.CoordinationActions[0].SourceRefs = []string{"u1"}
-	if err := c.renderConversationReplies(context.Background(), Turn{Loop: LoopTaskFinished}, &d, 0); err != nil || len(f.params) != 0 {
+	if err := c.renderConversationReplies(context.Background(), Turn{Loop: LoopTaskFinished}, &d, 0, nil); err != nil || len(f.params) != 0 {
 		t.Fatal("completion invoked conversational renderer")
 	}
-	if err := c.renderConversationReplies(context.Background(), Turn{Message: "问题"}, &d, 0); err == nil || len(f.params) != 1 || d.CoordinationActions[0].Reply != "你好" {
+	if err := c.renderConversationReplies(context.Background(), Turn{Message: "问题"}, &d, 0, nil); err == nil || len(f.params) != 1 || d.CoordinationActions[0].Reply != "你好" {
 		t.Fatal("renderer error failed open or changed reply")
 	}
 }
@@ -146,7 +146,7 @@ func TestConversationRendererKeepsHostWorkReceiptsDeduplicated(t *testing.T) {
 	}}
 	NormalizeWorkReceipts(turn, &d)
 	f := &conversationReplyCompleter{completion: assistantTool("response", toolConversationReplies, `{"replies":[{"action_ref":"a2","reply":"前面确实没回应到你的问题，这次按你说的来。"}]}`)}
-	if err := (&Coordinator{Chat: f}).renderConversationReplies(context.Background(), turn, &d, 0); err != nil {
+	if err := (&Coordinator{Chat: f}).renderConversationReplies(context.Background(), turn, &d, 0, nil); err != nil {
 		t.Fatal(err)
 	}
 	if d.UserText != "收到，我来处理。\n\n前面确实没回应到你的问题，这次按你说的来。" {
