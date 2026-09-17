@@ -567,7 +567,9 @@ SELECT task.id, task.agent_id, task.issue_id, task.status, task.priority, task.d
 FROM agent_task_queue AS task
 JOIN agent ON agent.id = task.agent_id AND agent.archived_at IS NULL
 JOIN LATERAL (
-    SELECT attempt.backend, attempt.status, attempt.error_code, attempt.finished_at
+    SELECT attempt.backend, attempt.status, attempt.error_code, attempt.finished_at,
+           attempt.updated_at, attempt.last_stage, attempt.runner_started_at,
+           attempt.daemon_started_at, attempt.claim_finalized_at
     FROM agent_task_runtime_start_attempt AS attempt
     WHERE attempt.task_id = task.id AND attempt.runtime_id = task.runtime_id
     ORDER BY attempt.created_at DESC, attempt.id DESC
@@ -575,12 +577,27 @@ JOIN LATERAL (
 ) AS latest ON true
 WHERE task.status = 'queued'
   AND latest.backend = 'aliyun_fc'
-  AND latest.status = 'blocked'
-  AND latest.error_code = 'DSH-HOST-WAITING'
-  AND latest.finished_at <= now() - interval '30 seconds'
+  AND (
+      (latest.status = 'blocked'
+       AND latest.error_code = 'DSH-HOST-WAITING'
+       AND latest.finished_at <= now() - interval '30 seconds')
+      OR
+      -- A rolling deployment or lost launcher can leave a pre-runner attempt
+      -- starting forever. The normal lease/CAS path supersedes it safely.
+      (latest.status = 'starting'
+       AND latest.last_stage IN ('launch_started', 'sandbox_resolving', 'dsh_host_waiting')
+       AND latest.updated_at <= now() - interval '2 minutes'
+       AND latest.runner_started_at IS NULL
+       AND latest.daemon_started_at IS NULL
+       AND latest.claim_finalized_at IS NULL
+       AND EXISTS (SELECT 1 FROM dsh_employee_session AS session
+                   WHERE session.workspace_id = task.workspace_id
+                     AND session.agent_id = task.agent_id
+                     AND session.scope_id = COALESCE(task.issue_id, task.chat_session_id, task.id)))
+  )
   AND (task.runtime_launch_lease_expires_at IS NULL OR task.runtime_launch_lease_expires_at <= now())
   AND COALESCE(task.context->>'deap_dws_token_required', 'false') <> 'true'
-ORDER BY latest.finished_at, task.id
+ORDER BY task.created_at, task.id
 LIMIT 32
 `
 

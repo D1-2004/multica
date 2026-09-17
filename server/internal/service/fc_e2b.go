@@ -1575,7 +1575,7 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		defer release()
 	}
 
-	tasks, err := l.Queries.ListAgentTasks(ctx, task.AgentID)
+	tasks, err := l.Queries.ListAgentPendingTasks(ctx, task.AgentID)
 	if err != nil {
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("check FC/E2B launch serialization: %w", err)
 	}
@@ -1856,7 +1856,7 @@ func (l *FCE2BLauncher) waitForRunOnceClaim(
 			if err != nil {
 				return "", fmt.Errorf("load task while checking Runtime runner blockers: %w", err)
 			}
-			tasks, err := l.Queries.ListAgentTasks(ctx, current.AgentID)
+			tasks, err := l.Queries.ListAgentPendingTasks(ctx, current.AgentID)
 			if err != nil {
 				return "", fmt.Errorf("check FC/E2B runner claim blockers: %w", err)
 			}
@@ -1891,7 +1891,7 @@ func (l *FCE2BLauncher) waitForRunOnceClaim(
 			if err != nil {
 				return "", fmt.Errorf("load task while checking Runtime runner blockers at deadline: %w", err)
 			}
-			tasks, err := l.Queries.ListAgentTasks(ctx, fresh.AgentID)
+			tasks, err := l.Queries.ListAgentPendingTasks(ctx, fresh.AgentID)
 			if err != nil {
 				return "", fmt.Errorf("check FC/E2B runner claim blockers: %w", err)
 			}
