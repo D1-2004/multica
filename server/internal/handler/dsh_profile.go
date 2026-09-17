@@ -32,10 +32,12 @@ func readDSHProfileSource(ctx context.Context, q *db.Queries, key dshhost.Key, t
 func dshProfileSource(template string, rows []db.ListDshPluginsForAgentRow) (dshprofile.Source, error) {
 	source := dshprofile.Source{TemplateID: template, Plugins: []dshprofile.SourcePlugin{}}
 	for _, row := range rows {
-		config, err := storedAgentDshPluginConfig(row)
-		if row.Enabled {
-			config, err = effectiveAgentDshPluginConfig(row)
+		// Disabled packages remain configured in the workbench, but must not
+		// insert loader rows or conflict with their enabled replacement.
+		if !row.Enabled {
+			continue
 		}
+		config, err := effectiveAgentDshPluginConfig(row)
 		if err != nil {
 			return source, errors.New("employee plugin configuration requires repair")
 		}

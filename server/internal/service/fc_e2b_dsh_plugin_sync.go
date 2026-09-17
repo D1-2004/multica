@@ -48,9 +48,14 @@ func (l *FCE2BLauncher) syncDSHNativePluginsOnHost(ctx context.Context, conn *pg
 	defer cancel()
 	// Older images remain readable during a rolling update. A present helper
 	// failing is not equivalent to an empty plugin set and must not delete bindings.
-	const command = `if [ -f /opt/multica-dsh/employee-profile-snapshot.mjs ]; then /usr/local/libexec/multica-dsh-host --plugin-snapshot || printf '{"version":1,"error":"snapshot_unavailable"}\n'; else printf '{"version":1,"available":false}\n'; fi`
+	const command = dshNativePluginSnapshotCommand
+	var appliedRevision int64
+	if err := conn.QueryRow(ctx, `SELECT applied_revision FROM dsh_employee_profile WHERE workspace_id=$1 AND agent_id=$2`, key.WorkspaceID, key.AgentID).Scan(&appliedRevision); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
 	out, err := l.runE2BCommand(readCtx, []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=",
 		"-e", "DSH_HOME=" + dshhost.MountPath + "/home", "-e", "MULTICA_DSH_WORKSPACE_ID=" + key.WorkspaceID.String(), "-e", "MULTICA_DSH_AGENT_ID=" + key.AgentID.String(),
+		"-e", "MULTICA_DSH_SNAPSHOT_REVISION=" + strconv.FormatInt(appliedRevision, 10),
 		"-e", "MULTICA_DSH_HOST_GENERATION=" + strconv.FormatInt(host.Generation, 10), host.SandboxID, "--", "/bin/sh", "-c", command})
 	if err != nil {
 		// An expired sandbox must still reach ordinary lifecycle recovery. The
@@ -84,6 +89,10 @@ func (l *FCE2BLauncher) syncDSHNativePluginsOnHost(ctx context.Context, conn *pg
 	}
 	return l.SyncDSHProfileSource(ctx, conn, key, template, snapshot)
 }
+
+// A failed helper may already have printed a diagnostic object. Emit exactly
+// one receipt, rather than concatenating that object with the error receipt.
+const dshNativePluginSnapshotCommand = `if [ -f /opt/multica-dsh/employee-profile-snapshot.mjs ]; then if snapshot="$(/usr/local/libexec/multica-dsh-host --plugin-snapshot)"; then printf '%s\n' "$snapshot"; else printf '{"version":1,"error":"snapshot_unavailable"}\n'; fi; else printf '{"version":1,"available":false}\n'; fi`
 
 // Human entries and tasks may now use session-scoped hosts. Reading only the
 // legacy employee row silently skips native edits for those existing agents.

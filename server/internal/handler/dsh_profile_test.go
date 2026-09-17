@@ -72,7 +72,25 @@ func TestDSHProfileUsesEmployeeOverrideAndChecksActiveRows(t *testing.T) {
 		t.Fatal("active obsolete row admitted")
 	}
 	row.Enabled = false
-	if _, err = dshProfileSource("template", []db.ListDshPluginsForAgentRow{row}); err != nil {
+	if source, err = dshProfileSource("template", []db.ListDshPluginsForAgentRow{row}); err != nil || len(source.Plugins) != 0 {
 		t.Fatal("disabled stale row blocked other plugins", err)
+	}
+}
+
+func TestDSHProfileExcludesDisabledVersionsWithTheSameLoaderRow(t *testing.T) {
+	active := db.ListDshPluginsForAgentRow{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, PackageName: "safety-v3", Enabled: true, BundleRows: []byte(`["safety"]`), ConfigRow: "safety", Config: []byte(`{}`), ConfigOverride: []byte(`{}`)}
+	old := active
+	old.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	old.PackageName, old.Enabled = "safety-v1", false
+	canary := old
+	canary.ID = pgtype.UUID{Bytes: uuid.New(), Valid: true}
+	canary.PackageName = "safety-canary"
+	rows := []db.ListDshPluginsForAgentRow{old, canary, active}
+	source, err := dshProfileSource("template", rows)
+	if err != nil || len(source.Plugins) != 1 || source.Plugins[0].PackageName != active.PackageName {
+		t.Fatalf("disabled replacements entered runtime composition: %+v, %v", source, err)
+	}
+	if rows[0].Enabled || rows[1].Enabled || !rows[2].Enabled || len(rows) != 3 {
+		t.Fatal("source projection changed saved plugin configuration")
 	}
 }

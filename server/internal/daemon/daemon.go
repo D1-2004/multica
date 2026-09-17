@@ -5796,6 +5796,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		return TaskResult{}, err
 	}
+	// Bundle resolution cannot spawn a native workspace writer. Finish it before
+	// creating the crash witness, so a network timeout cannot poison retries.
+	stopPrepareLease := d.startTaskPrepareLeaseExtender(prepareCtx, task, taskLog)
+	defer stopPrepareLease()
+
+	if err := d.ensureTaskSkillBundles(prepareCtx, &task); err != nil {
+		return TaskResult{}, err
+	}
+
 	var backend agent.Backend
 	if nativeDSH != nil {
 		release, err := acquireNativeDSHWorkspace(prepareCtx, nativeDSH)
@@ -5809,13 +5818,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			}
 			release(confirmed)
 		}()
-	}
-
-	stopPrepareLease := d.startTaskPrepareLeaseExtender(prepareCtx, task, taskLog)
-	defer stopPrepareLease()
-
-	if err := d.ensureTaskSkillBundles(prepareCtx, &task); err != nil {
-		return TaskResult{}, err
 	}
 
 	agentName := "agent"
