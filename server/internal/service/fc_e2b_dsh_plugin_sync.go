@@ -62,11 +62,15 @@ func (l *FCE2BLauncher) syncDSHNativePluginsOnHost(ctx context.Context, conn *pg
 	}
 	var availability struct {
 		Version   int    `json:"version"`
+		Busy      bool   `json:"busy"`
 		Error     string `json:"error"`
 		Available *bool  `json:"available"`
 	}
 	if len(out) > 2<<20 || json.Unmarshal([]byte(out), &availability) != nil {
 		return errors.New("native plugin synchronization unavailable")
+	}
+	if availability.Busy {
+		return errDSHHostWaiting
 	}
 	if availability.Error != "" {
 		return errors.New("native plugin changes are not ready for synchronization")
