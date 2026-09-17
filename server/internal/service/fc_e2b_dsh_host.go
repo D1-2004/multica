@@ -244,7 +244,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
  WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))
  OR ($5 AND EXISTS (SELECT 1 FROM dsh_native_access n
  WHERE n.workspace_id=$1 AND n.agent_id=$2 AND n.sandbox_id=$4 AND n.generation=$6
- AND n.kind IN ('entry','session') AND n.expires_at>now()))`,
+ AND n.parent_access_id IS NULL AND n.kind IN ('entry','session') AND n.expires_at>now()))`,
 			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, before.SandboxID, before.State == "running", before.Generation, scopeID).Scan(&busy)
 		if err != nil {
 			return dshhost.Host{}, false, err
@@ -336,7 +336,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		var nativeActive bool
 		if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM dsh_native_access
  WHERE workspace_id=$1 AND agent_id=$2 AND sandbox_id=$3 AND generation=$4
- AND kind IN ('entry','session') AND expires_at>now())`,
+ AND parent_access_id IS NULL AND kind IN ('entry','session') AND expires_at>now())`,
 			key.WorkspaceID, key.AgentID, host.SandboxID, host.Generation).Scan(&nativeActive); err != nil {
 			return dshhost.Host{}, cold, err
 		}

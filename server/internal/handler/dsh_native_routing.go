@@ -107,7 +107,7 @@ func (h *Handler) nativeTarget(ctx context.Context, parent dshhost.NativeAccess,
 		return "", "", nil, err
 	}
 	manager := h.dshNativeAccessManager()
-	grant, entry, err := manager.Issue(ctx, host, parent.UserID)
+	grant, entry, err := manager.IssueRouted(ctx, host, parent)
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -120,15 +120,6 @@ func (h *Handler) nativeTarget(ctx context.Context, parent dshhost.NativeAccess,
 	if err != nil {
 		cleanup()
 		return "", "", nil, err
-	}
-	// A child must never outlive the browser grant even if a process exits
-	// before its deferred revocation executes.
-	result, err := h.DB.Exec(ctx, `UPDATE dsh_native_access child SET expires_at=LEAST(child.expires_at,parent.expires_at)
- FROM dsh_native_access parent WHERE child.id=$1 AND parent.id=$2
- AND parent.kind='session' AND parent.expires_at>clock_timestamp()`, grant.ID, parent.ID)
-	if err != nil || result.RowsAffected() != 1 {
-		cleanup()
-		return "", "", nil, dshhost.ErrNativeAccessDenied
 	}
 	return upstream, child, cleanup, nil
 }

@@ -12,3 +12,6 @@
 - `server/internal/handler/dsh_native_mux.go`: independently cancellable owner follow streams; parent grant expiry/revocation.
 - `server/internal/handler/dsh_native_list.go`: official read-only snapshot refresh and platform title overlays.
 - `server/internal/handler/dsh_native_routing_test.go`: distinct-owner routing, cancellation, revocation and projection regression tests.
+
+- `server/migrations/9265_dsh_native_access_parent.up.sql` and `server/internal/dshhost/native_access_postgres.go`: nullable parent linkage; existing browser grants retain their semantics and routed capabilities inherit revocation/expiry.
+- `server/internal/service/fc_e2b_dsh_host.go` and `fc_e2b_dsh_plugin_sync.go`: routed reads are excluded from browser reservations and native plugin-source preference.

@@ -66,7 +66,7 @@ func dshLaunchPools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 		return pool
 	}
 	a, b := newPool(), newPool()
-	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9235_dsh_native_access", "9241_dsh_employee_profile", "9242_dsh_employee_profile_identity", "9243_dsh_profile_revision_identity", "9244_dsh_plugin_build_identity", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host"} {
+	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9235_dsh_native_access", "9265_dsh_native_access_parent", "9241_dsh_employee_profile", "9242_dsh_employee_profile_identity", "9243_dsh_profile_revision_identity", "9244_dsh_plugin_build_identity", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
@@ -695,5 +695,28 @@ func TestPrepareDSHTaskFilesystem(t *testing.T) {
 	}
 	if err := (&FCE2BLauncher{}).prepareDSHTaskFilesystem(context.Background(), nil, key); err == nil {
 		t.Fatal("missing provisioning configuration must not allow ephemeral fallback")
+	}
+}
+
+// Routed read connections may be interrupted by task recovery; they must not
+// reserve a writer generation or force a pending task to wait for a browser.
+func TestDSHRoutedGrantDoesNotBlockTemplateRecovery(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	launcher, rt, task := dshLaunchFixture(t, pool, provider)
+	first, err := resolveDSHTest(t, launcher, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(context.Background(), `INSERT INTO dsh_native_access
+ (id,workspace_id,agent_id,user_id,generation,sandbox_id,kind,token_hash,expires_at,parent_access_id)
+ VALUES($1,$2,$3,$4,$5,$6,'session',$7,now()+interval '15 minutes',$8)`,
+		uuid.New(), rt.WorkspaceID, task.AgentID, uuid.New(), first.Generation, first.SandboxID, strings.Repeat("d", 64), uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := resolveDSHTest(t, launcher, rt, task, "template-2")
+	if err != nil || next.Generation != first.Generation+1 {
+		t.Fatal("routed read blocked task recovery", next, err)
 	}
 }

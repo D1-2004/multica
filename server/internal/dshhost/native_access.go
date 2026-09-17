@@ -24,6 +24,8 @@ const (
 // It is never a lease permitting another sandbox to write the employee Home.
 type NativeAccess struct {
 	ID uuid.UUID
+	// ParentID marks a backend-only routed capability, not a browser reservation.
+	ParentID uuid.UUID
 	Key
 	UserID     uuid.UUID
 	Generation int64
@@ -95,7 +97,20 @@ func (m NativeAccessManager) allowed(ctx context.Context, access NativeAccess) e
 // Issue is called only after human authentication and native gateway readiness.
 // The store independently requires the exact Host to still be running.
 func (m NativeAccessManager) Issue(ctx context.Context, host Host, userID uuid.UUID) (NativeAccess, string, error) {
-	access := NativeAccess{ID: uuid.New(), Key: host.Key, UserID: userID, Generation: host.Generation, SandboxID: host.SandboxID, Kind: "entry"}
+	return m.issue(ctx, host, userID, uuid.Nil)
+}
+
+// IssueRouted derives an exact-Host capability from a human browser grant.
+// The store atomically validates the parent and bounds the child's lifetime.
+func (m NativeAccessManager) IssueRouted(ctx context.Context, host Host, parent NativeAccess) (NativeAccess, string, error) {
+	if parent.ID == uuid.Nil || parent.ParentID != uuid.Nil || parent.Kind != "session" || parent.Key != host.Key {
+		return NativeAccess{}, "", ErrNativeAccessDenied
+	}
+	return m.issue(ctx, host, parent.UserID, parent.ID)
+}
+
+func (m NativeAccessManager) issue(ctx context.Context, host Host, userID, parentID uuid.UUID) (NativeAccess, string, error) {
+	access := NativeAccess{ID: uuid.New(), ParentID: parentID, Key: host.Key, UserID: userID, Generation: host.Generation, SandboxID: host.SandboxID, Kind: "entry"}
 	if host.State != "running" || m.allowed(ctx, access) != nil {
 		return NativeAccess{}, "", ErrNativeAccessDenied
 	}
