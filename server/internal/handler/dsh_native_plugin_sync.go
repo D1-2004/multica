@@ -49,6 +49,26 @@ func nativeSnapshotChanged(snapshot dshprofile.NativeSnapshot, baseline dshprofi
 	return false
 }
 
+// Use the last imported native set as the next delta's baseline. A native
+// session may install and then remove a package without restarting its Host.
+func nativeSyncBaseline(snapshot dshprofile.NativeSnapshot, original dshprofile.Descriptor, raw string) (dshprofile.Descriptor, error) {
+	if raw == "" {
+		return original, nil
+	}
+	var previous dshprofile.NativeSnapshot
+	if json.Unmarshal([]byte(raw), &previous) != nil || previous.Validate(snapshot.WorkspaceID, snapshot.AgentID) != nil {
+		return original, errors.New("invalid previous native plugin snapshot")
+	}
+	if previous.BaseRevision != snapshot.BaseRevision {
+		return original, nil
+	}
+	original.Plugins = make([]dshprofile.Plugin, 0, len(previous.Plugins))
+	for _, plugin := range previous.Plugins {
+		original.Plugins = append(original.Plugins, dshprofile.Plugin{PackageName: plugin.PackageName, Version: plugin.Version})
+	}
+	return original, nil
+}
+
 type nativeResolvedPackage struct {
 	resolved *dshplugin.Resolved
 	source   dshplugin.Source
@@ -71,15 +91,19 @@ func (h *Handler) syncNativeDSHPlugins(ctx context.Context, conn *pgxpool.Conn, 
 	if json.Unmarshal([]byte(rawDescriptor), &baseline) != nil {
 		return errors.New("invalid native plugin baseline")
 	}
-	if !nativeSnapshotChanged(snapshot, baseline) {
-		return nil
-	}
 	var applied, synced int64
-	var fingerprint string
-	if err := conn.QueryRow(ctx, `SELECT applied_revision,native_sync_revision,native_sync_fingerprint FROM dsh_employee_profile WHERE workspace_id=$1 AND agent_id=$2`, key.WorkspaceID, key.AgentID).Scan(&applied, &synced, &fingerprint); err != nil {
+	var fingerprint, previousSnapshot string
+	if err := conn.QueryRow(ctx, `SELECT applied_revision,native_sync_revision,native_sync_fingerprint,native_sync_snapshot FROM dsh_employee_profile WHERE workspace_id=$1 AND agent_id=$2`, key.WorkspaceID, key.AgentID).Scan(&applied, &synced, &fingerprint, &previousSnapshot); err != nil {
 		return err
 	}
-	if applied != revision || (synced == revision && fingerprint == snapshot.Fingerprint) {
+	if (applied != revision && synced != revision) || (synced == revision && fingerprint == snapshot.Fingerprint) {
+		return nil
+	}
+	baseline, err := nativeSyncBaseline(snapshot, baseline, previousSnapshot)
+	if err != nil {
+		return err
+	}
+	if !nativeSnapshotChanged(snapshot, baseline) {
 		return nil
 	}
 	workspace := pgtype.UUID{Bytes: key.WorkspaceID, Valid: true}
@@ -124,10 +148,10 @@ func (h *Handler) syncNativeDSHPlugins(ctx context.Context, conn *pgxpool.Conn, 
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err = tx.QueryRow(ctx, `SELECT applied_revision,native_sync_revision,native_sync_fingerprint FROM dsh_employee_profile WHERE workspace_id=$1 AND agent_id=$2 FOR UPDATE`, key.WorkspaceID, key.AgentID).Scan(&applied, &synced, &fingerprint); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT applied_revision,native_sync_revision,native_sync_fingerprint,native_sync_snapshot FROM dsh_employee_profile WHERE workspace_id=$1 AND agent_id=$2 FOR UPDATE`, key.WorkspaceID, key.AgentID).Scan(&applied, &synced, &fingerprint, &previousSnapshot); err != nil {
 		return err
 	}
-	if applied != revision || (synced == revision && fingerprint == snapshot.Fingerprint) {
+	if (applied != revision && synced != revision) || (synced == revision && fingerprint == snapshot.Fingerprint) {
 		return nil
 	}
 	q = db.New(tx)
@@ -239,7 +263,11 @@ func (h *Handler) syncNativeDSHPlugins(ctx context.Context, conn *pgxpool.Conn, 
 			}
 		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE dsh_employee_profile SET native_sync_revision=$3,native_sync_fingerprint=$4,next_apply_at=now(),apply_attempts=0,apply_error='' WHERE workspace_id=$1 AND agent_id=$2`, key.WorkspaceID, key.AgentID, revision, snapshot.Fingerprint); err != nil {
+	encodedSnapshot, err := json.Marshal(snapshot)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE dsh_employee_profile SET native_sync_revision=$3,native_sync_fingerprint=$4,native_sync_snapshot=$5,next_apply_at=now(),apply_attempts=0,apply_error='' WHERE workspace_id=$1 AND agent_id=$2`, key.WorkspaceID, key.AgentID, revision, snapshot.Fingerprint, string(encodedSnapshot)); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

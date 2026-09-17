@@ -34,6 +34,31 @@ func TestNativePluginSnapshotDetectsInstallRemovalUpgradeAndSettings(t *testing.
 	}
 }
 
+func TestNativePluginUninstallAfterImportUsesLastNativeSet(t *testing.T) {
+	original := dshprofile.Descriptor{Plugins: []dshprofile.Plugin{{PackageName: "market", Version: "1.0.0"}}}
+	installed := dshprofile.NativeSnapshot{Version: 1, WorkspaceID: "workspace", AgentID: "agent", BaseRevision: "112", Fingerprint: strings.Repeat("a", 64), Plugins: []dshprofile.NativePlugin{
+		{PackageName: "market", Version: "1.0.0", Rows: []string{"market"}},
+		{PackageName: "graph", Version: "1.0.0", Rows: []string{"graph"}},
+	}}
+	removed := installed
+	removed.Plugins = installed.Plugins[:1]
+	removed.Fingerprint = strings.Repeat("b", 64)
+	baseline, err := nativeSyncBaseline(removed, original, string(mustNativeJSON(t, installed)))
+	if err != nil || !nativeSnapshotChanged(removed, baseline) || len(baseline.Plugins) != 2 {
+		t.Fatal("removing a package imported during this native session was missed", err)
+	}
+	reopened := removed
+	reopened.BaseRevision = "113"
+	baseline, err = nativeSyncBaseline(reopened, original, string(mustNativeJSON(t, installed)))
+	if err != nil || len(baseline.Plugins) != 1 {
+		t.Fatal("another native generation's baseline leaked into this profile", err)
+	}
+	removed.AgentID = "another-agent"
+	if _, err = nativeSyncBaseline(removed, original, string(mustNativeJSON(t, installed))); err == nil {
+		t.Fatal("cross-agent native snapshot accepted")
+	}
+}
+
 func TestNativePluginConfigurationSurvivesWorkbenchEdit(t *testing.T) {
 	row := db.ListDshPluginsForAgentRow{PackageName: "market", BundleRows: []byte(`["host","client"]`), ConfigOverride: []byte(`{"row_id":"host","config":{"mode":"native"},"rows":[{"id":"host","config":{"mode":"native"}},{"id":"client","config":{"theme":"dark"}}],"package":{"version":"2.0.0","integrity":"sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source_kind":"npm","source_spec":"market@2.0.0","artifact_key":"private-object","bundle_rows":["host","client"]}}`)}
 	value, err := decodeAgentDshPluginOverride([]byte(`{"row_id":"host","config":{"mode":"workbench"}}`), row)
