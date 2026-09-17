@@ -62,7 +62,7 @@ func (h *Handler) serveNativeSessionMux(w http.ResponseWriter, r *http.Request, 
 		if err != nil {
 			return "", "", nil, err
 		}
-		return h.nativeTarget(ctx, access, token, host)
+		return h.nativeReadTarget(ctx, access, token, host)
 	}
 	authorize := func(ctx context.Context) error {
 		_, err := h.nativeProxyAuthorize(r.Clone(ctx), access)

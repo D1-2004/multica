@@ -82,6 +82,16 @@ func (h *Handler) nativeSessionHost(ctx context.Context, access dshhost.NativeAc
 	return owner, false, err
 }
 
+// History can be observed from the entry Host without acquiring a writer.
+func (h *Handler) nativeReadTarget(ctx context.Context, access dshhost.NativeAccess, token string, host dshhost.Host) (string, string, func(), error) {
+	upstream, child, cleanup, err := h.nativeTarget(ctx, access, token, host)
+	if err == nil || host.SandboxID == access.SandboxID {
+		return upstream, child, cleanup, err
+	}
+	base := dshhost.Host{Key: access.Key, SandboxID: access.SandboxID, Generation: access.Generation, State: "running"}
+	return h.nativeTarget(ctx, access, token, base)
+}
+
 // A routed grant is private to this request/stream and revoked on completion.
 // The original grant remains the authority and bounds the routed lifetime.
 func (h *Handler) nativeTarget(ctx context.Context, parent dshhost.NativeAccess, token string, host dshhost.Host) (string, string, func(), error) {
@@ -200,7 +210,11 @@ func (h *Handler) routeDSHNativeRequest(w http.ResponseWriter, r *http.Request, 
 		writeError(w, 503, "session owner is unavailable; retry from the workbench")
 		return true
 	}
-	upstream, child, cleanup, err := h.nativeTarget(r.Context(), access, token, host)
+	target := h.nativeTarget
+	if nativeReadMethod(envelope.Method) {
+		target = h.nativeReadTarget
+	}
+	upstream, child, cleanup, err := target(r.Context(), access, token, host)
 	if err != nil {
 		writeError(w, 503, "session owner is unavailable")
 		return true

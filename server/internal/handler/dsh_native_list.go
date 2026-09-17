@@ -55,7 +55,7 @@ func (h *Handler) nativeSessionSnapshot(ctx context.Context, access dshhost.Nati
 	if err != nil {
 		return nil, err
 	}
-	upstream, child, cleanup, err := h.nativeTarget(ctx, access, token, host)
+	upstream, child, cleanup, err := h.nativeReadTarget(ctx, access, token, host)
 	if err != nil {
 		return nil, err
 	}
