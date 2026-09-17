@@ -1,6 +1,7 @@
 package agentsource
 
 import (
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 	"archive/zip"
 	"bytes"
 	"context"
@@ -56,9 +57,9 @@ func ParseAgentPackageFS(ctx context.Context, files fs.FS) (ParsedAgentPackage, 
 	return parseAgentPackageRepository(ctx, client, Source{})
 }
 
-func parseAgentPackageRepository(ctx context.Context, client RepositoryClient, source Source) (ParsedAgentPackage, error) {
+func parseAgentPackageRepository(ctx context.Context, client gitrepo.Reader, source Source) (ParsedAgentPackage, error) {
 	if err := ctx.Err(); err != nil { return ParsedAgentPackage{}, err }
-	tree, err := client.GetTree(ctx, source.InstallationID, source.Owner, source.Repository, source.CommitSHA)
+	tree, err := client.GetTree(ctx, source.CommitSHA)
 	if err != nil { return ParsedAgentPackage{}, err }
 	entries := repositoryEntries(tree)
 	content, err := loadRequiredText(ctx, client, source, entries, PortableManifestPath)

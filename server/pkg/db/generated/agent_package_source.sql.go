@@ -16,7 +16,7 @@ INSERT INTO agent_source (
     agent_id, workspace_id, source_type, repo_owner, repo_name, ref,
     manifest_path, synced_commit_sha, sync_status, last_synced_at, created_by
 ) VALUES ($1, $2, 'local', '', '', '', 'agent.json', $3, 'ready', now(), $4)
-RETURNING id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key, a2a_client_mappings
+RETURNING id, agent_id, source_type, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key, a2a_client_mappings, package_binding_state, git_connection_id, repository_url
 `
 
 type CreateLocalAgentSourceParams struct {
@@ -38,7 +38,6 @@ func (q *Queries) CreateLocalAgentSource(ctx context.Context, arg CreateLocalAge
 		&i.ID,
 		&i.AgentID,
 		&i.SourceType,
-		&i.GithubInstallationID,
 		&i.RepoOwner,
 		&i.RepoName,
 		&i.Ref,
@@ -54,6 +53,9 @@ func (q *Queries) CreateLocalAgentSource(ctx context.Context, arg CreateLocalAge
 		&i.WorkspaceID,
 		&i.ManagedSourceKey,
 		&i.A2aClientMappings,
+		&i.PackageBindingState,
+		&i.GitConnectionID,
+		&i.RepositoryUrl,
 	)
 	return i, err
 }

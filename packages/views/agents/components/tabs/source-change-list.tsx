@@ -53,7 +53,7 @@ function ChangeViewer({ changes, selected, onSelect, expandUnchanged, onExpandUn
   const byPath = new Map(changes.map((change) => [change.path, change]));
   // null also represents withheld text. Only an added or removed file may
   // substitute an absent side with empty text.
-  const hasText = (selected.before != null || selected.status === "added") && (selected.after != null || selected.status === "removed");
+  const hasText = (selected.before != null || selected.status === "added") && (selected.after != null || selected.status === "deleted" || selected.status === "removed");
 
   return <ResizablePanelGroup orientation="horizontal">
     <ResizablePanel defaultSize="25%" minSize="100px" maxSize="45%" className="min-w-0">
@@ -101,6 +101,7 @@ function ChangeStatus({ status, compact = false }: { status: string; compact?: b
   let color: string;
   switch (status) {
     case "added": label = t(($) => $.package_diff.added); marker = "A"; color = "text-success"; break;
+    case "deleted":
     case "removed": label = t(($) => $.package_diff.removed); marker = "D"; color = "text-destructive"; break;
     case "modified": label = t(($) => $.package_diff.modified); marker = "M"; color = "text-warning"; break;
     default: label = status; marker = "•"; color = "text-muted-foreground";

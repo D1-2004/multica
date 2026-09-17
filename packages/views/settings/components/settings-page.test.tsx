@@ -19,7 +19,7 @@ vi.mock("./local-runner-tab", stub("LocalRunnerTab"));
 vi.mock("./workspace-tab", stub("WorkspaceTab"));
 vi.mock("./members-tab", stub("MembersTab"));
 vi.mock("./repositories-tab", stub("RepositoriesTab"));
-vi.mock("./github-tab", stub("GitHubTab"));
+vi.mock("./repository-settings", stub("RepositorySettings"));
 vi.mock("./integrations-tab", stub("IntegrationsTab"));
 vi.mock("./labs-tab", stub("LabsTab"));
 vi.mock("./notifications-tab", stub("NotificationsTab"));
@@ -138,5 +138,15 @@ describe("SettingsPage hosted websites tab", () => {
     renderWithI18n(<SettingsPage />);
 
     expect(screen.getByRole("tab", { name: "Websites" })).toBeInTheDocument();
+  });
+});
+
+
+describe("SettingsPage repository navigation", () => {
+  it("provides one repository entry without provider or protocol tabs", () => {
+    renderWithI18n(<SettingsPage />);
+    expect(screen.getAllByRole("tab", { name: "Repositories" })).toHaveLength(1);
+    expect(screen.queryByRole("tab", { name: "Git" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "GitHub" })).not.toBeInTheDocument();
   });
 });

@@ -11,7 +11,7 @@ import (
 func (h *Handler) previewAgentPackagePublication(w http.ResponseWriter, r *http.Request) {
 	agent, source, ok := h.loadPackageSourceForManage(w, r)
 	if !ok { return }
-	if source.SourceType == "github" { writeError(w,http.StatusConflict,"Git Agents publish from their repository; select a branch, tag or commit"); return }
+	if source.SourceType == "git" { writeError(w,http.StatusConflict,"Git Agents publish from their repository; select a branch, tag or commit"); return }
 	content, err := readAgentPackageUpload(w, r)
 	if err != nil { writePackageUploadError(w, err); return }
 	parsed, err := agentsource.ParseAgentPackage(r.Context(), content)

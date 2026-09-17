@@ -1,4 +1,4 @@
-package githubapp
+package gitrepo
 
 import (
 	"bytes"
@@ -20,16 +20,16 @@ import (
 )
 
 const (
-	DefaultAPIBase       = "https://api.github.com"
+	GitHubAPIBase       = "https://api.github.com"
 	defaultTimeout       = 20 * time.Second
 	defaultResponseLimit = 10 << 20
 	tokenRefreshSkew     = time.Minute
 	maxRepositoryPages   = 20
 )
 
-var ErrUnavailable = errors.New("github app credentials are unavailable")
+var ErrGitHubUnavailable = errors.New("github app credentials are unavailable")
 
-type Config struct {
+type GitHubAppConfig struct {
 	AppID           string
 	PrivateKey      string
 	APIBase         string
@@ -45,7 +45,7 @@ func NormalizePrivateKeyPEM(value string) string {
 	return strings.ReplaceAll(strings.TrimSpace(value), `\n`, "\n")
 }
 
-type Client struct {
+type GitHubAppClient struct {
 	appID           string
 	privateKey      *rsa.PrivateKey
 	baseURL         *url.URL
@@ -63,24 +63,11 @@ type cachedToken struct {
 	expiresAt time.Time
 }
 
-type Repository struct {
-	ID            int64  `json:"id"`
-	Name          string `json:"name"`
-	FullName      string `json:"full_name"`
-	Private       bool   `json:"private"`
-	DefaultBranch string `json:"default_branch"`
-	HTMLURL       string `json:"html_url"`
-}
 
-type Branch struct {
-	Name string `json:"name"`
-	Commit struct {
-		SHA string `json:"sha"`
-	} `json:"commit"`
-	Protected bool `json:"protected"`
-}
 
-func (c *Client) ListBranches(ctx context.Context, installationID int64, owner, repo string) ([]Branch, error) {
+
+
+func (c *GitHubAppClient) ListBranches(ctx context.Context, installationID int64, owner, repo string) ([]Branch, error) {
 	branches := make([]Branch, 0)
 	for page := 1; page <= maxRepositoryPages; page++ {
 		var response []Branch
@@ -96,12 +83,9 @@ func (c *Client) ListBranches(ctx context.Context, installationID int64, owner, 
 	return nil, errors.New("github branch pagination limit exceeded")
 }
 
-type Tag struct {
-	Name string `json:"name"`
-	Commit struct { SHA string `json:"sha"` } `json:"commit"`
-}
 
-func (c *Client) ListTags(ctx context.Context, installationID int64, owner, repo string) ([]Tag, error) {
+
+func (c *GitHubAppClient) ListTags(ctx context.Context, installationID int64, owner, repo string) ([]Tag, error) {
 	tags := make([]Tag,0)
 	for page := 1; page <= maxRepositoryPages; page++ {
 		var response []Tag
@@ -113,37 +97,19 @@ func (c *Client) ListTags(ctx context.Context, installationID int64, owner, repo
 	return nil,errors.New("github tag pagination limit exceeded")
 }
 
-type TreeEntry struct {
-	Path string `json:"path"`
-	Mode string `json:"mode"`
-	Type string `json:"type"`
-	SHA  string `json:"sha"`
-	Size int64  `json:"size"`
-}
 
-type Tree struct {
-	SHA       string      `json:"sha"`
-	Truncated bool        `json:"truncated"`
-	Entries   []TreeEntry `json:"tree"`
-}
 
-type APIError struct {
-	StatusCode int
-	Message    string
-}
 
-func (e *APIError) Error() string {
-	if e.Message == "" {
-		return fmt.Sprintf("github API returned status %d", e.StatusCode)
-	}
-	return fmt.Sprintf("github API returned status %d: %s", e.StatusCode, e.Message)
-}
 
-func New(cfg Config) (*Client, error) {
+
+
+
+
+func NewGitHubApp(cfg GitHubAppConfig) (*GitHubAppClient, error) {
 	appID := strings.TrimSpace(cfg.AppID)
 	pemKey := NormalizePrivateKeyPEM(cfg.PrivateKey)
 	if appID == "" || pemKey == "" {
-		return nil, ErrUnavailable
+		return nil, ErrGitHubUnavailable
 	}
 	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(pemKey))
 	if err != nil {
@@ -181,7 +147,7 @@ func New(cfg Config) (*Client, error) {
 	if responseLimit <= 0 {
 		responseLimit = defaultResponseLimit
 	}
-	return &Client{
+	return &GitHubAppClient{
 		appID:           appID,
 		privateKey:      privateKey,
 		baseURL:         baseURL,
@@ -196,7 +162,7 @@ func New(cfg Config) (*Client, error) {
 func parseAPIBase(raw string) (*url.URL, error) {
 	base := strings.TrimSpace(raw)
 	if base == "" {
-		base = DefaultAPIBase
+		base = GitHubAPIBase
 	}
 	baseURL, err := url.Parse(base)
 	if err != nil || baseURL.Scheme == "" || baseURL.Host == "" || baseURL.User != nil ||
@@ -207,9 +173,9 @@ func parseAPIBase(raw string) (*url.URL, error) {
 	return baseURL, nil
 }
 
-func (c *Client) currentBaseURL() (*url.URL, error) {
+func (c *GitHubAppClient) currentBaseURL() (*url.URL, error) {
 	if c == nil {
-		return nil, ErrUnavailable
+		return nil, ErrGitHubUnavailable
 	}
 	if c.apiBaseProvider == nil {
 		if c.baseURL == nil {
@@ -235,7 +201,7 @@ func sameOrigin(a, b *url.URL) bool {
 	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
 }
 
-func (c *Client) ListRepositories(ctx context.Context, installationID int64) ([]Repository, error) {
+func (c *GitHubAppClient) ListRepositories(ctx context.Context, installationID int64) ([]Repository, error) {
 	repositories := make([]Repository, 0)
 	for page := 1; page <= maxRepositoryPages; page++ {
 		var response struct {
@@ -253,7 +219,7 @@ func (c *Client) ListRepositories(ctx context.Context, installationID int64) ([]
 	return nil, errors.New("github repository pagination limit exceeded")
 }
 
-func (c *Client) ResolveCommit(ctx context.Context, installationID int64, owner, repo, ref string) (string, error) {
+func (c *GitHubAppClient) ResolveCommit(ctx context.Context, installationID int64, owner, repo, ref string) (string, error) {
 	var response struct {
 		SHA string `json:"sha"`
 	}
@@ -269,7 +235,7 @@ func (c *Client) ResolveCommit(ctx context.Context, installationID int64, owner,
 	return response.SHA, nil
 }
 
-func (c *Client) GetTree(ctx context.Context, installationID int64, owner, repo, sha string) (Tree, error) {
+func (c *GitHubAppClient) GetTree(ctx context.Context, installationID int64, owner, repo, sha string) (Tree, error) {
 	var commit struct {
 		Tree struct {
 			SHA string `json:"sha"`
@@ -294,7 +260,7 @@ func (c *Client) GetTree(ctx context.Context, installationID int64, owner, repo,
 	return response, nil
 }
 
-func (c *Client) GetBlob(ctx context.Context, installationID int64, owner, repo, sha string) ([]byte, error) {
+func (c *GitHubAppClient) GetBlob(ctx context.Context, installationID int64, owner, repo, sha string) ([]byte, error) {
 	var response struct {
 		Encoding string `json:"encoding"`
 		Content  string `json:"content"`
@@ -315,6 +281,9 @@ func (c *Client) GetBlob(ctx context.Context, installationID int64, owner, repo,
 	if int64(len(decoded)) > c.responseLimit {
 		return nil, errors.New("github blob exceeds response limit")
 	}
+	if strings.HasPrefix(string(decoded), "version https://git-lfs.github.com/spec/v1\n") && strings.Contains(string(decoded), "\noid sha256:") {
+		return nil, errors.New("Git LFS content is not supported in Agent or skill configuration; commit the file contents directly")
+	}
 	return decoded, nil
 }
 
@@ -322,7 +291,8 @@ func escape(value string) string {
 	return url.PathEscape(value)
 }
 
-func (c *Client) doInstallationJSON(ctx context.Context, installationID int64, method, path string, body any, out any) error {
+func (c *GitHubAppClient) doInstallationJSON(ctx context.Context, installationID int64, method, path string, body any, out any) error {
+	if installationID == 0 { _, err := c.doJSON(ctx, method, path, body, out, ""); return err }
 	for attempt := 0; attempt < 2; attempt++ {
 		token, err := c.installationToken(ctx, installationID)
 		if err != nil {
@@ -338,7 +308,7 @@ func (c *Client) doInstallationJSON(ctx context.Context, installationID int64, m
 	return errors.New("github installation request authentication failed")
 }
 
-func (c *Client) installationToken(ctx context.Context, installationID int64) (string, error) {
+func (c *GitHubAppClient) installationToken(ctx context.Context, installationID int64) (string, error) {
 	now := c.now()
 	c.mu.Lock()
 	if cached, ok := c.tokens[installationID]; ok && now.Add(tokenRefreshSkew).Before(cached.expiresAt) {
@@ -369,13 +339,13 @@ func (c *Client) installationToken(ctx context.Context, installationID int64) (s
 	return response.Token, nil
 }
 
-func (c *Client) invalidateToken(installationID int64) {
+func (c *GitHubAppClient) invalidateToken(installationID int64) {
 	c.mu.Lock()
 	delete(c.tokens, installationID)
 	c.mu.Unlock()
 }
 
-func (c *Client) signAppJWT(now time.Time) (string, error) {
+func (c *GitHubAppClient) signAppJWT(now time.Time) (string, error) {
 	claims := jwt.MapClaims{
 		"iat": now.Add(-time.Minute).Unix(),
 		"exp": now.Add(9 * time.Minute).Unix(),
@@ -389,7 +359,7 @@ func (c *Client) signAppJWT(now time.Time) (string, error) {
 	return signed, nil
 }
 
-func (c *Client) doJSON(ctx context.Context, method, path string, body any, out any, bearer string) (int, error) {
+func (c *GitHubAppClient) doJSON(ctx context.Context, method, path string, body any, out any, bearer string) (int, error) {
 	endpoint, err := c.endpoint(path)
 	if err != nil {
 		return 0, err
@@ -417,7 +387,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("github API request failed: %w", err)
+		if ctx.Err() != nil { return 0,ctx.Err() }; return 0,errors.New("GitHub repository service could not be reached")
 	}
 	defer resp.Body.Close()
 	payload, err := readLimited(resp.Body, c.responseLimit)
@@ -429,6 +399,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 			Message string `json:"message"`
 		}
 		_ = json.Unmarshal(payload, &apiResponse)
+		if bearer != "" { apiResponse.Message = strings.ReplaceAll(apiResponse.Message,bearer,"[credential]") }
 		return resp.StatusCode, &APIError{StatusCode: resp.StatusCode, Message: apiResponse.Message}
 	}
 	if out != nil && len(payload) > 0 {
@@ -439,7 +410,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 	return resp.StatusCode, nil
 }
 
-func (c *Client) endpoint(path string) (*url.URL, error) {
+func (c *GitHubAppClient) endpoint(path string) (*url.URL, error) {
 	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") {
 		return nil, errors.New("invalid GitHub API path")
 	}

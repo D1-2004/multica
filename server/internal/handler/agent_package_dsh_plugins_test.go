@@ -43,7 +43,7 @@ func TestPackageDshPluginExportAndRebind(t *testing.T) {
 	if len(requirements.DshPlugins) != 1 || len(requirements.Secrets) != 1 {
 		t.Fatal("preview omitted a plugin or credential requirement")
 	}
-	req := CreateGitHubAgentRequest{Secrets: map[string]string{requirements.Secrets[0]: "new-employee-secret"}, DshPluginBindings: map[string]string{requirements.DshPlugins[0].Ref: uuidToString(other.ID)}}
+	req := CreateAgentPackageRequest{Secrets: map[string]string{requirements.Secrets[0]: "new-employee-secret"}, DshPluginBindings: map[string]string{requirements.DshPlugins[0].Ref: uuidToString(other.ID)}}
 	definition, err := preparePackageConfiguration(&req, map[string]json.RawMessage{}, bundle)
 	if err != nil {
 		t.Fatal(err)

@@ -12,6 +12,8 @@ const mockReuseInstallation = vi.hoisted(() => vi.fn());
 const mockGetConnectURL = vi.hoisted(() => vi.fn());
 const mockInvalidate = vi.hoisted(() => vi.fn());
 const mockNavPush = vi.hoisted(() => vi.fn());
+const mockNavReplace = vi.hoisted(() => vi.fn());
+const searchParamsRef = vi.hoisted(() => ({ current: new URLSearchParams("tab=repositories&section=connections") }));
 const mockSetQueryData = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
@@ -74,6 +76,10 @@ vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "workspace-1",
 }));
 
+vi.mock("@multica/core/permissions", () => ({
+  useCurrentMember: () => ({ role: membersRef.current[0]?.role }),
+}));
+
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => workspaceRef.current,
 }));
@@ -118,10 +124,10 @@ vi.mock("@multica/core/auth", () => {
 vi.mock("../../navigation/context", () => ({
   useNavigation: () => ({
     push: mockNavPush,
-    replace: vi.fn(),
+    replace: mockNavReplace,
     back: vi.fn(),
     pathname: "/acme/settings",
-    searchParams: new URLSearchParams("tab=github"),
+    searchParams: searchParamsRef.current,
     getShareableUrl: (p: string) => `https://app.example${p}`,
   }),
 }));
@@ -130,7 +136,12 @@ vi.mock("sonner", () => ({
   toast: { success: mockToastSuccess, error: mockToastError },
 }));
 
-import { GitHubTab } from "./github-tab";
+import { GitHubConnectionSection } from "./github-connection-section";
+import { GitHubCollaborationSettings } from "./github-collaboration-settings";
+
+function GitHubSettingsFixture() {
+  return <><GitHubConnectionSection /><GitHubCollaborationSettings /></>;
+}
 
 const TEST_RESOURCES = {
   en: { common: enCommon, settings: enSettings },
@@ -146,6 +157,7 @@ function I18nWrapper({ children }: { children: ReactNode }) {
 
 function resetFixtures() {
   vi.clearAllMocks();
+  searchParamsRef.current = new URLSearchParams("tab=repositories&section=connections");
   workspaceRef.current = {
     id: "workspace-1",
     name: "Acme",
@@ -162,27 +174,41 @@ function resetFixtures() {
   };
 }
 
-describe("GitHubTab", () => {
+describe("Repository GitHub settings", () => {
   beforeEach(resetFixtures);
 
-  it("folds the non-dev hint into the master switch description (no separate callout)", () => {
-    render(<GitHubTab />, { wrapper: I18nWrapper });
-    expect(screen.getByText(/Not a development team\? Just turn it off here\./)).toBeTruthy();
+  it("reports missing GitHub user authorization configuration after callback", async () => {
+    searchParamsRef.current = new URLSearchParams("tab=repositories&section=connections&github_error=user_authorization_not_configured");
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith("GitHub user authorization is not configured. Ask your administrator to complete the GitHub App setup."));
+    expect(mockNavReplace).toHaveBeenCalledWith("/acme/settings?tab=repositories&section=connections");
+  });
+
+  it("refreshes installations after a successful connection callback", async () => {
+    searchParamsRef.current = new URLSearchParams("tab=repositories&section=connections&github_connected=1");
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
+    await waitFor(() => expect(mockInvalidate).toHaveBeenCalledWith({ queryKey: ["github", "workspace-1"] }));
+    expect(mockNavReplace).toHaveBeenCalledWith("/acme/settings?tab=repositories&section=connections");
+  });
+
+  it("describes collaboration settings independently from access identities", () => {
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
+    expect(screen.getByText(enSettings.github.master_description_on)).toBeTruthy();
     // The old standalone callout (title + dedicated "Turn GitHub off" button) is gone.
     expect(screen.queryByRole("button", { name: /^Turn GitHub off$/ })).toBeNull();
   });
 
-  it("does not show the hint once the master switch is off", () => {
+  it("describes disabled collaboration when the master switch is off", () => {
     workspaceRef.current.settings = { github_enabled: false };
-    render(<GitHubTab />, { wrapper: I18nWrapper });
-    expect(screen.queryByText(/Not a development team\?/)).toBeNull();
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
+    expect(screen.getByText(enSettings.github.master_description_off)).toBeTruthy();
   });
 
   it("disables every feature switch when the master switch is off", () => {
     workspaceRef.current.settings = { github_enabled: false };
-    render(<GitHubTab />, { wrapper: I18nWrapper });
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
 
-    const master = screen.getByRole("switch", { name: /enable github features/i });
+    const master = screen.getByRole("switch", { name: /enable github collaboration/i });
     expect(master.getAttribute("aria-checked")).toBe("false");
 
     const switches = screen.getAllByRole("switch");
@@ -204,9 +230,9 @@ describe("GitHubTab", () => {
       settings: { co_authored_by_enabled: true, github_enabled: false },
     });
 
-    render(<GitHubTab />, { wrapper: I18nWrapper });
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("switch", { name: /enable github features/i }));
+    await user.click(screen.getByRole("switch", { name: /enable github collaboration/i }));
 
     await waitFor(() => {
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
@@ -227,7 +253,7 @@ describe("GitHubTab", () => {
     };
     mockDeleteInstallation.mockResolvedValue(undefined);
 
-    render(<GitHubTab />, { wrapper: I18nWrapper });
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
 
     await user.click(screen.getByRole("button", { name: /^Disconnect$/ }));
     expect(screen.getByText(/Multica will stop receiving webhooks/i)).toBeTruthy();
@@ -250,7 +276,7 @@ describe("GitHubTab", () => {
       can_manage: true,
       installations: [{ id: "inst-1", account_login: "acme", installation_id: 1 }],
     };
-    render(<GitHubTab />, { wrapper: I18nWrapper });
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
     expect(screen.getByRole("button", { name: /^Disconnect$/ })).toBeTruthy();
   });
 
@@ -261,7 +287,7 @@ describe("GitHubTab", () => {
       can_manage: false,
       installations: [{ id: "inst-1", account_login: "acme" }],
     };
-    render(<GitHubTab />, { wrapper: I18nWrapper });
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
 
     expect(screen.getByText(/Connected to acme/i)).toBeTruthy();
     expect(screen.getByText(/Read-only view\./i)).toBeTruthy();
@@ -276,7 +302,7 @@ describe("GitHubTab", () => {
       can_manage: false,
       installations: [],
     };
-    render(<GitHubTab />, { wrapper: I18nWrapper });
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
 
     expect(screen.getByText(/Ask an admin or owner/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Connect GitHub$/ })).toBeNull();
@@ -308,7 +334,7 @@ describe("GitHubTab", () => {
       created_at: "2026-07-29T00:00:00Z",
     });
 
-    render(<GitHubTab />, { wrapper: I18nWrapper });
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
 
     expect(screen.getByText("Available connections")).toBeTruthy();
     expect(screen.getByText("From Platform")).toBeTruthy();
@@ -342,7 +368,7 @@ describe("GitHubTab", () => {
     };
     mockReuseInstallation.mockRejectedValue(new Error("reusable GitHub installation not found"));
 
-    render(<GitHubTab />, { wrapper: I18nWrapper });
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
     const reuseButton = screen.getByRole("button", {
       name: "Use acme connection from Platform",
     });
@@ -370,14 +396,12 @@ describe("GitHubTab", () => {
         },
       ],
     };
-    render(<GitHubTab />, { wrapper: I18nWrapper });
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
     expect(screen.getByText(/Connected by Jiayuan/)).toBeTruthy();
   });
 
-  it("repositories shortcut navigates to the repositories tab", async () => {
-    const user = userEvent.setup();
-    render(<GitHubTab />, { wrapper: I18nWrapper });
-    await user.click(screen.getByRole("button", { name: /Manage repositories/ }));
-    expect(mockNavPush).toHaveBeenCalledWith("/acme/settings?tab=repositories");
+  it("keeps repository navigation outside the provider settings", () => {
+    render(<GitHubSettingsFixture />, { wrapper: I18nWrapper });
+    expect(screen.queryByRole("button", { name: /Manage repositories/ })).toBeNull();
   });
 });

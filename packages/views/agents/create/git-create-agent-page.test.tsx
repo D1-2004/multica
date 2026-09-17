@@ -9,19 +9,18 @@ import { NavigationProvider } from "../../navigation";
 import enAgents from "../../locales/en/agents.json";
 import { GitCreateAgentPage } from "./git-create-agent-page";
 
-const mocked = vi.hoisted(() => ({ preview: vi.fn(), create: vi.fn(), installations: vi.fn(), push: vi.fn() }));
+const mocked = vi.hoisted(() => ({ preview: vi.fn(), create: vi.fn(), installations: vi.fn(), push: vi.fn(), role: "admin" }));
 vi.mock("@multica/core/api", () => ({ api: {
-  listGitHubInstallations: mocked.installations,
-  listGitHubAgentRepositories: async () => ({ repositories: [] }),
-  listGitHubAgentBranches: async () => ({ default_branch: "main", branches: [] }),
-  previewGitHubAgent: mocked.preview, createAgentFromPackage: mocked.create,
+  resolveGitRepository: mocked.installations,
+  listGitAgentBranches: async () => ({ connection_id: "install-1", default_branch: "main", branches: [] }),
+  previewGitAgent: mocked.preview, createAgentFromPackage: mocked.create,
 } }));
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
 vi.mock("@multica/core/paths", async (original) => ({ ...await original<object>(), useWorkspacePaths: () => paths.workspace("acme") }));
 vi.mock("../components/runtime-picker", () => ({ RuntimePicker: () => <div>Runtime picker</div> }));
 vi.mock("./use-create-agent-form", () => ({ useCreateAgentForm: () => {
   const [draft, setDraft] = useState({ ...EMPTY_AGENT_DRAFT, runtimeId: "runtime-1" });
-  return { draft, setDraft, selectedRuntime: { id: "runtime-1" }, draftReady: true, runtimes: [], members: [], currentUserId: "user-1" };
+  return { draft, setDraft, selectedRuntime: { id: "runtime-1" }, draftReady: true, runtimes: [], members: [{ user_id: "user-1", role: mocked.role }], currentUserId: "user-1" };
 } }));
 
 function mount() {
@@ -36,21 +35,30 @@ function mount() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocked.installations.mockResolvedValue({ can_manage: true, installations: [{ id: "install-1", account_login: "acme" }] });
+  mocked.role = "admin";
+  mocked.installations.mockResolvedValue({ repository_url: "https://github.com/acme/agent", provider: "github", connections: [{ id: "install-1", account_login: "acme" }] });
   mocked.preview.mockResolvedValue({ preview_id: "reviewed-version", repository: "acme/agent", ref: "release/v2", resolved_sha: "a".repeat(40), name: "Imported", description: "", instructions: "Reviewed instructions", skills: [], blockers: [], warnings: [] });
   mocked.create.mockResolvedValue({ agent: { id: "agent-1" }, source: { synced_commit_sha: "a".repeat(40) }, warnings: [] });
 });
 
 describe("Git creation", () => {
-  it("requires a new preview after changing branches and submits only the reviewed ID", async () => {
+  it("links an unconnected workspace to Git settings", async () => {
+    mocked.installations.mockResolvedValue({ connections: [] });
     mount();
-    await waitFor(() => expect(screen.getByLabelText("GitHub connection")).toHaveValue("install-1"));
+    expect(await screen.findByRole("link", { name: enAgents.creation_studio.git.manage_connections })).toHaveAttribute("href", "/acme/settings?tab=repositories&section=connections");
+  });
+
+  it("requires a new preview after changing branches and submits only the reviewed ID", async () => {
+    mocked.installations.mockResolvedValue({ repository_url: "https://github.com/acme/agent", provider: "github", connections: [{ id: "install-1", account_login: "acme" }] });
+    mount();
     fireEvent.change(screen.getByLabelText(enAgents.tab_body.publish.repository), { target: { value: "https://github.com/acme/agent" } });
+    fireEvent.click(screen.getByRole("button", { name: "Read repository" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Preview agent" })).toBeEnabled());
     fireEvent.change(screen.getByLabelText("Branch, tag or commit"), { target: { value: "release/v2" } });
     expect(screen.getByRole("button", { name: enAgents.creation_studio.create_and_open })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Preview agent" }));
     await screen.findByText("Reviewed instructions");
-    expect(mocked.preview).toHaveBeenCalledWith("workspace-1", { installation_id: "install-1", repository: "https://github.com/acme/agent", ref: "refs/heads/release/v2" });
+    expect(mocked.preview).toHaveBeenCalledWith("workspace-1", { connection_id: "install-1", repository: "https://github.com/acme/agent", ref: "refs/heads/release/v2" });
     fireEvent.change(screen.getByLabelText("Branch, tag or commit"), { target: { value: "main" } });
     expect(screen.getByRole("button", { name: enAgents.creation_studio.create_and_open })).toBeDisabled();
     expect(screen.queryByText("Reviewed instructions")).toBeNull();
@@ -63,9 +71,8 @@ describe("Git creation", () => {
   });
 
   it("blocks creation for a member without management rights", async () => {
-    mocked.installations.mockResolvedValue({ can_manage: false, installations: [] });
+    mocked.role = "member";
     mount();
-    await screen.findByText(/workspace owner or admin must connect/);
     expect(screen.getByRole("button", { name: "Preview agent" })).toBeDisabled();
     expect(screen.getByRole("button", { name: enAgents.creation_studio.create_and_open })).toBeDisabled();
     expect(mocked.preview).not.toHaveBeenCalled();
@@ -75,8 +82,9 @@ describe("Git creation", () => {
 it("rejects a malformed preview without enabling creation", async () => {
   mocked.preview.mockResolvedValue({});
   mount();
-  await waitFor(() => expect(screen.getByLabelText("GitHub connection")).toHaveValue("install-1"));
-  fireEvent.change(screen.getByLabelText(enAgents.tab_body.publish.repository), { target: { value: "acme/agent" } });
+  fireEvent.change(screen.getByLabelText(enAgents.tab_body.publish.repository), { target: { value: "https://github.com/acme/agent" } });
+  fireEvent.click(screen.getByRole("button", { name: "Read repository" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Preview agent" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Preview agent" }));
   await screen.findByRole("alert");
   expect(screen.getByRole("button", { name: enAgents.creation_studio.create_and_open })).toBeDisabled();

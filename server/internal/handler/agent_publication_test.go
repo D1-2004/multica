@@ -62,6 +62,19 @@ func TestGitPublicationRollbackUsesHistoryInsteadOfMovedBranch(t *testing.T) {
 	if strings.Contains(string(history["publications"]),"published_definition") { t.Fatal("history leaked the configuration snapshot") }
 }
 
+func TestGitPublicationRollbackPreservesExportedManifest(t *testing.T) {
+	f := newGitSourceFixture(t)
+	id := f.create(t)
+	original := exportAgentFiles(t,id)["agent.json"]
+	publication, err := f.handler.Queries.LatestAppliedAgentSourcePreview(t.Context(),db.LatestAppliedAgentSourcePreviewParams{AgentID:parseUUID(id),WorkspaceID:parseUUID(testWorkspaceID)})
+	if err != nil { t.Fatal(err) }
+	preview := f.request(t,f.handler.PreviewAgentSourceSync,id,map[string]any{"ref":"release/v2"},http.StatusOK)
+	f.request(t,f.handler.SyncAgentSource,id,map[string]any{"preview_id":rawString(t,preview["preview_id"])},http.StatusOK)
+	rollback := f.request(t,f.handler.PreviewAgentSourceSync,id,map[string]any{"publication_id":uuidToString(publication.ID)},http.StatusOK)
+	confirmExportedPackagePreview(t,f,id,rollback,http.StatusOK)
+	if current := exportAgentFiles(t,id)["agent.json"]; packageValueHash(json.RawMessage(current)) != packageValueHash(json.RawMessage(original)) { t.Fatalf("rollback changed exported configuration:\nbefore: %s\nafter: %s",original,current) }
+}
+
 func TestGitAgentRejectsZIPPublication(t *testing.T) {
 	f := newGitSourceFixture(t)
 	packagePublishPreview(t, f.handler, f.create(t), f.files[gitSourceSHA2], http.StatusConflict)
@@ -86,8 +99,8 @@ func TestGitPublicationSupportsBranchesTagsAndCommits(t *testing.T) {
 func TestGitPublicationHistoryPaginationDoesNotExposeOtherAgents(t *testing.T) {
 	f := newGitSourceFixture(t)
 	id := f.create(t)
-	if _,err := testPool.Exec(t.Context(),`INSERT INTO agent_source_preview (workspace_id,created_by,agent_id,agent_source_id,github_installation_id,repository,ref,resolved_sha,snapshot,applied_at,applied_source)
-SELECT workspace_id,created_by,agent_id,agent_source_id,github_installation_id,repository,ref,resolved_sha,snapshot,clock_timestamp() + n * interval '1 microsecond',applied_source
+	if _,err := testPool.Exec(t.Context(),`INSERT INTO agent_source_preview (workspace_id,created_by,agent_id,agent_source_id,git_connection_id,repository,ref,resolved_sha,snapshot,applied_at,applied_source)
+SELECT workspace_id,created_by,agent_id,agent_source_id,git_connection_id,repository,ref,resolved_sha,snapshot,clock_timestamp() + n * interval '1 microsecond',applied_source
 FROM agent_source_preview CROSS JOIN generate_series(1,51) AS n WHERE agent_id=$1 AND applied_at IS NOT NULL`,id); err != nil { t.Fatal(err) }
 	first := f.request(t,f.handler.ListAgentPublications,id,nil,http.StatusOK)
 	var rows []map[string]json.RawMessage

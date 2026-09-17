@@ -67,7 +67,7 @@ func (s agentPackageService) Import(ctx context.Context, tx pgx.Tx, agent db.Age
 	if err != nil {
 		return err
 	}
-	request := CreateGitHubAgentRequest{Secrets: secrets, DeferredBindings: deferred, DshPluginBindings: pluginBindings}
+	request := CreateAgentPackageRequest{Secrets: secrets, DeferredBindings: deferred, DshPluginBindings: pluginBindings}
 	if !creating {
 		reusedSecrets, ready, err := s.handler.reusablePackageInputs(ctx, q, agent, uuidToString(actorID), state, prepared.bundle)
 		if err != nil {

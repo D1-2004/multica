@@ -177,7 +177,7 @@ export function SkillsTab({
                 return (
                   typeof origin === "object" &&
                   origin !== null &&
-                  (origin as Record<string, unknown>).type === "github_agent_source"
+                  (origin as Record<string, unknown>).type === "git_agent_source"
                 );
               });
               return (

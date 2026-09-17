@@ -241,6 +241,7 @@
       "tokens": "API Token",
       "general": "通用",
       "repositories": "代码仓库",
+    "git": "Git",
       "github": "GitHub",
       "integrations": "应用集成",
       "labs": "实验室",
@@ -720,15 +721,12 @@
   },
   "github": {
     "page_description": "连接 GitHub App、控制 Pull Request 如何出现在 Multica 中，并决定智能体在 commit 记录里留下哪些痕迹。",
-    "section_master": "启用 GitHub 功能",
-    "master_description_on": "关闭后，所有 GitHub 入口都会被隐藏，也不再产生新的副作用。后台已有数据不会被删除。团队不使用 GitHub？在这里直接关掉即可。",
+    "section_master": "启用 GitHub 协作功能",
+    "master_description_on": "控制 PR 侧栏、任务自动关联和提交署名。仓库访问身份在「访问身份」中管理。",
     "master_description_off": "GitHub 功能已关闭。PR 侧栏、Co-authored-by trailer 与自动关联都已暂停。后台数据未删除。",
     "section_connection": "连接",
     "connection_title": "GitHub App",
-    "connection_description_prefix": "自动把 issue 关联到 Pull Request。当 PR 的分支、标题或正文中包含",
-    "connection_description_suffix": "并被合并时，对应的 issue 会自动转为",
-    "connection_description_done": "已完成",
-    "connection_identifier_example": "MUL-123",
+    "connection_description": "授权此工作区访问 GitHub 仓库，用于导入智能体和技能、关联 Pull Request。",
     "connected_to": "已连接到 {{login}}",
     "connect_github": "连接 GitHub",
     "connect_opening": "正在打开…",
@@ -745,6 +743,10 @@
     "contact_admin_to_connect": "当前工作区尚未连接 GitHub。请让管理员或所有者完成 GitHub App 的配置。",
     "connected_by": "由 {{name}} 连接",
     "toast_not_configured": "当前部署未配置 GitHub 集成",
+    "toast_authorization_not_configured": "GitHub 用户授权尚未配置，请联系管理员完成 GitHub App 设置。",
+    "toast_connection_in_progress": "检测到多个 GitHub 连接流程，请重新发起连接，并在一个标签页中完成授权。",
+    "toast_connect_failed": "GitHub 连接失败，请重新发起连接并完成 GitHub 授权。",
+    "toast_connected": "GitHub App 已连接",
     "toast_open_failed": "打开 GitHub 安装页失败",
     "toast_disconnect_failed": "断开 GitHub App 失败",
     "toast_disconnected": "已断开 GitHub App",
@@ -1316,5 +1318,17 @@
     "secret_warning": "该密钥只展示一次，之后无法找回。请仅通过已批准的密钥交付渠道发送。",
     "secret_confirm": "我已复制并安全保存此密钥",
     "close": "关闭"
+  },
+  "repository_settings": {
+    "description": "统一管理工作区的仓库、访问身份和协作功能。",
+    "sections": {
+      "repositories": "仓库列表",
+      "connections": "访问身份",
+      "collaboration": "协作设置"
+    },
+    "collaboration_description": "配置 GitHub 的任务与 Pull Request 关联、PR 侧栏和提交署名。"
+  },
+  "git_repo": {
+    "description": "用于在工作区导入智能体和 skill、读取发布版本。连接授权给当前工作区，访问时使用该身份在代码平台上的权限。"
   }
 }

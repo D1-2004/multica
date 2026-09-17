@@ -5,7 +5,7 @@ description: GitHub App を一度連携すれば、ブランチ・タイトル�
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-**設定 → GitHub** で GitHub アカウントまたは組織を一度だけ連携してください。その後は、ブランチ名・タイトル・本文にイシュー識別子（例: `MUL-123`）を含むあらゆる pull request が該当する[イシュー](/issues)に**自動で紐づき**、イシューサイドバーの **Pull requests** に表示され、PR がマージされるとイシューが **Done** に移動します。
+**設定 → リポジトリ → アクセス ID** で GitHub アカウントまたは組織を一度だけ連携してください。その後は、ブランチ名・タイトル・本文にイシュー識別子（例: `MUL-123`）を含むあらゆる pull request が該当する[イシュー](/issues)に**自動で紐づき**、イシューサイドバーの **Pull requests** に表示され、PR がマージされるとイシューが **Done** に移動します。
 
 イシューごとの設定はありません。フロー全体が識別子で駆動されます。
 
@@ -13,7 +13,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 | 場所 | 動作 |
 |---|---|
-| **設定 → GitHub** | ワークスペースの admin には、マスタートグル、**Connect GitHub** ボタン、機能スイッチ（PR サイドバー、Co-authored-by、自動紐づけ）を備えた GitHub タブが表示されます。インストール後は GitHub タブに戻ります。 |
+| **設定 → リポジトリ → アクセス ID** | ワークスペースの owner / admin は「アクセス ID」で GitHub を接続・切断します。マスター、PR サイドバー、Co-authored-by、自動紐づけのスイッチは「連携設定」にあります。認証後は「アクセス ID」に戻ります。 |
 | **イシューサイドバー → Pull requests** | このイシューに自動で紐づいたすべての PR が、タイトル、リポジトリ、状態（`Open` / `Draft` / `Merged` / `Closed`）、作成者とともに表示されます。行をクリックすると GitHub の該当 PR に移動します。 |
 | **Webhook（バックグラウンド）** | すべての `pull_request` イベントで、Multica は PR 行を upsert し、PR からイシュー識別子をスキャンして、紐づけ行を（再）構築します。冪等性があり、同じ delivery を再送しても変化はありません。 |
 | **マージ時のステータス自動変更** | PR が `merged` に遷移すると、まだ `Done` でも `Cancelled` でもない、紐づいたすべてのイシューが `Done` に移動します。ステータス変更は source `github_pr_merged` でタイムラインに記録されます。 |
@@ -22,7 +22,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 ## 複数のワークスペース
 
-1 つの GitHub App installation を複数のワークスペースに接続できます。管理している別のワークスペースですでに接続済みの場合、新しいワークスペースの **設定 → GitHub** に「利用可能な既存の接続」として表示されます。「この接続を使用」を選ぶと、新しいワークスペース用の独立した binding が作成され、元のワークスペースの接続は維持されます。操作するユーザーは、接続元と接続先の両方で owner または admin である必要があります。
+1 つの GitHub App installation を複数のワークスペースに接続できます。管理している別のワークスペースですでに接続済みの場合、新しいワークスペースの **設定 → リポジトリ → アクセス ID** に「利用可能な既存の接続」として表示されます。「この接続を使用」を選ぶと、新しいワークスペース用の独立した binding が作成され、元のワークスペースの接続は維持されます。操作するユーザーは、接続元と接続先の両方で owner または admin である必要があります。
 
 2 つ目のワークスペースを接続するために GitHub App をアンインストールして再インストールしないでください。GitHub 側でアンインストールすると、アカウント単位の許可が取り消され、その installation に対する Multica のすべてのワークスペース binding が削除されます。
 
@@ -72,7 +72,7 @@ Multica は `project@1` の安定フィールドを検証し、追加の DTA 拡
 
 ## 連携解除
 
-**設定 → GitHub** にはインストール一覧はありません — 既存のインストールは GitHub から直接管理します。
+**設定 → リポジトリ → アクセス ID** にはインストール一覧はありません — 既存のインストールは GitHub から直接管理します。
 
 - **GitHub から** — `https://github.com/settings/installations`（個人）または `https://github.com/organizations/<org>/settings/installations`（組織）で Multica GitHub App をアンインストールします。Multica は `installation.deleted` webhook を受け取ってリアルタイムで行を削除し、開いている Settings タブはリロードなしで更新されます。
 - **Multica 内部からの連携解除は admin 専用です** — GitHub タブの連携解除コントロールは、admin 以外のユーザーには非表示です。マスター GitHub スイッチがオフでも利用可能なままなので、admin はワンクリックで機能を無効化した後でも、古いインストールを取り消せます。
@@ -144,7 +144,7 @@ GITHUB_APP_PRIVATE_KEY=<BEGIN/END 行を含む完全な PEM ブロック>
 
 `GITHUB_APP_ID` と `GITHUB_APP_PRIVATE_KEY` は PR 連携だけなら任意ですが、リポジトリからのエージェント作成と同期には両方が必要です。Multica はこれらから短命の installation access token を発行し、token をデータベースには保存しません。
 
-`FRONTEND_ORIGIN` も設定されている必要があります（どのプロダクションのセルフホストでもすでに設定されています）。インストール後、setup コールバックがユーザーを `<FRONTEND_ORIGIN>/settings?tab=github` に戻します。
+`FRONTEND_ORIGIN` も設定されている必要があります（どのプロダクションのセルフホストでもすでに設定されています）。インストール後、setup コールバックがユーザーを `<FRONTEND_ORIGIN>/settings?tab=repositories&section=connections` に戻します。
 
 env 変数を設定した後は API を再起動してください。
 
@@ -162,10 +162,10 @@ make migrate-up
 
 Multica で:
 
-1. owner または admin 権限で **設定 → GitHub** を開きます。
+1. owner または admin 権限で **設定 → リポジトリ → アクセス ID** を開きます。
 2. **Connect GitHub** をクリックします。GitHub が新しいタブで開きます。
 3. アクセスを付与するリポジトリを選び、**Install** します。
-4. GitHub が `<api-host>/api/github/setup` にリダイレクトしてインストールを記録し、`<FRONTEND_ORIGIN>/settings?tab=github&github_connected=1` に戻します。
+4. GitHub が `<api-host>/api/github/setup` にリダイレクトしてインストールを記録し、`<FRONTEND_ORIGIN>/settings?tab=repositories&section=connections&github_connected=1` に戻します。
 
 その後、ブランチ / タイトル / 本文にイシュー識別子を含む PR を開いてみてください — 数秒以内に、そのイシューの詳細ページに Pull requests ブロックが表示されます。
 

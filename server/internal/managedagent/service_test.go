@@ -66,7 +66,7 @@ func TestRepositoryParts(t *testing.T) {
 	}
 }
 
-func TestSkillConfigUsesGitHubAgentSourceWireContract(t *testing.T) {
+func TestSkillConfigUsesGitAgentSourceWireContract(t *testing.T) {
 	config := Config{
 		SourceKey: "fde-agent", RepositoryURL: "https://gitee.com/keeperqaq/fde-agent.git",
 		Ref: "master",
@@ -79,7 +79,7 @@ func TestSkillConfigUsesGitHubAgentSourceWireContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `{"origin":{"commit_sha":"0123456789abcdef0123456789abcdef01234567","path":"agent/skills/multica-development-manager","ref":"master","repository":"keeperqaq/fde-agent","type":"github_agent_source"}}`
+	const want = `{"origin":{"commit_sha":"0123456789abcdef0123456789abcdef01234567","path":"agent/skills/multica-development-manager","ref":"master","repository":"https://github.com/keeperqaq/fde-agent","type":"git_agent_source"}}`
 	if string(encoded) != want {
 		t.Fatalf("skill config = %s, want %s", encoded, want)
 	}
@@ -87,7 +87,7 @@ func TestSkillConfigUsesGitHubAgentSourceWireContract(t *testing.T) {
 
 func TestManagedSourceIdentityUsesManagedSourceKey(t *testing.T) {
 	source := db.AgentSource{
-		SourceType:       "github",
+		SourceType:       "git",
 		ManagedSourceKey: pgtype.Text{String: "fde-agent", Valid: true},
 	}
 	if !isManagedSource(source, "fde-agent") {

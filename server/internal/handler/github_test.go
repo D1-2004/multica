@@ -303,7 +303,7 @@ func TestStateRoundTripWithRepositoryReturnTarget(t *testing.T) {
 func TestGitHubConnectRepositoryReturnTarget(t *testing.T) {
 	t.Setenv("GITHUB_APP_SLUG", "multica-test")
 	t.Setenv("GITHUB_WEBHOOK_SECRET", "test-secret-123")
-	wsID := "11111111-2222-3333-4444-555555555555"
+	wsID := testWorkspaceID
 
 	req := httptest.NewRequest(
 		http.MethodGet,
@@ -311,8 +311,9 @@ func TestGitHubConnectRepositoryReturnTarget(t *testing.T) {
 		nil,
 	)
 	req = withURLParam(req, "id", wsID)
+	req.Header.Set("X-User-ID",testUserID)
 	rec := httptest.NewRecorder()
-	(&Handler{}).GitHubConnect(rec, req)
+	testHandler.GitHubConnect(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GitHubConnect: got %d (%s)", rec.Code, rec.Body.String())
 	}
@@ -324,10 +325,9 @@ func TestGitHubConnectRepositoryReturnTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse install URL: %v", err)
 	}
-	_, returnTo, ok := verifyStateWithReturn(installURL.Query().Get("state"))
-	if !ok || returnTo != githubReturnToRepositories {
-		t.Fatalf("signed return target = %q, valid=%v, want repositories", returnTo, ok)
-	}
+	if installURL.Path != "/api/github/install" { t.Fatalf("connect bypasses browser context setup: %s",installURL.Path) }
+	intent,err := readGitHubConnectIntent(installURL.Query().Get("state"))
+	if err != nil || intent.ReturnTo != githubReturnToRepositories || intent.WorkspaceID != wsID || intent.UserID != testUserID { t.Fatalf("invalid signed workspace context: %v",err) }
 
 	badReq := httptest.NewRequest(
 		http.MethodGet,
@@ -340,6 +340,20 @@ func TestGitHubConnectRepositoryReturnTarget(t *testing.T) {
 	if badRec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid return target: got %d, want 400", badRec.Code)
 	}
+}
+
+func TestGitHubSetupRecoversMissingStateFromBrowserContext(t *testing.T) {
+	t.Setenv("GITHUB_WEBHOOK_SECRET","test-secret-123")
+	contextToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256,jwt.MapClaims{
+		"iss":"multica-github-connect", "exp":time.Now().Add(15*time.Minute).Unix(),
+		"workspace_id":testWorkspaceID, "return_to":githubReturnToRepositories, "user_id":testUserID, "jti":"pending-test",
+	}).SignedString([]byte("test-secret-123"))
+	if err != nil { t.Fatal(err) }
+	req := httptest.NewRequest(http.MethodGet,"/api/github/setup?installation_id=not-a-number&setup_action=update",nil)
+	req.AddCookie(&http.Cookie{Name:"multica_github_connect",Value:contextToken})
+	rec := httptest.NewRecorder()
+	testHandler.GitHubSetupCallback(rec,req)
+	if location := rec.Header().Get("Location"); !strings.Contains(location,"tab=repositories&github_error=bad_installation_id") { t.Fatalf("lost pending workspace context: %s",location) }
 }
 
 func TestGitHubSetupCallbackRepositoryReturnTarget(t *testing.T) {
@@ -357,7 +371,7 @@ func TestGitHubSetupCallbackRepositoryReturnTarget(t *testing.T) {
 		nil,
 	)
 	rec := httptest.NewRecorder()
-	(&Handler{}).GitHubSetupCallback(rec, req)
+	(&Handler{cfg:Config{FrontendOrigin:"https://app.multica.test/"}}).GitHubSetupCallback(rec, req)
 	if rec.Code != http.StatusFound {
 		t.Fatalf("GitHubSetupCallback: got %d, want 302", rec.Code)
 	}
@@ -404,7 +418,7 @@ func TestWebhook_MergedPR_AdvancesLinkedIssueToDone(t *testing.T) {
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
@@ -515,7 +529,7 @@ func TestWebhook_MergedPR_PreservesCancelled(t *testing.T) {
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
@@ -580,7 +594,7 @@ func TestWebhook_UninstallReturnsWorkspaceForBroadcast(t *testing.T) {
 		t.Fatalf("CreateGitHubInstallation: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 	})
 
 	deleted, err := testHandler.Queries.DeleteGitHubInstallationByInstallationID(ctx, installationID)
@@ -629,7 +643,7 @@ func TestWebhook_MergedPR_WaitsForOpenSibling(t *testing.T) {
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
@@ -805,7 +819,7 @@ func TestWebhook_ClosedSiblingAfterMerge(t *testing.T) {
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
@@ -873,7 +887,7 @@ func TestWebhook_AllClosedWithoutMerge(t *testing.T) {
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
@@ -984,7 +998,7 @@ func TestWebhook_MergedPR_OnlyClosesIdentifiersWithClosingKeyword(t *testing.T) 
 			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id)
 		}
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 	})
 
 	const installationID int64 = 30264001
@@ -1084,7 +1098,7 @@ func TestWebhook_MergedPR_TitlePrefixDoesNotClose(t *testing.T) {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
@@ -1145,7 +1159,7 @@ func TestWebhook_MergedPR_BranchNameDoesNotClose(t *testing.T) {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
@@ -1266,7 +1280,7 @@ func TestWebhook_CloseKeywordRemovedBeforeMergeDoesNotClose(t *testing.T) {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
@@ -1375,7 +1389,7 @@ func TestWebhook_LinkOnlySiblingMergeAfterCloseKeywordPR(t *testing.T) {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
@@ -1455,7 +1469,7 @@ func TestWebhook_BareBodyMentionHiddenFromPRList(t *testing.T) {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
@@ -1527,7 +1541,7 @@ func TestWebhook_HiddenBodyMentionDoesNotBlockAutoAdvance(t *testing.T) {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
@@ -1678,7 +1692,7 @@ func setupPRTestIssue(t *testing.T, ctx context.Context, secret string) (IssueRe
 		testPool.Exec(ctx, `DELETE FROM github_pending_check_suite WHERE workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND installation_id = $1`, installationID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
@@ -1791,7 +1805,7 @@ func TestListGitHubInstallations_RoleGating(t *testing.T) {
 		t.Fatalf("CreateGitHubInstallation: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 	})
 
 	call := func(t *testing.T, role string) map[string]any {
@@ -1812,6 +1826,16 @@ func TestListGitHubInstallations_RoleGating(t *testing.T) {
 		return body
 	}
 
+	findFixtureRow := func(t *testing.T, installs []any) map[string]any {
+		t.Helper()
+		for _, candidate := range installs {
+			row, _ := candidate.(map[string]any)
+			if row["account_login"] == "role-gating-acct" { return row }
+		}
+		t.Fatal("fixture installation is missing")
+		return nil
+	}
+
 	t.Run("admin sees installation_id + can_manage true", func(t *testing.T) {
 		body := call(t, "admin")
 		if got, _ := body["can_manage"].(bool); !got {
@@ -1821,7 +1845,7 @@ func TestListGitHubInstallations_RoleGating(t *testing.T) {
 		if len(installs) == 0 {
 			t.Fatalf("expected at least one installation row, got %v", installs)
 		}
-		row, _ := installs[0].(map[string]any)
+		row := findFixtureRow(t, installs)
 		gotID, ok := row["installation_id"].(float64)
 		if !ok {
 			t.Fatalf("admin response missing installation_id: %v", row)
@@ -1837,7 +1861,7 @@ func TestListGitHubInstallations_RoleGating(t *testing.T) {
 			t.Errorf("can_manage = %v, want true", body["can_manage"])
 		}
 		installs, _ := body["installations"].([]any)
-		row, _ := installs[0].(map[string]any)
+		row := findFixtureRow(t, installs)
 		if _, ok := row["installation_id"]; !ok {
 			t.Errorf("owner response missing installation_id: %v", row)
 		}
@@ -1853,7 +1877,7 @@ func TestListGitHubInstallations_RoleGating(t *testing.T) {
 		if len(installs) == 0 {
 			t.Fatalf("member should still see installation rows, got %v", installs)
 		}
-		row, _ := installs[0].(map[string]any)
+		row := findFixtureRow(t, installs)
 		if _, present := row["installation_id"]; present {
 			t.Errorf("installation_id must be omitted for non-admin members, row=%v", row)
 		}
@@ -1869,7 +1893,7 @@ func TestListGitHubInstallations_RoleGating(t *testing.T) {
 			t.Errorf("can_manage = true, want false for guest")
 		}
 		installs, _ := body["installations"].([]any)
-		row, _ := installs[0].(map[string]any)
+		row := findFixtureRow(t, installs)
 		if _, present := row["installation_id"]; present {
 			t.Errorf("installation_id must be omitted for guest, row=%v", row)
 		}
@@ -1963,7 +1987,7 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)
 		})
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner", "admin"))
-			r.Get("/github/connect", testHandler.GitHubConnect)
+			r.With(RequireHumanActor).Get("/github/connect", testHandler.GitHubConnect)
 			r.Get("/github/installations/{installationId}/repositories", testHandler.ListGitHubInstallationRepositories)
 			r.Delete("/github/installations/{installationId}", testHandler.DeleteGitHubInstallation)
 		})
@@ -2009,6 +2033,15 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)
 		}
 	})
 
+	t.Run("GET connect rejects machine credentials", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,"/api/workspaces/"+wsID+"/github/connect",nil)
+		req.Header.Set("X-User-ID",adminUserID)
+		req.Header.Set("X-Actor-Source","task_token")
+		req.Header.Set("X-Workspace-ID",wsID)
+		rec := httptest.NewRecorder(); router.ServeHTTP(rec,req)
+		if rec.Code != http.StatusForbidden { t.Fatalf("machine connection start: %d",rec.Code) }
+	})
+
 	t.Run("GET repositories remains owner/admin only", func(t *testing.T) {
 		path := "/api/workspaces/" + wsID + "/github/installations/" + uuidToString(createdInst.ID) + "/repositories"
 		if code := exercise(t, http.MethodGet, path, memberUserID); code != http.StatusForbidden {
@@ -2033,7 +2066,7 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)
 			t.Errorf("admin DELETE installation: want 204, got %d", code)
 		}
 		var remaining int
-		if err := testPool.QueryRow(ctx, `SELECT COUNT(*) FROM github_installation WHERE id = $1`, uuidToString(createdInst.ID)).Scan(&remaining); err != nil {
+		if err := testPool.QueryRow(ctx, `SELECT COUNT(*) FROM git_connection WHERE provider = 'github' AND id = $1`, uuidToString(createdInst.ID)).Scan(&remaining); err != nil {
 			t.Fatalf("verify deletion: %v", err)
 		}
 		if remaining != 0 {
@@ -2049,8 +2082,8 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3)
 // the management handle via the list endpoint — which already gates the
 // numeric id by role.
 func TestGitHubInstallationBroadcastRedaction(t *testing.T) {
-	inst := db.GithubInstallation{
-		InstallationID: 123456789,
+	inst := db.GitConnection{
+		InstallationID: pgtype.Int8{Int64:123456789,Valid:true},
 		AccountLogin:   "broadcast-acct",
 		AccountType:    "User",
 	}
@@ -2125,7 +2158,7 @@ func TestWebhook_MergedPR_ChildWithParent_NotifiesParent(t *testing.T) {
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id IN ($1, $2)`, child.ID, parent.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND workspace_id = $1`, testWorkspaceID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id IN ($1, $2)`, child.ID, parent.ID)
 		testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id IN ($1, $2)`, child.ID, parent.ID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, child.ID)
@@ -2435,7 +2468,7 @@ func TestListGitHubInstallationRepositoriesRejectsCrossWorkspaceRow(t *testing.T
 		t.Fatalf("CreateGitHubInstallation: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND installation_id = $1`, installationID)
 	})
 
 	otherWorkspaceID := "11111111-2222-3333-4444-555555555555"
@@ -2592,7 +2625,7 @@ func TestWebhook_InstallationCreatedRefreshesUnknownLogin(t *testing.T) {
 
 	const installationID int64 = 71717171
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND installation_id = $1`, installationID)
 	})
 
 	// Seed the row the way the setup callback does today when App JWT
@@ -2708,7 +2741,7 @@ func TestSetupCallback_ConsumesPendingInstallationCreated(t *testing.T) {
 
 	const installationID int64 = 81818181
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND installation_id = $1`, installationID)
 		testPool.Exec(ctx, `DELETE FROM github_pending_installation WHERE installation_id = $1`, installationID)
 	})
 
@@ -2836,7 +2869,7 @@ func TestWebhook_PullRequest_FansOutToBoundWorkspaces(t *testing.T) {
 
 	// Workspace A is bound to the SAME installation but has no matching issue;
 	// it must still receive the PR mirror.
-	testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+	testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND installation_id = $1`, installationID)
 	testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, "fanout-pr-ws-a")
 	wsA, err := testHandler.Queries.CreateWorkspace(ctx, db.CreateWorkspaceParams{
 		Name: "fanout-pr-ws-a", Slug: "fanout-pr-ws-a", IssuePrefix: "FPA",
@@ -2860,7 +2893,7 @@ func TestWebhook_PullRequest_FansOutToBoundWorkspaces(t *testing.T) {
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE repo_owner = 'acme' AND repo_name = $1`, repo)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND installation_id = $1`, installationID)
 		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 		testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, wsA.ID)
@@ -2916,7 +2949,7 @@ func TestSecondWorkspaceBindDoesNotUnbindFirst(t *testing.T) {
 		t.Fatalf("CreateWorkspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND installation_id = $1`, installationID)
 		testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, wsB.ID)
 	})
 
@@ -2981,15 +3014,25 @@ func TestReuseGitHubInstallationAcrossManagedWorkspaces(t *testing.T) {
 		t.Skip("handler test fixture not initialized (no DB?)")
 	}
 	ctx := context.Background()
+	suffix := fmt.Sprintf("%d",time.Now().UnixNano())
 
 	var userID string
 	if err := testPool.QueryRow(ctx, `
 INSERT INTO "user" (name, email)
-VALUES ('GitHub Reuse Admin', 'github-reuse-admin@multica.test')
+VALUES ('GitHub Reuse Admin', $1)
 RETURNING id
-`).Scan(&userID); err != nil {
+`, "github-reuse-admin-"+suffix+"@multica.test").Scan(&userID); err != nil {
 		t.Fatalf("create reuse user: %v", err)
 	}
+	var workspaceIDs []string
+	t.Cleanup(func() {
+		for _,id := range workspaceIDs {
+			_,_ = testPool.Exec(context.Background(),`DELETE FROM git_connection WHERE provider = 'github' AND workspace_id=$1`,id)
+			_,_ = testPool.Exec(context.Background(),`DELETE FROM member WHERE workspace_id=$1`,id)
+			_,_ = testPool.Exec(context.Background(),`DELETE FROM workspace WHERE id=$1`,id)
+		}
+		_,_ = testPool.Exec(context.Background(),`DELETE FROM "user" WHERE id=$1`,userID)
+	})
 
 	createWorkspace := func(name, slug, prefix, role string) string {
 		t.Helper()
@@ -2998,9 +3041,10 @@ RETURNING id
 INSERT INTO workspace (name, slug, description, issue_prefix)
 VALUES ($1, $2, '', $3)
 RETURNING id
-`, name, slug, prefix).Scan(&id); err != nil {
+`, name, slug+"-"+suffix, prefix).Scan(&id); err != nil {
 			t.Fatalf("create workspace %s: %v", slug, err)
 		}
+		workspaceIDs = append(workspaceIDs,id)
 		if _, err := testPool.Exec(ctx, `
 INSERT INTO member (workspace_id, user_id, role)
 VALUES ($1, $2, $3)
@@ -3014,8 +3058,8 @@ VALUES ($1, $2, $3)
 	sourceWorkspaceID := createWorkspace("GitHub Reuse Source", "github-reuse-source", "GRS", "admin")
 	memberSourceWorkspaceID := createWorkspace("GitHub Reuse Member Source", "github-reuse-member-source", "GRM", "member")
 
-	const reusableNumericID int64 = 88001122
-	const forbiddenNumericID int64 = 88001123
+	reusableNumericID := time.Now().UnixNano()
+	forbiddenNumericID := reusableNumericID + 1
 	reusable, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
 		WorkspaceID:    parseUUID(sourceWorkspaceID),
 		InstallationID: reusableNumericID,
@@ -3034,10 +3078,6 @@ VALUES ($1, $2, $3)
 	if err != nil {
 		t.Fatalf("create member-only installation: %v", err)
 	}
-
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
-	})
 
 	router := chi.NewRouter()
 	router.Route("/api/workspaces/{id}", func(r chi.Router) {
@@ -3066,6 +3106,9 @@ VALUES ($1, $2, $3)
 		req.Header.Set("Content-Type", "application/json")
 		if actorSource != "" {
 			req.Header.Set("X-Actor-Source", actorSource)
+			// Mirror the authenticated task token's workspace binding so this
+			// test reaches the installation visibility/human-actor guards.
+			if actorSource == "task_token" { req.Header.Set("X-Workspace-ID",targetWorkspaceID) }
 		}
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -3194,7 +3237,7 @@ func TestWebhook_UninstallDeletesAllBindings(t *testing.T) {
 		t.Fatalf("CreateWorkspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		testPool.Exec(ctx, `DELETE FROM git_connection WHERE provider = 'github' AND installation_id = $1`, installationID)
 		testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, wsB.ID)
 	})
 

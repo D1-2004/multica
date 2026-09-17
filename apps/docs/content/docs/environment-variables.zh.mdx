@@ -224,6 +224,8 @@ API 返回的 `download_url` 在未配置 CloudFront 签名时会指向 `GET /ap
 | `GITHUB_WEBHOOK_SECRET` | 空 | 你在 GitHub App 上设置的 Webhook secret。每条 `pull_request` / `installation` delivery 都用它做 HMAC-SHA256 校验；同一个值也用作 setup 回调里 state token 的签名密钥 |
 | `GITHUB_APP_ID` | 空 | 仅做 PR 关联时可选；仓库来源智能体必填。配合 `GITHUB_APP_PRIVATE_KEY` 签发 installation token |
 | `GITHUB_APP_PRIVATE_KEY` | 空 | 仅做 PR 关联时可选；仓库来源智能体必填。App RSA 私钥的完整 PEM 块（包含 `-----BEGIN/END-----` 两行，保留换行）|
+| `GITHUB_APP_CLIENT_ID` | 空 | GitHub App 的 Client ID；新建和重新连接安装时必填 |
+| `GITHUB_APP_CLIENT_SECRET` | 空 | 同一个 App 的 Client secret，仅在服务端核验用户访问权；需登记 `<FRONTEND_ORIGIN>/api/github/authorize` 为 OAuth 回调 |
 | `GITHUB_API_BASE_URL` | `https://api.github.com` | 可选的 GitHub 兼容 API 地址，主要用于 GitHub Enterprise 或测试代理 |
 
 **任一必填变量未设时：**
@@ -260,3 +262,4 @@ API 返回的 `download_url` 在未配置 CloudFront 签名时会指向 `GET /ap
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
 | 2026-08-29 | 增加 `MULTICA_SITE_PUBLIC_URL` 及独立 origin 要求。 | Agent 托管的 JavaScript 属于公开不可信内容，外网部署不能从请求 Host 猜测 URL，也不能长期与已登录主应用共享 origin。 |
+| 2026-09-14 | 补充 GitHub App OAuth 凭据配置。 | 已有安装更新可能丢失 state，需要用户授权核验，不能仅凭安装 ID 建立连接。 |

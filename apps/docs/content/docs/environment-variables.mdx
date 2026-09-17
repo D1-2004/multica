@@ -264,6 +264,8 @@ The [GitHub PR ↔ issue integration](/github-integration) needs two variables. 
 | `GITHUB_WEBHOOK_SECRET` | empty | The Webhook secret you set on the GitHub App. Used for HMAC-SHA256 verification of every `pull_request` / `installation` delivery, and as the HMAC key for the setup-callback state token |
 | `GITHUB_APP_ID` | empty | Optional for PR linking; required for repository-backed agents. Numeric App ID used with `GITHUB_APP_PRIVATE_KEY` to mint installation tokens |
 | `GITHUB_APP_PRIVATE_KEY` | empty | Optional for PR linking; required for repository-backed agents. Full PEM block of the App's RSA private key (including `-----BEGIN/END-----` lines, newlines preserved) |
+| `GITHUB_APP_CLIENT_ID` | empty | GitHub App Client ID; required for new installation connections and reconnects |
+| `GITHUB_APP_CLIENT_SECRET` | empty | Client secret for that App; used only on the server to verify user access. Register `<FRONTEND_ORIGIN>/api/github/authorize` as the OAuth callback |
 | `GITHUB_API_BASE_URL` | `https://api.github.com` | Optional GitHub-compatible API base URL, primarily for GitHub Enterprise or test proxies |
 
 **Behavior when either of the required variables is unset:**
@@ -300,3 +302,4 @@ By default, the server reports to Multica's official PostHog instance. To opt ou
 | Date | Change | Reason |
 | --- | --- | --- |
 | 2026-08-29 | Added `MULTICA_SITE_PUBLIC_URL` and its isolated-origin requirement. | Agent-hosted JavaScript is public untrusted content and must not silently inherit a request Host or share the authenticated app origin in an internet-facing deployment. |
+| 2026-09-14 | Added GitHub App OAuth credentials for verified installation connection and recovery. | Configuring an existing installation may drop state; an installation ID alone cannot prove user access. |

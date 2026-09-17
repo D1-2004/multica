@@ -5,7 +5,7 @@ description: 一次性连接 GitHub App，之后 PR 的分支名、标题或正�
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-在 **Settings → GitHub** 里一次性连一个 GitHub 账号或组织。之后任何 PR 只要分支名、标题或正文里出现 issue 编号（例如 `MUL-123`），就会**自动关联**到那个 [issue](/issues)，出现在 issue 详情页右侧的 **Pull requests** 区块里——PR 合并时，issue 自动转 **Done**。
+在 **设置 → 代码仓库 → 访问身份** 里一次性连一个 GitHub 账号或组织。之后任何 PR 只要分支名、标题或正文里出现 issue 编号（例如 `MUL-123`），就会**自动关联**到那个 [issue](/issues)，出现在 issue 详情页右侧的 **Pull requests** 区块里——PR 合并时，issue 自动转 **Done**。
 
 没有 per-issue 的配置，整个流程是「编号驱动」的。
 
@@ -13,7 +13,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 | 出现位置 | 行为 |
 |---|---|
-| **Settings → GitHub** | 工作区 owner / admin 看到 GitHub 这个 tab，里面有主开关、**Connect GitHub** 按钮，以及功能开关（PR 侧栏、Co-authored-by、auto-link）。点 Connect 会打开 GitHub 的 App 安装页；装好后跳回 GitHub tab。 |
+| **设置 → 代码仓库 → 访问身份** | 工作区 owner / admin 在「访问身份」连接或断开 GitHub；主开关、PR 侧栏、Co-authored-by 和自动关联开关位于「协作设置」。授权完成后返回「访问身份」。 |
 | **Issue 详情侧栏 → Pull requests** | 列出所有自动关联到该 issue 的 PR，含标题、仓库、状态（`Open` / `Draft` / `Merged` / `Closed`）和作者。点一行跳到 GitHub。 |
 | **Webhook（后台）** | 每次 `pull_request` 事件触发：upsert PR 行 → 扫描里面的 issue 编号 →（重新）建立 link。幂等——重投 delivery 不会产生重复记录。 |
 | **Merge 自动改 status** | PR 转 `merged` 时，所有已关联且状态不是 `Done` / `Cancelled` 的 issue 会被推到 `Done`。时间线里以 source 为 `github_pr_merged` 记录。 |
@@ -27,14 +27,14 @@ import { Callout } from "fumadocs-ui/components/callout";
 - 每个工作区各自镜像 PR，并按**自己的** [issue 前缀](/workspaces) 和 GitHub 功能开关做自动关联。一个同时引用 `MUL-1` 和 `ENG-2` 的 PR，会在前缀为 `MUL` 的工作区关联 `MUL-1`、在前缀为 `ENG` 的工作区关联 `ENG-2`，两边互不可见对方的 issue。
 - 从某个工作区断开连接，只会让**该**工作区停止接收事件，其它工作区照常工作。
 
-如果 installation 已连接到你管理的另一个工作区，新工作区的 **Settings → GitHub** 会在「可使用的已有连接」中展示它。点击「使用该连接」即可为新工作区创建独立 binding；你必须同时是来源和目标工作区的 owner/admin，来源工作区不会被断开。
+如果 installation 已连接到你管理的另一个工作区，新工作区的 **设置 → 代码仓库 → 访问身份** 会在「可使用的已有连接」中展示它。点击「使用该连接」即可为新工作区创建独立 binding；你必须同时是来源和目标工作区的 owner/admin，来源工作区不会被断开。
 
 连接第二个工作区时，**不要**先到 GitHub 卸载再重装 App。GitHub 侧卸载会撤销账号级授权，并删除该 installation 在 Multica 中的全部工作区 binding。
 
 仓库范围由你授予 GitHub App 的权限决定（全部仓库或指定子集）。在工作区连接这个 installation 本身就是一次订阅——Multica 里不需要再单独逐仓库勾选。
 
 <Callout type="warning">
-**升级 self-host 部署时注意：** 事件投递以 GitHub 连接为准，而不是工作区的代码仓库列表。如果某个工作区之前是在**没有**连接 GitHub 的情况下、仅靠代码仓库列表里登记该仓库来接收 PR 事件，升级后它将不再收到事件。要恢复投递，需在该工作区的 **Settings → GitHub** 里**连接同一个 GitHub installation**。
+**升级 self-host 部署时注意：** 事件投递以 GitHub 连接为准，而不是工作区的代码仓库列表。如果某个工作区之前是在**没有**连接 GitHub 的情况下、仅靠代码仓库列表里登记该仓库来接收 PR 事件，升级后它将不再收到事件。要恢复投递，需在该工作区的 **设置 → 代码仓库 → 访问身份** 里**连接同一个 GitHub installation**。
 </Callout>
 
 ## 编号是怎么匹配的
@@ -103,7 +103,7 @@ Multica 校验 `project@1` 的稳定字段后，把所选 commit 编译为数据
 
 ## 断开连接
 
-**Settings → GitHub** 里没有 installation 列表——现有 installation 直接到 GitHub 上管理：
+**设置 → 代码仓库 → 访问身份** 里没有 installation 列表——现有 installation 直接到 GitHub 上管理：
 
 - **从 GitHub 卸载** —— 个人在 `https://github.com/settings/installations`、组织在 `https://github.com/organizations/<org>/settings/installations` 卸载 Multica App。Multica 收到 `installation.deleted` webhook 后立刻删行；任何已打开的 Settings tab 实时更新，不用刷新
 - **Multica 这边的断开是 admin only** —— GitHub tab 上的 Disconnect 控件对非 admin 不显示；主开关关掉时 Disconnect 仍然可用，方便 admin 一键关闭功能后再单独清理已连接的 installation
@@ -120,7 +120,7 @@ Multica 校验 `project@1` 的稳定字段后，把所选 commit 编译为数据
 
 如果你在 Multica Cloud 上，集成已经配好——跳过本节。
 
-Self-Host 需要：建一个 GitHub App、指向你的 server、设两个环境变量。完整流程如下。
+Self-Host 需要：建一个 GitHub App、指向你的 server、配置服务端凭据。完整流程如下。
 
 ### 1. 创建一个 GitHub App
 
@@ -135,8 +135,8 @@ Self-Host 需要：建一个 GitHub App、指向你的 server、设两个环境�
 |---|---|
 | **GitHub App name** | 任何能辨识的名字，例如 `Multica` 或 `Multica (staging)` |
 | **Homepage URL** | 你的 Multica 前端，例如 `https://multica.example.com` |
-| **Callback URL** | 留空——本集成不使用 OAuth 用户身份 |
-| **Setup URL** | `https://<api-host>/api/github/setup`。**勾选 "Redirect on update"** |
+| **Callback URL** | `<FRONTEND_ORIGIN>/api/github/authorize`，用于 GitHub 用户授权 |
+| **Setup URL** | `<FRONTEND_ORIGIN>/api/github/setup`。**勾选 "Redirect on update"**。两个回调必须使用同一浏览器域名，以读取待连接 Cookie |
 | **Webhook → Active** | 启用 |
 | **Webhook URL** | `https://<api-host>/api/webhooks/github` |
 | **Webhook secret** | 生成一个长随机字符串（例如 `openssl rand -hex 32`）。这个值会同样填到 step 2 的 env 里 |
@@ -152,7 +152,7 @@ Self-Host 需要：建一个 GitHub App、指向你的 server、设两个环境�
 - 你刚生成的 **webhook secret**（GitHub 之后不会再让你读取这个值——现在就保存好）
 
 <Callout type="warning">
-**Webhook secret ≠ Client secret。** App 设置页里两个字段紧挨着。**Webhook secret** 用于签 `pull_request` payload，这才是 Multica 需要的那个；**Client secret** 是 OAuth 用的，和本集成无关。混淆这两个会得到「每条 webhook 都 `401 invalid signature`」的诡异症状。
+**Webhook secret ≠ Client secret。** App 设置页里两个字段紧挨着。**Webhook secret** 用于签 `pull_request` payload，这才是 Multica 需要的那个；独立的 **Client secret** 用于连接安装时核验 GitHub 用户授权，配置到 `GITHUB_APP_CLIENT_SECRET`。混淆这两个会得到「每条 webhook 都 `401 invalid signature`」的诡异症状。
 </Callout>
 
 ### 2. 配置环境变量
@@ -162,6 +162,8 @@ API server 上：
 ```dotenv
 GITHUB_APP_SLUG=multica-acme
 GITHUB_WEBHOOK_SECRET=<你刚生成的 webhook secret>
+GITHUB_APP_CLIENT_ID=<同一个 GitHub App 的 Client ID>
+GITHUB_APP_CLIENT_SECRET=<同一个 GitHub App 的 Client secret>
 
 # 仅做 PR 关联时可选；从 GitHub 创建和同步智能体时必填：
 GITHUB_APP_ID=<App 设置页上的数字 App ID>
@@ -175,7 +177,9 @@ GITHUB_APP_PRIVATE_KEY=<完整 PEM 块，包含 BEGIN/END 行>
 
 `GITHUB_APP_ID` 和 `GITHUB_APP_PRIVATE_KEY` 只有在单独使用 PR 关联时才是可选项。从仓库创建或同步智能体需要同时配置二者，因为 Multica 会用它们签发短效 installation access token 来读取 Contents API。token 会自动刷新，也不会写入数据库。私钥从 App 设置页 **Private keys → Generate a private key** 生成，把整段 PEM（含 `-----BEGIN/END RSA PRIVATE KEY-----` 两行）粘到 env 里，保留换行。
 
-`FRONTEND_ORIGIN` 也必须设置（任何生产 self-host 都已经设了）——setup 回调结束后用它把用户跳回 `<FRONTEND_ORIGIN>/settings?tab=github`。
+`FRONTEND_ORIGIN` 必须设置，并将 `/api/github/*` 代理到本服务。新连接完成后返回 `<FRONTEND_ORIGIN>/<workspace-slug>/settings?tab=repositories&section=connections`，仓库入口则返回 `tab=repositories`。
+
+新连接和已有安装的更新都需要 `GITHUB_APP_CLIENT_ID`、`GITHUB_APP_CLIENT_SECRET`。浏览器先访问 `/api/github/install` 保存签名保护、15 分钟有效的连接上下文；GitHub Configure 丢失 `state` 时从中恢复发起的工作区。随后通过 OAuth 授权码核验 GitHub 用户可以访问所选安装，并重新检查发起人在 Multica 的工作区管理权限，全部通过后才写入连接。不保存用户 Token。缺少 OAuth 配置会提示配置错误，不能仅凭安装 ID 完成恢复。已经存在的工作区连接可继续使用。
 
 设完 env 重启 API。
 
@@ -193,10 +197,10 @@ make migrate-up
 
 到 Multica：
 
-1. 以 owner 或 admin 身份打开 **Settings → GitHub**
+1. 以 owner 或 admin 身份打开 **设置 → 代码仓库 → 访问身份**
 2. 点 **Connect GitHub**，GitHub 在新 tab 打开
 3. 选择要授权的仓库，点 **Install**
-4. GitHub 跳回 `<api-host>/api/github/setup`，落库后再跳到 `<FRONTEND_ORIGIN>/settings?tab=github&github_connected=1`
+4. GitHub 跳回 `<api-host>/api/github/setup`，落库后再跳到 `<FRONTEND_ORIGIN>/settings?tab=repositories&section=connections&github_connected=1`
 
 之后在任意一个仓库开一个分支 / 标题 / 正文带本工作区 issue 编号的 PR——几秒内对应 issue 的详情页上就能看到 Pull requests 区块。
 
@@ -239,3 +243,5 @@ curl -i -X POST https://<api-host>/api/webhooks/github \
 ## 协议历史
 
 - 2026-09-08：补充仓库链接 API 与预览后确认同步，替换原直接同步描述，并纠正尚未接入的创建页入口。
+
+- 2026-09-14：安装和更新回调增加限时浏览器上下文、GitHub 用户授权、工作区权限复核和工作区内跳转。原因：已有安装 Configure 可能丢失 state，恢复上下文不能仅凭安装 ID 授予访问权。

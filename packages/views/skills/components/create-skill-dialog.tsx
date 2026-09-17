@@ -1,5 +1,9 @@
 "use client";
 
+import { gitRepositoryOptions } from "@multica/core/git-repo";
+import { useWorkspacePaths } from "@multica/core/paths";
+import { AppLink } from "../../navigation";
+
 import { useRef, useState } from "react";
 import {
   AlertCircle,
@@ -13,7 +17,7 @@ import {
   X as XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import type { Skill } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -238,13 +242,12 @@ function ManualForm({
 // URL import form
 // ---------------------------------------------------------------------------
 
-type DetectedSource = "clawhub" | "skills.sh" | "github" | null;
+type DetectedSource = "clawhub" | "skills.sh" | null;
 
 function detectUrlSource(url: string): DetectedSource {
   const u = url.trim().toLowerCase();
   if (u.includes("clawhub.ai")) return "clawhub";
   if (u.includes("skills.sh")) return "skills.sh";
-  if (u.includes("github.com")) return "github";
   return null;
 }
 
@@ -288,6 +291,10 @@ function UrlForm({
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   const [url, setUrl] = useState("");
+  const [repositoryURL, setRepositoryURL] = useState("");
+  const [connectionId, setConnectionId] = useState("");
+  const identity = useQuery(gitRepositoryOptions(wsId, repositoryURL));
+  const paths = useWorkspacePaths();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const source = detectUrlSource(url);
@@ -300,7 +307,7 @@ function UrlForm({
     setLoading(true);
     setError("");
     try {
-      const skill = await api.importSkill({ url: trimmed });
+      const skill = await api.importSkill({ url: trimmed, connection_id: connectionId || undefined });
       seedAfterCreate(qc, wsId, skill);
       toast.success(t(($) => $.create.url.toast_imported));
       onCreated(skill);
@@ -331,10 +338,11 @@ function UrlForm({
           </Label>
           <Input
             id="import-url"
+            onBlur={() => setRepositoryURL(url.trim())}
             autoFocus
             value={url}
             onChange={(e) => {
-              setUrl(e.target.value);
+              setUrl(e.target.value); setConnectionId(""); setRepositoryURL("");
               setError("");
             }}
             placeholder="https://clawhub.ai/owner/skill"
@@ -345,11 +353,18 @@ function UrlForm({
           />
         </div>
 
+        {identity.data && <div className="space-y-2">
+          {identity.data.connections.length > 1 && <select aria-label={t(($) => $.create.url.git_identity)} value={connectionId} className="h-9 w-full rounded-md border bg-background px-3 text-body" onChange={(event) => setConnectionId(event.target.value)}>
+            <option value="">{t(($) => $.create.url.git_identity)}</option>
+            {identity.data.connections.map((connection) => <option key={connection.id} value={connection.id}>{connection.account_login}</option>)}
+          </select>}
+          <AppLink className="text-caption underline" href={`${paths.settings()}?tab=repositories&section=connections`}>{t(($) => $.create.url.git_settings)}</AppLink>
+        </div>}
         <div>
           <p className="mb-2 text-caption text-muted-foreground">
             {t(($) => $.create.url.supported_sources)}
           </p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             <SourceCard
               label="ClawHub"
               exampleHost="clawhub.ai/owner/skill"
@@ -366,7 +381,7 @@ function UrlForm({
               label="GitHub"
               exampleHost="github.com/owner/repo"
               browseUrl="https://github.com"
-              active={source === "github"}
+              active={identity.data?.provider === "github"}
             />
           </div>
         </div>
@@ -401,7 +416,7 @@ function UrlForm({
           type="button"
           size="sm"
           onClick={submit}
-          disabled={!url.trim() || loading}
+          disabled={!url.trim() || loading || ((identity.data?.connections.length ?? 0) > 1 && !connectionId)}
         >
           {loading ? (
             <>

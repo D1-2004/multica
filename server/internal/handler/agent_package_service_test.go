@@ -46,3 +46,19 @@ func TestPackageExportTracksManualConfigurationAndKeepsKnownAliases(t *testing.T
 	if packageBindingMatches(declaration,current,map[string]string{"plugin":"another-agent-resource"}) { t.Fatal("foreign resource mapping accepted") }
 	if packageBindingMatches(declaration,changed,map[string]string{"plugin":"configured-plugin"}) { t.Fatal("enabled flag mismatch accepted") }
 }
+
+func TestEmptyPluginBindingNeedsNoConfirmation(t *testing.T) {
+	for _, test := range []struct { name, path, declaration, actual string; ready bool }{
+		{"empty", "/dsh_plugins", `[]`, `[]`, true},
+		{"whitespace", "/dsh_plugins", `[ ]`, ` [] `, true},
+		{"configured", "/dsh_plugins", `[]`, `[{"ref":"plugin"}]`, false},
+		{"unconfirmed", "/dsh_plugins", `[{"ref":"plugin"}]`, `[{"ref":"plugin"}]`, false},
+		{"unavailable", "/dsh_plugins", `[]`, `null`, false},
+		{"invalid", "/dsh_plugins", `[]`, `invalid`, false},
+		{"other resource", "/bindings/github", `[]`, `[]`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := (packageBindingState{}).ready(test.path,json.RawMessage(test.declaration),json.RawMessage(test.actual)); got != test.ready { t.Fatalf("ready=%v, want %v",got,test.ready) }
+		})
+	}
+}

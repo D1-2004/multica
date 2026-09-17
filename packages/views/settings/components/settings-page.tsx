@@ -21,7 +21,6 @@ import {
   Zap,
   Globe2,
 } from "lucide-react";
-import { GitHubMark } from "./github-mark";
 import {
   Tabs,
   TabsList,
@@ -42,8 +41,7 @@ import { TokensTab } from "./tokens-tab";
 import { MCPConnectionsTab } from "./mcp-connections-tab";
 import { WorkspaceTab } from "./workspace-tab";
 import { MembersTab } from "./members-tab";
-import { RepositoriesTab } from "./repositories-tab";
-import { GitHubTab } from "./github-tab";
+import { RepositorySettings } from "./repository-settings";
 import { IntegrationsTab } from "./integrations-tab";
 import { LabsTab } from "./labs-tab";
 import { NotificationsTab } from "./notifications-tab";
@@ -83,7 +81,6 @@ const ACCOUNT_TAB_ICONS = {
 const WORKSPACE_TAB_KEYS = [
   "general",
   "repositories",
-  "github",
   "integrations",
   "labs",
   "members",
@@ -96,7 +93,6 @@ const WORKSPACE_TAB_KEYS = [
 const WORKSPACE_TAB_VALUES = {
   general: "workspace",
   repositories: "repositories",
-  github: "github",
   integrations: "integrations",
   labs: "labs",
   members: "members",
@@ -109,7 +105,6 @@ const WORKSPACE_TAB_VALUES = {
 const WORKSPACE_TAB_ICONS = {
   general: Settings,
   repositories: FolderGit2,
-  github: GitHubMark,
   integrations: Plug,
   labs: FlaskConical,
   members: Users,
@@ -125,10 +120,12 @@ const TAB_QUERY_KEY = "tab";
 
 // Legacy `?tab=…` values that have been collapsed into another tab. Old
 // bookmarks still land on the correct surface without us preserving a
-// dead TabsContent entry. Lark used to be its own top-level workspace
-// tab; it now lives inside Integrations.
+// dead TabsContent entry. Provider-specific settings now live inside
+// Integrations or Repositories.
 const LEGACY_WORKSPACE_TAB_REDIRECTS: Record<string, string> = {
   lark: "integrations",
+  git: "repositories",
+  github: "repositories",
 };
 
 const SETTINGS_TAB_TRIGGER_CLASS =
@@ -189,6 +186,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   const handleTabChange = (next: string) => {
     const params = new URLSearchParams(navigation.searchParams);
     params.set(TAB_QUERY_KEY, next);
+    params.delete("section");
     navigation.replace(`${navigation.pathname}?${params.toString()}`);
   };
 
@@ -316,10 +314,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
             <WorkspaceTab />
           </TabsContent>
           <TabsContent value="repositories">
-            <RepositoriesTab />
-          </TabsContent>
-          <TabsContent value="github">
-            <GitHubTab />
+            <RepositorySettings />
           </TabsContent>
           <TabsContent value="integrations">
             <IntegrationsTab />

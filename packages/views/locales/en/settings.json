@@ -241,6 +241,7 @@
       "tokens": "API Tokens",
       "general": "General",
       "repositories": "Repositories",
+    "git": "Git",
       "github": "GitHub",
       "integrations": "App Integrations",
       "labs": "Labs",
@@ -722,15 +723,12 @@
   },
   "github": {
     "page_description": "Connect a GitHub App, control how Pull Requests show up inside Multica, and decide what your agents leave behind in commit history.",
-    "section_master": "Enable GitHub features",
-    "master_description_on": "When off, every GitHub UI affordance is hidden and no new side-effects are written. Existing data is kept on the backend. Not a development team? Just turn it off here.",
+    "section_master": "Enable GitHub collaboration",
+    "master_description_on": "Controls pull request visibility, automatic task linking, and commit attribution. Repository access identities are managed separately.",
     "master_description_off": "GitHub features are turned off. The PR sidebar, co-author trailer, and auto-link are paused. Data on the backend is not deleted.",
     "section_connection": "Connection",
     "connection_title": "GitHub App",
-    "connection_description_prefix": "Link issues to pull requests automatically. When a PR with",
-    "connection_description_suffix": "in its branch, title, or body is merged, the corresponding issue moves to",
-    "connection_description_done": "Done",
-    "connection_identifier_example": "MUL-123",
+    "connection_description": "Authorize GitHub repository access for this workspace to import agents and skills and connect pull requests.",
     "connected_to": "Connected to {{login}}",
     "connect_github": "Connect GitHub",
     "connect_opening": "Opening…",
@@ -747,6 +745,10 @@
     "contact_admin_to_connect": "GitHub is not connected for this workspace. Ask an admin or owner to set up the GitHub App.",
     "connected_by": "Connected by {{name}}",
     "toast_not_configured": "GitHub integration is not configured for this deployment",
+    "toast_authorization_not_configured": "GitHub user authorization is not configured. Ask your administrator to complete the GitHub App setup.",
+    "toast_connection_in_progress": "Another GitHub connection was in progress. Start a new connection and complete it in one tab.",
+    "toast_connect_failed": "Could not connect GitHub. Start a new connection and complete GitHub authorization.",
+    "toast_connected": "GitHub App connected",
     "toast_open_failed": "Failed to open GitHub install",
     "toast_disconnect_failed": "Failed to disconnect GitHub App",
     "toast_disconnected": "GitHub App disconnected",
@@ -1318,5 +1320,17 @@
     "secret_warning": "This key is shown only once. Send it only through your approved secret-delivery channel; it cannot be recovered later.",
     "secret_confirm": "I have copied and stored this key safely",
     "close": "Close"
+  },
+  "repository_settings": {
+    "description": "Manage workspace repositories, access identities, and collaboration features.",
+    "sections": {
+      "repositories": "Repository list",
+      "connections": "Access identities",
+      "collaboration": "Collaboration settings"
+    },
+    "collaboration_description": "GitHub collaboration features for task and pull request linking and commit attribution."
+  },
+  "git_repo": {
+    "description": "Workspace identities for importing Agents and skills and reading publication revisions. Access uses the connected identity’s repository permissions."
   }
 }

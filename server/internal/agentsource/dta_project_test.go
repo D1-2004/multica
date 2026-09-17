@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/githubapp"
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 )
 
 const validDTAProject = `{
@@ -145,7 +145,7 @@ func TestParseDTAProjectRejectsInvalidStableCore(t *testing.T) {
 
 func TestCompileDTAProjectMapsDefinitionAndSkillLocations(t *testing.T) {
 	repository := fakeRepository{
-		tree: githubapp.Tree{Entries: []githubapp.TreeEntry{
+		tree: gitrepo.Tree{Entries: []gitrepo.TreeEntry{
 			{Path: DTAProjectPath, Type: "blob", Mode: "100644", SHA: "project", Size: int64(len(validDTAProject))},
 			{Path: "agent/AGENTS.md", Type: "blob", Mode: "100644", SHA: "definition", Size: 12},
 			{Path: "agent/skills/dta-basic-behavior/SKILL.md", Type: "blob", Mode: "100644", SHA: "basic", Size: 80},
@@ -164,7 +164,7 @@ func TestCompileDTAProjectMapsDefinitionAndSkillLocations(t *testing.T) {
 	bundle, err := CompileDTAProject(
 		context.Background(),
 		repository,
-		Source{InstallationID: 1, Owner: "acme", Repository: "agent", CommitSHA: "abc"},
+		Source{CommitSHA: "abc"},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +198,7 @@ func TestCompileDTAProjectRequiresDeclaredSkillNameToMatchFrontmatter(t *testing
 		1,
 	)
 	repository := fakeRepository{
-		tree: githubapp.Tree{Entries: []githubapp.TreeEntry{
+		tree: gitrepo.Tree{Entries: []gitrepo.TreeEntry{
 			{Path: DTAProjectPath, Type: "blob", Mode: "100644", SHA: "project", Size: int64(len(project))},
 			{Path: "agent/AGENTS.md", Type: "blob", Mode: "100644", SHA: "definition", Size: 12},
 			{Path: "agent/skills/dta-basic-behavior/SKILL.md", Type: "blob", Mode: "100644", SHA: "basic", Size: 80},
@@ -213,7 +213,7 @@ func TestCompileDTAProjectRequiresDeclaredSkillNameToMatchFrontmatter(t *testing
 	_, err := CompileDTAProject(
 		context.Background(),
 		repository,
-		Source{InstallationID: 1, Owner: "acme", Repository: "agent", CommitSHA: "abc"},
+		Source{CommitSHA: "abc"},
 	)
 	if err == nil || !strings.Contains(err.Error(), "expected \"dta-basic-behavior\"") {
 		t.Fatalf("error = %v", err)
@@ -228,7 +228,7 @@ spec:
   instructions: AGENT.md
 `
 	repository := fakeRepository{
-		tree: githubapp.Tree{Entries: []githubapp.TreeEntry{
+		tree: gitrepo.Tree{Entries: []gitrepo.TreeEntry{
 			{Path: ManifestPath, Type: "blob", Mode: "100644", SHA: "manifest", Size: int64(len(legacyManifest))},
 			{Path: "AGENT.md", Type: "blob", Mode: "100644", SHA: "definition", Size: 12},
 		}},
@@ -241,7 +241,7 @@ spec:
 	_, err := CompileDTAProject(
 		context.Background(),
 		repository,
-		Source{InstallationID: 1, Owner: "acme", Repository: "agent", CommitSHA: "abc"},
+		Source{CommitSHA: "abc"},
 	)
 	if err == nil || !strings.Contains(err.Error(), `required file "dingtalk-agent.json" was not found`) {
 		t.Fatalf("error = %v", err)

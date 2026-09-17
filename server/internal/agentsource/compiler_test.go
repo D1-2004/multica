@@ -5,19 +5,19 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/githubapp"
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 )
 
 type fakeRepository struct {
-	tree  githubapp.Tree
+	tree  gitrepo.Tree
 	blobs map[string][]byte
 }
 
-func (f fakeRepository) GetTree(context.Context, int64, string, string, string) (githubapp.Tree, error) {
+func (f fakeRepository) GetTree(context.Context, string) (gitrepo.Tree, error) {
 	return f.tree, nil
 }
 
-func (f fakeRepository) GetBlob(_ context.Context, _ int64, _, _, sha string) ([]byte, error) {
+func (f fakeRepository) GetBlob(_ context.Context, sha string) ([]byte, error) {
 	return f.blobs[sha], nil
 }
 
@@ -70,7 +70,7 @@ spec:
     - path: skills/review
 `
 	repository := fakeRepository{
-		tree: githubapp.Tree{Entries: []githubapp.TreeEntry{
+		tree: gitrepo.Tree{Entries: []gitrepo.TreeEntry{
 			{Path: ManifestPath, Type: "blob", Mode: "100644", SHA: "manifest", Size: int64(len(manifest))},
 			{Path: "AGENT.md", Type: "blob", Mode: "100644", SHA: "instructions", Size: 12},
 			{Path: "skills/review/SKILL.md", Type: "blob", Mode: "100644", SHA: "skill", Size: 60},
@@ -85,7 +85,7 @@ spec:
 			"binary":       {0, 1, 2, 3},
 		},
 	}
-	bundle, err := Compile(context.Background(), repository, Source{InstallationID: 1, Owner: "acme", Repository: "agent", CommitSHA: "abc"})
+	bundle, err := Compile(context.Background(), repository, Source{CommitSHA: "abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ spec:
   instructions: AGENT.md
 `
 	repository := fakeRepository{
-		tree: githubapp.Tree{Entries: []githubapp.TreeEntry{
+		tree: gitrepo.Tree{Entries: []gitrepo.TreeEntry{
 			{Path: ManifestPath, Type: "blob", Mode: "100644", SHA: "manifest", Size: int64(len(manifest))},
 			{Path: "AGENT.md", Type: "blob", Mode: "100644", SHA: "instructions", Size: 4},
 		}},
@@ -121,7 +121,7 @@ spec:
 		},
 	}
 
-	bundle, err := Compile(context.Background(), repository, Source{InstallationID: 1, Owner: "acme", Repository: "agent", CommitSHA: "abc"})
+	bundle, err := Compile(context.Background(), repository, Source{CommitSHA: "abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,17 +147,17 @@ spec:
 `
 	tests := []struct {
 		name  string
-		entry githubapp.TreeEntry
+		entry gitrepo.TreeEntry
 		blob  []byte
 		want  string
 	}{
-		{"symlink", githubapp.TreeEntry{Path: "skills/review/link", Type: "blob", Mode: "120000", SHA: "extra", Size: 3}, []byte("foo"), "unsupported git object"},
-		{"lfs", githubapp.TreeEntry{Path: "skills/review/model.bin", Type: "blob", Mode: "100644", SHA: "extra", Size: 50}, []byte("version https://git-lfs.github.com/spec/v1\n"), "Git LFS pointer"},
+		{"symlink", gitrepo.TreeEntry{Path: "skills/review/link", Type: "blob", Mode: "120000", SHA: "extra", Size: 3}, []byte("foo"), "unsupported git object"},
+		{"lfs", gitrepo.TreeEntry{Path: "skills/review/model.bin", Type: "blob", Mode: "100644", SHA: "extra", Size: 50}, []byte("version https://git-lfs.github.com/spec/v1\n"), "Git LFS pointer"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			repository := fakeRepository{
-				tree: githubapp.Tree{Entries: []githubapp.TreeEntry{
+				tree: gitrepo.Tree{Entries: []gitrepo.TreeEntry{
 					{Path: ManifestPath, Type: "blob", Mode: "100644", SHA: "manifest", Size: int64(len(baseManifest))},
 					{Path: "AGENT.md", Type: "blob", Mode: "100644", SHA: "instructions", Size: 4},
 					{Path: "skills/review/SKILL.md", Type: "blob", Mode: "100644", SHA: "skill", Size: 20},
@@ -168,7 +168,7 @@ spec:
 					"skill": []byte("# Review"), "extra": test.blob,
 				},
 			}
-			_, err := Compile(context.Background(), repository, Source{InstallationID: 1, Owner: "acme", Repository: "agent", CommitSHA: "abc"})
+			_, err := Compile(context.Background(), repository, Source{CommitSHA: "abc"})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
@@ -204,7 +204,7 @@ spec:
     - path: skills/second
 `
 	repository := fakeRepository{
-		tree: githubapp.Tree{Entries: []githubapp.TreeEntry{
+		tree: gitrepo.Tree{Entries: []gitrepo.TreeEntry{
 			{Path: ManifestPath, Type: "blob", Mode: "100644", SHA: "manifest", Size: int64(len(manifest))},
 			{Path: "AGENT.md", Type: "blob", Mode: "100644", SHA: "instructions", Size: 4},
 			{Path: "skills/first/SKILL.md", Type: "blob", Mode: "100644", SHA: "first", Size: 30},
@@ -216,7 +216,7 @@ spec:
 			"second": []byte("---\nname: shared\n---\n# Second"),
 		},
 	}
-	_, err := Compile(context.Background(), repository, Source{InstallationID: 1, Owner: "acme", Repository: "agent", CommitSHA: "abc"})
+	_, err := Compile(context.Background(), repository, Source{CommitSHA: "abc"})
 	if err == nil || !strings.Contains(err.Error(), "same name") {
 		t.Fatalf("error = %v, want duplicate skill name error", err)
 	}

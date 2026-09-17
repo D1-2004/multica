@@ -268,8 +268,8 @@ export function AgentOverviewSummary({
               )}
             </span>
           </div>
-          {source.source_type === "github" && <a
-            href={`https://github.com/${source.repository}`}
+          {source.source_type === "git" && <a
+            href={source.repository_url ?? ""}
             target="_blank"
             rel="noreferrer"
             className="mt-3 block truncate text-caption font-medium text-foreground underline-offset-4 hover:underline"
@@ -277,7 +277,7 @@ export function AgentOverviewSummary({
             {source.repository}
           </a>}
           <dl className="mt-2 space-y-2 text-caption">
-            {source.source_type === "github" && <SummaryRow label={t(($) => $.overview.source_ref)}>
+            {source.source_type === "git" && <SummaryRow label={t(($) => $.overview.source_ref)}>
               <span className="font-mono text-foreground">{source.ref}</span>
             </SummaryRow>}
             <SummaryRow label={source.source_type === "local" ? t(($) => $.overview.package_hash) : t(($) => $.overview.source_commit)}>
@@ -298,13 +298,13 @@ export function AgentOverviewSummary({
               {source.last_sync_error}
             </p>
           )}
-          {source.source_type === "github" && canSyncSource && onSourceSync && (
+          {source.source_type === "git" && canSyncSource && onSourceSync && (
             <Button
               type="button"
               variant="outline"
               size="sm"
               className="mt-3 w-full"
-              disabled={sourceSyncing || !source.github_connected}
+              disabled={sourceSyncing || !source.connected}
               onClick={onSourceSync}
             >
               {sourceSyncing ? (

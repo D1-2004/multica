@@ -257,6 +257,8 @@
       "toast_created": "Skill created"
     },
     "url": {
+      "git_identity": "Git identity",
+      "git_settings": "Manage Git identities",
       "url_label": "Skill URL",
       "supported_sources": "Supported sources",
       "import": "Import",

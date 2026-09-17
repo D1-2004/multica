@@ -60,9 +60,9 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 
 | Contract | Source | Behavior |
 |---|---|---|
-| Git instance ownership | `server/internal/handler/github_agent_source.go`; `agent_package_service.go` | v1 manifest profile fields are create defaults; v2 publication applies all declared portable configuration through the shared package service |
-| Git URL creation and immutable confirmation | `server/internal/handler/agent_source_preview.go`, `server/internal/handler/github_agent_source.go` | Workspace GitHub preview accepts a repository URL and saves a user-scoped `preview_id`; create confirmation is idempotent with that ID |
-| Branch/tag/commit selection and source sync | `server/internal/handler/agent_source_sync.go`, `server/internal/handler/agent_source_preview.go`; `server/internal/githubapp/client.go` | Preview accepts a qualified branch/tag ref or commit SHA and returns Git/configuration changes; sync requires the returned `preview_id` and rejects stale state or revoked Git access |
+| Package instance ownership | `server/internal/handler/agent_package_create.go`; `agent_package_service.go` | v1 manifest profile fields are create defaults; v2 publication applies all declared portable configuration through the shared package service |
+| Git URL creation and immutable confirmation | `server/internal/handler/agent_source_preview.go`, `server/internal/handler/git_agent_source.go`, `server/internal/handler/agent_package_create.go` | Workspace Git preview accepts a repository URL and saves a user-scoped `preview_id`; create confirmation is idempotent with that ID |
+| Branch/tag/commit selection and source sync | `server/internal/handler/agent_source_sync.go`, `server/internal/handler/agent_source_preview.go`; `server/internal/gitrepo/github_app.go` | Preview accepts a qualified branch/tag ref or commit SHA and returns Git/configuration changes; sync requires the returned `preview_id` and rejects stale state or revoked Git access |
 | Exclusive source skills | `server/internal/handler/skill.go`, `server/pkg/db/queries/agent_source_preview.sql` | Ordinary Git source skills are editable/deletable in workspace storage, but source mappings prohibit assigning them to other Agents; file mutations lock the parent skill |
 | Editable source Agent profile | `server/internal/handler/agent.go` | Name and description remain editable; only instructions are rejected as Git-managed. v2 publication reapplies declared profile values; v1 publication preserves the instance profile |
 | DingTalk install CLI | `server/cmd/multica/cmd_dingtalk.go` | `begin` creates a QR session; optional `--allow-unbound` sends `allow_unbound=true` for external users; `status` performs one status read |
@@ -178,7 +178,7 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | --- | --- | --- |
 | ZIP manifest-first validation and bundle | `internal/agentsource/package.go` `ParseAgentPackage`; `portable.go` `ParsedAgentPackage.Bundle` | `go test ./internal/agentsource` |
 | Git acquisition uses agent.json | `internal/agentsource/snapshot.go` `ReadAgentRepository` | `TestZIPAndRepositoryPrepareIdenticalV2Bundle` |
-| Shared preview confirmation and transaction | `internal/handler/github_agent_source.go` `CreateAgentFromPackage` | `TestLocalAndGitPackagesCreateTheSameConfiguration` |
+| Shared preview confirmation and transaction | `internal/handler/agent_package_create.go` `CreateAgentFromPackage` | `TestLocalAndGitPackagesCreateTheSameConfiguration` |
 | Config, secret/ref choices, OKRs and A2A | `internal/handler/agent_package_configuration.go` `preparePackageConfiguration` / `apply` | `TestCompleteExamplePackageUploadAndExport` |
 | v2 publication and stale state | `internal/handler/agent_package_sync.go`; `agent_source_preview.go` | `TestV2PackagePublicationAppliesConfigurationAndRejectsStalePreview` |
 | Builder's instructions and hidden carrier | `internal/handler/agent_builder.go` `agentBuilderInstructions` / `CreateAgentBuilderSession` | Read the embedded instructions and carrier transaction |
@@ -233,7 +233,7 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | Contract | Source | Verification |
 | --- | --- | --- |
 | Local ZIP update / stale guard / Git publication boundary | `internal/handler/agent_package_publish.go`; `agent_source_sync.go` | `TestZIPPublicationUpdatesExistingLocalAgents`; `TestGitAgentRejectsZIPPublication` |
-| Git branch/tag/commit selection and pinned confirmation | `internal/githubapp/client.go`; `internal/handler/agent_source_preview.go`; `packages/views/agents/components/git-revision-select.tsx` | `TestClientListsRepositoryTagsAndResolvesQualifiedRefs`; `TestGitPublicationSupportsBranchesTagsAndCommits`; `publish-tab.test.tsx` |
+| Git branch/tag/commit selection and pinned confirmation | `internal/gitrepo/github_app.go`; `internal/handler/agent_source_preview.go`; `packages/views/agents/components/git-revision-select.tsx` | `TestClientListsRepositoryTagsAndResolvesQualifiedRefs`; `TestGitPublicationSupportsBranchesTagsAndCommits`; `publish-tab.test.tsx` |
 | Transactional publication history and snapshot rollback | `internal/handler/agent_publication.go`; `pkg/db/queries/agent_source_preview.sql`; `packages/views/agents/components/tabs/agent-publication-history.tsx` | `TestGitPublicationKeepsRestorableConfiguration`; `TestGitPublicationRollbackUsesHistoryInsteadOfMovedBranch`; `TestGitPublicationHistoryPaginationDoesNotExposeOtherAgents`; `TestGitPublicationRollbackChecksAgentAndCurrentState`; `packages/core/api/agent-publications.test.ts` |
 | Complete error tree and Schema link | `internal/agentsource/schema.go`; `packages/views/agents/create/package-error.tsx` | `TestManifestSchemaDoesNotTruncateIssues`; `builder-package-panel.test.tsx` |
 | Portable OKR text and independent labels | `internal/handler/agent_package_okr.go`; `migrations/9222_agent_okr_authored_text.up.sql` | `TestCompleteExamplePackageUploadAndExport` |
@@ -301,3 +301,39 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - `server/internal/handler/dingtalk_response.go` freezes the triggering inbound `openMsgId` in each managed response route; `dingtalk_origin_reply.go` keeps per-work-item origin selection and task/Issue recovery.
 - `server/internal/service/dingtalkresponse/provider.go` and `server/internal/dwsclient/send.go` turn that frozen locator into `dws chat +messages-reply` for Coordinator replies, work acceptance, final results, and visible failure fallback. `server/internal/integrations/agentmessagerouter/dws_delivery.go` applies the same quote locator when Router callback owns the compatible DWS delivery.
 - Host tests verify exact route selection and CLI arguments. Live acceptance additionally requires a DingTalk readback whose `quotedMessage.messageId` equals the triggering message; a callback or assistant text alone is insufficient.
+- 2026-09-14: `github_connect.go` handles expiring browser context and GitHub user
+  authorization before workspace installation writes. `github_connect_test.go`
+  covers lost state, wrong browser context, provider rejection and revoked workspace
+  membership. Package binding and publication regressions cover empty plugins and
+  unchanged A2A export after rollback. Reason: correct live Git acceptance failures
+  without treating package declarations or installation IDs as authorization.
+
+- 2026-09-14: Package procedure details now live in `agent-packages.md`, loaded
+  from the main skill before package work. Reason: preserve the complete protocol
+  while keeping the main skill within the enforced 500-line budget.
+
+## GitRepo protocol update — 2026-09-15 (historical; Code removed 2026-09-16)
+
+| Contract | Source | Verification |
+| --- | --- | --- |
+| Workspace Git identities and automatic host selection | `internal/gitrepo/service.go`; `internal/handler/git_connection.go` | `TestCodeConnectionAgentPublicationAndPermissionBoundary` |
+| Code branch/tag pagination and immutable files | `internal/gitrepo/code.go` | `TestCodeRefsUseDocumentedPageEnvelope`; `code_test.go` |
+| Shared skill repository reader | `internal/handler/git_skill.go` | `git_skill_test.go` |
+| Shared ZIP and Git creation confirmation | `internal/handler/agent_package_create.go` | GitHub and Code source flow tests; local/Git parity tests |
+
+Reason: one repository boundary for GitHub and Alibaba Code, without duplicate
+credentials or GitHub-specific Agent import paths. Agent runtime identities are unchanged.
+
+## GitHub-only repository boundary — 2026-09-16
+
+| Contract | Source | Verification |
+| --- | --- | --- |
+| Only GitHub repository addresses are accepted | `internal/gitrepo/address.go`; `internal/handler/skill.go` | `TestParseAddressRejectsInternalCodeHosts`; `TestGitEndpointsRejectInternalCodeBeforeAccess` |
+| Only GitHub workspace identities are read; no Code token write endpoint | `pkg/db/queries/git_connection.sql`; `internal/handler/git_connection.go`; `cmd/server/router.go` | `TestGitConnectionsExcludeUnsupportedIdentities`; GitHub source flow tests |
+| Unsupported historical sources cannot sync | `internal/handler/git_agent_source.go` | `TestAgentSourceResponseDisablesUnsupportedRepository` |
+
+Reason: remove internal Code platform access from configuration management while preserving GitHub publication and existing Agent configuration/history. This supersedes the Code rows in the historical protocol update above.
+
+- 2026-09-16: Reconciled GitRepo package creation/publication with DSH plugin
+  recipes, explicit credential rebinding and private-config preview checks.
+  Reason: preserve both contracts when integrating the GitHub-only release.

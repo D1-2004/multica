@@ -1,6 +1,7 @@
 package agentsource
 
 import (
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -159,8 +160,8 @@ func ParseDTAProject(content []byte) (DTAProject, error) {
 	}, nil
 }
 
-func CompileDTAProject(ctx context.Context, client RepositoryClient, source Source) (Bundle, error) {
-	tree, err := client.GetTree(ctx, source.InstallationID, source.Owner, source.Repository, source.CommitSHA)
+func CompileDTAProject(ctx context.Context, client gitrepo.Reader, source Source) (Bundle, error) {
+	tree, err := client.GetTree(ctx, source.CommitSHA)
 	if err != nil {
 		return Bundle{}, err
 	}

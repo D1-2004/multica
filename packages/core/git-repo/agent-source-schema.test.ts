@@ -3,8 +3,8 @@ import { parseWithFallback } from "../api/schema";
 import {
   AgentSourceSchema,
   EMPTY_AGENT_SOURCE,
-  EMPTY_GITHUB_AGENT_PREVIEW,
-  GitHubAgentPreviewSchema,
+  EMPTY_GIT_AGENT_PREVIEW,
+  GitAgentPreviewSchema,
   AgentSourceSyncPreviewSchema,
   EMPTY_AGENT_SOURCE_SYNC_PREVIEW,
   AgentSourceBranchesSchema,
@@ -44,22 +44,22 @@ describe("GitHub agent source API schemas", () => {
   it("falls back when preview loses its immutable SHA", () => {
     const parsed = parseWithFallback(
       {
-        installation_id: "installation",
+        connection_id: "installation",
         repository: "acme/agent",
         ref: "main",
         name: "reviewer",
       },
-      GitHubAgentPreviewSchema,
-      EMPTY_GITHUB_AGENT_PREVIEW,
-      { endpoint: "POST /api/workspaces/:id/github/agent-preview" },
+      GitAgentPreviewSchema,
+      EMPTY_GIT_AGENT_PREVIEW,
+      { endpoint: "POST /api/workspaces/:id/git/agent-preview" },
     );
-    expect(parsed).toEqual(EMPTY_GITHUB_AGENT_PREVIEW);
+    expect(parsed).toEqual(EMPTY_GIT_AGENT_PREVIEW);
   });
 
   it("normalizes nullable collection fields from older preview responses", () => {
     const parsed = parseWithFallback(
       {
-        installation_id: "installation",
+        connection_id: "installation",
         repository: "acme/agent",
         ref: "main",
         resolved_sha: "abc",
@@ -71,9 +71,9 @@ describe("GitHub agent source API schemas", () => {
         warnings: null,
         blockers: null,
       },
-      GitHubAgentPreviewSchema,
-      EMPTY_GITHUB_AGENT_PREVIEW,
-      { endpoint: "POST /api/workspaces/:id/github/agent-preview" },
+      GitAgentPreviewSchema,
+      EMPTY_GIT_AGENT_PREVIEW,
+      { endpoint: "POST /api/workspaces/:id/git/agent-preview" },
     );
 
     expect(parsed).toMatchObject({
@@ -90,7 +90,7 @@ describe("GitHub agent source API schemas", () => {
     const parsed = parseWithFallback(
       {
         agent_id: "agent",
-        source_type: "github",
+        source_type: "git",
         repository: "acme/agent",
         ref: "main",
         synced_commit_sha: "abc",
@@ -100,8 +100,8 @@ describe("GitHub agent source API schemas", () => {
       EMPTY_AGENT_SOURCE,
       { endpoint: "GET /api/agents/:id/source" },
     );
-    expect(parsed.github_connected).toBe(false);
-    expect(parsed.installation_id).toBeNull();
+    expect(parsed.connected).toBe(false);
+    expect(parsed.connection_id).toBeNull();
     expect(parsed.manifest_path).toBe("dingtalk-agent.json");
   });
 
