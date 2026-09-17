@@ -515,7 +515,7 @@ func updateManagedSkill(ctx context.Context, q *db.Queries, skillID, sourceID pg
 func skillConfig(config Config, sha, sourcePath string) map[string]any {
 	owner, repo := repositoryParts(config.RepositoryURL)
 	return map[string]any{"origin": map[string]any{
-		"type": "github_agent_source", "repository": owner + "/" + repo,
+		"type": "git_agent_source", "repository": "https://github.com/" + owner + "/" + repo,
 		"ref": config.Ref, "commit_sha": sha, "path": sourcePath,
 	}}
 }

@@ -245,6 +245,8 @@
       "toast_created": "スキルを作成しました"
     },
     "url": {
+      "git_identity": "Git identity",
+      "git_settings": "Manage Git identities",
       "url_label": "スキル URL",
       "supported_sources": "対応ソース",
       "import": "インポート",

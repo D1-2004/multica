@@ -1,6 +1,7 @@
 package agentsource
 
 import (
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 	"archive/zip"
 	"bytes"
 	"context"
@@ -71,7 +72,7 @@ func (m PortableManifest) validate() error {
 	return validatePortableLayout(m)
 }
 
-func compilePortable(ctx context.Context, client RepositoryClient, source Source) (Bundle, error) {
+func compilePortable(ctx context.Context, client gitrepo.Reader, source Source) (Bundle, error) {
 	parsed, err := parseAgentPackageRepository(ctx, client, source)
 	if err != nil {
 		return Bundle{}, err

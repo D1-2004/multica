@@ -1,4 +1,4 @@
-package githubapp
+package gitrepo
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,6 +16,19 @@ import (
 	"testing"
 	"time"
 )
+
+func TestGitHubRejectsLFSPointerInsteadOfImportingItAsContent(t *testing.T) {
+	pointer := "version https://git-lfs.github.com/spec/v1\noid sha256:" + strings.Repeat("a", 64) + "\nsize 100\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"encoding":"base64","content":%q,"size":%d}`, base64.StdEncoding.EncodeToString([]byte(pointer)), len(pointer))
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL)
+	content, err := client.GetBlob(t.Context(), 0, "team", "agent", strings.Repeat("a", 40))
+	if err == nil || !strings.Contains(err.Error(), "LFS") || len(content) != 0 {
+		t.Fatalf("LFS pointer imported as file contents: %q, %v", content, err)
+	}
+}
 
 func TestClientCachesInstallationToken(t *testing.T) {
 	var tokenRequests atomic.Int32
@@ -240,8 +254,8 @@ func TestClientRefusesCrossOriginRedirectWithoutLeakingToken(t *testing.T) {
 }
 
 func TestNewRejectsMissingCredentials(t *testing.T) {
-	if _, err := New(Config{}); err != ErrUnavailable {
-		t.Fatalf("New error = %v, want ErrUnavailable", err)
+	if _, err := NewGitHubApp(GitHubAppConfig{}); err != ErrGitHubUnavailable {
+		t.Fatalf("NewGitHubApp error = %v, want ErrGitHubUnavailable", err)
 	}
 }
 
@@ -304,14 +318,14 @@ func TestGetTreeResolvesCommitToTreeSHA(t *testing.T) {
 	}
 }
 
-func newTestClient(t *testing.T, baseURL string) *Client {
+func newTestClient(t *testing.T, baseURL string) *GitHubAppClient {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pemKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-	client, err := New(Config{
+	client, err := NewGitHubApp(GitHubAppConfig{
 		AppID:      "123",
 		PrivateKey: string(pemKey),
 		APIBase:    baseURL,
@@ -354,7 +368,7 @@ func TestNewAcceptsEscapedPrivateKeyNewlines(t *testing.T) {
 	pemKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 	escaped := strings.ReplaceAll(string(pemKey), "\n", `\n`)
 
-	if _, err := New(Config{AppID: "123", PrivateKey: escaped}); err != nil {
-		t.Fatalf("New() with escaped PEM newlines: %v", err)
+	if _, err := NewGitHubApp(GitHubAppConfig{AppID: "123", PrivateKey: escaped}); err != nil {
+		t.Fatalf("NewGitHubApp() with escaped PEM newlines: %v", err)
 	}
 }

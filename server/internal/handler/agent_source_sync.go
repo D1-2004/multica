@@ -36,28 +36,25 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	preview, err := h.readAgentSourcePreview(r, agent.WorkspaceID, request.PreviewID)
-	if err != nil {
-		writeGitHubSourceError(w, err)
-		return
-	}
+	if err != nil { writeGitRepoError(w, err); return }
 	if preview.AgentID != agent.ID || preview.ExpectedStateHash == "" || (!preview.AppliedAt.Valid && preview.AgentSourceID != source.ID) {
 		writeError(w, http.StatusBadRequest, "preview does not belong to this Agent source")
 		return
 	}
 	resolved, err := h.resolveAgentSourcePreview(r.Context(), preview)
 	if err != nil {
-		writeGitHubSourceError(w, err)
+		writeGitRepoError(w, err)
 		return
 	}
 	if err := validatePackageActor(resolved.bundle.Definition, r.Header.Get("X-Actor-Source")); err != nil {
-		writeGitHubSourceError(w, err)
+		writeGitRepoError(w, err)
 		return
 	}
 	if preview.AppliedAt.Valid {
 		writeSourceSyncReplay(w, preview, resolved.bundle.Warnings)
 		return
 	}
-	if source.SourceType == "github" && !preview.GithubInstallationID.Valid {
+	if source.SourceType == "git" && preview.Repository == "" {
 		writeError(w, http.StatusConflict, "Git Agents publish from their repository; preview a branch, tag or commit")
 		return
 	}
@@ -69,10 +66,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	queries := h.Queries.WithTx(tx)
 	preview, err = lockSourcePreview(r.Context(), queries, preview)
-	if err != nil {
-		writeGitHubSourceError(w, err)
-		return
-	}
+	if err != nil { writeGitRepoError(w, err); return }
 	if preview.AppliedAt.Valid {
 		_ = tx.Rollback(r.Context())
 		writeSourceSyncReplay(w, preview, resolved.bundle.Warnings)
@@ -91,11 +85,8 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lockedSource, err := queries.LockAgentSourceByAgentID(r.Context(), agent.ID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusInternalServerError, "failed to read Agent source")
-		return
-	}
-	if lockedSource.ID != preview.AgentSourceID || (preview.GithubInstallationID.Valid && lockedSource.GithubInstallationID != preview.GithubInstallationID) ||
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) { writeError(w, http.StatusInternalServerError, "failed to read Agent source"); return }
+	if lockedSource.ID != preview.AgentSourceID || (preview.Repository != "" && (lockedSource.GitConnectionID != preview.GitConnectionID || lockedSource.RepositoryUrl != preview.Repository)) ||
 		lockedSource.SyncedCommitSha != preview.ExpectedSourceSha || lockedSource.ManagedSourceKey.Valid {
 		writeError(w, http.StatusConflict, "Agent source changed after preview; preview again")
 		return
@@ -141,7 +132,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	updatedSource := lockedSource
 	// Record the selected Git revision or local package hash atomically with
 	// its materialized configuration and publication receipt.
-	if preview.GithubInstallationID.Valid || lockedSource.SourceType == "local" {
+	if preview.Repository != "" || lockedSource.SourceType == "local" {
 		updatedSource, err = queries.MarkAgentSourceBranchSyncSucceeded(r.Context(), db.MarkAgentSourceBranchSyncSucceededParams{
 			ID: lockedSource.ID, Ref: resolved.ref, SyncedCommitSha: resolved.sha, ManifestPath: agentsource.SourceManifestPath(resolved.bundle),
 		})

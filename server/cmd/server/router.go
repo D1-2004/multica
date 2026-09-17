@@ -1573,6 +1573,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("composio integration disabled (COMPOSIO_API_KEY not set)")
 	}
 
+
 	// VCS at-rest encryption: the box encrypts per-workspace access tokens and
 	// webhook secrets for token-based providers (Forgejo / Gitea / GitLab).
 	// Without it, connect/webhook handlers return 503 (so a misconfigured
@@ -1860,6 +1861,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
+	r.Get("/api/github/install", h.GitHubInstallStart)
+	r.Get("/api/github/authorize", h.GitHubAuthorizeCallback)
 	// Slack OAuth callback (no Multica auth in the path — it is hit by Slack's
 	// browser redirect; the workspace/agent/initiator are recovered from the
 	// sealed state). It exchanges the code, upserts the install, then bounces
@@ -2089,6 +2092,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// the handler strips the management handle and adds a
 					// can_manage hint so the UI can gate connect/disconnect.
 					r.Get("/github/installations", h.ListGitHubInstallations)
+					r.Get("/git/connections", h.ListGitConnections)
+					r.Get("/git/repository", h.ResolveGitRepository)
 					// VCS connections (Forgejo / Gitea / GitLab) — member-visible
 					// for the same reason as GitHub installations; connect /
 					// disconnect are admin-gated in the group below.
@@ -2118,10 +2123,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Put("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Delete("/runtime-profiles/{profileId}", h.DeleteRuntimeProfile)
-					r.Get("/github/repositories", h.ListGitHubAgentRepositories)
-					r.Get("/github/branches", h.ListGitHubAgentBranches)
-					r.Post("/github/agent-preview", h.PreviewGitHubAgent)
-					r.Post("/github/agents", h.CreateGitHubAgent)
+					r.With(handler.RequireHumanActor).Delete("/git/connections/{connectionId}", h.DeleteGitConnection)
+					r.Get("/git/refs", h.ListGitAgentBranches)
+					r.Post("/git/agent-preview", h.PreviewGitAgent)
 					r.Post("/agent-packages/preview", h.PreviewAgentPackage)
 					r.Post("/agent-packages/prepare", h.PrepareAgentPackage)
 					r.Get("/agent-packages/{previewId}/download", h.DownloadPreparedAgentPackage)
@@ -2135,7 +2139,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// above so non-admins can see the workspace's connection state.
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
-					r.Get("/github/connect", h.GitHubConnect)
+					r.With(handler.RequireHumanActor).Get("/github/connect", h.GitHubConnect)
 					r.With(handler.RequireHumanActor).Post("/github/installations/reuse", h.ReuseGitHubInstallation)
 					r.Get("/github/installations/{installationId}/repositories", h.ListGitHubInstallationRepositories)
 					r.Delete("/github/installations/{installationId}", h.DeleteGitHubInstallation)

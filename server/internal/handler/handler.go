@@ -27,7 +27,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/githubapp"
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
@@ -281,7 +281,7 @@ type Handler struct {
 	LLMTraceObserver              LLMTraceObserver
 	DingTalkBindingTeardownRouter DingTalkBindingTeardownRouter
 	CloudRuntime                  cloudRuntimeProxy
-	GitHubApp                     *githubapp.Client
+	GitHubApp                     *gitrepo.GitHubAppClient
 	AgentIdentityGitHub           *agentidentitygithub.Client
 	ManagedAgent                  *managedagent.Service
 	// Lark integration. All three are nil when the Lark master key
@@ -515,13 +515,13 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	a2aSvc := service.NewA2AService(queries, txStarter, taskSvc, store)
 	taskSvc.A2AStateObserver = a2aSvc
 
-	githubClient, githubErr := githubapp.New(githubapp.Config{
+	githubClient, githubErr := gitrepo.NewGitHubApp(gitrepo.GitHubAppConfig{
 		AppID:           os.Getenv("GITHUB_APP_ID"),
 		PrivateKey:      os.Getenv("GITHUB_APP_PRIVATE_KEY"),
 		APIBase:         os.Getenv("GITHUB_API_BASE_URL"),
 		APIBaseProvider: cfg.GitHubAPIBaseURLProvider,
 	})
-	if githubErr != nil && !errors.Is(githubErr, githubapp.ErrUnavailable) {
+	if githubErr != nil && !errors.Is(githubErr, gitrepo.ErrGitHubUnavailable) {
 		slog.Warn("github agent sources disabled", "error", githubErr)
 	}
 	agentIdentityGitHub := agentidentitygithub.NewClient(agentidentitygithub.Config{

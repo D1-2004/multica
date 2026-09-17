@@ -1,4 +1,4 @@
--- GitHub-backed agent source ledger
+-- Git-backed agent source ledger
 
 -- name: GetAgentSourceByAgentID :one
 SELECT * FROM agent_source
@@ -28,22 +28,22 @@ FOR UPDATE;
 
 -- name: CreateAgentSource :one
 INSERT INTO agent_source (
-    agent_id, workspace_id, source_type, github_installation_id, repo_owner, repo_name, ref,
-    manifest_path, synced_commit_sha, sync_status, last_sync_attempt_at,
+    agent_id, workspace_id, source_type, git_connection_id, repo_owner, repo_name, ref,
+    repository_url, manifest_path, synced_commit_sha, sync_status, last_sync_attempt_at,
     last_synced_at, created_by
 ) VALUES (
-    $1, $2, 'github', $3, $4, $5, $6,
-    $7, $8, 'ready', now(), now(), $9
+    $1, $2, 'git', $3, $4, $5, $6,
+    sqlc.arg(repository_url), $7, $8, 'ready', now(), now(), $9
 )
 RETURNING *;
 
 -- name: CreateManagedAgentSource :one
 INSERT INTO agent_source (
-    agent_id, workspace_id, source_type, managed_source_key, repo_owner, repo_name,
+    agent_id, workspace_id, source_type, managed_source_key, repo_owner, repo_name, repository_url,
     ref, manifest_path, synced_commit_sha, sync_status, last_sync_attempt_at,
     last_synced_at, created_by
 ) VALUES (
-    $1, $2, 'github', $3, $4, $5,
+    $1, $2, 'git', $3, $4, $5, 'https://github.com/' || $4 || '/' || $5,
     $6, $7, $8, 'ready', now(), now(), $9
 )
 RETURNING *;
@@ -188,7 +188,7 @@ RETURNING *;
 UPDATE agent_source
 SET sync_status = CASE
         WHEN managed_source_key IS NOT NULL THEN 'failed'
-        WHEN github_installation_id IS NULL THEN 'disconnected'
+        WHEN git_connection_id IS NULL THEN 'disconnected'
         ELSE 'failed'
     END,
     last_sync_error = $2,
@@ -197,13 +197,13 @@ SET sync_status = CASE
 WHERE id = $1
 RETURNING *;
 
--- name: MarkAgentSourcesDisconnectedByInstallation :exec
+-- name: MarkAgentSourcesDisconnectedByConnection :exec
 UPDATE agent_source
 SET sync_status = 'disconnected',
-    last_sync_error = 'GitHub installation disconnected',
+    last_sync_error = 'Git connection disconnected',
     last_sync_attempt_at = now(),
     updated_at = now()
-WHERE github_installation_id = $1;
+WHERE git_connection_id = $1;
 
 -- name: CreateAgentSourceSkill :one
 INSERT INTO agent_source_skill (agent_source_id, skill_id, source_path)

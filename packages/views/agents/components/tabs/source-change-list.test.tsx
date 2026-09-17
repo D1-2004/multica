@@ -30,6 +30,21 @@ function preview(value = changes, open = true, onOpenChange = vi.fn()) {
 }
 
 describe("publication file diff", () => {
+  it("renders deleted text using the status returned by the publication API", async () => {
+    render(preview([{ path: "skills/release-check/references/legacy.md", status: "deleted", before: "Only present in v1", after: null }]));
+    const diff = await screen.findByTestId("file-diff");
+    expect(within(diff).getByTestId("before")).toHaveTextContent("Only present in v1");
+    expect(within(diff).getByTestId("after")).toBeEmptyDOMElement();
+    expect(screen.queryByText("deleted")).toBeNull();
+    expect(screen.getAllByTitle(enAgents.package_diff.removed)).toHaveLength(2);
+  });
+
+  it("keeps withheld deleted text unavailable", () => {
+    render(preview([{ path: "private.json", status: "deleted", before: null, after: null, before_sha: "old-object" }]));
+    expect(screen.queryByTestId("file-diff")).toBeNull();
+    expect(screen.getByText("Text content is unavailable for this file. Only file metadata can be compared.")).toBeInTheDocument();
+  });
+
   it("selects files from the navigation and distinguishes additions and removals", async () => {
     render(preview());
     const navigation = screen.getByRole("tablist", { name: "Changed files" });

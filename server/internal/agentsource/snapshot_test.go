@@ -3,16 +3,16 @@ package agentsource
 import (
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/githubapp"
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 )
 
 func TestRepositoryDiffComparesExactTreesIncludingRemovalsAndModes(t *testing.T) {
-	base := RepositorySnapshot{Files:map[string]string{"agent/AGENTS.md":"old", "removed.md":"removed"}, Tree:[]githubapp.TreeEntry{
+	base := RepositorySnapshot{Files:map[string]string{"agent/AGENTS.md":"old", "removed.md":"removed"}, Tree:[]gitrepo.TreeEntry{
 		{Path:"agent/AGENTS.md", Type:"blob", Mode:"100644", SHA:"a"},
 		{Path:"removed.md", Type:"blob", Mode:"100644", SHA:"b"},
 		{Path:"script.sh", Type:"blob", Mode:"100644", SHA:"c"},
 	}}
-	target := RepositorySnapshot{Files:map[string]string{"agent/AGENTS.md":"new"}, Tree:[]githubapp.TreeEntry{
+	target := RepositorySnapshot{Files:map[string]string{"agent/AGENTS.md":"new"}, Tree:[]gitrepo.TreeEntry{
 		{Path:"agent/AGENTS.md", Type:"blob", Mode:"100644", SHA:"d"},
 		{Path:"script.sh", Type:"blob", Mode:"100755", SHA:"c"},
 		{Path:"image.png", Type:"blob", Mode:"100644", SHA:"e"},

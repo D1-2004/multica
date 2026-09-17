@@ -6,10 +6,10 @@ WITH locked_workspace AS MATERIALIZED (
     FOR KEY SHARE
 )
 INSERT INTO agent_source_preview (
-    workspace_id, created_by, agent_id, agent_source_id, github_installation_id,
+    workspace_id, created_by, agent_id, agent_source_id, git_connection_id,
     repository, ref, resolved_sha, expected_source_sha, expected_state_hash, snapshot
 ) SELECT locked_workspace.id, sqlc.arg(created_by), sqlc.narg(agent_id), sqlc.narg(agent_source_id),
-    sqlc.arg(github_installation_id), sqlc.arg(repository), sqlc.arg(ref), sqlc.arg(resolved_sha),
+    sqlc.arg(git_connection_id), sqlc.arg(repository), sqlc.arg(ref), sqlc.arg(resolved_sha),
     sqlc.arg(expected_source_sha), sqlc.arg(expected_state_hash), sqlc.arg(snapshot)
 FROM locked_workspace
 RETURNING *;
@@ -39,7 +39,7 @@ WHERE id = $1 AND agent_id = $2 AND workspace_id = $3 AND applied_at IS NOT NULL
 
 -- name: ListAgentPublications :many
 SELECT publication.id, publication.ref, publication.resolved_sha,
-    publication.repository, publication.github_installation_id,
+    publication.repository, publication.git_connection_id,
     publication.applied_at, publication.created_by, publication.applied_changed,
     COALESCE(author.name, '')::text AS author_name,
     COALESCE(publication.snapshot->>'rollback_of', '')::text AS rollback_of,

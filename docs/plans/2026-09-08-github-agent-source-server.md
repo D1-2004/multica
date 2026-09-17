@@ -1,5 +1,8 @@
 # GitHub Agent 创建与确认同步
 
+> 本文保留 2026-09-08 阶段记录。当前仓库身份、导入及发布协议以 [GitRepo 文档](../git-repositories.md) 为准。
+
+
 Git 创建与同步支持 DTA `dingtalk-agent/project@1` 以及 `multica.agent/v1` JSON manifest，直接读取仓库中的定义文件。开发者修改仓库并正常提交代码；Multica 读取固定 commit，预览后创建或同步 Agent。平台当前配置另可导出为 v2 Agent ZIP；上传包已支持校验预览，v2 配置写入待接入。两种来源都不要求 CLI 构建 Bundle。
 
 ## 已实现范围
@@ -181,3 +184,8 @@ ZIP 是 Agent manifest 和数据文件的传输包，可用于下载和上传校
 当前实现以 [Agent manifest 文档](../agent-manifest.md) 为准。新增创建页“从本地导入”，本地 ZIP 上传与 Git 固定提交读取都经 Schema 校验形成完整 bundle，并统一调用 `POST /api/workspaces/{id}/agent-packages` 确认创建。v2 配置、OKR、A2A 策略与专属 skills 同事务写入，Git 发布使用同一配置适配器。身份/机器人等外部资源必须明确延后到目标环境配置，secret_ref 通过表单填写；旧平台 UUID 不自动搬运。公开创建不接受 DTA 清单作为入口。
 
 历史记录：2026-09-08，统一源码包创建与发布，补齐真实上传测试 Agent。原因：按用户最新设计，文件来源只是获取方式，配置校验和写入不能各自维护一套。
+
+
+## 协议变更记录
+
+- 2026-09-15：GitHub 专用 Agent 路径由 GitRepo 替换，支持 Code 工作区身份。保留本文作为阶段记录，避免将历史字段误当成当前协议。

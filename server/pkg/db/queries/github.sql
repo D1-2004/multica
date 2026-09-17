@@ -3,25 +3,25 @@
 -- =====================
 
 -- name: ListGitHubInstallationsByWorkspace :many
-SELECT * FROM github_installation
-WHERE workspace_id = $1
+SELECT * FROM git_connection
+WHERE provider = 'github' AND workspace_id = $1
 ORDER BY created_at ASC;
 
 -- name: ListGitHubInstallationsByInstallationID :many
 -- One installation_id can be bound to several workspaces; webhook routing lists
 -- every binding and fans the event out to each bound workspace. Ordered oldest
 -- first so processing is deterministic and replay-stable.
-SELECT * FROM github_installation
-WHERE installation_id = $1
+SELECT * FROM git_connection
+WHERE provider = 'github' AND installation_id = $1::bigint
 ORDER BY created_at ASC, id ASC;
 
 -- name: GetGitHubInstallationByID :one
-SELECT * FROM github_installation
-WHERE id = $1;
+SELECT * FROM git_connection
+WHERE provider = 'github' AND id = $1;
 
 -- name: GetGitHubInstallationInWorkspace :one
-SELECT * FROM github_installation
-WHERE id = $1 AND workspace_id = $2;
+SELECT * FROM git_connection
+WHERE provider = 'github' AND id = $1 AND workspace_id = $2;
 
 -- name: ListReusableGitHubInstallationsForUser :many
 -- A reusable installation must come from another workspace where the same
@@ -34,21 +34,21 @@ SELECT DISTINCT ON (gi.installation_id)
     gi.account_login,
     gi.account_type,
     gi.account_avatar_url,
-    gi.connected_by_id,
+    gi.created_by,
     gi.created_at,
     gi.updated_at,
     source_workspace.name AS source_workspace_name
-FROM github_installation gi
+FROM git_connection gi
 JOIN workspace source_workspace ON source_workspace.id = gi.workspace_id
 JOIN member source_member
   ON source_member.workspace_id = gi.workspace_id
  AND source_member.user_id = sqlc.arg('user_id')
  AND source_member.role IN ('owner', 'admin')
-WHERE gi.workspace_id <> sqlc.arg('target_workspace_id')
+WHERE gi.provider = 'github' AND gi.workspace_id <> sqlc.arg('target_workspace_id')
   AND NOT EXISTS (
       SELECT 1
-      FROM github_installation target
-      WHERE target.workspace_id = sqlc.arg('target_workspace_id')
+      FROM git_connection target
+      WHERE target.provider = 'github' AND target.workspace_id = sqlc.arg('target_workspace_id')
         AND target.installation_id = gi.installation_id
   )
 ORDER BY gi.installation_id, gi.created_at ASC, gi.id ASC;
@@ -58,49 +58,35 @@ ORDER BY gi.installation_id, gi.created_at ASC, gi.id ASC;
 -- numeric installation_id. The target workspace role is enforced by router
 -- middleware; this query independently proves source-workspace management.
 SELECT gi.*
-FROM github_installation gi
+FROM git_connection gi
 JOIN member source_member
   ON source_member.workspace_id = gi.workspace_id
  AND source_member.user_id = sqlc.arg('user_id')
  AND source_member.role IN ('owner', 'admin')
-WHERE gi.id = sqlc.arg('source_installation_id')
+WHERE gi.provider = 'github' AND gi.id = sqlc.arg('source_installation_id')
   AND gi.workspace_id <> sqlc.arg('target_workspace_id');
 
 -- name: CreateGitHubInstallation :one
-INSERT INTO github_installation (
-    workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id
-) VALUES (
-    $1, $2, $3, $4, sqlc.narg('account_avatar_url'), sqlc.narg('connected_by_id')
-)
+INSERT INTO git_connection (workspace_id, provider, installation_id, account_login, account_type, account_avatar_url, created_by)
+VALUES (sqlc.arg(workspace_id), 'github', sqlc.arg(installation_id)::bigint, sqlc.arg(account_login), sqlc.arg(account_type), sqlc.narg('account_avatar_url'), sqlc.narg('connected_by_id'))
 ON CONFLICT (workspace_id, installation_id) DO UPDATE SET
-    account_login = EXCLUDED.account_login,
-    account_type = EXCLUDED.account_type,
-    account_avatar_url = EXCLUDED.account_avatar_url,
-    connected_by_id = EXCLUDED.connected_by_id,
-    updated_at = now()
+    account_login = EXCLUDED.account_login, account_type = EXCLUDED.account_type,
+    account_avatar_url = EXCLUDED.account_avatar_url, created_by = EXCLUDED.created_by, updated_at = now()
 RETURNING *;
 
 -- name: DeleteGitHubInstallation :exec
-DELETE FROM github_installation WHERE id = $1 AND workspace_id = $2;
+WITH removed AS (DELETE FROM git_connection WHERE git_connection.id = $1 AND git_connection.workspace_id = $2 AND provider = 'github' RETURNING id)
+UPDATE agent_source SET sync_status = 'disconnected', last_sync_error = 'Git connection disconnected', updated_at = now() WHERE git_connection_id IN (SELECT id FROM removed);
 
 -- name: DeleteGitHubInstallationByInstallationID :many
--- GitHub-side uninstall/suspend removes trust in the installation entirely, so
--- drop every workspace binding. Returns one row per deleted binding so the
--- handler can broadcast to each affected workspace.
-DELETE FROM github_installation WHERE installation_id = $1
-RETURNING id, workspace_id;
+WITH removed AS (DELETE FROM git_connection WHERE git_connection.installation_id = $1::bigint AND provider = 'github' RETURNING id, workspace_id),
+disconnected AS (UPDATE agent_source SET sync_status = 'disconnected', last_sync_error = 'Git connection disconnected', updated_at = now() WHERE git_connection_id IN (SELECT id FROM removed))
+SELECT * FROM removed;
 
 -- name: UpdateGitHubInstallationAccountByInstallationID :many
--- Refresh the GitHub account display metadata across every workspace binding of
--- an installation (fired by installation.created/new_permissions_accepted/
--- unsuspend). Leaves workspace_id and connected_by_id untouched.
-UPDATE github_installation
-SET account_login = $2,
-    account_type = $3,
-    account_avatar_url = sqlc.narg('account_avatar_url'),
-    updated_at = now()
-WHERE installation_id = $1
-RETURNING *;
+UPDATE git_connection SET account_login = sqlc.arg(account_login), account_type = sqlc.arg(account_type),
+    account_avatar_url = sqlc.narg('account_avatar_url'), updated_at = now()
+WHERE installation_id = sqlc.arg(installation_id)::bigint AND provider = 'github' RETURNING *;
 
 -- name: UpsertPendingGitHubInstallation :one
 INSERT INTO github_pending_installation (
@@ -116,10 +102,10 @@ ON CONFLICT (installation_id) DO UPDATE SET
 RETURNING *;
 
 -- name: DeletePendingGitHubInstallation :exec
-DELETE FROM github_pending_installation WHERE installation_id = $1;
+DELETE FROM github_pending_installation WHERE installation_id = $1::bigint;
 
 -- name: GetPendingGitHubInstallation :one
-SELECT * FROM github_pending_installation WHERE installation_id = $1
+SELECT * FROM github_pending_installation WHERE installation_id = $1::bigint
 ;
 
 -- =====================

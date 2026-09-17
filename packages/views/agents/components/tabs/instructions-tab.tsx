@@ -98,7 +98,7 @@ export function InstructionsTab({
         </label>
         {instructionsLocked ? (
           <p className="text-caption leading-5 text-muted-foreground">
-            {t(($) => $.tab_body.instructions.github_managed)}
+            {t(($) => $.tab_body.instructions.git_managed)}
           </p>
         ) : null}
         <Textarea

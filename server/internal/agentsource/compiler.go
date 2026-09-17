@@ -15,7 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
-	"github.com/multica-ai/multica/server/internal/githubapp"
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 	"github.com/multica-ai/multica/server/internal/skill"
 	"gopkg.in/yaml.v3"
 )
@@ -68,9 +68,6 @@ type ManifestCompatibility struct {
 }
 
 type Source struct {
-	InstallationID int64
-	Owner          string
-	Repository     string
 	CommitSHA      string
 }
 
@@ -131,10 +128,6 @@ func (b *Bundle) UnmarshalJSON(data []byte) error {
 
 }
 
-type RepositoryClient interface {
-	GetTree(ctx context.Context, installationID int64, owner, repo, sha string) (githubapp.Tree, error)
-	GetBlob(ctx context.Context, installationID int64, owner, repo, sha string) ([]byte, error)
-}
 
 func ParseManifest(content []byte) (Manifest, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(content))
@@ -222,8 +215,8 @@ func validateRepositoryPath(value, field string) error {
 	return nil
 }
 
-func Compile(ctx context.Context, client RepositoryClient, source Source) (Bundle, error) {
-	tree, err := client.GetTree(ctx, source.InstallationID, source.Owner, source.Repository, source.CommitSHA)
+func Compile(ctx context.Context, client gitrepo.Reader, source Source) (Bundle, error) {
+	tree, err := client.GetTree(ctx, source.CommitSHA)
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -239,8 +232,8 @@ func Compile(ctx context.Context, client RepositoryClient, source Source) (Bundl
 	return compileBundle(ctx, client, source, entries, len(manifestBytes), manifest, nil)
 }
 
-func repositoryEntries(tree githubapp.Tree) map[string]githubapp.TreeEntry {
-	entries := make(map[string]githubapp.TreeEntry, len(tree.Entries))
+func repositoryEntries(tree gitrepo.Tree) map[string]gitrepo.TreeEntry {
+	entries := make(map[string]gitrepo.TreeEntry, len(tree.Entries))
 	for _, entry := range tree.Entries {
 		entries[entry.Path] = entry
 	}
@@ -249,9 +242,9 @@ func repositoryEntries(tree githubapp.Tree) map[string]githubapp.TreeEntry {
 
 func compileBundle(
 	ctx context.Context,
-	client RepositoryClient,
+	client gitrepo.Reader,
 	source Source,
-	entries map[string]githubapp.TreeEntry,
+	entries map[string]gitrepo.TreeEntry,
 	manifestSize int,
 	manifest Manifest,
 	expectedSkillNames map[string]string,
@@ -304,7 +297,7 @@ func compileBundle(
 	return bundle, nil
 }
 
-func loadRequiredText(ctx context.Context, client RepositoryClient, source Source, entries map[string]githubapp.TreeEntry, filePath string) ([]byte, error) {
+func loadRequiredText(ctx context.Context, client gitrepo.Reader, source Source, entries map[string]gitrepo.TreeEntry, filePath string) ([]byte, error) {
 	entry, ok := entries[filePath]
 	if !ok || entry.Type != "blob" {
 		return nil, fmt.Errorf("required file %q was not found", filePath)
@@ -315,7 +308,7 @@ func loadRequiredText(ctx context.Context, client RepositoryClient, source Sourc
 	if entry.Size > MaxFileSize {
 		return nil, fmt.Errorf("%s exceeds the %d byte file limit", filePath, MaxFileSize)
 	}
-	content, err := client.GetBlob(ctx, source.InstallationID, source.Owner, source.Repository, entry.SHA)
+	content, err := client.GetBlob(ctx, entry.SHA)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", filePath, err)
 	}
@@ -331,11 +324,11 @@ func loadRequiredText(ctx context.Context, client RepositoryClient, source Sourc
 	return content, nil
 }
 
-func compileSkill(ctx context.Context, client RepositoryClient, source Source, entries map[string]githubapp.TreeEntry, sourcePath string) (Skill, []string, int, error) {
+func compileSkill(ctx context.Context, client gitrepo.Reader, source Source, entries map[string]gitrepo.TreeEntry, sourcePath string) (Skill, []string, int, error) {
 	prefix := sourcePath + "/"
 	skillMDPath := prefix + "SKILL.md"
 	nestedSkillMD := make([]string, 0)
-	files := make([]githubapp.TreeEntry, 0)
+	files := make([]gitrepo.TreeEntry, 0)
 	for _, entry := range entries {
 		if !strings.HasPrefix(entry.Path, prefix) {
 			continue
@@ -383,7 +376,7 @@ func compileSkill(ctx context.Context, client RepositoryClient, source Source, e
 		if entry.Size > MaxFileSize {
 			return Skill{}, nil, 0, fmt.Errorf("%s exceeds the %d byte file limit", entry.Path, MaxFileSize)
 		}
-		content, err := client.GetBlob(ctx, source.InstallationID, source.Owner, source.Repository, entry.SHA)
+		content, err := client.GetBlob(ctx, entry.SHA)
 		if err != nil {
 			return Skill{}, nil, 0, fmt.Errorf("read %s: %w", entry.Path, err)
 		}
@@ -406,7 +399,7 @@ func compileSkill(ctx context.Context, client RepositoryClient, source Source, e
 	return result, warnings, totalSize, nil
 }
 
-func validateGitObject(entry githubapp.TreeEntry) error {
+func validateGitObject(entry gitrepo.TreeEntry) error {
 	if entry.Type == "commit" || entry.Mode == "160000" {
 		return errors.New("git submodules are not supported")
 	}

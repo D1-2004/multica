@@ -245,6 +245,8 @@
       "toast_created": "已创建 skill"
     },
     "url": {
+      "git_identity": "Git 身份",
+      "git_settings": "管理 Git 身份",
       "url_label": "Skill URL",
       "supported_sources": "支持的来源",
       "import": "导入",

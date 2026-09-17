@@ -315,7 +315,7 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	var fetched []*importedSkill
 	var failedURLs []string
 	if len(toFetchRefs) > 0 {
-		fetched, failedURLs = fetchTemplateSkillsParallel(fetchCtx, httpClient, toFetchRefs)
+		fetched, failedURLs = h.fetchTemplateSkillsParallel(fetchCtx, httpClient, wsUUID, toFetchRefs)
 	}
 	slog.Info("agent-template create: fetch phase done",
 		append(logger.RequestAttrs(r),
@@ -670,7 +670,7 @@ type templateFetchResult struct {
 // importedSkill, in parallel. Returns the imports in input order; failed_urls
 // is non-nil iff any fetch failed. Logs per-URL timing so we can spot which
 // upstream is the long pole in a slow request.
-func fetchTemplateSkillsParallel(ctx context.Context, client *http.Client, refs []agenttmpl.TemplateSkillRef) ([]*importedSkill, []string) {
+func (h *Handler) fetchTemplateSkillsParallel(ctx context.Context, client *http.Client, workspaceID pgtype.UUID, refs []agenttmpl.TemplateSkillRef) ([]*importedSkill, []string) {
 	results := make(chan templateFetchResult, len(refs))
 	var wg sync.WaitGroup
 	for i, ref := range refs {
@@ -679,7 +679,7 @@ func fetchTemplateSkillsParallel(ctx context.Context, client *http.Client, refs 
 			defer wg.Done()
 			start := time.Now()
 			slog.Info("agent-template fetch: start", "index", i, "source_url", ref.SourceURL)
-			imp, err := fetchSkillFromURL(ctx, client, ref.SourceURL)
+			imp, err := h.fetchSkillFromURL(ctx, client, workspaceID, ref.SourceURL)
 			elapsedMs := time.Since(start).Milliseconds()
 			if err != nil {
 				slog.Warn("agent-template fetch: failed",
@@ -724,7 +724,7 @@ func fetchTemplateSkillsParallel(ctx context.Context, client *http.Client, refs 
 // fetchSkillFromURL dispatches to the right upstream fetcher based on URL.
 // Mirrors the switch inside ImportSkill (skill.go:1566) so both entry points
 // stay in sync.
-func fetchSkillFromURL(ctx context.Context, client *http.Client, rawURL string) (*importedSkill, error) {
+func (h *Handler) fetchSkillFromURL(ctx context.Context, client *http.Client, workspaceID pgtype.UUID, rawURL string) (*importedSkill, error) {
 	source, normalized, err := detectImportSource(rawURL)
 	if err != nil {
 		return nil, err
@@ -732,10 +732,8 @@ func fetchSkillFromURL(ctx context.Context, client *http.Client, rawURL string) 
 	switch source {
 	case sourceClawHub:
 		return fetchFromClawHub(ctx, client, normalized)
-	case sourceSkillsSh:
-		return fetchFromSkillsSh(ctx, client, normalized)
-	case sourceGitHub:
-		return fetchFromGitHub(ctx, client, normalized)
+	case sourceSkillsSh, sourceGitRepo:
+		return h.fetchRepositorySkill(ctx, workspaceID, ImportSkillRequest{}, source, normalized)
 	}
 	return nil, fmt.Errorf("unknown import source for %s", rawURL)
 }

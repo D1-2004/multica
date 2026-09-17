@@ -25,7 +25,7 @@ export function AgentPublicationHistory({ agentId, disabled, onRestore }: { agen
         <p>{index === 0 ? `${t(($) => $.publication_history.latest)} · ` : ""}{item.rollback_of ? t(($) => $.publication_history.rollback) : item.initial_publication ? t(($) => $.publication_history.created) : t(($) => $.publication_history.published)}</p>
         {!item.has_configuration_snapshot && <p className="text-muted-foreground">{t(($) => $.publication_history.legacy)}</p>}
       </div>
-      {item.source_type === "github" && <Button variant="outline" disabled={disabled} onClick={() => onRestore(item.id)}>{t(($) => $.publication_history.restore)}</Button>}
+      {item.source_type === "git" && <Button variant="outline" disabled={disabled} onClick={() => onRestore(item.id)}>{t(($) => $.publication_history.restore)}</Button>}
     </article>)}
     {history.hasNextPage && <Button variant="outline" disabled={history.isFetchingNextPage} onClick={() => void history.fetchNextPage()}>{t(($) => $.publication_history.more)}</Button>}
   </section>;

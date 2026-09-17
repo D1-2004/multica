@@ -77,7 +77,7 @@ func (h *Handler) ListAgentPublications(w http.ResponseWriter, r *http.Request) 
 	publications := make([]map[string]any,0,len(rows))
 	for _, row := range rows {
 		kind, repositoryURL := "local", ""
-		if row.GithubInstallationID.Valid { kind, repositoryURL = "github", "https://github.com/" + row.Repository }
+		if row.Repository != "" { kind, repositoryURL = "git", row.Repository }
 		publications = append(publications,map[string]any{
 			"id":uuidToString(row.ID), "source_type":kind, "repository_url":repositoryURL, "ref":row.Ref,
 			"commit_sha":row.ResolvedSha, "published_at":timestampToString(row.AppliedAt),
@@ -98,13 +98,13 @@ func (h *Handler) previewAgentPublicationRollback(w http.ResponseWriter, r *http
 	if err != nil { writeAgentSourceDatabaseError(w,err); return }
 	var saved agentPublicationSnapshot
 	if err := json.Unmarshal(publication.Snapshot,&saved); err != nil { writeAgentSourceDatabaseError(w,err); return }
-	if !publication.GithubInstallationID.Valid || publication.Repository != source.RepoOwner + "/" + source.RepoName {
+	if publication.Repository == "" || publication.Repository != source.RepositoryUrl {
 		writeError(w,http.StatusConflict,"select a publication from this Agent's Git repository"); return
 	}
 	// Recheck the current installation's repository permission. Never resolve
 	// the old ref again: it can move or disappear after publication.
-	resolved, err := h.resolveGitHubAgentRepository(r.Context(),agent.WorkspaceID,GitHubAgentSourceInput{InstallationID:uuidToString(source.GithubInstallationID),Repository:publication.Repository,Ref:publication.Ref})
-	if err != nil { writeGitHubSourceError(w,err); return }
+	resolved, err := h.resolveGitAgentRepository(r.Context(),agent.WorkspaceID,GitAgentSourceInput{ConnectionID:uuidToString(source.GitConnectionID),Repository:publication.Repository,Ref:publication.Ref})
+	if err != nil { writeGitRepoError(w,err); return }
 	resolved.sha, resolved.snapshot, resolved.bundle = publication.ResolvedSha, saved.RepositorySnapshot, saved.Definition
 	if saved.PublishedDefinition != nil { resolved.bundle = *saved.PublishedDefinition }
 	if err := agentsource.ValidateBundle(resolved.bundle); err != nil { writeAgentPackageValidationError(w,err); return }
@@ -112,8 +112,8 @@ func (h *Handler) previewAgentPublicationRollback(w http.ResponseWriter, r *http
 	// that execution field complete too; Files/Tree remain the original Git diff.
 	resolved.snapshot.Definition = resolved.bundle
 	resolved.rollbackOf, resolved.publicationDefinition = publicationID, saved.PublishedDefinition
-	base, err := h.publishedSourceSnapshot(r.Context(),agent,source,resolved.installation.InstallationID)
-	if err != nil { writeGitHubSourceError(w,err); return }
+	base, err := h.publishedSourceSnapshot(r.Context(),agent,source,resolved.remote)
+	if err != nil { writeGitRepoError(w,err); return }
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil { writeAgentSourceDatabaseError(w,err); return }
 	defer tx.Rollback(r.Context())
@@ -123,7 +123,7 @@ func (h *Handler) previewAgentPublicationRollback(w http.ResponseWriter, r *http
 	if !h.canManageAgent(w,r,agent) { return }
 	locked, err := q.LockAgentSourceByAgentID(r.Context(),agent.ID)
 	if err != nil { writeAgentSourceDatabaseError(w,err); return }
-	if locked.ID != source.ID || locked.SyncedCommitSha != source.SyncedCommitSha || locked.Ref != source.Ref || locked.GithubInstallationID != source.GithubInstallationID || locked.ManagedSourceKey.Valid || agent.ArchivedAt.Valid {
+	if locked.ID != source.ID || locked.SyncedCommitSha != source.SyncedCommitSha || locked.Ref != source.Ref || locked.GitConnectionID != source.GitConnectionID || locked.ManagedSourceKey.Valid || agent.ArchivedAt.Valid {
 		writeError(w,http.StatusConflict,"Agent source changed; preview again"); return
 	}
 	current, stateHash, err := sourceStateFiles(r.Context(),q,agent,locked,resolved.bundle)

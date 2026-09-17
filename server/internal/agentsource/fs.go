@@ -10,7 +10,7 @@ import (
 	"path"
 	"sort"
 
-	"github.com/multica-ai/multica/server/internal/githubapp"
+	"github.com/multica-ai/multica/server/internal/gitrepo"
 )
 
 // CompileFS compiles an Agent bundle from a local or embedded filesystem using
@@ -48,7 +48,7 @@ func newFSRepositoryClient(sourceFS fs.FS) (*fsRepositoryClient, error) {
 			return fmt.Errorf("unsupported local bundle path %q", filePath)
 		}
 		if entry.IsDir() {
-			client.entries = append(client.entries, githubapp.TreeEntry{Path: filePath, Type: "tree", Mode: "040000"})
+			client.entries = append(client.entries, gitrepo.TreeEntry{Path: filePath, Type: "tree", Mode: "040000"})
 			return nil
 		}
 		if !entry.Type().IsRegular() {
@@ -63,7 +63,7 @@ func newFSRepositoryClient(sourceFS fs.FS) (*fsRepositoryClient, error) {
 		sum := sha256.Sum256([]byte(filePath))
 		blobID := hex.EncodeToString(sum[:])
 		client.blobs[blobID] = filePath
-		client.entries = append(client.entries, githubapp.TreeEntry{
+		client.entries = append(client.entries, gitrepo.TreeEntry{
 			Path: filePath, Type: "blob", Mode: "100644", SHA: blobID, Size: info.Size(),
 		})
 		return nil
@@ -76,15 +76,15 @@ func newFSRepositoryClient(sourceFS fs.FS) (*fsRepositoryClient, error) {
 
 type fsRepositoryClient struct {
 	sourceFS fs.FS
-	entries  []githubapp.TreeEntry
+	entries  []gitrepo.TreeEntry
 	blobs    map[string]string
 }
 
-func (c *fsRepositoryClient) GetTree(context.Context, int64, string, string, string) (githubapp.Tree, error) {
-	return githubapp.Tree{Entries: c.entries}, nil
+func (c *fsRepositoryClient) GetTree(context.Context, string) (gitrepo.Tree, error) {
+	return gitrepo.Tree{Entries: c.entries}, nil
 }
 
-func (c *fsRepositoryClient) GetBlob(_ context.Context, _ int64, _, _, blobID string) ([]byte, error) {
+func (c *fsRepositoryClient) GetBlob(_ context.Context, blobID string) ([]byte, error) {
 	filePath, ok := c.blobs[blobID]
 	if !ok {
 		return nil, fmt.Errorf("local bundle blob %q not found", blobID)

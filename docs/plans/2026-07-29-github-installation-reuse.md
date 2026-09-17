@@ -165,3 +165,15 @@
 ## 遗留风险
 
 - 完整 GitHub 用户 OAuth 恢复路径仍是后续能力：当 installation 没有任何当前用户可管理的 Multica 来源 workspace 时，仍需 GitHub user access token 才能安全证明用户有权绑定该已有 installation。
+
+## 2026-09-14 后续实现
+
+本次补齐了上述未覆盖的恢复路径：`github_connect.go` 提供浏览器连接入口、15 分钟签名上下文和用户 OAuth 回调；现有 `/api/github/setup` 可恢复 GitHub 更新安装时遗漏的 state，随后核验用户可访问的 installation。确认写入前复核原发起人的工作区 owner/admin 权限。新增 `GITHUB_APP_CLIENT_ID`、`GITHUB_APP_CLIENT_SECRET` 和同域 `/api/github/authorize` 回调配置，不修改已有连接复用接口的授权规则。
+
+上下文使用 HttpOnly、SameSite=Lax Cookie，HTTPS 域名启用 Secure；不使用进程内映射，适用于多副本和桌面外部浏览器。多标签页冲突取消待连接上下文，要求重新开始，不猜测工作区。授权码由 GitHub 单次兑换，用户 Token 仅用于当次安装核验，不落库。旧版已签发的带 state 安装回调保留兼容路径；新入口只签发限时用户绑定上下文。
+
+## 历史记录
+
+- 2026-09-14：补齐无可复用来源工作区时的已有安装恢复及 OAuth 验证。原因：真实验收确认 GitHub Configure 会丢失 state，单纯回填工作区不能证明 GitHub 安装访问权。此记录描述代码设计，不代表预发已配置 OAuth 或已完成新版真实授权验收。
+
+- 2026-09-15：部署前补齐 `src/main.sh` 的 GitHub OAuth Client ID / Client Secret 白名单。原因：Aone trait 需要通过启动白名单注入进程，仅配置控制台不足以启用授权。
