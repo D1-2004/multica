@@ -188,6 +188,11 @@ func (h *Handler) routeDSHNativeRequest(w http.ResponseWriter, r *http.Request, 
 		h.serveNativeSessionList(w, r, access, token, body)
 		return true
 	}
+	// Plugin RPCs remain opaque. A plugin's own sessionId need not identify
+	// a DSH Session, and must not select a different Host.
+	if !nativeSessionMethod(envelope.Method) {
+		return false
+	}
 	sid, err := nativeSessionID(envelope.Payload)
 	if err != nil {
 		writeError(w, 400, "invalid native session identity")
@@ -225,4 +230,14 @@ func nativeReadMethod(method string) bool {
 		return true
 	}
 	return false
+}
+
+func nativeSessionMethod(method string) bool {
+	switch method {
+	case "session/rename", "session/page", "session/attachment", "session/selectModel",
+		"session/cancel", "session/fork", "session/prompt", "session/updateQueue", "subagents/prompt":
+		return true
+	default:
+		return false
+	}
 }

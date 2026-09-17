@@ -161,3 +161,21 @@ func TestNativeTitleSurvivesLiveFrames(t *testing.T) {
 		t.Fatal("changed opaque frame")
 	}
 }
+
+func TestNativePluginRPCsStayOpaque(t *testing.T) {
+	for _, method := range []string{"market/install", "custom/session/prompt", "dws/authorize", "commands/execute", "session/create", "session/search"} {
+		if nativeSessionMethod(method) {
+			t.Fatalf("plugin/global RPC was intercepted: %s", method)
+		}
+	}
+	for _, method := range []string{"session/page", "session/prompt", "session/cancel", "session/updateQueue", "subagents/prompt"} {
+		if !nativeSessionMethod(method) {
+			t.Fatalf("owner RPC omitted: %s", method)
+		}
+	}
+	// A plugin-owned stream can use unrelated identities without DSH parsing.
+	sid, err := nativeStreamSession(nativeMuxOpen{Endpoint: "plugin/follow", Payload: json.RawMessage(`{"args":{"request":{"sessionId":"opaque-plugin-id"}}}`)})
+	if err != nil || sid != "" {
+		t.Fatal("plugin stream identity was interpreted", sid, err)
+	}
+}
