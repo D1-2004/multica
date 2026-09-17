@@ -43,7 +43,11 @@ func (h *Handler) DSHNativeUI(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "DSH native gateway is unavailable")
 		return
 	}
-	serveDSHNativeProxy(w, r, upstream, origin, dshNativeProxyRoot+id.String()+"/")
+	prefix := dshNativeProxyRoot + id.String() + "/"
+	if h.routeDSHNativeRequest(w, r, access, origin, prefix) {
+		return
+	}
+	serveDSHNativeProxy(w, r, upstream, origin, prefix)
 }
 
 func serveDSHNativeProxy(w http.ResponseWriter, r *http.Request, upstream, publicOrigin, prefix string) {
