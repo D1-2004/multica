@@ -341,3 +341,13 @@ consuming pending records. It is not enabled in preproduction yet.
 Employees with a provisioned filesystem mount the same AgenticSpace in every FC provider sandbox at `/mnt/multica`. `$MULTICA_FS_ROOT/files` is the shared user file directory; `DSH_HOME=/mnt/multica/home` is one subdirectory. Provisioning and status use human-managed `/api/agents/{id}/filesystem`; `/dsh-home` remains an API alias. Non-DSH FC providers expose Filesystem configuration; DSH keeps filesystem and plugins together in its DSH configuration.
 
 Execution sandboxes are selected by employee and conversation/task scope, with independent lifecycle records in `employee_filesystem_sandbox`. A scope's startup does not reserve the entire filesystem. Native session admission records its sandbox scope so subsequent platform and scheduled turns return to that host. Native entry prefers the most recently used session host. Shared-file concurrent modifications are coordinated by users and agents; the platform does not provide automatic conflict merging or a filesystem-wide writer queue. Older single-employee-writer descriptions above are superseded by this contract.
+
+Disabled employee plugin bindings remain saved in the workbench but are excluded
+from the executable Profile. A disabled older package must not insert the same
+loader rows as its enabled replacement. Native snapshot migration uses the
+acknowledged Profile revision, never the largest prepared directory.
+
+Stable image releases retain runtime-start failure statistics as observations.
+The absolute 5% and relative 3 percentage point failure thresholds log warnings
+but do not block rollout advancement or observation completion. Target update
+failures, incomplete cutovers and release state checks remain enforced.

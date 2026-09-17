@@ -739,11 +739,11 @@ type OSCommandRunner struct{}
 func (OSCommandRunner) Run(ctx context.Context, name string, args []string, env []string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(os.Environ(), env...)
-	var output bytes.Buffer
+	var output, diagnostics bytes.Buffer
 	cmd.Stdout = &output
-	cmd.Stderr = &output
+	cmd.Stderr = &diagnostics
 	if err := cmd.Run(); err != nil {
-		return output.String(), fmt.Errorf("command failed: %w: %s", err, redact.Text(output.String()))
+		return output.String(), fmt.Errorf("command failed: %w: %s", err, redact.Text(output.String()+diagnostics.String()))
 	}
 	return output.String(), nil
 }
