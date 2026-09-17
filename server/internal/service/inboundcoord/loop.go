@@ -90,6 +90,11 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	} else {
 		logCoordinatorLLMRequest(turn, coordinationUserPrompt(turn), len(recalls) > 0)
 	}
+	// Both prefetches are in, so the render question is now fully determined by
+	// the proposal shape. Ask the likely one while routing is still thinking.
+	speculation := c.startConversationReplySpeculation(ctx, turn)
+	conversationSpeculationUsed := false
+	defer func() { recordUnusedConversationReplySpeculation(ctx, speculation, conversationSpeculationUsed) }()
 	ledger := newRetryLedger()
 	failWith := func(reason string, err error) (Decision, error) {
 		appendStep(protocol.ChatCoordinatorStep{Type: "error", Content: clipRunes(err.Error(), 800), Error: true})
@@ -212,7 +217,8 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					if callErr == nil && !conversationRepliesRendered {
 						for _, action := range decision.CoordinationActions {
 							if action.Kind == "acknowledge" && action.AckKind == "conversation" {
-								if renderErr := c.renderConversationReplies(ctx, turn, &decision, round); renderErr != nil {
+								conversationSpeculationUsed = true
+								if renderErr := c.renderConversationReplies(ctx, turn, &decision, round, speculation); renderErr != nil {
 									return fail(renderErr)
 								}
 								conversationRepliesRendered = true

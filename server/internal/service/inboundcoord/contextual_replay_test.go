@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,7 +20,15 @@ type contextualReplayCompleter struct {
 	observer          *frozenReplayCompleter
 	renderModel       string
 	renderCurrentOnly bool
-	upstreamErrors    []string
+	// The speculative render reports failures from its own goroutine.
+	mu             sync.Mutex
+	upstreamErrors []string
+}
+
+func (c *contextualReplayCompleter) recordedUpstreamErrors() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.upstreamErrors...)
 }
 
 func (c *contextualReplayCompleter) Chat(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
@@ -52,7 +61,9 @@ func (c *contextualReplayCompleter) Chat(ctx context.Context, params openai.Chat
 		if key := os.Getenv("MULTICA_LLM_API_KEY"); key != "" {
 			detail = strings.ReplaceAll(detail, key, "[redacted]")
 		}
+		c.mu.Lock()
 		c.upstreamErrors = append(c.upstreamErrors, detail)
+		c.mu.Unlock()
 	}
 	return completion, err
 }
@@ -136,9 +147,10 @@ func TestCoordinatorContextualReplay(t *testing.T) {
 			reads := &frozenReplayTools{scene: turn.ConversationID, recall: fixture.Recall}
 			ctx, cancel := context.WithTimeout(context.Background(), decisionTimeout)
 			d, callErr := (&Coordinator{Chat: completer, Tools: reads}).runLoop(ctx, turn)
+			observer.waitSettled()
 			cancel()
-			r := result{ID: tc.ID, RoutePassed: true, Reply: d.UserText, Action: d.Action, Actions: d.CoordinationActions, Rounds: observer.rounds, ElapsedMS: time.Since(started).Milliseconds()}
-			r.UpstreamErrors = completer.upstreamErrors
+			r := result{ID: tc.ID, RoutePassed: true, Reply: d.UserText, Action: d.Action, Actions: d.CoordinationActions, Rounds: observer.recordedRounds(), ElapsedMS: time.Since(started).Milliseconds()}
+			r.UpstreamErrors = completer.recordedUpstreamErrors()
 			if callErr != nil {
 				r.Failure = "loop failed; inspect private model rounds"
 			} else if tc.Ignore {
@@ -215,13 +227,13 @@ func TestCoordinatorConversationFocusedReplay(t *testing.T) {
 		c := &Coordinator{Chat: completer}
 		d := Decision{Action: ActionReply, CoordinationActions: []CoordinationAction{{Kind: "acknowledge", AckKind: "conversation", SourceRefs: []string{"u1"}}}}
 		ctx, cancel := context.WithTimeout(context.Background(), decisionTimeout)
-		err := c.renderConversationReplies(ctx, fixture.Turn, &d, 0)
+		err := c.renderConversationReplies(ctx, fixture.Turn, &d, 0, nil)
 		result := finishCheckResult{}
 		if err == nil {
 			result, err = c.checkFinish(ctx, fixture.Turn, d, nil, 0, nil)
 		}
 		cancel()
-		r := trial{Index: i, Reply: d.UserText, Verdict: result.Verdict, ElapsedMS: time.Since(started).Milliseconds(), Rounds: observer.rounds, UpstreamErrors: completer.upstreamErrors}
+		r := trial{Index: i, Reply: d.UserText, Verdict: result.Verdict, ElapsedMS: time.Since(started).Milliseconds(), Rounds: observer.recordedRounds(), UpstreamErrors: completer.recordedUpstreamErrors()}
 		if err != nil {
 			r.Failure = "renderer or review failed; inspect private report"
 			t.Error(r.Failure)
