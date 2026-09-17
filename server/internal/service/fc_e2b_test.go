@@ -994,6 +994,23 @@ func TestDetectFCE2BRunnerLaunchRejectsImageWithoutSupportedEntrypoint(t *testin
 	}
 }
 
+func TestFCE2BHealthPortAvoidsPlatformClientPorts(t *testing.T) {
+	// This production task previously selected 38476, already held by an
+	// established loopback connection owned by the FC entrypoint process.
+	taskID := util.MustParseUUID("f1157fc9-8ff6-4e70-9dfa-be306328f5c6")
+	if port := fcE2BHealthPortForTask(taskID); port < 20000 || port >= 30000 {
+		t.Fatalf("task health port overlaps platform services or ephemeral ports: %d", port)
+	}
+	// Exercise UUID variations, including ports that used to overlap the
+	// provider proxy (33123) and the kernel's outgoing connection range.
+	for n := 0; n < 65536; n++ {
+		taskID.Bytes[14], taskID.Bytes[15] = byte(n>>8), byte(n)
+		if port := fcE2BHealthPortForTask(taskID); port < 20000 || port >= 30000 {
+			t.Fatalf("task %x selected unsafe health port %d", taskID.Bytes, port)
+		}
+	}
+}
+
 func TestFCE2BExecRunOnceWarmSandboxDoesNotInjectColdStart(t *testing.T) {
 	runner := &fakeCommandRunner{}
 	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
