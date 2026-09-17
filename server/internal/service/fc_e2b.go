@@ -74,11 +74,14 @@ const (
 	fcE2BRunnerClaimPollInterval    = 500 * time.Millisecond
 	fcE2BSandboxCreateMaxAttempts   = 4
 	fcE2BRunOnceHealthPortBase      = 20000
-	fcE2BRunOnceHealthPortSpan      = 30000
-	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
-	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
-	fcE2BChatSessionIDEnvKey        = "MULTICA_CHAT_SESSION_ID"
-	fcE2BA2AIsolationRoot           = "/tmp/multica-dws"
+	// Keep daemon listeners below Linux's ephemeral range (32768-60999).
+	// FC entrypoint connections can otherwise occupy a task's hashed port
+	// before run-once starts, even when no other daemon is listening.
+	fcE2BRunOnceHealthPortSpan  = 10000
+	fcE2BRootRunnerInstallDir   = "/usr/local/libexec"
+	fcE2BLegacyRunnerInstallDir = "/usr/local/bin"
+	fcE2BChatSessionIDEnvKey    = "MULTICA_CHAT_SESSION_ID"
+	fcE2BA2AIsolationRoot       = "/tmp/multica-dws"
 )
 
 var errAgentIdentityContextTokenRefreshRequired = errors.New("Agent Identity ContextToken refresh required")
