@@ -786,12 +786,12 @@
         "COORD.F15"
       ],
       "context_a": "用户要求从岗位领域材料选一份看看，关联里仅有旧skills/工程事项，没有同名卡片；岗位资料能说明其业务对象。",
-      "context_b": "用户明确询问此前那份工作的执行/进度，当前可读证据需要按该工作匹配。",
-      "expected_effects": "A按岗位数据范围安排有界材料检索，不把协调任务卡当领域材料、不因关联缺名否认能力或问任意范围；审核用已有岗位证据给出具体对象/能力纠正。B才回答匹配工作的真实状态，不能用旧skills清单代替。两者都不新增数据访问或外发权限，不硬编码某个词的行业含义，也不要求先写短合同。",
+      "context_b": "用户明确询问此前那份工作的执行/进度，当前可读证据需要按该工作匹配；包括对象本身就在技能目录里、同时又确是本员工已受理的那件事（如「刚才交给你的日报整理完了吗」）的相交情形。",
+      "expected_effects": "A按岗位数据范围安排有界材料检索，不把协调任务卡当领域材料、不因关联缺名否认能力或问任意范围；审核用已有岗位证据给出具体对象/能力纠正。B才回答匹配工作的真实状态，不能用旧skills清单代替；相交情形以已受理为准，审核不得因目录命中把正确的进度回答revise成新工作。两者都不新增数据访问或外发权限，不硬编码某个词的行业含义，也不要求先写短合同。",
       "verification": "not_run",
-      "evidence_status": "pending_reference",
-      "evidence_source": "真实消息回放：new-eb0e/d8b2、N_progress",
-      "evidence_note": "本轮五条真实消息候选待复跑；精确fixture/报告路径由主线程回填。"
+      "evidence_status": "production_failure_recorded",
+      "evidence_source": "正式 trace 2aab414d5323409db82de83d83a57a9a、df6a74eb963a4b2da87c956134f9201b（A支失败）、943f462ff6f54dfd98d7b369269b31f1（改写措辞后正确start_work）",
+      "evidence_note": "2026-09-17 客户交付-数字员工小群：问「梳理一下昨天的日报搜集情况」「昨天所有人的日报都搜集齐了么」，assoc预取返回三条同带「日报」字样的协调事项，主循环用report_status引用r1/r3代答，finish_check以 request is a status inquiry, not a new work execution 放行；agent_skills 里 work-report-operator 的描述已含「查询日报情况」，技能目录完整且 catalog_complete=true。该群 dws_chat_history 恒为 CrossOrgPermissionDenied，history_status=unavailable，关联事项是唯一场景信号。模型回放待补。"
     },
     {
       "id": "f06_delegated_sample_choices",
