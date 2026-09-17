@@ -24,6 +24,26 @@ func TestStripLeadingMentionKeepsDeliberateMentions(t *testing.T) {
 	}
 }
 
+// An executor writes the display form of an @, so the placeholder rule alone
+// leaves the duplicate in place.
+func TestStripLeadingAddressingCoversTheDisplayForm(t *testing.T) {
+	for _, tc := range []struct{ name, content, id, display, want string }{
+		{"display prefix", "@冬翔  群里文档实测完了", "sender", "冬翔", "群里文档实测完了"},
+		{"full width space", "@冬翔　结论如下", "sender", "冬翔", "结论如下"},
+		{"punctuation boundary", "@冬翔，结论如下", "sender", "冬翔", "，结论如下"},
+		{"both forms", "<@sender>@冬翔 结论", "sender", "冬翔", "结论"},
+		{"another person", "@菲迪 帮忙看下", "sender", "冬翔", "@菲迪 帮忙看下"},
+		{"longer name", "@冬翔翔 你看下", "sender", "冬翔", "@冬翔翔 你看下"},
+		{"inside sentence", "已经同步给 @冬翔 了", "sender", "冬翔", "已经同步给 @冬翔 了"},
+		{"unknown display name", "@冬翔 结论", "sender", "", "@冬翔 结论"},
+		{"only the opening", "@冬翔", "sender", "冬翔", ""},
+	} {
+		if got := StripLeadingAddressing(tc.content, tc.id, tc.display); got != tc.want {
+			t.Errorf("%s: got %q want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 // A quote reply is already addressed to the quoted sender by DingTalk, so the
 // placeholder a plain send would need must not reach the reply content.
 func TestSendQuoteReplyDropsDuplicateMention(t *testing.T) {
