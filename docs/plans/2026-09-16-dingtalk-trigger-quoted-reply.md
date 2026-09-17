@@ -68,3 +68,15 @@ CR 36159468 随 run 3108452697 部署预发成功（代码合并/构建/预发�
 发布口径要分开看：**提示词那一句随服务端发布立即生效；shim 的剥离随沙箱镜像里的 `multica` 生效**（FC 走 `multica-fc-hermes-runtime` 候选镜像，正式走 ASB 发布口径），服务端发布不覆盖它。冻结的显示名字段随服务端发布先落库，旧任务没有该字段时退化成只剥占位符，不会产生新的双 @。
 
 验收：`execenv`、`dwsclient`、`handler` 的相关用例通过（新增显示名剥离、已是引用回复被剥、引用别的消息不动、只剩 @ 不清空等用例）；`internal/handler` 失败集合与本分支基线 `5fa1416ba` 逐条相同（104 条，本地库既有问题）。真实群聊验收要等带新 `multica` 的沙箱镜像，未跑不记为通过。
+
+### 预发验收（2026-09-17）
+
+CR 36176708 随 run `3108607637` 部署预发成功（代码合并/构建/制品扫描/预发部署全 SUCCESS，预发 10:13:25 重启）。
+
+提示词这半已生效并有对照：
+
+- 新提示进了沙箱简报：Langfuse trace `2b9d045770684009881d9d647b3251b0` 的 `llm.call.1` 输入里，`- origin reply: dws chat +messages-reply …` 后带上了 `(the quote already @s the sender; do not open <text> with @them)`。
+- 执行器不再自己写寻址前缀：本次 `reply_text.txt` 首行直接是「结论：支持定时发布。」；对照昨天同一个群的 `reply.txt` 首行是「@冬翔  群里文档…」。
+- 群里读回 10:20:07 那条是引用回复（`quotedMessage.openMessageId=msghhRj14QRpqpTMCjdEnYD3A==`），正文 @ 只出现一次。
+
+仍未验证：shim 的剥离随沙箱镜像里的 `multica` 生效，本次预发服务端发布不包含它。也就是说现在靠的是执行器遵守提示，不是 Host 兜底；模型不遵守时仍会双 @。真实的 Host 兜底要等带新 `multica` 的镜像（FC 候选镜像或 ASB 发布口径）再验一次。单次样本不等于稳定结论。
