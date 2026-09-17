@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-15.9`。装配版本：`36`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-15.10`。装配版本：`37`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -165,7 +165,7 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 终结审查只呈现唯一candidate.actions视图；Host为每项分配action_ref=aN，工作动作使用实际提交时的规范化purpose/context，不同时展示旧action/items/non_work_refs投影。review返回 `verdict=allow|revise`、从Host本轮 `quote_options.requests[{ref:qN,text}] / candidates[{ref:cN,text}]`选择的必填 `request_quote_ref / candidate_quote_ref`、最多160字符reason、未处理 `missing_source_refs[]`及必填 `work_checks[]`。每个start_work/continue_work恰好对应一个 `{action_ref, deliverables: single|multiple|none}`：single为一个独立交付物（可含相关步骤、同类批量变更，如同一类配置改多个对象），multiple为本动作purpose混入了不同种类产出，none为没有实际工作。产品查证与另起通知草稿是两个产出；同一通知内整理议程/校对、同一类负责人批量改配是一个产物的步骤。审查只按该动作自身purpose分类，不得因整窗或兄弟动作还有其他请求把已拆开的动作标成multiple；未覆盖请求用 missing_source_refs。非工作动作不填检查项，纯非工作必须为空数组。Host校验引用与恰好覆盖，allow携带multiple/none不放行；交付物语义仍由LLM判断，不能据此声称Host已确定理解用户意图。规则驱动revise须提供上述200字符constraint_quote，其余填空。Host只接受本轮选项中的引用ID，绑定其原始内容并继续记录 `RequestQuote / CandidateQuote`，不再让模型自由转录引文。完整window仍是语义全集，选中的短证据不能缩小请求范围。Host严格验证引用、verdict/missing_source_refs，只有满足上述work_checks一致性的allow才可提交；非空constraint_quote无效时按上述revise修正/allow丢弃规则处理，decline动作本身仍需真实适用边界。空原窗/无文字ignore的哨兵由Host选项提供，模型仍选择对应qN/cN；既不重新开放旧模型动作，也不因换行/转义重抄错误而丢失有效裁决。
 
-岗位业务对象/产物与Coordinator自己的issue/task记录分开解释。对有资格响应的请求，用户已给岗位业务对象类别并让员工挑任意样本时，实例、人选和常规时间范围属于委派给Agent的选择，不是missing_fields。可查询事实、可见范围及身份/权限核验交Executor；只在确实必须用户决定的安全/授权/目标类别缺口时clarify，不让用户补齐可查询资料。取样仍是岗位数据范围内的有界检索，不能变成从关联事项名称中选一张卡；关联中没有该名字不能据此否认能力或制造澄清。仅当用户明确询问所做工作的执行/进度时才解释为任务元数据，并且必须回答被问的工作。该原则依据现有岗位、能力及当前引用，不做平台固定词义映射，不要求先写短合同，也不新增数据访问或外发授权；执行器继续检查身份/权限。
+岗位业务对象/产物与Coordinator自己的issue/task记录分开解释。对有资格响应的请求，用户已给岗位业务对象类别并让员工挑任意样本时，实例、人选和常规时间范围属于委派给Agent的选择，不是missing_fields。可查询事实、可见范围及身份/权限核验交Executor；只在确实必须用户决定的安全/授权/目标类别缺口时clarify，不让用户补齐可查询资料。取样仍是岗位数据范围内的有界检索，不能变成从关联事项名称中选一张卡；关联中没有该名字不能据此否认能力或制造澄清。仅当用户明确询问所做工作的执行/进度时才解释为任务元数据，并且必须回答被问的工作。技能目录已列出的岗位业务对象即使用「齐了么」「情况怎样」这类状态句式提问也仍是工作；标题里带同样词的关联事项不是该对象的数据，审查对这类 report_status 返回 revise。该原则依据现有岗位、能力及当前引用，不做平台固定词义映射，不要求先写短合同，也不新增数据访问或外发授权；执行器继续检查身份/权限。
 
 必要澄清不能来自无关旧事项的干扰。岗位或能力证据已能解释“日志”等对象时，非工作审核应revise错误澄清，并在reason指出有证据支持的具体对象及能力路由，让主模型据此纠正；不需新增scope LLM或把完整SOP灌回主循环。该纠正只解释岗位语义，不新增权限，执行器仍核实际调用者身份/访问权。真正缺少对象依据时仍可澄清。
 
@@ -334,3 +334,13 @@ start_work/continue_work的接单回复由Host生成，模型仅可选择闭合r
 本轮只做提示词与审查层收窄：模块 `inbound` 升 29、`finish_check_work` 升 22，预算相应上调，无工具 schema、Host 守卫或状态机变化。结构检查通过。
 
 预发同轮观察（2026-09-16 13:08/13:13，群 `cidVaO557dsSgYcgnvRNbwY4g==`）：「你去查一下到底什么原因」派出 WS-271 `冬翔委托：排查预发工作台登录转圈超时问题，定位具体原因`；与璟琦同形的纯抱怨「切工作区每次都要整个重新加载，慢…再不解决我天天跟你念叨」派出 WS-272 `冬翔委托：排查工作台切换工作区时全量重新加载导致的性能问题，定位具体原因`，都没有出现被发明的整理/提交/审批步骤。这是正样本观察，未对同一窗口跑修复前提示词做 A/B，模型回放仍缺，案例保持 `not_run`。证据见 `docs/reports/2026-09-16-dingtalk-trigger-quoted-reply-e2e.md`。
+
+### 岗位业务对象的状态句式仍是工作（2026-09-15.10）
+
+触发证据：正式群「客户交付-数字员工小群」（`cidG5GNL/T3DWwkDf9LxiEJ5w==`，2026-09-17）。云欢问「梳理一下昨天的日报搜集情况」（trace `2aab414d5323409db82de83d83a57a9a`）与「昨天所有人的日报都搜集齐了么？」（`df6a74eb963a4b2da87c956134f9201b`），两轮都用 `report_status` 引用 `r1`（Host 预取的 3 条关联事项）和 `r3`（`work_state`）代答，`finish_check` 均 allow，reason 为 `request is a status inquiry, not a new work execution; report_status with loaded state is appropriate.`。同一请求改写成「按照日报提交的技能要求检查……而不是看目前正在处理的问题」后，`943f462ff6f54dfd98d7b369269b31f1` 立即 `start_work`。三轮的证据、工具、权限与技能目录完全相同，只有措辞变化，属纯语义路由失败。
+
+放大因素有两条，都不是缺数据：预取返回的三条事项标题分别为「将李分分、刘雪、赵璐璐加入日报名单，收录其日报并向三人回复收录完成」「……加入日报名单」「向孙潇页(笑曳)回报近期日报中质量较好的案例清单」，与被问对象字面高度重合；该群的 `dws_chat_history` 恒为 `CrossOrgPermissionDenied`，`history_status=unavailable`，关联事项因此是唯一场景信号。技能目录本身是完整的（`catalog_complete=true`，13 条），`work-report-operator` 的简介已含「查询日报情况」。
+
+现行合同：技能目录已列出的岗位业务对象，即使用「齐了么」「情况怎样」这类状态句式提问，仍按工作路由；标题里带同样词的关联事项不是该对象的数据。`report_status` 只适用于对象是本员工自己已受理事项的提问，原「Asking whether existing work is done」因此收窄为「an accepted matter」，它继续管它本来要管的 `continue_work` 滥用。两个集合相交时（既是目录对象、又确是本员工已受理的那件事，例如「刚才交给你的日报整理完了吗」）以已受理为准，仍按 `report_status` 引用该事项已加载的状态；`finish_check` 只对主语是本员工从未受理过的目录对象的 `report_status` 返回 revise，不因目录命中否决正确的进度回答。规则归属 COORD.F04，正反例见 `f04_role_material_vs_coordination_record`（已回填上述三条 trace 作为证据，模型回放仍缺，保持 `not_run`）。
+
+本轮只做提示词与审查层收窄：模块 `inbound` 升 30、`finish_check` 升 23，预算相应上调，无工具 schema、Host 守卫或状态机变化。主循环 system prompt 9494 字符，仍在 9500 门槛内；判别句只在 `inbound` 留一句，完整规则放在不计入该门槛的 `finish_check`。结构检查与 inboundcoord 全包用例通过。
