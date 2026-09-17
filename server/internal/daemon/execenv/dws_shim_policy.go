@@ -179,6 +179,47 @@ func dwsMentionsOnly(parsed dwsCommand, sender string) bool {
 	return true
 }
 
+func firstNonEmptyDWSValue(parsed dwsCommand, names ...string) string {
+	for _, name := range names {
+		if value := strings.TrimSpace(parsed.values[name]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// replaceDWSContent rewrites only the message body and keeps every other
+// argument byte-for-byte. Content passed positionally or after `--` is left
+// alone: those args are message text, and rebuilding them could change what
+// is actually sent.
+func replaceDWSContent(args []string, parsed dwsCommand, transform func(string) string) []string {
+	for _, name := range []string{"content", "text", "markdown"} {
+		value := parsed.values[name]
+		if value == "" {
+			continue
+		}
+		next := transform(value)
+		if next == value || strings.TrimSpace(next) == "" {
+			return args
+		}
+		flag := "--" + name
+		for i := 0; i < len(args) && i < parsed.separator; i++ {
+			if args[i] == flag && i+1 < len(args) {
+				out := append([]string{}, args...)
+				out[i+1] = next
+				return out
+			}
+			if strings.HasPrefix(args[i], flag+"=") {
+				out := append([]string{}, args...)
+				out[i] = flag + "=" + next
+				return out
+			}
+		}
+		return args
+	}
+	return args
+}
+
 func dwsBooleanFlag(name string) bool {
 	switch name {
 	case "ai-tag", "at-all", "help", "debug", "dry-run", "mock", "verbose", "yes":
@@ -225,10 +266,19 @@ func RewriteDWSOriginReply(args []string, policy *protocol.DingTalkMessagePolicy
 	if parsed.conversationID == "" || parsed.conversationID != cid {
 		return args
 	}
-	if parsed.values["message-id"] != "" || parsed.values["ref-msg-id"] != "" {
-		return args
-	}
 	sender := strings.TrimSpace(policy.ReplyToSenderOpenDingTalkID)
+	name := strings.TrimSpace(policy.ReplyToSenderDisplayName)
+	if quoted := firstNonEmptyDWSValue(parsed, "message-id", "ref-msg-id"); quoted != "" {
+		// The executor already quoted a message itself. Quoting something else
+		// is its own call; only the duplicate opening on this task's trigger
+		// message is removed, and every other argument stays byte-for-byte.
+		if quoted != origin {
+			return args
+		}
+		return replaceDWSContent(args, parsed, func(content string) string {
+			return dwsclient.StripLeadingAddressing(content, sender, name)
+		})
+	}
 	// A quote reply takes no at list; DingTalk addresses the quoted sender by
 	// itself. Mentions of anyone else would be silently dropped, so that send
 	// stays a plain one.
@@ -245,7 +295,7 @@ func RewriteDWSOriginReply(args []string, policy *protocol.DingTalkMessagePolicy
 	if content == "" {
 		return args
 	}
-	content = dwsclient.StripLeadingMention(content, sender)
+	content = dwsclient.StripLeadingAddressing(content, sender, name)
 	if strings.TrimSpace(content) == "" {
 		return args
 	}

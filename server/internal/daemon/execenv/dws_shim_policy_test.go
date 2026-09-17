@@ -73,6 +73,49 @@ func TestRewriteDWSOriginReplyQuotesOriginConversation(t *testing.T) {
 	}
 }
 
+// The executor may quote the trigger message itself. DingTalk addresses the
+// quoted sender, so an opening it wrote by hand shows that person twice.
+func TestRewriteDWSOriginReplyStripsExecutorAddressingOnItsOwnQuote(t *testing.T) {
+	t.Parallel()
+	policy := &protocol.DingTalkMessagePolicy{
+		ReplyToOpenMsgID: "msg-origin", ReplyConversationID: "cid-origin",
+		ReplyToSenderOpenDingTalkID: "sender-open-id", ReplyToSenderDisplayName: "冬翔",
+	}
+	quoted := func(content string) []string {
+		return []string{"chat", "+messages-reply", "--group", "cid-origin", "--message-id", "msg-origin",
+			"--content", content, "--ai-tag=false", "--yes", "--format", "json"}
+	}
+	for _, tc := range []struct{ name, in, want string }{
+		{"display name", "@冬翔  群里文档实测完了", "群里文档实测完了"},
+		{"placeholder", "<@sender-open-id> 结论如下", "结论如下"},
+		{"both forms", "<@sender-open-id>@冬翔 结论如下", "结论如下"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := RewriteDWSOriginReply(quoted(tc.in), policy)
+			if !reflect.DeepEqual(got, quoted(tc.want)) {
+				t.Fatalf("got %#v", got)
+			}
+		})
+	}
+	// Someone else, a mention inside the sentence, and a name that only starts
+	// the same way are all real content.
+	for _, keep := range []string{"@菲迪 帮忙看下", "结论已经同步给 @冬翔 了", "@冬翔翔 你看下"} {
+		if got := RewriteDWSOriginReply(quoted(keep), policy); !reflect.DeepEqual(got, quoted(keep)) {
+			t.Fatalf("stripped real content %q: %#v", keep, got)
+		}
+	}
+	// A reply that is nothing but the opening keeps it; an empty send fails.
+	onlyMention := quoted("@冬翔")
+	if got := RewriteDWSOriginReply(onlyMention, policy); !reflect.DeepEqual(got, onlyMention) {
+		t.Fatalf("emptied the reply: %#v", got)
+	}
+	// Quoting a different message stays the executor's own call.
+	other := []string{"chat", "+messages-reply", "--group", "cid-origin", "--message-id", "msg-other", "--content", "@冬翔 ok"}
+	if got := RewriteDWSOriginReply(other, policy); !reflect.DeepEqual(got, other) {
+		t.Fatalf("touched another quote: %#v", got)
+	}
+}
+
 func TestDWSMessagePolicySupportedEntryPoints(t *testing.T) {
 	t.Parallel()
 	for _, command := range []string{"chat message send", "chat message reply", "chat send", "chat reply", "chat +send", "chat +dm", "chat +send-to-group", "chat +messages-send", "chat +messages-reply"} {

@@ -93,24 +93,25 @@ func dingTalkOriginFromStored(stored persistedDispatchContext) (openMsgID, conve
 	return openMsgID, conversationID
 }
 
-// dingTalkOriginSenderOpenDingTalkID is who wrote openMsgID, taken only from
-// the stored event. An unmatched id keeps the sender unknown rather than
-// guessing the window's first speaker.
-func dingTalkOriginSenderOpenDingTalkID(data DispatchEventData, openMsgID string) string {
+// dingTalkOriginSender is who wrote openMsgID, taken only from the stored
+// event. An unmatched id keeps the sender unknown rather than guessing the
+// window's first speaker. The display name travels with the id because an
+// executor addresses people by name, not by placeholder.
+func dingTalkOriginSender(data DispatchEventData, openMsgID string) (openDingTalkID, displayName string) {
 	openMsgID = strings.TrimSpace(openMsgID)
 	if openMsgID == "" {
-		return ""
+		return "", ""
 	}
 	for _, message := range data.Messages {
 		if strings.TrimSpace(message.OpenMsgID) != openMsgID {
 			continue
 		}
 		if id := strings.TrimSpace(message.SenderOpenDingTalkID); id != "" {
-			return id
+			return id, strings.TrimSpace(message.SenderDisplayName)
 		}
 		break
 	}
-	return ""
+	return "", ""
 }
 
 func applyDingTalkOriginReply(policy *protocol.DingTalkMessagePolicy, stored persistedDispatchContext) {
@@ -120,7 +121,8 @@ func applyDingTalkOriginReply(policy *protocol.DingTalkMessagePolicy, stored per
 	openMsgID, conversationID := dingTalkOriginFromStored(stored)
 	policy.ReplyToOpenMsgID = openMsgID
 	policy.ReplyConversationID = conversationID
-	policy.ReplyToSenderOpenDingTalkID = dingTalkOriginSenderOpenDingTalkID(stored.EventData, openMsgID)
+	policy.ReplyToSenderOpenDingTalkID, policy.ReplyToSenderDisplayName =
+		dingTalkOriginSender(stored.EventData, openMsgID)
 }
 
 func fillDingTalkOriginReply(in dingtalkresponse.ActionInput, task db.AgentTaskQueue, issue db.Issue) dingtalkresponse.ActionInput {
@@ -153,5 +155,8 @@ func dingTalkOriginReplyHint(cid, openMsgID string) string {
 	if cid == "" || openMsgID == "" {
 		return ""
 	}
-	return "- origin reply: `dws chat +messages-reply --group " + cid + " --message-id " + openMsgID + " --content <text> --yes`"
+	// DingTalk renders a quote reply already addressed to the quoted sender, so
+	// a `@name` opening in <text> shows that person twice.
+	return "- origin reply: `dws chat +messages-reply --group " + cid + " --message-id " + openMsgID +
+		" --content <text> --yes` (the quote already @s the sender; do not open <text> with @them)"
 }
