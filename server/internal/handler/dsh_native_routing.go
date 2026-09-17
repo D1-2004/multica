@@ -154,6 +154,11 @@ func (h *Handler) routeDSHNativeRequest(w http.ResponseWriter, r *http.Request, 
 	if !mux && (r.Method != "POST" || !strings.HasPrefix(path, "/api/")) {
 		return false
 	}
+	// Leave plugin RPC bodies (including uploads) and their gateway handling
+	// untouched. Only known session routes need inspection by this layer.
+	if !mux && path != "/api/session/list" && !nativeSessionMethod(strings.TrimPrefix(path, "/api/")) {
+		return false
+	}
 	if !nativeRequestOrigin(r, origin) {
 		writeError(w, 403, "invalid DSH native request origin")
 		return true

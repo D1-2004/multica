@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/multica-ai/multica/server/internal/dshhost"
 )
 
 func TestNativeSessionIdentity(t *testing.T) {
@@ -177,5 +179,17 @@ func TestNativePluginRPCsStayOpaque(t *testing.T) {
 	sid, err := nativeStreamSession(nativeMuxOpen{Endpoint: "plugin/follow", Payload: json.RawMessage(`{"args":{"request":{"sessionId":"opaque-plugin-id"}}}`)})
 	if err != nil || sid != "" {
 		t.Fatal("plugin stream identity was interpreted", sid, err)
+	}
+}
+
+func TestNativePluginUploadPassesThroughUntouched(t *testing.T) {
+	body := strings.Repeat("x", 5<<20)
+	r := httptest.NewRequest(http.MethodPost, "https://example.com/native/api/plugin/upload", strings.NewReader(body))
+	if (&Handler{}).routeDSHNativeRequest(httptest.NewRecorder(), r, dshhost.NativeAccess{}, "https://example.com", "/native/") {
+		t.Fatal("plugin upload was intercepted")
+	}
+	got, err := io.ReadAll(r.Body)
+	if err != nil || string(got) != body {
+		t.Fatal("plugin upload body was changed")
 	}
 }
