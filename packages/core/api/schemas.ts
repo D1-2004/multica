@@ -4530,7 +4530,8 @@ export const DshPluginListSchema = z.array(DshPluginSchema);
 
 export const AgentDshPluginListSchema = z.array(
   DshPluginBaseSchema.transform(
-    (row): AgentDshPlugin => ({ ...toDshPlugin(row), enabled: row.enabled !== false }),
+    (row): AgentDshPlugin => ({ ...toDshPlugin(row), enabled: row.enabled !== false,
+      configRevision: typeof row.config_revision === "number" && Number.isSafeInteger(row.config_revision) && row.config_revision >= 0 ? row.config_revision : 0 }),
   ),
 );
 

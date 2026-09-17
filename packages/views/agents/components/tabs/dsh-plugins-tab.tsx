@@ -59,14 +59,14 @@ function DshPluginsEditor({agent, runtime, canEdit, wsId}: {agent: Agent; runtim
   const queryClient = useQueryClient();
   const [showAdd, setShowAdd] = useState(false);
   const [configPlugin, setConfigPlugin] = useState<AgentDshPlugin | null>(null);
-  const {draft, setDraft, configChanges, setConfigChanges} = useDshPluginDraftStore();
+  const {draft, base, setDraft, configChanges, setConfigChanges} = useDshPluginDraftStore();
   const [targetRevision, setTargetRevision] = useState<string | null>(null);
   const profile = useQuery({...dshProfileOptions(wsId, agent.id), enabled: agent.runtime_mode === "cloud" && runtime != null && isFCE2BRuntime(runtime), refetchInterval: targetRevision ? 2000 : 5000});
 
   const needsFilesystem = agent.runtime_mode === "cloud" && runtime != null && isFCE2BRuntime(runtime);
   const home = useQuery({ ...dshHomeOptions(wsId, agent.id), enabled: needsFilesystem });
   const filesystemReady = !needsFilesystem || (!home.isError && home.data?.provisioned === true && home.data.step === 6);
-  const attached = useQuery(agentDshPluginsOptions(wsId, agent.id));
+  const attached = useQuery({...agentDshPluginsOptions(wsId, agent.id), refetchInterval: needsFilesystem ? 5000 : false});
   const workspacePlugins = useQuery(dshPluginListOptions(wsId));
 
   const attachedRows = useMemo(() => draft ?? attached.data ?? [], [draft, attached.data]);
@@ -88,7 +88,7 @@ function DshPluginsEditor({agent, runtime, canEdit, wsId}: {agent: Agent; runtim
   const finish = () => { setDraft(null); setConfigChanges({}); setTargetRevision(null); invalidate(); };
   const save = useMutation({
     mutationFn: async () => {
-      await api.setAgentDshPlugins(agent.id, attachedRows.map(({id, enabled}) => ({id, enabled, ...(configChanges[id] ? {configChange: configChanges[id]} : {})})));
+      await api.setAgentDshPlugins(agent.id, attachedRows.map(({id, enabled}) => ({id, enabled, ...(configChanges[id] ? {configChange: configChanges[id]} : {})})), base ?? attached.data ?? []);
       queryClient.setQueryData(agentDshPluginsOptions(wsId, agent.id).queryKey, attachedRows);
       if (!managed) return null;
       setTargetRevision("pending");
@@ -113,9 +113,9 @@ function DshPluginsEditor({agent, runtime, canEdit, wsId}: {agent: Agent; runtim
     onSuccess: (status) => { if (status?.desiredRevision) setTargetRevision(status.desiredRevision); invalidate(); },
   });
   const applying = save.isPending || targetRevision !== null || (managed && !!profile.data?.desiredRevision && profile.data.desiredRevision !== "0" && !profile.data.current);
-  const locked = !filesystemReady || attached.isPending || applying || (managed && (profile.isPending || profile.isError));
+  const locked = !filesystemReady || attached.isPending || attached.isError || applying || (managed && (profile.isPending || profile.isError));
   const dirty = draft !== null || Object.keys(configChanges).length > 0;
-  const edit = (rows: AgentDshPlugin[]) => { if (!locked) setDraft(rows); };
+  const edit = (rows: AgentDshPlugin[]) => { if (!locked) setDraft(rows, attached.data ?? []); };
   const handleToggle = (id: string, enabled: boolean) => edit(attachedRows.map((row) => row.id === id ? {...row, enabled} : row));
   const handleRemove = (id: string) => {
     if (locked) return;
@@ -154,6 +154,7 @@ function DshPluginsEditor({agent, runtime, canEdit, wsId}: {agent: Agent; runtim
         </div>
       )}
 
+      {attached.isError && <p role="alert" className="text-sm text-destructive">{t(($) => $.tab_body.dsh_plugins.sync_failed)}</p>}
       <section className="space-y-3" aria-busy={applying}>
         {canEdit && <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
           <Button size="sm" disabled={locked || !dirty} onClick={() => save.mutate()}>
@@ -228,7 +229,7 @@ function DshPluginsEditor({agent, runtime, canEdit, wsId}: {agent: Agent; runtim
         )}
       </section>
 
-      {configPlugin && canEdit && !locked && <DshPluginConfigDialog key={`${agent.id}:${configPlugin.id}`} wsId={wsId} agentId={agent.id} plugin={configPlugin} attached={(attached.data ?? []).some((row) => row.id === configPlugin.id)} initialChange={configChanges[configPlugin.id]} onStage={(change) => {setConfigChanges((current) => ({...current, [configPlugin.id]: change})); setConfigPlugin(null);}} onClose={() => setConfigPlugin(null)} />}
+      {configPlugin && canEdit && !locked && <DshPluginConfigDialog key={`${agent.id}:${configPlugin.id}`} wsId={wsId} agentId={agent.id} plugin={configPlugin} attached={(attached.data ?? []).some((row) => row.id === configPlugin.id)} initialChange={configChanges[configPlugin.id]} onStage={(change) => {edit(attachedRows); setConfigChanges((current) => ({...current, [configPlugin.id]: change})); setConfigPlugin(null);}} onClose={() => setConfigPlugin(null)} />}
 
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent>

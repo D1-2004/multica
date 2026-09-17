@@ -6169,7 +6169,7 @@ func (s *TaskService) RecoverQueuedFCE2BTask(ctx context.Context, task db.AgentT
 	if !IsFCE2BRuntime(rt) {
 		return
 	}
-	tasks, err := s.Queries.ListAgentTasks(ctx, task.AgentID)
+	tasks, err := s.Queries.ListAgentPendingTasks(ctx, task.AgentID)
 	if err != nil {
 		slog.Warn("queued FC/E2B recovery could not check blockers",
 			"task_id", util.UUIDToString(task.ID),

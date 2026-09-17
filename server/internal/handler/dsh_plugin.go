@@ -669,6 +669,10 @@ func (h *Handler) ListAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if err := h.syncAgentNativePlugins(r.Context(), agent); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "native plugin synchronization is pending; retry shortly")
+		return
+	}
 	rows, err := h.Queries.ListDshPluginsForAgent(r.Context(), db.ListDshPluginsForAgentParams{
 		AgentID:     agent.ID,
 		WorkspaceID: agent.WorkspaceID,
@@ -679,7 +683,8 @@ func (h *Handler) ListAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 	}
 	type agentPluginResponse struct {
 		DshPluginResponse
-		Enabled bool `json:"enabled"`
+		Enabled        bool  `json:"enabled"`
+		ConfigRevision int64 `json:"config_revision"`
 	}
 	resp := make([]agentPluginResponse, len(rows))
 	for i, row := range rows {
@@ -693,7 +698,15 @@ func (h *Handler) ListAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 				Catalog: row.Catalog, ValidatedDshVersion: row.ValidatedDshVersion,
 				CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 			}),
-			Enabled: row.Enabled,
+			Enabled:        row.Enabled,
+			ConfigRevision: row.ConfigRevision,
+		}
+		if config, err := storedAgentDshPluginConfig(row); err == nil && config.Package != nil {
+			resp[i].ResolvedVersion = config.Package.Version
+			resp[i].Integrity = config.Package.Integrity
+			resp[i].SourceKind = config.Package.SourceKind
+			resp[i].SourceSpec = config.Package.SourceSpec
+			resp[i].BundleRows = config.Package.BundleRows
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -706,11 +719,38 @@ type AgentDshPluginConfigChange struct {
 }
 
 type SetAgentDshPluginsRequest struct {
-	Plugins []struct {
+	ExpectedPlugins *[]expectedDshPlugin `json:"expected_plugins,omitempty"`
+	Plugins         []struct {
 		ID           string                      `json:"id"`
 		Enabled      *bool                       `json:"enabled"`
 		ConfigChange *AgentDshPluginConfigChange `json:"config_change,omitempty"`
 	} `json:"plugins"`
+}
+
+type expectedDshPlugin struct {
+	ID             string `json:"id"`
+	Enabled        bool   `json:"enabled"`
+	ConfigRevision int64  `json:"config_revision"`
+}
+
+func sameDshPluginBindings(expected []expectedDshPlugin, rows []db.ListDshPluginsForAgentRow) bool {
+	if len(expected) != len(rows) {
+		return false
+	}
+	byID := map[string]expectedDshPlugin{}
+	for _, row := range expected {
+		if _, ok := byID[row.ID]; ok {
+			return false
+		}
+		byID[row.ID] = row
+	}
+	for _, row := range rows {
+		item, ok := byID[uuidToString(row.ID)]
+		if !ok || item.Enabled != row.Enabled || item.ConfigRevision != row.ConfigRevision {
+			return false
+		}
+	}
+	return true
 }
 
 // SetAgentDshPlugins replaces the agent's bindings. Every id is checked against
@@ -725,6 +765,10 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 	// uses. loadAgentForUser only proves the caller can SEE the agent, which
 	// every workspace member can for a public one.
 	if !h.canManageAgent(w, r, agent) {
+		return
+	}
+	if err := h.syncAgentNativePlugins(r.Context(), agent); err != nil {
+		writeError(w, http.StatusConflict, "native plugin configuration changed; reload before submitting")
 		return
 	}
 	var req SetAgentDshPluginsRequest
@@ -816,6 +860,10 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	previousByID := map[pgtype.UUID]db.ListDshPluginsForAgentRow{}
+	if req.ExpectedPlugins != nil && !sameDshPluginBindings(*req.ExpectedPlugins, previous) {
+		writeError(w, http.StatusConflict, "plugin configuration changed; reload before submitting")
+		return
+	}
 	for _, row := range previous {
 		previousByID[row.ID] = row
 	}
@@ -825,6 +873,15 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, entry := range bindings {
+		prior := previousByID[entry.id]
+		if prior.Enabled != entry.enabled && len(prior.ConfigOverride) > 0 {
+			prior.ConfigOverride, err = resetNativePluginEnablement(prior.ConfigOverride)
+			if err != nil {
+				writeError(w, 422, "invalid stored plugin settings")
+				return
+			}
+			previousByID[entry.id] = prior
+		}
 		if err := qtx.AddAgentDshPlugin(r.Context(), db.AddAgentDshPluginParams{
 			AgentID:        agent.ID,
 			DshPluginID:    entry.id,

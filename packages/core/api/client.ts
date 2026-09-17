@@ -3869,13 +3869,14 @@ export class ApiClient {
   async setAgentDshPlugins(
     agentId: string,
     plugins: { id: string; enabled?: boolean; configChange?: UpdateAgentDshPluginConfig }[],
+    expectedPlugins?: AgentDshPlugin[],
   ): Promise<void> {
     await this.fetch(`/api/agents/${agentId}/dsh-plugins`, {
       method: "PUT",
       body: JSON.stringify({ plugins: plugins.map(({ configChange, ...plugin }) => ({
         ...plugin,
         ...(configChange ? { config_change: { expected_revision: configChange.expectedRevision, config_override: configChange.override === null ? null : { row_id: configChange.override.rowId, config: configChange.override.config } } } : {}),
-      })) }),
+      })), ...(expectedPlugins ? { expected_plugins: expectedPlugins.map(row => ({id:row.id,enabled:row.enabled,config_revision:row.configRevision ?? 0})) } : {}) }),
     });
   }
 

@@ -49,6 +49,7 @@ export interface DshPlugin {
 /** An imported plugin as attached to one agent. */
 export interface AgentDshPlugin extends DshPlugin {
   enabled: boolean;
+  configRevision?: number;
 }
 
 /** One (agent, plugin) pair, for folding a "used by" column client-side. */

@@ -11,14 +11,28 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/dshplugin"
+	"github.com/multica-ai/multica/server/internal/dshprofile"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // AgentDshPluginConfig overrides one loader row for one employee. Empty config
 // uses the package's bundle defaults; nil override inherits workspace settings.
 type AgentDshPluginConfig struct {
-	RowID  string         `json:"row_id"`
-	Config map[string]any `json:"config"`
+	RowID   string                   `json:"row_id"`
+	Config  map[string]any           `json:"config"`
+	Rows    []dshprofile.RowOverride `json:"rows,omitempty"`
+	Package *agentDshPackageOverride `json:"package,omitempty"`
+}
+
+// A native upgrade is pinned to this employee, never to every employee using
+// the workspace's imported package. Only the synchronizer writes provenance.
+type agentDshPackageOverride struct {
+	Version     string   `json:"version"`
+	Integrity   string   `json:"integrity"`
+	SourceKind  string   `json:"source_kind"`
+	SourceSpec  string   `json:"source_spec"`
+	ArtifactKey string   `json:"artifact_key"`
+	BundleRows  []string `json:"bundle_rows"`
 }
 
 type AgentDshPluginConfigResponse struct {
@@ -31,23 +45,44 @@ type AgentDshPluginConfigResponse struct {
 
 func decodeAgentDshPluginOverride(raw []byte, row db.ListDshPluginsForAgentRow) (*AgentDshPluginConfig, error) {
 	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return nil, nil
+		previous, err := storedAgentDshPluginConfig(row)
+		if err != nil {
+			return nil, err
+		}
+		if previous.Package == nil {
+			return nil, nil
+		}
+		// Reset settings without silently downgrading a native-installed version.
+		return &AgentDshPluginConfig{Config: map[string]any{}, Package: previous.Package}, nil
 	}
 	if len(raw) > 60000 {
 		return nil, errors.New("plugin configuration is too large")
 	}
-	var value AgentDshPluginConfig
+	var input struct {
+		RowID  string         `json:"row_id"`
+		Config map[string]any `json:"config"`
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&value); err != nil || value.Config == nil {
+	if err := dec.Decode(&input); err != nil || input.Config == nil {
 		return nil, errors.New("plugin override requires row_id and an object config")
 	}
 	if err := dec.Decode(new(any)); err != io.EOF {
 		return nil, errors.New("invalid plugin override")
 	}
+	value := AgentDshPluginConfig{RowID: input.RowID, Config: input.Config}
+	// Preserve native settings for other rows and server-owned package identity.
+	previous, err := storedAgentDshPluginConfig(row)
+	if err != nil {
+		return nil, err
+	}
+	value.Package = previous.Package
 	var rows []string
 	if err := json.Unmarshal(row.BundleRows, &rows); err != nil {
 		return nil, errors.New("invalid stored plugin loader rows")
+	}
+	if value.Package != nil {
+		rows = value.Package.BundleRows
 	}
 	// Even an empty override must address a declared row if it names one.
 	if value.RowID != "" {
@@ -66,6 +101,15 @@ func decodeAgentDshPluginOverride(raw []byte, row db.ListDshPluginsForAgentRow) 
 		return nil, errors.New("plugin configuration requires one declared loader row")
 	}
 	value.RowID = id
+	for _, patch := range previous.Rows {
+		if patch.ID == value.RowID {
+			patch.Config = nil
+			if patch.Disabled == nil {
+				continue
+			}
+		}
+		value.Rows = append(value.Rows, patch)
+	}
 	return &value, nil
 }
 
@@ -90,12 +134,26 @@ func effectiveAgentDshPluginConfig(row db.ListDshPluginsForAgentRow) (AgentDshPl
 	if err != nil {
 		return AgentDshPluginConfig{}, err
 	}
-	raw, err := json.Marshal(value)
+	raw, err := json.Marshal(struct {
+		RowID  string         `json:"row_id"`
+		Config map[string]any `json:"config"`
+	}{value.RowID, value.Config})
 	if err != nil {
 		return AgentDshPluginConfig{}, err
 	}
 	checked, err := decodeAgentDshPluginOverride(raw, row)
 	if err != nil {
+		return AgentDshPluginConfig{}, err
+	}
+	checked.Rows = value.Rows
+	rows := []string{}
+	if err := json.Unmarshal(row.BundleRows, &rows); err != nil {
+		return AgentDshPluginConfig{}, err
+	}
+	if value.Package != nil {
+		rows = value.Package.BundleRows
+	}
+	if err := dshprofile.ValidateRowOverrides(value.Rows, rows); err != nil {
 		return AgentDshPluginConfig{}, err
 	}
 	return *checked, nil
@@ -214,4 +272,25 @@ func (h *Handler) GetAgentDshPluginConfig(w http.ResponseWriter, r *http.Request
 }
 func (h *Handler) UpdateAgentDshPluginConfig(w http.ResponseWriter, r *http.Request) {
 	h.manageAgentDshPluginConfig(w, r, true)
+}
+
+// An explicit workbench toggle controls the whole package, including rows
+// previously disabled through the native editor.
+func resetNativePluginEnablement(raw []byte) ([]byte, error) {
+	if len(raw) == 0 {
+		return raw, nil
+	}
+	var value AgentDshPluginConfig
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, err
+	}
+	rows := value.Rows[:0]
+	for _, row := range value.Rows {
+		row.Disabled = nil
+		if len(row.Config) > 0 {
+			rows = append(rows, row)
+		}
+	}
+	value.Rows = rows
+	return json.Marshal(value)
 }

@@ -32,6 +32,9 @@ func (l *FCE2BLauncher) DSHEmployeeProfile(ctx context.Context, key dshhost.Key,
 		return result, errors.New("employee Profile source unavailable")
 	}
 	err := l.withDSHEmployee(ctx, key, func(conn *pgxpool.Conn, _ db.AgentRuntime, template string) error {
+		if err := l.syncDSHNativePlugins(ctx, conn, key, template); err != nil {
+			return err
+		}
 		store := dshprofile.Store{DB: conn}
 		if prepare {
 			if _, err := store.Prepare(ctx, key, template, l.ReadDSHProfileSource); err != nil {
