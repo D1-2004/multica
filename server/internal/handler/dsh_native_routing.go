@@ -104,12 +104,21 @@ func (h *Handler) nativeTarget(ctx context.Context, parent dshhost.NativeAccess,
 	cleanup := func() {
 		c, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = manager.Revoke(c, parent.Key, grant.ID, parent.UserID)
+		_ = (dshhost.PostgresStore{DB: h.DB}).RevokeNativeAccess(c, parent.Key, grant.ID)
 	}
 	_, child, err := manager.Exchange(ctx, entry, host)
 	if err != nil {
 		cleanup()
 		return "", "", nil, err
+	}
+	// A child must never outlive the browser grant even if a process exits
+	// before its deferred revocation executes.
+	result, err := h.DB.Exec(ctx, `UPDATE dsh_native_access child SET expires_at=LEAST(child.expires_at,parent.expires_at)
+ FROM dsh_native_access parent WHERE child.id=$1 AND parent.id=$2
+ AND parent.kind='session' AND parent.expires_at>clock_timestamp()`, grant.ID, parent.ID)
+	if err != nil || result.RowsAffected() != 1 {
+		cleanup()
+		return "", "", nil, dshhost.ErrNativeAccessDenied
 	}
 	return upstream, child, cleanup, nil
 }
@@ -153,6 +162,9 @@ func (h *Handler) routeDSHNativeRequest(w http.ResponseWriter, r *http.Request, 
 		writeError(w, 401, "open DSH again from the employee workbench")
 		return true
 	}
+	ctx, cancel := context.WithDeadline(r.Context(), access.ExpiresAt)
+	defer cancel()
+	r = r.WithContext(ctx)
 	if mux {
 		h.serveNativeSessionMux(w, r, access, token)
 		return true
