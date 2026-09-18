@@ -32,3 +32,37 @@ cannot affect earlier turns. No schema migration is needed. The query is generat
 with the isolated sqlc generator because the existing full generator has a known
 migration-order/compatibility issue. Reset-boundary unit tests passed; real channel
 reset and candidate restart validation remain pending.
+
+
+Native restart acceptance: boot 41-1789723257420 -> 349-1789723345450 on
+sandbox sbx-3ef7a97d-346d-4628-a5c4-3fcf582baa13. Same entry recovered;
+profile revision 142 remained applied/current. During task
+72a54f8e-adba-40ee-9c60-f7e0e9dcc6fd, restart returned HTTP 409 and the role
+answer completed normally. Task 4fdcbb8b-8e09-4c91-8e4e-b430d55f4b57 also
+passed role evaluation on the candidate runtime.
+
+Default preset distinction: plain workbench task 83905af2-fd8c-406d-9b2a-732a2d198002
+used the pre Agent's standard preset and answered as the test Agent. Updating the
+native agent-presets setting default to tavern-lite made the next ordinary chat
+task 61dd554b-7f8c-437e-8d21-33c2983542de correctly introduce 星野澄 and 团子.
+This setting applies to newly created sessions and does not migrate old sessions.
+
+Reset-boundary follow-up deploy: run 3108895617, commit 058ed3400.
+Browser click acceptance is blocked by the IAB provider (nodeRepl.fetch request
+failed; browser inventory unavailable). Unit coverage confirms draft service
+insertion and readback; do not label it browser E2E. A preproduction DSH bot/chat
+target is still needed for the actual DingTalk /new send/receive acceptance.
+
+Run 3108895617 completed deployment and integration successfully; it is at the
+normal manual preproduction verification gate. Post-deploy ordinary chat task
+5cd5caf7-2f67-469b-9411-78f026f3f363 completed with the correct cat identity,
+exercising persisted history and the new reset-boundary query with no reset.
+
+User requested reuse of an already-bound preproduction bot. Existing DSH Agents
+v21 and v25 have active DWS execution identities but message_route=unbound and
+no robot installation. Existing v7 Pi Agent 167f831a-73cb-4087-a86a-d1cbe4c08145
+has installation b0aaa072-b462-42ef-bce5-99906a6daa82, robotCode
+dingzvwprcls6j6p4ofi. Official production developer-platform readback confirms
+that robot's name is 须莫v7_Pre_Pi_钉钉组织 and mode STREAM/ONLINE. Its backend
+binding is preproduction only. Test IM delivery succeeded, but no corresponding
+preproduction task has been observed yet. This is not reset acceptance.
