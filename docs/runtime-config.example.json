@@ -28,6 +28,7 @@
   "runtime": {
     "agentic_fs": {"size_limit": 107374182400, "file_count_limit": 1000000000},
     "llm": {
+      "coordinator_model": "qwen3.8-max",
       "base_url": "https://llm.example.com/v1",
       "models": [
         "default-model",

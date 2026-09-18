@@ -127,7 +127,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				lt.AddMetadata(map[string]any{"read_snapshot_count": len(turn.CoordinationReads), "read_snapshot_runes": len([]rune(coordinationReadsJSON(turn))), "read_snapshot_truncated": turn.CoordinationReadsTruncated, "read_snapshot_budget": coordinationReadsBudget, "repair_proposal_runes": len([]rune(latestProposal)), "repair_proposal_budget": coordinationProposalBudget})
 			}
 		}
-		generation := traceRoundGeneration(lt, round, messages, tools)
+		generation := traceRoundGeneration(lt, round, messages, tools, c.configuredModel())
 		modelRounds = round + 1
 		completion, err := c.complete(ctx, messages, tools)
 		endRoundGeneration(generation, completion, err)
@@ -377,7 +377,7 @@ func (c *Coordinator) complete(ctx context.Context, messages []openai.ChatComple
 }
 
 func (c *Coordinator) completeWithLimit(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, limit int64, temp float64) (*openai.ChatCompletion, error) {
-	return c.completeWithModelLimit(ctx, coordinatorModel, messages, tools, limit, temp, shared.ReasoningEffortNone)
+	return c.completeWithModelLimit(ctx, c.configuredModel(), messages, tools, limit, temp, shared.ReasoningEffortNone)
 }
 
 func (c *Coordinator) completeWithModelLimit(ctx context.Context, model string, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, limit int64, temp float64, reasoning shared.ReasoningEffort) (*openai.ChatCompletion, error) {
@@ -683,7 +683,7 @@ func logCoordinatorLLMRequest(turn Turn, userPrompt string, recalled bool) {
 	slog.Info("inbound coordinator llm request",
 		append(coordinatorLogIndex(turn),
 			"event", "inbound_coordinator_llm_request",
-			"model", coordinatorModel,
+			"model", turn.modelName(),
 			"addressed", turn.Addressed,
 			"busy", turn.Busy,
 			"persona", clipRunes(strings.TrimSpace(turn.Persona), personaBudget),

@@ -78,6 +78,7 @@ const (
 
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
+	model                      string
 	ProactiveConversation      bool
 	OutstandingFollowUps       string
 	Loop                       Loop
@@ -250,14 +251,17 @@ type SkillSnapshot struct {
 
 // Coordinator runs the bounded assoc tool loop in loop.go.
 type Coordinator struct {
-	Ready       func(context.Context) (bool, error)
-	LLM         *llm.Client
-	Queries     historyReader
-	Tools       Tools
-	Chat        Completer
-	Assoc       *assoc.Service
-	DWSHistory  DingTalkHistoryLoader
-	SceneMemory sceneMemoryReader
+	// ModelProvider is sampled once per decision, including all finish reviews.
+	ModelProvider func() string
+	model         string
+	Ready         func(context.Context) (bool, error)
+	LLM           *llm.Client
+	Queries       historyReader
+	Tools         Tools
+	Chat          Completer
+	Assoc         *assoc.Service
+	DWSHistory    DingTalkHistoryLoader
+	SceneMemory   sceneMemoryReader
 	// Langfuse exports one trace per Decide call. Nil disables tracing.
 	Langfuse *langfuse.Client
 }
@@ -378,6 +382,11 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	if c == nil {
 		return Decision{Action: ActionContinue}
 	}
+	snapshot := *c
+	snapshot.model = c.configuredModel()
+	snapshot.ModelProvider = nil
+	c = &snapshot
+	turn.model = c.model
 	if c.Ready != nil {
 		ready, err := c.Ready(ctx)
 		if err != nil || !ready {
@@ -476,7 +485,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 			append(coordinatorLogIndex(turn),
 				"event", "inbound_coordinator_decided",
 				"action", string(decision.Action),
-				"model", coordinatorModel,
+				"model", c.configuredModel(),
 				"fail_open", false,
 				"loop_stop_reason", decision.Reason,
 				"loop_stop_fallback", handled,
@@ -494,7 +503,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 		append(coordinatorLogIndex(turn),
 			"event", "inbound_coordinator_decided",
 			"action", string(decision.Action),
-			"model", coordinatorModel,
+			"model", c.configuredModel(),
 			"fail_open", decision.Action == ActionContinue,
 			"tool_rounds", decision.ToolRounds,
 			"tools_used", decision.ToolsUsed,
@@ -937,4 +946,26 @@ func clipRunes(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n])
+}
+
+// configuredModel retains the previous model for snapshots predating this field.
+func (c *Coordinator) configuredModel() string {
+	if c != nil {
+		if c.model != "" {
+			return c.model
+		}
+		if c.ModelProvider != nil {
+			if model := strings.TrimSpace(c.ModelProvider()); model != "" {
+				return model
+			}
+		}
+	}
+	return coordinatorModel
+}
+
+func (turn Turn) modelName() string {
+	if turn.model != "" {
+		return turn.model
+	}
+	return coordinatorModel
 }

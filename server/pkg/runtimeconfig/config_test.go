@@ -384,3 +384,14 @@ func TestDiamondServiceCloseCancelsListener(t *testing.T) {
 			client.cancelled, client.runtimeProvidersCancelled, client.modelPricingCancelled, client.closed)
 	}
 }
+
+func TestCoordinatorModelStrictDocument(t *testing.T) {
+	raw := strings.Replace(validJSON(), `"default_model":`, `"coordinator_model":" qwen3.8-max ","default_model":`, 1)
+	cfg, err := ParseStrict([]byte(raw), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runtime.LLM.CoordinatorModel != "qwen3.8-max" {
+		t.Fatalf("model=%q", cfg.Runtime.LLM.CoordinatorModel)
+	}
+}

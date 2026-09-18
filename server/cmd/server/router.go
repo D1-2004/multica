@@ -785,6 +785,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{Logger: slog.Default()})
 	coordinator := inboundcoord.New(h.LLM, queries, h.Assoc)
+	if opts.RuntimeConfig != nil {
+		coordinator.ModelProvider = func() string { return opts.RuntimeConfig.current().Runtime.LLM.CoordinatorModel }
+	}
 	if opts.DeploymentFence != nil {
 		coordinator.Ready = func(ctx context.Context) (bool, error) {
 			return opts.DeploymentFence.AllLiveReplicasSupport(ctx, inboundcoord.ReplicaPlanMarker)
