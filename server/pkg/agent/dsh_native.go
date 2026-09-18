@@ -255,16 +255,11 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 			return false, errors.New("invalid native DSH follow frame")
 		}
 		if !opened {
-			snapshot, events, err := readDSHNativeBaseline(ctx, b.client.call, raw, b.native.SessionID, b.native.WorkDir)
+			snapshot, err := walkDSHNativeBaseline(ctx, b.client.call, raw, b.native.SessionID, b.native.WorkDir, history.accept)
 			if err != nil {
 				return false, err
 			}
 			trajectoryHeader = snapshot.Header
-			for _, event := range events {
-				if err := history.accept(event); err != nil {
-					return false, err
-				}
-			}
 			opened = true
 			if history.terminal != "" {
 				return true, nil
@@ -312,14 +307,9 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 			var restored dshNativeTaskHistory
 			restored.requestID = b.native.RequestID
 			recoveryErr := b.client.follow(artifactCtx, map[string]any{"address": map[string]string{"kind": "session", "sessionId": b.native.SessionID}}, func(raw json.RawMessage) (bool, error) {
-				snapshot, events, readErr := readDSHNativeBaseline(artifactCtx, b.client.call, raw, b.native.SessionID, b.native.WorkDir)
+				snapshot, readErr := walkDSHNativeBaseline(artifactCtx, b.client.call, raw, b.native.SessionID, b.native.WorkDir, restored.accept)
 				if readErr != nil {
 					return false, readErr
-				}
-				for _, event := range events {
-					if readErr := restored.accept(event); readErr != nil {
-						return false, readErr
-					}
 				}
 				trajectoryHeader = snapshot.Header
 				return true, nil

@@ -353,3 +353,5 @@ Stable image releases retain runtime-start failure statistics as observations.
 The absolute 5% and relative 3 percentage point failure thresholds log warnings
 but do not block rollout advancement or observation completion. Target update
 failures, incomplete cutovers and release state checks remain enforced.
+
+Long-lived native DSH Sessions may exceed the 32 MiB task artifact limit. The runner validates the complete frozen history prefix with temporary page spooling and replays it in source order before deciding whether a request is absent. Only the owned task turn and referenced child activations enter the artifact; their size limits and ownership checks still apply. A truncated or inconsistent history cannot authorize a retry.
