@@ -1,108 +1,119 @@
 # DSH managed restart and Tavern acceptance
 
-Scope: supervised native marketplace restart, readable saved configuration during
-native sync failure, DingTalk bare reset handoff, and Tavern draft insertion.
+Status: preproduction deployment, integration, and real native/DingTalk acceptance
+passed on 2026-09-18. Production application/runtime rollout is not part of this
+release. The existing preproduction robot was restored to its original settings.
 
-Evidence: production task 5117962c-ae25-4032-8d6b-5bf065dd43c8 reused
-session-19c85307-3f2f-4e18-8ae3-87626fd03577 after a bare /new. The adapter
-removed the directive without preserving CommandText, so Router could not arm
-pending_fresh. Tests cover text/richText, leading mentions, and /reset.
-No semantic Coordinator policy or intent rules change.
+## Fixes and root causes
 
-Production task 29865813-d476-4e66-905f-1cfc903408be contains the full role card
-in its system/message event while its answer denies having a card. This is not
-accepted as successful role behavior. Real fresh-session validation is pending.
+- Tavern 2.3.9 assumed compressed logs. The `dsh-tavern-multica` fork supports
+  native plaintext JSONL and Zstandard logs, preserves the existing encoding,
+  and registers its client bundle under the fork's package name. Version
+  `2.3.9-multica.3` uses the native conversation draft service for insertion,
+  preserves existing draft text, and verifies readback before reporting success.
+- Native marketplace restart previously escaped the managed supervisor. Runtime
+  commit `f1874cbbd8e658fc125501b384c68bf28e1c42c7` supervises child restart,
+  preserves the profile, and rejects restart during active tasks or mutations.
+- Native synchronization failure no longer prevents reading saved plugin/profile
+  configuration. `native_sync_pending` explicitly means the saved configuration
+  is readable but not confirmed current; writes still require synchronization.
+- Bare `/new` and `/reset` lost their command text in DingTalk normalization.
+  The adapter now preserves canonical command text for the durable reset handoff.
+- Clearing provider resume state alone left database-backed history intact.
+  Claims now use an immutable input reset boundary and exclude late answers from
+  pre-reset tasks. Visible transcripts are retained.
+- DSH also had a permanent chat-to-native-Session mapping. Durable reset epochs
+  now select a new native Session, while task retries retain exact committed
+  Session/request identities. Explicit old native sessions and schedules retain
+  their own epoch. Model history excludes messages owned by other native Sessions.
 
-Local adapter/router, Profile schema, supervisor/gateway and plugin tests passed.
-Preproduction deployment and real native restart/role/reset acceptance: pending.
+## Release evidence
 
-Preproduction native task 1c7557ca-72aa-432f-a3de-4ed1b65c4d65 completed and
-introduced the configured lighthouse observer 星野澄 and her cat 团子. This proves
-fresh native role behavior for the imported 2.3.9-multica.3 fork.
-Application CR 36211542 deployed successfully in run 3108891954; integration
-stage passed. Runtime f1874cbb CI 73671213 passed and produced candidate template
-u7rcxpnirvu7csz1i2m7. Isolated runtime 387d4e89-a0a3-486d-a04b-fd1349b24c0f
-is bound only to pre test Agent 616590ea-be68-4432-a7f7-e6cd79605bec.
+Application CR: https://cd.aone.alibaba-inc.com/unite/micro/cr/app/342160/36211542
 
-Additional reset defect: cloud claims rebuild context from the persisted transcript
-after clearing the provider session. A task-input reset boundary now limits that
-model-only history on the reset turn and following turns. The visible transcript
-remains intact. Immutable input ownership bounds the query so future queued resets
-cannot affect earlier turns. No schema migration is needed. The query is generated
-with the isolated sqlc generator because the existing full generator has a known
-migration-order/compatibility issue. Reset-boundary unit tests passed; real channel
-reset and candidate restart validation remain pending.
+| Run | Commit | Result |
+| --- | --- | --- |
+| 3108891954 | 43ad47c53906cf0ac05db95bf3bc35edea99ab5d | Deployment and integration SUCCESS |
+| 3108895617 | 058ed3400 | Deployment and integration SUCCESS |
+| 3108905913 | d5cb56cc6 | Epoch expansion: deployment and integration SUCCESS |
+| 3108907874 | 7eed27fd7 | Epoch activation: deployment and integration SUCCESS |
 
+Epoch expansion retained the old uniqueness index until all replicas supported
+new epochs. Activation then removed it via `9270_dsh_session_epoch_scope`;
+bootstrap readback confirmed both expansion and activation migrations. Do not
+roll back to pre-epoch binaries after activation; preserve epochs in a forward
+repair. The pipeline is at the normal manual preproduction verification gate.
 
-Native restart acceptance: boot 41-1789723257420 -> 349-1789723345450 on
-sandbox sbx-3ef7a97d-346d-4628-a5c4-3fcf582baa13. Same entry recovered;
-profile revision 142 remained applied/current. During task
-72a54f8e-adba-40ee-9c60-f7e0e9dcc6fd, restart returned HTTP 409 and the role
-answer completed normally. Task 4fdcbb8b-8e09-4c91-8e4e-b430d55f4b57 also
-passed role evaluation on the candidate runtime.
+Runtime CI 73671213 passed; candidate template `u7rcxpnirvu7csz1i2m7` uses image
+`dsh-managed-restart-f1874cbbd8e658fc125501b384c68bf28e1c42c7`, digest
+`sha256:7e814e1d6df2d61cbef8f8608981e80ae515243bcd345cc42d1c17c9b2c67fe3`.
+Candidate runtime: `387d4e89-a0a3-486d-a04b-fd1349b24c0f`.
+Pre plugin: `92e70a9a-3491-4b8a-a1e1-cc55dc33ca0a`, version 2.3.9-multica.3.
 
-Default preset distinction: plain workbench task 83905af2-fd8c-406d-9b2a-732a2d198002
-used the pre Agent's standard preset and answered as the test Agent. Updating the
-native agent-presets setting default to tavern-lite made the next ordinary chat
-task 61dd554b-7f8c-437e-8d21-33c2983542de correctly introduce 星野澄 and 团子.
-This setting applies to newly created sessions and does not migrate old sessions.
+## Native restart, role and insertion
 
-Reset-boundary follow-up deploy: run 3108895617, commit 058ed3400.
-Browser click acceptance is blocked by the IAB provider (nodeRepl.fetch request
-failed; browser inventory unavailable). Unit coverage confirms draft service
-insertion and readback; do not label it browser E2E. A preproduction DSH bot/chat
-target is still needed for the actual DingTalk /new send/receive acceptance.
+- Native boot changed `41-1789723257420` -> `349-1789723345450` on sandbox
+  `sbx-3ef7a97d-346d-4628-a5c4-3fcf582baa13`. The same entry recovered and
+  profile revision 142 remained applied/current.
+- During task `72a54f8e-adba-40ee-9c60-f7e0e9dcc6fd`, restart returned HTTP 409;
+  the task completed normally with the expected role.
+- Native task `1c7557ca-72aa-432f-a3de-4ed1b65c4d65` and ordinary workbench task
+  `61dd554b-7f8c-437e-8d21-33c2983542de` introduced 星野澄 and her cat 团子.
+  Ordinary new chats require the desired preset to be the native default:
+  choosing a preset for one existing session does not change that default.
+- In the Codex in-app browser on the existing pre bot, selecting tavern-lite in
+  Tavern management loaded the card. Clicking Insert into current conversation
+  placed the full card in the composer and displayed the instruction to return
+  and send. Insertion is a draft action, not automatic submission. The test
+  draft was cleared. The earlier browser-provider blocker was resolved.
 
-Run 3108895617 completed deployment and integration successfully; it is at the
-normal manual preproduction verification gate. Post-deploy ordinary chat task
-5cd5caf7-2f67-469b-9411-78f026f3f363 completed with the correct cat identity,
-exercising persisted history and the new reset-boundary query with no reset.
+## Existing robot reset acceptance
 
-User requested reuse of an already-bound preproduction bot. Existing DSH Agents
-v21 and v25 have active DWS execution identities but message_route=unbound and
-no robot installation. Existing v7 Pi Agent 167f831a-73cb-4087-a86a-d1cbe4c08145
-has installation b0aaa072-b462-42ef-bce5-99906a6daa82, robotCode
-dingzvwprcls6j6p4ofi. Official production developer-platform readback confirms
-that robot's name is 须莫v7_Pre_Pi_钉钉组织 and mode STREAM/ONLINE. Its backend
-binding is preproduction only. Test IM delivery succeeded, but no corresponding
-preproduction task has been observed yet. This is not reset acceptance.
+No robot was created. Existing Agent `167f831a-73cb-4087-a86a-d1cbe4c08145`
+(须莫v7 Pre ASB Pi), installation `b0aaa072-b462-42ef-bce5-99906a6daa82`, robot
+须莫v7_Pre_Pi_钉钉组织 was temporarily bound to the candidate DSH runtime with
+coordinator disabled and the test Tavern card. Native DingTalk sends triggered
+the preproduction tasks. DWS API personal sends delivered IM messages but did
+not trigger this robot callback, so they were not used as execution evidence.
 
+Transcript: https://pre-fde-workbench.dingtalk.com/yufa/chat?session=6cf89e63-cc53-4ca6-b781-7877c1ca8193
 
-Actual existing-bot acceptance found a third reset defect. Agent
-167f831a-73cb-4087-a86a-d1cbe4c08145 was temporarily switched from its original
-Pi runtime to the DSH candidate, with coordinator disabled, and its bindings
-backed up. No robot was created. Native DingTalk sends triggered task
-f61752e5-8317-4dbb-8530-aa909416ce4f (correct role and temporary token), then
-bare /new returned the reset acknowledgement. Task
-605ad253-4659-467d-9d5a-12616a5d6509 still recalled that token and reused
-session-cce5bfd7-29ff-4578-a7ab-b0a70a7600b5. Reset acceptance FAILED.
+Before the epoch fix, task `605ad253-4659-467d-9d5a-12616a5d6509` recalled the
+old token after a successful reset acknowledgement and reused the old Session.
+That failed test motivated the durable epoch fix.
 
-The launcher now resolves durable session epochs; existing task bindings win
-on retry, while new platform turns use the last reset at their queue position.
-Historical native sessions and schedules resolve their explicit epoch. Schema
-activation is staged: first deploy the epoch column, new composite unique index,
-and epoch-aware code with the old uniqueness index retained; after all replicas
-are updated, deploy removal of the old index. This prevents an incompatible
-old/new binary write window. Do not restore a pre-epoch binary after activation.
-Local focused tests pass (database tests skip without a reachable database).
-Direct preproduction DB connection from the laptop and FC test sandbox timed out;
-these attempts do not count as database test passes. Final live reset acceptance
-and restoring the pre bot's original runtime/coordinator/plugin bindings remain.
+Final acceptance:
 
+1. Task `f8d8ee20-e389-4129-8cb9-125bf848d200` introduced the expected role and
+   remembered 松风航标482 in `session-cce5bfd7-29ff-4578-a7ab-b0a70a7600b5`.
+   DingTalk readback: `msgZcHE9yYrD7avlKxF6WkFDQ==` at 18:13:15.
+2. Native DingTalk `/new` at 18:20:14 returned the reset acknowledgement:
+   `msgLZ+6u6NOIqSPMtAhPP7RIg==` at 18:20:15.
+3. Task `317c461c-bb76-4a01-81ac-60891b14747b` used new Session
+   `session-5d77ba22-e249-4b8b-ab01-192163b0f0a6`, kept 星野澄/团子, and explicitly
+   did not know the old token. DingTalk readback `msgBgRZ/g8Dh/4DdB9jm/I1Cg==`.
+4. Follow-up task `8ef8dc28-067b-4dd3-bd29-72713d9282e4` retained that new Session
+   and still did not know the token. Readback `msgtnXk0h53IvfTC+avhwp40g==`.
+5. Explicit native old-session task `a5a5142d-7b94-4692-8e19-1634a5f42bde`
+   successfully recalled 松风航标482 in the original Session, proving old history
+   was preserved. The stale pre-deploy browser entry was reopened from the Agent
+   configuration; the fresh native page displayed both sessions.
+6. Subsequent DingTalk task `71a7a829-ff2e-4e73-a82f-e1f65ff4a80b` stayed in the
+   new Session, retained the role, and still did not know the old token despite
+   the later old-session answer in the visible transcript. Final readback
+   `msgHmmplOtM7GBnFLaiNYDU7g==` at 18:25:34.
 
-Browser recovery: the Codex in-app browser is available again. On the existing
-pre bot's native page, selecting tavern-lite in Tavern management loaded 星野澄.
-Clicking Insert into current conversation produced the full role-card text in
-the conversation composer and the explicit notice to return and send. The draft
-was then cleared without sending. This closes the prior browser-click blocker;
-insert is a draft action, not automatic model submission.
+After all tasks completed, readback confirmed original runtime
+`67819224-27b7-4202-aeac-0bc0fb8d71f8`, coordinator=true, and empty plugin
+bindings restored. Test grants were revoked; the test browser tab was closed.
+Historical transcripts and DSH Home data were preserved.
 
-The activation release also excludes late answers from pre-reset tasks by their
-immutable input ownership, so an old task completing after the reset was queued
-cannot leak its answer into later context. The visible transcript is retained.
+## Check coverage
 
-Expansion run 3108905913 deployed d5cb56cc6 with deployment and integration
-SUCCESS. Bootstrap readback includes migration 9268_dsh_session_epoch. Activation
-is now safe for the epoch-aware fleet. History reconstruction additionally
-excludes messages bound to a different native Session, including later execution
-of an old native conversation after a platform reset.
+Local focused Go tests, Go vet for dshhost/dshschedule, reset-history unit tests,
+sqlc generation check, adapter/router tests, frontend schema/type checks, runtime
+supervisor/gateway tests, and plugin tests passed. Coordinator checker reported
+PASS_STRUCTURAL_ONLY, not semantic certification. The isolated real PostgreSQL
+concurrency tests could not connect from the laptop or FC sandbox; their attempts
+are not test passes. Real preproduction tasks above exercised the deployed schema,
+epoch selection, old-session admission, and cross-session history exclusion.
