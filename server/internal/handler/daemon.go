@@ -2659,7 +2659,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 						if cutoff < 0 {
 							inputLoadErr = errors.New("chat input message missing from visible transcript")
 						} else if cutoff > 0 && !withholdChatHistoryForReadback(task.Context) {
-							resp.ChatHistory = boundedChatHistoryTranscript(msgs[:cutoff], resp.ChatChannelType)
+							history, historyErr := h.chatHistorySinceReset(r.Context(), cs.ID, unanswered[0], msgs[:cutoff])
+							if historyErr != nil {
+								inputLoadErr = historyErr
+							} else {
+								resp.ChatHistory = boundedChatHistoryTranscript(history, resp.ChatChannelType)
+							}
 						}
 					}
 				}
