@@ -101,3 +101,16 @@ func TestRefreshCloudFrontCookies_SkipsWhenCookiePresent(t *testing.T) {
 		t.Error("should not refresh cookies when CloudFront-Policy is already present")
 	}
 }
+
+func TestRefreshCloudFrontCookies_DoesNotExpandWorkspaceCredential(t *testing.T) {
+	signer := testSigner(t)
+	for _, permission := range []string{WorkspaceAccessAll, WorkspaceAccessDSHConfig} {
+		r := httptest.NewRequest(http.MethodGet, "/api/workspace-access/self", nil)
+		r = r.WithContext(WithWorkspaceAccessPrincipal(r.Context(), WorkspaceAccessPrincipal{WorkspaceID: "workspace", Permission: permission}))
+		w := httptest.NewRecorder()
+		RefreshCloudFrontCookies(signer)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })).ServeHTTP(w, r)
+		if w.Code != http.StatusNoContent || len(w.Result().Cookies()) != 0 {
+			t.Fatalf("service credential minted CDN cookies: status=%d cookies=%d", w.Code, len(w.Result().Cookies()))
+		}
+	}
+}
