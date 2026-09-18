@@ -2,7 +2,17 @@
 -- A fresh provider session must also exclude older database-backed context.
 -- Keep the visible transcript intact; constrain only the model's history.
 -- Use the immutable input owner so retries preserve the same reset boundary.
-SELECT input.id, input.created_at
+SELECT input.id, input.created_at,
+  ARRAY(
+    SELECT DISTINCT older.id
+    FROM agent_task_queue older
+    JOIN chat_message older_input
+      ON older_input.task_id = COALESCE(older.chat_input_task_id, older.id)
+      AND older_input.chat_session_id = older.chat_session_id
+      AND older_input.role = 'user'
+    WHERE older.chat_session_id = task.chat_session_id
+      AND (older_input.created_at, older_input.id) < (input.created_at, input.id)
+  )::uuid[] AS excluded_task_ids
 FROM agent_task_queue task
 JOIN chat_message input
   ON input.task_id = COALESCE(task.chat_input_task_id, task.id)

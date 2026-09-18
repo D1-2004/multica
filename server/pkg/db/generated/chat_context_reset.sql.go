@@ -12,7 +12,17 @@ import (
 )
 
 const getChatContextResetBoundary = `-- name: GetChatContextResetBoundary :one
-SELECT input.id, input.created_at
+SELECT input.id, input.created_at,
+  ARRAY(
+    SELECT DISTINCT older.id
+    FROM agent_task_queue older
+    JOIN chat_message older_input
+      ON older_input.task_id = COALESCE(older.chat_input_task_id, older.id)
+      AND older_input.chat_session_id = older.chat_session_id
+      AND older_input.role = 'user'
+    WHERE older.chat_session_id = task.chat_session_id
+      AND (older_input.created_at, older_input.id) < (input.created_at, input.id)
+  )::uuid[] AS excluded_task_ids
 FROM agent_task_queue task
 JOIN chat_message input
   ON input.task_id = COALESCE(task.chat_input_task_id, task.id)
@@ -37,8 +47,9 @@ type GetChatContextResetBoundaryParams struct {
 }
 
 type GetChatContextResetBoundaryRow struct {
-	ID        pgtype.UUID        `json:"id"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	ID              pgtype.UUID        `json:"id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	ExcludedTaskIds []pgtype.UUID      `json:"excluded_task_ids"`
 }
 
 // A fresh provider session must also exclude older database-backed context.
@@ -47,6 +58,6 @@ type GetChatContextResetBoundaryRow struct {
 func (q *Queries) GetChatContextResetBoundary(ctx context.Context, arg GetChatContextResetBoundaryParams) (GetChatContextResetBoundaryRow, error) {
 	row := q.db.QueryRow(ctx, getChatContextResetBoundary, arg.ChatSessionID, arg.InputCreatedAt, arg.InputID)
 	var i GetChatContextResetBoundaryRow
-	err := row.Scan(&i.ID, &i.CreatedAt)
+	err := row.Scan(&i.ID, &i.CreatedAt, &i.ExcludedTaskIds)
 	return i, err
 }

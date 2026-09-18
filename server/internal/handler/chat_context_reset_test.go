@@ -15,7 +15,9 @@ func TestChatHistoryAfterBoundary(t *testing.T) {
 		return db.ChatMessage{ID: pgtype.UUID{Bytes: id, Valid: true}, CreatedAt: pgtype.Timestamptz{Time: stamp.Add(offset), Valid: true}}
 	}
 	old, reset, next := message(1, 0), message(2, 0), message(3, time.Second)
-	boundary := db.GetChatContextResetBoundaryRow{ID: reset.ID, CreatedAt: reset.CreatedAt}
+	late := message(4, 2*time.Second)
+	late.TaskID = old.ID
+	boundary := db.GetChatContextResetBoundaryRow{ID: reset.ID, CreatedAt: reset.CreatedAt, ExcludedTaskIds: []pgtype.UUID{old.ID}}
 	for _, tc := range []struct {
 		name     string
 		messages []db.ChatMessage
@@ -24,6 +26,7 @@ func TestChatHistoryAfterBoundary(t *testing.T) {
 		{"reset turn excludes all earlier context", []db.ChatMessage{old}, 0},
 		{"later turn retains only new conversation", []db.ChatMessage{old, reset, next}, 2},
 		{"empty history", nil, 0},
+		{"old task finishing after reset stays excluded", []db.ChatMessage{old, reset, next, late}, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := chatHistoryAfterBoundary(tc.messages, boundary)

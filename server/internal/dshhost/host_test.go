@@ -55,7 +55,7 @@ func stores(t *testing.T) (PostgresStore, PostgresStore) {
 		return PostgresStore{DB: pool}
 	}
 	a, b := newStore(), newStore()
-	for _, name := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9228_dsh_session_binding", "9229_dsh_session_scope", "9230_dsh_session_identity", "9231_dsh_task_identity", "9232_dsh_request_identity", "9233_dsh_storage_provision", "9234_dsh_storage_provision_identity", "9235_dsh_native_access", "9265_dsh_native_access_parent", "9236_dsh_native_access_hash", "9237_dsh_native_access_id", "9238_dsh_browser_session_identity", "9260_dsh_session_sandbox_scope", "9262_dsh_session_workdir", "9268_dsh_session_epoch", "9269_dsh_session_epoch_identity"} {
+	for _, name := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9228_dsh_session_binding", "9229_dsh_session_scope", "9230_dsh_session_identity", "9231_dsh_task_identity", "9232_dsh_request_identity", "9233_dsh_storage_provision", "9234_dsh_storage_provision_identity", "9235_dsh_native_access", "9265_dsh_native_access_parent", "9236_dsh_native_access_hash", "9237_dsh_native_access_id", "9238_dsh_browser_session_identity", "9260_dsh_session_sandbox_scope", "9262_dsh_session_workdir", "9268_dsh_session_epoch", "9269_dsh_session_epoch_identity", "9270_dsh_session_epoch_scope"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", name+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
@@ -67,9 +67,6 @@ func stores(t *testing.T) (PostgresStore, PostgresStore) {
 				t.Fatalf("%s: %v", name, err)
 			}
 		}
-	}
-	if _, err := a.DB.Exec(ctx, `DROP INDEX IF EXISTS dsh_employee_session_scope`); err != nil {
-		t.Fatal(err)
 	}
 	return a, b
 }

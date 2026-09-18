@@ -88,3 +88,21 @@ Local focused tests pass (database tests skip without a reachable database).
 Direct preproduction DB connection from the laptop and FC test sandbox timed out;
 these attempts do not count as database test passes. Final live reset acceptance
 and restoring the pre bot's original runtime/coordinator/plugin bindings remain.
+
+
+Browser recovery: the Codex in-app browser is available again. On the existing
+pre bot's native page, selecting tavern-lite in Tavern management loaded 星野澄.
+Clicking Insert into current conversation produced the full role-card text in
+the conversation composer and the explicit notice to return and send. The draft
+was then cleared without sending. This closes the prior browser-click blocker;
+insert is a draft action, not automatic model submission.
+
+The activation release also excludes late answers from pre-reset tasks by their
+immutable input ownership, so an old task completing after the reset was queued
+cannot leak its answer into later context. The visible transcript is retained.
+
+Expansion run 3108905913 deployed d5cb56cc6 with deployment and integration
+SUCCESS. Bootstrap readback includes migration 9268_dsh_session_epoch. Activation
+is now safe for the epoch-aware fleet. History reconstruction additionally
+excludes messages bound to a different native Session, including later execution
+of an old native conversation after a platform reset.

@@ -38,15 +38,6 @@ func (s PostgresStore) TaskScope(ctx context.Context, scope SessionScope, taskID
 	if scope.Kind == "task" {
 		return scope, nil
 	}
-	// Expansion release: keep the original epoch until every replica supports
-	// epochs and the follow-up migration removes the old uniqueness constraint.
-	var legacyScopeConstraint bool
-	if err := s.DB.QueryRow(ctx, `SELECT to_regclass('dsh_employee_session_scope') IS NOT NULL`).Scan(&legacyScopeConstraint); err != nil {
-		return SessionScope{}, err
-	}
-	if legacyScopeConstraint {
-		return scope, nil
-	}
 	err = s.DB.QueryRow(ctx, `SELECT reset.id FROM agent_task_queue current_task
  JOIN agent a ON a.id=current_task.agent_id AND a.workspace_id=$1
  JOIN agent_task_queue reset ON reset.agent_id=current_task.agent_id
