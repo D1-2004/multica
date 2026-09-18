@@ -216,6 +216,21 @@ func buildDshMCPServers(raw json.RawMessage, logger interface {
 		}
 		out = append(out, entry)
 	}
+	for name, policy := range config.Servers {
+		if !policy.Required {
+			continue
+		}
+		found := false
+		for _, server := range out {
+			if server.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, errors.New("required DSH MCP server configuration is invalid")
+		}
+	}
 	return out, nil
 }
 
