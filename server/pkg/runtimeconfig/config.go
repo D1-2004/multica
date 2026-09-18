@@ -114,9 +114,10 @@ func (c AgenticFSConfig) Defaults() AgenticFSConfig {
 }
 
 type LLMConfig struct {
-	BaseURL      string   `json:"base_url"`
-	Models       []string `json:"models"`
-	DefaultModel string   `json:"default_model"`
+	BaseURL          string   `json:"base_url"`
+	Models           []string `json:"models"`
+	DefaultModel     string   `json:"default_model"`
+	CoordinatorModel string   `json:"coordinator_model,omitempty"`
 }
 
 type FCE2BConfig struct {
@@ -236,6 +237,7 @@ func (c Config) normalized() Config {
 	c.Runtime.LLM.BaseURL = trimURL(c.Runtime.LLM.BaseURL)
 	c.Runtime.LLM.Models = normalizedUnique(c.Runtime.LLM.Models)
 	c.Runtime.LLM.DefaultModel = strings.TrimSpace(c.Runtime.LLM.DefaultModel)
+	c.Runtime.LLM.CoordinatorModel = strings.TrimSpace(c.Runtime.LLM.CoordinatorModel)
 	c.Runtime.FCE2B.Template = strings.TrimSpace(c.Runtime.FCE2B.Template)
 	c.Runtime.FCE2B.StablePublisherUserIDs = normalizedUnique(c.Runtime.FCE2B.StablePublisherUserIDs)
 	c.Runtime.FCE2B.DWSMessagePolicyFingerprints = normalizedUnique(c.Runtime.FCE2B.DWSMessagePolicyFingerprints)

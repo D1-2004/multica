@@ -344,3 +344,7 @@ start_work/continue_work的接单回复由Host生成，模型仅可选择闭合r
 现行合同：技能目录已列出的岗位业务对象，即使用「齐了么」「情况怎样」这类状态句式提问，仍按工作路由；标题里带同样词的关联事项不是该对象的数据。`report_status` 只适用于对象是本员工自己已受理事项的提问，原「Asking whether existing work is done」因此收窄为「an accepted matter」，它继续管它本来要管的 `continue_work` 滥用。两个集合相交时（既是目录对象、又确是本员工已受理的那件事，例如「刚才交给你的日报整理完了吗」）以已受理为准，仍按 `report_status` 引用该事项已加载的状态；`finish_check` 只对主语是本员工从未受理过的目录对象的 `report_status` 返回 revise，不因目录命中否决正确的进度回答。规则归属 COORD.F04，正反例见 `f04_role_material_vs_coordination_record`（已回填上述三条 trace 作为证据，模型回放仍缺，保持 `not_run`）。
 
 本轮只做提示词与审查层收窄：模块 `inbound` 升 30、`finish_check` 升 23，预算相应上调，无工具 schema、Host 守卫或状态机变化。主循环 system prompt 9494 字符，仍在 9500 门槛内；判别句只在 `inbound` 留一句，完整规则放在不计入该门槛的 `finish_check`。结构检查与 inboundcoord 全包用例通过。
+
+## Coordinator model configuration
+
+Diamond `dt-fde-multica-runtime.json` / `DEFAULT_GROUP` exposes `runtime.llm.coordinator_model`. Each decision snapshots the model once for the main loop, finish checks, logs and Langfuse; updates apply to the next decision. Missing/blank values retain `qwen3.7-plus` for existing documents during rollout. The configured target is `qwen3.8-max`. Requests keep `enable_thinking=false` and `reasoning_effort=none`; this setting does not change executor models or the global default. Local protocol tests do not certify real model behavior or deployment.

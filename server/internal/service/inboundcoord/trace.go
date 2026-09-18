@@ -58,7 +58,7 @@ func coordinatorTraceOptions(turn Turn, started time.Time) langfuse.TraceOptions
 		"chat_session_id":   strings.TrimSpace(turn.ChatSessionID),
 		"evidence_id":       strings.TrimSpace(turn.EvidenceID),
 		"source":            string(turn.Source),
-		"model":             coordinatorModel,
+		"model":             turn.modelName(),
 		"addressed":         turn.Addressed,
 		"busy":              turn.Busy,
 	}
@@ -203,7 +203,7 @@ func finishCoordinatorTrace(t *langfuse.Trace, decision Decision, loopErr error)
 	t.End(langfuse.EndOptions{Output: output, Err: loopErr})
 }
 
-func traceRoundGeneration(t *langfuse.Trace, round int, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam) *langfuse.Observation {
+func traceRoundGeneration(t *langfuse.Trace, round int, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, model string) *langfuse.Observation {
 	if t == nil {
 		return nil
 	}
@@ -218,7 +218,7 @@ func traceRoundGeneration(t *langfuse.Trace, round int, messages []openai.ChatCo
 	return t.StartObservation(langfuse.ObservationOptions{
 		Type:            langfuse.TypeGeneration,
 		Name:            fmt.Sprintf("coordinator.round.%d", round+1),
-		Model:           coordinatorModel,
+		Model:           model,
 		ModelParameters: params,
 		Input:           messages,
 		Metadata:        map[string]any{"round": round + 1},
