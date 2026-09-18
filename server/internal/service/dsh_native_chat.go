@@ -249,8 +249,14 @@ func (a dshNativeChatAdmission) replay(ctx context.Context, tx pgx.Tx, q *db.Que
 }
 
 func (a dshNativeChatAdmission) bind(ctx context.Context, tx pgx.Tx, session db.ChatSession, task db.AgentTaskQueue) error {
-	scope := dshhost.SessionScope{Key: a.access.Key, Kind: "chat", ID: uuid.UUID(session.ID.Bytes)}
 	store := dshhost.PostgresStore{DB: tx}
+	scope, err := store.NativeScope(ctx, a.access.Key, a.input.SessionID)
+	if err != nil {
+		return err
+	}
+	if scope.Kind != "chat" || scope.ID != uuid.UUID(session.ID.Bytes) {
+		return dshhost.ErrChanged
+	}
 	if err := store.BindWorkdir(ctx, scope, a.input.Workdir, false); err != nil {
 		return err
 	}

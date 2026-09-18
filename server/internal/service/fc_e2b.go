@@ -1554,6 +1554,10 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	var nativeBinding dshhost.Execution
 	if useEmployeeFilesystem && FCE2BRuntimeProvider(runtime) == "dsh" {
 		store := dshhost.PostgresStore{DB: runtimeLockConn}
+		filesystemScope, err = store.TaskScope(ctx, filesystemScope, uuid.UUID(task.ID.Bytes))
+		if err != nil {
+			return fcE2BLaunchSubmission{}, false, fmt.Errorf("resolve DSH context epoch: %w", err)
+		}
 		nativeBinding, err = store.BindExecution(ctx, filesystemScope, uuid.UUID(task.ID.Bytes))
 		if err != nil {
 			return fcE2BLaunchSubmission{}, false, fmt.Errorf("bind DSH native execution: %w", err)

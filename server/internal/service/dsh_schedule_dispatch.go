@@ -38,7 +38,7 @@ func (s *TaskService) withDSHScheduleAdmission(ctx context.Context, key dshsched
 			return err
 		}
 		scope := dshhost.SessionScope{Key: employee}
-		if err := tx.QueryRow(ctx, `SELECT scope_kind,scope_id FROM dsh_employee_session WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3 FOR SHARE`, key.WorkspaceID, key.AgentID, key.SessionID).Scan(&scope.Kind, &scope.ID); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT scope_kind,scope_id,epoch_id FROM dsh_employee_session WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3 FOR SHARE`, key.WorkspaceID, key.AgentID, key.SessionID).Scan(&scope.Kind, &scope.ID, &scope.Epoch); err != nil {
 			return dshhost.ErrNativeAccessDenied
 		}
 		parent := pgtype.UUID{Bytes: scope.ID, Valid: true}

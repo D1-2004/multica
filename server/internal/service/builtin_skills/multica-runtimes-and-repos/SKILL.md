@@ -370,3 +370,10 @@ For DingTalk Stream robots, `/new` (or `/reset`) by itself arms a durable reset
 for the next message. The adapter preserves canonical `CommandText` separately
 from the stripped model input, including leading robot mentions. `/new <text>`
 starts that message with a fresh provider session. Visible history is retained.
+
+DSH reset uses a durable conversation epoch: the reset task and later platform
+turns bind a new native Session. Retries retain their committed Session/request;
+old native sessions and their schedules retain their original epoch. The schema
+expansion release must reach every replica before removing the legacy scope
+uniqueness index and enabling epochs. Do not roll back to pre-epoch binaries after
+activation; use a forward repair that preserves all epochs.

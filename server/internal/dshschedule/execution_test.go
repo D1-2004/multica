@@ -52,8 +52,9 @@ func (r *executionRow) Scan(dest ...any) error {
 	*dest[8].(*int64) = r.due.EverySeconds
 	*dest[9].(*string) = r.kind
 	*dest[10].(*uuid.UUID) = r.scope
-	*dest[11].(*int) = 0
-	*dest[12].(*uuid.UUID) = r.batchRequest
+	*dest[11].(*uuid.UUID) = uuid.Nil
+	*dest[12].(*int) = 0
+	*dest[13].(*uuid.UUID) = r.batchRequest
 	return nil
 }
 func TestScheduleExecutionRejectsCorruptOccurrenceIdentity(t *testing.T) {
@@ -107,8 +108,8 @@ func (r *executionRows) Scan(dest ...any) error {
 	if err := r.entries[r.pos].Scan(dest...); err != nil {
 		return err
 	}
-	*dest[11].(*int) = r.pos
-	*dest[12].(*uuid.UUID) = r.request
+	*dest[12].(*int) = r.pos
+	*dest[13].(*uuid.UUID) = r.request
 	return nil
 }
 func (r *executionRows) Close()     {}

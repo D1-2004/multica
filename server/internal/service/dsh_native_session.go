@@ -46,8 +46,9 @@ func (s *TaskService) RegisterDSHNativeChatSession(ctx context.Context, agent db
 		}
 		var kind string
 		var scopeID pgtype.UUID
-		err := tx.QueryRow(ctx, `SELECT scope_kind,scope_id FROM dsh_employee_session
- WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3`, access.WorkspaceID, access.AgentID, sessionID).Scan(&kind, &scopeID)
+		var epoch uuid.UUID
+		err := tx.QueryRow(ctx, `SELECT scope_kind,scope_id,epoch_id FROM dsh_employee_session
+ WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3`, access.WorkspaceID, access.AgentID, sessionID).Scan(&kind, &scopeID, &epoch)
 		exists := err == nil
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
@@ -78,7 +79,7 @@ func (s *TaskService) RegisterDSHNativeChatSession(ctx context.Context, agent db
 			if out.Session.Status != "active" {
 				return ErrChatSessionArchived
 			}
-			return (dshhost.PostgresStore{DB: tx}).BindWorkdir(ctx, dshhost.SessionScope{Key: access.Key, Kind: "chat", ID: uuid.UUID(out.Session.ID.Bytes)}, workdir, false)
+			return (dshhost.PostgresStore{DB: tx}).BindWorkdir(ctx, dshhost.SessionScope{Key: access.Key, Kind: "chat", ID: uuid.UUID(out.Session.ID.Bytes), Epoch: epoch}, workdir, false)
 		}
 		out.Session, err = q.CreateChatSession(ctx, db.CreateChatSessionParams{
 			WorkspaceID: current.WorkspaceID, AgentID: current.ID, CreatorID: userID,

@@ -66,3 +66,25 @@ dingzvwprcls6j6p4ofi. Official production developer-platform readback confirms
 that robot's name is 须莫v7_Pre_Pi_钉钉组织 and mode STREAM/ONLINE. Its backend
 binding is preproduction only. Test IM delivery succeeded, but no corresponding
 preproduction task has been observed yet. This is not reset acceptance.
+
+
+Actual existing-bot acceptance found a third reset defect. Agent
+167f831a-73cb-4087-a86a-d1cbe4c08145 was temporarily switched from its original
+Pi runtime to the DSH candidate, with coordinator disabled, and its bindings
+backed up. No robot was created. Native DingTalk sends triggered task
+f61752e5-8317-4dbb-8530-aa909416ce4f (correct role and temporary token), then
+bare /new returned the reset acknowledgement. Task
+605ad253-4659-467d-9d5a-12616a5d6509 still recalled that token and reused
+session-cce5bfd7-29ff-4578-a7ab-b0a70a7600b5. Reset acceptance FAILED.
+
+The launcher now resolves durable session epochs; existing task bindings win
+on retry, while new platform turns use the last reset at their queue position.
+Historical native sessions and schedules resolve their explicit epoch. Schema
+activation is staged: first deploy the epoch column, new composite unique index,
+and epoch-aware code with the old uniqueness index retained; after all replicas
+are updated, deploy removal of the old index. This prevents an incompatible
+old/new binary write window. Do not restore a pre-epoch binary after activation.
+Local focused tests pass (database tests skip without a reachable database).
+Direct preproduction DB connection from the laptop and FC test sandbox timed out;
+these attempts do not count as database test passes. Final live reset acceptance
+and restoring the pre bot's original runtime/coordinator/plugin bindings remain.
