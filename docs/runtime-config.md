@@ -135,3 +135,7 @@ Never reuse a pre-release document in production. Publish and verify each unit i
 | 2026-08-30 | Reused `web.site_connect_src` as the hosted-site fetch proxy server-side origin allowlist while retaining the connector default and CSP behavior. | Client exact-URL declarations are untrusted; a live Diamond origin boundary lets the server authorize destinations without adding a second configuration contract. |
 | 2026-08-30 | Added non-removable `'self'` to the hosted-site CSP `connect-src` defaults while retaining the connector domain and Diamond HTTPS origin additions. | Allow hosted feedback pages to use the Multica same-origin proxy without letting Diamond remove either default source. |
 | 2026-08-30 | Added `web.site_connect_src` and the non-removable `https://connector.dingtalk.com` hosted-site CSP default. | Allow hosted feedback pages to call DingTalk AI Table webhooks without relaxing other CSP directives. |
+
+### Coordinator model
+
+`runtime.llm.coordinator_model` selects the Coordinator main-loop and finish-review model independently of `default_model` and sandbox model selection. Set it to `qwen3.8-max`. Each decision snapshots the current value; Diamond updates affect subsequent decisions without a restart. Thinking remains disabled (`enable_thinking=false`, `reasoning_effort=none`). Omission or blank retains the prior `qwen3.7-plus` during migration. Deploy supporting binaries on every replica before adding this field, because older binaries reject unknown fields.

@@ -263,7 +263,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 				name += ".repair"
 			}
 			generation = lt.StartObservation(langfuse.ObservationOptions{
-				Type: langfuse.TypeGeneration, Name: name, Model: coordinatorModel,
+				Type: langfuse.TypeGeneration, Name: name, Model: c.configuredModel(),
 				Input: checkMessages, ModelParameters: map[string]any{"max_completion_tokens": reviewLimit, "temperature": 0, "tool_choice": "required", "timeout_ms": finishCheckTimeout.Milliseconds()},
 				Metadata: map[string]any{"finish_check_policy_version": manifest.PolicyVersion, "finish_check_prompt_hash": manifest.PromptHash, "finish_check_modules": manifest.Modules, "job_policy_sha256": policy["sha256"], "job_policy_kind": policy["kind"], "coordinator_contract": coordinatorContractMetadata(turn), "protocol_attempt": attempt + 1},
 			})
