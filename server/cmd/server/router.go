@@ -2055,8 +2055,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.With(handler.RequireHumanActor).Post("/", h.CreateWorkspace)
 			r.Route("/{id}", func(r chi.Router) {
 				// DTA Tokens are workspace-bound service-member identities. Only a
-				// human workspace owner may create or change their credentials;
-				// admins, members, and DTA credentials cannot reach this group.
+				// workspace owner (including an all-permission service) may manage
+				// credentials. Restricted DSH tokens cannot reach this group.
 				r.Group(func(r chi.Router) {
 					r.Use(func(next http.Handler) http.Handler {
 						return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

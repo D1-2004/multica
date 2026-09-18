@@ -17,6 +17,12 @@ func RefreshCloudFrontCookies(signer *auth.CloudFrontSigner) func(http.Handler) 
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Workspace service credentials must not mint the human CDN session,
+			// whose policy is broader than the token's API/workspace boundary.
+			if _, service := WorkspaceAccessPrincipalFromContext(r.Context()); service {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if _, err := r.Cookie("CloudFront-Policy"); err != nil {
 				ttl := auth.AuthTokenTTL()
 				for _, cookie := range signer.SignedCookies(time.Now().Add(ttl)) {

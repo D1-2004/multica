@@ -2,8 +2,14 @@ package handler
 
 import (
 	"net/http"
+
+	"github.com/multica-ai/multica/server/internal/middleware"
 )
 
+// DTA credentials are also admitted when workspace middleware has established
+// their bound workspace and their permission admits the operation. Personal
+// account routes have no workspace context and remain human-only.
+//
 // RequireHumanActor is a chi-style middleware that rejects requests
 // authenticated via a machine credential — currently mat_ task tokens,
 // mcn_ cloud-node PATs, and dta_ workspace service-member tokens. It exists for endpoints whose
@@ -98,6 +104,10 @@ func RequireHumanActor(next http.Handler) http.Handler {
 		// X-Actor-Source is server-set only. The auth middleware
 		// strips any client-supplied value before stamping its own,
 		// so a non-empty value here is authoritative.
+		if p, ok := middleware.WorkspaceAccessPrincipalFromContext(r.Context()); ok && middleware.WorkspaceIDFromContext(r.Context()) == p.WorkspaceID && middleware.WorkspaceAccessRequestAllowed(p.Permission, r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		switch r.Header.Get("X-Actor-Source") {
 		case "task_token", "cloud_pat", "workspace_access_token":
 			writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")

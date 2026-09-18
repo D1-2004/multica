@@ -12,6 +12,7 @@ INSERT INTO workspace_access_token (
     workspace_id,
     subject_user_id,
     name,
+    permission,
     token_hash,
     token_prefix,
     expires_at,
@@ -22,6 +23,7 @@ VALUES (
     sqlc.arg('workspace_id'),
     sqlc.arg('subject_user_id'),
     sqlc.arg('name'),
+    sqlc.arg('permission'),
     sqlc.arg('token_hash'),
     sqlc.arg('token_prefix'),
     sqlc.narg('expires_at'),
@@ -42,6 +44,7 @@ ORDER BY created_at DESC;
 -- name: UpdateWorkspaceAccessToken :one
 UPDATE workspace_access_token
 SET name = sqlc.arg('name'),
+    permission = sqlc.arg('permission'),
     expires_at = sqlc.narg('expires_at'),
     version = version + 1,
     updated_by = sqlc.arg('actor_user_id'),

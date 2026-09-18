@@ -167,8 +167,8 @@ func (s Store) Acknowledge(ctx context.Context, host dshhost.Host, revision Revi
 
 type Status struct {
 	State             string        `json:"state"`
-	DesiredRevision   string        `json:"desired_revision,omitempty"`
-	AppliedRevision   string        `json:"applied_revision,omitempty"`
+	DesiredRevision   string        `json:"desired_revision"`
+	AppliedRevision   string        `json:"applied_revision"`
 	AppliedGeneration int64         `json:"applied_generation"`
 	AppliedSandboxID  string        `json:"applied_sandbox_id,omitempty"`
 	Current           bool          `json:"current"`

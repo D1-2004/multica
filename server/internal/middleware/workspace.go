@@ -262,6 +262,8 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 				return
 			}
 
+			member = WorkspaceAccessMember(r.Context(), member)
+
 			if len(roles) > 0 {
 				allowed := false
 				for _, role := range roles {

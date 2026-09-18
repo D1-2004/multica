@@ -135,7 +135,7 @@ func TestWorkspaceAccessAuthDelegatesBusinessAuthorizationToNativeRoutes(t *test
 	}
 }
 
-func TestWorkspaceAccessAuthUsesNativeMemberRole(t *testing.T) {
+func TestWorkspaceAccessAuthUsesRequestLocalAuthority(t *testing.T) {
 	queries, fixture := setupWorkspaceAccessAuthFixture(t)
 	request := func() *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/api/agents", nil)
@@ -148,7 +148,7 @@ func TestWorkspaceAccessAuthUsesNativeMemberRole(t *testing.T) {
 		next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			nextCalled = true
 			member, ok := MemberFromContext(r.Context())
-			if !ok || member.Role != "member" || member.UserID.String() != fixture.userID {
+			if !ok || member.Role != "owner" || member.UserID.String() != fixture.userID {
 				t.Fatalf("member = %+v, ok=%v", member, ok)
 			}
 			w.WriteHeader(http.StatusNoContent)
@@ -161,12 +161,12 @@ func TestWorkspaceAccessAuthUsesNativeMemberRole(t *testing.T) {
 		}
 	})
 
-	t.Run("owner route is denied", func(t *testing.T) {
-		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("next must not be called") })
+	t.Run("all permission admits owner route", func(t *testing.T) {
+		next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 		handler := Auth(queries, nil, nil)(RequireWorkspaceRole(queries, "owner")(next))
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, request())
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "insufficient permissions") {
+		if rec.Code != http.StatusNoContent {
 			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 		}
 	})
