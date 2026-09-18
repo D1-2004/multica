@@ -357,3 +357,16 @@ but do not block rollout advancement or observation completion. Target update
 failures, incomplete cutovers and release state checks remain enforced.
 
 Long-lived native DSH Sessions may exceed the 32 MiB task artifact limit. The runner validates the complete frozen history prefix with temporary page spooling and replays it in source order before deciding whether a request is absent. Only the owned task turn and referenced child activations enter the artifact; their size limits and ownership checks still apply. A truncated or inconsistent history cannot authorize a retry.
+
+
+During a native DSH restart, plugin listing remains readable from saved bindings.
+A Profile status of `native_sync_pending` means native edits have not been
+synchronized: saved revisions are visible but `current` is false. Refresh after
+recovery; configuration writes still require synchronization. A managed native
+restart preserves the live profile and is rejected while tasks or plugin
+mutations are active. Verify a new native boot and a subsequent real task.
+
+For DingTalk Stream robots, `/new` (or `/reset`) by itself arms a durable reset
+for the next message. The adapter preserves canonical `CommandText` separately
+from the stripped model input, including leading robot mentions. `/new <text>`
+starts that message with a fresh provider session. Visible history is retained.

@@ -670,8 +670,9 @@ func (h *Handler) ListAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.syncAgentNativePlugins(r.Context(), agent); err != nil {
-		writeError(w, http.StatusServiceUnavailable, "native plugin synchronization is pending; retry shortly")
-		return
+		// Saved bindings remain readable during a native restart. Mutations still
+		// require a successful sync, so stale data cannot overwrite native edits.
+		w.Header().Set("X-DSH-Native-Sync", "pending")
 	}
 	rows, err := h.Queries.ListDshPluginsForAgent(r.Context(), db.ListDshPluginsForAgentParams{
 		AgentID:     agent.ID,

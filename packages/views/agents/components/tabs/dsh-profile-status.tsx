@@ -16,6 +16,7 @@ export function DshProfileStatus({ workspaceId, agentId, embedded = false }: { w
     if (query.isPending) return t(($) => $.tab_body.dsh_profile.loading);
     if (unavailable) return t(($) => $.tab_body.dsh_profile.unavailable);
     switch (status?.state) {
+      case "native_sync_pending": return t(($) => $.tab_body.dsh_profile.native_sync_pending);
       case "unprepared": return t(($) => $.tab_body.dsh_profile.unprepared);
       case "configuration_changed": return t(($) => $.tab_body.dsh_profile.changed);
       case "waiting_for_builds": return t(($) => $.tab_body.dsh_profile.building);
@@ -64,7 +65,7 @@ export function DshProfileStatus({ workspaceId, agentId, embedded = false }: { w
         <Button size="sm" onClick={() => prepare.mutate()} disabled={prepare.isPending || query.isFetching}>
           {status?.state === "apply_failed" ? t(($) => $.tab_body.dsh_profile.retry_apply) : t(($) => $.tab_body.dsh_profile.prepare)}
         </Button>}
-      {unavailable && <Button size="sm" variant="outline" onClick={() => { void query.refetch(); }} disabled={prepare.isPending || query.isFetching}>
+      {(unavailable || status?.state === "native_sync_pending") && <Button size="sm" variant="outline" onClick={() => { void query.refetch(); }} disabled={prepare.isPending || query.isFetching}>
         {t(($) => $.tab_body.dsh_profile.refresh)}
       </Button>}
     </div>

@@ -32,7 +32,14 @@ func (l *FCE2BLauncher) DSHEmployeeProfile(ctx context.Context, key dshhost.Key,
 		return result, errors.New("employee Profile source unavailable")
 	}
 	err := l.withDSHEmployee(ctx, key, func(conn *pgxpool.Conn, _ db.AgentRuntime, template string) error {
-		if err := l.syncDSHNativePlugins(ctx, conn, key, template); err != nil {
+		if syncErr := l.syncDSHNativePlugins(ctx, conn, key, template); syncErr != nil {
+			if prepare {
+				return syncErr
+			}
+			// Read durable status without preparing from an unconfirmed snapshot.
+			var err error
+			result, err = (dshprofile.Store{DB: conn}).Status(ctx, key)
+			result.State, result.Current = "native_sync_pending", false
 			return err
 		}
 		store := dshprofile.Store{DB: conn}
