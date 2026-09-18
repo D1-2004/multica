@@ -147,7 +147,7 @@ func (b *dshNativeBackend) admit(ctx context.Context, prompt string, opts ExecOp
 	case "absent":
 		mcp := make([]map[string]any, 0, len(servers))
 		for _, s := range servers {
-			item := map[string]any{"serverName": s.Name, "transport": s.Transport}
+			item := map[string]any{"serverName": s.Name, "transport": s.Transport, "required": s.Required}
 			if s.Command != "" {
 				item["command"], item["args"], item["env"] = s.Command, s.Args, s.Env
 				if s.Cwd != "" {
@@ -232,15 +232,26 @@ func (b *dshNativeBackend) admit(ctx context.Context, prompt string, opts ExecOp
 }
 func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opts ExecOptions, servers []dshMCPServer, emit func(Message)) Result {
 	failure := func(err error) Result { return Result{Status: "failed", Error: err.Error()} }
+	// Even create can fail after the Host has acquired resources. Confirm this
+	// request is quiescent on every exit; never remove a witness on assumption.
+	cleanup := func(cause error) error {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		defer cancel()
+		if err := b.cleanup(cleanupCtx, cause != nil); err != nil {
+			return errors.Join(cause, err)
+		}
+		b.quiescent.Store(true)
+		return cause
+	}
 	raw, err := b.client.call(ctx, "create", map[string]string{"sessionId": b.native.SessionID, "cwd": b.native.WorkDir})
 	if err != nil {
-		return failure(err)
+		return failure(cleanup(err))
 	}
 	var created struct {
 		SessionID string `json:"sessionId"`
 	}
 	if json.Unmarshal(raw, &created) != nil || created.SessionID != b.native.SessionID {
-		return failure(errors.New("invalid native DSH Session receipt"))
+		return failure(cleanup(errors.New("invalid native DSH Session receipt")))
 	}
 	emit(Message{Type: MessageStatus, Status: "running", SessionID: b.native.SessionID})
 	history := dshNativeTaskHistory{requestID: b.native.RequestID}
@@ -292,12 +303,10 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 	if err == nil {
 		result, err = history.result(b.native.SessionID)
 	}
-	cleanupCtx, stopCleanup := context.WithTimeout(context.Background(), 35*time.Second)
-	defer stopCleanup()
-	if cleanupErr := b.cleanup(cleanupCtx, err != nil); cleanupErr != nil {
-		return failure(cleanupErr)
+	err = cleanup(err)
+	if !b.quiescent.Load() {
+		return failure(err)
 	}
-	b.quiescent.Store(true)
 	if b.native.TrajectorySink != nil {
 		artifactCtx, stopArtifact := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stopArtifact()

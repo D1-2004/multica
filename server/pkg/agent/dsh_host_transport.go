@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"time"
 )
@@ -25,6 +26,7 @@ type dshHostClient struct {
 }
 
 type dshHostResponse struct {
+	Error json.RawMessage `json:"error"`
 	OK    bool            `json:"ok"`
 	Value json.RawMessage `json:"value"`
 }
@@ -62,7 +64,7 @@ func (c *dshHostClient) open(ctx context.Context, method string, request any) (n
 	return conn, closeConn, nil
 }
 
-func dshHostRead(conn net.Conn, reader *bufio.Reader) (json.RawMessage, error) {
+func dshHostRead(conn net.Conn, reader *bufio.Reader, method string) (json.RawMessage, error) {
 	// The peer may close after writing several complete frames. Drain frames
 	// already buffered before treating a closed transport as interruption.
 	if err := conn.SetReadDeadline(time.Now().Add(40 * time.Second)); err != nil && reader.Buffered() == 0 {
@@ -75,8 +77,14 @@ func dshHostRead(conn net.Conn, reader *bufio.Reader) (json.RawMessage, error) {
 		return nil, errors.New("DSH Host response interrupted or invalid")
 	}
 	var response dshHostResponse
-	if json.Unmarshal(line, &response) != nil || !response.OK || len(response.Value) == 0 || string(response.Value) == "null" {
-		return nil, errors.New("DSH Host operation rejected")
+	if json.Unmarshal(line, &response) != nil {
+		return nil, fmt.Errorf("DSH Host %s: invalid response", method)
+	}
+	if !response.OK {
+		return nil, dshHostOperationError(method, response.Error)
+	}
+	if len(response.Value) == 0 || string(response.Value) == "null" {
+		return nil, fmt.Errorf("DSH Host %s: missing response value", method)
 	}
 	return response.Value, nil
 }
@@ -87,7 +95,7 @@ func (c *dshHostClient) call(ctx context.Context, method string, request any) (j
 		return nil, err
 	}
 	defer closeConn()
-	return dshHostRead(conn, bufio.NewReaderSize(conn, dshHostMaxFrame))
+	return dshHostRead(conn, bufio.NewReaderSize(conn, dshHostMaxFrame), method)
 }
 
 // The consumer decides completion from the correlated native turn/end event.
@@ -100,7 +108,7 @@ func (c *dshHostClient) follow(ctx context.Context, request any, consume func(js
 	defer closeConn()
 	reader := bufio.NewReaderSize(conn, dshHostMaxFrame)
 	for {
-		value, err := dshHostRead(conn, reader)
+		value, err := dshHostRead(conn, reader, "follow")
 		if err != nil {
 			return err
 		}
@@ -109,4 +117,31 @@ func (c *dshHostClient) follow(ctx context.Context, request any, consume func(js
 			return err
 		}
 	}
+}
+
+// Decode only bounded protocol categories. Old string errors and arbitrary
+// native message/detail fields are deliberately excluded from task output.
+func dshHostOperationError(method string, raw json.RawMessage) error {
+	var diagnostic struct {
+		Code   string `json:"code"`
+		Reason string `json:"reason"`
+	}
+	_ = json.Unmarshal(raw, &diagnostic)
+	code := "host/operation-failed"
+	switch diagnostic.Code {
+	case "multica/context-rejected", "multica/required-mcp-unavailable", "gateway/bad-request", "gateway/cancelled", "gateway/internal",
+		"session/agent-busy", "session/attachment-invalid", "session/conflict",
+		"session/fork-unavailable", "session/invalid-time-zone", "session/model-unavailable",
+		"session/not-found", "session/queue-item-not-found", "session/steer-unavailable",
+		"session/title-invalid", "session/workspace-attach-failed", "host/native-rejected":
+		code = diagnostic.Code
+	}
+	summary := "operation rejected"
+	if code == "gateway/internal" && diagnostic.Reason == "history_corrupt" {
+		summary = "session history integrity check failed"
+	}
+	if method == "task.bind" && (diagnostic.Reason == "required_mcp_unavailable" || code == "multica/required-mcp-unavailable") {
+		summary = "required MCP startup failed"
+	}
+	return fmt.Errorf("DSH Host %s failed [%s]: %s", method, code, summary)
 }

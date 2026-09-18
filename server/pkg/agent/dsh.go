@@ -42,6 +42,7 @@ type dshModelSelection struct {
 }
 
 type dshMCPServer struct {
+	Required          bool              `json:"required"`
 	Name              string            `json:"name"`
 	Transport         string            `json:"transport"`
 	Command           string            `json:"command,omitempty"`
@@ -155,6 +156,18 @@ func buildDshMCPServers(raw json.RawMessage, logger interface {
 	if err != nil {
 		return nil, err
 	}
+	// MCP connection availability is optional unless explicitly required by
+	// configuration. Invalid policy types must not silently weaken a gate.
+	var config struct {
+		Servers map[string]struct {
+			Required bool `json:"required"`
+		} `json:"mcpServers"`
+	}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &config); err != nil {
+			return nil, errors.New("invalid DSH MCP startup policy")
+		}
+	}
 	out := make([]dshMCPServer, 0, len(servers))
 	for _, rawServer := range servers {
 		server, ok := rawServer.(map[string]any)
@@ -163,7 +176,7 @@ func buildDshMCPServers(raw json.RawMessage, logger interface {
 		}
 		name, _ := server["name"].(string)
 		if command, _ := server["command"].(string); command != "" {
-			entry := dshMCPServer{Name: name, Transport: "stdio", Command: command, Args: []string{}, Env: map[string]string{}}
+			entry := dshMCPServer{Name: name, Required: config.Servers[name].Required, Transport: "stdio", Command: command, Args: []string{}, Env: map[string]string{}}
 			if args, ok := server["args"].([]string); ok {
 				entry.Args = args
 			}
@@ -191,7 +204,7 @@ func buildDshMCPServers(raw json.RawMessage, logger interface {
 			}
 			continue
 		}
-		entry := dshMCPServer{Name: name, Transport: "streamable-http", URL: remoteURL, Headers: map[string]string{}}
+		entry := dshMCPServer{Name: name, Required: config.Servers[name].Required, Transport: "streamable-http", URL: remoteURL, Headers: map[string]string{}}
 		if pairs, ok := server["headers"].([]map[string]any); ok {
 			for _, pair := range pairs {
 				key, _ := pair["name"].(string)
@@ -202,6 +215,21 @@ func buildDshMCPServers(raw json.RawMessage, logger interface {
 			}
 		}
 		out = append(out, entry)
+	}
+	for name, policy := range config.Servers {
+		if !policy.Required {
+			continue
+		}
+		found := false
+		for _, server := range out {
+			if server.Name == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, errors.New("required DSH MCP server configuration is invalid")
+		}
 	}
 	return out, nil
 }
