@@ -27,10 +27,9 @@ import (
 const DSHEmployeeHostCapability = "dsh_employee_host_v1"
 const dshEmployeeLockClass int32 = 0x44534831
 const employeeFilesystemLockClass int32 = 0x46535331
-const dshNativeStartupLockClass int32 = 0x44534832
 
-// The native process may need to index a large existing employee Home. Its
-// startup budget must outlive the Runtime's bounded native readiness window.
+// Keep the platform deadline outside the Runtime's bounded readiness window.
+// Runtime initialization defers history IO; independent session hosts start concurrently.
 const dshNativeStartupTimeout = 320 * time.Second
 
 var errDSHHostWaiting = errors.New("DSH employee host is awaiting reconciliation or task drain")
@@ -354,21 +353,10 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		}
 	}
 	if err == nil {
-		// Independent tasks keep independent writers and remain concurrent once
-		// admitted. Only native readiness is paced per employee: retrying every
-		// queued task simultaneously otherwise rescans the same NAS history and
-		// makes each cold start exceed its deadline. A contender retains its
-		// sandbox and retries normally; contention is never a retirement signal.
-		lockKey := dshEmployeeLockKey(rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true})
-		var acquired bool
-		if lockErr := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1,$2)", dshNativeStartupLockClass, lockKey).Scan(&acquired); lockErr != nil {
-			return dshhost.Host{}, cold, lockErr
-		}
-		if !acquired {
-			chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "waiting", "reason", "native_startup_pacing", "sandbox_id", host.SandboxID)
-			return dshhost.Host{}, cold, errDSHHostWaiting
-		}
-		defer releaseFCE2BAdvisoryLock(conn, false, dshNativeStartupLockClass, lockKey, "DSH native startup")
+		// The execution-scope admission lock already protects this session's
+		// writer. An employee-wide startup lock makes unrelated sessions wait
+		// behind one slow cold start and imposes the reconciliation retry delay
+		// on healthy hosts too. Preserve task-level concurrency here.
 		out, err = l.runE2BCommandWithTimeout(ctx, dshNativeStartupTimeout, dshNativeHostEnsureArgs(host, catalog, authority, origin, l.nativeAuthority.publicKey(), revision))
 	}
 	if err == nil {
