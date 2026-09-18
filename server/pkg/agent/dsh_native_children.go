@@ -55,14 +55,15 @@ func (b *dshNativeBackend) childTrajectories(ctx context.Context, rootHeader jso
 			childModes := map[string]string{}
 			address := dshNativeHistoryAddress(ref.ChildSessionID, parent.id, mode)
 			err = b.client.follow(ctx, map[string]any{"address": address}, func(raw json.RawMessage) (bool, error) {
-				snapshot, events, readErr := readDSHNativeBaseline(ctx, b.client.call, raw, ref.ChildSessionID, b.native.WorkDir, parent.id, mode)
+				selected := dshChildRangeCollector{ref: ref}
+				snapshot, readErr := walkDSHNativeBaseline(ctx, b.client.call, raw, ref.ChildSessionID, b.native.WorkDir, func(event json.RawMessage) error {
+					rememberDSHChildMode(childModes, event)
+					return selected.accept(event)
+				}, parent.id, mode)
 				if readErr != nil {
 					return false, readErr
 				}
-				for _, event := range events {
-					rememberDSHChildMode(childModes, event)
-				}
-				child, readErr = selectDSHChildRange(snapshot.Header, events, parent.header, parent.id, ref)
+				child, readErr = selected.document(snapshot.Header, parent.header, parent.id)
 				return true, readErr
 			})
 			if err != nil {
@@ -98,36 +99,57 @@ func rememberDSHChildMode(modes map[string]string, raw json.RawMessage) {
 	}
 }
 
-func selectDSHChildRange(header json.RawMessage, events []json.RawMessage, parentHeader json.RawMessage, parentID string, ref dshtrajectory.ChildReference) (dshtrajectory.ChildDocument, error) {
+// Retain only the activation owned by this task while walking the full prefix.
+type dshChildRangeCollector struct {
+	ref     dshtrajectory.ChildReference
+	events  []json.RawMessage
+	bytes   int
+	done    bool
+	closed  bool
+	lastSeq int64
+}
+
+func (c *dshChildRangeCollector) accept(raw json.RawMessage) error {
+	if c.ref.FirstSeq == nil || *c.ref.FirstSeq < 0 {
+		return errors.New("invalid native DSH child range")
+	}
+	event, err := decodeDSHNativeEvent(raw)
+	if err != nil {
+		return err
+	}
+	if c.done || *event.Seq < *c.ref.FirstSeq {
+		return nil
+	}
+	// Never widen an interrupted activation into a later activation.
+	if *event.Seq > *c.ref.FirstSeq && event.Type == "multica/task-child-start" {
+		c.done = true
+		return nil
+	}
+	c.bytes += len(raw) + 1
+	if c.bytes > dshtrajectory.MaxBytes {
+		return errors.New("native DSH child trajectory exceeds artifact limit")
+	}
+	c.events = append(c.events, raw)
+	c.lastSeq = *event.Seq
+	if event.Type == "multica/task-child-end" {
+		c.closed, c.done = true, true
+	}
+	return nil
+}
+
+func (c *dshChildRangeCollector) document(header, parentHeader json.RawMessage, parentID string) (dshtrajectory.ChildDocument, error) {
 	fail := func() (dshtrajectory.ChildDocument, error) {
 		return dshtrajectory.ChildDocument{}, errors.New("invalid native DSH child range")
 	}
-	if ref.FirstSeq == nil || *ref.FirstSeq < 0 || *ref.FirstSeq >= int64(len(events)) {
+	if c.ref.FirstSeq == nil || len(c.events) == 0 {
 		return fail()
 	}
 	physical, err := dshPhysicalHeader(header)
 	if err != nil {
 		return fail()
 	}
-	child := dshtrajectory.ChildDocument{Header: physical, Scope: dshtrajectory.ChildScope{SessionID: ref.ChildSessionID, ParentSessionID: parentID, ActivationID: ref.ActivationID, FirstSeq: *ref.FirstSeq}}
-	for i := *ref.FirstSeq; i < int64(len(events)); i++ {
-		event, err := decodeDSHNativeEvent(events[i])
-		if err != nil || *event.Seq != i {
-			return fail()
-		}
-		// An unclosed activation is an interrupted prefix. Never include the next
-		// activation, even when it was resumed by a later task in the same Session.
-		if i > *ref.FirstSeq && event.Type == "multica/task-child-start" {
-			break
-		}
-		child.Events = append(child.Events, events[i])
-		child.Scope.LastSeq = i
-		if event.Type == "multica/task-child-end" {
-			child.Scope.Closed = true
-			break
-		}
-	}
-	if dshtrajectory.ValidateChild(child, parentHeader, ref.RequestID) != nil {
+	child := dshtrajectory.ChildDocument{Header: physical, Events: c.events, Scope: dshtrajectory.ChildScope{SessionID: c.ref.ChildSessionID, ParentSessionID: parentID, ActivationID: c.ref.ActivationID, FirstSeq: *c.ref.FirstSeq, LastSeq: c.lastSeq, Closed: c.closed}}
+	if dshtrajectory.ValidateChild(child, parentHeader, c.ref.RequestID) != nil {
 		return fail()
 	}
 	return child, nil

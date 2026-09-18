@@ -168,3 +168,9 @@ func TestDSHNativeBaselinePagesAtFrozenCursorBeforeDecidingRetry(t *testing.T) {
 		t.Fatal("incomplete prefix accepted")
 	}
 }
+
+func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.RawMessage, sessionID, cwd string, childParent ...string) (dshNativeSnapshot, []json.RawMessage, error) {
+	var events []json.RawMessage
+	snapshot, err := walkDSHNativeBaseline(ctx, call, raw, sessionID, cwd, func(raw json.RawMessage) error { events = append(events, raw); return nil }, childParent...)
+	return snapshot, events, err
+}

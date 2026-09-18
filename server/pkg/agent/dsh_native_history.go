@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/multica-ai/multica/server/pkg/dshtrajectory"
 )
@@ -53,14 +55,13 @@ func decodeDSHNativeEvent(raw json.RawMessage) (dshNativeEvent, error) {
 	return event, nil
 }
 
-// readDSHNativeBaseline walks backwards at one frozen cursor, then returns
+// walkDSHNativeBaseline walks backwards at one frozen cursor, then visits
 // the complete prefix in source order. A partial page cannot prove that a
 // task's previous submission is absent. The caller opens follow first, so
 // events committed while pagination runs remain on the same subscription.
-func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.RawMessage, sessionID, cwd string, childParent ...string) (dshNativeSnapshot, []json.RawMessage, error) {
-	var snapshot dshNativeSnapshot
-	fail := func() (dshNativeSnapshot, []json.RawMessage, error) {
-		return snapshot, nil, errors.New("incomplete or mismatched native DSH history")
+func walkDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.RawMessage, sessionID, cwd string, visit func(json.RawMessage) error, childParent ...string) (snapshot dshNativeSnapshot, resultErr error) {
+	fail := func() (dshNativeSnapshot, error) {
+		return snapshot, errors.New("incomplete or mismatched native DSH history")
 	}
 	if json.Unmarshal(raw, &snapshot) != nil || snapshot.Type != "snapshot" || snapshot.Cursor == nil || *snapshot.Cursor < -1 || snapshot.HasMore == nil {
 		return fail()
@@ -91,13 +92,26 @@ func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.Raw
 			return fail()
 		}
 	}
-	pages := [][]json.RawMessage{}
+	// A long-lived Session can exceed the per-task artifact limit. Spool pages
+	// privately until the complete prefix is validated, then replay forward.
+	// This file is disposable transport buffering, never authoritative state.
+	spool, err := os.CreateTemp("", "multica-dsh-history-*")
+	if err != nil {
+		return snapshot, err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, spool.Close(), os.Remove(spool.Name()))
+	}()
+	type pageSpan struct{ offset, length int64 }
+	pages := []pageSpan{}
+	var offset int64
+
 	records, more := snapshot.Records, *snapshot.HasMore
 	end := *snapshot.Cursor + 1
-	totalBytes := 0
+	snapshot.Records = nil
 	for {
 		if err := ctx.Err(); err != nil {
-			return snapshot, nil, err
+			return snapshot, err
 		}
 		page := make([]json.RawMessage, 0, len(records))
 		start := end - int64(len(records))
@@ -112,13 +126,21 @@ func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.Raw
 			if err != nil || *event.Seq != start+int64(i) {
 				return fail()
 			}
-			totalBytes += len(record.Event) + 1
-			if totalBytes > 32<<20 {
-				return snapshot, nil, errors.New("native DSH history exceeds supported artifact size")
-			}
 			page = append(page, record.Event)
 		}
-		pages = append(pages, page)
+		encoded, err := json.Marshal(page)
+		if err != nil {
+			return snapshot, err
+		}
+		n, err := spool.Write(encoded)
+		if err != nil {
+			return snapshot, err
+		}
+		if n != len(encoded) {
+			return snapshot, io.ErrShortWrite
+		}
+		pages = append(pages, pageSpan{offset, int64(n)})
+		offset += int64(n)
 		if !more {
 			if start != 0 {
 				return fail()
@@ -130,7 +152,7 @@ func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.Raw
 		}
 		response, err := call(ctx, "page", map[string]any{"address": dshNativeHistoryAddress(sessionID, childParent...), "throughSeq": *snapshot.Cursor, "beforeSeq": start, "maxMessages": 50})
 		if err != nil {
-			return snapshot, nil, err
+			return snapshot, err
 		}
 		var previous dshNativePage
 		if json.Unmarshal(response, &previous) != nil || previous.HasMore == nil {
@@ -138,11 +160,25 @@ func readDSHNativeBaseline(ctx context.Context, call dshNativeCall, raw json.Raw
 		}
 		end, records, more = start, previous.Records, *previous.HasMore
 	}
-	events := make([]json.RawMessage, 0)
 	for i := len(pages) - 1; i >= 0; i-- {
-		events = append(events, pages[i]...)
+		if err := ctx.Err(); err != nil {
+			return snapshot, err
+		}
+		var page []json.RawMessage
+		span := pages[i]
+		if err := json.NewDecoder(io.NewSectionReader(spool, span.offset, span.length)).Decode(&page); err != nil {
+			return snapshot, err
+		}
+		for _, event := range page {
+			if err := ctx.Err(); err != nil {
+				return snapshot, err
+			}
+			if err := visit(event); err != nil {
+				return snapshot, err
+			}
+		}
 	}
-	return snapshot, events, nil
+	return snapshot, nil
 }
 
 // Only the turn containing the task's persisted RPC request ID owns its
@@ -211,6 +247,8 @@ func (h *dshNativeTaskHistory) accept(raw json.RawMessage) error {
 				return errors.New("native DSH turn contains another request")
 			}
 			h.foreign = true
+			h.pendingEvents = nil
+			h.turnBytes = 0
 		} else if data.Source.Kind == "" {
 			return errors.New("missing native DSH user message source")
 		}
@@ -242,10 +280,10 @@ func (h *dshNativeTaskHistory) accept(raw json.RawMessage) error {
 			h.pendingEvents = nil
 		}
 		h.ownEvents = append(h.ownEvents, raw)
-	} else if !h.found && h.inTurn {
+	} else if !h.found && h.inTurn && !h.foreign {
 		h.pendingEvents = append(h.pendingEvents, raw)
 	}
-	if !wasTerminal && (!h.found || h.ownTurn == h.turn) {
+	if !wasTerminal && ((!h.found && h.inTurn && !h.foreign) || (h.found && h.ownTurn == h.turn)) {
 		h.turnBytes += len(raw) + 1
 		if h.turnBytes > dshtrajectory.MaxBytes {
 			return errors.New("native DSH task trajectory exceeds 32 MiB")

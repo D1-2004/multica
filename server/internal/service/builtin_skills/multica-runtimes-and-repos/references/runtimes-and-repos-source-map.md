@@ -39,6 +39,8 @@
 
 ## Task and child trajectories
 
+- `server/pkg/agent/dsh_native_history.go`: privately spools complete frozen history pages, replays in source order, and retains only task-owned events; per-task limits do not cap total Session history. `dsh_native_history_stream_test.go` covers history above 32 MiB, foreign turns, retained ownership, pagination/cancellation failures, temporary file cleanup and child activation bounds.
+
 - `server/pkg/agent/dsh_native_children.go`: follows child references using the official parent/child/mode address and selects the exact activation after task resources are released; pagination retains that same address.
 - `server/pkg/db/queries/runtime_start.sql`, `server/internal/service/runtime_start_attempt.go`, `server/cmd/server/runtime_sweeper.go`: persist and retry FC host-preparation waits without browser polling, through the existing task launch lease.
 - `server/pkg/dshtrajectory/children.go`: validates request identity, parent lineage and contiguous child intervals; counts all included events without copying seeded or unrelated task history.
