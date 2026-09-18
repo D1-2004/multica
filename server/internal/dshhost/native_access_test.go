@@ -217,3 +217,73 @@ func TestNativeAccessPostgresSingleExchangeExpiryAndHostRetirement(t *testing.T)
 		t.Fatal("retiring Host accepted entry")
 	}
 }
+
+func TestNativeRoutedGrantRequiresBrowserParent(t *testing.T) {
+	host := Host{Key: Key{uuid.New(), uuid.New()}, SandboxID: "sbx-routed", Generation: 1, State: "running"}
+	parent := NativeAccess{ID: uuid.New(), Key: host.Key, UserID: uuid.New(), Kind: "session"}
+	store := &nativeAccessStub{}
+	m := NativeAccessManager{Store: store, CheckManage: func(context.Context, Key, uuid.UUID) error { return nil }}
+	grant, _, err := m.IssueRouted(context.Background(), host, parent)
+	if err != nil || grant.ParentID != parent.ID || grant.UserID != parent.UserID {
+		t.Fatal("lost parent authority", err)
+	}
+	for _, mutate := range []func(*NativeAccess){
+		func(p *NativeAccess) { p.ID = uuid.Nil },
+		func(p *NativeAccess) { p.ParentID = uuid.New() },
+		func(p *NativeAccess) { p.AgentID = uuid.New() },
+		func(p *NativeAccess) { p.Kind = "entry" },
+	} {
+		invalid := parent
+		mutate(&invalid)
+		if _, _, err = m.IssueRouted(context.Background(), host, invalid); !errors.Is(err, ErrNativeAccessDenied) {
+			t.Fatal("invalid derivation accepted")
+		}
+	}
+}
+
+func TestNativeRoutedGrantPostgresParentLifetimeAndRevocation(t *testing.T) {
+	s, _ := stores(t)
+	ctx := context.Background()
+	host := bind(t, s)
+	host, err := s.BeginCreate(ctx, host.Key, host.Generation, uuid.New(), "template")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err = s.CompleteCreate(ctx, host, "sbx-native-parent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NativeAccessManager{s, func(context.Context, Key, uuid.UUID) error { return nil }}
+	_, entry, err := m.Issue(ctx, host, uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, _, err := m.Exchange(ctx, entry, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.DB.Exec(ctx, `UPDATE dsh_native_access SET expires_at=clock_timestamp()+interval '30 seconds' WHERE id=$1`, parent.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, entry, err = m.IssueRouted(ctx, host, parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, token, err := m.Exchange(ctx, entry, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.ParentID != parent.ID || time.Until(child.ExpiresAt) > 31*time.Second {
+		t.Fatal("child escaped parent lifetime")
+	}
+	if err = m.Revoke(ctx, parent.Key, parent.ID, parent.UserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.Authorize(ctx, token, host); !errors.Is(err, ErrNativeAccessDenied) {
+		t.Fatal("parent revocation ignored")
+	}
+	if _, _, err = m.IssueRouted(ctx, host, parent); !errors.Is(err, ErrNativeAccessDenied) {
+		t.Fatal("derived from revoked parent")
+	}
+}

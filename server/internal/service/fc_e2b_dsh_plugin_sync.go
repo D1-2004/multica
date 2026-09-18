@@ -104,7 +104,7 @@ func nativePluginSnapshotHost(ctx context.Context, db dshhost.Database, key dshh
  WHERE h.workspace_id=$1 AND h.agent_id=$2 AND h.state='running' AND h.sandbox_id<>''
  ORDER BY EXISTS (SELECT 1 FROM dsh_native_access n WHERE n.workspace_id=h.workspace_id
  AND n.agent_id=h.agent_id AND n.sandbox_id=h.sandbox_id AND n.generation=h.generation
- AND n.kind IN ('entry','session') AND n.expires_at>now()) DESC,
+ AND n.parent_access_id IS NULL AND n.kind IN ('entry','session') AND n.expires_at>now()) DESC,
  (h.sandbox_id=COALESCE(p.applied_sandbox_id,'')) DESC,h.generation DESC,h.sandbox_id LIMIT 1`, key.WorkspaceID, key.AgentID).Scan(&host.State, &host.Generation, &host.SandboxID, &host.TemplateID)
 	return host, err
 }
