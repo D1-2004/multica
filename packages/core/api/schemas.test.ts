@@ -130,12 +130,13 @@ describe("hosted site schemas", () => {
 });
 
 describe("workspace access schemas", () => {
-  it("parses service-member tokens without a configurable policy", () => {
+  it("defaults legacy tokens to all permissions", () => {
     const parsed = WorkspaceAccessTokenListSchema.parse([{
       id: "t1", workspace_id: "w1", name: "DTA",
       version: 1, token_prefix: "dta_abc", expires_at: null, last_used_at: null,
       revoked_at: null, created_at: "2026-08-02T00:00:00Z", updated_at: "2026-08-02T00:00:00Z",
     }]);
+    expect(parsed[0]?.permission).toBe("all");
     expect(parsed[0]).not.toHaveProperty("resource_scope");
     expect(parsed[0]).not.toHaveProperty("capabilities");
   });
@@ -153,6 +154,12 @@ describe("workspace access schemas", () => {
       { endpoint: "test", includeReceived: false },
     );
     expect(parsed).toEqual(EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE);
+  });
+});
+
+describe("DTA permissions", () => {
+  it("rejects unknown permission values instead of treating them as full access", () => {
+    expect(WorkspaceAccessTokenListSchema.safeParse([{...EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE, permission: "admin"}]).success).toBe(false);
   });
 });
 

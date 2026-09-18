@@ -1,4 +1,7 @@
+export type WorkspaceAccessPermission = "all" | "dsh_config";
+
 export interface WorkspaceAccessToken {
+  permission: WorkspaceAccessPermission;
   id: string;
   workspace_id: string;
   name: string;
@@ -16,6 +19,7 @@ export interface WorkspaceAccessTokenSecretResponse extends WorkspaceAccessToken
 }
 
 export interface CreateWorkspaceAccessTokenRequest {
+  permission?: WorkspaceAccessPermission;
   name: string;
   expires_at: string | null;
 }

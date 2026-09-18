@@ -160,7 +160,7 @@ function TokenCard({
               ) : null}
             </div>
             <p className="mt-1 text-caption text-muted-foreground">
-              {t(($) => $.workspace_access.member_role)}
+              {token.permission === "dsh_config" ? t(($) => $.workspace_access.permission_dsh_config) : t(($) => $.workspace_access.permission_all)}
             </p>
             <p className="mt-2 text-caption text-muted-foreground">
               <span className="font-mono">{token.token_prefix}…</span>
@@ -257,6 +257,7 @@ function TokenEditorDialog({
   const createToken = useCreateWorkspaceAccessToken(wsId);
   const updateToken = useUpdateWorkspaceAccessToken(wsId);
   const [name, setName] = useState(token?.name ?? "");
+  const [permission, setPermission] = useState<"all" | "dsh_config">(token?.permission ?? "all");
   const [expiry, setExpiry] = useState(token ? "keep" : "90");
   const save = async () => {
     try {
@@ -266,13 +267,14 @@ function TokenEditorDialog({
           tokenId: token.id,
           data: {
             name: name.trim(),
+            permission,
             expires_at: expiresAt,
             version: token.version,
           },
         });
       } else {
         await createToken.mutateAsync({
-          data: { name: name.trim(), expires_at: expiresAt },
+          data: { name: name.trim(), permission, expires_at: expiresAt },
           onToken: onSecret,
         });
       }
@@ -302,9 +304,31 @@ function TokenEditorDialog({
             onChange={(event) => setName(event.target.value)}
             placeholder={t(($) => $.workspace_access.name_placeholder)}
           />
+          <Select
+            items={{
+              all: t(($) => $.workspace_access.permission_all),
+              dsh_config: t(($) => $.workspace_access.permission_dsh_config),
+            }}
+            value={permission}
+            onValueChange={(value) => {
+              if (value === "all" || value === "dsh_config") setPermission(value);
+            }}
+          >
+            <SelectTrigger aria-label={t(($) => $.workspace_access.permission_label)}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">
+                {t(($) => $.workspace_access.permission_all)}
+              </SelectItem>
+              <SelectItem value="dsh_config">
+                {t(($) => $.workspace_access.permission_dsh_config)}
+              </SelectItem>
+            </SelectContent>
+          </Select>
           <Alert>
             <AlertDescription>
-              {t(($) => $.workspace_access.member_permissions_description)}
+              {t(($) => $.workspace_access.permission_description)}
             </AlertDescription>
           </Alert>
           <ExpirySelect

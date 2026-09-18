@@ -176,7 +176,7 @@ func (h *Handler) UploadDshPlugin(w http.ResponseWriter, r *http.Request) {
 				"plugin": dshPluginToResponse(prior),
 			})
 			return
-		case "overwrite":
+		case "overwrite", "replace":
 		default:
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"status":          "conflict",
@@ -206,7 +206,7 @@ func (h *Handler) UploadDshPlugin(w http.ResponseWriter, r *http.Request) {
 		},
 		Resolved:     resolved,
 		ConfigRow:    configRow,
-		OnConflict:   strings.TrimSpace(r.FormValue("on_conflict")),
+		OnConflict:   normalizeDshPluginConflict(r.FormValue("on_conflict")),
 		DisplayName:  strings.TrimSpace(r.FormValue("display_name")),
 		ArtifactKey:  artifactKey,
 		ArtifactSize: int64(len(normalized)),
@@ -260,4 +260,12 @@ func (h *Handler) CheckDshPluginUpdate(w http.ResponseWriter, r *http.Request) {
 	resp.LatestVersion = latest
 	resp.UpdateAvailable = latest != "" && latest != row.ResolvedVersion
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func normalizeDshPluginConflict(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "replace" {
+		return "overwrite"
+	}
+	return value
 }

@@ -337,3 +337,14 @@ Reason: remove internal Code platform access from configuration management while
 - 2026-09-16: Reconciled GitRepo package creation/publication with DSH plugin
   recipes, explicit credential rebinding and private-config preview checks.
   Reason: preserve both contracts when integrating the GitHub-only release.
+
+## DTA DSH configuration publication
+
+- `server/internal/middleware/workspace_access_principal.go`: two permission
+  modes, exact restricted route contract, request-local workspace authority.
+- `server/internal/handler/workspace_access.go`: create/update/rotation/revoke
+  lifecycle; omitted update permission preserves the current mode.
+- `server/internal/handler/dsh_plugin_artifact.go`: replace/overwrite upload
+  equivalence; `dsh_plugin.go` handles full bindings and expected snapshot.
+- `server/internal/dshprofile/postgres.go`: current, desired/applied receipt.
+- Verification: `go test ./internal/middleware ./internal/handler ./internal/dshprofile`.

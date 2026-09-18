@@ -191,6 +191,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				}
 
 				principal := WorkspaceAccessPrincipal{
+					Permission:  row.Permission,
 					TokenID:     uuidToString(row.ID),
 					UserID:      uuidToString(row.SubjectUserID),
 					WorkspaceID: uuidToString(row.WorkspaceID),
@@ -210,7 +211,11 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					slog.Warn("auth: failed to update workspace access token last_used_at", "token_id", principal.TokenID, "error", err)
 				}
 				recorder := &workspaceAccessAuditResponseWriter{ResponseWriter: w, status: http.StatusOK}
-				next.ServeHTTP(recorder, r)
+				if WorkspaceAccessRequestAllowed(principal.Permission, r) {
+					next.ServeHTTP(recorder, r)
+				} else {
+					writeWorkspaceAccessAuthError(recorder, http.StatusForbidden, "workspace_access_operation_not_allowed")
+				}
 				result := "success"
 				if recorder.status >= http.StatusBadRequest {
 					result = "denied"

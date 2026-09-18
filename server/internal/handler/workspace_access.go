@@ -17,6 +17,7 @@ import (
 )
 
 type WorkspaceAccessTokenResponse struct {
+	Permission  string  `json:"permission"`
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
 	Name        string  `json:"name"`
@@ -36,6 +37,7 @@ type WorkspaceAccessTokenSecretResponse struct {
 
 func workspaceAccessTokenToResponse(token db.WorkspaceAccessToken) WorkspaceAccessTokenResponse {
 	return WorkspaceAccessTokenResponse{
+		Permission:  token.Permission,
 		ID:          uuidToString(token.ID),
 		WorkspaceID: uuidToString(token.WorkspaceID),
 		Name:        token.Name,
@@ -57,8 +59,9 @@ func validateWorkspaceAccessPolicy(name string) error {
 }
 
 type createWorkspaceAccessTokenRequest struct {
-	Name      string  `json:"name"`
-	ExpiresAt *string `json:"expires_at"`
+	Permission string  `json:"permission"`
+	Name       string  `json:"name"`
+	ExpiresAt  *string `json:"expires_at"`
 }
 
 func (h *Handler) CreateWorkspaceAccessToken(w http.ResponseWriter, r *http.Request) {
@@ -74,6 +77,14 @@ func (h *Handler) CreateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 	}
 	if err := validateWorkspaceAccessPolicy(req.Name); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	permission := req.Permission
+	if permission == "" {
+		permission = middleware.WorkspaceAccessAll
+	}
+	if !middleware.ValidWorkspaceAccessPermission(permission) {
+		writeError(w, http.StatusBadRequest, "permission must be all or dsh_config")
 		return
 	}
 	expiresAt, ok := parseWorkspaceAccessExpiry(w, req.ExpiresAt)
@@ -100,6 +111,7 @@ func (h *Handler) CreateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 			return createErr
 		}
 		token, createErr = qtx.CreateWorkspaceAccessToken(r.Context(), db.CreateWorkspaceAccessTokenParams{
+			Permission:    permission,
 			WorkspaceID:   parseUUID(workspaceID),
 			SubjectUserID: subject.ID,
 			Name:          strings.TrimSpace(req.Name),
@@ -146,9 +158,10 @@ func (h *Handler) GetWorkspaceAccessToken(w http.ResponseWriter, r *http.Request
 }
 
 type updateWorkspaceAccessTokenRequest struct {
-	Name      string          `json:"name"`
-	ExpiresAt json.RawMessage `json:"expires_at"`
-	Version   int32           `json:"version"`
+	Permission *string         `json:"permission"`
+	Name       string          `json:"name"`
+	ExpiresAt  json.RawMessage `json:"expires_at"`
+	Version    int32           `json:"version"`
 }
 
 func (h *Handler) UpdateWorkspaceAccessToken(w http.ResponseWriter, r *http.Request) {
@@ -173,6 +186,14 @@ func (h *Handler) UpdateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	permission := current.Permission
+	if req.Permission != nil {
+		permission = *req.Permission
+	}
+	if !middleware.ValidWorkspaceAccessPermission(permission) {
+		writeError(w, http.StatusBadRequest, "permission must be all or dsh_config")
+		return
+	}
 	expiresAt, ok := parseRequiredWorkspaceAccessExpiry(w, req.ExpiresAt)
 	if !ok {
 		return
@@ -181,6 +202,7 @@ func (h *Handler) UpdateWorkspaceAccessToken(w http.ResponseWriter, r *http.Requ
 	err := h.runWorkspaceAccessTransaction(r.Context(), func(qtx *db.Queries) error {
 		var updateErr error
 		updated, updateErr = qtx.UpdateWorkspaceAccessToken(r.Context(), db.UpdateWorkspaceAccessTokenParams{
+			Permission:  permission,
 			Name:        strings.TrimSpace(req.Name),
 			ExpiresAt:   expiresAt,
 			ActorUserID: parseUUID(actorID),
@@ -353,6 +375,7 @@ func (h *Handler) GetWorkspaceAccessSelf(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"permission":     principal.Permission,
 		"principal_type": "workspace_access_token",
 		"token_id":       principal.TokenID,
 		"name":           principal.Name,

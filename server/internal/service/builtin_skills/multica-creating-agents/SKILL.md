@@ -468,3 +468,24 @@ Explicit secret or plugin binding choices are applied and recorded as a publicat
 - 2026-09-16: Reconciled GitRepo package creation/publication with DSH plugin
   recipes, explicit credential rebinding and private-config preview checks.
   Reason: preserve both contracts when integrating the GitHub-only release.
+
+## Service-driven DSH configuration
+
+DTA credentials support `permission: "all" | "dsh_config"`, scoped to their
+workspace. `dsh_config` can upload plugins (`POST /api/dsh-plugins/upload`),
+read/replace Agent bindings (`GET/PUT /api/agents/{id}/dsh-plugins`), and
+prepare/read Profile (`POST/GET /api/agents/{id}/dsh-profile`). It cannot
+submit tasks or manage credentials. `all` includes these operations and other
+workspace operations. Personal account APIs remain human-only.
+
+`on_conflict=replace` aliases `overwrite` for uploads: it replaces the
+workspace package, potentially affecting every Agent bound to that package.
+PUT bindings replaces the full list; read first and supply `expected_plugins`
+for optimistic concurrency, preserving unrelated bindings. Disable a plugin
+by setting its binding `enabled: false`, then prepare and poll Profile.
+For rollback, re-upload the previous retained archive/configuration and
+prepare a new Profile. The platform does not retain old uploaded archives.
+A successful HTTP response is not publication proof: require a nonempty
+expected `desired_revision`, `current: true`, and matching `applied_revision`.
+An unprepared Profile returns empty revision strings. Existing running tasks
+are not restarted by credential changes.
