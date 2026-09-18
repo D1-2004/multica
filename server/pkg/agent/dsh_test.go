@@ -159,3 +159,13 @@ func writeDshFixture(t *testing.T, body string) string {
 	}
 	return path
 }
+
+func TestDshMCPStartupPolicy(t *testing.T) {
+	servers, err := buildDshMCPServers(json.RawMessage(`{"mcpServers":{"optional":{"command":"node"},"required":{"command":"node","required":true}}}`), nil)
+	if err != nil || len(servers) != 2 || servers[0].Required || !servers[1].Required {
+		t.Fatalf("servers=%+v err=%v", servers, err)
+	}
+	if _, err := buildDshMCPServers(json.RawMessage(`{"mcpServers":{"bad":{"command":"node","required":"true"}}}`), nil); err == nil {
+		t.Fatal("malformed requirement accepted")
+	}
+}

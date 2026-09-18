@@ -720,3 +720,57 @@ func TestDSHRoutedGrantDoesNotBlockTemplateRecovery(t *testing.T) {
 		t.Fatal("routed read blocked task recovery", next, err)
 	}
 }
+
+func TestDSHProfileAckFailureKeepsHealthyGeneration(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	rt.Provider = "dsh"
+	reads := 0
+	l.ReadDSHProfileSource = func(_ context.Context, _ *db.Queries, _ dshhost.Key, template string) (dshprofile.Source, error) {
+		reads++
+		if reads == 2 {
+			return dshprofile.Source{}, errors.New("transient configuration read failure")
+		}
+		return dshprofile.Source{TemplateID: template}, nil
+	}
+	if _, err := resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) || errors.Is(err, errDSHHostStartup) {
+		t.Fatal("ACK error classified as startup failure", err)
+	}
+	key := dshhost.Key{WorkspaceID: uuid.UUID(rt.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}
+	host, err := (dshhost.PostgresStore{DB: pool}).Get(context.Background(), key)
+	if err != nil || host.State != "running" {
+		t.Fatal("healthy host retired on ACK error", host, err)
+	}
+	next, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || next.Generation != host.Generation || provider.creates != 1 {
+		t.Fatal("ACK retry replaced healthy generation", next, err)
+	}
+}
+
+type dshNoSnapshotRunner struct{ dshHomeRunner }
+
+func (r dshNoSnapshotRunner) Run(ctx context.Context, name string, args, env []string) (string, error) {
+	for _, arg := range args {
+		if strings.Contains(arg, "--plugin-snapshot") {
+			return "", errors.New("another session snapshot is broken")
+		}
+	}
+	return r.dshHomeRunner.Run(ctx, name, args, env)
+}
+func TestDSHTaskAdmissionDoesNotReadNativePluginSnapshot(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	rt.Provider = "dsh"
+	l.Runner = dshNoSnapshotRunner{l.Runner.(dshHomeRunner)}
+	l.SyncDSHProfileSource = func(context.Context, *pgxpool.Conn, dshhost.Key, string, dshprofile.NativeSnapshot) error {
+		t.Fatal("task imported live native configuration")
+		return nil
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := resolveDSHTest(t, l, rt, task, "template-1"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

@@ -87,3 +87,16 @@ func TestDSHHostFollowRequiresConsumerCompletionAndClosesOnCancellation(t *testi
 		t.Fatal("cancelled subscription retained its connection")
 	}
 }
+
+func TestDSHHostErrorPreservesCodeAndOperationWithoutNativeSecrets(t *testing.T) {
+	client, _ := dshHostPipe(t, "{\"ok\":false,\"error\":{\"code\":\"gateway/internal\",\"reason\":\"history_corrupt\",\"message\":\"secret-token\",\"operation\":\"secret\"}}\n")
+	_, err := client.call(context.Background(), "create", nil)
+	if err == nil || !strings.Contains(err.Error(), "create failed [gateway/internal]") || !strings.Contains(err.Error(), "history integrity") || strings.Contains(err.Error(), "secret") {
+		t.Fatal(err)
+	}
+	client, _ = dshHostPipe(t, "{\"ok\":false,\"error\":{\"code\":\"secret-token\"}}\n")
+	_, err = client.call(context.Background(), "task.bind", nil)
+	if err == nil || strings.Contains(err.Error(), "secret-token") || !strings.Contains(err.Error(), "task.bind") {
+		t.Fatal(err)
+	}
+}

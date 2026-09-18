@@ -17,6 +17,8 @@ import (
 // A protocol peer on net.Pipe tests the production Backend path without a
 // local Host, network service, model or database.
 type nativeBackendPeer struct {
+	createFailure  bool
+	invalidCreate  bool
 	mu             sync.Mutex
 	calls          map[string]int
 	promptRequests []json.RawMessage
@@ -53,6 +55,14 @@ func (p *nativeBackendPeer) client() *dshHostClient {
 			}
 			switch request.Method {
 			case "create":
+				if p.createFailure {
+					_ = json.NewEncoder(remote).Encode(map[string]any{"ok": false, "error": map[string]string{"code": "gateway/internal", "reason": "history_corrupt"}})
+					return
+				}
+				if p.invalidCreate {
+					write(map[string]string{"sessionId": "wrong"})
+					return
+				}
 				write(map[string]string{"sessionId": "session"})
 			case "task.status":
 				p.mu.Lock()
@@ -262,5 +272,38 @@ func TestDSHNativeBackendTransportsFullPrompt(t *testing.T) {
 				t.Fatal("foreign request admitted")
 			}
 		})
+	}
+}
+
+func TestDSHNativeCreateFailureConfirmsCleanupAndAllowsNextTask(t *testing.T) {
+	for _, state := range []string{"absent", "different", "ready", "unknown"} {
+		for _, malformed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/malformed=%t", state, malformed), func(t *testing.T) {
+				peer := &nativeBackendPeer{calls: map[string]int{}, state: state, prompted: make(chan struct{}), createFailure: !malformed, invalidCreate: malformed}
+				backend := &dshNativeBackend{native: DSHNativeHostConfig{SessionID: "session", RequestID: "mine", WorkDir: "/mnt/multica/workspaces/session"}, client: peer.client()}
+				result := backend.executeNative(context.Background(), "hello", ExecOptions{}, nil, func(Message) {})
+				if result.Status != "failed" || backend.NativeHostTaskQuiescent() != (state != "unknown") {
+					t.Fatalf("result=%+v quiescent=%v", result, backend.NativeHostTaskQuiescent())
+				}
+				if peer.calls["task.status"] != 1 || peer.calls["prompt"] != 0 {
+					t.Fatal("failed create skipped cleanup or admitted prompt", peer.calls)
+				}
+				if state != "ready" && (peer.calls["task.cancel"] != 0 || peer.calls["task.release"] != 0) {
+					t.Fatal("cancelled another request", peer.calls)
+				}
+				if state == "ready" && (peer.calls["task.cancel"] != 1 || peer.calls["task.release"] != 1) {
+					t.Fatal("owned resources not cleaned", peer.calls)
+				}
+				if state == "absent" || state == "ready" {
+					peer.createFailure, peer.invalidCreate = false, false
+					peer.live = nativeTestTurn(0, 1, "mine", "recovered", "completed")
+					next := &dshNativeBackend{native: backend.native, client: peer.client()}
+					result = next.executeNative(context.Background(), "hello", ExecOptions{}, nil, func(Message) {})
+					if result.Status != "completed" || !next.NativeHostTaskQuiescent() {
+						t.Fatalf("next task failed: %+v", result)
+					}
+				}
+			})
+		}
 	}
 }
