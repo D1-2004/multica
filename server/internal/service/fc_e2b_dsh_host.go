@@ -27,6 +27,11 @@ import (
 const DSHEmployeeHostCapability = "dsh_employee_host_v1"
 const dshEmployeeLockClass int32 = 0x44534831
 const employeeFilesystemLockClass int32 = 0x46535331
+const dshNativeStartupLockClass int32 = 0x44534832
+
+// The native process may need to index a large existing employee Home. Its
+// startup budget must outlive the Runtime's bounded native readiness window.
+const dshNativeStartupTimeout = 320 * time.Second
 
 var errDSHHostWaiting = errors.New("DSH employee host is awaiting reconciliation or task drain")
 var errDSHHostStartup = errors.New("DSH employee native startup failed")
@@ -349,7 +354,22 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		}
 	}
 	if err == nil {
-		out, err = l.runE2BCommand(ctx, dshNativeHostEnsureArgs(host, catalog, authority, origin, l.nativeAuthority.publicKey(), revision))
+		// Independent tasks keep independent writers and remain concurrent once
+		// admitted. Only native readiness is paced per employee: retrying every
+		// queued task simultaneously otherwise rescans the same NAS history and
+		// makes each cold start exceed its deadline. A contender retains its
+		// sandbox and retries normally; contention is never a retirement signal.
+		lockKey := dshEmployeeLockKey(rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true})
+		var acquired bool
+		if lockErr := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1,$2)", dshNativeStartupLockClass, lockKey).Scan(&acquired); lockErr != nil {
+			return dshhost.Host{}, cold, lockErr
+		}
+		if !acquired {
+			chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "waiting", "reason", "native_startup_pacing", "sandbox_id", host.SandboxID)
+			return dshhost.Host{}, cold, errDSHHostWaiting
+		}
+		defer releaseFCE2BAdvisoryLock(conn, false, dshNativeStartupLockClass, lockKey, "DSH native startup")
+		out, err = l.runE2BCommandWithTimeout(ctx, dshNativeStartupTimeout, dshNativeHostEnsureArgs(host, catalog, authority, origin, l.nativeAuthority.publicKey(), revision))
 	}
 	if err == nil {
 		err = validateDSHNativeHostReceipt(out, host, profileDigest, revision)
