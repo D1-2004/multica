@@ -1277,11 +1277,15 @@
     "delete_failed": "웹사이트를 삭제할 수 없습니다"
   },
   "workspace_access": {
+    "permission_label": "권한 범위",
+    "permission_all": "모든 권한",
+    "permission_dsh_config": "DSH 설정만",
+    "permission_description": "현재 워크스페이스에만 적용됩니다. DSH 설정은 플러그인 업로드, 에이전트 플러그인 설정, Profile 생성 및 조회를 허용합니다.",
     "title": "DTA 액세스",
     "description": "현재 워크스페이스에만 연결된 DTA 액세스 자격 증명을 발급합니다. 외부 사업자에게 Multica 계정이나 개인 API 토큰을 제공하지 않습니다.",
     "owner_only": "워크스페이스 소유자만 DTA 액세스를 관리할 수 있습니다.",
     "tokens_title": "DTA 토큰",
-    "tokens_description": "각 토큰은 이 워크스페이스의 일반 멤버 권한을 가진 외부 사용자를 나타냅니다. 만료일을 개별 설정하고 즉시 폐기할 수 있습니다.",
+    "tokens_description": "각 토큰은 워크스페이스 내 독립 서비스 ID입니다. 모든 권한 또는 DSH 설정만 선택하고 만료일을 설정하거나 언제든 취소할 수 있습니다。",
     "create": "토큰 만들기",
     "loading": "DTA 액세스 불러오는 중…",
     "empty": "DTA 토큰이 없습니다.",

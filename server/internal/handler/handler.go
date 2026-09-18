@@ -1004,6 +1004,9 @@ func countOwners(members []db.Member) int {
 }
 
 func (h *Handler) getWorkspaceMember(ctx context.Context, userID, workspaceID string) (db.Member, error) {
+	if p, ok := middleware.WorkspaceAccessPrincipalFromContext(ctx); ok && userID == p.UserID && workspaceID != p.WorkspaceID {
+		return db.Member{}, pgx.ErrNoRows
+	}
 	userUUID, err := util.ParseUUID(userID)
 	if err != nil {
 		return db.Member{}, err
@@ -1012,10 +1015,11 @@ func (h *Handler) getWorkspaceMember(ctx context.Context, userID, workspaceID st
 	if err != nil {
 		return db.Member{}, err
 	}
-	return h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+	member, err := h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 		UserID:      userUUID,
 		WorkspaceID: wsUUID,
 	})
+	return middleware.WorkspaceAccessMember(ctx, member), err
 }
 
 func (h *Handler) requireWorkspaceMember(w http.ResponseWriter, r *http.Request, workspaceID, notFoundMsg string) (db.Member, bool) {

@@ -4014,6 +4014,7 @@ export const EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE: CreateBillingPortalSe
 
 export const WorkspaceAccessTokenSchema = z
   .object({
+    permission: z.enum(["all", "dsh_config"]).default("all"),
     id: z.string(),
     workspace_id: z.string(),
     name: z.string(),
@@ -4036,6 +4037,7 @@ export const WorkspaceAccessTokenSecretResponseSchema =
   });
 
 export const EMPTY_WORKSPACE_ACCESS_TOKEN: WorkspaceAccessToken = {
+  permission: "dsh_config",
   id: "",
   workspace_id: "",
   name: "",

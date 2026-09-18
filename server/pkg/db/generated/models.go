@@ -2086,6 +2086,7 @@ type WorkspaceAccessToken struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 	RevokedBy     pgtype.UUID        `json:"revoked_by"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
+	Permission    string             `json:"permission"`
 }
 
 type WorkspaceInvitation struct {

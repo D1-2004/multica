@@ -1277,11 +1277,15 @@
     "delete_failed": "Webサイトを削除できませんでした"
   },
   "workspace_access": {
+    "permission_label": "権限範囲",
+    "permission_all": "すべての権限",
+    "permission_dsh_config": "DSH 設定のみ",
+    "permission_description": "現在のワークスペースにのみ適用します。DSH 設定はプラグインのアップロード、エージェントへの設定、Profile の作成と確認を許可します。",
     "title": "DTA アクセス",
     "description": "現在のワークスペースにだけ紐づく DTA 用アクセス認証情報を発行します。外部事業者には Multica アカウントや個人 API トークンを付与しません。",
     "owner_only": "DTA アクセスを管理できるのはワークスペースオーナーだけです。",
     "tokens_title": "DTA トークン",
-    "tokens_description": "各トークンは、このワークスペースの通常メンバー権限を持つ外部利用者を表します。有効期限を個別に設定し、即時に失効できます。",
+    "tokens_description": "トークンごとにワークスペース内のサービス ID を作成します。すべての権限または DSH 設定のみを選択し、有効期限の設定や取り消しができます。",
     "create": "トークンを作成",
     "loading": "DTA アクセスを読み込み中…",
     "empty": "DTA トークンはまだありません。",
