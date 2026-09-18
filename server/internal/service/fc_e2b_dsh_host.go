@@ -184,9 +184,6 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	profiles := dshprofile.Store{DB: conn}
 	var revision dshprofile.Revision
 	if isDSH {
-		if err := l.syncDSHNativePlugins(ctx, conn, key, template); err != nil {
-			return dshhost.Host{}, false, err
-		}
 		catalog, profileDigest, err = dshManagedCatalog(l.Config.LLMModels)
 		if err != nil {
 			return dshhost.Host{}, false, err
@@ -304,18 +301,9 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		chattrace.LogStage(slog.Default(), trace, "employee_filesystem", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "provider", FCE2BRuntimeProvider(rt))
 		return host, cold, nil
 	}
-	if cold && l.SyncDSHProfileSource != nil {
-		if err := l.syncDSHNativePluginsOnHost(ctx, conn, key, template, host); err != nil {
-			return dshhost.Host{}, cold, err
-		}
-		updated, err := profiles.Prepare(ctx, key, template, l.ReadDSHProfileSource)
-		if err != nil {
-			return dshhost.Host{}, cold, err
-		}
-		if updated.ID != revision.ID {
-			return dshhost.Host{}, cold, errDSHHostWaiting
-		}
-	}
+	// Plugin snapshots are imported by the configuration worker and settings
+	// endpoints. Task admission consumes a durable revision, never another
+	// session's live Host availability.
 	origin, authority, err := dshNativeGatewayAddress(l.Config, host)
 	if err != nil {
 		return dshhost.Host{}, cold, err
@@ -362,9 +350,6 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	if err == nil {
 		err = validateDSHNativeHostReceipt(out, host, profileDigest, revision)
 	}
-	if err == nil {
-		err = profiles.Acknowledge(ctx, host, revision, l.ReadDSHProfileSource)
-	}
 	if err != nil {
 		// A crashed supervisor can leave a native child writing the Home.
 		// Stop admissions now; the next reconciliation drains other tasks and
@@ -374,6 +359,12 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		}
 		chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "waiting", "reason", "native_host_unavailable", "sandbox_id", host.SandboxID, "generation", host.Generation)
 		return dshhost.Host{}, cold, errors.Join(errDSHHostWaiting, errDSHHostStartup)
+	}
+	// The process has proved its exact composition. A database outage or a
+	// concurrent config edit is a reconciliation retry, not a dead Host.
+	if err = profiles.Acknowledge(ctx, host, revision, l.ReadDSHProfileSource); err != nil {
+		chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "waiting", "reason", "profile_ack_pending", "sandbox_id", host.SandboxID, "generation", host.Generation)
+		return dshhost.Host{}, cold, errDSHHostWaiting
 	}
 	chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "managed_profile_digest", profileDigest, "employee_profile_revision", revision.ID, "employee_profile_digest", revision.Digest)
 	return host, cold, nil

@@ -208,3 +208,20 @@ More scenarios in [Troubleshooting](/troubleshooting).
 |---|---|---|
 | 2026-07-29 | Added per-task `MULTICA_CHAT_SESSION_ID` injection for FC/E2B cloud sandboxes | Allows Chat agents to route background Issues with stable conversation identity without rebuilding the runtime image or changing local daemons |
 | 2026-08-26 | Local daemon runtimes export `MULTICA_CHAT_SESSION_ID` for chat tasks | The chat runtime brief now teaches `multica issue list --metadata "multica.chat_session_id=$MULTICA_CHAT_SESSION_ID"` as the way a chat run finds the Issue it already delegated to; on a local daemon that variable was unset, so the filter matched the wrong set. Requires the daemon CLI shipping this change |
+
+
+### DSH task startup dependencies
+
+DSH task MCP entries accept an optional boolean `required` inside the canonical
+`mcpServers` configuration. Omitted or `false` means the connection starts in the
+background and its tools become available when connected. An unavailable optional
+server does not prevent conversation startup. Set `required: true` for a capability
+that must be available before any prompt is accepted; a connection failure then
+fails task preparation. Invalid configuration and unconfirmed resource cleanup
+remain errors regardless of this setting.
+
+Native plugin changes are synchronized by the Profile configuration worker and
+plugin settings operations. Tasks consume the persisted immutable Profile revision;
+they do not read other sessions' live plugin snapshots. Saved changes still require
+the matching Profile receipt before admission. A pending Profile acknowledgement
+retries without retiring an otherwise healthy Host.
