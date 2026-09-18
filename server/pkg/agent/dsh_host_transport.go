@@ -129,7 +129,7 @@ func dshHostOperationError(method string, raw json.RawMessage) error {
 	_ = json.Unmarshal(raw, &diagnostic)
 	code := "host/operation-failed"
 	switch diagnostic.Code {
-	case "gateway/bad-request", "gateway/cancelled", "gateway/internal",
+	case "multica/context-rejected", "multica/required-mcp-unavailable", "gateway/bad-request", "gateway/cancelled", "gateway/internal",
 		"session/agent-busy", "session/attachment-invalid", "session/conflict",
 		"session/fork-unavailable", "session/invalid-time-zone", "session/model-unavailable",
 		"session/not-found", "session/queue-item-not-found", "session/steer-unavailable",
@@ -140,7 +140,7 @@ func dshHostOperationError(method string, raw json.RawMessage) error {
 	if code == "gateway/internal" && diagnostic.Reason == "history_corrupt" {
 		summary = "session history integrity check failed"
 	}
-	if method == "task.bind" && diagnostic.Reason == "required_mcp_unavailable" {
+	if method == "task.bind" && (diagnostic.Reason == "required_mcp_unavailable" || code == "multica/required-mcp-unavailable") {
 		summary = "required MCP startup failed"
 	}
 	return fmt.Errorf("DSH Host %s failed [%s]: %s", method, code, summary)
