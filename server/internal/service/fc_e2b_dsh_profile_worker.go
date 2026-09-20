@@ -86,6 +86,16 @@ func (l *FCE2BLauncher) applyNextDSHProfile(ctx context.Context) {
 	failed := !errors.Is(err, errDSHHostWaiting) || errors.Is(err, errDSHHostStartup)
 	_, _ = l.Pool.Exec(cleanup, `UPDATE dsh_employee_profile SET next_apply_at=now()+interval '10 seconds',
  apply_attempts=apply_attempts+CASE WHEN $4 THEN 1 ELSE 0 END,
- apply_error=CASE WHEN $4 THEN 'host_start_failed' ELSE apply_error END
- WHERE workspace_id=$1 AND agent_id=$2 AND desired_revision=$3`, key.WorkspaceID, key.AgentID, revision, failed)
+ apply_error=CASE WHEN $4 THEN $5 ELSE apply_error END
+ WHERE workspace_id=$1 AND agent_id=$2 AND desired_revision=$3`, key.WorkspaceID, key.AgentID, revision, failed, dshProfileApplyError(err))
+}
+
+func dshProfileApplyError(err error) string {
+	if errors.Is(err, errDSHNativeSync) {
+		return "native_sync_failed"
+	}
+	if errors.Is(err, errDSHHostStartup) {
+		return "host_start_failed"
+	}
+	return "profile_apply_failed"
 }

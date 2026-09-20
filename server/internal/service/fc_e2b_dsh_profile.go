@@ -12,6 +12,8 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+var errDSHNativeSync = errors.New("native plugin synchronization failed")
+
 func (l *FCE2BLauncher) RetryDSHEmployeeBuild(ctx context.Context, key dshhost.Key, revision int64, buildID uuid.UUID) error {
 	l = l.withCurrentConfig()
 	if l == nil || l.ReadDSHProfileSource == nil {
@@ -34,7 +36,7 @@ func (l *FCE2BLauncher) DSHEmployeeProfile(ctx context.Context, key dshhost.Key,
 	err := l.withDSHEmployee(ctx, key, func(conn *pgxpool.Conn, _ db.AgentRuntime, template string) error {
 		if syncErr := l.syncDSHNativePlugins(ctx, conn, key, template); syncErr != nil {
 			if prepare {
-				return syncErr
+				return errors.Join(errDSHNativeSync, syncErr)
 			}
 			// Read durable status without preparing from an unconfirmed snapshot.
 			var err error

@@ -148,3 +148,19 @@ Focused Go proxy tests cover old/unsupported Runtime, snapshot/save failure,
 both restart endpoints, successful forwarding, invalid origin/method/query,
 and ordinary read passthrough. Deployment and real preproduction regression
 acceptance for this follow-up are pending.
+
+The first follow-up deployment (CR 36224658, run 3109032489, two targets) passed
+build, deployment and integration. Real regression on v25 proved both restart
+routes reject the old `94f5c3d` template with HTTP 409 without changing its boot.
+On the fixed Runtime, installing IM and upgrading dshmarket reproduced a second
+failure: native snapshots were valid, but the managed resolver rejected IM's
+8,595,641-byte `lib/index.js` against its 8 MiB per-member limit. The new restart
+gate correctly refused to stop DSH when persistence failed.
+
+The follow-up raises only the per-member bound to 16 MiB. Compressed downloads
+remain capped at 32 MiB and total decompressed archives at 48 MiB. Tests cover a
+9 MiB bundled entry, an over-16-MiB member, and aggregate expansion above the
+unchanged total budget. Profile worker failures now distinguish native sync,
+Host startup and other application errors instead of calling every failure a
+Host startup failure. The complete plugin/restart/replacement acceptance remains
+pending the second deployment.
