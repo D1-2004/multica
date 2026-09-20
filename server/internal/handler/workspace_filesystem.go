@@ -1,10 +1,17 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
+	"path"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -67,7 +74,10 @@ func (h *Handler) GetWorkspaceFilesystemRoots(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusServiceUnavailable, "filesystem status is unavailable")
 		return
 	}
-	roots := []filesystemRoot{{Kind: "shared", Provisioned: provisioned, Access: humanSharedAccess(role)}}
+	// The workbench catalog is always available. NAS binding is tracked
+	// separately and does not block create/list for humans.
+	_ = provisioned
+	roots := []filesystemRoot{{Kind: "shared", Provisioned: true, Access: humanSharedAccess(role)}}
 	ids, err := store.ListEmployeeFilesystemAgentIDs(r.Context(), wsID)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "filesystem status is unavailable")
@@ -87,17 +97,22 @@ func (h *Handler) GetWorkspaceFilesystemRoots(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) GetWorkspaceFilesystemEntries(w http.ResponseWriter, r *http.Request) {
-	_, _, ok := h.filesystemActor(w, r)
+	wsID, _, ok := h.filesystemActor(w, r)
 	if !ok {
 		return
 	}
-	if _, err := wsfs.JailRelPath(r.URL.Query().Get("path")); err != nil {
+	rel, err := wsfs.JailRelPath(r.URL.Query().Get("path"))
+	if err != nil {
 		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_path", "path is outside the filesystem jail")
 		return
 	}
 	root := r.URL.Query().Get("root")
-	if root != "shared" && !validAgentRoot(root) {
-		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_root", "unknown filesystem root")
+	if root != "shared" {
+		if !validAgentRoot(root) {
+			writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_root", "unknown filesystem root")
+			return
+		}
+		writeErrorCode(w, http.StatusServiceUnavailable, "filesystem_host_starting", "filesystem listing host is not running")
 		return
 	}
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
@@ -105,8 +120,255 @@ func (h *Handler) GetWorkspaceFilesystemEntries(w http.ResponseWriter, r *http.R
 	if offset < 0 {
 		offset = 0
 	}
-	_ = limit
-	writeErrorCode(w, http.StatusServiceUnavailable, "filesystem_host_starting", "filesystem listing host is not running")
+	store := h.filesystemStore()
+	okDir, err := store.DirExists(r.Context(), wsID, rel)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "filesystem listing is unavailable")
+		return
+	}
+	if !okDir {
+		writeErrorCode(w, http.StatusNotFound, "filesystem_not_found", "directory not found")
+		return
+	}
+	children, err := store.ListChildren(r.Context(), wsID, rel)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "filesystem listing is unavailable")
+		return
+	}
+	page, truncated, next, err := wsfs.PageDirectory(children, offset, limit)
+	if err != nil {
+		writeErrorCode(w, http.StatusRequestEntityTooLarge, "filesystem_directory_too_large", "directory is too large to list")
+		return
+	}
+	var nextOffset any
+	if truncated {
+		nextOffset = next
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"root":        root,
+		"path":        rel,
+		"offset":      offset,
+		"limit":       limit,
+		"entries":     page,
+		"count":       len(page),
+		"truncated":   truncated,
+		"next_offset": nextOffset,
+	})
+}
+
+func (h *Handler) PostWorkspaceFilesystemMkdir(w http.ResponseWriter, r *http.Request) {
+	wsID, role, ok := h.requireSharedWrite(w, r)
+	if !ok {
+		return
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	var body struct {
+		Root string `json:"root"`
+		Path string `json:"path"`
+	}
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid mkdir")
+		return
+	}
+	if body.Root != "shared" {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_root", "unknown filesystem root")
+		return
+	}
+	rel, err := wsfs.JailRelPath(body.Path)
+	if err != nil || rel == "." {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_path", "path is outside the filesystem jail")
+		return
+	}
+	parent := wsfs.ParentPath(rel)
+	name := rel
+	if i := strings.LastIndex(rel, "/"); i >= 0 {
+		name = rel[i+1:]
+	}
+	store := h.filesystemStore()
+	okDir, err := store.DirExists(r.Context(), wsID, parent)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
+		return
+	}
+	if !okDir {
+		writeErrorCode(w, http.StatusNotFound, "filesystem_not_found", "parent directory not found")
+		return
+	}
+	createdBy, err := util.ParseUUID(requestUserID(r))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "user is required")
+		return
+	}
+	entry, err := store.InsertDir(r.Context(), wsID, googleUUID(createdBy), rel, name)
+	if isUniqueViolation(err) {
+		writeErrorCode(w, http.StatusConflict, "filesystem_exists", "path already exists")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "could not create directory")
+		return
+	}
+	_ = role
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name": entry.Name, "path": entry.RelPath, "is_dir": true, "size_bytes": 0,
+	})
+}
+
+func (h *Handler) PostWorkspaceFilesystemUpload(w http.ResponseWriter, r *http.Request) {
+	wsID, _, ok := h.requireSharedWrite(w, r)
+	if !ok {
+		return
+	}
+	if h.Storage == nil {
+		writeError(w, http.StatusServiceUnavailable, "filesystem storage is unavailable")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+1024)
+	if err := r.ParseMultipartForm(maxUploadSize + 1024); err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, "file is too large")
+		return
+	}
+	root := r.FormValue("root")
+	if root != "shared" {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_root", "unknown filesystem root")
+		return
+	}
+	dirRel, err := wsfs.JailRelPath(r.FormValue("path"))
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_path", "path is outside the filesystem jail")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "file is required")
+		return
+	}
+	defer file.Close()
+	filename := r.FormValue("filename")
+	if filename == "" {
+		filename = path.Base(header.Filename)
+	}
+	name, err := wsfs.JailFileName(filename)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_path", "filename is invalid")
+		return
+	}
+	rel := wsfs.JoinRel(dirRel, name)
+	store := h.filesystemStore()
+	okDir, err := store.DirExists(r.Context(), wsID, dirRel)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
+		return
+	}
+	if !okDir {
+		writeErrorCode(w, http.StatusNotFound, "filesystem_not_found", "directory not found")
+		return
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxUploadSize+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "could not read file")
+		return
+	}
+	if int64(len(data)) > maxUploadSize {
+		writeError(w, http.StatusRequestEntityTooLarge, "file is too large")
+		return
+	}
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
+	id := uuid.New()
+	key := fmt.Sprintf("wsfs/%s/%s", wsID.String(), id.String())
+	contentType := http.DetectContentType(data)
+	if _, err := h.Storage.Upload(r.Context(), key, data, contentType, name); err != nil {
+		slog.Error("workspace filesystem upload failed", "error", err)
+		writeError(w, http.StatusBadGateway, "upload failed")
+		return
+	}
+	createdBy, err := util.ParseUUID(requestUserID(r))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "user is required")
+		return
+	}
+	entry, err := store.InsertFile(r.Context(), id, wsID, googleUUID(createdBy), rel, name, key, digest, int64(len(data)))
+	if isUniqueViolation(err) {
+		h.Storage.Delete(r.Context(), key)
+		writeErrorCode(w, http.StatusConflict, "filesystem_exists", "path already exists")
+		return
+	}
+	if err != nil {
+		h.Storage.Delete(r.Context(), key)
+		writeError(w, http.StatusBadGateway, "could not create file")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name": entry.Name, "path": entry.RelPath, "is_dir": false,
+		"size_bytes": entry.SizeBytes, "sha256": entry.SHA256,
+	})
+}
+
+func (h *Handler) GetWorkspaceFilesystemContent(w http.ResponseWriter, r *http.Request) {
+	wsID, _, ok := h.filesystemActor(w, r)
+	if !ok {
+		return
+	}
+	if h.Storage == nil {
+		writeError(w, http.StatusServiceUnavailable, "filesystem storage is unavailable")
+		return
+	}
+	root := r.URL.Query().Get("root")
+	if root != "shared" {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_root", "unknown filesystem root")
+		return
+	}
+	rel, err := wsfs.JailRelPath(r.URL.Query().Get("path"))
+	if err != nil || rel == "." {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_path", "path is outside the filesystem jail")
+		return
+	}
+	entry, err := h.filesystemStore().GetEntry(r.Context(), wsID, rel)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeErrorCode(w, http.StatusNotFound, "filesystem_not_found", "file not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
+		return
+	}
+	if entry.IsDir || entry.StorageKey == "" {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_path", "path is not a file")
+		return
+	}
+	if entry.SizeBytes > maxUploadSize {
+		writeError(w, http.StatusRequestEntityTooLarge, "file is too large")
+		return
+	}
+	reader, err := h.Storage.GetReader(r.Context(), entry.StorageKey)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "could not read file")
+		return
+	}
+	defer reader.Close()
+	ctype := extContentTypes[strings.ToLower(path.Ext(entry.Name))]
+	if ctype == "" {
+		ctype = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(entry.Name, `"`, "")+`"`)
+	w.Header().Set("Content-Length", strconv.FormatInt(entry.SizeBytes, 10))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, io.LimitReader(reader, entry.SizeBytes))
+}
+
+func (h *Handler) requireSharedWrite(w http.ResponseWriter, r *http.Request) (uuid.UUID, dbMemberRole, bool) {
+	wsID, role, ok := h.filesystemActor(w, r)
+	if !ok {
+		return uuid.Nil, "", false
+	}
+	if role != "owner" && role != "admin" {
+		writeErrorCode(w, http.StatusForbidden, "filesystem_write_denied", "only workspace owners and admins can write shared files")
+		return uuid.Nil, "", false
+	}
+	return wsID, role, true
 }
 
 func (h *Handler) GetWorkspaceFilesystemGrants(w http.ResponseWriter, r *http.Request) {

@@ -3,7 +3,12 @@ import { AgentDshPluginConfigSchema } from "./agent-dsh-plugin-config-schema";
 import type { AgentDshPluginConfig, UpdateAgentDshPluginConfig } from "../dsh-plugins/types";
 import { DSHNativeEntrySchema, type DSHNativeEntry } from "./dsh-native-schema";
 import { DSHHomeSchema, type DSHHomeStatus } from "./dsh-home-schema";
-import { FilesystemRootsSchema, type FilesystemRoots } from "./filesystem-schema";
+import {
+  FilesystemEntriesSchema,
+  FilesystemRootsSchema,
+  type FilesystemEntries,
+  type FilesystemRoots,
+} from "./filesystem-schema";
 import type { GitRepositoryIdentity, GitConnections } from "../types/git-repo";
 import { GitRepositoryIdentitySchema, GitConnectionsSchema } from "./schemas";
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
@@ -3829,6 +3834,57 @@ export class ApiClient {
       endpoint: "GET /api/filesystem/roots",
       includeReceived: false,
     });
+  }
+
+  async listFilesystemEntries(
+    params: { root: string; path?: string; offset?: number; limit?: number },
+    signal?: AbortSignal,
+  ): Promise<FilesystemEntries> {
+    const query = new URLSearchParams({ root: params.root });
+    if (params.path) query.set("path", params.path);
+    if (params.offset != null) query.set("offset", String(params.offset));
+    if (params.limit != null) query.set("limit", String(params.limit));
+    const raw = await this.fetch<unknown>(`/api/filesystem/entries?${query}`, { signal });
+    return parseWithFallback<FilesystemEntries>(raw, FilesystemEntriesSchema, {
+      root: params.root,
+      path: params.path ?? ".",
+      offset: params.offset ?? 0,
+      limit: params.limit ?? 200,
+      entries: [],
+      count: 0,
+      truncated: false,
+      next_offset: null,
+    }, {
+      endpoint: "GET /api/filesystem/entries",
+      includeReceived: false,
+    });
+  }
+
+  async mkdirFilesystem(body: { root: string; path: string }): Promise<void> {
+    await this.fetch("/api/filesystem/mkdir", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async uploadFilesystemFile(input: {
+    root: string;
+    path: string;
+    file: File;
+    filename?: string;
+  }): Promise<void> {
+    const form = new FormData();
+    form.set("root", input.root);
+    form.set("path", input.path);
+    form.set("file", input.file);
+    if (input.filename) form.set("filename", input.filename);
+    await this.fetchRaw("/api/filesystem/upload", { method: "POST", body: form });
+  }
+
+  async downloadFilesystemFile(params: { root: string; path: string }): Promise<Blob> {
+    const query = new URLSearchParams({ root: params.root, path: params.path });
+    const res = await this.fetchRaw(`/api/filesystem/content?${query}`);
+    return res.blob();
   }
 
   async ensureDSHHome(agentId: string): Promise<DSHHomeStatus | null> {

@@ -15,6 +15,16 @@ const mocks = vi.hoisted(() => ({
   rootsError: false,
   refetch: vi.fn(),
   agents: [] as Agent[],
+  entries: {
+    root: "shared",
+    path: ".",
+    offset: 0,
+    limit: 200,
+    entries: [] as Array<{ name: string; path: string; is_dir: boolean; size_bytes?: number }>,
+    count: 0,
+    truncated: false,
+    next_offset: null as number | null,
+  },
 }));
 
 vi.mock("@multica/core/hooks", () => ({
@@ -38,6 +48,13 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
     ...actual,
     useQuery: (options: { queryKey?: readonly unknown[] }) => {
       const key = options.queryKey ?? [];
+      if (key[3] === "entries") {
+        return {
+          data: mocks.entries,
+          isPending: false,
+          isError: false,
+        };
+      }
       if (key[2] === "filesystem") {
         return {
           data: mocks.rootsPending || mocks.rootsError ? undefined : mocks.roots,
@@ -51,6 +68,11 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
       }
       return { data: undefined, isPending: false, isError: false };
     },
+    useMutation: () => ({
+      mutateAsync: vi.fn().mockResolvedValue(undefined),
+      isPending: false,
+    }),
+    useQueryClient: () => ({ invalidateQueries: vi.fn() }),
   };
 });
 
@@ -112,6 +134,16 @@ beforeEach(() => {
   mocks.rootsPending = false;
   mocks.rootsError = false;
   mocks.refetch.mockReset();
+  mocks.entries = {
+    root: "shared",
+    path: ".",
+    offset: 0,
+    limit: 200,
+    entries: [],
+    count: 0,
+    truncated: false,
+    next_offset: null,
+  };
   mocks.agents = [
     { ...BASE_AGENT, id: FEIDI_ID, name: "Feidi" },
     { ...BASE_AGENT, id: COACH_ID, name: "Coach" },
@@ -132,8 +164,21 @@ describe("FilesPage", () => {
       "aria-selected",
       "true",
     );
-    expect(screen.getByText("Nothing to show yet")).toBeInTheDocument();
+    expect(screen.getByText("This folder is empty")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New folder" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Upload" })).toBeInTheDocument();
     expect(screen.queryByText("No private disks yet")).not.toBeInTheDocument();
+  });
+
+  it("lists files in the shared folder", () => {
+    mocks.entries = {
+      ...mocks.entries,
+      entries: [{ name: "notes.md", path: "notes.md", is_dir: false, size_bytes: 12 }],
+      count: 1,
+    };
+    renderPage();
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+    expect(screen.queryByText("This folder is empty")).not.toBeInTheDocument();
   });
 
   it("shows an unready state for unprepared shared storage", () => {
@@ -147,10 +192,7 @@ describe("FilesPage", () => {
       "aria-selected",
       "true",
     );
-    expect(screen.getByText("Shared storage isn’t ready")).toBeInTheDocument();
-    expect(
-      screen.getByText("Members and agents will share files here once storage is prepared."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("This folder is empty")).toBeInTheDocument();
     expect(screen.queryByText("No private disks yet")).not.toBeInTheDocument();
   });
 

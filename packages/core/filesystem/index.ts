@@ -1,2 +1,8 @@
 export * from "./queries";
-export type { FilesystemRoot, FilesystemRoots } from "../api/filesystem-schema";
+export * from "./mutations";
+export type {
+  FilesystemEntry,
+  FilesystemEntries,
+  FilesystemRoot,
+  FilesystemRoots,
+} from "../api/filesystem-schema";

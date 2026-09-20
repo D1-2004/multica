@@ -11,5 +11,26 @@ export const FilesystemRootsSchema = z.object({
   roots: z.array(FilesystemRootSchema),
 });
 
+export const FilesystemEntrySchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  is_dir: z.boolean(),
+  size_bytes: z.number().optional(),
+  modified_at: z.string().optional(),
+});
+
+export const FilesystemEntriesSchema = z.object({
+  root: z.string(),
+  path: z.string(),
+  offset: z.number(),
+  limit: z.number(),
+  entries: z.array(FilesystemEntrySchema),
+  count: z.number(),
+  truncated: z.boolean(),
+  next_offset: z.number().nullable().optional(),
+});
+
 export type FilesystemRoots = z.infer<typeof FilesystemRootsSchema>;
 export type FilesystemRoot = z.infer<typeof FilesystemRootSchema>;
+export type FilesystemEntry = z.infer<typeof FilesystemEntrySchema>;
+export type FilesystemEntries = z.infer<typeof FilesystemEntriesSchema>;

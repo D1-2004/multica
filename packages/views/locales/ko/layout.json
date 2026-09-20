@@ -97,6 +97,19 @@
     "pane_private_title": "{{name}} 전용",
     "pane_private_body": "이 디스크는 다른 에이전트와 공유되지 않습니다.",
     "open_agent": "에이전트 열기",
-    "agent_fallback": "에이전트 {{id}}"
+    "agent_fallback": "에이전트 {{id}}",
+    "new_folder": "새 폴더",
+    "upload": "업로드",
+    "folder_name": "폴더 이름",
+    "create_folder": "폴더 만들기",
+    "cancel": "취소",
+    "empty_folder": "이 폴더는 비어 있습니다",
+    "empty_folder_hint": "폴더를 만들거나 파일을 업로드하세요.",
+    "kind_folder": "폴더",
+    "kind_file": "파일",
+    "download": "다운로드",
+    "create_failed": "폴더를 만들지 못했습니다",
+    "upload_failed": "파일을 업로드하지 못했습니다",
+    "download_failed": "파일을 다운로드하지 못했습니다"
   }
 }

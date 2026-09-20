@@ -97,6 +97,19 @@
     "pane_private_title": "仅 {{name}} 可见",
     "pane_private_body": "这块磁盘不会共享给其他智能体。",
     "open_agent": "打开智能体",
-    "agent_fallback": "智能体 {{id}}"
+    "agent_fallback": "智能体 {{id}}",
+    "new_folder": "新建文件夹",
+    "upload": "上传",
+    "folder_name": "文件夹名称",
+    "create_folder": "创建文件夹",
+    "cancel": "取消",
+    "empty_folder": "这个文件夹是空的",
+    "empty_folder_hint": "新建文件夹或上传文件即可开始。",
+    "kind_folder": "文件夹",
+    "kind_file": "文件",
+    "download": "下载",
+    "create_failed": "无法创建文件夹",
+    "upload_failed": "无法上传文件",
+    "download_failed": "无法下载文件"
   }
 }

@@ -97,6 +97,19 @@
     "pane_private_title": "{{name}} 専用",
     "pane_private_body": "このディスクは他のエージェントと共有されません。",
     "open_agent": "エージェントを開く",
-    "agent_fallback": "エージェント {{id}}"
+    "agent_fallback": "エージェント {{id}}",
+    "new_folder": "新しいフォルダ",
+    "upload": "アップロード",
+    "folder_name": "フォルダ名",
+    "create_folder": "フォルダを作成",
+    "cancel": "キャンセル",
+    "empty_folder": "このフォルダは空です",
+    "empty_folder_hint": "フォルダを作成するか、ファイルをアップロードしてください。",
+    "kind_folder": "フォルダ",
+    "kind_file": "ファイル",
+    "download": "ダウンロード",
+    "create_failed": "フォルダを作成できませんでした",
+    "upload_failed": "ファイルをアップロードできませんでした",
+    "download_failed": "ファイルをダウンロードできませんでした"
   }
 }

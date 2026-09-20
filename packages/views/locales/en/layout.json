@@ -97,6 +97,19 @@
     "pane_private_title": "Private to {{name}}",
     "pane_private_body": "This disk is never shared with other agents.",
     "open_agent": "Open agent",
-    "agent_fallback": "Agent {{id}}"
+    "agent_fallback": "Agent {{id}}",
+    "new_folder": "New folder",
+    "upload": "Upload",
+    "folder_name": "Folder name",
+    "create_folder": "Create folder",
+    "cancel": "Cancel",
+    "empty_folder": "This folder is empty",
+    "empty_folder_hint": "Create a folder or upload a file to get started.",
+    "kind_folder": "Folder",
+    "kind_file": "File",
+    "download": "Download",
+    "create_failed": "Couldn’t create the folder",
+    "upload_failed": "Couldn’t upload the file",
+    "download_failed": "Couldn’t download the file"
   }
 }
