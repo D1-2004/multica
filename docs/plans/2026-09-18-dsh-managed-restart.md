@@ -146,8 +146,7 @@ from active application progress; failures no longer show an endless spinner.
 
 Focused Go proxy tests cover old/unsupported Runtime, snapshot/save failure,
 both restart endpoints, successful forwarding, invalid origin/method/query,
-and ordinary read passthrough. Deployment and real preproduction regression
-acceptance for this follow-up are pending.
+and ordinary read passthrough. The real preproduction results are recorded below.
 
 The first follow-up deployment (CR 36224658, run 3109032489, two targets) passed
 build, deployment and integration. Real regression on v25 proved both restart
@@ -162,5 +161,48 @@ remain capped at 32 MiB and total decompressed archives at 48 MiB. Tests cover a
 9 MiB bundled entry, an over-16-MiB member, and aggregate expansion above the
 unchanged total budget. Profile worker failures now distinguish native sync,
 Host startup and other application errors instead of calling every failure a
-Host startup failure. The complete plugin/restart/replacement acceptance remains
-pending the second deployment.
+Host startup failure.
+
+
+Second deployment: CR 36224658, run 3109036729, release commit `66d073b31`
+contains `4d3beadbd`. Build, deployment and integration succeeded; deployment
+order 161568482 ended with 2/2 targets successful. The pipeline is parked at the
+normal preproduction verification gate; this follow-up was not published to
+production.
+
+On the same v25 Agent, normal reconciliation imported the previously rejected
+native snapshot and applied revision 148 on generation 6. IM 4.21.2, Tavern
+2.3.9-multica.3 and dshmarket 1.50.0 were all ready, with desired=applied=148
+and current=true. Native marketplace restart changed boot from
+`44-1789877489026` to `133-1789877509568`; configuration remained applied.
+The workbench visibly showed all three enabled plugins and confirmed the
+running DSH had applied the configuration.
+
+Busy restart regression: task `a2570365-21ca-407c-ab5e-db9657d448af` was running
+when restart returned HTTP 409 (DSH busy). It completed with persisted output
+`RESTART_GUARD_TASK_OK`, and the native boot remained unchanged. Test access
+grants were revoked. A profile read during initial replacement hit the gateway
+timeout; later readback took 1.26 seconds and returned applied/current. This
+is not evidence that all cold-start status reads are latency-bounded.
+
+Original Tavern character data matched the pre-repair snapshot exactly. New
+session task `b0528b34-5aa2-45e2-81eb-ba3e30e09953` completed after the fix and
+introduced the configured science-club character; no character fixture was
+written during these tests.
+
+
+The IM update regression resolved the native package to 4.23.0. The market
+request exceeded the HTTP deadline, but readback confirmed installation and
+normal import/build of revision 149. The worker's 90-second context expired
+while native startup permits 320 seconds. Those cancellations were counted as
+confirmed failures and temporarily exhausted the application retry budget,
+even though the owned native process subsequently became healthy. Cancellation
+now preserves the retry budget; confirmed startup/configuration failures remain
+bounded. No worker lease or concurrency limit was expanded.
+
+Reopening the native entry confirmed revision 149 on generation 7. Restart
+changed boot `44-1789878050421` to `158-1789878125482`, preserving IM 4.23.0,
+Tavern 2.3.9-multica.3 and dshmarket 1.50.0 with current=true. This readback
+predates deployment of the cancellation-budget follow-up; that change still
+requires preproduction deployment. The market update HTTP timeout is recorded
+as an incomplete synchronous acknowledgement, not a failed package install.

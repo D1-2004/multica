@@ -83,11 +83,19 @@ func (l *FCE2BLauncher) applyNextDSHProfile(ctx context.Context) {
 	}
 	// Active tasks and confirmed retirement are expected transitions, not a
 	// failed plugin. An actual native startup failure consumes a bounded retry.
-	failed := !errors.Is(err, errDSHHostWaiting) || errors.Is(err, errDSHHostStartup)
+	failed := dshProfileApplyConsumesAttempt(ctx.Err(), err)
 	_, _ = l.Pool.Exec(cleanup, `UPDATE dsh_employee_profile SET next_apply_at=now()+interval '10 seconds',
  apply_attempts=apply_attempts+CASE WHEN $4 THEN 1 ELSE 0 END,
  apply_error=CASE WHEN $4 THEN $5 ELSE apply_error END
  WHERE workspace_id=$1 AND agent_id=$2 AND desired_revision=$3`, key.WorkspaceID, key.AgentID, revision, failed, dshProfileApplyError(err))
+}
+
+// The worker's 90-second reconciliation window is shorter than a native cold
+// start (320 seconds). Remote work can finish after that window, so cancellation
+// is not a confirmed startup failure. Keep reconciling instead of exhausting the
+// three-attempt budget while the same owned process is still starting.
+func dshProfileApplyConsumesAttempt(contextErr, err error) bool {
+	return contextErr == nil && (!errors.Is(err, errDSHHostWaiting) || errors.Is(err, errDSHHostStartup))
 }
 
 func dshProfileApplyError(err error) string {

@@ -1,9 +1,27 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
+
+func TestDSHProfileReconciliationTimeoutDoesNotExhaustStartupBudget(t *testing.T) {
+	for _, ctxErr := range []error{context.Canceled, context.DeadlineExceeded} {
+		for _, err := range []error{ctxErr, errors.New("installation receipt unavailable"), errors.Join(errDSHHostWaiting, errDSHHostStartup)} {
+			if dshProfileApplyConsumesAttempt(ctxErr, err) {
+				t.Fatal("unconfirmed work consumed a startup attempt")
+			}
+		}
+	}
+	if dshProfileApplyConsumesAttempt(nil, errDSHHostWaiting) {
+		t.Fatal("expected lifecycle wait consumed a startup attempt")
+	}
+	if !dshProfileApplyConsumesAttempt(nil, errors.Join(errDSHHostWaiting, errDSHHostStartup)) ||
+		!dshProfileApplyConsumesAttempt(nil, errors.New("confirmed configuration error")) {
+		t.Fatal("confirmed failures must remain bounded")
+	}
+}
 
 func TestDSHProfileFailureKeepsFirstBoundary(t *testing.T) {
 	for _, tc := range []struct {
