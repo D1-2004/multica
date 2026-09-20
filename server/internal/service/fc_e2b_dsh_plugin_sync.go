@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,32 @@ import (
 	"github.com/multica-ai/multica/server/internal/dshprofile"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+// Restart is an explicit user operation, never part of ordinary task admission.
+// Persist the exact browser Host's native edits before allowing any process exit.
+func (l *FCE2BLauncher) PrepareDSHNativeRestart(ctx context.Context, host dshhost.Host) error {
+	l = l.withCurrentConfig()
+	if l == nil || l.SyncDSHProfileSource == nil {
+		return errors.New("native plugin synchronization unavailable")
+	}
+	return l.withDSHEmployee(ctx, host.Key, func(conn *pgxpool.Conn, _ db.AgentRuntime, template string) error {
+		probe, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		out, err := l.runE2BCommand(probe, []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=", host.SandboxID,
+			"--", "/opt/task-python/bin/python3", "-c", dshManagedRestartCapabilityCommand})
+		if err != nil || strings.TrimSpace(out) != "managed-restart-v1" {
+			return errors.New("this Runtime does not support managed DSH restart; upgrade the Runtime before restarting")
+		}
+		if err := l.syncDSHNativePluginsOnHost(ctx, conn, host.Key, template, host); err != nil {
+			return errors.New("native plugin changes could not be saved; DSH was not restarted")
+		}
+		return nil
+	})
+}
+
+// Probe the immutable installed adapter, not a user-controlled plugin or a
+// Runtime label. Older images must never receive the marketplace restart route.
+const dshManagedRestartCapabilityCommand = `import sys;sys.path.insert(0,"/opt/multica-dsh");from multica_dsh_host import NativeHost;print("managed-restart-v1" if callable(getattr(NativeHost,"request_restart",None)) else "unsupported")`
 
 // Both profile reconciliation and the settings list use the existing employee
 // lock. A snapshot can never select another sandbox or employee's filesystem.

@@ -117,3 +117,34 @@ PASS_STRUCTURAL_ONLY, not semantic certification. The isolated real PostgreSQL
 concurrency tests could not connect from the laptop or FC sandbox; their attempts
 are not test passes. Real preproduction tasks above exercised the deployed schema,
 epoch selection, old-session admission, and cross-session history exclusion.
+
+## September 20 recurrence: old Runtime and unsaved native edits
+
+The user's preproduction v25 Agent still used template `3rg3ebpz7rxmqe6ii5jn`
+(runtime commit `94f5c3d`), while the managed restart fix existed only in the
+`f1874cbb` candidate. Installing the Tavern fork did not update this binding.
+Its native market restart at 03:16:58 UTC spawned an unmanaged replacement on
+port 34001 while waiting for port 32921. The supervisor's control operation then
+failed; profile reads returned `native_sync_pending` with `host_start_failed`.
+Native revision 144 contained dshmarket 1.49.0 and @xmanrui/dsh-im 4.22.0, but the
+saved source still contained only dshmarket 1.47.0 and the Tavern fork.
+
+Temporary recovery switched this Agent to the existing candidate Runtime and
+normal lifecycle replacement created generation 3. Revision 145 was applied,
+but IM was absent because the native edits had not been imported. This is
+recovery evidence only, not acceptance of the permanent fix. The native source
+files were backed up in the employee Home before replacement.
+
+The application now gates both native marketplace restart routes before proxying:
+check the installed adapter supports managed restart, then persist the exact
+browser Host's plugin snapshot. Unsupported images and synchronization failures
+return an error without forwarding restart. This gate runs only on explicit
+restart requests, not task admissions or normal native reads. The existing
+Runtime supervisor still rejects active tasks/mutations and owns child restart.
+The plugin editor now separates an unconfirmed receipt (edits remain locked)
+from active application progress; failures no longer show an endless spinner.
+
+Focused Go proxy tests cover old/unsupported Runtime, snapshot/save failure,
+both restart endpoints, successful forwarding, invalid origin/method/query,
+and ordinary read passthrough. Deployment and real preproduction regression
+acceptance for this follow-up are pending.
