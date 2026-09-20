@@ -117,9 +117,7 @@ export function FilesPage() {
   );
 
   const activeKey =
-    (selected && disks.some((disk) => disk.key === selected)
-      ? selected
-      : disks[0]?.key) ?? null;
+    disks.find((disk) => disk.key === selected)?.key ?? disks[0]?.key ?? null;
   const selectedDisk = disks.find((disk) => disk.key === activeKey) ?? null;
   const sharedCount = disks.filter((disk) => disk.kind === "shared").length;
   const agentDisks = disks.filter((disk) => disk.kind === "agent");
@@ -195,26 +193,24 @@ export function FilesPage() {
                     )}
                   </DiskGroup>
                 ) : null}
-                <DiskGroup label={t(($) => $.files.agents)}>
-                  {agentDisks.length === 0 ? (
-                    <p className="px-2 text-caption text-muted-foreground">
-                      {t(($) => $.files.agents_empty)}
-                    </p>
-                  ) : visibleAgents.length === 0 ? (
-                    <p className="px-2 text-caption text-muted-foreground">
-                      {t(($) => $.files.filter_empty)}
-                    </p>
-                  ) : (
-                    visibleAgents.map((disk) => (
-                      <DiskRow
-                        key={disk.key}
-                        disk={disk}
-                        selected={disk.key === activeKey}
-                        onSelect={setSelected}
-                      />
-                    ))
-                  )}
-                </DiskGroup>
+                {agentDisks.length > 0 ? (
+                  <DiskGroup label={t(($) => $.files.agents)}>
+                    {visibleAgents.length === 0 ? (
+                      <p className="px-2 text-caption text-muted-foreground">
+                        {t(($) => $.files.filter_empty)}
+                      </p>
+                    ) : (
+                      visibleAgents.map((disk) => (
+                        <DiskRow
+                          key={disk.key}
+                          disk={disk}
+                          selected={disk.key === activeKey}
+                          onSelect={setSelected}
+                        />
+                      ))
+                    )}
+                  </DiskGroup>
+                ) : null}
               </div>
             </div>
           </aside>
@@ -351,6 +347,7 @@ function DiskPane({ disk, agentHref }: { disk: Disk; agentHref: string | null })
             title: t(($) => $.files.pane_listing_title),
             description: t(($) => $.files.pane_listing_body),
           };
+  const EmptyIcon = empty.icon;
   return (
     <>
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4">
@@ -375,12 +372,15 @@ function DiskPane({ disk, agentHref }: { disk: Disk; agentHref: string | null })
             <ListGridHeaderCell>{t(($) => $.files.col_kind)}</ListGridHeaderCell>
           </ListGridHeader>
         </ListGrid>
-        <div className="flex flex-1 items-center justify-center">
-          <CollectionPageState
-            icon={empty.icon}
-            title={empty.title}
-            description={empty.description}
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-10">
+          <EmptyIcon
+            aria-hidden="true"
+            className="size-8 text-muted-foreground"
           />
+          <p className="text-body font-medium">{empty.title}</p>
+          <p className="max-w-sm text-center text-caption text-muted-foreground">
+            {empty.description}
+          </p>
         </div>
       </div>
     </>

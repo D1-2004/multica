@@ -128,7 +128,12 @@ describe("FilesPage", () => {
     expect(screen.getByRole("option", { name: /Feidi/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Coach/ })).toBeInTheDocument();
     expect(screen.queryByText(FEIDI_ID)).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: /Shared files/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     expect(screen.getByText("Nothing to show yet")).toBeInTheDocument();
+    expect(screen.queryByText("No private disks yet")).not.toBeInTheDocument();
   });
 
   it("shows an unready state for unprepared shared storage", () => {
@@ -138,10 +143,15 @@ describe("FilesPage", () => {
 
     renderPage();
 
+    expect(screen.getByRole("option", { name: /Shared files/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     expect(screen.getByText("Shared storage isn’t ready")).toBeInTheDocument();
     expect(
       screen.getByText("Members and agents will share files here once storage is prepared."),
     ).toBeInTheDocument();
+    expect(screen.queryByText("No private disks yet")).not.toBeInTheDocument();
   });
 
   it("selects an agent disk and links to the agent filesystem view", async () => {
