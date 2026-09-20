@@ -1587,6 +1587,7 @@
       "native_unconfirmed": "DSH is not ready. Check the plugin configuration status and try again."
     },
     "dsh_profile": {
+      "native_sync_pending": "Native DSH configuration cannot be synchronized yet. Showing the last saved version. Refresh shortly.",
       "retry_build": "Retry build",
       "retry_unconfirmed": "Retry was not confirmed. Refresh the configuration status before trying again.",
       "title": "Configuration status",

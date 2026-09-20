@@ -11,8 +11,9 @@ import (
 
 type SessionScope struct {
 	Key
-	Kind string
-	ID   uuid.UUID
+	Kind  string
+	ID    uuid.UUID
+	Epoch uuid.UUID
 }
 
 type Execution struct {
@@ -30,8 +31,8 @@ func (s PostgresStore) BindSandboxScope(ctx context.Context, scope SessionScope,
 	}
 	var selected uuid.UUID
 	err := s.DB.QueryRow(ctx, `UPDATE dsh_employee_session SET sandbox_scope_id=COALESCE(sandbox_scope_id,$5)
- WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4 RETURNING sandbox_scope_id`,
-		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, preferred).Scan(&selected)
+ WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4 AND epoch_id=$6 RETURNING sandbox_scope_id`,
+		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, preferred, scope.Epoch).Scan(&selected)
 	return selected, err
 }
 
@@ -56,16 +57,16 @@ func (s PostgresStore) AdoptNativeSession(ctx context.Context, scope SessionScop
 		return errors.New("invalid native DSH session identity")
 	}
 	_, err := s.DB.Exec(ctx, `INSERT INTO dsh_employee_session
- (workspace_id,agent_id,scope_kind,scope_id,session_id) VALUES ($1,$2,$3,$4,$5)
- ON CONFLICT (workspace_id,agent_id,scope_kind,scope_id) DO NOTHING`,
-		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, sessionID)
+ (workspace_id,agent_id,scope_kind,scope_id,session_id,epoch_id) VALUES ($1,$2,$3,$4,$5,$6)
+ ON CONFLICT (workspace_id,agent_id,scope_kind,scope_id,epoch_id) DO NOTHING`,
+		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, sessionID, scope.Epoch)
 	if err != nil {
 		return err
 	}
 	var current string
 	if err := s.DB.QueryRow(ctx, `SELECT session_id FROM dsh_employee_session
- WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4`,
-		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID).Scan(&current); err != nil {
+ WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4 AND epoch_id=$5`,
+		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, scope.Epoch).Scan(&current); err != nil {
 		return err
 	}
 	if current != sessionID {
@@ -81,7 +82,7 @@ func (s PostgresStore) BindWorkdir(ctx context.Context, scope SessionScope, work
 		return ErrChanged
 	}
 	if created {
-		_, err := s.DB.Exec(ctx, `UPDATE dsh_employee_session SET workdir=$5 WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4 AND workdir IS NULL`, scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, workdir)
+		_, err := s.DB.Exec(ctx, `UPDATE dsh_employee_session SET workdir=$5 WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4 AND epoch_id=$6 AND workdir IS NULL`, scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, workdir, scope.Epoch)
 		if err != nil {
 			return err
 		}
@@ -98,7 +99,7 @@ func (s PostgresStore) BindWorkdir(ctx context.Context, scope SessionScope, work
 
 func (s PostgresStore) SessionWorkdir(ctx context.Context, scope SessionScope) (string, error) {
 	var workdir string
-	err := s.DB.QueryRow(ctx, `SELECT COALESCE(workdir,'/mnt/multica/workspaces/' || session_id) FROM dsh_employee_session WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4`, scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID).Scan(&workdir)
+	err := s.DB.QueryRow(ctx, `SELECT COALESCE(workdir,'/mnt/multica/workspaces/' || session_id) FROM dsh_employee_session WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4 AND epoch_id=$5`, scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, scope.Epoch).Scan(&workdir)
 	if err == nil && !protocol.ValidDSHWorkdir(workdir) {
 		err = ErrChanged
 	}
@@ -143,9 +144,9 @@ func (s PostgresStore) BindExecution(ctx context.Context, scope SessionScope, ta
 		return Execution{}, errors.New("DSH session binding requires employee, scope and task identities")
 	}
 	_, err := s.DB.Exec(ctx, `INSERT INTO dsh_employee_session
- (workspace_id,agent_id,scope_kind,scope_id,session_id) VALUES ($1,$2,$3,$4,$5)
- ON CONFLICT (workspace_id,agent_id,scope_kind,scope_id) DO NOTHING`,
-		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, "session-"+uuid.NewString())
+ (workspace_id,agent_id,scope_kind,scope_id,session_id,epoch_id) VALUES ($1,$2,$3,$4,$5,$6)
+ ON CONFLICT (workspace_id,agent_id,scope_kind,scope_id,epoch_id) DO NOTHING`,
+		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, "session-"+uuid.NewString(), scope.Epoch)
 	if err != nil {
 		return Execution{}, err
 	}
@@ -153,8 +154,8 @@ func (s PostgresStore) BindExecution(ctx context.Context, scope SessionScope, ta
 	// A separate statement observes a concurrent winner after ON CONFLICT;
 	// a CTE sharing the INSERT snapshot can miss that just-committed row.
 	err = s.DB.QueryRow(ctx, `SELECT session_id FROM dsh_employee_session
- WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4`,
-		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID).Scan(&sessionID)
+ WHERE workspace_id=$1 AND agent_id=$2 AND scope_kind=$3 AND scope_id=$4 AND epoch_id=$5`,
+		scope.WorkspaceID, scope.AgentID, scope.Kind, scope.ID, scope.Epoch).Scan(&sessionID)
 	if err != nil {
 		return Execution{}, err
 	}
