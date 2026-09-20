@@ -4,21 +4,25 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 )
 
 func TestDSHProfileReconciliationTimeoutDoesNotExhaustStartupBudget(t *testing.T) {
 	for _, ctxErr := range []error{context.Canceled, context.DeadlineExceeded} {
 		for _, err := range []error{ctxErr, errors.New("installation receipt unavailable"), errors.Join(errDSHHostWaiting, errDSHHostStartup)} {
-			if dshProfileApplyConsumesAttempt(ctxErr, err) {
+			if dshProfileApplyConsumesAttempt(ctxErr, err, 5*time.Minute) {
 				t.Fatal("unconfirmed work consumed a startup attempt")
 			}
 		}
 	}
-	if dshProfileApplyConsumesAttempt(nil, errDSHHostWaiting) {
+	if !dshProfileApplyConsumesAttempt(context.DeadlineExceeded, context.DeadlineExceeded, 15*time.Minute) {
+		t.Fatal("persistent timeouts must remain bounded")
+	}
+	if dshProfileApplyConsumesAttempt(nil, errDSHHostWaiting, time.Hour) {
 		t.Fatal("expected lifecycle wait consumed a startup attempt")
 	}
-	if !dshProfileApplyConsumesAttempt(nil, errors.Join(errDSHHostWaiting, errDSHHostStartup)) ||
-		!dshProfileApplyConsumesAttempt(nil, errors.New("confirmed configuration error")) {
+	if !dshProfileApplyConsumesAttempt(nil, errors.Join(errDSHHostWaiting, errDSHHostStartup), 0) ||
+		!dshProfileApplyConsumesAttempt(nil, errors.New("confirmed configuration error"), 0) {
 		t.Fatal("confirmed failures must remain bounded")
 	}
 }

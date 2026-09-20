@@ -197,8 +197,8 @@ normal import/build of revision 149. The worker's 90-second context expired
 while native startup permits 320 seconds. Those cancellations were counted as
 confirmed failures and temporarily exhausted the application retry budget,
 even though the owned native process subsequently became healthy. Cancellation
-now preserves the retry budget; confirmed startup/configuration failures remain
-bounded. No worker lease or concurrency limit was expanded.
+now preserves the retry budget within a durable 15-minute revision window;
+persistent timeouts and confirmed startup/configuration failures remain bounded. No worker lease or concurrency limit was expanded.
 
 Reopening the native entry confirmed revision 149 on generation 7. Restart
 changed boot `44-1789878050421` to `158-1789878125482`, preserving IM 4.23.0,
