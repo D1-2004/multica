@@ -636,7 +636,7 @@ Subscribers receive notifications about issue activity (new comments, status cha
 ### Execution History
 
 ```bash
-# List all execution runs for an issue
+# List all execution runs for an issue (table includes SANDBOX; JSON has sandbox_id)
 multica issue runs <issue-id>
 multica issue runs <issue-id> --full-id
 multica issue runs <issue-id> --output json

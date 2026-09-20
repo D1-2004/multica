@@ -2287,7 +2287,7 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 
 	actors := loadActorDisplayLookup(ctx, client)
 	fullID, _ := cmd.Flags().GetBool("full-id")
-	headers := []string{"ID", "AGENT", "STATUS", "STARTED", "COMPLETED", "ERROR"}
+	headers := []string{"ID", "AGENT", "STATUS", "SANDBOX", "STARTED", "COMPLETED", "ERROR"}
 	rows := make([][]string, 0, len(runs))
 	for _, r := range runs {
 		started := strVal(r, "started_at")
@@ -2307,6 +2307,7 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 			displayID(strVal(r, "id"), fullID),
 			actors.agent(strVal(r, "agent_id")),
 			strVal(r, "status"),
+			strVal(r, "sandbox_id"),
 			started,
 			completed,
 			errMsg,

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, Loader2, RotateCcw, Square } from "lucide-react";
+import { ChevronRight, Copy, Loader2, RotateCcw, Square } from "lucide-react";
 import { toast } from "sonner";
 import { api, dispatchReasonCode } from "@multica/core/api";
 import { issueKeys } from "@multica/core/issues/queries";
@@ -368,6 +368,7 @@ export function ActiveTaskRow({
   return (
     <RowShell task={task}>
       <TriggerText text={trigger} />
+      <SandboxIDChip sandboxId={task.sandbox_id} />
       <TaskCommentCoverage task={task} />
       <RowStatus title={label}>
         {task.status === "running" ? (
@@ -456,6 +457,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
       ? formatDuration(task.started_at, new Date(task.completed_at).getTime())
       : "",
     usage?.models.join(", ") ?? "",
+    task.sandbox_id ?? "",
   ]
     .filter(Boolean)
     .join(" · ");
@@ -494,6 +496,7 @@ function PastRow({ task, issueId }: { task: AgentTask; issueId: string }) {
   return (
     <RowShell task={task} title={rowTitle}>
       <TriggerText text={trigger} />
+      <SandboxIDChip sandboxId={task.sandbox_id} />
       <TaskCommentCoverage task={task} />
       <RowStatus title={failureLabel ?? label}>
         <TaskStatusIcon status={task.status} />
@@ -573,6 +576,42 @@ function RowShell({
 
 function TriggerText({ text }: { text: string }) {
   return <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">{text}</span>;
+}
+
+function SandboxIDChip({ sandboxId }: { sandboxId?: string }) {
+  const { t } = useT("issues");
+  const id = sandboxId?.trim() ?? "";
+  if (!id) return null;
+
+  const copy = async (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(id);
+      toast.success(t(($) => $.execution_log.sandbox_id_copied));
+    } catch {
+      toast.error(t(($) => $.execution_log.sandbox_id_copy_failed));
+    }
+  };
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={copy}
+            aria-label={t(($) => $.execution_log.sandbox_id_copy_aria)}
+          />
+        }
+        className="inline-flex max-w-[10.5rem] shrink-0 items-center gap-1 rounded px-1 py-0.5 font-mono text-caption text-muted-foreground transition-colors hover:bg-accent/70 hover:text-foreground"
+      >
+        <Copy className="!size-3 shrink-0" />
+        <span className="truncate">{id}</span>
+      </TooltipTrigger>
+      <TooltipContent>{t(($) => $.execution_log.sandbox_id_tooltip)}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function supportsCommentCoverage(status: AgentTask["status"]): boolean {
