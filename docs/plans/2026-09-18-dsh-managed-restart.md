@@ -203,6 +203,24 @@ persistent timeouts and confirmed startup/configuration failures remain bounded.
 Reopening the native entry confirmed revision 149 on generation 7. Restart
 changed boot `44-1789878050421` to `158-1789878125482`, preserving IM 4.23.0,
 Tavern 2.3.9-multica.3 and dshmarket 1.50.0 with current=true. This readback
-predates deployment of the cancellation-budget follow-up; that change still
-requires preproduction deployment. The market update HTTP timeout is recorded
+predates deployment of the cancellation-budget follow-up; its deployment
+and final readback are recorded below. The market update HTTP timeout is recorded
 as an incomplete synchronous acknowledgement, not a failed package install.
+
+
+Final follow-up deployment: run 3109039048, release branch
+`releases/20260920122558813_r_release_342160_dt-fde-multica-code`, merge
+`09312e322` includes final code `8191da6f4`. Deployment order 161569436 ended
+with allEnd=true, 2/2 targets successful; build and integration succeeded.
+The prior in-progress run 3109038888 was exited before deployment to include
+the bounded grace-window change. Production was not published.
+
+After final deployment, native restart changed boot from `158-1789878125482`
+to `3431-1789878899904`. The API returned applied/current, revision 149 on
+generation 7, and all three plugins ready. The workbench displayed IM 4.23.0,
+Tavern 2.3.9-multica.3 and market 1.50.0 enabled, with both target and confirmed
+revision 149. The test grant was revoked. Cancellation-grace and persistent-
+timeout limits have focused unit coverage; the earlier real cold-start timeout
+provided the motivating evidence, not a controlled post-deployment timeout
+fault injection. Full dshplugin tests, focused handler/service regression tests,
+frontend typecheck and service/handler vet passed for the relevant changes.
