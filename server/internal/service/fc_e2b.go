@@ -936,11 +936,10 @@ func firstString(obj map[string]any, keys ...string) string {
 }
 
 type FCE2BLauncher struct {
-	ReadDSHProfileSource    dshprofile.ReadSource
-	RefreshDSHSessionInputs func(context.Context, dshhost.Key) error
-	SyncDSHProfileSource    func(context.Context, *pgxpool.Conn, dshhost.Key, string, dshprofile.NativeSnapshot) error
-	ProvisionDSHStorage     func(context.Context, dshhost.Database, dshhost.Key) (dshhost.Host, error)
-	DSHArtifactSigner       interface {
+	ReadDSHProfileSource dshprofile.ReadSource
+	SyncDSHProfileSource func(context.Context, *pgxpool.Conn, dshhost.Key, string, dshprofile.NativeSnapshot) error
+	ProvisionDSHStorage  func(context.Context, dshhost.Database, dshhost.Key) (dshhost.Host, error)
+	DSHArtifactSigner    interface {
 		PresignGet(context.Context, string, time.Duration) (string, error)
 	}
 	Queries            *db.Queries

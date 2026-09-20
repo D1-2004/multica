@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"strconv"
 	"time"
 
@@ -79,13 +78,6 @@ func (l *FCE2BLauncher) applyNextDSHProfile(ctx context.Context) {
 		if !status.Current {
 			_, err = l.EnsureDSHEmployeeHost(ctx, key)
 		}
-	}
-	if err == nil && l.RefreshDSHSessionInputs != nil {
-		refresh, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-		if refreshErr := l.RefreshDSHSessionInputs(refresh, key); refreshErr != nil {
-			slog.Warn("DSH background session input connection is not ready", "agent_id", key.AgentID, "workspace_id", key.WorkspaceID)
-		}
-		cancel()
 	}
 	cleanup, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer done()
