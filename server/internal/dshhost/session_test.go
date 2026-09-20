@@ -174,3 +174,79 @@ func TestConcurrentNativeRequestsCannotCreateTwoTaskBindings(t *testing.T) {
 		t.Fatalf("same browser request committed %d task bindings", succeeded)
 	}
 }
+
+func TestResetEpochPreservesOldNativeSessionAndRetry(t *testing.T) {
+	a, b := stores(t)
+	ctx := context.Background()
+	scope := SessionScope{Key: Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, Kind: "chat", ID: uuid.New()}
+	oldTask := uuid.New()
+	old, err := a.BindExecution(ctx, scope, oldTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh := scope
+	fresh.Epoch = uuid.New()
+	next, err := b.BindExecution(ctx, fresh, fresh.Epoch)
+	if err != nil || next.SessionID == old.SessionID || next.Workdir == old.Workdir {
+		t.Fatalf("reset reused native context: %v", err)
+	}
+	for range 2 {
+		retry, err := a.BindExecution(ctx, fresh, fresh.Epoch)
+		if err != nil || retry != next {
+			t.Fatalf("reset retry changed identity: %v", err)
+		}
+	}
+	follow, err := a.BindExecution(ctx, fresh, uuid.New())
+	if err != nil || follow.SessionID != next.SessionID {
+		t.Fatalf("following turn lost new epoch: %v", err)
+	}
+	original, err := b.NativeScope(ctx, scope.Key, old.SessionID)
+	if err != nil || original != scope {
+		t.Fatalf("old native session lost scope: %v", err)
+	}
+	retryScope, err := b.TaskScope(ctx, scope, oldTask)
+	if err != nil || retryScope != scope {
+		t.Fatalf("old retry jumped to new epoch: %v", err)
+	}
+	retryScope, err = b.TaskScope(ctx, scope, fresh.Epoch)
+	if err != nil || retryScope != fresh {
+		t.Fatalf("fresh retry lost epoch: %v", err)
+	}
+	if _, err := b.BindExecution(ctx, scope, fresh.Epoch); err == nil {
+		t.Fatal("task moved backwards across reset")
+	}
+}
+
+func TestTaskScopeFollowsResetQueuePosition(t *testing.T) {
+	a, _ := stores(t)
+	ctx := context.Background()
+	_, err := a.DB.Exec(ctx, `CREATE TABLE agent(id uuid,workspace_id uuid);
+ CREATE TABLE agent_task_queue(id uuid,agent_id uuid,chat_session_id uuid,issue_id uuid,force_fresh_session boolean,created_at timestamptz);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := SessionScope{Key: Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, Kind: "chat", ID: uuid.New()}
+	if _, err = a.DB.Exec(ctx, `INSERT INTO agent VALUES($1,$2)`, scope.AgentID, scope.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	ids := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+	for i, id := range ids {
+		_, err = a.DB.Exec(ctx, `INSERT INTO agent_task_queue VALUES($1,$2,$3,NULL,$4,'2026-09-18 00:00:00Z'::timestamptz + $5 * interval '1 second')`, id, scope.AgentID, scope.ID, i == 1 || i == 3, i)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, id := range ids {
+		got, err := a.TaskScope(ctx, scope, id)
+		want := uuid.Nil
+		if i == 1 || i == 2 {
+			want = ids[1]
+		}
+		if i == 3 {
+			want = ids[3]
+		}
+		if err != nil || got.Epoch != want {
+			t.Fatalf("turn %d wrong epoch %v: %v", i, got.Epoch, err)
+		}
+	}
+}

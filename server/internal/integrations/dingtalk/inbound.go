@@ -442,20 +442,28 @@ func inboundFromBotCallbackForInstallationWithSource(data botCallbackData, clien
 	// (/new, /reset, /issue, /unbind); adopt the stripped view when — and
 	// only when — a command follows.
 	text = commandView(text)
+	commandText := text
 	// /new (or /reset) on the first non-empty line forces a fresh agent
 	// session for this dispatch (mirrors the Lark enricher): the directive
 	// is stripped and the remainder is the prompt.
 	forceFresh := false
 	if stripped, ok := parseFreshSessionCommand(text); ok {
 		text = stripped
+		// Preserve the shared router command even after removing the directive
+		// from model input; /reset is the DingTalk alias of /new.
+		commandText = "/new"
+		if stripped != "" {
+			commandText += " " + stripped
+		}
 		forceFresh = true
 	}
 	return channel.InboundMessage{
-		EventID:    data.MsgID,
-		MessageID:  data.MsgID,
-		Type:       msgType,
-		Text:       text,
-		ForceFresh: forceFresh,
+		EventID:     data.MsgID,
+		MessageID:   data.MsgID,
+		Type:        msgType,
+		Text:        text,
+		ForceFresh:  forceFresh,
+		CommandText: commandText,
 		// DingTalk only delivers group messages that @-mention the robot,
 		// so every callback is, by construction, addressed to the bot.
 		AddressedToBot: true,

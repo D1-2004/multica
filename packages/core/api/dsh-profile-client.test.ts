@@ -42,11 +42,28 @@ describe("employee Profile receipts", () => {
     { state: "applied", current: true, desired_revision: "2", applied_revision: "1", applied_generation: 1, applied_sandbox_id: "sandbox" },
     { state: "applied", current: true, desired_revision: "2", applied_revision: "2", applied_generation: 0, applied_sandbox_id: "sandbox" },
     { state: "pending_host", current: true, desired_revision: "2", applied_generation: 1 },
+    { state: "native_sync_pending", current: true, applied_generation: 1 },
     { state: "future_state", current: false, applied_generation: 0 },
     { state: "build_failed", desired_revision: "9", current: false, applied_generation: 0, builds: [{ package_name: "fixture", version: "1", state: "failed", can_retry: "true" }] },
   ])("does not turn malformed status into applied", async (body) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(body))));
     expect(await new ApiClient("https://pre.example.test").getDSHProfile("workspace", "agent")).toBeNull();
+  });
+
+  it("allows an unavailable native snapshot before the first saved revision", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      state: "native_sync_pending", current: false, desired_revision: "", applied_revision: "", applied_generation: 0,
+    }))));
+    expect(await new ApiClient("https://pre.example.test").getDSHProfile("workspace", "agent"))
+      .toMatchObject({ current: false, desiredRevision: "", state: "native_sync_pending" });
+  });
+
+  it("keeps saved revisions visible when native synchronization is pending", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      state: "native_sync_pending", current: false, desired_revision: "2", applied_revision: "2", applied_generation: 1,
+    }))));
+    expect(await new ApiClient("https://pre.example.test").getDSHProfile("workspace", "agent"))
+      .toMatchObject({ current: false, appliedRevision: "2", state: "native_sync_pending" });
   });
 
   it("distinguishes the last applied version from edited settings", async () => {
