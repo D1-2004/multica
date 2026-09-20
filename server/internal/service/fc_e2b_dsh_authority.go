@@ -30,7 +30,19 @@ type dshNativeAuthorityBridge struct {
 	key     ed25519.PrivateKey
 	mu      sync.Mutex
 	workers map[string]*dshAuthorityWorker
+	// Capability hints only; authorization always checks the live persisted Host.
+	unsupported map[dshSessionCapabilityKey]time.Time
 }
+type dshSessionCapabilityKey struct {
+	workspace, agent uuid.UUID
+	generation       int64
+	sandbox          string
+}
+
+func sessionCapabilityKey(host dshhost.Host) dshSessionCapabilityKey {
+	return dshSessionCapabilityKey{host.WorkspaceID, host.AgentID, host.Generation, host.SandboxID}
+}
+
 type dshAuthorityWorker struct {
 	until  time.Time
 	ready  chan struct{}
@@ -230,6 +242,10 @@ func (l *FCE2BLauncher) EnsureDSHNativeAuthority(ctx context.Context, host dshho
 func (l *FCE2BLauncher) EnsureDSHSessionInputs(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit) error {
 	if l != nil && l.nativeAuthority != nil {
 		l.nativeAuthority.mu.Lock()
+		if time.Now().Before(l.nativeAuthority.unsupported[sessionCapabilityKey(host)]) {
+			l.nativeAuthority.mu.Unlock()
+			return nil
+		}
 		active := false
 		for key, worker := range l.nativeAuthority.workers {
 			if strings.HasPrefix(key, "true/"+host.WorkspaceID.String()+"/"+host.AgentID.String()+"/"+strconv.FormatInt(host.Generation, 10)+"/") && strings.Contains(key, "/"+host.SandboxID+"/") && !worker.failed {
@@ -268,6 +284,21 @@ func (l *FCE2BLauncher) ensureDSHNativeAuthority(ctx context.Context, host dshho
 		return "", errors.New("DSH authority transport is unavailable")
 	}
 	if managedOnly && receipt.ManagedSessions != 1 {
+		// A legacy sandbox cannot gain this image capability without replacement.
+		// Avoid a remote exec every profile reconciliation for every old Host.
+		b := l.nativeAuthority
+		b.mu.Lock()
+		if b.unsupported == nil {
+			b.unsupported = make(map[dshSessionCapabilityKey]time.Time)
+		}
+		now := time.Now()
+		for key, until := range b.unsupported {
+			if !now.Before(until) {
+				delete(b.unsupported, key)
+			}
+		}
+		b.unsupported[sessionCapabilityKey(host)] = now.Add(time.Hour)
+		b.mu.Unlock()
 		return origin, nil
 	}
 	if err := l.nativeAuthority.ensure(ctx, origin, authority, receipt.TransportToken, host, manager); err != nil {
