@@ -271,7 +271,18 @@ function DiskRow({
   onSelect: (key: DiskKey) => void;
 }) {
   const { t } = useT("layout");
-  const meta = diskMeta(disk, t);
+  const meta =
+    disk.provisioned !== true
+      ? t(($) => $.files.status_unready)
+      : disk.kind === "shared"
+        ? t(($) => $.files.shared_hint)
+        : disk.access === "write"
+          ? t(($) => $.files.access_write)
+          : disk.access === "read"
+            ? t(($) => $.files.access_read)
+            : disk.access === "none"
+              ? t(($) => $.files.access_none)
+              : t(($) => $.files.kind_private);
   return (
     <button
       type="button"
@@ -320,26 +331,26 @@ function DiskIcon({ disk }: { disk: Disk }) {
   );
 }
 
-type LayoutT = ReturnType<typeof useT>["t"];
-
-function diskMeta(disk: Disk, t: LayoutT): string {
-  if (disk.provisioned !== true) return t(($) => $.files.status_unready);
-  if (disk.kind === "shared") return t(($) => $.files.shared_hint);
-  switch (disk.access) {
-    case "write":
-      return t(($) => $.files.access_write);
-    case "read":
-      return t(($) => $.files.access_read);
-    case "none":
-      return t(($) => $.files.access_none);
-    default:
-      return t(($) => $.files.kind_private);
-  }
-}
-
 function DiskPane({ disk, agentHref }: { disk: Disk; agentHref: string | null }) {
   const { t } = useT("layout");
-  const empty = emptyCopy(disk, t);
+  const empty =
+    disk.kind === "shared" && disk.provisioned !== true
+      ? {
+          icon: HardDrive,
+          title: t(($) => $.files.pane_unready_title),
+          description: t(($) => $.files.pane_unready_body),
+        }
+      : disk.kind === "agent"
+        ? {
+            icon: Folder,
+            title: t(($) => $.files.pane_private_title, { name: disk.name }),
+            description: t(($) => $.files.pane_private_body),
+          }
+        : {
+            icon: Folder,
+            title: t(($) => $.files.pane_listing_title),
+            description: t(($) => $.files.pane_listing_body),
+          };
   return (
     <>
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4">
@@ -374,32 +385,6 @@ function DiskPane({ disk, agentHref }: { disk: Disk; agentHref: string | null })
       </div>
     </>
   );
-}
-
-function emptyCopy(disk: Disk, t: LayoutT): {
-  icon: typeof Folder;
-  title: string;
-  description: string;
-} {
-  if (disk.kind === "shared" && disk.provisioned !== true) {
-    return {
-      icon: HardDrive,
-      title: t(($) => $.files.pane_unready_title),
-      description: t(($) => $.files.pane_unready_body),
-    };
-  }
-  if (disk.kind === "agent") {
-    return {
-      icon: Folder,
-      title: t(($) => $.files.pane_private_title, { name: disk.name }),
-      description: t(($) => $.files.pane_private_body),
-    };
-  }
-  return {
-    icon: Folder,
-    title: t(($) => $.files.pane_listing_title),
-    description: t(($) => $.files.pane_listing_body),
-  };
 }
 
 function FilesLoadingState() {
