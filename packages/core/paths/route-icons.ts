@@ -58,6 +58,7 @@ export type NavLabelKey =
   | "squads"
   | "usage"
   | "sites"
+  | "files"
   | "runtimes"
   | "runners"
   | "skills"
@@ -77,6 +78,7 @@ export type WorkspacePageKey =
   | "squads"
   | "usage"
   | "sites"
+  | "files"
   | "runtimes"
   | "runners"
   | "skills"
@@ -108,6 +110,7 @@ export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
   squads: { segment: "squads", icon: "Users", navKey: "squads" },
   usage: { segment: "usage", icon: "BarChart3", navKey: "usage" },
   sites: { segment: "sites", icon: "Globe2", navKey: "sites" },
+  files: { segment: "files", icon: "File", navKey: "files" },
   runtimes: { segment: "runtimes", icon: "Monitor", navKey: "runtimes" },
   runners: { segment: "runners", icon: "Laptop", navKey: "runners" },
   skills: { segment: "skills", icon: "BookOpenText", navKey: "skills" },

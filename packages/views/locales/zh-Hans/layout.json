@@ -10,6 +10,7 @@
     "squads": "小队",
     "usage": "统计",
     "sites": "网站",
+    "files": "文件",
     "runtimes": "运行时",
     "runners": "我的电脑",
     "skills": "Skills",
@@ -67,5 +68,14 @@
       "title": "加入 Discord",
       "dismiss": "关闭"
     }
+  },
+  "files": {
+    "intro": "工作区共享盘与每个智能体的私有盘分开列出。展开文件夹只会加载该目录。",
+    "shared": "共享",
+    "shared_ready": "共享存储已就绪。列目录需要读宿主处于运行中。",
+    "shared_unprovisioned": "尚未准备共享存储。",
+    "agents": "智能体磁盘（非共享）",
+    "agents_empty": "没有可见的私有智能体磁盘。",
+    "loading": "正在加载文件系统…"
   }
 }

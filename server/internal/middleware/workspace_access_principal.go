@@ -58,6 +58,9 @@ func IsDSHConfigurationRequest(r *http.Request) bool {
 	return false
 }
 func WorkspaceAccessRequestAllowed(permission string, r *http.Request) bool {
+	if isWorkspaceFilesystemRequest(r) {
+		return false
+	}
 	if permission == WorkspaceAccessAll {
 		return true
 	}
@@ -65,6 +68,10 @@ func WorkspaceAccessRequestAllowed(permission string, r *http.Request) bool {
 		return false
 	}
 	return (r.Method == http.MethodGet && r.URL.Path == "/api/workspace-access/self") || IsDSHConfigurationRequest(r)
+}
+
+func isWorkspaceFilesystemRequest(r *http.Request) bool {
+	return strings.HasPrefix(r.URL.Path, "/api/filesystem")
 }
 
 // WorkspaceAccessMember supplies request-local authority without turning the

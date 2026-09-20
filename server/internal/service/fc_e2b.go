@@ -1698,6 +1698,9 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		}
 		extraEnv["MULTICA_FS_ROOT"] = dshhost.MountPath
 	}
+	// Shared workspace mounts are not attached to DSH employee sandboxes
+	// unless a later grant generation supplies task_role_arn. Do not inject
+	// MULTICA_WORKSPACE_FS_* here: existing DSH users keep a single /mnt/multica.
 	if employeeHost != nil && FCE2BRuntimeProvider(runtime) == "dsh" {
 		binding := nativeBinding
 		if extraEnv == nil {
@@ -2886,6 +2889,8 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 	switch key {
 	case "OPENAI_MODEL",
 		"MULTICA_FS_ROOT",
+		"MULTICA_WORKSPACE_FS_ROOT",
+		"MULTICA_WORKSPACE_FS_ACCESS",
 		"DSH_HOME",
 		"MULTICA_DSH_WORKSPACE_ID",
 		"MULTICA_DSH_AGENT_ID",

@@ -3,6 +3,7 @@ import { AgentDshPluginConfigSchema } from "./agent-dsh-plugin-config-schema";
 import type { AgentDshPluginConfig, UpdateAgentDshPluginConfig } from "../dsh-plugins/types";
 import { DSHNativeEntrySchema, type DSHNativeEntry } from "./dsh-native-schema";
 import { DSHHomeSchema, type DSHHomeStatus } from "./dsh-home-schema";
+import { FilesystemRootsSchema, type FilesystemRoots } from "./filesystem-schema";
 import type { GitRepositoryIdentity, GitConnections } from "../types/git-repo";
 import { GitRepositoryIdentitySchema, GitConnectionsSchema } from "./schemas";
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
@@ -3818,6 +3819,14 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/filesystem`, { signal });
     return parseWithFallback<DSHHomeStatus | null>(raw, DSHHomeSchema, null, {
       endpoint: "GET /api/agents/{id}/filesystem",
+      includeReceived: false,
+    });
+  }
+
+  async listFilesystemRoots(signal?: AbortSignal): Promise<FilesystemRoots> {
+    const raw = await this.fetch<unknown>(`/api/filesystem/roots`, { signal });
+    return parseWithFallback<FilesystemRoots>(raw, FilesystemRootsSchema, { roots: [] }, {
+      endpoint: "GET /api/filesystem/roots",
       includeReceived: false,
     });
   }

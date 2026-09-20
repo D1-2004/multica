@@ -10,6 +10,7 @@
     "squads": "Squads",
     "usage": "Analytics",
     "sites": "Websites",
+    "files": "Files",
     "runtimes": "Runtimes",
     "runners": "My Computer",
     "skills": "Skills",
@@ -67,5 +68,14 @@
       "title": "Join our Discord",
       "dismiss": "Dismiss"
     }
+  },
+  "files": {
+    "intro": "Shared workspace files are separate from each agent's private disk. Expanding a folder loads that directory only.",
+    "shared": "Shared",
+    "shared_ready": "Shared storage is ready. Directory listing starts when a read host is running.",
+    "shared_unprovisioned": "Shared storage has not been prepared.",
+    "agents": "Agent disks (not shared)",
+    "agents_empty": "No private agent disks are visible.",
+    "loading": "Loading filesystems…"
   }
 }
