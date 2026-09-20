@@ -595,6 +595,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	h.PRRefresh = ghsnapshot.NewManager(ghClient, queries, txStarter, h.broadcastPRSnapshotApplied)
 	fcLauncher.ReadDSHProfileSource = readDSHProfileSource
 	fcLauncher.SyncDSHProfileSource = h.syncNativeDSHPlugins
+	fcLauncher.RefreshDSHSessionInputs = h.refreshDSHSessionInputs
 	if signer, ok := store.(storage.Presigner); ok {
 		fcLauncher.DSHArtifactSigner = signer
 	}

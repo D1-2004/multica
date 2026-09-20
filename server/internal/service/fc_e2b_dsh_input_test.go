@@ -213,3 +213,41 @@ func TestDSHNativeInputSelectedWorkdir(t *testing.T) {
 		}
 	}
 }
+
+func TestDSHNativeHostInputPreservesPluginRequestID(t *testing.T) {
+	b, host, manager, request := inputBridgeFixture()
+	prompt, err := protocol.DecodeDSHNativePrompt(request.Prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt.RequestID = "weixin-original-request"
+	request.Prompt, _ = json.Marshal(prompt)
+	request.Source, request.Token = "host", ""
+	manager.CheckManage = func(context.Context, dshhost.Key, uuid.UUID) error {
+		t.Fatal("host borrowed browser authorization")
+		return nil
+	}
+	expected, _ := protocol.DSHNativeRequestIdentity(prompt.SessionID, prompt.RequestID)
+	called := false
+	submit := func(_ context.Context, access dshhost.NativeAccess, input DSHNativeChatInput, _ string) (DSHNativePromptReceipt, error) {
+		called = true
+		if access.Kind != "host" || access.UserID != uuid.Nil || access.Key != host.Key || access.Generation != host.Generation {
+			t.Fatal("host principal changed")
+		}
+		if input.RequestID != expected || input.Prompt.RequestID != prompt.RequestID {
+			t.Fatal("plugin correlation lost")
+		}
+		return inputReceipt(input), nil
+	}
+	packet := b.answerInput(context.Background(), request, host, manager, "https://pre.test", submit)
+	raw, _ := base64.StdEncoding.DecodeString(packet.Payload)
+	if !called || !strings.Contains(string(raw), `"status":201`) {
+		t.Fatal("host admission failed")
+	}
+	called = false
+	request.Token = "dngs_" + strings.Repeat("A", 43)
+	b.answerInput(context.Background(), request, host, manager, "https://pre.test", submit)
+	if called {
+		t.Fatal("mixed principal reached admission")
+	}
+}

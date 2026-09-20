@@ -46,10 +46,15 @@ func managedDSHNativeConfig(launchedBy, provider, executable string, custom bool
 	value.Generation = generation
 	if task.DSHNativePrompt != nil {
 		copy, err := task.DSHNativePrompt.Clone()
-		if err != nil || copy.SessionID != value.SessionID || copy.RequestID != value.RequestID {
+		if err != nil {
+			return nil, errors.New("invalid native DSH input")
+		}
+		identity, identityErr := protocol.DSHNativeRequestIdentity(copy.SessionID, copy.RequestID)
+		if identityErr != nil || copy.SessionID != value.SessionID || identity.String() != value.RequestID {
 			return nil, errors.New("native DSH input does not match claimed binding")
 		}
 		value.Prompt = copy
+		value.RequestID = copy.RequestID
 	}
 	if !protocol.ValidDSHWorkdir(value.WorkDir) {
 		return nil, errors.New("invalid native DSH workspace binding")

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -26,11 +25,22 @@ func (b *dshNativeAuthorityBridge) answerInput(ctx context.Context, request dshA
 		raw, _ := json.Marshal(map[string]any{"authority": authority, "id": request.ID, "result": result})
 		return dshAuthorityPacket{Payload: base64.StdEncoding.EncodeToString(raw), Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(b.key, append([]byte(dshInputDomain), raw...)))}
 	}
-	authCtx, authCancel := context.WithTimeout(ctx, 4*time.Second)
-	access, err := manager.Authorize(authCtx, request.Token, host)
-	authCancel()
-	if err != nil {
-		result = map[string]any{"status": http.StatusForbidden, "error": "DSH native invocation is not authorized"}
+	var access dshhost.NativeAccess
+	if request.Source == "host" && request.Token == "" && !request.Exchange {
+		// The backend established this lane against the exact persisted Host.
+		// The transaction rechecks its generation, employee and current owner.
+		access = dshhost.NativeAccess{Key: host.Key, Generation: host.Generation, SandboxID: host.SandboxID, Kind: "host"}
+	} else if request.Source == "" {
+		authCtx, authCancel := context.WithTimeout(ctx, 4*time.Second)
+		var err error
+		access, err = manager.Authorize(authCtx, request.Token, host)
+		authCancel()
+		if err != nil {
+			result = map[string]any{"status": http.StatusForbidden, "error": "DSH native invocation is not authorized"}
+			return finish()
+		}
+	} else {
+		result = map[string]any{"status": http.StatusForbidden}
 		return finish()
 	}
 	prompt, err := protocol.DecodeDSHNativePrompt(request.Prompt)
@@ -49,7 +59,11 @@ func (b *dshNativeAuthorityBridge) answerInput(ctx context.Context, request dshA
 		result = map[string]any{"status": http.StatusBadRequest, "error": "Invalid DSH native workspace"}
 		return finish()
 	}
-	input := DSHNativeChatInput{SessionID: prompt.SessionID, RequestID: uuid.MustParse(prompt.RequestID), Workdir: workdir, Prompt: prompt}
+	requestID, err := protocol.DSHNativeRequestIdentity(prompt.SessionID, prompt.RequestID)
+	if err != nil {
+		return finish()
+	}
+	input := DSHNativeChatInput{SessionID: prompt.SessionID, RequestID: requestID, Workdir: workdir, Prompt: prompt}
 	receipt, err := submit(ctx, access, input, prompt.DisplayText())
 	if err != nil {
 		switch {
@@ -64,13 +78,13 @@ func (b *dshNativeAuthorityBridge) answerInput(ctx context.Context, request dshA
 		}
 		return finish()
 	}
-	if receipt.SessionID != prompt.SessionID || receipt.RequestID.String() != prompt.RequestID || !receipt.ChatSessionID.Valid || !receipt.TaskID.Valid || !receipt.MessageID.Valid || receipt.ChatSessionID.Bytes == [16]byte{} || receipt.TaskID.Bytes == [16]byte{} || receipt.MessageID.Bytes == [16]byte{} {
+	if receipt.SessionID != prompt.SessionID || receipt.RequestID != requestID || !receipt.ChatSessionID.Valid || !receipt.TaskID.Valid || !receipt.MessageID.Valid || receipt.ChatSessionID.Bytes == [16]byte{} || receipt.TaskID.Bytes == [16]byte{} || receipt.MessageID.Bytes == [16]byte{} {
 		return finish()
 	}
 	status := http.StatusCreated
 	if receipt.Replayed {
 		status = http.StatusOK
 	}
-	result = map[string]any{"status": status, "receipt": receipt}
+	result = map[string]any{"status": status, "receipt": receipt, "native_request_id": prompt.RequestID}
 	return finish()
 }

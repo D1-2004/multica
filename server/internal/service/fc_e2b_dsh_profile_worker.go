@@ -79,6 +79,11 @@ func (l *FCE2BLauncher) applyNextDSHProfile(ctx context.Context) {
 			_, err = l.EnsureDSHEmployeeHost(ctx, key)
 		}
 	}
+	if err == nil && l.RefreshDSHSessionInputs != nil {
+		refresh, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		_ = l.RefreshDSHSessionInputs(refresh, key)
+		cancel()
+	}
 	cleanup, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer done()
 	if err == nil {

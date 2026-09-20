@@ -117,6 +117,17 @@ func (h *Handler) submitDSHNativePrompt(ctx context.Context, access dshhost.Nati
 	if err != nil {
 		return out, dshhost.ErrNativeAccessDenied
 	}
+	// Host principals are admitted only by the authenticated reverse input lane.
+	// Resolve their owner server-side; plugins never supply a user or browser grant.
+	if access.Kind == "host" {
+		if !agent.OwnerID.Valid {
+			return out, dshhost.ErrNativeAccessDenied
+		}
+		access.UserID = uuid.UUID(agent.OwnerID.Bytes)
+		if err := h.checkDSHNativeManage(ctx, access.Key, access.UserID); err != nil {
+			return out, err
+		}
+	}
 	registered, err := h.TaskService.RegisterDSHNativeChatSession(ctx, agent, access, input.SessionID, input.Workdir, h.dshNativeInvoke)
 	if err != nil {
 		return out, err
