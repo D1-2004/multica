@@ -65,8 +65,15 @@ const (
 	fcE2BScopeTypeChat  = "chat"
 	fcE2BScopeTypeIssue = "issue"
 
-	defaultFCE2BCLIPath             = "e2b"
-	defaultFCE2BTimeoutSeconds      = 3600
+	defaultFCE2BCLIPath = "e2b"
+	// defaultFCE2BTimeoutSeconds is the FC/E2B sandbox lifetime used for both
+	// create (--timeout) and the per-task POST /timeout renewal. Long agent
+	// cells (clone + coding agent + PR + packaging) routinely need more than
+	// one hour; the previous 3600s wall killed still-running tasks with
+	// --lifecycle.ontimeout kill and no mid-task renewal. Config may raise
+	// this, but values below 4800 are floored so Diamond leftover 3600 cannot
+	// silently restore the old wall.
+	defaultFCE2BTimeoutSeconds      = 4800
 	defaultFCE2BSandboxReadyTimeout = 60 * time.Second
 	defaultAgentIdentityTimeout     = 10 * time.Second
 	fcE2BDaemonTokenTTL             = time.Hour
@@ -2658,7 +2665,7 @@ func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (str
 	args := []string{
 		"sandbox", "create",
 		"--detach",
-		"--timeout", strconv.Itoa(l.Config.TimeoutSeconds),
+		"--timeout", strconv.Itoa(l.sandboxTaskTimeoutSeconds()),
 		"--lifecycle.ontimeout", "kill",
 		template,
 	}

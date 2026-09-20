@@ -174,7 +174,7 @@ func (q *Queries) CreateAgentMCPDelegationClaim(ctx context.Context, arg CreateA
 }
 
 const getAgentMCPDelegationArtifact = `-- name: GetAgentMCPDelegationArtifact :one
-SELECT attachment.id, attachment.workspace_id, attachment.issue_id, attachment.comment_id, attachment.uploader_type, attachment.uploader_id, attachment.filename, attachment.url, attachment.content_type, attachment.size_bytes, attachment.created_at, attachment.chat_session_id, attachment.chat_message_id, attachment.task_id
+SELECT attachment.id, attachment.workspace_id, attachment.issue_id, attachment.comment_id, attachment.uploader_type, attachment.uploader_id, attachment.filename, attachment.url, attachment.content_type, attachment.size_bytes, attachment.created_at, attachment.chat_session_id, attachment.chat_message_id, attachment.task_id, attachment.sha256
 FROM agent_mcp_delegation delegation
 JOIN attachment ON attachment.id = $1
 LEFT JOIN comment ON comment.id = attachment.comment_id
@@ -218,6 +218,7 @@ func (q *Queries) GetAgentMCPDelegationArtifact(ctx context.Context, arg GetAgen
 		&i.ChatSessionID,
 		&i.ChatMessageID,
 		&i.TaskID,
+		&i.Sha256,
 	)
 	return i, err
 }
@@ -530,7 +531,7 @@ func (q *Queries) GetFirstAgentTaskForIssueAndAgent(ctx context.Context, arg Get
 }
 
 const listAgentMCPDelegationArtifacts = `-- name: ListAgentMCPDelegationArtifacts :many
-SELECT DISTINCT attachment.id, attachment.workspace_id, attachment.issue_id, attachment.comment_id, attachment.uploader_type, attachment.uploader_id, attachment.filename, attachment.url, attachment.content_type, attachment.size_bytes, attachment.created_at, attachment.chat_session_id, attachment.chat_message_id, attachment.task_id
+SELECT DISTINCT attachment.id, attachment.workspace_id, attachment.issue_id, attachment.comment_id, attachment.uploader_type, attachment.uploader_id, attachment.filename, attachment.url, attachment.content_type, attachment.size_bytes, attachment.created_at, attachment.chat_session_id, attachment.chat_message_id, attachment.task_id, attachment.sha256
 FROM agent_mcp_delegation delegation
 JOIN attachment
   ON attachment.workspace_id = $1
@@ -581,6 +582,7 @@ func (q *Queries) ListAgentMCPDelegationArtifacts(ctx context.Context, arg ListA
 			&i.ChatSessionID,
 			&i.ChatMessageID,
 			&i.TaskID,
+			&i.Sha256,
 		); err != nil {
 			return nil, err
 		}

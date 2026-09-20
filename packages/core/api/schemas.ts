@@ -1426,6 +1426,8 @@ export const AttachmentResponseSchema = z
     download_url: z.string(),
     markdown_url: z.string().optional().default(""),
     filename: z.string(),
+    size_bytes: z.number().optional().default(0),
+    sha256: z.string().optional().default(""),
     chat_session_id: z.string().nullable().optional(),
     chat_message_id: z.string().nullable().optional(),
   })
@@ -1446,6 +1448,7 @@ export const EMPTY_ATTACHMENT: Attachment = {
   markdown_url: "",
   content_type: "",
   size_bytes: 0,
+  sha256: "",
   created_at: "",
 };
 

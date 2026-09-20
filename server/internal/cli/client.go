@@ -445,61 +445,87 @@ type AttachmentResponse struct {
 	Filename    string `json:"filename"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
+	SHA256      string `json:"sha256"`
 	CreatedAt   string `json:"created_at"`
 }
 
+func (a AttachmentResponse) Receipt() string {
+	if a.SHA256 != "" {
+		return fmt.Sprintf("size_bytes=%d sha256=%s", a.SizeBytes, a.SHA256)
+	}
+	if a.SizeBytes > 0 {
+		return fmt.Sprintf("size_bytes=%d", a.SizeBytes)
+	}
+	return ""
+}
+
+func httpClientForContext(base *http.Client, ctx context.Context) *http.Client {
+	if base == nil {
+		return base
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return base
+	}
+	remaining := time.Until(deadline)
+	if remaining <= base.Timeout {
+		return base
+	}
+	clientCopy := *base
+	clientCopy.Timeout = remaining
+	return &clientCopy
+}
+
 // UploadFile uploads a file via multipart form to /api/upload-file.
-// It returns the attachment ID from the server response.
-func (c *APIClient) UploadFile(ctx context.Context, fileData []byte, filename string, issueID string) (string, error) {
+// The returned receipt includes size_bytes and sha256 when the server sent them.
+func (c *APIClient) UploadFile(ctx context.Context, fileData []byte, filename string, issueID string) (AttachmentResponse, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
 	part, err := writer.CreateFormFile("file", filepath.Base(filename))
 	if err != nil {
-		return "", fmt.Errorf("create form file: %w", err)
+		return AttachmentResponse{}, fmt.Errorf("create form file: %w", err)
 	}
 	if _, err := part.Write(fileData); err != nil {
-		return "", fmt.Errorf("write file data: %w", err)
+		return AttachmentResponse{}, fmt.Errorf("write file data: %w", err)
 	}
 
 	if issueID != "" {
 		if err := writer.WriteField("issue_id", issueID); err != nil {
-			return "", fmt.Errorf("write issue_id field: %w", err)
+			return AttachmentResponse{}, fmt.Errorf("write issue_id field: %w", err)
 		}
 	}
 
 	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("close multipart writer: %w", err)
+		return AttachmentResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/upload-file", &body)
 	if err != nil {
-		return "", err
+		return AttachmentResponse{}, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	c.setHeaders(req)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := httpClientForContext(c.HTTPClient, ctx).Do(req)
 	err = wrapTransport(req, err)
 	if err != nil {
-		return "", err
+		return AttachmentResponse{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return "", newHTTPError(http.MethodPost, "/api/upload-file", resp)
+		return AttachmentResponse{}, newHTTPError(http.MethodPost, "/api/upload-file", resp)
 	}
 
-	var result map[string]any
+	var result AttachmentResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode upload response: %w", err)
+		return AttachmentResponse{}, fmt.Errorf("decode upload response: %w", err)
 	}
-
-	id, _ := result["id"].(string)
-	if id == "" {
-		return "", fmt.Errorf("upload response missing attachment id")
+	if result.ID == "" {
+		return AttachmentResponse{}, fmt.Errorf("upload response missing attachment id")
 	}
-	return id, nil
+	return result, nil
 }
 
 // UploadTaskAttachment uploads a file via multipart form to /api/upload-file
@@ -532,18 +558,7 @@ func (c *APIClient) UploadTaskAttachment(ctx context.Context, fileData []byte, f
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	c.setHeaders(req)
 
-	// Honor a longer context deadline for large images, same as UploadFileWithURL.
-	httpClient := c.HTTPClient
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline)
-		if remaining > httpClient.Timeout {
-			clientCopy := *httpClient
-			clientCopy.Timeout = remaining
-			httpClient = &clientCopy
-		}
-	}
-
-	resp, err := httpClient.Do(req)
+	resp, err := httpClientForContext(c.HTTPClient, ctx).Do(req)
 	err = wrapTransport(req, err)
 	if err != nil {
 		return AttachmentResponse{}, err

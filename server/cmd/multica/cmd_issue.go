@@ -1365,12 +1365,17 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	// duplicates the issue. Warn on stderr and continue.
 	issueID := strVal(result, "id")
 	for _, att := range pending {
-		if _, uploadErr := client.UploadFile(ctx, att.data, att.path, issueID); uploadErr != nil {
+		uploaded, uploadErr := client.UploadFile(ctx, att.data, att.path, issueID)
+		if uploadErr != nil {
 			fmt.Fprintf(os.Stderr, "warning: upload attachment %s failed (issue already created, %s): %v\n",
 				att.path, strVal(result, "identifier"), uploadErr)
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
+		if receipt := uploaded.Receipt(); receipt != "" {
+			fmt.Fprintf(os.Stderr, "Uploaded %s %s\n", att.path, receipt)
+		} else {
+			fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
+		}
 	}
 
 	output, _ := cmd.Flags().GetString("output")
@@ -2164,12 +2169,16 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 	}
 	var attachmentIDs []string
 	for _, att := range pending {
-		id, uploadErr := client.UploadFile(ctx, att.data, att.path, issueID)
+		uploaded, uploadErr := client.UploadFile(ctx, att.data, att.path, issueID)
 		if uploadErr != nil {
 			return fmt.Errorf("upload attachment %s: %w", att.path, uploadErr)
 		}
-		attachmentIDs = append(attachmentIDs, id)
-		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
+		attachmentIDs = append(attachmentIDs, uploaded.ID)
+		if receipt := uploaded.Receipt(); receipt != "" {
+			fmt.Fprintf(os.Stderr, "Uploaded %s %s\n", att.path, receipt)
+		} else {
+			fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
+		}
 	}
 
 	body := map[string]any{"content": content}

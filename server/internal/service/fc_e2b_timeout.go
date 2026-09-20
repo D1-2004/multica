@@ -17,9 +17,22 @@ import (
 	"github.com/multica-ai/multica/server/internal/chattrace"
 )
 
-const fcE2BTaskSandboxTimeout = time.Hour
-
 var fcE2BAPISandboxIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// sandboxTaskTimeout is the lifetime applied at create and at every task-start
+// renewal. Create used Config.TimeoutSeconds while renewal was hardcoded to
+// 3600s, so raising Diamond timeout_seconds did not keep a running task alive.
+func (l *FCE2BLauncher) sandboxTaskTimeout() time.Duration {
+	seconds := defaultFCE2BTimeoutSeconds
+	if l != nil && l.Config.TimeoutSeconds > seconds {
+		seconds = l.Config.TimeoutSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func (l *FCE2BLauncher) sandboxTaskTimeoutSeconds() int {
+	return int(l.sandboxTaskTimeout() / time.Second)
+}
 
 func (l *FCE2BLauncher) sandboxLifetimeRequest(ctx context.Context, method, id, suffix string, body []byte) ([]byte, error) {
 	baseURL := strings.TrimRight(l.Config.APIURL, "/")
@@ -35,7 +48,7 @@ func (l *FCE2BLauncher) sandboxLifetimeRequest(ctx context.Context, method, id, 
 	req.Header.Set("X-API-KEY", l.Config.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout:       10 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 	response, err := client.Do(req)
@@ -58,15 +71,17 @@ func (l *FCE2BLauncher) sandboxLifetimeRequest(ctx context.Context, method, id, 
 
 func (l *FCE2BLauncher) renewSandboxForTask(ctx context.Context, sandboxID string, trace chattrace.Trace) (expiresAt time.Time, err error) {
 	started := time.Now()
-	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_renew", "started", "sandbox_id", sandboxID, "timeout_seconds", int(fcE2BTaskSandboxTimeout/time.Second))
+	timeout := l.sandboxTaskTimeout()
+	timeoutSeconds := int(timeout / time.Second)
+	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_renew", "started", "sandbox_id", sandboxID, "timeout_seconds", timeoutSeconds)
 	defer func() {
 		if err != nil {
 			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_renew", "failed", "sandbox_id", sandboxID, "stage_elapsed_ms", time.Since(started).Milliseconds(), "error", err)
 		} else {
-			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_renew", "succeeded", "sandbox_id", sandboxID, "timeout_seconds", int(fcE2BTaskSandboxTimeout/time.Second), "expires_at", expiresAt, "stage_elapsed_ms", time.Since(started).Milliseconds())
+			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_renew", "succeeded", "sandbox_id", sandboxID, "timeout_seconds", timeoutSeconds, "expires_at", expiresAt, "stage_elapsed_ms", time.Since(started).Milliseconds())
 		}
 	}()
-	body, _ := json.Marshal(map[string]int64{"timeout": int64(fcE2BTaskSandboxTimeout/time.Second)})
+	body, _ := json.Marshal(map[string]int64{"timeout": int64(timeoutSeconds)})
 	if _, err = l.sandboxLifetimeRequest(ctx, http.MethodPost, sandboxID, "/timeout", body); err != nil {
 		return time.Time{}, err
 	}
@@ -81,8 +96,8 @@ func (l *FCE2BLauncher) renewSandboxForTask(ctx context.Context, sandboxID strin
 	}
 	// The provider may truncate timestamps to seconds; allow a small clock skew.
 	if err := json.Unmarshal(data, &info); err != nil || info.ID != sandboxID || info.State != "running" ||
-		info.EndAt.Before(started.Add(fcE2BTaskSandboxTimeout-5*time.Second)) {
-		return time.Time{}, errors.New("FC/E2B sandbox renewal did not confirm 3600 seconds of lifetime")
+		info.EndAt.Before(started.Add(timeout-5*time.Second)) {
+		return time.Time{}, fmt.Errorf("FC/E2B sandbox renewal did not confirm %d seconds of lifetime", timeoutSeconds)
 	}
 	return info.EndAt, nil
 }

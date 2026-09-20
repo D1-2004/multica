@@ -62,6 +62,7 @@ export const AttachmentSchema: z.ZodType<Attachment> = z.object({
   markdown_url: z.string().default(""),
   content_type: z.string().default(""),
   size_bytes: z.number().default(0),
+  sha256: z.string().default(""),
   created_at: z.string().default(""),
 }).loose();
 

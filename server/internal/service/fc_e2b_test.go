@@ -773,7 +773,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 	wantCreateArgs := []string{
 		"sandbox", "create",
 		"--detach",
-		"--timeout", "1800",
+		"--timeout", "4800",
 		"--lifecycle.ontimeout", "kill",
 		"multica-fc-hermes-v1",
 	}
