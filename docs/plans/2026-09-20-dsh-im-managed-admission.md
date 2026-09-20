@@ -156,5 +156,5 @@
 - 网页身份由已鉴权的私有载体传入调用上下文；宿主插件由受认证反向通道绑定确切员工、Host generation 和 sandbox，后台重新取得当前 owner 并检查权限。内部执行使用独立可信上下文，并保留原有任务绑定校验。
 - IM 的原生 requestId 不保证为 UUID。保存原始请求，同时为既有 UUID 数据表派生 session-scoped 稳定 ID；执行和原生事件保留原 ID，平台日志上传验证两者关联。现有浏览器 UUID 不变，无数据表迁移。
 - 现有 admission.bind 已把原生新会话绑定到提交 Host 的 scope，后续任务回到该 Host，因此本地 IM 新会话可直接消费官方 page/follow 和 session/event。此次不虚构跨 Host 本地事件，不迁移旧会话；对其他 Host 已有会话的 IM 控制仍需单独验收。
-- 后台输入使用既有 profile reconciler 恢复，支持应用重启后无需打开网页。旧 Runtime 不声明 managed_sessions 能力时跳过。部署顺序为兼容应用、指定 Agent 的候选 Runtime，再真实验证；生产保持不变。
+- 后台输入由各应用副本独立恢复，不再等待串行的 profile reconciler。每轮一次运行中 Host 查询，最多 4 个并发连接；超时后下轮从剩余 Host 继续。旧 Runtime 确认不支持 managed_sessions 后按 sandbox/generation 缓存一小时，避免反复远程探测。该线程不启动、重启或替换 Host。部署顺序为兼容应用、指定 Agent 的候选 Runtime，再真实验证；生产保持不变。
 - 排队超过 IM 自身等待上限、多个执行 Host 的同账号后台消费者，以及 IM 直接 Agent 控制路径须用真实预发验证，不因单测通过宣称全兼容。
