@@ -383,3 +383,7 @@ Diamond `dt-fde-multica-runtime.json` / `DEFAULT_GROUP` exposes `runtime.llm.coo
 Qwen 在完整上下文的强制工具请求上返回特定 provider 400（InternalError.Algo / Invalid request parameters）时，Host 只将 tool_choice 从 required 改为 auto 重试一次，模型、上下文、工具、token预算和非思考设置保持不变。其它错误不走该兼容分支。返回值仍经过原工具名、结构、引用、身份与动作审查；自由文本不构成候选或已提交计划，也不得派发。R15 原失败保留，同请求 required/named失败与auto成功的预发模型对照已复现，产品链路另行验收。
 
 最终审查必须透传 UserDecisionSubmission 到 reviewTurn，实际装配 user_decision 模块。发起人的后续提交定义当前选择和补充要求；仅说明时可修改或取消原请求，不强制已被修改的原回复措辞。岗位／平台／身份边界仍生效，明确选项的方向与目标仍锁定，矛盾不执行。R18错误审查保留为反例。
+
+Candidate semantic review receives the full frozen proposal: continuation labels must identify their actual recalled task, and cannot rename it from an unrelated nearby message. This check does not choose the handling direction for the initiator.
+
+Submission interpretation receives the trusted latest submission after the frozen snapshot. Both protocol and semantic review repairs are bounded to three attempts with audits, locked direction and target, and no second human question. Verbatim review constraints may quote trusted supplementary text. Reply truthfulness and continuation-label grounding use separate model checks, so task identity checks cannot change the existing reply semantics.

@@ -262,7 +262,10 @@ func TestUserDecisionLaterSubmissionRealModel(t *testing.T) {
 		t.Fatal("preproduction model configuration required")
 	}
 	c := &Coordinator{LLM: client, model: os.Getenv("MULTICA_COORDINATOR_REPLAY_MODEL"), Tools: &stubTools{}}
-	s := UserDecisionSnapshot{Turn: Turn{Source: SourceRobot, Addressed: true, Message: "请只回复：原始回复"}}
+	s := UserDecisionSnapshot{Turn: Turn{Source: SourceRobot, Addressed: true, Message: "请只回复：原始回复"}, Proposal: userdecision.Proposal{Question: "希望如何处理？", Options: []userdecision.Option{
+		{ID: "reply", Kind: "reply", Label: "直接回复：原始回复", Plan: json.RawMessage(`{"actions":[{"kind":"acknowledge","ack_kind":"conversation","source_refs":["u1"],"reply":"原始回复"}]}`)},
+		{ID: "new", Kind: "start_work", Label: "新建回复测试工作", Plan: json.RawMessage(`{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"回复测试"}]}`)},
+	}}}
 	for _, tc := range []struct {
 		name, text string
 		cancel     bool
@@ -293,5 +296,37 @@ func TestUserDecisionLaterSubmissionRealModel(t *testing.T) {
 			}
 			t.Logf("later_submission=%s action=%s non_executable=%v", tc.name, d.Action, err != nil)
 		})
+	}
+}
+
+func TestUserDecisionTaskLabelRealModel(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_USER_DECISION_REPLAY") != "1" {
+		t.Skip("explicit preproduction model opt-in required")
+	}
+	client := llm.New(llm.Config{APIKey: os.Getenv("MULTICA_LLM_API_KEY"), BaseURL: os.Getenv("MULTICA_LLM_BASE_URL"), DefaultModel: coordinatorModel, MaxRetries: -1})
+	if !client.Enabled() {
+		t.Fatal("preproduction model configuration required")
+	}
+	c := &Coordinator{LLM: client, model: os.Getenv("MULTICA_COORDINATOR_REPLAY_MODEL")}
+	evidence := []byte(`{"request":"R19：请只回复原始测试回复","history":"R18停用取消测试已取消，没有创建任何任务","recalled_tasks":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","title":"R12独立模拟结论","status":"done","purpose":"写一句模拟结论"}]}`)
+	var proposal userdecision.Proposal
+	if err := json.Unmarshal([]byte(`{"question":"怎么处理？","options":[{"id":"reply","kind":"reply","label":"直接回复：原始测试回复","plan":{"actions":[{"kind":"acknowledge","reply":"原始测试回复","ack_kind":"conversation"}]}},{"id":"new","kind":"start_work","label":"新建R19回复测试","plan":{"actions":[{"kind":"start_work","purpose":"R19回复测试"}]}},{"id":"continue","kind":"continue_work","label":"续接R18停用取消测试","plan":{"actions":[{"kind":"continue_work","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"改为回复原始测试回复"}]}}]}`), &proposal); err != nil {
+		t.Fatal(err)
+	}
+	for _, valid := range []bool{false, true} {
+		if valid {
+			proposal.Options[2].Label = "继续R12独立模拟结论：改为R19回复测试"
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		raw, err := c.reviewUserDecisionProposal(ctx, Turn{}, evidence, proposal)
+		cancel()
+		var review struct {
+			Allowed *bool  `json:"allowed"`
+			Reason  string `json:"reason"`
+		}
+		if json.Unmarshal(raw, &review) != nil || review.Allowed == nil || *review.Allowed != valid || (err == nil) != valid {
+			t.Fatalf("label validity=%v review=%s error=%v", valid, raw, err)
+		}
+		t.Logf("label_valid=%v reason=%s", valid, review.Reason)
 	}
 }

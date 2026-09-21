@@ -123,6 +123,25 @@ func (c *Coordinator) proposeUserDecision(ctx context.Context, turn Turn, messag
 
 // Review the frozen alternatives before display; this does not choose for the user.
 func (c *Coordinator) reviewUserDecisionProposal(ctx context.Context, turn Turn, evidence []byte, proposal userdecision.Proposal) (json.RawMessage, error) {
+	replyReview, err := c.reviewUserDecisionProposalPart(ctx, evidence, proposal, false)
+	if err != nil {
+		return replyReview, err
+	}
+	for _, option := range proposal.Options {
+		if option.Kind == "continue_work" {
+			labels, labelErr := c.reviewUserDecisionProposalPart(ctx, evidence, proposal, true)
+			var combined map[string]any
+			if json.Unmarshal(labels, &combined) == nil {
+				combined["reply_review"] = json.RawMessage(replyReview)
+				labels, _ = json.Marshal(combined)
+			}
+			return labels, labelErr
+		}
+	}
+	return replyReview, nil
+}
+
+func (c *Coordinator) reviewUserDecisionProposalPart(ctx context.Context, evidence []byte, proposal userdecision.Proposal, taskLabels bool) (json.RawMessage, error) {
 	var reply *userdecision.Option
 	for i := range proposal.Options {
 		if proposal.Options[i].Kind == "reply" {
@@ -133,34 +152,52 @@ func (c *Coordinator) reviewUserDecisionProposal(ctx context.Context, turn Turn,
 	if reply == nil {
 		return nil, errors.New("reply candidate missing")
 	}
-	input, err := json.Marshal(map[string]any{"evidence": json.RawMessage(evidence), "reply_candidate": reply})
+	inputData := map[string]any{"evidence": json.RawMessage(evidence), "reply_candidate": reply}
+	toolName := "review_choices"
+	if taskLabels {
+		options := []userdecision.Option{}
+		for _, option := range proposal.Options {
+			if option.Kind == "continue_work" {
+				options = append(options, option)
+			}
+		}
+		inputData = map[string]any{"evidence": json.RawMessage(evidence), "continuation_options": options}
+		toolName = "review_task_labels"
+	}
+	input, err := json.Marshal(inputData)
 	if err != nil {
 		return nil, err
 	}
 	messages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(userDecisionPolicy()), openai.UserMessage(string(input))}
-	tool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "review_choices", Parameters: shared.FunctionParameters{
-		"type": "object", "additionalProperties": false, "required": []string{"allowed", "reason"}, "properties": map[string]any{
+	required := []string{"allowed", "reason"}
+	if taskLabels {
+		required = append(required, "labels_match_targets")
+	}
+	tool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: toolName, Parameters: shared.FunctionParameters{
+		"type": "object", "additionalProperties": false, "required": required, "properties": map[string]any{
 			"allowed": map[string]any{"type": "boolean"}, "reason": map[string]any{"type": "string"},
+			"labels_match_targets": map[string]any{"type": "boolean", "description": "False if any visible option misidentifies its actual task, even when issue_id exists. A label naming task B while targeting task A is false. An explicit change of purpose that names task A correctly is valid. True only when every label is grounded in the mapped task and candidate action."},
 		},
 	}})
-	generation := startUserDecisionGeneration(ctx, "coordinator.review_choices", c.configuredModel(), messages, 1024)
+	generation := startUserDecisionGeneration(ctx, "coordinator."+toolName, c.configuredModel(), messages, 1024)
 	response, err := c.completeWithLimit(ctx, messages, []openai.ChatCompletionToolUnionParam{tool}, 1024, temperature)
 	endRoundGeneration(generation, response, err)
 	if err != nil {
 		return nil, err
 	}
-	if response == nil || len(response.Choices) != 1 || len(response.Choices[0].Message.ToolCalls) != 1 || response.Choices[0].Message.ToolCalls[0].Function.Name != "review_choices" {
+	if response == nil || len(response.Choices) != 1 || len(response.Choices[0].Message.ToolCalls) != 1 || response.Choices[0].Message.ToolCalls[0].Function.Name != toolName {
 		return nil, errors.New("missing candidate semantic review")
 	}
 	raw := json.RawMessage(response.Choices[0].Message.ToolCalls[0].Function.Arguments)
 	var review struct {
-		Allowed *bool  `json:"allowed"`
-		Reason  string `json:"reason"`
+		Allowed            *bool  `json:"allowed"`
+		LabelsMatchTargets *bool  `json:"labels_match_targets"`
+		Reason             string `json:"reason"`
 	}
-	if json.Unmarshal(raw, &review) != nil || review.Allowed == nil || review.Reason == "" {
+	if json.Unmarshal(raw, &review) != nil || review.Allowed == nil || (taskLabels && review.LabelsMatchTargets == nil) || review.Reason == "" {
 		return raw, errors.New("invalid candidate semantic review")
 	}
-	if !*review.Allowed {
+	if !*review.Allowed || (taskLabels && !*review.LabelsMatchTargets) {
 		return raw, fmt.Errorf("candidate semantic review: %s", review.Reason)
 	}
 	return raw, nil
@@ -209,6 +246,7 @@ type UserDecisionResolutionAudit struct {
 	RawInterpretation      string   `json:"raw_interpretation,omitempty"`
 	InterpretationAttempts []string `json:"interpretation_attempts,omitempty"`
 	Review                 any      `json:"review,omitempty"`
+	ReviewAttempts         []any    `json:"review_attempts,omitempty"`
 }
 
 func (c *Coordinator) ResolveUserDecision(ctx context.Context, s UserDecisionSnapshot, submission userdecision.Submission) (Decision, error) {
@@ -235,6 +273,7 @@ func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSna
 	c = &snapshotCoordinator
 	turn := s.Turn
 	turn.UserDecisionEnabled = false
+	turn.UserDecisionSubmission = &submission
 	recalled := map[string]struct{}{}
 	for _, id := range s.RecalledIDs {
 		recalled[id] = struct{}{}
@@ -251,6 +290,34 @@ func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSna
 	if submission.OptionID != "" && selected == nil {
 		return Decision{}, errors.New("unknown frozen option")
 	}
+	reviewPlan := func(raw json.RawMessage) (Decision, error) {
+		decision, err := parseValidatedWindowPlan(string(raw), turn, s.Recalls, recalled)
+		if err != nil {
+			return Decision{}, err
+		}
+		if selected != nil {
+			if err = validateChoiceDirection(*selected, decision); err != nil {
+				return Decision{}, err
+			}
+			frozen, err := parseValidatedWindowPlan(string(selected.Plan), turn, s.Recalls, recalled)
+			if err != nil {
+				return Decision{}, err
+			}
+			if workTarget(frozen) != workTarget(decision) {
+				return Decision{}, errors.New("supplementary text changed selected target")
+			}
+		}
+		check, err := c.checkFinish(ctx, turn, decision, s.Messages, 0, map[string]finishCheckResult{})
+		if err != nil {
+			return Decision{}, err
+		}
+		audit.Review = check
+		audit.ReviewAttempts = append(audit.ReviewAttempts, check)
+		if check.Verdict != "allow" {
+			return Decision{}, fmt.Errorf("submitted plan rejected: %s", check.Reason)
+		}
+		return decision, nil
+	}
 	var raw json.RawMessage
 	if selected != nil {
 		raw = selected.Plan
@@ -265,7 +332,8 @@ func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSna
 		}
 		planSchema := windowPlanToolFor(turn, true).OfFunction.Function.Parameters
 		tool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "interpret_submission", Parameters: shared.FunctionParameters{"type": "object", "required": []string{"executable", "reason", "plan"}, "properties": map[string]any{"executable": map[string]any{"type": "boolean"}, "reason": map[string]any{"type": "string"}, "plan": planSchema}}})
-		interpretMessages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence))}
+		latest, _ := json.Marshal(map[string]any{"user_decision_submission": submission})
+		interpretMessages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence)), openai.UserMessage(string(latest))}
 		for attempt := 0; attempt < 3; attempt++ {
 			generation := startUserDecisionGeneration(ctx, "coordinator.interpret_submission", c.configuredModel(), interpretMessages, 2048)
 			response, err := c.completeWithLimit(ctx, interpretMessages, []openai.ChatCompletionToolUnionParam{tool}, 2048, temperature)
@@ -290,8 +358,8 @@ func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSna
 				return Decision{}, fmt.Errorf("submission not executable: %s", parsed.Reason)
 			}
 			raw = parsed.Plan
-			if _, validationErr := parseValidatedWindowPlan(string(raw), turn, s.Recalls, recalled); validationErr == nil {
-				break
+			if decision, validationErr := reviewPlan(raw); validationErr == nil {
+				return decision, nil
 			} else {
 				if attempt == 2 {
 					return Decision{}, validationErr
@@ -304,32 +372,7 @@ func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSna
 	if len(raw) == 0 {
 		return Decision{}, errors.New("empty submission")
 	}
-	decision, err := parseValidatedWindowPlan(string(raw), turn, s.Recalls, recalled)
-	if err != nil {
-		return Decision{}, err
-	}
-	if selected != nil {
-		if err = validateChoiceDirection(*selected, decision); err != nil {
-			return Decision{}, err
-		}
-		frozen, err := parseValidatedWindowPlan(string(selected.Plan), turn, s.Recalls, recalled)
-		if err != nil {
-			return Decision{}, err
-		}
-		if workTarget(frozen) != workTarget(decision) {
-			return Decision{}, errors.New("supplementary text changed selected target")
-		}
-	}
-	turn.UserDecisionSubmission = &submission
-	check, err := c.checkFinish(ctx, turn, decision, s.Messages, 0, map[string]finishCheckResult{})
-	if err != nil {
-		return Decision{}, err
-	}
-	audit.Review = check
-	if check.Verdict != "allow" {
-		return Decision{}, fmt.Errorf("submitted plan rejected: %s", check.Reason)
-	}
-	return decision, nil
+	return reviewPlan(raw)
 }
 func workTarget(d Decision) string {
 	for _, a := range d.CoordinationActions {

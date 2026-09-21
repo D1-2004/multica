@@ -45,7 +45,7 @@ func TestUnknownChoiceCannotCommitPlan(t *testing.T) {
 func TestUserDecisionReviewPolicyIsSelected(t *testing.T) {
 	turn := Turn{Loop: LoopFinishCheck, UserDecisionSubmission: &userdecision.Submission{OptionID: "o1"}}
 	prompt := buildSystemPrompt(turn)
-	if !strings.Contains(prompt, "[policy:user_decision@8]") {
+	if !strings.Contains(prompt, "[policy:user_decision@9]") {
 		t.Fatal("review did not receive locked-choice policy")
 	}
 }
@@ -80,7 +80,7 @@ func TestUserDecisionCandidatesNeverSaveExecutionPlan(t *testing.T) {
 func TestUserDecisionProposalFreezesChoicesBeforeCheckpoint(t *testing.T) {
 	turn := Turn{Source: SourceRobot, Addressed: true, Message: "帮我整理一份报告", UserDecisionEnabled: true}
 	proposal := `{"question":"希望如何处理？","recommended_id":"new","options":[{"id":"new","label":"新建工作：整理报告","kind":"start_work","plan":{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"整理一份报告","intent":"other"}]}},{"id":"reply","label":"直接回复：我可以帮你整理报告。","kind":"reply","plan":{"actions":[{"kind":"describe_capabilities","source_refs":["u1"],"reply":"我可以帮你整理报告。"}]}}]}`
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("choices", "propose_choices", proposal), assistantTool("review", "review_choices", `{"allowed":true,"reason":"supported alternatives"}`)}}
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("choices", "propose_choices", proposal), assistantTool("review", "review_choices", `{"allowed":true,"labels_match_targets":true,"reason":"supported alternatives"}`)}}
 	c := &Coordinator{Chat: chat}
 	commits := 0
 	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { commits++; return nil })
@@ -114,7 +114,7 @@ func TestUserDecisionProposalFreezesChoicesBeforeCheckpoint(t *testing.T) {
 func TestUserDecisionProposalRepairsBeforeShowingOneQuestion(t *testing.T) {
 	turn := Turn{Source: SourceRobot, Addressed: true, Message: "整理报告", UserDecisionEnabled: true}
 	valid := `{"question":"怎么处理？","recommended_id":"new","options":[{"id":"new","label":"新建工作","kind":"start_work","plan":{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"整理一份完整可转发报告"}]}},{"id":"reply","label":"模型摘要","kind":"reply","plan":{"actions":[{"kind":"acknowledge","source_refs":["u1"],"reply":"你好","ack_kind":"greeting"}]}}]}`
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("invalid", "propose_choices", `{"question":"怎么处理？","options":[]}`), assistantTool("valid", "propose_choices", valid), assistantTool("review", "review_choices", `{"allowed":true,"reason":"supported alternatives"}`)}}
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("invalid", "propose_choices", `{"question":"怎么处理？","options":[]}`), assistantTool("valid", "propose_choices", valid), assistantTool("review", "review_choices", `{"allowed":true,"labels_match_targets":true,"reason":"supported alternatives"}`)}}
 	c := &Coordinator{Chat: chat}
 	commits := 0
 	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { commits++; return nil })
@@ -159,7 +159,7 @@ func TestUserDecisionSubmissionLocksDirection(t *testing.T) {
 					t.Fatal("submission skipped final review")
 				}
 				body, _ := json.Marshal(chat.checkParams[0].Messages[0])
-				if !strings.Contains(string(body), "[policy:user_decision@8]") {
+				if !strings.Contains(string(body), "[policy:user_decision@9]") {
 					t.Fatal("actual final-review request lost submission policy")
 				}
 			}
@@ -179,9 +179,9 @@ func TestUserDecisionSemanticReviewRepairsMislabeledReceipt(t *testing.T) {
 	good := strings.ReplaceAll(bad, "我将继续修改报告。", "当前材料是一份报告。")
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("bad", "propose_choices", bad),
-		assistantTool("reject", "review_choices", `{"allowed":false,"reason":"reply promises execution despite conversation label"}`),
+		assistantTool("reject", "review_choices", `{"allowed":false,"labels_match_targets":true,"reason":"reply promises execution despite conversation label"}`),
 		assistantTool("good", "propose_choices", good),
-		assistantTool("allow", "review_choices", `{"allowed":true,"reason":"reply is standalone"}`),
+		assistantTool("allow", "review_choices", `{"allowed":true,"labels_match_targets":true,"reason":"reply is standalone"}`),
 	}}
 	commits := 0
 	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { commits++; return nil })
@@ -216,5 +216,60 @@ func TestUserDecisionInterpretationRepairIsBoundedAndAudited(t *testing.T) {
 		if !exhausted && d.Action != ActionIssue {
 			t.Fatal("valid repaired work missing")
 		}
+	}
+}
+
+func TestUserDecisionReviewReceivesWorkAlternatives(t *testing.T) {
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("review", "review_choices", `{"allowed":true,"reason":"standalone reply"}`), assistantTool("labels", "review_task_labels", `{"allowed":true,"labels_match_targets":true,"reason":"all labels grounded"}`)}}
+	proposal := userdecision.Proposal{Question: "如何处理？", Options: []userdecision.Option{
+		{ID: "continue", Kind: "continue_work", Label: "客户周报", Plan: json.RawMessage(`{"actions":[{"kind":"continue_work","issue_id":"actual-task"}]}`)},
+		{ID: "reply", Kind: "reply", Label: "直接回复：你好", Plan: json.RawMessage(`{"actions":[{"kind":"acknowledge","reply":"你好"}]}`)},
+	}}
+	_, err := (&Coordinator{Chat: chat}).reviewUserDecisionProposal(context.Background(), Turn{}, []byte(`{"recalled_tasks":[]}`), proposal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var input struct {
+		Options []userdecision.Option `json:"continuation_options"`
+	}
+	if json.Unmarshal([]byte(chat.params[1].Messages[1].OfUser.Content.OfString.Value), &input) != nil || len(input.Options) != 1 || input.Options[0].Label != "客户周报" || string(input.Options[0].Plan) != string(proposal.Options[0].Plan) {
+		t.Fatal("work label and frozen target absent from semantic review")
+	}
+}
+
+func TestUserDecisionLabelGroundingCannotBeOverriddenByAllowed(t *testing.T) {
+	for _, raw := range []string{`{"allowed":true,"labels_match_targets":false,"reason":"wrong task identity"}`, `{"allowed":true,"reason":"missing grounding verdict"}`} {
+		chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("review", "review_task_labels", raw)}}
+		_, err := (&Coordinator{Chat: chat}).reviewUserDecisionProposalPart(context.Background(), []byte(`{}`), userdecision.Proposal{Options: []userdecision.Option{{ID: "reply", Kind: "reply", Plan: json.RawMessage(`{}`)}}}, true)
+		if err == nil {
+			t.Fatal("ungrounded labels passed despite separate verdict")
+		}
+	}
+}
+
+func TestUserDecisionTrustedCustomIsVerbatimReviewEvidence(t *testing.T) {
+	turn := Turn{Message: "旧回复", UserDecisionSubmission: &userdecision.Submission{Custom: "改为只回复：新的回复"}}
+	if !finishConstraintQuoteValid("新的回复", turn) || finishConstraintQuoteValid("另一个回复", turn) {
+		t.Fatal("trusted custom was not validated verbatim")
+	}
+	turn.UserDecisionSubmission = nil
+	if finishConstraintQuoteValid("新的回复", turn) {
+		t.Fatal("absent submission became trusted evidence")
+	}
+}
+
+func TestUserDecisionSemanticRepairUsesLatestSubmissionOnce(t *testing.T) {
+	old := `{"executable":true,"reason":"old wording","plan":{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"conversation","reply":"旧回复"}]}}`
+	latest := strings.ReplaceAll(old, "旧回复", "新回复")
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("old", "interpret_submission", old), assistantTool("new", "interpret_submission", latest)}, checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("revise", "Follow latest submission: 新回复"), scriptedFinishVerdict("allow", "Latest submission followed")}}
+	commits := 0
+	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { commits++; return nil })
+	d, a, err := (&Coordinator{Chat: chat}).ResolveUserDecisionWithAudit(ctx, UserDecisionSnapshot{Turn: Turn{Source: SourceRobot, Addressed: true, Message: "请只回复旧回复"}}, userdecision.Submission{Custom: "改为只回复新回复"})
+	if err != nil || d.UserText != "新回复" || commits != 0 || len(a.InterpretationAttempts) != 2 || len(a.ReviewAttempts) != 2 {
+		t.Fatalf("bounded semantic repair lost: %v text=%s attempts=%d reviews=%d commits=%d", err, d.UserText, len(a.InterpretationAttempts), len(a.ReviewAttempts), commits)
+	}
+	last := chat.params[0].Messages[len(chat.params[0].Messages)-1].OfUser.Content.OfString.Value
+	if !strings.Contains(last, "user_decision_submission") || !strings.Contains(last, "改为只回复新回复") {
+		t.Fatal("trusted latest submission not emphasized after frozen evidence")
 	}
 }

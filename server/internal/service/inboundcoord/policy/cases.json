@@ -1522,6 +1522,16 @@
       "context_b": "明确选择续接任务A，补充说明却要求改为任务B",
       "expected_effects": "A以同一发起人的后续提交审查，不强制旧措辞；取消不执行不二次询问。B保持选择锁定，矛盾不执行",
       "verification": "host_tests_passed; preproduction_model_replay_passed; native_after_fix_pending"
+    },
+    {
+      "id": "user_decision_candidate_task_label",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "续接标签称R18，但实际目标是R12独立模拟结论，R18已取消且没有任务",
+      "context_b": "同一目标如实称R12独立模拟结论并说明改为R19回复测试",
+      "expected_effects": "A发卡前拒绝并修正；B不因更偏好直接回复而拒绝可选方向",
+      "verification": "host_tests_passed; preproduction_model_replay_passed; native_after_fix_pending"
     }
   ]
 }
