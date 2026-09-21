@@ -2613,6 +2613,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetAgent)
 					r.Get("/source", h.GetAgentSource)
 					r.Get("/decisions/export", h.ExportUserDecisions)
+					r.Get("/decisions/health", h.UserDecisionHealth)
 					r.Get("/export", h.ExportAgent)
 					r.Get("/package-bindings", h.GetAgentPackageBindings)
 					r.With(handler.RequireHumanActor).Post("/package-bindings/confirm", h.ConfirmAgentPackageBinding)

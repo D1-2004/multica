@@ -105,9 +105,10 @@ func (s *Service) runIdentity(parent context.Context, r Request) {
 	var once sync.Once
 	go func() {
 		defer cancel()
-		done <- session.Consume(ctx, func() { once.Do(func() { close(ready) }) }, func(raw []byte) error {
+		consumeErr := session.Consume(ctx, func() { once.Do(func() { close(ready) }) }, func(raw []byte) error {
 			e, err := ParseAuditEvent(raw)
 			if err != nil {
+				slog.Warn("user decision event could not be decoded", "event", "user_decision_event_decode_failed", "agent_id", r.AgentID, "bytes", len(raw))
 				return nil
 			}
 			outcome, err := s.Store.AcceptFrom(ctx, e, r.SenderUID, r.SenderOrgID)
@@ -115,11 +116,14 @@ func (s *Service) runIdentity(parent context.Context, r Request) {
 				return nil
 			}
 			if err != nil {
+				slog.Error("user decision callback persistence failed", "event", "user_decision_callback_persist_failed", "decision_id", e.RequestID)
 				return err
 			}
 			slog.Info("user decision callback", "event", "user_decision_callback", "decision_id", e.RequestID, "outcome", outcome)
 			return nil
 		})
+		slog.Info("user decision consumer stopped", "event", "user_decision_consumer_stopped", "agent_id", r.AgentID, "cancelled", ctx.Err() != nil, "failed", consumeErr != nil)
+		done <- consumeErr
 	}()
 	defer func() {
 		cancel()
@@ -130,6 +134,7 @@ func (s *Service) runIdentity(parent context.Context, r Request) {
 	}()
 	select {
 	case <-ready:
+		slog.Info("user decision consumer ready", "event", "user_decision_consumer_ready", "agent_id", r.AgentID, "environment", s.Store.Environment)
 	case <-done:
 		return
 	case <-ctx.Done():

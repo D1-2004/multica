@@ -35,6 +35,55 @@ func (h *Handler) ReceiveUserDecisionEvent(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, 200, map[string]string{"outcome": outcome})
 }
 
+// UserDecisionHealth exposes durable consumer liveness without credentials or
+// sender identifiers. It uses the same workspace/private-agent access as export.
+func (h *Handler) UserDecisionHealth(w http.ResponseWriter, r *http.Request) {
+	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	ws := uuidToString(agent.WorkspaceID)
+	actorType, actorID := h.resolveActor(r, requestUserID(r), ws)
+	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, ws) {
+		writeError(w, 403, "you do not have access to this agent")
+		return
+	}
+	if h.UserDecisions == nil {
+		writeError(w, 503, "user decision service unavailable")
+		return
+	}
+	rows, err := h.UserDecisions.Pool.Query(r.Context(), `SELECT jsonb_build_object(
+ 'decision_id',d.id,'state',d.state,'environment',d.environment,
+ 'consumer_present',c.owner IS NOT NULL,'consumer_ready',COALESCE(c.ready,false),
+ 'consumer_lease_live',COALESCE(c.lease_expires_at>clock_timestamp(),false),
+ 'consumer_updated_at',c.updated_at,'consumer_lease_expires_at',c.lease_expires_at,
+ 'last_event_at',(SELECT max(e.created_at) FROM coordinator_user_decision_event e WHERE e.decision_id=d.id),
+ 'card_update_pending',d.card_update_pending,'decision_updated_at',d.updated_at)
+ FROM coordinator_user_decision d LEFT JOIN coordinator_user_decision_consumer c
+ ON c.environment=d.environment AND c.sender_uid=d.sender_uid AND c.sender_org_id=d.sender_org_id
+ WHERE d.workspace_id=$1 AND d.agent_id=$2 ORDER BY d.created_at DESC LIMIT 100`, ws, uuidToString(agent.ID))
+	if err != nil {
+		writeError(w, 500, "could not read decision health")
+		return
+	}
+	defer rows.Close()
+	items := []json.RawMessage{}
+	for rows.Next() {
+		var raw json.RawMessage
+		if rows.Scan(&raw) != nil {
+			writeError(w, 500, "could not decode decision health")
+			return
+		}
+		items = append(items, raw)
+	}
+	if rows.Err() != nil {
+		writeError(w, 500, "could not read decision health")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, 200, map[string]any{"environment": h.UserDecisions.Store.Environment, "decisions": items})
+}
+
 func (h *Handler) ExportUserDecisions(w http.ResponseWriter, r *http.Request) {
 	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
