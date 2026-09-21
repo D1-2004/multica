@@ -38,7 +38,7 @@ func (r *nativeClaimBinding) Scan(dest ...any) error {
 }
 
 func TestDSHNativeClaimPreservesPayloadAndChecksBinding(t *testing.T) {
-	for _, mode := range []string{"valid", "incapable", "other-provider", "other-backend", "other-workspace", "other-owner", "other-message", "other-request", "other-session", "missing-binding", "read-failure", "duplicate-input", "summary-changed", "null-input"} {
+	for _, mode := range []string{"valid", "plugin-request", "plugin-other-request", "plugin-other-session", "incapable", "other-provider", "other-backend", "other-workspace", "other-owner", "other-message", "other-request", "other-session", "missing-binding", "read-failure", "duplicate-input", "summary-changed", "null-input"} {
 		t.Run(mode, func(t *testing.T) {
 			id := func() pgtype.UUID { return pgtype.UUID{Bytes: uuid.New(), Valid: true} }
 			workspace := id()
@@ -49,15 +49,28 @@ func TestDSHNativeClaimPreservesPayloadAndChecksBinding(t *testing.T) {
 			receipt := "upload"
 			zone := "Asia/Shanghai"
 			p := protocol.DSHNativePrompt{SessionID: "session-" + uuid.NewString(), RequestID: uuid.NewString(), Mode: "steer", Content: []protocol.DSHNativePromptPart{{Type: "text", Text: &text}, {Type: "file", ReceiptID: &receipt}}, ClientTimeZone: &zone}
+			if mode == "plugin-request" || mode == "plugin-other-request" || mode == "plugin-other-session" {
+				p.RequestID = "weixin-acceptance-" + uuid.NewString()
+			}
 			raw, err := json.Marshal(map[string]any{"dsh_native_prompt": p})
 			if err != nil {
 				t.Fatal(err)
 			}
 			msgs := []db.ChatMessage{{ID: id(), TaskID: task.ID, ChatSessionID: task.ChatSessionID, Role: "user", MessageKind: "message", Content: p.DisplayText(), SourcePayload: raw}}
-			reader := &nativeClaimBinding{session: p.SessionID, request: p.RequestID}
+			identity, err := protocol.DSHNativeRequestIdentity(p.SessionID, p.RequestID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := &nativeClaimBinding{session: p.SessionID, request: identity.String()}
 			capable := true
 			backend := service.SandboxBackendAliyunFC
 			switch mode {
+			case "plugin-other-request":
+				other, _ := protocol.DSHNativeRequestIdentity(p.SessionID, p.RequestID+"-other")
+				reader.request = other.String()
+			case "plugin-other-session":
+				other, _ := protocol.DSHNativeRequestIdentity("session-"+uuid.NewString(), p.RequestID)
+				reader.request = other.String()
 			case "incapable":
 				capable = false
 			case "other-provider":
@@ -86,7 +99,7 @@ func TestDSHNativeClaimPreservesPayloadAndChecksBinding(t *testing.T) {
 				msgs[0].SourcePayload = []byte(`{"dsh_native_prompt":null}`)
 			}
 			got, failure := loadDSHNativeClaim(context.Background(), reader, task, rt, backend, workspace, capable, msgs)
-			if mode == "valid" {
+			if mode == "valid" || mode == "plugin-request" {
 				if failure != nil || !reflect.DeepEqual(got, &p) {
 					t.Fatalf("typed input not delivered: failure=%+v", failure)
 				}

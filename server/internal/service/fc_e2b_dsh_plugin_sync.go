@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,32 @@ import (
 	"github.com/multica-ai/multica/server/internal/dshprofile"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+// Restart is an explicit user operation, never part of ordinary task admission.
+// Persist the exact browser Host's native edits before allowing any process exit.
+func (l *FCE2BLauncher) PrepareDSHNativeRestart(ctx context.Context, host dshhost.Host) error {
+	l = l.withCurrentConfig()
+	if l == nil || l.SyncDSHProfileSource == nil {
+		return errors.New("native plugin synchronization unavailable")
+	}
+	return l.withDSHEmployee(ctx, host.Key, func(conn *pgxpool.Conn, _ db.AgentRuntime, template string) error {
+		probe, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		out, err := l.runE2BCommand(probe, []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=", host.SandboxID,
+			"--", "/opt/task-python/bin/python3", "-c", dshManagedRestartCapabilityCommand})
+		if err != nil || strings.TrimSpace(out) != "managed-restart-v1" {
+			return errors.New("this Runtime does not support managed DSH restart; upgrade the Runtime before restarting")
+		}
+		if err := l.syncDSHNativePluginsOnHost(ctx, conn, host.Key, template, host, true); err != nil {
+			return errors.New("native plugin changes could not be saved; DSH was not restarted")
+		}
+		return nil
+	})
+}
+
+// Probe the immutable installed adapter, not a user-controlled plugin or a
+// Runtime label. Older images must never receive the marketplace restart route.
+const dshManagedRestartCapabilityCommand = `import sys;sys.path.insert(0,"/opt/multica-dsh");from multica_dsh_host import NativeHost;print("managed-restart-v1" if callable(getattr(NativeHost,"request_restart",None)) else "unsupported")`
 
 // Both profile reconciliation and the settings list use the existing employee
 // lock. A snapshot can never select another sandbox or employee's filesystem.
@@ -37,11 +64,14 @@ func (l *FCE2BLauncher) syncDSHNativePlugins(ctx context.Context, conn *pgxpool.
 	if err != nil {
 		return err
 	}
-	return l.syncDSHNativePluginsOnHost(ctx, conn, key, template, host)
+	return l.syncDSHNativePluginsOnHost(ctx, conn, key, template, host, false)
 }
 
-func (l *FCE2BLauncher) syncDSHNativePluginsOnHost(ctx context.Context, conn *pgxpool.Conn, key dshhost.Key, template string, host dshhost.Host) error {
+func (l *FCE2BLauncher) syncDSHNativePluginsOnHost(ctx context.Context, conn *pgxpool.Conn, key dshhost.Key, template string, host dshhost.Host, restart bool) error {
 	if host.State != "running" || host.SandboxID == "" {
+		if restart {
+			return errors.New("native restart Host unavailable")
+		}
 		return nil
 	}
 	readCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
@@ -60,7 +90,7 @@ func (l *FCE2BLauncher) syncDSHNativePluginsOnHost(ctx context.Context, conn *pg
 	if err != nil {
 		// An expired sandbox must still reach ordinary lifecycle recovery. The
 		// persisted pointer is checked again once its replacement has mounted.
-		if l.checkSandboxReady(readCtx, host.SandboxID) != nil {
+		if !restart && l.checkSandboxReady(readCtx, host.SandboxID) != nil {
 			return nil
 		}
 		return errors.New("native plugin snapshot command failed on a running sandbox")
@@ -81,13 +111,36 @@ func (l *FCE2BLauncher) syncDSHNativePluginsOnHost(ctx context.Context, conn *pg
 		return errors.New("native plugin changes are not ready for synchronization")
 	}
 	if availability.Version == 1 && availability.Available != nil && !*availability.Available {
+		if restart {
+			return errors.New("native restart snapshot unavailable")
+		}
 		return nil
 	}
 	var snapshot dshprofile.NativeSnapshot
 	if json.Unmarshal([]byte(out), &snapshot) != nil || snapshot.Validate(key.WorkspaceID.String(), key.AgentID.String()) != nil {
 		return errors.New("invalid native plugin snapshot")
 	}
-	return l.SyncDSHProfileSource(ctx, conn, key, template, snapshot)
+	if err := l.SyncDSHProfileSource(ctx, conn, key, template, snapshot); err != nil {
+		return err
+	}
+	if restart {
+		// Background import deliberately ignores stale native revisions. That
+		// no-op is not a saved-change receipt authorizing a user restart.
+		var eligible bool
+		base, err := strconv.ParseInt(snapshot.BaseRevision, 10, 64)
+		if err != nil {
+			return err
+		}
+		err = conn.QueryRow(ctx, `SELECT applied_revision=$3 OR native_sync_revision=$3
+ FROM dsh_employee_profile WHERE workspace_id=$1 AND agent_id=$2`, key.WorkspaceID, key.AgentID, base).Scan(&eligible)
+		if err != nil {
+			return err
+		}
+		if !eligible {
+			return errors.New("native configuration revision is stale; reopen the current DSH entry")
+		}
+	}
+	return nil
 }
 
 // A failed helper may already have printed a diagnostic object. Emit exactly

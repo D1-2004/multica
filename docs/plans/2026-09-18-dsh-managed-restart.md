@@ -117,3 +117,110 @@ PASS_STRUCTURAL_ONLY, not semantic certification. The isolated real PostgreSQL
 concurrency tests could not connect from the laptop or FC sandbox; their attempts
 are not test passes. Real preproduction tasks above exercised the deployed schema,
 epoch selection, old-session admission, and cross-session history exclusion.
+
+## September 20 recurrence: old Runtime and unsaved native edits
+
+The user's preproduction v25 Agent still used template `3rg3ebpz7rxmqe6ii5jn`
+(runtime commit `94f5c3d`), while the managed restart fix existed only in the
+`f1874cbb` candidate. Installing the Tavern fork did not update this binding.
+Its native market restart at 03:16:58 UTC spawned an unmanaged replacement on
+port 34001 while waiting for port 32921. The supervisor's control operation then
+failed; profile reads returned `native_sync_pending` with `host_start_failed`.
+Native revision 144 contained dshmarket 1.49.0 and @xmanrui/dsh-im 4.22.0, but the
+saved source still contained only dshmarket 1.47.0 and the Tavern fork.
+
+Temporary recovery switched this Agent to the existing candidate Runtime and
+normal lifecycle replacement created generation 3. Revision 145 was applied,
+but IM was absent because the native edits had not been imported. This is
+recovery evidence only, not acceptance of the permanent fix. The native source
+files were backed up in the employee Home before replacement.
+
+The application now gates both native marketplace restart routes before proxying:
+check the installed adapter supports managed restart, then persist the exact
+browser Host's plugin snapshot. Unsupported images and synchronization failures
+return an error without forwarding restart. This gate runs only on explicit
+restart requests, not task admissions or normal native reads. The existing
+Runtime supervisor still rejects active tasks/mutations and owns child restart.
+The plugin editor now separates an unconfirmed receipt (edits remain locked)
+from active application progress; failures no longer show an endless spinner.
+
+Focused Go proxy tests cover old/unsupported Runtime, snapshot/save failure,
+both restart endpoints, successful forwarding, invalid origin/method/query,
+and ordinary read passthrough. The real preproduction results are recorded below.
+
+The first follow-up deployment (CR 36224658, run 3109032489, two targets) passed
+build, deployment and integration. Real regression on v25 proved both restart
+routes reject the old `94f5c3d` template with HTTP 409 without changing its boot.
+On the fixed Runtime, installing IM and upgrading dshmarket reproduced a second
+failure: native snapshots were valid, but the managed resolver rejected IM's
+8,595,641-byte `lib/index.js` against its 8 MiB per-member limit. The new restart
+gate correctly refused to stop DSH when persistence failed.
+
+The follow-up raises only the per-member bound to 16 MiB. Compressed downloads
+remain capped at 32 MiB and total decompressed archives at 48 MiB. Tests cover a
+9 MiB bundled entry, an over-16-MiB member, and aggregate expansion above the
+unchanged total budget. Profile worker failures now distinguish native sync,
+Host startup and other application errors instead of calling every failure a
+Host startup failure.
+
+
+Second deployment: CR 36224658, run 3109036729, release commit `66d073b31`
+contains `4d3beadbd`. Build, deployment and integration succeeded; deployment
+order 161568482 ended with 2/2 targets successful. The pipeline is parked at the
+normal preproduction verification gate; this follow-up was not published to
+production.
+
+On the same v25 Agent, normal reconciliation imported the previously rejected
+native snapshot and applied revision 148 on generation 6. IM 4.21.2, Tavern
+2.3.9-multica.3 and dshmarket 1.50.0 were all ready, with desired=applied=148
+and current=true. Native marketplace restart changed boot from
+`44-1789877489026` to `133-1789877509568`; configuration remained applied.
+The workbench visibly showed all three enabled plugins and confirmed the
+running DSH had applied the configuration.
+
+Busy restart regression: task `a2570365-21ca-407c-ab5e-db9657d448af` was running
+when restart returned HTTP 409 (DSH busy). It completed with persisted output
+`RESTART_GUARD_TASK_OK`, and the native boot remained unchanged. Test access
+grants were revoked. A profile read during initial replacement hit the gateway
+timeout; later readback took 1.26 seconds and returned applied/current. This
+is not evidence that all cold-start status reads are latency-bounded.
+
+Original Tavern character data matched the pre-repair snapshot exactly. New
+session task `b0528b34-5aa2-45e2-81eb-ba3e30e09953` completed after the fix and
+introduced the configured science-club character; no character fixture was
+written during these tests.
+
+
+The IM update regression resolved the native package to 4.23.0. The market
+request exceeded the HTTP deadline, but readback confirmed installation and
+normal import/build of revision 149. The worker's 90-second context expired
+while native startup permits 320 seconds. Those cancellations were counted as
+confirmed failures and temporarily exhausted the application retry budget,
+even though the owned native process subsequently became healthy. Cancellation
+now preserves the retry budget within a durable 15-minute revision window;
+persistent timeouts and confirmed startup/configuration failures remain bounded. No worker lease or concurrency limit was expanded.
+
+Reopening the native entry confirmed revision 149 on generation 7. Restart
+changed boot `44-1789878050421` to `158-1789878125482`, preserving IM 4.23.0,
+Tavern 2.3.9-multica.3 and dshmarket 1.50.0 with current=true. This readback
+predates deployment of the cancellation-budget follow-up; its deployment
+and final readback are recorded below. The market update HTTP timeout is recorded
+as an incomplete synchronous acknowledgement, not a failed package install.
+
+
+Final follow-up deployment: run 3109039048, release branch
+`releases/20260920122558813_r_release_342160_dt-fde-multica-code`, merge
+`09312e322` includes final code `8191da6f4`. Deployment order 161569436 ended
+with allEnd=true, 2/2 targets successful; build and integration succeeded.
+The prior in-progress run 3109038888 was exited before deployment to include
+the bounded grace-window change. Production was not published.
+
+After final deployment, native restart changed boot from `158-1789878125482`
+to `3431-1789878899904`. The API returned applied/current, revision 149 on
+generation 7, and all three plugins ready. The workbench displayed IM 4.23.0,
+Tavern 2.3.9-multica.3 and market 1.50.0 enabled, with both target and confirmed
+revision 149. The test grant was revoked. Cancellation-grace and persistent-
+timeout limits have focused unit coverage; the earlier real cold-start timeout
+provided the motivating evidence, not a controlled post-deployment timeout
+fault injection. Full dshplugin tests, focused handler/service regression tests,
+frontend typecheck and service/handler vet passed for the relevant changes.

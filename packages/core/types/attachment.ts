@@ -37,5 +37,7 @@ export interface Attachment {
   markdown_url: string;
   content_type: string;
   size_bytes: number;
+  /** Lowercase hex digest of the uploaded bytes. Empty or omitted when the server did not persist a hash. */
+  sha256?: string;
   created_at: string;
 }

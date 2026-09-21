@@ -65,7 +65,8 @@ func loadDSHNativeClaim(ctx context.Context, reader dshNativeBindingReader, task
 	if err != nil {
 		return nil, &claimBuildFailure{outcome: "error_dsh_native_binding_load", status: http.StatusServiceUnavailable, message: "native DSH binding is unavailable"}
 	}
-	if sessionID != prompt.SessionID || requestID != prompt.RequestID {
+	identity, identityErr := protocol.DSHNativeRequestIdentity(prompt.SessionID, prompt.RequestID)
+	if identityErr != nil || sessionID != prompt.SessionID || requestID != identity.String() {
 		return invalid()
 	}
 	return prompt, nil

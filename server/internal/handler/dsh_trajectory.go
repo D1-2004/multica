@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dshtrajectory"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -140,7 +141,8 @@ func validateDSHUploadBinding(data []byte, sessionID, requestID string, bound bo
 		if err != nil {
 			return err
 		}
-		if !bound || sessionID != doc.Scope.SessionID || requestID != doc.Scope.RequestID {
+		identity, identityErr := protocol.DSHNativeRequestIdentity(doc.Scope.SessionID, doc.Scope.RequestID)
+		if !bound || sessionID != doc.Scope.SessionID || (requestID != doc.Scope.RequestID && (identityErr != nil || requestID != identity.String())) {
 			return errors.New("trajectory does not match the persisted DSH task binding")
 		}
 	} else if bound {
