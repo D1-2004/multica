@@ -305,9 +305,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	var host dshhost.Host
 	if before.State == "creating" {
 		host, err = manager.ReconcileCreate(ctx, key)
-		if errors.Is(err, dshhost.ErrCreateAbandoned) {
-			host, err = ensureHost()
-		} else if err != nil {
+		if err != nil {
 			slog.Info("dsh host waiting", "reason", dshhost.WaitCreateIntentStale, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
 			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitCreateIntentStale)
 		}
@@ -328,11 +326,11 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		err = conn.QueryRow(ctx, `SELECT EXISTS (
  SELECT 1 FROM agent_task_queue t JOIN agent a ON a.id=t.agent_id
  WHERE a.workspace_id=$1 AND t.agent_id=$2 AND t.id IS DISTINCT FROM $3::uuid
- AND ((t.status IN ('dispatched','running','waiting_local_directory') AND ($7::uuid='00000000-0000-0000-0000-000000000000'::uuid OR EXISTS
+ AND ((t.status IN ('dispatched','running','waiting_local_directory') AND ($5::uuid='00000000-0000-0000-0000-000000000000'::uuid OR EXISTS
  (SELECT 1 FROM agent_task_runtime_start_attempt active WHERE active.task_id=t.id AND active.sandbox_id=$4))) OR
  (t.status='queued' AND EXISTS (SELECT 1 FROM agent_task_runtime_start_attempt s
  WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))`,
-			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, before.SandboxID, before.State == "running", before.Generation, scopeID).Scan(&taskBusy)
+			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, before.SandboxID, scopeID).Scan(&taskBusy)
 		if err != nil {
 			return dshhost.Host{}, false, err
 		}

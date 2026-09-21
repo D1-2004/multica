@@ -15,15 +15,13 @@ import (
 )
 
 var (
-	ErrPending         = errors.New("DSH host transition requires reconciliation")
-	ErrChanged         = errors.New("DSH host generation changed")
-	ErrRetireRequired  = errors.New("DSH host must be drained and retired before replacement")
-	ErrCreateAbandoned = errors.New("DSH create intent was abandoned")
+	ErrPending        = errors.New("DSH host transition requires reconciliation")
+	ErrChanged        = errors.New("DSH host generation changed")
+	ErrRetireRequired = errors.New("DSH host must be drained and retired before replacement")
 )
 
 var (
-	createIntentStaleAfter = 5 * time.Minute
-	retireStaleAfter       = 2 * time.Minute
+	retireStaleAfter = 2 * time.Minute
 )
 
 const (
@@ -75,6 +73,8 @@ type Store interface {
 	CompleteCreate(context.Context, Host, string) (Host, error)
 	BeginRetire(context.Context, Host) (Host, error)
 	CompleteRetire(context.Context, Host) error
+	// AbandonCreate is a store primitive. Manager never calls it: an empty
+	// FindCreated stays pending so listing lag cannot spawn a second writer.
 	AbandonCreate(context.Context, Host) error
 }
 
@@ -121,16 +121,10 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 		return Host{}, err
 	}
 	if h.State == "creating" {
-		if abandoned, abandonErr := m.abandonStaleCreate(ctx, h); abandonErr != nil {
-			return Host{}, abandonErr
-		} else if abandoned {
-			h, err = m.Store.Get(ctx, key)
-			if err != nil {
-				return Host{}, err
-			}
-		} else {
-			return Host{}, fmt.Errorf("%w: %s", ErrPending, WaitCreateIntentStale)
-		}
+		// Empty FindCreated is not permission to BeginCreate another sandbox
+		// on the same employee volume. Stay pending until ReconcileCreate
+		// observes the original intent.
+		return Host{}, fmt.Errorf("%w: %s", ErrPending, WaitCreateIntentStale)
 	}
 	if h.State == "retiring" {
 		if err := m.finishRetire(ctx, h); err != nil {
@@ -232,34 +226,11 @@ func (m Manager) ReconcileCreate(ctx context.Context, key Key) (Host, error) {
 	}
 	id, err := m.Provider.FindCreated(ctx, h)
 	if err != nil || strings.TrimSpace(id) == "" {
-		if abandoned, abandonErr := m.abandonStaleCreate(ctx, h); abandonErr != nil {
-			return Host{}, abandonErr
-		} else if abandoned {
-			return Host{}, ErrCreateAbandoned
-		}
+		// Listing lag and transport errors both stay pending. Do not abandon
+		// the intent: Create may already have been accepted.
 		return Host{}, fmt.Errorf("%w: %s", ErrPending, WaitCreateIntentStale)
 	}
 	return m.recordCreated(ctx, h, id)
-}
-
-func (m Manager) abandonStaleCreate(ctx context.Context, h Host) (bool, error) {
-	if h.State != "creating" || !h.stale(createIntentStaleAfter) {
-		return false, nil
-	}
-	id, err := m.Provider.FindCreated(ctx, h)
-	if strings.TrimSpace(id) != "" {
-		return false, nil
-	}
-	// Empty listing (ErrPending or blank id) after the stale window may be
-	// abandoned. Transport/API errors stay pending so a lost create is not
-	// replaced with a second writer on the same volume.
-	if err != nil && !errors.Is(err, ErrPending) {
-		return false, nil
-	}
-	if err := m.Store.AbandonCreate(ctx, h); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 func (m Manager) sandboxGone(ctx context.Context, id string) bool {

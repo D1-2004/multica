@@ -66,7 +66,7 @@ func dshLaunchPools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 		return pool
 	}
 	a, b := newPool(), newPool()
-	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9235_dsh_native_access", "9265_dsh_native_access_parent", "9241_dsh_employee_profile", "9242_dsh_employee_profile_identity", "9243_dsh_profile_revision_identity", "9244_dsh_plugin_build_identity", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host"} {
+	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9235_dsh_native_access", "9265_dsh_native_access_parent", "9241_dsh_employee_profile", "9242_dsh_employee_profile_identity", "9243_dsh_profile_revision_identity", "9244_dsh_plugin_build_identity", "9261_dsh_profile_apply_queue", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
@@ -376,7 +376,7 @@ func dshLaunchFixture(t *testing.T, pool *pgxpool.Pool, p *dshLaunchProvider) (*
 			return
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/sandboxes/")
-		_ = json.NewEncoder(w).Encode(map[string]any{"sandboxID": id, "state": "running", "endAt": time.Now().Add(time.Hour)})
+		_ = json.NewEncoder(w).Encode(map[string]any{"sandboxID": id, "state": "running", "endAt": time.Now().Add(time.Duration(dshhost.DefaultSandboxTaskTimeoutSeconds) * time.Second)})
 	}))
 	t.Cleanup(httpServer.Close)
 	u := func(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
@@ -458,6 +458,7 @@ func TestDSHNativeHostFailureRequiresConfirmedSandboxRetirement(t *testing.T) {
 	a, _ := dshLaunchPools(t)
 	provider := &dshLaunchProvider{destroyErr: errors.New("not confirmed")}
 	l, rt, task := dshLaunchFixture(t, a, provider)
+	rt.Provider = "dsh"
 	l.Runner = dshHomeRunner{wrongNativeReceipt: true, profiles: &sync.Map{}}
 	if _, err := resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) {
 		t.Fatal("native Host mismatch did not stop admissions", err)
@@ -653,6 +654,7 @@ func TestDSHProfileFailureDoesNotStrandExistingLifecycle(t *testing.T) {
 			a, _ := dshLaunchPools(t)
 			provider := &dshLaunchProvider{failCreate: initial == "creating"}
 			l, rt, task := dshLaunchFixture(t, a, provider)
+			rt.Provider = "dsh"
 			if initial == "retiring" {
 				l.Runner = dshHomeRunner{wrongNativeReceipt: true, profiles: &sync.Map{}}
 			}

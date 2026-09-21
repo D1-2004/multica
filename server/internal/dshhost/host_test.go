@@ -203,7 +203,7 @@ func TestUnknownCreateCannotRetryAndReconcilesAcrossReplica(t *testing.T) {
 	}
 }
 
-func TestStaleCreateIntentCanBeAbandonedAndReplaced(t *testing.T) {
+func TestStaleEmptyCreateIntentStaysPending(t *testing.T) {
 	a, _ := stores(t)
 	h := bind(t, a)
 	p := &cloud{createErr: errors.New("response lost"), hidden: true}
@@ -218,9 +218,18 @@ func TestStaleCreateIntentCanBeAbandonedAndReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.createErr = nil
-	got, err := m.Ensure(context.Background(), h.Key, "template-1")
-	if err != nil || got.Generation != 2 || p.creates != 2 {
-		t.Fatalf("host=%+v err=%v creates=%d", got, err, p.creates)
+	if _, err := m.Ensure(context.Background(), h.Key, "template-1"); !errors.Is(err, ErrPending) {
+		t.Fatal(err)
+	}
+	if _, err := m.ReconcileCreate(context.Background(), h.Key); !errors.Is(err, ErrPending) {
+		t.Fatal(err)
+	}
+	if p.creates != 1 {
+		t.Fatalf("empty listing spawned a second sandbox: creates=%d", p.creates)
+	}
+	got, err := a.Get(context.Background(), h.Key)
+	if err != nil || got.State != "creating" || got.Generation != 1 {
+		t.Fatalf("host=%+v err=%v", got, err)
 	}
 }
 
