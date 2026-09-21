@@ -22,7 +22,8 @@ func TestPostgresConcurrentAcceptance(t *testing.T) {
 	if strings.Contains(dsn, "localhost") || strings.Contains(dsn, "127.0.0.1") {
 		t.Fatal("runtime database verification belongs in preproduction")
 	}
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)

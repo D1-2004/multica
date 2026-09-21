@@ -11,23 +11,34 @@ import (
 const Version = "coordinator-user-decision-v1"
 
 type Event struct {
-	Protocol       string
-	ID             string
-	CorpID         string
-	ConversationID string
-	CardID         string
-	OperatorID     string
-	RequestID      string
-	Version        string
-	Selected       []string
-	Custom         string
-	At             time.Time
-	Raw            json.RawMessage
+	ValidationError string
+	Protocol        string
+	ID              string
+	CorpID          string
+	ConversationID  string
+	CardID          string
+	OperatorID      string
+	RequestID       string
+	Version         string
+	Selected        []string
+	Custom          string
+	At              time.Time
+	Raw             json.RawMessage
 }
 
 // ParseEvent accepts the DWS Stream envelope or its decoded payload. The
 // action context contains the sender identity, never the human operator.
-func ParseEvent(raw []byte) (Event, error) { return parseEvent(raw, 0) }
+func ParseEvent(raw []byte) (Event, error) {
+	e, err := ParseAuditEvent(raw)
+	if err == nil && e.ValidationError != "" {
+		return Event{}, errors.New(e.ValidationError)
+	}
+	return e, err
+}
+
+// ParseAuditEvent preserves malformed answers when the trusted envelope can be
+// matched, allowing rejection records without accepting a choice.
+func ParseAuditEvent(raw []byte) (Event, error) { return parseEvent(raw, 0) }
 
 func parseEvent(raw []byte, depth int) (Event, error) {
 	var envelope struct {
@@ -100,14 +111,15 @@ func parseEvent(raw []byte, depth int) (Event, error) {
 		return Event{}, invalid
 	}
 	answer, ok := a.Context.Answers["q0"]
+	answerError := ""
 	if !ok || len(a.Context.Answers) != 1 || (len(answer.Selected) == 1 && strings.TrimSpace(answer.Selected[0]) == "") || len(answer.Selected) > 1 || (len(answer.Selected) == 0 && strings.TrimSpace(answer.Custom) == "") || len([]rune(answer.Custom)) > 8000 {
-		return Event{}, invalid
+		answerError = "invalid_answer"
 	}
 	id := envelope.EventID
 	if id == "" {
 		id = envelope.EventIDSnake
 	}
-	e := Event{Protocol: protocol, ID: id, CorpID: payload.CorpID, ConversationID: payload.Body.Conversation.ID, CardID: payload.Body.Biz.ID, OperatorID: payload.Body.Operator.ID, RequestID: a.Context.ID, Version: a.Context.Version, Selected: answer.Selected, Custom: answer.Custom, At: time.UnixMilli(payload.Body.Timestamp), Raw: append(json.RawMessage(nil), raw...)}
+	e := Event{ValidationError: answerError, Protocol: protocol, ID: id, CorpID: payload.CorpID, ConversationID: payload.Body.Conversation.ID, CardID: payload.Body.Biz.ID, OperatorID: payload.Body.Operator.ID, RequestID: a.Context.ID, Version: a.Context.Version, Selected: answer.Selected, Custom: answer.Custom, At: time.UnixMilli(payload.Body.Timestamp), Raw: append(json.RawMessage(nil), raw...)}
 	if e.ID == "" || e.CorpID == "" || e.ConversationID == "" || e.CardID == "" || e.OperatorID == "" || e.RequestID == "" || e.Version == "" {
 		return Event{}, invalid
 	}

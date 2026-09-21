@@ -104,7 +104,7 @@ func (s *Service) runIdentity(parent context.Context, r Request) {
 	go func() {
 		defer cancel()
 		done <- session.Consume(ctx, func() { once.Do(func() { close(ready) }) }, func(raw []byte) error {
-			e, err := ParseEvent(raw)
+			e, err := ParseAuditEvent(raw)
 			if err != nil {
 				return nil
 			}
@@ -193,6 +193,29 @@ func (s *Service) processIdentity(ctx context.Context, identity Request, session
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return err
+	}
+	// Updating the original business ID can confirm an uncertain send without
+	// creating a second card. Failed probes remain durable and retry later.
+	if probe, ok := session.(interface {
+		Reconcile(context.Context, Request) error
+	}); ok {
+		var raw []byte
+		probeErr := s.Pool.QueryRow(ctx, `UPDATE coordinator_user_decision SET available_at=now()+interval '30 seconds' WHERE id=(SELECT id FROM coordinator_user_decision WHERE environment=$1 AND sender_uid=$2 AND sender_org_id=$3 AND state='send_unknown' AND available_at<=now() ORDER BY created_at LIMIT 1) RETURNING to_jsonb(coordinator_user_decision)`, s.Store.Environment, identity.SenderUID, identity.SenderOrgID).Scan(&raw)
+		if probeErr == nil {
+			var unknown Request
+			if json.Unmarshal(raw, &unknown) == nil {
+				probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+				probeErr = probe.Reconcile(probeCtx, unknown)
+				cancel()
+				if probeErr == nil {
+					if err := s.Store.ConfirmSent(ctx, unknown.ID, unknown.CardID); err != nil {
+						return err
+					}
+				}
+			}
+		} else if !errors.Is(probeErr, pgx.ErrNoRows) {
+			return probeErr
+		}
 	}
 	r, err := s.claimResolution(ctx, identity)
 	if err == nil {
@@ -296,6 +319,13 @@ func (s *Service) finishResolution(ctx context.Context, r Request, plan, interpr
 	}
 	if state != "resuming" {
 		return errors.New("decision resolution no longer owns request")
+	}
+	var active bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agent WHERE id=$1 AND workspace_id=$2 AND archived_at IS NULL AND status NOT IN ('disabled','paused'))`, r.AgentID, r.WorkspaceID).Scan(&active); err != nil {
+		return err
+	}
+	if !active {
+		reason = "员工已停用或删除，本次未执行。"
 	}
 	if reason != "" {
 		plan, _ = json.Marshal(map[string]any{"Action": "reply", "UserText": reason, "PlanVersion": "window-plan-v1", "Reason": "user_decision_not_executed"})

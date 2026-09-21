@@ -176,7 +176,7 @@ func (s *Store) AcceptFrom(ctx context.Context, e Event, senderUID, senderOrgID 
 	}
 	option := ""
 	if outcome == "accepted" {
-		if len(e.Selected) > 1 || (len(e.Selected) == 0 && strings.TrimSpace(e.Custom) == "") || len([]rune(e.Custom)) > 8000 {
+		if e.ValidationError != "" || len(e.Selected) > 1 || (len(e.Selected) == 0 && strings.TrimSpace(e.Custom) == "") || len([]rune(e.Custom)) > 8000 {
 			outcome = "invalid_answer"
 		}
 		if len(e.Selected) == 1 {
@@ -196,8 +196,8 @@ func (s *Store) AcceptFrom(ctx context.Context, e Event, senderUID, senderOrgID 
 	if !json.Valid(e.Raw) || e.ID == "" {
 		return "", errors.New("invalid event audit payload")
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO coordinator_user_decision_event(decision_id,environment,event_id,operator_id,outcome,payload)
- VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(environment,event_id) DO NOTHING`, e.RequestID, s.Environment, e.ID, e.OperatorID, outcome, e.Raw)
+	tag, err := tx.Exec(ctx, `INSERT INTO coordinator_user_decision_event(decision_id,environment,event_id,operator_id,outcome,payload,protocol)
+ VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(environment,event_id) DO NOTHING`, e.RequestID, s.Environment, e.ID, e.OperatorID, outcome, e.Raw, e.Protocol)
 	if err != nil {
 		return "", err
 	}

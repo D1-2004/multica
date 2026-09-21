@@ -49,3 +49,7 @@ func (s *decisionSession) Update(ctx context.Context, r userdecision.Request, st
 func (s *decisionSession) Consume(ctx context.Context, ready func(), consume func([]byte) error) error {
 	return s.cli.ConsumeCardEvents(ctx, s.dir, ready, consume)
 }
+
+func (s *decisionSession) Reconcile(ctx context.Context, r userdecision.Request) error {
+	return s.cli.UpdateA2UI(ctx, s.dir, r.CardID, "INPUTTING", userdecision.Card(r.ID, r.Proposal))
+}

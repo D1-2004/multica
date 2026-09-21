@@ -834,8 +834,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		if r.Submission == nil {
 			return nil, nil, fmt.Errorf("missing accepted submission")
 		}
-		plan, err := coordinator.ResolveUserDecision(ctx, snapshot, *r.Submission)
-		audit := map[string]any{"resolved_plan": plan, "proposal_model": snapshot.Proposal.Model}
+		plan, resolutionAudit, err := coordinator.ResolveUserDecisionWithAudit(ctx, snapshot, *r.Submission)
+		audit := map[string]any{"resolved_plan": plan, "proposal_model": snapshot.Proposal.Model, "resolution": resolutionAudit}
 		if err != nil {
 			audit["error"] = err.Error()
 		}

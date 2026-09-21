@@ -22,7 +22,7 @@ func (h *Handler) ReceiveUserDecisionEvent(w http.ResponseWriter, r *http.Reques
 		writeError(w, 400, "invalid card event size")
 		return
 	}
-	event, err := userdecision.ParseEvent(raw)
+	event, err := userdecision.ParseAuditEvent(raw)
 	if err != nil {
 		writeError(w, 400, "invalid card event")
 		return
@@ -71,7 +71,7 @@ func (h *Handler) ExportUserDecisions(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	rows, err := h.UserDecisions.Pool.Query(r.Context(), `SELECT to_jsonb(d),COALESCE((SELECT jsonb_agg(jsonb_build_object('event_id',e.event_id,'operator_id',e.operator_id,'outcome',e.outcome,'received_at',e.created_at,'payload',e.payload) ORDER BY e.created_at) FROM coordinator_user_decision_event e WHERE e.decision_id=d.id),'[]'::jsonb)
+	rows, err := h.UserDecisions.Pool.Query(r.Context(), `SELECT to_jsonb(d),COALESCE((SELECT jsonb_agg(jsonb_build_object('event_id',e.event_id,'operator_id',e.operator_id,'outcome',e.outcome,'received_at',e.created_at,'payload',e.payload,'protocol',e.protocol) ORDER BY e.created_at) FROM coordinator_user_decision_event e WHERE e.decision_id=d.id),'[]'::jsonb)
  FROM coordinator_user_decision d WHERE workspace_id=$1 AND agent_id=$2 AND created_at >=$3 AND created_at<$4 AND ($5='' OR state=$5) AND ($6='' OR version=$6) AND ($7='' OR id::text=$7) AND ($8='' OR id::text>$8) ORDER BY id LIMIT $9`, ws, uuidToString(agent.ID), from, to, r.URL.Query().Get("state"), r.URL.Query().Get("version"), r.URL.Query().Get("decision_id"), r.URL.Query().Get("after"), limit)
 	if err != nil {
 		writeError(w, 500, "could not read decisions")

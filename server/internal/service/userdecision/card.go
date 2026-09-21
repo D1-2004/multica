@@ -39,13 +39,17 @@ func Card(id string, p Proposal) []string {
 	model := map[string]any{"clarification": map[string]any{"sourceTurnId": id, "sourceProjectionVersion": Version, "questions": []any{map[string]any{"id": "q0", "prompt": p.Question, "selection": "single", "allowCustom": true, "options": questions}}, "answers": map[string]any{"q0": map[string]any{"selected": []string{}, "custom": ""}}}}
 	path := func(s string) map[string]string { return map[string]string{"path": "/clarification/" + s} }
 	action := map[string]any{"event": map[string]any{"name": "runtime.clarification.submit", "context": map[string]any{"outcome": "answered", "sourceTurnId": path("sourceTurnId"), "sourceProjectionVersion": path("sourceProjectionVersion"), "questions": path("questions"), "answers": path("answers")}}}
+	required := func(value any) map[string]any {
+		return map[string]any{"call": "required", "args": map[string]any{"value": value}}
+	}
+	checks := []any{map[string]any{"condition": map[string]any{"call": "or", "args": map[string]any{"values": []any{required(path("answers/q0/selected")), required(path("answers/q0/custom"))}}}, "message": "请选择一项或填写补充说明"}}
 	components := []any{
 		component("root", "Column", map[string]any{"children": []string{"question", "choices", "extra", "submit"}}),
 		component("question", "Text", map[string]any{"text": p.Question}),
 		component("choices", "ChoicePicker", map[string]any{"options": options, "value": path("answers/q0/selected"), "variant": "mutuallyExclusive", "displayStyle": "checkbox"}),
 		component("extra", "TextField", map[string]any{"label": "补充说明（可选，也可以直接写你的想法）", "value": path("answers/q0/custom")}),
 		component("submitLabel", "Text", map[string]any{"text": "提交选择"}),
-		component("submit", "Button", map[string]any{"child": "submitLabel", "variant": "primary", "action": action}),
+		component("submit", "Button", map[string]any{"child": "submitLabel", "variant": "primary", "action": action, "checks": checks}),
 	}
 	return encodeMessages(map[string]any{"version": "v1.0", "createSurface": map[string]any{"surfaceId": id, "catalogId": "https://dingtalk.com/card/a2ui/catalogs/public/catalog.json", "dataModel": model}}, map[string]any{"version": "v1.0", "updateComponents": map[string]any{"surfaceId": id, "components": components}})
 }

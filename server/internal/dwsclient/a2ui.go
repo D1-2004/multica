@@ -52,7 +52,7 @@ func parseA2UIReceipt(raw []byte) (A2UIReceipt, error) {
 	return response.Result.Result, nil
 }
 func (c CLI) UpdateA2UI(ctx context.Context, dir, bizID, status string, messages []string) error {
-	valid := map[string]bool{"CONFIRMED": true, "EXECUTING": true, "FINISH": true, "ERROR": true, "ABORTED": true, "TIMEOUT": true}
+	valid := map[string]bool{"INPUTTING": true, "CONFIRMED": true, "EXECUTING": true, "FINISH": true, "ERROR": true, "ABORTED": true, "TIMEOUT": true}
 	if bizID == "" || !valid[status] || len(messages) == 0 {
 		return errors.New("invalid A2UI update")
 	}

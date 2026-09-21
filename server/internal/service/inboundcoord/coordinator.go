@@ -434,7 +434,11 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	ensureTurnTraceID(&turn)
 	c.prefetchSceneMemory(ctx, &turn)
 
-	loopCtx, cancel := context.WithTimeout(ctx, decisionTimeout)
+	timeout := decisionTimeout
+	if turn.UserDecisionEnabled {
+		timeout = 90 * time.Second
+	}
+	loopCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	started := time.Now()
 	turnTrace = c.startTurnTrace(ctx, turn, started)

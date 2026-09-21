@@ -41,7 +41,7 @@ func (c *Coordinator) proposeUserDecision(ctx context.Context, turn Turn, messag
 	params := windowPlanToolFor(turn, true).OfFunction.Function.Parameters
 	option := map[string]any{"type": "object", "additionalProperties": false, "required": []string{"id", "label", "kind", "plan"}, "properties": map[string]any{"id": map[string]any{"type": "string"}, "label": map[string]any{"type": "string"}, "kind": map[string]any{"type": "string", "enum": []string{"continue_work", "start_work", "reply"}}, "plan": params}}
 	schema := shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"question", "options", "recommended_id"}, "properties": map[string]any{"question": map[string]any{"type": "string"}, "options": map[string]any{"type": "array", "minItems": 2, "maxItems": 5, "items": option}, "recommended_id": map[string]any{"type": "string"}}}
-	response, err := c.complete(ctx, []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence))}, []openai.ChatCompletionToolUnionParam{openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "propose_choices", Parameters: schema})})
+	response, err := c.completeWithLimit(ctx, []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence))}, []openai.ChatCompletionToolUnionParam{openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "propose_choices", Parameters: schema})}, 4096, temperature)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -111,9 +111,24 @@ func userDecisionPolicy() string {
 // ResolveUserDecision interprets supplementary text once and rechecks the
 // frozen candidate. It never regenerates the displayed choices or commits a
 // checkpoint; the durable Host commits this result with the original job.
+type UserDecisionResolutionAudit struct {
+	Model             string `json:"model"`
+	RawInterpretation string `json:"raw_interpretation,omitempty"`
+	Review            any    `json:"review,omitempty"`
+}
+
 func (c *Coordinator) ResolveUserDecision(ctx context.Context, s UserDecisionSnapshot, submission userdecision.Submission) (Decision, error) {
+	return c.resolveUserDecision(ctx, s, submission, &UserDecisionResolutionAudit{})
+}
+func (c *Coordinator) ResolveUserDecisionWithAudit(ctx context.Context, s UserDecisionSnapshot, submission userdecision.Submission) (Decision, UserDecisionResolutionAudit, error) {
+	var audit UserDecisionResolutionAudit
+	d, err := c.resolveUserDecision(ctx, s, submission, &audit)
+	return d, audit, err
+}
+func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSnapshot, submission userdecision.Submission, audit *UserDecisionResolutionAudit) (Decision, error) {
 	snapshotCoordinator := *c
 	snapshotCoordinator.model = c.configuredModel()
+	audit.Model = snapshotCoordinator.model
 	snapshotCoordinator.ModelProvider = nil
 	c = &snapshotCoordinator
 	turn := s.Turn
@@ -148,13 +163,14 @@ func (c *Coordinator) ResolveUserDecision(ctx context.Context, s UserDecisionSna
 		}
 		planSchema := windowPlanToolFor(turn, true).OfFunction.Function.Parameters
 		tool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "interpret_submission", Parameters: shared.FunctionParameters{"type": "object", "required": []string{"executable", "reason", "plan"}, "properties": map[string]any{"executable": map[string]any{"type": "boolean"}, "reason": map[string]any{"type": "string"}, "plan": planSchema}}})
-		response, err := c.complete(ctx, []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence))}, []openai.ChatCompletionToolUnionParam{tool})
+		response, err := c.completeWithLimit(ctx, []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence))}, []openai.ChatCompletionToolUnionParam{tool}, 2048, temperature)
 		if err != nil {
 			return Decision{}, err
 		}
 		if response == nil || len(response.Choices) != 1 || len(response.Choices[0].Message.ToolCalls) != 1 || response.Choices[0].Message.ToolCalls[0].Function.Name != "interpret_submission" {
 			return Decision{}, errors.New("missing submission interpretation")
 		}
+		audit.RawInterpretation = response.Choices[0].Message.ToolCalls[0].Function.Arguments
 		var parsed struct {
 			Executable bool            `json:"executable"`
 			Reason     string          `json:"reason"`
@@ -192,6 +208,7 @@ func (c *Coordinator) ResolveUserDecision(ctx context.Context, s UserDecisionSna
 	if err != nil {
 		return Decision{}, err
 	}
+	audit.Review = check
 	if check.Verdict != "allow" {
 		return Decision{}, fmt.Errorf("submitted plan rejected: %s", check.Reason)
 	}
