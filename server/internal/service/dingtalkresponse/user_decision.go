@@ -40,22 +40,28 @@ func (s *decisionSession) Verify(ctx context.Context, cid, messageID string) (st
 	return corp, actor, err
 }
 func (s *decisionSession) Send(ctx context.Context, r userdecision.Request) (string, error) {
-	receipt, err := s.cli.SendA2UI(ctx, s.dir, dwsclient.A2UISendRequest{ConversationID: r.ConversationID, BizID: r.CardID, RequestID: r.SendRequestID, Summary: r.Proposal.Question, Messages: userdecision.Card(r.ID, r.Proposal)})
+	receipt, err := s.cli.SendA2UI(ctx, s.dir, dwsclient.A2UISendRequest{ConversationID: r.ConversationID, BizID: r.CardID, RequestID: r.SendRequestID, Summary: r.Proposal.Question, Messages: userdecision.Card(r.ID, r.Proposal), Annotations: decisionAnnotation(r.ID, "question")})
 	return receipt.BizID, err
 }
 func (s *decisionSession) Update(ctx context.Context, r userdecision.Request, status, text string) error {
 	messages := userdecision.StatusCard(r.ID, text)
+	componentID := "status"
 	if r.State == "waiting" {
 		// Refresh components only: keep the frozen choices and the client form data.
-		messages = userdecision.Card(r.ID, r.Proposal)[1:]
+		messages = userdecision.WaitingCardUpdate(r.ID, r.Proposal)
 		status = "INPUTTING"
+		componentID = "question"
 	}
-	return s.cli.UpdateA2UI(ctx, s.dir, r.CardID, status, messages)
+	return s.cli.UpdateA2UI(ctx, s.dir, r.CardID, status, messages, decisionAnnotation(r.ID, componentID))
 }
 func (s *decisionSession) Consume(ctx context.Context, ready func(), consume func([]byte) error) error {
 	return s.cli.ConsumeCardEvents(ctx, s.dir, ready, consume)
 }
 
 func (s *decisionSession) Reconcile(ctx context.Context, r userdecision.Request) error {
-	return s.cli.UpdateA2UI(ctx, s.dir, r.CardID, "INPUTTING", userdecision.Card(r.ID, r.Proposal))
+	return s.cli.UpdateA2UI(ctx, s.dir, r.CardID, "INPUTTING", userdecision.Card(r.ID, r.Proposal), decisionAnnotation(r.ID, "question"))
+}
+
+func decisionAnnotation(surfaceID, componentID string) []dwsclient.A2UIAnnotation {
+	return []dwsclient.A2UIAnnotation{{SurfaceID: surfaceID, ComponentID: componentID, Type: "artifact"}}
 }

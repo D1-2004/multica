@@ -160,7 +160,7 @@ func (h *Handler) ExportUserDecisions(w http.ResponseWriter, r *http.Request) {
 		}
 		sample["snapshot"] = input
 		sample["interactions"] = interactions
-		for _, key := range []string{"sender_uid", "sender_org_id", "lease_token", "lease_expires_at", "send_request_id", "card_biz_id"} {
+		for _, key := range []string{"sender_uid", "sender_org_id", "lease_token", "lease_expires_at", "send_request_id"} {
 			delete(sample, key)
 		}
 		sample["label_source"] = "user_submission_not_gold"

@@ -36,7 +36,7 @@ func Card(id string, p Proposal) []string {
 		options = append(options, map[string]any{"label": o.Label, "value": o.ID})
 		questions = append(questions, map[string]any{"id": o.ID, "label": o.Label})
 	}
-	model := map[string]any{"clarification": map[string]any{"sourceTurnId": id, "sourceProjectionVersion": Version, "questions": []any{map[string]any{"id": "q0", "prompt": p.Question, "selection": "single", "allowCustom": true, "options": questions}}, "answers": map[string]any{"q0": map[string]any{"selected": []string{}, "custom": ""}}}}
+	model := map[string]any{"questionSummary": p.Question, "clarification": map[string]any{"sourceTurnId": id, "sourceProjectionVersion": Version, "questions": []any{map[string]any{"id": "q0", "prompt": p.Question, "selection": "single", "allowCustom": true, "options": questions}}, "answers": map[string]any{"q0": map[string]any{"selected": []string{}, "custom": ""}}}}
 	path := func(s string) map[string]string { return map[string]string{"path": "/clarification/" + s} }
 	action := map[string]any{"event": map[string]any{"name": "runtime.clarification.submit", "context": map[string]any{"outcome": "answered", "sourceTurnId": path("sourceTurnId"), "sourceProjectionVersion": path("sourceProjectionVersion"), "questions": path("questions"), "answers": path("answers")}}}
 	required := func(value any) map[string]any {
@@ -45,7 +45,7 @@ func Card(id string, p Proposal) []string {
 	checks := []any{map[string]any{"condition": map[string]any{"call": "or", "catalogId": catalog, "args": map[string]any{"values": []any{required(path("answers/q0/selected")), required(path("answers/q0/custom"))}}}, "message": "请选择一项或填写补充说明"}}
 	components := []any{
 		component("root", "Column", map[string]any{"children": []string{"question", "choices", "extra", "submit"}}),
-		component("question", "Text", map[string]any{"text": p.Question}),
+		map[string]any{"id": "question", "component": "Markdown", "catalogId": "https://dingtalk.com/card/a2ui/catalogs/public/catalog.json", "content": map[string]string{"path": "/questionSummary"}},
 		component("choices", "ChoicePicker", map[string]any{"options": options, "value": path("answers/q0/selected"), "variant": "mutuallyExclusive", "displayStyle": "checkbox"}),
 		component("extra", "TextField", map[string]any{"label": "补充说明（可选，也可以直接写你的想法）", "value": path("answers/q0/custom")}),
 		component("submitLabel", "Text", map[string]any{"text": "提交选择"}),
@@ -53,9 +53,22 @@ func Card(id string, p Proposal) []string {
 	}
 	return encodeMessages(map[string]any{"version": "v1.0", "createSurface": map[string]any{"surfaceId": id, "catalogId": "https://dingtalk.com/card/a2ui/catalogs/public/catalog.json", "dataModel": model}}, map[string]any{"version": "v1.0", "updateComponents": map[string]any{"surfaceId": id, "components": components}})
 }
+
+// WaitingCardUpdate updates only the question binding and components. Existing
+// answers survive reconnects, including cards created before summary bindings.
+func WaitingCardUpdate(id string, p Proposal) []string {
+	messages := encodeMessages(map[string]any{"version": "v1.0", "updateDataModel": map[string]any{"surfaceId": id, "path": "/questionSummary", "value": p.Question}})
+	return append(messages, Card(id, p)[1:]...)
+}
+
 func StatusCard(id, text string) []string {
-	const catalog = "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json"
-	return encodeMessages(map[string]any{"version": "v1.0", "updateComponents": map[string]any{"surfaceId": id, "components": []any{map[string]any{"id": "root", "component": "Column", "catalogId": catalog, "children": []string{"status"}}, map[string]any{"id": "status", "component": "Text", "catalogId": catalog, "text": text}}}})
+	const catalog = "https://dingtalk.com/card/a2ui/catalogs/public/catalog.json"
+	return encodeMessages(
+		map[string]any{"version": "v1.0", "updateDataModel": map[string]any{"surfaceId": id, "path": "/statusSummary", "value": text}},
+		map[string]any{"version": "v1.0", "updateComponents": map[string]any{"surfaceId": id, "components": []any{
+			map[string]any{"id": "root", "component": "Column", "catalogId": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json", "children": []string{"status"}},
+			map[string]any{"id": "status", "component": "Markdown", "catalogId": catalog, "content": map[string]string{"path": "/statusSummary"}},
+		}}})
 }
 func encodeMessages(messages ...any) []string {
 	out := make([]string, 0, len(messages))

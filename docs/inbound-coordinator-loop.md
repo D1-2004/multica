@@ -350,7 +350,7 @@ start_work/continue_work的接单回复由Host生成，模型仅可选择闭合r
 Diamond `dt-fde-multica-runtime.json` / `DEFAULT_GROUP` exposes `runtime.llm.coordinator_model`. Each decision snapshots the model once for the main loop, finish checks, logs and Langfuse; updates apply to the next decision. Missing/blank values retain `qwen3.7-plus` for existing documents during rollout. The configured target is `qwen3.8-max`. Requests keep `enable_thinking=false` and `reasoning_effort=none`; this setting does not change executor models or the global default. Local protocol tests do not certify real model behavior or deployment.
 
 
-### 发起人选择处理方式（2026-09-21，尚未完成产品接线及验收）
+### 发起人选择处理方式（2026-09-21，已接线，预发验收中）
 
 `inbound_coordinator_user_decision` 默认关闭；关闭 Coordinator 同时清除此设置。候选提案与执行 checkpoint 分开：`UserDecisionSnapshot` 保存冻结上下文、模型实际输入、召回任务、提案及 policy 版本，`proposeUserDecision` 在 `SavePlan` 之前返回等待。每次入站仅一次提问；续接最多三个真实任务，加新建与具体直接回复；卡片不暴露内部计划或默认勾选。
 
@@ -367,3 +367,5 @@ Diamond `dt-fde-multica-runtime.json` / `DEFAULT_GROUP` exposes `runtime.llm.coo
 补充说明解释的结构／引用校验失败允许最多三次内部修正，保留全部原始解释输出并提供冻结召回 ID 校验反馈；不增加用户询问，不修复或掩盖用户意图矛盾，不允许切换明确选择的目标。耗尽后未执行。
 
 用户提交后的 finish_check 仍校验结构、参与边界、目标与限制，但不执行旧自动路由中按审查理由关键词改判能力／开工方向的修正。显式选择由语义审查判断合法性，Host 不因 reason 中出现 tool、forbids 或 start_work 等词替换 verdict。R9 实测暴露误拒绝，修复验收单独记录。
+
+卡片问题与接收／执行状态使用公开 Catalog 的 Markdown 组件，并在创建和每次更新时发送对应 surface/component 的 artifact 注解；不能让 DWS 更新默认的空注解抹掉摘要。等待表单恢复仅更新问题绑定及组件，不重置 answers。数据集导出保留非凭证的 card_biz_id 供卡片关联，凭据、消费者身份和租约字段仍排除。摘要终态由独立内部群诊断卡实测验证，完整产品链路待部署验证。

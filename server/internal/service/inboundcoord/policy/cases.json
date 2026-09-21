@@ -1472,6 +1472,16 @@
       "context_b": "语义审查因真实限制或无依据回复返回 revise；用户选择不豁免合法性审查。",
       "expected_effects": "用户决策分支保留语义 verdict 与理由，不运行旧自动路由 prose 关键词改判；allow 可以回复，revise 不执行；结构、参与及目标检查仍生效。",
       "verification": "host_test_only"
+    },
+    {
+      "id": "user_decision_card_summary_and_recovery",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "创建／更新携带问题或状态 Markdown 的 artifact 注解，旧等待卡重连恢复问题绑定。",
+      "context_b": "更新省略注解导致 DWS 清空 artifact，或恢复表单覆盖用户已输入的答案。",
+      "expected_effects": "终态摘要展示实际状态；等待恢复保留 answers；只发布数据绑定和组件更新，不重发第二张卡。",
+      "verification": "host_test_only"
     }
   ]
 }

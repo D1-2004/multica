@@ -2,8 +2,11 @@ package dwsclient
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -40,4 +43,38 @@ exit 3
 	if err != nil || receipt.BizID != "card" {
 		t.Fatalf("noninteractive card creation failed: %v, %+v", err, receipt)
 	}
+}
+
+func TestA2UIUpdatesPreserveArtifactAnnotation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dws")
+	script := `#!/bin/sh
+printf '%s\n' "$@" > "$DWS_CONFIG_DIR/args"
+printf '%s' '{"success":true}'
+`
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	annotations := []A2UIAnnotation{{SurfaceID: "decision", ComponentID: "status", Type: "artifact"}}
+	if err := (CLI{Path: path}).UpdateA2UI(context.Background(), dir, "card", "FINISH", []string{"{}"}, annotations); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Split(string(raw), "\n")
+	for i, arg := range args {
+		if arg == "--a2ui-annotations" && i+1 < len(args) {
+			var actual []A2UIAnnotation
+			if err := json.Unmarshal([]byte(args[i+1]), &actual); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual, annotations) {
+				t.Fatalf("annotation changed: %+v", actual)
+			}
+			return
+		}
+	}
+	t.Fatal("update would clear artifact annotations")
 }

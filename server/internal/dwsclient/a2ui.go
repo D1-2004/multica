@@ -13,7 +13,14 @@ import (
 	"time"
 )
 
+type A2UIAnnotation struct {
+	SurfaceID   string `json:"surfaceId"`
+	ComponentID string `json:"componentId"`
+	Type        string `json:"type"`
+}
+
 type A2UISendRequest struct {
+	Annotations                               []A2UIAnnotation
 	ConversationID, BizID, RequestID, Summary string
 	Messages                                  []string
 }
@@ -32,7 +39,11 @@ func (c CLI) SendA2UI(ctx context.Context, dir string, in A2UISendRequest) (A2UI
 	if err != nil {
 		return A2UIReceipt{}, err
 	}
-	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+messages-send", "--as", "user", "--chat-id", in.ConversationID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--yes", "--format", "json"})
+	if in.Annotations == nil {
+		in.Annotations = []A2UIAnnotation{}
+	}
+	annotations, _ := json.Marshal(in.Annotations)
+	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+messages-send", "--as", "user", "--chat-id", in.ConversationID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--a2ui-annotations", string(annotations), "--yes", "--format", "json"})
 	if err != nil {
 		return A2UIReceipt{}, err
 	}
@@ -51,13 +62,17 @@ func parseA2UIReceipt(raw []byte) (A2UIReceipt, error) {
 	}
 	return response.Result.Result, nil
 }
-func (c CLI) UpdateA2UI(ctx context.Context, dir, bizID, status string, messages []string) error {
+func (c CLI) UpdateA2UI(ctx context.Context, dir, bizID, status string, messages []string, annotations []A2UIAnnotation) error {
 	valid := map[string]bool{"INPUTTING": true, "CONFIRMED": true, "EXECUTING": true, "FINISH": true, "ERROR": true, "ABORTED": true, "TIMEOUT": true}
 	if bizID == "" || !valid[status] || len(messages) == 0 {
 		return errors.New("invalid A2UI update")
 	}
 	body, _ := json.Marshal(messages)
-	raw, err := c.messageCommand(ctx, dir, []string{"chat", "message", "update-a2ui-card", "--biz-id", bizID, "--content", string(body), "--flow-status", status, "--format", "json"})
+	if annotations == nil {
+		annotations = []A2UIAnnotation{}
+	}
+	annotationJSON, _ := json.Marshal(annotations)
+	raw, err := c.messageCommand(ctx, dir, []string{"chat", "message", "update-a2ui-card", "--biz-id", bizID, "--content", string(body), "--flow-status", status, "--a2ui-annotations", string(annotationJSON), "--format", "json"})
 	if err != nil {
 		return err
 	}

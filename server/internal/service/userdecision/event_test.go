@@ -164,3 +164,29 @@ func TestStatusPreservesAcceptedChoiceAtCompletion(t *testing.T) {
 		t.Fatalf("waiting falsely acknowledged: %s %s", status, text)
 	}
 }
+
+func TestSummaryBindingsSurviveWaitingCardRecovery(t *testing.T) {
+	p := Proposal{Question: "请选择处理方式"}
+	updates := WaitingCardUpdate("decision", p)
+	var data struct {
+		UpdateDataModel struct {
+			Path  string `json:"path"`
+			Value string `json:"value"`
+		} `json:"updateDataModel"`
+	}
+	if err := json.Unmarshal([]byte(updates[0]), &data); err != nil {
+		t.Fatal(err)
+	}
+	if data.UpdateDataModel.Path != "/questionSummary" || data.UpdateDataModel.Value != p.Question {
+		t.Fatalf("wrong recovery binding: %+v", data)
+	}
+	if strings.Contains(strings.Join(updates, ""), `"createSurface"`) {
+		t.Fatal("recovery must not recreate or reset the form")
+	}
+	for _, messages := range [][]string{updates, StatusCard("decision", "已收到选择，尚未执行。")} {
+		raw := strings.Join(messages, "")
+		if !strings.Contains(raw, `"component":"Markdown"`) || !strings.Contains(raw, `"catalogId":"https://dingtalk.com/card/a2ui/catalogs/public/catalog.json"`) {
+			t.Fatal("summary needs a public Markdown artifact component")
+		}
+	}
+}
