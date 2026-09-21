@@ -204,3 +204,41 @@ func TestUserDecisionRealModelReplyReview(t *testing.T) {
 		})
 	}
 }
+
+// Replay the exact exported snapshot without modifying the accepted record or
+// invoking SavePlan. The artifact remains outside the repository.
+func TestUserDecisionRealFrozenSubmission(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_USER_DECISION_REPLAY") != "1" {
+		t.Skip("explicit preproduction model opt-in required")
+	}
+	path := os.Getenv("MULTICA_USER_DECISION_SNAPSHOT_FILE")
+	if path == "" {
+		t.Skip("explicit exported decision required")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sample struct {
+		Snapshot   UserDecisionSnapshot    `json:"snapshot"`
+		Submission userdecision.Submission `json:"submission"`
+	}
+	if err := json.Unmarshal(data, &sample); err != nil {
+		t.Fatal(err)
+	}
+	client := llm.New(llm.Config{APIKey: os.Getenv("MULTICA_LLM_API_KEY"), BaseURL: os.Getenv("MULTICA_LLM_BASE_URL"), DefaultModel: coordinatorModel, MaxRetries: -1})
+	if !client.Enabled() {
+		t.Fatal("preproduction model configuration required")
+	}
+	c := &Coordinator{LLM: client, model: os.Getenv("MULTICA_COORDINATOR_REPLAY_MODEL"), Tools: &stubTools{}}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	decision, audit, err := c.ResolveUserDecisionWithAudit(ctx, sample.Snapshot, sample.Submission)
+	if err != nil {
+		t.Fatalf("resolution failed: %v review=%+v", err, audit.Review)
+	}
+	if decision.Action != ActionReply {
+		t.Fatalf("expected reply, got %s", decision.Action)
+	}
+	t.Logf("frozen submission allowed: action=%s review=%+v", decision.Action, audit.Review)
+}

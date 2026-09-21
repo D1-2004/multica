@@ -1462,6 +1462,16 @@
       "context_b": "修正仍含无效动作、虚构任务或承诺执行工作的 receipt 回复，或补充说明把续接目标改成另一任务；conversation 动作正文承诺“我将继续修改”同样须被独立语义审查拒绝",
       "expected_effects": "仅合法冻结候选发一张卡；失败不提交计划，不把标签摘要当实际回复；明确方向不可被改写；补充解释引用不合法时仅在冻结范围内内部修正最多三次，保存每次输出，耗尽不执行",
       "verification": "host_test_only"
+    },
+    {
+      "id": "user_decision_semantic_verdict_not_keyword_routing",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "用户明确只确认收到、不新建或续接，选择独立回复；语义审查 allow 的理由提到 forbids start_work 或 tool permission。",
+      "context_b": "语义审查因真实限制或无依据回复返回 revise；用户选择不豁免合法性审查。",
+      "expected_effects": "用户决策分支保留语义 verdict 与理由，不运行旧自动路由 prose 关键词改判；allow 可以回复，revise 不执行；结构、参与及目标检查仍生效。",
+      "verification": "host_test_only"
     }
   ]
 }

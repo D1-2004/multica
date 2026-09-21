@@ -337,7 +337,8 @@
         "f01_uid_required_reply_rename",
         "f01_other_uid_same_name_quote",
         "user_decision_initiator_contrast",
-        "user_decision_proposal_repair_contrast"
+        "user_decision_proposal_repair_contrast",
+        "user_decision_semantic_verdict_not_keyword_routing"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -351,7 +352,8 @@
         "dialogue_history_guidance": "2026-09-10.6 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior.",
         "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending.",
         "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
-        "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback"
+        "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback",
+        "user_decision_r9": "Host regression and exact frozen R9 real-model replay passed; new deployed native submission pending. Frozen replay uses no SavePlan or executor."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -386,7 +388,8 @@
         "server/internal/service/inboundcoord/policy/conversation_reply.md",
         "server/internal/service/inboundcoord/user_decision.go",
         "server/internal/service/userdecision/event.go",
-        "server/internal/service/userdecision/store.go"
+        "server/internal/service/userdecision/store.go",
+        "server/internal/service/inboundcoord/finish_invented_capability_test.go"
       ],
       "case_file": "cases.json"
     },

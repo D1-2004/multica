@@ -294,7 +294,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		}
 		if protocolErr == nil {
 			modelVerdict := result.Verdict
-			protocolErr = validateFinishWorkChecks(&result, decision)
+			protocolErr = validateFinishWorkContract(&result, decision, turn.UserDecisionSubmission == nil)
 			if protocolErr == nil {
 				protocolErr = validateFinishParticipationChecks(&result, turn, decision)
 			}
@@ -502,6 +502,12 @@ func finishConstraintQuoteValid(quote string, turn Turn) bool {
 // The model assesses semantic independence explicitly; Host enforces the
 // one-deliverable action contract rather than interpreting prose in reason.
 func validateFinishWorkChecks(result *finishCheckResult, decision Decision) error {
+	return validateFinishWorkContract(result, decision, true)
+}
+
+// A submitted choice uses the semantic review verdict. Legacy automatic-routing
+// prose heuristics must not replace that verdict or select work for the user.
+func validateFinishWorkContract(result *finishCheckResult, decision Decision, automaticRouting bool) error {
 	expected := map[string]string{}
 	for i, a := range decision.CoordinationActions {
 		if a.Kind == "start_work" || a.Kind == "continue_work" {
@@ -521,7 +527,9 @@ func validateFinishWorkChecks(result *finishCheckResult, decision Decision) erro
 			}
 			applyFinishWorkCheckKindRepair(result, check, expected[check.ActionRef], len(expected) > 1)
 		}
-		applyInventedCapabilityRepair(result, expected)
+		if automaticRouting {
+			applyInventedCapabilityRepair(result, expected)
+		}
 		result.WorkChecks = nil
 		return nil
 	}
@@ -551,7 +559,9 @@ func validateFinishWorkChecks(result *finishCheckResult, decision Decision) erro
 	if len(seen) != len(expected) {
 		return fmt.Errorf("finish check did not assess every work action")
 	}
-	applyInventedCapabilityRepair(result, expected)
+	if automaticRouting {
+		applyInventedCapabilityRepair(result, expected)
+	}
 	return nil
 }
 
