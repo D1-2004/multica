@@ -1502,6 +1502,16 @@
       "context_b": "请求等待超过五分钟且订阅未就绪，或发卡未知、接受恢复、卡片更新持续延迟",
       "expected_effects": "A仅统计正常等待，不提醒；B持久通知有效Agent所有者但不代选，环境/工作区隔离，多实例重启不重复通知同一问题",
       "verification": "preproduction_verification_pending"
+    },
+    {
+      "id": "user_decision_provider_tool_choice_contrast",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "Qwen完整上下文强制工具请求返回已实测的provider400 Invalid request parameters",
+      "context_b": "鉴权/网络/其他参数错误，或兼容重试仅返回自由文本",
+      "expected_effects": "A原样保留上下文与工具，只切auto重试一次；B不走该兼容重试，任何自由文本均不得成为候选或提交执行计划",
+      "verification": "host_test_only"
     }
   ]
 }

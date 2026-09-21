@@ -156,6 +156,15 @@ type userDecisionReplayRecorder struct {
 
 func (r *userDecisionReplayRecorder) Chat(ctx context.Context, p openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
 	c, err := r.inner.Chat(ctx, p)
+	if err != nil {
+		names := []string{}
+		for _, tool := range p.Tools {
+			if tool.OfFunction != nil {
+				names = append(names, tool.OfFunction.Function.Name)
+			}
+		}
+		r.t.Logf("failed model call tools=%v messages=%d reasoning=%s token_limit=%d", names, len(p.Messages), p.ReasoningEffort, p.MaxCompletionTokens.Value)
+	}
 	if c != nil {
 		for _, choice := range c.Choices {
 			for _, call := range choice.Message.ToolCalls {
