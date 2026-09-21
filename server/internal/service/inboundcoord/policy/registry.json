@@ -291,15 +291,15 @@
     },
     {
       "id": "user_decision",
-      "version": "3",
+      "version": "4",
       "file": "user_decision.md",
       "applies_when": "user_decision",
       "requires": [],
       "owns_rule_ids": [
         "COORD.F01"
       ],
-      "budget_characters": 3145,
-      "content_sha256": "3d7bcd08b5847658f5dd6b603d9af87e3391bd0d793156e45a775c014347059a"
+      "budget_characters": 3838,
+      "content_sha256": "754aeca9e3d76c137c49e55f0f9a2dc122ff2e8691f6966877217109447baba4"
     }
   ],
   "obligations": [

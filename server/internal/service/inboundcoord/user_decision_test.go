@@ -45,7 +45,7 @@ func TestUnknownChoiceCannotCommitPlan(t *testing.T) {
 func TestUserDecisionReviewPolicyIsSelected(t *testing.T) {
 	turn := Turn{Loop: LoopFinishCheck, UserDecisionSubmission: &userdecision.Submission{OptionID: "o1"}}
 	prompt := buildSystemPrompt(turn)
-	if !strings.Contains(prompt, "[policy:user_decision@3]") {
+	if !strings.Contains(prompt, "[policy:user_decision@4]") {
 		t.Fatal("review did not receive locked-choice policy")
 	}
 }
@@ -80,7 +80,7 @@ func TestUserDecisionCandidatesNeverSaveExecutionPlan(t *testing.T) {
 func TestUserDecisionProposalFreezesChoicesBeforeCheckpoint(t *testing.T) {
 	turn := Turn{Source: SourceRobot, Addressed: true, Message: "帮我整理一份报告", UserDecisionEnabled: true}
 	proposal := `{"question":"希望如何处理？","recommended_id":"new","options":[{"id":"new","label":"新建工作：整理报告","kind":"start_work","plan":{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"整理一份报告","intent":"other"}]}},{"id":"reply","label":"直接回复：我可以帮你整理报告。","kind":"reply","plan":{"actions":[{"kind":"describe_capabilities","source_refs":["u1"],"reply":"我可以帮你整理报告。"}]}}]}`
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("choices", "propose_choices", proposal)}}
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("choices", "propose_choices", proposal), assistantTool("review", "review_choices", `{"allowed":true,"reason":"supported alternatives"}`)}}
 	c := &Coordinator{Chat: chat}
 	commits := 0
 	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { commits++; return nil })
@@ -114,7 +114,7 @@ func TestUserDecisionProposalFreezesChoicesBeforeCheckpoint(t *testing.T) {
 func TestUserDecisionProposalRepairsBeforeShowingOneQuestion(t *testing.T) {
 	turn := Turn{Source: SourceRobot, Addressed: true, Message: "整理报告", UserDecisionEnabled: true}
 	valid := `{"question":"怎么处理？","recommended_id":"new","options":[{"id":"new","label":"新建工作","kind":"start_work","plan":{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"整理一份完整可转发报告"}]}},{"id":"reply","label":"模型摘要","kind":"reply","plan":{"actions":[{"kind":"acknowledge","source_refs":["u1"],"reply":"你好","ack_kind":"greeting"}]}}]}`
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("invalid", "propose_choices", `{"question":"怎么处理？","options":[]}`), assistantTool("valid", "propose_choices", valid)}}
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("invalid", "propose_choices", `{"question":"怎么处理？","options":[]}`), assistantTool("valid", "propose_choices", valid), assistantTool("review", "review_choices", `{"allowed":true,"reason":"supported alternatives"}`)}}
 	c := &Coordinator{Chat: chat}
 	commits := 0
 	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { commits++; return nil })
@@ -160,5 +160,29 @@ func TestUserDecisionSubmissionLocksDirection(t *testing.T) {
 				t.Fatal("missing interpretation or premature commit")
 			}
 		})
+	}
+}
+
+func TestUserDecisionSemanticReviewRepairsMislabeledReceipt(t *testing.T) {
+	turn := Turn{Source: SourceRobot, Addressed: true, Message: "整理报告", UserDecisionEnabled: true}
+	bad := `{"question":"怎么处理？","recommended_id":"new","options":[{"id":"new","label":"新建工作","kind":"start_work","plan":{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"整理报告"}]}},{"id":"reply","label":"回复","kind":"reply","plan":{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"conversation","reply":"我将继续修改报告。"}]}}]}`
+	good := strings.ReplaceAll(bad, "我将继续修改报告。", "当前材料是一份报告。")
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("bad", "propose_choices", bad),
+		assistantTool("reject", "review_choices", `{"allowed":false,"reason":"reply promises execution despite conversation label"}`),
+		assistantTool("good", "propose_choices", good),
+		assistantTool("allow", "review_choices", `{"allowed":true,"reason":"reply is standalone"}`),
+	}}
+	commits := 0
+	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { commits++; return nil })
+	d, err := (&Coordinator{Chat: chat}).proposeUserDecision(ctx, turn, nil, nil, nil, Decision{Action: ActionIssue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commits != 0 || d.UserDecision == nil || len(d.UserDecision.ProposalReviews) != 2 || len(d.UserDecision.ProposalAttempts) != 2 {
+		t.Fatal("review evidence missing or premature execution")
+	}
+	if strings.Contains(d.UserDecision.Proposal.Options[1].Label, "继续修改") {
+		t.Fatal("rejected reply shown")
 	}
 }

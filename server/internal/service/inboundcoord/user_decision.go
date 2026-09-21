@@ -25,6 +25,7 @@ type UserDecisionSnapshot struct {
 	Recommended      Decision                                 `json:"recommended"`
 	ProposalPolicy   PolicyModuleManifest                     `json:"proposal_policy"`
 	Policy           PolicyManifest                           `json:"policy"`
+	ProposalReviews  []json.RawMessage                        `json:"proposal_reviews,omitempty"`
 	ProposalAttempts []string                                 `json:"proposal_attempts,omitempty"`
 	Proposal         userdecision.Proposal                    `json:"proposal"`
 }
@@ -48,6 +49,7 @@ func (c *Coordinator) proposeUserDecision(ctx context.Context, turn Turn, messag
 	proposalMessages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence))}
 	var p userdecision.Proposal
 	var attempts []string
+	var reviews []json.RawMessage
 	var validationErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		generation := startUserDecisionGeneration(ctx, "coordinator.propose_choices", c.configuredModel(), proposalMessages, 4096)
@@ -93,6 +95,13 @@ func (c *Coordinator) proposeUserDecision(ctx context.Context, turn Turn, messag
 			validationErr = p.Validate()
 		}
 		if validationErr == nil {
+			review, reviewErr := c.reviewUserDecisionProposal(ctx, turn, evidence, p)
+			if len(review) > 0 {
+				reviews = append(reviews, review)
+			}
+			validationErr = reviewErr
+		}
+		if validationErr == nil {
 			break
 		}
 		feedback, _ := json.Marshal(map[string]any{"proposal_validation_error": validationErr.Error(), "previous_proposal": call.Arguments})
@@ -103,13 +112,48 @@ func (c *Coordinator) proposeUserDecision(ctx context.Context, turn Turn, messag
 	}
 	p.Model = c.configuredModel()
 	p.RawOutput = attempts[len(attempts)-1]
-	snapshot := &UserDecisionSnapshot{Turn: turn, Messages: messages, Recalls: recalls, RecalledIDs: sortedCopy(turn.recalledIssueIDs), Recommended: recommended, Policy: policyManifestForStage(turn, len(recalled) > 0), Proposal: p, ProposalAttempts: attempts}
+	snapshot := &UserDecisionSnapshot{Turn: turn, Messages: messages, Recalls: recalls, RecalledIDs: sortedCopy(turn.recalledIssueIDs), Recommended: recommended, Policy: policyManifestForStage(turn, len(recalled) > 0), Proposal: p, ProposalAttempts: attempts, ProposalReviews: reviews}
 	for _, module := range coordinatorPolicy.Modules {
 		if module.ID == "user_decision" {
 			snapshot.ProposalPolicy = PolicyModuleManifest{ID: module.ID, Version: module.Version, Hash: module.ContentHash}
 		}
 	}
 	return Decision{Action: ActionAwaitUser, UserText: p.Question, Reason: "awaiting_initiator", UserDecision: snapshot}, nil
+}
+
+// Review the frozen alternatives before display; this does not choose for the user.
+func (c *Coordinator) reviewUserDecisionProposal(ctx context.Context, turn Turn, evidence []byte, proposal userdecision.Proposal) (json.RawMessage, error) {
+	input, err := json.Marshal(map[string]any{"evidence": json.RawMessage(evidence), "proposal": proposal})
+	if err != nil {
+		return nil, err
+	}
+	messages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(input))}
+	tool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "review_choices", Parameters: shared.FunctionParameters{
+		"type": "object", "additionalProperties": false, "required": []string{"allowed", "reason"}, "properties": map[string]any{
+			"allowed": map[string]any{"type": "boolean"}, "reason": map[string]any{"type": "string"},
+		},
+	}})
+	generation := startUserDecisionGeneration(ctx, "coordinator.review_choices", c.configuredModel(), messages, 1024)
+	response, err := c.completeWithLimit(ctx, messages, []openai.ChatCompletionToolUnionParam{tool}, 1024, temperature)
+	endRoundGeneration(generation, response, err)
+	if err != nil {
+		return nil, err
+	}
+	if response == nil || len(response.Choices) != 1 || len(response.Choices[0].Message.ToolCalls) != 1 || response.Choices[0].Message.ToolCalls[0].Function.Name != "review_choices" {
+		return nil, errors.New("missing candidate semantic review")
+	}
+	raw := json.RawMessage(response.Choices[0].Message.ToolCalls[0].Function.Arguments)
+	var review struct {
+		Allowed *bool  `json:"allowed"`
+		Reason  string `json:"reason"`
+	}
+	if json.Unmarshal(raw, &review) != nil || review.Allowed == nil || review.Reason == "" {
+		return raw, errors.New("invalid candidate semantic review")
+	}
+	if !*review.Allowed {
+		return raw, fmt.Errorf("candidate semantic review: %s", review.Reason)
+	}
+	return raw, nil
 }
 
 func validateChoiceDirection(o userdecision.Option, d Decision) error {
