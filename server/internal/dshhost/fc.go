@@ -243,17 +243,15 @@ func (p *FCProvider) DestroyAndConfirmAbsent(ctx context.Context, id string) err
 	if err != nil && status != http.StatusNotFound {
 		return err
 	}
-	deadline := time.Now().Add(destroyAbsenceWait)
+	confirmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), destroyAbsenceWait)
+	defer cancel()
 	for {
-		if p.sandboxAbsent(ctx, id) {
+		if p.sandboxAbsent(confirmCtx, id) {
 			return nil
 		}
-		if time.Now().After(deadline) {
-			return errors.New("DSH FC old sandbox absence is unconfirmed")
-		}
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-confirmCtx.Done():
+			return errors.New("DSH FC old sandbox absence is unconfirmed")
 		case <-time.After(destroyAbsencePoll):
 		}
 	}

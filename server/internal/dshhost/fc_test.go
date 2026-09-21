@@ -25,6 +25,22 @@ func fakeFC(t *testing.T, handler http.HandlerFunc) *FCProvider {
 	return p
 }
 
+func TestFCDestroyConfirmsAbsenceIndependentOfCallerCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := fakeFC(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" {
+			w.WriteHeader(202)
+			return
+		}
+		cancel()
+		w.WriteHeader(404)
+	})
+	if err := p.DestroyAndConfirmAbsent(ctx, "sandbox-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFCDeleteRequiresAuthoritativeAbsence(t *testing.T) {
 	for _, status := range []int{200, 202, 403, 500, 404} {
 		t.Run(http.StatusText(status), func(t *testing.T) {

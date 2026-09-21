@@ -252,6 +252,56 @@ func TestTransportErrorDoesNotAbandonStaleCreate(t *testing.T) {
 	}
 }
 
+type deadlineCloud struct {
+	cloud
+}
+
+func (p *deadlineCloud) DestroyAndConfirmAbsent(ctx context.Context, id string) error {
+	p.mu.Lock()
+	p.live = map[uuid.UUID]string{}
+	p.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return context.DeadlineExceeded
+}
+
+func (p *deadlineCloud) SandboxAbsent(ctx context.Context, id string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return p.cloud.SandboxAbsent(ctx, id)
+}
+
+func TestCancelledDestroyCompletesRetireWhenSandboxGone(t *testing.T) {
+	a, _ := stores(t)
+	h := bind(t, a)
+	p := &deadlineCloud{}
+	m := Manager{a, p}
+	ctx := context.Background()
+	first, err := m.Ensure(ctx, h.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retiring, err := a.BeginRetire(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := m.finishRetire(cancelCtx, retiring); err != nil {
+		t.Fatal(err)
+	}
+	got, err := a.Get(ctx, h.Key)
+	if err != nil || got.State != "offline" || got.Generation != first.Generation {
+		t.Fatalf("host=%+v err=%v", got, err)
+	}
+	next, err := m.Ensure(ctx, h.Key, "template-2")
+	if err != nil || next.Generation != 2 || p.creates != 2 {
+		t.Fatalf("host=%+v err=%v creates=%d", next, err, p.creates)
+	}
+}
+
 func TestFailedHealthAndDestroyNeverAuthorizeReplacement(t *testing.T) {
 	a, b := stores(t)
 	h := bind(t, a)

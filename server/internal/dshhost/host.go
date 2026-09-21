@@ -249,9 +249,13 @@ func (m Manager) sandboxGone(ctx context.Context, id string) bool {
 func (m Manager) finishRetire(ctx context.Context, h Host) error {
 	err := m.Provider.DestroyAndConfirmAbsent(ctx, h.SandboxID)
 	if err != nil {
-		if m.sandboxGone(ctx, h.SandboxID) && (h.stale(retireStaleAfter) || errors.Is(err, context.DeadlineExceeded)) {
-			commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-			defer cancel()
+		// Caller deadline/cancel must not hide a GET 404: otherwise the host
+		// stays retiring and Ensure can never rebuild the employee volume.
+		inspectCtx, inspectCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer inspectCancel()
+		if m.sandboxGone(inspectCtx, h.SandboxID) && (h.stale(retireStaleAfter) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+			commitCtx, commitCancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer commitCancel()
 			return m.Store.CompleteRetire(commitCtx, h)
 		}
 		return fmt.Errorf("%w: %s", ErrPending, WaitDestroyUnconfirmed)
