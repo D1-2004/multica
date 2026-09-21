@@ -95,6 +95,20 @@ func (s PostgresStore) BeginRetire(ctx context.Context, h Host) (Host, error) {
  RETURNING `+columns, h.WorkspaceID, h.AgentID, h.Generation, h.SandboxID))
 }
 
+func (s PostgresStore) AbortRetire(ctx context.Context, h Host) error {
+	result, err := s.DB.Exec(ctx, `UPDATE dsh_employee_host
+ SET state='running', updated_at=now()
+ WHERE workspace_id=$1 AND agent_id=$2 AND generation=$3 AND sandbox_id=$4 AND state='retiring'`,
+		h.WorkspaceID, h.AgentID, h.Generation, h.SandboxID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrChanged
+	}
+	return nil
+}
+
 func (s PostgresStore) CompleteRetire(ctx context.Context, h Host) error {
 	result, err := s.DB.Exec(ctx, `UPDATE dsh_employee_host
  SET state='offline', sandbox_id='', create_intent=NULL, updated_at=now()

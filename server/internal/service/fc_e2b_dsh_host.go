@@ -356,10 +356,18 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		if loadErr != nil {
 			return dshhost.Host{}, false, loadErr
 		}
-		if err = manager.Retire(ctx, key, current.Generation); err != nil {
-			reason := dshhost.WaitDestroyUnconfirmed
-			if strings.Contains(err.Error(), dshhost.WaitCreateIntentStale) {
-				reason = dshhost.WaitCreateIntentStale
+		if err = manager.RetireUnlessBusy(ctx, key, current.Generation, func(retired dshhost.Host) (bool, error) {
+			var granted bool
+			qErr := conn.QueryRow(ctx, `SELECT EXISTS (
+ SELECT 1 FROM dsh_native_access n
+ WHERE n.workspace_id=$1 AND n.agent_id=$2 AND n.sandbox_id=$3 AND n.generation=$4
+ AND n.parent_access_id IS NULL AND n.kind IN ('entry','session') AND n.expires_at>now())`,
+				rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, retired.SandboxID, retired.Generation).Scan(&granted)
+			return granted, qErr
+		}); err != nil {
+			reason := dshWaitReason(err)
+			if reason == "dsh_host_waiting" {
+				reason = dshhost.WaitDestroyUnconfirmed
 			}
 			slog.Info("dsh host waiting", "reason", reason, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", current.Generation, "sandbox_id", current.SandboxID)
 			return dshhost.Host{}, false, waitDSHHost(reason)

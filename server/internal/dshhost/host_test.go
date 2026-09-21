@@ -302,6 +302,26 @@ func TestCancelledDestroyCompletesRetireWhenSandboxGone(t *testing.T) {
 	}
 }
 
+func TestRetireAbortsWhenHoldAppearsAfterBegin(t *testing.T) {
+	a, _ := stores(t)
+	h := bind(t, a)
+	p := &cloud{}
+	m := Manager{a, p}
+	ctx := context.Background()
+	first, err := m.Ensure(ctx, h.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = m.RetireUnlessBusy(ctx, first.Key, first.Generation, func(Host) (bool, error) { return true, nil })
+	if !errors.Is(err, ErrPending) {
+		t.Fatal(err)
+	}
+	got, err := a.Get(ctx, first.Key)
+	if err != nil || got.State != "running" || got.SandboxID != first.SandboxID || p.destroys != 0 {
+		t.Fatalf("aborted retire destroyed host: %+v destroys=%d err=%v", got, p.destroys, err)
+	}
+}
+
 func TestFailedHealthAndDestroyNeverAuthorizeReplacement(t *testing.T) {
 	a, b := stores(t)
 	h := bind(t, a)
