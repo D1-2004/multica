@@ -1492,6 +1492,16 @@
       "context_b": "过期或取消的未执行决策收到迟到提交。",
       "expected_effects": "回执不清理解析租约；卡片重试不重派执行；过期取消拒绝提交，不生成虚假选择，仅恢复终态说明。",
       "verification": "host_test_only"
+    },
+    {
+      "id": "user_decision_monitor_contrast",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "发起人尚未选择，订阅健康，等待十分钟",
+      "context_b": "请求等待超过五分钟且订阅未就绪，或发卡未知、接受恢复、卡片更新持续延迟",
+      "expected_effects": "A仅统计正常等待，不提醒；B持久通知有效Agent所有者但不代选，环境/工作区隔离，多实例重启不重复通知同一问题",
+      "verification": "preproduction_verification_pending"
     }
   ]
 }

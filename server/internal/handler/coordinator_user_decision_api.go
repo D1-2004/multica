@@ -61,7 +61,7 @@ func (h *Handler) UserDecisionHealth(w http.ResponseWriter, r *http.Request) {
  'card_update_pending',d.card_update_pending,'decision_updated_at',d.updated_at)
  FROM coordinator_user_decision d LEFT JOIN coordinator_user_decision_consumer c
  ON c.environment=d.environment AND c.sender_uid=d.sender_uid AND c.sender_org_id=d.sender_org_id
- WHERE d.workspace_id=$1 AND d.agent_id=$2 ORDER BY d.created_at DESC LIMIT 100`, ws, uuidToString(agent.ID))
+ WHERE d.workspace_id=$1 AND d.agent_id=$2 AND d.environment=$3 ORDER BY d.created_at DESC LIMIT 100`, ws, uuidToString(agent.ID), h.UserDecisions.Store.Environment)
 	if err != nil {
 		writeError(w, 500, "could not read decision health")
 		return
@@ -80,8 +80,14 @@ func (h *Handler) UserDecisionHealth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "could not read decision health")
 		return
 	}
+	rows.Close()
+	metrics, err := h.UserDecisions.Store.Metrics(r.Context(), ws, uuidToString(agent.ID))
+	if err != nil {
+		writeError(w, 500, "could not read decision metrics")
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, 200, map[string]any{"environment": h.UserDecisions.Store.Environment, "decisions": items})
+	writeJSON(w, 200, map[string]any{"environment": h.UserDecisions.Store.Environment, "decisions": items, "metrics": metrics})
 }
 
 func (h *Handler) ExportUserDecisions(w http.ResponseWriter, r *http.Request) {

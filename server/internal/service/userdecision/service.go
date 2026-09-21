@@ -16,11 +16,12 @@ import (
 
 type ResolveFunc func(context.Context, Request) (plan, interpretation json.RawMessage, err error)
 type Service struct {
-	Store     *Store
-	Pool      *pgxpool.Pool
-	Transport Transport
-	Resolve   ResolveFunc
-	Wake      func()
+	Store       *Store
+	Pool        *pgxpool.Pool
+	Transport   Transport
+	Resolve     ResolveFunc
+	Wake        func()
+	NotifyAlert func(Alert)
 }
 
 // Run supervises one leased consumer per sender identity across all replicas.
@@ -35,7 +36,24 @@ func (s *Service) Run(ctx context.Context) {
 	defer wg.Wait()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	// Allow subscription ownership to settle during rolling restarts.
+	nextMonitor := time.Now().Add(2 * time.Minute)
 	for {
+		if time.Now().After(nextMonitor) {
+			monitorCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			alerts, err := s.Store.Monitor(monitorCtx)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				slog.Error("user decision monitor failed", "event", "user_decision_monitor_failed")
+			}
+			for _, alert := range alerts {
+				slog.Warn("user decision needs attention", "event", "user_decision_alert", "decision_id", alert.DecisionID, "reason", alert.Reason)
+				if s.NotifyAlert != nil {
+					s.NotifyAlert(alert)
+				}
+			}
+			nextMonitor = time.Now().Add(time.Minute)
+		}
 		if err := s.Store.Sweep(ctx); err != nil && ctx.Err() == nil {
 			slog.Error("user decision sweep failed", "event", "user_decision_sweep_failed")
 		}

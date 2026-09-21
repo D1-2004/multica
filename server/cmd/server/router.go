@@ -822,6 +822,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		decisionEnv = "staging"
 	}
 	h.UserDecisions = &userdecision.Service{Pool: pool, Store: &userdecision.Store{DB: pool, Environment: decisionEnv, Blobs: h.Storage}, Transport: dingtalkresponse.NewDecisionTransport(dingtalkresponse.DWSConfig{AgentIdentity: agentidentityhsf.NewClient(), BaseURL: signupConfig.FCE2B.AgentIdentityControlBaseURL, BaseURLProvider: agentIdentityControlBaseURLProvider, ClientSecret: signupConfig.FCE2B.DWSClientSecret}, decisionMCP), Wake: h.InboundCoordinatorWorker.Notify}
+	h.UserDecisions.NotifyAlert = func(alert userdecision.Alert) {
+		var item map[string]any
+		if json.Unmarshal(alert.Item, &item) == nil {
+			bus.Publish(events.Event{Type: protocol.EventInboxNew, WorkspaceID: alert.WorkspaceID, ActorType: "system", Payload: map[string]any{"item": item}})
+		}
+	}
 	h.UserDecisions.Resolve = func(ctx context.Context, r userdecision.Request) (json.RawMessage, json.RawMessage, error) {
 		raw, err := h.UserDecisions.Store.Snapshot(ctx, r)
 		if err != nil {
