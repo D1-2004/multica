@@ -30,7 +30,19 @@ type dshNativeAuthorityBridge struct {
 	key     ed25519.PrivateKey
 	mu      sync.Mutex
 	workers map[string]*dshAuthorityWorker
+	// Capability hints only; authorization always checks the live persisted Host.
+	unsupported map[dshSessionCapabilityKey]time.Time
 }
+type dshSessionCapabilityKey struct {
+	workspace, agent uuid.UUID
+	generation       int64
+	sandbox          string
+}
+
+func sessionCapabilityKey(host dshhost.Host) dshSessionCapabilityKey {
+	return dshSessionCapabilityKey{host.WorkspaceID, host.AgentID, host.Generation, host.SandboxID}
+}
+
 type dshAuthorityWorker struct {
 	until  time.Time
 	ready  chan struct{}
@@ -42,6 +54,7 @@ type dshAuthorityRequest struct {
 	Exchange bool            `json:"exchange"`
 	Prompt   json.RawMessage `json:"prompt,omitempty"`
 	Workdir  string          `json:"workdir,omitempty"`
+	Source   string          `json:"source,omitempty"`
 }
 type dshAuthorityPacket struct {
 	Payload   string `json:"payload"`
@@ -158,7 +171,9 @@ func dshNativePoll(ctx context.Context, client *http.Client, origin, token, cont
 	}
 	seen := map[string]bool{}
 	for _, r := range envelope.Requests {
-		if !dshAuthorityRequestID.MatchString(r.ID) || seen[r.ID] || len(r.Token) != 48 || (inputLane && (r.Exchange || len(r.Prompt) == 0 || !strings.HasPrefix(r.Token, "dngs_"))) || (!inputLane && len(r.Prompt) > 0) {
+		hostInput := inputLane && r.Source == "host" && r.Token == "" && !r.Exchange && len(r.Prompt) > 0
+		browserInput := r.Source == "" && len(r.Token) == 48 && (!inputLane || (!r.Exchange && len(r.Prompt) > 0 && strings.HasPrefix(r.Token, "dngs_"))) && (inputLane || len(r.Prompt) == 0)
+		if !dshAuthorityRequestID.MatchString(r.ID) || seen[r.ID] || (!hostInput && !browserInput) {
 			return nil, errors.New("invalid DSH authority request")
 		}
 		seen[r.ID] = true
@@ -220,6 +235,34 @@ func (b *dshNativeAuthorityBridge) serve(key string, worker *dshAuthorityWorker,
 // EnsureDSHNativeAuthority starts independent authorization and input transports. It never
 // creates, renews, destroys, leases or replaces an employee writer.
 func (l *FCE2BLauncher) EnsureDSHNativeAuthority(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit) (string, error) {
+	return l.ensureDSHNativeAuthority(ctx, host, manager, submit, false)
+}
+
+// Refresh only the new standard service. Existing images retain their browser lifecycle.
+func (l *FCE2BLauncher) EnsureDSHSessionInputs(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit) error {
+	if l != nil && l.nativeAuthority != nil {
+		l.nativeAuthority.mu.Lock()
+		if time.Now().Before(l.nativeAuthority.unsupported[sessionCapabilityKey(host)]) {
+			l.nativeAuthority.mu.Unlock()
+			return nil
+		}
+		active := false
+		for key, worker := range l.nativeAuthority.workers {
+			if strings.HasPrefix(key, "true/"+host.WorkspaceID.String()+"/"+host.AgentID.String()+"/"+strconv.FormatInt(host.Generation, 10)+"/") && strings.Contains(key, "/"+host.SandboxID+"/") && !worker.failed {
+				worker.until = time.Now().Add(dshhost.NativeSessionLifetime)
+				active = true
+			}
+		}
+		l.nativeAuthority.mu.Unlock()
+		if active {
+			return nil
+		}
+	}
+	_, err := l.ensureDSHNativeAuthority(ctx, host, manager, submit, true)
+	return err
+}
+
+func (l *FCE2BLauncher) ensureDSHNativeAuthority(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit, managedOnly bool) (string, error) {
 	l = l.withCurrentConfig()
 	if l == nil || l.nativeAuthority == nil {
 		return "", errors.New("DSH authority is unavailable")
@@ -233,11 +276,30 @@ func (l *FCE2BLauncher) EnsureDSHNativeAuthority(ctx context.Context, host dshho
 		return "", errors.New("DSH authority readiness is unconfirmed")
 	}
 	var receipt struct {
-		TransportToken string `json:"transport_token"`
-		InputToken     string `json:"input_transport_token"`
+		TransportToken  string `json:"transport_token"`
+		InputToken      string `json:"input_transport_token"`
+		ManagedSessions int    `json:"managed_sessions"`
 	}
 	if json.Unmarshal([]byte(out), &receipt) != nil || (!regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`).MatchString(receipt.TransportToken) || !regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`).MatchString(receipt.InputToken)) {
 		return "", errors.New("DSH authority transport is unavailable")
+	}
+	if managedOnly && receipt.ManagedSessions != 1 {
+		// A legacy sandbox cannot gain this image capability without replacement.
+		// Avoid a remote exec every profile reconciliation for every old Host.
+		b := l.nativeAuthority
+		b.mu.Lock()
+		if b.unsupported == nil {
+			b.unsupported = make(map[dshSessionCapabilityKey]time.Time)
+		}
+		now := time.Now()
+		for key, until := range b.unsupported {
+			if !now.Before(until) {
+				delete(b.unsupported, key)
+			}
+		}
+		b.unsupported[sessionCapabilityKey(host)] = now.Add(time.Hour)
+		b.mu.Unlock()
+		return origin, nil
 	}
 	if err := l.nativeAuthority.ensure(ctx, origin, authority, receipt.TransportToken, host, manager); err != nil {
 		return "", err

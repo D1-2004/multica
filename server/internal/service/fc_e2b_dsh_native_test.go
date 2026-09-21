@@ -92,3 +92,34 @@ func TestDSHNativeGatewayRejectsUntrustedAddresses(t *testing.T) {
 		t.Fatal("retiring Host accepted")
 	}
 }
+
+func TestDSHSessionRefreshDoesNotRepeatedlyExecuteOnLegacyHosts(t *testing.T) {
+	host := dshhost.Host{Key: dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, State: "running", Generation: 3, SandboxID: "sbx-legacy"}
+	config := FCE2BConfig{DSHNativeAuthority: "https://pre.multica.test", Domain: "fc.example.test", APIKey: "fixture", APIURL: "https://api.fc.example.test"}
+	b := newDSHNativeAuthorityBridge("fixture-secret")
+	origin, authority, _ := dshNativeGatewayAddress(config, host)
+	raw, _ := json.Marshal(struct {
+		dshNativeGatewayReceipt
+		Transport string `json:"transport_token"`
+		Input     string `json:"input_transport_token"`
+	}{dshNativeGatewayReceipt{PublicKey: b.publicKey(), Version: 3, Ready: true, WorkspaceID: host.WorkspaceID.String(), AgentID: host.AgentID.String(), Generation: host.Generation, SandboxID: host.SandboxID, Port: DSHNativeGatewayPort, Authority: authority, Origin: origin}, strings.Repeat("a", 43), strings.Repeat("b", 43)})
+	runner := &fakeCommandRunner{out: []string{string(raw), string(raw)}}
+	l := &FCE2BLauncher{nativeAuthority: b, ConfigProvider: func() FCE2BConfig { return config }, Runner: runner}
+	for i := 0; i < 100; i++ {
+		if err := l.EnsureDSHSessionInputs(context.Background(), host, dshhost.NativeAccessManager{}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("legacy image incurred %d remote probes", len(runner.calls))
+	}
+	// A replacement must be probed and its stale receipt rejected, never hidden
+	// by a capability observation about an earlier Host generation.
+	host.Generation++
+	if err := l.EnsureDSHSessionInputs(context.Background(), host, dshhost.NativeAccessManager{}, nil); err == nil {
+		t.Fatal("replacement skipped live readiness")
+	}
+	if len(runner.calls) != 2 {
+		t.Fatal("replacement was not probed")
+	}
+}

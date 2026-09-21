@@ -461,3 +461,20 @@ func TestDSHNativeChatTypedPersistenceAndBusySteer(t *testing.T) {
 		t.Fatal("rejected steer left a task or event")
 	}
 }
+
+func TestDSHNativeHostAdmissionRequiresCurrentOwner(t *testing.T) {
+	a, session, agent := nativeChatTestIdentity()
+	a.access.Kind, a.access.ID = "host", uuid.Nil
+	if err := a.validateIdentity(session, agent, session.CreatorID); err != nil {
+		t.Fatal(err)
+	}
+	agent.OwnerID.Bytes = uuid.New()
+	if a.validateIdentity(session, agent, session.CreatorID) == nil {
+		t.Fatal("former owner admitted plugin input")
+	}
+	agent.OwnerID = session.CreatorID
+	a.access.Kind = "session"
+	if a.validateIdentity(session, agent, session.CreatorID) == nil {
+		t.Fatal("browser principal without grant admitted")
+	}
+}
