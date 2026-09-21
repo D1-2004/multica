@@ -45,7 +45,7 @@ func TestUnknownChoiceCannotCommitPlan(t *testing.T) {
 func TestUserDecisionReviewPolicyIsSelected(t *testing.T) {
 	turn := Turn{Loop: LoopFinishCheck, UserDecisionSubmission: &userdecision.Submission{OptionID: "o1"}}
 	prompt := buildSystemPrompt(turn)
-	if !strings.Contains(prompt, "[policy:user_decision@6]") {
+	if !strings.Contains(prompt, "[policy:user_decision@7]") {
 		t.Fatal("review did not receive locked-choice policy")
 	}
 }
@@ -184,5 +184,27 @@ func TestUserDecisionSemanticReviewRepairsMislabeledReceipt(t *testing.T) {
 	}
 	if strings.Contains(d.UserDecision.Proposal.Options[1].Label, "继续修改") {
 		t.Fatal("rejected reply shown")
+	}
+}
+
+func TestUserDecisionInterpretationRepairIsBoundedAndAudited(t *testing.T) {
+	const invalid = `{"executable":true,"reason":"copied invalid reference","plan":{"actions":[{"kind":"continue_work","source_refs":["u1"],"issue_id":"bad-id","purpose":"整理一份完整可转发报告","basis":"change"}]}}`
+	const valid = `{"executable":true,"reason":"use requested new work","plan":{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"整理一份完整可转发报告"}]}}`
+	for _, exhausted := range []bool{false, true} {
+		rounds := []openai.ChatCompletion{assistantTool("invalid", "interpret_submission", invalid), assistantTool("valid", "interpret_submission", valid)}
+		if exhausted {
+			rounds = []openai.ChatCompletion{assistantTool("bad1", "interpret_submission", invalid), assistantTool("bad2", "interpret_submission", invalid), assistantTool("bad3", "interpret_submission", invalid)}
+		}
+		c := &Coordinator{Chat: &scriptedCompleter{rounds: rounds}}
+		s := UserDecisionSnapshot{Turn: Turn{Source: SourceRobot, Addressed: true, Message: "新建一份报告"}}
+		commits := 0
+		ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { commits++; return nil })
+		d, audit, err := c.ResolveUserDecisionWithAudit(ctx, s, userdecision.Submission{Custom: "新建一份完整报告"})
+		if (err != nil) != exhausted || commits != 0 || len(audit.InterpretationAttempts) != len(rounds) {
+			t.Fatalf("exhausted=%v attempts=%d commits=%d error=%v", exhausted, len(audit.InterpretationAttempts), commits, err)
+		}
+		if !exhausted && d.Action != ActionIssue {
+			t.Fatal("valid repaired work missing")
+		}
 	}
 }

@@ -204,10 +204,11 @@ func userDecisionPolicy() string {
 // frozen candidate. It never regenerates the displayed choices or commits a
 // checkpoint; the durable Host commits this result with the original job.
 type UserDecisionResolutionAudit struct {
-	TraceID           string `json:"trace_id,omitempty"`
-	Model             string `json:"model"`
-	RawInterpretation string `json:"raw_interpretation,omitempty"`
-	Review            any    `json:"review,omitempty"`
+	TraceID                string   `json:"trace_id,omitempty"`
+	Model                  string   `json:"model"`
+	RawInterpretation      string   `json:"raw_interpretation,omitempty"`
+	InterpretationAttempts []string `json:"interpretation_attempts,omitempty"`
+	Review                 any      `json:"review,omitempty"`
 }
 
 func (c *Coordinator) ResolveUserDecision(ctx context.Context, s UserDecisionSnapshot, submission userdecision.Submission) (Decision, error) {
@@ -265,28 +266,40 @@ func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSna
 		planSchema := windowPlanToolFor(turn, true).OfFunction.Function.Parameters
 		tool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "interpret_submission", Parameters: shared.FunctionParameters{"type": "object", "required": []string{"executable", "reason", "plan"}, "properties": map[string]any{"executable": map[string]any{"type": "boolean"}, "reason": map[string]any{"type": "string"}, "plan": planSchema}}})
 		interpretMessages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence))}
-		generation := startUserDecisionGeneration(ctx, "coordinator.interpret_submission", c.configuredModel(), interpretMessages, 2048)
-		response, err := c.completeWithLimit(ctx, interpretMessages, []openai.ChatCompletionToolUnionParam{tool}, 2048, temperature)
-		endRoundGeneration(generation, response, err)
-		if err != nil {
-			return Decision{}, err
+		for attempt := 0; attempt < 3; attempt++ {
+			generation := startUserDecisionGeneration(ctx, "coordinator.interpret_submission", c.configuredModel(), interpretMessages, 2048)
+			response, err := c.completeWithLimit(ctx, interpretMessages, []openai.ChatCompletionToolUnionParam{tool}, 2048, temperature)
+			endRoundGeneration(generation, response, err)
+			if err != nil {
+				return Decision{}, err
+			}
+			if response == nil || len(response.Choices) != 1 || len(response.Choices[0].Message.ToolCalls) != 1 || response.Choices[0].Message.ToolCalls[0].Function.Name != "interpret_submission" {
+				return Decision{}, errors.New("missing submission interpretation")
+			}
+			audit.RawInterpretation = response.Choices[0].Message.ToolCalls[0].Function.Arguments
+			audit.InterpretationAttempts = append(audit.InterpretationAttempts, audit.RawInterpretation)
+			var parsed struct {
+				Executable bool            `json:"executable"`
+				Reason     string          `json:"reason"`
+				Plan       json.RawMessage `json:"plan"`
+			}
+			if err = json.Unmarshal([]byte(response.Choices[0].Message.ToolCalls[0].Function.Arguments), &parsed); err != nil {
+				return Decision{}, err
+			}
+			if !parsed.Executable {
+				return Decision{}, fmt.Errorf("submission not executable: %s", parsed.Reason)
+			}
+			raw = parsed.Plan
+			if _, validationErr := parseValidatedWindowPlan(string(raw), turn, s.Recalls, recalled); validationErr == nil {
+				break
+			} else {
+				if attempt == 2 {
+					return Decision{}, validationErr
+				}
+				feedback, _ := json.Marshal(map[string]any{"interpretation_validation_error": validationErr.Error(), "previous_interpretation": audit.RawInterpretation, "allowed_issue_ids": s.RecalledIDs})
+				interpretMessages = append(interpretMessages, openai.UserMessage(string(feedback)))
+			}
 		}
-		if response == nil || len(response.Choices) != 1 || len(response.Choices[0].Message.ToolCalls) != 1 || response.Choices[0].Message.ToolCalls[0].Function.Name != "interpret_submission" {
-			return Decision{}, errors.New("missing submission interpretation")
-		}
-		audit.RawInterpretation = response.Choices[0].Message.ToolCalls[0].Function.Arguments
-		var parsed struct {
-			Executable bool            `json:"executable"`
-			Reason     string          `json:"reason"`
-			Plan       json.RawMessage `json:"plan"`
-		}
-		if err = json.Unmarshal([]byte(response.Choices[0].Message.ToolCalls[0].Function.Arguments), &parsed); err != nil {
-			return Decision{}, err
-		}
-		if !parsed.Executable {
-			return Decision{}, fmt.Errorf("submission not executable: %s", parsed.Reason)
-		}
-		raw = parsed.Plan
 	}
 	if len(raw) == 0 {
 		return Decision{}, errors.New("empty submission")
