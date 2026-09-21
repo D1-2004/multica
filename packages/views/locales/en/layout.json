@@ -95,7 +95,7 @@
     "preview": "Preview",
     "preview_unavailable": "This type can’t be previewed. Download it instead.",
     "upload_folder": "Upload folder",
-    "upload_folder_too_many": "You can upload at most 100 files at a time",
+    "folder_upload_limit": "You can upload at most 100 files at a time",
     "upload_done": "Upload finished",
     "pane_unready_title": "Shared storage isn’t ready",
     "pane_unready_body": "Members and agents will share files here once storage is prepared.",

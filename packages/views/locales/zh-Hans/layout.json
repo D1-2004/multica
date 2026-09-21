@@ -95,7 +95,7 @@
     "preview": "预览",
     "preview_unavailable": "这种类型不能预览，请下载查看。",
     "upload_folder": "上传文件夹",
-    "upload_folder_too_many": "一次最多上传 100 个文件",
+    "folder_upload_limit": "一次最多上传 100 个文件",
     "upload_done": "上传完成",
     "pane_unready_title": "共享存储还没准备好",
     "pane_unready_body": "准备完成后，成员和智能体可以在这里共用文件。",

@@ -75,7 +75,7 @@ export function FileBrowser({
   const uploadMany = async (files: File[]) => {
     if (files.length === 0) return;
     if (files.length > FOLDER_UPLOAD_MAX_FILES) {
-      toast.error(t(($) => $.files.upload_folder_too_many));
+      toast.error(t(($) => $.files.folder_upload_limit));
       return;
     }
     const dirs = new Set<string>();
@@ -84,7 +84,9 @@ export function FileBrowser({
       const parts = relative.split("/").filter(Boolean);
       let acc = relPath;
       for (let i = 0; i < parts.length - 1; i++) {
-        acc = acc ? `${acc}/${parts[i]}` : parts[i];
+        const part = parts[i];
+        if (!part) continue;
+        acc = acc ? `${acc}/${part}` : part;
         dirs.add(acc);
       }
     }
@@ -363,9 +365,8 @@ async function collectDroppedFiles(dt: DataTransfer): Promise<File[]> {
       const file = await new Promise<File>((resolve, reject) => {
         (entry as FileSystemFileEntry).file(resolve, reject);
       });
-      const named = new File([file], file.name, { type: file.type, lastModified: file.lastModified });
-      Object.defineProperty(named, "webkitRelativePath", { value: prefix + file.name });
-      files.push(named);
+      Object.defineProperty(file, "webkitRelativePath", { value: prefix + file.name });
+      files.push(file);
       return;
     }
     if (entry.isDirectory) {

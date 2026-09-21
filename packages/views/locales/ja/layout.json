@@ -95,7 +95,7 @@
     "preview": "プレビュー",
     "preview_unavailable": "この形式はプレビューできません。ダウンロードしてください。",
     "upload_folder": "フォルダをアップロード",
-    "upload_folder_too_many": "一度にアップロードできるのは 100 ファイルまでです",
+    "folder_upload_limit": "一度にアップロードできるのは 100 ファイルまでです",
     "upload_done": "アップロードが完了しました",
     "pane_unready_title": "共有ストレージの準備ができていません",
     "pane_unready_body": "準備が完了すると、メンバーとエージェントがここでファイルを共有できます。",
