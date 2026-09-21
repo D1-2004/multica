@@ -224,18 +224,13 @@ func (h *Handler) PostWorkspaceFilesystemMkdir(w http.ResponseWriter, r *http.Re
 		name = rel[i+1:]
 	}
 	store := h.filesystemStore()
-	okDir, err := store.DirExists(r.Context(), wsID, agentID, parent)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
-		return
-	}
-	if !okDir {
-		writeErrorCode(w, http.StatusNotFound, "filesystem_not_found", "parent directory not found")
-		return
-	}
 	createdBy, err := util.ParseUUID(requestUserID(r))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "user is required")
+		return
+	}
+	if err := store.EnsureParents(r.Context(), wsID, agentID, googleUUID(createdBy), parent); err != nil {
+		writeError(w, http.StatusBadGateway, "could not create directory")
 		return
 	}
 	entry, err := store.InsertDir(r.Context(), wsID, agentID, googleUUID(createdBy), rel, name)
@@ -289,15 +284,6 @@ func (h *Handler) PostWorkspaceFilesystemUpload(w http.ResponseWriter, r *http.R
 	}
 	rel := wsfs.JoinRel(dirRel, name)
 	store := h.filesystemStore()
-	okDir, err := store.DirExists(r.Context(), wsID, agentID, dirRel)
-	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
-		return
-	}
-	if !okDir {
-		writeErrorCode(w, http.StatusNotFound, "filesystem_not_found", "directory not found")
-		return
-	}
 	data, err := io.ReadAll(io.LimitReader(file, maxUploadSize+1))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "could not read file")
@@ -322,6 +308,11 @@ func (h *Handler) PostWorkspaceFilesystemUpload(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "user is required")
 		return
 	}
+	if err := store.EnsureParents(r.Context(), wsID, agentID, googleUUID(createdBy), dirRel); err != nil {
+		h.Storage.Delete(r.Context(), key)
+		writeError(w, http.StatusBadGateway, "could not create directory")
+		return
+	}
 	entry, err := store.InsertFile(r.Context(), id, wsID, agentID, googleUUID(createdBy), rel, name, key, digest, int64(len(data)))
 	if isUniqueViolation(err) {
 		h.Storage.Delete(r.Context(), key)
@@ -337,6 +328,90 @@ func (h *Handler) PostWorkspaceFilesystemUpload(w http.ResponseWriter, r *http.R
 		"name": entry.Name, "path": entry.RelPath, "is_dir": false,
 		"size_bytes": entry.SizeBytes, "sha256": entry.SHA256,
 	})
+}
+
+func (h *Handler) PostWorkspaceFilesystemRename(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	var body struct {
+		Root string `json:"root"`
+		Path string `json:"path"`
+		Name string `json:"name"`
+	}
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid rename")
+		return
+	}
+	wsID, agentID, ok := h.requireCatalogWrite(w, r, body.Root)
+	if !ok {
+		return
+	}
+	oldRel, err := wsfs.JailRelPath(body.Path)
+	if err != nil || oldRel == "." {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_path", "path is outside the filesystem jail")
+		return
+	}
+	newName, err := wsfs.JailFileName(body.Name)
+	if err != nil {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_path", "name is invalid")
+		return
+	}
+	newRel := wsfs.JoinRel(wsfs.ParentPath(oldRel), newName)
+	if newRel == oldRel {
+		writeJSON(w, http.StatusOK, map[string]any{"path": newRel, "name": newName})
+		return
+	}
+	store := h.filesystemStore()
+	_, err = store.GetEntry(r.Context(), wsID, agentID, oldRel)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeErrorCode(w, http.StatusNotFound, "filesystem_not_found", "path not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
+		return
+	}
+	if _, err := store.GetEntry(r.Context(), wsID, agentID, newRel); err == nil {
+		writeErrorCode(w, http.StatusConflict, "filesystem_exists", "path already exists")
+		return
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
+		return
+	}
+	if err := store.Rename(r.Context(), wsID, agentID, oldRel, newRel, newName); err != nil {
+		writeError(w, http.StatusBadGateway, "could not rename")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": newRel, "name": newName})
+}
+
+func (h *Handler) DeleteWorkspaceFilesystemEntry(w http.ResponseWriter, r *http.Request) {
+	root := r.URL.Query().Get("root")
+	wsID, agentID, ok := h.requireCatalogWrite(w, r, root)
+	if !ok {
+		return
+	}
+	rel, err := wsfs.JailRelPath(r.URL.Query().Get("path"))
+	if err != nil || rel == "." {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_path", "path is outside the filesystem jail")
+		return
+	}
+	store := h.filesystemStore()
+	keys, err := store.StorageKeysUnder(r.Context(), wsID, agentID, rel)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
+		return
+	}
+	if err := store.DeleteUnder(r.Context(), wsID, agentID, rel); err != nil {
+		writeError(w, http.StatusBadGateway, "could not delete")
+		return
+	}
+	if h.Storage != nil {
+		for _, key := range keys {
+			h.Storage.Delete(r.Context(), key)
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) GetWorkspaceFilesystemContent(w http.ResponseWriter, r *http.Request) {
@@ -440,12 +515,8 @@ func (h *Handler) canAccessAgentFilesystem(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) GetWorkspaceFilesystemGrants(w http.ResponseWriter, r *http.Request) {
-	wsID, role, ok := h.filesystemActor(w, r)
+	wsID, _, ok := h.filesystemActor(w, r)
 	if !ok {
-		return
-	}
-	if role != "owner" && role != "admin" {
-		writeError(w, http.StatusForbidden, "only workspace owners and admins can read filesystem grants")
 		return
 	}
 	grants, err := h.filesystemStore().ListGrants(r.Context(), wsID)

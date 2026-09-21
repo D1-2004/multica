@@ -2330,6 +2330,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/content", h.GetWorkspaceFilesystemContent)
 				r.Post("/mkdir", h.PostWorkspaceFilesystemMkdir)
 				r.Post("/upload", h.PostWorkspaceFilesystemUpload)
+				r.Post("/rename", h.PostWorkspaceFilesystemRename)
+				r.Delete("/entries", h.DeleteWorkspaceFilesystemEntry)
 				r.Get("/grants", h.GetWorkspaceFilesystemGrants)
 				r.Put("/grants", h.PutWorkspaceFilesystemGrant)
 			})

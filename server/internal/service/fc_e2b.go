@@ -1713,7 +1713,7 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		if extraEnv == nil {
 			extraEnv = make(map[string]string)
 		}
-		extraEnv["MULTICA_WORKSPACE_FS_ROOT"] = dshhost.WorkspaceMountPath
+		extraEnv["MULTICA_WORKSPACE_FS_ROOT"] = dshhost.WorkspaceSharedRoot
 		extraEnv["MULTICA_WORKSPACE_FS_ACCESS"] = access
 	}
 	if employeeHost != nil && FCE2BRuntimeProvider(runtime) == "dsh" {

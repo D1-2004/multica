@@ -12,6 +12,11 @@ import (
 // task_role_arn must never receive this second mount.
 const WorkspaceMountPath = "/mnt/workspace"
 
+// WorkspaceSharedRoot is where granted shared catalog files are copied and
+// what MULTICA_WORKSPACE_FS_ROOT points at. The volume itself still mounts at
+// WorkspaceMountPath.
+const WorkspaceSharedRoot = "/mnt/workspace/shared"
+
 // VolumeMountSpec is one FC volumeMounts entry. RoleARN and ReadOnly are
 // unused on today's single fc.sandbox.auth.role create path.
 type VolumeMountSpec struct {

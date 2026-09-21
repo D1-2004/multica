@@ -59,7 +59,7 @@ func (l *FCE2BLauncher) attachWorkspaceCatalog(ctx context.Context, sandboxID st
 		slog.Warn("workspace filesystem catalog unavailable", "error", err)
 		return grant.Access
 	}
-	if _, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", "--user", "user", sandboxID, "--", "mkdir", "-p", dshhost.WorkspaceMountPath}); err != nil {
+	if _, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", "--user", "user", sandboxID, "--", "mkdir", "-p", dshhost.WorkspaceSharedRoot}); err != nil {
 		slog.Warn("workspace filesystem mkdir failed", "error", err)
 		return grant.Access
 	}
@@ -81,7 +81,7 @@ func (l *FCE2BLauncher) attachWorkspaceCatalog(ctx context.Context, sandboxID st
 		if err != nil || int64(len(data)) > workspaceCatalogMaxBytes {
 			continue
 		}
-		dest := path.Join(dshhost.WorkspaceMountPath, file.RelPath)
+		dest := path.Join(dshhost.WorkspaceSharedRoot, file.RelPath)
 		if !utf8.ValidString(dest) {
 			continue
 		}

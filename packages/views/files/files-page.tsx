@@ -4,7 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { useQuery } from "@tanstack/react-query";
 import type { FilesystemRoot } from "@multica/core/filesystem";
-import { filesystemRootsOptions } from "@multica/core/filesystem";
+import { filesystemGrantsOptions, filesystemRootsOptions } from "@multica/core/filesystem";
 import { FileBrowser } from "./files-browser";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -17,7 +17,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
-import { File, Folder, HardDrive, Search } from "lucide-react";
+import { Folder, HardDrive, Search } from "lucide-react";
 import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { useT } from "../i18n";
 import {
@@ -64,6 +64,7 @@ export function FilesPage() {
   const paths = useWorkspacePaths();
   const rootsQuery = useQuery(filesystemRootsOptions(wsId ?? ""));
   const agentsQuery = useQuery(agentListOptions(wsId ?? ""));
+  const grantsQuery = useQuery(filesystemGrantsOptions(wsId ?? ""));
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<DiskKey | null>(null);
 
@@ -122,7 +123,7 @@ export function FilesPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <CollectionPageHeader
-        icon={File}
+        icon={Folder}
         title={t(($) => $.nav.files)}
         count={disks.length}
         description={t(($) => $.files.description)}
@@ -206,6 +207,10 @@ export function FilesPage() {
                   </DiskGroup>
                 ) : null}
               </div>
+              <AgentAccessList
+                agents={agentsQuery.data ?? []}
+                grants={grantsQuery.data?.grants ?? []}
+              />
             </div>
           </aside>
           <section className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -231,6 +236,51 @@ export function FilesPage() {
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+function AgentAccessList({
+  agents,
+  grants,
+}: {
+  agents: Agent[];
+  grants: Array<{ agent_id: string; access: string }>;
+}) {
+  const { t } = useT("layout");
+  const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  const rows = grants
+    .filter((grant) => grant.access === "read" || grant.access === "write")
+    .map((grant) => ({
+      grant,
+      agent: byId.get(grant.agent_id),
+    }))
+    .filter((row) => row.agent);
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-4 border-t pt-3">
+      <p className="px-2 text-caption font-medium text-muted-foreground">
+        {t(($) => $.files.agent_access)}
+      </p>
+      <ul className="mt-1 flex flex-col gap-1">
+        {rows.map(({ grant, agent }) => (
+          <li key={grant.agent_id} className="flex items-center gap-2 px-2 py-1">
+            <ActorAvatar
+              name={agent!.name}
+              initials={avatarInitials(agent!.name)}
+              avatarUrl={resolvePublicFileUrl(agent!.avatar_url)}
+              isAgent
+              size="sm"
+            />
+            <span className="min-w-0 flex-1 truncate text-caption">{agent!.name}</span>
+            <Badge variant="outline">
+              {grant.access === "write"
+                ? t(($) => $.files.access_write)
+                : t(($) => $.files.access_read)}
+            </Badge>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

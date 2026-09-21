@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Entry is one catalog row in the workbench shared disk.
@@ -165,4 +166,77 @@ func (s Store) InsertFile(ctx context.Context, id, workspaceID, agentID, created
 		id, workspaceID, agentArg(agentID), parent, name, rel, size, sha256, storageKey, createdBy).Scan(
 		&e.ID, &e.ParentPath, &e.Name, &e.RelPath, &e.IsDir, &e.SizeBytes, &e.SHA256, &e.StorageKey, &e.ModTime)
 	return e, err
+}
+
+func isUnique(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func (s Store) EnsureParents(ctx context.Context, workspaceID, agentID, createdBy uuid.UUID, rel string) error {
+	if rel == "" || rel == "." {
+		return nil
+	}
+	acc := ""
+	for _, part := range strings.Split(rel, "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		acc = JoinRel(acc, part)
+		exists, err := s.DirExists(ctx, workspaceID, agentID, acc)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		if _, err := s.InsertDir(ctx, workspaceID, agentID, createdBy, acc, part); err != nil && !isUnique(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s Store) Rename(ctx context.Context, workspaceID, agentID uuid.UUID, oldRel, newRel, newName string) error {
+	_, err := s.DB.Exec(ctx, `UPDATE workspace_fs_entry SET
+ rel_path = CASE WHEN rel_path = $3 THEN $4 ELSE $4 || substr(rel_path, char_length($3)+1) END,
+ parent_path = CASE
+   WHEN parent_path = $3 THEN $4
+   WHEN parent_path LIKE $3 || '/%' THEN $4 || substr(parent_path, char_length($3)+1)
+   ELSE parent_path
+ END,
+ name = CASE WHEN rel_path = $3 THEN $5 ELSE name END,
+ updated_at = now()
+ WHERE workspace_id=$1 AND agent_id IS NOT DISTINCT FROM $2
+ AND (rel_path = $3 OR rel_path LIKE $3 || '/%')`,
+		workspaceID, agentArg(agentID), oldRel, newRel, newName)
+	return err
+}
+
+func (s Store) StorageKeysUnder(ctx context.Context, workspaceID, agentID uuid.UUID, rel string) ([]string, error) {
+	rows, err := s.DB.Query(ctx, `SELECT storage_key FROM workspace_fs_entry
+ WHERE workspace_id=$1 AND agent_id IS NOT DISTINCT FROM $2 AND storage_key <> ''
+ AND (rel_path = $3 OR rel_path LIKE $3 || '/%')`,
+		workspaceID, agentArg(agentID), rel)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+func (s Store) DeleteUnder(ctx context.Context, workspaceID, agentID uuid.UUID, rel string) error {
+	_, err := s.DB.Exec(ctx, `DELETE FROM workspace_fs_entry
+ WHERE workspace_id=$1 AND agent_id IS NOT DISTINCT FROM $2
+ AND (rel_path = $3 OR rel_path LIKE $3 || '/%')`,
+		workspaceID, agentArg(agentID), rel)
+	return err
 }
