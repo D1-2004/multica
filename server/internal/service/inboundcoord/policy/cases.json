@@ -1512,6 +1512,16 @@
       "context_b": "鉴权/网络/其他参数错误，或兼容重试仅返回自由文本",
       "expected_effects": "A原样保留上下文与工具，只切auto重试一次；B不走该兼容重试，任何自由文本均不得成为候选或提交执行计划",
       "verification": "host_test_only"
+    },
+    {
+      "id": "user_decision_later_submission_review",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "无选项，仅补充说明明确修改原回复或取消原请求",
+      "context_b": "明确选择续接任务A，补充说明却要求改为任务B",
+      "expected_effects": "A以同一发起人的后续提交审查，不强制旧措辞；取消不执行不二次询问。B保持选择锁定，矛盾不执行",
+      "verification": "host_tests_passed; preproduction_model_replay_passed; native_after_fix_pending"
     }
   ]
 }

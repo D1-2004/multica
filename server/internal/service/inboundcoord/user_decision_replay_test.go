@@ -105,13 +105,13 @@ func TestUserDecisionRealModel(t *testing.T) {
 					resolutionCtx = ContextWithPlanCheckpoint(resolutionCtx, nil, func(Decision) error { commits++; return nil })
 					result, audit, resolveErr := c.ResolveUserDecisionWithAudit(resolutionCtx, *d.UserDecision, userdecision.Submission{Custom: followup.text, OptionID: followup.option})
 					resolutionCancel()
-					if followup.name == "contradiction" {
+					if followup.name == "contradiction" || followup.name == "negation" {
 						var parsed struct {
 							Executable bool   `json:"executable"`
 							Reason     string `json:"reason"`
 						}
 						if json.Unmarshal([]byte(audit.RawInterpretation), &parsed) != nil || parsed.Executable || parsed.Reason == "" || resolveErr == nil {
-							t.Fatalf("conflict was not explicitly rejected: %v", resolveErr)
+							t.Fatalf("%s was not explicitly non-executable: %v", followup.name, resolveErr)
 						}
 						continue
 					}
@@ -250,4 +250,48 @@ func TestUserDecisionRealFrozenSubmission(t *testing.T) {
 		t.Fatalf("expected reply, got %s", decision.Action)
 	}
 	t.Logf("frozen submission allowed: action=%s review=%+v", decision.Action, audit.Review)
+}
+
+// R18: the final reviewer must not restore wording superseded by the initiator.
+func TestUserDecisionLaterSubmissionRealModel(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_USER_DECISION_REPLAY") != "1" {
+		t.Skip("explicit preproduction model opt-in required")
+	}
+	client := llm.New(llm.Config{APIKey: os.Getenv("MULTICA_LLM_API_KEY"), BaseURL: os.Getenv("MULTICA_LLM_BASE_URL"), DefaultModel: coordinatorModel, MaxRetries: -1})
+	if !client.Enabled() {
+		t.Fatal("preproduction model configuration required")
+	}
+	c := &Coordinator{LLM: client, model: os.Getenv("MULTICA_COORDINATOR_REPLAY_MODEL"), Tools: &stubTools{}}
+	s := UserDecisionSnapshot{Turn: Turn{Source: SourceRobot, Addressed: true, Message: "请只回复：原始回复"}}
+	for _, tc := range []struct {
+		name, text string
+		cancel     bool
+	}{
+		{"later_wording", "改为只回复：新的回复", false},
+		{"cancel", "取消本次测试，不要发送原始回复，不要新建或续接任何工作。", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+			commits := 0
+			ctx = ContextWithPlanCheckpoint(ctx, nil, func(Decision) error { commits++; return nil })
+			d, a, err := c.ResolveUserDecisionWithAudit(ctx, s, userdecision.Submission{Custom: tc.text})
+			if commits != 0 {
+				t.Fatal("replay committed a plan")
+			}
+			review, _ := a.Review.(finishCheckResult)
+			if tc.cancel {
+				var p struct {
+					Executable bool
+					Reason     string
+				}
+				if json.Unmarshal([]byte(a.RawInterpretation), &p) != nil || p.Executable || p.Reason == "" || err == nil {
+					t.Fatalf("cancellation was not explicit non-execution: error=%v interpretation=%s", err, a.RawInterpretation)
+				}
+			} else if err != nil || d.Action != ActionReply || d.UserText != "新的回复" || review.Verdict != "allow" {
+				t.Fatalf("later instruction not respected: action=%s text=%s review=%+v error=%v", d.Action, d.UserText, a.Review, err)
+			}
+			t.Logf("later_submission=%s action=%s non_executable=%v", tc.name, d.Action, err != nil)
+		})
+	}
 }

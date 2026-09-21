@@ -227,7 +227,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	if err != nil {
 		return finishCheckResult{}, fmt.Errorf("encode finish proposal: %w", err)
 	}
-	reviewTurn := Turn{Loop: LoopFinishCheck, FinishCheckAction: decision.Action, FinishCheckMixedActions: mixedActions}
+	reviewTurn := Turn{Loop: LoopFinishCheck, FinishCheckAction: decision.Action, FinishCheckMixedActions: mixedActions, UserDecisionSubmission: turn.UserDecisionSubmission}
 	if turn.Loop != LoopTaskFinished {
 		reviewTurn.Source, reviewTurn.ChatType = turn.Source, turn.ChatType
 	}

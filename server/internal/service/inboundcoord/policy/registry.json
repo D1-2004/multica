@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-21.1",
-  "assembly_version": "38",
+  "policy_version": "2026-09-21.2",
+  "assembly_version": "39",
   "modules": [
     {
       "id": "core",
@@ -291,15 +291,15 @@
     },
     {
       "id": "user_decision",
-      "version": "7",
+      "version": "8",
       "file": "user_decision.md",
       "applies_when": "user_decision",
       "requires": [],
       "owns_rule_ids": [
         "COORD.F01"
       ],
-      "budget_characters": 5021,
-      "content_sha256": "2722212337ab13708b55cfbef457630d2130c5b64f9fe39ff58ef237e9e74400"
+      "budget_characters": 5867,
+      "content_sha256": "a05f6890dca943f70320005657065c6f753df68ba8818b2c7d3745eb727dc66b"
     }
   ],
   "obligations": [
@@ -342,7 +342,8 @@
         "user_decision_card_summary_and_recovery",
         "user_decision_durable_recovery_and_receipt_lease",
         "user_decision_monitor_contrast",
-        "user_decision_provider_tool_choice_contrast"
+        "user_decision_provider_tool_choice_contrast",
+        "user_decision_later_submission_review"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -363,7 +364,8 @@
         "user_decision_snapshot": "R14 native preproduction event4cd4de16265749769a0d76cf749a4f29 completed with no tasks; 80658-byte snapshot export passed. Local storage upload/read/digest/size failure tests passed; real OSS outage injection not run.",
         "user_decision_monitor": "Preproduction run3109347220 deploy161712686 allEnd=true; both replicas passed four PostgreSQL checks. Two actual send_unknown owner inbox alerts persisted and remained deduplicated across subsequent scans; live metrics read back.",
         "user_decision_export": "Structured and JSON-string wrapped credential/contact removal host tests passed; authoritative inputs and decision associations preserved; R14 live export after deployment preserves semantically decoded snapshot and exact submission; JSON-string canonical formatting alone changes.",
-        "user_decision_provider_tool_choice": "R15 provider400 retained. Same synthetic full-context request fails required/named tool choice and succeeds auto; bounded fallback and fail-closed Host tests passed. All four preproduction model replay scenarios passed (107.88s), including new/reply/continue, text-only, contradiction and two similar tasks. 58b3fd150 deployed run3109348064 allEnd=true; R16 native preproduction eventbc6b44c5cb1148df8796d081a2f204b6 completed with exact reply and tasks=[]; R17 disabled-setting automatic contrast passed. R15b real upstream DWS send failure retained without resending and owner alert delivered."
+        "user_decision_provider_tool_choice": "R15 provider400 retained. Same synthetic full-context request fails required/named tool choice and succeeds auto; bounded fallback and fail-closed Host tests passed. All four preproduction model replay scenarios passed (107.88s), including new/reply/continue, text-only, contradiction and two similar tasks. 58b3fd150 deployed run3109348064 allEnd=true; R16 native preproduction eventbc6b44c5cb1148df8796d081a2f204b6 completed with exact reply and tasks=[]; R17 disabled-setting automatic contrast passed. R15b real upstream DWS send failure retained without resending and owner alert delivered.",
+        "user_decision_later_submission": "R18 retained safe nonexecution but reviewer incorrectly preferred original wording: reviewTurn omitted trusted submission. Actual review prompt propagation Host tests pass; later-wording and cancellation preproduction model replay passed (10.23s), full four-scenario replay passed (115.47s). Native after-fix verification pending."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",

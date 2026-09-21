@@ -45,7 +45,7 @@ func TestUnknownChoiceCannotCommitPlan(t *testing.T) {
 func TestUserDecisionReviewPolicyIsSelected(t *testing.T) {
 	turn := Turn{Loop: LoopFinishCheck, UserDecisionSubmission: &userdecision.Submission{OptionID: "o1"}}
 	prompt := buildSystemPrompt(turn)
-	if !strings.Contains(prompt, "[policy:user_decision@7]") {
+	if !strings.Contains(prompt, "[policy:user_decision@8]") {
 		t.Fatal("review did not receive locked-choice policy")
 	}
 }
@@ -145,13 +145,23 @@ func TestUserDecisionSubmissionLocksDirection(t *testing.T) {
 		{"reply refined", "reply", "用你好回复", `{"executable":true,"reason":"修改措辞","plan":` + replyPlan + `}`, false, ActionReply},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &Coordinator{Chat: &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("interpret", "interpret_submission", tt.output)}}}
+			chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("interpret", "interpret_submission", tt.output)}}
+			c := &Coordinator{Chat: chat}
 			s := UserDecisionSnapshot{Turn: Turn{Source: SourceRobot, Addressed: true, Message: "整理报告"}, Proposal: userdecision.Proposal{Options: []userdecision.Option{{ID: "new", Kind: "start_work", Plan: json.RawMessage(newPlan)}, {ID: "reply", Kind: "reply", Label: "原来的问候", Plan: json.RawMessage(replyPlan)}}}}
 			commits := 0
 			ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { commits++; return nil })
 			d, audit, err := c.ResolveUserDecisionWithAudit(ctx, s, userdecision.Submission{OptionID: tt.option, Custom: tt.custom})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err=%v", err)
+			}
+			if err == nil {
+				if len(chat.checkParams) == 0 {
+					t.Fatal("submission skipped final review")
+				}
+				body, _ := json.Marshal(chat.checkParams[0].Messages[0])
+				if !strings.Contains(string(body), "[policy:user_decision@8]") {
+					t.Fatal("actual final-review request lost submission policy")
+				}
 			}
 			if err == nil && d.Action != tt.action {
 				t.Fatalf("action=%s", d.Action)
