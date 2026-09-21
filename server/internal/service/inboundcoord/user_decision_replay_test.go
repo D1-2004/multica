@@ -3,6 +3,7 @@ package inboundcoord
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -243,6 +244,14 @@ func TestUserDecisionRealFrozenSubmission(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	decision, audit, err := c.ResolveUserDecisionWithAudit(ctx, sample.Snapshot, sample.Submission)
+	if os.Getenv("MULTICA_USER_DECISION_EXPECT_NONEXECUTION") == "1" {
+		var rejected *userdecision.NonExecutableSubmissionError
+		if !errors.As(err, &rejected) || rejected.Reason == "" || decision.Action != "" {
+			t.Fatalf("frozen cancellation not explicit: error=%v action=%s", err, decision.Action)
+		}
+		t.Logf("frozen cancellation retained: %s", rejected.Reason)
+		return
+	}
 	if err != nil {
 		t.Fatalf("resolution failed: %v review=%+v", err, audit.Review)
 	}

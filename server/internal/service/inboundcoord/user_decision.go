@@ -337,8 +337,14 @@ func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSna
 		planSchema := windowPlanToolFor(turn, true).OfFunction.Function.Parameters
 		tool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "interpret_submission", Parameters: shared.FunctionParameters{"type": "object", "required": []string{"executable", "reason", "plan"}, "properties": map[string]any{"executable": map[string]any{"type": "boolean"}, "reason": map[string]any{"type": "string"}, "plan": planSchema}}})
 		latest, _ := json.Marshal(map[string]any{"user_decision_submission": submission})
-		interpretMessages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence)), openai.UserMessage(string(latest))}
-		policy := policyManifestForStage(turn, true)
+		interpretMessages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(userDecisionPolicy()), openai.UserMessage(string(evidence)), openai.UserMessage(string(latest))}
+		policy := PolicyManifest{PolicyVersion: coordinatorPolicy.Version, AssemblyVersion: coordinatorPolicy.AssemblyVersion}
+		for _, module := range coordinatorPolicy.Modules {
+			if module.ID == "user_decision" {
+				policy.Modules = []PolicyModuleManifest{{ID: module.ID, Version: module.Version, Hash: policyHash(policyModuleBody(module))}}
+				policy.ActiveRuleIDs = append([]string(nil), module.OwnsRuleIDs...)
+			}
+		}
 		actualPrompt := interpretMessages[0].OfSystem.Content.OfString.Value
 		policy.PromptHash = policyHash(actualPrompt)
 		policy.Characters = utf8.RuneCountInString(actualPrompt)

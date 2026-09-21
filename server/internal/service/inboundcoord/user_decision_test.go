@@ -45,7 +45,7 @@ func TestUnknownChoiceCannotCommitPlan(t *testing.T) {
 func TestUserDecisionReviewPolicyIsSelected(t *testing.T) {
 	turn := Turn{Loop: LoopFinishCheck, UserDecisionSubmission: &userdecision.Submission{OptionID: "o1"}}
 	prompt := buildSystemPrompt(turn)
-	if !strings.Contains(prompt, "[policy:user_decision@9]") {
+	if !strings.Contains(prompt, "[policy:user_decision@10]") {
 		t.Fatal("review did not receive locked-choice policy")
 	}
 }
@@ -162,7 +162,7 @@ func TestUserDecisionSubmissionLocksDirection(t *testing.T) {
 					t.Fatal("submission skipped final review")
 				}
 				body, _ := json.Marshal(chat.checkParams[0].Messages[0])
-				if !strings.Contains(string(body), "[policy:user_decision@9]") {
+				if !strings.Contains(string(body), "[policy:user_decision@10]") {
 					t.Fatal("actual final-review request lost submission policy")
 				}
 			}
@@ -270,6 +270,9 @@ func TestUserDecisionSemanticRepairUsesLatestSubmissionOnce(t *testing.T) {
 	d, a, err := (&Coordinator{Chat: chat}).ResolveUserDecisionWithAudit(ctx, UserDecisionSnapshot{Turn: Turn{Source: SourceRobot, Addressed: true, Message: "请只回复旧回复"}}, userdecision.Submission{Custom: "改为只回复新回复"})
 	if err != nil || d.UserText != "新回复" || commits != 0 || len(a.InterpretationAttempts) != 2 || len(a.ReviewAttempts) != 2 {
 		t.Fatalf("bounded semantic repair lost: %v text=%s attempts=%d reviews=%d commits=%d", err, d.UserText, len(a.InterpretationAttempts), len(a.ReviewAttempts), commits)
+	}
+	if a.InterpretationPolicy == nil || len(a.InterpretationPolicy.Modules) != 1 || a.InterpretationPolicy.Modules[0].ID != "user_decision" {
+		t.Fatal("automatic routing policy leaked into submission interpretation")
 	}
 	if a.InterpretationPolicy == nil || a.InterpretationPolicy.PromptHash != policyHash(chat.params[0].Messages[0].OfSystem.Content.OfString.Value) {
 		t.Fatal("interpretation policy not captured from actual prompt")
