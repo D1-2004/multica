@@ -281,60 +281,8 @@ dump_log_tail() {
   fi
 }
 
-write_health_server() {
-  cat >"$RUN_DIR/health-server.js" <<'NODE'
-const http = require("http");
-
-const backendPort = process.env.BACKEND_PORT || "8080";
-const frontendPort = process.env.FRONTEND_PORT || "3000";
-const healthPort = Number(process.env.AONE_HEALTH_PORT || "6001");
-
-function probe(port, path) {
-  return new Promise((resolve) => {
-    const req = http.get({ hostname: "127.0.0.1", port, path, timeout: 1500 }, (res) => {
-      res.resume();
-      res.on("end", () => resolve(res.statusCode >= 200 && res.statusCode < 500));
-    });
-    req.on("timeout", () => {
-      req.destroy();
-      resolve(false);
-    });
-    req.on("error", () => resolve(false));
-  });
-}
-
-const server = http.createServer(async (req, res) => {
-  const path = new URL(req.url, "http://127.0.0.1").pathname;
-  if (path !== "/check.node" && path !== "/healthz") {
-    res.writeHead(404, { "content-type": "text/plain" });
-    res.end("not found");
-    return;
-  }
-
-  const [backendReady, frontendReady] = await Promise.all([
-    probe(backendPort, "/healthz"),
-    probe(frontendPort, "/"),
-  ]);
-  if (backendReady && frontendReady) {
-    res.writeHead(200, { "content-type": "text/plain" });
-    res.end("success");
-    return;
-  }
-
-  res.writeHead(503, { "content-type": "text/plain" });
-  res.end(`backend=${backendReady} frontend=${frontendReady}`);
-});
-
-server.listen(healthPort, "0.0.0.0", () => {
-  console.log(`multica health server listening on ${healthPort}`);
-});
-
-process.on("SIGTERM", () => server.close(() => process.exit(0)));
-process.on("SIGINT", () => server.close(() => process.exit(0)));
-NODE
-}
-
 process_patterns=(
+  "$APP_ROOT/src/frontend-supervisor[.]cjs"
   "$APP_ROOT/bin/server"
   "node apps/web/server[.]js"
   "$RUN_DIR/health-server[.]js"
@@ -362,6 +310,13 @@ stop_existing_processes() {
   local attempt
 
   echo "[multica][runtime] stopping existing application processes"
+  # Stop the restart owner first, otherwise a deploy can race with a respawn.
+  pkill -TERM -f "$APP_ROOT/src/frontend-supervisor[.]cjs" >/dev/null 2>&1 || true
+  for attempt in $(seq 1 8); do
+    pgrep -f "$APP_ROOT/src/frontend-supervisor[.]cjs" >/dev/null 2>&1 || break
+    sleep 1
+  done
+  pkill -KILL -f "$APP_ROOT/src/frontend-supervisor[.]cjs" >/dev/null 2>&1 || true
   for pattern in "${process_patterns[@]}"; do
     pkill -TERM -f "$pattern" >/dev/null 2>&1 || true
   done
@@ -389,7 +344,7 @@ stop_current_processes() {
   local running
 
   echo "[multica][runtime] stopping current application processes"
-  for pid in "$backend_pid" "$frontend_pid" "$health_pid"; do
+  for pid in "$health_pid" "$backend_pid"; do
     if kill -0 "$pid" 2>/dev/null; then
       kill -TERM "$pid" 2>/dev/null || true
     fi
@@ -397,7 +352,7 @@ stop_current_processes() {
 
   for attempt in $(seq 1 10); do
     running=false
-    for pid in "$backend_pid" "$frontend_pid" "$health_pid"; do
+    for pid in "$health_pid" "$backend_pid"; do
       if kill -0 "$pid" 2>/dev/null; then
         running=true
         break
@@ -410,7 +365,7 @@ stop_current_processes() {
   done
 
   echo "[multica][runtime] force stopping current application processes"
-  for pid in "$backend_pid" "$frontend_pid" "$health_pid"; do
+  for pid in "$health_pid" "$backend_pid"; do
     if kill -0 "$pid" 2>/dev/null; then
       kill -KILL "$pid" 2>/dev/null || true
     fi
@@ -430,23 +385,15 @@ current_release_is_healthy() {
 
 start_processes() {
   echo "[multica][runtime] starting backend"
-  nohup setsid "$APP_ROOT/bin/server" </dev/null >"$LOG_DIR/backend.log" 2>&1 &
+  nohup setsid "$APP_ROOT/bin/server" </dev/null >>"$LOG_DIR/backend.log" 2>&1 &
   backend_pid=$!
   echo "$backend_pid" >"$RUN_DIR/backend.pid"
 
-  echo "[multica][runtime] starting frontend"
-  (
-    cd "$APP_ROOT/web"
-    PORT="$FRONTEND_PORT" HOSTNAME=0.0.0.0 nohup setsid node apps/web/server.js </dev/null >"$LOG_DIR/frontend.log" 2>&1 &
-    echo $! >"$RUN_DIR/frontend.pid"
-  )
-  frontend_pid="$(cat "$RUN_DIR/frontend.pid")"
-
-  write_health_server
-  echo "[multica][runtime] starting Aone health server"
-  nohup setsid node "$RUN_DIR/health-server.js" </dev/null >"$LOG_DIR/health.log" 2>&1 &
+  echo "[multica][runtime] starting frontend supervisor and health server"
+  nohup setsid node "$APP_ROOT/src/frontend-supervisor.cjs" </dev/null >>"$LOG_DIR/health.log" 2>&1 &
   health_pid=$!
   echo "$health_pid" >"$RUN_DIR/health.pid"
+
 }
 
 wait_for_startup() {
@@ -455,11 +402,6 @@ wait_for_startup() {
     if ! kill -0 "$backend_pid" 2>/dev/null; then
       echo "[multica][runtime] backend exited during startup"
       dump_log_tail "backend" "$LOG_DIR/backend.log"
-      return 1
-    fi
-    if ! kill -0 "$frontend_pid" 2>/dev/null; then
-      echo "[multica][runtime] frontend exited during startup"
-      dump_log_tail "frontend" "$LOG_DIR/frontend.log"
       return 1
     fi
     if ! kill -0 "$health_pid" 2>/dev/null; then
