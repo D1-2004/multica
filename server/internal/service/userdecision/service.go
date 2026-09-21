@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,29 @@ import (
 )
 
 type ResolveFunc func(context.Context, Request) (plan, interpretation json.RawMessage, err error)
+
+// NonExecutableSubmissionError carries only the interpreter's user-facing
+// explanation. Provider, protocol and internal errors must never use this type.
+type NonExecutableSubmissionError struct{ Reason string }
+
+func (e *NonExecutableSubmissionError) Error() string {
+	return "submission not executable: " + e.Reason
+}
+
+func resolutionFailureMessage(err error) string {
+	var rejected *NonExecutableSubmissionError
+	if errors.As(err, &rejected) && rejected != nil {
+		reason := []rune(strings.TrimSpace(rejected.Reason))
+		if len(reason) > 400 {
+			reason = append(reason[:400], '.', '.', '.')
+		}
+		if len(reason) > 0 {
+			return "本次未执行：" + string(reason)
+		}
+	}
+	return "无法依据本次选择和补充说明形成明确、合法的处理计划，本次未执行。"
+}
+
 type Service struct {
 	Store       *Store
 	Pool        *pgxpool.Pool
@@ -267,7 +291,7 @@ func (s *Service) processIdentity(ctx context.Context, identity Request, session
 		cancel()
 		reason := ""
 		if resolveErr != nil {
-			reason = "无法依据本次选择和补充说明形成明确、合法的处理计划，本次未执行。"
+			reason = resolutionFailureMessage(resolveErr)
 		}
 		if err = s.finishResolution(ctx, r, plan, interpretation, reason); err != nil {
 			return err

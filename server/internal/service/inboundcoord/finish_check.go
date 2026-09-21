@@ -25,6 +25,7 @@ type finishWorkCheck struct {
 }
 
 type finishCheckResult struct {
+	Policy              *PolicyManifest            `json:"policy,omitempty"`
 	HistoryReadRequired bool                       `json:"-"` // Host-only prerequisite, never supplied by the reviewer.
 	RequestQuoteRef     string                     `json:"request_quote_ref"`
 	CandidateQuoteRef   string                     `json:"candidate_quote_ref"`
@@ -276,6 +277,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 			return finishCheckResult{}, fmt.Errorf("finish check unavailable: %w", callErr)
 		}
 		result, protocolErr := parseFinishCheck(completion, len(refs))
+		result.Policy = nil // Only the Host may attach policy provenance.
 		if protocolErr == nil && result.ConstraintQuote != "" && !finishConstraintQuoteValid(result.ConstraintQuote, turn) {
 			if result.Verdict == "revise" {
 				protocolErr = fmt.Errorf("constraint_quote is not a verbatim substring of supplied restrictions. Copy the shortest exact directive or just the literal mandatory reply text from job_policy/persona/reply_tone/current_window/user_decision_submission.custom. Preserve Markdown if quoting its surrounding directive; do not paraphrase or omit formatting inside the selected substring")
@@ -320,6 +322,9 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		}
 		record(result, false, protocolErr)
 		if protocolErr == nil {
+			if turn.UserDecisionSubmission != nil {
+				result.Policy = &manifest
+			}
 			if cache != nil {
 				cache[key] = result
 			}

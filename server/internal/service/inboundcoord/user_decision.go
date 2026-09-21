@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"time"
+	"unicode/utf8"
 
 	"github.com/multica-ai/multica/server/internal/service/userdecision"
 	openai "github.com/openai/openai-go/v3"
@@ -17,17 +18,19 @@ import (
 // UserDecisionSnapshot is immutable evidence for the single question belonging
 // to this inbound run. It is not a committed execution checkpoint.
 type UserDecisionSnapshot struct {
-	DecisionID       string                                   `json:"decision_id,omitempty"`
-	Turn             Turn                                     `json:"turn"`
-	Messages         []openai.ChatCompletionMessageParamUnion `json:"messages"`
-	Recalls          []recallCall                             `json:"recalls"`
-	RecalledIDs      []string                                 `json:"recalled_ids"`
-	Recommended      Decision                                 `json:"recommended"`
-	ProposalPolicy   PolicyModuleManifest                     `json:"proposal_policy"`
-	Policy           PolicyManifest                           `json:"policy"`
-	ProposalReviews  []json.RawMessage                        `json:"proposal_reviews,omitempty"`
-	ProposalAttempts []string                                 `json:"proposal_attempts,omitempty"`
-	Proposal         userdecision.Proposal                    `json:"proposal"`
+	ProposalPromptHash       string                                   `json:"proposal_prompt_hash,omitempty"`
+	ProposalReviewPromptHash string                                   `json:"proposal_review_prompt_hash,omitempty"`
+	DecisionID               string                                   `json:"decision_id,omitempty"`
+	Turn                     Turn                                     `json:"turn"`
+	Messages                 []openai.ChatCompletionMessageParamUnion `json:"messages"`
+	Recalls                  []recallCall                             `json:"recalls"`
+	RecalledIDs              []string                                 `json:"recalled_ids"`
+	Recommended              Decision                                 `json:"recommended"`
+	ProposalPolicy           PolicyModuleManifest                     `json:"proposal_policy"`
+	Policy                   PolicyManifest                           `json:"policy"`
+	ProposalReviews          []json.RawMessage                        `json:"proposal_reviews,omitempty"`
+	ProposalAttempts         []string                                 `json:"proposal_attempts,omitempty"`
+	Proposal                 userdecision.Proposal                    `json:"proposal"`
 }
 
 func (c *Coordinator) proposeUserDecision(ctx context.Context, turn Turn, messages []openai.ChatCompletionMessageParamUnion, recalls []recallCall, recalled map[string]struct{}, recommended Decision) (Decision, error) {
@@ -112,7 +115,7 @@ func (c *Coordinator) proposeUserDecision(ctx context.Context, turn Turn, messag
 	}
 	p.Model = c.configuredModel()
 	p.RawOutput = attempts[len(attempts)-1]
-	snapshot := &UserDecisionSnapshot{Turn: turn, Messages: messages, Recalls: recalls, RecalledIDs: sortedCopy(turn.recalledIssueIDs), Recommended: recommended, Policy: policyManifestForStage(turn, len(recalled) > 0), Proposal: p, ProposalAttempts: attempts, ProposalReviews: reviews}
+	snapshot := &UserDecisionSnapshot{ProposalPromptHash: policyHash(proposalMessages[0].OfSystem.Content.OfString.Value), ProposalReviewPromptHash: policyHash(userDecisionPolicy()), Turn: turn, Messages: messages, Recalls: recalls, RecalledIDs: sortedCopy(turn.recalledIssueIDs), Recommended: recommended, Policy: policyManifestForStage(turn, len(recalled) > 0), Proposal: p, ProposalAttempts: attempts, ProposalReviews: reviews}
 	for _, module := range coordinatorPolicy.Modules {
 		if module.ID == "user_decision" {
 			snapshot.ProposalPolicy = PolicyModuleManifest{ID: module.ID, Version: module.Version, Hash: module.ContentHash}
@@ -241,12 +244,13 @@ func userDecisionPolicy() string {
 // frozen candidate. It never regenerates the displayed choices or commits a
 // checkpoint; the durable Host commits this result with the original job.
 type UserDecisionResolutionAudit struct {
-	TraceID                string   `json:"trace_id,omitempty"`
-	Model                  string   `json:"model"`
-	RawInterpretation      string   `json:"raw_interpretation,omitempty"`
-	InterpretationAttempts []string `json:"interpretation_attempts,omitempty"`
-	Review                 any      `json:"review,omitempty"`
-	ReviewAttempts         []any    `json:"review_attempts,omitempty"`
+	InterpretationPolicy   *PolicyManifest `json:"interpretation_policy,omitempty"`
+	TraceID                string          `json:"trace_id,omitempty"`
+	Model                  string          `json:"model"`
+	RawInterpretation      string          `json:"raw_interpretation,omitempty"`
+	InterpretationAttempts []string        `json:"interpretation_attempts,omitempty"`
+	Review                 any             `json:"review,omitempty"`
+	ReviewAttempts         []any           `json:"review_attempts,omitempty"`
 }
 
 func (c *Coordinator) ResolveUserDecision(ctx context.Context, s UserDecisionSnapshot, submission userdecision.Submission) (Decision, error) {
@@ -334,6 +338,11 @@ func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSna
 		tool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "interpret_submission", Parameters: shared.FunctionParameters{"type": "object", "required": []string{"executable", "reason", "plan"}, "properties": map[string]any{"executable": map[string]any{"type": "boolean"}, "reason": map[string]any{"type": "string"}, "plan": planSchema}}})
 		latest, _ := json.Marshal(map[string]any{"user_decision_submission": submission})
 		interpretMessages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence)), openai.UserMessage(string(latest))}
+		policy := policyManifestForStage(turn, true)
+		actualPrompt := interpretMessages[0].OfSystem.Content.OfString.Value
+		policy.PromptHash = policyHash(actualPrompt)
+		policy.Characters = utf8.RuneCountInString(actualPrompt)
+		audit.InterpretationPolicy = &policy
 		for attempt := 0; attempt < 3; attempt++ {
 			generation := startUserDecisionGeneration(ctx, "coordinator.interpret_submission", c.configuredModel(), interpretMessages, 2048)
 			response, err := c.completeWithLimit(ctx, interpretMessages, []openai.ChatCompletionToolUnionParam{tool}, 2048, temperature)
@@ -355,7 +364,7 @@ func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSna
 				return Decision{}, err
 			}
 			if !parsed.Executable {
-				return Decision{}, fmt.Errorf("submission not executable: %s", parsed.Reason)
+				return Decision{}, &userdecision.NonExecutableSubmissionError{Reason: parsed.Reason}
 			}
 			raw = parsed.Plan
 			if decision, validationErr := reviewPlan(raw); validationErr == nil {

@@ -91,6 +91,9 @@ func TestUserDecisionProposalFreezesChoicesBeforeCheckpoint(t *testing.T) {
 	if d.Action != ActionAwaitUser || d.UserDecision == nil || commits != 0 {
 		t.Fatal("proposal executed or was not frozen")
 	}
+	if d.UserDecision.ProposalPromptHash != policyHash(chat.params[0].Messages[0].OfSystem.Content.OfString.Value) || d.UserDecision.ProposalReviewPromptHash != policyHash(userDecisionPolicy()) {
+		t.Fatal("proposal prompt provenance differs from actual request")
+	}
 	if d.UserDecision.Proposal.Options[0].ID != "new" || d.UserDecision.ProposalPolicy.ID != "user_decision" {
 		t.Fatal("candidate or policy provenance missing")
 	}
@@ -267,6 +270,13 @@ func TestUserDecisionSemanticRepairUsesLatestSubmissionOnce(t *testing.T) {
 	d, a, err := (&Coordinator{Chat: chat}).ResolveUserDecisionWithAudit(ctx, UserDecisionSnapshot{Turn: Turn{Source: SourceRobot, Addressed: true, Message: "请只回复旧回复"}}, userdecision.Submission{Custom: "改为只回复新回复"})
 	if err != nil || d.UserText != "新回复" || commits != 0 || len(a.InterpretationAttempts) != 2 || len(a.ReviewAttempts) != 2 {
 		t.Fatalf("bounded semantic repair lost: %v text=%s attempts=%d reviews=%d commits=%d", err, d.UserText, len(a.InterpretationAttempts), len(a.ReviewAttempts), commits)
+	}
+	if a.InterpretationPolicy == nil || a.InterpretationPolicy.PromptHash != policyHash(chat.params[0].Messages[0].OfSystem.Content.OfString.Value) {
+		t.Fatal("interpretation policy not captured from actual prompt")
+	}
+	review := a.Review.(finishCheckResult)
+	if review.Policy == nil || review.Policy.PromptHash != policyHash(chat.checkParams[1].Messages[0].OfSystem.Content.OfString.Value) {
+		t.Fatal("review policy not captured from actual prompt")
 	}
 	last := chat.params[0].Messages[len(chat.params[0].Messages)-1].OfUser.Content.OfString.Value
 	if !strings.Contains(last, "user_decision_submission") || !strings.Contains(last, "改为只回复新回复") {
