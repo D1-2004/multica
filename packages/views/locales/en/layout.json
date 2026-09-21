@@ -96,6 +96,8 @@
     "pane_listing_body": "Opening a folder loads that directory only. Listing isn’t available on this disk yet.",
     "pane_private_title": "Private to {{name}}",
     "pane_private_body": "This disk is never shared with other agents.",
+    "agent_shared_title": "Workspace shared files",
+    "agent_shared_hint": "Shared files live on the workspace disk, not this private disk. Grant read or write on the agent Filesystem page, then the next task copies them to /mnt/workspace.",
     "open_agent": "Open agent",
     "agent_fallback": "Agent {{id}}",
     "new_folder": "New folder",

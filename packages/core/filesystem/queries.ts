@@ -31,11 +31,17 @@ export function filesystemEntriesOptions(
   root: string,
   path: string,
   offset = 0,
+  recursive = false,
 ) {
   return queryOptions({
-    queryKey: filesystemKeys.entries(workspaceId, root, path, offset),
+    queryKey: filesystemKeys.entries(workspaceId, root, recursive ? "recursive" : path, offset),
     queryFn: ({ signal }) =>
-      api.listFilesystemEntries({ root, path: path === "." ? "" : path, offset }, signal),
+      api.listFilesystemEntries({
+        root,
+        path: path === "." ? "" : path,
+        offset,
+        recursive,
+      }, signal),
     enabled: !!workspaceId && !!root,
     staleTime: 2000,
   });

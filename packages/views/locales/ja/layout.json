@@ -96,6 +96,8 @@
     "pane_listing_body": "フォルダを開くとそのディレクトリだけを読み込みます。このディスクではまだ一覧を利用できません。",
     "pane_private_title": "{{name}} 専用",
     "pane_private_body": "このディスクは他のエージェントと共有されません。",
+    "agent_shared_title": "共有ワークスペースファイル",
+    "agent_shared_hint": "共有ファイルはこの非共有ディスクではなく、ワークスペース側にあります。エージェントのファイルシステムページで読み取りまたは書き込みを許可すると、次のタスクで /mnt/workspace に同期されます。",
     "open_agent": "エージェントを開く",
     "agent_fallback": "エージェント {{id}}",
     "new_folder": "新しいフォルダ",

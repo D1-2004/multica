@@ -11,7 +11,6 @@ import {
   KeyRound,
   Monitor,
   Plug,
-  Puzzle,
   Rocket,
   Settings2,
   Shield,
@@ -127,7 +126,7 @@ export function AgentConfigNav({
                         {Icon ? (
                           <Icon
                             aria-hidden="true"
-                            className="size-3.5 shrink-0"
+                            className="size-4 shrink-0"
                           />
                         ) : null}
                         <span className="min-w-0 truncate">

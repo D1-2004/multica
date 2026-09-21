@@ -180,7 +180,7 @@ export function AgentOverviewPane({
       items: group.items.filter((item) => {
         if (item.id === "mcp_config") return showMcp;
         if (item.id === "dsh") return runtime?.provider === "dsh";
-        if (item.id === "filesystem") return canEdit && agent.runtime_mode === "cloud" && runtime?.provider !== "dsh" && !!runtime && isFCE2BRuntime(runtime);
+        if (item.id === "filesystem") return canEdit && agent.runtime_mode === "cloud";
         if (item.id === "composio_mcp") return showComposioMcp;
         if (item.id === "integrations") return botIntegrationsConfigured;
         if (item.id === "mcp_access" || item.id === "a2a") {

@@ -121,6 +121,34 @@ func (h *Handler) GetWorkspaceFilesystemEntries(w http.ResponseWriter, r *http.R
 		offset = 0
 	}
 	store := h.filesystemStore()
+	if r.URL.Query().Get("recursive") == "1" {
+		all, err := store.ListAll(r.Context(), wsID)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, "filesystem listing is unavailable")
+			return
+		}
+		if len(all) > wsfs.MaxDirectorySize {
+			writeErrorCode(w, http.StatusRequestEntityTooLarge, "filesystem_directory_too_large", "directory is too large to list")
+			return
+		}
+		if offset > len(all) {
+			offset = len(all)
+		}
+		end := offset + limit
+		truncated := end < len(all)
+		if end > len(all) {
+			end = len(all)
+		}
+		var nextOffset any
+		if truncated {
+			nextOffset = end
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"root": root, "path": rel, "offset": offset, "limit": limit,
+			"entries": all[offset:end], "count": end - offset, "truncated": truncated, "next_offset": nextOffset,
+		})
+		return
+	}
 	okDir, err := store.DirExists(r.Context(), wsID, rel)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "filesystem listing is unavailable")

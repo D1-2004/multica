@@ -3841,13 +3841,14 @@ export class ApiClient {
   }
 
   async listFilesystemEntries(
-    params: { root: string; path?: string; offset?: number; limit?: number },
+    params: { root: string; path?: string; offset?: number; limit?: number; recursive?: boolean },
     signal?: AbortSignal,
   ): Promise<FilesystemEntries> {
     const query = new URLSearchParams({ root: params.root });
     if (params.path) query.set("path", params.path);
     if (params.offset != null) query.set("offset", String(params.offset));
     if (params.limit != null) query.set("limit", String(params.limit));
+    if (params.recursive) query.set("recursive", "1");
     const raw = await this.fetch<unknown>(`/api/filesystem/entries?${query}`, { signal });
     return parseWithFallback<FilesystemEntries>(raw, FilesystemEntriesSchema, {
       root: params.root,

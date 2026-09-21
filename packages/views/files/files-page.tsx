@@ -350,17 +350,21 @@ function DiskPane({
   if (disk.kind === "shared") {
     return <SharedBrowser disk={disk} wsId={wsId} />;
   }
-  return <AgentDiskPane disk={disk} agentHref={agentHref} />;
+  return <AgentDiskPane disk={disk} wsId={wsId} agentHref={agentHref} />;
 }
 
 function AgentDiskPane({
   disk,
+  wsId,
   agentHref,
 }: {
   disk: Disk;
+  wsId: string;
   agentHref: string | null;
 }) {
   const { t } = useT("layout");
+  const listing = useQuery(filesystemEntriesOptions(wsId, "shared", ".", 0, true));
+  const shared = listing.data?.entries ?? [];
   return (
     <>
       <PaneHeader
@@ -369,14 +373,35 @@ function AgentDiskPane({
         onPathChange={() => undefined}
         agentHref={agentHref}
       />
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-10">
-        <Folder aria-hidden="true" className="size-8 text-muted-foreground" />
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-6">
         <p className="text-body font-medium">
           {t(($) => $.files.pane_private_title, { name: disk.name })}
         </p>
-        <p className="max-w-sm text-center text-caption text-muted-foreground">
+        <p className="mt-1 max-w-lg text-caption text-muted-foreground">
           {t(($) => $.files.pane_private_body)}
         </p>
+        <p className="mt-6 text-caption font-medium text-muted-foreground">
+          {t(($) => $.files.agent_shared_title)}
+        </p>
+        <p className="mt-1 max-w-lg text-caption text-muted-foreground">
+          {t(($) => $.files.agent_shared_hint)}
+        </p>
+        {shared.length === 0 ? (
+          <p className="mt-3 text-caption text-muted-foreground">{t(($) => $.files.empty_folder)}</p>
+        ) : (
+          <ul className="mt-3 divide-y divide-border rounded-md border">
+            {shared.map((entry) => (
+              <li key={entry.path} className="flex items-center gap-2 px-3 py-2 text-body">
+                {entry.is_dir ? (
+                  <Folder aria-hidden="true" className="size-3.5 text-muted-foreground" />
+                ) : (
+                  <File aria-hidden="true" className="size-3.5 text-muted-foreground" />
+                )}
+                <span className="min-w-0 truncate">{entry.path || entry.name}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </>
   );

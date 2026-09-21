@@ -96,6 +96,8 @@
     "pane_listing_body": "打开文件夹时只会加载当前目录。这块磁盘暂时还不能列出内容。",
     "pane_private_title": "仅 {{name}} 可见",
     "pane_private_body": "这块磁盘不会共享给其他智能体。",
+    "agent_shared_title": "工作区共享文件",
+    "agent_shared_hint": "共享文件在工作区磁盘上，不在这块私有盘里。到智能体「文件系统」页打开只读或可写后，下次任务会同步到 /mnt/workspace。",
     "open_agent": "打开智能体",
     "agent_fallback": "智能体 {{id}}",
     "new_folder": "新建文件夹",

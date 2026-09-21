@@ -126,7 +126,7 @@ function SharedDiskPanel({
 }) {
   const { t } = useT("agents");
   const paths = useWorkspacePaths();
-  const listing = useQuery(filesystemEntriesOptions(workspaceId, "shared", "."));
+  const listing = useQuery(filesystemEntriesOptions(workspaceId, "shared", ".", 0, true));
   const grants = useQuery(filesystemGrantsOptions(workspaceId));
   const saveGrant = useFilesystemGrant(workspaceId);
   const access =
@@ -196,7 +196,7 @@ function SharedDiskPanel({
               ) : (
                 <File aria-hidden="true" className="size-3.5 text-muted-foreground" />
               )}
-              <span className="min-w-0 truncate">{entry.name}</span>
+              <span className="min-w-0 truncate">{entry.path || entry.name}</span>
             </li>
           ))}
         </ul>

@@ -96,6 +96,8 @@
     "pane_listing_body": "폴더를 열면 해당 디렉터리만 불러옵니다. 이 디스크에서는 아직 목록을 볼 수 없습니다.",
     "pane_private_title": "{{name}} 전용",
     "pane_private_body": "이 디스크는 다른 에이전트와 공유되지 않습니다.",
+    "agent_shared_title": "공유 워크스페이스 파일",
+    "agent_shared_hint": "공유 파일은 이 비공유 디스크가 아니라 워크스페이스 디스크에 있습니다. 에이전트 파일 시스템 페이지에서 읽기 또는 쓰기를 허용하면 다음 작업에서 /mnt/workspace로 동기화됩니다.",
     "open_agent": "에이전트 열기",
     "agent_fallback": "에이전트 {{id}}",
     "new_folder": "새 폴더",
