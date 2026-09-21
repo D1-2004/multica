@@ -85,7 +85,7 @@ func (p Proposal) Validate() error {
 		}
 	}
 	if counts["continue_work"] > 3 || counts["start_work"] != 1 || counts["reply"] != 1 {
-		return errors.New("invalid decision option mix")
+		return errors.New("options require exactly one start_work, exactly one reply, and zero to three continue_work")
 	}
 	if p.RecommendedID != "" && !seen[p.RecommendedID] {
 		return errors.New("unknown recommended option")

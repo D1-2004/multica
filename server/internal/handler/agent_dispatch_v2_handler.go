@@ -1624,6 +1624,7 @@ func decideDispatchCoordinator(
 	coord := h.inboundCoordinator()
 	turn := inboundcoord.Turn{
 		UserDecisionEnabled:   decisionScope(ctx) != nil,
+		UserDecisionRequestID: decisionRequestID(ctx),
 		Source:                source,
 		Addressed:             !command.ProactiveConversation || dispatchMentionsEmployee(command),
 		ProactiveConversation: command.ProactiveConversation,

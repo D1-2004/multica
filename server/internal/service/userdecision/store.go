@@ -126,6 +126,9 @@ func (s *Store) Accept(ctx context.Context, e Event) (string, error) {
 }
 
 func (s *Store) AcceptFrom(ctx context.Context, e Event, senderUID, senderOrgID string) (string, error) {
+	if _, err := uuid.Parse(e.RequestID); err != nil {
+		return "", pgx.ErrNoRows
+	}
 	if s.DB == nil || s.Environment == "" {
 		return "", errors.New("decision store unavailable")
 	}

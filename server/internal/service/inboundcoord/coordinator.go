@@ -81,6 +81,7 @@ const (
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
 	UserDecisionEnabled    bool
+	UserDecisionRequestID  string
 	UserDecisionSubmission *userdecision.Submission
 
 	model                      string

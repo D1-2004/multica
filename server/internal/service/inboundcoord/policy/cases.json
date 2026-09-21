@@ -1452,6 +1452,16 @@
       "context_b": "其他群成员选择同一张卡，或发起人补充说明与所选目标矛盾",
       "expected_effects": "仅发起人的首次有效提交可恢复；目标矛盾不换选项、不执行、不发第二次询问",
       "verification": "not_run"
+    },
+    {
+      "id": "user_decision_proposal_repair_contrast",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "候选缺少必需选项，在发卡前根据校验反馈修正；直接回复标签使用计划原文",
+      "context_b": "修正仍含无效动作或虚构任务，或补充说明把续接目标改成另一任务",
+      "expected_effects": "仅合法冻结候选发一张卡；失败不提交计划，不把标签摘要当实际回复；明确方向不可被改写",
+      "verification": "host_test_only"
     }
   ]
 }

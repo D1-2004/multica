@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
+	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/langfuse"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/service/userdecision"
 	openai "github.com/openai/openai-go/v3"
@@ -15,14 +17,16 @@ import (
 // UserDecisionSnapshot is immutable evidence for the single question belonging
 // to this inbound run. It is not a committed execution checkpoint.
 type UserDecisionSnapshot struct {
-	Turn           Turn                                     `json:"turn"`
-	Messages       []openai.ChatCompletionMessageParamUnion `json:"messages"`
-	Recalls        []recallCall                             `json:"recalls"`
-	RecalledIDs    []string                                 `json:"recalled_ids"`
-	Recommended    Decision                                 `json:"recommended"`
-	ProposalPolicy PolicyModuleManifest                     `json:"proposal_policy"`
-	Policy         PolicyManifest                           `json:"policy"`
-	Proposal       userdecision.Proposal                    `json:"proposal"`
+	DecisionID       string                                   `json:"decision_id,omitempty"`
+	Turn             Turn                                     `json:"turn"`
+	Messages         []openai.ChatCompletionMessageParamUnion `json:"messages"`
+	Recalls          []recallCall                             `json:"recalls"`
+	RecalledIDs      []string                                 `json:"recalled_ids"`
+	Recommended      Decision                                 `json:"recommended"`
+	ProposalPolicy   PolicyModuleManifest                     `json:"proposal_policy"`
+	Policy           PolicyManifest                           `json:"policy"`
+	ProposalAttempts []string                                 `json:"proposal_attempts,omitempty"`
+	Proposal         userdecision.Proposal                    `json:"proposal"`
 }
 
 func (c *Coordinator) proposeUserDecision(ctx context.Context, turn Turn, messages []openai.ChatCompletionMessageParamUnion, recalls []recallCall, recalled map[string]struct{}, recommended Decision) (Decision, error) {
@@ -41,36 +45,65 @@ func (c *Coordinator) proposeUserDecision(ctx context.Context, turn Turn, messag
 	params := windowPlanToolFor(turn, true).OfFunction.Function.Parameters
 	option := map[string]any{"type": "object", "additionalProperties": false, "required": []string{"id", "label", "kind", "plan"}, "properties": map[string]any{"id": map[string]any{"type": "string"}, "label": map[string]any{"type": "string"}, "kind": map[string]any{"type": "string", "enum": []string{"continue_work", "start_work", "reply"}}, "plan": params}}
 	schema := shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"question", "options", "recommended_id"}, "properties": map[string]any{"question": map[string]any{"type": "string"}, "options": map[string]any{"type": "array", "minItems": 2, "maxItems": 5, "items": option}, "recommended_id": map[string]any{"type": "string"}}}
-	response, err := c.completeWithLimit(ctx, []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence))}, []openai.ChatCompletionToolUnionParam{openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "propose_choices", Parameters: schema})}, 4096, temperature)
-	if err != nil {
-		return Decision{}, err
-	}
-	if response == nil || len(response.Choices) != 1 || len(response.Choices[0].Message.ToolCalls) != 1 {
-		return Decision{}, errors.New("missing user decision proposal")
-	}
-	call := response.Choices[0].Message.ToolCalls[0].Function
-	if call.Name != "propose_choices" {
-		return Decision{}, errors.New("unexpected user decision tool")
-	}
+	proposalMessages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence))}
 	var p userdecision.Proposal
-	if err = json.Unmarshal([]byte(call.Arguments), &p); err != nil {
-		return Decision{}, err
-	}
-	if err = p.Validate(); err != nil {
-		return Decision{}, err
-	}
-	for _, o := range p.Options {
-		d, err := parseValidatedWindowPlan(string(o.Plan), turn, recalls, recalled)
-		if err != nil {
-			return Decision{}, fmt.Errorf("candidate %s: %w", o.ID, err)
+	var attempts []string
+	var validationErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		generation := startUserDecisionGeneration(ctx, "coordinator.propose_choices", c.configuredModel(), proposalMessages, 4096)
+		response, callErr := c.completeWithLimit(ctx, proposalMessages, []openai.ChatCompletionToolUnionParam{openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "propose_choices", Parameters: schema})}, 4096, temperature)
+		endRoundGeneration(generation, response, callErr)
+		if callErr != nil {
+			return Decision{}, callErr
 		}
-		if err = validateChoiceDirection(o, d); err != nil {
-			return Decision{}, err
+		if response == nil || len(response.Choices) != 1 || len(response.Choices[0].Message.ToolCalls) != 1 {
+			return Decision{}, errors.New("missing user decision proposal")
 		}
+		call := response.Choices[0].Message.ToolCalls[0].Function
+		if call.Name != "propose_choices" {
+			return Decision{}, errors.New("unexpected user decision tool")
+		}
+		attempts = append(attempts, call.Arguments)
+		p = userdecision.Proposal{}
+		validationErr = json.Unmarshal([]byte(call.Arguments), &p)
+		if validationErr == nil {
+			validationErr = p.Validate()
+		}
+		if validationErr == nil {
+			for i := range p.Options {
+				o := p.Options[i]
+				d, parseErr := parseValidatedWindowPlan(string(o.Plan), turn, recalls, recalled)
+				if parseErr != nil {
+					validationErr = fmt.Errorf("candidate %s: %w", o.ID, parseErr)
+					break
+				}
+				// The exact model-authored reply is the visible choice, never a
+				// potentially misleading model-authored summary of that reply.
+				if o.Kind == "reply" && d.Action == ActionReply && d.UserText != "" {
+					o.Label = "直接回复：“" + d.UserText + "”"
+					p.Options[i] = o
+				}
+				if directionErr := validateChoiceDirection(o, d); directionErr != nil {
+					validationErr = fmt.Errorf("candidate %s kind=%s: %w; plan action kinds=%v", o.ID, o.Kind, directionErr, decisionOptionActionKinds(d))
+					break
+				}
+			}
+		}
+		if validationErr == nil {
+			validationErr = p.Validate()
+		}
+		if validationErr == nil {
+			break
+		}
+		feedback, _ := json.Marshal(map[string]any{"proposal_validation_error": validationErr.Error(), "previous_proposal": call.Arguments})
+		proposalMessages = append(proposalMessages, openai.UserMessage(string(feedback)))
+	}
+	if validationErr != nil {
+		return Decision{}, validationErr
 	}
 	p.Model = c.configuredModel()
-	p.RawOutput = call.Arguments
-	snapshot := &UserDecisionSnapshot{Turn: turn, Messages: messages, Recalls: recalls, RecalledIDs: sortedCopy(turn.recalledIssueIDs), Recommended: recommended, Policy: policyManifestForStage(turn, len(recalled) > 0), Proposal: p}
+	p.RawOutput = attempts[len(attempts)-1]
+	snapshot := &UserDecisionSnapshot{Turn: turn, Messages: messages, Recalls: recalls, RecalledIDs: sortedCopy(turn.recalledIssueIDs), Recommended: recommended, Policy: policyManifestForStage(turn, len(recalled) > 0), Proposal: p, ProposalAttempts: attempts}
 	for _, module := range coordinatorPolicy.Modules {
 		if module.ID == "user_decision" {
 			snapshot.ProposalPolicy = PolicyModuleManifest{ID: module.ID, Version: module.Version, Hash: module.ContentHash}
@@ -90,7 +123,7 @@ func validateChoiceDirection(o userdecision.Option, d Decision) error {
 		}
 	}
 	if o.Kind == "reply" {
-		if work != 0 || d.Action != ActionReply || d.UserText == "" || !strings.Contains(o.Label, d.UserText) {
+		if work != 0 || d.Action != ActionReply || d.UserText == "" {
 			return errors.New("reply candidate must contain a concrete non-work reply")
 		}
 	} else if work != 1 {
@@ -112,6 +145,7 @@ func userDecisionPolicy() string {
 // frozen candidate. It never regenerates the displayed choices or commits a
 // checkpoint; the durable Host commits this result with the original job.
 type UserDecisionResolutionAudit struct {
+	TraceID           string `json:"trace_id,omitempty"`
 	Model             string `json:"model"`
 	RawInterpretation string `json:"raw_interpretation,omitempty"`
 	Review            any    `json:"review,omitempty"`
@@ -122,7 +156,15 @@ func (c *Coordinator) ResolveUserDecision(ctx context.Context, s UserDecisionSna
 }
 func (c *Coordinator) ResolveUserDecisionWithAudit(ctx context.Context, s UserDecisionSnapshot, submission userdecision.Submission) (Decision, UserDecisionResolutionAudit, error) {
 	var audit UserDecisionResolutionAudit
+	turn := s.Turn
+	turn.TraceID = uuid.NewString()
+	turn.UserDecisionRequestID = s.DecisionID
+	turn.model = c.configuredModel()
+	audit.TraceID = turn.TraceID
+	trace := c.startTurnTrace(ctx, turn, time.Now())
+	ctx = langfuse.ContextWithTrace(ctx, trace)
 	d, err := c.resolveUserDecision(ctx, s, submission, &audit)
+	finishCoordinatorTrace(trace, d, err)
 	return d, audit, err
 }
 func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSnapshot, submission userdecision.Submission, audit *UserDecisionResolutionAudit) (Decision, error) {
@@ -163,7 +205,10 @@ func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSna
 		}
 		planSchema := windowPlanToolFor(turn, true).OfFunction.Function.Parameters
 		tool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "interpret_submission", Parameters: shared.FunctionParameters{"type": "object", "required": []string{"executable", "reason", "plan"}, "properties": map[string]any{"executable": map[string]any{"type": "boolean"}, "reason": map[string]any{"type": "string"}, "plan": planSchema}}})
-		response, err := c.completeWithLimit(ctx, []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence))}, []openai.ChatCompletionToolUnionParam{tool}, 2048, temperature)
+		interpretMessages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(evidence))}
+		generation := startUserDecisionGeneration(ctx, "coordinator.interpret_submission", c.configuredModel(), interpretMessages, 2048)
+		response, err := c.completeWithLimit(ctx, interpretMessages, []openai.ChatCompletionToolUnionParam{tool}, 2048, temperature)
+		endRoundGeneration(generation, response, err)
 		if err != nil {
 			return Decision{}, err
 		}
@@ -221,4 +266,20 @@ func workTarget(d Decision) string {
 		}
 	}
 	return "reply"
+}
+
+func decisionOptionActionKinds(d Decision) []string {
+	kinds := make([]string, 0, len(d.CoordinationActions))
+	for _, a := range d.CoordinationActions {
+		kinds = append(kinds, a.Kind)
+	}
+	return kinds
+}
+
+func startUserDecisionGeneration(ctx context.Context, name, model string, input any, tokens int) *langfuse.Observation {
+	trace := langfuse.TraceFromContext(ctx)
+	if trace == nil {
+		return nil
+	}
+	return trace.StartObservation(langfuse.ObservationOptions{Type: langfuse.TypeGeneration, Name: name, Model: model, Input: input, ModelParameters: map[string]any{"max_completion_tokens": tokens, "temperature": temperature}})
 }

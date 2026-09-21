@@ -44,7 +44,7 @@ func TestUnknownChoiceCannotCommitPlan(t *testing.T) {
 func TestUserDecisionReviewPolicyIsSelected(t *testing.T) {
 	turn := Turn{Loop: LoopFinishCheck, UserDecisionSubmission: &userdecision.Submission{OptionID: "o1"}}
 	prompt := buildSystemPrompt(turn)
-	if !strings.Contains(prompt, "[policy:user_decision@1]") {
+	if !strings.Contains(prompt, "[policy:user_decision@2]") {
 		t.Fatal("review did not receive locked-choice policy")
 	}
 }
@@ -107,5 +107,24 @@ func TestUserDecisionProposalFreezesChoicesBeforeCheckpoint(t *testing.T) {
 	}
 	if resolved.Action != ActionIssue || workTarget(resolved) != "start_work:" || commits != 0 {
 		t.Fatalf("changed direction or premature commit: %+v", resolved)
+	}
+}
+
+func TestUserDecisionProposalRepairsBeforeShowingOneQuestion(t *testing.T) {
+	turn := Turn{Source: SourceRobot, Addressed: true, Message: "整理报告", UserDecisionEnabled: true}
+	valid := `{"question":"怎么处理？","recommended_id":"new","options":[{"id":"new","label":"新建工作","kind":"start_work","plan":{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"整理一份完整可转发报告"}]}},{"id":"reply","label":"模型摘要","kind":"reply","plan":{"actions":[{"kind":"acknowledge","source_refs":["u1"],"reply":"你好","ack_kind":"greeting"}]}}]}`
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("invalid", "propose_choices", `{"question":"怎么处理？","options":[]}`), assistantTool("valid", "propose_choices", valid)}}
+	c := &Coordinator{Chat: chat}
+	commits := 0
+	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { commits++; return nil })
+	d, err := c.proposeUserDecision(ctx, turn, nil, nil, nil, Decision{Action: ActionIssue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Action != ActionAwaitUser || len(d.UserDecision.ProposalAttempts) != 2 || commits != 0 {
+		t.Fatal("repair did not retain attempts or committed early")
+	}
+	if d.UserDecision.Proposal.Options[1].Label != "直接回复：“你好”" {
+		t.Fatal("visible choice is not exact model reply")
 	}
 }

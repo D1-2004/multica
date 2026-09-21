@@ -291,15 +291,15 @@
     },
     {
       "id": "user_decision",
-      "version": "1",
+      "version": "2",
       "file": "user_decision.md",
       "applies_when": "user_decision",
       "requires": [],
       "owns_rule_ids": [
         "COORD.F01"
       ],
-      "budget_characters": 1713,
-      "content_sha256": "4001e7b73280ad9f9c3eb3b3f3477f974488a99483e2912ea69796858aa09bb6"
+      "budget_characters": 2732,
+      "content_sha256": "b6317aca79f73f93aa9de935c7d865c564e7057bb46af4425a5eb2d638ae9eb5"
     }
   ],
   "obligations": [
@@ -336,7 +336,8 @@
         "f01_receiving_mention_stale_name",
         "f01_uid_required_reply_rename",
         "f01_other_uid_same_name_quote",
-        "user_decision_initiator_contrast"
+        "user_decision_initiator_contrast",
+        "user_decision_proposal_repair_contrast"
       ],
       "verification": {
         "status": "integration_replay_pending",

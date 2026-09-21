@@ -43,6 +43,7 @@ func coordinatorTraceOptions(turn Turn, started time.Time) langfuse.TraceOptions
 	metadata := map[string]any{
 		"loop":              coordinatorTraceName,
 		"coord_trace_id":    strings.TrimSpace(turn.TraceID),
+		"decision_id":       strings.TrimSpace(turn.UserDecisionRequestID),
 		"conversation_id":   strings.TrimSpace(turn.ConversationID),
 		"conversation_name": conversationName(turn),
 		"conversation_kind": kind,

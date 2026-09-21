@@ -102,6 +102,7 @@ func (h *Handler) persistUserDecision(w http.ResponseWriter, r *http.Request, d 
 		writeError(w, 503, "user decision scope unavailable; no work dispatched")
 		return true
 	}
+	d.UserDecision.DecisionID = scope.ID
 	snapshot, err := json.Marshal(d.UserDecision)
 	if err != nil {
 		writeError(w, 500, "could not freeze decision")
@@ -121,4 +122,11 @@ func unavailableUserDecision(c DispatchCommand) inboundcoord.Decision {
 		return inboundcoord.Decision{Action: inboundcoord.ActionSilence, Reason: "user_decision_not_addressed"}
 	}
 	return inboundcoord.Decision{Action: inboundcoord.ActionReply, UserText: "用户选择服务暂不可用，本次未执行。", Reason: "user_decision_service_unavailable"}
+}
+
+func decisionRequestID(ctx context.Context) string {
+	if scope := decisionScope(ctx); scope != nil {
+		return scope.ID
+	}
+	return ""
 }

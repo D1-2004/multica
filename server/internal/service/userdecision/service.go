@@ -39,7 +39,9 @@ func (s *Service) Run(ctx context.Context) {
 		if err := s.Store.Sweep(ctx); err != nil && ctx.Err() == nil {
 			slog.Error("user decision sweep failed", "event", "user_decision_sweep_failed")
 		}
-		_ = s.refreshExecution(ctx)
+		if err := s.refreshExecution(ctx); err != nil && ctx.Err() == nil {
+			slog.Error("user decision execution tracking failed", "event", "user_decision_execution_tracking_failed")
+		}
 		rows, err := s.Pool.Query(ctx, `SELECT DISTINCT ON (sender_uid,sender_org_id) to_jsonb(d) FROM coordinator_user_decision d WHERE environment=$1 AND (state IN ('prepared','sending','send_unknown','waiting','accepted','resuming') OR card_update_pending) ORDER BY sender_uid,sender_org_id,created_at`, s.Store.Environment)
 		if err == nil {
 			for rows.Next() {
