@@ -292,7 +292,15 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	}
 	out, err := l.runE2BCommand(ctx, args)
 	if err != nil {
-		return dshhost.Host{}, cold, errors.New("DSH employee Home initialization failed")
+		slog.Warn("DSH employee Home initialization command failed",
+			"sandbox_id", host.SandboxID,
+			"workspace_id", host.WorkspaceID,
+			"agent_id", host.AgentID,
+			"generation", host.Generation,
+			"error", err,
+			"output", strings.TrimSpace(out),
+		)
+		return dshhost.Host{}, cold, fmt.Errorf("DSH employee Home initialization failed: %w", err)
 	}
 	if err = validateDSHHomeReceipt(out, host); err != nil {
 		return dshhost.Host{}, cold, err
