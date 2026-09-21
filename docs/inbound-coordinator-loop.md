@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-15.10`。装配版本：`37`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-21.1`。装配版本：`38`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -348,3 +348,12 @@ start_work/continue_work的接单回复由Host生成，模型仅可选择闭合r
 ## Coordinator model configuration
 
 Diamond `dt-fde-multica-runtime.json` / `DEFAULT_GROUP` exposes `runtime.llm.coordinator_model`. Each decision snapshots the model once for the main loop, finish checks, logs and Langfuse; updates apply to the next decision. Missing/blank values retain `qwen3.7-plus` for existing documents during rollout. The configured target is `qwen3.8-max`. Requests keep `enable_thinking=false` and `reasoning_effort=none`; this setting does not change executor models or the global default. Local protocol tests do not certify real model behavior or deployment.
+
+
+### 发起人选择处理方式（2026-09-21，尚未完成产品接线及验收）
+
+`inbound_coordinator_user_decision` 默认关闭；关闭 Coordinator 同时清除此设置。候选提案与执行 checkpoint 分开：`UserDecisionSnapshot` 保存冻结上下文、模型实际输入、召回任务、提案及 policy 版本，`proposeUserDecision` 在 `SavePlan` 之前返回等待。每次入站仅一次提问；续接最多三个真实任务，加新建与具体直接回复；卡片不暴露内部计划或默认勾选。
+
+回调身份只读取可信 `operatorDTO.openDingTalkId`，新协议 `a2uiEvent.action.context` 与旧 `actionData.context` 在边界兼容。数据库事务锁住决策、去重事件并接收首次有效提交；拒绝事件不消耗机会。未确认发送成功不启动 24 小时计时；过期不自动选择。发送链路标识不构成 DWS 消息幂等保证，结果不明禁止盲目重发。
+
+选择锁定动作方向与目标；只补充文字可解释为计划，歧义或矛盾不执行、不二次询问。用户选择、模型推荐与人工金标分别记录。结构检查与单元测试不表示内部群产品链路通过；服务端消费、派发恢复、OSS/导出与真实模型/群验收仍须完成。

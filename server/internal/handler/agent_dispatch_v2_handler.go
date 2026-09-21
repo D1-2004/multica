@@ -391,6 +391,17 @@ func (h *Handler) executeAgentDispatchV2(
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
+	if h.guardUnavailableUserDecision(w, r, command, dispatchContext) {
+		return
+	}
+	if decisionScope(r.Context()) != nil {
+		agent, ok := h.resolveAgentDispatchAgent(w, r, dispatchContext.UserID, dispatchContext.WorkspaceID, dispatchContext.AgentID)
+		if !ok {
+			return
+		}
+		h.createAgentDispatchIssueV2(w, r, command, plan.Prompt, dispatchContext, agent)
+		return
+	}
 	if plan.MaterializerType == protocol.DispatchSurfaceTypeChat {
 		_, hasSavedPlan := inboundcoord.RestoredPlan(r.Context())
 		coordinatorOn, coordinatorFlagErr := h.Queries.GetAgentInboundCoordinator(r.Context(), dispatchContext.AgentID)
@@ -1114,7 +1125,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			hasAttachments = true
 		}
 	}
-	if !hasAttachments || c.ProactiveConversation {
+	if !hasAttachments || c.ProactiveConversation || decisionScope(r.Context()) != nil {
 		decision = decideDispatchCoordinator(
 			r.Context(), h, c, agent, prompt.DisplayContent,
 			dispatchContext.UserID,
@@ -1123,6 +1134,9 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	}
 	// Publish committed results after materialization, not just the model verdict.
 	defer func() { inboundcoord.RecordDecision(r.Context(), decision) }()
+	if h.persistUserDecision(w, r, decision) {
+		return
+	}
 	if decision.Action == inboundcoord.ActionDeferred {
 		writeError(w, http.StatusServiceUnavailable, "coordinator has not decided this window; retry without executing")
 		return
@@ -1609,6 +1623,7 @@ func decideDispatchCoordinator(
 	ids := dispatchAssocIDs(command)
 	coord := h.inboundCoordinator()
 	turn := inboundcoord.Turn{
+		UserDecisionEnabled:   decisionScope(ctx) != nil,
 		Source:                source,
 		Addressed:             !command.ProactiveConversation || dispatchMentionsEmployee(command),
 		ProactiveConversation: command.ProactiveConversation,

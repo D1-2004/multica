@@ -150,6 +150,9 @@ func selectedPolicyModules(turn Turn, recalled bool) []policyModule {
 		selected["dialogue"] = len(turn.History) > 0 || len(turn.DingTalkHistory) > 0
 		selected["recall_match"] = recalled
 	}
+	if turn.UserDecisionSubmission != nil {
+		selected["user_decision"] = true
+	}
 	modules := make([]policyModule, 0, len(selected))
 	for _, module := range coordinatorPolicy.Modules {
 		if selected[module.ID] {

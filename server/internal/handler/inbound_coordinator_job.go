@@ -189,6 +189,7 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	// Memory trigger recorded at enqueue time (coord_trace_id = job id) and
 	// the turn's SLS/Langfuse trace resolve to the same identifier.
 	jobCtx = inboundcoord.ContextWithTraceID(jobCtx, util.UUIDToString(job.ID))
+	jobCtx = context.WithValue(jobCtx, userDecisionJobKey{}, job)
 	if coordinatorCapacityWaitExpired(job) {
 		// Waiting longer cannot help this window: the occupied slots are held
 		// by work this loop does not control. Run it instead of parking again.
@@ -217,6 +218,9 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	response := newBufferedDispatchResponse()
 	w.handler.executeAgentDispatchV2(response, req, command, plan, dispatchContext)
 	if response.Status() >= http.StatusOK && response.Status() < http.StatusMultipleChoices {
+		if recordedDecision != nil && recordedDecision.Action == inboundcoord.ActionAwaitUser {
+			return true, nil
+		}
 		if recordedDecision != nil {
 			*recordedDecision = coordinatorDecisionWithDispatchResult(*recordedDecision, response)
 			if err := w.handler.persistCoordinatorJobChat(jobCtx, job, *recordedDecision); err != nil {
@@ -702,7 +706,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			if priorWaitErr != nil {
 				return nil, job, priorWaitErr
 			}
-			if !sameCoordinatorCollectKind(base, command) || !sameCoordinatorWaitDelivery(priorWait, waitDelivery) {
+			if !sameCoordinatorCollectKind(base, command) || !sameCoordinatorWaitDelivery(priorWait, waitDelivery) || (waitPolicy.InboundCoordinatorUserDecision && !sameDecisionAuthor(base, command)) {
 				splitKind = true
 				continue
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -54,6 +55,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
+	"github.com/multica-ai/multica/server/internal/service/userdecision"
 	"github.com/multica-ai/multica/server/internal/sitehosting"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -814,6 +816,37 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	h.InboundCoordinator = coordinator
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
+	decisionMCP := strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL"))
+	decisionEnv := "production"
+	if strings.Contains(decisionMCP, "pre-mcp.") {
+		decisionEnv = "staging"
+	}
+	h.UserDecisions = &userdecision.Service{Pool: pool, Store: &userdecision.Store{DB: pool, Environment: decisionEnv, Blobs: h.Storage}, Transport: dingtalkresponse.NewDecisionTransport(dingtalkresponse.DWSConfig{AgentIdentity: agentidentityhsf.NewClient(), BaseURL: signupConfig.FCE2B.AgentIdentityControlBaseURL, BaseURLProvider: agentIdentityControlBaseURLProvider, ClientSecret: signupConfig.FCE2B.DWSClientSecret}, decisionMCP), Wake: h.InboundCoordinatorWorker.Notify}
+	h.UserDecisions.Resolve = func(ctx context.Context, r userdecision.Request) (json.RawMessage, json.RawMessage, error) {
+		raw, err := h.UserDecisions.Store.Snapshot(ctx, r)
+		if err != nil {
+			return nil, nil, err
+		}
+		var snapshot inboundcoord.UserDecisionSnapshot
+		if err = json.Unmarshal(raw, &snapshot); err != nil {
+			return nil, nil, err
+		}
+		if r.Submission == nil {
+			return nil, nil, fmt.Errorf("missing accepted submission")
+		}
+		plan, err := coordinator.ResolveUserDecision(ctx, snapshot, *r.Submission)
+		audit := map[string]any{"resolved_plan": plan, "proposal_model": snapshot.Proposal.Model}
+		if err != nil {
+			audit["error"] = err.Error()
+		}
+		interpretation, _ := json.Marshal(audit)
+		if err != nil {
+			return nil, interpretation, err
+		}
+		raw, err = json.Marshal(plan)
+		return raw, interpretation, err
+	}
+
 	if agentMessageRouterClient != nil {
 		h.DingTalkResponses = dingtalkresponse.NewService(pool, dingtalkresponse.NewDWSProvider(dingtalkresponse.DWSConfig{
 			AgentIdentity:   agentidentityhsf.NewClient(),
@@ -1576,7 +1609,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("composio integration disabled (COMPOSIO_API_KEY not set)")
 	}
 
-
 	// VCS at-rest encryption: the box encrypts per-workspace access tokens and
 	// webhook secrets for token-based providers (Forgejo / Gitea / GitLab).
 	// Without it, connect/webhook handlers return 503 (so a misconfigured
@@ -1694,6 +1726,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Authorization: Bearer, and is disabled unless MULTICA_LOG_DIR is set
 	// (main.sh exports it in containerized deployments).
 	r.Get("/api/internal/logs/tail", logTailHandler(os.Getenv("MULTICA_LOG_TAIL_TOKEN"), os.Getenv("MULTICA_LOG_DIR")))
+	r.Post("/api/internal/coordinator/card-events", func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimSpace(os.Getenv("MULTICA_LOG_TAIL_TOKEN"))
+		if token == "" || !hasBearerToken(r, token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h.ReceiveUserDecisionEvent(w, r)
+	})
+
 	if opts.DeploymentFence != nil {
 		fenceToken := os.Getenv("MULTICA_LOG_TAIL_TOKEN")
 		r.Get("/api/internal/deployment-fence", deploymentFenceStatusHandler(fenceToken, opts.DeploymentFence))
@@ -2560,6 +2601,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
 					r.Get("/source", h.GetAgentSource)
+					r.Get("/decisions/export", h.ExportUserDecisions)
 					r.Get("/export", h.ExportAgent)
 					r.Get("/package-bindings", h.GetAgentPackageBindings)
 					r.With(handler.RequireHumanActor).Post("/package-bindings/confirm", h.ConfirmAgentPackageBinding)

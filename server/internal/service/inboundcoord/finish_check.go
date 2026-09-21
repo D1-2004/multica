@@ -130,8 +130,9 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		"job_policy":               policy,
 	}
 	input := map[string]any{
-		"proactive_conversation": turn.ProactiveConversation,
-		"employee_account_name":  turn.EmployeeAccountName, "employee_uid": turn.DWSUID, "agent_name": conversationAgentName(turn),
+		"user_decision_submission": turn.UserDecisionSubmission,
+		"proactive_conversation":   turn.ProactiveConversation,
+		"employee_account_name":    turn.EmployeeAccountName, "employee_uid": turn.DWSUID, "agent_name": conversationAgentName(turn),
 		"source": turn.Source, "chat_type": turn.ChatType, "conversation_id": turn.ConversationID, modelAddressingField(turn): turn.Addressed,
 		"receiving_identity_status":    receivingIdentityStatus(turn),
 		"receiving_identity_authority": receivingIdentityAuthority,

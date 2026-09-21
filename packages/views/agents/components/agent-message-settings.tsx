@@ -89,7 +89,15 @@ export function InboundCoordinatorSetting({
           description={t(($) => $.inspector.prop_inbound_coordinator_hint)}
           enabled={agent.inbound_coordinator === true}
           canEdit={canEdit}
-          onSave={(next) => onUpdate(next ? { inbound_coordinator: true } : { inbound_coordinator: false, event_trigger_enabled: false })}
+          onSave={(next) => onUpdate(next ? { inbound_coordinator: true } : { inbound_coordinator: false, inbound_coordinator_user_decision: false, event_trigger_enabled: false })}
+        />
+        <BooleanSetting
+          agentId={agent.id}
+          label={t(($) => $.inspector.prop_coordinator_user_decision)}
+          description={t(($) => $.inspector.prop_coordinator_user_decision_hint)}
+          enabled={agent.inbound_coordinator_user_decision === true}
+          canEdit={canEdit && agent.inbound_coordinator === true}
+          onSave={(next) => onUpdate({ inbound_coordinator_user_decision: next })}
         />
         <BooleanSetting
           agentId={agent.id}

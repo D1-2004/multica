@@ -1442,6 +1442,16 @@
       "verification": "not_run",
       "evidence_status": "pending_reference",
       "evidence_note": "重试前置检查与等待恢复已在预发观察到（park 8.5 分钟后自动开跑，未触发 10 分钟豁免）；豁免路径本身仍只有本地数据库用例，不记为通过。"
+    },
+    {
+      "id": "user_decision_initiator_contrast",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "发起人选择已冻结的续接选项，并补充格式要求",
+      "context_b": "其他群成员选择同一张卡，或发起人补充说明与所选目标矛盾",
+      "expected_effects": "仅发起人的首次有效提交可恢复；目标矛盾不换选项、不执行、不发第二次询问",
+      "verification": "not_run"
     }
   ]
 }

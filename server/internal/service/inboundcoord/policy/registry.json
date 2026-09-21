@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-15.10",
-  "assembly_version": "37",
+  "policy_version": "2026-09-21.1",
+  "assembly_version": "38",
   "modules": [
     {
       "id": "core",
@@ -288,6 +288,18 @@
       ],
       "budget_characters": 1027,
       "content_sha256": "557f060241a7d463bfa8092668d6145ca21a858073fb83103ae4a92b6b3650be"
+    },
+    {
+      "id": "user_decision",
+      "version": "1",
+      "file": "user_decision.md",
+      "applies_when": "user_decision",
+      "requires": [],
+      "owns_rule_ids": [
+        "COORD.F01"
+      ],
+      "budget_characters": 1713,
+      "content_sha256": "4001e7b73280ad9f9c3eb3b3f3477f974488a99483e2912ea69796858aa09bb6"
     }
   ],
   "obligations": [
@@ -304,7 +316,8 @@
         "window",
         "finish_check",
         "finish_check_work",
-        "conversation_reply"
+        "conversation_reply",
+        "user_decision"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -322,7 +335,8 @@
         "f02_history_read_unknown",
         "f01_receiving_mention_stale_name",
         "f01_uid_required_reply_rename",
-        "f01_other_uid_same_name_quote"
+        "f01_other_uid_same_name_quote",
+        "user_decision_initiator_contrast"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -368,7 +382,10 @@
         "server/internal/service/inboundcoord/contextual_reply_test.go",
         "docs/plans/2026-09-15-coordinator-contextual-replies.md",
         "server/internal/service/inboundcoord/conversation_reply.go",
-        "server/internal/service/inboundcoord/policy/conversation_reply.md"
+        "server/internal/service/inboundcoord/policy/conversation_reply.md",
+        "server/internal/service/inboundcoord/user_decision.go",
+        "server/internal/service/userdecision/event.go",
+        "server/internal/service/userdecision/store.go"
       ],
       "case_file": "cases.json"
     },
@@ -1514,6 +1531,9 @@
     ],
     "conversation_reply_render": [
       "conversation_reply"
+    ],
+    "user_decision_submission": [
+      "user_decision"
     ]
   },
   "retired_implementations": [

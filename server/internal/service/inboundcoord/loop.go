@@ -265,6 +265,9 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 						decision.Steps = steps
 						decision.ToolRounds = round + 1
 						decision.ToolsUsed = append([]string(nil), used...)
+						if turn.UserDecisionEnabled && turn.Loop != LoopTaskFinished && decision.Action != ActionSilence {
+							return c.proposeUserDecision(ctx, turn, messages, recalls, recalledIssues, decision)
+						}
 						if saveErr := SavePlan(ctx, decision); saveErr != nil {
 							return fail(saveErr)
 						}
