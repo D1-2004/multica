@@ -36,6 +36,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/wsfs"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -937,10 +938,11 @@ func firstString(obj map[string]any, keys ...string) string {
 }
 
 type FCE2BLauncher struct {
-	ReadDSHProfileSource dshprofile.ReadSource
-	SyncDSHProfileSource func(context.Context, *pgxpool.Conn, dshhost.Key, string, dshprofile.NativeSnapshot) error
-	ProvisionDSHStorage  func(context.Context, dshhost.Database, dshhost.Key) (dshhost.Host, error)
-	DSHArtifactSigner    interface {
+	ReadDSHProfileSource  dshprofile.ReadSource
+	SyncDSHProfileSource  func(context.Context, *pgxpool.Conn, dshhost.Key, string, dshprofile.NativeSnapshot) error
+	ProvisionDSHStorage   func(context.Context, dshhost.Database, dshhost.Key) (dshhost.Host, error)
+	PrepareWorkspaceMount func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error)
+	DSHArtifactSigner     interface {
 		PresignGet(context.Context, string, time.Duration) (string, error)
 	}
 	Queries            *db.Queries
@@ -1706,12 +1708,15 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		}
 		extraEnv["MULTICA_FS_ROOT"] = dshhost.MountPath
 	}
-	// Shared workspace mounts are not attached to DSH employee sandboxes
-	// unless a later grant generation supplies task_role_arn. Do not inject
-	// MULTICA_WORKSPACE_FS_* here: existing DSH users keep a single /mnt/multica.
-	if access := l.attachWorkspaceCatalog(ctx, sandboxID, runtime.WorkspaceID, task.AgentID); access != "" {
+	// Inject shared-disk env only when FC actually volume-mounted it.
+	// Grant none and empty task_role_arn keep a single /mnt/multica.
+	if employeeHost != nil && len(employeeHost.ExtraMounts) == 1 {
 		if extraEnv == nil {
 			extraEnv = make(map[string]string)
+		}
+		access := l.seedWorkspaceCatalog(ctx, sandboxID, runtime.WorkspaceID, task.AgentID)
+		if access == "" {
+			access = wsfs.AccessRead
 		}
 		extraEnv["MULTICA_WORKSPACE_FS_ROOT"] = dshhost.WorkspaceSharedRoot
 		extraEnv["MULTICA_WORKSPACE_FS_ACCESS"] = access

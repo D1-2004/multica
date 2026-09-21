@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dshprofile"
+	"github.com/multica-ai/multica/server/internal/wsfs"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -218,6 +219,28 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		return dshhost.Host{}, false, err
 	}
 	manager := dshhost.Manager{Store: store, Provider: provider}
+	decision := wsfs.MountDecision{Private: &before, RoleARN: before.RoleARN}
+	if l.PrepareWorkspaceMount != nil {
+		got, decErr := l.PrepareWorkspaceMount(ctx, conn, key.WorkspaceID, key.AgentID, &before)
+		if errors.Is(decErr, dshhost.ErrPending) || errors.Is(decErr, dshhost.ErrChanged) {
+			return dshhost.Host{}, false, errDSHHostWaiting
+		}
+		if decErr != nil {
+			slog.Warn("workspace filesystem mount not ready",
+				"error", decErr,
+				"workspace_id", key.WorkspaceID,
+				"agent_id", key.AgentID,
+			)
+		} else {
+			decision = got
+		}
+	}
+	ensureHost := func() (dshhost.Host, error) {
+		if decision.Shared != nil && decision.RoleARN != "" && decision.RoleARN != before.RoleARN {
+			return manager.EnsureWithShared(ctx, key, template, *decision.Shared, decision.RoleARN)
+		}
+		return manager.Ensure(ctx, key, template)
+	}
 	var host dshhost.Host
 	if before.State == "creating" {
 		host, err = manager.ReconcileCreate(ctx, key)
@@ -227,7 +250,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	} else if before.State == "retiring" {
 		err = dshhost.ErrRetireRequired
 	} else {
-		host, err = manager.Ensure(ctx, key, template)
+		host, err = ensureHost()
 	}
 	if errors.Is(err, dshhost.ErrRetireRequired) || (err == nil && host.TemplateID != template) {
 		var busy bool
@@ -263,7 +286,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		if isDSH && revision.Descriptor == "" {
 			return dshhost.Host{}, false, errDSHHostWaiting
 		}
-		host, err = manager.Ensure(ctx, key, template)
+		host, err = ensureHost()
 	}
 	if errors.Is(err, dshhost.ErrPending) || errors.Is(err, dshhost.ErrChanged) {
 		return dshhost.Host{}, false, errDSHHostWaiting

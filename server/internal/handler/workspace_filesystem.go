@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,10 +13,12 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/wsfs"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -572,6 +575,21 @@ func (h *Handler) PutWorkspaceFilesystemGrant(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid filesystem grant")
 		return
+	}
+	if (grant.Access == wsfs.AccessRead || grant.Access == wsfs.AccessWrite) && h.FCE2BLauncher != nil && h.FCE2BLauncher.PrepareWorkspaceMount != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+		defer cancel()
+		var employee *dshhost.Host
+		if host, hostErr := (dshhost.PostgresStore{DB: h.DB}).Get(ctx, dshhost.Key{WorkspaceID: wsID, AgentID: agentID}); hostErr == nil {
+			employee = &host
+		}
+		if _, prepErr := h.FCE2BLauncher.PrepareWorkspaceMount(ctx, h.DB, wsID, agentID, employee); prepErr != nil {
+			slog.Warn("workspace filesystem provision after grant is pending",
+				"error", prepErr,
+				"workspace_id", wsID,
+				"agent_id", agentID,
+			)
+		}
 	}
 	writeJSON(w, http.StatusOK, grant)
 }

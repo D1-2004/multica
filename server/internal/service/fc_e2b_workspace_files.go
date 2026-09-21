@@ -35,9 +35,14 @@ func pyQuote(s string) string {
 	return string(b)
 }
 
-// attachWorkspaceCatalog copies granted shared files into /mnt/workspace
-// without adding an FC volume. Default grant none leaves DSH launches unchanged.
 func (l *FCE2BLauncher) attachWorkspaceCatalog(ctx context.Context, sandboxID string, workspaceID, agentID pgtype.UUID) string {
+	return l.seedWorkspaceCatalog(ctx, sandboxID, workspaceID, agentID)
+}
+
+// seedWorkspaceCatalog copies granted catalog files onto an already mounted
+// shared volume. It must not mkdir /mnt/workspace — that path exists only when
+// FC created the sandbox with volumeMounts.
+func (l *FCE2BLauncher) seedWorkspaceCatalog(ctx context.Context, sandboxID string, workspaceID, agentID pgtype.UUID) string {
 	if l == nil || l.Pool == nil || l.ObjectStorage == nil || sandboxID == "" {
 		return ""
 	}
@@ -58,17 +63,6 @@ func (l *FCE2BLauncher) attachWorkspaceCatalog(ctx context.Context, sandboxID st
 	if err != nil {
 		slog.Warn("workspace filesystem catalog unavailable", "error", err)
 		return grant.Access
-	}
-	// Employee hosts mount NAS at /mnt/multica. /mnt is root-owned, so uid 1000
-	// cannot mkdir /mnt/workspace. Create as root, then hand the tree to the
-	// task user. If this fails, do not inject MULTICA_WORKSPACE_FS_ROOT.
-	if _, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", "--user", "root", sandboxID, "--", "mkdir", "-p", dshhost.WorkspaceSharedRoot}); err != nil {
-		slog.Warn("workspace filesystem mkdir failed", "error", err)
-		return ""
-	}
-	if _, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", "--user", "root", sandboxID, "--", "chown", "-R", "1000:1000", dshhost.WorkspaceMountPath}); err != nil {
-		slog.Warn("workspace filesystem chown failed", "error", err)
-		return ""
 	}
 	copied := 0
 	for _, file := range files {
@@ -99,7 +93,7 @@ func (l *FCE2BLauncher) attachWorkspaceCatalog(ctx context.Context, sandboxID st
 		}
 		copied++
 	}
-	slog.Info("workspace filesystem catalog attached",
+	slog.Info("workspace filesystem catalog seeded onto mounted volume",
 		"sandbox_id", sandboxID,
 		"access", grant.Access,
 		"copied", copied,

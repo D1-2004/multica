@@ -45,6 +45,11 @@ type Host struct {
 	CreateIntent uuid.UUID
 	SandboxID    string
 	TemplateID   string
+	// ExtraMounts and AuthRoleARN are launch overlays, not persisted on the
+	// employee host row. They exist so a granted shared volume can be added at
+	// Create without changing grant-none DSH sandboxes.
+	ExtraMounts []VolumeMountSpec
+	AuthRoleARN string
 }
 
 // Store implementations must perform transitions atomically in shared storage.
@@ -77,6 +82,17 @@ type Manager struct {
 }
 
 func (m Manager) Ensure(ctx context.Context, key Key, template string) (Host, error) {
+	return m.ensure(ctx, key, template, nil, "")
+}
+
+func (m Manager) EnsureWithShared(ctx context.Context, key Key, template string, shared VolumeMountSpec, authRole string) (Host, error) {
+	if shared.Name == "" || authRole == "" {
+		return Host{}, errors.New("shared mount requires a volume and composite role")
+	}
+	return m.ensure(ctx, key, template, &shared, authRole)
+}
+
+func (m Manager) ensure(ctx context.Context, key Key, template string, shared *VolumeMountSpec, authRole string) (Host, error) {
 	if key.WorkspaceID == uuid.Nil || key.AgentID == uuid.Nil || strings.TrimSpace(template) == "" {
 		return Host{}, errors.New("DSH host requires an employee and immutable template ID")
 	}
@@ -89,8 +105,15 @@ func (m Manager) Ensure(ctx context.Context, key Key, template string) (Host, er
 		if h.TemplateID != template {
 			return Host{}, ErrRetireRequired
 		}
+		if shared != nil && !m.sandboxHasMount(ctx, h.SandboxID, *shared) {
+			return Host{}, ErrRetireRequired
+		}
 		if err := m.Provider.Healthy(ctx, h.SandboxID); err != nil {
 			return Host{}, fmt.Errorf("%w: existing sandbox health could not be confirmed", ErrRetireRequired)
+		}
+		if shared != nil {
+			h.ExtraMounts = []VolumeMountSpec{*shared}
+			h.AuthRoleARN = authRole
 		}
 		return h, nil
 	case "creating", "retiring":
@@ -99,18 +122,38 @@ func (m Manager) Ensure(ctx context.Context, key Key, template string) (Host, er
 	default:
 		return Host{}, errors.New("invalid DSH host state")
 	}
-	// Commit the intent BEFORE the external create. A crash, timeout, or lost
-	// database response leaves this intent blocking all subsequent creators.
 	h, err = m.Store.BeginCreate(ctx, key, h.Generation, uuid.New(), template)
 	if err != nil {
 		return Host{}, err
 	}
+	if shared != nil {
+		h.ExtraMounts = []VolumeMountSpec{*shared}
+		h.AuthRoleARN = authRole
+	}
 	id, err := m.Provider.Create(ctx, h)
 	if err != nil || strings.TrimSpace(id) == "" {
-		// Do not expose provider error bodies, which can contain credentials.
 		return Host{}, fmt.Errorf("%w: sandbox creation outcome is unconfirmed", ErrPending)
 	}
 	return m.recordCreated(ctx, h, id)
+}
+
+func (m Manager) sandboxHasMount(ctx context.Context, sandboxID string, want VolumeMountSpec) bool {
+	inspector, ok := m.Provider.(interface {
+		InspectMounts(context.Context, string) ([]VolumeMountSpec, error)
+	})
+	if !ok || sandboxID == "" {
+		return false
+	}
+	mounts, err := inspector.InspectMounts(ctx, sandboxID)
+	if err != nil {
+		return false
+	}
+	for _, got := range mounts {
+		if got.Path == want.Path && got.Name == want.Name {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Manager) recordCreated(ctx context.Context, h Host, id string) (Host, error) {
@@ -118,7 +161,27 @@ func (m Manager) recordCreated(ctx context.Context, h Host, id string) (Host, er
 	// database is unavailable, reconciliation can recover by CreateIntent.
 	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	return m.Store.CompleteCreate(commitCtx, h, id)
+	created, err := m.Store.CompleteCreate(commitCtx, h, id)
+	if err != nil {
+		return Host{}, err
+	}
+	created.ExtraMounts = h.ExtraMounts
+	created.AuthRoleARN = h.AuthRoleARN
+	if len(created.ExtraMounts) == 0 {
+		if inspector, ok := m.Provider.(interface {
+			InspectMounts(context.Context, string) ([]VolumeMountSpec, error)
+		}); ok {
+			mounts, inspectErr := inspector.InspectMounts(commitCtx, id)
+			if inspectErr == nil {
+				for _, got := range mounts {
+					if got.Path == WorkspaceSharedRoot && got.Name != "" && got.Name != created.VolumeName {
+						created.ExtraMounts = []VolumeMountSpec{got}
+					}
+				}
+			}
+		}
+	}
+	return created, nil
 }
 
 func (m Manager) ReconcileCreate(ctx context.Context, key Key) (Host, error) {

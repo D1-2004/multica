@@ -49,6 +49,7 @@ type MountDecision struct {
 	Private *dshhost.Host
 	Shared  *dshhost.VolumeMountSpec
 	RoleARN string
+	Access  string
 }
 
 // SelectVolumeMounts implements the launch matrix. Empty TaskRoleARN on an
@@ -67,6 +68,7 @@ func SelectVolumeMounts(employee *dshhost.Host, grant Grant, binding *Binding) M
 		}
 		out.Shared = &shared
 		out.RoleARN = grant.TaskRoleARN
+		out.Access = access
 		return out
 	}
 	if binding == nil || access == AccessNone {
@@ -77,7 +79,7 @@ func SelectVolumeMounts(employee *dshhost.Host, grant Grant, binding *Binding) M
 	if access == AccessWrite {
 		role = binding.RWRoleARN
 	}
-	return MountDecision{Shared: &shared, RoleARN: role}
+	return MountDecision{Shared: &shared, RoleARN: role, Access: access}
 }
 
 func sharedMount(binding Binding, access string) dshhost.VolumeMountSpec {
@@ -85,5 +87,5 @@ func sharedMount(binding Binding, access string) dshhost.VolumeMountSpec {
 	if access == AccessWrite {
 		name = binding.RWVolumeName
 	}
-	return dshhost.VolumeMountSpec{Name: name, Path: dshhost.WorkspaceMountPath}
+	return dshhost.VolumeMountSpec{Name: name, Path: dshhost.WorkspaceSharedRoot}
 }

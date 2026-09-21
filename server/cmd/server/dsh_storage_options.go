@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/dshhost"
+	"github.com/multica-ai/multica/server/internal/wsfs"
 	"gitlab.alibaba-inc.com/koastline/normandy-credential-sdk-golang/credential/provider"
 )
 
@@ -64,6 +65,40 @@ func dshStorageProvisioning(runtime *appRuntimeConfig) (func(context.Context, ds
 		storageProvider := dshhost.CloudStorageProvider{API: api, Spec: spec}
 		m := dshhost.Provisioner{Store: store, Provider: storageProvider}
 		return m.Ensure(ctx, key, spec)
+	}, nil
+}
+
+func workspaceFSController(runtime *appRuntimeConfig) (*wsfs.Controller, error) {
+	cfg, source, err := readDSHStorageConfig(runtime)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return nil, nil
+	}
+	managed, err := provider.GetDefaultCredentialProvider()
+	if err != nil {
+		return nil, errors.New("DSH managed credential provider unavailable")
+	}
+	slog.Info("workspace filesystem storage configuration loaded", "source", source, "size_limit", cfg.Placement.SizeLimit, "file_count_limit", cfg.Placement.FileCountLimit)
+	return &wsfs.Controller{
+		Spec: cfg.Placement,
+		NewAPI: func(ctx context.Context) (dshhost.CloudCaller, error) {
+			current, _, err := readDSHStorageConfig(runtime)
+			if err != nil || current == nil {
+				return nil, errors.New("DSH storage configuration unavailable")
+			}
+			return dshhost.NewACSClient(current.Placement.Region, func(ctx context.Context) (dshhost.CloudCredentials, error) {
+				if err := ctx.Err(); err != nil {
+					return dshhost.CloudCredentials{}, err
+				}
+				cred, err := managed.GetCredential(current.CredentialResource)
+				if err != nil || cred == nil {
+					return dshhost.CloudCredentials{}, errors.New("DSH provisioning access package unavailable")
+				}
+				return dshhost.CloudCredentials{AccessKeyID: cred.AccessKeyId, AccessKeySecret: cred.AccessKeySecret, SecurityToken: cred.SecurityToken}, nil
+			})
+		},
 	}, nil
 }
 

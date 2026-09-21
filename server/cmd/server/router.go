@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -58,6 +59,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	"github.com/multica-ai/multica/server/internal/wsfs"
 	composiosdk "github.com/multica-ai/multica/server/pkg/composio"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
@@ -448,6 +450,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			h.ProvisionDSHStorage = func(ctx context.Context, key dshhost.Key) (dshhost.Host, error) {
 				return provision(ctx, pool, key)
 			}
+		}
+	}
+	if ctrl, err := workspaceFSController(opts.RuntimeConfig); err != nil {
+		slog.Error("workspace filesystem provisioning configuration unavailable", "error", err)
+	} else if ctrl != nil {
+		h.FCE2BLauncher.PrepareWorkspaceMount = func(ctx context.Context, db wsfs.Database, workspaceID, agentID uuid.UUID, employee *dshhost.Host) (wsfs.MountDecision, error) {
+			cfg, _, err := readDSHStorageConfig(opts.RuntimeConfig)
+			if err == nil && cfg != nil {
+				live := *ctrl
+				live.Spec = cfg.Placement
+				return live.PrepareMount(ctx, db, workspaceID, agentID, employee)
+			}
+			return ctrl.PrepareMount(ctx, db, workspaceID, agentID, employee)
 		}
 	}
 	h.Assoc = assoc.NewService(assoc.NewSQLStore(pool))
@@ -1575,7 +1590,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		slog.Info("composio integration disabled (COMPOSIO_API_KEY not set)")
 	}
-
 
 	// VCS at-rest encryption: the box encrypts per-workspace access tokens and
 	// webhook secrets for token-based providers (Forgejo / Gitea / GitLab).

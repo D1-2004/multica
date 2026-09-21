@@ -136,11 +136,37 @@ func (p *FCProvider) Create(ctx context.Context, h Host) (string, error) {
 	if h.State != "creating" {
 		return "", errors.New("invalid persisted DSH FC create intent")
 	}
+	if len(h.ExtraMounts) == 1 && h.AuthRoleARN != "" {
+		spec, err := DualCreateSpec(h, h.ExtraMounts[0], h.AuthRoleARN)
+		if err != nil {
+			return "", err
+		}
+		return p.CreateSpec(ctx, spec)
+	}
 	spec, err := employeeCreateSpec(h)
 	if err != nil {
 		return "", err
 	}
 	return p.CreateSpec(ctx, spec)
+}
+
+func (p *FCProvider) InspectMounts(ctx context.Context, id string) ([]VolumeMountSpec, error) {
+	if !sandboxIDPattern.MatchString(id) {
+		return nil, errors.New("invalid DSH FC sandbox ID")
+	}
+	data, _, _, err := p.request(ctx, http.MethodGet, "/sandboxes/"+id, nil)
+	if err != nil {
+		return nil, err
+	}
+	var info sandboxInfo
+	if err := json.Unmarshal(data, &info); err != nil || !sandboxIDPattern.MatchString(info.ID) {
+		return nil, errors.New("invalid DSH FC sandbox inspect response")
+	}
+	out := make([]VolumeMountSpec, 0, len(info.Mounts))
+	for _, m := range info.Mounts {
+		out = append(out, VolumeMountSpec{Name: m.Name, Path: m.Path})
+	}
+	return out, nil
 }
 
 // CreateSpec posts a generalized mount list. Employee Create remains the
@@ -215,10 +241,36 @@ func matches(info sandboxInfo, h Host) bool {
 	if err != nil {
 		return false
 	}
-	return matchesSpec(info, spec)
+	if matchesSpec(info, spec) {
+		return true
+	}
+	if len(info.Mounts) != 2 {
+		return false
+	}
+	var shared VolumeMountSpec
+	hasPrivate := false
+	for _, m := range info.Mounts {
+		if m.Path == MountPath && m.Name == h.VolumeName {
+			hasPrivate = true
+		} else if m.Path == WorkspaceSharedRoot && m.Name != "" && m.Name != h.VolumeName {
+			shared = VolumeMountSpec{Name: m.Name, Path: m.Path}
+		}
+	}
+	if !hasPrivate || shared.Name == "" {
+		return false
+	}
+	dual, err := DualCreateSpec(h, shared, info.Metadata["fc.sandbox.auth.role"])
+	return err == nil && matchesSpec(info, dual)
 }
 
 func (p *FCProvider) FindCreated(ctx context.Context, h Host) (string, error) {
+	if len(h.ExtraMounts) == 1 && h.AuthRoleARN != "" {
+		spec, err := DualCreateSpec(h, h.ExtraMounts[0], h.AuthRoleARN)
+		if err != nil {
+			return "", err
+		}
+		return p.FindCreatedSpec(ctx, spec)
+	}
 	return p.findSandbox(ctx, "multica.dsh.intent", h.CreateIntent.String(), func(info sandboxInfo) bool { return matches(info, h) })
 }
 
@@ -226,9 +278,9 @@ func (p *FCProvider) FindCreatedSpec(ctx context.Context, spec SandboxCreateSpec
 	if err := spec.valid(); err != nil {
 		return "", err
 	}
-	label, value := "multica.wsfs.intent", spec.CreateIntent.String()
-	if spec.Scope == "employee" {
-		label, value = "multica.dsh.intent", spec.CreateIntent.String()
+	label, value := "multica.dsh.intent", spec.CreateIntent.String()
+	if spec.Scope == "wsfs-read" || spec.Scope == "wsfs-write" {
+		label, value = "multica.wsfs.intent", spec.CreateIntent.String()
 	}
 	return p.findSandbox(ctx, label, value, func(info sandboxInfo) bool { return matchesSpec(info, spec) })
 }

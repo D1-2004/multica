@@ -7,14 +7,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// WorkspaceMountPath is the shared workspace filesystem mount. Employee
-// Homes stay at MountPath (/mnt/multica). A DSH sandbox without a populated
-// task_role_arn must never receive this second mount.
+// WorkspaceMountPath is the listing/write-host mount. Employee Homes stay at
+// MountPath (/mnt/multica). A DSH sandbox without a populated task_role_arn
+// must never receive a second mount.
 const WorkspaceMountPath = "/mnt/workspace"
 
-// WorkspaceSharedRoot is where granted shared catalog files are copied and
-// what MULTICA_WORKSPACE_FS_ROOT points at. The volume itself still mounts at
-// WorkspaceMountPath.
+// WorkspaceSharedRoot is the task dual-mount path and MULTICA_WORKSPACE_FS_ROOT.
+// Shared Access Points use RootPath=/files, so this path is the team file tree.
 const WorkspaceSharedRoot = "/mnt/workspace/shared"
 
 // VolumeMountSpec is one FC volumeMounts entry. RoleARN and ReadOnly are
@@ -68,7 +67,7 @@ func (s SandboxCreateSpec) valid() error {
 	}
 	seenPath := map[string]bool{}
 	for _, m := range s.Mounts {
-		if m.Name == "" || (m.Path != MountPath && m.Path != WorkspaceMountPath) || seenPath[m.Path] {
+		if m.Name == "" || (m.Path != MountPath && m.Path != WorkspaceMountPath && m.Path != WorkspaceSharedRoot) || seenPath[m.Path] {
 			return errors.New("invalid FC volume mount spec")
 		}
 		seenPath[m.Path] = true
@@ -76,10 +75,45 @@ func (s SandboxCreateSpec) valid() error {
 	if s.Scope == "employee" && (len(s.Mounts) != 1 || s.Mounts[0].Path != MountPath) {
 		return errors.New("employee FC create must mount only /mnt/multica")
 	}
-	if (s.Scope == "wsfs-read" || s.Scope == "wsfs-write") && (s.AgentID != uuid.Nil || len(s.Mounts) != 1 || s.Mounts[0].Path != WorkspaceMountPath) {
-		return errors.New("workspace filesystem host must mount only /mnt/workspace")
+	if s.Scope == "task" {
+		if s.AgentID == uuid.Nil || len(s.Mounts) != 2 {
+			return errors.New("dual-mount task create requires employee and shared volumes")
+		}
+		hasPrivate, hasShared := false, false
+		for _, m := range s.Mounts {
+			if m.Path == MountPath {
+				hasPrivate = true
+			}
+			if m.Path == WorkspaceSharedRoot {
+				hasShared = true
+			}
+		}
+		if !hasPrivate || !hasShared {
+			return errors.New("dual-mount task create must mount /mnt/multica and /mnt/workspace/shared")
+		}
+	}
+	if (s.Scope == "wsfs-read" || s.Scope == "wsfs-write") && (s.AgentID != uuid.Nil || len(s.Mounts) != 1 || (s.Mounts[0].Path != WorkspaceMountPath && s.Mounts[0].Path != WorkspaceSharedRoot)) {
+		return errors.New("workspace filesystem host must mount only the shared workspace path")
 	}
 	return nil
+}
+
+func DualCreateSpec(h Host, shared VolumeMountSpec, authRole string) (SandboxCreateSpec, error) {
+	spec, err := employeeCreateSpec(h)
+	if err != nil {
+		return SandboxCreateSpec{}, err
+	}
+	shared.Path = WorkspaceSharedRoot
+	if shared.Name == "" || shared.Name == h.VolumeName || authRole == "" {
+		return SandboxCreateSpec{}, errors.New("invalid shared volume for dual-mount create")
+	}
+	spec.Scope = "task"
+	spec.Mounts = []VolumeMountSpec{spec.Mounts[0], shared}
+	spec.RoleARN = authRole
+	spec.Labels["multica.wsfs.volume"] = shared.Name
+	spec.Labels["multica.wsfs.mount"] = shared.Path
+	spec.Labels["multica.wsfs.role-arn"] = authRole
+	return spec, spec.valid()
 }
 
 func matchesSpec(info sandboxInfo, spec SandboxCreateSpec) bool {

@@ -40,7 +40,7 @@ func TestSelectVolumeMountsEmployeeNoneKeepsPrivateOnly(t *testing.T) {
 func TestSelectVolumeMountsEmployeeWriteWithTaskRoleAddsShared(t *testing.T) {
 	employee := testEmployee()
 	got := SelectVolumeMounts(employee, Grant{Access: AccessWrite, TaskRoleARN: "role-composite"}, testBinding())
-	if got.Shared == nil || got.Shared.Name != "vol-rw" || got.Shared.Path != dshhost.WorkspaceMountPath || got.RoleARN != "role-composite" {
+	if got.Shared == nil || got.Shared.Name != "vol-rw" || got.Shared.Path != dshhost.WorkspaceSharedRoot || got.RoleARN != "role-composite" || got.Access != AccessWrite {
 		t.Fatalf("expected dual mount with composite role: %+v", got)
 	}
 	if got.Private == nil || got.Private.VolumeName != "vol-employee" {
