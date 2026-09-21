@@ -59,9 +59,16 @@ func (l *FCE2BLauncher) attachWorkspaceCatalog(ctx context.Context, sandboxID st
 		slog.Warn("workspace filesystem catalog unavailable", "error", err)
 		return grant.Access
 	}
-	if _, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", "--user", "user", sandboxID, "--", "mkdir", "-p", dshhost.WorkspaceSharedRoot}); err != nil {
+	// Employee hosts mount NAS at /mnt/multica. /mnt is root-owned, so uid 1000
+	// cannot mkdir /mnt/workspace. Create as root, then hand the tree to the
+	// task user. If this fails, do not inject MULTICA_WORKSPACE_FS_ROOT.
+	if _, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", "--user", "root", sandboxID, "--", "mkdir", "-p", dshhost.WorkspaceSharedRoot}); err != nil {
 		slog.Warn("workspace filesystem mkdir failed", "error", err)
-		return grant.Access
+		return ""
+	}
+	if _, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", "--user", "root", sandboxID, "--", "chown", "-R", "1000:1000", dshhost.WorkspaceMountPath}); err != nil {
+		slog.Warn("workspace filesystem chown failed", "error", err)
+		return ""
 	}
 	copied := 0
 	for _, file := range files {
