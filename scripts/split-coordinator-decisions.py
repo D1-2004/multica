@@ -18,12 +18,13 @@ def split_samples(samples, evaluation_percent=20):
         links = ["conversation:" + str(sample["split_group"])]
         # Use all recalled tasks, not just the chosen one, so the same task
         # cannot enter both partitions through an alternative shown to a user.
-        snap = sample.get("snapshot", {})
-        links += ["task:" + task for task in snap.get("recalled_ids", [])]
+        snap = sample.get("snapshot") or {}
+        links += ["task:" + task for task in (snap.get("recalled_ids") or [])]
         execution = sample.get("execution_result") or {}
-        links += ["task:" + task["issue_id"] for task in execution.get("tasks", []) if task.get("issue_id")]
+        links += ["task:" + task["issue_id"] for task in (execution.get("tasks") or []) if task.get("issue_id")]
         for link in links[1:]:
             parent[root(link)] = root(links[0])
+        root(links[0])
         groups.append(links[0])
     stable = {}
     for key in sorted(parent):
