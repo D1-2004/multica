@@ -20,7 +20,23 @@ import (
 
 const MountPath = "/mnt/multica"
 
+// DefaultSandboxTaskTimeoutSeconds is the employee-host create/renew floor.
+// Config may raise it; leftover 3600 cannot restore the old one-hour wall.
+const DefaultSandboxTaskTimeoutSeconds = 4800
+
+func SandboxTaskTimeoutSeconds(configured int) int {
+	if configured > DefaultSandboxTaskTimeoutSeconds {
+		return configured
+	}
+	return DefaultSandboxTaskTimeoutSeconds
+}
+
 var sandboxIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+var (
+	destroyAbsenceWait = 800 * time.Millisecond
+	destroyAbsencePoll = 100 * time.Millisecond
+)
 
 type FCConfig struct {
 	APIURL          string
@@ -190,7 +206,7 @@ func (p *FCProvider) CreateSpec(ctx context.Context, spec SandboxCreateSpec) (st
 		mounts[i] = volumeMount{Name: m.Name, Path: m.Path}
 	}
 	data, _, _, err := p.request(ctx, http.MethodPost, "/sandboxes", map[string]any{
-		"templateID": spec.TemplateID, "timeout": p.config.TimeoutSeconds,
+		"templateID": spec.TemplateID, "timeout": SandboxTaskTimeoutSeconds(p.config.TimeoutSeconds),
 		"autoPause": false,
 		"metadata":  metadata, "volumeMounts": mounts,
 	})
@@ -227,13 +243,32 @@ func (p *FCProvider) DestroyAndConfirmAbsent(ctx context.Context, id string) err
 	if err != nil && status != http.StatusNotFound {
 		return err
 	}
-	// A success/accepted response alone does not fence a mounted writer.
-	// Require a subsequent authoritative lookup of this exact sandbox ID.
-	_, _, status, _ = p.request(ctx, http.MethodGet, "/sandboxes/"+id, nil)
-	if status != http.StatusNotFound {
-		return errors.New("DSH FC old sandbox absence is unconfirmed")
+	deadline := time.Now().Add(destroyAbsenceWait)
+	for {
+		if p.sandboxAbsent(ctx, id) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("DSH FC old sandbox absence is unconfirmed")
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(destroyAbsencePoll):
+		}
 	}
-	return nil
+}
+
+func (p *FCProvider) sandboxAbsent(ctx context.Context, id string) bool {
+	_, _, status, _ := p.request(ctx, http.MethodGet, "/sandboxes/"+id, nil)
+	return status == http.StatusNotFound
+}
+
+func (p *FCProvider) SandboxAbsent(ctx context.Context, id string) (bool, error) {
+	if !sandboxIDPattern.MatchString(id) {
+		return false, errors.New("invalid DSH FC sandbox ID")
+	}
+	return p.sandboxAbsent(ctx, id), nil
 }
 
 func matches(info sandboxInfo, h Host) bool {

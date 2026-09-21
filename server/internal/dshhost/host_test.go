@@ -134,6 +134,17 @@ func (p *cloud) FindCreated(_ context.Context, h Host) (string, error) {
 	return p.live[h.CreateIntent], nil
 }
 
+func (p *cloud) SandboxAbsent(_ context.Context, id string) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, live := range p.live {
+		if live == id {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func TestReplicasCreateOneWriter(t *testing.T) {
 	a, b := stores(t)
 	h := bind(t, a)
@@ -172,10 +183,6 @@ func TestUnknownCreateCannotRetryAndReconcilesAcrossReplica(t *testing.T) {
 	if _, err := m.Ensure(context.Background(), h.Key, "template-1"); !errors.Is(err, ErrPending) {
 		t.Fatal(err)
 	}
-	// Simulate an arbitrarily old heartbeat. Expiry cannot grant ownership.
-	if _, err := a.DB.Exec(context.Background(), "UPDATE dsh_employee_host SET updated_at=now()-interval '30 days'"); err != nil {
-		t.Fatal(err)
-	}
 	n := Manager{b, p}
 	if _, err := n.Ensure(context.Background(), h.Key, "template-1"); !errors.Is(err, ErrPending) {
 		t.Fatal(err)
@@ -190,6 +197,27 @@ func TestUnknownCreateCannotRetryAndReconcilesAcrossReplica(t *testing.T) {
 	got, err := n.ReconcileCreate(context.Background(), h.Key)
 	if err != nil || got.SandboxID != "sandbox-1" {
 		t.Fatalf("host=%+v err=%v", got, err)
+	}
+}
+
+func TestStaleCreateIntentCanBeAbandonedAndReplaced(t *testing.T) {
+	a, _ := stores(t)
+	h := bind(t, a)
+	p := &cloud{createErr: errors.New("response lost"), hidden: true}
+	m := Manager{a, p}
+	if _, err := m.Ensure(context.Background(), h.Key, "template-1"); !errors.Is(err, ErrPending) {
+		t.Fatal(err)
+	}
+	if p.creates != 1 {
+		t.Fatalf("creates=%d", p.creates)
+	}
+	if _, err := a.DB.Exec(context.Background(), "UPDATE dsh_employee_host SET updated_at=now()-interval '10 minutes'"); err != nil {
+		t.Fatal(err)
+	}
+	p.createErr = nil
+	got, err := m.Ensure(context.Background(), h.Key, "template-1")
+	if err != nil || got.Generation != 2 || p.creates != 2 {
+		t.Fatalf("host=%+v err=%v creates=%d", got, err, p.creates)
 	}
 }
 

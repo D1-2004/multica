@@ -1630,7 +1630,15 @@
     "over_limit": " · {{count}} over limit"
   },
   "presence": {
-    "queue_badge": "+{{count}} queued"
+    "queue_badge": "+{{count}} queued",
+    "wait_reason": {
+      "sandbox_unhealthy": "Rebuilding expired sandbox",
+      "destroy_unconfirmed": "Waiting for old sandbox to drain",
+      "create_intent_stale": "Retrying sandbox create",
+      "native_grant_busy": "Waiting for an open session",
+      "task_drain_busy": "Waiting for in-flight tasks",
+      "dsh_host_waiting": "Waiting for employee host"
+    }
   },
   "visibility": {
     "private": {

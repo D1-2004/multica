@@ -15,9 +15,23 @@ import (
 )
 
 var (
-	ErrPending        = errors.New("DSH host transition requires reconciliation")
-	ErrChanged        = errors.New("DSH host generation changed")
-	ErrRetireRequired = errors.New("DSH host must be drained and retired before replacement")
+	ErrPending         = errors.New("DSH host transition requires reconciliation")
+	ErrChanged         = errors.New("DSH host generation changed")
+	ErrRetireRequired  = errors.New("DSH host must be drained and retired before replacement")
+	ErrCreateAbandoned = errors.New("DSH create intent was abandoned")
+)
+
+var (
+	createIntentStaleAfter = 5 * time.Minute
+	retireStaleAfter       = 2 * time.Minute
+)
+
+const (
+	WaitSandboxUnhealthy   = "sandbox_unhealthy"
+	WaitDestroyUnconfirmed = "destroy_unconfirmed"
+	WaitCreateIntentStale  = "create_intent_stale"
+	WaitNativeGrantBusy    = "native_grant_busy"
+	WaitTaskDrainBusy      = "task_drain_busy"
 )
 
 type Key struct {
@@ -45,6 +59,7 @@ type Host struct {
 	CreateIntent uuid.UUID
 	SandboxID    string
 	TemplateID   string
+	UpdatedAt    time.Time
 	// ExtraMounts and AuthRoleARN are launch overlays, not persisted on the
 	// employee host row. They exist so a granted shared volume can be added at
 	// Create without changing grant-none DSH sandboxes.
@@ -60,6 +75,7 @@ type Store interface {
 	CompleteCreate(context.Context, Host, string) (Host, error)
 	BeginRetire(context.Context, Host) (Host, error)
 	CompleteRetire(context.Context, Host) error
+	AbandonCreate(context.Context, Host) error
 }
 
 type Provider interface {
@@ -92,6 +108,10 @@ func (m Manager) EnsureWithShared(ctx context.Context, key Key, template string,
 	return m.ensure(ctx, key, template, &shared, authRole)
 }
 
+func (h Host) stale(after time.Duration) bool {
+	return !h.UpdatedAt.IsZero() && after > 0 && time.Since(h.UpdatedAt) >= after
+}
+
 func (m Manager) ensure(ctx context.Context, key Key, template string, shared *VolumeMountSpec, authRole string) (Host, error) {
 	if key.WorkspaceID == uuid.Nil || key.AgentID == uuid.Nil || strings.TrimSpace(template) == "" {
 		return Host{}, errors.New("DSH host requires an employee and immutable template ID")
@@ -100,8 +120,28 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 	if err != nil {
 		return Host{}, err
 	}
-	switch h.State {
-	case "running":
+	if h.State == "creating" {
+		if abandoned, abandonErr := m.abandonStaleCreate(ctx, h); abandonErr != nil {
+			return Host{}, abandonErr
+		} else if abandoned {
+			h, err = m.Store.Get(ctx, key)
+			if err != nil {
+				return Host{}, err
+			}
+		} else {
+			return Host{}, fmt.Errorf("%w: %s", ErrPending, WaitCreateIntentStale)
+		}
+	}
+	if h.State == "retiring" {
+		if err := m.finishRetire(ctx, h); err != nil {
+			return Host{}, err
+		}
+		h, err = m.Store.Get(ctx, key)
+		if err != nil {
+			return Host{}, err
+		}
+	}
+	if h.State == "running" {
 		if h.TemplateID != template {
 			return Host{}, ErrRetireRequired
 		}
@@ -109,17 +149,15 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 			return Host{}, ErrRetireRequired
 		}
 		if err := m.Provider.Healthy(ctx, h.SandboxID); err != nil {
-			return Host{}, fmt.Errorf("%w: existing sandbox health could not be confirmed", ErrRetireRequired)
+			return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
 		}
 		if shared != nil {
 			h.ExtraMounts = []VolumeMountSpec{*shared}
 			h.AuthRoleARN = authRole
 		}
 		return h, nil
-	case "creating", "retiring":
-		return Host{}, ErrPending
-	case "offline":
-	default:
+	}
+	if h.State != "offline" {
 		return Host{}, errors.New("invalid DSH host state")
 	}
 	h, err = m.Store.BeginCreate(ctx, key, h.Generation, uuid.New(), template)
@@ -194,9 +232,56 @@ func (m Manager) ReconcileCreate(ctx context.Context, key Key) (Host, error) {
 	}
 	id, err := m.Provider.FindCreated(ctx, h)
 	if err != nil || strings.TrimSpace(id) == "" {
-		return Host{}, ErrPending
+		if abandoned, abandonErr := m.abandonStaleCreate(ctx, h); abandonErr != nil {
+			return Host{}, abandonErr
+		} else if abandoned {
+			return Host{}, ErrCreateAbandoned
+		}
+		return Host{}, fmt.Errorf("%w: %s", ErrPending, WaitCreateIntentStale)
 	}
 	return m.recordCreated(ctx, h, id)
+}
+
+func (m Manager) abandonStaleCreate(ctx context.Context, h Host) (bool, error) {
+	if h.State != "creating" || !h.stale(createIntentStaleAfter) {
+		return false, nil
+	}
+	id, err := m.Provider.FindCreated(ctx, h)
+	if err == nil && strings.TrimSpace(id) != "" {
+		return false, nil
+	}
+	if err := m.Store.AbandonCreate(ctx, h); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (m Manager) sandboxGone(ctx context.Context, id string) bool {
+	if id == "" {
+		return true
+	}
+	if inspector, ok := m.Provider.(interface {
+		SandboxAbsent(context.Context, string) (bool, error)
+	}); ok {
+		gone, err := inspector.SandboxAbsent(ctx, id)
+		return err == nil && gone
+	}
+	return false
+}
+
+func (m Manager) finishRetire(ctx context.Context, h Host) error {
+	err := m.Provider.DestroyAndConfirmAbsent(ctx, h.SandboxID)
+	if err != nil {
+		if m.sandboxGone(ctx, h.SandboxID) && (h.stale(retireStaleAfter) || errors.Is(err, context.DeadlineExceeded)) {
+			commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			return m.Store.CompleteRetire(commitCtx, h)
+		}
+		return fmt.Errorf("%w: %s", ErrPending, WaitDestroyUnconfirmed)
+	}
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	return m.Store.CompleteRetire(commitCtx, h)
 }
 
 // Retire is invoked after admissions are stopped and current tasks are drained.
@@ -218,10 +303,5 @@ func (m Manager) Retire(ctx context.Context, key Key, generation int64) error {
 	} else if h.State != "retiring" {
 		return ErrChanged
 	}
-	if err := m.Provider.DestroyAndConfirmAbsent(ctx, h.SandboxID); err != nil {
-		return fmt.Errorf("%w: old sandbox destruction is unconfirmed", ErrPending)
-	}
-	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
-	return m.Store.CompleteRetire(commitCtx, h)
+	return m.finishRetire(ctx, h)
 }

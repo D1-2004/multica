@@ -89,6 +89,7 @@ type dshLaunchProvider struct {
 	creates    int
 	destroyErr error
 	failCreate bool
+	healthErr  error
 	live       map[uuid.UUID]string
 }
 
@@ -106,7 +107,22 @@ func (p *dshLaunchProvider) Create(_ context.Context, h dshhost.Host) (string, e
 	}
 	return id, nil
 }
-func (p *dshLaunchProvider) Healthy(context.Context, string) error { return nil }
+func (p *dshLaunchProvider) Healthy(context.Context, string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.healthErr
+}
+
+func (p *dshLaunchProvider) SandboxAbsent(_ context.Context, id string) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, live := range p.live {
+		if live == id {
+			return false, nil
+		}
+	}
+	return true, nil
+}
 func (p *dshLaunchProvider) DestroyAndConfirmAbsent(_ context.Context, id string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -420,6 +436,21 @@ func TestDSHLaunchUsesOneConnectionAndOneEmployeeHostAcrossReplicas(t *testing.T
 	wg.Wait()
 	if provider.creates != 1 {
 		t.Fatalf("created %d hosts", provider.creates)
+	}
+}
+
+func TestDSHLaunchRebuildsUnhealthyHostWhenIdle(t *testing.T) {
+	a, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, a, provider)
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.healthErr = errors.New("sandbox gone")
+	next, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || next.Generation != 2 || next.SandboxID == first.SandboxID || provider.creates != 2 {
+		t.Fatalf("generation=%d sandbox=%s creates=%d err=%v", next.Generation, next.SandboxID, provider.creates, err)
 	}
 }
 

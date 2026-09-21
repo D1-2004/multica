@@ -1609,7 +1609,15 @@
     "over_limit": " · 超出 {{count}} 字"
   },
   "presence": {
-    "queue_badge": "+{{count}} 排队"
+    "queue_badge": "+{{count}} 排队",
+    "wait_reason": {
+      "sandbox_unhealthy": "沙箱已失效，正在重建",
+      "destroy_unconfirmed": "正在等待旧沙箱释放",
+      "create_intent_stale": "正在重试创建沙箱",
+      "native_grant_busy": "等待已打开的会话结束",
+      "task_drain_busy": "等待进行中的任务结束",
+      "dsh_host_waiting": "正在等待员工 Host"
+    }
   },
   "visibility": {
     "private": {

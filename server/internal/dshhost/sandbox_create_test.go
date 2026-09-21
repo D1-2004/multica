@@ -74,6 +74,30 @@ func TestMatchesSpecAcceptsTwoMountsAndRejectsListingRW(t *testing.T) {
 	}
 }
 
+func TestFCCreateTimeoutFloorsConfigured3600To4800(t *testing.T) {
+	h := Host{
+		Key: Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, Storage: Storage{VolumeName: "vol-employee", AccessPointARN: "ap", RoleARN: "acs:ram::1:role/employee"},
+		State: "creating", Generation: 1, CreateIntent: uuid.New(), TemplateID: "template-1",
+	}
+	p := fakeFC(t, func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Timeout int `json:"timeout"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body.Timeout != DefaultSandboxTaskTimeoutSeconds {
+			t.Errorf("employee create timeout=%d want %d", body.Timeout, DefaultSandboxTaskTimeoutSeconds)
+		}
+		_ = json.NewEncoder(w).Encode(sandboxInfo{ID: "sandbox-ttl", Template: "alias", State: "running"})
+	})
+	p.config.TimeoutSeconds = 3600
+	id, err := p.Create(context.Background(), h)
+	if err != nil || id != "sandbox-ttl" {
+		t.Fatalf("id=%s err=%v", id, err)
+	}
+}
+
 func TestFCCreateEmployeePayloadStaysSingleMount(t *testing.T) {
 	a, _ := stores(t)
 	h := bind(t, a)
@@ -83,12 +107,16 @@ func TestFCCreateEmployeePayloadStaysSingleMount(t *testing.T) {
 			Mounts    []volumeMount     `json:"volumeMounts"`
 			Metadata  map[string]string `json:"metadata"`
 			AutoPause bool              `json:"autoPause"`
+			Timeout   int               `json:"timeout"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
 		if len(body.Mounts) != 1 || body.Mounts[0] != (volumeMount{h.VolumeName, MountPath}) || body.AutoPause {
 			t.Errorf("DSH employee create payload changed: %+v", body)
+		}
+		if body.Timeout != DefaultSandboxTaskTimeoutSeconds {
+			t.Errorf("employee create timeout=%d", body.Timeout)
 		}
 		if body.Metadata["fc.sandbox.auth.role"] != h.RoleARN || body.Metadata["multica.dsh.agent"] != h.AgentID.String() {
 			t.Error("DSH identity labels changed")

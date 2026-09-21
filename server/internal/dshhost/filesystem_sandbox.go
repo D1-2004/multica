@@ -17,7 +17,7 @@ type FilesystemSandboxStore struct {
 }
 
 const filesystemSandboxColumns = `e.workspace_id, e.agent_id, e.file_system_id, e.space_id, e.volume_name, e.access_point_arn, e.role_arn, e.vpc_id, e.security_group_id, e.vswitch_ids,
- h.state, h.generation, COALESCE(h.create_intent, '00000000-0000-0000-0000-000000000000'::uuid), h.sandbox_id, h.template_id`
+ h.state, h.generation, COALESCE(h.create_intent, '00000000-0000-0000-0000-000000000000'::uuid), h.sandbox_id, h.template_id, h.updated_at`
 const filesystemSandboxJoin = ` JOIN dsh_employee_host e ON e.workspace_id=h.workspace_id AND e.agent_id=h.agent_id`
 
 // LockRunningHost must run inside the caller's transaction. It locks the actual
@@ -105,6 +105,22 @@ func (s FilesystemSandboxStore) CompleteRetire(ctx context.Context, h Host) erro
 	}
 	result, err := s.DB.Exec(ctx, `UPDATE employee_filesystem_sandbox SET state='offline',sandbox_id='',create_intent=NULL,updated_at=now()
  WHERE workspace_id=$1 AND agent_id=$2 AND scope_id=$3 AND generation=$4 AND sandbox_id=$5 AND state='retiring'`, h.WorkspaceID, h.AgentID, s.ScopeID, h.Generation, h.SandboxID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrChanged
+	}
+	return nil
+}
+
+func (s FilesystemSandboxStore) AbandonCreate(ctx context.Context, h Host) error {
+	if h.ScopeID != s.ScopeID {
+		return ErrChanged
+	}
+	result, err := s.DB.Exec(ctx, `UPDATE employee_filesystem_sandbox SET state='offline',sandbox_id='',create_intent=NULL,updated_at=now()
+ WHERE workspace_id=$1 AND agent_id=$2 AND scope_id=$3 AND generation=$4 AND create_intent=$5 AND state='creating'`,
+		h.WorkspaceID, h.AgentID, s.ScopeID, h.Generation, h.CreateIntent)
 	if err != nil {
 		return err
 	}

@@ -716,6 +716,7 @@ type AgentTaskResponse struct {
 	QuickCreateDueDate       string                 `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
 	QuickCreateAttachmentIDs []string               `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
 	HandoffNote              string                 `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
+	WaitReason               string                 `json:"wait_reason,omitempty"`                 // queued launch deferral reason; status stays queued
 	SquadID                  string                 `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
 	SquadName                string                 `json:"squad_name,omitempty"`                  // display name for the picker squad
 	ParentIssueID            string                 `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
@@ -1039,6 +1040,10 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	if t.HandoffNote.Valid {
 		handoffNote = t.HandoffNote.String
 	}
+	waitReason := ""
+	if t.WaitReason.Valid {
+		waitReason = t.WaitReason.String
+	}
 	trace, traceErr := chattrace.ForTask(t.Context, uuidToString(t.ID), t.CreatedAt.Time)
 	if traceErr != nil {
 		slog.Error("task response has invalid task trace", "task_id", uuidToString(t.ID), "error", traceErr)
@@ -1075,6 +1080,7 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		DeliveredCommentIDs:  uuidStringsOrEmpty(t.DeliveredCommentIds),
 		TriggerSummary:       textToPtr(t.TriggerSummary),
 		HandoffNote:          handoffNote,
+		WaitReason:           waitReason,
 		WorkDir:              workDir,
 		RelativeWorkDir:      relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
 		// Surface task source so the UI can distinguish issue-linked tasks

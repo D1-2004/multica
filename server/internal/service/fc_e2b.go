@@ -1436,6 +1436,10 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 			)
 			return l.failLaunch(ctx, task, attempt.ID, failure)
 		}
+		chattrace.LogStage(slog.Default(), trace, "fc_e2b_launch", "waiting",
+			"task_id", taskID,
+			"runtime_id", runtimeID,
+		)
 		return nil
 	}
 
@@ -1543,10 +1547,7 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	if !useEmployeeFilesystem && FCE2BRuntimeProvider(runtime) == "dsh" {
 		err := l.prepareDSHTaskFilesystem(ctx, runtimeLockConn, filesystemScope.Key)
 		if errors.Is(err, errDSHHostWaiting) {
-			if _, recordErr := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "dsh_host_waiting"); recordErr != nil {
-				return fcE2BLaunchSubmission{}, false, recordErr
-			}
-			return fcE2BLaunchSubmission{}, true, nil
+			return l.deferDSHHostWaiting(ctx, runtimeLockConn, task, attempt, err)
 		}
 		if err != nil {
 			return fcE2BLaunchSubmission{}, false, err
@@ -1622,10 +1623,7 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		var host dshhost.Host
 		host, coldStart, err = l.resolveFilesystemScopeSandbox(ctx, filesystemScope.Key, filesystemScopeID, task.ID, runtime, template, runtimeLockConn, trace)
 		if errors.Is(err, errDSHHostWaiting) {
-			if _, recordErr := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "dsh_host_waiting"); recordErr != nil {
-				return fcE2BLaunchSubmission{}, false, recordErr
-			}
-			return fcE2BLaunchSubmission{}, true, nil
+			return l.deferDSHHostWaiting(ctx, runtimeLockConn, task, attempt, err)
 		}
 		sandboxID = host.SandboxID
 		employeeHost = &host

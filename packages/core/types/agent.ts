@@ -310,6 +310,8 @@ export interface AgentTask {
   // apps/mobile/CLAUDE.md; the label maps on both clients already key off the
   // raw wire value and fall back on an unrecognised one.
   failure_reason?: TaskFailureReason | (string & {}) | "";
+  /** Queued launch deferral reason. Status stays queued. Older backends omit it. */
+  wait_reason?: string;
   created_at: string;
   /** A private DSH native event ledger is available through the task-scoped viewer. */
   dsh_trajectory_available?: boolean;

@@ -20,12 +20,12 @@ type Database interface {
 type PostgresStore struct{ DB Database }
 
 const columns = `workspace_id, agent_id, file_system_id, space_id, volume_name, access_point_arn, role_arn, vpc_id, security_group_id, vswitch_ids,
- state, generation, COALESCE(create_intent, '00000000-0000-0000-0000-000000000000'::uuid), sandbox_id, template_id`
+ state, generation, COALESCE(create_intent, '00000000-0000-0000-0000-000000000000'::uuid), sandbox_id, template_id, updated_at`
 
 func readHost(row pgx.Row) (Host, error) {
 	var h Host
 	err := row.Scan(&h.WorkspaceID, &h.AgentID, &h.FileSystemID, &h.SpaceID, &h.VolumeName, &h.AccessPointARN,
-		&h.RoleARN, &h.VPCID, &h.SecurityGroupID, &h.VSwitchIDs, &h.State, &h.Generation, &h.CreateIntent, &h.SandboxID, &h.TemplateID)
+		&h.RoleARN, &h.VPCID, &h.SecurityGroupID, &h.VSwitchIDs, &h.State, &h.Generation, &h.CreateIntent, &h.SandboxID, &h.TemplateID, &h.UpdatedAt)
 	return h, err
 }
 
@@ -100,6 +100,20 @@ func (s PostgresStore) CompleteRetire(ctx context.Context, h Host) error {
  SET state='offline', sandbox_id='', create_intent=NULL, updated_at=now()
  WHERE workspace_id=$1 AND agent_id=$2 AND generation=$3 AND sandbox_id=$4 AND state='retiring'`,
 		h.WorkspaceID, h.AgentID, h.Generation, h.SandboxID)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrChanged
+	}
+	return nil
+}
+
+func (s PostgresStore) AbandonCreate(ctx context.Context, h Host) error {
+	result, err := s.DB.Exec(ctx, `UPDATE dsh_employee_host
+ SET state='offline', sandbox_id='', create_intent=NULL, updated_at=now()
+ WHERE workspace_id=$1 AND agent_id=$2 AND generation=$3 AND create_intent=$4 AND state='creating'`,
+		h.WorkspaceID, h.AgentID, h.Generation, h.CreateIntent)
 	if err != nil {
 		return err
 	}

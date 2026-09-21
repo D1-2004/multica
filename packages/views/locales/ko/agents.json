@@ -1412,7 +1412,15 @@
     "over_limit": " · 제한 초과 {{count}}자"
   },
   "presence": {
-    "queue_badge": "+{{count}} 대기 중"
+    "queue_badge": "+{{count}} 대기 중",
+    "wait_reason": {
+      "sandbox_unhealthy": "만료된 샌드박스를 다시 만드는 중",
+      "destroy_unconfirmed": "이전 샌드박스 해제를 기다리는 중",
+      "create_intent_stale": "샌드박스 생성을 다시 시도하는 중",
+      "native_grant_busy": "열린 세션이 끝나기를 기다리는 중",
+      "task_drain_busy": "진행 중인 작업이 끝나기를 기다리는 중",
+      "dsh_host_waiting": "직원 호스트를 기다리는 중"
+    }
   },
   "visibility": {
     "private": {

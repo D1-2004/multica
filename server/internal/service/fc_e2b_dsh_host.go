@@ -16,11 +16,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dshprofile"
+	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/wsfs"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -35,6 +37,65 @@ const dshNativeStartupTimeout = 320 * time.Second
 
 var errDSHHostWaiting = errors.New("DSH employee host is awaiting reconciliation or task drain")
 var errDSHHostStartup = errors.New("DSH employee native startup failed")
+
+type dshHostWaitError struct {
+	reason string
+}
+
+func (e dshHostWaitError) Error() string {
+	if e.reason == "" {
+		return errDSHHostWaiting.Error()
+	}
+	return errDSHHostWaiting.Error() + ": " + e.reason
+}
+
+func (e dshHostWaitError) Unwrap() error { return errDSHHostWaiting }
+
+func waitDSHHost(reason string) error {
+	return dshHostWaitError{reason: reason}
+}
+
+func (l *FCE2BLauncher) deferDSHHostWaiting(ctx context.Context, exec interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, task db.AgentTaskQueue, attempt db.AgentTaskRuntimeStartAttempt, waitErr error) (fcE2BLaunchSubmission, bool, error) {
+	if _, recordErr := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "dsh_host_waiting"); recordErr != nil {
+		return fcE2BLaunchSubmission{}, false, recordErr
+	}
+	reason := dshWaitReason(waitErr)
+	if exec != nil {
+		if _, err := exec.Exec(ctx, `UPDATE agent_task_queue SET wait_reason=$2 WHERE id=$1 AND status='queued'`, task.ID, reason); err != nil {
+			slog.Warn("dsh host wait_reason write failed", "task_id", util.UUIDToString(task.ID), "error", err)
+		}
+	}
+	slog.Info("FC/E2B launch deferred by DSH host wait",
+		"event", "fc_e2b_launch_deferred",
+		"task_id", util.UUIDToString(task.ID),
+		"runtime_id", util.UUIDToString(task.RuntimeID),
+		"reason", reason,
+	)
+	return fcE2BLaunchSubmission{}, true, nil
+}
+
+func dshWaitReason(err error) string {
+	var wait dshHostWaitError
+	if errors.As(err, &wait) && wait.reason != "" {
+		return wait.reason
+	}
+	switch {
+	case strings.Contains(err.Error(), dshhost.WaitSandboxUnhealthy):
+		return dshhost.WaitSandboxUnhealthy
+	case strings.Contains(err.Error(), dshhost.WaitDestroyUnconfirmed):
+		return dshhost.WaitDestroyUnconfirmed
+	case strings.Contains(err.Error(), dshhost.WaitCreateIntentStale):
+		return dshhost.WaitCreateIntentStale
+	case strings.Contains(err.Error(), dshhost.WaitNativeGrantBusy):
+		return dshhost.WaitNativeGrantBusy
+	case strings.Contains(err.Error(), dshhost.WaitTaskDrainBusy):
+		return dshhost.WaitTaskDrainBusy
+	}
+	return "dsh_host_waiting"
+}
+
 var dshAccessPointPattern = regexp.MustCompile(`^acs:nas:[a-z0-9-]+:[0-9]+:accesspoint/(ap-[a-z0-9]+)$`)
 
 func employeeFilesystemScopeID(scope dshhost.SessionScope) uuid.UUID {
@@ -244,8 +305,11 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	var host dshhost.Host
 	if before.State == "creating" {
 		host, err = manager.ReconcileCreate(ctx, key)
-		if err != nil {
-			return dshhost.Host{}, false, errDSHHostWaiting
+		if errors.Is(err, dshhost.ErrCreateAbandoned) {
+			host, err = ensureHost()
+		} else if err != nil {
+			slog.Info("dsh host waiting", "reason", dshhost.WaitCreateIntentStale, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
+			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitCreateIntentStale)
 		}
 	} else if before.State == "retiring" {
 		err = dshhost.ErrRetireRequired
@@ -253,35 +317,54 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		host, err = ensureHost()
 	}
 	if errors.Is(err, dshhost.ErrRetireRequired) || (err == nil && host.TemplateID != template) {
-		var busy bool
+		if errors.Is(err, dshhost.ErrRetireRequired) && strings.Contains(err.Error(), dshhost.WaitSandboxUnhealthy) {
+			slog.Info("dsh host waiting", "reason", dshhost.WaitSandboxUnhealthy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
+		}
+		var taskBusy, nativeBusy bool
 		// A submitted background runner can still be queued before claiming.
 		// Treat its persisted sandbox receipt as active admission, too.
 		// Live native grants also reserve a healthy generation until revoked or
-		// expired. A retiring generation already rejects those grants; its
-		// remaining task writers must still drain before destruction.
+		// expired. Advisory-lock waiters are not retire signals.
 		err = conn.QueryRow(ctx, `SELECT EXISTS (
  SELECT 1 FROM agent_task_queue t JOIN agent a ON a.id=t.agent_id
  WHERE a.workspace_id=$1 AND t.agent_id=$2 AND t.id IS DISTINCT FROM $3::uuid
  AND ((t.status IN ('dispatched','running','waiting_local_directory') AND ($7::uuid='00000000-0000-0000-0000-000000000000'::uuid OR EXISTS
  (SELECT 1 FROM agent_task_runtime_start_attempt active WHERE active.task_id=t.id AND active.sandbox_id=$4))) OR
  (t.status='queued' AND EXISTS (SELECT 1 FROM agent_task_runtime_start_attempt s
- WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))
- OR ($5 AND EXISTS (SELECT 1 FROM dsh_native_access n
- WHERE n.workspace_id=$1 AND n.agent_id=$2 AND n.sandbox_id=$4 AND n.generation=$6
- AND n.parent_access_id IS NULL AND n.kind IN ('entry','session') AND n.expires_at>now()))`,
-			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, before.SandboxID, before.State == "running", before.Generation, scopeID).Scan(&busy)
+ WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))`,
+			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, before.SandboxID, before.State == "running", before.Generation, scopeID).Scan(&taskBusy)
 		if err != nil {
 			return dshhost.Host{}, false, err
 		}
-		if busy {
-			return dshhost.Host{}, false, errDSHHostWaiting
+		if before.State == "running" {
+			err = conn.QueryRow(ctx, `SELECT EXISTS (
+ SELECT 1 FROM dsh_native_access n
+ WHERE n.workspace_id=$1 AND n.agent_id=$2 AND n.sandbox_id=$3 AND n.generation=$4
+ AND n.parent_access_id IS NULL AND n.kind IN ('entry','session') AND n.expires_at>now())`,
+				rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, before.SandboxID, before.Generation).Scan(&nativeBusy)
+			if err != nil {
+				return dshhost.Host{}, false, err
+			}
+		}
+		if nativeBusy {
+			slog.Info("dsh host waiting", "reason", dshhost.WaitNativeGrantBusy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
+			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitNativeGrantBusy)
+		}
+		if taskBusy {
+			slog.Info("dsh host waiting", "reason", dshhost.WaitTaskDrainBusy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
+			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitTaskDrainBusy)
 		}
 		current, loadErr := store.Get(ctx, key)
 		if loadErr != nil {
 			return dshhost.Host{}, false, loadErr
 		}
 		if err = manager.Retire(ctx, key, current.Generation); err != nil {
-			return dshhost.Host{}, false, errDSHHostWaiting
+			reason := dshhost.WaitDestroyUnconfirmed
+			if strings.Contains(err.Error(), dshhost.WaitCreateIntentStale) {
+				reason = dshhost.WaitCreateIntentStale
+			}
+			slog.Info("dsh host waiting", "reason", reason, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", current.Generation, "sandbox_id", current.SandboxID)
+			return dshhost.Host{}, false, waitDSHHost(reason)
 		}
 		if isDSH && revision.Descriptor == "" {
 			return dshhost.Host{}, false, errDSHHostWaiting
@@ -289,7 +372,9 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		host, err = ensureHost()
 	}
 	if errors.Is(err, dshhost.ErrPending) || errors.Is(err, dshhost.ErrChanged) {
-		return dshhost.Host{}, false, errDSHHostWaiting
+		reason := dshWaitReason(err)
+		slog.Info("dsh host waiting", "reason", reason, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID)
+		return dshhost.Host{}, false, waitDSHHost(reason)
 	}
 	if err != nil {
 		return dshhost.Host{}, false, err

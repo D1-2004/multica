@@ -1404,7 +1404,15 @@
     "over_limit": " · 制限を {{count}} 文字超過"
   },
   "presence": {
-    "queue_badge": "+{{count}} 待機中"
+    "queue_badge": "+{{count}} 待機中",
+    "wait_reason": {
+      "sandbox_unhealthy": "期限切れのサンドボックスを再作成しています",
+      "destroy_unconfirmed": "旧サンドボックスの解放を待っています",
+      "create_intent_stale": "サンドボックス作成を再試行しています",
+      "native_grant_busy": "開いているセッションの終了を待っています",
+      "task_drain_busy": "実行中タスクの終了を待っています",
+      "dsh_host_waiting": "従業員ホストを待っています"
+    }
   },
   "visibility": {
     "private": {

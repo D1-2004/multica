@@ -667,6 +667,12 @@ function TaskRow({
           <span className={cfg.color}>
             {taskStatusLabel(task.status, t)}
           </span>
+          {task.status === "queued" && task.wait_reason && (
+            <>
+              <Sep />
+              <span>{task.wait_reason}</span>
+            </>
+          )}
           <Sep />
           <span>{timeText}</span>
           {durationText && (
