@@ -513,8 +513,13 @@ function DingTalkBindingModeCard({
   );
   const messageRouteActive = currentBinding?.messageRoute.status === "active";
   const messageRoutePending = currentBinding?.messageRoute.status === "pending";
+  // Identity-only aggregate rows also contain status=unbound. Only an
+  // actual message projection has a scope version (or legacy boundAt).
+  // messageScope itself is not evidence: the API parser defaults it.
+  const hasMessageProjection = currentBinding?.messageRoute.messageScopeVersion !== undefined ||
+    Boolean(currentBinding?.messageRoute.boundAt);
   const messageRouteReconciliationState = bindingMode === "message" &&
-    (currentBinding?.messageRoute.status === "unbound" ||
+    ((currentBinding?.messageRoute.status === "unbound" && hasMessageProjection) ||
       currentBinding?.messageRoute.status === "bound_to_other_agent" ||
       currentBinding?.messageRoute.status === "inconsistent" ||
       currentBinding?.messageRoute.status === "router_unavailable");

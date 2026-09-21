@@ -874,13 +874,13 @@ describe("DingTalkAccountBindingCard", () => {
     expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
   });
 
-  it("keeps an unbound message projection visible and removable after identity-only binding", async () => {
+  it("shows the connect action for identity-only binding without a message projection", async () => {
     listBindings.mockResolvedValue({
       bindings: [
         {
           ...activeBinding,
           dwsIdentity: { ...activeBinding.dwsIdentity, source: "identity" },
-          messageRoute: { status: "unbound" },
+          messageRoute: { status: "unbound", messageScope: "direct_only" },
         },
       ],
       configured: true,
@@ -894,10 +894,10 @@ describe("DingTalkAccountBindingCard", () => {
 
     unmount();
     renderCard("message");
-    expect(
-      await screen.findByText(enAgents.tab_body.integrations.dingtalk_account_unbound_warning),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Bind digital employee/i })).toBeInTheDocument();
+    expect(screen.queryByText(enAgents.tab_body.integrations.dingtalk_account_unbound_warning)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Unbind$/i })).not.toBeInTheDocument();
+    expect(deleteBinding).not.toHaveBeenCalled();
   });
 
   it("shows terminal task failures and allows a fresh binding attempt", async () => {
