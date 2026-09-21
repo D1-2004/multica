@@ -221,6 +221,9 @@ func (s *Store) AcceptFrom(ctx context.Context, e Event, senderUID, senderOrgID 
 }
 
 // ConfirmSent starts the 24 hour window exactly once. Retries cannot extend it.
+// ConfirmSent receives the provider receipt, never a callback-supplied ID.
+// The creation correlation ID is distinct from the provider-generated bizId.
+// Only the first confirmed send may replace it; later confirmations must match.
 func (s *Store) ConfirmSent(ctx context.Context, id, cardID string) error {
 	if cardID == "" {
 		return errors.New("missing confirmed card identity")
@@ -232,7 +235,7 @@ func (s *Store) ConfirmSent(ctx context.Context, id, cardID string) error {
 	defer tx.Rollback(ctx)
 	tag, err := tx.Exec(ctx, `UPDATE coordinator_user_decision SET state=CASE WHEN state IN ('sending','send_unknown') THEN 'waiting' ELSE state END,card_biz_id=$3,
  sent_at=COALESCE(sent_at,now()),expires_at=COALESCE(expires_at,now()+interval '24 hours'),lease_token=NULL,lease_expires_at=NULL,updated_at=now()
- WHERE id=$1 AND environment=$2 AND state IN ('sending','send_unknown','waiting','accepted','resuming','dispatched','not_executed') AND (card_biz_id IS NULL OR card_biz_id=$3)`, id, s.Environment, cardID)
+ WHERE id=$1 AND environment=$2 AND state IN ('sending','send_unknown','waiting','accepted','resuming','dispatched','not_executed') AND ((sent_at IS NULL AND state IN ('sending','send_unknown')) OR card_biz_id=$3)`, id, s.Environment, cardID)
 	if err != nil {
 		return err
 	}

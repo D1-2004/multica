@@ -197,6 +197,7 @@ func (s *Service) processIdentity(ctx context.Context, identity Request, session
 			}
 			slog.Warn("user decision send needs reconciliation", fields...)
 		} else if err = s.Store.ConfirmSent(ctx, send.ID, cardID); err != nil {
+			slog.Warn("user decision receipt persistence failed", "event", "user_decision_receipt_pending", "decision_id", send.ID, "provider_card_id", cardID)
 			return err
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {

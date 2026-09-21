@@ -42,10 +42,13 @@ func TestPostgresConcurrentAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = store.ConfirmSent(ctx, id, "coordinator_"+id); err != nil {
+	if err = store.ConfirmSent(ctx, id, "transformer_card_"+strings.ReplaceAll(id, "-", "")); err != nil {
 		t.Fatal(err)
 	}
-	base := Event{ID: uuid.NewString(), CorpID: r.CorpID, ConversationID: r.ConversationID, CardID: "coordinator_" + id, OperatorID: r.InitiatorID, RequestID: id, Version: Version, Selected: []string{"new"}, Raw: json.RawMessage(`{"fixture":true}`)}
+	if err = store.ConfirmSent(ctx, id, "other-provider-card"); err == nil {
+		t.Fatal("confirmed card identity was rebound")
+	}
+	base := Event{ID: uuid.NewString(), CorpID: r.CorpID, ConversationID: r.ConversationID, CardID: "transformer_card_" + strings.ReplaceAll(id, "-", ""), OperatorID: r.InitiatorID, RequestID: id, Version: Version, Selected: []string{"new"}, Raw: json.RawMessage(`{"fixture":true}`)}
 	impostor := base
 	impostor.ID = uuid.NewString()
 	impostor.OperatorID = "other"
@@ -94,7 +97,7 @@ func TestPostgresConcurrentAcceptance(t *testing.T) {
 	if err = pool.QueryRow(ctx, `SELECT expires_at FROM coordinator_user_decision WHERE id=$1`, id).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	if err = store.ConfirmSent(ctx, id, "coordinator_"+id); err != nil {
+	if err = store.ConfirmSent(ctx, id, "transformer_card_"+strings.ReplaceAll(id, "-", "")); err != nil {
 		t.Fatal(err)
 	}
 	var after time.Time
