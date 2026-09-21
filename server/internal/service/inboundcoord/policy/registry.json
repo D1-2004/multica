@@ -357,7 +357,8 @@
         "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback",
         "user_decision_r9": "R9 failure retained; Host regression and frozen real-model replay passed; deployed R10 native submission b4a631e3f662472bbc192e848d082f60 completed with exact reply and no tasks.",
         "user_decision_summary": "5619b6c92 deployed run3109336221 allEnd=true; R13 native summary recovered to question, selection preserved, continuation task5bc88c5f-eac7-45f5-9770-9ef0257c4bc9 completed with three-line native result.",
-        "user_decision_recovery": "Explicit preproduction PostgreSQL expiry/cancellation/receipt lease/card retry tests added; deployment execution pending."
+        "user_decision_recovery": "Explicit preproduction PostgreSQL expiry/cancellation/receipt lease/card retry tests added; deployment execution pending.",
+        "user_decision_snapshot": "R14 native preproduction event4cd4de16265749769a0d76cf749a4f29 completed with no tasks; 80658-byte snapshot export passed. Local storage upload/read/digest/size failure tests passed; real OSS outage injection not run."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -393,7 +394,9 @@
         "server/internal/service/inboundcoord/user_decision.go",
         "server/internal/service/userdecision/event.go",
         "server/internal/service/userdecision/store.go",
-        "server/internal/service/inboundcoord/finish_invented_capability_test.go"
+        "server/internal/service/inboundcoord/finish_invented_capability_test.go",
+        "server/internal/service/userdecision/snapshot.go",
+        "server/internal/service/userdecision/snapshot_test.go"
       ],
       "case_file": "cases.json"
     },

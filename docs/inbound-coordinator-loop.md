@@ -371,3 +371,5 @@ Diamond `dt-fde-multica-runtime.json` / `DEFAULT_GROUP` exposes `runtime.llm.coo
 卡片问题与接收／执行状态使用公开 Catalog 的 Markdown 组件，并在确认创建回执后通过持久化待办补充对应 surface/component 的 artifact 注解；此后每次更新保留注解；不能让 DWS 更新默认的空注解抹掉摘要。等待表单恢复仅更新问题绑定及组件，不重置 answers。数据集导出保留非凭证的 card_biz_id 供卡片关联，凭据、消费者身份和租约字段仍排除。等待态使用 CONFIRMING，避免 INPUTTING 覆盖会话列表摘要为“正在回复中”。R12 实卡更新后显示问题正文且原生提交成功；自动接线仍待部署回归。关闭设置仅影响新请求，已发出的卡片继续按冻结规则处理。
 
 发卡回执重试只清理 sending/send_unknown 的发送租约；不得清理 resuming 的解析租约。显式预发启动验证通过隔离环境记录及回滚事务检查数据库过期、取消和卡片更新重试；MULTICA_USER_DECISION_VERIFY_ON_BOOT 默认关闭，正式环境拒绝开启。测试不新增 HTTP 调试入口，不冒充真实客户端失败注入。
+
+大快照上传失败不得产生已冻结引用；读取失败、超限或摘要不一致不得返回部分上下文。`snapshot_test.go` 覆盖这些失败边界与原引用重试；R14 实测约80KB快照的原生提交和导出通过，不能替代真实OSS故障注入。

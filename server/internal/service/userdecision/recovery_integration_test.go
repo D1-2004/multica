@@ -63,7 +63,7 @@ func TestPostgresExpiryCancellationAndReceiptLease(t *testing.T) {
 	if _, err = store.Prepare(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO inbound_coordinator_job(id,acceptance_id,workspace_id,agent_id,user_id,endpoint_namespace_id,idempotency_key,command,chat_session_id,user_message_id,status,available_at,last_error) VALUES($1,$1,$2,$3,$1,$1,$1::text,'{}',$1,$1,'pending','infinity','awaiting_user_decision')`, r.JobID, r.WorkspaceID, r.AgentID); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO inbound_coordinator_job(id,acceptance_id,workspace_id,agent_id,user_id,endpoint_namespace_id,idempotency_key,command,chat_session_id,user_message_id,status,available_at,last_error) VALUES($1::uuid,$1::uuid,$2::uuid,$3::uuid,$1::uuid,$1::uuid,($1::uuid)::text,'{}',$1::uuid,$1::uuid,'pending','infinity','awaiting_user_decision')`, r.JobID, r.WorkspaceID, r.AgentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = tx.Exec(ctx, `UPDATE coordinator_user_decision SET state='sending' WHERE id=$1`, r.ID); err != nil {
