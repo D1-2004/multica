@@ -160,7 +160,7 @@ func TestStatusPreservesAcceptedChoiceAtCompletion(t *testing.T) {
 	r.ExecutionResult = nil
 	r.Proposal.Question = "怎么处理？"
 	status, text = Status(r)
-	if status != "INPUTTING" || text != "怎么处理？" {
+	if status != "CONFIRMING" || text != "怎么处理？" {
 		t.Fatalf("waiting falsely acknowledged: %s %s", status, text)
 	}
 }

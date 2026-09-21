@@ -49,7 +49,7 @@ func (s *decisionSession) Update(ctx context.Context, r userdecision.Request, st
 	if r.State == "waiting" {
 		// Refresh components only: keep the frozen choices and the client form data.
 		messages = userdecision.WaitingCardUpdate(r.ID, r.Proposal)
-		status = "INPUTTING"
+		status = "CONFIRMING"
 		componentID = "question"
 	}
 	return s.cli.UpdateA2UI(ctx, s.dir, r.CardID, status, messages, decisionAnnotation(r.ID, componentID))
@@ -59,7 +59,7 @@ func (s *decisionSession) Consume(ctx context.Context, ready func(), consume fun
 }
 
 func (s *decisionSession) Reconcile(ctx context.Context, r userdecision.Request) error {
-	return s.cli.UpdateA2UI(ctx, s.dir, r.CardID, "INPUTTING", userdecision.Card(r.ID, r.Proposal), decisionAnnotation(r.ID, "question"))
+	return s.cli.UpdateA2UI(ctx, s.dir, r.CardID, "CONFIRMING", userdecision.Card(r.ID, r.Proposal), decisionAnnotation(r.ID, "question"))
 }
 
 func decisionAnnotation(surfaceID, componentID string) []dwsclient.A2UIAnnotation {

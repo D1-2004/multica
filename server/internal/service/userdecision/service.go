@@ -305,7 +305,7 @@ func Status(r Request) (string, string) {
 
 	switch r.State {
 	case "waiting", "prepared", "sending", "send_unknown":
-		return "INPUTTING", r.Proposal.Question
+		return "CONFIRMING", r.Proposal.Question
 	case "expired":
 		return "TIMEOUT", "选择已过期，本次未执行。"
 	case "cancelled":

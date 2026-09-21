@@ -59,7 +59,7 @@ printf '%s' '{"success":true}'
 		t.Fatal(err)
 	}
 	annotations := []A2UIAnnotation{{SurfaceID: "decision", ComponentID: "status", Type: "artifact"}}
-	if err := (CLI{Path: path}).UpdateA2UI(context.Background(), dir, "card", "FINISH", []string{"{}"}, annotations); err != nil {
+	if err := (CLI{Path: path}).UpdateA2UI(context.Background(), dir, "card", "CONFIRMING", []string{"{}"}, annotations); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "args"))
