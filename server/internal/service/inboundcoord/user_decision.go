@@ -123,6 +123,11 @@ func validateChoiceDirection(o userdecision.Option, d Decision) error {
 		}
 	}
 	if o.Kind == "reply" {
+		for _, a := range d.CoordinationActions {
+			if a.Kind == "acknowledge" && a.AckKind == "receipt" {
+				return errors.New("reply choice cannot be a work receipt; supply an evidence-supported standalone answer without committing to execution")
+			}
+		}
 		if work != 0 || d.Action != ActionReply || d.UserText == "" {
 			return errors.New("reply candidate must contain a concrete non-work reply")
 		}

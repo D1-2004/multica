@@ -32,7 +32,7 @@ func (c CLI) SendA2UI(ctx context.Context, dir string, in A2UISendRequest) (A2UI
 	if err != nil {
 		return A2UIReceipt{}, err
 	}
-	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+messages-send", "--as", "user", "--chat-id", in.ConversationID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--format", "json"})
+	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+messages-send", "--as", "user", "--chat-id", in.ConversationID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--yes", "--format", "json"})
 	if err != nil {
 		return A2UIReceipt{}, err
 	}

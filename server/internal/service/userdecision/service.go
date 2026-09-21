@@ -189,7 +189,13 @@ func (s *Service) processIdentity(ctx context.Context, identity Request, session
 		cancel()
 		if sendErr != nil {
 			_ = s.Store.MarkSendUnknown(ctx, send.ID)
-			slog.Warn("user decision send needs reconciliation", "event", "user_decision_send_unknown", "decision_id", send.ID)
+			fields := []any{"event", "user_decision_send_unknown", "decision_id", send.ID}
+			// Only typed, allowlisted CLI diagnostics may cross the log boundary.
+			var diagnostic interface{ DiagnosticFields() map[string]any }
+			if errors.As(sendErr, &diagnostic) {
+				fields = append(fields, "diagnostics", diagnostic.DiagnosticFields())
+			}
+			slog.Warn("user decision send needs reconciliation", fields...)
 		} else if err = s.Store.ConfirmSent(ctx, send.ID, cardID); err != nil {
 			return err
 		}

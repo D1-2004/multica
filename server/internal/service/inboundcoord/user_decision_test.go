@@ -22,6 +22,7 @@ func TestUserDecisionCandidateDirections(t *testing.T) {
 		{"multiple targets", "continue_work", Decision{CoordinationActions: []CoordinationAction{{Kind: "continue_work", IssueID: "a"}, {Kind: "continue_work", IssueID: "b"}}}, false},
 		{"concrete reply", "reply", Decision{Action: ActionReply, UserText: "你好", CoordinationActions: []CoordinationAction{{Kind: "acknowledge", Reply: "你好"}}}, true},
 		{"reply hides work", "reply", Decision{Action: ActionReply, UserText: "完成", CoordinationActions: []CoordinationAction{{Kind: "start_work"}}}, false},
+		{"work receipt is not standalone reply", "reply", Decision{Action: ActionReply, UserText: "我这就新建工作", CoordinationActions: []CoordinationAction{{Kind: "acknowledge", AckKind: "receipt", Reply: "我这就新建工作"}}}, false},
 		{"empty reply", "reply", Decision{Action: ActionReply}, false},
 	}
 	for _, tt := range tests {
@@ -44,7 +45,7 @@ func TestUnknownChoiceCannotCommitPlan(t *testing.T) {
 func TestUserDecisionReviewPolicyIsSelected(t *testing.T) {
 	turn := Turn{Loop: LoopFinishCheck, UserDecisionSubmission: &userdecision.Submission{OptionID: "o1"}}
 	prompt := buildSystemPrompt(turn)
-	if !strings.Contains(prompt, "[policy:user_decision@2]") {
+	if !strings.Contains(prompt, "[policy:user_decision@3]") {
 		t.Fatal("review did not receive locked-choice policy")
 	}
 }
