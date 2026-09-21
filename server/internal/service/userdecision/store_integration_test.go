@@ -83,12 +83,12 @@ func TestPostgresConcurrentAcceptance(t *testing.T) {
 	if err != nil || outcome != "duplicate_event" {
 		t.Fatal(outcome, err)
 	}
-	var accepted, events int
-	if err = pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE outcome='accepted'),count(*) FROM coordinator_user_decision_event WHERE decision_id=$1`, id).Scan(&accepted, &events); err != nil {
+	var accepted, events, deliveries int
+	if err = pool.QueryRow(ctx, `SELECT count(*) FILTER(WHERE outcome='accepted'),count(*),sum(delivery_count) FROM coordinator_user_decision_event WHERE decision_id=$1`, id).Scan(&accepted, &events, &deliveries); err != nil {
 		t.Fatal(err)
 	}
-	if accepted != 1 || events != 18 {
-		t.Fatalf("accepted=%d events=%d", accepted, events)
+	if accepted != 1 || events != 18 || deliveries != 19 {
+		t.Fatalf("accepted=%d events=%d deliveries=%d", accepted, events, deliveries)
 	}
 	var before time.Time
 	if err = pool.QueryRow(ctx, `SELECT expires_at FROM coordinator_user_decision WHERE id=$1`, id).Scan(&before); err != nil {

@@ -132,9 +132,6 @@ func (s *Store) AcceptFrom(ctx context.Context, e Event, senderUID, senderOrgID 
 	if s.DB == nil || s.Environment == "" {
 		return "", errors.New("decision store unavailable")
 	}
-	if _, err := uuid.Parse(e.RequestID); err != nil {
-		return "", errors.New("invalid decision identifier")
-	}
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
 		return "", err
@@ -205,6 +202,12 @@ func (s *Store) AcceptFrom(ctx context.Context, e Event, senderUID, senderOrgID 
 		return "", err
 	}
 	if tag.RowsAffected() == 0 {
+		// Preserve the original submission and its outcome; replay delivery is
+		// separate audit metadata, never a second accepted sample.
+		_, err = tx.Exec(ctx, `UPDATE coordinator_user_decision_event SET delivery_count=delivery_count+1,last_received_at=clock_timestamp(),last_delivery_outcome='duplicate_event' WHERE environment=$1 AND event_id=$2`, s.Environment, e.ID)
+		if err != nil {
+			return "", err
+		}
 		return "duplicate_event", tx.Commit(ctx)
 	}
 	if outcome == "accepted" {

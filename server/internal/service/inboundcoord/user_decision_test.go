@@ -128,3 +128,36 @@ func TestUserDecisionProposalRepairsBeforeShowingOneQuestion(t *testing.T) {
 		t.Fatal("visible choice is not exact model reply")
 	}
 }
+
+func TestUserDecisionSubmissionLocksDirection(t *testing.T) {
+	const newPlan = `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"整理一份完整可转发报告"}]}`
+	const replyPlan = `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"reply":"你好","ack_kind":"greeting"}]}`
+	for _, tt := range []struct {
+		name, option, custom, output string
+		wantErr                      bool
+		action                       Action
+	}{
+		{"custom only", "", "请整理报告", `{"executable":true,"reason":"明确整理要求","plan":` + newPlan + `}`, false, ActionIssue},
+		{"choice with refinement", "new", "整理成一页", `{"executable":true,"reason":"格式细化","plan":` + newPlan + `}`, false, ActionIssue},
+		{"contradictory instructions", "new", "不要整理，直接结束", `{"executable":false,"reason":"补充与新建工作矛盾","plan":null}`, true, ""},
+		{"model switches direction", "new", "整理成一页", `{"executable":true,"reason":"改成回复","plan":` + replyPlan + `}`, true, ""},
+		{"reply refined", "reply", "用你好回复", `{"executable":true,"reason":"修改措辞","plan":` + replyPlan + `}`, false, ActionReply},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Coordinator{Chat: &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("interpret", "interpret_submission", tt.output)}}}
+			s := UserDecisionSnapshot{Turn: Turn{Source: SourceRobot, Addressed: true, Message: "整理报告"}, Proposal: userdecision.Proposal{Options: []userdecision.Option{{ID: "new", Kind: "start_work", Plan: json.RawMessage(newPlan)}, {ID: "reply", Kind: "reply", Label: "原来的问候", Plan: json.RawMessage(replyPlan)}}}}
+			commits := 0
+			ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { commits++; return nil })
+			d, audit, err := c.ResolveUserDecisionWithAudit(ctx, s, userdecision.Submission{OptionID: tt.option, Custom: tt.custom})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err=%v", err)
+			}
+			if err == nil && d.Action != tt.action {
+				t.Fatalf("action=%s", d.Action)
+			}
+			if audit.RawInterpretation != tt.output || commits != 0 {
+				t.Fatal("missing interpretation or premature commit")
+			}
+		})
+	}
+}
