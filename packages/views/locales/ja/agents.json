@@ -1345,6 +1345,18 @@
       "home_title": "ファイルシステム"
     },
     "dsh_home": {
+      "shared_title": "共有ワークスペースファイル",
+      "shared_intro": "ワークスペースの「ファイル」ページの共有ディスクです。既定ではこのエージェントに公開しません。読み取りまたは書き込みを許可すると、次のタスクで /mnt/workspace（$MULTICA_WORKSPACE_FS_ROOT）に同期します。サンドボックス内の書き込みはファイルページに戻りません。",
+      "shared_empty": "共有ファイルはまだありません。",
+      "grant_label": "エージェント権限",
+      "grant_none": "なし",
+      "grant_read": "読み取り",
+      "grant_write": "書き込み",
+      "grant_saved": "権限を更新しました",
+      "grant_failed": "権限を更新できませんでした",
+      "access_path": "タスク内: $MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace",
+      "open_files": "ファイルを開く",
+      "private_title": "非共有ディスク",
       "intro": "各 Agent はすべての FC provider で使える独立した永続ファイルシステムを持ちます。ターミナルやファイルツールで $MULTICA_FS_ROOT/files（/mnt/multica/files）を読み書きできます。DSH_HOME は DSH 用のサブディレクトリです。",
       "loading": "ファイルシステムを確認中…",
       "unavailable": "状態を取得できません。更新してください。",

@@ -489,7 +489,12 @@ export function AgentOverviewPane({
                     />
                   )}
                   {effectiveView === "filesystem" && (
-                    <DshHomeTab workspaceId={wsId} agentId={agent.id} nativeEnabled={false} />
+                    <DshHomeTab
+                      workspaceId={wsId}
+                      agentId={agent.id}
+                      nativeEnabled={false}
+                      canEdit={canEdit}
+                    />
                   )}
                   {effectiveView === "dsh" && (
                     <DshConfigTab

@@ -15,6 +15,16 @@ export function useFilesystemMkdir(workspaceId: string) {
   });
 }
 
+export function useFilesystemGrant(workspaceId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { agent_id: string; access: string }) => api.putFilesystemGrant(input),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: filesystemKeys.grants(workspaceId) });
+    },
+  });
+}
+
 export function useFilesystemDownload() {
   return useMutation({
     mutationFn: (input: { root: string; path: string }) =>

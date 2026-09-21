@@ -1,5 +1,29 @@
 "use client";
 
+import type { LucideIcon } from "lucide-react";
+import {
+  ArrowLeftRight,
+  Bot,
+  Cpu,
+  Download,
+  FileText,
+  Folder,
+  KeyRound,
+  Monitor,
+  Plug,
+  Puzzle,
+  Rocket,
+  Settings2,
+  Shield,
+  SlidersHorizontal,
+  Sparkles,
+  Target,
+  Terminal,
+  Variable,
+  Wrench,
+  Activity,
+  Cable,
+} from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -14,6 +38,29 @@ import type {
   ConfigGroupId,
   DetailTab,
 } from "./agent-config-navigation";
+
+const CONFIG_TAB_ICONS: Partial<Record<DetailTab, LucideIcon>> = {
+  digital_employee: Bot,
+  instructions: FileText,
+  okr: Target,
+  skills: Sparkles,
+  mcp_config: Wrench,
+  composio_mcp: Plug,
+  integrations: Cable,
+  mcp_access: KeyRound,
+  a2a: ArrowLeftRight,
+  general: Settings2,
+  runner: Terminal,
+  dsh: Monitor,
+  filesystem: Folder,
+  env: Variable,
+  custom_args: SlidersHorizontal,
+  runtime_config: Cpu,
+  export: Download,
+  publish: Rocket,
+  access: Shield,
+  llm_trace: Activity,
+};
 
 interface AgentConfigNavProps {
   groups: readonly AgentConfigGroup[];
@@ -62,6 +109,7 @@ export function AgentConfigNav({
                 >
                   {group.items.map((item) => {
                     const active = item.id === activeView;
+                    const Icon = CONFIG_TAB_ICONS[item.id];
                     return (
                       <button
                         key={item.id}
@@ -76,6 +124,12 @@ export function AgentConfigNav({
                             : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
                         )}
                       >
+                        {Icon ? (
+                          <Icon
+                            aria-hidden="true"
+                            className="size-3.5 shrink-0"
+                          />
+                        ) : null}
                         <span className="min-w-0 truncate">
                           {t(($) => $.tabs[item.labelKey])}
                         </span>

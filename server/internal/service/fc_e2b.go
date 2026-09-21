@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
+	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -944,6 +945,7 @@ type FCE2BLauncher struct {
 	}
 	Queries            *db.Queries
 	Tasks              *TaskService
+	ObjectStorage      storage.Storage
 	Config             FCE2BConfig
 	ConfigProvider     func() FCE2BConfig
 	Runner             CommandRunner
@@ -1136,6 +1138,12 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 func (l *FCE2BLauncher) SetPool(pool *pgxpool.Pool) {
 	if l != nil {
 		l.Pool = pool
+	}
+}
+
+func (l *FCE2BLauncher) SetObjectStorage(store storage.Storage) {
+	if l != nil {
+		l.ObjectStorage = store
 	}
 }
 
@@ -1701,6 +1709,13 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	// Shared workspace mounts are not attached to DSH employee sandboxes
 	// unless a later grant generation supplies task_role_arn. Do not inject
 	// MULTICA_WORKSPACE_FS_* here: existing DSH users keep a single /mnt/multica.
+	if access := l.attachWorkspaceCatalog(ctx, sandboxID, runtime.WorkspaceID, task.AgentID); access != "" {
+		if extraEnv == nil {
+			extraEnv = make(map[string]string)
+		}
+		extraEnv["MULTICA_WORKSPACE_FS_ROOT"] = dshhost.WorkspaceMountPath
+		extraEnv["MULTICA_WORKSPACE_FS_ACCESS"] = access
+	}
 	if employeeHost != nil && FCE2BRuntimeProvider(runtime) == "dsh" {
 		binding := nativeBinding
 		if extraEnv == nil {

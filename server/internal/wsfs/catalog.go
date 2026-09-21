@@ -94,6 +94,24 @@ func (s Store) DirExists(ctx context.Context, workspaceID uuid.UUID, rel string)
 	return e.IsDir, nil
 }
 
+func (s Store) ListFiles(ctx context.Context, workspaceID uuid.UUID) ([]Entry, error) {
+	rows, err := s.DB.Query(ctx, `SELECT id, parent_path, name, rel_path, is_dir, size_bytes, sha256, storage_key, updated_at
+ FROM workspace_fs_entry WHERE workspace_id=$1 AND is_dir=false ORDER BY rel_path`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Entry
+	for rows.Next() {
+		var e Entry
+		if err := rows.Scan(&e.ID, &e.ParentPath, &e.Name, &e.RelPath, &e.IsDir, &e.SizeBytes, &e.SHA256, &e.StorageKey, &e.ModTime); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func (s Store) InsertDir(ctx context.Context, workspaceID, createdBy uuid.UUID, rel, name string) (Entry, error) {
 	parent := ParentPath(rel)
 	id := uuid.New()

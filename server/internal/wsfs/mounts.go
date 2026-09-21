@@ -29,11 +29,11 @@ type Binding struct {
 // is AccessNone with empty TaskRoleARN, which must not add a shared mount
 // to an employee sandbox.
 type Grant struct {
-	WorkspaceID uuid.UUID
-	AgentID     uuid.UUID
-	Access      string
-	Generation  int64
-	TaskRoleARN string
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	AgentID     uuid.UUID `json:"agent_id"`
+	Access      string    `json:"access"`
+	Generation  int64     `json:"generation"`
+	TaskRoleARN string    `json:"task_role_arn"`
 }
 
 func (g Grant) effectiveAccess() string {

@@ -1353,6 +1353,18 @@
       "home_title": "파일 시스템"
     },
     "dsh_home": {
+      "shared_title": "공유 워크스페이스 파일",
+      "shared_intro": "워크스페이스 파일 페이지의 공유 디스크입니다. 기본적으로 이 에이전트에는 열려 있지 않습니다. 읽기 또는 쓰기를 허용하면 다음 작업에서 /mnt/workspace($MULTICA_WORKSPACE_FS_ROOT)로 동기화됩니다. 샌드박스 쓰기는 파일 페이지로 돌아가지 않습니다.",
+      "shared_empty": "아직 공유 파일이 없습니다.",
+      "grant_label": "에이전트 권한",
+      "grant_none": "없음",
+      "grant_read": "읽기",
+      "grant_write": "쓰기",
+      "grant_saved": "권한이 업데이트되었습니다",
+      "grant_failed": "권한을 업데이트하지 못했습니다",
+      "access_path": "작업에서: $MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace",
+      "open_files": "파일 열기",
+      "private_title": "비공유 디스크",
       "intro": "각 Agent는 모든 FC provider에서 사용할 수 있는 독립적인 영구 파일 시스템을 가집니다. 터미널과 파일 도구로 $MULTICA_FS_ROOT/files(/mnt/multica/files)를 읽고 쓸 수 있습니다. DSH_HOME은 DSH 전용 하위 디렉터리입니다.",
       "loading": "파일 시스템 확인 중…",
       "unavailable": "상태를 확인할 수 없습니다. 새로고침하세요.",

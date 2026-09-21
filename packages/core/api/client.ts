@@ -5,8 +5,12 @@ import { DSHNativeEntrySchema, type DSHNativeEntry } from "./dsh-native-schema";
 import { DSHHomeSchema, type DSHHomeStatus } from "./dsh-home-schema";
 import {
   FilesystemEntriesSchema,
+  FilesystemGrantsSchema,
+  FilesystemGrantSchema,
   FilesystemRootsSchema,
   type FilesystemEntries,
+  type FilesystemGrant,
+  type FilesystemGrants,
   type FilesystemRoots,
 } from "./filesystem-schema";
 import type { GitRepositoryIdentity, GitConnections } from "../types/git-repo";
@@ -3856,6 +3860,25 @@ export class ApiClient {
       next_offset: null,
     }, {
       endpoint: "GET /api/filesystem/entries",
+      includeReceived: false,
+    });
+  }
+
+  async listFilesystemGrants(signal?: AbortSignal): Promise<FilesystemGrants> {
+    const raw = await this.fetch<unknown>(`/api/filesystem/grants`, { signal });
+    return parseWithFallback<FilesystemGrants>(raw, FilesystemGrantsSchema, { grants: [] }, {
+      endpoint: "GET /api/filesystem/grants",
+      includeReceived: false,
+    });
+  }
+
+  async putFilesystemGrant(body: { agent_id: string; access: string }): Promise<FilesystemGrant | null> {
+    const raw = await this.fetch<unknown>(`/api/filesystem/grants`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    return parseWithFallback<FilesystemGrant | null>(raw, FilesystemGrantSchema, null, {
+      endpoint: "PUT /api/filesystem/grants",
       includeReceived: false,
     });
   }
