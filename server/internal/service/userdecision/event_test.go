@@ -117,6 +117,24 @@ func TestExportDropsCredentialAndUnrelatedContactFields(t *testing.T) {
 	}
 }
 
+func TestExportScrubsJSONEncodedEnvelopesWithoutChangingAuthoritativeInput(t *testing.T) {
+	inner := `{"API-Key":"fixture-api-value","operator":{"email":"fixture@example.invalid","openDingTalkId":"actor"},"selected":["reply"]}`
+	outer, _ := json.Marshal(map[string]any{"data": inner, "cookie": "fixture-cookie"})
+	in := map[string]any{"payload": string(outer), "question": "继续哪项工作？", "card_biz_id": "card"}
+	raw, _ := json.Marshal(ExportValue(in))
+	for _, forbidden := range []string{"fixture-api-value", "fixture@example.invalid", "fixture-cookie"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatal("encoded private field escaped export policy")
+		}
+	}
+	if !strings.Contains(string(raw), "actor") || !strings.Contains(string(raw), "reply") || !strings.Contains(string(raw), "card_biz_id") {
+		t.Fatal("lost decision associations")
+	}
+	if in["payload"] != string(outer) {
+		t.Fatal("mutated authoritative envelope")
+	}
+}
+
 func TestCardValidationFunctionsUseBasicCatalog(t *testing.T) {
 	p := Proposal{Question: "处理方式", Options: []Option{{ID: "new", Label: "新建", Kind: "start_work"}, {ID: "reply", Label: "回复", Kind: "reply"}}}
 	var message map[string]any

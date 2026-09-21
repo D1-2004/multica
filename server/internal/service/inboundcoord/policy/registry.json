@@ -360,7 +360,8 @@
         "user_decision_summary": "5619b6c92 deployed run3109336221 allEnd=true; R13 native summary recovered to question, selection preserved, continuation task5bc88c5f-eac7-45f5-9770-9ef0257c4bc9 completed with three-line native result.",
         "user_decision_recovery": "Preproduction run3109340164 release dad5c06c deployed allEnd=true at22:54:57; both replicas logged PostgreSQL checks passed. Expiry/cancellation/receipt lease, persisted card retry and first-valid concurrency tests passed. Prior fixture42P08 failure retained; no claim of native phone or provider-outage injection.",
         "user_decision_snapshot": "R14 native preproduction event4cd4de16265749769a0d76cf749a4f29 completed with no tasks; 80658-byte snapshot export passed. Local storage upload/read/digest/size failure tests passed; real OSS outage injection not run.",
-        "user_decision_monitor": "Owner inbox alerts and database metrics implemented; local compile passed; real PostgreSQL rollback fixture and preproduction alert delivery pending."
+        "user_decision_monitor": "Owner inbox alerts and database metrics implemented; local compile passed; real PostgreSQL rollback fixture and preproduction alert delivery pending.",
+        "user_decision_export": "Structured and JSON-string wrapped credential/contact removal host tests passed; authoritative inputs and decision associations preserved; live export round-trip verification pending."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -400,7 +401,8 @@
         "server/internal/service/userdecision/snapshot.go",
         "server/internal/service/userdecision/snapshot_test.go",
         "server/internal/service/userdecision/monitor.go",
-        "server/internal/service/userdecision/monitor_integration_test.go"
+        "server/internal/service/userdecision/monitor_integration_test.go",
+        "server/internal/service/userdecision/export.go"
       ],
       "case_file": "cases.json"
     },
