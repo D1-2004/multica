@@ -167,18 +167,23 @@ describe("FilesPage", () => {
     expect(screen.getByText("This folder is empty")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New folder" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Upload" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Upload folder" })).toBeInTheDocument();
     expect(screen.queryByText("No private disks yet")).not.toBeInTheDocument();
   });
 
-  it("lists files in the shared folder", () => {
+  it("lists files in the shared folder and previews instead of downloading", async () => {
     mocks.entries = {
       ...mocks.entries,
       entries: [{ name: "notes.md", path: "notes.md", is_dir: false, size_bytes: 12 }],
       count: 1,
     };
+    const user = userEvent.setup();
     renderPage();
     expect(screen.getByText("notes.md")).toBeInTheDocument();
     expect(screen.queryByText("This folder is empty")).not.toBeInTheDocument();
+    await user.click(screen.getByText("notes.md"));
+    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument();
+    expect(screen.getAllByText("12 B").length).toBeGreaterThan(0);
   });
 
   it("shows an unready state for unprepared shared storage", () => {
@@ -206,7 +211,7 @@ describe("FilesPage", () => {
       "aria-selected",
       "true",
     );
-    expect(screen.getByText("Private to Feidi")).toBeInTheDocument();
+    expect(screen.getByText("This folder is empty")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open agent" })).toHaveAttribute(
       "href",
       `/acme/agents/${FEIDI_ID}?view=filesystem`,

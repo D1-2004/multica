@@ -62,6 +62,20 @@ func humanSharedAccess(role dbMemberRole) string {
 	return wsfs.AccessRead
 }
 
+func parseFilesystemRoot(root string) (uuid.UUID, bool) {
+	if root == "shared" {
+		return uuid.Nil, true
+	}
+	if !validAgentRoot(root) {
+		return uuid.Nil, false
+	}
+	id, err := uuid.Parse(strings.TrimPrefix(root, "agent:"))
+	if err != nil {
+		return uuid.Nil, false
+	}
+	return id, true
+}
+
 func (h *Handler) GetWorkspaceFilesystemRoots(w http.ResponseWriter, r *http.Request) {
 	wsID, role, ok := h.filesystemActor(w, r)
 	if !ok {
@@ -107,12 +121,12 @@ func (h *Handler) GetWorkspaceFilesystemEntries(w http.ResponseWriter, r *http.R
 		return
 	}
 	root := r.URL.Query().Get("root")
-	if root != "shared" {
-		if !validAgentRoot(root) {
-			writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_root", "unknown filesystem root")
-			return
-		}
-		writeErrorCode(w, http.StatusServiceUnavailable, "filesystem_host_starting", "filesystem listing host is not running")
+	agentID, rootOK := parseFilesystemRoot(root)
+	if !rootOK {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_root", "unknown filesystem root")
+		return
+	}
+	if agentID != uuid.Nil && !h.canAccessAgentFilesystem(w, r, wsID, agentID) {
 		return
 	}
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
@@ -122,7 +136,7 @@ func (h *Handler) GetWorkspaceFilesystemEntries(w http.ResponseWriter, r *http.R
 	}
 	store := h.filesystemStore()
 	if r.URL.Query().Get("recursive") == "1" {
-		all, err := store.ListAll(r.Context(), wsID)
+		all, err := store.ListAll(r.Context(), wsID, agentID)
 		if err != nil {
 			writeError(w, http.StatusServiceUnavailable, "filesystem listing is unavailable")
 			return
@@ -149,7 +163,7 @@ func (h *Handler) GetWorkspaceFilesystemEntries(w http.ResponseWriter, r *http.R
 		})
 		return
 	}
-	okDir, err := store.DirExists(r.Context(), wsID, rel)
+	okDir, err := store.DirExists(r.Context(), wsID, agentID, rel)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "filesystem listing is unavailable")
 		return
@@ -158,7 +172,7 @@ func (h *Handler) GetWorkspaceFilesystemEntries(w http.ResponseWriter, r *http.R
 		writeErrorCode(w, http.StatusNotFound, "filesystem_not_found", "directory not found")
 		return
 	}
-	children, err := store.ListChildren(r.Context(), wsID, rel)
+	children, err := store.ListChildren(r.Context(), wsID, agentID, rel)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "filesystem listing is unavailable")
 		return
@@ -185,10 +199,6 @@ func (h *Handler) GetWorkspaceFilesystemEntries(w http.ResponseWriter, r *http.R
 }
 
 func (h *Handler) PostWorkspaceFilesystemMkdir(w http.ResponseWriter, r *http.Request) {
-	wsID, role, ok := h.requireSharedWrite(w, r)
-	if !ok {
-		return
-	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	decoder.DisallowUnknownFields()
 	var body struct {
@@ -199,8 +209,8 @@ func (h *Handler) PostWorkspaceFilesystemMkdir(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid mkdir")
 		return
 	}
-	if body.Root != "shared" {
-		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_root", "unknown filesystem root")
+	wsID, agentID, ok := h.requireCatalogWrite(w, r, body.Root)
+	if !ok {
 		return
 	}
 	rel, err := wsfs.JailRelPath(body.Path)
@@ -214,7 +224,7 @@ func (h *Handler) PostWorkspaceFilesystemMkdir(w http.ResponseWriter, r *http.Re
 		name = rel[i+1:]
 	}
 	store := h.filesystemStore()
-	okDir, err := store.DirExists(r.Context(), wsID, parent)
+	okDir, err := store.DirExists(r.Context(), wsID, agentID, parent)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
 		return
@@ -228,7 +238,7 @@ func (h *Handler) PostWorkspaceFilesystemMkdir(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "user is required")
 		return
 	}
-	entry, err := store.InsertDir(r.Context(), wsID, googleUUID(createdBy), rel, name)
+	entry, err := store.InsertDir(r.Context(), wsID, agentID, googleUUID(createdBy), rel, name)
 	if isUniqueViolation(err) {
 		writeErrorCode(w, http.StatusConflict, "filesystem_exists", "path already exists")
 		return
@@ -237,17 +247,12 @@ func (h *Handler) PostWorkspaceFilesystemMkdir(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadGateway, "could not create directory")
 		return
 	}
-	_ = role
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name": entry.Name, "path": entry.RelPath, "is_dir": true, "size_bytes": 0,
 	})
 }
 
 func (h *Handler) PostWorkspaceFilesystemUpload(w http.ResponseWriter, r *http.Request) {
-	wsID, _, ok := h.requireSharedWrite(w, r)
-	if !ok {
-		return
-	}
 	if h.Storage == nil {
 		writeError(w, http.StatusServiceUnavailable, "filesystem storage is unavailable")
 		return
@@ -258,8 +263,8 @@ func (h *Handler) PostWorkspaceFilesystemUpload(w http.ResponseWriter, r *http.R
 		return
 	}
 	root := r.FormValue("root")
-	if root != "shared" {
-		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_root", "unknown filesystem root")
+	wsID, agentID, ok := h.requireCatalogWrite(w, r, root)
+	if !ok {
 		return
 	}
 	dirRel, err := wsfs.JailRelPath(r.FormValue("path"))
@@ -284,7 +289,7 @@ func (h *Handler) PostWorkspaceFilesystemUpload(w http.ResponseWriter, r *http.R
 	}
 	rel := wsfs.JoinRel(dirRel, name)
 	store := h.filesystemStore()
-	okDir, err := store.DirExists(r.Context(), wsID, dirRel)
+	okDir, err := store.DirExists(r.Context(), wsID, agentID, dirRel)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
 		return
@@ -317,7 +322,7 @@ func (h *Handler) PostWorkspaceFilesystemUpload(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "user is required")
 		return
 	}
-	entry, err := store.InsertFile(r.Context(), id, wsID, googleUUID(createdBy), rel, name, key, digest, int64(len(data)))
+	entry, err := store.InsertFile(r.Context(), id, wsID, agentID, googleUUID(createdBy), rel, name, key, digest, int64(len(data)))
 	if isUniqueViolation(err) {
 		h.Storage.Delete(r.Context(), key)
 		writeErrorCode(w, http.StatusConflict, "filesystem_exists", "path already exists")
@@ -344,8 +349,12 @@ func (h *Handler) GetWorkspaceFilesystemContent(w http.ResponseWriter, r *http.R
 		return
 	}
 	root := r.URL.Query().Get("root")
-	if root != "shared" {
+	agentID, rootOK := parseFilesystemRoot(root)
+	if !rootOK {
 		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_root", "unknown filesystem root")
+		return
+	}
+	if agentID != uuid.Nil && !h.canAccessAgentFilesystem(w, r, wsID, agentID) {
 		return
 	}
 	rel, err := wsfs.JailRelPath(r.URL.Query().Get("path"))
@@ -353,7 +362,7 @@ func (h *Handler) GetWorkspaceFilesystemContent(w http.ResponseWriter, r *http.R
 		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_path", "path is outside the filesystem jail")
 		return
 	}
-	entry, err := h.filesystemStore().GetEntry(r.Context(), wsID, rel)
+	entry, err := h.filesystemStore().GetEntry(r.Context(), wsID, agentID, rel)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErrorCode(w, http.StatusNotFound, "filesystem_not_found", "file not found")
 		return
@@ -381,22 +390,53 @@ func (h *Handler) GetWorkspaceFilesystemContent(w http.ResponseWriter, r *http.R
 		ctype = "application/octet-stream"
 	}
 	w.Header().Set("Content-Type", ctype)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(entry.Name, `"`, "")+`"`)
+	disposition := "attachment"
+	if r.URL.Query().Get("inline") == "1" {
+		disposition = "inline"
+	}
+	w.Header().Set("Content-Disposition", disposition+`; filename="`+strings.ReplaceAll(entry.Name, `"`, "")+`"`)
 	w.Header().Set("Content-Length", strconv.FormatInt(entry.SizeBytes, 10))
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, io.LimitReader(reader, entry.SizeBytes))
 }
 
-func (h *Handler) requireSharedWrite(w http.ResponseWriter, r *http.Request) (uuid.UUID, dbMemberRole, bool) {
+func (h *Handler) requireCatalogWrite(w http.ResponseWriter, r *http.Request, root string) (uuid.UUID, uuid.UUID, bool) {
 	wsID, role, ok := h.filesystemActor(w, r)
 	if !ok {
-		return uuid.Nil, "", false
+		return uuid.Nil, uuid.Nil, false
 	}
-	if role != "owner" && role != "admin" {
-		writeErrorCode(w, http.StatusForbidden, "filesystem_write_denied", "only workspace owners and admins can write shared files")
-		return uuid.Nil, "", false
+	agentID, rootOK := parseFilesystemRoot(root)
+	if !rootOK {
+		writeErrorCode(w, http.StatusBadRequest, "filesystem_invalid_root", "unknown filesystem root")
+		return uuid.Nil, uuid.Nil, false
 	}
-	return wsID, role, true
+	if agentID == uuid.Nil {
+		if role != "owner" && role != "admin" {
+			writeErrorCode(w, http.StatusForbidden, "filesystem_write_denied", "only workspace owners and admins can write shared files")
+			return uuid.Nil, uuid.Nil, false
+		}
+		return wsID, uuid.Nil, true
+	}
+	if !h.canAccessAgentFilesystem(w, r, wsID, agentID) {
+		return uuid.Nil, uuid.Nil, false
+	}
+	return wsID, agentID, true
+}
+
+func (h *Handler) canAccessAgentFilesystem(w http.ResponseWriter, r *http.Request, wsID, agentID uuid.UUID) bool {
+	agent, loadOK := h.loadAgentForUser(w, r, agentID.String())
+	if !loadOK {
+		return false
+	}
+	if uuidToString(agent.WorkspaceID) != wsID.String() || googleUUID(agent.ID) != agentID {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return false
+	}
+	if !h.canManageAgentFilesystem(r, agent) {
+		writeErrorCode(w, http.StatusForbidden, "filesystem_write_denied", "cannot manage this agent filesystem")
+		return false
+	}
+	return true
 }
 
 func (h *Handler) GetWorkspaceFilesystemGrants(w http.ResponseWriter, r *http.Request) {
