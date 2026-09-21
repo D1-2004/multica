@@ -20,7 +20,6 @@ type A2UIAnnotation struct {
 }
 
 type A2UISendRequest struct {
-	Annotations                               []A2UIAnnotation
 	ConversationID, BizID, RequestID, Summary string
 	Messages                                  []string
 }
@@ -39,11 +38,7 @@ func (c CLI) SendA2UI(ctx context.Context, dir string, in A2UISendRequest) (A2UI
 	if err != nil {
 		return A2UIReceipt{}, err
 	}
-	if in.Annotations == nil {
-		in.Annotations = []A2UIAnnotation{}
-	}
-	annotations, _ := json.Marshal(in.Annotations)
-	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+messages-send", "--as", "user", "--chat-id", in.ConversationID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--a2ui-annotations", string(annotations), "--yes", "--format", "json"})
+	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+messages-send", "--as", "user", "--chat-id", in.ConversationID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--yes", "--format", "json"})
 	if err != nil {
 		return A2UIReceipt{}, err
 	}

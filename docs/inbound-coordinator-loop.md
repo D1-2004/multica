@@ -368,4 +368,4 @@ Diamond `dt-fde-multica-runtime.json` / `DEFAULT_GROUP` exposes `runtime.llm.coo
 
 用户提交后的 finish_check 仍校验结构、参与边界、目标与限制，但不执行旧自动路由中按审查理由关键词改判能力／开工方向的修正。显式选择由语义审查判断合法性，Host 不因 reason 中出现 tool、forbids 或 start_work 等词替换 verdict。R9 实测暴露误拒绝，修复验收单独记录。
 
-卡片问题与接收／执行状态使用公开 Catalog 的 Markdown 组件，并在创建和每次更新时发送对应 surface/component 的 artifact 注解；不能让 DWS 更新默认的空注解抹掉摘要。等待表单恢复仅更新问题绑定及组件，不重置 answers。数据集导出保留非凭证的 card_biz_id 供卡片关联，凭据、消费者身份和租约字段仍排除。摘要终态由独立内部群诊断卡实测验证，完整产品链路待部署验证。
+卡片问题与接收／执行状态使用公开 Catalog 的 Markdown 组件，并在确认创建回执后通过持久化待办补充对应 surface/component 的 artifact 注解；此后每次更新保留注解；不能让 DWS 更新默认的空注解抹掉摘要。等待表单恢复仅更新问题绑定及组件，不重置 answers。数据集导出保留非凭证的 card_biz_id 供卡片关联，凭据、消费者身份和租约字段仍排除。摘要终态由独立内部群诊断卡实测验证，完整产品链路待部署验证。

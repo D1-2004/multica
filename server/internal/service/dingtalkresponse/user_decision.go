@@ -40,7 +40,7 @@ func (s *decisionSession) Verify(ctx context.Context, cid, messageID string) (st
 	return corp, actor, err
 }
 func (s *decisionSession) Send(ctx context.Context, r userdecision.Request) (string, error) {
-	receipt, err := s.cli.SendA2UI(ctx, s.dir, dwsclient.A2UISendRequest{ConversationID: r.ConversationID, BizID: r.CardID, RequestID: r.SendRequestID, Summary: r.Proposal.Question, Messages: userdecision.Card(r.ID, r.Proposal), Annotations: decisionAnnotation(r.ID, "question")})
+	receipt, err := s.cli.SendA2UI(ctx, s.dir, dwsclient.A2UISendRequest{ConversationID: r.ConversationID, BizID: r.CardID, RequestID: r.SendRequestID, Summary: r.Proposal.Question, Messages: userdecision.Card(r.ID, r.Proposal)})
 	return receipt.BizID, err
 }
 func (s *decisionSession) Update(ctx context.Context, r userdecision.Request, status, text string) error {

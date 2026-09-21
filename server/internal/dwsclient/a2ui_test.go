@@ -28,6 +28,9 @@ func TestSendA2UIAuthorizesNoninteractiveCardCreation(t *testing.T) {
 	path := filepath.Join(dir, "dws")
 	script := `#!/bin/sh
 for arg in "$@"; do
+ if [ "$arg" = "--a2ui-annotations" ]; then exit 2; fi
+done
+for arg in "$@"; do
  if [ "$arg" = "--yes" ]; then
   printf '%s' '{"ok":true,"result":{"success":true,"result":{"bizId":"card","cardInstanceId":42}}}'
   exit 0
