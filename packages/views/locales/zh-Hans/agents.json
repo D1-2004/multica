@@ -1546,6 +1546,18 @@
       "home_title": "文件系统"
     },
     "dsh_home": {
+      "shared_title": "工作区共享文件",
+      "shared_intro": "这里是工作区「文件」页里的共享盘。默认不对这个智能体开放。打开只读或可写后，下次任务会把文件同步到 /mnt/workspace（$MULTICA_WORKSPACE_FS_ROOT）。沙箱里的写入不会自动回到文件页。",
+      "shared_empty": "还没有共享文件。",
+      "grant_label": "智能体权限",
+      "grant_none": "不开放",
+      "grant_read": "只读",
+      "grant_write": "可写",
+      "grant_saved": "已更新权限",
+      "grant_failed": "无法更新权限",
+      "access_path": "任务里：$MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace",
+      "open_files": "打开文件页",
+      "private_title": "智能体私有盘",
       "intro": "每个 Agent 拥有独立的持久文件系统，所有 FC provider 均可使用。终端和文件工具可读写 $MULTICA_FS_ROOT/files（/mnt/multica/files）；DSH_HOME 只是其中供 DSH 使用的子目录。",
       "loading": "正在检查文件系统…",
       "unavailable": "无法获取文件系统状态，请刷新重试。",
@@ -1568,6 +1580,7 @@
       "native_unconfirmed": "DSH 尚未就绪。请查看插件配置状态后重试。"
     },
     "dsh_profile": {
+      "native_sync_pending": "暂时无法同步原生 DSH 配置，当前显示上次保存的版本。请稍后刷新。",
       "retry_build": "重试构建",
       "retry_unconfirmed": "尚未确认重试结果。请先刷新配置状态，再决定是否重试。",
       "title": "配置生效状态",

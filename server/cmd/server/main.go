@@ -580,6 +580,7 @@ func main() {
 	if h.FCE2BLauncher != nil {
 		go h.FCE2BLauncher.RunDSHBuildWorker(sweepCtx, h.Storage)
 		go h.FCE2BLauncher.RunDSHProfileWorker(sweepCtx)
+		go h.RunDSHSessionInputWorker(sweepCtx)
 	}
 
 	// Channel inbound supervisor (MUL-3620): holds the §4.4 WS lease per

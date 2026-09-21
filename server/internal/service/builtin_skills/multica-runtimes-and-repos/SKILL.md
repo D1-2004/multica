@@ -40,6 +40,15 @@ available from the entry page or this schema support alone.
 
 A runtime is the execution target behind an agent. A daemon owns local runtime processes and claims queued tasks from the server.
 
+FC/E2B sandbox lifetime equals this task's lifetime. Create and task-start
+renewal both default to 4800 seconds (`--lifecycle.ontimeout kill`). The
+platform does not renew again while the task runs, so work that outlives
+that window can be killed with no Issue event. `nohup` / `setsid` do not
+keep processes alive after the task ends. Persist patches, logs, and
+artifacts to Issue comments/attachments before exiting. Attachment upload
+receipts include `size_bytes` and `sha256`; comment JSON uses `size_bytes`,
+not `size`.
+
 The chain is:
 
 1. user action creates or updates an `agent_task_queue` row;
@@ -357,3 +366,23 @@ but do not block rollout advancement or observation completion. Target update
 failures, incomplete cutovers and release state checks remain enforced.
 
 Long-lived native DSH Sessions may exceed the 32 MiB task artifact limit. The runner validates the complete frozen history prefix with temporary page spooling and replays it in source order before deciding whether a request is absent. Only the owned task turn and referenced child activations enter the artifact; their size limits and ownership checks still apply. A truncated or inconsistent history cannot authorize a retry.
+
+
+During a native DSH restart, plugin listing remains readable from saved bindings.
+A Profile status of `native_sync_pending` means native edits have not been
+synchronized: saved revisions are visible but `current` is false. Refresh after
+recovery; configuration writes still require synchronization. A managed native
+restart preserves the live profile and is rejected while tasks or plugin
+mutations are active. Verify a new native boot and a subsequent real task.
+
+For DingTalk Stream robots, `/new` (or `/reset`) by itself arms a durable reset
+for the next message. The adapter preserves canonical `CommandText` separately
+from the stripped model input, including leading robot mentions. `/new <text>`
+starts that message with a fresh provider session. Visible history is retained.
+
+DSH reset uses a durable conversation epoch: the reset task and later platform
+turns bind a new native Session. Retries retain their committed Session/request;
+old native sessions and their schedules retain their original epoch. The schema
+expansion release must reach every replica before removing the legacy scope
+uniqueness index and enabling epochs. Do not roll back to pre-epoch binaries after
+activation; use a forward repair that preserves all epochs.

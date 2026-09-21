@@ -3,6 +3,16 @@ import { AgentDshPluginConfigSchema } from "./agent-dsh-plugin-config-schema";
 import type { AgentDshPluginConfig, UpdateAgentDshPluginConfig } from "../dsh-plugins/types";
 import { DSHNativeEntrySchema, type DSHNativeEntry } from "./dsh-native-schema";
 import { DSHHomeSchema, type DSHHomeStatus } from "./dsh-home-schema";
+import {
+  FilesystemEntriesSchema,
+  FilesystemGrantsSchema,
+  FilesystemGrantSchema,
+  FilesystemRootsSchema,
+  type FilesystemEntries,
+  type FilesystemGrant,
+  type FilesystemGrants,
+  type FilesystemRoots,
+} from "./filesystem-schema";
 import type { GitRepositoryIdentity, GitConnections } from "../types/git-repo";
 import { GitRepositoryIdentitySchema, GitConnectionsSchema } from "./schemas";
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
@@ -3820,6 +3830,85 @@ export class ApiClient {
       endpoint: "GET /api/agents/{id}/filesystem",
       includeReceived: false,
     });
+  }
+
+  async listFilesystemRoots(signal?: AbortSignal): Promise<FilesystemRoots> {
+    const raw = await this.fetch<unknown>(`/api/filesystem/roots`, { signal });
+    return parseWithFallback<FilesystemRoots>(raw, FilesystemRootsSchema, { roots: [] }, {
+      endpoint: "GET /api/filesystem/roots",
+      includeReceived: false,
+    });
+  }
+
+  async listFilesystemEntries(
+    params: { root: string; path?: string; offset?: number; limit?: number; recursive?: boolean },
+    signal?: AbortSignal,
+  ): Promise<FilesystemEntries> {
+    const query = new URLSearchParams({ root: params.root });
+    if (params.path) query.set("path", params.path);
+    if (params.offset != null) query.set("offset", String(params.offset));
+    if (params.limit != null) query.set("limit", String(params.limit));
+    if (params.recursive) query.set("recursive", "1");
+    const raw = await this.fetch<unknown>(`/api/filesystem/entries?${query}`, { signal });
+    return parseWithFallback<FilesystemEntries>(raw, FilesystemEntriesSchema, {
+      root: params.root,
+      path: params.path ?? ".",
+      offset: params.offset ?? 0,
+      limit: params.limit ?? 200,
+      entries: [],
+      count: 0,
+      truncated: false,
+      next_offset: null,
+    }, {
+      endpoint: "GET /api/filesystem/entries",
+      includeReceived: false,
+    });
+  }
+
+  async listFilesystemGrants(signal?: AbortSignal): Promise<FilesystemGrants> {
+    const raw = await this.fetch<unknown>(`/api/filesystem/grants`, { signal });
+    return parseWithFallback<FilesystemGrants>(raw, FilesystemGrantsSchema, { grants: [] }, {
+      endpoint: "GET /api/filesystem/grants",
+      includeReceived: false,
+    });
+  }
+
+  async putFilesystemGrant(body: { agent_id: string; access: string }): Promise<FilesystemGrant | null> {
+    const raw = await this.fetch<unknown>(`/api/filesystem/grants`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+    return parseWithFallback<FilesystemGrant | null>(raw, FilesystemGrantSchema, null, {
+      endpoint: "PUT /api/filesystem/grants",
+      includeReceived: false,
+    });
+  }
+
+  async mkdirFilesystem(body: { root: string; path: string }): Promise<void> {
+    await this.fetch("/api/filesystem/mkdir", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async uploadFilesystemFile(input: {
+    root: string;
+    path: string;
+    file: File;
+    filename?: string;
+  }): Promise<void> {
+    const form = new FormData();
+    form.set("root", input.root);
+    form.set("path", input.path);
+    form.set("file", input.file);
+    if (input.filename) form.set("filename", input.filename);
+    await this.fetchRaw("/api/filesystem/upload", { method: "POST", body: form });
+  }
+
+  async downloadFilesystemFile(params: { root: string; path: string }): Promise<Blob> {
+    const query = new URLSearchParams({ root: params.root, path: params.path });
+    const res = await this.fetchRaw(`/api/filesystem/content?${query}`);
+    return res.blob();
   }
 
   async ensureDSHHome(agentId: string): Promise<DSHHomeStatus | null> {

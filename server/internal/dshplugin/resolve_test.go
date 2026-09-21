@@ -369,6 +369,31 @@ func TestResolveAcceptsAPrebuiltBundle(t *testing.T) {
 	}
 }
 
+func TestResolveAcceptsLargeBundledEntryWithinArchiveBudget(t *testing.T) {
+	files := goodPackage()
+	files["lib/index.js"] = "/*" + strings.Repeat("x", 9<<20) + "*/"
+	resolved, err := resolveFixture(t, files)
+	if err != nil || resolved.Entry != "lib/index.js" {
+		t.Fatalf("large prebuilt bundle rejected: %v", err)
+	}
+}
+
+func TestArchiveStillRejectsOversizedMembersAndExpandedTotals(t *testing.T) {
+	t.Run("single member", func(t *testing.T) {
+		_, err := archiveFiles(tarball(t, map[string]string{"lib/index.js": strings.Repeat("x", (16<<20)+1)}))
+		if err == nil || !strings.Contains(err.Error(), "file over") {
+			t.Fatalf("member budget not enforced: %v", err)
+		}
+	})
+	t.Run("expanded total", func(t *testing.T) {
+		body := strings.Repeat("x", 14<<20)
+		_, err := archiveFiles(tarball(t, map[string]string{"a.js": body, "b.js": body, "c.js": body, "d.js": body}))
+		if err == nil {
+			t.Fatal("expanded archive budget not enforced")
+		}
+	})
+}
+
 func TestResolveRefusesPackagesThatCannotBoot(t *testing.T) {
 	cases := []struct {
 		name   string

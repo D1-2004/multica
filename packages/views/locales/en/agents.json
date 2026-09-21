@@ -1567,6 +1567,18 @@
       "home_title": "Filesystem"
     },
     "dsh_home": {
+      "shared_title": "Shared workspace files",
+      "shared_intro": "These are the files on the workspace Files page. They stay closed to this agent until you grant read or write. The next task then copies them to /mnt/workspace ($MULTICA_WORKSPACE_FS_ROOT). Writes in the sandbox do not come back to the Files page.",
+      "shared_empty": "No shared files yet.",
+      "grant_label": "Agent access",
+      "grant_none": "None",
+      "grant_read": "Read",
+      "grant_write": "Write",
+      "grant_saved": "Access updated",
+      "grant_failed": "Couldn’t update access",
+      "access_path": "In a task: $MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace",
+      "open_files": "Open Files",
+      "private_title": "Private disk",
       "intro": "Each agent has an independent persistent filesystem, available to every FC provider. Use terminal and file tools to read or write $MULTICA_FS_ROOT/files (/mnt/multica/files). DSH_HOME is a subdirectory used by DSH.",
       "loading": "Checking filesystem...",
       "unavailable": "Filesystem status is unavailable. Refresh to check again.",
@@ -1589,6 +1601,7 @@
       "native_unconfirmed": "DSH is not ready. Check the plugin configuration status and try again."
     },
     "dsh_profile": {
+      "native_sync_pending": "Native DSH configuration cannot be synchronized yet. Showing the last saved version. Refresh shortly.",
       "retry_build": "Retry build",
       "retry_unconfirmed": "Retry was not confirmed. Refresh the configuration status before trying again.",
       "title": "Configuration status",

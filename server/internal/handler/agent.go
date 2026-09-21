@@ -785,6 +785,10 @@ type AgentTaskResponse struct {
 	// and native session id stay server-private; the dedicated GET endpoint
 	// re-applies task and private-agent authorization before streaming bytes.
 	DSHTrajectoryAvailable bool `json:"dsh_trajectory_available,omitempty"`
+	// SandboxID is the FC/E2B or ASB sandbox that ran this task. Empty when
+	// the run never reached a sandbox (queued, local daemon, launch failed
+	// before create). omitempty so older clients ignore it.
+	SandboxID string `json:"sandbox_id,omitempty"`
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -2896,6 +2900,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
+	h.hydrateTaskSandboxIDs(r.Context(), resp)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -3172,6 +3177,7 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
+	h.hydrateTaskSandboxIDs(r.Context(), resp)
 
 	writeJSON(w, http.StatusOK, resp)
 }

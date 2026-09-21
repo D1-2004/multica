@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
+	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -65,8 +66,15 @@ const (
 	fcE2BScopeTypeChat  = "chat"
 	fcE2BScopeTypeIssue = "issue"
 
-	defaultFCE2BCLIPath             = "e2b"
-	defaultFCE2BTimeoutSeconds      = 3600
+	defaultFCE2BCLIPath = "e2b"
+	// defaultFCE2BTimeoutSeconds is the FC/E2B sandbox lifetime used for both
+	// create (--timeout) and the per-task POST /timeout renewal. Long agent
+	// cells (clone + coding agent + PR + packaging) routinely need more than
+	// one hour; the previous 3600s wall killed still-running tasks with
+	// --lifecycle.ontimeout kill and no mid-task renewal. Config may raise
+	// this, but values below 4800 are floored so Diamond leftover 3600 cannot
+	// silently restore the old wall.
+	defaultFCE2BTimeoutSeconds      = 4800
 	defaultFCE2BSandboxReadyTimeout = 60 * time.Second
 	defaultAgentIdentityTimeout     = 10 * time.Second
 	fcE2BDaemonTokenTTL             = time.Hour
@@ -944,6 +952,7 @@ type FCE2BLauncher struct {
 	}
 	Queries            *db.Queries
 	Tasks              *TaskService
+	ObjectStorage      storage.Storage
 	Config             FCE2BConfig
 	ConfigProvider     func() FCE2BConfig
 	Runner             CommandRunner
@@ -1136,6 +1145,12 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 func (l *FCE2BLauncher) SetPool(pool *pgxpool.Pool) {
 	if l != nil {
 		l.Pool = pool
+	}
+}
+
+func (l *FCE2BLauncher) SetObjectStorage(store storage.Storage) {
+	if l != nil {
+		l.ObjectStorage = store
 	}
 }
 
@@ -1554,6 +1569,10 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	var nativeBinding dshhost.Execution
 	if useEmployeeFilesystem && FCE2BRuntimeProvider(runtime) == "dsh" {
 		store := dshhost.PostgresStore{DB: runtimeLockConn}
+		filesystemScope, err = store.TaskScope(ctx, filesystemScope, uuid.UUID(task.ID.Bytes))
+		if err != nil {
+			return fcE2BLaunchSubmission{}, false, fmt.Errorf("resolve DSH context epoch: %w", err)
+		}
 		nativeBinding, err = store.BindExecution(ctx, filesystemScope, uuid.UUID(task.ID.Bytes))
 		if err != nil {
 			return fcE2BLaunchSubmission{}, false, fmt.Errorf("bind DSH native execution: %w", err)
@@ -1693,6 +1712,16 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 			extraEnv = make(map[string]string)
 		}
 		extraEnv["MULTICA_FS_ROOT"] = dshhost.MountPath
+	}
+	// Shared workspace mounts are not attached to DSH employee sandboxes
+	// unless a later grant generation supplies task_role_arn. Do not inject
+	// MULTICA_WORKSPACE_FS_* here: existing DSH users keep a single /mnt/multica.
+	if access := l.attachWorkspaceCatalog(ctx, sandboxID, runtime.WorkspaceID, task.AgentID); access != "" {
+		if extraEnv == nil {
+			extraEnv = make(map[string]string)
+		}
+		extraEnv["MULTICA_WORKSPACE_FS_ROOT"] = dshhost.WorkspaceMountPath
+		extraEnv["MULTICA_WORKSPACE_FS_ACCESS"] = access
 	}
 	if employeeHost != nil && FCE2BRuntimeProvider(runtime) == "dsh" {
 		binding := nativeBinding
@@ -2658,7 +2687,7 @@ func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (str
 	args := []string{
 		"sandbox", "create",
 		"--detach",
-		"--timeout", strconv.Itoa(l.Config.TimeoutSeconds),
+		"--timeout", strconv.Itoa(l.sandboxTaskTimeoutSeconds()),
 		"--lifecycle.ontimeout", "kill",
 		template,
 	}
@@ -2882,6 +2911,8 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 	switch key {
 	case "OPENAI_MODEL",
 		"MULTICA_FS_ROOT",
+		"MULTICA_WORKSPACE_FS_ROOT",
+		"MULTICA_WORKSPACE_FS_ACCESS",
 		"DSH_HOME",
 		"MULTICA_DSH_WORKSPACE_ID",
 		"MULTICA_DSH_AGENT_ID",

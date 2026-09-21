@@ -65,3 +65,12 @@ func TestWorkspaceAccessMemberCannotElevateAnotherSubjectOrWorkspace(t *testing.
 		t.Fatal("human membership changed")
 	}
 }
+
+func TestWorkspaceAccessDeniesFilesystemForDTATokens(t *testing.T) {
+	for _, path := range []string{"/api/filesystem/roots", "/api/filesystem/entries", "/api/filesystem/grants"} {
+		r := httptest.NewRequest("GET", path, nil)
+		if WorkspaceAccessRequestAllowed(WorkspaceAccessAll, r) || WorkspaceAccessRequestAllowed(WorkspaceAccessDSHConfig, r) {
+			t.Fatalf("DTA token allowed %s", path)
+		}
+	}
+}

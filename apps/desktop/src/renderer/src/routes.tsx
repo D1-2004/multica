@@ -44,6 +44,7 @@ import { InboxPage } from "@multica/views/inbox";
 import { ChatPage } from "@multica/views/chat";
 import { SettingsPage } from "@multica/views/settings";
 import { HostedSitesPage } from "@multica/views/sitehosting";
+import { FilesPage } from "@multica/views/files";
 import { LabelUsagePage } from "@multica/views/labels";
 import { useT } from "@multica/views/i18n";
 import { Download, Server } from "lucide-react";
@@ -295,6 +296,11 @@ export const appRoutes: RouteObject[] = [
             path: "sites",
             element: <HostedSitesPage />,
             handle: { title: "Websites" },
+          },
+          {
+            path: "files",
+            element: <FilesPage />,
+            handle: { title: "Files" },
           },
           {
             path: "settings",

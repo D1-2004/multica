@@ -2364,6 +2364,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/api/assoc/bind-outbound", h.BindAssocOutbound)
 			r.Post("/api/tasks/{taskID}/dingtalk-send-receipts", h.RecordDingTalkSendReceipt)
 
+			r.Route("/api/filesystem", func(r chi.Router) {
+				r.Use(handler.RequireHumanActor)
+				r.Get("/roots", h.GetWorkspaceFilesystemRoots)
+				r.Get("/entries", h.GetWorkspaceFilesystemEntries)
+				r.Get("/content", h.GetWorkspaceFilesystemContent)
+				r.Post("/mkdir", h.PostWorkspaceFilesystemMkdir)
+				r.Post("/upload", h.PostWorkspaceFilesystemUpload)
+				r.Get("/grants", h.GetWorkspaceFilesystemGrants)
+				r.Put("/grants", h.PutWorkspaceFilesystemGrant)
+			})
+
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
 				r.Post("/table/groups", h.ListIssueTableGroups)

@@ -51,7 +51,7 @@ func validJSON() string {
       "server_url": "https://pre-api.example.com",
       "api_url": "https://fc.example.com",
       "domain": "fc.example.com",
-      "timeout_seconds": 900,
+      "timeout_seconds": 4800,
       "sandbox_ready_timeout": "5m"
     },
     "asb": {

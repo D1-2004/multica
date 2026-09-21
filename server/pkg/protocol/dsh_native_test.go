@@ -86,3 +86,19 @@ func TestDSHNativePersistentWorkdir(t *testing.T) {
 		}
 	}
 }
+
+func TestDSHNativePluginRequestIdentity(t *testing.T) {
+ sid := "session-71ff28eb-365a-4119-8d44-594a748770e3"
+ original := "weixin-abc123"
+ first, err := DSHNativeRequestIdentity(sid, original)
+ if err != nil { t.Fatal(err) }
+ retry, _ := DSHNativeRequestIdentity(sid, original)
+ other, _ := DSHNativeRequestIdentity("session-c62a4a70-13bf-485a-9559-179e167c4765", original)
+ if first != retry || first == other { t.Fatal("native requests must deduplicate within their exact session") }
+ browser := "cd9f370c-9dbe-4968-bfc3-b93e461c8e69"
+ kept, err := DSHNativeRequestIdentity(sid, browser)
+ if err != nil || kept.String() != browser { t.Fatal("existing browser identity changed") }
+ for _, id := range []string{"", "bad request", "../bad", "00000000-0000-0000-0000-000000000000"} {
+  if _, err := DSHNativeRequestIdentity(sid, id); err == nil { t.Fatalf("accepted invalid identity %q", id) }
+ }
+}

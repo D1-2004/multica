@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS workspace_filesystem_provision_workspace_idx ON workspace_filesystem_provision (workspace_id);

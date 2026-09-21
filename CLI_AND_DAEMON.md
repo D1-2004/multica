@@ -549,6 +549,12 @@ multica issue comment list <issue-id> --thread <comment-id> --tail 30 \
 # Add a comment
 multica issue comment add <issue-id> --content "Looks good, merging now"
 
+# Attach a local file (repeatable). Upload prints size_bytes and sha256 so
+# the caller can compare against the local file without a second round-trip.
+# Server limit is 100 MB per file. JSON comment/issue payloads use size_bytes
+# (not size / sizeBytes) plus sha256 when the server persisted the digest.
+multica issue comment add <issue-id> --content "artifacts" --attachment ./out.tgz
+
 # Reply to a specific comment
 multica issue comment add <issue-id> --parent <comment-id> --content "Thanks!"
 
@@ -630,7 +636,7 @@ Subscribers receive notifications about issue activity (new comments, status cha
 ### Execution History
 
 ```bash
-# List all execution runs for an issue
+# List all execution runs for an issue (table includes SANDBOX; JSON has sandbox_id)
 multica issue runs <issue-id>
 multica issue runs <issue-id> --full-id
 multica issue runs <issue-id> --output json

@@ -411,6 +411,24 @@ deleted_lark_user_bindings AS (
 ),
 deleted_lark_binding_tokens AS (
     DELETE FROM lark_binding_token WHERE workspace_id = $1
+),
+deleted_workspace_fs_entry AS (
+    DELETE FROM workspace_fs_entry WHERE workspace_id = $1
+),
+deleted_workspace_filesystem_host AS (
+    DELETE FROM workspace_filesystem_host WHERE workspace_id = $1
+),
+deleted_workspace_filesystem_grant_role AS (
+    DELETE FROM workspace_filesystem_grant_role WHERE workspace_id = $1
+),
+deleted_workspace_filesystem_grant AS (
+    DELETE FROM workspace_filesystem_grant WHERE workspace_id = $1
+),
+deleted_workspace_filesystem AS (
+    DELETE FROM workspace_filesystem WHERE workspace_id = $1
+),
+deleted_workspace_filesystem_provision AS (
+    DELETE FROM workspace_filesystem_provision WHERE workspace_id = $1
 )
 UPDATE channel_media_pending_object
 SET state = CASE

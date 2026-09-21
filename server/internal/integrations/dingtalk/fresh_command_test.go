@@ -1,6 +1,9 @@
 package dingtalk
 
-import "testing"
+import (
+	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	"testing"
+)
 
 func TestParseFreshSessionCommand(t *testing.T) {
 	cases := []struct {
@@ -65,5 +68,27 @@ func TestInboundPlainTextDoesNotForceFresh(t *testing.T) {
 	}
 	if msg.ForceFresh {
 		t.Fatal("plain text must not force fresh")
+	}
+}
+
+// Exercise the adapter-to-router boundary: an empty stripped body must still
+// carry the directive that makes Router persist the next-turn reset.
+func TestBareNewSurvivesRouterCommandClassification(t *testing.T) {
+	for _, body := range []string{"/new", "@机器人 /new", "/reset", "@机器人 /reset"} {
+		for _, kind := range []string{"text", "richText"} {
+			t.Run(kind+body, func(t *testing.T) {
+				data := botCallbackData{ConversationID: "cid", MsgID: "fresh", SenderStaffID: "sender", ConversationType: "2", Msgtype: kind}
+				data.Text.Content = body
+				data.Content = richTextContent{RichText: []richTextNode{{Text: body}}}
+				msg, ok := inboundFromBotCallback(data, "client")
+				if !ok || !msg.ForceFresh || msg.Text != "" {
+					t.Fatalf("reset not consumed: %+v", msg)
+				}
+				rest, fresh := engine.ParseFreshSessionCommand(msg.CommandText)
+				if !fresh || rest != "" {
+					t.Fatalf("router lost bare reset: %q", msg.CommandText)
+				}
+			})
+		}
 	}
 }

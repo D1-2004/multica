@@ -30,7 +30,7 @@ func LoadExecution(ctx context.Context, db ExecutionReader, key dshhost.Key, tas
 	e.SessionScope.Key = key
 	e.TaskID = taskID
 	rows, err := db.Query(ctx, `SELECT o.session_id,o.schedule_id,o.occurrence_at,o.request_id,
- s.owner_member_id,s.source_task_id,s.prompt,s.first_due_at,s.every_seconds,m.scope_kind,m.scope_id,o.batch_ordinal,b.request_id
+ s.owner_member_id,s.source_task_id,s.prompt,s.first_due_at,s.every_seconds,m.scope_kind,m.scope_id,m.epoch_id,o.batch_ordinal,b.request_id
  FROM dsh_schedule_occurrence o
  JOIN dsh_schedule s ON s.workspace_id=o.workspace_id AND s.agent_id=o.agent_id AND s.session_id=o.session_id AND s.schedule_id=o.schedule_id
  JOIN dsh_task_binding b ON b.workspace_id=o.workspace_id AND b.agent_id=o.agent_id AND b.task_id=o.task_id AND b.session_id=o.session_id
@@ -45,17 +45,17 @@ func LoadExecution(ctx context.Context, db ExecutionReader, key dshhost.Key, tas
 	for rows.Next() {
 		due := Due{Record: Record{Key: Key{WorkspaceID: key.WorkspaceID, AgentID: key.AgentID}}}
 		var kind string
-		var scope, request uuid.UUID
+		var scope, request, epoch uuid.UUID
 		var ordinal int
-		if err := rows.Scan(&due.SessionID, &due.ScheduleID, &due.At, &due.RequestID, &due.OwnerMemberID, &due.SourceTaskID, &due.Prompt, &due.FirstDue, &due.EverySeconds, &kind, &scope, &ordinal, &request); err != nil {
+		if err := rows.Scan(&due.SessionID, &due.ScheduleID, &due.At, &due.RequestID, &due.OwnerMemberID, &due.SourceTaskID, &due.Prompt, &due.FirstDue, &due.EverySeconds, &kind, &scope, &epoch, &ordinal, &request); err != nil {
 			return Execution{}, err
 		}
 		if ordinal != len(reminders) || scope == uuid.Nil || (kind != "chat" && kind != "issue" && kind != "task") {
 			return Execution{}, ErrInvalid
 		}
 		if len(reminders) == 0 {
-			e.Kind, e.ID, requestID = kind, scope, request
-		} else if e.Kind != kind || e.ID != scope || requestID != request {
+			e.Kind, e.ID, e.Epoch, requestID = kind, scope, epoch, request
+		} else if e.Kind != kind || e.ID != scope || e.Epoch != epoch || requestID != request {
 			return Execution{}, ErrInvalid
 		}
 		reminders = append(reminders, due)

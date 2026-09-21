@@ -133,21 +133,40 @@ func (p *FCProvider) request(ctx context.Context, method, path string, body any)
 }
 
 func (p *FCProvider) Create(ctx context.Context, h Host) (string, error) {
-	if h.State != "creating" || h.CreateIntent == uuid.Nil || h.WorkspaceID == uuid.Nil || h.AgentID == uuid.Nil || h.Generation < 1 ||
-		h.VolumeName == "" || h.AccessPointARN == "" || h.RoleARN == "" || !sandboxIDPattern.MatchString(h.TemplateID) {
+	if h.State != "creating" {
 		return "", errors.New("invalid persisted DSH FC create intent")
 	}
-	metadata := identity(h)
+	spec, err := employeeCreateSpec(h)
+	if err != nil {
+		return "", err
+	}
+	return p.CreateSpec(ctx, spec)
+}
+
+// CreateSpec posts a generalized mount list. Employee Create remains the
+// single /mnt/multica specialization so existing DSH sandboxes are unchanged.
+func (p *FCProvider) CreateSpec(ctx context.Context, spec SandboxCreateSpec) (string, error) {
+	if err := spec.valid(); err != nil {
+		return "", err
+	}
+	metadata := make(map[string]string, len(spec.Labels)+2)
+	for key, value := range spec.Labels {
+		metadata[key] = value
+	}
 	vpc, err := json.Marshal(map[string]any{"vpcId": p.config.VPCID, "securityGroupId": p.config.SecurityGroupID, "vSwitchIds": p.config.VSwitchIDs})
 	if err != nil {
 		return "", err
 	}
 	metadata["fc.sandbox.network.vpc"] = string(vpc)
-	metadata["fc.sandbox.auth.role"] = h.RoleARN
+	metadata["fc.sandbox.auth.role"] = spec.RoleARN
+	mounts := make([]volumeMount, len(spec.Mounts))
+	for i, m := range spec.Mounts {
+		mounts[i] = volumeMount{Name: m.Name, Path: m.Path}
+	}
 	data, _, _, err := p.request(ctx, http.MethodPost, "/sandboxes", map[string]any{
-		"templateID": h.TemplateID, "timeout": p.config.TimeoutSeconds,
+		"templateID": spec.TemplateID, "timeout": p.config.TimeoutSeconds,
 		"autoPause": false,
-		"metadata":  metadata, "volumeMounts": []volumeMount{{h.VolumeName, MountPath}},
+		"metadata":  metadata, "volumeMounts": mounts,
 	})
 	if err != nil {
 		return "", err
@@ -192,22 +211,26 @@ func (p *FCProvider) DestroyAndConfirmAbsent(ctx context.Context, id string) err
 }
 
 func matches(info sandboxInfo, h Host) bool {
-	// FC reports a display alias in templateID and consumes fc.sandbox.*
-	// metadata during creation. Match the immutable requested template and
-	// role via our own durable labels, plus the actual returned mount.
-	if !sandboxIDPattern.MatchString(info.ID) || info.Template == "" {
+	spec, err := employeeCreateSpec(h)
+	if err != nil {
 		return false
 	}
-	for key, value := range identity(h) {
-		if info.Metadata[key] != value {
-			return false
-		}
-	}
-	return len(info.Mounts) == 1 && info.Mounts[0].Name == h.VolumeName && info.Mounts[0].Path == MountPath
+	return matchesSpec(info, spec)
 }
 
 func (p *FCProvider) FindCreated(ctx context.Context, h Host) (string, error) {
 	return p.findSandbox(ctx, "multica.dsh.intent", h.CreateIntent.String(), func(info sandboxInfo) bool { return matches(info, h) })
+}
+
+func (p *FCProvider) FindCreatedSpec(ctx context.Context, spec SandboxCreateSpec) (string, error) {
+	if err := spec.valid(); err != nil {
+		return "", err
+	}
+	label, value := "multica.wsfs.intent", spec.CreateIntent.String()
+	if spec.Scope == "employee" {
+		label, value = "multica.dsh.intent", spec.CreateIntent.String()
+	}
+	return p.findSandbox(ctx, label, value, func(info sandboxInfo) bool { return matchesSpec(info, spec) })
 }
 
 func (p *FCProvider) findSandbox(ctx context.Context, label, value string, match func(sandboxInfo) bool) (string, error) {

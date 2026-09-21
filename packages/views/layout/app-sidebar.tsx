@@ -133,6 +133,7 @@ type NavKey =
   | "squads"
   | "usage"
   | "sites"
+  | "files"
   | "runtimes"
   | "runners"
   | "skills"
@@ -153,6 +154,7 @@ type NavLabelKey =
   | "squads"
   | "usage"
   | "sites"
+  | "files"
   | "runtimes"
   | "runners"
   | "skills"
@@ -193,6 +195,7 @@ const workspaceDomains: WorkspaceDomain[] = [
       { key: "autopilots", labelKey: "autopilots" },
       { key: "usage", labelKey: "usage" },
       { key: "sites", labelKey: "sites" },
+      { key: "files", labelKey: "files" },
     ],
   },
   {

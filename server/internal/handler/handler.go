@@ -513,6 +513,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	if pool, ok := txStarter.(*pgxpool.Pool); ok {
 		fcLauncher.SetPool(pool)
 	}
+	fcLauncher.SetObjectStorage(store)
 	taskSvc.RuntimeLauncher = fcLauncher
 	a2aSvc := service.NewA2AService(queries, txStarter, taskSvc, store)
 	taskSvc.A2AStateObserver = a2aSvc

@@ -44,10 +44,35 @@ func (h *Handler) DSHNativeUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prefix := dshNativeProxyRoot + id.String() + "/"
+	if serveDSHNativeRestart(w, r, upstream, origin, prefix, func() error {
+		if _, err := h.nativeProxyAuthorize(r, access); err != nil {
+			return errors.New("open DSH again from the employee workbench")
+		}
+		return h.FCE2BLauncher.PrepareDSHNativeRestart(r.Context(), host)
+	}) {
+		return
+	}
 	if h.routeDSHNativeRequest(w, r, access, origin, prefix) {
 		return
 	}
 	serveDSHNativeProxy(w, r, upstream, origin, prefix)
+}
+
+func serveDSHNativeRestart(w http.ResponseWriter, r *http.Request, upstream, origin, prefix string, prepare func() error) bool {
+	path := "/" + strings.TrimPrefix(r.URL.Path, prefix)
+	if path != "/dsh-market/restart" && path != "/dsh-market/api/v1/restart" {
+		return false
+	}
+	if !strings.HasPrefix(r.URL.Path, prefix) || r.Method != http.MethodPost || r.URL.RawQuery != "" || r.Header.Get("Upgrade") != "" || !nativeRequestOrigin(r, origin) {
+		writeError(w, http.StatusForbidden, "invalid DSH restart request")
+		return true
+	}
+	if err := prepare(); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return true
+	}
+	serveDSHNativeProxy(w, r, upstream, origin, prefix)
+	return true
 }
 
 func serveDSHNativeProxy(w http.ResponseWriter, r *http.Request, upstream, publicOrigin, prefix string) {

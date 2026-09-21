@@ -68,4 +68,19 @@ describe("AgentConfigNav", () => {
       screen.getByRole("tab", { name: "Digital Employee" }),
     ).toHaveClass("h-8", "text-body");
   });
+
+  it("renders an icon on every configuration tab", () => {
+    renderWithI18n(
+      <AgentConfigNav
+        groups={AGENT_CONFIG_GROUPS}
+        activeView="filesystem"
+        onSelect={vi.fn()}
+      />,
+    );
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.length).toBeGreaterThan(0);
+    for (const tab of tabs) {
+      expect(tab.querySelector("svg")).not.toBeNull();
+    }
+  });
 });

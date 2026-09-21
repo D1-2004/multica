@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"log/slog"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -147,7 +148,7 @@ func (b *dshNativeBackend) admit(ctx context.Context, prompt string, opts ExecOp
 	case "absent":
 		mcp := make([]map[string]any, 0, len(servers))
 		for _, s := range servers {
-			item := map[string]any{"serverName": s.Name, "transport": s.Transport}
+			item := map[string]any{"serverName": s.Name, "transport": s.Transport, "required": s.Required}
 			if s.Command != "" {
 				item["command"], item["args"], item["env"] = s.Command, s.Args, s.Env
 				if s.Cwd != "" {
@@ -230,17 +231,52 @@ func (b *dshNativeBackend) admit(ctx context.Context, prompt string, opts ExecOp
 	}
 	return nil
 }
+
+// Keep phase diagnostics bounded: never log prompts, URLs, credentials or
+// native exception bodies. Request IDs correlate these records with task traces.
+func (b *dshNativeBackend) logStartupPhase(phase, state string, start time.Time) {
+	logger := b.cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Info("dsh_native_startup_phase", "phase", phase, "state", state,
+		"elapsed_ms", time.Since(start).Milliseconds(), "session_id", b.native.SessionID,
+		"request_id", b.native.RequestID, "agent_id", b.native.AgentID, "generation", b.native.Generation)
+}
+
 func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opts ExecOptions, servers []dshMCPServer, emit func(Message)) Result {
 	failure := func(err error) Result { return Result{Status: "failed", Error: err.Error()} }
-	raw, err := b.client.call(ctx, "create", map[string]string{"sessionId": b.native.SessionID, "cwd": b.native.WorkDir})
+	// Even create can fail after the Host has acquired resources. Confirm this
+	// request is quiescent on every exit; never remove a witness on assumption.
+	cleanup := func(cause error) error {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		defer cancel()
+		if err := b.cleanup(cleanupCtx, cause != nil); err != nil {
+			return errors.Join(cause, err)
+		}
+		b.quiescent.Store(true)
+		return cause
+	}
+	storageMode := "new"
+	if opts.ResumeSessionID != "" {
+		storageMode = "resume"
+	}
+	createStart := time.Now()
+	b.logStartupPhase("create_"+storageMode, "begin", createStart)
+	raw, err := b.client.call(ctx, "create", map[string]string{"sessionId": b.native.SessionID, "cwd": b.native.WorkDir, "storageMode": storageMode})
 	if err != nil {
-		return failure(err)
+		b.logStartupPhase("create_"+storageMode, "failed", createStart)
+	} else {
+		b.logStartupPhase("create_"+storageMode, "complete", createStart)
+	}
+	if err != nil {
+		return failure(cleanup(err))
 	}
 	var created struct {
 		SessionID string `json:"sessionId"`
 	}
 	if json.Unmarshal(raw, &created) != nil || created.SessionID != b.native.SessionID {
-		return failure(errors.New("invalid native DSH Session receipt"))
+		return failure(cleanup(errors.New("invalid native DSH Session receipt")))
 	}
 	emit(Message{Type: MessageStatus, Status: "running", SessionID: b.native.SessionID})
 	history := dshNativeTaskHistory{requestID: b.native.RequestID}
@@ -255,7 +291,14 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 			return false, errors.New("invalid native DSH follow frame")
 		}
 		if !opened {
+			baselineStart := time.Now()
+			b.logStartupPhase("history_baseline", "begin", baselineStart)
 			snapshot, err := walkDSHNativeBaseline(ctx, b.client.call, raw, b.native.SessionID, b.native.WorkDir, history.accept)
+			if err != nil {
+				b.logStartupPhase("history_baseline", "failed", baselineStart)
+			} else {
+				b.logStartupPhase("history_baseline", "complete", baselineStart)
+			}
 			if err != nil {
 				return false, err
 			}
@@ -265,9 +308,13 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 				return true, nil
 			}
 			if !history.found {
+				admitStart := time.Now()
+				b.logStartupPhase("task_admit", "begin", admitStart)
 				if err := b.admit(ctx, prompt, opts, servers); err != nil {
+					b.logStartupPhase("task_admit", "failed", admitStart)
 					return false, err
 				}
+				b.logStartupPhase("task_admit", "complete", admitStart)
 			}
 			return false, nil
 		}
@@ -292,12 +339,10 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 	if err == nil {
 		result, err = history.result(b.native.SessionID)
 	}
-	cleanupCtx, stopCleanup := context.WithTimeout(context.Background(), 35*time.Second)
-	defer stopCleanup()
-	if cleanupErr := b.cleanup(cleanupCtx, err != nil); cleanupErr != nil {
-		return failure(cleanupErr)
+	err = cleanup(err)
+	if !b.quiescent.Load() {
+		return failure(err)
 	}
-	b.quiescent.Store(true)
 	if b.native.TrajectorySink != nil {
 		artifactCtx, stopArtifact := context.WithTimeout(context.Background(), 30*time.Second)
 		defer stopArtifact()

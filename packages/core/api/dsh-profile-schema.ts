@@ -3,9 +3,9 @@ import { z } from "zod";
 const revision = z.string().regex(/^[1-9][0-9]{0,18}$/);
 
 export const DSHProfileSchema = z.object({
-  state: z.enum(["unprepared", "waiting_for_builds", "build_failed", "pending_host", "applied", "configuration_changed", "apply_failed"]),
-  desired_revision: revision.optional(),
-  applied_revision: revision.optional(),
+  state: z.enum(["unprepared", "waiting_for_builds", "build_failed", "pending_host", "applied", "configuration_changed", "apply_failed", "native_sync_pending"]),
+  desired_revision: z.union([revision, z.literal("")]).optional(),
+  applied_revision: z.union([revision, z.literal("")]).optional(),
   applied_generation: z.number().int().nonnegative(),
   applied_sandbox_id: z.string().optional(),
   current: z.boolean(),
@@ -21,7 +21,7 @@ export const DSHProfileSchema = z.object({
   if (value.current !== (value.state === "applied") ||
       (value.current && (!value.desired_revision || value.applied_revision !== value.desired_revision ||
         value.applied_generation < 1 || !value.applied_sandbox_id)) ||
-      (value.state !== "unprepared" && !value.desired_revision) ||
+      (!["unprepared", "native_sync_pending"].includes(value.state) && !value.desired_revision) ||
       (value.current && value.builds?.some((build) => build.state !== "ready"))) {
     ctx.addIssue({ code: "custom", message: "Profile application requires matching revision and Host receipt" });
   }

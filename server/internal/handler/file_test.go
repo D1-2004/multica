@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -332,6 +334,31 @@ func TestUploadFileResolvesWorkspaceViaIDHeaderStill(t *testing.T) {
 	testHandler.UploadFile(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("UploadFile with UUID header: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode upload response: %v; body: %s", err, w.Body.String())
+	}
+	if resp["size_bytes"] != float64(len("hello via uuid")) {
+		t.Fatalf("size_bytes = %v, want %d", resp["size_bytes"], len("hello via uuid"))
+	}
+	sum := sha256.Sum256([]byte("hello via uuid"))
+	wantSHA := hex.EncodeToString(sum[:])
+	if resp["sha256"] != wantSHA {
+		t.Fatalf("sha256 = %v, want %s", resp["sha256"], wantSHA)
+	}
+	var storedSHA string
+	if err := testPool.QueryRow(
+		context.Background(),
+		`SELECT sha256 FROM attachment WHERE workspace_id = $1 AND filename = $2`,
+		testWorkspaceID,
+		"uuid-upload.txt",
+	).Scan(&storedSHA); err != nil {
+		t.Fatalf("query stored sha256: %v", err)
+	}
+	if storedSHA != wantSHA {
+		t.Fatalf("stored sha256 = %q, want %s", storedSHA, wantSHA)
 	}
 
 	// Clean up.
