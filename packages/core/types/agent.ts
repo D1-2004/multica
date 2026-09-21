@@ -397,6 +397,11 @@ export interface AgentTask {
    * reporting was not free, we just don't know what it cost.
    */
   usage?: TaskUsage[];
+  /**
+   * Cloud sandbox id (FC/E2B or ASB) that ran this task. Empty/omitted when
+   * the run never reached a sandbox. Copy it into SLS / Aliyun CLI queries.
+   */
+  sandbox_id?: string;
 }
 
 /**

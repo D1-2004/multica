@@ -43,7 +43,7 @@
       "server_url": "",
       "api_url": "",
       "domain": "",
-      "timeout_seconds": 900,
+      "timeout_seconds": 4800,
       "sandbox_ready_timeout": "5m"
     },
     "asb": {

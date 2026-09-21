@@ -5197,6 +5197,7 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 	h.hydrateTaskUsage(r.Context(), issue.ID, resp)
 	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
+	h.hydrateTaskSandboxIDs(r.Context(), resp)
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -5279,6 +5280,34 @@ func (h *Handler) hydrateDSHTrajectoryAvailability(ctx context.Context, resp []A
 	}
 	for i := range resp {
 		_, resp[i].DSHTrajectoryAvailable = available[resp[i].ID]
+	}
+}
+
+// hydrateTaskSandboxIDs copies the latest non-empty sandbox id from the
+// runtime start attempt onto each user-facing task row. Failures are
+// swallowed: the execution log must still render without the id.
+func (h *Handler) hydrateTaskSandboxIDs(ctx context.Context, resp []AgentTaskResponse) {
+	if len(resp) == 0 {
+		return
+	}
+	taskIDs := make([]pgtype.UUID, 0, len(resp))
+	for i := range resp {
+		taskIDs = append(taskIDs, parseUUID(resp[i].ID))
+	}
+	rows, err := h.Queries.ListLatestSandboxIDsByTaskIDs(ctx, taskIDs)
+	if err != nil || len(rows) == 0 {
+		return
+	}
+	byTask := make(map[string]string, len(rows))
+	for _, row := range rows {
+		id := strings.TrimSpace(row.SandboxID)
+		if id == "" {
+			continue
+		}
+		byTask[uuidToString(row.TaskID)] = id
+	}
+	for i := range resp {
+		resp[i].SandboxID = byTask[resp[i].ID]
 	}
 }
 

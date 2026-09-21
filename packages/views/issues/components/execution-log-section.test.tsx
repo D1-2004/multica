@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTask } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
@@ -87,6 +87,29 @@ describe("ActiveTaskRow", () => {
     expect(screen.getByText("Includes 3 comments")).toBeInTheDocument();
     expect(screen.getByText("View transcript")).toBeInTheDocument();
     expect(mockState.taskMessagesOptions).not.toHaveBeenCalled();
+  });
+
+  it("shows a copyable sandbox id when the run has one", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    renderWithI18n(
+      <ActiveTaskRow
+        task={makeTask({ sandbox_id: "sbx_issue_exec_1" })}
+        issueId="issue-1"
+      />,
+    );
+
+    expect(screen.getByText("sbx_issue_exec_1")).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Copy sandbox ID" }));
+    });
+    expect(writeText).toHaveBeenCalledWith("sbx_issue_exec_1");
+  });
+
+  it("hides the sandbox id when the run never reached a sandbox", () => {
+    renderWithI18n(<ActiveTaskRow task={makeTask()} issueId="issue-1" />);
+    expect(screen.queryByRole("button", { name: "Copy sandbox ID" })).not.toBeInTheDocument();
   });
 
   it("does not make transcript actions depend on hover-only rendering", () => {

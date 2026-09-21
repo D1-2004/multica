@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -94,7 +96,16 @@ type AttachmentResponse struct {
 	MarkdownURL string `json:"markdown_url"`
 	ContentType string `json:"content_type"`
 	SizeBytes   int64  `json:"size_bytes"`
-	CreatedAt   string `json:"created_at"`
+	// SHA256 is the lowercase hex digest of the uploaded bytes. Empty on
+	// rows uploaded before the column existed; callers must treat "" as
+	// "unknown", not as a zero hash.
+	SHA256    string `json:"sha256"`
+	CreatedAt string `json:"created_at"`
+}
+
+func sha256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // attachmentURLMode selects how DownloadURL is rendered on a response.
@@ -159,6 +170,7 @@ func (h *Handler) attachmentToResponse(a db.Attachment, mode attachmentURLMode) 
 		MarkdownURL:  h.buildMarkdownURL(a, id),
 		ContentType:  a.ContentType,
 		SizeBytes:    a.SizeBytes,
+		SHA256:       a.Sha256,
 		CreatedAt:    a.CreatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
 	}
 	// Only CloudFront mode overrides the stable path here; the presign and proxy
@@ -450,6 +462,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			Filename:     header.Filename,
 			ContentType:  contentType,
 			SizeBytes:    int64(len(data)),
+			Sha256:       sha256Hex(data),
 		}
 
 		if issueID := r.FormValue("issue_id"); issueID != "" {
@@ -578,10 +591,12 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, map[string]string{
-			"id":       "",
-			"url":      link,
-			"filename": header.Filename,
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id":         "",
+			"url":        link,
+			"filename":   header.Filename,
+			"size_bytes": int64(len(data)),
+			"sha256":     sha256Hex(data),
 		})
 		return
 	}
@@ -593,10 +608,12 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "upload failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"id":       id.String(),
-		"url":      link,
-		"filename": header.Filename,
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":         id.String(),
+		"url":        link,
+		"filename":   header.Filename,
+		"size_bytes": int64(len(data)),
+		"sha256":     sha256Hex(data),
 	})
 }
 
