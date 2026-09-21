@@ -3,7 +3,6 @@ package userdecision
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -11,24 +10,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestPostgresConcurrentAcceptance(t *testing.T) {
-	dsn := os.Getenv("MULTICA_USER_DECISION_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("requires explicitly selected preproduction database")
-	}
-	if strings.Contains(dsn, "localhost") || strings.Contains(dsn, "127.0.0.1") {
-		t.Fatal("runtime database verification belongs in preproduction")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Close()
+	ctx, pool := preproductionTestDB(t)
 	store := &Store{DB: pool, Environment: "integration-" + uuid.NewString()}
 	p := Proposal{Question: "fixture", Options: []Option{{ID: "new", Label: "new", Kind: "start_work", Plan: json.RawMessage(`{}`)}, {ID: "reply", Label: "reply", Kind: "reply", Plan: json.RawMessage(`{}`)}}}
 	r := Request{ID: uuid.NewString(), WorkspaceID: uuid.NewString(), AgentID: uuid.NewString(), JobID: uuid.NewString(), Environment: store.Environment, CorpID: "test-corp", ConversationID: "test-cid", InitiatorID: "initiator", SenderUID: "sender", SenderOrgID: "org", Snapshot: json.RawMessage(`{}`), Proposal: p}
@@ -36,8 +21,16 @@ func TestPostgresConcurrentAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(ctx, `DELETE FROM coordinator_user_decision_event WHERE decision_id=$1`, id)
-	defer pool.Exec(ctx, `DELETE FROM coordinator_user_decision WHERE id=$1`, id)
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := pool.Exec(cleanup, `DELETE FROM coordinator_user_decision_event WHERE decision_id=$1`, id); err != nil {
+			t.Error(err)
+		}
+		if _, err := pool.Exec(cleanup, `DELETE FROM coordinator_user_decision WHERE id=$1`, id); err != nil {
+			t.Error(err)
+		}
+	})
 	_, err = pool.Exec(ctx, `UPDATE coordinator_user_decision SET state='sending' WHERE id=$1`, id)
 	if err != nil {
 		t.Fatal(err)

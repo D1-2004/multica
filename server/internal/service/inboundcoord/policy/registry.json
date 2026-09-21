@@ -339,7 +339,8 @@
         "user_decision_initiator_contrast",
         "user_decision_proposal_repair_contrast",
         "user_decision_semantic_verdict_not_keyword_routing",
-        "user_decision_card_summary_and_recovery"
+        "user_decision_card_summary_and_recovery",
+        "user_decision_durable_recovery_and_receipt_lease"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -355,7 +356,8 @@
         "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
         "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback",
         "user_decision_r9": "R9 failure retained; Host regression and frozen real-model replay passed; deployed R10 native submission b4a631e3f662472bbc192e848d082f60 completed with exact reply and no tasks.",
-        "user_decision_summary": "R11 deployed summary exposed INPUTTING masking question; R12 CONFIRMING live update showed question and native submission completed after setting disabled. Automatic CONFIRMING update deployment pending."
+        "user_decision_summary": "5619b6c92 deployed run3109336221 allEnd=true; R13 native summary recovered to question, selection preserved, continuation task5bc88c5f-eac7-45f5-9770-9ef0257c4bc9 completed with three-line native result.",
+        "user_decision_recovery": "Explicit preproduction PostgreSQL expiry/cancellation/receipt lease/card retry tests added; deployment execution pending."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",

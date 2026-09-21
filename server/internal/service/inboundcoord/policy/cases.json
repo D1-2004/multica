@@ -1482,6 +1482,16 @@
       "context_b": "更新省略注解导致 DWS 清空 artifact，或恢复表单覆盖用户已输入的答案。",
       "expected_effects": "等待态使用 CONFIRMING 展示问题摘要，不以 INPUTTING 显示正在回复；终态摘要展示实际状态；等待恢复保留 answers；只发布数据绑定和组件更新，不重发第二张卡。",
       "verification": "host_test_only"
+    },
+    {
+      "id": "user_decision_durable_recovery_and_receipt_lease",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "选择解析中收到重复发卡回执，或终态卡片更新失败后服务重启。",
+      "context_b": "过期或取消的未执行决策收到迟到提交。",
+      "expected_effects": "回执不清理解析租约；卡片重试不重派执行；过期取消拒绝提交，不生成虚假选择，仅恢复终态说明。",
+      "verification": "host_test_only"
     }
   ]
 }

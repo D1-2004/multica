@@ -33,6 +33,7 @@ RUN cd server && for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
         -o "bin/runner-cli/${target_os}-${target_arch}/multica" ./cmd/multica; \
     done
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/migrate ./cmd/migrate
+RUN cd server && CGO_ENABLED=0 go test -c -o bin/userdecision-verify ./internal/service/userdecision
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_task_usage_hourly ./cmd/backfill_task_usage_hourly
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_codex_usage_cache ./cmd/backfill_codex_usage_cache
 
