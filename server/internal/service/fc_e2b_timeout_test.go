@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/chattrace"
-	"github.com/multica-ai/multica/server/internal/dshhost"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -45,8 +44,8 @@ func newSandboxTimeoutAPI(t *testing.T) (*sandboxTimeoutAPI, *httptest.Server) {
 			var body struct {
 				Timeout int `json:"timeout"`
 			}
-			if !strings.HasSuffix(r.URL.Path, "/timeout") || json.NewDecoder(r.Body).Decode(&body) != nil || body.Timeout != dshhost.DefaultSandboxTaskTimeoutSeconds {
-				t.Errorf("sandbox renewal must POST timeout=%d", dshhost.DefaultSandboxTaskTimeoutSeconds)
+			if !strings.HasSuffix(r.URL.Path, "/timeout") || json.NewDecoder(r.Body).Decode(&body) != nil || body.Timeout != 3600 {
+				t.Error("sandbox renewal must POST timeout=3600")
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
@@ -55,7 +54,7 @@ func newSandboxTimeoutAPI(t *testing.T) (*sandboxTimeoutAPI, *httptest.Server) {
 				w.WriteHeader(code)
 				return
 			}
-			api.expires[id] = time.Now().Add(time.Duration(dshhost.DefaultSandboxTaskTimeoutSeconds) * time.Second).UTC().Truncate(time.Second)
+			api.expires[id] = time.Now().Add(time.Hour).UTC().Truncate(time.Second)
 			if api.shortRenewal[id] {
 				api.expires[id] = time.Now().Add(time.Minute)
 			}

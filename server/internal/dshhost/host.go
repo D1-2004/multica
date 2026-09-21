@@ -247,7 +247,13 @@ func (m Manager) abandonStaleCreate(ctx context.Context, h Host) (bool, error) {
 		return false, nil
 	}
 	id, err := m.Provider.FindCreated(ctx, h)
-	if err == nil && strings.TrimSpace(id) != "" {
+	if strings.TrimSpace(id) != "" {
+		return false, nil
+	}
+	// Empty listing (ErrPending or blank id) after the stale window may be
+	// abandoned. Transport/API errors stay pending so a lost create is not
+	// replaced with a second writer on the same volume.
+	if err != nil && !errors.Is(err, ErrPending) {
 		return false, nil
 	}
 	if err := m.Store.AbandonCreate(ctx, h); err != nil {

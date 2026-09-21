@@ -84,12 +84,12 @@ func bind(t *testing.T, s PostgresStore) Host {
 }
 
 type cloud struct {
-	mu                               sync.Mutex
-	creates, destroys                int
-	live                             map[uuid.UUID]string
-	createErr, healthErr, destroyErr error
-	cancelOnCreate                   context.CancelFunc
-	hidden                           bool
+	mu                                        sync.Mutex
+	creates, destroys                         int
+	live                                      map[uuid.UUID]string
+	createErr, healthErr, destroyErr, findErr error
+	cancelOnCreate                            context.CancelFunc
+	hidden                                    bool
 }
 
 func (p *cloud) Create(_ context.Context, h Host) (string, error) {
@@ -128,6 +128,9 @@ func (p *cloud) DestroyAndConfirmAbsent(_ context.Context, id string) error {
 func (p *cloud) FindCreated(_ context.Context, h Host) (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.findErr != nil {
+		return "", p.findErr
+	}
 	if p.hidden {
 		return "", nil
 	}
@@ -218,6 +221,25 @@ func TestStaleCreateIntentCanBeAbandonedAndReplaced(t *testing.T) {
 	got, err := m.Ensure(context.Background(), h.Key, "template-1")
 	if err != nil || got.Generation != 2 || p.creates != 2 {
 		t.Fatalf("host=%+v err=%v creates=%d", got, err, p.creates)
+	}
+}
+
+func TestTransportErrorDoesNotAbandonStaleCreate(t *testing.T) {
+	a, _ := stores(t)
+	h := bind(t, a)
+	p := &cloud{createErr: errors.New("response lost"), findErr: errors.New("listing unavailable")}
+	m := Manager{a, p}
+	if _, err := m.Ensure(context.Background(), h.Key, "template-1"); !errors.Is(err, ErrPending) {
+		t.Fatal(err)
+	}
+	if _, err := a.DB.Exec(context.Background(), "UPDATE dsh_employee_host SET updated_at=now()-interval '10 minutes'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Ensure(context.Background(), h.Key, "template-1"); !errors.Is(err, ErrPending) {
+		t.Fatal(err)
+	}
+	if p.creates != 1 {
+		t.Fatalf("abandoned create after transport error: creates=%d", p.creates)
 	}
 }
 

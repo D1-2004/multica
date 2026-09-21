@@ -3,6 +3,7 @@
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import type { AgentPresenceDetail } from "@multica/core/agents";
 import { availabilityConfig, workloadConfig } from "../presence";
+import { isDSHWaitReason } from "../wait-reason";
 import { useT } from "../../i18n";
 
 interface PresenceIndicatorProps {
@@ -50,15 +51,9 @@ export function AgentPresenceIndicator({
   const isWorking = detail.workload === "working";
   const isQueued = detail.workload === "queued";
   const waitReasonKey = detail.waitReason;
-  const waitReasonLabel =
-    waitReasonKey === "sandbox_unhealthy" ||
-    waitReasonKey === "destroy_unconfirmed" ||
-    waitReasonKey === "create_intent_stale" ||
-    waitReasonKey === "native_grant_busy" ||
-    waitReasonKey === "task_drain_busy" ||
-    waitReasonKey === "dsh_host_waiting"
-      ? t(($) => $.presence.wait_reason[waitReasonKey])
-      : waitReasonKey;
+  const waitReasonLabel = isDSHWaitReason(waitReasonKey)
+    ? t(($) => $.presence.wait_reason[waitReasonKey])
+    : waitReasonKey;
   const showWaitReason =
     detail.availability === "online" && isQueued && Boolean(waitReasonLabel);
   const showQueueBadge = isWorking && detail.queuedCount > 0;

@@ -18,14 +18,16 @@ import (
 	"github.com/multica-ai/multica/server/internal/dshhost"
 )
 
-func (l *FCE2BLauncher) sandboxTaskTimeoutSeconds() int {
+const fcE2BTaskSandboxTimeout = time.Hour
+
+var fcE2BAPISandboxIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+func (l *FCE2BLauncher) employeeHostTimeoutSeconds() int {
 	if l == nil {
 		return dshhost.DefaultSandboxTaskTimeoutSeconds
 	}
 	return dshhost.SandboxTaskTimeoutSeconds(l.Config.TimeoutSeconds)
 }
-
-var fcE2BAPISandboxIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 func (l *FCE2BLauncher) sandboxLifetimeRequest(ctx context.Context, method, id, suffix string, body []byte) ([]byte, error) {
 	baseURL := strings.TrimRight(l.Config.APIURL, "/")
@@ -63,8 +65,15 @@ func (l *FCE2BLauncher) sandboxLifetimeRequest(ctx context.Context, method, id, 
 }
 
 func (l *FCE2BLauncher) renewSandboxForTask(ctx context.Context, sandboxID string, trace chattrace.Trace) (expiresAt time.Time, err error) {
+	return l.renewSandboxTimeout(ctx, sandboxID, trace, int(fcE2BTaskSandboxTimeout/time.Second))
+}
+
+func (l *FCE2BLauncher) renewEmployeeHostSandbox(ctx context.Context, sandboxID string, trace chattrace.Trace) (expiresAt time.Time, err error) {
+	return l.renewSandboxTimeout(ctx, sandboxID, trace, l.employeeHostTimeoutSeconds())
+}
+
+func (l *FCE2BLauncher) renewSandboxTimeout(ctx context.Context, sandboxID string, trace chattrace.Trace, timeoutSeconds int) (expiresAt time.Time, err error) {
 	started := time.Now()
-	timeoutSeconds := l.sandboxTaskTimeoutSeconds()
 	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_renew", "started", "sandbox_id", sandboxID, "timeout_seconds", timeoutSeconds)
 	defer func() {
 		if err != nil {

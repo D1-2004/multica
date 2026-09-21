@@ -391,7 +391,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	if err != nil {
 		return dshhost.Host{}, cold, err
 	}
-	if _, err = l.renewSandboxForTask(ctx, host.SandboxID, trace); err != nil {
+	if _, err = l.renewEmployeeHostSandbox(ctx, host.SandboxID, trace); err != nil {
 		return dshhost.Host{}, cold, err
 	}
 	args, err := dshHomePrepareArgs(host)
