@@ -44,7 +44,13 @@ func (s *decisionSession) Send(ctx context.Context, r userdecision.Request) (str
 	return receipt.BizID, err
 }
 func (s *decisionSession) Update(ctx context.Context, r userdecision.Request, status, text string) error {
-	return s.cli.UpdateA2UI(ctx, s.dir, r.CardID, status, userdecision.StatusCard(r.ID, text))
+	messages := userdecision.StatusCard(r.ID, text)
+	if r.State == "waiting" {
+		// Refresh components only: keep the frozen choices and the client form data.
+		messages = userdecision.Card(r.ID, r.Proposal)[1:]
+		status = "INPUTTING"
+	}
+	return s.cli.UpdateA2UI(ctx, s.dir, r.CardID, status, messages)
 }
 func (s *decisionSession) Consume(ctx context.Context, ready func(), consume func([]byte) error) error {
 	return s.cli.ConsumeCardEvents(ctx, s.dir, ready, consume)

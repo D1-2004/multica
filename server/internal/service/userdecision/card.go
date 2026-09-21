@@ -40,9 +40,9 @@ func Card(id string, p Proposal) []string {
 	path := func(s string) map[string]string { return map[string]string{"path": "/clarification/" + s} }
 	action := map[string]any{"event": map[string]any{"name": "runtime.clarification.submit", "context": map[string]any{"outcome": "answered", "sourceTurnId": path("sourceTurnId"), "sourceProjectionVersion": path("sourceProjectionVersion"), "questions": path("questions"), "answers": path("answers")}}}
 	required := func(value any) map[string]any {
-		return map[string]any{"call": "required", "args": map[string]any{"value": value}}
+		return map[string]any{"call": "required", "catalogId": catalog, "args": map[string]any{"value": value}}
 	}
-	checks := []any{map[string]any{"condition": map[string]any{"call": "or", "args": map[string]any{"values": []any{required(path("answers/q0/selected")), required(path("answers/q0/custom"))}}}, "message": "请选择一项或填写补充说明"}}
+	checks := []any{map[string]any{"condition": map[string]any{"call": "or", "catalogId": catalog, "args": map[string]any{"values": []any{required(path("answers/q0/selected")), required(path("answers/q0/custom"))}}}, "message": "请选择一项或填写补充说明"}}
 	components := []any{
 		component("root", "Column", map[string]any{"children": []string{"question", "choices", "extra", "submit"}}),
 		component("question", "Text", map[string]any{"text": p.Question}),

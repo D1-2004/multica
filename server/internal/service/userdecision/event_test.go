@@ -116,3 +116,35 @@ func TestExportDropsCredentialAndUnrelatedContactFields(t *testing.T) {
 		t.Fatal("export mutated authoritative data")
 	}
 }
+
+func TestCardValidationFunctionsUseBasicCatalog(t *testing.T) {
+	p := Proposal{Question: "处理方式", Options: []Option{{ID: "new", Label: "新建", Kind: "start_work"}, {ID: "reply", Label: "回复", Kind: "reply"}}}
+	var message map[string]any
+	if err := json.Unmarshal([]byte(Card("id", p)[1]), &message); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	var walk func(any)
+	walk = func(value any) {
+		switch v := value.(type) {
+		case map[string]any:
+			if _, ok := v["call"]; ok {
+				count++
+				if v["catalogId"] != "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json" {
+					t.Fatalf("function resolves against wrong surface catalog: %v", v)
+				}
+			}
+			for _, child := range v {
+				walk(child)
+			}
+		case []any:
+			for _, child := range v {
+				walk(child)
+			}
+		}
+	}
+	walk(message)
+	if count != 3 {
+		t.Fatalf("expected OR and two required checks, got %d", count)
+	}
+}
