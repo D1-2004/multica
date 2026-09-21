@@ -167,3 +167,40 @@ func (r *userDecisionReplayRecorder) Chat(ctx context.Context, p openai.ChatComp
 	}
 	return c, err
 }
+
+// This contrast comes from the real R5 card: a conversation label cannot make
+// a promise of future work a standalone reply.
+func TestUserDecisionRealModelReplyReview(t *testing.T) {
+	if os.Getenv("MULTICA_RUN_USER_DECISION_REPLAY") != "1" {
+		t.Skip("explicit preproduction model opt-in required")
+	}
+	client := llm.New(llm.Config{APIKey: os.Getenv("MULTICA_LLM_API_KEY"), BaseURL: os.Getenv("MULTICA_LLM_BASE_URL"), DefaultModel: coordinatorModel, MaxRetries: -1})
+	if !client.Enabled() {
+		t.Fatal("preproduction model configuration required")
+	}
+	c := &Coordinator{LLM: client, model: os.Getenv("MULTICA_COORDINATOR_REPLAY_MODEL")}
+	turn := Turn{Source: SourceRobot, Addressed: true, Message: "把已有报告第三行改成下一步完成验收。", UserDecisionEnabled: true}
+	evidence, _ := json.Marshal(map[string]any{"request": turn.Message})
+	for _, tc := range []struct {
+		name, body string
+		valid      bool
+	}{
+		{"mislabeled_future_work", "你说要修改第三行，我将按继续修改处理。", false},
+		{"standalone_fact", "你提供的修改要求是：第三行改为下一步完成验收。", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan, _ := json.Marshal(map[string]any{"actions": []any{map[string]any{"kind": "acknowledge", "ack_kind": "conversation", "source_refs": []string{"u1"}, "reply": tc.body}}})
+			p := userdecision.Proposal{Question: "怎么处理？", Options: []userdecision.Option{
+				{ID: "new", Kind: "start_work", Label: "新建工作，整理修改后的报告", Plan: json.RawMessage(`{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"整理修改后的报告"}]}`)},
+				{ID: "reply", Kind: "reply", Label: tc.body, Plan: plan},
+			}}
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			raw, err := c.reviewUserDecisionProposal(ctx, turn, evidence, p)
+			t.Logf("review=%s", raw)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v error=%v", tc.valid, err)
+			}
+		})
+	}
+}

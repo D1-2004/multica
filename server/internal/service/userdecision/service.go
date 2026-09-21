@@ -165,6 +165,13 @@ func (s *Service) runIdentity(parent context.Context, r Request) {
 		}
 	}()
 	defer func() { cancel(); <-heartbeatDone }()
+	// Restore waiting forms from their frozen snapshots after reconnect/rollout.
+	// Component-only updates preserve typed answers and do not create another card.
+	if _, err = s.Pool.Exec(ctx, `UPDATE coordinator_user_decision SET card_update_pending=true,available_at=now(),updated_at=now() WHERE environment=$1 AND sender_uid=$2 AND sender_org_id=$3 AND state='waiting'`, s.Store.Environment, r.SenderUID, r.SenderOrgID); err != nil {
+		slog.Warn("user decision waiting card recovery failed", "event", "user_decision_card_recovery_failed", "agent_id", r.AgentID)
+		return
+	}
+
 	// Re-authenticate periodically so a long-lived subscription never retains
 	// expired per-session credentials indefinitely.
 	refresh := time.NewTimer(30 * time.Minute)
@@ -273,25 +280,6 @@ func (s *Service) processIdentity(ctx context.Context, identity Request, session
 	return err
 }
 func Status(r Request) (string, string) {
-	var execution struct {
-		State string `json:"state"`
-	}
-	_ = json.Unmarshal(r.ExecutionResult, &execution)
-	if execution.State == "completed" {
-		return "FINISH", "任务执行已结束，请查看本次处理的回复消息。"
-	}
-	if execution.State == "failed" {
-		return "ERROR", "本次处理未成功完成，请查看失败说明。"
-	}
-
-	switch r.State {
-	case "expired":
-		return "TIMEOUT", "选择已过期，本次未执行。"
-	case "cancelled":
-		return "ABORTED", "员工已停用或删除，本次未执行。"
-	case "not_executed", "failed":
-		return "ERROR", r.LastError
-	}
 	text := "已收到你的补充说明。"
 	if r.Submission != nil {
 		for _, o := range r.Proposal.Options {
@@ -304,6 +292,28 @@ func Status(r Request) (string, string) {
 			text += "\n补充说明：" + r.Submission.Custom
 		}
 	}
+	var execution struct {
+		State string `json:"state"`
+	}
+	_ = json.Unmarshal(r.ExecutionResult, &execution)
+	if execution.State == "completed" {
+		return "FINISH", text + "\n本次处理已结束，请查看回复消息。"
+	}
+	if execution.State == "failed" {
+		return "ERROR", text + "\n本次处理未成功完成，请查看失败说明。"
+	}
+
+	switch r.State {
+	case "waiting", "prepared", "sending", "send_unknown":
+		return "INPUTTING", r.Proposal.Question
+	case "expired":
+		return "TIMEOUT", "选择已过期，本次未执行。"
+	case "cancelled":
+		return "ABORTED", "员工已停用或删除，本次未执行。"
+	case "not_executed", "failed":
+		return "ERROR", r.LastError
+	}
+
 	if r.State == "dispatched" {
 		return "EXECUTING", text + "\n已进入处理流程，执行结果将另行告知。"
 	}

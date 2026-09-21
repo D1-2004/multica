@@ -148,3 +148,19 @@ func TestCardValidationFunctionsUseBasicCatalog(t *testing.T) {
 		t.Fatalf("expected OR and two required checks, got %d", count)
 	}
 }
+
+func TestStatusPreservesAcceptedChoiceAtCompletion(t *testing.T) {
+	r := Request{State: "dispatched", Proposal: Proposal{Options: []Option{{ID: "reply", Label: "直接回复：你好"}}}, Submission: &Submission{OptionID: "reply", Custom: "保持简短"}, ExecutionResult: json.RawMessage(`{"state":"completed","tasks":[]}`)}
+	status, text := Status(r)
+	if status != "FINISH" || !strings.Contains(text, "直接回复：你好") || !strings.Contains(text, "保持简短") {
+		t.Fatalf("accepted evidence lost: %s %s", status, text)
+	}
+	r.State = "waiting"
+	r.Submission = nil
+	r.ExecutionResult = nil
+	r.Proposal.Question = "怎么处理？"
+	status, text = Status(r)
+	if status != "INPUTTING" || text != "怎么处理？" {
+		t.Fatalf("waiting falsely acknowledged: %s %s", status, text)
+	}
+}

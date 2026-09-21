@@ -45,7 +45,7 @@ func TestUnknownChoiceCannotCommitPlan(t *testing.T) {
 func TestUserDecisionReviewPolicyIsSelected(t *testing.T) {
 	turn := Turn{Loop: LoopFinishCheck, UserDecisionSubmission: &userdecision.Submission{OptionID: "o1"}}
 	prompt := buildSystemPrompt(turn)
-	if !strings.Contains(prompt, "[policy:user_decision@4]") {
+	if !strings.Contains(prompt, "[policy:user_decision@6]") {
 		t.Fatal("review did not receive locked-choice policy")
 	}
 }

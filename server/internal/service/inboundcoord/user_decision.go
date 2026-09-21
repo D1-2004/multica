@@ -123,11 +123,21 @@ func (c *Coordinator) proposeUserDecision(ctx context.Context, turn Turn, messag
 
 // Review the frozen alternatives before display; this does not choose for the user.
 func (c *Coordinator) reviewUserDecisionProposal(ctx context.Context, turn Turn, evidence []byte, proposal userdecision.Proposal) (json.RawMessage, error) {
-	input, err := json.Marshal(map[string]any{"evidence": json.RawMessage(evidence), "proposal": proposal})
+	var reply *userdecision.Option
+	for i := range proposal.Options {
+		if proposal.Options[i].Kind == "reply" {
+			reply = &proposal.Options[i]
+			break
+		}
+	}
+	if reply == nil {
+		return nil, errors.New("reply candidate missing")
+	}
+	input, err := json.Marshal(map[string]any{"evidence": json.RawMessage(evidence), "reply_candidate": reply})
 	if err != nil {
 		return nil, err
 	}
-	messages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPromptForStage(turn, true) + "\n" + userDecisionPolicy()), openai.UserMessage(string(input))}
+	messages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(userDecisionPolicy()), openai.UserMessage(string(input))}
 	tool := openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "review_choices", Parameters: shared.FunctionParameters{
 		"type": "object", "additionalProperties": false, "required": []string{"allowed", "reason"}, "properties": map[string]any{
 			"allowed": map[string]any{"type": "boolean"}, "reason": map[string]any{"type": "string"},
