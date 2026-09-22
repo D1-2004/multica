@@ -399,3 +399,5 @@ Submission interpretation uses only the registered user-decision policy, frozen 
 `user_decision_service_unavailable` 仅表示未装配决策服务。持久化队列缺失、发卡身份不可用、订阅身份读取失败、原消息发起人读取失败和多发起人分别记录稳定原因码。底层 DWS 错误原文不得进入用户回复或日志；日志只保存有界原因、Agent 和决策 ID。未叫到员工的主动群监听仍保持静默。
 
 线上反例：HuntStudio AI资讯是 NEW_EXTERNAL_GROUP，群组织与须莫v6 发卡组织不同，旧版在发卡前拒绝并误报服务不可用。修正取消该本地渠道限制，不改变发起人的作答权限；单元测试不代替 DWS 真实发卡、回调与任务验收。
+
+单聊发卡使用冻结入站类型 `p2p` 和已核验发起人的 `openDingTalkId`，映射 DWS `--open-dingtalk-id`；群聊使用原会话 ID 映射 `--chat-id`。这只选择接口参数，不限制渠道能力。发卡前读取并校验完整冻结快照（含 OSS 对象）；缺失或损坏不得猜测收件人。未知发送结果保留原卡片与请求标识，不能因参数修复自动补发。
