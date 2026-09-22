@@ -10,12 +10,10 @@ import {
 import {
   ChevronRight,
   Cloud,
-  LayoutDashboard,
   Loader2,
   Monitor,
   Plus,
   Server,
-  ShieldCheck,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -82,7 +80,6 @@ import { getMikaOnboarding, pickContentLang } from "../../onboarding/templates";
 import { ConnectRemoteDialog } from "./connect-remote-dialog";
 import { CloudRuntimeDialog } from "./cloud-runtime-dialog";
 import { FCE2BRuntimeDialog } from "./fc-e2b-runtime-dialog";
-import { StableFCE2BReleaseDialog } from "./stable-fc-e2b-release-dialog";
 import { ProviderLogo } from "./provider-logo";
 import { buildWorkloadIndex, RuntimeList } from "./runtime-list";
 import { RuntimeListToolbar } from "./runtime-list-toolbar";
@@ -147,7 +144,6 @@ export function RuntimesPage({
   const [showConnectDialog, setShowConnectDialog] = useState(false);
   const [showCloudRuntimeDialog, setShowCloudRuntimeDialog] = useState(false);
   const [showFCE2BRuntimeDialog, setShowFCE2BRuntimeDialog] = useState(false);
-  const [showStableReleaseDialog, setShowStableReleaseDialog] = useState(false);
   const [runtimeScope, setRuntimeScope] = useState<RuntimeOwnershipScope>("mine");
   const [runtimeSearch, setRuntimeSearch] = useState("");
   const [ownerId, setOwnerId] = useState<string | null>(null);
@@ -160,14 +156,12 @@ export function RuntimesPage({
   const sandboxBackend: SandboxBackend =
     runtimeView === "asb" ? "asb" : "aliyun_fc";
   const stableChannelQuery = useCloudSandboxStableChannel(sandboxBackend);
-  const paths = useWorkspacePaths();
   const changeRuntimeView = (view: RuntimeView) => {
     const search = new URLSearchParams(navigation.searchParams);
     search.set("backend", view);
     navigation.replace(`${navigation.pathname}?${search.toString()}`);
     setOwnerId(null);
     setShowFCE2BRuntimeDialog(false);
-    setShowStableReleaseDialog(false);
   };
 
   const { data: runtimes = [], isLoading: runtimesLoading } = useQuery(
@@ -397,9 +391,6 @@ export function RuntimesPage({
         runtimeView={runtimeView}
         onRuntimeViewChange={changeRuntimeView}
         isPhysicalView={isPhysicalView}
-        canPublishStable={stableChannelQuery.data?.can_publish === true}
-        stableOverviewHref={`${paths.stableRuntimes()}?backend=${sandboxBackend}`}
-        onOpenStableRelease={() => setShowStableReleaseDialog(true)}
       />
 
       {showEmpty ? (
@@ -480,14 +471,7 @@ export function RuntimesPage({
           onClose={() => setShowFCE2BRuntimeDialog(false)}
         />
       )}
-      {!isPhysicalView &&
-        stableChannelQuery.data?.can_publish &&
-        showStableReleaseDialog && (
-          <StableFCE2BReleaseDialog
-            sandboxBackend={sandboxBackend}
-            onClose={() => setShowStableReleaseDialog(false)}
-          />
-        )}
+
     </div>
   );
 }
@@ -517,8 +501,8 @@ function MikaSetupCard({
 }) {
   const { t, i18n } = useT("runtimes");
   const navigation = useNavigation();
-  const paths = useWorkspacePaths();
   const wsSlug = useRequiredWorkspaceSlug();
+  const paths = useWorkspacePaths();
   const bootstrapMika = useBootstrapMika(workspaceId);
 
   const [open, setOpen] = useState(false);
@@ -657,9 +641,6 @@ function PageHeaderBar({
   runtimeView,
   onRuntimeViewChange,
   isPhysicalView,
-  canPublishStable,
-  stableOverviewHref,
-  onOpenStableRelease,
 }: {
   totalCount: number;
   onConnectRemote: () => void;
@@ -670,9 +651,6 @@ function PageHeaderBar({
   runtimeView: RuntimeView;
   onRuntimeViewChange: (view: RuntimeView) => void;
   isPhysicalView: boolean;
-  canPublishStable: boolean;
-  stableOverviewHref: string;
-  onOpenStableRelease: () => void;
 }) {
   const { t, i18n } = useT("runtimes");
   return (
@@ -717,20 +695,6 @@ function PageHeaderBar({
               </SelectItem>
             </SelectContent>
           </Select>
-          {!isPhysicalView && canPublishStable && (
-            <>
-              <CollectionPageHeaderAction
-                icon={LayoutDashboard}
-                label={t(($) => $.fc_e2b_stable_overview.action)}
-                render={<AppLink href={stableOverviewHref} />}
-              />
-              <CollectionPageHeaderAction
-                icon={ShieldCheck}
-                label={t(($) => $.fc_e2b_stable.action)}
-                onClick={onOpenStableRelease}
-              />
-            </>
-          )}
           {!isPhysicalView && canManageFCE2B && (
             <CollectionPageHeaderAction
               icon={Cloud}
@@ -805,9 +769,9 @@ function MachineRow({
   members: MemberWithUser[];
 }) {
   const { t } = useT("runtimes");
+  const paths = useWorkspacePaths();
   const healthLabel = useHealthLabel();
   const timeAgo = useTimeAgo();
-  const paths = useWorkspacePaths();
   const Icon = machine.section === "cloud" ? Cloud : Monitor;
   const locator = machine.id;
   const busyCount = machine.runningCount + machine.queuedCount;

@@ -67,7 +67,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 	}
 	props := map[string]any{
 		"kind":        map[string]any{"type": "string", "enum": kinds},
-		"source_refs": map[string]any{"type": "array", "minItems": 1, "uniqueItems": true, "items": sourceRefSchema, "description": "Exact current-window uN refs. Every uN in current_message must be covered by at least one action, including non-work. Multiple intents may share a ref."},
+		"source_refs": map[string]any{"type": "array", "minItems": 1, "items": sourceRefSchema, "description": "Exact current-window uN refs. Every uN in current_message must be covered by at least one action, including non-work. Multiple intents may share a ref."},
 		"reply":       map[string]any{"type": "string", "description": "Required for non-work operations except ignore. For start_work/continue_work, omit reply: Host owns and supplies the receipt after all work is committed. Any supplied work reply is discarded; never put a deliverable here. Non-work replies stay within their operation, without business answers or internal routing narration."},
 		"reason":      map[string]any{"type": "string", "description": "Only ignore: why no response/work is needed."},
 	}
@@ -92,7 +92,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 		}
 		props["missing_fields"] = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"intent", "recipient", "message_body", "scope", "timing", "authorization", "work_target", "source_material"}}, "description": "clarify only: missing information preventing a safe dispatch."}
 		if strict && len(contract.stateRefs) > 0 {
-			props["state_refs"] = map[string]any{"type": "array", "minItems": 1, "uniqueItems": true, "items": stringEnum(contract.stateRefs), "description": "report_status only: read_ref of the Host snapshots listed in this run (assoc_recall, work_state, context_read coordination_state), including bounded empty or unavailable reads. History is not execution state."}
+			props["state_refs"] = map[string]any{"type": "array", "minItems": 1, "items": stringEnum(contract.stateRefs), "description": "report_status only: read_ref of the Host snapshots listed in this run (assoc_recall, work_state, context_read coordination_state), including bounded empty or unavailable reads. History is not execution state."}
 		} else if strict {
 			kinds = removeKind(kinds, "report_status")
 		}

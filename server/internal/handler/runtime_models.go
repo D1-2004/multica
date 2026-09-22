@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -395,6 +396,19 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		if len(catalog.Models) == 0 {
 			writeError(w, http.StatusServiceUnavailable, catalog.ConfigKey+" is empty")
 			return
+		}
+		if h.Models != nil && os.Getenv("MULTICA_MODEL_GATEWAY_ENABLED") == "true" {
+			snapshot, err := h.Models.Load(r.Context())
+			if err != nil {
+				writeError(w, 503, "model configuration unavailable")
+				return
+			}
+			catalog.Models = []string{snapshot.Config.DefaultModel.String()}
+			for _, ref := range snapshot.Config.AgentModels {
+				if ref != snapshot.Config.DefaultModel {
+					catalog.Models = append(catalog.Models, ref.String())
+				}
+			}
 		}
 		models := make([]ModelEntry, 0, len(catalog.Models))
 		for index, model := range catalog.Models {

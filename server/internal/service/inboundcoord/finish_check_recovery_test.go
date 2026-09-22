@@ -36,7 +36,7 @@ func TestFinishCheckProtocolRepairKeepsPlanAndOneMainRound(t *testing.T) {
 	props := chat.checkParams[1].Tools[0].GetFunction().Parameters["properties"].(map[string]any)
 	checkItems := props["work_checks"].(map[string]any)["items"].(map[string]any)
 	refs := checkItems["properties"].(map[string]any)["action_ref"].(map[string]any)["enum"]
-	if !reflect.DeepEqual(refs, []string{"a1", "a2"}) {
+	if !reflect.DeepEqual(refs, []any{"a1", "a2"}) {
 		t.Fatalf("non-work action leaked into review reference schema: %#v", refs)
 	}
 	raw, _ := json.Marshal(chat.checkParams[1].Messages[len(chat.checkParams[1].Messages)-1])
@@ -91,7 +91,7 @@ func TestRejectedProposalRepairsInMainLoopWithoutGrantingWork(t *testing.T) {
 		t.Fatalf("action=%s saves=%d main=%d review=%d err=%v", d.Action, saves, chat.calls, chat.checkCalls, err)
 	}
 	props := chat.checkParams[0].Tools[0].GetFunction().Parameters["properties"].(map[string]any)
-	if props["work_checks"].(map[string]any)["maxItems"] != 0 {
+	if props["work_checks"].(map[string]any)["maxItems"] != float64(0) {
 		t.Fatal("non-work schema permits invented work checks")
 	}
 }

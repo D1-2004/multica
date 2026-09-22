@@ -1,3 +1,4 @@
+import {ModelProbeSchema, GlobalModelsSchema, EMPTY_GLOBAL_MODELS, DeveloperCapabilitiesSchema, DiscoveredModelsSchema, globalModelsWire, type GlobalModels, type ModelProvider} from "./global-models-schema";
 import { DSHProfileSchema, type DSHProfileStatus } from "./dsh-profile-schema";
 import { AgentDshPluginConfigSchema } from "./agent-dsh-plugin-config-schema";
 import type { AgentDshPluginConfig, UpdateAgentDshPluginConfig } from "../dsh-plugins/types";
@@ -856,6 +857,25 @@ export class ApiClient {
       return undefined as T;
     }
     return res.json() as Promise<T>;
+  }
+
+  async restoreGlobalModels(revision:number): Promise<GlobalModels> {
+ return parseWithFallback(await this.fetch<unknown>("/api/developer/models/restore",{method:"POST",body:JSON.stringify({revision})}),GlobalModelsSchema,EMPTY_GLOBAL_MODELS,{endpoint:"developer/models/restore",includeReceived:false});
+ }
+  async testProviderModel(provider:ModelProvider, model:string) {
+ return parseWithFallback(await this.fetch<unknown>("/api/developer/models/test",{method:"POST",body:JSON.stringify({provider:{id:provider.id,base_url:provider.baseUrl,api_key:provider.apiKey},model})}),ModelProbeSchema,{valid:false,status:0,elapsedMs:0},{endpoint:"developer/models/test",includeReceived:false});
+ }
+  async getDeveloperCapabilities() {
+    return parseWithFallback(await this.fetch<unknown>("/api/developer/capabilities"), DeveloperCapabilitiesSchema, {developer:false}, {endpoint:"developer/capabilities"});
+  }
+  async getGlobalModels(): Promise<GlobalModels> {
+    return parseWithFallback(await this.fetch<unknown>("/api/developer/models"), GlobalModelsSchema, EMPTY_GLOBAL_MODELS, {endpoint:"developer/models",includeReceived:false});
+  }
+  async saveGlobalModels(config: GlobalModels): Promise<GlobalModels> {
+    return parseWithFallback(await this.fetch<unknown>("/api/developer/models", {method:"PUT", body:JSON.stringify(globalModelsWire(config))}), GlobalModelsSchema, EMPTY_GLOBAL_MODELS, {endpoint:"developer/models",includeReceived:false});
+  }
+  async discoverProviderModels(provider: ModelProvider) {
+    return parseWithFallback(await this.fetch<unknown>("/api/developer/models/discover", {method:"POST",body:JSON.stringify({id:provider.id,base_url:provider.baseUrl,api_key:provider.apiKey})}), DiscoveredModelsSchema, {models:[] as string[], replace:false, checked:0, unavailable:0, unverified:0}, {endpoint:"developer/models/discover",includeReceived:false});
   }
 
   // Auth

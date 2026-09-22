@@ -49,6 +49,8 @@ const (
 // ASBConfig is the deployment-owned configuration for the Aone Sandbox
 // backend. Tenant API keys are Runtime-owned encrypted credentials.
 type ASBConfig struct {
+	TaskModelResolver     func(context.Context, string, string) (string, error)
+	ModelResolver         func(string) (string, error)
 	NetworkAllowlist      []string
 	NetworkServiceURLs    []string
 	Enabled               bool
@@ -197,6 +199,9 @@ func (c ASBConfig) Validate() error {
 }
 
 func (c ASBConfig) ModelForAgent(model string) (string, error) {
+	if c.ModelResolver != nil {
+		return c.ModelResolver(model)
+	}
 	model = strings.TrimSpace(model)
 	if model == "" {
 		if len(c.LLMModels) == 0 {
@@ -1598,6 +1603,10 @@ func (l *ASBLauncher) execRunOnce(
 		"OPENAI_BASE_URL":               l.Config.LLMBaseURL,
 		"OPENAI_API_KEY":                l.Config.LLMAPIKey,
 	}
+	if os.Getenv("MULTICA_MODEL_GATEWAY_ENABLED") == "true" {
+		envs["OPENAI_BASE_URL"] = strings.TrimRight(l.Config.ServerURL, "/") + "/api/daemon/runtimes/" + util.UUIDToString(runtime.ID) + "/model-tasks/" + util.UUIDToString(taskID) + "/v1"
+		envs["OPENAI_API_KEY"] = token
+	}
 	if coldStart {
 		envs["MULTICA_FC_E2B_COLD_START"] = "true"
 	}
@@ -1644,12 +1653,18 @@ func (l *ASBLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQueu
 	if l.Common == nil {
 		return nil, errors.New("ASB launcher common runtime services are unavailable")
 	}
+	resolver := l.Config.ModelForAgent
+	if l.Config.TaskModelResolver != nil {
+		resolver = func(model string) (string, error) {
+			return l.Config.TaskModelResolver(ctx, util.UUIDToString(task.ID), model)
+		}
+	}
 	return l.Common.extraEnvForTaskWithModel(
 		ctx,
 		task,
 		runtime,
 		sandboxID,
-		l.Config.ModelForAgent,
+		resolver,
 	)
 }
 

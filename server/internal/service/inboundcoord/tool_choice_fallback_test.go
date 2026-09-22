@@ -26,15 +26,15 @@ func (f *providerFailureCompleter) Chat(_ context.Context, p openai.ChatCompleti
 func providerParameterError(status int, code string) *openai.Error {
 	return &openai.Error{StatusCode: status, Code: code, Message: "<400> InternalError.Algo: An error occurred in model serving, error message is: [Invalid request parameters.]"}
 }
-func TestProviderToolChoiceFallback(t *testing.T) {
+func TestProviderFailureDoesNotRewriteToolChoice(t *testing.T) {
 	for _, tc := range []struct {
 		name, model string
 		err         error
 		always      bool
 		want        int
 	}{
-		{"known_qwen_parameter_failure", "qwen3.8-max", providerParameterError(400, "provider_error"), false, 2},
-		{"bounded_retry", "qwen3.8-max", providerParameterError(400, "provider_error"), true, 2},
+		{"known_qwen_parameter_failure", "qwen3.8-max", providerParameterError(400, "provider_error"), false, 1},
+		{"bounded_retry", "qwen3.8-max", providerParameterError(400, "provider_error"), true, 1},
 		{"other_provider", "other-model", providerParameterError(400, "provider_error"), false, 1},
 		{"auth_failure", "qwen3.8-max", providerParameterError(401, "provider_error"), false, 1},
 		{"other_parameter_failure", "qwen3.8-max", providerParameterError(400, "invalid_request_error"), false, 1},
@@ -71,7 +71,7 @@ func TestProviderFallbackTextCannotBecomeUserDecisionPlan(t *testing.T) {
 	f := &providerFailureCompleter{failure: providerParameterError(400, "provider_error")}
 	c := &Coordinator{Chat: f, model: "qwen3.8-max"}
 	d, err := c.proposeUserDecision(context.Background(), Turn{Message: "synthetic request", Addressed: true}, nil, nil, nil, Decision{})
-	if err == nil || d.UserDecision != nil || len(f.calls) != 2 {
+	if err == nil || d.UserDecision != nil || len(f.calls) != 1 {
 		t.Fatalf("text response must fail closed: error=%v calls=%d", err, len(f.calls))
 	}
 }
