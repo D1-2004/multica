@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,7 +45,7 @@ func Retryable(err error) bool {
 		case 401, 403, 404, 408, 429:
 			return true
 		case 400:
-			return api.Code == "provider_error"
+			return api.Code == "provider_error" || (api.Code == "invalid_parameter_error" && api.Param == "" && strings.Contains(api.Message, "model serving") && strings.Contains(api.Message, "[Invalid request parameters.]"))
 		}
 		return api.StatusCode >= 500
 	}

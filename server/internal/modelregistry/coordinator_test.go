@@ -101,3 +101,14 @@ func TestFallbackIsBoundedAndStopsOnCancellation(t *testing.T) {
 		t.Fatal("canceled request consumed another candidate")
 	}
 }
+
+func TestBailianServingFailureCanUseNextModel(t *testing.T) {
+	e := &openai.Error{StatusCode: 400, Code: "invalid_parameter_error", Message: "An error occurred in model serving, error message is: [Invalid request parameters.]"}
+	if !Retryable(e) {
+		t.Fatal("observed provider serving failure must allow configured fallback")
+	}
+	e.Param = "messages"
+	if Retryable(e) {
+		t.Fatal("explicit malformed input must not be retried across providers")
+	}
+}
