@@ -409,20 +409,7 @@ func (c *Coordinator) completeWithModelLimit(ctx context.Context, model string, 
 	if chat == nil {
 		chat = c.LLM
 	}
-	completion, err := chat.Chat(ctx, params)
-	var apiErr *openai.Error
-	// The preproduction Qwen provider rejects forced tool choice for some
-	// otherwise valid, full-context requests. Retry this precise parameter
-	// failure once without forcing a tool. Every caller still validates the
-	// returned tool and its arguments before accepting a plan or doing work.
-	if toolChoice == "required" && strings.HasPrefix(strings.ToLower(model), "qwen") &&
-		errors.As(err, &apiErr) && apiErr.StatusCode == 400 && apiErr.Code == "provider_error" &&
-		strings.Contains(apiErr.Message, "InternalError.Algo") && strings.Contains(apiErr.Message, "[Invalid request parameters.]") && ctx.Err() == nil {
-		slog.WarnContext(ctx, "coordinator retrying provider tool choice", "event", "inbound_coordinator_tool_choice_fallback", "model", model)
-		params.SetExtraFields(map[string]any{"enable_thinking": false, "tool_choice": "auto"})
-		return chat.Chat(ctx, params)
-	}
-	return completion, err
+	return chat.Chat(ctx, params)
 }
 
 func (c *Coordinator) callTool(ctx context.Context, turn Turn, name, arguments string) (string, error) {

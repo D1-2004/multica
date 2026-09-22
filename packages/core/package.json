@@ -16,6 +16,7 @@
     "./attachments": "./attachments/index.ts",
     "./attachments/image-sequence": "./attachments/image-sequence.ts",
     "./api": "./api/index.ts",
+    "./global-models": "./global-models/index.ts",
     "./api/client": "./api/client.ts",
     "./api/schema": "./api/schema.ts",
     "./api/schemas": "./api/schemas.ts",

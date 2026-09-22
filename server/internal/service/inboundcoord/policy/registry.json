@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-21.2",
-  "assembly_version": "41",
+  "policy_version": "2026-09-22.1",
+  "assembly_version": "42",
   "modules": [
     {
       "id": "core",
@@ -1505,7 +1505,8 @@
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "history_prefetch_2026_09_10": "host_tests_passed_local; pre e2e pending",
         "retry_budget_and_tool_contract_2026_09_10": "host_tests_passed_local; pre e2e pending",
-        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending."
+        "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending.",
+        "global_model_routing": "local_checks_pending; real_preproduction_delivery_pending"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/trace.go",
@@ -1520,7 +1521,9 @@
         "server/internal/service/inboundcoord/finish_quote.go",
         "server/internal/service/inboundcoord/scene_prefetch.go",
         "server/internal/service/inboundcoord/history_prefetch.go",
-        "server/internal/service/inboundcoord/retry_budget.go"
+        "server/internal/service/inboundcoord/retry_budget.go",
+        "server/internal/modelregistry/coordinator.go",
+        "server/internal/modelregistry/coordinator_test.go"
       ],
       "case_file": "cases.json"
     }
@@ -1773,6 +1776,14 @@
         "COORD.F14"
       ],
       "reason": "A valid ignore replaced by fixed text repeats without answering the current message. Required-source schema/Host facts and bounded conversation actions repair normal decisions; genuine errors retain the durable fallback."
+    },
+    {
+      "id": "qwen_tool_choice_error_rewrite",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F19"
+      ],
+      "reason": "Global provider routing replaces required-to-auto retries. Each decision freezes a versioned provider chain; each model attempt is recorded separately. Model failures never replay committed tools or bypass plan review."
     }
   ]
 }

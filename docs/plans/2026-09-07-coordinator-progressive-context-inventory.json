@@ -5895,5 +5895,17 @@
       "preceding_replay_result": "6/7; retained by main-agent evidence report, not overwritten",
       "verification_after_change": "not_run"
     }
-  ]
+  ],
+  "global_model_configuration_2026_09_22": {
+    "source": "server/internal/modelregistry/coordinator.go",
+    "contract": "docs/inbound-coordinator-loop.md",
+    "replaces": "Qwen required-to-auto provider error retry",
+    "invariants": [
+      "freeze configuration once per decision",
+      "model errors only; never replay tools or committed effects",
+      "each provider attempt has its own generation and usage",
+      "all original Host validation remains authoritative"
+    ],
+    "verification": "unit_and_static_passed; preproduction_pending"
+  }
 }

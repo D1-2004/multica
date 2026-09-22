@@ -380,7 +380,7 @@ Diamond `dt-fde-multica-runtime.json` / `DEFAULT_GROUP` exposes `runtime.llm.coo
 
 数据集导出对嵌套 JSON 字符串执行同样的凭证与无关联系方式字段清理，仍以字符串返回该层，不修改权威输入；卡片 ID、作答者关联和选项 ID 保留。
 
-Qwen 在完整上下文的强制工具请求上返回特定 provider 400（InternalError.Algo / Invalid request parameters）时，Host 只将 tool_choice 从 required 改为 auto 重试一次，模型、上下文、工具、token预算和非思考设置保持不变。其它错误不走该兼容分支。返回值仍经过原工具名、结构、引用、身份与动作审查；自由文本不构成候选或已提交计划，也不得派发。R15 原失败保留，同请求 required/named失败与auto成功的预发模型对照已复现，产品链路另行验收。
+全局模型配置以数据库版本为权威，Diamond 保留只读默认 Provider。每次 Decide 冻结主模型与跨 Provider 降级链；所有模型调用（含回复整理和 finish 审查）共用该快照。上游限流、网络、超时、5xx、认证/模型不可用及 provider_error 可尝试下一候选；通用请求校验错误、业务审查拒绝、取消和总预算耗尽不降级。每个候选最多一次，共享原总预算；成功切换后本轮后续调用沿用备用模型。失败重试不重新执行工具或提交计划。原 required→auto 参数重写已移除，原工具和 Host 审查保持。每次供应商尝试独立记录 provider、model、配置版本与结果。当前结构/单元测试及预发验收状态见 registry 与交付记录。
 
 最终审查必须透传 UserDecisionSubmission 到 reviewTurn，实际装配 user_decision 模块。发起人的后续提交定义当前选择和补充要求；仅说明时可修改或取消原请求，不强制已被修改的原回复措辞。岗位／平台／身份边界仍生效，明确选项的方向与目标仍锁定，矛盾不执行。R18错误审查保留为反例。
 

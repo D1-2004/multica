@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/handler"
+	"github.com/multica-ai/multica/server/internal/modelregistry"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/modelpricing"
@@ -28,6 +29,7 @@ type runtimeConfigSecrets struct {
 }
 
 type appRuntimeConfig struct {
+	models  *modelregistry.Registry
 	remote  *runtimeconfig.Service
 	secrets runtimeConfigSecrets
 	base    handler.Config
@@ -119,6 +121,7 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 		runtimeProviders = c.remote.RuntimeProviders()
 	}
 	return service.FCE2BConfig{
+		ModelResolver:                     c.modelResolver(),
 		Enabled:                           raw.Runtime.FCE2B.Enabled,
 		Template:                          raw.Runtime.FCE2B.Template,
 		ServerURL:                         raw.Runtime.FCE2B.ServerURL,
@@ -147,6 +150,7 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 func (c *appRuntimeConfig) asb() service.ASBConfig {
 	raw := c.current()
 	return service.ASBConfig{
+		ModelResolver:    c.modelResolver(),
 		NetworkAllowlist: append([]string{}, raw.Runtime.ASB.NetworkAllowlist...),
 		NetworkServiceURLs: []string{
 			raw.AgentIdentity.ControlBaseURL, raw.AgentIdentity.SandboxBaseURL,
@@ -405,3 +409,10 @@ func (p runtimeFeatureFlagProvider) Lookup(_ context.Context, key string) (featu
 }
 
 func (runtimeFeatureFlagProvider) Name() string { return "runtime-diamond" }
+
+func (c *appRuntimeConfig) modelResolver() func(string) (string, error) {
+	if c.models == nil || os.Getenv("MULTICA_MODEL_GATEWAY_ENABLED") != "true" {
+		return nil
+	}
+	return c.models.ModelForAgent
+}
