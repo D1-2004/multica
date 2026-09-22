@@ -25,6 +25,7 @@ type finishWorkCheck struct {
 }
 
 type finishCheckResult struct {
+	Policy              *PolicyManifest            `json:"policy,omitempty"`
 	HistoryReadRequired bool                       `json:"-"` // Host-only prerequisite, never supplied by the reviewer.
 	RequestQuoteRef     string                     `json:"request_quote_ref"`
 	CandidateQuoteRef   string                     `json:"candidate_quote_ref"`
@@ -54,7 +55,7 @@ func finishCheckTool(action Action, quotes finishQuoteOptions, workRefs ...strin
 			"required": []string{"request_quote_ref", "candidate_quote_ref", "verdict", "reason", "missing_source_refs", "work_checks", "constraint_quote"},
 			"properties": map[string]any{
 				"work_checks":         map[string]any{"type": "array", "maxItems": len(workRefs), "description": "Exactly one entry per candidate start_work/continue_work, no entries for other kinds. Classify independent deliverables within EACH action, not number of source_refs. Empty for non-work-only candidates.", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action_ref", "deliverables", "target_match"}, "properties": map[string]any{"target_match": map[string]any{"type": "string", "enum": []string{"new_work", "same_deliverable", "different_deliverable", "no_advancement", "unknown"}, "description": "Judge the chosen work target separately from permission and output count. start_work uses new_work. For continue_work compare candidate.purpose with existing_work.original_goal: same_deliverable only for a substantive update to that SAME requested output; different_deliverable for an independent outcome even with shared evidence/topic/person. Same goal but no substantive new input or requested execution change is no_advancement: a status/presence check or reminder of accepted work does not request another execution — revise to report_status with loaded state_refs, do not keep continue_work. Missing target evidence is unknown. Only same_deliverable can allow continuation."}, "action_ref": actionRefSchema, "deliverables": map[string]any{"type": "string", "enum": []string{"single", "multiple", "none"}, "description": "Classify only THIS action's purpose. single: one output, including related steps or a same-kind batch (same mutation/config change on several named objects). multiple: THIS purpose mixes unrelated kinds of output (lookup AND a separate notice draft); sibling actions and other window requests do not make it multiple. none: no executable deliverable."}}}},
-				"constraint_quote":    map[string]any{"type": "string", "maxLength": 200, "description": "On revise caused by a supplied policy/configuration requirement, return its exact directive or mandatory reply template here (<=200 characters). Routing cannot read the hidden policy: saying only use the template is not repairable. Quote job_policy, current_window or supplied persona/reply_tone verbatim. Empty for allow or revisions unrelated to such requirements. Never invent rules."},
+				"constraint_quote":    map[string]any{"type": "string", "maxLength": 200, "description": "On revise caused by a supplied policy/configuration requirement, return its exact directive or mandatory reply template here (<=200 characters). Routing cannot read the hidden policy: saying only use the template is not repairable. Quote job_policy, current_window, user_decision_submission.custom or supplied persona/reply_tone verbatim. Empty for allow or revisions unrelated to such requirements. Never invent rules."},
 				"request_quote_ref":   map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Requests), "description": "Select a Host request quote option qN. The option is evidence only; read the entire current_window for all intents and constraints. Do not transcribe text."},
 				"candidate_quote_ref": map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Candidates), "description": "Select a Host candidate quote option cN for the action you compared. Host binds its exact original text; do not transcribe or escape it."},
 				"verdict":             map[string]any{"type": "string", "enum": []string{"allow", "revise"}, "description": "For decline, enforce explicitly mandatory reply wording in job_policy exactly: this is a requirement, not cosmetic polish. If candidate differs, revise and return just the literal required reply text in constraint_quote. Otherwise judge request coverage, applicability and authority."},
@@ -130,8 +131,9 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		"job_policy":               policy,
 	}
 	input := map[string]any{
-		"proactive_conversation": turn.ProactiveConversation,
-		"employee_account_name":  turn.EmployeeAccountName, "employee_uid": turn.DWSUID, "agent_name": conversationAgentName(turn),
+		"user_decision_submission": turn.UserDecisionSubmission,
+		"proactive_conversation":   turn.ProactiveConversation,
+		"employee_account_name":    turn.EmployeeAccountName, "employee_uid": turn.DWSUID, "agent_name": conversationAgentName(turn),
 		"source": turn.Source, "chat_type": turn.ChatType, "conversation_id": turn.ConversationID, modelAddressingField(turn): turn.Addressed,
 		"receiving_identity_status":    receivingIdentityStatus(turn),
 		"receiving_identity_authority": receivingIdentityAuthority,
@@ -226,7 +228,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	if err != nil {
 		return finishCheckResult{}, fmt.Errorf("encode finish proposal: %w", err)
 	}
-	reviewTurn := Turn{Loop: LoopFinishCheck, FinishCheckAction: decision.Action, FinishCheckMixedActions: mixedActions}
+	reviewTurn := Turn{Loop: LoopFinishCheck, FinishCheckAction: decision.Action, FinishCheckMixedActions: mixedActions, UserDecisionSubmission: turn.UserDecisionSubmission}
 	if turn.Loop != LoopTaskFinished {
 		reviewTurn.Source, reviewTurn.ChatType = turn.Source, turn.ChatType
 	}
@@ -275,9 +277,10 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 			return finishCheckResult{}, fmt.Errorf("finish check unavailable: %w", callErr)
 		}
 		result, protocolErr := parseFinishCheck(completion, len(refs))
+		result.Policy = nil // Only the Host may attach policy provenance.
 		if protocolErr == nil && result.ConstraintQuote != "" && !finishConstraintQuoteValid(result.ConstraintQuote, turn) {
 			if result.Verdict == "revise" {
-				protocolErr = fmt.Errorf("constraint_quote is not a verbatim substring of supplied restrictions. Copy the shortest exact directive or just the literal mandatory reply text from job_policy/persona/reply_tone/current_window. Preserve Markdown if quoting its surrounding directive; do not paraphrase or omit formatting inside the selected substring")
+				protocolErr = fmt.Errorf("constraint_quote is not a verbatim substring of supplied restrictions. Copy the shortest exact directive or just the literal mandatory reply text from job_policy/persona/reply_tone/current_window/user_decision_submission.custom. Preserve Markdown if quoting its surrounding directive; do not paraphrase or omit formatting inside the selected substring")
 			} else {
 				result.ConstraintQuote = ""
 				if lt != nil {
@@ -293,7 +296,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		}
 		if protocolErr == nil {
 			modelVerdict := result.Verdict
-			protocolErr = validateFinishWorkChecks(&result, decision)
+			protocolErr = validateFinishWorkContract(&result, decision, turn.UserDecisionSubmission == nil)
 			if protocolErr == nil {
 				protocolErr = validateFinishParticipationChecks(&result, turn, decision)
 			}
@@ -319,6 +322,9 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		}
 		record(result, false, protocolErr)
 		if protocolErr == nil {
+			if turn.UserDecisionSubmission != nil {
+				result.Policy = &manifest
+			}
 			if cache != nil {
 				cache[key] = result
 			}
@@ -495,12 +501,18 @@ func finishConstraintQuoteValid(quote string, turn Turn) bool {
 	if strings.TrimSpace(quote) == "" || utf8.RuneCountInString(quote) > 200 {
 		return false
 	}
-	return suppliedConstraintQuote(quote, turn)
+	return suppliedConstraintQuote(quote, turn) || (turn.UserDecisionSubmission != nil && strings.Contains(turn.UserDecisionSubmission.Custom, quote))
 }
 
 // The model assesses semantic independence explicitly; Host enforces the
 // one-deliverable action contract rather than interpreting prose in reason.
 func validateFinishWorkChecks(result *finishCheckResult, decision Decision) error {
+	return validateFinishWorkContract(result, decision, true)
+}
+
+// A submitted choice uses the semantic review verdict. Legacy automatic-routing
+// prose heuristics must not replace that verdict or select work for the user.
+func validateFinishWorkContract(result *finishCheckResult, decision Decision, automaticRouting bool) error {
 	expected := map[string]string{}
 	for i, a := range decision.CoordinationActions {
 		if a.Kind == "start_work" || a.Kind == "continue_work" {
@@ -520,7 +532,9 @@ func validateFinishWorkChecks(result *finishCheckResult, decision Decision) erro
 			}
 			applyFinishWorkCheckKindRepair(result, check, expected[check.ActionRef], len(expected) > 1)
 		}
-		applyInventedCapabilityRepair(result, expected)
+		if automaticRouting {
+			applyInventedCapabilityRepair(result, expected)
+		}
 		result.WorkChecks = nil
 		return nil
 	}
@@ -550,7 +564,9 @@ func validateFinishWorkChecks(result *finishCheckResult, decision Decision) erro
 	if len(seen) != len(expected) {
 		return fmt.Errorf("finish check did not assess every work action")
 	}
-	applyInventedCapabilityRepair(result, expected)
+	if automaticRouting {
+		applyInventedCapabilityRepair(result, expected)
+	}
 	return nil
 }
 

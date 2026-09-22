@@ -35,7 +35,6 @@ import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
 import { AgentMcpTab } from "./tabs/agent-mcp-tab";
-import { isFCE2BRuntime } from "@multica/core/runtimes";
 import { DshHomeTab } from "./tabs/dsh-home-tab";
 import { DshConfigTab } from "./tabs/dsh-config-tab";
 import { IntegrationsTab } from "./tabs/integrations-tab";

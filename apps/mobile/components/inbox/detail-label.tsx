@@ -46,6 +46,7 @@ const PRIORITY_LABEL: Record<IssuePriority, string> = {
 
 // Mirrors useTypeLabels in packages/views/inbox/components/inbox-detail-label.tsx
 const TYPE_LABEL: Record<InboxItemType, string> = {
+  coordinator_decision_alert: "Decision processing needs attention",
   issue_assigned: "Assigned",
   issue_subscribed: "Subscribed",
   unassigned: "Unassigned",
@@ -132,6 +133,7 @@ export function InboxDetailLabel({
         return details.to
           ? `Set due date to ${shortDate(details.to)}`
           : "Removed due date";
+      case "coordinator_decision_alert":
       case "new_comment":
         return singleLine(item.body) || TYPE_LABEL[item.type];
       case "reaction_added":

@@ -222,6 +222,8 @@
     "prop_dingtalk_show_ai_tag_hint": "在数字员工的钉钉回复和工作中主动发送的消息上显示 AI 发送标识。默认关闭，修改后对新接收的工作生效。",
     "prop_chat_session_resume": "续接上一轮会话",
     "prop_chat_session_resume_hint": "打开后，单聊中的连续追问会尽量沿用上一轮对话，回答更快。超过 20 分钟或智能体配置发生变化时，会自动带着完整历史重新开始。关闭后，每一轮都会开启新的模型会话。",
+    "prop_coordinator_user_decision": "由发起人选择处理方式",
+    "prop_coordinator_user_decision_hint": "每次入站请求询问一次，由发起人选择续接、新建或直接回复。24 小时未提交则过期，不自动执行。目前仅支持企业内部群。",
     "prop_inbound_coordinator": "入站先判断",
     "prop_inbound_coordinator_hint": "打开后，钉钉和网页消息会先判断能否直接回复；只有需要调用工具、查资料或持续跟进时才创建任务。关闭后，每条消息都直接交给智能体执行。",
     "prop_task_finished_loop": "事情完成再判断",

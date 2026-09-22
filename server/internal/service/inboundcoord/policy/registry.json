@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-15.10",
-  "assembly_version": "37",
+  "policy_version": "2026-09-21.2",
+  "assembly_version": "41",
   "modules": [
     {
       "id": "core",
@@ -288,6 +288,18 @@
       ],
       "budget_characters": 1027,
       "content_sha256": "557f060241a7d463bfa8092668d6145ca21a858073fb83103ae4a92b6b3650be"
+    },
+    {
+      "id": "user_decision",
+      "version": "10",
+      "file": "user_decision.md",
+      "applies_when": "user_decision",
+      "requires": [],
+      "owns_rule_ids": [
+        "COORD.F01"
+      ],
+      "budget_characters": 8407,
+      "content_sha256": "c2aca0cabafe0b8e594fc10e58201ce2c7daced33c29cbf508cb2ce2a3fc678b"
     }
   ],
   "obligations": [
@@ -304,7 +316,8 @@
         "window",
         "finish_check",
         "finish_check_work",
-        "conversation_reply"
+        "conversation_reply",
+        "user_decision"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -322,7 +335,16 @@
         "f02_history_read_unknown",
         "f01_receiving_mention_stale_name",
         "f01_uid_required_reply_rename",
-        "f01_other_uid_same_name_quote"
+        "f01_other_uid_same_name_quote",
+        "user_decision_initiator_contrast",
+        "user_decision_proposal_repair_contrast",
+        "user_decision_semantic_verdict_not_keyword_routing",
+        "user_decision_card_summary_and_recovery",
+        "user_decision_durable_recovery_and_receipt_lease",
+        "user_decision_monitor_contrast",
+        "user_decision_provider_tool_choice_contrast",
+        "user_decision_later_submission_review",
+        "user_decision_candidate_task_label"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -336,7 +358,17 @@
         "dialogue_history_guidance": "2026-09-10.6 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior.",
         "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending.",
         "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
-        "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback"
+        "other_uid_same_name_quote": "Host tests and real-model negative replay passed: invalid allow/revise recipient evidence repaired inside reviewer protocol; normal ignore without fallback",
+        "user_decision_r9": "R9 failure retained; Host regression and frozen real-model replay passed; deployed R10 native submission b4a631e3f662472bbc192e848d082f60 completed with exact reply and no tasks.",
+        "user_decision_summary": "5619b6c92 deployed run3109336221 allEnd=true; R13 native summary recovered to question, selection preserved, continuation task5bc88c5f-eac7-45f5-9770-9ef0257c4bc9 completed with three-line native result.",
+        "user_decision_recovery": "Preproduction run3109340164 release dad5c06c deployed allEnd=true at22:54:57; both replicas logged PostgreSQL checks passed. Expiry/cancellation/receipt lease, persisted card retry and first-valid concurrency tests passed. Prior fixture42P08 failure retained; no claim of native phone or provider-outage injection.",
+        "user_decision_snapshot": "R14 native preproduction event4cd4de16265749769a0d76cf749a4f29 completed with no tasks; 80658-byte snapshot export passed. Local storage upload/read/digest/size failure tests passed; real OSS outage injection not run.",
+        "user_decision_monitor": "Preproduction run3109347220 deploy161712686 allEnd=true; both replicas passed four PostgreSQL checks. Two actual send_unknown owner inbox alerts persisted and remained deduplicated across subsequent scans; live metrics read back.",
+        "user_decision_export": "Structured and JSON-string wrapped credential/contact removal host tests passed; authoritative inputs and decision associations preserved; R14 live export after deployment preserves semantically decoded snapshot and exact submission; JSON-string canonical formatting alone changes.",
+        "user_decision_provider_tool_choice": "R15 provider400 retained. Same synthetic full-context request fails required/named tool choice and succeeds auto; bounded fallback and fail-closed Host tests passed. All four preproduction model replay scenarios passed (107.88s), including new/reply/continue, text-only, contradiction and two similar tasks. 58b3fd150 deployed run3109348064 allEnd=true; R16 native preproduction eventbc6b44c5cb1148df8796d081a2f204b6 completed with exact reply and tasks=[]; R17 disabled-setting automatic contrast passed. R15b real upstream DWS send failure retained without resending and owner alert delivered.",
+        "user_decision_later_submission": "2db99ce81 deployed run3109350491 allEnd=true. R19 preserved custom text across restart and accepted native callback, but remained not_executed: interpretation reused old reply and constraint quote excluded custom. Latest submission is now emphasized, custom quotations validated verbatim, and semantic repairs bounded/audited without a second question. Real R19 frozen replay passed twice (8.78s,12.49s); corrected full-proposal later-wording/cancellation model contrasts passed9.25s. Host semantic repair and quote tests passed. Native after-fix pending. R20 native preproduction event7436edb0d0f54a51ad6bbe26708acd9a completed with exact latest custom reply and tasks=[] on99d8b2dc4; R21 event2467075e45374c529d087aff11259864 explicitly cancelled, not_executed/no work. Resolution/proposal/review prompt provenance and bounded explicit rejection messaging Host tests pass; live export/message verification pending.",
+        "user_decision_candidate_labels": "R19 incorrect task label retained. Separate task-label semantic review rejects false identity while allowing explicit purpose changes; host field propagation/fail-closed tests pass, two real-model contrasts pass (10.35s). Full four-scenario regression passes (142.93s). Native after-fix pending. Native R22 verified label/target WS-299, event4fad5430e456456889d8c2565919374f, task35a45abf-67fe-4fe0-9aae-2ac08a38eb03 completed; actual desktop shows three lines and updated final line. Selected option and custom text survived real rolling deploy.",
+        "user_decision_resolution_provenance": "c75f20a62 deployed run3109352900 allEnd=true. R22 live export includes separate interpretation/review policy manifests; R23 includes exact proposal/review prompt hashes. R23 model misclassified cancellation acknowledgment as executable; isolated interpretation policy fix passes exact frozen cancellation replay4.18s and later-wording/cancellation8.25s. Further interpretation regression and native confirmation pending. Narrowed-policy real model regressions passed67.61s: text-only new work, selected refinement, cancellation, contradiction, similar-task reference/negation. Native confirmation pending."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -368,7 +400,18 @@
         "server/internal/service/inboundcoord/contextual_reply_test.go",
         "docs/plans/2026-09-15-coordinator-contextual-replies.md",
         "server/internal/service/inboundcoord/conversation_reply.go",
-        "server/internal/service/inboundcoord/policy/conversation_reply.md"
+        "server/internal/service/inboundcoord/policy/conversation_reply.md",
+        "server/internal/service/inboundcoord/user_decision.go",
+        "server/internal/service/userdecision/event.go",
+        "server/internal/service/userdecision/store.go",
+        "server/internal/service/inboundcoord/finish_invented_capability_test.go",
+        "server/internal/service/userdecision/snapshot.go",
+        "server/internal/service/userdecision/snapshot_test.go",
+        "server/internal/service/userdecision/monitor.go",
+        "server/internal/service/userdecision/monitor_integration_test.go",
+        "server/internal/service/userdecision/export.go",
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/tool_choice_fallback_test.go"
       ],
       "case_file": "cases.json"
     },
@@ -1514,6 +1557,9 @@
     ],
     "conversation_reply_render": [
       "conversation_reply"
+    ],
+    "user_decision_submission": [
+      "user_decision"
     ]
   },
   "retired_implementations": [

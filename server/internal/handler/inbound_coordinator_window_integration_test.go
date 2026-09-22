@@ -25,13 +25,13 @@ func TestShouldEnqueueInboundCoordinatorJobHonorsOwnerSwitch(t *testing.T) {
 	}
 	plan := agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeChat}
 	id := parseUUID(agentID)
-	if err := testHandler.Queries.UpdateAgentInboundCoordinator(ctx, id, false); err != nil {
+	if err := testHandler.Queries.UpdateAgentInboundCoordinator(ctx, db.UpdateAgentInboundCoordinatorParams{ID: id, InboundCoordinator: false}); err != nil {
 		t.Fatal(err)
 	}
 	if shouldEnqueueInboundCoordinatorJob(ctx, testHandler, command, plan, id) {
 		t.Fatal("inbound coordinator off must send auto IM to the sandbox instead of the coordinator queue")
 	}
-	if err := testHandler.Queries.UpdateAgentInboundCoordinator(ctx, id, true); err != nil {
+	if err := testHandler.Queries.UpdateAgentInboundCoordinator(ctx, db.UpdateAgentInboundCoordinatorParams{ID: id, InboundCoordinator: true}); err != nil {
 		t.Fatal(err)
 	}
 	if !shouldEnqueueInboundCoordinatorJob(ctx, testHandler, command, plan, id) {

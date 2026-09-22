@@ -46,6 +46,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
+	"github.com/multica-ai/multica/server/internal/service/userdecision"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -216,6 +217,7 @@ type Handler struct {
 	Bus                      *events.Bus
 	TaskService              *service.TaskService
 	InboundCoordinator       *inboundcoord.Coordinator
+	UserDecisions            *userdecision.Service
 	InboundCoordinatorWorker *InboundCoordinatorJobWorker
 	SceneMemoryStore         *scenememory.Store
 	SceneMemoryWorker        *scenememory.Worker

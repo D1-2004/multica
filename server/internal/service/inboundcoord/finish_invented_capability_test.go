@@ -124,3 +124,17 @@ func TestLoopSubmitsStartWorkWhenReviewerInventsCatalogLimit(t *testing.T) {
 		t.Fatalf("catalog invention must not open a repair loop: action=%s calls=%d checks=%d err=%v", d.Action, chat.calls, chat.checkCalls, err)
 	}
 }
+
+func TestSubmittedChoiceDoesNotUseAutomaticCapabilityHeuristic(t *testing.T) {
+	for _, verdict := range []string{"allow", "revise"} {
+		reason := "The user explicitly forbids start_work; no tool permission is needed for this acknowledgement."
+		result := finishCheckResult{Verdict: verdict, Reason: reason, WorkChecks: []finishWorkCheck{}}
+		decision := Decision{CoordinationActions: []CoordinationAction{{Kind: "acknowledge"}}}
+		if err := validateFinishWorkContract(&result, decision, false); err != nil {
+			t.Fatal(err)
+		}
+		if result.Verdict != verdict || result.Reason != reason {
+			t.Fatalf("submitted choice semantic verdict replaced: %#v", result)
+		}
+	}
+}

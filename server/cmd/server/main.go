@@ -559,6 +559,9 @@ func main() {
 	if h.DingTalkResponsePolicySync != nil {
 		go h.DingTalkResponsePolicySync.Run(sweepCtx)
 	}
+	if h.UserDecisions != nil {
+		go h.UserDecisions.Run(sweepCtx)
+	}
 	if h.InboundCoordinatorWorker != nil {
 		go h.InboundCoordinatorWorker.Run(sweepCtx)
 	}
