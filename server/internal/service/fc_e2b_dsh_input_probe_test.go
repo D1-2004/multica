@@ -32,7 +32,7 @@ func TestDSHInputProbeBoundsConcurrentAndFailedRetries(t *testing.T) {
 		t.Fatalf("concurrent probes=%d", wins.Load())
 	}
 	for _, delay := range []time.Duration{30 * time.Second, 60 * time.Second, 120 * time.Second, 120 * time.Second} {
-		b.finishInputProbe(key, now, errors.New("offline"))
+		b.finishInputProbe(key, now, errors.New("offline"), false)
 		if b.beginInputProbe(key, now.Add(delay-time.Nanosecond)) {
 			t.Fatal("early retry")
 		}
@@ -45,7 +45,7 @@ func TestDSHInputProbeBoundsConcurrentAndFailedRetries(t *testing.T) {
 			t.Fatal("recovery suppressed")
 		}
 	}
-	b.finishInputProbe(key, now, nil)
+	b.finishInputProbe(key, now, nil, false)
 	if !b.beginInputProbe(key, now.Add(30*time.Second)) {
 		t.Fatal("success did not reset delay")
 	}
@@ -111,5 +111,25 @@ func TestDSHInputProbeSchedulingKeepsReplicaAndLiveTransportIndependent(t *testi
 	worker.failed = true
 	if !b.DSHSessionInputsNeedProbe(host) {
 		t.Fatal("failed input transport cannot recover")
+	}
+}
+
+func TestDSHInputProbeCancellationDoesNotPenalizeHost(t *testing.T) {
+	b := newDSHNativeAuthorityBridge("fixture")
+	key := dshSessionCapabilityKey{sandbox: "cancel-test"}
+	now := time.Now()
+	b.beginInputProbe(key, now)
+	b.finishInputProbe(key, now, context.Canceled, true)
+	if !b.beginInputProbe(key, now) {
+		t.Fatal("cancelled scan delayed recovery")
+	}
+	b.finishInputProbe(key, now, errors.New("real failure"), false)
+	retryAt := b.inputProbes[key].retryAt
+	if !b.beginInputProbe(key, retryAt) {
+		t.Fatal("failed host not due")
+	}
+	b.finishInputProbe(key, retryAt, context.DeadlineExceeded, true)
+	if b.inputProbes[key].failures != 1 || !b.beginInputProbe(key, retryAt) {
+		t.Fatal("scan timeout changed failure budget")
 	}
 }

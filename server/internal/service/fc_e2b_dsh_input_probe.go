@@ -66,11 +66,15 @@ func (b *dshNativeAuthorityBridge) beginInputProbe(key dshSessionCapabilityKey, 
 	p.inFlight = true
 	return true
 }
-func (b *dshNativeAuthorityBridge) finishInputProbe(key dshSessionCapabilityKey, now time.Time, err error) {
+func (b *dshNativeAuthorityBridge) finishInputProbe(key dshSessionCapabilityKey, now time.Time, err error, scanCancelled bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	p := b.inputProbes[key]
 	p.inFlight = false
+	// Scanner cancellation is a local budget/shutdown event, not a failed Host.
+	if scanCancelled {
+		return
+	}
 	delay := 30 * time.Second
 	if err != nil {
 		if p.failures < 3 {
@@ -99,7 +103,7 @@ func (l *FCE2BLauncher) refreshDSHSessionInputs(ctx context.Context, host dshhos
 	}
 	started := time.Now()
 	_, err := l.ensureDSHNativeAuthority(ctx, host, manager, submit, true)
-	l.nativeAuthority.finishInputProbe(key, time.Now(), err)
+	l.nativeAuthority.finishInputProbe(key, time.Now(), err, ctx.Err() != nil)
 	result := "connected"
 	if err != nil {
 		result = DSHSessionInputFailureCode(err)

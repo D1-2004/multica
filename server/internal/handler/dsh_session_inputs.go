@@ -59,6 +59,11 @@ func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next in
 	if err != nil {
 		return next
 	}
+	// Renew every live transport even when only a bounded subset needs CLI probes.
+	due := make([]bool, len(hosts))
+	for i, host := range hosts {
+		due[i] = h.FCE2BLauncher.DSHSessionInputsNeedProbe(host)
+	}
 	var group sync.WaitGroup
 	permits := make(chan struct{}, 2)
 	scheduled := 0
@@ -70,7 +75,7 @@ func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next in
 			nextIndex = index
 			break
 		}
-		if !h.FCE2BLauncher.DSHSessionInputsNeedProbe(host) {
+		if !due[index] {
 			continue
 		}
 		if ctx.Err() != nil {
