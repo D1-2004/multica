@@ -272,8 +272,11 @@ func (l *FCE2BLauncher) ensureDSHNativeAuthority(ctx context.Context, host dshho
 		return "", err
 	}
 	out, err := l.dshGatewayControl(ctx, host, "--gateway-authority")
-	if err != nil || validateDSHNativeGatewayReceipt(out, host, origin, authority, l.nativeAuthority.publicKey()) != nil {
-		return "", errors.New("DSH authority readiness is unconfirmed")
+	if err != nil {
+		return "", errDSHAuthorityProbeExecution
+	}
+	if validateDSHNativeGatewayReceipt(out, host, origin, authority, l.nativeAuthority.publicKey()) != nil {
+		return "", errDSHAuthorityProbeReceipt
 	}
 	var receipt struct {
 		TransportToken  string `json:"transport_token"`
@@ -308,4 +311,24 @@ func (l *FCE2BLauncher) ensureDSHNativeAuthority(ctx context.Context, host dshho
 		return "", err
 	}
 	return origin, nil
+}
+
+var errDSHAuthorityProbeExecution = errors.New("DSH authority probe execution failed")
+var errDSHAuthorityProbeReceipt = errors.New("DSH authority probe receipt invalid")
+
+// DSHSessionInputErrorClass exposes only stable categories, never subprocess
+// output, tokens or prompt content.
+func DSHSessionInputErrorClass(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, errDSHAuthorityProbeExecution):
+		return "probe_execution"
+	case errors.Is(err, errDSHAuthorityProbeReceipt):
+		return "probe_receipt"
+	default:
+		return "authority_transport"
+	}
 }

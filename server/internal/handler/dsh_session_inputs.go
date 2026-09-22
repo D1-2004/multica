@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/dshhost"
+	"github.com/multica-ai/multica/server/internal/service"
 )
 
 // Restore inputs independently of slow plugin builds and Host creation. Each
@@ -16,20 +18,21 @@ func (h *Handler) RunDSHSessionInputWorker(ctx context.Context) {
 	if h.DB == nil || h.FCE2BLauncher == nil {
 		return
 	}
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
+	retries := newDSHInputRetries()
 	next := 0
 	for {
-		next = h.refreshRunningDSHSessionInputs(ctx, next)
+		next = h.refreshRunningDSHSessionInputs(ctx, next, retries)
+		timer := time.NewTimer(15 * time.Second)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
 		}
 	}
 }
 
-func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next int) int {
+func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next int, retries *dshInputRetries) int {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	rows, err := h.DB.Query(ctx, `SELECT h.workspace_id,h.agent_id,h.scope_id,h.sandbox_id,h.generation FROM employee_filesystem_host h
@@ -56,11 +59,15 @@ func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next in
 	if err != nil {
 		return next
 	}
+	retries.retain(hosts)
 	var group sync.WaitGroup
 	permits := make(chan struct{}, 4)
 	for i := 0; i < len(hosts); i++ {
 		index := (next + i) % len(hosts)
 		host := hosts[index]
+		if !retries.due(host, time.Now()) {
+			continue
+		}
 		if ctx.Err() != nil {
 			group.Wait()
 			return index
@@ -76,8 +83,19 @@ func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next in
 			defer group.Done()
 			defer func() { <-permits }()
 			// No Host creation/restart or browser grant is involved.
-			if err := h.FCE2BLauncher.EnsureDSHSessionInputs(ctx, host, h.dshNativeAccessManager(), h.submitDSHNativePrompt); err != nil && ctx.Err() == nil {
-				slog.Warn("DSH background session input connection is not ready", "agent_id", host.AgentID, "workspace_id", host.WorkspaceID)
+			err := h.FCE2BLauncher.EnsureDSHSessionInputs(ctx, host, h.dshNativeAccessManager(), h.submitDSHNativePrompt)
+			if parent.Err() != nil {
+				return
+			}
+			delay := retries.record(host, err, time.Now())
+			if err != nil {
+				category := service.DSHSessionInputErrorClass(err)
+				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					category = "scan_deadline"
+				}
+				slog.Warn("DSH background session input connection is not ready", "agent_id", host.AgentID, "workspace_id", host.WorkspaceID,
+					"scope_id", host.ScopeID, "sandbox_id", host.SandboxID, "generation", host.Generation,
+					"error_class", category, "retry_after_ms", delay.Milliseconds())
 			}
 		}()
 	}
