@@ -1374,6 +1374,23 @@
     "probe_model": "Probe model",
     "probe": "Test tool calling",
     "probe_pass": "Model connectivity and tool calling passed.",
-    "probe_fail": "Model check failed (HTTP {{status}}). No tools were executed."
+    "probe_fail": "Model check failed (HTTP {{status}}). No tools were executed.",
+    "search_providers": "Filter providers by name or ID",
+    "model_count": "{{count}} models",
+    "disabled": "Disabled",
+    "no_matches": "No matching results",
+    "search_agent_models": "Search models or providers",
+    "filter_provider": "Filter provider",
+    "all_providers": "All providers",
+    "filter_selection": "Filter selection",
+    "all_models": "All models",
+    "selected_models": "Selected",
+    "unselected_models": "Unselected",
+    "filter_count": "Showing {{visible}} / {{total}} models · {{selected}} selected",
+    "catalog_title": "Model catalog",
+    "edit_catalog": "Edit catalog",
+    "done_editing": "Done editing",
+    "search_catalog": "Search catalog models",
+    "catalog_count": "Showing {{visible}} / {{total}} models"
   }
 }

@@ -1372,6 +1372,23 @@
     "probe_model": "测试模型",
     "probe": "测试工具调用",
     "probe_pass": "模型连接及工具调用校验通过。",
-    "probe_fail": "模型校验未通过（HTTP {{status}}），未执行任何工具。"
+    "probe_fail": "模型校验未通过（HTTP {{status}}），未执行任何工具。",
+    "search_providers": "筛选 Provider 名称或标识",
+    "model_count": "{{count}} 个模型",
+    "disabled": "已停用",
+    "no_matches": "没有匹配的结果",
+    "search_agent_models": "搜索模型名称或 Provider",
+    "filter_provider": "筛选 Provider",
+    "all_providers": "全部 Provider",
+    "filter_selection": "筛选勾选状态",
+    "all_models": "全部模型",
+    "selected_models": "已勾选",
+    "unselected_models": "未勾选",
+    "filter_count": "显示 {{visible}} / {{total}} 个模型 · 共勾选 {{selected}} 个",
+    "catalog_title": "模型目录",
+    "edit_catalog": "编辑目录",
+    "done_editing": "完成编辑",
+    "search_catalog": "搜索目录中的模型",
+    "catalog_count": "显示 {{visible}} / {{total}} 个模型"
   }
 }

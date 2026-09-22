@@ -131,7 +131,9 @@ function releaseProgress(release: FCE2BStableRelease | null): {
   };
 }
 
-export function StableFCE2BRuntimeOverviewPage() {
+export function StableFCE2BRuntimeOverviewPage({
+  embedded = false,
+}: { embedded?: boolean } = {}) {
   const { t, i18n } = useT("runtimes");
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
@@ -461,7 +463,13 @@ export function StableFCE2BRuntimeOverviewPage() {
         />
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <main className="mx-auto w-full max-w-[1680px] space-y-5 p-4 sm:p-6">
+          <main
+            className={
+              embedded
+                ? "w-full min-w-0 space-y-5 py-4"
+                : "mx-auto w-full max-w-[1680px] space-y-5 p-4 sm:p-6"
+            }
+          >
             <div>
               <h1 className="text-title-lg font-semibold tracking-tight">
                 {t(($) => $.fc_e2b_stable_overview.heading)}
@@ -556,7 +564,13 @@ export function StableFCE2BRuntimeOverviewPage() {
               />
             </section>
 
-            <section className="grid items-start gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+            <section
+              className={
+                embedded
+                  ? "grid min-w-0 items-start gap-4"
+                  : "grid items-start gap-4 xl:grid-cols-[360px_minmax(0,1fr)]"
+              }
+            >
               <TemplateDistributionCard
                 items={templateDistribution}
                 selected={templateFilter}
@@ -838,9 +852,7 @@ function OverviewMetric({
         {value}
       </p>
       {hint && (
-        <p className="mt-1 truncate text-micro text-muted-foreground">
-          {hint}
-        </p>
+        <p className="mt-1 truncate text-micro text-muted-foreground">{hint}</p>
       )}
     </button>
   );
