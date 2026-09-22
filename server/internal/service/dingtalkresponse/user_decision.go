@@ -32,12 +32,15 @@ func (t *decisionTransport) Open(ctx context.Context, r userdecision.Request) (u
 }
 func (s *decisionSession) Close() { s.close() }
 func (s *decisionSession) Verify(ctx context.Context, cid, messageID string) (string, string, error) {
-	corp, err := s.cli.VerifyInternalGroup(ctx, s.dir, cid)
+	corp, err := s.cli.DecisionOrganization(ctx, s.dir)
 	if err != nil {
 		return "", "", err
 	}
 	actor, err := s.cli.ResolveMessageSender(ctx, s.dir, cid, messageID)
-	return corp, actor, err
+	if err != nil {
+		return "", "", &dwsclient.DecisionIdentityError{Code: "user_decision_initiator_lookup_failed"}
+	}
+	return corp, actor, nil
 }
 func (s *decisionSession) Send(ctx context.Context, r userdecision.Request) (string, error) {
 	receipt, err := s.cli.SendA2UI(ctx, s.dir, dwsclient.A2UISendRequest{ConversationID: r.ConversationID, BizID: r.CardID, RequestID: r.SendRequestID, Summary: r.Proposal.Question, Messages: userdecision.Card(r.ID, r.Proposal)})
