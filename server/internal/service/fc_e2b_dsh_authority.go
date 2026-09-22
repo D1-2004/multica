@@ -32,15 +32,16 @@ type dshNativeAuthorityBridge struct {
 	workers map[string]*dshAuthorityWorker
 	// Capability hints only; authorization always checks the live persisted Host.
 	unsupported map[dshSessionCapabilityKey]time.Time
+	inputProbes map[dshSessionCapabilityKey]*dshInputProbe
 }
 type dshSessionCapabilityKey struct {
-	workspace, agent uuid.UUID
-	generation       int64
-	sandbox          string
+	workspace, agent, scope uuid.UUID
+	generation              int64
+	sandbox                 string
 }
 
 func sessionCapabilityKey(host dshhost.Host) dshSessionCapabilityKey {
-	return dshSessionCapabilityKey{host.WorkspaceID, host.AgentID, host.Generation, host.SandboxID}
+	return dshSessionCapabilityKey{workspace: host.WorkspaceID, agent: host.AgentID, scope: host.ScopeID, generation: host.Generation, sandbox: host.SandboxID}
 }
 
 type dshAuthorityWorker struct {
@@ -239,6 +240,32 @@ func (l *FCE2BLauncher) EnsureDSHNativeAuthority(ctx context.Context, host dshho
 }
 
 // Refresh only the new standard service. Existing images retain their browser lifecycle.
+// DSHSessionInputsNeedProbe is a scheduling hint only. It renews existing input
+// transports without creating a process; Ensure rechecks the gate before exec.
+func (l *FCE2BLauncher) DSHSessionInputsNeedProbe(host dshhost.Host) bool {
+	if l != nil && l.nativeAuthority != nil {
+		l.nativeAuthority.mu.Lock()
+		if time.Now().Before(l.nativeAuthority.unsupported[sessionCapabilityKey(host)]) {
+			l.nativeAuthority.mu.Unlock()
+			return false
+		}
+		active := false
+		for key, worker := range l.nativeAuthority.workers {
+			if strings.HasPrefix(key, "true/"+host.WorkspaceID.String()+"/"+host.AgentID.String()+"/"+strconv.FormatInt(host.Generation, 10)+"/") && strings.Contains(key, "/"+host.SandboxID+"/") && !worker.failed {
+				worker.until = time.Now().Add(dshhost.NativeSessionLifetime)
+				active = true
+			}
+		}
+		probe := l.nativeAuthority.inputProbes[sessionCapabilityKey(host)]
+		deferred := probe != nil && (probe.inFlight || time.Now().Before(probe.retryAt))
+		l.nativeAuthority.mu.Unlock()
+		if active || deferred {
+			return false
+		}
+	}
+	return true
+}
+
 func (l *FCE2BLauncher) EnsureDSHSessionInputs(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit) error {
 	if l != nil && l.nativeAuthority != nil {
 		l.nativeAuthority.mu.Lock()
@@ -258,8 +285,7 @@ func (l *FCE2BLauncher) EnsureDSHSessionInputs(ctx context.Context, host dshhost
 			return nil
 		}
 	}
-	_, err := l.ensureDSHNativeAuthority(ctx, host, manager, submit, true)
-	return err
+	return l.refreshDSHSessionInputs(ctx, host, manager, submit)
 }
 
 func (l *FCE2BLauncher) ensureDSHNativeAuthority(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit, managedOnly bool) (string, error) {
@@ -272,8 +298,11 @@ func (l *FCE2BLauncher) ensureDSHNativeAuthority(ctx context.Context, host dshho
 		return "", err
 	}
 	out, err := l.dshGatewayControl(ctx, host, "--gateway-authority")
-	if err != nil || validateDSHNativeGatewayReceipt(out, host, origin, authority, l.nativeAuthority.publicKey()) != nil {
-		return "", errors.New("DSH authority readiness is unconfirmed")
+	if err != nil {
+		return "", &dshInputProbeError{code: "gateway_exec_failed", cause: err}
+	}
+	if err := validateDSHNativeGatewayReceipt(out, host, origin, authority, l.nativeAuthority.publicKey()); err != nil {
+		return "", &dshInputProbeError{code: "gateway_receipt_rejected", cause: err}
 	}
 	var receipt struct {
 		TransportToken  string `json:"transport_token"`
