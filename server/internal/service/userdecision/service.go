@@ -239,7 +239,7 @@ func (s *Service) processIdentity(ctx context.Context, identity Request, session
 	send, err := s.Store.ClaimSend(ctx, identity.SenderUID, identity.SenderOrgID)
 	if err == nil {
 		sendCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-		cardID, sendErr := session.Send(sendCtx, send)
+		cardID, sendErr := s.sendCard(sendCtx, session, send)
 		cancel()
 		if sendErr != nil {
 			_ = s.Store.MarkSendUnknown(ctx, send.ID)
@@ -419,4 +419,14 @@ func (s *Service) finishResolution(ctx context.Context, r Request, plan, interpr
 		s.Wake()
 	}
 	return err
+}
+
+// Hydrate the immutable snapshot before transport routing, including OSS-backed requests.
+func (s *Service) sendCard(ctx context.Context, session Session, r Request) (string, error) {
+	snapshot, err := s.Store.Snapshot(ctx, r)
+	if err != nil {
+		return "", err
+	}
+	r.Snapshot = snapshot
+	return session.Send(ctx, r)
 }

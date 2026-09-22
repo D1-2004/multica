@@ -90,3 +90,40 @@ func TestSnapshotUploadFailureDoesNotProduceReference(t *testing.T) {
 		}
 	}
 }
+
+type snapshotSendSession struct {
+	Session
+	received Request
+	calls    int
+}
+
+func (s *snapshotSendSession) Send(_ context.Context, r Request) (string, error) {
+	s.received = r
+	s.calls++
+	return r.CardID, nil
+}
+func TestSendHydratesVerifiedSnapshotBeforeTransport(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{"turn": map[string]string{"ChatType": "p2p"}, "context": strings.Repeat("x", 70000)})
+	blobs := &snapshotFixtureStorage{}
+	r := Request{ID: "decision", WorkspaceID: "workspace", CardID: "stable-card", Snapshot: body}
+	ref, err := freezeSnapshot(context.Background(), blobs, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Snapshot = ref
+	svc := &Service{Store: &Store{Blobs: blobs}}
+	session := &snapshotSendSession{}
+	id, err := svc.sendCard(context.Background(), session, r)
+	if err != nil || id != r.CardID || session.calls != 1 || !bytes.Equal(session.received.Snapshot, body) {
+		t.Fatalf("snapshot not hydrated: %v", err)
+	}
+	blobs.readErr = errors.New("unavailable")
+	if _, err = svc.sendCard(context.Background(), session, r); err == nil || session.calls != 1 {
+		t.Fatal("unverified snapshot reached send")
+	}
+	blobs.readErr = nil
+	blobs.body[10] ^= 1
+	if _, err = svc.sendCard(context.Background(), session, r); err == nil || session.calls != 1 {
+		t.Fatal("corrupt snapshot reached send")
+	}
+}
