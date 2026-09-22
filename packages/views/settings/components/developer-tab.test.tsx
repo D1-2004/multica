@@ -14,4 +14,5 @@ beforeEach(()=>{state.developer=true;state.save.mockReset();state.discover.mockR
 describe("developer settings",()=>{
  it("hides global editing from non developers",()=>{state.developer=false;renderWithI18n(<DeveloperTab/>);expect(screen.getByText("Developer access required")).toBeInTheDocument();expect(screen.queryByText("Add provider")).toBeNull()});
  it("keeps Diamond readonly and hosts runtime release controls",()=>{renderWithI18n(<DeveloperTab/>);expect(screen.getByDisplayValue("https://default.example/v1")).toBeDisabled();expect(screen.queryByLabelText("API Key")).toBeNull();fireEvent.click(screen.getByRole("button",{name:"Runtime releases"}));expect(screen.getByTestId("runtime-release")).toBeInTheDocument()});
+ it("preserves newlines while manually editing a provider catalog",()=>{renderWithI18n(<DeveloperTab/>);fireEvent.click(screen.getByRole("button",{name:"Add provider"}));const catalogs=screen.getAllByLabelText("Model catalog (one model ID per line)");const input=catalogs[catalogs.length-1]!;fireEvent.change(input,{target:{value:"model-one\n"}});expect(input).toHaveValue("model-one\n")});
 });
