@@ -1,7 +1,7 @@
 /**
  * @vitest-environment jsdom
  */
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -10,7 +10,8 @@ import { chatKeys } from "../chat/queries";
 import { defaultStorage } from "../platform/storage";
 import { issueKeys } from "../issues/queries";
 import { labelKeys } from "../labels/queries";
-import { workspaceWorkingAgentsKeys } from "../agents/queries";
+import { workspaceWorkingAgentsKeys, agentTasksOptions, agentTaskSnapshotKeys } from "../agents/queries";
+import { ApiClient, setApiInstance } from "../api";
 import { workspaceKeys } from "../workspace/queries";
 import {
   markWorkspaceDeletePending,
@@ -429,5 +430,61 @@ describe("useRealtimeSync — workspace:deleted self-initiated suppression", () 
     dispatchWorkspaceDeleted(ws, "ws-2");
 
     expect(defaultStorage.getItem("multica_issue_draft:delete-me")).toBeNull();
+  });
+});
+
+
+describe("agent history refresh pressure", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("coalesces repeated task events into periodic history reads while invalidating presence", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockImplementation(async () => new Response("[]"));
+    vi.stubGlobal("fetch", fetchMock);
+    setApiInstance(new ApiClient("https://api.example.test"));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ws = createMockWs();
+    qc.setQueryData(agentTaskSnapshotKeys.list("ws-1"), []);
+    const hook = renderHook(() => {
+      useRealtimeSync(ws, createStores());
+      return useQuery(agentTasksOptions("ws-1", "agent-1"));
+    }, { wrapper: createWrapper(qc) });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const onAny = vi.mocked(ws.onAny).mock.calls[0]![0];
+    await act(async () => {
+      for (let i = 0; i < 50; i++) {
+        onAny({ type: "task:completed", payload: {} } as never);
+        await vi.advanceTimersByTimeAsync(200);
+      }
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(qc.getQueryState(agentTaskSnapshotKeys.list("ws-1"))?.isInvalidated).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_100); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    hook.unmount();
+    qc.clear();
+  });
+
+  it("aborts the actual history HTTP request when its last observer leaves", async () => {
+    let requestSignal: AbortSignal | undefined;
+    vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => {
+      requestSignal = init.signal as AbortSignal;
+      return new Promise<Response>((_resolve, reject) => {
+        requestSignal!.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      });
+    }));
+    setApiInstance(new ApiClient("https://api.example.test"));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const hook = renderHook(() => useQuery(agentTasksOptions("ws-1", "agent-1")), {
+      wrapper: createWrapper(qc),
+    });
+    expect(requestSignal?.aborted).toBe(false);
+    hook.unmount();
+    expect(requestSignal?.aborted).toBe(true);
+    qc.clear();
   });
 });

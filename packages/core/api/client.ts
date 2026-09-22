@@ -2987,8 +2987,8 @@ export class ApiClient {
     );
   }
 
-  async listAgentTasks(agentId: string): Promise<AgentTask[]> {
-    return this.fetch(`/api/agents/${agentId}/tasks`);
+  async listAgentTasks(agentId: string, signal?: AbortSignal): Promise<AgentTask[]> {
+    return this.fetch(`/api/agents/${agentId}/tasks`, { signal });
   }
 
   async listAgentCoordinatorConversations(
