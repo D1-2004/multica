@@ -154,30 +154,19 @@ func (c CLI) ConsumeCardEvents(ctx context.Context, dir string, ready func(), co
 	return commandFailed(ctx, "DWS card consumer stopped", err)
 }
 
-// VerifyInternalGroup requires the live group to belong to the authenticated
-// organization's profile; ordinary/cross-organization groups are excluded.
-func (c CLI) VerifyInternalGroup(ctx context.Context, dir, cid string) (string, error) {
-	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+conversation-info", "--group", cid, "--format", "json"})
+// DecisionIdentityError exposes a bounded diagnostic code, never DWS output or credentials.
+type DecisionIdentityError struct{ Code string }
+
+func (e *DecisionIdentityError) Error() string { return e.Code }
+func decisionIdentityError(code string) error  { return &DecisionIdentityError{Code: code} }
+
+// DecisionOrganization identifies the authenticated event subscription scope.
+// DWS owns channel capability checks. Group type and owning organization must
+// not be used to reject external groups or direct conversations locally.
+func (c CLI) DecisionOrganization(ctx context.Context, dir string) (string, error) {
+	raw, err := c.messageCommand(ctx, dir, []string{"profile", "list", "--format", "json"})
 	if err != nil {
-		return "", err
-	}
-	var info struct {
-		Success bool `json:"success"`
-		Result  struct {
-			Conversation struct {
-				ID       string `json:"openConversationId"`
-				CorpID   string `json:"corpId"`
-				CorpName string `json:"corpName"`
-				Single   bool   `json:"singleChat"`
-			} `json:"conversationInfo"`
-		} `json:"result"`
-	}
-	if json.Unmarshal(raw, &info) != nil || !info.Success || info.Result.Conversation.ID != cid || info.Result.Conversation.Single || info.Result.Conversation.CorpID == "" || info.Result.Conversation.CorpName == "" {
-		return "", errors.New("user decision requires an enterprise internal group")
-	}
-	raw, err = c.messageCommand(ctx, dir, []string{"profile", "list", "--format", "json"})
-	if err != nil {
-		return "", err
+		return "", decisionIdentityError("user_decision_sender_profile_lookup_failed")
 	}
 	var profiles struct {
 		Success  bool   `json:"success"`
@@ -188,12 +177,12 @@ func (c CLI) VerifyInternalGroup(ctx context.Context, dir, cid string) (string, 
 		} `json:"profiles"`
 	}
 	if json.Unmarshal(raw, &profiles) != nil || !profiles.Success {
-		return "", errors.New("could not verify sender organization")
+		return "", decisionIdentityError("user_decision_sender_profile_invalid")
 	}
 	for _, p := range profiles.Profiles {
-		if p.ID == profiles.Current && p.CorpID == info.Result.Conversation.CorpID {
+		if p.ID == profiles.Current && p.CorpID != "" {
 			return p.CorpID, nil
 		}
 	}
-	return "", errors.New("group is outside the sender organization")
+	return "", decisionIdentityError("user_decision_sender_profile_invalid")
 }

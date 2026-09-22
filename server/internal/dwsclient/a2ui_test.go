@@ -81,3 +81,22 @@ printf '%s' '{"success":true}'
 	}
 	t.Fatal("update would clear artifact annotations")
 }
+
+func TestDecisionOrganizationUsesSubscriptionNotConversationOwnership(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dws")
+	// Any conversation-info lookup would reintroduce a local channel restriction.
+	script := `#!/bin/sh
+case "$*" in
+ 'profile list --format json') printf '%s' '{"success":true,"currentProfile":"active","profiles":[{"profile":"other","corpId":"group-owner"},{"profile":"active","corpId":"sender-org"}]}' ;;
+ *) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	corp, err := (CLI{Path: path}).DecisionOrganization(context.Background(), dir)
+	if err != nil || corp != "sender-org" {
+		t.Fatalf("subscription organization: %q %v", corp, err)
+	}
+}

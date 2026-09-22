@@ -1045,7 +1045,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if policy.InboundCoordinator && policy.InboundCoordinatorUserDecision {
-		writeError(w, http.StatusConflict, "由发起人选择处理方式目前仅面向企业内部群，当前会话未执行任务")
+		writeError(w, http.StatusConflict, "由发起人选择处理方式目前通过数字员工的钉钉卡片交互，网页会话尚未接入，本次未执行任务")
 		return
 	}
 

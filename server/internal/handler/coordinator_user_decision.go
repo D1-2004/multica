@@ -3,9 +3,11 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
-	"strings"
 
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/userdecision"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -21,7 +23,7 @@ func decisionScope(ctx context.Context) *userdecision.Request {
 
 // The trusted worker supplies the job and lease; neither can come from the wire.
 func (h *Handler) guardUnavailableUserDecision(w http.ResponseWriter, r *http.Request, c DispatchCommand, dc agentDispatchContext) bool {
-	if c.Event.Domain != "channel" || c.Event.Type != "message.created" || c.TaskFinishedTaskID != "" {
+	if c.Event.Domain != "channel" || c.Event.Type != "message.created" || c.TaskFinishedTaskID != "" || c.Source.Type != "digital_employee" {
 		return false
 	}
 	if _, ok := inboundcoord.RestoredPlan(r.Context()); ok {
@@ -35,11 +37,8 @@ func (h *Handler) guardUnavailableUserDecision(w http.ResponseWriter, r *http.Re
 	if !policy.InboundCoordinator || !policy.InboundCoordinatorUserDecision {
 		return false
 	}
-	reject := func(text string) bool {
-		d := unavailableUserDecision(c)
-		if d.Action == inboundcoord.ActionReply {
-			d.UserText = text
-		}
+	reject := func(reason, text string) bool {
+		d := rejectedUserDecision(c, reason, text)
 		inboundcoord.RecordDecision(r.Context(), d)
 		if !writeDispatchCoordinatorTerminal(w, r.Context(), h, c, dc, d) {
 			writeError(w, 503, text)
@@ -47,20 +46,17 @@ func (h *Handler) guardUnavailableUserDecision(w http.ResponseWriter, r *http.Re
 		return true
 	}
 	if h.UserDecisions == nil {
-		return reject("用户选择服务暂不可用，本次未执行。")
-	}
-	if !strings.EqualFold(c.Event.Data.Conversation.Type, "group") || c.Source.Type != "digital_employee" {
-		return reject("由发起人选择处理方式目前仅支持企业内部群，本次未执行。")
+		return reject("user_decision_service_unavailable", "用户选择服务暂不可用，本次未执行。")
 	}
 	job, ok := r.Context().Value(userDecisionJobKey{}).(db.InboundCoordinatorJob)
 	if !ok {
-		return reject("本次请求尚未进入用户选择队列，未执行。")
+		return reject("user_decision_queue_unavailable", "本次请求尚未进入用户选择队列，未执行。")
 	}
 	uid, org := dispatchCoordinatorDWSIdentity(c)
 	req := userdecision.Request{ID: uuidToString(job.ID), JobID: uuidToString(job.ID), JobLease: uuidToString(job.LeaseToken), AgentID: uuidToString(dc.AgentID), WorkspaceID: uuidToString(dc.WorkspaceID), Environment: h.UserDecisions.Store.Environment, ConversationID: dispatchConversationID(c), SenderUID: uid, SenderOrgID: org}
 	session, err := h.UserDecisions.Transport.Open(r.Context(), req)
 	if err != nil {
-		return reject("暂时无法验证员工的发卡身份，本次未执行。")
+		return reject("user_decision_sender_unavailable", "暂时无法验证员工的发卡身份，本次未执行。")
 	}
 	defer session.Close()
 	origin := dispatchOriginOpenMsgID(c)
@@ -69,10 +65,12 @@ func (h *Handler) guardUnavailableUserDecision(w http.ResponseWriter, r *http.Re
 	}
 	req.CorpID, req.InitiatorID, err = session.Verify(r.Context(), req.ConversationID, origin)
 	if err != nil {
-		return reject("当前会话或发起人身份未通过企业内部群校验，本次未执行。")
+		reason, explanation := userDecisionIdentityRejection(err)
+		slog.Warn("coordinator user decision identity rejected", "event", "user_decision_identity_rejected", "agent_id", req.AgentID, "decision_id", req.ID, "reason", reason)
+		return reject(reason, explanation)
 	}
 	if !singleDecisionAuthor(c) {
-		return reject("这批消息来自不同发起人，无法合并选择，本次未执行。")
+		return reject("user_decision_multiple_initiators", "这批消息来自不同发起人，无法合并选择，本次未执行。")
 	}
 	*r = *r.WithContext(context.WithValue(r.Context(), userDecisionScopeKey{}, &req))
 	return false
@@ -118,10 +116,14 @@ func (h *Handler) persistUserDecision(w http.ResponseWriter, r *http.Request, d 
 	return true
 }
 func unavailableUserDecision(c DispatchCommand) inboundcoord.Decision {
+	return rejectedUserDecision(c, "user_decision_service_unavailable", "用户选择服务暂不可用，本次未执行。")
+}
+
+func rejectedUserDecision(c DispatchCommand, reason, text string) inboundcoord.Decision {
 	if c.ProactiveConversation && !dispatchMentionsEmployee(c) {
 		return inboundcoord.Decision{Action: inboundcoord.ActionSilence, Reason: "user_decision_not_addressed"}
 	}
-	return inboundcoord.Decision{Action: inboundcoord.ActionReply, UserText: "用户选择服务暂不可用，本次未执行。", Reason: "user_decision_service_unavailable"}
+	return inboundcoord.Decision{Action: inboundcoord.ActionReply, UserText: text, Reason: reason}
 }
 
 func decisionRequestID(ctx context.Context) string {
@@ -129,4 +131,15 @@ func decisionRequestID(ctx context.Context) string {
 		return scope.ID
 	}
 	return ""
+}
+
+func userDecisionIdentityRejection(err error) (string, string) {
+	var identityErr *dwsclient.DecisionIdentityError
+	if errors.As(err, &identityErr) {
+		switch identityErr.Code {
+		case "user_decision_sender_profile_lookup_failed", "user_decision_sender_profile_invalid", "user_decision_initiator_lookup_failed":
+			return identityErr.Code, "暂时无法核验会话或原消息发起人，本次未执行，请稍后重试。"
+		}
+	}
+	return "user_decision_identity_verification_failed", "当前会话或发起人身份未通过校验，本次未执行。"
 }

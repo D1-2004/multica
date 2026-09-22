@@ -391,3 +391,11 @@ Submission interpretation receives the trusted latest submission after the froze
 Dataset provenance includes exact proposal and candidate-review system prompt hashes, the actual interpretation policy manifest, and the Host-stamped policy manifest for each final review attempt. This preserves the distinction when a waiting request resumes after a deployment. Explicit non-executable interpretation reasons are shown to the initiator with a bounded message; infrastructure and review-protocol failures retain the generic public message.
 
 Submission interpretation uses only the registered user-decision policy, frozen evidence and typed plan schema. Automatic routing instructions are not assembled again at this stage; the full final-review and Host constraints still validate the resulting plan. Explicit cancellation is non-executable even when a cancellation acknowledgment could be written.
+
+### 用户决策渠道与诊断修正（2026-09-22）
+
+按用户最新要求，数字员工的用户决策入口不再限制内部群、会话类型或群归属组织。DWS 判断会话是否支持发卡；Host 只验证原消息与会话关联、发起人、订阅身份和提交幂等。决策记录的 corp_id 使用发卡账号当前认证 profile 的订阅组织，而非群拥有者组织；回调仍须匹配环境、订阅组织、会话、卡片、问题版本和原消息发起人。机器人暂不接入此模式，保持既有自动 Coordinator 流程，不因同一 Agent 开启数字员工用户决策而被拦截。
+
+`user_decision_service_unavailable` 仅表示未装配决策服务。持久化队列缺失、发卡身份不可用、订阅身份读取失败、原消息发起人读取失败和多发起人分别记录稳定原因码。底层 DWS 错误原文不得进入用户回复或日志；日志只保存有界原因、Agent 和决策 ID。未叫到员工的主动群监听仍保持静默。
+
+线上反例：HuntStudio AI资讯是 NEW_EXTERNAL_GROUP，群组织与须莫v6 发卡组织不同，旧版在发卡前拒绝并误报服务不可用。修正取消该本地渠道限制，不改变发起人的作答权限；单元测试不代替 DWS 真实发卡、回调与任务验收。
