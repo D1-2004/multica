@@ -396,8 +396,12 @@ Submission interpretation uses only the registered user-decision policy, frozen 
 
 按用户最新要求，数字员工的用户决策入口不再限制内部群、会话类型或群归属组织。DWS 判断会话是否支持发卡；Host 只验证原消息与会话关联、发起人、订阅身份和提交幂等。决策记录的 corp_id 使用发卡账号当前认证 profile 的订阅组织，而非群拥有者组织；回调仍须匹配环境、订阅组织、会话、卡片、问题版本和原消息发起人。机器人暂不接入此模式，保持既有自动 Coordinator 流程，不因同一 Agent 开启数字员工用户决策而被拦截。
 
-`user_decision_service_unavailable` 仅表示未装配决策服务。持久化队列缺失、发卡身份不可用、订阅身份读取失败、原消息发起人读取失败和多发起人分别记录稳定原因码。底层 DWS 错误原文不得进入用户回复或日志；日志只保存有界原因、Agent 和决策 ID。未叫到员工的主动群监听仍保持静默。
+`user_decision_service_unavailable` 仅表示未装配决策服务。持久化队列缺失、发卡身份不可用、订阅身份读取失败、原消息发起人读取失败和多发起人分别记录稳定原因码。普通诊断日志不保存底层 DWS 错误原文；日志只保存有界原因、Agent 和决策 ID。明确发卡拒绝的用户回复按下述专门契约展示脱敏的 DWS 提示。未叫到员工的主动群监听仍保持静默。
 
 线上反例：HuntStudio AI资讯是 NEW_EXTERNAL_GROUP，群组织与须莫v6 发卡组织不同，旧版在发卡前拒绝并误报服务不可用。修正取消该本地渠道限制，不改变发起人的作答权限；单元测试不代替 DWS 真实发卡、回调与任务验收。
 
 单聊发卡使用冻结入站类型 `p2p` 和已核验发起人的 `openDingTalkId`，映射 DWS `--open-dingtalk-id`；群聊使用原会话 ID 映射 `--chat-id`。这只选择接口参数，不限制渠道能力。发卡前读取并校验完整冻结快照（含 OSS 对象）；缺失或损坏不得猜测收件人。未知发送结果保留原卡片与请求标识，不能因参数修复自动补发。
+
+### 发卡明确拒绝的用户反馈
+
+DWS 返回 A2UI_TARGET_INVALID、INVALID_PARAM、FORBIDDEN 或 PERMISSION_DENIED 的明确业务拒绝时，发送租约持有者以同一 PostgreSQL 事务将决策终结为 not_executed，并恢复原 Coordinator 的 reply-only checkpoint。回复包含错误码、脱敏且限长的 DWS error.message 和 Trace ID；不转发 stderr、凭证或建议命令。未生成用户选择，不创建工作，不重发卡片、不更新不存在的卡片。重复或过期发送租约不能覆盖状态。INTERNAL_ERROR、下游投递失败和超时仍为 send_unknown，不能误判未发送。

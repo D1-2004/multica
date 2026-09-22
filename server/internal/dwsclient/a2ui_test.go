@@ -151,3 +151,25 @@ printf '%s' '{"ok":true,"result":{"success":true,"result":{"bizId":"card","cardI
 		})
 	}
 }
+
+func TestCardSendRejectionPreservesSafeProviderMessage(t *testing.T) {
+	e := messageCLIError([]byte(`{"error":{"category":"api","reason":"business_error","server_error_code":"A2UI_TARGET_INVALID","trace_id":"trace123","message":"A2UI card target group does not belong to the creator organization"}}`))
+	msg, ok := e.CardSendRejection()
+	if !ok || !strings.Contains(msg, "A2UI_TARGET_INVALID") || !strings.Contains(msg, "does not belong") || !strings.Contains(msg, "trace123") {
+		t.Fatal(msg, ok)
+	}
+	if strings.Contains(e.Error(), "does not belong") {
+		t.Fatal("provider message leaked into generic log error")
+	}
+	for _, code := range []string{"INTERNAL_ERROR", "A2UI_DELIVER_FAILED", "A2UI_WAVE_FAILED"} {
+		raw, _ := json.Marshal(map[string]any{"error": map[string]any{"category": "api", "reason": "business_error", "server_error_code": code, "message": "uncertain"}})
+		if _, ok := messageCLIError(raw).CardSendRejection(); ok {
+			t.Fatalf("ambiguous %s treated as rejected", code)
+		}
+	}
+	e = messageCLIError([]byte(`{"error":{"category":"api","reason":"business_error","server_error_code":"A2UI_TARGET_INVALID","message":"denied token=private-credential"}}`))
+	msg, _ = e.CardSendRejection()
+	if strings.Contains(msg, "private-credential") {
+		t.Fatal("credential leaked")
+	}
+}

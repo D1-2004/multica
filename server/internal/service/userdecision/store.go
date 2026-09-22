@@ -357,3 +357,32 @@ func (s *Store) MarkSendUnknown(ctx context.Context, id string) error {
 	}
 	return tx.Commit(ctx)
 }
+
+// RejectSend atomically records a definite rejection and wakes the original job
+// with a reply-only checkpoint. No user choice or business work is synthesized.
+func (s *Store) RejectSend(ctx context.Context, r Request, message string) error {
+	tx, err := s.DB.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	plan, err := json.Marshal(map[string]any{"Action": "reply", "UserText": message, "PlanVersion": "window-plan-v1", "Reason": "user_decision_send_rejected"})
+	if err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE coordinator_user_decision SET state='not_executed',last_error=$4,final_plan=$5,card_update_pending=false,lease_token=NULL,lease_expires_at=NULL,updated_at=now() WHERE id=$1 AND environment=$2 AND state='sending' AND lease_token=$3 AND sent_at IS NULL`, r.ID, s.Environment, r.LeaseToken, message, plan)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("decision send rejection no longer owns request")
+	}
+	tag, err = tx.Exec(ctx, `UPDATE inbound_coordinator_job SET command=jsonb_set(command,'{_coordinator_plan}',$2::jsonb),status='pending',available_at=now(),lease_token=NULL,lease_expires_at=NULL,last_error=NULL,updated_at=now() WHERE id=$1 AND status='pending' AND last_error='awaiting_user_decision'`, r.JobID, plan)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("waiting coordinator job could not resume after send rejection")
+	}
+	return tx.Commit(ctx)
+}
