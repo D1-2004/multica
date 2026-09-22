@@ -242,7 +242,22 @@ func (s *Service) processIdentity(ctx context.Context, identity Request, session
 		cardID, sendErr := s.sendCard(sendCtx, session, send)
 		cancel()
 		if sendErr != nil {
-			_ = s.Store.MarkSendUnknown(ctx, send.ID)
+			var rejection interface{ CardSendRejection() (string, bool) }
+			if errors.As(sendErr, &rejection) {
+				if message, rejected := rejection.CardSendRejection(); rejected {
+					if err := s.Store.RejectSend(ctx, send, message); err != nil {
+						return err
+					}
+					if s.Wake != nil {
+						s.Wake()
+					}
+					slog.Warn("user decision card send rejected", "event", "user_decision_send_rejected", "decision_id", send.ID)
+					return nil
+				}
+			}
+			if err := s.Store.MarkSendUnknown(ctx, send.ID); err != nil {
+				return err
+			}
 			fields := []any{"event", "user_decision_send_unknown", "decision_id", send.ID}
 			// Only typed, allowlisted CLI diagnostics may cross the log boundary.
 			var diagnostic interface{ DiagnosticFields() map[string]any }

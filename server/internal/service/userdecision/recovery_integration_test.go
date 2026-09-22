@@ -213,3 +213,45 @@ func TestPostgresCardUpdateRetryDoesNotRedispatch(t *testing.T) {
 		t.Fatalf("unknown send lost: %s %v", state, err)
 	}
 }
+
+func TestPostgresSendRejectionResumesReplyOnly(t *testing.T) {
+	ctx, pool := preproductionTestDB(t)
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	store := &Store{DB: tx, Environment: "integration-" + uuid.NewString()}
+	r := integrationRequest(store.Environment)
+	if _, err = store.Prepare(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO inbound_coordinator_job(id,acceptance_id,workspace_id,agent_id,user_id,endpoint_namespace_id,idempotency_key,command,chat_session_id,user_message_id,status,available_at,last_error) VALUES($1::uuid,$1::uuid,$2::uuid,$3::uuid,$1::uuid,$1::uuid,($1::uuid)::text,'{}',$1::uuid,$1::uuid,'pending','infinity','awaiting_user_decision')`, r.JobID, r.WorkspaceID, r.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	r, err = store.ClaimSend(ctx, r.SenderUID, r.SenderOrgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := "选择卡片发送失败，本次未执行。DWS 错误：A2UI_TARGET_INVALID"
+	if err = store.RejectSend(ctx, r, message); err != nil {
+		t.Fatal(err)
+	}
+	var state, text, action string
+	var noChoice, unsent, noUpdate bool
+	if err = tx.QueryRow(ctx, `SELECT state,submission IS NULL,sent_at IS NULL,NOT card_update_pending FROM coordinator_user_decision WHERE id=$1`, r.ID).Scan(&state, &noChoice, &unsent, &noUpdate); err != nil {
+		t.Fatal(err)
+	}
+	if state != "not_executed" || !noChoice || !unsent || !noUpdate {
+		t.Fatalf("invalid rejected state %s %v %v %v", state, noChoice, unsent, noUpdate)
+	}
+	if err = tx.QueryRow(ctx, `SELECT command->'_coordinator_plan'->>'Action',command->'_coordinator_plan'->>'UserText' FROM inbound_coordinator_job WHERE id=$1 AND available_at<=now()`, r.JobID).Scan(&action, &text); err != nil {
+		t.Fatal(err)
+	}
+	if action != "reply" || text != message {
+		t.Fatal(action, text)
+	}
+	if err = store.RejectSend(ctx, r, message); err == nil {
+		t.Fatal("duplicate rejection accepted")
+	}
+}
