@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"math/rand/v2"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/dshhost"
@@ -79,6 +81,9 @@ func (b *dshNativeAuthorityBridge) finishInputProbe(key dshSessionCapabilityKey,
 		p.failures = 0
 	}
 	// Even a successful but immediately disconnected transport must not spin.
+	if err != nil {
+		delay += time.Duration(rand.Int64N(int64(delay / 4)))
+	}
 	p.retryAt = now.Add(delay)
 }
 func (l *FCE2BLauncher) refreshDSHSessionInputs(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit) error {
@@ -92,7 +97,13 @@ func (l *FCE2BLauncher) refreshDSHSessionInputs(ctx context.Context, host dshhos
 	if !l.nativeAuthority.beginInputProbe(key, time.Now()) {
 		return ErrDSHInputProbeDeferred
 	}
+	started := time.Now()
 	_, err := l.ensureDSHNativeAuthority(ctx, host, manager, submit, true)
 	l.nativeAuthority.finishInputProbe(key, time.Now(), err)
+	result := "connected"
+	if err != nil {
+		result = DSHSessionInputFailureCode(err)
+	}
+	slog.Info("DSH background input probe finished", "workspace_id", host.WorkspaceID, "agent_id", host.AgentID, "scope_id", host.ScopeID, "sandbox_id", host.SandboxID, "generation", host.Generation, "elapsed_ms", time.Since(started).Milliseconds(), "result", result)
 	return err
 }

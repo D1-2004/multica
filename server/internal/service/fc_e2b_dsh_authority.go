@@ -240,6 +240,32 @@ func (l *FCE2BLauncher) EnsureDSHNativeAuthority(ctx context.Context, host dshho
 }
 
 // Refresh only the new standard service. Existing images retain their browser lifecycle.
+// DSHSessionInputsNeedProbe is a scheduling hint only. It renews existing input
+// transports without creating a process; Ensure rechecks the gate before exec.
+func (l *FCE2BLauncher) DSHSessionInputsNeedProbe(host dshhost.Host) bool {
+	if l != nil && l.nativeAuthority != nil {
+		l.nativeAuthority.mu.Lock()
+		if time.Now().Before(l.nativeAuthority.unsupported[sessionCapabilityKey(host)]) {
+			l.nativeAuthority.mu.Unlock()
+			return false
+		}
+		active := false
+		for key, worker := range l.nativeAuthority.workers {
+			if strings.HasPrefix(key, "true/"+host.WorkspaceID.String()+"/"+host.AgentID.String()+"/"+strconv.FormatInt(host.Generation, 10)+"/") && strings.Contains(key, "/"+host.SandboxID+"/") && !worker.failed {
+				worker.until = time.Now().Add(dshhost.NativeSessionLifetime)
+				active = true
+			}
+		}
+		probe := l.nativeAuthority.inputProbes[sessionCapabilityKey(host)]
+		deferred := probe != nil && (probe.inFlight || time.Now().Before(probe.retryAt))
+		l.nativeAuthority.mu.Unlock()
+		if active || deferred {
+			return false
+		}
+	}
+	return true
+}
+
 func (l *FCE2BLauncher) EnsureDSHSessionInputs(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit) error {
 	if l != nil && l.nativeAuthority != nil {
 		l.nativeAuthority.mu.Lock()

@@ -36,7 +36,11 @@ func TestDSHInputProbeBoundsConcurrentAndFailedRetries(t *testing.T) {
 		if b.beginInputProbe(key, now.Add(delay-time.Nanosecond)) {
 			t.Fatal("early retry")
 		}
-		now = now.Add(delay)
+		retryAt := b.inputProbes[key].retryAt
+		if retryAt.Before(now.Add(delay)) || !retryAt.Before(now.Add(delay+delay/4)) {
+			t.Fatal("retry jitter out of bounds")
+		}
+		now = retryAt
 		if !b.beginInputProbe(key, now) {
 			t.Fatal("recovery suppressed")
 		}
@@ -65,9 +69,15 @@ func TestDSHSessionInputsFailedExecIsNotRepeatedAndDoesNotLeakOutput(t *testing.
 	host := dshhost.Host{Key: dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, State: "running", Generation: 1, SandboxID: "fixture"}
 	runner := &fakeCommandRunner{errs: []error{errors.New("secret transport body"), errors.New("secret transport body")}}
 	l := &FCE2BLauncher{nativeAuthority: newDSHNativeAuthorityBridge("fixture"), Runner: runner, Config: FCE2BConfig{DSHNativeAuthority: "https://pre.multica.test", Domain: "fc.test", APIKey: "fixture", APIURL: "https://api.test"}}
+	if !l.DSHSessionInputsNeedProbe(host) {
+		t.Fatal("new host not due")
+	}
 	err := l.EnsureDSHSessionInputs(context.Background(), host, dshhost.NativeAccessManager{}, nil)
 	if DSHSessionInputFailureCode(err) != "gateway_exec_failed" || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("unsafe error: %v", err)
+	}
+	if l.DSHSessionInputsNeedProbe(host) {
+		t.Fatal("failed host remained due")
 	}
 	for i := 0; i < 100; i++ {
 		if err = l.EnsureDSHSessionInputs(context.Background(), host, dshhost.NativeAccessManager{}, nil); !errors.Is(err, ErrDSHInputProbeDeferred) {
@@ -81,5 +91,25 @@ func TestDSHSessionInputsFailedExecIsNotRepeatedAndDoesNotLeakOutput(t *testing.
 	_ = l.EnsureDSHSessionInputs(context.Background(), host, dshhost.NativeAccessManager{}, nil)
 	if len(runner.calls) != 2 {
 		t.Fatal("new generation not probed")
+	}
+}
+
+func TestDSHInputProbeSchedulingKeepsReplicaAndLiveTransportIndependent(t *testing.T) {
+	host := dshhost.Host{Key: dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, SandboxID: "fixture", Generation: 1}
+	a := &FCE2BLauncher{nativeAuthority: newDSHNativeAuthorityBridge("fixture")}
+	b := &FCE2BLauncher{nativeAuthority: newDSHNativeAuthorityBridge("fixture")}
+	key := sessionCapabilityKey(host)
+	a.nativeAuthority.beginInputProbe(key, time.Now())
+	if a.DSHSessionInputsNeedProbe(host) || !b.DSHSessionInputsNeedProbe(host) {
+		t.Fatal("replica probe budgets coupled")
+	}
+	worker := &dshAuthorityWorker{until: time.Now().Add(-time.Minute)}
+	b.nativeAuthority.workers["true/"+host.WorkspaceID.String()+"/"+host.AgentID.String()+"/1/authority/fixture/origin/token"] = worker
+	if b.DSHSessionInputsNeedProbe(host) || worker.until.Before(time.Now()) {
+		t.Fatal("live input transport not renewed")
+	}
+	worker.failed = true
+	if !b.DSHSessionInputsNeedProbe(host) {
+		t.Fatal("failed input transport cannot recover")
 	}
 }

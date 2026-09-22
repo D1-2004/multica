@@ -60,10 +60,19 @@ func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next in
 		return next
 	}
 	var group sync.WaitGroup
-	permits := make(chan struct{}, 4)
+	permits := make(chan struct{}, 2)
+	scheduled := 0
+	nextIndex := 0
 	for i := 0; i < len(hosts); i++ {
 		index := (next + i) % len(hosts)
 		host := hosts[index]
+		if scheduled >= 8 {
+			nextIndex = index
+			break
+		}
+		if !h.FCE2BLauncher.DSHSessionInputsNeedProbe(host) {
+			continue
+		}
 		if ctx.Err() != nil {
 			group.Wait()
 			return index
@@ -74,6 +83,7 @@ func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next in
 			group.Wait()
 			return index
 		}
+		scheduled++
 		group.Add(1)
 		go func() {
 			defer group.Done()
@@ -85,5 +95,5 @@ func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next in
 		}()
 	}
 	group.Wait()
-	return 0
+	return nextIndex
 }
