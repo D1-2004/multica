@@ -20,8 +20,8 @@ type A2UIAnnotation struct {
 }
 
 type A2UISendRequest struct {
-	ConversationID, BizID, RequestID, Summary string
-	Messages                                  []string
+	ConversationID, ReceiverOpenDingTalkID, BizID, RequestID, Summary string
+	Messages                                                          []string
 }
 type A2UIReceipt struct {
 	BizID          string `json:"bizId"`
@@ -31,14 +31,18 @@ type A2UIReceipt struct {
 // SendA2UI supplies stable tracing/business IDs. They are NOT evidence of send
 // idempotency: a caller must reconcile unknown outcomes instead of resending.
 func (c CLI) SendA2UI(ctx context.Context, dir string, in A2UISendRequest) (A2UIReceipt, error) {
-	if in.ConversationID == "" || in.BizID == "" || in.RequestID == "" || in.Summary == "" || len(in.Messages) == 0 {
+	if (in.ConversationID == "") == (in.ReceiverOpenDingTalkID == "") || in.BizID == "" || in.RequestID == "" || in.Summary == "" || len(in.Messages) == 0 {
 		return A2UIReceipt{}, errors.New("incomplete A2UI send request")
 	}
 	body, err := json.Marshal(in.Messages)
 	if err != nil {
 		return A2UIReceipt{}, err
 	}
-	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+messages-send", "--as", "user", "--chat-id", in.ConversationID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--yes", "--format", "json"})
+	targetFlag, targetID := "--chat-id", in.ConversationID
+	if in.ReceiverOpenDingTalkID != "" {
+		targetFlag, targetID = "--open-dingtalk-id", in.ReceiverOpenDingTalkID
+	}
+	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+messages-send", "--as", "user", targetFlag, targetID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--yes", "--format", "json"})
 	if err != nil {
 		return A2UIReceipt{}, err
 	}

@@ -100,3 +100,54 @@ esac
 		t.Fatalf("subscription organization: %q %v", corp, err)
 	}
 }
+
+func TestSendA2UITargetArguments(t *testing.T) {
+	for _, tc := range []struct {
+		name, cid, recipient, flag, target string
+		fail                               bool
+	}{
+		{"direct", "", "trusted-actor", "--open-dingtalk-id", "trusted-actor", false},
+		{"group", "source-cid", "", "--chat-id", "source-cid", false},
+		{"ambiguous", "source-cid", "trusted-actor", "", "", true},
+		{"missing", "", "", "", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "dws")
+			script := `#!/bin/sh
+printf '%s\n' "$@" > "$DWS_CONFIG_DIR/args"
+printf '%s' '{"ok":true,"result":{"success":true,"result":{"bizId":"card","cardInstanceId":42}}}'
+`
+			if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			_, err := (CLI{Path: path}).SendA2UI(context.Background(), dir, A2UISendRequest{ConversationID: tc.cid, ReceiverOpenDingTalkID: tc.recipient, BizID: "card", RequestID: "request", Summary: "question", Messages: []string{"{}"}})
+			if (err != nil) != tc.fail {
+				t.Fatalf("error=%v", err)
+			}
+			raw, readErr := os.ReadFile(filepath.Join(dir, "args"))
+			if tc.fail {
+				if !os.IsNotExist(readErr) {
+					t.Fatal("invalid target invoked DWS")
+				}
+				return
+			}
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			args := strings.Split(string(raw), "\n")
+			targets := 0
+			for i, arg := range args {
+				if arg == "--chat-id" || arg == "--open-dingtalk-id" {
+					targets++
+					if arg != tc.flag || args[i+1] != tc.target {
+						t.Fatalf("wrong target: %v", args)
+					}
+				}
+			}
+			if targets != 1 {
+				t.Fatalf("target count=%d", targets)
+			}
+		})
+	}
+}
