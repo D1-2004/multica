@@ -392,10 +392,10 @@ Dataset provenance includes exact proposal and candidate-review system prompt ha
 
 Submission interpretation uses only the registered user-decision policy, frozen evidence and typed plan schema. Automatic routing instructions are not assembled again at this stage; the full final-review and Host constraints still validate the resulting plan. Explicit cancellation is non-executable even when a cancellation acknowledgment could be written.
 
-### 百炼 DeepSeek 工具 schema（2026-09-22）
+### 统一工具 schema（2026-09-22）
 
-百炼 `deepseek-v4.1-flash` 的 `required` 工具请求会拒绝 JSON Schema 的 `uniqueItems` 关键字，包括值为 false 的情形。`oneOf` 子分支只声明父级属性差量时还会漏掉分支必填字段。已以同一请求的最小对照及完整上下文复现；这不是通过改为 `auto` 解决的问题。
+所有 Coordinator 模型使用同一份工具 schema：不发送 `uniqueItems`，对象 `oneOf` 每个分支包含完整属性及必填字段。重复 source_refs/state_refs 和参与判断引用由既有 Host 校验拒绝；生成约束不代替提交校验。工具选择仍为 `required`，不增加按模型或 Provider 的适配分支，也不恢复报错后改成 `auto` 的重试。
 
-仅该官方百炼端点与模型的 Coordinator 请求在 modelregistry 出站边界转换工具 schema：移除不支持的关键字并保留“引用不可重复”的说明，将对象 `oneOf` 的父级约束完整展开到每个互斥分支。原始 schema、参数快照、required 工具选择和其它模型保持不变。Host 的 `parseValidatedWindowPlan` 仍拒绝重复 source_refs/state_refs，`validateFinishParticipationChecks` 仍拒绝重复参与判断；不会重放工具或绕过语义审核。原有 policy 与历史义务不变，仅协议表示调整。
+背景是百炼 DeepSeek 的最小复现：`uniqueItems` 无论 true/false 均触发400，删除后200；只声明分支差量还会遗漏必填字段。因此采用所有模型共用的完整分支表示，保留相同动作、字段、闭合对象及审核义务。`coordinatorWireParams` 只完成统一 schema 展开，不改参数快照与实际工具执行。
 
-验证：`TestDeepSeekSchemaPreservesRequiredChoiceAndBranchConstraints`、`TestReferenceUniquenessRemainsHostEnforced` 与现有参与判断重复引用对照。预发完整调用与结果验证单独记录，HTTP200本身不证明计划可提交。
+验证：`TestCoordinatorWireSchemaPreservesRequiredChoiceAndBranchConstraints`、`TestReferenceUniquenessRemainsHostEnforced` 及参与判断重复引用对照。预发模型调用与完整任务验收分别记录。

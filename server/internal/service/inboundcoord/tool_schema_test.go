@@ -1,4 +1,4 @@
-package modelregistry
+package inboundcoord
 
 import (
 	"encoding/json"
@@ -8,16 +8,16 @@ import (
 	"testing"
 )
 
-func TestDeepSeekSchemaPreservesRequiredChoiceAndBranchConstraints(t *testing.T) {
+func TestCoordinatorWireSchemaPreservesRequiredChoiceAndBranchConstraints(t *testing.T) {
 	schema := shared.FunctionParameters{"type": "object", "properties": map[string]any{"actions": map[string]any{"type": "array", "items": map[string]any{
 		"type": "object", "additionalProperties": false, "required": []string{"kind"},
-		"properties": map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"acknowledge", "ignore"}}, "source_refs": map[string]any{"type": "array", "minItems": 1, "uniqueItems": true, "items": map[string]any{"type": "string", "enum": []string{"u1"}}}, "reply": map[string]any{"type": "string"}, "reason": map[string]any{"type": "string"}},
+		"properties": map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"acknowledge", "ignore"}}, "source_refs": map[string]any{"type": "array", "minItems": 1, "description": "References must be unique.", "items": map[string]any{"type": "string", "enum": []string{"u1"}}}, "reply": map[string]any{"type": "string"}, "reason": map[string]any{"type": "string"}},
 		"oneOf":      []any{map[string]any{"properties": map[string]any{"kind": map[string]any{"enum": []string{"acknowledge"}}}, "required": []string{"source_refs", "reply"}}, map[string]any{"properties": map[string]any{"kind": map[string]any{"enum": []string{"ignore"}}}, "required": []string{"source_refs", "reason"}}},
 	}}}}
 	params := openai.ChatCompletionNewParams{Tools: []openai.ChatCompletionToolUnionParam{openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{Name: "finish", Parameters: schema})}}
 	params.SetExtraFields(map[string]any{"tool_choice": "required", "enable_thinking": false})
 	before, _ := json.Marshal(params)
-	got, err := deepSeekCoordinatorParams(params)
+	got, err := coordinatorWireParams(params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,9 +57,9 @@ func TestDeepSeekSchemaPreservesRequiredChoiceAndBranchConstraints(t *testing.T)
 		}
 	}
 }
-func TestDeepSeekSchemaDoesNotRemovePropertyNamedUniqueItems(t *testing.T) {
+func TestToolSchemaPreservesPropertyNames(t *testing.T) {
 	schema := map[string]any{"type": "object", "properties": map[string]any{"uniqueItems": map[string]any{"type": "string"}}}
-	normalizeDeepSeekSchema(schema)
+	expandToolSchemaBranches(schema)
 	if schema["properties"].(map[string]any)["uniqueItems"] == nil {
 		t.Fatal("removed a property name")
 	}

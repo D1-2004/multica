@@ -1,4 +1,4 @@
-package modelregistry
+package inboundcoord
 
 import (
 	"encoding/json"
@@ -9,12 +9,10 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
-// deepSeekCoordinatorParams adapts the Coordinator's tool grammar for Bailian
-// DeepSeek V4.1. The service rejects the uniqueItems keyword (even false) and
-// loses inherited required fields when oneOf branches only specify deltas.
-// Host validation remains authoritative for duplicate source/state references.
-// Keep required tool choice, branch discriminators and all other constraints.
-func deepSeekCoordinatorParams(params openai.ChatCompletionNewParams) (openai.ChatCompletionNewParams, error) {
+// coordinatorWireParams gives every model the same self-contained tool schema.
+// Each oneOf branch includes its inherited object constraints, rather than
+// depending on a provider to combine sibling properties and required fields.
+func coordinatorWireParams(params openai.ChatCompletionNewParams) (openai.ChatCompletionNewParams, error) {
 	params.Tools = append([]openai.ChatCompletionToolUnionParam(nil), params.Tools...)
 	for i, tool := range params.Tools {
 		if tool.OfFunction == nil {
@@ -29,25 +27,20 @@ func deepSeekCoordinatorParams(params openai.ChatCompletionNewParams) (openai.Ch
 		if err = json.Unmarshal(raw, &schema); err != nil {
 			return params, fmt.Errorf("decode Coordinator tool schema: %w", err)
 		}
-		normalizeDeepSeekSchema(schema)
+		expandToolSchemaBranches(schema)
 		functionTool.Function.Parameters = shared.FunctionParameters(schema)
 		params.Tools[i].OfFunction = &functionTool
 	}
 	return params, nil
 }
 
-func normalizeDeepSeekSchema(value any) {
+func expandToolSchemaBranches(value any) {
 	switch schema := value.(type) {
 	case []any:
 		for _, v := range schema {
-			normalizeDeepSeekSchema(v)
+			expandToolSchemaBranches(v)
 		}
 	case map[string]any:
-		if _, exists := schema["uniqueItems"]; exists {
-			delete(schema, "uniqueItems")
-			description, _ := schema["description"].(string)
-			schema["description"] = description + " Entries must be unique; Host rejects duplicate references."
-		}
 		// Only expand the Coordinator's object-branch pattern. Copying each parent
 		// constraint into every mutually exclusive branch preserves the contract.
 		branches, hasBranches := schema["oneOf"].([]any)
@@ -109,7 +102,7 @@ func normalizeDeepSeekSchema(value any) {
 				merged["required"] = required
 				// Deep copy prevents sibling branches sharing rewritten property maps.
 				independent := cloneSchemaValue(merged).(map[string]any)
-				normalizeDeepSeekSchema(independent)
+				expandToolSchemaBranches(independent)
 				expanded = append(expanded, independent)
 			}
 			for key := range schema {
@@ -124,11 +117,11 @@ func normalizeDeepSeekSchema(value any) {
 			if key == "properties" {
 				if properties, ok := value.(map[string]any); ok {
 					for _, property := range properties {
-						normalizeDeepSeekSchema(property)
+						expandToolSchemaBranches(property)
 					}
 				}
 			} else if key == "items" || key == "oneOf" || key == "anyOf" || key == "allOf" {
-				normalizeDeepSeekSchema(value)
+				expandToolSchemaBranches(value)
 			}
 		}
 	}

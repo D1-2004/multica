@@ -402,6 +402,11 @@ func (c *Coordinator) completeWithModelLimit(ctx context.Context, model string, 
 		"tool_choice":     toolChoice,
 	})
 	params.Temperature = openai.Float(temp)
+	var err error
+	params, err = coordinatorWireParams(params)
+	if err != nil {
+		return nil, err
+	}
 	if c == nil || (c.Chat == nil && c.LLM == nil) {
 		return nil, fmt.Errorf("coordinator loop: llm is not configured")
 	}
