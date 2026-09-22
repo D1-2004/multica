@@ -914,7 +914,13 @@ export function useRealtimeSync(
         // Per-agent task list (Activity tab "Recent work"). Prefix match
         // catches every agent's list — the per-agent detail key sits
         // under agentTasks/<wsId>/<agentId>.
-        qc.invalidateQueries({ queryKey: agentTasksKeys.all(wsId) });
+        // History may contain tens of thousands of rows. Refetching on every
+        // workspace task event cancels/restarts it faster than it can finish.
+        // Keep cached history stale; mounted views refresh on their own cadence.
+        qc.invalidateQueries({
+          queryKey: agentTasksKeys.all(wsId),
+          refetchType: "none",
+        });
         // Per-issue task list (issue-detail Execution log). Prefix match
         // across all issues — keeps the contract "any task: event makes
         // every list-of-tasks query stale" so cache stays fresh even
