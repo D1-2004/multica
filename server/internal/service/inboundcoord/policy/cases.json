@@ -1532,6 +1532,26 @@
       "context_b": "同一目标如实称R12独立模拟结论并说明改为R19回复测试",
       "expected_effects": "A发卡前拒绝并修正；B不因更偏好直接回复而拒绝可选方向",
       "verification": "host_tests_passed; preproduction_model_replay_passed; native_after_fix_pending"
+    },
+    {
+      "id": "user_decision_dws_channel_capability",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "数字员工在外部群、普通群或单聊收到请求，消息作者可由实际发卡身份查询验证",
+      "context_b": "机器人收到请求，或数字员工收到无法验证原消息作者的请求",
+      "expected_effects": "前者不按会话类型或群归属组织本地拒绝，由DWS决定发卡支持情况；机器人保留原自动流程；作者不可验证仍不执行。回调绑定订阅组织和真实发起人，不能由群其他成员代选。 单聊将已核验发起人映射到 receiverOpenDingTalkId，群聊使用 openConversationId；OSS 冻结快照读取或校验失败不发卡，不重发未知卡片。",
+      "verification": "host_tests_passed_live_pending"
+    },
+    {
+      "id": "user_decision_card_send_rejection",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "DWS 明确返回 A2UI_TARGET_INVALID，含错误提示及 trace_id",
+      "context_b": "发送超时或返回 A2UI_DELIVER_FAILED，无法确定是否已创建卡片",
+      "expected_effects": "A 原子终结为 not_executed，以原回复流程显示脱敏的 DWS 错误码、提示和 Trace ID，无选择、无任务、不更新卡片；B 保留 send_unknown 且不得盲目重发。重复发送租约不得重复恢复回复。",
+      "verification": "host_tests_passed; preproduction_transaction_and_live_delivery_pending"
     }
   ]
 }

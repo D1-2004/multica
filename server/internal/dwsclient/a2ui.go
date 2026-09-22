@@ -20,8 +20,8 @@ type A2UIAnnotation struct {
 }
 
 type A2UISendRequest struct {
-	ConversationID, BizID, RequestID, Summary string
-	Messages                                  []string
+	ConversationID, ReceiverOpenDingTalkID, BizID, RequestID, Summary string
+	Messages                                                          []string
 }
 type A2UIReceipt struct {
 	BizID          string `json:"bizId"`
@@ -31,14 +31,18 @@ type A2UIReceipt struct {
 // SendA2UI supplies stable tracing/business IDs. They are NOT evidence of send
 // idempotency: a caller must reconcile unknown outcomes instead of resending.
 func (c CLI) SendA2UI(ctx context.Context, dir string, in A2UISendRequest) (A2UIReceipt, error) {
-	if in.ConversationID == "" || in.BizID == "" || in.RequestID == "" || in.Summary == "" || len(in.Messages) == 0 {
+	if (in.ConversationID == "") == (in.ReceiverOpenDingTalkID == "") || in.BizID == "" || in.RequestID == "" || in.Summary == "" || len(in.Messages) == 0 {
 		return A2UIReceipt{}, errors.New("incomplete A2UI send request")
 	}
 	body, err := json.Marshal(in.Messages)
 	if err != nil {
 		return A2UIReceipt{}, err
 	}
-	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+messages-send", "--as", "user", "--chat-id", in.ConversationID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--yes", "--format", "json"})
+	targetFlag, targetID := "--chat-id", in.ConversationID
+	if in.ReceiverOpenDingTalkID != "" {
+		targetFlag, targetID = "--open-dingtalk-id", in.ReceiverOpenDingTalkID
+	}
+	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+messages-send", "--as", "user", targetFlag, targetID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--yes", "--format", "json"})
 	if err != nil {
 		return A2UIReceipt{}, err
 	}
@@ -154,30 +158,19 @@ func (c CLI) ConsumeCardEvents(ctx context.Context, dir string, ready func(), co
 	return commandFailed(ctx, "DWS card consumer stopped", err)
 }
 
-// VerifyInternalGroup requires the live group to belong to the authenticated
-// organization's profile; ordinary/cross-organization groups are excluded.
-func (c CLI) VerifyInternalGroup(ctx context.Context, dir, cid string) (string, error) {
-	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+conversation-info", "--group", cid, "--format", "json"})
+// DecisionIdentityError exposes a bounded diagnostic code, never DWS output or credentials.
+type DecisionIdentityError struct{ Code string }
+
+func (e *DecisionIdentityError) Error() string { return e.Code }
+func decisionIdentityError(code string) error  { return &DecisionIdentityError{Code: code} }
+
+// DecisionOrganization identifies the authenticated event subscription scope.
+// DWS owns channel capability checks. Group type and owning organization must
+// not be used to reject external groups or direct conversations locally.
+func (c CLI) DecisionOrganization(ctx context.Context, dir string) (string, error) {
+	raw, err := c.messageCommand(ctx, dir, []string{"profile", "list", "--format", "json"})
 	if err != nil {
-		return "", err
-	}
-	var info struct {
-		Success bool `json:"success"`
-		Result  struct {
-			Conversation struct {
-				ID       string `json:"openConversationId"`
-				CorpID   string `json:"corpId"`
-				CorpName string `json:"corpName"`
-				Single   bool   `json:"singleChat"`
-			} `json:"conversationInfo"`
-		} `json:"result"`
-	}
-	if json.Unmarshal(raw, &info) != nil || !info.Success || info.Result.Conversation.ID != cid || info.Result.Conversation.Single || info.Result.Conversation.CorpID == "" || info.Result.Conversation.CorpName == "" {
-		return "", errors.New("user decision requires an enterprise internal group")
-	}
-	raw, err = c.messageCommand(ctx, dir, []string{"profile", "list", "--format", "json"})
-	if err != nil {
-		return "", err
+		return "", decisionIdentityError("user_decision_sender_profile_lookup_failed")
 	}
 	var profiles struct {
 		Success  bool   `json:"success"`
@@ -188,12 +181,12 @@ func (c CLI) VerifyInternalGroup(ctx context.Context, dir, cid string) (string, 
 		} `json:"profiles"`
 	}
 	if json.Unmarshal(raw, &profiles) != nil || !profiles.Success {
-		return "", errors.New("could not verify sender organization")
+		return "", decisionIdentityError("user_decision_sender_profile_invalid")
 	}
 	for _, p := range profiles.Profiles {
-		if p.ID == profiles.Current && p.CorpID == info.Result.Conversation.CorpID {
+		if p.ID == profiles.Current && p.CorpID != "" {
 			return p.CorpID, nil
 		}
 	}
-	return "", errors.New("group is outside the sender organization")
+	return "", decisionIdentityError("user_decision_sender_profile_invalid")
 }

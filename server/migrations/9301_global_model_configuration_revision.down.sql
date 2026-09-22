@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS global_model_configuration_revision;

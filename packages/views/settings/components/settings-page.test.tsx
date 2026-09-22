@@ -9,6 +9,8 @@ import { renderWithI18n } from "../../test/i18n";
 const stub = vi.hoisted(
   () => (name: string) => () => ({ [name]: () => <div>{name}</div> }),
 );
+vi.mock("@multica/core/global-models", () => ({useDeveloperCapabilities:()=>({data:{developer:false}})}));
+vi.mock("./developer-tab", stub("DeveloperTab"));
 vi.mock("./account-tab", stub("AccountTab"));
 vi.mock("./preferences-tab", stub("PreferencesTab"));
 vi.mock("./chat-tab", stub("ChatTab"));
@@ -66,6 +68,7 @@ function trigger() {
 }
 
 beforeEach(() => {
+  vi.stubGlobal("localStorage", {getItem:()=>null,setItem:()=>{},removeItem:()=>{}});
   layout.compact = true;
   replace.mockClear();
 });

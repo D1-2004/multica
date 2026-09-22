@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 // SendRequest contains only trusted routing fields and a platform idempotency key.
@@ -47,6 +49,7 @@ func (e *SendRejectedError) Error() string { return "DWS message send rejected: 
 type MessageOperationError struct {
 	diagnostics      *HistoryError
 	DuplicateRequest bool
+	providerMessage  string
 }
 
 func (e *MessageOperationError) Error() string {
@@ -83,7 +86,7 @@ func messageCLIError(raw []byte) *MessageOperationError {
 	}
 	_ = json.Unmarshal(candidate, &envelope)
 	duplicate := diagnostics.fields["server_error_code"] == "1001" && strings.Contains(envelope.Error.Message, "Request is repeated with uuid '")
-	return &MessageOperationError{diagnostics: diagnostics, DuplicateRequest: duplicate}
+	return &MessageOperationError{diagnostics: diagnostics, DuplicateRequest: duplicate, providerMessage: SafeMessage(redact.Text(envelope.Error.Message), 1000)}
 }
 
 func (c CLI) Send(ctx context.Context, configDir string, req SendRequest) (SendResult, error) {
@@ -312,4 +315,25 @@ func ParseSendStatus(raw []byte) (SendStatus, error) {
 		}
 	}
 	return status, nil
+}
+
+// CardSendRejection returns only definite pre-delivery failures. Transport and
+// downstream delivery failures remain ambiguous and must not authorize a resend.
+func (e *MessageOperationError) CardSendRejection() (string, bool) {
+	if !e.diagnostics.BusinessError() {
+		return "", false
+	}
+	switch e.diagnostics.ServerErrorCode() {
+	case "A2UI_TARGET_INVALID", "INVALID_PARAM", "FORBIDDEN", "PERMISSION_DENIED":
+	default:
+		return "", false
+	}
+	text := "选择卡片发送失败，本次未执行。\nDWS 错误：" + e.diagnostics.ServerErrorCode()
+	if e.providerMessage != "" {
+		text += "\nDWS 提示：" + e.providerMessage
+	}
+	if trace := e.diagnostics.field("trace_id"); trace != "" {
+		text += "\nTrace ID：" + trace
+	}
+	return text, true
 }

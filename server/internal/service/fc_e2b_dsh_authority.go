@@ -32,15 +32,16 @@ type dshNativeAuthorityBridge struct {
 	workers map[string]*dshAuthorityWorker
 	// Capability hints only; authorization always checks the live persisted Host.
 	unsupported map[dshSessionCapabilityKey]time.Time
+	inputProbes map[dshSessionCapabilityKey]*dshInputProbe
 }
 type dshSessionCapabilityKey struct {
-	workspace, agent uuid.UUID
-	generation       int64
-	sandbox          string
+	workspace, agent, scope uuid.UUID
+	generation              int64
+	sandbox                 string
 }
 
 func sessionCapabilityKey(host dshhost.Host) dshSessionCapabilityKey {
-	return dshSessionCapabilityKey{host.WorkspaceID, host.AgentID, host.Generation, host.SandboxID}
+	return dshSessionCapabilityKey{workspace: host.WorkspaceID, agent: host.AgentID, scope: host.ScopeID, generation: host.Generation, sandbox: host.SandboxID}
 }
 
 type dshAuthorityWorker struct {
@@ -258,8 +259,7 @@ func (l *FCE2BLauncher) EnsureDSHSessionInputs(ctx context.Context, host dshhost
 			return nil
 		}
 	}
-	_, err := l.ensureDSHNativeAuthority(ctx, host, manager, submit, true)
-	return err
+	return l.refreshDSHSessionInputs(ctx, host, manager, submit)
 }
 
 func (l *FCE2BLauncher) ensureDSHNativeAuthority(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit, managedOnly bool) (string, error) {
@@ -273,10 +273,10 @@ func (l *FCE2BLauncher) ensureDSHNativeAuthority(ctx context.Context, host dshho
 	}
 	out, err := l.dshGatewayControl(ctx, host, "--gateway-authority")
 	if err != nil {
-		return "", errDSHAuthorityProbeExecution
+		return "", &dshInputProbeError{code: "gateway_exec_failed", cause: err}
 	}
-	if validateDSHNativeGatewayReceipt(out, host, origin, authority, l.nativeAuthority.publicKey()) != nil {
-		return "", errDSHAuthorityProbeReceipt
+	if err := validateDSHNativeGatewayReceipt(out, host, origin, authority, l.nativeAuthority.publicKey()); err != nil {
+		return "", &dshInputProbeError{code: "gateway_receipt_rejected", cause: err}
 	}
 	var receipt struct {
 		TransportToken  string `json:"transport_token"`
@@ -311,24 +311,4 @@ func (l *FCE2BLauncher) ensureDSHNativeAuthority(ctx context.Context, host dshho
 		return "", err
 	}
 	return origin, nil
-}
-
-var errDSHAuthorityProbeExecution = errors.New("DSH authority probe execution failed")
-var errDSHAuthorityProbeReceipt = errors.New("DSH authority probe receipt invalid")
-
-// DSHSessionInputErrorClass exposes only stable categories, never subprocess
-// output, tokens or prompt content.
-func DSHSessionInputErrorClass(err error) string {
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return "deadline"
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	case errors.Is(err, errDSHAuthorityProbeExecution):
-		return "probe_execution"
-	case errors.Is(err, errDSHAuthorityProbeReceipt):
-		return "probe_receipt"
-	default:
-		return "authority_transport"
-	}
 }

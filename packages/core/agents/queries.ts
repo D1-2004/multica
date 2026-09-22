@@ -160,15 +160,16 @@ export function agentPublicationsOptions(wsId: string, agentId: string) {
 
 // All tasks for a single agent (the agent detail page consumer). Powers both
 // the inspector's 7-day throughput stats and the Tasks tab list — shared so
-// they don't fetch twice. WS task events invalidate this via the existing
-// task-prefix invalidation in useRealtimeSync.
+// they don't fetch twice. Task events only mark history stale; mounted views
+// refetch on a bounded cadence instead of restarting on every event.
 export function agentTasksOptions(wsId: string, agentId: string) {
   return queryOptions({
     queryKey: agentTasksKeys.detail(wsId, agentId),
-    queryFn: () => api.listAgentTasks(agentId),
+    queryFn: ({ signal }) => api.listAgentTasks(agentId, signal),
     staleTime: 30 * 1000,
     gcTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: true,
+    refetchInterval: 30 * 1000,
+    refetchOnWindowFocus: false,
   });
 }
 

@@ -18,10 +18,10 @@ func (h *Handler) RunDSHSessionInputWorker(ctx context.Context) {
 	if h.DB == nil || h.FCE2BLauncher == nil {
 		return
 	}
-	retries := newDSHInputRetries()
+	// Wait after completion; an overdue ticker must not trigger a new scan immediately.
 	next := 0
 	for {
-		next = h.refreshRunningDSHSessionInputs(ctx, next, retries)
+		next = h.refreshRunningDSHSessionInputs(ctx, next)
 		timer := time.NewTimer(15 * time.Second)
 		select {
 		case <-ctx.Done():
@@ -32,7 +32,7 @@ func (h *Handler) RunDSHSessionInputWorker(ctx context.Context) {
 	}
 }
 
-func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next int, retries *dshInputRetries) int {
+func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next int) int {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	rows, err := h.DB.Query(ctx, `SELECT h.workspace_id,h.agent_id,h.scope_id,h.sandbox_id,h.generation FROM employee_filesystem_host h
@@ -59,15 +59,11 @@ func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next in
 	if err != nil {
 		return next
 	}
-	retries.retain(hosts)
 	var group sync.WaitGroup
 	permits := make(chan struct{}, 4)
 	for i := 0; i < len(hosts); i++ {
 		index := (next + i) % len(hosts)
 		host := hosts[index]
-		if !retries.due(host, time.Now()) {
-			continue
-		}
 		if ctx.Err() != nil {
 			group.Wait()
 			return index
@@ -83,19 +79,8 @@ func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next in
 			defer group.Done()
 			defer func() { <-permits }()
 			// No Host creation/restart or browser grant is involved.
-			err := h.FCE2BLauncher.EnsureDSHSessionInputs(ctx, host, h.dshNativeAccessManager(), h.submitDSHNativePrompt)
-			if parent.Err() != nil {
-				return
-			}
-			delay := retries.record(host, err, time.Now())
-			if err != nil {
-				category := service.DSHSessionInputErrorClass(err)
-				if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-					category = "scan_deadline"
-				}
-				slog.Warn("DSH background session input connection is not ready", "agent_id", host.AgentID, "workspace_id", host.WorkspaceID,
-					"scope_id", host.ScopeID, "sandbox_id", host.SandboxID, "generation", host.Generation,
-					"error_class", category, "retry_after_ms", delay.Milliseconds())
+			if err := h.FCE2BLauncher.EnsureDSHSessionInputs(ctx, host, h.dshNativeAccessManager(), h.submitDSHNativePrompt); err != nil && ctx.Err() == nil && !errors.Is(err, service.ErrDSHInputProbeDeferred) {
+				slog.Warn("DSH background session input connection is not ready", "agent_id", host.AgentID, "workspace_id", host.WorkspaceID, "generation", host.Generation, "scope_id", host.ScopeID, "sandbox_id", host.SandboxID, "error_code", service.DSHSessionInputFailureCode(err))
 			}
 		}()
 	}

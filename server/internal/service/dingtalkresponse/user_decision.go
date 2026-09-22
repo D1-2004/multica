@@ -2,6 +2,8 @@ package dingtalkresponse
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/service/userdecision"
 	"strings"
@@ -32,15 +34,22 @@ func (t *decisionTransport) Open(ctx context.Context, r userdecision.Request) (u
 }
 func (s *decisionSession) Close() { s.close() }
 func (s *decisionSession) Verify(ctx context.Context, cid, messageID string) (string, string, error) {
-	corp, err := s.cli.VerifyInternalGroup(ctx, s.dir, cid)
+	corp, err := s.cli.DecisionOrganization(ctx, s.dir)
 	if err != nil {
 		return "", "", err
 	}
 	actor, err := s.cli.ResolveMessageSender(ctx, s.dir, cid, messageID)
-	return corp, actor, err
+	if err != nil {
+		return "", "", &dwsclient.DecisionIdentityError{Code: "user_decision_initiator_lookup_failed"}
+	}
+	return corp, actor, nil
 }
 func (s *decisionSession) Send(ctx context.Context, r userdecision.Request) (string, error) {
-	receipt, err := s.cli.SendA2UI(ctx, s.dir, dwsclient.A2UISendRequest{ConversationID: r.ConversationID, BizID: r.CardID, RequestID: r.SendRequestID, Summary: r.Proposal.Question, Messages: userdecision.Card(r.ID, r.Proposal)})
+	in, err := decisionCardRequest(r)
+	if err != nil {
+		return "", err
+	}
+	receipt, err := s.cli.SendA2UI(ctx, s.dir, in)
 	return receipt.BizID, err
 }
 func (s *decisionSession) Update(ctx context.Context, r userdecision.Request, status, text string) error {
@@ -64,4 +73,27 @@ func (s *decisionSession) Reconcile(ctx context.Context, r userdecision.Request)
 
 func decisionAnnotation(surfaceID, componentID string) []dwsclient.A2UIAnnotation {
 	return []dwsclient.A2UIAnnotation{{SurfaceID: surfaceID, ComponentID: componentID, Type: "artifact"}}
+}
+
+func decisionCardRequest(r userdecision.Request) (dwsclient.A2UISendRequest, error) {
+	var snapshot struct {
+		Turn struct{ ChatType string } `json:"turn"`
+	}
+	if json.Unmarshal(r.Snapshot, &snapshot) != nil {
+		return dwsclient.A2UISendRequest{}, errors.New("invalid decision transport snapshot")
+	}
+	in := dwsclient.A2UISendRequest{BizID: r.CardID, RequestID: r.SendRequestID, Summary: r.Proposal.Question, Messages: userdecision.Card(r.ID, r.Proposal)}
+	// The Host-frozen channel type selects the DWS target shape, not channel eligibility.
+	switch snapshot.Turn.ChatType {
+	case "p2p":
+		if r.InitiatorID == "" {
+			return in, errors.New("missing decision recipient")
+		}
+		in.ReceiverOpenDingTalkID = r.InitiatorID
+	case "group":
+		in.ConversationID = r.ConversationID
+	default:
+		return in, errors.New("missing decision channel type")
+	}
+	return in, nil
 }
