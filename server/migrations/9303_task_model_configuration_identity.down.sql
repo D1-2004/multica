@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS task_model_configuration_identity;

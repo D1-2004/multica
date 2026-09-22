@@ -49,6 +49,7 @@ const (
 // ASBConfig is the deployment-owned configuration for the Aone Sandbox
 // backend. Tenant API keys are Runtime-owned encrypted credentials.
 type ASBConfig struct {
+	TaskModelResolver     func(context.Context, string, string) (string, error)
 	ModelResolver         func(string) (string, error)
 	NetworkAllowlist      []string
 	NetworkServiceURLs    []string
@@ -1652,12 +1653,18 @@ func (l *ASBLauncher) extraEnvForTask(ctx context.Context, task db.AgentTaskQueu
 	if l.Common == nil {
 		return nil, errors.New("ASB launcher common runtime services are unavailable")
 	}
+	resolver := l.Config.ModelForAgent
+	if l.Config.TaskModelResolver != nil {
+		resolver = func(model string) (string, error) {
+			return l.Config.TaskModelResolver(ctx, util.UUIDToString(task.ID), model)
+		}
+	}
 	return l.Common.extraEnvForTaskWithModel(
 		ctx,
 		task,
 		runtime,
 		sandboxID,
-		l.Config.ModelForAgent,
+		resolver,
 	)
 }
 

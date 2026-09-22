@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -182,7 +183,12 @@ func (h *Handler) ProxyRuntimeModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "managed cloud runtime required")
 		return
 	}
-	s, e := h.Models.Load(r.Context())
+	agent, loadErr := h.Queries.GetAgent(r.Context(), task.AgentID)
+	if loadErr != nil {
+		writeError(w, 503, "agent configuration unavailable")
+		return
+	}
+	s, e := h.Models.TaskSnapshot(r.Context(), uuidToString(task.ID), agent.Model.String)
 	if e != nil {
 		writeError(w, 503, "model configuration unavailable")
 		return
@@ -238,6 +244,7 @@ func (h *Handler) ProxyRuntimeModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+	slog.InfoContext(r.Context(), "runtime model request", "event", "runtime_model_request", "task_id", uuidToString(task.ID), "provider", ref.Provider, "model", ref.Model, "configuration_revision", s.Config.Revision, "status", resp.StatusCode)
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(resp.StatusCode)

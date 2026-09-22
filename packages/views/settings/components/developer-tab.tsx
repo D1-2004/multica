@@ -78,7 +78,7 @@ function ModelEditor({ initial }: { initial: GlobalModels }) {
     }));
   const refs = draft.providers
     .filter((p) => p.enabled)
-    .flatMap((p) => p.models.map((model) => ({ provider: p.id, model })));
+    .flatMap((p) => p.models.filter(Boolean).map((model) => ({ provider: p.id, model })));
   const choose = (value: string) => refs.find((r) => refKey(r) === value);
   return (
     <div className="flex max-w-5xl flex-col gap-6">
@@ -167,8 +167,7 @@ function ModelEditor({ initial }: { initial: GlobalModels }) {
                   update(i, {
                     models: e.target.value
                       .split("\n")
-                      .map((s) => s.trim())
-                      .filter(Boolean),
+                      .map((s) => s.trim()),
                   })
                 }
               />

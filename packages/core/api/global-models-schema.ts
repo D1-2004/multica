@@ -60,7 +60,7 @@ export function globalModelsWire(c: GlobalModels) {
       id: p.id,
       name: p.name,
       base_url: p.baseUrl,
-      models: p.models,
+      models: p.models.map(m=>m.trim()).filter(Boolean),
       enabled: p.enabled,
       builtin: p.builtin,
       api_key: p.apiKey || undefined,

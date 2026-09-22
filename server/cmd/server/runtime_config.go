@@ -121,6 +121,7 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 		runtimeProviders = c.remote.RuntimeProviders()
 	}
 	return service.FCE2BConfig{
+		TaskModelResolver:                 c.taskModelResolver(),
 		ModelResolver:                     c.modelResolver(),
 		Enabled:                           raw.Runtime.FCE2B.Enabled,
 		Template:                          raw.Runtime.FCE2B.Template,
@@ -150,8 +151,9 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 func (c *appRuntimeConfig) asb() service.ASBConfig {
 	raw := c.current()
 	return service.ASBConfig{
-		ModelResolver:    c.modelResolver(),
-		NetworkAllowlist: append([]string{}, raw.Runtime.ASB.NetworkAllowlist...),
+		TaskModelResolver: c.taskModelResolver(),
+		ModelResolver:     c.modelResolver(),
+		NetworkAllowlist:  append([]string{}, raw.Runtime.ASB.NetworkAllowlist...),
 		NetworkServiceURLs: []string{
 			raw.AgentIdentity.ControlBaseURL, raw.AgentIdentity.SandboxBaseURL,
 			raw.EnterpriseIdentity.BUCAuthorizeURL, raw.EnterpriseIdentity.BUCTokenURL, raw.EnterpriseIdentity.BUCIssuer, raw.EnterpriseIdentity.BUCJWKSURL, raw.EnterpriseIdentity.IdemBaseURL,
@@ -415,4 +417,11 @@ func (c *appRuntimeConfig) modelResolver() func(string) (string, error) {
 		return nil
 	}
 	return c.models.ModelForAgent
+}
+
+func (c *appRuntimeConfig) taskModelResolver() func(context.Context, string, string) (string, error) {
+	if c.models == nil || os.Getenv("MULTICA_MODEL_GATEWAY_ENABLED") != "true" {
+		return nil
+	}
+	return c.models.PrepareTaskModel
 }

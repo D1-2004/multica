@@ -117,6 +117,7 @@ const (
 )
 
 type FCE2BConfig struct {
+	TaskModelResolver                 func(context.Context, string, string) (string, error)
 	ModelResolver                     func(string) (string, error)
 	Enabled                           bool
 	Template                          string
@@ -2010,7 +2011,13 @@ func (l *FCE2BLauncher) extraEnvForTask(
 	runtime db.AgentRuntime,
 	sandboxID string,
 ) (map[string]string, error) {
-	return l.extraEnvForTaskWithModel(ctx, task, runtime, sandboxID, l.Config.ModelForAgent)
+	resolver := l.Config.ModelForAgent
+	if l.Config.TaskModelResolver != nil {
+		resolver = func(model string) (string, error) {
+			return l.Config.TaskModelResolver(ctx, util.UUIDToString(task.ID), model)
+		}
+	}
+	return l.extraEnvForTaskWithModel(ctx, task, runtime, sandboxID, resolver)
 }
 
 func (l *FCE2BLauncher) extraEnvForTaskWithModel(
