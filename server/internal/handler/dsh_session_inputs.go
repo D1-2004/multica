@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/dshhost"
+	"github.com/multica-ai/multica/server/internal/service"
 )
 
 // Restore inputs independently of slow plugin builds and Host creation. Each
@@ -76,8 +78,8 @@ func (h *Handler) refreshRunningDSHSessionInputs(parent context.Context, next in
 			defer group.Done()
 			defer func() { <-permits }()
 			// No Host creation/restart or browser grant is involved.
-			if err := h.FCE2BLauncher.EnsureDSHSessionInputs(ctx, host, h.dshNativeAccessManager(), h.submitDSHNativePrompt); err != nil && ctx.Err() == nil {
-				slog.Warn("DSH background session input connection is not ready", "agent_id", host.AgentID, "workspace_id", host.WorkspaceID)
+			if err := h.FCE2BLauncher.EnsureDSHSessionInputs(ctx, host, h.dshNativeAccessManager(), h.submitDSHNativePrompt); err != nil && ctx.Err() == nil && !errors.Is(err, service.ErrDSHInputProbeDeferred) {
+				slog.Warn("DSH background session input connection is not ready", "agent_id", host.AgentID, "workspace_id", host.WorkspaceID, "generation", host.Generation, "error_code", service.DSHSessionInputFailureCode(err))
 			}
 		}()
 	}

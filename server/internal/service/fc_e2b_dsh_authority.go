@@ -32,6 +32,7 @@ type dshNativeAuthorityBridge struct {
 	workers map[string]*dshAuthorityWorker
 	// Capability hints only; authorization always checks the live persisted Host.
 	unsupported map[dshSessionCapabilityKey]time.Time
+	inputProbes map[dshSessionCapabilityKey]*dshInputProbe
 }
 type dshSessionCapabilityKey struct {
 	workspace, agent uuid.UUID
@@ -258,8 +259,7 @@ func (l *FCE2BLauncher) EnsureDSHSessionInputs(ctx context.Context, host dshhost
 			return nil
 		}
 	}
-	_, err := l.ensureDSHNativeAuthority(ctx, host, manager, submit, true)
-	return err
+	return l.refreshDSHSessionInputs(ctx, host, manager, submit)
 }
 
 func (l *FCE2BLauncher) ensureDSHNativeAuthority(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit, managedOnly bool) (string, error) {
@@ -272,8 +272,11 @@ func (l *FCE2BLauncher) ensureDSHNativeAuthority(ctx context.Context, host dshho
 		return "", err
 	}
 	out, err := l.dshGatewayControl(ctx, host, "--gateway-authority")
-	if err != nil || validateDSHNativeGatewayReceipt(out, host, origin, authority, l.nativeAuthority.publicKey()) != nil {
-		return "", errors.New("DSH authority readiness is unconfirmed")
+	if err != nil {
+		return "", &dshInputProbeError{code: "gateway_exec_failed", cause: err}
+	}
+	if err := validateDSHNativeGatewayReceipt(out, host, origin, authority, l.nativeAuthority.publicKey()); err != nil {
+		return "", &dshInputProbeError{code: "gateway_receipt_rejected", cause: err}
 	}
 	var receipt struct {
 		TransportToken  string `json:"transport_token"`
