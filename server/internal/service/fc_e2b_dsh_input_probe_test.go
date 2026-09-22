@@ -51,6 +51,11 @@ func TestDSHInputProbeBoundsConcurrentAndFailedRetries(t *testing.T) {
 		t.Fatal("generation inherited failure")
 	}
 	replacement = key
+	replacement.scope = uuid.New()
+	if !b.beginInputProbe(replacement, now) {
+		t.Fatal("scope inherited failure")
+	}
+	replacement = key
 	replacement.sandbox = "replacement"
 	if !b.beginInputProbe(replacement, now) {
 		t.Fatal("sandbox inherited failure")
