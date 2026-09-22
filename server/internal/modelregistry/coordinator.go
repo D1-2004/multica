@@ -81,6 +81,14 @@ func (r *Route) Chat(ctx context.Context, params openai.ChatCompletionNewParams)
 				cancel()
 				return nil, e
 			}
+			provider, _, _ := r.Snapshot.Resolve(ref)
+			if ref.Model == "deepseek-v4.1-flash" && BailianAPIOrigin(provider.BaseURL) != "" {
+				p, e = deepSeekCoordinatorParams(p)
+				if e != nil {
+					cancel()
+					return nil, e
+				}
+			}
 			result, err = client.Chat(attemptCtx, p)
 		}
 		cancel()

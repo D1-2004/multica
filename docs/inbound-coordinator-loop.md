@@ -391,3 +391,11 @@ Submission interpretation receives the trusted latest submission after the froze
 Dataset provenance includes exact proposal and candidate-review system prompt hashes, the actual interpretation policy manifest, and the Host-stamped policy manifest for each final review attempt. This preserves the distinction when a waiting request resumes after a deployment. Explicit non-executable interpretation reasons are shown to the initiator with a bounded message; infrastructure and review-protocol failures retain the generic public message.
 
 Submission interpretation uses only the registered user-decision policy, frozen evidence and typed plan schema. Automatic routing instructions are not assembled again at this stage; the full final-review and Host constraints still validate the resulting plan. Explicit cancellation is non-executable even when a cancellation acknowledgment could be written.
+
+### 百炼 DeepSeek 工具 schema（2026-09-22）
+
+百炼 `deepseek-v4.1-flash` 的 `required` 工具请求会拒绝 JSON Schema 的 `uniqueItems` 关键字，包括值为 false 的情形。`oneOf` 子分支只声明父级属性差量时还会漏掉分支必填字段。已以同一请求的最小对照及完整上下文复现；这不是通过改为 `auto` 解决的问题。
+
+仅该官方百炼端点与模型的 Coordinator 请求在 modelregistry 出站边界转换工具 schema：移除不支持的关键字并保留“引用不可重复”的说明，将对象 `oneOf` 的父级约束完整展开到每个互斥分支。原始 schema、参数快照、required 工具选择和其它模型保持不变。Host 的 `parseValidatedWindowPlan` 仍拒绝重复 source_refs/state_refs，`validateFinishParticipationChecks` 仍拒绝重复参与判断；不会重放工具或绕过语义审核。原有 policy 与历史义务不变，仅协议表示调整。
+
+验证：`TestDeepSeekSchemaPreservesRequiredChoiceAndBranchConstraints`、`TestReferenceUniquenessRemainsHostEnforced` 与现有参与判断重复引用对照。预发完整调用与结果验证单独记录，HTTP200本身不证明计划可提交。
