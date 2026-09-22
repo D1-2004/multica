@@ -795,6 +795,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return opts.DeploymentFence.AllLiveReplicasSupport(ctx, inboundcoord.ReplicaPlanMarker)
 		}
 	}
+	h.ConfigureGlobalModels(pool)
+	if opts.RuntimeConfig != nil {
+		opts.RuntimeConfig.models = h.Models
+	}
+	coordinator.RouteProvider = h.Models.CoordinatorSnapshot
 	coordinator.SetIssueCommentWriter(handler.NewInboundCoordinatorIssueCommentWriter(h))
 	coordinator.DWSHistory = inboundcoord.NewDWSHistoryLoader(inboundcoord.DWSHistoryConfig{
 		MCPBaseURL:            strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL")),
@@ -1960,6 +1965,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Route("/api/daemon", func(r chi.Router) {
 		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
 
+		r.Get("/runtimes/{runtimeId}/model-tasks/{taskId}/v1/{modelPath:models}", h.ProxyRuntimeModel)
+		r.Post("/runtimes/{runtimeId}/model-tasks/{taskId}/v1/*", h.ProxyRuntimeModel)
 		r.Post("/register", h.DaemonRegister)
 		r.Post("/deregister", h.DaemonDeregister)
 		r.Post("/heartbeat", h.DaemonHeartbeat)
@@ -2038,6 +2045,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
 		r.With(handler.RequireHumanActor).Post("/api/cli-token", h.IssueCliToken)
+		r.With(handler.RequireHumanActor).Get("/api/developer/capabilities", h.DeveloperCapabilities)
+		r.With(handler.RequireHumanActor).Get("/api/developer/models", h.GetGlobalModels)
+		r.With(handler.RequireHumanActor).Put("/api/developer/models", h.SaveGlobalModels)
+		r.With(handler.RequireHumanActor).Post("/api/developer/models/discover", h.DiscoverProviderModels)
+		r.With(handler.RequireHumanActor).Post("/api/developer/models/restore", h.RestoreGlobalModels)
+		r.With(handler.RequireHumanActor).Post("/api/developer/models/test", h.TestProviderModel)
 		r.With(handler.RequireHumanActor).Get("/api/sitehosting/sites", h.ListStaticSites)
 		r.With(handler.RequireHumanActor).Delete("/api/sitehosting/sites/{siteId}", h.DeleteStaticSite)
 		r.Post("/api/upload-file", h.UploadFile)

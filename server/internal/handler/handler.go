@@ -40,6 +40,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/managedagent"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/modelregistry"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runnerws"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -204,6 +205,7 @@ type enterpriseIdentityService interface {
 }
 
 type Handler struct {
+	Models                   *modelregistry.Registry
 	Queries                  *db.Queries
 	Assoc                    *assoc.Service
 	DB                       dbExecutor
