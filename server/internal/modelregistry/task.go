@@ -71,5 +71,15 @@ func (r *Registry) PrepareTaskModel(ctx context.Context, taskID, model string) (
 	if e != nil {
 		return "", e
 	}
-	return s.Config.DefaultModel.String(), nil
+	return taskRuntimeModel(s.Config.DefaultModel), nil
+}
+
+// Builtin models keep their legacy runtime ID so existing native DSH catalogs
+// can select them. The gateway resolves this alias against the frozen mass
+// provider; custom providers remain qualified to avoid name collisions.
+func taskRuntimeModel(ref Ref) string {
+	if ref.Provider == "mass" {
+		return ref.Model
+	}
+	return ref.String()
 }
