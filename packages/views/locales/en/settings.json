@@ -1391,6 +1391,10 @@
     "edit_catalog": "Edit catalog",
     "done_editing": "Done editing",
     "search_catalog": "Search catalog models",
-    "catalog_count": "Showing {{visible}} / {{total}} models"
+    "catalog_count": "Showing {{visible}} / {{total}} models",
+    "discovering": "Discovering and checking…",
+    "bailian_discovered": "Bailian: checked {{checked}} text/tool models, kept {{count}}; {{unavailable}} rejected, {{unverified}} unverified. Save to apply.",
+    "diamond_help": "Append the Diamond Coordinator model after this fallback chain, skipping duplicates. It is also used before global models are configured.",
+    "coordinator_choice": "Coordinator model {{index}}"
   }
 }

@@ -122,7 +122,11 @@ func (h *Handler) DiscoverProviderModels(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	timeout := 15 * time.Second
+	if modelregistry.BailianAPIOrigin(p.BaseURL) != "" {
+		timeout = 60 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	req, e := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(p.BaseURL, "/")+"/models", nil)
 	if e != nil {
@@ -156,6 +160,15 @@ func (h *Handler) DiscoverProviderModels(w http.ResponseWriter, r *http.Request)
 			ids = append(ids, v.ID)
 			seen[v.ID] = true
 		}
+	}
+	if modelregistry.BailianAPIOrigin(p.BaseURL) != "" {
+		result, err := modelregistry.DiscoverBailian(ctx, p, ids, modelregistry.HTTPClient())
+		if err != nil {
+			writeError(w, 502, err.Error())
+			return
+		}
+		writeJSON(w, 200, result)
+		return
 	}
 	writeJSON(w, 200, map[string]any{"models": ids})
 }

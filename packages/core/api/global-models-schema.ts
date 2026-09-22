@@ -52,7 +52,13 @@ export const EMPTY_GLOBAL_MODELS: GlobalModels = {
   diamondFallback: true,
 };
 export const DeveloperCapabilitiesSchema = z.object({ developer: z.boolean() });
-export const DiscoveredModelsSchema = z.object({ models: z.array(z.string()) });
+export const DiscoveredModelsSchema = z.object({
+  models: z.array(z.string()),
+  replace: z.boolean().optional(),
+  checked: z.number().optional(),
+  unavailable: z.number().optional(),
+  unverified: z.number().optional(),
+});
 export function globalModelsWire(c: GlobalModels) {
   return {
     revision: c.revision,
@@ -60,7 +66,7 @@ export function globalModelsWire(c: GlobalModels) {
       id: p.id,
       name: p.name,
       base_url: p.baseUrl,
-      models: p.models.map(m=>m.trim()).filter(Boolean),
+      models: p.models.map((m) => m.trim()).filter(Boolean),
       enabled: p.enabled,
       builtin: p.builtin,
       api_key: p.apiKey || undefined,

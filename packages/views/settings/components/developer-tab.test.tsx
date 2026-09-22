@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithI18n } from "../../test/i18n";
 const state = vi.hoisted(() => ({
@@ -113,4 +113,38 @@ it("filters a catalog without altering its content", () => {
   expect(
     screen.getByRole("region", { name: "Model catalog" }),
   ).toHaveTextContent("qwen");
+});
+
+it("searches Coordinator model choices without changing the selected model", () => {
+  renderWithI18n(<DeveloperTab />);
+  fireEvent.click(screen.getByRole("button", { name: "Coordinator model 1" }));
+  const search = screen
+    .getAllByPlaceholderText("Search models or providers")
+    .at(-1)!;
+  fireEvent.change(search, { target: { value: "not-a-model" } });
+  expect(screen.queryByRole("button", { name: "mass/qwen" })).toBeNull();
+  fireEvent.change(search, { target: { value: "QWEN" } });
+  expect(screen.getByRole("button", { name: "mass/qwen" })).toBeInTheDocument();
+});
+it("replaces a verified vendor catalog instead of merging rejected models back", async () => {
+  state.discover.mockResolvedValue({
+    models: ["verified"],
+    replace: true,
+    checked: 2,
+    unavailable: 1,
+    unverified: 0,
+  });
+  renderWithI18n(<DeveloperTab />);
+  fireEvent.click(screen.getByRole("button", { name: "Add provider" }));
+  fireEvent.click(screen.getByRole("button", { name: "Edit catalog" }));
+  fireEvent.change(
+    screen.getByLabelText("Model catalog (one model ID per line)"),
+    { target: { value: "rejected" } },
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Fetch /models" }));
+  await waitFor(() =>
+    expect(
+      screen.getByLabelText("Model catalog (one model ID per line)"),
+    ).toHaveValue("verified"),
+  );
 });

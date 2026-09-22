@@ -875,7 +875,7 @@ export class ApiClient {
     return parseWithFallback(await this.fetch<unknown>("/api/developer/models", {method:"PUT", body:JSON.stringify(globalModelsWire(config))}), GlobalModelsSchema, EMPTY_GLOBAL_MODELS, {endpoint:"developer/models",includeReceived:false});
   }
   async discoverProviderModels(provider: ModelProvider) {
-    return parseWithFallback(await this.fetch<unknown>("/api/developer/models/discover", {method:"POST",body:JSON.stringify({id:provider.id,base_url:provider.baseUrl,api_key:provider.apiKey})}), DiscoveredModelsSchema, {models:[]}, {endpoint:"developer/models/discover",includeReceived:false});
+    return parseWithFallback(await this.fetch<unknown>("/api/developer/models/discover", {method:"POST",body:JSON.stringify({id:provider.id,base_url:provider.baseUrl,api_key:provider.apiKey})}), DiscoveredModelsSchema, {models:[] as string[], replace:false, checked:0, unavailable:0, unverified:0}, {endpoint:"developer/models/discover",includeReceived:false});
   }
 
   // Auth

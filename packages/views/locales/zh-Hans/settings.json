@@ -1389,6 +1389,10 @@
     "edit_catalog": "编辑目录",
     "done_editing": "完成编辑",
     "search_catalog": "搜索目录中的模型",
-    "catalog_count": "显示 {{visible}} / {{total}} 个模型"
+    "catalog_count": "显示 {{visible}} / {{total}} 个模型",
+    "discovering": "正在拉取并检查…",
+    "bailian_discovered": "百炼：检查 {{checked}} 个文本工具模型，保留 {{count}} 个；{{unavailable}} 个调用被拒绝，{{unverified}} 个暂未验证。保存后生效。",
+    "diamond_help": "勾选后，在上述降级链末尾追加 Diamond 中的 Coordinator 模型，重复项不再添加。未配置全局模型时，也会使用该默认模型。",
+    "coordinator_choice": "Coordinator 模型 {{index}}"
   }
 }

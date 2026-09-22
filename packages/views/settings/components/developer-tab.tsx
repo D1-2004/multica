@@ -1,5 +1,10 @@
 "use client";
 import { useState } from "react";
+import { ChevronDown } from "lucide-react";
+import {
+  PropertyPicker,
+  PickerItem,
+} from "../../issues/components/pickers/property-picker";
 import {
   useTestProviderModel,
   useRestoreGlobalModels,
@@ -239,21 +244,35 @@ function ModelEditor({ initial }: { initial: GlobalModels }) {
                       setMessage("");
                       try {
                         const result = await discover.mutateAsync(p);
-                        if (!result.models.length) {
+                        if (result.replace) {
+                          setMessage(
+                            t(($) => $.developer.bailian_discovered, {
+                              count: result.models.length,
+                              checked: result.checked ?? 0,
+                              unavailable: result.unavailable ?? 0,
+                              unverified: result.unverified ?? 0,
+                            }),
+                          );
+                        }
+                        if (!result.models.length && !result.replace) {
                           setMessage(t(($) => $.developer.empty_catalog));
                           return;
                         }
                         update(i, {
-                          models: Array.from(
-                            new Set([...p.models, ...result.models]),
-                          ),
+                          models: result.replace
+                            ? result.models
+                            : Array.from(
+                                new Set([...p.models, ...result.models]),
+                              ),
                         });
                       } catch {
                         setMessage(t(($) => $.developer.discovery_failed));
                       }
                     }}
                   >
-                    {t(($) => $.developer.discover)}
+                    {discover.isPending
+                      ? t(($) => $.developer.discovering)
+                      : t(($) => $.developer.discover)}
                   </Button>
                 </div>
               )}
@@ -435,26 +454,19 @@ function ModelEditor({ initial }: { initial: GlobalModels }) {
         {draft.coordinator.map((ref, i) => (
           <div key={i} className="flex items-center gap-2">
             <span>{i + 1}</span>
-            <select
-              className="min-w-0 flex-1 rounded border bg-background p-2"
-              value={refKey(ref)}
-              onChange={(e) => {
-                const next = choose(e.target.value);
-                if (next)
-                  setDraft((c) => ({
-                    ...c,
-                    coordinator: c.coordinator.map((r, j) =>
-                      i === j ? next : r,
-                    ),
-                  }));
-              }}
-            >
-              {refs.map((m) => (
-                <option key={refKey(m)} value={refKey(m)}>
-                  {m.provider}/{m.model}
-                </option>
-              ))}
-            </select>
+            <CoordinatorModelPicker
+              refs={refs}
+              value={ref}
+              index={i}
+              onChange={(next) =>
+                setDraft((c) => ({
+                  ...c,
+                  coordinator: c.coordinator.map((r, j) =>
+                    i === j ? next : r,
+                  ),
+                }))
+              }
+            />
             <Button
               variant="outline"
               onClick={() =>
@@ -494,6 +506,9 @@ function ModelEditor({ initial }: { initial: GlobalModels }) {
           />{" "}
           {t(($) => $.developer.last_diamond)}
         </label>
+        <p className="text-caption text-muted-foreground">
+          {t(($) => $.developer.diamond_help)}
+        </p>
       </section>
       {restore.isError && <p role="alert">{restore.error.message}</p>}
       {message && <p role="status">{message}</p>}
@@ -602,6 +617,104 @@ function ProviderCatalog({
           </span>
         </>
       )}
+    </div>
+  );
+}
+
+function CoordinatorModelPicker({
+  refs,
+  value,
+  index,
+  onChange,
+}: {
+  refs: ModelRef[];
+  value: ModelRef;
+  index: number;
+  onChange: (ref: ModelRef) => void;
+}) {
+  const { t } = useT("settings");
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [provider, setProvider] = useState("");
+  const filtered = refs.filter(
+    (r) =>
+      (!provider || r.provider === provider) &&
+      `${r.provider}/${r.model}`
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+  );
+  return (
+    <div className="min-w-0 flex-1">
+      <PropertyPicker
+        open={open}
+        onOpenChange={setOpen}
+        searchable
+        onSearchChange={setQuery}
+        searchPlaceholder={t(($) => $.developer.search_agent_models)}
+        align="start"
+        width="w-[var(--anchor-width)] min-w-64 max-w-[calc(100vw-2rem)]"
+        triggerRender={
+          <button
+            type="button"
+            aria-label={t(($) => $.developer.coordinator_choice, {
+              index: index + 1,
+            })}
+            className="flex w-full min-w-0 items-center gap-2 rounded border border-input p-2 text-left"
+          />
+        }
+        trigger={
+          <>
+            <span className="min-w-0 flex-1 truncate">
+              {value.provider}/{value.model}
+            </span>
+            <ChevronDown className="size-4 shrink-0" />
+          </>
+        }
+        header={
+          <div className="px-2 pb-2">
+            <select
+              aria-label={t(($) => $.developer.filter_provider)}
+              className="w-full rounded border bg-background p-2"
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
+            >
+              <option value="">{t(($) => $.developer.all_providers)}</option>
+              {Array.from(new Set(refs.map((r) => r.provider))).map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-caption text-muted-foreground">
+              {t(($) => $.developer.catalog_count, {
+                visible: filtered.length,
+                total: refs.length,
+              })}
+            </p>
+          </div>
+        }
+      >
+        {filtered.length ? (
+          filtered.map((ref) => (
+            <PickerItem
+              key={refKey(ref)}
+              selected={refKey(ref) === refKey(value)}
+              onClick={() => {
+                onChange(ref);
+                setOpen(false);
+              }}
+            >
+              <span className="break-all">
+                {ref.provider}/{ref.model}
+              </span>
+            </PickerItem>
+          ))
+        ) : (
+          <p className="p-3 text-body text-muted-foreground">
+            {t(($) => $.developer.no_matches)}
+          </p>
+        )}
+      </PropertyPicker>
     </div>
   );
 }
