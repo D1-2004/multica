@@ -33,6 +33,7 @@ RUN cd server && for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64
         -o "bin/runner-cli/${target_os}-${target_arch}/multica" ./cmd/multica; \
     done
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/migrate ./cmd/migrate
+RUN cd server && CGO_ENABLED=0 go test -c -o bin/userdecision-verify ./internal/service/userdecision
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_task_usage_hourly ./cmd/backfill_task_usage_hourly
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_codex_usage_cache ./cmd/backfill_codex_usage_cache
 
@@ -101,7 +102,9 @@ RUN set -eux; \
     dws version; \
     dws chat message send --help | grep -q -- '--ai-tag'; \
     dws chat message send --help | grep -q -- '--idempotency-key'; \
-    dws chat message query-send-status --help > /dev/null
+    dws chat message query-send-status --help > /dev/null; \
+    dws chat message update-a2ui-card --help > /dev/null; \
+    dws event schema user_card_action_triggered > /dev/null
 
 RUN mkdir -p /home/admin/${APP_NAME}/target/${APP_NAME} /home/admin/${APP_NAME}/logs /home/admin/${APP_NAME}/node/bin /home/admin/cai/bin /home/admin/cai/conf/apps && \
     cp -rf /home/admin/appname/bin /home/admin/${APP_NAME} && \

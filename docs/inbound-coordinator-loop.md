@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-15.10`。装配版本：`37`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-21.2`。装配版本：`38`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -348,3 +348,46 @@ start_work/continue_work的接单回复由Host生成，模型仅可选择闭合r
 ## Coordinator model configuration
 
 Diamond `dt-fde-multica-runtime.json` / `DEFAULT_GROUP` exposes `runtime.llm.coordinator_model`. Each decision snapshots the model once for the main loop, finish checks, logs and Langfuse; updates apply to the next decision. Missing/blank values retain `qwen3.7-plus` for existing documents during rollout. The configured target is `qwen3.8-max`. Requests keep `enable_thinking=false` and `reasoning_effort=none`; this setting does not change executor models or the global default. Local protocol tests do not certify real model behavior or deployment.
+
+
+### 发起人选择处理方式（2026-09-21，已接线，预发验收中）
+
+`inbound_coordinator_user_decision` 默认关闭；关闭 Coordinator 同时清除此设置。候选提案与执行 checkpoint 分开：`UserDecisionSnapshot` 保存冻结上下文、模型实际输入、召回任务、提案及 policy 版本，`proposeUserDecision` 在 `SavePlan` 之前返回等待。每次入站仅一次提问；续接最多三个真实任务，加新建与具体直接回复；卡片不暴露内部计划或默认勾选。
+
+回调身份只读取可信 `operatorDTO.openDingTalkId`，新协议 `a2uiEvent.action.context` 与旧 `actionData.context` 在边界兼容。数据库事务锁住决策、去重事件并接收首次有效提交；拒绝事件不消耗机会。未确认发送成功不启动 24 小时计时；过期不自动选择。发送链路标识不构成 DWS 消息幂等保证，结果不明禁止盲目重发。
+
+选择锁定动作方向与目标；只补充文字可解释为计划，歧义或矛盾不执行、不二次询问。用户选择、模型推荐与人工金标分别记录。结构检查与单元测试不表示内部群产品链路通过；服务端消费、派发恢复、OSS/导出与真实模型/群验收仍须完成。
+
+候选发卡前的结构校验最多允许三次内部模型生成，校验失败反馈与原始候选全部留在快照中；耗尽后不发卡、不执行。该修正不增加用户询问次数，也不能绕过岗位或事实约束。
+
+候选完成结构校验后，由独立 `review_choices` 模型调用仅核对直接回复的事实与标签语义；即使动作被标为 conversation，也不得承诺选回复后执行工作。审查不代选，不审新建／续接路线优劣，不把技能目录缺失当作执行器能力缺失；审查原始输出与修正次数保存在冻结快照，仍在最多三次发卡前生成预算内。
+
+消费者重连后通过持久化待办刷新现存 waiting 卡片的组件，复用原卡与冻结候选，保留客户端已输入值；等待态不得显示已接收。终态卡片保留已接受选项与补充说明，处理成功与接收确认分开。回复计划的 JSON null IssueResults 视为空数组，不能阻断其它决策的终态汇总。
+
+补充说明解释的结构／引用校验失败允许最多三次内部修正，保留全部原始解释输出并提供冻结召回 ID 校验反馈；不增加用户询问，不修复或掩盖用户意图矛盾，不允许切换明确选择的目标。耗尽后未执行。
+
+用户提交后的 finish_check 仍校验结构、参与边界、目标与限制，但不执行旧自动路由中按审查理由关键词改判能力／开工方向的修正。显式选择由语义审查判断合法性，Host 不因 reason 中出现 tool、forbids 或 start_work 等词替换 verdict。R9 实测暴露误拒绝，修复验收单独记录。
+
+卡片问题与接收／执行状态使用公开 Catalog 的 Markdown 组件，并在确认创建回执后通过持久化待办补充对应 surface/component 的 artifact 注解；此后每次更新保留注解；不能让 DWS 更新默认的空注解抹掉摘要。等待表单恢复仅更新问题绑定及组件，不重置 answers。数据集导出保留非凭证的 card_biz_id 供卡片关联，凭据、消费者身份和租约字段仍排除。等待态使用 CONFIRMING，避免 INPUTTING 覆盖会话列表摘要为“正在回复中”。R12 实卡更新后显示问题正文且原生提交成功；R13/R14 自动接线的原生卡片、回调和结果均通过。关闭设置仅影响新请求，已发出的卡片继续按冻结规则处理。
+
+发卡回执重试只清理 sending/send_unknown 的发送租约；不得清理 resuming 的解析租约。显式预发启动验证通过隔离环境记录及回滚事务检查数据库过期、取消和卡片更新重试；MULTICA_USER_DECISION_VERIFY_ON_BOOT 默认关闭，正式环境拒绝开启。测试不新增 HTTP 调试入口，不冒充真实客户端失败注入。
+
+大快照上传失败不得产生已冻结引用；读取失败、超限或摘要不一致不得返回部分上下文。`snapshot_test.go` 覆盖这些失败边界与原引用重试；R14 实测约80KB快照的原生提交和导出通过，不能替代真实OSS故障注入。
+
+预发run3109340164（release dad5c06c）在两个实例上实际通过PostgreSQL过期／取消／重复回执租约、卡片更新持久重试与首次有效并发测试，发布allEnd=true；R14大快照与提交发布后回读未变化。测试夹具42P08失败及修正保留在验收记录中，未声明真实手机双端或OSS服务故障已验收。
+
+用户决策监控每分钟读取 PostgreSQL 权威状态，服务启动留两分钟订阅恢复时间。等待超过五分钟且订阅当前未就绪、发送未知超过五分钟、已接受未恢复超过五分钟、卡片更新积压超过五分钟，分别生成工作台 attention 提醒。收件人为仍在工作区内的 Agent 所有者，不新增决策人配置、不转移卡片作答权；没有有效所有者时不猜测收件人。通知按环境／决策／问题／所有者确定唯一 ID，由 inbox_item 主键去重，多实例或重启不重复投递同一提醒；WebSocket 只是唤醒，权威通知已持久化。健康接口补充权威状态数量、最久等待、24 小时接受等待均值／回调原因分布及累计重复投递数，保持工作区、Agent、环境隔离。正常等待且订阅健康不报警。
+
+数据集导出对嵌套 JSON 字符串执行同样的凭证与无关联系方式字段清理，仍以字符串返回该层，不修改权威输入；卡片 ID、作答者关联和选项 ID 保留。
+
+Qwen 在完整上下文的强制工具请求上返回特定 provider 400（InternalError.Algo / Invalid request parameters）时，Host 只将 tool_choice 从 required 改为 auto 重试一次，模型、上下文、工具、token预算和非思考设置保持不变。其它错误不走该兼容分支。返回值仍经过原工具名、结构、引用、身份与动作审查；自由文本不构成候选或已提交计划，也不得派发。R15 原失败保留，同请求 required/named失败与auto成功的预发模型对照已复现，产品链路另行验收。
+
+最终审查必须透传 UserDecisionSubmission 到 reviewTurn，实际装配 user_decision 模块。发起人的后续提交定义当前选择和补充要求；仅说明时可修改或取消原请求，不强制已被修改的原回复措辞。岗位／平台／身份边界仍生效，明确选项的方向与目标仍锁定，矛盾不执行。R18错误审查保留为反例。
+
+Candidate semantic review receives the full frozen proposal: continuation labels must identify their actual recalled task, and cannot rename it from an unrelated nearby message. This check does not choose the handling direction for the initiator.
+
+Submission interpretation receives the trusted latest submission after the frozen snapshot. Both protocol and semantic review repairs are bounded to three attempts with audits, locked direction and target, and no second human question. Verbatim review constraints may quote trusted supplementary text. Reply truthfulness and continuation-label grounding use separate model checks, so task identity checks cannot change the existing reply semantics.
+
+Dataset provenance includes exact proposal and candidate-review system prompt hashes, the actual interpretation policy manifest, and the Host-stamped policy manifest for each final review attempt. This preserves the distinction when a waiting request resumes after a deployment. Explicit non-executable interpretation reasons are shown to the initiator with a bounded message; infrastructure and review-protocol failures retain the generic public message.
+
+Submission interpretation uses only the registered user-decision policy, frozen evidence and typed plan schema. Automatic routing instructions are not assembled again at this stage; the full final-review and Host constraints still validate the resulting plan. Explicit cancellation is non-executable even when a cancellation acknowledgment could be written.

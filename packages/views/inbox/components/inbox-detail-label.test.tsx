@@ -85,3 +85,16 @@ describe("InboxDetailLabel quick-create outcomes", () => {
     expect(container.textContent).not.toMatch(/failed/i);
   });
 });
+
+describe("Coordinator decision alerts", () => {
+  it("shows the actionable persisted body", () => {
+    const body = "The card delivery outcome is unknown; no duplicate was sent.";
+    const { container } = render(<InboxDetailLabel item={item({ type: "coordinator_decision_alert", body, severity: "attention" })} />);
+    expect(container.textContent).toBe(body);
+  });
+
+  it("keeps a readable label when an older response omits the body", () => {
+    const { container } = render(<InboxDetailLabel item={item({ type: "coordinator_decision_alert", body: null })} />);
+    expect(container.textContent).toBe(en.types.coordinator_decision_alert);
+  });
+});

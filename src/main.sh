@@ -16,6 +16,7 @@ cd "$APP_ROOT"
 RUNTIME_CONFIG_KEYS=(
   APP_ENV
   DATABASE_URL
+  MULTICA_USER_DECISION_VERIFY_ON_BOOT
   JWT_SECRET
   MULTICA_RUNTIME_CONFIG_SOURCE
   MULTICA_RUNTIME_LLM_API_KEY
@@ -439,6 +440,9 @@ stop_existing_processes
 echo "[multica][runtime] running migrations"
 "$APP_ROOT/bin/migrate" up
 echo "[multica][runtime] migrations completed"
+
+# Explicit preproduction-only verification uses the migrated database.
+bash "$APP_ROOT/src/verify-user-decisions.sh" "$APP_ROOT/bin/userdecision-verify"
 
 start_processes
 if ! wait_for_startup; then

@@ -303,7 +303,7 @@ func (definition packageConfiguration) importConfiguration(ctx context.Context, 
 		}
 	}
 	if c.TaskFinishedLoopEnabled != nil {
-		if err := q.UpdateAgentTaskFinishedLoop(ctx, agent.ID, *c.TaskFinishedLoopEnabled); err != nil {
+		if err := q.UpdateAgentTaskFinishedLoop(ctx, db.UpdateAgentTaskFinishedLoopParams{ID: agent.ID, TaskFinishedLoopEnabled: *c.TaskFinishedLoopEnabled}); err != nil {
 			return err
 		}
 	}

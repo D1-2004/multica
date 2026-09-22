@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/service/userdecision"
 	"log/slog"
 	"strings"
 	"time"
@@ -49,12 +50,13 @@ const (
 type Action string
 
 const (
-	ActionReply    Action = "reply"
-	ActionIssue    Action = "issue"
-	ActionContinue Action = "continue"
-	ActionSilence  Action = "silence"
-	ActionRetry    Action = "retry"
-	ActionDeferred Action = "deferred"
+	ActionReply     Action = "reply"
+	ActionAwaitUser Action = "await_user"
+	ActionIssue     Action = "issue"
+	ActionContinue  Action = "continue"
+	ActionSilence   Action = "silence"
+	ActionRetry     Action = "retry"
+	ActionDeferred  Action = "deferred"
 )
 
 // Source names the inbound surface that asked for a decision.
@@ -78,6 +80,10 @@ const (
 
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
+	UserDecisionEnabled    bool
+	UserDecisionRequestID  string
+	UserDecisionSubmission *userdecision.Submission
+
 	model                      string
 	ProactiveConversation      bool
 	OutstandingFollowUps       string
@@ -161,6 +167,8 @@ type HistoryLine struct {
 
 // Decision is what callers act on.
 type Decision struct {
+	UserDecision *UserDecisionSnapshot `json:"user_decision,omitempty"`
+
 	CoordinationActions []CoordinationAction `json:"coordination_actions,omitempty"`
 	Action              Action
 	UserText            string
@@ -427,7 +435,11 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	ensureTurnTraceID(&turn)
 	c.prefetchSceneMemory(ctx, &turn)
 
-	loopCtx, cancel := context.WithTimeout(ctx, decisionTimeout)
+	timeout := decisionTimeout
+	if turn.UserDecisionEnabled {
+		timeout = 90 * time.Second
+	}
+	loopCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	started := time.Now()
 	turnTrace = c.startTurnTrace(ctx, turn, started)
@@ -464,6 +476,9 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 		// so it ends here with a fixed reply or silence instead of six job
 		// retries that leave the person with nothing.
 		fallback, handled := loopStopFallback(turn, decision)
+		if turn.UserDecisionEnabled {
+			handled = false
+		}
 		if handled {
 			// Checkpoint the verdict like any window plan: a redelivered job
 			// restores it instead of reasoning again and possibly proposing

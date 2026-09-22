@@ -230,6 +230,8 @@
     "prop_dingtalk_show_ai_tag_hint": "Show an AI sender label on this digital employee's DingTalk replies and messages sent while working. Off by default. Changes apply to new work.",
     "prop_chat_session_resume": "Resume last session",
     "prop_chat_session_resume_hint": "When on, 1:1 follow-up messages reuse the previous conversation when it is still available and nothing important has changed. Consecutive questions respond faster. After 20 minutes or a configuration change, the conversation restarts with the full history. When off, every turn starts a new model session.",
+    "prop_coordinator_user_decision": "Let the requester choose",
+    "prop_coordinator_user_decision_hint": "Ask once per inbound request to continue work, start work, or reply. Expires after 24 hours without executing. Currently available in internal DingTalk groups.",
     "prop_inbound_coordinator": "Judge before sandbox",
     "prop_inbound_coordinator_hint": "When on, DingTalk and web messages first decide whether they can be answered immediately. Only requests that need tools, research, or follow-up start a task. When off, every message goes directly to the agent for execution.",
     "prop_task_finished_loop": "Judge after the work finishes",

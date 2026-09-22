@@ -10,6 +10,12 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Agent response policy compatibility", () => {
+  it.each([undefined, "true", 1, null, {}, []])("keeps user decision disabled for missing or malformed %j", (value) => {
+    expect(AgentResponseSchema.parse({ id: "agent-1", inbound_coordinator_user_decision: value }).inbound_coordinator_user_decision).toBe(false);
+  });
+  it.each([true, false])("preserves explicit user decision setting %j", (value) => {
+    expect(AgentResponseSchema.parse({ id: "agent-1", inbound_coordinator_user_decision: value }).inbound_coordinator_user_decision).toBe(value);
+  });
   it.each(["true", 1, null, {}, []])("keeps event triggers disabled for malformed %j", (value) => {
     expect(AgentResponseSchema.parse({ id: "agent-1", event_trigger_enabled: value }).event_trigger_enabled).toBe(false);
   });

@@ -1023,7 +1023,10 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agent, err = h.refreshBuilderPackageContract(r, agent, req.Content)
-	if err != nil { writeError(w, http.StatusInternalServerError, "failed to prepare Agent Builder package contract"); return }
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare Agent Builder package contract")
+		return
+	}
 
 	// Detect whether this is the very first human message in the session,
 	// BEFORE we insert the new row. This scopes LLM auto-titling (MUL-4295) to
@@ -1034,6 +1037,16 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	hadUserMessage := true
 	if existed, err := h.Queries.ChatSessionHasUserMessage(r.Context(), session.ID); err == nil {
 		hadUserMessage = existed
+	}
+
+	policy, policyErr := h.Queries.GetAgentDingTalkResponsePolicy(r.Context(), agent.ID)
+	if policyErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "could not verify coordinator decision policy")
+		return
+	}
+	if policy.InboundCoordinator && policy.InboundCoordinatorUserDecision {
+		writeError(w, http.StatusConflict, "由发起人选择处理方式目前仅面向企业内部群，当前会话未执行任务")
+		return
 	}
 
 	// Media must enter the existing attachment-aware chat path before any

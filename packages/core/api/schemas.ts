@@ -2876,6 +2876,7 @@ export const AgentResponseSchema = z
     id: z.string(),
     coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     coordinator_contract_state: z.enum(["loaded", "not_configured", "stale", "unavailable"]).catch("unavailable").default("not_configured"),
+    inbound_coordinator_user_decision: z.boolean().catch(false).default(false),
     event_trigger_enabled: z.boolean().catch(false).default(false),
     dingtalk_response_enabled: z.boolean().catch(false).default(false),
     dingtalk_show_ai_tag: z.boolean().catch(false).default(false),

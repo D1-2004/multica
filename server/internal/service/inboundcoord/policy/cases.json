@@ -1442,6 +1442,96 @@
       "verification": "not_run",
       "evidence_status": "pending_reference",
       "evidence_note": "重试前置检查与等待恢复已在预发观察到（park 8.5 分钟后自动开跑，未触发 10 分钟豁免）；豁免路径本身仍只有本地数据库用例，不记为通过。"
+    },
+    {
+      "id": "user_decision_initiator_contrast",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "发起人选择已冻结的续接选项，并补充格式要求",
+      "context_b": "其他群成员选择同一张卡，或发起人补充说明与所选目标矛盾",
+      "expected_effects": "仅发起人的首次有效提交可恢复；目标矛盾不换选项、不执行、不发第二次询问",
+      "verification": "not_run"
+    },
+    {
+      "id": "user_decision_proposal_repair_contrast",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "候选缺少必需选项，在发卡前根据校验反馈修正；直接回复标签使用计划原文",
+      "context_b": "修正仍含无效动作、虚构任务或承诺执行工作的 receipt 回复，或补充说明把续接目标改成另一任务；conversation 动作正文承诺“我将继续修改”同样须被独立语义审查拒绝",
+      "expected_effects": "仅合法冻结候选发一张卡；失败不提交计划，不把标签摘要当实际回复；明确方向不可被改写；补充解释引用不合法时仅在冻结范围内内部修正最多三次，保存每次输出，耗尽不执行",
+      "verification": "host_test_only"
+    },
+    {
+      "id": "user_decision_semantic_verdict_not_keyword_routing",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "用户明确只确认收到、不新建或续接，选择独立回复；语义审查 allow 的理由提到 forbids start_work 或 tool permission。",
+      "context_b": "语义审查因真实限制或无依据回复返回 revise；用户选择不豁免合法性审查。",
+      "expected_effects": "用户决策分支保留语义 verdict 与理由，不运行旧自动路由 prose 关键词改判；allow 可以回复，revise 不执行；结构、参与及目标检查仍生效。",
+      "verification": "host_test_only"
+    },
+    {
+      "id": "user_decision_card_summary_and_recovery",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "创建确认后以持久化更新补充问题 Markdown 的 artifact 注解，后续更新保留状态注解，旧等待卡重连恢复问题绑定。",
+      "context_b": "更新省略注解导致 DWS 清空 artifact，或恢复表单覆盖用户已输入的答案。",
+      "expected_effects": "等待态使用 CONFIRMING 展示问题摘要，不以 INPUTTING 显示正在回复；终态摘要展示实际状态；等待恢复保留 answers；只发布数据绑定和组件更新，不重发第二张卡。",
+      "verification": "host_test_only"
+    },
+    {
+      "id": "user_decision_durable_recovery_and_receipt_lease",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "选择解析中收到重复发卡回执，或终态卡片更新失败后服务重启。",
+      "context_b": "过期或取消的未执行决策收到迟到提交。",
+      "expected_effects": "回执不清理解析租约；卡片重试不重派执行；过期取消拒绝提交，不生成虚假选择，仅恢复终态说明。",
+      "verification": "host_test_only"
+    },
+    {
+      "id": "user_decision_monitor_contrast",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "发起人尚未选择，订阅健康，等待十分钟",
+      "context_b": "请求等待超过五分钟且订阅未就绪，或发卡未知、接受恢复、卡片更新持续延迟",
+      "expected_effects": "A仅统计正常等待，不提醒；B持久通知有效Agent所有者但不代选，环境/工作区隔离，多实例重启不重复通知同一问题",
+      "verification": "preproduction_verification_pending"
+    },
+    {
+      "id": "user_decision_provider_tool_choice_contrast",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "Qwen完整上下文强制工具请求返回已实测的provider400 Invalid request parameters",
+      "context_b": "鉴权/网络/其他参数错误，或兼容重试仅返回自由文本",
+      "expected_effects": "A原样保留上下文与工具，只切auto重试一次；B不走该兼容重试，任何自由文本均不得成为候选或提交执行计划",
+      "verification": "host_test_only"
+    },
+    {
+      "id": "user_decision_later_submission_review",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "无选项，仅补充说明明确修改原回复或取消原请求",
+      "context_b": "明确选择续接任务A，补充说明却要求改为任务B",
+      "expected_effects": "A以同一发起人的后续提交审查，不强制旧措辞；取消不执行不二次询问。B保持选择锁定，矛盾不执行",
+      "verification": "host_tests_passed; preproduction_model_replay_passed; native_after_fix_pending"
+    },
+    {
+      "id": "user_decision_candidate_task_label",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "续接标签称R18，但实际目标是R12独立模拟结论，R18已取消且没有任务",
+      "context_b": "同一目标如实称R12独立模拟结论并说明改为R19回复测试",
+      "expected_effects": "A发卡前拒绝并修正；B不因更偏好直接回复而拒绝可选方向",
+      "verification": "host_tests_passed; preproduction_model_replay_passed; native_after_fix_pending"
     }
   ]
 }

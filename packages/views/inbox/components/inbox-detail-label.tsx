@@ -14,6 +14,7 @@ import { useT } from "../../i18n";
 export function useTypeLabels(): Record<InboxItemType, string> {
   const { t } = useT("inbox");
   return {
+    coordinator_decision_alert: t(($) => $.types.coordinator_decision_alert),
     issue_assigned: t(($) => $.types.issue_assigned),
     issue_subscribed: t(($) => $.types.issue_subscribed),
     unassigned: t(($) => $.types.unassigned),
@@ -93,6 +94,7 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
       if (details.to) return <span>{t(($) => $.labels.set_due_date_to, { date: shortDate(details.to) })}</span>;
       return <span>{t(($) => $.labels.removed_due_date)}</span>;
     }
+    case "coordinator_decision_alert":
     case "new_comment": {
       if (item.body) return <span>{item.body}</span>;
       return <span>{typeLabels[item.type]}</span>;
