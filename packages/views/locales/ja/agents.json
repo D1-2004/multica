@@ -215,7 +215,7 @@
     "prop_chat_session_resume": "前回セッションを再開",
     "prop_chat_session_resume_hint": "オンにすると、1 対 1 の連続した質問では可能な限り前回の会話を引き継ぎ、より速く応答します。20 分を超えた場合や設定が変わった場合は、全履歴を使って自動的に再開します。オフでは毎回新しいモデルセッションを開始します。",
     "prop_coordinator_user_decision": "依頼者が処理方法を選択",
-    "prop_coordinator_user_decision_hint": "受信リクエストごとに一度確認します。24時間後に実行せず期限切れになります。現在は企業内DingTalkグループのみ対応しています。",
+    "prop_coordinator_user_decision_hint": "デジタル従業員への受信リクエストごとに一度確認します。24時間後に実行せず期限切れになります。対応する会話はDingTalkが判定します。ボットはまだ対象外です。",
     "prop_inbound_coordinator": "受信時に先判断",
     "prop_inbound_coordinator_hint": "オンにすると、DingTalk と Web のメッセージはまずすぐに返信できるかを判断し、ツール、調査、継続対応が必要な依頼だけタスクを開始します。オフではすべてのメッセージをエージェントが直接実行します。",
     "prop_task_finished_loop": "仕事完了後に再判断",
