@@ -169,7 +169,9 @@ function runtimeWithImage(templateName: string | null): AgentRuntime {
     launch_header: "",
     status: "online",
     device_info: "",
-    metadata: templateName ? { template_name: templateName } : {},
+    metadata: templateName
+      ? { kind: "fc-e2b", template_name: templateName, template_alias: templateName }
+      : { kind: "fc-e2b" },
     owner_id: "user-1",
     visibility: "private",
     last_seen_at: null,
@@ -256,6 +258,22 @@ describe("FilesPage", () => {
     expect(notice).toHaveTextContent(SHARED_DISK_REQUIRED_RUNTIME_IMAGE);
     expect(notice).toHaveTextContent("unknown");
     expect(notice).not.toHaveTextContent("do not match");
+  });
+
+  it("does not prompt when the runtime is not an FC image", async () => {
+    mocks.runtimes = [
+      {
+        ...runtimeWithImage("local-runtime"),
+        runtime_mode: "local",
+        metadata: { template_name: "local-runtime" },
+      },
+    ];
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("option", { name: /Feidi/ }));
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("does not prompt when the bound runtime image satisfies the requirement", async () => {

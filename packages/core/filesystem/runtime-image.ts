@@ -24,7 +24,7 @@ export function compareRuntimeImage(
   if (!need) return "not_required";
   const have = clean(bound);
   if (!have) return "unknown";
-  if (have === need || have.endsWith(need) || need.endsWith(have)) return "match";
+  if (have === need || have.endsWith(`-${need}`) || have.endsWith(`/${need}`)) return "match";
   return "mismatch";
 }
 
@@ -33,7 +33,7 @@ export function boundRuntimeImage(
 ): string | null {
   const metadata = runtime?.metadata;
   if (!metadata || typeof metadata !== "object") return null;
-  for (const key of ["template_name", "template_alias", "template_id"] as const) {
+  for (const key of ["template_alias", "template", "template_id", "template_name"] as const) {
     const value = metadata[key];
     if (typeof value === "string" && value.trim()) return value.trim();
   }

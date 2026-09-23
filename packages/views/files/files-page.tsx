@@ -11,7 +11,9 @@ import {
   filesystemGrantsOptions,
   filesystemRootsOptions,
 } from "@multica/core/filesystem";
+import { parseFCE2BRuntimeMetadata } from "@multica/core/runtimes";
 import { runtimeListOptions } from "@multica/core/runtimes/queries";
+import type { AgentRuntime } from "@multica/core/types";
 import { FileBrowser } from "./files-browser";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -227,11 +229,12 @@ export function FilesPage() {
                 disk={selectedDisk}
                 wsId={wsId ?? ""}
                 boundRuntimeImage={
-                  selectedDisk.kind === "agent" && !runtimesQuery.isPending
-                    ? boundRuntimeImage(
-                        (runtimesQuery.data ?? []).find(
-                          (runtime) => runtime.id === selectedDisk.agent?.runtime_id,
-                        ),
+                  selectedDisk.kind === "agent" &&
+                  !runtimesQuery.isPending &&
+                  !runtimesQuery.isError
+                    ? fcBoundRuntimeImage(
+                        runtimesQuery.data,
+                        selectedDisk.agent?.runtime_id,
                       )
                     : undefined
                 }
@@ -387,6 +390,16 @@ function DiskIcon({ disk }: { disk: Disk }) {
       <Folder aria-hidden="true" className="size-3" />
     </span>
   );
+}
+
+function fcBoundRuntimeImage(
+  runtimes: AgentRuntime[] | undefined,
+  runtimeId: string | null | undefined,
+): string | null | undefined {
+  if (!runtimeId) return undefined;
+  const runtime = (runtimes ?? []).find((item) => item.id === runtimeId);
+  if (!runtime || !parseFCE2BRuntimeMetadata(runtime)) return undefined;
+  return boundRuntimeImage(runtime);
 }
 
 function RuntimeImageMismatchNotice({
