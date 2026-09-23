@@ -198,26 +198,27 @@ func (s Store) EnsureParents(ctx context.Context, workspaceID, agentID, createdB
 }
 
 func (s Store) Rename(ctx context.Context, workspaceID, agentID uuid.UUID, oldRel, newRel, newName string) error {
+	child := likeChildPattern(oldRel)
 	_, err := s.DB.Exec(ctx, `UPDATE workspace_fs_entry SET
  rel_path = CASE WHEN rel_path = $3 THEN $4 ELSE $4 || substr(rel_path, char_length($3)+1) END,
  parent_path = CASE
    WHEN parent_path = $3 THEN $4
-   WHEN parent_path LIKE $3 || '/%' THEN $4 || substr(parent_path, char_length($3)+1)
+   WHEN parent_path LIKE $6 ESCAPE '\' THEN $4 || substr(parent_path, char_length($3)+1)
    ELSE parent_path
  END,
  name = CASE WHEN rel_path = $3 THEN $5 ELSE name END,
  updated_at = now()
  WHERE workspace_id=$1 AND agent_id IS NOT DISTINCT FROM $2
- AND (rel_path = $3 OR rel_path LIKE $3 || '/%')`,
-		workspaceID, agentArg(agentID), oldRel, newRel, newName)
+ AND (rel_path = $3 OR rel_path LIKE $6 ESCAPE '\')`,
+		workspaceID, agentArg(agentID), oldRel, newRel, newName, child)
 	return err
 }
 
 func (s Store) StorageKeysUnder(ctx context.Context, workspaceID, agentID uuid.UUID, rel string) ([]string, error) {
 	rows, err := s.DB.Query(ctx, `SELECT storage_key FROM workspace_fs_entry
  WHERE workspace_id=$1 AND agent_id IS NOT DISTINCT FROM $2 AND storage_key <> ''
- AND (rel_path = $3 OR rel_path LIKE $3 || '/%')`,
-		workspaceID, agentArg(agentID), rel)
+ AND (rel_path = $3 OR rel_path LIKE $4 ESCAPE '\')`,
+		workspaceID, agentArg(agentID), rel, likeChildPattern(rel))
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +237,21 @@ func (s Store) StorageKeysUnder(ctx context.Context, workspaceID, agentID uuid.U
 func (s Store) DeleteUnder(ctx context.Context, workspaceID, agentID uuid.UUID, rel string) error {
 	_, err := s.DB.Exec(ctx, `DELETE FROM workspace_fs_entry
  WHERE workspace_id=$1 AND agent_id IS NOT DISTINCT FROM $2
- AND (rel_path = $3 OR rel_path LIKE $3 || '/%')`,
-		workspaceID, agentArg(agentID), rel)
+ AND (rel_path = $3 OR rel_path LIKE $4 ESCAPE '\')`,
+		workspaceID, agentArg(agentID), rel, likeChildPattern(rel))
 	return err
+}
+
+// likeChildPattern matches descendants of rel. % and _ in the path are
+// literals, so a directory named "a_b" or "100%" cannot select its siblings.
+func likeChildPattern(rel string) string {
+	var b strings.Builder
+	for _, r := range rel {
+		if r == '\\' || r == '%' || r == '_' {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	b.WriteString("/%")
+	return b.String()
 }

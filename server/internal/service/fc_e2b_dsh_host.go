@@ -101,6 +101,16 @@ func dshWaitReason(err error) string {
 // on the private mount only, and a later idle rebuild adds the shared mount.
 // fallback=true means the current grant could not be resolved, so the launch
 // must also drop any shared mount an existing sandbox still carries.
+// launchWithoutSharedMount is true when this launch must not keep a shared
+// volume. A resolved grant of none is included: the sandbox from the previous
+// grant can still have that mount, and Ensure would reuse it.
+func launchWithoutSharedMount(decision wsfs.MountDecision, prepareEnabled, fallback bool) bool {
+	if decision.Shared != nil {
+		return false
+	}
+	return fallback || prepareEnabled
+}
+
 func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Database, key dshhost.Key, before *dshhost.Host) (decision wsfs.MountDecision, fallback bool) {
 	decision = wsfs.MountDecision{Private: before, RoleARN: before.RoleARN}
 	if l.PrepareWorkspaceMount == nil {
@@ -300,7 +310,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		if decision.Shared != nil && decision.RoleARN != "" && decision.RoleARN != before.RoleARN {
 			return manager.EnsureWithShared(ctx, key, template, *decision.Shared, decision.RoleARN)
 		}
-		if mountFallback {
+		if launchWithoutSharedMount(decision, l.PrepareWorkspaceMount != nil, mountFallback) {
 			return manager.EnsurePrivate(ctx, key, template)
 		}
 		return manager.Ensure(ctx, key, template)
@@ -328,7 +338,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			slog.Info("dsh host waiting", "reason", dshhost.WaitCreateIntentStale, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
 			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitCreateIntentStale)
 		}
-		if mountFallback {
+		if launchWithoutSharedMount(decision, l.PrepareWorkspaceMount != nil, mountFallback) {
 			// An adopted create may carry a shared mount from an earlier grant.
 			err = manager.RequirePrivate(ctx, host)
 		}

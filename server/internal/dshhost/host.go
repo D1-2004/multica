@@ -353,8 +353,10 @@ func (m Manager) Retire(ctx context.Context, key Key, generation int64) error {
 
 // RetireUnlessBusy begins retire, then re-checks a live hold (native grants).
 // Inserts require state=running, so a grant that committed before BeginRetire
-// is visible here; a grant after BeginRetire is denied. Crash recovery of an
-// already-retiring generation skips the hold and finishes destroy.
+// is visible here; a grant after BeginRetire is denied. A failed hold query
+// aborts a retire this call started and, on a later retry, is checked again
+// before destroy. An already-retiring host is not destroyed while that query
+// fails or a hold is present.
 func (m Manager) RetireUnlessBusy(ctx context.Context, key Key, generation int64, busy func(Host) (bool, error)) error {
 	return m.retire(ctx, key, generation, busy)
 }
@@ -377,9 +379,14 @@ func (m Manager) retire(ctx context.Context, key Key, generation int64, busy fun
 	} else if h.State != "retiring" {
 		return ErrChanged
 	}
-	if began && busy != nil {
+	if busy != nil {
 		blocked, busyErr := busy(h)
 		if busyErr != nil {
+			if began {
+				if abortErr := m.Store.AbortRetire(ctx, h); abortErr != nil {
+					return errors.Join(busyErr, abortErr)
+				}
+			}
 			return busyErr
 		}
 		if blocked {

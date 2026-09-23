@@ -14,7 +14,8 @@ function clean(value: string | null | undefined): string {
 /**
  * Compare the image a capability requires with the image on the bound runtime.
  * An empty bound image is unknown, not a match. A bound image satisfies the
- * requirement when the two names are equal or one is the other's suffix.
+ * requirement when it equals the required image or ends with that image as a
+ * "-" or "/" delimited token. A shorter suffix does not match.
  */
 export function compareRuntimeImage(
   required: string | null | undefined,
