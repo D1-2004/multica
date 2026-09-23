@@ -559,6 +559,9 @@ func main() {
 	if h.DingTalkResponsePolicySync != nil {
 		go h.DingTalkResponsePolicySync.Run(sweepCtx)
 	}
+	if h.UserDecisions != nil {
+		go h.UserDecisions.Run(sweepCtx)
+	}
 	if h.InboundCoordinatorWorker != nil {
 		go h.InboundCoordinatorWorker.Run(sweepCtx)
 	}
@@ -577,6 +580,7 @@ func main() {
 	if h.FCE2BLauncher != nil {
 		go h.FCE2BLauncher.RunDSHBuildWorker(sweepCtx, h.Storage)
 		go h.FCE2BLauncher.RunDSHProfileWorker(sweepCtx)
+		go h.RunDSHSessionInputWorker(sweepCtx)
 	}
 
 	// Channel inbound supervisor (MUL-3620): holds the §4.4 WS lease per

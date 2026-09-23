@@ -363,3 +363,13 @@ FROM eligible
 JOIN agent_task_queue AS task ON task.id = eligible.id
 WHERE eligible.runtime_position <= sqlc.arg('max_per_runtime')::integer
 ORDER BY task.runtime_id, task.created_at ASC, task.id ASC;
+
+-- name: ListLatestSandboxIDsByTaskIDs :many
+-- Latest non-empty sandbox id per task, for issue execution-log rows.
+SELECT DISTINCT ON (task_id)
+    task_id,
+    sandbox_id
+FROM agent_task_runtime_start_attempt
+WHERE task_id = ANY(sqlc.arg('task_ids')::uuid[])
+  AND btrim(sandbox_id) <> ''
+ORDER BY task_id, updated_at DESC, created_at DESC, id DESC;

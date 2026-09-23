@@ -1426,6 +1426,8 @@ export const AttachmentResponseSchema = z
     download_url: z.string(),
     markdown_url: z.string().optional().default(""),
     filename: z.string(),
+    size_bytes: z.number().optional().default(0),
+    sha256: z.string().optional().default(""),
     chat_session_id: z.string().nullable().optional(),
     chat_message_id: z.string().nullable().optional(),
   })
@@ -1446,6 +1448,7 @@ export const EMPTY_ATTACHMENT: Attachment = {
   markdown_url: "",
   content_type: "",
   size_bytes: 0,
+  sha256: "",
   created_at: "",
 };
 
@@ -2449,6 +2452,7 @@ export const AgentTaskSchema = z
     // `.catch(undefined)` collapses a bad array to "no usage recorded", which
     // the UI already renders as an em dash.
     usage: z.array(TaskUsageSchema).optional().catch(undefined),
+    sandbox_id: z.string().optional(),
   })
   .loose();
 
@@ -2873,6 +2877,7 @@ export const AgentResponseSchema = z
     id: z.string(),
     coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     coordinator_contract_state: z.enum(["loaded", "not_configured", "stale", "unavailable"]).catch("unavailable").default("not_configured"),
+    inbound_coordinator_user_decision: z.boolean().catch(false).default(false),
     event_trigger_enabled: z.boolean().catch(false).default(false),
     dingtalk_response_enabled: z.boolean().catch(false).default(false),
     dingtalk_show_ai_tag: z.boolean().catch(false).default(false),

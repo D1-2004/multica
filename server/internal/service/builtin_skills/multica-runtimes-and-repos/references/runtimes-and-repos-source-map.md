@@ -1,5 +1,8 @@
 # Runtimes and repos source map
 
+- FC/E2B sandbox lifetime: `server/internal/service/fc_e2b.go` `defaultFCE2BTimeoutSeconds` (4800) and `createSandbox --timeout`; `fc_e2b_timeout.go` `sandboxTaskTimeout` / `renewSandboxForTask` use the same duration (config may raise it, never lower it). `--lifecycle.ontimeout kill`. Documented in `docs/fc-sandbox-lifecycle.md`.
+- Attachment upload receipts: `server/internal/handler/file.go` `AttachmentResponse.size_bytes` + `sha256`; CLI `server/internal/cli/client.go` `UploadFile` / `Receipt()`. Limit `maxUploadSize` 100 MB.
+
 - `server/internal/service/asb_capacity_gate.go` distinguishes short create pacing from cached full/429 results. `asb_capacity.go` waits the remaining pacing interval inside the current launch under the tenant lock; it preserves cancellation and never reports pacing as full quota. `asb_capacity_waiter.go` wakes the next eligible waiter after a recovery launch finishes.
 
 - `server/internal/service/asb_capacity_region.go` maps live quota regions to ASB regional API hosts for cold creation. `asb_capacity.go` refreshes allocations after quota contention and after reclaim; only explicit create-time `403 QUOTA_EXCEEDED` errors trigger regional failover. Regional client copies do not change the shared tenant lock/cooldown or sandbox-ID-based lifecycle routing.

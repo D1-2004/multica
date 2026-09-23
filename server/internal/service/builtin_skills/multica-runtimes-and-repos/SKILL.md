@@ -40,6 +40,15 @@ available from the entry page or this schema support alone.
 
 A runtime is the execution target behind an agent. A daemon owns local runtime processes and claims queued tasks from the server.
 
+FC/E2B sandbox lifetime equals this task's lifetime. Create and task-start
+renewal both default to 4800 seconds (`--lifecycle.ontimeout kill`). The
+platform does not renew again while the task runs, so work that outlives
+that window can be killed with no Issue event. `nohup` / `setsid` do not
+keep processes alive after the task ends. Persist patches, logs, and
+artifacts to Issue comments/attachments before exiting. Attachment upload
+receipts include `size_bytes` and `sha256`; comment JSON uses `size_bytes`,
+not `size`.
+
 The chain is:
 
 1. user action creates or updates an `agent_task_queue` row;

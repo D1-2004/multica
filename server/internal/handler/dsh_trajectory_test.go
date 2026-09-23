@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const validDSHTrajectory = `{"type":"session","version":0,"id":"ses_test-1","createdAt":1720000000000,"delegationDepth":0}
@@ -167,5 +169,27 @@ func TestValidateDSHTrajectoryNativeV3Root(t *testing.T) {
 				t.Fatal("unsupported or incomplete native ledger was accepted")
 			}
 		})
+	}
+}
+
+func TestDSHUploadBindingCorrelatesNativePluginIdentity(t *testing.T) {
+	const sid = "session-31e58f19-8669-42f3-98f6-01bc71aa8ad0"
+	const rid = "weixin-native-request"
+	identity, err := protocol.DSHNativeRequestIdentity(sid, rid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped := `{"type":"multica/task-trajectory","version":1,"sessionId":"` + sid + `","requestId":"` + rid + `","firstSeq":10,"lastSeq":12}
+{"type":"session","version":3,"id":"` + sid + `","createdAt":1,"isSeeded":false}
+{"type":"turn/start","seq":10,"time":2,"data":{"turn":9}}
+{"type":"user/message","seq":11,"time":3,"data":{"source":{"kind":"user","rpcId":"` + rid + `"}}}
+{"type":"turn/end","seq":12,"time":4,"data":{"turn":9,"reason":{"kind":"completed"}}}
+`
+	if err := validateDSHUploadBinding([]byte(scoped), sid, identity.String(), true); err != nil {
+		t.Fatal(err)
+	}
+	foreign, _ := protocol.DSHNativeRequestIdentity(sid, "other")
+	if validateDSHUploadBinding([]byte(scoped), sid, foreign.String(), true) == nil {
+		t.Fatal("foreign plugin reply admitted")
 	}
 }

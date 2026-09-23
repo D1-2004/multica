@@ -2097,6 +2097,24 @@ describe("ApiClient", () => {
     ]);
   });
 
+  it("preserves sandbox_id on issue task runs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify([
+            { id: "task-1", status: "completed", sandbox_id: "sbx_issue_exec_1" },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    const tasks = await client.listTasksByIssue("issue-1");
+    expect(tasks[0]?.sandbox_id).toBe("sbx_issue_exec_1");
+  });
+
   it("keeps task runs when optional comment coverage is malformed", async () => {
     vi.stubGlobal(
       "fetch",

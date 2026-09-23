@@ -112,6 +112,9 @@ func RestoredPlan(ctx context.Context) (Decision, bool) {
 }
 
 func SavePlan(ctx context.Context, d Decision) error {
+	if d.Action == ActionAwaitUser || d.UserDecision != nil {
+		return fmt.Errorf("user decision candidates cannot be execution checkpoints")
+	}
 	cp, ok := ctx.Value(checkpointKey{}).(planCheckpoint)
 	if ok && cp.save != nil {
 		return cp.save(d)

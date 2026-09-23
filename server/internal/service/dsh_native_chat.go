@@ -55,13 +55,16 @@ type dshNativeChatAdmission struct {
 }
 
 func (a dshNativeChatAdmission) validateEmployee(agent db.Agent, userID pgtype.UUID) error {
-	if a.invoke == nil || a.access.ID == uuid.Nil || a.access.Kind != "session" ||
+	if a.invoke == nil || (a.access.Kind != "session" && a.access.Kind != "host") || (a.access.Kind == "session" && a.access.ID == uuid.Nil) ||
 		a.access.Generation < 1 || a.access.SandboxID == "" ||
 		a.access.WorkspaceID == uuid.Nil || a.access.AgentID == uuid.Nil || a.access.UserID == uuid.Nil ||
 		!userID.Valid || uuid.UUID(userID.Bytes) != a.access.UserID ||
 		!agent.WorkspaceID.Valid || uuid.UUID(agent.WorkspaceID.Bytes) != a.access.WorkspaceID ||
 		!agent.ID.Valid || uuid.UUID(agent.ID.Bytes) != a.access.AgentID || agent.ArchivedAt.Valid ||
 		agent.RuntimeMode != "cloud" || !agent.RuntimeID.Valid || agent.RuntimeID != a.runtimeID {
+		return dshhost.ErrNativeAccessDenied
+	}
+	if a.access.Kind == "host" && agent.OwnerID != userID {
 		return dshhost.ErrNativeAccessDenied
 	}
 	return nil
@@ -92,7 +95,8 @@ func (input DSHNativeChatInput) Validate(content string) error {
 		return err
 	}
 	if input.Prompt != nil {
-		if input.Prompt.Validate() != nil || input.Prompt.SessionID != input.SessionID || input.Prompt.RequestID != input.RequestID.String() || content != input.Prompt.DisplayText() {
+		identity, identityErr := protocol.DSHNativeRequestIdentity(input.Prompt.SessionID, input.Prompt.RequestID)
+		if identityErr != nil || input.Prompt.Validate() != nil || input.Prompt.SessionID != input.SessionID || identity != input.RequestID || content != input.Prompt.DisplayText() {
 			return ErrDSHNativeInput
 		}
 		return nil
@@ -178,11 +182,13 @@ func (a dshNativeChatAdmission) checkGrantLocked(ctx context.Context, tx pgx.Tx,
 	if err := dshhost.LockRunningHost(ctx, tx, dshhost.Host{Key: a.access.Key, Generation: a.access.Generation, SandboxID: a.access.SandboxID}); err != nil {
 		return dshhost.ErrNativeAccessDenied
 	}
-	if err := tx.QueryRow(ctx, `SELECT agent_id FROM dsh_native_access
+	if a.access.Kind == "session" {
+		if err := tx.QueryRow(ctx, `SELECT agent_id FROM dsh_native_access
  WHERE workspace_id=$1 AND agent_id=$2 AND generation=$3 AND sandbox_id=$4 AND id=$5
  AND user_id=$6 AND kind='session' AND expires_at>clock_timestamp() FOR SHARE`,
-		a.access.WorkspaceID, a.access.AgentID, a.access.Generation, a.access.SandboxID, a.access.ID, userID).Scan(&id); err != nil {
-		return dshhost.ErrNativeAccessDenied
+			a.access.WorkspaceID, a.access.AgentID, a.access.Generation, a.access.SandboxID, a.access.ID, userID).Scan(&id); err != nil {
+			return dshhost.ErrNativeAccessDenied
+		}
 	}
 
 	if err := tx.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE id=$1 AND workspace_id=$2 FOR SHARE`, agent.RuntimeID, agent.WorkspaceID).Scan(&id); err != nil {

@@ -94,8 +94,9 @@ type AgentResponse struct {
 	// InboundCoordinator runs the server-side assoc tool loop that replies
 	// immediately or opens an Issue. Off by default for new and existing
 	// agents; only an explicit owner on switch enables it.
-	InboundCoordinator  bool `json:"inbound_coordinator"`
-	EventTriggerEnabled bool `json:"event_trigger_enabled"`
+	InboundCoordinator             bool `json:"inbound_coordinator"`
+	InboundCoordinatorUserDecision bool `json:"inbound_coordinator_user_decision"`
+	EventTriggerEnabled            bool `json:"event_trigger_enabled"`
 	// DingTalkShowAITag controls the sender label for platform and sandbox DWS sends.
 	DingTalkShowAITag bool `json:"dingtalk_show_ai_tag"`
 	// DingTalkResponseEnabled opts this employee into platform-owned replies and reception cleanup.
@@ -222,6 +223,7 @@ func (h *Handler) hydrateDingTalkResponsePolicy(ctx context.Context, resp *Agent
 		resp.EventTriggerEnabled, _ = h.EventTriggers.Enabled(ctx, agentID, parseUUID(resp.WorkspaceID))
 	}
 	resp.InboundCoordinator = policy.InboundCoordinator
+	resp.InboundCoordinatorUserDecision = policy.InboundCoordinatorUserDecision
 	resp.DingTalkShowAITag = policy.DingtalkShowAiTag
 	resp.DingTalkResponseEnabled = policy.DingtalkResponseEnabled
 	resp.DingTalkResponsePolicyRevision = policy.DingtalkResponsePolicyRevision
@@ -335,6 +337,7 @@ func (h *Handler) hydrateAgentsInboundCoordinator(ctx context.Context, resps []A
 	for _, row := range rows {
 		if i, ok := index[uuidToString(row.ID)]; ok {
 			resps[i].InboundCoordinator = row.InboundCoordinator
+			resps[i].InboundCoordinatorUserDecision = row.InboundCoordinatorUserDecision
 		}
 	}
 }
@@ -414,6 +417,7 @@ func (h *Handler) hydrateAgentsDingTalkResponsePolicy(ctx context.Context, resps
 	for _, row := range rows {
 		if i, ok := index[uuidToString(row.ID)]; ok {
 			resps[i].InboundCoordinator = row.InboundCoordinator
+			resps[i].InboundCoordinatorUserDecision = row.InboundCoordinatorUserDecision
 			resps[i].DingTalkShowAITag = row.DingtalkShowAiTag
 			resps[i].DingTalkResponseEnabled = row.DingtalkResponseEnabled
 			resps[i].DingTalkResponsePolicyRevision = row.DingtalkResponsePolicyRevision
@@ -782,6 +786,10 @@ type AgentTaskResponse struct {
 	// and native session id stay server-private; the dedicated GET endpoint
 	// re-applies task and private-agent authorization before streaming bytes.
 	DSHTrajectoryAvailable bool `json:"dsh_trajectory_available,omitempty"`
+	// SandboxID is the FC/E2B or ASB sandbox that ran this task. Empty when
+	// the run never reached a sandbox (queued, local daemon, launch failed
+	// before create). omitempty so older clients ignore it.
+	SandboxID string `json:"sandbox_id,omitempty"`
 	// AuthToken is the task-scoped `mat_` token the daemon must inject as
 	// MULTICA_TOKEN in the agent process environment. The server binds it to
 	// this (agent_id, task_id) pair at claim time and treats any request
@@ -1818,23 +1826,24 @@ type UpdateAgentRequest struct {
 	// DispatchPromptOverrides is a whole-map replacement, not a merge: the UI
 	// edits one segment at a time but always sends the complete map, so a
 	// removed key is an unambiguous "restore the managed text".
-	DispatchPromptOverrides     *map[string]string `json:"dispatch_prompt_overrides"`
-	DispatchAlwaysNewIssue      *bool              `json:"dispatch_always_new_issue"`
-	ChatSessionResume           *bool              `json:"chat_session_resume"`
-	InboundCoordinator          *bool              `json:"inbound_coordinator"`
-	EventTriggerEnabled         *bool              `json:"event_trigger_enabled"`
-	DingTalkShowAITag           *bool              `json:"dingtalk_show_ai_tag"`
-	DingTalkResponseEnabled     *bool              `json:"dingtalk_response_enabled"`
-	TaskFinishedLoopEnabled     *bool              `json:"task_finished_loop_enabled"`
-	SceneMemoryWriteEnabled     *bool              `json:"scene_memory_write_enabled"`
-	SceneMemoryRecallEnabled    *bool              `json:"scene_memory_recall_enabled"`
-	SceneMemoryUIEnabled        *bool              `json:"scene_memory_ui_enabled"`
-	SceneMemoryBootstrapEnabled *bool              `json:"scene_memory_bootstrap_enabled"`
-	Persona                     *string            `json:"persona"`
-	ReplyTone                   *string            `json:"reply_tone"`
-	AvatarURL                   *string            `json:"avatar_url"`
-	RuntimeID                   *string            `json:"runtime_id"`
-	RuntimeConfig               any                `json:"runtime_config"`
+	DispatchPromptOverrides        *map[string]string `json:"dispatch_prompt_overrides"`
+	DispatchAlwaysNewIssue         *bool              `json:"dispatch_always_new_issue"`
+	ChatSessionResume              *bool              `json:"chat_session_resume"`
+	InboundCoordinator             *bool              `json:"inbound_coordinator"`
+	InboundCoordinatorUserDecision *bool              `json:"inbound_coordinator_user_decision"`
+	EventTriggerEnabled            *bool              `json:"event_trigger_enabled"`
+	DingTalkShowAITag              *bool              `json:"dingtalk_show_ai_tag"`
+	DingTalkResponseEnabled        *bool              `json:"dingtalk_response_enabled"`
+	TaskFinishedLoopEnabled        *bool              `json:"task_finished_loop_enabled"`
+	SceneMemoryWriteEnabled        *bool              `json:"scene_memory_write_enabled"`
+	SceneMemoryRecallEnabled       *bool              `json:"scene_memory_recall_enabled"`
+	SceneMemoryUIEnabled           *bool              `json:"scene_memory_ui_enabled"`
+	SceneMemoryBootstrapEnabled    *bool              `json:"scene_memory_bootstrap_enabled"`
+	Persona                        *string            `json:"persona"`
+	ReplyTone                      *string            `json:"reply_tone"`
+	AvatarURL                      *string            `json:"avatar_url"`
+	RuntimeID                      *string            `json:"runtime_id"`
+	RuntimeConfig                  any                `json:"runtime_config"`
 	// custom_env is intentionally NOT updatable through this endpoint.
 	// Use `PUT /api/agents/{id}/env` for env changes — that path admits
 	// the agent owner or a workspace owner/admin, denies agent actors,
@@ -2528,8 +2537,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.InboundCoordinator != nil || req.DingTalkShowAITag != nil || req.DingTalkResponseEnabled != nil {
+	if req.InboundCoordinatorUserDecision != nil || req.InboundCoordinator != nil || req.DingTalkShowAITag != nil || req.DingTalkResponseEnabled != nil {
 		policyParams := db.UpdateAgentDingTalkResponsePolicyParams{ID: updated.ID}
+		if req.InboundCoordinatorUserDecision != nil {
+			policyParams.UserDecision = pgtype.Bool{Bool: *req.InboundCoordinatorUserDecision, Valid: true}
+		}
 		if req.InboundCoordinator != nil {
 			policyParams.InboundCoordinator = pgtype.Bool{Bool: *req.InboundCoordinator, Valid: true}
 		}
@@ -2549,7 +2561,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.TaskFinishedLoopEnabled != nil {
-		if err := h.Queries.UpdateAgentTaskFinishedLoop(r.Context(), updated.ID, *req.TaskFinishedLoopEnabled); err != nil {
+		if err := h.Queries.UpdateAgentTaskFinishedLoop(r.Context(), db.UpdateAgentTaskFinishedLoopParams{ID: updated.ID, TaskFinishedLoopEnabled: *req.TaskFinishedLoopEnabled}); err != nil {
 			slog.Warn("update agent task_finished_loop failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to update task finished loop")
 			return
@@ -2894,6 +2906,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
+	h.hydrateTaskSandboxIDs(r.Context(), resp)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -3170,6 +3183,7 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
+	h.hydrateTaskSandboxIDs(r.Context(), resp)
 
 	writeJSON(w, http.StatusOK, resp)
 }

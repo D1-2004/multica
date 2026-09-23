@@ -62,6 +62,7 @@ export const AttachmentSchema: z.ZodType<Attachment> = z.object({
   markdown_url: z.string().default(""),
   content_type: z.string().default(""),
   size_bytes: z.number().default(0),
+  sha256: z.string().default(""),
   created_at: z.string().default(""),
 }).loose();
 
@@ -422,6 +423,7 @@ export const AgentTaskSchema: z.ZodType<AgentTask> = z.object({
   completed_at: z.string().nullable().default(null),
   result: z.unknown().default(null),
   error: z.string().nullable().default(null),
+  sandbox_id: z.string().optional(),
   // Backend uses empty string ("") as the "not failed" sentinel (Go
   // `omitempty` on a custom string-typed enum). Normalize that to `undefined`
   // so downstream truthy checks (`if (task.failure_reason)`) don't have to

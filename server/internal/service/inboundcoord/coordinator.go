@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/service/userdecision"
 	"log/slog"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 	"github.com/multica-ai/multica/server/internal/langfuse"
+	"github.com/multica-ai/multica/server/internal/modelregistry"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -49,12 +51,13 @@ const (
 type Action string
 
 const (
-	ActionReply    Action = "reply"
-	ActionIssue    Action = "issue"
-	ActionContinue Action = "continue"
-	ActionSilence  Action = "silence"
-	ActionRetry    Action = "retry"
-	ActionDeferred Action = "deferred"
+	ActionReply     Action = "reply"
+	ActionAwaitUser Action = "await_user"
+	ActionIssue     Action = "issue"
+	ActionContinue  Action = "continue"
+	ActionSilence   Action = "silence"
+	ActionRetry     Action = "retry"
+	ActionDeferred  Action = "deferred"
 )
 
 // Source names the inbound surface that asked for a decision.
@@ -78,6 +81,10 @@ const (
 
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
+	UserDecisionEnabled    bool
+	UserDecisionRequestID  string
+	UserDecisionSubmission *userdecision.Submission
+
 	model                      string
 	ProactiveConversation      bool
 	OutstandingFollowUps       string
@@ -161,6 +168,8 @@ type HistoryLine struct {
 
 // Decision is what callers act on.
 type Decision struct {
+	UserDecision *UserDecisionSnapshot `json:"user_decision,omitempty"`
+
 	CoordinationActions []CoordinationAction `json:"coordination_actions,omitempty"`
 	Action              Action
 	UserText            string
@@ -251,6 +260,7 @@ type SkillSnapshot struct {
 
 // Coordinator runs the bounded assoc tool loop in loop.go.
 type Coordinator struct {
+	RouteProvider func(context.Context) (*modelregistry.Route, error)
 	// ModelProvider is sampled once per decision, including all finish reviews.
 	ModelProvider func() string
 	model         string
@@ -385,6 +395,15 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	snapshot := *c
 	snapshot.model = c.configuredModel()
 	snapshot.ModelProvider = nil
+	if c.RouteProvider != nil {
+		route, err := c.RouteProvider(ctx)
+		if err != nil {
+			return Decision{Action: ActionDeferred, Reason: "model_configuration_unavailable"}
+		}
+		snapshot.Chat = route
+		snapshot.model = route.Model()
+		snapshot.RouteProvider = nil
+	}
 	c = &snapshot
 	turn.model = c.model
 	if c.Ready != nil {
@@ -427,7 +446,11 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	ensureTurnTraceID(&turn)
 	c.prefetchSceneMemory(ctx, &turn)
 
-	loopCtx, cancel := context.WithTimeout(ctx, decisionTimeout)
+	timeout := decisionTimeout
+	if turn.UserDecisionEnabled {
+		timeout = 90 * time.Second
+	}
+	loopCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	started := time.Now()
 	turnTrace = c.startTurnTrace(ctx, turn, started)
@@ -464,6 +487,9 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 		// so it ends here with a fixed reply or silence instead of six job
 		// retries that leave the person with nothing.
 		fallback, handled := loopStopFallback(turn, decision)
+		if turn.UserDecisionEnabled {
+			handled = false
+		}
 		if handled {
 			// Checkpoint the verdict like any window plan: a redelivered job
 			// restores it instead of reasoning again and possibly proposing
@@ -969,3 +995,6 @@ func (turn Turn) modelName() string {
 	}
 	return coordinatorModel
 }
+
+// CurrentModel reports the Diamond default before a per-decision route is resolved.
+func (c *Coordinator) CurrentModel() string { return c.configuredModel() }

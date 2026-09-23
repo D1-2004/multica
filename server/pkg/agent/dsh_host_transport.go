@@ -123,13 +123,14 @@ func (c *dshHostClient) follow(ctx context.Context, request any, consume func(js
 // native message/detail fields are deliberately excluded from task output.
 func dshHostOperationError(method string, raw json.RawMessage) error {
 	var diagnostic struct {
-		Code   string `json:"code"`
-		Reason string `json:"reason"`
+		Code      string `json:"code"`
+		Reason    string `json:"reason"`
+		ElapsedMs int64  `json:"elapsedMs"`
 	}
 	_ = json.Unmarshal(raw, &diagnostic)
 	code := "host/operation-failed"
 	switch diagnostic.Code {
-	case "multica/context-rejected", "multica/required-mcp-unavailable", "gateway/bad-request", "gateway/cancelled", "gateway/internal",
+	case "host/rpc-timeout", "host/transport-failed", "host/module-not-found", "host/startup-failed", "multica/context-rejected", "multica/required-mcp-unavailable", "gateway/bad-request", "gateway/cancelled", "gateway/internal",
 		"session/agent-busy", "session/attachment-invalid", "session/conflict",
 		"session/fork-unavailable", "session/invalid-time-zone", "session/model-unavailable",
 		"session/not-found", "session/queue-item-not-found", "session/steer-unavailable",
@@ -137,11 +138,24 @@ func dshHostOperationError(method string, raw json.RawMessage) error {
 		code = diagnostic.Code
 	}
 	summary := "operation rejected"
+	switch code {
+	case "host/rpc-timeout":
+		summary = "native operation deadline exceeded; outcome may still be pending"
+	case "host/transport-failed":
+		summary = "native transport failed; outcome is unknown"
+	case "host/module-not-found":
+		summary = "native startup dependency module is missing"
+	case "host/startup-failed":
+		summary = "native Host failed to start"
+	}
 	if code == "gateway/internal" && diagnostic.Reason == "history_corrupt" {
 		summary = "session history integrity check failed"
 	}
 	if method == "task.bind" && (diagnostic.Reason == "required_mcp_unavailable" || code == "multica/required-mcp-unavailable") {
 		summary = "required MCP startup failed"
+	}
+	if diagnostic.ElapsedMs > 0 && diagnostic.ElapsedMs < 3600000 {
+		return fmt.Errorf("DSH Host %s failed [%s] after %dms: %s", method, code, diagnostic.ElapsedMs, summary)
 	}
 	return fmt.Errorf("DSH Host %s failed [%s]: %s", method, code, summary)
 }

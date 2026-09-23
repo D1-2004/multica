@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-15.10`。装配版本：`37`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-22.1`。装配版本：`42`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -348,3 +348,68 @@ start_work/continue_work的接单回复由Host生成，模型仅可选择闭合r
 ## Coordinator model configuration
 
 Diamond `dt-fde-multica-runtime.json` / `DEFAULT_GROUP` exposes `runtime.llm.coordinator_model`. Each decision snapshots the model once for the main loop, finish checks, logs and Langfuse; updates apply to the next decision. Missing/blank values retain `qwen3.7-plus` for existing documents during rollout. The configured target is `qwen3.8-max`. Requests keep `enable_thinking=false` and `reasoning_effort=none`; this setting does not change executor models or the global default. Local protocol tests do not certify real model behavior or deployment.
+
+
+### 发起人选择处理方式（2026-09-21，已接线，预发验收中）
+
+`inbound_coordinator_user_decision` 默认关闭；关闭 Coordinator 同时清除此设置。候选提案与执行 checkpoint 分开：`UserDecisionSnapshot` 保存冻结上下文、模型实际输入、召回任务、提案及 policy 版本，`proposeUserDecision` 在 `SavePlan` 之前返回等待。每次入站仅一次提问；续接最多三个真实任务，加新建与具体直接回复；卡片不暴露内部计划或默认勾选。
+
+回调身份只读取可信 `operatorDTO.openDingTalkId`，新协议 `a2uiEvent.action.context` 与旧 `actionData.context` 在边界兼容。数据库事务锁住决策、去重事件并接收首次有效提交；拒绝事件不消耗机会。未确认发送成功不启动 24 小时计时；过期不自动选择。发送链路标识不构成 DWS 消息幂等保证，结果不明禁止盲目重发。
+
+选择锁定动作方向与目标；只补充文字可解释为计划，歧义或矛盾不执行、不二次询问。用户选择、模型推荐与人工金标分别记录。结构检查与单元测试不表示内部群产品链路通过；服务端消费、派发恢复、OSS/导出与真实模型/群验收仍须完成。
+
+候选发卡前的结构校验最多允许三次内部模型生成，校验失败反馈与原始候选全部留在快照中；耗尽后不发卡、不执行。该修正不增加用户询问次数，也不能绕过岗位或事实约束。
+
+候选完成结构校验后，由独立 `review_choices` 模型调用仅核对直接回复的事实与标签语义；即使动作被标为 conversation，也不得承诺选回复后执行工作。审查不代选，不审新建／续接路线优劣，不把技能目录缺失当作执行器能力缺失；审查原始输出与修正次数保存在冻结快照，仍在最多三次发卡前生成预算内。
+
+消费者重连后通过持久化待办刷新现存 waiting 卡片的组件，复用原卡与冻结候选，保留客户端已输入值；等待态不得显示已接收。终态卡片保留已接受选项与补充说明，处理成功与接收确认分开。回复计划的 JSON null IssueResults 视为空数组，不能阻断其它决策的终态汇总。
+
+补充说明解释的结构／引用校验失败允许最多三次内部修正，保留全部原始解释输出并提供冻结召回 ID 校验反馈；不增加用户询问，不修复或掩盖用户意图矛盾，不允许切换明确选择的目标。耗尽后未执行。
+
+用户提交后的 finish_check 仍校验结构、参与边界、目标与限制，但不执行旧自动路由中按审查理由关键词改判能力／开工方向的修正。显式选择由语义审查判断合法性，Host 不因 reason 中出现 tool、forbids 或 start_work 等词替换 verdict。R9 实测暴露误拒绝，修复验收单独记录。
+
+卡片问题与接收／执行状态使用公开 Catalog 的 Markdown 组件，并在确认创建回执后通过持久化待办补充对应 surface/component 的 artifact 注解；此后每次更新保留注解；不能让 DWS 更新默认的空注解抹掉摘要。等待表单恢复仅更新问题绑定及组件，不重置 answers。数据集导出保留非凭证的 card_biz_id 供卡片关联，凭据、消费者身份和租约字段仍排除。等待态使用 CONFIRMING，避免 INPUTTING 覆盖会话列表摘要为“正在回复中”。R12 实卡更新后显示问题正文且原生提交成功；R13/R14 自动接线的原生卡片、回调和结果均通过。关闭设置仅影响新请求，已发出的卡片继续按冻结规则处理。
+
+发卡回执重试只清理 sending/send_unknown 的发送租约；不得清理 resuming 的解析租约。显式预发启动验证通过隔离环境记录及回滚事务检查数据库过期、取消和卡片更新重试；MULTICA_USER_DECISION_VERIFY_ON_BOOT 默认关闭，正式环境拒绝开启。测试不新增 HTTP 调试入口，不冒充真实客户端失败注入。
+
+大快照上传失败不得产生已冻结引用；读取失败、超限或摘要不一致不得返回部分上下文。`snapshot_test.go` 覆盖这些失败边界与原引用重试；R14 实测约80KB快照的原生提交和导出通过，不能替代真实OSS故障注入。
+
+预发run3109340164（release dad5c06c）在两个实例上实际通过PostgreSQL过期／取消／重复回执租约、卡片更新持久重试与首次有效并发测试，发布allEnd=true；R14大快照与提交发布后回读未变化。测试夹具42P08失败及修正保留在验收记录中，未声明真实手机双端或OSS服务故障已验收。
+
+用户决策监控每分钟读取 PostgreSQL 权威状态，服务启动留两分钟订阅恢复时间。等待超过五分钟且订阅当前未就绪、发送未知超过五分钟、已接受未恢复超过五分钟、卡片更新积压超过五分钟，分别生成工作台 attention 提醒。收件人为仍在工作区内的 Agent 所有者，不新增决策人配置、不转移卡片作答权；没有有效所有者时不猜测收件人。通知按环境／决策／问题／所有者确定唯一 ID，由 inbox_item 主键去重，多实例或重启不重复投递同一提醒；WebSocket 只是唤醒，权威通知已持久化。健康接口补充权威状态数量、最久等待、24 小时接受等待均值／回调原因分布及累计重复投递数，保持工作区、Agent、环境隔离。正常等待且订阅健康不报警。
+
+数据集导出对嵌套 JSON 字符串执行同样的凭证与无关联系方式字段清理，仍以字符串返回该层，不修改权威输入；卡片 ID、作答者关联和选项 ID 保留。
+
+全局模型配置以数据库版本为权威，Diamond 保留只读默认 Provider。每次 Decide 冻结主模型与跨 Provider 降级链；所有模型调用（含回复整理和 finish 审查）共用该快照。上游限流、网络、超时、5xx、认证/模型不可用及 provider_error 可尝试下一候选；通用请求校验错误、业务审查拒绝、取消和总预算耗尽不降级。每个候选最多一次，共享原总预算；成功切换后本轮后续调用沿用备用模型。失败重试不重新执行工具或提交计划。原 required→auto 参数重写已移除，原工具和 Host 审查保持。每次供应商尝试独立记录 provider、model、配置版本与结果。当前结构/单元测试及预发验收状态见 registry 与交付记录。
+
+最终审查必须透传 UserDecisionSubmission 到 reviewTurn，实际装配 user_decision 模块。发起人的后续提交定义当前选择和补充要求；仅说明时可修改或取消原请求，不强制已被修改的原回复措辞。岗位／平台／身份边界仍生效，明确选项的方向与目标仍锁定，矛盾不执行。R18错误审查保留为反例。
+
+Candidate semantic review receives the full frozen proposal: continuation labels must identify their actual recalled task, and cannot rename it from an unrelated nearby message. This check does not choose the handling direction for the initiator.
+
+Submission interpretation receives the trusted latest submission after the frozen snapshot. Both protocol and semantic review repairs are bounded to three attempts with audits, locked direction and target, and no second human question. Verbatim review constraints may quote trusted supplementary text. Reply truthfulness and continuation-label grounding use separate model checks, so task identity checks cannot change the existing reply semantics.
+
+Dataset provenance includes exact proposal and candidate-review system prompt hashes, the actual interpretation policy manifest, and the Host-stamped policy manifest for each final review attempt. This preserves the distinction when a waiting request resumes after a deployment. Explicit non-executable interpretation reasons are shown to the initiator with a bounded message; infrastructure and review-protocol failures retain the generic public message.
+
+Submission interpretation uses only the registered user-decision policy, frozen evidence and typed plan schema. Automatic routing instructions are not assembled again at this stage; the full final-review and Host constraints still validate the resulting plan. Explicit cancellation is non-executable even when a cancellation acknowledgment could be written.
+
+### 用户决策渠道与诊断修正（2026-09-22）
+
+按用户最新要求，数字员工的用户决策入口不再限制内部群、会话类型或群归属组织。DWS 判断会话是否支持发卡；Host 只验证原消息与会话关联、发起人、订阅身份和提交幂等。决策记录的 corp_id 使用发卡账号当前认证 profile 的订阅组织，而非群拥有者组织；回调仍须匹配环境、订阅组织、会话、卡片、问题版本和原消息发起人。机器人暂不接入此模式，保持既有自动 Coordinator 流程，不因同一 Agent 开启数字员工用户决策而被拦截。
+
+`user_decision_service_unavailable` 仅表示未装配决策服务。持久化队列缺失、发卡身份不可用、订阅身份读取失败、原消息发起人读取失败和多发起人分别记录稳定原因码。普通诊断日志不保存底层 DWS 错误原文；日志只保存有界原因、Agent 和决策 ID。明确发卡拒绝的用户回复按下述专门契约展示脱敏的 DWS 提示。未叫到员工的主动群监听仍保持静默。
+
+线上反例：HuntStudio AI资讯是 NEW_EXTERNAL_GROUP，群组织与须莫v6 发卡组织不同，旧版在发卡前拒绝并误报服务不可用。修正取消该本地渠道限制，不改变发起人的作答权限；单元测试不代替 DWS 真实发卡、回调与任务验收。
+
+单聊发卡使用冻结入站类型 `p2p` 和已核验发起人的 `openDingTalkId`，映射 DWS `--open-dingtalk-id`；群聊使用原会话 ID 映射 `--chat-id`。这只选择接口参数，不限制渠道能力。发卡前读取并校验完整冻结快照（含 OSS 对象）；缺失或损坏不得猜测收件人。未知发送结果保留原卡片与请求标识，不能因参数修复自动补发。
+
+### 发卡明确拒绝的用户反馈
+
+DWS 返回 A2UI_TARGET_INVALID、INVALID_PARAM、FORBIDDEN 或 PERMISSION_DENIED 的明确业务拒绝时，发送租约持有者以同一 PostgreSQL 事务将决策终结为 not_executed，并恢复原 Coordinator 的 reply-only checkpoint。回复包含错误码、脱敏且限长的 DWS error.message 和 Trace ID；不转发 stderr、凭证或建议命令。未生成用户选择，不创建工作，不重发卡片、不更新不存在的卡片。重复或过期发送租约不能覆盖状态。INTERNAL_ERROR、下游投递失败和超时仍为 send_unknown，不能误判未发送。
+
+### 统一工具 schema（2026-09-22）
+
+所有 Coordinator 模型使用同一份工具 schema：不发送 `uniqueItems`，对象 `oneOf` 每个分支包含完整属性及必填字段。重复 source_refs/state_refs 和参与判断引用由既有 Host 校验拒绝；生成约束不代替提交校验。工具选择仍为 `required`，不增加按模型或 Provider 的适配分支，也不恢复报错后改成 `auto` 的重试。
+
+背景是百炼 DeepSeek 的最小复现：`uniqueItems` 无论 true/false 均触发400，删除后200；只声明分支差量还会遗漏必填字段。因此采用所有模型共用的完整分支表示，保留相同动作、字段、闭合对象及审核义务。`coordinatorWireParams` 只完成统一 schema 展开，不改参数快照与实际工具执行。
+
+验证：`TestCoordinatorWireSchemaPreservesRequiredChoiceAndBranchConstraints`、`TestReferenceUniquenessRemainsHostEnforced` 及参与判断重复引用对照。预发模型调用与完整任务验收分别记录。

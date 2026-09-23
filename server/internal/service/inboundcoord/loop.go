@@ -265,6 +265,9 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 						decision.Steps = steps
 						decision.ToolRounds = round + 1
 						decision.ToolsUsed = append([]string(nil), used...)
+						if turn.UserDecisionEnabled && turn.Loop != LoopTaskFinished && decision.Action != ActionSilence {
+							return c.proposeUserDecision(ctx, turn, messages, recalls, recalledIssues, decision)
+						}
 						if saveErr := SavePlan(ctx, decision); saveErr != nil {
 							return fail(saveErr)
 						}
@@ -399,13 +402,19 @@ func (c *Coordinator) completeWithModelLimit(ctx context.Context, model string, 
 		"tool_choice":     toolChoice,
 	})
 	params.Temperature = openai.Float(temp)
-	if c != nil && c.Chat != nil {
-		return c.Chat.Chat(ctx, params)
+	var err error
+	params, err = coordinatorWireParams(params)
+	if err != nil {
+		return nil, err
 	}
-	if c == nil || c.LLM == nil {
+	if c == nil || (c.Chat == nil && c.LLM == nil) {
 		return nil, fmt.Errorf("coordinator loop: llm is not configured")
 	}
-	return c.LLM.Chat(ctx, params)
+	chat := c.Chat
+	if chat == nil {
+		chat = c.LLM
+	}
+	return chat.Chat(ctx, params)
 }
 
 func (c *Coordinator) callTool(ctx context.Context, turn Turn, name, arguments string) (string, error) {

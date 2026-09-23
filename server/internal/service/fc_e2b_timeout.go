@@ -18,8 +18,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/dshhost"
 )
 
-const fcE2BTaskSandboxTimeout = time.Hour
-
 var fcE2BAPISandboxIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 func (l *FCE2BLauncher) employeeHostTimeoutSeconds() int {
@@ -27,6 +25,20 @@ func (l *FCE2BLauncher) employeeHostTimeoutSeconds() int {
 		return dshhost.DefaultSandboxTaskTimeoutSeconds
 	}
 	return dshhost.SandboxTaskTimeoutSeconds(l.Config.TimeoutSeconds)
+}
+
+// sandboxTaskTimeout is the lifetime applied at generic task-sandbox create
+// and renewal. Config may raise it; values below the default floor are raised.
+func (l *FCE2BLauncher) sandboxTaskTimeout() time.Duration {
+	seconds := defaultFCE2BTimeoutSeconds
+	if l != nil && l.Config.TimeoutSeconds > seconds {
+		seconds = l.Config.TimeoutSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func (l *FCE2BLauncher) sandboxTaskTimeoutSeconds() int {
+	return int(l.sandboxTaskTimeout() / time.Second)
 }
 
 func (l *FCE2BLauncher) sandboxLifetimeRequest(ctx context.Context, method, id, suffix string, body []byte) ([]byte, error) {
@@ -65,7 +77,7 @@ func (l *FCE2BLauncher) sandboxLifetimeRequest(ctx context.Context, method, id, 
 }
 
 func (l *FCE2BLauncher) renewSandboxForTask(ctx context.Context, sandboxID string, trace chattrace.Trace) (expiresAt time.Time, err error) {
-	return l.renewSandboxTimeout(ctx, sandboxID, trace, int(fcE2BTaskSandboxTimeout/time.Second))
+	return l.renewSandboxTimeout(ctx, sandboxID, trace, l.sandboxTaskTimeoutSeconds())
 }
 
 func (l *FCE2BLauncher) renewEmployeeHostSandbox(ctx context.Context, sandboxID string, trace chattrace.Trace) (expiresAt time.Time, err error) {

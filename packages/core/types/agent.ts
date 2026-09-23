@@ -399,6 +399,11 @@ export interface AgentTask {
    * reporting was not free, we just don't know what it cost.
    */
   usage?: TaskUsage[];
+  /**
+   * Cloud sandbox id (FC/E2B or ASB) that ran this task. Empty/omitted when
+   * the run never reached a sandbox. Copy it into SLS / Aliyun CLI queries.
+   */
+  sandbox_id?: string;
 }
 
 /**
@@ -509,6 +514,7 @@ export interface Agent {
    * `undefined` as false. Only an explicit true turns it on.
    */
   inbound_coordinator?: boolean;
+  inbound_coordinator_user_decision?: boolean;
   event_trigger_enabled?: boolean;
   /** Let the platform own DingTalk replies and thinking reactions; off when omitted. */
   dingtalk_response_enabled?: boolean;
@@ -869,6 +875,7 @@ export interface UpdateAgentRequest {
   dispatch_always_new_issue?: boolean;
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
+  inbound_coordinator_user_decision?: boolean;
   event_trigger_enabled?: boolean;
   dingtalk_response_enabled?: boolean;
   dingtalk_show_ai_tag?: boolean;

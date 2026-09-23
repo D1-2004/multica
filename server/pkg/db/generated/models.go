@@ -592,6 +592,7 @@ type Attachment struct {
 	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
 	ChatMessageID pgtype.UUID        `json:"chat_message_id"`
 	TaskID        pgtype.UUID        `json:"task_id"`
+	Sha256        string             `json:"sha256"`
 }
 
 type Autopilot struct {

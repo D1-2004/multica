@@ -1,6 +1,8 @@
 "use client";
 
 import React from "react";
+import { useDeveloperCapabilities } from "@multica/core/global-models";
+import { DeveloperTab } from "./developer-tab";
 import {
   User,
   SlidersHorizontal,
@@ -145,6 +147,7 @@ interface SettingsPageProps {
 
 export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   const { t } = useT("settings");
+  const developer = useDeveloperCapabilities().data?.developer === true;
   const workspace = useCurrentWorkspace();
   const workspaceName = workspace?.name;
   const { role } = useCurrentMember(workspace?.id ?? "");
@@ -162,6 +165,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
     () =>
       new Set<string>([
         ...ACCOUNT_TAB_KEYS,
+        ...(developer ? ["developer"] : []),
         ...Object.entries(WORKSPACE_TAB_VALUES)
           .filter(
             ([key]) =>
@@ -171,7 +175,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           .map(([, value]) => value),
         ...(extraAccountTabs?.map((tab) => tab.value) ?? []),
       ]),
-    [extraAccountTabs, role, workspaceAccessEnabled],
+    [extraAccountTabs, role, workspaceAccessEnabled, developer],
   );
 
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
@@ -235,6 +239,15 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
               </TabsTrigger>
             );
           })}
+          {developer && (
+            <TabsTrigger
+              value="developer"
+              className={SETTINGS_TAB_TRIGGER_CLASS}
+            >
+              <FlaskConical className="h-4 w-4" />
+              {t(($) => $.developer.title)}
+            </TabsTrigger>
+          )}
           {extraAccountTabs?.map((tab) => (
             <TabsTrigger
               key={tab.value}
@@ -274,15 +287,22 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
       <div className="min-w-0 flex-1 md:overflow-y-auto">
         <div
           className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${
-            activeTab === "labels" ||
-            activeTab === "sites" ||
-            activeTab === "properties" ||
-            activeTab === "quick-actions" ||
-            activeTab === "local_runner"
-              ? "max-w-5xl"
-              : "max-w-3xl"
+            activeTab === "developer"
+              ? "max-w-none"
+              : activeTab === "labels" ||
+                  activeTab === "sites" ||
+                  activeTab === "properties" ||
+                  activeTab === "quick-actions" ||
+                  activeTab === "local_runner"
+                ? "max-w-5xl"
+                : "max-w-3xl"
           }`}
         >
+          {developer && (
+            <TabsContent value="developer">
+              <DeveloperTab />
+            </TabsContent>
+          )}
           <TabsContent value="profile">
             <AccountTab />
           </TabsContent>

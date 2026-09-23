@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -55,6 +56,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
+	"github.com/multica-ai/multica/server/internal/service/userdecision"
 	"github.com/multica-ai/multica/server/internal/sitehosting"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -808,6 +810,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return opts.DeploymentFence.AllLiveReplicasSupport(ctx, inboundcoord.ReplicaPlanMarker)
 		}
 	}
+	h.ConfigureGlobalModels(pool)
+	if opts.RuntimeConfig != nil {
+		opts.RuntimeConfig.models = h.Models
+	}
+	coordinator.RouteProvider = h.Models.CoordinatorSnapshot
 	coordinator.SetIssueCommentWriter(handler.NewInboundCoordinatorIssueCommentWriter(h))
 	coordinator.DWSHistory = inboundcoord.NewDWSHistoryLoader(inboundcoord.DWSHistoryConfig{
 		MCPBaseURL:            strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL")),
@@ -829,6 +836,43 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	h.InboundCoordinator = coordinator
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
+	decisionMCP := strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL"))
+	decisionEnv := "production"
+	if strings.Contains(decisionMCP, "pre-mcp.") {
+		decisionEnv = "staging"
+	}
+	h.UserDecisions = &userdecision.Service{Pool: pool, Store: &userdecision.Store{DB: pool, Environment: decisionEnv, Blobs: h.Storage}, Transport: dingtalkresponse.NewDecisionTransport(dingtalkresponse.DWSConfig{AgentIdentity: agentidentityhsf.NewClient(), BaseURL: signupConfig.FCE2B.AgentIdentityControlBaseURL, BaseURLProvider: agentIdentityControlBaseURLProvider, ClientSecret: signupConfig.FCE2B.DWSClientSecret}, decisionMCP), Wake: h.InboundCoordinatorWorker.Notify}
+	h.UserDecisions.NotifyAlert = func(alert userdecision.Alert) {
+		var item map[string]any
+		if json.Unmarshal(alert.Item, &item) == nil {
+			bus.Publish(events.Event{Type: protocol.EventInboxNew, WorkspaceID: alert.WorkspaceID, ActorType: "system", Payload: map[string]any{"item": item}})
+		}
+	}
+	h.UserDecisions.Resolve = func(ctx context.Context, r userdecision.Request) (json.RawMessage, json.RawMessage, error) {
+		raw, err := h.UserDecisions.Store.Snapshot(ctx, r)
+		if err != nil {
+			return nil, nil, err
+		}
+		var snapshot inboundcoord.UserDecisionSnapshot
+		if err = json.Unmarshal(raw, &snapshot); err != nil {
+			return nil, nil, err
+		}
+		if r.Submission == nil {
+			return nil, nil, fmt.Errorf("missing accepted submission")
+		}
+		plan, resolutionAudit, err := coordinator.ResolveUserDecisionWithAudit(ctx, snapshot, *r.Submission)
+		audit := map[string]any{"resolved_plan": plan, "proposal_model": snapshot.Proposal.Model, "resolution": resolutionAudit}
+		if err != nil {
+			audit["error"] = err.Error()
+		}
+		interpretation, _ := json.Marshal(audit)
+		if err != nil {
+			return nil, interpretation, err
+		}
+		raw, err = json.Marshal(plan)
+		return raw, interpretation, err
+	}
+
 	if agentMessageRouterClient != nil {
 		h.DingTalkResponses = dingtalkresponse.NewService(pool, dingtalkresponse.NewDWSProvider(dingtalkresponse.DWSConfig{
 			AgentIdentity:   agentidentityhsf.NewClient(),
@@ -1708,6 +1752,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Authorization: Bearer, and is disabled unless MULTICA_LOG_DIR is set
 	// (main.sh exports it in containerized deployments).
 	r.Get("/api/internal/logs/tail", logTailHandler(os.Getenv("MULTICA_LOG_TAIL_TOKEN"), os.Getenv("MULTICA_LOG_DIR")))
+	r.Post("/api/internal/coordinator/card-events", func(w http.ResponseWriter, r *http.Request) {
+		token := strings.TrimSpace(os.Getenv("MULTICA_LOG_TAIL_TOKEN"))
+		if token == "" || !hasBearerToken(r, token) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		h.ReceiveUserDecisionEvent(w, r)
+	})
+
 	if opts.DeploymentFence != nil {
 		fenceToken := os.Getenv("MULTICA_LOG_TAIL_TOKEN")
 		r.Get("/api/internal/deployment-fence", deploymentFenceStatusHandler(fenceToken, opts.DeploymentFence))
@@ -1927,6 +1980,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Route("/api/daemon", func(r chi.Router) {
 		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
 
+		r.Get("/runtimes/{runtimeId}/model-tasks/{taskId}/v1/{modelPath:models}", h.ProxyRuntimeModel)
+		r.Post("/runtimes/{runtimeId}/model-tasks/{taskId}/v1/*", h.ProxyRuntimeModel)
 		r.Post("/register", h.DaemonRegister)
 		r.Post("/deregister", h.DaemonDeregister)
 		r.Post("/heartbeat", h.DaemonHeartbeat)
@@ -2005,6 +2060,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
 		r.With(handler.RequireHumanActor).Post("/api/cli-token", h.IssueCliToken)
+		r.With(handler.RequireHumanActor).Get("/api/developer/capabilities", h.DeveloperCapabilities)
+		r.With(handler.RequireHumanActor).Get("/api/developer/models", h.GetGlobalModels)
+		r.With(handler.RequireHumanActor).Put("/api/developer/models", h.SaveGlobalModels)
+		r.With(handler.RequireHumanActor).Post("/api/developer/models/discover", h.DiscoverProviderModels)
+		r.With(handler.RequireHumanActor).Post("/api/developer/models/restore", h.RestoreGlobalModels)
+		r.With(handler.RequireHumanActor).Post("/api/developer/models/test", h.TestProviderModel)
 		r.With(handler.RequireHumanActor).Get("/api/sitehosting/sites", h.ListStaticSites)
 		r.With(handler.RequireHumanActor).Delete("/api/sitehosting/sites/{siteId}", h.DeleteStaticSite)
 		r.Post("/api/upload-file", h.UploadFile)
@@ -2587,6 +2648,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
 					r.Get("/source", h.GetAgentSource)
+					r.Get("/decisions/export", h.ExportUserDecisions)
+					r.Get("/decisions/health", h.UserDecisionHealth)
 					r.Get("/export", h.ExportAgent)
 					r.Get("/package-bindings", h.GetAgentPackageBindings)
 					r.With(handler.RequireHumanActor).Post("/package-bindings/confirm", h.ConfirmAgentPackageBinding)

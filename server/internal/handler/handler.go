@@ -40,12 +40,14 @@ import (
 	"github.com/multica-ai/multica/server/internal/managedagent"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/modelregistry"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runnerws"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
+	"github.com/multica-ai/multica/server/internal/service/userdecision"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -203,6 +205,7 @@ type enterpriseIdentityService interface {
 }
 
 type Handler struct {
+	Models                   *modelregistry.Registry
 	Queries                  *db.Queries
 	Assoc                    *assoc.Service
 	DB                       dbExecutor
@@ -216,6 +219,7 @@ type Handler struct {
 	Bus                      *events.Bus
 	TaskService              *service.TaskService
 	InboundCoordinator       *inboundcoord.Coordinator
+	UserDecisions            *userdecision.Service
 	InboundCoordinatorWorker *InboundCoordinatorJobWorker
 	SceneMemoryStore         *scenememory.Store
 	SceneMemoryWorker        *scenememory.Worker

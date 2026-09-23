@@ -44,6 +44,7 @@ func (l *FCE2BLauncher) applyNextDSHProfile(ctx context.Context) {
 	}
 	var key dshhost.Key
 	var revision int64
+	var revisionUpdatedAt time.Time
 	err := l.Pool.QueryRow(ctx, `WITH candidate AS (
  SELECT p.workspace_id,p.agent_id FROM dsh_employee_profile p
  JOIN agent a ON a.id=p.agent_id AND a.workspace_id=p.workspace_id
@@ -54,16 +55,20 @@ func (l *FCE2BLauncher) applyNextDSHProfile(ctx context.Context) {
  ORDER BY p.next_apply_at FOR UPDATE OF p SKIP LOCKED LIMIT 1
  ) UPDATE dsh_employee_profile p SET next_apply_at=now()+interval '2 minutes'
  FROM candidate c WHERE p.workspace_id=c.workspace_id AND p.agent_id=c.agent_id
- RETURNING p.workspace_id,p.agent_id,p.desired_revision`).Scan(&key.WorkspaceID, &key.AgentID, &revision)
+ RETURNING p.workspace_id,p.agent_id,p.desired_revision,p.updated_at`).Scan(&key.WorkspaceID, &key.AgentID, &revision, &revisionUpdatedAt)
 	if err != nil {
 		return
 	}
 	status, err := l.DSHEmployeeProfile(ctx, key, true)
 	if err == nil {
 		// Prepare may publish a new revision for a saved plugin edit.
+		previousRevision := revision
 		revision, err = strconv.ParseInt(status.DesiredRevision, 10, 64)
 		if err != nil {
 			return
+		}
+		if revision != previousRevision {
+			revisionUpdatedAt = time.Now()
 		}
 		if status.State == "waiting_for_builds" || status.State == "build_failed" || status.State == "apply_failed" {
 			_, _ = l.Pool.Exec(ctx, `UPDATE dsh_employee_profile SET next_apply_at=now()+interval '10 seconds'
@@ -83,9 +88,32 @@ func (l *FCE2BLauncher) applyNextDSHProfile(ctx context.Context) {
 	}
 	// Active tasks and confirmed retirement are expected transitions, not a
 	// failed plugin. An actual native startup failure consumes a bounded retry.
-	failed := !errors.Is(err, errDSHHostWaiting) || errors.Is(err, errDSHHostStartup)
+	failed := dshProfileApplyConsumesAttempt(ctx.Err(), err, time.Since(revisionUpdatedAt))
 	_, _ = l.Pool.Exec(cleanup, `UPDATE dsh_employee_profile SET next_apply_at=now()+interval '10 seconds',
  apply_attempts=apply_attempts+CASE WHEN $4 THEN 1 ELSE 0 END,
- apply_error=CASE WHEN $4 THEN 'host_start_failed' ELSE apply_error END
- WHERE workspace_id=$1 AND agent_id=$2 AND desired_revision=$3`, key.WorkspaceID, key.AgentID, revision, failed)
+ apply_error=CASE WHEN $4 THEN $5 ELSE apply_error END
+ WHERE workspace_id=$1 AND agent_id=$2 AND desired_revision=$3`, key.WorkspaceID, key.AgentID, revision, failed, dshProfileApplyError(err))
+}
+
+// The worker's 90-second reconciliation window is shorter than a native cold
+// start (320 seconds). Remote work can finish after that window, so cancellation
+// is not a confirmed startup failure. Keep reconciling instead of exhausting the
+// three-attempt budget while the same owned process is still starting. The
+// grace window is durable across replicas and bounded: persistent timeouts
+// eventually consume attempts too, rather than applying forever.
+func dshProfileApplyConsumesAttempt(contextErr, err error, revisionAge time.Duration) bool {
+	if contextErr != nil {
+		return revisionAge >= 15*time.Minute
+	}
+	return !errors.Is(err, errDSHHostWaiting) || errors.Is(err, errDSHHostStartup)
+}
+
+func dshProfileApplyError(err error) string {
+	if errors.Is(err, errDSHNativeSync) {
+		return "native_sync_failed"
+	}
+	if errors.Is(err, errDSHHostStartup) {
+		return "host_start_failed"
+	}
+	return "profile_apply_failed"
 }

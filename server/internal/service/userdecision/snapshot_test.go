@@ -1,0 +1,129 @@
+package userdecision
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"strings"
+	"testing"
+
+	"github.com/multica-ai/multica/server/internal/storage"
+)
+
+type snapshotFixtureStorage struct {
+	storage.Storage
+	body      []byte
+	key       string
+	uploadErr error
+	readErr   error
+}
+
+func (s *snapshotFixtureStorage) Upload(_ context.Context, key string, body []byte, _, _ string) (string, error) {
+	if s.uploadErr != nil {
+		return "", s.uploadErr
+	}
+	s.key, s.body = key, bytes.Clone(body)
+	return key, nil
+}
+func (s *snapshotFixtureStorage) GetReader(_ context.Context, key string) (io.ReadCloser, error) {
+	if s.readErr != nil {
+		return nil, s.readErr
+	}
+	if key != s.key {
+		return nil, errors.New("unexpected object")
+	}
+	return io.NopCloser(bytes.NewReader(s.body)), nil
+}
+
+func TestSnapshotUnavailableOrCorruptNeverReturnsPartialContext(t *testing.T) {
+	ctx := context.Background()
+	body, _ := json.Marshal(map[string]string{"context": strings.Repeat("test ", 16000)})
+	r := Request{ID: "decision", WorkspaceID: "workspace", Snapshot: body}
+	blobs := &snapshotFixtureStorage{}
+	ref, err := freezeSnapshot(ctx, blobs, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(ref, body) {
+		t.Fatal("large context was not externalized")
+	}
+	r.Snapshot = ref
+	store := &Store{Blobs: blobs}
+	got, err := store.Snapshot(ctx, r)
+	if err != nil || !bytes.Equal(got, body) {
+		t.Fatalf("snapshot round trip failed: %v", err)
+	}
+	blobs.readErr = errors.New("injected read failure")
+	if got, err = store.Snapshot(ctx, r); err == nil || got != nil {
+		t.Fatal("read failure returned context")
+	}
+	blobs.readErr = nil
+	blobs.body[10] ^= 1
+	if got, err = store.Snapshot(ctx, r); err == nil || got != nil {
+		t.Fatal("corrupt object returned context")
+	}
+	blobs.body = bytes.Repeat([]byte{'x'}, maxSnapshotBytes+1)
+	if got, err = store.Snapshot(ctx, r); err == nil || got != nil {
+		t.Fatal("oversized object returned context")
+	}
+	store.Blobs = nil
+	if got, err = store.Snapshot(ctx, r); err == nil || got != nil {
+		t.Fatal("missing object store returned context")
+	}
+	// A later successful read uses the original immutable reference.
+	store.Blobs, blobs.body = blobs, body
+	got, err = store.Snapshot(ctx, r)
+	if err != nil || !bytes.Equal(got, body) {
+		t.Fatalf("read retry failed: %v", err)
+	}
+}
+
+func TestSnapshotUploadFailureDoesNotProduceReference(t *testing.T) {
+	body, _ := json.Marshal(map[string]string{"context": strings.Repeat("test ", 16000)})
+	r := Request{ID: "decision", WorkspaceID: "workspace", Snapshot: body}
+	blobs := &snapshotFixtureStorage{uploadErr: errors.New("injected upload failure")}
+	for _, target := range []storage.Storage{nil, blobs} {
+		if ref, err := freezeSnapshot(context.Background(), target, r); err == nil || ref != nil {
+			t.Fatal("failed upload produced reference")
+		}
+	}
+}
+
+type snapshotSendSession struct {
+	Session
+	received Request
+	calls    int
+}
+
+func (s *snapshotSendSession) Send(_ context.Context, r Request) (string, error) {
+	s.received = r
+	s.calls++
+	return r.CardID, nil
+}
+func TestSendHydratesVerifiedSnapshotBeforeTransport(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{"turn": map[string]string{"ChatType": "p2p"}, "context": strings.Repeat("x", 70000)})
+	blobs := &snapshotFixtureStorage{}
+	r := Request{ID: "decision", WorkspaceID: "workspace", CardID: "stable-card", Snapshot: body}
+	ref, err := freezeSnapshot(context.Background(), blobs, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Snapshot = ref
+	svc := &Service{Store: &Store{Blobs: blobs}}
+	session := &snapshotSendSession{}
+	id, err := svc.sendCard(context.Background(), session, r)
+	if err != nil || id != r.CardID || session.calls != 1 || !bytes.Equal(session.received.Snapshot, body) {
+		t.Fatalf("snapshot not hydrated: %v", err)
+	}
+	blobs.readErr = errors.New("unavailable")
+	if _, err = svc.sendCard(context.Background(), session, r); err == nil || session.calls != 1 {
+		t.Fatal("unverified snapshot reached send")
+	}
+	blobs.readErr = nil
+	blobs.body[10] ^= 1
+	if _, err = svc.sendCard(context.Background(), session, r); err == nil || session.calls != 1 {
+		t.Fatal("corrupt snapshot reached send")
+	}
+}

@@ -30,8 +30,10 @@ const (
 	// the community catalog are a few megabytes; this leaves generous headroom
 	// while keeping one import off the heap budget.
 	MaxTarballBytes = 32 << 20
-	// maxMemberBytes bounds any single file read out of the archive.
-	maxMemberBytes = 8 << 20
+	// Bundled plugins such as dsh-im ship a JavaScript entry above 8 MiB.
+	// Keep a per-file bound without rejecting them; the total expanded archive
+	// and compressed download budgets below still cap overall import memory.
+	maxMemberBytes = 16 << 20
 	// maxMembers stops a tarball with an absurd file count from spinning here.
 	maxMembers = 20000
 	// maxArchiveBytes bounds the DECOMPRESSED total. Without it a small, highly

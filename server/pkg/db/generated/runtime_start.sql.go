@@ -1032,3 +1032,39 @@ func (q *Queries) UpdateAgentTaskRuntimeStartSandbox(ctx context.Context, arg Up
 	)
 	return i, err
 }
+
+const listLatestSandboxIDsByTaskIDs = `-- name: ListLatestSandboxIDsByTaskIDs :many
+SELECT DISTINCT ON (task_id)
+    task_id,
+    sandbox_id
+FROM agent_task_runtime_start_attempt
+WHERE task_id = ANY($1::uuid[])
+  AND btrim(sandbox_id) <> ''
+ORDER BY task_id, updated_at DESC, created_at DESC, id DESC
+`
+
+type ListLatestSandboxIDsByTaskIDsRow struct {
+	TaskID    pgtype.UUID `json:"task_id"`
+	SandboxID string      `json:"sandbox_id"`
+}
+
+// Latest non-empty sandbox id per task, for issue execution-log rows.
+func (q *Queries) ListLatestSandboxIDsByTaskIDs(ctx context.Context, taskIds []pgtype.UUID) ([]ListLatestSandboxIDsByTaskIDsRow, error) {
+	rows, err := q.db.Query(ctx, listLatestSandboxIDsByTaskIDs, taskIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLatestSandboxIDsByTaskIDsRow{}
+	for rows.Next() {
+		var i ListLatestSandboxIDsByTaskIDsRow
+		if err := rows.Scan(&i.TaskID, &i.SandboxID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

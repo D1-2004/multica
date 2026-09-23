@@ -44,8 +44,8 @@ func newSandboxTimeoutAPI(t *testing.T) (*sandboxTimeoutAPI, *httptest.Server) {
 			var body struct {
 				Timeout int `json:"timeout"`
 			}
-			if !strings.HasSuffix(r.URL.Path, "/timeout") || json.NewDecoder(r.Body).Decode(&body) != nil || body.Timeout != 3600 {
-				t.Error("sandbox renewal must POST timeout=3600")
+			if !strings.HasSuffix(r.URL.Path, "/timeout") || json.NewDecoder(r.Body).Decode(&body) != nil || body.Timeout < defaultFCE2BTimeoutSeconds {
+				t.Errorf("sandbox renewal must POST timeout>=%d", defaultFCE2BTimeoutSeconds)
 				w.WriteHeader(http.StatusBadRequest)
 				return
 			}
@@ -54,7 +54,7 @@ func newSandboxTimeoutAPI(t *testing.T) (*sandboxTimeoutAPI, *httptest.Server) {
 				w.WriteHeader(code)
 				return
 			}
-			api.expires[id] = time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+			api.expires[id] = time.Now().Add(time.Duration(body.Timeout) * time.Second).UTC().Truncate(time.Second)
 			if api.shortRenewal[id] {
 				api.expires[id] = time.Now().Add(time.Minute)
 			}
@@ -74,6 +74,21 @@ func newSandboxTimeoutAPI(t *testing.T) (*sandboxTimeoutAPI, *httptest.Server) {
 	}))
 	t.Cleanup(server.Close)
 	return api, server
+}
+
+func TestSandboxTaskTimeoutFloorsAt4800(t *testing.T) {
+	low := NewFCE2BLauncher(nil, nil, FCE2BConfig{TimeoutSeconds: 3600}, nil)
+	if got := low.sandboxTaskTimeoutSeconds(); got != 4800 {
+		t.Fatalf("TimeoutSeconds=3600 floored to %d, want 4800", got)
+	}
+	unset := NewFCE2BLauncher(nil, nil, FCE2BConfig{}, nil)
+	if got := unset.sandboxTaskTimeoutSeconds(); got != 4800 {
+		t.Fatalf("unset TimeoutSeconds = %d, want 4800", got)
+	}
+	high := NewFCE2BLauncher(nil, nil, FCE2BConfig{TimeoutSeconds: 7200}, nil)
+	if got := high.sandboxTaskTimeoutSeconds(); got != 7200 {
+		t.Fatalf("TimeoutSeconds=7200 = %d, want 7200", got)
+	}
 }
 
 func TestResolveSandboxRenewsEveryWarmAcquisition(t *testing.T) {

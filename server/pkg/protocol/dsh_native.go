@@ -52,6 +52,26 @@ func ValidDSHSessionID(value string) bool {
 	return err == nil && id != uuid.Nil && raw == id.String()
 }
 
+// DSHNativeRequestIdentity preserves native IDs while deriving a stable database UUID.
+// Existing browser UUIDs retain their persisted identity unchanged.
+func DSHNativeRequestIdentity(sessionID, requestID string) (uuid.UUID, error) {
+	if !ValidDSHSessionID(sessionID) || len(requestID) == 0 || len(requestID) > 160 {
+		return uuid.Nil, ErrDSHNativePrompt
+	}
+	for _, c := range requestID {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return uuid.Nil, ErrDSHNativePrompt
+		}
+	}
+	if id, err := uuid.Parse(requestID); err == nil {
+		if id == uuid.Nil || id.String() != requestID {
+			return uuid.Nil, ErrDSHNativePrompt
+		}
+		return id, nil
+	}
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("multica/dsh/request/v1/"+sessionID+"/"+requestID)), nil
+}
+
 func DecodeDSHNativePrompt(raw []byte) (*DSHNativePrompt, error) {
 	if len(raw) == 0 || len(raw) > DSHNativePromptMaxBytes || !utf8.Valid(raw) {
 		return nil, ErrDSHNativePrompt
@@ -101,8 +121,8 @@ func DecodeDSHNativePrompt(raw []byte) (*DSHNativePrompt, error) {
 }
 
 func (p DSHNativePrompt) Validate() error {
-	id, err := uuid.Parse(p.RequestID)
-	if err != nil || id == uuid.Nil || id.String() != p.RequestID || !ValidDSHSessionID(p.SessionID) || (p.Mode != "queue" && p.Mode != "steer") || len(p.Content) == 0 {
+	_, err := DSHNativeRequestIdentity(p.SessionID, p.RequestID)
+	if err != nil || (p.Mode != "queue" && p.Mode != "steer") || len(p.Content) == 0 {
 		return ErrDSHNativePrompt
 	}
 	if p.ClientTimeZone != nil {

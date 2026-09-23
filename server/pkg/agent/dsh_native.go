@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"log/slog"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -230,6 +231,19 @@ func (b *dshNativeBackend) admit(ctx context.Context, prompt string, opts ExecOp
 	}
 	return nil
 }
+
+// Keep phase diagnostics bounded: never log prompts, URLs, credentials or
+// native exception bodies. Request IDs correlate these records with task traces.
+func (b *dshNativeBackend) logStartupPhase(phase, state string, start time.Time) {
+	logger := b.cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Info("dsh_native_startup_phase", "phase", phase, "state", state,
+		"elapsed_ms", time.Since(start).Milliseconds(), "session_id", b.native.SessionID,
+		"request_id", b.native.RequestID, "agent_id", b.native.AgentID, "generation", b.native.Generation)
+}
+
 func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opts ExecOptions, servers []dshMCPServer, emit func(Message)) Result {
 	failure := func(err error) Result { return Result{Status: "failed", Error: err.Error()} }
 	// Even create can fail after the Host has acquired resources. Confirm this
@@ -243,7 +257,18 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 		b.quiescent.Store(true)
 		return cause
 	}
-	raw, err := b.client.call(ctx, "create", map[string]string{"sessionId": b.native.SessionID, "cwd": b.native.WorkDir})
+	storageMode := "new"
+	if opts.ResumeSessionID != "" {
+		storageMode = "resume"
+	}
+	createStart := time.Now()
+	b.logStartupPhase("create_"+storageMode, "begin", createStart)
+	raw, err := b.client.call(ctx, "create", map[string]string{"sessionId": b.native.SessionID, "cwd": b.native.WorkDir, "storageMode": storageMode})
+	if err != nil {
+		b.logStartupPhase("create_"+storageMode, "failed", createStart)
+	} else {
+		b.logStartupPhase("create_"+storageMode, "complete", createStart)
+	}
 	if err != nil {
 		return failure(cleanup(err))
 	}
@@ -266,7 +291,14 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 			return false, errors.New("invalid native DSH follow frame")
 		}
 		if !opened {
+			baselineStart := time.Now()
+			b.logStartupPhase("history_baseline", "begin", baselineStart)
 			snapshot, err := walkDSHNativeBaseline(ctx, b.client.call, raw, b.native.SessionID, b.native.WorkDir, history.accept)
+			if err != nil {
+				b.logStartupPhase("history_baseline", "failed", baselineStart)
+			} else {
+				b.logStartupPhase("history_baseline", "complete", baselineStart)
+			}
 			if err != nil {
 				return false, err
 			}
@@ -276,9 +308,13 @@ func (b *dshNativeBackend) executeNative(ctx context.Context, prompt string, opt
 				return true, nil
 			}
 			if !history.found {
+				admitStart := time.Now()
+				b.logStartupPhase("task_admit", "begin", admitStart)
 				if err := b.admit(ctx, prompt, opts, servers); err != nil {
+					b.logStartupPhase("task_admit", "failed", admitStart)
 					return false, err
 				}
+				b.logStartupPhase("task_admit", "complete", admitStart)
 			}
 			return false, nil
 		}

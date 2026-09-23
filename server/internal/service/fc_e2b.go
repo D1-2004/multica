@@ -67,8 +67,15 @@ const (
 	fcE2BScopeTypeChat  = "chat"
 	fcE2BScopeTypeIssue = "issue"
 
-	defaultFCE2BCLIPath             = "e2b"
-	defaultFCE2BTimeoutSeconds      = 3600
+	defaultFCE2BCLIPath = "e2b"
+	// defaultFCE2BTimeoutSeconds is the FC/E2B sandbox lifetime used for both
+	// create (--timeout) and the per-task POST /timeout renewal. Long agent
+	// cells (clone + coding agent + PR + packaging) routinely need more than
+	// one hour; the previous 3600s wall killed still-running tasks with
+	// --lifecycle.ontimeout kill and no mid-task renewal. Config may raise
+	// this, but values below 4800 are floored so Diamond leftover 3600 cannot
+	// silently restore the old wall.
+	defaultFCE2BTimeoutSeconds      = 4800
 	defaultFCE2BSandboxReadyTimeout = 60 * time.Second
 	defaultAgentIdentityTimeout     = 10 * time.Second
 	fcE2BDaemonTokenTTL             = time.Hour
@@ -111,6 +118,8 @@ const (
 )
 
 type FCE2BConfig struct {
+	TaskModelResolver                 func(context.Context, string, string) (string, error)
+	ModelResolver                     func(string) (string, error)
 	Enabled                           bool
 	Template                          string
 	ServerURL                         string
@@ -364,6 +373,9 @@ func parseFCE2BModels(raw string) ([]string, error) {
 }
 
 func (c FCE2BConfig) ModelForAgent(model string) (string, error) {
+	if c.ModelResolver != nil {
+		return c.ModelResolver(model)
+	}
 	model = strings.TrimSpace(model)
 	if model == "" {
 		if len(c.LLMModels) == 0 {
@@ -2002,7 +2014,13 @@ func (l *FCE2BLauncher) extraEnvForTask(
 	runtime db.AgentRuntime,
 	sandboxID string,
 ) (map[string]string, error) {
-	return l.extraEnvForTaskWithModel(ctx, task, runtime, sandboxID, l.Config.ModelForAgent)
+	resolver := l.Config.ModelForAgent
+	if l.Config.TaskModelResolver != nil {
+		resolver = func(model string) (string, error) {
+			return l.Config.TaskModelResolver(ctx, util.UUIDToString(task.ID), model)
+		}
+	}
+	return l.extraEnvForTaskWithModel(ctx, task, runtime, sandboxID, resolver)
 }
 
 func (l *FCE2BLauncher) extraEnvForTaskWithModel(
@@ -2683,7 +2701,7 @@ func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (str
 	args := []string{
 		"sandbox", "create",
 		"--detach",
-		"--timeout", strconv.Itoa(l.Config.TimeoutSeconds),
+		"--timeout", strconv.Itoa(l.sandboxTaskTimeoutSeconds()),
 		"--lifecycle.ontimeout", "kill",
 		template,
 	}
@@ -2816,6 +2834,11 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 	if overridden := strings.TrimSpace(extraEnv["DWS_CONFIG_DIR"]); overridden != "" {
 		dwsConfigDir = overridden
 	}
+	llmURL, llmKey := l.Config.LLMBaseURL, l.Config.LLMAPIKey
+	if os.Getenv("MULTICA_MODEL_GATEWAY_ENABLED") == "true" {
+		llmURL = strings.TrimRight(l.Config.ServerURL, "/") + "/api/daemon/runtimes/" + runtimeID + "/model-tasks/" + util.UUIDToString(taskID) + "/v1"
+		llmKey = token
+	}
 	args = append(args,
 		"-e", "MULTICA_SERVER_URL="+l.Config.ServerURL,
 		"-e", "MULTICA_DAEMON_TOKEN="+token,
@@ -2826,8 +2849,8 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "MULTICA_CLOUD_SANDBOX_BACKEND="+string(SandboxBackendAliyunFC),
 		"-e", "HOME="+launch.Home,
 		"-e", "DWS_CONFIG_DIR="+dwsConfigDir,
-		"-e", "OPENAI_BASE_URL="+l.Config.LLMBaseURL,
-		"-e", "OPENAI_API_KEY="+l.Config.LLMAPIKey,
+		"-e", "OPENAI_BASE_URL="+llmURL,
+		"-e", "OPENAI_API_KEY="+llmKey,
 	)
 	if coldStart {
 		args = append(args, "-e", "MULTICA_FC_E2B_COLD_START=true")
