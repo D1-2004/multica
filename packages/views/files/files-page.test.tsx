@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   refetch: vi.fn(),
   agents: [] as Agent[],
   runtimes: [] as AgentRuntime[],
+  grants: { grants: [] as Array<{ agent_id: string; access: string }> },
   entries: {
     root: "shared",
     path: ".",
@@ -59,7 +60,10 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
           isError: false,
         };
       }
-      if (key[2] === "filesystem") {
+      if (key[3] === "grants") {
+        return { data: mocks.grants, isPending: false, isError: false, refetch: mocks.refetch };
+      }
+      if (key[2] === "filesystem" && key[3] === "roots") {
         return {
           data: mocks.rootsPending || mocks.rootsError ? undefined : mocks.roots,
           isPending: mocks.rootsPending,
@@ -156,6 +160,12 @@ beforeEach(() => {
     { ...BASE_AGENT, id: COACH_ID, name: "Coach" },
   ];
   mocks.runtimes = [];
+  mocks.grants = {
+    grants: [
+      { agent_id: FEIDI_ID, access: "read" },
+      { agent_id: COACH_ID, access: "write" },
+    ],
+  };
 });
 
 function runtimeWithImage(templateName: string | null): AgentRuntime {
@@ -258,6 +268,19 @@ describe("FilesPage", () => {
     expect(notice).toHaveTextContent(SHARED_DISK_REQUIRED_RUNTIME_IMAGE);
     expect(notice).toHaveTextContent("unknown");
     expect(notice).not.toHaveTextContent("do not match");
+  });
+
+  it("does not prompt for an agent without shared-disk access", async () => {
+    mocks.grants = { grants: [] };
+    mocks.runtimes = [
+      runtimeWithImage("multica-m7-va2eb67817f146ef4-r1-6ccf66"),
+    ];
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("option", { name: /Feidi/ }));
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("does not prompt when the runtime is not an FC image", async () => {

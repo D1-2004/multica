@@ -390,8 +390,13 @@ func (m Manager) retire(ctx context.Context, key Key, generation int64, busy fun
 			return busyErr
 		}
 		if blocked {
-			if abortErr := m.Store.AbortRetire(ctx, h); abortErr != nil {
-				return abortErr
+			// Destroy has not been sent only when this call moved the host to
+			// retiring. An earlier attempt may already have asked FC to delete
+			// the sandbox, so restoring running would hand out access to it.
+			if began {
+				if abortErr := m.Store.AbortRetire(ctx, h); abortErr != nil {
+					return abortErr
+				}
 			}
 			return fmt.Errorf("%w: %s", ErrPending, WaitNativeGrantBusy)
 		}

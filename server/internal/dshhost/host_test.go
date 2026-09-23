@@ -354,8 +354,8 @@ func TestAlreadyRetiringHostRechecksHold(t *testing.T) {
 		t.Fatalf("already-retiring host skipped the hold: err=%v destroys=%d", err, p.destroys)
 	}
 	got, err := a.Get(ctx, first.Key)
-	if err != nil || got.State != "running" {
-		t.Fatalf("hold did not restore running: %+v err=%v", got, err)
+	if err != nil || got.State != "retiring" || got.SandboxID != first.SandboxID {
+		t.Fatalf("hold restored a retire that may already be deleting: %+v err=%v", got, err)
 	}
 }
 

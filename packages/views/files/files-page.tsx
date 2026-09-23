@@ -230,6 +230,9 @@ export function FilesPage() {
                 wsId={wsId ?? ""}
                 boundRuntimeImage={
                   selectedDisk.kind === "agent" &&
+                  agentUsesSharedDisk(grantsQuery.data?.grants, selectedDisk.agentId) &&
+                  !grantsQuery.isPending &&
+                  !grantsQuery.isError &&
                   !runtimesQuery.isPending &&
                   !runtimesQuery.isError
                     ? fcBoundRuntimeImage(
@@ -390,6 +393,15 @@ function DiskIcon({ disk }: { disk: Disk }) {
       <Folder aria-hidden="true" className="size-3" />
     </span>
   );
+}
+
+function agentUsesSharedDisk(
+  grants: Array<{ agent_id: string; access: string }> | undefined,
+  agentId: string | undefined,
+): boolean {
+  if (!agentId) return false;
+  const grant = (grants ?? []).find((item) => item.agent_id === agentId);
+  return grant?.access === "read" || grant?.access === "write";
 }
 
 function fcBoundRuntimeImage(
