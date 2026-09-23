@@ -325,8 +325,45 @@ func TestSandboxReleaseOnlyTrimsSingleUseDSHHost(t *testing.T) {
 	if action, reason := f.release(t, task, "sbx-dsh-run-only"); action != fcE2BSandboxIdleTrimmed || reason != "idle_window" {
 		t.Fatalf("action=%s reason=%s", action, reason)
 	}
+	if fcE2BSandboxReleaseGrace != 30*time.Second || fcE2BSandboxIdleRetention != 10*time.Minute {
+		t.Fatalf("grace=%s idle=%s", fcE2BSandboxReleaseGrace, fcE2BSandboxIdleRetention)
+	}
+	if calls := f.fcCalls(); len(calls) != 1 || calls[0] != (releaseFCCall{http.MethodPost, "/sandboxes/sbx-dsh-run-only/timeout", `{"timeout":600}`}) {
+		t.Fatalf("DSH one-shot must keep the 10 minute hold, not the immediate delete: %v", calls)
+	}
 	if state, _ := f.scopeState(t, scopeID); state != "running" || len(f.provider.destroyed) != 0 {
 		t.Fatalf("retired a DSH host: state=%s", state)
+	}
+}
+
+func TestSandboxReleaseKeepsEmployeePrivateHost(t *testing.T) {
+	f := newReleaseFixture(t)
+	ctx := context.Background()
+	store := dshhost.PostgresStore{DB: f.pool}
+	host, err := store.Get(ctx, f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	volume := host.VolumeName
+	if host, err = store.BeginCreate(ctx, f.key, host.Generation, uuid.New(), "template-1"); err != nil {
+		t.Fatal(err)
+	}
+	if host, err = store.CompleteCreate(ctx, host, "sbx-private"); err != nil {
+		t.Fatal(err)
+	}
+	task := f.task(t, pgtype.UUID{}, pgtype.UUID{}, "completed", "sbx-private")
+	if action, reason := f.release(t, task, "sbx-private"); action != fcE2BSandboxRetained || reason != "employee_host" {
+		t.Fatalf("action=%s reason=%s", action, reason)
+	}
+	if len(f.provider.destroyed) != 0 || len(f.fcCalls()) != 0 {
+		t.Fatalf("private host was touched: destroyed=%v calls=%v", f.provider.destroyed, f.fcCalls())
+	}
+	kept, err := store.Get(ctx, f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.State != "running" || kept.SandboxID != "sbx-private" || kept.VolumeName != volume || dshhost.MountPath != "/mnt/multica" {
+		t.Fatalf("private disk changed: state=%s sandbox=%s volume=%s mount=%s", kept.State, kept.SandboxID, kept.VolumeName, dshhost.MountPath)
 	}
 }
 
