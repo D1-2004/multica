@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ var (
 	ErrPending        = errors.New("DSH host transition requires reconciliation")
 	ErrChanged        = errors.New("DSH host generation changed")
 	ErrRetireRequired = errors.New("DSH host must be drained and retired before replacement")
+	// ErrCreateRejected means FC refused the create; the intent was abandoned.
+	ErrCreateRejected = errors.New("DSH host sandbox creation was rejected")
 )
 
 var (
@@ -180,6 +183,18 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 	}
 	id, err := m.Provider.Create(ctx, h)
 	if err != nil || strings.TrimSpace(id) == "" {
+		if status, rejected := createRejected(err); rejected {
+			// A 4xx answer created nothing, so the intent can be released
+			// instead of waiting on a lookup that can never succeed.
+			abandonCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			if abandonErr := m.Store.AbandonCreate(abandonCtx, h); abandonErr == nil {
+				if status == http.StatusTooManyRequests {
+					return Host{}, fmt.Errorf("%w: sandbox creation throttled (HTTP %d)", ErrPending, status)
+				}
+				return Host{}, fmt.Errorf("%w (HTTP %d)", ErrCreateRejected, status)
+			}
+		}
 		return Host{}, fmt.Errorf("%w: sandbox creation outcome is unconfirmed", ErrPending)
 	}
 	return m.recordCreated(ctx, h, id)

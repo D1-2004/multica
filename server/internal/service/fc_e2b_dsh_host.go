@@ -313,6 +313,22 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		}
 		return manager.Ensure(ctx, key, template)
 	}
+	ensureWithFallback := func() (dshhost.Host, error) {
+		host, err := ensureHost()
+		if errors.Is(err, dshhost.ErrCreateRejected) && decision.Shared != nil {
+			// A shared-mount create FC refuses must not cost the task: the
+			// rejected intent is already released, so create private-only.
+			slog.Warn("shared-mount sandbox create rejected; launching without the shared mount",
+				"error", err,
+				"workspace_id", key.WorkspaceID,
+				"agent_id", key.AgentID,
+			)
+			decision = wsfs.MountDecision{Private: &before, RoleARN: before.RoleARN}
+			mountFallback = true
+			return ensureHost()
+		}
+		return host, err
+	}
 	var host dshhost.Host
 	if before.State == "creating" {
 		host, err = manager.ReconcileCreate(ctx, key)
@@ -327,7 +343,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	} else if before.State == "retiring" {
 		err = dshhost.ErrRetireRequired
 	} else {
-		host, err = ensureHost()
+		host, err = ensureWithFallback()
 	}
 	if errors.Is(err, dshhost.ErrRetireRequired) || (err == nil && host.TemplateID != template) {
 		if errors.Is(err, dshhost.ErrRetireRequired) && strings.Contains(err.Error(), dshhost.WaitSandboxUnhealthy) {
@@ -390,7 +406,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		if isDSH && revision.Descriptor == "" {
 			return dshhost.Host{}, false, errDSHHostWaiting
 		}
-		host, err = ensureHost()
+		host, err = ensureWithFallback()
 	}
 	if errors.Is(err, dshhost.ErrPending) || errors.Is(err, dshhost.ErrChanged) {
 		reason := dshWaitReason(err)

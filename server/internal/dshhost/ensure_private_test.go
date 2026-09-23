@@ -95,3 +95,75 @@ func TestRequirePrivateChecksAnAdoptedSandbox(t *testing.T) {
 		t.Fatalf("adopted dual-mount sandbox must be retired under the fallback, got %v", err)
 	}
 }
+
+type offlineHostStore struct {
+	h         Host
+	abandoned *bool
+}
+
+func (s offlineHostStore) Get(context.Context, Key) (Host, error) { return s.h, nil }
+func (s offlineHostStore) BeginCreate(_ context.Context, _ Key, generation int64, intent uuid.UUID, template string) (Host, error) {
+	h := s.h
+	h.State, h.Generation, h.CreateIntent, h.TemplateID = "creating", generation+1, intent, template
+	return h, nil
+}
+func (s offlineHostStore) CompleteCreate(context.Context, Host, string) (Host, error) {
+	return Host{}, errors.New("unexpected completion")
+}
+func (s offlineHostStore) BeginRetire(context.Context, Host) (Host, error) {
+	return Host{}, errors.New("unexpected retire")
+}
+func (s offlineHostStore) CompleteRetire(context.Context, Host) error {
+	return errors.New("unexpected retire")
+}
+func (s offlineHostStore) AbortRetire(context.Context, Host) error {
+	return errors.New("unexpected retire")
+}
+func (s offlineHostStore) AbandonCreate(_ context.Context, h Host) error {
+	if h.State != "creating" || h.CreateIntent == uuid.Nil {
+		return errors.New("abandoned a non-creating host")
+	}
+	*s.abandoned = true
+	return nil
+}
+
+type rejectingProvider struct{ err error }
+
+func (p rejectingProvider) Create(context.Context, Host) (string, error) { return "", p.err }
+func (p rejectingProvider) Healthy(context.Context, string) error        { return nil }
+func (p rejectingProvider) DestroyAndConfirmAbsent(context.Context, string) error {
+	return errors.New("unexpected destroy")
+}
+func (p rejectingProvider) FindCreated(context.Context, Host) (string, error) {
+	return "", errors.New("unexpected find")
+}
+
+func TestEnsureReleasesIntentsFCRejected(t *testing.T) {
+	key := Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}
+	offline := Host{Key: key, State: "offline"}
+	for _, tc := range []struct {
+		name          string
+		err           error
+		wantAbandoned bool
+		wantRejected  bool
+	}{
+		{"bad request", &FCStatusError{Status: 400}, true, true},
+		{"forbidden", &FCStatusError{Status: 403}, true, true},
+		{"throttled", &FCStatusError{Status: 429}, true, false},
+		{"request timeout", &FCStatusError{Status: 408}, false, false},
+		{"server error", &FCStatusError{Status: 502}, false, false},
+		{"transport", errors.New("DSH FC transport outcome unconfirmed"), false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			abandoned := false
+			m := Manager{Store: offlineHostStore{h: offline, abandoned: &abandoned}, Provider: rejectingProvider{err: tc.err}}
+			_, err := m.Ensure(context.Background(), key, "tpl")
+			if abandoned != tc.wantAbandoned {
+				t.Fatalf("abandoned=%v, want %v (err %v)", abandoned, tc.wantAbandoned, err)
+			}
+			if errors.Is(err, ErrCreateRejected) != tc.wantRejected || errors.Is(err, ErrPending) == tc.wantRejected {
+				t.Fatalf("unexpected classification: %v", err)
+			}
+		})
+	}
+}

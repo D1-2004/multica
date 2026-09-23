@@ -116,6 +116,21 @@ func identity(h Host) map[string]string {
 	return labels
 }
 
+// FCStatusError is a definite HTTP answer from FC. Only the status is kept.
+type FCStatusError struct{ Status int }
+
+func (e *FCStatusError) Error() string { return fmt.Sprintf("DSH FC returned HTTP %d", e.Status) }
+
+// createRejected reports a create request FC answered without creating a
+// sandbox. Timeouts and server errors stay ambiguous.
+func createRejected(err error) (int, bool) {
+	var status *FCStatusError
+	if !errors.As(err, &status) || status.Status < 400 || status.Status >= 500 || status.Status == http.StatusRequestTimeout {
+		return 0, false
+	}
+	return status.Status, true
+}
+
 func (p *FCProvider) request(ctx context.Context, method, path string, body any) ([]byte, http.Header, int, error) {
 	var encoded []byte
 	if body != nil {
@@ -139,7 +154,7 @@ func (p *FCProvider) request(ctx context.Context, method, path string, body any)
 	// Never include the response body in errors; provider responses can echo
 	// request credentials or signed connection URLs.
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, res.Header, res.StatusCode, fmt.Errorf("DSH FC returned HTTP %d", res.StatusCode)
+		return nil, res.Header, res.StatusCode, &FCStatusError{Status: res.StatusCode}
 	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
