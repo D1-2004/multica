@@ -45,7 +45,14 @@ type FCConfig struct {
 	SecurityGroupID string
 	VSwitchIDs      []string
 	TimeoutSeconds  int
+	// Origin names the deployment that owns the sandbox. Production and
+	// pre-release share one FC account, so the listing cannot tell them apart
+	// without it. It is informational only and never used to match an intent.
+	Origin string
 }
+
+// OriginLabel is the FC metadata key carrying FCConfig.Origin.
+const OriginLabel = "multica.origin"
 
 // FCProvider uses the E2B HTTP contract directly. In particular, create is
 // deliberately NOT retried. The caller persists the intent before this call.
@@ -201,6 +208,11 @@ func (p *FCProvider) CreateSpec(ctx context.Context, spec SandboxCreateSpec) (st
 	}
 	metadata["fc.sandbox.network.vpc"] = string(vpc)
 	metadata["fc.sandbox.auth.role"] = spec.RoleARN
+	// Deliberately outside spec.Labels: reconciliation must keep adopting
+	// sandboxes created by a replica that predates this label.
+	if p.config.Origin != "" {
+		metadata[OriginLabel] = p.config.Origin
+	}
 	mounts := make([]volumeMount, len(spec.Mounts))
 	for i, m := range spec.Mounts {
 		mounts[i] = volumeMount{Name: m.Name, Path: m.Path}

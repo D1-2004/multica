@@ -20,6 +20,10 @@ import (
 
 var fcE2BAPISandboxIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
+// errFCE2BSandboxGone reports a 404 from a non-DELETE lifetime request: the
+// sandbox already expired or was removed.
+var errFCE2BSandboxGone = errors.New("FC/E2B sandbox no longer exists")
+
 func (l *FCE2BLauncher) employeeHostTimeoutSeconds() int {
 	if l == nil {
 		return dshhost.DefaultSandboxTaskTimeoutSeconds
@@ -63,8 +67,11 @@ func (l *FCE2BLauncher) sandboxLifetimeRequest(ctx context.Context, method, id, 
 		return nil, errors.New("FC/E2B sandbox lifetime transport failed")
 	}
 	defer response.Body.Close()
-	if method == http.MethodDelete && response.StatusCode == http.StatusNotFound {
-		return nil, nil
+	if response.StatusCode == http.StatusNotFound {
+		if method == http.MethodDelete {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%w: FC/E2B sandbox lifetime returned HTTP 404", errFCE2BSandboxGone)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("FC/E2B sandbox lifetime returned HTTP %d", response.StatusCode)

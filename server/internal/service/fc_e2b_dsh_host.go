@@ -267,15 +267,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			return dshhost.Host{}, false, errDSHHostWaiting
 		}
 	}
-	var provider dshhost.Provider
-	if l.dshProvider != nil {
-		provider, err = l.dshProvider(before.Storage)
-	} else {
-		provider, err = dshhost.NewFCProvider(dshhost.FCConfig{
-			APIURL: l.Config.APIURL, APIKey: l.Config.APIKey, TimeoutSeconds: l.Config.TimeoutSeconds,
-			VPCID: before.VPCID, SecurityGroupID: before.SecurityGroupID, VSwitchIDs: before.VSwitchIDs,
-		})
-	}
+	provider, err := l.dshHostProvider(before.Storage)
 	if err != nil {
 		return dshhost.Host{}, false, err
 	}
@@ -379,7 +371,9 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	}
 	if errors.Is(err, dshhost.ErrPending) || errors.Is(err, dshhost.ErrChanged) {
 		reason := dshWaitReason(err)
-		slog.Info("dsh host waiting", "reason", reason, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID)
+		// The error names the provider outcome (an HTTP status, never a body),
+		// which is the only record of why a create was rejected.
+		slog.Info("dsh host waiting", "reason", reason, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "error", err)
 		return dshhost.Host{}, false, waitDSHHost(reason)
 	}
 	if err != nil {
@@ -490,6 +484,18 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	}
 	chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "managed_profile_digest", profileDigest, "employee_profile_revision", revision.ID, "employee_profile_digest", revision.Digest)
 	return host, cold, nil
+}
+
+// dshHostProvider builds the FC client for one employee's storage placement.
+func (l *FCE2BLauncher) dshHostProvider(storage dshhost.Storage) (dshhost.Provider, error) {
+	if l.dshProvider != nil {
+		return l.dshProvider(storage)
+	}
+	return dshhost.NewFCProvider(dshhost.FCConfig{
+		APIURL: l.Config.APIURL, APIKey: l.Config.APIKey, TimeoutSeconds: l.Config.TimeoutSeconds,
+		VPCID: storage.VPCID, SecurityGroupID: storage.SecurityGroupID, VSwitchIDs: storage.VSwitchIDs,
+		Origin: fcE2BSandboxOrigin(l.Config),
+	})
 }
 
 // This digest covers the image-owned managed overlay and its model catalog.
