@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"path"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -108,6 +109,34 @@ func retireWriteHost(ctx context.Context, provider *dshhost.FCProvider, store ws
 	})
 }
 
+// lookupWriteHostTemplate uses the DSH stable image, then an employee host in
+// this workspace. Shared uploads must not require an employee host row.
+func lookupWriteHostTemplate(ctx context.Context, conn *pgxpool.Conn, workspaceID uuid.UUID) (string, error) {
+	var stable, employee string
+	err := conn.QueryRow(ctx, `SELECT current_template_id FROM fc_e2b_stable_channel
+ WHERE sandbox_backend='aliyun_fc' AND channel IN ('stable:dsh','stable') AND btrim(current_template_id)<>''
+ ORDER BY (channel='stable:dsh') DESC LIMIT 1`).Scan(&stable)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("workspace write host template: %w", err)
+	}
+	err = conn.QueryRow(ctx, `SELECT template_id FROM dsh_employee_host
+ WHERE workspace_id=$1 AND btrim(template_id)<>'' ORDER BY updated_at DESC LIMIT 1`, workspaceID).Scan(&employee)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("workspace write host template: %w", err)
+	}
+	return preferWriteHostTemplate(stable, employee)
+}
+
+func preferWriteHostTemplate(stable, employee string) (string, error) {
+	if template := strings.TrimSpace(stable); template != "" {
+		return template, nil
+	}
+	if template := strings.TrimSpace(employee); template != "" {
+		return template, nil
+	}
+	return "", errors.New("workspace write host template is not ready")
+}
+
 func releaseWriteHostAfterDestroy(sandboxID string, destroy func(string) error, release func() error) error {
 	if sandboxID != "" {
 		if err := destroy(sandboxID); err != nil {
@@ -144,10 +173,9 @@ func (l *FCE2BLauncher) ensureWorkspaceWriteHostLocked(ctx context.Context, conn
 	if err != nil {
 		return "", err
 	}
-	var template string
-	if err := conn.QueryRow(ctx, `SELECT template_id FROM dsh_employee_host
- WHERE workspace_id=$1 AND template_id<>'' ORDER BY updated_at DESC LIMIT 1`, workspaceID).Scan(&template); err != nil {
-		return "", fmt.Errorf("workspace write host template: %w", err)
+	template, err := lookupWriteHostTemplate(ctx, conn, workspaceID)
+	if err != nil {
+		return "", err
 	}
 	provider, err := dshhost.NewFCProvider(dshhost.FCConfig{
 		APIURL: l.Config.APIURL, APIKey: l.Config.APIKey, TimeoutSeconds: dshhost.SandboxTaskTimeoutSeconds(l.Config.TimeoutSeconds),

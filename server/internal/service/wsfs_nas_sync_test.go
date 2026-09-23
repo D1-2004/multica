@@ -9,6 +9,24 @@ import (
 	"github.com/multica-ai/multica/server/internal/dshhost"
 )
 
+func TestWriteHostTemplateDoesNotRequireEmployeeHost(t *testing.T) {
+	got, err := preferWriteHostTemplate("stable-dsh", "")
+	if err != nil || got != "stable-dsh" {
+		t.Fatalf("stable got=%q err=%v", got, err)
+	}
+	got, err = preferWriteHostTemplate("", "employee-image")
+	if err != nil || got != "employee-image" {
+		t.Fatalf("employee got=%q err=%v", got, err)
+	}
+	got, err = preferWriteHostTemplate(" stable-dsh ", "employee-image")
+	if err != nil || got != "stable-dsh" {
+		t.Fatalf("prefer stable got=%q err=%v", got, err)
+	}
+	if _, err := preferWriteHostTemplate("  ", ""); err == nil {
+		t.Fatal("expected missing template")
+	}
+}
+
 func TestReleaseWriteHostWaitsForConfirmedAbsence(t *testing.T) {
 	released := false
 	err := releaseWriteHostAfterDestroy("sbx-old", func(string) error {
