@@ -43,8 +43,9 @@ func (g Grant) effectiveAccess() string {
 	return AccessNone
 }
 
-// MountDecision is what a launcher may pass to FC. Employee DSH create
-// (dshhost.Manager.Ensure) ignores Shared and always uses the employee Host.
+// MountDecision is what a launcher may pass to FC. Manager.Ensure and
+// EnsurePrivate use only the employee Host; EnsureWithShared adds Shared with
+// the composite role.
 type MountDecision struct {
 	Private *dshhost.Host
 	Shared  *dshhost.VolumeMountSpec

@@ -345,9 +345,15 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	} else {
 		host, err = ensureWithFallback()
 	}
+	// A creating host adopted above already has its sandbox. Drain checks and
+	// logs must use it, not the empty pre-adoption sandbox ID.
+	retireSandboxID := before.SandboxID
+	if before.State == "creating" && host.SandboxID != "" {
+		retireSandboxID = host.SandboxID
+	}
 	if errors.Is(err, dshhost.ErrRetireRequired) || (err == nil && host.TemplateID != template) {
 		if errors.Is(err, dshhost.ErrRetireRequired) && strings.Contains(err.Error(), dshhost.WaitSandboxUnhealthy) {
-			slog.Info("dsh host waiting", "reason", dshhost.WaitSandboxUnhealthy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
+			slog.Info("dsh host waiting", "reason", dshhost.WaitSandboxUnhealthy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", retireSandboxID)
 		}
 		var taskBusy, nativeBusy bool
 		// A submitted background runner can still be queued before claiming.
@@ -361,7 +367,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
  (SELECT 1 FROM agent_task_runtime_start_attempt active WHERE active.task_id=t.id AND active.sandbox_id=$4))) OR
  (t.status='queued' AND EXISTS (SELECT 1 FROM agent_task_runtime_start_attempt s
  WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))`,
-			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, before.SandboxID, scopeID).Scan(&taskBusy)
+			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, retireSandboxID, scopeID).Scan(&taskBusy)
 		if err != nil {
 			return dshhost.Host{}, false, err
 		}
@@ -376,11 +382,11 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			}
 		}
 		if nativeBusy {
-			slog.Info("dsh host waiting", "reason", dshhost.WaitNativeGrantBusy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
+			slog.Info("dsh host waiting", "reason", dshhost.WaitNativeGrantBusy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", retireSandboxID)
 			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitNativeGrantBusy)
 		}
 		if taskBusy {
-			slog.Info("dsh host waiting", "reason", dshhost.WaitTaskDrainBusy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
+			slog.Info("dsh host waiting", "reason", dshhost.WaitTaskDrainBusy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", retireSandboxID)
 			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitTaskDrainBusy)
 		}
 		current, loadErr := store.Get(ctx, key)
