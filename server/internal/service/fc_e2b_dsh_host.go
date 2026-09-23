@@ -96,6 +96,29 @@ func dshWaitReason(err error) string {
 	return "dsh_host_waiting"
 }
 
+// workspaceMountDecision never blocks a launch. The shared mount is an overlay:
+// until the workspace storage and composite role are confirmed, the task runs
+// on the private mount only, and a later idle rebuild adds the shared mount.
+// fallback=true means the current grant could not be resolved, so the launch
+// must also drop any shared mount an existing sandbox still carries.
+func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Database, key dshhost.Key, before *dshhost.Host) (decision wsfs.MountDecision, fallback bool) {
+	decision = wsfs.MountDecision{Private: before, RoleARN: before.RoleARN}
+	if l.PrepareWorkspaceMount == nil {
+		return decision, false
+	}
+	got, err := l.PrepareWorkspaceMount(ctx, conn, key.WorkspaceID, key.AgentID, before)
+	if err != nil {
+		slog.Warn("workspace filesystem mount not ready; launching without the shared mount",
+			"error", err,
+			"pending", errors.Is(err, dshhost.ErrPending) || errors.Is(err, dshhost.ErrChanged),
+			"workspace_id", key.WorkspaceID,
+			"agent_id", key.AgentID,
+		)
+		return decision, true
+	}
+	return got, false
+}
+
 var dshAccessPointPattern = regexp.MustCompile(`^acs:nas:[a-z0-9-]+:[0-9]+:accesspoint/(ap-[a-z0-9]+)$`)
 
 func employeeFilesystemScopeID(scope dshhost.SessionScope) uuid.UUID {
@@ -272,27 +295,31 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		return dshhost.Host{}, false, err
 	}
 	manager := dshhost.Manager{Store: store, Provider: provider}
-	decision := wsfs.MountDecision{Private: &before, RoleARN: before.RoleARN}
-	if l.PrepareWorkspaceMount != nil {
-		got, decErr := l.PrepareWorkspaceMount(ctx, conn, key.WorkspaceID, key.AgentID, &before)
-		if errors.Is(decErr, dshhost.ErrPending) || errors.Is(decErr, dshhost.ErrChanged) {
-			return dshhost.Host{}, false, errDSHHostWaiting
-		}
-		if decErr != nil {
-			slog.Warn("workspace filesystem mount not ready",
-				"error", decErr,
-				"workspace_id", key.WorkspaceID,
-				"agent_id", key.AgentID,
-			)
-		} else {
-			decision = got
-		}
-	}
+	decision, mountFallback := l.workspaceMountDecision(ctx, conn, key, &before)
 	ensureHost := func() (dshhost.Host, error) {
 		if decision.Shared != nil && decision.RoleARN != "" && decision.RoleARN != before.RoleARN {
 			return manager.EnsureWithShared(ctx, key, template, *decision.Shared, decision.RoleARN)
 		}
+		if mountFallback {
+			return manager.EnsurePrivate(ctx, key, template)
+		}
 		return manager.Ensure(ctx, key, template)
+	}
+	ensureWithFallback := func() (dshhost.Host, error) {
+		host, err := ensureHost()
+		if errors.Is(err, dshhost.ErrCreateRejected) && decision.Shared != nil {
+			// A shared-mount create FC refuses must not cost the task: the
+			// rejected intent is already released, so create private-only.
+			slog.Warn("shared-mount sandbox create rejected; launching without the shared mount",
+				"error", err,
+				"workspace_id", key.WorkspaceID,
+				"agent_id", key.AgentID,
+			)
+			decision = wsfs.MountDecision{Private: &before, RoleARN: before.RoleARN}
+			mountFallback = true
+			return ensureHost()
+		}
+		return host, err
 	}
 	var host dshhost.Host
 	if before.State == "creating" {
@@ -301,14 +328,24 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			slog.Info("dsh host waiting", "reason", dshhost.WaitCreateIntentStale, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
 			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitCreateIntentStale)
 		}
+		if mountFallback {
+			// An adopted create may carry a shared mount from an earlier grant.
+			err = manager.RequirePrivate(ctx, host)
+		}
 	} else if before.State == "retiring" {
 		err = dshhost.ErrRetireRequired
 	} else {
-		host, err = ensureHost()
+		host, err = ensureWithFallback()
+	}
+	// A creating host adopted above already has its sandbox. Drain checks and
+	// logs must use it, not the empty pre-adoption sandbox ID.
+	retireSandboxID := before.SandboxID
+	if before.State == "creating" && host.SandboxID != "" {
+		retireSandboxID = host.SandboxID
 	}
 	if errors.Is(err, dshhost.ErrRetireRequired) || (err == nil && host.TemplateID != template) {
 		if errors.Is(err, dshhost.ErrRetireRequired) && strings.Contains(err.Error(), dshhost.WaitSandboxUnhealthy) {
-			slog.Info("dsh host waiting", "reason", dshhost.WaitSandboxUnhealthy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
+			slog.Info("dsh host waiting", "reason", dshhost.WaitSandboxUnhealthy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", retireSandboxID)
 		}
 		var taskBusy, nativeBusy bool
 		// A submitted background runner can still be queued before claiming.
@@ -322,7 +359,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
  (SELECT 1 FROM agent_task_runtime_start_attempt active WHERE active.task_id=t.id AND active.sandbox_id=$4))) OR
  (t.status='queued' AND EXISTS (SELECT 1 FROM agent_task_runtime_start_attempt s
  WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))`,
-			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, before.SandboxID, scopeID).Scan(&taskBusy)
+			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, retireSandboxID, scopeID).Scan(&taskBusy)
 		if err != nil {
 			return dshhost.Host{}, false, err
 		}
@@ -337,11 +374,11 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			}
 		}
 		if nativeBusy {
-			slog.Info("dsh host waiting", "reason", dshhost.WaitNativeGrantBusy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
+			slog.Info("dsh host waiting", "reason", dshhost.WaitNativeGrantBusy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", retireSandboxID)
 			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitNativeGrantBusy)
 		}
 		if taskBusy {
-			slog.Info("dsh host waiting", "reason", dshhost.WaitTaskDrainBusy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
+			slog.Info("dsh host waiting", "reason", dshhost.WaitTaskDrainBusy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", retireSandboxID)
 			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitTaskDrainBusy)
 		}
 		current, loadErr := store.Get(ctx, key)
@@ -367,7 +404,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		if isDSH && revision.Descriptor == "" {
 			return dshhost.Host{}, false, errDSHHostWaiting
 		}
-		host, err = ensureHost()
+		host, err = ensureWithFallback()
 	}
 	if errors.Is(err, dshhost.ErrPending) || errors.Is(err, dshhost.ErrChanged) {
 		reason := dshWaitReason(err)

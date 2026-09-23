@@ -47,7 +47,7 @@ func (f *wsStorageAPI) laneAP(lane string) map[string]any {
 		"ARN": arn, "AccessPointId": id, "AccessPointName": provisionName(f.p, lane),
 		"AgenticSpaceId": f.p.Resources[0], "FileSystemId": f.p.Spec.FileSystemID,
 		"VpcId": f.p.Spec.VPCID, "VSwitchId": f.p.Spec.VSwitchIDs[0],
-		"RootPath": "/files", "EnabledRam": true, "Status": "active",
+		"RootPath": "/", "EnabledRam": true, "Status": "active",
 		"DomainName": id + ".fs-suffix." + f.p.Spec.Region + ".nas.aliyuncs.com",
 	}
 }
@@ -179,7 +179,7 @@ func TestWorkspaceCloudStorageVerifiesROWithoutClientWrite(t *testing.T) {
 	}
 }
 
-func TestWorkspaceAccessPointUsesFilesRoot(t *testing.T) {
+func TestWorkspaceAccessPointUsesSpaceRoot(t *testing.T) {
 	f, c := wsStorageFixture()
 	p := f.p
 	p.Step = ProvisionAccessPointRO
@@ -197,7 +197,7 @@ func TestWorkspaceAccessPointUsesFilesRoot(t *testing.T) {
 			createCall = call
 		}
 	}
-	if createCall.Query["RootPath"] != "/files" || createCall.Query["EnabledRam"] != true {
+	if _, ok := createCall.Query["RootPath"]; ok || createCall.Query["RootDirectory"] != nil || createCall.Query["EnabledRam"] != true {
 		t.Fatalf("AP create: %+v", createCall.Query)
 	}
 	if createCall.Query["FileSystemPath"] != nil {

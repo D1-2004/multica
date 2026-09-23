@@ -130,7 +130,8 @@ func (c CloudStorageProvider) PrepareStorageResource(ctx context.Context, p Work
 		call.Query["VpcId"] = p.Spec.VPCID
 		call.Query["VswId"] = p.Spec.VSwitchIDs[0]
 		call.Query["EnabledRam"] = true
-		call.Query["RootPath"] = "/files"
+		// AgenticFS access points cannot set a root directory: the AP root is
+		// always the AgenticSpace root, which is the team file tree.
 		call.Query["AccessPointName"] = name
 		call.Query["Tag"] = []map[string]string{
 			{"Key": "multica.wsfs.intent", "Value": p.Intent.String()},
@@ -220,7 +221,7 @@ func (c CloudStorageProvider) access(ctx context.Context, p WorkspaceProvision, 
 	}
 	a := r.AccessPoint
 	domainPattern := `^` + regexp.QuoteMeta(id+"."+p.Spec.FileSystemID) + `-[a-z0-9]+\.` + regexp.QuoteMeta(p.Spec.Region+".nas.aliyuncs.com") + `$`
-	if a.ARN != arn || a.AccessPointID != id || a.AccessPointName != provisionName(p, lane) || a.AgenticSpaceID != p.Resources[ProvisionSpace] || a.FileSystemID != p.Spec.FileSystemID || a.VpcID != p.Spec.VPCID || a.VSwitchID != p.Spec.VSwitchIDs[0] || !a.EnabledRAM || a.RootPath != "/files" || a.Status != "active" || !regexp.MustCompile(domainPattern).MatchString(a.DomainName) {
+	if a.ARN != arn || a.AccessPointID != id || a.AccessPointName != provisionName(p, lane) || a.AgenticSpaceID != p.Resources[ProvisionSpace] || a.FileSystemID != p.Spec.FileSystemID || a.VpcID != p.Spec.VPCID || a.VSwitchID != p.Spec.VSwitchIDs[0] || !a.EnabledRAM || a.RootPath != "/" || a.Status != "active" || !regexp.MustCompile(domainPattern).MatchString(a.DomainName) {
 		return a, errors.New("workspace filesystem access point ownership or readiness mismatch")
 	}
 	return a, nil

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ var (
 	ErrPending        = errors.New("DSH host transition requires reconciliation")
 	ErrChanged        = errors.New("DSH host generation changed")
 	ErrRetireRequired = errors.New("DSH host must be drained and retired before replacement")
+	// ErrCreateRejected means FC refused the create; the intent was abandoned.
+	ErrCreateRejected = errors.New("DSH host sandbox create was rejected")
 )
 
 var (
@@ -76,14 +79,16 @@ type Store interface {
 	// AbortRetire restores running if Destroy has not started. Used when a
 	// native grant lands after the idle check and before BeginRetire commits.
 	AbortRetire(context.Context, Host) error
-	// AbandonCreate is a store primitive. Manager never calls it: an empty
+	// AbandonCreate releases a creating intent. Manager calls it only after
+	// the provider definitively rejected the create request. An empty
 	// FindCreated stays pending so listing lag cannot spawn a second writer.
 	AbandonCreate(context.Context, Host) error
 }
 
 type Provider interface {
 	// Create must label the sandbox with the durable CreateIntent before it
-	// can mount storage. Errors are ambiguous and must not cause a retry.
+	// can mount storage. Errors are ambiguous and must not cause a retry,
+	// except an *FCStatusError whose status proves the request was refused.
 	Create(context.Context, Host) (string, error)
 	Healthy(context.Context, string) error
 	// DestroyAndConfirmAbsent succeeds only after the provider confirms that
@@ -101,21 +106,29 @@ type Manager struct {
 }
 
 func (m Manager) Ensure(ctx context.Context, key Key, template string) (Host, error) {
-	return m.ensure(ctx, key, template, nil, "")
+	return m.ensure(ctx, key, template, nil, "", false)
+}
+
+// EnsurePrivate is the launch fallback while a shared mount cannot be
+// confirmed. A running sandbox that still carries any other volume, such as a
+// shared mount from an earlier grant, must be rebuilt rather than reused, so a
+// revoked or downgraded grant never survives through the fallback.
+func (m Manager) EnsurePrivate(ctx context.Context, key Key, template string) (Host, error) {
+	return m.ensure(ctx, key, template, nil, "", true)
 }
 
 func (m Manager) EnsureWithShared(ctx context.Context, key Key, template string, shared VolumeMountSpec, authRole string) (Host, error) {
 	if shared.Name == "" || authRole == "" {
 		return Host{}, errors.New("shared mount requires a volume and composite role")
 	}
-	return m.ensure(ctx, key, template, &shared, authRole)
+	return m.ensure(ctx, key, template, &shared, authRole, false)
 }
 
 func (h Host) stale(after time.Duration) bool {
 	return !h.UpdatedAt.IsZero() && after > 0 && time.Since(h.UpdatedAt) >= after
 }
 
-func (m Manager) ensure(ctx context.Context, key Key, template string, shared *VolumeMountSpec, authRole string) (Host, error) {
+func (m Manager) ensure(ctx context.Context, key Key, template string, shared *VolumeMountSpec, authRole string, privateOnly bool) (Host, error) {
 	if key.WorkspaceID == uuid.Nil || key.AgentID == uuid.Nil || strings.TrimSpace(template) == "" {
 		return Host{}, errors.New("DSH host requires an employee and immutable template ID")
 	}
@@ -145,6 +158,19 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 		if shared != nil && !m.sandboxHasMount(ctx, h.SandboxID, *shared) {
 			return Host{}, ErrRetireRequired
 		}
+		if privateOnly {
+			// One detail read proves both health and the private-only mounts.
+			if inspector, ok := m.Provider.(sandboxInspector); ok {
+				detail, err := inspector.InspectSandbox(ctx, h.SandboxID)
+				if err != nil || detail.State != "running" {
+					return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
+				}
+				if err := requirePrivateMounts(h, detail.Mounts); err != nil {
+					return Host{}, err
+				}
+				return h, nil
+			}
+		}
 		if err := m.Provider.Healthy(ctx, h.SandboxID); err != nil {
 			return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
 		}
@@ -167,23 +193,75 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 	}
 	id, err := m.Provider.Create(ctx, h)
 	if err != nil || strings.TrimSpace(id) == "" {
+		if status, rejected := createRejected(err); rejected {
+			// A 4xx answer created nothing, so the intent can be released
+			// instead of waiting on a lookup that can never succeed.
+			abandonCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			if abandonErr := m.Store.AbandonCreate(abandonCtx, h); abandonErr == nil {
+				if status == http.StatusTooManyRequests {
+					return Host{}, fmt.Errorf("%w: sandbox creation throttled (HTTP %d)", ErrPending, status)
+				}
+				return Host{}, fmt.Errorf("%w (HTTP %d)", ErrCreateRejected, status)
+			}
+		}
 		return Host{}, fmt.Errorf("%w: sandbox creation outcome is unconfirmed", ErrPending)
 	}
 	return m.recordCreated(ctx, h, id)
 }
 
+// SandboxDetail is one provider read of a sandbox's state and volumes.
+type SandboxDetail struct {
+	State  string
+	Mounts []VolumeMountSpec
+}
+
+// sandboxInspector is implemented by providers that can read a sandbox's
+// volumes. Providers without it cannot create a shared mount at all.
+type sandboxInspector interface {
+	InspectSandbox(context.Context, string) (SandboxDetail, error)
+}
+
+// RequirePrivate returns ErrRetireRequired unless the sandbox is confirmed to
+// carry exactly the private employee volume. An inspection failure or a
+// response without that volume counts as unconfirmed.
+func (m Manager) RequirePrivate(ctx context.Context, h Host) error {
+	inspector, ok := m.Provider.(sandboxInspector)
+	if !ok {
+		return nil
+	}
+	detail, err := inspector.InspectSandbox(ctx, h.SandboxID)
+	if err != nil {
+		return fmt.Errorf("%w: sandbox mounts could not be confirmed private", ErrRetireRequired)
+	}
+	return requirePrivateMounts(h, detail.Mounts)
+}
+
+func requirePrivateMounts(h Host, mounts []VolumeMountSpec) error {
+	hasPrivate := false
+	for _, got := range mounts {
+		if got.Path != MountPath || got.Name != h.VolumeName {
+			return fmt.Errorf("%w: sandbox still carries a shared mount", ErrRetireRequired)
+		}
+		hasPrivate = true
+	}
+	if !hasPrivate {
+		// A detail response without the private volume is not a confirmation.
+		return fmt.Errorf("%w: sandbox mounts could not be confirmed private", ErrRetireRequired)
+	}
+	return nil
+}
+
 func (m Manager) sandboxHasMount(ctx context.Context, sandboxID string, want VolumeMountSpec) bool {
-	inspector, ok := m.Provider.(interface {
-		InspectMounts(context.Context, string) ([]VolumeMountSpec, error)
-	})
+	inspector, ok := m.Provider.(sandboxInspector)
 	if !ok || sandboxID == "" {
 		return false
 	}
-	mounts, err := inspector.InspectMounts(ctx, sandboxID)
+	detail, err := inspector.InspectSandbox(ctx, sandboxID)
 	if err != nil {
 		return false
 	}
-	for _, got := range mounts {
+	for _, got := range detail.Mounts {
 		if got.Path == want.Path && got.Name == want.Name {
 			return true
 		}
@@ -203,12 +281,10 @@ func (m Manager) recordCreated(ctx context.Context, h Host, id string) (Host, er
 	created.ExtraMounts = h.ExtraMounts
 	created.AuthRoleARN = h.AuthRoleARN
 	if len(created.ExtraMounts) == 0 {
-		if inspector, ok := m.Provider.(interface {
-			InspectMounts(context.Context, string) ([]VolumeMountSpec, error)
-		}); ok {
-			mounts, inspectErr := inspector.InspectMounts(commitCtx, id)
+		if inspector, ok := m.Provider.(sandboxInspector); ok {
+			detail, inspectErr := inspector.InspectSandbox(commitCtx, id)
 			if inspectErr == nil {
-				for _, got := range mounts {
+				for _, got := range detail.Mounts {
 					if got.Path == WorkspaceSharedRoot && got.Name != "" && got.Name != created.VolumeName {
 						created.ExtraMounts = []VolumeMountSpec{got}
 					}

@@ -55,7 +55,8 @@ type FCConfig struct {
 const OriginLabel = "multica.origin"
 
 // FCProvider uses the E2B HTTP contract directly. In particular, create is
-// deliberately NOT retried. The caller persists the intent before this call.
+// deliberately NOT retried here. The caller persists the intent before this
+// call and releases it only when FC definitively refused the request.
 type FCProvider struct {
 	config FCConfig
 	client *http.Client
@@ -123,6 +124,27 @@ func identity(h Host) map[string]string {
 	return labels
 }
 
+// FCStatusError is a definite HTTP answer from FC. Only the status is kept.
+type FCStatusError struct{ Status int }
+
+func (e *FCStatusError) Error() string { return fmt.Sprintf("DSH FC returned HTTP %d", e.Status) }
+
+// createRejected reports a create request FC refused before creating a
+// sandbox. Only statuses that mean "request not accepted" qualify; conflicts,
+// timeouts and server errors stay ambiguous.
+func createRejected(err error) (int, bool) {
+	var status *FCStatusError
+	if !errors.As(err, &status) {
+		return 0, false
+	}
+	switch status.Status {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+		http.StatusUnprocessableEntity, http.StatusTooManyRequests:
+		return status.Status, true
+	}
+	return 0, false
+}
+
 func (p *FCProvider) request(ctx context.Context, method, path string, body any) ([]byte, http.Header, int, error) {
 	var encoded []byte
 	if body != nil {
@@ -146,7 +168,7 @@ func (p *FCProvider) request(ctx context.Context, method, path string, body any)
 	// Never include the response body in errors; provider responses can echo
 	// request credentials or signed connection URLs.
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, res.Header, res.StatusCode, fmt.Errorf("DSH FC returned HTTP %d", res.StatusCode)
+		return nil, res.Header, res.StatusCode, &FCStatusError{Status: res.StatusCode}
 	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
@@ -173,23 +195,23 @@ func (p *FCProvider) Create(ctx context.Context, h Host) (string, error) {
 	return p.CreateSpec(ctx, spec)
 }
 
-func (p *FCProvider) InspectMounts(ctx context.Context, id string) ([]VolumeMountSpec, error) {
+func (p *FCProvider) InspectSandbox(ctx context.Context, id string) (SandboxDetail, error) {
 	if !sandboxIDPattern.MatchString(id) {
-		return nil, errors.New("invalid DSH FC sandbox ID")
+		return SandboxDetail{}, errors.New("invalid DSH FC sandbox ID")
 	}
 	data, _, _, err := p.request(ctx, http.MethodGet, "/sandboxes/"+id, nil)
 	if err != nil {
-		return nil, err
+		return SandboxDetail{}, err
 	}
 	var info sandboxInfo
-	if err := json.Unmarshal(data, &info); err != nil || !sandboxIDPattern.MatchString(info.ID) {
-		return nil, errors.New("invalid DSH FC sandbox inspect response")
+	if err := json.Unmarshal(data, &info); err != nil || info.ID != id {
+		return SandboxDetail{}, errors.New("invalid DSH FC sandbox inspect response")
 	}
-	out := make([]VolumeMountSpec, 0, len(info.Mounts))
+	detail := SandboxDetail{State: info.State, Mounts: make([]VolumeMountSpec, 0, len(info.Mounts))}
 	for _, m := range info.Mounts {
-		out = append(out, VolumeMountSpec{Name: m.Name, Path: m.Path})
+		detail.Mounts = append(detail.Mounts, VolumeMountSpec{Name: m.Name, Path: m.Path})
 	}
-	return out, nil
+	return detail, nil
 }
 
 // CreateSpec posts a generalized mount list. Employee Create remains the
