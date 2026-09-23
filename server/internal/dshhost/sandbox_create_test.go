@@ -9,6 +9,27 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestWorkspaceWriteSpecIsSingleSharedMount(t *testing.T) {
+	ws, intent := uuid.New(), uuid.New()
+	spec, err := WorkspaceWriteSpec(ws, intent, 2, "template-1", "vol-rw", "acs:ram::1:role/rw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.Scope != "wsfs-write" || spec.AgentID != uuid.Nil || spec.RoleARN == "" || len(spec.Mounts) != 1 || spec.Mounts[0] != (VolumeMountSpec{Name: "vol-rw", Path: WorkspaceSharedRoot}) {
+		t.Fatalf("write spec: %+v", spec)
+	}
+	if spec.Labels["multica.wsfs.intent"] != intent.String() || spec.Labels["multica.wsfs.scope"] != "wsfs-write" {
+		t.Fatalf("labels: %+v", spec.Labels)
+	}
+	if spec.valid() != nil {
+		t.Fatal(spec.valid())
+	}
+	spec.Mounts = append(spec.Mounts, VolumeMountSpec{Name: "vol-employee", Path: MountPath})
+	if spec.valid() == nil {
+		t.Fatal("wsfs-write accepted an employee mount")
+	}
+}
+
 func TestEmployeeCreateSpecIsSingleMulticaMount(t *testing.T) {
 	h := Host{
 		Key: Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, Storage: Storage{VolumeName: "vol-employee", AccessPointARN: "ap", RoleARN: "acs:ram::1:role/employee"},

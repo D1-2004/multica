@@ -327,6 +327,15 @@ func (h *Handler) PostWorkspaceFilesystemUpload(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadGateway, "could not create file")
 		return
 	}
+	if agentID == uuid.Nil && h.FCE2BLauncher != nil {
+		if syncErr := h.FCE2BLauncher.SyncSharedFile(r.Context(), wsID, rel, data); syncErr != nil {
+			slog.Error("workspace shared file was not written to NAS", "path", rel, "error", syncErr)
+			_ = store.DeleteUnder(r.Context(), wsID, agentID, rel)
+			h.Storage.Delete(r.Context(), key)
+			writeError(w, http.StatusBadGateway, "could not write the shared disk")
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name": entry.Name, "path": entry.RelPath, "is_dir": false,
 		"size_bytes": entry.SizeBytes, "sha256": entry.SHA256,
@@ -589,6 +598,15 @@ func (h *Handler) PutWorkspaceFilesystemGrant(w http.ResponseWriter, r *http.Req
 				"workspace_id", wsID,
 				"agent_id", agentID,
 			)
+		}
+		if grant.Access == wsfs.AccessRead || grant.Access == wsfs.AccessWrite {
+			if syncErr := h.FCE2BLauncher.SyncSharedCatalog(ctx, wsID); syncErr != nil {
+				slog.Warn("workspace shared catalog was not written to NAS",
+					"error", syncErr,
+					"workspace_id", wsID,
+					"agent_id", agentID,
+				)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, grant)

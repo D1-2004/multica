@@ -3,6 +3,7 @@ package dshhost
 import (
 	"errors"
 	"sort"
+	"strconv"
 
 	"github.com/google/uuid"
 )
@@ -97,6 +98,27 @@ func (s SandboxCreateSpec) valid() error {
 		return errors.New("workspace filesystem host must mount only the shared workspace path")
 	}
 	return nil
+}
+
+// WorkspaceWriteSpec is the wsfs-write host: one read-write shared volume and
+// the workspace RW role. It is not an employee sandbox and must not mount
+// /mnt/multica.
+func WorkspaceWriteSpec(workspaceID, intent uuid.UUID, generation int64, template, volume, role string) (SandboxCreateSpec, error) {
+	spec := SandboxCreateSpec{
+		WorkspaceID: workspaceID, Scope: "wsfs-write", Generation: generation, CreateIntent: intent,
+		TemplateID: template, RoleARN: role,
+		Mounts: []VolumeMountSpec{{Name: volume, Path: WorkspaceSharedRoot}},
+		Labels: map[string]string{
+			"multica.wsfs.intent":     intent.String(),
+			"multica.wsfs.workspace":  workspaceID.String(),
+			"multica.wsfs.scope":      "wsfs-write",
+			"multica.wsfs.generation": strconv.FormatInt(generation, 10),
+			"multica.wsfs.volume":     volume,
+			"multica.wsfs.mount":      WorkspaceSharedRoot,
+			"multica.wsfs.role-arn":   role,
+		},
+	}
+	return spec, spec.valid()
 }
 
 func DualCreateSpec(h Host, shared VolumeMountSpec, authRole string) (SandboxCreateSpec, error) {
