@@ -2,11 +2,40 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/dshhost"
 )
+
+func TestReleaseWriteHostWaitsForConfirmedAbsence(t *testing.T) {
+	released := false
+	err := releaseWriteHostAfterDestroy("sbx-old", func(string) error {
+		return errors.New("absence unconfirmed")
+	}, func() error {
+		released = true
+		return nil
+	})
+	if err == nil || released {
+		t.Fatalf("err=%v released=%v", err, released)
+	}
+	if !strings.Contains(err.Error(), "destroy unconfirmed") {
+		t.Fatal(err)
+	}
+
+	destroyed := false
+	err = releaseWriteHostAfterDestroy("", func(string) error {
+		destroyed = true
+		return errors.New("should not run")
+	}, func() error {
+		released = true
+		return nil
+	})
+	if err != nil || destroyed || !released {
+		t.Fatalf("empty id err=%v destroyed=%v released=%v", err, destroyed, released)
+	}
+}
 
 func TestSharedNASWriteUsesUserOnSharedRoot(t *testing.T) {
 	runner := &fakeCommandRunner{out: []string{"{}"}}

@@ -97,6 +97,26 @@ func (l *FCE2BLauncher) SyncSharedCatalog(ctx context.Context, workspaceID uuid.
 	return nil
 }
 
+// retireWriteHost drops the write-host row only after the sandbox is confirmed
+// absent. Releasing first would let BeginWriteHost create a second sandbox on
+// the same read-write volume.
+func retireWriteHost(ctx context.Context, provider *dshhost.FCProvider, store wsfs.Store, host wsfs.WriteHost) error {
+	return releaseWriteHostAfterDestroy(host.SandboxID, func(id string) error {
+		return provider.DestroyAndConfirmAbsent(ctx, id)
+	}, func() error {
+		return store.ReleaseWriteHost(ctx, host)
+	})
+}
+
+func releaseWriteHostAfterDestroy(sandboxID string, destroy func(string) error, release func() error) error {
+	if sandboxID != "" {
+		if err := destroy(sandboxID); err != nil {
+			return fmt.Errorf("workspace write host destroy unconfirmed: %w", err)
+		}
+	}
+	return release()
+}
+
 func (l *FCE2BLauncher) ensureWorkspaceWriteHost(ctx context.Context, workspaceID uuid.UUID) (string, error) {
 	conn, err := l.Pool.Acquire(ctx)
 	if err != nil {
@@ -141,8 +161,7 @@ func (l *FCE2BLauncher) ensureWorkspaceWriteHostLocked(ctx context.Context, conn
 		return "", err
 	}
 	if host.State == "running" && (host.VolumeName != binding.RWVolumeName || host.RoleARN != binding.RWRoleARN || host.TemplateID != template) {
-		_ = provider.DestroyAndConfirmAbsent(ctx, host.SandboxID)
-		if err := store.ReleaseWriteHost(ctx, host); err != nil {
+		if err := retireWriteHost(ctx, provider, store, host); err != nil {
 			return "", err
 		}
 		host.State = "offline"
@@ -153,8 +172,7 @@ func (l *FCE2BLauncher) ensureWorkspaceWriteHostLocked(ctx context.Context, conn
 			return host.SandboxID, nil
 		}
 		if !replaced {
-			_ = provider.DestroyAndConfirmAbsent(ctx, host.SandboxID)
-			if err := store.ReleaseWriteHost(ctx, host); err != nil {
+			if err := retireWriteHost(ctx, provider, store, host); err != nil {
 				return "", err
 			}
 			return l.ensureWorkspaceWriteHostLocked(ctx, conn, workspaceID, true)
