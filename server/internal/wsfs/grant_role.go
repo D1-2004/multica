@@ -164,7 +164,7 @@ func (c CloudStorageProvider) ensureRAMRole(ctx context.Context, name, desc, wan
 	}
 	arn, err = c.getRAMRole(ctx, name, desc, wantARN)
 	if err != nil {
-		return "", fmt.Errorf("%w: composite role creation outcome is unconfirmed", dshhost.ErrPending)
+		return "", fmt.Errorf("%w: composite role creation outcome is unconfirmed: create: %s; lookup: %s", dshhost.ErrPending, causeText(createErr), causeText(err))
 	}
 	return arn, nil
 }
@@ -200,7 +200,7 @@ func (c CloudStorageProvider) ensureRAMPolicy(ctx context.Context, name, desc, d
 	}
 	got, err := c.getRAMPolicy(ctx, name, desc, doc)
 	if err != nil {
-		return "", fmt.Errorf("%w: composite policy creation outcome is unconfirmed", dshhost.ErrPending)
+		return "", fmt.Errorf("%w: composite policy creation outcome is unconfirmed: create: %s; lookup: %s", dshhost.ErrPending, causeText(createErr), causeText(err))
 	}
 	return got, nil
 }
@@ -241,7 +241,7 @@ func (c CloudStorageProvider) ensureRAMAttachment(ctx context.Context, name stri
 	}}, &struct{}{})
 	if _, err := c.listRAMAttachment(ctx, name); err != nil {
 		if attachErr != nil {
-			return fmt.Errorf("%w: composite policy attachment is unconfirmed", dshhost.ErrPending)
+			return fmt.Errorf("%w: composite policy attachment is unconfirmed: attach: %s; lookup: %s", dshhost.ErrPending, causeText(attachErr), causeText(err))
 		}
 		return err
 	}

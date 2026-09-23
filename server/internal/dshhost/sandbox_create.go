@@ -13,7 +13,8 @@ import (
 const WorkspaceMountPath = "/mnt/workspace"
 
 // WorkspaceSharedRoot is the task dual-mount path and MULTICA_WORKSPACE_FS_ROOT.
-// Shared Access Points use RootPath=/files, so this path is the team file tree.
+// Shared Access Points root at the AgenticSpace root (AgenticFS cannot set an
+// AP root directory), so this path is the team file tree.
 const WorkspaceSharedRoot = "/mnt/workspace/shared"
 
 // VolumeMountSpec is one FC volumeMounts entry. RoleARN and ReadOnly are

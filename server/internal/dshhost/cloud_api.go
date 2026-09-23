@@ -120,6 +120,10 @@ func (c *ACSClient) Call(ctx context.Context, call CloudCall, out any) error {
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		raw, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
+		if code := acsErrorCode(raw); code != "" {
+			return fmt.Errorf("DSH cloud %s returned HTTP %d (%s)", call.Action, res.StatusCode, code)
+		}
 		return fmt.Errorf("DSH cloud %s returned HTTP %d", call.Action, res.StatusCode)
 	}
 	raw, err := io.ReadAll(io.LimitReader(res.Body, (4<<20)+1))
@@ -132,10 +136,34 @@ func (c *ACSClient) Call(ctx context.Context, call CloudCall, out any) error {
 		HTTPStatusCode int   `json:"httpStatusCode"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil || (envelope.Success != nil && !*envelope.Success) || envelope.HTTPStatusCode >= 400 {
+		if code := acsErrorCode(raw); code != "" {
+			return fmt.Errorf("DSH cloud %s did not succeed (%s)", call.Action, code)
+		}
 		return errors.New("DSH cloud operation did not succeed")
 	}
 	if out != nil && json.Unmarshal(raw, out) != nil {
 		return errors.New("invalid DSH cloud response")
 	}
 	return nil
+}
+
+var acsErrorCodePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,80}$`)
+
+// acsErrorCode extracts only the machine-readable error code. Messages and
+// other body fields are never surfaced, since they can echo request details.
+func acsErrorCode(raw []byte) string {
+	var body struct {
+		Code      json.RawMessage `json:"Code"`
+		LowerCode json.RawMessage `json:"code"`
+	}
+	if json.Unmarshal(raw, &body) != nil {
+		return ""
+	}
+	for _, field := range []json.RawMessage{body.Code, body.LowerCode} {
+		var code string
+		if json.Unmarshal(field, &code) == nil && acsErrorCodePattern.MatchString(code) {
+			return code
+		}
+	}
+	return ""
 }

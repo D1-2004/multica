@@ -4,10 +4,16 @@
 | --- | --- |
 | Status | Draft |
 | Date | 2026-09-20 |
-| Revised | 2026-09-20（第二轮：helper 分 uid、单 Role 下 dual-mount 依赖复合 Role、RoleName 用 per-generation UUID、RootPath=/files 缺目录 fail-closed） |
+| Revised | 2026-09-20（第二轮：helper 分 uid、单 Role 下 dual-mount 依赖复合 Role、RoleName 用 per-generation UUID、RootPath=/files 缺目录 fail-closed）；2026-09-23 预发实测更正见下方引用块 |
 | Author | Grok (design loop) |
 | Workspace | dt-fde-multica Aone fork (`/Users/yuanzhan/.grok/worktrees/d1-dt-fde-multica/file-system`) |
 | Audience | 后端 / 前端 / 运行时 / 部署 |
+
+> **预发实测更正（2026-09-23，优先于下文）**
+>
+> 1. **AgenticFS 接入点不能设根目录。** NAS `CreateAccessPoint` 的参数叫 `RootDirectory`（不是 `RootPath`），且文档注明「Agentic 文件系统不支持」。预发上两个共享 AP 的实际 `RootPath` 都是 `/`，即 AgenticSpace 根 `/multica_{workspaceId}/`。代码已不再传该参数，校验改为 `RootPath == "/"`：**共享盘的团队文件树就是 Space 根**。下文所有 `RootPath=/files` 以及 `/files` 目录是否自动创建的讨论均作废，读写隔离仍靠两个 AP + 两套 RAM + 两个卷。
+> 2. **RAM 前缀。** 预发开通用户 `multica-dsh-pre-storage` 原策略只允许 `role/policy` 的 `multica-dsh-*`，共享盘的 `multica-wsfs-*` 和复合角色 `wsfst-*` 的 `CreateRole` 被拒，开通卡在 `role_ro`。已给 `MulticaDSHPreStorageProvisioner20260914-U2232880` 发布 v2 加入这两个前缀（v1 保留可回滚）。**正式环境发布前需要同样处理。** RAM 的角色、策略、挂载按名全局唯一，开通在 `creating` 查不到时会重发创建，不会再永久等待。
+> 3. **挂载矩阵不阻塞启动。** 共享盘或复合角色未确认（Pending、Changed 或错误）时，任务只挂 `/mnt/multica` 照常启动，并打 `workspace filesystem mount not ready` 日志，错误里带云 API 的 Action、HTTP 状态和错误码。仍带共享卷的旧沙箱在这条回退路径上会被退役重建，不会复用，降级或撤销的授权不会借此保留。
 
 ---
 
