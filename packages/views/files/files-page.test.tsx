@@ -3,8 +3,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Agent } from "@multica/core/types";
-import type { FilesystemRoot } from "@multica/core/filesystem";
+import type { Agent, AgentRuntime } from "@multica/core/types";
+import {
+  SHARED_DISK_REQUIRED_RUNTIME_IMAGE,
+  type FilesystemRoot,
+} from "@multica/core/filesystem";
 import { renderWithI18n } from "../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../navigation";
 import { FilesPage } from "./files-page";
@@ -15,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   rootsError: false,
   refetch: vi.fn(),
   agents: [] as Agent[],
+  runtimes: [] as AgentRuntime[],
   entries: {
     root: "shared",
     path: ".",
@@ -65,6 +69,9 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
       }
       if (key[2] === "agents") {
         return { data: mocks.agents, isPending: false, isError: false };
+      }
+      if (key[0] === "runtimes") {
+        return { data: mocks.runtimes, isPending: false, isError: false };
       }
       return { data: undefined, isPending: false, isError: false };
     },
@@ -148,7 +155,28 @@ beforeEach(() => {
     { ...BASE_AGENT, id: FEIDI_ID, name: "Feidi" },
     { ...BASE_AGENT, id: COACH_ID, name: "Coach" },
   ];
+  mocks.runtimes = [];
 });
+
+function runtimeWithImage(templateName: string | null): AgentRuntime {
+  return {
+    id: "runtime-1",
+    workspace_id: "ws-1",
+    daemon_id: null,
+    name: "PI",
+    runtime_mode: "cloud",
+    provider: "pi",
+    launch_header: "",
+    status: "online",
+    device_info: "",
+    metadata: templateName ? { template_name: templateName } : {},
+    owner_id: "user-1",
+    visibility: "private",
+    last_seen_at: null,
+    created_at: "2026-06-01T00:00:00Z",
+    updated_at: "2026-06-01T00:00:00Z",
+  };
+}
 
 describe("FilesPage", () => {
   it("lists shared files and agent names instead of raw ids", () => {
@@ -199,6 +227,46 @@ describe("FilesPage", () => {
     );
     expect(screen.getByText("This folder is empty")).toBeInTheDocument();
     expect(screen.queryByText("No private disks yet")).not.toBeInTheDocument();
+  });
+
+  it("prompts when the agent runtime image does not match the shared disk", async () => {
+    mocks.runtimes = [
+      runtimeWithImage("multica-m7-va2eb67817f146ef4-r1-6ccf66"),
+    ];
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: /Feidi/ }));
+
+    const notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent(SHARED_DISK_REQUIRED_RUNTIME_IMAGE);
+    expect(notice).toHaveTextContent("multica-m7-va2eb67817f146ef4-r1-6ccf66");
+    expect(notice).toHaveTextContent("do not match");
+  });
+
+  it("prompts when the bound runtime image is unknown", async () => {
+    mocks.runtimes = [runtimeWithImage(null)];
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("option", { name: /Feidi/ }));
+
+    const notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent(SHARED_DISK_REQUIRED_RUNTIME_IMAGE);
+    expect(notice).toHaveTextContent("unknown");
+    expect(notice).not.toHaveTextContent("do not match");
+  });
+
+  it("does not prompt when the bound runtime image satisfies the requirement", async () => {
+    mocks.runtimes = [runtimeWithImage(SHARED_DISK_REQUIRED_RUNTIME_IMAGE)];
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("option", { name: /Feidi/ }));
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText(SHARED_DISK_REQUIRED_RUNTIME_IMAGE)).not.toBeInTheDocument();
   });
 
   it("selects an agent disk and links to the agent filesystem view", async () => {
