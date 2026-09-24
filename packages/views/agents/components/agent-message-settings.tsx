@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { Agent } from "@multica/core/types";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Button } from "@multica/ui/components/ui/button";
@@ -161,6 +161,7 @@ function UserDecisionNamesSetting({ agent, canEdit, onUpdate }: {
   onUpdate: (data: Record<string, unknown>) => Promise<void>;
 }) {
   const { t } = useT("agents");
+  const effectsId = useId();
   const saved = (agent.inbound_coordinator_user_decision_names ?? []).join("\n");
   const [draft, setDraft] = useState(saved);
   const [saving, setSaving] = useState(false);
@@ -174,8 +175,12 @@ function UserDecisionNamesSetting({ agent, canEdit, onUpdate }: {
       align="start"
     >
       <div className="space-y-2">
+        <p id={effectsId} className="whitespace-pre-line text-caption leading-5 text-foreground">
+          {t(($) => $.inspector.prop_coordinator_user_decision_names_effect)}
+        </p>
         <Textarea
           aria-label={t(($) => $.inspector.prop_coordinator_user_decision_names)}
+          aria-describedby={effectsId}
           placeholder={t(($) => $.inspector.prop_coordinator_user_decision_names_placeholder)}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
