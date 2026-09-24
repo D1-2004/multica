@@ -10,6 +10,17 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Agent response policy compatibility", () => {
+  it.each([undefined, "Alice", 1, null, {}, ["Alice", 1]])("fails closed for malformed user decision names %j", (value) => {
+    expect(AgentResponseSchema.parse({ id: "agent-1", inbound_coordinator_user_decision_names: value }).inbound_coordinator_user_decision_names).toEqual([]);
+  });
+  it("preserves and sends an explicit name allowlist", async () => {
+    const names = ["冬翔", "Alice"];
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "agent-1", inbound_coordinator_user_decision_names: names }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await new ApiClient("https://api.example.test").updateAgent("agent-1", { inbound_coordinator_user_decision_names: names });
+    expect(result.inbound_coordinator_user_decision_names).toEqual(names);
+    expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/api/agents/agent-1", expect.objectContaining({ body: JSON.stringify({ inbound_coordinator_user_decision_names: names }) }));
+  });
   it.each([undefined, "true", 1, null, {}, []])("keeps user decision disabled for missing or malformed %j", (value) => {
     expect(AgentResponseSchema.parse({ id: "agent-1", inbound_coordinator_user_decision: value }).inbound_coordinator_user_decision).toBe(false);
   });

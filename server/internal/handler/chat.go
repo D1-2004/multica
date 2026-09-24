@@ -1039,16 +1039,6 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		hadUserMessage = existed
 	}
 
-	policy, policyErr := h.Queries.GetAgentDingTalkResponsePolicy(r.Context(), agent.ID)
-	if policyErr != nil {
-		writeError(w, http.StatusServiceUnavailable, "could not verify coordinator decision policy")
-		return
-	}
-	if policy.InboundCoordinator && policy.InboundCoordinatorUserDecision {
-		writeError(w, http.StatusConflict, "由发起人选择处理方式目前通过数字员工的钉钉卡片交互，网页会话尚未接入，本次未执行任务")
-		return
-	}
-
 	// Media must enter the existing attachment-aware chat path before any
 	// Coordinator plan is produced. Never rewrite a completed decision.
 	decision := inboundcoord.Decision{Action: inboundcoord.ActionContinue}

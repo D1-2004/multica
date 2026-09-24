@@ -888,6 +888,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// once the exporter exists (docs/langfuse-observability.md).
 	if opts.Langfuse.Enabled() {
 		coordinator.Langfuse = opts.Langfuse
+		h.UserDecisions.Observe = coordinator.ObserveUserDecision
 		sceneFlusher.Langfuse = opts.Langfuse
 		h.TaskService.Langfuse = opts.Langfuse
 		h.LLMTraceObserver = handler.NewLangfuseLLMTraceObserver(opts.Langfuse)

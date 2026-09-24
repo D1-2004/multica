@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
@@ -34,7 +35,7 @@ func (h *Handler) guardUnavailableUserDecision(w http.ResponseWriter, r *http.Re
 		writeError(w, 503, "could not verify coordinator decision policy")
 		return true
 	}
-	if !policy.InboundCoordinator || !policy.InboundCoordinatorUserDecision {
+	if !userDecisionEnabledForCommand(policy, c) {
 		return false
 	}
 	reject := func(reason, text string) bool {
@@ -142,4 +143,51 @@ func userDecisionIdentityRejection(err error) (string, string) {
 		}
 	}
 	return "user_decision_identity_verification_failed", "当前会话或发起人身份未通过校验，本次未执行。"
+}
+
+// Names are rollout preferences, not identity credentials. Callback authorization
+// continues to require the verified source author's DingTalk ID.
+func normalizeUserDecisionNames(names []string) []string {
+	result := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name != "" && !seen[name] {
+			result = append(result, name)
+			seen[name] = true
+		}
+	}
+	return result
+}
+
+func userDecisionEnabledForCommand(policy db.GetAgentDingTalkResponsePolicyRow, c DispatchCommand) bool {
+	if !policy.InboundCoordinator || !policy.InboundCoordinatorUserDecision || c.Source.Type != "digital_employee" || c.Event.Domain != "channel" || c.Event.Type != "message.created" || c.TaskFinishedTaskID != "" {
+		return false
+	}
+	matches := func(raw string) bool {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			return false
+		}
+		for _, allowed := range policy.InboundCoordinatorUserDecisionNames {
+			if name == strings.TrimSpace(allowed) {
+				return true
+			}
+		}
+		return false
+	}
+	if !matches(c.Event.Data.Sender.DisplayName) {
+		return false
+	}
+	for _, message := range c.Event.Data.Messages {
+		if message.SenderDisplayName != "" && !matches(message.SenderDisplayName) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameUserDecisionCollectAudience(policy db.GetAgentDingTalkResponsePolicyRow, a, b DispatchCommand) bool {
+	enabledA, enabledB := userDecisionEnabledForCommand(policy, a), userDecisionEnabledForCommand(policy, b)
+	return enabledA == enabledB && (!enabledA || sameDecisionAuthor(a, b))
 }

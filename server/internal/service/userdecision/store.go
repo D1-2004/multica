@@ -27,6 +27,7 @@ type Store struct {
 type Request struct {
 	LeaseToken        string          `json:"lease_token"`
 	JobLease          string          `json:"-"`
+	CreatedAt         time.Time       `json:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at"`
 	ExecutionResult   json.RawMessage `json:"execution_result"`
 	FinalPlan         json.RawMessage `json:"final_plan"`

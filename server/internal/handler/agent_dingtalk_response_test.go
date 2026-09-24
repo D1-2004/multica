@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -202,5 +203,42 @@ func TestUpdateAgentDingTalkResponsePolicyRequiresManageAccess(t *testing.T) {
 				t.Fatalf("expected %d, got %d: %s", tc.status, w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestUpdateAgentUserDecisionNamesRoundTrip(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "decision-names", nil)
+	for _, tc := range []struct {
+		body     map[string]any
+		names    []string
+		revision int64
+		enabled  bool
+	}{
+		{map[string]any{"inbound_coordinator": true, "inbound_coordinator_user_decision": true, "inbound_coordinator_user_decision_names": []string{" 冬翔 ", "", "冬翔", "Alice"}}, []string{"冬翔", "Alice"}, 2, true},
+		{map[string]any{"description": "Unrelated update"}, []string{"冬翔", "Alice"}, 2, true},
+		{map[string]any{"inbound_coordinator_user_decision_names": []string{"冬翔", "Alice"}}, []string{"冬翔", "Alice"}, 2, true},
+		{map[string]any{"inbound_coordinator_user_decision_names": []string{}}, []string{}, 3, true},
+		{map[string]any{"inbound_coordinator": false}, []string{}, 4, false},
+	} {
+		w := updateAgentForTest(t, agentID, tc.body)
+		if w.Code != http.StatusOK {
+			t.Fatalf("update: %d %s", w.Code, w.Body.String())
+		}
+		var response AgentResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(response.InboundCoordinatorUserDecisionNames, tc.names) || response.DingTalkResponsePolicyRevision != tc.revision || response.InboundCoordinatorUserDecision != tc.enabled {
+			t.Fatalf("unexpected response: names=%v revision=%d enabled=%v", response.InboundCoordinatorUserDecisionNames, response.DingTalkResponsePolicyRevision, response.InboundCoordinatorUserDecision)
+		}
+	}
+	for _, value := range []any{"冬翔", []any{"冬翔", 1}, 1} {
+		w := updateAgentForTest(t, agentID, map[string]any{"inbound_coordinator_user_decision_names": value})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("malformed names accepted: %d", w.Code)
+		}
 	}
 }

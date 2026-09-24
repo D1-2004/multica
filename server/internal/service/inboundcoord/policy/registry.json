@@ -346,7 +346,9 @@
         "user_decision_later_submission_review",
         "user_decision_candidate_task_label",
         "user_decision_dws_channel_capability",
-        "user_decision_card_send_rejection"
+        "user_decision_card_send_rejection",
+        "user_decision_name_audience",
+        "user_decision_choice_trace_and_listener"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -372,7 +374,8 @@
         "user_decision_candidate_labels": "R19 incorrect task label retained. Separate task-label semantic review rejects false identity while allowing explicit purpose changes; host field propagation/fail-closed tests pass, two real-model contrasts pass (10.35s). Full four-scenario regression passes (142.93s). Native after-fix pending. Native R22 verified label/target WS-299, event4fad5430e456456889d8c2565919374f, task35a45abf-67fe-4fe0-9aae-2ac08a38eb03 completed; actual desktop shows three lines and updated final line. Selected option and custom text survived real rolling deploy.",
         "user_decision_resolution_provenance": "c75f20a62 deployed run3109352900 allEnd=true. R22 live export includes separate interpretation/review policy manifests; R23 includes exact proposal/review prompt hashes. R23 model misclassified cancellation acknowledgment as executable; isolated interpretation policy fix passes exact frozen cancellation replay4.18s and later-wording/cancellation8.25s. Further interpretation regression and native confirmation pending. Narrowed-policy real model regressions passed67.61s: text-only new work, selected refinement, cancellation, contradiction, similar-task reference/negation. Native confirmation pending.",
         "user_decision_dws_channel_capability": "2026-09-22: remove local group type/organization restriction; verify subscription scope and exact source author. Robots stay on automatic Coordinator. Local Host tests passed; live DWS acceptance pending. DM target regression: route trusted p2p initiator via receiverOpenDingTalkId, group via openConversationId; hydrate and verify OSS snapshots before sending; native after-fix acceptance pending.",
-        "user_decision_send_rejection": "Definite DWS rejection atomically resumes reply-only error feedback with sanitized provider message; ambiguous sends remain reconciliation-only. Local four-package tests, vet, server build and structural policy check passed; preproduction transaction and live delivery pending."
+        "user_decision_send_rejection": "Definite DWS rejection atomically resumes reply-only error feedback with sanitized provider message; ambiguous sends remain reconciliation-only. Local four-package tests, vet, server build and structural policy check passed; preproduction transaction and live delivery pending.",
+        "user_decision_audience_trace_listener": "2026-09-24: name/collect Host tests, core schema/UI tests, core/views typechecks and synchronous choice/resolve trace/stream cancellation/callback retry tests passed locally; database projection and deployment pending. Historical pre SLS 48 requests confirm trusted names. Native probe blocked by DWS CONTEXT_PROCESSING_ERROR."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -415,7 +418,12 @@
         "server/internal/service/userdecision/monitor_integration_test.go",
         "server/internal/service/userdecision/export.go",
         "server/internal/service/inboundcoord/loop.go",
-        "server/internal/service/inboundcoord/tool_choice_fallback_test.go"
+        "server/internal/service/inboundcoord/tool_choice_fallback_test.go",
+        "server/internal/handler/coordinator_user_decision.go",
+        "server/internal/handler/coordinator_user_decision_test.go",
+        "server/internal/service/inboundcoord/user_decision_trace.go",
+        "server/internal/service/userdecision/trace.go",
+        "server/internal/dwsclient/a2ui.go"
       ],
       "case_file": "cases.json"
     },
@@ -1502,7 +1510,8 @@
         "f16_host_prefetch_nonwork_cost_and_skips",
         "f16_history_prefetch_before_first_model_call",
         "f16_retry_budget_stops_identical_failures",
-        "f04_other_recipient_work_keywords"
+        "f04_other_recipient_work_keywords",
+        "user_decision_choice_trace_and_listener"
       ],
       "verification": {
         "status": "integration_replay_pending",

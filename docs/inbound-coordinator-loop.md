@@ -413,3 +413,13 @@ DWS 返回 A2UI_TARGET_INVALID、INVALID_PARAM、FORBIDDEN 或 PERMISSION_DENIED
 背景是百炼 DeepSeek 的最小复现：`uniqueItems` 无论 true/false 均触发400，删除后200；只声明分支差量还会遗漏必填字段。因此采用所有模型共用的完整分支表示，保留相同动作、字段、闭合对象及审核义务。`coordinatorWireParams` 只完成统一 schema 展开，不改参数快照与实际工具执行。
 
 验证：`TestCoordinatorWireSchemaPreservesRequiredChoiceAndBranchConstraints`、`TestReferenceUniquenessRemainsHostEnforced` 及参与判断重复引用对照。预发模型调用与完整任务验收分别记录。
+
+### A2UI 按提问人姓名放量（2026-09-24）
+
+数字员工设置增加 `inbound_coordinator_user_decision_names`（字符串数组，默认空）。只有 Coordinator 与用户决策两个开关均开启，且可信入站 `sender.display_name` 去除首尾空格后与名单完整相等，才进入发卡流程。空名单、空姓名、非名单、机器人、Web 和 task_finished 沿用各自原流程；正文中提到姓名不参与匹配。姓名仅用于放量，不作为作答授权：同名者都会命中，回调仍须通过原始发起人 ID 校验。多行可填多个显示名/别名；关闭总开关不删除已填写名单，已发卡仍按冻结规则处理。
+
+collect 在是否命中名单不同的请求之间拆窗；命中者之间仍须同作者 ID，避免一个人的选择控制另一人的请求。原始批内显式出现非名单姓名则不发卡，批内缺姓名但 ID 不同仍由单作者守卫拒绝。
+
+用户选择以 `coordinator.user_decision.choice` observation 写回原 Coordinator trace；问题、可选项和模型推荐为 input，实际 accepted submission 的 option ID/label/custom 与状态为 output，不能把推荐或拒绝事件当作选择。选择后的解释与审查沿用冻结 trace 并归到 choice 下，避免重新生成 trace ID。PostgreSQL 版本水位驱动独立重试，同一 decision 使用固定 observation ID；Langfuse 失败不阻塞卡片或派发。OTLP 接收成功与 Langfuse 查询可见分别验证。
+
+监听保留 PostgreSQL 跨副本租约、ready 后发卡、独立心跳与重连。短暂回调持久化失败在当前流内重试；退出/取消会主动解除 pipe 读取，避免子进程后代持有管道导致无法重连。严重进程或上游事件丢失仍不能仅凭本地重试宣称 exactly-once；业务首次有效选择由数据库事务与事件去重保证。

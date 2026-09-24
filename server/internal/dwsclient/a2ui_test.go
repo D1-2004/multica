@@ -3,12 +3,47 @@ package dwsclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestConsumeCardEventsCancellationAndCallbackFailure(t *testing.T) {
+	for _, callbackFails := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cancel-after-ready", true: "persistence-failure"}[callbackFails], func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "dws")
+			script := "#!/bin/sh\nprintf '[event] ready subscription\\n' >&2\nprintf '{}\\n'\nexec sleep 30\n"
+			if err := os.WriteFile(path, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			failure := errors.New("persist failed")
+			start := time.Now()
+			err := (CLI{Path: path}).ConsumeCardEvents(ctx, dir, func() {
+				if !callbackFails {
+					cancel()
+				}
+			}, func([]byte) error {
+				if callbackFails {
+					return failure
+				}
+				return nil
+			})
+			if err == nil || time.Since(start) >= 2*time.Second {
+				t.Fatalf("consumer failed to stop promptly: %v", err)
+			}
+			if callbackFails && !errors.Is(err, failure) {
+				t.Fatal(err)
+			}
+		})
+	}
+}
 
 func TestA2UIReceiptRequiresExplicitSuccess(t *testing.T) {
 	good := `{"ok":true,"result":{"success":true,"result":{"bizId":"card","cardInstanceId":42}}}`

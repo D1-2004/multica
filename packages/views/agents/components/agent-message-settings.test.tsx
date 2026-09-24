@@ -145,14 +145,43 @@ describe("Proactive conversation setting", () => {
   it.each([
     [false, false, "Proactively process all new conversation messages", { event_trigger_enabled: true, inbound_coordinator: true }],
     [true, true, "Proactively process all new conversation messages", { event_trigger_enabled: false }],
-    [true, true, "Judge before sandbox", { inbound_coordinator: false, event_trigger_enabled: false }],
+    [true, true, "Judge before sandbox", { inbound_coordinator: false, inbound_coordinator_user_decision: false, event_trigger_enabled: false }],
   ] as const)("preserves the inbound dependency for %j / %j", (inbound, proactive, label, expected) => {
     const onUpdate = vi.fn(async () => {});
     renderWithI18n(<InboundCoordinatorSetting agent={{ ...agent, inbound_coordinator: inbound, event_trigger_enabled: proactive }} canEdit onUpdate={onUpdate} />);
     const toggles = screen.getAllByRole("switch");
     expect(toggles[0]).toHaveAccessibleName("Judge before sandbox");
-    expect(toggles[1]).toHaveAccessibleName("Proactively process all new conversation messages");
+    expect(toggles[1]).toHaveAccessibleName("Let the requester choose");
+    expect(toggles[2]).toHaveAccessibleName("Proactively process all new conversation messages");
     fireEvent.click(screen.getByLabelText(label));
     expect(onUpdate).toHaveBeenCalledExactlyOnceWith(expected);
+  });
+});
+
+
+describe("User decision requester names", () => {
+  it("saves trimmed unique names without changing the master switch", async () => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(<InboundCoordinatorSetting agent={{ ...agent, inbound_coordinator: true, inbound_coordinator_user_decision: true }} canEdit onUpdate={onUpdate} />);
+    const input = screen.getByLabelText("Requesters who can choose");
+    fireEvent.change(input, { target: { value: " 冬翔 \nAlice\n冬翔\n" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save names" }));
+    expect(onUpdate).toHaveBeenCalledExactlyOnceWith({ inbound_coordinator_user_decision_names: ["冬翔", "Alice"] });
+    await waitFor(() => expect(input).toHaveValue("冬翔\nAlice"));
+  });
+
+  it("sends an explicit empty list when all names are removed", async () => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(<InboundCoordinatorSetting agent={{ ...agent, inbound_coordinator: true, inbound_coordinator_user_decision_names: ["冬翔"] }} canEdit onUpdate={onUpdate} />);
+    fireEvent.change(screen.getByLabelText("Requesters who can choose"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save names" }));
+    expect(onUpdate).toHaveBeenCalledExactlyOnceWith({ inbound_coordinator_user_decision_names: [] });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save names" })).not.toBeDisabled());
+  });
+
+  it("keeps names read-only without manage access", () => {
+    renderWithI18n(<InboundCoordinatorSetting agent={{ ...agent, inbound_coordinator: true, inbound_coordinator_user_decision_names: ["冬翔"] }} canEdit={false} onUpdate={vi.fn(async () => {})} />);
+    expect(screen.getByLabelText("Requesters who can choose")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save names" })).toBeDisabled();
   });
 });

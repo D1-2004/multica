@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { Agent } from "@multica/core/types";
+import { Textarea } from "@multica/ui/components/ui/textarea";
+import { Button } from "@multica/ui/components/ui/button";
 import { Switch } from "@multica/ui/components/ui/switch";
 import {
   SettingsCard,
@@ -99,6 +101,7 @@ export function InboundCoordinatorSetting({
           canEdit={canEdit && agent.inbound_coordinator === true}
           onSave={(next) => onUpdate({ inbound_coordinator_user_decision: next })}
         />
+        <UserDecisionNamesSetting agent={agent} canEdit={canEdit} onUpdate={onUpdate} />
         <BooleanSetting
           agentId={agent.id}
           label={t(($) => $.inspector.prop_event_trigger)}
@@ -148,6 +151,54 @@ export function BooleanSetting({
         }}
         aria-label={label}
       />
+    </SettingsRow>
+  );
+}
+
+function UserDecisionNamesSetting({ agent, canEdit, onUpdate }: {
+  agent: Agent;
+  canEdit: boolean;
+  onUpdate: (data: Record<string, unknown>) => Promise<void>;
+}) {
+  const { t } = useT("agents");
+  const saved = (agent.inbound_coordinator_user_decision_names ?? []).join("\n");
+  const [draft, setDraft] = useState(saved);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setDraft(saved); }, [agent.id, saved]);
+  const enabled = canEdit && agent.inbound_coordinator === true;
+  return (
+    <SettingsRow
+      label={t(($) => $.inspector.prop_coordinator_user_decision_names)}
+      description={t(($) => $.inspector.prop_coordinator_user_decision_names_hint)}
+      size="text"
+      align="start"
+    >
+      <div className="space-y-2">
+        <Textarea
+          aria-label={t(($) => $.inspector.prop_coordinator_user_decision_names)}
+          placeholder={t(($) => $.inspector.prop_coordinator_user_decision_names_placeholder)}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          disabled={!enabled || saving}
+          rows={3}
+          className="resize-y"
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!enabled || saving || draft === saved}
+          onClick={() => {
+            const names = [...new Set(draft.split(/\r?\n/).map((name) => name.trim()).filter(Boolean))];
+            setSaving(true);
+            void onUpdate({ inbound_coordinator_user_decision_names: names })
+              .then(() => setDraft(names.join("\n")))
+              .catch(() => undefined)
+              .finally(() => setSaving(false));
+          }}
+        >
+          {t(($) => $.inspector.prop_coordinator_user_decision_names_save)}
+        </Button>
+      </div>
     </SettingsRow>
   );
 }
