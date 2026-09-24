@@ -1733,14 +1733,10 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		extraEnv["MULTICA_FS_ROOT"] = dshhost.MountPath
 	}
 	// Inject shared-disk env only when FC actually volume-mounted it.
-	// Grant none and empty task_role_arn keep a single /mnt/multica.
-	if employeeHost != nil && len(employeeHost.ExtraMounts) == 1 {
+	// The value is the mount in force for this launch, not the desired grant.
+	if access := effectiveWorkspaceFSAccess(employeeHost); access != "" {
 		if extraEnv == nil {
 			extraEnv = make(map[string]string)
-		}
-		access := l.seedWorkspaceCatalog(ctx, sandboxID, runtime.WorkspaceID, task.AgentID)
-		if access == "" {
-			access = wsfs.AccessRead
 		}
 		extraEnv["MULTICA_WORKSPACE_FS_ROOT"] = dshhost.WorkspaceSharedRoot
 		extraEnv["MULTICA_WORKSPACE_FS_ACCESS"] = access

@@ -528,6 +528,159 @@ func TestWriteExpansionKeepsHostWithNativeGrant(t *testing.T) {
 	}
 }
 
+func TestReadDowngradeWithUnreadyRoleDoesNotKeepWritableMount(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	ctx := context.Background()
+	for _, stem := range []string{"9273_workspace_filesystem", "9280_workspace_filesystem_grant"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = pool.Exec(ctx, string(data)); err != nil {
+			t.Fatal(stem, err)
+		}
+	}
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsID, agID := uuid.UUID(rt.WorkspaceID.Bytes), uuid.UUID(task.AgentID.Bytes)
+	if _, err = pool.Exec(ctx, `INSERT INTO workspace_filesystem (
+ workspace_id, file_system_id, space_id, vpc_id, security_group_id, vswitch_ids,
+ ro_access_point_arn, rw_access_point_arn, ro_role_arn, rw_role_arn, ro_volume_name, rw_volume_name,
+ size_limit, file_count_limit) VALUES ($1,'fs','space','vpc','sg',ARRAY['vsw'],'ap-ro','ap-rw','role-ro','role-rw','vol-ro','vol-rw',1,1)`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO workspace_filesystem_grant (workspace_id, agent_id, access, generation, task_role_arn)
+ VALUES ($1,$2,'read',2,'')`, wsID, agID); err != nil {
+		t.Fatal(err)
+	}
+	employee := &dshhost.Host{Storage: dshhost.Storage{VolumeName: first.VolumeName, AccessPointARN: "ap", RoleARN: "role-employee"}}
+	decision, readErr := (wsfs.Controller{}).ReadMount(ctx, pool, wsID, agID, employee)
+	if !errors.Is(readErr, wsfs.ErrSharedDiskNotReady) || decision.Access != wsfs.AccessRead || decision.Shared != nil || decision.RWVolume != "vol-rw" || decision.ROVolume != "vol-ro" {
+		t.Fatalf("read constraint dropped while the composite role is unprepared: %+v %v", decision, readErr)
+	}
+	provider.mu.Lock()
+	provider.mountsFor = map[string][]dshhost.VolumeMountSpec{
+		first.SandboxID: {
+			{Name: first.VolumeName, Path: dshhost.MountPath},
+			{Name: "vol-rw", Path: dshhost.WorkspaceSharedRoot},
+		},
+	}
+	provider.mu.Unlock()
+	l.ReadWorkspaceMount = func(ctx context.Context, db wsfs.Database, workspaceID, agentID uuid.UUID, before *dshhost.Host) (wsfs.MountDecision, error) {
+		return (wsfs.Controller{}).ReadMount(ctx, db, workspaceID, agentID, before)
+	}
+	rt.Metadata = []byte(`{"capabilities":["workspace_shared_disk"]}`)
+	second, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err == nil && second.SandboxID == first.SandboxID {
+		t.Fatalf("read downgrade with an unprepared role kept the writable mount: %+v creates=%d destroys=%d", second, provider.creates, provider.destroys)
+	}
+	if err != nil || second.SandboxID == "" || second.SandboxID == first.SandboxID || provider.destroys != 1 {
+		t.Fatalf("read downgrade did not drain the writable mount: host=%+v creates=%d destroys=%d err=%v", second, provider.creates, provider.destroys, err)
+	}
+	for _, mount := range second.ExtraMounts {
+		if mount.Name == "vol-rw" {
+			t.Fatalf("replacement kept the writable volume: %+v", second)
+		}
+	}
+}
+
+func TestUnreadyReadGrantKeepsHostWithoutSharedMount(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	ctx := context.Background()
+	for _, stem := range []string{"9273_workspace_filesystem", "9280_workspace_filesystem_grant"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = pool.Exec(ctx, string(data)); err != nil {
+			t.Fatal(stem, err)
+		}
+	}
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsID, agID := uuid.UUID(rt.WorkspaceID.Bytes), uuid.UUID(task.AgentID.Bytes)
+	if _, err = pool.Exec(ctx, `INSERT INTO workspace_filesystem (
+ workspace_id, file_system_id, space_id, vpc_id, security_group_id, vswitch_ids,
+ ro_access_point_arn, rw_access_point_arn, ro_role_arn, rw_role_arn, ro_volume_name, rw_volume_name,
+ size_limit, file_count_limit) VALUES ($1,'fs','space','vpc','sg',ARRAY['vsw'],'ap-ro','ap-rw','role-ro','role-rw','vol-ro','vol-rw',1,1)`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO workspace_filesystem_grant (workspace_id, agent_id, access, generation, task_role_arn)
+ VALUES ($1,$2,'read',2,'')`, wsID, agID); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.mountsFor = map[string][]dshhost.VolumeMountSpec{
+		first.SandboxID: {{Name: first.VolumeName, Path: dshhost.MountPath}},
+	}
+	provider.mu.Unlock()
+	l.ReadWorkspaceMount = func(ctx context.Context, db wsfs.Database, workspaceID, agentID uuid.UUID, before *dshhost.Host) (wsfs.MountDecision, error) {
+		return (wsfs.Controller{}).ReadMount(ctx, db, workspaceID, agentID, before)
+	}
+	rt.Metadata = []byte(`{"kind":"fc-e2b"}`)
+	got, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || got.SandboxID != first.SandboxID || got.Generation != first.Generation || len(got.ExtraMounts) != 0 || provider.creates != 1 || provider.destroys != 0 {
+		t.Fatalf("unready read grant rebuilt a host that has no shared mount: %+v err=%v creates=%d destroys=%d", got, err, provider.creates, provider.destroys)
+	}
+}
+
+func TestWriteExpansionKeepsReadOnlyMountButDeclaresRead(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	ctx := context.Background()
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS workspace_filesystem_grant (
+ workspace_id uuid NOT NULL, agent_id uuid NOT NULL, access text NOT NULL, generation bigint NOT NULL DEFAULT 0,
+ task_role_arn text NOT NULL DEFAULT '', task_policy_name text NOT NULL DEFAULT '', updated_at timestamptz NOT NULL DEFAULT now(), updated_by uuid)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO workspace_filesystem_grant (workspace_id, agent_id, access, generation, task_role_arn)
+ VALUES ($1,$2,'write',3,'role-write')`, rt.WorkspaceID, task.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.mountsFor = map[string][]dshhost.VolumeMountSpec{
+		first.SandboxID: {
+			{Name: first.VolumeName, Path: dshhost.MountPath},
+			{Name: "vol-ro", Path: dshhost.WorkspaceSharedRoot},
+		},
+	}
+	provider.mu.Unlock()
+	l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		return wsfs.MountDecision{
+			Shared:   &dshhost.VolumeMountSpec{Name: "vol-rw", Path: dshhost.WorkspaceSharedRoot},
+			RoleARN:  "role-write",
+			Access:   wsfs.AccessWrite,
+			ROVolume: "vol-ro",
+			RWVolume: "vol-rw",
+		}, nil
+	}
+	rt.Metadata = []byte(`{"capabilities":["workspace_shared_disk"]}`)
+	got, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || got.SandboxID != first.SandboxID || got.Generation != first.Generation || provider.creates != 1 || provider.destroys != 0 {
+		t.Fatalf("write expansion rebuilt a healthy read-only host: %+v err=%v creates=%d destroys=%d", got, err, provider.creates, provider.destroys)
+	}
+	if got.SharedAccess != wsfs.AccessRead || effectiveWorkspaceFSAccess(&got) != wsfs.AccessRead {
+		t.Fatalf("kept RO mount but effective access is %q", got.SharedAccess)
+	}
+	stored, err := (wsfs.Store{DB: pool}).GetGrant(ctx, uuid.UUID(rt.WorkspaceID.Bytes), uuid.UUID(task.AgentID.Bytes))
+	if err != nil || stored.Access != wsfs.AccessWrite {
+		t.Fatalf("desired grant changed: %+v %v", stored, err)
+	}
+}
+
 func TestReadDowngradeWithoutCapabilityDoesNotKeepWritableMount(t *testing.T) {
 	pool, _ := dshLaunchPools(t)
 	provider := &dshLaunchProvider{}

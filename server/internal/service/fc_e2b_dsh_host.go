@@ -222,6 +222,14 @@ func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Da
 	// It must not hide an explicit revoke or a narrower grant.
 	got, err := l.ReadWorkspaceMount(ctx, conn, key.WorkspaceID, key.AgentID, before)
 	if err != nil {
+		if errors.Is(err, wsfs.ErrSharedDiskNotReady) && got.Access == wsfs.AccessRead {
+			// The read grant is already confirmed. The missing composite role
+			// must not turn that into an unconstrained reuse of a writable mount.
+			if got.Private == nil {
+				got.Private = before
+			}
+			return got, sharedLaunchConstrain
+		}
 		slog.Warn("workspace filesystem mount not ready; launching without the shared mount",
 			"error", err,
 			"workspace_id", key.WorkspaceID,
@@ -424,18 +432,25 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 				return manager.EnsureWithSharedGrant(ctx, key, template, sharedTarget(decision))
 			}
 		case sharedLaunchConstrain:
-			if decision.Shared != nil && decision.Shared.Name != "" && decision.RoleARN != "" {
-				target := sharedTarget(decision)
-				target.Access = wsfs.AccessRead
-				h, err := manager.Store.Get(ctx, key)
-				if err != nil {
-					return dshhost.Host{}, err
-				}
-				if h.State == "running" {
-					return manager.EnsureWithSharedGrant(ctx, key, template, target)
-				}
+			target := sharedTarget(decision)
+			target.Access = wsfs.AccessRead
+			if target.Volume == "" {
+				target.Volume = decision.ROVolume
+			}
+			if target.OtherVolume == "" {
+				target.OtherVolume = decision.RWVolume
+			}
+			h, err := manager.Store.Get(ctx, key)
+			if err != nil {
+				return dshhost.Host{}, err
+			}
+			if h.State != "running" {
 				return manager.Ensure(ctx, key, template)
 			}
+			if target.Volume != "" && target.RoleARN != "" && target.RoleARN != h.RoleARN {
+				return manager.EnsureWithSharedGrant(ctx, key, template, target)
+			}
+			return manager.AuthorizeRunning(ctx, h, &target)
 		}
 		return manager.Ensure(ctx, key, template)
 	}

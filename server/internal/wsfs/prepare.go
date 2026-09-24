@@ -77,14 +77,25 @@ func (c Controller) ReadMount(ctx context.Context, db Database, workspaceID, age
 		return decision, nil
 	}
 	binding, err := store.GetBinding(ctx, workspaceID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return MountDecision{}, ErrSharedDiskNotReady
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return MountDecision{}, err
 	}
-	if employee != nil && grant.TaskRoleARN == "" {
-		return MountDecision{}, ErrSharedDiskNotReady
+	// The confirmed grant still constrains a mount the sandbox already has.
+	// A missing binding or composite role only blocks attaching a new volume.
+	if errors.Is(err, pgx.ErrNoRows) || (employee != nil && grant.TaskRoleARN == "") {
+		decision := MountDecision{
+			Private:         employee,
+			Access:          grant.effectiveAccess(),
+			GrantGeneration: grant.Generation,
+		}
+		if employee != nil {
+			decision.RoleARN = employee.RoleARN
+		}
+		if err == nil {
+			decision.ROVolume = binding.ROVolumeName
+			decision.RWVolume = binding.RWVolumeName
+		}
+		return decision, ErrSharedDiskNotReady
 	}
 	return SelectVolumeMounts(employee, grant, &binding), nil
 }

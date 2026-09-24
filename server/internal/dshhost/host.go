@@ -66,6 +66,9 @@ type Host struct {
 	// Create without changing grant-none DSH sandboxes.
 	ExtraMounts []VolumeMountSpec
 	AuthRoleARN string
+	// SharedAccess is the permission of the shared volume actually mounted for
+	// this launch. It is not the user's desired grant.
+	SharedAccess string
 	// Observed* is the last confirmed shared-mount identity for one sandbox
 	// generation. A later failed read may trust it only when the sandbox id
 	// and generation still match and the new grant is not tighter.
@@ -334,15 +337,19 @@ func (m Manager) AuthorizeRunning(ctx context.Context, h Host, target *SharedTar
 		}
 		m.rememberShared(ctx, h, target.Volume, recorded, target.GrantGeneration)
 		h.ExtraMounts = []VolumeMountSpec{{Name: target.Volume, Path: WorkspaceSharedRoot}}
+		h.SharedAccess = recorded
 		h.AuthRoleARN = target.RoleARN
 		return h, nil
 	case "narrower":
+		// The live volume is narrower than the desired grant. Keep it and
+		// tell this launch the effective permission, not the desired one.
 		recorded := "read"
 		if target.OtherVolume != "" && live == target.OtherVolume && target.Access == "read" {
 			recorded = "write"
 		}
 		m.rememberShared(ctx, h, live, recorded, target.GrantGeneration)
 		h.ExtraMounts = []VolumeMountSpec{{Name: live, Path: WorkspaceSharedRoot}}
+		h.SharedAccess = recorded
 		h.AuthRoleARN = ""
 		return h, nil
 	default:
@@ -404,6 +411,10 @@ func (m Manager) reuseRecordedMount(h Host, target SharedTarget) (Host, error) {
 	}
 	if h.ObservedSharedVolume != "" {
 		h.ExtraMounts = []VolumeMountSpec{{Name: h.ObservedSharedVolume, Path: WorkspaceSharedRoot}}
+		h.SharedAccess = h.ObservedSharedAccess
+		if h.SharedAccess != "read" && h.SharedAccess != "write" {
+			h.SharedAccess = "read"
+		}
 		h.AuthRoleARN = ""
 	}
 	return h, nil
