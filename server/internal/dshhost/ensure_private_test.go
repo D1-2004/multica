@@ -66,16 +66,23 @@ func TestEnsurePrivateRebuildsSandboxesThatMayCarryASharedMount(t *testing.T) {
 		name        string
 		provider    mountedProvider
 		wantRebuild bool
+		wantWait    bool
 	}{
-		{"private only", mountedProvider{mounts: []VolumeMountSpec{private}}, false},
-		{"stale shared write mount", mountedProvider{mounts: []VolumeMountSpec{private, shared}}, true},
-		{"unknown mounts", mountedProvider{inspectErr: errors.New("DSH FC returned HTTP 500")}, true},
-		{"mounts missing from detail", mountedProvider{}, true},
-		{"sandbox not running", mountedProvider{mounts: []VolumeMountSpec{private}, state: "paused"}, true},
+		{"private only", mountedProvider{mounts: []VolumeMountSpec{private}}, false, false},
+		{"stale shared write mount", mountedProvider{mounts: []VolumeMountSpec{private, shared}}, true, false},
+		{"unknown mounts", mountedProvider{inspectErr: errors.New("DSH FC returned HTTP 500")}, false, true},
+		{"mounts missing from detail", mountedProvider{}, true, false},
+		{"sandbox not running", mountedProvider{mounts: []VolumeMountSpec{private}, state: "paused"}, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := Manager{Store: runningHostStore{h: running}, Provider: tc.provider}
 			got, err := m.EnsurePrivate(context.Background(), key, "tpl")
+			if tc.wantWait {
+				if !errors.Is(err, ErrPending) || errors.Is(err, ErrRetireRequired) || got.SandboxID == running.SandboxID {
+					t.Fatalf("unconfirmed revoke destroyed or reused the host: %+v %v", got, err)
+				}
+				return
+			}
 			if tc.wantRebuild {
 				if !errors.Is(err, ErrRetireRequired) {
 					t.Fatalf("fallback reused a sandbox that may keep a revoked shared mount: %+v %v", got, err)

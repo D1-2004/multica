@@ -66,6 +66,25 @@ type Host struct {
 	// Create without changing grant-none DSH sandboxes.
 	ExtraMounts []VolumeMountSpec
 	AuthRoleARN string
+	// Observed* is the last confirmed shared-mount identity on this generation.
+	// It is empty until a detail read succeeds. A later failed read may trust
+	// it only when the new grant is not tighter.
+	ObservedSharedKnown     bool
+	ObservedSharedVolume    string
+	ObservedSharedAccess    string
+	ObservedGrantGeneration int64
+}
+
+// SharedTarget is the grant a running or new sandbox must honor.
+// Access empty keeps the historical rule: a different shared volume is wider.
+// Access write treats a different shared volume as narrower, so an RO host
+// stays up until a normal rebuild. Access none drops any shared volume.
+type SharedTarget struct {
+	Access          string
+	Volume          string
+	OtherVolume     string
+	RoleARN         string
+	GrantGeneration int64
 }
 
 // Store implementations must perform transitions atomically in shared storage.
@@ -106,7 +125,7 @@ type Manager struct {
 }
 
 func (m Manager) Ensure(ctx context.Context, key Key, template string) (Host, error) {
-	return m.ensure(ctx, key, template, nil, "", false)
+	return m.ensure(ctx, key, template, nil, false)
 }
 
 // EnsurePrivate is the launch fallback while a shared mount cannot be
@@ -114,14 +133,20 @@ func (m Manager) Ensure(ctx context.Context, key Key, template string) (Host, er
 // shared mount from an earlier grant, must be rebuilt rather than reused, so a
 // revoked or downgraded grant never survives through the fallback.
 func (m Manager) EnsurePrivate(ctx context.Context, key Key, template string) (Host, error) {
-	return m.ensure(ctx, key, template, nil, "", true)
+	return m.ensure(ctx, key, template, nil, true)
 }
 
 func (m Manager) EnsureWithShared(ctx context.Context, key Key, template string, shared VolumeMountSpec, authRole string) (Host, error) {
-	if shared.Name == "" || authRole == "" {
+	return m.EnsureWithSharedGrant(ctx, key, template, SharedTarget{Volume: shared.Name, RoleARN: authRole})
+}
+
+// EnsureWithSharedGrant applies one grant to a new sandbox, or compares it
+// with the mount a running sandbox already has.
+func (m Manager) EnsureWithSharedGrant(ctx context.Context, key Key, template string, target SharedTarget) (Host, error) {
+	if target.Volume == "" || target.RoleARN == "" {
 		return Host{}, errors.New("shared mount requires a volume and composite role")
 	}
-	return m.ensure(ctx, key, template, &shared, authRole, false)
+	return m.ensure(ctx, key, template, &target, false)
 }
 
 // EnsureConstrained checks a read grant against a sandbox that may already
@@ -136,16 +161,16 @@ func (m Manager) EnsureConstrained(ctx context.Context, key Key, template string
 		return Host{}, err
 	}
 	if h.State == "running" {
-		return m.ensure(ctx, key, template, &shared, authRole, false)
+		return m.ensure(ctx, key, template, &SharedTarget{Access: "read", Volume: shared.Name, RoleARN: authRole}, false)
 	}
-	return m.ensure(ctx, key, template, nil, "", false)
+	return m.ensure(ctx, key, template, nil, false)
 }
 
 func (h Host) stale(after time.Duration) bool {
 	return !h.UpdatedAt.IsZero() && after > 0 && time.Since(h.UpdatedAt) >= after
 }
 
-func (m Manager) ensure(ctx context.Context, key Key, template string, shared *VolumeMountSpec, authRole string, privateOnly bool) (Host, error) {
+func (m Manager) ensure(ctx context.Context, key Key, template string, target *SharedTarget, privateOnly bool) (Host, error) {
 	if key.WorkspaceID == uuid.Nil || key.AgentID == uuid.Nil || strings.TrimSpace(template) == "" {
 		return Host{}, errors.New("DSH host requires an employee and immutable template ID")
 	}
@@ -170,38 +195,13 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 			return Host{}, ErrRetireRequired
 		}
 		if privateOnly {
-			// One detail read proves both health and the private-only mounts.
-			if inspector, ok := m.Provider.(sandboxInspector); ok {
-				detail, err := inspector.InspectSandbox(ctx, h.SandboxID)
-				if err != nil || detail.State != "running" {
-					return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
-				}
-				if err := requirePrivateMounts(h, detail.Mounts); err != nil {
-					return Host{}, err
-				}
-				return h, nil
+			revoked := SharedTarget{Access: "none"}
+			if target != nil {
+				revoked.GrantGeneration = target.GrantGeneration
 			}
+			return m.AuthorizeRunning(ctx, h, &revoked)
 		}
-		if err := m.Provider.Healthy(ctx, h.SandboxID); err != nil {
-			return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
-		}
-		if shared != nil {
-			switch m.sharedMountFit(ctx, h.SandboxID, *shared) {
-			case sharedMountMatches:
-				h.ExtraMounts = []VolumeMountSpec{*shared}
-				h.AuthRoleARN = authRole
-			case sharedMountWider:
-				// A read-only grant must not keep a writable volume that is
-				// already mounted. Absence is different: do not retire just to
-				// add a share.
-				return Host{}, fmt.Errorf("%w: shared mount is wider than the grant", ErrRetireRequired)
-			case sharedMountUnconfirmed:
-				// A failed detail read is not proof the shared path is empty.
-				// Wait and read it again. Do not retire on this uncertainty.
-				return Host{}, fmt.Errorf("%w: shared mount inspection is unconfirmed", ErrPending)
-			}
-		}
-		return h, nil
+		return m.AuthorizeRunning(ctx, h, target)
 	}
 	if h.State != "offline" {
 		return Host{}, errors.New("invalid DSH host state")
@@ -210,9 +210,9 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 	if err != nil {
 		return Host{}, err
 	}
-	if shared != nil {
-		h.ExtraMounts = []VolumeMountSpec{*shared}
-		h.AuthRoleARN = authRole
+	if !privateOnly && target != nil && target.Volume != "" && target.Access != "none" {
+		h.ExtraMounts = []VolumeMountSpec{{Name: target.Volume, Path: WorkspaceSharedRoot}}
+		h.AuthRoleARN = target.RoleARN
 	}
 	id, err := m.Provider.Create(ctx, h)
 	if err != nil || strings.TrimSpace(id) == "" {
@@ -275,39 +275,131 @@ func requirePrivateMounts(h Host, mounts []VolumeMountSpec) error {
 	return nil
 }
 
-type sharedMountFit int
-
-const (
-	sharedMountAbsent sharedMountFit = iota
-	sharedMountMatches
-	sharedMountWider
-	sharedMountUnconfirmed
-)
-
-// sharedMountFit reports whether the live sandbox already has the granted
-// shared volume. A different volume at the shared path is wider than the
-// grant. No inspector means the mount is treated as absent, because that
-// provider cannot attach a shared volume. An inspection error is unconfirmed
-// and must not be treated as an empty shared path.
-func (m Manager) sharedMountFit(ctx context.Context, sandboxID string, want VolumeMountSpec) sharedMountFit {
+// AuthorizeRunning compares a live sandbox with the grant. Adding a share or
+// widening read to write does not retire a healthy host. A tighter grant or
+// an explicit none enters the drain path. A failed detail read waits, unless
+// a recorded mount shows the grant was not tightened.
+func (m Manager) AuthorizeRunning(ctx context.Context, h Host, target *SharedTarget) (Host, error) {
+	if h.SandboxID == "" {
+		return Host{}, fmt.Errorf("%w: shared mount inspection is unconfirmed", ErrPending)
+	}
+	if target == nil {
+		if err := m.Provider.Healthy(ctx, h.SandboxID); err != nil {
+			return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
+		}
+		return h, nil
+	}
 	inspector, ok := m.Provider.(sandboxInspector)
-	if !ok || sandboxID == "" {
-		return sharedMountAbsent
+	if !ok {
+		if err := m.Provider.Healthy(ctx, h.SandboxID); err != nil {
+			return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
+		}
+		return h, nil
 	}
-	detail, err := inspector.InspectSandbox(ctx, sandboxID)
+	detail, err := inspector.InspectSandbox(ctx, h.SandboxID)
 	if err != nil {
-		return sharedMountUnconfirmed
+		return m.reuseRecordedMount(h, *target)
 	}
-	for _, got := range detail.Mounts {
-		if got.Path != WorkspaceSharedRoot || got.Name == "" {
-			continue
-		}
-		if got.Name == want.Name && got.Path == want.Path {
-			return sharedMountMatches
-		}
-		return sharedMountWider
+	if detail.State != "running" {
+		return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
 	}
-	return sharedMountAbsent
+	if target.Access == "none" {
+		if err := requirePrivateMounts(h, detail.Mounts); err != nil {
+			return Host{}, err
+		}
+		m.rememberShared(ctx, h, "", "none", target.GrantGeneration)
+		h.ExtraMounts = nil
+		h.AuthRoleARN = ""
+		return h, nil
+	}
+	live := sharedVolumeName(detail.Mounts)
+	switch relateLiveMount(live, *target) {
+	case "absent":
+		m.rememberShared(ctx, h, "", "none", target.GrantGeneration)
+		h.ExtraMounts = nil
+		h.AuthRoleARN = ""
+		return h, nil
+	case "match":
+		recorded := target.Access
+		if recorded == "" {
+			recorded = "read"
+		}
+		m.rememberShared(ctx, h, target.Volume, recorded, target.GrantGeneration)
+		h.ExtraMounts = []VolumeMountSpec{{Name: target.Volume, Path: WorkspaceSharedRoot}}
+		h.AuthRoleARN = target.RoleARN
+		return h, nil
+	case "narrower":
+		recorded := "read"
+		if target.OtherVolume != "" && live == target.OtherVolume && target.Access == "read" {
+			recorded = "write"
+		}
+		m.rememberShared(ctx, h, live, recorded, target.GrantGeneration)
+		h.ExtraMounts = []VolumeMountSpec{{Name: live, Path: WorkspaceSharedRoot}}
+		h.AuthRoleARN = ""
+		return h, nil
+	default:
+		return Host{}, fmt.Errorf("%w: shared mount is wider than the grant", ErrRetireRequired)
+	}
+}
+
+func sharedVolumeName(mounts []VolumeMountSpec) string {
+	for _, got := range mounts {
+		if got.Path == WorkspaceSharedRoot && got.Name != "" {
+			return got.Name
+		}
+	}
+	return ""
+}
+
+// relateLiveMount classifies the volume already mounted at the shared path.
+// A write grant never treats a different volume as wider: write is the
+// maximum, and the RO host keeps running until a normal rebuild.
+func relateLiveMount(live string, target SharedTarget) string {
+	if live == "" {
+		return "absent"
+	}
+	if target.Volume != "" && live == target.Volume {
+		return "match"
+	}
+	if target.Access == "write" {
+		return "narrower"
+	}
+	return "wider"
+}
+
+func grantTightened(targetAccess, observedAccess string) bool {
+	rank := func(access string) int {
+		switch access {
+		case "write":
+			return 2
+		case "read":
+			return 1
+		default:
+			return 0
+		}
+	}
+	return rank(targetAccess) < rank(observedAccess)
+}
+
+func (m Manager) reuseRecordedMount(h Host, target SharedTarget) (Host, error) {
+	if !h.ObservedSharedKnown || grantTightened(target.Access, h.ObservedSharedAccess) {
+		return Host{}, fmt.Errorf("%w: shared mount inspection is unconfirmed", ErrPending)
+	}
+	if h.ObservedSharedVolume != "" {
+		h.ExtraMounts = []VolumeMountSpec{{Name: h.ObservedSharedVolume, Path: WorkspaceSharedRoot}}
+		h.AuthRoleARN = ""
+	}
+	return h, nil
+}
+
+func (m Manager) rememberShared(ctx context.Context, h Host, volume, access string, grantGeneration int64) {
+	recorder, ok := m.Store.(interface {
+		RecordSharedObservation(context.Context, Key, int64, string, string, int64) error
+	})
+	if !ok {
+		return
+	}
+	_ = recorder.RecordSharedObservation(ctx, h.Key, h.Generation, volume, access, grantGeneration)
 }
 
 func (m Manager) sandboxHasMount(ctx context.Context, sandboxID string, want VolumeMountSpec) bool {

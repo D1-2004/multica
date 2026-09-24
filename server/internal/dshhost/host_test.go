@@ -55,7 +55,7 @@ func stores(t *testing.T) (PostgresStore, PostgresStore) {
 		return PostgresStore{DB: pool}
 	}
 	a, b := newStore(), newStore()
-	for _, name := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9228_dsh_session_binding", "9229_dsh_session_scope", "9230_dsh_session_identity", "9231_dsh_task_identity", "9232_dsh_request_identity", "9233_dsh_storage_provision", "9234_dsh_storage_provision_identity", "9235_dsh_native_access", "9265_dsh_native_access_parent", "9236_dsh_native_access_hash", "9237_dsh_native_access_id", "9238_dsh_browser_session_identity", "9260_dsh_session_sandbox_scope", "9262_dsh_session_workdir", "9268_dsh_session_epoch", "9269_dsh_session_epoch_identity", "9270_dsh_session_epoch_scope"} {
+	for _, name := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9228_dsh_session_binding", "9229_dsh_session_scope", "9230_dsh_session_identity", "9231_dsh_task_identity", "9232_dsh_request_identity", "9233_dsh_storage_provision", "9234_dsh_storage_provision_identity", "9235_dsh_native_access", "9265_dsh_native_access_parent", "9236_dsh_native_access_hash", "9237_dsh_native_access_id", "9238_dsh_browser_session_identity", "9260_dsh_session_sandbox_scope", "9262_dsh_session_workdir", "9268_dsh_session_epoch", "9269_dsh_session_epoch_identity", "9270_dsh_session_epoch_scope", "9304_dsh_employee_host_shared_observation"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", name+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
@@ -203,6 +203,54 @@ func TestInspectionFailureDoesNotReuseAfterReadOnlyGrant(t *testing.T) {
 	got, err := m.EnsureWithShared(ctx, h.Key, "template-1", readOnly, "role-read")
 	if !errors.Is(err, ErrPending) || errors.Is(err, ErrRetireRequired) || got.SandboxID == first.SandboxID || p.creates != 1 || p.destroys != 0 {
 		t.Fatalf("unconfirmed existing mount reused after read-only grant and inspection failure: host=%+v err=%v creates=%d destroys=%d", got, err, p.creates, p.destroys)
+	}
+}
+
+func TestWriteGrantKeepsReadOnlyHost(t *testing.T) {
+	a, _ := stores(t)
+	h := bind(t, a)
+	p := &mountedCloud{}
+	m := Manager{a, p}
+	ctx := context.Background()
+	first, err := m.Ensure(ctx, h.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mounts = []VolumeMountSpec{
+		{Name: h.VolumeName, Path: MountPath},
+		{Name: "vol-ro", Path: WorkspaceSharedRoot},
+	}
+	got, err := m.EnsureWithSharedGrant(ctx, h.Key, "template-1", SharedTarget{Access: "write", Volume: "vol-rw", OtherVolume: "vol-ro", RoleARN: "role-write"})
+	if err != nil || got.SandboxID != first.SandboxID || got.State != "running" || got.AuthRoleARN == "role-write" || p.creates != 1 || p.destroys != 0 {
+		t.Fatalf("read-only host was retired to gain write: host=%+v err=%v creates=%d destroys=%d", got, err, p.creates, p.destroys)
+	}
+}
+
+func TestInspectFailureReusesRecordedMountWhenGrantIsNotTightened(t *testing.T) {
+	a, _ := stores(t)
+	h := bind(t, a)
+	p := &mountedCloud{}
+	m := Manager{a, p}
+	ctx := context.Background()
+	first, err := m.Ensure(ctx, h.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mounts = []VolumeMountSpec{
+		{Name: h.VolumeName, Path: MountPath},
+		{Name: "vol-ro", Path: WorkspaceSharedRoot},
+	}
+	if _, err = m.EnsureWithSharedGrant(ctx, h.Key, "template-1", SharedTarget{Access: "read", Volume: "vol-ro", RoleARN: "role-read"}); err != nil {
+		t.Fatal(err)
+	}
+	bad := &inspectFailCloud{}
+	got, err := (Manager{Store: a, Provider: bad}).EnsureWithSharedGrant(ctx, h.Key, "template-1", SharedTarget{Access: "read", Volume: "vol-ro", RoleARN: "role-read"})
+	if err != nil || got.SandboxID != first.SandboxID || bad.creates != 0 || bad.destroys != 0 {
+		t.Fatalf("recorded read mount blocked a healthy host: host=%+v err=%v creates=%d destroys=%d", got, err, bad.creates, bad.destroys)
+	}
+	revoked, err := (Manager{Store: a, Provider: bad}).EnsurePrivate(ctx, h.Key, "template-1")
+	if !errors.Is(err, ErrPending) || errors.Is(err, ErrRetireRequired) || revoked.SandboxID == first.SandboxID || bad.destroys != 0 {
+		t.Fatalf("tightened grant reused a host after a failed mount check: host=%+v err=%v destroys=%d", revoked, err, bad.destroys)
 	}
 }
 

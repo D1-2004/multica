@@ -131,6 +131,88 @@ func classifySharedLaunch(capable bool, decision wsfs.MountDecision, notReady bo
 	return sharedLaunchOffer
 }
 
+func sharedTarget(decision wsfs.MountDecision) dshhost.SharedTarget {
+	volume := ""
+	if decision.Shared != nil {
+		volume = decision.Shared.Name
+	}
+	other := decision.RWVolume
+	if decision.Access == wsfs.AccessWrite {
+		other = decision.ROVolume
+	}
+	return dshhost.SharedTarget{
+		Access:          decision.Access,
+		Volume:          volume,
+		OtherVolume:     other,
+		RoleARN:         decision.RoleARN,
+		GrantGeneration: decision.GrantGeneration,
+	}
+}
+
+func adoptedSharedTarget(mode sharedLaunchMode, decision wsfs.MountDecision) *dshhost.SharedTarget {
+	switch mode {
+	case sharedLaunchRevoke:
+		target := dshhost.SharedTarget{Access: "none", GrantGeneration: decision.GrantGeneration}
+		return &target
+	case sharedLaunchOffer, sharedLaunchConstrain:
+		if decision.Shared == nil || decision.Shared.Name == "" || decision.RoleARN == "" {
+			return nil
+		}
+		target := sharedTarget(decision)
+		if mode == sharedLaunchConstrain {
+			target.Access = wsfs.AccessRead
+		}
+		return &target
+	default:
+		return nil
+	}
+}
+
+func retireUnusedSharedCandidate(ctx context.Context, conn *pgxpool.Conn, manager dshhost.Manager, key dshhost.Key, host dshhost.Host, workspaceID, excludeTask pgtype.UUID, scopeID uuid.UUID) error {
+	var taskBusy, nativeBusy bool
+	err := conn.QueryRow(ctx, `SELECT EXISTS (
+ SELECT 1 FROM agent_task_queue t JOIN agent a ON a.id=t.agent_id
+ WHERE a.workspace_id=$1 AND t.agent_id=$2 AND t.id IS DISTINCT FROM $3::uuid
+ AND ((t.status IN ('dispatched','running','waiting_local_directory') AND ($5::uuid='00000000-0000-0000-0000-000000000000'::uuid OR EXISTS
+ (SELECT 1 FROM agent_task_runtime_start_attempt active WHERE active.task_id=t.id AND active.sandbox_id=$4))) OR
+ (t.status='queued' AND EXISTS (SELECT 1 FROM agent_task_runtime_start_attempt s
+ WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))`,
+		workspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, host.SandboxID, scopeID).Scan(&taskBusy)
+	if err != nil {
+		return err
+	}
+	if taskBusy {
+		return waitDSHHost(dshhost.WaitTaskDrainBusy)
+	}
+	err = conn.QueryRow(ctx, `SELECT EXISTS (
+ SELECT 1 FROM dsh_native_access n
+ WHERE n.workspace_id=$1 AND n.agent_id=$2 AND n.sandbox_id=$3 AND n.generation=$4
+ AND n.parent_access_id IS NULL AND n.kind IN ('entry','session') AND n.expires_at>now())`,
+		workspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, host.SandboxID, host.Generation).Scan(&nativeBusy)
+	if err != nil {
+		return err
+	}
+	if nativeBusy {
+		return waitDSHHost(dshhost.WaitNativeGrantBusy)
+	}
+	if err = manager.RetireUnlessBusy(ctx, key, host.Generation, func(retired dshhost.Host) (bool, error) {
+		var granted bool
+		qErr := conn.QueryRow(ctx, `SELECT EXISTS (
+ SELECT 1 FROM dsh_native_access n
+ WHERE n.workspace_id=$1 AND n.agent_id=$2 AND n.sandbox_id=$3 AND n.generation=$4
+ AND n.parent_access_id IS NULL AND n.kind IN ('entry','session') AND n.expires_at>now())`,
+			workspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, retired.SandboxID, retired.Generation).Scan(&granted)
+		return granted, qErr
+	}); err != nil {
+		reason := dshWaitReason(err)
+		if reason == "dsh_host_waiting" {
+			reason = dshhost.WaitDestroyUnconfirmed
+		}
+		return waitDSHHost(reason)
+	}
+	return nil
+}
+
 func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Database, key dshhost.Key, before *dshhost.Host, metadata []byte) (decision wsfs.MountDecision, mode sharedLaunchMode) {
 	decision = wsfs.MountDecision{Private: before, RoleARN: before.RoleARN}
 	if l.ReadWorkspaceMount == nil {
@@ -339,11 +421,20 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			return manager.EnsurePrivate(ctx, key, template)
 		case sharedLaunchOffer:
 			if decision.Shared != nil && decision.RoleARN != "" {
-				return manager.EnsureWithShared(ctx, key, template, *decision.Shared, decision.RoleARN)
+				return manager.EnsureWithSharedGrant(ctx, key, template, sharedTarget(decision))
 			}
 		case sharedLaunchConstrain:
 			if decision.Shared != nil && decision.Shared.Name != "" && decision.RoleARN != "" {
-				return manager.EnsureConstrained(ctx, key, template, *decision.Shared, decision.RoleARN)
+				target := sharedTarget(decision)
+				target.Access = wsfs.AccessRead
+				h, err := manager.Store.Get(ctx, key)
+				if err != nil {
+					return dshhost.Host{}, err
+				}
+				if h.State == "running" {
+					return manager.EnsureWithSharedGrant(ctx, key, template, target)
+				}
+				return manager.Ensure(ctx, key, template)
 			}
 		}
 		return manager.Ensure(ctx, key, template)
@@ -371,10 +462,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			slog.Info("dsh host waiting", "reason", dshhost.WaitCreateIntentStale, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
 			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitCreateIntentStale)
 		}
-		if launchMode == sharedLaunchRevoke {
-			// An adopted create may carry a shared mount from an explicit revoke.
-			err = manager.RequirePrivate(ctx, host)
-		}
+		host, err = manager.AuthorizeRunning(ctx, host, adoptedSharedTarget(launchMode, decision))
 	} else if before.State == "retiring" {
 		err = dshhost.ErrRetireRequired
 	} else {
@@ -468,21 +556,24 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	} else {
 		err = l.checkSandboxReady(ctx, host.SandboxID)
 	}
-	if err != nil {
-		if cold && launchMode == sharedLaunchOffer && decision.Shared != nil {
-			// The shared create already returned an id. A later readiness
-			// failure must not fail the task or create another sandbox.
-			slog.Warn("shared-mount sandbox was not ready; continuing without the shared mount",
-				"error", err,
-				"sandbox_id", host.SandboxID,
-				"workspace_id", key.WorkspaceID,
-				"agent_id", key.AgentID,
-			)
-			host.ExtraMounts = nil
-			host.AuthRoleARN = ""
-		} else {
-			return dshhost.Host{}, cold, err
+	if err != nil && cold && launchMode == sharedLaunchOffer && decision.Shared != nil {
+		// The shared candidate was created for this call and is not executable.
+		// Confirm it is unused and gone, then create one private sandbox.
+		// A healthy host is not on this path. An unconfirmed destroy does not
+		// start a second sandbox.
+		if retireErr := retireUnusedSharedCandidate(ctx, conn, manager, key, host, rt.WorkspaceID, excludeTask, scopeID); retireErr != nil {
+			return dshhost.Host{}, true, retireErr
 		}
+		var privateHost dshhost.Host
+		privateHost, err = manager.Ensure(ctx, key, template)
+		if err != nil {
+			return dshhost.Host{}, true, err
+		}
+		host = privateHost
+		err = l.waitSandboxReady(ctx, host.SandboxID)
+	}
+	if err != nil {
+		return dshhost.Host{}, cold, err
 	}
 	if _, err = l.renewEmployeeHostSandbox(ctx, host.SandboxID, trace); err != nil {
 		return dshhost.Host{}, cold, err

@@ -61,6 +61,12 @@ type MountDecision struct {
 	// Revoked is an explicit none grant. Launch must drop a shared mount the
 	// sandbox still carries. A missing grant is not revoked.
 	Revoked bool
+	// ROVolume and RWVolume name the workspace's two shared volumes. A live
+	// mount equal to the other volume is a downgrade or an upgrade, not merely
+	// a name mismatch.
+	ROVolume        string
+	RWVolume        string
+	GrantGeneration int64
 }
 
 // SelectVolumeMounts implements the launch matrix. Empty TaskRoleARN on an
@@ -80,6 +86,9 @@ func SelectVolumeMounts(employee *dshhost.Host, grant Grant, binding *Binding) M
 		out.Shared = &shared
 		out.RoleARN = grant.TaskRoleARN
 		out.Access = access
+		out.ROVolume = binding.ROVolumeName
+		out.RWVolume = binding.RWVolumeName
+		out.GrantGeneration = grant.Generation
 		return out
 	}
 	if binding == nil || access == AccessNone {
@@ -90,7 +99,7 @@ func SelectVolumeMounts(employee *dshhost.Host, grant Grant, binding *Binding) M
 	if access == AccessWrite {
 		role = binding.RWRoleARN
 	}
-	return MountDecision{Shared: &shared, RoleARN: role, Access: access}
+	return MountDecision{Shared: &shared, RoleARN: role, Access: access, ROVolume: binding.ROVolumeName, RWVolume: binding.RWVolumeName, GrantGeneration: grant.Generation}
 }
 
 func sharedMount(binding Binding, access string) dshhost.VolumeMountSpec {
