@@ -130,6 +130,13 @@ type TaskRuntimeCapacityWakeup interface {
 	NotifyRuntimeCapacityMayBeAvailable()
 }
 
+// TaskRuntimeTerminalObserver learns that a task reached a terminal state, so
+// a cloud runtime can release or shorten the sandbox it ran in. It must return
+// promptly: it is called on the task transition path.
+type TaskRuntimeTerminalObserver interface {
+	TaskTerminal(task db.AgentTaskQueue)
+}
+
 // triggerSummaryMaxLen caps the snapshot length so the row stays cheap to
 // transmit (it ends up in every task list response). 200 is enough for a
 // recognisable preview of a one-paragraph comment.
@@ -777,6 +784,7 @@ func (s *TaskService) captureTaskStarted(ctx context.Context, task db.AgentTaskQ
 
 func (s *TaskService) captureTaskCompleted(ctx context.Context, task db.AgentTaskQueue) {
 	s.observeTaskTerminal(ctx, task)
+	s.notifyRuntimeTaskEnded(task)
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
@@ -785,6 +793,7 @@ func (s *TaskService) captureTaskCompleted(ctx context.Context, task db.AgentTas
 
 func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQueue) {
 	s.observeTaskTerminal(ctx, task)
+	s.notifyRuntimeTaskEnded(task)
 	failureReason := taskFailureReason(task)
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
@@ -795,6 +804,7 @@ func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQu
 
 func (s *TaskService) captureTaskCancelled(ctx context.Context, task db.AgentTaskQueue) {
 	s.observeTaskTerminal(ctx, task)
+	s.notifyRuntimeTaskEnded(task)
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
@@ -6560,10 +6570,31 @@ func taskEvent(eventType string, route humanRealtimeRoute, task db.AgentTaskQueu
 }
 
 func (s *TaskService) publishTaskEvent(eventType string, route humanRealtimeRoute, task db.AgentTaskQueue, extra ...map[string]any) {
+	s.notifyRuntimeTaskTerminal(eventType, task)
 	if route.workspaceID == "" {
 		return
 	}
 	s.Bus.Publish(taskEvent(eventType, route, task, extra...))
+}
+
+// notifyRuntimeTaskTerminal forwards terminal task events. The capture*
+// helpers notify too, so a terminal write reaches the runtime whether it
+// published an event (unroutable ones included) or only recorded metrics, as
+// agent archiving does. The observer drops duplicates.
+func (s *TaskService) notifyRuntimeTaskTerminal(eventType string, task db.AgentTaskQueue) {
+	switch eventType {
+	case protocol.EventTaskCompleted, protocol.EventTaskFailed, protocol.EventTaskCancelled:
+		s.notifyRuntimeTaskEnded(task)
+	}
+}
+
+func (s *TaskService) notifyRuntimeTaskEnded(task db.AgentTaskQueue) {
+	if s == nil || s.RuntimeLauncher == nil {
+		return
+	}
+	if observer, ok := s.RuntimeLauncher.(TaskRuntimeTerminalObserver); ok {
+		observer.TaskTerminal(task)
+	}
 }
 
 func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, task db.AgentTaskQueue, extra ...map[string]any) {
@@ -6572,6 +6603,7 @@ func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, 
 	}
 	route, ok := s.humanRealtimeRouteForTask(ctx, task)
 	if !ok {
+		s.notifyRuntimeTaskTerminal(eventType, task)
 		return
 	}
 	s.publishTaskEvent(eventType, route, task, extra...)
@@ -6600,6 +6632,7 @@ func (s *TaskService) publishTaskFailedEvent(route humanRealtimeRoute, task db.A
 func (s *TaskService) broadcastTaskFailedEvent(ctx context.Context, task db.AgentTaskQueue, errMsg, failureReason string, retryPending bool) {
 	route, ok := s.humanRealtimeRouteForTask(ctx, task)
 	if !ok {
+		s.notifyRuntimeTaskTerminal(protocol.EventTaskFailed, task)
 		return
 	}
 	s.publishTaskFailedEvent(route, task, errMsg, failureReason, retryPending)

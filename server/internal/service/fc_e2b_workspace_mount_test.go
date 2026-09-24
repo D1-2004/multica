@@ -11,6 +11,23 @@ import (
 	"github.com/multica-ai/multica/server/internal/wsfs"
 )
 
+func TestLaunchWithoutSharedMountDropsARevokedGrant(t *testing.T) {
+	none := wsfs.MountDecision{RoleARN: "role-employee"}
+	if !launchWithoutSharedMount(none, true, false) {
+		t.Fatal("a resolved grant of none must rebuild without the shared mount")
+	}
+	if launchWithoutSharedMount(none, false, false) {
+		t.Fatal("workspaces without a shared disk must keep the existing ensure path")
+	}
+	shared := wsfs.MountDecision{Shared: &dshhost.VolumeMountSpec{Name: "vol-shared", Path: dshhost.WorkspaceSharedRoot}, RoleARN: "role-composite"}
+	if launchWithoutSharedMount(shared, true, true) {
+		t.Fatal("a confirmed shared mount must not be dropped")
+	}
+	if !launchWithoutSharedMount(none, false, true) {
+		t.Fatal("an unconfirmed mount must launch private-only")
+	}
+}
+
 func TestWorkspaceMountDecisionNeverBlocksLaunch(t *testing.T) {
 	key := dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}
 	before := &dshhost.Host{Key: key, Storage: dshhost.Storage{VolumeName: "vol-employee", RoleARN: "role-employee", AccessPointARN: "ap-employee"}}

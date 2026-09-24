@@ -104,6 +104,8 @@
     "rename_failed": "无法重命名",
     "delete_failed": "无法删除",
     "agent_access": "智能体权限",
+    "runtime_mismatch": "此功能需要运行时镜像 {{required}}。当前绑定的运行时是 {{bound}}，版本不匹配。",
+    "runtime_unknown": "此功能需要运行时镜像 {{required}}。当前绑定的运行时版本未知。",
     "pane_unready_title": "共享存储还没准备好",
     "pane_unready_body": "准备完成后，成员和智能体可以在这里共用文件。",
     "pane_listing_title": "暂时没有可显示的内容",

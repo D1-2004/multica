@@ -4,7 +4,16 @@ import { useMemo, useState, type ReactNode } from "react";
 
 import { useQuery } from "@tanstack/react-query";
 import type { FilesystemRoot } from "@multica/core/filesystem";
-import { filesystemGrantsOptions, filesystemRootsOptions } from "@multica/core/filesystem";
+import {
+  SHARED_DISK_REQUIRED_RUNTIME_IMAGE,
+  boundRuntimeImage,
+  compareRuntimeImage,
+  filesystemGrantsOptions,
+  filesystemRootsOptions,
+} from "@multica/core/filesystem";
+import { parseFCE2BRuntimeMetadata } from "@multica/core/runtimes";
+import { runtimeListOptions } from "@multica/core/runtimes/queries";
+import type { AgentRuntime } from "@multica/core/types";
 import { FileBrowser } from "./files-browser";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -65,6 +74,7 @@ export function FilesPage() {
   const rootsQuery = useQuery(filesystemRootsOptions(wsId ?? ""));
   const agentsQuery = useQuery(agentListOptions(wsId ?? ""));
   const grantsQuery = useQuery(filesystemGrantsOptions(wsId ?? ""));
+  const runtimesQuery = useQuery(runtimeListOptions(wsId ?? ""));
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<DiskKey | null>(null);
 
@@ -218,6 +228,19 @@ export function FilesPage() {
               <DiskPane
                 disk={selectedDisk}
                 wsId={wsId ?? ""}
+                boundRuntimeImage={
+                  selectedDisk.kind === "agent" &&
+                  agentUsesSharedDisk(grantsQuery.data?.grants, selectedDisk.agentId) &&
+                  !grantsQuery.isPending &&
+                  !grantsQuery.isError &&
+                  !runtimesQuery.isPending &&
+                  !runtimesQuery.isError
+                    ? fcBoundRuntimeImage(
+                        runtimesQuery.data,
+                        selectedDisk.agent?.runtime_id,
+                      )
+                    : undefined
+                }
                 agentHref={
                   selectedDisk.agentId
                     ? `${paths.agentDetail(selectedDisk.agentId)}?view=filesystem`
@@ -372,25 +395,75 @@ function DiskIcon({ disk }: { disk: Disk }) {
   );
 }
 
+function agentUsesSharedDisk(
+  grants: Array<{ agent_id: string; access: string }> | undefined,
+  agentId: string | undefined,
+): boolean {
+  if (!agentId) return false;
+  const grant = (grants ?? []).find((item) => item.agent_id === agentId);
+  return grant?.access === "read" || grant?.access === "write";
+}
+
+function fcBoundRuntimeImage(
+  runtimes: AgentRuntime[] | undefined,
+  runtimeId: string | null | undefined,
+): string | null | undefined {
+  if (!runtimeId) return undefined;
+  const runtime = (runtimes ?? []).find((item) => item.id === runtimeId);
+  if (!runtime || !parseFCE2BRuntimeMetadata(runtime)) return undefined;
+  return boundRuntimeImage(runtime);
+}
+
+function RuntimeImageMismatchNotice({
+  bound,
+}: {
+  bound: string | null | undefined;
+}) {
+  const { t } = useT("layout");
+  const match = compareRuntimeImage(SHARED_DISK_REQUIRED_RUNTIME_IMAGE, bound);
+  if (match === "not_required" || match === "match") return null;
+  const text =
+    match === "unknown"
+      ? t(($) => $.files.runtime_unknown, {
+          required: SHARED_DISK_REQUIRED_RUNTIME_IMAGE,
+        })
+      : t(($) => $.files.runtime_mismatch, {
+          required: SHARED_DISK_REQUIRED_RUNTIME_IMAGE,
+          bound: bound ?? "",
+        });
+  return (
+    <p role="status" className="border-b bg-muted/40 px-4 py-2 text-caption text-foreground">
+      {text}
+    </p>
+  );
+}
+
 function DiskPane({
   disk,
   wsId,
   agentHref,
+  boundRuntimeImage: boundImage,
 }: {
   disk: Disk;
   wsId: string;
   agentHref: string | null;
+  boundRuntimeImage?: string | null;
 }) {
   const root = disk.kind === "shared" ? "shared" : `agent:${disk.agentId ?? ""}`;
   const canWrite = disk.access === "write";
   return (
-    <FileBrowser
-      wsId={wsId}
-      root={root}
-      disk={{ name: disk.name, kind: disk.kind, access: disk.access }}
-      canWrite={canWrite}
-      agentHref={agentHref}
-    />
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      {disk.kind === "agent" && boundImage !== undefined ? (
+        <RuntimeImageMismatchNotice bound={boundImage} />
+      ) : null}
+      <FileBrowser
+        wsId={wsId}
+        root={root}
+        disk={{ name: disk.name, kind: disk.kind, access: disk.access }}
+        canWrite={canWrite}
+        agentHref={agentHref}
+      />
+    </div>
   );
 }
 

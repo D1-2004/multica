@@ -18,7 +18,7 @@ func fakeFC(t *testing.T, handler http.HandlerFunc) *FCProvider {
 	t.Helper()
 	s := httptest.NewServer(handler)
 	t.Cleanup(s.Close)
-	p, err := NewFCProvider(FCConfig{s.URL, "test-secret", "vpc-test", "sg-test", []string{"vsw-test"}, 600})
+	p, err := NewFCProvider(FCConfig{s.URL, "test-secret", "vpc-test", "sg-test", []string{"vsw-test"}, 600, "pre.multica.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +97,9 @@ func TestFCCreatePayloadAndAmbiguousFailureAreNotRetried(t *testing.T) {
 		}
 		if body.Metadata["multica.dsh.intent"] == "" || body.Metadata["fc.sandbox.auth.role"] != h.RoleARN || body.Metadata["fc.sandbox.network.vpc"] == "" {
 			t.Error("missing persisted identity or mount authority")
+		}
+		if body.Metadata[OriginLabel] != "pre.multica.test" {
+			t.Errorf("origin label = %q", body.Metadata[OriginLabel])
 		}
 		if r.Header.Get("X-API-KEY") != "test-secret" {
 			t.Error("missing auth")

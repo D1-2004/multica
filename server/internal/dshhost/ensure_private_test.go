@@ -3,6 +3,7 @@ package dshhost
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -33,20 +34,27 @@ func (s runningHostStore) AbandonCreate(context.Context, Host) error {
 type mountedProvider struct {
 	mounts     []VolumeMountSpec
 	inspectErr error
+	state      string
 }
 
 func (p mountedProvider) Create(context.Context, Host) (string, error) {
 	return "", errors.New("unexpected create")
 }
-func (p mountedProvider) Healthy(context.Context, string) error { return nil }
+func (p mountedProvider) Healthy(context.Context, string) error {
+	return errors.New("private-only reuse must prove health from the detail read")
+}
 func (p mountedProvider) DestroyAndConfirmAbsent(context.Context, string) error {
 	return errors.New("unexpected destroy")
 }
 func (p mountedProvider) FindCreated(context.Context, Host) (string, error) {
 	return "", errors.New("unexpected find")
 }
-func (p mountedProvider) InspectMounts(context.Context, string) ([]VolumeMountSpec, error) {
-	return p.mounts, p.inspectErr
+func (p mountedProvider) InspectSandbox(context.Context, string) (SandboxDetail, error) {
+	state := p.state
+	if state == "" {
+		state = "running"
+	}
+	return SandboxDetail{State: state, Mounts: p.mounts}, p.inspectErr
 }
 
 func TestEnsurePrivateRebuildsSandboxesThatMayCarryASharedMount(t *testing.T) {
@@ -63,6 +71,7 @@ func TestEnsurePrivateRebuildsSandboxesThatMayCarryASharedMount(t *testing.T) {
 		{"stale shared write mount", mountedProvider{mounts: []VolumeMountSpec{private, shared}}, true},
 		{"unknown mounts", mountedProvider{inspectErr: errors.New("DSH FC returned HTTP 500")}, true},
 		{"mounts missing from detail", mountedProvider{}, true},
+		{"sandbox not running", mountedProvider{mounts: []VolumeMountSpec{private}, state: "paused"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := Manager{Store: runningHostStore{h: running}, Provider: tc.provider}
@@ -76,8 +85,8 @@ func TestEnsurePrivateRebuildsSandboxesThatMayCarryASharedMount(t *testing.T) {
 			if err != nil || got.SandboxID != "sbx-1" {
 				t.Fatalf("private-only sandbox must be reused, got %+v %v", got, err)
 			}
-			// The ordinary path keeps today's reuse semantics.
-			if _, err := (Manager{Store: runningHostStore{h: running}, Provider: mountedProvider{mounts: []VolumeMountSpec{private, shared}}}).Ensure(context.Background(), key, "tpl"); err != nil {
+			// The ordinary path keeps today's reuse semantics (health via Healthy).
+			if _, err := (Manager{Store: runningHostStore{h: running}, Provider: healthyProvider{mountedProvider{mounts: []VolumeMountSpec{private, shared}}}}).Ensure(context.Background(), key, "tpl"); err != nil {
 				t.Fatalf("Ensure changed behavior: %v", err)
 			}
 		})
@@ -150,7 +159,10 @@ func TestEnsureReleasesIntentsFCRejected(t *testing.T) {
 		{"bad request", &FCStatusError{Status: 400}, true, true},
 		{"forbidden", &FCStatusError{Status: 403}, true, true},
 		{"throttled", &FCStatusError{Status: 429}, true, false},
+		{"template not found", &FCStatusError{Status: 404}, true, true},
 		{"request timeout", &FCStatusError{Status: 408}, false, false},
+		{"conflict", &FCStatusError{Status: 409}, false, false},
+		{"locked", &FCStatusError{Status: 423}, false, false},
 		{"server error", &FCStatusError{Status: 502}, false, false},
 		{"transport", errors.New("DSH FC transport outcome unconfirmed"), false, false},
 	} {
@@ -165,5 +177,25 @@ func TestEnsureReleasesIntentsFCRejected(t *testing.T) {
 				t.Fatalf("unexpected classification: %v", err)
 			}
 		})
+	}
+}
+
+type healthyProvider struct{ mountedProvider }
+
+func (healthyProvider) Healthy(context.Context, string) error { return nil }
+
+func TestPrivateOnlyUnhealthyKeepsTheWaitReason(t *testing.T) {
+	key := Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}
+	running := Host{Key: key, Storage: Storage{VolumeName: "vol-employee"}, State: "running", Generation: 1, SandboxID: "sbx-1", TemplateID: "tpl"}
+	m := Manager{Store: runningHostStore{h: running}, Provider: mountedProvider{inspectErr: errors.New("DSH FC returned HTTP 404")}}
+	_, err := m.EnsurePrivate(context.Background(), key, "tpl")
+	if !errors.Is(err, ErrRetireRequired) || !strings.Contains(err.Error(), WaitSandboxUnhealthy) {
+		t.Fatalf("an unreadable sandbox must surface sandbox_unhealthy, got %v", err)
+	}
+}
+
+func TestCreateRejectedMessageIsClassifiedAsSandboxCreate(t *testing.T) {
+	if !strings.Contains(strings.ToLower(ErrCreateRejected.Error()), "sandbox create") {
+		t.Fatalf("the launch failure classifier matches \"sandbox create\"; got %q", ErrCreateRejected)
 	}
 }

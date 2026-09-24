@@ -20,7 +20,7 @@ var (
 	ErrChanged        = errors.New("DSH host generation changed")
 	ErrRetireRequired = errors.New("DSH host must be drained and retired before replacement")
 	// ErrCreateRejected means FC refused the create; the intent was abandoned.
-	ErrCreateRejected = errors.New("DSH host sandbox creation was rejected")
+	ErrCreateRejected = errors.New("DSH host sandbox create was rejected")
 )
 
 var (
@@ -79,14 +79,16 @@ type Store interface {
 	// AbortRetire restores running if Destroy has not started. Used when a
 	// native grant lands after the idle check and before BeginRetire commits.
 	AbortRetire(context.Context, Host) error
-	// AbandonCreate is a store primitive. Manager never calls it: an empty
+	// AbandonCreate releases a creating intent. Manager calls it only after
+	// the provider definitively rejected the create request. An empty
 	// FindCreated stays pending so listing lag cannot spawn a second writer.
 	AbandonCreate(context.Context, Host) error
 }
 
 type Provider interface {
 	// Create must label the sandbox with the durable CreateIntent before it
-	// can mount storage. Errors are ambiguous and must not cause a retry.
+	// can mount storage. Errors are ambiguous and must not cause a retry,
+	// except an *FCStatusError whose status proves the request was refused.
 	Create(context.Context, Host) (string, error)
 	Healthy(context.Context, string) error
 	// DestroyAndConfirmAbsent succeeds only after the provider confirms that
@@ -157,8 +159,16 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 			return Host{}, ErrRetireRequired
 		}
 		if privateOnly {
-			if err := m.RequirePrivate(ctx, h); err != nil {
-				return Host{}, err
+			// One detail read proves both health and the private-only mounts.
+			if inspector, ok := m.Provider.(sandboxInspector); ok {
+				detail, err := inspector.InspectSandbox(ctx, h.SandboxID)
+				if err != nil || detail.State != "running" {
+					return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
+				}
+				if err := requirePrivateMounts(h, detail.Mounts); err != nil {
+					return Host{}, err
+				}
+				return h, nil
 			}
 		}
 		if err := m.Provider.Healthy(ctx, h.SandboxID); err != nil {
@@ -200,21 +210,34 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 	return m.recordCreated(ctx, h, id)
 }
 
+// SandboxDetail is one provider read of a sandbox's state and volumes.
+type SandboxDetail struct {
+	State  string
+	Mounts []VolumeMountSpec
+}
+
+// sandboxInspector is implemented by providers that can read a sandbox's
+// volumes. Providers without it cannot create a shared mount at all.
+type sandboxInspector interface {
+	InspectSandbox(context.Context, string) (SandboxDetail, error)
+}
+
 // RequirePrivate returns ErrRetireRequired unless the sandbox is confirmed to
 // carry exactly the private employee volume. An inspection failure or a
 // response without that volume counts as unconfirmed.
-// Providers without mount inspection cannot create a shared mount at all.
 func (m Manager) RequirePrivate(ctx context.Context, h Host) error {
-	inspector, ok := m.Provider.(interface {
-		InspectMounts(context.Context, string) ([]VolumeMountSpec, error)
-	})
+	inspector, ok := m.Provider.(sandboxInspector)
 	if !ok {
 		return nil
 	}
-	mounts, err := inspector.InspectMounts(ctx, h.SandboxID)
+	detail, err := inspector.InspectSandbox(ctx, h.SandboxID)
 	if err != nil {
 		return fmt.Errorf("%w: sandbox mounts could not be confirmed private", ErrRetireRequired)
 	}
+	return requirePrivateMounts(h, detail.Mounts)
+}
+
+func requirePrivateMounts(h Host, mounts []VolumeMountSpec) error {
 	hasPrivate := false
 	for _, got := range mounts {
 		if got.Path != MountPath || got.Name != h.VolumeName {
@@ -230,17 +253,15 @@ func (m Manager) RequirePrivate(ctx context.Context, h Host) error {
 }
 
 func (m Manager) sandboxHasMount(ctx context.Context, sandboxID string, want VolumeMountSpec) bool {
-	inspector, ok := m.Provider.(interface {
-		InspectMounts(context.Context, string) ([]VolumeMountSpec, error)
-	})
+	inspector, ok := m.Provider.(sandboxInspector)
 	if !ok || sandboxID == "" {
 		return false
 	}
-	mounts, err := inspector.InspectMounts(ctx, sandboxID)
+	detail, err := inspector.InspectSandbox(ctx, sandboxID)
 	if err != nil {
 		return false
 	}
-	for _, got := range mounts {
+	for _, got := range detail.Mounts {
 		if got.Path == want.Path && got.Name == want.Name {
 			return true
 		}
@@ -260,12 +281,10 @@ func (m Manager) recordCreated(ctx context.Context, h Host, id string) (Host, er
 	created.ExtraMounts = h.ExtraMounts
 	created.AuthRoleARN = h.AuthRoleARN
 	if len(created.ExtraMounts) == 0 {
-		if inspector, ok := m.Provider.(interface {
-			InspectMounts(context.Context, string) ([]VolumeMountSpec, error)
-		}); ok {
-			mounts, inspectErr := inspector.InspectMounts(commitCtx, id)
+		if inspector, ok := m.Provider.(sandboxInspector); ok {
+			detail, inspectErr := inspector.InspectSandbox(commitCtx, id)
 			if inspectErr == nil {
-				for _, got := range mounts {
+				for _, got := range detail.Mounts {
 					if got.Path == WorkspaceSharedRoot && got.Name != "" && got.Name != created.VolumeName {
 						created.ExtraMounts = []VolumeMountSpec{got}
 					}
@@ -334,8 +353,10 @@ func (m Manager) Retire(ctx context.Context, key Key, generation int64) error {
 
 // RetireUnlessBusy begins retire, then re-checks a live hold (native grants).
 // Inserts require state=running, so a grant that committed before BeginRetire
-// is visible here; a grant after BeginRetire is denied. Crash recovery of an
-// already-retiring generation skips the hold and finishes destroy.
+// is visible here; a grant after BeginRetire is denied. A failed hold query
+// aborts a retire this call started and, on a later retry, is checked again
+// before destroy. An already-retiring host is not destroyed while that query
+// fails or a hold is present.
 func (m Manager) RetireUnlessBusy(ctx context.Context, key Key, generation int64, busy func(Host) (bool, error)) error {
 	return m.retire(ctx, key, generation, busy)
 }
@@ -358,14 +379,24 @@ func (m Manager) retire(ctx context.Context, key Key, generation int64, busy fun
 	} else if h.State != "retiring" {
 		return ErrChanged
 	}
-	if began && busy != nil {
+	if busy != nil {
 		blocked, busyErr := busy(h)
 		if busyErr != nil {
+			if began {
+				if abortErr := m.Store.AbortRetire(ctx, h); abortErr != nil {
+					return errors.Join(busyErr, abortErr)
+				}
+			}
 			return busyErr
 		}
 		if blocked {
-			if abortErr := m.Store.AbortRetire(ctx, h); abortErr != nil {
-				return abortErr
+			// Destroy has not been sent only when this call moved the host to
+			// retiring. An earlier attempt may already have asked FC to delete
+			// the sandbox, so restoring running would hand out access to it.
+			if began {
+				if abortErr := m.Store.AbortRetire(ctx, h); abortErr != nil {
+					return abortErr
+				}
 			}
 			return fmt.Errorf("%w: %s", ErrPending, WaitNativeGrantBusy)
 		}

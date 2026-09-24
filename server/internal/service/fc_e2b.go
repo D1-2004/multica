@@ -1668,6 +1668,17 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		"scope_type", scopeType,
 		"scope_id", scopeID,
 	)
+	lifecycleScope := "task"
+	if useEmployeeFilesystem {
+		lifecycleScope = "employee_" + filesystemScope.Kind
+	} else if scoped {
+		lifecycleScope = scope.typ
+	}
+	lifecycleAction := fcE2BSandboxReused
+	if coldStart {
+		lifecycleAction = fcE2BSandboxCreated
+	}
+	logFCE2BSandboxLifecycle(lifecycleAction, "task_start", task, sandboxID, lifecycleScope, nil)
 	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_resolve", "succeeded",
 		"task_id", taskID,
 		"sandbox_id", sandboxID,

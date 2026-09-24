@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -105,6 +106,17 @@ func (h *Handler) IssueDSHNativeAccess(w http.ResponseWriter, r *http.Request) {
 	access, token, err := h.dshNativeAccessManager().Issue(ctx, host, uuid.UUID(userID.Bytes))
 	if err != nil {
 		writeError(w, http.StatusForbidden, "DSH native entry is unavailable or no longer authorized")
+		return
+	}
+	// Sandbox release may have shortened this host after EnsureDSHEmployeeHost
+	// renewed it; renewing once the grant has committed restores the lifetime.
+	// Without that confirmation the session could outlive its host.
+	if err := h.FCE2BLauncher.RenewDSHNativeHost(ctx, host); err != nil {
+		slog.Warn("DSH native entry could not renew its host", "sandbox_id", host.SandboxID, "error", err)
+		if revokeErr := h.dshNativeAccessManager().Revoke(ctx, key, access.ID, uuid.UUID(userID.Bytes)); revokeErr != nil {
+			slog.Warn("DSH native entry could not revoke an unconfirmed grant", "access_id", access.ID, "error", revokeErr)
+		}
+		writeError(w, http.StatusServiceUnavailable, "DSH employee startup is unconfirmed; refresh Home status before retrying")
 		return
 	}
 	// Fragments are not transmitted to the gateway in the navigation request.

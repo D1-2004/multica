@@ -104,6 +104,8 @@
     "rename_failed": "Couldn’t rename",
     "delete_failed": "Couldn’t delete",
     "agent_access": "Agent access",
+    "runtime_mismatch": "This feature needs runtime image {{required}}. The bound runtime is {{bound}}, so the versions do not match.",
+    "runtime_unknown": "This feature needs runtime image {{required}}. The bound runtime version is unknown.",
     "pane_unready_title": "Shared storage isn’t ready",
     "pane_unready_body": "Members and agents will share files here once storage is prepared.",
     "pane_listing_title": "Nothing to show yet",

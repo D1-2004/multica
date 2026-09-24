@@ -121,6 +121,12 @@ func (h *Handler) nativeTarget(ctx context.Context, parent dshhost.NativeAccess,
 		cleanup()
 		return "", "", nil, err
 	}
+	// Sandbox release may have shortened this host after its last task; a
+	// routed stream must not outlive the host it reads.
+	if err := h.FCE2BLauncher.RenewDSHNativeHost(ctx, host); err != nil {
+		cleanup()
+		return "", "", nil, err
+	}
 	return upstream, child, cleanup, nil
 }
 
