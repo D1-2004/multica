@@ -1543,11 +1543,11 @@
       "ui_off": "打开「显示列表」后，这里会出现每个单聊和群聊的记忆。"
     },
     "dsh_config": {
-      "home_title": "文件系统"
+      "home_title": "私有盘"
     },
     "dsh_home": {
-      "shared_title": "工作区共享文件",
-      "shared_intro": "这里是工作区「文件」页里的共享盘。默认不对这个智能体开放。打开只读或可写后，下次任务会把文件同步到 /mnt/workspace/shared（$MULTICA_WORKSPACE_FS_ROOT）。沙箱里的写入不会自动回到文件页。",
+      "shared_title": "工作区共享盘",
+      "shared_intro": "这是工作区共享盘，按这个智能体单独设为不开放、只读或可写。它不在员工私有盘 /mnt/multica 里，也不是 DSH 的配置。设为只读或可写后，下次任务挂到 /mnt/workspace/shared。这里的授权不改变私有盘读写，也不改变 DSH Profile。",
       "shared_empty": "还没有共享文件。",
       "grant_label": "智能体权限",
       "grant_none": "不开放",
@@ -1557,7 +1557,9 @@
       "grant_failed": "无法更新权限",
       "access_path": "任务里：$MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace/shared",
       "open_files": "打开文件页",
-      "private_title": "智能体私有盘",
+      "private_title": "员工私有盘",
+      "private_intro": "这是员工私有盘 /mnt/multica，对该智能体默认可读写。终端和文件工具读写 $MULTICA_FS_ROOT/files（/mnt/multica/files）。DSH_HOME=/mnt/multica/home，插件构建产物在 /mnt/multica/plugin-builds。上面的共享盘不在这块盘里。",
+      "dsh_intro": "DSH 只用这块员工私有盘。路径是 /mnt/multica，默认可读写。DSH_HOME=/mnt/multica/home。安装后的插件构建产物在 /mnt/multica/plugin-builds。终端和文件工具读写 $MULTICA_FS_ROOT/files（/mnt/multica/files）。",
       "intro": "每个 Agent 拥有独立的持久文件系统，所有 FC provider 均可使用。终端和文件工具可读写 $MULTICA_FS_ROOT/files（/mnt/multica/files）；DSH_HOME 只是其中供 DSH 使用的子目录。",
       "loading": "正在检查文件系统…",
       "unavailable": "无法获取文件系统状态，请刷新重试。",

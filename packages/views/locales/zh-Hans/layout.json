@@ -70,7 +70,7 @@
     }
   },
   "files": {
-    "description": "工作区共享文件和智能体的私有磁盘。",
+    "description": "两块盘：工作区共享盘，以及每个智能体的私有盘 /mnt/multica。共享盘不在 DSH 里。",
     "disks": "磁盘",
     "search_disks": "搜索磁盘",
     "shared": "共享文件",
@@ -113,7 +113,7 @@
     "pane_private_title": "仅 {{name}} 可见",
     "pane_private_body": "这块磁盘不会共享给其他智能体。",
     "agent_shared_title": "工作区共享文件",
-    "agent_shared_hint": "共享文件在工作区磁盘上，不在这块私有盘里。到智能体「文件系统」页打开只读或可写后，下次任务会同步到 /mnt/workspace/shared。",
+    "agent_shared_hint": "共享盘在工作区磁盘上，不在私有盘 /mnt/multica，也不在 DSH 配置里。到智能体「文件系统」页设为只读或可写后，下次任务挂到 /mnt/workspace/shared。",
     "open_agent": "打开智能体",
     "agent_fallback": "智能体 {{id}}",
     "new_folder": "新建文件夹",

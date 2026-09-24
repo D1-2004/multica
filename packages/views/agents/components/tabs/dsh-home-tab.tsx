@@ -22,11 +22,12 @@ import { toast } from "sonner";
 import { AppLink } from "../../../navigation";
 import { useT } from "../../../i18n";
 
-export function DshHomeTab({ workspaceId, agentId, nativeEnabled = true, canEdit = false }: {
+export function DshHomeTab({ workspaceId, agentId, nativeEnabled = true, canEdit = false, includeSharedDisk = false }: {
   workspaceId: string;
   agentId: string;
   nativeEnabled?: boolean;
   canEdit?: boolean;
+  includeSharedDisk?: boolean;
 }) {
   const { t } = useT("agents");
   const [phase, setPhase] = useState<"idle" | "preparing" | "waiting" | "opening" | "error">("idle");
@@ -97,10 +98,10 @@ export function DshHomeTab({ workspaceId, agentId, nativeEnabled = true, canEdit
     phase === "opening" || status.state === "running" ? t(($) => $.tab_body.dsh_home.native_preparing) :
     t(($) => $.tab_body.dsh_home.starting);
   return <section className="space-y-8">
-    <SharedDiskPanel workspaceId={workspaceId} agentId={agentId} canEdit={canEdit} />
+    {includeSharedDisk ? <SharedDiskPanel workspaceId={workspaceId} agentId={agentId} canEdit={canEdit} /> : null}
     <div className="space-y-4">
     <h2 className="text-title font-medium">{t(($) => $.tab_body.dsh_home.private_title)}</h2>
-    <p className="text-body leading-6 text-muted-foreground">{t(($) => $.tab_body.dsh_home.intro)}</p>
+    <p className="text-body leading-6 text-muted-foreground">{includeSharedDisk ? t(($) => $.tab_body.dsh_home.private_intro) : t(($) => $.tab_body.dsh_home.dsh_intro)}</p>
     <p role="status" aria-live="polite" className="text-caption text-muted-foreground">
       {busy ? progress : home.isPending ? t(($) => $.tab_body.dsh_home.loading) :
         unavailable ? t(($) => $.tab_body.dsh_home.unavailable) :

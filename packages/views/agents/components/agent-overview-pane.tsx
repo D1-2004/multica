@@ -493,6 +493,7 @@ export function AgentOverviewPane({
                       agentId={agent.id}
                       nativeEnabled={false}
                       canEdit={canEdit}
+                      includeSharedDisk
                     />
                   )}
                   {effectiveView === "dsh" && (
