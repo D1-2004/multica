@@ -178,7 +178,7 @@ func TestDSHNativeManagedProfileReceipt(t *testing.T) {
 	if err := launcher.stageDSHProfile(context.Background(), host, revision); err != nil {
 		t.Fatal(err)
 	}
-	out, err := runner.Run(context.Background(), "", dshNativeHostEnsureArgs(host, raw, "https://pre.multica.test", "https://33124-sandbox.fc.test", strings.Repeat("a", 64), revision), nil)
+	out, err := runner.Run(context.Background(), "", dshNativeHostEnsureArgs(host, raw, revision), nil)
 	if err != nil || validateDSHNativeHostReceipt(out, host, digest, revision) != nil {
 		t.Fatalf("matching managed profile rejected: %v", err)
 	}
@@ -391,7 +391,7 @@ func dshLaunchFixture(t *testing.T, pool *pgxpool.Pool, p *dshLaunchProvider) (*
 	u := func(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
 	rt := db.AgentRuntime{ID: u(uuid.New()), WorkspaceID: u(workspace)}
 	task := db.AgentTaskQueue{ID: u(uuid.New()), AgentID: u(agent), RuntimeID: rt.ID}
-	launcher := &FCE2BLauncher{nativeAuthority: newDSHNativeAuthorityBridge("test-secret"), Pool: pool, Runner: dshHomeRunner{profiles: &sync.Map{}}, Config: FCE2BConfig{ServerURL: "https://production-relay.test", DSHNativeAuthority: "https://pre.multica.test", Domain: "fc.test", APIURL: httpServer.URL, APIKey: "test-key", LLMModels: []string{"fixture-model"}, SandboxReadyTimeout: time.Second}, dshProvider: func(dshhost.Storage) (dshhost.Provider, error) { return p, nil }}
+	launcher := &FCE2BLauncher{Pool: pool, Runner: dshHomeRunner{profiles: &sync.Map{}}, Config: FCE2BConfig{ServerURL: "https://production-relay.test", AppOrigin: "https://pre.multica.test", Domain: "fc.test", APIURL: httpServer.URL, APIKey: "test-key", LLMModels: []string{"fixture-model"}, SandboxReadyTimeout: time.Second}, dshProvider: func(dshhost.Storage) (dshhost.Provider, error) { return p, nil }}
 	launcher.ReadDSHProfileSource = func(_ context.Context, _ *db.Queries, _ dshhost.Key, template string) (dshprofile.Source, error) {
 		return dshprofile.Source{TemplateID: template}, nil
 	}
@@ -748,7 +748,7 @@ func TestDSHEmployeeCapabilityIsNotAdvertisedForOtherProviders(t *testing.T) {
 
 // Runs only against an explicitly configured remote test database. Native
 // startup excludes no task, and an active UI grant must protect its generation.
-func TestDSHNativeStartupSharesWriterAndDrainsNativeGrants(t *testing.T) {
+func TestDSHProfileStartupSharesWriterAndDrainsTasks(t *testing.T) {
 	pool, _ := dshLaunchPools(t)
 	provider := &dshLaunchProvider{}
 	l, rt, task := dshLaunchFixture(t, pool, provider)
@@ -772,59 +772,9 @@ func TestDSHNativeStartupSharesWriterAndDrainsNativeGrants(t *testing.T) {
 	if _, err = pool.Exec(ctx, `UPDATE agent_task_queue SET status='completed'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `INSERT INTO dsh_native_access(id,workspace_id,agent_id,user_id,generation,sandbox_id,kind,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,'session',$7,now()+interval '1 minute')`, uuid.New(), rt.WorkspaceID, task.AgentID, uuid.New(), first.Generation, first.SandboxID, strings.Repeat("a", 64)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = resolveDSHTest(t, l, rt, task, "template-2"); !errors.Is(err, errDSHHostWaiting) {
-		t.Fatal("template replacement ignored live native session", err)
-	}
-	if provider.creates != 1 {
-		t.Fatal("replaced an admitted writer")
-	}
-	if _, err = pool.Exec(ctx, `UPDATE dsh_native_access SET kind='revoked'`); err != nil {
-		t.Fatal(err)
-	}
 	next, err := resolveDSHTest(t, l, rt, native, "template-2")
 	if err != nil || next.Generation != first.Generation+1 {
 		t.Fatal("drained native host did not recover", err)
-	}
-}
-
-func TestDSHNativeStartupRejectsMissingIdentityAndDisabledDeployment(t *testing.T) {
-	ctx := context.Background()
-	key := dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}
-	for _, launcher := range []*FCE2BLauncher{nil, {}, {Config: FCE2BConfig{Enabled: true}}} {
-		if _, err := launcher.EnsureDSHEmployeeHost(ctx, key); err == nil {
-			t.Fatal("unconfigured native startup accepted")
-		}
-	}
-}
-
-func TestDSHPendingProfileDoesNotRetireLiveNativePage(t *testing.T) {
-	pool, _ := dshLaunchPools(t)
-	provider := &dshLaunchProvider{}
-	l, rt, task := dshLaunchFixture(t, pool, provider)
-	rt.Provider = "dsh"
-	first, err := resolveDSHTest(t, l, rt, task, "template-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	if _, err = pool.Exec(ctx, `UPDATE dsh_employee_profile SET applied_revision=0 WHERE workspace_id=$1 AND agent_id=$2`, rt.WorkspaceID, task.AgentID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = pool.Exec(ctx, `INSERT INTO dsh_native_access(id,workspace_id,agent_id,user_id,generation,sandbox_id,kind,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,'session',$7,now()+interval '1 minute')`, uuid.New(), rt.WorkspaceID, task.AgentID, uuid.New(), first.Generation, first.SandboxID, strings.Repeat("b", 64)); err != nil {
-		t.Fatal(err)
-	}
-	// Calling ensure for a mismatched live Profile would return a startup
-	// error. A pending apply must wait without reaching that failure path.
-	l.Runner = dshHomeRunner{wrongNativeReceipt: true, profiles: &sync.Map{}}
-	if _, err = resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) || errors.Is(err, errDSHHostStartup) {
-		t.Fatal("pending Profile was treated as a failed live Host", err)
-	}
-	host, err := (dshhost.PostgresStore{DB: pool}).Get(ctx, first.Key)
-	if err != nil || host.State != "running" || host.SandboxID != first.SandboxID || provider.creates != 1 {
-		t.Fatal("native page lost its running generation", host, err)
 	}
 }
 
@@ -977,10 +927,6 @@ func TestDSHTaskAdmissionDoesNotReadNativePluginSnapshot(t *testing.T) {
 	l, rt, task := dshLaunchFixture(t, pool, provider)
 	rt.Provider = "dsh"
 	l.Runner = dshNoSnapshotRunner{l.Runner.(dshHomeRunner)}
-	l.SyncDSHProfileSource = func(context.Context, *pgxpool.Conn, dshhost.Key, string, dshprofile.NativeSnapshot) error {
-		t.Fatal("task imported live native configuration")
-		return nil
-	}
 	for i := 0; i < 2; i++ {
 		if _, err := resolveDSHTest(t, l, rt, task, "template-1"); err != nil {
 			t.Fatal(err)

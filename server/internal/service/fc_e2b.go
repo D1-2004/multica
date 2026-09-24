@@ -123,7 +123,7 @@ type FCE2BConfig struct {
 	Enabled                           bool
 	Template                          string
 	ServerURL                         string
-	DSHNativeAuthority                string
+	AppOrigin                         string
 	APIKey                            string
 	APIURL                            string
 	Domain                            string
@@ -159,7 +159,7 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		Enabled:                           envBool("MULTICA_FC_E2B_ENABLED"),
 		Template:                          strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TEMPLATE")),
 		ServerURL:                         strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_SERVER_URL")), "/"),
-		DSHNativeAuthority:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_APP_URL")), "/"),
+		AppOrigin:                         strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_APP_URL")), "/"),
 		APIKey:                            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_KEY")),
 		APIURL:                            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_URL")), "/"),
 		Domain:                            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
@@ -951,7 +951,6 @@ func firstString(obj map[string]any, keys ...string) string {
 
 type FCE2BLauncher struct {
 	ReadDSHProfileSource  dshprofile.ReadSource
-	SyncDSHProfileSource  func(context.Context, *pgxpool.Conn, dshhost.Key, string, dshprofile.NativeSnapshot) error
 	ProvisionDSHStorage   func(context.Context, dshhost.Database, dshhost.Key) (dshhost.Host, error)
 	PrepareWorkspaceMount func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error)
 	// ReadWorkspaceMount is the launch-time lookup. It must not provision NAS
@@ -973,7 +972,6 @@ type FCE2BLauncher struct {
 	sleep              func(context.Context, time.Duration) error
 	jitter             func(time.Duration) time.Duration
 	dshProvider        func(dshhost.Storage) (dshhost.Provider, error)
-	nativeAuthority    *dshNativeAuthorityBridge
 
 	// LLMTraceCaptureAlways turns on sandbox model request/response capture
 	// for every task on a capable runtime image, independent of Router
@@ -1144,7 +1142,6 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 		Runner:           runner,
 		AgentIdentity:    agentidentityhsf.NewClient(),
 		IdentityBindings: q,
-		nativeAuthority:  newDSHNativeAuthorityBridge(os.Getenv("JWT_SECRET")),
 		sleep:            sleepWithContext,
 		jitter:           runtimeStartRetryJitter,
 	}

@@ -2,7 +2,6 @@ import {ModelProbeSchema, GlobalModelsSchema, EMPTY_GLOBAL_MODELS, DeveloperCapa
 import { DSHProfileSchema, type DSHProfileStatus } from "./dsh-profile-schema";
 import { AgentDshPluginConfigSchema } from "./agent-dsh-plugin-config-schema";
 import type { AgentDshPluginConfig, UpdateAgentDshPluginConfig } from "../dsh-plugins/types";
-import { DSHNativeEntrySchema, type DSHNativeEntry } from "./dsh-native-schema";
 import { DSHHomeSchema, type DSHHomeStatus } from "./dsh-home-schema";
 import {
   FilesystemEntriesSchema,
@@ -3801,20 +3800,6 @@ export class ApiClient {
       [] as DshPluginRegistryResult[],
       { endpoint: "GET /api/dsh-plugins/registry-search" },
     );
-  }
-
-  async issueDSHNativeEntry(workspaceId: string, agentId: string): Promise<DSHNativeEntry | null> {
-    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/dsh-native/access`, {
-      method: "POST",
-      body: "{}",
-      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
-    });
-    const entry = parseWithFallback<DSHNativeEntry | null>(raw, DSHNativeEntrySchema, null, {
-      endpoint: "POST /api/agents/{id}/dsh-native/access",
-      includeReceived: false,
-    });
-    if (entry && this.baseUrl && new URL(entry.entryUrl).origin !== new URL(this.baseUrl).origin) return null;
-    return entry;
   }
 
   async getDSHProfile(workspaceId: string, agentId: string, signal?: AbortSignal): Promise<DSHProfileStatus | null> {

@@ -18,7 +18,7 @@ import (
 // entry. This is not an HTTP endpoint and accepts no caller credentials.
 func (h *Handler) DispatchDSHSchedule(ctx context.Context, key dshschedule.Key) (dshschedule.Receipt, error) {
 	if h == nil || h.TaskService == nil {
-		return dshschedule.Receipt{}, dshhost.ErrNativeAccessDenied
+		return dshschedule.Receipt{}, service.ErrDSHAccessDenied
 	}
 	return h.TaskService.DispatchDSHSchedule(ctx, key, h.dshNativeInvoke)
 }

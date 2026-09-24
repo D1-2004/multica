@@ -5,8 +5,7 @@
 This package owns employee storage and native execution identities for FC DSH.
 The FC launcher uses it for employee admission, mount initialization and native
 Host readiness. The native task adapter and storage provisioning entry point
-are integrated in the feature branch, including the HTTP/WS native gateway and
-platform prompt admission. Employee provisioning and full business acceptance
+are integrated in the feature branch, including platform-dispatched task execution. Employee provisioning and full business acceptance
 remain pending. The FC image
 advertises the capability on the candidate branch; deployment and acceptance
 must be checked against the actual template catalog.
@@ -85,9 +84,8 @@ editable Profile revision. `internal/dshprofile` persists desired revisions and
 immutable build artifacts; `service/fc_e2b_dsh_profile.go` compares current saved
 configuration with the receipt before reporting it as applied.
 
-Before the consolidated deployment, finish the remaining native busy-steer,
-queue projection and full trajectory audit, and verify the complete chain in FC
-and pre-release. Implementation presence is not a live acceptance result.
+Validate ordinary DSH task execution and trajectory persistence in FC before
+release. Local compilation and tests do not constitute live acceptance.
 
 ## Storage provisioning intent
 
@@ -128,35 +126,15 @@ listings, lost database receipts, cancellation and failed ownership verification
 `TestProvisionPostgresCompetingReplicas` additionally requires the real
 preproduction database; a local skip is not evidence for its SQL behavior.
 
-## Native browser credentials
+## Task execution only
 
-`NativeAccessManager` and `dsh_native_access` implement the credential lifecycle
-for the native gateway. Human-only `/api/agents/{id}/dsh-native/access` routes
-issue and revoke access; `handler/dsh_native.go` checks permissions and ensures
-the exact employee Host and gateway before issuing a grant.
-After authenticated human management checks and actual gateway readiness, the
-caller may issue a 60-second entry bound to user, workspace, employee, exact
-sandbox ID and generation. PostgreSQL stores only a SHA-256 token digest. One
-conditional update consumes the entry and replaces it with a distinct 15-minute
-browser credential; lost exchange receipts never authorize replay. The original
-entry cannot authenticate ordinary requests, and a session cannot be exchanged.
-
-Every lookup checks database-clock expiry and the same running Host. The manager
-also requires a fresh management-permission callback for issuance, exchange and
-each authorization. The gateway must call it before every HTTP operation and
-periodically throughout WebSocket connections, terminating access on any failed
-check. Revocation changes the durable grant state; it does not alter Home
-ownership, extend sandbox lifetime or authorize replacement. Entry and session
-credentials must never be stored in trajectories, logs or employee profiles.
-
-Pure tests cover credential separation, employee/generation mismatch, permission
-revocation and uncertain exchange receipts. The PostgreSQL test uses 24 callers
-across two pools and checks expiry and Host retirement, but requires the actual
-preproduction test environment. HTTP handlers, gateway cookie exchange, ongoing
-WebSocket checks and durable prompt admission are implemented; their real
-employee browser and task acceptance remains required. Busy-session steer and
-platform queue projection are still open implementation items.
-
+The native browser entry, credentials, proxy, session routing and reverse input
+admission are removed. Neither input recovery nor Profile reconciliation scans
+historical Hosts or starts employee sandboxes. Workbench configuration prepares
+build intents, and the next ordinary task applies its saved Profile. The Runtime
+uses its loopback private control service with task-scoped model/tool credentials.
+Historical grant migrations remain for upgrade compatibility; the running service
+neither issues grants nor lets old grants reserve/renew a sandbox.
 
 ## Trajectory persistence and deletion
 

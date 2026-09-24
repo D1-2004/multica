@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { dshHomeOptions, dshProfileOptions, useEnsureDSHHome, usePrepareDSHProfile, useDSHNativeEntry } from "@multica/core/agents";
+import { dshHomeOptions, useEnsureDSHHome } from "@multica/core/agents";
 import {
   filesystemEntriesOptions,
   filesystemGrantsOptions,
@@ -22,53 +22,31 @@ import { toast } from "sonner";
 import { AppLink } from "../../../navigation";
 import { useT } from "../../../i18n";
 
-export function DshHomeTab({ workspaceId, agentId, nativeEnabled = true, canEdit = false }: {
+export function DshHomeTab({ workspaceId, agentId, canEdit = false }: {
   workspaceId: string;
   agentId: string;
-  nativeEnabled?: boolean;
   canEdit?: boolean;
 }) {
   const { t } = useT("agents");
-  const [phase, setPhase] = useState<"idle" | "preparing" | "waiting" | "opening" | "error">("idle");
-  const busy = phase === "preparing" || phase === "waiting" || phase === "opening";
+  const [phase, setPhase] = useState<"idle" | "preparing" | "error">("idle");
+  const busy = phase === "preparing";
   const identity = `${workspaceId}/${agentId}`;
   const active = useRef(identity);
-  const launching = useRef(false);
   const homeOptions = dshHomeOptions(workspaceId, agentId);
   const home = useQuery({ ...homeOptions, refetchInterval: busy ? 2000 : homeOptions.refetchInterval });
-  const profileOptions = dshProfileOptions(workspaceId, agentId);
-  const profile = useQuery({ ...profileOptions, enabled: nativeEnabled, refetchInterval: busy ? 2000 : profileOptions.refetchInterval });
   const prepare = useEnsureDSHHome(workspaceId, agentId);
-  const prepareProfile = usePrepareDSHProfile(workspaceId, agentId);
-  const native = useDSHNativeEntry(workspaceId, agentId);
   useEffect(() => {
-    active.current = identity; launching.current = false; setPhase("idle");
+    active.current = identity; setPhase("idle");
     return () => { active.current = ""; };
   }, [identity]);
   useEffect(() => {
     if (!busy) return;
-    const timer = setTimeout(() => { launching.current = false; setPhase("error"); }, 10 * 60 * 1000);
+    const timer = setTimeout(() => { setPhase("error"); }, 10 * 60 * 1000);
     return () => clearTimeout(timer);
   }, [busy]);
-  useEffect(() => {
-    if (phase !== "waiting" || launching.current) return;
-    if (profile.data?.state === "build_failed" || profile.data?.state === "apply_failed" || profile.isError || home.isError) {
-      setPhase("error"); return;
-    }
-    if (!profile.data?.current || !home.data?.provisioned) return;
-    launching.current = true; setPhase("opening");
-    native.mutate({ onEntry: (entry) => {
-      if (active.current !== `${entry.workspaceId}/${entry.agentId}`) return;
-      // Same-tab navigation works after asynchronous preparation on mobile,
-      // without a second click or an asynchronously blocked popup.
-      const link = document.createElement("a");
-      link.href = entry.entryUrl; link.referrerPolicy = "no-referrer";
-      link.click();
-    } }, { onError: () => { if (active.current === identity) setPhase("error"); } });
-  }, [phase, profile.data, profile.isError, home.data, home.isError, identity, native]);
   const start = async () => {
     if (busy) return;
-    launching.current = false; setPhase("preparing");
+    setPhase("preparing");
     try {
       let storage = home.data;
       const deadline = Date.now() + 10 * 60 * 1000;
@@ -82,20 +60,13 @@ export function DshHomeTab({ workspaceId, agentId, nativeEnabled = true, canEdit
         if (!storage?.provisioned) await new Promise((resolve) => setTimeout(resolve, 2000));
       }
       if (active.current !== identity) return;
-      if (!nativeEnabled) { setPhase("idle"); return; }
-      const latest = await profile.refetch();
-      if (!latest.data?.current) await prepareProfile.mutateAsync();
-      if (active.current === identity) setPhase("waiting");
+      setPhase("idle");
     } catch { if (active.current === identity) setPhase("error"); }
   };
   const status = home.data;
   const unavailable = home.isError || (!home.isPending && status == null);
   const ready = status?.provisioned === true && status.step === 6;
-  const progress = !status?.provisioned ? t(($) => $.tab_body.dsh_home.preparing) :
-    profile.data?.state === "waiting_for_builds" ? t(($) => $.tab_body.dsh_profile.building) :
-    status.state === "retiring" ? t(($) => $.tab_body.dsh_home.retiring) :
-    phase === "opening" || status.state === "running" ? t(($) => $.tab_body.dsh_home.native_preparing) :
-    t(($) => $.tab_body.dsh_home.starting);
+  const progress = t(($) => $.tab_body.dsh_home.preparing);
   return <section className="space-y-8">
     <SharedDiskPanel workspaceId={workspaceId} agentId={agentId} canEdit={canEdit} />
     <div className="space-y-4">
@@ -106,11 +77,11 @@ export function DshHomeTab({ workspaceId, agentId, nativeEnabled = true, canEdit
         unavailable ? t(($) => $.tab_body.dsh_home.unavailable) :
         ready ? t(($) => $.tab_body.dsh_home.ready) : t(($) => $.tab_body.dsh_home.unprovisioned)}
     </p>
-    {phase === "error" && <p role="alert" className="text-caption text-destructive">{t(($) => $.tab_body.dsh_home.native_unconfirmed)}</p>}
-    <Button size="sm" disabled={busy || home.isPending} aria-busy={busy} onClick={() => { void start(); }}>
+    {phase === "error" && <p role="alert" className="text-caption text-destructive">{t(($) => $.tab_body.dsh_home.unconfirmed)}</p>}
+    {!ready && <Button size="sm" disabled={busy || home.isPending} aria-busy={busy} onClick={() => { void start(); }}>
       {busy && <Loader2 className="size-3.5 animate-spin" />}
-      {busy ? progress : nativeEnabled ? (ready ? t(($) => $.tab_body.dsh_home.native_enter) : t(($) => $.tab_body.dsh_home.initialize_and_enter)) : t(($) => $.tab_body.dsh_home.prepare)}
-    </Button>
+      {busy ? progress : t(($) => $.tab_body.dsh_home.prepare)}
+    </Button>}
     </div>
   </section>;
 }

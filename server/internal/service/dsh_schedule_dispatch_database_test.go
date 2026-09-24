@@ -22,7 +22,7 @@ import (
 func TestDSHScheduleDatabaseFreshAdmissionAcrossReplicas(t *testing.T) {
 	for _, scopeKind := range []string{"chat", "issue", "task"} {
 		t.Run(scopeKind, func(t *testing.T) {
-			s, a, session, agent, pool, _ := nativeChatDatabaseFixture(t)
+			s, a, session, agent, pool, _ := dshScheduleDatabaseFixture(t)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			t.Cleanup(func() {
@@ -88,11 +88,11 @@ func TestDSHScheduleDatabaseFreshAdmissionAcrossReplicas(t *testing.T) {
 			var calls atomic.Int32
 			denyAtWrite := func(context.Context, *db.Queries, db.Agent, pgtype.UUID) error {
 				if calls.Add(1) == 2 {
-					return dshhost.ErrNativeAccessDenied
+					return ErrDSHAccessDenied
 				}
 				return nil
 			}
-			if _, err := s.DispatchDSHSchedule(ctx, record.Key, denyAtWrite); !errors.Is(err, dshhost.ErrNativeAccessDenied) {
+			if _, err := s.DispatchDSHSchedule(ctx, record.Key, denyAtWrite); !errors.Is(err, ErrDSHAccessDenied) {
 				t.Fatal("revoked permission admitted", err)
 			}
 			var count int

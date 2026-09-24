@@ -126,22 +126,6 @@ func (s FilesystemSandboxStore) BeginRetire(ctx context.Context, h Host) (Host, 
  SELECT `+filesystemSandboxColumns+` FROM changed h`+filesystemSandboxJoin, h.WorkspaceID, h.AgentID, s.ScopeID, h.Generation, h.SandboxID))
 }
 
-func (s FilesystemSandboxStore) AbortRetire(ctx context.Context, h Host) error {
-	if h.ScopeID != s.ScopeID {
-		return ErrChanged
-	}
-	result, err := s.DB.Exec(ctx, `UPDATE employee_filesystem_sandbox SET state='running',updated_at=now()
- WHERE workspace_id=$1 AND agent_id=$2 AND scope_id=$3 AND generation=$4 AND sandbox_id=$5 AND state='retiring'`,
-		h.WorkspaceID, h.AgentID, s.ScopeID, h.Generation, h.SandboxID)
-	if err != nil {
-		return err
-	}
-	if result.RowsAffected() != 1 {
-		return ErrChanged
-	}
-	return nil
-}
-
 func (s FilesystemSandboxStore) CompleteRetire(ctx context.Context, h Host) error {
 	if h.ScopeID != s.ScopeID {
 		return ErrChanged
