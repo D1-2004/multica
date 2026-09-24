@@ -1561,7 +1561,7 @@
       "context_a": "双开关开启，可信提问人姓名与手填冬翔完整匹配",
       "context_b": "名单为空、姓名缺失、不匹配，或仅消息正文提到冬翔",
       "expected_effects": "A进入卡片流程；B保持原自动Coordinator。命中/未命中collect拆窗，命中不同ID也拆窗；回调仍校验发起人ID，同名不代表代选授权。",
-      "verification": "host_tests_passed; preproduction_database_and_native_delivery_pending"
+      "verification": "host_tests_passed; preproduction_database_and_api_passed; historical_choice_langfuse_readback_passed; new_native_delivery_blocked_by_DWS"
     },
     {
       "id": "user_decision_choice_trace_and_listener",
@@ -1572,7 +1572,7 @@
       "context_a": "首次有效回调已事务提交，随后解释或观测投递重试",
       "context_b": "错误操作者、重复回调、数据库临时错误或监听管道断开",
       "expected_effects": "A同decision原trace固定choice记录真实选项与后续解释；B不改写首次选择，临时落库重试，断流取消并可重连。观测水位仅在出口成功后推进，不覆写原trace根输入输出。",
-      "verification": "host_tests_passed; preproduction_database_and_native_delivery_pending"
+      "verification": "host_tests_passed; preproduction_database_and_api_passed; historical_choice_langfuse_readback_passed; new_native_delivery_blocked_by_DWS"
     }
   ]
 }

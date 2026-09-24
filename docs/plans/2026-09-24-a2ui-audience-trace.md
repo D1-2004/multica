@@ -37,3 +37,16 @@
 - 网络批次预算与数据库提交预算分开；成功版本不因尾条超时回滚。失败记录持久退避一分钟，避免最早20条坏快照阻塞全部新记录。新增三个 PostgreSQL 验证覆盖并发版本、尾部取消、公平重试。
 - 预发开启 `MULTICA_USER_DECISION_VERIFY_ON_BOOT=true`；仅修改该 key，JSON 字符串序列化并回读验证，其他60个配置不变。发布入口自动迁移后执行隔离测试，未手工执行数据库迁移。
 - 本地 langfuse/dwsclient/userdecision 全包及 race 检查通过，inboundcoord Decision/Trace 相关测试通过。
+
+## 交付结果（2026-09-24）
+- 功能提交 `956bc6b24bc8ceb5ddc6a50112f3a264702271bb`；预发合并提交 `a1a824bdbe`，仅合同文档与案例追加冲突，双方内容全部保留，合并后 build/相关Go测试/views typecheck/policy检查通过。
+- CR [36306449](https://cd.aone.alibaba-inc.com/unite/micro/cr/app/342160/36306449)；run `3109734020` 构建/预发部署/集成测试均 SUCCESS；deploy `161891040` SUCCESS，allEnd=true。人工预发验证关卡保留，不影响本次已完成部署。
+- 自动迁移日志确认 `up 9304_coordinator_user_decision_names`、`up 9305_coordinator_user_decision_trace`。预发启动检查通过，新增三个 TestPostgresDecisionTrace 用例分别 0.03s/0.01s/0.03s 通过。
+- 真实 API 验证：去首尾空格、去重、清空、局部更新保留名单/不虚增revision均通过。原已启用的两个Agent `79ab6405-7947-46bb-bc2e-a280b28348ca`、`ada8943e-815e-44d9-9598-c26a5d0bb52b` 已恢复总开关，名单均为 `['冬翔']`，策略revision分别8、15。其他Agent默认空名单。
+- 真实Langfuse回读：`2326de29f86d464d825c84d7f252e07e` 出现唯一choice `0a5c62dcafc2a8e9`，实际option_id=`reply-greeting`、label与PG一致，execution_state=completed；`30d30a33d5394ee689cf647d81ef568c` 出现唯一choice `09907c92a1f2f666`，无选择项、保留实际补充取消文本，state=not_executed。两条原根observation和trace input/output前后均相等。旧历史解释不会追溯迁移；新解释同trace已由本地调用链测试验证。
+- 已移除临时启动验证配置（恢复原60项环境配置），DWS恢复任务前prod环境；不触发额外发布。
+
+### 保留边界
+- 本次原生新消息→发卡→点击→解释→回信闭环未完成：DWS查询指定群时报 CONTEXT_PROCESSING_ERROR，未伪造事件或发出测试消息。历史真实选择补投验证与本轮原生点击验收分开。
+- 消费者的事务幂等、租约、断线取消和瞬时落库重试已加固，但DWS上游提前ACK后进程硬崩溃/长期数据库故障仍可能丢回调；没有把它宣称为exactly-once投递。
+- 既有locale parity和schema字符串比较失败不归入本次全部通过。
