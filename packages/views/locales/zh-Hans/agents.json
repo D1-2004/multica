@@ -222,8 +222,18 @@
     "prop_dingtalk_show_ai_tag_hint": "在数字员工的钉钉回复和工作中主动发送的消息上显示 AI 发送标识。默认关闭，修改后对新接收的工作生效。",
     "prop_chat_session_resume": "续接上一轮会话",
     "prop_chat_session_resume_hint": "打开后，单聊中的连续追问会尽量沿用上一轮对话，回答更快。超过 20 分钟或智能体配置发生变化时，会自动带着完整历史重新开始。关闭后，每一轮都会开启新的模型会话。",
-    "prop_coordinator_user_decision": "由发起人选择处理方式",
-    "prop_coordinator_user_decision_hint": "每次数字员工入站请求询问一次，由发起人选择续接、新建或直接回复。24 小时未提交则过期，不自动执行。会话支持情况由钉钉判断；机器人暂不接入。",
+    "prop_coordinator_user_decision": "选择卡（A2UI）",
+    "prop_coordinator_user_decision_hint": "选择哪些人需要先提交选择，再处理请求。",
+    "prop_coordinator_user_decision_off": "关闭",
+    "prop_coordinator_user_decision_off_hint": "所有请求自动处理，不发选择卡。",
+    "prop_coordinator_user_decision_all": "所有人",
+    "prop_coordinator_user_decision_all_hint": "所有提问人先收到选择卡，提交后再处理。",
+    "prop_coordinator_user_decision_named": "指定名单",
+    "prop_coordinator_user_decision_named_hint": "名单内先选择，其余请求自动处理。",
+    "prop_coordinator_user_decision_names": "选择卡名单",
+    "prop_coordinator_user_decision_names_hint": "按钉钉显示名完整匹配，忽略首尾空格，同名均生效。名单留空时，所有请求自动处理。",
+    "prop_coordinator_user_decision_names_placeholder": "每行一个姓名",
+    "prop_coordinator_user_decision_names_save": "保存名单",
     "prop_inbound_coordinator": "入站先判断",
     "prop_inbound_coordinator_hint": "打开后，钉钉和网页消息会先判断能否直接回复；只有需要调用工具、查资料或持续跟进时才创建任务。关闭后，每条消息都直接交给智能体执行。",
     "prop_task_finished_loop": "事情完成再判断",
@@ -1224,7 +1234,7 @@
       "local_runtime_notice": "这个智能体跑在本地守护进程上，不会加载 DSH 插件。在这里绑定的插件会保存下来，但要等智能体切到云端运行时才会生效。",
       "intro": "这个智能体的 DeepSeek Harness Profile 在每次任务开始时加载的插件。请先把插件导入工作区，再在这里挂载需要随该智能体启动的插件。",
       "attached_title": "插件配置",
-      "filesystem_required": "请先点击“初始化文件系统并打开DSH原生页面”，就绪后即可配置插件。",
+      "filesystem_required": "请先准备文件系统，再配置插件。",
       "attached_hint": "所有修改先暂存在当前页面，提交后统一应用。",
       "add_action": "挂载",
       "add_title": "挂载插件",
@@ -1543,11 +1553,11 @@
       "ui_off": "打开「显示列表」后，这里会出现每个单聊和群聊的记忆。"
     },
     "dsh_config": {
-      "home_title": "文件系统"
+      "home_title": "私有盘"
     },
     "dsh_home": {
-      "shared_title": "工作区共享文件",
-      "shared_intro": "这里是工作区「文件」页里的共享盘。默认不对这个智能体开放。打开只读或可写后，下次任务会把文件同步到 /mnt/workspace（$MULTICA_WORKSPACE_FS_ROOT）。沙箱里的写入不会自动回到文件页。",
+      "shared_title": "工作区共享盘",
+      "shared_intro": "这是工作区共享盘，按这个智能体单独设为不开放、只读或可写。它不在员工私有盘 /mnt/multica 里，也不是 DSH 的配置。设为只读或可写后，下次任务挂到 /mnt/workspace/shared。这里的授权不改变私有盘读写，也不改变 DSH Profile。",
       "shared_empty": "还没有共享文件。",
       "grant_label": "智能体权限",
       "grant_none": "不开放",
@@ -1555,9 +1565,11 @@
       "grant_write": "可写",
       "grant_saved": "已更新权限",
       "grant_failed": "无法更新权限",
-      "access_path": "任务里：$MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace",
+      "access_path": "任务里：$MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace/shared",
       "open_files": "打开文件页",
-      "private_title": "智能体私有盘",
+      "private_title": "员工私有盘",
+      "private_intro": "这是员工私有盘 /mnt/multica，对该智能体默认可读写。终端和文件工具读写 $MULTICA_FS_ROOT/files（/mnt/multica/files）。DSH_HOME=/mnt/multica/home，插件构建产物在 /mnt/multica/plugin-builds。上面的共享盘不在这块盘里。",
+      "dsh_intro": "DSH 只用这块员工私有盘。路径是 /mnt/multica，默认可读写。DSH_HOME=/mnt/multica/home。安装后的插件构建产物在 /mnt/multica/plugin-builds。终端和文件工具读写 $MULTICA_FS_ROOT/files（/mnt/multica/files）。",
       "intro": "每个 Agent 拥有独立的持久文件系统，所有 FC provider 均可使用。终端和文件工具可读写 $MULTICA_FS_ROOT/files（/mnt/multica/files）；DSH_HOME 只是其中供 DSH 使用的子目录。",
       "loading": "正在检查文件系统…",
       "unavailable": "无法获取文件系统状态，请刷新重试。",
@@ -1572,15 +1584,9 @@
       "preparing": "正在准备...",
       "continue": "继续准备",
       "prepare": "准备文件系统",
-      "refresh": "刷新状态",
-      "native_prepare": "准备 DSH",
-      "native_preparing": "正在打开 DSH…",
-      "native_enter": "打开 DSH 原生页面",
-      "initialize_and_enter": "初始化文件系统并打开DSH原生页面",
-      "native_unconfirmed": "DSH 尚未就绪。请查看插件配置状态后重试。"
+      "refresh": "刷新状态"
     },
     "dsh_profile": {
-      "native_sync_pending": "暂时无法同步原生 DSH 配置，当前显示上次保存的版本。请稍后刷新。",
       "retry_build": "重试构建",
       "retry_unconfirmed": "尚未确认重试结果。请先刷新配置状态，再决定是否重试。",
       "title": "配置生效状态",
@@ -1590,7 +1596,7 @@
       "changed": "已保存更新，正在自动应用配置。",
       "building": "正在准备插件依赖，配置尚未生效。",
       "failed": "插件准备失败，配置尚未生效。请检查插件版本或联系管理员。",
-      "pending": "插件依赖已就绪，正在应用配置；如有任务运行，会在任务结束后生效。",
+      "pending": "配置已保存，将在下次任务启动时应用。",
       "applied": "运行中的 DSH 已确认此配置生效。",
       "desired": "目标版本",
       "last_applied": "上次确认版本",
@@ -1611,7 +1617,15 @@
     "over_limit": " · 超出 {{count}} 字"
   },
   "presence": {
-    "queue_badge": "+{{count}} 排队"
+    "queue_badge": "+{{count}} 排队",
+    "wait_reason": {
+      "sandbox_unhealthy": "沙箱已失效，正在重建",
+      "destroy_unconfirmed": "正在等待旧沙箱释放",
+      "create_intent_stale": "正在重试创建沙箱",
+      "native_grant_busy": "等待已打开的会话结束",
+      "task_drain_busy": "等待进行中的任务结束",
+      "dsh_host_waiting": "正在等待员工 Host"
+    }
   },
   "visibility": {
     "private": {

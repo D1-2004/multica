@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Agent } from "@multica/core/types";
+import type { Agent, AgentRuntime } from "@multica/core/types";
 import type { FilesystemRoot } from "@multica/core/filesystem";
 import { renderWithI18n } from "../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../navigation";
@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   rootsError: false,
   refetch: vi.fn(),
   agents: [] as Agent[],
+  runtimes: [] as AgentRuntime[],
+  grants: { grants: [] as Array<{ agent_id: string; access: string }> },
   entries: {
     root: "shared",
     path: ".",
@@ -55,7 +57,10 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
           isError: false,
         };
       }
-      if (key[2] === "filesystem") {
+      if (key[3] === "grants") {
+        return { data: mocks.grants, isPending: false, isError: false, refetch: mocks.refetch };
+      }
+      if (key[2] === "filesystem" && key[3] === "roots") {
         return {
           data: mocks.rootsPending || mocks.rootsError ? undefined : mocks.roots,
           isPending: mocks.rootsPending,
@@ -65,6 +70,9 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
       }
       if (key[2] === "agents") {
         return { data: mocks.agents, isPending: false, isError: false };
+      }
+      if (key[0] === "runtimes") {
+        return { data: mocks.runtimes, isPending: false, isError: false };
       }
       return { data: undefined, isPending: false, isError: false };
     },
@@ -148,6 +156,13 @@ beforeEach(() => {
     { ...BASE_AGENT, id: FEIDI_ID, name: "Feidi" },
     { ...BASE_AGENT, id: COACH_ID, name: "Coach" },
   ];
+  mocks.runtimes = [];
+  mocks.grants = {
+    grants: [
+      { agent_id: FEIDI_ID, access: "read" },
+      { agent_id: COACH_ID, access: "write" },
+    ],
+  };
 });
 
 describe("FilesPage", () => {
@@ -155,7 +170,7 @@ describe("FilesPage", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "Files", level: 1 })).toBeInTheDocument();
-    expect(screen.getByText("Shared workspace files and private agent disks.")).toBeInTheDocument();
+    expect(screen.getByText(/The shared disk is not part of DSH/)).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Shared files/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Feidi/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Coach/ })).toBeInTheDocument();
@@ -167,18 +182,23 @@ describe("FilesPage", () => {
     expect(screen.getByText("This folder is empty")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New folder" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Upload" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Upload folder" })).toBeInTheDocument();
     expect(screen.queryByText("No private disks yet")).not.toBeInTheDocument();
   });
 
-  it("lists files in the shared folder", () => {
+  it("lists files in the shared folder and previews instead of downloading", async () => {
     mocks.entries = {
       ...mocks.entries,
       entries: [{ name: "notes.md", path: "notes.md", is_dir: false, size_bytes: 12 }],
       count: 1,
     };
+    const user = userEvent.setup();
     renderPage();
     expect(screen.getByText("notes.md")).toBeInTheDocument();
     expect(screen.queryByText("This folder is empty")).not.toBeInTheDocument();
+    await user.click(screen.getByText("notes.md"));
+    expect(screen.getByRole("button", { name: "Download" })).toBeInTheDocument();
+    expect(screen.getAllByText("12 B").length).toBeGreaterThan(0);
   });
 
   it("shows an unready state for unprepared shared storage", () => {
@@ -196,6 +216,16 @@ describe("FilesPage", () => {
     expect(screen.queryByText("No private disks yet")).not.toBeInTheDocument();
   });
 
+  it("does not warn that the runtime image lacks a shared-disk capability", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(screen.getByRole("option", { name: /Feidi/ }));
+
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText(/has not declared/)).not.toBeInTheDocument();
+  });
+
   it("selects an agent disk and links to the agent filesystem view", async () => {
     const user = userEvent.setup();
     renderPage();
@@ -206,7 +236,7 @@ describe("FilesPage", () => {
       "aria-selected",
       "true",
     );
-    expect(screen.getByText("Private to Feidi")).toBeInTheDocument();
+    expect(screen.getByText("This folder is empty")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open agent" })).toHaveAttribute(
       "href",
       `/acme/agents/${FEIDI_ID}?view=filesystem`,

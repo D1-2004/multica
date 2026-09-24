@@ -310,6 +310,8 @@ export interface AgentTask {
   // apps/mobile/CLAUDE.md; the label maps on both clients already key off the
   // raw wire value and fall back on an unrecognised one.
   failure_reason?: TaskFailureReason | (string & {}) | "";
+  /** Queued launch deferral reason. Status stays queued. Older backends omit it. */
+  wait_reason?: string;
   created_at: string;
   /** A private DSH native event ledger is available through the task-scoped viewer. */
   dsh_trajectory_available?: boolean;
@@ -513,6 +515,8 @@ export interface Agent {
    */
   inbound_coordinator?: boolean;
   inbound_coordinator_user_decision?: boolean;
+  inbound_coordinator_user_decision_mode?: "off" | "all" | "named";
+  inbound_coordinator_user_decision_names?: string[];
   event_trigger_enabled?: boolean;
   /** Let the platform own DingTalk replies and thinking reactions; off when omitted. */
   dingtalk_response_enabled?: boolean;
@@ -874,6 +878,8 @@ export interface UpdateAgentRequest {
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
   inbound_coordinator_user_decision?: boolean;
+  inbound_coordinator_user_decision_mode?: "off" | "all" | "named";
+  inbound_coordinator_user_decision_names?: string[];
   event_trigger_enabled?: boolean;
   dingtalk_response_enabled?: boolean;
   dingtalk_show_ai_tag?: boolean;

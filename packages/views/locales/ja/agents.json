@@ -214,8 +214,18 @@
     "prop_dingtalk_show_ai_tag_hint": "デジタル従業員の DingTalk での返信と作業中に送るメッセージに AI 送信ラベルを表示します。初期設定はオフです。変更は新しい作業から適用されます。",
     "prop_chat_session_resume": "前回セッションを再開",
     "prop_chat_session_resume_hint": "オンにすると、1 対 1 の連続した質問では可能な限り前回の会話を引き継ぎ、より速く応答します。20 分を超えた場合や設定が変わった場合は、全履歴を使って自動的に再開します。オフでは毎回新しいモデルセッションを開始します。",
-    "prop_coordinator_user_decision": "依頼者が処理方法を選択",
-    "prop_coordinator_user_decision_hint": "デジタル従業員への受信リクエストごとに一度確認します。24時間後に実行せず期限切れになります。対応する会話はDingTalkが判定します。ボットはまだ対象外です。",
+    "prop_coordinator_user_decision": "選択カード（A2UI）",
+    "prop_coordinator_user_decision_hint": "依頼の処理前に選択カードを送る対象を選びます。",
+    "prop_coordinator_user_decision_off": "オフ",
+    "prop_coordinator_user_decision_off_hint": "選択カードを送らず、すべての依頼を自動処理します。",
+    "prop_coordinator_user_decision_all": "全員",
+    "prop_coordinator_user_decision_all_hint": "全員に選択カードを送り、回答後に処理します。",
+    "prop_coordinator_user_decision_named": "指定した人",
+    "prop_coordinator_user_decision_named_hint": "名簿にいる人は先に選択し、それ以外の依頼は自動処理します。",
+    "prop_coordinator_user_decision_names": "選択カードを送る人",
+    "prop_coordinator_user_decision_names_hint": "DingTalk の表示名を完全一致で照合します。前後の空白を除き、同名の人は全員対象です。空欄の場合はすべて自動処理します。",
+    "prop_coordinator_user_decision_names_placeholder": "1 行に 1 名",
+    "prop_coordinator_user_decision_names_save": "名前を保存",
     "prop_inbound_coordinator": "受信時に先判断",
     "prop_inbound_coordinator_hint": "オンにすると、DingTalk と Web のメッセージはまずすぐに返信できるかを判断し、ツール、調査、継続対応が必要な依頼だけタスクを開始します。オフではすべてのメッセージをエージェントが直接実行します。",
     "prop_task_finished_loop": "仕事完了後に再判断",
@@ -1025,7 +1035,7 @@
       "local_runtime_notice": "このエージェントはローカルデーモン上で動作しており、DSH プラグインを読み込みません。ここで紐づけた内容は保存されますが、クラウドランタイムに移すまで実行されません。",
       "intro": "このエージェントの DeepSeek Harness プロファイルがタスク開始時に読み込むプラグイン。まずワークスペースに導入し、その中から起動時に使うものを紐付けてください。",
       "attached_title": "プラグイン設定",
-      "filesystem_required": "DSH ネイティブページを開いてファイルシステムを準備すると、プラグインを設定できます。",
+      "filesystem_required": "プラグインを設定する前に、ファイルシステムを準備してください。",
       "attached_hint": "変更はこのページに一時保存され、送信後にまとめて適用されます。",
       "add_action": "紐付け",
       "add_title": "プラグインを紐付け",
@@ -1348,7 +1358,7 @@
     },
     "dsh_home": {
       "shared_title": "共有ワークスペースファイル",
-      "shared_intro": "ワークスペースの「ファイル」ページの共有ディスクです。既定ではこのエージェントに公開しません。読み取りまたは書き込みを許可すると、次のタスクで /mnt/workspace（$MULTICA_WORKSPACE_FS_ROOT）に同期します。サンドボックス内の書き込みはファイルページに戻りません。",
+      "shared_intro": "ワークスペースの「ファイル」ページの共有ディスクです。既定ではこのエージェントに公開しません。読み取りまたは書き込みを許可すると、次のタスクで /mnt/workspace/shared（$MULTICA_WORKSPACE_FS_ROOT）に同期します。サンドボックス内の書き込みはファイルページに戻りません。",
       "shared_empty": "共有ファイルはまだありません。",
       "grant_label": "エージェント権限",
       "grant_none": "なし",
@@ -1356,7 +1366,7 @@
       "grant_write": "書き込み",
       "grant_saved": "権限を更新しました",
       "grant_failed": "権限を更新できませんでした",
-      "access_path": "タスク内: $MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace",
+      "access_path": "タスク内: $MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace/shared",
       "open_files": "ファイルを開く",
       "private_title": "非共有ディスク",
       "intro": "各 Agent はすべての FC provider で使える独立した永続ファイルシステムを持ちます。ターミナルやファイルツールで $MULTICA_FS_ROOT/files（/mnt/multica/files）を読み書きできます。DSH_HOME は DSH 用のサブディレクトリです。",
@@ -1373,12 +1383,7 @@
       "preparing": "準備中...",
       "continue": "準備を続行",
       "prepare": "ファイルシステムを準備",
-      "refresh": "状態を更新",
-      "native_prepare": "DSH を準備",
-      "native_preparing": "DSH を開いています…",
-      "native_enter": "DSH ネイティブページを開く",
-      "initialize_and_enter": "ファイルシステムを初期化して DSH ネイティブ画面を開く",
-      "native_unconfirmed": "DSH はまだ準備できていません。プラグイン設定の状態を確認して再試行してください。"
+      "refresh": "状態を更新"
     },
     "dsh_profile": {
       "retry_build": "ビルドを再試行",
@@ -1390,7 +1395,7 @@
       "changed": "変更を保存しました。設定を自動適用しています。",
       "building": "プラグインの依存関係を準備中です。設定は未適用です。",
       "failed": "プラグインの準備に失敗しました。バージョンを確認するか管理者に連絡してください。設定は未適用です。",
-      "pending": "プラグインの準備が完了しました。ホストによる設定の確認を待っています。",
+      "pending": "保存した設定は、次のタスク開始時に適用されます。",
       "applied": "実行中の DSH ホストがこの設定を確認しました。",
       "desired": "目標バージョン",
       "last_applied": "前回確認したバージョン",
@@ -1406,7 +1411,15 @@
     "over_limit": " · 制限を {{count}} 文字超過"
   },
   "presence": {
-    "queue_badge": "+{{count}} 待機中"
+    "queue_badge": "+{{count}} 待機中",
+    "wait_reason": {
+      "sandbox_unhealthy": "期限切れのサンドボックスを再作成しています",
+      "destroy_unconfirmed": "旧サンドボックスの解放を待っています",
+      "create_intent_stale": "サンドボックス作成を再試行しています",
+      "native_grant_busy": "開いているセッションの終了を待っています",
+      "task_drain_busy": "実行中タスクの終了を待っています",
+      "dsh_host_waiting": "従業員ホストを待っています"
+    }
   },
   "visibility": {
     "private": {

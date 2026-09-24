@@ -1,16 +1,14 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 import { useQuery } from "@tanstack/react-query";
 import type { FilesystemRoot } from "@multica/core/filesystem";
 import {
-  filesystemEntriesOptions,
+  filesystemGrantsOptions,
   filesystemRootsOptions,
-  useFilesystemDownload,
-  useFilesystemMkdir,
-  useFilesystemUpload,
 } from "@multica/core/filesystem";
+import { FileBrowser } from "./files-browser";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { Agent } from "@multica/core/types";
@@ -20,25 +18,16 @@ import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
-import {
-  ListGrid,
-  ListGridBody,
-  ListGridCell,
-  ListGridHeader,
-  ListGridHeaderCell,
-  ListGridRow,
-} from "@multica/ui/components/ui/list-grid";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
-import { File, Folder, FolderPlus, HardDrive, Search, Upload } from "lucide-react";
-import { toast } from "sonner";
+import { Folder, HardDrive, Search } from "lucide-react";
 import { matchesPinyin } from "../editor/extensions/pinyin-match";
 import { useT } from "../i18n";
 import {
   CollectionPageHeader,
   CollectionPageState,
 } from "../layout/collection-page";
-import { AppLink } from "../navigation";
+
 
 type DiskKey = "shared" | `agent:${string}`;
 
@@ -51,8 +40,6 @@ type Disk = {
   agentId?: string;
   agent?: Agent;
 };
-
-const GRID_COLS = "grid-cols-[0.75rem_minmax(8rem,1fr)_6.5rem_0.75rem]";
 
 function diskKey(root: FilesystemRoot): DiskKey | null {
   if (root.kind === "shared") return "shared";
@@ -80,6 +67,8 @@ export function FilesPage() {
   const paths = useWorkspacePaths();
   const rootsQuery = useQuery(filesystemRootsOptions(wsId ?? ""));
   const agentsQuery = useQuery(agentListOptions(wsId ?? ""));
+  const grantsQuery = useQuery(filesystemGrantsOptions(wsId ?? ""));
+
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<DiskKey | null>(null);
 
@@ -138,7 +127,7 @@ export function FilesPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <CollectionPageHeader
-        icon={File}
+        icon={Folder}
         title={t(($) => $.nav.files)}
         count={disks.length}
         description={t(($) => $.files.description)}
@@ -222,6 +211,10 @@ export function FilesPage() {
                   </DiskGroup>
                 ) : null}
               </div>
+              <AgentAccessList
+                agents={agentsQuery.data ?? []}
+                grants={grantsQuery.data?.grants ?? []}
+              />
             </div>
           </aside>
           <section className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -247,6 +240,51 @@ export function FilesPage() {
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+function AgentAccessList({
+  agents,
+  grants,
+}: {
+  agents: Agent[];
+  grants: Array<{ agent_id: string; access: string }>;
+}) {
+  const { t } = useT("layout");
+  const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  const rows = grants
+    .filter((grant) => grant.access === "read" || grant.access === "write")
+    .map((grant) => ({
+      grant,
+      agent: byId.get(grant.agent_id),
+    }))
+    .filter((row) => row.agent);
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-4 border-t pt-3">
+      <p className="px-2 text-caption font-medium text-muted-foreground">
+        {t(($) => $.files.agent_access)}
+      </p>
+      <ul className="mt-1 flex flex-col gap-1">
+        {rows.map(({ grant, agent }) => (
+          <li key={grant.agent_id} className="flex items-center gap-2 px-2 py-1">
+            <ActorAvatar
+              name={agent!.name}
+              initials={avatarInitials(agent!.name)}
+              avatarUrl={resolvePublicFileUrl(agent!.avatar_url)}
+              isAgent
+              size="sm"
+            />
+            <span className="min-w-0 flex-1 truncate text-caption">{agent!.name}</span>
+            <Badge variant="outline">
+              {grant.access === "write"
+                ? t(($) => $.files.access_write)
+                : t(($) => $.files.access_read)}
+            </Badge>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -347,278 +385,17 @@ function DiskPane({
   wsId: string;
   agentHref: string | null;
 }) {
-  if (disk.kind === "shared") {
-    return <SharedBrowser disk={disk} wsId={wsId} />;
-  }
-  return <AgentDiskPane disk={disk} wsId={wsId} agentHref={agentHref} />;
-}
-
-function AgentDiskPane({
-  disk,
-  wsId,
-  agentHref,
-}: {
-  disk: Disk;
-  wsId: string;
-  agentHref: string | null;
-}) {
-  const { t } = useT("layout");
-  const listing = useQuery(filesystemEntriesOptions(wsId, "shared", ".", 0, true));
-  const shared = listing.data?.entries ?? [];
+  const root = disk.kind === "shared" ? "shared" : `agent:${disk.agentId ?? ""}`;
+  const canWrite = disk.access === "write";
   return (
-    <>
-      <PaneHeader
-        disk={disk}
-        path="."
-        onPathChange={() => undefined}
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <FileBrowser
+        wsId={wsId}
+        root={root}
+        disk={{ name: disk.name, kind: disk.kind, access: disk.access }}
+        canWrite={canWrite}
         agentHref={agentHref}
       />
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-6">
-        <p className="text-body font-medium">
-          {t(($) => $.files.pane_private_title, { name: disk.name })}
-        </p>
-        <p className="mt-1 max-w-lg text-caption text-muted-foreground">
-          {t(($) => $.files.pane_private_body)}
-        </p>
-        <p className="mt-6 text-caption font-medium text-muted-foreground">
-          {t(($) => $.files.agent_shared_title)}
-        </p>
-        <p className="mt-1 max-w-lg text-caption text-muted-foreground">
-          {t(($) => $.files.agent_shared_hint)}
-        </p>
-        {shared.length === 0 ? (
-          <p className="mt-3 text-caption text-muted-foreground">{t(($) => $.files.empty_folder)}</p>
-        ) : (
-          <ul className="mt-3 divide-y divide-border rounded-md border">
-            {shared.map((entry) => (
-              <li key={entry.path} className="flex items-center gap-2 px-3 py-2 text-body">
-                {entry.is_dir ? (
-                  <Folder aria-hidden="true" className="size-3.5 text-muted-foreground" />
-                ) : (
-                  <File aria-hidden="true" className="size-3.5 text-muted-foreground" />
-                )}
-                <span className="min-w-0 truncate">{entry.path || entry.name}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </>
-  );
-}
-
-function SharedBrowser({ disk, wsId }: { disk: Disk; wsId: string }) {
-  const { t } = useT("layout");
-  const [path, setPath] = useState(".");
-  const [folderOpen, setFolderOpen] = useState(false);
-  const [folderName, setFolderName] = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
-  const canWrite = disk.access === "write";
-  const listing = useQuery(filesystemEntriesOptions(wsId, "shared", path));
-  const mkdir = useFilesystemMkdir(wsId);
-  const upload = useFilesystemUpload(wsId);
-  const download = useFilesystemDownload();
-  const entries = listing.data?.entries ?? [];
-
-  const relPath = path === "." ? "" : path;
-
-  return (
-    <>
-      <PaneHeader disk={disk} path={path} onPathChange={setPath} agentHref={null}>
-        {canWrite ? (
-          <>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 gap-1 px-2"
-              onClick={() => {
-                setFolderName("");
-                setFolderOpen(true);
-              }}
-            >
-              <FolderPlus aria-hidden="true" className="size-3.5" />
-              {t(($) => $.files.new_folder)}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 gap-1 px-2"
-              onClick={() => fileRef.current?.click()}
-            >
-              <Upload aria-hidden="true" className="size-3.5" />
-              {t(($) => $.files.upload)}
-            </Button>
-            <input
-              ref={fileRef}
-              type="file"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
-                if (!file) return;
-                void upload
-                  .mutateAsync({ root: "shared", path: relPath, file, filename: file.name })
-                  .catch(() => toast.error(t(($) => $.files.upload_failed)));
-              }}
-            />
-          </>
-        ) : null}
-      </PaneHeader>
-      {folderOpen ? (
-        <form
-          className="flex shrink-0 items-center gap-2 border-b px-4 py-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            const name = folderName.trim();
-            if (!name) return;
-            const next = relPath ? `${relPath}/${name}` : name;
-            void mkdir
-              .mutateAsync({ root: "shared", path: next })
-              .then(() => {
-                setFolderOpen(false);
-                setFolderName("");
-              })
-              .catch(() => toast.error(t(($) => $.files.create_failed)));
-          }}
-        >
-          <Input
-            value={folderName}
-            onChange={(event) => setFolderName(event.target.value)}
-            aria-label={t(($) => $.files.folder_name)}
-            placeholder={t(($) => $.files.folder_name)}
-            className="h-8 max-w-xs"
-            autoFocus
-          />
-          <Button type="submit" size="sm" disabled={mkdir.isPending || !folderName.trim()}>
-            {t(($) => $.files.create_folder)}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={() => setFolderOpen(false)}
-          >
-            {t(($) => $.files.cancel)}
-          </Button>
-        </form>
-      ) : null}
-      <div className="@container flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <ListGrid className={GRID_COLS}>
-          <ListGridHeader>
-            <ListGridHeaderCell>{t(($) => $.files.col_name)}</ListGridHeaderCell>
-            <ListGridHeaderCell>{t(($) => $.files.col_kind)}</ListGridHeaderCell>
-          </ListGridHeader>
-          <ListGridBody>
-            {entries.map((entry) => (
-              <ListGridRow
-                key={entry.path}
-                className="cursor-pointer"
-                onClick={() => {
-                  if (entry.is_dir) {
-                    setPath(entry.path);
-                    return;
-                  }
-                  void download
-                    .mutateAsync({ root: "shared", path: entry.path })
-                    .then((blob) => {
-                      const url = URL.createObjectURL(blob);
-                      const link = document.createElement("a");
-                      link.href = url;
-                      link.download = entry.name;
-                      link.click();
-                      URL.revokeObjectURL(url);
-                    })
-                    .catch(() => toast.error(t(($) => $.files.download_failed)));
-                }}
-              >
-                <ListGridCell className="gap-2">
-                  {entry.is_dir ? (
-                    <Folder aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <File aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="truncate">{entry.name}</span>
-                </ListGridCell>
-                <ListGridCell className="text-caption text-muted-foreground">
-                  {entry.is_dir
-                    ? t(($) => $.files.kind_folder)
-                    : t(($) => $.files.kind_file)}
-                </ListGridCell>
-              </ListGridRow>
-            ))}
-          </ListGridBody>
-        </ListGrid>
-        {listing.isPending ? (
-          <div className="p-4">
-            <Skeleton className="h-8 w-full" />
-          </div>
-        ) : entries.length === 0 ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-10">
-            <Folder aria-hidden="true" className="size-8 text-muted-foreground" />
-            <p className="text-body font-medium">{t(($) => $.files.empty_folder)}</p>
-            <p className="max-w-sm text-center text-caption text-muted-foreground">
-              {t(($) => $.files.empty_folder_hint)}
-            </p>
-          </div>
-        ) : null}
-      </div>
-    </>
-  );
-}
-
-function PaneHeader({
-  disk,
-  path,
-  onPathChange,
-  agentHref,
-  children,
-}: {
-  disk: Disk;
-  path: string;
-  onPathChange: (path: string) => void;
-  agentHref: string | null;
-  children?: ReactNode;
-}) {
-  const { t } = useT("layout");
-  const segments = path === "." || path === "" ? [] : path.split("/");
-  return (
-    <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4">
-      <Folder aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
-      <nav aria-label="breadcrumb" className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden text-body">
-        <button
-          type="button"
-          className="truncate font-medium hover:underline"
-          onClick={() => onPathChange(".")}
-        >
-          {disk.name}
-        </button>
-        {segments.map((segment, index) => {
-          const next = segments.slice(0, index + 1).join("/");
-          return (
-            <span key={next} className="flex min-w-0 items-center gap-1">
-              <span className="text-muted-foreground">/</span>
-              <button
-                type="button"
-                className="truncate hover:underline"
-                onClick={() => onPathChange(next)}
-              >
-                {segment}
-              </button>
-            </span>
-          );
-        })}
-      </nav>
-      {children}
-      {agentHref ? (
-        <AppLink
-          href={agentHref}
-          className="shrink-0 text-caption text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-        >
-          {t(($) => $.files.open_agent)}
-        </AppLink>
-      ) : null}
     </div>
   );
 }

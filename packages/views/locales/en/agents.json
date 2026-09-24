@@ -230,8 +230,18 @@
     "prop_dingtalk_show_ai_tag_hint": "Show an AI sender label on this digital employee's DingTalk replies and messages sent while working. Off by default. Changes apply to new work.",
     "prop_chat_session_resume": "Resume last session",
     "prop_chat_session_resume_hint": "When on, 1:1 follow-up messages reuse the previous conversation when it is still available and nothing important has changed. Consecutive questions respond faster. After 20 minutes or a configuration change, the conversation restarts with the full history. When off, every turn starts a new model session.",
-    "prop_coordinator_user_decision": "Let the requester choose",
-    "prop_coordinator_user_decision_hint": "Ask once per digital employee request to continue work, start work, or reply. Expires after 24 hours without executing. DingTalk determines conversation support; bots are not included yet.",
+    "prop_coordinator_user_decision": "Choice cards (A2UI)",
+    "prop_coordinator_user_decision_hint": "Choose who receives a choice card before a request is handled.",
+    "prop_coordinator_user_decision_off": "Off",
+    "prop_coordinator_user_decision_off_hint": "Handle all requests automatically, without choice cards.",
+    "prop_coordinator_user_decision_all": "Everyone",
+    "prop_coordinator_user_decision_all_hint": "Everyone receives a choice card; handling waits for their submission.",
+    "prop_coordinator_user_decision_named": "Named people",
+    "prop_coordinator_user_decision_named_hint": "Listed people choose first; other requests are handled automatically.",
+    "prop_coordinator_user_decision_names": "People who receive choice cards",
+    "prop_coordinator_user_decision_names_hint": "One DingTalk display name per line. Match the full name, ignoring surrounding spaces; people with the same name are all included. An empty list means all requests are handled automatically.",
+    "prop_coordinator_user_decision_names_placeholder": "One name per line",
+    "prop_coordinator_user_decision_names_save": "Save names",
     "prop_inbound_coordinator": "Judge before sandbox",
     "prop_inbound_coordinator_hint": "When on, DingTalk and web messages first decide whether they can be answered immediately. Only requests that need tools, research, or follow-up start a task. When off, every message goes directly to the agent for execution.",
     "prop_task_finished_loop": "Judge after the work finishes",
@@ -1237,7 +1247,7 @@
       "local_runtime_notice": "This agent runs on a local daemon, which does not load DSH plugins. Anything bound here is saved but will not run until the agent moves to a cloud runtime.",
       "intro": "Plugins this agent's DeepSeek Harness profile loads at the start of every task. Import plugins into the workspace first, then attach the ones this agent should boot with.",
       "attached_title": "Plugin configuration",
-      "filesystem_required": "Open native DSH to prepare the filesystem before configuring plugins.",
+      "filesystem_required": "Prepare the filesystem before configuring plugins.",
       "attached_hint": "Changes stay on this page until you submit them together.",
       "add_action": "Attach",
       "add_title": "Attach a plugin",
@@ -1564,11 +1574,11 @@
       "ui_off": "Turn on Show list to see memory for each DM and group."
     },
     "dsh_config": {
-      "home_title": "Filesystem"
+      "home_title": "Private disk"
     },
     "dsh_home": {
-      "shared_title": "Shared workspace files",
-      "shared_intro": "These are the files on the workspace Files page. They stay closed to this agent until you grant read or write. The next task then copies them to /mnt/workspace ($MULTICA_WORKSPACE_FS_ROOT). Writes in the sandbox do not come back to the Files page.",
+      "shared_title": "Workspace shared disk",
+      "shared_intro": "This is the workspace shared disk. Set it to none, read, or write for this agent. It is not the employee private disk at /mnt/multica, and it is not a DSH setting. After read or write, the next task mounts it at /mnt/workspace/shared. This grant does not change private-disk access or the DSH profile.",
       "shared_empty": "No shared files yet.",
       "grant_label": "Agent access",
       "grant_none": "None",
@@ -1576,9 +1586,11 @@
       "grant_write": "Write",
       "grant_saved": "Access updated",
       "grant_failed": "Couldn’t update access",
-      "access_path": "In a task: $MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace",
+      "access_path": "In a task: $MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace/shared",
       "open_files": "Open Files",
-      "private_title": "Private disk",
+      "private_title": "Employee private disk",
+      "private_intro": "This is the employee private disk at /mnt/multica. It is read-write for this agent. Terminal and file tools use $MULTICA_FS_ROOT/files (/mnt/multica/files). DSH_HOME=/mnt/multica/home, and installed plugin builds live in /mnt/multica/plugin-builds. The shared disk above is not on this disk.",
+      "dsh_intro": "DSH uses only this employee private disk. The path is /mnt/multica, read-write by default. DSH_HOME=/mnt/multica/home. Installed plugin builds live in /mnt/multica/plugin-builds. Terminal and file tools use $MULTICA_FS_ROOT/files (/mnt/multica/files).",
       "intro": "Each agent has an independent persistent filesystem, available to every FC provider. Use terminal and file tools to read or write $MULTICA_FS_ROOT/files (/mnt/multica/files). DSH_HOME is a subdirectory used by DSH.",
       "loading": "Checking filesystem...",
       "unavailable": "Filesystem status is unavailable. Refresh to check again.",
@@ -1593,15 +1605,9 @@
       "preparing": "Preparing...",
       "continue": "Continue preparation",
       "prepare": "Prepare filesystem",
-      "refresh": "Refresh status",
-      "native_prepare": "Prepare DSH",
-      "native_preparing": "Opening DSH…",
-      "native_enter": "Open native DSH",
-      "initialize_and_enter": "Initialize filesystem and open native DSH",
-      "native_unconfirmed": "DSH is not ready. Check the plugin configuration status and try again."
+      "refresh": "Refresh status"
     },
     "dsh_profile": {
-      "native_sync_pending": "Native DSH configuration cannot be synchronized yet. Showing the last saved version. Refresh shortly.",
       "retry_build": "Retry build",
       "retry_unconfirmed": "Retry was not confirmed. Refresh the configuration status before trying again.",
       "title": "Configuration status",
@@ -1611,7 +1617,7 @@
       "changed": "Changes saved. Applying the configuration automatically.",
       "building": "Preparing plugin dependencies. The configuration is not active yet.",
       "failed": "Plugin preparation failed. Check the plugin version or contact an administrator. The configuration is not active.",
-      "pending": "Plugin dependencies are ready. Applying the configuration; active tasks finish first.",
+      "pending": "Saved configuration will apply when the next task starts.",
       "applied": "The running DSH host has confirmed this configuration.",
       "desired": "Desired version",
       "last_applied": "Last confirmed version",
@@ -1632,7 +1638,15 @@
     "over_limit": " · {{count}} over limit"
   },
   "presence": {
-    "queue_badge": "+{{count}} queued"
+    "queue_badge": "+{{count}} queued",
+    "wait_reason": {
+      "sandbox_unhealthy": "Rebuilding expired sandbox",
+      "destroy_unconfirmed": "Waiting for old sandbox to drain",
+      "create_intent_stale": "Retrying sandbox create",
+      "native_grant_busy": "Waiting for an open session",
+      "task_drain_busy": "Waiting for in-flight tasks",
+      "dsh_host_waiting": "Waiting for employee host"
+    }
   },
   "visibility": {
     "private": {

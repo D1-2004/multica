@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dshprofile"
+	"github.com/multica-ai/multica/server/internal/wsfs"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -66,7 +67,7 @@ func dshLaunchPools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 		return pool
 	}
 	a, b := newPool(), newPool()
-	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9235_dsh_native_access", "9265_dsh_native_access_parent", "9241_dsh_employee_profile", "9242_dsh_employee_profile_identity", "9243_dsh_profile_revision_identity", "9244_dsh_plugin_build_identity", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host"} {
+	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9235_dsh_native_access", "9265_dsh_native_access_parent", "9241_dsh_employee_profile", "9242_dsh_employee_profile_identity", "9243_dsh_profile_revision_identity", "9244_dsh_plugin_build_identity", "9261_dsh_profile_apply_queue", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host", "9304_dsh_employee_host_shared_observation", "9305_dsh_employee_host_observation_identity", "9306_employee_filesystem_sandbox_shared_observation"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
@@ -87,9 +88,12 @@ func dshLaunchPools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 type dshLaunchProvider struct {
 	mu         sync.Mutex
 	creates    int
+	destroys   int
 	destroyErr error
 	failCreate bool
+	healthErr  error
 	live       map[uuid.UUID]string
+	mountsFor  map[string][]dshhost.VolumeMountSpec
 }
 
 func (p *dshLaunchProvider) Create(_ context.Context, h dshhost.Host) (string, error) {
@@ -106,19 +110,40 @@ func (p *dshLaunchProvider) Create(_ context.Context, h dshhost.Host) (string, e
 	}
 	return id, nil
 }
-func (p *dshLaunchProvider) Healthy(context.Context, string) error { return nil }
+func (p *dshLaunchProvider) Healthy(context.Context, string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.healthErr
+}
+
+func (p *dshLaunchProvider) SandboxAbsent(_ context.Context, id string) (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, live := range p.live {
+		if live == id {
+			return false, nil
+		}
+	}
+	return true, nil
+}
 func (p *dshLaunchProvider) DestroyAndConfirmAbsent(_ context.Context, id string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.destroyErr != nil {
 		return p.destroyErr
 	}
+	p.destroys++
 	for k, v := range p.live {
 		if v == id {
 			delete(p.live, k)
 		}
 	}
 	return nil
+}
+func (p *dshLaunchProvider) InspectSandbox(_ context.Context, id string) (dshhost.SandboxDetail, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return dshhost.SandboxDetail{State: "running", Mounts: append([]dshhost.VolumeMountSpec(nil), p.mountsFor[id]...)}, nil
 }
 func (p *dshLaunchProvider) FindCreated(_ context.Context, h dshhost.Host) (string, error) {
 	p.mu.Lock()
@@ -153,7 +178,7 @@ func TestDSHNativeManagedProfileReceipt(t *testing.T) {
 	if err := launcher.stageDSHProfile(context.Background(), host, revision); err != nil {
 		t.Fatal(err)
 	}
-	out, err := runner.Run(context.Background(), "", dshNativeHostEnsureArgs(host, raw, "https://pre.multica.test", "https://33124-sandbox.fc.test", strings.Repeat("a", 64), revision), nil)
+	out, err := runner.Run(context.Background(), "", dshNativeHostEnsureArgs(host, raw, revision), nil)
 	if err != nil || validateDSHNativeHostReceipt(out, host, digest, revision) != nil {
 		t.Fatalf("matching managed profile rejected: %v", err)
 	}
@@ -360,13 +385,13 @@ func dshLaunchFixture(t *testing.T, pool *pgxpool.Pool, p *dshLaunchProvider) (*
 			return
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/sandboxes/")
-		_ = json.NewEncoder(w).Encode(map[string]any{"sandboxID": id, "state": "running", "endAt": time.Now().Add(time.Hour)})
+		_ = json.NewEncoder(w).Encode(map[string]any{"sandboxID": id, "state": "running", "endAt": time.Now().Add(time.Duration(dshhost.DefaultSandboxTaskTimeoutSeconds) * time.Second)})
 	}))
 	t.Cleanup(httpServer.Close)
 	u := func(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
 	rt := db.AgentRuntime{ID: u(uuid.New()), WorkspaceID: u(workspace)}
 	task := db.AgentTaskQueue{ID: u(uuid.New()), AgentID: u(agent), RuntimeID: rt.ID}
-	launcher := &FCE2BLauncher{nativeAuthority: newDSHNativeAuthorityBridge("test-secret"), Pool: pool, Runner: dshHomeRunner{profiles: &sync.Map{}}, Config: FCE2BConfig{ServerURL: "https://production-relay.test", DSHNativeAuthority: "https://pre.multica.test", Domain: "fc.test", APIURL: httpServer.URL, APIKey: "test-key", LLMModels: []string{"fixture-model"}, SandboxReadyTimeout: time.Second}, dshProvider: func(dshhost.Storage) (dshhost.Provider, error) { return p, nil }}
+	launcher := &FCE2BLauncher{Pool: pool, Runner: dshHomeRunner{profiles: &sync.Map{}}, Config: FCE2BConfig{ServerURL: "https://production-relay.test", AppOrigin: "https://pre.multica.test", Domain: "fc.test", APIURL: httpServer.URL, APIKey: "test-key", LLMModels: []string{"fixture-model"}, SandboxReadyTimeout: time.Second}, dshProvider: func(dshhost.Storage) (dshhost.Provider, error) { return p, nil }}
 	launcher.ReadDSHProfileSource = func(_ context.Context, _ *db.Queries, _ dshhost.Key, template string) (dshprofile.Source, error) {
 		return dshprofile.Source{TemplateID: template}, nil
 	}
@@ -423,10 +448,418 @@ func TestDSHLaunchUsesOneConnectionAndOneEmployeeHostAcrossReplicas(t *testing.T
 	}
 }
 
+type readyFailRunner struct{ dshHomeRunner }
+
+func (r readyFailRunner) Run(ctx context.Context, name string, args, env []string) (string, error) {
+	if len(args) > 0 && args[len(args)-1] == "true" {
+		return "", errors.New("sandbox exec not ready")
+	}
+	return r.dshHomeRunner.Run(ctx, name, args, env)
+}
+
+func TestAdoptedCreateDoesNotHandOverAWritableMountAfterReadDowngrade(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{failCreate: true}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	if _, err := resolveDSHTest(t, l, rt, task, "template-1"); err == nil {
+		t.Fatal("lost create returned a host")
+	}
+	provider.failCreate = false
+	provider.mu.Lock()
+	provider.mountsFor = map[string][]dshhost.VolumeMountSpec{
+		"sbx-1": {
+			{Name: "vol-rw", Path: dshhost.WorkspaceSharedRoot},
+		},
+	}
+	provider.mu.Unlock()
+	l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		return wsfs.MountDecision{
+			Shared:   &dshhost.VolumeMountSpec{Name: "vol-ro", Path: dshhost.WorkspaceSharedRoot},
+			RoleARN:  "role-read",
+			Access:   wsfs.AccessRead,
+			RWVolume: "vol-rw",
+			ROVolume: "vol-ro",
+		}, nil
+	}
+	rt.Metadata = []byte(`{"capabilities":["workspace_shared_disk"]}`)
+	host, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || host.SandboxID == "" || host.SandboxID == "sbx-1" || provider.creates != 2 || provider.destroys != 1 {
+		t.Fatalf("adopted RW host was handed to a read grant: host=%+v creates=%d destroys=%d err=%v", host, provider.creates, provider.destroys, err)
+	}
+	for _, mount := range host.ExtraMounts {
+		if mount.Name == "vol-rw" {
+			t.Fatalf("replacement kept the writable volume: %+v", host)
+		}
+	}
+}
+
+func TestWriteExpansionKeepsHostWithNativeGrant(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(context.Background(), `INSERT INTO dsh_native_access(id,workspace_id,agent_id,user_id,generation,sandbox_id,kind,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,'session',$7,now()+interval '5 minute')`, uuid.New(), rt.WorkspaceID, task.AgentID, uuid.New(), first.Generation, first.SandboxID, strings.Repeat("d", 64)); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.mountsFor = map[string][]dshhost.VolumeMountSpec{
+		first.SandboxID: {
+			{Name: first.VolumeName, Path: dshhost.MountPath},
+			{Name: "vol-ro", Path: dshhost.WorkspaceSharedRoot},
+		},
+	}
+	provider.mu.Unlock()
+	l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		return wsfs.MountDecision{
+			Shared:   &dshhost.VolumeMountSpec{Name: "vol-rw", Path: dshhost.WorkspaceSharedRoot},
+			RoleARN:  "role-write",
+			Access:   wsfs.AccessWrite,
+			ROVolume: "vol-ro",
+			RWVolume: "vol-rw",
+		}, nil
+	}
+	rt.Metadata = []byte(`{"capabilities":["workspace_shared_disk"]}`)
+	got, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || got.SandboxID != first.SandboxID || got.Generation != first.Generation || got.AuthRoleARN == "role-write" || provider.creates != 1 || provider.destroys != 0 {
+		t.Fatalf("write expansion retired a host that has a native session: host=%+v err=%v creates=%d destroys=%d", got, err, provider.creates, provider.destroys)
+	}
+}
+
+func TestReadDowngradeWithUnreadyRoleDoesNotKeepWritableMount(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	ctx := context.Background()
+	for _, stem := range []string{"9273_workspace_filesystem", "9280_workspace_filesystem_grant"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = pool.Exec(ctx, string(data)); err != nil {
+			t.Fatal(stem, err)
+		}
+	}
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsID, agID := uuid.UUID(rt.WorkspaceID.Bytes), uuid.UUID(task.AgentID.Bytes)
+	if _, err = pool.Exec(ctx, `INSERT INTO workspace_filesystem (
+ workspace_id, file_system_id, space_id, vpc_id, security_group_id, vswitch_ids,
+ ro_access_point_arn, rw_access_point_arn, ro_role_arn, rw_role_arn, ro_volume_name, rw_volume_name,
+ size_limit, file_count_limit) VALUES ($1,'fs','space','vpc','sg',ARRAY['vsw'],'ap-ro','ap-rw','role-ro','role-rw','vol-ro','vol-rw',1,1)`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO workspace_filesystem_grant (workspace_id, agent_id, access, generation, task_role_arn)
+ VALUES ($1,$2,'read',2,'')`, wsID, agID); err != nil {
+		t.Fatal(err)
+	}
+	employee := &dshhost.Host{Storage: dshhost.Storage{VolumeName: first.VolumeName, AccessPointARN: "ap", RoleARN: "role-employee"}}
+	decision, readErr := (wsfs.Controller{}).ReadMount(ctx, pool, wsID, agID, employee)
+	if !errors.Is(readErr, wsfs.ErrSharedDiskNotReady) || decision.Access != wsfs.AccessRead || decision.Shared != nil || decision.RWVolume != "vol-rw" || decision.ROVolume != "vol-ro" {
+		t.Fatalf("read constraint dropped while the composite role is unprepared: %+v %v", decision, readErr)
+	}
+	provider.mu.Lock()
+	provider.mountsFor = map[string][]dshhost.VolumeMountSpec{
+		first.SandboxID: {
+			{Name: first.VolumeName, Path: dshhost.MountPath},
+			{Name: "vol-rw", Path: dshhost.WorkspaceSharedRoot},
+		},
+	}
+	provider.mu.Unlock()
+	l.ReadWorkspaceMount = func(ctx context.Context, db wsfs.Database, workspaceID, agentID uuid.UUID, before *dshhost.Host) (wsfs.MountDecision, error) {
+		return (wsfs.Controller{}).ReadMount(ctx, db, workspaceID, agentID, before)
+	}
+	rt.Metadata = []byte(`{"capabilities":["workspace_shared_disk"]}`)
+	second, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err == nil && second.SandboxID == first.SandboxID {
+		t.Fatalf("read downgrade with an unprepared role kept the writable mount: %+v creates=%d destroys=%d", second, provider.creates, provider.destroys)
+	}
+	if err != nil || second.SandboxID == "" || second.SandboxID == first.SandboxID || provider.destroys != 1 {
+		t.Fatalf("read downgrade did not drain the writable mount: host=%+v creates=%d destroys=%d err=%v", second, provider.creates, provider.destroys, err)
+	}
+	for _, mount := range second.ExtraMounts {
+		if mount.Name == "vol-rw" {
+			t.Fatalf("replacement kept the writable volume: %+v", second)
+		}
+	}
+}
+
+func TestUnreadyReadGrantKeepsHostWithoutSharedMount(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	ctx := context.Background()
+	for _, stem := range []string{"9273_workspace_filesystem", "9280_workspace_filesystem_grant"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = pool.Exec(ctx, string(data)); err != nil {
+			t.Fatal(stem, err)
+		}
+	}
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsID, agID := uuid.UUID(rt.WorkspaceID.Bytes), uuid.UUID(task.AgentID.Bytes)
+	if _, err = pool.Exec(ctx, `INSERT INTO workspace_filesystem (
+ workspace_id, file_system_id, space_id, vpc_id, security_group_id, vswitch_ids,
+ ro_access_point_arn, rw_access_point_arn, ro_role_arn, rw_role_arn, ro_volume_name, rw_volume_name,
+ size_limit, file_count_limit) VALUES ($1,'fs','space','vpc','sg',ARRAY['vsw'],'ap-ro','ap-rw','role-ro','role-rw','vol-ro','vol-rw',1,1)`, wsID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO workspace_filesystem_grant (workspace_id, agent_id, access, generation, task_role_arn)
+ VALUES ($1,$2,'read',2,'')`, wsID, agID); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.mountsFor = map[string][]dshhost.VolumeMountSpec{
+		first.SandboxID: {{Name: first.VolumeName, Path: dshhost.MountPath}},
+	}
+	provider.mu.Unlock()
+	l.ReadWorkspaceMount = func(ctx context.Context, db wsfs.Database, workspaceID, agentID uuid.UUID, before *dshhost.Host) (wsfs.MountDecision, error) {
+		return (wsfs.Controller{}).ReadMount(ctx, db, workspaceID, agentID, before)
+	}
+	rt.Metadata = []byte(`{"kind":"fc-e2b"}`)
+	got, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || got.SandboxID != first.SandboxID || got.Generation != first.Generation || len(got.ExtraMounts) != 0 || provider.creates != 1 || provider.destroys != 0 {
+		t.Fatalf("unready read grant rebuilt a host that has no shared mount: %+v err=%v creates=%d destroys=%d", got, err, provider.creates, provider.destroys)
+	}
+}
+
+func TestFreshSharedMountDeclaresTheMountedAccess(t *testing.T) {
+	for _, tc := range []struct {
+		access string
+		volume string
+		role   string
+	}{
+		{access: wsfs.AccessWrite, volume: "vol-rw", role: "role-write"},
+		{access: wsfs.AccessRead, volume: "vol-ro", role: "role-read"},
+	} {
+		t.Run(tc.access, func(t *testing.T) {
+			pool, _ := dshLaunchPools(t)
+			provider := &dshLaunchProvider{}
+			l, rt, task := dshLaunchFixture(t, pool, provider)
+			l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+				return wsfs.MountDecision{
+					Shared:  &dshhost.VolumeMountSpec{Name: tc.volume, Path: dshhost.WorkspaceSharedRoot},
+					RoleARN: tc.role,
+					Access:  tc.access,
+				}, nil
+			}
+			rt.Metadata = []byte(`{"capabilities":["workspace_shared_disk"]}`)
+			host, err := resolveDSHTest(t, l, rt, task, "template-1")
+			if err != nil || host.SandboxID == "" || provider.creates != 1 || len(host.ExtraMounts) != 1 || host.ExtraMounts[0].Name != tc.volume {
+				t.Fatalf("fresh %s mount was not created: %+v creates=%d err=%v", tc.access, host, provider.creates, err)
+			}
+			if host.SharedAccess != tc.access || effectiveWorkspaceFSAccess(&host) != tc.access {
+				t.Fatalf("fresh %s mount declared %q", tc.access, effectiveWorkspaceFSAccess(&host))
+			}
+		})
+	}
+}
+
+func TestWriteGrantMountsSharedDiskWithoutImageCapability(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		return wsfs.MountDecision{
+			Shared:  &dshhost.VolumeMountSpec{Name: "vol-rw", Path: dshhost.WorkspaceSharedRoot},
+			RoleARN: "role-write",
+			Access:  wsfs.AccessWrite,
+		}, nil
+	}
+	rt.Metadata = []byte(`{"kind":"fc-e2b"}`)
+	host, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || provider.creates != 1 || len(host.ExtraMounts) != 1 || host.ExtraMounts[0].Name != "vol-rw" || host.SharedAccess != wsfs.AccessWrite || effectiveWorkspaceFSAccess(&host) != wsfs.AccessWrite {
+		t.Fatalf("write grant without an image capability did not mount the shared disk: %+v creates=%d err=%v", host, provider.creates, err)
+	}
+}
+
+func TestPrivateLaunchDoesNotInjectSharedDiskEnv(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	host, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || host.SandboxID == "" || len(host.ExtraMounts) != 0 || provider.creates != 1 {
+		t.Fatalf("private launch changed: %+v creates=%d err=%v", host, provider.creates, err)
+	}
+	if access := effectiveWorkspaceFSAccess(&host); access != "" {
+		t.Fatalf("private launch injected shared access %q", access)
+	}
+}
+
+func TestWriteExpansionKeepsReadOnlyMountButDeclaresRead(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	ctx := context.Background()
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS workspace_filesystem_grant (
+ workspace_id uuid NOT NULL, agent_id uuid NOT NULL, access text NOT NULL, generation bigint NOT NULL DEFAULT 0,
+ task_role_arn text NOT NULL DEFAULT '', task_policy_name text NOT NULL DEFAULT '', updated_at timestamptz NOT NULL DEFAULT now(), updated_by uuid)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, `INSERT INTO workspace_filesystem_grant (workspace_id, agent_id, access, generation, task_role_arn)
+ VALUES ($1,$2,'write',3,'role-write')`, rt.WorkspaceID, task.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.mountsFor = map[string][]dshhost.VolumeMountSpec{
+		first.SandboxID: {
+			{Name: first.VolumeName, Path: dshhost.MountPath},
+			{Name: "vol-ro", Path: dshhost.WorkspaceSharedRoot},
+		},
+	}
+	provider.mu.Unlock()
+	l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		return wsfs.MountDecision{
+			Shared:   &dshhost.VolumeMountSpec{Name: "vol-rw", Path: dshhost.WorkspaceSharedRoot},
+			RoleARN:  "role-write",
+			Access:   wsfs.AccessWrite,
+			ROVolume: "vol-ro",
+			RWVolume: "vol-rw",
+		}, nil
+	}
+	rt.Metadata = []byte(`{"capabilities":["workspace_shared_disk"]}`)
+	got, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || got.SandboxID != first.SandboxID || got.Generation != first.Generation || provider.creates != 1 || provider.destroys != 0 {
+		t.Fatalf("write expansion rebuilt a healthy read-only host: %+v err=%v creates=%d destroys=%d", got, err, provider.creates, provider.destroys)
+	}
+	if got.SharedAccess != wsfs.AccessRead || effectiveWorkspaceFSAccess(&got) != wsfs.AccessRead {
+		t.Fatalf("kept RO mount but effective access is %q", got.SharedAccess)
+	}
+	stored, err := (wsfs.Store{DB: pool}).GetGrant(ctx, uuid.UUID(rt.WorkspaceID.Bytes), uuid.UUID(task.AgentID.Bytes))
+	if err != nil || stored.Access != wsfs.AccessWrite {
+		t.Fatalf("desired grant changed: %+v %v", stored, err)
+	}
+}
+
+func TestReadDowngradeWithoutCapabilityDoesNotKeepWritableMount(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || first.SandboxID == "" {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.mountsFor = map[string][]dshhost.VolumeMountSpec{
+		first.SandboxID: {
+			{Name: first.VolumeName, Path: dshhost.MountPath},
+			{Name: "vol-rw", Path: dshhost.WorkspaceSharedRoot},
+		},
+	}
+	provider.mu.Unlock()
+	l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		return wsfs.MountDecision{
+			Shared:  &dshhost.VolumeMountSpec{Name: "vol-ro", Path: dshhost.WorkspaceSharedRoot},
+			RoleARN: "role-read",
+			Access:  wsfs.AccessRead,
+		}, nil
+	}
+	rt.Metadata = []byte(`{"kind":"fc-e2b"}`)
+	second, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || second.SandboxID == "" || second.SandboxID == first.SandboxID || provider.creates != 2 || provider.destroys != 1 {
+		t.Fatalf("read downgrade with missing capability keeps host without inspecting existing writable mount: first=%s second=%+v creates=%d destroys=%d err=%v", first.SandboxID, second, provider.creates, provider.destroys, err)
+	}
+	for _, mount := range second.ExtraMounts {
+		if mount.Name == "vol-rw" {
+			t.Fatalf("replacement kept the writable volume: %+v", second)
+		}
+	}
+}
+
+type firstSandboxNotReady struct{ dshHomeRunner }
+
+func (r firstSandboxNotReady) Run(ctx context.Context, name string, args, env []string) (string, error) {
+	if len(args) >= 3 && args[0] == "sandbox" && args[1] == "exec" && args[2] == "sbx-1" && args[len(args)-1] == "true" {
+		return "", errors.New("sandbox exec not ready")
+	}
+	return r.dshHomeRunner.Run(ctx, name, args, env)
+}
+
+func TestSharedCreateReadinessFailureDoesNotFailLaunch(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	prepared := 0
+	l.PrepareWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		prepared++
+		return wsfs.MountDecision{}, errors.New("launch must not provision")
+	}
+	l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		return wsfs.MountDecision{
+			Shared:  &dshhost.VolumeMountSpec{Name: "vol-shared", Path: dshhost.WorkspaceSharedRoot},
+			RoleARN: "role-shared",
+			Access:  wsfs.AccessRead,
+		}, nil
+	}
+	rt.Metadata = []byte(`{"capabilities":["workspace_shared_disk"]}`)
+	l.Runner = firstSandboxNotReady{l.Runner.(dshHomeRunner)}
+	host, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || host.SandboxID != "sbx-2" || len(host.ExtraMounts) != 0 || provider.creates != 2 || provider.destroys != 1 || prepared != 0 {
+		t.Fatalf("shared readiness failure did not rebuild one private sandbox: host=%+v creates=%d destroys=%d prepared=%d err=%v", host, provider.creates, provider.destroys, prepared, err)
+	}
+
+	blockedPool, _ := dshLaunchPools(t)
+	blocked := &dshLaunchProvider{destroyErr: errors.New("destroy unconfirmed")}
+	blockedLauncher, blockedRT, blockedTask := dshLaunchFixture(t, blockedPool, blocked)
+	blockedLauncher.ReadWorkspaceMount = l.ReadWorkspaceMount
+	blockedRT.Metadata = rt.Metadata
+	blockedLauncher.Runner = firstSandboxNotReady{blockedLauncher.Runner.(dshHomeRunner)}
+	if _, err := resolveDSHTest(t, blockedLauncher, blockedRT, blockedTask, "template-1"); err == nil || blocked.creates != 1 || blocked.destroys != 0 {
+		t.Fatalf("unconfirmed destroy started a second sandbox: creates=%d destroys=%d err=%v", blocked.creates, blocked.destroys, err)
+	}
+
+	privatePool, _ := dshLaunchPools(t)
+	privateProvider := &dshLaunchProvider{}
+	privateLauncher, privateRT, privateTask := dshLaunchFixture(t, privatePool, privateProvider)
+	privateLauncher.Runner = readyFailRunner{privateLauncher.Runner.(dshHomeRunner)}
+	if _, err := resolveDSHTest(t, privateLauncher, privateRT, privateTask, "template-1"); err == nil || privateProvider.creates != 1 {
+		t.Fatalf("private readiness failure was ignored: creates=%d err=%v", privateProvider.creates, err)
+	}
+
+	lostPool, _ := dshLaunchPools(t)
+	lost := &dshLaunchProvider{failCreate: true}
+	lostLauncher, lostRT, lostTask := dshLaunchFixture(t, lostPool, lost)
+	lostLauncher.ReadWorkspaceMount = l.ReadWorkspaceMount
+	lostRT.Metadata = rt.Metadata
+	_, _ = resolveDSHTest(t, lostLauncher, lostRT, lostTask, "template-1")
+	if _, err := resolveDSHTest(t, lostLauncher, lostRT, lostTask, "template-1"); lost.creates != 1 {
+		t.Fatalf("unconfirmed shared create was retried: creates=%d err=%v", lost.creates, err)
+	}
+}
+
+func TestDSHLaunchRebuildsUnhealthyHostWhenIdle(t *testing.T) {
+	a, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, a, provider)
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.healthErr = errors.New("sandbox gone")
+	next, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || next.Generation != 2 || next.SandboxID == first.SandboxID || provider.creates != 2 {
+		t.Fatalf("generation=%d sandbox=%s creates=%d err=%v", next.Generation, next.SandboxID, provider.creates, err)
+	}
+}
+
 func TestDSHNativeHostFailureRequiresConfirmedSandboxRetirement(t *testing.T) {
 	a, _ := dshLaunchPools(t)
 	provider := &dshLaunchProvider{destroyErr: errors.New("not confirmed")}
 	l, rt, task := dshLaunchFixture(t, a, provider)
+	rt.Provider = "dsh"
 	l.Runner = dshHomeRunner{wrongNativeReceipt: true, profiles: &sync.Map{}}
 	if _, err := resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) {
 		t.Fatal("native Host mismatch did not stop admissions", err)
@@ -536,7 +969,7 @@ func TestDSHEmployeeCapabilityIsNotAdvertisedForOtherProviders(t *testing.T) {
 
 // Runs only against an explicitly configured remote test database. Native
 // startup excludes no task, and an active UI grant must protect its generation.
-func TestDSHNativeStartupSharesWriterAndDrainsNativeGrants(t *testing.T) {
+func TestDSHProfileStartupSharesWriterAndDrainsTasks(t *testing.T) {
 	pool, _ := dshLaunchPools(t)
 	provider := &dshLaunchProvider{}
 	l, rt, task := dshLaunchFixture(t, pool, provider)
@@ -560,59 +993,9 @@ func TestDSHNativeStartupSharesWriterAndDrainsNativeGrants(t *testing.T) {
 	if _, err = pool.Exec(ctx, `UPDATE agent_task_queue SET status='completed'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(ctx, `INSERT INTO dsh_native_access(id,workspace_id,agent_id,user_id,generation,sandbox_id,kind,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,'session',$7,now()+interval '1 minute')`, uuid.New(), rt.WorkspaceID, task.AgentID, uuid.New(), first.Generation, first.SandboxID, strings.Repeat("a", 64)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = resolveDSHTest(t, l, rt, task, "template-2"); !errors.Is(err, errDSHHostWaiting) {
-		t.Fatal("template replacement ignored live native session", err)
-	}
-	if provider.creates != 1 {
-		t.Fatal("replaced an admitted writer")
-	}
-	if _, err = pool.Exec(ctx, `UPDATE dsh_native_access SET kind='revoked'`); err != nil {
-		t.Fatal(err)
-	}
 	next, err := resolveDSHTest(t, l, rt, native, "template-2")
 	if err != nil || next.Generation != first.Generation+1 {
 		t.Fatal("drained native host did not recover", err)
-	}
-}
-
-func TestDSHNativeStartupRejectsMissingIdentityAndDisabledDeployment(t *testing.T) {
-	ctx := context.Background()
-	key := dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}
-	for _, launcher := range []*FCE2BLauncher{nil, {}, {Config: FCE2BConfig{Enabled: true}}} {
-		if _, err := launcher.EnsureDSHEmployeeHost(ctx, key); err == nil {
-			t.Fatal("unconfigured native startup accepted")
-		}
-	}
-}
-
-func TestDSHPendingProfileDoesNotRetireLiveNativePage(t *testing.T) {
-	pool, _ := dshLaunchPools(t)
-	provider := &dshLaunchProvider{}
-	l, rt, task := dshLaunchFixture(t, pool, provider)
-	rt.Provider = "dsh"
-	first, err := resolveDSHTest(t, l, rt, task, "template-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	if _, err = pool.Exec(ctx, `UPDATE dsh_employee_profile SET applied_revision=0 WHERE workspace_id=$1 AND agent_id=$2`, rt.WorkspaceID, task.AgentID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = pool.Exec(ctx, `INSERT INTO dsh_native_access(id,workspace_id,agent_id,user_id,generation,sandbox_id,kind,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,'session',$7,now()+interval '1 minute')`, uuid.New(), rt.WorkspaceID, task.AgentID, uuid.New(), first.Generation, first.SandboxID, strings.Repeat("b", 64)); err != nil {
-		t.Fatal(err)
-	}
-	// Calling ensure for a mismatched live Profile would return a startup
-	// error. A pending apply must wait without reaching that failure path.
-	l.Runner = dshHomeRunner{wrongNativeReceipt: true, profiles: &sync.Map{}}
-	if _, err = resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) || errors.Is(err, errDSHHostStartup) {
-		t.Fatal("pending Profile was treated as a failed live Host", err)
-	}
-	host, err := (dshhost.PostgresStore{DB: pool}).Get(ctx, first.Key)
-	if err != nil || host.State != "running" || host.SandboxID != first.SandboxID || provider.creates != 1 {
-		t.Fatal("native page lost its running generation", host, err)
 	}
 }
 
@@ -622,6 +1005,7 @@ func TestDSHProfileFailureDoesNotStrandExistingLifecycle(t *testing.T) {
 			a, _ := dshLaunchPools(t)
 			provider := &dshLaunchProvider{failCreate: initial == "creating"}
 			l, rt, task := dshLaunchFixture(t, a, provider)
+			rt.Provider = "dsh"
 			if initial == "retiring" {
 				l.Runner = dshHomeRunner{wrongNativeReceipt: true, profiles: &sync.Map{}}
 			}
@@ -764,10 +1148,6 @@ func TestDSHTaskAdmissionDoesNotReadNativePluginSnapshot(t *testing.T) {
 	l, rt, task := dshLaunchFixture(t, pool, provider)
 	rt.Provider = "dsh"
 	l.Runner = dshNoSnapshotRunner{l.Runner.(dshHomeRunner)}
-	l.SyncDSHProfileSource = func(context.Context, *pgxpool.Conn, dshhost.Key, string, dshprofile.NativeSnapshot) error {
-		t.Fatal("task imported live native configuration")
-		return nil
-	}
 	for i := 0; i < 2; i++ {
 		if _, err := resolveDSHTest(t, l, rt, task, "template-1"); err != nil {
 			t.Fatal(err)

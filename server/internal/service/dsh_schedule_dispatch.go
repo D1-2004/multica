@@ -20,15 +20,15 @@ import (
 // Admission uses the same lock order as native human chat but has its own
 // standing authority. No browser grant, previous task token or live Host is
 // required. Every occurrence is a fresh automatic task, not a human message.
-func (s *TaskService) withDSHScheduleAdmission(ctx context.Context, key dshschedule.Key, invoke DSHNativeInvokeCheck,
+func (s *TaskService) withDSHScheduleAdmission(ctx context.Context, key dshschedule.Key, invoke DSHInvokeCheck,
 	fn func(*db.Queries, pgx.Tx, db.Agent, pgtype.UUID, dshhost.SessionScope, dshschedule.State) error) error {
 	if key.Validate() != nil || s == nil || s.Queries == nil || s.TxStarter == nil || invoke == nil || fn == nil {
-		return dshhost.ErrNativeAccessDenied
+		return ErrDSHAccessDenied
 	}
 	employee := dshhost.Key{WorkspaceID: key.WorkspaceID, AgentID: key.AgentID}
 	initial, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: pgtype.UUID{Bytes: key.AgentID, Valid: true}, WorkspaceID: pgtype.UUID{Bytes: key.WorkspaceID, Valid: true}})
 	if err != nil || !initial.RuntimeID.Valid {
-		return dshhost.ErrNativeAccessDenied
+		return ErrDSHAccessDenied
 	}
 	return s.runInTxWithHandle(ctx, func(q *db.Queries, tx pgx.Tx) error {
 		if err := lockDSHEmployeeAdmission(ctx, tx, employee, initial.RuntimeID); err != nil {
@@ -39,7 +39,7 @@ func (s *TaskService) withDSHScheduleAdmission(ctx context.Context, key dshsched
 		}
 		scope := dshhost.SessionScope{Key: employee}
 		if err := tx.QueryRow(ctx, `SELECT scope_kind,scope_id,epoch_id FROM dsh_employee_session WHERE workspace_id=$1 AND agent_id=$2 AND session_id=$3 FOR SHARE`, key.WorkspaceID, key.AgentID, key.SessionID).Scan(&scope.Kind, &scope.ID, &scope.Epoch); err != nil {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		parent := pgtype.UUID{Bytes: scope.ID, Valid: true}
 		var session db.ChatSession
@@ -50,31 +50,31 @@ func (s *TaskService) withDSHScheduleAdmission(ctx context.Context, key dshsched
 			}
 			session, err = q.GetChatSession(ctx, parent)
 			if err != nil || session.Status != "active" || session.AgentID != initial.ID || session.WorkspaceID != initial.WorkspaceID || (session.RuntimeID.Valid && session.RuntimeID != initial.RuntimeID) {
-				return dshhost.ErrNativeAccessDenied
+				return ErrDSHAccessDenied
 			}
 		case "issue":
 			if _, err := q.LockIssueForChannelMediaBind(ctx, db.LockIssueForChannelMediaBindParams{ID: parent, WorkspaceID: initial.WorkspaceID}); err != nil {
-				return dshhost.ErrNativeAccessDenied
+				return ErrDSHAccessDenied
 			}
 		case "task":
 			var found bool
 			if err := tx.QueryRow(ctx, `SELECT true FROM agent_task_queue t JOIN agent a ON a.id=t.agent_id WHERE t.id=$1 AND t.agent_id=$2 AND a.workspace_id=$3 FOR SHARE OF t`, parent, initial.ID, initial.WorkspaceID).Scan(&found); err != nil {
-				return dshhost.ErrNativeAccessDenied
+				return ErrDSHAccessDenied
 			}
 		default:
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		agent, err := q.GetAgentForClaimUpdate(ctx, initial.ID)
 		if err != nil || agent.WorkspaceID != initial.WorkspaceID || agent.RuntimeID != initial.RuntimeID || agent.Kind != "user" || agent.ArchivedAt.Valid || agent.RuntimeMode != "cloud" {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		var locked pgtype.UUID
 		if err := tx.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE id=$1 AND workspace_id=$2 FOR SHARE`, agent.RuntimeID, agent.WorkspaceID).Scan(&locked); err != nil {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		runtime, err := q.GetAgentRuntime(ctx, agent.RuntimeID)
 		if err != nil || runtime.Provider != "dsh" || !IsFCE2BRuntime(runtime) {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		state, err := (dshschedule.Store{Tx: tx}).Read(ctx, key)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -88,13 +88,13 @@ func (s *TaskService) withDSHScheduleAdmission(ctx context.Context, key dshsched
 		}
 		var userID pgtype.UUID
 		if err := tx.QueryRow(ctx, `SELECT user_id FROM member WHERE id=$1 AND workspace_id=$2 FOR SHARE`, state.OwnerMemberID, agent.WorkspaceID).Scan(&userID); err != nil || !userID.Valid {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		if scope.Kind == "chat" && session.CreatorID != userID {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		if err := invoke(ctx, q, agent, userID); err != nil {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		return fn(q, tx, agent, userID, scope, state)
 	})
@@ -104,7 +104,7 @@ func (s *TaskService) withDSHScheduleAdmission(ctx context.Context, key dshsched
 // then calls the normal durable queue wake path. The optional MCP overlay is
 // freshly resolved outside database transactions after an authority preflight;
 // the write transaction repeats authorization and rejects a changed employee.
-func (s *TaskService) DispatchDSHSchedule(ctx context.Context, key dshschedule.Key, invoke DSHNativeInvokeCheck) (dshschedule.Receipt, error) {
+func (s *TaskService) DispatchDSHSchedule(ctx context.Context, key dshschedule.Key, invoke DSHInvokeCheck) (dshschedule.Receipt, error) {
 	var snapshot db.Agent
 	err := s.withDSHScheduleAdmission(ctx, key, invoke, func(_ *db.Queries, _ pgx.Tx, agent db.Agent, _ pgtype.UUID, _ dshhost.SessionScope, _ dshschedule.State) error {
 		snapshot = agent

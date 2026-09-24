@@ -18,11 +18,27 @@ func fakeFC(t *testing.T, handler http.HandlerFunc) *FCProvider {
 	t.Helper()
 	s := httptest.NewServer(handler)
 	t.Cleanup(s.Close)
-	p, err := NewFCProvider(FCConfig{s.URL, "test-secret", "vpc-test", "sg-test", []string{"vsw-test"}, 600})
+	p, err := NewFCProvider(FCConfig{s.URL, "test-secret", "vpc-test", "sg-test", []string{"vsw-test"}, 600, "pre.multica.test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestFCDestroyConfirmsAbsenceIndependentOfCallerCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := fakeFC(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" {
+			w.WriteHeader(202)
+			return
+		}
+		cancel()
+		w.WriteHeader(404)
+	})
+	if err := p.DestroyAndConfirmAbsent(ctx, "sandbox-1"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestFCDeleteRequiresAuthoritativeAbsence(t *testing.T) {
@@ -81,6 +97,9 @@ func TestFCCreatePayloadAndAmbiguousFailureAreNotRetried(t *testing.T) {
 		}
 		if body.Metadata["multica.dsh.intent"] == "" || body.Metadata["fc.sandbox.auth.role"] != h.RoleARN || body.Metadata["fc.sandbox.network.vpc"] == "" {
 			t.Error("missing persisted identity or mount authority")
+		}
+		if body.Metadata[OriginLabel] != "pre.multica.test" {
+			t.Errorf("origin label = %q", body.Metadata[OriginLabel])
 		}
 		if r.Header.Get("X-API-KEY") != "test-secret" {
 			t.Error("missing auth")

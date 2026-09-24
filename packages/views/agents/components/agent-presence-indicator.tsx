@@ -3,6 +3,7 @@
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import type { AgentPresenceDetail } from "@multica/core/agents";
 import { availabilityConfig, workloadConfig } from "../presence";
+import { isDSHWaitReason } from "../wait-reason";
 import { useT } from "../../i18n";
 
 interface PresenceIndicatorProps {
@@ -49,6 +50,12 @@ export function AgentPresenceIndicator({
   const workloadLabel = t(($) => $.workload[detail.workload]);
   const isWorking = detail.workload === "working";
   const isQueued = detail.workload === "queued";
+  const waitReasonKey = detail.waitReason;
+  const waitReasonLabel = isDSHWaitReason(waitReasonKey)
+    ? t(($) => $.presence.wait_reason[waitReasonKey])
+    : waitReasonKey;
+  const showWaitReason =
+    detail.availability === "online" && isQueued && Boolean(waitReasonLabel);
   const showQueueBadge = isWorking && detail.queuedCount > 0;
   // Queued's amber comes from workloadConfig as the *severe* tone — meant
   // for "stuck on offline runtime", which is the dominant cause. But on a
@@ -63,7 +70,7 @@ export function AgentPresenceIndicator({
     return (
       <span
         className="inline-flex items-center"
-        title={`${availabilityLabel}${detail.workload !== "idle" ? ` · ${workloadLabel}` : ""}`}
+        title={`${availabilityLabel}${detail.workload !== "idle" ? ` · ${workloadLabel}` : ""}${showWaitReason ? ` · ${waitReasonLabel}` : ""}`}
       >
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${av.dotClass}`} />
       </span>
@@ -110,6 +117,11 @@ export function AgentPresenceIndicator({
         {isQueued && (
           <span className="font-mono text-caption tabular-nums text-muted-foreground">
             {detail.queuedCount}
+          </span>
+        )}
+        {showWaitReason && (
+          <span className="text-caption text-muted-foreground">
+            · {waitReasonLabel}
           </span>
         )}
       </span>

@@ -20,7 +20,7 @@ var (
 )
 
 // JailRelPath returns a cleaned relative path inside the files jail.
-// The HTTP/POSIX jail root is the shared AP RootPath (/files) or the
+// The HTTP/POSIX jail root is the shared AgenticSpace root or the
 // employee $MULTICA_FS_ROOT/files directory. Empty path means the jail root.
 func JailRelPath(path string) (string, error) {
 	path = strings.TrimSpace(path)

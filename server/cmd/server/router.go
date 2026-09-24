@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -60,6 +61,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	"github.com/multica-ai/multica/server/internal/wsfs"
 	composiosdk "github.com/multica-ai/multica/server/pkg/composio"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
@@ -450,6 +452,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			h.ProvisionDSHStorage = func(ctx context.Context, key dshhost.Key) (dshhost.Host, error) {
 				return provision(ctx, pool, key)
 			}
+		}
+	}
+	if ctrl, err := workspaceFSController(opts.RuntimeConfig); err != nil {
+		slog.Error("workspace filesystem provisioning configuration unavailable", "error", err)
+	} else if ctrl != nil {
+		h.FCE2BLauncher.PrepareWorkspaceMount = func(ctx context.Context, db wsfs.Database, workspaceID, agentID uuid.UUID, employee *dshhost.Host) (wsfs.MountDecision, error) {
+			cfg, _, err := readDSHStorageConfig(opts.RuntimeConfig)
+			if err == nil && cfg != nil {
+				live := *ctrl
+				live.Spec = cfg.Placement
+				return live.PrepareMount(ctx, db, workspaceID, agentID, employee)
+			}
+			return ctrl.PrepareMount(ctx, db, workspaceID, agentID, employee)
+		}
+		h.FCE2BLauncher.ReadWorkspaceMount = func(ctx context.Context, db wsfs.Database, workspaceID, agentID uuid.UUID, employee *dshhost.Host) (wsfs.MountDecision, error) {
+			return ctrl.ReadMount(ctx, db, workspaceID, agentID, employee)
 		}
 	}
 	h.Assoc = assoc.NewService(assoc.NewSQLStore(pool))
@@ -888,6 +906,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// once the exporter exists (docs/langfuse-observability.md).
 	if opts.Langfuse.Enabled() {
 		coordinator.Langfuse = opts.Langfuse
+		h.UserDecisions.Observe = coordinator.ObserveUserDecision
 		sceneFlusher.Langfuse = opts.Langfuse
 		h.TaskService.Langfuse = opts.Langfuse
 		h.LLMTraceObserver = handler.NewLangfuseLLMTraceObserver(opts.Langfuse)
@@ -1859,14 +1878,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.With(authRL).Post("/auth/fde/dingtalk", h.DingTalkLogin)
 	r.Post("/auth/logout", h.Logout)
 
-	// Native gateway capabilities perform their own database authorization.
-	nativeAccessRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_DSH_NATIVE_ACCESS", 2400), time.Minute, trustedProxies)
-	r.With(nativeAccessRL).Post("/api/dsh-native/access/exchange", h.ExchangeDSHNativeAccess)
-	r.With(nativeAccessRL).Post("/api/dsh-native/access/check", h.CheckDSHNativeAccess)
-	r.Handle("/api/dsh-native/ui/{accessId}/*", http.HandlerFunc(h.DSHNativeUI))
-	nativePromptRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_DSH_NATIVE_PROMPT", 120), time.Minute, trustedProxies)
-	r.With(nativePromptRL).Post("/api/dsh-native/prompts", h.SubmitDSHNativePrompt)
-
 	// Public API
 	r.Get("/api/config", h.GetConfig)
 	r.With(contactSalesRL).Post("/api/contact-sales", h.CreateContactSales)
@@ -2390,6 +2401,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/content", h.GetWorkspaceFilesystemContent)
 				r.Post("/mkdir", h.PostWorkspaceFilesystemMkdir)
 				r.Post("/upload", h.PostWorkspaceFilesystemUpload)
+				r.Post("/rename", h.PostWorkspaceFilesystemRename)
+				r.Delete("/entries", h.DeleteWorkspaceFilesystemEntry)
 				r.Get("/grants", h.GetWorkspaceFilesystemGrants)
 				r.Put("/grants", h.PutWorkspaceFilesystemGrant)
 			})
@@ -2676,8 +2689,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Post("/dsh-home", h.EnsureDSHHome)
 					r.With(handler.RequireHumanActor).Get("/filesystem", h.GetDSHHome)
 					r.With(handler.RequireHumanActor).Post("/filesystem", h.EnsureDSHHome)
-					r.With(handler.RequireHumanActor).Post("/dsh-native/access", h.IssueDSHNativeAccess)
-					r.With(handler.RequireHumanActor).Delete("/dsh-native/access/{accessId}", h.RevokeDSHNativeAccess)
 					r.Put("/dsh-plugins", h.SetAgentDshPlugins)
 					r.Delete("/dsh-plugins/{pluginId}", h.RemoveAgentDshPlugin)
 					// OKRs materialize as workspace labels the agent tags

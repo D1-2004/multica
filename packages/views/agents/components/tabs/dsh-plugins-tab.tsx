@@ -3,7 +3,7 @@
 import { DshProfileStatus } from "./dsh-profile-status";
 import { isFCE2BRuntime } from "@multica/core/runtimes";
 import { DshPluginConfigDialog } from "./dsh-plugin-config-dialog";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Blocks, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -92,32 +92,26 @@ function DshPluginsEditor({agent, runtime, canEdit, wsId}: {agent: Agent; runtim
       queryClient.setQueryData(agentDshPluginsOptions(wsId, agent.id).queryKey, attachedRows);
       if (!managed) return null;
       setTargetRevision("pending");
-      // Publish one desired revision for the entire submitted set. Waiting for
-      // this exact receipt prevents an older current=true response unlocking edits.
+      // Persist the complete desired revision. Ordinary task startup applies it;
+      // saving configuration must not wait for or start an employee sandbox.
       const result = await api.prepareDSHProfile(wsId, agent.id);
       if (!result?.desiredRevision) throw new Error("Profile submission was not confirmed");
       return result;
     },
     onSuccess: (status) => {
-      if (!status) { finish(); return; }
-      setTargetRevision(status.desiredRevision);
-      void queryClient.invalidateQueries({queryKey: dshProfileKeys.detail(wsId, agent.id)});
+      if (status) queryClient.setQueryData(dshProfileKeys.detail(wsId, agent.id), status);
+      finish();
     },
     onError: (error: unknown) => toast.error(error instanceof ApiError && error.message ? error.message : t(($) => $.tab_body.dsh_plugins.save_failed_toast)),
   });
-  useEffect(() => {
-    if (targetRevision && profile.data?.current && profile.data.desiredRevision === targetRevision && profile.data.appliedRevision === targetRevision) finish();
-  }, [targetRevision, profile.data]);
   const confirm = useMutation({
     mutationFn: () => api.prepareDSHProfile(wsId, agent.id),
-    onSuccess: (status) => { if (status?.desiredRevision) setTargetRevision(status.desiredRevision); invalidate(); },
+    onSuccess: (status) => { if (status?.desiredRevision) finish(); else invalidate(); },
   });
-  // A missing receipt keeps edits locked, but only active work merits a spinner.
-  // Synchronization/build failures must remain visible as failures, not progress.
-  const unconfirmed = managed && !!profile.data?.desiredRevision && profile.data.desiredRevision !== "0" && !profile.data.current;
-  const applying = save.isPending || confirm.isPending || (!profile.isError && !save.isError &&
-    (unconfirmed || targetRevision !== null) && ["waiting_for_builds", "pending_host"].includes(profile.data?.state ?? ""));
-  const locked = !filesystemReady || attached.isPending || attached.isError || applying || targetRevision !== null || unconfirmed || (managed && (profile.isPending || profile.isError));
+  // An uncertain save keeps the draft until the revision is confirmed.
+  // Build/application status remains visible without locking future edits.
+  const applying = save.isPending || confirm.isPending;
+  const locked = !filesystemReady || attached.isPending || attached.isError || applying || targetRevision !== null || (managed && (profile.isPending || profile.isError));
   const dirty = draft !== null || Object.keys(configChanges).length > 0;
   const edit = (rows: AgentDshPlugin[]) => { if (!locked) setDraft(rows, attached.data ?? []); };
   const handleToggle = (id: string, enabled: boolean) => edit(attachedRows.map((row) => row.id === id ? {...row, enabled} : row));
@@ -167,7 +161,7 @@ function DshPluginsEditor({agent, runtime, canEdit, wsId}: {agent: Agent; runtim
           </Button>
           {targetRevision === "pending" && save.isError && <Button size="sm" variant="outline" disabled={confirm.isPending} onClick={() => confirm.mutate()}>{t(($) => $.tab_body.dsh_profile.retry_apply)}</Button>}
           {dirty && !applying && <Button size="sm" variant="ghost" onClick={() => {setDraft(null); setConfigChanges({});}}>{t(($) => $.tab_body.dsh_plugins.discard_changes)}</Button>}
-          <span role="status" aria-live="polite" className="text-caption text-muted-foreground">{applying ? t(($) => $.tab_body.dsh_plugins.waiting_confirmation) : profile.isError || profile.data?.state === "native_sync_pending" ? t(($) => $.tab_body.dsh_profile.native_sync_pending) : profile.data?.state === "apply_failed" ? t(($) => $.tab_body.dsh_profile.apply_failed) : profile.data?.state === "build_failed" ? t(($) => $.tab_body.dsh_profile.failed) : dirty ? t(($) => $.tab_body.dsh_plugins.unsaved_changes) : t(($) => $.tab_body.dsh_plugins.no_changes)}</span>
+          <span role="status" aria-live="polite" className="text-caption text-muted-foreground">{applying ? t(($) => $.tab_body.dsh_plugins.waiting_confirmation) : profile.isError || profile.data?.state === "native_sync_pending" ? t(($) => $.tab_body.dsh_profile.unavailable) : profile.data?.state === "apply_failed" ? t(($) => $.tab_body.dsh_profile.apply_failed) : profile.data?.state === "build_failed" ? t(($) => $.tab_body.dsh_profile.failed) : dirty ? t(($) => $.tab_body.dsh_plugins.unsaved_changes) : t(($) => $.tab_body.dsh_plugins.no_changes)}</span>
         </div>}
         <div className="flex items-start justify-between gap-4">
           <div>

@@ -94,9 +94,11 @@ type AgentResponse struct {
 	// InboundCoordinator runs the server-side assoc tool loop that replies
 	// immediately or opens an Issue. Off by default for new and existing
 	// agents; only an explicit owner on switch enables it.
-	InboundCoordinator             bool `json:"inbound_coordinator"`
-	InboundCoordinatorUserDecision bool `json:"inbound_coordinator_user_decision"`
-	EventTriggerEnabled            bool `json:"event_trigger_enabled"`
+	InboundCoordinator                  bool     `json:"inbound_coordinator"`
+	InboundCoordinatorUserDecisionMode  string   `json:"inbound_coordinator_user_decision_mode"`
+	InboundCoordinatorUserDecision      bool     `json:"inbound_coordinator_user_decision"`
+	InboundCoordinatorUserDecisionNames []string `json:"inbound_coordinator_user_decision_names"`
+	EventTriggerEnabled                 bool     `json:"event_trigger_enabled"`
 	// DingTalkShowAITag controls the sender label for platform and sandbox DWS sends.
 	DingTalkShowAITag bool `json:"dingtalk_show_ai_tag"`
 	// DingTalkResponseEnabled opts this employee into platform-owned replies and reception cleanup.
@@ -223,7 +225,9 @@ func (h *Handler) hydrateDingTalkResponsePolicy(ctx context.Context, resp *Agent
 		resp.EventTriggerEnabled, _ = h.EventTriggers.Enabled(ctx, agentID, parseUUID(resp.WorkspaceID))
 	}
 	resp.InboundCoordinator = policy.InboundCoordinator
+	resp.InboundCoordinatorUserDecisionMode = userDecisionMode(policy.InboundCoordinator, policy.InboundCoordinatorUserDecision, policy.InboundCoordinatorUserDecisionAudience)
 	resp.InboundCoordinatorUserDecision = policy.InboundCoordinatorUserDecision
+	resp.InboundCoordinatorUserDecisionNames = append([]string{}, policy.InboundCoordinatorUserDecisionNames...)
 	resp.DingTalkShowAITag = policy.DingtalkShowAiTag
 	resp.DingTalkResponseEnabled = policy.DingtalkResponseEnabled
 	resp.DingTalkResponsePolicyRevision = policy.DingtalkResponsePolicyRevision
@@ -337,7 +341,9 @@ func (h *Handler) hydrateAgentsInboundCoordinator(ctx context.Context, resps []A
 	for _, row := range rows {
 		if i, ok := index[uuidToString(row.ID)]; ok {
 			resps[i].InboundCoordinator = row.InboundCoordinator
+			resps[i].InboundCoordinatorUserDecisionMode = userDecisionMode(row.InboundCoordinator, row.InboundCoordinatorUserDecision, row.InboundCoordinatorUserDecisionAudience)
 			resps[i].InboundCoordinatorUserDecision = row.InboundCoordinatorUserDecision
+			resps[i].InboundCoordinatorUserDecisionNames = append([]string{}, row.InboundCoordinatorUserDecisionNames...)
 		}
 	}
 }
@@ -417,7 +423,9 @@ func (h *Handler) hydrateAgentsDingTalkResponsePolicy(ctx context.Context, resps
 	for _, row := range rows {
 		if i, ok := index[uuidToString(row.ID)]; ok {
 			resps[i].InboundCoordinator = row.InboundCoordinator
+			resps[i].InboundCoordinatorUserDecisionMode = userDecisionMode(row.InboundCoordinator, row.InboundCoordinatorUserDecision, row.InboundCoordinatorUserDecisionAudience)
 			resps[i].InboundCoordinatorUserDecision = row.InboundCoordinatorUserDecision
+			resps[i].InboundCoordinatorUserDecisionNames = append([]string{}, row.InboundCoordinatorUserDecisionNames...)
 			resps[i].DingTalkShowAITag = row.DingtalkShowAiTag
 			resps[i].DingTalkResponseEnabled = row.DingtalkResponseEnabled
 			resps[i].DingTalkResponsePolicyRevision = row.DingtalkResponsePolicyRevision
@@ -505,44 +513,45 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 
 	contract, contractState := coordinatorcontract.Resolve(a.CoordinatorContract, a.Instructions)
 	return AgentResponse{
-		ID:                             uuidToString(a.ID),
-		WorkspaceID:                    uuidToString(a.WorkspaceID),
-		RuntimeID:                      uuidToString(a.RuntimeID),
-		RuntimeBound:                   a.RuntimeID.Valid,
-		Name:                           a.Name,
-		Description:                    a.Description,
-		Instructions:                   a.Instructions,
-		CoordinatorContract:            contract,
-		CoordinatorContractState:       contractState,
-		SystemKey:                      a.SystemKey.String,
-		SystemInstructions:             systemInstructionsFor(a),
-		DispatchPromptOverrides:        parseDispatchPromptOverrides(a.DispatchPromptOverrides),
-		DispatchAlwaysNewIssue:         a.DispatchAlwaysNewIssue,
-		InboundCoordinator:             false,
-		DingTalkResponsePolicyRevision: 1,
-		AvatarURL:                      h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
-		RuntimeMode:                    a.RuntimeMode,
-		RuntimeConfig:                  rc,
-		CustomArgs:                     customArgs,
-		McpConfig:                      mcpConfig,
-		HasCustomEnv:                   envKeyCount > 0,
-		CustomEnvKeyCount:              envKeyCount,
-		Visibility:                     a.Visibility,
-		PermissionMode:                 a.PermissionMode,
-		InvocationTargets:              []AgentInvocationTargetDTO{},
-		Status:                         a.Status,
-		MaxConcurrentTasks:             a.MaxConcurrentTasks,
-		Model:                          a.Model.String,
-		ThinkingLevel:                  a.ThinkingLevel.String,
-		ServiceTier:                    a.ServiceTier.String,
-		ComposioToolkitAllowlist:       composioAllowlist,
-		OwnerID:                        uuidToPtr(a.OwnerID),
-		Skills:                         []AgentSkillSummary{},
-		DisabledRuntimeSkills:          decodeDisabledRuntimeSkills(a.DisabledRuntimeSkills),
-		CreatedAt:                      timestampToString(a.CreatedAt),
-		UpdatedAt:                      timestampToString(a.UpdatedAt),
-		ArchivedAt:                     timestampToPtr(a.ArchivedAt),
-		ArchivedBy:                     uuidToPtr(a.ArchivedBy),
+		InboundCoordinatorUserDecisionMode: "off",
+		ID:                                 uuidToString(a.ID),
+		WorkspaceID:                        uuidToString(a.WorkspaceID),
+		RuntimeID:                          uuidToString(a.RuntimeID),
+		RuntimeBound:                       a.RuntimeID.Valid,
+		Name:                               a.Name,
+		Description:                        a.Description,
+		Instructions:                       a.Instructions,
+		CoordinatorContract:                contract,
+		CoordinatorContractState:           contractState,
+		SystemKey:                          a.SystemKey.String,
+		SystemInstructions:                 systemInstructionsFor(a),
+		DispatchPromptOverrides:            parseDispatchPromptOverrides(a.DispatchPromptOverrides),
+		DispatchAlwaysNewIssue:             a.DispatchAlwaysNewIssue,
+		InboundCoordinator:                 false,
+		DingTalkResponsePolicyRevision:     1,
+		AvatarURL:                          h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
+		RuntimeMode:                        a.RuntimeMode,
+		RuntimeConfig:                      rc,
+		CustomArgs:                         customArgs,
+		McpConfig:                          mcpConfig,
+		HasCustomEnv:                       envKeyCount > 0,
+		CustomEnvKeyCount:                  envKeyCount,
+		Visibility:                         a.Visibility,
+		PermissionMode:                     a.PermissionMode,
+		InvocationTargets:                  []AgentInvocationTargetDTO{},
+		Status:                             a.Status,
+		MaxConcurrentTasks:                 a.MaxConcurrentTasks,
+		Model:                              a.Model.String,
+		ThinkingLevel:                      a.ThinkingLevel.String,
+		ServiceTier:                        a.ServiceTier.String,
+		ComposioToolkitAllowlist:           composioAllowlist,
+		OwnerID:                            uuidToPtr(a.OwnerID),
+		Skills:                             []AgentSkillSummary{},
+		DisabledRuntimeSkills:              decodeDisabledRuntimeSkills(a.DisabledRuntimeSkills),
+		CreatedAt:                          timestampToString(a.CreatedAt),
+		UpdatedAt:                          timestampToString(a.UpdatedAt),
+		ArchivedAt:                         timestampToPtr(a.ArchivedAt),
+		ArchivedBy:                         uuidToPtr(a.ArchivedBy),
 	}
 }
 
@@ -720,6 +729,7 @@ type AgentTaskResponse struct {
 	QuickCreateDueDate       string                 `json:"quick_create_due_date,omitempty"`       // explicit calendar due date selected in quick-create
 	QuickCreateAttachmentIDs []string               `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
 	HandoffNote              string                 `json:"handoff_note,omitempty"`                // assignment handoff instruction; rendered into the run's opening prompt + issue_context.md (omitempty so old daemons ignore it)
+	WaitReason               string                 `json:"wait_reason,omitempty"`                 // queued launch deferral reason; status stays queued
 	SquadID                  string                 `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
 	SquadName                string                 `json:"squad_name,omitempty"`                  // display name for the picker squad
 	ParentIssueID            string                 `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
@@ -1047,6 +1057,10 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	if t.HandoffNote.Valid {
 		handoffNote = t.HandoffNote.String
 	}
+	waitReason := ""
+	if t.WaitReason.Valid {
+		waitReason = t.WaitReason.String
+	}
 	trace, traceErr := chattrace.ForTask(t.Context, uuidToString(t.ID), t.CreatedAt.Time)
 	if traceErr != nil {
 		slog.Error("task response has invalid task trace", "task_id", uuidToString(t.ID), "error", traceErr)
@@ -1083,6 +1097,7 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		DeliveredCommentIDs:  uuidStringsOrEmpty(t.DeliveredCommentIds),
 		TriggerSummary:       textToPtr(t.TriggerSummary),
 		HandoffNote:          handoffNote,
+		WaitReason:           waitReason,
 		WorkDir:              workDir,
 		RelativeWorkDir:      relativeWorkDir(workDir, workspaceID, uuidToString(t.ID)),
 		// Surface task source so the UI can distinguish issue-linked tasks
@@ -1820,24 +1835,26 @@ type UpdateAgentRequest struct {
 	// DispatchPromptOverrides is a whole-map replacement, not a merge: the UI
 	// edits one segment at a time but always sends the complete map, so a
 	// removed key is an unambiguous "restore the managed text".
-	DispatchPromptOverrides        *map[string]string `json:"dispatch_prompt_overrides"`
-	DispatchAlwaysNewIssue         *bool              `json:"dispatch_always_new_issue"`
-	ChatSessionResume              *bool              `json:"chat_session_resume"`
-	InboundCoordinator             *bool              `json:"inbound_coordinator"`
-	InboundCoordinatorUserDecision *bool              `json:"inbound_coordinator_user_decision"`
-	EventTriggerEnabled            *bool              `json:"event_trigger_enabled"`
-	DingTalkShowAITag              *bool              `json:"dingtalk_show_ai_tag"`
-	DingTalkResponseEnabled        *bool              `json:"dingtalk_response_enabled"`
-	TaskFinishedLoopEnabled        *bool              `json:"task_finished_loop_enabled"`
-	SceneMemoryWriteEnabled        *bool              `json:"scene_memory_write_enabled"`
-	SceneMemoryRecallEnabled       *bool              `json:"scene_memory_recall_enabled"`
-	SceneMemoryUIEnabled           *bool              `json:"scene_memory_ui_enabled"`
-	SceneMemoryBootstrapEnabled    *bool              `json:"scene_memory_bootstrap_enabled"`
-	Persona                        *string            `json:"persona"`
-	ReplyTone                      *string            `json:"reply_tone"`
-	AvatarURL                      *string            `json:"avatar_url"`
-	RuntimeID                      *string            `json:"runtime_id"`
-	RuntimeConfig                  any                `json:"runtime_config"`
+	DispatchPromptOverrides             *map[string]string `json:"dispatch_prompt_overrides"`
+	DispatchAlwaysNewIssue              *bool              `json:"dispatch_always_new_issue"`
+	ChatSessionResume                   *bool              `json:"chat_session_resume"`
+	InboundCoordinator                  *bool              `json:"inbound_coordinator"`
+	InboundCoordinatorUserDecisionMode  *string            `json:"inbound_coordinator_user_decision_mode"`
+	InboundCoordinatorUserDecision      *bool              `json:"inbound_coordinator_user_decision"`
+	InboundCoordinatorUserDecisionNames *[]string          `json:"inbound_coordinator_user_decision_names"`
+	EventTriggerEnabled                 *bool              `json:"event_trigger_enabled"`
+	DingTalkShowAITag                   *bool              `json:"dingtalk_show_ai_tag"`
+	DingTalkResponseEnabled             *bool              `json:"dingtalk_response_enabled"`
+	TaskFinishedLoopEnabled             *bool              `json:"task_finished_loop_enabled"`
+	SceneMemoryWriteEnabled             *bool              `json:"scene_memory_write_enabled"`
+	SceneMemoryRecallEnabled            *bool              `json:"scene_memory_recall_enabled"`
+	SceneMemoryUIEnabled                *bool              `json:"scene_memory_ui_enabled"`
+	SceneMemoryBootstrapEnabled         *bool              `json:"scene_memory_bootstrap_enabled"`
+	Persona                             *string            `json:"persona"`
+	ReplyTone                           *string            `json:"reply_tone"`
+	AvatarURL                           *string            `json:"avatar_url"`
+	RuntimeID                           *string            `json:"runtime_id"`
+	RuntimeConfig                       any                `json:"runtime_config"`
 	// custom_env is intentionally NOT updatable through this endpoint.
 	// Use `PUT /api/agents/{id}/env` for env changes — that path admits
 	// the agent owner or a workspace owner/admin, denies agent actors,
@@ -2070,6 +2087,14 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	rawFields, err := decodeJSONBodyWithRawFields(r.Body, &req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if _, present := rawFields["inbound_coordinator_user_decision_mode"]; present && req.InboundCoordinatorUserDecisionMode == nil {
+		writeError(w, http.StatusBadRequest, "inbound_coordinator_user_decision_mode must be off, all, or named")
+		return
+	}
+	if err := validateUserDecisionMode(req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if req.Instructions != nil || req.CoordinatorContract != nil {
@@ -2531,11 +2556,15 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.InboundCoordinatorUserDecision != nil || req.InboundCoordinator != nil || req.DingTalkShowAITag != nil || req.DingTalkResponseEnabled != nil {
+	if req.InboundCoordinatorUserDecisionMode != nil || req.InboundCoordinatorUserDecisionNames != nil || req.InboundCoordinatorUserDecision != nil || req.InboundCoordinator != nil || req.DingTalkShowAITag != nil || req.DingTalkResponseEnabled != nil {
 		policyParams := db.UpdateAgentDingTalkResponsePolicyParams{ID: updated.ID}
+		if req.InboundCoordinatorUserDecisionNames != nil {
+			policyParams.UserDecisionNames = normalizeUserDecisionNames(*req.InboundCoordinatorUserDecisionNames)
+		}
 		if req.InboundCoordinatorUserDecision != nil {
 			policyParams.UserDecision = pgtype.Bool{Bool: *req.InboundCoordinatorUserDecision, Valid: true}
 		}
+		applyUserDecisionMode(req, &policyParams)
 		if req.InboundCoordinator != nil {
 			policyParams.InboundCoordinator = pgtype.Bool{Bool: *req.InboundCoordinator, Valid: true}
 		}

@@ -1156,6 +1156,7 @@ const claimAgentTask = `-- name: ClaimAgentTask :one
 UPDATE agent_task_queue
 SET status = 'dispatched',
     dispatched_at = now(),
+    wait_reason = NULL,
     prepare_lease_expires_at = now() + make_interval(secs => $2::double precision)
 WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
@@ -1263,6 +1264,7 @@ const claimAgentTaskByID = `-- name: ClaimAgentTaskByID :one
 UPDATE agent_task_queue AS atq
 SET status = 'dispatched',
     dispatched_at = now(),
+    wait_reason = NULL,
     prepare_lease_expires_at = now() + make_interval(secs => $1::double precision)
 WHERE atq.id = $2
   AND atq.runtime_id = $3
@@ -2989,6 +2991,13 @@ WITH victims AS (
                     latest_attempt.backend = 'asb'
                     AND latest_attempt.status = 'starting'
                 )
+                OR
+                (
+                    latest_attempt.status = 'blocked'
+                    AND latest_attempt.error_code = 'DSH-HOST-WAITING'
+                    AND COALESCE(latest_attempt.finished_at, latest_attempt.updated_at)
+                        >= now() - make_interval(secs => $1::double precision)
+                )
             )
       )
     ORDER BY queued_task.created_at ASC
@@ -3033,6 +3042,13 @@ WHERE t.id = v.id
             (
                 latest_attempt.backend = 'asb'
                 AND latest_attempt.status = 'starting'
+            )
+            OR
+            (
+                latest_attempt.status = 'blocked'
+                AND latest_attempt.error_code = 'DSH-HOST-WAITING'
+                AND COALESCE(latest_attempt.finished_at, latest_attempt.updated_at)
+                    >= now() - make_interval(secs => $1::double precision)
             )
         )
   )

@@ -63,7 +63,7 @@ func TestDSHScheduleClaimRequiresReceiptAndNativeTransport(t *testing.T) {
 				t.Fatal(err)
 			}
 			task.TriggerEvidenceRefID = pgtype.UUID{Bytes: due.RequestID, Valid: true}
-			database := &scheduleClaimDB{values: []any{r.SessionID, r.ScheduleID, due.At, due.RequestID, r.OwnerMemberID, r.SourceTaskID, r.Prompt, r.FirstDue, r.EverySeconds, "task", r.SourceTaskID, 0, due.RequestID}}
+			database := &scheduleClaimDB{values: []any{r.SessionID, r.ScheduleID, due.At, due.RequestID, r.OwnerMemberID, r.SourceTaskID, r.Prompt, r.FirstDue, r.EverySeconds, "task", r.SourceTaskID, uuid.Nil, 0, due.RequestID}}
 			h := &Handler{DB: database}
 			request := httptest.NewRequest(http.MethodPost, "/claim", nil)
 			request.Header.Set("X-Client-Capabilities", protocol.DaemonCapabilityDSHNativePromptV1)

@@ -182,13 +182,14 @@ type EndOptions struct {
 // Trace is one Langfuse trace rooted at a single observation. A nil *Trace is
 // valid: every method is a no-op, which is what callers get from a nil Client.
 type Trace struct {
-	client     *Client
-	ctx        context.Context
-	root       trace.Span
-	id         trace.TraceID
-	traceAttrs []attribute.KeyValue
-	startedAt  time.Time
-	ended      bool
+	client          *Client
+	ctx             context.Context
+	root            trace.Span
+	id              trace.TraceID
+	traceAttrs      []attribute.KeyValue
+	startedAt       time.Time
+	ended           bool
+	observationOnly bool
 }
 
 // StartTrace opens a new trace with its root observation. The returned Trace
@@ -390,7 +391,7 @@ func (t *Trace) End(end EndOptions) {
 		return
 	}
 	t.ended = true
-	if end.Output != nil {
+	if end.Output != nil && !t.observationOnly {
 		t.root.SetAttributes(attribute.String(attrTraceOutput, encodePayload(end.Output)))
 	}
 	finishSpan(t.root, end)
@@ -655,4 +656,16 @@ func clipString(s string, max int) string {
 		cut--
 	}
 	return s[:cut] + "…[truncated " + strconv.Itoa(len(s)-cut) + " bytes]"
+}
+
+// ContinueTrace provides a context for nested observations without replacing
+// the existing trace's input or output. It is used by asynchronous resumptions.
+func (c *Client) ContinueTrace(ctx context.Context, traceOpts TraceOptions, opts ObservationOptions) *Trace {
+	o := c.StartObservationInTrace(ctx, traceOpts, opts)
+	if o == nil {
+		return nil
+	}
+	t := o.trace
+	t.root, t.ctx, t.observationOnly = o.span, o.ctx, true
+	return t
 }

@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	"github.com/jackc/pgx/v5/pgtype"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
@@ -34,7 +37,7 @@ func (h *Handler) guardUnavailableUserDecision(w http.ResponseWriter, r *http.Re
 		writeError(w, 503, "could not verify coordinator decision policy")
 		return true
 	}
-	if !policy.InboundCoordinator || !policy.InboundCoordinatorUserDecision {
+	if !userDecisionEnabledForCommand(policy, c) {
 		return false
 	}
 	reject := func(reason, text string) bool {
@@ -142,4 +145,93 @@ func userDecisionIdentityRejection(err error) (string, string) {
 		}
 	}
 	return "user_decision_identity_verification_failed", "当前会话或发起人身份未通过校验，本次未执行。"
+}
+
+// Names are rollout preferences, not identity credentials. Callback authorization
+// continues to require the verified source author's DingTalk ID.
+func normalizeUserDecisionNames(names []string) []string {
+	result := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name != "" && !seen[name] {
+			result = append(result, name)
+			seen[name] = true
+		}
+	}
+	return result
+}
+
+func userDecisionEnabledForCommand(policy db.GetAgentDingTalkResponsePolicyRow, c DispatchCommand) bool {
+	if !policy.InboundCoordinator || !policy.InboundCoordinatorUserDecision || c.Source.Type != "digital_employee" || c.Event.Domain != "channel" || c.Event.Type != "message.created" || c.TaskFinishedTaskID != "" {
+		return false
+	}
+	if policy.InboundCoordinatorUserDecisionAudience == "all" {
+		return true
+	}
+	matches := func(raw string) bool {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			return false
+		}
+		for _, allowed := range policy.InboundCoordinatorUserDecisionNames {
+			if name == strings.TrimSpace(allowed) {
+				return true
+			}
+		}
+		return false
+	}
+	if !matches(c.Event.Data.Sender.DisplayName) {
+		return false
+	}
+	for _, message := range c.Event.Data.Messages {
+		if message.SenderDisplayName != "" && !matches(message.SenderDisplayName) {
+			return false
+		}
+	}
+	return true
+}
+
+func sameUserDecisionCollectAudience(policy db.GetAgentDingTalkResponsePolicyRow, a, b DispatchCommand) bool {
+	enabledA, enabledB := userDecisionEnabledForCommand(policy, a), userDecisionEnabledForCommand(policy, b)
+	return enabledA == enabledB && (!enabledA || sameDecisionAuthor(a, b))
+}
+
+// The existing enable bit remains authoritative for older clients and binaries.
+func userDecisionMode(coordinator, enabled bool, audience string) string {
+	if !coordinator || !enabled {
+		return "off"
+	}
+	if audience == "all" {
+		return "all"
+	}
+	return "named"
+}
+
+func validateUserDecisionMode(req UpdateAgentRequest) error {
+	if req.InboundCoordinatorUserDecisionMode == nil {
+		return nil
+	}
+	mode := *req.InboundCoordinatorUserDecisionMode
+	if mode != "off" && mode != "all" && mode != "named" {
+		return errors.New("inbound_coordinator_user_decision_mode must be off, all, or named")
+	}
+	if req.InboundCoordinatorUserDecision != nil && *req.InboundCoordinatorUserDecision != (mode != "off") {
+		return errors.New("inbound_coordinator_user_decision conflicts with inbound_coordinator_user_decision_mode")
+	}
+	return nil
+}
+
+func applyUserDecisionMode(req UpdateAgentRequest, params *db.UpdateAgentDingTalkResponsePolicyParams) {
+	if req.InboundCoordinatorUserDecisionMode != nil {
+		mode := *req.InboundCoordinatorUserDecisionMode
+		params.UserDecision = pgtype.Bool{Bool: mode != "off", Valid: true}
+		// Disabling preserves the last audience and names for a later explicit selection.
+		if mode != "off" {
+			params.UserDecisionAudience = pgtype.Text{String: mode, Valid: true}
+		}
+	} else if req.InboundCoordinatorUserDecisionNames != nil || (req.InboundCoordinatorUserDecision != nil && *req.InboundCoordinatorUserDecision) {
+		// A legacy client editing its name-based switch must never enable everyone.
+		params.UserDecisionAudience = pgtype.Text{String: "named", Valid: true}
+	}
 }

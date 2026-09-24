@@ -66,6 +66,17 @@ func (l *CloudSandboxLauncher) LaunchTask(ctx context.Context, task db.AgentTask
 	}
 }
 
+// TaskTerminal forwards to the FC launcher, which ignores other backends
+// after it reloads the task's Runtime off the transition path.
+func (l *CloudSandboxLauncher) TaskTerminal(task db.AgentTaskQueue) {
+	if l == nil || l.AliyunFC == nil {
+		return
+	}
+	if observer, ok := l.AliyunFC.(TaskRuntimeTerminalObserver); ok {
+		observer.TaskTerminal(task)
+	}
+}
+
 func (l *CloudSandboxLauncher) NotifyRuntimeCapacityMayBeAvailable() {
 	if l == nil || l.ASB == nil {
 		return

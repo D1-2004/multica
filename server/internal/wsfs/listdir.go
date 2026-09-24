@@ -11,6 +11,7 @@ type DirEntry struct {
 	Path    string `json:"path"`
 	IsDir   bool   `json:"is_dir"`
 	Size    int64  `json:"size_bytes"`
+	SHA256  string `json:"sha256,omitempty"`
 	ModTime string `json:"modified_at,omitempty"`
 }
 

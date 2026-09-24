@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -202,5 +203,154 @@ func TestUpdateAgentDingTalkResponsePolicyRequiresManageAccess(t *testing.T) {
 				t.Fatalf("expected %d, got %d: %s", tc.status, w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestUpdateAgentUserDecisionNamesRoundTrip(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "decision-names", nil)
+	for _, tc := range []struct {
+		body     map[string]any
+		names    []string
+		revision int64
+		enabled  bool
+	}{
+		{map[string]any{"inbound_coordinator": true, "inbound_coordinator_user_decision": true, "inbound_coordinator_user_decision_names": []string{" 冬翔 ", "", "冬翔", "Alice"}}, []string{"冬翔", "Alice"}, 2, true},
+		{map[string]any{"description": "Unrelated update"}, []string{"冬翔", "Alice"}, 2, true},
+		{map[string]any{"inbound_coordinator_user_decision_names": []string{"冬翔", "Alice"}}, []string{"冬翔", "Alice"}, 2, true},
+		{map[string]any{"inbound_coordinator_user_decision_names": []string{}}, []string{}, 3, true},
+		{map[string]any{"inbound_coordinator": false}, []string{}, 4, false},
+	} {
+		w := updateAgentForTest(t, agentID, tc.body)
+		if w.Code != http.StatusOK {
+			t.Fatalf("update: %d %s", w.Code, w.Body.String())
+		}
+		var response AgentResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(response.InboundCoordinatorUserDecisionNames, tc.names) || response.DingTalkResponsePolicyRevision != tc.revision || response.InboundCoordinatorUserDecision != tc.enabled {
+			t.Fatalf("unexpected response: names=%v revision=%d enabled=%v", response.InboundCoordinatorUserDecisionNames, response.DingTalkResponsePolicyRevision, response.InboundCoordinatorUserDecision)
+		}
+	}
+	for _, value := range []any{"冬翔", []any{"冬翔", 1}, 1} {
+		w := updateAgentForTest(t, agentID, map[string]any{"inbound_coordinator_user_decision_names": value})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("malformed names accepted: %d", w.Code)
+		}
+	}
+}
+
+func TestUpdateAgentUserDecisionModesRoundTrip(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "decision-modes", nil)
+	for _, tc := range []struct {
+		body     map[string]any
+		mode     string
+		revision int64
+	}{
+		{map[string]any{"inbound_coordinator": true, "inbound_coordinator_user_decision_mode": "all"}, "all", 2},
+		{map[string]any{"inbound_coordinator_user_decision_mode": "all"}, "all", 2},
+		{map[string]any{"description": "Unrelated edit"}, "all", 2},
+		{map[string]any{"inbound_coordinator_user_decision_mode": "named", "inbound_coordinator_user_decision_names": []string{" 冬翔 "}}, "named", 3},
+		{map[string]any{"inbound_coordinator_user_decision_mode": "all"}, "all", 4},
+		{map[string]any{"inbound_coordinator_user_decision_mode": "off"}, "off", 5},
+		{map[string]any{"inbound_coordinator_user_decision": true}, "named", 6},
+		{map[string]any{"inbound_coordinator_user_decision_mode": "all"}, "all", 7},
+		{map[string]any{"inbound_coordinator_user_decision_names": []string{"冬翔"}}, "named", 8},
+		{map[string]any{"inbound_coordinator": false, "inbound_coordinator_user_decision_mode": "all"}, "off", 9},
+		{map[string]any{"inbound_coordinator": true}, "off", 10},
+	} {
+		w := updateAgentForTest(t, agentID, tc.body)
+		if w.Code != http.StatusOK {
+			t.Fatalf("update=%d %s", w.Code, w.Body.String())
+		}
+		var response AgentResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.InboundCoordinatorUserDecisionMode != tc.mode || response.DingTalkResponsePolicyRevision != tc.revision || response.InboundCoordinatorUserDecision != (tc.mode != "off") {
+			t.Fatalf("mode=%s revision=%d enabled=%v", response.InboundCoordinatorUserDecisionMode, response.DingTalkResponsePolicyRevision, response.InboundCoordinatorUserDecision)
+		}
+		if tc.revision >= 3 && !reflect.DeepEqual(response.InboundCoordinatorUserDecisionNames, []string{"冬翔"}) {
+			t.Fatalf("names lost: %v", response.InboundCoordinatorUserDecisionNames)
+		}
+	}
+}
+
+func TestUpdateAgentRejectsInvalidDecisionModeBeforeAnyWrite(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "decision-mode-invalid", nil)
+	before, err := testHandler.Queries.GetAgent(context.Background(), parseUUID(agentID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []map[string]any{
+		{"inbound_coordinator_user_decision_mode": "invalid"},
+		{"inbound_coordinator_user_decision_mode": ""},
+		{"inbound_coordinator_user_decision_mode": nil},
+		{"inbound_coordinator_user_decision_mode": true},
+		{"inbound_coordinator_user_decision_mode": "all", "inbound_coordinator_user_decision": false},
+		{"inbound_coordinator_user_decision_mode": "off", "inbound_coordinator_user_decision": true},
+	} {
+		body["name"] = "Must not persist"
+		w := updateAgentForTest(t, agentID, body)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("invalid mode accepted=%d %s", w.Code, w.Body.String())
+		}
+		after, err := testHandler.Queries.GetAgent(context.Background(), parseUUID(agentID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after.Name != before.Name {
+			t.Fatal("invalid mode partially wrote agent")
+		}
+	}
+}
+
+func TestUserDecisionModeConcurrentPartialUpdates(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID := parseUUID(createHandlerTestAgent(t, "decision-mode-concurrent", nil))
+	if _, err := testHandler.Queries.UpdateAgentDingTalkResponsePolicy(ctx, db.UpdateAgentDingTalkResponsePolicyParams{ID: agentID, InboundCoordinator: pgtype.Bool{Bool: true, Valid: true}}); err != nil {
+		t.Fatal(err)
+	}
+	params := []db.UpdateAgentDingTalkResponsePolicyParams{
+		{ID: agentID, UserDecision: pgtype.Bool{Bool: true, Valid: true}, UserDecisionAudience: pgtype.Text{String: "all", Valid: true}},
+		{ID: agentID, ShowAiTag: pgtype.Bool{Bool: true, Valid: true}},
+	}
+	start, results := make(chan struct{}), make(chan error, len(params))
+	for _, param := range params {
+		conn, err := testPool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(conn.Release)
+		go func() {
+			<-start
+			_, err := db.New(conn).UpdateAgentDingTalkResponsePolicy(ctx, param)
+			results <- err
+		}()
+	}
+	close(start)
+	for range params {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy, err := testHandler.Queries.GetAgentDingTalkResponsePolicy(ctx, agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !policy.InboundCoordinatorUserDecision || policy.InboundCoordinatorUserDecisionAudience != "all" || !policy.DingtalkShowAiTag || policy.DingtalkResponsePolicyRevision != 4 {
+		t.Fatalf("lost concurrent mode update: %+v", policy)
 	}
 }

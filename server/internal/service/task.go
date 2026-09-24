@@ -130,6 +130,13 @@ type TaskRuntimeCapacityWakeup interface {
 	NotifyRuntimeCapacityMayBeAvailable()
 }
 
+// TaskRuntimeTerminalObserver learns that a task reached a terminal state, so
+// a cloud runtime can release or shorten the sandbox it ran in. It must return
+// promptly: it is called on the task transition path.
+type TaskRuntimeTerminalObserver interface {
+	TaskTerminal(task db.AgentTaskQueue)
+}
+
 // triggerSummaryMaxLen caps the snapshot length so the row stays cheap to
 // transmit (it ends up in every task list response). 200 is enough for a
 // recognisable preview of a one-paragraph comment.
@@ -777,6 +784,7 @@ func (s *TaskService) captureTaskStarted(ctx context.Context, task db.AgentTaskQ
 
 func (s *TaskService) captureTaskCompleted(ctx context.Context, task db.AgentTaskQueue) {
 	s.observeTaskTerminal(ctx, task)
+	s.notifyRuntimeTaskEnded(task)
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
@@ -785,6 +793,7 @@ func (s *TaskService) captureTaskCompleted(ctx context.Context, task db.AgentTas
 
 func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQueue) {
 	s.observeTaskTerminal(ctx, task)
+	s.notifyRuntimeTaskEnded(task)
 	failureReason := taskFailureReason(task)
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
@@ -795,6 +804,7 @@ func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQu
 
 func (s *TaskService) captureTaskCancelled(ctx context.Context, task db.AgentTaskQueue) {
 	s.observeTaskTerminal(ctx, task)
+	s.notifyRuntimeTaskEnded(task)
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
@@ -2121,7 +2131,6 @@ type DirectChatSendResult struct {
 	Message            db.ChatMessage
 	BoundAttachmentIDs []pgtype.UUID
 	Queued             bool
-	Replayed           bool
 }
 
 var ErrChatSessionAlreadyStarted = errors.New("chat session already has a user message")
@@ -2163,22 +2172,6 @@ func (s *TaskService) SendDirectChatMessageWithContext(
 	baseTaskContext []byte,
 	trace chattrace.Trace,
 ) (*DirectChatSendResult, error) {
-	return s.sendDirectChatMessage(ctx, session, agent, initiatorUserID, content, attachmentIDs, uploaderType, uploaderID, baseTaskContext, trace, nil)
-}
-
-func (s *TaskService) sendDirectChatMessage(
-	ctx context.Context,
-	session db.ChatSession,
-	agent db.Agent,
-	initiatorUserID pgtype.UUID,
-	content string,
-	attachmentIDs []pgtype.UUID,
-	uploaderType string,
-	uploaderID pgtype.UUID,
-	baseTaskContext []byte,
-	trace chattrace.Trace,
-	native *dshNativeChatAdmission,
-) (*DirectChatSendResult, error) {
 	taskContext, err := chattrace.Merge(baseTaskContext, trace)
 	if err != nil {
 		return nil, fmt.Errorf("build direct chat trace context: %w", err)
@@ -2201,11 +2194,6 @@ func (s *TaskService) sendDirectChatMessage(
 
 	var out DirectChatSendResult
 	if err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, tx pgx.Tx) error {
-		if native != nil {
-			if err := native.lockAdmission(ctx, tx); err != nil {
-				return err
-			}
-		}
 		// Serialise this send against a concurrent runtime rebind of the same
 		// session (MUL-5163). The lock must be taken first and the agent re-read
 		// under it: the runtime_id the caller loaded can already be stale by the
@@ -2234,20 +2222,6 @@ func (s *TaskService) sendDirectChatMessage(
 		if !carrier.RuntimeID.Valid {
 			return ErrChatTaskAgentNoRuntime
 		}
-		if native != nil {
-			if err := native.checkLocked(ctx, tx, qtx, currentSession, carrier, initiatorUserID); err != nil {
-				return err
-			}
-			replay, err := native.replay(ctx, tx, qtx, currentSession, carrier, initiatorUserID, content)
-			if err != nil {
-				return err
-			}
-			if replay != nil {
-				out = *replay
-				return nil
-			}
-		}
-
 		// The database status of every newly-created task is "queued" until a
 		// daemon claims it. Product queue semantics are positional instead: this
 		// send is a follow-up only when another visible task in the same session
@@ -2257,9 +2231,6 @@ func (s *TaskService) sendDirectChatMessage(
 		queued, err := qtx.HasPendingChatTurnForSession(ctx, session.ID)
 		if err != nil {
 			return fmt.Errorf("check direct chat queue position: %w", err)
-		}
-		if native != nil && native.input.Prompt != nil && native.input.Prompt.Mode == "steer" && queued {
-			return ErrDSHNativeSteerBusy
 		}
 		out.Queued = queued
 
@@ -2289,12 +2260,6 @@ func (s *TaskService) sendDirectChatMessage(
 			return fmt.Errorf("stamp direct chat input owner: %w", err)
 		}
 		out.Task = task
-		if native != nil {
-			if err := native.bind(ctx, tx, currentSession, task); err != nil {
-				return err
-			}
-		}
-
 		// Adopt the onboarding kickoff, if this session still has an unowned one.
 		// It is written by OpenMikaOnboardingChat with no task, so this is the
 		// only thing that ever delivers it to a runtime — and it must happen
@@ -2310,20 +2275,13 @@ func (s *TaskService) sendDirectChatMessage(
 			return fmt.Errorf("adopt onboarding kickoff: %w", err)
 		}
 
-		var nativeSource []byte
-		if native != nil {
-			nativeSource, err = dshNativeSource(native.input.Prompt)
-			if err != nil {
-				return err
-			}
-		}
 		// Create the user message already owned by this task (task_id = task.id),
 		// so it belongs to this immutable input batch the instant it exists.
 		msg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
 			ChatSessionID: session.ID,
 			Role:          "user",
 			Content:       content,
-			SourcePayload: nativeSource,
+			SourcePayload: nil,
 			TaskID:        task.ID,
 			MessageKind:   pgtype.Text{String: protocol.ChatMessageKindMessage, Valid: true},
 		})
@@ -2359,9 +2317,6 @@ func (s *TaskService) sendDirectChatMessage(
 		return nil, err
 	}
 
-	if out.Replayed {
-		return &out, nil
-	}
 	slog.Info("direct chat task enqueued",
 		"task_id", util.UUIDToString(out.Task.ID),
 		"chat_session_id", util.UUIDToString(session.ID),
@@ -6560,10 +6515,31 @@ func taskEvent(eventType string, route humanRealtimeRoute, task db.AgentTaskQueu
 }
 
 func (s *TaskService) publishTaskEvent(eventType string, route humanRealtimeRoute, task db.AgentTaskQueue, extra ...map[string]any) {
+	s.notifyRuntimeTaskTerminal(eventType, task)
 	if route.workspaceID == "" {
 		return
 	}
 	s.Bus.Publish(taskEvent(eventType, route, task, extra...))
+}
+
+// notifyRuntimeTaskTerminal forwards terminal task events. The capture*
+// helpers notify too, so a terminal write reaches the runtime whether it
+// published an event (unroutable ones included) or only recorded metrics, as
+// agent archiving does. The observer drops duplicates.
+func (s *TaskService) notifyRuntimeTaskTerminal(eventType string, task db.AgentTaskQueue) {
+	switch eventType {
+	case protocol.EventTaskCompleted, protocol.EventTaskFailed, protocol.EventTaskCancelled:
+		s.notifyRuntimeTaskEnded(task)
+	}
+}
+
+func (s *TaskService) notifyRuntimeTaskEnded(task db.AgentTaskQueue) {
+	if s == nil || s.RuntimeLauncher == nil {
+		return
+	}
+	if observer, ok := s.RuntimeLauncher.(TaskRuntimeTerminalObserver); ok {
+		observer.TaskTerminal(task)
+	}
 }
 
 func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, task db.AgentTaskQueue, extra ...map[string]any) {
@@ -6572,6 +6548,7 @@ func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, 
 	}
 	route, ok := s.humanRealtimeRouteForTask(ctx, task)
 	if !ok {
+		s.notifyRuntimeTaskTerminal(eventType, task)
 		return
 	}
 	s.publishTaskEvent(eventType, route, task, extra...)
@@ -6600,6 +6577,7 @@ func (s *TaskService) publishTaskFailedEvent(route humanRealtimeRoute, task db.A
 func (s *TaskService) broadcastTaskFailedEvent(ctx context.Context, task db.AgentTaskQueue, errMsg, failureReason string, retryPending bool) {
 	route, ok := s.humanRealtimeRouteForTask(ctx, task)
 	if !ok {
+		s.notifyRuntimeTaskTerminal(protocol.EventTaskFailed, task)
 		return
 	}
 	s.publishTaskFailedEvent(route, task, errMsg, failureReason, retryPending)

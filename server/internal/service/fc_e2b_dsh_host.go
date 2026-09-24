@@ -16,11 +16,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dshprofile"
+	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/wsfs"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -34,6 +37,188 @@ const dshNativeStartupTimeout = 320 * time.Second
 
 var errDSHHostWaiting = errors.New("DSH employee host is awaiting reconciliation or task drain")
 var errDSHHostStartup = errors.New("DSH employee native startup failed")
+
+type dshHostWaitError struct {
+	reason string
+}
+
+func (e dshHostWaitError) Error() string {
+	if e.reason == "" {
+		return errDSHHostWaiting.Error()
+	}
+	return errDSHHostWaiting.Error() + ": " + e.reason
+}
+
+func (e dshHostWaitError) Unwrap() error { return errDSHHostWaiting }
+
+func waitDSHHost(reason string) error {
+	return dshHostWaitError{reason: reason}
+}
+
+func (l *FCE2BLauncher) deferDSHHostWaiting(ctx context.Context, exec interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, task db.AgentTaskQueue, attempt db.AgentTaskRuntimeStartAttempt, waitErr error) (fcE2BLaunchSubmission, bool, error) {
+	if _, recordErr := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "dsh_host_waiting"); recordErr != nil {
+		return fcE2BLaunchSubmission{}, false, recordErr
+	}
+	reason := dshWaitReason(waitErr)
+	if exec != nil {
+		if _, err := exec.Exec(ctx, `UPDATE agent_task_queue SET wait_reason=$2 WHERE id=$1 AND status='queued'`, task.ID, reason); err != nil {
+			slog.Warn("dsh host wait_reason write failed", "task_id", util.UUIDToString(task.ID), "error", err)
+		}
+	}
+	slog.Info("FC/E2B launch deferred by DSH host wait",
+		"event", "fc_e2b_launch_deferred",
+		"task_id", util.UUIDToString(task.ID),
+		"runtime_id", util.UUIDToString(task.RuntimeID),
+		"reason", reason,
+	)
+	return fcE2BLaunchSubmission{}, true, nil
+}
+
+func dshWaitReason(err error) string {
+	var wait dshHostWaitError
+	if errors.As(err, &wait) && wait.reason != "" {
+		return wait.reason
+	}
+	switch {
+	case strings.Contains(err.Error(), dshhost.WaitSandboxUnhealthy):
+		return dshhost.WaitSandboxUnhealthy
+	case strings.Contains(err.Error(), dshhost.WaitDestroyUnconfirmed):
+		return dshhost.WaitDestroyUnconfirmed
+	case strings.Contains(err.Error(), dshhost.WaitCreateIntentStale):
+		return dshhost.WaitCreateIntentStale
+	case strings.Contains(err.Error(), dshhost.WaitTaskDrainBusy):
+		return dshhost.WaitTaskDrainBusy
+	}
+	return "dsh_host_waiting"
+}
+
+// sharedLaunchKeep reuses the historical private ensure path.
+// sharedLaunchOffer may attach a shared mount only when the sandbox is created.
+// sharedLaunchRevoke drops a shared mount after an explicit none grant.
+// sharedLaunchConstrain compares a read grant with a mount the sandbox already
+// has. It must not attach a shared volume to a newly created sandbox.
+type sharedLaunchMode int
+
+const (
+	sharedLaunchKeep sharedLaunchMode = iota
+	sharedLaunchOffer
+	sharedLaunchRevoke
+	sharedLaunchConstrain
+)
+
+// classifySharedLaunch separates a prepared mount, an unready binding, and a revoke.
+// Mounting follows the grant and the prepared volume. It does not depend on
+// whether the runtime image lists workspace_shared_disk. A prepare failure must
+// not retire a healthy sandbox. An explicit revoke must.
+// Unknown create results are handled by the creating fence, not by this mode.
+func classifySharedLaunch(_ bool, decision wsfs.MountDecision, notReady bool) sharedLaunchMode {
+	if decision.Revoked {
+		return sharedLaunchRevoke
+	}
+	if notReady || decision.Shared == nil {
+		return sharedLaunchKeep
+	}
+	return sharedLaunchOffer
+}
+
+func sharedTarget(decision wsfs.MountDecision) dshhost.SharedTarget {
+	volume := ""
+	if decision.Shared != nil {
+		volume = decision.Shared.Name
+	}
+	other := decision.RWVolume
+	if decision.Access == wsfs.AccessWrite {
+		other = decision.ROVolume
+	}
+	return dshhost.SharedTarget{
+		Access:          decision.Access,
+		Volume:          volume,
+		OtherVolume:     other,
+		RoleARN:         decision.RoleARN,
+		GrantGeneration: decision.GrantGeneration,
+	}
+}
+
+func adoptedSharedTarget(mode sharedLaunchMode, decision wsfs.MountDecision) *dshhost.SharedTarget {
+	switch mode {
+	case sharedLaunchRevoke:
+		target := dshhost.SharedTarget{Access: "none", GrantGeneration: decision.GrantGeneration}
+		return &target
+	case sharedLaunchOffer, sharedLaunchConstrain:
+		if decision.Shared == nil || decision.Shared.Name == "" || decision.RoleARN == "" {
+			return nil
+		}
+		target := sharedTarget(decision)
+		if mode == sharedLaunchConstrain {
+			target.Access = wsfs.AccessRead
+		}
+		return &target
+	default:
+		return nil
+	}
+}
+
+func retireUnusedSharedCandidate(ctx context.Context, conn *pgxpool.Conn, manager dshhost.Manager, key dshhost.Key, host dshhost.Host, workspaceID, excludeTask pgtype.UUID, scopeID uuid.UUID) error {
+	var taskBusy bool
+	err := conn.QueryRow(ctx, `SELECT EXISTS (
+ SELECT 1 FROM agent_task_queue t JOIN agent a ON a.id=t.agent_id
+ WHERE a.workspace_id=$1 AND t.agent_id=$2 AND t.id IS DISTINCT FROM $3::uuid
+ AND ((t.status IN ('dispatched','running','waiting_local_directory') AND ($5::uuid='00000000-0000-0000-0000-000000000000'::uuid OR EXISTS
+ (SELECT 1 FROM agent_task_runtime_start_attempt active WHERE active.task_id=t.id AND active.sandbox_id=$4))) OR
+ (t.status='queued' AND EXISTS (SELECT 1 FROM agent_task_runtime_start_attempt s
+ WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))`,
+		workspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, host.SandboxID, scopeID).Scan(&taskBusy)
+	if err != nil {
+		return err
+	}
+	if taskBusy {
+		return waitDSHHost(dshhost.WaitTaskDrainBusy)
+	}
+	if err = manager.Retire(ctx, key, host.Generation); err != nil {
+		reason := dshWaitReason(err)
+		if reason == "dsh_host_waiting" {
+			reason = dshhost.WaitDestroyUnconfirmed
+		}
+		return waitDSHHost(reason)
+	}
+	return nil
+}
+
+func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Database, key dshhost.Key, before *dshhost.Host, _ []byte) (decision wsfs.MountDecision, mode sharedLaunchMode) {
+	decision = wsfs.MountDecision{Private: before, RoleARN: before.RoleARN}
+	if l.ReadWorkspaceMount == nil {
+		return decision, sharedLaunchKeep
+	}
+	// Always read the grant. Image metadata must not hide a prepared mount,
+	// an explicit revoke, or a narrower grant.
+	got, err := l.ReadWorkspaceMount(ctx, conn, key.WorkspaceID, key.AgentID, before)
+	if err != nil {
+		if errors.Is(err, wsfs.ErrSharedDiskNotReady) && got.Access == wsfs.AccessRead {
+			// The read grant is already confirmed. The missing composite role
+			// must not turn that into an unconstrained reuse of a writable mount.
+			if got.Private == nil {
+				got.Private = before
+			}
+			return got, sharedLaunchConstrain
+		}
+		slog.Warn("workspace filesystem mount not ready; launching without the shared mount",
+			"error", err,
+			"workspace_id", key.WorkspaceID,
+			"agent_id", key.AgentID,
+		)
+		return decision, sharedLaunchKeep
+	}
+	if got.Private == nil {
+		got.Private = before
+	}
+	if got.RoleARN == "" {
+		got.RoleARN = before.RoleARN
+	}
+	return got, classifySharedLaunch(false, got, false)
+}
+
 var dshAccessPointPattern = regexp.MustCompile(`^acs:nas:[a-z0-9-]+:[0-9]+:accesspoint/(ap-[a-z0-9]+)$`)
 
 func employeeFilesystemScopeID(scope dshhost.SessionScope) uuid.UUID {
@@ -83,38 +268,10 @@ func lockDSHEmployee(ctx context.Context, conn *pgxpool.Conn, workspace, agent p
 	return func() { releaseFCE2BAdvisoryLock(conn, false, dshEmployeeLockClass, key, "DSH employee") }, nil
 }
 
-// EnsureDSHEmployeeHost starts or recovers the employee writer for a human
-// native entry. The caller checks management permission before this operation
-// and again when issuing access. No task or runner is fabricated for UI startup.
-func (l *FCE2BLauncher) EnsureDSHEmployeeHost(ctx context.Context, key dshhost.Key) (dshhost.Host, error) {
-	l = l.withCurrentConfig()
-	var host dshhost.Host
-	err := l.withDSHEmployee(ctx, key, func(conn *pgxpool.Conn, runtime db.AgentRuntime, template string) error {
-		// Prefer the most recently used session host, so an entry opened after
-		// a platform task observes the same native process and live events.
-		var scopeID uuid.UUID
-		err := conn.QueryRow(ctx, `SELECT scope_id FROM employee_filesystem_sandbox
- WHERE workspace_id=$1 AND agent_id=$2 ORDER BY updated_at DESC,scope_id LIMIT 1`, key.WorkspaceID, key.AgentID).Scan(&scopeID)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		if scopeID != uuid.Nil {
-			release, err := lockEmployeeFilesystemScope(ctx, conn, key, scopeID)
-			if err != nil {
-				return err
-			}
-			defer release()
-		}
-		host, _, err = l.resolveFilesystemScopeSandbox(ctx, key, scopeID, pgtype.UUID{}, runtime, template, conn, chattrace.New("dsh_native_entry"))
-		return err
-	})
-	return host, err
-}
-
 // All human Home/Profile operations use the same Runtime-to-employee lock order
 // as task admission. The operation runs against the reloaded current binding.
 func (l *FCE2BLauncher) withDSHEmployee(ctx context.Context, key dshhost.Key, operation func(*pgxpool.Conn, db.AgentRuntime, string) error) error {
-	if l == nil || l.Queries == nil || l.Pool == nil || !l.Config.Enabled || l.nativeAuthority == nil || key.WorkspaceID == uuid.Nil || key.AgentID == uuid.Nil {
+	if l == nil || l.Queries == nil || l.Pool == nil || !l.Config.Enabled || key.WorkspaceID == uuid.Nil || key.AgentID == uuid.Nil {
 		return errors.New("DSH employee startup is unavailable")
 	}
 	if err := l.Config.Validate(); err != nil {
@@ -205,68 +362,123 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			return dshhost.Host{}, false, errDSHHostWaiting
 		}
 	}
-	var provider dshhost.Provider
-	if l.dshProvider != nil {
-		provider, err = l.dshProvider(before.Storage)
-	} else {
-		provider, err = dshhost.NewFCProvider(dshhost.FCConfig{
-			APIURL: l.Config.APIURL, APIKey: l.Config.APIKey, TimeoutSeconds: l.Config.TimeoutSeconds,
-			VPCID: before.VPCID, SecurityGroupID: before.SecurityGroupID, VSwitchIDs: before.VSwitchIDs,
-		})
-	}
+	provider, err := l.dshHostProvider(before.Storage)
 	if err != nil {
 		return dshhost.Host{}, false, err
 	}
 	manager := dshhost.Manager{Store: store, Provider: provider}
+	decision, launchMode := l.workspaceMountDecision(ctx, conn, key, &before, rt.Metadata)
+	ensureHost := func() (dshhost.Host, error) {
+		switch launchMode {
+		case sharedLaunchRevoke:
+			return manager.EnsurePrivate(ctx, key, template)
+		case sharedLaunchOffer:
+			if decision.Shared != nil && decision.RoleARN != "" {
+				return manager.EnsureWithSharedGrant(ctx, key, template, sharedTarget(decision))
+			}
+		case sharedLaunchConstrain:
+			target := sharedTarget(decision)
+			target.Access = wsfs.AccessRead
+			if target.Volume == "" {
+				target.Volume = decision.ROVolume
+			}
+			if target.OtherVolume == "" {
+				target.OtherVolume = decision.RWVolume
+			}
+			h, err := manager.Store.Get(ctx, key)
+			if err != nil {
+				return dshhost.Host{}, err
+			}
+			if h.State != "running" {
+				return manager.Ensure(ctx, key, template)
+			}
+			if target.Volume != "" && target.RoleARN != "" && target.RoleARN != h.RoleARN {
+				return manager.EnsureWithSharedGrant(ctx, key, template, target)
+			}
+			return manager.AuthorizeRunning(ctx, h, &target)
+		}
+		return manager.Ensure(ctx, key, template)
+	}
+	ensureWithFallback := func() (dshhost.Host, error) {
+		host, err := ensureHost()
+		if errors.Is(err, dshhost.ErrCreateRejected) && decision.Shared != nil {
+			// A shared-mount create FC refuses must not cost the task: the
+			// rejected intent is already released, so create private-only.
+			slog.Warn("shared-mount sandbox create rejected; launching without the shared mount",
+				"error", err,
+				"workspace_id", key.WorkspaceID,
+				"agent_id", key.AgentID,
+			)
+			decision = wsfs.MountDecision{Private: &before, RoleARN: before.RoleARN}
+			launchMode = sharedLaunchKeep
+			return manager.Ensure(ctx, key, template)
+		}
+		return host, err
+	}
 	var host dshhost.Host
 	if before.State == "creating" {
 		host, err = manager.ReconcileCreate(ctx, key)
 		if err != nil {
-			return dshhost.Host{}, false, errDSHHostWaiting
+			slog.Info("dsh host waiting", "reason", dshhost.WaitCreateIntentStale, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
+			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitCreateIntentStale)
 		}
+		host, err = manager.AuthorizeRunning(ctx, host, adoptedSharedTarget(launchMode, decision))
 	} else if before.State == "retiring" {
 		err = dshhost.ErrRetireRequired
 	} else {
-		host, err = manager.Ensure(ctx, key, template)
+		host, err = ensureWithFallback()
+	}
+	// A creating host adopted above already has its sandbox. Drain checks and
+	// logs must use it, not the empty pre-adoption sandbox ID.
+	retireSandboxID := before.SandboxID
+	if before.State == "creating" && host.SandboxID != "" {
+		retireSandboxID = host.SandboxID
 	}
 	if errors.Is(err, dshhost.ErrRetireRequired) || (err == nil && host.TemplateID != template) {
-		var busy bool
+		if errors.Is(err, dshhost.ErrRetireRequired) && strings.Contains(err.Error(), dshhost.WaitSandboxUnhealthy) {
+			slog.Info("dsh host waiting", "reason", dshhost.WaitSandboxUnhealthy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", retireSandboxID)
+		}
+		var taskBusy bool
 		// A submitted background runner can still be queued before claiming.
 		// Treat its persisted sandbox receipt as active admission, too.
-		// Live native grants also reserve a healthy generation until revoked or
-		// expired. A retiring generation already rejects those grants; its
-		// remaining task writers must still drain before destruction.
 		err = conn.QueryRow(ctx, `SELECT EXISTS (
  SELECT 1 FROM agent_task_queue t JOIN agent a ON a.id=t.agent_id
  WHERE a.workspace_id=$1 AND t.agent_id=$2 AND t.id IS DISTINCT FROM $3::uuid
- AND ((t.status IN ('dispatched','running','waiting_local_directory') AND ($7::uuid='00000000-0000-0000-0000-000000000000'::uuid OR EXISTS
+ AND ((t.status IN ('dispatched','running','waiting_local_directory') AND ($5::uuid='00000000-0000-0000-0000-000000000000'::uuid OR EXISTS
  (SELECT 1 FROM agent_task_runtime_start_attempt active WHERE active.task_id=t.id AND active.sandbox_id=$4))) OR
  (t.status='queued' AND EXISTS (SELECT 1 FROM agent_task_runtime_start_attempt s
- WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))
- OR ($5 AND EXISTS (SELECT 1 FROM dsh_native_access n
- WHERE n.workspace_id=$1 AND n.agent_id=$2 AND n.sandbox_id=$4 AND n.generation=$6
- AND n.parent_access_id IS NULL AND n.kind IN ('entry','session') AND n.expires_at>now()))`,
-			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, before.SandboxID, before.State == "running", before.Generation, scopeID).Scan(&busy)
+ WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))`,
+			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, retireSandboxID, scopeID).Scan(&taskBusy)
 		if err != nil {
 			return dshhost.Host{}, false, err
 		}
-		if busy {
-			return dshhost.Host{}, false, errDSHHostWaiting
+		if taskBusy {
+			slog.Info("dsh host waiting", "reason", dshhost.WaitTaskDrainBusy, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", retireSandboxID)
+			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitTaskDrainBusy)
 		}
 		current, loadErr := store.Get(ctx, key)
 		if loadErr != nil {
 			return dshhost.Host{}, false, loadErr
 		}
 		if err = manager.Retire(ctx, key, current.Generation); err != nil {
-			return dshhost.Host{}, false, errDSHHostWaiting
+			reason := dshWaitReason(err)
+			if reason == "dsh_host_waiting" {
+				reason = dshhost.WaitDestroyUnconfirmed
+			}
+			slog.Info("dsh host waiting", "reason", reason, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", current.Generation, "sandbox_id", current.SandboxID)
+			return dshhost.Host{}, false, waitDSHHost(reason)
 		}
 		if isDSH && revision.Descriptor == "" {
 			return dshhost.Host{}, false, errDSHHostWaiting
 		}
-		host, err = manager.Ensure(ctx, key, template)
+		host, err = ensureWithFallback()
 	}
 	if errors.Is(err, dshhost.ErrPending) || errors.Is(err, dshhost.ErrChanged) {
-		return dshhost.Host{}, false, errDSHHostWaiting
+		reason := dshWaitReason(err)
+		// The error names the provider outcome (an HTTP status, never a body),
+		// which is the only record of why a create was rejected.
+		slog.Info("dsh host waiting", "reason", reason, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "error", err)
+		return dshhost.Host{}, false, waitDSHHost(reason)
 	}
 	if err != nil {
 		return dshhost.Host{}, false, err
@@ -280,10 +492,26 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	} else {
 		err = l.checkSandboxReady(ctx, host.SandboxID)
 	}
+	if err != nil && cold && launchMode == sharedLaunchOffer && decision.Shared != nil {
+		// The shared candidate was created for this call and is not executable.
+		// Confirm it is unused and gone, then create one private sandbox.
+		// A healthy host is not on this path. An unconfirmed destroy does not
+		// start a second sandbox.
+		if retireErr := retireUnusedSharedCandidate(ctx, conn, manager, key, host, rt.WorkspaceID, excludeTask, scopeID); retireErr != nil {
+			return dshhost.Host{}, true, retireErr
+		}
+		var privateHost dshhost.Host
+		privateHost, err = manager.Ensure(ctx, key, template)
+		if err != nil {
+			return dshhost.Host{}, true, err
+		}
+		host = privateHost
+		err = l.waitSandboxReady(ctx, host.SandboxID)
+	}
 	if err != nil {
 		return dshhost.Host{}, cold, err
 	}
-	if _, err = l.renewSandboxForTask(ctx, host.SandboxID, trace); err != nil {
+	if _, err = l.renewEmployeeHostSandbox(ctx, host.SandboxID, trace); err != nil {
 		return dshhost.Host{}, cold, err
 	}
 	args, err := dshHomePrepareArgs(host)
@@ -292,7 +520,15 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	}
 	out, err := l.runE2BCommand(ctx, args)
 	if err != nil {
-		return dshhost.Host{}, cold, errors.New("DSH employee Home initialization failed")
+		slog.Warn("DSH employee Home initialization command failed",
+			"sandbox_id", host.SandboxID,
+			"workspace_id", host.WorkspaceID,
+			"agent_id", host.AgentID,
+			"generation", host.Generation,
+			"error", err,
+			"output", strings.TrimSpace(out),
+		)
+		return dshhost.Host{}, cold, fmt.Errorf("DSH employee Home initialization failed: %w", err)
 	}
 	if err = validateDSHHomeReceipt(out, host); err != nil {
 		return dshhost.Host{}, cold, err
@@ -301,13 +537,6 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		chattrace.LogStage(slog.Default(), trace, "employee_filesystem", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "provider", FCE2BRuntimeProvider(rt))
 		return host, cold, nil
 	}
-	// Plugin snapshots are imported by the configuration worker and settings
-	// endpoints. Task admission consumes a durable revision, never another
-	// session's live Host availability.
-	origin, authority, err := dshNativeGatewayAddress(l.Config, host)
-	if err != nil {
-		return dshhost.Host{}, cold, err
-	}
 	// An unchanged healthy host already owns this exact immutable Profile.
 	// Reopening it needs a live receipt, not another artifact delivery/staging pass.
 	status, statusErr := profiles.Status(ctx, key)
@@ -315,26 +544,11 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	if !reusedProfile && !cold {
 		// The employee acknowledgement records only the last sandbox. Another
 		// session may have acknowledged the same revision since this Host did.
-		// Prove this Host's live composition before treating its UI grant as a
-		// pending configuration change. This probe never starts or stages DSH.
+		// Prove this Host's live composition before restaging its configuration.
+		// This probe never starts or stages DSH.
 		reusedProfile = l.dshNativeHostHasProfile(ctx, host, profileDigest, revision)
 	}
 	if !reusedProfile {
-		// Native market edits are already hot-loaded in this Host. Importing
-		// them publishes the next immutable Profile for new task sandboxes;
-		// it must not restart the browser's Host underneath its live grant.
-		// --ensure rejects a changed Profile, so waiting must happen before
-		// staging/ensure rather than turning that expected change into retirement.
-		var nativeActive bool
-		if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM dsh_native_access
- WHERE workspace_id=$1 AND agent_id=$2 AND sandbox_id=$3 AND generation=$4
- AND parent_access_id IS NULL AND kind IN ('entry','session') AND expires_at>now())`,
-			key.WorkspaceID, key.AgentID, host.SandboxID, host.Generation).Scan(&nativeActive); err != nil {
-			return dshhost.Host{}, cold, err
-		}
-		if nativeActive {
-			return dshhost.Host{}, cold, errDSHHostWaiting
-		}
 		err = l.deliverDSHProfile(ctx, profiles, host, revision)
 		if err == nil {
 			err = l.stageDSHProfile(ctx, host, revision)
@@ -345,7 +559,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		// writer. An employee-wide startup lock makes unrelated sessions wait
 		// behind one slow cold start and imposes the reconciliation retry delay
 		// on healthy hosts too. Preserve task-level concurrency here.
-		out, err = l.runE2BCommandWithTimeout(ctx, dshNativeStartupTimeout, dshNativeHostEnsureArgs(host, catalog, authority, origin, l.nativeAuthority.publicKey(), revision))
+		out, err = l.runE2BCommandWithTimeout(ctx, dshNativeStartupTimeout, dshNativeHostEnsureArgs(host, catalog, revision))
 	}
 	if err == nil {
 		err = validateDSHNativeHostReceipt(out, host, profileDigest, revision)
@@ -368,6 +582,18 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	}
 	chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "managed_profile_digest", profileDigest, "employee_profile_revision", revision.ID, "employee_profile_digest", revision.Digest)
 	return host, cold, nil
+}
+
+// dshHostProvider builds the FC client for one employee's storage placement.
+func (l *FCE2BLauncher) dshHostProvider(storage dshhost.Storage) (dshhost.Provider, error) {
+	if l.dshProvider != nil {
+		return l.dshProvider(storage)
+	}
+	return dshhost.NewFCProvider(dshhost.FCConfig{
+		APIURL: l.Config.APIURL, APIKey: l.Config.APIKey, TimeoutSeconds: l.Config.TimeoutSeconds,
+		VPCID: storage.VPCID, SecurityGroupID: storage.SecurityGroupID, VSwitchIDs: storage.VSwitchIDs,
+		Origin: fcE2BSandboxOrigin(l.Config),
+	})
 }
 
 // This digest covers the image-owned managed overlay and its model catalog.
@@ -398,16 +624,12 @@ func dshManagedCatalog(models []string) (string, string, error) {
 	return raw, digest, nil
 }
 
-func dshNativeHostEnsureArgs(host dshhost.Host, catalog, authority, origin, publicKey string, revision dshprofile.Revision) []string {
+func dshNativeHostEnsureArgs(host dshhost.Host, catalog string, revision dshprofile.Revision) []string {
 	return []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=",
 		"-e", "DSH_HOME=" + dshhost.MountPath + "/home", "-e", "MULTICA_DSH_WORKSPACE_ID=" + host.WorkspaceID.String(),
 		"-e", "MULTICA_DSH_AGENT_ID=" + host.AgentID.String(), "-e", "MULTICA_DSH_HOST_GENERATION=" + strconv.FormatInt(host.Generation, 10),
 		"-e", "MULTICA_DSH_MODEL_CATALOG_JSON=" + catalog,
 		"-e", "MULTICA_DSH_EMPLOYEE_PROFILE_FILE=" + dshProfileInputPath(revision),
-		"-e", "MULTICA_DSH_NATIVE_AUTHORITY=" + authority,
-		"-e", "MULTICA_DSH_NATIVE_PUBLIC_KEY=" + publicKey,
-		"-e", "MULTICA_DSH_NATIVE_ORIGIN=" + origin,
-		"-e", "MULTICA_DSH_SANDBOX_ID=" + host.SandboxID,
 		host.SandboxID, "--", "/usr/local/libexec/multica-dsh-host", "--ensure"}
 }
 

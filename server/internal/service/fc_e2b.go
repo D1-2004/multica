@@ -36,6 +36,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/wsfs"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -122,7 +123,7 @@ type FCE2BConfig struct {
 	Enabled                           bool
 	Template                          string
 	ServerURL                         string
-	DSHNativeAuthority                string
+	AppOrigin                         string
 	APIKey                            string
 	APIURL                            string
 	Domain                            string
@@ -158,7 +159,7 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		Enabled:                           envBool("MULTICA_FC_E2B_ENABLED"),
 		Template:                          strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TEMPLATE")),
 		ServerURL:                         strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_SERVER_URL")), "/"),
-		DSHNativeAuthority:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_APP_URL")), "/"),
+		AppOrigin:                         strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_APP_URL")), "/"),
 		APIKey:                            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_KEY")),
 		APIURL:                            strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_API_URL")), "/"),
 		Domain:                            strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DOMAIN")),
@@ -949,10 +950,13 @@ func firstString(obj map[string]any, keys ...string) string {
 }
 
 type FCE2BLauncher struct {
-	ReadDSHProfileSource dshprofile.ReadSource
-	SyncDSHProfileSource func(context.Context, *pgxpool.Conn, dshhost.Key, string, dshprofile.NativeSnapshot) error
-	ProvisionDSHStorage  func(context.Context, dshhost.Database, dshhost.Key) (dshhost.Host, error)
-	DSHArtifactSigner    interface {
+	ReadDSHProfileSource  dshprofile.ReadSource
+	ProvisionDSHStorage   func(context.Context, dshhost.Database, dshhost.Key) (dshhost.Host, error)
+	PrepareWorkspaceMount func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error)
+	// ReadWorkspaceMount is the launch-time lookup. It must not provision NAS
+	// or RAM. PrepareWorkspaceMount remains the explicit grant flow.
+	ReadWorkspaceMount func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error)
+	DSHArtifactSigner  interface {
 		PresignGet(context.Context, string, time.Duration) (string, error)
 	}
 	Queries            *db.Queries
@@ -968,7 +972,6 @@ type FCE2BLauncher struct {
 	sleep              func(context.Context, time.Duration) error
 	jitter             func(time.Duration) time.Duration
 	dshProvider        func(dshhost.Storage) (dshhost.Provider, error)
-	nativeAuthority    *dshNativeAuthorityBridge
 
 	// LLMTraceCaptureAlways turns on sandbox model request/response capture
 	// for every task on a capable runtime image, independent of Router
@@ -1139,7 +1142,6 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 		Runner:           runner,
 		AgentIdentity:    agentidentityhsf.NewClient(),
 		IdentityBindings: q,
-		nativeAuthority:  newDSHNativeAuthorityBridge(os.Getenv("JWT_SECRET")),
 		sleep:            sleepWithContext,
 		jitter:           runtimeStartRetryJitter,
 	}
@@ -1446,6 +1448,10 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 			)
 			return l.failLaunch(ctx, task, attempt.ID, failure)
 		}
+		chattrace.LogStage(slog.Default(), trace, "fc_e2b_launch", "waiting",
+			"task_id", taskID,
+			"runtime_id", runtimeID,
+		)
 		return nil
 	}
 
@@ -1553,10 +1559,7 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	if !useEmployeeFilesystem && FCE2BRuntimeProvider(runtime) == "dsh" {
 		err := l.prepareDSHTaskFilesystem(ctx, runtimeLockConn, filesystemScope.Key)
 		if errors.Is(err, errDSHHostWaiting) {
-			if _, recordErr := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "dsh_host_waiting"); recordErr != nil {
-				return fcE2BLaunchSubmission{}, false, recordErr
-			}
-			return fcE2BLaunchSubmission{}, true, nil
+			return l.deferDSHHostWaiting(ctx, runtimeLockConn, task, attempt, err)
 		}
 		if err != nil {
 			return fcE2BLaunchSubmission{}, false, err
@@ -1632,10 +1635,7 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		var host dshhost.Host
 		host, coldStart, err = l.resolveFilesystemScopeSandbox(ctx, filesystemScope.Key, filesystemScopeID, task.ID, runtime, template, runtimeLockConn, trace)
 		if errors.Is(err, errDSHHostWaiting) {
-			if _, recordErr := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "dsh_host_waiting"); recordErr != nil {
-				return fcE2BLaunchSubmission{}, false, recordErr
-			}
-			return fcE2BLaunchSubmission{}, true, nil
+			return l.deferDSHHostWaiting(ctx, runtimeLockConn, task, attempt, err)
 		}
 		sandboxID = host.SandboxID
 		employeeHost = &host
@@ -1668,6 +1668,17 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		"scope_type", scopeType,
 		"scope_id", scopeID,
 	)
+	lifecycleScope := "task"
+	if useEmployeeFilesystem {
+		lifecycleScope = "employee_" + filesystemScope.Kind
+	} else if scoped {
+		lifecycleScope = scope.typ
+	}
+	lifecycleAction := fcE2BSandboxReused
+	if coldStart {
+		lifecycleAction = fcE2BSandboxCreated
+	}
+	logFCE2BSandboxLifecycle(lifecycleAction, "task_start", task, sandboxID, lifecycleScope, nil)
 	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_resolve", "succeeded",
 		"task_id", taskID,
 		"sandbox_id", sandboxID,
@@ -1718,14 +1729,13 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		}
 		extraEnv["MULTICA_FS_ROOT"] = dshhost.MountPath
 	}
-	// Shared workspace mounts are not attached to DSH employee sandboxes
-	// unless a later grant generation supplies task_role_arn. Do not inject
-	// MULTICA_WORKSPACE_FS_* here: existing DSH users keep a single /mnt/multica.
-	if access := l.attachWorkspaceCatalog(ctx, sandboxID, runtime.WorkspaceID, task.AgentID); access != "" {
+	// Inject shared-disk env only when FC actually volume-mounted it.
+	// The value is the mount in force for this launch, not the desired grant.
+	if access := effectiveWorkspaceFSAccess(employeeHost); access != "" {
 		if extraEnv == nil {
 			extraEnv = make(map[string]string)
 		}
-		extraEnv["MULTICA_WORKSPACE_FS_ROOT"] = dshhost.WorkspaceMountPath
+		extraEnv["MULTICA_WORKSPACE_FS_ROOT"] = dshhost.WorkspaceSharedRoot
 		extraEnv["MULTICA_WORKSPACE_FS_ACCESS"] = access
 	}
 	if employeeHost != nil && FCE2BRuntimeProvider(runtime) == "dsh" {

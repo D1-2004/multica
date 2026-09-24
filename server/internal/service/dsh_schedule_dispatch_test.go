@@ -55,7 +55,7 @@ func TestDSHScheduleExecutionRetainsScopeWithoutHumanImpersonation(t *testing.T)
 func TestDSHScheduleDispatchDeniesUnconfiguredAuthority(t *testing.T) {
 	key := dshschedule.Key{WorkspaceID: uuid.New(), AgentID: uuid.New(), SessionID: uuid.NewString(), ScheduleID: "schedule-1"}
 	for _, s := range []*TaskService{nil, {}, {Queries: db.New(nil)}} {
-		if _, err := s.DispatchDSHSchedule(context.Background(), key, nil); !errors.Is(err, dshhost.ErrNativeAccessDenied) {
+		if _, err := s.DispatchDSHSchedule(context.Background(), key, nil); !errors.Is(err, ErrDSHAccessDenied) {
 			t.Fatal(err)
 		}
 	}

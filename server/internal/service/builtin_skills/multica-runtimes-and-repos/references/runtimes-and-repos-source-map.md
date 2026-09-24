@@ -1,6 +1,6 @@
 # Runtimes and repos source map
 
-- FC/E2B sandbox lifetime: `server/internal/service/fc_e2b.go` `defaultFCE2BTimeoutSeconds` (4800) and `createSandbox --timeout`; `fc_e2b_timeout.go` `sandboxTaskTimeout` / `renewSandboxForTask` use the same duration (config may raise it, never lower it). `--lifecycle.ontimeout kill`. Documented in `docs/fc-sandbox-lifecycle.md`.
+- FC/E2B sandbox lifetime: `server/internal/service/fc_e2b.go` `defaultFCE2BTimeoutSeconds` (4800) and `createSandbox --timeout`; `fc_e2b_timeout.go` `sandboxTaskTimeout` / `renewSandboxForTask` use the same duration (config may raise it, never lower it). `--lifecycle.ontimeout kill`. Release after a terminal task: `fc_e2b_sandbox_release.go` (`TaskTerminal` via `TaskRuntimeTerminalObserver` from `task.go` `publishTaskEvent`; single-use non-DSH scopes released, others trimmed to `fcE2BSandboxIdleRetention` = 10 minutes; log event `fc_e2b_sandbox_lifecycle`). Documented in `docs/fc-sandbox-lifecycle.md`.
 - Attachment upload receipts: `server/internal/handler/file.go` `AttachmentResponse.size_bytes` + `sha256`; CLI `server/internal/cli/client.go` `UploadFile` / `Receipt()`. Limit `maxUploadSize` 100 MB.
 
 - `server/internal/service/asb_capacity_gate.go` distinguishes short create pacing from cached full/429 results. `asb_capacity.go` waits the remaining pacing interval inside the current launch under the tenant lock; it preserves cancellation and never reports pacing as full quota. `asb_capacity_waiter.go` wakes the next eligible waiter after a recovery launch finishes.
@@ -53,13 +53,9 @@
 - `server/pkg/protocol/dsh_native.go` validates and clones official native prompt content with bounded transport space; `dsh_native_test.go` covers attachment-only input, invalid unions, nulls and content preservation.
 - `server/internal/handler/dsh_native_claim.go` checks task-owned input, native binding and daemon capability before delivery. `daemon.go` requeues refused claims and excludes native attachments from generic callback text. Pure claim tests cover old daemons, changed scope, binding failures and unchanged ordinary inputs.
 - `server/internal/daemon/dsh_native.go` and `server/pkg/agent/dsh_native.go` preserve native Session spelling and deliver the complete typed request to the authenticated Host control socket. Protocol-peer tests inspect actual serialized control requests without starting a local Host.
-- `server/internal/service/dsh_native_chat_test.go` includes full-input replay comparison and an opt-in real PostgreSQL persistence/busy-steer rollback case. Active steering, browser forwarding and preproduction acceptance are still pending.
 
 
 - `server/internal/dshhost/session.go` and migration `9238_dsh_browser_session_identity`: preserve official UUID and platform-prefixed Session identities; transactional native adoption refuses remapping and duplicate request ownership.
-- `server/internal/service/dsh_native_chat.go`, `task.go`, `dsh_native_chat_test.go`: native admission shares the direct-chat transaction, rechecks human invocation and exact live grant/Host, binds immutable input identity and returns an existing task on an identical retry. Includes opt-in PostgreSQL concurrent replay, input rollback, lost-commit-response and revoked/stale-grant cases; these require real preproduction execution.
-- `server/internal/service/dsh_native_session.go`, `dsh_native_session_test.go`: transactionally registers a human-owned chat and exact native mapping under Runtime/employee/workspace locks, resolves concurrent retries and rejects another creator or an issue scope. Registration is separate from input admission and never fabricates a task. Database concurrency and rollback cases require real preproduction execution.
-- `server/internal/handler/dsh_native_prompt.go`, `dsh_native_prompt_test.go`, `server/cmd/server/router.go`: capability-authenticated `POST /api/dsh-native/prompts`, strict input boundary, current invocation checks, registration plus admission, safe retry receipts and replay-aware event publication. Pure boundary tests run with `MULTICA_HANDLER_UNIT_TESTS_ONLY=1`; real browser acceptance is still pending; Gateway v3 calls the same submission method through the separate input lane.
 
 - `server/internal/handler/dsh_home.go`: human/manage-authorized status and provisioning endpoints for FC DSH agents.
 - `server/internal/dshhost/provision.go` and `provision_postgres.go`: durable placement, per-resource intent, receipt reconciliation and immutable binding.
@@ -75,21 +71,6 @@
 - `packages/views/agents/components/tabs/dsh-home-tab.tsx`: storage and host status, preparation and retry controls; owner/admin FC DSH visibility through `dsh-config-tab.tsx`.
 - `packages/core/api/dsh-home-client.test.ts`, `packages/views/agents/components/tabs/dsh-home-tab.test.tsx`: malformed response, accepted/pending, unknown write outcome, no implicit writes and cache isolation checks.
 
-## Native browser authorization
-
-- `server/internal/handler/dsh_native.go`: human entry/revocation, capability exchange/check and fresh workspace management checks.
-- `server/internal/service/fc_e2b_dsh_native.go`: deployment-owned FC origin, application authority independent of the task relay, and bounded exact gateway readiness verification; no Host lifecycle mutations.
-- `server/internal/dshhost/native_access*.go`: digest-only durable access, one-time exchange and running Host predicates.
-- `server/internal/handler/dsh_native_test.go`, `server/internal/service/fc_e2b_dsh_native_test.go`: callback replay, identity and permission boundaries, readiness mismatch and old-image rejection. Runtime/browser and PostgreSQL acceptance must run in preproduction.
-
-- `server/internal/service/fc_e2b_dsh_host.go`: shares cold startup, recovery, Runtime/employee locking and task/native-grant drain between human entry and platform launches; injects the deployment-owned gateway authority, sandbox origin and sandbox ID into the employee supervisor. Gateway readiness remains separate from native prompt/task admission.
-
-- `server/internal/service/fc_e2b.go` / `fc_e2b_dsh_host.go`: mandatory DSH employee admission lock and real Home/Host receipt verification, independent of provider-derived catalog capability labels.
-
-- `server/internal/service/fc_e2b_dsh_authority.go`: backend-initiated authorization polling, deployment signing, exact-Host decisions and bounded connection lifetime; no writer lifecycle mutations.
-
-- `packages/core/api/dsh-native-schema.ts`, `packages/core/agents/dsh-home.ts`, `packages/views/agents/components/tabs/dsh-home-tab.tsx`: scoped human native-entry request, credential-safe parsing, explicit Prepare/Enter flow and ephemeral component-owned entry URL.
-
 ## FC stable provider scope
 
 - `server/cmd/multica/cmd_runtime_stable.go`: explicit `--backend aliyun_fc --provider dsh` channel, Runtime, history and release operations; release-ID lifecycle actions preserve persisted scope.
@@ -101,7 +82,6 @@
 - `server/internal/service/fc_e2b_stable_scope_database_test.go`: opt-in real preproduction test, temporary tables and transaction rollback against installed migration functions. Requires `DSH_STABLE_SCOPE_TEST_DATABASE_URL`; never runs local database services.
 - `packages/core/api/client.ts`, `schemas.ts`, `stable-provider-scope-schema.test.ts`: optional provider query, release scope parsing and malformed/historical response checks. Existing shared-channel UI does not provide scoped publishing controls.
 
-- `server/internal/service/fc_e2b_dsh_input.go` signs correlated input receipts after current grant authorization and the shared handler admission callback. `fc_e2b_dsh_authority.go` starts independent input and access workers, bounds input polls and exposes no signing key to FC. `fc_e2b_dsh_input_test.go` covers refusal, replay, unknown outcomes, signature domains and a blocked input with concurrent successful access checks. Gateway readiness requires version 3; real preproduction/native acceptance remains pending.
 
 ## Employee plugin configuration
 
@@ -125,14 +105,14 @@
 
 ## Durable employee Profile revisions
 
-- `packages/core/agents/dsh-profile.ts` and `packages/views/agents/components/tabs/dsh-profile-status.tsx`: workspace/employee-scoped status reads, explicit preparation, desired versus confirmed versions and failed build display. Plugin edits and native entry attempts invalidate the receipt cache.
+- `packages/core/agents/dsh-profile.ts` and `packages/views/agents/components/tabs/dsh-profile-status.tsx`: workspace/employee-scoped status reads, explicit preparation, desired versus confirmed versions and failed build display. Plugin edits invalidate the receipt cache.
 
 - `server/internal/dshprofile/profile.go` and `postgres.go`: configuration-sensitive immutable revisions, credential-independent build keys, parent/publication locks, queued build intents and exact generation/configuration receipt fencing. Public status excludes private descriptors and includes employee-scoped package build states, including failures.
 - `server/migrations/9241_dsh_employee_profile.*.sql` through `9244_dsh_plugin_build_identity.*.sql`: durable Profile/build state and separately created concurrent unique indexes. Workspace teardown removes these rows in the parent transaction.
 - `server/internal/handler/dsh_profile.go`, `server/internal/service/fc_e2b_dsh_profile.go`: human manager-only status/preparation, transaction-bound effective employee settings and shared Runtime/employee lock order. No endpoint fabricates a Host receipt or starts a build/Host on read.
 - `packages/core/api/dsh-profile-schema.ts` and `dsh-profile-client.test.ts`: exact string revisions, workspace-bound requests and malformed receipt rejection.
 - `server/internal/dshprofile/postgres_test.go`: opt-in isolated-schema preproduction tests for cross-replica publication, pending builds, replay timestamps, config edits, changed revisions/generations and retiring Hosts. Local runs skip the database test.
-- `server/internal/dshprofile/delivery.go`, `server/internal/service/fc_e2b_dsh_delivery.go`, `fc_e2b_dsh_host.go`: immutable publication metadata, scoped artifact download, bounded Profile transfer into a private file, shared native/task admission and live Host receipt acknowledgement. Configuration bytes never enter build or artifact-install requests.
+- `server/internal/dshprofile/delivery.go`, `server/internal/service/fc_e2b_dsh_delivery.go`, `fc_e2b_dsh_host.go`: immutable publication metadata, scoped artifact download, bounded Profile transfer into a private file, task admission and live Host receipt acknowledgement. Configuration bytes never enter build or artifact-install requests.
 - `server/internal/service/fc_e2b_dsh_delivery_test.go`, `fc_e2b_dsh_host_test.go`: artifact identity/receipt rejection, large Profile transport, actual revision matching and opt-in multi-pool Host/revision tests. Local tests do not certify employee Home or live application.
 - `server/internal/dshprofile/build_worker.go`, `build_postgres.go`, `build_artifact.go`: durable claimed execution phases, persist-before-create, unknown-create reconciliation, scoped immutable transfer receipts, object readback verification and confirmed cleanup.
 - `server/internal/service/fc_e2b_dsh_build.go`, `server/internal/dshhost/fc_build.go`, `server/cmd/server/main.go`: capability-gated FC build driver, exact persisted sandbox identity, fixed idempotent helper commands and shared-ledger background reconciliation. No employee mounts, role or configuration in build sandboxes.
@@ -157,7 +137,6 @@
   member and invocation checks under transaction locks; native Session isolation,
   immutable retry, independently verified create/cancel provenance, atomic cancelled
   publication, individual lifecycle readback and bounded creation-ordered lists.
-- `server/internal/service/dsh_native_chat.go#lockDSHEmployeeAdmission`: shared
   Runtime-then-employee lock order; acquiring locks does not grant permission.
 - `server/internal/dshschedule`: durable registration, tombstones, due planning,
   occurrence identity and same-transaction task/binding/receipt advancement.
@@ -193,7 +172,14 @@
 - `server/internal/dshhost/filesystem_sandbox.go`, migrations `9257`–`9260`, `server/internal/service/employee_filesystem_test.go`: employee storage shared across independently selected execution sandboxes; persistent native session host routing. Filesystem write conflict management is outside this feature.
 - `server/internal/handler/dsh_home.go`, `packages/views/agents/components/agent-overview-pane.tsx`: all-FC filesystem provisioning/configuration and representative host status, with DSH settings kept together.
 
-- `server/internal/handler/dsh_native_proxy.go`: same-origin native page, scoped cookies, asset and transport path handling, FC attachment-header removal.
-- `server/internal/service/fc_e2b_dsh_profile_worker.go`, `internal/dshplugin/stored_archive.go`: automatic Profile reconciliation and integrity-checked recovery of missing pinned archives.
 
-- `server/internal/service/fc_e2b_dsh_host.go`, `fc_e2b_dsh_native.go`: read-only live Profile receipt resolves cross-session acknowledgement drift before native-entry drain checks; `fc_e2b_dsh_host_test.go` covers reopening with an existing grant after another sandbox acknowledges the same revision, plus mismatched/unavailable receipts.
+
+## Native input removal
+
+- `server/cmd/server/main.go`, `router.go`: no historical Host input worker or native prompt admission endpoint.
+- `server/internal/service/dsh_access.go`, `server/internal/handler/dsh_native_invoke.go`: invocation checks retained for task-backed schedule admission.
+- `docs/plans/2026-09-24-dsh-native-without-platform-task.md`: native-page removal scope and validation evidence; no deployment claim.
+
+- `server/internal/service/fc_e2b_dsh_profile.go`: saved configuration prepares build intents; application occurs at ordinary task startup. No employee Host is started by a Profile worker.
+- `packages/core/agents/dsh-home.ts`, `packages/views/agents/components/tabs/dsh-home-tab.tsx`: filesystem preparation only, with no native-page API or navigation.
+- `packages/views/agents/components/tabs/dsh-plugins-tab.tsx`: configuration save is confirmed by the persisted desired revision, independently of task/Host execution.

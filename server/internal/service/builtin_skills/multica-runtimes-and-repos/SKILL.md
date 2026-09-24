@@ -34,16 +34,18 @@ Home does not by itself prove that a native Host or business task is running.
 DSH Session identity is preserved exactly: official browser UUIDs and platform
 `session-UUID` identities are distinct valid names. The internal native adoption
 primitive requires the same PostgreSQL transaction as task/input creation and
-rejects scope, task or request conflicts. This storage primitive does not yet
-connect native browser prompts to task admission. Do not claim native chat is
-available from the entry page or this schema support alone.
+rejects scope, task or request conflicts. This storage primitive supports platform-dispatched tasks; it does not expose a native browser entry.
 
 A runtime is the execution target behind an agent. A daemon owns local runtime processes and claims queued tasks from the server.
 
 FC/E2B sandbox lifetime equals this task's lifetime. Create and task-start
 renewal both default to 4800 seconds (`--lifecycle.ontimeout kill`). The
 platform does not renew again while the task runs, so work that outlives
-that window can be killed with no Issue event. `nohup` / `setsid` do not
+that window can be killed with no Issue event. About 30 seconds after the
+task ends, a non-DSH sandbox that no later task can reuse (a task with
+neither an Issue nor a chat, such as a run-only autopilot) is released, and
+any other sandbox, DSH employee hosts included, keeps only a 10-minute idle
+window for the next turn on the same Issue or chat. `nohup` / `setsid` do not
 keep processes alive after the task ends. Persist patches, logs, and
 artifacts to Issue comments/attachments before exiting. Attachment upload
 receipts include `size_bytes` and `sha256`; comment JSON uses `size_bytes`,
@@ -206,23 +208,9 @@ replaced, so files stored only in that sandbox do not carry over. Active tasks
 finish with their existing policy. Ask the user to configure a missing
 destination; do not try to bypass the sandbox network policy.
 
-Human owners/admins can use the employee Configuration → Execution → DSH configuration page to read persisted storage status. The native-entry button initializes missing storage and opens DSH in one action; its label reflects storage readiness. The page distinguishes storage readiness from host running state and never creates resources on render. Interrupted or pending requests are reconciled through the same employee intent; credentials and placement remain deployment-owned.
+Human owners/admins can prepare and inspect the employee filesystem from the workbench configuration page. DSH plugin bindings and settings are managed in the workbench. A confirmed configuration save publishes the desired revision and dependency build intents; the next ordinary task applies that revision. Saving configuration neither starts an employee sandbox nor waits for a native page to become ready.
 
-Native prompt admission is exposed through `POST /api/dsh-native/prompts` with a session Bearer capability and exactly `workspace_id`, `agent_id`, `generation`, `sandbox_id`, `session_id`, `request_id`, `workdir` and `content`. Request IDs are canonical nonzero UUIDs; workdir must be `/mnt/multica/workspaces/<session_id>`. The server derives the human from the grant and registers or resolves that human's platform chat session from the native identity. Registration creates the session and mapping together, without a task or synthetic input; a later admission failure can leave this empty session for a retry. Clients cannot select a platform chat ID, human, model or credentials.
-
-The native chat admission service then writes the human input, platform task and exact native Session/request binding in one PostgreSQL transaction. Registration and admission take the same Runtime and employee admission locks as Host startup, then require current invocation permission, FC DSH runtime and an unexpired grant for the current Host generation. Existing chat mappings must belong to the same human; issue mappings cannot be adopted as chats. Identical request retries reuse the original task/message without another launch; changed input or scope conflicts are rejected. The response contains `session_id`, `request_id`, `chat_session_id`, `task_id`, `message_id`, `queued` and `replayed` (201 for new admissions, 200 for replay). An unconfirmed admission returns 503 and must be retried with the same identity. Gateway v3 forwards browser prompts through the independent reverse input lane; real PostgreSQL/browser acceptance remains pending. This HTTP endpoint alone does not make native UI business prompts available.
-
-Typed native input is preserved internally as `dsh_native_prompt` in the task-owned user message and daemon claim. It carries the original `requestId`, `sessionId`, `mode`, text/image/file content and optional `clientTimeZone`; transcript text is a display summary. Claims verify the persisted employee/Session/request binding and require `dsh-native-prompt-v1`; an old daemon cannot execute an attachment summary as a replacement. The managed FC launcher rejects missing or mismatched native launch identity, preserving both UUID and `session-UUID` names. Busy `steer` is explicitly rejected until active-task input admission exists; it is never silently converted to a queued turn. The public endpoint above remains text-only. Gateway v3 submits full native requests through a separate signed reverse input lane. These protocol changes are not a claim of browser or real database acceptance.
-
-Human employee managers can request a short-lived native entry with `POST /api/agents/{id}/dsh-native/access` and an empty body. The server requires a provisioned Home, then starts or recovers its FC DSH Host under the same Runtime and employee locks used by platform tasks, without creating a task. It verifies the exact live gateway readiness receipt. It returns `access_id`, `entry_url` (a one-minute fragment credential) and `expires_at`; the fragment is consumed at the same-origin `/api/dsh-native/ui/{access_id}/_multica/open` proxy entry page, including when an older session Cookie exists. Do not log, share or persist the URL. `DELETE /api/agents/{id}/dsh-native/access/{accessId}` revokes the grant. Opening an entry can start, renew or recover the Host; revoking access does not destroy it. Existing task admissions and live native grants block template replacement until they drain; an uncertain create or destruction never permits another writer. The employee DSH configuration page combines Home, Profile status and plugin management. Saved plugin changes are reconciled in the background: pinned missing archives are recovered only when their exact integrity matches, immutable dependencies are built, and the Profile is automatically applied after active tasks drain. Failed builds and repeated Host startup failures are shown with explicit retry actions. The native proxy scopes the session cookie to its access path and forwards page assets, RPC and WebSocket traffic through the existing workbench domain. Its storage section exposes Prepare DSH after storage is ready, then a short-lived Enter DSH link. The link is cleared on expiry or employee change and excluded from query/mutation data; errors do not trigger automatic startup retries. This entry does not prove native prompt/task admission is accepted.
-
-Native session list summaries are refreshed through the official read-only session follow snapshot for persisted platform bindings. Shared Home files do not imply shared in-memory projections. Session RPCs and follow streams resolve the current owner from the workspace/employee/session binding; browser-selected hosts are never accepted. A routed grant stays private to the backend, persists its browser parent, and is revoked when its request or stream ends. Its parent must remain authorized and its expiry never exceeds the parent's. Routed grants do not reserve a sandbox generation, block Profile application, or influence which native Host supplies plugin edits; only direct browser grants retain those existing behaviors. Recovery may interrupt a routed history stream. Browser expiry and periodic authorization checks still bound live connections. An unavailable owner permits read-only history fallback but refuses writes; reopening history never resumes another writer. Platform chat/task titles replace wrapper-prompt titles in list and projection frames. Host-wide plugin events and control remain attached to the page's entry Host; this is not a claim of general multi-Host plugin federation.
-
-Reopening a native page verifies the selected sandbox’s live employee identity, generation, managed catalog and exact Profile revision/digest when the employee’s last acknowledgement points elsewhere. Another session acknowledging the same Profile does not require restaging or closing the current browser. A mismatched or unavailable live receipt still preserves the active-grant drain requirement.
-
-The gateway authority is the deployment app origin (`web.app_url` in Diamond or `MULTICA_APP_URL` in environment mode), independent of the FC task relay URL. A missing authority fails closed. The backend now opens a signed reverse authorization transport to the v3 FC gateway before issuing an entry. It polls only the deployment-derived gateway origin, never follows redirects, and signs each decision with a deployment key derived in a separate HKDF domain; only the public key enters FC. Requests bind one exact Host and are never replayed after an uncertain exchange. Each browser request and periodic WebSocket check still consults current database authorization. This transport does not create or renew a Host. The capability callbacks remain available via `POST /api/dsh-native/access/exchange` and `/check`, using the entry/session Bearer credential and exact `workspace_id`, `agent_id`, `generation`, `sandbox_id` body. These callbacks independently check the current employee manager and the persisted running Host. Their credentials are not Multica API tokens or model/tool credentials.
-
-Gateway v3 uses `/_multica/inputs` with its own control-only transport token and `multica-dsh-native-input-v1` signature domain. Input polls carry one request at a time, with a 4 MiB frame bound and at most 8 MiB of pending native input; authorization polls retain their smaller independent budget. Only the backend can sign the durable task admission. The gateway returns native `accepted:true` only after a correlated platform receipt, never after a timeout, and never falls back to direct Host prompting. A lost input response must be retried with the same native request ID. Opening an entry establishes both reverse lanes; neither lane holds a writer lease. Native Session creation defaults to a generated Session and `/mnt/multica/workspaces/<session_id>`; arbitrary workspaces/cwd are refused. Fork/adoption of existing different directories, active steering, queue projection and real browser parity remain pending. Gateway v2 candidates cannot satisfy v3 readiness and require the normal drained sandbox replacement.
+The native DSH page, entry/access APIs, browser proxy, session list/routing and browser restart have been removed. Native browser/plugin inputs cannot create platform Tasks. There are no reverse authority/input polls, historical Host input recovery worker, or Profile worker that starts historical employee Hosts. Runtime task execution retains the loopback private control service and ordinary task-bound model/tool credentials. Native plugin snapshot import is removed; saved workbench configuration is authoritative. Task launch and queued dependency builds still perform scoped sandbox operations.
 
 Employee Host support is established by the fixed Home initialization and native supervisor receipts during launch. FC template catalog capabilities are derived from provider fingerprints and do not read arbitrary Docker labels. Do not treat a missing `dsh_employee_host_v1` catalog flag as proof that a template lacks the protocol, or a manually supplied flag as proof that it supports it; older images must still fail the actual fixed-command checks.
 
@@ -277,8 +265,8 @@ after an uncertain response; never automatically repeat a retry request. A histo
 receipt after a saved edit is `configuration_changed`; a retired/replaced Host
 cannot be current. Preparation does not start a Host. The durable receipt store
 requires matching live Host generation, exact descriptor and fresh configuration
-under transaction locks. Native entry and platform task admission prepare the
-same employee revision. Pending builds do not start a new writer; existing
+under transaction locks. Platform task admission prepares the
+saved employee revision. Pending builds do not start a new writer; existing
 unknown creates and retiring generations still reconcile. Published artifacts
 are installed under the employee Home only after identity and digest validation.
 The Profile is transferred in bounded chunks into an immutable 0600 file, so a
@@ -353,12 +341,11 @@ consuming pending records. It is not enabled in preproduction yet.
 
 Employees with a provisioned filesystem mount the same AgenticSpace in every FC provider sandbox at `/mnt/multica`. `$MULTICA_FS_ROOT/files` is the shared user file directory; `DSH_HOME=/mnt/multica/home` is one subdirectory. Provisioning and status use human-managed `/api/agents/{id}/filesystem`; `/dsh-home` remains an API alias. Non-DSH FC providers expose Filesystem configuration; DSH keeps filesystem and plugins together in its DSH configuration.
 
-Execution sandboxes are selected by employee and conversation/task scope, with independent lifecycle records in `employee_filesystem_sandbox`. A scope's startup does not reserve the entire filesystem. Native session admission records its sandbox scope so subsequent platform and scheduled turns return to that host. Native entry prefers the most recently used session host. Shared-file concurrent modifications are coordinated by users and agents; the platform does not provide automatic conflict merging or a filesystem-wide writer queue. Older single-employee-writer descriptions above are superseded by this contract.
+Execution sandboxes are selected by employee and conversation/task scope, with independent lifecycle records in `employee_filesystem_sandbox`. A scope's startup does not reserve the entire filesystem. Platform task bindings record their sandbox scope so subsequent platform and scheduled turns return to that host. Shared-file concurrent modifications are coordinated by users and agents; the platform does not provide automatic conflict merging or a filesystem-wide writer queue. Older single-employee-writer descriptions above are superseded by this contract.
 
 Disabled employee plugin bindings remain saved in the workbench but are excluded
 from the executable Profile. A disabled older package must not insert the same
-loader rows as its enabled replacement. Native snapshot migration uses the
-acknowledged Profile revision, never the largest prepared directory.
+loader rows as its enabled replacement.
 
 Stable image releases retain runtime-start failure statistics as observations.
 The absolute 5% and relative 3 percentage point failure thresholds log warnings
@@ -367,13 +354,6 @@ failures, incomplete cutovers and release state checks remain enforced.
 
 Long-lived native DSH Sessions may exceed the 32 MiB task artifact limit. The runner validates the complete frozen history prefix with temporary page spooling and replays it in source order before deciding whether a request is absent. Only the owned task turn and referenced child activations enter the artifact; their size limits and ownership checks still apply. A truncated or inconsistent history cannot authorize a retry.
 
-
-During a native DSH restart, plugin listing remains readable from saved bindings.
-A Profile status of `native_sync_pending` means native edits have not been
-synchronized: saved revisions are visible but `current` is false. Refresh after
-recovery; configuration writes still require synchronization. A managed native
-restart preserves the live profile and is rejected while tasks or plugin
-mutations are active. Verify a new native boot and a subsequent real task.
 
 For DingTalk Stream robots, `/new` (or `/reset`) by itself arms a durable reset
 for the next message. The adapter preserves canonical `CommandText` separately

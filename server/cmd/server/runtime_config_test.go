@@ -25,7 +25,7 @@ func TestAppRuntimeConfigDSHAuthorityDoesNotUseTaskRelay(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := &appRuntimeConfig{remote: remote}
-	if got := app.fce2b(); got.DSHNativeAuthority != cfg.Web.AppURL || got.ServerURL != cfg.Runtime.FCE2B.ServerURL {
+	if got := app.fce2b(); got.AppOrigin != cfg.Web.AppURL || got.ServerURL != cfg.Runtime.FCE2B.ServerURL {
 		t.Fatal("DSH authority and task relay were conflated")
 	}
 	cfg.Web.AppURL = "https://updated-pre.multica.test"
@@ -36,7 +36,7 @@ func TestAppRuntimeConfigDSHAuthorityDoesNotUseTaskRelay(t *testing.T) {
 	if _, err := remote.ApplyJSON(updated); err != nil {
 		t.Fatal(err)
 	}
-	if got := app.fce2b(); got.DSHNativeAuthority != cfg.Web.AppURL || got.ServerURL != cfg.Runtime.FCE2B.ServerURL {
+	if got := app.fce2b(); got.AppOrigin != cfg.Web.AppURL || got.ServerURL != cfg.Runtime.FCE2B.ServerURL {
 		t.Fatal("DSH authority did not follow the current app origin")
 	}
 }

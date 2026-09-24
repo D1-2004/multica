@@ -3,14 +3,20 @@ package dshhost
 import (
 	"errors"
 	"sort"
+	"strconv"
 
 	"github.com/google/uuid"
 )
 
-// WorkspaceMountPath is the shared workspace filesystem mount. Employee
-// Homes stay at MountPath (/mnt/multica). A DSH sandbox without a populated
-// task_role_arn must never receive this second mount.
+// WorkspaceMountPath is the listing/write-host mount. Employee Homes stay at
+// MountPath (/mnt/multica). A DSH sandbox without a populated task_role_arn
+// must never receive a second mount.
 const WorkspaceMountPath = "/mnt/workspace"
+
+// WorkspaceSharedRoot is the task dual-mount path and MULTICA_WORKSPACE_FS_ROOT.
+// Shared Access Points root at the AgenticSpace root (AgenticFS cannot set an
+// AP root directory), so this path is the team file tree.
+const WorkspaceSharedRoot = "/mnt/workspace/shared"
 
 // VolumeMountSpec is one FC volumeMounts entry. RoleARN and ReadOnly are
 // unused on today's single fc.sandbox.auth.role create path.
@@ -63,7 +69,7 @@ func (s SandboxCreateSpec) valid() error {
 	}
 	seenPath := map[string]bool{}
 	for _, m := range s.Mounts {
-		if m.Name == "" || (m.Path != MountPath && m.Path != WorkspaceMountPath) || seenPath[m.Path] {
+		if m.Name == "" || (m.Path != MountPath && m.Path != WorkspaceMountPath && m.Path != WorkspaceSharedRoot) || seenPath[m.Path] {
 			return errors.New("invalid FC volume mount spec")
 		}
 		seenPath[m.Path] = true
@@ -71,10 +77,66 @@ func (s SandboxCreateSpec) valid() error {
 	if s.Scope == "employee" && (len(s.Mounts) != 1 || s.Mounts[0].Path != MountPath) {
 		return errors.New("employee FC create must mount only /mnt/multica")
 	}
-	if (s.Scope == "wsfs-read" || s.Scope == "wsfs-write") && (s.AgentID != uuid.Nil || len(s.Mounts) != 1 || s.Mounts[0].Path != WorkspaceMountPath) {
-		return errors.New("workspace filesystem host must mount only /mnt/workspace")
+	if s.Scope == "task" {
+		if s.AgentID == uuid.Nil || len(s.Mounts) != 2 {
+			return errors.New("dual-mount task create requires employee and shared volumes")
+		}
+		hasPrivate, hasShared := false, false
+		for _, m := range s.Mounts {
+			if m.Path == MountPath {
+				hasPrivate = true
+			}
+			if m.Path == WorkspaceSharedRoot {
+				hasShared = true
+			}
+		}
+		if !hasPrivate || !hasShared {
+			return errors.New("dual-mount task create must mount /mnt/multica and /mnt/workspace/shared")
+		}
+	}
+	if (s.Scope == "wsfs-read" || s.Scope == "wsfs-write") && (s.AgentID != uuid.Nil || len(s.Mounts) != 1 || (s.Mounts[0].Path != WorkspaceMountPath && s.Mounts[0].Path != WorkspaceSharedRoot)) {
+		return errors.New("workspace filesystem host must mount only the shared workspace path")
 	}
 	return nil
+}
+
+// WorkspaceWriteSpec is the wsfs-write host: one read-write shared volume and
+// the workspace RW role. It is not an employee sandbox and must not mount
+// /mnt/multica.
+func WorkspaceWriteSpec(workspaceID, intent uuid.UUID, generation int64, template, volume, role string) (SandboxCreateSpec, error) {
+	spec := SandboxCreateSpec{
+		WorkspaceID: workspaceID, Scope: "wsfs-write", Generation: generation, CreateIntent: intent,
+		TemplateID: template, RoleARN: role,
+		Mounts: []VolumeMountSpec{{Name: volume, Path: WorkspaceSharedRoot}},
+		Labels: map[string]string{
+			"multica.wsfs.intent":     intent.String(),
+			"multica.wsfs.workspace":  workspaceID.String(),
+			"multica.wsfs.scope":      "wsfs-write",
+			"multica.wsfs.generation": strconv.FormatInt(generation, 10),
+			"multica.wsfs.volume":     volume,
+			"multica.wsfs.mount":      WorkspaceSharedRoot,
+			"multica.wsfs.role-arn":   role,
+		},
+	}
+	return spec, spec.valid()
+}
+
+func DualCreateSpec(h Host, shared VolumeMountSpec, authRole string) (SandboxCreateSpec, error) {
+	spec, err := employeeCreateSpec(h)
+	if err != nil {
+		return SandboxCreateSpec{}, err
+	}
+	shared.Path = WorkspaceSharedRoot
+	if shared.Name == "" || shared.Name == h.VolumeName || authRole == "" {
+		return SandboxCreateSpec{}, errors.New("invalid shared volume for dual-mount create")
+	}
+	spec.Scope = "task"
+	spec.Mounts = []VolumeMountSpec{spec.Mounts[0], shared}
+	spec.RoleARN = authRole
+	spec.Labels["multica.wsfs.volume"] = shared.Name
+	spec.Labels["multica.wsfs.mount"] = shared.Path
+	spec.Labels["multica.wsfs.role-arn"] = authRole
+	return spec, spec.valid()
 }
 
 func matchesSpec(info sandboxInfo, spec SandboxCreateSpec) bool {

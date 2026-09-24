@@ -110,6 +110,18 @@ export function deriveAgentPresenceDetail(input: DerivePresenceInput): AgentPres
 
   const availability = deriveAgentAvailability(input.runtime, input.now);
   const detail = deriveWorkloadDetail(input.tasks);
+  let waitReason: string | undefined;
+  if (detail.workload === "queued") {
+    for (const task of input.tasks) {
+      if (
+        (task.status === "queued" || task.status === "dispatched") &&
+        task.wait_reason
+      ) {
+        waitReason = task.wait_reason;
+        break;
+      }
+    }
+  }
 
   return {
     availability,
@@ -117,6 +129,7 @@ export function deriveAgentPresenceDetail(input: DerivePresenceInput): AgentPres
     runningCount: detail.runningCount,
     queuedCount: detail.queuedCount,
     capacity: input.agent.max_concurrent_tasks,
+    waitReason,
   };
 }
 

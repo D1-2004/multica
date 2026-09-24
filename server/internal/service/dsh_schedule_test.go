@@ -47,7 +47,7 @@ func TestDSHScheduleTaskIdentityAndTerminalFence(t *testing.T) {
 func TestDSHScheduleRequiresTransactionAndInvocationPolicy(t *testing.T) {
 	for _, s := range []*TaskService{nil, {}, {Queries: db.New(nil)}} {
 		_, err := s.RegisterDSHSchedule(context.Background(), DSHScheduleActor{}, DSHScheduleInput{}, nil)
-		if !errors.Is(err, dshhost.ErrNativeAccessDenied) {
+		if !errors.Is(err, ErrDSHAccessDenied) {
 			t.Fatalf("unconfigured authority: %v", err)
 		}
 	}

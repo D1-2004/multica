@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/langfuse"
-	"time"
 	"unicode/utf8"
 
 	"github.com/multica-ai/multica/server/internal/service/userdecision"
@@ -18,6 +16,7 @@ import (
 // UserDecisionSnapshot is immutable evidence for the single question belonging
 // to this inbound run. It is not a committed execution checkpoint.
 type UserDecisionSnapshot struct {
+	TraceRootSpanID          string                                   `json:"trace_root_span_id,omitempty"`
 	ProposalPromptHash       string                                   `json:"proposal_prompt_hash,omitempty"`
 	ProposalReviewPromptHash string                                   `json:"proposal_review_prompt_hash,omitempty"`
 	DecisionID               string                                   `json:"decision_id,omitempty"`
@@ -115,7 +114,7 @@ func (c *Coordinator) proposeUserDecision(ctx context.Context, turn Turn, messag
 	}
 	p.Model = c.configuredModel()
 	p.RawOutput = attempts[len(attempts)-1]
-	snapshot := &UserDecisionSnapshot{ProposalPromptHash: policyHash(proposalMessages[0].OfSystem.Content.OfString.Value), ProposalReviewPromptHash: policyHash(userDecisionPolicy()), Turn: turn, Messages: messages, Recalls: recalls, RecalledIDs: sortedCopy(turn.recalledIssueIDs), Recommended: recommended, Policy: policyManifestForStage(turn, len(recalled) > 0), Proposal: p, ProposalAttempts: attempts, ProposalReviews: reviews}
+	snapshot := &UserDecisionSnapshot{TraceRootSpanID: langfuse.TraceFromContext(ctx).RootSpanID(), ProposalPromptHash: policyHash(proposalMessages[0].OfSystem.Content.OfString.Value), ProposalReviewPromptHash: policyHash(userDecisionPolicy()), Turn: turn, Messages: messages, Recalls: recalls, RecalledIDs: sortedCopy(turn.recalledIssueIDs), Recommended: recommended, Policy: policyManifestForStage(turn, len(recalled) > 0), Proposal: p, ProposalAttempts: attempts, ProposalReviews: reviews}
 	for _, module := range coordinatorPolicy.Modules {
 		if module.ID == "user_decision" {
 			snapshot.ProposalPolicy = PolicyModuleManifest{ID: module.ID, Version: module.Version, Hash: module.ContentHash}
@@ -258,15 +257,14 @@ func (c *Coordinator) ResolveUserDecision(ctx context.Context, s UserDecisionSna
 }
 func (c *Coordinator) ResolveUserDecisionWithAudit(ctx context.Context, s UserDecisionSnapshot, submission userdecision.Submission) (Decision, UserDecisionResolutionAudit, error) {
 	var audit UserDecisionResolutionAudit
-	turn := s.Turn
-	turn.TraceID = uuid.NewString()
-	turn.UserDecisionRequestID = s.DecisionID
-	turn.model = c.configuredModel()
-	audit.TraceID = turn.TraceID
-	trace := c.startTurnTrace(ctx, turn, time.Now())
+	audit.TraceID = s.Turn.TraceID
+	if langfuse.TraceIDHex(audit.TraceID) == "" {
+		audit.TraceID = s.DecisionID
+	}
+	trace := c.startUserDecisionResolutionTrace(ctx, s, submission)
 	ctx = langfuse.ContextWithTrace(ctx, trace)
 	d, err := c.resolveUserDecision(ctx, s, submission, &audit)
-	finishCoordinatorTrace(trace, d, err)
+	trace.End(langfuse.EndOptions{Output: map[string]any{"action": d.Action, "reason": d.Reason}, Err: err})
 	return d, audit, err
 }
 func (c *Coordinator) resolveUserDecision(ctx context.Context, s UserDecisionSnapshot, submission userdecision.Submission, audit *UserDecisionResolutionAudit) (Decision, error) {

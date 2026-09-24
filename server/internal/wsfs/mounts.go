@@ -34,6 +34,13 @@ type Grant struct {
 	Access      string    `json:"access"`
 	Generation  int64     `json:"generation"`
 	TaskRoleARN string    `json:"task_role_arn"`
+	// Persisted is false when no grant row exists. That is not a revoke.
+	Persisted bool `json:"-"`
+}
+
+// Revoked reports an explicit none grant. A missing row is not a revoke.
+func (g Grant) Revoked() bool {
+	return g.Persisted && g.effectiveAccess() == AccessNone
 }
 
 func (g Grant) effectiveAccess() string {
@@ -43,12 +50,23 @@ func (g Grant) effectiveAccess() string {
 	return AccessNone
 }
 
-// MountDecision is what a launcher may pass to FC. Employee DSH create
-// (dshhost.Manager.Ensure) ignores Shared and always uses the employee Host.
+// MountDecision is what a launcher may pass to FC. Manager.Ensure and
+// EnsurePrivate use only the employee Host; EnsureWithShared adds Shared with
+// the composite role.
 type MountDecision struct {
 	Private *dshhost.Host
 	Shared  *dshhost.VolumeMountSpec
 	RoleARN string
+	Access  string
+	// Revoked is an explicit none grant. Launch must drop a shared mount the
+	// sandbox still carries. A missing grant is not revoked.
+	Revoked bool
+	// ROVolume and RWVolume name the workspace's two shared volumes. A live
+	// mount equal to the other volume is a downgrade or an upgrade, not merely
+	// a name mismatch.
+	ROVolume        string
+	RWVolume        string
+	GrantGeneration int64
 }
 
 // SelectVolumeMounts implements the launch matrix. Empty TaskRoleARN on an
@@ -67,6 +85,10 @@ func SelectVolumeMounts(employee *dshhost.Host, grant Grant, binding *Binding) M
 		}
 		out.Shared = &shared
 		out.RoleARN = grant.TaskRoleARN
+		out.Access = access
+		out.ROVolume = binding.ROVolumeName
+		out.RWVolume = binding.RWVolumeName
+		out.GrantGeneration = grant.Generation
 		return out
 	}
 	if binding == nil || access == AccessNone {
@@ -77,7 +99,7 @@ func SelectVolumeMounts(employee *dshhost.Host, grant Grant, binding *Binding) M
 	if access == AccessWrite {
 		role = binding.RWRoleARN
 	}
-	return MountDecision{Shared: &shared, RoleARN: role}
+	return MountDecision{Shared: &shared, RoleARN: role, Access: access, ROVolume: binding.ROVolumeName, RWVolume: binding.RWVolumeName, GrantGeneration: grant.Generation}
 }
 
 func sharedMount(binding Binding, access string) dshhost.VolumeMountSpec {
@@ -85,5 +107,5 @@ func sharedMount(binding Binding, access string) dshhost.VolumeMountSpec {
 	if access == AccessWrite {
 		name = binding.RWVolumeName
 	}
-	return dshhost.VolumeMountSpec{Name: name, Path: dshhost.WorkspaceMountPath}
+	return dshhost.VolumeMountSpec{Name: name, Path: dshhost.WorkspaceSharedRoot}
 }

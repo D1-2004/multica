@@ -17,7 +17,8 @@ type FilesystemSandboxStore struct {
 }
 
 const filesystemSandboxColumns = `e.workspace_id, e.agent_id, e.file_system_id, e.space_id, e.volume_name, e.access_point_arn, e.role_arn, e.vpc_id, e.security_group_id, e.vswitch_ids,
- h.state, h.generation, COALESCE(h.create_intent, '00000000-0000-0000-0000-000000000000'::uuid), h.sandbox_id, h.template_id`
+ h.state, h.generation, COALESCE(h.create_intent, '00000000-0000-0000-0000-000000000000'::uuid), h.sandbox_id, h.template_id, h.updated_at,
+ h.observed_shared_volume, h.observed_shared_access, h.observed_grant_generation, h.observed_sandbox_id, h.observed_host_generation`
 const filesystemSandboxJoin = ` JOIN dsh_employee_host e ON e.workspace_id=h.workspace_id AND e.agent_id=h.agent_id`
 
 // LockRunningHost must run inside the caller's transaction. It locks the actual
@@ -36,9 +37,33 @@ func LockRunningHost(ctx context.Context, db Database, h Host) error {
 }
 
 func (s FilesystemSandboxStore) read(row pgx.Row) (Host, error) {
-	h, err := readHost(row)
+	var h Host
+	var volume, access, observedSandbox *string
+	var grantGeneration, observedGeneration *int64
+	err := row.Scan(&h.WorkspaceID, &h.AgentID, &h.FileSystemID, &h.SpaceID, &h.VolumeName, &h.AccessPointARN,
+		&h.RoleARN, &h.VPCID, &h.SecurityGroupID, &h.VSwitchIDs, &h.State, &h.Generation, &h.CreateIntent, &h.SandboxID, &h.TemplateID, &h.UpdatedAt,
+		&volume, &access, &grantGeneration, &observedSandbox, &observedGeneration)
+	if err != nil {
+		return Host{}, err
+	}
+	if access != nil {
+		h.ObservedSharedKnown = true
+		h.ObservedSharedAccess = *access
+	}
+	if volume != nil {
+		h.ObservedSharedVolume = *volume
+	}
+	if grantGeneration != nil {
+		h.ObservedGrantGeneration = *grantGeneration
+	}
+	if observedSandbox != nil {
+		h.ObservedSandboxID = *observedSandbox
+	}
+	if observedGeneration != nil {
+		h.ObservedHostGeneration = *observedGeneration
+	}
 	h.ScopeID = s.ScopeID
-	return h, err
+	return h, nil
 }
 
 func (s FilesystemSandboxStore) changed(row pgx.Row) (Host, error) {
@@ -74,7 +99,9 @@ func (s FilesystemSandboxStore) BeginCreate(ctx context.Context, key Key, genera
 		return Host{}, errors.New("invalid employee filesystem create intent")
 	}
 	return s.changed(s.DB.QueryRow(ctx, `WITH changed AS (UPDATE employee_filesystem_sandbox
- SET state='creating',generation=generation+1,create_intent=$5,template_id=$6,updated_at=now()
+ SET state='creating',generation=generation+1,create_intent=$5,template_id=$6,
+ observed_shared_volume=NULL, observed_shared_access=NULL, observed_grant_generation=NULL,
+ observed_sandbox_id=NULL, observed_host_generation=NULL, updated_at=now()
  WHERE workspace_id=$1 AND agent_id=$2 AND scope_id=$3 AND generation=$4 AND state='offline' RETURNING *)
  SELECT `+filesystemSandboxColumns+` FROM changed h`+filesystemSandboxJoin, key.WorkspaceID, key.AgentID, s.ScopeID, generation, intent, template))
 }
@@ -103,7 +130,9 @@ func (s FilesystemSandboxStore) CompleteRetire(ctx context.Context, h Host) erro
 	if h.ScopeID != s.ScopeID {
 		return ErrChanged
 	}
-	result, err := s.DB.Exec(ctx, `UPDATE employee_filesystem_sandbox SET state='offline',sandbox_id='',create_intent=NULL,updated_at=now()
+	result, err := s.DB.Exec(ctx, `UPDATE employee_filesystem_sandbox SET state='offline',sandbox_id='',create_intent=NULL,
+ observed_shared_volume=NULL, observed_shared_access=NULL, observed_grant_generation=NULL,
+ observed_sandbox_id=NULL, observed_host_generation=NULL, updated_at=now()
  WHERE workspace_id=$1 AND agent_id=$2 AND scope_id=$3 AND generation=$4 AND sandbox_id=$5 AND state='retiring'`, h.WorkspaceID, h.AgentID, s.ScopeID, h.Generation, h.SandboxID)
 	if err != nil {
 		return err
@@ -112,4 +141,40 @@ func (s FilesystemSandboxStore) CompleteRetire(ctx context.Context, h Host) erro
 		return ErrChanged
 	}
 	return nil
+}
+
+func (s FilesystemSandboxStore) AbandonCreate(ctx context.Context, h Host) error {
+	if h.ScopeID != s.ScopeID {
+		return ErrChanged
+	}
+	result, err := s.DB.Exec(ctx, `UPDATE employee_filesystem_sandbox SET state='offline',sandbox_id='',create_intent=NULL,
+ observed_shared_volume=NULL, observed_shared_access=NULL, observed_grant_generation=NULL,
+ observed_sandbox_id=NULL, observed_host_generation=NULL, updated_at=now()
+ WHERE workspace_id=$1 AND agent_id=$2 AND scope_id=$3 AND generation=$4 AND create_intent=$5 AND state='creating'`,
+		h.WorkspaceID, h.AgentID, s.ScopeID, h.Generation, h.CreateIntent)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrChanged
+	}
+	return nil
+}
+
+// RecordSharedObservation stores this scope's confirmed mount. Another scope
+// does not read it, and a different sandbox generation does not inherit it.
+func (s FilesystemSandboxStore) RecordSharedObservation(ctx context.Context, h Host, volume, access string, grantGeneration int64) error {
+	if h.ScopeID != s.ScopeID {
+		return ErrChanged
+	}
+	var recordedVolume any
+	if volume != "" {
+		recordedVolume = volume
+	}
+	_, err := s.DB.Exec(ctx, `UPDATE employee_filesystem_sandbox
+ SET observed_shared_volume=$5, observed_shared_access=$6, observed_grant_generation=$7,
+ observed_sandbox_id=$8, observed_host_generation=$4
+ WHERE workspace_id=$1 AND agent_id=$2 AND scope_id=$3 AND generation=$4 AND sandbox_id=$8 AND state='running'`,
+		h.WorkspaceID, h.AgentID, s.ScopeID, h.Generation, recordedVolume, access, grantGeneration, h.SandboxID)
+	return err
 }
