@@ -1,6 +1,6 @@
 # 删除 DSH 原生页面与历史 Host 恢复扫描
 
-状态：代码清理及本地验证完成；用户已授权预发部署，正在发布应用并准备 Runtime 候选验收。
+状态：预发应用部署、10 分钟日志观察和新 Runtime 冷/热任务验收完成；未发布正式，未切换共享 stable Runtime。
 
 ## 用户决定
 
@@ -39,12 +39,47 @@
 
 ## 部署与未验收项
 
-- 无生产/预发部署、Runtime 切换、云端资源删除或数据库数据修改。
+- 本轮只部署预发应用，并创建私有候选 Runtime 和临时验收员工/Issue；未发布正式、未切换共享 stable Runtime、未修改历史数据库 Host 记录。
 - 应用全部副本升级后，删除的扫描和授权链路才完全停止。旧副本仍会运行旧循环；不能用本地代码已删除推断线上已停止。
 - 新 Runtime 不提供公开原生网关。已有带网关的 supervisor 配置不匹配时，通过现有任务排空/确切沙箱回收流程替换，不直接扫描或重启历史沙箱。
 - 历史数据库授权表/迁移保留，运行代码不再签发、读取或用其续期沙箱。
-- 依 `fc-runtime-dev-loop`，候选镜像不可变来源、真实 FC 普通任务及新旧版本兼容验收尚未运行。本地通过不代表已完成云端验收。
+- `fc-runtime-dev-loop` 候选镜像来源、真实 FC 普通任务冷/热验收已完成（见下）。本次未修改 persistent Daemon 生命周期或普通任务 wire，未另启本地设备。新旧镜像滚动组合不等同于全部正式验收。
 
 ## 预发发布授权与验证计划
 
 2026-09-24 用户要求部署预发。只提交预发流水线 66；不推进正式。应用所有副本切换后，核对版本、健康、旧原生接口已移除，以及发布后日志无历史 Host gateway-authority / plugin-snapshot 循环。Runtime 使用本分支独立候选流水线，普通 DSH 任务做冷/热启动验收。
+
+## 预发部署与验收结果（2026-09-24）
+
+### 应用
+
+- CR `36313412`：[变更单](https://cd.aone.alibaba-inc.com/unite/micro/cr/app/342160/36313412)。
+- Pipeline `66`，Run `3109784459`：[发布](https://cd.aone.alibaba-inc.com/unite/micro/publish/app/342160?flowId=1005452)。代码合并、构建、制品扫描、预发部署和集成测试均成功；2026-09-24 16:48:41 +0800 完成部署，停留人工预发验证，不推进正式。
+- 应用代码提交 `6ad422ec2464f36421a8214a051e1413f83be025`；实际构建/发布合并提交 `2f63bb428a76a9a66b5e8a8c56ee3c1901ad40c0`，已核对包含前者。
+- 两个预发副本 `33.8.56.137`、`33.60.149.134` 均 Ready，实际 imageID 同为 `sha256:6bff6bf1f1012c2997afb9d74c309d429b36cf5ee077f9328e47525169a0c421`，不是只检查期望镜像字段。
+- `/health` 200；旧原生页面、`/api/dsh-native/access/check`、`/api/dsh-native/prompts` 均 404。
+
+### 扫描对照
+
+Normandy SLS：Project `dt-fde-multica-sls` / Logstore `application-log`，限定预发标签 `acni_ag_dt-fde-multica_default_prehost`。
+
+- 发布前 16:30–16:40：`DSH background session input connection is not ready` 共 **159** 条。
+- 发布后 16:49–16:59：正常日志 **11,436** 条；后台输入探测、`gateway-authority`、`plugin-snapshot` 相关日志合计 **0** 条。
+- 结论限于被删除的历史 Host 恢复/原生页面链路。真实任务启动、沙箱回收和排队依赖构建仍按需调用 E2B，不能把“扫描停止”描述成“所有 E2B 调用为零”。
+
+### Runtime 与普通任务
+
+- Pipeline `313082`，Run `75805733`：[候选构建](https://code.alibaba-inc.com/dingtalk-ai-lab/multica-fc-hermes-runtime/ci/jobs?pipelineId=313082&pipelineRunId=75805733&createType=yaml)。状态 SUCCESS，真实沙箱 smoke exit 0。
+- Runtime commit `3df10d4cd5aada0645827490a4a729b3728cf1cb`；Multica commit `6ad422ec2464f36421a8214a051e1413f83be025`。
+- Template `9466pj91the6stguprm2`，alias `multica-m7-va2eb67817f146ef4-r1-3df10d`，provider fingerprint `a2eb67817f146ef4`。
+- 私有 candidate Runtime `ed96f586-12b1-4b36-849e-e9f599419413`；读回 online、dsh、aliyun_fc、candidate、ready 与 exact Template 均匹配。未替换任何共享 stable Runtime。
+- 冷任务 `606bfea3-d0dc-4f1a-88ea-2a4816941135`：16:58:34–16:59:41，completed。
+- 热任务 `db05afe7-cd5d-43b0-a88d-c26941d80891`：17:00:32–17:01:26，completed。
+- 两次均使用沙箱 `sbx-02d122f5-972c-42b2-a2b8-fc17569b1c1b`，精确返回 `DSH_NO_NATIVE_PAGE_OK_3DF10D4`。手动 rerun 创建独立原生 Session，沙箱复用成功。
+- 两份加密存储轨迹读回并校验 SHA256；实际 tool/call 与 tool/result 证明 Python 检查 127.0.0.1:33124 未监听，exit code 0，非仅依据模型自述。
+- 临时员工 `22783ad6-aaf0-4a54-9cf4-bff1c076dd2c` 已归档，临时 Issue `1f4a117d-021e-41e4-abeb-e375cccd93ff` 已删除并读回 404。候选 Runtime 保留为已验证产物；员工归档绑定作为审计记录保留，沙箱走既有任务结束 idle 生命周期。
+
+### 构建过程记录
+
+- 首个候选运行 `75801222` 因候选 YAML 文件名不符合 helper 校验约定主动取消，未做 Runtime 切换。
+- `75802402` 构建/smoke 成功，但缺少 `multica_commit` 回执，未作为最终验收产物；补齐独立来源输出后，以 `75805733` 完成来源验证。
