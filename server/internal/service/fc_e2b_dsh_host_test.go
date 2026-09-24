@@ -664,6 +664,24 @@ func TestFreshSharedMountDeclaresTheMountedAccess(t *testing.T) {
 	}
 }
 
+func TestWriteGrantMountsSharedDiskWithoutImageCapability(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		return wsfs.MountDecision{
+			Shared:  &dshhost.VolumeMountSpec{Name: "vol-rw", Path: dshhost.WorkspaceSharedRoot},
+			RoleARN: "role-write",
+			Access:  wsfs.AccessWrite,
+		}, nil
+	}
+	rt.Metadata = []byte(`{"kind":"fc-e2b"}`)
+	host, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || provider.creates != 1 || len(host.ExtraMounts) != 1 || host.ExtraMounts[0].Name != "vol-rw" || host.SharedAccess != wsfs.AccessWrite || effectiveWorkspaceFSAccess(&host) != wsfs.AccessWrite {
+		t.Fatalf("write grant without an image capability did not mount the shared disk: %+v creates=%d err=%v", host, provider.creates, err)
+	}
+}
+
 func TestPrivateLaunchDoesNotInjectSharedDiskEnv(t *testing.T) {
 	pool, _ := dshLaunchPools(t)
 	provider := &dshLaunchProvider{}
@@ -751,8 +769,13 @@ func TestReadDowngradeWithoutCapabilityDoesNotKeepWritableMount(t *testing.T) {
 	}
 	rt.Metadata = []byte(`{"kind":"fc-e2b"}`)
 	second, err := resolveDSHTest(t, l, rt, task, "template-1")
-	if err != nil || second.SandboxID == "" || second.SandboxID == first.SandboxID || len(second.ExtraMounts) != 0 || provider.creates != 2 || provider.destroys != 1 {
+	if err != nil || second.SandboxID == "" || second.SandboxID == first.SandboxID || provider.creates != 2 || provider.destroys != 1 {
 		t.Fatalf("read downgrade with missing capability keeps host without inspecting existing writable mount: first=%s second=%+v creates=%d destroys=%d err=%v", first.SandboxID, second, provider.creates, provider.destroys, err)
+	}
+	for _, mount := range second.ExtraMounts {
+		if mount.Name == "vol-rw" {
+			t.Fatalf("replacement kept the writable volume: %+v", second)
+		}
 	}
 }
 

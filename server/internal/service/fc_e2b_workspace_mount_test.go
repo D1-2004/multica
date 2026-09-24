@@ -17,16 +17,16 @@ func TestClassifySharedLaunchSeparatesRevokeFromNotReady(t *testing.T) {
 		t.Fatal("an explicit revoke must drop the shared mount even when the image is old or the binding is unready")
 	}
 	ready := wsfs.MountDecision{Shared: &dshhost.VolumeMountSpec{Name: "vol-shared", Path: dshhost.WorkspaceSharedRoot}, RoleARN: "role-composite"}
-	if classifySharedLaunch(false, ready, false) != sharedLaunchKeep {
-		t.Fatal("an image that does not declare shared disk must keep the historical launch")
+	if classifySharedLaunch(false, ready, false) != sharedLaunchOffer {
+		t.Fatal("a prepared shared volume is offered even when the image does not list a shared-disk capability")
 	}
 	readOnly := wsfs.MountDecision{Shared: &dshhost.VolumeMountSpec{Name: "vol-ro", Path: dshhost.WorkspaceSharedRoot}, RoleARN: "role-read", Access: wsfs.AccessRead}
-	if classifySharedLaunch(false, readOnly, false) != sharedLaunchConstrain {
-		t.Fatal("a read grant must still be compared with an existing mount when shared disk is not declared")
+	if classifySharedLaunch(false, readOnly, false) != sharedLaunchOffer {
+		t.Fatal("a prepared read volume is offered without an image capability")
 	}
 	write := wsfs.MountDecision{Shared: &dshhost.VolumeMountSpec{Name: "vol-rw", Path: dshhost.WorkspaceSharedRoot}, RoleARN: "role-write", Access: wsfs.AccessWrite}
-	if classifySharedLaunch(false, write, false) != sharedLaunchKeep {
-		t.Fatal("a write grant on an image without shared disk must not offer a new mount")
+	if classifySharedLaunch(false, write, false) != sharedLaunchOffer {
+		t.Fatal("a prepared write volume is offered without an image capability")
 	}
 	if classifySharedLaunch(true, ready, true) != sharedLaunchKeep {
 		t.Fatal("a shared disk that is not ready must not retire a healthy sandbox")
@@ -70,8 +70,8 @@ func TestWorkspaceMountDecisionNeverBlocksLaunch(t *testing.T) {
 	if got, mode := l.workspaceMountDecision(context.Background(), nil, key, before, capable); mode != sharedLaunchOffer || got.Shared != shared {
 		t.Fatalf("a capable runtime may offer a ready shared mount, got %+v mode=%v", got, mode)
 	}
-	if _, mode := l.workspaceMountDecision(context.Background(), nil, key, before, []byte(`{"kind":"fc-e2b"}`)); mode != sharedLaunchConstrain {
-		t.Fatal("a read grant on an image without shared disk must be checked against an existing mount")
+	if _, mode := l.workspaceMountDecision(context.Background(), nil, key, before, []byte(`{"kind":"fc-e2b"}`)); mode != sharedLaunchOffer {
+		t.Fatal("a prepared read grant is offered without an image capability")
 	}
 	revoked := &FCE2BLauncher{ReadWorkspaceMount: func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
 		return wsfs.MountDecision{Private: before, RoleARN: before.RoleARN, Revoked: true}, nil

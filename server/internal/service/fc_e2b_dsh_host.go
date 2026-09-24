@@ -110,22 +110,16 @@ const (
 	sharedLaunchConstrain
 )
 
-// classifySharedLaunch separates "not capable", "not ready", and "revoked".
-// A prepare failure must not retire a healthy sandbox. An explicit revoke must.
-// A read grant still has to be compared with an existing mount when the image
-// has not declared shared disk; that flag only blocks a new mount.
+// classifySharedLaunch separates a prepared mount, an unready binding, and a revoke.
+// Mounting follows the grant and the prepared volume. It does not depend on
+// whether the runtime image lists workspace_shared_disk. A prepare failure must
+// not retire a healthy sandbox. An explicit revoke must.
 // Unknown create results are handled by the creating fence, not by this mode.
-func classifySharedLaunch(capable bool, decision wsfs.MountDecision, notReady bool) sharedLaunchMode {
+func classifySharedLaunch(_ bool, decision wsfs.MountDecision, notReady bool) sharedLaunchMode {
 	if decision.Revoked {
 		return sharedLaunchRevoke
 	}
 	if notReady || decision.Shared == nil {
-		return sharedLaunchKeep
-	}
-	if !capable {
-		if decision.Access == wsfs.AccessRead {
-			return sharedLaunchConstrain
-		}
 		return sharedLaunchKeep
 	}
 	return sharedLaunchOffer
@@ -213,13 +207,13 @@ func retireUnusedSharedCandidate(ctx context.Context, conn *pgxpool.Conn, manage
 	return nil
 }
 
-func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Database, key dshhost.Key, before *dshhost.Host, metadata []byte) (decision wsfs.MountDecision, mode sharedLaunchMode) {
+func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Database, key dshhost.Key, before *dshhost.Host, _ []byte) (decision wsfs.MountDecision, mode sharedLaunchMode) {
 	decision = wsfs.MountDecision{Private: before, RoleARN: before.RoleARN}
 	if l.ReadWorkspaceMount == nil {
 		return decision, sharedLaunchKeep
 	}
-	// Always read the grant. The capability flag may block a new shared offer.
-	// It must not hide an explicit revoke or a narrower grant.
+	// Always read the grant. Image metadata must not hide a prepared mount,
+	// an explicit revoke, or a narrower grant.
 	got, err := l.ReadWorkspaceMount(ctx, conn, key.WorkspaceID, key.AgentID, before)
 	if err != nil {
 		if errors.Is(err, wsfs.ErrSharedDiskNotReady) && got.Access == wsfs.AccessRead {
@@ -243,7 +237,7 @@ func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Da
 	if got.RoleARN == "" {
 		got.RoleARN = before.RoleARN
 	}
-	return got, classifySharedLaunch(wsfs.DeclaresSharedDisk(metadata), got, false)
+	return got, classifySharedLaunch(false, got, false)
 }
 
 var dshAccessPointPattern = regexp.MustCompile(`^acs:nas:[a-z0-9-]+:[0-9]+:accesspoint/(ap-[a-z0-9]+)$`)

@@ -165,36 +165,12 @@ beforeEach(() => {
   };
 });
 
-function runtimeWithImage(templateName: string | null, capable = false): AgentRuntime {
-  return {
-    id: "runtime-1",
-    workspace_id: "ws-1",
-    daemon_id: null,
-    name: "PI",
-    runtime_mode: "cloud",
-    provider: "pi",
-    launch_header: "",
-    status: "online",
-    device_info: "",
-    metadata: {
-      kind: "fc-e2b",
-      ...(templateName ? { template_alias: templateName } : {}),
-      ...(capable ? { capabilities: ["workspace_shared_disk"] } : {}),
-    },
-    owner_id: "user-1",
-    visibility: "private",
-    last_seen_at: null,
-    created_at: "2026-06-01T00:00:00Z",
-    updated_at: "2026-06-01T00:00:00Z",
-  };
-}
-
 describe("FilesPage", () => {
   it("lists shared files and agent names instead of raw ids", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "Files", level: 1 })).toBeInTheDocument();
-    expect(screen.getByText("Shared workspace files and private agent disks.")).toBeInTheDocument();
+    expect(screen.getByText(/The shared disk is not part of DSH/)).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Shared files/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Feidi/ })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: /Coach/ })).toBeInTheDocument();
@@ -240,70 +216,14 @@ describe("FilesPage", () => {
     expect(screen.queryByText("No private disks yet")).not.toBeInTheDocument();
   });
 
-  it("prompts when the agent runtime image does not match the shared disk", async () => {
-    mocks.runtimes = [
-      runtimeWithImage("multica-m7-va2eb67817f146ef4-r1-6ccf66"),
-    ];
-    const user = userEvent.setup();
-    renderPage();
-
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("option", { name: /Feidi/ }));
-
-    const notice = screen.getByRole("status");
-    expect(notice).toHaveTextContent("multica-m7-va2eb67817f146ef4-r1-6ccf66");
-    expect(notice).toHaveTextContent("has not declared");
-  });
-
-  it("prompts when the bound runtime image is unknown", async () => {
-    mocks.runtimes = [runtimeWithImage(null)];
-    const user = userEvent.setup();
-    renderPage();
-
-    await user.click(screen.getByRole("option", { name: /Feidi/ }));
-
-    const notice = screen.getByRole("status");
-    expect(notice).toHaveTextContent("unknown");
-    expect(notice).not.toHaveTextContent("has not declared");
-  });
-
-  it("does not prompt for an agent without shared-disk access", async () => {
-    mocks.grants = { grants: [] };
-    mocks.runtimes = [
-      runtimeWithImage("multica-m7-va2eb67817f146ef4-r1-6ccf66"),
-    ];
+  it("does not warn that the runtime image lacks a shared-disk capability", async () => {
     const user = userEvent.setup();
     renderPage();
 
     await user.click(screen.getByRole("option", { name: /Feidi/ }));
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  });
-
-  it("does not prompt when the runtime is not an FC image", async () => {
-    mocks.runtimes = [
-      {
-        ...runtimeWithImage("local-runtime"),
-        runtime_mode: "local",
-        metadata: { template_name: "local-runtime" },
-      },
-    ];
-    const user = userEvent.setup();
-    renderPage();
-
-    await user.click(screen.getByRole("option", { name: /Feidi/ }));
-
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
-  });
-
-  it("does not prompt when the bound runtime image satisfies the requirement", async () => {
-    mocks.runtimes = [runtimeWithImage("image-capable", true)];
-    const user = userEvent.setup();
-    renderPage();
-
-    await user.click(screen.getByRole("option", { name: /Feidi/ }));
-
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText(/has not declared/)).not.toBeInTheDocument();
   });
 
   it("selects an agent disk and links to the agent filesystem view", async () => {
