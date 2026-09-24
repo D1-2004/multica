@@ -146,6 +146,10 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     // would clobber a concurrent successful mutation if the failing call
     // resolves last (e.g. flipping visibility then runtime simultaneously
     // and only the visibility PATCH fails).
+    // Audience changes wait for the server so failed saves preserve name drafts
+    // and the UI never presents an unconfirmed audience as active.
+    const optimistic = !("inbound_coordinator_user_decision_mode" in data
+      || "inbound_coordinator_user_decision_names" in data);
     const optimisticData =
       typeof data.runtime_id === "string"
         ? { ...data, runtime_bound: data.runtime_id.trim().length > 0 }
@@ -161,11 +165,13 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         ];
       }
     }
-    qc.setQueryData<Agent[]>(queryKey, (old) =>
-      old?.map((a) =>
-        a.id === id ? ({ ...a, ...optimisticData } as Agent) : a,
-      ),
-    );
+    if (optimistic) {
+      qc.setQueryData<Agent[]>(queryKey, (old) =>
+        old?.map((a) =>
+          a.id === id ? ({ ...a, ...optimisticData } as Agent) : a,
+        ),
+      );
+    }
     try {
       const updated = await api.updateAgent(id, data as UpdateAgentRequest);
       qc.setQueryData<Agent[]>(queryKey, (old) =>
@@ -174,7 +180,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       qc.invalidateQueries({ queryKey });
       toast.success(t(($) => $.detail.agent_updated_toast));
     } catch (e) {
-      if (prevAgent) {
+      if (optimistic && prevAgent) {
         qc.setQueryData<Agent[]>(queryKey, (old) =>
           old?.map((a) =>
             a.id === id ? ({ ...a, ...prevFields } as Agent) : a,

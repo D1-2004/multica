@@ -10,6 +10,25 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Agent response policy compatibility", () => {
+  it.each(["off", "all", "named"] as const)("preserves explicit user decision mode %s", (mode) => {
+    const parsed = AgentResponseSchema.parse({ id: "agent-1", inbound_coordinator_user_decision_mode: mode, inbound_coordinator_user_decision: mode === "off" });
+    expect(parsed.inbound_coordinator_user_decision_mode).toBe(mode);
+  });
+  it.each([undefined, false, true])("maps the legacy setting %j without widening the audience", (enabled) => {
+    const parsed = AgentResponseSchema.parse({ id: "agent-1", inbound_coordinator_user_decision: enabled });
+    expect(parsed.inbound_coordinator_user_decision_mode).toBe(enabled === true ? "named" : "off");
+  });
+  it.each(["future", "", null, true, 1, {}, []])("fails closed for malformed user decision mode %j", (mode) => {
+    const parsed = AgentResponseSchema.parse({ id: "agent-1", inbound_coordinator_user_decision_mode: mode, inbound_coordinator_user_decision: true });
+    expect(parsed.inbound_coordinator_user_decision_mode).toBe("off");
+  });
+  it("sends and reads the selected mode through the update API", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "agent-1", inbound_coordinator_user_decision_mode: "all" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await new ApiClient("https://api.example.test").updateAgent("agent-1", { inbound_coordinator_user_decision_mode: "all" });
+    expect(result.inbound_coordinator_user_decision_mode).toBe("all");
+    expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/api/agents/agent-1", expect.objectContaining({ body: JSON.stringify({ inbound_coordinator_user_decision_mode: "all" }) }));
+  });
   it.each([undefined, "Alice", 1, null, {}, ["Alice", 1]])("fails closed for malformed user decision names %j", (value) => {
     expect(AgentResponseSchema.parse({ id: "agent-1", inbound_coordinator_user_decision_names: value }).inbound_coordinator_user_decision_names).toEqual([]);
   });

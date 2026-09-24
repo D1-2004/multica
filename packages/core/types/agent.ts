@@ -513,6 +513,7 @@ export interface Agent {
    */
   inbound_coordinator?: boolean;
   inbound_coordinator_user_decision?: boolean;
+  inbound_coordinator_user_decision_mode?: "off" | "all" | "named";
   inbound_coordinator_user_decision_names?: string[];
   event_trigger_enabled?: boolean;
   /** Let the platform own DingTalk replies and thinking reactions; off when omitted. */
@@ -875,6 +876,7 @@ export interface UpdateAgentRequest {
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
   inbound_coordinator_user_decision?: boolean;
+  inbound_coordinator_user_decision_mode?: "off" | "all" | "named";
   inbound_coordinator_user_decision_names?: string[];
   event_trigger_enabled?: boolean;
   dingtalk_response_enabled?: boolean;

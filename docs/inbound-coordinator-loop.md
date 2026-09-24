@@ -416,9 +416,11 @@ DWS 返回 A2UI_TARGET_INVALID、INVALID_PARAM、FORBIDDEN 或 PERMISSION_DENIED
 
 ### A2UI 按提问人姓名放量（2026-09-24）
 
-数字员工设置增加 `inbound_coordinator_user_decision_names`（字符串数组，默认空）。只有 Coordinator 与用户决策两个开关均开启，且可信入站 `sender.display_name` 去除首尾空格后与名单完整相等，才进入发卡流程。空名单、空姓名、非名单、机器人、Web 和 task_finished 沿用各自原流程；正文中提到姓名不参与匹配。姓名仅用于放量，不作为作答授权：同名者都会命中，回调仍须通过原始发起人 ID 校验。多行可填多个显示名/别名；关闭总开关不删除已填写名单，已发卡仍按冻结规则处理。
+数字员工的 A2UI 设置使用 `inbound_coordinator_user_decision_mode` 三模式：`off`（关闭）沿用自动处理；`all`（所有人）对所有合格提问人发卡，不要求显示名；`named`（指定名单）仅在可信入站 `sender.display_name` 去除首尾空格后与 `inbound_coordinator_user_decision_names` 某项完整相等时发卡。仅指定名单模式显示姓名输入，名单为空时不发卡；空名单不代表所有人。机器人、Web 和 task_finished 沿用各自原流程，关闭入站判断时 mode=off。正文中提到姓名不参与匹配。姓名仅用于放量，同名者都会命中；所有人模式同样保留原消息作者ID和回调身份核验，不赋予他人代选权限。切换模式保留名单，已发卡仍按冻结规则处理。
 
-collect 在是否命中名单不同的请求之间拆窗；命中者之间仍须同作者 ID，避免一个人的选择控制另一人的请求。原始批内显式出现非名单姓名则不发卡，批内缺姓名但 ID 不同仍由单作者守卫拒绝。
+API 三模式由数据库 enabled 与 audience(named/all) 组合推导，旧开关/名单写入保留旧版指定名单语义，不能通过旧客户端意外进入所有人模式；无关局部更新保留已有范围。非法模式或矛盾模式/开关在写入前拒绝，范围变化递增响应策略版本。现有配置迁移为off/named，不默认放开所有人。
+
+collect 在是否启用选择不同的请求之间拆窗；所有人和指定名单模式下，启用者之间仍须同作者 ID，避免一个人的选择控制另一人的请求。原始批内显式出现非名单姓名则不发卡，批内缺姓名但 ID 不同仍由单作者守卫拒绝。
 
 用户选择以 `coordinator.user_decision.choice` observation 写回原 Coordinator trace；问题、可选项和模型推荐为 input，实际 accepted submission 的 option ID/label/custom 与状态为 output，不能把推荐或拒绝事件当作选择。选择后的解释与审查沿用冻结 trace 并归到 choice 下，避免重新生成 trace ID。PostgreSQL 版本水位驱动独立重试，同一 decision 使用固定 observation ID；Langfuse 失败不阻塞卡片或派发。OTLP 接收成功与 Langfuse 查询可见分别验证。
 

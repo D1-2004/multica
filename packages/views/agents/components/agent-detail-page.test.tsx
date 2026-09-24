@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -14,12 +14,18 @@ import {
 
 const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
 
-// The DM tests exercise the header action wiring plus the real permission
-// rules (via auth + member fixtures); the tabbed body and avatar/presence
-// widgets are irrelevant weight, so they're stubbed.
-vi.mock("./agent-overview-pane", () => ({
-  AgentOverviewPane: () => <div>agent-overview-pane</div>,
-}));
+// Keep the real message settings for mutation/cache integration coverage;
+// unrelated tabs and avatar/presence widgets are stubbed.
+vi.mock("./agent-overview-pane", async () => {
+  const { InboundCoordinatorSetting } = await import("./agent-message-settings");
+  return {
+    AgentOverviewPane: ({ agent, canEdit, onUpdate }: {
+      agent: Agent;
+      canEdit: boolean;
+      onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
+    }) => <InboundCoordinatorSetting agent={agent} canEdit={canEdit} onUpdate={(data) => onUpdate(agent.id, data)} />,
+  };
+});
 vi.mock("../../common/actor-avatar", () => ({
   ActorAvatar: () => <div>actor-avatar</div>,
 }));
@@ -36,6 +42,7 @@ const currentUserRef = vi.hoisted(() => ({
   current: { id: "user-1" } as { id: string } | null,
 }));
 const mockToastError = vi.hoisted(() => vi.fn());
+const mockUpdateAgent = vi.hoisted(() => vi.fn());
 const mockModalOpen = vi.hoisted(() => vi.fn());
 
 vi.mock("@multica/core/hooks", () => ({
@@ -106,7 +113,7 @@ vi.mock("@multica/core/api", () => {
     }
   }
   return {
-    api: { getAgent: vi.fn(() => Promise.reject(new ApiError(404, "not found"))) },
+    api: { getAgent: vi.fn(() => Promise.reject(new ApiError(404, "not found"))), updateAgent: mockUpdateAgent },
     ApiError,
   };
 });
@@ -163,7 +170,7 @@ function renderPage() {
       </NavigationProvider>
     </I18nProvider>,
   );
-  return { push };
+  return { push, queryClient };
 }
 
 beforeEach(() => {
@@ -280,5 +287,68 @@ describe("AgentDetailPage DM button", () => {
       "Bind a runtime before running this agent.",
     );
     expect(mockModalOpen).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("AgentDetailPage audience saves", () => {
+  beforeEach(() => {
+    agentsRef.current = [{ ...baseAgent, owner_id: "user-1", inbound_coordinator: true, inbound_coordinator_user_decision_mode: "named", inbound_coordinator_user_decision_names: ["Alice"] }];
+  });
+
+  it("waits for the server before showing a new audience", async () => {
+    let resolveUpdate!: (agent: Agent) => void;
+    mockUpdateAgent.mockImplementation(() => new Promise<Agent>((resolve) => { resolveUpdate = resolve; }));
+    const { queryClient } = renderPage();
+    fireEvent.click(await screen.findByRole("radio", { name: "Everyone" }));
+    expect(mockUpdateAgent).toHaveBeenCalledWith("agent-1", { inbound_coordinator_user_decision_mode: "all" });
+    expect(screen.getByRole("radio", { name: "Named people" })).toBeChecked();
+    expect(screen.getByRole("textbox")).toHaveValue("Alice");
+    expect(queryClient.getQueryData<Agent[]>(["agents", "ws-1"])?.[0]?.inbound_coordinator_user_decision_mode).toBe("named");
+    const updated = { ...agentsRef.current[0] as Agent, inbound_coordinator_user_decision_mode: "all" as const };
+    agentsRef.current = [updated];
+    await act(async () => { resolveUpdate(updated); });
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Everyone" })).toBeChecked());
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+  });
+
+  it("preserves draft names after a rejected save and refetch", async () => {
+    let rejectUpdate!: (reason: Error) => void;
+    mockUpdateAgent.mockImplementation(() => new Promise<Agent>((_, reject) => { rejectUpdate = reject; }));
+    const { queryClient } = renderPage();
+    fireEvent.change(await screen.findByRole("textbox"), { target: { value: "Bob" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save names" }));
+    expect(queryClient.getQueryData<Agent[]>(["agents", "ws-1"])?.[0]?.inbound_coordinator_user_decision_names).toEqual(["Alice"]);
+    await act(async () => { rejectUpdate(new Error("save failed")); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save names" })).not.toBeDisabled());
+    expect(screen.getByRole("textbox")).toHaveValue("Bob");
+    expect(screen.getByRole("radio", { name: "Named people" })).toBeChecked();
+    expect(mockToastError).toHaveBeenCalledWith("save failed");
+  });
+
+  it("keeps the saved audience after a rejected mode change", async () => {
+    mockUpdateAgent.mockRejectedValue(new Error("save failed"));
+    renderPage();
+    fireEvent.click(await screen.findByRole("radio", { name: "Off" }));
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith("save failed"));
+    expect(screen.getByRole("radio", { name: "Named people" })).toBeChecked();
+    expect(screen.getByRole("textbox")).toHaveValue("Alice");
+  });
+
+  it("waits for the server for the whole coordinator disable request", async () => {
+    mockUpdateAgent.mockImplementation(() => new Promise<Agent>(() => {}));
+    const { queryClient } = renderPage();
+    fireEvent.click(await screen.findByRole("switch", { name: "Judge before sandbox" }));
+    expect(mockUpdateAgent).toHaveBeenCalledWith("agent-1", { inbound_coordinator: false, inbound_coordinator_user_decision_mode: "off", event_trigger_enabled: false });
+    expect(queryClient.getQueryData<Agent[]>(["agents", "ws-1"])?.[0]).toMatchObject({ inbound_coordinator: true, inbound_coordinator_user_decision_mode: "named" });
+  });
+
+  it("preserves optimistic updates for independent settings", async () => {
+    agentsRef.current = [{ ...baseAgent, owner_id: "user-1", inbound_coordinator: false }];
+    mockUpdateAgent.mockImplementation(() => new Promise<Agent>(() => {}));
+    const { queryClient } = renderPage();
+    fireEvent.click(await screen.findByRole("switch", { name: "Judge before sandbox" }));
+    expect(mockUpdateAgent).toHaveBeenCalledWith("agent-1", { inbound_coordinator: true });
+    expect(queryClient.getQueryData<Agent[]>(["agents", "ws-1"])?.[0]?.inbound_coordinator).toBe(true);
   });
 });

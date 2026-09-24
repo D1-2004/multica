@@ -348,7 +348,8 @@
         "user_decision_dws_channel_capability",
         "user_decision_card_send_rejection",
         "user_decision_name_audience",
-        "user_decision_choice_trace_and_listener"
+        "user_decision_choice_trace_and_listener",
+        "user_decision_three_modes"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -375,7 +376,8 @@
         "user_decision_resolution_provenance": "c75f20a62 deployed run3109352900 allEnd=true. R22 live export includes separate interpretation/review policy manifests; R23 includes exact proposal/review prompt hashes. R23 model misclassified cancellation acknowledgment as executable; isolated interpretation policy fix passes exact frozen cancellation replay4.18s and later-wording/cancellation8.25s. Further interpretation regression and native confirmation pending. Narrowed-policy real model regressions passed67.61s: text-only new work, selected refinement, cancellation, contradiction, similar-task reference/negation. Native confirmation pending.",
         "user_decision_dws_channel_capability": "2026-09-22: remove local group type/organization restriction; verify subscription scope and exact source author. Robots stay on automatic Coordinator. Local Host tests passed; live DWS acceptance pending. DM target regression: route trusted p2p initiator via receiverOpenDingTalkId, group via openConversationId; hydrate and verify OSS snapshots before sending; native after-fix acceptance pending.",
         "user_decision_send_rejection": "Definite DWS rejection atomically resumes reply-only error feedback with sanitized provider message; ambiguous sends remain reconciliation-only. Local four-package tests, vet, server build and structural policy check passed; preproduction transaction and live delivery pending.",
-        "user_decision_audience_trace_listener": "2026-09-24: local scoped tests/typechecks/build/vet/race passed. Pre run3109734020 deploy161891040 SUCCESS/allEnd=true; migrations9304/9305 and three PostgreSQL projection tests passed. Live API normalization/clear/preserve/revision passed; two enabled agents limited to 冬翔. Actual Langfuse traces2326de29f86d464d825c84d7f252e07e and30d30a33d5394ee689cf647d81ef568c each contain one matching historical choice; original trace/root I/O unchanged. New native click loop blocked by DWS CONTEXT_PROCESSING_ERROR."
+        "user_decision_audience_trace_listener": "2026-09-24: local scoped tests/typechecks/build/vet/race passed. Pre run3109734020 deploy161891040 SUCCESS/allEnd=true; migrations9304/9305 and three PostgreSQL projection tests passed. Live API normalization/clear/preserve/revision passed; two enabled agents limited to 冬翔. Actual Langfuse traces2326de29f86d464d825c84d7f252e07e and30d30a33d5394ee689cf647d81ef568c each contain one matching historical choice; original trace/root I/O unchanged. New native click loop blocked by DWS CONTEXT_PROCESSING_ERROR.",
+        "user_decision_three_modes": "2026-09-24: off/all/named Host tests, API mode mapping/validation unit tests, core62+views36 tests, typecheck/build/vet/sqlc checks passed. Real DB integration tests not run; deployment/API verification pending."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",

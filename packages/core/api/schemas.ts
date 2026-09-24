@@ -2871,12 +2871,13 @@ export const AgentInvocationTargetsSchema = z
 
 // Agent payloads predate schema validation. Validate additive response policy
 // fields without changing other existing fields or dropping future fields.
-export const AgentResponseSchema = z
+const AgentResponseBaseSchema = z
   .object({
     id: z.string(),
     coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     coordinator_contract_state: z.enum(["loaded", "not_configured", "stale", "unavailable"]).catch("unavailable").default("not_configured"),
     inbound_coordinator_user_decision: z.boolean().catch(false).default(false),
+    inbound_coordinator_user_decision_mode: z.enum(["off", "all", "named"]).optional().catch("off"),
     inbound_coordinator_user_decision_names: z.array(z.string()).catch([]).default([]),
     event_trigger_enabled: z.boolean().catch(false).default(false),
     dingtalk_response_enabled: z.boolean().catch(false).default(false),
@@ -2891,6 +2892,15 @@ export const AgentResponseSchema = z
   })
   .loose();
 
+function normalizeUserDecisionMode<T extends z.infer<typeof AgentResponseBaseSchema>>(agent: T) {
+  return {
+    ...agent,
+    inbound_coordinator_user_decision_mode: agent.inbound_coordinator_user_decision_mode
+      ?? (agent.inbound_coordinator_user_decision === true ? "named" as const : "off" as const),
+  };
+}
+
+export const AgentResponseSchema = AgentResponseBaseSchema.transform(normalizeUserDecisionMode);
 export const AgentResponseListSchema = z.array(AgentResponseSchema);
 
 export const EMPTY_AGENT_RESPONSE: Agent = {
@@ -2923,10 +2933,10 @@ export const EMPTY_AGENT_RESPONSE: Agent = {
 
 // `agent` is a full Agent record — schematising every field would duplicate
 // a 50-field interface and bit-rot fast. Keep it loose and require only `id`.
-const MinimalAgentSchema = AgentResponseSchema.extend({
+const MinimalAgentSchema = AgentResponseBaseSchema.extend({
   permission_mode: AgentPermissionModeSchema.optional(),
   invocation_targets: AgentInvocationTargetsSchema.optional(),
-});
+}).transform(normalizeUserDecisionMode);
 
 export const CreateAgentFromTemplateResponseSchema = z
   .object({

@@ -34,14 +34,15 @@ func (q *Queries) GetAgentTaskFinishedLoop(ctx context.Context, id pgtype.UUID) 
 }
 
 const listAgentInboundCoordinatorByIDs = `-- name: ListAgentInboundCoordinatorByIDs :many
-SELECT id, inbound_coordinator, inbound_coordinator_user_decision, inbound_coordinator_user_decision_names FROM agent WHERE id = ANY($1::uuid[])
+SELECT id, inbound_coordinator, inbound_coordinator_user_decision, inbound_coordinator_user_decision_names, inbound_coordinator_user_decision_audience FROM agent WHERE id = ANY($1::uuid[])
 `
 
 type ListAgentInboundCoordinatorByIDsRow struct {
-	ID                                  pgtype.UUID `json:"id"`
-	InboundCoordinator                  bool        `json:"inbound_coordinator"`
-	InboundCoordinatorUserDecision      bool        `json:"inbound_coordinator_user_decision"`
-	InboundCoordinatorUserDecisionNames []string    `json:"inbound_coordinator_user_decision_names"`
+	ID                                     pgtype.UUID `json:"id"`
+	InboundCoordinator                     bool        `json:"inbound_coordinator"`
+	InboundCoordinatorUserDecision         bool        `json:"inbound_coordinator_user_decision"`
+	InboundCoordinatorUserDecisionNames    []string    `json:"inbound_coordinator_user_decision_names"`
+	InboundCoordinatorUserDecisionAudience string      `json:"inbound_coordinator_user_decision_audience"`
 }
 
 func (q *Queries) ListAgentInboundCoordinatorByIDs(ctx context.Context, ids []pgtype.UUID) ([]ListAgentInboundCoordinatorByIDsRow, error) {
@@ -58,6 +59,7 @@ func (q *Queries) ListAgentInboundCoordinatorByIDs(ctx context.Context, ids []pg
 			&i.InboundCoordinator,
 			&i.InboundCoordinatorUserDecision,
 			&i.InboundCoordinatorUserDecisionNames,
+			&i.InboundCoordinatorUserDecisionAudience,
 		); err != nil {
 			return nil, err
 		}

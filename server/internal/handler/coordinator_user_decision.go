@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	"github.com/jackc/pgx/v5/pgtype"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -164,6 +166,9 @@ func userDecisionEnabledForCommand(policy db.GetAgentDingTalkResponsePolicyRow, 
 	if !policy.InboundCoordinator || !policy.InboundCoordinatorUserDecision || c.Source.Type != "digital_employee" || c.Event.Domain != "channel" || c.Event.Type != "message.created" || c.TaskFinishedTaskID != "" {
 		return false
 	}
+	if policy.InboundCoordinatorUserDecisionAudience == "all" {
+		return true
+	}
 	matches := func(raw string) bool {
 		name := strings.TrimSpace(raw)
 		if name == "" {
@@ -190,4 +195,43 @@ func userDecisionEnabledForCommand(policy db.GetAgentDingTalkResponsePolicyRow, 
 func sameUserDecisionCollectAudience(policy db.GetAgentDingTalkResponsePolicyRow, a, b DispatchCommand) bool {
 	enabledA, enabledB := userDecisionEnabledForCommand(policy, a), userDecisionEnabledForCommand(policy, b)
 	return enabledA == enabledB && (!enabledA || sameDecisionAuthor(a, b))
+}
+
+// The existing enable bit remains authoritative for older clients and binaries.
+func userDecisionMode(coordinator, enabled bool, audience string) string {
+	if !coordinator || !enabled {
+		return "off"
+	}
+	if audience == "all" {
+		return "all"
+	}
+	return "named"
+}
+
+func validateUserDecisionMode(req UpdateAgentRequest) error {
+	if req.InboundCoordinatorUserDecisionMode == nil {
+		return nil
+	}
+	mode := *req.InboundCoordinatorUserDecisionMode
+	if mode != "off" && mode != "all" && mode != "named" {
+		return errors.New("inbound_coordinator_user_decision_mode must be off, all, or named")
+	}
+	if req.InboundCoordinatorUserDecision != nil && *req.InboundCoordinatorUserDecision != (mode != "off") {
+		return errors.New("inbound_coordinator_user_decision conflicts with inbound_coordinator_user_decision_mode")
+	}
+	return nil
+}
+
+func applyUserDecisionMode(req UpdateAgentRequest, params *db.UpdateAgentDingTalkResponsePolicyParams) {
+	if req.InboundCoordinatorUserDecisionMode != nil {
+		mode := *req.InboundCoordinatorUserDecisionMode
+		params.UserDecision = pgtype.Bool{Bool: mode != "off", Valid: true}
+		// Disabling preserves the last audience and names for a later explicit selection.
+		if mode != "off" {
+			params.UserDecisionAudience = pgtype.Text{String: mode, Valid: true}
+		}
+	} else if req.InboundCoordinatorUserDecisionNames != nil || (req.InboundCoordinatorUserDecision != nil && *req.InboundCoordinatorUserDecision) {
+		// A legacy client editing its name-based switch must never enable everyone.
+		params.UserDecisionAudience = pgtype.Text{String: "named", Valid: true}
+	}
 }
