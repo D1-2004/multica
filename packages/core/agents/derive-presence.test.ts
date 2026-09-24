@@ -257,6 +257,18 @@ describe("deriveAgentPresenceDetail", () => {
     expect(detail.capacity).toBe(6);
   });
 
+  it("surfaces wait_reason from a queued task when nothing is running", () => {
+    const detail = deriveAgentPresenceDetail({
+      agent: makeAgent(),
+      runtime: makeRuntime(),
+      tasks: [makeTask({ status: "queued", wait_reason: "sandbox_unhealthy" })],
+      now: NOW,
+    });
+    expect(detail.availability).toBe("online");
+    expect(detail.workload).toBe("queued");
+    expect(detail.waitReason).toBe("sandbox_unhealthy");
+  });
+
   it("composes offline + queued — the canonical 'stuck' case (was previously misleading 'running 0/N')", () => {
     // The motivation for the redesign: runtime offline + queued tasks
     // used to surface as `running` with `0/3 +2q` counts (literally false).

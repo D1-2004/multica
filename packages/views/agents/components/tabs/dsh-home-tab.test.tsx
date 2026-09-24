@@ -4,8 +4,10 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
+import { WorkspaceSlugProvider } from "@multica/core/paths";
 import enAgents from "../../../locales/en/agents.json";
 import enCommon from "../../../locales/en/common.json";
+import { NavigationProvider } from "../../../navigation";
 import { DshHomeTab } from "./dsh-home-tab";
 
 const calls = vi.hoisted(() => ({ get: vi.fn(), ensure: vi.fn(), entry: vi.fn(), profile: vi.fn(), prepareProfile: vi.fn(), navigate: vi.fn() }));
@@ -31,6 +33,33 @@ function show() {
   return client;
 }
 
+
+it("does not show the shared disk inside DSH", async () => {
+  show();
+  await screen.findByRole("button", { name: "Initialize filesystem and open native DSH" });
+  expect(screen.queryByRole("heading", { name: "Workspace shared disk" })).toBeNull();
+  expect(screen.getByText(/DSH uses only this employee private disk/)).toBeTruthy();
+  expect(screen.queryByText(/\/mnt\/workspace\/shared/)).toBeNull();
+});
+
+it("shows the shared disk only on the filesystem page", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  clients.push(client);
+  render(
+    <I18nProvider locale="en" resources={{ en: { agents: enAgents, common: enCommon } }}>
+      <WorkspaceSlugProvider slug="acme">
+        <NavigationProvider value={{ push: vi.fn(), replace: vi.fn(), back: vi.fn(), pathname: "/acme/agents/agent", searchParams: new URLSearchParams(), getShareableUrl: (path: string) => path, openInNewTab: vi.fn() }}>
+          <QueryClientProvider client={client}>
+            <DshHomeTab workspaceId="ws" agentId="agent" nativeEnabled={false} includeSharedDisk />
+          </QueryClientProvider>
+        </NavigationProvider>
+      </WorkspaceSlugProvider>
+    </I18nProvider>,
+  );
+  expect(await screen.findByRole("heading", { name: "Workspace shared disk" })).toBeTruthy();
+  expect(screen.getByText(/not a DSH setting/)).toBeTruthy();
+  expect(screen.getByText(/The shared disk above is not on this disk/)).toBeTruthy();
+});
 
 it("opens from one action after storage and profile preparation without caching credentials", async () => {
   calls.ensure.mockImplementation(async () => { calls.get.mockResolvedValue(ready); return ready; });

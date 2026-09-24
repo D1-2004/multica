@@ -20,7 +20,23 @@ import (
 
 const MountPath = "/mnt/multica"
 
+// DefaultSandboxTaskTimeoutSeconds is the employee-host create/renew floor.
+// Config may raise it; leftover 3600 cannot restore the old one-hour wall.
+const DefaultSandboxTaskTimeoutSeconds = 4800
+
+func SandboxTaskTimeoutSeconds(configured int) int {
+	if configured > DefaultSandboxTaskTimeoutSeconds {
+		return configured
+	}
+	return DefaultSandboxTaskTimeoutSeconds
+}
+
 var sandboxIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+var (
+	destroyAbsenceWait = 800 * time.Millisecond
+	destroyAbsencePoll = 100 * time.Millisecond
+)
 
 type FCConfig struct {
 	APIURL          string
@@ -29,10 +45,18 @@ type FCConfig struct {
 	SecurityGroupID string
 	VSwitchIDs      []string
 	TimeoutSeconds  int
+	// Origin names the deployment that owns the sandbox. Production and
+	// pre-release share one FC account, so the listing cannot tell them apart
+	// without it. It is informational only and never used to match an intent.
+	Origin string
 }
 
+// OriginLabel is the FC metadata key carrying FCConfig.Origin.
+const OriginLabel = "multica.origin"
+
 // FCProvider uses the E2B HTTP contract directly. In particular, create is
-// deliberately NOT retried. The caller persists the intent before this call.
+// deliberately NOT retried here. The caller persists the intent before this
+// call and releases it only when FC definitively refused the request.
 type FCProvider struct {
 	config FCConfig
 	client *http.Client
@@ -100,6 +124,27 @@ func identity(h Host) map[string]string {
 	return labels
 }
 
+// FCStatusError is a definite HTTP answer from FC. Only the status is kept.
+type FCStatusError struct{ Status int }
+
+func (e *FCStatusError) Error() string { return fmt.Sprintf("DSH FC returned HTTP %d", e.Status) }
+
+// createRejected reports a create request FC refused before creating a
+// sandbox. Only statuses that mean "request not accepted" qualify; conflicts,
+// timeouts and server errors stay ambiguous.
+func createRejected(err error) (int, bool) {
+	var status *FCStatusError
+	if !errors.As(err, &status) {
+		return 0, false
+	}
+	switch status.Status {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+		http.StatusUnprocessableEntity, http.StatusTooManyRequests:
+		return status.Status, true
+	}
+	return 0, false
+}
+
 func (p *FCProvider) request(ctx context.Context, method, path string, body any) ([]byte, http.Header, int, error) {
 	var encoded []byte
 	if body != nil {
@@ -123,7 +168,7 @@ func (p *FCProvider) request(ctx context.Context, method, path string, body any)
 	// Never include the response body in errors; provider responses can echo
 	// request credentials or signed connection URLs.
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return nil, res.Header, res.StatusCode, fmt.Errorf("DSH FC returned HTTP %d", res.StatusCode)
+		return nil, res.Header, res.StatusCode, &FCStatusError{Status: res.StatusCode}
 	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
@@ -136,11 +181,37 @@ func (p *FCProvider) Create(ctx context.Context, h Host) (string, error) {
 	if h.State != "creating" {
 		return "", errors.New("invalid persisted DSH FC create intent")
 	}
+	if len(h.ExtraMounts) == 1 && h.AuthRoleARN != "" {
+		spec, err := DualCreateSpec(h, h.ExtraMounts[0], h.AuthRoleARN)
+		if err != nil {
+			return "", err
+		}
+		return p.CreateSpec(ctx, spec)
+	}
 	spec, err := employeeCreateSpec(h)
 	if err != nil {
 		return "", err
 	}
 	return p.CreateSpec(ctx, spec)
+}
+
+func (p *FCProvider) InspectSandbox(ctx context.Context, id string) (SandboxDetail, error) {
+	if !sandboxIDPattern.MatchString(id) {
+		return SandboxDetail{}, errors.New("invalid DSH FC sandbox ID")
+	}
+	data, _, _, err := p.request(ctx, http.MethodGet, "/sandboxes/"+id, nil)
+	if err != nil {
+		return SandboxDetail{}, err
+	}
+	var info sandboxInfo
+	if err := json.Unmarshal(data, &info); err != nil || info.ID != id {
+		return SandboxDetail{}, errors.New("invalid DSH FC sandbox inspect response")
+	}
+	detail := SandboxDetail{State: info.State, Mounts: make([]VolumeMountSpec, 0, len(info.Mounts))}
+	for _, m := range info.Mounts {
+		detail.Mounts = append(detail.Mounts, VolumeMountSpec{Name: m.Name, Path: m.Path})
+	}
+	return detail, nil
 }
 
 // CreateSpec posts a generalized mount list. Employee Create remains the
@@ -159,12 +230,17 @@ func (p *FCProvider) CreateSpec(ctx context.Context, spec SandboxCreateSpec) (st
 	}
 	metadata["fc.sandbox.network.vpc"] = string(vpc)
 	metadata["fc.sandbox.auth.role"] = spec.RoleARN
+	// Deliberately outside spec.Labels: reconciliation must keep adopting
+	// sandboxes created by a replica that predates this label.
+	if p.config.Origin != "" {
+		metadata[OriginLabel] = p.config.Origin
+	}
 	mounts := make([]volumeMount, len(spec.Mounts))
 	for i, m := range spec.Mounts {
 		mounts[i] = volumeMount{Name: m.Name, Path: m.Path}
 	}
 	data, _, _, err := p.request(ctx, http.MethodPost, "/sandboxes", map[string]any{
-		"templateID": spec.TemplateID, "timeout": p.config.TimeoutSeconds,
+		"templateID": spec.TemplateID, "timeout": SandboxTaskTimeoutSeconds(p.config.TimeoutSeconds),
 		"autoPause": false,
 		"metadata":  metadata, "volumeMounts": mounts,
 	})
@@ -201,13 +277,30 @@ func (p *FCProvider) DestroyAndConfirmAbsent(ctx context.Context, id string) err
 	if err != nil && status != http.StatusNotFound {
 		return err
 	}
-	// A success/accepted response alone does not fence a mounted writer.
-	// Require a subsequent authoritative lookup of this exact sandbox ID.
-	_, _, status, _ = p.request(ctx, http.MethodGet, "/sandboxes/"+id, nil)
-	if status != http.StatusNotFound {
-		return errors.New("DSH FC old sandbox absence is unconfirmed")
+	confirmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), destroyAbsenceWait)
+	defer cancel()
+	for {
+		if p.sandboxAbsent(confirmCtx, id) {
+			return nil
+		}
+		select {
+		case <-confirmCtx.Done():
+			return errors.New("DSH FC old sandbox absence is unconfirmed")
+		case <-time.After(destroyAbsencePoll):
+		}
 	}
-	return nil
+}
+
+func (p *FCProvider) sandboxAbsent(ctx context.Context, id string) bool {
+	_, _, status, _ := p.request(ctx, http.MethodGet, "/sandboxes/"+id, nil)
+	return status == http.StatusNotFound
+}
+
+func (p *FCProvider) SandboxAbsent(ctx context.Context, id string) (bool, error) {
+	if !sandboxIDPattern.MatchString(id) {
+		return false, errors.New("invalid DSH FC sandbox ID")
+	}
+	return p.sandboxAbsent(ctx, id), nil
 }
 
 func matches(info sandboxInfo, h Host) bool {
@@ -215,10 +308,36 @@ func matches(info sandboxInfo, h Host) bool {
 	if err != nil {
 		return false
 	}
-	return matchesSpec(info, spec)
+	if matchesSpec(info, spec) {
+		return true
+	}
+	if len(info.Mounts) != 2 {
+		return false
+	}
+	var shared VolumeMountSpec
+	hasPrivate := false
+	for _, m := range info.Mounts {
+		if m.Path == MountPath && m.Name == h.VolumeName {
+			hasPrivate = true
+		} else if m.Path == WorkspaceSharedRoot && m.Name != "" && m.Name != h.VolumeName {
+			shared = VolumeMountSpec{Name: m.Name, Path: m.Path}
+		}
+	}
+	if !hasPrivate || shared.Name == "" {
+		return false
+	}
+	dual, err := DualCreateSpec(h, shared, info.Metadata["fc.sandbox.auth.role"])
+	return err == nil && matchesSpec(info, dual)
 }
 
 func (p *FCProvider) FindCreated(ctx context.Context, h Host) (string, error) {
+	if len(h.ExtraMounts) == 1 && h.AuthRoleARN != "" {
+		spec, err := DualCreateSpec(h, h.ExtraMounts[0], h.AuthRoleARN)
+		if err != nil {
+			return "", err
+		}
+		return p.FindCreatedSpec(ctx, spec)
+	}
 	return p.findSandbox(ctx, "multica.dsh.intent", h.CreateIntent.String(), func(info sandboxInfo) bool { return matches(info, h) })
 }
 
@@ -226,9 +345,9 @@ func (p *FCProvider) FindCreatedSpec(ctx context.Context, spec SandboxCreateSpec
 	if err := spec.valid(); err != nil {
 		return "", err
 	}
-	label, value := "multica.wsfs.intent", spec.CreateIntent.String()
-	if spec.Scope == "employee" {
-		label, value = "multica.dsh.intent", spec.CreateIntent.String()
+	label, value := "multica.dsh.intent", spec.CreateIntent.String()
+	if spec.Scope == "wsfs-read" || spec.Scope == "wsfs-write" {
+		label, value = "multica.wsfs.intent", spec.CreateIntent.String()
 	}
 	return p.findSandbox(ctx, label, value, func(info sandboxInfo) bool { return matchesSpec(info, spec) })
 }

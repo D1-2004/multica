@@ -1348,7 +1348,7 @@
     },
     "dsh_home": {
       "shared_title": "共有ワークスペースファイル",
-      "shared_intro": "ワークスペースの「ファイル」ページの共有ディスクです。既定ではこのエージェントに公開しません。読み取りまたは書き込みを許可すると、次のタスクで /mnt/workspace（$MULTICA_WORKSPACE_FS_ROOT）に同期します。サンドボックス内の書き込みはファイルページに戻りません。",
+      "shared_intro": "ワークスペースの「ファイル」ページの共有ディスクです。既定ではこのエージェントに公開しません。読み取りまたは書き込みを許可すると、次のタスクで /mnt/workspace/shared（$MULTICA_WORKSPACE_FS_ROOT）に同期します。サンドボックス内の書き込みはファイルページに戻りません。",
       "shared_empty": "共有ファイルはまだありません。",
       "grant_label": "エージェント権限",
       "grant_none": "なし",
@@ -1356,7 +1356,7 @@
       "grant_write": "書き込み",
       "grant_saved": "権限を更新しました",
       "grant_failed": "権限を更新できませんでした",
-      "access_path": "タスク内: $MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace",
+      "access_path": "タスク内: $MULTICA_WORKSPACE_FS_ROOT → /mnt/workspace/shared",
       "open_files": "ファイルを開く",
       "private_title": "非共有ディスク",
       "intro": "各 Agent はすべての FC provider で使える独立した永続ファイルシステムを持ちます。ターミナルやファイルツールで $MULTICA_FS_ROOT/files（/mnt/multica/files）を読み書きできます。DSH_HOME は DSH 用のサブディレクトリです。",
@@ -1406,7 +1406,15 @@
     "over_limit": " · 制限を {{count}} 文字超過"
   },
   "presence": {
-    "queue_badge": "+{{count}} 待機中"
+    "queue_badge": "+{{count}} 待機中",
+    "wait_reason": {
+      "sandbox_unhealthy": "期限切れのサンドボックスを再作成しています",
+      "destroy_unconfirmed": "旧サンドボックスの解放を待っています",
+      "create_intent_stale": "サンドボックス作成を再試行しています",
+      "native_grant_busy": "開いているセッションの終了を待っています",
+      "task_drain_busy": "実行中タスクの終了を待っています",
+      "dsh_host_waiting": "従業員ホストを待っています"
+    }
   },
   "visibility": {
     "private": {

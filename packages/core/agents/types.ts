@@ -68,4 +68,7 @@ export interface AgentPresenceDetail {
   // Mirrors agent.max_concurrent_tasks — pulled into the detail so the UI
   // can render `running / capacity` ratios without re-fetching the agent.
   capacity: number;
+  // First queued task's wait_reason, when present. Online + queued surfaces
+  // this so "排队中" is not a silent false queue.
+  waitReason?: string;
 }

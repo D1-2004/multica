@@ -33,7 +33,11 @@ func (s Store) GetGrant(ctx context.Context, workspaceID, agentID uuid.UUID) (Gr
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Grant{WorkspaceID: workspaceID, AgentID: agentID, Access: AccessNone}, nil
 	}
-	return g, err
+	if err != nil {
+		return Grant{}, err
+	}
+	g.Persisted = true
+	return g, nil
 }
 
 func (s Store) ListGrants(ctx context.Context, workspaceID uuid.UUID) ([]Grant, error) {

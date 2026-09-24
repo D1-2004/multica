@@ -6,6 +6,8 @@ export const filesystemKeys = {
   entries: (workspaceId: string, root: string, path: string, offset: number) =>
     ["workspace", workspaceId, "filesystem", "entries", root, path, offset] as const,
   grants: (workspaceId: string) => ["workspace", workspaceId, "filesystem", "grants"] as const,
+  content: (root: string, path: string) =>
+    ["filesystem", "content", root, path] as const,
 };
 
 export function filesystemRootsOptions(workspaceId: string) {
@@ -44,5 +46,14 @@ export function filesystemEntriesOptions(
       }, signal),
     enabled: !!workspaceId && !!root,
     staleTime: 2000,
+  });
+}
+
+export function filesystemContentOptions(root: string, path: string, enabled = true) {
+  return queryOptions({
+    queryKey: filesystemKeys.content(root, path),
+    queryFn: () => api.downloadFilesystemFile({ root, path }),
+    enabled: enabled && !!root && !!path,
+    staleTime: 30_000,
   });
 }

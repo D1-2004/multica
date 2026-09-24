@@ -36,6 +36,7 @@ import { TranscriptButton } from "../../../common/task-transcript";
 import { AttributionBadge } from "../../../issues/components/attribution-badge";
 import { DSHTrajectoryButton } from "../../../common/task-trajectory";
 import { taskStatusConfig } from "../../config";
+import { isDSHWaitReason } from "../../wait-reason";
 import { failureReasonLabel } from "./task-failure";
 import { Sparkline } from "../sparkline";
 import { useT, useTimeAgo } from "../../../i18n";
@@ -590,6 +591,7 @@ function TaskRow({
   // values and grows, so there is no enum to cast to.
   const failureLabel =
     task.status === "failed" ? failureReasonLabel(task.failure_reason) : null;
+  const waitReason = task.wait_reason;
 
   // Only show duration for terminal rows. An active row's duration is
   // inferred from the timeText already ("Started 2m ago") and adding a
@@ -667,6 +669,16 @@ function TaskRow({
           <span className={cfg.color}>
             {taskStatusLabel(task.status, t)}
           </span>
+          {task.status === "queued" && waitReason && (
+            <>
+              <Sep />
+              <span>
+                {isDSHWaitReason(waitReason)
+                  ? t(($) => $.presence.wait_reason[waitReason])
+                  : waitReason}
+              </span>
+            </>
+          )}
           <Sep />
           <span>{timeText}</span>
           {durationText && (

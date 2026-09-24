@@ -15,13 +15,24 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	"github.com/multica-ai/multica/server/internal/dshhost"
 )
 
 var fcE2BAPISandboxIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-// sandboxTaskTimeout is the lifetime applied at create and at every task-start
-// renewal. Create used Config.TimeoutSeconds while renewal was hardcoded to
-// 3600s, so raising Diamond timeout_seconds did not keep a running task alive.
+// errFCE2BSandboxGone reports a 404 from a non-DELETE lifetime request: the
+// sandbox already expired or was removed.
+var errFCE2BSandboxGone = errors.New("FC/E2B sandbox no longer exists")
+
+func (l *FCE2BLauncher) employeeHostTimeoutSeconds() int {
+	if l == nil {
+		return dshhost.DefaultSandboxTaskTimeoutSeconds
+	}
+	return dshhost.SandboxTaskTimeoutSeconds(l.Config.TimeoutSeconds)
+}
+
+// sandboxTaskTimeout is the lifetime applied at generic task-sandbox create
+// and renewal. Config may raise it; values below the default floor are raised.
 func (l *FCE2BLauncher) sandboxTaskTimeout() time.Duration {
 	seconds := defaultFCE2BTimeoutSeconds
 	if l != nil && l.Config.TimeoutSeconds > seconds {
@@ -56,8 +67,11 @@ func (l *FCE2BLauncher) sandboxLifetimeRequest(ctx context.Context, method, id, 
 		return nil, errors.New("FC/E2B sandbox lifetime transport failed")
 	}
 	defer response.Body.Close()
-	if method == http.MethodDelete && response.StatusCode == http.StatusNotFound {
-		return nil, nil
+	if response.StatusCode == http.StatusNotFound {
+		if method == http.MethodDelete {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%w: FC/E2B sandbox lifetime returned HTTP 404", errFCE2BSandboxGone)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("FC/E2B sandbox lifetime returned HTTP %d", response.StatusCode)
@@ -70,9 +84,15 @@ func (l *FCE2BLauncher) sandboxLifetimeRequest(ctx context.Context, method, id, 
 }
 
 func (l *FCE2BLauncher) renewSandboxForTask(ctx context.Context, sandboxID string, trace chattrace.Trace) (expiresAt time.Time, err error) {
+	return l.renewSandboxTimeout(ctx, sandboxID, trace, l.sandboxTaskTimeoutSeconds())
+}
+
+func (l *FCE2BLauncher) renewEmployeeHostSandbox(ctx context.Context, sandboxID string, trace chattrace.Trace) (expiresAt time.Time, err error) {
+	return l.renewSandboxTimeout(ctx, sandboxID, trace, l.employeeHostTimeoutSeconds())
+}
+
+func (l *FCE2BLauncher) renewSandboxTimeout(ctx context.Context, sandboxID string, trace chattrace.Trace, timeoutSeconds int) (expiresAt time.Time, err error) {
 	started := time.Now()
-	timeout := l.sandboxTaskTimeout()
-	timeoutSeconds := int(timeout / time.Second)
 	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_renew", "started", "sandbox_id", sandboxID, "timeout_seconds", timeoutSeconds)
 	defer func() {
 		if err != nil {
@@ -96,7 +116,7 @@ func (l *FCE2BLauncher) renewSandboxForTask(ctx context.Context, sandboxID strin
 	}
 	// The provider may truncate timestamps to seconds; allow a small clock skew.
 	if err := json.Unmarshal(data, &info); err != nil || info.ID != sandboxID || info.State != "running" ||
-		info.EndAt.Before(started.Add(timeout-5*time.Second)) {
+		info.EndAt.Before(started.Add(time.Duration(timeoutSeconds)*time.Second-5*time.Second)) {
 		return time.Time{}, fmt.Errorf("FC/E2B sandbox renewal did not confirm %d seconds of lifetime", timeoutSeconds)
 	}
 	return info.EndAt, nil

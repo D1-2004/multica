@@ -240,6 +240,8 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 
 ## Domain Reminders
 
+- Workspace shared disk and the employee private disk are separate stores. The shared-disk grant does not change `/mnt/multica` or the DSH profile. See `docs/workspace-storage-boundaries.md`.
+
 - Before any Coordinator-related change in `inboundcoord`, handlers/dispatch/callbacks, assoc, scenememory, or trace, read `docs/inbound-coordinator-loop.md` (current behavior contract) and `server/internal/service/inboundcoord/policy/registry.json` (versioned obligations, modules, and superseded incident safeguards). Update source mapping, relevant tool/Host contracts, contrast cases, and evidence status together; run `python3 scripts/check-coordinator-policy.py`. Historical Plans are evidence, not a competing current contract.
 
 - All queries filter by `workspace_id`; membership gates access; `X-Workspace-ID` selects the workspace.

@@ -3911,6 +3911,18 @@ export class ApiClient {
     });
   }
 
+  async renameFilesystem(body: { root: string; path: string; name: string }): Promise<void> {
+    await this.fetch("/api/filesystem/rename", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async deleteFilesystemEntry(params: { root: string; path: string }): Promise<void> {
+    const query = new URLSearchParams({ root: params.root, path: params.path });
+    await this.fetch(`/api/filesystem/entries?${query}`, { method: "DELETE" });
+  }
+
   async uploadFilesystemFile(input: {
     root: string;
     path: string;

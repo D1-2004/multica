@@ -16,6 +16,7 @@ export const FilesystemEntrySchema = z.object({
   path: z.string(),
   is_dir: z.boolean(),
   size_bytes: z.number().optional(),
+  sha256: z.string().optional(),
   modified_at: z.string().optional(),
 });
 

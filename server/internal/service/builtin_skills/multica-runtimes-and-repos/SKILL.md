@@ -43,7 +43,11 @@ A runtime is the execution target behind an agent. A daemon owns local runtime p
 FC/E2B sandbox lifetime equals this task's lifetime. Create and task-start
 renewal both default to 4800 seconds (`--lifecycle.ontimeout kill`). The
 platform does not renew again while the task runs, so work that outlives
-that window can be killed with no Issue event. `nohup` / `setsid` do not
+that window can be killed with no Issue event. About 30 seconds after the
+task ends, a non-DSH sandbox that no later task can reuse (a task with
+neither an Issue nor a chat, such as a run-only autopilot) is released, and
+any other sandbox, DSH employee hosts included, keeps only a 10-minute idle
+window for the next turn on the same Issue or chat. `nohup` / `setsid` do not
 keep processes alive after the task ends. Persist patches, logs, and
 artifacts to Issue comments/attachments before exiting. Attachment upload
 receipts include `size_bytes` and `sha256`; comment JSON uses `size_bytes`,
