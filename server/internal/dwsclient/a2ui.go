@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -100,7 +99,7 @@ func (c CLI) ConsumeCardEvents(ctx context.Context, dir string, ready func(), co
 		if cmd.Process == nil {
 			return nil
 		}
-		return cmd.Process.Signal(os.Interrupt)
+		return cmd.Process.Kill()
 	}
 	cmd.WaitDelay = 5 * time.Second
 	stdout, err := cmd.StdoutPipe()
@@ -114,6 +113,18 @@ func (c CLI) ConsumeCardEvents(ctx context.Context, dir string, ready func(), co
 	if err = cmd.Start(); err != nil {
 		return commandFailed(ctx, "start DWS card consumer", err)
 	}
+	// Cancellation must unblock readers before Wait: WaitDelay alone cannot
+	// help while this function is still waiting for pipes held by descendants.
+	readersDone := make(chan struct{})
+	defer close(readersDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = stdout.Close()
+			_ = stderr.Close()
+		case <-readersDone:
+		}
+	}()
 	var workers sync.WaitGroup
 	var once sync.Once
 	var consumerErr error
@@ -145,6 +156,7 @@ func (c CLI) ConsumeCardEvents(ctx context.Context, dir string, ready func(), co
 				return
 			}
 		}
+		defer cancel()
 		if scanner.Err() != nil {
 			consumerErr = errors.New("DWS card event exceeds stream limit")
 			cancel()

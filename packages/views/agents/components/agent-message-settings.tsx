@@ -1,7 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import type { Agent } from "@multica/core/types";
+import { Textarea } from "@multica/ui/components/ui/textarea";
+import { Button } from "@multica/ui/components/ui/button";
+import { RadioGroup, RadioGroupItem } from "@multica/ui/components/ui/radio-group";
 import { Switch } from "@multica/ui/components/ui/switch";
 import {
   SettingsCard,
@@ -89,16 +92,9 @@ export function InboundCoordinatorSetting({
           description={t(($) => $.inspector.prop_inbound_coordinator_hint)}
           enabled={agent.inbound_coordinator === true}
           canEdit={canEdit}
-          onSave={(next) => onUpdate(next ? { inbound_coordinator: true } : { inbound_coordinator: false, inbound_coordinator_user_decision: false, event_trigger_enabled: false })}
+          onSave={(next) => onUpdate(next ? { inbound_coordinator: true } : { inbound_coordinator: false, inbound_coordinator_user_decision_mode: "off", event_trigger_enabled: false })}
         />
-        <BooleanSetting
-          agentId={agent.id}
-          label={t(($) => $.inspector.prop_coordinator_user_decision)}
-          description={t(($) => $.inspector.prop_coordinator_user_decision_hint)}
-          enabled={agent.inbound_coordinator_user_decision === true}
-          canEdit={canEdit && agent.inbound_coordinator === true}
-          onSave={(next) => onUpdate({ inbound_coordinator_user_decision: next })}
-        />
+        <UserDecisionSetting agent={agent} canEdit={canEdit} onUpdate={onUpdate} />
         <BooleanSetting
           agentId={agent.id}
           label={t(($) => $.inspector.prop_event_trigger)}
@@ -148,6 +144,92 @@ export function BooleanSetting({
         }}
         aria-label={label}
       />
+    </SettingsRow>
+  );
+}
+
+function UserDecisionSetting({ agent, canEdit, onUpdate }: {
+  agent: Agent;
+  canEdit: boolean;
+  onUpdate: (data: Record<string, unknown>) => Promise<void>;
+}) {
+  const { t } = useT("agents");
+  const namesHintId = useId();
+  const savedNames = (agent.inbound_coordinator_user_decision_names ?? []).join("\n");
+  const [draftNames, setDraftNames] = useState(savedNames);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { setDraftNames(savedNames); }, [agent.id, savedNames]);
+  const enabled = canEdit && agent.inbound_coordinator === true;
+  const mode = agent.inbound_coordinator_user_decision_mode
+    ?? (agent.inbound_coordinator_user_decision === true ? "named" : "off");
+  const options = [
+    { value: "off", label: t(($) => $.inspector.prop_coordinator_user_decision_off), description: t(($) => $.inspector.prop_coordinator_user_decision_off_hint) },
+    { value: "all", label: t(($) => $.inspector.prop_coordinator_user_decision_all), description: t(($) => $.inspector.prop_coordinator_user_decision_all_hint) },
+    { value: "named", label: t(($) => $.inspector.prop_coordinator_user_decision_named), description: t(($) => $.inspector.prop_coordinator_user_decision_named_hint) },
+  ] as const;
+  return (
+    <SettingsRow
+      label={t(($) => $.inspector.prop_coordinator_user_decision)}
+      description={t(($) => $.inspector.prop_coordinator_user_decision_hint)}
+      size="text"
+      align="start"
+    >
+      <div className="space-y-4">
+        <RadioGroup
+          aria-label={t(($) => $.inspector.prop_coordinator_user_decision)}
+          value={mode}
+          disabled={!enabled || saving}
+          onValueChange={(next) => {
+            if (!enabled || saving || next === mode || !options.some((option) => option.value === next)) return;
+            setSaving(true);
+            void onUpdate({ inbound_coordinator_user_decision_mode: next })
+              .catch(() => undefined)
+              .finally(() => setSaving(false));
+          }}
+          className="gap-3"
+        >
+          {options.map((option) => (
+            <label key={option.value} className="flex items-start gap-3">
+              <RadioGroupItem value={option.value} aria-labelledby={`${namesHintId}-${option.value}`} aria-describedby={`${namesHintId}-${option.value}-hint`} className="mt-0.5" />
+              <span className="min-w-0">
+                <span id={`${namesHintId}-${option.value}`} className="block text-body font-medium">{option.label}</span>
+                <span id={`${namesHintId}-${option.value}-hint`} className="block text-caption leading-5 text-muted-foreground">{option.description}</span>
+              </span>
+            </label>
+          ))}
+        </RadioGroup>
+        {mode === "named" ? (
+          <div className="space-y-2">
+            <Textarea
+              aria-label={t(($) => $.inspector.prop_coordinator_user_decision_names)}
+              aria-describedby={namesHintId}
+              placeholder={t(($) => $.inspector.prop_coordinator_user_decision_names_placeholder)}
+              value={draftNames}
+              onChange={(event) => setDraftNames(event.target.value)}
+              disabled={!enabled || saving}
+              rows={3}
+              className="resize-y"
+            />
+            <p id={namesHintId} className="text-caption leading-5 text-muted-foreground">
+              {t(($) => $.inspector.prop_coordinator_user_decision_names_hint)}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!enabled || saving || draftNames === savedNames}
+              onClick={() => {
+                const names = [...new Set(draftNames.split(/\r?\n/).map((name) => name.trim()).filter(Boolean))];
+                setSaving(true);
+                void onUpdate({ inbound_coordinator_user_decision_mode: "named", inbound_coordinator_user_decision_names: names })
+                  .catch(() => undefined)
+                  .finally(() => setSaving(false));
+              }}
+            >
+              {t(($) => $.inspector.prop_coordinator_user_decision_names_save)}
+            </Button>
+          </div>
+        ) : null}
+      </div>
     </SettingsRow>
   );
 }

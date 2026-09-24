@@ -271,3 +271,20 @@ Prompts, DingTalk history, tool arguments, and model bodies are exported as
 observation input/output. The same content already reaches SLS and the
 existing Router/static LLM trace sinks; treat the Langfuse project as
 sensitive debugging data with the same access rules.
+
+### A2UI choices
+
+`coordinator.user_decision.choice` uses one deterministic observation ID per
+decision inside the original Coordinator trace. Its input contains the frozen
+question, option IDs/labels/kinds and the model recommendation. Its output
+contains the committed state and, only after acceptance, the actual option
+ID/label, supplementary text, operator/event ID and receipt time. A model
+recommendation or rejected callback is never a human selection.
+
+Submission interpretation and reviews appear beneath
+`coordinator.user_decision.resolve` under that choice, preserving the frozen
+trace ID. The projection worker reads durable decision versions, exports
+synchronously via OTLP and advances its PostgreSQL watermark only on success.
+Repeated exports retain the observation ID. These exports bypass the normal
+in-memory batch queue; network acknowledgement does not prove the asynchronous
+Langfuse index is already visible. Application state remains authoritative.

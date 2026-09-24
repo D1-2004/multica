@@ -44,6 +44,7 @@ type Service struct {
 	Pool        *pgxpool.Pool
 	Transport   Transport
 	Resolve     ResolveFunc
+	Observe     func(context.Context, Request) error
 	Wake        func()
 	NotifyAlert func(Alert)
 }
@@ -58,6 +59,10 @@ func (s *Service) Run(ctx context.Context) {
 	running := map[string]bool{}
 	var wg sync.WaitGroup
 	defer wg.Wait()
+	if s.Observe != nil {
+		wg.Add(1)
+		go func() { defer wg.Done(); s.runObservations(ctx) }()
+	}
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	// Allow subscription ownership to settle during rolling restarts.
@@ -143,9 +148,10 @@ func (s *Service) runIdentity(parent context.Context, r Request) {
 	}
 	defer session.Close()
 	ready := make(chan struct{})
-	done := make(chan error, 1)
+	done := make(chan struct{})
 	var once sync.Once
 	go func() {
+		defer close(done)
 		defer cancel()
 		consumeErr := session.Consume(ctx, func() { once.Do(func() { close(ready) }) }, func(raw []byte) error {
 			e, err := ParseAuditEvent(raw)
@@ -153,7 +159,9 @@ func (s *Service) runIdentity(parent context.Context, r Request) {
 				slog.Warn("user decision event could not be decoded", "event", "user_decision_event_decode_failed", "agent_id", r.AgentID, "bytes", len(raw))
 				return nil
 			}
-			outcome, err := s.Store.AcceptFrom(ctx, e, r.SenderUID, r.SenderOrgID)
+			outcome, err := persistCardEvent(ctx, func(attemptCtx context.Context) (string, error) {
+				return s.Store.AcceptFrom(attemptCtx, e, r.SenderUID, r.SenderOrgID)
+			}, 250*time.Millisecond)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
@@ -165,7 +173,6 @@ func (s *Service) runIdentity(parent context.Context, r Request) {
 			return nil
 		})
 		slog.Info("user decision consumer stopped", "event", "user_decision_consumer_stopped", "agent_id", r.AgentID, "cancelled", ctx.Err() != nil, "failed", consumeErr != nil)
-		done <- consumeErr
 	}()
 	defer func() {
 		cancel()

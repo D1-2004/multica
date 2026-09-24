@@ -706,7 +706,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			if priorWaitErr != nil {
 				return nil, job, priorWaitErr
 			}
-			if !sameCoordinatorCollectKind(base, command) || !sameCoordinatorWaitDelivery(priorWait, waitDelivery) || (waitPolicy.InboundCoordinatorUserDecision && !sameDecisionAuthor(base, command)) {
+			if !sameCoordinatorCollectKind(base, command) || !sameCoordinatorWaitDelivery(priorWait, waitDelivery) || !sameUserDecisionCollectAudience(waitPolicy, base, command) {
 				splitKind = true
 				continue
 			}

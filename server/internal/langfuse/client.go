@@ -27,6 +27,7 @@ const (
 // concurrent use. A nil *Client is valid and turns every method into a no-op,
 // which is how an unconfigured deployment is represented.
 type Client struct {
+	exporter  sdktrace.SpanExporter
 	provider  *sdktrace.TracerProvider
 	tracer    trace.Tracer
 	endpoint  string
@@ -66,6 +67,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		sdktrace.WithMaxQueueSize(cfg.MaxQueueSize),
 		sdktrace.WithMaxExportBatchSize(cfg.MaxBatchSize),
 	))
+	client.exporter = exporter
 	client.endpoint = endpoint
 	return client, nil
 }
@@ -73,7 +75,9 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 // NewWithExporter builds a Client that hands every finished span synchronously
 // to exporter. It exists for tests and never touches the network.
 func NewWithExporter(cfg Config, exporter sdktrace.SpanExporter) *Client {
-	return newClient(cfg.withDefaults(), sdktrace.WithSyncer(exporter))
+	client := newClient(cfg.withDefaults(), sdktrace.WithSyncer(exporter))
+	client.exporter = exporter
+	return client
 }
 
 func newClient(cfg Config, processor sdktrace.TracerProviderOption) *Client {

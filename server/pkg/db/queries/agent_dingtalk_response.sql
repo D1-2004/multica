@@ -1,10 +1,10 @@
 -- name: GetAgentDingTalkResponsePolicy :one
-SELECT inbound_coordinator, inbound_coordinator_user_decision, dingtalk_show_ai_tag, dingtalk_response_enabled, dingtalk_response_policy_revision
+SELECT inbound_coordinator, inbound_coordinator_user_decision, inbound_coordinator_user_decision_names, inbound_coordinator_user_decision_audience, dingtalk_show_ai_tag, dingtalk_response_enabled, dingtalk_response_policy_revision
 FROM agent
 WHERE id = $1;
 
 -- name: ListAgentDingTalkResponsePoliciesByIDs :many
-SELECT id, inbound_coordinator, inbound_coordinator_user_decision, dingtalk_show_ai_tag, dingtalk_response_enabled, dingtalk_response_policy_revision
+SELECT id, inbound_coordinator, inbound_coordinator_user_decision, inbound_coordinator_user_decision_names, inbound_coordinator_user_decision_audience, dingtalk_show_ai_tag, dingtalk_response_enabled, dingtalk_response_policy_revision
 FROM agent
 WHERE id = ANY(sqlc.arg('ids')::uuid[]);
 
@@ -12,17 +12,21 @@ WHERE id = ANY(sqlc.arg('ids')::uuid[]);
 UPDATE agent SET
     inbound_coordinator = COALESCE(sqlc.narg('inbound_coordinator')::boolean, inbound_coordinator),
     inbound_coordinator_user_decision = CASE WHEN NOT COALESCE(sqlc.narg('inbound_coordinator')::boolean, inbound_coordinator) THEN false ELSE COALESCE(sqlc.narg('user_decision')::boolean, inbound_coordinator_user_decision) END,
+    inbound_coordinator_user_decision_audience = COALESCE(sqlc.narg('user_decision_audience')::text, inbound_coordinator_user_decision_audience),
+    inbound_coordinator_user_decision_names = COALESCE(sqlc.narg('user_decision_names')::text[], inbound_coordinator_user_decision_names),
     dingtalk_show_ai_tag = COALESCE(sqlc.narg('show_ai_tag')::boolean, dingtalk_show_ai_tag),
     dingtalk_response_enabled = COALESCE(sqlc.narg('response_enabled')::boolean, dingtalk_response_enabled),
     dingtalk_response_policy_revision = dingtalk_response_policy_revision + CASE
         WHEN inbound_coordinator IS DISTINCT FROM COALESCE(sqlc.narg('inbound_coordinator')::boolean, inbound_coordinator)
           OR inbound_coordinator_user_decision IS DISTINCT FROM (CASE WHEN NOT COALESCE(sqlc.narg('inbound_coordinator')::boolean, inbound_coordinator) THEN false ELSE COALESCE(sqlc.narg('user_decision')::boolean, inbound_coordinator_user_decision) END)
+          OR inbound_coordinator_user_decision_audience IS DISTINCT FROM COALESCE(sqlc.narg('user_decision_audience')::text, inbound_coordinator_user_decision_audience)
+          OR inbound_coordinator_user_decision_names IS DISTINCT FROM COALESCE(sqlc.narg('user_decision_names')::text[], inbound_coordinator_user_decision_names)
           OR dingtalk_show_ai_tag IS DISTINCT FROM COALESCE(sqlc.narg('show_ai_tag')::boolean, dingtalk_show_ai_tag)
           OR dingtalk_response_enabled IS DISTINCT FROM COALESCE(sqlc.narg('response_enabled')::boolean, dingtalk_response_enabled)
         THEN 1 ELSE 0 END,
     updated_at = now()
 WHERE id = sqlc.arg('id')
-RETURNING inbound_coordinator, inbound_coordinator_user_decision, dingtalk_show_ai_tag, dingtalk_response_enabled, dingtalk_response_policy_revision;
+RETURNING inbound_coordinator, inbound_coordinator_user_decision, inbound_coordinator_user_decision_names, inbound_coordinator_user_decision_audience, dingtalk_show_ai_tag, dingtalk_response_enabled, dingtalk_response_policy_revision;
 
 -- name: UpdateLocalRuntimeDingTalkCapabilities :exec
 UPDATE agent_runtime
