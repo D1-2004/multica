@@ -194,7 +194,7 @@ func (healthyProvider) Healthy(context.Context, string) error { return nil }
 func TestPrivateOnlyUnhealthyKeepsTheWaitReason(t *testing.T) {
 	key := Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}
 	running := Host{Key: key, Storage: Storage{VolumeName: "vol-employee"}, State: "running", Generation: 1, SandboxID: "sbx-1", TemplateID: "tpl"}
-	m := Manager{Store: runningHostStore{h: running}, Provider: mountedProvider{inspectErr: errors.New("DSH FC returned HTTP 404")}}
+	m := Manager{Store: runningHostStore{h: running}, Provider: mountedProvider{inspectErr: &FCStatusError{Status: 404}}}
 	_, err := m.EnsurePrivate(context.Background(), key, "tpl")
 	if !errors.Is(err, ErrRetireRequired) || !strings.Contains(err.Error(), WaitSandboxUnhealthy) {
 		t.Fatalf("an unreadable sandbox must surface sandbox_unhealthy, got %v", err)

@@ -66,13 +66,15 @@ type Host struct {
 	// Create without changing grant-none DSH sandboxes.
 	ExtraMounts []VolumeMountSpec
 	AuthRoleARN string
-	// Observed* is the last confirmed shared-mount identity on this generation.
-	// It is empty until a detail read succeeds. A later failed read may trust
-	// it only when the new grant is not tighter.
+	// Observed* is the last confirmed shared-mount identity for one sandbox
+	// generation. A later failed read may trust it only when the sandbox id
+	// and generation still match and the new grant is not tighter.
 	ObservedSharedKnown     bool
 	ObservedSharedVolume    string
 	ObservedSharedAccess    string
 	ObservedGrantGeneration int64
+	ObservedSandboxID       string
+	ObservedHostGeneration  int64
 }
 
 // SharedTarget is the grant a running or new sandbox must honor.
@@ -298,6 +300,12 @@ func (m Manager) AuthorizeRunning(ctx context.Context, h Host, target *SharedTar
 	}
 	detail, err := inspector.InspectSandbox(ctx, h.SandboxID)
 	if err != nil {
+		// A definite 404 means the sandbox is gone. Idle recycle deletes it
+		// after 10 minutes; the next launch must retire and create again.
+		// A recorded mount must not stand in for that sandbox.
+		if sandboxDefinitelyGone(err) {
+			return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
+		}
 		return m.reuseRecordedMount(h, *target)
 	}
 	if detail.State != "running" {
@@ -381,8 +389,17 @@ func grantTightened(targetAccess, observedAccess string) bool {
 	return rank(targetAccess) < rank(observedAccess)
 }
 
+func sandboxDefinitelyGone(err error) bool {
+	var status *FCStatusError
+	return errors.As(err, &status) && status.Status == http.StatusNotFound
+}
+
+func observationMatches(h Host) bool {
+	return h.ObservedSharedKnown && h.ObservedSandboxID != "" && h.ObservedSandboxID == h.SandboxID && h.ObservedHostGeneration == h.Generation
+}
+
 func (m Manager) reuseRecordedMount(h Host, target SharedTarget) (Host, error) {
-	if !h.ObservedSharedKnown || grantTightened(target.Access, h.ObservedSharedAccess) {
+	if !observationMatches(h) || grantTightened(target.Access, h.ObservedSharedAccess) {
 		return Host{}, fmt.Errorf("%w: shared mount inspection is unconfirmed", ErrPending)
 	}
 	if h.ObservedSharedVolume != "" {
@@ -394,12 +411,12 @@ func (m Manager) reuseRecordedMount(h Host, target SharedTarget) (Host, error) {
 
 func (m Manager) rememberShared(ctx context.Context, h Host, volume, access string, grantGeneration int64) {
 	recorder, ok := m.Store.(interface {
-		RecordSharedObservation(context.Context, Key, int64, string, string, int64) error
+		RecordSharedObservation(context.Context, Host, string, string, int64) error
 	})
 	if !ok {
 		return
 	}
-	_ = recorder.RecordSharedObservation(ctx, h.Key, h.Generation, volume, access, grantGeneration)
+	_ = recorder.RecordSharedObservation(ctx, h, volume, access, grantGeneration)
 }
 
 func (m Manager) sandboxHasMount(ctx context.Context, sandboxID string, want VolumeMountSpec) bool {

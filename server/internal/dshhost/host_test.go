@@ -55,7 +55,7 @@ func stores(t *testing.T) (PostgresStore, PostgresStore) {
 		return PostgresStore{DB: pool}
 	}
 	a, b := newStore(), newStore()
-	for _, name := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9228_dsh_session_binding", "9229_dsh_session_scope", "9230_dsh_session_identity", "9231_dsh_task_identity", "9232_dsh_request_identity", "9233_dsh_storage_provision", "9234_dsh_storage_provision_identity", "9235_dsh_native_access", "9265_dsh_native_access_parent", "9236_dsh_native_access_hash", "9237_dsh_native_access_id", "9238_dsh_browser_session_identity", "9260_dsh_session_sandbox_scope", "9262_dsh_session_workdir", "9268_dsh_session_epoch", "9269_dsh_session_epoch_identity", "9270_dsh_session_epoch_scope", "9304_dsh_employee_host_shared_observation"} {
+	for _, name := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9257_employee_filesystem_sandbox", "9258_employee_filesystem_sandbox_scope", "9259_employee_filesystem_host", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9228_dsh_session_binding", "9229_dsh_session_scope", "9230_dsh_session_identity", "9231_dsh_task_identity", "9232_dsh_request_identity", "9233_dsh_storage_provision", "9234_dsh_storage_provision_identity", "9235_dsh_native_access", "9265_dsh_native_access_parent", "9236_dsh_native_access_hash", "9237_dsh_native_access_id", "9238_dsh_browser_session_identity", "9260_dsh_session_sandbox_scope", "9262_dsh_session_workdir", "9268_dsh_session_epoch", "9269_dsh_session_epoch_identity", "9270_dsh_session_epoch_scope", "9304_dsh_employee_host_shared_observation", "9305_dsh_employee_host_observation_identity", "9306_employee_filesystem_sandbox_shared_observation"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", name+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
@@ -251,6 +251,117 @@ func TestInspectFailureReusesRecordedMountWhenGrantIsNotTightened(t *testing.T) 
 	revoked, err := (Manager{Store: a, Provider: bad}).EnsurePrivate(ctx, h.Key, "template-1")
 	if !errors.Is(err, ErrPending) || errors.Is(err, ErrRetireRequired) || revoked.SandboxID == first.SandboxID || bad.destroys != 0 {
 		t.Fatalf("tightened grant reused a host after a failed mount check: host=%+v err=%v destroys=%d", revoked, err, bad.destroys)
+	}
+}
+
+type goneCloud struct{ cloud }
+
+func (p *goneCloud) InspectSandbox(context.Context, string) (SandboxDetail, error) {
+	return SandboxDetail{}, &FCStatusError{Status: 404}
+}
+
+func TestExpiredSandbox404RebuildsEvenWithObservation(t *testing.T) {
+	a, _ := stores(t)
+	h := bind(t, a)
+	p := &mountedCloud{}
+	m := Manager{a, p}
+	ctx := context.Background()
+	first, err := m.Ensure(ctx, h.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnly := SharedTarget{Access: "read", Volume: "vol-ro", RoleARN: "role-read"}
+	p.mounts = []VolumeMountSpec{{Name: h.VolumeName, Path: MountPath}, {Name: "vol-ro", Path: WorkspaceSharedRoot}}
+	if _, err = m.EnsureWithSharedGrant(ctx, h.Key, "template-1", readOnly); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"no observation", "recorded observation"} {
+		provider := &goneCloud{}
+		store := a
+		if name == "no observation" {
+			bare := bind(t, a)
+			if _, err = (Manager{a, &cloud{}}).Ensure(ctx, bare.Key, "template-1"); err != nil {
+				t.Fatal(err)
+			}
+			got, err := (Manager{a, provider}).EnsureWithSharedGrant(ctx, bare.Key, "template-1", readOnly)
+			if !errors.Is(err, ErrRetireRequired) || !strings.Contains(err.Error(), WaitSandboxUnhealthy) || got.SandboxID != "" || provider.creates != 0 || provider.destroys != 0 {
+				t.Fatalf("%s: FC 404 did not enter rebuild: host=%+v err=%v", name, got, err)
+			}
+			continue
+		}
+		got, err := (Manager{store, provider}).EnsureWithSharedGrant(ctx, h.Key, "template-1", readOnly)
+		if !errors.Is(err, ErrRetireRequired) || !strings.Contains(err.Error(), WaitSandboxUnhealthy) || got.SandboxID == first.SandboxID || provider.creates != 0 || provider.destroys != 0 {
+			t.Fatalf("%s: FC 404 did not enter rebuild: host=%+v err=%v", name, got, err)
+		}
+	}
+}
+
+func TestFilesystemScopeRetainsSharedObservation(t *testing.T) {
+	a, _ := stores(t)
+	employee := bind(t, a)
+	ctx := context.Background()
+	scope := FilesystemSandboxStore{DB: a.DB, ScopeID: uuid.New()}
+	if _, err := scope.Bind(ctx, employee.Key); err != nil {
+		t.Fatal(err)
+	}
+	p := &mountedCloud{}
+	m := Manager{Store: scope, Provider: p}
+	first, err := m.Ensure(ctx, employee.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mounts = []VolumeMountSpec{{Name: employee.VolumeName, Path: MountPath}, {Name: "vol-ro", Path: WorkspaceSharedRoot}}
+	readOnly := SharedTarget{Access: "read", Volume: "vol-ro", RoleARN: "role-read"}
+	if _, err = m.EnsureWithSharedGrant(ctx, employee.Key, "template-1", readOnly); err != nil {
+		t.Fatal(err)
+	}
+	got, err := (Manager{Store: scope, Provider: &inspectFailCloud{}}).EnsureWithSharedGrant(ctx, employee.Key, "template-1", readOnly)
+	if err != nil || got.SandboxID != first.SandboxID || !got.ObservedSharedKnown {
+		t.Fatalf("scoped observation was lost: known=%v returned=%s err=%v", got.ObservedSharedKnown, got.SandboxID, err)
+	}
+	other := FilesystemSandboxStore{DB: a.DB, ScopeID: uuid.New()}
+	if _, err = other.Bind(ctx, employee.Key); err != nil {
+		t.Fatal(err)
+	}
+	otherHost, err := (Manager{Store: other, Provider: &cloud{}}).Ensure(ctx, employee.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := (Manager{Store: other, Provider: &inspectFailCloud{}}).EnsureWithSharedGrant(ctx, employee.Key, "template-1", readOnly)
+	if !errors.Is(err, ErrPending) || blocked.SandboxID == otherHost.SandboxID {
+		t.Fatalf("another scope reused this scope's observation: host=%+v err=%v", blocked, err)
+	}
+}
+
+func TestStaleObservationDoesNotAuthorizeAnotherGeneration(t *testing.T) {
+	a, _ := stores(t)
+	h := bind(t, a)
+	p := &mountedCloud{}
+	m := Manager{a, p}
+	ctx := context.Background()
+	first, err := m.Ensure(ctx, h.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mounts = []VolumeMountSpec{{Name: h.VolumeName, Path: MountPath}}
+	if _, err = m.EnsurePrivate(ctx, h.Key, "template-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.DB.Exec(ctx, `UPDATE dsh_employee_host
+ SET generation=generation+1, sandbox_id='legacy-new-rw'
+ WHERE workspace_id=$1 AND agent_id=$2 AND sandbox_id=$3`, h.WorkspaceID, h.AgentID, first.SandboxID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := (Manager{a, &inspectFailCloud{}}).EnsurePrivate(ctx, h.Key, "template-1")
+	if err == nil || got.SandboxID == "legacy-new-rw" {
+		t.Fatalf("old observation authorized a different generation after revoke: returned=%s err=%v", got.SandboxID, err)
+	}
+	reloaded, err := a.Get(ctx, h.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Generation == first.Generation || observationMatches(reloaded) {
+		t.Fatalf("stale observation still matches generation=%d sandbox=%s observed=%s/%d", reloaded.Generation, reloaded.SandboxID, reloaded.ObservedSandboxID, reloaded.ObservedHostGeneration)
 	}
 }
 

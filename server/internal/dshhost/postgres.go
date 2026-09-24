@@ -21,7 +21,7 @@ type PostgresStore struct{ DB Database }
 
 const columns = `workspace_id, agent_id, file_system_id, space_id, volume_name, access_point_arn, role_arn, vpc_id, security_group_id, vswitch_ids,
  state, generation, COALESCE(create_intent, '00000000-0000-0000-0000-000000000000'::uuid), sandbox_id, template_id, updated_at,
- observed_shared_volume, observed_shared_access, observed_grant_generation`
+ observed_shared_volume, observed_shared_access, observed_grant_generation, observed_sandbox_id, observed_host_generation`
 
 func readHost(row pgx.Row) (Host, error) {
 	var h Host
@@ -32,11 +32,11 @@ func readHost(row pgx.Row) (Host, error) {
 
 func readEmployeeHost(row pgx.Row) (Host, error) {
 	var h Host
-	var volume, access *string
-	var grantGeneration *int64
+	var volume, access, observedSandbox *string
+	var grantGeneration, observedGeneration *int64
 	err := row.Scan(&h.WorkspaceID, &h.AgentID, &h.FileSystemID, &h.SpaceID, &h.VolumeName, &h.AccessPointARN,
 		&h.RoleARN, &h.VPCID, &h.SecurityGroupID, &h.VSwitchIDs, &h.State, &h.Generation, &h.CreateIntent, &h.SandboxID, &h.TemplateID, &h.UpdatedAt,
-		&volume, &access, &grantGeneration)
+		&volume, &access, &grantGeneration, &observedSandbox, &observedGeneration)
 	if err != nil {
 		return Host{}, err
 	}
@@ -49,6 +49,12 @@ func readEmployeeHost(row pgx.Row) (Host, error) {
 	}
 	if grantGeneration != nil {
 		h.ObservedGrantGeneration = *grantGeneration
+	}
+	if observedSandbox != nil {
+		h.ObservedSandboxID = *observedSandbox
+	}
+	if observedGeneration != nil {
+		h.ObservedHostGeneration = *observedGeneration
 	}
 	return h, nil
 }
@@ -101,7 +107,8 @@ func (s PostgresStore) BeginCreate(ctx context.Context, key Key, generation int6
 	}
 	return transition(s.DB.QueryRow(ctx, `UPDATE dsh_employee_host
  SET state='creating', generation=generation+1, create_intent=$4, template_id=$5,
- observed_shared_volume=NULL, observed_shared_access=NULL, observed_grant_generation=NULL, updated_at=now()
+ observed_shared_volume=NULL, observed_shared_access=NULL, observed_grant_generation=NULL,
+ observed_sandbox_id=NULL, observed_host_generation=NULL, updated_at=now()
  WHERE workspace_id=$1 AND agent_id=$2 AND generation=$3 AND state='offline'
  RETURNING `+columns, key.WorkspaceID, key.AgentID, generation, intent, template))
 }
@@ -137,7 +144,8 @@ func (s PostgresStore) AbortRetire(ctx context.Context, h Host) error {
 func (s PostgresStore) CompleteRetire(ctx context.Context, h Host) error {
 	result, err := s.DB.Exec(ctx, `UPDATE dsh_employee_host
  SET state='offline', sandbox_id='', create_intent=NULL,
- observed_shared_volume=NULL, observed_shared_access=NULL, observed_grant_generation=NULL, updated_at=now()
+ observed_shared_volume=NULL, observed_shared_access=NULL, observed_grant_generation=NULL,
+ observed_sandbox_id=NULL, observed_host_generation=NULL, updated_at=now()
  WHERE workspace_id=$1 AND agent_id=$2 AND generation=$3 AND sandbox_id=$4 AND state='retiring'`,
 		h.WorkspaceID, h.AgentID, h.Generation, h.SandboxID)
 	if err != nil {
@@ -152,7 +160,8 @@ func (s PostgresStore) CompleteRetire(ctx context.Context, h Host) error {
 func (s PostgresStore) AbandonCreate(ctx context.Context, h Host) error {
 	result, err := s.DB.Exec(ctx, `UPDATE dsh_employee_host
  SET state='offline', sandbox_id='', create_intent=NULL,
- observed_shared_volume=NULL, observed_shared_access=NULL, observed_grant_generation=NULL, updated_at=now()
+ observed_shared_volume=NULL, observed_shared_access=NULL, observed_grant_generation=NULL,
+ observed_sandbox_id=NULL, observed_host_generation=NULL, updated_at=now()
  WHERE workspace_id=$1 AND agent_id=$2 AND generation=$3 AND create_intent=$4 AND state='creating'`,
 		h.WorkspaceID, h.AgentID, h.Generation, h.CreateIntent)
 	if err != nil {
@@ -166,14 +175,15 @@ func (s PostgresStore) AbandonCreate(ctx context.Context, h Host) error {
 
 // RecordSharedObservation stores the last confirmed shared-mount identity.
 // A later detail-read failure may trust it only when the grant was not tightened.
-func (s PostgresStore) RecordSharedObservation(ctx context.Context, key Key, generation int64, volume, access string, grantGeneration int64) error {
+func (s PostgresStore) RecordSharedObservation(ctx context.Context, h Host, volume, access string, grantGeneration int64) error {
 	var recordedVolume any
 	if volume != "" {
 		recordedVolume = volume
 	}
 	_, err := s.DB.Exec(ctx, `UPDATE dsh_employee_host
- SET observed_shared_volume=$4, observed_shared_access=$5, observed_grant_generation=$6
- WHERE workspace_id=$1 AND agent_id=$2 AND generation=$3 AND state='running'`,
-		key.WorkspaceID, key.AgentID, generation, recordedVolume, access, grantGeneration)
+ SET observed_shared_volume=$4, observed_shared_access=$5, observed_grant_generation=$6,
+ observed_sandbox_id=$7, observed_host_generation=$3
+ WHERE workspace_id=$1 AND agent_id=$2 AND generation=$3 AND sandbox_id=$7 AND state='running'`,
+		h.WorkspaceID, h.AgentID, h.Generation, recordedVolume, access, grantGeneration, h.SandboxID)
 	return err
 }
