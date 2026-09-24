@@ -1878,14 +1878,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.With(authRL).Post("/auth/fde/dingtalk", h.DingTalkLogin)
 	r.Post("/auth/logout", h.Logout)
 
-	// Native gateway capabilities perform their own database authorization.
-	nativeAccessRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_DSH_NATIVE_ACCESS", 2400), time.Minute, trustedProxies)
-	r.With(nativeAccessRL).Post("/api/dsh-native/access/exchange", h.ExchangeDSHNativeAccess)
-	r.With(nativeAccessRL).Post("/api/dsh-native/access/check", h.CheckDSHNativeAccess)
-	r.Handle("/api/dsh-native/ui/{accessId}/*", http.HandlerFunc(h.DSHNativeUI))
-	nativePromptRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_DSH_NATIVE_PROMPT", 120), time.Minute, trustedProxies)
-	r.With(nativePromptRL).Post("/api/dsh-native/prompts", h.SubmitDSHNativePrompt)
-
 	// Public API
 	r.Get("/api/config", h.GetConfig)
 	r.With(contactSalesRL).Post("/api/contact-sales", h.CreateContactSales)
@@ -2697,8 +2689,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Post("/dsh-home", h.EnsureDSHHome)
 					r.With(handler.RequireHumanActor).Get("/filesystem", h.GetDSHHome)
 					r.With(handler.RequireHumanActor).Post("/filesystem", h.EnsureDSHHome)
-					r.With(handler.RequireHumanActor).Post("/dsh-native/access", h.IssueDSHNativeAccess)
-					r.With(handler.RequireHumanActor).Delete("/dsh-native/access/{accessId}", h.RevokeDSHNativeAccess)
 					r.Put("/dsh-plugins", h.SetAgentDshPlugins)
 					r.Delete("/dsh-plugins/{pluginId}", h.RemoveAgentDshPlugin)
 					// OKRs materialize as workspace labels the agent tags

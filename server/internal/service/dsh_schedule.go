@@ -76,16 +76,16 @@ func scheduleTaskMatches(actor DSHScheduleActor, task db.AgentTaskQueue, agent d
 // withDSHScheduleTask retains current task, membership and employee authority
 // through the write. Historical accountability alone never grants permission:
 // an unattended parent must have an actual persisted Schedule occurrence.
-func (s *TaskService) withDSHScheduleTask(ctx context.Context, actor DSHScheduleActor, sessionID string, invoke DSHNativeInvokeCheck,
+func (s *TaskService) withDSHScheduleTask(ctx context.Context, actor DSHScheduleActor, sessionID string, invoke DSHInvokeCheck,
 	fn func(pgx.Tx, uuid.UUID, time.Time) error) error {
 	if s == nil || s.Queries == nil || s.TxStarter == nil || invoke == nil || fn == nil ||
 		actor.TaskID == uuid.Nil || actor.WorkspaceID == uuid.Nil || actor.AgentID == uuid.Nil || !dshhost.ValidSessionID(sessionID) {
-		return dshhost.ErrNativeAccessDenied
+		return ErrDSHAccessDenied
 	}
 	taskID := pgtype.UUID{Bytes: actor.TaskID, Valid: true}
 	initial, err := s.Queries.GetAgentTask(ctx, taskID)
 	if err != nil || !initial.RuntimeID.Valid {
-		return dshhost.ErrNativeAccessDenied
+		return ErrDSHAccessDenied
 	}
 	return s.runInTxWithHandle(ctx, func(q *db.Queries, tx pgx.Tx) error {
 		if err := lockDSHEmployeeAdmission(ctx, tx, actor.Key, initial.RuntimeID); err != nil {
@@ -96,26 +96,26 @@ func (s *TaskService) withDSHScheduleTask(ctx context.Context, actor DSHSchedule
 		}
 		agent, err := q.GetAgentForClaimUpdate(ctx, pgtype.UUID{Bytes: actor.AgentID, Valid: true})
 		if err != nil {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		var locked pgtype.UUID
 		if err := tx.QueryRow(ctx, `SELECT id FROM agent_task_queue WHERE id=$1 FOR SHARE`, taskID).Scan(&locked); err != nil {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		task, err := q.GetAgentTask(ctx, taskID)
 		if err != nil || task.RuntimeID != initial.RuntimeID || !scheduleTaskMatches(actor, task, agent) {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		if err := tx.QueryRow(ctx, `SELECT task_id FROM dsh_task_binding WHERE workspace_id=$1 AND agent_id=$2 AND task_id=$3 AND session_id=$4 FOR SHARE`,
 			actor.WorkspaceID, actor.AgentID, actor.TaskID, sessionID).Scan(&locked); err != nil {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		if err := tx.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE id=$1 AND workspace_id=$2 FOR SHARE`, agent.RuntimeID, agent.WorkspaceID).Scan(&locked); err != nil {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		runtime, err := q.GetAgentRuntime(ctx, agent.RuntimeID)
 		if err != nil || runtime.Provider != "dsh" || !IsFCE2BRuntime(runtime) {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		var memberID, userID pgtype.UUID
 		if task.OriginatorUserID.Valid {
@@ -124,15 +124,15 @@ func (s *TaskService) withDSHScheduleTask(ctx context.Context, actor DSHSchedule
 		} else {
 			execution, loadErr := dshschedule.LoadExecution(ctx, tx, actor.Key, actor.TaskID)
 			if loadErr != nil || !ScheduleExecutionMatches(task, execution) {
-				return dshhost.ErrNativeAccessDenied
+				return ErrDSHAccessDenied
 			}
 			err = tx.QueryRow(ctx, `SELECT id,user_id FROM member WHERE id=$1 AND workspace_id=$2 FOR SHARE`, execution.OwnerMemberID, agent.WorkspaceID).Scan(&memberID, &userID)
 		}
 		if err != nil || !memberID.Valid || !userID.Valid {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		if err := invoke(ctx, q, agent, userID); err != nil {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		var now time.Time
 		if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
@@ -142,7 +142,7 @@ func (s *TaskService) withDSHScheduleTask(ctx context.Context, actor DSHSchedule
 	})
 }
 
-func (s *TaskService) RegisterDSHSchedule(ctx context.Context, actor DSHScheduleActor, input DSHScheduleInput, invoke DSHNativeInvokeCheck) (DSHScheduleView, error) {
+func (s *TaskService) RegisterDSHSchedule(ctx context.Context, actor DSHScheduleActor, input DSHScheduleInput, invoke DSHInvokeCheck) (DSHScheduleView, error) {
 	var view DSHScheduleView
 	err := s.withDSHScheduleTask(ctx, actor, input.SessionID, invoke, func(tx pgx.Tx, owner uuid.UUID, now time.Time) error {
 		sourceID, err := uuid.Parse(input.SourceTaskID)
@@ -209,7 +209,7 @@ func (s *TaskService) RegisterDSHSchedule(ctx context.Context, actor DSHSchedule
 	return view, err
 }
 
-func (s *TaskService) ListDSHSchedules(ctx context.Context, actor DSHScheduleActor, sessionID string, invoke DSHNativeInvokeCheck) (DSHScheduleList, error) {
+func (s *TaskService) ListDSHSchedules(ctx context.Context, actor DSHScheduleActor, sessionID string, invoke DSHInvokeCheck) (DSHScheduleList, error) {
 	result := DSHScheduleList{Items: []DSHScheduleView{}}
 	err := s.withDSHScheduleTask(ctx, actor, sessionID, invoke, func(tx pgx.Tx, _ uuid.UUID, now time.Time) error {
 		states, truncated, err := (dshschedule.Store{Tx: tx}).List(ctx, actor.WorkspaceID, actor.AgentID, sessionID)
@@ -227,7 +227,7 @@ func (s *TaskService) ListDSHSchedules(ctx context.Context, actor DSHScheduleAct
 
 // ReadDSHSchedule includes consumed and cancelled records, so native recovery
 // does not have to republish another member's immutable create to read its state.
-func (s *TaskService) ReadDSHSchedule(ctx context.Context, actor DSHScheduleActor, sessionID, scheduleID string, invoke DSHNativeInvokeCheck) (DSHScheduleView, error) {
+func (s *TaskService) ReadDSHSchedule(ctx context.Context, actor DSHScheduleActor, sessionID, scheduleID string, invoke DSHInvokeCheck) (DSHScheduleView, error) {
 	var view DSHScheduleView
 	err := s.withDSHScheduleTask(ctx, actor, sessionID, invoke, func(tx pgx.Tx, _ uuid.UUID, now time.Time) error {
 		state, err := (dshschedule.Store{Tx: tx}).Read(ctx, dshschedule.Key{WorkspaceID: actor.WorkspaceID, AgentID: actor.AgentID, SessionID: sessionID, ScheduleID: scheduleID})
@@ -240,7 +240,7 @@ func (s *TaskService) ReadDSHSchedule(ctx context.Context, actor DSHScheduleActo
 	return view, err
 }
 
-func (s *TaskService) CancelDSHSchedule(ctx context.Context, actor DSHScheduleActor, sessionID, scheduleID string, invoke DSHNativeInvokeCheck) (bool, error) {
+func (s *TaskService) CancelDSHSchedule(ctx context.Context, actor DSHScheduleActor, sessionID, scheduleID string, invoke DSHInvokeCheck) (bool, error) {
 	found := false
 	err := s.withDSHScheduleTask(ctx, actor, sessionID, invoke, func(tx pgx.Tx, owner uuid.UUID, _ time.Time) error {
 		key := dshschedule.Key{WorkspaceID: actor.WorkspaceID, AgentID: actor.AgentID, SessionID: sessionID, ScheduleID: scheduleID}
@@ -253,7 +253,7 @@ func (s *TaskService) CancelDSHSchedule(ctx context.Context, actor DSHScheduleAc
 			return err
 		}
 		if state.OwnerMemberID != owner {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		if state.CancelledAt.Valid || !state.NextDue.Valid {
 			return nil
@@ -273,7 +273,7 @@ func verifyDSHScheduleSource(ctx context.Context, tx pgx.Tx, key dshhost.Key, se
  JOIN dsh_task_binding b ON b.task_id=t.id AND b.agent_id=t.agent_id
  WHERE b.workspace_id=$1 AND b.agent_id=$2 AND b.session_id=$3 AND t.id=$4 FOR SHARE OF t,b`,
 		key.WorkspaceID, key.AgentID, session, sourceID).Scan(&locked); err != nil {
-		return dshhost.ErrNativeAccessDenied
+		return ErrDSHAccessDenied
 	}
 	task, err := db.New(tx).GetAgentTask(ctx, pgtype.UUID{Bytes: sourceID, Valid: true})
 	if err != nil {
@@ -282,17 +282,17 @@ func verifyDSHScheduleSource(ctx context.Context, tx pgx.Tx, key dshhost.Key, se
 	var sourceOwner uuid.UUID
 	if task.OriginatorUserID.Valid {
 		if err := tx.QueryRow(ctx, `SELECT id FROM member WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, key.WorkspaceID, task.OriginatorUserID).Scan(&sourceOwner); err != nil {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 	} else {
 		execution, err := dshschedule.LoadExecution(ctx, tx, key, sourceID)
 		if err != nil || !ScheduleExecutionMatches(task, execution) {
-			return dshhost.ErrNativeAccessDenied
+			return ErrDSHAccessDenied
 		}
 		sourceOwner = execution.OwnerMemberID
 	}
 	if sourceOwner != owner {
-		return dshhost.ErrNativeAccessDenied
+		return ErrDSHAccessDenied
 	}
 	return nil
 }

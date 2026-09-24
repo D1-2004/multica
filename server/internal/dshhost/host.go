@@ -31,7 +31,6 @@ const (
 	WaitSandboxUnhealthy   = "sandbox_unhealthy"
 	WaitDestroyUnconfirmed = "destroy_unconfirmed"
 	WaitCreateIntentStale  = "create_intent_stale"
-	WaitNativeGrantBusy    = "native_grant_busy"
 	WaitTaskDrainBusy      = "task_drain_busy"
 )
 
@@ -100,9 +99,6 @@ type Store interface {
 	CompleteCreate(context.Context, Host, string) (Host, error)
 	BeginRetire(context.Context, Host) (Host, error)
 	CompleteRetire(context.Context, Host) error
-	// AbortRetire restores running if Destroy has not started. Used when a
-	// native grant lands after the idle check and before BeginRetire commits.
-	AbortRetire(context.Context, Host) error
 	// AbandonCreate releases a creating intent. Manager calls it only after
 	// the provider definitively rejected the create request. An empty
 	// FindCreated stays pending so listing lag cannot spawn a second writer.
@@ -528,20 +524,6 @@ func (m Manager) finishRetire(ctx context.Context, h Host) error {
 // Repeating it for the SAME generation recovers a crashed retirement. A stale
 // caller can never retire a newer generation.
 func (m Manager) Retire(ctx context.Context, key Key, generation int64) error {
-	return m.retire(ctx, key, generation, nil)
-}
-
-// RetireUnlessBusy begins retire, then re-checks a live hold (native grants).
-// Inserts require state=running, so a grant that committed before BeginRetire
-// is visible here; a grant after BeginRetire is denied. A failed hold query
-// aborts a retire this call started and, on a later retry, is checked again
-// before destroy. An already-retiring host is not destroyed while that query
-// fails or a hold is present.
-func (m Manager) RetireUnlessBusy(ctx context.Context, key Key, generation int64, busy func(Host) (bool, error)) error {
-	return m.retire(ctx, key, generation, busy)
-}
-
-func (m Manager) retire(ctx context.Context, key Key, generation int64, busy func(Host) (bool, error)) error {
 	h, err := m.Store.Get(ctx, key)
 	if err != nil {
 		return err
@@ -549,37 +531,13 @@ func (m Manager) retire(ctx context.Context, key Key, generation int64, busy fun
 	if h.Generation != generation {
 		return ErrChanged
 	}
-	began := false
 	if h.State == "running" {
 		h, err = m.Store.BeginRetire(ctx, h)
 		if err != nil {
 			return err
 		}
-		began = true
 	} else if h.State != "retiring" {
 		return ErrChanged
-	}
-	if busy != nil {
-		blocked, busyErr := busy(h)
-		if busyErr != nil {
-			if began {
-				if abortErr := m.Store.AbortRetire(ctx, h); abortErr != nil {
-					return errors.Join(busyErr, abortErr)
-				}
-			}
-			return busyErr
-		}
-		if blocked {
-			// Destroy has not been sent only when this call moved the host to
-			// retiring. An earlier attempt may already have asked FC to delete
-			// the sandbox, so restoring running would hand out access to it.
-			if began {
-				if abortErr := m.Store.AbortRetire(ctx, h); abortErr != nil {
-					return abortErr
-				}
-			}
-			return fmt.Errorf("%w: %s", ErrPending, WaitNativeGrantBusy)
-		}
 	}
 	return m.finishRetire(ctx, h)
 }

@@ -50,7 +50,7 @@ func writeDSHScheduleError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		writeError(w, http.StatusNotFound, "DSH schedule was not found")
-	case errors.Is(err, dshhost.ErrNativeAccessDenied):
+	case errors.Is(err, service.ErrDSHAccessDenied):
 		writeError(w, http.StatusForbidden, "DSH schedule authority is absent or no longer valid")
 	case errors.Is(err, dshschedule.ErrInvalid):
 		writeError(w, http.StatusBadRequest, "invalid DSH schedule")

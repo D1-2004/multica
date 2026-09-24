@@ -1,129 +1,82 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
-import { WorkspaceSlugProvider } from "@multica/core/paths";
 import enAgents from "../../../locales/en/agents.json";
 import enCommon from "../../../locales/en/common.json";
-import { NavigationProvider } from "../../../navigation";
 import { DshHomeTab } from "./dsh-home-tab";
 
-const calls = vi.hoisted(() => ({ get: vi.fn(), ensure: vi.fn(), entry: vi.fn(), profile: vi.fn(), prepareProfile: vi.fn(), navigate: vi.fn() }));
+const calls = vi.hoisted(() => ({ get: vi.fn(), ensure: vi.fn() }));
 vi.mock("@multica/core/api", () => ({ api: {
-  getDSHProfile: (...args: unknown[]) => calls.profile(...args),
-  prepareDSHProfile: (...args: unknown[]) => calls.prepareProfile(...args),
   getDSHHome: (...args: unknown[]) => calls.get(...args),
   ensureDSHHome: (...args: unknown[]) => calls.ensure(...args),
-  issueDSHNativeEntry: (...args: unknown[]) => calls.entry(...args),
+  listFilesystemEntries: async () => ({ entries: [] }),
+  listFilesystemGrants: async () => ({ grants: [] }),
 } }));
+vi.mock("@multica/core/paths", () => ({ useWorkspacePaths: () => ({ files: () => "/workspace/files" }) }));
+vi.mock("../../../navigation", () => ({ AppLink: ({href, children}: {href: string; children: React.ReactNode}) => <a href={href}>{children}</a> }));
 const missing = { provisioned: false, state: "unprovisioned", step: 0, generation: 0, sandboxId: "" };
 const ready = { provisioned: true, state: "offline", step: 6, generation: 0, sandboxId: "" };
 const clients: QueryClient[] = [];
-beforeEach(() => { vi.resetAllMocks(); calls.get.mockResolvedValue(missing); calls.profile.mockResolvedValue({state: "applied", current: true, builds: []}); vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { calls.navigate(this.href); }); });
-afterEach(() => { vi.restoreAllMocks(); cleanup(); clients.forEach((c) => c.clear()); clients.length = 0; });
-
+beforeEach(() => { vi.resetAllMocks(); calls.get.mockResolvedValue(missing); });
+afterEach(() => { cleanup(); clients.forEach((c) => c.clear()); clients.length = 0; });
 function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   clients.push(client);
   render(<I18nProvider locale="en" resources={{ en: { agents: enAgents, common: enCommon } }}>
     <QueryClientProvider client={client}><DshHomeTab workspaceId="ws" agentId="agent" /></QueryClientProvider>
   </I18nProvider>);
-  return client;
 }
-
 
 it("does not show the shared disk inside DSH", async () => {
   show();
-  await screen.findByRole("button", { name: "Initialize filesystem and open native DSH" });
+  await screen.findByRole("button", { name: "Prepare filesystem" });
   expect(screen.queryByRole("heading", { name: "Workspace shared disk" })).toBeNull();
   expect(screen.getByText(/DSH uses only this employee private disk/)).toBeTruthy();
-  expect(screen.queryByText(/\/mnt\/workspace\/shared/)).toBeNull();
-});
-
-it("shows the shared disk only on the filesystem page", async () => {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  clients.push(client);
-  render(
-    <I18nProvider locale="en" resources={{ en: { agents: enAgents, common: enCommon } }}>
-      <WorkspaceSlugProvider slug="acme">
-        <NavigationProvider value={{ push: vi.fn(), replace: vi.fn(), back: vi.fn(), pathname: "/acme/agents/agent", searchParams: new URLSearchParams(), getShareableUrl: (path: string) => path, openInNewTab: vi.fn() }}>
-          <QueryClientProvider client={client}>
-            <DshHomeTab workspaceId="ws" agentId="agent" nativeEnabled={false} includeSharedDisk />
-          </QueryClientProvider>
-        </NavigationProvider>
-      </WorkspaceSlugProvider>
-    </I18nProvider>,
-  );
-  expect(await screen.findByRole("heading", { name: "Workspace shared disk" })).toBeTruthy();
-  expect(screen.getByText(/not a DSH setting/)).toBeTruthy();
-  expect(screen.getByText(/The shared disk above is not on this disk/)).toBeTruthy();
-});
-
-it("opens from one action after storage and profile preparation without caching credentials", async () => {
-  calls.ensure.mockImplementation(async () => { calls.get.mockResolvedValue(ready); return ready; });
-  const entryUrl = "https://pre-fde-workbench.dingtalk.com/api/dsh-native/ui/access/_multica/open#entry=dnge_fixture";
-  calls.entry.mockResolvedValue({ accessId: "access", entryUrl, expiresAt: new Date(Date.now()+60000).toISOString() });
-  const client = show();
-  const button = await screen.findByRole("button", { name: "Initialize filesystem and open native DSH" });
-  await waitFor(() => expect(button).not.toBeDisabled());
-  expect(calls.ensure).not.toHaveBeenCalled();
-  await userEvent.click(button);
-  await waitFor(() => expect(calls.navigate).toHaveBeenCalledWith(entryUrl));
-  expect(calls.ensure).toHaveBeenCalledTimes(1);
-  expect(calls.prepareProfile).not.toHaveBeenCalled();
-  expect(calls.entry).toHaveBeenCalledTimes(1);
-  expect(JSON.stringify(client.getMutationCache().getAll().map((m) => m.state.data))).not.toContain("dnge_");
   expect(screen.queryByRole("link")).toBeNull();
 });
 
-it("waits for the actual plugin application before opening and shows progress", async () => {
-  calls.get.mockResolvedValue(ready);
-  calls.profile.mockResolvedValue({ state: "waiting_for_builds", current: false, builds: [] });
-  const client = show();
-  const button = await screen.findByRole("button", { name: "Open native DSH" });
-  await userEvent.click(button);
-  await waitFor(() => expect(calls.prepareProfile).toHaveBeenCalledTimes(1));
-  expect(calls.entry).not.toHaveBeenCalled();
-  expect(screen.getByRole("button")).toBeDisabled();
-  calls.entry.mockResolvedValue({ accessId: "access", entryUrl: "https://pre.example/api/dsh-native/ui/access/", expiresAt: new Date(Date.now()+60000).toISOString() });
-  await act(async () => client.setQueryData(["workspace", "ws", "agents", "agent", "dsh-profile"], {state: "applied", current: true, builds: []}));
-  await waitFor(() => expect(calls.navigate).toHaveBeenCalledTimes(1));
-});
-
-it.each([null, { accessId: "expired", entryUrl: "secret", expiresAt: "2000-01-01T00:00:00Z" }])("does not navigate or replay an unconfirmed entry", async (entry) => {
-  calls.get.mockResolvedValue(ready); calls.entry.mockResolvedValue(entry);
-  show();
-  const button = await screen.findByRole("button", { name: "Open native DSH" });
-  await userEvent.click(button);
-  await screen.findByRole("alert");
-  expect(calls.navigate).not.toHaveBeenCalled();
-  expect(calls.entry).toHaveBeenCalledTimes(1);
-  expect(screen.getByRole("button")).not.toBeDisabled();
-});
-
-it("does not navigate a delayed result after switching employees", async () => {
-  calls.get.mockResolvedValue(ready);
-  let complete!: (value: unknown) => void;
-  calls.entry.mockReturnValue(new Promise((resolve) => { complete = resolve; }));
+it("shows the shared disk only on the filesystem page", () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   clients.push(client);
-  const page = (agentId: string) => <I18nProvider locale="en" resources={{ en: { agents: enAgents, common: enCommon } }}><QueryClientProvider client={client}><DshHomeTab workspaceId="ws" agentId={agentId} /></QueryClientProvider></I18nProvider>;
-  const view = render(page("first"));
-  await userEvent.click(await screen.findByRole("button", { name: "Open native DSH" }));
-  await waitFor(() => expect(calls.entry).toHaveBeenCalledTimes(1));
-  view.rerender(page("second"));
-  await act(async () => complete({accessId: "access", entryUrl: "https://pre.example", expiresAt: new Date(Date.now()+60000).toISOString()}));
-  expect(calls.navigate).not.toHaveBeenCalled();
+  render(<I18nProvider locale="en" resources={{ en: { agents: enAgents, common: enCommon } }}>
+    <QueryClientProvider client={client}><DshHomeTab workspaceId="ws" agentId="agent" includeSharedDisk /></QueryClientProvider>
+  </I18nProvider>);
+  expect(screen.getByRole("heading", { name: "Workspace shared disk" })).toBeTruthy();
+  expect(screen.getByText(/not a DSH setting/)).toBeTruthy();
+  expect(screen.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(["/workspace/files"]);
 });
 
-it("reopens an already applied host without preparing storage or rescheduling configuration", async () => {
-  calls.get.mockResolvedValue({...ready,state:"running",sandboxId:"existing",generation:3});
-  calls.entry.mockResolvedValue({accessId:"access",entryUrl:"https://pre.example/native",expiresAt:new Date(Date.now()+60000).toISOString()});
+it("prepares storage only after a user action and exposes no native entry", async () => {
+  calls.ensure.mockImplementation(async () => { calls.get.mockResolvedValue(ready); return ready; });
   show();
-  await userEvent.click(await screen.findByRole("button", {name:"Open native DSH"}));
-  await waitFor(() => expect(calls.navigate).toHaveBeenCalledTimes(1));
+  const button = await screen.findByRole("button", { name: "Prepare filesystem" });
+  await waitFor(() => expect(button).not.toBeDisabled());
   expect(calls.ensure).not.toHaveBeenCalled();
-  expect(calls.prepareProfile).not.toHaveBeenCalled();
+  await userEvent.click(button);
+  await screen.findByText("Storage is ready");
+  expect(calls.ensure).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
+});
+
+it("does not start a sandbox when storage is already ready", async () => {
+  calls.get.mockResolvedValue(ready);
+  show();
+  await screen.findByText("Storage is ready");
+  expect(screen.queryByRole("button")).toBeNull();
+  expect(calls.ensure).not.toHaveBeenCalled();
+});
+
+it("reconciles an uncertain preparation without automatically retrying the write", async () => {
+  calls.ensure.mockRejectedValue(new Error("response lost"));
+  show();
+  const button = await screen.findByRole("button", { name: "Prepare filesystem" });
+  await waitFor(() => expect(button).not.toBeDisabled());
+  await userEvent.click(button);
+  await screen.findByRole("alert");
+  expect(calls.ensure).toHaveBeenCalledTimes(1);
+  expect(calls.get.mock.calls.length).toBeGreaterThan(1);
 });

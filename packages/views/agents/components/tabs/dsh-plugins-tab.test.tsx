@@ -322,14 +322,14 @@ it("disables all plugin writes until the employee filesystem is ready", async ()
   mockListAgentDshPlugins.mockResolvedValue([plugin("one", "plugin-one")]);
   mockListDshPlugins.mockResolvedValue([plugin("one", "plugin-one"), plugin("two", "plugin-two")]);
   renderTab(true, {}, {...dshRuntime, metadata: {kind: "fc-e2b"}});
-  await screen.findByText("Open native DSH to prepare the filesystem before configuring plugins.");
+  await screen.findByText("Prepare the filesystem before configuring plugins.");
   await screen.findByText("plugin-one");
   expect(screen.getByRole("switch")).toHaveAttribute("aria-disabled", "true");
   for (const button of screen.getAllByRole("button")) expect(button).toBeDisabled();
   expect(mockSetAgentDshPlugins).not.toHaveBeenCalled();
 });
 
-it("stages multiple operations in one submission and locks editing until the exact revision is confirmed", async () => {
+it("saves one revision and unlocks editing without waiting for a running sandbox", async () => {
   vi.clearAllMocks();
   mockGetHome.mockResolvedValue({provisioned:true,state:"running",step:6});
   mockGetProfile.mockResolvedValue({state:"applied",current:true,desiredRevision:"10",appliedRevision:"10",builds:[]});
@@ -344,15 +344,13 @@ it("stages multiple operations in one submission and locks editing until the exa
   await userEvent.click(screen.getByRole("button",{name:"Submit configuration changes"}));
   await waitFor(() => expect(mockPrepareProfile).toHaveBeenCalledWith("ws-1","agent-1"));
   expect(mockSetAgentDshPlugins).toHaveBeenCalledExactlyOnceWith("agent-1",[{id:"p2",enabled:false}], [plugin("p1","first"),plugin("p2","second")]);
-  expect(screen.getByRole("button",{name:"Applying configuration…"})).toBeDisabled();
-  expect(screen.getByRole("button",{name:"Configure"})).toBeDisabled();
-  expect(screen.getByRole("switch")).toHaveAttribute("aria-disabled","true");
-  await act(async () => queryClient.setQueryData(["workspace","ws-1","agents","agent-1","dsh-profile"],{state:"applied",current:true,desiredRevision:"11",appliedRevision:"11",builds:[]}));
+  mockGetProfile.mockResolvedValue({state:"pending_host",current:false,desiredRevision:"11",appliedRevision:"10",builds:[]});
+  await act(async () => queryClient.setQueryData(["workspace","ws-1","agents","agent-1","dsh-profile"],{state:"pending_host",current:false,desiredRevision:"11",appliedRevision:"10",builds:[]}));
   await waitFor(() => expect(screen.getByRole("button",{name:"Configure"})).not.toBeDisabled());
   expect(screen.getByText("No pending configuration changes")).toBeTruthy();
 });
 
-it("keeps the observed base when native changes arrive while a draft is open", async () => {
+it("keeps the observed base when another editor changes configuration while a draft is open", async () => {
   vi.clearAllMocks();
   mockGetHome.mockResolvedValue({provisioned:true,state:"running",step:6});
   mockGetProfile.mockResolvedValue({state:"applied",current:true,desiredRevision:"10",appliedRevision:"10",builds:[]});
@@ -362,7 +360,7 @@ it("keeps the observed base when native changes arrive while a draft is open", a
   mockSetAgentDshPlugins.mockResolvedValue(undefined);
   const {queryClient} = renderTab();
   await userEvent.click(await screen.findByRole("switch",{name:"Enable existing"}));
-  await act(async () => queryClient.setQueryData(["workspaces","ws-1","dsh-plugins","agent","agent-1"],[original,plugin("p2","native-installed")]));
+  await act(async () => queryClient.setQueryData(["workspaces","ws-1","dsh-plugins","agent","agent-1"],[original,plugin("p2","externally-installed")]));
   await userEvent.click(screen.getByRole("button",{name:"Submit configuration changes"}));
   await waitFor(() => expect(mockSetAgentDshPlugins).toHaveBeenCalledWith("agent-1",[{id:"p1",enabled:false}],[original]));
 });

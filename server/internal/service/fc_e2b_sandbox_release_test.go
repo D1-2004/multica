@@ -80,7 +80,7 @@ func TestTaskTerminalRunsOneReleasePerTask(t *testing.T) {
 }
 
 func TestSandboxOriginIsTheAppHost(t *testing.T) {
-	if got := fcE2BSandboxOrigin(FCE2BConfig{DSHNativeAuthority: "https://pre-fde-workbench.dingtalk.com/"}); got != "pre-fde-workbench.dingtalk.com" {
+	if got := fcE2BSandboxOrigin(FCE2BConfig{AppOrigin: "https://pre-fde-workbench.dingtalk.com/"}); got != "pre-fde-workbench.dingtalk.com" {
 		t.Fatalf("origin = %q", got)
 	}
 	if got := fcE2BSandboxOrigin(FCE2BConfig{}); got != "" {
@@ -218,7 +218,7 @@ func newReleaseFixture(t *testing.T) *releaseFixture {
 	}))
 	t.Cleanup(server.Close)
 	f.rt = db.AgentRuntime{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, WorkspaceID: pgtype.UUID{Bytes: f.key.WorkspaceID, Valid: true}}
-	f.l = &FCE2BLauncher{Pool: a, Config: FCE2BConfig{Enabled: true, APIURL: server.URL, APIKey: "test-key", DSHNativeAuthority: "https://pre.multica.test"},
+	f.l = &FCE2BLauncher{Pool: a, Config: FCE2BConfig{Enabled: true, APIURL: server.URL, APIKey: "test-key", AppOrigin: "https://pre.multica.test"},
 		dshProvider: func(dshhost.Storage) (dshhost.Provider, error) { return f.provider, nil }}
 	return f
 }
@@ -331,7 +331,7 @@ func TestSandboxReleaseOnlyTrimsSingleUseDSHHost(t *testing.T) {
 	if calls := f.fcCalls(); len(calls) != 1 || calls[0] != (releaseFCCall{http.MethodPost, "/sandboxes/sbx-dsh-run-only/timeout", `{"timeout":600}`}) {
 		t.Fatalf("DSH one-shot must keep the 10 minute hold, not the immediate delete: %v", calls)
 	}
-	if state, _ := f.scopeState(t, scopeID); state != "running" || len(f.provider.destroyed) != 0 {
+	if state, _ := f.scopeState(t, scopeID); state != "offline" || len(f.provider.destroyed) != 1 {
 		t.Fatalf("retired a DSH host: state=%s", state)
 	}
 }
@@ -375,12 +375,12 @@ func TestSandboxReleaseKeepsEmployeeSandboxAnotherTaskUses(t *testing.T) {
 	if action, reason := f.release(t, task, "sbx-shared"); action != fcE2BSandboxRetained || reason != "in_use" {
 		t.Fatalf("action=%s reason=%s", action, reason)
 	}
-	if state, _ := f.scopeState(t, scopeID); state != "running" || len(f.provider.destroyed) != 0 || len(f.fcCalls()) != 0 {
+	if state, _ := f.scopeState(t, scopeID); state != "offline" || len(f.provider.destroyed) != 1 || len(f.fcCalls()) != 0 {
 		t.Fatalf("busy sandbox touched: state=%s destroyed=%v", state, f.provider.destroyed)
 	}
 }
 
-func TestSandboxReleaseKeepsEmployeeSandboxWithNativeGrant(t *testing.T) {
+func TestSandboxReleaseIgnoresLegacyNativeGrant(t *testing.T) {
 	f := newReleaseFixture(t)
 	task := f.task(t, pgtype.UUID{}, pgtype.UUID{}, "completed", "sbx-native")
 	scopeID := f.runningScope(t, task, "sbx-native")
@@ -388,11 +388,11 @@ func TestSandboxReleaseKeepsEmployeeSandboxWithNativeGrant(t *testing.T) {
  VALUES ($1,$2,$3,$4,1,'sbx-native','session',repeat('a',64),now()+interval '10 minutes')`, uuid.New(), f.key.WorkspaceID, f.key.AgentID, uuid.New()); err != nil {
 		t.Fatal(err)
 	}
-	if action, reason := f.release(t, task, "sbx-native"); action != fcE2BSandboxRetained || reason != "native_grant" {
+	if action, reason := f.release(t, task, "sbx-native"); action != fcE2BSandboxReleased || reason != "single_use_scope" {
 		t.Fatalf("action=%s reason=%s", action, reason)
 	}
-	if state, _ := f.scopeState(t, scopeID); state != "running" || len(f.provider.destroyed) != 0 {
-		t.Fatalf("browser session lost its sandbox: state=%s", state)
+	if state, _ := f.scopeState(t, scopeID); state != "offline" || len(f.provider.destroyed) != 1 {
+		t.Fatalf("legacy browser grant blocked release: state=%s", state)
 	}
 }
 
@@ -409,31 +409,6 @@ func TestSandboxReleaseTrimsReusableEmployeeScope(t *testing.T) {
 	}
 	if state, sandbox := f.scopeState(t, scopeID); state != "running" || sandbox != "sbx-issue" || len(f.provider.destroyed) != 0 {
 		t.Fatal("a reusable scope must stay adoptable during its idle window")
-	}
-}
-
-func TestSandboxReleaseRestoresLifetimeWhenANativeGrantLandsDuringTrim(t *testing.T) {
-	f := newReleaseFixture(t)
-	task := f.task(t, pgtype.UUID{Bytes: uuid.New(), Valid: true}, pgtype.UUID{}, "completed", "sbx-racing")
-	f.runningScope(t, task, "sbx-racing")
-	// A browser entry issued between the grant check and the trim: its host was
-	// renewed before this release took the scope lock.
-	f.onTimeout = func(body string) {
-		if body != `{"timeout":600}` {
-			return
-		}
-		if _, err := f.other.Exec(context.Background(), `INSERT INTO dsh_native_access (id,workspace_id,agent_id,user_id,generation,sandbox_id,kind,token_hash,expires_at)
- VALUES ($1,$2,$3,$4,1,'sbx-racing','entry',repeat('b',64),now()+interval '1 minute')`, uuid.New(), f.key.WorkspaceID, f.key.AgentID, uuid.New()); err != nil {
-			t.Error(err)
-		}
-	}
-	if action, reason := f.release(t, task, "sbx-racing"); action != fcE2BSandboxRetained || reason != "native_grant" {
-		t.Fatalf("action=%s reason=%s", action, reason)
-	}
-	calls := f.fcCalls()
-	last := calls[len(calls)-2]
-	if last.method != http.MethodPost || last.body != `{"timeout":4800}` {
-		t.Fatalf("lifetime was not restored for the browser session: %v", calls)
 	}
 }
 

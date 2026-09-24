@@ -16,7 +16,7 @@ export function DshProfileStatus({ workspaceId, agentId, embedded = false }: { w
     if (query.isPending) return t(($) => $.tab_body.dsh_profile.loading);
     if (unavailable) return t(($) => $.tab_body.dsh_profile.unavailable);
     switch (status?.state) {
-      case "native_sync_pending": return t(($) => $.tab_body.dsh_profile.native_sync_pending);
+      case "native_sync_pending": return t(($) => $.tab_body.dsh_profile.unavailable);
       case "unprepared": return t(($) => $.tab_body.dsh_profile.unprepared);
       case "configuration_changed": return t(($) => $.tab_body.dsh_profile.changed);
       case "waiting_for_builds": return t(($) => $.tab_body.dsh_profile.building);

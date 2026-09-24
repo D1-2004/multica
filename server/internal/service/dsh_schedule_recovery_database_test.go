@@ -16,7 +16,7 @@ import (
 // Only the explicitly configured, migrated preproduction database is allowed.
 // The creating task is already completed when publication first reaches the API.
 func TestDSHScheduleDatabaseRecoveryPreservesOriginalCreator(t *testing.T) {
-	s, a, session, agent, pool, _ := nativeChatDatabaseFixture(t)
+	s, a, session, agent, pool, _ := dshScheduleDatabaseFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	t.Cleanup(func() {
@@ -56,19 +56,19 @@ func TestDSHScheduleDatabaseRecoveryPreservesOriginalCreator(t *testing.T) {
 	}
 	actor := DSHScheduleActor{Key: a.access.Key, TaskID: current}
 	input := DSHScheduleInput{SourceTaskID: source.String(), SessionID: a.input.SessionID, ScheduleID: "schedule-1", Prompt: "late durable reminder", FirstDue: overdue}
-	deny := func(context.Context, *db.Queries, db.Agent, pgtype.UUID) error { return dshhost.ErrNativeAccessDenied }
-	if _, err := s.RegisterDSHSchedule(ctx, actor, input, deny); !errors.Is(err, dshhost.ErrNativeAccessDenied) {
+	deny := func(context.Context, *db.Queries, db.Agent, pgtype.UUID) error { return ErrDSHAccessDenied }
+	if _, err := s.RegisterDSHSchedule(ctx, actor, input, deny); !errors.Is(err, ErrDSHAccessDenied) {
 		t.Fatal("current authority was bypassed", err)
 	}
 	for _, invalidSource := range []uuid.UUID{uuid.New(), unproven} {
 		invalid := input
 		invalid.SourceTaskID = invalidSource.String()
-		if _, err := s.RegisterDSHSchedule(ctx, actor, invalid, a.invoke); !errors.Is(err, dshhost.ErrNativeAccessDenied) {
+		if _, err := s.RegisterDSHSchedule(ctx, actor, invalid, a.invoke); !errors.Is(err, ErrDSHAccessDenied) {
 			t.Fatal("unbound or accountable-only source accepted", err)
 		}
 	}
 	// A valid historical human creator does not authorize an expired bearer task.
-	if _, err := s.RegisterDSHSchedule(ctx, DSHScheduleActor{Key: a.access.Key, TaskID: source}, input, a.invoke); !errors.Is(err, dshhost.ErrNativeAccessDenied) {
+	if _, err := s.RegisterDSHSchedule(ctx, DSHScheduleActor{Key: a.access.Key, TaskID: source}, input, a.invoke); !errors.Is(err, ErrDSHAccessDenied) {
 		t.Fatal("completed current task accepted", err)
 	}
 	view, err := s.RegisterDSHSchedule(ctx, actor, input, a.invoke)
@@ -89,7 +89,7 @@ func TestDSHScheduleDatabaseRecoveryPreservesOriginalCreator(t *testing.T) {
 	cancelled.ScheduleID = "schedule-3"
 	cancelled.Cancelled = true
 	cancelled.CancellationTaskID = unproven.String()
-	if _, err := s.RegisterDSHSchedule(ctx, actor, cancelled, a.invoke); !errors.Is(err, dshhost.ErrNativeAccessDenied) {
+	if _, err := s.RegisterDSHSchedule(ctx, actor, cancelled, a.invoke); !errors.Is(err, ErrDSHAccessDenied) {
 		t.Fatal("unproven cancellation source accepted", err)
 	}
 	var count int
@@ -132,7 +132,7 @@ func TestDSHScheduleDatabaseRecoveryPreservesOriginalCreator(t *testing.T) {
 		t.Fatal(err)
 	}
 	input.ScheduleID = "schedule-2"
-	if _, err := s.RegisterDSHSchedule(ctx, actor, input, a.invoke); !errors.Is(err, dshhost.ErrNativeAccessDenied) {
+	if _, err := s.RegisterDSHSchedule(ctx, actor, input, a.invoke); !errors.Is(err, ErrDSHAccessDenied) {
 		t.Fatal("cross-owner recovery accepted", err)
 	}
 	found, err := s.CancelDSHSchedule(ctx, actor, a.input.SessionID, "schedule-1", a.invoke)

@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dshschedule"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -80,7 +79,7 @@ func logFCE2BSandboxLifecycle(action fcE2BSandboxLifecycleAction, reason string,
 // fcE2BSandboxOrigin is the deployment host stamped on sandboxes it creates.
 // Production and pre-release share one FC account.
 func fcE2BSandboxOrigin(cfg FCE2BConfig) string {
-	u, err := url.Parse(strings.TrimSpace(cfg.DSHNativeAuthority))
+	u, err := url.Parse(strings.TrimSpace(cfg.AppOrigin))
 	if err != nil {
 		return ""
 	}
@@ -245,80 +244,19 @@ func (l *FCE2BLauncher) releaseEmployeeScopeSandbox(ctx context.Context, conn *p
 	if taskBusy {
 		return fcE2BSandboxRetained, "in_use", scope, nil
 	}
-	nativeBusy, err := dshNativeGrantHolds(ctx, conn, host)
-	if err != nil {
-		return "", "", scope, err
-	}
-	if nativeBusy {
-		return fcE2BSandboxRetained, "native_grant", scope, nil
-	}
-	// A DSH employee host is also opened by native entry and the profile
-	// worker, which renew it under this lock and only later issue a grant or
-	// touch it, possibly minutes later, with nothing recorded meanwhile. Such
-	// a host is never retired here; it gets the idle window, which native
-	// entry extends again once its grant commits. Other providers have no
-	// renewer outside task launch, so a single-use scope is retired at once.
+	// DSH tasks retain their existing idle window for follow-up execution.
 	if FCE2BRuntimeProvider(rt) != "dsh" && dshScopeIsSingleUse(key, task, scopeID) {
 		provider, err := l.dshHostProvider(host.Storage)
 		if err != nil {
 			return "", "single_use_scope", scope, err
 		}
-		// Retirement confirms destruction before the scope may be reused, the
-		// same path a template change takes. A native grant issued after the
-		// check above aborts it; grant issuance requires a running host.
-		err = (dshhost.Manager{Store: store, Provider: provider}).RetireUnlessBusy(ctx, key, host.Generation, func(retiring dshhost.Host) (bool, error) {
-			return dshNativeGrantHolds(ctx, conn, retiring)
-		})
-		if err != nil {
-			if strings.Contains(err.Error(), dshhost.WaitNativeGrantBusy) {
-				return fcE2BSandboxRetained, "native_grant", scope, nil
-			}
+		if err := (dshhost.Manager{Store: store, Provider: provider}).Retire(ctx, key, host.Generation); err != nil {
 			return "", "single_use_scope", scope, err
 		}
 		return fcE2BSandboxReleased, "single_use_scope", scope, nil
 	}
 	action, reason, _, err := l.trimSandboxIdleLifetime(ctx, conn, pgtype.UUID{}, sandboxID, scope)
-	if err != nil || action != fcE2BSandboxIdleTrimmed {
-		return action, reason, scope, err
-	}
-	// Native entry renews before it issues a grant, releases the scope lock,
-	// and renews again once the grant commits. A grant that lands during the
-	// trim is therefore either visible here or followed by its own renewal.
-	nativeBusy, err = dshNativeGrantHolds(ctx, conn, host)
-	if err != nil {
-		return "", "idle_window", scope, err
-	}
-	if nativeBusy {
-		if _, err := l.renewEmployeeHostSandbox(ctx, sandboxID, chattrace.New("fc_e2b_sandbox_release")); err != nil {
-			return "", "native_grant", scope, err
-		}
-		return fcE2BSandboxRetained, "native_grant", scope, nil
-	}
-	return action, reason, scope, nil
-}
-
-// RenewDSHNativeHost restores the full employee-host lifetime once a native
-// grant has committed. See the trim in releaseEmployeeScopeSandbox.
-func (l *FCE2BLauncher) RenewDSHNativeHost(ctx context.Context, host dshhost.Host) error {
-	if l == nil {
-		return errors.New("DSH native host renewal is unavailable")
-	}
-	_, err := l.withCurrentConfig().renewEmployeeHostSandbox(ctx, host.SandboxID, chattrace.New("dsh_native_entry"))
-	return err
-}
-
-// dshNativeGrantHolds reports a live browser entry or session on this exact
-// sandbox generation; the sandbox must outlive it. Unlike retirement for a
-// template change, a shortened lifetime would also cut a routed stream that a
-// browser session on another sandbox reads through, so routed grants count.
-func dshNativeGrantHolds(ctx context.Context, conn *pgxpool.Conn, host dshhost.Host) (bool, error) {
-	var granted bool
-	err := conn.QueryRow(ctx, `SELECT EXISTS (
- SELECT 1 FROM dsh_native_access n
- WHERE n.workspace_id=$1 AND n.agent_id=$2 AND n.sandbox_id=$3 AND n.generation=$4
- AND n.kind IN ('entry','session') AND n.expires_at>now())`,
-		host.WorkspaceID, host.AgentID, host.SandboxID, host.Generation).Scan(&granted)
-	return granted, err
+	return action, reason, scope, err
 }
 
 // dshScopeIsSingleUse: only an ordinary task with neither an issue nor a chat

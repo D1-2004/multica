@@ -669,11 +669,6 @@ func (h *Handler) ListAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.syncAgentNativePlugins(r.Context(), agent); err != nil {
-		// Saved bindings remain readable during a native restart. Mutations still
-		// require a successful sync, so stale data cannot overwrite native edits.
-		w.Header().Set("X-DSH-Native-Sync", "pending")
-	}
 	rows, err := h.Queries.ListDshPluginsForAgent(r.Context(), db.ListDshPluginsForAgentParams{
 		AgentID:     agent.ID,
 		WorkspaceID: agent.WorkspaceID,
@@ -766,10 +761,6 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 	// uses. loadAgentForUser only proves the caller can SEE the agent, which
 	// every workspace member can for a public one.
 	if !h.canManageAgent(w, r, agent) {
-		return
-	}
-	if err := h.syncAgentNativePlugins(r.Context(), agent); err != nil {
-		writeError(w, http.StatusConflict, "native plugin configuration changed; reload before submitting")
 		return
 	}
 	var req SetAgentDshPluginsRequest

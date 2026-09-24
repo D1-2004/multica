@@ -491,7 +491,6 @@ export function AgentOverviewPane({
                     <DshHomeTab
                       workspaceId={wsId}
                       agentId={agent.id}
-                      nativeEnabled={false}
                       canEdit={canEdit}
                       includeSharedDisk
                     />

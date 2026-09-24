@@ -24,9 +24,6 @@ func (s runningHostStore) BeginRetire(context.Context, Host) (Host, error) {
 func (s runningHostStore) CompleteRetire(context.Context, Host) error {
 	return errors.New("unexpected retire")
 }
-func (s runningHostStore) AbortRetire(context.Context, Host) error {
-	return errors.New("unexpected retire")
-}
 func (s runningHostStore) AbandonCreate(context.Context, Host) error {
 	return errors.New("unexpected abandon")
 }
@@ -130,9 +127,6 @@ func (s offlineHostStore) BeginRetire(context.Context, Host) (Host, error) {
 	return Host{}, errors.New("unexpected retire")
 }
 func (s offlineHostStore) CompleteRetire(context.Context, Host) error {
-	return errors.New("unexpected retire")
-}
-func (s offlineHostStore) AbortRetire(context.Context, Host) error {
 	return errors.New("unexpected retire")
 }
 func (s offlineHostStore) AbandonCreate(_ context.Context, h Host) error {

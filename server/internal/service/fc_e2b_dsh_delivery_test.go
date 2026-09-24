@@ -123,7 +123,7 @@ func TestDSHLargeProfileUsesBoundedChunksAndSmallHostEnvironment(t *testing.T) {
 	if err := l.stageDSHProfile(context.Background(), host, revision); err != nil {
 		t.Fatal(err)
 	}
-	for _, arg := range dshNativeHostEnsureArgs(host, "[]", "https://authority.test", "https://gateway.test", "key", revision) {
+	for _, arg := range dshNativeHostEnsureArgs(host, "[]", revision) {
 		if len(arg) > 1024 || strings.Contains(arg, "汉") {
 			t.Fatal("private Profile payload reached the long-lived Host environment")
 		}
