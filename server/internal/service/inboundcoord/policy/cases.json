@@ -1582,7 +1582,7 @@
       "context_a": "模式all，数字员工收到合法原始作者请求，其显示名为空或不在旧名单",
       "context_b": "同一请求模式off，或named且名单为空/未匹配；旧客户端只提交旧开关或名单",
       "expected_effects": "A进入选择流程但继续核验原作者ID、按不同作者拆窗；B正常自动处理，旧字段不能意外开启all。切换范围递增policy revision；关闭入站关闭选择；非法或矛盾模式在任何写入前拒绝；无关更新保留范围。",
-      "verification": "local_host_and_ui_tests_passed; preproduction_api_verification_pending"
+      "verification": "local_host_and_ui_tests_passed; preproduction_off_and_invalid_mode_api_passed; native_all_mode_delivery_not_run"
     }
   ]
 }
