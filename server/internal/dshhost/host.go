@@ -124,6 +124,23 @@ func (m Manager) EnsureWithShared(ctx context.Context, key Key, template string,
 	return m.ensure(ctx, key, template, &shared, authRole, false)
 }
 
+// EnsureConstrained checks a read grant against a sandbox that may already
+// have a wider shared volume. A new sandbox stays private: the caller has
+// not declared that this image can mount the shared disk.
+func (m Manager) EnsureConstrained(ctx context.Context, key Key, template string, shared VolumeMountSpec, authRole string) (Host, error) {
+	if shared.Name == "" || authRole == "" {
+		return Host{}, errors.New("shared mount requires a volume and composite role")
+	}
+	h, err := m.Store.Get(ctx, key)
+	if err != nil {
+		return Host{}, err
+	}
+	if h.State == "running" {
+		return m.ensure(ctx, key, template, &shared, authRole, false)
+	}
+	return m.ensure(ctx, key, template, nil, "", false)
+}
+
 func (h Host) stale(after time.Duration) bool {
 	return !h.UpdatedAt.IsZero() && after > 0 && time.Since(h.UpdatedAt) >= after
 }
@@ -178,6 +195,10 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 				// already mounted. Absence is different: do not retire just to
 				// add a share.
 				return Host{}, fmt.Errorf("%w: shared mount is wider than the grant", ErrRetireRequired)
+			case sharedMountUnconfirmed:
+				// A failed detail read is not proof the shared path is empty.
+				// Wait and read it again. Do not retire on this uncertainty.
+				return Host{}, fmt.Errorf("%w: shared mount inspection is unconfirmed", ErrPending)
 			}
 		}
 		return h, nil
@@ -260,11 +281,14 @@ const (
 	sharedMountAbsent sharedMountFit = iota
 	sharedMountMatches
 	sharedMountWider
+	sharedMountUnconfirmed
 )
 
 // sharedMountFit reports whether the live sandbox already has the granted
 // shared volume. A different volume at the shared path is wider than the
-// grant. No inspector means the mount is treated as absent, not as a conflict.
+// grant. No inspector means the mount is treated as absent, because that
+// provider cannot attach a shared volume. An inspection error is unconfirmed
+// and must not be treated as an empty shared path.
 func (m Manager) sharedMountFit(ctx context.Context, sandboxID string, want VolumeMountSpec) sharedMountFit {
 	inspector, ok := m.Provider.(sandboxInspector)
 	if !ok || sandboxID == "" {
@@ -272,7 +296,7 @@ func (m Manager) sharedMountFit(ctx context.Context, sandboxID string, want Volu
 	}
 	detail, err := inspector.InspectSandbox(ctx, sandboxID)
 	if err != nil {
-		return sharedMountAbsent
+		return sharedMountUnconfirmed
 	}
 	for _, got := range detail.Mounts {
 		if got.Path != WorkspaceSharedRoot || got.Name == "" {

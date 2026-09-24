@@ -183,6 +183,29 @@ func TestReadOnlyGrantDoesNotKeepWritableMount(t *testing.T) {
 	}
 }
 
+type inspectFailCloud struct{ cloud }
+
+func (p *inspectFailCloud) InspectSandbox(context.Context, string) (SandboxDetail, error) {
+	return SandboxDetail{}, errors.New("detail unavailable")
+}
+
+func TestInspectionFailureDoesNotReuseAfterReadOnlyGrant(t *testing.T) {
+	a, _ := stores(t)
+	h := bind(t, a)
+	p := &inspectFailCloud{}
+	m := Manager{a, p}
+	ctx := context.Background()
+	first, err := m.Ensure(ctx, h.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readOnly := VolumeMountSpec{Name: "vol-ro", Path: WorkspaceSharedRoot}
+	got, err := m.EnsureWithShared(ctx, h.Key, "template-1", readOnly, "role-read")
+	if !errors.Is(err, ErrPending) || errors.Is(err, ErrRetireRequired) || got.SandboxID == first.SandboxID || p.creates != 1 || p.destroys != 0 {
+		t.Fatalf("unconfirmed existing mount reused after read-only grant and inspection failure: host=%+v err=%v creates=%d destroys=%d", got, err, p.creates, p.destroys)
+	}
+}
+
 func TestEnsureWithSharedKeepsHealthySandboxWithoutTheMount(t *testing.T) {
 	a, _ := stores(t)
 	h := bind(t, a)

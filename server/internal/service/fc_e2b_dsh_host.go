@@ -99,22 +99,33 @@ func dshWaitReason(err error) string {
 // sharedLaunchKeep reuses the historical private ensure path.
 // sharedLaunchOffer may attach a shared mount only when the sandbox is created.
 // sharedLaunchRevoke drops a shared mount after an explicit none grant.
+// sharedLaunchConstrain compares a read grant with a mount the sandbox already
+// has. It must not attach a shared volume to a newly created sandbox.
 type sharedLaunchMode int
 
 const (
 	sharedLaunchKeep sharedLaunchMode = iota
 	sharedLaunchOffer
 	sharedLaunchRevoke
+	sharedLaunchConstrain
 )
 
 // classifySharedLaunch separates "not capable", "not ready", and "revoked".
 // A prepare failure must not retire a healthy sandbox. An explicit revoke must.
+// A read grant still has to be compared with an existing mount when the image
+// has not declared shared disk; that flag only blocks a new mount.
 // Unknown create results are handled by the creating fence, not by this mode.
 func classifySharedLaunch(capable bool, decision wsfs.MountDecision, notReady bool) sharedLaunchMode {
 	if decision.Revoked {
 		return sharedLaunchRevoke
 	}
-	if !capable || notReady || decision.Shared == nil {
+	if notReady || decision.Shared == nil {
+		return sharedLaunchKeep
+	}
+	if !capable {
+		if decision.Access == wsfs.AccessRead {
+			return sharedLaunchConstrain
+		}
 		return sharedLaunchKeep
 	}
 	return sharedLaunchOffer
@@ -329,6 +340,10 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		case sharedLaunchOffer:
 			if decision.Shared != nil && decision.RoleARN != "" {
 				return manager.EnsureWithShared(ctx, key, template, *decision.Shared, decision.RoleARN)
+			}
+		case sharedLaunchConstrain:
+			if decision.Shared != nil && decision.Shared.Name != "" && decision.RoleARN != "" {
+				return manager.EnsureConstrained(ctx, key, template, *decision.Shared, decision.RoleARN)
 			}
 		}
 		return manager.Ensure(ctx, key, template)

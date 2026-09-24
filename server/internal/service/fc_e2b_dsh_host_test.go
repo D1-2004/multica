@@ -88,10 +88,12 @@ func dshLaunchPools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 type dshLaunchProvider struct {
 	mu         sync.Mutex
 	creates    int
+	destroys   int
 	destroyErr error
 	failCreate bool
 	healthErr  error
 	live       map[uuid.UUID]string
+	mountsFor  map[string][]dshhost.VolumeMountSpec
 }
 
 func (p *dshLaunchProvider) Create(_ context.Context, h dshhost.Host) (string, error) {
@@ -130,12 +132,18 @@ func (p *dshLaunchProvider) DestroyAndConfirmAbsent(_ context.Context, id string
 	if p.destroyErr != nil {
 		return p.destroyErr
 	}
+	p.destroys++
 	for k, v := range p.live {
 		if v == id {
 			delete(p.live, k)
 		}
 	}
 	return nil
+}
+func (p *dshLaunchProvider) InspectSandbox(_ context.Context, id string) (dshhost.SandboxDetail, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return dshhost.SandboxDetail{State: "running", Mounts: append([]dshhost.VolumeMountSpec(nil), p.mountsFor[id]...)}, nil
 }
 func (p *dshLaunchProvider) FindCreated(_ context.Context, h dshhost.Host) (string, error) {
 	p.mu.Lock()
@@ -447,6 +455,36 @@ func (r readyFailRunner) Run(ctx context.Context, name string, args, env []strin
 		return "", errors.New("sandbox exec not ready")
 	}
 	return r.dshHomeRunner.Run(ctx, name, args, env)
+}
+
+func TestReadDowngradeWithoutCapabilityDoesNotKeepWritableMount(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	first, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || first.SandboxID == "" {
+		t.Fatal(err)
+	}
+	provider.mu.Lock()
+	provider.mountsFor = map[string][]dshhost.VolumeMountSpec{
+		first.SandboxID: {
+			{Name: first.VolumeName, Path: dshhost.MountPath},
+			{Name: "vol-rw", Path: dshhost.WorkspaceSharedRoot},
+		},
+	}
+	provider.mu.Unlock()
+	l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		return wsfs.MountDecision{
+			Shared:  &dshhost.VolumeMountSpec{Name: "vol-ro", Path: dshhost.WorkspaceSharedRoot},
+			RoleARN: "role-read",
+			Access:  wsfs.AccessRead,
+		}, nil
+	}
+	rt.Metadata = []byte(`{"kind":"fc-e2b"}`)
+	second, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || second.SandboxID == "" || second.SandboxID == first.SandboxID || len(second.ExtraMounts) != 0 || provider.creates != 2 || provider.destroys != 1 {
+		t.Fatalf("read downgrade with missing capability keeps host without inspecting existing writable mount: first=%s second=%+v creates=%d destroys=%d err=%v", first.SandboxID, second, provider.creates, provider.destroys, err)
+	}
 }
 
 func TestSharedCreateReadinessFailureDoesNotFailLaunch(t *testing.T) {
