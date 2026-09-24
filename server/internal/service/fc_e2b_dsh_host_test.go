@@ -632,6 +632,51 @@ func TestUnreadyReadGrantKeepsHostWithoutSharedMount(t *testing.T) {
 	}
 }
 
+func TestFreshSharedMountDeclaresTheMountedAccess(t *testing.T) {
+	for _, tc := range []struct {
+		access string
+		volume string
+		role   string
+	}{
+		{access: wsfs.AccessWrite, volume: "vol-rw", role: "role-write"},
+		{access: wsfs.AccessRead, volume: "vol-ro", role: "role-read"},
+	} {
+		t.Run(tc.access, func(t *testing.T) {
+			pool, _ := dshLaunchPools(t)
+			provider := &dshLaunchProvider{}
+			l, rt, task := dshLaunchFixture(t, pool, provider)
+			l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+				return wsfs.MountDecision{
+					Shared:  &dshhost.VolumeMountSpec{Name: tc.volume, Path: dshhost.WorkspaceSharedRoot},
+					RoleARN: tc.role,
+					Access:  tc.access,
+				}, nil
+			}
+			rt.Metadata = []byte(`{"capabilities":["workspace_shared_disk"]}`)
+			host, err := resolveDSHTest(t, l, rt, task, "template-1")
+			if err != nil || host.SandboxID == "" || provider.creates != 1 || len(host.ExtraMounts) != 1 || host.ExtraMounts[0].Name != tc.volume {
+				t.Fatalf("fresh %s mount was not created: %+v creates=%d err=%v", tc.access, host, provider.creates, err)
+			}
+			if host.SharedAccess != tc.access || effectiveWorkspaceFSAccess(&host) != tc.access {
+				t.Fatalf("fresh %s mount declared %q", tc.access, effectiveWorkspaceFSAccess(&host))
+			}
+		})
+	}
+}
+
+func TestPrivateLaunchDoesNotInjectSharedDiskEnv(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	host, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || host.SandboxID == "" || len(host.ExtraMounts) != 0 || provider.creates != 1 {
+		t.Fatalf("private launch changed: %+v creates=%d err=%v", host, provider.creates, err)
+	}
+	if access := effectiveWorkspaceFSAccess(&host); access != "" {
+		t.Fatalf("private launch injected shared access %q", access)
+	}
+}
+
 func TestWriteExpansionKeepsReadOnlyMountButDeclaresRead(t *testing.T) {
 	pool, _ := dshLaunchPools(t)
 	ctx := context.Background()

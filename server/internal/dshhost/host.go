@@ -218,6 +218,7 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, target *S
 	if !privateOnly && target != nil && target.Volume != "" && target.Access != "none" {
 		h.ExtraMounts = []VolumeMountSpec{{Name: target.Volume, Path: WorkspaceSharedRoot}}
 		h.AuthRoleARN = target.RoleARN
+		h.SharedAccess = target.Access
 	}
 	id, err := m.Provider.Create(ctx, h)
 	if err != nil || strings.TrimSpace(id) == "" {
@@ -458,6 +459,7 @@ func (m Manager) recordCreated(ctx context.Context, h Host, id string) (Host, er
 	}
 	created.ExtraMounts = h.ExtraMounts
 	created.AuthRoleARN = h.AuthRoleARN
+	created.SharedAccess = h.SharedAccess
 	if len(created.ExtraMounts) == 0 {
 		if inspector, ok := m.Provider.(sandboxInspector); ok {
 			detail, inspectErr := inspector.InspectSandbox(commitCtx, id)
