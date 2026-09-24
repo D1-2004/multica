@@ -954,7 +954,10 @@ type FCE2BLauncher struct {
 	SyncDSHProfileSource  func(context.Context, *pgxpool.Conn, dshhost.Key, string, dshprofile.NativeSnapshot) error
 	ProvisionDSHStorage   func(context.Context, dshhost.Database, dshhost.Key) (dshhost.Host, error)
 	PrepareWorkspaceMount func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error)
-	DSHArtifactSigner     interface {
+	// ReadWorkspaceMount is the launch-time lookup. It must not provision NAS
+	// or RAM. PrepareWorkspaceMount remains the explicit grant flow.
+	ReadWorkspaceMount func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error)
+	DSHArtifactSigner  interface {
 		PresignGet(context.Context, string, time.Duration) (string, error)
 	}
 	Queries            *db.Queries

@@ -59,6 +59,36 @@ func (c Controller) EnsureBinding(ctx context.Context, db Database, workspaceID 
 	return (Provisioner{Store: store, Provider: provider}).Ensure(ctx, workspaceID, spec)
 }
 
+// ErrSharedDiskNotReady means the grant exists but the binding or composite
+// role has not been prepared. Launch must not provision them itself.
+var ErrSharedDiskNotReady = errors.New("workspace shared disk is not ready")
+
+// ReadMount returns the mount to use from stored state. It does not create
+// NAS volumes or RAM roles.
+func (c Controller) ReadMount(ctx context.Context, db Database, workspaceID, agentID uuid.UUID, employee *dshhost.Host) (MountDecision, error) {
+	store := Store{DB: db}
+	grant, err := store.GetGrant(ctx, workspaceID, agentID)
+	if err != nil {
+		return MountDecision{}, err
+	}
+	if !grant.Persisted || grant.Revoked() || grant.effectiveAccess() == AccessNone {
+		decision := SelectVolumeMounts(employee, grant, nil)
+		decision.Revoked = grant.Revoked()
+		return decision, nil
+	}
+	binding, err := store.GetBinding(ctx, workspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MountDecision{}, ErrSharedDiskNotReady
+	}
+	if err != nil {
+		return MountDecision{}, err
+	}
+	if employee != nil && grant.TaskRoleARN == "" {
+		return MountDecision{}, ErrSharedDiskNotReady
+	}
+	return SelectVolumeMounts(employee, grant, &binding), nil
+}
+
 func (c Controller) PrepareMount(ctx context.Context, db Database, workspaceID, agentID uuid.UUID, employee *dshhost.Host) (MountDecision, error) {
 	store := Store{DB: db}
 	grant, err := store.GetGrant(ctx, workspaceID, agentID)

@@ -96,37 +96,51 @@ func dshWaitReason(err error) string {
 	return "dsh_host_waiting"
 }
 
-// workspaceMountDecision never blocks a launch. The shared mount is an overlay:
-// until the workspace storage and composite role are confirmed, the task runs
-// on the private mount only, and a later idle rebuild adds the shared mount.
-// fallback=true means the current grant could not be resolved, so the launch
-// must also drop any shared mount an existing sandbox still carries.
-// launchWithoutSharedMount is true when this launch must not keep a shared
-// volume. A resolved grant of none is included: the sandbox from the previous
-// grant can still have that mount, and Ensure would reuse it.
-func launchWithoutSharedMount(decision wsfs.MountDecision, prepareEnabled, fallback bool) bool {
-	if decision.Shared != nil {
-		return false
+// sharedLaunchKeep reuses the historical private ensure path.
+// sharedLaunchOffer may attach a shared mount only when the sandbox is created.
+// sharedLaunchRevoke drops a shared mount after an explicit none grant.
+type sharedLaunchMode int
+
+const (
+	sharedLaunchKeep sharedLaunchMode = iota
+	sharedLaunchOffer
+	sharedLaunchRevoke
+)
+
+// classifySharedLaunch separates "not capable", "not ready", and "revoked".
+// A prepare failure must not retire a healthy sandbox. An explicit revoke must.
+// Unknown create results are handled by the creating fence, not by this mode.
+func classifySharedLaunch(capable bool, decision wsfs.MountDecision, notReady bool) sharedLaunchMode {
+	if decision.Revoked {
+		return sharedLaunchRevoke
 	}
-	return fallback || prepareEnabled
+	if !capable || notReady || decision.Shared == nil {
+		return sharedLaunchKeep
+	}
+	return sharedLaunchOffer
 }
 
-func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Database, key dshhost.Key, before *dshhost.Host) (decision wsfs.MountDecision, fallback bool) {
+func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Database, key dshhost.Key, before *dshhost.Host, metadata []byte) (decision wsfs.MountDecision, mode sharedLaunchMode) {
 	decision = wsfs.MountDecision{Private: before, RoleARN: before.RoleARN}
-	if l.PrepareWorkspaceMount == nil {
-		return decision, false
+	if l.ReadWorkspaceMount == nil || !wsfs.DeclaresSharedDisk(metadata) {
+		return decision, sharedLaunchKeep
 	}
-	got, err := l.PrepareWorkspaceMount(ctx, conn, key.WorkspaceID, key.AgentID, before)
+	got, err := l.ReadWorkspaceMount(ctx, conn, key.WorkspaceID, key.AgentID, before)
 	if err != nil {
 		slog.Warn("workspace filesystem mount not ready; launching without the shared mount",
 			"error", err,
-			"pending", errors.Is(err, dshhost.ErrPending) || errors.Is(err, dshhost.ErrChanged),
 			"workspace_id", key.WorkspaceID,
 			"agent_id", key.AgentID,
 		)
-		return decision, true
+		return decision, sharedLaunchKeep
 	}
-	return got, false
+	if got.Private == nil {
+		got.Private = before
+	}
+	if got.RoleARN == "" {
+		got.RoleARN = before.RoleARN
+	}
+	return got, classifySharedLaunch(true, got, false)
 }
 
 var dshAccessPointPattern = regexp.MustCompile(`^acs:nas:[a-z0-9-]+:[0-9]+:accesspoint/(ap-[a-z0-9]+)$`)
@@ -305,13 +319,15 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		return dshhost.Host{}, false, err
 	}
 	manager := dshhost.Manager{Store: store, Provider: provider}
-	decision, mountFallback := l.workspaceMountDecision(ctx, conn, key, &before)
+	decision, launchMode := l.workspaceMountDecision(ctx, conn, key, &before, rt.Metadata)
 	ensureHost := func() (dshhost.Host, error) {
-		if decision.Shared != nil && decision.RoleARN != "" && decision.RoleARN != before.RoleARN {
-			return manager.EnsureWithShared(ctx, key, template, *decision.Shared, decision.RoleARN)
-		}
-		if launchWithoutSharedMount(decision, l.PrepareWorkspaceMount != nil, mountFallback) {
+		switch launchMode {
+		case sharedLaunchRevoke:
 			return manager.EnsurePrivate(ctx, key, template)
+		case sharedLaunchOffer:
+			if decision.Shared != nil && decision.RoleARN != "" {
+				return manager.EnsureWithShared(ctx, key, template, *decision.Shared, decision.RoleARN)
+			}
 		}
 		return manager.Ensure(ctx, key, template)
 	}
@@ -326,8 +342,8 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 				"agent_id", key.AgentID,
 			)
 			decision = wsfs.MountDecision{Private: &before, RoleARN: before.RoleARN}
-			mountFallback = true
-			return ensureHost()
+			launchMode = sharedLaunchKeep
+			return manager.Ensure(ctx, key, template)
 		}
 		return host, err
 	}
@@ -338,8 +354,8 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			slog.Info("dsh host waiting", "reason", dshhost.WaitCreateIntentStale, "workspace_id", key.WorkspaceID, "agent_id", key.AgentID, "generation", before.Generation, "sandbox_id", before.SandboxID)
 			return dshhost.Host{}, false, waitDSHHost(dshhost.WaitCreateIntentStale)
 		}
-		if launchWithoutSharedMount(decision, l.PrepareWorkspaceMount != nil, mountFallback) {
-			// An adopted create may carry a shared mount from an earlier grant.
+		if launchMode == sharedLaunchRevoke {
+			// An adopted create may carry a shared mount from an explicit revoke.
 			err = manager.RequirePrivate(ctx, host)
 		}
 	} else if before.State == "retiring" {

@@ -1,9 +1,17 @@
-/**
- * Shared-disk agent work needs this FC/E2B image. Older PI images return 401
- * from the model request and exit before they can read the disk.
- */
-export const SHARED_DISK_REQUIRED_RUNTIME_IMAGE =
-  "multica-m7-va2eb67817f146ef4-r1-fdf8b8";
+/** Runtime metadata capability. An image name is not a capability. */
+export const SHARED_DISK_CAPABILITY = "workspace_shared_disk";
+
+export type SharedDiskSupport = "capable" | "incapable" | "unknown";
+
+export function sharedDiskSupport(
+  runtime: { metadata?: Record<string, unknown> | null } | null | undefined,
+): SharedDiskSupport {
+  const metadata = runtime?.metadata;
+  if (!metadata || typeof metadata !== "object") return "unknown";
+  const capabilities = metadata.capabilities;
+  if (!Array.isArray(capabilities)) return "incapable";
+  return capabilities.some((item) => item === SHARED_DISK_CAPABILITY) ? "capable" : "incapable";
+}
 
 export type RuntimeImageMatch = "not_required" | "match" | "mismatch" | "unknown";
 

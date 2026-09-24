@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
-  SHARED_DISK_REQUIRED_RUNTIME_IMAGE,
+  SHARED_DISK_CAPABILITY,
   boundRuntimeImage,
   compareRuntimeImage,
+  sharedDiskSupport,
 } from "./runtime-image";
 
+describe("sharedDiskSupport", () => {
+  it("treats a missing capability list as incapable and missing metadata as unknown", () => {
+    expect(sharedDiskSupport(null)).toBe("unknown");
+    expect(sharedDiskSupport({ metadata: { kind: "fc-e2b" } })).toBe("incapable");
+    expect(sharedDiskSupport({ metadata: { capabilities: ["dws"] } })).toBe("incapable");
+    expect(sharedDiskSupport({ metadata: { capabilities: [SHARED_DISK_CAPABILITY] } })).toBe("capable");
+  });
+});
+
 describe("compareRuntimeImage", () => {
-  const required = SHARED_DISK_REQUIRED_RUNTIME_IMAGE;
+  const required = "multica-m7-va2eb67817f146ef4-r1-fdf8b8";
 
   it("treats a different or older image as a mismatch", () => {
     expect(
@@ -42,11 +52,11 @@ describe("boundRuntimeImage", () => {
       boundRuntimeImage({
         metadata: {
           template_name: "Team v2",
-          template_alias: `  ${SHARED_DISK_REQUIRED_RUNTIME_IMAGE}  `,
+          template_alias: "  image-alias  ",
           template_id: "id-1",
         },
       }),
-    ).toBe(SHARED_DISK_REQUIRED_RUNTIME_IMAGE);
+    ).toBe("image-alias");
     expect(boundRuntimeImage({ metadata: { template_id: "id-only" } })).toBe("id-only");
     expect(boundRuntimeImage({ metadata: { template_name: "Team v2" } })).toBe("Team v2");
     expect(boundRuntimeImage({ metadata: {} })).toBeNull();

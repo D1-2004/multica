@@ -148,6 +148,43 @@ func (p *cloud) SandboxAbsent(_ context.Context, id string) (bool, error) {
 	return true, nil
 }
 
+func TestEnsureWithSharedKeepsHealthySandboxWithoutTheMount(t *testing.T) {
+	a, _ := stores(t)
+	h := bind(t, a)
+	p := &cloud{}
+	m := Manager{a, p}
+	ctx := context.Background()
+	first, err := m.Ensure(ctx, h.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := VolumeMountSpec{Name: "vol-shared", Path: WorkspaceSharedRoot}
+	got, err := m.EnsureWithShared(ctx, h.Key, "template-1", shared, "role-composite")
+	if err != nil || got.SandboxID != first.SandboxID || got.State != "running" || p.creates != 1 || p.destroys != 0 {
+		t.Fatalf("healthy sandbox was rebuilt for a shared mount: %+v err=%v creates=%d destroys=%d", got, err, p.creates, p.destroys)
+	}
+}
+
+func TestEnsureDuringRetireDoesNotCreateAnotherSandbox(t *testing.T) {
+	a, b := stores(t)
+	h := bind(t, a)
+	p := &cloud{}
+	ctx := context.Background()
+	first, err := (Manager{a, p}).Ensure(ctx, h.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.BeginRetire(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Manager{b, p}).Ensure(ctx, h.Key, "template-1"); !errors.Is(err, ErrPending) {
+		t.Fatal(err)
+	}
+	if p.creates != 1 || p.destroys != 0 {
+		t.Fatalf("a launch during retire destroyed or replaced the sandbox: creates=%d destroys=%d", p.creates, p.destroys)
+	}
+}
+
 func TestReplicasCreateOneWriter(t *testing.T) {
 	a, b := stores(t)
 	h := bind(t, a)

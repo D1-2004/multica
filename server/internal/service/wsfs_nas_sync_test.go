@@ -55,6 +55,24 @@ func TestReleaseWriteHostWaitsForConfirmedAbsence(t *testing.T) {
 	}
 }
 
+func TestSharedNASRenameDoesNotOverwrite(t *testing.T) {
+	script := nasRenameScript(dshhost.WorkspaceSharedRoot+"/a_%", dshhost.WorkspaceSharedRoot+"/b")
+	if !strings.Contains(script, "s.rename(d)") || !strings.Contains(script, "if d.exists()") || strings.Contains(script, `open("wb"`) {
+		t.Fatal(script)
+	}
+	args := strings.Join(sharedNASExec("sbx", script), " ")
+	if !strings.Contains(args, "--user user sbx") || strings.Contains(args, "/mnt/multica") {
+		t.Fatal(args)
+	}
+}
+
+func TestSharedNASDeleteRemovesTree(t *testing.T) {
+	script := nasDeleteScript(dshhost.WorkspaceSharedRoot + "/a_b")
+	if !strings.Contains(script, "shutil.rmtree") || !strings.Contains(script, "p.unlink") || strings.Contains(script, "wb") {
+		t.Fatal(script)
+	}
+}
+
 func TestSharedNASWriteUsesUserOnSharedRoot(t *testing.T) {
 	runner := &fakeCommandRunner{out: []string{"{}"}}
 	l := &FCE2BLauncher{Runner: runner}

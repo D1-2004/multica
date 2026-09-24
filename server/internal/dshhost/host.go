@@ -143,19 +143,13 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 		return Host{}, fmt.Errorf("%w: %s", ErrPending, WaitCreateIntentStale)
 	}
 	if h.State == "retiring" {
-		if err := m.finishRetire(ctx, h); err != nil {
-			return Host{}, err
-		}
-		h, err = m.Store.Get(ctx, key)
-		if err != nil {
-			return Host{}, err
-		}
+		// A concurrent launch must not finish a retire. The holder of the
+		// retire checks native grants before destroy; completing it here can
+		// delete a sandbox that check still has to see.
+		return Host{}, fmt.Errorf("%w: %s", ErrPending, WaitDestroyUnconfirmed)
 	}
 	if h.State == "running" {
 		if h.TemplateID != template {
-			return Host{}, ErrRetireRequired
-		}
-		if shared != nil && !m.sandboxHasMount(ctx, h.SandboxID, *shared) {
 			return Host{}, ErrRetireRequired
 		}
 		if privateOnly {
@@ -174,7 +168,10 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 		if err := m.Provider.Healthy(ctx, h.SandboxID); err != nil {
 			return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
 		}
-		if shared != nil {
+		// A healthy sandbox keeps running when the shared volume is absent.
+		// The mount is applied the next time this host is created, not by
+		// retiring the sandbox the current task can still use.
+		if shared != nil && m.sandboxHasMount(ctx, h.SandboxID, *shared) {
 			h.ExtraMounts = []VolumeMountSpec{*shared}
 			h.AuthRoleARN = authRole
 		}

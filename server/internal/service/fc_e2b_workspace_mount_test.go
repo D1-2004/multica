@@ -11,20 +11,23 @@ import (
 	"github.com/multica-ai/multica/server/internal/wsfs"
 )
 
-func TestLaunchWithoutSharedMountDropsARevokedGrant(t *testing.T) {
-	none := wsfs.MountDecision{RoleARN: "role-employee"}
-	if !launchWithoutSharedMount(none, true, false) {
-		t.Fatal("a resolved grant of none must rebuild without the shared mount")
+func TestClassifySharedLaunchSeparatesRevokeFromNotReady(t *testing.T) {
+	revoked := wsfs.MountDecision{Revoked: true}
+	if classifySharedLaunch(false, revoked, true) != sharedLaunchRevoke {
+		t.Fatal("an explicit revoke must drop the shared mount even when the image is old or the binding is unready")
 	}
-	if launchWithoutSharedMount(none, false, false) {
-		t.Fatal("workspaces without a shared disk must keep the existing ensure path")
+	ready := wsfs.MountDecision{Shared: &dshhost.VolumeMountSpec{Name: "vol-shared", Path: dshhost.WorkspaceSharedRoot}, RoleARN: "role-composite"}
+	if classifySharedLaunch(false, ready, false) != sharedLaunchKeep {
+		t.Fatal("an image that does not declare shared disk must keep the historical launch")
 	}
-	shared := wsfs.MountDecision{Shared: &dshhost.VolumeMountSpec{Name: "vol-shared", Path: dshhost.WorkspaceSharedRoot}, RoleARN: "role-composite"}
-	if launchWithoutSharedMount(shared, true, true) {
-		t.Fatal("a confirmed shared mount must not be dropped")
+	if classifySharedLaunch(true, ready, true) != sharedLaunchKeep {
+		t.Fatal("a shared disk that is not ready must not retire a healthy sandbox")
 	}
-	if !launchWithoutSharedMount(none, false, true) {
-		t.Fatal("an unconfirmed mount must launch private-only")
+	if classifySharedLaunch(true, ready, false) != sharedLaunchOffer {
+		t.Fatal("a capable runtime with a ready binding may offer the shared mount on create")
+	}
+	if classifySharedLaunch(true, wsfs.MountDecision{}, false) != sharedLaunchKeep {
+		t.Fatal("a missing grant is not a revoke")
 	}
 }
 
@@ -32,6 +35,7 @@ func TestWorkspaceMountDecisionNeverBlocksLaunch(t *testing.T) {
 	key := dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}
 	before := &dshhost.Host{Key: key, Storage: dshhost.Storage{VolumeName: "vol-employee", RoleARN: "role-employee", AccessPointARN: "ap-employee"}}
 	shared := &dshhost.VolumeMountSpec{Name: "vol-shared", Path: dshhost.WorkspaceSharedRoot}
+	capable := []byte(`{"capabilities":["workspace_shared_disk"]}`)
 	for _, tc := range []struct {
 		name string
 		err  error
@@ -42,23 +46,26 @@ func TestWorkspaceMountDecisionNeverBlocksLaunch(t *testing.T) {
 		{"hard failure", errors.New("invalid shared access point for composite role")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			l := &FCE2BLauncher{PrepareWorkspaceMount: func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
-				return wsfs.MountDecision{Private: before, Shared: shared, RoleARN: "role-composite"}, tc.err
+			l := &FCE2BLauncher{ReadWorkspaceMount: func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+				return wsfs.MountDecision{}, tc.err
 			}}
-			got, fallback := l.workspaceMountDecision(context.Background(), nil, key, before)
-			if !fallback || got.Shared != nil || got.RoleARN != "role-employee" || got.Private != before {
-				t.Fatalf("an unready shared mount must launch private-only with fallback, got %+v fallback=%v", got, fallback)
+			got, mode := l.workspaceMountDecision(context.Background(), nil, key, before, capable)
+			if mode != sharedLaunchKeep || got.Shared != nil || got.RoleARN != "role-employee" {
+				t.Fatalf("an unready shared mount must keep the historical launch, got %+v mode=%v", got, mode)
 			}
 		})
 	}
 
-	l := &FCE2BLauncher{PrepareWorkspaceMount: func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+	l := &FCE2BLauncher{ReadWorkspaceMount: func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
 		return wsfs.MountDecision{Private: before, Shared: shared, RoleARN: "role-composite", Access: wsfs.AccessRead}, nil
 	}}
-	if got, fallback := l.workspaceMountDecision(context.Background(), nil, key, before); fallback || got.Shared != shared || got.RoleARN != "role-composite" {
-		t.Fatalf("a ready shared mount must be used, got %+v fallback=%v", got, fallback)
+	if got, mode := l.workspaceMountDecision(context.Background(), nil, key, before, capable); mode != sharedLaunchOffer || got.Shared != shared {
+		t.Fatalf("a capable runtime may offer a ready shared mount, got %+v mode=%v", got, mode)
 	}
-	if got, fallback := (&FCE2BLauncher{}).workspaceMountDecision(context.Background(), nil, key, before); fallback || got.Shared != nil || got.RoleARN != "role-employee" {
-		t.Fatalf("no workspace controller must launch private-only, got %+v fallback=%v", got, fallback)
+	if _, mode := l.workspaceMountDecision(context.Background(), nil, key, before, []byte(`{"kind":"fc-e2b"}`)); mode != sharedLaunchKeep {
+		t.Fatal("an old image must skip shared disk before the read")
+	}
+	if got, mode := (&FCE2BLauncher{}).workspaceMountDecision(context.Background(), nil, key, before, capable); mode != sharedLaunchKeep || got.Shared != nil {
+		t.Fatalf("no reader must keep the historical launch, got %+v mode=%v", got, mode)
 	}
 }

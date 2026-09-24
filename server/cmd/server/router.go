@@ -466,6 +466,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			}
 			return ctrl.PrepareMount(ctx, db, workspaceID, agentID, employee)
 		}
+		h.FCE2BLauncher.ReadWorkspaceMount = func(ctx context.Context, db wsfs.Database, workspaceID, agentID uuid.UUID, employee *dshhost.Host) (wsfs.MountDecision, error) {
+			return ctrl.ReadMount(ctx, db, workspaceID, agentID, employee)
+		}
 	}
 	h.Assoc = assoc.NewService(assoc.NewSQLStore(pool))
 	h.SiteHosting = sitehosting.NewService(

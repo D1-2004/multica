@@ -390,6 +390,13 @@ func (h *Handler) PostWorkspaceFilesystemRename(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
 		return
 	}
+	if agentID == uuid.Nil && h.FCE2BLauncher != nil {
+		if syncErr := h.FCE2BLauncher.SyncSharedRename(r.Context(), wsID, oldRel, newRel); syncErr != nil {
+			slog.Error("workspace shared path was not renamed on NAS", "path", oldRel, "error", syncErr)
+			writeError(w, http.StatusBadGateway, "could not rename the shared disk")
+			return
+		}
+	}
 	if err := store.Rename(r.Context(), wsID, agentID, oldRel, newRel, newName); err != nil {
 		writeError(w, http.StatusBadGateway, "could not rename")
 		return
@@ -413,6 +420,13 @@ func (h *Handler) DeleteWorkspaceFilesystemEntry(w http.ResponseWriter, r *http.
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "filesystem is unavailable")
 		return
+	}
+	if agentID == uuid.Nil && h.FCE2BLauncher != nil {
+		if syncErr := h.FCE2BLauncher.SyncSharedDelete(r.Context(), wsID, rel); syncErr != nil {
+			slog.Error("workspace shared path was not deleted on NAS", "path", rel, "error", syncErr)
+			writeError(w, http.StatusBadGateway, "could not delete the shared disk")
+			return
+		}
 	}
 	if err := store.DeleteUnder(r.Context(), wsID, agentID, rel); err != nil {
 		writeError(w, http.StatusBadGateway, "could not delete")

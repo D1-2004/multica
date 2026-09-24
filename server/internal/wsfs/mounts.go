@@ -34,6 +34,13 @@ type Grant struct {
 	Access      string    `json:"access"`
 	Generation  int64     `json:"generation"`
 	TaskRoleARN string    `json:"task_role_arn"`
+	// Persisted is false when no grant row exists. That is not a revoke.
+	Persisted bool `json:"-"`
+}
+
+// Revoked reports an explicit none grant. A missing row is not a revoke.
+func (g Grant) Revoked() bool {
+	return g.Persisted && g.effectiveAccess() == AccessNone
 }
 
 func (g Grant) effectiveAccess() string {
@@ -51,6 +58,9 @@ type MountDecision struct {
 	Shared  *dshhost.VolumeMountSpec
 	RoleARN string
 	Access  string
+	// Revoked is an explicit none grant. Launch must drop a shared mount the
+	// sandbox still carries. A missing grant is not revoked.
+	Revoked bool
 }
 
 // SelectVolumeMounts implements the launch matrix. Empty TaskRoleARN on an

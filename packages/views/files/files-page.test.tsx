@@ -4,10 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Agent, AgentRuntime } from "@multica/core/types";
-import {
-  SHARED_DISK_REQUIRED_RUNTIME_IMAGE,
-  type FilesystemRoot,
-} from "@multica/core/filesystem";
+import type { FilesystemRoot } from "@multica/core/filesystem";
 import { renderWithI18n } from "../test/i18n";
 import { NavigationProvider, type NavigationAdapter } from "../navigation";
 import { FilesPage } from "./files-page";
@@ -168,7 +165,7 @@ beforeEach(() => {
   };
 });
 
-function runtimeWithImage(templateName: string | null): AgentRuntime {
+function runtimeWithImage(templateName: string | null, capable = false): AgentRuntime {
   return {
     id: "runtime-1",
     workspace_id: "ws-1",
@@ -179,9 +176,11 @@ function runtimeWithImage(templateName: string | null): AgentRuntime {
     launch_header: "",
     status: "online",
     device_info: "",
-    metadata: templateName
-      ? { kind: "fc-e2b", template_name: templateName, template_alias: templateName }
-      : { kind: "fc-e2b" },
+    metadata: {
+      kind: "fc-e2b",
+      ...(templateName ? { template_alias: templateName } : {}),
+      ...(capable ? { capabilities: ["workspace_shared_disk"] } : {}),
+    },
     owner_id: "user-1",
     visibility: "private",
     last_seen_at: null,
@@ -252,9 +251,8 @@ describe("FilesPage", () => {
     await user.click(screen.getByRole("option", { name: /Feidi/ }));
 
     const notice = screen.getByRole("status");
-    expect(notice).toHaveTextContent(SHARED_DISK_REQUIRED_RUNTIME_IMAGE);
     expect(notice).toHaveTextContent("multica-m7-va2eb67817f146ef4-r1-6ccf66");
-    expect(notice).toHaveTextContent("do not match");
+    expect(notice).toHaveTextContent("has not declared");
   });
 
   it("prompts when the bound runtime image is unknown", async () => {
@@ -265,9 +263,8 @@ describe("FilesPage", () => {
     await user.click(screen.getByRole("option", { name: /Feidi/ }));
 
     const notice = screen.getByRole("status");
-    expect(notice).toHaveTextContent(SHARED_DISK_REQUIRED_RUNTIME_IMAGE);
     expect(notice).toHaveTextContent("unknown");
-    expect(notice).not.toHaveTextContent("do not match");
+    expect(notice).not.toHaveTextContent("has not declared");
   });
 
   it("does not prompt for an agent without shared-disk access", async () => {
@@ -300,14 +297,13 @@ describe("FilesPage", () => {
   });
 
   it("does not prompt when the bound runtime image satisfies the requirement", async () => {
-    mocks.runtimes = [runtimeWithImage(SHARED_DISK_REQUIRED_RUNTIME_IMAGE)];
+    mocks.runtimes = [runtimeWithImage("image-capable", true)];
     const user = userEvent.setup();
     renderPage();
 
     await user.click(screen.getByRole("option", { name: /Feidi/ }));
 
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
-    expect(screen.queryByText(SHARED_DISK_REQUIRED_RUNTIME_IMAGE)).not.toBeInTheDocument();
   });
 
   it("selects an agent disk and links to the agent filesystem view", async () => {

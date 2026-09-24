@@ -50,6 +50,75 @@ func (l *FCE2BLauncher) SyncSharedFile(ctx context.Context, workspaceID uuid.UUI
 	return l.writeSharedNASFile(ctx, sandboxID, cleaned, data)
 }
 
+// SyncSharedRename moves one shared path on NAS. A missing source is left
+// alone. An existing destination is not overwritten.
+func (l *FCE2BLauncher) SyncSharedRename(ctx context.Context, workspaceID uuid.UUID, oldRel, newRel string) error {
+	oldClean, err := wsfs.JailRelPath(oldRel)
+	if err != nil || oldClean == "." {
+		return fmt.Errorf("shared rename source: %w", err)
+	}
+	newClean, err := wsfs.JailRelPath(newRel)
+	if err != nil || newClean == "." {
+		return fmt.Errorf("shared rename destination: %w", err)
+	}
+	return l.withSharedNAS(ctx, workspaceID, func(sandboxID string) error {
+		_, err := l.runE2BCommand(ctx, sharedNASExec(sandboxID, nasRenameScript(
+			path.Join(dshhost.WorkspaceSharedRoot, oldClean),
+			path.Join(dshhost.WorkspaceSharedRoot, newClean),
+		)))
+		return err
+	})
+}
+
+// SyncSharedDelete removes one shared path on NAS, including a directory tree.
+// A path that is already absent is success.
+func (l *FCE2BLauncher) SyncSharedDelete(ctx context.Context, workspaceID uuid.UUID, rel string) error {
+	cleaned, err := wsfs.JailRelPath(rel)
+	if err != nil || cleaned == "." {
+		return fmt.Errorf("shared delete path: %w", err)
+	}
+	return l.withSharedNAS(ctx, workspaceID, func(sandboxID string) error {
+		_, err := l.runE2BCommand(ctx, sharedNASExec(sandboxID, nasDeleteScript(path.Join(dshhost.WorkspaceSharedRoot, cleaned))))
+		return err
+	})
+}
+
+func sharedNASExec(sandboxID, script string) []string {
+	return []string{"sandbox", "exec", "--user", "user", sandboxID, "--", "python3", "-c", script}
+}
+
+func nasRenameScript(oldPath, newPath string) string {
+	return "import pathlib,sys; s=pathlib.Path(" + pyQuote(oldPath) + "); d=pathlib.Path(" + pyQuote(newPath) + ");\n" +
+		"if not s.exists():\n sys.exit(0)\n" +
+		"d.parent.mkdir(parents=True, exist_ok=True)\n" +
+		"if d.exists():\n sys.exit(2)\n" +
+		"s.rename(d)\n"
+}
+
+func nasDeleteScript(dest string) string {
+	return "import pathlib,shutil; p=pathlib.Path(" + pyQuote(dest) + ")\n" +
+		"if not p.exists():\n raise SystemExit\n" +
+		"shutil.rmtree(p) if p.is_dir() else p.unlink()\n"
+}
+
+func (l *FCE2BLauncher) withSharedNAS(ctx context.Context, workspaceID uuid.UUID, fn func(string) error) error {
+	if l == nil || l.Pool == nil || workspaceID == uuid.Nil {
+		return nil
+	}
+	store := wsfs.Store{DB: l.Pool}
+	if _, err := store.GetBinding(ctx, workspaceID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	sandboxID, err := l.ensureWorkspaceWriteHost(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	return fn(sandboxID)
+}
+
 // SyncSharedCatalog copies the existing shared catalog onto the NAS volume.
 // It is used when an agent is granted access, so a read-only mount is not
 // asked to create the files itself.
