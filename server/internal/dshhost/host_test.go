@@ -148,6 +148,41 @@ func (p *cloud) SandboxAbsent(_ context.Context, id string) (bool, error) {
 	return true, nil
 }
 
+type mountedCloud struct {
+	cloud
+	mounts []VolumeMountSpec
+}
+
+func (p *mountedCloud) InspectSandbox(context.Context, string) (SandboxDetail, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return SandboxDetail{State: "running", Mounts: append([]VolumeMountSpec(nil), p.mounts...)}, nil
+}
+
+func TestReadOnlyGrantDoesNotKeepWritableMount(t *testing.T) {
+	a, _ := stores(t)
+	h := bind(t, a)
+	p := &mountedCloud{}
+	m := Manager{a, p}
+	ctx := context.Background()
+	first, err := m.Ensure(ctx, h.Key, "template-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mounts = []VolumeMountSpec{
+		{Name: h.VolumeName, Path: MountPath},
+		{Name: "vol-rw", Path: WorkspaceSharedRoot},
+	}
+	readOnly := VolumeMountSpec{Name: "vol-ro", Path: WorkspaceSharedRoot}
+	got, err := m.EnsureWithShared(ctx, h.Key, "template-1", readOnly, "role-read")
+	if !errors.Is(err, ErrRetireRequired) || got.AuthRoleARN == "role-read" || p.creates != 1 || p.destroys != 0 {
+		t.Fatalf("writable mount survived a read-only grant: host=%+v err=%v creates=%d destroys=%d", got, err, p.creates, p.destroys)
+	}
+	if got.SandboxID == first.SandboxID && got.State == "running" && len(got.ExtraMounts) > 0 {
+		t.Fatalf("returned the running host with the writable mount still attached: %+v", got)
+	}
+}
+
 func TestEnsureWithSharedKeepsHealthySandboxWithoutTheMount(t *testing.T) {
 	a, _ := stores(t)
 	h := bind(t, a)

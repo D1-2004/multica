@@ -63,7 +63,13 @@ func TestWorkspaceMountDecisionNeverBlocksLaunch(t *testing.T) {
 		t.Fatalf("a capable runtime may offer a ready shared mount, got %+v mode=%v", got, mode)
 	}
 	if _, mode := l.workspaceMountDecision(context.Background(), nil, key, before, []byte(`{"kind":"fc-e2b"}`)); mode != sharedLaunchKeep {
-		t.Fatal("an old image must skip shared disk before the read")
+		t.Fatal("an old image must not be offered a new shared mount")
+	}
+	revoked := &FCE2BLauncher{ReadWorkspaceMount: func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		return wsfs.MountDecision{Private: before, RoleARN: before.RoleARN, Revoked: true}, nil
+	}}
+	if _, mode := revoked.workspaceMountDecision(context.Background(), nil, key, before, []byte(`{"kind":"fc-e2b"}`)); mode != sharedLaunchRevoke {
+		t.Fatal("missing shared-disk capability must not skip an explicit revoke")
 	}
 	if got, mode := (&FCE2BLauncher{}).workspaceMountDecision(context.Background(), nil, key, before, capable); mode != sharedLaunchKeep || got.Shared != nil {
 		t.Fatalf("no reader must keep the historical launch, got %+v mode=%v", got, mode)

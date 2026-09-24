@@ -168,12 +168,17 @@ func (m Manager) ensure(ctx context.Context, key Key, template string, shared *V
 		if err := m.Provider.Healthy(ctx, h.SandboxID); err != nil {
 			return Host{}, fmt.Errorf("%w: %s", ErrRetireRequired, WaitSandboxUnhealthy)
 		}
-		// A healthy sandbox keeps running when the shared volume is absent.
-		// The mount is applied the next time this host is created, not by
-		// retiring the sandbox the current task can still use.
-		if shared != nil && m.sandboxHasMount(ctx, h.SandboxID, *shared) {
-			h.ExtraMounts = []VolumeMountSpec{*shared}
-			h.AuthRoleARN = authRole
+		if shared != nil {
+			switch m.sharedMountFit(ctx, h.SandboxID, *shared) {
+			case sharedMountMatches:
+				h.ExtraMounts = []VolumeMountSpec{*shared}
+				h.AuthRoleARN = authRole
+			case sharedMountWider:
+				// A read-only grant must not keep a writable volume that is
+				// already mounted. Absence is different: do not retire just to
+				// add a share.
+				return Host{}, fmt.Errorf("%w: shared mount is wider than the grant", ErrRetireRequired)
+			}
 		}
 		return h, nil
 	}
@@ -247,6 +252,38 @@ func requirePrivateMounts(h Host, mounts []VolumeMountSpec) error {
 		return fmt.Errorf("%w: sandbox mounts could not be confirmed private", ErrRetireRequired)
 	}
 	return nil
+}
+
+type sharedMountFit int
+
+const (
+	sharedMountAbsent sharedMountFit = iota
+	sharedMountMatches
+	sharedMountWider
+)
+
+// sharedMountFit reports whether the live sandbox already has the granted
+// shared volume. A different volume at the shared path is wider than the
+// grant. No inspector means the mount is treated as absent, not as a conflict.
+func (m Manager) sharedMountFit(ctx context.Context, sandboxID string, want VolumeMountSpec) sharedMountFit {
+	inspector, ok := m.Provider.(sandboxInspector)
+	if !ok || sandboxID == "" {
+		return sharedMountAbsent
+	}
+	detail, err := inspector.InspectSandbox(ctx, sandboxID)
+	if err != nil {
+		return sharedMountAbsent
+	}
+	for _, got := range detail.Mounts {
+		if got.Path != WorkspaceSharedRoot || got.Name == "" {
+			continue
+		}
+		if got.Name == want.Name && got.Path == want.Path {
+			return sharedMountMatches
+		}
+		return sharedMountWider
+	}
+	return sharedMountAbsent
 }
 
 func (m Manager) sandboxHasMount(ctx context.Context, sandboxID string, want VolumeMountSpec) bool {

@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dshprofile"
+	"github.com/multica-ai/multica/server/internal/wsfs"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -436,6 +437,57 @@ func TestDSHLaunchUsesOneConnectionAndOneEmployeeHostAcrossReplicas(t *testing.T
 	wg.Wait()
 	if provider.creates != 1 {
 		t.Fatalf("created %d hosts", provider.creates)
+	}
+}
+
+type readyFailRunner struct{ dshHomeRunner }
+
+func (r readyFailRunner) Run(ctx context.Context, name string, args, env []string) (string, error) {
+	if len(args) > 0 && args[len(args)-1] == "true" {
+		return "", errors.New("sandbox exec not ready")
+	}
+	return r.dshHomeRunner.Run(ctx, name, args, env)
+}
+
+func TestSharedCreateReadinessFailureDoesNotFailLaunch(t *testing.T) {
+	pool, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{}
+	l, rt, task := dshLaunchFixture(t, pool, provider)
+	prepared := 0
+	l.PrepareWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		prepared++
+		return wsfs.MountDecision{}, errors.New("launch must not provision")
+	}
+	l.ReadWorkspaceMount = func(context.Context, wsfs.Database, uuid.UUID, uuid.UUID, *dshhost.Host) (wsfs.MountDecision, error) {
+		return wsfs.MountDecision{
+			Shared:  &dshhost.VolumeMountSpec{Name: "vol-shared", Path: dshhost.WorkspaceSharedRoot},
+			RoleARN: "role-shared",
+			Access:  wsfs.AccessRead,
+		}, nil
+	}
+	rt.Metadata = []byte(`{"capabilities":["workspace_shared_disk"]}`)
+	l.Runner = readyFailRunner{l.Runner.(dshHomeRunner)}
+	host, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || host.SandboxID == "" || provider.creates != 1 || prepared != 0 {
+		t.Fatalf("shared readiness failure did not degrade: host=%s creates=%d prepared=%d err=%v", host.SandboxID, provider.creates, prepared, err)
+	}
+
+	privatePool, _ := dshLaunchPools(t)
+	privateProvider := &dshLaunchProvider{}
+	privateLauncher, privateRT, privateTask := dshLaunchFixture(t, privatePool, privateProvider)
+	privateLauncher.Runner = readyFailRunner{privateLauncher.Runner.(dshHomeRunner)}
+	if _, err := resolveDSHTest(t, privateLauncher, privateRT, privateTask, "template-1"); err == nil || privateProvider.creates != 1 {
+		t.Fatalf("private readiness failure was ignored: creates=%d err=%v", privateProvider.creates, err)
+	}
+
+	lostPool, _ := dshLaunchPools(t)
+	lost := &dshLaunchProvider{failCreate: true}
+	lostLauncher, lostRT, lostTask := dshLaunchFixture(t, lostPool, lost)
+	lostLauncher.ReadWorkspaceMount = l.ReadWorkspaceMount
+	lostRT.Metadata = rt.Metadata
+	_, _ = resolveDSHTest(t, lostLauncher, lostRT, lostTask, "template-1")
+	if _, err := resolveDSHTest(t, lostLauncher, lostRT, lostTask, "template-1"); lost.creates != 1 {
+		t.Fatalf("unconfirmed shared create was retried: creates=%d err=%v", lost.creates, err)
 	}
 }
 

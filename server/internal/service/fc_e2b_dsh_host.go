@@ -122,9 +122,11 @@ func classifySharedLaunch(capable bool, decision wsfs.MountDecision, notReady bo
 
 func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Database, key dshhost.Key, before *dshhost.Host, metadata []byte) (decision wsfs.MountDecision, mode sharedLaunchMode) {
 	decision = wsfs.MountDecision{Private: before, RoleARN: before.RoleARN}
-	if l.ReadWorkspaceMount == nil || !wsfs.DeclaresSharedDisk(metadata) {
+	if l.ReadWorkspaceMount == nil {
 		return decision, sharedLaunchKeep
 	}
+	// Always read the grant. The capability flag may block a new shared offer.
+	// It must not hide an explicit revoke or a narrower grant.
 	got, err := l.ReadWorkspaceMount(ctx, conn, key.WorkspaceID, key.AgentID, before)
 	if err != nil {
 		slog.Warn("workspace filesystem mount not ready; launching without the shared mount",
@@ -140,7 +142,7 @@ func (l *FCE2BLauncher) workspaceMountDecision(ctx context.Context, conn wsfs.Da
 	if got.RoleARN == "" {
 		got.RoleARN = before.RoleARN
 	}
-	return got, classifySharedLaunch(true, got, false)
+	return got, classifySharedLaunch(wsfs.DeclaresSharedDisk(metadata), got, false)
 }
 
 var dshAccessPointPattern = regexp.MustCompile(`^acs:nas:[a-z0-9-]+:[0-9]+:accesspoint/(ap-[a-z0-9]+)$`)
@@ -452,7 +454,20 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		err = l.checkSandboxReady(ctx, host.SandboxID)
 	}
 	if err != nil {
-		return dshhost.Host{}, cold, err
+		if cold && launchMode == sharedLaunchOffer && decision.Shared != nil {
+			// The shared create already returned an id. A later readiness
+			// failure must not fail the task or create another sandbox.
+			slog.Warn("shared-mount sandbox was not ready; continuing without the shared mount",
+				"error", err,
+				"sandbox_id", host.SandboxID,
+				"workspace_id", key.WorkspaceID,
+				"agent_id", key.AgentID,
+			)
+			host.ExtraMounts = nil
+			host.AuthRoleARN = ""
+		} else {
+			return dshhost.Host{}, cold, err
+		}
 	}
 	if _, err = l.renewEmployeeHostSandbox(ctx, host.SandboxID, trace); err != nil {
 		return dshhost.Host{}, cold, err
