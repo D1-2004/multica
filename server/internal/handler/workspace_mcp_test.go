@@ -75,3 +75,18 @@ func TestWorkspaceMCPTokenIssuerRejectsMachineActors(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceMCPRuntimeListDoesNotAdvertiseWorkspaceQuery(t *testing.T) {
+	for _, tool := range workspaceMCPTools {
+		if tool.name != "runtime_list" {
+			continue
+		}
+		schema := workspaceMCPToolDefinition(tool)["inputSchema"].(map[string]any)
+		properties := schema["properties"].(map[string]any)
+		if _, hasQuery := properties["query"]; hasQuery {
+			t.Fatal("runtime_list must derive workspace from token URL")
+		}
+		return
+	}
+	t.Fatal("runtime_list tool missing")
+}

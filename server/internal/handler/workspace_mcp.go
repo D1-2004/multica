@@ -159,6 +159,30 @@ func workspaceMCPToolAllowed(tool workspaceMCPTool, scopes []string, role string
 	return tool.scope != "manage" || role == "owner" || role == "admin"
 }
 
+func workspaceMCPQueryFields(name string) map[string]any {
+	var keys []string
+	switch name {
+	case "issue_list":
+		keys = []string{"status", "priority", "assignee_type", "assignee_id", "project_id", "parent_issue_id", "limit", "offset"}
+	case "issue_search":
+		keys = []string{"q", "limit"}
+	case "issue_comment_list":
+		keys = []string{"roots_only", "summary", "compact", "thread", "tail", "since"}
+	case "issue_runs", "agent_tasks", "autopilot_runs":
+		keys = []string{"limit"}
+	case "skill_search_workspace":
+		keys = []string{"q"}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	fields := make(map[string]any, len(keys))
+	for _, key := range keys {
+		fields[key] = map[string]any{"type": "string"}
+	}
+	return fields
+}
+
 func workspaceMCPToolDefinition(tool workspaceMCPTool) map[string]any {
 	properties := map[string]any{}
 	required := []string{}
@@ -181,8 +205,8 @@ func workspaceMCPToolDefinition(tool workspaceMCPTool) map[string]any {
 		properties["payload"] = body
 		required = append(required, "payload")
 	}
-	if tool.method == "GET" {
-		properties["query"] = map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}
+	if queryFields := workspaceMCPQueryFields(tool.name); queryFields != nil {
+		properties["query"] = map[string]any{"type": "object", "properties": queryFields, "additionalProperties": false}
 	}
 	return map[string]any{
 		"name": tool.name, "description": "Workspace-scoped Multica " + strings.ReplaceAll(tool.name, "_", " ") + "; native business authorization applies.",
@@ -298,7 +322,7 @@ func (h *Handler) callWorkspaceMCPTool(w http.ResponseWriter, r *http.Request, r
 	if selected.body {
 		allowedArgs["payload"] = true
 	}
-	if selected.method == http.MethodGet {
+	if workspaceMCPQueryFields(selected.name) != nil {
 		allowedArgs["query"] = true
 	}
 	for key := range raw {
@@ -377,8 +401,9 @@ func (h *Handler) callWorkspaceMCPTool(w http.ResponseWriter, r *http.Request, r
 	}
 	if len(args.Query) > 0 {
 		values := url.Values{}
+		queryFields := workspaceMCPQueryFields(selected.name)
 		for key, value := range args.Query {
-			if key == "workspace_id" || key == "workspace_slug" || strings.ContainsAny(key, "&=?") {
+			if _, allowed := queryFields[key]; !allowed || strings.ContainsAny(key, "&=?") {
 				h.writeMulticaMCPError(w, req.ID, -32602, "invalid query key")
 				return
 			}
