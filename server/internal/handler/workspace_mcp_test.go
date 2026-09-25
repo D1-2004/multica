@@ -90,3 +90,13 @@ func TestWorkspaceMCPRuntimeListDoesNotAdvertiseWorkspaceQuery(t *testing.T) {
 	}
 	t.Fatal("runtime_list tool missing")
 }
+
+func TestWorkspaceMCPRunStatusIncludesTerminalHistory(t *testing.T) {
+	for _, tool := range workspaceMCPTools {
+		if tool.name == "issue_run_status" {
+			if tool.path != "/api/issues/{id}/task-runs" { t.Fatalf("run status route = %q", tool.path) }
+			return
+		}
+	}
+	t.Fatal("issue_run_status tool missing")
+}

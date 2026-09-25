@@ -8,7 +8,7 @@ The registry currently declares 123 tools. A declaration is a fixed API method a
 | --- | --- | --- |
 | `issue list/search/get/create/update/status/assign/children` | `issue_*` mapped | Create, status, and assign have field schemas and route through existing issue handlers. Full create/update flag parity needs schema and case verification. |
 | `issue comment list/add/update/delete/resolve/unresolve` | `issue_comment_*` mapped | Native comment ownership and trigger rules apply. |
-| `issue runs/run-messages/timeline/usage/pull-requests/rerun/cancel-task` | `issue_*` mapped | `issue_run_status` also exposes the active task. Run message visibility stays with the native task handler. |
+| `issue runs/run-messages/timeline/usage/pull-requests/rerun/cancel-task` | `issue_*` mapped | `issue_run_status` reads the run history, including terminal states. Run message visibility stays with the native task handler. |
 | `issue label/metadata/property/subscriber/reorder` | Write and list routes mapped where present | Metadata get can be read from metadata list; property list from issue detail. Targeted subscriber add/remove requires route parity review. |
 | `issue wakeup *` | Not exposed | Installed CLI has wakeup subcommands, but this checkout has no issue wakeup HTTP handlers. Add native API and authorization first. |
 | `agent list/get/create/update/archive/restore/tasks/skills` | `agent_*` mapped | Agent owner/native member checks remain in the handlers. `agent copy` has no dedicated route in this checkout; create from a redacted export is a future typed workflow. |

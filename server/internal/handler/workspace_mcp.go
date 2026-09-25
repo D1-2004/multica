@@ -46,7 +46,7 @@ var workspaceMCPTools = []workspaceMCPTool{
 	{"issue_comment_resolve", "POST", "/api/comments/{commentId}/resolve", "write", false, nil},
 	{"issue_comment_unresolve", "DELETE", "/api/comments/{commentId}/resolve", "write", false, nil},
 	{"issue_runs", "GET", "/api/issues/{id}/task-runs", "read", false, nil},
-	{"issue_run_status", "GET", "/api/issues/{id}/active-task", "read", false, nil},
+	{"issue_run_status", "GET", "/api/issues/{id}/task-runs", "read", false, nil},
 	{"issue_run_messages", "GET", "/api/tasks/{taskId}/messages", "read", false, nil},
 	{"issue_timeline", "GET", "/api/issues/{id}/timeline", "read", false, nil},
 	{"issue_usage", "GET", "/api/issues/{id}/usage", "read", false, nil},
