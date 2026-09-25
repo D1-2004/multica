@@ -767,7 +767,7 @@ func (OSCommandRunner) Run(ctx context.Context, name string, args []string, env 
 
 func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunner) ([]FCE2BTemplate, error) {
 	if runner == nil {
-		runner = OSCommandRunner{}
+		runner = defaultFCE2BCommandRunner()
 	}
 	if err := cfg.ValidateTemplateAPI(); err != nil {
 		return nil, err
@@ -1133,7 +1133,12 @@ type fcE2BTaskScope struct {
 
 func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner CommandRunner) *FCE2BLauncher {
 	if runner == nil {
-		runner = OSCommandRunner{}
+		runner = defaultFCE2BCommandRunner()
+		transport := FCE2BTransportSDK
+		if _, ok := runner.(OSCommandRunner); ok {
+			transport = FCE2BTransportCLI
+		}
+		slog.Info("FC/E2B transport selected", "transport", transport)
 	}
 	return &FCE2BLauncher{
 		Queries:          q,

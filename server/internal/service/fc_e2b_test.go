@@ -101,6 +101,7 @@ type fakeCommandCall struct {
 }
 
 func (f *fakeCommandRunner) Run(ctx context.Context, name string, args []string, env []string) (string, error) {
+	requireFCE2BSDKAccepts(args)
 	f.calls = append(f.calls, fakeCommandCall{
 		name: name,
 		args: append([]string(nil), args...),
