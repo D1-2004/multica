@@ -121,6 +121,8 @@ type LLMConfig struct {
 }
 
 type FCE2BConfig struct {
+	RecoverAbandonedLaunches     bool     `json:"recover_abandoned_launches,omitempty"`
+	BoundDSHHostWait             bool     `json:"bound_dsh_host_wait,omitempty"`
 	DWSMessagePolicyFingerprints []string `json:"dws_message_policy_fingerprints,omitempty"`
 	Enabled                      bool     `json:"enabled"`
 	StablePublisherUserIDs       []string `json:"stable_publisher_user_ids"`

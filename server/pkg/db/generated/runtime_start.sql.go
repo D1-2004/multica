@@ -585,26 +585,28 @@ WHERE task.status = 'queued'
       -- A rolling deployment or lost launcher can leave a pre-runner attempt
       -- starting forever. The normal lease/CAS path supersedes it safely.
       (latest.status = 'starting'
-       AND latest.last_stage IN ('launch_started', 'sandbox_resolving', 'dsh_host_waiting')
-       AND latest.updated_at <= now() - interval '2 minutes'
+       AND (latest.last_stage IN ('launch_started', 'sandbox_resolving', 'dsh_host_waiting')
+            OR ($1::boolean AND latest.last_stage IN ('template_resolved', 'sandbox_ready', 'runner_probing', 'runner_probe_succeeded', 'task_environment_preparing', 'daemon_token_preparing')))
+       AND ($1::boolean OR latest.updated_at <= now() - interval '2 minutes')
        AND latest.runner_started_at IS NULL
        AND latest.daemon_started_at IS NULL
        AND latest.claim_finalized_at IS NULL
-       AND EXISTS (SELECT 1 FROM dsh_employee_session AS session
+       AND ($1::boolean OR EXISTS (SELECT 1 FROM dsh_employee_session AS session
                    WHERE session.workspace_id = agent.workspace_id
                      AND session.agent_id = task.agent_id
-                     AND session.scope_id = COALESCE(task.issue_id, task.chat_session_id, task.id)))
+                     AND session.scope_id = COALESCE(task.issue_id, task.chat_session_id, task.id))))
   )
   AND (task.runtime_launch_lease_expires_at IS NULL OR task.runtime_launch_lease_expires_at <= now())
   AND COALESCE(task.context->>'deap_dws_token_required', 'false') <> 'true'
+  AND (NOT $1::boolean OR NOT EXISTS (SELECT 1 FROM task_token WHERE task_id = task.id))
 ORDER BY task.created_at, task.id
 LIMIT 32
 `
 
 // A Profile build or host reconciliation can finish without a running task
 // or open browser to wake this queued launch. Reuse the normal launch lease.
-func (q *Queries) ListDSHHostWaitingTasks(ctx context.Context) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, listDSHHostWaitingTasks)
+func (q *Queries) ListDSHHostWaitingTasks(ctx context.Context, recoverAbandonedLaunches bool) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listDSHHostWaitingTasks, recoverAbandonedLaunches)
 	if err != nil {
 		return nil, err
 	}
@@ -1059,6 +1061,184 @@ func (q *Queries) ListLatestSandboxIDsByTaskIDs(ctx context.Context, taskIds []p
 	for rows.Next() {
 		var i ListLatestSandboxIDsByTaskIDsRow
 		if err := rows.Scan(&i.TaskID, &i.SandboxID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const expireDSHHostWaitingTasks = `-- name: ExpireDSHHostWaitingTasks :many
+WITH victims AS MATERIALIZED (
+    SELECT task.id
+    FROM agent_task_queue AS task
+    JOIN LATERAL (
+        SELECT attempt.id, attempt.status, attempt.error_code
+        FROM agent_task_runtime_start_attempt AS attempt
+        WHERE attempt.task_id = task.id AND attempt.runtime_id = task.runtime_id
+        ORDER BY attempt.created_at DESC, attempt.id DESC LIMIT 1
+    ) AS latest ON true
+    WHERE task.status = 'queued'
+      AND latest.status = 'blocked' AND latest.error_code = 'DSH-HOST-WAITING'
+      AND (task.runtime_launch_lease_expires_at IS NULL OR task.runtime_launch_lease_expires_at <= now())
+      AND NOT EXISTS (SELECT 1 FROM task_token WHERE task_id = task.id)
+      AND EXISTS (
+          SELECT 1 FROM agent_task_runtime_start_attempt AS first_wait
+          WHERE first_wait.task_id = task.id AND first_wait.runtime_id = task.runtime_id
+            AND first_wait.error_code = 'DSH-HOST-WAITING'
+            AND first_wait.finished_at <= now() - interval '10 minutes'
+      )
+    ORDER BY task.created_at, task.id
+    LIMIT 32
+    FOR UPDATE OF task SKIP LOCKED
+), failed AS (
+    UPDATE agent_task_queue AS task
+    SET status = 'failed', completed_at = now(), prepare_lease_expires_at = NULL,
+        error = 'DSH host preparation exceeded the 10 minute waiting limit. Please retry.',
+        failure_reason = 'runtime_start_failed'
+    WHERE task.id IN (SELECT id FROM victims) AND task.status = 'queued'
+    RETURNING task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.chat_finalize_deferred_at, task.originator_source, task.delegated_from_task_id, task.retry_of_task_id, task.rerun_of_task_id, task.rule_version_id, task.trigger_evidence_kind, task.trigger_evidence_ref_id, task.accountable_user_id, task.session_rollout_missing, task.retired_session_id, task.quick_actions_disabled, task.regenerate_quick_actions_for, task.runtime_launch_lease_token, task.runtime_launch_lease_expires_at
+), attempts AS (
+    UPDATE agent_task_runtime_start_attempt AS attempt
+    SET status = 'failed', error_code = 'DSH-HOST-WAIT-TIMEOUT',
+        error_detail = 'DSH host preparation exceeded the 10 minute waiting limit',
+        updated_at = now()
+    WHERE attempt.task_id IN (SELECT id FROM failed)
+      AND attempt.id = (
+          SELECT latest.id FROM agent_task_runtime_start_attempt AS latest
+          WHERE latest.task_id = attempt.task_id AND latest.runtime_id = attempt.runtime_id
+          ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1
+      )
+    RETURNING attempt.id
+)
+SELECT failed.id, failed.agent_id, failed.issue_id, failed.status, failed.priority, failed.dispatched_at, failed.started_at, failed.completed_at, failed.result, failed.error, failed.created_at, failed.context, failed.runtime_id, failed.session_id, failed.work_dir, failed.trigger_comment_id, failed.chat_session_id, failed.autopilot_run_id, failed.attempt, failed.max_attempts, failed.parent_task_id, failed.failure_reason, failed.trigger_summary, failed.force_fresh_session, failed.is_leader_task, failed.wait_reason, failed.initiator_user_id, failed.handoff_note, failed.prepare_lease_expires_at, failed.squad_id, failed.runtime_mcp_overlay, failed.escalation_for_task_id, failed.fire_at, failed.originator_user_id, failed.runtime_connected_apps, failed.coalesced_comment_ids, failed.delivered_comment_ids, failed.chat_input_task_id, failed.chat_finalize_deferred_at, failed.originator_source, failed.delegated_from_task_id, failed.retry_of_task_id, failed.rerun_of_task_id, failed.rule_version_id, failed.trigger_evidence_kind, failed.trigger_evidence_ref_id, failed.accountable_user_id, failed.session_rollout_missing, failed.retired_session_id, failed.quick_actions_disabled, failed.regenerate_quick_actions_for, failed.runtime_launch_lease_token, failed.runtime_launch_lease_expires_at FROM failed
+`
+
+type ExpireDSHHostWaitingTasksRow struct {
+	ID                          pgtype.UUID        `json:"id"`
+	AgentID                     pgtype.UUID        `json:"agent_id"`
+	IssueID                     pgtype.UUID        `json:"issue_id"`
+	Status                      string             `json:"status"`
+	Priority                    int32              `json:"priority"`
+	DispatchedAt                pgtype.Timestamptz `json:"dispatched_at"`
+	StartedAt                   pgtype.Timestamptz `json:"started_at"`
+	CompletedAt                 pgtype.Timestamptz `json:"completed_at"`
+	Result                      []byte             `json:"result"`
+	Error                       pgtype.Text        `json:"error"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	Context                     []byte             `json:"context"`
+	RuntimeID                   pgtype.UUID        `json:"runtime_id"`
+	SessionID                   pgtype.Text        `json:"session_id"`
+	WorkDir                     pgtype.Text        `json:"work_dir"`
+	TriggerCommentID            pgtype.UUID        `json:"trigger_comment_id"`
+	ChatSessionID               pgtype.UUID        `json:"chat_session_id"`
+	AutopilotRunID              pgtype.UUID        `json:"autopilot_run_id"`
+	Attempt                     int32              `json:"attempt"`
+	MaxAttempts                 int32              `json:"max_attempts"`
+	ParentTaskID                pgtype.UUID        `json:"parent_task_id"`
+	FailureReason               pgtype.Text        `json:"failure_reason"`
+	TriggerSummary              pgtype.Text        `json:"trigger_summary"`
+	ForceFreshSession           bool               `json:"force_fresh_session"`
+	IsLeaderTask                bool               `json:"is_leader_task"`
+	WaitReason                  pgtype.Text        `json:"wait_reason"`
+	InitiatorUserID             pgtype.UUID        `json:"initiator_user_id"`
+	HandoffNote                 pgtype.Text        `json:"handoff_note"`
+	PrepareLeaseExpiresAt       pgtype.Timestamptz `json:"prepare_lease_expires_at"`
+	SquadID                     pgtype.UUID        `json:"squad_id"`
+	RuntimeMcpOverlay           []byte             `json:"runtime_mcp_overlay"`
+	EscalationForTaskID         pgtype.UUID        `json:"escalation_for_task_id"`
+	FireAt                      pgtype.Timestamptz `json:"fire_at"`
+	OriginatorUserID            pgtype.UUID        `json:"originator_user_id"`
+	RuntimeConnectedApps        []byte             `json:"runtime_connected_apps"`
+	CoalescedCommentIds         []pgtype.UUID      `json:"coalesced_comment_ids"`
+	DeliveredCommentIds         []pgtype.UUID      `json:"delivered_comment_ids"`
+	ChatInputTaskID             pgtype.UUID        `json:"chat_input_task_id"`
+	ChatFinalizeDeferredAt      pgtype.Timestamptz `json:"chat_finalize_deferred_at"`
+	OriginatorSource            pgtype.Text        `json:"originator_source"`
+	DelegatedFromTaskID         pgtype.UUID        `json:"delegated_from_task_id"`
+	RetryOfTaskID               pgtype.UUID        `json:"retry_of_task_id"`
+	RerunOfTaskID               pgtype.UUID        `json:"rerun_of_task_id"`
+	RuleVersionID               pgtype.UUID        `json:"rule_version_id"`
+	TriggerEvidenceKind         pgtype.Text        `json:"trigger_evidence_kind"`
+	TriggerEvidenceRefID        pgtype.UUID        `json:"trigger_evidence_ref_id"`
+	AccountableUserID           pgtype.UUID        `json:"accountable_user_id"`
+	SessionRolloutMissing       bool               `json:"session_rollout_missing"`
+	RetiredSessionID            pgtype.Text        `json:"retired_session_id"`
+	QuickActionsDisabled        bool               `json:"quick_actions_disabled"`
+	RegenerateQuickActionsFor   pgtype.UUID        `json:"regenerate_quick_actions_for"`
+	RuntimeLaunchLeaseToken     pgtype.UUID        `json:"runtime_launch_lease_token"`
+	RuntimeLaunchLeaseExpiresAt pgtype.Timestamptz `json:"runtime_launch_lease_expires_at"`
+}
+
+// Use task-then-attempt locking, as in claim/failure finalization. A live
+// launcher, claim token, or newer non-waiting attempt owns the task instead.
+func (q *Queries) ExpireDSHHostWaitingTasks(ctx context.Context) ([]ExpireDSHHostWaitingTasksRow, error) {
+	rows, err := q.db.Query(ctx, expireDSHHostWaitingTasks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpireDSHHostWaitingTasksRow{}
+	for rows.Next() {
+		var i ExpireDSHHostWaitingTasksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.ChatFinalizeDeferredAt,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
+			&i.AccountableUserID,
+			&i.SessionRolloutMissing,
+			&i.RetiredSessionID,
+			&i.QuickActionsDisabled,
+			&i.RegenerateQuickActionsFor,
+			&i.RuntimeLaunchLeaseToken,
+			&i.RuntimeLaunchLeaseExpiresAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

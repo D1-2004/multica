@@ -395,3 +395,23 @@ func TestCoordinatorModelStrictDocument(t *testing.T) {
 		t.Fatalf("model=%q", cfg.Runtime.LLM.CoordinatorModel)
 	}
 }
+
+func TestDiamondRuntimeRecoverySwitchesRollback(t *testing.T) {
+	client := &fakeDiamondClient{content: validJSON()}
+	service, err := newDiamondService(nil, true, func() (diamondClient, error) { return client, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	for _, enabled := range []bool{true, false} {
+		flags := `"recover_abandoned_launches": false, "bound_dsh_host_wait": false,`
+		if enabled {
+			flags = `"recover_abandoned_launches": true, "bound_dsh_host_wait": true,`
+		}
+		client.onChange(strings.Replace(validJSON(), `"fc_e2b": {`, `"fc_e2b": {`+flags, 1))
+		cfg := service.Current().Config.Runtime.FCE2B
+		if cfg.RecoverAbandonedLaunches != enabled || cfg.BoundDSHHostWait != enabled {
+			t.Fatalf("switch update not applied: %+v", cfg)
+		}
+	}
+}

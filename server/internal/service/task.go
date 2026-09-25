@@ -55,9 +55,10 @@ type TaskService struct {
 	EmptyClaim *EmptyClaimCache
 	// RuntimeLauncher is optional. When set, it may start server-managed
 	// runtimes for a newly queued task; local runtimes simply no-op there.
-	RuntimeLauncher    TaskRuntimeLauncher
-	CompletionNotifier TaskCompletionNotifier
-	A2AStateObserver   A2ATaskStateObserver
+	RuntimeStartRecoveryConfig func() RuntimeStartRecoveryConfig
+	RuntimeLauncher            TaskRuntimeLauncher
+	CompletionNotifier         TaskCompletionNotifier
+	A2AStateObserver           A2ATaskStateObserver
 	// Langfuse exports one trace per finished agent task (see
 	// task_langfuse.go). Nil disables the export.
 	Langfuse              *langfuse.Client

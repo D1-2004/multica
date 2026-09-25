@@ -471,13 +471,39 @@ func (s *TaskService) MarkRuntimeStartBlocked(ctx context.Context, attempt db.Ag
 	return nil
 }
 
+// RuntimeStartRecoveryConfig is read afresh for each sweep from Diamond.
+// Zero values retain the historical DSH-only recovery and unbounded wait.
+type RuntimeStartRecoveryConfig struct {
+	RecoverAbandonedLaunches bool
+	BoundDSHHostWait         bool
+}
+
 // RecoverWaitingDSHHosts resumes the same queued tasks after asynchronous
 // Profile builds or host reconciliation, without depending on browser polling.
 func (s *TaskService) RecoverWaitingDSHHosts(ctx context.Context) {
 	if s == nil || s.Queries == nil || s.RuntimeLauncher == nil {
 		return
 	}
-	tasks, err := s.Queries.ListDSHHostWaitingTasks(ctx)
+	cfg := RuntimeStartRecoveryConfig{}
+	if s.RuntimeStartRecoveryConfig != nil {
+		cfg = s.RuntimeStartRecoveryConfig()
+	}
+	if cfg.BoundDSHHostWait {
+		failed, err := s.Queries.ExpireDSHHostWaitingTasks(ctx)
+		if err != nil {
+			slog.Warn("expire waiting DSH host tasks failed", "error", err)
+		} else {
+			for _, task := range failed {
+				slog.Info("DSH host wait expired", "task_id", util.UUIDToString(task.ID), "error_code", "DSH-HOST-WAIT-TIMEOUT")
+			}
+			tasks := make([]db.AgentTaskQueue, 0, len(failed))
+			for _, row := range failed {
+				tasks = append(tasks, db.AgentTaskQueue(row))
+			}
+			s.HandleFailedTasks(ctx, tasks)
+		}
+	}
+	tasks, err := s.Queries.ListDSHHostWaitingTasks(ctx, cfg.RecoverAbandonedLaunches)
 	if err != nil {
 		slog.Warn("list waiting DSH host tasks failed", "error", err)
 		return

@@ -504,6 +504,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
 		h.FCE2BLauncher.ConfigProvider = opts.RuntimeConfig.fce2b
+		h.TaskService.RuntimeStartRecoveryConfig = func() service.RuntimeStartRecoveryConfig {
+			cfg := opts.RuntimeConfig.current().Runtime.FCE2B
+			return service.RuntimeStartRecoveryConfig{RecoverAbandonedLaunches: cfg.RecoverAbandonedLaunches, BoundDSHHostWait: cfg.BoundDSHHostWait}
+		}
 	}
 	h.FCE2BLauncher.SetSandboxRelaySigner(opts.SandboxRelaySigner)
 	asbRuntime, err := service.NewASBEnterpriseRuntimeFromConfig(
