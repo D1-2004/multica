@@ -2,15 +2,18 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
 
@@ -137,19 +140,7 @@ type FCE2BRolloutRunner struct {
 // present snapshot and MULTICA_FC_E2B_SDK_ROLLOUT otherwise. A nil diamond
 // means the deployment has no Diamond runtime configuration.
 func NewFCE2BRolloutRunner(diamond func() runtimeconfig.FCE2BSDKRolloutSnapshot) FCE2BRolloutRunner {
-	fallback, err := ParseFCE2BSDKRollout(os.Getenv(FCE2BSDKRolloutEnv))
-	if err != nil {
-		slog.Error("FC/E2B SDK rollout fallback ignored; it keeps every operation on the CLI", "error", err)
-		fallback = FCE2BSDKRollout{}
-	}
-	if fcE2BRolloutActive(fallback) {
-		slog.Info("FC/E2B SDK rollout fallback active",
-			"workspaces", len(fallback.WorkspaceIDs),
-			"agents", len(fallback.AgentIDs),
-			"runtimes", len(fallback.RuntimeIDs),
-			"percent", fallback.Percent,
-		)
-	}
+	fallback := fcE2BRolloutFallback()
 	return FCE2BRolloutRunner{
 		CLI: OSCommandRunner{},
 		SDK: SDKCommandRunner{},
@@ -177,10 +168,32 @@ func (r FCE2BRolloutRunner) Run(ctx context.Context, name string, args []string,
 	started := time.Now()
 	out, err := r.SDK.Run(ctx, name, args, env)
 	// Only SDK operations log here, so CLI-only deployments keep their logs.
+	slog.Info("FC/E2B SDK transport", fcE2BSDKTransportLogAttrs(args, source, scope, time.Since(started), err)...)
+	return out, err
+}
+
+// fcE2BSDKTransportLogAttrs describes one SDK operation without its command,
+// environment or output: command output can carry signed URLs that callers
+// deliberately keep out of logs, so a failure is logged by kind, exit code
+// and the transport cause only.
+func fcE2BSDKTransportLogAttrs(args []string, source string, scope FCE2BScope, elapsed time.Duration, err error) []any {
+	operationName, sandboxID := "unsupported", ""
+	if operation, parseErr := parseFCE2BOperation(args); parseErr == nil {
+		switch {
+		case operation.create != nil:
+			operationName = "sandbox_create"
+		case operation.exec != nil && operation.exec.Background:
+			operationName, sandboxID = "sandbox_exec_background", operation.exec.SandboxID
+		case operation.exec != nil:
+			operationName, sandboxID = "sandbox_exec", operation.exec.SandboxID
+		default:
+			operationName = "template_list"
+		}
+	}
 	attrs := []any{
-		"operation", fcE2BOperationName(args),
+		"operation", operationName,
 		"rollout_source", source,
-		"duration_ms", time.Since(started).Milliseconds(),
+		"duration_ms", elapsed.Milliseconds(),
 	}
 	for _, field := range []struct {
 		key string
@@ -190,40 +203,77 @@ func (r FCE2BRolloutRunner) Run(ctx context.Context, name string, args []string,
 			attrs = append(attrs, field.key, field.id)
 		}
 	}
-	if sandboxID := fcE2BOperationSandboxID(args); sandboxID != "" {
+	if sandboxID != "" {
 		attrs = append(attrs, "sandbox_id", sandboxID)
 	}
-	if err != nil {
-		attrs = append(attrs, "outcome", "error", "error", err)
-	} else {
-		attrs = append(attrs, "outcome", "ok")
+	if err == nil {
+		return append(attrs, "outcome", "ok")
 	}
-	slog.Info("FC/E2B SDK transport", attrs...)
-	return out, err
-}
-
-func fcE2BOperationName(args []string) string {
-	operation, err := parseFCE2BOperation(args)
+	attrs = append(attrs, "outcome", "error")
+	var exitErr *fcE2BCommandExitError
+	var limitErr *fcE2BOutputLimitError
+	var sdkErr *fcE2BSDKError
 	switch {
-	case err != nil:
-		return "unsupported"
-	case operation.create != nil:
-		return "sandbox_create"
-	case operation.exec != nil && operation.exec.Background:
-		return "sandbox_exec_background"
-	case operation.exec != nil:
-		return "sandbox_exec"
+	case errors.As(err, &exitErr):
+		return append(attrs, "error_kind", "exit", "exit_code", exitErr.ExitCode)
+	case errors.As(err, &limitErr):
+		return append(attrs, "error_kind", "output_limit", "stream", limitErr.stream)
+	case errors.Is(err, context.DeadlineExceeded):
+		attrs = append(attrs, "error_kind", "deadline")
+	case errors.Is(err, context.Canceled):
+		attrs = append(attrs, "error_kind", "canceled")
 	default:
-		return "template_list"
+		attrs = append(attrs, "error_kind", "failed")
 	}
+	// The cause of an SDK failure is the transport or API error, never the
+	// command's output; other errors are fixed texts.
+	cause := err.Error()
+	if errors.As(err, &sdkErr) && sdkErr.cause != nil {
+		cause = sdkErr.cause.Error()
+	}
+	if len(cause) > fcE2BSDKLogCauseBytes {
+		cause = cause[:fcE2BSDKLogCauseBytes]
+	}
+	return append(attrs, "error_cause", redact.Text(cause))
 }
 
-func fcE2BOperationSandboxID(args []string) string {
-	operation, err := parseFCE2BOperation(args)
-	if err != nil || operation.exec == nil {
-		return ""
+// fcE2BSDKLogCauseBytes bounds the transport cause in the SDK log line.
+const fcE2BSDKLogCauseBytes = 256
+
+// fcE2BRolloutFallbackState caches the parsed MULTICA_FC_E2B_SDK_ROLLOUT so
+// every runner built from the same value shares one parse and one log line.
+var fcE2BRolloutFallbackState struct {
+	sync.Mutex
+	loaded  bool
+	raw     string
+	rollout FCE2BSDKRollout
+}
+
+// fcE2BRolloutFallback returns the environment fallback rollout. Unset,
+// empty or invalid keeps every operation on the CLI.
+func fcE2BRolloutFallback() FCE2BSDKRollout {
+	raw := os.Getenv(FCE2BSDKRolloutEnv)
+	state := &fcE2BRolloutFallbackState
+	state.Lock()
+	defer state.Unlock()
+	if state.loaded && state.raw == raw {
+		return state.rollout
 	}
-	return operation.exec.SandboxID
+	fallback, err := ParseFCE2BSDKRollout(raw)
+	if err != nil {
+		slog.Error("FC/E2B SDK rollout fallback ignored; it keeps every operation on the CLI", "error", err)
+		fallback = FCE2BSDKRollout{}
+	}
+	if fcE2BRolloutActive(fallback) {
+		slog.Info("FC/E2B SDK rollout fallback active",
+			"workspaces", len(fallback.WorkspaceIDs),
+			"agents", len(fallback.AgentIDs),
+			"runtimes", len(fallback.RuntimeIDs),
+			"percent", fallback.Percent,
+		)
+	}
+	state.loaded, state.raw, state.rollout = true, raw, fallback
+	return fallback
 }
 
 // defaultFCE2BCommandRunner applies only MULTICA_FC_E2B_SDK_ROLLOUT. Servers

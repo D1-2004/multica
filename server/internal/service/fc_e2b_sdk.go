@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	e2b "github.com/aliyun-fc/e2b-go-sdk"
 
@@ -27,11 +28,17 @@ const (
 	// That call is not a read-only attach. Sending the same body keeps the
 	// sandbox lease behaviour of every exec unchanged.
 	fcE2BSDKConnectTimeoutSeconds = e2b.DefaultSandboxTimeoutSeconds
-	// fcE2BSDKMaxOutputBytes bounds the stdout and stderr one command may
-	// return. The SDK accumulates the whole stream internally, so exceeding
-	// the bound stops reading and fails explicitly instead of truncating a
-	// receipt. Callers accept at most 64 KiB of receipt.
+	// fcE2BSDKMaxOutputBytes bounds the stdout one command may return. The
+	// SDK accumulates the whole stream internally, so exceeding the bound stops
+	// reading and fails explicitly instead of truncating a receipt. Callers
+	// accept at most 64 KiB of receipt.
 	fcE2BSDKMaxOutputBytes = 4 << 20
+	// fcE2BSDKMaxStderrBytes bounds the stderr one command may write. The CLI
+	// kept all of it, so this bound only guards memory and sits far above any
+	// progress output. Below it, stderr volume never fails a command.
+	fcE2BSDKMaxStderrBytes = 32 << 20
+	// fcE2BSDKStderrTailBytes is the end of stderr kept for the error text.
+	fcE2BSDKStderrTailBytes = 256 << 10
 	// fcE2BSDKMaxTemplateListBytes bounds the template list response.
 	fcE2BSDKMaxTemplateListBytes = 8 << 20
 	// fcE2BSDKMaxCreateResponseBytes bounds the create response.
@@ -55,7 +62,21 @@ func newFCE2BSDKHTTPClient() *http.Client {
 	transport.MaxIdleConnsPerHost = 16
 	// No client-wide timeout: command streams stay open for the command's
 	// lifetime. The caller context and the SDK request timeout bound them.
-	return &http.Client{Transport: transport}
+	return &http.Client{Transport: transport, CheckRedirect: fcE2BSameHostRedirect}
+}
+
+// fcE2BSameHostRedirect follows redirects within one host only. Go drops the
+// Authorization header on a cross-host redirect but would forward X-API-KEY
+// and envd's X-Access-Token, so such a redirect is returned unfollowed and
+// fails as a non-2xx response.
+func fcE2BSameHostRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	if req.URL.Host != via[0].URL.Host {
+		return http.ErrUseLastResponse
+	}
+	return nil
 }
 
 // SDKCommandRunner performs the FC/E2B operations the launcher builds in
@@ -70,8 +91,11 @@ type SDKCommandRunner struct {
 	// HTTPClient carries control-plane and envd traffic. Nil uses a shared
 	// client so connections are pooled across calls.
 	HTTPClient *http.Client
-	// maxOutputBytes overrides fcE2BSDKMaxOutputBytes in tests.
-	maxOutputBytes int
+	// maxOutputBytes, maxStderrBytes and stderrTailBytes override the output
+	// bounds in tests.
+	maxOutputBytes  int
+	maxStderrBytes  int
+	stderrTailBytes int
 }
 
 type fcE2BCredentials struct {
@@ -152,7 +176,8 @@ func (r SDKCommandRunner) httpClient() *http.Client {
 // reuse lives in the shared HTTP transport, so credentials and endpoints are
 // never shared between calls with different configuration.
 func (r SDKCommandRunner) client(creds fcE2BCredentials) (*e2b.Client, error) {
-	options := []e2b.Option{e2b.WithAPIKey(creds.APIKey), e2b.WithHTTPClient(r.httpClient())}
+	// The CLI never checked the key's format; the FC control plane decides.
+	options := []e2b.Option{e2b.WithAPIKey(creds.APIKey), e2b.WithValidateAPIKey(false), e2b.WithHTTPClient(r.httpClient())}
 	if creds.Domain != "" {
 		options = append(options, e2b.WithDomain(creds.Domain))
 	}
@@ -441,7 +466,7 @@ func compareFCE2BVersion(a, b string) int {
 func (r SDKCommandRunner) exec(ctx context.Context, client *e2b.Client, request fcE2BExecRequest) (string, error) {
 	sandbox, err := client.ConnectSandbox(ctx, request.SandboxID, fcE2BSDKConnectTimeoutSeconds)
 	if err != nil {
-		return "", fcE2BSDKFailure(err, "", "")
+		return "", fcE2BSDKFailure(fcE2BContextCause(ctx, err), "", "")
 	}
 	// Like the CLI, the command itself has no remote timeout; the caller's
 	// context bounds how long Multica waits for it.
@@ -452,7 +477,7 @@ func (r SDKCommandRunner) exec(ctx context.Context, client *e2b.Client, request 
 	if request.Background {
 		handle, err := sandbox.Commands.Start(ctx, request.Command, options...)
 		if err != nil {
-			return "", fcE2BSDKFailure(err, "", "")
+			return "", fcE2BSDKFailure(fcE2BContextCause(ctx, err), "", "")
 		}
 		// Detach only after envd reported the process start. Disconnect does
 		// not stop the remote process.
@@ -462,23 +487,24 @@ func (r SDKCommandRunner) exec(ctx context.Context, client *e2b.Client, request 
 
 	waitCtx, stopWaiting := context.WithCancel(ctx)
 	defer stopWaiting()
-	limit := r.maxOutputBytes
-	if limit <= 0 {
-		limit = fcE2BSDKMaxOutputBytes
+	output := &fcE2BBoundedOutput{
+		stdoutLimit: positiveOr(r.maxOutputBytes, fcE2BSDKMaxOutputBytes),
+		stderrLimit: positiveOr(r.maxStderrBytes, fcE2BSDKMaxStderrBytes),
+		stderrTail:  positiveOr(r.stderrTailBytes, fcE2BSDKStderrTailBytes),
+		exceeded:    stopWaiting,
 	}
-	output := &fcE2BBoundedOutput{limit: limit, exceeded: stopWaiting}
 	handle, err := sandbox.Commands.Start(waitCtx, request.Command, options...)
 	if err != nil {
-		return "", fcE2BSDKFailure(err, "", "")
+		return "", fcE2BSDKFailure(fcE2BContextCause(ctx, err), "", "")
 	}
 	// Cancelling the wait closes the local stream only; like killing the CLI,
 	// it does not stop the remote command.
 	defer func() { _ = handle.Disconnect() }()
 	result, err := handle.Wait(waitCtx, e2b.WithWaitStdout(output.writeStdout), e2b.WithWaitStderr(output.writeStderr))
-	stdout, stderr := output.stdout.String(), output.stderr.String()
-	if output.overflow {
-		return "", fmt.Errorf("command failed: output exceeded %d bytes", limit)
+	if output.overflow != nil {
+		return "", output.overflow
 	}
+	stdout, stderr := output.stdout.String(), output.stderrText()
 	if err == nil {
 		return stdout, nil
 	}
@@ -575,28 +601,87 @@ func fcE2BSDKFailure(cause error, stdout, stderr string) error {
 	}
 }
 
-// fcE2BBoundedOutput collects command output up to limit bytes in total. On
-// overflow it stops the wait, which closes the stream.
-type fcE2BBoundedOutput struct {
-	limit    int
-	stdout   strings.Builder
-	stderr   strings.Builder
-	overflow bool
-	exceeded context.CancelFunc
+// fcE2BContextCause keeps a cancelled or expired caller context visible to
+// errors.Is. The SDK reports a context that ends during connect or start as
+// its own request timeout.
+func fcE2BContextCause(ctx context.Context, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
+		return fmt.Errorf("%w (%v)", ctxErr, err)
+	}
+	return err
 }
 
-func (o *fcE2BBoundedOutput) writeStdout(chunk string) { o.write(&o.stdout, chunk) }
+func positiveOr(value, fallback int) int {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
 
-func (o *fcE2BBoundedOutput) writeStderr(chunk string) { o.write(&o.stderr, chunk) }
+// fcE2BOutputLimitError reports a stream that outgrew its bound.
+type fcE2BOutputLimitError struct {
+	stream string
+	limit  int
+}
 
-func (o *fcE2BBoundedOutput) write(target *strings.Builder, chunk string) {
-	if o.overflow {
+func (e *fcE2BOutputLimitError) Error() string {
+	return fmt.Sprintf("command failed: %s exceeded %d bytes", e.stream, e.limit)
+}
+
+// fcE2BBoundedOutput collects stdout up to stdoutLimit bytes and keeps the
+// last stderrTail bytes of stderr, up to stderrLimit bytes in total. The
+// callbacks run on the Wait goroutine only. On overflow it stops the wait,
+// which closes the stream.
+type fcE2BBoundedOutput struct {
+	stdoutLimit int
+	stderrLimit int
+	stderrTail  int
+	stdout      strings.Builder
+	stderr      []byte
+	stderrTotal int
+	overflow    error
+	exceeded    context.CancelFunc
+}
+
+func (o *fcE2BBoundedOutput) writeStdout(chunk string) {
+	if o.overflow != nil {
 		return
 	}
-	if o.stdout.Len()+o.stderr.Len()+len(chunk) > o.limit {
-		o.overflow = true
-		o.exceeded()
+	if o.stdout.Len()+len(chunk) > o.stdoutLimit {
+		o.stop("stdout", o.stdoutLimit)
 		return
 	}
-	target.WriteString(chunk)
+	o.stdout.WriteString(chunk)
+}
+
+func (o *fcE2BBoundedOutput) writeStderr(chunk string) {
+	if o.overflow != nil {
+		return
+	}
+	o.stderrTotal += len(chunk)
+	if o.stderrTotal > o.stderrLimit {
+		o.stop("stderr", o.stderrLimit)
+		return
+	}
+	o.stderr = append(o.stderr, chunk...)
+	if extra := len(o.stderr) - o.stderrTail; extra > 0 {
+		kept := o.stderr[extra:]
+		for len(kept) > 0 && !utf8.RuneStart(kept[0]) {
+			kept = kept[1:]
+		}
+		o.stderr = append(o.stderr[:0], kept...)
+	}
+}
+
+func (o *fcE2BBoundedOutput) stop(stream string, limit int) {
+	o.overflow = &fcE2BOutputLimitError{stream: stream, limit: limit}
+	o.exceeded()
+}
+
+// stderrText is the kept stderr, marked when its beginning was dropped.
+func (o *fcE2BBoundedOutput) stderrText() string {
+	if omitted := o.stderrTotal - len(o.stderr); omitted > 0 {
+		return fmt.Sprintf("[first %d bytes of stderr omitted]\n", omitted) + string(o.stderr)
+	}
+	return string(o.stderr)
 }

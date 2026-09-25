@@ -122,8 +122,8 @@ A compact m7 alias is display text and carries the opaque provider-combination f
 - `enabled` is the master switch. `false` keeps every operation on the CLI whatever the lists say.
 - An operation uses the SDK when its agent, runtime, or workspace is listed, or when its agent (else runtime, else workspace) falls in the `percent` bucket. `percent: 100` also covers operations without a scope, such as the stable-channel template scan.
 - Unknown fields, non-UUID identifiers, and `percent` outside 0–100 are rejected. A rejected publication keeps the previous generation.
-- A missing document, a failed initial read, a failed listener registration, or a deleted document never blocks startup. Without a valid document the environment fallback `MULTICA_FC_E2B_SDK_ROLLOUT` applies, and when that is unset every operation uses the CLI.
-- Logs record the Data ID, generation, SHA-256, `present`, `enabled`, list sizes, and `percent`. Each operation routed to the SDK logs `FC/E2B SDK transport` with `rollout_source=diamond|env`.
+- A missing document, a failed initial read, a failed listener registration, or a deleted document never blocks startup. Without a valid document the environment fallback `MULTICA_FC_E2B_SDK_ROLLOUT` applies, and when that is unset every operation uses the CLI. A replica whose listener registration failed drops a loaded document too, so it can never stay on the SDK without receiving a later switch-off.
+- Logs record the Data ID, generation, SHA-256, `present`, `enabled`, list sizes, and `percent`. Each operation routed to the SDK logs `FC/E2B SDK transport` with `rollout_source=diamond|env`, the outcome and, for a failure, `error_kind` (`exit`, `output_limit`, `deadline`, `canceled`, `failed`) with the exit code or the transport cause. Commands, environment values, and command output are never logged there.
 
 The rollout is a separate Data ID rather than a `runtime.fc_e2b` field because the runtime document rejects unknown fields, and older binaries would refuse to start once it carried one.
 

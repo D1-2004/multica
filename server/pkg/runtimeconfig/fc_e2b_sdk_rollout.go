@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 
@@ -56,7 +57,8 @@ func ParseFCE2BSDKRollout(data []byte) (FCE2BSDKRollout, error) {
 	if err := decoder.Decode(&rollout); err != nil {
 		return FCE2BSDKRollout{}, err
 	}
-	if decoder.More() {
+	// More() misses a stray closing bracket; only the end of input is valid.
+	if _, err := decoder.Token(); err != io.EOF {
 		return FCE2BSDKRollout{}, errors.New("trailing data")
 	}
 	if rollout.Percent < 0 || rollout.Percent > 100 {

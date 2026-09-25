@@ -43,6 +43,8 @@ func TestDiamondServiceStartsWithoutFCE2BSDKRollout(t *testing.T) {
 		"fetch failed":     {content: validJSON(), rolloutGetErr: errors.New("timeout")},
 		"document invalid": {content: validJSON(), rolloutContent: `{"enabled":true,"percent":500}`},
 		"listener failed":  {content: validJSON(), rolloutListenErr: errors.New("listen refused")},
+		// A loaded rollout without a listener could never be switched off.
+		"loaded but listener failed": {content: validJSON(), rolloutContent: testSDKRollout, rolloutListenErr: errors.New("listen refused")},
 	}
 	for name, client := range cases {
 		service, err := newDiamondService(nil, true, func() (diamondClient, error) { return client, nil })

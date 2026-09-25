@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -61,6 +63,7 @@ type fakeFCE2BServer struct {
 	createEnvd    string
 	deletes       []string
 	connectStatus int
+	connectDelay  time.Duration
 	templateBody  string
 	// events returns the stream for one Start; hold keeps it open afterwards.
 	events func(start fakeFCE2BStart) (events []map[string]any, hold bool)
@@ -119,6 +122,13 @@ func (f *fakeFCE2BServer) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		f.connects = append(f.connects, id+" "+strings.TrimSpace(string(body)))
 		f.mu.Unlock()
+		if f.connectDelay > 0 {
+			select {
+			case <-time.After(f.connectDelay):
+			case <-r.Context().Done():
+				return
+			}
+		}
 		if f.connectStatus != 0 {
 			w.WriteHeader(f.connectStatus)
 			_, _ = io.WriteString(w, `{"code":404,"message":"sandbox not found"}`)
@@ -408,10 +418,11 @@ func TestSDKCommandRunnerFailsExplicitlyOnOutputOverflow(t *testing.T) {
 	fake := newFakeFCE2BServer(t)
 	fake.events = func(fakeFCE2BStart) ([]map[string]any, bool) {
 		chunk := strings.Repeat("x", 800)
-		return []map[string]any{fcE2BStartEvent(7), fcE2BOutputEvent("stdout", chunk), fcE2BOutputEvent("stderr", chunk)}, true
+		return []map[string]any{fcE2BStartEvent(7), fcE2BOutputEvent("stdout", chunk), fcE2BOutputEvent("stdout", chunk)}, true
 	}
 	out, err := SDKCommandRunner{maxOutputBytes: 1024}.Run(context.Background(), "e2b", []string{"sandbox", "exec", "sbx_1", "true"}, fake.env())
-	if out != "" || err == nil || !strings.Contains(err.Error(), "output exceeded 1024 bytes") {
+	var limitErr *fcE2BOutputLimitError
+	if out != "" || !errors.As(err, &limitErr) || err.Error() != "command failed: stdout exceeded 1024 bytes" {
 		t.Fatalf("overflow = %q, %v", out, err)
 	}
 	select {
@@ -421,6 +432,173 @@ func TestSDKCommandRunnerFailsExplicitlyOnOutputOverflow(t *testing.T) {
 	}
 	if _, _, _, signals := fake.snapshot(); signals != 0 {
 		t.Fatal("overflow must not kill the remote command")
+	}
+}
+
+// The CLI buffered all of stderr, so a chatty command must not fail on stderr
+// volume alone; only the tail is kept for the error text.
+func TestSDKCommandRunnerKeepsStderrTailInsteadOfFailing(t *testing.T) {
+	fake := newFakeFCE2BServer(t)
+	exitCode := 0
+	fake.events = func(fakeFCE2BStart) ([]map[string]any, bool) {
+		events := []map[string]any{fcE2BStartEvent(7), fcE2BOutputEvent("stdout", "receipt\n")}
+		for i := 0; i < 4; i++ {
+			events = append(events, fcE2BOutputEvent("stderr", strings.Repeat(strconv.Itoa(i), 500)))
+		}
+		return append(events, fcE2BEndEvent(exitCode)), false
+	}
+	runner := SDKCommandRunner{maxOutputBytes: 1024, maxStderrBytes: 1 << 20, stderrTailBytes: 700}
+	out, err := runner.Run(context.Background(), "e2b", []string{"sandbox", "exec", "sbx_1", "true"}, fake.env())
+	if err != nil || out != "receipt\n" {
+		t.Fatalf("stderr volume failed the command: %q, %v", out, err)
+	}
+	exitCode = 2
+	_, err = runner.Run(context.Background(), "e2b", []string{"sandbox", "exec", "sbx_1", "false"}, fake.env())
+	text := ""
+	if err != nil {
+		text = err.Error()
+	}
+	if !strings.HasPrefix(text, "command failed: exit status 2: receipt\n[first 1300 bytes of stderr omitted]\n") ||
+		!strings.HasSuffix(text, strings.Repeat("2", 200)+strings.Repeat("3", 500)) {
+		t.Fatalf("error = %.200q", text)
+	}
+}
+
+func TestSDKCommandRunnerBoundsStderrMemory(t *testing.T) {
+	fake := newFakeFCE2BServer(t)
+	fake.events = func(fakeFCE2BStart) ([]map[string]any, bool) {
+		chunk := strings.Repeat("e", 800)
+		return []map[string]any{fcE2BStartEvent(7), fcE2BOutputEvent("stderr", chunk), fcE2BOutputEvent("stderr", chunk)}, true
+	}
+	_, err := SDKCommandRunner{maxStderrBytes: 1024}.Run(context.Background(), "e2b", []string{"sandbox", "exec", "sbx_1", "true"}, fake.env())
+	if err == nil || err.Error() != "command failed: stderr exceeded 1024 bytes" {
+		t.Fatalf("stderr bound = %v", err)
+	}
+	select {
+	case <-fake.closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("stderr overflow did not stop reading the stream")
+	}
+}
+
+// The Go SDK validates keys as e2b_<hex> by default; the CLI never did.
+func TestSDKCommandRunnerAcceptsAnyAPIKeyFormat(t *testing.T) {
+	t.Setenv("E2B_VALIDATE_API_KEY", "")
+	fake := newFakeFCE2BServer(t)
+	env := []string{"E2B_API_KEY=fc-Key.With_Other+Format", "E2B_API_URL=" + fake.server.URL, "E2B_DOMAIN=fc.test"}
+	if _, err := (SDKCommandRunner{}).Run(context.Background(), "e2b", []string{"sandbox", "exec", "sbx_1", "true"}, env); err != nil {
+		t.Fatalf("exec with a non-hex key = %v", err)
+	}
+}
+
+func TestSDKCommandRunnerReportsCancelledConnectAsContextError(t *testing.T) {
+	fake := newFakeFCE2BServer(t)
+	fake.connectDelay = 5 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	_, err := SDKCommandRunner{}.Run(ctx, "e2b", []string{"sandbox", "exec", "sbx_1", "true"}, fake.env())
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.HasPrefix(err.Error(), "command failed: context deadline exceeded") {
+		t.Fatalf("cancelled connect = %v", err)
+	}
+}
+
+// Go strips Authorization on a cross-host redirect but not X-API-KEY.
+func TestSDKCommandRunnerDoesNotFollowCrossHostRedirects(t *testing.T) {
+	var leaked []string
+	var mu sync.Mutex
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		leaked = append(leaked, r.Header.Get("X-API-KEY"))
+		mu.Unlock()
+		_, _ = io.WriteString(w, "[]")
+	}))
+	defer other.Close()
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/templates":
+			http.Redirect(w, r, "/templates-moved", http.StatusTemporaryRedirect)
+		case "/templates-moved":
+			http.Redirect(w, r, other.URL+"/templates", http.StatusTemporaryRedirect)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer api.Close()
+	t.Setenv("E2B_TEAM_ID", "")
+	env := []string{"E2B_API_KEY=e2b_0123abcd", "E2B_API_URL=" + api.URL, "E2B_DOMAIN=fc.test"}
+	_, err := SDKCommandRunner{}.Run(context.Background(), "e2b", []string{"template", "list", "--format", "json"}, env)
+	if err == nil || !strings.Contains(err.Error(), "307") {
+		t.Fatalf("cross-host redirect = %v, want the unfollowed 307", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(leaked) != 0 {
+		t.Fatalf("API key forwarded across hosts: %d requests", len(leaked))
+	}
+}
+
+// Command output can carry signed URLs that callers keep out of logs, so the
+// SDK transport log records how an operation failed, not what it printed.
+func TestFCE2BSDKTransportLogOmitsCommandOutput(t *testing.T) {
+	fake := newFakeFCE2BServer(t)
+	secret := "Signature=SIGNEDsecret123"
+	fake.events = func(fakeFCE2BStart) ([]map[string]any, bool) {
+		return []map[string]any{fcE2BStartEvent(7), fcE2BOutputEvent("stdout", "GET https://bucket/x?"+secret+"\n"),
+			fcE2BOutputEvent("stderr", "403 for url https://bucket/x?"+secret), fcE2BEndEvent(3)}, false
+	}
+	agent := uuid.New()
+	runner := FCE2BRolloutRunner{CLI: &recordingFCE2BRunner{}, SDK: SDKCommandRunner{},
+		Rollout: func() (FCE2BSDKRollout, string) {
+			return FCE2BSDKRollout{Enabled: true, AgentIDs: []string{agent.String()}}, fcE2BRolloutSourceDiamond
+		}}
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+	ctx := WithFCE2BScope(context.Background(), FCE2BScope{AgentID: agent})
+	if _, err := runner.Run(ctx, "e2b", []string{"sandbox", "exec", "-e", "TOKEN=hidden-env", "sbx_1", "--", "curl", "https://bucket/x?" + secret}, fake.env()); err == nil {
+		t.Fatal("remote exit 3 was not reported")
+	}
+	line := logs.String()
+	for _, forbidden := range []string{"SIGNEDsecret123", "hidden-env", "bucket"} {
+		if strings.Contains(line, forbidden) {
+			t.Fatalf("SDK transport log leaked %q: %s", forbidden, line)
+		}
+	}
+	for _, want := range []string{"operation=sandbox_exec", "outcome=error", "error_kind=exit", "exit_code=3", "sandbox_id=sbx_1"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("SDK transport log lacks %q: %s", want, line)
+		}
+	}
+
+	fake.connectStatus = http.StatusNotFound
+	logs.Reset()
+	if _, err := runner.Run(ctx, "e2b", []string{"sandbox", "exec", "sbx_1", "true"}, fake.env()); err == nil {
+		t.Fatal("missing sandbox was not reported")
+	}
+	if line := logs.String(); !strings.Contains(line, "error_kind=failed") || !strings.Contains(line, "sandbox not found") {
+		t.Fatalf("transport failure lacks its cause: %s", line)
+	}
+}
+
+func TestFCE2BRolloutFallbackParsesEachValueOnce(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+	agent := uuid.New().String()
+	t.Setenv(FCE2BSDKRolloutEnv, `{"enabled":true,"agent_ids":["`+agent+`"]}`)
+	for i := 0; i < 3; i++ {
+		if rollout := fcE2BRolloutFallback(); !fcE2BRolloutActive(rollout) || rollout.AgentIDs[0] != agent {
+			t.Fatalf("fallback = %#v", rollout)
+		}
+	}
+	if count := strings.Count(logs.String(), "fallback active"); count != 1 {
+		t.Fatalf("fallback logged %d times, want once per value", count)
+	}
+	t.Setenv(FCE2BSDKRolloutEnv, "")
+	if fcE2BRolloutActive(fcE2BRolloutFallback()) {
+		t.Fatal("a changed value was served from the cache")
 	}
 }
 
@@ -563,7 +741,7 @@ func TestSDKCommandRunnerRejectedCreateTextMatchesCLI(t *testing.T) {
 }
 
 func TestParseFCE2BSDKRollout(t *testing.T) {
-	for _, raw := range []string{"", "  ", "{}", `{"enabled":false,"agent_ids":["22222222-2222-2222-2222-222222222222"]}`} {
+	for _, raw := range []string{"", "  ", "{}", "{}\n", `{"enabled":false,"agent_ids":["22222222-2222-2222-2222-222222222222"]}`} {
 		rollout, err := ParseFCE2BSDKRollout(raw)
 		if err != nil || fcE2BRolloutActive(rollout) {
 			t.Fatalf("%q = %#v, %v; want inactive", raw, rollout, err)
@@ -576,6 +754,7 @@ func TestParseFCE2BSDKRollout(t *testing.T) {
 	for _, raw := range []string{
 		`{"enabled":true,"percent":101}`, `{"percent":-1}`, `{"agent_ids":["agent-1"]}`, `{"agent_ids":["00000000-0000-0000-0000-000000000000"]}`,
 		`{"workspaces":["11111111-1111-1111-1111-111111111111"]}`, `{"percent":5}{}`, `[]`, `true`, `{"enabled":"yes"}`,
+		`{"enabled":true,"percent":100}}`, `{"enabled":true}]`, `{"enabled":true} x`,
 	} {
 		if _, err := ParseFCE2BSDKRollout(raw); err == nil {
 			t.Fatalf("invalid rollout accepted: %s", raw)

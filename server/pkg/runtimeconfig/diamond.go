@@ -189,9 +189,14 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 	if err := client.ListenConfig(FCE2BSDKRolloutDiamondDataID, DiamondGroup, func(content string) {
 		applyFCE2BSDKRolloutUpdate(logger, service, content, "FC/E2B SDK rollout updated")
 	}); err != nil {
+		// Without a listener a published switch-off would never arrive, so a
+		// loaded rollout would pin this replica to the SDK. Drop it; the
+		// environment fallback (the CLI by default) applies until restart.
+		dropped, _ := service.ApplyFCE2BSDKRolloutJSON(nil)
 		if logger != nil {
-			logger.Warn("FC/E2B SDK rollout listener unavailable; the loaded snapshot stays fixed",
+			logger.Warn("FC/E2B SDK rollout listener unavailable; the environment fallback applies",
 				slog.String("data_id", FCE2BSDKRolloutDiamondDataID),
+				slog.Uint64("generation", dropped.Generation),
 				slog.String("error", err.Error()),
 			)
 		}
