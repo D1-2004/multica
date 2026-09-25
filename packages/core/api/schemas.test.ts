@@ -69,6 +69,7 @@ import {
   WorkspaceAccessTokenSecretResponseSchema,
   EMPTY_WORKSPACE_ACCESS_TOKEN_SECRET_RESPONSE,
   AgentA2AConfigSchema,
+  AgentA2AEndpointSchema,
   AgentA2AClientSchema,
   AgentA2ACredentialSecretResponseSchema,
   LabelUsageResponseSchema,
@@ -195,6 +196,7 @@ describe("Agent A2A management schemas", () => {
         card_url: "https://example.test/api/a2a/agents/public-agent-1/.well-known/agent-card.json",
         rpc_url: "https://example.test/api/a2a/agents/public-agent-1/v1",
         mcp_url: "https://example.test/api/mcp/agents/public-agent-1",
+        workspace_mcp_url: "https://example.test/api/mcp/workspaces/workspace-1",
         protocol_version: "1.0",
       },
       agent_card: {
@@ -235,6 +237,7 @@ describe("Agent A2A management schemas", () => {
       cardUrl: "https://example.test/api/a2a/agents/public-agent-1/.well-known/agent-card.json",
       rpcUrl: "https://example.test/api/a2a/agents/public-agent-1/v1",
       mcpUrl: "https://example.test/api/mcp/agents/public-agent-1",
+      workspaceMcpUrl: "https://example.test/api/mcp/workspaces/workspace-1",
       protocolVersion: "1.0",
     });
     expect(parsed.agentCard?.supportedInterfaces[0]?.protocolBinding)
@@ -274,6 +277,21 @@ describe("Agent A2A management schemas", () => {
       ...baseClient,
       scopes: ["send", "admin"],
     }).success).toBe(false);
+  });
+
+  it("ignores a malformed workspace MCP URL from a newer server", () => {
+    const parsed = AgentA2AEndpointSchema.parse({
+      public_agent_id: "agent-1",
+      enabled: true,
+      card_name: "Agent",
+      card_description: "",
+      card_version: "1.0",
+      card_skills: [],
+      card_url: "https://example.test/card",
+      rpc_url: "https://example.test/rpc",
+      workspace_mcp_url: 42,
+    });
+    expect(parsed.workspaceMcpUrl).toBe("");
   });
 
   it("falls back safely when the management response is malformed", () => {

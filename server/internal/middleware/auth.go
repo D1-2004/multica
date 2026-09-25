@@ -224,6 +224,41 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 				return
 			}
 
+			// Workspace MCP credentials are confined to their endpoint and to
+			// server-created allowlisted business API subrequests. The member join
+			// in this lookup is checked on every request, including subrequests.
+			if strings.HasPrefix(tokenString, "wmcp_") {
+				if len(releaseFlags) == 0 || !internalflags.WorkspaceMCPEndpointEnabled(r.Context(), releaseFlags[0]) {
+					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_mcp_disabled")
+					return
+				}
+				if !strings.HasPrefix(r.URL.Path, "/api/mcp/workspaces/") && !IsWorkspaceMCPDispatch(r.Context()) {
+					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_mcp_endpoint_only")
+					return
+				}
+				if queries == nil {
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_mcp_token_invalid")
+					return
+				}
+				token, err := queries.GetWorkspaceMCPTokenByHash(r.Context(), auth.HashToken(tokenString))
+				if err != nil || token.RevokedAt.Valid || !token.ExpiresAt.Valid || !token.ExpiresAt.Time.After(time.Now()) {
+					writeWorkspaceAccessAuthError(w, http.StatusUnauthorized, "workspace_mcp_token_invalid")
+					return
+				}
+				r.Header.Del("X-Workspace-Slug")
+				r.Header.Del("X-Task-ID")
+				r.Header.Del("X-Agent-ID")
+				r.Header.Set("X-Workspace-ID", uuidToString(token.WorkspaceID))
+				r.Header.Set("X-User-ID", uuidToString(token.SubjectUserID))
+				r.Header.Set("X-Actor-Source", "workspace_mcp_token")
+				r = r.WithContext(WithWorkspaceMCPPrincipal(r.Context(), token))
+				if err := queries.TouchWorkspaceMCPToken(r.Context(), token.ID); err != nil {
+					slog.Warn("auth: failed to touch workspace MCP token", "error", err)
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// PAT: tokens starting with "mul_"
 			if strings.HasPrefix(tokenString, "mul_") {
 				hash := auth.HashToken(tokenString)

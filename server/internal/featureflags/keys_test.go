@@ -18,6 +18,17 @@ func TestReleaseFlagsDefaultToOff(t *testing.T) {
 	}
 }
 
+func TestWorkspaceMCPDefaultsToPreReleaseOnly(t *testing.T) {
+	t.Setenv("AONE_ENV_TYPE", "prepub")
+	if !WorkspaceMCPEndpointEnabled(context.Background(), nil) || !WorkspaceMCPReplaceAgentLinksEnabled(context.Background(), nil) {
+		t.Fatal("workspace MCP flags should default on in pre-release")
+	}
+	t.Setenv("AONE_ENV_TYPE", "production")
+	if WorkspaceMCPEndpointEnabled(context.Background(), nil) || WorkspaceMCPReplaceAgentLinksEnabled(context.Background(), nil) {
+		t.Fatal("workspace MCP flags should default off in production")
+	}
+}
+
 // MUL-5345: hang stack capture is gone from this build, but v0.4.13–v0.4.18 are
 // installed and still hold a debugger channel open on every renderer whenever
 // this key arrives as `true`. Those clients are fail-closed on absence, so NOT

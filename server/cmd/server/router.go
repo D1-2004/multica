@@ -2121,6 +2121,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// session_id or agent_id, then enforce membership and Agent permissions in
 		// the handler, so generic MCP clients need no custom workspace header.
 		r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
+		r.Post("/api/mcp/workspaces/{workspaceId}", h.WorkspaceMCP)
 		r.Handle("/api/runner-mcp", http.HandlerFunc(h.RunnerMCP))
 		r.Post("/api/runner-mcp/mounts/{mountId}/servers/{serverName}", h.RunnerMountedMCP)
 
@@ -2154,10 +2155,29 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						})
 					})
 				})
+				r.Group(func(r chi.Router) {
+					r.Use(func(next http.Handler) http.Handler {
+						return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+							if !featureflags.WorkspaceMCPEndpointEnabled(req.Context(), opts.FeatureFlags) {
+								http.NotFound(w, req)
+								return
+							}
+							next.ServeHTTP(w, req)
+						})
+					})
+					r.Use(handler.RequireWorkspaceMCPHumanIssuer)
+					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
+					r.Route("/mcp-tokens", func(r chi.Router) {
+						r.Get("/", h.ListWorkspaceMCPTokens)
+						r.Post("/", h.CreateWorkspaceMCPToken)
+						r.Post("/{tokenId}/revoke", h.RevokeWorkspaceMCPToken)
+					})
+				})
 				// Member-level access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/", h.GetWorkspace)
+					r.Get("/mcp", h.GetWorkspaceMCPDiscovery)
 					r.Get("/members", h.ListMembersWithUser)
 					r.With(handler.RequireHumanActor).Post("/leave", h.LeaveWorkspace)
 					r.Get("/invitations", h.ListWorkspaceInvitations)
@@ -2957,6 +2977,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		})
 	})
 
+	h.WorkspaceMCPDispatcher = r
 	return r, h
 }
 
