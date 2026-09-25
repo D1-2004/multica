@@ -1134,11 +1134,14 @@ type fcE2BTaskScope struct {
 func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner CommandRunner) *FCE2BLauncher {
 	if runner == nil {
 		runner = defaultFCE2BCommandRunner()
-		transport := FCE2BTransportSDK
-		if _, ok := runner.(OSCommandRunner); ok {
-			transport = FCE2BTransportCLI
+		if gated, ok := runner.(FCE2BRolloutRunner); ok && gated.Rollout.Enabled() {
+			slog.Info("FC/E2B SDK rollout enabled",
+				"workspaces", len(gated.Rollout.WorkspaceIDs),
+				"agents", len(gated.Rollout.AgentIDs),
+				"runtimes", len(gated.Rollout.RuntimeIDs),
+				"percent", gated.Rollout.Percent,
+			)
 		}
-		slog.Info("FC/E2B transport selected", "transport", transport)
 	}
 	return &FCE2BLauncher{
 		Queries:          q,
@@ -1376,6 +1379,11 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	if !IsFCE2BRuntime(runtime) {
 		return nil
 	}
+	ctx = WithFCE2BScope(ctx, FCE2BScope{
+		WorkspaceID: pgFCE2BScopeID(runtime.WorkspaceID),
+		AgentID:     pgFCE2BScopeID(task.AgentID),
+		RuntimeID:   pgFCE2BScopeID(task.RuntimeID),
+	})
 	trace, traceErr := chattrace.ForTask(task.Context, taskID, task.CreatedAt.Time)
 	if traceErr != nil {
 		failure := ClassifyRuntimeStartFailure(SandboxBackendAliyunFC, "invalid task trace: "+traceErr.Error())

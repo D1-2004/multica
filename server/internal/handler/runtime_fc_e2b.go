@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -84,7 +85,7 @@ func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	templates, err := service.ListFCE2BTemplates(r.Context(), h.currentConfig().FCE2B, nil)
+	templates, err := service.ListFCE2BTemplates(fcE2BWorkspaceScope(r, workspaceID), h.currentConfig().FCE2B, nil)
 	if err != nil {
 		slog.Error("FC/E2B template list failed", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -202,7 +203,7 @@ func (h *Handler) createAliyunFCRuntime(
 			return
 		}
 	}
-	templates, err := service.ListFCE2BTemplates(r.Context(), h.currentConfig().FCE2B, nil)
+	templates, err := service.ListFCE2BTemplates(fcE2BWorkspaceScope(r, workspaceID), h.currentConfig().FCE2B, nil)
 	if err != nil {
 		slog.Error("FC/E2B template validation failed during runtime creation", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -1000,7 +1001,11 @@ func (h *Handler) UpdateFCE2BRuntimeTemplate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	templates, err := service.ListFCE2BTemplates(r.Context(), h.currentConfig().FCE2B, h.FCE2BLauncher.Runner)
+	scope := service.FCE2BScope{RuntimeID: uuid.UUID(runtime.ID.Bytes)}
+	if runtime.WorkspaceID.Valid {
+		scope.WorkspaceID = uuid.UUID(runtime.WorkspaceID.Bytes)
+	}
+	templates, err := service.ListFCE2BTemplates(service.WithFCE2BScope(r.Context(), scope), h.currentConfig().FCE2B, h.FCE2BLauncher.Runner)
 	if err != nil {
 		slog.Error("FC/E2B template validation failed during runtime update", "error", err, "runtime_id", runtimeID)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -1152,4 +1157,14 @@ func runtimeSlug(name string) string {
 		return "fc-hermes"
 	}
 	return slug
+}
+
+// fcE2BWorkspaceScope routes a workspace's template lookup through the FC/E2B
+// SDK rollout. An unparsable ID carries no scope and stays on the CLI.
+func fcE2BWorkspaceScope(r *http.Request, workspaceID string) context.Context {
+	parsed, err := uuid.Parse(workspaceID)
+	if err != nil {
+		return r.Context()
+	}
+	return service.WithFCE2BScope(r.Context(), service.FCE2BScope{WorkspaceID: parsed})
 }

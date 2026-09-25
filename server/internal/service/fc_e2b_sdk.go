@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,16 +19,6 @@ import (
 	e2b "github.com/aliyun-fc/e2b-go-sdk"
 
 	"github.com/multica-ai/multica/server/pkg/redact"
-)
-
-// FC/E2B transports selectable with MULTICA_FC_E2B_TRANSPORT. The Go SDK is
-// the default. "cli" restores the e2b CLI subprocess as an operator-selected
-// rollback while the SDK rolls out; it is never a runtime fallback, so an
-// ambiguous create or exec is not repeated through the other backend. Remove
-// it together with the image's @e2b/cli once production runs on the SDK.
-const (
-	FCE2BTransportSDK = "sdk"
-	FCE2BTransportCLI = "cli"
 )
 
 const (
@@ -45,8 +34,10 @@ const (
 	fcE2BSDKMaxOutputBytes = 4 << 20
 	// fcE2BSDKMaxTemplateListBytes bounds the template list response.
 	fcE2BSDKMaxTemplateListBytes = 8 << 20
-	// fcE2BSDKTemplateListTimeout matches the SDK default request timeout.
-	fcE2BSDKTemplateListTimeout = 60 * time.Second
+	// fcE2BSDKMaxCreateResponseBytes bounds the create response.
+	fcE2BSDKMaxCreateResponseBytes = 64 << 10
+	// fcE2BAPIRequestTimeout is the CLI's control-plane request timeout.
+	fcE2BAPIRequestTimeout = 60 * time.Second
 	// fcE2BCLIMinSandboxTimeoutSeconds is the e2b CLI create floor.
 	fcE2BCLIMinSandboxTimeoutSeconds = 30
 )
@@ -59,43 +50,22 @@ var fcE2BSDKHTTPClient = newFCE2BSDKHTTPClient()
 
 func newFCE2BSDKHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// The CLI's undici agent never reads HTTP(S)_PROXY; neither does this.
+	transport.Proxy = nil
 	transport.MaxIdleConnsPerHost = 16
 	// No client-wide timeout: command streams stay open for the command's
 	// lifetime. The caller context and the SDK request timeout bound them.
 	return &http.Client{Transport: transport}
 }
 
-// NewFCE2BCommandRunner returns the CommandRunner for transport. An empty
-// value selects the Go SDK.
-func NewFCE2BCommandRunner(transport string) (CommandRunner, error) {
-	switch strings.ToLower(strings.TrimSpace(transport)) {
-	case "", FCE2BTransportSDK:
-		return SDKCommandRunner{}, nil
-	case FCE2BTransportCLI:
-		return OSCommandRunner{}, nil
-	default:
-		return nil, fmt.Errorf("invalid MULTICA_FC_E2B_TRANSPORT %q: expected %q or %q", transport, FCE2BTransportSDK, FCE2BTransportCLI)
-	}
-}
-
-// defaultFCE2BCommandRunner reads MULTICA_FC_E2B_TRANSPORT. An invalid value
-// keeps the SDK and is logged; it must not silently re-enable the CLI.
-func defaultFCE2BCommandRunner() CommandRunner {
-	transport := os.Getenv("MULTICA_FC_E2B_TRANSPORT")
-	runner, err := NewFCE2BCommandRunner(transport)
-	if err != nil {
-		slog.Error("FC/E2B transport configuration ignored", "error", err, "transport", FCE2BTransportSDK)
-		return SDKCommandRunner{}
-	}
-	return runner
-}
-
-// SDKCommandRunner performs the FC/E2B operations the launcher builds through
-// the Go SDK instead of forking the e2b CLI. It accepts exactly the argv
-// shapes Multica produces (sandbox create, sandbox exec, template list) and
-// decodes them into typed requests. Any other shape is rejected rather than
-// approximated. Credentials come from the E2B_* entries of env, the same
-// values the CLI received; request-specific values never enter shared state.
+// SDKCommandRunner performs the FC/E2B operations the launcher builds in
+// process instead of forking the e2b CLI. It accepts exactly the argv shapes
+// Multica produces (sandbox create, sandbox exec, template list) and decodes
+// them into typed requests. Any other shape is rejected rather than
+// approximated. Exec runs through the Go SDK's connect and envd command
+// stream; create and template list send the CLI's exact control-plane
+// requests. Credentials come from the E2B_* entries of env, the same values
+// the CLI received; request-specific values never enter shared state.
 type SDKCommandRunner struct {
 	// HTTPClient carries control-plane and envd traffic. Nil uses a shared
 	// client so connections are pooled across calls.
@@ -130,15 +100,15 @@ func (r SDKCommandRunner) Run(ctx context.Context, _ string, args []string, env 
 		return "", err
 	}
 	creds := fcE2BCredentialsFromEnv(env)
-	if operation.listTemplates {
+	switch {
+	case operation.listTemplates:
 		return r.listTemplates(ctx, creds)
+	case operation.create != nil:
+		return r.create(ctx, creds, *operation.create)
 	}
 	client, err := r.client(creds)
 	if err != nil {
 		return "", fcE2BSDKFailure(err, "", "")
-	}
-	if operation.create != nil {
-		return r.create(ctx, client, *operation.create)
 	}
 	return r.exec(ctx, client, *operation.exec)
 }
@@ -335,20 +305,137 @@ func fcE2BShellQuote(arg string) string {
 	return "'" + strings.ReplaceAll(arg, "'", `'"'"'`) + "'"
 }
 
-func (r SDKCommandRunner) create(ctx context.Context, client *e2b.Client, request fcE2BCreateRequest) (string, error) {
-	options := []e2b.SandboxCreateOption{e2b.WithTemplate(request.Template)}
-	if request.TimeoutSeconds > 0 {
-		options = append(options, e2b.WithTimeout(request.TimeoutSeconds))
+// create posts the body `e2b sandbox create` sends. The SDK's CreateSandbox
+// always adds empty metadata and envVars objects, which the CLI omits, so the
+// control-plane request is built here.
+func (r SDKCommandRunner) create(ctx context.Context, creds fcE2BCredentials, request fcE2BCreateRequest) (string, error) {
+	timeoutSeconds := request.TimeoutSeconds
+	if timeoutSeconds == 0 {
+		timeoutSeconds = e2b.DefaultSandboxTimeoutSeconds
 	}
-	if request.OnTimeout != "" {
-		options = append(options, e2b.WithLifecycle(e2b.SandboxLifecycle{OnTimeout: request.OnTimeout}))
+	body := map[string]any{
+		"templateID":            request.Template,
+		"timeout":               timeoutSeconds,
+		"secure":                true,
+		"allow_internet_access": true,
+		"autoPause":             request.OnTimeout == "pause",
+		"autoResume":            map[string]bool{"enabled": false},
 	}
-	sandbox, err := client.CreateSandbox(ctx, options...)
+	status, payload, err := r.controlPlane(ctx, creds, http.MethodPost, "/sandboxes", nil, body, fcE2BSDKMaxCreateResponseBytes)
 	if err != nil {
-		return "", fcE2BSDKFailure(err, "", "")
+		return "", err
+	}
+	if status < 200 || status >= 300 {
+		return "", fcE2BSDKFailure(fcE2BAPIError(status, payload), "", "")
+	}
+	var created struct {
+		SandboxID   string `json:"sandboxID"`
+		EnvdVersion string `json:"envdVersion"`
+	}
+	if json.Unmarshal(payload, &created) != nil || !fcE2BAPISandboxIDPattern.MatchString(created.SandboxID) {
+		return "", errors.New("command failed: FC/E2B sandbox create returned no sandbox id")
+	}
+	if compareFCE2BVersion(created.EnvdVersion, "0.1.0") < 0 {
+		// The CLI removes a sandbox whose envd predates the SDK protocol.
+		_, _, _ = r.controlPlane(context.WithoutCancel(ctx), creds, http.MethodDelete, "/sandboxes/"+created.SandboxID, nil, nil, fcE2BSDKMaxCreateResponseBytes)
+		return "", errors.New("command failed: You need to update the template to use the new SDK.")
 	}
 	// Keep the create receipt the launcher already parses.
-	return fmt.Sprintf("Sandbox created with ID %s using template %s\n", sandbox.SandboxID(), request.Template), nil
+	return fmt.Sprintf("Sandbox created with ID %s using template %s\n", created.SandboxID, request.Template), nil
+}
+
+// controlPlane sends one request to the E2B API with the CLI's credentials:
+// X-API-KEY, plus a bearer token when E2B_ACCESS_TOKEN is set.
+func (r SDKCommandRunner) controlPlane(ctx context.Context, creds fcE2BCredentials, method, path string, query url.Values, body any, limit int64) (int, []byte, error) {
+	if creds.APIKey == "" {
+		return 0, nil, errors.New("command failed: FC/E2B API key is required")
+	}
+	base, err := url.Parse(creds.APIURL)
+	if err != nil || base.Host == "" || (base.Scheme != "https" && base.Scheme != "http") {
+		return 0, nil, errors.New("command failed: invalid FC/E2B API URL")
+	}
+	target := creds.APIURL + path
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			return 0, nil, errors.New("command failed: encode FC/E2B request")
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	ctx, cancel := context.WithTimeout(ctx, fcE2BAPIRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, target, reader)
+	if err != nil {
+		return 0, nil, errors.New("command failed: create FC/E2B request")
+	}
+	req.Header.Set("X-API-KEY", creds.APIKey)
+	if token := os.Getenv("E2B_ACCESS_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("User-Agent", "e2b-go-sdk/"+e2b.Version)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	response, err := r.httpClient().Do(req)
+	if err != nil {
+		return 0, nil, fcE2BSDKFailure(err, "", "")
+	}
+	defer response.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil {
+		return 0, nil, fcE2BSDKFailure(err, "", "")
+	}
+	if int64(len(payload)) > limit {
+		return 0, nil, fmt.Errorf("command failed: FC/E2B response exceeded %d bytes", limit)
+	}
+	return response.StatusCode, payload, nil
+}
+
+// fcE2BAPIError mirrors the JS SDK's handleApiError text, which the CLI
+// printed for a rejected request.
+func fcE2BAPIError(status int, payload []byte) error {
+	content := strings.TrimSpace(string(payload))
+	var parsed struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(payload, &parsed) == nil && parsed.Message != "" {
+		content = parsed.Message
+	}
+	switch status {
+	case http.StatusUnauthorized:
+		return fmt.Errorf("Unauthorized, please check your credentials. - %s", content)
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("Rate limit exceeded, please try again later - %s", content)
+	}
+	if content == "" {
+		content = http.StatusText(status)
+	}
+	return fmt.Errorf("%d: %s", status, content)
+}
+
+// compareFCE2BVersion compares dotted numeric versions like compare-versions.
+func compareFCE2BVersion(a, b string) int {
+	left, right := strings.Split(strings.TrimPrefix(a, "v"), "."), strings.Split(strings.TrimPrefix(b, "v"), ".")
+	for i := 0; i < max(len(left), len(right)); i++ {
+		var l, r int
+		if i < len(left) {
+			l, _ = strconv.Atoi(strings.SplitN(left[i], "-", 2)[0])
+		}
+		if i < len(right) {
+			r, _ = strconv.Atoi(strings.SplitN(right[i], "-", 2)[0])
+		}
+		if l != r {
+			if l < r {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
 }
 
 func (r SDKCommandRunner) exec(ctx context.Context, client *e2b.Client, request fcE2BExecRequest) (string, error) {
@@ -397,7 +484,12 @@ func (r SDKCommandRunner) exec(ctx context.Context, client *e2b.Client, request 
 	}
 	var exitErr *e2b.CommandExitError
 	if errors.As(err, &exitErr) {
-		return stdout, fcE2BSDKFailure(&fcE2BCommandExitError{ExitCode: result.ExitCode}, stdout, stderr)
+		// The CLI printed envd's end error after the command's stderr and
+		// exited with the remote code, truncated to 8 bits by the OS.
+		if result.Error != "" {
+			stderr += result.Error + "\n"
+		}
+		return stdout, fcE2BSDKFailure(&fcE2BCommandExitError{ExitCode: result.ExitCode & 0xff}, stdout, stderr)
 	}
 	return stdout, fcE2BSDKFailure(err, stdout, stderr)
 }
@@ -407,40 +499,17 @@ func (r SDKCommandRunner) exec(ctx context.Context, client *e2b.Client, request 
 // unknown fields and rewrites timestamps, which would change the template
 // directory's parsing and ordering, so the response stays raw.
 func (r SDKCommandRunner) listTemplates(ctx context.Context, creds fcE2BCredentials) (string, error) {
-	if creds.APIKey == "" {
-		return "", errors.New("command failed: FC/E2B API key is required")
-	}
-	base, err := url.Parse(creds.APIURL)
-	if err != nil || base.Host == "" || (base.Scheme != "https" && base.Scheme != "http") {
-		return "", errors.New("command failed: invalid FC/E2B API URL")
-	}
-	target := creds.APIURL + "/templates"
 	// With E2B_API_KEY set the CLI only scopes the list by E2B_TEAM_ID.
+	var query url.Values
 	if teamID := os.Getenv("E2B_TEAM_ID"); teamID != "" {
-		target += "?" + url.Values{"teamID": {teamID}}.Encode()
+		query = url.Values{"teamID": {teamID}}
 	}
-	ctx, cancel := context.WithTimeout(ctx, fcE2BSDKTemplateListTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	status, body, err := r.controlPlane(ctx, creds, http.MethodGet, "/templates", query, nil, fcE2BSDKMaxTemplateListBytes)
 	if err != nil {
-		return "", errors.New("command failed: create FC/E2B template list request")
+		return "", err
 	}
-	req.Header.Set("X-API-KEY", creds.APIKey)
-	req.Header.Set("User-Agent", "e2b-go-sdk/"+e2b.Version)
-	response, err := r.httpClient().Do(req)
-	if err != nil {
-		return "", fcE2BSDKFailure(err, "", "")
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, fcE2BSDKMaxTemplateListBytes+1))
-	if err != nil {
-		return "", fcE2BSDKFailure(err, "", "")
-	}
-	if len(body) > fcE2BSDKMaxTemplateListBytes {
-		return "", fmt.Errorf("command failed: FC/E2B template list exceeded %d bytes", fcE2BSDKMaxTemplateListBytes)
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", fmt.Errorf("command failed: FC/E2B template list returned HTTP %d: %s", response.StatusCode, redact.Text(string(body)))
+	if status < 200 || status >= 300 {
+		return "", fcE2BSDKFailure(fcE2BAPIError(status, body), "", "")
 	}
 	return fcE2BSortTemplateAliases(body)
 }

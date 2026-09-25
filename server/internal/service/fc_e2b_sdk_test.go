@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/util"
@@ -56,6 +57,8 @@ type fakeFCE2BServer struct {
 
 	createStatus  int
 	createBody    string
+	createEnvd    string
+	deletes       []string
 	connectStatus int
 	templateBody  string
 	// events returns the stream for one Start; hold keeps it open afterwards.
@@ -99,8 +102,17 @@ func (f *fakeFCE2BServer) serve(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, f.createBody)
 			return
 		}
+		envd := f.createEnvd
+		if envd == "" {
+			envd = "0.5.4"
+		}
 		w.WriteHeader(http.StatusCreated)
-		_, _ = io.WriteString(w, `{"sandboxID":"sbx_123","envdVersion":"0.5.4","envdAccessToken":"envd-token","templateID":"tpl"}`)
+		_, _ = fmt.Fprintf(w, `{"sandboxID":"sbx_123","envdVersion":%q,"envdAccessToken":"envd-token","templateID":"tpl"}`, envd)
+	case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/sandboxes/"):
+		f.mu.Lock()
+		f.deletes = append(f.deletes, strings.TrimPrefix(r.URL.Path, "/sandboxes/"))
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/sandboxes/") && strings.HasSuffix(r.URL.Path, "/connect"):
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/sandboxes/"), "/connect")
 		f.mu.Lock()
@@ -190,6 +202,10 @@ func fcE2BEndEvent(code int) map[string]any {
 	return map[string]any{"event": map[string]any{"end": map[string]any{"exitCode": code}}}
 }
 
+func fcE2BEndEventWithError(code int, message string) map[string]any {
+	return map[string]any{"event": map[string]any{"end": map[string]any{"exitCode": code, "error": message}}}
+}
+
 func (f *fakeFCE2BServer) snapshot() ([]map[string]any, []string, []fakeFCE2BStart, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -264,32 +280,6 @@ func TestParseFCE2BOperationAcceptsOnlyLauncherShapes(t *testing.T) {
 	}
 }
 
-func TestNewFCE2BCommandRunnerSelectsTransport(t *testing.T) {
-	for _, transport := range []string{"", "sdk", " SDK "} {
-		if runner, err := NewFCE2BCommandRunner(transport); err != nil || !reflect.DeepEqual(runner, SDKCommandRunner{}) {
-			t.Fatalf("transport %q = %#v, %v; want SDK", transport, runner, err)
-		}
-	}
-	if runner, err := NewFCE2BCommandRunner("cli"); err != nil || runner != (OSCommandRunner{}) {
-		t.Fatalf("cli transport = %#v, %v", runner, err)
-	}
-	if _, err := NewFCE2BCommandRunner("both"); err == nil {
-		t.Fatal("unknown transport accepted")
-	}
-	t.Setenv("MULTICA_FC_E2B_TRANSPORT", "both")
-	if _, ok := defaultFCE2BCommandRunner().(SDKCommandRunner); !ok {
-		t.Fatal("invalid transport configuration must keep the SDK")
-	}
-	t.Setenv("MULTICA_FC_E2B_TRANSPORT", "cli")
-	if _, ok := NewFCE2BLauncher(nil, nil, FCE2BConfig{}, nil).Runner.(OSCommandRunner); !ok {
-		t.Fatal("explicit CLI rollback was not selected")
-	}
-	t.Setenv("MULTICA_FC_E2B_TRANSPORT", "")
-	if _, ok := NewFCE2BLauncher(nil, nil, FCE2BConfig{}, nil).Runner.(SDKCommandRunner); !ok {
-		t.Fatal("SDK is not the default transport")
-	}
-}
-
 // The launcher's create → ready → probe → run-once sequence sends the same
 // HTTP requests through the SDK that the e2b CLI sent.
 func TestFCE2BLauncherSDKTransportEndToEnd(t *testing.T) {
@@ -348,10 +338,13 @@ func TestFCE2BLauncherSDKTransportEndToEnd(t *testing.T) {
 	if len(creates) != 1 {
 		t.Fatalf("creates = %d", len(creates))
 	}
-	create := creates[0]
-	if create["templateID"] != "multica-fc-hermes-v1" || create["timeout"] != float64(4800) || create["autoPause"] != false ||
-		create["secure"] != true || create["allow_internet_access"] != true {
-		t.Fatalf("create body = %#v", create)
+	// Exactly the body `e2b sandbox create` sends: no metadata or envVars.
+	wantCreate := map[string]any{
+		"templateID": "multica-fc-hermes-v1", "timeout": float64(4800), "secure": true,
+		"allow_internet_access": true, "autoPause": false, "autoResume": map[string]any{"enabled": false},
+	}
+	if !reflect.DeepEqual(creates[0], wantCreate) {
+		t.Fatalf("create body = %#v, want %#v", creates[0], wantCreate)
 	}
 	if want := []string{`sbx_123 {"timeout":300}`, `sbx_123 {"timeout":300}`, `sbx_123 {"timeout":300}`}; !reflect.DeepEqual(connects, want) {
 		t.Fatalf("connects = %#v, want the CLI's per-exec 300s attach %#v", connects, want)
@@ -393,14 +386,16 @@ func TestSDKCommandRunnerReportsRemoteExitLikeCLI(t *testing.T) {
 	fake := newFakeFCE2BServer(t)
 	token := "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn"
 	fake.events = func(fakeFCE2BStart) ([]map[string]any, bool) {
-		return []map[string]any{fcE2BStartEvent(7), fcE2BOutputEvent("stdout", "partial\n"), fcE2BOutputEvent("stderr", "boom "+token), fcE2BEndEvent(3)}, false
+		return []map[string]any{fcE2BStartEvent(7), fcE2BOutputEvent("stdout", "partial\n"), fcE2BOutputEvent("stderr", "boom "+token+"\n"), fcE2BEndEventWithError(3, "exit status 3")}, false
 	}
 	out, err := SDKCommandRunner{}.Run(context.Background(), "e2b", []string{"sandbox", "exec", "--user", "user", "sbx_1", "--", "python3", "-c", "raise SystemExit(3)"}, fake.env())
 	if out != "partial\n" {
 		t.Fatalf("stdout = %q", out)
 	}
-	if err == nil || !strings.HasPrefix(err.Error(), "command failed: exit status 3: partial\nboom ") || strings.Contains(err.Error(), token) {
-		t.Fatalf("error = %v", err)
+	// The CLI printed envd's end error after the command's stderr.
+	if err == nil || !strings.HasPrefix(err.Error(), "command failed: exit status 3: partial\nboom ") ||
+		!strings.HasSuffix(err.Error(), "\nexit status 3\n") || strings.Contains(err.Error(), token) {
+		t.Fatalf("error = %q", err)
 	}
 	var exitErr *fcE2BCommandExitError
 	if !errors.As(err, &exitErr) || exitErr.ExitCode != 3 {
@@ -511,5 +506,161 @@ func TestSDKCommandRunnerListsTemplatesLikeCLI(t *testing.T) {
 	fake.templateBody = `not json`
 	if _, err := ListFCE2BTemplates(context.Background(), cfg, SDKCommandRunner{}); err == nil || !strings.Contains(err.Error(), "invalid JSON") {
 		t.Fatalf("invalid list = %v", err)
+	}
+}
+
+func TestSDKCommandRunnerSignalledExitMatchesCLIStatus(t *testing.T) {
+	fake := newFakeFCE2BServer(t)
+	fake.events = func(fakeFCE2BStart) ([]map[string]any, bool) {
+		return []map[string]any{fcE2BStartEvent(7), fcE2BEndEventWithError(-1, "signal: killed")}, false
+	}
+	_, err := SDKCommandRunner{}.Run(context.Background(), "e2b", []string{"sandbox", "exec", "sbx_1", "sleep 9"}, fake.env())
+	// process.exit(-1) reaches the OS as 255.
+	if err == nil || err.Error() != "command failed: exit status 255: signal: killed\n" {
+		t.Fatalf("error = %q", err)
+	}
+}
+
+func TestSDKCommandRunnerRemovesSandboxWithOutdatedEnvd(t *testing.T) {
+	fake := newFakeFCE2BServer(t)
+	fake.createEnvd = "0.0.9"
+	out, err := SDKCommandRunner{}.Run(context.Background(), "e2b", []string{"sandbox", "create", "--detach", "--timeout", "600", "--lifecycle.ontimeout", "kill", "tpl"}, fake.env())
+	if out != "" || err == nil || !strings.Contains(err.Error(), "update the template") {
+		t.Fatalf("outdated envd = %q, %v", out, err)
+	}
+	fake.mu.Lock()
+	deletes := append([]string(nil), fake.deletes...)
+	fake.mu.Unlock()
+	if !reflect.DeepEqual(deletes, []string{"sbx_123"}) {
+		t.Fatalf("deletes = %v", deletes)
+	}
+	if compareFCE2BVersion("0.5.4", "0.1.0") <= 0 || compareFCE2BVersion("0.1.0", "0.1") != 0 || compareFCE2BVersion("0.0.9-rc1", "0.1.0") >= 0 {
+		t.Fatal("version comparison")
+	}
+}
+
+func TestSDKCommandRunnerIgnoresProxyEnvironment(t *testing.T) {
+	transport, ok := fcE2BSDKHTTPClient.Transport.(*http.Transport)
+	if !ok || transport.Proxy != nil {
+		t.Fatal("the CLI never used HTTP(S)_PROXY; the SDK transport must not either")
+	}
+}
+
+func TestSDKCommandRunnerRejectedCreateTextMatchesCLI(t *testing.T) {
+	fake := newFakeFCE2BServer(t)
+	fake.createStatus = http.StatusUnauthorized
+	fake.createBody = `{"code":401,"message":"invalid key"}`
+	_, err := SDKCommandRunner{}.Run(context.Background(), "e2b", []string{"sandbox", "create", "--detach", "tpl"}, fake.env())
+	if err == nil || err.Error() != "command failed: Unauthorized, please check your credentials. - invalid key: " {
+		t.Fatalf("error = %q", err)
+	}
+	fake.createStatus = http.StatusBadRequest
+	fake.createBody = `{"code":400,"message":"bad template"}`
+	if _, err := (SDKCommandRunner{}).Run(context.Background(), "e2b", []string{"sandbox", "create", "--detach", "tpl"}, fake.env()); err == nil || err.Error() != "command failed: 400: bad template: " {
+		t.Fatalf("error = %q", err)
+	}
+}
+
+func TestParseFCE2BSDKRollout(t *testing.T) {
+	for _, raw := range []string{"", "  ", "{}"} {
+		rollout, err := ParseFCE2BSDKRollout(raw)
+		if err != nil || rollout.Enabled() {
+			t.Fatalf("%q = %#v, %v; want disabled", raw, rollout, err)
+		}
+	}
+	rollout, err := ParseFCE2BSDKRollout(`{"workspace_ids":[" 11111111-1111-1111-1111-111111111111 "],"agent_ids":["22222222-2222-2222-2222-222222222222"],"percent":5}`)
+	if err != nil || !rollout.Enabled() || rollout.WorkspaceIDs[0] != "11111111-1111-1111-1111-111111111111" || rollout.Percent != 5 {
+		t.Fatalf("rollout = %#v, %v", rollout, err)
+	}
+	for _, raw := range []string{
+		`{"percent":101}`, `{"percent":-1}`, `{"agent_ids":["agent-1"]}`, `{"agent_ids":["00000000-0000-0000-0000-000000000000"]}`,
+		`{"workspaces":["11111111-1111-1111-1111-111111111111"]}`, `{"percent":5}{}`, `[]`, `true`,
+	} {
+		if _, err := ParseFCE2BSDKRollout(raw); err == nil {
+			t.Fatalf("invalid rollout accepted: %s", raw)
+		}
+	}
+}
+
+func TestFCE2BSDKRolloutSelectsOnlyMatchingScope(t *testing.T) {
+	workspace, agent, runtime := uuid.New(), uuid.New(), uuid.New()
+	other := FCE2BScope{WorkspaceID: uuid.New(), AgentID: uuid.New(), RuntimeID: uuid.New()}
+	cases := []struct {
+		name    string
+		rollout FCE2BSDKRollout
+		scope   FCE2BScope
+		want    bool
+	}{
+		{"empty rollout", FCE2BSDKRollout{}, FCE2BScope{WorkspaceID: workspace, AgentID: agent, RuntimeID: runtime}, false},
+		{"agent listed", FCE2BSDKRollout{AgentIDs: []string{agent.String()}}, FCE2BScope{WorkspaceID: workspace, AgentID: agent}, true},
+		{"runtime listed", FCE2BSDKRollout{RuntimeIDs: []string{runtime.String()}}, FCE2BScope{RuntimeID: runtime}, true},
+		{"workspace listed", FCE2BSDKRollout{WorkspaceIDs: []string{workspace.String()}}, FCE2BScope{WorkspaceID: workspace, AgentID: agent}, true},
+		{"unlisted scope", FCE2BSDKRollout{WorkspaceIDs: []string{workspace.String()}, AgentIDs: []string{agent.String()}}, other, false},
+		{"unscoped with list", FCE2BSDKRollout{WorkspaceIDs: []string{workspace.String()}}, FCE2BScope{}, false},
+		{"unscoped below 100", FCE2BSDKRollout{Percent: 99}, FCE2BScope{}, false},
+		{"everything at 100", FCE2BSDKRollout{Percent: 100}, FCE2BScope{}, true},
+	}
+	for _, tc := range cases {
+		if got := tc.rollout.Selects(tc.scope); got != tc.want {
+			t.Fatalf("%s: Selects = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	// Percent buckets by agent first, deterministically, and roughly evenly.
+	selected := 0
+	for i := 0; i < 2000; i++ {
+		scope := FCE2BScope{WorkspaceID: workspace, AgentID: uuid.New()}
+		first := FCE2BSDKRollout{Percent: 25}.Selects(scope)
+		if first != (FCE2BSDKRollout{Percent: 25}).Selects(scope) {
+			t.Fatal("percent bucketing is not stable")
+		}
+		if first {
+			selected++
+		}
+	}
+	if selected < 400 || selected > 600 {
+		t.Fatalf("25%% rollout selected %d of 2000 agents", selected)
+	}
+}
+
+type recordingFCE2BRunner struct {
+	calls int
+	err   error
+}
+
+func (r *recordingFCE2BRunner) Run(context.Context, string, []string, []string) (string, error) {
+	r.calls++
+	return "", r.err
+}
+
+func TestFCE2BRolloutRunnerDispatchesWithoutFallback(t *testing.T) {
+	agent := uuid.New()
+	cli, sdk := &recordingFCE2BRunner{}, &recordingFCE2BRunner{err: errors.New("sdk failed")}
+	runner := FCE2BRolloutRunner{CLI: cli, SDK: sdk, Rollout: FCE2BSDKRollout{AgentIDs: []string{agent.String()}}}
+	launcher := &FCE2BLauncher{Runner: runner}
+
+	if err := launcher.checkSandboxReady(context.Background(), "sbx_1"); err != nil || cli.calls != 1 || sdk.calls != 0 {
+		t.Fatalf("unscoped ready check = %v; cli=%d sdk=%d", err, cli.calls, sdk.calls)
+	}
+	ctx := WithFCE2BScope(context.Background(), FCE2BScope{AgentID: agent})
+	// The scope survives the per-command timeout context, and an SDK failure
+	// is returned as-is instead of being retried through the CLI.
+	if err := launcher.checkSandboxReady(ctx, "sbx_1"); err == nil || cli.calls != 1 || sdk.calls != 1 {
+		t.Fatalf("selected ready check = %v; cli=%d sdk=%d", err, cli.calls, sdk.calls)
+	}
+}
+
+func TestFCE2BDefaultTransportIsCLI(t *testing.T) {
+	t.Setenv(FCE2BSDKRolloutEnv, "")
+	runner, ok := NewFCE2BLauncher(nil, nil, FCE2BConfig{}, nil).Runner.(FCE2BRolloutRunner)
+	if !ok || runner.Rollout.Enabled() || runner.CLI != (OSCommandRunner{}) || runner.Rollout.Selects(FCE2BScope{WorkspaceID: uuid.New(), AgentID: uuid.New()}) {
+		t.Fatalf("default runner = %#v", runner)
+	}
+	t.Setenv(FCE2BSDKRolloutEnv, `{"percent":"all"}`)
+	if runner := defaultFCE2BCommandRunner().(FCE2BRolloutRunner); runner.Rollout.Enabled() {
+		t.Fatal("an invalid rollout must keep every operation on the CLI")
+	}
+	t.Setenv(FCE2BSDKRolloutEnv, `{"percent":100}`)
+	if runner := defaultFCE2BCommandRunner().(FCE2BRolloutRunner); !runner.Rollout.Selects(FCE2BScope{}) {
+		t.Fatal("a full rollout was not applied")
 	}
 }

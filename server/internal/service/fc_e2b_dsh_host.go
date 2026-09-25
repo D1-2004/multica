@@ -321,6 +321,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	if conn == nil || !rt.WorkspaceID.Valid || key.WorkspaceID != uuid.UUID(rt.WorkspaceID.Bytes) || key.AgentID == uuid.Nil {
 		return dshhost.Host{}, false, errors.New("invalid DSH employee launch identity")
 	}
+	ctx = WithFCE2BScope(ctx, FCE2BScope{WorkspaceID: key.WorkspaceID, AgentID: key.AgentID, RuntimeID: pgFCE2BScopeID(rt.ID)})
 	isDSH := FCE2BRuntimeProvider(rt) == "dsh"
 	var catalog, profileDigest string
 	var store dshhost.Store = dshhost.PostgresStore{DB: conn}

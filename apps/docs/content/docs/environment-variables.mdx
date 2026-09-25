@@ -203,8 +203,8 @@ These variables enable the self-hosted server to create a cloud Hermes runtime b
 | `MULTICA_FC_E2B_OPENAI_BASE_URL` | empty | OpenAI-compatible LLM endpoint for Hermes, for example `https://maas-api.alibaba-inc.com/v1` |
 | `MULTICA_FC_E2B_OPENAI_API_KEY` | empty | LLM API key injected into the sandbox runner. Not written to the database or runtime metadata |
 | `MULTICA_FC_E2B_OPENAI_MODELS` | empty | JSON array of Hermes models available to FC agents. The first item is the default when an agent has no pinned model |
-| `MULTICA_FC_E2B_CLI_PATH` | `e2b` | Path to the `e2b` CLI executable on the server host. Used only when `MULTICA_FC_E2B_TRANSPORT=cli` |
-| `MULTICA_FC_E2B_TRANSPORT` | `sdk` | `sdk` creates sandboxes, runs commands, and lists templates through the Go SDK without starting a process. `cli` is a temporary rollback to the `e2b` CLI subprocess; the CLI is never used as an automatic fallback |
+| `MULTICA_FC_E2B_CLI_PATH` | `e2b` | Path to the `e2b` CLI executable on the server host |
+| `MULTICA_FC_E2B_SDK_ROLLOUT` | empty | JSON rollout that moves FC/E2B operations from the `e2b` CLI to the in-process Go SDK: `{"workspace_ids":[…],"agent_ids":[…],"runtime_ids":[…],"percent":N}`. An operation uses the SDK when its agent, runtime, or workspace is listed, or its agent (else runtime, else workspace) falls in the percent bucket; `percent: 100` also covers unscoped operations. Empty or invalid keeps every operation on the CLI. An operation never retries on the other transport |
 | `MULTICA_FC_E2B_TIMEOUT_SECONDS` | `3600` | Sandbox lifetime in seconds |
 | `MULTICA_FC_E2B_SANDBOX_READY_TIMEOUT` | `60s` | How long the server waits for a newly created sandbox to accept `exec` |
 | `MULTICA_AGENT_IDENTITY_BASE_URL` | empty | Legacy Agent Identity base URL. Used as the default for control-plane calls and sandbox redemption when the split URLs below are not set |
