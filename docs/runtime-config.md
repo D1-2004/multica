@@ -105,6 +105,28 @@ See [the complete provider example](runtime-manifest-fingerprints.example.json).
 
 A compact m7 alias is display text and carries the opaque provider-combination fingerprint. It is not the execution identity and does not encode component versions. FC execution identity remains the template ID. Templates whose fingerprint is not in Diamond stay visible with no selectable providers, so they cannot be used for new Runtime creation or stable publication.
 
+## FC/E2B SDK rollout
+
+`dt-fde-multica-fc-e2b-sdk-rollout.json` (Group `DEFAULT_GROUP`, application `dt-fde-multica`) moves FC/E2B operations from the `e2b` CLI subprocess to the in-process Go SDK. It is optional and watched live: an operation reads the current snapshot when it starts, so publishing a change switches the next sandbox create, exec, or template lookup without a release or restart.
+
+```json
+{
+  "enabled": true,
+  "workspace_ids": ["<workspace uuid>"],
+  "agent_ids": ["<agent uuid>"],
+  "runtime_ids": ["<runtime uuid>"],
+  "percent": 0
+}
+```
+
+- `enabled` is the master switch. `false` keeps every operation on the CLI whatever the lists say.
+- An operation uses the SDK when its agent, runtime, or workspace is listed, or when its agent (else runtime, else workspace) falls in the `percent` bucket. `percent: 100` also covers operations without a scope, such as the stable-channel template scan.
+- Unknown fields, non-UUID identifiers, and `percent` outside 0–100 are rejected. A rejected publication keeps the previous generation.
+- A missing document, a failed initial read, a failed listener registration, or a deleted document never blocks startup. Without a valid document the environment fallback `MULTICA_FC_E2B_SDK_ROLLOUT` applies, and when that is unset every operation uses the CLI.
+- Logs record the Data ID, generation, SHA-256, `present`, `enabled`, list sizes, and `percent`. Each operation routed to the SDK logs `FC/E2B SDK transport` with `rollout_source=diamond|env`.
+
+The rollout is a separate Data ID rather than a `runtime.fc_e2b` field because the runtime document rejects unknown fields, and older binaries would refuse to start once it carried one.
+
 ## Managed model pricing
 
 The model-pricing document is a strict, dynamically watched USD catalog. Every model listed in `runtime.llm.models` must have an exact price entry; the pricing document may be a superset so operators can publish a new price before adding the model to the Runtime catalog. This price-first order keeps every live generation valid.

@@ -114,6 +114,14 @@ func (c *appRuntimeConfig) current() runtimeconfig.Config {
 	return c.remote.Current().Config
 }
 
+// fcE2BSDKRollout is the live Diamond rollout for the FC/E2B SDK transport.
+func (c *appRuntimeConfig) fcE2BSDKRollout() runtimeconfig.FCE2BSDKRolloutSnapshot {
+	if c == nil || c.remote == nil {
+		return runtimeconfig.FCE2BSDKRolloutSnapshot{}
+	}
+	return c.remote.FCE2BSDKRollout()
+}
+
 func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 	raw := c.current()
 	runtimeProviders := runtimeconfig.RuntimeProvidersSnapshot{}

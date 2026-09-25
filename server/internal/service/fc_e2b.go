@@ -1134,14 +1134,6 @@ type fcE2BTaskScope struct {
 func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner CommandRunner) *FCE2BLauncher {
 	if runner == nil {
 		runner = defaultFCE2BCommandRunner()
-		if gated, ok := runner.(FCE2BRolloutRunner); ok && gated.Rollout.Enabled() {
-			slog.Info("FC/E2B SDK rollout enabled",
-				"workspaces", len(gated.Rollout.WorkspaceIDs),
-				"agents", len(gated.Rollout.AgentIDs),
-				"runtimes", len(gated.Rollout.RuntimeIDs),
-				"percent", gated.Rollout.Percent,
-			)
-		}
 	}
 	return &FCE2BLauncher{
 		Queries:          q,

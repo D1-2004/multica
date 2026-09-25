@@ -22,6 +22,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
 
 // requireFCE2BSDKAccepts panics when the SDK transport cannot decode an argv
@@ -562,19 +563,19 @@ func TestSDKCommandRunnerRejectedCreateTextMatchesCLI(t *testing.T) {
 }
 
 func TestParseFCE2BSDKRollout(t *testing.T) {
-	for _, raw := range []string{"", "  ", "{}"} {
+	for _, raw := range []string{"", "  ", "{}", `{"enabled":false,"agent_ids":["22222222-2222-2222-2222-222222222222"]}`} {
 		rollout, err := ParseFCE2BSDKRollout(raw)
-		if err != nil || rollout.Enabled() {
-			t.Fatalf("%q = %#v, %v; want disabled", raw, rollout, err)
+		if err != nil || fcE2BRolloutActive(rollout) {
+			t.Fatalf("%q = %#v, %v; want inactive", raw, rollout, err)
 		}
 	}
-	rollout, err := ParseFCE2BSDKRollout(`{"workspace_ids":[" 11111111-1111-1111-1111-111111111111 "],"agent_ids":["22222222-2222-2222-2222-222222222222"],"percent":5}`)
-	if err != nil || !rollout.Enabled() || rollout.WorkspaceIDs[0] != "11111111-1111-1111-1111-111111111111" || rollout.Percent != 5 {
+	rollout, err := ParseFCE2BSDKRollout(`{"enabled":true,"workspace_ids":[" 11111111-1111-1111-1111-111111111111 "],"agent_ids":["22222222-2222-2222-2222-222222222222"],"percent":5}`)
+	if err != nil || !fcE2BRolloutActive(rollout) || rollout.WorkspaceIDs[0] != "11111111-1111-1111-1111-111111111111" || rollout.Percent != 5 {
 		t.Fatalf("rollout = %#v, %v", rollout, err)
 	}
 	for _, raw := range []string{
-		`{"percent":101}`, `{"percent":-1}`, `{"agent_ids":["agent-1"]}`, `{"agent_ids":["00000000-0000-0000-0000-000000000000"]}`,
-		`{"workspaces":["11111111-1111-1111-1111-111111111111"]}`, `{"percent":5}{}`, `[]`, `true`,
+		`{"enabled":true,"percent":101}`, `{"percent":-1}`, `{"agent_ids":["agent-1"]}`, `{"agent_ids":["00000000-0000-0000-0000-000000000000"]}`,
+		`{"workspaces":["11111111-1111-1111-1111-111111111111"]}`, `{"percent":5}{}`, `[]`, `true`, `{"enabled":"yes"}`,
 	} {
 		if _, err := ParseFCE2BSDKRollout(raw); err == nil {
 			t.Fatalf("invalid rollout accepted: %s", raw)
@@ -591,26 +592,28 @@ func TestFCE2BSDKRolloutSelectsOnlyMatchingScope(t *testing.T) {
 		scope   FCE2BScope
 		want    bool
 	}{
-		{"empty rollout", FCE2BSDKRollout{}, FCE2BScope{WorkspaceID: workspace, AgentID: agent, RuntimeID: runtime}, false},
-		{"agent listed", FCE2BSDKRollout{AgentIDs: []string{agent.String()}}, FCE2BScope{WorkspaceID: workspace, AgentID: agent}, true},
-		{"runtime listed", FCE2BSDKRollout{RuntimeIDs: []string{runtime.String()}}, FCE2BScope{RuntimeID: runtime}, true},
-		{"workspace listed", FCE2BSDKRollout{WorkspaceIDs: []string{workspace.String()}}, FCE2BScope{WorkspaceID: workspace, AgentID: agent}, true},
-		{"unlisted scope", FCE2BSDKRollout{WorkspaceIDs: []string{workspace.String()}, AgentIDs: []string{agent.String()}}, other, false},
-		{"unscoped with list", FCE2BSDKRollout{WorkspaceIDs: []string{workspace.String()}}, FCE2BScope{}, false},
-		{"unscoped below 100", FCE2BSDKRollout{Percent: 99}, FCE2BScope{}, false},
-		{"everything at 100", FCE2BSDKRollout{Percent: 100}, FCE2BScope{}, true},
+		{"empty rollout", FCE2BSDKRollout{Enabled: true}, FCE2BScope{WorkspaceID: workspace, AgentID: agent, RuntimeID: runtime}, false},
+		{"master switch off", FCE2BSDKRollout{AgentIDs: []string{agent.String()}, Percent: 100}, FCE2BScope{AgentID: agent}, false},
+		{"agent listed", FCE2BSDKRollout{Enabled: true, AgentIDs: []string{agent.String()}}, FCE2BScope{WorkspaceID: workspace, AgentID: agent}, true},
+		{"runtime listed", FCE2BSDKRollout{Enabled: true, RuntimeIDs: []string{runtime.String()}}, FCE2BScope{RuntimeID: runtime}, true},
+		{"workspace listed", FCE2BSDKRollout{Enabled: true, WorkspaceIDs: []string{workspace.String()}}, FCE2BScope{WorkspaceID: workspace, AgentID: agent}, true},
+		{"unlisted scope", FCE2BSDKRollout{Enabled: true, WorkspaceIDs: []string{workspace.String()}, AgentIDs: []string{agent.String()}}, other, false},
+		{"unscoped with list", FCE2BSDKRollout{Enabled: true, WorkspaceIDs: []string{workspace.String()}}, FCE2BScope{}, false},
+		{"unscoped below 100", FCE2BSDKRollout{Enabled: true, Percent: 99}, FCE2BScope{}, false},
+		{"everything at 100", FCE2BSDKRollout{Enabled: true, Percent: 100}, FCE2BScope{}, true},
 	}
 	for _, tc := range cases {
-		if got := tc.rollout.Selects(tc.scope); got != tc.want {
-			t.Fatalf("%s: Selects = %v, want %v", tc.name, got, tc.want)
+		if got := fcE2BRolloutSelects(tc.rollout, tc.scope); got != tc.want {
+			t.Fatalf("%s: selects = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 	// Percent buckets by agent first, deterministically, and roughly evenly.
+	quarter := FCE2BSDKRollout{Enabled: true, Percent: 25}
 	selected := 0
 	for i := 0; i < 2000; i++ {
 		scope := FCE2BScope{WorkspaceID: workspace, AgentID: uuid.New()}
-		first := FCE2BSDKRollout{Percent: 25}.Selects(scope)
-		if first != (FCE2BSDKRollout{Percent: 25}).Selects(scope) {
+		first := fcE2BRolloutSelects(quarter, scope)
+		if first != fcE2BRolloutSelects(quarter, scope) {
 			t.Fatal("percent bucketing is not stable")
 		}
 		if first {
@@ -635,7 +638,8 @@ func (r *recordingFCE2BRunner) Run(context.Context, string, []string, []string) 
 func TestFCE2BRolloutRunnerDispatchesWithoutFallback(t *testing.T) {
 	agent := uuid.New()
 	cli, sdk := &recordingFCE2BRunner{}, &recordingFCE2BRunner{err: errors.New("sdk failed")}
-	runner := FCE2BRolloutRunner{CLI: cli, SDK: sdk, Rollout: FCE2BSDKRollout{AgentIDs: []string{agent.String()}}}
+	rollout := FCE2BSDKRollout{Enabled: true, AgentIDs: []string{agent.String()}}
+	runner := FCE2BRolloutRunner{CLI: cli, SDK: sdk, Rollout: func() (FCE2BSDKRollout, string) { return rollout, fcE2BRolloutSourceDiamond }}
 	launcher := &FCE2BLauncher{Runner: runner}
 
 	if err := launcher.checkSandboxReady(context.Background(), "sbx_1"); err != nil || cli.calls != 1 || sdk.calls != 0 {
@@ -649,18 +653,71 @@ func TestFCE2BRolloutRunnerDispatchesWithoutFallback(t *testing.T) {
 	}
 }
 
+func TestFCE2BRolloutRunnerFollowsDiamondAndFallsBackToEnv(t *testing.T) {
+	agent := uuid.New()
+	t.Setenv(FCE2BSDKRolloutEnv, `{"enabled":true,"agent_ids":["`+agent.String()+`"]}`)
+	var mu sync.Mutex
+	snapshot := runtimeconfig.FCE2BSDKRolloutSnapshot{}
+	runner := NewFCE2BRolloutRunner(func() runtimeconfig.FCE2BSDKRolloutSnapshot {
+		mu.Lock()
+		defer mu.Unlock()
+		return snapshot
+	})
+	cli, sdk := &recordingFCE2BRunner{}, &recordingFCE2BRunner{}
+	runner.CLI, runner.SDK = cli, sdk
+	ctx := WithFCE2BScope(context.Background(), FCE2BScope{AgentID: agent})
+	run := func() {
+		if _, err := runner.Run(ctx, "e2b", []string{"sandbox", "exec", "sbx_1", "true"}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	set := func(next runtimeconfig.FCE2BSDKRolloutSnapshot) {
+		mu.Lock()
+		snapshot = next
+		mu.Unlock()
+	}
+
+	// No Diamond document yet: the environment fallback selects the agent.
+	run()
+	if cli.calls != 0 || sdk.calls != 1 {
+		t.Fatalf("env fallback: cli=%d sdk=%d", cli.calls, sdk.calls)
+	}
+	// A present Diamond document wins, including its master switch, and
+	// applies to the very next operation.
+	set(runtimeconfig.FCE2BSDKRolloutSnapshot{Present: true, Rollout: FCE2BSDKRollout{Enabled: false, AgentIDs: []string{agent.String()}}})
+	run()
+	if cli.calls != 1 || sdk.calls != 1 {
+		t.Fatalf("diamond switch off: cli=%d sdk=%d", cli.calls, sdk.calls)
+	}
+	set(runtimeconfig.FCE2BSDKRolloutSnapshot{Present: true, Rollout: FCE2BSDKRollout{Enabled: true, Percent: 100}})
+	run()
+	if cli.calls != 1 || sdk.calls != 2 {
+		t.Fatalf("diamond full rollout: cli=%d sdk=%d", cli.calls, sdk.calls)
+	}
+	// Removing the document returns to the fallback.
+	set(runtimeconfig.FCE2BSDKRolloutSnapshot{Present: false})
+	run()
+	if cli.calls != 1 || sdk.calls != 3 {
+		t.Fatalf("diamond removed: cli=%d sdk=%d", cli.calls, sdk.calls)
+	}
+}
+
 func TestFCE2BDefaultTransportIsCLI(t *testing.T) {
 	t.Setenv(FCE2BSDKRolloutEnv, "")
 	runner, ok := NewFCE2BLauncher(nil, nil, FCE2BConfig{}, nil).Runner.(FCE2BRolloutRunner)
-	if !ok || runner.Rollout.Enabled() || runner.CLI != (OSCommandRunner{}) || runner.Rollout.Selects(FCE2BScope{WorkspaceID: uuid.New(), AgentID: uuid.New()}) {
+	if !ok || runner.CLI != (OSCommandRunner{}) {
 		t.Fatalf("default runner = %#v", runner)
 	}
+	if rollout, source := runner.Rollout(); fcE2BRolloutActive(rollout) || source != fcE2BRolloutSourceEnv ||
+		fcE2BRolloutSelects(rollout, FCE2BScope{WorkspaceID: uuid.New(), AgentID: uuid.New()}) {
+		t.Fatalf("default rollout = %#v from %s", rollout, source)
+	}
 	t.Setenv(FCE2BSDKRolloutEnv, `{"percent":"all"}`)
-	if runner := defaultFCE2BCommandRunner().(FCE2BRolloutRunner); runner.Rollout.Enabled() {
+	if rollout, _ := NewFCE2BRolloutRunner(nil).Rollout(); fcE2BRolloutActive(rollout) {
 		t.Fatal("an invalid rollout must keep every operation on the CLI")
 	}
-	t.Setenv(FCE2BSDKRolloutEnv, `{"percent":100}`)
-	if runner := defaultFCE2BCommandRunner().(FCE2BRolloutRunner); !runner.Rollout.Selects(FCE2BScope{}) {
-		t.Fatal("a full rollout was not applied")
+	t.Setenv(FCE2BSDKRolloutEnv, `{"enabled":true,"percent":100}`)
+	if rollout, _ := NewFCE2BRolloutRunner(func() runtimeconfig.FCE2BSDKRolloutSnapshot { return runtimeconfig.FCE2BSDKRolloutSnapshot{} }).Rollout(); !fcE2BRolloutSelects(rollout, FCE2BScope{}) {
+		t.Fatal("a full fallback rollout was not applied while Diamond has no document")
 	}
 }

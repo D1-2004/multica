@@ -85,7 +85,7 @@ func (h *Handler) ListFCE2BTemplates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	templates, err := service.ListFCE2BTemplates(fcE2BWorkspaceScope(r, workspaceID), h.currentConfig().FCE2B, nil)
+	templates, err := service.ListFCE2BTemplates(fcE2BWorkspaceScope(r, workspaceID), h.currentConfig().FCE2B, h.fcE2BRunner())
 	if err != nil {
 		slog.Error("FC/E2B template list failed", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -203,7 +203,7 @@ func (h *Handler) createAliyunFCRuntime(
 			return
 		}
 	}
-	templates, err := service.ListFCE2BTemplates(fcE2BWorkspaceScope(r, workspaceID), h.currentConfig().FCE2B, nil)
+	templates, err := service.ListFCE2BTemplates(fcE2BWorkspaceScope(r, workspaceID), h.currentConfig().FCE2B, h.fcE2BRunner())
 	if err != nil {
 		slog.Error("FC/E2B template validation failed during runtime creation", "error", err)
 		writeError(w, http.StatusServiceUnavailable, err.Error())
@@ -1167,4 +1167,12 @@ func fcE2BWorkspaceScope(r *http.Request, workspaceID string) context.Context {
 		return r.Context()
 	}
 	return service.WithFCE2BScope(r.Context(), service.FCE2BScope{WorkspaceID: parsed})
+}
+
+// fcE2BRunner is the launcher's transport, which follows the live SDK rollout.
+func (h *Handler) fcE2BRunner() service.CommandRunner {
+	if h.FCE2BLauncher == nil {
+		return nil
+	}
+	return h.FCE2BLauncher.Runner
 }

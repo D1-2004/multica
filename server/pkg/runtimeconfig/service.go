@@ -30,6 +30,7 @@ type Service struct {
 	snapshot         atomic.Pointer[Snapshot]
 	runtimeProviders atomic.Pointer[RuntimeProvidersSnapshot]
 	modelPricing     atomic.Pointer[ModelPricingSnapshot]
+	fcE2BSDKRollout  atomic.Pointer[FCE2BSDKRolloutSnapshot]
 	logger           *slog.Logger
 	prod             bool
 
@@ -38,6 +39,7 @@ type Service struct {
 	// locks could admit two individually valid updates as one invalid pair.
 	applyMu                 sync.Mutex
 	runtimeProvidersApplyMu sync.Mutex
+	fcE2BSDKRolloutApplyMu  sync.Mutex
 	mu                      sync.Mutex
 	closeOnce               sync.Once
 	closeFunc               func() error
