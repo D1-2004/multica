@@ -269,3 +269,21 @@ func TestProvisioningWaitReasonOnOff(t *testing.T) {
 		}
 	}
 }
+
+func TestFCSandboxCreateIncludesTaskInstrumentation(t *testing.T) {
+	runner := &fakeCommandRunner{out: []string{"Sandbox created with ID sbx_observed using template fixture"}}
+	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{CLIPath: "e2b-test", SandboxReadyTimeout: time.Minute}, runner)
+	var stages []string
+	ctx := startupobs.WithRecorder(context.Background(), func(_ context.Context, name string, _ time.Time, err error) {
+		if err != nil {
+			t.Error(err)
+		}
+		stages = append(stages, name)
+	})
+	if _, err := launcher.createSandbox(ctx, "fixture"); err != nil {
+		t.Fatal(err)
+	}
+	if len(stages) != 2 || stages[0] != "fc_command_sandbox_create" || stages[1] != "fc_create" {
+		t.Fatalf("create bypassed startup instrumentation: %v", stages)
+	}
+}

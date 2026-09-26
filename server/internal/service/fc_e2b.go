@@ -2716,7 +2716,9 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 	return "", coldStart, lastErr
 }
 
-func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (string, error) {
+func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (sandboxID string, resultErr error) {
+	finish := startupobs.Start(ctx, "fc_create")
+	defer func() { finish(resultErr) }()
 	template = strings.TrimSpace(template)
 	if template == "" {
 		return "", errors.New("FC/E2B runtime has no template")
