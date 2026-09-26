@@ -33,10 +33,14 @@ const (
 	// reading and fails explicitly instead of truncating a receipt. Callers
 	// accept at most 64 KiB of receipt.
 	fcE2BSDKMaxOutputBytes = 4 << 20
-	// fcE2BSDKMaxStderrBytes bounds the stderr one command may write. The CLI
-	// kept all of it, so this bound only guards memory and sits far above any
-	// progress output. Below it, stderr volume never fails a command.
-	fcE2BSDKMaxStderrBytes = 32 << 20
+	// fcE2BSDKMaxStderrBytes bounds the stderr one command may write. envd
+	// buffers about 20 MiB of a process's output in 16 KiB events and, once
+	// a burst outruns the reader, silently drops the rest while still
+	// reporting a clean exit; later stdout is lost with it. Both bounds
+	// together stay at 16 MiB, below that buffer, so output that fits is
+	// always complete and anything larger fails explicitly instead of
+	// arriving truncated. Launcher commands print far less.
+	fcE2BSDKMaxStderrBytes = 12 << 20
 	// fcE2BSDKStderrTailBytes is the end of stderr kept for the error text.
 	fcE2BSDKStderrTailBytes = 256 << 10
 	// fcE2BSDKMaxTemplateListBytes bounds the template list response.

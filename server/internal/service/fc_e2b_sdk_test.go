@@ -464,6 +464,15 @@ func TestSDKCommandRunnerKeepsStderrTailInsteadOfFailing(t *testing.T) {
 	}
 }
 
+// envd buffers about 20 MiB of output and drops the rest of a burst while
+// still reporting a clean exit (measured on FC: 16 MiB complete, 20 MiB lost
+// its last 128 KiB). The default bounds keep every accepted result below it.
+func TestSDKCommandRunnerOutputBoundsStayBelowTheEnvdBuffer(t *testing.T) {
+	if total := fcE2BSDKMaxOutputBytes + fcE2BSDKMaxStderrBytes; total > 16<<20 {
+		t.Fatalf("stdout and stderr bounds allow %d bytes, above the complete-delivery range", total)
+	}
+}
+
 func TestSDKCommandRunnerBoundsStderrMemory(t *testing.T) {
 	fake := newFakeFCE2BServer(t)
 	fake.events = func(fakeFCE2BStart) ([]map[string]any, bool) {
