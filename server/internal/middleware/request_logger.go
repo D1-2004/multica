@@ -57,6 +57,11 @@ const agentMCPConnectPathPrefix = "/api/mcp/connect/"
 // delivery prints a replayable URL into the structured log stream.
 func redactWebhookPath(path string) string {
 	prefix := webhookIngressPathPrefix
+	if strings.HasPrefix(path, "/api/mcp/workspaces/") {
+		if i := strings.Index(path, "/connect/"); i >= 0 {
+			return path[:i+len("/connect/")] + "[redacted]"
+		}
+	}
 	if strings.HasPrefix(path, agentMCPConnectPathPrefix) {
 		prefix = agentMCPConnectPathPrefix
 	} else if !strings.HasPrefix(path, webhookIngressPathPrefix) {

@@ -1,3 +1,4 @@
+import { WorkspaceMCPConnectionsSchema, WorkspaceMCPLinkSchema, type WorkspaceMCPConnection, type CreateWorkspaceMCPConnection } from "./workspace-mcp-schema";
 import {ModelProbeSchema, GlobalModelsSchema, EMPTY_GLOBAL_MODELS, DeveloperCapabilitiesSchema, DiscoveredModelsSchema, globalModelsWire, type GlobalModels, type ModelProvider} from "./global-models-schema";
 import { DSHProfileSchema, type DSHProfileStatus } from "./dsh-profile-schema";
 import { AgentDshPluginConfigSchema } from "./agent-dsh-plugin-config-schema";
@@ -4079,6 +4080,28 @@ export class ApiClient {
     await this.fetch(`/api/agents/${agentId}/skills/${skillId}`, {
       method: "DELETE",
     });
+  }
+
+  async listWorkspaceMCPConnections(workspaceId: string): Promise<WorkspaceMCPConnection[]> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/mcp-tokens/`);
+    return parseWithFallback(raw, WorkspaceMCPConnectionsSchema, [], {
+      endpoint: "GET /api/workspaces/:id/mcp-tokens", includeReceived: false,
+    });
+  }
+
+  async createWorkspaceMCPConnection(workspaceId: string, data: CreateWorkspaceMCPConnection): Promise<{ id: string; url: string }> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/mcp-tokens/`, {
+      method: "POST", body: JSON.stringify(data),
+    });
+    const result = parseWithFallback(raw, WorkspaceMCPLinkSchema, { id: "", url: "" }, {
+      endpoint: "POST /api/workspaces/:id/mcp-tokens", includeReceived: false,
+    });
+    if (!result.id || !result.url) throw new Error("Invalid MCP connection response");
+    return result;
+  }
+
+  async revokeWorkspaceMCPConnection(workspaceId: string, id: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/mcp-tokens/${id}/revoke`, { method: "POST" });
   }
 
   // Personal Access Tokens

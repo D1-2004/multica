@@ -622,6 +622,38 @@
           "description": "The configuration contains your API Key. Store it only on your device and revoke it from API Tokens when you stop using that client."
         }
       }
+    },
+    "workspace": {
+      "description": "Create revocable MCP links for this workspace. Paste a link into your AI client to connect.",
+      "scope": "Only this workspace: {{workspace}}",
+      "scope_hint": "Connections act with your current workspace permissions, limited to the access you select below.",
+      "disabled": "Workspace MCP is not enabled on this deployment.",
+      "admin_only": "Ask a workspace owner or admin to create a connection.",
+      "name": "Connection name",
+      "name_placeholder": "For example, my OpenCode",
+      "permission": "Access",
+      "read": "Read only",
+      "write": "Read and write",
+      "expiry": "Expires in",
+      "days": "{{count}} days",
+      "create": "Create MCP link",
+      "connections": "Connections",
+      "retry": "Could not load connections. Retry",
+      "empty": "No connections yet.",
+      "active": "Active",
+      "expired": "Expired",
+      "revoked": "Revoked",
+      "expires": "Expires: {{date}}",
+      "revoke": "Revoke",
+      "ready": "Your MCP link is ready",
+      "one_time": "Copy this link now. It is shown only once and grants access to this workspace.",
+      "link": "Workspace MCP link",
+      "client_hint": "Paste the full link into OpenCode or another remote MCP client. No separate token or Authorization header is needed.",
+      "copy": "Copy link",
+      "copied": "Copied",
+      "create_failed": "Could not create the connection. Please retry.",
+      "revoke_failed": "Could not revoke the connection. Please retry.",
+      "revoke_hint": "Revoke “{{name}}”? Its link will stop working immediately."
     }
   },
   "tokens": {
