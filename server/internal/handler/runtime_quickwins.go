@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -37,20 +38,25 @@ func taskDingTalkReplyCommand(raw []byte, taskID string) string {
 // per-skill cache/progressive download path; partial mixed delivery would lose
 // inline bundles when an older daemon rebuilds Skills from SkillRefs.
 func inlineSmallSkillSet(skills []service.AgentSkillData) bool {
-	if len(skills) == 0 || len(skills) > 8 {
+	// Every claim includes the platform's built-ins. Keep a bounded complete
+	// set large enough for a real minimal agent, and account for the entire
+	// wire representation (metadata and JSON escaping included).
+	if len(skills) == 0 || len(skills) > 32 {
 		return false
 	}
-	var size int64
+	// Reject large source payloads before allocating their encoded copy.
+	var rawBytes int64
 	for _, skill := range skills {
-		size += int64(len(skill.Content))
+		rawBytes += int64(len(skill.Content)) + int64(len(skill.Config)) + int64(len(skill.Description))
 		for _, file := range skill.Files {
-			size += int64(len(file.Content))
+			rawBytes += int64(len(file.Content))
 		}
-		if size > 128*1024 {
+		if rawBytes > 512*1024 {
 			return false
 		}
 	}
-	return true
+	encoded, err := json.Marshal(skills)
+	return err == nil && len(encoded) <= 512*1024
 }
 
 func appendTaskReplyCommand(instruction, command string) string {

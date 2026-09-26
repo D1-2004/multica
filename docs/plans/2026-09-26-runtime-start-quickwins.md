@@ -102,10 +102,26 @@ it does not submit runners. Completion emits the persisted event. Old binaries
 can continue polling during rollout; add new Diamond keys only after deployment.
 A missed completion write or notification is repaired by the original sweeper.
 
-Small-bundle batching is server-side at claim (complete sets of at most 8 bundles
-and 128 KiB content); no FC image upgrade is needed. Larger sets retain refs and
+Small-bundle batching is server-side at claim (complete sets of at most 32 bundles
+and 512 KiB encoded JSON); no FC image upgrade is needed. Larger sets retain refs and
 progressive caching. Hot exec coalescing caches only a per-launch, per-sandbox
 capability receipt; no capability cache crosses tasks or sandbox replacement.
+
+### 2026-09-27: make bounded batching reachable for real agents
+
+The original 8-bundle/128-KiB gate was unreachable: every claim includes 11
+mandatory built-in bundles (306454 content bytes before JSON encoding), even
+when an agent has no workspace skills. The revised limit includes that baseline
+and the DWS policy bundle without dropping any skill or changing daemon/image
+contracts. The gate bounds the entire serialized bundle array, including names,
+descriptions, configuration, manifests and JSON escaping, rather than only file
+contents. A larger set still uses all refs; mixed inline/ref responses remain
+unsupported by older daemons. OFF retains the existing progressive cache path.
+
+The regression uses the actual embedded built-ins plus a DWS policy and a small
+workspace skill. This guards against another permanently unreachable rollout;
+separate cases reject oversized supporting files, metadata and bundle counts.
+No new production fault-injection or runtime configuration is introduced.
 
 Validation on 2026-09-26: targeted service/handler/DSH/Profile/runtimeconfig/server
 checks pass, as do -race and go vet. The baseline health test also returns 503 at
