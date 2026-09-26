@@ -155,17 +155,24 @@ func (h *Handler) handleSemanticaRelayCall(w http.ResponseWriter, r *http.Reques
 		fail("Semantica rate limit or shared store unavailable")
 		return
 	}
+	// Authorization and rate checks have finished. Commit JSON headers before
+	// the slow upstream call so the public relay's header deadline does not
+	// cancel an otherwise valid MCP request. Body completion remains bounded
+	// by ctx, and no success result is emitted before the upstream finishes.
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	_ = http.NewResponseController(w).Flush()
 	result, err := relay.call(ctx, args)
+	outcome = "ok"
 	if err != nil {
 		outcome = "upstream_error"
-		fail("Semantica upstream unavailable")
-		return
-	}
-	outcome = "ok"
-	if result.IsError {
+		result = multicaMCPToolResult{IsError: true, Content: []multicaMCPContent{{Type: "text", Text: "Semantica upstream unavailable"}}}
+	} else if result.IsError {
 		outcome = "tool_error"
 	}
-	h.writeMulticaMCPResult(w, id, result)
+	_ = json.NewEncoder(w).Encode(multicaMCPResponse{JSONRPC: "2.0", ID: id, Result: result})
 }
 
 func semanticaJSONObject(raw []byte) bool {

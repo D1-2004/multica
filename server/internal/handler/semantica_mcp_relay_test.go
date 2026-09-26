@@ -186,3 +186,33 @@ func TestSemanticaResponseBoundsAndRPC(t *testing.T) {
 		})
 	}
 }
+
+// The public sandbox relay waits only 30 seconds for response headers, while
+// Semantica may need 45 seconds. Scaled timings reproduce that real boundary.
+func TestSemanticaReturnsHeadersBeforeSlowUpstream(t *testing.T) {
+	h, _ := semanticaFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`)
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.handleSemanticaRelayCall(w, r, json.RawMessage(`1`), json.RawMessage(`{"method":"tools/list"}`))
+	}))
+	defer server.Close()
+	transport := &http.Transport{ResponseHeaderTimeout: 50 * time.Millisecond}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	req, _ := http.NewRequest(http.MethodPost, server.URL, nil)
+	req.Header = semanticaRequest().Header
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("outer relay timed out before MCP result: %v", err)
+	}
+	defer resp.Body.Close()
+	var result multicaMCPResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 || result.Result == nil || result.Error != nil {
+		t.Fatalf("invalid completed result: %+v", result)
+	}
+}

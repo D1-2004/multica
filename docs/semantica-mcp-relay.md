@@ -26,7 +26,12 @@ Only `search_knowledge`, `query_knowledge_cypher`,
 `method=tools/list` returns their current upstream schemas; `method=tools/call`
 requires `tool_name` and object `arguments`. The upstream enforces read-only
 query semantics. Responses are limited to 2 MiB and calls to 45 seconds; redirects
-are rejected. SSE notifications are skipped until the matching JSON-RPC result.
+are rejected. After task authorization and the shared rate checks, the handler
+flushes the JSON response headers before waiting on Semantica. This keeps the
+existing public sandbox relay's 30-second response-header deadline from
+prematurely cancelling the 45-second call; the full JSON result still arrives
+only when the upstream completes. No public/production relay change is needed.
+SSE notifications are skipped until the matching JSON-RPC result.
 Audit events contain task/Agent/workspace/tool/outcome/duration, never contents
 or credentials.
 
@@ -57,3 +62,8 @@ advance production/manual validation. Send a real message as 冬翔 to 东翔测
 in pre, requesting schema then an MCP search. Correlate the DingTalk receipt,
 Multica task, `semantica_mcp_relay_call` audit event and returned schema/search
 summary. Unit tests and direct probes are supporting evidence, not acceptance.
+
+Before rolling back to a binary that predates this feature, remove the new
+Diamond field first: the existing strict config parser rejects unknown fields
+at startup. During forward rollout, omit the field until every replica runs
+the new binary, then publish the explicit pre-release value.
