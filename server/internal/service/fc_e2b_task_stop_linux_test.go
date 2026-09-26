@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,38 +17,93 @@ import (
 )
 
 // The script runs for real, through the same `/bin/bash -l -c` wrapper both
-// transports use, against the process shapes cancellation left behind: tool
-// commands in their own process group or session, a child that cleared its
-// environment, an orphan re-parented to init, and one that ignores SIGTERM.
-func TestFCE2BTaskStopScriptEndsOnlyTheTaskProcessTree(t *testing.T) {
-	for _, tool := range []string{"/bin/bash", "setsid", "sleep", "getconf"} {
+// transports use, against two tasks sharing a sandbox. The processes live in
+// a session whose live leader is not the task's, as the runner does under
+// envd. Run as root, the processes belong to another user, so the task marker
+// is read the way FC sandboxes allow: under that user's uid, without
+// CAP_SYS_PTRACE.
+func TestFCE2BTaskStopScriptEndsOnlyTheTaskProcesses(t *testing.T) {
+	for _, tool := range []string{"/bin/bash", "setsid", "sleep", "env", "sh"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s is unavailable", tool)
 		}
 	}
-	runtimeID := uuid.New().String()
+	runtimeID, otherRuntimeID := uuid.New().String(), uuid.New().String()
+	taskID, otherTaskID := uuid.New().String(), uuid.New().String()
 	port, otherPort := 20000+os.Getpid()%9000, 30000+os.Getpid()%9000
-	base := 9000 + os.Getpid()%500*10
-	sleeper := func(i int) string { return "sleep " + strconv.Itoa(base+i) }
-	runner := func(port int, body string) string {
-		return fmt.Sprintf(`bash -c '%s' fake-runner --runtime-id %s --provider pi --health-port %d &`, body, runtimeID, port)
+	base := 9000 + os.Getpid()%400*10
+	n := func(i int) int { return base + i }
+	dir, err := os.MkdirTemp("", "fc-e2b-task-stop-")
+	if err != nil {
+		t.Fatal(err)
 	}
-	fixture := strings.Join([]string{
-		// An orphan left before this task's runner started survives.
-		fmt.Sprintf(`setsid bash -c '%s &'`, sleeper(1)),
-		"sleep 1.2",
-		// This task's runner: a child, a tool session with a member, and an
-		// orphan it leaves in its own session.
-		runner(port, fmt.Sprintf(`%s & setsid bash -c "%s & exec %s" & setsid bash -c "%s &"; wait`, sleeper(2), sleeper(3), sleeper(4), sleeper(5))),
-		// A second process of the same runner that ignores SIGTERM.
-		runner(port, fmt.Sprintf(`trap "" TERM; %s & wait`, sleeper(8))),
-		// Another task's runner and an unrelated process survive.
-		runner(otherPort, fmt.Sprintf(`%s & wait`, sleeper(6))),
-		sleeper(7) + " &",
-		"sleep 1",
-	}, "\n")
-	// livePIDs lists running processes whose command line is exactly cmd.
-	livePIDs := func(cmd string) []int {
+	defer os.RemoveAll(dir)
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(dir, "fixture.sh")
+	if err := os.WriteFile(fixture, []byte(fmt.Sprintf(`case $1 in
+target)
+  # A child, a tool session with a member, and orphans in their own sessions:
+  # marked by the inherited task id, with MULTICA_TASK_ID blanked as for A2A
+  # children, and one that cleared its environment.
+  sleep %[2]d &
+  setsid bash -c 'sleep %[3]d & exec sleep %[4]d' &
+  setsid bash -c 'sleep %[5]d &'
+  MULTICA_TASK_ID= setsid bash -c 'sleep %[10]d &'
+  env -i PATH="$PATH" setsid sh -c 'sleep %[11]d &'
+  # Cleared orphans left in a tool session, its leader alive and gone.
+  setsid bash -c 'env -i PATH="$PATH" sh -c "sleep %[12]d &"; exec sleep %[13]d' &
+  setsid bash -c 'env -i PATH="$PATH" sh -c "sleep %[14]d &"; sleep %[15]d &'
+  wait;;
+stubborn)
+  trap '' TERM
+  sleep %[8]d &
+  wait;;
+other)
+  # PRI-61: another task's orphan, started after this task's runner.
+  sleep %[9]d &
+  setsid bash -c 'sleep %[6]d &'
+  wait;;
+collide)
+  sleep %[16]d &
+  wait;;
+service)
+  setsid bash -c '(exec -a /usr/local/libexec/multica-provider-http-proxy sleep %[17]d) &';;
+esac
+`, 0, n(2), n(3), n(4), n(5), n(6), 0, n(8), n(9), n(10), n(11), n(12), n(13), n(14), n(15), n(16), n(17))), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mine := fmt.Sprintf("MULTICA_TASK_ID=%s FC_E2B_TASK_ID=%s", taskID, taskID)
+	theirs := fmt.Sprintf("MULTICA_TASK_ID=%s FC_E2B_TASK_ID=%s", otherTaskID, otherTaskID)
+	runner := func(env, role, runtimeID string, port int) string {
+		return fmt.Sprintf("env %s bash %s %s --runtime-id %s --provider pi --health-port %d &", env, fixture, role, runtimeID, port)
+	}
+	harness := exec.Command("/bin/bash", "-c", strings.Join([]string{
+		// An orphan without a task id, left before the runners.
+		fmt.Sprintf("setsid bash -c 'sleep %d &'", n(1)),
+		runner(mine, "target", runtimeID, port),
+		// A second process of the runner that ignores SIGTERM.
+		runner(mine, "stubborn", runtimeID, port),
+		runner(theirs, "other", otherRuntimeID, otherPort),
+		// Another task's runner on a colliding health port.
+		runner(theirs, "collide", runtimeID, port),
+		// A shared sandbox service that still carries this task's id.
+		fmt.Sprintf("env %s bash %s service", mine, fixture),
+		fmt.Sprintf("sleep %d &", n(7)),
+		fmt.Sprintf("exec sleep %d", n(0)),
+	}, "\n"))
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "MULTICA_TASK_ID=") && !strings.HasPrefix(kv, "FC_E2B_TASK_ID=") {
+			harness.Env = append(harness.Env, kv)
+		}
+	}
+	harness.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if os.Geteuid() == 0 {
+		harness.SysProcAttr.Credential = &syscall.Credential{Uid: 65534, Gid: 65534}
+	}
+	// livePIDs lists running processes started as `<prog> <arg>`.
+	livePIDs := func(arg int) []int {
 		entries, _ := os.ReadDir("/proc")
 		var pids []int
 		for _, entry := range entries {
@@ -56,7 +112,7 @@ func TestFCE2BTaskStopScriptEndsOnlyTheTaskProcessTree(t *testing.T) {
 				continue
 			}
 			line, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-			if err != nil || strings.TrimRight(strings.ReplaceAll(string(line), "\x00", " "), " ") != cmd {
+			if argv := strings.Split(strings.TrimRight(string(line), "\x00"), "\x00"); err != nil || len(argv) != 2 || argv[1] != strconv.Itoa(arg) {
 				continue
 			}
 			stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
@@ -69,33 +125,36 @@ func TestFCE2BTaskStopScriptEndsOnlyTheTaskProcessTree(t *testing.T) {
 		}
 		return pids
 	}
-	parentOf := func(pid int) string {
-		stat, _ := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-		if fields := strings.Fields(string(stat[strings.LastIndexByte(string(stat), ')')+1:])); len(fields) > 1 {
-			return fields[1]
-		}
-		return ""
-	}
-	alive := func(i int) bool { return len(livePIDs(sleeper(i))) > 0 }
+	alive := func(i int) bool { return len(livePIDs(n(i))) > 0 }
+	all := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 	defer func() {
-		for i := 1; i <= 8; i++ {
-			for _, pid := range livePIDs(sleeper(i)) {
+		for _, i := range all {
+			for _, pid := range livePIDs(n(i)) {
 				_ = syscall.Kill(pid, syscall.SIGKILL)
 			}
 		}
+		_ = harness.Wait()
 	}()
-	since := time.Now()
-	if err := exec.Command("/bin/bash", "-c", fixture).Run(); err != nil {
+	if err := harness.Start(); err != nil {
 		t.Fatalf("start fixture: %v", err)
 	}
-	for i := 1; i <= 8; i++ {
-		if !alive(i) {
-			t.Fatalf("fixture %d did not start", i)
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		started := 0
+		for _, i := range all {
+			if alive(i) {
+				started++
+			}
+		}
+		if started == len(all) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("fixture started %d of %d processes", started, len(all))
 		}
 	}
-	// Orphans reach PID 1 only without a subreaper; otherwise skip that case.
-	orphanAdopted := len(livePIDs(sleeper(5))) == 1 && parentOf(livePIDs(sleeper(5))[0]) == "1"
-	operation, err := parseFCE2BOperation(fcE2BTaskStopArgs("sbx_123", runtimeID, port, since))
+	// Let the short-lived session leaders exit.
+	time.Sleep(500 * time.Millisecond)
+	operation, err := parseFCE2BOperation(fcE2BTaskStopArgs("sbx_123", runtimeID, port, taskID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,12 +167,16 @@ func TestFCE2BTaskStopScriptEndsOnlyTheTaskProcessTree(t *testing.T) {
 		t.Fatalf("receipt = %#v, %v (%s)", receipt, err, out)
 	}
 	time.Sleep(300 * time.Millisecond)
-	for i, want := range map[int]bool{1: true, 2: false, 3: false, 4: false, 6: true, 7: true, 8: false} {
-		if alive(i) != want {
-			t.Fatalf("process %d alive=%v, want %v (%s)", i, !want, want, out)
+	survive := map[int]bool{
+		0: true, 1: true, 7: true, // the session leader and processes with no task id
+		6: true, 9: true, 16: true, // another task's orphan, child and colliding runner
+		11: true, // this task's orphan that cleared its environment: unprovable
+		17: true, // a shared service outside the runner's tree
+	}
+	for _, i := range all {
+		if alive(i) != survive[i] {
+			t.Errorf("process %d alive=%v, want %v", i, alive(i), survive[i])
 		}
 	}
-	if orphanAdopted && alive(5) {
-		t.Fatalf("the task's orphan survived (%s)", out)
-	}
+	t.Logf("receipt as uid %d: %s", os.Geteuid(), strings.TrimSpace(string(out)))
 }

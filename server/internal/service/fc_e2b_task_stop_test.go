@@ -18,9 +18,8 @@ import (
 )
 
 func TestFCE2BTaskStopArgsRunAsRootThroughEitherTransport(t *testing.T) {
-	runtimeID := uuid.New().String()
-	since := time.Unix(1790420000, 0)
-	args := fcE2BTaskStopArgs("sbx_123", runtimeID, 29567, since)
+	runtimeID, taskID := uuid.New().String(), uuid.New().String()
+	args := fcE2BTaskStopArgs("sbx_123", runtimeID, 29567, taskID)
 	requireFCE2BSDKAccepts(args)
 	operation, err := parseFCE2BOperation(args)
 	if err != nil || operation.exec == nil || operation.exec.Background {
@@ -30,21 +29,23 @@ func TestFCE2BTaskStopArgsRunAsRootThroughEitherTransport(t *testing.T) {
 	if request.SandboxID != "sbx_123" || request.User != "root" || request.Env["LD_PRELOAD"] != "" || len(request.Env) != 6 {
 		t.Fatalf("stop command identity = %#v", request)
 	}
-	want := fcE2BShellCommand([]string{"bash", "-c", fcE2BTaskStopScript, "fc-e2b-task-stop", runtimeID, "29567", "1790420000"})
-	if request.Command != want || !strings.HasSuffix(request.Command, " fc-e2b-task-stop "+runtimeID+" 29567 1790420000") {
+	want := fcE2BShellCommand([]string{"bash", "-c", fcE2BTaskStopScript, "fc-e2b-task-stop", runtimeID, "29567", taskID})
+	if request.Command != want || !strings.HasSuffix(request.Command, " fc-e2b-task-stop "+runtimeID+" 29567 "+taskID) {
 		t.Fatalf("stop command text = %.120q", request.Command)
 	}
 }
 
 func TestParseFCE2BTaskStopReceipt(t *testing.T) {
-	receipt, err := parseFCE2BTaskStopReceipt("login banner\n" + `{"version":2,"runners":1,"orphans":1,"found":3,"terminated":2,"killed":1,"remaining":0}` + "\n")
-	if err != nil || receipt != (fcE2BTaskStopReceipt{Version: 2, Runners: 1, Orphans: 1, Found: 3, Terminated: 2, Killed: 1}) {
+	receipt, err := parseFCE2BTaskStopReceipt("login banner\n" + `{"version":3,"runners":1,"marked":2,"unreadable":1,"found":3,"terminated":2,"killed":1,"remaining":0}` + "\n")
+	if err != nil || receipt != (fcE2BTaskStopReceipt{Version: 3, Runners: 1, Marked: 2, Unreadable: 1, Found: 3, Terminated: 2, Killed: 1}) {
 		t.Fatalf("receipt = %#v, %v", receipt, err)
 	}
-	if _, err := parseFCE2BTaskStopReceipt(`{"version":2,"error":"invalid arguments"}`); err == nil {
+	if _, err := parseFCE2BTaskStopReceipt(`{"version":3,"error":"invalid arguments"}`); err == nil {
 		t.Fatal("a refused stop was accepted")
 	}
-	for _, out := range []string{"", "done", `{"found":1}`, `{"version":1,"found":1}`} {
+	// A version 2 receipt came from the start-time sweep that ended other
+	// tasks' orphans (PRI-61).
+	for _, out := range []string{"", "done", `{"found":1}`, `{"version":2,"runners":1,"orphans":1,"found":1}`} {
 		if _, err := parseFCE2BTaskStopReceipt(out); err == nil {
 			t.Fatalf("receipt accepted from %q", out)
 		}
@@ -71,17 +72,15 @@ func (r *stopRecordingRunner) Run(ctx context.Context, _ string, args []string, 
 // and the CLI transport both end a cancelled task's processes.
 func TestFCE2BLauncherStopsTaskProcessesThroughTheRollout(t *testing.T) {
 	workspace, agent, runtimeID, taskID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
-	dispatched := time.Unix(1790420000, 0)
 	task := db.AgentTaskQueue{
-		ID:           pgtype.UUID{Bytes: taskID, Valid: true},
-		AgentID:      pgtype.UUID{Bytes: agent, Valid: true},
-		RuntimeID:    pgtype.UUID{Bytes: runtimeID, Valid: true},
-		Status:       "cancelled",
-		DispatchedAt: pgtype.Timestamptz{Time: dispatched, Valid: true},
+		ID:        pgtype.UUID{Bytes: taskID, Valid: true},
+		AgentID:   pgtype.UUID{Bytes: agent, Valid: true},
+		RuntimeID: pgtype.UUID{Bytes: runtimeID, Valid: true},
+		Status:    "cancelled",
 	}
 	rt := db.AgentRuntime{ID: task.RuntimeID, WorkspaceID: pgtype.UUID{Bytes: workspace, Valid: true}}
 	for _, enabled := range []bool{true, false} {
-		cli := &stopRecordingRunner{out: `{"version":2,"runners":1,"found":2,"terminated":2,"killed":0,"remaining":0}`}
+		cli := &stopRecordingRunner{out: `{"version":3,"runners":1,"marked":2,"found":2,"terminated":2,"killed":0,"remaining":0}`}
 		sdk := &stopRecordingRunner{out: cli.out}
 		rollout := FCE2BSDKRollout{Enabled: enabled, AgentIDs: []string{agent.String()}}
 		l := &FCE2BLauncher{Runner: FCE2BRolloutRunner{CLI: cli, SDK: sdk, Rollout: func() (FCE2BSDKRollout, string) { return rollout, fcE2BRolloutSourceDiamond }}}
@@ -96,7 +95,7 @@ func TestFCE2BLauncherStopsTaskProcessesThroughTheRollout(t *testing.T) {
 		if len(used.calls) != 1 || len(idle.calls) != 0 {
 			t.Fatalf("sdk=%v routed cli=%d sdk=%d", enabled, len(cli.calls), len(sdk.calls))
 		}
-		wantArgs := fcE2BTaskStopArgs("sbx_123", runtimeID.String(), fcE2BHealthPortForTask(task.ID), dispatched.Add(-fcE2BTaskStopSinceSlack))
+		wantArgs := fcE2BTaskStopArgs("sbx_123", runtimeID.String(), fcE2BHealthPortForTask(task.ID), taskID.String())
 		if !reflect.DeepEqual(used.calls[0], wantArgs) {
 			t.Fatalf("stop args = %q", used.calls[0])
 		}
@@ -109,7 +108,7 @@ func TestFCE2BLauncherStopsTaskProcessesThroughTheRollout(t *testing.T) {
 	if _, err := (&FCE2BLauncher{Runner: gone}).stopTaskProcessesInSandbox(context.Background(), task, rt, "sbx_123", 1); err != nil {
 		t.Fatalf("a removed sandbox has nothing left to stop: %v", err)
 	}
-	survivors := &stopRecordingRunner{out: `{"version":2,"runners":1,"found":1,"terminated":0,"killed":0,"remaining":1}`}
+	survivors := &stopRecordingRunner{out: `{"version":3,"runners":1,"found":1,"terminated":0,"killed":0,"remaining":1}`}
 	if receipt, err := (&FCE2BLauncher{Runner: survivors}).stopTaskProcessesInSandbox(context.Background(), task, rt, "sbx_123", 1); err != nil || receipt.Remaining != 1 {
 		t.Fatalf("survivors = %#v, %v", receipt, err)
 	}

@@ -20,16 +20,23 @@ import (
 // A cancelled task stops only its own runner: the in-sandbox daemon ends the
 // agent, but agent tools start their commands in new sessions, and those
 // survived cancellation until the sandbox expired or, worse, kept running
-// into the next task that reused it (PRI-52). The server therefore ends every
-// process of the cancelled task inside each sandbox the task used, through
-// the same FC/E2B transport as every other command, so the CLI and the SDK
-// behave alike.
+// into the next task that reused it (PRI-52). The server therefore ends the
+// cancelled task's processes inside each sandbox the task used, through the
+// same FC/E2B transport as every other command, so the CLI and the SDK behave
+// alike.
 //
-// FC sandboxes deny reading another process's environment even to root (no
-// CAP_SYS_PTRACE), so a task is recognised by what /proc/<pid>/stat and
-// /proc/<pid>/cmdline expose: its runner carries the task's runtime id and
-// per-task health port on the command line.
+// Only processes provably owned by the task are ended; a process whose owner
+// cannot be proven is left alone (PRI-61: a start-time window took another
+// task's orphan). Ownership is proven by the runner's command line and by the
+// task id in a process's environment, which every tool inherits from the
+// agent. FC sandboxes give root no CAP_SYS_PTRACE, so the environment is read
+// under the process's own uid.
 const (
+	// fcE2BTaskMarkerEnv carries the task id through the runner, the daemon,
+	// the agent and its tools. Unlike MULTICA_TASK_ID, which the daemon blanks
+	// for A2A children, a non-MULTICA key without a credential-like suffix is
+	// inherited unchanged.
+	fcE2BTaskMarkerEnv = "FC_E2B_TASK_ID"
 	// The in-sandbox daemon notices a cancellation within seconds and then
 	// tears its tree down, orphaning tool commands. The first pass runs at
 	// once to catch the tree intact; the second catches what was forked or
@@ -38,9 +45,6 @@ const (
 	fcE2BTaskStopExecTimeout = 45 * time.Second
 	fcE2BTaskStopBudget      = 2 * time.Minute
 	fcE2BTaskStopConcurrency = 4
-	// fcE2BTaskStopSinceSlack widens the orphan window when the runner is
-	// already gone and only the server's start time is known.
-	fcE2BTaskStopSinceSlack = 5 * time.Second
 )
 
 var (
@@ -49,39 +53,65 @@ var (
 )
 
 // fcE2BTaskStopScript ends one task's processes in the sandbox. It takes the
-// runtime id, the task's health port and a start time (epoch seconds). The
-// task's processes are:
-//   - its runner: the command lines carrying both --runtime-id <id> and
-//     --health-port <port>, and every descendant of those;
-//   - every member of a session or process group one of those leads, other
-//     than session and group 1, where envd, the runner and shared services
-//     live;
-//   - orphans re-parented to PID 1 outside session 1 that started after the
-//     runner (or, without a runner, after the given start time), except
-//     sandbox services under /usr/local/libexec/multica-* and /.fce2b/.
+// runtime id, the task's health port and the task id. A process is the
+// task's when it is proven to be:
+//   - its runner: a command line carrying both --runtime-id <id> and
+//     --health-port <port>, unless its environment names another task;
+//   - marked: its environment carries MULTICA_TASK_ID=<task> or
+//     FC_E2B_TASK_ID=<task>, read under the process's own uid;
+//   - a descendant of a proven process;
+//   - in a session or process group, other than 1, that holds a proven
+//     process and whose leader is proven or gone: only the leader's
+//     descendants can join it, so it was created by one of the task's
+//     processes. A live leader that is not the task's, such as the session
+//     the runner was started in, is not expanded.
+//
+// Never ended: a process whose environment names another task; sandbox
+// services under /usr/local/libexec/multica-* and /.fce2b/ unless they
+// descend from the runner (a shared service started by an earlier runner
+// still carries that task's id); and anything unproven, such as an orphan
+// that cleared its environment, which is reported rather than guessed.
 //
 // The tree is frozen with SIGSTOP and rescanned before it is ended, so no
 // process escapes by forking or re-parenting meanwhile; then SIGTERM with
 // SIGCONT, and SIGKILL after a grace. The last line is a JSON receipt. It
-// runs as root under bash (mapfile, associative arrays).
-const fcE2BTaskStopScript = `rt=$1 port=$2 since=$3
-if [[ ! $rt =~ ^[0-9a-f-]{36}$ || ! $port =~ ^[0-9]{1,5}$ || ! $since =~ ^[0-9]{1,12}$ ]]; then
-  echo '{"version":2,"error":"invalid arguments"}'; exit 2
+// runs as root under bash (mapfile, associative arrays) and needs setpriv to
+// read other users' environments.
+const fcE2BTaskStopScript = `rt=$1 port=$2 task=$3
+uuid='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+if [[ ! $rt =~ $uuid || ! $task =~ $uuid || ! $port =~ ^[0-9]{1,5}$ ]]; then
+  echo '{"version":3,"error":"invalid arguments"}'; exit 2
 fi
-self=$$ btime=0
-while read -r key value _; do [[ $key == btime ]] && btime=$value; done </proc/stat
-hz=$(getconf CLK_TCK 2>/dev/null) || hz=100
-declare -A ppid=() pgid=() sid=() start=() runner=() infra=() target=() orphan=()
+self=$$
+# Prints "M <pid>" for this task's marker, "F <pid>" for another task's and
+# "U <pid>" when the environment cannot be read. Runs as the processes' uid.
+markers='task=$1; shift
+for p; do
+  mine=0 other=0
+  if ! { while IFS= read -r -d "" kv || [[ -n $kv ]]; do
+      case $kv in
+        "MULTICA_TASK_ID=$task"|"FC_E2B_TASK_ID=$task") mine=1;;
+        MULTICA_TASK_ID=?*|FC_E2B_TASK_ID=?*) other=1;;
+      esac
+    done <"/proc/$p/environ"; } 2>/dev/null; then echo "U $p"; continue; fi
+  if (( mine )); then echo "M $p"; elif (( other )); then echo "F $p"; fi
+done'
+declare -A ppid=() pgid=() sid=() runner=() infra=() marked=() foreign=() unreadable=() target=()
 scan() {
-  ppid=() pgid=() sid=() start=() runner=() infra=()
-  local d p raw f argv i has_rt has_port
+  ppid=() pgid=() sid=() runner=() infra=() marked=() foreign=() unreadable=()
+  local d p raw f argv i has_rt has_port key a rest uid gid out kind
+  local -A byuid=()
   for d in /proc/[0-9]*; do
     p=${d#/proc/}
     [[ $p == 1 || $p == "$self" ]] && continue
     { read -r raw <"$d/stat"; } 2>/dev/null || continue
     read -r -a f <<<"${raw##*) }"
-    [[ ${f[0]} == Z ]] && continue
-    ppid[$p]=${f[1]} pgid[$p]=${f[2]} sid[$p]=${f[3]} start[$p]=$(( btime + f[19] / hz ))
+    # Zombies and kernel threads (PF_KTHREAD) own nothing.
+    [[ ${f[0]} == Z ]] || (( f[6] & 0x200000 )) && continue
+    ppid[$p]=${f[1]} pgid[$p]=${f[2]} sid[$p]=${f[3]} uid= gid=
+    { while read -r key a rest; do
+        case $key in Uid:) uid=$a;; Gid:) gid=$a;; esac
+      done <"$d/status"; } 2>/dev/null
     argv=()
     { mapfile -d '' -t argv <"$d/cmdline"; } 2>/dev/null
     has_rt=0 has_port=0
@@ -90,31 +120,42 @@ scan() {
       [[ ${argv[i]} == --health-port && ${argv[i+1]} == "$port" ]] && has_port=1
     done
     (( has_rt && has_port )) && runner[$p]=1
-    case " ${argv[0]:-} ${argv[1]:-}" in *" /usr/local/libexec/multica-"*|*" /.fce2b/"*) infra[$p]=1;; esac
+    case " ${argv[*]:0:3}" in *" /usr/local/libexec/multica-"*|*" /.fce2b/"*) infra[$p]=1;; esac
+    [[ -n $uid && -n $gid ]] && byuid[$uid:$gid]+="$p "
+  done
+  for key in "${!byuid[@]}"; do
+    uid=${key%%:*} gid=${key#*:}
+    if [[ $uid == "$EUID" ]]; then
+      out=$(bash -c "$markers" fc-e2b-task-markers "$task" ${byuid[$key]})
+    elif [[ $EUID == 0 ]]; then
+      out=$(setpriv --reuid="$uid" --regid="$gid" --clear-groups bash -c "$markers" fc-e2b-task-markers "$task" ${byuid[$key]} 2>/dev/null) ||
+        out=$(printf 'U %s\n' ${byuid[$key]})
+    else
+      out=$(printf 'U %s\n' ${byuid[$key]})
+    fi
+    while read -r kind p; do
+      case $kind in M) marked[$p]=1;; F) foreign[$p]=1;; U) unreadable[$p]=1;; esac
+    done <<<"$out"
   done
 }
+# owned reports whether a session or group id was created by the task: its
+# leader is proven, or it is gone and a proven process remains in it.
+owned() { (( $1 > 1 )) && { [[ -n ${target[$1]:-} ]] || [[ -z ${ppid[$1]:-} ]]; }; }
 collect() {
-  local p since_eff=$since changed=1 groups sessions
-  for p in "${!runner[@]}"; do target[$p]=1; done
-  if (( ${#runner[@]} > 0 )); then
-    since_eff=
-    for p in "${!runner[@]}"; do [[ -z $since_eff ]] || (( start[$p] < since_eff )) && since_eff=${start[$p]}; done
-  fi
-  for p in "${!ppid[@]}"; do
-    if [[ ${ppid[$p]} == 1 && ${sid[$p]} != 1 && -z ${infra[$p]:-} ]] && (( start[$p] >= since_eff )); then
-      target[$p]=1 orphan[$p]=1
-    fi
-  done
+  local p changed=1 groups sessions
+  for p in "${!runner[@]}"; do [[ -z ${foreign[$p]:-} ]] && target[$p]=1; done
+  for p in "${!marked[@]}"; do [[ -z ${infra[$p]:-} ]] && target[$p]=1; done
   while (( changed )); do
     changed=0 groups=" " sessions=" "
     for p in "${!target[@]}"; do
       [[ -n ${ppid[$p]:-} ]] || continue
-      [[ ${sid[$p]} != 1 ]] && sessions+="${sid[$p]} "
-      [[ ${pgid[$p]} != 1 ]] && groups+="${pgid[$p]} "
+      owned "${sid[$p]}" && sessions+="${sid[$p]} "
+      owned "${pgid[$p]}" && groups+="${pgid[$p]} "
     done
     for p in "${!ppid[@]}"; do
-      [[ -n ${target[$p]:-} ]] && continue
-      if [[ -n ${target[${ppid[$p]}]:-} || $sessions == *" ${sid[$p]} "* || $groups == *" ${pgid[$p]} "* ]]; then
+      [[ -n ${target[$p]:-} || -n ${foreign[$p]:-} ]] && continue
+      if [[ -n ${target[${ppid[$p]}]:-} ]] ||
+        { [[ -z ${infra[$p]:-} ]] && [[ $sessions == *" ${sid[$p]} "* || $groups == *" ${pgid[$p]} "* ]]; }; then
         target[$p]=1 changed=1
       fi
     done
@@ -125,7 +166,7 @@ alive() { local raw; { read -r raw <"/proc/$1/stat"; } 2>/dev/null || return 1; 
 survivors() { local p; for p in "${!target[@]}"; do alive "$p" && printf '%s ' "$p"; done; }
 count() { set -- $1; echo $#; }
 scan; collect
-found=${#target[@]} runners=${#runner[@]} terminated=0 killed=0 remaining=0
+found=${#target[@]} terminated=0 killed=0 remaining=0
 if (( found > 0 )); then
   kill -STOP "${!target[@]}" 2>/dev/null
   scan; collect
@@ -149,14 +190,19 @@ if (( found > 0 )); then
     killed=$(( $(count "$left") - remaining ))
   fi
 fi
-printf '{"version":2,"runners":%d,"orphans":%d,"found":%d,"terminated":%d,"killed":%d,"remaining":%d}\n' "$runners" "${#orphan[@]}" "$found" "$terminated" "$killed" "$remaining"
+runners=0
+for p in "${!runner[@]}"; do [[ -z ${foreign[$p]:-} ]] && runners=$((runners + 1)); done
+printf '{"version":3,"runners":%d,"marked":%d,"unreadable":%d,"found":%d,"terminated":%d,"killed":%d,"remaining":%d}\n' "$runners" "${#marked[@]}" "${#unreadable[@]}" "$found" "$terminated" "$killed" "$remaining"
 `
 
-// fcE2BTaskStopReceipt is the script's report for one sandbox.
+// fcE2BTaskStopReceipt is the script's report for one sandbox. Unreadable
+// counts processes whose environment could not be read and so could not be
+// proven to be anyone's.
 type fcE2BTaskStopReceipt struct {
 	Version    int    `json:"version"`
 	Runners    int    `json:"runners"`
-	Orphans    int    `json:"orphans"`
+	Marked     int    `json:"marked"`
+	Unreadable int    `json:"unreadable"`
 	Found      int    `json:"found"`
 	Terminated int    `json:"terminated"`
 	Killed     int    `json:"killed"`
@@ -166,7 +212,7 @@ type fcE2BTaskStopReceipt struct {
 
 // fcE2BTaskStopArgs ends the task's processes as root with the same loader
 // hardening as the root runner launch.
-func fcE2BTaskStopArgs(sandboxID, runtimeID string, healthPort int, since time.Time) []string {
+func fcE2BTaskStopArgs(sandboxID, runtimeID string, healthPort int, taskID string) []string {
 	return []string{
 		"sandbox", "exec",
 		"--user", "root",
@@ -179,31 +225,20 @@ func fcE2BTaskStopArgs(sandboxID, runtimeID string, healthPort int, since time.T
 		sandboxID,
 		"--",
 		"bash", "-c", fcE2BTaskStopScript, "fc-e2b-task-stop",
-		runtimeID, strconv.Itoa(healthPort), strconv.FormatInt(since.Unix(), 10),
+		runtimeID, strconv.Itoa(healthPort), taskID,
 	}
 }
 
 func parseFCE2BTaskStopReceipt(out string) (fcE2BTaskStopReceipt, error) {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	var receipt fcE2BTaskStopReceipt
-	if err := json.Unmarshal([]byte(strings.TrimSpace(lines[len(lines)-1])), &receipt); err != nil || receipt.Version != 2 {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(lines[len(lines)-1])), &receipt); err != nil || receipt.Version != 3 {
 		return fcE2BTaskStopReceipt{}, errors.New("FC/E2B task stop returned no receipt")
 	}
 	if receipt.Error != "" {
 		return receipt, fmt.Errorf("FC/E2B task stop refused: %s", receipt.Error)
 	}
 	return receipt, nil
-}
-
-// fcE2BTaskStopSince is the earliest time the task's processes can have
-// started, used for orphans once the runner is gone.
-func fcE2BTaskStopSince(task db.AgentTaskQueue) time.Time {
-	for _, ts := range []pgtype.Timestamptz{task.DispatchedAt, task.StartedAt, task.CreatedAt} {
-		if ts.Valid {
-			return ts.Time.Add(-fcE2BTaskStopSinceSlack)
-		}
-	}
-	return time.Now().Add(-fcE2BTaskStopSinceSlack)
 }
 
 // scheduleCancelledTaskStop starts ending a cancelled task's processes off
@@ -292,7 +327,7 @@ func (l *FCE2BLauncher) stopTaskProcessesInSandbox(ctx context.Context, task db.
 		RuntimeID:   pgFCE2BScopeID(task.RuntimeID),
 	})
 	started := time.Now()
-	args := fcE2BTaskStopArgs(sandboxID, util.UUIDToString(task.RuntimeID), fcE2BHealthPortForTask(task.ID), fcE2BTaskStopSince(task))
+	args := fcE2BTaskStopArgs(sandboxID, util.UUIDToString(task.RuntimeID), fcE2BHealthPortForTask(task.ID), util.UUIDToString(task.ID))
 	out, err := l.runE2BCommandWithTimeout(ctx, fcE2BTaskStopExecTimeout, args)
 	attrs = append(attrs, "duration_ms", time.Since(started).Milliseconds())
 	if err != nil {
@@ -309,7 +344,7 @@ func (l *FCE2BLauncher) stopTaskProcessesInSandbox(ctx context.Context, task db.
 		slog.Warn("FC/E2B task processes not stopped", append(attrs, "outcome", "invalid_receipt")...)
 		return receipt, err
 	}
-	attrs = append(attrs, "runners", receipt.Runners, "orphans", receipt.Orphans, "found", receipt.Found,
+	attrs = append(attrs, "runners", receipt.Runners, "marked", receipt.Marked, "unreadable", receipt.Unreadable, "found", receipt.Found,
 		"terminated", receipt.Terminated, "killed", receipt.Killed, "remaining", receipt.Remaining)
 	if receipt.Remaining > 0 {
 		slog.Warn("FC/E2B task processes stopped", append(attrs, "outcome", "survivors")...)
