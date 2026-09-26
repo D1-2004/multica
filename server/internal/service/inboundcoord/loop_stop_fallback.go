@@ -17,7 +17,7 @@ const coordinatorFallbackReply = "抱歉，这次没能处理好，我还没法�
 // the job worker retries them.
 func deterministicLoopStop(reason string) bool {
 	switch reason {
-	case loopStopRoundsExhausted, loopStopRepeatedInvalidPlan, loopStopReviewDeadlock:
+	case loopStopRoundsExhausted, loopStopRepeatedInvalidPlan, loopStopReviewDeadlock, loopStopFinishSerialization:
 		return true
 	}
 	return false

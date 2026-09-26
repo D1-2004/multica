@@ -3,12 +3,17 @@ package inboundcoord
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	openai "github.com/openai/openai-go/v3"
 )
+
+var errFinishSerialization = errors.New("finish serialization recovery failed")
+
+const loopStopFinishSerialization = "finish_serialization_exhausted"
 
 func (c *Coordinator) finishRecoveryEnabled() bool {
 	if c == nil {
@@ -52,11 +57,11 @@ func (c *Coordinator) repairFinishSerialization(ctx context.Context, turn Turn, 
 		}
 	}
 	if len(finishTools) != 1 {
-		return nil, fmt.Errorf("finish serialization recovery has no unique finish tool")
+		return nil, fmt.Errorf("%w: finish serialization recovery has no unique finish tool", errFinishSerialization)
 	}
 	for needsFinishSerializationRepair(completion) {
 		if *repairs >= 2 {
-			return nil, fmt.Errorf("finish serialization recovery exhausted")
+			return nil, fmt.Errorf("%w: finish serialization recovery exhausted", errFinishSerialization)
 		}
 		previous := completion.Choices[0].Message.Content
 		if calls := functionToolCalls(completion.Choices[0].Message); len(calls) == 1 {
@@ -83,13 +88,13 @@ func (c *Coordinator) repairFinishSerialization(ctx context.Context, turn Turn, 
 			return nil, err
 		}
 		if completion == nil || len(completion.Choices) != 1 {
-			return nil, fmt.Errorf("finish serialization recovery returned no unique choice")
+			return nil, fmt.Errorf("%w: finish serialization recovery returned no unique choice", errFinishSerialization)
 		}
 		msg := completion.Choices[0].Message
 		normalizeToolCallTypes(&msg)
 		calls := functionToolCalls(msg)
 		if len(calls) != 1 || calls[0].Name != toolFinish {
-			return nil, fmt.Errorf("finish serialization recovery must return only finish")
+			return nil, fmt.Errorf("%w: finish serialization recovery must return only finish", errFinishSerialization)
 		}
 	}
 	return completion, nil

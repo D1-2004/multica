@@ -141,7 +141,10 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		if c.finishRecoveryEnabled() && needsFinishSerializationRepair(completion) {
 			completion, err = c.repairFinishSerialization(ctx, turn, messages, tools, recalled, completion, &finishRepairs, &modelRounds)
 			if err != nil {
-				return failWith("finish_serialization_failed", err)
+				if errors.Is(err, errFinishSerialization) {
+					return failWith(loopStopFinishSerialization, err)
+				}
+				return fail(err)
 			}
 		}
 		msg := completion.Choices[0].Message

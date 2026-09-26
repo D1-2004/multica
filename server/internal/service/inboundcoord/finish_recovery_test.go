@@ -123,3 +123,16 @@ func TestFinishRecoveryThroughDecideKeepsHostReview(t *testing.T) {
 		}
 	}
 }
+
+func TestFinishRecoveryExhaustionDoesNotReplayWholeDecision(t *testing.T) {
+	broken := assistantTool("f", toolFinish, `{"actions":[`)
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{broken, broken, broken}}
+	c := &Coordinator{Chat: chat, finishRecovery: true}
+	got := c.Decide(context.Background(), Turn{Source: SourceWeb, Message: "你好", Addressed: true})
+	if got.Action != ActionReply || !got.LoopStopFallback() || got.Reason != loopStopFinishSerialization || len(got.CoordinationActions) != 0 {
+		t.Fatalf("exhaustion must checkpoint a no-work fallback: %#v", got)
+	}
+	if len(chat.params) != 3 || got.ToolRounds != 3 {
+		t.Fatal("repair budget/accounting changed")
+	}
+}

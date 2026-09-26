@@ -437,3 +437,5 @@ collect 在是否启用选择不同的请求之间拆窗；所有人和指定名
 模型schema按kind使用与Host相同的允许字段，避免start_work被展示state_refs。
 依据：https://api-docs.deepseek.com/guides/thinking_mode/ 。
 结构检查、脚本Host测试、模型回放和真实投递证据分别报告。
+
+finish-only恢复耗尽后按确定性停止生成一次固定失败回执，不让外层job重跑整个决策；网络错误仍按原可恢复错误路径处理。
