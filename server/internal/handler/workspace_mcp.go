@@ -52,8 +52,8 @@ var workspaceMCPTools = []workspaceMCPTool{
 	{"issue_usage", "GET", "/api/issues/{id}/usage", "read", false, nil},
 	{"issue_pull_requests", "GET", "/api/issues/{id}/pull-requests", "read", false, nil},
 	{"agent_list_artifacts", "GET", "/api/issues/{id}/attachments", "read", false, nil},
-	{"issue_rerun", "POST", "/api/issues/{id}/rerun", "write", true, nil},
-	{"issue_cancel_task", "POST", "/api/issues/{id}/tasks/{taskId}/cancel", "write", true, nil},
+	{"issue_rerun", "POST", "/api/issues/{id}/rerun", "write", true, map[string]any{"task_id": map[string]any{"type": "string", "format": "uuid"}}},
+	{"issue_cancel_task", "POST", "/api/issues/{id}/tasks/{taskId}/cancel", "write", false, nil},
 	{"issue_labels", "GET", "/api/issues/{id}/labels", "read", false, nil},
 	{"issue_label_add", "POST", "/api/issues/{id}/labels", "write", true, nil},
 	{"issue_label_remove", "DELETE", "/api/issues/{id}/labels/{labelId}", "write", false, nil},
@@ -122,7 +122,7 @@ var workspaceMCPTools = []workspaceMCPTool{
 	{"autopilot_delete", "DELETE", "/api/autopilots/{id}", "manage", false, nil},
 	{"autopilot_trigger_list", "GET", "/api/autopilots/{id}", "read", false, nil},
 	{"autopilot_runs", "GET", "/api/autopilots/{id}/runs", "read", false, nil},
-	{"autopilot_trigger", "POST", "/api/autopilots/{id}/trigger", "manage", true, nil},
+	{"autopilot_trigger", "POST", "/api/autopilots/{id}/trigger", "manage", false, nil},
 	{"autopilot_trigger_add", "POST", "/api/autopilots/{id}/triggers", "manage", true, nil},
 	{"autopilot_trigger_update", "PATCH", "/api/autopilots/{id}/triggers/{triggerId}", "manage", true, nil},
 	{"autopilot_trigger_delete", "DELETE", "/api/autopilots/{id}/triggers/{triggerId}", "manage", false, nil},
@@ -183,6 +183,12 @@ func workspaceMCPQueryFields(name string) map[string]any {
 	return fields
 }
 
+// workspaceMCPPayloadOptional lists body tools whose API also accepts an empty
+// body, so callers may omit payload entirely.
+func workspaceMCPPayloadOptional(name string) bool {
+	return name == "issue_rerun"
+}
+
 func workspaceMCPToolDefinition(tool workspaceMCPTool) map[string]any {
 	properties := map[string]any{}
 	required := []string{}
@@ -203,7 +209,9 @@ func workspaceMCPToolDefinition(tool workspaceMCPTool) map[string]any {
 			body["additionalProperties"] = false
 		}
 		properties["payload"] = body
-		required = append(required, "payload")
+		if !workspaceMCPPayloadOptional(tool.name) {
+			required = append(required, "payload")
+		}
 	}
 	if queryFields := workspaceMCPQueryFields(tool.name); queryFields != nil {
 		properties["query"] = map[string]any{"type": "object", "properties": queryFields, "additionalProperties": false}
@@ -350,11 +358,12 @@ func (h *Handler) callWorkspaceMCPTool(w http.ResponseWriter, r *http.Request, r
 		}
 		path = strings.Replace(path, segment, url.PathEscape(value), 1)
 	}
-	if selected.body && (len(args.Payload) == 0 || !json.Valid(args.Payload) || args.Payload[0] != '{') {
+	payloadOmitted := len(args.Payload) == 0 && workspaceMCPPayloadOptional(selected.name)
+	if selected.body && !payloadOmitted && (len(args.Payload) == 0 || !json.Valid(args.Payload) || args.Payload[0] != '{') {
 		h.writeMulticaMCPError(w, req.ID, -32602, "payload object required")
 		return
 	}
-	if selected.fields != nil {
+	if selected.fields != nil && !payloadOmitted {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(args.Payload, &fields); err != nil {
 			h.writeMulticaMCPError(w, req.ID, -32602, "invalid payload")
@@ -434,6 +443,11 @@ func (h *Handler) callWorkspaceMCPTool(w http.ResponseWriter, r *http.Request, r
 	response := recorder.Result()
 	defer response.Body.Close()
 	resultBytes, _ := io.ReadAll(io.LimitReader(response.Body, 2<<20))
+	if len(bytes.TrimSpace(resultBytes)) == 0 {
+		// 204 and other empty responses (every DELETE route) still owe the
+		// client a readable text block, not an empty string.
+		resultBytes, _ = json.Marshal(map[string]any{"ok": response.StatusCode < http.StatusBadRequest, "status": response.StatusCode})
+	}
 	result := "success"
 	if response.StatusCode >= http.StatusBadRequest {
 		result = "denied"

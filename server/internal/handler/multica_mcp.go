@@ -120,6 +120,20 @@ type multicaMCPContent struct {
 	Resource *agentMCPEmbeddedResource `json:"resource,omitempty"`
 }
 
+// MarshalJSON always emits "text" on text content, even when it is empty.
+// MCP TextContent requires the field, and strict clients (the official SDK)
+// reject `{"type":"text"}`. Other content types keep omitting it.
+func (c multicaMCPContent) MarshalJSON() ([]byte, error) {
+	type content multicaMCPContent
+	if c.Type != "text" {
+		return json.Marshal(content(c))
+	}
+	return json.Marshal(struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}{c.Type, c.Text})
+}
+
 type multicaMCPChatSendArguments struct {
 	SessionID string `json:"session_id"`
 	Content   string `json:"content"`
