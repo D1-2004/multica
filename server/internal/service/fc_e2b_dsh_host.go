@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/startupobs"
 	"hash/fnv"
 	"log/slog"
 	"regexp"
@@ -359,6 +360,9 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			revision = dshprofile.Revision{}
 		}
 		if revision.Descriptor == "" && before.State != "creating" && before.State != "retiring" {
+			if l.Config.QuickWins.BoundDSHHostWait {
+				return dshhost.Host{}, false, waitDSHHost("profile_build_pending")
+			}
 			return dshhost.Host{}, false, errDSHHostWaiting
 		}
 	}
@@ -535,6 +539,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	}
 	if !isDSH {
 		chattrace.LogStage(slog.Default(), trace, "employee_filesystem", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "provider", FCE2BRuntimeProvider(rt))
+		l.notifyDSHReady(ctx, conn, key, "filesystem_host_ready")
 		return host, cold, nil
 	}
 	// An unchanged healthy host already owns this exact immutable Profile.
@@ -549,17 +554,21 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 		reusedProfile = l.dshNativeHostHasProfile(ctx, host, profileDigest, revision)
 	}
 	if !reusedProfile {
+		finishProfile := startupobs.Start(ctx, "dsh_profile_delivery")
 		err = l.deliverDSHProfile(ctx, profiles, host, revision)
 		if err == nil {
 			err = l.stageDSHProfile(ctx, host, revision)
 		}
+		finishProfile(err)
 	}
 	if err == nil {
 		// The execution-scope admission lock already protects this session's
 		// writer. An employee-wide startup lock makes unrelated sessions wait
 		// behind one slow cold start and imposes the reconciliation retry delay
 		// on healthy hosts too. Preserve task-level concurrency here.
+		finishNative := startupobs.Start(ctx, "dsh_native_host_ensure")
 		out, err = l.runE2BCommandWithTimeout(ctx, dshNativeStartupTimeout, dshNativeHostEnsureArgs(host, catalog, revision))
+		finishNative(err)
 	}
 	if err == nil {
 		err = validateDSHNativeHostReceipt(out, host, profileDigest, revision)
@@ -572,15 +581,22 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 			return dshhost.Host{}, cold, transitionErr
 		}
 		chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "waiting", "reason", "native_host_unavailable", "sandbox_id", host.SandboxID, "generation", host.Generation)
+		if l.Config.QuickWins.BoundDSHHostWait {
+			return dshhost.Host{}, cold, errors.Join(waitDSHHost("native_host_unavailable"), errDSHHostStartup)
+		}
 		return dshhost.Host{}, cold, errors.Join(errDSHHostWaiting, errDSHHostStartup)
 	}
 	// The process has proved its exact composition. A database outage or a
 	// concurrent config edit is a reconciliation retry, not a dead Host.
 	if err = profiles.Acknowledge(ctx, host, revision, l.ReadDSHProfileSource); err != nil {
 		chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "waiting", "reason", "profile_ack_pending", "sandbox_id", host.SandboxID, "generation", host.Generation)
+		if l.Config.QuickWins.BoundDSHHostWait {
+			return dshhost.Host{}, cold, waitDSHHost("profile_ack_pending")
+		}
 		return dshhost.Host{}, cold, errDSHHostWaiting
 	}
 	chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "managed_profile_digest", profileDigest, "employee_profile_revision", revision.ID, "employee_profile_digest", revision.Digest)
+	l.notifyDSHReady(ctx, conn, key, "native_host_ready")
 	return host, cold, nil
 }
 
@@ -691,6 +707,9 @@ func (l *FCE2BLauncher) prepareDSHTaskFilesystem(ctx context.Context, db dshhost
 	defer cancel()
 	_, err := l.ProvisionDSHStorage(ctx, db, key)
 	if errors.Is(err, dshhost.ErrPending) || errors.Is(err, dshhost.ErrChanged) || errors.Is(err, context.DeadlineExceeded) {
+		if l.Config.QuickWins.BoundDSHHostWait {
+			return waitDSHHost("provisioning_pending")
+		}
 		return errDSHHostWaiting
 	}
 	if err != nil {

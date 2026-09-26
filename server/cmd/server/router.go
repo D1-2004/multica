@@ -446,11 +446,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	if provision, err := dshStorageProvisioning(opts.RuntimeConfig); err != nil {
 		slog.Error("DSH storage provisioning configuration unavailable", "error", err)
-	} else {
-		h.FCE2BLauncher.ProvisionDSHStorage = provision
+	} else if provision != nil {
+		h.FCE2BLauncher.ProvisionDSHStorage = func(ctx context.Context, database dshhost.Database, key dshhost.Key) (dshhost.Host, error) {
+			host, err := provision(ctx, database, key)
+			if err == nil {
+				h.TaskService.NotifyDSHReadiness(ctx, database, key, "provisioning_ready")
+			}
+			return host, err
+		}
 		if provision != nil {
 			h.ProvisionDSHStorage = func(ctx context.Context, key dshhost.Key) (dshhost.Host, error) {
-				return provision(ctx, pool, key)
+				return h.FCE2BLauncher.ProvisionDSHStorage(ctx, pool, key)
 			}
 		}
 	}
@@ -506,7 +512,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.FCE2BLauncher.ConfigProvider = opts.RuntimeConfig.fce2b
 		h.TaskService.RuntimeStartRecoveryConfig = func() service.RuntimeStartRecoveryConfig {
 			cfg := opts.RuntimeConfig.current().Runtime.FCE2B
-			return service.RuntimeStartRecoveryConfig{RecoverAbandonedLaunches: cfg.RecoverAbandonedLaunches, BoundDSHHostWait: cfg.BoundDSHHostWait}
+			return service.RuntimeStartRecoveryConfig{RecoverAbandonedLaunches: cfg.RecoverAbandonedLaunches, BoundDSHHostWait: cfg.BoundDSHHostWait, DSHEventWakeup: cfg.DSHEventWakeup, DingTalkReplyCommand: cfg.DingTalkReplyCommand, ASBEventWakeup: cfg.ASBEventWakeup, StartupObservability: cfg.StartupObservability, BoundedReadyExec: cfg.BoundedReadyExec, CoalescedHotExec: cfg.CoalescedHotExec, BatchSkillResolve: cfg.BatchSkillResolve}
 		}
 	}
 	h.FCE2BLauncher.SetSandboxRelaySigner(opts.SandboxRelaySigner)

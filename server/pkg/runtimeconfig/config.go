@@ -121,6 +121,14 @@ type LLMConfig struct {
 }
 
 type FCE2BConfig struct {
+	DSHEventWakeup       bool `json:"dsh_event_wakeup,omitempty"`
+	DingTalkReplyCommand bool `json:"dingtalk_reply_command,omitempty"`
+	ASBEventWakeup       bool `json:"asb_event_wakeup,omitempty"`
+	StartupObservability bool `json:"startup_observability,omitempty"`
+	BoundedReadyExec     bool `json:"bounded_ready_exec,omitempty"`
+	CoalescedHotExec     bool `json:"coalesced_hot_exec,omitempty"`
+	BatchSkillResolve    bool `json:"batch_skill_resolve,omitempty"`
+
 	RecoverAbandonedLaunches     bool     `json:"recover_abandoned_launches,omitempty"`
 	BoundDSHHostWait             bool     `json:"bound_dsh_host_wait,omitempty"`
 	DWSMessagePolicyFingerprints []string `json:"dws_message_policy_fingerprints,omitempty"`

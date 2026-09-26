@@ -567,7 +567,7 @@ SELECT task.id, task.agent_id, task.issue_id, task.status, task.priority, task.d
 FROM agent_task_queue AS task
 JOIN agent ON agent.id = task.agent_id AND agent.archived_at IS NULL
 JOIN LATERAL (
-    SELECT attempt.backend, attempt.status, attempt.error_code, attempt.finished_at,
+    SELECT attempt.backend, attempt.status, attempt.error_code, attempt.finished_at, attempt.created_at,
            attempt.updated_at, attempt.last_stage, attempt.runner_started_at,
            attempt.daemon_started_at, attempt.claim_finalized_at
     FROM agent_task_runtime_start_attempt AS attempt
@@ -577,36 +577,46 @@ JOIN LATERAL (
 ) AS latest ON true
 WHERE task.status = 'queued'
   AND latest.backend = 'aliyun_fc'
+  AND (NOT $1::boolean OR EXISTS (SELECT 1 FROM runtime_readiness_event AS ready
+       WHERE ready.workspace_id=agent.workspace_id
+         AND ready.agent_id IN (task.agent_id,'00000000-0000-0000-0000-000000000000'::uuid)
+         AND ready.event_at >= latest.created_at))
   AND (
       (latest.status = 'blocked'
        AND latest.error_code = 'DSH-HOST-WAITING'
-       AND latest.finished_at <= now() - interval '30 seconds')
+       AND ($2::boolean OR latest.finished_at <= now() - interval '30 seconds'))
       OR
       -- A rolling deployment or lost launcher can leave a pre-runner attempt
       -- starting forever. The normal lease/CAS path supersedes it safely.
       (latest.status = 'starting'
        AND (latest.last_stage IN ('launch_started', 'sandbox_resolving', 'dsh_host_waiting')
-            OR ($1::boolean AND latest.last_stage IN ('template_resolved', 'sandbox_ready', 'runner_probing', 'runner_probe_succeeded', 'task_environment_preparing', 'daemon_token_preparing')))
-       AND ($1::boolean OR latest.updated_at <= now() - interval '2 minutes')
+            OR ($3::boolean AND latest.last_stage IN ('template_resolved', 'sandbox_ready', 'runner_probing', 'runner_probe_succeeded', 'task_environment_preparing', 'daemon_token_preparing')))
+       AND ($3::boolean OR latest.updated_at <= now() - interval '2 minutes')
        AND latest.runner_started_at IS NULL
        AND latest.daemon_started_at IS NULL
        AND latest.claim_finalized_at IS NULL
-       AND ($1::boolean OR EXISTS (SELECT 1 FROM dsh_employee_session AS session
+       AND ($3::boolean OR EXISTS (SELECT 1 FROM dsh_employee_session AS session
                    WHERE session.workspace_id = agent.workspace_id
                      AND session.agent_id = task.agent_id
                      AND session.scope_id = COALESCE(task.issue_id, task.chat_session_id, task.id))))
   )
   AND (task.runtime_launch_lease_expires_at IS NULL OR task.runtime_launch_lease_expires_at <= now())
   AND COALESCE(task.context->>'deap_dws_token_required', 'false') <> 'true'
-  AND (NOT $1::boolean OR NOT EXISTS (SELECT 1 FROM task_token WHERE task_id = task.id))
+  AND (NOT $3::boolean OR NOT EXISTS (SELECT 1 FROM task_token WHERE task_id = task.id))
 ORDER BY task.created_at, task.id
 LIMIT 32
 `
 
+type ListDSHHostWaitingTasksParams struct {
+	EventsOnly               bool `json:"events_only"`
+	DshEventWakeup           bool `json:"dsh_event_wakeup"`
+	RecoverAbandonedLaunches bool `json:"recover_abandoned_launches"`
+}
+
 // A Profile build or host reconciliation can finish without a running task
 // or open browser to wake this queued launch. Reuse the normal launch lease.
-func (q *Queries) ListDSHHostWaitingTasks(ctx context.Context, recoverAbandonedLaunches bool) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, listDSHHostWaitingTasks, recoverAbandonedLaunches)
+func (q *Queries) ListDSHHostWaitingTasks(ctx context.Context, arg ListDSHHostWaitingTasksParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listDSHHostWaitingTasks, arg.EventsOnly, arg.DshEventWakeup, arg.RecoverAbandonedLaunches)
 	if err != nil {
 		return nil, err
 	}

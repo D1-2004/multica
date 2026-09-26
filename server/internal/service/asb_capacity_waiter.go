@@ -21,17 +21,19 @@ const (
 )
 
 type asbCapacityWaitCoordinator struct {
-	mu       sync.Mutex
-	inFlight map[string]struct{}
-	wakeups  chan struct{}
-	cursor   int
-	running  int
+	mu                sync.Mutex
+	inFlight          map[string]struct{}
+	wakeups           chan struct{}
+	capacityAvailable chan struct{}
+	cursor            int
+	running           int
 }
 
 func newASBCapacityWaitCoordinator() *asbCapacityWaitCoordinator {
 	return &asbCapacityWaitCoordinator{
-		inFlight: make(map[string]struct{}),
-		wakeups:  make(chan struct{}, 1),
+		inFlight:          make(map[string]struct{}),
+		wakeups:           make(chan struct{}, 1),
+		capacityAvailable: make(chan struct{}, 1),
 	}
 }
 
@@ -100,7 +102,14 @@ func asbCapacityScopeID(scope ASBTenantCredentialScope) string {
 
 func (l *ASBLauncher) NotifyRuntimeCapacityMayBeAvailable() {
 	if l != nil && l.CapacityWait != nil {
-		l.CapacityWait.notify()
+		if l.Tasks != nil && l.Tasks.CurrentRuntimeStartRecoveryConfig().ASBEventWakeup {
+			select {
+			case l.CapacityWait.capacityAvailable <- struct{}{}:
+			default:
+			}
+		} else {
+			l.CapacityWait.notify()
+		}
 	}
 }
 
@@ -124,8 +133,8 @@ func (l *ASBLauncher) RunCapacityWaiter(ctx context.Context) {
 		"event", "asb_capacity_waiter_stopped",
 	)
 
-	runOnce := func() {
-		if _, err := l.retryCapacityWaitingTasks(ctx); err != nil && ctx.Err() == nil {
+	runOnce := func(event bool) {
+		if _, err := l.retryCapacityWaitingTasksForEvent(ctx, event); err != nil && ctx.Err() == nil {
 			slog.Error("ASB sandbox capacity waiter iteration failed",
 				"event", "asb_capacity_waiter_failed",
 				"error", err,
@@ -134,22 +143,28 @@ func (l *ASBLauncher) RunCapacityWaiter(ctx context.Context) {
 	}
 
 	// Recover capacity waits left by an older replica immediately after startup.
-	runOnce()
+	runOnce(false)
 	ticker := time.NewTicker(asbCapacityWaitRecoveryInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-l.CapacityWait.capacityAvailable:
+			runOnce(true)
 		case <-l.CapacityWait.wakeups:
-			runOnce()
+			runOnce(false)
 		case <-ticker.C:
-			runOnce()
+			runOnce(false)
 		}
 	}
 }
 
 func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error) {
+	return l.retryCapacityWaitingTasksForEvent(ctx, false)
+}
+
+func (l *ASBLauncher) retryCapacityWaitingTasksForEvent(ctx context.Context, event bool) (int, error) {
 	if l == nil || l.Queries == nil || l.Tasks == nil || l.Credentials == nil {
 		return 0, fmt.Errorf("ASB sandbox capacity waiter is unavailable")
 	}
@@ -159,10 +174,14 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 	if l.CapacityWait == nil {
 		l.CapacityWait = newASBCapacityWaitCoordinator()
 	}
+	retryDelay := asbCapacityWaitRetryDelay
+	if event && l.Tasks.CurrentRuntimeStartRecoveryConfig().ASBEventWakeup {
+		retryDelay = 0
+	}
 	waiting, err := l.Queries.ListASBCapacityWaitingTasks(
 		ctx,
 		db.ListASBCapacityWaitingTasksParams{
-			RetrySeconds:  asbCapacityWaitRetryDelay.Seconds(),
+			RetrySeconds:  retryDelay.Seconds(),
 			StaleSeconds:  asbCapacityStaleLaunchAge.Seconds(),
 			MaxPerRuntime: asbCapacityWaitMaxConcurrent,
 		},
@@ -263,4 +282,12 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 		}
 	}
 	return scheduled, nil
+}
+
+type asbCapacityNotifyKey struct{}
+
+func notifyASBReclaimed(ctx context.Context) {
+	if notify, ok := ctx.Value(asbCapacityNotifyKey{}).(func()); ok {
+		notify()
+	}
 }

@@ -57,7 +57,7 @@ func TestFCAbandonedLaunchRecoveryRollout(t *testing.T) {
 			if _, err := pool.Exec(ctx, `UPDATE agent_task_runtime_start_attempt SET last_stage=$2, runner_started_at=`+tc.receipt+` WHERE id=$1`, attempt.ID, tc.stage); err != nil {
 				t.Fatal(err)
 			}
-			rows, err := svc.Queries.ListDSHHostWaitingTasks(ctx, tc.enabled)
+			rows, err := svc.Queries.ListDSHHostWaitingTasks(ctx, db.ListDSHHostWaitingTasksParams{RecoverAbandonedLaunches: tc.enabled})
 			if err != nil {
 				t.Fatal(err)
 			}

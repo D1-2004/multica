@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/startupobs"
 	"hash/fnv"
 	"io"
 	"log/slog"
@@ -118,6 +119,8 @@ const (
 )
 
 type FCE2BConfig struct {
+	QuickWins RuntimeStartRecoveryConfig
+
 	TaskModelResolver                 func(context.Context, string, string) (string, error)
 	ModelResolver                     func(string) (string, error)
 	Enabled                           bool
@@ -665,6 +668,11 @@ func fcE2BRunnerLaunchForRuntime(rt db.AgentRuntime) (fcE2BRunnerLaunch, error) 
 // fixed absolute paths. Metadata can neither provide a path nor make a command
 // run as root.
 func (l *FCE2BLauncher) detectFCE2BRunnerLaunch(ctx context.Context, sandboxID string, rt db.AgentRuntime) (fcE2BRunnerLaunch, error) {
+	if l.Config.QuickWins.CoalescedHotExec {
+		if receipt, ok := ctx.Value(hotRunnerProbeKey{}).(*hotRunnerProbe); ok && receipt.sandboxID == sandboxID && (receipt.launch.Command != "" || receipt.err != nil) {
+			return receipt.launch, receipt.err
+		}
+	}
 	hint, err := fcE2BRunnerLaunchForRuntime(rt)
 	if err != nil {
 		return fcE2BRunnerLaunch{}, err
@@ -755,6 +763,9 @@ type OSCommandRunner struct{}
 
 func (OSCommandRunner) Run(ctx context.Context, name string, args []string, env []string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if bounded, _ := ctx.Value(boundedExecKey{}).(bool); bounded {
+		cmd.WaitDelay = 2 * time.Second
+	}
 	cmd.Env = append(os.Environ(), env...)
 	var output, diagnostics bytes.Buffer
 	cmd.Stdout = &output
@@ -1352,6 +1363,9 @@ type fcE2BLaunchSubmission struct {
 func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) error {
 	if configured := l.withCurrentConfig(); configured != l {
 		return configured.LaunchTask(ctx, task)
+	}
+	if l != nil && l.Config.QuickWins.CoalescedHotExec {
+		ctx = context.WithValue(ctx, hotRunnerProbeKey{}, &hotRunnerProbe{})
 	}
 	if l == nil || l.Queries == nil || l.Tasks == nil || !task.RuntimeID.Valid {
 		return nil
@@ -2648,6 +2662,8 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 		var readyErr error
 		if coldStart {
 			readyErr = l.waitSandboxReady(ctx, sandboxID)
+		} else if l.Config.QuickWins.CoalescedHotExec {
+			readyErr = l.probeHotRunner(ctx, sandboxID, rt)
 		} else {
 			readyErr = l.checkSandboxReady(ctx, sandboxID)
 		}
@@ -2784,16 +2800,28 @@ func sleepWithContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
+type boundedExecKey struct{}
+
 func (l *FCE2BLauncher) checkSandboxReady(ctx context.Context, sandboxID string) error {
+	if l.Config.QuickWins.BoundedReadyExec {
+		ctx = context.WithValue(ctx, boundedExecKey{}, true)
+		_, err := l.runE2BCommandWithTimeout(ctx, 5*time.Second, []string{"sandbox", "exec", sandboxID, "true"})
+		return err
+	}
 	_, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", sandboxID, "true"})
 	return err
 }
 
 func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) error {
 	deadline := time.Now().Add(l.Config.SandboxReadyTimeout)
+	if l.Config.QuickWins.BoundedReadyExec {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
 	var lastErr error
 	for {
-		_, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", sandboxID, "true"})
+		err := l.checkSandboxReady(ctx, sandboxID)
 		if err == nil {
 			return nil
 		}
@@ -2909,7 +2937,14 @@ func (l *FCE2BLauncher) runE2BCommand(ctx context.Context, args []string) (strin
 func (l *FCE2BLauncher) runE2BCommandWithTimeout(ctx context.Context, timeout time.Duration, args []string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return l.Runner.Run(cmdCtx, l.Config.CLIPath, args, l.e2bEnv())
+	stage := "fc_command"
+	if len(args) > 1 {
+		stage += "_" + args[0] + "_" + args[1]
+	}
+	finish := startupobs.Start(ctx, stage)
+	out, err := l.Runner.Run(cmdCtx, l.Config.CLIPath, args, l.e2bEnv())
+	finish(err)
+	return out, err
 }
 
 func (l *FCE2BLauncher) e2bEnv() []string {
@@ -3034,7 +3069,7 @@ func (l *FCE2BLauncher) failLaunch(
 	attemptID pgtype.UUID,
 	failure RuntimeStartFailure,
 ) error {
-	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) {
+	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) || errors.Is(cause, errRuntimeLaunchShutdown) {
 		return cause
 	}
 	_, err := l.Tasks.FailTaskRuntimeStart(ctx, task.ID, task.RuntimeID, attemptID, failure)
@@ -3066,7 +3101,7 @@ func (s *TaskService) FailTaskRuntimeStart(
 	attemptID pgtype.UUID,
 	failure RuntimeStartFailure,
 ) (*db.AgentTaskQueue, error) {
-	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) {
+	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) || errors.Is(cause, errRuntimeLaunchShutdown) {
 		return nil, cause
 	}
 	// A request-scoped A2A identity intentionally cancels Runtime startup when

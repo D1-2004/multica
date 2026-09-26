@@ -234,7 +234,7 @@ func (l *FCE2BLauncher) RunDSHBuildWorker(ctx context.Context, objects storage.S
 			if err != nil {
 				continue
 			}
-			worker := dshprofile.BuildWorker{Ledger: dshprofile.PostgresBuildLedger{DB: current.Pool}, Driver: driver}
+			worker := dshprofile.BuildWorker{OnReady: current.profileBuildReady, Ledger: dshprofile.PostgresBuildLedger{DB: current.Pool}, Driver: driver}
 			if err := worker.Step(ctx); err != nil && !errors.Is(err, dshprofile.ErrNoBuildJob) && ctx.Err() == nil {
 				slog.Warn("dsh_plugin_build_reconciliation_pending")
 			}

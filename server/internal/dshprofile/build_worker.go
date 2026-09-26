@@ -108,6 +108,8 @@ type BuildDriver interface {
 }
 
 type BuildWorker struct {
+	OnReady func(context.Context, uuid.UUID)
+
 	Ledger BuildLedger
 	Driver BuildDriver
 	Now    func() time.Time
@@ -145,7 +147,11 @@ func (w BuildWorker) Step(ctx context.Context) error {
 		if err := w.Ledger.Save(ctx, job, next); err != nil {
 			return err
 		}
+		becameReady := job.State != "ready" && next.State == "ready"
 		job = next
+		if becameReady && w.OnReady != nil {
+			w.OnReady(ctx, job.WorkspaceID)
+		}
 		slog.InfoContext(ctx, "dsh_plugin_build_transition",
 			"workspace_id", job.WorkspaceID.String(), "build_id", job.BuildID.String(),
 			"phase", job.Phase, "state", job.State, "template_id", job.TemplateID,

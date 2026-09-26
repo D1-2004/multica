@@ -474,6 +474,14 @@ func (s *TaskService) MarkRuntimeStartBlocked(ctx context.Context, attempt db.Ag
 // RuntimeStartRecoveryConfig is read afresh for each sweep from Diamond.
 // Zero values retain the historical DSH-only recovery and unbounded wait.
 type RuntimeStartRecoveryConfig struct {
+	DSHEventWakeup       bool
+	DingTalkReplyCommand bool
+	ASBEventWakeup       bool
+	StartupObservability bool
+	BoundedReadyExec     bool
+	CoalescedHotExec     bool
+	BatchSkillResolve    bool
+
 	RecoverAbandonedLaunches bool
 	BoundDSHHostWait         bool
 }
@@ -503,7 +511,7 @@ func (s *TaskService) RecoverWaitingDSHHosts(ctx context.Context) {
 			s.HandleFailedTasks(ctx, tasks)
 		}
 	}
-	tasks, err := s.Queries.ListDSHHostWaitingTasks(ctx, cfg.RecoverAbandonedLaunches)
+	tasks, err := s.Queries.ListDSHHostWaitingTasks(ctx, db.ListDSHHostWaitingTasksParams{RecoverAbandonedLaunches: cfg.RecoverAbandonedLaunches, DshEventWakeup: cfg.DSHEventWakeup, EventsOnly: false})
 	if err != nil {
 		slog.Warn("list waiting DSH host tasks failed", "error", err)
 		return

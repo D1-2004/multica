@@ -60,3 +60,57 @@ Full sqlc generation is blocked by existing migration 271 referring to the
 fork table created in 9025. Query generation used sqlc v1.29.0 with the
 repository's existing temporary-schema approach (271 analyzed last), and
 copied only the changed runtime_start queries to retain fork compatibility.
+
+
+## Revised scope (2026-09-26 follow-up)
+
+The new instruction supersedes the initial deferrals. Use the PRI-34 v2 numbering.
+Q1 remains excluded: Coordinator budget, reasoning and finish retry require the
+owner's separate decision. Q2-Q7 plus readiness timeout, hot exec coalescing and
+bounded skill batching are in scope, with independent live flags. No changes to
+Coordinator prompt/logic are permitted; Q5 is task-side delivery guidance only.
+
+| Item | runtime.fc_e2b key | Contract |
+| --- | --- | --- |
+| Q2 | dsh_event_wakeup | Persist workspace/agent readiness timestamps, broadcast PostgreSQL hints, recheck after lease release, periodic sweep repairs missed hints |
+| Q3 | bound_dsh_host_wait | Existing 10-minute cumulative wait bound plus typed provisioning/native/profile wait reasons |
+| Q4 | recover_abandoned_launches | Existing recovery plus shutdown cancellation/join before releasing owned launch leases |
+| Q5 | dingtalk_reply_command | Task-side quoted reply command using authoritative source identifiers; no Coordinator changes |
+| Q6 | asb_event_wakeup | Capacity release events bypass retry delay; completion of a failed retry does not bypass backoff |
+| Q7 | startup_observability | Structured task-correlated substage timings and Langfuse startup spans |
+| Extra | bounded_ready_exec | Short readiness exec deadline, pipe-drain WaitDelay, total deadline |
+| Extra | coalesced_hot_exec | Probe readiness and runner capability in one fixed script for reused FC sandboxes |
+| Extra | batch_skill_resolve | Bounded small-bundle batching; preserve progressive resolution for large bundles |
+
+Events are hints, never authority. Consumers reload durable state and take the
+existing launch lease; an event published before blocked persistence remains
+eligible and a release hint closes the lease race. False restores legacy
+selection/backoff/commands on subsequent operations. No task may be marked
+failed merely because this server is shutting down.
+
+Tests must cover notification-before-blocked, lease-held notification, two
+replicas, shutdown cancellation/lease fencing, ASB self-notification spin,
+quoted delivery targets, bounded exec pipes and partial skill cache progress.
+Real-task on/off/on evidence is required independently of config propagation.
+
+
+Implementation detail: readiness uses `runtime_readiness_event` (one timestamp
+per workspace/agent; nil agent is a workspace Profile build) and the existing
+PostgreSQL LISTEN/NOTIFY pattern in `internal/daemonws/pg_notifier.go`. A 5-second,
+four-worker bounded cloud-state reconciler finishes pending NAS/host receipts;
+it does not submit runners. Completion emits the persisted event. Old binaries
+can continue polling during rollout; add new Diamond keys only after deployment.
+A missed completion write or notification is repaired by the original sweeper.
+
+Small-bundle batching is server-side at claim (complete sets of at most 8 bundles
+and 128 KiB content); no FC image upgrade is needed. Larger sets retain refs and
+progressive caching. Hot exec coalescing caches only a per-launch, per-sandbox
+capability receipt; no capability cache crosses tasks or sandbox replacement.
+
+Validation on 2026-09-26: targeted service/handler/DSH/Profile/runtimeconfig/server
+checks pass, as do -race and go vet. The baseline health test also returns 503 at
+untouched 43ce215a90, separately from the existing FC trace sink failure.
+Real baseline: DingTalk message msgAkqseVuH3jWQcydiao6J1w==, task
+5fcbbe61-33f9-4c3b-84fa-5d24bdfa86df, trace 3ff62e6a-eb4e-4c89-914c-832a6a4692d7.
+Message 13:55:21, ACK 13:55:47, result 13:56:33 (+08:00); decision-to-start ~8s.
+This one sample does not estimate percentiles. E2E on/off/on remains to be run.

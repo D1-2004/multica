@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/startupobs"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -37,6 +38,8 @@ import (
 )
 
 type TaskService struct {
+	launchShutdown runtimeLaunchShutdown
+
 	Queries   *db.Queries
 	TxStarter TxStarter
 	Hub       *realtime.Hub
@@ -5957,8 +5960,16 @@ func (s *TaskService) launchRuntimeForTaskWithContextAndCompletion(
 			launchParent = a2aintegration.WithInvocationIdentity(context.Background(), identity)
 		}
 	}
+	launchParent, finishLaunch, accepted := s.trackRuntimeLaunch(launchParent)
+	if !accepted {
+		if done != nil {
+			done()
+		}
+		return
+	}
 	taskCopy := task
 	go func(parent context.Context) {
+		defer finishLaunch()
 		if done != nil {
 			defer done()
 		}
@@ -6011,13 +6022,17 @@ func (s *TaskService) launchRuntimeForTaskWithContextAndCompletion(
 			)
 		}
 		started := time.Now()
+		launchCtx = s.withStartupObservability(launchCtx, taskCopy)
+		finishStartup := startupobs.Start(launchCtx, "total")
 		err = s.RuntimeLauncher.LaunchTask(launchCtx, taskCopy)
+		finishStartup(err)
 		cancelLaunch(context.Canceled)
 		<-renewDone
 
 		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), runtimeLaunchLeaseDBTimeout)
 		releaseErr := s.runtimeLaunchLeases.Release(releaseCtx, lease)
 		releaseCancel()
+		s.notifyRuntimeReadinessHint(context.Background())
 		if releaseErr != nil {
 			slog.Warn("runtime launcher lease release failed",
 				"task_id", taskKey,
@@ -6110,7 +6125,7 @@ func (s *TaskService) RecoverQueuedFCE2BTask(ctx context.Context, task db.AgentT
 	if task.Status != "queued" || !task.RuntimeID.Valid {
 		return
 	}
-	if task.CreatedAt.Valid && time.Since(task.CreatedAt.Time) < fcE2BQueuedRecoveryAge {
+	if !s.CurrentRuntimeStartRecoveryConfig().DSHEventWakeup && task.CreatedAt.Valid && time.Since(task.CreatedAt.Time) < fcE2BQueuedRecoveryAge {
 		return
 	}
 	rt, err := s.Queries.GetAgentRuntime(ctx, task.RuntimeID)

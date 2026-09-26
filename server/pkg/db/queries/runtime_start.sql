@@ -224,7 +224,7 @@ SELECT task.*
 FROM agent_task_queue AS task
 JOIN agent ON agent.id = task.agent_id AND agent.archived_at IS NULL
 JOIN LATERAL (
-    SELECT attempt.backend, attempt.status, attempt.error_code, attempt.finished_at,
+    SELECT attempt.backend, attempt.status, attempt.error_code, attempt.finished_at, attempt.created_at,
            attempt.updated_at, attempt.last_stage, attempt.runner_started_at,
            attempt.daemon_started_at, attempt.claim_finalized_at
     FROM agent_task_runtime_start_attempt AS attempt
@@ -234,10 +234,14 @@ JOIN LATERAL (
 ) AS latest ON true
 WHERE task.status = 'queued'
   AND latest.backend = 'aliyun_fc'
+  AND (NOT @events_only::boolean OR EXISTS (SELECT 1 FROM runtime_readiness_event AS ready
+       WHERE ready.workspace_id=agent.workspace_id
+         AND ready.agent_id IN (task.agent_id,'00000000-0000-0000-0000-000000000000'::uuid)
+         AND ready.event_at >= latest.created_at))
   AND (
       (latest.status = 'blocked'
        AND latest.error_code = 'DSH-HOST-WAITING'
-       AND latest.finished_at <= now() - interval '30 seconds')
+       AND (@dsh_event_wakeup::boolean OR latest.finished_at <= now() - interval '30 seconds'))
       OR
       -- A rolling deployment or lost launcher can leave a pre-runner attempt
       -- starting forever. The normal lease/CAS path supersedes it safely.

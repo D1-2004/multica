@@ -415,3 +415,23 @@ func TestDiamondRuntimeRecoverySwitchesRollback(t *testing.T) {
 		}
 	}
 }
+
+func TestDiamondQuickwinFlagsSwitchTogetherWithoutRestart(t *testing.T) {
+	client := &fakeDiamondClient{content: validJSON()}
+	service, err := newDiamondService(nil, true, func() (diamondClient, error) { return client, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	for _, value := range []string{"true", "false", "true"} {
+		flags := `"dsh_event_wakeup":` + value + `,"dingtalk_reply_command":` + value + `,"asb_event_wakeup":` + value + `,"startup_observability":` + value + `,"bounded_ready_exec":` + value + `,"coalesced_hot_exec":` + value + `,"batch_skill_resolve":` + value + `,`
+		client.onChange(strings.Replace(validJSON(), `"fc_e2b": {`, `"fc_e2b": {`+flags, 1))
+		cfg := service.Current().Config.Runtime.FCE2B
+		want := value == "true"
+		for _, got := range []bool{cfg.DSHEventWakeup, cfg.DingTalkReplyCommand, cfg.ASBEventWakeup, cfg.StartupObservability, cfg.BoundedReadyExec, cfg.CoalescedHotExec, cfg.BatchSkillResolve} {
+			if got != want {
+				t.Fatal("live flag update lost")
+			}
+		}
+	}
+}
