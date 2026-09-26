@@ -54,6 +54,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	latestFeedbackNeedsHistoryAttempt := false
 	unresolvedReviewFeedback := ""
 	modelRounds := 0
+	finishRepairs := 0
 	conversationRepliesRendered := false
 	if turn.Loop != LoopTaskFinished && len(turn.History)+len(turn.DingTalkHistory) > 0 {
 		if _, err := rememberCoordinationRead(&turn, &readSequence, toolContextRead, `{"kind":"history"}`, "", nil); err != nil {
@@ -127,8 +128,8 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				lt.AddMetadata(map[string]any{"read_snapshot_count": len(turn.CoordinationReads), "read_snapshot_runes": len([]rune(coordinationReadsJSON(turn))), "read_snapshot_truncated": turn.CoordinationReadsTruncated, "read_snapshot_budget": coordinationReadsBudget, "repair_proposal_runes": len([]rune(latestProposal)), "repair_proposal_budget": coordinationProposalBudget})
 			}
 		}
-		generation := traceRoundGeneration(lt, round, messages, tools, c.configuredModel())
-		modelRounds = round + 1
+		generation := traceRoundGeneration(lt, round, messages, tools, c.configuredModel(), c.completionBudget(), c.finishRecoveryEnabled())
+		modelRounds++
 		completion, err := c.complete(ctx, messages, tools)
 		endRoundGeneration(generation, completion, err)
 		if err != nil {
@@ -136,6 +137,12 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		}
 		if len(completion.Choices) == 0 {
 			return fail(fmt.Errorf("coordinator loop: no choices"))
+		}
+		if c.finishRecoveryEnabled() && needsFinishSerializationRepair(completion) {
+			completion, err = c.repairFinishSerialization(ctx, turn, messages, tools, recalled, completion, &finishRepairs, &modelRounds)
+			if err != nil {
+				return failWith("finish_serialization_failed", err)
+			}
 		}
 		msg := completion.Choices[0].Message
 		normalizeToolCallTypes(&msg)
@@ -263,7 +270,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					}
 					if callErr == nil {
 						decision.Steps = steps
-						decision.ToolRounds = round + 1
+						decision.ToolRounds = modelRounds
 						decision.ToolsUsed = append([]string(nil), used...)
 						if turn.UserDecisionEnabled && turn.Loop != LoopTaskFinished && decision.Action != ActionSilence {
 							return c.proposeUserDecision(ctx, turn, messages, recalls, recalledIssues, decision)
@@ -376,7 +383,7 @@ func finishToolOutput(decision Decision) string {
 }
 
 func (c *Coordinator) complete(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam) (*openai.ChatCompletion, error) {
-	return c.completeWithLimit(ctx, messages, tools, maxCompletionTokens, temperature)
+	return c.completeWithLimit(ctx, messages, tools, c.completionBudget(), temperature)
 }
 
 func (c *Coordinator) completeWithLimit(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, limit int64, temp float64) (*openai.ChatCompletion, error) {
@@ -397,15 +404,22 @@ func (c *Coordinator) completeWithModelLimit(ctx context.Context, model string, 
 		// validate the exact response tool before applying any result.
 		toolChoice = "auto"
 	}
-	params.SetExtraFields(map[string]any{
-		"enable_thinking": reasoning != shared.ReasoningEffortNone,
-		"tool_choice":     toolChoice,
-	})
+	extra := map[string]any{"enable_thinking": reasoning != shared.ReasoningEffortNone, "tool_choice": toolChoice}
+	if c.finishRecoveryEnabled() && isDeepSeekFlash(model) {
+		params.ReasoningEffort = ""
+		extra["thinking"] = map[string]any{"type": "disabled"}
+		extra["enable_thinking"] = false
+		extra["tool_choice"] = "required"
+	}
+	params.SetExtraFields(extra)
 	params.Temperature = openai.Float(temp)
 	var err error
 	params, err = coordinatorWireParams(params)
 	if err != nil {
 		return nil, err
+	}
+	if c.finishRecoveryEnabled() {
+		pruneFinishSchemas(params.Tools)
 	}
 	if c == nil || (c.Chat == nil && c.LLM == nil) {
 		return nil, fmt.Errorf("coordinator loop: llm is not configured")

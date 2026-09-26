@@ -114,6 +114,8 @@ func (c AgenticFSConfig) Defaults() AgenticFSConfig {
 }
 
 type LLMConfig struct {
+	CoordinatorFinishRecovery bool `json:"coordinator_finish_recovery,omitempty"`
+
 	BaseURL          string   `json:"base_url"`
 	Models           []string `json:"models"`
 	DefaultModel     string   `json:"default_model"`

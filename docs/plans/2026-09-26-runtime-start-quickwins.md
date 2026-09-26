@@ -114,3 +114,14 @@ Real baseline: DingTalk message msgAkqseVuH3jWQcydiao6J1w==, task
 5fcbbe61-33f9-4c3b-84fa-5d24bdfa86df, trace 3ff62e6a-eb4e-4c89-914c-832a6a4692d7.
 Message 13:55:21, ACK 13:55:47, result 13:56:33 (+08:00); decision-to-start ~8s.
 This one sample does not estimate percentiles. E2E on/off/on remains to be run.
+
+
+## Q1 authorization and implementation (14:36 follow-up)
+
+The later user comment 22fe680a-710a-4e50-a433-0811a17122a4 explicitly authorizes
+Coordinator changes. Prior Q1 exclusions in this plan are historical, superseded
+by this section. Add runtime.llm.coordinator_finish_recovery: 4096 main output,
+DeepSeek flash thinking disabled, bounded finish-only serialization repair and
+kind-specific schemas matching unchanged Host validation. Use the observed EOF
+and start_work/state_refs failures as regressions. Do not rerun reads or commit
+anything during serialization repair. This remains pre-release only.

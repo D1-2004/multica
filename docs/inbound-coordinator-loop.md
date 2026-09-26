@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-22.1`。装配版本：`42`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-26.1`。装配版本：`43`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -425,3 +425,15 @@ collect 在是否启用选择不同的请求之间拆窗；所有人和指定名
 用户选择以 `coordinator.user_decision.choice` observation 写回原 Coordinator trace；问题、可选项和模型推荐为 input，实际 accepted submission 的 option ID/label/custom 与状态为 output，不能把推荐或拒绝事件当作选择。选择后的解释与审查沿用冻结 trace 并归到 choice 下，避免重新生成 trace ID。PostgreSQL 版本水位驱动独立重试，同一 decision 使用固定 observation ID；Langfuse 失败不阻塞卡片或派发。OTLP 接收成功与 Langfuse 查询可见分别验证。
 
 监听保留 PostgreSQL 跨副本租约、ready 后发卡、独立心跳与重连。短暂回调持久化失败在当前流内重试；退出/取消会主动解除 pipe 读取，避免子进程后代持有管道导致无法重连。严重进程或上游事件丢失仍不能仅凭本地重试宣称 exactly-once；业务首次有效选择由数据库事务与事件去重保证。
+
+
+## PRI-47 finish transport recovery
+
+2026-09-26 14:36 用户授权纳入 Q1。`runtime.llm.coordinator_finish_recovery`
+在每个 Decide 开始时冻结：开启后主输出预算4096，DeepSeek flash使用
+`thinking.type=disabled`（省略不兼容的reasoning_effort）；关闭恢复1536与原参数。
+截断或JSON不完整时，在同一证据快照内最多两次只提供finish工具重新序列化，
+不重做读取、不扩大总decision deadline、不提交旧候选；修复结果仍走全部Host与review。
+模型schema按kind使用与Host相同的允许字段，避免start_work被展示state_refs。
+依据：https://api-docs.deepseek.com/guides/thinking_mode/ 。
+结构检查、脚本Host测试、模型回放和真实投递证据分别报告。

@@ -817,6 +817,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	coordinator := inboundcoord.New(h.LLM, queries, h.Assoc)
 	if opts.RuntimeConfig != nil {
 		coordinator.ModelProvider = func() string { return opts.RuntimeConfig.current().Runtime.LLM.CoordinatorModel }
+		coordinator.FinishRecoveryProvider = func() bool { return opts.RuntimeConfig.current().Runtime.LLM.CoordinatorFinishRecovery }
 	}
 	if opts.DeploymentFence != nil {
 		coordinator.Ready = func(ctx context.Context) (bool, error) {

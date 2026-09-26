@@ -81,6 +81,8 @@ const (
 
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
+	FinishProtocolRepair bool
+
 	UserDecisionEnabled    bool
 	UserDecisionRequestID  string
 	UserDecisionSubmission *userdecision.Submission
@@ -260,6 +262,9 @@ type SkillSnapshot struct {
 
 // Coordinator runs the bounded assoc tool loop in loop.go.
 type Coordinator struct {
+	FinishRecoveryProvider func() bool
+	finishRecovery         bool
+
 	RouteProvider func(context.Context) (*modelregistry.Route, error)
 	// ModelProvider is sampled once per decision, including all finish reviews.
 	ModelProvider func() string
@@ -395,6 +400,8 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	snapshot := *c
 	snapshot.model = c.configuredModel()
 	snapshot.ModelProvider = nil
+	snapshot.finishRecovery = c.finishRecoveryEnabled()
+	snapshot.FinishRecoveryProvider = nil
 	if c.RouteProvider != nil {
 		route, err := c.RouteProvider(ctx)
 		if err != nil {
