@@ -1,121 +1,112 @@
 // @vitest-environment jsdom
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enSettings from "../../locales/en/settings.json";
-
-const createTokenSpy = vi.hoisted(() => vi.fn());
-const copyTextSpy = vi.hoisted(() => vi.fn());
-
+const mocks = vi.hoisted(() => ({
+  create: vi.fn(),
+  list: vi.fn(),
+  revoke: vi.fn(),
+  copy: vi.fn(),
+  role: "owner",
+}));
 vi.mock("@multica/core/api", () => ({
   api: {
-    getBaseUrl: () => "https://api.example.com",
-    createPersonalAccessToken: createTokenSpy,
+    createWorkspaceMCPConnection: mocks.create,
+    listWorkspaceMCPConnections: mocks.list,
+    revokeWorkspaceMCPConnection: mocks.revoke,
   },
 }));
-
-vi.mock("@multica/ui/lib/clipboard", () => ({ copyText: copyTextSpy }));
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+vi.mock("@multica/core/config", () => ({ useFeatureEnabled: () => true }));
+vi.mock("@multica/core/paths", () => ({
+  useCurrentWorkspace: () => ({ id: "ws-1", name: "My team" }),
 }));
-
+vi.mock("@multica/core/permissions", () => ({
+  useCurrentMember: () => ({ role: mocks.role }),
+}));
+vi.mock("@multica/ui/lib/clipboard", () => ({ copyText: mocks.copy }));
+vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 import { MCPConnectionsTab } from "./mcp-connections-tab";
-
 function renderTab() {
   return render(
-    <I18nProvider
-      locale="en"
-      resources={{ en: { common: enCommon, settings: enSettings } }}
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
     >
-      <MCPConnectionsTab />
-    </I18nProvider>,
+      <I18nProvider
+        locale="en"
+        resources={{ en: { common: enCommon, settings: enSettings } }}
+      >
+        <MCPConnectionsTab />
+      </I18nProvider>
+    </QueryClientProvider>,
   );
 }
-
-describe("MCPConnectionsTab", () => {
+describe("Workspace MCP connections", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    copyTextSpy.mockResolvedValue(true);
-    createTokenSpy.mockResolvedValue({ token: "mul_test_secret" });
+    mocks.role = "owner";
+    mocks.list.mockResolvedValue([]);
+    mocks.create.mockResolvedValue({
+      id: "conn",
+      url: "https://example.test/api/mcp/workspaces/ws-1/connect/wmcp_secret",
+    });
+    mocks.copy.mockResolvedValue(true);
   });
-
-  it("explains that connecting a client requires an API Key", () => {
+  it("creates and copies a workspace-only link with read-only default", async () => {
+    const user = userEvent.setup();
     renderTab();
-
-    expect(screen.getByText(/an API Key is required/i)).toBeInTheDocument();
-  });
-
-  it("surfaces the endpoint and only the four supported clients", () => {
-    renderTab();
-
     expect(
-      screen.getByDisplayValue<HTMLInputElement>(
-        "https://api.example.com/api/mcp",
-      ).readOnly,
-    ).toBe(true);
-
-    const clients = screen.getAllByRole("button", { name: /^Configure / });
-    expect(clients).toHaveLength(4);
-    expect(clients.map((button) => button.textContent)).toEqual([
-      expect.stringContaining("Codex"),
-      expect.stringContaining("Claude"),
-      expect.stringContaining("Qoder"),
-      expect.stringContaining("QoderWork"),
+      screen.getByText("Only this workspace: My team"),
+    ).toBeInTheDocument();
+    await user.type(
+      screen.getByRole("textbox", { name: "Connection name" }),
+      "My OpenCode",
+    );
+    await user.click(screen.getByRole("button", { name: "Create MCP link" }));
+    await screen.findByText("Your MCP link is ready");
+    expect(mocks.create).toHaveBeenCalledWith(
+      "ws-1",
+      expect.objectContaining({ name: "My OpenCode", scopes: ["read"] }),
+    );
+    await user.click(screen.getByRole("button", { name: "Copy link" }));
+    expect(mocks.copy).toHaveBeenCalledWith(
+      "https://example.test/api/mcp/workspaces/ws-1/connect/wmcp_secret",
+    );
+  });
+  it("does not fetch or issue admin-managed connections for members", () => {
+    mocks.role = "member";
+    renderTab();
+    expect(screen.getByText(/Ask a workspace owner/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Create MCP link" }),
+    ).not.toBeInTheDocument();
+    expect(mocks.list).not.toHaveBeenCalled();
+  });
+  it("revokes only the selected connection after confirmation", async () => {
+    mocks.list.mockResolvedValue([
+      {
+        id: "conn",
+        name: "My OpenCode",
+        scopes: ["read"],
+        expiresAt: "2099-01-01T00:00:00Z",
+        revokedAt: null,
+      },
     ]);
-  });
-
-  it("creates a dedicated API Key and copies a ready Codex config", async () => {
+    mocks.revoke.mockResolvedValue(undefined);
     const user = userEvent.setup();
     renderTab();
-
-    await user.click(screen.getByRole("button", { name: "Configure Codex" }));
-    await user.click(
-      screen.getByRole("button", { name: "Create API Key and copy" }),
+    await screen.findByText("My OpenCode");
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    expect(mocks.revoke).not.toHaveBeenCalled();
+    const buttons = screen.getAllByRole("button", { name: "Revoke" });
+    await user.click(buttons[buttons.length - 1]!);
+    await waitFor(() =>
+      expect(mocks.revoke).toHaveBeenCalledWith("ws-1", "conn"),
     );
-
-    await waitFor(() => {
-      expect(createTokenSpy).toHaveBeenCalledWith({
-        name: "Multica MCP · Codex",
-        expires_in_days: 90,
-      });
-    });
-    expect(copyTextSpy).toHaveBeenCalledWith(
-      `[mcp_servers.multica]\nurl = "https://api.example.com/api/mcp"\nhttp_headers = { Authorization = "Bearer mul_test_secret" }\nenabled = true`,
-    );
-  });
-
-  it("copies QoderWork's Streamable HTTP import JSON", async () => {
-    const user = userEvent.setup();
-    renderTab();
-
-    await user.click(
-      screen.getByRole("button", { name: "Configure QoderWork" }),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Create API Key and copy" }),
-    );
-
-    await waitFor(() => {
-      expect(copyTextSpy).toHaveBeenCalledWith(
-        JSON.stringify(
-          {
-            mcpServers: {
-              multica: {
-                type: "streamable-http",
-                url: "https://api.example.com/api/mcp",
-                headers: {
-                  Authorization: "Bearer mul_test_secret",
-                },
-              },
-            },
-          },
-          null,
-          2,
-        ),
-      );
-    });
   });
 });
