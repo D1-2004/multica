@@ -69,6 +69,7 @@ export function AgentMCPLinkCard({ agent }: { agent: Agent }) {
   const deleteCredential = useDeleteAgentA2ACredential(wsId, agent.id);
 
   const endpoint = configQuery.data?.endpoint ?? null;
+  const workspaceMcpUrl = endpoint?.workspaceMcpUrl?.trim() ?? "";
   const clients = configQuery.data?.clients ?? EMPTY_CLIENTS;
   const localClient = useMemo(() => findLocalMCPClient(clients), [clients]);
   const activeCredentials = useMemo(
@@ -160,8 +161,9 @@ export function AgentMCPLinkCard({ agent }: { agent: Agent }) {
   };
 
   const handleCopy = async () => {
-    if (!generatedLink) return;
-    if (await copyText(generatedLink.url)) {
+    const url = workspaceMcpUrl || generatedLink?.url;
+    if (!url) return;
+    if (await copyText(url)) {
       setCopied(true);
       toast.success(t(($) => $.tab_body.a2a.copied));
       setTimeout(() => setCopied(false), 2000);
@@ -202,14 +204,18 @@ export function AgentMCPLinkCard({ agent }: { agent: Agent }) {
             <h3 className="text-sm font-medium">MCP</h3>
             {!configQuery.isLoading && !configQuery.isError && (
               <Badge variant={linkExists ? "default" : "secondary"}>
-                {linkExists
+                {workspaceMcpUrl
+                  ? t(($) => $.tab_body.integrations.mcp_workspace_badge)
+                  : linkExists
                   ? t(($) => $.tab_body.integrations.mcp_link_active)
                   : t(($) => $.tab_body.integrations.mcp_link_not_created)}
               </Badge>
             )}
           </div>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            {t(($) => $.tab_body.integrations.mcp_link_intro)}
+            {workspaceMcpUrl
+              ? t(($) => $.tab_body.integrations.mcp_workspace_intro)
+              : t(($) => $.tab_body.integrations.mcp_link_intro)}
           </p>
         </div>
       </div>
@@ -231,14 +237,14 @@ export function AgentMCPLinkCard({ agent }: { agent: Agent }) {
           </div>
         ) : (
           <>
-            {generatedLink ? (
+            {workspaceMcpUrl ? (
               <>
                 <div className="flex min-w-0 gap-2">
                   <Input
                     readOnly
-                    value={generatedLink.url}
+                    value={workspaceMcpUrl}
                     className="min-w-0 bg-muted/30 font-mono text-xs"
-                    aria-label="MCP URL"
+                    aria-label="Workspace MCP URL"
                   />
                   <Button onClick={handleCopy} className="shrink-0">
                     {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
@@ -248,56 +254,80 @@ export function AgentMCPLinkCard({ agent }: { agent: Agent }) {
                   </Button>
                 </div>
                 <p className="text-xs leading-5 text-muted-foreground">
-                  {t(($) => $.tab_body.integrations.mcp_link_once_warning)}
+                  {t(($) => $.tab_body.integrations.mcp_workspace_token_hint)}
                 </p>
               </>
-            ) : linkExists ? (
-              <div className="rounded-md bg-muted/30 px-3 py-2.5">
-                <p className="text-xs font-medium">
-                  {t(($) => $.tab_body.integrations.mcp_existing_link_title)}
-                </p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {t(($) => $.tab_body.integrations.mcp_existing_link_description, {
-                    prefix: activeCredentials[0]?.tokenPrefix ?? "mca2a_••••",
-                  })}
-                </p>
-              </div>
             ) : (
-              <p className="text-xs text-muted-foreground">
-                {canGenerate
-                  ? t(($) => $.tab_body.integrations.mcp_no_link_description)
-                  : t(($) => $.tab_body.integrations.mcp_link_unavailable)}
-              </p>
-            )}
-
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" onClick={handleGenerate} disabled={!canGenerate || busy}>
-                {generating ? (
-                  <Loader2 className="size-4 animate-spin" />
+              <>
+                {generatedLink ? (
+                  <>
+                    <div className="flex min-w-0 gap-2">
+                      <Input
+                        readOnly
+                        value={generatedLink.url}
+                        className="min-w-0 bg-muted/30 font-mono text-xs"
+                        aria-label="MCP URL"
+                      />
+                      <Button onClick={handleCopy} className="shrink-0">
+                        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+                        {copied
+                          ? t(($) => $.tab_body.a2a.copied)
+                          : t(($) => $.tab_body.integrations.mcp_copy_link)}
+                      </Button>
+                    </div>
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      {t(($) => $.tab_body.integrations.mcp_link_once_warning)}
+                    </p>
+                  </>
                 ) : linkExists ? (
-                  <RotateCw className="size-4" />
+                  <div className="rounded-md bg-muted/30 px-3 py-2.5">
+                    <p className="text-xs font-medium">
+                      {t(($) => $.tab_body.integrations.mcp_existing_link_title)}
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {t(($) => $.tab_body.integrations.mcp_existing_link_description, {
+                        prefix: activeCredentials[0]?.tokenPrefix ?? "mca2a_••••",
+                      })}
+                    </p>
+                  </div>
                 ) : (
-                  <KeyRound className="size-4" />
+                  <p className="text-xs text-muted-foreground">
+                    {canGenerate
+                      ? t(($) => $.tab_body.integrations.mcp_no_link_description)
+                      : t(($) => $.tab_body.integrations.mcp_link_unavailable)}
+                  </p>
                 )}
-                {linkExists
-                  ? t(($) => $.tab_body.integrations.mcp_regenerate_link)
-                  : t(($) => $.tab_body.integrations.mcp_generate_link)}
-              </Button>
-              {linkExists && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setRevokeOpen(true)}
-                  disabled={busy}
-                >
-                  <Trash2 className="size-4 text-destructive" />
-                  {t(($) => $.tab_body.integrations.mcp_revoke_link)}
-                </Button>
-              )}
-            </div>
-            <p className="text-xs leading-5 text-muted-foreground">
-              {t(($) => $.tab_body.integrations.mcp_link_security_hint)}
-            </p>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" onClick={handleGenerate} disabled={!canGenerate || busy}>
+                    {generating ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : linkExists ? (
+                      <RotateCw className="size-4" />
+                    ) : (
+                      <KeyRound className="size-4" />
+                    )}
+                    {linkExists
+                      ? t(($) => $.tab_body.integrations.mcp_regenerate_link)
+                      : t(($) => $.tab_body.integrations.mcp_generate_link)}
+                  </Button>
+                  {linkExists && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setRevokeOpen(true)}
+                      disabled={busy}
+                    >
+                      <Trash2 className="size-4 text-destructive" />
+                      {t(($) => $.tab_body.integrations.mcp_revoke_link)}
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs leading-5 text-muted-foreground">
+                  {t(($) => $.tab_body.integrations.mcp_link_security_hint)}
+                </p>
+              </>
+            )}
           </>
         )}
       </div>

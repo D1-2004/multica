@@ -66,6 +66,8 @@ export interface AgentA2AEndpoint {
   rpcUrl: string;
   /** Canonical header-authenticated MCP endpoint; absent on older servers. */
   mcpUrl?: string;
+  /** Workspace MCP endpoint disclosed while the replacement flag is enabled. */
+  workspaceMcpUrl?: string;
   protocolVersion: string;
   id?: string;
   agentId?: string;
