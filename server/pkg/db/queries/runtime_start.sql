@@ -333,6 +333,7 @@ JOIN LATERAL (
            attempt.status,
            attempt.error_code,
            attempt.finished_at,
+           attempt.created_at,
            attempt.updated_at
     FROM agent_task_runtime_start_attempt AS attempt
     WHERE attempt.task_id = task.id
@@ -348,8 +349,9 @@ WHERE task.status = 'queued'
       (
           latest_attempt.status = 'blocked'
           AND latest_attempt.error_code = 'ASB-CAPACITY-WAITING'
-          AND COALESCE(latest_attempt.finished_at, latest_attempt.updated_at)
+          AND (COALESCE(latest_attempt.finished_at, latest_attempt.updated_at)
               <= now() - make_interval(secs => sqlc.arg('retry_seconds')::double precision)
+              OR latest_attempt.created_at <= sqlc.narg('wake_before')::timestamptz)
       )
       OR
       (

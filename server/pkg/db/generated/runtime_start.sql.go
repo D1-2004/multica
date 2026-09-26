@@ -437,6 +437,7 @@ JOIN LATERAL (
            attempt.status,
            attempt.error_code,
            attempt.finished_at,
+           attempt.created_at,
            attempt.updated_at
     FROM agent_task_runtime_start_attempt AS attempt
     WHERE attempt.task_id = task.id
@@ -452,15 +453,16 @@ WHERE task.status = 'queued'
       (
           latest_attempt.status = 'blocked'
           AND latest_attempt.error_code = 'ASB-CAPACITY-WAITING'
-          AND COALESCE(latest_attempt.finished_at, latest_attempt.updated_at)
+          AND (COALESCE(latest_attempt.finished_at, latest_attempt.updated_at)
               <= now() - make_interval(secs => $2::double precision)
+              OR latest_attempt.created_at <= $3::timestamptz)
       )
       OR
       (
           latest_attempt.backend = 'asb'
           AND latest_attempt.status = 'starting'
           AND latest_attempt.updated_at
-              <= now() - make_interval(secs => $3::double precision)
+              <= now() - make_interval(secs => $4::double precision)
       )
   )
   AND (
@@ -476,9 +478,10 @@ ORDER BY task.runtime_id, task.created_at ASC, task.id ASC
 `
 
 type ListASBCapacityWaitingTasksParams struct {
-	MaxPerRuntime int32   `json:"max_per_runtime"`
-	RetrySeconds  float64 `json:"retry_seconds"`
-	StaleSeconds  float64 `json:"stale_seconds"`
+	MaxPerRuntime int32              `json:"max_per_runtime"`
+	RetrySeconds  float64            `json:"retry_seconds"`
+	WakeBefore    pgtype.Timestamptz `json:"wake_before"`
+	StaleSeconds  float64            `json:"stale_seconds"`
 }
 
 // Only the latest startup attempt controls retry eligibility. A later
@@ -489,7 +492,12 @@ type ListASBCapacityWaitingTasksParams struct {
 // Sandbox capacity is FIFO for every task kind; chat and retry priorities do
 // not grant preferential access to a tenant's instance quota.
 func (q *Queries) ListASBCapacityWaitingTasks(ctx context.Context, arg ListASBCapacityWaitingTasksParams) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, listASBCapacityWaitingTasks, arg.MaxPerRuntime, arg.RetrySeconds, arg.StaleSeconds)
+	rows, err := q.db.Query(ctx, listASBCapacityWaitingTasks,
+		arg.MaxPerRuntime,
+		arg.RetrySeconds,
+		arg.WakeBefore,
+		arg.StaleSeconds,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/startupobs"
@@ -297,4 +298,55 @@ func TestFCSandboxCreateIncludesTaskInstrumentation(t *testing.T) {
 	if len(stages) != 2 || stages[0] != "fc_command_sandbox_create" || stages[1] != "fc_create" {
 		t.Fatalf("create bypassed startup instrumentation: %v", stages)
 	}
+}
+
+func TestASBCapacityEventSurvivesBusyLeaseButDoesNotWakeFreshFailure(t *testing.T) {
+	ctx := context.Background()
+	pool, svc, task, first := quickwinFixture(t)
+	if err := svc.MarkRuntimeStartBlocked(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := svc.BeginRuntimeStartAttempt(ctx, task, SandboxBackendASB, RuntimeStartProtocolHTTPJSONV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var eventAt time.Time
+	if err = pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&eventAt); err != nil {
+		t.Fatal(err)
+	}
+	lease, ok, err := svc.runtimeLaunchLeases.Acquire(ctx, task.ID, time.Minute)
+	if err != nil || !ok {
+		t.Fatal("lease acquisition failed")
+	}
+	if _, err = svc.MarkRuntimeStartCapacityWaiting(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	check := func(wake bool, want bool) {
+		t.Helper()
+		rows, err := svc.Queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{RetrySeconds: 30, StaleSeconds: 180, MaxPerRuntime: 4, WakeBefore: pgtype.Timestamptz{Time: eventAt, Valid: wake}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, r := range rows {
+			found = found || r.ID == task.ID
+		}
+		if found != want {
+			t.Fatalf("selected=%v want=%v", found, want)
+		}
+	}
+	check(true, false)
+	if err = svc.runtimeLaunchLeases.Release(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	check(true, true)
+	check(false, false)
+	next, err := svc.BeginRuntimeStartAttempt(ctx, task, SandboxBackendASB, RuntimeStartProtocolHTTPJSONV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = svc.MarkRuntimeStartCapacityWaiting(ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	check(true, false)
 }
