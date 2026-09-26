@@ -3,6 +3,8 @@ package featureflags
 import (
 	"context"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
 func TestReleaseFlagsDefaultToOff(t *testing.T) {
@@ -18,14 +20,30 @@ func TestReleaseFlagsDefaultToOff(t *testing.T) {
 	}
 }
 
-func TestWorkspaceMCPDefaultsToPreReleaseOnly(t *testing.T) {
-	t.Setenv("AONE_ENV_TYPE", "prepub")
-	if !WorkspaceMCPEndpointEnabled(context.Background(), nil) || WorkspaceMCPReplaceAgentLinksEnabled(context.Background(), nil) {
-		t.Fatal("workspace endpoint should default on without replacing agent links")
+func TestWorkspaceMCPDefaultsOnInEveryEnvironment(t *testing.T) {
+	for _, env := range []string{"production", "prepub", "development", ""} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv("AONE_ENV_TYPE", env)
+			t.Setenv("APP_ENV", "production")
+			ctx := context.Background()
+			public := EvaluateFrontendPublicFlags(ctx, nil)
+			if !WorkspaceMCPEndpointEnabled(ctx, nil) || !public[WorkspaceMCPEndpoint] {
+				t.Fatal("workspace endpoint and settings UI must default on")
+			}
+			if WorkspaceMCPReplaceAgentLinksEnabled(ctx, nil) || public[WorkspaceMCPReplaceAgentLinks] {
+				t.Fatal("workspace MCP must not replace the agent MCP entry")
+			}
+		})
 	}
+}
+
+func TestWorkspaceMCPExplicitOffStillDisablesAPIAndUI(t *testing.T) {
 	t.Setenv("AONE_ENV_TYPE", "production")
-	if WorkspaceMCPEndpointEnabled(context.Background(), nil) || WorkspaceMCPReplaceAgentLinksEnabled(context.Background(), nil) {
-		t.Fatal("workspace MCP flags should default off in production")
+	t.Setenv("FF_WORKSPACE_MCP_ENDPOINT_ENABLED", "false")
+	flags := featureflag.NewService(featureflag.NewEnvProvider("FF_"))
+	ctx := context.Background()
+	if WorkspaceMCPEndpointEnabled(ctx, flags) || EvaluateFrontendPublicFlags(ctx, flags)[WorkspaceMCPEndpoint] {
+		t.Fatal("explicit operator override must disable the endpoint and UI together")
 	}
 }
 

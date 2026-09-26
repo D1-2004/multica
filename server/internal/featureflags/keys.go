@@ -2,8 +2,6 @@ package featureflags
 
 import (
 	"context"
-	"os"
-	"strings"
 
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
@@ -56,19 +54,8 @@ func WorkspaceAccessTokensEnabled(ctx context.Context, flags *featureflag.Servic
 	return flags.IsEnabled(ctx, WorkspaceAccessTokens, false)
 }
 
-func workspaceMCPPreReleaseDefault() bool {
-	for _, name := range []string{"AONE_ENV_TYPE", "ENV_TYPE", "APP_ENV", "GO_ENV"} {
-		value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
-		if value == "" {
-			continue
-		}
-		return value == "prepub" || value == "pre" || value == "prepublish" || value == "staging" || value == "stage"
-	}
-	return false
-}
-
 func WorkspaceMCPEndpointEnabled(ctx context.Context, flags *featureflag.Service) bool {
-	return flags.IsEnabled(ctx, WorkspaceMCPEndpoint, workspaceMCPPreReleaseDefault())
+	return flags.IsEnabled(ctx, WorkspaceMCPEndpoint, true)
 }
 
 func WorkspaceMCPReplaceAgentLinksEnabled(ctx context.Context, flags *featureflag.Service) bool {
@@ -80,7 +67,7 @@ func EvaluateFrontendPublicFlags(ctx context.Context, flags *featureflag.Service
 	for _, key := range frontendPublicFlags {
 		defaultValue := false
 		if key == WorkspaceMCPEndpoint {
-			defaultValue = workspaceMCPPreReleaseDefault()
+			defaultValue = true
 		}
 		out[key] = flags.IsEnabled(ctx, key, defaultValue)
 		if key == WorkspaceMCPReplaceAgentLinks {

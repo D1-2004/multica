@@ -4,6 +4,12 @@ Settings → MCP connections manages revocable links bound to the current worksp
 The agent's MCP access page continues to issue its existing agent-only links.
 Workspace links never replace or widen an agent credential.
 
+Workspace MCP is enabled by default in every environment, including production.
+The API authentication gate and the frontend public flag use the same default.
+Operators can explicitly disable it with `FF_WORKSPACE_MCP_ENDPOINT_ENABLED=false`
+(also accepted by the Aone runtime-config allowlist); there is no environment-name
+check and no prerequisite Diamond update. Agent-link replacement remains disabled.
+
 The connection uses the existing `workspace_mcp_token` record, SHA-256 credential
 hash, scopes, expiry, live membership/role check and revocation. Human workspace
 owners/admins issue and revoke connections through the existing token API.
