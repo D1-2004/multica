@@ -25,8 +25,35 @@ DWH 一格开发（取源 + OpenCode 30–60 分钟 + 提 PR + 打包）经常�
 当前创建和续期走同一套寿命：默认 **4800 秒**，配置值只有更高时才采用。
 低于 4800 的 Diamond 旧值会被抬到 4800，避免静默回到一小时墙。
 
-`nohup` / `setsid` 不能让进程活过这次任务。任务结束时 `daemon run-once`
-退出，沙箱按下文「任务结束后的释放」处理。后台作业语义尚未提供。
+任务结束时 `daemon run-once` 退出，但它只杀 agent 自己的进程组；agent
+工具起的命令在新的进程组或会话里，`nohup` / `setsid` 的进程也一样，会一直
+活到沙箱被释放或过期，Issue / 聊天 scope 复用时还会带进下一轮任务。取消的
+任务由服务端主动结束这些进程，见下文「取消后结束沙箱内进程」；完成和失败的
+任务不结束进程，沙箱按「任务结束后的释放」处理。后台作业语义尚未提供。
+
+## 取消后结束沙箱内进程
+
+PRI-52 实测：从界面取消 run 后，SDK / CLI 两条路径都写回 `cancelled` 并在
+30 秒后 `idle_trimmed`，但沙箱内的 Python 和 `sleep` 在取消后 80 多秒仍在运行，
+CLI 样本的 Python 已被 PID 1 接管。
+
+现在任务一进入 `cancelled`，`TaskRuntimeTerminalObserver` 就（与下面的释放并行，
+不等 30 秒宽限）在 5 秒后（让 daemon 先停掉 agent 并上报）对该任务每个 start
+attempt 用过的沙箱执行一次 `fc_e2b_task_stop.go` 的脚本，以 root 运行，走与
+其它命令相同的 FC/E2B 传输（SDK / CLI 按灰度选择）：
+
+- **找进程**：环境里带本任务标记的进程。runner 启动时带
+  `FC_E2B_TASK_ID=<task>`（非 `MULTICA_` 前缀、也不像凭证，能穿过 daemon 和
+  A2A 的环境过滤传到工具进程），同时认 `MULTICA_TASK_ID=<task>`。再加上组长带
+  标记的进程组和会话里的所有进程，以及这些进程的全部子孙。只按「组长带标记」
+  扩展，所以 envd、init、DSH host 和其它任务不会被牵连。
+- **结束**：先 `SIGTERM`，最多等 5 秒，再 `SIGKILL`；回执为
+  `{"found","terminated","killed","remaining"}`，写日志
+  `event=fc_e2b_task_processes_stopped`，有残留时为 Warn。
+- **仍漏得掉的**：清空了环境且已被 PID 1 接管的进程（标记和父子关系都没了），
+  以及处理取消的副本在这 5 秒内重启的情况；后者和释放一样回退到 TTL。
+
+沙箱本身仍按下文释放：Issue / 聊天 scope 剩 10 分钟，到期由云平台销毁。
 
 ## 任务结束后的释放
 

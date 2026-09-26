@@ -2856,6 +2856,7 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "MULTICA_DAEMON_TOKEN="+token,
 		"-e", "MULTICA_RUNTIME_ID="+runtimeID,
 		"-e", "MULTICA_TASK_ID="+util.UUIDToString(taskID),
+		"-e", fcE2BTaskMarkerEnv+"="+util.UUIDToString(taskID),
 		"-e", "MULTICA_DAEMON_ID="+rt.DaemonID.String,
 		"-e", "MULTICA_AGENT_RUNTIME_NAME="+rt.Name,
 		"-e", "MULTICA_CLOUD_SANDBOX_BACKEND="+string(SandboxBackendAliyunFC),

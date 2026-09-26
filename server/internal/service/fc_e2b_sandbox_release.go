@@ -93,6 +93,9 @@ func (l *FCE2BLauncher) TaskTerminal(task db.AgentTaskQueue) {
 	if l == nil || l.Pool == nil || !task.ID.Valid || !task.RuntimeID.Valid {
 		return
 	}
+	// A cancelled task's processes end right away; the sandbox itself still
+	// follows the release below.
+	l.scheduleCancelledTaskStop(task)
 	taskKey := util.UUIDToString(task.ID)
 	if _, inFlight := fcE2BSandboxReleasePending.LoadOrStore(taskKey, struct{}{}); inFlight {
 		return
