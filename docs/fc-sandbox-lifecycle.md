@@ -37,21 +37,31 @@ PRI-52 实测：从界面取消 run 后，SDK / CLI 两条路径都写回 `cance
 30 秒后 `idle_trimmed`，但沙箱内的 Python 和 `sleep` 在取消后 80 多秒仍在运行，
 CLI 样本的 Python 已被 PID 1 接管。
 
-现在任务一进入 `cancelled`，`TaskRuntimeTerminalObserver` 就（与下面的释放并行，
-不等 30 秒宽限）在 5 秒后（让 daemon 先停掉 agent 并上报）对该任务每个 start
-attempt 用过的沙箱执行一次 `fc_e2b_task_stop.go` 的脚本，以 root 运行，走与
-其它命令相同的 FC/E2B 传输（SDK / CLI 按灰度选择）：
+实测的进程树：`envd` → runner 包装（`multica-fc-runner --runtime-id … --health-port …`）
+→ `multica daemon run-once`（同样的参数）→ `pi` → 工具命令。runner、daemon、pi
+和 envd 同在会话 / 进程组 1；工具命令各自新开会话。FC 沙箱里 root 没有
+`CAP_SYS_PTRACE`，读不到其他进程的环境变量，只能读 `/proc/<pid>/stat` 和
+`cmdline`。
 
-- **找进程**：环境里带本任务标记的进程。runner 启动时带
-  `FC_E2B_TASK_ID=<task>`（非 `MULTICA_` 前缀、也不像凭证，能穿过 daemon 和
-  A2A 的环境过滤传到工具进程），同时认 `MULTICA_TASK_ID=<task>`。再加上组长带
-  标记的进程组和会话里的所有进程，以及这些进程的全部子孙。只按「组长带标记」
-  扩展，所以 envd、init、DSH host 和其它任务不会被牵连。
-- **结束**：先 `SIGTERM`，最多等 5 秒，再 `SIGKILL`；回执为
-  `{"found","terminated","killed","remaining"}`，写日志
-  `event=fc_e2b_task_processes_stopped`，有残留时为 Warn。
-- **仍漏得掉的**：清空了环境且已被 PID 1 接管的进程（标记和父子关系都没了），
-  以及处理取消的副本在这 5 秒内重启的情况；后者和释放一样回退到 TTL。
+任务一进入 `cancelled`，`TaskRuntimeTerminalObserver` 立即（与下面的释放并行，
+不等 30 秒宽限）对该任务每个 start attempt 用过的沙箱执行一次
+`fc_e2b_task_stop.go` 的脚本，10 秒后再执行一次，补上期间新 fork 或被 daemon
+拆树后成为孤儿的进程。脚本以 root 运行，走与其它命令相同的 FC/E2B 传输（SDK /
+CLI 按灰度选择）：
+
+- **本任务的进程**：命令行同时带 `--runtime-id <runtime>` 和
+  `--health-port <本任务端口>`（端口由 task id 算出）的 runner 及其全部子孙；
+  这些进程所在的会话和进程组（1 除外）的全部成员；以及被 PID 1 接管、不在会话 1、
+  在本任务 runner 启动之后（runner 已退出时用派发时间减 5 秒）启动的孤儿，
+  `/usr/local/libexec/multica-*` 和 `/.fce2b/` 下的沙箱服务除外。
+- **结束**：先 `SIGSTOP` 冻结并重扫一次，防止 fork 或改父进程逃逸；再 `SIGTERM`
+  加 `SIGCONT`，最多等 5 秒后 `SIGKILL`。回执为
+  `{"runners","orphans","found","terminated","killed","remaining"}`，写日志
+  `event=fc_e2b_task_processes_stopped`（带 `pass`），有残留时为 Warn。
+- **边界**：同一沙箱里并发运行的其它任务，如果在本任务 runner 启动后自己放了
+  脱离会话的后台进程，也会被当作孤儿结束；DSH 原生任务的工具进程挂在长驻 DSH
+  host 下，由 DSH host 自己处理取消，不在此列；处理取消的副本在这几秒内重启时，
+  回退到 TTL。
 
 沙箱本身仍按下文释放：Issue / 聊天 scope 剩 10 分钟，到期由云平台销毁。
 
