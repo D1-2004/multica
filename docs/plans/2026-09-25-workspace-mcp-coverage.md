@@ -33,7 +33,7 @@ An owner or admin can `POST /api/workspaces/{id}/mcp-tokens/` with `name`, `scop
 
 A tool takes `payload` only when its native route reads a request body: `issue_cancel_task` and `autopilot_trigger` take path arguments only, and `issue_rerun` accepts an optional `payload` (`task_id`). Routes that answer with an empty body (every DELETE tool, HTTP 204) return the text content `{"ok":true,"status":204}`, so MCP text content always carries a `text` string.
 
-`workspace_mcp_endpoint_enabled` defaults on in pre-release and off in production.
+`workspace_mcp_endpoint_enabled` defaults on in all environments, including production.
 Workspace connections now live in Settings and never replace agent MCP links.
 See [the Settings connection contract](../workspace-mcp-links.md). The existing
 Bearer endpoint remains available; a revocable URL is returned once on creation.
