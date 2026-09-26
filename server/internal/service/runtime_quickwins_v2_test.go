@@ -350,3 +350,31 @@ func TestASBCapacityEventSurvivesBusyLeaseButDoesNotWakeFreshFailure(t *testing.
 	}
 	check(true, false)
 }
+
+func TestCapacityFastWakeIgnoresUnrelatedFCCompletions(t *testing.T) {
+	ctx := context.Background()
+	_, svc, task, attempt := quickwinFixture(t)
+	launcher := &capacityWakeRuntimeLauncher{}
+	svc.RuntimeLauncher = launcher
+	enabled := true
+	svc.RuntimeStartRecoveryConfig = func() RuntimeStartRecoveryConfig { return RuntimeStartRecoveryConfig{ASBEventWakeup: enabled} }
+	svc.notifyRuntimeCapacityMayBeAvailable(task)
+	if launcher.wakeups.Load() != 0 {
+		t.Fatal("FC completion bypassed ASB retry delay")
+	}
+	if err := svc.MarkRuntimeStartBlocked(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.BeginRuntimeStartAttempt(ctx, task, SandboxBackendASB, RuntimeStartProtocolHTTPJSONV1); err != nil {
+		t.Fatal(err)
+	}
+	svc.notifyRuntimeCapacityMayBeAvailable(task)
+	if launcher.wakeups.Load() != 1 {
+		t.Fatal("ASB completion lost its fast wake")
+	}
+	enabled = false
+	svc.notifyRuntimeCapacityMayBeAvailable(task)
+	if launcher.wakeups.Load() != 2 {
+		t.Fatal("off lost the legacy broad hint")
+	}
+}
