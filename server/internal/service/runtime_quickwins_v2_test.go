@@ -233,7 +233,7 @@ func TestHotProbeReceiptCannotEscapeItsSandbox(t *testing.T) {
 	rt := db.AgentRuntime{Provider: "pi", Metadata: []byte(`{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","template_id":"fixture","runner_protocol":"root-log-v1"}`)}
 	rt.Metadata, _ = json.Marshal(map[string]string{"runner": FCE2BRunnerCommandForProvider("pi")})
 	ctx := context.WithValue(context.Background(), hotRunnerProbeKey{}, &hotRunnerProbe{})
-	if err := l.probeHotRunner(ctx, "sandbox-a", rt); err != nil {
+	if err := l.checkReusedSandboxReady(ctx, "sandbox-a", rt); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := l.detectFCE2BRunnerLaunch(ctx, "sandbox-a", rt); err != nil {
@@ -248,6 +248,17 @@ func TestHotProbeReceiptCannotEscapeItsSandbox(t *testing.T) {
 	if len(runner.calls) != 2 {
 		t.Fatal("receipt reused across sandboxes")
 	}
+	l.Config.QuickWins.CoalescedHotExec = false
+	if err := l.checkReusedSandboxReady(ctx, "sandbox-a", rt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.detectFCE2BRunnerLaunch(ctx, "sandbox-a", rt); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) != 4 {
+		t.Fatal("off did not restore two separate exec probes")
+	}
+
 }
 
 func TestProvisioningWaitReasonOnOff(t *testing.T) {

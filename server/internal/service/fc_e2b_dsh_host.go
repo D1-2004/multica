@@ -494,7 +494,7 @@ func (l *FCE2BLauncher) resolveFilesystemScopeSandbox(ctx context.Context, key d
 	if cold {
 		err = l.waitSandboxReady(ctx, host.SandboxID)
 	} else {
-		err = l.checkSandboxReady(ctx, host.SandboxID)
+		err = l.checkReusedSandboxReady(ctx, host.SandboxID, rt)
 	}
 	if err != nil && cold && launchMode == sharedLaunchOffer && decision.Shared != nil {
 		// The shared candidate was created for this call and is not executable.

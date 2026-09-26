@@ -67,3 +67,10 @@ func (l *FCE2BLauncher) probeHotRunner(ctx context.Context, sandboxID string, rt
 	}
 	return nil
 }
+
+func (l *FCE2BLauncher) checkReusedSandboxReady(ctx context.Context, sandboxID string, runtime db.AgentRuntime) error {
+	if l.Config.QuickWins.CoalescedHotExec {
+		return l.probeHotRunner(ctx, sandboxID, runtime)
+	}
+	return l.checkSandboxReady(ctx, sandboxID)
+}

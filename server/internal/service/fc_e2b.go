@@ -670,6 +670,7 @@ func fcE2BRunnerLaunchForRuntime(rt db.AgentRuntime) (fcE2BRunnerLaunch, error) 
 func (l *FCE2BLauncher) detectFCE2BRunnerLaunch(ctx context.Context, sandboxID string, rt db.AgentRuntime) (fcE2BRunnerLaunch, error) {
 	if l.Config.QuickWins.CoalescedHotExec {
 		if receipt, ok := ctx.Value(hotRunnerProbeKey{}).(*hotRunnerProbe); ok && receipt.sandboxID == sandboxID && (receipt.launch.Command != "" || receipt.err != nil) {
+			startupobs.Start(ctx, "fc_hot_probe_reused")(receipt.err)
 			return receipt.launch, receipt.err
 		}
 	}
@@ -2662,10 +2663,8 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 		var readyErr error
 		if coldStart {
 			readyErr = l.waitSandboxReady(ctx, sandboxID)
-		} else if l.Config.QuickWins.CoalescedHotExec {
-			readyErr = l.probeHotRunner(ctx, sandboxID, rt)
 		} else {
-			readyErr = l.checkSandboxReady(ctx, sandboxID)
+			readyErr = l.checkReusedSandboxReady(ctx, sandboxID, rt)
 		}
 		var expiresAt time.Time
 		if readyErr == nil {
