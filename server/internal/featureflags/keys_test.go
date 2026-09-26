@@ -20,8 +20,8 @@ func TestReleaseFlagsDefaultToOff(t *testing.T) {
 
 func TestWorkspaceMCPDefaultsToPreReleaseOnly(t *testing.T) {
 	t.Setenv("AONE_ENV_TYPE", "prepub")
-	if !WorkspaceMCPEndpointEnabled(context.Background(), nil) || !WorkspaceMCPReplaceAgentLinksEnabled(context.Background(), nil) {
-		t.Fatal("workspace MCP flags should default on in pre-release")
+	if !WorkspaceMCPEndpointEnabled(context.Background(), nil) || WorkspaceMCPReplaceAgentLinksEnabled(context.Background(), nil) {
+		t.Fatal("workspace endpoint should default on without replacing agent links")
 	}
 	t.Setenv("AONE_ENV_TYPE", "production")
 	if WorkspaceMCPEndpointEnabled(context.Background(), nil) || WorkspaceMCPReplaceAgentLinksEnabled(context.Background(), nil) {

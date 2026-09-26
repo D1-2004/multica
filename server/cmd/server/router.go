@@ -1907,6 +1907,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// exists so a local Coding Agent can be configured with one copied command.
 	r.Post("/api/mcp/agents/{publicAgentId}", h.HandleAgentMCP)
 	r.Post("/api/mcp/connect/{accessToken}", h.HandleAgentMCP)
+	r.With(middleware.WorkspaceMCPLinkCredential, middleware.Auth(queries, patCache, cloudPATVerifier, opts.FeatureFlags)).
+		Post("/api/mcp/workspaces/{workspaceId}/connect/{accessToken}", h.WorkspaceMCP)
 
 	// Webhook ingress for autopilots. Outside the authenticated group on
 	// purpose: the bearer token in the URL path IS the credential. Workspace

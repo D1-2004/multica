@@ -15,8 +15,10 @@ import (
 )
 
 func TestWorkspaceMCPRouterDispatchAndTokenLifecycle(t *testing.T) {
+	t.Setenv("MULTICA_PUBLIC_URL", "http://localhost")
 	provider := featureflag.NewStaticProvider()
 	provider.Set(internalflags.WorkspaceMCPEndpoint, featureflag.Rule{Default: true})
+	provider.Set(internalflags.WorkspaceMCPReplaceAgentLinks, featureflag.Rule{Default: true})
 	router, _ := NewRouterWithOptions(testPool, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil,
 		RouterOptions{FeatureFlags: featureflag.NewService(provider)})
 	server := httptest.NewServer(router)
@@ -63,9 +65,17 @@ func TestWorkspaceMCPRouterDispatchAndTokenLifecycle(t *testing.T) {
 		_, _ = testPool.Exec(t.Context(), `DELETE FROM member WHERE workspace_id=$1 AND user_id=$2`, testWorkspaceID, subjectID)
 		_, _ = testPool.Exec(t.Context(), `DELETE FROM "user" WHERE id=$1`, subjectID)
 	})
-	endpoint := "/api/mcp/workspaces/" + testWorkspaceID
+	endpoint := "/api/mcp/workspaces/" + testWorkspaceID + "/connect/" + secret
+	if created["url"] != "http://localhost"+endpoint {
+		t.Fatal("missing workspace link")
+	}
+	status, _ = call("/api/mcp/workspaces/"+testWorkspaceID, secret,
+		map[string]any{"jsonrpc": "2.0", "id": 0, "method": "tools/list"})
+	if status != http.StatusOK {
+		t.Fatalf("existing Bearer endpoint status=%d", status)
+	}
 	mcp := func(id int, method string, params any) (int, map[string]any) {
-		return call(endpoint, secret, map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
+		return call(endpoint, "", map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 	}
 	status, listed := mcp(1, "tools/list", nil)
 	if status != http.StatusOK {
@@ -108,6 +118,24 @@ func TestWorkspaceMCPRouterDispatchAndTokenLifecycle(t *testing.T) {
 	if agentID == "" {
 		t.Fatalf("agent create returned no id: %v", agent)
 	}
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/agents/"+agentID+"/a2a/", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Endpoint struct {
+			MCPURL          string `json:"mcp_url"`
+			WorkspaceMCPURL string `json:"workspace_mcp_url"`
+		} `json:"endpoint"`
+	}
+	err = json.NewDecoder(res.Body).Decode(&config)
+	res.Body.Close()
+	if err != nil || res.StatusCode != http.StatusOK || config.Endpoint.MCPURL == "" || config.Endpoint.WorkspaceMCPURL != "" {
+		t.Fatalf("agent MCP entry was replaced: status=%d config=%+v err=%v", res.StatusCode, config, err)
+	}
 	toolCall(5, "issue_assign", map[string]any{"id": issueID, "payload": map[string]any{"assignee_type": "agent", "assignee_id": agentID}})
 	runs, _ := toolCall(6, "issue_runs", map[string]any{"id": issueID}).([]any)
 	if len(runs) == 0 {
@@ -117,7 +145,7 @@ func TestWorkspaceMCPRouterDispatchAndTokenLifecycle(t *testing.T) {
 	if len(runtimes) == 0 {
 		t.Fatal("runtime list returned no runtime")
 	}
-	_, cross := call("/api/mcp/workspaces/00000000-0000-0000-0000-000000000000", secret,
+	_, cross := call("/api/mcp/workspaces/00000000-0000-0000-0000-000000000000/connect/"+secret, "",
 		map[string]any{"jsonrpc": "2.0", "id": 8, "method": "tools/list"})
 	if cross["error"] != "workspace mismatch" {
 		t.Fatalf("cross workspace response=%v", cross)

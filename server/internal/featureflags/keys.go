@@ -72,17 +72,20 @@ func WorkspaceMCPEndpointEnabled(ctx context.Context, flags *featureflag.Service
 }
 
 func WorkspaceMCPReplaceAgentLinksEnabled(ctx context.Context, flags *featureflag.Service) bool {
-	return flags.IsEnabled(ctx, WorkspaceMCPReplaceAgentLinks, workspaceMCPPreReleaseDefault())
+	return false // Workspace connections are managed in Settings, never on agents.
 }
 
 func EvaluateFrontendPublicFlags(ctx context.Context, flags *featureflag.Service) map[string]bool {
 	out := make(map[string]bool, len(frontendPublicFlags)+1)
 	for _, key := range frontendPublicFlags {
 		defaultValue := false
-		if key == WorkspaceMCPEndpoint || key == WorkspaceMCPReplaceAgentLinks {
+		if key == WorkspaceMCPEndpoint {
 			defaultValue = workspaceMCPPreReleaseDefault()
 		}
 		out[key] = flags.IsEnabled(ctx, key, defaultValue)
+		if key == WorkspaceMCPReplaceAgentLinks {
+			out[key] = false
+		}
 	}
 	out[agentSkillTogglesCompat] = true
 	return out

@@ -33,7 +33,12 @@ An owner or admin can `POST /api/workspaces/{id}/mcp-tokens/` with `name`, `scop
 
 A tool takes `payload` only when its native route reads a request body: `issue_cancel_task` and `autopilot_trigger` take path arguments only, and `issue_rerun` accepts an optional `payload` (`task_id`). Routes that answer with an empty body (every DELETE tool, HTTP 204) return the text content `{"ok":true,"status":204}`, so MCP text content always carries a `text` string.
 
-Diamond keys `workspace_mcp_endpoint_enabled` and `workspace_mcp_replace_agent_links` default on for pre-release environment labels and off for production. The first controls token authentication, issuance, discovery, and tool calls. The second changes new A2A config disclosure to `workspace_mcp_url` and clears `mcp_url`; old agent MCP URLs and credentials continue to work. `GET /api/workspaces/{id}/mcp` provides the current workspace endpoint. Both flags can be turned off to roll back new disclosure and calls. PostgreSQL token/audit state and the Diamond snapshot are shared across replicas.
+`workspace_mcp_endpoint_enabled` defaults on in pre-release and off in production.
+Workspace connections now live in Settings and never replace agent MCP links.
+See [the Settings connection contract](../workspace-mcp-links.md). The existing
+Bearer endpoint remains available; a revocable URL is returned once on creation.
+Neither flag is currently wired into the strict Diamond schema. Environment
+`FF_WORKSPACE_MCP_ENDPOINT_ENABLED` can override the endpoint release default.
 
 ## Remaining verification
 

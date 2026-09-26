@@ -124,6 +124,11 @@ func (h *Handler) CreateWorkspaceMCPToken(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "service_name must be 1-120 characters")
 		return
 	}
+	baseURL, err := normalizeAgentA2APublicBaseURL(h.currentConfig().PublicURL)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "public URL unavailable")
+		return
+	}
 	secret, err := auth.GenerateWorkspaceMCPToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "token generation failed")
@@ -172,10 +177,12 @@ func (h *Handler) CreateWorkspaceMCPToken(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "token creation audit failed")
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": id, "workspace_id": workspaceID, "subject_user_id": req.SubjectUserID,
 		"name": req.Name, "scopes": scopes, "expires_at": expires.Format(time.RFC3339),
 		"token": secret,
+		"url":   baseURL + "/api/mcp/workspaces/" + workspaceID + "/connect/" + secret,
 	})
 }
 

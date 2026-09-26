@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
-	featureflags "github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
@@ -659,12 +658,7 @@ func (h *Handler) loadAgentA2AConfigResponse(r *http.Request, scope agentA2AMana
 		return AgentA2AConfigResponse{}, err
 	}
 	endpointResponse, card, err := h.agentA2AEndpointPresentation(scope.Agent, runtimeSupported, endpoint, configuredSkills)
-	if err == nil && featureflags.WorkspaceMCPEndpointEnabled(r.Context(), h.FeatureFlags) && featureflags.WorkspaceMCPReplaceAgentLinksEnabled(r.Context(), h.FeatureFlags) {
-		if baseURL, baseErr := normalizeAgentA2APublicBaseURL(h.currentConfig().PublicURL); baseErr == nil {
-			endpointResponse.WorkspaceMCPURL = baseURL + "/api/mcp/workspaces/" + uuidToString(scope.WorkspaceID)
-			endpointResponse.MCPURL = ""
-		}
-	}
+
 	if err != nil {
 		return AgentA2AConfigResponse{}, err
 	}
