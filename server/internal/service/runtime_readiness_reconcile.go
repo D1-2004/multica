@@ -40,11 +40,13 @@ func (l *FCE2BLauncher) reconcileRuntimeReadiness(ctx context.Context) {
  SELECT workspace_id,agent_id,'00000000-0000-0000-0000-000000000000'::uuid AS scope_id,'storage' AS kind,updated_at FROM dsh_storage_provision WHERE state<>'complete'
  UNION ALL SELECT workspace_id,agent_id,scope_id,'host',updated_at FROM employee_filesystem_sandbox WHERE state='creating'
  UNION ALL SELECT workspace_id,agent_id,'00000000-0000-0000-0000-000000000000'::uuid,'host',updated_at FROM dsh_employee_host WHERE state='creating'
- ) pending JOIN LATERAL (
+ ) pending LEFT JOIN LATERAL (
  SELECT task.id FROM agent_task_queue task JOIN agent ON agent.id=task.agent_id
  WHERE task.agent_id=pending.agent_id AND task.status='queued' AND agent.archived_at IS NULL
+ AND (pending.scope_id='00000000-0000-0000-0000-000000000000'::uuid OR COALESCE(task.chat_session_id,task.issue_id)=pending.scope_id)
  ORDER BY task.created_at,task.id LIMIT 1
  ) waiting ON true
+ WHERE EXISTS (SELECT 1 FROM agent_task_queue task JOIN agent ON agent.id=task.agent_id WHERE task.agent_id=pending.agent_id AND task.status='queued' AND agent.archived_at IS NULL)
  ORDER BY pending.updated_at LIMIT 8`)
 	if err != nil {
 		slog.Warn("runtime readiness reconciliation scan failed", "error", err)
@@ -90,7 +92,7 @@ func (l *FCE2BLauncher) reconcileRuntimeReadiness(ctx context.Context) {
 			// Link shared preparation to its oldest queued waiter. This is only
 			// diagnostic attribution, never authority to launch that task. Reuse
 			// this connection so all workers cannot deadlock acquiring another.
-			if l.Tasks.CurrentRuntimeStartRecoveryConfig().StartupObservability {
+			if c.taskID.Valid && l.Tasks.CurrentRuntimeStartRecoveryConfig().StartupObservability {
 				if task, err := db.New(conn).GetAgentTask(work, c.taskID); err == nil {
 					work = l.Tasks.withStartupObservability(work, task)
 				}

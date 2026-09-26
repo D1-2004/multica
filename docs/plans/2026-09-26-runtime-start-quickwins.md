@@ -128,10 +128,11 @@ No new production fault-injection or runtime configuration is introduced.
 NAS/host operations resumed by the readiness reconciler must carry the same
 optional startup recorder as foreground launches. Without it, a pending NAS
 operation can finish its later steps without emitting any Q7 substage spans.
-The worker uses the oldest queued task for the affected agent as a representative
-trace link; this is not an ownership/launch decision and does not imply that a
+The worker uses the oldest queued task for the affected agent and resource scope
+as a representative trace link; this is not an ownership/launch decision and does not imply that a
 shared resource's duration should be summed once per waiting task. Missing task
-metadata must not prevent reconciliation. Q7 OFF avoids the task metadata read
+metadata (including no matching waiter for an old scoped host) must not prevent
+reconciliation or be attributed to an unrelated task. Q7 OFF avoids the task metadata read
 and emits no added observations; later emissions still recheck the live switch.
 
 Validation on 2026-09-26: targeted service/handler/DSH/Profile/runtimeconfig/server
