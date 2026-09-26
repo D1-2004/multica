@@ -2,11 +2,14 @@ package service
 
 import (
 	"context"
-	"github.com/google/uuid"
-	"github.com/multica-ai/multica/server/internal/dshhost"
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/dshhost"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // Cloud provisioning APIs have no push callback. Reconcile their durable
@@ -33,25 +36,30 @@ func (l *FCE2BLauncher) RunRuntimeReadinessReconciler(ctx context.Context) {
 }
 
 func (l *FCE2BLauncher) reconcileRuntimeReadiness(ctx context.Context) {
-	rows, err := l.Pool.Query(ctx, `SELECT pending.workspace_id,pending.agent_id,pending.scope_id,pending.kind FROM (
+	rows, err := l.Pool.Query(ctx, `SELECT pending.workspace_id,pending.agent_id,pending.scope_id,pending.kind,waiting.id FROM (
  SELECT workspace_id,agent_id,'00000000-0000-0000-0000-000000000000'::uuid AS scope_id,'storage' AS kind,updated_at FROM dsh_storage_provision WHERE state<>'complete'
  UNION ALL SELECT workspace_id,agent_id,scope_id,'host',updated_at FROM employee_filesystem_sandbox WHERE state='creating'
  UNION ALL SELECT workspace_id,agent_id,'00000000-0000-0000-0000-000000000000'::uuid,'host',updated_at FROM dsh_employee_host WHERE state='creating'
- ) pending WHERE EXISTS (SELECT 1 FROM agent_task_queue task WHERE task.agent_id=pending.agent_id AND task.status='queued' AND EXISTS (SELECT 1 FROM agent WHERE agent.id=task.agent_id AND agent.archived_at IS NULL))
+ ) pending JOIN LATERAL (
+ SELECT task.id FROM agent_task_queue task JOIN agent ON agent.id=task.agent_id
+ WHERE task.agent_id=pending.agent_id AND task.status='queued' AND agent.archived_at IS NULL
+ ORDER BY task.created_at,task.id LIMIT 1
+ ) waiting ON true
  ORDER BY pending.updated_at LIMIT 8`)
 	if err != nil {
 		slog.Warn("runtime readiness reconciliation scan failed", "error", err)
 		return
 	}
 	type candidate struct {
-		key   dshhost.Key
-		scope uuid.UUID
-		kind  string
+		key    dshhost.Key
+		scope  uuid.UUID
+		kind   string
+		taskID pgtype.UUID
 	}
 	var candidates []candidate
 	for rows.Next() {
 		var c candidate
-		if rows.Scan(&c.key.WorkspaceID, &c.key.AgentID, &c.scope, &c.kind) == nil {
+		if rows.Scan(&c.key.WorkspaceID, &c.key.AgentID, &c.scope, &c.kind, &c.taskID) == nil {
 			candidates = append(candidates, c)
 		}
 	}
@@ -79,6 +87,14 @@ func (l *FCE2BLauncher) reconcileRuntimeReadiness(ctx context.Context) {
 				return
 			}
 			defer conn.Release()
+			// Link shared preparation to its oldest queued waiter. This is only
+			// diagnostic attribution, never authority to launch that task. Reuse
+			// this connection so all workers cannot deadlock acquiring another.
+			if l.Tasks.CurrentRuntimeStartRecoveryConfig().StartupObservability {
+				if task, err := db.New(conn).GetAgentTask(work, c.taskID); err == nil {
+					work = l.Tasks.withStartupObservability(work, task)
+				}
+			}
 			// The existing provisioning/host ledger CAS fences competing replicas.
 			if c.kind == "storage" {
 				if l.ProvisionDSHStorage != nil {

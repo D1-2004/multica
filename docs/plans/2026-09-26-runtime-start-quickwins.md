@@ -123,6 +123,17 @@ workspace skill. This guards against another permanently unreachable rollout;
 separate cases reject oversized supporting files, metadata and bundle counts.
 No new production fault-injection or runtime configuration is introduced.
 
+### Background readiness observation context
+
+NAS/host operations resumed by the readiness reconciler must carry the same
+optional startup recorder as foreground launches. Without it, a pending NAS
+operation can finish its later steps without emitting any Q7 substage spans.
+The worker uses the oldest queued task for the affected agent as a representative
+trace link; this is not an ownership/launch decision and does not imply that a
+shared resource's duration should be summed once per waiting task. Missing task
+metadata must not prevent reconciliation. Q7 OFF avoids the task metadata read
+and emits no added observations; later emissions still recheck the live switch.
+
 Validation on 2026-09-26: targeted service/handler/DSH/Profile/runtimeconfig/server
 checks pass, as do -race and go vet. The baseline health test also returns 503 at
 untouched 43ce215a90, separately from the existing FC trace sink failure.
