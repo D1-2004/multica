@@ -243,6 +243,7 @@ type Handler struct {
 	LocalSkillListStore      LocalSkillListStore
 	LocalSkillImportStore    LocalSkillImportStore
 	FeatureFlags             *featureflag.Service
+	SemanticaMCPRelay        *SemanticaMCPRelay
 	LivenessStore            LivenessStore
 	HeartbeatScheduler       HeartbeatScheduler
 	Storage                  storage.Storage

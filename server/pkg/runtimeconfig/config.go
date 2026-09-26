@@ -74,7 +74,8 @@ type IntegrationsConfig struct {
 }
 
 type FeatureConfig struct {
-	WorkspaceAccessTokens bool `json:"workspace_access_tokens"`
+	SemanticaMCPRelay     *bool `json:"semantica_mcp_relay,omitempty"`
+	WorkspaceAccessTokens bool  `json:"workspace_access_tokens"`
 }
 
 type RuntimeConfig struct {

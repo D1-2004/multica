@@ -726,6 +726,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("lark oauth disabled (LARK_CLIENT_ID or LARK_CLIENT_SECRET not set)")
 	}
 	h.FeatureFlags = opts.FeatureFlags
+	if relay, err := handler.NewSemanticaMCPRelayFromEnv(rdb); err != nil {
+		slog.Warn("Semantica MCP relay disabled", "error", err)
+	} else {
+		h.SemanticaMCPRelay = relay
+	}
 	h.TaskService.FeatureFlags = opts.FeatureFlags
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
