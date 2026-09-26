@@ -205,6 +205,7 @@ type enterpriseIdentityService interface {
 }
 
 type Handler struct {
+	WorkspaceMCPDispatcher   http.Handler
 	Models                   *modelregistry.Registry
 	Queries                  *db.Queries
 	Assoc                    *assoc.Service

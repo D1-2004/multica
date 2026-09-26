@@ -181,4 +181,28 @@ describe("AgentMCPLinkCard", () => {
     expect(screen.getByRole("button", { name: /Regenerate/i })).toBeEnabled();
     expect(screen.getByRole("button", { name: /Revoke link/i })).toBeEnabled();
   });
+
+  it("shows the workspace endpoint when replacement disclosure is enabled", async () => {
+    const user = userEvent.setup();
+    const config = configRef.current!;
+    configRef.current = {
+      ...config,
+      endpoint: {
+        ...config.endpoint!,
+        mcpUrl: "",
+        workspaceMcpUrl: "https://multica.example/api/mcp/workspaces/ws-1",
+      },
+    };
+
+    renderCard();
+
+    expect(screen.getByRole("textbox", { name: "Workspace MCP URL" })).toHaveValue(
+      "https://multica.example/api/mcp/workspaces/ws-1",
+    );
+    expect(screen.queryByRole("button", { name: /Generate MCP link/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Copy link/i }));
+    expect(copyTextSpy).toHaveBeenLastCalledWith(
+      "https://multica.example/api/mcp/workspaces/ws-1",
+    );
+  });
 });

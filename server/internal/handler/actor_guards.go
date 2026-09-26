@@ -109,7 +109,7 @@ func RequireHumanActor(next http.Handler) http.Handler {
 			return
 		}
 		switch r.Header.Get("X-Actor-Source") {
-		case "task_token", "cloud_pat", "workspace_access_token":
+		case "task_token", "cloud_pat", "workspace_access_token", "workspace_mcp_token":
 			writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
 			return
 		}
