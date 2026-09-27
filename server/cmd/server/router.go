@@ -821,7 +821,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			if raw.PerformanceOptimization != nil {
 				return raw.PerformanceOptimization.AllowsAgent(util.UUIDToString(agentID))
 			}
-			return raw.LLM.CoordinatorFinishRecovery
+			return false
 		}
 	}
 	if opts.DeploymentFence != nil {

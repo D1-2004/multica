@@ -13,9 +13,10 @@ one public control in `dt-fde-multica-runtime.json`:
 ```
 
 This is one rollout object, not ten independent publication steps. A missing
-object retains the old fields temporarily for safe deployment of the new
-binary. **Once the object is present, it takes precedence over every old
-performance boolean.** An `enabled: false` value or an empty `agent_ids`
+object **disables the entire batch in the new binary**, even when old fields
+are still present in the Diamond document. The old fields remain decode-only
+to let both binary versions parse the same document during rollout. An
+`enabled: false` value or an empty `agent_ids`
 array selects nobody. Targets are canonical, exact agent UUIDs. No percentage,
 workspace inheritance, or wildcard is supported. Keep pre and production
 Diamond documents separate; this change does not edit production.
@@ -34,16 +35,21 @@ tracked launches even if the switch was turned off meanwhile.
 
 Deployment order:
 
-1. Release this backward-compatible binary to pre through the existing CR
-   and pipeline 66, retaining other release-branch changes.
-2. Add the single object to the pre Diamond runtime document, selecting only
-   approved test agents. Remove the ten old public performance fields after
-   all pre replicas run the new binary; the new object already overrides them.
-3. Verify targeted and non-targeted agents in the same pre environment with
+1. While the old binary is still live, set all ten old pre Diamond performance
+   fields to false and confirm the update on both pre replicas. This closes
+   the rolling-deploy interval in which old replicas would otherwise keep
+   optimizing every agent. Do not add the new field yet: old strict parsers
+   would reject it.
+2. Release the new binary to pre through the existing CR and pipeline 66,
+   preserving other authorized release-branch changes. The new binary remains
+   off when the new object is absent. Wait for every pre replica to run it.
+3. Add the single object to the pre Diamond runtime document, selecting only
+   approved test agents. Old fields may be removed in this same publish.
+4. Verify targeted and non-targeted agents in the same pre environment with
    matching tasks: Coordinator budget/repair trace, FC startup selection,
    DSH and ASB background wakeups, claimed-task payload, and on→off→on.
    Record config revision, agent/task/trace IDs, correctness, and latency.
-4. Leave production untouched. Production rollout requires a separate
+5. Leave production untouched. Production rollout requires a separate
    decision, verified production Diamond values, and review of changes that
    this switch cannot revert (E2B cancellation cleanup and existing schema
    migrations). Do not pass the manual pre verification gate automatically.

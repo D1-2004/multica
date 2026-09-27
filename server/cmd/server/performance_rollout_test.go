@@ -37,4 +37,8 @@ func TestPerformanceRolloutObjectOverridesLegacyFields(t *testing.T) {
 	if cfg.DSHEventWakeup || cfg.BatchSkillResolve {
 		t.Fatal("old Diamond fields escaped the unified off switch")
 	}
+	cfg = quickWinsForRuntime(runtimeconfig.RuntimeConfig{FCE2B: runtimeconfig.FCE2BConfig{DSHEventWakeup: true, BatchSkillResolve: true}})
+	if cfg.DSHEventWakeup || cfg.BatchSkillResolve {
+		t.Fatal("missing unified rollout must fail closed even with old fields")
+	}
 }

@@ -6,8 +6,8 @@ import (
 )
 
 // quickWins translates the one public Diamond rollout into the internal
-// feature switches. Old snapshots keep their individual values only until
-// the document is migrated; a present rollout always takes precedence.
+// feature switches. Old fields remain decode-only for rolling deployment;
+// their values never enable this binary without an explicit rollout.
 func (c *appRuntimeConfig) quickWins() service.RuntimeStartRecoveryConfig {
 	return quickWinsForRuntime(c.current().Runtime)
 }
@@ -24,16 +24,5 @@ func quickWinsForRuntime(raw runtimeconfig.RuntimeConfig) service.RuntimeStartRe
 			BatchSkillResolve: on,
 		}
 	}
-	fc := raw.FCE2B
-	return service.RuntimeStartRecoveryConfig{
-		RecoverAbandonedLaunches: fc.RecoverAbandonedLaunches,
-		BoundDSHHostWait:         fc.BoundDSHHostWait,
-		DSHEventWakeup:           fc.DSHEventWakeup,
-		DingTalkReplyCommand:     fc.DingTalkReplyCommand,
-		ASBEventWakeup:           fc.ASBEventWakeup,
-		StartupObservability:     fc.StartupObservability,
-		BoundedReadyExec:         fc.BoundedReadyExec,
-		CoalescedHotExec:         fc.CoalescedHotExec,
-		BatchSkillResolve:        fc.BatchSkillResolve,
-	}
+	return service.RuntimeStartRecoveryConfig{}
 }
