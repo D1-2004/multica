@@ -24,7 +24,7 @@ import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
 import { SkillsPage } from "@multica/views/skills";
-import { SemanticaPage } from "@multica/views/agents";
+import { InternalConnectorsPage } from "@multica/views/agents";
 import { DshPluginsPage } from "@multica/views/dsh-plugins";
 import { DshPluginDetailPage } from "./pages/dsh-plugin-detail-page";
 import { ProductFeatureListPage } from "@multica/views/product-features";
@@ -210,7 +210,7 @@ export const appRoutes: RouteObject[] = [
             handle: { title: "Runtime" },
           },
           { path: "skills", element: <SkillsPage />, handle: { title: "Skills" } },
-          { path: "internal-connectors", element: <SemanticaPage />, handle: { title: "Semantica" } },
+          { path: "internal-connectors", element: <InternalConnectorsPage />, handle: { title: "Internal connectors" } },
           {
             path: "dsh-plugins",
             element: <DshPluginsPage />,

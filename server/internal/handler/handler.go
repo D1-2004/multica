@@ -244,6 +244,8 @@ type Handler struct {
 	LocalSkillImportStore    LocalSkillImportStore
 	FeatureFlags             *featureflag.Service
 	SemanticaMCPRelay        *SemanticaMCPRelay
+	InternalConnectorRedis   internalConnectorRedis
+	InternalConnectorClient  *http.Client
 	LivenessStore            LivenessStore
 	HeartbeatScheduler       HeartbeatScheduler
 	Storage                  storage.Storage

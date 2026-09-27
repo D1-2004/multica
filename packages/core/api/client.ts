@@ -1,3 +1,4 @@
+import { InternalConnectorListSchema, AvailableInternalConnectorListSchema, SavedInternalConnectorSchema, type InternalConnector, type AvailableInternalConnector, type InternalConnectorInput } from "./internal-connector-schema";
 import { SemanticaMCPStatusSchema, EMPTY_SEMANTICA_MCP_STATUS, type SemanticaMCPStatus } from "./semantica-mcp-schema";
 import { WorkspaceMCPConnectionsSchema, WorkspaceMCPLinkSchema, type WorkspaceMCPConnection, type CreateWorkspaceMCPConnection } from "./workspace-mcp-schema";
 import {ModelProbeSchema, GlobalModelsSchema, EMPTY_GLOBAL_MODELS, DeveloperCapabilitiesSchema, DiscoveredModelsSchema, globalModelsWire, type GlobalModels, type ModelProvider} from "./global-models-schema";
@@ -4081,6 +4082,31 @@ export class ApiClient {
     await this.fetch(`/api/agents/${agentId}/skills/${skillId}`, {
       method: "DELETE",
     });
+  }
+
+  async listInternalConnectors(workspaceId: string): Promise<InternalConnector[]> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/internal-connectors`);
+    return parseWithFallback(raw, InternalConnectorListSchema, [], {
+      endpoint: "GET /api/workspaces/:id/internal-connectors", includeReceived: false,
+    });
+  }
+
+  async listAvailableInternalConnectors(workspaceId: string): Promise<AvailableInternalConnector[]> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/internal-connectors/available`);
+    return parseWithFallback(raw, AvailableInternalConnectorListSchema, [], {
+      endpoint: "GET /api/workspaces/:id/internal-connectors/available", includeReceived: false,
+    });
+  }
+
+  async createInternalConnector(workspaceId: string, data: InternalConnectorInput): Promise<{id:string;credential_ref:string}> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/internal-connectors`, {method:"POST",body:JSON.stringify(data)});
+    const result = parseWithFallback(raw,SavedInternalConnectorSchema,{id:"",credential_ref:""},{endpoint:"POST /api/workspaces/:id/internal-connectors",includeReceived:false});
+    if (!result.id) throw new Error("Invalid connector response");
+    return result;
+  }
+
+  async updateInternalConnector(workspaceId: string, id: string, data: InternalConnectorInput): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}`, {method:"PATCH",body:JSON.stringify(data)});
   }
 
   async getSemanticaMCPStatus(workspaceId: string): Promise<SemanticaMCPStatus> {

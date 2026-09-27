@@ -146,6 +146,7 @@ RUNTIME_CONFIG_KEYS=(
   MULTICA_SEMANTICA_MCP_URL
   MULTICA_SEMANTICA_MCP_BEARER_TOKEN
   MULTICA_SEMANTICA_MCP_TARGET_AGENT_ID
+  MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES
   REDIS_URL
   REDIS_AUTHZ_INSTANCE_ID
   REDIS_AUTHZ_ENDPOINT
@@ -179,6 +180,9 @@ RUNTIME_CONFIG_KEYS=(
 
 is_runtime_config_key() {
   local candidate="$1"
+  if [[ "$candidate" =~ ^MULTICA_INTERNAL_MCP_BEARER_[A-F0-9]{32}$ ]]; then
+    return 0
+  fi
   local config_key
   for config_key in "${RUNTIME_CONFIG_KEYS[@]}"; do
     if [[ "$candidate" == "$config_key" ]]; then

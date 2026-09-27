@@ -726,6 +726,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("lark oauth disabled (LARK_CLIENT_ID or LARK_CLIENT_SECRET not set)")
 	}
 	h.FeatureFlags = opts.FeatureFlags
+	if rdb != nil {
+		h.InternalConnectorRedis = rdb
+	}
+	h.InternalConnectorClient = handler.NewInternalConnectorClient()
 	if relay, err := handler.NewSemanticaMCPRelayFromEnv(rdb); err != nil {
 		slog.Warn("Semantica MCP relay disabled", "error", err)
 	} else {
@@ -2128,6 +2132,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// session_id or agent_id, then enforce membership and Agent permissions in
 		// the handler, so generic MCP clients need no custom workspace header.
 		r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
+		r.Post("/api/internal-connectors/{connectorId}/mcp", h.CallInternalConnector)
 		r.Post("/api/mcp/workspaces/{workspaceId}", h.WorkspaceMCP)
 		r.Handle("/api/runner-mcp", http.HandlerFunc(h.RunnerMCP))
 		r.Post("/api/runner-mcp/mounts/{mountId}/servers/{serverName}", h.RunnerMountedMCP)
@@ -2185,6 +2190,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/", h.GetWorkspace)
 					r.Get("/semantica-mcp-relay", h.GetSemanticaMCPRelayStatus)
+					r.Get("/internal-connectors/available", h.ListAvailableInternalConnectors)
 					r.Get("/mcp", h.GetWorkspaceMCPDiscovery)
 					r.Get("/members", h.ListMembersWithUser)
 					r.With(handler.RequireHumanActor).Post("/leave", h.LeaveWorkspace)
@@ -2212,6 +2218,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)
+					r.Get("/internal-connectors", h.ListInternalConnectors)
+					r.Post("/internal-connectors", h.CreateInternalConnector)
+					r.Patch("/internal-connectors/{connectorId}", h.UpdateInternalConnector)
 					r.Get("/dingtalk/users/search", h.SearchDingTalkUsers)
 					r.Post("/dingtalk/members", h.AddDingTalkWorkspaceMembers)
 					r.Post("/dingtalk/group-members", h.AddDingTalkGroupMembers)

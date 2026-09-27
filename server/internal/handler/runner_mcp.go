@@ -309,26 +309,38 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	if err != nil {
 		return errors.New("managed MCP requires MULTICA_PUBLIC_URL")
 	}
-	backendConfig, err := json.Marshal(map[string]any{
-		"mcpServers": map[string]any{
-			"multica": map[string]any{
-				"type": "http",
-				"url":  publicURL + "/api/mcp",
-				"headers": map[string]string{
-					"Authorization": "Bearer " + taskToken,
-				},
-			},
+	managedServers := map[string]any{
+		"multica": map[string]any{
+			"type": "http", "url": publicURL + "/api/mcp",
+			"headers": map[string]string{"Authorization": "Bearer " + taskToken},
 		},
-	})
+	}
+	routes := map[string]MCPRelayRoute{
+		"multica": {Path: "/api/mcp", Authorization: "Bearer " + taskToken},
+	}
+	connectors, err := h.authorizedConnectors(ctx, uuidToString(runtime.WorkspaceID), uuidToString(agentID))
+	if err != nil {
+		return err
+	}
+	for _, connector := range connectors {
+		if validateConnectorInput(connectorInput{Name: connector.Name, UpstreamURL: connector.UpstreamURL, AllowedTools: connector.AllowedTools, AgentIDs: []string{uuidToString(agentID)}, Enabled: true}) != nil {
+			continue
+		}
+		name := "internal-" + connector.ID
+		path := "/api/internal-connectors/" + connector.ID + "/mcp"
+		managedServers[name] = map[string]any{
+			"type": "http", "url": publicURL + path,
+			"headers": map[string]string{"Authorization": "Bearer " + taskToken},
+		}
+		routes[name] = MCPRelayRoute{Path: path, Authorization: "Bearer " + taskToken}
+	}
+	backendConfig, err := json.Marshal(map[string]any{"mcpServers": managedServers})
 	if err != nil {
 		return err
 	}
 	effectiveConfig, _, err := mergeManagedMCPConfig(agentData.McpConfig, backendConfig)
 	if err != nil {
 		return err
-	}
-	routes := map[string]MCPRelayRoute{
-		"multica": {Path: "/api/mcp", Authorization: "Bearer " + taskToken},
 	}
 	bindings, err := h.Queries.ListAgentRunnerBindings(ctx, db.ListAgentRunnerBindingsParams{WorkspaceID: runtime.WorkspaceID, AgentID: agentID})
 	if err != nil {

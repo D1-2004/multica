@@ -80,8 +80,8 @@ func EvaluateFrontendPublicFlags(ctx context.Context, flags *featureflag.Service
 	return out
 }
 
-// SemanticaEnvironment deliberately defaults unknown deployments to off.
-func SemanticaEnvironment() string {
+// DeploymentEnvironment deliberately defaults unknown deployments to off.
+func DeploymentEnvironment() string {
 	for _, key := range []string{"AONE_ENV_TYPE", "ENV_TYPE", "GO_ENV", "APP_ENV"} {
 		raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
 		if raw == "" {
@@ -100,5 +100,11 @@ func SemanticaEnvironment() string {
 }
 
 func SemanticaMCPRelayEnabled(ctx context.Context, flags *featureflag.Service) bool {
-	return flags.IsEnabled(ctx, "semantica_mcp_relay", SemanticaEnvironment() == "pre")
+	return flags.IsEnabled(ctx, "semantica_mcp_relay", DeploymentEnvironment() == "pre")
 }
+
+func InternalMCPConnectorsEnabled(ctx context.Context, flags *featureflag.Service) bool {
+	return flags.IsEnabled(ctx, "internal_mcp_connectors", DeploymentEnvironment() == "pre")
+}
+
+func SemanticaEnvironment() string { return DeploymentEnvironment() }

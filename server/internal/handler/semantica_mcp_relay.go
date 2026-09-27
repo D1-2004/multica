@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -76,7 +75,7 @@ func (h *Handler) GetSemanticaMCPRelayStatus(w http.ResponseWriter, r *http.Requ
 }
 
 const semanticaRelayTool = "semantica_mcp_relay"
-const semanticaMaxResponse = 2 << 20
+const semanticaMaxResponse = internalMCPMaxResponse
 
 var semanticaTools = map[string]bool{
 	"search_knowledge": true, "query_knowledge_cypher": true,
@@ -231,7 +230,7 @@ func (h *Handler) handleSemanticaRelayCall(w http.ResponseWriter, r *http.Reques
 
 func semanticaJSONObject(raw []byte) bool {
 	raw = bytes.TrimSpace(raw)
-	return len(raw) > 1 && raw[0] == '{' && raw[len(raw)-1] == '}' && json.Valid(raw)
+	return internalMCPJSONObject(raw)
 }
 
 func (s *SemanticaMCPRelay) limit(ctx context.Context, task, agent, ws string) error {
@@ -317,36 +316,6 @@ func (s *SemanticaMCPRelay) call(ctx context.Context, args semanticaRelayArgumen
 	return result, nil
 }
 
-// Stop at the matching SSE response, even when the server keeps the stream open.
 func semanticaReadRPC(body io.Reader, contentType string) ([]byte, error) {
-	limited := &io.LimitedReader{R: body, N: semanticaMaxResponse + 1}
-	if !strings.HasPrefix(contentType, "text/event-stream") {
-		raw, err := io.ReadAll(limited)
-		if err != nil || len(raw) > semanticaMaxResponse {
-			return nil, errors.New("response read limit")
-		}
-		return raw, nil
-	}
-	scanner := bufio.NewScanner(limited)
-	scanner.Buffer(make([]byte, 4096), semanticaMaxResponse+1)
-	var data []string
-	for scanner.Scan() {
-		if limited.N == 0 {
-			return nil, errors.New("response read limit")
-		}
-		line := scanner.Text()
-		if line == "" {
-			payload := []byte(strings.Join(data, "\n"))
-			data = nil
-			var event struct {
-				ID json.RawMessage `json:"id"`
-			}
-			if json.Unmarshal(payload, &event) == nil && string(event.ID) == "1" {
-				return payload, nil
-			}
-		} else if strings.HasPrefix(line, "data:") {
-			data = append(data, strings.TrimPrefix(strings.TrimPrefix(line, "data:"), " "))
-		}
-	}
-	return nil, errors.New("missing upstream RPC event")
+	return readInternalMCPResponse(body, contentType)
 }

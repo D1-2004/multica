@@ -74,6 +74,7 @@ type IntegrationsConfig struct {
 }
 
 type FeatureConfig struct {
+	InternalMCPConnectors *bool `json:"internal_mcp_connectors,omitempty"`
 	SemanticaMCPRelay     *bool `json:"semantica_mcp_relay,omitempty"`
 	WorkspaceAccessTokens bool  `json:"workspace_access_tokens"`
 }

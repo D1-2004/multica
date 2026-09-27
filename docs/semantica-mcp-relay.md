@@ -56,22 +56,15 @@ Incomplete settings leave this tool unavailable without breaking server startup.
 The environment comes from AONE_ENV_TYPE, ENV_TYPE, GO_ENV, APP_ENV in that
 order; unknown values use an isolated `unknown` key namespace and default off.
 
-## Workspace UI
+## Legacy compatibility
 
-`/{workspaceSlug}/internal-connectors` is the member-visible entry point for
-the Semantica capability. `GET /api/workspaces/{id}/semantica-mcp-relay` is
-protected by the existing workspace membership gate and Agent access gate. It
-reports whether the relay is configured and enabled for this workspace, the authorized Agent ID,
-and the four approved tool names. It never returns the upstream address or
-credential. A target Agent in another workspace is never disclosed.
-
-The screen explains the actual user flow: check the authorized Agent, open a
-new chat with that Agent, ask it to query the approved knowledge graph, then
-read its tool-backed response. It offers a copyable example prompt. The screen
-does not send MCP requests with a member token; only a live Agent task may use
-the relay. It does not offer URL, Bearer, or HMAC editing controls because these
-settings are deployment-owned. The current search tool may time out; the UI
-must not label an unprobed upstream as healthy.
+The `semantica_mcp_relay` tool and its existing env keys remain available for
+active pre-release tasks during migration. The workspace-status endpoint stays
+behind workspace and Agent access gates, exposes no upstream URL or secret,
+and supplies a temporary preset card in the generic connector UI. New
+connectors use the separate native MCP route described in
+[internal-mcp-connectors.md](internal-mcp-connectors.md). The legacy tool is not
+evidence that the generic route has passed end-to-end validation.
 
 ## Acceptance
 
