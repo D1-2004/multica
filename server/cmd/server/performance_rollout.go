@@ -16,7 +16,7 @@ func quickWinsForRuntime(raw runtimeconfig.RuntimeConfig) service.RuntimeStartRe
 	if rollout := raw.PerformanceOptimization; rollout != nil {
 		on := rollout.Enabled && len(rollout.AgentIDs) > 0
 		return service.RuntimeStartRecoveryConfig{
-			Scoped: true, RolloutAgentIDs: append([]string(nil), rollout.AgentIDs...),
+			Scoped: true, RolloutEnabled: on, RolloutAgentIDs: append([]string(nil), rollout.AgentIDs...),
 			DSHEventWakeup: on, BoundDSHHostWait: on,
 			RecoverAbandonedLaunches: on, DingTalkReplyCommand: on,
 			ASBEventWakeup: on, StartupObservability: on,

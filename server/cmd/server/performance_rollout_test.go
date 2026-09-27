@@ -13,6 +13,9 @@ func TestPerformanceRolloutSingleSwitchSelectsAllQuickWinsForOneAgent(t *testing
 	other := pgtype.UUID{Bytes: [16]byte{91}, Valid: true}
 	for _, enabled := range []bool{true, false, true} {
 		cfg := quickWinsForRuntime(runtimeconfig.RuntimeConfig{PerformanceOptimization: &runtimeconfig.PerformanceOptimizationConfig{Enabled: enabled, AgentIDs: []string{target}}})
+		if cfg.AllowsAgent(id) != enabled {
+			t.Fatalf("rollout eligibility ignored master enabled=%v", enabled)
+		}
 		selected := cfg.ForAgent(id)
 		outside := cfg.ForAgent(other)
 		for _, flag := range []bool{selected.DSHEventWakeup, selected.BoundDSHHostWait, selected.RecoverAbandonedLaunches, selected.DingTalkReplyCommand, selected.ASBEventWakeup, selected.StartupObservability, selected.BoundedReadyExec, selected.CoalescedHotExec, selected.BatchSkillResolve} {

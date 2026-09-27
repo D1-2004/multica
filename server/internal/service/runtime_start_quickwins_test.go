@@ -50,6 +50,7 @@ func TestPerformanceRolloutDSHRecoveryDoesNotCrossAgentBoundary(t *testing.T) {
 		ids  []pgtype.UUID
 		want bool
 	}{
+		{"empty_targets", nil, false},
 		{"other_agent", []pgtype.UUID{other}, false},
 		{"selected_agent", []pgtype.UUID{task.AgentID}, true},
 	} {
@@ -69,6 +70,9 @@ func TestPerformanceRolloutDSHRecoveryDoesNotCrossAgentBoundary(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `UPDATE agent_task_runtime_start_attempt SET finished_at=now()-interval '11 minutes' WHERE id=$1`, attempt.ID); err != nil {
 		t.Fatal(err)
+	}
+	if rows, err := svc.Queries.ExpireDSHHostWaitingTasks(ctx, true, nil); err != nil || len(rows) != 0 {
+		t.Fatalf("empty rollout expired a task: rows=%d err=%v", len(rows), err)
 	}
 	if rows, err := svc.Queries.ExpireDSHHostWaitingTasks(ctx, true, []pgtype.UUID{other}); err != nil || len(rows) != 0 {
 		t.Fatalf("other agent expired by rollout: rows=%d err=%v", len(rows), err)
@@ -124,15 +128,16 @@ func TestPerformanceRolloutFCRecoveryDoesNotCrossAgentBoundary(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name string
-		id   pgtype.UUID
+		ids  []pgtype.UUID
 		want bool
 	}{
-		{"other_agent", pgtype.UUID{Bytes: [16]byte{93}, Valid: true}, false},
-		{"selected_agent", task.AgentID, true},
+		{"empty_targets", nil, false},
+		{"other_agent", []pgtype.UUID{{Bytes: [16]byte{93}, Valid: true}}, false},
+		{"selected_agent", []pgtype.UUID{task.AgentID}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, err := svc.Queries.ListDSHHostWaitingTasks(ctx, db.ListDSHHostWaitingTasksParams{
-				RecoverAbandonedLaunches: true, Scoped: true, RolloutAgentIDs: []pgtype.UUID{tc.id},
+				RecoverAbandonedLaunches: true, Scoped: true, RolloutAgentIDs: tc.ids,
 			})
 			if err != nil {
 				t.Fatal(err)

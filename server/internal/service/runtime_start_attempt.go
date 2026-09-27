@@ -475,9 +475,10 @@ func (s *TaskService) MarkRuntimeStartBlocked(ctx context.Context, attempt db.Ag
 // RuntimeStartRecoveryConfig is read afresh for each sweep from Diamond.
 // Zero values retain the historical DSH-only recovery and unbounded wait.
 type RuntimeStartRecoveryConfig struct {
-	// Scoped is set only by the unified Diamond rollout. Legacy snapshots and
-	// tests keep their existing individual flags until the document migrates.
+	// Scoped is set only by the unified Diamond rollout. Unscoped values are
+	// used by focused service tests; production translation is fail-closed.
 	Scoped               bool
+	RolloutEnabled       bool
 	RolloutAgentIDs      []string
 	DSHEventWakeup       bool
 	DingTalkReplyCommand bool
@@ -495,12 +496,13 @@ func (c RuntimeStartRecoveryConfig) AllowsAgent(agentID pgtype.UUID) bool {
 	if !c.Scoped {
 		return true
 	}
-	return agentID.Valid && slices.Contains(c.RolloutAgentIDs, util.UUIDToString(agentID))
+	return c.RolloutEnabled && agentID.Valid && slices.Contains(c.RolloutAgentIDs, util.UUIDToString(agentID))
 }
 
 func (c RuntimeStartRecoveryConfig) ForAgent(agentID pgtype.UUID) RuntimeStartRecoveryConfig {
 	if c.AllowsAgent(agentID) {
 		c.Scoped = false
+		c.RolloutEnabled = false
 		c.RolloutAgentIDs = nil
 		return c
 	}

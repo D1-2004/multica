@@ -370,17 +370,18 @@ func TestPerformanceRolloutASBFastWakeDoesNotCrossAgentBoundary(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name string
-		id   pgtype.UUID
+		ids  []pgtype.UUID
 		want bool
 	}{
-		{"other_agent", pgtype.UUID{Bytes: [16]byte{92}, Valid: true}, false},
-		{"selected_agent", task.AgentID, true},
+		{"empty_targets", nil, false},
+		{"other_agent", []pgtype.UUID{{Bytes: [16]byte{92}, Valid: true}}, false},
+		{"selected_agent", []pgtype.UUID{task.AgentID}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rows, err := svc.Queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{
 				RetrySeconds: 30, StaleSeconds: 180, MaxPerRuntime: 4,
 				WakeBefore: pgtype.Timestamptz{Time: eventAt, Valid: true},
-				Scoped:     true, RolloutAgentIDs: []pgtype.UUID{tc.id},
+				Scoped:     true, RolloutAgentIDs: tc.ids,
 			})
 			if err != nil {
 				t.Fatal(err)
