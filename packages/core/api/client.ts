@@ -1,3 +1,4 @@
+import { SemanticaMCPStatusSchema, EMPTY_SEMANTICA_MCP_STATUS, type SemanticaMCPStatus } from "./semantica-mcp-schema";
 import { WorkspaceMCPConnectionsSchema, WorkspaceMCPLinkSchema, type WorkspaceMCPConnection, type CreateWorkspaceMCPConnection } from "./workspace-mcp-schema";
 import {ModelProbeSchema, GlobalModelsSchema, EMPTY_GLOBAL_MODELS, DeveloperCapabilitiesSchema, DiscoveredModelsSchema, globalModelsWire, type GlobalModels, type ModelProvider} from "./global-models-schema";
 import { DSHProfileSchema, type DSHProfileStatus } from "./dsh-profile-schema";
@@ -4079,6 +4080,13 @@ export class ApiClient {
   async removeAgentSkill(agentId: string, skillId: string): Promise<void> {
     await this.fetch(`/api/agents/${agentId}/skills/${skillId}`, {
       method: "DELETE",
+    });
+  }
+
+  async getSemanticaMCPStatus(workspaceId: string): Promise<SemanticaMCPStatus> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/semantica-mcp-relay`);
+    return parseWithFallback(raw, SemanticaMCPStatusSchema, EMPTY_SEMANTICA_MCP_STATUS, {
+      endpoint: "GET /api/workspaces/:id/semantica-mcp-relay", includeReceived: false,
     });
   }
 

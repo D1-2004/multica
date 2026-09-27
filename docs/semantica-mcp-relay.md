@@ -11,8 +11,9 @@ crosses this boundary. This replaces the separate FaaS hop for this capability.
 The implementation ports task authorization from `feat/faas-mcp-relay` and
 JSON/SSE normalization from `dt-fde-semantica-mcp-relay/src/relay.ts`.
 It keeps the existing Multica managed-MCP transport, so cloud sandboxes require
-no new networking path. The scope is one deployment-configured connector;
-workspace connector CRUD/UI from the reference branch is a separate feature.
+no new networking path. The scope is one deployment-configured connector.
+The former FaaS connector CRUD screen cannot configure this relay and must not
+be presented as its management interface.
 No database migration or new Redis account is required.
 
 The existing Multica `storeRedis` client performs atomic INCR + PEXPIRE for
@@ -55,10 +56,30 @@ Incomplete settings leave this tool unavailable without breaking server startup.
 The environment comes from AONE_ENV_TYPE, ENV_TYPE, GO_ENV, APP_ENV in that
 order; unknown values use an isolated `unknown` key namespace and default off.
 
+## Workspace UI
+
+`/{workspaceSlug}/internal-connectors` is the member-visible entry point for
+the Semantica capability. `GET /api/workspaces/{id}/semantica-mcp-relay` is
+protected by the existing workspace membership gate and Agent access gate. It
+reports whether the relay is configured and enabled for this workspace, the authorized Agent ID,
+and the four approved tool names. It never returns the upstream address or
+credential. A target Agent in another workspace is never disclosed.
+
+The screen explains the actual user flow: check the authorized Agent, open a
+new chat with that Agent, ask it to query the approved knowledge graph, then
+read its tool-backed response. It offers a copyable example prompt. The screen
+does not send MCP requests with a member token; only a live Agent task may use
+the relay. It does not offer URL, Bearer, or HMAC editing controls because these
+settings are deployment-owned. The current search tool may time out; the UI
+must not label an unprobed upstream as healthy.
+
 ## Acceptance
 
-Deploy only through pipeline 66, retaining all in-flight CRs. Do not merge or
-advance production/manual validation. Send a real message as 冬翔 to 东翔测试号
+Deploy only through pipeline 66, using this CR and the latest develop baseline.
+The previous FaaS connector CR and other old pending CRs may be removed from
+the pre-release release set as requested on 2026-09-27; take care not to drop
+changes already on develop. Do not merge or advance production/manual
+validation. Send a real message as 冬翔 to 东翔测试号
 in pre, requesting schema then an MCP search. Correlate the DingTalk receipt,
 Multica task, `semantica_mcp_relay_call` audit event and returned schema/search
 summary. Unit tests and direct probes are supporting evidence, not acceptance.

@@ -14,12 +14,66 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/redis/go-redis/v9"
 )
+
+type semanticaMCPRelayStatus struct {
+	Available bool     `json:"available"`
+	AgentID   *string  `json:"agent_id"`
+	AgentName *string  `json:"agent_name"`
+	Tools     []string `json:"tools"`
+}
+
+// GetSemanticaMCPRelayStatus is behind the workspace membership gate. It
+// reports deployment state without exposing the upstream URL or credentials.
+func (h *Handler) GetSemanticaMCPRelayStatus(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace_id")
+	if !ok {
+		return
+	}
+	status := semanticaMCPRelayStatus{Tools: []string{}}
+	relay := h.SemanticaMCPRelay
+	if relay == nil {
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	agentID, err := util.ParseUUID(relay.targetAgentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Semantica relay configuration is invalid")
+		return
+	}
+	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Semantica relay status is unavailable")
+		return
+	}
+	workspace := uuidToString(workspaceID)
+	userID := requestUserID(r)
+	actorType, actorID := h.resolveActor(r, userID, workspace)
+	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspace) ||
+		!h.canInvokeAgent(r.Context(), agent, actorType, actorID, userID, workspace) {
+		writeJSON(w, http.StatusOK, status)
+		return
+	}
+	status.AgentID = &relay.targetAgentID
+	status.AgentName = &agent.Name
+	status.Available = !agent.ArchivedAt.Valid && agent.RuntimeID.Valid && relay.redis != nil &&
+		featureflags.SemanticaMCPRelayEnabled(r.Context(), h.FeatureFlags)
+	if status.Available {
+		status.Tools = []string{"get_knowledge_graph_schema", "get_knowledge_node_schema", "query_knowledge_cypher", "search_knowledge"}
+	}
+	writeJSON(w, http.StatusOK, status)
+}
 
 const semanticaRelayTool = "semantica_mcp_relay"
 const semanticaMaxResponse = 2 << 20

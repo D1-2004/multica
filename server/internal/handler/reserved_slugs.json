@@ -80,6 +80,7 @@
         "runtimes",
         "runners",
         "skills",
+        "internal-connectors",
         "dsh-plugins",
         "features",
         "settings",

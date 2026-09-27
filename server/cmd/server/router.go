@@ -2184,6 +2184,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/", h.GetWorkspace)
+					r.Get("/semantica-mcp-relay", h.GetSemanticaMCPRelayStatus)
 					r.Get("/mcp", h.GetWorkspaceMCPDiscovery)
 					r.Get("/members", h.ListMembersWithUser)
 					r.With(handler.RequireHumanActor).Post("/leave", h.LeaveWorkspace)
