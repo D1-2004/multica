@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -199,12 +200,25 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 		_, err = tx.Exec(r.Context(), `INSERT INTO internal_connector (id,workspace_id,name,upstream_url,credential_ref,allowed_tools,enabled)
 			VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7)`, id, ws, strings.TrimSpace(in.Name), in.UpstreamURL, connectorCredentialRef(id), raw, in.Enabled)
 	} else {
-		tag, e := tx.Exec(r.Context(), `UPDATE internal_connector SET name=$3,upstream_url=$4,allowed_tools=$5,enabled=$6,credential_ref=$7,updated_at=now()
-			WHERE id=$1::uuid AND workspace_id=$2::uuid`, id, ws, strings.TrimSpace(in.Name), in.UpstreamURL, raw, in.Enabled, connectorCredentialRef(id))
-		err = e
-		if err == nil && tag.RowsAffected() != 1 {
+		var existingURL string
+		e := tx.QueryRow(r.Context(), `SELECT upstream_url FROM internal_connector WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`, id, ws).Scan(&existingURL)
+		if errors.Is(e, pgx.ErrNoRows) {
 			writeError(w, 404, "connector not found")
 			return
+		}
+		if e != nil {
+			writeError(w, 500, "failed to load connector")
+			return
+		}
+		if in.UpstreamURL != existingURL {
+			writeError(w, 400, "upstream_url cannot be changed after creation")
+			return
+		}
+		tag, e := tx.Exec(r.Context(), `UPDATE internal_connector SET name=$3,allowed_tools=$4,enabled=$5,updated_at=now()
+			WHERE id=$1::uuid AND workspace_id=$2::uuid`, id, ws, strings.TrimSpace(in.Name), raw, in.Enabled)
+		err = e
+		if err == nil && tag.RowsAffected() != 1 {
+			err = errors.New("connector update affected no rows")
 		}
 	}
 	if err != nil {

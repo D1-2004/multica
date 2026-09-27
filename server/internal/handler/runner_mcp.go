@@ -300,6 +300,9 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 		return errors.New("claimed task is missing Agent data")
 	}
 	if !supportsRunnerMCPMounts || !supportsManagedRelayRoutes {
+		if h.internalConnectorsEnabled(ctx) {
+			slog.WarnContext(ctx, "internal MCP connectors unavailable: sandbox daemon lacks managed MCP support", "agent_id", uuidToString(agentID), "runtime_id", uuidToString(runtime.ID), "supports_runner_mcp_mounts", supportsRunnerMCPMounts, "supports_managed_relay_routes", supportsManagedRelayRoutes)
+		}
 		return h.injectLegacyRunnerMCP(ctx, runtime, agentID, taskToken, agentData, supportsRunnerMCPMounts)
 	}
 	if runnerMCPRuntimeUnsupported(runtime) {
@@ -320,7 +323,8 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	}
 	connectors, err := h.authorizedConnectors(ctx, uuidToString(runtime.WorkspaceID), uuidToString(agentID))
 	if err != nil {
-		return err
+		slog.WarnContext(ctx, "internal MCP connector discovery failed; continuing task claim without connectors", "agent_id", uuidToString(agentID), "runtime_id", uuidToString(runtime.ID), "error", err)
+		connectors = nil
 	}
 	for _, connector := range connectors {
 		if validateConnectorInput(connectorInput{Name: connector.Name, UpstreamURL: connector.UpstreamURL, AllowedTools: connector.AllowedTools, AgentIDs: []string{uuidToString(agentID)}, Enabled: true}) != nil {

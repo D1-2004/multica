@@ -92,3 +92,19 @@ func TestInternalConnectorRateKeysAreIsolated(t *testing.T) {
 		}
 	}
 }
+
+func TestInternalConnectorUpstreamToolErrorRetainsBoundedText(t *testing.T) {
+	id := "11111111-1111-4111-8111-111111111111"
+	t.Setenv(connectorCredentialRef(id), "upstream-only")
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"isError":true,"content":[{"type":"text","text":"invalid cypher syntax"}]}}`)
+	}))
+	defer upstream.Close()
+	h := &Handler{InternalConnectorClient: upstream.Client()}
+	c := internalConnector{ID: id, CredentialRef: connectorCredentialRef(id), UpstreamURL: upstream.URL}
+	result, err := h.callInternalConnectorUpstream(context.Background(), c, "tools/call", connectorRPCParams{Name: "read_knowledge", Arguments: json.RawMessage(`{}`)})
+	toolResult, ok := result.(multicaMCPToolResult)
+	if err != nil || !ok || !toolResult.IsError || len(toolResult.Content) != 1 || toolResult.Content[0].Text != "invalid cypher syntax" {
+		t.Fatalf("tool error text lost: %#v %v", result, err)
+	}
+}

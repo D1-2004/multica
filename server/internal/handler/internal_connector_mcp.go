@@ -284,7 +284,24 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 		return result, errors.New("invalid upstream tool result")
 	}
 	if result.IsError {
-		return multicaMCPToolResult{IsError: true, Content: []multicaMCPContent{{Type: "text", Text: "Internal MCP tool failed"}}}, nil
+		const maxToolErrorRunes = 4096
+		content := make([]multicaMCPContent, 0, len(result.Content))
+		remaining := maxToolErrorRunes
+		for _, item := range result.Content {
+			if item.Type != "text" || item.Text == "" || remaining == 0 {
+				continue
+			}
+			runes := []rune(item.Text)
+			if len(runes) > remaining {
+				runes = runes[:remaining]
+			}
+			remaining -= len(runes)
+			content = append(content, multicaMCPContent{Type: "text", Text: string(runes)})
+		}
+		if len(content) == 0 {
+			content = []multicaMCPContent{{Type: "text", Text: "Internal MCP tool failed"}}
+		}
+		return multicaMCPToolResult{IsError: true, Content: content}, nil
 	}
 	return result, nil
 }

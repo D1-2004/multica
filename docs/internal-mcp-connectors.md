@@ -28,7 +28,8 @@ read-only tools may be listed. This is an operator assertion, not a claim that
 MCP annotations alone enforce safety. JSON and SSE replies are normalized by
 the existing bounded parser (2 MiB, 45 seconds, no redirects). Long calls
 flush response headers after authorization to survive the outer 30-second
-header deadline. An upstream failure becomes a generic tool error.
+header deadline. Upstream tool errors retain bounded text so the Agent can
+correct its arguments; transport and parse failures remain generic.
 
 ## Configuration and rollout
 
@@ -45,8 +46,12 @@ header deadline. An upstream failure becomes a generic tool error.
 - `MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES` is an operator-set list of
   approved upstream DNS names/suffixes. URLs must be fixed HTTPS origins plus
   path, with no userinfo, query or fragment. Host validation uses exact match
-  or dot-bounded suffix; callers cannot override the target. Production starts
-  with an empty allowlist and the feature off.
+  or dot-bounded suffix; callers cannot override the target. Operators should
+  configure exact upstream hostnames in pre-release and production. A
+  connector's URL is immutable after creation, keeping its operator-provisioned
+  credential bound to that destination. A different URL requires a new
+  connector and credential reference. Production starts with an empty allowlist
+  and the feature off.
 - The existing Tair client atomically increments task/Agent/workspace rate
   counters with TTL, namespaced by environment and connector ID. A missing
   client or rejected counter fails closed. Audit records IDs, method, tool,
@@ -59,7 +64,7 @@ header deadline. An upstream failure becomes a generic tool error.
 
 ## User flow
 
-In `/{workspaceSlug}/internal-connectors`, a workspace owner/admin creates a
+In `/{workspaceSlug}/internal-connectors`, a human workspace owner/admin creates a
 connector, chooses an approved upstream URL, tool allowlist and Agents, and
 keeps it off. The page shows the generated credential reference and a clear
 “waiting for operator credential” state. After the operator injects that
