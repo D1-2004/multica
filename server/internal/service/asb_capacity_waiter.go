@@ -175,8 +175,9 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 	if l.CapacityWait == nil {
 		l.CapacityWait = newASBCapacityWaitCoordinator()
 	}
+	quickWins := l.Tasks.CurrentRuntimeStartRecoveryConfig()
 	var wakeBefore pgtype.Timestamptz
-	if l.Tasks.CurrentRuntimeStartRecoveryConfig().ASBEventWakeup {
+	if quickWins.ASBEventWakeup {
 		l.CapacityWait.mu.Lock()
 		at := l.CapacityWait.lastCapacityEvent
 		l.CapacityWait.mu.Unlock()
@@ -185,10 +186,12 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 	waiting, err := l.Queries.ListASBCapacityWaitingTasks(
 		ctx,
 		db.ListASBCapacityWaitingTasksParams{
-			RetrySeconds:  asbCapacityWaitRetryDelay.Seconds(),
-			WakeBefore:    wakeBefore,
-			StaleSeconds:  asbCapacityStaleLaunchAge.Seconds(),
-			MaxPerRuntime: asbCapacityWaitMaxConcurrent,
+			Scoped:          quickWins.Scoped,
+			RolloutAgentIDs: quickWins.QueryRolloutAgentIDs(),
+			RetrySeconds:    asbCapacityWaitRetryDelay.Seconds(),
+			WakeBefore:      wakeBefore,
+			StaleSeconds:    asbCapacityStaleLaunchAge.Seconds(),
+			MaxPerRuntime:   asbCapacityWaitMaxConcurrent,
 		},
 	)
 	if err != nil {

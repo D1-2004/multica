@@ -511,8 +511,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
 		h.FCE2BLauncher.ConfigProvider = opts.RuntimeConfig.fce2b
 		h.TaskService.RuntimeStartRecoveryConfig = func() service.RuntimeStartRecoveryConfig {
-			cfg := opts.RuntimeConfig.current().Runtime.FCE2B
-			return service.RuntimeStartRecoveryConfig{RecoverAbandonedLaunches: cfg.RecoverAbandonedLaunches, BoundDSHHostWait: cfg.BoundDSHHostWait, DSHEventWakeup: cfg.DSHEventWakeup, DingTalkReplyCommand: cfg.DingTalkReplyCommand, ASBEventWakeup: cfg.ASBEventWakeup, StartupObservability: cfg.StartupObservability, BoundedReadyExec: cfg.BoundedReadyExec, CoalescedHotExec: cfg.CoalescedHotExec, BatchSkillResolve: cfg.BatchSkillResolve}
+			return opts.RuntimeConfig.quickWins()
 		}
 	}
 	h.FCE2BLauncher.SetSandboxRelaySigner(opts.SandboxRelaySigner)
@@ -817,7 +816,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	coordinator := inboundcoord.New(h.LLM, queries, h.Assoc)
 	if opts.RuntimeConfig != nil {
 		coordinator.ModelProvider = func() string { return opts.RuntimeConfig.current().Runtime.LLM.CoordinatorModel }
-		coordinator.FinishRecoveryProvider = func() bool { return opts.RuntimeConfig.current().Runtime.LLM.CoordinatorFinishRecovery }
+		coordinator.FinishRecoveryAgentProvider = func(agentID pgtype.UUID) bool {
+			raw := opts.RuntimeConfig.current().Runtime
+			if raw.PerformanceOptimization != nil {
+				return raw.PerformanceOptimization.AllowsAgent(util.UUIDToString(agentID))
+			}
+			return raw.LLM.CoordinatorFinishRecovery
+		}
 	}
 	if opts.DeploymentFence != nil {
 		coordinator.Ready = func(ctx context.Context) (bool, error) {

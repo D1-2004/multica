@@ -1365,6 +1365,11 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	if configured := l.withCurrentConfig(); configured != l {
 		return configured.LaunchTask(ctx, task)
 	}
+	if l != nil && l.Config.QuickWins.Scoped {
+		selected := *l
+		selected.Config.QuickWins = l.Config.QuickWins.ForAgent(task.AgentID)
+		return selected.LaunchTask(ctx, task)
+	}
 	if l != nil && l.Config.QuickWins.CoalescedHotExec {
 		ctx = context.WithValue(ctx, hotRunnerProbeKey{}, &hotRunnerProbe{})
 	}

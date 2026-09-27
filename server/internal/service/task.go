@@ -5960,7 +5960,7 @@ func (s *TaskService) launchRuntimeForTaskWithContextAndCompletion(
 			launchParent = a2aintegration.WithInvocationIdentity(context.Background(), identity)
 		}
 	}
-	launchParent, finishLaunch, accepted := s.trackRuntimeLaunch(launchParent)
+	launchParent, finishLaunch, accepted := s.trackRuntimeLaunchForAgent(launchParent, task.AgentID)
 	if !accepted {
 		if done != nil {
 			done()
@@ -6125,7 +6125,7 @@ func (s *TaskService) RecoverQueuedFCE2BTask(ctx context.Context, task db.AgentT
 	if task.Status != "queued" || !task.RuntimeID.Valid {
 		return
 	}
-	if !s.CurrentRuntimeStartRecoveryConfig().DSHEventWakeup && task.CreatedAt.Valid && time.Since(task.CreatedAt.Time) < fcE2BQueuedRecoveryAge {
+	if !s.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).DSHEventWakeup && task.CreatedAt.Valid && time.Since(task.CreatedAt.Time) < fcE2BQueuedRecoveryAge {
 		return
 	}
 	rt, err := s.Queries.GetAgentRuntime(ctx, task.RuntimeID)

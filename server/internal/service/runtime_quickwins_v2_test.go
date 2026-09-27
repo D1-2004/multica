@@ -351,6 +351,51 @@ func TestASBCapacityEventSurvivesBusyLeaseButDoesNotWakeFreshFailure(t *testing.
 	check(true, false)
 }
 
+func TestPerformanceRolloutASBFastWakeDoesNotCrossAgentBoundary(t *testing.T) {
+	ctx := context.Background()
+	pool, svc, task, first := quickwinFixture(t)
+	if err := svc.MarkRuntimeStartBlocked(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := svc.BeginRuntimeStartAttempt(ctx, task, SandboxBackendASB, RuntimeStartProtocolHTTPJSONV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var eventAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&eventAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.MarkRuntimeStartCapacityWaiting(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		id   pgtype.UUID
+		want bool
+	}{
+		{"other_agent", pgtype.UUID{Bytes: [16]byte{92}, Valid: true}, false},
+		{"selected_agent", task.AgentID, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := svc.Queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{
+				RetrySeconds: 30, StaleSeconds: 180, MaxPerRuntime: 4,
+				WakeBefore: pgtype.Timestamptz{Time: eventAt, Valid: true},
+				Scoped:     true, RolloutAgentIDs: []pgtype.UUID{tc.id},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, row := range rows {
+				found = found || row.ID == task.ID
+			}
+			if found != tc.want {
+				t.Fatalf("fast wake selected=%v want=%v", found, tc.want)
+			}
+		})
+	}
+}
+
 func TestCapacityFastWakeIgnoresUnrelatedFCCompletions(t *testing.T) {
 	ctx := context.Background()
 	_, svc, task, attempt := quickwinFixture(t)

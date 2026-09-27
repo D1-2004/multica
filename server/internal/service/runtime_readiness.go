@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -18,6 +19,9 @@ const runtimeReadinessChannel = "multica_runtime_ready"
 // The readiness timestamp survives notification loss and the launch-lease race.
 func (s *TaskService) NotifyDSHReadiness(ctx context.Context, database dshhost.Database, key dshhost.Key, reason string) {
 	if s == nil || database == nil || !s.CurrentRuntimeStartRecoveryConfig().DSHEventWakeup {
+		return
+	}
+	if key.AgentID != uuid.Nil && !s.CurrentRuntimeStartRecoveryConfig().AllowsAgent(pgtype.UUID{Bytes: [16]byte(key.AgentID), Valid: true}) {
 		return
 	}
 	_, err := database.Exec(ctx, `WITH ready AS (
@@ -47,12 +51,15 @@ func (s *TaskService) recoverReadyRuntimeTasks(ctx context.Context) {
 	if !cfg.DSHEventWakeup || s.Queries == nil || s.RuntimeLauncher == nil {
 		return
 	}
-	tasks, err := s.Queries.ListDSHHostWaitingTasks(ctx, db.ListDSHHostWaitingTasksParams{DshEventWakeup: true, EventsOnly: true})
+	tasks, err := s.Queries.ListDSHHostWaitingTasks(ctx, db.ListDSHHostWaitingTasksParams{DshEventWakeup: true, EventsOnly: true, Scoped: cfg.Scoped, RolloutAgentIDs: cfg.QueryRolloutAgentIDs()})
 	if err != nil {
 		slog.Warn("runtime readiness scan failed", "error", err)
 		return
 	}
 	for _, task := range tasks {
+		if !cfg.AllowsAgent(task.AgentID) {
+			continue
+		}
 		s.RecoverQueuedFCE2BTask(ctx, task)
 	}
 }

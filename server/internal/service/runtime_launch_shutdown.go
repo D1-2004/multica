@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"sync"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var errRuntimeLaunchShutdown = errors.New("runtime launcher stopped for server shutdown")
@@ -24,7 +26,11 @@ func (s *TaskService) CurrentRuntimeStartRecoveryConfig() RuntimeStartRecoveryCo
 }
 
 func (s *TaskService) trackRuntimeLaunch(parent context.Context) (context.Context, func(), bool) {
-	if !s.CurrentRuntimeStartRecoveryConfig().RecoverAbandonedLaunches {
+	return s.trackRuntimeLaunchForAgent(parent, pgtype.UUID{})
+}
+
+func (s *TaskService) trackRuntimeLaunchForAgent(parent context.Context, agentID pgtype.UUID) (context.Context, func(), bool) {
+	if !s.CurrentRuntimeStartRecoveryConfig().ForAgent(agentID).RecoverAbandonedLaunches {
 		return parent, func() {}, true
 	}
 	state := &s.launchShutdown
@@ -53,7 +59,7 @@ func (s *TaskService) trackRuntimeLaunch(parent context.Context) (context.Contex
 // A launcher which cannot stop keeps its lease until expiry; never release a
 // lease underneath an operation which may still submit a runner.
 func (s *TaskService) ShutdownRuntimeLaunches(ctx context.Context) error {
-	if s == nil || !s.CurrentRuntimeStartRecoveryConfig().RecoverAbandonedLaunches {
+	if s == nil {
 		return nil
 	}
 	state := &s.launchShutdown

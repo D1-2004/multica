@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	openai "github.com/openai/openai-go/v3"
 )
 
@@ -37,6 +38,28 @@ func TestFinishRecoveryBudgetAndDeepSeekWireOnOff(t *testing.T) {
 		} else if _, exists := wire["thinking"]; exists {
 			t.Fatal("off retained new wire override")
 		}
+	}
+}
+
+func TestFinishRecoveryRolloutKeepsOtherAgentOnLegacyBudget(t *testing.T) {
+	selected := pgtype.UUID{Bytes: [16]byte{11}, Valid: true}
+	other := pgtype.UUID{Bytes: [16]byte{12}, Valid: true}
+	for _, tc := range []struct {
+		name  string
+		agent pgtype.UUID
+		want  int64
+	}{
+		{"selected", selected, 4096},
+		{"other", other, 1536},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("f", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"你好"}]}`)}}
+			c := &Coordinator{Chat: chat, FinishRecoveryAgentProvider: func(id pgtype.UUID) bool { return id == selected }}
+			got := c.Decide(context.Background(), Turn{Source: SourceWeb, Message: "你好", Addressed: true, AgentID: tc.agent})
+			if got.Action != ActionReply || len(chat.params) == 0 || chat.params[0].MaxCompletionTokens.Value != tc.want {
+				t.Fatalf("decision=%#v budget=%v want=%d", got, chat.params, tc.want)
+			}
+		})
 	}
 }
 

@@ -11,13 +11,13 @@ import (
 )
 
 func (s *TaskService) withStartupObservability(ctx context.Context, task db.AgentTaskQueue) context.Context {
-	if !s.CurrentRuntimeStartRecoveryConfig().StartupObservability {
+	if !s.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).StartupObservability {
 		return ctx
 	}
 	opts := TaskLangfuseTraceOptions(task, nil, nil)
 	return startupobs.WithRecorder(ctx, func(ctx context.Context, stage string, start time.Time, err error) {
 		// Re-read for long launches: an emergency off stops subsequent emissions.
-		if !s.CurrentRuntimeStartRecoveryConfig().StartupObservability {
+		if !s.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).StartupObservability {
 			return
 		}
 		status := "succeeded"

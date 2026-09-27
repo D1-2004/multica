@@ -455,7 +455,8 @@ WHERE task.status = 'queued'
           AND latest_attempt.error_code = 'ASB-CAPACITY-WAITING'
           AND (COALESCE(latest_attempt.finished_at, latest_attempt.updated_at)
               <= now() - make_interval(secs => $2::double precision)
-              OR latest_attempt.created_at <= $3::timestamptz)
+              OR (latest_attempt.created_at <= $3::timestamptz
+                  AND (NOT $5::boolean OR task.agent_id = ANY($6::uuid[]))))
       )
       OR
       (
@@ -478,10 +479,12 @@ ORDER BY task.runtime_id, task.created_at ASC, task.id ASC
 `
 
 type ListASBCapacityWaitingTasksParams struct {
-	MaxPerRuntime int32              `json:"max_per_runtime"`
-	RetrySeconds  float64            `json:"retry_seconds"`
-	WakeBefore    pgtype.Timestamptz `json:"wake_before"`
-	StaleSeconds  float64            `json:"stale_seconds"`
+	MaxPerRuntime   int32              `json:"max_per_runtime"`
+	RetrySeconds    float64            `json:"retry_seconds"`
+	WakeBefore      pgtype.Timestamptz `json:"wake_before"`
+	StaleSeconds    float64            `json:"stale_seconds"`
+	Scoped          bool               `json:"scoped"`
+	RolloutAgentIDs []pgtype.UUID      `json:"rollout_agent_ids"`
 }
 
 // Only the latest startup attempt controls retry eligibility. A later
@@ -497,6 +500,8 @@ func (q *Queries) ListASBCapacityWaitingTasks(ctx context.Context, arg ListASBCa
 		arg.RetrySeconds,
 		arg.WakeBefore,
 		arg.StaleSeconds,
+		arg.Scoped,
+		arg.RolloutAgentIDs,
 	)
 	if err != nil {
 		return nil, err
@@ -585,6 +590,7 @@ JOIN LATERAL (
 ) AS latest ON true
 WHERE task.status = 'queued'
   AND latest.backend = 'aliyun_fc'
+  AND (NOT $1::boolean OR NOT $4::boolean OR task.agent_id = ANY($5::uuid[]))
   AND (NOT $1::boolean OR EXISTS (SELECT 1 FROM runtime_readiness_event AS ready
        WHERE ready.workspace_id=agent.workspace_id
          AND ready.agent_id IN (task.agent_id,'00000000-0000-0000-0000-000000000000'::uuid)
@@ -592,39 +598,41 @@ WHERE task.status = 'queued'
   AND (
       (latest.status = 'blocked'
        AND latest.error_code = 'DSH-HOST-WAITING'
-       AND ($2::boolean OR latest.finished_at <= now() - interval '30 seconds'))
+       AND (($2::boolean AND (NOT $4::boolean OR task.agent_id = ANY($5::uuid[]))) OR latest.finished_at <= now() - interval '30 seconds'))
       OR
       -- A rolling deployment or lost launcher can leave a pre-runner attempt
       -- starting forever. The normal lease/CAS path supersedes it safely.
       (latest.status = 'starting'
        AND (latest.last_stage IN ('launch_started', 'sandbox_resolving', 'dsh_host_waiting')
-            OR ($3::boolean AND latest.last_stage IN ('template_resolved', 'sandbox_ready', 'runner_probing', 'runner_probe_succeeded', 'task_environment_preparing', 'daemon_token_preparing')))
-       AND ($3::boolean OR latest.updated_at <= now() - interval '2 minutes')
+            OR ($3::boolean AND (NOT $4::boolean OR task.agent_id = ANY($5::uuid[])) AND latest.last_stage IN ('template_resolved', 'sandbox_ready', 'runner_probing', 'runner_probe_succeeded', 'task_environment_preparing', 'daemon_token_preparing')))
+       AND (($3::boolean AND (NOT $4::boolean OR task.agent_id = ANY($5::uuid[]))) OR latest.updated_at <= now() - interval '2 minutes')
        AND latest.runner_started_at IS NULL
        AND latest.daemon_started_at IS NULL
        AND latest.claim_finalized_at IS NULL
-       AND ($3::boolean OR EXISTS (SELECT 1 FROM dsh_employee_session AS session
+       AND (($3::boolean AND (NOT $4::boolean OR task.agent_id = ANY($5::uuid[]))) OR EXISTS (SELECT 1 FROM dsh_employee_session AS session
                    WHERE session.workspace_id = agent.workspace_id
                      AND session.agent_id = task.agent_id
                      AND session.scope_id = COALESCE(task.issue_id, task.chat_session_id, task.id))))
   )
   AND (task.runtime_launch_lease_expires_at IS NULL OR task.runtime_launch_lease_expires_at <= now())
   AND COALESCE(task.context->>'deap_dws_token_required', 'false') <> 'true'
-  AND (NOT $3::boolean OR NOT EXISTS (SELECT 1 FROM task_token WHERE task_id = task.id))
+  AND (NOT ($3::boolean AND (NOT $4::boolean OR task.agent_id = ANY($5::uuid[]))) OR NOT EXISTS (SELECT 1 FROM task_token WHERE task_id = task.id))
 ORDER BY task.created_at, task.id
 LIMIT 32
 `
 
 type ListDSHHostWaitingTasksParams struct {
-	EventsOnly               bool `json:"events_only"`
-	DshEventWakeup           bool `json:"dsh_event_wakeup"`
-	RecoverAbandonedLaunches bool `json:"recover_abandoned_launches"`
+	EventsOnly               bool          `json:"events_only"`
+	DshEventWakeup           bool          `json:"dsh_event_wakeup"`
+	RecoverAbandonedLaunches bool          `json:"recover_abandoned_launches"`
+	Scoped                   bool          `json:"scoped"`
+	RolloutAgentIDs          []pgtype.UUID `json:"rollout_agent_ids"`
 }
 
 // A Profile build or host reconciliation can finish without a running task
 // or open browser to wake this queued launch. Reuse the normal launch lease.
 func (q *Queries) ListDSHHostWaitingTasks(ctx context.Context, arg ListDSHHostWaitingTasksParams) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, listDSHHostWaitingTasks, arg.EventsOnly, arg.DshEventWakeup, arg.RecoverAbandonedLaunches)
+	rows, err := q.db.Query(ctx, listDSHHostWaitingTasks, arg.EventsOnly, arg.DshEventWakeup, arg.RecoverAbandonedLaunches, arg.Scoped, arg.RolloutAgentIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1100,6 +1108,7 @@ WITH victims AS MATERIALIZED (
         ORDER BY attempt.created_at DESC, attempt.id DESC LIMIT 1
     ) AS latest ON true
     WHERE task.status = 'queued'
+      AND (NOT $1::boolean OR task.agent_id = ANY($2::uuid[]))
       AND latest.status = 'blocked' AND latest.error_code = 'DSH-HOST-WAITING'
       AND (task.runtime_launch_lease_expires_at IS NULL OR task.runtime_launch_lease_expires_at <= now())
       AND NOT EXISTS (SELECT 1 FROM task_token WHERE task_id = task.id)
@@ -1193,8 +1202,8 @@ type ExpireDSHHostWaitingTasksRow struct {
 
 // Use task-then-attempt locking, as in claim/failure finalization. A live
 // launcher, claim token, or newer non-waiting attempt owns the task instead.
-func (q *Queries) ExpireDSHHostWaitingTasks(ctx context.Context) ([]ExpireDSHHostWaitingTasksRow, error) {
-	rows, err := q.db.Query(ctx, expireDSHHostWaitingTasks)
+func (q *Queries) ExpireDSHHostWaitingTasks(ctx context.Context, scoped bool, rolloutAgentIDs []pgtype.UUID) ([]ExpireDSHHostWaitingTasksRow, error) {
+	rows, err := q.db.Query(ctx, expireDSHHostWaitingTasks, scoped, rolloutAgentIDs)
 	if err != nil {
 		return nil, err
 	}

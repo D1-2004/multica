@@ -263,7 +263,9 @@ type SkillSnapshot struct {
 // Coordinator runs the bounded assoc tool loop in loop.go.
 type Coordinator struct {
 	FinishRecoveryProvider func() bool
-	finishRecovery         bool
+	// Sample one Diamond snapshot with the resolved agent before a decision.
+	FinishRecoveryAgentProvider func(pgtype.UUID) bool
+	finishRecovery              bool
 
 	RouteProvider func(context.Context) (*modelregistry.Route, error)
 	// ModelProvider is sampled once per decision, including all finish reviews.
@@ -401,7 +403,11 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	snapshot.model = c.configuredModel()
 	snapshot.ModelProvider = nil
 	snapshot.finishRecovery = c.finishRecoveryEnabled()
+	if c.FinishRecoveryAgentProvider != nil {
+		snapshot.finishRecovery = c.FinishRecoveryAgentProvider(turn.AgentID)
+	}
 	snapshot.FinishRecoveryProvider = nil
+	snapshot.FinishRecoveryAgentProvider = nil
 	if c.RouteProvider != nil {
 		route, err := c.RouteProvider(ctx)
 		if err != nil {

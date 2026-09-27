@@ -435,3 +435,41 @@ func TestDiamondQuickwinFlagsSwitchTogetherWithoutRestart(t *testing.T) {
 		}
 	}
 }
+
+func TestDiamondPerformanceRolloutHotSelectionAndIsolation(t *testing.T) {
+	const selected = "e2293e9e-1e79-4926-b0e6-da4cb693add0"
+	const other = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	client := &fakeDiamondClient{content: validJSON()}
+	service, err := newDiamondService(nil, true, func() (diamondClient, error) { return client, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	for _, enabled := range []bool{true, false, true} {
+		value := "false"
+		if enabled {
+			value = "true"
+		}
+		rollout := `"performance_optimization":{"enabled":` + value + `,"agent_ids":["` + selected + `"]},`
+		client.onChange(strings.Replace(validJSON(), `"fc_e2b": {`, rollout+`"fc_e2b": {`, 1))
+		cfg := service.Current().Config.Runtime.PerformanceOptimization
+		if cfg == nil || cfg.AllowsAgent(selected) != enabled || cfg.AllowsAgent(other) {
+			t.Fatalf("rollout selection after hot update: %+v", cfg)
+		}
+	}
+	// Snapshot consumers cannot mutate the live allowlist.
+	snapshot := service.Current()
+	snapshot.Config.Runtime.PerformanceOptimization.AgentIDs[0] = other
+	if !service.Current().Config.Runtime.PerformanceOptimization.AllowsAgent(selected) {
+		t.Fatal("rollout allowlist escaped snapshot copy")
+	}
+}
+
+func TestPerformanceRolloutRejectsMalformedTargets(t *testing.T) {
+	for _, target := range []string{"not-a-uuid", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"} {
+		rollout := `"performance_optimization":{"enabled":true,"agent_ids":["` + target + `"]},`
+		if _, err := ParseStrict([]byte(strings.Replace(validJSON(), `"fc_e2b": {`, rollout+`"fc_e2b": {`, 1)), false); err == nil {
+			t.Fatalf("accepted malformed rollout agent %q", target)
+		}
+	}
+}

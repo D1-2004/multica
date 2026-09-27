@@ -224,6 +224,11 @@ func cloneSnapshot(in Snapshot) Snapshot {
 	out.Config.Web.CORSAllowedOrigins = append([]string(nil), in.Config.Web.CORSAllowedOrigins...)
 	out.Config.Web.LoginProviders = append([]string(nil), in.Config.Web.LoginProviders...)
 	out.Config.Runtime.LLM.Models = append([]string(nil), in.Config.Runtime.LLM.Models...)
+	if in.Config.Runtime.PerformanceOptimization != nil {
+		rollout := *in.Config.Runtime.PerformanceOptimization
+		rollout.AgentIDs = append([]string(nil), rollout.AgentIDs...)
+		out.Config.Runtime.PerformanceOptimization = &rollout
+	}
 	out.Config.Runtime.FCE2B.StablePublisherUserIDs = append([]string(nil), in.Config.Runtime.FCE2B.StablePublisherUserIDs...)
 	out.Config.AgentIdentity.DebugContextTokenAgents = append([]string(nil), in.Config.AgentIdentity.DebugContextTokenAgents...)
 	out.Config.EnterpriseIdentity.BUCAuthorizeApps = append([]string(nil), in.Config.EnterpriseIdentity.BUCAuthorizeApps...)

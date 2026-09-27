@@ -82,6 +82,18 @@ type RuntimeConfig struct {
 	LLM       LLMConfig       `json:"llm"`
 	FCE2B     FCE2BConfig     `json:"fc_e2b"`
 	ASB       ASBConfig       `json:"asb"`
+	// A single Diamond rollout controls the performance batch. Missing or
+	// empty targets never opt an agent into a newly deployed optimization.
+	PerformanceOptimization *PerformanceOptimizationConfig `json:"performance_optimization,omitempty"`
+}
+
+type PerformanceOptimizationConfig struct {
+	Enabled  bool     `json:"enabled"`
+	AgentIDs []string `json:"agent_ids"`
+}
+
+func (c PerformanceOptimizationConfig) AllowsAgent(agentID string) bool {
+	return c.Enabled && agentID != "" && slices.Contains(c.AgentIDs, agentID)
 }
 
 // AgenticFSConfig contains live defaults for newly provisioned spaces, not
@@ -250,6 +262,9 @@ func (c Config) normalized() Config {
 	c.Runtime.LLM.Models = normalizedUnique(c.Runtime.LLM.Models)
 	c.Runtime.LLM.DefaultModel = strings.TrimSpace(c.Runtime.LLM.DefaultModel)
 	c.Runtime.LLM.CoordinatorModel = strings.TrimSpace(c.Runtime.LLM.CoordinatorModel)
+	if c.Runtime.PerformanceOptimization != nil {
+		c.Runtime.PerformanceOptimization.AgentIDs = normalizedUnique(c.Runtime.PerformanceOptimization.AgentIDs)
+	}
 	c.Runtime.FCE2B.Template = strings.TrimSpace(c.Runtime.FCE2B.Template)
 	c.Runtime.FCE2B.StablePublisherUserIDs = normalizedUnique(c.Runtime.FCE2B.StablePublisherUserIDs)
 	c.Runtime.FCE2B.DWSMessagePolicyFingerprints = normalizedUnique(c.Runtime.FCE2B.DWSMessagePolicyFingerprints)
@@ -353,6 +368,16 @@ func (c IntegrationsConfig) validate() error {
 }
 
 func (c RuntimeConfig) validate() error {
+	if rollout := c.PerformanceOptimization; rollout != nil {
+		if err := validateUnique("performance_optimization.agent_ids", rollout.AgentIDs, false); err != nil {
+			return err
+		}
+		for _, agentID := range rollout.AgentIDs {
+			if parsed, err := uuid.Parse(strings.TrimSpace(agentID)); err != nil || parsed == uuid.Nil || parsed.String() != agentID {
+				return fmt.Errorf("performance_optimization.agent_ids contains invalid canonical UUID %q", agentID)
+			}
+		}
+	}
 	quota := c.AgenticFS.Defaults()
 	if quota.SizeLimit < 10<<30 || quota.SizeLimit%(1<<30) != 0 || quota.FileCountLimit < 10000 || quota.FileCountLimit > 1000000000 {
 		return fmt.Errorf("agentic_fs requires size_limit >= 10 GiB in whole GiB and file_count_limit between 10000 and 1000000000")

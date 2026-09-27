@@ -450,7 +450,7 @@ func (l *ASBLauncher) SetPool(pool *pgxpool.Pool) {
 }
 
 func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) error {
-	if l != nil && l.Tasks != nil && l.Tasks.CurrentRuntimeStartRecoveryConfig().ASBEventWakeup {
+	if l != nil && l.Tasks != nil && l.Tasks.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).ASBEventWakeup {
 		ctx = context.WithValue(ctx, asbCapacityNotifyKey{}, l.NotifyRuntimeCapacityMayBeAvailable)
 	}
 	if configured := l.withCurrentConfig(); configured != l {

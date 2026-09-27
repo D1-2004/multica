@@ -121,7 +121,7 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 		runtimeProviders = c.remote.RuntimeProviders()
 	}
 	return service.FCE2BConfig{
-		QuickWins:                         service.RuntimeStartRecoveryConfig{RecoverAbandonedLaunches: raw.Runtime.FCE2B.RecoverAbandonedLaunches, BoundDSHHostWait: raw.Runtime.FCE2B.BoundDSHHostWait, DSHEventWakeup: raw.Runtime.FCE2B.DSHEventWakeup, DingTalkReplyCommand: raw.Runtime.FCE2B.DingTalkReplyCommand, ASBEventWakeup: raw.Runtime.FCE2B.ASBEventWakeup, StartupObservability: raw.Runtime.FCE2B.StartupObservability, BoundedReadyExec: raw.Runtime.FCE2B.BoundedReadyExec, CoalescedHotExec: raw.Runtime.FCE2B.CoalescedHotExec, BatchSkillResolve: raw.Runtime.FCE2B.BatchSkillResolve},
+		QuickWins:                         quickWinsForRuntime(raw.Runtime),
 		TaskModelResolver:                 c.taskModelResolver(),
 		ModelResolver:                     c.modelResolver(),
 		Enabled:                           raw.Runtime.FCE2B.Enabled,

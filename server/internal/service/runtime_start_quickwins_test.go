@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -32,6 +33,49 @@ func quickwinFixture(t *testing.T) (*pgxpool.Pool, *TaskService, db.AgentTaskQue
 		pool.Exec(context.Background(), `DELETE FROM agent_task_runtime_start_attempt WHERE task_id=$1`, task.ID)
 	})
 	return pool, svc, task, attempt
+}
+
+func TestPerformanceRolloutDSHRecoveryDoesNotCrossAgentBoundary(t *testing.T) {
+	ctx := context.Background()
+	pool, svc, task, attempt := quickwinFixture(t)
+	if _, err := svc.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "dsh_host_waiting"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.MarkRuntimeStartBlocked(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	other := pgtype.UUID{Bytes: [16]byte{91}, Valid: true}
+	for _, tc := range []struct {
+		name string
+		ids  []pgtype.UUID
+		want bool
+	}{
+		{"other_agent", []pgtype.UUID{other}, false},
+		{"selected_agent", []pgtype.UUID{task.AgentID}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := svc.Queries.ListDSHHostWaitingTasks(ctx, db.ListDSHHostWaitingTasksParams{DshEventWakeup: true, Scoped: true, RolloutAgentIDs: tc.ids})
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, row := range rows {
+				found = found || row.ID == task.ID
+			}
+			if found != tc.want {
+				t.Fatalf("early recovery selected=%v, want %v", found, tc.want)
+			}
+		})
+	}
+	if _, err := pool.Exec(ctx, `UPDATE agent_task_runtime_start_attempt SET finished_at=now()-interval '11 minutes' WHERE id=$1`, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := svc.Queries.ExpireDSHHostWaitingTasks(ctx, true, []pgtype.UUID{other}); err != nil || len(rows) != 0 {
+		t.Fatalf("other agent expired by rollout: rows=%d err=%v", len(rows), err)
+	}
+	if rows, err := svc.Queries.ExpireDSHHostWaitingTasks(ctx, true, []pgtype.UUID{task.AgentID}); err != nil || len(rows) != 1 || rows[0].ID != task.ID {
+		t.Fatalf("selected agent did not expire: rows=%v err=%v", rows, err)
+	}
 }
 
 func TestFCAbandonedLaunchRecoveryRollout(t *testing.T) {
@@ -67,6 +111,38 @@ func TestFCAbandonedLaunchRecoveryRollout(t *testing.T) {
 			}
 			if found != tc.want {
 				t.Fatalf("selected=%v want=%v", found, tc.want)
+			}
+		})
+	}
+}
+
+func TestPerformanceRolloutFCRecoveryDoesNotCrossAgentBoundary(t *testing.T) {
+	ctx := context.Background()
+	pool, svc, task, attempt := quickwinFixture(t)
+	if _, err := pool.Exec(ctx, `UPDATE agent_task_runtime_start_attempt SET last_stage='template_resolved' WHERE id=$1`, attempt.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		id   pgtype.UUID
+		want bool
+	}{
+		{"other_agent", pgtype.UUID{Bytes: [16]byte{93}, Valid: true}, false},
+		{"selected_agent", task.AgentID, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := svc.Queries.ListDSHHostWaitingTasks(ctx, db.ListDSHHostWaitingTasksParams{
+				RecoverAbandonedLaunches: true, Scoped: true, RolloutAgentIDs: []pgtype.UUID{tc.id},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, row := range rows {
+				found = found || row.ID == task.ID
+			}
+			if found != tc.want {
+				t.Fatalf("abandoned FC recovery selected=%v want=%v", found, tc.want)
 			}
 		})
 	}
@@ -128,7 +204,7 @@ func TestDSHWaitExpiryAcrossRetriesAndClaimFences(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			rows, err := svc.Queries.ExpireDSHHostWaitingTasks(ctx)
+			rows, err := svc.Queries.ExpireDSHHostWaitingTasks(ctx, false, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

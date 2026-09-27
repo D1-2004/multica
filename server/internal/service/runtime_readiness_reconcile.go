@@ -46,8 +46,9 @@ func (l *FCE2BLauncher) reconcileRuntimeReadiness(ctx context.Context) {
  AND (pending.scope_id='00000000-0000-0000-0000-000000000000'::uuid OR COALESCE(task.chat_session_id,task.issue_id)=pending.scope_id)
  ORDER BY task.created_at,task.id LIMIT 1
  ) waiting ON true
- WHERE EXISTS (SELECT 1 FROM agent_task_queue task JOIN agent ON agent.id=task.agent_id WHERE task.agent_id=pending.agent_id AND task.status='queued' AND agent.archived_at IS NULL)
- ORDER BY pending.updated_at LIMIT 8`)
+ WHERE (NOT $1::boolean OR pending.agent_id = ANY($2::uuid[]))
+ AND EXISTS (SELECT 1 FROM agent_task_queue task JOIN agent ON agent.id=task.agent_id WHERE task.agent_id=pending.agent_id AND task.status='queued' AND agent.archived_at IS NULL)
+ ORDER BY pending.updated_at LIMIT 8`, l.Config.QuickWins.Scoped, l.Config.QuickWins.QueryRolloutAgentIDs())
 	if err != nil {
 		slog.Warn("runtime readiness reconciliation scan failed", "error", err)
 		return
@@ -73,6 +74,9 @@ func (l *FCE2BLauncher) reconcileRuntimeReadiness(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		if !l.Config.QuickWins.AllowsAgent(pgtype.UUID{Bytes: [16]byte(c.key.AgentID), Valid: true}) {
+			continue
+		}
 		select {
 		case slots <- struct{}{}:
 		case <-ctx.Done():
@@ -92,7 +96,7 @@ func (l *FCE2BLauncher) reconcileRuntimeReadiness(ctx context.Context) {
 			// Link shared preparation to its oldest queued waiter. This is only
 			// diagnostic attribution, never authority to launch that task. Reuse
 			// this connection so all workers cannot deadlock acquiring another.
-			if c.taskID.Valid && l.Tasks.CurrentRuntimeStartRecoveryConfig().StartupObservability {
+			if c.taskID.Valid && l.Tasks.CurrentRuntimeStartRecoveryConfig().ForAgent(pgtype.UUID{Bytes: [16]byte(c.key.AgentID), Valid: true}).StartupObservability {
 				if task, err := db.New(conn).GetAgentTask(work, c.taskID); err == nil {
 					work = l.Tasks.withStartupObservability(work, task)
 				}

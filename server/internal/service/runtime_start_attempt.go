@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -474,6 +475,10 @@ func (s *TaskService) MarkRuntimeStartBlocked(ctx context.Context, attempt db.Ag
 // RuntimeStartRecoveryConfig is read afresh for each sweep from Diamond.
 // Zero values retain the historical DSH-only recovery and unbounded wait.
 type RuntimeStartRecoveryConfig struct {
+	// Scoped is set only by the unified Diamond rollout. Legacy snapshots and
+	// tests keep their existing individual flags until the document migrates.
+	Scoped               bool
+	RolloutAgentIDs      []string
 	DSHEventWakeup       bool
 	DingTalkReplyCommand bool
 	ASBEventWakeup       bool
@@ -484,6 +489,35 @@ type RuntimeStartRecoveryConfig struct {
 
 	RecoverAbandonedLaunches bool
 	BoundDSHHostWait         bool
+}
+
+func (c RuntimeStartRecoveryConfig) AllowsAgent(agentID pgtype.UUID) bool {
+	if !c.Scoped {
+		return true
+	}
+	return agentID.Valid && slices.Contains(c.RolloutAgentIDs, util.UUIDToString(agentID))
+}
+
+func (c RuntimeStartRecoveryConfig) ForAgent(agentID pgtype.UUID) RuntimeStartRecoveryConfig {
+	if c.AllowsAgent(agentID) {
+		c.Scoped = false
+		c.RolloutAgentIDs = nil
+		return c
+	}
+	return RuntimeStartRecoveryConfig{}
+}
+
+func (c RuntimeStartRecoveryConfig) QueryRolloutAgentIDs() []pgtype.UUID {
+	if !c.Scoped {
+		return nil
+	}
+	ids := make([]pgtype.UUID, 0, len(c.RolloutAgentIDs))
+	for _, raw := range c.RolloutAgentIDs {
+		if id, err := util.ParseUUID(raw); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // RecoverWaitingDSHHosts resumes the same queued tasks after asynchronous
@@ -497,7 +531,7 @@ func (s *TaskService) RecoverWaitingDSHHosts(ctx context.Context) {
 		cfg = s.RuntimeStartRecoveryConfig()
 	}
 	if cfg.BoundDSHHostWait {
-		failed, err := s.Queries.ExpireDSHHostWaitingTasks(ctx)
+		failed, err := s.Queries.ExpireDSHHostWaitingTasks(ctx, cfg.Scoped, cfg.QueryRolloutAgentIDs())
 		if err != nil {
 			slog.Warn("expire waiting DSH host tasks failed", "error", err)
 		} else {
@@ -511,7 +545,7 @@ func (s *TaskService) RecoverWaitingDSHHosts(ctx context.Context) {
 			s.HandleFailedTasks(ctx, tasks)
 		}
 	}
-	tasks, err := s.Queries.ListDSHHostWaitingTasks(ctx, db.ListDSHHostWaitingTasksParams{RecoverAbandonedLaunches: cfg.RecoverAbandonedLaunches, DshEventWakeup: cfg.DSHEventWakeup, EventsOnly: false})
+	tasks, err := s.Queries.ListDSHHostWaitingTasks(ctx, db.ListDSHHostWaitingTasksParams{RecoverAbandonedLaunches: cfg.RecoverAbandonedLaunches, DshEventWakeup: cfg.DSHEventWakeup, EventsOnly: false, Scoped: cfg.Scoped, RolloutAgentIDs: cfg.QueryRolloutAgentIDs()})
 	if err != nil {
 		slog.Warn("list waiting DSH host tasks failed", "error", err)
 		return
