@@ -143,6 +143,10 @@ type FCE2BConfig struct {
 	TimeoutSeconds                    int
 	SandboxReadyTimeout               time.Duration
 	ParseError                        error
+	// SDKRollout is runtime.fc_e2b_sdk_rollout of the snapshot this
+	// configuration came from; the zero value keeps the CLI and leaves a
+	// cancelled task's processes alone.
+	SDKRollout FCE2BSDKRollout
 }
 
 func FCE2BConfigFromEnv() FCE2BConfig {
@@ -2856,7 +2860,6 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "MULTICA_DAEMON_TOKEN="+token,
 		"-e", "MULTICA_RUNTIME_ID="+runtimeID,
 		"-e", "MULTICA_TASK_ID="+util.UUIDToString(taskID),
-		"-e", fcE2BTaskMarkerEnv+"="+util.UUIDToString(taskID),
 		"-e", "MULTICA_DAEMON_ID="+rt.DaemonID.String,
 		"-e", "MULTICA_AGENT_RUNTIME_NAME="+rt.Name,
 		"-e", "MULTICA_CLOUD_SANDBOX_BACKEND="+string(SandboxBackendAliyunFC),
@@ -2865,6 +2868,11 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "OPENAI_BASE_URL="+llmURL,
 		"-e", "OPENAI_API_KEY="+llmKey,
 	)
+	// The cancelled-task stop proves ownership by this marker, so it follows
+	// the same switch.
+	if fcE2BRolloutSelects(l.Config.SDKRollout, fcE2BScopeFrom(ctx)) {
+		args = append(args, "-e", fcE2BTaskMarkerEnv+"="+util.UUIDToString(taskID))
+	}
 	if coldStart {
 		args = append(args, "-e", "MULTICA_FC_E2B_COLD_START=true")
 	}
@@ -2913,6 +2921,11 @@ func (l *FCE2BLauncher) runE2BCommand(ctx context.Context, args []string) (strin
 }
 
 func (l *FCE2BLauncher) runE2BCommandWithTimeout(ctx context.Context, timeout time.Duration, args []string) (string, error) {
+	if l.ConfigProvider == nil {
+		// A frozen snapshot routes every command it sends, so one launch or
+		// stop never mixes two generations of the switch.
+		ctx = withFCE2BFrozenRollout(ctx, l.Config.SDKRollout)
+	}
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return l.Runner.Run(cmdCtx, l.Config.CLIPath, args, l.e2bEnv())

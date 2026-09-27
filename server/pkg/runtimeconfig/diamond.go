@@ -120,16 +120,6 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 	} else {
 		logRuntimeProvidersUpdate(logger, "Runtime provider catalog loaded", runtimeProviders)
 	}
-	if rolloutContent, rolloutErr := client.GetConfig(FCE2BSDKRolloutDiamondDataID, DiamondGroup); rolloutErr != nil {
-		if logger != nil {
-			logger.Warn("FC/E2B SDK rollout unavailable; the environment fallback applies",
-				slog.String("data_id", FCE2BSDKRolloutDiamondDataID),
-				slog.String("error", rolloutErr.Error()),
-			)
-		}
-	} else {
-		applyFCE2BSDKRolloutUpdate(logger, service, rolloutContent, "FC/E2B SDK rollout loaded")
-	}
 	modelPricingContent, err := client.GetConfig(ModelPricingDiamondDataID, DiamondGroup)
 	if err != nil {
 		return nil, fmt.Errorf("fetch required model pricing Diamond config: %w", err)
@@ -185,24 +175,6 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 	} else {
 		providersListening = true
 	}
-	rolloutListening := false
-	if err := client.ListenConfig(FCE2BSDKRolloutDiamondDataID, DiamondGroup, func(content string) {
-		applyFCE2BSDKRolloutUpdate(logger, service, content, "FC/E2B SDK rollout updated")
-	}); err != nil {
-		// Without a listener a published switch-off would never arrive, so a
-		// loaded rollout would pin this replica to the SDK. Drop it; the
-		// environment fallback (the CLI by default) applies until restart.
-		dropped, _ := service.ApplyFCE2BSDKRolloutJSON(nil)
-		if logger != nil {
-			logger.Warn("FC/E2B SDK rollout listener unavailable; the environment fallback applies",
-				slog.String("data_id", FCE2BSDKRolloutDiamondDataID),
-				slog.Uint64("generation", dropped.Generation),
-				slog.String("error", err.Error()),
-			)
-		}
-	} else {
-		rolloutListening = true
-	}
 	if err := client.ListenConfig(ModelPricingDiamondDataID, DiamondGroup, func(content string) {
 		next, applyErr := service.ApplyModelPricingJSON([]byte(content))
 		if applyErr != nil {
@@ -224,9 +196,6 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 		if providersListening {
 			_ = client.CancelListenConfig(RuntimeProvidersDiamondDataID, DiamondGroup)
 		}
-		if rolloutListening {
-			_ = client.CancelListenConfig(FCE2BSDKRolloutDiamondDataID, DiamondGroup)
-		}
 		return nil, fmt.Errorf("listen to required model pricing Diamond config: %w", err)
 	}
 	service.setCloseFunc(func() error {
@@ -235,13 +204,9 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 		if providersListening {
 			providersErr = client.CancelListenConfig(RuntimeProvidersDiamondDataID, DiamondGroup)
 		}
-		var rolloutErr error
-		if rolloutListening {
-			rolloutErr = client.CancelListenConfig(FCE2BSDKRolloutDiamondDataID, DiamondGroup)
-		}
 		pricingErr := client.CancelListenConfig(ModelPricingDiamondDataID, DiamondGroup)
 		client.CloseClient()
-		return errors.Join(runtimeErr, providersErr, rolloutErr, pricingErr)
+		return errors.Join(runtimeErr, providersErr, pricingErr)
 	})
 	closeClient = false
 	return service, nil

@@ -1,59 +1,86 @@
 package runtimeconfig
 
 import (
-	"errors"
+	"strings"
 	"testing"
 )
 
-const testSDKRollout = `{"enabled":true,"workspace_ids":["d4f9ceed-d114-4312-bb30-dd791aee039b"],"agent_ids":["79dde6f4-30e2-44cc-acd4-8c3421221406"],"percent":0}`
+// withSDKRollout places runtime.fc_e2b_sdk_rollout into the valid document.
+func withSDKRollout(rollout string) string {
+	return strings.Replace(validJSON(), `"runtime": {`, `"runtime": {"fc_e2b_sdk_rollout":`+rollout+`,`, 1)
+}
 
-func TestDiamondServiceLoadsAndUpdatesFCE2BSDKRollout(t *testing.T) {
-	client := &fakeDiamondClient{content: validJSON(), rolloutContent: testSDKRollout}
+func TestParseStrictReadsFCE2BSDKRollout(t *testing.T) {
+	if cfg := mustParseConfig(t, validJSON()); cfg.Runtime.FCE2BSDKRollout != nil {
+		t.Fatalf("absent rollout = %#v", cfg.Runtime.FCE2BSDKRollout)
+	}
+	cfg := mustParseConfig(t, withSDKRollout(`{"enabled":true,"workspace_ids":["11111111-1111-1111-1111-111111111111"],"agent_ids":["22222222-2222-2222-2222-222222222222"],"runtime_ids":["33333333-3333-3333-3333-333333333333"],"percent":5}`))
+	got := cfg.Runtime.FCE2BSDKRollout
+	if got == nil || !got.Enabled || got.WorkspaceIDs[0] != "11111111-1111-1111-1111-111111111111" || got.AgentIDs[0] != "22222222-2222-2222-2222-222222222222" ||
+		got.RuntimeIDs[0] != "33333333-3333-3333-3333-333333333333" || got.Percent != 5 {
+		t.Fatalf("rollout = %#v", got)
+	}
+	if off := mustParseConfig(t, withSDKRollout(`{"enabled":false}`)).Runtime.FCE2BSDKRollout; off == nil || off.Enabled {
+		t.Fatalf("switched-off rollout = %#v", off)
+	}
+}
+
+func TestParseStrictRejectsInvalidFCE2BSDKRollout(t *testing.T) {
+	for _, rollout := range []string{
+		`{"enabled":true,"percent":101}`,
+		`{"percent":-1}`,
+		`{"agent_ids":["agent-1"]}`,
+		`{"agent_ids":["00000000-0000-0000-0000-000000000000"]}`,
+		// Identifiers are compared as written, so only canonical ones count.
+		`{"workspace_ids":[" 11111111-1111-1111-1111-111111111111 "]}`,
+		`{"runtime_ids":["AAAAAAAA-1111-1111-1111-111111111111"]}`,
+		`{"agent_ids":["22222222-2222-2222-2222-222222222222","22222222-2222-2222-2222-222222222222"]}`,
+		`{"workspaces":["11111111-1111-1111-1111-111111111111"]}`,
+		`{"enabled":"yes"}`,
+		`[]`,
+	} {
+		if _, err := ParseStrict([]byte(withSDKRollout(rollout)), true); err == nil {
+			t.Fatalf("invalid rollout accepted: %s", rollout)
+		}
+	}
+}
+
+// A rejected publication keeps the previous snapshot, rollout included.
+func TestDiamondServiceRetainsFCE2BSDKRolloutOnInvalidUpdate(t *testing.T) {
+	client := &fakeDiamondClient{content: withSDKRollout(`{"enabled":true,"agent_ids":["22222222-2222-2222-2222-222222222222"]}`)}
 	service, err := newDiamondService(nil, true, func() (diamondClient, error) { return client, nil })
 	if err != nil {
 		t.Fatalf("newDiamondService: %v", err)
 	}
-	loaded := service.FCE2BSDKRollout()
-	if !loaded.Present || !loaded.Rollout.Enabled || loaded.Generation != 1 || len(loaded.Rollout.AgentIDs) != 1 || client.rolloutOnChange == nil {
-		t.Fatalf("loaded = %#v, listener=%v", loaded, client.rolloutOnChange != nil)
+	t.Cleanup(func() { _ = service.Close() })
+	if first := service.Current().Config.Runtime.FCE2BSDKRollout; first == nil || !first.Enabled {
+		t.Fatalf("loaded rollout = %#v", first)
 	}
-
-	client.rolloutOnChange(`{"enabled":false}`)
-	if next := service.FCE2BSDKRollout(); !next.Present || next.Rollout.Enabled || next.Generation != 2 {
-		t.Fatalf("switched off = %#v", next)
+	client.onChange(withSDKRollout(`{"enabled":false}`))
+	second := service.Current()
+	if second.Generation != 2 || second.Config.Runtime.FCE2BSDKRollout.Enabled {
+		t.Fatalf("switch-off = %#v", second.Config.Runtime.FCE2BSDKRollout)
 	}
-	// An invalid publication keeps the last valid rollout.
-	client.rolloutOnChange(`{"enabled":true,"agent_ids":["not-a-uuid"]}`)
-	if kept := service.FCE2BSDKRollout(); kept.Generation != 2 || kept.Rollout.Enabled {
-		t.Fatalf("invalid update replaced the snapshot: %#v", kept)
+	client.onChange(withSDKRollout(`{"enabled":true,"percent":500}`))
+	if kept := service.Current(); kept.Generation != 2 || kept.Config.Runtime.FCE2BSDKRollout.Enabled {
+		t.Fatalf("invalid update replaced the snapshot: %#v", kept.Config.Runtime.FCE2BSDKRollout)
 	}
-	// Removing the document hands control back to the caller's fallback.
-	client.rolloutOnChange("")
-	if removed := service.FCE2BSDKRollout(); removed.Present || removed.Generation != 3 {
-		t.Fatalf("removed = %#v", removed)
-	}
-	if err := service.Close(); err != nil || !client.rolloutCancelled {
-		t.Fatalf("close = %v, rollout listener cancelled = %v", err, client.rolloutCancelled)
+	client.onChange(validJSON())
+	if removed := service.Current(); removed.Generation != 3 || removed.Config.Runtime.FCE2BSDKRollout != nil {
+		t.Fatalf("removed = %#v", removed.Config.Runtime.FCE2BSDKRollout)
 	}
 }
 
-func TestDiamondServiceStartsWithoutFCE2BSDKRollout(t *testing.T) {
-	cases := map[string]*fakeDiamondClient{
-		"document absent":  {content: validJSON()},
-		"fetch failed":     {content: validJSON(), rolloutGetErr: errors.New("timeout")},
-		"document invalid": {content: validJSON(), rolloutContent: `{"enabled":true,"percent":500}`},
-		"listener failed":  {content: validJSON(), rolloutListenErr: errors.New("listen refused")},
-		// A loaded rollout without a listener could never be switched off.
-		"loaded but listener failed": {content: validJSON(), rolloutContent: testSDKRollout, rolloutListenErr: errors.New("listen refused")},
+func TestSnapshotFCE2BSDKRolloutIsACopy(t *testing.T) {
+	service, err := NewStatic(mustParseConfig(t, withSDKRollout(`{"enabled":true,"agent_ids":["22222222-2222-2222-2222-222222222222"]}`)))
+	if err != nil {
+		t.Fatalf("NewStatic: %v", err)
 	}
-	for name, client := range cases {
-		service, err := newDiamondService(nil, true, func() (diamondClient, error) { return client, nil })
-		if err != nil {
-			t.Fatalf("%s: startup must not depend on the rollout document: %v", name, err)
-		}
-		if snapshot := service.FCE2BSDKRollout(); snapshot.Present {
-			t.Fatalf("%s: snapshot = %#v, want the caller fallback", name, snapshot)
-		}
-		_ = service.Close()
+	first := service.Current()
+	first.Config.Runtime.FCE2BSDKRollout.Enabled = false
+	first.Config.Runtime.FCE2BSDKRollout.AgentIDs[0] = "mutated"
+	current := service.Current().Config.Runtime.FCE2BSDKRollout
+	if !current.Enabled || current.AgentIDs[0] != "22222222-2222-2222-2222-222222222222" {
+		t.Fatalf("Current returned the service-owned rollout: %#v", current)
 	}
 }

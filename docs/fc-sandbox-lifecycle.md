@@ -47,8 +47,10 @@ FC 沙箱里 root 没有 `CAP_SYS_PTRACE`，直接读其他用户进程的 `/pro
 任务一进入 `cancelled`，`TaskRuntimeTerminalObserver` 立即（与下面的释放并行，
 不等 30 秒宽限）对该任务每个 start attempt 用过的沙箱执行一次
 `fc_e2b_task_stop.go` 的脚本，10 秒后再执行一次，补上期间新 fork 或被 daemon
-拆树后成为孤儿的进程。脚本以 root 运行，走与其它命令相同的 FC/E2B 传输（SDK /
-CLI 按灰度选择），参数是 runtime id、本任务健康端口（由 task id 算出）和 task id。
+拆树后成为孤儿的进程。这一步和 runner 注入 `FC_E2B_TASK_ID` 都受
+`runtime.fc_e2b_sdk_rollout` 控制：只对开关选中的 workspace / agent / runtime 执行，
+随 SDK 传输一起生效；没选中的任务保持改造前的行为（不注入标记、不结束进程，交给沙箱释放）。
+脚本以 root 运行，参数是 runtime id、本任务健康端口（由 task id 算出）和 task id。
 只结束能证明属于本任务的进程；证明不了的一律留下，不按启动时间或父进程猜。
 
 - **能证明属于本任务**：
@@ -202,6 +204,7 @@ lifecycle 日志归属。
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-09-28 | 取消清理和 `FC_E2B_TASK_ID` 注入改由 `runtime.fc_e2b_sdk_rollout` 按作用域控制，与 SDK 传输共用一个开关 | E2B 改造整体可灰度、可热关，不再“部署即生效”；与性能优化开关分开（PRI-47 方案 B） |
 | 2026-09-27 | 取消后只结束能证明属于本任务的沙箱进程：runner 命令行、按进程 uid 读取的任务标记、其子孙及由本任务创建的会话；runner 额外注入 `FC_E2B_TASK_ID`；去掉按启动时间认领孤儿 | PRI-61 在真实 FC 上发现，按“被 PID 1 接管且在 runner 之后启动”认领孤儿，会结束同沙箱另一任务之后放出的孤儿 |
 | 2026-09-23 | 任务结束后释放不可复用的非 DSH 沙箱，其余（含 DSH 员工沙箱）只保留 10 分钟空闲窗口；DSH 等待日志带上错误原因；DSH 沙箱打 `multica.origin` 标签 | 沙箱只靠 4800 秒 TTL 回收，92% 为一次性冷创建；等待日志只有 reason 看不到云平台结果；正式/预发共用账号无法按环境统计 |
 | 2026-09-20 | 创建与任务启动续期统一为默认 4800 秒，配置只允许更大 | 3600s 墙会杀掉仍在前台跑的长任务；续期写死 3600 使 Diamond 调大无效 |

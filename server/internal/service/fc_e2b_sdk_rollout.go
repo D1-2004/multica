@@ -3,11 +3,8 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"hash/fnv"
 	"log/slog"
-	"os"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,40 +14,20 @@ import (
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
 
-// FCE2BSDKRolloutEnv holds the fallback rollout that applies while Diamond has
-// no valid rollout document (runtimeconfig.FCE2BSDKRolloutDiamondDataID), and
-// in deployments without Diamond. Unset, empty or invalid keeps every
-// operation on the CLI.
-const FCE2BSDKRolloutEnv = "MULTICA_FC_E2B_SDK_ROLLOUT"
-
 // fcE2BSDKRolloutBucketKey namespaces percent bucketing so this rollout does
 // not correlate with feature-flag buckets for the same identifiers.
 const fcE2BSDKRolloutBucketKey = "fc_e2b_sdk_transport"
 
-// Sources of the rollout that decided an operation.
+// Sources of the rollout that decided an operation: the snapshot a launch or
+// stop froze, or the live runtime document for a standalone operation.
 const (
-	fcE2BRolloutSourceDiamond = "diamond"
-	fcE2BRolloutSourceEnv     = "env"
+	fcE2BRolloutSourceSnapshot = "snapshot"
+	fcE2BRolloutSourceLive     = "live"
 )
 
-// FCE2BSDKRollout selects the operations that use the Go SDK. Remove it
-// together with the CLI once production runs on the SDK.
+// FCE2BSDKRollout is runtime.fc_e2b_sdk_rollout. Remove it together with the
+// CLI once production runs on the SDK.
 type FCE2BSDKRollout = runtimeconfig.FCE2BSDKRollout
-
-// ParseFCE2BSDKRollout validates rollout JSON. Blank input is the empty
-// rollout.
-func ParseFCE2BSDKRollout(raw string) (FCE2BSDKRollout, error) {
-	rollout, err := runtimeconfig.ParseFCE2BSDKRollout([]byte(raw))
-	if err != nil {
-		return FCE2BSDKRollout{}, fmt.Errorf("invalid %s: %w", FCE2BSDKRolloutEnv, err)
-	}
-	return rollout, nil
-}
-
-// fcE2BRolloutActive reports whether the rollout can select any operation.
-func fcE2BRolloutActive(r FCE2BSDKRollout) bool {
-	return r.Enabled && (r.Percent > 0 || len(r.WorkspaceIDs) > 0 || len(r.AgentIDs) > 0 || len(r.RuntimeIDs) > 0)
-}
 
 // fcE2BRolloutSelects reports whether an operation with scope uses the SDK.
 func fcE2BRolloutSelects(r FCE2BSDKRollout, scope FCE2BScope) bool {
@@ -124,43 +101,46 @@ func pgFCE2BScopeID(id pgtype.UUID) uuid.UUID {
 	return uuid.UUID(id.Bytes)
 }
 
-// FCE2BRolloutRunner sends each operation to the CLI unless the rollout
-// selects its scope. The rollout is read for every operation, so a Diamond
-// update applies to the next operation without a restart. The choice is made
-// once per operation and never retried on the other transport, so an
-// ambiguous create or exec is not repeated.
+// fcE2BFrozenRolloutKey carries the rollout of the configuration snapshot a
+// launch or stop froze, so all of its commands use one generation.
+type fcE2BFrozenRolloutKey struct{}
+
+// withFCE2BFrozenRollout attaches a frozen snapshot's rollout to operations
+// started under ctx.
+func withFCE2BFrozenRollout(ctx context.Context, rollout FCE2BSDKRollout) context.Context {
+	return context.WithValue(ctx, fcE2BFrozenRolloutKey{}, rollout)
+}
+
+// FCE2BRolloutRunner sends each operation to the CLI unless
+// runtime.fc_e2b_sdk_rollout selects its scope. The rollout comes from the
+// snapshot the caller froze, else from Rollout, which reads the live runtime
+// document, so a Diamond update applies to the next launch without a
+// restart. The choice is made once per operation and never retried on the
+// other transport, so an ambiguous create or exec is not repeated.
 type FCE2BRolloutRunner struct {
 	CLI CommandRunner
 	SDK CommandRunner
-	// Rollout returns the rollout in force and where it came from.
-	Rollout func() (FCE2BSDKRollout, string)
+	// Rollout returns the rollout of the current runtime document. Nil
+	// selects nothing.
+	Rollout func() FCE2BSDKRollout
 }
 
-// NewFCE2BRolloutRunner uses the Diamond rollout while diamond reports a
-// present snapshot and MULTICA_FC_E2B_SDK_ROLLOUT otherwise. A nil diamond
-// means the deployment has no Diamond runtime configuration.
-func NewFCE2BRolloutRunner(diamond func() runtimeconfig.FCE2BSDKRolloutSnapshot) FCE2BRolloutRunner {
-	fallback := fcE2BRolloutFallback()
-	return FCE2BRolloutRunner{
-		CLI: OSCommandRunner{},
-		SDK: SDKCommandRunner{},
-		Rollout: func() (FCE2BSDKRollout, string) {
-			if diamond != nil {
-				if snapshot := diamond(); snapshot.Present {
-					return snapshot.Rollout, fcE2BRolloutSourceDiamond
-				}
-			}
-			return fallback, fcE2BRolloutSourceEnv
-		},
-	}
+// NewFCE2BRolloutRunner routes by the runtime document through rollout. A
+// nil rollout means the deployment has no runtime document: only frozen
+// snapshots, which then carry no rollout either, can select the SDK.
+func NewFCE2BRolloutRunner(rollout func() FCE2BSDKRollout) FCE2BRolloutRunner {
+	return FCE2BRolloutRunner{CLI: OSCommandRunner{}, SDK: SDKCommandRunner{}, Rollout: rollout}
 }
 
 func (r FCE2BRolloutRunner) Run(ctx context.Context, name string, args []string, env []string) (string, error) {
 	scope := fcE2BScopeFrom(ctx)
-	var rollout FCE2BSDKRollout
-	source := fcE2BRolloutSourceEnv
-	if r.Rollout != nil {
-		rollout, source = r.Rollout()
+	rollout, frozen := ctx.Value(fcE2BFrozenRolloutKey{}).(FCE2BSDKRollout)
+	source := fcE2BRolloutSourceSnapshot
+	if !frozen {
+		source = fcE2BRolloutSourceLive
+		if r.Rollout != nil {
+			rollout = r.Rollout()
+		}
 	}
 	if !fcE2BRolloutSelects(rollout, scope) {
 		return r.CLI.Run(ctx, name, args, env)
@@ -240,44 +220,9 @@ func fcE2BSDKTransportLogAttrs(args []string, source string, scope FCE2BScope, e
 // fcE2BSDKLogCauseBytes bounds the transport cause in the SDK log line.
 const fcE2BSDKLogCauseBytes = 256
 
-// fcE2BRolloutFallbackState caches the parsed MULTICA_FC_E2B_SDK_ROLLOUT so
-// every runner built from the same value shares one parse and one log line.
-var fcE2BRolloutFallbackState struct {
-	sync.Mutex
-	loaded  bool
-	raw     string
-	rollout FCE2BSDKRollout
-}
-
-// fcE2BRolloutFallback returns the environment fallback rollout. Unset,
-// empty or invalid keeps every operation on the CLI.
-func fcE2BRolloutFallback() FCE2BSDKRollout {
-	raw := os.Getenv(FCE2BSDKRolloutEnv)
-	state := &fcE2BRolloutFallbackState
-	state.Lock()
-	defer state.Unlock()
-	if state.loaded && state.raw == raw {
-		return state.rollout
-	}
-	fallback, err := ParseFCE2BSDKRollout(raw)
-	if err != nil {
-		slog.Error("FC/E2B SDK rollout fallback ignored; it keeps every operation on the CLI", "error", err)
-		fallback = FCE2BSDKRollout{}
-	}
-	if fcE2BRolloutActive(fallback) {
-		slog.Info("FC/E2B SDK rollout fallback active",
-			"workspaces", len(fallback.WorkspaceIDs),
-			"agents", len(fallback.AgentIDs),
-			"runtimes", len(fallback.RuntimeIDs),
-			"percent", fallback.Percent,
-		)
-	}
-	state.loaded, state.raw, state.rollout = true, raw, fallback
-	return fallback
-}
-
-// defaultFCE2BCommandRunner applies only MULTICA_FC_E2B_SDK_ROLLOUT. Servers
-// with Diamond runtime configuration replace it with a Diamond-aware runner.
+// defaultFCE2BCommandRunner follows only frozen snapshots. Servers with the
+// Diamond runtime document replace it with a runner that also reads the live
+// document.
 func defaultFCE2BCommandRunner() CommandRunner {
 	return NewFCE2BRolloutRunner(nil)
 }

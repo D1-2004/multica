@@ -180,11 +180,6 @@ type fakeDiamondClient struct {
 	cancelled                 bool
 	runtimeProvidersCancelled bool
 	modelPricingCancelled     bool
-	rolloutContent            string
-	rolloutGetErr             error
-	rolloutListenErr          error
-	rolloutOnChange           func(string)
-	rolloutCancelled          bool
 	closed                    bool
 }
 
@@ -207,8 +202,6 @@ func (c *fakeDiamondClient) GetConfig(dataID, group string) (string, error) {
 			content = validModelPricingJSON()
 		}
 		return content, c.modelPricingGetErr
-	case FCE2BSDKRolloutDiamondDataID:
-		return c.rolloutContent, c.rolloutGetErr
 	default:
 		return "", errors.New("unexpected coordinates")
 	}
@@ -228,9 +221,6 @@ func (c *fakeDiamondClient) ListenConfig(dataID, group string, onChange func(str
 	case ModelPricingDiamondDataID:
 		c.modelPricingOnChange = onChange
 		return c.modelPricingListenErr
-	case FCE2BSDKRolloutDiamondDataID:
-		c.rolloutOnChange = onChange
-		return c.rolloutListenErr
 	default:
 		return errors.New("unexpected coordinates")
 	}
@@ -249,9 +239,6 @@ func (c *fakeDiamondClient) CancelListenConfig(dataID, group string) error {
 		return nil
 	case ModelPricingDiamondDataID:
 		c.modelPricingCancelled = true
-		return nil
-	case FCE2BSDKRolloutDiamondDataID:
-		c.rolloutCancelled = true
 		return nil
 	default:
 		return errors.New("unexpected coordinates")

@@ -21,9 +21,11 @@ import (
 // agent, but agent tools start their commands in new sessions, and those
 // survived cancellation until the sandbox expired or, worse, kept running
 // into the next task that reused it (PRI-52). The server therefore ends the
-// cancelled task's processes inside each sandbox the task used, through the
-// same FC/E2B transport as every other command, so the CLI and the SDK behave
-// alike.
+// cancelled task's processes inside each sandbox the task used.
+//
+// runtime.fc_e2b_sdk_rollout gates the stop and the runner marker together
+// with the SDK transport, by the task's workspace, agent and runtime: a scope
+// it does not select keeps the behavior from before the SDK change.
 //
 // Only processes provably owned by the task are ended; a process whose owner
 // cannot be proven is left alone (PRI-61: a start-time window took another
@@ -312,7 +314,8 @@ func (l *FCE2BLauncher) stopCancelledTaskProcesses(ctx context.Context, taskID p
 }
 
 // stopTaskProcessesInSandbox runs the stop script in one sandbox and logs the
-// receipt. The command carries the task's scope, so the SDK rollout applies.
+// receipt. runtime.fc_e2b_sdk_rollout must select the task's scope; the
+// command then carries that scope, so it also takes the SDK transport.
 func (l *FCE2BLauncher) stopTaskProcessesInSandbox(ctx context.Context, task db.AgentTaskQueue, rt db.AgentRuntime, sandboxID string, pass int) (fcE2BTaskStopReceipt, error) {
 	attrs := []any{"event", "fc_e2b_task_processes_stopped", "task_id", util.UUIDToString(task.ID),
 		"agent_id", util.UUIDToString(task.AgentID), "runtime_id", util.UUIDToString(task.RuntimeID), "sandbox_id", sandboxID, "pass", pass}
@@ -321,11 +324,16 @@ func (l *FCE2BLauncher) stopTaskProcessesInSandbox(ctx context.Context, task db.
 		slog.Warn("FC/E2B task processes not stopped", append(attrs, "error", err.Error())...)
 		return fcE2BTaskStopReceipt{}, err
 	}
-	ctx = WithFCE2BScope(ctx, FCE2BScope{
+	scope := FCE2BScope{
 		WorkspaceID: pgFCE2BScopeID(rt.WorkspaceID),
 		AgentID:     pgFCE2BScopeID(task.AgentID),
 		RuntimeID:   pgFCE2BScopeID(task.RuntimeID),
-	})
+	}
+	if !fcE2BRolloutSelects(l.Config.SDKRollout, scope) {
+		slog.Info("FC/E2B task processes not stopped", append(attrs, "outcome", "disabled")...)
+		return fcE2BTaskStopReceipt{}, nil
+	}
+	ctx = WithFCE2BScope(ctx, scope)
 	started := time.Now()
 	args := fcE2BTaskStopArgs(sandboxID, util.UUIDToString(task.RuntimeID), fcE2BHealthPortForTask(task.ID), util.UUIDToString(task.ID))
 	out, err := l.runE2BCommandWithTimeout(ctx, fcE2BTaskStopExecTimeout, args)

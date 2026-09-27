@@ -30,7 +30,6 @@ type Service struct {
 	snapshot         atomic.Pointer[Snapshot]
 	runtimeProviders atomic.Pointer[RuntimeProvidersSnapshot]
 	modelPricing     atomic.Pointer[ModelPricingSnapshot]
-	fcE2BSDKRollout  atomic.Pointer[FCE2BSDKRolloutSnapshot]
 	logger           *slog.Logger
 	prod             bool
 
@@ -39,7 +38,6 @@ type Service struct {
 	// locks could admit two individually valid updates as one invalid pair.
 	applyMu                 sync.Mutex
 	runtimeProvidersApplyMu sync.Mutex
-	fcE2BSDKRolloutApplyMu  sync.Mutex
 	mu                      sync.Mutex
 	closeOnce               sync.Once
 	closeFunc               func() error
@@ -229,6 +227,7 @@ func cloneSnapshot(in Snapshot) Snapshot {
 	out.Config.Runtime.FCE2B.StablePublisherUserIDs = append([]string(nil), in.Config.Runtime.FCE2B.StablePublisherUserIDs...)
 	out.Config.AgentIdentity.DebugContextTokenAgents = append([]string(nil), in.Config.AgentIdentity.DebugContextTokenAgents...)
 	out.Config.EnterpriseIdentity.BUCAuthorizeApps = append([]string(nil), in.Config.EnterpriseIdentity.BUCAuthorizeApps...)
+	out.Config.Runtime.FCE2BSDKRollout = in.Config.Runtime.FCE2BSDKRollout.clone()
 	return out
 }
 

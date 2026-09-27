@@ -114,12 +114,18 @@ func (c *appRuntimeConfig) current() runtimeconfig.Config {
 	return c.remote.Current().Config
 }
 
-// fcE2BSDKRollout is the live Diamond rollout for the FC/E2B SDK transport.
-func (c *appRuntimeConfig) fcE2BSDKRollout() runtimeconfig.FCE2BSDKRolloutSnapshot {
-	if c == nil || c.remote == nil {
-		return runtimeconfig.FCE2BSDKRolloutSnapshot{}
+// fcE2BSDKRollout is the live runtime.fc_e2b_sdk_rollout.
+func (c *appRuntimeConfig) fcE2BSDKRollout() runtimeconfig.FCE2BSDKRollout {
+	return fcE2BSDKRolloutOf(c.current().Runtime)
+}
+
+// fcE2BSDKRolloutOf is the rollout of one runtime document; absent selects
+// nothing.
+func fcE2BSDKRolloutOf(raw runtimeconfig.RuntimeConfig) runtimeconfig.FCE2BSDKRollout {
+	if raw.FCE2BSDKRollout == nil {
+		return runtimeconfig.FCE2BSDKRollout{}
 	}
-	return c.remote.FCE2BSDKRollout()
+	return *raw.FCE2BSDKRollout
 }
 
 func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
@@ -153,6 +159,7 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 		CLIPath:                           defaultFCE2BCLIPath,
 		TimeoutSeconds:                    raw.Runtime.FCE2B.TimeoutSeconds,
 		SandboxReadyTimeout:               raw.Runtime.FCE2B.SandboxReadyTimeout.Duration,
+		SDKRollout:                        fcE2BSDKRolloutOf(raw.Runtime),
 	}
 }
 

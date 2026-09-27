@@ -107,10 +107,16 @@ A compact m7 alias is display text and carries the opaque provider-combination f
 
 ## FC/E2B SDK rollout
 
-`dt-fde-multica-fc-e2b-sdk-rollout.json` (Group `DEFAULT_GROUP`, application `dt-fde-multica`) moves FC/E2B operations from the `e2b` CLI subprocess to the in-process Go SDK. It is optional and watched live: an operation reads the current snapshot when it starts, so publishing a change switches the next sandbox create, exec, or template lookup without a release or restart.
+`runtime.fc_e2b_sdk_rollout` in `dt-fde-multica-runtime.json` is the single switch of the FC/E2B SDK change. It is a sibling of `runtime.performance_optimization` and independent of it: either can be switched without touching the other. For a selected scope it
+
+- sends FC/E2B commands (sandbox create, exec, template lookup) through the in-process Go SDK instead of the `e2b` CLI subprocess;
+- injects `FC_E2B_TASK_ID` into the runner, and
+- ends a cancelled task's processes in the sandboxes it used (see `docs/fc-sandbox-lifecycle.md`).
+
+An unselected scope keeps the behavior from before the change: the CLI, no marker, and a cancelled task's processes are left to the sandbox release.
 
 ```json
-{
+"fc_e2b_sdk_rollout": {
   "enabled": true,
   "workspace_ids": ["<workspace uuid>"],
   "agent_ids": ["<agent uuid>"],
@@ -119,13 +125,15 @@ A compact m7 alias is display text and carries the opaque provider-combination f
 }
 ```
 
-- `enabled` is the master switch. `false` keeps every operation on the CLI whatever the lists say.
-- An operation uses the SDK when its agent, runtime, or workspace is listed, or when its agent (else runtime, else workspace) falls in the `percent` bucket. `percent: 100` also covers operations without a scope, such as the stable-channel template scan.
-- Unknown fields, non-UUID identifiers, and `percent` outside 0–100 are rejected. A rejected publication keeps the previous generation.
-- A missing document, a failed initial read, a failed listener registration, or a deleted document never blocks startup. Without a valid document the environment fallback `MULTICA_FC_E2B_SDK_ROLLOUT` applies, and when that is unset every operation uses the CLI. A replica whose listener registration failed drops a loaded document too, so it can never stay on the SDK without receiving a later switch-off.
-- Logs record the Data ID, generation, SHA-256, `present`, `enabled`, list sizes, and `percent`. Each operation routed to the SDK logs `FC/E2B SDK transport` with `rollout_source=diamond|env`, the outcome and, for a failure, `error_kind` (`exit`, `output_limit`, `deadline`, `canceled`, `failed`) with the exit code or the transport cause. Commands, environment values, and command output are never logged there.
+- `enabled` is the master switch. `false`, or the whole key absent, selects nothing whatever the lists say. Switch-off value: `{"enabled": false}`.
+- An operation is selected when its agent, runtime, or workspace is listed, or when its agent (else runtime, else workspace) falls in the `percent` bucket. `percent: 100` also covers operations without a scope, such as the stable-channel template scan.
+- Identifiers must be canonical lowercase UUIDs without duplicates; `percent` must be 0–100. Like any invalid runtime document, a rejected publication keeps the previous generation.
+- A launch or a cancelled-task stop freezes one runtime snapshot, and every command it sends takes its transport from that snapshot. A publication therefore applies to the next launch or stop without a restart and never splits one launch across two generations.
+- Each operation routed to the SDK logs `FC/E2B SDK transport` with `rollout_source=snapshot|live`, the outcome and, for a failure, `error_kind` (`exit`, `output_limit`, `deadline`, `canceled`, `failed`) with the exit code or the transport cause. Commands, environment values, and command output are never logged there. An unselected cancelled-task stop logs `event=fc_e2b_task_processes_stopped outcome=disabled`.
 
-The rollout is a separate Data ID rather than a `runtime.fc_e2b` field because the runtime document rejects unknown fields, and older binaries would refuse to start once it carried one.
+This key replaces the separate Data ID `dt-fde-multica-fc-e2b-sdk-rollout.json` and the environment fallback `MULTICA_FC_E2B_SDK_ROLLOUT`; neither is read any more.
+
+Rollout order: binaries older than this key reject a runtime document that carries it. Deploy the supporting binary on every replica first, then publish the key; to roll the binary back, remove the key first.
 
 ## Managed model pricing
 
@@ -154,6 +162,7 @@ Never reuse a pre-release document in production. Publish and verify each unit i
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-09-28 | Moved the FC/E2B SDK rollout into `runtime.fc_e2b_sdk_rollout`, which also gates the cancelled-task stop and its runner marker; dropped the separate Data ID and `MULTICA_FC_E2B_SDK_ROLLOUT`. | One runtime document carries every rollout switch; the SDK change and the performance batch keep separate, independent switches (PRI-47, option B). |
 | 2026-08-30 | Reused `web.site_connect_src` as the hosted-site fetch proxy server-side origin allowlist while retaining the connector default and CSP behavior. | Client exact-URL declarations are untrusted; a live Diamond origin boundary lets the server authorize destinations without adding a second configuration contract. |
 | 2026-08-30 | Added non-removable `'self'` to the hosted-site CSP `connect-src` defaults while retaining the connector domain and Diamond HTTPS origin additions. | Allow hosted feedback pages to use the Multica same-origin proxy without letting Diamond remove either default source. |
 | 2026-08-30 | Added `web.site_connect_src` and the non-removable `https://connector.dingtalk.com` hosted-site CSP default. | Allow hosted feedback pages to call DingTalk AI Table webhooks without relaxing other CSP directives. |

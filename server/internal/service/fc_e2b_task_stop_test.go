@@ -68,9 +68,9 @@ func (r *stopRecordingRunner) Run(ctx context.Context, _ string, args []string, 
 	return r.out, r.err
 }
 
-// The stop runs through the rollout like every FC/E2B command, so the SDK
-// and the CLI transport both end a cancelled task's processes.
-func TestFCE2BLauncherStopsTaskProcessesThroughTheRollout(t *testing.T) {
+// runtime.fc_e2b_sdk_rollout gates the stop by the task's scope; a selected
+// stop takes the SDK transport like every other command of that scope.
+func TestFCE2BLauncherStopsTaskProcessesOnlyWhenTheRolloutSelectsTheTask(t *testing.T) {
 	workspace, agent, runtimeID, taskID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	task := db.AgentTaskQueue{
 		ID:        pgtype.UUID{Bytes: taskID, Valid: true},
@@ -79,40 +79,61 @@ func TestFCE2BLauncherStopsTaskProcessesThroughTheRollout(t *testing.T) {
 		Status:    "cancelled",
 	}
 	rt := db.AgentRuntime{ID: task.RuntimeID, WorkspaceID: pgtype.UUID{Bytes: workspace, Valid: true}}
-	for _, enabled := range []bool{true, false} {
+	other := uuid.New().String()
+	for _, tc := range []struct {
+		name     string
+		rollout  FCE2BSDKRollout
+		selected bool
+	}{
+		{"agent listed", FCE2BSDKRollout{Enabled: true, AgentIDs: []string{agent.String()}}, true},
+		{"workspace listed", FCE2BSDKRollout{Enabled: true, WorkspaceIDs: []string{workspace.String()}}, true},
+		{"runtime listed", FCE2BSDKRollout{Enabled: true, RuntimeIDs: []string{runtimeID.String()}}, true},
+		{"everything", FCE2BSDKRollout{Enabled: true, Percent: 100}, true},
+		{"absent", FCE2BSDKRollout{}, false},
+		{"master switch off", FCE2BSDKRollout{AgentIDs: []string{agent.String()}, Percent: 100}, false},
+		{"other agent", FCE2BSDKRollout{Enabled: true, AgentIDs: []string{other}, WorkspaceIDs: []string{other}, RuntimeIDs: []string{other}}, false},
+	} {
 		cli := &stopRecordingRunner{out: `{"version":3,"runners":1,"marked":2,"found":2,"terminated":2,"killed":0,"remaining":0}`}
 		sdk := &stopRecordingRunner{out: cli.out}
-		rollout := FCE2BSDKRollout{Enabled: enabled, AgentIDs: []string{agent.String()}}
-		l := &FCE2BLauncher{Runner: FCE2BRolloutRunner{CLI: cli, SDK: sdk, Rollout: func() (FCE2BSDKRollout, string) { return rollout, fcE2BRolloutSourceDiamond }}}
+		// The live document says the opposite of the frozen snapshot; the
+		// snapshot decides.
+		live := FCE2BSDKRollout{Enabled: !tc.selected, Percent: 100}
+		l := &FCE2BLauncher{
+			Config: FCE2BConfig{SDKRollout: tc.rollout},
+			Runner: FCE2BRolloutRunner{CLI: cli, SDK: sdk, Rollout: func() FCE2BSDKRollout { return live }},
+		}
 		receipt, err := l.stopTaskProcessesInSandbox(context.Background(), task, rt, "sbx_123", 1)
+		if !tc.selected {
+			if err != nil || receipt != (fcE2BTaskStopReceipt{}) || len(cli.calls)+len(sdk.calls) != 0 {
+				t.Fatalf("%s: stop ran: receipt = %#v, %v; cli=%d sdk=%d", tc.name, receipt, err, len(cli.calls), len(sdk.calls))
+			}
+			continue
+		}
 		if err != nil || receipt.Found != 2 || receipt.Terminated != 2 {
-			t.Fatalf("sdk=%v receipt = %#v, %v", enabled, receipt, err)
+			t.Fatalf("%s: receipt = %#v, %v", tc.name, receipt, err)
 		}
-		used, idle := cli, sdk
-		if enabled {
-			used, idle = sdk, cli
-		}
-		if len(used.calls) != 1 || len(idle.calls) != 0 {
-			t.Fatalf("sdk=%v routed cli=%d sdk=%d", enabled, len(cli.calls), len(sdk.calls))
+		if len(sdk.calls) != 1 || len(cli.calls) != 0 {
+			t.Fatalf("%s: routed cli=%d sdk=%d", tc.name, len(cli.calls), len(sdk.calls))
 		}
 		wantArgs := fcE2BTaskStopArgs("sbx_123", runtimeID.String(), fcE2BHealthPortForTask(task.ID), taskID.String())
-		if !reflect.DeepEqual(used.calls[0], wantArgs) {
-			t.Fatalf("stop args = %q", used.calls[0])
+		if !reflect.DeepEqual(sdk.calls[0], wantArgs) {
+			t.Fatalf("%s: stop args = %q", tc.name, sdk.calls[0])
 		}
-		if used.scopes[0] != (FCE2BScope{WorkspaceID: workspace, AgentID: agent, RuntimeID: runtimeID}) {
-			t.Fatalf("stop scope = %#v", used.scopes[0])
+		if sdk.scopes[0] != (FCE2BScope{WorkspaceID: workspace, AgentID: agent, RuntimeID: runtimeID}) {
+			t.Fatalf("%s: stop scope = %#v", tc.name, sdk.scopes[0])
 		}
 	}
 
+	on := FCE2BConfig{SDKRollout: FCE2BSDKRollout{Enabled: true, Percent: 100}}
 	gone := &stopRecordingRunner{err: errors.New(`command failed: 404: sandbox "sbx_123" not found: `)}
-	if _, err := (&FCE2BLauncher{Runner: gone}).stopTaskProcessesInSandbox(context.Background(), task, rt, "sbx_123", 1); err != nil {
+	if _, err := (&FCE2BLauncher{Config: on, Runner: gone}).stopTaskProcessesInSandbox(context.Background(), task, rt, "sbx_123", 1); err != nil {
 		t.Fatalf("a removed sandbox has nothing left to stop: %v", err)
 	}
 	survivors := &stopRecordingRunner{out: `{"version":3,"runners":1,"found":1,"terminated":0,"killed":0,"remaining":1}`}
-	if receipt, err := (&FCE2BLauncher{Runner: survivors}).stopTaskProcessesInSandbox(context.Background(), task, rt, "sbx_123", 1); err != nil || receipt.Remaining != 1 {
+	if receipt, err := (&FCE2BLauncher{Config: on, Runner: survivors}).stopTaskProcessesInSandbox(context.Background(), task, rt, "sbx_123", 1); err != nil || receipt.Remaining != 1 {
 		t.Fatalf("survivors = %#v, %v", receipt, err)
 	}
-	if _, err := (&FCE2BLauncher{Runner: survivors}).stopTaskProcessesInSandbox(context.Background(), task, rt, "sbx;reboot", 1); err == nil {
+	if _, err := (&FCE2BLauncher{Config: on, Runner: survivors}).stopTaskProcessesInSandbox(context.Background(), task, rt, "sbx;reboot", 1); err == nil {
 		t.Fatal("an invalid sandbox id reached the transport")
 	}
 }
