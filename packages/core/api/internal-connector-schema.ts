@@ -7,6 +7,7 @@ export const InternalConnectorSchema = z.object({
   upstream_url: z.string().url(),
   credential_ref: z.string(),
   credential_ready: z.boolean(),
+  credential_source: z.enum(["none", "environment", "workspace", "unavailable"]).optional().default("none"),
   allowed_tools: z.array(z.string()),
   agent_ids: z.array(z.string()),
   enabled: z.boolean(),
@@ -17,6 +18,7 @@ export const InternalConnectorSchema = z.object({
   upstreamUrl: v.upstream_url,
   credentialRef: v.credential_ref,
   credentialReady: v.credential_ready,
+  credentialSource: v.credential_source,
   allowedTools: v.allowed_tools,
   agentIds: v.agent_ids,
   enabled: v.enabled,
@@ -53,3 +55,12 @@ export type InternalConnectorInput = {
   agent_ids: string[];
   enabled: boolean;
 };
+
+export const InternalConnectorTestSchema = z.object({
+  reachable: z.boolean(),
+  message: z.string().optional(),
+  tools: z.array(z.string()).optional(),
+  has_more: z.boolean().optional(),
+  duration_ms: z.number().optional(),
+});
+export type InternalConnectorTest = z.infer<typeof InternalConnectorTestSchema>;

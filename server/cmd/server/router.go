@@ -730,6 +730,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.InternalConnectorRedis = rdb
 	}
 	h.InternalConnectorClient = handler.NewInternalConnectorClient()
+	if connectorKey, err := secretbox.LoadKey("MULTICA_INTERNAL_MCP_SECRET_KEY"); err == nil {
+		if box, boxErr := secretbox.New(connectorKey); boxErr == nil {
+			h.InternalConnectorSecretBox = box
+		}
+	}
 	if relay, err := handler.NewSemanticaMCPRelayFromEnv(rdb); err != nil {
 		slog.Warn("Semantica MCP relay disabled", "error", err)
 	} else {
@@ -2221,6 +2226,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Get("/internal-connectors", h.ListInternalConnectors)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors", h.CreateInternalConnector)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Patch("/internal-connectors/{connectorId}", h.UpdateInternalConnector)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Put("/internal-connectors/{connectorId}/credential", h.PutInternalConnectorCredential)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/test", h.TestInternalConnector)
 					r.Get("/dingtalk/users/search", h.SearchDingTalkUsers)
 					r.Post("/dingtalk/members", h.AddDingTalkWorkspaceMembers)
 					r.Post("/dingtalk/group-members", h.AddDingTalkGroupMembers)

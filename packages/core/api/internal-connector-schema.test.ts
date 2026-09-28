@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseWithFallback } from "./schema";
-import { AvailableInternalConnectorListSchema, InternalConnectorListSchema } from "./internal-connector-schema";
+import { AvailableInternalConnectorListSchema, InternalConnectorListSchema, InternalConnectorTestSchema } from "./internal-connector-schema";
 
 const opts = { endpoint: "GET /api/workspaces/:id/internal-connectors", includeReceived: false };
 
@@ -15,5 +15,9 @@ describe("internal connector API boundary", () => {
     expect(result).toEqual([{id:raw[0]!.id,name:"Knowledge",agentId:raw[0]!.agent_id,agentName:"Reader",tools:["lookup"]}]);
     expect(JSON.stringify(result)).not.toContain("private.example");
     expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+  it("treats a malformed connectivity response as unreachable", () => {
+    const result = parseWithFallback({reachable:"true",tools:["read"]},InternalConnectorTestSchema,{reachable:false,message:"Invalid connection test response"},opts);
+    expect(result.reachable).toBe(false);
   });
 });

@@ -50,6 +50,53 @@ func connectorCredentialReady(c internalConnector) bool {
 	return token != "" && !strings.ContainsAny(token, "\r\n")
 }
 
+type connectorSealedCredential struct {
+	WorkspaceID string `json:"workspace_id"`
+	ConnectorID string `json:"connector_id"`
+	Bearer      string `json:"bearer"`
+}
+
+func (h *Handler) connectorBearer(c internalConnector) (string, error) {
+	id, err := uuid.Parse(c.ID)
+	if err != nil || id == uuid.Nil || c.CredentialRef != connectorCredentialRef(id.String()) {
+		return "", errors.New("invalid connector credential reference")
+	}
+	if len(c.CredentialCiphertext) > 0 {
+		if h.InternalConnectorSecretBox == nil {
+			return "", errors.New("connector credential key unavailable")
+		}
+		plain, err := h.InternalConnectorSecretBox.Open(c.CredentialCiphertext)
+		var sealed connectorSealedCredential
+		if err != nil || json.Unmarshal(plain, &sealed) != nil || sealed.WorkspaceID != c.WorkspaceID || sealed.ConnectorID != c.ID ||
+			sealed.Bearer == "" || strings.ContainsAny(sealed.Bearer, "\r\n\x00") {
+			return "", errors.New("connector credential unavailable")
+		}
+		return sealed.Bearer, nil
+	}
+	if !connectorCredentialReady(c) {
+		return "", errors.New("connector credential unavailable")
+	}
+	return os.Getenv(c.CredentialRef), nil
+}
+
+func (h *Handler) connectorCredentialReady(c internalConnector) bool {
+	_, err := h.connectorBearer(c)
+	return err == nil
+}
+
+func (h *Handler) connectorCredentialSource(c internalConnector) string {
+	if len(c.CredentialCiphertext) > 0 {
+		if h.connectorCredentialReady(c) {
+			return "workspace"
+		}
+		return "unavailable"
+	}
+	if connectorCredentialReady(c) {
+		return "environment"
+	}
+	return "none"
+}
+
 func (h *Handler) connectorLimit(ctx context.Context, connectorID, task, agent, ws string) error {
 	if h.InternalConnectorRedis == nil {
 		return errors.New("shared rate limiter is unavailable")
@@ -228,7 +275,11 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json, text/event-stream")
-	request.Header.Set("Authorization", "Bearer "+os.Getenv(c.CredentialRef))
+	bearer, err := h.connectorBearer(c)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Authorization", "Bearer "+bearer)
 	client := h.InternalConnectorClient
 	if client == nil {
 		return nil, errors.New("internal connector HTTP client unavailable")

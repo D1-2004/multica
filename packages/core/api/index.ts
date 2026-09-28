@@ -13,7 +13,7 @@ export type {
 } from "./client";
 export { parseWithFallback, setSchemaLogger } from "./schema";
 export type { ParseOptions } from "./schema";
-export type { InternalConnector, InternalConnectorInput, AvailableInternalConnector } from "./internal-connector-schema";
+export type { InternalConnector, InternalConnectorInput, InternalConnectorTest, AvailableInternalConnector } from "./internal-connector-schema";
 export { DuplicateIssueErrorBodySchema } from "./schemas";
 export type { DuplicateIssueErrorBody } from "./schemas";
 export { WSClient } from "./ws-client";

@@ -22,15 +22,17 @@ func (h *Handler) internalConnectorsEnabled(ctx context.Context) bool {
 }
 
 type internalConnector struct {
-	ID              string   `json:"id"`
-	WorkspaceID     string   `json:"workspace_id"`
-	Name            string   `json:"name"`
-	UpstreamURL     string   `json:"upstream_url"`
-	CredentialRef   string   `json:"credential_ref"`
-	AllowedTools    []string `json:"allowed_tools"`
-	AgentIDs        []string `json:"agent_ids"`
-	Enabled         bool     `json:"enabled"`
-	CredentialReady bool     `json:"credential_ready"`
+	ID                   string   `json:"id"`
+	WorkspaceID          string   `json:"workspace_id"`
+	Name                 string   `json:"name"`
+	UpstreamURL          string   `json:"upstream_url"`
+	CredentialRef        string   `json:"credential_ref"`
+	AllowedTools         []string `json:"allowed_tools"`
+	AgentIDs             []string `json:"agent_ids"`
+	Enabled              bool     `json:"enabled"`
+	CredentialReady      bool     `json:"credential_ready"`
+	CredentialSource     string   `json:"credential_source"`
+	CredentialCiphertext []byte   `json:"-"`
 }
 
 type connectorInput struct {
@@ -96,7 +98,7 @@ func (h *Handler) ListInternalConnectors(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ws := chi.URLParam(r, "id")
-	rows, err := h.DB.Query(r.Context(), `SELECT id::text, workspace_id::text, name, upstream_url, credential_ref, allowed_tools, enabled
+	rows, err := h.DB.Query(r.Context(), `SELECT id::text, workspace_id::text, name, upstream_url, credential_ref, allowed_tools, enabled, credential_ciphertext
 		FROM internal_connector WHERE workspace_id = $1::uuid ORDER BY updated_at DESC`, ws)
 	if err != nil {
 		writeError(w, 500, "failed to list connectors")
@@ -107,7 +109,7 @@ func (h *Handler) ListInternalConnectors(w http.ResponseWriter, r *http.Request)
 	for rows.Next() {
 		var c internalConnector
 		var raw []byte
-		if rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &raw, &c.Enabled) != nil {
+		if rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &raw, &c.Enabled, &c.CredentialCiphertext) != nil {
 			writeError(w, 500, "failed to scan connectors")
 			return
 		}
@@ -115,7 +117,8 @@ func (h *Handler) ListInternalConnectors(w http.ResponseWriter, r *http.Request)
 			writeError(w, 500, "invalid connector tool configuration")
 			return
 		}
-		c.CredentialReady = connectorCredentialReady(c)
+		c.CredentialReady = h.connectorCredentialReady(c)
+		c.CredentialSource = h.connectorCredentialSource(c)
 		c.AgentIDs = []string{}
 		agentRows, e := h.DB.Query(r.Context(), `SELECT agent_id::text FROM internal_connector_agent WHERE connector_id=$1::uuid AND workspace_id=$2::uuid`, c.ID, ws)
 		if e != nil {
@@ -185,10 +188,6 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 		writeError(w, 400, "invalid connector id")
 		return
 	}
-	if in.Enabled && !connectorCredentialReady(internalConnector{ID: id, CredentialRef: connectorCredentialRef(id)}) {
-		writeError(w, 400, "connector credential is not configured")
-		return
-	}
 	raw, _ := json.Marshal(in.AllowedTools)
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
@@ -197,11 +196,16 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 	}
 	defer tx.Rollback(r.Context())
 	if create {
+		if in.Enabled {
+			writeError(w, 400, "create the connector before enabling it")
+			return
+		}
 		_, err = tx.Exec(r.Context(), `INSERT INTO internal_connector (id,workspace_id,name,upstream_url,credential_ref,allowed_tools,enabled)
 			VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7)`, id, ws, strings.TrimSpace(in.Name), in.UpstreamURL, connectorCredentialRef(id), raw, in.Enabled)
 	} else {
 		var existingURL string
-		e := tx.QueryRow(r.Context(), `SELECT upstream_url FROM internal_connector WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`, id, ws).Scan(&existingURL)
+		var ciphertext []byte
+		e := tx.QueryRow(r.Context(), `SELECT upstream_url, credential_ciphertext FROM internal_connector WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`, id, ws).Scan(&existingURL, &ciphertext)
 		if errors.Is(e, pgx.ErrNoRows) {
 			writeError(w, 404, "connector not found")
 			return
@@ -212,6 +216,10 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 		}
 		if in.UpstreamURL != existingURL {
 			writeError(w, 400, "upstream_url cannot be changed after creation")
+			return
+		}
+		if in.Enabled && !h.connectorCredentialReady(internalConnector{ID: id, CredentialRef: connectorCredentialRef(id), CredentialCiphertext: ciphertext}) {
+			writeError(w, 400, "connector credential is not configured")
 			return
 		}
 		tag, e := tx.Exec(r.Context(), `UPDATE internal_connector SET name=$3,allowed_tools=$4,enabled=$5,updated_at=now()
@@ -246,7 +254,7 @@ func (h *Handler) authorizedConnectors(ctx context.Context, workspaceID, agentID
 	if !h.internalConnectorsEnabled(ctx) {
 		return nil, nil
 	}
-	rows, err := h.DB.Query(ctx, `SELECT c.id::text,c.workspace_id::text,c.name,c.upstream_url,c.credential_ref,c.allowed_tools,c.enabled
+	rows, err := h.DB.Query(ctx, `SELECT c.id::text,c.workspace_id::text,c.name,c.upstream_url,c.credential_ref,c.allowed_tools,c.enabled,c.credential_ciphertext
 		FROM internal_connector c JOIN internal_connector_agent g ON g.connector_id=c.id AND g.workspace_id=c.workspace_id
 		WHERE c.workspace_id=$1::uuid AND g.agent_id=$2::uuid AND c.enabled`, workspaceID, agentID)
 	if err != nil {
@@ -257,13 +265,13 @@ func (h *Handler) authorizedConnectors(ctx context.Context, workspaceID, agentID
 	for rows.Next() {
 		var c internalConnector
 		var raw []byte
-		if err = rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &raw, &c.Enabled); err != nil {
+		if err = rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &raw, &c.Enabled, &c.CredentialCiphertext); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal(raw, &c.AllowedTools); err != nil {
 			return nil, err
 		}
-		if connectorCredentialReady(c) {
+		if h.connectorCredentialReady(c) {
 			out = append(out, c)
 		}
 	}
@@ -283,7 +291,7 @@ func (h *Handler) ListAvailableInternalConnectors(w http.ResponseWriter, r *http
 		return
 	}
 	ws := uuidToString(workspaceID)
-	rows, err := h.DB.Query(r.Context(), `SELECT c.id::text,c.name,c.upstream_url,c.credential_ref,c.allowed_tools,g.agent_id::text
+	rows, err := h.DB.Query(r.Context(), `SELECT c.id::text,c.name,c.upstream_url,c.credential_ref,c.allowed_tools,g.agent_id::text,c.credential_ciphertext
 		FROM internal_connector c JOIN internal_connector_agent g ON g.connector_id=c.id AND g.workspace_id=c.workspace_id
 		WHERE c.workspace_id=$1::uuid AND c.enabled ORDER BY c.name,g.agent_id`, ws)
 	if err != nil {
@@ -297,12 +305,12 @@ func (h *Handler) ListAvailableInternalConnectors(w http.ResponseWriter, r *http
 		var c internalConnector
 		var agentID string
 		var raw []byte
-		if err := rows.Scan(&c.ID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &raw, &agentID); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &raw, &agentID, &c.CredentialCiphertext); err != nil {
 			writeError(w, 500, "connector list unavailable")
 			return
 		}
 		c.WorkspaceID = ws
-		if json.Unmarshal(raw, &c.AllowedTools) != nil || !connectorCredentialReady(c) {
+		if json.Unmarshal(raw, &c.AllowedTools) != nil || !h.connectorCredentialReady(c) {
 			continue
 		}
 		if validateConnectorInput(connectorInput{Name: c.Name, UpstreamURL: c.UpstreamURL, AllowedTools: c.AllowedTools, AgentIDs: []string{agentID}, Enabled: true}) != nil {

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 )
 
 func TestInternalConnectorHostAndCredentialIsolation(t *testing.T) {
@@ -30,6 +33,38 @@ func TestInternalConnectorHostAndCredentialIsolation(t *testing.T) {
 		t.Fatal("approved credential not found")
 	}
 	if connectorCredentialReady(internalConnector{ID: b, CredentialRef: connectorCredentialRef(b)}) || connectorCredentialReady(internalConnector{ID: b, CredentialRef: connectorCredentialRef(a)}) {
+		t.Fatal("credential crossed connector boundary")
+	}
+}
+
+func TestInternalConnectorStoredCredentialIsBoundToWorkspaceAndConnector(t *testing.T) {
+	id := "11111111-1111-4111-8111-111111111111"
+	workspace := "33333333-3333-4333-8333-333333333333"
+	box, err := secretbox.New(bytes.Repeat([]byte("k"), secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := box.Seal([]byte(`{"workspace_id":"` + workspace + `","connector_id":"` + id + `","bearer":"stored-token"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(connectorCredentialRef(id), "environment-token")
+	h := &Handler{InternalConnectorSecretBox: box}
+	c := internalConnector{ID: id, WorkspaceID: workspace, CredentialRef: connectorCredentialRef(id), CredentialCiphertext: sealed}
+	if token, err := h.connectorBearer(c); err != nil || token != "stored-token" {
+		t.Fatalf("stored credential not selected: %q %v", token, err)
+	}
+	if _, err := (&Handler{}).connectorBearer(c); err == nil {
+		t.Fatal("missing decryption key fell back to environment credential")
+	}
+	c.WorkspaceID = "44444444-4444-4444-8444-444444444444"
+	if _, err := h.connectorBearer(c); err == nil {
+		t.Fatal("credential crossed workspace boundary or fell back to environment")
+	}
+	c.WorkspaceID = workspace
+	c.ID = "22222222-2222-4222-8222-222222222222"
+	c.CredentialRef = connectorCredentialRef(c.ID)
+	if _, err := h.connectorBearer(c); err == nil {
 		t.Fatal("credential crossed connector boundary")
 	}
 }

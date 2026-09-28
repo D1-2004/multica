@@ -34,7 +34,8 @@ correct its arguments; transport and parse failures remain generic.
 ## Configuration and rollout
 
 - The database owns connector metadata, workspace/Agent grants and a
-  metadata-only call audit. It never stores the upstream Bearer. The schema
+  metadata-only call audit. When the admin uses the GUI to set a Bearer, it
+  stores only AES-GCM ciphertext, never plaintext. The schema
   uses no foreign keys and builds each index concurrently in its own migration.
 - `credential_ref` is a deterministic env key
   `MULTICA_INTERNAL_MCP_BEARER_<UUID_WITHOUT_DASHES>`. Its value is injected
@@ -43,6 +44,17 @@ correct its arguments; transport and parse failures remain generic.
   the value. A missing credential keeps the connector unavailable and cannot
   be enabled. A new connector can be added without code changes, but an
   operator must provision its credential and redeploy before enabling it.
+- Alternatively a human workspace owner/admin can set or rotate the Bearer in
+  the management page. The server seals it with a dedicated
+  `MULTICA_INTERNAL_MCP_SECRET_KEY` (base64-encoded 32-byte key) before writing
+  workspace-scoped ciphertext. A stored credential takes precedence over the
+  legacy environment reference; unreadable ciphertext fails closed. Admin
+  responses expose readiness and source but never the value. The dedicated
+  key is provisioned through the controlled Aone environment trait.
+- The admin connectivity check sends a bounded `tools/list` request to the
+  connector's immutable URL with its effective credential. It returns a
+  sanitized reachability result and the discovered allowlisted tool names;
+  it does not call a tool, grant an Agent, or expose the Bearer or raw response.
 - `MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES` is an operator-set list of
   approved upstream DNS names/suffixes. URLs must be fixed HTTPS origins plus
   path, with no userinfo, query or fragment. Host validation uses exact match
@@ -66,18 +78,19 @@ correct its arguments; transport and parse failures remain generic.
 
 In `/{workspaceSlug}/internal-connectors`, a human workspace owner/admin creates a
 connector, chooses an approved upstream URL, tool allowlist and Agents, and
-keeps it off. The page shows the generated credential reference and a clear
-“waiting for operator credential” state. After the operator injects that
-credential and the next pre-release deployment makes it available, the admin
-can enable it. An authorized member then sees which Agent can use the
+keeps it off. The page allows the admin to set or rotate the credential and
+test connectivity; it also shows the environment reference for operator-managed
+credentials. Once a credential is ready, the admin can enable it. An authorized
+member then sees which Agent can use the
 connector, opens a chat with that Agent and asks it to use the connector's
 native MCP tools. The page never asks the member for upstream credentials.
 
 Disabled or unauthorized connectors are absent from task MCP discovery. An
 already running task may retain a stale MCP entry until its next claim, but
 **each call** rechecks current authorization and state, so disabling or
-revoking takes effect for calls immediately. Secret rotation needs the Aone
-controlled configuration and a new deployment; no GUI field exposes a secret.
+revoking takes effect for calls immediately. GUI-managed credential rotation
+takes effect on the next call; operator-managed environment rotation needs a
+new deployment. No API returns a saved credential.
 
 Semantica's current `semantica_mcp_relay` tool remains available during the
 migration to avoid breaking active pre-release tasks. Once its workspace

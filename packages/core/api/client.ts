@@ -1,4 +1,4 @@
-import { InternalConnectorListSchema, AvailableInternalConnectorListSchema, SavedInternalConnectorSchema, type InternalConnector, type AvailableInternalConnector, type InternalConnectorInput } from "./internal-connector-schema";
+import { InternalConnectorListSchema, AvailableInternalConnectorListSchema, SavedInternalConnectorSchema, InternalConnectorTestSchema, type InternalConnector, type AvailableInternalConnector, type InternalConnectorInput, type InternalConnectorTest } from "./internal-connector-schema";
 import { SemanticaMCPStatusSchema, EMPTY_SEMANTICA_MCP_STATUS, type SemanticaMCPStatus } from "./semantica-mcp-schema";
 import { WorkspaceMCPConnectionsSchema, WorkspaceMCPLinkSchema, type WorkspaceMCPConnection, type CreateWorkspaceMCPConnection } from "./workspace-mcp-schema";
 import {ModelProbeSchema, GlobalModelsSchema, EMPTY_GLOBAL_MODELS, DeveloperCapabilitiesSchema, DiscoveredModelsSchema, globalModelsWire, type GlobalModels, type ModelProvider} from "./global-models-schema";
@@ -4107,6 +4107,19 @@ export class ApiClient {
 
   async updateInternalConnector(workspaceId: string, id: string, data: InternalConnectorInput): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}`, {method:"PATCH",body:JSON.stringify(data)});
+  }
+
+  async setInternalConnectorCredential(workspaceId: string, id: string, bearerToken: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}/credential`, {
+      method: "PUT", body: JSON.stringify({bearer_token: bearerToken}),
+    });
+  }
+
+  async testInternalConnector(workspaceId: string, id: string): Promise<InternalConnectorTest> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}/test`, {method:"POST"});
+    return parseWithFallback(raw, InternalConnectorTestSchema, {reachable:false,message:"Invalid connection test response"}, {
+      endpoint:"POST /api/workspaces/:id/internal-connectors/:connectorId/test",includeReceived:false,
+    });
   }
 
   async getSemanticaMCPStatus(workspaceId: string): Promise<SemanticaMCPStatus> {
