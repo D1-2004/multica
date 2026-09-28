@@ -1612,6 +1612,33 @@ func decideDispatchCoordinator(
 	if h == nil || h.Queries == nil || command.Event.Domain != "channel" || command.Event.Type != "message.created" {
 		return inboundcoord.Decision{Action: inboundcoord.ActionContinue}
 	}
+	coord := h.inboundCoordinator()
+	turn := coordinatorHistoryInputs(command, agent.ID, inboundcoord.HistoryBeforeFromContext(ctx))
+	turn.UserDecisionEnabled = decisionScope(ctx) != nil
+	turn.UserDecisionRequestID = decisionRequestID(ctx)
+	turn.ConversationTitle = strings.TrimSpace(command.Event.Data.Conversation.Title)
+	turn.SenderName = command.Event.Data.Sender.DisplayName
+	turn.Message = message
+	turn.UserID = userID
+	turn.AgentName = agent.Name
+	turn.Instructions = agent.Instructions
+	turn.IdentityNote = inboundcoord.IdentityNote(turn.Source, turn.ConversationID, turn.PersonID)
+	turn.WorkspaceID = uuidToString(agent.WorkspaceID)
+	turn.IssueDispatchContext = issueDispatchContext
+	if n, err := h.Queries.CountRunningTasks(ctx, agent.ID); err == nil && n > 0 {
+		turn.Busy = true
+	}
+	coord.FillVoice(ctx, &turn)
+	return coord.Decide(ctx, turn)
+}
+
+// coordinatorHistoryInputs returns the Turn fields that decide a DingTalk
+// history read: who reads, which conversation, the cutoff and the window
+// messages excluded from history. The claimed decision and a read started
+// while the job is still collecting both build them here, so the early read
+// has exactly the inputs of the decision. fallbackBefore is the job's
+// acceptance time, used when no window message carries a timestamp.
+func coordinatorHistoryInputs(command DispatchCommand, agentID pgtype.UUID, fallbackBefore time.Time) inboundcoord.Turn {
 	source := inboundcoord.SourceRobot
 	if command.Source.Type == "digital_employee" {
 		source = inboundcoord.SourceDigitalEmployee
@@ -1621,31 +1648,19 @@ func decideDispatchCoordinator(
 		chatType = "group"
 	}
 	ids := dispatchAssocIDs(command)
-	coord := h.inboundCoordinator()
 	turn := inboundcoord.Turn{
-		UserDecisionEnabled:   decisionScope(ctx) != nil,
-		UserDecisionRequestID: decisionRequestID(ctx),
 		Source:                source,
 		Addressed:             !command.ProactiveConversation || dispatchMentionsEmployee(command),
 		ProactiveConversation: command.ProactiveConversation,
 		ChatType:              chatType,
-		ConversationTitle:     strings.TrimSpace(command.Event.Data.Conversation.Title),
-		SenderName:            command.Event.Data.Sender.DisplayName,
-		Message:               message,
-		AgentID:               agent.ID,
-		UserID:                userID,
-		AgentName:             agent.Name,
-		Instructions:          agent.Instructions,
-		IdentityNote:          inboundcoord.IdentityNote(source, ids.ConversationID, ids.PersonID),
-		WorkspaceID:           uuidToString(agent.WorkspaceID),
+		AgentID:               agentID,
 		ConversationID:        ids.ConversationID,
 		PersonID:              ids.PersonID,
 		EvidenceID:            ids.EvidenceID,
 		Kind:                  ids.Kind,
-		IssueDispatchContext:  issueDispatchContext,
 		Utterances:            windowUtterancesFromCommand(command),
+		HistoryBefore:         fallbackBefore,
 	}
-	turn.HistoryBefore = inboundcoord.HistoryBeforeFromContext(ctx)
 	for _, u := range turn.Utterances {
 		if u.Timestamp.After(turn.MessageTimestamp) {
 			turn.MessageTimestamp = u.Timestamp
@@ -1655,11 +1670,7 @@ func decideDispatchCoordinator(
 		turn.HistoryBefore = turn.MessageTimestamp
 	}
 	turn.DWSUID, turn.DWSOrgID = dispatchCoordinatorDWSIdentity(command)
-	if n, err := h.Queries.CountRunningTasks(ctx, agent.ID); err == nil && n > 0 {
-		turn.Busy = true
-	}
-	coord.FillVoice(ctx, &turn)
-	return coord.Decide(ctx, turn)
+	return turn
 }
 
 // Both prompt utterances and per-item dispatch selection use this projection

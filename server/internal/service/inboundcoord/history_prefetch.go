@@ -26,6 +26,12 @@ type historyPrefetchResult struct {
 	// sentinel, so the context state, not the error type, decides this.
 	timedOut bool
 	elapsed  time.Duration
+	// window is the collect-window read outcome: "" when that read is not
+	// enabled for the agent, else hit, miss (no matching read on this
+	// replica) or failed (fell back to the claim-time read). waited is how
+	// long the decision blocked on a hit.
+	window string
+	waited time.Duration
 }
 
 // shouldPrefetchHistory reports whether Host should read the bounded recent
@@ -57,13 +63,37 @@ func shouldPrefetchHistory(c *Coordinator, turn Turn) bool {
 // scene recall prefetch. The returned channel yields exactly one result.
 func (c *Coordinator) startHistoryPrefetch(ctx context.Context, turn Turn) <-chan historyPrefetchResult {
 	out := make(chan historyPrefetchResult, 1)
-	readCtx, cancel := context.WithTimeout(ctx, historyPrefetchTimeout)
+	window := ""
+	var early *windowHistoryRead
+	if c.windowHistoryAllowed {
+		window = "miss"
+		early = c.takeWindowHistory(turn)
+	}
 	go func() {
+		if early != nil {
+			waitStarted := time.Now()
+			select {
+			case <-early.done:
+				// Only a successful read with identical inputs is reused; a
+				// failed or timed-out one reads again below, as before.
+				if early.result.err == nil {
+					result := early.result
+					result.window, result.waited = "hit", time.Since(waitStarted)
+					out <- result
+					return
+				}
+				window = "failed"
+			case <-ctx.Done():
+				out <- historyPrefetchResult{err: ctx.Err(), timedOut: true, window: "failed", waited: time.Since(waitStarted)}
+				return
+			}
+		}
+		readCtx, cancel := context.WithTimeout(ctx, historyPrefetchTimeout)
 		defer cancel()
 		started := time.Now()
 		history, err := c.DWSHistory.Load(readCtx, turn)
 		timedOut := err != nil && (readCtx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled))
-		out <- historyPrefetchResult{history: history, err: err, timedOut: timedOut, elapsed: time.Since(started)}
+		out <- historyPrefetchResult{history: history, err: err, timedOut: timedOut, elapsed: time.Since(started), window: window}
 	}()
 	return out
 }
@@ -92,11 +122,20 @@ func (c *Coordinator) finishHistoryPrefetch(ctx context.Context, turn *Turn, seq
 	}
 	traceHistoryEnd(obs, result.history, result.err)
 	if lt != nil {
-		lt.AddMetadata(map[string]any{"history_prefetch_status": status, "history_prefetch_elapsed_ms": result.elapsed.Milliseconds()})
+		metadata := map[string]any{"history_prefetch_status": status, "history_prefetch_elapsed_ms": result.elapsed.Milliseconds()}
+		if result.window != "" {
+			metadata["history_prefetch_window"] = result.window
+			metadata["history_prefetch_wait_ms"] = result.waited.Milliseconds()
+		}
+		lt.AddMetadata(metadata)
 	}
-	slog.Info("inbound coordinator history prefetch", append(coordinatorLogIndex(*turn),
+	logArgs := append(coordinatorLogIndex(*turn),
 		"event", "inbound_coordinator_history_prefetch", "origin", "host_prefetch", "status", status,
-		"elapsed_ms", result.elapsed.Milliseconds(), "timeout_ms", historyPrefetchTimeout.Milliseconds(), "message_count", len(result.history))...)
+		"elapsed_ms", result.elapsed.Milliseconds(), "timeout_ms", historyPrefetchTimeout.Milliseconds(), "message_count", len(result.history))
+	if result.window != "" {
+		logArgs = append(logArgs, "window", result.window, "wait_ms", result.waited.Milliseconds())
+	}
+	slog.Info("inbound coordinator history prefetch", logArgs...)
 	if timedOut {
 		turn.HistoryStatus = "not_loaded"
 		return call, "", fmt.Errorf("history prefetch timed out after %s", historyPrefetchTimeout)

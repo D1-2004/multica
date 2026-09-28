@@ -266,6 +266,12 @@ type Coordinator struct {
 	// Sample one Diamond snapshot with the resolved agent before a decision.
 	FinishRecoveryAgentProvider func(pgtype.UUID) bool
 	finishRecovery              bool
+	// HistoryPrefetchAgentProvider selects the agents whose DingTalk history
+	// is read during the collect window (window_history_prefetch.go). Nil
+	// keeps the read at claim time.
+	HistoryPrefetchAgentProvider func(pgtype.UUID) bool
+	windowHistory                *windowHistoryReads
+	windowHistoryAllowed         bool
 
 	RouteProvider func(context.Context) (*modelregistry.Route, error)
 	// ModelProvider is sampled once per decision, including all finish reviews.
@@ -290,7 +296,7 @@ type sceneMemoryReader interface {
 // New wires the loop. assocSvc may be nil; missing required evidence defers
 // enabled Coordinator work without creating an unverified sandbox request.
 func New(llmClient *llm.Client, queries historyReader, assocSvc *assoc.Service) *Coordinator {
-	c := &Coordinator{LLM: llmClient, Queries: queries, Assoc: assocSvc}
+	c := &Coordinator{LLM: llmClient, Queries: queries, Assoc: assocSvc, windowHistory: newWindowHistoryReads()}
 	if assocSvc != nil {
 		tools := &AssocTools{Service: assocSvc}
 		if issues, ok := queries.(IssueAccess); ok {
@@ -408,6 +414,8 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	}
 	snapshot.FinishRecoveryProvider = nil
 	snapshot.FinishRecoveryAgentProvider = nil
+	snapshot.windowHistoryAllowed = c.historyPrefetchAllowed(turn)
+	snapshot.HistoryPrefetchAgentProvider = nil
 	if c.RouteProvider != nil {
 		route, err := c.RouteProvider(ctx)
 		if err != nil {

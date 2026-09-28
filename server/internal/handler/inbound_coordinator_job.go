@@ -746,6 +746,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			if h.SceneMemoryWorker != nil {
 				h.SceneMemoryWorker.Notify()
 			}
+			h.prefetchCoordinatorWindowHistory(job)
 			// Every callback is durable in the merged command. Settle extras
 			// only when the complete window has actually been handled.
 			slog.Info("inbound coordinator job collected",
@@ -816,6 +817,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	if h.SceneMemoryWorker != nil {
 		h.SceneMemoryWorker.Notify()
 	}
+	h.prefetchCoordinatorWindowHistory(job)
 	slog.Info("inbound coordinator job accepted",
 		"event", "inbound_coordinator_job_accepted",
 		"job_id", util.UUIDToString(job.ID),
@@ -829,6 +831,28 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 		SessionCreated: true,
 	})
 	return response, job, nil
+}
+
+// prefetchCoordinatorWindowHistory starts the DingTalk history read of a
+// committed job that is still collecting, from the same persisted command
+// the claiming worker restores, and wakes this replica's workers when the
+// window closes so the replica holding the read usually claims the job. It
+// does nothing unless the Coordinator enables the read for the agent.
+func (h *Handler) prefetchCoordinatorWindowHistory(job db.InboundCoordinatorJob) {
+	coordinator := h.InboundCoordinator
+	if coordinator == nil || !job.AgentID.Valid || !job.AvailableAt.Valid {
+		return
+	}
+	command, err := restoreInboundCoordinatorCommand(job.Command, job.EndpointNamespaceID, h.TaskCompletionTargetIdentity)
+	if err != nil || strings.TrimSpace(command.TaskFinishedTaskID) != "" || command.Event.Domain != "channel" || command.Event.Type != "message.created" {
+		return
+	}
+	turn := coordinatorHistoryInputs(command, job.AgentID, job.CreatedAt.Time)
+	if !coordinator.PrefetchWindowHistory(turn) || h.InboundCoordinatorWorker == nil {
+		return
+	}
+	worker := h.InboundCoordinatorWorker
+	time.AfterFunc(time.Until(job.AvailableAt.Time)+5*time.Millisecond, worker.Notify)
 }
 
 func (h *Handler) persistCoordinatorJobChat(ctx context.Context, job db.InboundCoordinatorJob, decision inboundcoord.Decision) error {

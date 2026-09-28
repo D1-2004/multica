@@ -816,13 +816,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	coordinator := inboundcoord.New(h.LLM, queries, h.Assoc)
 	if opts.RuntimeConfig != nil {
 		coordinator.ModelProvider = func() string { return opts.RuntimeConfig.current().Runtime.LLM.CoordinatorModel }
-		coordinator.FinishRecoveryAgentProvider = func(agentID pgtype.UUID) bool {
+		performanceAgent := func(agentID pgtype.UUID) bool {
 			raw := opts.RuntimeConfig.current().Runtime
 			if raw.PerformanceOptimization != nil {
 				return raw.PerformanceOptimization.AllowsAgent(util.UUIDToString(agentID))
 			}
 			return false
 		}
+		coordinator.FinishRecoveryAgentProvider = performanceAgent
+		coordinator.HistoryPrefetchAgentProvider = performanceAgent
 	}
 	if opts.DeploymentFence != nil {
 		coordinator.Ready = func(ctx context.Context) (bool, error) {
