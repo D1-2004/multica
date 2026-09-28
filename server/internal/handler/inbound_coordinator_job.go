@@ -38,6 +38,9 @@ type InboundCoordinatorJobWorker struct {
 	handler *Handler
 	notify  chan struct{}
 	done    chan struct{}
+
+	wakeMu  sync.Mutex
+	wakeups map[string]*time.Timer
 }
 
 func NewInboundCoordinatorJobWorker(h *Handler) *InboundCoordinatorJobWorker {
@@ -45,7 +48,34 @@ func NewInboundCoordinatorJobWorker(h *Handler) *InboundCoordinatorJobWorker {
 		handler: h,
 		notify:  make(chan struct{}, inboundCoordinatorWorkerConcurrency),
 		done:    make(chan struct{}),
+		wakeups: make(map[string]*time.Timer),
 	}
+}
+
+// WakeAt notifies the workers when job becomes claimable. A later window
+// deadline for the same job replaces the earlier wake-up.
+func (w *InboundCoordinatorJobWorker) WakeAt(jobID string, at time.Time) {
+	if w == nil || jobID == "" {
+		return
+	}
+	w.wakeMu.Lock()
+	defer w.wakeMu.Unlock()
+	if w.wakeups == nil {
+		w.wakeups = make(map[string]*time.Timer)
+	}
+	if previous := w.wakeups[jobID]; previous != nil {
+		previous.Stop()
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(time.Until(at)+5*time.Millisecond, func() {
+		w.wakeMu.Lock()
+		if w.wakeups[jobID] == timer {
+			delete(w.wakeups, jobID)
+		}
+		w.wakeMu.Unlock()
+		w.Notify()
+	})
+	w.wakeups[jobID] = timer
 }
 
 func (w *InboundCoordinatorJobWorker) Notify() {
@@ -848,11 +878,12 @@ func (h *Handler) prefetchCoordinatorWindowHistory(job db.InboundCoordinatorJob)
 		return
 	}
 	turn := coordinatorHistoryInputs(command, job.AgentID, job.CreatedAt.Time)
-	if !coordinator.PrefetchWindowHistory(turn) || h.InboundCoordinatorWorker == nil {
+	// The job id is the claimed decision's trace id; it only labels the log.
+	turn.TraceID = util.UUIDToString(job.ID)
+	if !coordinator.PrefetchWindowHistory(turn) {
 		return
 	}
-	worker := h.InboundCoordinatorWorker
-	time.AfterFunc(time.Until(job.AvailableAt.Time)+5*time.Millisecond, worker.Notify)
+	h.InboundCoordinatorWorker.WakeAt(util.UUIDToString(job.ID), job.AvailableAt.Time)
 }
 
 func (h *Handler) persistCoordinatorJobChat(ctx context.Context, job db.InboundCoordinatorJob, decision inboundcoord.Decision) error {

@@ -27,9 +27,10 @@ type historyPrefetchResult struct {
 	timedOut bool
 	elapsed  time.Duration
 	// window is the collect-window read outcome: "" when that read is not
-	// enabled for the agent, else hit, miss (no matching read on this
-	// replica) or failed (fell back to the claim-time read). waited is how
-	// long the decision blocked on a hit.
+	// enabled for the agent, else hit, miss (no recent matching read on this
+	// replica), failed (fell back to the claim-time read) or timeout (the
+	// claim-time budget ran out while the early read was in flight). waited
+	// is how long the decision blocked on the early read.
 	window string
 	waited time.Duration
 }
@@ -63,6 +64,7 @@ func shouldPrefetchHistory(c *Coordinator, turn Turn) bool {
 // scene recall prefetch. The returned channel yields exactly one result.
 func (c *Coordinator) startHistoryPrefetch(ctx context.Context, turn Turn) <-chan historyPrefetchResult {
 	out := make(chan historyPrefetchResult, 1)
+	readCtx, cancel := context.WithTimeout(ctx, historyPrefetchTimeout)
 	window := ""
 	var early *windowHistoryRead
 	if c.windowHistoryAllowed {
@@ -70,30 +72,33 @@ func (c *Coordinator) startHistoryPrefetch(ctx context.Context, turn Turn) <-cha
 		early = c.takeWindowHistory(turn)
 	}
 	go func() {
+		defer cancel()
+		started := time.Now()
+		var waited time.Duration
 		if early != nil {
-			waitStarted := time.Now()
+			// Waiting for the early read and any fallback read share the one
+			// claim-time budget, so the first model request never waits
+			// longer than it would for a claim-time read.
 			select {
 			case <-early.done:
-				// Only a successful read with identical inputs is reused; a
-				// failed or timed-out one reads again below, as before.
+				waited = time.Since(started)
 				if early.result.err == nil {
 					result := early.result
-					result.window, result.waited = "hit", time.Since(waitStarted)
+					result.window, result.waited = "hit", waited
+					c.shadowWindowHistory(turn, early)
 					out <- result
 					return
 				}
 				window = "failed"
-			case <-ctx.Done():
-				out <- historyPrefetchResult{err: ctx.Err(), timedOut: true, window: "failed", waited: time.Since(waitStarted)}
+			case <-readCtx.Done():
+				waited = time.Since(started)
+				out <- historyPrefetchResult{err: readCtx.Err(), timedOut: true, elapsed: waited, window: "timeout", waited: waited}
 				return
 			}
 		}
-		readCtx, cancel := context.WithTimeout(ctx, historyPrefetchTimeout)
-		defer cancel()
-		started := time.Now()
 		history, err := c.DWSHistory.Load(readCtx, turn)
 		timedOut := err != nil && (readCtx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled))
-		out <- historyPrefetchResult{history: history, err: err, timedOut: timedOut, elapsed: time.Since(started), window: window}
+		out <- historyPrefetchResult{history: history, err: err, timedOut: timedOut, elapsed: time.Since(started), window: window, waited: waited}
 	}()
 	return out
 }

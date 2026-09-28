@@ -78,6 +78,7 @@ func TestCommittedCoordinatorJobReadsHistoryDuringItsWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := db.InboundCoordinatorJob{
+		ID:          pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
 		AgentID:     agentID,
 		Command:     raw,
 		CreatedAt:   pgtype.Timestamptz{Time: created, Valid: true},
@@ -123,5 +124,32 @@ func TestCommittedCoordinatorJobReadsHistoryDuringItsWindow(t *testing.T) {
 	got := turns[0]
 	if !got.HistoryBefore.Equal(want.HistoryBefore) || got.ConversationID != want.ConversationID || got.DWSUID != want.DWSUID || got.EvidenceID != want.EvidenceID {
 		t.Fatalf("window read inputs %+v differ from the claimed decision's %+v", got, want)
+	}
+}
+
+func TestWindowWakeUpFollowsTheLatestDeadlineOfAJob(t *testing.T) {
+	w := NewInboundCoordinatorJobWorker(&Handler{})
+	start := time.Now()
+	w.WakeAt("job-1", start.Add(60*time.Millisecond))
+	// A later message extended the window: the earlier wake-up is dropped.
+	w.WakeAt("job-1", start.Add(200*time.Millisecond))
+	select {
+	case <-w.notify:
+		if elapsed := time.Since(start); elapsed < 190*time.Millisecond {
+			t.Fatalf("woke at %s, before the extended deadline", elapsed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the extended deadline must still wake the workers")
+	}
+	select {
+	case <-w.notify:
+		t.Fatal("a replaced wake-up must not fire")
+	case <-time.After(150 * time.Millisecond):
+	}
+	w.wakeMu.Lock()
+	pending := len(w.wakeups)
+	w.wakeMu.Unlock()
+	if pending != 0 {
+		t.Fatalf("fired wake-ups must be forgotten, %d left", pending)
 	}
 }
