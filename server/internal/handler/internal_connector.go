@@ -166,6 +166,11 @@ func (h *Handler) UpdateInternalConnector(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, create bool) {
 	ws := chi.URLParam(r, "id")
+	wsUUID, ok := parseUUIDOrBadRequest(w, ws, "workspace id")
+	if !ok {
+		return
+	}
+	ws = uuidToString(wsUUID)
 	var in connectorInput
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	dec := json.NewDecoder(r.Body)
@@ -184,9 +189,12 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 	id := chi.URLParam(r, "connectorId")
 	if create {
 		id = uuid.NewString()
-	} else if _, err := uuid.Parse(id); err != nil {
-		writeError(w, 400, "invalid connector id")
-		return
+	} else {
+		idUUID, ok := parseUUIDOrBadRequest(w, id, "connector id")
+		if !ok {
+			return
+		}
+		id = uuidToString(idUUID)
 	}
 	raw, _ := json.Marshal(in.AllowedTools)
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -218,7 +226,7 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 			writeError(w, 400, "upstream_url cannot be changed after creation")
 			return
 		}
-		if in.Enabled && !h.connectorCredentialReady(internalConnector{ID: id, CredentialRef: connectorCredentialRef(id), CredentialCiphertext: ciphertext}) {
+		if in.Enabled && !h.connectorCredentialReady(internalConnector{ID: id, WorkspaceID: ws, CredentialRef: connectorCredentialRef(id), CredentialCiphertext: ciphertext}) {
 			writeError(w, 400, "connector credential is not configured")
 			return
 		}

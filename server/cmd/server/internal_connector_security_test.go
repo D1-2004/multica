@@ -125,6 +125,15 @@ func TestInternalConnectorManagementRejectsTaskTokenAndURLChange(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("same-URL update: status=%d body=%v", status, result)
 	}
+	active := map[string]any{"name": "Test", "upstream_url": "https://safe.example.test/mcp", "allowed_tools": []string{"read"}, "agent_ids": []string{agentID}, "enabled": true}
+	status, result = call(http.MethodPatch, base+"/"+connectorID, testToken, active)
+	if status != http.StatusOK {
+		t.Fatalf("could not enable authorized connector: status=%d body=%v", status, result)
+	}
+	status, result = call(http.MethodPost, "/api/internal-connectors/"+connectorID+"/mcp", taskToken, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+	if status != http.StatusOK || result["result"] == nil {
+		t.Fatalf("authorized Agent could not initialize connector: status=%d body=%v", status, result)
+	}
 	otherWS := uuid.NewString()
 	if _, err := testPool.Exec(t.Context(), `INSERT INTO workspace (id,name,slug,description) VALUES ($1::uuid,'Other','connector-boundary-' || $2,'')`, otherWS, uuid.NewString()); err != nil {
 		t.Fatal(err)
