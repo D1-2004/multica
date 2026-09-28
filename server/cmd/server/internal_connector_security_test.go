@@ -202,3 +202,27 @@ func (transport connectorTestTransport) RoundTrip(req *http.Request) (*http.Resp
 	}
 	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(response))}, nil
 }
+
+func TestInternalConnectorCredentialKeySelection(t *testing.T) {
+	root := strings.Repeat("j", 48)
+	t.Setenv("JWT_SECRET", root)
+	t.Setenv("MULTICA_INTERNAL_MCP_SECRET_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("d"), 32)))
+	t.Setenv("MULTICA_INTERNAL_MCP_KEY_SOURCE", "jwt-derived")
+	first, source, err := internalConnectorCredentialKey()
+	if err != nil || source != "jwt-derived" || len(first) != 32 {
+		t.Fatalf("derived key unavailable: source=%q length=%d error=%v", source, len(first), err)
+	}
+	second, _, err := internalConnectorCredentialKey()
+	if err != nil || !bytes.Equal(first, second) || bytes.Equal(first, bytes.Repeat([]byte("d"), 32)) {
+		t.Fatal("key derivation is unstable or reused the dedicated key")
+	}
+	t.Setenv("JWT_SECRET", "short")
+	if _, _, err := internalConnectorCredentialKey(); err == nil {
+		t.Fatal("weak JWT root was accepted")
+	}
+	t.Setenv("MULTICA_INTERNAL_MCP_KEY_SOURCE", "dedicated")
+	key, source, err := internalConnectorCredentialKey()
+	if err != nil || source != "dedicated" || !bytes.Equal(key, bytes.Repeat([]byte("d"), 32)) {
+		t.Fatalf("dedicated source was not selected: %q %v", source, err)
+	}
+}

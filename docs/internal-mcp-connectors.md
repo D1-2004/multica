@@ -45,12 +45,22 @@ correct its arguments; transport and parse failures remain generic.
   be enabled. A new connector can be added without code changes, but an
   operator must provision its credential and redeploy before enabling it.
 - Alternatively a human workspace owner/admin can set or rotate the Bearer in
-  the management page. The server seals it with a dedicated
-  `MULTICA_INTERNAL_MCP_SECRET_KEY` (base64-encoded 32-byte key) before writing
-  workspace-scoped ciphertext. A stored credential takes precedence over the
+  the management page. The server seals it before writing workspace-scoped
+  ciphertext. The default key source is a dedicated
+  `MULTICA_INTERNAL_MCP_SECRET_KEY` (base64-encoded 32-byte key) provisioned
+  through a secret-backed environment channel. Where an existing `env-vars`
+  trait cannot mark values secret, operators can explicitly set the
+  **non-secret** `MULTICA_INTERNAL_MCP_KEY_SOURCE=jwt-derived`. The server then
+  derives a distinct AES key with HMAC-SHA256 over the shared `JWT_SECRET`
+  (at least 32 bytes) and a fixed connector-specific context label. This
+  follows the repository's existing domain-separated key derivation pattern;
+  it does not persist another master secret in the trait. All replicas must
+  select the same source and share the same root secret. Rotating that root
+  invalidates stored connector credentials until re-encrypted. A stored
+  credential takes precedence over the
   legacy environment reference; unreadable ciphertext fails closed. Admin
   responses expose readiness and source but never the value. The dedicated
-  key is provisioned through the controlled Aone environment trait.
+  key option remains for deployments with supported secret injection.
 - The admin connectivity check sends a bounded `tools/list` request to the
   connector's immutable URL with its effective credential. It returns a
   sanitized reachability result, the discovered allowlisted tool names, and

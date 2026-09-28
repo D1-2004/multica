@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
@@ -730,18 +731,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.InternalConnectorRedis = rdb
 	}
 	h.InternalConnectorClient = handler.NewInternalConnectorClient()
-	if os.Getenv("MULTICA_INTERNAL_MCP_SECRET_KEY") == "" {
-		if featureflags.DeploymentEnvironment() == "pre" {
-			slog.Warn("internal connector credential storage unavailable", "reason", "MULTICA_INTERNAL_MCP_SECRET_KEY is not set")
+	connectorKey, connectorKeySource, connectorKeyErr := internalConnectorCredentialKey()
+	if connectorKeyErr != nil {
+		if featureflags.DeploymentEnvironment() == "pre" || connectorKeySource == "jwt-derived" {
+			slog.Warn("internal connector credential storage unavailable", "source", connectorKeySource, "error", connectorKeyErr)
 		} else {
-			slog.Info("internal connector credential storage unavailable", "reason", "MULTICA_INTERNAL_MCP_SECRET_KEY is not set")
+			slog.Info("internal connector credential storage unavailable", "source", connectorKeySource, "error", connectorKeyErr)
 		}
-	} else if connectorKey, err := secretbox.LoadKey("MULTICA_INTERNAL_MCP_SECRET_KEY"); err != nil {
-		slog.Warn("internal connector credential key invalid", "error", err)
 	} else if box, err := secretbox.New(connectorKey); err != nil {
 		slog.Warn("internal connector credential key invalid", "error", err)
 	} else {
 		h.InternalConnectorSecretBox = box
+		slog.Info("internal connector credential storage configured", "source", connectorKeySource)
 	}
 	if relay, err := handler.NewSemanticaMCPRelayFromEnv(rdb); err != nil {
 		slog.Warn("Semantica MCP relay disabled", "error", err)
@@ -3207,6 +3208,28 @@ func agentIdentityControlBaseURLFromEnv() string {
 // explicit COMPOSIO_STATE_SECRET; otherwise derives a composio-specific key
 // from JWT_SECRET via SHA-256 so the two signing domains never share an
 // identical key. Returns nil when neither is set (composio stays disabled).
+// internalConnectorCredentialKey selects one stable encryption domain on every
+// replica. The explicit selector prevents a partially injected dedicated key
+// from making replicas encrypt the same workspace with different keys.
+func internalConnectorCredentialKey() ([]byte, string, error) {
+	source := strings.TrimSpace(os.Getenv("MULTICA_INTERNAL_MCP_KEY_SOURCE"))
+	switch source {
+	case "", "dedicated":
+		key, err := secretbox.LoadKey("MULTICA_INTERNAL_MCP_SECRET_KEY")
+		return key, "dedicated", err
+	case "jwt-derived":
+		jwtSecret := os.Getenv("JWT_SECRET")
+		if len(jwtSecret) < 32 {
+			return nil, source, errors.New("JWT_SECRET must be set to at least 32 bytes")
+		}
+		mac := hmac.New(sha256.New, []byte(jwtSecret))
+		_, _ = mac.Write([]byte("multica/internal-mcp-credential/v1"))
+		return mac.Sum(nil), source, nil
+	default:
+		return nil, source, errors.New("unsupported internal connector key source")
+	}
+}
+
 func composioStateSecret() []byte {
 	if v := strings.TrimSpace(os.Getenv("COMPOSIO_STATE_SECRET")); v != "" {
 		return []byte(v)
