@@ -57,6 +57,7 @@ func (*dshBuildDriver) frozenRequest(job dshprofile.BuildJob) map[string]any {
 func (d *dshBuildDriver) Scope() string { return d.provider.Scope() }
 
 func (d *dshBuildDriver) Preflight(ctx context.Context, job dshprofile.BuildJob) error {
+	ctx = WithFCE2BScope(ctx, FCE2BScope{WorkspaceID: job.WorkspaceID})
 	key, err := dshBuildSourceKey(job)
 	if err != nil {
 		return dshprofile.ErrBuildSourceInvalid
@@ -114,6 +115,7 @@ type dshBuildControlReply struct {
 }
 
 func (d *dshBuildDriver) control(ctx context.Context, job dshprofile.BuildJob, operation string, transfer bool) (dshBuildControlReply, error) {
+	ctx = WithFCE2BScope(ctx, FCE2BScope{WorkspaceID: job.WorkspaceID})
 	frozen := d.frozenRequest(job)
 	encoded, err := json.Marshal(frozen)
 	if err != nil {

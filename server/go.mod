@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/a2aproject/a2a-go/v2 v2.4.0
+	github.com/aliyun-fc/e2b-go-sdk v0.0.0-20260902102031-b539ebd3e79b
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.13
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.13

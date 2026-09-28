@@ -535,6 +535,9 @@ func main() {
 	}
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	go runDBStatsLogger(sweepCtx, pool)
+	if window, ok := processMemorySampleWindow(); ok {
+		go runProcessMemorySampler(sweepCtx, window)
+	}
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
 	}

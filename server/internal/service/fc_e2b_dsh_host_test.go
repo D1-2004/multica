@@ -232,6 +232,7 @@ func TestDSHNativeManagedProfileReceipt(t *testing.T) {
 }
 
 func (r dshHomeRunner) Run(_ context.Context, _ string, args []string, _ []string) (string, error) {
+	requireFCE2BSDKAccepts(args)
 	values := map[string]string{}
 	var sandbox string
 	for i := range len(args) - 1 {

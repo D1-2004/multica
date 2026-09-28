@@ -78,6 +78,9 @@ type FeatureConfig struct {
 }
 
 type RuntimeConfig struct {
+	// FCE2BSDKRollout is the FC/E2B SDK switch; nil keeps the e2b CLI.
+	FCE2BSDKRollout *FCE2BSDKRollout `json:"fc_e2b_sdk_rollout,omitempty"`
+
 	AgenticFS AgenticFSConfig `json:"agentic_fs"`
 	LLM       LLMConfig       `json:"llm"`
 	FCE2B     FCE2BConfig     `json:"fc_e2b"`
@@ -403,6 +406,9 @@ func (c RuntimeConfig) validate() error {
 		if strings.TrimSpace(c.ASB.ResourceCPU) == "" || strings.TrimSpace(c.ASB.ResourceMemory) == "" {
 			return fmt.Errorf("asb resource_cpu and resource_memory are required when enabled")
 		}
+	}
+	if c.FCE2BSDKRollout != nil {
+		return c.FCE2BSDKRollout.validate()
 	}
 	return nil
 }

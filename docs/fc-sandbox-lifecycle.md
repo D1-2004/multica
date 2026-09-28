@@ -25,8 +25,76 @@ DWH 一格开发（取源 + OpenCode 30–60 分钟 + 提 PR + 打包）经常�
 当前创建和续期走同一套寿命：默认 **4800 秒**，配置值只有更高时才采用。
 低于 4800 的 Diamond 旧值会被抬到 4800，避免静默回到一小时墙。
 
-`nohup` / `setsid` 不能让进程活过这次任务。任务结束时 `daemon run-once`
-退出，沙箱按下文「任务结束后的释放」处理。后台作业语义尚未提供。
+任务结束时 `daemon run-once` 退出，但它只杀 agent 自己的进程组；agent
+工具起的命令在新的进程组或会话里，`nohup` / `setsid` 的进程也一样，会一直
+活到沙箱被释放或过期，Issue / 聊天 scope 复用时还会带进下一轮任务。取消的
+任务由服务端主动结束这些进程，见下文「取消后结束沙箱内进程」；完成和失败的
+任务不结束进程，沙箱按「任务结束后的释放」处理。后台作业语义尚未提供。
+
+## 取消后结束沙箱内进程
+
+PRI-52 实测：从界面取消 run 后，SDK / CLI 两条路径都写回 `cancelled` 并在
+30 秒后 `idle_trimmed`，但沙箱内的 Python 和 `sleep` 在取消后 80 多秒仍在运行，
+CLI 样本的 Python 已被 PID 1 接管。
+
+实测的进程树：`envd` → runner 包装（`multica-fc-runner --runtime-id … --health-port …`）
+→ `multica daemon run-once`（同样的参数）→ `pi` → 工具命令。runner、daemon、pi
+和 envd 同在会话 / 进程组 1；工具命令各自新开会话，退出后留下的孤儿由 PID 1 接管。
+FC 沙箱里 root 没有 `CAP_SYS_PTRACE`，直接读其他用户进程的 `/proc/<pid>/environ`
+会被拒绝；用 `setpriv --reuid/--regid --clear-groups` 切到该进程的 uid 后可以读。
+`stat` 和 `cmdline` 任何人都可读。
+
+任务一进入 `cancelled`，`TaskRuntimeTerminalObserver` 立即（与下面的释放并行，
+不等 30 秒宽限）对该任务每个 start attempt 用过的沙箱执行一次
+`fc_e2b_task_stop.go` 的脚本，10 秒后再执行一次，补上期间新 fork 或被 daemon
+拆树后成为孤儿的进程。这一步和 runner 注入 `FC_E2B_TASK_ID` 都受
+`runtime.fc_e2b_sdk_rollout` 控制：只对开关选中的 workspace / agent / runtime 执行，
+随 SDK 传输一起生效；没选中的任务保持改造前的行为（不注入标记、不结束进程，交给沙箱释放）。
+一次取消清理在排期时（任务写成 `cancelled` 的那一刻）冻结一份运行配置快照，两遍都按它判定、选传输：
+两遍之间热关，已选中的这次清理照样执行第二遍；两遍之间热开，之前没选中的这次取消也不补跑第二遍。
+热切换只影响之后新发生的取消和新的启动。
+脚本以 root 运行，参数是 runtime id、本任务健康端口（由 task id 算出）和 task id。
+只结束能证明属于本任务的进程；证明不了的一律留下，不按启动时间或父进程猜。
+
+- **能证明属于本任务**：
+  - runner：命令行同时带 `--runtime-id <runtime>` 和 `--health-port <本任务端口>`；
+    环境里写着别的任务 id 时不算（端口碰撞）。
+  - 任务标记：环境里有 `MULTICA_TASK_ID=<task>` 或 `FC_E2B_TASK_ID=<task>`，
+    按进程自己的 uid 读取。runner 启动时两个都注入；daemon 给 agent 重新写入
+    `MULTICA_TASK_ID`，`FC_E2B_TASK_ID` 原样继承；pi 以 `detached` 启动工具命令，
+    环境取自自己的 `process.env`，所以工具命令和它们的孤儿都带标记。A2A 子 agent
+    的 `MULTICA_TASK_ID` 被清空，靠 `FC_E2B_TASK_ID` 识别。
+  - 已证明进程的全部子孙。
+  - 已证明进程所在会话 / 进程组（0、1 除外）的其它成员，前提是该会话 / 组的
+    leader 已被证明或已退出：只有 leader 的子孙能进入，所以它由本任务进程创建。
+    leader 活着且不属于本任务时（例如 runner 所在的 envd 会话）不扩展。
+- **不结束**：
+  - 环境里写着别的任务 id 的进程，包括同沙箱另一任务在本任务 runner 之后放出、
+    被 PID 1 接管的孤儿（PRI-61）。
+  - `/usr/local/libexec/multica-*`、`/.fce2b/` 下的沙箱服务，除非是本任务 runner
+    的子孙。共享的 provider 代理可能带着第一个任务的 id，不能凭标记结束。
+  - 没有任务标记、也不在上述子孙或会话里的进程。
+- **证明不了、因此会留下的情况**：
+  - 自己清空环境（如 `env -i`）又脱离会话的孤儿。如果所在会话还有本任务的进程，
+    可以按会话一并结束；否则留到沙箱按下文释放。
+  - 环境读不到的进程：改过身份后变成 non-dumpable 的进程，以及 envd 这类能力集比
+    执行者更高的 root 进程。计入回执 `unreadable`，不结束。
+  - 显式改写了 `MULTICA_TASK_ID` / `FC_E2B_TASK_ID` 的进程，按改写后的值归属。
+  - 处理取消的副本在这几秒内重启时，回退到 TTL。
+- **DSH 原生任务**：DSH host 和员工级 DSH 进程启动时不继承调用方环境，不带任务 id，
+  各自是存活的会话 leader，不会被结束；DSH 工具命令带着所属任务的
+  `MULTICA_TASK_ID`，取消时只结束本任务的那些。这一条依据模板代码，尚未在 DSH
+  沙箱实跑。
+- **结束**：先 `SIGSTOP` 冻结并重扫一次，防止 fork 或改父进程逃逸；再 `SIGTERM`
+  加 `SIGCONT`，最多等 5 秒后 `SIGKILL`。回执为
+  `{"version":3,"runners","marked","unreadable","found","terminated","killed","remaining"}`，
+  写日志 `event=fc_e2b_task_processes_stopped`（带 `pass`），有残留时为 Warn。
+
+回归：`TestFCE2BTaskStopScriptEndsOnlyTheTaskProcesses`（Linux）在同一会话里放两个
+任务的进程，真实执行脚本。以 root 运行时，fixture 切到 nobody，按 FC 的方式经
+`setpriv` 读取标记。
+
+沙箱本身仍按下文释放：Issue / 聊天 scope 剩 10 分钟，到期由云平台销毁。
 
 ## 任务结束后的释放
 
@@ -139,6 +207,9 @@ lifecycle 日志归属。
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-09-28 | 一次取消清理的两遍固定使用排期时的配置快照 | PRI-67：两遍各自重读配置，两遍之间热关会漏掉补杀，热开会给没选中的任务补跑第二遍 |
+| 2026-09-28 | 取消清理和 `FC_E2B_TASK_ID` 注入改由 `runtime.fc_e2b_sdk_rollout` 按作用域控制，与 SDK 传输共用一个开关 | E2B 改造整体可灰度、可热关，不再“部署即生效”；与性能优化开关分开（PRI-47 方案 B） |
+| 2026-09-27 | 取消后只结束能证明属于本任务的沙箱进程：runner 命令行、按进程 uid 读取的任务标记、其子孙及由本任务创建的会话；runner 额外注入 `FC_E2B_TASK_ID`；去掉按启动时间认领孤儿 | PRI-61 在真实 FC 上发现，按“被 PID 1 接管且在 runner 之后启动”认领孤儿，会结束同沙箱另一任务之后放出的孤儿 |
 | 2026-09-23 | 任务结束后释放不可复用的非 DSH 沙箱，其余（含 DSH 员工沙箱）只保留 10 分钟空闲窗口；DSH 等待日志带上错误原因；DSH 沙箱打 `multica.origin` 标签 | 沙箱只靠 4800 秒 TTL 回收，92% 为一次性冷创建；等待日志只有 reason 看不到云平台结果；正式/预发共用账号无法按环境统计 |
 | 2026-09-20 | 创建与任务启动续期统一为默认 4800 秒，配置只允许更大 | 3600s 墙会杀掉仍在前台跑的长任务；续期写死 3600 使 Diamond 调大无效 |
 | 2026-09-09 | 回滚定时续期，改为每次任务启动时续期 3600 秒，失败释放并最多替换一次 | 简化多实例续期协调，避免在无法确认寿命的沙箱上启动任务 |

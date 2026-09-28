@@ -53,6 +53,7 @@ type deliveryRunner struct {
 }
 
 func (r *deliveryRunner) Run(_ context.Context, _ string, args, _ []string) (string, error) {
+	requireFCE2BSDKAccepts(args)
 	r.calls++
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "MULTICA_DSH_ARTIFACT_REQUEST=") {
