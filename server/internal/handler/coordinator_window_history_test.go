@@ -159,6 +159,37 @@ func TestWindowWakeUpFollowsTheLatestDeadlineOfAJob(t *testing.T) {
 	}
 }
 
+func TestOutOfOrderWindowWakeUpKeepsTheLaterDeadline(t *testing.T) {
+	w := NewInboundCoordinatorJobWorker(&Handler{})
+	start := time.Now()
+	// The merge that extended the window registered first; the enqueue of
+	// the job's first message arrives late with the earlier deadline.
+	w.WakeAt("job-1", start.Add(200*time.Millisecond))
+	w.WakeAt("job-1", start.Add(60*time.Millisecond))
+	select {
+	case <-w.notify:
+		if elapsed := time.Since(start); elapsed < 190*time.Millisecond {
+			t.Fatalf("woke at %s, before the window deadline", elapsed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the later deadline must still wake the workers")
+	}
+	select {
+	case <-w.notify:
+		t.Fatal("the earlier deadline must not add a wake-up")
+	case <-time.After(150 * time.Millisecond):
+	}
+	// Other jobs keep their own wake-ups.
+	w.WakeAt("job-1", start.Add(400*time.Millisecond))
+	w.WakeAt("job-2", start.Add(410*time.Millisecond))
+	w.wakeMu.Lock()
+	pending := len(w.wakeups)
+	w.wakeMu.Unlock()
+	if pending != 2 {
+		t.Fatalf("each job keeps one wake-up, have %d", pending)
+	}
+}
+
 func TestOnlyTheFirstUndisturbedClaimMayReuseTheWindowRead(t *testing.T) {
 	for _, tc := range []struct {
 		name string

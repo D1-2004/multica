@@ -40,7 +40,13 @@ type InboundCoordinatorJobWorker struct {
 	done    chan struct{}
 
 	wakeMu  sync.Mutex
-	wakeups map[string]*time.Timer
+	wakeups map[string]windowWakeup
+}
+
+// windowWakeup is the pending collect-deadline wake-up of one job.
+type windowWakeup struct {
+	at    time.Time
+	timer *time.Timer
 }
 
 func NewInboundCoordinatorJobWorker(h *Handler) *InboundCoordinatorJobWorker {
@@ -48,12 +54,14 @@ func NewInboundCoordinatorJobWorker(h *Handler) *InboundCoordinatorJobWorker {
 		handler: h,
 		notify:  make(chan struct{}, inboundCoordinatorWorkerConcurrency),
 		done:    make(chan struct{}),
-		wakeups: make(map[string]*time.Timer),
+		wakeups: make(map[string]windowWakeup),
 	}
 }
 
-// WakeAt notifies the workers when job becomes claimable. A later window
-// deadline for the same job replaces the earlier wake-up.
+// WakeAt notifies the workers when job becomes claimable. A job's collect
+// deadline only moves later (coordinatorCollectDeadline), but callers run
+// asynchronously and can arrive out of order, so only a later deadline
+// replaces the pending wake-up; an earlier one is dropped.
 func (w *InboundCoordinatorJobWorker) WakeAt(jobID string, at time.Time) {
 	if w == nil || jobID == "" {
 		return
@@ -61,21 +69,24 @@ func (w *InboundCoordinatorJobWorker) WakeAt(jobID string, at time.Time) {
 	w.wakeMu.Lock()
 	defer w.wakeMu.Unlock()
 	if w.wakeups == nil {
-		w.wakeups = make(map[string]*time.Timer)
+		w.wakeups = make(map[string]windowWakeup)
 	}
-	if previous := w.wakeups[jobID]; previous != nil {
-		previous.Stop()
+	if previous, ok := w.wakeups[jobID]; ok {
+		if !at.After(previous.at) {
+			return
+		}
+		previous.timer.Stop()
 	}
 	var timer *time.Timer
 	timer = time.AfterFunc(time.Until(at)+5*time.Millisecond, func() {
 		w.wakeMu.Lock()
-		if w.wakeups[jobID] == timer {
+		if w.wakeups[jobID].timer == timer {
 			delete(w.wakeups, jobID)
 		}
 		w.wakeMu.Unlock()
 		w.Notify()
 	})
-	w.wakeups[jobID] = timer
+	w.wakeups[jobID] = windowWakeup{at: at, timer: timer}
 }
 
 func (w *InboundCoordinatorJobWorker) Notify() {
