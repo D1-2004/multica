@@ -1904,6 +1904,7 @@
     "test_connection": "Test connection",
     "testing": "Testing…",
     "test_success": "Upstream reachable; approved tools found: {{tools}}",
+    "test_missing_tools": "Upstream reachable, but configured tools were not found: {{tools}}. Check tool names before enabling.",
     "test_failed": "Connection test failed. Check the URL and credential.",
     "manage": "Manage",
     "available": "Available connectors",

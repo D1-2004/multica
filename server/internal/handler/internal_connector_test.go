@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -141,5 +142,22 @@ func TestInternalConnectorUpstreamToolErrorRetainsBoundedText(t *testing.T) {
 	toolResult, ok := result.(multicaMCPToolResult)
 	if err != nil || !ok || !toolResult.IsError || len(toolResult.Content) != 1 || toolResult.Content[0].Text != "invalid cypher syntax" {
 		t.Fatalf("tool error text lost: %#v %v", result, err)
+	}
+}
+
+func TestConnectorTestFailureMessageIsActionableWithoutUpstreamBody(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{connectorUpstreamStatusError{Code: 401}, "upstream rejected credential (HTTP 401)"},
+		{connectorUpstreamStatusError{Code: 502}, "upstream returned HTTP 502"},
+		{connectorUpstreamProtocolError{}, "upstream returned an invalid MCP response"},
+		{context.DeadlineExceeded, "upstream request timed out"},
+		{errors.New("secret body from remote"), "upstream network connection failed"},
+	} {
+		if got := connectorTestFailureMessage(tc.err); got != tc.want || strings.Contains(got, "secret") {
+			t.Fatalf("failure category mismatch or leaked upstream detail: got %q want %q", got, tc.want)
+		}
 	}
 }

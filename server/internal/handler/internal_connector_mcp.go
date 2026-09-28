@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -30,6 +31,14 @@ type connectorRPCParams struct {
 	Arguments json.RawMessage `json:"arguments"`
 	Cursor    string          `json:"cursor"`
 }
+
+type connectorUpstreamStatusError struct{ Code int }
+
+func (e connectorUpstreamStatusError) Error() string { return fmt.Sprintf("upstream HTTP %d", e.Code) }
+
+type connectorUpstreamProtocolError struct{}
+
+func (connectorUpstreamProtocolError) Error() string { return "invalid upstream MCP response" }
 
 func NewInternalConnectorClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -290,11 +299,11 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, errors.New("upstream HTTP error")
+		return nil, connectorUpstreamStatusError{Code: response.StatusCode}
 	}
 	raw, err := readInternalMCPResponse(response.Body, response.Header.Get("Content-Type"))
 	if err != nil {
-		return nil, err
+		return nil, connectorUpstreamProtocolError{}
 	}
 	var rpc struct {
 		JSONRPC string          `json:"jsonrpc"`
@@ -303,7 +312,7 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 		Error   json.RawMessage `json:"error"`
 	}
 	if json.Unmarshal(raw, &rpc) != nil || rpc.JSONRPC != "2.0" || string(rpc.ID) != "1" || (len(rpc.Error) > 0 && string(rpc.Error) != "null") {
-		return nil, errors.New("invalid upstream MCP response")
+		return nil, connectorUpstreamProtocolError{}
 	}
 	if method == "tools/list" {
 		var list struct {
@@ -311,7 +320,7 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 			NextCursor string           `json:"nextCursor"`
 		}
 		if json.Unmarshal(rpc.Result, &list) != nil || list.Tools == nil {
-			return nil, errors.New("invalid upstream tools/list")
+			return nil, connectorUpstreamProtocolError{}
 		}
 		allowed := make(map[string]bool, len(c.AllowedTools))
 		for _, name := range c.AllowedTools {

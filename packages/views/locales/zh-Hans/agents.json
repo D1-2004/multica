@@ -1878,6 +1878,7 @@
     "test_connection": "测试连通性",
     "testing": "测试中…",
     "test_success": "上游连通；发现授权工具：{{tools}}",
+    "test_missing_tools": "上游连通，但未找到配置的工具：{{tools}}。请核对工具名与上游列表，暂不能判定为可用。",
     "test_failed": "连通性测试失败，请检查地址和凭证。",
     "manage": "管理",
     "available": "可使用的连接器",

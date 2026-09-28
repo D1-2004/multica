@@ -730,10 +730,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.InternalConnectorRedis = rdb
 	}
 	h.InternalConnectorClient = handler.NewInternalConnectorClient()
-	if connectorKey, err := secretbox.LoadKey("MULTICA_INTERNAL_MCP_SECRET_KEY"); err == nil {
-		if box, boxErr := secretbox.New(connectorKey); boxErr == nil {
-			h.InternalConnectorSecretBox = box
+	if os.Getenv("MULTICA_INTERNAL_MCP_SECRET_KEY") == "" {
+		if featureflags.DeploymentEnvironment() == "pre" {
+			slog.Warn("internal connector credential storage unavailable", "reason", "MULTICA_INTERNAL_MCP_SECRET_KEY is not set")
+		} else {
+			slog.Info("internal connector credential storage unavailable", "reason", "MULTICA_INTERNAL_MCP_SECRET_KEY is not set")
 		}
+	} else if connectorKey, err := secretbox.LoadKey("MULTICA_INTERNAL_MCP_SECRET_KEY"); err != nil {
+		slog.Warn("internal connector credential key invalid", "error", err)
+	} else if box, err := secretbox.New(connectorKey); err != nil {
+		slog.Warn("internal connector credential key invalid", "error", err)
+	} else {
+		h.InternalConnectorSecretBox = box
 	}
 	if relay, err := handler.NewSemanticaMCPRelayFromEnv(rdb); err != nil {
 		slog.Warn("Semantica MCP relay disabled", "error", err)

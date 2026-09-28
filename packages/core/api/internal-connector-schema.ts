@@ -58,8 +58,10 @@ export type InternalConnectorInput = {
 
 export const InternalConnectorTestSchema = z.object({
   reachable: z.boolean(),
+  ready: z.boolean().optional().default(false),
   message: z.string().optional(),
   tools: z.array(z.string()).optional(),
+  missing_tools: z.array(z.string()).optional().default([]),
   has_more: z.boolean().optional(),
   duration_ms: z.number().optional(),
 });

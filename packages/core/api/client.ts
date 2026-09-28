@@ -4117,7 +4117,7 @@ export class ApiClient {
 
   async testInternalConnector(workspaceId: string, id: string): Promise<InternalConnectorTest> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}/test`, {method:"POST"});
-    return parseWithFallback(raw, InternalConnectorTestSchema, {reachable:false,message:"Invalid connection test response"}, {
+    return parseWithFallback(raw, InternalConnectorTestSchema, {reachable:false,ready:false,missing_tools:[],message:"Invalid connection test response"}, {
       endpoint:"POST /api/workspaces/:id/internal-connectors/:connectorId/test",includeReceived:false,
     });
   }

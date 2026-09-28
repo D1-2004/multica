@@ -79,7 +79,7 @@ export function InternalConnectorsPage() {
   async function testConnection(id:string) {
     setTesting(id);
     try {const result=await api.testInternalConnector(workspaceId,id);setTestResults((old)=>({...old,[id]:result}));}
-    catch {setTestResults((old)=>({...old,[id]:{reachable:false,message:t(($)=>$.internal_mcp.test_failed)}}));}
+    catch {setTestResults((old)=>({...old,[id]:{reachable:false,ready:false,missing_tools:[],message:t(($)=>$.internal_mcp.test_failed)}}));}
     finally {setTesting(null)}
   }
   async function copyAndOpen(agentId:string,prompt:string) {
@@ -117,7 +117,7 @@ export function InternalConnectorsPage() {
         <p className="break-all text-caption text-muted-foreground">{t(($)=>$.internal_mcp.credential_ref)}: <code>{c.credentialRef}</code></p>
         <p className="text-caption text-muted-foreground">{t(($)=>$.internal_mcp.credential_source)}: {c.credentialSource==="workspace"?t(($)=>$.internal_mcp.credential_workspace):c.credentialSource==="environment"?t(($)=>$.internal_mcp.credential_environment):t(($)=>$.internal_mcp.waiting_credential)}</p>
         <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>edit(c.id)}>{t(($)=>$.internal_mcp.manage)}</Button><Button variant="outline" disabled={testing===c.id} onClick={()=>testConnection(c.id)}>{testing===c.id?t(($)=>$.internal_mcp.testing):t(($)=>$.internal_mcp.test_connection)}</Button></div>
-        {testResults[c.id] && <p role="status" className={`text-caption ${testResults[c.id]?.reachable?"text-foreground":"text-destructive"}`}>{testResults[c.id]?.reachable?t(($)=>$.internal_mcp.test_success,{tools:testResults[c.id]?.tools?.join(", ")||"—"}):testResults[c.id]?.message||t(($)=>$.internal_mcp.test_failed)}</p>}
+        {testResults[c.id] && <p role="status" className={`text-caption ${testResults[c.id]?.ready?"text-foreground":testResults[c.id]?.reachable?"text-warning":"text-destructive"}`}>{testResults[c.id]?.ready?t(($)=>$.internal_mcp.test_success,{tools:testResults[c.id]?.tools?.join(", ")||"—"}):testResults[c.id]?.reachable?t(($)=>$.internal_mcp.test_missing_tools,{tools:testResults[c.id]?.missing_tools.join(", ")||"—"}):testResults[c.id]?.message||t(($)=>$.internal_mcp.test_failed)}</p>}
       </article>)}</div>
     </section>}
 

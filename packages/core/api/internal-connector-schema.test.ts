@@ -17,7 +17,12 @@ describe("internal connector API boundary", () => {
     expect(JSON.stringify(result)).not.toContain("SECRET");
   });
   it("treats a malformed connectivity response as unreachable", () => {
-    const result = parseWithFallback({reachable:"true",tools:["read"]},InternalConnectorTestSchema,{reachable:false,message:"Invalid connection test response"},opts);
+    const result = parseWithFallback({reachable:"true",tools:["read"]},InternalConnectorTestSchema,{reachable:false,ready:false,missing_tools:[],message:"Invalid connection test response"},opts);
     expect(result.reachable).toBe(false);
+  });
+  it("does not mark an empty upstream tool list ready", () => {
+    const result = InternalConnectorTestSchema.parse({reachable:true,tools:[],missing_tools:["read"]});
+    expect(result.ready).toBe(false);
+    expect(result.missing_tools).toEqual(["read"]);
   });
 });

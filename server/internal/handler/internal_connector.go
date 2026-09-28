@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -175,8 +176,17 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	if dec.Decode(&in) != nil || validateConnectorInput(in) != nil {
-		writeError(w, 400, "invalid connector configuration")
+	if dec.Decode(&in) != nil {
+		writeError(w, 400, "invalid connector request")
+		return
+	}
+	var extra any
+	if dec.Decode(&extra) != io.EOF {
+		writeError(w, 400, "invalid connector request")
+		return
+	}
+	if err := validateConnectorInput(in); err != nil {
+		writeError(w, 400, err.Error())
 		return
 	}
 	for _, agent := range in.AgentIDs {

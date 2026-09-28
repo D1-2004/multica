@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -126,7 +127,7 @@ func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) 
 		result, callErr := h.callInternalConnectorUpstream(ctx, c, "tools/list", connectorRPCParams{Cursor: cursor})
 		if callErr != nil {
 			slog.InfoContext(r.Context(), "internal connector test failed", "connector_id", id, "workspace_id", ws, "duration_ms", time.Since(started).Milliseconds())
-			writeJSON(w, 200, map[string]any{"reachable": false, "message": "upstream unavailable, invalid, or rejected the credential"})
+			writeJSON(w, 200, map[string]any{"reachable": false, "ready": false, "message": connectorTestFailureMessage(callErr)})
 			return
 		}
 		list, ok := result.(map[string]any)
@@ -157,11 +158,33 @@ func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) 
 		cursor, more = next, true
 	}
 	found := []string{}
+	missing := []string{}
 	for _, name := range c.AllowedTools {
 		if tools[name] {
 			found = append(found, name)
+		} else {
+			missing = append(missing, name)
 		}
 	}
-	slog.InfoContext(r.Context(), "internal connector test completed", "connector_id", id, "workspace_id", ws, "duration_ms", time.Since(started).Milliseconds(), "found_tools", len(found))
-	writeJSON(w, 200, map[string]any{"reachable": true, "tools": found, "has_more": more, "duration_ms": time.Since(started).Milliseconds()})
+	ready := len(missing) == 0
+	slog.InfoContext(r.Context(), "internal connector test completed", "connector_id", id, "workspace_id", ws, "duration_ms", time.Since(started).Milliseconds(), "found_tools", len(found), "missing_tools", len(missing))
+	writeJSON(w, 200, map[string]any{"reachable": true, "ready": ready, "tools": found, "missing_tools": missing, "has_more": more, "duration_ms": time.Since(started).Milliseconds()})
+}
+
+func connectorTestFailureMessage(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "upstream request timed out"
+	}
+	var status connectorUpstreamStatusError
+	if errors.As(err, &status) {
+		if status.Code == http.StatusUnauthorized || status.Code == http.StatusForbidden {
+			return fmt.Sprintf("upstream rejected credential (HTTP %d)", status.Code)
+		}
+		return fmt.Sprintf("upstream returned HTTP %d", status.Code)
+	}
+	var protocol connectorUpstreamProtocolError
+	if errors.As(err, &protocol) {
+		return "upstream returned an invalid MCP response"
+	}
+	return "upstream network connection failed"
 }

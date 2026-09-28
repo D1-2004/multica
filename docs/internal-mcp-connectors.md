@@ -53,7 +53,11 @@ correct its arguments; transport and parse failures remain generic.
   key is provisioned through the controlled Aone environment trait.
 - The admin connectivity check sends a bounded `tools/list` request to the
   connector's immutable URL with its effective credential. It returns a
-  sanitized reachability result and the discovered allowlisted tool names;
+  sanitized reachability result, the discovered allowlisted tool names, and
+  any configured names not found in the bounded list. Reachable without all
+  configured tools is a warning, never a ready/green result. Failure reasons
+  identify safe categories (credential rejected, timeout, HTTP status or MCP
+  parse failure) without returning upstream bodies, credentials or URLs;
   it does not call a tool, grant an Agent, or expose the Bearer or raw response.
 - `MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES` is an operator-set list of
   approved upstream DNS names/suffixes. URLs must be fixed HTTPS origins plus

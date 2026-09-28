@@ -27,7 +27,7 @@ func TestInternalConnectorManagementRejectsTaskTokenAndURLChange(t *testing.T) {
 	provider.Set("internal_mcp_connectors", featureflag.Rule{Default: true})
 	router, handler := NewRouterWithOptions(testPool, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil,
 		RouterOptions{FeatureFlags: featureflag.NewService(provider)})
-	handler.InternalConnectorClient = &http.Client{Transport: connectorTestTransport{t}}
+	handler.InternalConnectorClient = &http.Client{Transport: connectorTestTransport{t: t}}
 	server := httptest.NewServer(router)
 	defer server.Close()
 
@@ -69,6 +69,11 @@ func TestInternalConnectorManagementRejectsTaskTokenAndURLChange(t *testing.T) {
 		return res.StatusCode, result
 	}
 
+	invalidTarget := map[string]any{"name": "Test", "upstream_url": "https://other.example.test/mcp", "allowed_tools": []string{"read"}, "agent_ids": []string{}, "enabled": false}
+	status, rejected := call(http.MethodPost, base, testToken, invalidTarget)
+	if status != http.StatusBadRequest || rejected["error"] != "upstream host is not in the deployment allowlist" {
+		t.Fatalf("admin did not receive actionable validation reason: status=%d body=%v", status, rejected)
+	}
 	status, created := call(http.MethodPost, base, testToken, input)
 	if status != http.StatusOK {
 		t.Fatalf("human create: status=%d body=%v", status, created)
@@ -89,9 +94,15 @@ func TestInternalConnectorManagementRejectsTaskTokenAndURLChange(t *testing.T) {
 		t.Fatalf("credential not sealed: len=%d err=%v", len(ciphertext), err)
 	}
 	status, result = call(http.MethodPost, base+"/"+connectorID+"/test", testToken, nil)
-	if status != http.StatusOK || result["reachable"] != true || strings.Contains(fmt.Sprint(result), "workspace-secret") {
+	if status != http.StatusOK || result["reachable"] != true || result["ready"] != true || strings.Contains(fmt.Sprint(result), "workspace-secret") {
 		t.Fatalf("connectivity test failed or leaked credential: status=%d body=%v", status, result)
 	}
+	handler.InternalConnectorClient = &http.Client{Transport: connectorTestTransport{t: t, empty: true}}
+	status, result = call(http.MethodPost, base+"/"+connectorID+"/test", testToken, nil)
+	if status != http.StatusOK || result["reachable"] != true || result["ready"] != false || !strings.Contains(fmt.Sprint(result["missing_tools"]), "read") {
+		t.Fatalf("empty upstream tool list was presented as ready: status=%d body=%v", status, result)
+	}
+	handler.InternalConnectorClient = &http.Client{Transport: connectorTestTransport{t: t}}
 
 	for _, tc := range []struct {
 		method, path string
@@ -170,7 +181,10 @@ func TestInternalConnectorManagementRejectsTaskTokenAndURLChange(t *testing.T) {
 	}
 }
 
-type connectorTestTransport struct{ t *testing.T }
+type connectorTestTransport struct {
+	t     *testing.T
+	empty bool
+}
 
 func (transport connectorTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Host != "safe.example.test" || req.Header.Get("Authorization") != "Bearer workspace-secret" || req.Header.Get("X-Task-ID") != "" {
@@ -182,5 +196,9 @@ func (transport connectorTestTransport) RoundTrip(req *http.Request) (*http.Resp
 	if err := json.NewDecoder(req.Body).Decode(&rpc); err != nil || rpc.Method != "tools/list" {
 		transport.t.Errorf("connectivity test invoked an unexpected method: %q %v", rpc.Method, err)
 	}
-	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}}`))}, nil
+	response := `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}}`
+	if transport.empty {
+		response = `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`
+	}
+	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(response))}, nil
 }
