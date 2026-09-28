@@ -86,7 +86,7 @@ export function InternalConnectorsPage() {
     try {await navigator.clipboard.writeText(prompt);setCopyError(false);navigation.push(paths.chatWithAgent(agentId));}
     catch {setCopyError(true);setQuestion(prompt)}
   }
-  function promptFor(name:string,id:string) {return t(($)=>$.internal_mcp.example,{name,server:`internal-${id}`});}
+  function promptFor(name:string,serverName:string) {return t(($)=>$.internal_mcp.example,{name,server:serverName});}
 
   const present=list.data??[];
   const visible=available.data??[];
@@ -130,7 +130,7 @@ export function InternalConnectorsPage() {
         {visible.map((c)=><article key={`${c.id}-${c.agentId}`} className="space-y-3 rounded-xl border border-border bg-card p-5">
           <h3 className="text-title-sm font-semibold">{c.name}</h3><p className="text-body text-muted-foreground">{t(($)=>$.internal_mcp.with_agent,{name:c.agentName})}</p>
           <div className="flex flex-wrap gap-1">{c.tools.map((name)=><code key={name} className="rounded bg-muted px-2 py-1 text-caption">{name}</code>)}</div>
-          <div className="flex flex-wrap gap-2"><Button onClick={()=>copyAndOpen(c.agentId,promptFor(c.name,c.id))}><Copy className="mr-2 size-4"/>{t(($)=>$.internal_mcp.open_chat)}</Button><Button variant="outline" onClick={()=>navigation.push(paths.chatWithAgent(c.agentId))}>{t(($)=>$.semantica.open_chat)}</Button></div>
+          <div className="flex flex-wrap gap-2"><Button onClick={()=>copyAndOpen(c.agentId,promptFor(c.name,c.serverName))}><Copy className="mr-2 size-4"/>{t(($)=>$.internal_mcp.open_chat)}</Button><Button variant="outline" onClick={()=>navigation.push(paths.chatWithAgent(c.agentId))}>{t(($)=>$.semantica.open_chat)}</Button></div>
         </article>)}
         {showLegacy && <article className="space-y-3 rounded-xl border border-border border-l-4 border-l-primary bg-card p-5">
           <div className="flex items-center justify-between gap-2"><h3 className="text-title-sm font-semibold">{t(($)=>$.internal_mcp.legacy_name)}</h3><Badge variant="secondary">{t(($)=>$.internal_mcp.legacy)}</Badge></div>

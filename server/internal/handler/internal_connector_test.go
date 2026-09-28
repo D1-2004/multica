@@ -161,3 +161,59 @@ func TestConnectorTestFailureMessageIsActionableWithoutUpstreamBody(t *testing.T
 		}
 	}
 }
+
+func TestInternalConnectorToolNamesStayWithinPiLimit(t *testing.T) {
+	t.Setenv("MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES", "pre-wiki.dingtalk.alibaba-inc.com")
+	id := "a3fc1b87-7e59-452f-951d-7a317e110709"
+	server := connectorServerName(id)
+	if server != "ca3fc1b877e59452f" {
+		t.Fatalf("unstable connector server name: %q", server)
+	}
+	for _, original := range []string{"get_knowledge_graph_schema", "get_knowledge_node_schema", "query_knowledge_cypher", "search_knowledge", strings.Repeat("long_tool_", 12)} {
+		presented := connectorPresentedToolName(original)
+		if n := len("mcp__" + server + "__" + presented); n > 62 {
+			t.Fatalf("Pi MCP name remains too long: %d %q", n, presented)
+		}
+		if resolved, ok := connectorOriginalAllowedTool([]string{original}, presented); !ok || resolved != original {
+			t.Fatalf("alias did not resolve back to the allowed upstream tool: %q", presented)
+		}
+	}
+	longName := strings.Repeat("long_tool_", 12)
+	if err := validateConnectorInput(connectorInput{Name: "Knowledge", UpstreamURL: "https://pre-wiki.dingtalk.alibaba-inc.com/mcp", AllowedTools: []string{longName, connectorPresentedToolName(longName)}}); err == nil {
+		t.Fatal("alias collision was accepted")
+	}
+}
+
+func TestInternalConnectorLongToolListUsesResolvableAlias(t *testing.T) {
+	id := "a3fc1b87-7e59-452f-951d-7a317e110709"
+	longName := strings.Repeat("read_knowledge_", 6)
+	t.Setenv(connectorCredentialRef(id), "upstream-only")
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Method string `json:"method"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Method != "tools/list" {
+			t.Errorf("unexpected upstream request: %q %v", request.Method, err)
+		}
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":%q,"description":"Read knowledge","inputSchema":{"type":"object"}}]}}`, longName)
+	}))
+	defer upstream.Close()
+	h := &Handler{InternalConnectorClient: upstream.Client()}
+	c := internalConnector{ID: id, CredentialRef: connectorCredentialRef(id), UpstreamURL: upstream.URL, AllowedTools: []string{longName}}
+	result, err := h.callInternalConnectorUpstream(context.Background(), c, "tools/list", connectorRPCParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := result.(map[string]any)
+	tools := list["tools"].([]map[string]any)
+	if len(tools) != 1 {
+		t.Fatalf("wrong filtered tool list: %#v", tools)
+	}
+	alias, _ := tools[0]["name"].(string)
+	if alias == longName || alias != connectorPresentedToolName(longName) || !strings.Contains(tools[0]["description"].(string), longName) {
+		t.Fatalf("long tool was not presented under a documented alias: %#v", tools[0])
+	}
+	if original, ok := connectorOriginalAllowedTool(c.AllowedTools, alias); !ok || original != longName {
+		t.Fatal("presented alias did not resolve to the authorized upstream tool")
+	}
+}

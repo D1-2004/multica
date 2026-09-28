@@ -30,12 +30,14 @@ export type InternalConnector = z.infer<typeof InternalConnectorSchema>;
 export const AvailableInternalConnectorSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
+  server_name: z.string().optional(),
   agent_id: z.string().uuid(),
   agent_name: z.string(),
   tools: z.array(z.string()),
 }).transform((v) => ({
   id: v.id,
   name: v.name,
+  serverName: v.server_name ?? `internal-${v.id}`,
   agentId: v.agent_id,
   agentName: v.agent_name,
   tools: v.tools,

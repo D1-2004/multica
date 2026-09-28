@@ -221,9 +221,13 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		h.writeMulticaMCPError(w, request.ID, -32602, "invalid MCP parameters")
 		return
 	}
-	if request.Method == "tools/call" && (!slices.Contains(c.AllowedTools, params.Name) || !internalMCPJSONObject(params.Arguments)) {
-		h.writeMulticaMCPError(w, request.ID, -32602, "tool is not allowed or arguments are invalid")
-		return
+	if request.Method == "tools/call" {
+		original, allowed := connectorOriginalAllowedTool(c.AllowedTools, params.Name)
+		if !allowed || !internalMCPJSONObject(params.Arguments) {
+			h.writeMulticaMCPError(w, request.ID, -32602, "tool is not allowed or arguments are invalid")
+			return
+		}
+		params.Name = original
 	}
 	if request.Method == "tools/list" && (params.Name != "" || len(params.Arguments) > 0) {
 		h.writeMulticaMCPError(w, request.ID, -32602, "invalid tools/list parameters")
@@ -330,6 +334,11 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 		for _, item := range list.Tools {
 			name, _ := item["name"].(string)
 			if allowed[name] {
+				if presented := connectorPresentedToolName(name); presented != name {
+					item["name"] = presented
+					description, _ := item["description"].(string)
+					item["description"] = "Upstream tool " + name + ". " + description
+				}
 				tools = append(tools, item)
 			}
 		}

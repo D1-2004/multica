@@ -330,7 +330,14 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 		if validateConnectorInput(connectorInput{Name: connector.Name, UpstreamURL: connector.UpstreamURL, AllowedTools: connector.AllowedTools, AgentIDs: []string{uuidToString(agentID)}, Enabled: true}) != nil {
 			continue
 		}
-		name := "internal-" + connector.ID
+		name := connectorServerName(connector.ID)
+		if name == "" {
+			continue
+		}
+		if _, exists := managedServers[name]; exists {
+			slog.WarnContext(ctx, "internal MCP connector server name collision; skipping connector", "connector_id", connector.ID, "server_name", name)
+			continue
+		}
 		path := "/api/internal-connectors/" + connector.ID + "/mcp"
 		managedServers[name] = map[string]any{
 			"type": "http", "url": publicURL + path,

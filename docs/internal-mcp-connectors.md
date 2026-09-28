@@ -20,7 +20,8 @@ server-defined tool names and input schemas. This initial implementation is a
 stateless JSON-RPC subset of Streamable HTTP: it supports local `initialize`,
 `notifications/initialized`, `tools/list` and `tools/call`, but not persistent
 MCP sessions, server notifications, resource or prompt methods. Expose an authorized connector as
-its own MCP server named `internal-<connector ID>` in the Agent's task-scoped
+its own MCP server with a stable compact name (`c` plus the first 16 UUID hex
+digits) in the Agent's task-scoped
 MCP configuration. `initialize` is handled locally; `tools/list` fetches the
 upstream list and returns only the configured allowlist. `tools/call` requires
 a tool in that allowlist and an object argument. Only explicitly approved
@@ -30,6 +31,16 @@ the existing bounded parser (2 MiB, 45 seconds, no redirects). Long calls
 flush response headers after authorization to survive the outer 30-second
 header deadline. Upstream tool errors retain bounded text so the Agent can
 correct its arguments; transport and parse failures remain generic.
+
+Pi composes MCP tool names from the server and upstream tool names, and rejects
+overlong names before the Agent starts. The compact server name and a bounded
+tool presentation name keep that composite at most 62 bytes. Upstream names
+over 38 bytes are exposed under stable `t_<hash>` aliases; tool descriptions
+retain the original names, and `tools/call` resolves aliases back to the
+original only after the configured allowlist check. Alias collisions in one
+connector are rejected at configuration time. The relay URL and authorization
+continue to use the full connector UUID; shortening the display name does not
+shorten the security identifier.
 
 ## Configuration and rollout
 
@@ -109,7 +120,7 @@ new deployment. No API returns a saved credential.
 Semantica's current `semantica_mcp_relay` tool remains available during the
 migration to avoid breaking active pre-release tasks. Once its workspace
 connector has a provisioned credential and the real DingTalk task has called
-its native `internal-<id>` endpoint successfully, remove the legacy tool,
+its compact native MCP endpoint successfully, remove the legacy tool,
 legacy env keys and Semantica-only status endpoint in a later reviewed change.
 Do not advertise the generic connector as accepted merely because the old
 Semantica wrapper still works. Do not publish or merge production in this task.

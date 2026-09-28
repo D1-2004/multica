@@ -74,11 +74,17 @@ func validateConnectorInput(in connectorInput) error {
 		return errors.New("enabled connector requires an Agent grant")
 	}
 	seen := map[string]bool{}
+	presentedSeen := map[string]bool{}
 	for _, tool := range in.AllowedTools {
 		if len(tool) == 0 || len(tool) > 128 || strings.ContainsAny(tool, ",\r\n") || seen[tool] {
 			return errors.New("invalid or duplicate allowed tool")
 		}
 		seen[tool] = true
+		presented := connectorPresentedToolName(tool)
+		if presentedSeen[presented] {
+			return errors.New("allowed tools collide after MCP name shortening")
+		}
+		presentedSeen[presented] = true
 	}
 	agentSeen := map[string]bool{}
 	for _, id := range in.AgentIDs {
@@ -345,7 +351,7 @@ func (h *Handler) ListAvailableInternalConnectors(w http.ResponseWriter, r *http
 		if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, ws) || !h.canInvokeAgent(r.Context(), agent, actorType, actorID, userID, ws) {
 			continue
 		}
-		items = append(items, map[string]any{"id": c.ID, "name": c.Name, "agent_id": agentID, "agent_name": agent.Name, "tools": c.AllowedTools})
+		items = append(items, map[string]any{"id": c.ID, "name": c.Name, "server_name": connectorServerName(c.ID), "agent_id": agentID, "agent_name": agent.Name, "tools": c.AllowedTools})
 	}
 	if rows.Err() != nil {
 		writeError(w, 500, "connector list unavailable")

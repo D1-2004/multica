@@ -160,7 +160,7 @@ func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) 
 	found := []string{}
 	missing := []string{}
 	for _, name := range c.AllowedTools {
-		if tools[name] {
+		if tools[connectorPresentedToolName(name)] {
 			found = append(found, name)
 		} else {
 			missing = append(missing, name)
