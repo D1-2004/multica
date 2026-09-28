@@ -31,6 +31,7 @@ type countingRunner struct {
 }
 
 func (r *countingRunner) Run(_ context.Context, _ string, args []string, _ []string) (string, error) {
+	requireFCE2BSDKAccepts(args)
 	joined := strings.Join(args, " ")
 	switch {
 	case strings.Contains(joined, "sandbox create"):

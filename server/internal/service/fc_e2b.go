@@ -143,6 +143,10 @@ type FCE2BConfig struct {
 	TimeoutSeconds                    int
 	SandboxReadyTimeout               time.Duration
 	ParseError                        error
+	// SDKRollout is runtime.fc_e2b_sdk_rollout of the snapshot this
+	// configuration came from; the zero value keeps the CLI and leaves a
+	// cancelled task's processes alone.
+	SDKRollout FCE2BSDKRollout
 }
 
 func FCE2BConfigFromEnv() FCE2BConfig {
@@ -767,7 +771,7 @@ func (OSCommandRunner) Run(ctx context.Context, name string, args []string, env 
 
 func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunner) ([]FCE2BTemplate, error) {
 	if runner == nil {
-		runner = OSCommandRunner{}
+		runner = defaultFCE2BCommandRunner()
 	}
 	if err := cfg.ValidateTemplateAPI(); err != nil {
 		return nil, err
@@ -972,6 +976,9 @@ type FCE2BLauncher struct {
 	sleep              func(context.Context, time.Duration) error
 	jitter             func(time.Duration) time.Duration
 	dshProvider        func(dshhost.Storage) (dshhost.Provider, error)
+	// stopPass runs one pass of a cancelled-task stop; nil runs
+	// stopCancelledTaskProcesses.
+	stopPass func(ctx context.Context, frozen *FCE2BLauncher, taskID pgtype.UUID, pass int)
 
 	// LLMTraceCaptureAlways turns on sandbox model request/response capture
 	// for every task on a capable runtime image, independent of Router
@@ -1133,7 +1140,7 @@ type fcE2BTaskScope struct {
 
 func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner CommandRunner) *FCE2BLauncher {
 	if runner == nil {
-		runner = OSCommandRunner{}
+		runner = defaultFCE2BCommandRunner()
 	}
 	return &FCE2BLauncher{
 		Queries:          q,
@@ -1371,6 +1378,11 @@ func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) 
 	if !IsFCE2BRuntime(runtime) {
 		return nil
 	}
+	ctx = WithFCE2BScope(ctx, FCE2BScope{
+		WorkspaceID: pgFCE2BScopeID(runtime.WorkspaceID),
+		AgentID:     pgFCE2BScopeID(task.AgentID),
+		RuntimeID:   pgFCE2BScopeID(task.RuntimeID),
+	})
 	trace, traceErr := chattrace.ForTask(task.Context, taskID, task.CreatedAt.Time)
 	if traceErr != nil {
 		failure := ClassifyRuntimeStartFailure(SandboxBackendAliyunFC, "invalid task trace: "+traceErr.Error())
@@ -2859,6 +2871,11 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "OPENAI_BASE_URL="+llmURL,
 		"-e", "OPENAI_API_KEY="+llmKey,
 	)
+	// The cancelled-task stop proves ownership by this marker, so it follows
+	// the same switch.
+	if fcE2BRolloutSelects(l.Config.SDKRollout, fcE2BScopeFrom(ctx)) {
+		args = append(args, "-e", fcE2BTaskMarkerEnv+"="+util.UUIDToString(taskID))
+	}
 	if coldStart {
 		args = append(args, "-e", "MULTICA_FC_E2B_COLD_START=true")
 	}
@@ -2907,6 +2924,11 @@ func (l *FCE2BLauncher) runE2BCommand(ctx context.Context, args []string) (strin
 }
 
 func (l *FCE2BLauncher) runE2BCommandWithTimeout(ctx context.Context, timeout time.Duration, args []string) (string, error) {
+	if l.ConfigProvider == nil {
+		// A frozen snapshot routes every command it sends, so one launch or
+		// stop never mixes two generations of the switch.
+		ctx = withFCE2BFrozenRollout(ctx, l.Config.SDKRollout)
+	}
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return l.Runner.Run(cmdCtx, l.Config.CLIPath, args, l.e2bEnv())

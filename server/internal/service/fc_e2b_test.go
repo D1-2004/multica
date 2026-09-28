@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/chattrace"
@@ -101,6 +103,7 @@ type fakeCommandCall struct {
 }
 
 func (f *fakeCommandRunner) Run(ctx context.Context, name string, args []string, env []string) (string, error) {
+	requireFCE2BSDKAccepts(args)
 	f.calls = append(f.calls, fakeCommandCall{
 		name: name,
 		args: append([]string(nil), args...),
@@ -724,6 +727,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		CLIPath:             "/usr/local/bin/e2b",
 		TimeoutSeconds:      1800,
 		SandboxReadyTimeout: time.Second,
+		SDKRollout:          FCE2BSDKRollout{Enabled: true, Percent: 100},
 	}, runner)
 
 	sandboxID, err := launcher.createSandbox(context.Background(), "multica-fc-hermes-v1")
@@ -815,6 +819,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 		"-e", "DWS_CONFIG_DIR=/home/user/.dws",
 		"-e", "OPENAI_BASE_URL=https://api-deap.dingtalk.com/deapai",
 		"-e", "OPENAI_API_KEY=maas_secret",
+		"-e", "FC_E2B_TASK_ID=22222222-2222-2222-2222-222222222222",
 		"-e", "MULTICA_FC_E2B_COLD_START=true",
 		"-e", "OPENAI_MODEL=qwen3.7-max",
 		"sbx_123",
@@ -826,6 +831,42 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 	}
 	if !reflect.DeepEqual(runner.calls[3].args, wantExecArgs) {
 		t.Fatalf("exec args = %#v, want %#v", runner.calls[3].args, wantExecArgs)
+	}
+}
+
+// The cancelled-task stop proves ownership by FC_E2B_TASK_ID, so the runner
+// carries it exactly where runtime.fc_e2b_sdk_rollout selects the task.
+func TestFCE2BRunnerTaskMarkerFollowsTheSDKRollout(t *testing.T) {
+	workspace, agent := uuid.New(), uuid.New()
+	rt := db.AgentRuntime{
+		ID:       util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		Name:     "FC-Hermes",
+		DaemonID: pgtype.Text{String: "fc-e2b:ws:fc-hermes", Valid: true},
+		Metadata: []byte(`{"runner":"multica-fc-hermes-container-log-entry"}`),
+	}
+	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	marker := "FC_E2B_TASK_ID=22222222-2222-2222-2222-222222222222"
+	scoped := WithFCE2BScope(context.Background(), FCE2BScope{WorkspaceID: workspace, AgentID: agent, RuntimeID: uuid.UUID(rt.ID.Bytes)})
+	for _, tc := range []struct {
+		name    string
+		rollout FCE2BSDKRollout
+		want    bool
+	}{
+		{"absent", FCE2BSDKRollout{}, false},
+		{"master switch off", FCE2BSDKRollout{AgentIDs: []string{agent.String()}}, false},
+		{"other workspace", FCE2BSDKRollout{Enabled: true, WorkspaceIDs: []string{uuid.New().String()}}, false},
+		{"agent listed", FCE2BSDKRollout{Enabled: true, AgentIDs: []string{agent.String()}}, true},
+		{"workspace listed", FCE2BSDKRollout{Enabled: true, WorkspaceIDs: []string{workspace.String()}}, true},
+	} {
+		runner := &fakeCommandRunner{}
+		launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{ServerURL: "https://api.multica.test", CLIPath: "e2b", SDKRollout: tc.rollout}, runner)
+		launch := mustFCE2BRunnerLaunch(t, rt)
+		if err := launcher.execRunOnce(scoped, "sbx_1", rt, launch.Mode, taskID, "mdt_test_token", false, nil); err != nil {
+			t.Fatalf("%s: execRunOnce: %v", tc.name, err)
+		}
+		if got := slices.Contains(runner.calls[0].args, marker); got != tc.want {
+			t.Fatalf("%s: marker present = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 

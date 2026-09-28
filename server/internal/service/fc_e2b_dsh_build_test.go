@@ -42,6 +42,7 @@ type buildControlRunner struct {
 
 func (r *buildControlRunner) Run(_ context.Context, name string, args, env []string) (string, error) {
 	r.t.Helper()
+	requireFCE2BSDKAccepts(args)
 	if name != "/fixture/e2b" || len(env) != 3 {
 		r.t.Fatal("unexpected CLI or ambient worker credentials")
 	}

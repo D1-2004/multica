@@ -29,6 +29,7 @@ const (
 // through the wsfs-write host. A workspace without a provisioned binding is a
 // no-op so the OSS catalog can still exist before NAS is ready.
 func (l *FCE2BLauncher) SyncSharedFile(ctx context.Context, workspaceID uuid.UUID, rel string, data []byte) error {
+	ctx = WithFCE2BScope(ctx, FCE2BScope{WorkspaceID: workspaceID})
 	if l == nil || l.Pool == nil || workspaceID == uuid.Nil {
 		return nil
 	}
@@ -53,6 +54,7 @@ func (l *FCE2BLauncher) SyncSharedFile(ctx context.Context, workspaceID uuid.UUI
 // SyncSharedRename moves one shared path on NAS. A missing source is left
 // alone. An existing destination is not overwritten.
 func (l *FCE2BLauncher) SyncSharedRename(ctx context.Context, workspaceID uuid.UUID, oldRel, newRel string) error {
+	ctx = WithFCE2BScope(ctx, FCE2BScope{WorkspaceID: workspaceID})
 	oldClean, err := wsfs.JailRelPath(oldRel)
 	if err != nil || oldClean == "." {
 		return fmt.Errorf("shared rename source: %w", err)
@@ -73,6 +75,7 @@ func (l *FCE2BLauncher) SyncSharedRename(ctx context.Context, workspaceID uuid.U
 // SyncSharedDelete removes one shared path on NAS, including a directory tree.
 // A path that is already absent is success.
 func (l *FCE2BLauncher) SyncSharedDelete(ctx context.Context, workspaceID uuid.UUID, rel string) error {
+	ctx = WithFCE2BScope(ctx, FCE2BScope{WorkspaceID: workspaceID})
 	cleaned, err := wsfs.JailRelPath(rel)
 	if err != nil || cleaned == "." {
 		return fmt.Errorf("shared delete path: %w", err)
@@ -123,6 +126,7 @@ func (l *FCE2BLauncher) withSharedNAS(ctx context.Context, workspaceID uuid.UUID
 // It is used when an agent is granted access, so a read-only mount is not
 // asked to create the files itself.
 func (l *FCE2BLauncher) SyncSharedCatalog(ctx context.Context, workspaceID uuid.UUID) error {
+	ctx = WithFCE2BScope(ctx, FCE2BScope{WorkspaceID: workspaceID})
 	if l == nil || l.Pool == nil || l.ObjectStorage == nil || workspaceID == uuid.Nil {
 		return nil
 	}
