@@ -1117,15 +1117,20 @@ func recoverDuplicateAgentChatDispatch(
 	}, nil
 }
 
-func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext, agent db.Agent) {
-	decision := inboundcoord.Decision{Action: inboundcoord.ActionContinue, Reason: "attachment_execution_path"}
-	hasAttachments := false
+// dispatchHasAttachments reports whether a message of the window carries
+// attachments, which send the window down the attachment execution path.
+func dispatchHasAttachments(c DispatchCommand) bool {
 	for _, message := range c.Event.Data.Messages {
 		if message.Reaction == nil && len(message.Attachments) > 0 {
-			hasAttachments = true
+			return true
 		}
 	}
-	if !hasAttachments || c.ProactiveConversation || decisionScope(r.Context()) != nil {
+	return false
+}
+
+func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext, agent db.Agent) {
+	decision := inboundcoord.Decision{Action: inboundcoord.ActionContinue, Reason: "attachment_execution_path"}
+	if !dispatchHasAttachments(c) || c.ProactiveConversation || decisionScope(r.Context()) != nil {
 		decision = decideDispatchCoordinator(
 			r.Context(), h, c, agent, prompt.DisplayContent,
 			dispatchContext.UserID,
@@ -1613,6 +1618,22 @@ func decideDispatchCoordinator(
 		return inboundcoord.Decision{Action: inboundcoord.ActionContinue}
 	}
 	coord := h.inboundCoordinator()
+	turn := coordinatorDecisionTurn(ctx, h, coord, command, agent, message, userID, issueDispatchContext)
+	return coord.Decide(ctx, turn)
+}
+
+// coordinatorDecisionTurn assembles the Turn a dispatch decision reads. The
+// collect-window shadow builds the same Turn for the job it will compare.
+func coordinatorDecisionTurn(
+	ctx context.Context,
+	h *Handler,
+	coord *inboundcoord.Coordinator,
+	command DispatchCommand,
+	agent db.Agent,
+	message string,
+	userID pgtype.UUID,
+	issueDispatchContext []byte,
+) inboundcoord.Turn {
 	turn := coordinatorHistoryInputs(command, agent.ID, inboundcoord.HistoryBeforeFromContext(ctx))
 	turn.UserDecisionEnabled = decisionScope(ctx) != nil
 	turn.UserDecisionRequestID = decisionRequestID(ctx)
@@ -1629,7 +1650,7 @@ func decideDispatchCoordinator(
 		turn.Busy = true
 	}
 	coord.FillVoice(ctx, &turn)
-	return coord.Decide(ctx, turn)
+	return turn
 }
 
 // coordinatorHistoryInputs returns the Turn fields that decide a DingTalk

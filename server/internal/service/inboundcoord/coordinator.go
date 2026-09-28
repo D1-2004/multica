@@ -271,6 +271,7 @@ type Coordinator struct {
 	// keeps the read at claim time.
 	HistoryPrefetchAgentProvider func(pgtype.UUID) bool
 	windowHistory                *windowHistoryReads
+	firstRoundShadows            *firstRoundShadows
 	windowHistoryAllowed         bool
 
 	RouteProvider func(context.Context) (*modelregistry.Route, error)
@@ -296,7 +297,7 @@ type sceneMemoryReader interface {
 // New wires the loop. assocSvc may be nil; missing required evidence defers
 // enabled Coordinator work without creating an unverified sandbox request.
 func New(llmClient *llm.Client, queries historyReader, assocSvc *assoc.Service) *Coordinator {
-	c := &Coordinator{LLM: llmClient, Queries: queries, Assoc: assocSvc, windowHistory: newWindowHistoryReads()}
+	c := &Coordinator{LLM: llmClient, Queries: queries, Assoc: assocSvc, windowHistory: newWindowHistoryReads(), firstRoundShadows: newFirstRoundShadows()}
 	if assocSvc != nil {
 		tools := &AssocTools{Service: assocSvc}
 		if issues, ok := queries.(IssueAccess); ok {
@@ -387,6 +388,57 @@ func hostSilence(turn Turn, reason string) Decision {
 
 // Decide returns a verdict or an explicit deferred state. Model/evidence
 // failures do not expand authorization by bypassing the validated plan.
+// decisionSnapshot samples the model route and the rollout switches once for
+// one decision, so a switch flipped mid-decision cannot mix configurations.
+func (c *Coordinator) decisionSnapshot(ctx context.Context, turn Turn) (*Coordinator, error) {
+	snapshot := *c
+	snapshot.model = c.configuredModel()
+	snapshot.ModelProvider = nil
+	snapshot.finishRecovery = c.finishRecoveryEnabled()
+	if c.FinishRecoveryAgentProvider != nil {
+		snapshot.finishRecovery = c.FinishRecoveryAgentProvider(turn.AgentID)
+	}
+	snapshot.FinishRecoveryProvider = nil
+	snapshot.FinishRecoveryAgentProvider = nil
+	snapshot.windowHistoryAllowed = c.historyPrefetchAllowed(turn)
+	snapshot.HistoryPrefetchAgentProvider = nil
+	if c.RouteProvider != nil {
+		route, err := c.RouteProvider(ctx)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.Chat = route
+		snapshot.model = route.Model()
+		snapshot.RouteProvider = nil
+	}
+	return &snapshot, nil
+}
+
+// normalizeDecisionHistory fixes the history cutoff and status the loop reads.
+func normalizeDecisionHistory(turn *Turn) {
+	if turn.HistoryBefore.IsZero() {
+		turn.HistoryBefore = turn.MessageTimestamp
+		if turn.HistoryBefore.IsZero() {
+			turn.HistoryBefore = time.Now().UTC()
+		}
+	}
+	if turn.Source == SourceWeb && !turn.HistoryBefore.IsZero() {
+		kept := make([]HistoryLine, 0, len(turn.History))
+		for _, line := range turn.History {
+			if line.Timestamp.IsZero() || line.Timestamp.Before(turn.HistoryBefore) {
+				kept = append(kept, line)
+			}
+		}
+		turn.History = kept
+	}
+	if turn.HistoryStatus == "" {
+		turn.HistoryStatus = "not_loaded"
+		if len(turn.DingTalkHistory) > 0 || len(turn.History) > 0 {
+			turn.HistoryStatus = "loaded"
+		}
+	}
+}
+
 func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision) {
 	if strings.TrimSpace(turn.TraceID) == "" {
 		turn.TraceID = TraceIDFromContext(ctx)
@@ -405,27 +457,11 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	if c == nil {
 		return Decision{Action: ActionContinue}
 	}
-	snapshot := *c
-	snapshot.model = c.configuredModel()
-	snapshot.ModelProvider = nil
-	snapshot.finishRecovery = c.finishRecoveryEnabled()
-	if c.FinishRecoveryAgentProvider != nil {
-		snapshot.finishRecovery = c.FinishRecoveryAgentProvider(turn.AgentID)
+	snapshot, snapshotErr := c.decisionSnapshot(ctx, turn)
+	if snapshotErr != nil {
+		return Decision{Action: ActionDeferred, Reason: "model_configuration_unavailable"}
 	}
-	snapshot.FinishRecoveryProvider = nil
-	snapshot.FinishRecoveryAgentProvider = nil
-	snapshot.windowHistoryAllowed = c.historyPrefetchAllowed(turn)
-	snapshot.HistoryPrefetchAgentProvider = nil
-	if c.RouteProvider != nil {
-		route, err := c.RouteProvider(ctx)
-		if err != nil {
-			return Decision{Action: ActionDeferred, Reason: "model_configuration_unavailable"}
-		}
-		snapshot.Chat = route
-		snapshot.model = route.Model()
-		snapshot.RouteProvider = nil
-	}
-	c = &snapshot
+	c = snapshot
 	turn.model = c.model
 	if c.Ready != nil {
 		ready, err := c.Ready(ctx)
@@ -476,27 +512,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	started := time.Now()
 	turnTrace = c.startTurnTrace(ctx, turn, started)
 	loopCtx = langfuse.ContextWithTrace(loopCtx, turnTrace)
-	if turn.HistoryBefore.IsZero() {
-		turn.HistoryBefore = turn.MessageTimestamp
-		if turn.HistoryBefore.IsZero() {
-			turn.HistoryBefore = time.Now().UTC()
-		}
-	}
-	if turn.Source == SourceWeb && !turn.HistoryBefore.IsZero() {
-		kept := make([]HistoryLine, 0, len(turn.History))
-		for _, line := range turn.History {
-			if line.Timestamp.IsZero() || line.Timestamp.Before(turn.HistoryBefore) {
-				kept = append(kept, line)
-			}
-		}
-		turn.History = kept
-	}
-	if turn.HistoryStatus == "" {
-		turn.HistoryStatus = "not_loaded"
-		if len(turn.DingTalkHistory) > 0 || len(turn.History) > 0 {
-			turn.HistoryStatus = "loaded"
-		}
-	}
+	normalizeDecisionHistory(&turn)
 	decision, err := c.runLoop(loopCtx, turn)
 	loopErr = err
 	elapsed := time.Since(started)
@@ -808,6 +824,9 @@ func (c *Coordinator) prefetchSceneMemory(ctx context.Context, turn *Turn) {
 	}
 	turn.SceneMemoryRevision = row.MemoryRevision
 	turn.SceneTitle = strings.TrimSpace(row.SceneTitle)
+	if hostQuiet(ctx) {
+		return
+	}
 	slog.Info("scene memory injected into coordinator",
 		append(coordinatorLogIndex(*turn),
 			"event", "scene_memory_recall_injected",

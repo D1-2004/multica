@@ -146,7 +146,9 @@ func (c *Coordinator) finishHistoryPrefetch(ctx context.Context, turn *Turn, seq
 	if result.window != "" {
 		logArgs = append(logArgs, "window", result.window, "wait_ms", result.waited.Milliseconds())
 	}
-	slog.Info("inbound coordinator history prefetch", logArgs...)
+	if !hostQuiet(ctx) {
+		slog.Info("inbound coordinator history prefetch", logArgs...)
+	}
 	if timedOut {
 		turn.HistoryStatus = "not_loaded"
 		return call, "", fmt.Errorf("history prefetch timed out after %s", historyPrefetchTimeout)

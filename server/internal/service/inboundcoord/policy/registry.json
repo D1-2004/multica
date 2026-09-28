@@ -496,6 +496,7 @@
         "server/internal/service/inboundcoord/progressive_context.go",
         "server/internal/service/inboundcoord/history_prefetch.go",
         "server/internal/service/inboundcoord/window_history_prefetch.go",
+        "server/internal/service/inboundcoord/first_round_shadow.go",
         "server/internal/service/inboundcoord/policy/inbound.md"
       ],
       "case_file": "cases.json",
@@ -1385,6 +1386,7 @@
         "server/internal/service/inboundcoord/work_state_snapshot.go",
         "server/internal/service/inboundcoord/history_prefetch.go",
         "server/internal/service/inboundcoord/window_history_prefetch.go",
+        "server/internal/service/inboundcoord/first_round_shadow.go",
         "server/internal/service/inboundcoord/retry_budget.go",
         "server/internal/service/inboundcoord/tool_contract.go",
         "server/internal/service/inboundcoord/finish_check_recovery_test.go#TestRejectedProposalRepairsInMainLoopWithoutGrantingWork"
@@ -1557,6 +1559,7 @@
         "server/internal/service/inboundcoord/scene_prefetch.go",
         "server/internal/service/inboundcoord/history_prefetch.go",
         "server/internal/service/inboundcoord/window_history_prefetch.go",
+        "server/internal/service/inboundcoord/first_round_shadow.go",
         "server/internal/service/inboundcoord/retry_budget.go",
         "server/internal/modelregistry/coordinator.go",
         "server/internal/modelregistry/coordinator_test.go"

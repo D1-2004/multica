@@ -29,6 +29,9 @@ const (
 	inboundCoordinatorWorkerMaxAttempts  = 6
 	inboundCoordinatorSceneParkDelay     = 5 * time.Second
 	inboundCoordinatorSceneBusyDelay     = 500 * time.Millisecond
+	// coordinatorShadowAssemblyTimeout bounds the database reads that build
+	// the collect-window shadow's Turn.
+	coordinatorShadowAssemblyTimeout = 2 * time.Second
 )
 
 // InboundCoordinatorJobWorker executes accepted short loops from PostgreSQL.
@@ -901,7 +904,49 @@ func (h *Handler) prefetchCoordinatorWindowHistory(job db.InboundCoordinatorJob)
 			return
 		}
 		h.InboundCoordinatorWorker.WakeAt(util.UUIDToString(job.ID), job.AvailableAt.Time)
+		h.shadowCoordinatorFirstRound(job, command)
 	}()
+}
+
+// shadowCoordinatorFirstRound starts the collect-window shadow of the job's
+// first model request. It assembles the Turn from what the claim uses: the
+// persisted command, its execution plan, the agent row, the idempotency key
+// and the claim context (trace id and history cutoff), without the plan
+// checkpoint and decision observer that only the lease holder installs.
+func (h *Handler) shadowCoordinatorFirstRound(job db.InboundCoordinatorJob, command DispatchCommand) {
+	coordinator := h.InboundCoordinator
+	if coordinator == nil || h.Queries == nil || command.ProactiveConversation || dispatchHasAttachments(command) {
+		return
+	}
+	dispatchContext := agentDispatchContext{
+		EndpointID:          job.DispatchEndpointID,
+		EndpointNamespaceID: job.EndpointNamespaceID,
+		UserID:              job.UserID,
+		WorkspaceID:         job.WorkspaceID,
+		AgentID:             job.AgentID,
+	}
+	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext)
+	if err != nil {
+		return
+	}
+	jobID := util.UUIDToString(job.ID)
+	ctx, cancel := context.WithTimeout(context.Background(), coordinatorShadowAssemblyTimeout)
+	defer cancel()
+	ctx = inboundcoord.ContextWithTraceID(ctx, jobID)
+	ctx = inboundcoord.ContextWithHistoryBefore(ctx, job.CreatedAt.Time)
+	agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: job.AgentID, WorkspaceID: job.WorkspaceID})
+	if err != nil || agent.ArchivedAt.Valid {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/internal/inbound-coordinator", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Idempotency-Key", job.IdempotencyKey)
+	turn := coordinatorDecisionTurn(ctx, h, coordinator, command, agent, plan.Prompt.DisplayContent, job.UserID,
+		dispatchRuntimeContext(command, dispatchIdempotencyKey(req, command)))
+	turn.TraceID = jobID
+	coordinator.ShadowFirstRound(turn)
 }
 
 // windowHistoryEligibleJob reports whether this claim is the first,
