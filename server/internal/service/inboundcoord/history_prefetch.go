@@ -28,7 +28,8 @@ type historyPrefetchResult struct {
 	elapsed  time.Duration
 	// window is the collect-window read outcome: "" when that read is not
 	// enabled for the agent, else hit, miss (no recent matching read on this
-	// replica), failed (fell back to the claim-time read) or timeout (the
+	// replica), reclaimed (a read existed but the job was parked, retried or
+	// re-leased), failed (fell back to the claim-time read) or timeout (the
 	// claim-time budget ran out while the early read was in flight). waited
 	// is how long the decision blocked on the early read.
 	window string
@@ -70,6 +71,11 @@ func (c *Coordinator) startHistoryPrefetch(ctx context.Context, turn Turn) <-cha
 	if c.windowHistoryAllowed {
 		window = "miss"
 		early = c.takeWindowHistory(turn)
+		if early != nil && !windowHistoryEligible(ctx) {
+			// A parked, retried or re-leased job reads at claim time; the
+			// early read is consumed and dropped.
+			early, window = nil, "reclaimed"
+		}
 	}
 	go func() {
 		defer cancel()

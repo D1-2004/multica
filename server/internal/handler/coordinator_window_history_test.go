@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -88,8 +89,8 @@ func TestCommittedCoordinatorJobReadsHistoryDuringItsWindow(t *testing.T) {
 	loader := &windowHistoryLoader{}
 	coordinator := inboundcoord.New(nil, nil, nil)
 	coordinator.DWSHistory = loader
-	allowed := false
-	coordinator.HistoryPrefetchAgentProvider = func(id pgtype.UUID) bool { return allowed && id == agentID }
+	var allowed atomic.Bool
+	coordinator.HistoryPrefetchAgentProvider = func(id pgtype.UUID) bool { return allowed.Load() && id == agentID }
 	h := &Handler{InboundCoordinator: coordinator}
 	h.InboundCoordinatorWorker = NewInboundCoordinatorJobWorker(h)
 
@@ -105,12 +106,16 @@ func TestCommittedCoordinatorJobReadsHistoryDuringItsWindow(t *testing.T) {
 	default:
 	}
 
-	allowed = true
+	allowed.Store(true)
 	h.prefetchCoordinatorWindowHistory(job)
 	select {
 	case <-h.InboundCoordinatorWorker.notify:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the replica holding the read must wake its workers when the window closes")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(loader.loaded()) < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
 	}
 	turns := loader.loaded()
 	if len(turns) != 1 {
@@ -151,5 +156,62 @@ func TestWindowWakeUpFollowsTheLatestDeadlineOfAJob(t *testing.T) {
 	w.wakeMu.Unlock()
 	if pending != 0 {
 		t.Fatalf("fired wake-ups must be forgotten, %d left", pending)
+	}
+}
+
+func TestOnlyTheFirstUndisturbedClaimMayReuseTheWindowRead(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		job  db.InboundCoordinatorJob
+		want bool
+	}{
+		{"first claim", db.InboundCoordinatorJob{AttemptCount: 1}, true},
+		// A park restores attempt_count but records why it waited.
+		{"after scene-busy park", db.InboundCoordinatorJob{AttemptCount: 1, LastError: pgtype.Text{String: "scene window already running", Valid: true}}, false},
+		{"after retry", db.InboundCoordinatorJob{AttemptCount: 2, LastError: pgtype.Text{String: "model timeout", Valid: true}}, false},
+		{"lease takeover", db.InboundCoordinatorJob{AttemptCount: 2}, false},
+	} {
+		if got := windowHistoryEligibleJob(tc.job); got != tc.want {
+			t.Fatalf("%s: eligible=%v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestWindowReadDoesNotDelayAdmission(t *testing.T) {
+	agentID := pgtype.UUID{Bytes: [16]byte{7}, Valid: true}
+	created := time.Now().UTC()
+	raw, err := json.Marshal(windowHistoryCommand(DispatchMessage{OpenMsgID: "msg-1", Text: "6 点", OccurredAt: created.UnixMilli()}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := db.InboundCoordinatorJob{
+		ID:          pgtype.UUID{Bytes: [16]byte{4}, Valid: true},
+		AgentID:     agentID,
+		Command:     raw,
+		CreatedAt:   pgtype.Timestamptz{Time: created, Valid: true},
+		AvailableAt: pgtype.Timestamptz{Time: created.Add(time.Second), Valid: true},
+	}
+	coordinator := inboundcoord.New(nil, nil, nil)
+	coordinator.DWSHistory = &windowHistoryLoader{}
+	release := make(chan struct{})
+	decided := make(chan struct{})
+	// The rollout lookup stands in for any slow gate before the read.
+	coordinator.HistoryPrefetchAgentProvider = func(pgtype.UUID) bool {
+		defer close(decided)
+		<-release
+		return false
+	}
+	h := &Handler{InboundCoordinator: coordinator}
+	h.InboundCoordinatorWorker = NewInboundCoordinatorJobWorker(h)
+	started := time.Now()
+	h.prefetchCoordinatorWindowHistory(job)
+	if elapsed := time.Since(started); elapsed > 50*time.Millisecond {
+		t.Fatalf("admission waited %s for the window read gate", elapsed)
+	}
+	close(release)
+	select {
+	case <-decided:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the window read gate never ran")
 	}
 }

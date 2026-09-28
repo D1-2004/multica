@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -118,7 +119,7 @@ func TestWindowHistoryReadServesTheClaimedDecision(t *testing.T) {
 
 	turn := windowTurn(cutoff)
 	turn.Message = "6 点"
-	got := c.Decide(context.Background(), turn)
+	got := c.Decide(firstClaim(), turn)
 	if got.Action != ActionReply || calls.Load() != 1 {
 		t.Fatalf("decision=%+v llm_calls=%d", got, calls.Load())
 	}
@@ -156,7 +157,7 @@ func TestWindowHistoryReadNeedsIdenticalInputs(t *testing.T) {
 			turn := windowTurn(cutoff)
 			change(&turn)
 			turn.Message = "6 点"
-			c.Decide(context.Background(), turn)
+			c.Decide(firstClaim(), turn)
 			if n := loader.count(); n != 2 {
 				t.Fatalf("a read with different inputs must not be reused, loads=%d", n)
 			}
@@ -178,7 +179,7 @@ func TestFailedWindowHistoryReadFallsBackToClaimRead(t *testing.T) {
 	waitCalls(t, loader, 1)
 	turn := windowTurn(cutoff)
 	turn.Message = "6 点"
-	c.Decide(context.Background(), turn)
+	c.Decide(firstClaim(), turn)
 	if n := loader.count(); n != 2 {
 		t.Fatalf("a failed window read must be retried at claim, loads=%d", n)
 	}
@@ -205,7 +206,7 @@ func TestInFlightWindowHistoryReadIsAwaitedNotRepeated(t *testing.T) {
 	turn := windowTurn(cutoff)
 	turn.Message = "6 点"
 	started := time.Now()
-	c.Decide(context.Background(), turn)
+	c.Decide(firstClaim(), turn)
 	<-release
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("a running window read must be awaited, not repeated: took %s", elapsed)
@@ -228,7 +229,7 @@ func TestWindowHistoryReadFollowsTheAgentSwitch(t *testing.T) {
 	}
 	turn := windowTurn(cutoff)
 	turn.Message = "6 点"
-	c.Decide(context.Background(), turn)
+	c.Decide(firstClaim(), turn)
 	if n := loader.count(); n != 1 {
 		t.Fatalf("disabled agent must read once at claim, loads=%d", n)
 	}
@@ -240,7 +241,7 @@ func TestWindowHistoryReadFollowsTheAgentSwitch(t *testing.T) {
 	c.PrefetchWindowHistory(windowTurn(cutoff))
 	waitCalls(t, loader, 1)
 	allowed.Store(false)
-	c.Decide(context.Background(), turn)
+	c.Decide(firstClaim(), turn)
 	if n := loader.count(); n != 2 {
 		t.Fatalf("switch-off must restore the claim-time read, loads=%d", n)
 	}
@@ -348,7 +349,7 @@ func TestInFlightWindowHistoryReadStaysWithinTheClaimBudget(t *testing.T) {
 	turn := windowTurn(cutoff)
 	turn.Message = "6 点"
 	started := time.Now()
-	c.Decide(context.Background(), turn)
+	c.Decide(firstClaim(), turn)
 	if elapsed := time.Since(started); elapsed > historyPrefetchTimeout+700*time.Millisecond {
 		t.Fatalf("history wait %s exceeded the claim-time budget %s", elapsed, historyPrefetchTimeout)
 	}
@@ -383,7 +384,7 @@ func TestParkedJobDoesNotReuseAnOldWindowRead(t *testing.T) {
 
 	turn := windowTurn(cutoff)
 	turn.Message = "6 点"
-	c.Decide(context.Background(), turn)
+	c.Decide(firstClaim(), turn)
 	if n := loader.count(); n != 2 {
 		t.Fatalf("an early read older than the reuse age must be read again, loads=%d", n)
 	}
@@ -433,7 +434,7 @@ func TestReusedWindowReadIsShadowCompared(t *testing.T) {
 	}
 	turn := windowTurn(cutoff)
 	turn.Message = "6 点"
-	c.Decide(context.Background(), turn)
+	c.Decide(firstClaim(), turn)
 	for !strings.Contains(logs.String(), "inbound_coordinator_window_history_shadow") && time.Now().Before(deadline.Add(2*time.Second)) {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -482,5 +483,80 @@ func TestWindowHistoryReadSkipsOwnerSwitchOff(t *testing.T) {
 				t.Fatalf("switched-off Coordinator read history %d times", n)
 			}
 		}
+	}
+}
+
+// firstClaim is the context of a job's first, undisturbed claim, the only
+// claim that may reuse the window read.
+func firstClaim() context.Context {
+	return ContextWithWindowHistoryEligible(context.Background())
+}
+
+func TestParkedOrRetriedClaimReadsAtClaimTimeEvenWithAFreshWindowRead(t *testing.T) {
+	// A scene-busy park is only 500 ms: the re-claim comes well within the
+	// reuse age, with the same key, and must still read at claim time.
+	loader := &scriptedHistory{answers: [][]HistoryLine{
+		{{Role: "菲迪", Content: "早读看到的旧上下文"}},
+		{{Role: "菲迪", Content: "认领时的新上下文"}},
+	}}
+	var allowed atomic.Bool
+	allowed.Store(true)
+	var calls atomic.Int32
+	prompt := new(string)
+	c := &Coordinator{LLM: decisionLLM(t, &calls, prompt, false), DWSHistory: loader, windowHistory: newWindowHistoryReads()}
+	c.HistoryPrefetchAgentProvider = func(pgtype.UUID) bool { return allowed.Load() }
+	cutoff := time.Date(2026, 9, 29, 1, 0, 0, 0, time.UTC)
+	c.PrefetchWindowHistory(windowTurn(cutoff))
+	deadline := time.Now().Add(2 * time.Second)
+	for loader.count() < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	turn := windowTurn(cutoff)
+	turn.Message = "6 点"
+	c.Decide(context.Background(), turn) // no first-claim mark: parked, retried or re-leased
+	if n := loader.count(); n != 2 {
+		t.Fatalf("a re-claimed job must read at claim time, loads=%d", n)
+	}
+	if !strings.Contains(*prompt, "认领时的新上下文") || strings.Contains(*prompt, "早读看到的旧上下文") {
+		t.Fatalf("the claim-time history must be used: %q", *prompt)
+	}
+	if c.takeWindowHistory(windowTurn(cutoff)) != nil {
+		t.Fatal("the unused early read must be dropped, not left for another claim")
+	}
+}
+
+func TestCompareHistoryCoversEveryModelVisibleField(t *testing.T) {
+	base := HistoryLine{Role: "菲迪", Content: "晚上几点出发？", EvidenceID: "m1", Timestamp: time.Date(2026, 9, 29, 1, 0, 0, 0, time.UTC),
+		TimestampRaw: "2026-09-29 09:00:00", SenderID: "u1", ReplyToEvidenceID: "m0", ReplyToSenderID: "u0"}
+	if compareHistory([]HistoryLine{base}, []HistoryLine{base}) != "match" {
+		t.Fatal("identical reads must match")
+	}
+	shifted := base
+	shifted.Timestamp = base.Timestamp.In(time.FixedZone("Asia/Shanghai", 8*60*60))
+	if compareHistory([]HistoryLine{base}, []HistoryLine{shifted}) != "match" {
+		t.Fatal("the same instant in another location is the same timestamp")
+	}
+	// Every field of HistoryLine reaches the prompt, so changing any one of
+	// them must be a mismatch; a new field fails here until it is compared.
+	v := reflect.ValueOf(base)
+	for i := 0; i < v.NumField(); i++ {
+		changed := base
+		f := reflect.ValueOf(&changed).Elem().Field(i)
+		switch f.Kind() {
+		case reflect.String:
+			f.SetString(f.String() + "-changed")
+		case reflect.Bool:
+			f.SetBool(!f.Bool())
+		case reflect.Struct:
+			changed.Timestamp = base.Timestamp.Add(time.Second)
+		default:
+			t.Fatalf("field %s of kind %s is not covered by this test", v.Type().Field(i).Name, f.Kind())
+		}
+		if compareHistory([]HistoryLine{base}, []HistoryLine{changed}) != "mismatch" {
+			t.Fatalf("a change of %s must be a mismatch", v.Type().Field(i).Name)
+		}
+	}
+	if compareHistory([]HistoryLine{base}, []HistoryLine{base, base}) != "mismatch" {
+		t.Fatal("a different message count must be a mismatch")
 	}
 }

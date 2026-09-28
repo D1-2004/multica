@@ -23,12 +23,13 @@ import (
 //
 // Equal inputs do not by themselves prove an equal DWS answer: a message
 // before the cutoff may become visible to the list only after the early
-// read. Reuse is therefore limited to reads started within
-// windowHistoryReuseAge of the claim (a parked job reads again), and every
-// reuse is shadow-compared with a claim-time read off the critical path.
+// read. Reuse is therefore limited to the first, undisturbed claim of the
+// window (a parked, retried or re-leased job reads again) and to reads
+// started within windowHistoryReuseAge of it, and every reuse is
+// shadow-compared with a claim-time read off the critical path.
 const (
 	// windowHistoryReuseAge covers the normal claim of the read's own window
-	// (4 s after the message that started it) and excludes parked jobs.
+	// (4 s after the message that started it).
 	windowHistoryReuseAge = 8 * time.Second
 	// windowHistoryTTL drops reads that were never claimed on this replica.
 	windowHistoryTTL = 90 * time.Second
@@ -110,9 +111,11 @@ func (c *Coordinator) PrefetchWindowHistory(turn Turn) bool {
 	}
 	// The claimed decision skips its whole loop, history included, when the
 	// owner switched the Coordinator off; an early read would be wasted.
+	switchStarted := time.Now()
 	switchCtx, cancelSwitch := context.WithTimeout(context.Background(), ownerSwitchTimeout)
 	off := c.coordinatorOff(switchCtx, turn)
 	cancelSwitch()
+	switchElapsed := time.Since(switchStarted)
 	if off {
 		return false
 	}
@@ -154,7 +157,7 @@ func (c *Coordinator) PrefetchWindowHistory(turn Turn) bool {
 	}()
 	slog.Info("inbound coordinator window history read started", append(coordinatorLogIndex(turn),
 		"event", "inbound_coordinator_window_history_started",
-		"window_messages", len(turn.Utterances))...)
+		"window_messages", len(turn.Utterances), "switch_ms", switchElapsed.Milliseconds())...)
 	return true
 }
 
@@ -208,16 +211,38 @@ func (c *Coordinator) shadowWindowHistory(turn Turn, early *windowHistoryRead) {
 	}()
 }
 
-// compareHistory reports whether two reads hold the same messages, by
-// evidence id and content, in the same order.
+// compareHistory reports whether two reads hold the same messages in the
+// same order, field by field over everything the prompt can show: role,
+// content and its truncation, evidence id, sender, both timestamps and the
+// quoted message. Timestamps compare as instants, not by location.
 func compareHistory(a, b []HistoryLine) string {
 	if len(a) != len(b) {
 		return "mismatch"
 	}
 	for i := range a {
-		if a[i].EvidenceID != b[i].EvidenceID || a[i].Content != b[i].Content || a[i].Role != b[i].Role {
+		x, y := a[i], b[i]
+		if x.Role != y.Role || x.Content != y.Content || x.ContentTruncated != y.ContentTruncated ||
+			x.EvidenceID != y.EvidenceID || x.SenderID != y.SenderID ||
+			!x.Timestamp.Equal(y.Timestamp) || x.TimestampRaw != y.TimestampRaw ||
+			x.ReplyToEvidenceID != y.ReplyToEvidenceID || x.ReplyToSenderID != y.ReplyToSenderID {
 			return "mismatch"
 		}
 	}
 	return "match"
+}
+
+type windowHistoryEligibleKey struct{}
+
+// ContextWithWindowHistoryEligible marks a decision as the first,
+// undisturbed claim of its collect window. Only such a decision may reuse
+// the window's early history read: a parked, retried or re-leased job may be
+// claimed within the reuse age of the early read, but its context can have
+// moved on, so it reads at claim time.
+func ContextWithWindowHistoryEligible(ctx context.Context) context.Context {
+	return context.WithValue(ctx, windowHistoryEligibleKey{}, true)
+}
+
+func windowHistoryEligible(ctx context.Context) bool {
+	eligible, _ := ctx.Value(windowHistoryEligibleKey{}).(bool)
+	return eligible
 }

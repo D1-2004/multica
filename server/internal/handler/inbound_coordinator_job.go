@@ -235,6 +235,9 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if err != nil {
 		return true, w.retry(ctx, job, err)
 	}
+	if windowHistoryEligibleJob(job) {
+		jobCtx = inboundcoord.ContextWithWindowHistoryEligible(jobCtx)
+	}
 	var recordedDecision *inboundcoord.Decision
 	jobCtx = inboundcoord.WithDecisionObserver(jobCtx, func(decision inboundcoord.Decision) {
 		copied := decision
@@ -873,17 +876,30 @@ func (h *Handler) prefetchCoordinatorWindowHistory(job db.InboundCoordinatorJob)
 	if coordinator == nil || !job.AgentID.Valid || !job.AvailableAt.Valid {
 		return
 	}
-	command, err := restoreInboundCoordinatorCommand(job.Command, job.EndpointNamespaceID, h.TaskCompletionTargetIdentity)
-	if err != nil || strings.TrimSpace(command.TaskFinishedTaskID) != "" || command.Event.Domain != "channel" || command.Event.Type != "message.created" {
-		return
-	}
-	turn := coordinatorHistoryInputs(command, job.AgentID, job.CreatedAt.Time)
-	// The job id is the claimed decision's trace id; it only labels the log.
-	turn.TraceID = util.UUIDToString(job.ID)
-	if !coordinator.PrefetchWindowHistory(turn) {
-		return
-	}
-	h.InboundCoordinatorWorker.WakeAt(util.UUIDToString(job.ID), job.AvailableAt.Time)
+	// Off the admission path: the owner-switch lookup and command restore
+	// must not delay the Router's 202.
+	go func() {
+		command, err := restoreInboundCoordinatorCommand(job.Command, job.EndpointNamespaceID, h.TaskCompletionTargetIdentity)
+		if err != nil || strings.TrimSpace(command.TaskFinishedTaskID) != "" || command.Event.Domain != "channel" || command.Event.Type != "message.created" {
+			return
+		}
+		turn := coordinatorHistoryInputs(command, job.AgentID, job.CreatedAt.Time)
+		// The job id is the claimed decision's trace id; it only labels the log.
+		turn.TraceID = util.UUIDToString(job.ID)
+		if !coordinator.PrefetchWindowHistory(turn) {
+			return
+		}
+		h.InboundCoordinatorWorker.WakeAt(util.UUIDToString(job.ID), job.AvailableAt.Time)
+	}()
+}
+
+// windowHistoryEligibleJob reports whether this claim is the first,
+// undisturbed claim of the job's collect window: claiming increments
+// attempt_count, a park restores it but records last_error, and a retry or
+// lease takeover leaves a higher count. Only this claim may reuse the
+// window's early history read.
+func windowHistoryEligibleJob(job db.InboundCoordinatorJob) bool {
+	return job.AttemptCount == 1 && !job.LastError.Valid
 }
 
 func (h *Handler) persistCoordinatorJobChat(ctx context.Context, job db.InboundCoordinatorJob, decision inboundcoord.Decision) error {
