@@ -128,12 +128,12 @@ An unselected scope keeps the behavior from before the change: the CLI, no marke
 - `enabled` is the master switch. `false`, or the whole key absent, selects nothing whatever the lists say. Switch-off value: `{"enabled": false}`.
 - An operation is selected when its agent, runtime, or workspace is listed, or when its agent (else runtime, else workspace) falls in the `percent` bucket. `percent: 100` also covers operations without a scope, such as the stable-channel template scan.
 - Identifiers must be canonical lowercase UUIDs without duplicates; `percent` must be 0–100. Like any invalid runtime document, a rejected publication keeps the previous generation.
-- A launch or a cancelled-task stop freezes one runtime snapshot, and every command it sends takes its transport from that snapshot. A publication therefore applies to the next launch or stop without a restart and never splits one launch across two generations.
+- Operations that freeze one runtime snapshot route every command they send by it: a launch freezes one when it starts, and a cancelled-task stop freezes one when it is scheduled and uses it for both of its passes. A publication applies to such operations that start after it, without a restart; operations already running finish under their snapshot. A selected stop therefore still runs its second pass after a switch-off, and a stop that was not selected gains no pass after a switch-on. Commands sent outside such an operation, such as the template list, read the live document each time.
 - Each operation routed to the SDK logs `FC/E2B SDK transport` with `rollout_source=snapshot|live`, the outcome and, for a failure, `error_kind` (`exit`, `output_limit`, `deadline`, `canceled`, `failed`) with the exit code or the transport cause. Commands, environment values, and command output are never logged there. An unselected cancelled-task stop logs `event=fc_e2b_task_processes_stopped outcome=disabled`.
 
 This key replaces the separate Data ID `dt-fde-multica-fc-e2b-sdk-rollout.json` and the environment fallback `MULTICA_FC_E2B_SDK_ROLLOUT`; neither is read any more.
 
-Rollout order: binaries older than this key reject a runtime document that carries it. Deploy the supporting binary on every replica first, then publish the key; to roll the binary back, remove the key first.
+Rollout order: binaries older than this key reject a runtime document that carries it. Follow "Adding a runtime-document key" under the release procedure: every replica runs the supporting binary before the key is published, and the key is removed before an older binary is released.
 
 ## Managed model pricing
 
@@ -147,6 +147,12 @@ See [the complete pricing example](runtime-model-pricing.example.json) and [the 
 
 ## Release procedure
 
+Older binaries reject runtime-document keys they do not know: a starting replica refuses to start, and a running replica keeps its previous snapshot. Every step below therefore keeps the document readable by every binary that may run against it.
+
+### First adoption of the Diamond source
+
+Use this once, when an environment moves from environment traits to Diamond. Its binaries do not read Diamond before the release, so the document can be published first, but it may only contain keys the binary being released understands.
+
 1. Build the runtime-settings JSON from the current environment snapshot without placing secrets in it, add a fingerprint entry only when a new provider combination is introduced, and build the model-pricing JSON from authoritative provider price sheets.
 2. Validate the runtime-settings document with the same strict parser used by the server: `cd server && go run ./cmd/runtimeconfig -file /path/to/runtime.json` (add `-production` for the production document). Run `go test ./pkg/runtimeconfig ./pkg/modelpricing` to validate both managed catalogs.
 3. Publish the model-pricing Data ID first, then the runtime settings and provider catalog, before releasing the binary.
@@ -156,12 +162,28 @@ See [the complete pricing example](runtime-model-pricing.example.json) and [the 
 7. Verify health, public config/model order, one real FC/E2B task, and one real ASB task.
 8. Publish one harmless, reversible runtime update and verify both replicas switch generation without a release, then restore it.
 
+### Adding a runtime-document key
+
+Use this for every new key, such as `fc_e2b_sdk_rollout` or `performance_optimization`.
+
+1. Release the binary that knows the key to every replica, with the document unchanged. Verify every replica runs the new build and logs `runtime Diamond config loaded` with the same generation and SHA-256, and that `mw diamond listener` shows each replica listening on the current MD5.
+2. Validate the new document with the released commit: `cd server && go run ./cmd/runtimeconfig -file /path/to/runtime.json` (add `-production` for production). The same command at the previous release commit must reject it with `unknown field`, which confirms the older binary cannot read it.
+3. Publish the document with the key at its off or narrowest value. Verify every replica logs `runtime Diamond config updated` with the new generation and SHA-256.
+4. Widen or switch the key in later single publications, verifying each on every replica.
+
+### Hot updates and rollback
+
+- A publication applies to operations that start after every replica logs its generation. Operations that froze a snapshot finish under it, as each key describes. An invalid publication is rejected by every replica, which keeps its previous generation and logs `runtime Diamond update rejected; retaining previous snapshot`.
+- Behavior rollback: publish the key switched off (for example `{"enabled": false}`); no release is needed.
+- Binary rollback: first publish the document without every key the older binary does not know (for this batch `fc_e2b_sdk_rollout` and `performance_optimization`), verify every replica logged the new generation, then release the older binary. An older binary released while the document still carries such a key cannot start.
+
 Never reuse a pre-release document in production. Publish and verify each unit independently.
 
 ## Change history
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-09-28 | Split the release procedure into first adoption, adding a key, and hot updates and rollback; a cancelled-task stop now freezes one snapshot for both passes. | The general steps published the document before the binary, which older replicas reject once it carries a new key; each stop pass reread the switch (PRI-67). |
 | 2026-09-28 | Moved the FC/E2B SDK rollout into `runtime.fc_e2b_sdk_rollout`, which also gates the cancelled-task stop and its runner marker; dropped the separate Data ID and `MULTICA_FC_E2B_SDK_ROLLOUT`. | One runtime document carries every rollout switch; the SDK change and the performance batch keep separate, independent switches (PRI-47, option B). |
 | 2026-08-30 | Reused `web.site_connect_src` as the hosted-site fetch proxy server-side origin allowlist while retaining the connector default and CSP behavior. | Client exact-URL declarations are untrusted; a live Diamond origin boundary lets the server authorize destinations without adding a second configuration contract. |
 | 2026-08-30 | Added non-removable `'self'` to the hosted-site CSP `connect-src` defaults while retaining the connector domain and Diamond HTTPS origin additions. | Allow hosted feedback pages to use the Multica same-origin proxy without letting Diamond remove either default source. |

@@ -60,6 +60,12 @@ type stopRecordingRunner struct {
 	err    error
 }
 
+func (r *stopRecordingRunner) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.calls)
+}
+
 func (r *stopRecordingRunner) Run(ctx context.Context, _ string, args []string, _ []string) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -192,5 +198,104 @@ func TestCancelledTaskStopIsScheduledOncePerCancelledTask(t *testing.T) {
 	defer mu.Unlock()
 	if scheduled != 1 {
 		t.Fatalf("stops scheduled = %d, want one for the cancelled task only", scheduled)
+	}
+}
+
+// One cancelled-task stop runs both passes under the snapshot in force when
+// it was scheduled. Switching runtime.fc_e2b_sdk_rollout between the passes
+// neither skips the second pass of a selected stop nor adds one to a stop that
+// was not selected; stops scheduled after the switch follow the new value.
+func TestCancelledTaskStopKeepsItsSnapshotAcrossPasses(t *testing.T) {
+	pool, err := pgxpool.New(context.Background(), "postgres://fc-e2b-stop-test@127.0.0.1:1/none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	workspace, agent, runtimeID := uuid.New(), uuid.New(), uuid.New()
+	rt := db.AgentRuntime{ID: pgtype.UUID{Bytes: runtimeID, Valid: true}, WorkspaceID: pgtype.UUID{Bytes: workspace, Valid: true}}
+	selected := FCE2BSDKRollout{Enabled: true, AgentIDs: []string{agent.String()}}
+	receipt := `{"version":3,"runners":1,"found":1,"terminated":1,"killed":0,"remaining":0}`
+	// stop schedules one cancelled task while live is published, publishes
+	// next between its passes, and returns the transport of each pass: "sdk",
+	// "cli", or "" when the pass sent nothing.
+	stop := func(live, next FCE2BSDKRollout) []string {
+		t.Helper()
+		var mu sync.Mutex
+		current := live
+		cli := &stopRecordingRunner{out: receipt}
+		sdk := &stopRecordingRunner{out: receipt}
+		var sent []string
+		done := make(chan struct{})
+		task := db.AgentTaskQueue{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, AgentID: pgtype.UUID{Bytes: agent, Valid: true},
+			RuntimeID: rt.ID, Status: "cancelled"}
+		l := &FCE2BLauncher{
+			Pool:   pool,
+			Runner: FCE2BRolloutRunner{CLI: cli, SDK: sdk, Rollout: func() FCE2BSDKRollout { mu.Lock(); defer mu.Unlock(); return current }},
+			ConfigProvider: func() FCE2BConfig {
+				mu.Lock()
+				defer mu.Unlock()
+				return FCE2BConfig{Enabled: true, SDKRollout: current}
+			},
+			sleep: func(ctx context.Context, d time.Duration) error {
+				if d == fcE2BTaskStopSecondPass {
+					mu.Lock()
+					current = next
+					mu.Unlock()
+				}
+				return nil
+			},
+			stopPass: func(ctx context.Context, frozen *FCE2BLauncher, _ pgtype.UUID, pass int) {
+				cliBefore, sdkBefore := cli.count(), sdk.count()
+				if _, err := frozen.stopTaskProcessesInSandbox(ctx, task, rt, "sbx_123", pass); err != nil {
+					t.Errorf("pass %d: %v", pass, err)
+				}
+				transport := ""
+				switch {
+				case sdk.count() > sdkBefore:
+					transport = "sdk"
+				case cli.count() > cliBefore:
+					transport = "cli"
+				}
+				mu.Lock()
+				sent = append(sent, transport)
+				complete := len(sent) == 2
+				mu.Unlock()
+				if complete {
+					close(done)
+				}
+			},
+		}
+		l.scheduleCancelledTaskStop(task)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the stop did not run both passes")
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), sent...)
+	}
+	for _, tc := range []struct {
+		name       string
+		live, next FCE2BSDKRollout
+		want       []string
+	}{
+		{"switched off between the passes", selected, FCE2BSDKRollout{}, []string{"sdk", "sdk"}},
+		{"master switch off between the passes", selected, FCE2BSDKRollout{Enabled: false, AgentIDs: selected.AgentIDs}, []string{"sdk", "sdk"}},
+		{"switched on between the passes", FCE2BSDKRollout{}, selected, []string{"", ""}},
+		{"unchanged on", selected, selected, []string{"sdk", "sdk"}},
+		{"unchanged off", FCE2BSDKRollout{}, FCE2BSDKRollout{}, []string{"", ""}},
+	} {
+		if got := stop(tc.live, tc.next); !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s: passes sent %q, want %q", tc.name, got, tc.want)
+		}
+		// A stop scheduled after the switch takes the value now in force.
+		want := []string{"", ""}
+		if fcE2BRolloutSelects(tc.next, FCE2BScope{WorkspaceID: workspace, AgentID: agent, RuntimeID: runtimeID}) {
+			want = []string{"sdk", "sdk"}
+		}
+		if got := stop(tc.next, tc.next); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s: a later stop sent %q, want %q", tc.name, got, want)
+		}
 	}
 }

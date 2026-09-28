@@ -246,6 +246,12 @@ func parseFCE2BTaskStopReceipt(out string) (fcE2BTaskStopReceipt, error) {
 // scheduleCancelledTaskStop starts ending a cancelled task's processes off
 // the transition path. The event and the metrics path both notify for one
 // terminal write; only one stop runs per task at a time.
+//
+// One stop is one operation: both passes run under the configuration
+// snapshot in force when the cancellation was scheduled. Switching
+// runtime.fc_e2b_sdk_rollout meanwhile applies to stops scheduled later, so a
+// stop it selected still runs its second pass after a switch-off, and a stop
+// it did not select gains no second pass after a switch-on.
 func (l *FCE2BLauncher) scheduleCancelledTaskStop(task db.AgentTaskQueue) {
 	if l == nil || l.Pool == nil || task.Status != "cancelled" || !task.ID.Valid || !task.RuntimeID.Valid {
 		return
@@ -253,6 +259,13 @@ func (l *FCE2BLauncher) scheduleCancelledTaskStop(task db.AgentTaskQueue) {
 	taskKey := util.UUIDToString(task.ID)
 	if _, inFlight := fcE2BTaskStopPending.LoadOrStore(taskKey, struct{}{}); inFlight {
 		return
+	}
+	frozen := l.withCurrentConfig()
+	stopPass := l.stopPass
+	if stopPass == nil {
+		stopPass = func(ctx context.Context, frozen *FCE2BLauncher, taskID pgtype.UUID, pass int) {
+			frozen.stopCancelledTaskProcesses(ctx, taskID, pass)
+		}
 	}
 	go func() {
 		defer fcE2BTaskStopPending.Delete(taskKey)
@@ -277,7 +290,7 @@ func (l *FCE2BLauncher) scheduleCancelledTaskStop(task db.AgentTaskQueue) {
 				slog.Warn("FC/E2B task stop skipped: stop slots busy", "event", "fc_e2b_task_processes_stopped", "task_id", taskKey)
 				return
 			}
-			l.withCurrentConfig().stopCancelledTaskProcesses(ctx, task.ID, pass+1)
+			stopPass(ctx, frozen, task.ID, pass+1)
 			<-fcE2BTaskStopSlots
 		}
 	}()

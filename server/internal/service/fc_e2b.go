@@ -976,6 +976,9 @@ type FCE2BLauncher struct {
 	sleep              func(context.Context, time.Duration) error
 	jitter             func(time.Duration) time.Duration
 	dshProvider        func(dshhost.Storage) (dshhost.Provider, error)
+	// stopPass runs one pass of a cancelled-task stop; nil runs
+	// stopCancelledTaskProcesses.
+	stopPass func(ctx context.Context, frozen *FCE2BLauncher, taskID pgtype.UUID, pass int)
 
 	// LLMTraceCaptureAlways turns on sandbox model request/response capture
 	// for every task on a capable runtime image, independent of Router
