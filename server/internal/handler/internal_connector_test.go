@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -111,6 +112,53 @@ func TestInternalConnectorRelayFiltersToolsAndHeaders(t *testing.T) {
 		t.Fatalf("call failed: %#v %v", result, err)
 	}
 }
+
+func TestInternalConnectorNoAuthDiscoveryPinsReadOnlyTools(t *testing.T) {
+	id := "11111111-1111-4111-8111-111111111111"
+	ws := "33333333-3333-4333-8333-333333333333"
+	t.Setenv(connectorCredentialRef(id), "must-not-leak")
+	t.Setenv("MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES", "pre-wiki.dingtalk.alibaba-inc.com")
+	h := &Handler{InternalConnectorClient: &http.Client{Transport: connectorTestRoundTrip(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("no-auth upstream received Authorization: %q", got)
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"delegate_task","annotations":{"readOnlyHint":false}},{"name":"describe_agent","annotations":{"readOnlyHint":true}}]}}`))}, nil
+	})}}
+	in := connectorInput{Name: "Agent", UpstreamURL: "https://pre-wiki.dingtalk.alibaba-inc.com/mcp", AuthMode: "none", AutoDiscover: true}
+	sealed, err := h.prepareInternalConnectorCreate(context.Background(), &in, id, ws)
+	if err != nil || len(sealed) != 0 || in.AuthMode != "none" || len(in.AllowedTools) != 1 || in.AllowedTools[0] != "describe_agent" {
+		t.Fatalf("no-auth setup failed: tools=%v mode=%q ciphertext=%d err=%v", in.AllowedTools, in.AuthMode, len(sealed), err)
+	}
+	if err := validateConnectorInput(in); err != nil {
+		t.Fatal(err)
+	}
+	if !h.connectorCredentialReady(internalConnector{ID: id, WorkspaceID: ws, CredentialRef: connectorCredentialRef(id), AuthMode: "none"}) {
+		t.Fatal("no-auth connector was treated as missing a credential")
+	}
+}
+
+func TestInternalConnectorCapabilityLinkMustBelongToThisDeployment(t *testing.T) {
+	token := "mca2a_" + strings.Repeat("a", 40)
+	base := "https://pre.example.test/base"
+	valid := base + "/api/mcp/connect/" + token
+	if got, err := parseInternalConnectorCapabilityLink(valid, base); err != nil || got != token {
+		t.Fatalf("same-deployment link rejected: token_valid=%v err=%v", got == token, err)
+	}
+	for _, raw := range []string{
+		"https://other.example.test/base/api/mcp/connect/" + token,
+		valid + "/extra",
+		valid + "?copy=1",
+		base + "/api/mcp/connect/mca2a_short",
+	} {
+		if got, err := parseInternalConnectorCapabilityLink(raw, base); err == nil || got != "" || strings.Contains(err.Error(), token) {
+			t.Fatalf("unsafe link accepted or leaked: token=%q err=%v", got, err)
+		}
+	}
+}
+
+type connectorTestRoundTrip func(*http.Request) (*http.Response, error)
+
+func (f connectorTestRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestInternalConnectorRateKeysAreIsolated(t *testing.T) {
 	t.Setenv("AONE_ENV_TYPE", "pre")

@@ -66,6 +66,9 @@ type connectorSealedCredential struct {
 }
 
 func (h *Handler) connectorBearer(c internalConnector) (string, error) {
+	if c.AuthMode == "none" {
+		return "", nil
+	}
 	id, err := uuid.Parse(c.ID)
 	if err != nil || id == uuid.Nil || c.CredentialRef != connectorCredentialRef(id.String()) {
 		return "", errors.New("invalid connector credential reference")
@@ -94,6 +97,9 @@ func (h *Handler) connectorCredentialReady(c internalConnector) bool {
 }
 
 func (h *Handler) connectorCredentialSource(c internalConnector) string {
+	if c.AuthMode == "none" {
+		return "none"
+	}
 	if len(c.CredentialCiphertext) > 0 {
 		if h.connectorCredentialReady(c) {
 			return "workspace"
@@ -270,6 +276,15 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalConnector, method string, params connectorRPCParams) (any, error) {
+	return h.callInternalConnectorUpstreamFiltered(ctx, c, method, params, true)
+}
+
+// Discovery runs only during administrator setup. It sees the upstream tool
+// definitions before the newly created connector has a pinned allowlist.
+func (h *Handler) callInternalConnectorUpstreamFiltered(ctx context.Context, c internalConnector, method string, params connectorRPCParams, filterTools bool) (any, error) {
+	if !filterTools && method != "tools/list" {
+		return nil, errors.New("unfiltered connector requests are limited to tools/list")
+	}
 	upstreamParams := map[string]any{}
 	if method == "tools/list" && params.Cursor != "" {
 		upstreamParams["cursor"] = params.Cursor
@@ -292,7 +307,9 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+bearer)
+	if bearer != "" {
+		request.Header.Set("Authorization", "Bearer "+bearer)
+	}
 	client := h.InternalConnectorClient
 	if client == nil {
 		return nil, errors.New("internal connector HTTP client unavailable")
@@ -333,7 +350,11 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 		tools := []map[string]any{}
 		for _, item := range list.Tools {
 			name, _ := item["name"].(string)
-			if allowed[name] {
+			if !filterTools || allowed[name] {
+				if !filterTools {
+					tools = append(tools, item)
+					continue
+				}
 				if presented := connectorPresentedToolName(name); presented != name {
 					item["name"] = presented
 					description, _ := item["description"].(string)

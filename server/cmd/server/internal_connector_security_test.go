@@ -181,13 +181,88 @@ func TestInternalConnectorManagementRejectsTaskTokenAndURLChange(t *testing.T) {
 	}
 }
 
+func TestInternalConnectorImportsHostedAgentCapabilityWithoutPersistingItsLink(t *testing.T) {
+	t.Setenv("MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES", "safe.example.test")
+	t.Setenv("MULTICA_INTERNAL_MCP_SECRET_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte("k"), 32)))
+	t.Setenv("MULTICA_PUBLIC_URL", "https://safe.example.test")
+	provider := featureflag.NewStaticProvider()
+	provider.Set("internal_mcp_connectors", featureflag.Rule{Default: true})
+	router, handler := NewRouterWithOptions(testPool, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil,
+		RouterOptions{FeatureFlags: featureflag.NewService(provider)})
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	var agentID string
+	if err := testPool.QueryRow(t.Context(), `SELECT id::text FROM agent WHERE workspace_id=$1::uuid LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatal(err)
+	}
+	endpointID, clientID := uuid.NewString(), uuid.NewString()
+	publicAgentID := uuid.NewString()
+	if _, err := testPool.Exec(t.Context(), `INSERT INTO agent_a2a_endpoint
+		(id,workspace_id,agent_id,public_agent_id,enabled,delegated_by_user_id,card_name)
+		VALUES ($1::uuid,$2::uuid,$3::uuid,$4,false,$5::uuid,'Test Agent')`, endpointID, testWorkspaceID, agentID, publicAgentID, testUserID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_a2a_endpoint WHERE id=$1::uuid`, endpointID)
+	})
+	if _, err := testPool.Exec(t.Context(), `INSERT INTO a2a_client (id,endpoint_id,name,created_by,updated_by)
+		VALUES ($1::uuid,$2::uuid,'Test MCP',$3::uuid,$3::uuid)`, clientID, endpointID, testUserID); err != nil {
+		t.Fatal(err)
+	}
+	capability := "mca2a_" + strings.Repeat("b", 40)
+	if _, err := testPool.Exec(t.Context(), `INSERT INTO a2a_client_credential
+		(client_id,key_id,token_hash,token_prefix,created_by)
+		VALUES ($1::uuid,'test-key',$2,'mca2a_test',$3::uuid)`, clientID, auth.HashToken(capability), testUserID); err != nil {
+		t.Fatal(err)
+	}
+	handler.InternalConnectorClient = &http.Client{Transport: connectorTestTransport{t: t, expectedBearer: capability}}
+
+	input := map[string]any{
+		"name": "Hosted Agent", "upstream_url": "https://safe.example.test/api/mcp/connect/" + capability,
+		"agent_ids": []string{agentID}, "allowed_tools": []string{}, "auto_discover": true, "enabled": false,
+	}
+	body, _ := json.Marshal(input)
+	req, _ := http.NewRequest(http.MethodPost, server.URL+"/api/workspaces/"+testWorkspaceID+"/internal-connectors", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var created map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&created); err != nil || res.StatusCode != 200 {
+		t.Fatalf("capability import failed: status=%d body=%v err=%v", res.StatusCode, created, err)
+	}
+	id, _ := created["id"].(string)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM internal_connector WHERE id=$1::uuid`, id)
+	})
+	var storedURL, mode, allowed string
+	var ciphertext []byte
+	if err := testPool.QueryRow(t.Context(), `SELECT upstream_url,auth_mode,credential_ciphertext,allowed_tools::text
+		FROM internal_connector WHERE id=$1::uuid`, id).Scan(&storedURL, &mode, &ciphertext, &allowed); err != nil {
+		t.Fatal(err)
+	}
+	if storedURL != "https://safe.example.test/api/mcp/agents/"+publicAgentID || mode != "bearer" || len(ciphertext) == 0 ||
+		strings.Contains(storedURL, capability) || bytes.Contains(ciphertext, []byte(capability)) || !strings.Contains(allowed, "read") {
+		t.Fatalf("capability was not safely normalized: url=%q mode=%q ciphertext_len=%d tools=%s", storedURL, mode, len(ciphertext), allowed)
+	}
+}
+
 type connectorTestTransport struct {
-	t     *testing.T
-	empty bool
+	t              *testing.T
+	empty          bool
+	expectedBearer string
 }
 
 func (transport connectorTestTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Host != "safe.example.test" || req.Header.Get("Authorization") != "Bearer workspace-secret" || req.Header.Get("X-Task-ID") != "" {
+	expectedBearer := transport.expectedBearer
+	if expectedBearer == "" {
+		expectedBearer = "workspace-secret"
+	}
+	if req.URL.Host != "safe.example.test" || req.Header.Get("Authorization") != "Bearer "+expectedBearer || req.Header.Get("X-Task-ID") != "" {
 		transport.t.Errorf("connector test escaped fixed target or credential boundary: host=%s", req.URL.Host)
 	}
 	var rpc struct {
@@ -196,7 +271,7 @@ func (transport connectorTestTransport) RoundTrip(req *http.Request) (*http.Resp
 	if err := json.NewDecoder(req.Body).Decode(&rpc); err != nil || rpc.Method != "tools/list" {
 		transport.t.Errorf("connectivity test invoked an unexpected method: %q %v", rpc.Method, err)
 	}
-	response := `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read","inputSchema":{"type":"object"}}]}}`
+	response := `{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":true}}]}}`
 	if transport.empty {
 		response = `{"jsonrpc":"2.0","id":1,"result":{"tools":[]}}`
 	}

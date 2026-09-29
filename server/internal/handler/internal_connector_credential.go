@@ -37,6 +37,18 @@ func (h *Handler) PutInternalConnectorCredential(w http.ResponseWriter, r *http.
 		return
 	}
 	ws, id = uuidToString(wsUUID), uuidToString(idUUID)
+	var authMode string
+	if err := h.DB.QueryRow(r.Context(), `SELECT auth_mode FROM internal_connector WHERE id=$1::uuid AND workspace_id=$2::uuid`, id, ws).Scan(&authMode); errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, 404, "connector not found")
+		return
+	} else if err != nil {
+		writeError(w, 500, "connector configuration unavailable")
+		return
+	}
+	if authMode != "bearer" {
+		writeError(w, 400, "connector does not use a Bearer credential")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	var input struct {
 		BearerToken string `json:"bearer_token"`
@@ -97,9 +109,9 @@ func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) 
 	ws, id = uuidToString(wsUUID), uuidToString(idUUID)
 	var c internalConnector
 	var raw []byte
-	err := h.DB.QueryRow(r.Context(), `SELECT id::text,workspace_id::text,name,upstream_url,credential_ref,allowed_tools,enabled,credential_ciphertext
+	err := h.DB.QueryRow(r.Context(), `SELECT id::text,workspace_id::text,name,upstream_url,credential_ref,auth_mode,allowed_tools,enabled,credential_ciphertext
 		FROM internal_connector WHERE id=$1::uuid AND workspace_id=$2::uuid`, id, ws).
-		Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &raw, &c.Enabled, &c.CredentialCiphertext)
+		Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &c.AuthMode, &raw, &c.Enabled, &c.CredentialCiphertext)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "connector not found")
 		return

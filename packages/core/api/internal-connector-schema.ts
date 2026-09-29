@@ -7,6 +7,7 @@ export const InternalConnectorSchema = z.object({
   upstream_url: z.string().url(),
   credential_ref: z.string(),
   credential_ready: z.boolean(),
+  auth_mode: z.enum(["none", "bearer"]).optional().default("bearer"),
   credential_source: z.enum(["none", "environment", "workspace", "unavailable"]).optional().default("none"),
   allowed_tools: z.array(z.string()),
   agent_ids: z.array(z.string()),
@@ -18,6 +19,7 @@ export const InternalConnectorSchema = z.object({
   upstreamUrl: v.upstream_url,
   credentialRef: v.credential_ref,
   credentialReady: v.credential_ready,
+  authMode: v.auth_mode,
   credentialSource: v.credential_source,
   allowedTools: v.allowed_tools,
   agentIds: v.agent_ids,
@@ -56,6 +58,9 @@ export type InternalConnectorInput = {
   allowed_tools: string[];
   agent_ids: string[];
   enabled: boolean;
+  auth_mode?: "none" | "bearer" | "";
+  bearer_token?: string;
+  auto_discover?: boolean;
 };
 
 export const InternalConnectorTestSchema = z.object({
