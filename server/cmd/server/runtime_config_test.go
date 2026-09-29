@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"os"
 	"strings"
 	"testing"
@@ -111,5 +114,39 @@ func TestAppRuntimeConfigReadsCurrentRuntimeProviderSnapshot(t *testing.T) {
 	updated := app.fce2b()
 	if got := updated.RuntimeProviderFingerprints["ac20d08b3a999731"]; len(got) != 1 || got[0] != "pi" {
 		t.Fatalf("updated providers = %#v", got)
+	}
+}
+
+func TestSemanticaRuntimeDiamondUpdates(t *testing.T) {
+	t.Setenv("AONE_ENV_TYPE", "pre")
+	raw, err := os.ReadFile("../../../docs/runtime-config.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := runtimeconfig.ParseStrict(raw, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote, err := runtimeconfig.NewStatic(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flags := featureflag.NewService(runtimeFeatureFlagProvider{config: &appRuntimeConfig{remote: remote}})
+	if !featureflags.SemanticaMCPRelayEnabled(context.Background(), flags) {
+		t.Fatal("pre default disabled")
+	}
+	off := false
+	cfg.Features.SemanticaMCPRelay = &off
+	raw, _ = json.Marshal(cfg)
+	if _, err := remote.ApplyJSON(raw); err != nil {
+		t.Fatal(err)
+	}
+	if featureflags.SemanticaMCPRelayEnabled(context.Background(), flags) {
+		t.Fatal("Diamond disable ignored")
+	}
+	snapshot := remote.Current()
+	*snapshot.Config.Features.SemanticaMCPRelay = true
+	if featureflags.SemanticaMCPRelayEnabled(context.Background(), flags) {
+		t.Fatal("snapshot caller mutated live flag")
 	}
 }

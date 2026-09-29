@@ -215,6 +215,14 @@ func (s *Service) Close() error {
 
 func cloneSnapshot(in Snapshot) Snapshot {
 	out := in
+	if in.Config.Features.InternalMCPConnectors != nil {
+		enabled := *in.Config.Features.InternalMCPConnectors
+		out.Config.Features.InternalMCPConnectors = &enabled
+	}
+	if in.Config.Features.SemanticaMCPRelay != nil {
+		enabled := *in.Config.Features.SemanticaMCPRelay
+		out.Config.Features.SemanticaMCPRelay = &enabled
+	}
 	if in.Config.Runtime.AgenticFS.Placement != nil {
 		placement := *in.Config.Runtime.AgenticFS.Placement
 		placement.VSwitchIDs = append([]string(nil), placement.VSwitchIDs...)

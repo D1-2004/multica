@@ -138,6 +138,7 @@ type NavKey =
   | "runners"
   | "skills"
   | "dshPlugins"
+  | "internalConnectors"
   | "featureUpdates"
   | "settings";
 
@@ -159,6 +160,7 @@ type NavLabelKey =
   | "runners"
   | "skills"
   | "dsh_plugins"
+  | "internal_knowledge"
   | "feature_updates"
   | "settings";
 
@@ -204,6 +206,7 @@ const workspaceDomains: WorkspaceDomain[] = [
       { key: "agents", labelKey: "agents", primary: true },
       { key: "squads", labelKey: "squads" },
       { key: "skills", labelKey: "skills" },
+      { key: "internalConnectors", labelKey: "internal_knowledge" },
     ],
   },
   {

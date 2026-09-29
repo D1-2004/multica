@@ -243,6 +243,9 @@ type Handler struct {
 	LocalSkillListStore      LocalSkillListStore
 	LocalSkillImportStore    LocalSkillImportStore
 	FeatureFlags             *featureflag.Service
+	SemanticaMCPRelay        *SemanticaMCPRelay
+	InternalConnectorRedis   internalConnectorRedis
+	InternalConnectorClient  *http.Client
 	LivenessStore            LivenessStore
 	HeartbeatScheduler       HeartbeatScheduler
 	Storage                  storage.Storage
@@ -427,6 +430,8 @@ type Handler struct {
 	// error rather than silently storing plaintext. Wired in
 	// cmd/server/router.go after New.
 	VCSSecretBox *secretbox.Box
+	// InternalConnectorSecretBox seals workspace-managed upstream credentials.
+	InternalConnectorSecretBox *secretbox.Box
 	// PRRefresh drives the GitHub API snapshot pipeline for PR cards (MUL-5265):
 	// webhook / page-visit / TTL triggers → authenticated GraphQL fetch →
 	// head-SHA-guarded atomic snapshot write. Always non-nil, but inert (every
