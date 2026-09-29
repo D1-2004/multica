@@ -3,6 +3,9 @@ package handler
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -183,10 +186,11 @@ func TestAgentA2AForwardRoutesOnlyTheBoundClient(t *testing.T) {
 		return recorder
 	}
 	targetRPC := target.URL + "/api/a2a/agents/pre-target-agent-0001/v1"
-	if recorder := putForward(map[string]any{"rpc_url": targetRPC, "token": forwardTestTargetToken}); recorder.Code != http.StatusBadRequest {
+	targetToken := randomAgentA2ATestToken(t)
+	if recorder := putForward(map[string]any{"rpc_url": targetRPC, "token": targetToken}); recorder.Code != http.StatusBadRequest {
 		t.Fatalf("ambiguous source client accepted: %d %s", recorder.Code, recorder.Body.String())
 	}
-	if recorder := putForward(map[string]any{"rpc_url": targetRPC, "token": forwardTestTargetToken, "source_client_id": boundClient.ID}); recorder.Code != http.StatusOK {
+	if recorder := putForward(map[string]any{"rpc_url": targetRPC, "token": targetToken, "source_client_id": boundClient.ID}); recorder.Code != http.StatusOK {
 		t.Fatalf("bind forward = %d: %s", recorder.Code, recorder.Body.String())
 	}
 
@@ -208,7 +212,7 @@ func TestAgentA2AForwardRoutesOnlyTheBoundClient(t *testing.T) {
 	if recorder := call(boundSecret.Token, "GetTask", nil); recorder.Code != http.StatusOK || targetCalls != 1 || localCalls != 0 {
 		t.Fatalf("bound client was not forwarded: status=%d target=%d local=%d body=%s", recorder.Code, targetCalls, localCalls, recorder.Body.String())
 	}
-	if targetAuthorization != "Bearer "+forwardTestTargetToken {
+	if targetAuthorization != "Bearer "+targetToken {
 		t.Fatalf("target Authorization = %q", targetAuthorization)
 	}
 	if recorder := call(otherSecret.Token, "GetTask", nil); recorder.Code != http.StatusNoContent || targetCalls != 1 || localCalls != 1 {
@@ -218,14 +222,63 @@ func TestAgentA2AForwardRoutesOnlyTheBoundClient(t *testing.T) {
 		t.Fatalf("marked request on a forwarding hop: status=%d target=%d local=%d", recorder.Code, targetCalls, localCalls)
 	}
 
+	// An archived Agent starts no new turns through the forward, but its
+	// existing forwarded tasks stay readable.
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET archived_at = now() WHERE id = $1`, agentID); err != nil {
+		t.Fatalf("archive agent: %v", err)
+	}
+	if recorder := call(boundSecret.Token, "SendMessage", nil); targetCalls != 1 || localCalls != 2 {
+		t.Fatalf("archived Agent forwarded a new turn: status=%d target=%d local=%d", recorder.Code, targetCalls, localCalls)
+	}
+	if recorder := call(boundSecret.Token, "GetTask", nil); recorder.Code != http.StatusOK || targetCalls != 2 {
+		t.Fatalf("archived Agent stopped forwarding reads: status=%d target=%d local=%d", recorder.Code, targetCalls, localCalls)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET archived_at = NULL WHERE id = $1`, agentID); err != nil {
+		t.Fatalf("unarchive agent: %v", err)
+	}
+
 	// A scope the source client lacks is never forwarded; the local SDK
 	// rejects it.
 	if recorder := updateAgentA2ATestClient(t, agentID, ownerID, boundClient.ID, map[string]any{"scopes": []string{"read"}}); recorder.Code != http.StatusOK {
 		t.Fatalf("narrow scopes = %d: %s", recorder.Code, recorder.Body.String())
 	}
-	if recorder := call(boundSecret.Token, "CancelTask", nil); targetCalls != 1 || localCalls != 2 {
+	if recorder := call(boundSecret.Token, "CancelTask", nil); targetCalls != 2 || localCalls != 3 {
 		t.Fatalf("out-of-scope method was forwarded: status=%d target=%d local=%d", recorder.Code, targetCalls, localCalls)
 	}
+
+	// The target key stays bound to its first source client, also after the
+	// forward is cleared and recreated.
+	if recorder := putForward(map[string]any{"rpc_url": targetRPC, "token": targetToken, "source_client_id": otherClient.ID}); recorder.Code != http.StatusConflict {
+		t.Fatalf("target key rebound to another source client: %d %s", recorder.Code, recorder.Body.String())
+	}
+	recorder := httptest.NewRecorder()
+	testHandler.DeleteAgentA2AOperatorForward(recorder, withAgentA2AURLParams(
+		newRequest(http.MethodDelete, "/api/agents/"+agentID+"/a2a/operator/forward", nil), "id", agentID))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("clear forward = %d", recorder.Code)
+	}
+	if recorder := putForward(map[string]any{"rpc_url": targetRPC, "token": targetToken, "source_client_id": otherClient.ID}); recorder.Code != http.StatusConflict {
+		t.Fatalf("target key rebound after clearing: %d %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder := putForward(map[string]any{"rpc_url": targetRPC, "token": randomAgentA2ATestToken(t), "source_client_id": otherClient.ID}); recorder.Code != http.StatusOK {
+		t.Fatalf("fresh target key for another client refused: %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// randomAgentA2ATestToken returns a well-formed target key unique to this run.
+// Forward token bindings are permanent, so tests must not share a key.
+func randomAgentA2ATestToken(t *testing.T) string {
+	t.Helper()
+	raw := make([]byte, 20)
+	if _, err := rand.Read(raw); err != nil {
+		t.Fatalf("random token: %v", err)
+	}
+	token := "mca2a_" + hex.EncodeToString(raw)
+	digest := sha256.Sum256([]byte(token))
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM a2a_forward_token_binding WHERE token_sha256 = $1`, hex.EncodeToString(digest[:]))
+	})
+	return token
 }
 
 func TestAgentA2AOperatorForwardSealsTokenAndHidesIt(t *testing.T) {
@@ -264,9 +317,10 @@ func TestAgentA2AOperatorForwardSealsTokenAndHidesIt(t *testing.T) {
 		return recorder
 	}
 	target := "https://pre-fde-workbench.dingtalk.com/api/a2a/agents/99c83573-1392-4265-87e1-9c10da75f8e4/v1"
+	sealToken := randomAgentA2ATestToken(t)
 
 	configureAgentA2AOperatorTestHandler(t, []string{operatorEmail}, nil)
-	if recorder := putForward(map[string]any{"rpc_url": target, "token": forwardTestTargetToken}); recorder.Code != http.StatusBadRequest {
+	if recorder := putForward(map[string]any{"rpc_url": target, "token": sealToken}); recorder.Code != http.StatusBadRequest {
 		t.Fatalf("forward accepted with forwarding disabled: %d", recorder.Code)
 	}
 
@@ -274,11 +328,11 @@ func TestAgentA2AOperatorForwardSealsTokenAndHidesIt(t *testing.T) {
 	if recorder := putForward(map[string]any{"rpc_url": target, "token": "not-a-key"}); recorder.Code != http.StatusBadRequest {
 		t.Fatalf("invalid forward token accepted: %d", recorder.Code)
 	}
-	recorder := putForward(map[string]any{"rpc_url": target, "token": forwardTestTargetToken})
+	recorder := putForward(map[string]any{"rpc_url": target, "token": sealToken})
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("operator forward PUT = %d: %s", recorder.Code, recorder.Body.String())
 	}
-	if bytes.Contains(recorder.Body.Bytes(), []byte(forwardTestTargetToken)) {
+	if bytes.Contains(recorder.Body.Bytes(), []byte(sealToken)) {
 		t.Fatalf("forward token was returned: %s", recorder.Body.String())
 	}
 	response := decodeAgentA2AOperatorResponse(t, recorder)
@@ -289,10 +343,10 @@ func TestAgentA2AOperatorForwardSealsTokenAndHidesIt(t *testing.T) {
 	if err := testPool.QueryRow(context.Background(), `SELECT forward_token_encrypted FROM agent_a2a_operator_config WHERE agent_id = $1`, agentID).Scan(&sealed); err != nil {
 		t.Fatalf("load sealed token: %v", err)
 	}
-	if bytes.Contains(sealed, []byte(forwardTestTargetToken)) {
+	if bytes.Contains(sealed, []byte(sealToken)) {
 		t.Fatal("forward token is stored in plaintext")
 	}
-	if opened, err := box.Open(sealed); err != nil || string(opened) != forwardTestTargetToken {
+	if opened, err := box.Open(sealed); err != nil || string(opened) != sealToken {
 		t.Fatalf("sealed token does not round-trip: %v", err)
 	}
 }

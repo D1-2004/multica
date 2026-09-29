@@ -120,11 +120,14 @@ func (h *Handler) maybeForwardAgentA2ARPC(
 		return true
 	}
 	method := agentA2ARPCMethod(body)
-	if method == "" || !a2aintegration.MethodPermitted(method, credential.ClientScopes, credential.EndpointEnabled) {
+	// An archived Agent admits no new turns, exactly like an unpublished
+	// endpoint; the local publication lookup already refuses both.
+	admitsNewTurns := credential.EndpointEnabled && !credential.AgentArchivedAt.Valid
+	if method == "" || !a2aintegration.MethodPermitted(method, credential.ClientScopes, admitsNewTurns) {
 		// The local SDK answers with the protocol-native parse, method or
 		// authorization error, so nothing this credential may not do reaches
 		// the target. Reads and cancels of forwarded tasks keep flowing after
-		// the endpoint is unpublished; new turns do not.
+		// the endpoint is unpublished or the Agent archived; new turns do not.
 		return false
 	}
 	h.forwardAgentA2ARPC(w, r, body, target, publicAgentID)

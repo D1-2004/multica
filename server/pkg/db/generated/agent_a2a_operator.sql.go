@@ -11,6 +11,38 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimA2AForwardTokenBinding = `-- name: ClaimA2AForwardTokenBinding :one
+INSERT INTO a2a_forward_token_binding (
+    token_sha256, source_client_id, workspace_id, agent_id, created_by
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (token_sha256) DO UPDATE
+SET token_sha256 = a2a_forward_token_binding.token_sha256
+RETURNING source_client_id
+`
+
+type ClaimA2AForwardTokenBindingParams struct {
+	TokenSha256    string      `json:"token_sha256"`
+	SourceClientID pgtype.UUID `json:"source_client_id"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AgentID        pgtype.UUID `json:"agent_id"`
+	CreatedBy      pgtype.UUID `json:"created_by"`
+}
+
+// Returns the source client that owns the target key: the requested one on
+// first use, or the earlier owner on every later call.
+func (q *Queries) ClaimA2AForwardTokenBinding(ctx context.Context, arg ClaimA2AForwardTokenBindingParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, claimA2AForwardTokenBinding,
+		arg.TokenSha256,
+		arg.SourceClientID,
+		arg.WorkspaceID,
+		arg.AgentID,
+		arg.CreatedBy,
+	)
+	var source_client_id pgtype.UUID
+	err := row.Scan(&source_client_id)
+	return source_client_id, err
+}
+
 const clearAgentA2AOperatorForward = `-- name: ClearAgentA2AOperatorForward :exec
 UPDATE agent_a2a_operator_config
 SET forward_rpc_url = NULL,

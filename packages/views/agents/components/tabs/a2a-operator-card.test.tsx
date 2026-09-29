@@ -11,16 +11,23 @@ import enAgents from "../../../locales/en/agents.json";
 const operatorRef = vi.hoisted(() => ({
   current: null as AgentA2AOperatorConfig | null,
 }));
+const clientsRef = vi.hoisted(() => ({
+  current: [] as { id: string; name: string; status: string }[],
+}));
 const updateIdentitySpy = vi.hoisted(() => vi.fn());
 const deleteIdentitySpy = vi.hoisted(() => vi.fn());
 const updateForwardSpy = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: operatorRef.current }),
+  useQuery: (options: { queryKey: string[] }) =>
+    options.queryKey[0] === "agent-a2a-operator"
+      ? { data: operatorRef.current }
+      : { data: { endpoint: null, agentCard: null, clients: clientsRef.current } },
   queryOptions: <T,>(options: T) => options,
 }));
 
 vi.mock("@multica/core/agent-a2a", () => ({
+  agentA2AConfigOptions: () => ({ queryKey: ["agent-a2a"] }),
   agentA2AOperatorConfigOptions: () => ({ queryKey: ["agent-a2a-operator"] }),
   useUpdateAgentA2AOperatorIdentity: () => ({ mutateAsync: updateIdentitySpy, isPending: false }),
   useDeleteAgentA2AOperatorIdentity: () => ({ mutateAsync: deleteIdentitySpy, isPending: false }),
@@ -47,6 +54,7 @@ function renderCard() {
 describe("A2AOperatorCard", () => {
   beforeEach(() => {
     operatorRef.current = null;
+    clientsRef.current = [];
     updateIdentitySpy.mockReset().mockResolvedValue({});
     deleteIdentitySpy.mockReset().mockResolvedValue({});
     updateForwardSpy.mockReset().mockResolvedValue({});
@@ -124,5 +132,39 @@ describe("A2AOperatorCard", () => {
     const clearButtons = screen.getAllByRole("button", { name: enAgents.tab_body.a2a.operator.clear });
     await user.click(clearButtons[0]!);
     expect(deleteIdentitySpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires choosing the source client when several are active", async () => {
+    operatorRef.current = {
+      operator: true,
+      dwsIdentity: null,
+      forward: null,
+      forwardAllowedOrigins: ["https://pre.example.test"],
+    };
+    clientsRef.current = [
+      { id: "client-a", name: "DEAP Tagggg", status: "active" },
+      { id: "client-b", name: "Other caller", status: "active" },
+      { id: "client-c", name: "Revoked", status: "revoked" },
+    ];
+    const user = userEvent.setup();
+    renderCard();
+
+    const save = screen.getByRole("button", { name: enAgents.tab_body.a2a.operator.save_forward });
+    await user.type(
+      screen.getByLabelText(enAgents.tab_body.a2a.operator.forward_url),
+      "https://pre.example.test/api/a2a/agents/agent_1234567890123/v1",
+    );
+    await user.type(screen.getByLabelText(enAgents.tab_body.a2a.operator.forward_token), "mca2a_target");
+    expect(save).toBeDisabled();
+    expect(screen.queryByRole("option", { name: "Revoked" })).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText(enAgents.tab_body.a2a.operator.source_client), "client-b");
+    expect(save).toBeEnabled();
+    await user.click(save);
+    expect(updateForwardSpy).toHaveBeenCalledWith({
+      rpcUrl: "https://pre.example.test/api/a2a/agents/agent_1234567890123/v1",
+      token: "mca2a_target",
+      sourceClientId: "client-b",
+    });
   });
 });

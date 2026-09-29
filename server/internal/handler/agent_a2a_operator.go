@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -209,6 +211,24 @@ func (h *Handler) UpdateAgentA2AOperatorForward(w http.ResponseWriter, r *http.R
 	sourceClientID, status, err := h.resolveAgentA2AForwardSourceClient(r, scope, req.SourceClientID)
 	if err != nil {
 		writeError(w, status, err.Error())
+		return
+	}
+	// A target key serves one source client for its whole life, across
+	// rebinding, clearing and other Agents; see a2a_forward_token_binding.
+	digest := sha256.Sum256([]byte(token))
+	owner, err := h.Queries.ClaimA2AForwardTokenBinding(r.Context(), db.ClaimA2AForwardTokenBindingParams{
+		TokenSha256:    hex.EncodeToString(digest[:]),
+		SourceClientID: sourceClientID,
+		WorkspaceID:    scope.WorkspaceID,
+		AgentID:        scope.Agent.ID,
+		CreatedBy:      scope.ActorUserID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record the forward credential binding")
+		return
+	}
+	if owner.Bytes != sourceClientID.Bytes {
+		writeError(w, http.StatusConflict, "this target key already forwarded another source client; mint a new A2A key on the target Agent")
 		return
 	}
 	sealed, err := h.A2AService.PushSecrets.Seal([]byte(token))

@@ -1022,7 +1022,10 @@
         "forward_saved": "A2A 전달을 저장했습니다",
         "forward_cleared": "A2A 전달을 해제했습니다",
         "clear": "해제",
-        "save_failed": "운영자 설정을 저장하지 못했습니다"
+        "save_failed": "운영자 설정을 저장하지 못했습니다",
+        "source_client": "원본 A2A 클라이언트",
+        "source_client_placeholder": "전달할 클라이언트 선택",
+        "no_client": "먼저 A2A 클라이언트를 만드세요. 한 클라이언트의 요청만 전달할 수 있으며, 대상 키는 계속 그 클라이언트 전용입니다."
       }
     },
     "skills": {

@@ -1212,7 +1212,10 @@
         "forward_saved": "已保存 A2A 转发",
         "forward_cleared": "已清除 A2A 转发",
         "clear": "清除",
-        "save_failed": "运营配置保存失败"
+        "save_failed": "运营配置保存失败",
+        "source_client": "来源 A2A 客户端",
+        "source_client_placeholder": "选择要转发的客户端",
+        "no_client": "请先创建 A2A 客户端。只能转发一个客户端的请求，同一把目标 Key 也只能一直服务这一个客户端。"
       }
     },
     "skills": {

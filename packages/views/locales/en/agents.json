@@ -1224,7 +1224,10 @@
         "forward_saved": "A2A forward saved",
         "forward_cleared": "A2A forward cleared",
         "clear": "Clear",
-        "save_failed": "Failed to save operator settings"
+        "save_failed": "Failed to save operator settings",
+        "source_client": "Source A2A client",
+        "source_client_placeholder": "Choose the client to forward",
+        "no_client": "Create an A2A client first. Only one client's calls can be forwarded, and a target key serves one client for good."
       }
     },
     "skills": {

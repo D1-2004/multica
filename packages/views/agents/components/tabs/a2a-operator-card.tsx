@@ -5,20 +5,24 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
+  agentA2AConfigOptions,
   agentA2AOperatorConfigOptions,
   useDeleteAgentA2AOperatorForward,
   useDeleteAgentA2AOperatorIdentity,
   useUpdateAgentA2AOperatorForward,
   useUpdateAgentA2AOperatorIdentity,
+  type AgentA2AClient,
 } from "@multica/core/agent-a2a";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
+import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
 import { useT } from "../../../i18n";
 
 const DECIMAL_ID = /^[1-9][0-9]{0,19}$/;
+const EMPTY_CLIENTS: AgentA2AClient[] = [];
 
 /**
  * Deployment-operator settings for an Agent's A2A endpoint: the DEAP digital
@@ -29,6 +33,7 @@ const DECIMAL_ID = /^[1-9][0-9]{0,19}$/;
 export function A2AOperatorCard({ wsId, agentId }: { wsId: string; agentId: string }) {
   const { t } = useT("agents");
   const operatorQuery = useQuery(agentA2AOperatorConfigOptions(wsId, agentId));
+  const a2aConfigQuery = useQuery(agentA2AConfigOptions(wsId, agentId));
   const updateIdentity = useUpdateAgentA2AOperatorIdentity(wsId, agentId);
   const deleteIdentity = useDeleteAgentA2AOperatorIdentity(wsId, agentId);
   const updateForward = useUpdateAgentA2AOperatorForward(wsId, agentId);
@@ -39,6 +44,7 @@ export function A2AOperatorCard({ wsId, agentId }: { wsId: string; agentId: stri
   const [deapAgentUuid, setDeapAgentUuid] = useState("");
   const [rpcUrl, setRpcUrl] = useState("");
   const [forwardToken, setForwardToken] = useState("");
+  const [sourceClientId, setSourceClientId] = useState("");
 
   const config = operatorQuery.data;
   if (config?.operator !== true) {
@@ -46,9 +52,23 @@ export function A2AOperatorCard({ wsId, agentId }: { wsId: string; agentId: stri
   }
   const identity = config.dwsIdentity;
   const forward = config.forward;
+  const activeClients = (a2aConfigQuery.data?.clients ?? EMPTY_CLIENTS).filter(
+    (client) => client.status === "active",
+  );
+  // Only one source client may be forwarded; default to the current binding,
+  // or to the Agent's only active client.
+  const selectedClientId =
+    sourceClientId ||
+    (forward?.sourceClientId && activeClients.some((client) => client.id === forward.sourceClientId)
+      ? forward.sourceClientId
+      : activeClients.length === 1
+        ? activeClients[0]!.id
+        : "");
+  const clientName = (id: string) => activeClients.find((client) => client.id === id)?.name ?? id;
   const identityValid = DECIMAL_ID.test(uid.trim()) && DECIMAL_ID.test(orgId.trim());
   const forwardEnabled = config.forwardAllowedOrigins.length > 0;
-  const forwardValid = rpcUrl.trim().startsWith("https://") && forwardToken.trim().length > 0;
+  const forwardValid =
+    rpcUrl.trim().startsWith("https://") && forwardToken.trim().length > 0 && selectedClientId !== "";
 
   const saveIdentity = async () => {
     try {
@@ -77,7 +97,11 @@ export function A2AOperatorCard({ wsId, agentId }: { wsId: string; agentId: stri
 
   const saveForward = async () => {
     try {
-      await updateForward.mutateAsync({ rpcUrl: rpcUrl.trim(), token: forwardToken.trim() });
+      await updateForward.mutateAsync({
+        rpcUrl: rpcUrl.trim(),
+        token: forwardToken.trim(),
+        sourceClientId: selectedClientId,
+      });
       setRpcUrl("");
       setForwardToken("");
       toast.success(t(($) => $.tab_body.a2a.operator.forward_saved));
@@ -198,6 +222,11 @@ export function A2AOperatorCard({ wsId, agentId }: { wsId: string; agentId: stri
                     : t(($) => $.tab_body.a2a.operator.forward_inactive)}
                 </Badge>
                 <span className="min-w-0 break-all font-mono">{forward.rpcUrl}</span>
+                {forward.sourceClientId && (
+                  <span className="text-muted-foreground">
+                    ← {clientName(forward.sourceClientId)}
+                  </span>
+                )}
               </span>
               <Button
                 variant="outline"
@@ -211,6 +240,35 @@ export function A2AOperatorCard({ wsId, agentId }: { wsId: string; agentId: stri
           )}
           {forwardEnabled && (
             <>
+              <div className="space-y-1.5">
+                <Label htmlFor="a2a-operator-forward-client">
+                  {t(($) => $.tab_body.a2a.operator.source_client)}
+                </Label>
+                {activeClients.length === 0 ? (
+                  <p className="text-caption text-muted-foreground">
+                    {t(($) => $.tab_body.a2a.operator.no_client)}
+                  </p>
+                ) : activeClients.length === 1 ? (
+                  <p id="a2a-operator-forward-client" className="text-body">
+                    {activeClients[0]!.name}
+                  </p>
+                ) : (
+                  <NativeSelect
+                    id="a2a-operator-forward-client"
+                    value={selectedClientId}
+                    onChange={(event) => setSourceClientId(event.target.value)}
+                  >
+                    <NativeSelectOption value="" disabled>
+                      {t(($) => $.tab_body.a2a.operator.source_client_placeholder)}
+                    </NativeSelectOption>
+                    {activeClients.map((client) => (
+                      <NativeSelectOption key={client.id} value={client.id}>
+                        {client.name}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                )}
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="a2a-operator-forward-url">

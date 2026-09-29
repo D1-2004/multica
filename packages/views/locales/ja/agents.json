@@ -1014,7 +1014,10 @@
         "forward_saved": "A2A 転送を保存しました",
         "forward_cleared": "A2A 転送を解除しました",
         "clear": "解除",
-        "save_failed": "オペレーター設定を保存できませんでした"
+        "save_failed": "オペレーター設定を保存できませんでした",
+        "source_client": "転送元の A2A クライアント",
+        "source_client_placeholder": "転送するクライアントを選択",
+        "no_client": "先に A2A クライアントを作成してください。転送できるのは 1 つのクライアントの呼び出しだけで、転送先キーは同じクライアント専用になります。"
       }
     },
     "skills": {

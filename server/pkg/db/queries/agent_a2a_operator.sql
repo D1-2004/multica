@@ -58,3 +58,13 @@ SET forward_rpc_url = NULL,
     updated_at = now()
 WHERE workspace_id = $1
   AND agent_id = $2;
+
+-- name: ClaimA2AForwardTokenBinding :one
+-- Returns the source client that owns the target key: the requested one on
+-- first use, or the earlier owner on every later call.
+INSERT INTO a2a_forward_token_binding (
+    token_sha256, source_client_id, workspace_id, agent_id, created_by
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (token_sha256) DO UPDATE
+SET token_sha256 = a2a_forward_token_binding.token_sha256
+RETURNING source_client_id;
