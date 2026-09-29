@@ -284,7 +284,11 @@ func (h *Handler) MulticaMCP(w http.ResponseWriter, r *http.Request) {
 	case "ping":
 		h.writeMulticaMCPResult(w, req.ID, map[string]any{})
 	case "tools/list":
-		h.writeMulticaMCPResult(w, req.ID, map[string]any{"tools": multicaMCPToolDefinitions()})
+		tools := multicaMCPToolDefinitions()
+		if h.semanticaRelayVisible(r) {
+			tools = append(tools, semanticaRelayDefinition())
+		}
+		h.writeMulticaMCPResult(w, req.ID, map[string]any{"tools": tools})
 	case "tools/call":
 		h.handleMulticaMCPToolsCall(w, r, req)
 	default:
@@ -612,6 +616,10 @@ func (h *Handler) handleMulticaMCPToolsCall(w http.ResponseWriter, r *http.Reque
 	}
 	if err := json.Unmarshal(req.Params, &params); err != nil || strings.TrimSpace(params.Name) == "" {
 		h.writeMulticaMCPError(w, req.ID, -32602, "invalid tool call parameters")
+		return
+	}
+	if params.Name == semanticaRelayTool {
+		h.handleSemanticaRelayCall(w, r, req.ID, params.Arguments)
 		return
 	}
 	if params.Name == multicaMCPBindingGetTool || params.Name == multicaMCPBindingBindTool || params.Name == multicaMCPBindingUnbindTool {

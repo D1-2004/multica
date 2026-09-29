@@ -9,3 +9,5 @@ export {
 export { GitCreateAgentPage } from "./create/git-create-agent-page";
 
 export { LocalCreateAgentPage } from "./create/local-create-agent-page";
+
+export { InternalConnectorsPage } from "./internal-connectors-page";

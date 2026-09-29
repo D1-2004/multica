@@ -409,10 +409,28 @@ type runtimeFeatureFlagProvider struct {
 }
 
 func (p runtimeFeatureFlagProvider) Lookup(_ context.Context, key string) (featureflag.Decision, bool) {
-	if p.config == nil || key != "workspace_access_tokens" {
+	if p.config == nil {
 		return featureflag.Decision{}, false
 	}
-	enabled := p.config.current().Features.WorkspaceAccessTokens
+	var enabled bool
+	switch key {
+	case "workspace_access_tokens":
+		enabled = p.config.current().Features.WorkspaceAccessTokens
+	case "semantica_mcp_relay":
+		value := p.config.current().Features.SemanticaMCPRelay
+		if value == nil {
+			return featureflag.Decision{}, false
+		}
+		enabled = *value
+	case "internal_mcp_connectors":
+		value := p.config.current().Features.InternalMCPConnectors
+		if value == nil {
+			return featureflag.Decision{}, false
+		}
+		enabled = *value
+	default:
+		return featureflag.Decision{}, false
+	}
 	variant := "off"
 	if enabled {
 		variant = "on"

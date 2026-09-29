@@ -12,7 +12,9 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
-import { ApiError } from "@multica/core/api";
+import { ApiError, api } from "@multica/core/api";
+import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
 import {
   runtimeCapabilitiesOptions,
   runtimeDisplayLabel,
@@ -54,11 +56,19 @@ export function McpConfigTab({
 	canEdit?: boolean;
 }) {
   const { t } = useT("agents");
+  const workspaceId = useWorkspaceId();
+  const paths = useWorkspacePaths();
   const runtimeId =
     runtime?.runtime_mode === "local" && runtime.status === "online"
       ? runtime.id
       : null;
   const runtimeQuery = useQuery(runtimeCapabilitiesOptions(runtimeId));
+  const assignedConnectorQuery = useQuery({
+    queryKey: ["workspaces", workspaceId, "internal-connectors", "available"],
+    queryFn: () => api.listAvailableInternalConnectors(workspaceId),
+    enabled: !!workspaceId,
+  });
+  const assignedConnectors = assignedConnectorQuery.data?.filter((connector) => connector.agentId === agent.id) ?? [];
   const redacted = agent.mcp_config_redacted === true;
   const managedServers = useMemo(
     () => listManagedMcpServers(agent.mcp_config),
@@ -183,9 +193,42 @@ export function McpConfigTab({
             editLabel={t(($) => $.tab_body.mcp_config.edit_aria)}
             deleteLabel={t(($) => $.tab_body.mcp_config.delete_aria)}
           />
-        ) : (
+        ) : assignedConnectors.length === 0 && !assignedConnectorQuery.isLoading ? (
           <McpNotice text={t(($) => $.tab_body.mcp_config.managed_empty)} />
+        ) : null}
+
+      <div className="space-y-3 border-t border-border pt-4">
+        <div>
+          <h3 className="text-body font-medium">{t(($) => $.tab_body.mcp_config.workspace_connectors_title)}</h3>
+          <p className="mt-1 max-w-2xl text-caption leading-5 text-muted-foreground">
+            {t(($) => $.tab_body.mcp_config.workspace_connectors_hint)}
+          </p>
+        </div>
+        {assignedConnectorQuery.isLoading ? (
+          <McpNotice loading text={t(($) => $.tab_body.mcp_config.runtime_discovering)} />
+        ) : assignedConnectorQuery.isError ? (
+          <McpNotice text={t(($) => $.tab_body.mcp_config.workspace_connectors_failed)} />
+        ) : assignedConnectors.length === 0 ? (
+          <McpNotice text={t(($) => $.tab_body.mcp_config.workspace_connectors_empty)} />
+        ) : (
+          <div className="space-y-2">
+            {assignedConnectors.map((connector) => (
+              <div key={connector.id} className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3">
+                <div>
+                  <p className="text-body font-medium">{connector.name}</p>
+                  <p className="mt-1 text-caption text-muted-foreground">
+                    {t(($) => $.tab_body.mcp_config.workspace_connector_tools, { count: connector.tools.length })}
+                  </p>
+                </div>
+                <Badge variant="secondary">{t(($) => $.tab_body.mcp_config.workspace_connector_assigned)}</Badge>
+              </div>
+            ))}
+          </div>
         )}
+        <a className="inline-block text-caption font-medium text-primary underline-offset-4 hover:underline" href={paths.internalConnectors()}>
+          {t(($) => $.tab_body.mcp_config.workspace_connectors_open)}
+        </a>
+      </div>
       </section>
 
       <section className="space-y-3">

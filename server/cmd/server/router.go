@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
@@ -727,6 +728,28 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("lark oauth disabled (LARK_CLIENT_ID or LARK_CLIENT_SECRET not set)")
 	}
 	h.FeatureFlags = opts.FeatureFlags
+	if rdb != nil {
+		h.InternalConnectorRedis = rdb
+	}
+	h.InternalConnectorClient = handler.NewInternalConnectorClient()
+	connectorKey, connectorKeySource, connectorKeyErr := internalConnectorCredentialKey()
+	if connectorKeyErr != nil {
+		if featureflags.DeploymentEnvironment() == "pre" || connectorKeySource == "jwt-derived" {
+			slog.Warn("internal connector credential storage unavailable", "source", connectorKeySource, "error", connectorKeyErr)
+		} else {
+			slog.Info("internal connector credential storage unavailable", "source", connectorKeySource, "error", connectorKeyErr)
+		}
+	} else if box, err := secretbox.New(connectorKey); err != nil {
+		slog.Warn("internal connector credential key invalid", "error", err)
+	} else {
+		h.InternalConnectorSecretBox = box
+		slog.Info("internal connector credential storage configured", "source", connectorKeySource)
+	}
+	if relay, err := handler.NewSemanticaMCPRelayFromEnv(rdb); err != nil {
+		slog.Warn("Semantica MCP relay disabled", "error", err)
+	} else {
+		h.SemanticaMCPRelay = relay
+	}
 	h.TaskService.FeatureFlags = opts.FeatureFlags
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
@@ -2124,6 +2147,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// session_id or agent_id, then enforce membership and Agent permissions in
 		// the handler, so generic MCP clients need no custom workspace header.
 		r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
+		r.Post("/api/internal-connectors/{connectorId}/mcp", h.CallInternalConnector)
 		r.Post("/api/mcp/workspaces/{workspaceId}", h.WorkspaceMCP)
 		r.Handle("/api/runner-mcp", http.HandlerFunc(h.RunnerMCP))
 		r.Post("/api/runner-mcp/mounts/{mountId}/servers/{serverName}", h.RunnerMountedMCP)
@@ -2180,6 +2204,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
 					r.Get("/", h.GetWorkspace)
+					r.Get("/semantica-mcp-relay", h.GetSemanticaMCPRelayStatus)
+					r.Get("/internal-connectors/available", h.ListAvailableInternalConnectors)
 					r.Get("/mcp", h.GetWorkspaceMCPDiscovery)
 					r.Get("/members", h.ListMembersWithUser)
 					r.With(handler.RequireHumanActor).Post("/leave", h.LeaveWorkspace)
@@ -2207,6 +2233,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/members", h.CreateInvitation)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Get("/internal-connectors", h.ListInternalConnectors)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors", h.CreateInternalConnector)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Patch("/internal-connectors/{connectorId}", h.UpdateInternalConnector)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Put("/internal-connectors/{connectorId}/credential", h.PutInternalConnectorCredential)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/test", h.TestInternalConnector)
 					r.Get("/dingtalk/users/search", h.SearchDingTalkUsers)
 					r.Post("/dingtalk/members", h.AddDingTalkWorkspaceMembers)
 					r.Post("/dingtalk/group-members", h.AddDingTalkGroupMembers)
@@ -3178,6 +3209,28 @@ func agentIdentityControlBaseURLFromEnv() string {
 // explicit COMPOSIO_STATE_SECRET; otherwise derives a composio-specific key
 // from JWT_SECRET via SHA-256 so the two signing domains never share an
 // identical key. Returns nil when neither is set (composio stays disabled).
+// internalConnectorCredentialKey selects one stable encryption domain on every
+// replica. The explicit selector prevents a partially injected dedicated key
+// from making replicas encrypt the same workspace with different keys.
+func internalConnectorCredentialKey() ([]byte, string, error) {
+	source := strings.TrimSpace(os.Getenv("MULTICA_INTERNAL_MCP_KEY_SOURCE"))
+	switch source {
+	case "", "dedicated":
+		key, err := secretbox.LoadKey("MULTICA_INTERNAL_MCP_SECRET_KEY")
+		return key, "dedicated", err
+	case "jwt-derived":
+		jwtSecret := os.Getenv("JWT_SECRET")
+		if len(jwtSecret) < 32 {
+			return nil, source, errors.New("JWT_SECRET must be set to at least 32 bytes")
+		}
+		mac := hmac.New(sha256.New, []byte(jwtSecret))
+		_, _ = mac.Write([]byte("multica/internal-mcp-credential/v1"))
+		return mac.Sum(nil), source, nil
+	default:
+		return nil, source, errors.New("unsupported internal connector key source")
+	}
+}
+
 func composioStateSecret() []byte {
 	if v := strings.TrimSpace(os.Getenv("COMPOSIO_STATE_SECRET")); v != "" {
 		return []byte(v)

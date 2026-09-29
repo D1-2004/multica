@@ -64,6 +64,7 @@ export type NavLabelKey =
   | "runners"
   | "skills"
   | "dsh_plugins"
+  | "internal_knowledge"
   | "feature_updates"
   | "settings";
 
@@ -84,6 +85,7 @@ export type WorkspacePageKey =
   | "runners"
   | "skills"
   | "dshPlugins"
+  | "internalConnectors"
   | "featureUpdates"
   | "settings";
 
@@ -120,6 +122,7 @@ export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
     icon: "Blocks",
     navKey: "dsh_plugins",
   },
+  internalConnectors: { segment: "internal-connectors", icon: "BookOpenText", navKey: "internal_knowledge" },
   featureUpdates: {
     segment: "features",
     icon: "Megaphone",
