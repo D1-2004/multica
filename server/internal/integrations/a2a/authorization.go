@@ -34,6 +34,22 @@ func (AuthorizationInterceptor) Before(
 	return ctx, nil, nil
 }
 
+// MethodPermitted applies the same scope and publication rules as
+// AuthorizationInterceptor to a JSON-RPC method name, for request paths that
+// must decide before the SDK runs (the cross-environment forwarder).
+func MethodPermitted(method string, scopes []string, endpointEnabled bool) bool {
+	requiredScope := methodScope(method)
+	if requiredScope == "" || !hasScope(scopes, requiredScope) {
+		return false
+	}
+	return endpointEnabled || !IsTaskCreatingMethod(method)
+}
+
+// IsTaskCreatingMethod reports whether a method admits a new task turn.
+func IsTaskCreatingMethod(method string) bool {
+	return method == "SendMessage" || method == "SendStreamingMessage"
+}
+
 func methodScope(method string) string {
 	switch method {
 	case "SendMessage", "SendStreamingMessage",

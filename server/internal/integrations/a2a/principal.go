@@ -9,6 +9,10 @@ const (
 	AgentIdentityTokenHeader  = "X-Multica-Agent-Identity-Context-Token"
 	AgentIdentityExpiryHeader = "X-Multica-Agent-Identity-Context-Token-Expires-At"
 	DEAPDWSTokenHeader        = "X-DWS-Token"
+	// DingTalkEventExtensionURI is DEAP's optional message extension carrying
+	// the DingTalk conversation, sender, thread and quoted-message context in
+	// message.metadata[URI].
+	DingTalkEventExtensionURI = "https://api-deap.dingtalk.com/a2a/extensions/dingtalk-event/v1"
 )
 
 // Principal identifies the authenticated external caller and its target endpoint.

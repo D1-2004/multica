@@ -11,8 +11,13 @@ const (
 	a2aTaskOriginContextKey               = "multica_origin"
 	a2aTaskOriginValue                    = "a2a"
 	a2aTaskDEAPDWSTokenRequiredContextKey = "deap_dws_token_required"
-	a2aTaskContextJSON                    = `{"multica_origin":"a2a"}`
-	a2aTaskDEAPDWSContextJSON             = `{"deap_dws_token_required":true,"multica_origin":"a2a"}`
+	// a2aTaskOperatorDWSIdentityContextKey marks an A2A turn admitted while the
+	// Agent had an operator-bound DEAP employee identity and the caller sent
+	// neither X-DWS-Token nor an external ContextToken. It is non-secret: the
+	// launcher re-reads the binding, so clearing it revokes future launches.
+	a2aTaskOperatorDWSIdentityContextKey = "a2a_operator_dws_identity"
+	a2aTaskContextJSON                   = `{"multica_origin":"a2a"}`
+	a2aTaskDEAPDWSContextJSON            = `{"deap_dws_token_required":true,"multica_origin":"a2a"}`
 )
 
 // newA2ATaskContext marks an execution as A2A-originated on the durable local
@@ -42,6 +47,50 @@ func newA2ATaskContext(identity ...a2aintegration.InvocationIdentity) []byte {
 		panic(err)
 	}
 	return encoded
+}
+
+// newA2ATaskContextWithBinding is newA2ATaskContext plus the operator-identity
+// marker. A caller-supplied identity (DEAP X-DWS-Token or an external
+// ContextToken) always wins over the operator binding.
+func newA2ATaskContextWithBinding(identity a2aintegration.InvocationIdentity, bound a2aDingTalkBoundIdentity) []byte {
+	taskContext := newA2ATaskContext(identity)
+	if bound.UID != "" && bound.OrgID != "" && identity.DEAPDWSToken == "" && identity.ContextToken == "" {
+		return withA2AOperatorDWSIdentity(taskContext)
+	}
+	return taskContext
+}
+
+// withA2AOperatorDWSIdentity adds the operator-identity marker to an A2A task
+// context produced by newA2ATaskContext.
+func withA2AOperatorDWSIdentity(taskContext []byte) []byte {
+	var envelope map[string]any
+	if err := json.Unmarshal(taskContext, &envelope); err != nil || envelope == nil {
+		return taskContext
+	}
+	envelope[a2aTaskOperatorDWSIdentityContextKey] = true
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return taskContext
+	}
+	return encoded
+}
+
+// UsesA2AOperatorDWSIdentity reports whether the A2A turn should run as the
+// operator-bound DEAP employee identity.
+func UsesA2AOperatorDWSIdentity(taskContext []byte) bool {
+	if len(taskContext) == 0 || !IsA2ATaskOrigin(taskContext) {
+		return false
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(taskContext, &envelope); err != nil {
+		return false
+	}
+	raw, ok := envelope[a2aTaskOperatorDWSIdentityContextKey]
+	if !ok {
+		return false
+	}
+	var marked bool
+	return json.Unmarshal(raw, &marked) == nil && marked
 }
 
 func requiresA2ADEAPDWSToken(taskContext []byte) bool {

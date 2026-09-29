@@ -79,6 +79,22 @@ type Config struct {
 	AllowSignup         bool
 	AllowedEmails       []string
 	AllowedEmailDomains []string
+	// A2AOperatorEmails lists the account emails that may bind a DEAP digital
+	// employee identity to an Agent or forward its inbound A2A traffic
+	// (MULTICA_A2A_OPERATOR_EMAILS). Empty admits nobody.
+	A2AOperatorEmails []string
+	// A2AForwardAllowedOrigins lists the pre-release HTTPS origins whose
+	// forward registrations this deployment accepts and forwards A2A calls to
+	// (MULTICA_A2A_FORWARD_ALLOWED_ORIGINS). Empty disables the registry role.
+	A2AForwardAllowedOrigins []string
+	// A2AForwardRegistryURLs lists the production origins this deployment
+	// registers its Agents with (MULTICA_A2A_FORWARD_REGISTRY_URLS). Empty
+	// disables the pre-release "accept production forwards" switch.
+	A2AForwardRegistryURLs []string
+	// A2AForwardRegistrationSecret authenticates forward registrations between
+	// pre-release and production (MULTICA_A2A_FORWARD_REGISTRATION_SECRET);
+	// both deployments share it and it must be at least 32 characters.
+	A2AForwardRegistrationSecret string
 	// StableRuntimePublisherUserIDs is the deployment-owned UUID allow-list for
 	// promoting immutable FC/E2B templates and controlling their rollout.
 	StableRuntimePublisherUserIDs map[string]struct{}
@@ -205,6 +221,9 @@ type enterpriseIdentityService interface {
 }
 
 type Handler struct {
+	// a2aForwardTransport overrides the transport used to forward inbound A2A
+	// JSON-RPC to another environment; nil uses the default.
+	a2aForwardTransport      http.RoundTripper
 	WorkspaceMCPDispatcher   http.Handler
 	Models                   *modelregistry.Registry
 	Queries                  *db.Queries

@@ -179,6 +179,9 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 		return nil, a2a.NewError(a2a.ErrInvalidParams, "message metadata is not valid JSON")
 	}
 	content := renderA2AInputForAgent(materializedParts)
+	// Read outside the send transaction: a failed optional read must not abort
+	// the transaction that owns the turn.
+	boundIdentity := loadA2AOperatorDWSIdentity(ctx, s.Queries, principalIDs.WorkspaceID, principalIDs.AgentID)
 
 	var queuedTask db.AgentTaskQueue
 	var publicTaskID string
@@ -351,7 +354,7 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 			return nil, a2a.NewError(a2a.ErrInvalidParams, "referenceTaskIds contain an unavailable task")
 		}
 	}
-	taskContext := newA2ATaskContext(validated.Identity)
+	taskContext := newA2ATaskContextWithBinding(validated.Identity, boundIdentity)
 	if !isNewTask && a2a.TaskState(binding.PublicState) == a2a.TaskStateAuthRequired && validated.Identity.ContextToken != "" {
 		if _, resumeErr := qtx.ResumeDeferredA2AAuthTurns(ctx, db.ResumeDeferredA2AAuthTurnsParams{
 			TaskContext: taskContext,
@@ -390,6 +393,7 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 		Role:          "user",
 		Content:       content,
 		TaskID:        queuedTask.ID,
+		SourcePayload: buildA2ADingTalkInboundPayload(validated.RequestMetadata, validated.Metadata, boundIdentity),
 	})
 	if err != nil {
 		return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "create input message")
