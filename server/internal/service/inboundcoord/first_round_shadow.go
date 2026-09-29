@@ -331,11 +331,33 @@ func firstRoundInputs(turn Turn, feedback string) map[string]string {
 		"scene_memory": hashJSON([]any{turn.SceneMemory, turn.SceneMemoryRevision, turn.SceneMemoryStatus, turn.SceneTitle}),
 		"history": hashJSON([]any{turn.DingTalkHistory, turn.History, turn.HistoryStatus, turn.HistoryError, turn.HistoryBefore,
 			historyReads(turn.CoordinationReads)}),
-		"recall":     hashJSON([]any{recall, turn.RelatedTasks, sortedCopy(turn.recalledIssueIDs)}),
-		"reads":      hashJSON([]any{reads, turn.CoordinationReadsTruncated}),
-		"work_state": hashJSON(feedback),
-		"route":      hashJSON(turn.model),
+		// The recall scope is the read's own time window; the items are what
+		// it found. They move for different reasons, so they are separate.
+		"recall_scope": hashJSON(recallParts(recall, true)),
+		"recall_items": hashJSON([]any{recallParts(recall, false), turn.RelatedTasks, sortedCopy(turn.recalledIssueIDs)}),
+		"reads":        hashJSON([]any{reads, turn.CoordinationReadsTruncated}),
+		"work_state":   hashJSON(feedback),
+		"route":        hashJSON(turn.model),
 	}
+}
+
+// recallParts returns the scope of each recall read, or everything else.
+func recallParts(reads []CoordinationRead, scope bool) []any {
+	out := []any{}
+	for _, read := range reads {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(read.Result, &fields) != nil {
+			out = append(out, string(read.Result))
+			continue
+		}
+		if scope {
+			out = append(out, fields["scope"])
+			continue
+		}
+		delete(fields, "scope")
+		out = append(out, fields, read.Failed)
+	}
+	return out
 }
 
 func historyReads(reads []CoordinationRead) []CoordinationRead {

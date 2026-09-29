@@ -315,3 +315,42 @@ func TestRequestFingerprintIsCanonicalAndSectioned(t *testing.T) {
 		t.Fatalf("a budget change is a route change, got %v", got)
 	}
 }
+
+// windowedRecall answers recall like the association service: the scope is
+// the read's own window ending now, the items are what it found.
+type windowedRecall struct {
+	mu    sync.Mutex
+	reads int
+}
+
+func (w *windowedRecall) Call(_ context.Context, _ Turn, name, _ string) (string, error) {
+	if name != toolAssocRecall {
+		return `{}`, nil
+	}
+	w.mu.Lock()
+	w.reads++
+	until := time.Date(2026, 9, 29, 1, 0, w.reads, 0, time.UTC)
+	w.mu.Unlock()
+	raw, _ := json.Marshal(map[string]any{
+		"status": "loaded", "conversation_id": "cid-real",
+		"scope": map[string]any{"since": until.Add(-48 * time.Hour).Format(time.RFC3339), "until": until.Format(time.RFC3339)},
+		"items": []map[string]any{{"issue_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "purpose": "确认晚上几点出发", "status": "queued", "on_this_scene": true}},
+	})
+	return string(raw), nil
+}
+
+func TestFirstRoundShadowSeparatesTheRecallWindowFromItsItems(t *testing.T) {
+	logs := captureLogs(t)
+	loader := sameHistory(2)
+	c, _ := shadowCoordinator(t, loader)
+	c.Tools = &windowedRecall{}
+	cutoff := time.Date(2026, 9, 29, 1, 0, 0, 0, time.UTC)
+	builtShadow(t, c, loader, shadowTurn(cutoff))
+	c.Decide(claimContext(), shadowTurn(cutoff))
+	out := logs.String()
+	for _, want := range []string{"outcome=diff", "diff_inputs=recall_scope", "unexplained=false"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("a recall read later in time must be named as its window, want %q: %s", want, out)
+		}
+	}
+}
