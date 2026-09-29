@@ -128,17 +128,19 @@ func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, 200, map[string]any{"reachable": false, "message": "credential is not configured"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	started := time.Now()
 	cursor := ""
 	seenCursors := map[string]bool{}
 	tools := map[string]bool{}
 	more := false
+	attempts := 0
 	for page := 0; page < 8; page++ {
-		result, callErr := h.callInternalConnectorUpstream(ctx, c, "tools/list", connectorRPCParams{Cursor: cursor})
+		result, pageAttempts, callErr := h.connectorToolListWithRetry(ctx, c, cursor, true)
+		attempts += pageAttempts
 		if callErr != nil {
-			slog.InfoContext(r.Context(), "internal connector test failed", "connector_id", id, "workspace_id", ws, "duration_ms", time.Since(started).Milliseconds())
+			slog.InfoContext(r.Context(), "internal connector test failed", "connector_id", id, "workspace_id", ws, "duration_ms", time.Since(started).Milliseconds(), "attempts", attempts, "failure_class", connectorTestFailureMessage(callErr))
 			writeJSON(w, 200, map[string]any{"reachable": false, "ready": false, "message": connectorTestFailureMessage(callErr)})
 			return
 		}
@@ -179,7 +181,7 @@ func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	ready := len(missing) == 0
-	slog.InfoContext(r.Context(), "internal connector test completed", "connector_id", id, "workspace_id", ws, "duration_ms", time.Since(started).Milliseconds(), "found_tools", len(found), "missing_tools", len(missing))
+	slog.InfoContext(r.Context(), "internal connector test completed", "connector_id", id, "workspace_id", ws, "duration_ms", time.Since(started).Milliseconds(), "attempts", attempts, "found_tools", len(found), "missing_tools", len(missing))
 	writeJSON(w, 200, map[string]any{"reachable": true, "ready": ready, "tools": found, "missing_tools": missing, "has_more": more, "duration_ms": time.Since(started).Milliseconds()})
 }
 

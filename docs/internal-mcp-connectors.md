@@ -84,6 +84,11 @@ shorten the security identifier.
   identify safe categories (credential rejected, timeout, HTTP status or MCP
   parse failure) without returning upstream bodies, credentials or URLs;
   it does not call a tool, grant an Agent, or expose the Bearer or raw response.
+  Because `tools/list` is read-only, an administrator test or initial discovery
+  may retry once after a network timeout under a total bounded deadline. A
+  credential rejection, invalid MCP response, or upstream tool error is not
+  retried. The metadata-only log records the attempt count and safe error
+  class; task `tools/call` is never automatically retried.
 - `MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES` is an operator-set list of
   approved upstream DNS names/suffixes. URLs must be fixed HTTPS origins plus
   path, with no userinfo, query or fragment. Host validation uses exact match
@@ -127,12 +132,16 @@ are not silently reinterpreted as local capability links. The page does not
 show an empty Bearer input for no-auth connectors; an existing Bearer is only
 changed through an explicit rotation action.
 
-The connector is created disabled. The admin confirms connectivity and enables
-it for the selected Agents. An authorized member can see the connector on the
-workspace page, and an Agent's MCP configuration page also lists connectors
-assigned to that Agent. The member then opens a chat with that Agent and asks
-it to use the connector's native MCP tools. No upstream secret is placed in
-the Agent configuration, task prompt or member-facing page.
+The connector is created disabled. The workspace's **Aone FaaS connector**
+page has one job: add and manage connectors. It shows current state and an
+enable/disable action directly on each card; the management dialog presents
+the same state as a clear action rather than an unlabeled checkbox. It does
+not duplicate Agent chat or test conversations below the management list.
+The admin confirms connectivity and enables the connector for selected
+Agents. An Agent's MCP configuration page lists usable workspace-assigned
+connectors. Members use the Agent's existing chat surface to invoke native
+MCP tools. No upstream secret is placed in the Agent configuration, task
+prompt or member-facing page.
 
 Disabled or unauthorized connectors are absent from task MCP discovery. An
 already running task may retain a stale MCP entry until its next claim, but

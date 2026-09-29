@@ -137,6 +137,32 @@ func TestInternalConnectorNoAuthDiscoveryPinsReadOnlyTools(t *testing.T) {
 	}
 }
 
+func TestInternalConnectorAdminToolListRetriesOnlyTimeouts(t *testing.T) {
+	c := internalConnector{ID: "11111111-1111-4111-8111-111111111111", AuthMode: "none", UpstreamURL: "https://safe.example.test/mcp", AllowedTools: []string{"read"}}
+	calls := 0
+	h := &Handler{InternalConnectorClient: &http.Client{Transport: connectorTestRoundTrip(func(*http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return nil, context.DeadlineExceeded
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read"}]}}`))}, nil
+	})}}
+	result, attempts, err := h.connectorToolListWithRetry(context.Background(), c, "", true)
+	if err != nil || attempts != 2 || calls != 2 || len(result.(map[string]any)["tools"].([]map[string]any)) != 1 {
+		t.Fatalf("timed-out tools/list did not recover once: attempts=%d calls=%d result=%v err=%v", attempts, calls, result, err)
+	}
+
+	calls = 0
+	h.InternalConnectorClient = &http.Client{Transport: connectorTestRoundTrip(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 401, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("rejected"))}, nil
+	})}
+	_, attempts, err = h.connectorToolListWithRetry(context.Background(), c, "", true)
+	if attempts != 1 || calls != 1 || err == nil {
+		t.Fatalf("credential rejection was retried: attempts=%d calls=%d err=%v", attempts, calls, err)
+	}
+}
+
 func TestInternalConnectorCapabilityLinkMustBelongToThisDeployment(t *testing.T) {
 	token := "mca2a_" + strings.Repeat("a", 40)
 	base := "https://pre.example.test/base"

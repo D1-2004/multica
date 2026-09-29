@@ -5,22 +5,18 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type InternalConnectorInput, type InternalConnectorTest } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { useWorkspacePaths } from "@multica/core/paths";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
-import { ArrowUpRight, Copy, Network, Plus } from "lucide-react";
+import { Plus, Power } from "lucide-react";
 import { useT } from "../i18n";
-import { useNavigation } from "../navigation";
 
 const empty: InternalConnectorInput = {name:"",upstream_url:"",allowed_tools:[],agent_ids:[],enabled:false,auth_mode:"none"};
 
 export function InternalConnectorsPage() {
   const {t}=useT("agents");
   const workspaceId=useWorkspaceId();
-  const paths=useWorkspacePaths();
-  const navigation=useNavigation();
   const queryClient=useQueryClient();
   const userId=useAuthStore((s)=>s.user?.id);
   const members=useQuery(memberListOptions(workspaceId));
@@ -28,20 +24,18 @@ export function InternalConnectorsPage() {
   const canManage=members.data?.some((member)=>member.user_id===userId && (member.role==="owner" || member.role==="admin"))===true;
   const key=["workspaces",workspaceId,"internal-connectors"];
   const list=useQuery({queryKey:key,queryFn:()=>api.listInternalConnectors(workspaceId),enabled:!!workspaceId&&canManage,refetchOnWindowFocus:true});
-  const available=useQuery({queryKey:[...key,"available"],queryFn:()=>api.listAvailableInternalConnectors(workspaceId),enabled:!!workspaceId,refetchOnWindowFocus:true});
-  const legacy=useQuery({queryKey:[...key,"legacy"],queryFn:()=>api.getSemanticaMCPStatus(workspaceId),enabled:!!workspaceId,refetchOnWindowFocus:true});
   const [editing,setEditing]=useState<string|null>(null);
   const [form,setForm]=useState<InternalConnectorInput>(empty);
   const [bearerInput,setBearerInput]=useState("");
   const [rotateCredential,setRotateCredential]=useState(false);
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(false);
-  const [question,setQuestion]=useState("");
-  const [copyError,setCopyError]=useState(false);
   const [credentialToken,setCredentialToken]=useState("");
   const [credentialBusy,setCredentialBusy]=useState(false);
   const [credentialError,setCredentialError]=useState("");
   const [testing,setTesting]=useState<string|null>(null);
+  const [toggling,setToggling]=useState<string|null>(null);
+  const [toggleErrors,setToggleErrors]=useState<Record<string,string>>({});
   const [testResults,setTestResults]=useState<Record<string,InternalConnectorTest>>({});
   const selectedConnector=editing!=="new"?list.data?.find((c)=>c.id===editing):undefined;
   const credentialReady=selectedConnector?.credentialReady===true;
@@ -85,16 +79,16 @@ export function InternalConnectorsPage() {
     catch {setTestResults((old)=>({...old,[id]:{reachable:false,ready:false,missing_tools:[],message:t(($)=>$.internal_mcp.test_failed)}}));}
     finally {setTesting(null)}
   }
-  async function copyAndOpen(agentId:string,prompt:string) {
-    try {await navigator.clipboard.writeText(prompt);setCopyError(false);navigation.push(paths.chatWithAgent(agentId));}
-    catch {setCopyError(true);setQuestion(prompt)}
+  async function toggleConnector(connector:NonNullable<typeof list.data>[number]) {
+    setToggling(connector.id);setToggleErrors((old)=>({...old,[connector.id]:""}));
+    try {
+      await api.updateInternalConnector(workspaceId,connector.id,{name:connector.name,upstream_url:connector.upstreamUrl,allowed_tools:connector.allowedTools,agent_ids:connector.agentIds,auth_mode:connector.authMode,enabled:!connector.enabled});
+      await Promise.all([queryClient.invalidateQueries({queryKey:key}),queryClient.invalidateQueries({queryKey:[...key,"available"]})]);
+    } catch(e) {setToggleErrors((old)=>({...old,[connector.id]:e instanceof Error?e.message:t(($)=>$.internal_mcp.save_failed)}));}
+    finally {setToggling(null)}
   }
-  function promptFor(name:string,serverName:string) {return t(($)=>$.internal_mcp.example,{name,server:serverName});}
 
   const present=list.data??[];
-  const visible=available.data??[];
-  const hasGenericSemantica=visible.some((c)=>c.name.toLowerCase()==="semantica");
-  const showLegacy=legacy.data?.available===true && !!legacy.data.agentId && !hasGenericSemantica;
 
   return <main className="mx-auto min-h-0 w-full max-w-6xl flex-1 space-y-7 overflow-y-auto px-6 py-8">
     <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-5">
@@ -104,46 +98,21 @@ export function InternalConnectorsPage() {
       {canManage && <Button onClick={()=>edit()}><Plus className="mr-2 size-4"/>{t(($)=>$.internal_mcp.create)}</Button>}
     </header>
 
-    <section className="grid gap-3 md:grid-cols-3">
-      {[t(($)=>$.internal_mcp.step_define),t(($)=>$.internal_mcp.step_credential),t(($)=>$.internal_mcp.step_use)].map((label,i)=><div key={label} className="rounded-xl border border-border bg-card p-4"><span className="text-caption font-mono text-muted-foreground">{String(i+1).padStart(2,"0")}</span><p className="mt-2 text-body font-medium">{label}</p></div>)}
-    </section>
+    {!members.isLoading && !canManage && <p className="rounded-xl border border-border bg-muted/40 p-5 text-body text-muted-foreground">{t(($)=>$.internal_mcp.admin_only)}</p>}
 
     {canManage && <section className="space-y-3">
       <h2 className="text-title font-semibold">{t(($)=>$.internal_mcp.managed)}</h2>
       {list.isError && <p role="alert" className="text-body text-destructive">{t(($)=>$.internal_mcp.load_failed)}</p>}
       {list.isLoading && <p className="text-body text-muted-foreground">{t(($)=>$.internal_mcp.loading)}</p>}
-      {!list.isLoading && !list.isError && present.length===0 && <p className="rounded-xl border border-dashed border-border p-6 text-body text-muted-foreground">{t(($)=>$.internal_mcp.empty)}</p>}
+      {!list.isLoading && !list.isError && present.length===0 && <div className="rounded-xl border border-dashed border-border p-6"><p className="text-body text-muted-foreground">{t(($)=>$.internal_mcp.empty)}</p><Button className="mt-4" variant="outline" onClick={()=>edit()}><Plus className="mr-2 size-4"/>{t(($)=>$.internal_mcp.create)}</Button></div>}
       <div className="grid gap-3 md:grid-cols-2">{present.map((c)=><article key={c.id} className="space-y-3 rounded-xl border border-border bg-card p-5">
-        <div className="flex items-start justify-between gap-3"><div><h3 className="text-title-sm font-semibold">{c.name}</h3><p className="mt-1 break-all text-caption text-muted-foreground">{c.upstreamUrl}</p></div><Badge variant={c.enabled&&c.credentialReady?"default":"secondary"}>{!c.credentialReady?t(($)=>$.internal_mcp.waiting_credential):c.enabled?t(($)=>$.internal_mcp.enabled):t(($)=>$.internal_mcp.disabled)}</Badge></div>
-        <div className="flex flex-wrap gap-1">{c.allowedTools.map((name)=><code key={name} className="rounded bg-muted px-2 py-1 text-caption">{name}</code>)}</div>
-        <p className="text-caption text-muted-foreground">{t(($)=>$.internal_mcp.agent_count,{count:c.agentIds.length})}</p>
-        {c.authMode==="bearer" && <p className="break-all text-caption text-muted-foreground">{t(($)=>$.internal_mcp.credential_ref)}: <code>{c.credentialRef}</code></p>}
-        <p className="text-caption text-muted-foreground">{t(($)=>$.internal_mcp.credential_source)}: {c.authMode==="none"?t(($)=>$.internal_mcp.no_auth):c.credentialSource==="workspace"?t(($)=>$.internal_mcp.credential_workspace):c.credentialSource==="environment"?t(($)=>$.internal_mcp.credential_environment):t(($)=>$.internal_mcp.waiting_credential)}</p>
-        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>edit(c.id)}>{t(($)=>$.internal_mcp.manage)}</Button><Button variant="outline" disabled={testing===c.id} onClick={()=>testConnection(c.id)}>{testing===c.id?t(($)=>$.internal_mcp.testing):t(($)=>$.internal_mcp.test_connection)}</Button></div>
+        <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0 flex-1"><h3 className="text-title-sm font-semibold">{c.name}</h3><p className="mt-1 break-all text-caption text-muted-foreground">{c.upstreamUrl}</p></div><Badge variant={c.enabled&&c.credentialReady?"default":"secondary"}>{!c.credentialReady?t(($)=>$.internal_mcp.waiting_credential):c.enabled?t(($)=>$.internal_mcp.enabled):t(($)=>$.internal_mcp.disabled)}</Badge></div>
+        <p className="text-caption text-muted-foreground">{t(($)=>$.internal_mcp.agent_count,{count:c.agentIds.length})} · {t(($)=>$.internal_mcp.discovered_tools,{count:c.allowedTools.length})} · {c.authMode==="none"?t(($)=>$.internal_mcp.no_auth):c.credentialSource==="workspace"?t(($)=>$.internal_mcp.credential_workspace):c.credentialSource==="environment"?t(($)=>$.internal_mcp.credential_environment):t(($)=>$.internal_mcp.waiting_credential)}</p>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>edit(c.id)}>{t(($)=>$.internal_mcp.manage)}</Button><Button variant="outline" disabled={testing===c.id} onClick={()=>testConnection(c.id)}>{testing===c.id?t(($)=>$.internal_mcp.testing):t(($)=>$.internal_mcp.test_connection)}</Button><Button variant={c.enabled?"outline":"default"} disabled={toggling===c.id||(!c.enabled&&!c.credentialReady)} onClick={()=>toggleConnector(c)}><Power className="mr-2 size-4"/>{toggling===c.id?t(($)=>$.internal_mcp.saving):c.enabled?t(($)=>$.internal_mcp.disable_action):t(($)=>$.internal_mcp.enable)}</Button></div>
+        {toggleErrors[c.id] && <p role="alert" className="text-caption text-destructive">{toggleErrors[c.id]}</p>}
         {testResults[c.id] && <p role="status" className={`text-caption ${testResults[c.id]?.ready?"text-foreground":testResults[c.id]?.reachable?"text-warning":"text-destructive"}`}>{testResults[c.id]?.ready?t(($)=>$.internal_mcp.test_success,{tools:testResults[c.id]?.tools?.join(", ")||"—"}):testResults[c.id]?.reachable?t(($)=>$.internal_mcp.test_missing_tools,{tools:testResults[c.id]?.missing_tools.join(", ")||"—"}):testResults[c.id]?.message||t(($)=>$.internal_mcp.test_failed)}</p>}
       </article>)}</div>
     </section>}
-
-    <section className="space-y-3">
-      <h2 className="flex items-center gap-2 text-title font-semibold"><Network className="size-5"/>{t(($)=>$.internal_mcp.available)}</h2>
-      {available.isLoading && <p className="text-body text-muted-foreground">{t(($)=>$.internal_mcp.loading)}</p>}
-      {available.isError && <p role="alert" className="text-body text-destructive">{t(($)=>$.internal_mcp.load_failed)}</p>}
-      {!available.isLoading && !available.isError && visible.length===0 && !showLegacy && <p className="text-body text-muted-foreground">{t(($)=>$.internal_mcp.none_available)}</p>}
-      <div className="grid gap-3 md:grid-cols-2">
-        {visible.map((c)=><article key={`${c.id}-${c.agentId}`} className="space-y-3 rounded-xl border border-border bg-card p-5">
-          <h3 className="text-title-sm font-semibold">{c.name}</h3><p className="text-body text-muted-foreground">{t(($)=>$.internal_mcp.with_agent,{name:c.agentName})}</p>
-          <div className="flex flex-wrap gap-1">{c.tools.map((name)=><code key={name} className="rounded bg-muted px-2 py-1 text-caption">{name}</code>)}</div>
-          <div className="flex flex-wrap gap-2"><Button onClick={()=>copyAndOpen(c.agentId,promptFor(c.name,c.serverName))}><Copy className="mr-2 size-4"/>{t(($)=>$.internal_mcp.open_chat)}</Button><Button variant="outline" onClick={()=>navigation.push(paths.chatWithAgent(c.agentId))}>{t(($)=>$.semantica.open_chat)}</Button></div>
-        </article>)}
-        {showLegacy && <article className="space-y-3 rounded-xl border border-border border-l-4 border-l-primary bg-card p-5">
-          <div className="flex items-center justify-between gap-2"><h3 className="text-title-sm font-semibold">{t(($)=>$.internal_mcp.legacy_name)}</h3><Badge variant="secondary">{t(($)=>$.internal_mcp.legacy)}</Badge></div>
-          <p className="text-body text-muted-foreground">{t(($)=>$.internal_mcp.with_agent,{name:legacy.data?.agentName??t(($)=>$.semantica.agent_fallback)})}</p>
-          <div className="flex flex-wrap gap-2"><Button onClick={()=>copyAndOpen(legacy.data!.agentId!,t(($)=>$.semantica.example))}><ArrowUpRight className="mr-2 size-4"/>{t(($)=>$.internal_mcp.open_chat)}</Button><Button variant="outline" onClick={()=>navigation.push(paths.chatWithAgent(legacy.data!.agentId!))}>{t(($)=>$.semantica.open_chat)}</Button></div>
-        </article>}
-      </div>
-      {copyError && <p role="alert" className="text-caption text-destructive">{t(($)=>$.internal_mcp.copy_failed)} <span>{question}</span></p>}
-      <p className="text-caption text-muted-foreground">{t(($)=>$.internal_mcp.usage_note)}</p>
-    </section>
 
     {editing && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><div className="max-h-[90vh] w-full max-w-xl space-y-4 overflow-y-auto rounded-2xl border border-border bg-background p-6 shadow-xl">
       <h2 className="text-title font-semibold">{editing==="new"?t(($)=>$.internal_mcp.create):t(($)=>$.internal_mcp.manage)}</h2>
@@ -158,15 +127,19 @@ export function InternalConnectorsPage() {
       </fieldset>}
       {editing!=="new" && <p className="text-caption text-muted-foreground">{t(($)=>$.internal_mcp.discovered_tools,{count:form.allowed_tools.length})}</p>}
       <fieldset><legend className="text-label font-medium">{t(($)=>$.internal_mcp.agents)}</legend><div className="mt-2 max-h-40 space-y-2 overflow-y-auto rounded-lg border border-border p-3">{agents.data?.map((agent)=><label key={agent.id} className="flex items-center gap-2 text-body"><input type="checkbox" checked={form.agent_ids.includes(agent.id)} onChange={(e)=>setForm({...form,agent_ids:e.target.checked?[...form.agent_ids,agent.id]:form.agent_ids.filter((id)=>id!==agent.id)})}/>{agent.name}</label>)}</div></fieldset>
-      {editing!=="new" && <label className="flex items-center gap-2 text-body"><input type="checkbox" disabled={!credentialReady&&!form.enabled} checked={form.enabled} onChange={(e)=>setForm({...form,enabled:e.target.checked})}/>{t(($)=>$.internal_mcp.enable)}</label>}
-      {editing!=="new" && !credentialReady && <p className="text-caption text-muted-foreground">{t(($)=>$.internal_mcp.enable_hint)}</p>}
+      {editing!=="new" && <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-4">
+        <div className="flex items-center gap-2"><Power className="size-4 text-muted-foreground"/><span className="text-label font-semibold">{t(($)=>$.internal_mcp.state_title)}</span><Badge variant={form.enabled?"default":"secondary"}>{form.enabled?t(($)=>$.internal_mcp.enabled):t(($)=>$.internal_mcp.disabled)}</Badge></div>
+        <p className="text-caption text-muted-foreground">{t(($)=>$.internal_mcp.state_hint)}</p>
+        <div className="grid grid-cols-2 gap-2"><Button variant={!form.enabled?"default":"outline"} onClick={()=>setForm({...form,enabled:false})}>{t(($)=>$.internal_mcp.keep_disabled)}</Button><Button variant={form.enabled?"default":"outline"} disabled={!credentialReady&&!form.enabled} onClick={()=>setForm({...form,enabled:true})}>{t(($)=>$.internal_mcp.enable)}</Button></div>
+        {!credentialReady && <p className="text-caption text-muted-foreground">{t(($)=>$.internal_mcp.enable_hint)}</p>}
+      </div>}
       {editing!=="new" && selectedConnector?.authMode==="none" && <p className="rounded-lg border border-border bg-muted/40 p-3 text-caption text-muted-foreground">{t(($)=>$.internal_mcp.no_auth_hint)}</p>}
       {editing!=="new" && selectedConnector?.authMode==="bearer" && <div className="space-y-2">
         {credentialReady && !rotateCredential && <Button variant="outline" onClick={()=>setRotateCredential(true)}>{t(($)=>$.internal_mcp.rotate_credential)}</Button>}
         {(!credentialReady || rotateCredential) && <div className="space-y-2 rounded-lg border border-border p-4"><label className="block text-label font-medium">{t(($)=>$.internal_mcp.credential)}<Input className="mt-1" type="password" autoComplete="off" value={credentialToken} onChange={(e)=>setCredentialToken(e.target.value)}/></label><p className="text-caption text-muted-foreground">{t(($)=>$.internal_mcp.credential_hint)}</p><Button variant="outline" disabled={credentialBusy||!credentialToken} onClick={saveCredential}>{credentialBusy?t(($)=>$.internal_mcp.saving):t(($)=>$.internal_mcp.save_credential)}</Button>{credentialError && <p role="alert" className="text-caption text-destructive">{credentialError}</p>}</div>}
       </div>}
       {error && <p role="alert" className="text-body text-destructive">{error}</p>}
-      <div className="flex justify-end gap-2"><Button variant="outline" onClick={()=>{setEditing(null);setForm(empty);setBearerInput("");setCredentialToken("")}}>{t(($)=>$.internal_mcp.cancel)}</Button><Button disabled={busy} onClick={save}>{busy?t(($)=>$.internal_mcp.saving):t(($)=>$.internal_mcp.save)}</Button></div>
+      <div className="flex justify-end gap-2"><Button variant="outline" onClick={()=>{setEditing(null);setForm(empty);setBearerInput("");setCredentialToken("")}}>{t(($)=>$.internal_mcp.cancel)}</Button><Button disabled={busy} onClick={save}>{busy?t(($)=>$.internal_mcp.saving):selectedConnector&&form.enabled!==selectedConnector.enabled?form.enabled?t(($)=>$.internal_mcp.save_enable):t(($)=>$.internal_mcp.save_disable):t(($)=>$.internal_mcp.save)}</Button></div>
     </div></div>}
   </main>;
 }

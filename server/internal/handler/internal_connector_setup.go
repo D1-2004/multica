@@ -115,13 +115,13 @@ func parseInternalConnectorCapabilityLink(raw, base string) (string, error) {
 
 // Discovery pins tool names at creation. No upstream mutation is invoked.
 func (h *Handler) discoverInternalConnectorTools(ctx context.Context, c internalConnector) ([]string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	seen := map[string]bool{}
 	seenCursors := map[string]bool{}
 	cursor := ""
 	for page := 0; page < 8; page++ {
-		result, err := h.callInternalConnectorUpstreamFiltered(ctx, c, "tools/list", connectorRPCParams{Cursor: cursor}, false)
+		result, _, err := h.connectorToolListWithRetry(ctx, c, cursor, false)
 		if err != nil {
 			return nil, errors.New("could not discover MCP tools; check the address and authentication")
 		}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"slices"
@@ -30,6 +31,37 @@ type connectorRPCParams struct {
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
 	Cursor    string          `json:"cursor"`
+}
+
+const connectorListAttemptTimeout = 8 * time.Second
+
+// An administrator's tools/list is read-only and safe to retry once after a
+// transient network timeout. Keep this separate from task tools/call, which
+// can have side effects and must never be retried by the relay.
+func (h *Handler) connectorToolListWithRetry(ctx context.Context, c internalConnector, cursor string, filterTools bool) (any, int, error) {
+	for attempt := 1; attempt <= 2; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, connectorListAttemptTimeout)
+		result, err := h.callInternalConnectorUpstreamFiltered(attemptCtx, c, "tools/list", connectorRPCParams{Cursor: cursor}, filterTools)
+		cancel()
+		if err == nil {
+			return result, attempt, nil
+		}
+		if ctx.Err() != nil {
+			return nil, attempt, ctx.Err()
+		}
+		if attempt == 2 || !retryableConnectorListTimeout(err) {
+			return nil, attempt, err
+		}
+	}
+	return nil, 2, context.DeadlineExceeded
+}
+
+func retryableConnectorListTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var networkError net.Error
+	return errors.As(err, &networkError) && networkError.Timeout()
 }
 
 type connectorUpstreamStatusError struct{ Code int }
