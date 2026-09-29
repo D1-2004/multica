@@ -473,3 +473,43 @@ func TestPerformanceRolloutRejectsMalformedTargets(t *testing.T) {
 		}
 	}
 }
+
+func TestFinishSchemaExperimentConfig(t *testing.T) {
+	const agent = "7b1f0d3e-2c4a-4e5b-8f6a-9c0d1e2f3a4b"
+	with := func(experiment string) []byte {
+		rollout := `"performance_optimization":{"enabled":true,"agent_ids":["` + agent + `"],"finish_schema_experiment":` + experiment + `},`
+		return []byte(strings.Replace(validJSON(), `"fc_e2b": {`, rollout+`"fc_e2b": {`, 1))
+	}
+	cfg, err := ParseStrict(with(`{"enabled":true,"salt":"pri47-a"}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Runtime.PerformanceOptimization.FinishSchemaExperiment; got == nil || !got.Enabled || got.Salt != "pri47-a" {
+		t.Fatalf("experiment not parsed: %+v", got)
+	}
+	for _, bad := range []string{`{"enabled":true,"salt":""}`, `{"enabled":true,"salt":" x"}`, `{"enabled":true,"salt":"` + strings.Repeat("s", 65) + `"}`, `{"enabled":true,"salt":"x","percent":50}`} {
+		if _, err := ParseStrict(with(bad), false); err == nil {
+			t.Fatalf("accepted invalid experiment %s", bad)
+		}
+	}
+	if _, err := ParseStrict(with(`{"enabled":false,"salt":""}`), false); err != nil {
+		t.Fatalf("a disabled experiment needs no salt: %v", err)
+	}
+}
+
+func TestFinishSchemaExperimentSnapshotIsACopy(t *testing.T) {
+	const agent = "7b1f0d3e-2c4a-4e5b-8f6a-9c0d1e2f3a4b"
+	client := &fakeDiamondClient{content: validJSON()}
+	service, err := newDiamondService(nil, true, func() (diamondClient, error) { return client, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	rollout := `"performance_optimization":{"enabled":true,"agent_ids":["` + agent + `"],"finish_schema_experiment":{"enabled":true,"salt":"pri47-a"}},`
+	client.onChange(strings.Replace(validJSON(), `"fc_e2b": {`, rollout+`"fc_e2b": {`, 1))
+	snapshot := service.Current()
+	snapshot.Config.Runtime.PerformanceOptimization.FinishSchemaExperiment.Enabled = false
+	if !service.Current().Config.Runtime.PerformanceOptimization.FinishSchemaExperiment.Enabled {
+		t.Fatal("experiment config escaped snapshot copy")
+	}
+}

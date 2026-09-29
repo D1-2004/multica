@@ -825,6 +825,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 		coordinator.FinishRecoveryAgentProvider = performanceAgent
 		coordinator.HistoryPrefetchAgentProvider = performanceAgent
+		coordinator.FinishSchemaExperimentProvider = func(agentID pgtype.UUID) inboundcoord.FinishSchemaExperiment {
+			return opts.RuntimeConfig.finishSchemaExperiment(util.UUIDToString(agentID))
+		}
+		coordinator.BuildID = version + "@" + commit
 	}
 	if opts.DeploymentFence != nil {
 		coordinator.Ready = func(ctx context.Context) (bool, error) {

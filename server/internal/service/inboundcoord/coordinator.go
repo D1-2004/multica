@@ -272,7 +272,13 @@ type Coordinator struct {
 	HistoryPrefetchAgentProvider func(pgtype.UUID) bool
 	windowHistory                *windowHistoryReads
 	firstRoundShadows            *firstRoundShadows
-	windowHistoryAllowed         bool
+	// FinishSchemaExperimentProvider reads the finish schema experiment for
+	// an agent (finish_schema_experiment.go). Nil disables the experiment.
+	FinishSchemaExperimentProvider func(pgtype.UUID) FinishSchemaExperiment
+	// BuildID identifies the running binary in experiment logs.
+	BuildID                string
+	finishSchemaAssignment finishSchemaAssignment
+	windowHistoryAllowed   bool
 
 	RouteProvider func(context.Context) (*modelregistry.Route, error)
 	// ModelProvider is sampled once per decision, including all finish reviews.
@@ -402,6 +408,8 @@ func (c *Coordinator) decisionSnapshot(ctx context.Context, turn Turn) (*Coordin
 	snapshot.FinishRecoveryAgentProvider = nil
 	snapshot.windowHistoryAllowed = c.historyPrefetchAllowed(turn)
 	snapshot.HistoryPrefetchAgentProvider = nil
+	snapshot.finishSchemaAssignment = c.assignFinishSchemaArm(ctx, turn, snapshot.finishRecovery)
+	snapshot.FinishSchemaExperimentProvider = nil
 	if c.RouteProvider != nil {
 		route, err := c.RouteProvider(ctx)
 		if err != nil {
@@ -463,6 +471,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	}
 	c = snapshot
 	turn.model = c.model
+	c.logFinishSchemaAssignment(ctx, turn)
 	if c.Ready != nil {
 		ready, err := c.Ready(ctx)
 		if err != nil || !ready {
@@ -511,6 +520,9 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	defer cancel()
 	started := time.Now()
 	turnTrace = c.startTurnTrace(ctx, turn, started)
+	if a := c.finishSchemaAssignment; a.active && turnTrace != nil {
+		turnTrace.AddMetadata(map[string]any{"finish_schema_arm": a.arm, "finish_schema_reason": a.reason, "config_sha256": a.configSHA256, "build": c.BuildID})
+	}
 	loopCtx = langfuse.ContextWithTrace(loopCtx, turnTrace)
 	normalizeDecisionHistory(&turn)
 	decision, err := c.runLoop(loopCtx, turn)

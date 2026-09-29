@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"os"
 	"slices"
 	"strings"
@@ -108,10 +109,26 @@ func (c *appRuntimeConfig) validateSnapshot(raw runtimeconfig.Config) error {
 }
 
 func (c *appRuntimeConfig) current() runtimeconfig.Config {
+	return c.snapshot().Config
+}
+
+func (c *appRuntimeConfig) snapshot() runtimeconfig.Snapshot {
 	if c == nil || c.remote == nil {
-		return runtimeconfig.Config{}
+		return runtimeconfig.Snapshot{}
 	}
-	return c.remote.Current().Config
+	return c.remote.Current()
+}
+
+// finishSchemaExperiment reads the finish schema experiment for agentID. It
+// is enabled only while the performance switch itself allows the agent.
+func (c *appRuntimeConfig) finishSchemaExperiment(agentID string) inboundcoord.FinishSchemaExperiment {
+	snapshot := c.snapshot()
+	experiment := inboundcoord.FinishSchemaExperiment{ConfigSHA256: snapshot.SHA256, ConfigGeneration: snapshot.Generation}
+	rollout := snapshot.Config.Runtime.PerformanceOptimization
+	if rollout != nil && rollout.AllowsAgent(agentID) && rollout.FinishSchemaExperiment != nil && rollout.FinishSchemaExperiment.Enabled {
+		experiment.Enabled, experiment.Salt = true, rollout.FinishSchemaExperiment.Salt
+	}
+	return experiment
 }
 
 func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {

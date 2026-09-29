@@ -226,7 +226,7 @@ func (c *Coordinator) compareFirstRoundShadow(turn Turn, params openai.ChatCompl
 	entry := shadows.entries[key]
 	delete(shadows.entries, key)
 	shadows.mu.Unlock()
-	logArgs := append(coordinatorLogIndex(turn), "event", "inbound_coordinator_speculation_shadow", "claim_build_ms", claimBuild.Milliseconds())
+	logArgs := append(coordinatorLogIndex(turn), "event", "inbound_coordinator_speculation_shadow", "v_loop_first_ms", claimBuild.Milliseconds())
 	outcome := ""
 	switch {
 	case entry == nil:

@@ -54,6 +54,25 @@ Deployment order:
    this switch cannot revert (E2B cancellation cleanup and existing schema
    migrations). Do not pass the manual pre verification gate automatically.
 
+## Temporary finish schema experiment
+
+`performance_optimization.finish_schema_experiment` isolates one Q1 part, the
+finish schema pruning, for a controlled comparison:
+
+```json
+"finish_schema_experiment": {"enabled": true, "salt": "<fixed per experiment>"}
+```
+
+It is absent and off by default, and it has no effect for an agent the parent
+object does not select. While on, each Coordinator job is assigned once by a
+salted hash of its job UUID: the `pruned` group keeps Q1 unchanged and the
+`expanded` group sends the expanded finish schema; every other Q1 parameter is
+the same. The same deployment order applies: deploy the binary to every
+replica before adding the key, and remove the key before any binary rollback.
+Changing the salt reshuffles the groups, so keep it fixed for one experiment.
+The contract is in `docs/inbound-coordinator-loop.md`; remove the field and
+its code when the experiment concludes.
+
 ## Where further latency work has evidence
 
 PRI-34 found that 109/192 Coordinator main calls hit the old 1536-token cap;

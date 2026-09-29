@@ -90,6 +90,17 @@ type RuntimeConfig struct {
 type PerformanceOptimizationConfig struct {
 	Enabled  bool     `json:"enabled"`
 	AgentIDs []string `json:"agent_ids"`
+	// FinishSchemaExperiment temporarily splits the decisions of the agents
+	// above into two groups that differ only in whether the expanded finish
+	// schema is pruned. It has no effect unless Enabled allows the agent.
+	FinishSchemaExperiment *FinishSchemaExperimentConfig `json:"finish_schema_experiment,omitempty"`
+}
+
+// FinishSchemaExperimentConfig assigns each Coordinator job to a group by a
+// stable hash of its id and Salt; changing Salt reshuffles the groups.
+type FinishSchemaExperimentConfig struct {
+	Enabled bool   `json:"enabled"`
+	Salt    string `json:"salt"`
 }
 
 func (c PerformanceOptimizationConfig) AllowsAgent(agentID string) bool {
@@ -375,6 +386,11 @@ func (c RuntimeConfig) validate() error {
 		for _, agentID := range rollout.AgentIDs {
 			if parsed, err := uuid.Parse(strings.TrimSpace(agentID)); err != nil || parsed == uuid.Nil || parsed.String() != agentID {
 				return fmt.Errorf("performance_optimization.agent_ids contains invalid canonical UUID %q", agentID)
+			}
+		}
+		if experiment := rollout.FinishSchemaExperiment; experiment != nil && experiment.Enabled {
+			if salt := strings.TrimSpace(experiment.Salt); salt == "" || len(salt) > 64 || salt != experiment.Salt {
+				return fmt.Errorf("performance_optimization.finish_schema_experiment.salt must be 1-64 characters without surrounding spaces when enabled")
 			}
 		}
 	}
