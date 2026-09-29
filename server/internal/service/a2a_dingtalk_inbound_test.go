@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
@@ -244,14 +243,28 @@ func TestA2ATaskContextOperatorBindingMarker(t *testing.T) {
 }
 
 type fakeA2AOperatorIdentityReader struct {
-	config db.AgentA2aOperatorConfig
-	err    error
-	calls  int
+	config      db.GetAgentA2AOperatorConfigRow
+	err         error
+	identity    db.AgentDingtalkIdentity
+	identityErr error
+	calls       int
 }
 
-func (f *fakeA2AOperatorIdentityReader) GetAgentA2AOperatorConfig(context.Context, db.GetAgentA2AOperatorConfigParams) (db.AgentA2aOperatorConfig, error) {
+func (f *fakeA2AOperatorIdentityReader) GetAgentA2AOperatorConfig(context.Context, db.GetAgentA2AOperatorConfigParams) (db.GetAgentA2AOperatorConfigRow, error) {
 	f.calls++
 	return f.config, f.err
+}
+
+func (f *fakeA2AOperatorIdentityReader) GetAgentDingTalkIdentity(context.Context, db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error) {
+	f.calls++
+	return f.identity, f.identityErr
+}
+
+func enabledTagggIdentityReader() *fakeA2AOperatorIdentityReader {
+	return &fakeA2AOperatorIdentityReader{
+		config:   db.GetAgentA2AOperatorConfigRow{A2aIdentityEnabled: true},
+		identity: db.AgentDingtalkIdentity{DwsUid: "5550001", OrgID: "7770001"},
+	}
 }
 
 func operatorIdentityTestLauncher(reader A2AOperatorIdentityReader, creator *fakeAgentIdentityContextCreator) *FCE2BLauncher {
@@ -267,10 +280,7 @@ func operatorIdentityTestLauncher(reader A2AOperatorIdentityReader, creator *fak
 }
 
 func TestA2AOperatorBindingMintsRunnerContextToken(t *testing.T) {
-	reader := &fakeA2AOperatorIdentityReader{config: db.AgentA2aOperatorConfig{
-		DwsUid:   pgtype.Text{String: "5550001", Valid: true},
-		DwsOrgID: pgtype.Text{String: "7770001", Valid: true},
-	}}
+	reader := enabledTagggIdentityReader()
 	creator := &fakeAgentIdentityContextCreator{result: agentidentityhsf.CreateContextResult{
 		ContextToken: "ctx_from_operator_binding",
 		ExpiresAt:    time.Now().Add(15 * time.Minute).UnixMilli(),
@@ -348,6 +358,21 @@ func TestLoadA2AOperatorDWSIdentityFailsOpen(t *testing.T) {
 	}
 	if got := loadA2AOperatorDWSIdentity(context.Background(), &fakeA2AOperatorIdentityReader{}, ws, agent); got.UID != "" {
 		t.Fatalf("cleared row produced identity %+v", got)
+	}
+	// An identity bound only through Integrations stays out of A2A until an
+	// operator enables it.
+	integrationsOnly := enabledTagggIdentityReader()
+	integrationsOnly.config.A2aIdentityEnabled = false
+	if got := loadA2AOperatorDWSIdentity(context.Background(), integrationsOnly, ws, agent); got.UID != "" {
+		t.Fatalf("identity without the A2A switch produced %+v", got)
+	}
+	unbound := enabledTagggIdentityReader()
+	unbound.identityErr = pgx.ErrNoRows
+	if got := loadA2AOperatorDWSIdentity(context.Background(), unbound, ws, agent); got.UID != "" {
+		t.Fatalf("switch without identity produced %+v", got)
+	}
+	if got := loadA2AOperatorDWSIdentity(context.Background(), enabledTagggIdentityReader(), ws, agent); got.UID != "5550001" || got.OrgID != "7770001" {
+		t.Fatalf("enabled identity = %+v", got)
 	}
 	if got := loadA2AOperatorDWSIdentity(context.Background(), nil, ws, agent); got.UID != "" {
 		t.Fatalf("nil reader produced identity %+v", got)

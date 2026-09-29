@@ -5,8 +5,8 @@ import type {
   CreateAgentA2ACredentialRequest,
   UpdateAgentA2AClientRequest,
   UpdateAgentA2AConfigRequest,
-  UpdateAgentA2AOperatorForwardRequest,
   UpdateAgentA2AOperatorIdentityRequest,
+  UpdateAgentA2AProdForwardRequest,
 } from "../types";
 import { agentA2AKeys } from "./queries";
 
@@ -112,23 +112,11 @@ export function useDeleteAgentA2AOperatorIdentity(wsId: string, agentId: string)
   });
 }
 
-// The forward token is write-only: it goes to the server and is never kept in
-// query state.
-export function useUpdateAgentA2AOperatorForward(wsId: string, agentId: string) {
+export function useUpdateAgentA2AProdForward(wsId: string, agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: UpdateAgentA2AOperatorForwardRequest) =>
-      api.updateAgentA2AOperatorForward(agentId, data),
-    onSuccess: () => queryClient.invalidateQueries({
-      queryKey: agentA2AKeys.all(wsId, agentId),
-    }),
-  });
-}
-
-export function useDeleteAgentA2AOperatorForward(wsId: string, agentId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => api.deleteAgentA2AOperatorForward(agentId),
+    mutationFn: (data: UpdateAgentA2AProdForwardRequest) =>
+      api.updateAgentA2AProdForward(agentId, data),
     onSuccess: () => queryClient.invalidateQueries({
       queryKey: agentA2AKeys.all(wsId, agentId),
     }),

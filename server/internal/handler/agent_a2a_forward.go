@@ -14,19 +14,22 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// An operator can point one Agent's inbound A2A JSON-RPC at the same kind of
-// endpoint in another environment, so DEAP keeps calling the production Card
-// while the turn runs on pre-release. The caller still authenticates here with
-// this environment's credential; only then is the unchanged body replayed to
-// the target with the target Agent's key. The target re-authenticates and
-// re-validates every identity header itself.
+// When a pre-release Agent registered for a digital employee identity (see
+// agent_a2a_forward_registration.go), the production Agent bound to the same
+// identity forwards its inbound A2A JSON-RPC there, so DEAP keeps calling the
+// production Card while the turn runs on pre-release. The caller still
+// authenticates here with this environment's credential; only then is the
+// unchanged body replayed to the target with the registration key. The target
+// re-authenticates and re-validates every identity header itself.
 
 const (
 	// agentA2AForwardedHeader marks a forwarded request. An Agent whose own
@@ -90,13 +93,17 @@ var defaultAgentA2AForwardTransport http.RoundTripper = &http.Transport{
 }
 
 type agentA2AForwardTarget struct {
-	RPCURL string
-	Token  string
+	DWSUID         string
+	OrgID          string
+	RPCURL         string
+	TargetClientID pgtype.UUID
+	Token          string
+	TokenSHA256    string
 }
 
-// maybeForwardAgentA2ARPC forwards an authenticated request when the
-// operator bound this credential's client to another environment. It returns
-// true when it has written the response.
+// maybeForwardAgentA2ARPC forwards an authenticated request when a
+// pre-release Agent registered for this Agent's digital employee identity. It
+// returns true when it has written the response.
 func (h *Handler) maybeForwardAgentA2ARPC(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -104,7 +111,7 @@ func (h *Handler) maybeForwardAgentA2ARPC(
 	credential db.GetAgentA2ACredentialByTokenHashRow,
 	publicAgentID string,
 ) bool {
-	target, configured, err := h.resolveAgentA2AForward(r.Context(), credential)
+	target, configured, err := h.resolveAgentA2AForward(r.Context(), credential, publicAgentID)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "A2A forward is misconfigured")
 		return true
@@ -113,8 +120,8 @@ func (h *Handler) maybeForwardAgentA2ARPC(
 		return false
 	}
 	if r.Header.Get(agentA2AForwardedHeader) != "" {
-		// This hop forwards the client itself, so a marked request is either
-		// a forwarding loop or a caller trying to force local execution.
+		// This hop forwards the Agent itself, so a marked request is either a
+		// forwarding loop or a caller trying to force local execution.
 		// Neither may run here.
 		writeError(w, http.StatusLoopDetected, "A2A forward loop detected")
 		return true
@@ -130,47 +137,115 @@ func (h *Handler) maybeForwardAgentA2ARPC(
 		// the endpoint is unpublished or the Agent archived; new turns do not.
 		return false
 	}
-	h.forwardAgentA2ARPC(w, r, body, target, publicAgentID)
-	return true
+	for attempt := 0; ; attempt++ {
+		// The target sees every forwarded call as its one registration
+		// client, so that client serves exactly one source client for good.
+		// A second client (or a second Agent bound to the same identity)
+		// runs locally instead of sharing the first client's tasks there.
+		owner, err := h.Queries.ClaimA2AForwardTokenBinding(r.Context(), db.ClaimA2AForwardTokenBindingParams{
+			TokenSha256:    agentA2AForwardBindingKey(target.RPCURL, target.TargetClientID),
+			SourceClientID: credential.ClientID,
+			WorkspaceID:    credential.WorkspaceID,
+			AgentID:        credential.AgentID,
+			CreatedBy:      credential.DelegatedByUserID,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "A2A forward is misconfigured")
+			return true
+		}
+		if owner.Bytes != credential.ClientID.Bytes {
+			slog.Warn("A2A forward target belongs to another source client; serving locally",
+				"event", "a2a_forward_client_mismatch",
+				"agent_id", uuidToString(credential.AgentID),
+				"client_id", uuidToString(credential.ClientID),
+			)
+			return false
+		}
+		if h.forwardAgentA2ARPC(w, r, body, target, publicAgentID) {
+			return true
+		}
+		// Pre-release no longer honors this key (withdrawn, or its employee
+		// changed there) and ran nothing. Retire exactly this registration; a
+		// newer one with another key is left alone.
+		if err := h.Queries.RejectA2AForwardRegistration(r.Context(), db.RejectA2AForwardRegistrationParams{
+			DwsUid:      target.DWSUID,
+			OrgID:       target.OrgID,
+			TokenSha256: target.TokenSHA256,
+		}); err != nil {
+			slog.Warn("retire rejected A2A forward registration failed", "agent_id", uuidToString(credential.AgentID), "error", err)
+		}
+		slog.Warn("A2A forward target rejected the registration key",
+			"event", "a2a_forward_registration_rejected",
+			"agent_id", uuidToString(credential.AgentID),
+			"target_origin", agentA2AForwardOrigin(target.RPCURL),
+			"attempt", attempt,
+		)
+		if attempt > 0 {
+			return false
+		}
+		// A key rotation may have raced this call; follow the registration
+		// that replaced it once, otherwise serve the call here.
+		target, configured, err = h.resolveAgentA2AForward(r.Context(), credential, publicAgentID)
+		if err != nil || !configured {
+			return false
+		}
+	}
 }
 
-// resolveAgentA2AForward returns the forward target for the authenticated
-// credential. configured=false means "serve locally": no forward exists, it
-// is bound to another client, the deployment disabled forwarding by clearing
-// the origin allow-list, or the settings could not be read. A forward that is
-// configured but cannot be used returns an error so the request fails instead
-// of silently running here.
-func (h *Handler) resolveAgentA2AForward(ctx context.Context, credential db.GetAgentA2ACredentialByTokenHashRow) (agentA2AForwardTarget, bool, error) {
-	config, err := h.Queries.GetAgentA2AOperatorConfig(ctx, db.GetAgentA2AOperatorConfigParams{
-		WorkspaceID: credential.WorkspaceID,
-		AgentID:     credential.AgentID,
+// resolveAgentA2AForward returns the pre-release target registered for the
+// Agent's digital employee identity. configured=false means "serve locally":
+// this deployment is not a registry, the operator did not enable the identity
+// for A2A, nothing is registered, the registration points back at this Agent,
+// its origin left the allow-list, or the settings could not be read. A
+// registration that cannot be used returns an error so the request fails
+// instead of silently running here.
+func (h *Handler) resolveAgentA2AForward(
+	ctx context.Context,
+	credential db.GetAgentA2ACredentialByTokenHashRow,
+	publicAgentID string,
+) (agentA2AForwardTarget, bool, error) {
+	if !h.agentA2AForwardRegistry() {
+		return agentA2AForwardTarget{}, false, nil
+	}
+	uid, orgID, ok := service.A2AOperatorIdentity(ctx, h.Queries, credential.WorkspaceID, credential.AgentID)
+	if !ok {
+		return agentA2AForwardTarget{}, false, nil
+	}
+	registration, err := h.Queries.GetA2AForwardRegistration(ctx, db.GetA2AForwardRegistrationParams{
+		DwsUid: uid,
+		OrgID:  orgID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return agentA2AForwardTarget{}, false, nil
 	}
 	if err != nil {
-		slog.Warn("load A2A forward configuration failed; serving locally",
+		slog.Warn("load A2A forward registration failed; serving locally",
 			"agent_id", uuidToString(credential.AgentID),
 			"error", err,
 		)
 		return agentA2AForwardTarget{}, false, nil
 	}
-	if !config.ForwardRpcUrl.Valid || len(config.ForwardTokenEncrypted) == 0 ||
-		!config.ForwardSourceClientID.Valid || config.ForwardSourceClientID.Bytes != credential.ClientID.Bytes {
-		return agentA2AForwardTarget{}, false, nil
+	if baseURL, err := normalizeAgentA2APublicBaseURL(h.currentConfig().PublicURL); err == nil {
+		if own, err := a2aintegration.AgentRPCURL(baseURL, publicAgentID); err == nil && strings.EqualFold(own, registration.RpcUrl) {
+			return agentA2AForwardTarget{}, false, nil
+		}
 	}
 	allowed := normalizedAgentA2AForwardOrigins(h.currentConfig().A2AForwardAllowedOrigins)
-	if _, err := agentA2AForwardOriginAllowed(config.ForwardRpcUrl.String, allowed); err != nil {
+	if _, err := agentA2AForwardOriginAllowed(registration.RpcUrl, allowed); err != nil {
 		return agentA2AForwardTarget{}, false, nil
 	}
-	if h.A2AService == nil || h.A2AService.PushSecrets == nil {
-		return agentA2AForwardTarget{}, false, errors.New("forward credential key is not configured")
-	}
-	token, err := h.A2AService.PushSecrets.Open(config.ForwardTokenEncrypted)
+	token, err := h.A2AService.PushSecrets.Open(registration.TokenEncrypted)
 	if err != nil || !validAgentAccessToken(string(token)) {
 		return agentA2AForwardTarget{}, false, errors.New("forward credential cannot be opened")
 	}
-	return agentA2AForwardTarget{RPCURL: config.ForwardRpcUrl.String, Token: string(token)}, true, nil
+	return agentA2AForwardTarget{
+		DWSUID:         uid,
+		OrgID:          orgID,
+		RPCURL:         registration.RpcUrl,
+		TargetClientID: registration.TargetClientID,
+		Token:          string(token),
+		TokenSHA256:    registration.TokenSha256,
+	}, true, nil
 }
 
 // agentA2ARPCMethod returns the JSON-RPC method of a single request object,
@@ -186,25 +261,30 @@ func agentA2ARPCMethod(body []byte) string {
 	return strings.TrimSpace(envelope.Method)
 }
 
+// forwardAgentA2ARPC relays the call and returns true once it has written the
+// response. It returns false, writing nothing, only when pre-release rejected
+// the registration key itself (401 with agentA2AForwardKeyRejectedHeader),
+// which it decides before doing anything; every other answer, including other
+// 401s, passes through.
 func (h *Handler) forwardAgentA2ARPC(
 	w http.ResponseWriter,
 	r *http.Request,
 	body []byte,
 	target agentA2AForwardTarget,
 	publicAgentID string,
-) {
+) bool {
 	select {
 	case agentA2AForwardSlots <- struct{}{}:
 		defer func() { <-agentA2AForwardSlots }()
 	default:
 		writeError(w, http.StatusServiceUnavailable, "A2A forward capacity exhausted")
-		return
+		return true
 	}
 	started := time.Now()
 	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target.RPCURL, bytes.NewReader(body))
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "A2A forward target is invalid")
-		return
+		return true
 	}
 	copyAgentA2AForwardRequestHeaders(request.Header, r.Header)
 	request.Header.Set("Authorization", "Bearer "+target.Token)
@@ -232,9 +312,12 @@ func (h *Handler) forwardAgentA2ARPC(
 		if r.Context().Err() == nil {
 			writeError(w, http.StatusBadGateway, "A2A forward target is unavailable")
 		}
-		return
+		return true
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized && response.Header.Get(agentA2AForwardKeyRejectedHeader) != "" {
+		return false
+	}
 
 	for name, values := range response.Header {
 		if agentA2AIsHopByHop(name) || strings.EqualFold(name, "Set-Cookie") || strings.EqualFold(name, "Content-Length") {
@@ -255,6 +338,7 @@ func (h *Handler) forwardAgentA2ARPC(
 		"duration_ms", time.Since(started).Milliseconds(),
 		"stream_error", copyErr != nil,
 	)...)
+	return true
 }
 
 func copyAgentA2AForwardRequestHeaders(destination, source http.Header) {

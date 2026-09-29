@@ -28,8 +28,10 @@ type ClaimA2AForwardTokenBindingParams struct {
 	CreatedBy      pgtype.UUID `json:"created_by"`
 }
 
-// Returns the source client that owns the target key: the requested one on
-// first use, or the earlier owner on every later call.
+// Returns the source client that owns a forward target: the requested one on
+// first use, or the earlier owner on every later call. token_sha256 holds the
+// target's binding key (see agentA2AForwardBindingKey), which stays the same
+// across key rotations of one target client.
 func (q *Queries) ClaimA2AForwardTokenBinding(ctx context.Context, arg ClaimA2AForwardTokenBindingParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, claimA2AForwardTokenBinding,
 		arg.TokenSha256,
@@ -43,57 +45,93 @@ func (q *Queries) ClaimA2AForwardTokenBinding(ctx context.Context, arg ClaimA2AF
 	return source_client_id, err
 }
 
-const clearAgentA2AOperatorForward = `-- name: ClearAgentA2AOperatorForward :exec
-UPDATE agent_a2a_operator_config
-SET forward_rpc_url = NULL,
-    forward_token_encrypted = NULL,
-    forward_source_client_id = NULL,
-    forward_updated_by = $3,
-    forward_updated_at = now(),
-    updated_at = now()
-WHERE workspace_id = $1
-  AND agent_id = $2
+const createAgentA2AForwardClient = `-- name: CreateAgentA2AForwardClient :exec
+INSERT INTO agent_a2a_forward_client (client_id, agent_id, workspace_id, dws_uid, org_id)
+VALUES ($1, $2, $3, $4, $5)
 `
 
-type ClearAgentA2AOperatorForwardParams struct {
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-	AgentID          pgtype.UUID `json:"agent_id"`
-	ForwardUpdatedBy pgtype.UUID `json:"forward_updated_by"`
+type CreateAgentA2AForwardClientParams struct {
+	ClientID    pgtype.UUID `json:"client_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	DwsUid      string      `json:"dws_uid"`
+	OrgID       string      `json:"org_id"`
 }
 
-func (q *Queries) ClearAgentA2AOperatorForward(ctx context.Context, arg ClearAgentA2AOperatorForwardParams) error {
-	_, err := q.db.Exec(ctx, clearAgentA2AOperatorForward, arg.WorkspaceID, arg.AgentID, arg.ForwardUpdatedBy)
+func (q *Queries) CreateAgentA2AForwardClient(ctx context.Context, arg CreateAgentA2AForwardClientParams) error {
+	_, err := q.db.Exec(ctx, createAgentA2AForwardClient,
+		arg.ClientID,
+		arg.AgentID,
+		arg.WorkspaceID,
+		arg.DwsUid,
+		arg.OrgID,
+	)
 	return err
 }
 
-const clearAgentA2AOperatorIdentity = `-- name: ClearAgentA2AOperatorIdentity :exec
-UPDATE agent_a2a_operator_config
-SET dws_uid = NULL,
-    dws_org_id = NULL,
-    deap_agent_uuid = NULL,
-    identity_updated_by = $3,
-    identity_updated_at = now(),
-    updated_at = now()
-WHERE workspace_id = $1
+const getA2AForwardRegistration = `-- name: GetA2AForwardRegistration :one
+SELECT dws_uid, org_id, rpc_url, target_client_id, token_encrypted, token_sha256, target_agent_name,
+       signed_at_ms, registered_at, revoked_at
+FROM a2a_forward_registration
+WHERE dws_uid = $1
+  AND org_id = $2
+  AND token_encrypted IS NOT NULL
+`
+
+type GetA2AForwardRegistrationParams struct {
+	DwsUid string `json:"dws_uid"`
+	OrgID  string `json:"org_id"`
+}
+
+// Only a live registration; withdrawn ones remain as ordering tombstones.
+func (q *Queries) GetA2AForwardRegistration(ctx context.Context, arg GetA2AForwardRegistrationParams) (A2aForwardRegistration, error) {
+	row := q.db.QueryRow(ctx, getA2AForwardRegistration, arg.DwsUid, arg.OrgID)
+	var i A2aForwardRegistration
+	err := row.Scan(
+		&i.DwsUid,
+		&i.OrgID,
+		&i.RpcUrl,
+		&i.TargetClientID,
+		&i.TokenEncrypted,
+		&i.TokenSha256,
+		&i.TargetAgentName,
+		&i.SignedAtMs,
+		&i.RegisteredAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getAgentA2AForwardClient = `-- name: GetAgentA2AForwardClient :one
+SELECT client_id, agent_id, workspace_id, dws_uid, org_id, created_at, retired_at
+FROM agent_a2a_forward_client
+WHERE client_id = $1
   AND agent_id = $2
 `
 
-type ClearAgentA2AOperatorIdentityParams struct {
-	WorkspaceID       pgtype.UUID `json:"workspace_id"`
-	AgentID           pgtype.UUID `json:"agent_id"`
-	IdentityUpdatedBy pgtype.UUID `json:"identity_updated_by"`
+type GetAgentA2AForwardClientParams struct {
+	ClientID pgtype.UUID `json:"client_id"`
+	AgentID  pgtype.UUID `json:"agent_id"`
 }
 
-func (q *Queries) ClearAgentA2AOperatorIdentity(ctx context.Context, arg ClearAgentA2AOperatorIdentityParams) error {
-	_, err := q.db.Exec(ctx, clearAgentA2AOperatorIdentity, arg.WorkspaceID, arg.AgentID, arg.IdentityUpdatedBy)
-	return err
+func (q *Queries) GetAgentA2AForwardClient(ctx context.Context, arg GetAgentA2AForwardClientParams) (AgentA2aForwardClient, error) {
+	row := q.db.QueryRow(ctx, getAgentA2AForwardClient, arg.ClientID, arg.AgentID)
+	var i AgentA2aForwardClient
+	err := row.Scan(
+		&i.ClientID,
+		&i.AgentID,
+		&i.WorkspaceID,
+		&i.DwsUid,
+		&i.OrgID,
+		&i.CreatedAt,
+		&i.RetiredAt,
+	)
+	return i, err
 }
 
 const getAgentA2AOperatorConfig = `-- name: GetAgentA2AOperatorConfig :one
-SELECT config.agent_id, config.workspace_id, config.dws_uid, config.dws_org_id, config.deap_agent_uuid,
-       config.identity_updated_by, config.identity_updated_at, config.forward_rpc_url,
-       config.forward_token_encrypted, config.forward_source_client_id, config.forward_updated_by,
-       config.forward_updated_at, config.created_at, config.updated_at
+SELECT config.agent_id, config.workspace_id, config.deap_agent_uuid, config.a2a_identity_enabled,
+       config.accept_prod_forward, config.updated_by, config.created_at, config.updated_at
 FROM agent_a2a_operator_config config
 JOIN agent a
   ON a.id = config.agent_id
@@ -107,95 +145,360 @@ type GetAgentA2AOperatorConfigParams struct {
 	AgentID     pgtype.UUID `json:"agent_id"`
 }
 
-func (q *Queries) GetAgentA2AOperatorConfig(ctx context.Context, arg GetAgentA2AOperatorConfigParams) (AgentA2aOperatorConfig, error) {
+type GetAgentA2AOperatorConfigRow struct {
+	AgentID            pgtype.UUID        `json:"agent_id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	DeapAgentUuid      pgtype.Text        `json:"deap_agent_uuid"`
+	A2aIdentityEnabled bool               `json:"a2a_identity_enabled"`
+	AcceptProdForward  bool               `json:"accept_prod_forward"`
+	UpdatedBy          pgtype.UUID        `json:"updated_by"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetAgentA2AOperatorConfig(ctx context.Context, arg GetAgentA2AOperatorConfigParams) (GetAgentA2AOperatorConfigRow, error) {
 	row := q.db.QueryRow(ctx, getAgentA2AOperatorConfig, arg.WorkspaceID, arg.AgentID)
-	var i AgentA2aOperatorConfig
+	var i GetAgentA2AOperatorConfigRow
 	err := row.Scan(
 		&i.AgentID,
 		&i.WorkspaceID,
-		&i.DwsUid,
-		&i.DwsOrgID,
 		&i.DeapAgentUuid,
-		&i.IdentityUpdatedBy,
-		&i.IdentityUpdatedAt,
-		&i.ForwardRpcUrl,
-		&i.ForwardTokenEncrypted,
-		&i.ForwardSourceClientID,
-		&i.ForwardUpdatedBy,
-		&i.ForwardUpdatedAt,
+		&i.A2aIdentityEnabled,
+		&i.AcceptProdForward,
+		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const upsertAgentA2AOperatorForward = `-- name: UpsertAgentA2AOperatorForward :exec
-INSERT INTO agent_a2a_operator_config (
-    agent_id, workspace_id, forward_rpc_url, forward_token_encrypted, forward_source_client_id,
-    forward_updated_by, forward_updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, now())
-ON CONFLICT (agent_id) DO UPDATE
-SET forward_rpc_url = EXCLUDED.forward_rpc_url,
-    forward_token_encrypted = EXCLUDED.forward_token_encrypted,
-    forward_source_client_id = EXCLUDED.forward_source_client_id,
-    forward_updated_by = EXCLUDED.forward_updated_by,
-    forward_updated_at = now(),
-    updated_at = now()
-WHERE agent_a2a_operator_config.workspace_id = EXCLUDED.workspace_id
+const isA2ACredentialRevoked = `-- name: IsA2ACredentialRevoked :one
+SELECT EXISTS (
+    SELECT 1
+    FROM a2a_client_credential credential
+    JOIN a2a_client client ON client.id = credential.client_id
+    WHERE credential.token_hash = $1
+      AND (credential.status <> 'active' OR client.status <> 'active')
+)
 `
 
-type UpsertAgentA2AOperatorForwardParams struct {
-	AgentID               pgtype.UUID `json:"agent_id"`
-	WorkspaceID           pgtype.UUID `json:"workspace_id"`
-	ForwardRpcUrl         pgtype.Text `json:"forward_rpc_url"`
-	ForwardTokenEncrypted []byte      `json:"forward_token_encrypted"`
-	ForwardSourceClientID pgtype.UUID `json:"forward_source_client_id"`
-	ForwardUpdatedBy      pgtype.UUID `json:"forward_updated_by"`
+// Whether a key that no longer authenticates was revoked (as opposed to never
+// existing), so a forwarding registry can tell a withdrawn key apart.
+func (q *Queries) IsA2ACredentialRevoked(ctx context.Context, tokenHash string) (bool, error) {
+	row := q.db.QueryRow(ctx, isA2ACredentialRevoked, tokenHash)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
-func (q *Queries) UpsertAgentA2AOperatorForward(ctx context.Context, arg UpsertAgentA2AOperatorForwardParams) error {
-	_, err := q.db.Exec(ctx, upsertAgentA2AOperatorForward,
-		arg.AgentID,
-		arg.WorkspaceID,
-		arg.ForwardRpcUrl,
-		arg.ForwardTokenEncrypted,
-		arg.ForwardSourceClientID,
-		arg.ForwardUpdatedBy,
+const listAgentA2AForwardRegistrants = `-- name: ListAgentA2AForwardRegistrants :many
+SELECT agent_id, registry_origin, workspace_id, client_id, client_uid, client_org_id,
+       registered_rpc_url, registered_token_sha256, registered_at, last_error, created_at, updated_at
+FROM agent_a2a_forward_registrant
+WHERE agent_id = $1
+  AND workspace_id = $2
+ORDER BY registry_origin
+`
+
+type ListAgentA2AForwardRegistrantsParams struct {
+	AgentID     pgtype.UUID `json:"agent_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) ListAgentA2AForwardRegistrants(ctx context.Context, arg ListAgentA2AForwardRegistrantsParams) ([]AgentA2aForwardRegistrant, error) {
+	rows, err := q.db.Query(ctx, listAgentA2AForwardRegistrants, arg.AgentID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentA2aForwardRegistrant{}
+	for rows.Next() {
+		var i AgentA2aForwardRegistrant
+		if err := rows.Scan(
+			&i.AgentID,
+			&i.RegistryOrigin,
+			&i.WorkspaceID,
+			&i.ClientID,
+			&i.ClientUid,
+			&i.ClientOrgID,
+			&i.RegisteredRpcUrl,
+			&i.RegisteredTokenSha256,
+			&i.RegisteredAt,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const rejectA2AForwardRegistration = `-- name: RejectA2AForwardRegistration :exec
+UPDATE a2a_forward_registration
+SET token_encrypted = NULL,
+    revoked_at = now()
+WHERE dws_uid = $1
+  AND org_id = $2
+  AND token_sha256 = $3
+  AND token_encrypted IS NOT NULL
+`
+
+type RejectA2AForwardRegistrationParams struct {
+	DwsUid      string `json:"dws_uid"`
+	OrgID       string `json:"org_id"`
+	TokenSha256 string `json:"token_sha256"`
+}
+
+// Production retires a registration whose target rejected its key. A newer
+// registration (another key) is left alone.
+func (q *Queries) RejectA2AForwardRegistration(ctx context.Context, arg RejectA2AForwardRegistrationParams) error {
+	_, err := q.db.Exec(ctx, rejectA2AForwardRegistration, arg.DwsUid, arg.OrgID, arg.TokenSha256)
+	return err
+}
+
+const retireAgentA2AForwardClient = `-- name: RetireAgentA2AForwardClient :exec
+UPDATE agent_a2a_forward_client
+SET retired_at = now()
+WHERE client_id = $1
+  AND agent_id = $2
+  AND retired_at IS NULL
+`
+
+type RetireAgentA2AForwardClientParams struct {
+	ClientID pgtype.UUID `json:"client_id"`
+	AgentID  pgtype.UUID `json:"agent_id"`
+}
+
+func (q *Queries) RetireAgentA2AForwardClient(ctx context.Context, arg RetireAgentA2AForwardClientParams) error {
+	_, err := q.db.Exec(ctx, retireAgentA2AForwardClient, arg.ClientID, arg.AgentID)
+	return err
+}
+
+const revokeA2AForwardRegistration = `-- name: RevokeA2AForwardRegistration :exec
+UPDATE a2a_forward_registration
+SET token_encrypted = NULL,
+    revoked_at = now(),
+    signed_at_ms = $5
+WHERE dws_uid = $1
+  AND org_id = $2
+  AND rpc_url = $3
+  AND token_sha256 = $4
+  AND signed_at_ms < $5
+  AND token_encrypted IS NOT NULL
+`
+
+type RevokeA2AForwardRegistrationParams struct {
+	DwsUid      string `json:"dws_uid"`
+	OrgID       string `json:"org_id"`
+	RpcUrl      string `json:"rpc_url"`
+	TokenSha256 string `json:"token_sha256"`
+	SignedAtMs  int64  `json:"signed_at_ms"`
+}
+
+// A registrant withdraws only the exact registration it made, and only with a
+// request signed after it, so a replayed withdrawal cannot remove a newer one.
+func (q *Queries) RevokeA2AForwardRegistration(ctx context.Context, arg RevokeA2AForwardRegistrationParams) error {
+	_, err := q.db.Exec(ctx, revokeA2AForwardRegistration,
+		arg.DwsUid,
+		arg.OrgID,
+		arg.RpcUrl,
+		arg.TokenSha256,
+		arg.SignedAtMs,
 	)
 	return err
 }
 
-const upsertAgentA2AOperatorIdentity = `-- name: UpsertAgentA2AOperatorIdentity :exec
-INSERT INTO agent_a2a_operator_config (
-    agent_id, workspace_id, dws_uid, dws_org_id, deap_agent_uuid, identity_updated_by, identity_updated_at
-) VALUES ($1, $2, $3, $4, $5, $6, now())
+const saveAgentA2AForwardRegistrant = `-- name: SaveAgentA2AForwardRegistrant :exec
+INSERT INTO agent_a2a_forward_registrant (
+    agent_id, registry_origin, workspace_id, client_id, client_uid, client_org_id,
+    registered_rpc_url, registered_token_sha256, registered_at, last_error
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+ON CONFLICT (agent_id, registry_origin) DO UPDATE
+SET client_id = EXCLUDED.client_id,
+    client_uid = EXCLUDED.client_uid,
+    client_org_id = EXCLUDED.client_org_id,
+    registered_rpc_url = EXCLUDED.registered_rpc_url,
+    registered_token_sha256 = EXCLUDED.registered_token_sha256,
+    registered_at = EXCLUDED.registered_at,
+    last_error = EXCLUDED.last_error,
+    updated_at = now()
+WHERE agent_a2a_forward_registrant.workspace_id = EXCLUDED.workspace_id
+`
+
+type SaveAgentA2AForwardRegistrantParams struct {
+	AgentID               pgtype.UUID        `json:"agent_id"`
+	RegistryOrigin        string             `json:"registry_origin"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ClientID              pgtype.UUID        `json:"client_id"`
+	ClientUid             string             `json:"client_uid"`
+	ClientOrgID           string             `json:"client_org_id"`
+	RegisteredRpcUrl      pgtype.Text        `json:"registered_rpc_url"`
+	RegisteredTokenSha256 pgtype.Text        `json:"registered_token_sha256"`
+	RegisteredAt          pgtype.Timestamptz `json:"registered_at"`
+	LastError             pgtype.Text        `json:"last_error"`
+}
+
+func (q *Queries) SaveAgentA2AForwardRegistrant(ctx context.Context, arg SaveAgentA2AForwardRegistrantParams) error {
+	_, err := q.db.Exec(ctx, saveAgentA2AForwardRegistrant,
+		arg.AgentID,
+		arg.RegistryOrigin,
+		arg.WorkspaceID,
+		arg.ClientID,
+		arg.ClientUid,
+		arg.ClientOrgID,
+		arg.RegisteredRpcUrl,
+		arg.RegisteredTokenSha256,
+		arg.RegisteredAt,
+		arg.LastError,
+	)
+	return err
+}
+
+const setAgentA2AAcceptProdForward = `-- name: SetAgentA2AAcceptProdForward :exec
+INSERT INTO agent_a2a_operator_config (agent_id, workspace_id, accept_prod_forward, updated_by)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (agent_id) DO UPDATE
-SET dws_uid = EXCLUDED.dws_uid,
-    dws_org_id = EXCLUDED.dws_org_id,
-    deap_agent_uuid = EXCLUDED.deap_agent_uuid,
-    identity_updated_by = EXCLUDED.identity_updated_by,
-    identity_updated_at = now(),
+SET accept_prod_forward = EXCLUDED.accept_prod_forward,
+    updated_by = EXCLUDED.updated_by,
     updated_at = now()
 WHERE agent_a2a_operator_config.workspace_id = EXCLUDED.workspace_id
 `
 
-type UpsertAgentA2AOperatorIdentityParams struct {
+type SetAgentA2AAcceptProdForwardParams struct {
 	AgentID           pgtype.UUID `json:"agent_id"`
 	WorkspaceID       pgtype.UUID `json:"workspace_id"`
-	DwsUid            pgtype.Text `json:"dws_uid"`
-	DwsOrgID          pgtype.Text `json:"dws_org_id"`
-	DeapAgentUuid     pgtype.Text `json:"deap_agent_uuid"`
-	IdentityUpdatedBy pgtype.UUID `json:"identity_updated_by"`
+	AcceptProdForward bool        `json:"accept_prod_forward"`
+	UpdatedBy         pgtype.UUID `json:"updated_by"`
 }
 
-func (q *Queries) UpsertAgentA2AOperatorIdentity(ctx context.Context, arg UpsertAgentA2AOperatorIdentityParams) error {
-	_, err := q.db.Exec(ctx, upsertAgentA2AOperatorIdentity,
+func (q *Queries) SetAgentA2AAcceptProdForward(ctx context.Context, arg SetAgentA2AAcceptProdForwardParams) error {
+	_, err := q.db.Exec(ctx, setAgentA2AAcceptProdForward,
+		arg.AgentID,
+		arg.WorkspaceID,
+		arg.AcceptProdForward,
+		arg.UpdatedBy,
+	)
+	return err
+}
+
+const setAgentA2AIdentityEnabled = `-- name: SetAgentA2AIdentityEnabled :exec
+INSERT INTO agent_a2a_operator_config (agent_id, workspace_id, a2a_identity_enabled, deap_agent_uuid, updated_by)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (agent_id) DO UPDATE
+SET a2a_identity_enabled = EXCLUDED.a2a_identity_enabled,
+    deap_agent_uuid = EXCLUDED.deap_agent_uuid,
+    updated_by = EXCLUDED.updated_by,
+    updated_at = now()
+WHERE agent_a2a_operator_config.workspace_id = EXCLUDED.workspace_id
+`
+
+type SetAgentA2AIdentityEnabledParams struct {
+	AgentID            pgtype.UUID `json:"agent_id"`
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	A2aIdentityEnabled bool        `json:"a2a_identity_enabled"`
+	DeapAgentUuid      pgtype.Text `json:"deap_agent_uuid"`
+	UpdatedBy          pgtype.UUID `json:"updated_by"`
+}
+
+func (q *Queries) SetAgentA2AIdentityEnabled(ctx context.Context, arg SetAgentA2AIdentityEnabledParams) error {
+	_, err := q.db.Exec(ctx, setAgentA2AIdentityEnabled,
+		arg.AgentID,
+		arg.WorkspaceID,
+		arg.A2aIdentityEnabled,
+		arg.DeapAgentUuid,
+		arg.UpdatedBy,
+	)
+	return err
+}
+
+const upsertA2AForwardRegistration = `-- name: UpsertA2AForwardRegistration :execrows
+INSERT INTO a2a_forward_registration (
+    dws_uid, org_id, rpc_url, target_client_id, token_encrypted, token_sha256, target_agent_name, signed_at_ms
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+ON CONFLICT (dws_uid, org_id) DO UPDATE
+SET rpc_url = EXCLUDED.rpc_url,
+    target_client_id = EXCLUDED.target_client_id,
+    token_encrypted = EXCLUDED.token_encrypted,
+    token_sha256 = EXCLUDED.token_sha256,
+    target_agent_name = EXCLUDED.target_agent_name,
+    signed_at_ms = EXCLUDED.signed_at_ms,
+    registered_at = now(),
+    revoked_at = NULL
+WHERE a2a_forward_registration.signed_at_ms < EXCLUDED.signed_at_ms
+`
+
+type UpsertA2AForwardRegistrationParams struct {
+	DwsUid          string      `json:"dws_uid"`
+	OrgID           string      `json:"org_id"`
+	RpcUrl          string      `json:"rpc_url"`
+	TargetClientID  pgtype.UUID `json:"target_client_id"`
+	TokenEncrypted  []byte      `json:"token_encrypted"`
+	TokenSha256     string      `json:"token_sha256"`
+	TargetAgentName string      `json:"target_agent_name"`
+	SignedAtMs      int64       `json:"signed_at_ms"`
+}
+
+// A request signed earlier than the stored state (a replay or a reordered
+// retry) changes nothing, even when that state is a withdrawal.
+func (q *Queries) UpsertA2AForwardRegistration(ctx context.Context, arg UpsertA2AForwardRegistrationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, upsertA2AForwardRegistration,
+		arg.DwsUid,
+		arg.OrgID,
+		arg.RpcUrl,
+		arg.TargetClientID,
+		arg.TokenEncrypted,
+		arg.TokenSha256,
+		arg.TargetAgentName,
+		arg.SignedAtMs,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const upsertAgentDingTalkIdentityManual = `-- name: UpsertAgentDingTalkIdentityManual :exec
+INSERT INTO agent_dingtalk_identity (
+    agent_id, workspace_id, dws_uid, org_id, account_display_name, organization_name, bound_by
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (agent_id) DO UPDATE
+SET dws_uid = EXCLUDED.dws_uid,
+    org_id = EXCLUDED.org_id,
+    account_display_name = EXCLUDED.account_display_name,
+    organization_name = EXCLUDED.organization_name,
+    account_avatar_url = '',
+    bound_by = EXCLUDED.bound_by,
+    bound_at = now(),
+    updated_at = now()
+WHERE agent_dingtalk_identity.workspace_id = EXCLUDED.workspace_id
+`
+
+type UpsertAgentDingTalkIdentityManualParams struct {
+	AgentID            pgtype.UUID `json:"agent_id"`
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	DwsUid             string      `json:"dws_uid"`
+	OrgID              string      `json:"org_id"`
+	AccountDisplayName string      `json:"account_display_name"`
+	OrganizationName   string      `json:"organization_name"`
+	BoundBy            pgtype.UUID `json:"bound_by"`
+}
+
+// The operator binds a DEAP digital employee identity directly; the row is the
+// same one the Integrations QR binding writes.
+func (q *Queries) UpsertAgentDingTalkIdentityManual(ctx context.Context, arg UpsertAgentDingTalkIdentityManualParams) error {
+	_, err := q.db.Exec(ctx, upsertAgentDingTalkIdentityManual,
 		arg.AgentID,
 		arg.WorkspaceID,
 		arg.DwsUid,
-		arg.DwsOrgID,
-		arg.DeapAgentUuid,
-		arg.IdentityUpdatedBy,
+		arg.OrgID,
+		arg.AccountDisplayName,
+		arg.OrganizationName,
+		arg.BoundBy,
 	)
 	return err
 }

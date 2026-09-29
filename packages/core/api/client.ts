@@ -115,7 +115,7 @@ import type {
   CreateAgentA2ACredentialRequest,
   AgentA2AOperatorConfig,
   UpdateAgentA2AOperatorIdentityRequest,
-  UpdateAgentA2AOperatorForwardRequest,
+  UpdateAgentA2AProdForwardRequest,
   RuntimeUsage,
   IssueUsageSummary,
   RuntimeHourlyActivity,
@@ -4302,8 +4302,7 @@ export class ApiClient {
     return parsed;
   }
 
-  // Deployment operator settings. Non-operators receive operator=false; the
-  // forward token is write-only and never returned.
+  // Deployment operator settings. Non-operators receive operator=false.
   async getAgentA2AOperatorConfig(agentId: string): Promise<AgentA2AOperatorConfig> {
     const raw = await this.fetch<unknown>(
       `/api/agents/${encodeURIComponent(agentId)}/a2a/operator`,
@@ -4327,6 +4326,8 @@ export class ApiClient {
         body: JSON.stringify({
           uid: data.uid,
           org_id: data.orgId,
+          display_name: data.displayName ?? "",
+          organization_name: data.organizationName ?? "",
           deap_agent_uuid: data.deapAgentUuid ?? "",
         }),
       },
@@ -4352,39 +4353,19 @@ export class ApiClient {
     );
   }
 
-  async updateAgentA2AOperatorForward(
+  async updateAgentA2AProdForward(
     agentId: string,
-    data: UpdateAgentA2AOperatorForwardRequest,
+    data: UpdateAgentA2AProdForwardRequest,
   ): Promise<AgentA2AOperatorConfig> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/a2a/operator/forward`,
-      {
-        method: "PUT",
-        body: JSON.stringify({
-          rpc_url: data.rpcUrl,
-          token: data.token,
-          source_client_id: data.sourceClientId ?? "",
-        }),
-      },
+      `/api/agents/${encodeURIComponent(agentId)}/a2a/operator/prod-forward`,
+      { method: "PUT", body: JSON.stringify({ accept: data.accept }) },
     );
     return parseWithFallback(
       raw,
       AgentA2AOperatorConfigSchema,
       EMPTY_AGENT_A2A_OPERATOR_CONFIG,
-      { endpoint: "PUT /api/agents/:id/a2a/operator/forward", includeReceived: false },
-    );
-  }
-
-  async deleteAgentA2AOperatorForward(agentId: string): Promise<AgentA2AOperatorConfig> {
-    const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/a2a/operator/forward`,
-      { method: "DELETE" },
-    );
-    return parseWithFallback(
-      raw,
-      AgentA2AOperatorConfigSchema,
-      EMPTY_AGENT_A2A_OPERATOR_CONFIG,
-      { endpoint: "DELETE /api/agents/:id/a2a/operator/forward", includeReceived: false },
+      { endpoint: "PUT /api/agents/:id/a2a/operator/prod-forward", includeReceived: false },
     );
   }
 

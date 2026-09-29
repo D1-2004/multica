@@ -10,14 +10,12 @@ import (
 
 const forwardTestTargetToken = "mca2a_0123456789abcdef0123456789abcdef01234567"
 
-func TestNormalizeAgentA2AForwardTarget(t *testing.T) {
+func TestValidateAgentA2AForwardRPCURL(t *testing.T) {
 	allowed := []string{"https://pre-fde-workbench.dingtalk.com", "http://insecure.example", "https://x.example/path"}
 	valid := "https://pre-fde-workbench.dingtalk.com/api/a2a/agents/99c83573-1392-4265-87e1-9c10da75f8e4/v1"
-	got, err := normalizeAgentA2AForwardTarget(valid, allowed, "https://fde-workbench.dingtalk.com", "99c83573-1392-4265-87e1-9c10da75f8e4")
-	if err != nil || got != valid {
+	if got, err := validateAgentA2AForwardRPCURL(valid, allowed); err != nil || got != valid {
 		t.Fatalf("valid target = %q, %v", got, err)
 	}
-
 	cases := map[string]string{
 		"origin not allowed": "https://evil.example/api/a2a/agents/99c83573-1392-4265-87e1-9c10da75f8e4/v1",
 		"plain http":         "http://pre-fde-workbench.dingtalk.com/api/a2a/agents/99c83573-1392-4265-87e1-9c10da75f8e4/v1",
@@ -27,24 +25,32 @@ func TestNormalizeAgentA2AForwardTarget(t *testing.T) {
 		"card path":          "https://pre-fde-workbench.dingtalk.com/api/a2a/agents/99c83573-1392-4265-87e1-9c10da75f8e4/.well-known/agent-card.json",
 	}
 	for name, target := range cases {
-		if _, err := normalizeAgentA2AForwardTarget(target, allowed, "https://fde-workbench.dingtalk.com", "own-agent-id-000000"); err == nil {
+		if _, err := validateAgentA2AForwardRPCURL(target, allowed); err == nil {
 			t.Errorf("%s: %q was accepted", name, target)
 		}
 	}
-
-	if _, err := normalizeAgentA2AForwardTarget(valid, nil, "https://fde-workbench.dingtalk.com", ""); err == nil {
+	if _, err := validateAgentA2AForwardRPCURL(valid, nil); err == nil {
 		t.Fatal("forwarding was accepted with an empty origin allow-list")
-	}
-	// Pointing an Agent at itself on the same deployment would loop.
-	if _, err := normalizeAgentA2AForwardTarget(valid, allowed, "https://pre-fde-workbench.dingtalk.com", "99c83573-1392-4265-87e1-9c10da75f8e4"); err == nil {
-		t.Fatal("self-forward was accepted")
-	}
-	// Another Agent on the same deployment is a legitimate test target.
-	if _, err := normalizeAgentA2AForwardTarget(valid, allowed, "https://pre-fde-workbench.dingtalk.com", "another-agent-000000"); err != nil {
-		t.Fatalf("same-origin different Agent rejected: %v", err)
 	}
 	if origins := normalizedAgentA2AForwardOrigins(allowed); len(origins) != 1 || origins[0] != "https://pre-fde-workbench.dingtalk.com" {
 		t.Fatalf("normalized origins = %v", origins)
+	}
+}
+
+func TestSignAgentA2AForwardRegistrationBindsTimestampAndBody(t *testing.T) {
+	secret := []byte("forward-registration-secret-0123456789abcdef")
+	base := signAgentA2AForwardRegistration(secret, "100", []byte(`{"a":1}`))
+	if base != signAgentA2AForwardRegistration(secret, "100", []byte(`{"a":1}`)) {
+		t.Fatal("signature is not deterministic")
+	}
+	for name, other := range map[string]string{
+		"timestamp": signAgentA2AForwardRegistration(secret, "101", []byte(`{"a":1}`)),
+		"body":      signAgentA2AForwardRegistration(secret, "100", []byte(`{"a":2}`)),
+		"secret":    signAgentA2AForwardRegistration([]byte("another-secret-another-secret-0000"), "100", []byte(`{"a":1}`)),
+	} {
+		if other == base {
+			t.Errorf("signature ignores the %s", name)
+		}
 	}
 }
 

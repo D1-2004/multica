@@ -4385,46 +4385,66 @@ export const AgentA2AOperatorConfigSchema = z.object({
   dws_identity: z.object({
     uid: z.string(),
     org_id: z.string(),
+    display_name: z.string().optional().default(""),
+    organization_name: z.string().optional().default(""),
     deap_agent_uuid: z.string().nullable().optional().default(null),
-    updated_by: z.string().optional().default(""),
-    updated_at: z.string().optional().default(""),
+    a2a_enabled: z.boolean().optional().default(false),
+    bound_at: z.string().optional().default(""),
   }).loose().nullable().optional().catch(null),
-  forward: z.object({
+  prod_forward: z.object({
+    accept: z.boolean().optional().default(true),
+    blocked_reason: z.string().optional().catch(""),
+    registrations: z.array(z.object({
+      registry: z.string(),
+      registered_at: z.string().nullable().optional().catch(null),
+      current: z.boolean().optional().catch(false),
+      error: z.string().optional().catch(""),
+    }).loose()).optional().catch([]),
+  }).loose().nullable().optional().catch(null),
+  forward_target: z.object({
     rpc_url: z.string(),
-    source_client_id: z.string().optional().default(""),
-    active: z.boolean().optional().default(false),
-    updated_by: z.string().optional().default(""),
-    updated_at: z.string().optional().default(""),
+    agent_name: z.string().optional().default(""),
+    registered_at: z.string().optional().default(""),
   }).loose().nullable().optional().catch(null),
-  forward_allowed_origins: z.array(z.string()).optional().catch([]),
 }).loose().transform((config): AgentA2AOperatorConfig => ({
   operator: config.operator === true,
   dwsIdentity: config.dws_identity
     ? {
       uid: config.dws_identity.uid,
       orgId: config.dws_identity.org_id,
+      displayName: config.dws_identity.display_name,
+      organizationName: config.dws_identity.organization_name,
       deapAgentUuid: config.dws_identity.deap_agent_uuid ?? null,
-      updatedBy: config.dws_identity.updated_by,
-      updatedAt: config.dws_identity.updated_at,
+      a2aEnabled: config.dws_identity.a2a_enabled === true,
+      boundAt: config.dws_identity.bound_at,
     }
     : null,
-  forward: config.forward
+  prodForward: config.prod_forward
     ? {
-      rpcUrl: config.forward.rpc_url,
-      sourceClientId: config.forward.source_client_id,
-      active: config.forward.active === true,
-      updatedBy: config.forward.updated_by,
-      updatedAt: config.forward.updated_at,
+      accept: config.prod_forward.accept !== false,
+      blockedReason: config.prod_forward.blocked_reason ?? "",
+      registrations: (config.prod_forward.registrations ?? []).map((registration) => ({
+        registry: registration.registry,
+        registeredAt: registration.registered_at ?? null,
+        current: registration.current === true,
+        error: registration.error ?? "",
+      })),
     }
     : null,
-  forwardAllowedOrigins: config.forward_allowed_origins ?? [],
+  forwardTarget: config.forward_target
+    ? {
+      rpcUrl: config.forward_target.rpc_url,
+      agentName: config.forward_target.agent_name,
+      registeredAt: config.forward_target.registered_at,
+    }
+    : null,
 }));
 
 export const EMPTY_AGENT_A2A_OPERATOR_CONFIG: AgentA2AOperatorConfig = {
   operator: false,
   dwsIdentity: null,
-  forward: null,
-  forwardAllowedOrigins: [],
+  prodForward: null,
+  forwardTarget: null,
 };
 export const DingTalkInstallationSchema = z
   .object({

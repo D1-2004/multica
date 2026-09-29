@@ -139,23 +139,45 @@ export interface CreateAgentA2ACredentialRequest {
   expiresAt?: string | null;
 }
 
-/** Operator-bound DEAP digital employee identity used by A2A tasks. */
+/**
+ * The Agent's DingTalk identity. It is the same record as the Integrations
+ * DingTalk identity; `a2aEnabled` says whether A2A turns may run as it.
+ */
 export interface AgentA2AOperatorIdentity {
   uid: string;
   orgId: string;
+  displayName: string;
+  organizationName: string;
   deapAgentUuid: string | null;
-  updatedBy: string;
-  updatedAt: string;
+  a2aEnabled: boolean;
+  boundAt: string;
 }
 
-/** Operator-configured forward of inbound A2A JSON-RPC to another environment. */
-export interface AgentA2AOperatorForward {
+/**
+ * Pre-release: one production registry. `current` means the registry holds
+ * this Agent's present identity; a registration that is not current no longer
+ * receives traffic.
+ */
+export interface AgentA2AProdForwardRegistration {
+  registry: string;
+  registeredAt: string | null;
+  current: boolean;
+  error: string;
+}
+
+/** Pre-release: whether this Agent accepts production forwards for its identity. */
+export interface AgentA2AProdForward {
+  accept: boolean;
+  /** Why the Agent cannot register yet while `accept` is on; empty when it can. */
+  blockedReason: string;
+  registrations: AgentA2AProdForwardRegistration[];
+}
+
+/** Production: the pre-release Agent currently registered for this Agent's identity. */
+export interface AgentA2AForwardTarget {
   rpcUrl: string;
-  /** The one source A2A client whose calls are forwarded. */
-  sourceClientId: string;
-  active: boolean;
-  updatedBy: string;
-  updatedAt: string;
+  agentName: string;
+  registeredAt: string;
 }
 
 /**
@@ -165,19 +187,18 @@ export interface AgentA2AOperatorForward {
 export interface AgentA2AOperatorConfig {
   operator: boolean;
   dwsIdentity: AgentA2AOperatorIdentity | null;
-  forward: AgentA2AOperatorForward | null;
-  forwardAllowedOrigins: string[];
+  prodForward: AgentA2AProdForward | null;
+  forwardTarget: AgentA2AForwardTarget | null;
 }
 
 export interface UpdateAgentA2AOperatorIdentityRequest {
   uid: string;
   orgId: string;
+  displayName?: string;
+  organizationName?: string;
   deapAgentUuid?: string;
 }
 
-export interface UpdateAgentA2AOperatorForwardRequest {
-  rpcUrl: string;
-  token: string;
-  /** Optional when the Agent has exactly one active A2A client. */
-  sourceClientId?: string;
+export interface UpdateAgentA2AProdForwardRequest {
+  accept: boolean;
 }

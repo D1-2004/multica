@@ -51,8 +51,7 @@ vi.mock("@multica/core/agent-a2a", () => ({
   agentA2AOperatorConfigOptions: () => ({ queryKey: ["agent-a2a-operator"] }),
   useUpdateAgentA2AOperatorIdentity: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteAgentA2AOperatorIdentity: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useUpdateAgentA2AOperatorForward: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useDeleteAgentA2AOperatorForward: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useUpdateAgentA2AProdForward: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@multica/ui/lib/clipboard", () => ({

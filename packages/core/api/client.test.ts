@@ -988,92 +988,116 @@ describe("ApiClient A2A config response schemas", () => {
 
 describe("ApiClient A2A operator response schema", () => {
   function stubJSON(body: unknown) {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(JSON.stringify(body), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      ),
-    );
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
   }
 
-  it("maps operator settings without exposing the forward token", async () => {
+  it("maps the shared identity and both forward views", async () => {
     stubJSON({
       operator: true,
       dws_identity: {
-        uid: "5550001",
-        org_id: "7770001",
+        uid: "7015073760",
+        org_id: "439446171",
+        display_name: "Tagggg",
+        organization_name: "钉钉",
         deap_agent_uuid: "18265b7f",
-        updated_by: "user-1",
-        updated_at: "2026-09-29T12:00:00Z",
+        a2a_enabled: true,
+        bound_at: "2026-09-29T12:00:00Z",
       },
-      forward: {
+      prod_forward: {
+        accept: true,
+        registrations: [
+          { registry: "https://fde-workbench.dingtalk.com", registered_at: "2026-09-29T12:01:00Z", current: true },
+          { registry: "https://pre-fde-workbench.dingtalk.com", registered_at: null, current: "yes", error: "HTTP 503" },
+        ],
+      },
+      forward_target: {
         rpc_url: "https://pre.example.test/api/a2a/agents/agent_1234567890123/v1",
-        source_client_id: "client-1",
-        active: true,
-        updated_by: "user-1",
-        updated_at: "2026-09-29T12:00:00Z",
+        agent_name: "Pre QwenTag",
+        registered_at: "2026-09-29T12:01:00Z",
       },
-      forward_allowed_origins: ["https://pre.example.test"],
     });
     const config = await new ApiClient("https://api.example.test").getAgentA2AOperatorConfig("agent/1");
     expect(config).toEqual({
       operator: true,
       dwsIdentity: {
-        uid: "5550001",
-        orgId: "7770001",
+        uid: "7015073760",
+        orgId: "439446171",
+        displayName: "Tagggg",
+        organizationName: "钉钉",
         deapAgentUuid: "18265b7f",
-        updatedBy: "user-1",
-        updatedAt: "2026-09-29T12:00:00Z",
+        a2aEnabled: true,
+        boundAt: "2026-09-29T12:00:00Z",
       },
-      forward: {
+      prodForward: {
+        accept: true,
+        blockedReason: "",
+        registrations: [
+          { registry: "https://fde-workbench.dingtalk.com", registeredAt: "2026-09-29T12:01:00Z", current: true, error: "" },
+          { registry: "https://pre-fde-workbench.dingtalk.com", registeredAt: null, current: false, error: "HTTP 503" },
+        ],
+      },
+      forwardTarget: {
         rpcUrl: "https://pre.example.test/api/a2a/agents/agent_1234567890123/v1",
-        sourceClientId: "client-1",
-        active: true,
-        updatedBy: "user-1",
-        updatedAt: "2026-09-29T12:00:00Z",
+        agentName: "Pre QwenTag",
+        registeredAt: "2026-09-29T12:01:00Z",
       },
-      forwardAllowedOrigins: ["https://pre.example.test"],
     });
   });
 
   it("fails closed to operator=false on a malformed response", async () => {
     const warn = vi.fn();
     setSchemaLogger({ ...noopLogger, warn });
-    stubJSON({ operator: "yes", dws_identity: 7, forward: "x" });
+    stubJSON({ operator: "yes", dws_identity: 7, prod_forward: "x" });
     const config = await new ApiClient("https://api.example.test").getAgentA2AOperatorConfig("agent/1");
     expect(config.operator).toBe(false);
     expect(config.dwsIdentity).toBeNull();
-    expect(config.forward).toBeNull();
+    expect(config.prodForward).toBeNull();
+
+    // A malformed registration list degrades to no registrations, not a crash.
+    stubJSON({ operator: true, prod_forward: { accept: false, blocked_reason: 3, registrations: "x" } });
+    const degraded = await new ApiClient("https://api.example.test").getAgentA2AOperatorConfig("agent/1");
+    expect(degraded.prodForward).toEqual({ accept: false, blockedReason: "", registrations: [] });
 
     stubJSON("not-an-object");
     const fallback = await new ApiClient("https://api.example.test").getAgentA2AOperatorConfig("agent/1");
     expect(fallback).toEqual({
       operator: false,
       dwsIdentity: null,
-      forward: null,
-      forwardAllowedOrigins: [],
+      prodForward: null,
+      forwardTarget: null,
     });
   });
 
-  it("sends the identity binding with snake_case fields", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ operator: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    await new ApiClient("https://api.example.test").updateAgentA2AOperatorIdentity("agent/1", {
-      uid: "5550001",
-      orgId: "7770001",
+  it("sends the identity binding and the forward switch with snake_case fields", async () => {
+    const fetchMock = stubJSON({ operator: true });
+    const client = new ApiClient("https://api.example.test");
+    await client.updateAgentA2AOperatorIdentity("agent/1", {
+      uid: "7015073760",
+      orgId: "439446171",
+      displayName: "Tagggg",
     });
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    let [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("https://api.example.test/api/agents/agent%2F1/a2a/operator/dws-identity");
     expect(init.method).toBe("PUT");
-    expect(JSON.parse(String(init.body))).toEqual({ uid: "5550001", org_id: "7770001", deap_agent_uuid: "" });
+    expect(JSON.parse(String(init.body))).toEqual({
+      uid: "7015073760",
+      org_id: "439446171",
+      display_name: "Tagggg",
+      organization_name: "",
+      deap_agent_uuid: "",
+    });
+
+    await client.updateAgentA2AProdForward("agent/1", { accept: false });
+    [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/agents/agent%2F1/a2a/operator/prod-forward");
+    expect(JSON.parse(String(init.body))).toEqual({ accept: false });
   });
 });
 

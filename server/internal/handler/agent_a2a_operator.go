@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -17,11 +15,15 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// The A2A operator surface binds a DEAP digital employee identity to an Agent
-// and proxies an Agent's inbound A2A traffic to another environment. Both let
-// the caller act through someone else's credential, so neither is an ordinary
-// Agent-management permission: the deployment names the operators by email
-// (MULTICA_A2A_OPERATOR_EMAILS) and everyone else sees only operator=false.
+// The A2A operator surface lets a deployment operator bind a DEAP digital
+// employee identity to an Agent and, on pre-release, accept that employee's
+// production A2A traffic. Both act through someone else's credential, so
+// neither is an ordinary Agent-management permission: the deployment names the
+// operators by email (MULTICA_A2A_OPERATOR_EMAILS) and everyone else sees only
+// operator=false.
+//
+// The identity is the agent_dingtalk_identity row the Integrations DingTalk
+// binding also writes; binding or clearing it here or there changes both.
 
 var (
 	agentA2AOperatorDecimalID  = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
@@ -29,41 +31,62 @@ var (
 	agentA2AOperatorDEAPUUIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 )
 
+const agentA2AOperatorMaxNameRunes = 100
+
 type AgentA2AOperatorIdentityResponse struct {
-	UID           string  `json:"uid"`
-	OrgID         string  `json:"org_id"`
-	DEAPAgentUUID *string `json:"deap_agent_uuid"`
-	UpdatedBy     string  `json:"updated_by"`
-	UpdatedAt     string  `json:"updated_at"`
+	UID              string  `json:"uid"`
+	OrgID            string  `json:"org_id"`
+	DisplayName      string  `json:"display_name"`
+	OrganizationName string  `json:"organization_name"`
+	DEAPAgentUUID    *string `json:"deap_agent_uuid"`
+	A2AEnabled       bool    `json:"a2a_enabled"`
+	BoundAt          string  `json:"bound_at"`
 }
 
-type AgentA2AOperatorForwardResponse struct {
-	RPCURL         string `json:"rpc_url"`
-	SourceClientID string `json:"source_client_id"`
-	Active         bool   `json:"active"`
-	UpdatedBy      string `json:"updated_by"`
-	UpdatedAt      string `json:"updated_at"`
+// AgentA2AProdForwardRegistrationResponse is one production registry as seen
+// from pre-release. Current means the registry holds this Agent's present
+// identity; a registration that is not current no longer receives traffic.
+type AgentA2AProdForwardRegistrationResponse struct {
+	Registry     string  `json:"registry"`
+	RegisteredAt *string `json:"registered_at"`
+	Current      bool    `json:"current"`
+	Error        string  `json:"error,omitempty"`
+}
+
+// AgentA2AProdForwardResponse is the pre-release side: whether this Agent
+// accepts production forwards for its identity, why it cannot register yet,
+// and each registry's registration.
+type AgentA2AProdForwardResponse struct {
+	Accept        bool                                      `json:"accept"`
+	BlockedReason string                                    `json:"blocked_reason,omitempty"`
+	Registrations []AgentA2AProdForwardRegistrationResponse `json:"registrations"`
+}
+
+// AgentA2AForwardTargetResponse is the production side: the pre-release Agent
+// currently registered for this Agent's identity.
+type AgentA2AForwardTargetResponse struct {
+	RPCURL       string `json:"rpc_url"`
+	AgentName    string `json:"agent_name"`
+	RegisteredAt string `json:"registered_at"`
 }
 
 type AgentA2AOperatorResponse struct {
-	Operator              bool                              `json:"operator"`
-	DWSIdentity           *AgentA2AOperatorIdentityResponse `json:"dws_identity,omitempty"`
-	Forward               *AgentA2AOperatorForwardResponse  `json:"forward,omitempty"`
-	ForwardAllowedOrigins []string                          `json:"forward_allowed_origins,omitempty"`
+	Operator      bool                              `json:"operator"`
+	DWSIdentity   *AgentA2AOperatorIdentityResponse `json:"dws_identity,omitempty"`
+	ProdForward   *AgentA2AProdForwardResponse      `json:"prod_forward,omitempty"`
+	ForwardTarget *AgentA2AForwardTargetResponse    `json:"forward_target,omitempty"`
 }
 
 type updateAgentA2AOperatorIdentityRequest struct {
-	UID           string `json:"uid"`
-	OrgID         string `json:"org_id"`
-	DEAPAgentUUID string `json:"deap_agent_uuid"`
+	UID              string `json:"uid"`
+	OrgID            string `json:"org_id"`
+	DisplayName      string `json:"display_name"`
+	OrganizationName string `json:"organization_name"`
+	DEAPAgentUUID    string `json:"deap_agent_uuid"`
 }
 
-type updateAgentA2AOperatorForwardRequest struct {
-	RPCURL string `json:"rpc_url"`
-	Token  string `json:"token"`
-	// SourceClientID selects the one A2A client whose calls are forwarded.
-	// Optional when the endpoint has exactly one active client.
-	SourceClientID string `json:"source_client_id"`
+type updateAgentA2AProdForwardRequest struct {
+	Accept *bool `json:"accept"`
 }
 
 // isAgentA2AOperator reports whether the human actor's account email is listed
@@ -110,12 +133,7 @@ func (h *Handler) GetAgentA2AOperatorConfig(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusOK, AgentA2AOperatorResponse{Operator: false})
 		return
 	}
-	response, err := h.loadAgentA2AOperatorResponse(r, scope)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load A2A operator configuration")
-		return
-	}
-	writeJSON(w, http.StatusOK, response)
+	h.writeAgentA2AOperatorResponse(w, r, scope)
 }
 
 func (h *Handler) UpdateAgentA2AOperatorIdentity(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +152,12 @@ func (h *Handler) UpdateAgentA2AOperatorIdentity(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "uid and org_id must be positive decimal identifiers")
 		return
 	}
+	displayName := strings.TrimSpace(req.DisplayName)
+	organizationName := strings.TrimSpace(req.OrganizationName)
+	if len([]rune(displayName)) > agentA2AOperatorMaxNameRunes || len([]rune(organizationName)) > agentA2AOperatorMaxNameRunes {
+		writeError(w, http.StatusBadRequest, "display_name and organization_name must be at most 100 characters")
+		return
+	}
 	deapAgentUUID := pgtype.Text{}
 	if value := strings.TrimSpace(req.DEAPAgentUUID); value != "" {
 		if !agentA2AOperatorDEAPUUIDRe.MatchString(value) {
@@ -142,18 +166,50 @@ func (h *Handler) UpdateAgentA2AOperatorIdentity(w http.ResponseWriter, r *http.
 		}
 		deapAgentUUID = pgtype.Text{String: value, Valid: true}
 	}
-	if err := h.Queries.UpsertAgentA2AOperatorIdentity(r.Context(), db.UpsertAgentA2AOperatorIdentityParams{
-		AgentID:           scope.Agent.ID,
-		WorkspaceID:       scope.WorkspaceID,
-		DwsUid:            pgtype.Text{String: uid, Valid: true},
-		DwsOrgID:          pgtype.Text{String: orgID, Valid: true},
-		DeapAgentUuid:     deapAgentUUID,
-		IdentityUpdatedBy: scope.ActorUserID,
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	queries := h.Queries.WithTx(tx)
+	// A pending QR attempt must not overwrite the identity bound here.
+	if err := queries.DeleteAgentDingTalkIdentityAttempts(r.Context(), db.DeleteAgentDingTalkIdentityAttemptsParams{
+		WorkspaceID: scope.WorkspaceID,
+		AgentID:     scope.Agent.ID,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save A2A DWS identity")
+		writeError(w, http.StatusInternalServerError, "failed to save DingTalk identity")
+		return
+	}
+	if err := queries.UpsertAgentDingTalkIdentityManual(r.Context(), db.UpsertAgentDingTalkIdentityManualParams{
+		AgentID:            scope.Agent.ID,
+		WorkspaceID:        scope.WorkspaceID,
+		DwsUid:             uid,
+		OrgID:              orgID,
+		AccountDisplayName: displayName,
+		OrganizationName:   organizationName,
+		BoundBy:            scope.ActorUserID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save DingTalk identity")
+		return
+	}
+	if err := queries.SetAgentA2AIdentityEnabled(r.Context(), db.SetAgentA2AIdentityEnabledParams{
+		AgentID:            scope.Agent.ID,
+		WorkspaceID:        scope.WorkspaceID,
+		A2aIdentityEnabled: true,
+		DeapAgentUuid:      deapAgentUUID,
+		UpdatedBy:          scope.ActorUserID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save DingTalk identity")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save DingTalk identity")
 		return
 	}
 	h.auditAgentA2AOperatorChange(r, scope, "dws_identity_set")
+	h.syncAgentA2AForwardRegistration(r.Context(), scope, true)
 	h.writeAgentA2AOperatorResponse(w, r, scope)
 }
 
@@ -162,64 +218,6 @@ func (h *Handler) DeleteAgentA2AOperatorIdentity(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	if err := h.Queries.ClearAgentA2AOperatorIdentity(r.Context(), db.ClearAgentA2AOperatorIdentityParams{
-		WorkspaceID:       scope.WorkspaceID,
-		AgentID:           scope.Agent.ID,
-		IdentityUpdatedBy: scope.ActorUserID,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to clear A2A DWS identity")
-		return
-	}
-	h.auditAgentA2AOperatorChange(r, scope, "dws_identity_cleared")
-	h.writeAgentA2AOperatorResponse(w, r, scope)
-}
-
-func (h *Handler) UpdateAgentA2AOperatorForward(w http.ResponseWriter, r *http.Request) {
-	scope, ok := h.requireAgentA2AOperator(w, r)
-	if !ok {
-		return
-	}
-	if h.A2AService == nil || h.A2AService.PushSecrets == nil {
-		writeError(w, http.StatusServiceUnavailable, "A2A forwarding requires MULTICA_A2A_PUSH_SECRET_KEY")
-		return
-	}
-	var req updateAgentA2AOperatorForwardRequest
-	if err := decodeAgentA2AJSON(w, r, &req, false); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	endpoint, err := h.Queries.GetAgentA2AEndpointByAgent(r.Context(), scope.Agent.ID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusInternalServerError, "failed to load A2A endpoint")
-		return
-	}
-	target, err := normalizeAgentA2AForwardTarget(
-		req.RPCURL,
-		h.currentConfig().A2AForwardAllowedOrigins,
-		h.currentConfig().PublicURL,
-		endpoint.PublicAgentID,
-	)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	token := strings.TrimSpace(req.Token)
-	if !validAgentAccessToken(token) {
-		writeError(w, http.StatusBadRequest, "token must be the target Agent's A2A access key")
-		return
-	}
-	sourceClientID, status, err := h.resolveAgentA2AForwardSourceClient(r, scope, req.SourceClientID)
-	if err != nil {
-		writeError(w, status, err.Error())
-		return
-	}
-	sealed, err := h.A2AService.PushSecrets.Seal([]byte(token))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to protect the forward credential")
-		return
-	}
-	// The key claim and the forward row commit together, so a failed save
-	// never leaves a target key pinned to a client that did not get it.
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
@@ -227,98 +225,65 @@ func (h *Handler) UpdateAgentA2AOperatorForward(w http.ResponseWriter, r *http.R
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	queries := h.Queries.WithTx(tx)
-	// A target key serves one source client for its whole life, across
-	// rebinding, clearing and other Agents; see a2a_forward_token_binding.
-	digest := sha256.Sum256([]byte(token))
-	owner, err := queries.ClaimA2AForwardTokenBinding(r.Context(), db.ClaimA2AForwardTokenBindingParams{
-		TokenSha256:    hex.EncodeToString(digest[:]),
-		SourceClientID: sourceClientID,
-		WorkspaceID:    scope.WorkspaceID,
-		AgentID:        scope.Agent.ID,
-		CreatedBy:      scope.ActorUserID,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record the forward credential binding")
+	if _, err := queries.DeleteAgentDingTalkIdentity(r.Context(), db.DeleteAgentDingTalkIdentityParams{
+		WorkspaceID: scope.WorkspaceID,
+		AgentID:     scope.Agent.ID,
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to clear DingTalk identity")
 		return
 	}
-	if owner.Bytes != sourceClientID.Bytes {
-		writeError(w, http.StatusConflict, "this target key already forwarded another source client; mint a new A2A key on the target Agent")
-		return
-	}
-	if err := queries.UpsertAgentA2AOperatorForward(r.Context(), db.UpsertAgentA2AOperatorForwardParams{
-		AgentID:               scope.Agent.ID,
-		WorkspaceID:           scope.WorkspaceID,
-		ForwardRpcUrl:         pgtype.Text{String: target, Valid: true},
-		ForwardTokenEncrypted: sealed,
-		ForwardSourceClientID: sourceClientID,
-		ForwardUpdatedBy:      scope.ActorUserID,
+	if err := queries.SetAgentA2AIdentityEnabled(r.Context(), db.SetAgentA2AIdentityEnabledParams{
+		AgentID:            scope.Agent.ID,
+		WorkspaceID:        scope.WorkspaceID,
+		A2aIdentityEnabled: false,
+		UpdatedBy:          scope.ActorUserID,
 	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save A2A forward")
+		writeError(w, http.StatusInternalServerError, "failed to clear DingTalk identity")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save A2A forward")
+		writeError(w, http.StatusInternalServerError, "failed to clear DingTalk identity")
 		return
 	}
-	h.auditAgentA2AOperatorChange(r, scope, "forward_set",
-		"forward_target", target,
-		"forward_source_client_id", uuidToString(sourceClientID),
-	)
+	h.auditAgentA2AOperatorChange(r, scope, "dws_identity_cleared")
+	h.syncAgentA2AForwardRegistration(r.Context(), scope, false)
 	h.writeAgentA2AOperatorResponse(w, r, scope)
 }
 
-// resolveAgentA2AForwardSourceClient picks the single active A2A client whose
-// calls are forwarded. The target sees every forwarded call as its own one
-// client, so forwarding more than one source client would let them read and
-// continue each other's tasks there.
-func (h *Handler) resolveAgentA2AForwardSourceClient(
-	r *http.Request,
-	scope agentA2AManagementScope,
-	requested string,
-) (pgtype.UUID, int, error) {
-	clients, err := h.Queries.ListAgentA2AClientsForOwner(r.Context(), db.ListAgentA2AClientsForOwnerParams{
-		OwnerUserID: scope.OwnerUserID,
-		WorkspaceID: scope.WorkspaceID,
-		AgentID:     scope.Agent.ID,
-	})
-	if err != nil {
-		return pgtype.UUID{}, http.StatusInternalServerError, errors.New("failed to load A2A clients")
-	}
-	active := make([]db.A2aClient, 0, len(clients))
-	for _, client := range clients {
-		if client.Status == "active" {
-			active = append(active, client)
-		}
-	}
-	requested = strings.TrimSpace(requested)
-	if requested == "" {
-		if len(active) != 1 {
-			return pgtype.UUID{}, http.StatusBadRequest, errors.New("source_client_id is required unless the Agent has exactly one active A2A client")
-		}
-		return active[0].ID, 0, nil
-	}
-	for _, client := range active {
-		if uuidToString(client.ID) == requested {
-			return client.ID, 0, nil
-		}
-	}
-	return pgtype.UUID{}, http.StatusBadRequest, errors.New("source_client_id is not an active A2A client of this Agent")
-}
-
-func (h *Handler) DeleteAgentA2AOperatorForward(w http.ResponseWriter, r *http.Request) {
+// UpdateAgentA2AProdForward turns the pre-release "accept production forwards"
+// switch on or off; {accept: true} while already on re-registers. It exists
+// only where this deployment registers with a production registry.
+func (h *Handler) UpdateAgentA2AProdForward(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.requireAgentA2AOperator(w, r)
 	if !ok {
 		return
 	}
-	if err := h.Queries.ClearAgentA2AOperatorForward(r.Context(), db.ClearAgentA2AOperatorForwardParams{
-		WorkspaceID:      scope.WorkspaceID,
-		AgentID:          scope.Agent.ID,
-		ForwardUpdatedBy: scope.ActorUserID,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to clear A2A forward")
+	if !h.agentA2AForwardRegistrant() {
+		writeError(w, http.StatusNotFound, "production forwarding is not available on this deployment")
 		return
 	}
-	h.auditAgentA2AOperatorChange(r, scope, "forward_cleared")
+	var req updateAgentA2AProdForwardRequest
+	if err := decodeAgentA2AJSON(w, r, &req, false); err != nil || req.Accept == nil {
+		writeError(w, http.StatusBadRequest, "accept is required")
+		return
+	}
+	if err := h.Queries.SetAgentA2AAcceptProdForward(r.Context(), db.SetAgentA2AAcceptProdForwardParams{
+		AgentID:           scope.Agent.ID,
+		WorkspaceID:       scope.WorkspaceID,
+		AcceptProdForward: *req.Accept,
+		UpdatedBy:         scope.ActorUserID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save production forward setting")
+		return
+	}
+	action := "prod_forward_disabled"
+	if *req.Accept {
+		action = "prod_forward_enabled"
+	}
+	h.auditAgentA2AOperatorChange(r, scope, action)
+	// Turning the switch on (again) always re-registers with a fresh key, which
+	// is also how an operator repairs a registration a registry lost.
+	h.syncAgentA2AForwardRegistration(r.Context(), scope, *req.Accept)
 	h.writeAgentA2AOperatorResponse(w, r, scope)
 }
 
@@ -332,42 +297,97 @@ func (h *Handler) writeAgentA2AOperatorResponse(w http.ResponseWriter, r *http.R
 }
 
 func (h *Handler) loadAgentA2AOperatorResponse(r *http.Request, scope agentA2AManagementScope) (AgentA2AOperatorResponse, error) {
-	allowed := normalizedAgentA2AForwardOrigins(h.currentConfig().A2AForwardAllowedOrigins)
-	response := AgentA2AOperatorResponse{Operator: true, ForwardAllowedOrigins: allowed}
+	response := AgentA2AOperatorResponse{Operator: true}
 	config, err := h.Queries.GetAgentA2AOperatorConfig(r.Context(), db.GetAgentA2AOperatorConfigParams{
 		WorkspaceID: scope.WorkspaceID,
 		AgentID:     scope.Agent.ID,
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return response, nil
-	}
-	if err != nil {
+	hasConfig := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return AgentA2AOperatorResponse{}, err
 	}
-	if config.DwsUid.Valid && config.DwsOrgID.Valid {
-		identity := &AgentA2AOperatorIdentityResponse{
-			UID:       config.DwsUid.String,
-			OrgID:     config.DwsOrgID.String,
-			UpdatedBy: uuidToString(config.IdentityUpdatedBy),
-			UpdatedAt: timestampToString(config.IdentityUpdatedAt),
-		}
-		if config.DeapAgentUuid.Valid {
-			value := config.DeapAgentUuid.String
-			identity.DEAPAgentUUID = &value
-		}
-		response.DWSIdentity = identity
+	identity, err := h.Queries.GetAgentDingTalkIdentity(r.Context(), db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: scope.WorkspaceID,
+		AgentID:     scope.Agent.ID,
+	})
+	hasIdentity := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return AgentA2AOperatorResponse{}, err
 	}
-	if config.ForwardRpcUrl.Valid && len(config.ForwardTokenEncrypted) > 0 {
-		_, originErr := agentA2AForwardOriginAllowed(config.ForwardRpcUrl.String, allowed)
-		response.Forward = &AgentA2AOperatorForwardResponse{
-			RPCURL:         config.ForwardRpcUrl.String,
-			SourceClientID: uuidToString(config.ForwardSourceClientID),
-			Active:         originErr == nil && h.A2AService != nil && h.A2AService.PushSecrets != nil,
-			UpdatedBy:      uuidToString(config.ForwardUpdatedBy),
-			UpdatedAt:      timestampToString(config.ForwardUpdatedAt),
+	if hasIdentity {
+		item := &AgentA2AOperatorIdentityResponse{
+			UID:              identity.DwsUid,
+			OrgID:            identity.OrgID,
+			DisplayName:      identity.AccountDisplayName,
+			OrganizationName: identity.OrganizationName,
+			A2AEnabled:       hasConfig && config.A2aIdentityEnabled,
+			BoundAt:          timestampToString(identity.BoundAt),
+		}
+		if hasConfig && config.DeapAgentUuid.Valid {
+			value := config.DeapAgentUuid.String
+			item.DEAPAgentUUID = &value
+		}
+		response.DWSIdentity = item
+	}
+	if h.agentA2AForwardRegistrant() {
+		forward, err := h.loadAgentA2AProdForwardResponse(r, scope)
+		if err != nil {
+			return AgentA2AOperatorResponse{}, err
+		}
+		response.ProdForward = forward
+	}
+	if h.agentA2AForwardRegistry() && hasIdentity && hasConfig && config.A2aIdentityEnabled {
+		registration, err := h.Queries.GetA2AForwardRegistration(r.Context(), db.GetA2AForwardRegistrationParams{
+			DwsUid: identity.DwsUid,
+			OrgID:  identity.OrgID,
+		})
+		if err == nil {
+			response.ForwardTarget = &AgentA2AForwardTargetResponse{
+				RPCURL:       registration.RpcUrl,
+				AgentName:    registration.TargetAgentName,
+				RegisteredAt: timestampToString(registration.RegisteredAt),
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return AgentA2AOperatorResponse{}, err
 		}
 	}
 	return response, nil
+}
+
+func (h *Handler) loadAgentA2AProdForwardResponse(r *http.Request, scope agentA2AManagementScope) (*AgentA2AProdForwardResponse, error) {
+	desired, err := h.loadAgentA2AForwardDesired(r.Context(), scope.Agent)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := h.Queries.ListAgentA2AForwardRegistrants(r.Context(), db.ListAgentA2AForwardRegistrantsParams{
+		AgentID:     scope.Agent.ID,
+		WorkspaceID: scope.WorkspaceID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	forward := &AgentA2AProdForwardResponse{
+		Accept:        desired.Accept,
+		BlockedReason: desired.Reason,
+		Registrations: []AgentA2AProdForwardRegistrationResponse{},
+	}
+	byOrigin := make(map[string]db.AgentA2aForwardRegistrant, len(rows))
+	for _, row := range rows {
+		byOrigin[row.RegistryOrigin] = row
+	}
+	for _, origin := range normalizedAgentA2AForwardOrigins(h.currentConfig().A2AForwardRegistryURLs) {
+		item := AgentA2AProdForwardRegistrationResponse{Registry: origin}
+		if row, ok := byOrigin[origin]; ok {
+			if row.RegisteredAt.Valid {
+				value := timestampToString(row.RegisteredAt)
+				item.RegisteredAt = &value
+			}
+			item.Current = agentA2AForwardRegistrantCurrent(row, desired)
+			item.Error = row.LastError.String
+		}
+		forward.Registrations = append(forward.Registrations, item)
+	}
+	return forward, nil
 }
 
 func (h *Handler) auditAgentA2AOperatorChange(r *http.Request, scope agentA2AManagementScope, action string, attrs ...any) {
@@ -381,10 +401,9 @@ func (h *Handler) auditAgentA2AOperatorChange(r *http.Request, scope agentA2AMan
 	slog.Info("A2A operator configuration changed", append(fields, attrs...)...)
 }
 
-// normalizeAgentA2AForwardTarget accepts only the canonical JSON-RPC URL of
-// another hosted Agent on an allow-listed HTTPS origin. Forwarding to this
-// deployment's own copy of the same Agent would loop, so it is rejected.
-func normalizeAgentA2AForwardTarget(raw string, allowedOrigins []string, publicURL, ownPublicAgentID string) (string, error) {
+// validateAgentA2AForwardRPCURL accepts only the canonical JSON-RPC URL of a
+// hosted Agent on an allow-listed HTTPS origin.
+func validateAgentA2AForwardRPCURL(raw string, allowedOrigins []string) (string, error) {
 	allowed := normalizedAgentA2AForwardOrigins(allowedOrigins)
 	if len(allowed) == 0 {
 		return "", errors.New("A2A forwarding is not enabled on this deployment")
@@ -393,14 +412,8 @@ func normalizeAgentA2AForwardTarget(raw string, allowedOrigins []string, publicU
 	if err != nil {
 		return "", err
 	}
-	match := agentA2AForwardRPCPath.FindStringSubmatch(parsed.Path)
-	if match == nil {
+	if !agentA2AForwardRPCPath.MatchString(parsed.Path) {
 		return "", errors.New("rpc_url must be an A2A JSON-RPC URL like https://host/api/a2a/agents/{id}/v1")
-	}
-	if own, ownErr := url.Parse(strings.TrimSpace(publicURL)); ownErr == nil &&
-		strings.EqualFold(own.Scheme+"://"+own.Host, parsed.Scheme+"://"+parsed.Host) &&
-		ownPublicAgentID != "" && match[1] == ownPublicAgentID {
-		return "", errors.New("rpc_url must not point back to this Agent")
 	}
 	return parsed.Scheme + "://" + parsed.Host + parsed.Path, nil
 }
