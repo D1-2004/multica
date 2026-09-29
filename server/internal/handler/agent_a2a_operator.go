@@ -213,10 +213,24 @@ func (h *Handler) UpdateAgentA2AOperatorForward(w http.ResponseWriter, r *http.R
 		writeError(w, status, err.Error())
 		return
 	}
+	sealed, err := h.A2AService.PushSecrets.Seal([]byte(token))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to protect the forward credential")
+		return
+	}
+	// The key claim and the forward row commit together, so a failed save
+	// never leaves a target key pinned to a client that did not get it.
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	queries := h.Queries.WithTx(tx)
 	// A target key serves one source client for its whole life, across
 	// rebinding, clearing and other Agents; see a2a_forward_token_binding.
 	digest := sha256.Sum256([]byte(token))
-	owner, err := h.Queries.ClaimA2AForwardTokenBinding(r.Context(), db.ClaimA2AForwardTokenBindingParams{
+	owner, err := queries.ClaimA2AForwardTokenBinding(r.Context(), db.ClaimA2AForwardTokenBindingParams{
 		TokenSha256:    hex.EncodeToString(digest[:]),
 		SourceClientID: sourceClientID,
 		WorkspaceID:    scope.WorkspaceID,
@@ -231,12 +245,7 @@ func (h *Handler) UpdateAgentA2AOperatorForward(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusConflict, "this target key already forwarded another source client; mint a new A2A key on the target Agent")
 		return
 	}
-	sealed, err := h.A2AService.PushSecrets.Seal([]byte(token))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to protect the forward credential")
-		return
-	}
-	if err := h.Queries.UpsertAgentA2AOperatorForward(r.Context(), db.UpsertAgentA2AOperatorForwardParams{
+	if err := queries.UpsertAgentA2AOperatorForward(r.Context(), db.UpsertAgentA2AOperatorForwardParams{
 		AgentID:               scope.Agent.ID,
 		WorkspaceID:           scope.WorkspaceID,
 		ForwardRpcUrl:         pgtype.Text{String: target, Valid: true},
@@ -244,6 +253,10 @@ func (h *Handler) UpdateAgentA2AOperatorForward(w http.ResponseWriter, r *http.R
 		ForwardSourceClientID: sourceClientID,
 		ForwardUpdatedBy:      scope.ActorUserID,
 	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save A2A forward")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save A2A forward")
 		return
 	}

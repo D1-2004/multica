@@ -167,4 +167,37 @@ describe("A2AOperatorCard", () => {
       sourceClientId: "client-b",
     });
   });
+
+  it("drops a choice whose client was revoked and falls back to the remaining one", async () => {
+    operatorRef.current = {
+      operator: true,
+      dwsIdentity: null,
+      forward: null,
+      forwardAllowedOrigins: ["https://pre.example.test"],
+    };
+    clientsRef.current = [
+      { id: "client-a", name: "DEAP Tagggg", status: "active" },
+      { id: "client-b", name: "Other caller", status: "active" },
+    ];
+    const user = userEvent.setup();
+    const view = renderCard();
+    await user.selectOptions(screen.getByLabelText(enAgents.tab_body.a2a.operator.source_client), "client-b");
+
+    clientsRef.current = [
+      { id: "client-a", name: "DEAP Tagggg", status: "active" },
+      { id: "client-b", name: "Other caller", status: "revoked" },
+    ];
+    view.rerender(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <A2AOperatorCard wsId="ws-1" agentId="agent-1" />
+      </I18nProvider>,
+    );
+    await user.type(
+      screen.getByLabelText(enAgents.tab_body.a2a.operator.forward_url),
+      "https://pre.example.test/api/a2a/agents/agent_1234567890123/v1",
+    );
+    await user.type(screen.getByLabelText(enAgents.tab_body.a2a.operator.forward_token), "mca2a_target");
+    await user.click(screen.getByRole("button", { name: enAgents.tab_body.a2a.operator.save_forward }));
+    expect(updateForwardSpy).toHaveBeenCalledWith(expect.objectContaining({ sourceClientId: "client-a" }));
+  });
 });

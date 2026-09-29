@@ -55,15 +55,18 @@ export function A2AOperatorCard({ wsId, agentId }: { wsId: string; agentId: stri
   const activeClients = (a2aConfigQuery.data?.clients ?? EMPTY_CLIENTS).filter(
     (client) => client.status === "active",
   );
-  // Only one source client may be forwarded; default to the current binding,
-  // or to the Agent's only active client.
-  const selectedClientId =
-    sourceClientId ||
-    (forward?.sourceClientId && activeClients.some((client) => client.id === forward.sourceClientId)
-      ? forward.sourceClientId
+  // Only one source client may be forwarded. A choice counts only while that
+  // client is still active; otherwise fall back to the current binding, then
+  // to the Agent's only active client.
+  const isActiveClient = (id: string | undefined) =>
+    !!id && activeClients.some((client) => client.id === id);
+  const selectedClientId = isActiveClient(sourceClientId)
+    ? sourceClientId
+    : isActiveClient(forward?.sourceClientId)
+      ? forward!.sourceClientId
       : activeClients.length === 1
         ? activeClients[0]!.id
-        : "");
+        : "";
   const clientName = (id: string) => activeClients.find((client) => client.id === id)?.name ?? id;
   const identityValid = DECIMAL_ID.test(uid.trim()) && DECIMAL_ID.test(orgId.trim());
   const forwardEnabled = config.forwardAllowedOrigins.length > 0;

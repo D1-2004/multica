@@ -75,6 +75,12 @@
   - 其余情况换 `Authorization` 为目标 Key，保留 DEAP 头（X-DingTalk-*、A2A-*、X-DWS-Token、trace、Skill Center 签名），
     去掉 Cookie、X-Forwarded-*、X-User-* 等，流式立即刷新，并发上限 64。
 - 目标侧的限流和并发由目标 client 自己承担，来源 client 的限流不再生效；这是调试工具可接受的取舍。
+- 一把目标 Key 终生只服务第一个来源 client（`a2a_forward_token_binding`，迁移 9317，只存 SHA-256）：
+  换来源 client、清除后重建、换到别的 Agent 都会 409，要为新 client 在目标 Agent 另生成 Key。
+  认领与转发配置在同一事务提交。9316 在预发单独存在过约 10 分钟，期间只有本次验证建过一条转发，
+  已清除并在 9317 上线后重新认领；生产两条迁移同批上线，不存在未认领的旧配置，因此不做回填
+  （Key 加密存储，SQL 无法回填）。
+- 已归档的来源 Agent 与下线端点同样处理：不再转发新建回合，只转发已转发任务的读取和取消。
 - Agent Card 仍由本环境提供，DEAP 配置无需改动。
 - 只在生产部署后对 DEAP 流量生效；预发上用「预发 Agent A → 预发 Agent B」自转发验证。
 - 身份绑定只对阿里云 FC 生效：只有 FC 的 claim 会向 daemon 证明 runner 已兑换身份，ASB 上不签发。
