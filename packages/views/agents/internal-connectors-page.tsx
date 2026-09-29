@@ -114,7 +114,7 @@ export function InternalConnectorsPage() {
       </article>)}</div>
     </section>}
 
-    {editing && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><div className="max-h-[90vh] w-full max-w-xl space-y-4 overflow-y-auto rounded-2xl border border-border bg-background p-6 shadow-xl">
+    {editing && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><div className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-xl"><div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
       <h2 className="text-title font-semibold">{editing==="new"?t(($)=>$.internal_mcp.create):t(($)=>$.internal_mcp.manage)}</h2>
       <p className="text-body text-muted-foreground">{t(($)=>$.internal_mcp.form_hint)}</p>
       <label className="block text-label font-medium">{t(($)=>$.internal_mcp.name)}<Input className="mt-1" value={form.name} onChange={(e)=>setForm({...form,name:e.target.value})}/></label>
@@ -139,7 +139,7 @@ export function InternalConnectorsPage() {
         {(!credentialReady || rotateCredential) && <div className="space-y-2 rounded-lg border border-border p-4"><label className="block text-label font-medium">{t(($)=>$.internal_mcp.credential)}<Input className="mt-1" type="password" autoComplete="off" value={credentialToken} onChange={(e)=>setCredentialToken(e.target.value)}/></label><p className="text-caption text-muted-foreground">{t(($)=>$.internal_mcp.credential_hint)}</p><Button variant="outline" disabled={credentialBusy||!credentialToken} onClick={saveCredential}>{credentialBusy?t(($)=>$.internal_mcp.saving):t(($)=>$.internal_mcp.save_credential)}</Button>{credentialError && <p role="alert" className="text-caption text-destructive">{credentialError}</p>}</div>}
       </div>}
       {error && <p role="alert" className="text-body text-destructive">{error}</p>}
-      <div className="sticky bottom-0 -mx-6 -mb-6 flex justify-end gap-2 border-t border-border bg-background px-6 py-4"><Button variant="outline" onClick={()=>{setEditing(null);setForm(empty);setBearerInput("");setCredentialToken("")}}>{t(($)=>$.internal_mcp.cancel)}</Button><Button disabled={busy} onClick={save}>{busy?t(($)=>$.internal_mcp.saving):selectedConnector&&form.enabled!==selectedConnector.enabled?form.enabled?t(($)=>$.internal_mcp.save_enable):t(($)=>$.internal_mcp.save_disable):t(($)=>$.internal_mcp.save)}</Button></div>
+      </div><div className="flex shrink-0 justify-end gap-2 border-t border-border bg-background px-6 py-4"><Button variant="outline" onClick={()=>{setEditing(null);setForm(empty);setBearerInput("");setCredentialToken("")}}>{t(($)=>$.internal_mcp.cancel)}</Button><Button disabled={busy} onClick={save}>{busy?t(($)=>$.internal_mcp.saving):selectedConnector&&form.enabled!==selectedConnector.enabled?form.enabled?t(($)=>$.internal_mcp.save_enable):t(($)=>$.internal_mcp.save_disable):t(($)=>$.internal_mcp.save)}</Button></div>
     </div></div>}
   </main>;
 }
