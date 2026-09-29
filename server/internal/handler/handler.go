@@ -79,6 +79,14 @@ type Config struct {
 	AllowSignup         bool
 	AllowedEmails       []string
 	AllowedEmailDomains []string
+	// A2AOperatorEmails lists the account emails that may bind a DEAP digital
+	// employee identity to an Agent or forward its inbound A2A traffic
+	// (MULTICA_A2A_OPERATOR_EMAILS). Empty admits nobody.
+	A2AOperatorEmails []string
+	// A2AForwardAllowedOrigins lists the HTTPS origins an operator may forward
+	// an Agent's inbound A2A JSON-RPC to (MULTICA_A2A_FORWARD_ALLOWED_ORIGINS).
+	// Empty disables forwarding.
+	A2AForwardAllowedOrigins []string
 	// StableRuntimePublisherUserIDs is the deployment-owned UUID allow-list for
 	// promoting immutable FC/E2B templates and controlling their rollout.
 	StableRuntimePublisherUserIDs map[string]struct{}
@@ -205,6 +213,9 @@ type enterpriseIdentityService interface {
 }
 
 type Handler struct {
+	// a2aForwardTransport overrides the transport used to forward inbound A2A
+	// JSON-RPC to another environment; nil uses the default.
+	a2aForwardTransport      http.RoundTripper
 	WorkspaceMCPDispatcher   http.Handler
 	Models                   *modelregistry.Registry
 	Queries                  *db.Queries

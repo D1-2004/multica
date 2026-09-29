@@ -5,6 +5,8 @@ import type {
   CreateAgentA2ACredentialRequest,
   UpdateAgentA2AClientRequest,
   UpdateAgentA2AConfigRequest,
+  UpdateAgentA2AOperatorForwardRequest,
+  UpdateAgentA2AOperatorIdentityRequest,
 } from "../types";
 import { agentA2AKeys } from "./queries";
 
@@ -83,6 +85,50 @@ export function useDeleteAgentA2ACredential(wsId: string, agentId: string) {
       clientId: string;
       credentialId: string;
     }) => api.deleteAgentA2ACredential(agentId, clientId, credentialId),
+    onSuccess: () => queryClient.invalidateQueries({
+      queryKey: agentA2AKeys.all(wsId, agentId),
+    }),
+  });
+}
+
+export function useUpdateAgentA2AOperatorIdentity(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpdateAgentA2AOperatorIdentityRequest) =>
+      api.updateAgentA2AOperatorIdentity(agentId, data),
+    onSuccess: () => queryClient.invalidateQueries({
+      queryKey: agentA2AKeys.all(wsId, agentId),
+    }),
+  });
+}
+
+export function useDeleteAgentA2AOperatorIdentity(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.deleteAgentA2AOperatorIdentity(agentId),
+    onSuccess: () => queryClient.invalidateQueries({
+      queryKey: agentA2AKeys.all(wsId, agentId),
+    }),
+  });
+}
+
+// The forward token is write-only: it goes to the server and is never kept in
+// query state.
+export function useUpdateAgentA2AOperatorForward(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpdateAgentA2AOperatorForwardRequest) =>
+      api.updateAgentA2AOperatorForward(agentId, data),
+    onSuccess: () => queryClient.invalidateQueries({
+      queryKey: agentA2AKeys.all(wsId, agentId),
+    }),
+  });
+}
+
+export function useDeleteAgentA2AOperatorForward(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.deleteAgentA2AOperatorForward(agentId),
     onSuccess: () => queryClient.invalidateQueries({
       queryKey: agentA2AKeys.all(wsId, agentId),
     }),

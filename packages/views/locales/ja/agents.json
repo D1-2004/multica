@@ -991,7 +991,31 @@
       "local_curl_title": "すぐに実行できる cURL",
       "local_curl_description": "このコマンドには資格情報が埋め込まれています。信頼できるローカルシェルでのみ実行し、必要に応じてシェル履歴を消去してください。",
       "secret_confirm": "資格情報を安全に保存しました",
-      "done": "完了"
+      "done": "完了",
+      "operator": {
+        "title": "オペレーター設定",
+        "badge": "オペレーターのみ",
+        "description": "デプロイで指定されたオペレーターだけに表示されます。この設定によりエージェントは別の認証情報で動作するため、すべての変更は監査ログに記録されます。",
+        "identity_title": "DingTalk デジタル従業員の ID",
+        "identity_description": "DingTalk ID を持たない A2A タスクは、このデジタル従業員として実行されます。Agent Identity の UID と OrgID を入力してください。DEAP agentUuid は任意です。",
+        "identity_empty": "ID は未設定です。A2A タスクは DingTalk ID なしで実行されます。",
+        "deap_agent_uuid": "DEAP agentUuid（任意）",
+        "save_identity": "ID を設定",
+        "identity_saved": "デジタル従業員の ID を設定しました",
+        "identity_cleared": "デジタル従業員の ID を解除しました",
+        "forward_title": "A2A リクエストの転送",
+        "forward_description": "このエージェントで唯一有効な A2A クライアントからのリクエストを、別環境のエージェントに転送します。許可されたオリジン: {{origins}}",
+        "forward_disabled": "このデプロイでは転送が無効です。",
+        "forward_url": "転送先の A2A JSON-RPC URL",
+        "forward_token": "転送先の A2A キー",
+        "forward_active": "転送中",
+        "forward_inactive": "無効",
+        "save_forward": "転送を保存",
+        "forward_saved": "A2A 転送を保存しました",
+        "forward_cleared": "A2A 転送を解除しました",
+        "clear": "解除",
+        "save_failed": "オペレーター設定を保存できませんでした"
+      }
     },
     "skills": {
       "assigned_title": "エージェントに割り当て済み",

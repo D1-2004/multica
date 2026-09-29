@@ -6277,6 +6277,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		d.cfg.LaunchedBy,
 		task.ID,
 		task.AgentIdentityContextToken,
+		task.A2ARunnerIdentity,
 	)
 	if err != nil {
 		return TaskResult{}, err
@@ -8277,8 +8278,12 @@ func restoreA2ATaskIdentityEnv(agentEnv map[string]string, contextToken, dwsConf
 	}
 }
 
-func managedA2AIdentityConfigDirs(launchedBy, taskID, contextToken string) (string, string, error) {
-	if !strings.EqualFold(strings.TrimSpace(launchedBy), "fc-e2b") || strings.TrimSpace(contextToken) == "" {
+// managedA2AIdentityConfigDirs returns the task-local DWS/GitHub directories
+// an FC/E2B A2A child may inherit. A claim ContextToken or the server's
+// runner-identity attestation (the runner already redeemed the token, so the
+// claim deliberately omits it) is required.
+func managedA2AIdentityConfigDirs(launchedBy, taskID, contextToken string, runnerIdentity bool) (string, string, error) {
+	if !strings.EqualFold(strings.TrimSpace(launchedBy), "fc-e2b") || (strings.TrimSpace(contextToken) == "" && !runnerIdentity) {
 		return "", "", nil
 	}
 	taskID = strings.TrimSpace(taskID)
@@ -8292,7 +8297,14 @@ func managedA2AIdentityConfigDirs(launchedBy, taskID, contextToken string) (stri
 		return "", "", errors.New("managed A2A DWS configuration directory is not bound to the task")
 	}
 	cleanGitHub := filepath.Clean(githubDirectory)
-	if !filepath.IsAbs(cleanGitHub) || filepath.Dir(cleanGitHub) != cleanDWS || filepath.Base(cleanGitHub) != "gh" {
+	nestedGitHub := filepath.Dir(cleanGitHub) == cleanDWS && filepath.Base(cleanGitHub) == "gh"
+	// The FC runner keeps sibling roots: <tmp>/multica-dws/<task> and
+	// <tmp>/multica-gh/<task>.
+	siblingGitHub := filepath.Base(cleanGitHub) == taskID &&
+		filepath.Base(filepath.Dir(cleanGitHub)) == "multica-gh" &&
+		filepath.Base(filepath.Dir(cleanDWS)) == "multica-dws" &&
+		filepath.Dir(filepath.Dir(cleanGitHub)) == filepath.Dir(filepath.Dir(cleanDWS))
+	if !filepath.IsAbs(cleanGitHub) || (!nestedGitHub && !siblingGitHub) {
 		return "", "", errors.New("managed A2A GitHub configuration directory is not bound to the task")
 	}
 	return cleanDWS, cleanGitHub, nil

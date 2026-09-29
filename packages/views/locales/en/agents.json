@@ -1201,7 +1201,31 @@
       "local_curl_title": "Ready-to-run cURL",
       "local_curl_description": "This command embeds the credential. Run it only in a trusted local shell and clear your shell history afterward if needed.",
       "secret_confirm": "I stored this credential securely",
-      "done": "Done"
+      "done": "Done",
+      "operator": {
+        "title": "Operator settings",
+        "badge": "Operators only",
+        "description": "Visible only to deployment operators. These settings let this agent act through another credential, so every change is audited.",
+        "identity_title": "DingTalk digital employee identity",
+        "identity_description": "A2A tasks without their own DingTalk identity run as this digital employee. Enter the Agent Identity UID and OrgID; the DEAP agentUuid is optional.",
+        "identity_empty": "No identity bound. A2A tasks run without a DingTalk identity.",
+        "deap_agent_uuid": "DEAP agentUuid (optional)",
+        "save_identity": "Bind identity",
+        "identity_saved": "Digital employee identity bound",
+        "identity_cleared": "Digital employee identity cleared",
+        "forward_title": "Forward inbound A2A",
+        "forward_description": "Send the inbound A2A requests of this agent's one active A2A client to an agent in another environment. Allowed origins: {{origins}}",
+        "forward_disabled": "Forwarding is disabled on this deployment.",
+        "forward_url": "Target A2A JSON-RPC URL",
+        "forward_token": "Target A2A key",
+        "forward_active": "Forwarding",
+        "forward_inactive": "Inactive",
+        "save_forward": "Save forward",
+        "forward_saved": "A2A forward saved",
+        "forward_cleared": "A2A forward cleared",
+        "clear": "Clear",
+        "save_failed": "Failed to save operator settings"
+      }
     },
     "skills": {
       "intro": "This is the agent's effective skill set. Workspace skills are managed here; local runtime skills are discovered automatically and inherited read-only.",

@@ -138,3 +138,46 @@ export interface UpdateAgentA2AClientRequest {
 export interface CreateAgentA2ACredentialRequest {
   expiresAt?: string | null;
 }
+
+/** Operator-bound DEAP digital employee identity used by A2A tasks. */
+export interface AgentA2AOperatorIdentity {
+  uid: string;
+  orgId: string;
+  deapAgentUuid: string | null;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+/** Operator-configured forward of inbound A2A JSON-RPC to another environment. */
+export interface AgentA2AOperatorForward {
+  rpcUrl: string;
+  /** The one source A2A client whose calls are forwarded. */
+  sourceClientId: string;
+  active: boolean;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+/**
+ * Deployment operator settings for one Agent. Non-operators always receive
+ * `operator: false` and no settings.
+ */
+export interface AgentA2AOperatorConfig {
+  operator: boolean;
+  dwsIdentity: AgentA2AOperatorIdentity | null;
+  forward: AgentA2AOperatorForward | null;
+  forwardAllowedOrigins: string[];
+}
+
+export interface UpdateAgentA2AOperatorIdentityRequest {
+  uid: string;
+  orgId: string;
+  deapAgentUuid?: string;
+}
+
+export interface UpdateAgentA2AOperatorForwardRequest {
+  rpcUrl: string;
+  token: string;
+  /** Optional when the Agent has exactly one active A2A client. */
+  sourceClientId?: string;
+}

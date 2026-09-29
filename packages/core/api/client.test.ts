@@ -986,6 +986,97 @@ describe("ApiClient A2A config response schemas", () => {
   );
 });
 
+describe("ApiClient A2A operator response schema", () => {
+  function stubJSON(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+  }
+
+  it("maps operator settings without exposing the forward token", async () => {
+    stubJSON({
+      operator: true,
+      dws_identity: {
+        uid: "5550001",
+        org_id: "7770001",
+        deap_agent_uuid: "18265b7f",
+        updated_by: "user-1",
+        updated_at: "2026-09-29T12:00:00Z",
+      },
+      forward: {
+        rpc_url: "https://pre.example.test/api/a2a/agents/agent_1234567890123/v1",
+        source_client_id: "client-1",
+        active: true,
+        updated_by: "user-1",
+        updated_at: "2026-09-29T12:00:00Z",
+      },
+      forward_allowed_origins: ["https://pre.example.test"],
+    });
+    const config = await new ApiClient("https://api.example.test").getAgentA2AOperatorConfig("agent/1");
+    expect(config).toEqual({
+      operator: true,
+      dwsIdentity: {
+        uid: "5550001",
+        orgId: "7770001",
+        deapAgentUuid: "18265b7f",
+        updatedBy: "user-1",
+        updatedAt: "2026-09-29T12:00:00Z",
+      },
+      forward: {
+        rpcUrl: "https://pre.example.test/api/a2a/agents/agent_1234567890123/v1",
+        sourceClientId: "client-1",
+        active: true,
+        updatedBy: "user-1",
+        updatedAt: "2026-09-29T12:00:00Z",
+      },
+      forwardAllowedOrigins: ["https://pre.example.test"],
+    });
+  });
+
+  it("fails closed to operator=false on a malformed response", async () => {
+    const warn = vi.fn();
+    setSchemaLogger({ ...noopLogger, warn });
+    stubJSON({ operator: "yes", dws_identity: 7, forward: "x" });
+    const config = await new ApiClient("https://api.example.test").getAgentA2AOperatorConfig("agent/1");
+    expect(config.operator).toBe(false);
+    expect(config.dwsIdentity).toBeNull();
+    expect(config.forward).toBeNull();
+
+    stubJSON("not-an-object");
+    const fallback = await new ApiClient("https://api.example.test").getAgentA2AOperatorConfig("agent/1");
+    expect(fallback).toEqual({
+      operator: false,
+      dwsIdentity: null,
+      forward: null,
+      forwardAllowedOrigins: [],
+    });
+  });
+
+  it("sends the identity binding with snake_case fields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ operator: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await new ApiClient("https://api.example.test").updateAgentA2AOperatorIdentity("agent/1", {
+      uid: "5550001",
+      orgId: "7770001",
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://api.example.test/api/agents/agent%2F1/a2a/operator/dws-identity");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(String(init.body))).toEqual({ uid: "5550001", org_id: "7770001", deap_agent_uuid: "" });
+  });
+});
+
 describe("ApiClient Agent OKR response schema", () => {
   it("preserves stable row and label ids and exposes usage availability", async () => {
     vi.stubGlobal(

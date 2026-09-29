@@ -71,6 +71,7 @@ func (h *Handler) GetAgentA2ACard(w http.ResponseWriter, r *http.Request) {
 		Streaming:              true,
 		PushNotifications:      h.A2AService != nil && h.A2AService.PushSecrets != nil,
 		AgentIdentityExtension: true,
+		DingTalkEventExtension: true,
 		InputModes:             contentModes,
 		OutputModes:            contentModes,
 	})
@@ -150,6 +151,9 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusBadRequest, "failed to read A2A request body")
+		return
+	}
+	if h.maybeForwardAgentA2ARPC(w, r, body, credential, publicAgentID) {
 		return
 	}
 	r.Header.Del("Authorization")

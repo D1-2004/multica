@@ -405,6 +405,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		AllowSignup:                   os.Getenv("ALLOW_SIGNUP") != "false",
 		AllowedEmails:                 splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
 		AllowedEmailDomains:           splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
+		A2AOperatorEmails:             splitAndTrim(os.Getenv("MULTICA_A2A_OPERATOR_EMAILS")),
+		A2AForwardAllowedOrigins:      splitAndTrim(os.Getenv("MULTICA_A2A_FORWARD_ALLOWED_ORIGINS")),
 		StableRuntimePublisherUserIDs: stableRuntimePublishers,
 		DisableWorkspaceCreation:      os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 		VCSIntegrationEnabled:         os.Getenv("MULTICA_VCS_INTEGRATION_ENABLED") == "true",
@@ -2759,6 +2761,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 						r.Use(handler.RequireHumanActor)
 						r.Get("/", h.GetAgentA2AConfig)
 						r.Put("/", h.UpdateAgentA2AConfig)
+						r.Get("/operator", h.GetAgentA2AOperatorConfig)
+						r.Put("/operator/dws-identity", h.UpdateAgentA2AOperatorIdentity)
+						r.Delete("/operator/dws-identity", h.DeleteAgentA2AOperatorIdentity)
+						r.Put("/operator/forward", h.UpdateAgentA2AOperatorForward)
+						r.Delete("/operator/forward", h.DeleteAgentA2AOperatorForward)
 						r.Post("/clients", h.CreateAgentA2AClient)
 						r.Patch("/clients/{clientId}", h.UpdateAgentA2AClient)
 						r.Post("/clients/{clientId}/credentials", h.CreateAgentA2ACredential)

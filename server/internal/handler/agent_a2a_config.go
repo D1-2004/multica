@@ -270,6 +270,7 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 			Streaming:              true,
 			PushNotifications:      h.A2AService != nil && h.A2AService.PushSecrets != nil,
 			AgentIdentityExtension: true,
+			DingTalkEventExtension: true,
 			InputModes:             contentModes,
 			OutputModes:            contentModes,
 		}); buildErr != nil {
@@ -742,6 +743,7 @@ func (h *Handler) agentA2AEndpointPresentation(
 		Streaming:              true,
 		PushNotifications:      h.A2AService != nil && h.A2AService.PushSecrets != nil,
 		AgentIdentityExtension: true,
+		DingTalkEventExtension: true,
 		InputModes:             contentModes,
 		OutputModes:            contentModes,
 	})

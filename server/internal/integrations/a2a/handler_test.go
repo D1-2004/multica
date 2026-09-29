@@ -444,6 +444,27 @@ func TestJSONRPCScopeAuthorizationRunsAtSDKMethodBoundary(t *testing.T) {
 	}
 }
 
+func TestMethodPermittedMatchesInterceptorRules(t *testing.T) {
+	t.Parallel()
+
+	all := []string{"send", "read", "list", "cancel"}
+	if !MethodPermitted("SendMessage", all, true) || !MethodPermitted("GetTask", []string{"read"}, true) {
+		t.Fatal("scoped methods were refused")
+	}
+	if MethodPermitted("CancelTask", []string{"read"}, true) {
+		t.Fatal("CancelTask was permitted without the cancel scope")
+	}
+	if MethodPermitted("FutureMutation", all, true) {
+		t.Fatal("unmapped method was permitted")
+	}
+	// An unpublished endpoint refuses new turns but still serves existing
+	// tasks.
+	if MethodPermitted("SendStreamingMessage", all, false) || !MethodPermitted("GetTask", all, false) ||
+		!MethodPermitted("CancelTask", all, false) {
+		t.Fatal("unpublished endpoint rules differ from the interceptor")
+	}
+}
+
 func TestMethodScopeFailsClosedForUnknownSDKMethod(t *testing.T) {
 	t.Parallel()
 

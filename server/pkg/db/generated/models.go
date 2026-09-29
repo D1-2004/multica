@@ -216,6 +216,23 @@ type AgentA2aEndpoint struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AgentA2aOperatorConfig struct {
+	AgentID               pgtype.UUID        `json:"agent_id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	DwsUid                pgtype.Text        `json:"dws_uid"`
+	DwsOrgID              pgtype.Text        `json:"dws_org_id"`
+	DeapAgentUuid         pgtype.Text        `json:"deap_agent_uuid"`
+	IdentityUpdatedBy     pgtype.UUID        `json:"identity_updated_by"`
+	IdentityUpdatedAt     pgtype.Timestamptz `json:"identity_updated_at"`
+	ForwardRpcUrl         pgtype.Text        `json:"forward_rpc_url"`
+	ForwardTokenEncrypted []byte             `json:"forward_token_encrypted"`
+	ForwardSourceClientID pgtype.UUID        `json:"forward_source_client_id"`
+	ForwardUpdatedBy      pgtype.UUID        `json:"forward_updated_by"`
+	ForwardUpdatedAt      pgtype.Timestamptz `json:"forward_updated_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentBuilderDraft struct {
 	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`

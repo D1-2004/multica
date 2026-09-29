@@ -90,6 +90,7 @@ import type {
   AgentA2AConfig,
   AgentA2ACredential,
   AgentA2ACredentialSecretResponse,
+  AgentA2AOperatorConfig,
 } from "../types";
 import type {
   CloudRuntimeNode,
@@ -4375,6 +4376,55 @@ export const EMPTY_AGENT_A2A_CONFIG: AgentA2AConfig = {
 export const EMPTY_AGENT_A2A_CREDENTIAL_SECRET_RESPONSE: AgentA2ACredentialSecretResponse = {
   credential: EMPTY_AGENT_A2A_CREDENTIAL,
   token: "",
+};
+
+// Operator settings fail closed: a malformed or unknown response falls back to
+// operator=false, which hides the operator card.
+export const AgentA2AOperatorConfigSchema = z.object({
+  operator: z.boolean().catch(false),
+  dws_identity: z.object({
+    uid: z.string(),
+    org_id: z.string(),
+    deap_agent_uuid: z.string().nullable().optional().default(null),
+    updated_by: z.string().optional().default(""),
+    updated_at: z.string().optional().default(""),
+  }).loose().nullable().optional().catch(null),
+  forward: z.object({
+    rpc_url: z.string(),
+    source_client_id: z.string().optional().default(""),
+    active: z.boolean().optional().default(false),
+    updated_by: z.string().optional().default(""),
+    updated_at: z.string().optional().default(""),
+  }).loose().nullable().optional().catch(null),
+  forward_allowed_origins: z.array(z.string()).optional().catch([]),
+}).loose().transform((config): AgentA2AOperatorConfig => ({
+  operator: config.operator === true,
+  dwsIdentity: config.dws_identity
+    ? {
+      uid: config.dws_identity.uid,
+      orgId: config.dws_identity.org_id,
+      deapAgentUuid: config.dws_identity.deap_agent_uuid ?? null,
+      updatedBy: config.dws_identity.updated_by,
+      updatedAt: config.dws_identity.updated_at,
+    }
+    : null,
+  forward: config.forward
+    ? {
+      rpcUrl: config.forward.rpc_url,
+      sourceClientId: config.forward.source_client_id,
+      active: config.forward.active === true,
+      updatedBy: config.forward.updated_by,
+      updatedAt: config.forward.updated_at,
+    }
+    : null,
+  forwardAllowedOrigins: config.forward_allowed_origins ?? [],
+}));
+
+export const EMPTY_AGENT_A2A_OPERATOR_CONFIG: AgentA2AOperatorConfig = {
+  operator: false,
+  dwsIdentity: null,
+  forward: null,
+  forwardAllowedOrigins: [],
 };
 export const DingTalkInstallationSchema = z
   .object({

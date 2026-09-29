@@ -34,6 +34,7 @@ import { Label } from "@multica/ui/components/ui/label";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { useT } from "../../../i18n";
+import { A2AOperatorCard } from "./a2a-operator-card";
 
 const A2A_CLIENT_NAME = "A2A Client";
 const DEFAULT_SCOPES = ["send", "read", "list", "cancel"] as const;
@@ -482,6 +483,8 @@ export function A2ATab({ agent }: { agent: Agent }) {
           </CardContent>
         </Card>
       )}
+
+      <A2AOperatorCard wsId={wsId} agentId={agent.id} />
 
       <AlertDialog open={revokeOpen} onOpenChange={setRevokeOpen}>
         <AlertDialogContent>

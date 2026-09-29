@@ -1189,7 +1189,31 @@
       "local_curl_title": "可直接运行的 cURL",
       "local_curl_description": "此命令已嵌入凭证。请仅在可信的本地终端运行，必要时清理终端历史。",
       "secret_confirm": "我已安全保存此凭证",
-      "done": "完成"
+      "done": "完成",
+      "operator": {
+        "title": "运营配置",
+        "badge": "仅运营者",
+        "description": "只有部署指定的运营者能看到。这里的设置会让智能体借用其他凭证行事，每次修改都会记录审计日志。",
+        "identity_title": "钉钉数字员工身份",
+        "identity_description": "没有自带钉钉身份的 A2A 任务，会以这个数字员工的身份运行。填写 Agent Identity 的 UID 和 OrgID，DEAP agentUuid 可选。",
+        "identity_empty": "尚未绑定身份，A2A 任务运行时不带钉钉身份。",
+        "deap_agent_uuid": "DEAP agentUuid（可选）",
+        "save_identity": "绑定身份",
+        "identity_saved": "已绑定数字员工身份",
+        "identity_cleared": "已清除数字员工身份",
+        "forward_title": "转发 A2A 请求",
+        "forward_description": "把这个智能体唯一一个启用中的 A2A 客户端发来的请求，转发到其他环境的智能体。允许的来源：{{origins}}",
+        "forward_disabled": "当前部署未开启转发。",
+        "forward_url": "目标 A2A JSON-RPC URL",
+        "forward_token": "目标 A2A Key",
+        "forward_active": "转发中",
+        "forward_inactive": "未生效",
+        "save_forward": "保存转发",
+        "forward_saved": "已保存 A2A 转发",
+        "forward_cleared": "已清除 A2A 转发",
+        "clear": "清除",
+        "save_failed": "运营配置保存失败"
+      }
     },
     "skills": {
       "intro": "这里展示该智能体实际拥有的全部 skill。工作区 skill 可在此管理；本地运行时 skill 会自动发现并以只读方式继承。",

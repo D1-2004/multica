@@ -335,21 +335,46 @@ func TestManagedA2AIdentityConfigDirs(t *testing.T) {
 	dwsDir := filepath.Join(t.TempDir(), taskID)
 	t.Setenv("DWS_CONFIG_DIR", dwsDir)
 	t.Setenv("GH_CONFIG_DIR", filepath.Join(dwsDir, "gh"))
-	dws, github, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token")
+	dws, github, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token", false)
 	if err != nil || dws != dwsDir || github != filepath.Join(dwsDir, "gh") {
 		t.Fatalf("managed dirs = %q, %q, %v", dws, github, err)
 	}
 
 	t.Setenv("GH_CONFIG_DIR", filepath.Join(t.TempDir(), "gh"))
-	if _, _, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token"); err == nil {
+	if _, _, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token", false); err == nil {
 		t.Fatal("GitHub config outside the task-local DWS root was accepted")
 	}
 	t.Setenv("GH_CONFIG_DIR", "")
-	if _, _, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token"); err == nil {
+	if _, _, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token", false); err == nil {
 		t.Fatal("missing task-local GitHub config was accepted")
 	}
-	if dws, github, err := managedA2AIdentityConfigDirs("local", taskID, "external-context-token"); err != nil || dws != "" || github != "" {
+	if dws, github, err := managedA2AIdentityConfigDirs("local", taskID, "external-context-token", false); err != nil || dws != "" || github != "" {
 		t.Fatalf("local runtime unexpectedly required managed dirs: %q, %q, %v", dws, github, err)
+	}
+}
+
+func TestManagedA2AIdentityConfigDirsRunnerIdentity(t *testing.T) {
+	taskID := "22222222-2222-2222-2222-222222222222"
+	tmp := t.TempDir()
+	dwsDir := filepath.Join(tmp, "multica-dws", taskID)
+	githubDir := filepath.Join(tmp, "multica-gh", taskID)
+	t.Setenv("DWS_CONFIG_DIR", dwsDir)
+	t.Setenv("GH_CONFIG_DIR", githubDir)
+
+	if dws, github, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "", false); err != nil || dws != "" || github != "" {
+		t.Fatalf("no token and no runner attestation must not restore dirs: %q, %q, %v", dws, github, err)
+	}
+	dws, github, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "", true)
+	if err != nil || dws != dwsDir || github != githubDir {
+		t.Fatalf("runner identity dirs = %q, %q, %v", dws, github, err)
+	}
+	t.Setenv("GH_CONFIG_DIR", filepath.Join(tmp, "multica-gh", "other-task"))
+	if _, _, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "", true); err == nil {
+		t.Fatal("GitHub config bound to another task was accepted")
+	}
+	t.Setenv("GH_CONFIG_DIR", filepath.Join(t.TempDir(), "multica-gh", taskID))
+	if _, _, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "", true); err == nil {
+		t.Fatal("GitHub config under a different root was accepted")
 	}
 }
 

@@ -6,12 +6,22 @@ export const agentA2AKeys = {
     ["workspaces", wsId, "agents", agentId, "a2a"] as const,
   config: (wsId: string, agentId: string) =>
     [...agentA2AKeys.all(wsId, agentId), "config"] as const,
+  operator: (wsId: string, agentId: string) =>
+    [...agentA2AKeys.all(wsId, agentId), "operator"] as const,
 };
 
 export function agentA2AConfigOptions(wsId: string, agentId: string) {
   return queryOptions({
     queryKey: agentA2AKeys.config(wsId, agentId),
     queryFn: () => api.getAgentA2AConfig(agentId),
+    enabled: Boolean(wsId && agentId),
+  });
+}
+
+export function agentA2AOperatorConfigOptions(wsId: string, agentId: string) {
+  return queryOptions({
+    queryKey: agentA2AKeys.operator(wsId, agentId),
+    queryFn: () => api.getAgentA2AOperatorConfig(agentId),
     enabled: Boolean(wsId && agentId),
   });
 }

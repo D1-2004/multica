@@ -963,19 +963,22 @@ type FCE2BLauncher struct {
 	DSHArtifactSigner  interface {
 		PresignGet(context.Context, string, time.Duration) (string, error)
 	}
-	Queries            *db.Queries
-	Tasks              *TaskService
-	ObjectStorage      storage.Storage
-	Config             FCE2BConfig
-	ConfigProvider     func() FCE2BConfig
-	Runner             CommandRunner
-	AgentIdentity      AgentIdentityContextCreator
-	GitHubIdentity     AgentIdentityGithubBindingReader
-	IdentityBindings   AgentIdentityBindingReader
-	SandboxRelaySigner SandboxRelayTokenSigner
-	sleep              func(context.Context, time.Duration) error
-	jitter             func(time.Duration) time.Duration
-	dshProvider        func(dshhost.Storage) (dshhost.Provider, error)
+	Queries          *db.Queries
+	Tasks            *TaskService
+	ObjectStorage    storage.Storage
+	Config           FCE2BConfig
+	ConfigProvider   func() FCE2BConfig
+	Runner           CommandRunner
+	AgentIdentity    AgentIdentityContextCreator
+	GitHubIdentity   AgentIdentityGithubBindingReader
+	IdentityBindings AgentIdentityBindingReader
+	// A2AOperatorIdentities reads the operator-bound DEAP employee identity
+	// that A2A turns marked with a2a_operator_dws_identity run as.
+	A2AOperatorIdentities A2AOperatorIdentityReader
+	SandboxRelaySigner    SandboxRelayTokenSigner
+	sleep                 func(context.Context, time.Duration) error
+	jitter                func(time.Duration) time.Duration
+	dshProvider           func(dshhost.Storage) (dshhost.Provider, error)
 	// stopPass runs one pass of a cancelled-task stop; nil runs
 	// stopCancelledTaskProcesses.
 	stopPass func(ctx context.Context, frozen *FCE2BLauncher, taskID pgtype.UUID, pass int)
@@ -1143,14 +1146,15 @@ func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner
 		runner = defaultFCE2BCommandRunner()
 	}
 	return &FCE2BLauncher{
-		Queries:          q,
-		Tasks:            tasks,
-		Config:           cfg,
-		Runner:           runner,
-		AgentIdentity:    agentidentityhsf.NewClient(),
-		IdentityBindings: q,
-		sleep:            sleepWithContext,
-		jitter:           runtimeStartRetryJitter,
+		Queries:               q,
+		Tasks:                 tasks,
+		Config:                cfg,
+		Runner:                runner,
+		AgentIdentity:         agentidentityhsf.NewClient(),
+		IdentityBindings:      q,
+		A2AOperatorIdentities: q,
+		sleep:                 sleepWithContext,
+		jitter:                runtimeStartRetryJitter,
 	}
 }
 
@@ -2134,12 +2138,63 @@ func (l *FCE2BLauncher) identityEnvForTask(
 			}
 			return map[string]string{protocol.DEAPDWSTokenEnvKey: identity.DEAPDWSToken}, nil
 		}
+		if UsesA2AOperatorDWSIdentity(task.Context) {
+			return l.a2aOperatorIdentityEnv(ctx, task, runtime, sandboxID)
+		}
 		// A2A may use only the explicitly supplied task-local external token.
 		// fcE2BAgentIdentityExtraEnv validates the paired expiry and external
 		// source marker; owner bindings and connected identities stay skipped.
 		return fcE2BAgentIdentityExtraEnv(task, l.Config)
 	}
 	resolved, err := l.resolveIdentityForTask(ctx, task, runtime, sandboxID, agentRow)
+	if err != nil {
+		return nil, err
+	}
+	if resolved.ContextToken == "" {
+		return nil, nil
+	}
+	return fcE2BAgentIdentityEnvForToken(resolved.ContextToken, l.Config)
+}
+
+// a2aOperatorIdentityEnv mints the runner ContextToken for an A2A turn that
+// runs as the operator-bound DEAP employee. The binding is re-read at launch
+// so an operator who clears it stops every later launch; a cleared binding
+// launches without identity rather than failing the turn. Owner bindings and
+// connected GitHub identities remain excluded from A2A.
+func (l *FCE2BLauncher) a2aOperatorIdentityEnv(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	runtime db.AgentRuntime,
+	sandboxID string,
+) (map[string]string, error) {
+	if !CloudSandboxRuntimeHasCapability(runtime, "dws") {
+		return nil, errors.New("A2A operator DWS identity requires a DWS-capable Runtime")
+	}
+	if !IsFCE2BRuntime(runtime) {
+		// Only the Aliyun FC claim attests the runner identity to the daemon
+		// (a2a_runner_identity); elsewhere a minted token could never reach
+		// the A2A child, so none is minted.
+		slog.Info("FC/E2B task identity selected",
+			"task_id", util.UUIDToString(task.ID),
+			"identity_source", "a2a_operator_binding_unsupported_backend",
+			"dws_identity", false,
+		)
+		return nil, nil
+	}
+	bound := loadA2AOperatorDWSIdentity(ctx, l.A2AOperatorIdentities, runtime.WorkspaceID, task.AgentID)
+	if bound.UID == "" {
+		slog.Info("FC/E2B task identity selected",
+			"task_id", util.UUIDToString(task.ID),
+			"identity_source", "a2a_operator_binding_cleared",
+			"dws_identity", false,
+		)
+		return nil, nil
+	}
+	resolved, err := l.createResolvedIdentityContext(ctx, task, sandboxID, fcE2BDWSIdentity{
+		UID:    bound.UID,
+		OrgID:  bound.OrgID,
+		Source: "a2a_operator_binding",
+	}, agentidentitygithub.Connection{}, false)
 	if err != nil {
 		return nil, err
 	}

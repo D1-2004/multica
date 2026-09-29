@@ -72,6 +72,32 @@ func TestBuildAgentCardDeclaresBaseTaskSkillWhenNoSkillsAreConfigured(t *testing
 	}
 }
 
+func TestBuildAgentCardDeclaresOptionalDingTalkEventExtension(t *testing.T) {
+	t.Parallel()
+
+	card, err := BuildAgentCard(CardConfig{
+		BaseURL:                "https://multica.example.com",
+		PublicAgentID:          "agt_public_123",
+		Name:                   "DEAP Agent",
+		Version:                "1.0.0",
+		AgentIdentityExtension: true,
+		DingTalkEventExtension: true,
+	})
+	if err != nil {
+		t.Fatalf("BuildAgentCard() error = %v", err)
+	}
+	extensions := card.Capabilities.Extensions
+	if len(extensions) != 2 {
+		t.Fatalf("extensions = %+v, want agent identity and DingTalk event", extensions)
+	}
+	if extensions[0].URI != AgentIdentityExtensionURI || extensions[0].Required {
+		t.Fatalf("agent identity extension = %+v", extensions[0])
+	}
+	if extensions[1].URI != "https://api-deap.dingtalk.com/a2a/extensions/dingtalk-event/v1" || extensions[1].Required {
+		t.Fatalf("DingTalk event extension must be declared optional: %+v", extensions[1])
+	}
+}
+
 func TestMergeConfiguredAgentSkillsPublishesStableOpaqueCapabilities(t *testing.T) {
 	t.Parallel()
 
