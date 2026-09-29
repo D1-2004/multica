@@ -3,6 +3,7 @@ package inboundcoord
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/modelregistry"
 	"github.com/openai/openai-go/v3"
 )
 
@@ -29,9 +31,15 @@ func jobIn(t *testing.T, arm string) string {
 	return ""
 }
 
-func experimentOn(enabled *atomic.Bool) func(pgtype.UUID) FinishSchemaExperiment {
-	return func(pgtype.UUID) FinishSchemaExperiment {
-		return FinishSchemaExperiment{Enabled: enabled.Load(), Salt: experimentSalt, ConfigSHA256: "cfg-sha", ConfigGeneration: 7}
+// decisionConfig serves one runtime configuration read: the model, the
+// performance switch and, while experiment is on, the experiment in mode.
+func decisionConfig(model string, parent bool, experiment *atomic.Bool, mode string) func(pgtype.UUID) DecisionConfig {
+	return func(pgtype.UUID) DecisionConfig {
+		cfg := DecisionConfig{Model: model, Performance: parent, ConfigSHA256: "cfg-sha", ConfigGeneration: 7}
+		if experiment != nil && experiment.Load() {
+			cfg.FinishSchema = FinishSchemaExperiment{Enabled: true, Mode: mode, Salt: experimentSalt}
+		}
+		return cfg
 	}
 }
 
@@ -67,11 +75,16 @@ func TestFinishSchemaArmIsStableAndBalanced(t *testing.T) {
 // wire body of its first routing request.
 func firstRoutingRequest(t *testing.T, c *Coordinator, recorder *wireRecorder, job string) map[string]any {
 	t.Helper()
-	before := len(recorder.routing())
 	ctx := context.Background()
 	if job != "" {
 		ctx = ContextWithTraceID(ctx, job)
 	}
+	return routingRequestIn(t, c, recorder, ctx)
+}
+
+func routingRequestIn(t *testing.T, c *Coordinator, recorder *wireRecorder, ctx context.Context) map[string]any {
+	t.Helper()
+	before := len(recorder.routing())
 	c.Decide(ctx, experimentTurn())
 	routing := recorder.routing()
 	if len(routing) <= before {
@@ -110,11 +123,7 @@ func experimentCoordinator(t *testing.T, model string, parent bool, experiment *
 	t.Helper()
 	client, recorder := recordingLLM(t)
 	c := &Coordinator{LLM: client}
-	c.ModelProvider = func() string { return model }
-	c.FinishRecoveryAgentProvider = func(pgtype.UUID) bool { return parent }
-	if experiment != nil {
-		c.FinishSchemaExperimentProvider = experimentOn(experiment)
-	}
+	c.DecisionConfigProvider = decisionConfig(model, parent, experiment, "")
 	return c, recorder
 }
 
@@ -180,14 +189,12 @@ func TestFinishSchemaGroupHoldsForTheWholeDecision(t *testing.T) {
 		assistantTool("done2", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"我在。"}]}`),
 	}}
 	c := &Coordinator{Chat: chat, Tools: &stubTools{}}
-	c.ModelProvider = func() string { return "qwen3.7-plus" }
-	c.FinishRecoveryAgentProvider = func(pgtype.UUID) bool { return true }
-	provider := experimentOn(&on)
-	c.FinishSchemaExperimentProvider = func(id pgtype.UUID) FinishSchemaExperiment {
-		experiment := provider(id)
+	provider := decisionConfig("qwen3.7-plus", true, &on, "")
+	c.DecisionConfigProvider = func(id pgtype.UUID) DecisionConfig {
+		cfg := provider(id)
 		// The experiment is switched off while the decision is running.
 		on.Store(false)
-		return experiment
+		return cfg
 	}
 	job := jobIn(t, finishSchemaExpanded)
 	c.Decide(ContextWithTraceID(context.Background(), job), experimentTurn())
@@ -261,5 +268,185 @@ func TestFinishSchemaExperimentExcludesJobsWithoutAnID(t *testing.T) {
 	}
 	if out := logs.String(); !strings.Contains(out, "reason=excluded_no_job_id") || strings.Contains(out, "event=inbound_coordinator_finish_schema_request") {
 		t.Fatalf("the exclusion is recorded and no group is claimed: %s", out)
+	}
+}
+
+func TestFinishSchemaDecisionReadsTheConfigurationOnce(t *testing.T) {
+	var on atomic.Bool
+	on.Store(true)
+	c, recorder := experimentCoordinator(t, "qwen3.7-plus", true, &on)
+	reads, legacy := 0, 0
+	provider := c.DecisionConfigProvider
+	c.DecisionConfigProvider = func(id pgtype.UUID) DecisionConfig { reads++; return provider(id) }
+	c.ModelProvider = func() string { legacy++; return "other-model" }
+	c.FinishRecoveryAgentProvider = func(pgtype.UUID) bool { legacy++; return false }
+	c.HistoryPrefetchAgentProvider = func(pgtype.UUID) bool { legacy++; return false }
+	wire := firstRoutingRequest(t, c, recorder, jobIn(t, finishSchemaExpanded))
+	if reads != 1 || legacy != 0 {
+		t.Fatalf("a decision takes model, switch and experiment from one read: reads %d, other reads %d", reads, legacy)
+	}
+	if wire["model"] != "qwen3.7-plus" || wire["max_completion_tokens"] != float64(4096) {
+		t.Fatalf("model and switch come from the same read: %v %v", wire["model"], wire["max_completion_tokens"])
+	}
+}
+
+func TestFinishSchemaStopLossKeepsEveryDecisionExpanded(t *testing.T) {
+	var on atomic.Bool
+	on.Store(true)
+	split, splitRecorder := experimentCoordinator(t, "qwen3.7-plus", true, &on)
+	_, expandedFinish := splitFinish(firstRoutingRequest(t, split, splitRecorder, jobIn(t, finishSchemaExpanded)))
+	_, prunedFinish := splitFinish(firstRoutingRequest(t, split, splitRecorder, jobIn(t, finishSchemaPruned)))
+
+	logs := captureLogs(t)
+	client, recorder := recordingLLM(t)
+	c := &Coordinator{LLM: client, DecisionConfigProvider: decisionConfig("qwen3.7-plus", true, &on, finishSchemaModeExpanded)}
+	for _, job := range []string{jobIn(t, finishSchemaPruned), jobIn(t, finishSchemaExpanded), ""} {
+		wire := firstRoutingRequest(t, c, recorder, job)
+		if _, finish := splitFinish(wire); finish != expandedFinish {
+			t.Fatalf("the stop-loss keeps the expanded schema for job %q", job)
+		}
+		if wire["max_completion_tokens"] != float64(4096) {
+			t.Fatal("the stop-loss keeps the rest of the performance switch")
+		}
+	}
+	if got := strings.Count(logs.String(), "reason=forced_expanded"); got != 3 {
+		t.Fatalf("every decision is recorded as forced expanded, got %d: %s", got, logs.String())
+	}
+
+	// Switching the experiment off instead returns to the switch's pruning.
+	on.Store(false)
+	if _, finish := splitFinish(firstRoutingRequest(t, c, recorder, jobIn(t, finishSchemaExpanded))); finish != prunedFinish {
+		t.Fatal("with the experiment off the switch prunes as before")
+	}
+}
+
+func TestFinishSchemaRecordKeepsTheGroupAcrossClaims(t *testing.T) {
+	var on atomic.Bool
+	on.Store(true)
+	c, recorder := experimentCoordinator(t, "qwen3.7-plus", true, &on)
+	job := jobIn(t, finishSchemaExpanded)
+	var saved []FinishSchemaRecord
+	claim := func(previous *FinishSchemaRecord) context.Context {
+		return ContextWithFinishSchemaRecord(ContextWithTraceID(context.Background(), job), previous, func(r FinishSchemaRecord) error {
+			saved = append(saved, r)
+			return nil
+		})
+	}
+
+	logs := captureLogs(t)
+	first := routingRequestIn(t, c, recorder, claim(nil))
+	if len(saved) != 1 || saved[0].Arm != finishSchemaExpanded || saved[0].SaltDigest != finishSchemaSaltDigest(experimentSalt) || saved[0].ConfigSHA256 != "cfg-sha" {
+		t.Fatalf("the first split decision persists the group: %+v", saved)
+	}
+	if !strings.Contains(logs.String(), "record=saved") {
+		t.Fatalf("the save is recorded: %s", logs.String())
+	}
+
+	record := saved[0]
+	logs = captureLogs(t)
+	again := routingRequestIn(t, c, recorder, claim(&record))
+	if len(saved) != 1 || !strings.Contains(logs.String(), "reason=included") || !strings.Contains(logs.String(), "record=reused") {
+		t.Fatalf("a later claim reuses the group: %s", logs.String())
+	}
+	_, firstFinish := splitFinish(first)
+	if _, againFinish := splitFinish(again); againFinish != firstFinish {
+		t.Fatal("a later claim keeps the group's schema")
+	}
+
+	moved := record
+	moved.SaltDigest = finishSchemaSaltDigest("earlier-salt")
+	logs = captureLogs(t)
+	routingRequestIn(t, c, recorder, claim(&moved))
+	if !strings.Contains(logs.String(), "reason=excluded_config_changed") {
+		t.Fatalf("a claim after a salt change is excluded: %s", logs.String())
+	}
+
+	// The experiment was switched off between claims: the job follows the
+	// switch and stays recorded as excluded.
+	on.Store(false)
+	usualCoordinator, usualRecorder := experimentCoordinator(t, "qwen3.7-plus", true, nil)
+	_, usual := splitFinish(firstRoutingRequest(t, usualCoordinator, usualRecorder, job))
+	logs = captureLogs(t)
+	after := routingRequestIn(t, c, recorder, claim(&record))
+	if _, finish := splitFinish(after); finish != usual {
+		t.Fatal("after the switch-off the job takes the switch's usual schema")
+	}
+	if out := logs.String(); !strings.Contains(out, "reason=excluded_config_changed") || strings.Contains(out, "event=inbound_coordinator_finish_schema_request") {
+		t.Fatalf("the job is recorded as excluded and claims no group: %s", out)
+	}
+}
+
+func TestFinishSchemaCheckpointIsExcluded(t *testing.T) {
+	var on atomic.Bool
+	on.Store(true)
+	c, recorder := experimentCoordinator(t, "qwen3.7-plus", true, &on)
+	logs := captureLogs(t)
+	restored := &Decision{Action: ActionReply, PlanVersion: "window-plan-v1"}
+	ctx := ContextWithPlanCheckpoint(ContextWithTraceID(context.Background(), jobIn(t, finishSchemaExpanded)), restored, nil)
+	c.Decide(ctx, experimentTurn())
+	if recorder.count() != 0 {
+		t.Fatal("a restored plan sends no model request")
+	}
+	if out := logs.String(); !strings.Contains(out, "reason=excluded_checkpoint") || strings.Contains(out, "event=inbound_coordinator_finish_schema_request") {
+		t.Fatalf("a restored plan is recorded as excluded: %s", out)
+	}
+}
+
+func TestFinishSchemaRouteFailureStaysInTheDenominator(t *testing.T) {
+	var on atomic.Bool
+	on.Store(true)
+	c, recorder := experimentCoordinator(t, "qwen3.7-plus", true, &on)
+	c.RouteProvider = func(context.Context) (*modelregistry.Route, error) { return nil, errors.New("route unavailable") }
+	logs := captureLogs(t)
+	got := c.Decide(ContextWithTraceID(context.Background(), jobIn(t, finishSchemaPruned)), experimentTurn())
+	if got.Action != ActionDeferred || recorder.count() != 0 {
+		t.Fatalf("a route failure defers without a request: %#v", got)
+	}
+	if out := logs.String(); !strings.Contains(out, "reason=included") || !strings.Contains(out, "route_error=true") {
+		t.Fatalf("the grouped decision is still recorded: %s", out)
+	}
+}
+
+func TestFinishSchemaRepairRequestIsRecorded(t *testing.T) {
+	var on atomic.Bool
+	on.Store(true)
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("bad", toolFinish, `{"actions":[`),
+		assistantTool("good", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"我在。"}]}`),
+	}}
+	c := &Coordinator{Chat: chat, Tools: &stubTools{}, DecisionConfigProvider: decisionConfig("qwen3.7-plus", true, &on, "")}
+	logs := captureLogs(t)
+	c.Decide(ContextWithTraceID(context.Background(), jobIn(t, finishSchemaExpanded)), experimentTurn())
+	if len(chat.params) != 2 {
+		t.Fatalf("the decision needs a route round and a repair, got %d", len(chat.params))
+	}
+	sizes := map[string]string{}
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if !strings.Contains(line, "event=inbound_coordinator_finish_schema_request") {
+			continue
+		}
+		fields := map[string]string{}
+		for _, part := range strings.Fields(line) {
+			if k, v, ok := strings.Cut(part, "="); ok {
+				fields[k] = v
+			}
+		}
+		if fields["arm"] != finishSchemaExpanded {
+			t.Fatalf("every request carries the decision's group: %s", line)
+		}
+		sizes[fields["kind"]] = fields["finish_schema_bytes"]
+	}
+	if sizes["route"] == "" || sizes["finish_repair"] == "" {
+		t.Fatalf("the route round and the repair are both recorded: %v", sizes)
+	}
+	finish := 0
+	for _, tool := range chat.params[1].Tools {
+		if tool.OfFunction != nil && tool.OfFunction.Function.Name == toolFinish {
+			raw, _ := json.Marshal(tool)
+			finish = len(raw)
+		}
+	}
+	if sizes["finish_repair"] != fmt.Sprint(finish) {
+		t.Fatalf("the repair log records the schema the repair sent: %v vs %d", sizes, finish)
 	}
 }

@@ -808,3 +808,23 @@ func TestCoordinatorWindowPlanContinuationPreservesTokenAndSingleDeliverable(t *
 		t.Fatal("continuation lost its single scope or original evidence")
 	}
 }
+
+func TestCoordinatorJobFinishSchemaComesOnlyFromTheJob(t *testing.T) {
+	stored := []byte(`{"_finish_schema_experiment":{"arm":"expanded","salt_digest":"ab12","config_sha256":"cfg","config_generation":4}}`)
+	if record := coordinatorJobFinishSchema(stored); record == nil || record.Arm != "expanded" || record.SaltDigest != "ab12" || record.ConfigSHA256 != "cfg" || record.ConfigGeneration != 4 {
+		t.Fatalf("stored group not read: %#v", record)
+	}
+	for _, raw := range []string{`{}`, `not json`, `{"_finish_schema_experiment":"x"}`, `{"_finish_schema_experiment":{"arm":""}}`} {
+		if record := coordinatorJobFinishSchema([]byte(raw)); record != nil {
+			t.Fatalf("%s produced a group: %#v", raw, record)
+		}
+	}
+	var req AgentDispatchV2Request
+	if err := json.Unmarshal([]byte(`{"_finish_schema_experiment":{"arm":"pruned","salt_digest":"ab12"}}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(req.DispatchCommand())
+	if record := coordinatorJobFinishSchema(encoded); record != nil {
+		t.Fatalf("a wire field became a trusted group: %s", encoded)
+	}
+}

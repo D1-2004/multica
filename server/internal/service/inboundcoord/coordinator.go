@@ -272,9 +272,11 @@ type Coordinator struct {
 	HistoryPrefetchAgentProvider func(pgtype.UUID) bool
 	windowHistory                *windowHistoryReads
 	firstRoundShadows            *firstRoundShadows
-	// FinishSchemaExperimentProvider reads the finish schema experiment for
-	// an agent (finish_schema_experiment.go). Nil disables the experiment.
-	FinishSchemaExperimentProvider func(pgtype.UUID) FinishSchemaExperiment
+	// DecisionConfigProvider reads, in one runtime configuration read, the
+	// model, performance switch and finish schema experiment of an agent
+	// (finish_schema_experiment.go). When set it replaces ModelProvider and
+	// the per-agent switch providers for a decision.
+	DecisionConfigProvider func(pgtype.UUID) DecisionConfig
 	// BuildID identifies the running binary in experiment logs.
 	BuildID                string
 	finishSchemaAssignment finishSchemaAssignment
@@ -396,24 +398,39 @@ func hostSilence(turn Turn, reason string) Decision {
 // failures do not expand authorization by bypassing the validated plan.
 // decisionSnapshot samples the model route and the rollout switches once for
 // one decision, so a switch flipped mid-decision cannot mix configurations.
+// When the route cannot be resolved it still returns the snapshot, so the
+// decision's experiment group is recorded before it is deferred.
 func (c *Coordinator) decisionSnapshot(ctx context.Context, turn Turn) (*Coordinator, error) {
 	snapshot := *c
-	snapshot.model = c.configuredModel()
-	snapshot.ModelProvider = nil
-	snapshot.finishRecovery = c.finishRecoveryEnabled()
-	if c.FinishRecoveryAgentProvider != nil {
-		snapshot.finishRecovery = c.FinishRecoveryAgentProvider(turn.AgentID)
+	if c.DecisionConfigProvider != nil {
+		cfg := c.DecisionConfigProvider(turn.AgentID)
+		snapshot.model = c.model
+		if snapshot.model == "" {
+			snapshot.model = strings.TrimSpace(cfg.Model)
+		}
+		if snapshot.model == "" {
+			snapshot.model = coordinatorModel
+		}
+		snapshot.finishRecovery = cfg.Performance
+		snapshot.windowHistoryAllowed = cfg.Performance
+		snapshot.finishSchemaAssignment = assignFinishSchemaArm(ctx, turn, cfg)
+	} else {
+		snapshot.model = c.configuredModel()
+		snapshot.finishRecovery = c.finishRecoveryEnabled()
+		if c.FinishRecoveryAgentProvider != nil {
+			snapshot.finishRecovery = c.FinishRecoveryAgentProvider(turn.AgentID)
+		}
+		snapshot.windowHistoryAllowed = c.historyPrefetchAllowed(turn)
 	}
+	snapshot.ModelProvider = nil
 	snapshot.FinishRecoveryProvider = nil
 	snapshot.FinishRecoveryAgentProvider = nil
-	snapshot.windowHistoryAllowed = c.historyPrefetchAllowed(turn)
 	snapshot.HistoryPrefetchAgentProvider = nil
-	snapshot.finishSchemaAssignment = c.assignFinishSchemaArm(ctx, turn, snapshot.finishRecovery)
-	snapshot.FinishSchemaExperimentProvider = nil
+	snapshot.DecisionConfigProvider = nil
 	if c.RouteProvider != nil {
 		route, err := c.RouteProvider(ctx)
 		if err != nil {
-			return nil, err
+			return &snapshot, err
 		}
 		snapshot.Chat = route
 		snapshot.model = route.Model()
@@ -467,11 +484,12 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	}
 	snapshot, snapshotErr := c.decisionSnapshot(ctx, turn)
 	if snapshotErr != nil {
+		snapshot.recordFinishSchemaAssignment(ctx, turn, true)
 		return Decision{Action: ActionDeferred, Reason: "model_configuration_unavailable"}
 	}
 	c = snapshot
 	turn.model = c.model
-	c.logFinishSchemaAssignment(ctx, turn)
+	c.recordFinishSchemaAssignment(ctx, turn, false)
 	if c.Ready != nil {
 		ready, err := c.Ready(ctx)
 		if err != nil || !ready {

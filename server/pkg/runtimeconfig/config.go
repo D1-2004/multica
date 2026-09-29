@@ -97,10 +97,24 @@ type PerformanceOptimizationConfig struct {
 }
 
 // FinishSchemaExperimentConfig assigns each Coordinator job to a group by a
-// stable hash of its id and Salt; changing Salt reshuffles the groups.
+// stable hash of its id and Salt; changing Salt reshuffles the groups, so
+// keep it fixed for one experiment. Mode "expanded" is the stop-loss: every
+// decision of the selected agents keeps the expanded finish schema while the
+// rest of the performance switch stays on.
 type FinishSchemaExperimentConfig struct {
 	Enabled bool   `json:"enabled"`
+	Mode    string `json:"mode,omitempty"`
 	Salt    string `json:"salt"`
+}
+
+const (
+	FinishSchemaModeSplit    = "split"
+	FinishSchemaModeExpanded = "expanded"
+)
+
+// SplitsGroups reports whether the experiment assigns jobs by hash.
+func (c FinishSchemaExperimentConfig) SplitsGroups() bool {
+	return c.Enabled && (c.Mode == "" || c.Mode == FinishSchemaModeSplit)
 }
 
 func (c PerformanceOptimizationConfig) AllowsAgent(agentID string) bool {
@@ -388,9 +402,16 @@ func (c RuntimeConfig) validate() error {
 				return fmt.Errorf("performance_optimization.agent_ids contains invalid canonical UUID %q", agentID)
 			}
 		}
-		if experiment := rollout.FinishSchemaExperiment; experiment != nil && experiment.Enabled {
-			if salt := strings.TrimSpace(experiment.Salt); salt == "" || len(salt) > 64 || salt != experiment.Salt {
-				return fmt.Errorf("performance_optimization.finish_schema_experiment.salt must be 1-64 characters without surrounding spaces when enabled")
+		if experiment := rollout.FinishSchemaExperiment; experiment != nil {
+			switch experiment.Mode {
+			case "", FinishSchemaModeSplit, FinishSchemaModeExpanded:
+			default:
+				return fmt.Errorf("performance_optimization.finish_schema_experiment.mode must be split or expanded")
+			}
+			if experiment.SplitsGroups() {
+				if salt := strings.TrimSpace(experiment.Salt); salt == "" || len(salt) > 64 || salt != experiment.Salt {
+					return fmt.Errorf("performance_optimization.finish_schema_experiment.salt must be 1-64 characters without surrounding spaces when the split is enabled")
+				}
 			}
 		}
 	}

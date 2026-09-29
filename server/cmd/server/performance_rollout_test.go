@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
 
@@ -47,10 +48,10 @@ func TestPerformanceRolloutObjectOverridesLegacyFields(t *testing.T) {
 	}
 }
 
-func TestFinishSchemaExperimentFollowsThePerformanceSwitch(t *testing.T) {
+func TestCoordinatorDecisionConfigComesFromOneSnapshot(t *testing.T) {
 	const target = "e2293e9e-1e79-4926-b0e6-da4cb693add0"
 	const other = "5b000000-0000-0000-0000-000000000000"
-	build := func(parent, experiment bool) *appRuntimeConfig {
+	build := func(parent, experiment bool, mode string) *appRuntimeConfig {
 		t.Helper()
 		raw, err := os.ReadFile("../../../docs/runtime-config.example.json")
 		if err != nil {
@@ -60,10 +61,11 @@ func TestFinishSchemaExperimentFollowsThePerformanceSwitch(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		cfg.Runtime.LLM.CoordinatorModel = "qwen3.7-plus"
 		cfg.Runtime.PerformanceOptimization = &runtimeconfig.PerformanceOptimizationConfig{
 			Enabled:                parent,
 			AgentIDs:               []string{target},
-			FinishSchemaExperiment: &runtimeconfig.FinishSchemaExperimentConfig{Enabled: experiment, Salt: "pri47"},
+			FinishSchemaExperiment: &runtimeconfig.FinishSchemaExperimentConfig{Enabled: experiment, Mode: mode, Salt: "pri47"},
 		}
 		remote, err := runtimeconfig.NewStatic(cfg)
 		if err != nil {
@@ -71,17 +73,24 @@ func TestFinishSchemaExperimentFollowsThePerformanceSwitch(t *testing.T) {
 		}
 		return &appRuntimeConfig{remote: remote}
 	}
-	got := build(true, true).finishSchemaExperiment(target)
-	if !got.Enabled || got.Salt != "pri47" || got.ConfigSHA256 == "" {
-		t.Fatalf("the experiment runs for an agent under the performance switch: %+v", got)
+	app := build(true, true, "")
+	got := app.coordinatorDecisionConfig(target)
+	snapshot := app.snapshot()
+	if !got.Performance || !got.FinishSchema.Enabled || got.FinishSchema.Salt != "pri47" || got.Model != "qwen3.7-plus" || got.ConfigSHA256 != snapshot.SHA256 || got.ConfigGeneration != snapshot.Generation {
+		t.Fatalf("the decision config is one snapshot of the switch, experiment, model and identity: %+v", got)
 	}
-	for name, experiment := range map[string]bool{
-		"parent off":        build(false, true).finishSchemaExperiment(target).Enabled,
-		"agent not allowed": build(true, true).finishSchemaExperiment(other).Enabled,
-		"experiment off":    build(true, false).finishSchemaExperiment(target).Enabled,
+	if stop := build(true, true, runtimeconfig.FinishSchemaModeExpanded).coordinatorDecisionConfig(target); !stop.Performance || stop.FinishSchema.Mode != runtimeconfig.FinishSchemaModeExpanded {
+		t.Fatalf("the stop-loss keeps the switch on: %+v", stop)
+	}
+	for name, cfg := range map[string]inboundcoord.DecisionConfig{
+		"parent off":        build(false, true, "").coordinatorDecisionConfig(target),
+		"agent not allowed": app.coordinatorDecisionConfig(other),
 	} {
-		if experiment {
-			t.Fatalf("%s must keep the experiment off", name)
+		if cfg.Performance || cfg.FinishSchema.Enabled {
+			t.Fatalf("%s must keep the switch and the experiment off: %+v", name, cfg)
 		}
+	}
+	if off := build(true, false, "").coordinatorDecisionConfig(target); !off.Performance || off.FinishSchema.Enabled {
+		t.Fatalf("experiment off keeps the switch only: %+v", off)
 	}
 }

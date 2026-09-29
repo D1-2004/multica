@@ -9,6 +9,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 var errFinishSerialization = errors.New("finish serialization recovery failed")
@@ -77,8 +78,11 @@ func (c *Coordinator) repairFinishSerialization(ctx context.Context, turn Turn, 
 		*modelCalls++
 		trace := langfuse.TraceFromContext(ctx)
 		observation := traceRoundGeneration(trace, *modelCalls-1, retry, finishTools, c.configuredModel(), c.completionBudget(), true)
-		var err error
-		completion, err = c.complete(ctx, retry, finishTools)
+		params, err := c.wireParams(c.configuredModel(), retry, finishTools, c.completionBudget(), temperature, shared.ReasoningEffortNone)
+		if err == nil {
+			c.logFinishSchemaRequest(turn, "finish_repair", *modelCalls-1, params)
+			completion, err = c.sendParams(ctx, params)
+		}
 		endRoundGeneration(observation, completion, err)
 		if trace != nil {
 			manifest := policyManifestForStage(repairTurn, recalled)

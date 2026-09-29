@@ -487,13 +487,23 @@ func TestFinishSchemaExperimentConfig(t *testing.T) {
 	if got := cfg.Runtime.PerformanceOptimization.FinishSchemaExperiment; got == nil || !got.Enabled || got.Salt != "pri47-a" {
 		t.Fatalf("experiment not parsed: %+v", got)
 	}
-	for _, bad := range []string{`{"enabled":true,"salt":""}`, `{"enabled":true,"salt":" x"}`, `{"enabled":true,"salt":"` + strings.Repeat("s", 65) + `"}`, `{"enabled":true,"salt":"x","percent":50}`} {
+	for _, bad := range []string{`{"enabled":true,"salt":""}`, `{"enabled":true,"salt":" x"}`, `{"enabled":true,"salt":"` + strings.Repeat("s", 65) + `"}`, `{"enabled":true,"salt":"x","percent":50}`, `{"enabled":true,"mode":"split","salt":""}`, `{"enabled":true,"mode":"pruned","salt":"x"}`} {
 		if _, err := ParseStrict(with(bad), false); err == nil {
 			t.Fatalf("accepted invalid experiment %s", bad)
 		}
 	}
 	if _, err := ParseStrict(with(`{"enabled":false,"salt":""}`), false); err != nil {
 		t.Fatalf("a disabled experiment needs no salt: %v", err)
+	}
+	stop, err := ParseStrict(with(`{"enabled":true,"mode":"expanded","salt":""}`), false)
+	if err != nil {
+		t.Fatalf("the stop-loss mode needs no salt: %v", err)
+	}
+	if got := stop.Runtime.PerformanceOptimization.FinishSchemaExperiment; got.Mode != FinishSchemaModeExpanded || got.SplitsGroups() {
+		t.Fatalf("the stop-loss mode must not split: %+v", got)
+	}
+	if !cfg.Runtime.PerformanceOptimization.FinishSchemaExperiment.SplitsGroups() {
+		t.Fatal("an enabled experiment without a mode splits the groups")
 	}
 }
 

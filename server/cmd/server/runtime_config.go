@@ -119,16 +119,25 @@ func (c *appRuntimeConfig) snapshot() runtimeconfig.Snapshot {
 	return c.remote.Current()
 }
 
-// finishSchemaExperiment reads the finish schema experiment for agentID. It
-// is enabled only while the performance switch itself allows the agent.
-func (c *appRuntimeConfig) finishSchemaExperiment(agentID string) inboundcoord.FinishSchemaExperiment {
+// coordinatorDecisionConfig reads, from one runtime configuration snapshot,
+// the Coordinator model, whether the performance switch selects agentID,
+// and the finish schema experiment, which only applies under that switch.
+func (c *appRuntimeConfig) coordinatorDecisionConfig(agentID string) inboundcoord.DecisionConfig {
 	snapshot := c.snapshot()
-	experiment := inboundcoord.FinishSchemaExperiment{ConfigSHA256: snapshot.SHA256, ConfigGeneration: snapshot.Generation}
-	rollout := snapshot.Config.Runtime.PerformanceOptimization
-	if rollout != nil && rollout.AllowsAgent(agentID) && rollout.FinishSchemaExperiment != nil && rollout.FinishSchemaExperiment.Enabled {
-		experiment.Enabled, experiment.Salt = true, rollout.FinishSchemaExperiment.Salt
+	cfg := inboundcoord.DecisionConfig{
+		Model:            snapshot.Config.Runtime.LLM.CoordinatorModel,
+		ConfigSHA256:     snapshot.SHA256,
+		ConfigGeneration: snapshot.Generation,
 	}
-	return experiment
+	rollout := snapshot.Config.Runtime.PerformanceOptimization
+	if rollout == nil || !rollout.AllowsAgent(agentID) {
+		return cfg
+	}
+	cfg.Performance = true
+	if experiment := rollout.FinishSchemaExperiment; experiment != nil && experiment.Enabled {
+		cfg.FinishSchema = inboundcoord.FinishSchemaExperiment{Enabled: true, Mode: experiment.Mode, Salt: experiment.Salt}
+	}
+	return cfg
 }
 
 func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {

@@ -823,10 +823,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			}
 			return false
 		}
-		coordinator.FinishRecoveryAgentProvider = performanceAgent
+		// A collect-window read happens before the claim; the claimed
+		// decision takes the switch from its own single snapshot below.
 		coordinator.HistoryPrefetchAgentProvider = performanceAgent
-		coordinator.FinishSchemaExperimentProvider = func(agentID pgtype.UUID) inboundcoord.FinishSchemaExperiment {
-			return opts.RuntimeConfig.finishSchemaExperiment(util.UUIDToString(agentID))
+		coordinator.DecisionConfigProvider = func(agentID pgtype.UUID) inboundcoord.DecisionConfig {
+			return opts.RuntimeConfig.coordinatorDecisionConfig(util.UUIDToString(agentID))
 		}
 		coordinator.BuildID = version + "@" + commit
 	}

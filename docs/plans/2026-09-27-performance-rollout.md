@@ -60,8 +60,12 @@ Deployment order:
 finish schema pruning, for a controlled comparison:
 
 ```json
-"finish_schema_experiment": {"enabled": true, "salt": "<fixed per experiment>"}
+"finish_schema_experiment": {"enabled": true, "mode": "split", "salt": "<fixed per experiment>"}
 ```
+
+`"mode": "expanded"` is the stop-loss: it keeps the switch on and sends the
+expanded finish schema for every decision of the selected agents. Setting
+`enabled: false` instead returns them to the switch's pruning.
 
 It is absent and off by default, and it has no effect for an agent the parent
 object does not select. While on, each Coordinator job is assigned once by a
@@ -69,7 +73,9 @@ salted hash of its job UUID: the `pruned` group keeps Q1 unchanged and the
 `expanded` group sends the expanded finish schema; every other Q1 parameter is
 the same. The same deployment order applies: deploy the binary to every
 replica before adding the key, and remove the key before any binary rollback.
-Changing the salt reshuffles the groups, so keep it fixed for one experiment.
+Changing the salt reshuffles the groups, so keep it fixed for one experiment;
+a job's first group is persisted with the job, and a later claim under a
+different salt or a disabled experiment is logged as `excluded_config_changed`.
 The contract is in `docs/inbound-coordinator-loop.md`; remove the field and
 its code when the experiment concludes.
 

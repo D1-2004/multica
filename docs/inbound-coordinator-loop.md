@@ -446,6 +446,11 @@ finish-only恢复耗尽后按确定性停止生成一次固定失败回执，不
 
 ### finish schema 裁剪对照实验（PRI-47，临时）
 
-`runtime.performance_optimization.finish_schema_experiment {enabled, salt}` 只在父开关对该agent生效时起作用，缺省关闭；父开关关闭时与旧行为逐字节相同。开启后，每个入站决策在 `decisionSnapshot` 用持久化job UUID与salt的SHA-256一次性分组：`pruned` 组照常裁剪finish schema，`expanded` 组保留展开后的schema；4096预算、序列化修复、DeepSeek thinking、窗口历史预读、路由和其余参数两组相同。同一job跨副本认领、park、重试和同一决策的各轮都落在同一组；决策中途热关只影响之后的新决策。没有job UUID的决策走原路径并记 `reason=excluded_no_job_id`，非入站循环记 `excluded_loop`。
+`runtime.performance_optimization.finish_schema_experiment {enabled, mode, salt}` 只在父开关对该agent生效时起作用，缺省关闭；父开关关闭时与旧行为逐字节相同。每个决策在 `decisionSnapshot` 只调用一次 `DecisionConfigProvider`，从同一份运行时配置快照同时取模型、父开关、实验参数与配置指纹，并冻结到该决策的所有轮次和修复。
 
-任何模型请求之前先写 `inbound_coordinator_finish_schema_assigned`（arm、reason、job_id、build、config_sha256/generation、model），每次路由请求发出前写 `inbound_coordinator_finish_schema_request`（round、实际finish schema哈希与字节数、工具数），同时写入Langfuse trace metadata。未发出请求或失败的决策仍在分母内。salt启用时必须是1–64字符且首尾无空白。新键要求新二进制：先部署代码再写Diamond，回滚二进制前先删键。实验结论由真实流量统计给出，本节只约束分组与参数隔离。
+- `mode` 缺省或 `split`：入站决策按持久化job UUID与salt的SHA-256一次性分组，`pruned` 组照常裁剪finish schema，`expanded` 组保留展开后的schema；4096预算、序列化修复、DeepSeek thinking、窗口历史预读、路由和其余参数两组相同。salt必须是1–64字符且首尾无空白，实验期间不得更换。
+- `mode=expanded` 是止损：父开关保持开启时，该agent所有决策（含没有job UUID与非入站循环）都保留展开schema，记 `reason=forced_expanded`。`enabled=false` 回到父开关的原裁剪，不是止损。
+
+首个 `included` 决策把 `{arm, salt_digest, config_sha256, config_generation}` 持租约写入job的 `command._finish_schema_experiment`；同一job再次认领时读取该记录：salt不变则沿用同组（`record=reused`），salt变更或实验已关闭则按当前配置执行并记 `excluded_config_changed`。恢复的plan checkpoint不发首轮请求，记 `excluded_checkpoint`；没有job UUID记 `excluded_no_job_id`，分裂模式下非入站循环记 `excluded_loop`。
+
+任何模型请求之前先写 `inbound_coordinator_finish_schema_assigned`（arm、reason、mode、job_id、record、route_error、build、config_sha256/generation、model）；模型路由解析失败被延后的决策同样记录（`route_error=true`）。每次携带finish工具的请求发出前写 `inbound_coordinator_finish_schema_request`（kind=`route`/`finish_repair`、round、实际finish schema哈希与字节数、工具数），同时写入Langfuse trace metadata。未发出请求或失败的决策仍在分母内。新键要求新二进制：先部署代码再写Diamond，回滚二进制前先删键。实验结论由真实流量统计给出，本节只约束分组与参数隔离。

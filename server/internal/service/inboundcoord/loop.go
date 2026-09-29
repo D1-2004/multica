@@ -102,7 +102,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			if round == 0 && turn.Loop != LoopTaskFinished {
 				c.compareFirstRoundShadow(turn, params, latestFeedback, time.Since(loopStarted))
 			}
-			c.logFinishSchemaRequest(turn, round, params)
+			c.logFinishSchemaRequest(turn, "route", round, params)
 			completion, err = c.sendParams(ctx, params)
 		}
 		endRoundGeneration(generation, completion, err)

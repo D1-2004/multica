@@ -33,12 +33,40 @@ func coordinatorJobCheckpoint(raw []byte) (*inboundcoord.Decision, error) {
 	return &plan, nil
 }
 
+// coordinatorJobFinishSchema reads the finish schema experiment group the
+// job took in an earlier claim. Like the plan, it comes only from the job.
+func coordinatorJobFinishSchema(raw []byte) *inboundcoord.FinishSchemaRecord {
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(raw, &envelope) != nil || len(envelope["_finish_schema_experiment"]) == 0 {
+		return nil
+	}
+	var record inboundcoord.FinishSchemaRecord
+	if json.Unmarshal(envelope["_finish_schema_experiment"], &record) != nil || record.Arm == "" {
+		return nil
+	}
+	return &record
+}
+
 func (h *Handler) coordinatorCheckpointContext(ctx context.Context, job db.InboundCoordinatorJob) (context.Context, error) {
 	plan, err := coordinatorJobCheckpoint(job.Command)
 	if err != nil {
 		return ctx, err
 	}
 	ctx = inboundcoord.ContextWithHistoryBefore(ctx, job.CreatedAt.Time)
+	ctx = inboundcoord.ContextWithFinishSchemaRecord(ctx, coordinatorJobFinishSchema(job.Command), func(record inboundcoord.FinishSchemaRecord) error {
+		raw, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		n, err := h.Queries.SaveCoordinatorFinishSchema(ctx, db.SaveCoordinatorFinishSchemaParams{Record: raw, ID: job.ID, LeaseToken: job.LeaseToken})
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return fmt.Errorf("coordinator finish schema lease lost")
+		}
+		return nil
+	})
 	return inboundcoord.ContextWithPlanCheckpoint(ctx, plan, func(d inboundcoord.Decision) error {
 		if d.PlanVersion != "window-plan-v1" {
 			return nil
