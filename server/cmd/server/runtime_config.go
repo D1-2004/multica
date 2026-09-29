@@ -140,6 +140,16 @@ func (c *appRuntimeConfig) coordinatorDecisionConfig(agentID string) inboundcoor
 	return cfg
 }
 
+// coordinatorCollectQuiet is agentID's collect-window silence under the
+// performance switch; zero keeps the handler default.
+func (c *appRuntimeConfig) coordinatorCollectQuiet(agentID string) time.Duration {
+	rollout := c.current().Runtime.PerformanceOptimization
+	if rollout == nil || !rollout.AllowsAgent(agentID) || rollout.CollectQuietMS <= 0 {
+		return 0
+	}
+	return time.Duration(rollout.CollectQuietMS) * time.Millisecond
+}
+
 func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 	raw := c.current()
 	runtimeProviders := runtimeconfig.RuntimeProvidersSnapshot{}

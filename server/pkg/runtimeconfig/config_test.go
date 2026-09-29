@@ -523,3 +523,23 @@ func TestFinishSchemaExperimentSnapshotIsACopy(t *testing.T) {
 		t.Fatal("experiment config escaped snapshot copy")
 	}
 }
+
+func TestPerformanceCollectQuietMS(t *testing.T) {
+	const agent = "7b1f0d3e-2c4a-4e5b-8f6a-9c0d1e2f3a4b"
+	with := func(quiet string) []byte {
+		rollout := `"performance_optimization":{"enabled":true,"agent_ids":["` + agent + `"]` + quiet + `},`
+		return []byte(strings.Replace(validJSON(), `"fc_e2b": {`, rollout+`"fc_e2b": {`, 1))
+	}
+	cfg, err := ParseStrict(with(`,"collect_quiet_ms":1000`), false)
+	if err != nil || cfg.Runtime.PerformanceOptimization.CollectQuietMS != 1000 {
+		t.Fatalf("a 1 s collect window must parse: %v", err)
+	}
+	if cfg, err := ParseStrict(with(``), false); err != nil || cfg.Runtime.PerformanceOptimization.CollectQuietMS != 0 {
+		t.Fatalf("an absent collect window keeps the default: %v", err)
+	}
+	for _, bad := range []string{`,"collect_quiet_ms":300`, `,"collect_quiet_ms":5000`, `,"collect_quiet_ms":-1`} {
+		if _, err := ParseStrict(with(bad), false); err == nil {
+			t.Fatalf("accepted %s", bad)
+		}
+	}
+}

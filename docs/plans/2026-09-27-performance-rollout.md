@@ -54,6 +54,16 @@ Deployment order:
    this switch cannot revert (E2B cancellation cleanup and existing schema
    migrations). Do not pass the manual pre verification gate automatically.
 
+## Collect window
+
+`performance_optimization.collect_quiet_ms` (500–4000) shortens the inbound
+Coordinator collect silence for the selected agents, for example to 1000 ms;
+absent keeps 4 s, and the 12 s window cap is unchanged. A later message that
+arrives after the silence starts the scene's next window instead of joining
+the one being decided. Production had 32 merged windows in 3,916 jobs over
+30 days (0.8%), so measure split windows and duplicate or missed work before
+widening it.
+
 ## Temporary finish schema experiment
 
 `performance_optimization.finish_schema_experiment` isolates one Q1 part, the

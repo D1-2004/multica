@@ -94,6 +94,10 @@ type PerformanceOptimizationConfig struct {
 	// above into two groups that differ only in whether the expanded finish
 	// schema is pruned. It has no effect unless Enabled allows the agent.
 	FinishSchemaExperiment *FinishSchemaExperimentConfig `json:"finish_schema_experiment,omitempty"`
+	// CollectQuietMS is the silence, in milliseconds, that ends an inbound
+	// Coordinator collect window for the agents above. Zero keeps the 4 s
+	// default; the 12 s window cap is unchanged.
+	CollectQuietMS int `json:"collect_quiet_ms,omitempty"`
 }
 
 // FinishSchemaExperimentConfig assigns each Coordinator job to a group by a
@@ -401,6 +405,9 @@ func (c RuntimeConfig) validate() error {
 			if parsed, err := uuid.Parse(strings.TrimSpace(agentID)); err != nil || parsed == uuid.Nil || parsed.String() != agentID {
 				return fmt.Errorf("performance_optimization.agent_ids contains invalid canonical UUID %q", agentID)
 			}
+		}
+		if rollout.CollectQuietMS != 0 && (rollout.CollectQuietMS < 500 || rollout.CollectQuietMS > 4000) {
+			return fmt.Errorf("performance_optimization.collect_quiet_ms must be between 500 and 4000")
 		}
 		if experiment := rollout.FinishSchemaExperiment; experiment != nil {
 			switch experiment.Mode {

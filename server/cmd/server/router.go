@@ -861,6 +861,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}))
 	}
 	h.InboundCoordinator = coordinator
+	if opts.RuntimeConfig != nil {
+		h.CoordinatorCollectQuiet = func(agentID pgtype.UUID) time.Duration {
+			return opts.RuntimeConfig.coordinatorCollectQuiet(util.UUIDToString(agentID))
+		}
+	}
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
 	decisionMCP := strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL"))
 	decisionEnv := "production"

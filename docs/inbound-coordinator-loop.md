@@ -181,7 +181,7 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 自然语言意图由LLM判断并审查。Host不再用ACK、停止回复、工具名称或诊断编号词表决定静默、拆窗或工作关联；自发事件、监听范围、去重与持久化状态继续按协议事实检查。
 
-collect 只按入站来源和生命周期区分，普通提问与礼貌收尾可在同一窗口。collect 只合并正在输入的消息：4 秒静默，创建起最多 12 秒。封窗、已 claim、重试或挂起的窗口不再吸收新消息。同 scene 同时一个 Coordinator 窗口，沙箱执行仍受容量保护；容量不能阻止新窗口判断聊天。collect/park 不提前 sync-silence 完成，回执随真实处理关闭。
+collect 只按入站来源和生命周期区分，普通提问与礼貌收尾可在同一窗口。collect 只合并正在输入的消息：默认 4 秒静默，创建起最多 12 秒。`runtime.performance_optimization.collect_quiet_ms`（500–4000，PRI-47）可对白名单 agent 缩短静默时长（如 1000），12 秒上限不变；受理与合并日志记 `collect_quiet_ms`。缩短后，间隔超过静默时长的后续消息会成为同 scene 的下一窗口（场景忙时按既有规则 park），不会并入正在判断的窗口。封窗、已 claim、重试或挂起的窗口不再吸收新消息。同 scene 同时一个 Coordinator 窗口，沙箱执行仍受容量保护；容量不能阻止新窗口判断聊天。collect/park 不提前 sync-silence 完成，回执随真实处理关闭。
 
 执行容量按「场景 × 委托人」计（`SceneDelegatorMaxInFlightMatters`，当前 2），归属取 assoc 的 `task_person` 边，人按 `assoc_person_alias` 双向归一（输入 → canonical person_key → 该人其它别名），所以同一人的 uid/staffId/openDingTalkId 算同一份预算，合窗内分组也用同一份闭包。续办他人事项成功后按当前委托人补建归属，否则准入算在当前发言人头上、执行却仍记在原委托人名下。一个人把自己的名额用满时只有他自己等待，同群其他人照常受理；合窗里每位发言人各自结算自己的新增事项。在飞只含 `queued/dispatched/running/waiting_local_directory`：`deferred` 与 `fire_at` 在未来的事项是排期或等外部输入，不占名额；非 running 的行超过在飞判定（2 小时）也不再占名额，running 由 daemon 心跳自证存活、长跑合法占用（真正卡死由 `cmd/server/runtime_sweeper.go` 负责失败）。没有任何 `task_person` 归属的在飞事项计入每个委托人，缺失身份不凭措辞或显示名归属；委托人身份不可信时退回按场景计数。单窗口一次最多起两项（`SceneWindowMaxItems`）不变。
 

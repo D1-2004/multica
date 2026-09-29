@@ -726,7 +726,8 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	if err != nil {
 		return nil, job, err
 	}
-	collectAt := time.Now().UTC().Add(inboundCoordinatorCollectWindow)
+	collectQuiet := h.coordinatorCollectQuiet(dispatchContext.AgentID)
+	collectAt := time.Now().UTC().Add(collectQuiet)
 	if err := h.registerDingTalkResponseRoute(ctx, tx, command, dispatchContext); err != nil {
 		return nil, job, err
 	}
@@ -765,7 +766,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			job, err = qtx.UpdateInboundCoordinatorJobCollect(ctx, db.UpdateInboundCoordinatorJobCollectParams{
 				ID:          existing.ID,
 				Command:     mergedRaw,
-				AvailableAt: pgtype.Timestamptz{Time: coordinatorCollectDeadline(existing.CreatedAt.Time, time.Now().UTC()), Valid: true},
+				AvailableAt: pgtype.Timestamptz{Time: coordinatorCollectDeadline(existing.CreatedAt.Time, time.Now().UTC(), collectQuiet), Valid: true},
 			})
 			if err != nil {
 				return nil, job, err
@@ -803,6 +804,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 				"message_count", len(merged.Event.Data.Messages),
 				"collect_until", job.AvailableAt.Time,
 				"collect_age_ms", time.Since(job.CreatedAt.Time).Milliseconds(),
+				"collect_quiet_ms", collectQuiet.Milliseconds(),
 			)
 			return response, job, nil
 		}
@@ -869,6 +871,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 		"event", "inbound_coordinator_job_accepted",
 		"job_id", util.UUIDToString(job.ID),
 		"source", command.Source.Type,
+		"collect_quiet_ms", collectQuiet.Milliseconds(),
 	)
 	h.publishChatToUser(protocol.EventChatMessage, util.UUIDToString(job.WorkspaceID), util.UUIDToString(job.UserID), "member", util.UUIDToString(job.UserID), util.UUIDToString(job.ChatSessionID), protocol.ChatMessagePayload{
 		ChatSessionID: util.UUIDToString(job.ChatSessionID),

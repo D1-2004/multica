@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
@@ -92,5 +93,39 @@ func TestCoordinatorDecisionConfigComesFromOneSnapshot(t *testing.T) {
 	}
 	if off := build(true, false, "").coordinatorDecisionConfig(target); !off.Performance || off.FinishSchema.Enabled {
 		t.Fatalf("experiment off keeps the switch only: %+v", off)
+	}
+}
+
+func TestCoordinatorCollectQuietFollowsThePerformanceSwitch(t *testing.T) {
+	const target = "e2293e9e-1e79-4926-b0e6-da4cb693add0"
+	const other = "5b000000-0000-0000-0000-000000000000"
+	build := func(parent bool, quiet int) *appRuntimeConfig {
+		t.Helper()
+		raw, err := os.ReadFile("../../../docs/runtime-config.example.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := runtimeconfig.ParseStrict(raw, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.Runtime.PerformanceOptimization = &runtimeconfig.PerformanceOptimizationConfig{Enabled: parent, AgentIDs: []string{target}, CollectQuietMS: quiet}
+		remote, err := runtimeconfig.NewStatic(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &appRuntimeConfig{remote: remote}
+	}
+	if got := build(true, 1000).coordinatorCollectQuiet(target); got != time.Second {
+		t.Fatalf("selected agent collects for 1 s, got %v", got)
+	}
+	for name, got := range map[string]time.Duration{
+		"other agent": build(true, 1000).coordinatorCollectQuiet(other),
+		"parent off":  build(false, 1000).coordinatorCollectQuiet(target),
+		"unset":       build(true, 0).coordinatorCollectQuiet(target),
+	} {
+		if got != 0 {
+			t.Fatalf("%s keeps the default window, got %v", name, got)
+		}
 	}
 }
