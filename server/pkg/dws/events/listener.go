@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -31,9 +32,14 @@ type Alert struct {
 
 // Options tune a Listener (and every Listener a Manager runs).
 type Options struct {
-	// ReadIdle reconnects when no frame arrived for this long (default 3m;
-	// the server pings well within that).
+	// ReadIdle reconnects when no frame (a pong included) arrived for this
+	// long (default 3m).
 	ReadIdle time.Duration
+	// PingInterval is how often the listener pings the server (default
+	// ReadIdle/3). The server can stay silent for longer than ReadIdle, so
+	// the pong is what keeps a quiet connection alive, as the WebSocket ping
+	// of dingtalk-stream-sdk-go does.
+	PingInterval time.Duration
 	// MinBackoff and MaxBackoff bound the reconnect delay (1s, 30s).
 	MinBackoff, MaxBackoff time.Duration
 	// AlertAfter is how long an outage lasts before Alert fires (2m).
@@ -53,12 +59,13 @@ type Options struct {
 	Now    func() time.Time
 }
 
-func (o Options) readIdle() time.Duration    { return orDefault(o.ReadIdle, 3*time.Minute) }
-func (o Options) minBackoff() time.Duration  { return orDefault(o.MinBackoff, time.Second) }
-func (o Options) maxBackoff() time.Duration  { return orDefault(o.MaxBackoff, 30*time.Second) }
-func (o Options) alertAfter() time.Duration  { return orDefault(o.AlertAfter, 2*time.Minute) }
-func (o Options) stableAfter() time.Duration { return orDefault(o.StableAfter, 30*time.Second) }
-func (o Options) dedupeTTL() time.Duration   { return orDefault(o.DedupeTTL, 24*time.Hour) }
+func (o Options) readIdle() time.Duration     { return orDefault(o.ReadIdle, 3*time.Minute) }
+func (o Options) pingInterval() time.Duration { return orDefault(o.PingInterval, o.readIdle()/3) }
+func (o Options) minBackoff() time.Duration   { return orDefault(o.MinBackoff, time.Second) }
+func (o Options) maxBackoff() time.Duration   { return orDefault(o.MaxBackoff, 30*time.Second) }
+func (o Options) alertAfter() time.Duration   { return orDefault(o.AlertAfter, 2*time.Minute) }
+func (o Options) stableAfter() time.Duration  { return orDefault(o.StableAfter, 30*time.Second) }
+func (o Options) dedupeTTL() time.Duration    { return orDefault(o.DedupeTTL, 24*time.Hour) }
 func (o Options) now() time.Time {
 	if o.Now != nil {
 		return o.Now()
@@ -198,6 +205,23 @@ func (l *Listener) connect(ctx context.Context, st *Status) (int, error) {
 	// Closing the socket is the only way to interrupt a blocked read.
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
+	// Control frames never surface from ReadMessage, so a pong (or a server
+	// ping) extends the read deadline itself; both run on the reader.
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(l.readIdle()))
+	})
+	conn.SetPingHandler(func(data string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(l.readIdle()))
+		// As gorilla's default handler: a failed pong is the next read's error.
+		err := conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(10*time.Second))
+		var netErr net.Error
+		if err == websocket.ErrCloseSent || errors.As(err, &netErr) {
+			return nil
+		}
+		return err
+	})
+	ping := time.NewTicker(l.pingInterval())
+	defer ping.Stop()
 
 	now := l.now()
 	st.State, st.Since, st.LastConnectedAt = StateConnected, now, now
@@ -256,6 +280,11 @@ func (l *Listener) connect(ctx context.Context, st *Status) (int, error) {
 		select {
 		case <-stable:
 			markHealthy()
+			continue
+		case <-ping.C:
+			if err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second)); err != nil {
+				return handled, fmt.Errorf("ping: %w", err)
+			}
 			continue
 		case <-overdue:
 			if !healthy {

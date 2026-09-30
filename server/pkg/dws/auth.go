@@ -161,8 +161,12 @@ func refresh(ctx context.Context, cfg Config, tok Token) (Token, error) {
 	if next.CorpID == "" {
 		next.CorpID = tok.CorpID
 	}
-	// A refresh continues the lineage the exchange started.
+	// A refresh continues the lineage the exchange started; a lineage of
+	// unknown age starts counting now, so MaxLineage bounds it too.
 	next.MintedAt = tok.MintedAt
+	if next.MintedAt.IsZero() {
+		next.MintedAt = cfg.now()
+	}
 	return next, nil
 }
 
