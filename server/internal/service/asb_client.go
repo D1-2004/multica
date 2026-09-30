@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/startupobs"
 	"io"
 	"net/http"
 	"net/url"
@@ -324,7 +325,9 @@ func normalizeASBBaseURL(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
-func (c *ASBClient) CreateSandbox(ctx context.Context, input ASBCreateSandboxInput) (*ASBSandbox, error) {
+func (c *ASBClient) CreateSandbox(ctx context.Context, input ASBCreateSandboxInput) (result *ASBSandbox, resultErr error) {
+	finish := startupobs.Start(ctx, "asb_create")
+	defer func() { finish(resultErr) }()
 	if strings.TrimSpace(input.ImageURI) == "" {
 		return nil, errors.New("ASB image URI is required")
 	}

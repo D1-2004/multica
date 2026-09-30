@@ -239,6 +239,7 @@ type Handler struct {
 	Bus                      *events.Bus
 	TaskService              *service.TaskService
 	InboundCoordinator       *inboundcoord.Coordinator
+	CoordinatorCollectQuiet  func(agentID pgtype.UUID) time.Duration
 	UserDecisions            *userdecision.Service
 	InboundCoordinatorWorker *InboundCoordinatorJobWorker
 	SceneMemoryStore         *scenememory.Store

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -17,10 +18,21 @@ const (
 	inboundCoordinatorCollectMaxWait = 12 * time.Second
 )
 
+// coordinatorCollectQuiet is the silence that ends an agent's collect
+// window: the performance switch may shorten it per agent, otherwise 4 s.
+func (h *Handler) coordinatorCollectQuiet(agentID pgtype.UUID) time.Duration {
+	if h != nil && h.CoordinatorCollectQuiet != nil {
+		if quiet := h.CoordinatorCollectQuiet(agentID); quiet > 0 {
+			return quiet
+		}
+	}
+	return inboundCoordinatorCollectWindow
+}
+
 // coordinatorCollectDeadline bounds typing debounce independently of task
 // capacity, retries, and worker scheduling. A sealed window never reopens.
-func coordinatorCollectDeadline(createdAt, now time.Time) time.Time {
-	quiet := now.Add(inboundCoordinatorCollectWindow)
+func coordinatorCollectDeadline(createdAt, now time.Time, window time.Duration) time.Time {
+	quiet := now.Add(window)
 	maximum := createdAt.Add(inboundCoordinatorCollectMaxWait)
 	if quiet.After(maximum) {
 		return maximum

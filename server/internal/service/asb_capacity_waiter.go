@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -21,17 +22,20 @@ const (
 )
 
 type asbCapacityWaitCoordinator struct {
-	mu       sync.Mutex
-	inFlight map[string]struct{}
-	wakeups  chan struct{}
-	cursor   int
-	running  int
+	mu                sync.Mutex
+	inFlight          map[string]struct{}
+	wakeups           chan struct{}
+	capacityAvailable chan struct{}
+	lastCapacityEvent time.Time
+	cursor            int
+	running           int
 }
 
 func newASBCapacityWaitCoordinator() *asbCapacityWaitCoordinator {
 	return &asbCapacityWaitCoordinator{
-		inFlight: make(map[string]struct{}),
-		wakeups:  make(chan struct{}, 1),
+		inFlight:          make(map[string]struct{}),
+		wakeups:           make(chan struct{}, 1),
+		capacityAvailable: make(chan struct{}, 1),
 	}
 }
 
@@ -100,7 +104,17 @@ func asbCapacityScopeID(scope ASBTenantCredentialScope) string {
 
 func (l *ASBLauncher) NotifyRuntimeCapacityMayBeAvailable() {
 	if l != nil && l.CapacityWait != nil {
-		l.CapacityWait.notify()
+		if l.Tasks != nil && l.Tasks.CurrentRuntimeStartRecoveryConfig().ASBEventWakeup {
+			l.CapacityWait.mu.Lock()
+			l.CapacityWait.lastCapacityEvent = time.Now()
+			l.CapacityWait.mu.Unlock()
+			select {
+			case l.CapacityWait.capacityAvailable <- struct{}{}:
+			default:
+			}
+		} else {
+			l.CapacityWait.notify()
+		}
 	}
 }
 
@@ -141,6 +155,8 @@ func (l *ASBLauncher) RunCapacityWaiter(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-l.CapacityWait.capacityAvailable:
+			runOnce()
 		case <-l.CapacityWait.wakeups:
 			runOnce()
 		case <-ticker.C:
@@ -159,12 +175,23 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 	if l.CapacityWait == nil {
 		l.CapacityWait = newASBCapacityWaitCoordinator()
 	}
+	quickWins := l.Tasks.CurrentRuntimeStartRecoveryConfig()
+	var wakeBefore pgtype.Timestamptz
+	if quickWins.ASBEventWakeup {
+		l.CapacityWait.mu.Lock()
+		at := l.CapacityWait.lastCapacityEvent
+		l.CapacityWait.mu.Unlock()
+		wakeBefore = pgtype.Timestamptz{Time: at, Valid: !at.IsZero()}
+	}
 	waiting, err := l.Queries.ListASBCapacityWaitingTasks(
 		ctx,
 		db.ListASBCapacityWaitingTasksParams{
-			RetrySeconds:  asbCapacityWaitRetryDelay.Seconds(),
-			StaleSeconds:  asbCapacityStaleLaunchAge.Seconds(),
-			MaxPerRuntime: asbCapacityWaitMaxConcurrent,
+			Scoped:          quickWins.Scoped,
+			RolloutAgentIDs: quickWins.QueryRolloutAgentIDs(),
+			RetrySeconds:    asbCapacityWaitRetryDelay.Seconds(),
+			WakeBefore:      wakeBefore,
+			StaleSeconds:    asbCapacityStaleLaunchAge.Seconds(),
+			MaxPerRuntime:   asbCapacityWaitMaxConcurrent,
 		},
 	)
 	if err != nil {
@@ -263,4 +290,12 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 		}
 	}
 	return scheduled, nil
+}
+
+type asbCapacityNotifyKey struct{}
+
+func notifyASBReclaimed(ctx context.Context) {
+	if notify, ok := ctx.Value(asbCapacityNotifyKey{}).(func()); ok {
+		notify()
+	}
 }

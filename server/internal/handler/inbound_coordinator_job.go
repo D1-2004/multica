@@ -29,6 +29,9 @@ const (
 	inboundCoordinatorWorkerMaxAttempts  = 6
 	inboundCoordinatorSceneParkDelay     = 5 * time.Second
 	inboundCoordinatorSceneBusyDelay     = 500 * time.Millisecond
+	// coordinatorShadowAssemblyTimeout bounds the database reads that build
+	// the collect-window shadow's Turn.
+	coordinatorShadowAssemblyTimeout = 2 * time.Second
 )
 
 // InboundCoordinatorJobWorker executes accepted short loops from PostgreSQL.
@@ -38,6 +41,15 @@ type InboundCoordinatorJobWorker struct {
 	handler *Handler
 	notify  chan struct{}
 	done    chan struct{}
+
+	wakeMu  sync.Mutex
+	wakeups map[string]windowWakeup
+}
+
+// windowWakeup is the pending collect-deadline wake-up of one job.
+type windowWakeup struct {
+	at    time.Time
+	timer *time.Timer
 }
 
 func NewInboundCoordinatorJobWorker(h *Handler) *InboundCoordinatorJobWorker {
@@ -45,7 +57,39 @@ func NewInboundCoordinatorJobWorker(h *Handler) *InboundCoordinatorJobWorker {
 		handler: h,
 		notify:  make(chan struct{}, inboundCoordinatorWorkerConcurrency),
 		done:    make(chan struct{}),
+		wakeups: make(map[string]windowWakeup),
 	}
+}
+
+// WakeAt notifies the workers when job becomes claimable. A job's collect
+// deadline only moves later (coordinatorCollectDeadline), but callers run
+// asynchronously and can arrive out of order, so only a later deadline
+// replaces the pending wake-up; an earlier one is dropped.
+func (w *InboundCoordinatorJobWorker) WakeAt(jobID string, at time.Time) {
+	if w == nil || jobID == "" {
+		return
+	}
+	w.wakeMu.Lock()
+	defer w.wakeMu.Unlock()
+	if w.wakeups == nil {
+		w.wakeups = make(map[string]windowWakeup)
+	}
+	if previous, ok := w.wakeups[jobID]; ok {
+		if !at.After(previous.at) {
+			return
+		}
+		previous.timer.Stop()
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(time.Until(at)+5*time.Millisecond, func() {
+		w.wakeMu.Lock()
+		if w.wakeups[jobID].timer == timer {
+			delete(w.wakeups, jobID)
+		}
+		w.wakeMu.Unlock()
+		w.Notify()
+	})
+	w.wakeups[jobID] = windowWakeup{at: at, timer: timer}
 }
 
 func (w *InboundCoordinatorJobWorker) Notify() {
@@ -204,6 +248,9 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	jobCtx, err = w.handler.coordinatorCheckpointContext(jobCtx, job)
 	if err != nil {
 		return true, w.retry(ctx, job, err)
+	}
+	if windowHistoryEligibleJob(job) {
+		jobCtx = inboundcoord.ContextWithWindowHistoryEligible(jobCtx)
 	}
 	var recordedDecision *inboundcoord.Decision
 	jobCtx = inboundcoord.WithDecisionObserver(jobCtx, func(decision inboundcoord.Decision) {
@@ -679,7 +726,8 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	if err != nil {
 		return nil, job, err
 	}
-	collectAt := time.Now().UTC().Add(inboundCoordinatorCollectWindow)
+	collectQuiet := h.coordinatorCollectQuiet(dispatchContext.AgentID)
+	collectAt := time.Now().UTC().Add(collectQuiet)
 	if err := h.registerDingTalkResponseRoute(ctx, tx, command, dispatchContext); err != nil {
 		return nil, job, err
 	}
@@ -718,7 +766,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			job, err = qtx.UpdateInboundCoordinatorJobCollect(ctx, db.UpdateInboundCoordinatorJobCollectParams{
 				ID:          existing.ID,
 				Command:     mergedRaw,
-				AvailableAt: pgtype.Timestamptz{Time: coordinatorCollectDeadline(existing.CreatedAt.Time, time.Now().UTC()), Valid: true},
+				AvailableAt: pgtype.Timestamptz{Time: coordinatorCollectDeadline(existing.CreatedAt.Time, time.Now().UTC(), collectQuiet), Valid: true},
 			})
 			if err != nil {
 				return nil, job, err
@@ -746,6 +794,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			if h.SceneMemoryWorker != nil {
 				h.SceneMemoryWorker.Notify()
 			}
+			h.prefetchCoordinatorWindowHistory(job)
 			// Every callback is durable in the merged command. Settle extras
 			// only when the complete window has actually been handled.
 			slog.Info("inbound coordinator job collected",
@@ -755,6 +804,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 				"message_count", len(merged.Event.Data.Messages),
 				"collect_until", job.AvailableAt.Time,
 				"collect_age_ms", time.Since(job.CreatedAt.Time).Milliseconds(),
+				"collect_quiet_ms", collectQuiet.Milliseconds(),
 			)
 			return response, job, nil
 		}
@@ -816,10 +866,12 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	if h.SceneMemoryWorker != nil {
 		h.SceneMemoryWorker.Notify()
 	}
+	h.prefetchCoordinatorWindowHistory(job)
 	slog.Info("inbound coordinator job accepted",
 		"event", "inbound_coordinator_job_accepted",
 		"job_id", util.UUIDToString(job.ID),
 		"source", command.Source.Type,
+		"collect_quiet_ms", collectQuiet.Milliseconds(),
 	)
 	h.publishChatToUser(protocol.EventChatMessage, util.UUIDToString(job.WorkspaceID), util.UUIDToString(job.UserID), "member", util.UUIDToString(job.UserID), util.UUIDToString(job.ChatSessionID), protocol.ChatMessagePayload{
 		ChatSessionID: util.UUIDToString(job.ChatSessionID),
@@ -829,6 +881,84 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 		SessionCreated: true,
 	})
 	return response, job, nil
+}
+
+// prefetchCoordinatorWindowHistory starts the DingTalk history read of a
+// committed job that is still collecting, from the same persisted command
+// the claiming worker restores, and wakes this replica's workers when the
+// window closes so the replica holding the read usually claims the job. It
+// does nothing unless the Coordinator enables the read for the agent.
+func (h *Handler) prefetchCoordinatorWindowHistory(job db.InboundCoordinatorJob) {
+	coordinator := h.InboundCoordinator
+	if coordinator == nil || !job.AgentID.Valid || !job.AvailableAt.Valid {
+		return
+	}
+	// Off the admission path: the owner-switch lookup and command restore
+	// must not delay the Router's 202.
+	go func() {
+		command, err := restoreInboundCoordinatorCommand(job.Command, job.EndpointNamespaceID, h.TaskCompletionTargetIdentity)
+		if err != nil || strings.TrimSpace(command.TaskFinishedTaskID) != "" || command.Event.Domain != "channel" || command.Event.Type != "message.created" {
+			return
+		}
+		turn := coordinatorHistoryInputs(command, job.AgentID, job.CreatedAt.Time)
+		// The job id is the claimed decision's trace id; it only labels the log.
+		turn.TraceID = util.UUIDToString(job.ID)
+		if !coordinator.PrefetchWindowHistory(turn) {
+			return
+		}
+		h.InboundCoordinatorWorker.WakeAt(util.UUIDToString(job.ID), job.AvailableAt.Time)
+		h.shadowCoordinatorFirstRound(job, command)
+	}()
+}
+
+// shadowCoordinatorFirstRound starts the collect-window shadow of the job's
+// first model request. It assembles the Turn from what the claim uses: the
+// persisted command, its execution plan, the agent row, the idempotency key
+// and the claim context (trace id and history cutoff), without the plan
+// checkpoint and decision observer that only the lease holder installs.
+func (h *Handler) shadowCoordinatorFirstRound(job db.InboundCoordinatorJob, command DispatchCommand) {
+	coordinator := h.InboundCoordinator
+	if coordinator == nil || h.Queries == nil || command.ProactiveConversation || dispatchHasAttachments(command) {
+		return
+	}
+	dispatchContext := agentDispatchContext{
+		EndpointID:          job.DispatchEndpointID,
+		EndpointNamespaceID: job.EndpointNamespaceID,
+		UserID:              job.UserID,
+		WorkspaceID:         job.WorkspaceID,
+		AgentID:             job.AgentID,
+	}
+	plan, err := buildAgentDispatchExecutionPlan(command, dispatchContext)
+	if err != nil {
+		return
+	}
+	jobID := util.UUIDToString(job.ID)
+	ctx, cancel := context.WithTimeout(context.Background(), coordinatorShadowAssemblyTimeout)
+	defer cancel()
+	ctx = inboundcoord.ContextWithTraceID(ctx, jobID)
+	ctx = inboundcoord.ContextWithHistoryBefore(ctx, job.CreatedAt.Time)
+	agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: job.AgentID, WorkspaceID: job.WorkspaceID})
+	if err != nil || agent.ArchivedAt.Valid {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/internal/inbound-coordinator", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Idempotency-Key", job.IdempotencyKey)
+	turn := coordinatorDecisionTurn(ctx, h, coordinator, command, agent, plan.Prompt.DisplayContent, job.UserID,
+		dispatchRuntimeContext(command, dispatchIdempotencyKey(req, command)))
+	turn.TraceID = jobID
+	coordinator.ShadowFirstRound(turn)
+}
+
+// windowHistoryEligibleJob reports whether this claim is the first,
+// undisturbed claim of the job's collect window: claiming increments
+// attempt_count, a park restores it but records last_error, and a retry or
+// lease takeover leaves a higher count. Only this claim may reuse the
+// window's early history read.
+func windowHistoryEligibleJob(job db.InboundCoordinatorJob) bool {
+	return job.AttemptCount == 1 && !job.LastError.Valid
 }
 
 func (h *Handler) persistCoordinatorJobChat(ctx context.Context, job db.InboundCoordinatorJob, decision inboundcoord.Decision) error {

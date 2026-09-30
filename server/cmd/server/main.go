@@ -582,6 +582,8 @@ func main() {
 	h.PRRefresh.Start(sweepCtx)
 	if h.FCE2BLauncher != nil {
 		go h.FCE2BLauncher.RunDSHBuildWorker(sweepCtx, h.Storage)
+		go h.TaskService.RunRuntimeReadinessListener(sweepCtx)
+		go h.FCE2BLauncher.RunRuntimeReadinessReconciler(sweepCtx)
 	}
 
 	// Channel inbound supervisor (MUL-3620): holds the §4.4 WS lease per
@@ -704,6 +706,11 @@ func main() {
 	// HTTP is fully drained — safe to stop the sweeper and flush the
 	// final batch of queued heartbeat bumps.
 	sweepCancel()
+	launchShutdownCtx, launchShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := h.TaskService.ShutdownRuntimeLaunches(launchShutdownCtx); err != nil {
+		slog.Warn("runtime launch shutdown incomplete; leases will expire", "error", err)
+	}
+	launchShutdownCancel()
 	heartbeatScheduler.Stop()
 	if h.WebhookDeliveryWorker != nil && !h.WebhookDeliveryWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("webhook delivery worker did not exit within shutdown timeout")

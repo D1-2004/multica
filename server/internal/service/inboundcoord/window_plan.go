@@ -235,45 +235,8 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 		if err := dec.Decode(&a); err != nil {
 			return Decision{}, fmt.Errorf("invalid actions[%d]: %w", actionIndex, err)
 		}
-		allowed := map[string]bool{"kind": true}
-		if turn.Loop != LoopTaskFinished {
-			allowed["source_refs"] = true
-		}
-		work := false
-		switch a.Kind {
-		case "start_work", "continue_work":
-			work = true
-			for _, k := range []string{"purpose", "intent", "context", "reply", "receipt_language"} {
-				allowed[k] = true
-			}
-			if a.Kind == "continue_work" {
-				allowed["issue_id"] = true
-				allowed["basis"] = true
-			}
-		case "decline":
-			allowed["reason_code"] = true
-			allowed["constraint_quote"] = true
-			allowed["reply"] = true
-		case "clarify":
-			allowed["missing_fields"] = true
-			allowed["reply"] = true
-		case "report_status":
-			allowed["state_refs"] = true
-			allowed["reply"] = true
-		case "acknowledge":
-			allowed["ack_kind"] = true
-			allowed["reply"] = true
-		case "describe_capabilities":
-			allowed["reply"] = true
-		case "report_memory":
-			allowed["memory_revision"] = true
-			allowed["reply"] = true
-		case "report_result":
-			allowed["result_ref"] = true
-			allowed["reply"] = true
-		case "ignore":
-			allowed["reason"] = true
-		default:
+		allowed, work := coordinationAllowedFields(a.Kind, turn.Loop)
+		if allowed == nil {
 			return Decision{}, fmt.Errorf("unknown coordination kind %q", a.Kind)
 		}
 		for k := range fields {
@@ -572,4 +535,49 @@ func windowItemSourceContent(turn Turn, ref string, u WindowUtterance) string {
 		ContentStatus: status, Content: u.ReplyToContent,
 	})
 	return content + windowItemQuoteLabel + string(quote)
+}
+
+func coordinationAllowedFields(kind string, loop Loop) (map[string]bool, bool) {
+	allowed := map[string]bool{"kind": true}
+	if loop != LoopTaskFinished {
+		allowed["source_refs"] = true
+	}
+	work := false
+	switch kind {
+	case "start_work", "continue_work":
+		work = true
+		for _, k := range []string{"purpose", "intent", "context", "reply", "receipt_language"} {
+			allowed[k] = true
+		}
+		if kind == "continue_work" {
+			allowed["issue_id"] = true
+			allowed["basis"] = true
+		}
+	case "decline":
+		allowed["reason_code"] = true
+		allowed["constraint_quote"] = true
+		allowed["reply"] = true
+	case "clarify":
+		allowed["missing_fields"] = true
+		allowed["reply"] = true
+	case "report_status":
+		allowed["state_refs"] = true
+		allowed["reply"] = true
+	case "acknowledge":
+		allowed["ack_kind"] = true
+		allowed["reply"] = true
+	case "describe_capabilities":
+		allowed["reply"] = true
+	case "report_memory":
+		allowed["memory_revision"] = true
+		allowed["reply"] = true
+	case "report_result":
+		allowed["result_ref"] = true
+		allowed["reply"] = true
+	case "ignore":
+		allowed["reason"] = true
+	default:
+		return nil, false
+	}
+	return allowed, work
 }

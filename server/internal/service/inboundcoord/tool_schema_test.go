@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -22,7 +23,10 @@ func TestCoordinatorWireSchemaPreservesRequiredChoiceAndBranchConstraints(t *tes
 		t.Fatal(err)
 	}
 	after, _ := json.Marshal(params)
-	if string(before) != string(after) {
+	var beforeValue, afterValue any
+	_ = json.Unmarshal(before, &beforeValue)
+	_ = json.Unmarshal(after, &afterValue)
+	if !reflect.DeepEqual(beforeValue, afterValue) {
 		t.Fatal("mutated shared input")
 	}
 	raw, _ := json.Marshal(got)

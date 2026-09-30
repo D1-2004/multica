@@ -529,6 +529,9 @@ func reclaimASBSandboxWithRetries(ctx context.Context, client *ASBClient, sandbo
 		}
 		cancel()
 		if err == nil {
+			if reclaimed {
+				notifyASBReclaimed(ctx)
+			}
 			return reclaimed, nil
 		}
 		if stopASBCapacityReclaim(ctx, err) {
