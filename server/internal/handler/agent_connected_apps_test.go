@@ -18,6 +18,7 @@ const (
 	appsSceneEnabled   = "cidAppsEnabled=="
 	appsSceneConnected = "cidAppsConnected=="
 	appsSceneOff       = "cidAppsOff=="
+	appsSceneDirect    = "cidAppsDirect=="
 	appsPersonBoth     = "staff-apps-both"
 	appsPersonCred     = "staff-apps-cred"
 )
@@ -180,7 +181,18 @@ func TestAgentConnectedAppsStatusAndUsage(t *testing.T) {
 		VALUES ($1, $2, 'dingtalk', $3, $4, 'group', 'Memory title', 'notes')`, testWorkspaceID, f.agentID, catalogTestOrg, appsSceneEnabled); err != nil {
 		t.Fatal(err)
 	}
-	if err := contextcap.RegisterDirectScene(ctx, testPool, testWorkspaceID, f.agentID, catalogTestOrg, appsSceneConnected, "Direct chat"); err != nil {
+	// Rows an earlier release stored on a 1:1 chat's own key: the runtime
+	// ignores them (the chat's configuration is its person's), so they do
+	// not count either.
+	f.bindScope(t, contextcap.ScopeScene, appsSceneDirect, "Direct chat", dcr.ID, true, nil)
+	f.storeScopeCredential(t, contextcap.ScopeScene, catalogTestOrg, appsSceneDirect, dcr.ID, "")
+	if err := contextcap.RegisterDirectScene(ctx, testPool, testWorkspaceID, f.agentID, catalogTestOrg, appsSceneDirect, "Direct chat"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := contextcap.UpsertScenePrompt(ctx, testPool, contextcap.SceneConfigWrite{
+		WorkspaceID: testWorkspaceID, AgentID: f.agentID, OrgID: catalogTestOrg, SceneKey: appsSceneConnected,
+		SceneKind: contextcap.SceneKindGroup, SceneTitle: "Connected group", ActorID: testUserID,
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -208,14 +220,14 @@ func TestAgentConnectedAppsStatusAndUsage(t *testing.T) {
 	if len(scenes) != 2 {
 		t.Fatalf("detail scenes = %+v, want the enabled and the connected scene only", detail.Scenes)
 	}
-	// Newest activity first: the 1:1 registration is the latest write.
+	// Newest activity first: the group's configuration is the latest write.
 	if detail.Scenes[0].SceneKey != appsSceneConnected || detail.Scenes[1].SceneKey != appsSceneEnabled {
 		t.Fatalf("detail scene order = %+v", detail.Scenes)
 	}
 	if got := scenes[appsSceneEnabled]; got != (connectedAppSceneDTO{SceneKey: appsSceneEnabled, Title: "Memory title", Kind: "group", Enabled: true}) {
 		t.Fatalf("enabled scene = %+v", got)
 	}
-	if got := scenes[appsSceneConnected]; got.Title != "Direct chat" || got.Kind != "dm" || got.Enabled || !got.Connected || !strings.HasPrefix(got.Account, "••••") {
+	if got := scenes[appsSceneConnected]; got.Title != "Connected group" || got.Kind != "group" || got.Enabled || !got.Connected || !strings.HasPrefix(got.Account, "••••") {
 		t.Fatalf("connected scene = %+v", got)
 	}
 	if len(detail.Persons) != 2 {
@@ -408,7 +420,11 @@ func TestContextConfigConnectionStartAcceptsManagerForScenes(t *testing.T) {
 	ctx := context.Background()
 	dcr := f.create(t, f.dcr)
 	f.offer(t, dcr.ID)
-	if err := contextcap.RegisterDirectScene(ctx, testPool, testWorkspaceID, f.agentID, catalogTestOrg, catalogTestScene, "Known scene"); err != nil {
+	// A group scene the agent has seen (its configuration row).
+	if _, err := contextcap.UpsertScenePrompt(ctx, testPool, contextcap.SceneConfigWrite{
+		WorkspaceID: testWorkspaceID, AgentID: f.agentID, OrgID: catalogTestOrg, SceneKey: catalogTestScene,
+		SceneKind: contextcap.SceneKindGroup, SceneTitle: "Known scene", ActorID: testUserID,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	startPath := "/api/context-capabilities/agents/" + f.agentID + "/connections/start"

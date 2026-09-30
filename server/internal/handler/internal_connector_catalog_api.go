@@ -239,10 +239,13 @@ func (h *Handler) RefreshInternalConnectorTools(w http.ResponseWriter, r *http.R
 // StartContextConfigConnection starts connecting the caller's own account
 // (person scope) or a group's account (scene scope) of an official app
 // connector from the mobile configuration page. It requires the caller's
-// live grant for exactly that scope, or for a scene of an agent the caller
-// manages (contextCapRequireScope); startConnectorOAuth then applies the
-// PUT credentials connector rule (scene: offered; person: offered or
-// globally granted) and re-checks it at the callback.
+// live grant for exactly that scope, or for a group scene of an agent the
+// caller manages (contextCapRequireScope). A 1:1 chat scene connects its
+// person's account, which only that person may do (403 person_only for a
+// manager; 409 dm_person_unknown when the person is unknown).
+// startConnectorOAuth then applies the PUT credentials connector rule
+// (scene: offered; person: offered or globally granted) and re-checks it at
+// the callback.
 func (h *Handler) StartContextConfigConnection(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {
@@ -266,14 +269,18 @@ func (h *Handler) StartContextConfigConnection(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid connector_id")
 		return
 	}
-	grant, ok := h.contextCapRequireScope(w, r, a, userID, input.ScopeType, input.ScopeKey)
+	grant, ok := h.contextCapRequireScope(w, r, a, userID, input.ScopeType, input.ScopeKey, contextCapNeedCredential)
 	if !ok {
 		return
 	}
+	// The state stores the effective scope (a 1:1 chat scene's person), so
+	// the account lands there; SceneKey keeps the dm scene the caller asked
+	// for, so the callback re-checks the same request.
 	started, err := h.startConnectorOAuth(r.Context(), connectorOAuthStart{
 		connectorOAuthScope: connectorOAuthScope{
 			WorkspaceID: a.WorkspaceID, ConnectorID: uuidToString(connectorUUID), UserID: userID,
 			ScopeType: grant.ScopeType, AgentID: a.ID, OrgID: a.OrgID, ScopeKey: grant.ScopeKey,
+			SceneKey: grant.DirectSceneKey,
 		},
 		ReturnTo: input.ReturnTo,
 	})
@@ -298,6 +305,11 @@ func (h *Handler) ConnectorOAuthCallback(w http.ResponseWriter, r *http.Request)
 // own timeout), because the state is consumed first and a dropped
 // connection must not lose a code that was already accepted.
 func (h *Handler) serveConnectorOAuthCallback(w http.ResponseWriter, r *http.Request, via string) {
+	// A callback of another deployment's connect (its state names that
+	// deployment) is forwarded there or refused before any local handling.
+	if h.forwardConnectorOAuthCallback(w, r, via) {
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	query := r.URL.Query()
