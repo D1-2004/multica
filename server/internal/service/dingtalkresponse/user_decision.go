@@ -106,8 +106,47 @@ func (s *decisionSession) Consume(ctx context.Context, ready func(), consume fun
 	if s.events != nil && dwsclient.SDKSession(s.dir) {
 		return awaitEventConnection(ctx, s.events, s.identity, ready)
 	}
-	return s.cli.ConsumeCardEvents(ctx, s.dir, ready, consume)
+	if s.events == nil {
+		return s.cli.ConsumeCardEvents(ctx, s.dir, ready, consume)
+	}
+	// Switched on while this consumer runs on the dws CLI: end it, so the
+	// decision service reopens the identity on the shared connection
+	// instead of keeping a second stream until the consumer's cycle ends.
+	// The switch also selects the SDK transport, so the reopened session
+	// never lands back here.
+	cliCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	switched := make(chan struct{})
+	go func() {
+		tick := time.NewTicker(switchCheckInterval)
+		defer tick.Stop()
+		for {
+			select {
+			case <-cliCtx.Done():
+				return
+			case <-tick.C:
+				if s.events.Active() {
+					// Start the shared stream now, not at its next sweep.
+					s.events.Kick()
+					close(switched)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	err := s.cli.ConsumeCardEvents(cliCtx, s.dir, ready, consume)
+	select {
+	case <-switched:
+		return errors.New("DWS event connections switched on")
+	default:
+		return err
+	}
 }
+
+// switchCheckInterval is how often a dws CLI consumer checks whether the
+// shared event connections were switched on.
+var switchCheckInterval = time.Second
 
 // eventConnectionLost is how long a connection may stay gone after it was
 // ready before the consumer reports it lost (the service then re-opens).
