@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strconv"
@@ -71,6 +72,7 @@ func (h *Handler) GetAgentA2ACard(w http.ResponseWriter, r *http.Request) {
 		Streaming:              true,
 		PushNotifications:      h.A2AService != nil && h.A2AService.PushSecrets != nil,
 		AgentIdentityExtension: true,
+		DingTalkEventExtension: true,
 		InputModes:             contentModes,
 		OutputModes:            contentModes,
 	})
@@ -122,8 +124,14 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 		writeAgentA2AUnauthorized(w)
 		return
 	}
-	credential, err := h.Queries.GetAgentA2ACredentialByTokenHash(r.Context(), auth.HashToken(rawToken))
+	tokenHash := auth.HashToken(rawToken)
+	credential, err := h.Queries.GetAgentA2ACredentialByTokenHash(r.Context(), tokenHash)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) && h.agentA2AForwardKeyRevoked(r.Context(), tokenHash) {
+			// Lets a production registry tell a withdrawn forward key from
+			// any other authentication failure.
+			w.Header().Set(agentA2AForwardKeyRejectedHeader, "revoked")
+		}
 		writeAgentA2AUnauthorized(w)
 		return
 	}
@@ -132,6 +140,21 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 		!credential.AgentOwnerID.Valid ||
 		!credential.DelegatedByUserID.Valid ||
 		credential.AgentOwnerID.Bytes != credential.DelegatedByUserID.Bytes {
+		writeAgentA2AUnauthorized(w)
+		return
+	}
+	stale, err := h.agentA2AForwardCredentialStale(r.Context(), credential)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "A2A forward state is temporarily unavailable")
+		return
+	}
+	if stale {
+		slog.Warn("stale A2A production-forward key rejected",
+			"event", "a2a_forward_key_stale",
+			"agent_id", uuidToString(credential.AgentID),
+			"client_id", uuidToString(credential.ClientID),
+		)
+		w.Header().Set(agentA2AForwardKeyRejectedHeader, "stale")
 		writeAgentA2AUnauthorized(w)
 		return
 	}
@@ -150,6 +173,9 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusBadRequest, "failed to read A2A request body")
+		return
+	}
+	if h.maybeForwardAgentA2ARPC(w, r, body, credential, publicAgentID) {
 		return
 	}
 	r.Header.Del("Authorization")

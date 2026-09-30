@@ -27,6 +27,9 @@ type CardConfig struct {
 	Streaming              bool
 	PushNotifications      bool
 	AgentIdentityExtension bool
+	// DingTalkEventExtension declares the DEAP DingTalk event extension as
+	// optional so DEAP attaches conversation, sender and thread context.
+	DingTalkEventExtension bool
 	InputModes             []string
 	OutputModes            []string
 }
@@ -191,11 +194,18 @@ func BuildAgentCard(config CardConfig) (*a2a.AgentCard, error) {
 		ExtendedAgentCard: false,
 	}
 	if config.AgentIdentityExtension {
-		capabilities.Extensions = []a2a.AgentExtension{{
+		capabilities.Extensions = append(capabilities.Extensions, a2a.AgentExtension{
 			URI:         AgentIdentityExtensionURI,
 			Required:    false,
 			Description: "Accepts an optional external Multica Agent Identity ContextToken for one task turn.",
-		}}
+		})
+	}
+	if config.DingTalkEventExtension {
+		capabilities.Extensions = append(capabilities.Extensions, a2a.AgentExtension{
+			URI:         DingTalkEventExtensionURI,
+			Required:    false,
+			Description: "DingTalk event context",
+		})
 	}
 
 	return &a2a.AgentCard{

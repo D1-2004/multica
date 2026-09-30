@@ -5,6 +5,8 @@ import type {
   CreateAgentA2ACredentialRequest,
   UpdateAgentA2AClientRequest,
   UpdateAgentA2AConfigRequest,
+  UpdateAgentA2AOperatorIdentityRequest,
+  UpdateAgentA2AProdForwardRequest,
 } from "../types";
 import { agentA2AKeys } from "./queries";
 
@@ -83,6 +85,38 @@ export function useDeleteAgentA2ACredential(wsId: string, agentId: string) {
       clientId: string;
       credentialId: string;
     }) => api.deleteAgentA2ACredential(agentId, clientId, credentialId),
+    onSuccess: () => queryClient.invalidateQueries({
+      queryKey: agentA2AKeys.all(wsId, agentId),
+    }),
+  });
+}
+
+export function useUpdateAgentA2AOperatorIdentity(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpdateAgentA2AOperatorIdentityRequest) =>
+      api.updateAgentA2AOperatorIdentity(agentId, data),
+    onSuccess: () => queryClient.invalidateQueries({
+      queryKey: agentA2AKeys.all(wsId, agentId),
+    }),
+  });
+}
+
+export function useDeleteAgentA2AOperatorIdentity(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.deleteAgentA2AOperatorIdentity(agentId),
+    onSuccess: () => queryClient.invalidateQueries({
+      queryKey: agentA2AKeys.all(wsId, agentId),
+    }),
+  });
+}
+
+export function useUpdateAgentA2AProdForward(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: UpdateAgentA2AProdForwardRequest) =>
+      api.updateAgentA2AProdForward(agentId, data),
     onSuccess: () => queryClient.invalidateQueries({
       queryKey: agentA2AKeys.all(wsId, agentId),
     }),

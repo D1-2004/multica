@@ -222,6 +222,7 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: scope.WorkspaceID,
 		AgentID:     scope.Agent.ID,
 	})
+	wasEnabled := err == nil && existing.Enabled
 	if err == nil {
 		publicAgentID = existing.PublicAgentID
 	} else if !errors.Is(err, pgx.ErrNoRows) {
@@ -270,6 +271,7 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 			Streaming:              true,
 			PushNotifications:      h.A2AService != nil && h.A2AService.PushSecrets != nil,
 			AgentIdentityExtension: true,
+			DingTalkEventExtension: true,
 			InputModes:             contentModes,
 			OutputModes:            contentModes,
 		}); buildErr != nil {
@@ -297,6 +299,13 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update agent A2A configuration")
 		return
+	}
+	if !wasEnabled && *request.Enabled {
+		// A pre-release Agent whose identity was bound before A2A was
+		// published registers for production forwards now. Unpublishing keeps
+		// the registration so forwarded tasks stay readable and cancellable;
+		// the endpoint itself refuses new turns.
+		h.syncAgentA2AForwardRegistration(r.Context(), scope, false)
 	}
 	response, err := h.loadAgentA2AConfigResponse(r, scope)
 	if err != nil {
@@ -742,6 +751,7 @@ func (h *Handler) agentA2AEndpointPresentation(
 		Streaming:              true,
 		PushNotifications:      h.A2AService != nil && h.A2AService.PushSecrets != nil,
 		AgentIdentityExtension: true,
+		DingTalkEventExtension: true,
 		InputModes:             contentModes,
 		OutputModes:            contentModes,
 	})

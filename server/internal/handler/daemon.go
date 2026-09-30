@@ -1721,6 +1721,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		nativeA2AInvocation := requestUsesNativeA2AInvocation(r, task.Context, rt)
 		resp.A2AInvocation = nativeA2AInvocation
 		resp.A2AManagedRuntimeV2 = nativeA2AInvocation && rt.RuntimeMode == "cloud"
+		resp.A2ARunnerIdentity = resp.A2AManagedRuntimeV2 && service.IsFCE2BRuntime(rt) && service.UsesA2AOperatorDWSIdentity(task.Context)
 		if !a2aTask && !rt.OwnerID.Valid {
 			slog.Error("batch claim: runtime owner missing; cancelling task to avoid unscoped agent credentials",
 				"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
@@ -2764,6 +2765,17 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 			resp.ChatMessage = strings.Join(parts, "\n\n")
+			// An A2A session has no channel binding, so the Audience line would
+			// always read "direct room". The DEAP DingTalk inbound envelope on
+			// the current message says whether it came from a group.
+			if resp.ChatChannelType == "" && resp.ChatType == "" && service.IsA2ATaskOrigin(task.Context) {
+				for i := len(resp.ChatMessageSourcePayloads) - 1; i >= 0; i-- {
+					if chatType := service.A2ADingTalkChatType(resp.ChatMessageSourcePayloads[i].Payload); chatType != "" {
+						resp.ChatType = chatType
+						break
+					}
+				}
+			}
 
 			// Fail closed: a task-owned direct task that resolves to no user text
 			// (and is not the agent's proactive intro) must never dispatch an
@@ -3320,6 +3332,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	nativeA2AInvocation := requestUsesNativeA2AInvocation(r, task.Context, runtime)
 	resp.A2AInvocation = nativeA2AInvocation
 	resp.A2AManagedRuntimeV2 = nativeA2AInvocation && runtime.RuntimeMode == "cloud"
+	resp.A2ARunnerIdentity = resp.A2AManagedRuntimeV2 && service.IsFCE2BRuntime(runtime) && service.UsesA2AOperatorDWSIdentity(task.Context)
 	requeueFailedClaim := func(reason string) {
 		if _, err := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); err != nil {
 			slog.Error("task claim: failed to requeue after finalization error",

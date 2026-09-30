@@ -774,6 +774,10 @@ type AgentTaskResponse struct {
 	// A2AManagedRuntimeV2 is emitted only after the server has verified the
 	// managed Runtime metadata and daemon's a2a-invocation-v2 capability.
 	A2AManagedRuntimeV2 bool `json:"a2a_managed_runtime_v2,omitempty"`
+	// A2ARunnerIdentity attests that the FC/E2B runner redeemed a server-minted
+	// operator-binding ContextToken for this A2A turn, so the daemon may hand
+	// the runner's task-local DWS/GitHub directories to the child process.
+	A2ARunnerIdentity bool `json:"a2a_runner_identity,omitempty"`
 	// Attribution is the resolved accountable-human provenance for this run
 	// (MUL-4302 §9): the source label + precise flag, the initiator (accountable)
 	// and originator refs, the evidence pointer, and lineage. Always present (the

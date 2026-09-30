@@ -69,6 +69,19 @@ type A2aContext struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
+type A2aForwardRegistration struct {
+	DwsUid          string             `json:"dws_uid"`
+	OrgID           string             `json:"org_id"`
+	RpcUrl          string             `json:"rpc_url"`
+	TargetClientID  pgtype.UUID        `json:"target_client_id"`
+	TokenEncrypted  []byte             `json:"token_encrypted"`
+	TokenSha256     string             `json:"token_sha256"`
+	TargetAgentName string             `json:"target_agent_name"`
+	SignedAtMs      int64              `json:"signed_at_ms"`
+	RegisteredAt    pgtype.Timestamptz `json:"registered_at"`
+	RevokedAt       pgtype.Timestamptz `json:"revoked_at"`
+}
+
 type A2aPushConfig struct {
 	ID                         pgtype.UUID        `json:"id"`
 	BindingID                  pgtype.UUID        `json:"binding_id"`
@@ -214,6 +227,51 @@ type AgentA2aEndpoint struct {
 	CardSkills        []byte             `json:"card_skills"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentA2aForwardClient struct {
+	ClientID    pgtype.UUID        `json:"client_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	DwsUid      string             `json:"dws_uid"`
+	OrgID       string             `json:"org_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	RetiredAt   pgtype.Timestamptz `json:"retired_at"`
+}
+
+type AgentA2aForwardRegistrant struct {
+	AgentID               pgtype.UUID        `json:"agent_id"`
+	RegistryOrigin        string             `json:"registry_origin"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ClientID              pgtype.UUID        `json:"client_id"`
+	ClientUid             string             `json:"client_uid"`
+	ClientOrgID           string             `json:"client_org_id"`
+	RegisteredRpcUrl      pgtype.Text        `json:"registered_rpc_url"`
+	RegisteredTokenSha256 pgtype.Text        `json:"registered_token_sha256"`
+	RegisteredAt          pgtype.Timestamptz `json:"registered_at"`
+	LastError             pgtype.Text        `json:"last_error"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentA2aOperatorConfig struct {
+	AgentID               pgtype.UUID        `json:"agent_id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	DwsUid                pgtype.Text        `json:"dws_uid"`
+	DwsOrgID              pgtype.Text        `json:"dws_org_id"`
+	DeapAgentUuid         pgtype.Text        `json:"deap_agent_uuid"`
+	IdentityUpdatedBy     pgtype.UUID        `json:"identity_updated_by"`
+	IdentityUpdatedAt     pgtype.Timestamptz `json:"identity_updated_at"`
+	ForwardRpcUrl         pgtype.Text        `json:"forward_rpc_url"`
+	ForwardTokenEncrypted []byte             `json:"forward_token_encrypted"`
+	ForwardSourceClientID pgtype.UUID        `json:"forward_source_client_id"`
+	ForwardUpdatedBy      pgtype.UUID        `json:"forward_updated_by"`
+	ForwardUpdatedAt      pgtype.Timestamptz `json:"forward_updated_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	A2aIdentityEnabled    bool               `json:"a2a_identity_enabled"`
+	AcceptProdForward     bool               `json:"accept_prod_forward"`
+	UpdatedBy             pgtype.UUID        `json:"updated_by"`
 }
 
 type AgentBuilderDraft struct {

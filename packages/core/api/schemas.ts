@@ -90,6 +90,7 @@ import type {
   AgentA2AConfig,
   AgentA2ACredential,
   AgentA2ACredentialSecretResponse,
+  AgentA2AOperatorConfig,
 } from "../types";
 import type {
   CloudRuntimeNode,
@@ -4375,6 +4376,75 @@ export const EMPTY_AGENT_A2A_CONFIG: AgentA2AConfig = {
 export const EMPTY_AGENT_A2A_CREDENTIAL_SECRET_RESPONSE: AgentA2ACredentialSecretResponse = {
   credential: EMPTY_AGENT_A2A_CREDENTIAL,
   token: "",
+};
+
+// Operator settings fail closed: a malformed or unknown response falls back to
+// operator=false, which hides the operator card.
+export const AgentA2AOperatorConfigSchema = z.object({
+  operator: z.boolean().catch(false),
+  dws_identity: z.object({
+    uid: z.string(),
+    org_id: z.string(),
+    display_name: z.string().optional().default(""),
+    organization_name: z.string().optional().default(""),
+    deap_agent_uuid: z.string().nullable().optional().default(null),
+    a2a_enabled: z.boolean().optional().default(false),
+    bound_at: z.string().optional().default(""),
+  }).loose().nullable().optional().catch(null),
+  prod_forward: z.object({
+    accept: z.boolean().optional().default(true),
+    blocked_reason: z.string().optional().catch(""),
+    registrations: z.array(z.object({
+      registry: z.string(),
+      registered_at: z.string().nullable().optional().catch(null),
+      current: z.boolean().optional().catch(false),
+      error: z.string().optional().catch(""),
+    }).loose()).optional().catch([]),
+  }).loose().nullable().optional().catch(null),
+  forward_target: z.object({
+    rpc_url: z.string(),
+    agent_name: z.string().optional().default(""),
+    registered_at: z.string().optional().default(""),
+  }).loose().nullable().optional().catch(null),
+}).loose().transform((config): AgentA2AOperatorConfig => ({
+  operator: config.operator === true,
+  dwsIdentity: config.dws_identity
+    ? {
+      uid: config.dws_identity.uid,
+      orgId: config.dws_identity.org_id,
+      displayName: config.dws_identity.display_name,
+      organizationName: config.dws_identity.organization_name,
+      deapAgentUuid: config.dws_identity.deap_agent_uuid ?? null,
+      a2aEnabled: config.dws_identity.a2a_enabled === true,
+      boundAt: config.dws_identity.bound_at,
+    }
+    : null,
+  prodForward: config.prod_forward
+    ? {
+      accept: config.prod_forward.accept !== false,
+      blockedReason: config.prod_forward.blocked_reason ?? "",
+      registrations: (config.prod_forward.registrations ?? []).map((registration) => ({
+        registry: registration.registry,
+        registeredAt: registration.registered_at ?? null,
+        current: registration.current === true,
+        error: registration.error ?? "",
+      })),
+    }
+    : null,
+  forwardTarget: config.forward_target
+    ? {
+      rpcUrl: config.forward_target.rpc_url,
+      agentName: config.forward_target.agent_name,
+      registeredAt: config.forward_target.registered_at,
+    }
+    : null,
+}));
+
+export const EMPTY_AGENT_A2A_OPERATOR_CONFIG: AgentA2AOperatorConfig = {
+  operator: false,
+  dwsIdentity: null,
+  prodForward: null,
+  forwardTarget: null,
 };
 export const DingTalkInstallationSchema = z
   .object({
