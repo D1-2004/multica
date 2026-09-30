@@ -2801,6 +2801,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/coordinator-conversations", h.ListAgentCoordinatorConversations)
 					r.Get("/coordinator-conversations/{sessionId}/messages", h.ListAgentCoordinatorConversationMessages)
 					r.Get("/scene-memory", h.ListAgentSceneMemory)
+					r.Get("/scene-memory/{memoryId}", h.GetAgentSceneMemory)
 					r.Put("/scene-memory/{memoryId}", h.UpdateAgentSceneMemory)
 					r.Post("/scene-memory/{memoryId}/reset", h.ResetAgentSceneMemory)
 					r.Post("/scene-memory/{memoryId}/relations/clear", h.ClearAgentSceneRelations)
@@ -2808,6 +2809,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// read-only scope summaries (docs/context-capabilities.md).
 					r.With(handler.RequireHumanActor).Get("/context-capabilities", h.GetAgentContextCapabilities)
 					r.With(handler.RequireHumanActor).Put("/context-capabilities/offers", h.PutAgentContextCapabilityOffers)
+					// IM scenes (group and 1:1 chats): scene list, scene
+					// prompt and scene bindings. Configuration only; the
+					// scene key is a percent-encoded openConversationId.
+					r.With(handler.RequireHumanActor).Get("/scenes", h.ListAgentScenes)
+					r.With(handler.RequireHumanActor).Get("/scenes/{sceneKey}", h.GetAgentScene)
+					r.With(handler.RequireHumanActor).Put("/scenes/{sceneKey}/prompt", h.PutAgentScenePrompt)
+					r.With(handler.RequireHumanActor).Put("/scenes/{sceneKey}/bindings", h.PutAgentSceneBinding)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)

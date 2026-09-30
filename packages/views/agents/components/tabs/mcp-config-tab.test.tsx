@@ -13,24 +13,7 @@ import { McpConfigTab } from "./mcp-config-tab";
 
 vi.mock("./runner-tab", () => ({ RunnerTab: () => <div>Runner MCP servers</div> }));
 
-const mockListAvailableConnectors = vi.hoisted(() => vi.fn().mockResolvedValue([]));
-vi.mock("@multica/core/api", async () => {
-  const actual = await vi.importActual<typeof import("@multica/core/api")>("@multica/core/api");
-  return {
-    ...actual,
-    api: new Proxy(actual.api, {
-      get(target, key) {
-        return key === "listAvailableInternalConnectors" ? mockListAvailableConnectors : Reflect.get(target, key);
-      },
-    }),
-  };
-});
-
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
-vi.mock("@multica/core/paths", async () => {
-  const actual = await vi.importActual<typeof import("@multica/core/paths")>("@multica/core/paths");
-  return { ...actual, useWorkspacePaths: () => ({ internalConnectors: () => "/ws/internal-connectors" }) };
-});
 
 
 const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
@@ -135,21 +118,6 @@ const onlineRuntime: AgentRuntime = {
 
 describe("McpConfigTab", () => {
   beforeEach(() => vi.clearAllMocks());
-
-  it("shows a connector assigned by the workspace without copying its secret into agent config", async () => {
-    mockListAvailableConnectors.mockResolvedValueOnce([{
-      id: "11111111-1111-4111-8111-111111111111",
-      name: "Knowledge",
-      serverName: "c1111111111114111",
-      agentId: "agent-1",
-      agentName: "Agent",
-      tools: ["describe_agent"],
-    }]);
-    renderTab();
-    expect(await screen.findByText("Knowledge")).toBeInTheDocument();
-    expect(screen.getByText("1 available tools")).toBeInTheDocument();
-    expect(screen.queryByText(/Bearer/)).not.toBeInTheDocument();
-  });
 
   it("renders redacted managed MCP without exposing add or edit controls", () => {
     renderTab({ mcp_config: null, mcp_config_redacted: true });

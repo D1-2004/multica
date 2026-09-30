@@ -74,7 +74,12 @@ describe("context capability mobile client", () => {
       resource_id: connectorId,
       enabled: true,
     });
-    expect(result).toEqual({ resourceType: "connector", resourceId: connectorId, enabled: true });
+    expect(result).toEqual({
+      resourceType: "connector",
+      resourceId: connectorId,
+      enabled: true,
+      shareInGroups: false,
+    });
   });
 
   it("never returns the bearer from a credential write", async () => {
@@ -161,7 +166,7 @@ describe("context capability mobile client", () => {
     const fetch = stubFetch({ scene: { scope_key: "cid1", scope_title: "Team", source: "jsapi", expires_at: "" } });
     const scene = await new ApiClient(base).resolveContextConfigScene(agentId, { chatId: "chat-1" });
     expect(JSON.parse(requestOf(fetch).init.body as string)).toEqual({ chat_id: "chat-1" });
-    expect(scene).toEqual({ scopeKey: "cid1", scopeTitle: "Team", source: "jsapi", expiresAt: "" });
+    expect(scene).toEqual({ scopeKey: "cid1", scopeTitle: "Team", source: "jsapi", expiresAt: "", kind: "group" });
   });
 
   it("asks for a JSAPI signature of the exact page URL", async () => {

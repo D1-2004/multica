@@ -98,15 +98,15 @@ function agentDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
       bindings: [],
       credentials: [],
     },
-    scenes: [{ scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "" }],
+    scenes: [{ scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group" }],
     jsapiAvailable: false,
     ...overrides,
   };
 }
 
 const sceneDetail: ContextConfigSceneDetail = {
-  scene: { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "" },
-  bindings: [{ resourceType: "connector", resourceId: "conn-wiki", enabled: true }],
+  scene: { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group" },
+  bindings: [{ resourceType: "connector", resourceId: "conn-wiki", enabled: true, shareInGroups: false }],
   credentials: [{ connectorId: "conn-wiki", hint: "••••abcd", updatedAt: "", kind: "bearer" }],
 };
 
@@ -153,10 +153,14 @@ beforeEach(() => {
   api.getContextConfigAgent.mockResolvedValue(agentDetail());
   api.getContextConfigScene.mockResolvedValue(sceneDetail);
   api.setContextCapabilityBinding.mockImplementation(
-    async (_agentId: string, input: { resourceType: string; resourceId: string; enabled: boolean }) => ({
+    async (
+      _agentId: string,
+      input: { resourceType: string; resourceId: string; enabled: boolean; shareInGroups?: boolean },
+    ) => ({
       resourceType: input.resourceType,
       resourceId: input.resourceId,
       enabled: input.enabled,
+      shareInGroups: input.shareInGroups === true,
     }),
   );
 });
@@ -634,6 +638,131 @@ describe("ContextConfigPage", () => {
       expect(toast.error).not.toHaveBeenCalledWith(copy.connect_failed);
       expect(openAuthorizeUrl).not.toHaveBeenCalled();
     });
+  });
+
+  it("labels the chat kind of each scene and explains a 1:1 chat scene", async () => {
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        scenes: [
+          { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group" },
+          { scopeKey: "cid-dm", scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm" },
+        ],
+      }),
+    );
+    api.getContextConfigScene.mockImplementation(async (_agentId: string, sceneKey: string) =>
+      sceneKey === "cid-dm"
+        ? {
+            scene: { scopeKey: "cid-dm", scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm" },
+            bindings: [],
+            credentials: [],
+          }
+        : sceneDetail,
+    );
+    const user = userEvent.setup();
+    renderPage({ initialAgentId: "agent-1" });
+
+    expect(await screen.findByRole("tab", { name: copy.tab_scene })).toBeInTheDocument();
+    const groupRegion = await screen.findByRole("region", { name: "Sales team" });
+    expect(within(groupRegion).getByText(copy.kind_group)).toBeInTheDocument();
+    expect(within(groupRegion).getByText(copy.scene_scope_hint)).toBeInTheDocument();
+
+    const picker = screen.getByRole("combobox");
+    expect(within(picker).getByRole("option", { name: `${copy.kind_dm} · ${copy.scene_untitled_dm}` })).toBeInTheDocument();
+    await user.selectOptions(picker, "cid-dm");
+
+    const dmRegion = await screen.findByRole("region", { name: copy.scene_untitled_dm });
+    expect(within(dmRegion).getByText(copy.kind_dm)).toBeInTheDocument();
+    expect(within(dmRegion).getByText(copy.scene_scope_hint_dm)).toBeInTheDocument();
+    expect(within(dmRegion).getByText(copy.credential_required)).toBeInTheDocument();
+    // A 1:1 chat scene is stored only this round; the page must not promise
+    // runtime effect.
+    expect(within(dmRegion).getByText(copy.dm_pending_note)).toBeInTheDocument();
+    expect(within(groupRegion).queryByText(copy.dm_pending_note)).not.toBeInTheDocument();
+  });
+
+  it("saves the group-chat switch of a personal connector and says it is not applied yet", async () => {
+    const person = agentDetail().person!;
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        person: {
+          ...person,
+          bindings: [
+            { resourceType: "connector", resourceId: "conn-wiki", enabled: true, shareInGroups: false },
+            { resourceType: "skill", resourceId: "skill-report", enabled: true, shareInGroups: false },
+          ],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage({ initialAgentId: "agent-1" });
+
+    await user.click(await screen.findByRole("tab", { name: copy.tab_person }));
+    const region = await screen.findByRole("region", { name: "Alice" });
+    // One switch per enabled personal connector; skills never get one.
+    const share = within(region).getByRole("switch", { name: copy.share_in_groups });
+    expect(share).not.toBeChecked();
+    expect(within(region).getAllByRole("switch", { name: copy.share_in_groups })).toHaveLength(1);
+    expect(within(region).getByText(copy.share_in_groups_hint)).toBeInTheDocument();
+    // The runtime does not read the switch yet, so the page says so and the
+    // person scope hint does not claim group chats are excluded.
+    expect(within(region).getByText(copy.share_in_groups_pending_note)).toBeInTheDocument();
+    expect(share).toHaveAccessibleDescription(
+      `${copy.share_in_groups_hint} ${copy.share_in_groups_pending_note}`,
+    );
+    expect(within(region).getByText(copy.person_scope_hint)).toBeInTheDocument();
+
+    await user.click(share);
+
+    await waitFor(() =>
+      expect(api.setContextCapabilityBinding).toHaveBeenCalledWith("agent-1", {
+        scopeType: "person",
+        scopeKey: "staff-1",
+        resourceType: "connector",
+        resourceId: "conn-wiki",
+        enabled: true,
+        shareInGroups: true,
+      }),
+    );
+  });
+
+  it("shows the group-chat switch only for enabled personal connectors", async () => {
+    const user = userEvent.setup();
+    renderPage({ initialAgentId: "agent-1" });
+
+    // The scene editor never offers it.
+    const sceneRegion = await screen.findByRole("region", { name: "Sales team" });
+    expect(within(sceneRegion).queryByRole("switch", { name: copy.share_in_groups })).not.toBeInTheDocument();
+
+    // A personal connector that is off has nothing to share.
+    await user.click(screen.getByRole("tab", { name: copy.tab_person }));
+    const region = await screen.findByRole("region", { name: "Alice" });
+    expect(within(region).queryByRole("switch", { name: copy.share_in_groups })).not.toBeInTheDocument();
+  });
+
+  it("reflects a connector already shared with group chats", async () => {
+    const person = agentDetail().person!;
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        person: {
+          ...person,
+          bindings: [{ resourceType: "connector", resourceId: "conn-wiki", enabled: true, shareInGroups: true }],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage({ initialAgentId: "agent-1" });
+
+    await user.click(await screen.findByRole("tab", { name: copy.tab_person }));
+    const region = await screen.findByRole("region", { name: "Alice" });
+    expect(within(region).getByRole("switch", { name: copy.share_in_groups })).toBeChecked();
+  });
+
+  it("uses a centered column that widens on desktop screens", async () => {
+    renderPage({ initialAgentId: "agent-1" });
+    await screen.findByRole("region", { name: "Sales team" });
+    const column = screen.getByRole("main").firstElementChild;
+    expect(column?.className).toContain("mx-auto");
+    expect(column?.className).toContain("sm:max-w-2xl");
   });
 
   it("lets a person with several agents choose one", async () => {

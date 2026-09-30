@@ -74,6 +74,12 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("./context-offers-section", () => ({
+  ContextOffersSection: ({ resourceType }: { resourceType: string }) => (
+    <div>{`offers:${resourceType}`}</div>
+  ),
+}));
+
 import { SkillsTab } from "./skills-tab";
 
 const agent: Agent = {
@@ -311,5 +317,24 @@ describe("SkillsTab", () => {
     expect(
       await screen.findByText("Couldn't discover runtime skills. Try again."),
     ).toBeInTheDocument();
+  });
+
+  it("lets editors choose the skills scenes and people may turn on", () => {
+    renderSkillsTab();
+
+    expect(screen.getByText("offers:skill")).toBeInTheDocument();
+  });
+
+  it("hides the skill offers from viewers", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={queryClient}>
+          <SkillsTab agent={agent} runtime={null} canEdit={false} />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+
+    expect(screen.queryByText("offers:skill")).not.toBeInTheDocument();
   });
 });

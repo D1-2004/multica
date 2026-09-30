@@ -95,10 +95,18 @@ func TestScopeFromTaskContext(t *testing.T) {
 			want: Scope{SceneKey: "cidGroupC", SceneTitle: "Snake", ConversationType: "group"},
 		},
 		{
-			name: "single chat has no scene",
+			// The DM is a configuration scene (DirectSceneKey) but carries no
+			// runtime scene layer this round.
+			name: "single chat has no runtime scene",
 			raw: `{"dispatch_event_data":{"conversation":{"openConversationId":"cidDirect","type":"single","title":"DM"},
 				"sender":{"staffId":"staff-2","displayName":"Bob"},"messages":[{"senderStaffId":"staff-2"}]}}`,
-			want: Scope{PersonKey: "staff-2", PersonName: "Bob", ConversationType: "single"},
+			want: Scope{PersonKey: "staff-2", PersonName: "Bob", ConversationType: "single", DirectSceneKey: "cidDirect"},
+		},
+		{
+			name: "unknown conversation type has no DM scene",
+			raw: `{"dispatch_event_data":{"conversation":{"openConversationId":"cidMaybeShared","type":"channel"},
+				"sender":{"staffId":"staff-2"}}}`,
+			want: Scope{PersonKey: "staff-2", ConversationType: "channel"},
 		},
 		{
 			name: "multi sender merged run has no person",

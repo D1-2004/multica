@@ -3782,6 +3782,47 @@ describe("ApiClient agent scene memory", () => {
     ).resolves.toEqual([]);
   });
 
+  it("loads one scene memory row by id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "mem-9",
+          org_id: "org-old",
+          scene_key: "cid+abc",
+          scene_kind: "group",
+          memory_text: "notes",
+          memory_revision: 4,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      new ApiClient("https://api.example.test").getAgentSceneMemory("agent-1", "mem-9"),
+    ).resolves.toEqual(
+      expect.objectContaining({ id: "mem-9", scene_key: "cid+abc", memory_revision: 4 }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/agents/agent-1/scene-memory/mem-9",
+      expect.any(Object),
+    );
+  });
+
+  it("falls back to an empty row for a malformed memory response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(["not", "a", "row"]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    await expect(
+      new ApiClient("https://api.example.test").getAgentSceneMemory("agent-1", "mem-9"),
+    ).resolves.toEqual(expect.objectContaining({ id: "", scene_key: "" }));
+  });
+
   it("updates scene memory through PUT and parses the row", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

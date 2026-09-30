@@ -1,6 +1,6 @@
 /**
- * Context capabilities: scene (DingTalk group) and personal connector/skill
- * layers on top of an agent's global grants. See
+ * Context capabilities: scene (DingTalk group chat or 1:1 chat) and personal
+ * connector/skill layers on top of an agent's global grants. See
  * docs/context-capabilities.md for the product contract. Wire JSON is
  * snake_case; these types are the camelCase shapes the API client returns.
  */
@@ -11,6 +11,11 @@ export type ContextScopeType = "scene" | "person";
 
 export type ContextResourceType = "connector" | "skill";
 
+/** Kind of an IM scene: a DingTalk group chat or a 1:1 chat (a 1:1 chat is a
+ * scene exactly like a group). Older backends only knew group scenes, so a
+ * missing kind parses as "group". */
+export type ContextSceneKind = "group" | "dm";
+
 /** How the caller obtained the right to configure a scope. Kept as a plain
  * string so a new server-side source does not break parsing. */
 export type ContextGrantSource = "agent_link" | "jsapi" | (string & {});
@@ -20,6 +25,10 @@ export interface ContextCapabilityBinding {
   resourceType: ContextResourceType;
   resourceId: string;
   enabled: boolean;
+  /** Person-scope connector bindings only: the person also allows this
+   * connector in group chats when they trigger the run ("在群聊中由我触发时也
+   * 可用"). false unless the server sent a literal true. */
+  shareInGroups: boolean;
 }
 
 /** How a stored scene or personal credential was obtained. Unknown kinds
@@ -55,6 +64,8 @@ export interface ContextConfigSceneGrant {
   scopeTitle: string;
   source: ContextGrantSource;
   expiresAt: string;
+  /** Group chat or 1:1 chat. */
+  kind: ContextSceneKind;
 }
 
 export interface ContextConfigRedeemResult {
@@ -154,6 +165,8 @@ export interface SetContextCapabilityBindingInput {
   resourceType: ContextResourceType;
   resourceId: string;
   enabled: boolean;
+  /** Person scope + connector only; omitted leaves the stored value. */
+  shareInGroups?: boolean;
 }
 
 export interface SetContextConnectorCredentialInput {
@@ -195,7 +208,7 @@ export interface DingTalkJsapiConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Admin (agent detail → Context capabilities tab)
+// Admin (agent detail → Skills / Connectors offer sections, Scenes section)
 // ---------------------------------------------------------------------------
 
 export interface ContextLibraryConnector {
@@ -203,6 +216,8 @@ export interface ContextLibraryConnector {
   name: string;
   enabled: boolean;
   authMode: string;
+  /** Official app slug ("github", ...) or "" for an Aone FaaS connector. */
+  catalogSlug: string;
 }
 
 export interface ContextScopeSummary {
@@ -231,4 +246,80 @@ export interface AgentContextCapabilities {
 export interface SetAgentContextCapabilityOffersInput {
   connectorIds: string[];
   skillIds: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Admin scenes (agent detail → 场域 section)
+// ---------------------------------------------------------------------------
+
+/** One IM scene of an agent (a DingTalk group chat or 1:1 chat) as listed
+ * by `GET /api/agents/{id}/scenes`. */
+export interface AgentSceneSummary {
+  /** openConversationId of the conversation. */
+  sceneKey: string;
+  kind: ContextSceneKind;
+  title: string;
+  orgId: string;
+  /** "" when the server reported no activity time. */
+  lastActiveAt: string;
+  /** Latest inbound Coordinator chat session of the conversation, "" when
+   * there is none. */
+  inboundSessionId: string;
+  inboundCount: number;
+  /** scene_memory row id, "" when the scene has no memory. */
+  memoryId: string;
+  hasPrompt: boolean;
+  connectorCount: number;
+  skillCount: number;
+}
+
+export interface AgentScenesPage {
+  scenes: AgentSceneSummary[];
+  hasMore: boolean;
+}
+
+/** Scene prompt (场域提示词). Stored per scene; not yet applied at runtime. */
+export interface AgentScenePrompt {
+  text: string;
+  /** "" when the scene has no stored prompt. */
+  updatedAt: string;
+  updatedByName: string;
+}
+
+/** A scene binding as the admin sees it, with who changed it last. */
+export interface AgentSceneBinding {
+  resourceType: ContextResourceType;
+  resourceId: string;
+  enabled: boolean;
+  updatedByName: string;
+  updatedAt: string;
+}
+
+export interface AgentSceneOfferedConnector {
+  id: string;
+  name: string;
+  /** Official app catalog slug ("github", ...), "" for custom connectors. */
+  catalogSlug: string;
+  authMode: ContextConnectorAuthMode;
+}
+
+export interface AgentSceneDetail {
+  scene: AgentSceneSummary;
+  prompt: AgentScenePrompt;
+  bindings: AgentSceneBinding[];
+  offers: {
+    connectors: AgentSceneOfferedConnector[];
+    skills: ContextSkillItem[];
+  };
+}
+
+export interface ListAgentScenesParams {
+  limit?: number;
+  offset?: number;
+}
+
+export interface SetAgentSceneBindingInput {
+  resourceType: ContextResourceType;
+  resourceId: string;
+  enabled: boolean;
 }

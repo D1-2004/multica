@@ -6,9 +6,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
-import type { AgentContextCapabilities } from "../types/context-capability";
+import type { AgentContextCapabilities, AgentSceneDetail } from "../types/context-capability";
 import {
   useSetAgentContextCapabilityOffers,
+  useSetAgentSceneBinding,
+  useSetAgentScenePrompt,
   useSetContextCapabilityBinding,
   useSetContextConnectorCredential,
 } from "./mutations";
@@ -110,5 +112,63 @@ describe("context capability mutations", () => {
       vi.useRealTimers();
     }
     expect(leaked()).toBe(false);
+  });
+});
+
+describe("admin scene mutations", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("writes a saved scene prompt into the scene detail and refreshes the scene list", async () => {
+    const prompt = { text: "Be brief.", updatedAt: "t", updatedByName: "Ada" };
+    const setAgentScenePrompt = vi.fn().mockResolvedValue(prompt);
+    setApiInstance({ setAgentScenePrompt } as unknown as ApiClient);
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const sceneKey = contextCapabilityKeys.scene("ws-1", "agent-1", "cid1");
+    const detail = {
+      scene: { sceneKey: "cid1" },
+      prompt: { text: "", updatedAt: "", updatedByName: "" },
+      bindings: [],
+      offers: { connectors: [], skills: [] },
+    } as unknown as AgentSceneDetail;
+    queryClient.setQueryData(sceneKey, detail);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useSetAgentScenePrompt("ws-1", "agent-1"), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ sceneKey: "cid1", prompt: "Be brief." });
+    });
+
+    expect(setAgentScenePrompt).toHaveBeenCalledWith("ws-1", "agent-1", "cid1", "Be brief.");
+    expect(queryClient.getQueryData<AgentSceneDetail>(sceneKey)?.prompt).toEqual(prompt);
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: contextCapabilityKeys.scenes("ws-1", "agent-1"),
+    });
+  });
+
+  it("refreshes the whole agent after an admin scene toggle, even when it fails", async () => {
+    const setAgentSceneBinding = vi.fn().mockRejectedValue(new Error("403"));
+    setApiInstance({ setAgentSceneBinding } as unknown as ApiClient);
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useSetAgentSceneBinding("ws-1", "agent-1"), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current
+        .mutateAsync({ sceneKey: "cid1", resourceType: "skill", resourceId: "s1", enabled: true })
+        .catch(() => undefined);
+    });
+
+    expect(setAgentSceneBinding).toHaveBeenCalledWith("ws-1", "agent-1", "cid1", {
+      resourceType: "skill",
+      resourceId: "s1",
+      enabled: true,
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: contextCapabilityKeys.agent("ws-1", "agent-1"),
+    });
   });
 });

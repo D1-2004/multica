@@ -9,6 +9,11 @@ import {
 } from "./internal-connector-schema";
 import {
   AgentContextCapabilitiesSchema,
+  AgentSceneBindingResponseSchema,
+  AgentSceneDetailSchema,
+  AgentScenePromptResponseSchema,
+  AgentScenesPageSchema,
+  EMPTY_AGENT_SCENES_PAGE,
   ContextCapabilityBindingResponseSchema,
   ContextConfigAgentDetailSchema,
   ContextConfigAgentListSchema,
@@ -21,6 +26,10 @@ import {
 } from "./context-capability-schema";
 import type {
   AgentContextCapabilities,
+  AgentSceneBinding,
+  AgentSceneDetail,
+  AgentScenePrompt,
+  AgentScenesPage,
   ContextCapabilityBinding,
   ContextConfigAgentDetail,
   ContextConfigAgentSummary,
@@ -30,8 +39,10 @@ import type {
   ContextConnectorCredential,
   DeleteContextConnectorCredentialInput,
   DingTalkJsapiConfig,
+  ListAgentScenesParams,
   ResolveContextConfigSceneInput,
   SetAgentContextCapabilityOffersInput,
+  SetAgentSceneBindingInput,
   SetContextCapabilityBindingInput,
   SetContextConnectorCredentialInput,
   StartContextConnectorConnectionInput,
@@ -3098,6 +3109,20 @@ export class ApiClient {
     );
   }
 
+  /** One scene memory row by id (the scene detail's 记忆 sub-tab). A
+   * malformed response parses to a row with an empty id. */
+  async getAgentSceneMemory(agentId: string, memoryId: string): Promise<AgentSceneMemory> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}`,
+    );
+    return parseWithFallback(
+      raw,
+      AgentSceneMemorySchema,
+      EMPTY_AGENT_SCENE_MEMORY,
+      { endpoint: "GET /api/agents/{id}/scene-memory/{memoryId}" },
+    );
+  }
+
   async updateAgentSceneMemory(
     agentId: string,
     memoryId: string,
@@ -4278,17 +4303,21 @@ export class ApiClient {
     agentId: string,
     input: SetContextCapabilityBindingInput,
   ): Promise<ContextCapabilityBinding> {
+    const body: Record<string, string | boolean> = {
+      scope_type: input.scopeType,
+      scope_key: input.scopeKey,
+      resource_type: input.resourceType,
+      resource_id: input.resourceId,
+      enabled: input.enabled,
+    };
+    // Only sent when the caller changes it; the server rejects it outside
+    // person connector bindings.
+    if (input.shareInGroups !== undefined) body.share_in_groups = input.shareInGroups;
     const raw = await this.fetch<unknown>(
       `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/bindings`,
       {
         method: "PUT",
-        body: JSON.stringify({
-          scope_type: input.scopeType,
-          scope_key: input.scopeKey,
-          resource_type: input.resourceType,
-          resource_id: input.resourceId,
-          enabled: input.enabled,
-        }),
+        body: JSON.stringify(body),
         headers: NO_WORKSPACE_HEADER,
       },
     );
@@ -4304,6 +4333,7 @@ export class ApiClient {
       resourceType: input.resourceType,
       resourceId: input.resourceId,
       enabled: input.enabled,
+      shareInGroups: input.resourceType === "connector" && input.shareInGroups === true,
     };
   }
 
@@ -4440,6 +4470,102 @@ export class ApiClient {
     return parseWithFallback<AgentContextCapabilities | null>(raw, AgentContextCapabilitiesSchema, null, {
       endpoint: "PUT /api/agents/{id}/context-capabilities/offers",
     });
+  }
+
+  // Admin scenes (agent detail → 场域). Workspace-scoped like the context
+  // capability admin routes: the workspace is pinned explicitly so the query
+  // key's wsId and the request always agree.
+
+  async listAgentScenes(
+    workspaceId: string,
+    agentId: string,
+    params: ListAgentScenesParams = {},
+  ): Promise<AgentScenesPage> {
+    const search = new URLSearchParams();
+    if (params.limit !== undefined) search.set("limit", String(params.limit));
+    if (params.offset !== undefined) search.set("offset", String(params.offset));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/scenes${query ? `?${query}` : ""}`,
+      { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+    return parseWithFallback<AgentScenesPage>(raw, AgentScenesPageSchema, EMPTY_AGENT_SCENES_PAGE, {
+      endpoint: "GET /api/agents/{id}/scenes",
+    });
+  }
+
+  async getAgentScene(
+    workspaceId: string,
+    agentId: string,
+    sceneKey: string,
+  ): Promise<AgentSceneDetail | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}`,
+      { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+    return parseWithFallback<AgentSceneDetail | null>(raw, AgentSceneDetailSchema, null, {
+      endpoint: "GET /api/agents/{id}/scenes/{sceneKey}",
+    });
+  }
+
+  /** Saves the scene prompt (trimmed by the server, at most 8000
+   * characters). A malformed echo falls back to the text that was sent; the
+   * caller refetches the scene for the authoritative value. */
+  async setAgentScenePrompt(
+    workspaceId: string,
+    agentId: string,
+    sceneKey: string,
+    prompt: string,
+  ): Promise<AgentScenePrompt> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}/prompt`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ prompt }),
+        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+      },
+    );
+    return parseWithFallback<AgentScenePrompt>(
+      raw,
+      AgentScenePromptResponseSchema,
+      { text: prompt.trim(), updatedAt: "", updatedByName: "" },
+      { endpoint: "PUT /api/agents/{id}/scenes/{sceneKey}/prompt" },
+    );
+  }
+
+  async setAgentSceneBinding(
+    workspaceId: string,
+    agentId: string,
+    sceneKey: string,
+    input: SetAgentSceneBindingInput,
+  ): Promise<AgentSceneBinding> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}/bindings`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          resource_type: input.resourceType,
+          resource_id: input.resourceId,
+          enabled: input.enabled,
+        }),
+        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+      },
+    );
+    // The write succeeded; a malformed echo falls back to what was sent and
+    // the caller's invalidation refetches the authoritative state.
+    const binding = parseWithFallback<AgentSceneBinding | null>(
+      raw,
+      AgentSceneBindingResponseSchema,
+      null,
+      { endpoint: "PUT /api/agents/{id}/scenes/{sceneKey}/bindings" },
+    );
+    return binding ?? {
+      resourceType: input.resourceType,
+      resourceId: input.resourceId,
+      enabled: input.enabled,
+      updatedByName: "",
+      updatedAt: "",
+    };
   }
 
   async getSemanticaMCPStatus(workspaceId: string): Promise<SemanticaMCPStatus> {

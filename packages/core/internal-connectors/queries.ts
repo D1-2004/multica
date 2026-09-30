@@ -22,6 +22,16 @@ export function internalConnectorListOptions(wsId: string) {
   });
 }
 
+/** Member-visible view: every enabled connector granted to an agent, one row
+ * per (connector, agent) pair, without URLs or credential state. */
+export function availableInternalConnectorsOptions(wsId: string) {
+  return queryOptions({
+    queryKey: internalConnectorKeys.available(wsId),
+    queryFn: () => api.listAvailableInternalConnectors(wsId),
+    enabled: Boolean(wsId),
+  });
+}
+
 /** Official app gallery (admin only). */
 export function connectorCatalogOptions(wsId: string) {
   return queryOptions({

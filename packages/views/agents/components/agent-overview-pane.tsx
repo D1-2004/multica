@@ -16,7 +16,6 @@ import { dingtalkInstallationsOptions } from "@multica/core/dingtalk";
 import { larkInstallationsOptions } from "@multica/core/lark";
 import { slackInstallationsOptions } from "@multica/core/slack";
 import { wecomInstallationsOptions } from "@multica/core/wecom";
-import { agentContextCapabilitiesOptions } from "@multica/core/context-capabilities";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -32,10 +31,9 @@ import { ActivityTab } from "./tabs/activity-tab";
 import { InstructionsTab } from "./tabs/instructions-tab";
 import { OKRTab } from "./tabs/okr-tab";
 import { SkillsTab } from "./tabs/skills-tab";
-import { ContextCapabilitiesTab } from "./tabs/context-capabilities-tab";
 import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
-import { McpConfigTab } from "./tabs/mcp-config-tab";
+import { ConnectorsTab } from "./tabs/connectors-tab";
 import { AgentMcpTab } from "./tabs/agent-mcp-tab";
 import { DshHomeTab } from "./tabs/dsh-home-tab";
 import { DshConfigTab } from "./tabs/dsh-config-tab";
@@ -49,7 +47,7 @@ import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ActorIssuesPanel } from "../../common/actor-issues-panel";
 import { CoordinatorSessionsTab } from "./tabs/coordinator-sessions-tab";
-import { SceneMemoryTab } from "./tabs/scene-memory-tab";
+import { ScenesTab } from "./tabs/scenes-tab";
 import { ExportTab } from "./tabs/export-tab";
 import { PackageBindingsPanel } from "./package-bindings-panel";
 import { PublishTab } from "./tabs/publish-tab";
@@ -73,8 +71,7 @@ export type { DetailTab } from "./agent-config-navigation";
 const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
   { id: "overview", labelKey: "overview" },
   { id: "work", labelKey: "work" },
-  { id: "inbound", labelKey: "inbound" },
-  { id: "memory", labelKey: "memory" },
+  { id: "scenes", labelKey: "scenes" },
   { id: "configuration", labelKey: "configuration" },
 ];
 
@@ -101,10 +98,10 @@ interface AgentOverviewPaneProps {
 /**
  * Agent workbench organised around user intent instead of backend fields.
  * Overview answers "what is happening now?", Work owns the issue surface,
- * Conversations lists short-loop channel transcripts, Memory holds scene
- * text and issue links, and Configuration groups identity, capabilities,
- * connections, execution, and management without changing persistence or
- * permission semantics.
+ * Scenes lists the DingTalk group chats and 1:1 chats the agent works in
+ * (each with its inbound history, memory and scene configuration), and
+ * Configuration groups identity, capabilities, connections, execution, and
+ * management without changing persistence or permission semantics.
  */
 export function AgentOverviewPane({
   agent,
@@ -158,16 +155,6 @@ export function AgentOverviewPane({
     ...wecomInstallationsOptions(wsId),
     enabled: !!wsId,
   });
-  // The admin endpoint needs agent-manager rights and answers
-  // `enabled: false` while the server flag is off, so the tab only appears
-  // for editors on deployments that actually serve context capabilities.
-  // The tab reuses this cached query.
-  const { data: contextCapabilities } = useQuery({
-    ...agentContextCapabilitiesOptions(wsId, agent.id),
-    enabled: canEdit && !!wsId,
-  });
-  const contextCapabilitiesEnabled = contextCapabilities?.enabled === true;
-
   const botIntegrationsConfigured =
     larkListing?.configured === true ||
     slackListing?.configured === true ||
@@ -178,23 +165,23 @@ export function AgentOverviewPane({
     !!agent.owner_id &&
     agent.owner_id === currentUserId;
 
+  // The agent's own MCP servers need a runtime that reads mcp_config; the
+  // rest of the 连接器 tab (official apps, Aone FaaS grants, offers) goes
+  // through the server relay and applies to every runtime.
+  const supportsOwnMcpConfig = runtime
+    ? runtimeSupportsMcpConfig(runtime.provider, runtime.metadata)
+    : true;
+
   const visibleConfigGroups = useMemo<AgentConfigGroup[]>(() => {
-    const showMcp = runtime
-      ? runtimeSupportsMcpConfig(runtime.provider, runtime.metadata)
-      : true;
     const showComposioMcp =
       composioMCPAppsEnabled && isAgentOwner;
 
     return AGENT_CONFIG_GROUPS.map((group) => ({
       ...group,
       items: group.items.filter((item) => {
-        if (item.id === "mcp_config") return showMcp;
         if (item.id === "dsh") return runtime?.provider === "dsh";
         if (item.id === "filesystem") return canEdit && agent.runtime_mode === "cloud";
         if (item.id === "composio_mcp") return showComposioMcp;
-        if (item.id === "context_capabilities") {
-          return canEdit && contextCapabilitiesEnabled;
-        }
         if (item.id === "integrations") return botIntegrationsConfigured;
         if (item.id === "mcp_access" || item.id === "a2a") {
           return isAgentOwner;
@@ -215,7 +202,6 @@ export function AgentOverviewPane({
     botIntegrationsConfigured,
     canEdit,
     composioMCPAppsEnabled,
-    contextCapabilitiesEnabled,
     isAgentOwner,
     runtime,
   ]);
@@ -225,13 +211,12 @@ export function AgentOverviewPane({
       new Set<DetailTab>([
         "overview",
         "work",
-        "inbound",
-        ...(canEdit ? (["memory"] as const) : []),
+        "scenes",
         ...visibleConfigGroups.flatMap((group) =>
           group.items.map((item) => item.id),
         ),
       ]),
-    [canEdit, visibleConfigGroups],
+    [visibleConfigGroups],
   );
 
   const defaultConfigView = visibleConfigGroups[0]?.items[0]?.id;
@@ -249,6 +234,11 @@ export function AgentOverviewPane({
       const params = new URLSearchParams(navigation.searchParams);
       if (next === "overview") params.delete("view");
       else params.set("view", next);
+      // The selected scene only means something inside the scenes section.
+      if (next !== "scenes") {
+        params.delete("scene");
+        params.delete("scene_tab");
+      }
       const query = params.toString();
       navigation.replace(`${navigation.pathname}${query ? `?${query}` : ""}`);
     },
@@ -268,12 +258,7 @@ export function AgentOverviewPane({
   );
 
   const requestSection = (section: DetailSection) => {
-    if (
-      section === "overview" ||
-      section === "work" ||
-      section === "inbound" ||
-      section === "memory"
-    ) {
+    if (section === "overview" || section === "work" || section === "scenes") {
       requestView(section);
       return;
     }
@@ -315,19 +300,18 @@ export function AgentOverviewPane({
     setActiveView(nextView);
   }, [activeDirty, effectiveView, navigation, urlView, visibleViews]);
 
+  // Legacy view names keep working and are rewritten to their new home.
   useEffect(() => {
-    if (urlView !== "identity") return;
+    if (urlView === null) return;
+    const normalized = normalizeDetailView(urlView);
+    if (normalized === null || normalized === urlView) return;
     const params = new URLSearchParams(navigation.searchParams);
-    params.set("view", "digital_employee");
+    params.set("view", normalized);
     navigation.replace(`${navigation.pathname}?${params.toString()}`);
   }, [navigation, urlView]);
 
   useEffect(() => {
-    if (
-      urlView === null ||
-      urlView === "identity" ||
-      normalizeDetailView(urlView) !== null
-    ) {
+    if (urlView === null || normalizeDetailView(urlView) !== null) {
       return;
     }
     const params = new URLSearchParams(navigation.searchParams);
@@ -372,10 +356,7 @@ export function AgentOverviewPane({
         aria-label={t(($) => $.tabs.page_navigation_aria)}
       >
         <div className="mx-auto flex max-w-[1440px] items-center gap-6">
-          {(canEdit
-            ? TOP_TABS
-            : TOP_TABS.filter((tab) => tab.id !== "memory")
-          ).map((tab) => (
+          {TOP_TABS.map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -403,7 +384,7 @@ export function AgentOverviewPane({
           "min-h-0 flex-1",
           isSecondaryLayout
             ? "overflow-y-auto md:overflow-hidden"
-            : effectiveView === "memory" || effectiveView === "inbound"
+            : effectiveView === "scenes"
               ? "overflow-hidden"
               : "overflow-y-auto",
         )}
@@ -434,17 +415,20 @@ export function AgentOverviewPane({
           </div>
         )}
 
-        {effectiveView === "inbound" && <CoordinatorSessionsTab key={agent.id} agent={agent} />}
-
-        {effectiveView === "memory" && (
-          <div className="flex h-full min-h-0 flex-1 flex-col">
-            <SceneMemoryTab
+        {/* The admin scene API needs agent-manager rights; everyone else
+            keeps read access to the inbound conversation history. */}
+        {effectiveView === "scenes" &&
+          (canEdit ? (
+            <ScenesTab
+              key={agent.id}
               agent={agent}
               canEdit={canEdit}
               onUpdate={onUpdate}
+              onDirtyChange={setActiveDirty}
             />
-          </div>
-        )}
+          ) : (
+            <CoordinatorSessionsTab key={agent.id} agent={agent} />
+          ))}
 
         {secondaryTabs.length > 0 && activeSecondaryTab && (
           <div className="flex min-h-full flex-col md:h-full md:flex-row">
@@ -520,24 +504,17 @@ export function AgentOverviewPane({
                     />
                   )}
                   {effectiveView === "mcp_config" && (
-                    <McpConfigTab
+                    <ConnectorsTab
                       agent={agent}
                       runtime={runtime}
+                      supportsOwnMcpConfig={supportsOwnMcpConfig}
                       onSave={(updates) => onUpdate(agent.id, updates)}
                       onDirtyChange={setActiveDirty}
-					  canEdit={canEdit}
+                      canEdit={canEdit}
                     />
                   )}
                   {effectiveView === "composio_mcp" && (
                     <AgentMcpTab agent={agent} />
-                  )}
-                  {effectiveView === "context_capabilities" && (
-                    <ContextCapabilitiesTab
-                      agent={agent}
-                      wsId={wsId}
-                      canEdit={canEdit}
-                      onDirtyChange={setActiveDirty}
-                    />
                   )}
                   {effectiveView === "integrations" && (
                     <IntegrationsTab

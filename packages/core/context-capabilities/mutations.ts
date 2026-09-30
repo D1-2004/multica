@@ -2,6 +2,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type {
   AgentContextCapabilities,
+  AgentSceneDetail,
+  SetAgentSceneBindingInput,
   DeleteContextConnectorCredentialInput,
   ResolveContextConfigSceneInput,
   SetAgentContextCapabilityOffersInput,
@@ -98,5 +100,50 @@ export function useSetAgentContextCapabilityOffers(wsId: string, agentId: string
       if (data) queryClient.setQueryData(queryKey, data);
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey }),
+  });
+}
+
+export interface SetAgentScenePromptInput {
+  sceneKey: string;
+  prompt: string;
+}
+
+/** Saves a scene prompt (admin only). The echo is written into the scene
+ * detail before the settle-time refetch; the list refetches for has_prompt. */
+export function useSetAgentScenePrompt(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sceneKey, prompt }: SetAgentScenePromptInput) =>
+      api.setAgentScenePrompt(wsId, agentId, sceneKey, prompt),
+    onSuccess: (prompt, { sceneKey }) => {
+      queryClient.setQueryData<AgentSceneDetail | null>(
+        contextCapabilityKeys.scene(wsId, agentId, sceneKey),
+        (current) => (current ? { ...current, prompt } : current),
+      );
+    },
+    onSettled: () =>
+      queryClient.invalidateQueries({
+        queryKey: contextCapabilityKeys.scenes(wsId, agentId),
+      }),
+  });
+}
+
+export interface SetAgentSceneBindingMutationInput extends SetAgentSceneBindingInput {
+  sceneKey: string;
+}
+
+/** Admin toggle of one offered connector or skill in a scene. Not
+ * optimistic: the server gates the write on the offer catalog. The agent key
+ * covers the scene detail, the scene list counts and the offer usage
+ * counts. */
+export function useSetAgentSceneBinding(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sceneKey, ...input }: SetAgentSceneBindingMutationInput) =>
+      api.setAgentSceneBinding(wsId, agentId, sceneKey, input),
+    onSettled: () =>
+      queryClient.invalidateQueries({
+        queryKey: contextCapabilityKeys.agent(wsId, agentId),
+      }),
   });
 }

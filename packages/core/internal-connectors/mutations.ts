@@ -82,3 +82,85 @@ export function useSetInternalConnectorCredential(wsId: string) {
       queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
   });
 }
+
+export interface SetInternalConnectorAgentGrantInput {
+  connector: InternalConnector;
+  agentId: string;
+  granted: boolean;
+}
+
+/** Grants a workspace connector to one agent (or revokes it) from the
+ * agent's connector tab. The update endpoint replaces the connector
+ * wholesale, so the write starts from the full current connector. */
+export function useSetInternalConnectorAgentGrant(wsId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connector, agentId, granted }: SetInternalConnectorAgentGrantInput) => {
+      const others = connector.agentIds.filter((id) => id !== agentId);
+      return api.updateInternalConnector(
+        wsId,
+        connector.id,
+        internalConnectorUpdateInput(connector, {
+          agent_ids: granted ? [...others, agentId] : others,
+        }),
+      );
+    },
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
+  });
+}
+
+export interface SetInternalConnectorEnabledInput {
+  connector: InternalConnector;
+  enabled: boolean;
+}
+
+/** Workspace kill switch of one connector (every agent, scene and person). */
+export function useSetInternalConnectorEnabled(wsId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ connector, enabled }: SetInternalConnectorEnabledInput) =>
+      api.updateInternalConnector(
+        wsId,
+        connector.id,
+        internalConnectorUpdateInput(connector, { enabled }),
+      ),
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
+  });
+}
+
+export interface AddAgentCatalogConnectorInput {
+  slug: string;
+  agentId: string;
+}
+
+/** Adds an official app to one agent: creates the workspace catalog
+ * connector when it is missing (idempotent on the server), then grants it
+ * to the agent. Resolves to the granted connector. */
+export function useAddAgentCatalogConnector(wsId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ slug, agentId }: AddAgentCatalogConnectorInput): Promise<InternalConnector> => {
+      const echoed = await api.addCatalogConnector(wsId, slug);
+      // A malformed echo still created the connector; read it back so the
+      // grant starts from the stored connector.
+      const connector =
+        echoed ??
+        (await api.listInternalConnectors(wsId)).find((item) => item.catalogSlug === slug) ??
+        null;
+      if (!connector) throw new Error(`official app ${slug} was not added`);
+      if (connector.agentIds.includes(agentId)) return connector;
+      await api.updateInternalConnector(
+        wsId,
+        connector.id,
+        internalConnectorUpdateInput(connector, {
+          agent_ids: [...connector.agentIds, agentId],
+        }),
+      );
+      return { ...connector, agentIds: [...connector.agentIds, agentId] };
+    },
+    onSettled: () =>
+      queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
+  });
+}

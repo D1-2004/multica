@@ -1061,6 +1061,7 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 					`DELETE FROM context_config_grant WHERE workspace_id=$1`,
 					`DELETE FROM context_connector_credential WHERE workspace_id=$1`,
 					`DELETE FROM context_capability_binding WHERE workspace_id=$1`,
+					`DELETE FROM agent_scene_config WHERE workspace_id=$1`,
 				} {
 					if _, err := tx.Exec(ctx, statement, requester.WorkspaceID); err != nil {
 						return err

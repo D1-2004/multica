@@ -78,6 +78,8 @@ var preMigrationHooks = map[string]preMigrationHook{
 	"9406_context_config_grant_scope_idx":          cleanupInvalidConcurrentIndexHook("context_config_grant_scope_idx"),
 	// One official app connector per workspace and catalog slug.
 	"9410_internal_connector_catalog_slug_idx": cleanupInvalidConcurrentIndexHook("internal_connector_catalog_slug_idx"),
+	// One scene configuration row per agent scene (ON CONFLICT arbiter).
+	"9414_agent_scene_config_scene_idx": cleanupInvalidConcurrentIndexHook("agent_scene_config_scene_idx"),
 }
 
 func repairIssueOriginTypeConstraintHook(ctx context.Context, pool *pgxpool.Pool) error {

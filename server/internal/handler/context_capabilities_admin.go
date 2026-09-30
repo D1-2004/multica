@@ -27,6 +27,9 @@ type contextCapLibraryConnectorDTO struct {
 	Name     string `json:"name"`
 	Enabled  bool   `json:"enabled"`
 	AuthMode string `json:"auth_mode"`
+	// CatalogSlug is the official app ("github", "notion", ...) or "" for
+	// an Aone FaaS connector; the UI uses it for the brand logo.
+	CatalogSlug string `json:"catalog_slug"`
 }
 
 type contextCapScopeSummaryDTO struct {
@@ -114,7 +117,7 @@ func (h *Handler) buildContextCapAdmin(ctx context.Context, caller contextCapAdm
 	if err != nil {
 		return resp, err
 	}
-	rows, err := h.DB.Query(ctx, `SELECT id::text, name, enabled, auth_mode FROM internal_connector
+	rows, err := h.DB.Query(ctx, `SELECT id::text, name, enabled, auth_mode, catalog_slug FROM internal_connector
 		WHERE workspace_id = $1::uuid AND ($2::boolean OR id = ANY($3::uuid[])) ORDER BY name, id`,
 		ws, caller.workspaceAdmin, offers.ConnectorIDs)
 	if err != nil {
@@ -122,7 +125,7 @@ func (h *Handler) buildContextCapAdmin(ctx context.Context, caller contextCapAdm
 	}
 	for rows.Next() {
 		var c contextCapLibraryConnectorDTO
-		if err := rows.Scan(&c.ID, &c.Name, &c.Enabled, &c.AuthMode); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Enabled, &c.AuthMode, &c.CatalogSlug); err != nil {
 			rows.Close()
 			return resp, err
 		}

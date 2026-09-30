@@ -202,6 +202,16 @@ secrets still never reach the sandbox. `validateConnectorURL` accepts a
 catalog template URL without the host allowlist. The custom connector create
 path refuses those URLs, so only the server writes them.
 
+Where it is managed (2026-09-30): official apps are the agent's global
+configuration, so they are added and managed in the agent's connector tab
+(agent detail → 配置 → 能力 → 连接器, DetailTab `mcp_config`). 「添加连接器」
+→ 官方应用 calls `POST /connector-catalog/{slug}` (idempotent; creates the
+workspace catalog connector when it is missing) and then grants that
+connector to the agent through the connector update. The shared-account
+connect, GitHub PAT, tool refresh and 允许写操作 controls live on that tab
+too. The workspace page `/{workspaceSlug}/internal-connectors` lists only
+custom (Aone FaaS) connectors; it no longer shows the official app gallery.
+
 ### Connecting accounts
 
 There are three credential layers. They resolve person > scene (offered
@@ -209,8 +219,8 @@ only) > workspace, exactly like Bearer connectors
 (`docs/context-capabilities.md` §3):
 
 - **Workspace shared account** (optional, global layer): an owner/admin
-  clicks "connect shared account" on the web connectors page (the desktop
-  app sends them there, see "Browser binding" below).
+  clicks "connect shared account" on the agent's connector tab on the web
+  (the desktop app sends them there, see "Browser binding" below).
 - **Personal** and **group (scene)** accounts: people click 连接 on the
   mobile page `/dingtalk/configure`. Connecting also turns the connector on
   for that scope when it is offered.
@@ -248,7 +258,9 @@ response directly) that links back to `/dingtalk/configure` and the app.
 `return_to` must be a path or an absolute URL on the app origin
 (`MULTICA_APP_URL` / `FRONTEND_ORIGIN`). The default is
 `/dingtalk/configure?agent=<id>` for scene and person scopes and
-`/<workspace slug>/internal-connectors` for the workspace.
+`/<workspace slug>/internal-connectors` for the workspace. The web client
+passes `return_to=/<workspace slug>/agents/<agent id>?view=mcp_config` for
+a workspace connect, so the admin lands back on the agent's connector tab.
 
 **Browser binding.** A state completes only in the browser that started it.
 Without this, anyone allowed to start a connect (for example any holder of a
@@ -274,9 +286,10 @@ authorized their own account into the admin's workspace; it was removed and
 `/api/connector-oauth/begin` is no longer routed). The desktop app's API
 responses land in its own cookie jar, not in the system browser that signs
 in, so the desktop never calls the start endpoint: "connect shared account"
-opens `<daemon_app_url>/<workspace slug>/internal-connectors` (the web
-connectors page, with `daemon_app_url` from `/api/config`) in the system
-browser and tells the admin to finish connecting there. When the server
+opens `<daemon_app_url>/<workspace slug>/agents/<agent id>?view=mcp_config`
+(the agent's connector tab on the web, with `daemon_app_url` from
+`/api/config`) in the system browser and tells the admin to finish
+connecting there. When the server
 publishes no app URL, it asks the admin to open the web version instead. The
 desktop list refetches on focus, so the new account shows up on return.
 

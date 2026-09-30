@@ -43,7 +43,17 @@ type Binding struct {
 	ResourceType string
 	ResourceID   string
 	Enabled      bool
+	// ShareInGroups is the person-scope connector opt-in 「在群聊中由我触发时也可用」.
+	// Stored only; runtime resolution does not read it yet.
+	ShareInGroups bool
+	// UpdatedBy is the user who last changed the row ("" when unknown).
+	UpdatedBy string
+	UpdatedAt time.Time
 }
+
+// bindingColumns selects a Binding from context_capability_binding aliased b.
+const bindingColumns = `b.scope_type, b.org_id, b.scope_key, b.scope_title, b.resource_type, b.resource_id::text, b.enabled,
+	b.share_in_groups, COALESCE(b.updated_by::text, ''), b.updated_at`
 
 // Offers is an agent's enabled offer catalog.
 type Offers struct {
@@ -217,7 +227,7 @@ func TaskBindings(ctx context.Context, db DBTX, workspaceID, agentID string, sco
 	if !scope.HasScene() && !scope.HasPerson() {
 		return nil, nil
 	}
-	rows, err := db.Query(ctx, `SELECT b.scope_type, b.org_id, b.scope_key, b.scope_title, b.resource_type, b.resource_id::text, b.enabled
+	rows, err := db.Query(ctx, `SELECT `+bindingColumns+`
 		FROM context_capability_binding b
 		WHERE b.workspace_id = $1::uuid AND b.agent_id = $2::uuid AND b.enabled AND b.org_id = $3
 		  AND ((b.scope_type = 'scene' AND $4::text <> '' AND b.scope_key = $4::text)
@@ -242,10 +252,10 @@ func ListScopeBindings(ctx context.Context, db DBTX, workspaceID, agentID, scope
 	if scopeType != ScopeScene && scopeType != ScopePerson {
 		return nil, ErrInvalidInput
 	}
-	rows, err := db.Query(ctx, `SELECT scope_type, org_id, scope_key, scope_title, resource_type, resource_id::text, enabled
-		FROM context_capability_binding
-		WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type = $3 AND org_id = $4 AND scope_key = $5
-		ORDER BY resource_type, created_at, resource_id`,
+	rows, err := db.Query(ctx, `SELECT `+bindingColumns+`
+		FROM context_capability_binding b
+		WHERE b.workspace_id = $1::uuid AND b.agent_id = $2::uuid AND b.scope_type = $3 AND b.org_id = $4 AND b.scope_key = $5
+		ORDER BY b.resource_type, b.created_at, b.resource_id`,
 		workspaceID, agentID, scopeType, orgID, scopeKey)
 	if err != nil {
 		return nil, err
@@ -264,7 +274,11 @@ type BindingWrite struct {
 	ResourceType string
 	ResourceID   string
 	Enabled      bool
-	ActorID      string
+	// ShareInGroups, when non-nil, sets the person-scope connector opt-in
+	// 「在群聊中由我触发时也可用」; nil keeps the stored value (false for a new
+	// row). It is only valid for ScopePerson with ResourceConnector.
+	ShareInGroups *bool
+	ActorID       string
 }
 
 // UpsertBinding creates or updates one scene or person binding. Enabling a
@@ -276,6 +290,9 @@ func UpsertBinding(ctx context.Context, db DBTX, in BindingWrite) (Binding, erro
 		(in.ResourceType != ResourceConnector && in.ResourceType != ResourceSkill) {
 		return Binding{}, ErrInvalidInput
 	}
+	if in.ShareInGroups != nil && (in.ScopeType != ScopePerson || in.ResourceType != ResourceConnector) {
+		return Binding{}, ErrInvalidInput
+	}
 	resourceID, err := canonicalUUID(in.ResourceID)
 	if err != nil {
 		return Binding{}, err
@@ -284,23 +301,27 @@ func UpsertBinding(ctx context.Context, db DBTX, in BindingWrite) (Binding, erro
 	if err != nil {
 		return Binding{}, err
 	}
-	var out Binding
-	err = db.QueryRow(ctx, `INSERT INTO context_capability_binding
-		(workspace_id, agent_id, scope_type, org_id, scope_key, scope_title, resource_type, resource_id, enabled, created_by, updated_by)
-		SELECT $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::boolean, $10::uuid, $10::uuid
+	var shareInGroups any
+	if in.ShareInGroups != nil {
+		shareInGroups = *in.ShareInGroups
+	}
+	out, err := scanBinding(db.QueryRow(ctx, `INSERT INTO context_capability_binding AS b
+		(workspace_id, agent_id, scope_type, org_id, scope_key, scope_title, resource_type, resource_id, enabled, share_in_groups, created_by, updated_by)
+		SELECT $1::uuid, $2::uuid, $3::text, $4::text, $5::text, $6::text, $7::text, $8::uuid, $9::boolean, COALESCE($11::boolean, FALSE), $10::uuid, $10::uuid
 		WHERE NOT $9::boolean OR EXISTS (
 		  SELECT 1 FROM context_capability_binding o
 		  WHERE o.workspace_id = $1::uuid AND o.agent_id = $2::uuid AND o.scope_type = 'offer'
 		    AND o.org_id = '' AND o.scope_key = '' AND o.resource_type = $7::text AND o.resource_id = $8::uuid AND o.enabled)
 		ON CONFLICT (agent_id, scope_type, org_id, scope_key, resource_type, resource_id)
 		DO UPDATE SET enabled = EXCLUDED.enabled,
-		  scope_title = CASE WHEN EXCLUDED.scope_title <> '' THEN EXCLUDED.scope_title ELSE context_capability_binding.scope_title END,
+		  scope_title = CASE WHEN EXCLUDED.scope_title <> '' THEN EXCLUDED.scope_title ELSE b.scope_title END,
+		  share_in_groups = COALESCE($11::boolean, b.share_in_groups),
 		  updated_by = EXCLUDED.updated_by,
 		  updated_at = now()
-		WHERE context_capability_binding.workspace_id = EXCLUDED.workspace_id
-		RETURNING scope_type, org_id, scope_key, scope_title, resource_type, resource_id::text, enabled`,
-		in.WorkspaceID, in.AgentID, in.ScopeType, in.OrgID, in.ScopeKey, in.ScopeTitle, in.ResourceType, resourceID, in.Enabled, actor,
-	).Scan(&out.ScopeType, &out.OrgID, &out.ScopeKey, &out.ScopeTitle, &out.ResourceType, &out.ResourceID, &out.Enabled)
+		WHERE b.workspace_id = EXCLUDED.workspace_id
+		RETURNING `+bindingColumns,
+		in.WorkspaceID, in.AgentID, in.ScopeType, in.OrgID, in.ScopeKey, in.ScopeTitle, in.ResourceType, resourceID, in.Enabled, actor, shareInGroups,
+	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		if in.Enabled {
 			return Binding{}, ErrNotOffered
@@ -335,10 +356,10 @@ func ListScopeSummaries(ctx context.Context, db DBTX, workspaceID, agentID strin
 		return summary
 	}
 
-	rows, err := db.Query(ctx, `SELECT scope_type, org_id, scope_key, scope_title, resource_type, resource_id::text, enabled
-		FROM context_capability_binding
-		WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type IN ('scene', 'person')
-		ORDER BY updated_at DESC, resource_type, resource_id`, workspaceID, agentID)
+	rows, err := db.Query(ctx, `SELECT `+bindingColumns+`
+		FROM context_capability_binding b
+		WHERE b.workspace_id = $1::uuid AND b.agent_id = $2::uuid AND b.scope_type IN ('scene', 'person')
+		ORDER BY b.updated_at DESC, b.resource_type, b.resource_id`, workspaceID, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -663,22 +684,30 @@ type Link struct {
 	ScopeKey     string
 	ScopeTitle   string
 	SourceTaskID string
-	ExpiresAt    time.Time
+	// ExtraSceneKey is set only on a person link minted in a 1:1 chat: the
+	// DM's openConversationId. Redeeming the link also grants that DM scene.
+	ExtraSceneKey string
+	ExpiresAt     time.Time
 }
 
-const linkColumns = `token_hash, workspace_id::text, agent_id::text, scope_type, org_id, scope_key, scope_title, COALESCE(source_task_id::text, ''), expires_at`
+const linkColumns = `token_hash, workspace_id::text, agent_id::text, scope_type, org_id, scope_key, scope_title, COALESCE(source_task_id::text, ''), extra_scene_key, expires_at`
 
 func scanLink(row pgx.Row) (Link, error) {
 	var l Link
-	err := row.Scan(&l.TokenHash, &l.WorkspaceID, &l.AgentID, &l.ScopeType, &l.OrgID, &l.ScopeKey, &l.ScopeTitle, &l.SourceTaskID, &l.ExpiresAt)
+	err := row.Scan(&l.TokenHash, &l.WorkspaceID, &l.AgentID, &l.ScopeType, &l.OrgID, &l.ScopeKey, &l.ScopeTitle, &l.SourceTaskID, &l.ExtraSceneKey, &l.ExpiresAt)
 	return l, err
 }
 
 // InsertLink stores a configuration link that expires ttl from now (use
 // LinkTTL(l.ScopeType)). l.ExpiresAt is ignored; the stored row is returned.
+// ExtraSceneKey must be empty or, on a person link, a valid
+// openConversationId.
 func InsertLink(ctx context.Context, db DBTX, l Link, ttl time.Duration) (Link, error) {
 	if (l.ScopeType != ScopeScene && l.ScopeType != ScopePerson) || !ValidScopeKey(l.ScopeType, l.ScopeKey) ||
 		len(l.TokenHash) != 64 || ttl <= 0 {
+		return Link{}, ErrInvalidInput
+	}
+	if l.ExtraSceneKey != "" && (l.ScopeType != ScopePerson || !ValidOpenConversationID(l.ExtraSceneKey)) {
 		return Link{}, ErrInvalidInput
 	}
 	sourceTask, err := optionalUUID(l.SourceTaskID)
@@ -686,10 +715,10 @@ func InsertLink(ctx context.Context, db DBTX, l Link, ttl time.Duration) (Link, 
 		return Link{}, err
 	}
 	return scanLink(db.QueryRow(ctx, `INSERT INTO context_config_link
-		(token_hash, workspace_id, agent_id, scope_type, org_id, scope_key, scope_title, source_task_id, expires_at)
-		VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::uuid, now() + make_interval(secs => $9::double precision))
+		(token_hash, workspace_id, agent_id, scope_type, org_id, scope_key, scope_title, source_task_id, extra_scene_key, expires_at)
+		VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::uuid, $10, now() + make_interval(secs => $9::double precision))
 		RETURNING `+linkColumns,
-		l.TokenHash, l.WorkspaceID, l.AgentID, l.ScopeType, l.OrgID, l.ScopeKey, l.ScopeTitle, sourceTask, ttl.Seconds()))
+		l.TokenHash, l.WorkspaceID, l.AgentID, l.ScopeType, l.OrgID, l.ScopeKey, l.ScopeTitle, sourceTask, ttl.Seconds(), l.ExtraSceneKey))
 }
 
 // RedeemLink atomically redeems a link by token hash. Scene links stay
@@ -712,12 +741,19 @@ func RedeemLink(ctx context.Context, db DBTX, tokenHash, userID string) (Link, e
 	return out, err
 }
 
+func scanBinding(row pgx.Row) (Binding, error) {
+	var b Binding
+	err := row.Scan(&b.ScopeType, &b.OrgID, &b.ScopeKey, &b.ScopeTitle, &b.ResourceType, &b.ResourceID, &b.Enabled,
+		&b.ShareInGroups, &b.UpdatedBy, &b.UpdatedAt)
+	return b, err
+}
+
 func collectBindings(rows pgx.Rows) ([]Binding, error) {
 	defer rows.Close()
 	out := []Binding{}
 	for rows.Next() {
-		var b Binding
-		if err := rows.Scan(&b.ScopeType, &b.OrgID, &b.ScopeKey, &b.ScopeTitle, &b.ResourceType, &b.ResourceID, &b.Enabled); err != nil {
+		b, err := scanBinding(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, b)
