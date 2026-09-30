@@ -270,7 +270,7 @@ Hi/你好等普通会话已有正常回复，是本次必须保留的对照，�
 
 主动群的现有审查还返回participation_checks：共享依据的source_refs可分组，但每条来源须恰好覆盖一次；模型独立判断对象依据、原文称呼或已读对话引用和ignore/coordinate/work去向。Host只验证出处及判定与动作的一致性，不用人名或意图词表分类。审查输出预算随窗口条数从768有界增加到3072，仍在原12秒截止内，不增加独立分类调用。
 
-DWS 历史读取通过 `MULTICA_DWS_HISTORY_MCP_URL` 显式选择 MCP 环境，并在每次隔离配置目录中写入 `mcp_url`；预发配置使用预发地址。`im.message-list.v1` 的无时区显示时间按 DWS 约定的上海时区解析，未知格式保留原文。群聊对象未明且历史未加载时，忽略提案须先读取一次历史；明确引用当前文本中的其他收件人可直接判断。读取失败保持未知，不循环读取，也不凭空建立对话。CLI 标准错误仅记录稳定诊断字段。
+DWS 历史读取通过 `MULTICA_DWS_HISTORY_MCP_URL` 显式选择 MCP 环境，并在每次隔离配置目录中写入 `mcp_url`；预发配置使用预发地址。`im.message-list.v1` 的无时区显示时间按 DWS 约定的上海时区解析，未知格式保留原文。群聊对象未明且历史未加载时，忽略提案须先读取一次历史；明确引用当前文本中的其他收件人可直接判断。读取失败保持未知，不循环读取，也不凭空建立对话。CLI 标准错误仅记录稳定诊断字段。运行时开关 `runtime.use_dws_for_tag` 打开后，同一读取改由进程内 DWS SDK 执行（`server/pkg/dws/clicompat` 复现 dws 的请求、成败判定与输出），返回给 Host 的内容与诊断字段不变；加密群消息无法解密，保留密文。
 
 ### 跨组织历史读取续授
 
@@ -358,7 +358,7 @@ Diamond `dt-fde-multica-runtime.json` / `DEFAULT_GROUP` exposes `runtime.llm.coo
 
 `inbound_coordinator_user_decision` 默认关闭；关闭 Coordinator 同时清除此设置。候选提案与执行 checkpoint 分开：`UserDecisionSnapshot` 保存冻结上下文、模型实际输入、召回任务、提案及 policy 版本，`proposeUserDecision` 在 `SavePlan` 之前返回等待。每次入站仅一次提问；续接最多三个真实任务，加新建与具体直接回复；卡片不暴露内部计划或默认勾选。
 
-回调身份只读取可信 `operatorDTO.openDingTalkId`，新协议 `a2uiEvent.action.context` 与旧 `actionData.context` 在边界兼容。数据库事务锁住决策、去重事件并接收首次有效提交；拒绝事件不消耗机会。未确认发送成功不启动 24 小时计时；过期不自动选择。发送链路标识不构成 DWS 消息幂等保证，结果不明禁止盲目重发。
+运行时开关 `runtime.use_dws_for_tag` 打开后，卡片回调改由服务端共享的 DWS 事件连接接收（`server/internal/dwseventsource` 事件源，每个发卡身份全服一条连接，由通用连接管理 `server/internal/connmgr` 在副本间放置、断线重连并在滚动发布时交接）；决策会话等待该连接就绪而不再各自订阅，回调仍经决策服务同一段落库逻辑处理。回调身份只读取可信 `operatorDTO.openDingTalkId`，新协议 `a2uiEvent.action.context` 与旧 `actionData.context` 在边界兼容。数据库事务锁住决策、去重事件并接收首次有效提交；拒绝事件不消耗机会。未确认发送成功不启动 24 小时计时；过期不自动选择。发送链路标识不构成 DWS 消息幂等保证，结果不明禁止盲目重发。
 
 选择锁定动作方向与目标；只补充文字可解释为计划，歧义或矛盾不执行、不二次询问。用户选择、模型推荐与人工金标分别记录。结构检查与单元测试不表示内部群产品链路通过；服务端消费、派发恢复、OSS/导出与真实模型/群验收仍须完成。
 

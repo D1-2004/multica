@@ -1,0 +1,1510 @@
+// Copied from github.com/DingTalk-Real-AI/dingtalk-workspace-cli tag v1.0.62-beta.8, path internal/transport/client.go; only import paths rewritten (and re-sorted by gofmt). Apache-2.0; see clicompat/NOTICE.
+// Copyright 2026 Alibaba Group
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package transport
+
+import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	apperrors "github.com/multica-ai/multica/server/pkg/dws/clicompat/internal/upstream/errors"
+	"github.com/multica-ai/multica/server/pkg/dws/clicompat/internal/upstream/i18n"
+	"github.com/multica-ai/multica/server/pkg/dws/clicompat/internal/upstream/jsonutil"
+	"github.com/multica-ai/multica/server/pkg/dws/clicompat/internal/upstream/logging"
+	"github.com/multica-ai/multica/server/pkg/dws/clicompat/internal/upstream/pkg/config"
+	"github.com/multica-ai/multica/server/pkg/dws/clicompat/internal/upstream/pkg/configmeta"
+	"github.com/multica-ai/multica/server/pkg/dws/clicompat/internal/upstream/pkg/validate"
+	"github.com/multica-ai/multica/server/pkg/dws/clicompat/internal/upstream/requestmeta"
+)
+
+func init() {
+	configmeta.Register(configmeta.ConfigItem{
+		Name:         "DWS_ALLOW_HTTP_ENDPOINTS",
+		Category:     configmeta.CategorySecurity,
+		Description:  "允许非 HTTPS 的 MCP 端点 (仅限 loopback)",
+		DefaultValue: "(禁用)",
+		Example:      "1",
+	})
+	configmeta.Register(configmeta.ConfigItem{
+		Name:         "DWS_TRUSTED_DOMAINS",
+		Category:     configmeta.CategoryNetwork,
+		Description:  "信任的 HTTPS 域名白名单 (逗号分隔，* 信任所有)",
+		DefaultValue: "*.dingtalk.com,*.dingtalk.io",
+		Example:      "*.dingtalk.com,*.dingtalk.io,custom.example.com",
+	})
+}
+
+const (
+	trustedDomainsEnv     = "DWS_TRUSTED_DOMAINS"
+	defaultTrustedDomains = "*.dingtalk.com,*.dingtalk.io"
+
+	// defaultHTTPTimeout is the default timeout for HTTP transport requests.
+	defaultHTTPTimeout = 30 * time.Second
+
+	// Default retry parameters for JSON-RPC calls.
+	defaultMaxRetries    = 1
+	defaultRetryDelay    = 500 * time.Millisecond
+	defaultRetryMaxDelay = 5 * time.Second
+	maxToolsPerListPage  = 10_000
+
+	// Security headers
+	HeaderSource       = "X-Cli-Source"
+	HeaderVersion      = "X-Cli-Version"
+	HeaderExecutionId  = "X-Cli-Execution-Id"
+	HeaderAgentVersion = "x-dws-agent-ver"
+	HeaderAgentExt     = "x-dws-agent-ext"
+	SourceValue        = "dws-cli"
+)
+
+// Supported MCP protocol versions, ordered from newest to oldest.
+var supportedProtocolVersions = []string{
+	"2025-03-26",
+	"2024-11-05",
+	"2024-06-18",
+}
+
+type Client struct {
+	HTTPClient       *http.Client
+	MaxRetries       int
+	RetryDelay       time.Duration
+	RetryMaxDelay    time.Duration
+	AuthToken        string
+	ExtraHeaders     map[string]string
+	SnapshotRecorder SnapshotRecorder
+	TrustedDomains   []string
+	ExecutionId      string       // Request tracing ID for debugging
+	FileLogger       *slog.Logger // Structured file logger for diagnostics (nil-safe).
+	sleep            func(context.Context, time.Duration) error
+	wildcardOnce     sync.Once
+	// Stderr is the writer for warning messages. Defaults to os.Stderr.
+	Stderr io.Writer
+}
+
+type SnapshotRecorder interface {
+	RecordJSONRPC(method, endpoint string, requestBody, responseBody []byte) string
+}
+
+type requestEnvelope struct {
+	JSONRPC string `json:"jsonrpc"`
+	ID      int    `json:"id,omitempty"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
+}
+
+type responseEnvelope struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      int             `json:"id"`
+	Result  json.RawMessage `json:"result"`
+	Error   *RPCError       `json:"error"`
+}
+
+type RPCError struct {
+	Code    int             `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data,omitempty"`
+}
+
+func (e *RPCError) UnmarshalJSON(data []byte) error {
+	if err := jsonutil.RejectNonCanonicalObjectKeys(data, "code", "message", "data"); err != nil {
+		return fmt.Errorf("invalid JSON-RPC error: %w", err)
+	}
+	type rpcError RPCError
+	var decoded rpcError
+	if err := unmarshalJSONUseNumber(data, &decoded); err != nil {
+		return err
+	}
+	*e = RPCError(decoded)
+	return nil
+}
+
+type InitializeResult struct {
+	RequestedProtocolVersion string         `json:"requested_protocol_version"`
+	ProtocolVersion          string         `json:"protocol_version"`
+	Capabilities             map[string]any `json:"capabilities"`
+	ServerInfo               map[string]any `json:"server_info"`
+}
+
+type ToolDescriptor struct {
+	Name         string         `json:"name"`
+	Title        string         `json:"title"`
+	Description  string         `json:"description"`
+	InputSchema  map[string]any `json:"inputSchema"`
+	OutputSchema map[string]any `json:"outputSchema,omitempty"`
+	Sensitive    bool           `json:"sensitive,omitempty"`
+}
+
+func (t *ToolDescriptor) UnmarshalJSON(data []byte) error {
+	if err := jsonutil.RejectDuplicateObjectKeys(data); err != nil {
+		return fmt.Errorf("invalid tool descriptor: %w", err)
+	}
+	if err := jsonutil.RejectNonCanonicalObjectKeys(data, "name", "title", "description", "inputSchema", "outputSchema", "sensitive"); err != nil {
+		return fmt.Errorf("invalid tool descriptor: %w", err)
+	}
+	type toolDescriptor ToolDescriptor
+	var decoded toolDescriptor
+	if err := unmarshalJSONUseNumber(data, &decoded); err != nil {
+		return err
+	}
+	*t = ToolDescriptor(decoded)
+	return nil
+}
+
+type ToolsListResult struct {
+	Tools            []ToolDescriptor `json:"tools"`
+	NextCursor       string           `json:"nextCursor,omitempty"`
+	RawResultBytes   int              `json:"-"`
+	RawResponseBytes int              `json:"-"`
+}
+
+func (r *ToolsListResult) UnmarshalJSON(data []byte) error {
+	if err := jsonutil.RejectNonCanonicalObjectKeys(data, "tools", "nextCursor"); err != nil {
+		return fmt.Errorf("invalid tools/list result: %w", err)
+	}
+	var raw struct {
+		Tools      json.RawMessage `json:"tools"`
+		NextCursor string          `json:"nextCursor"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	toolsJSON := bytes.TrimSpace(raw.Tools)
+	if len(toolsJSON) == 0 {
+		return errors.New(`tools/list result is missing required "tools" array`)
+	}
+	if bytes.Equal(toolsJSON, []byte("null")) {
+		return errors.New(`tools/list result "tools" must be a non-null array`)
+	}
+	if err := rejectOversizedToolsArray(toolsJSON, maxToolsPerListPage); err != nil {
+		return err
+	}
+
+	var tools []ToolDescriptor
+	if err := json.Unmarshal(toolsJSON, &tools); err != nil {
+		return fmt.Errorf(`tools/list result "tools" must be an array: %w`, err)
+	}
+
+	*r = ToolsListResult{
+		Tools:          tools,
+		NextCursor:     raw.NextCursor,
+		RawResultBytes: len(data),
+	}
+	return nil
+}
+
+func rejectOversizedToolsArray(data []byte, limit int) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	opening, err := decoder.Token()
+	if err != nil || opening != json.Delim('[') {
+		return errors.New(`tools/list result "tools" must be an array`)
+	}
+	count := 0
+	for decoder.More() {
+		count++
+		if count > limit {
+			return fmt.Errorf("tools/list page exceeded the %d-tool safety limit", limit)
+		}
+		if err := skipJSONValue(decoder, 0); err != nil {
+			return fmt.Errorf(`tools/list result "tools" must be an array: %w`, err)
+		}
+	}
+	closing, err := decoder.Token()
+	if err != nil || closing != json.Delim(']') {
+		return errors.New(`tools/list result "tools" must be an array`)
+	}
+	return nil
+}
+
+func skipJSONValue(decoder *json.Decoder, depth int) error {
+	if depth > 256 {
+		return errors.New("JSON nesting exceeds safety limit")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, composite := token.(json.Delim)
+	if !composite {
+		return nil
+	}
+	switch delim {
+	case '{':
+		for decoder.More() {
+			if _, err := decoder.Token(); err != nil {
+				return err
+			}
+			if err := skipJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		token, err = decoder.Token()
+		if err != nil || token != json.Delim('}') {
+			return errors.New("invalid JSON object")
+		}
+	case '[':
+		for decoder.More() {
+			if err := skipJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		token, err = decoder.Token()
+		if err != nil || token != json.Delim(']') {
+			return errors.New("invalid JSON array")
+		}
+	default:
+		return errors.New("invalid JSON delimiter")
+	}
+	return nil
+}
+
+func unmarshalJSONUseNumber(data []byte, out any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(out); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return errors.New("unexpected trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+type ContentBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+func (b *ContentBlock) UnmarshalJSON(data []byte) error {
+	if err := jsonutil.RejectNonCanonicalObjectKeys(data, "type", "text"); err != nil {
+		return fmt.Errorf("invalid content block: %w", err)
+	}
+	type contentBlock ContentBlock
+	var decoded contentBlock
+	if err := unmarshalJSONUseNumber(data, &decoded); err != nil {
+		return err
+	}
+	*b = ContentBlock(decoded)
+	return nil
+}
+
+type ToolCallResult struct {
+	Content           map[string]any  `json:"-"`
+	StructuredContent map[string]any  `json:"structuredContent,omitempty"`
+	Blocks            []ContentBlock  `json:"content,omitempty"`
+	IsError           bool            `json:"isError,omitempty"`
+	RawResult         json.RawMessage `json:"-"`
+}
+
+func (r *ToolCallResult) UnmarshalJSON(data []byte) error {
+	type rawResult struct {
+		Content           json.RawMessage `json:"content"`
+		StructuredContent json.RawMessage `json:"structuredContent"`
+		IsError           bool            `json:"isError,omitempty"`
+	}
+
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) || trimmed[0] != '{' {
+		return fmt.Errorf("tools/call result must be a non-null object")
+	}
+	if err := jsonutil.RejectDuplicateObjectKeys(trimmed); err != nil {
+		return fmt.Errorf("invalid tools/call result: %w", err)
+	}
+	if err := jsonutil.RejectNonCanonicalObjectKeys(trimmed, "content", "structuredContent", "isError"); err != nil {
+		return fmt.Errorf("invalid tools/call result: %w", err)
+	}
+	var raw rawResult
+	if err := unmarshalJSONUseNumber(trimmed, &raw); err != nil {
+		return err
+	}
+
+	*r = ToolCallResult{IsError: raw.IsError, RawResult: append(json.RawMessage(nil), trimmed...)}
+	structuredJSON := bytes.TrimSpace(raw.StructuredContent)
+	if len(structuredJSON) > 0 && !bytes.Equal(structuredJSON, []byte("null")) {
+		var structured map[string]any
+		if err := unmarshalJSONUseNumber(structuredJSON, &structured); err != nil || structured == nil {
+			return fmt.Errorf("tools/call structuredContent must be an object")
+		}
+		r.StructuredContent = structured
+	}
+
+	contentJSON := bytes.TrimSpace(raw.Content)
+	if len(contentJSON) == 0 || bytes.Equal(contentJSON, []byte("null")) {
+		if len(structuredJSON) > 0 && !bytes.Equal(structuredJSON, []byte("null")) {
+			r.Content = cloneAnyMap(r.StructuredContent)
+			return nil
+		}
+		return fmt.Errorf("tools/call result is missing required non-null content")
+	}
+
+	var object map[string]any
+	if err := unmarshalJSONUseNumber(contentJSON, &object); err == nil && object != nil {
+		r.Content = object
+		return nil
+	}
+
+	var blocks []ContentBlock
+	if err := unmarshalJSONUseNumber(contentJSON, &blocks); err == nil && blocks != nil {
+		r.Blocks = blocks
+		if len(structuredJSON) > 0 && !bytes.Equal(structuredJSON, []byte("null")) {
+			r.Content = cloneAnyMap(r.StructuredContent)
+			return nil
+		}
+		for _, block := range blocks {
+			text := strings.TrimSpace(block.Text)
+			if text == "" {
+				continue
+			}
+			var parsed map[string]any
+			if err := json.Unmarshal([]byte(text), &parsed); err == nil {
+				r.Content = parsed
+				return nil
+			}
+		}
+		return nil
+	}
+
+	return fmt.Errorf("unsupported tools/call content shape")
+}
+
+func (r ToolCallResult) MarshalJSON() ([]byte, error) {
+	if raw := bytes.TrimSpace(r.RawResult); len(raw) > 0 {
+		return append([]byte(nil), raw...), nil
+	}
+	result := map[string]any{}
+	if r.Content != nil {
+		result["content"] = r.Content
+	}
+	if r.Blocks != nil {
+		result["content"] = r.Blocks
+	}
+	if r.StructuredContent != nil {
+		result["structuredContent"] = r.StructuredContent
+	}
+	if r.IsError {
+		result["isError"] = true
+	}
+	return json.Marshal(result)
+}
+
+// defaultTransport returns a tuned http.Transport for MCP JSON-RPC calls.
+// Compared to http.DefaultTransport it adds ResponseHeaderTimeout to detect
+// "accepted but never responded" servers faster, and explicit TLS/dial timeouts.
+func defaultTransport() *http.Transport {
+	return &http.Transport{
+		// Honour HTTP_PROXY / HTTPS_PROXY / NO_PROXY env vars; a custom
+		// Transport without an explicit Proxy field would otherwise bypass
+		// proxies entirely, which breaks sandboxed/air-gapped deployments
+		// that rely on an outbound proxy (#236).
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   3 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 20 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		ForceAttemptHTTP2:     true,
+	}
+}
+
+func NewClient(httpClient *http.Client) *Client {
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Timeout:       defaultHTTPTimeout,
+			Transport:     defaultTransport(),
+			CheckRedirect: safeRedirectPolicy,
+		}
+	} else {
+		if httpClient.Transport == nil {
+			httpClient.Transport = defaultTransport()
+		}
+		if httpClient.CheckRedirect == nil {
+			httpClient.CheckRedirect = safeRedirectPolicy
+		}
+	}
+	return &Client{
+		HTTPClient:    httpClient,
+		MaxRetries:    defaultMaxRetries,
+		RetryDelay:    defaultRetryDelay,
+		RetryMaxDelay: defaultRetryMaxDelay,
+	}
+}
+
+// safeRedirectPolicy prevents credential headers from being forwarded
+// when a response redirects to a different host (e.g. API 302 → CDN).
+// Credentials and Agent extension context are bound to the initial origin:
+// once a redirect chain leaves that origin they remain stripped for every
+// subsequent hop, including a redirect back to the initial origin.
+// Non-sensitive headers like X-Cli-* and x-dws-agent-ver pass through.
+func safeRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("too many redirects")
+	}
+	if redirectChainLeftInitialOrigin(req, via) {
+		req.Header.Del(HeaderAgentExt)
+		req.Header.Del(requestmeta.DingTalkExtHeader)
+		req.Header.Del("Authorization")
+		req.Header.Del("x-user-access-token")
+	}
+	return nil
+}
+
+func redirectChainLeftInitialOrigin(req *http.Request, via []*http.Request) bool {
+	if len(via) == 0 {
+		return false
+	}
+	initialURL := via[0].URL
+	if !sameOrigin(req.URL, initialURL) {
+		return true
+	}
+	for _, previous := range via[1:] {
+		if !sameOrigin(previous.URL, initialURL) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameOrigin(left, right *url.URL) bool {
+	return strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(left.Host, right.Host)
+}
+
+// WithAuth returns a shallow copy of c with the given auth token and extra
+// headers. The returned client shares the underlying HTTP client but is safe
+// to use concurrently with the original.
+func (c *Client) WithAuth(token string, headers map[string]string) *Client {
+	return &Client{
+		HTTPClient:       c.HTTPClient,
+		MaxRetries:       c.MaxRetries,
+		RetryDelay:       c.RetryDelay,
+		RetryMaxDelay:    c.RetryMaxDelay,
+		AuthToken:        token,
+		ExtraHeaders:     cloneStringMap(headers),
+		SnapshotRecorder: c.SnapshotRecorder,
+		TrustedDomains:   append([]string(nil), c.TrustedDomains...),
+		ExecutionId:      c.ExecutionId,
+		FileLogger:       c.FileLogger,
+		sleep:            c.sleep,
+		Stderr:           c.Stderr,
+	}
+}
+
+// WithMaxRetries returns a copy of c with an independent retry limit. It is
+// useful when a caller knows a request cannot be retried safely.
+func (c *Client) WithMaxRetries(maxRetries int) *Client {
+	copy := c.WithAuth(c.AuthToken, c.ExtraHeaders)
+	copy.MaxRetries = maxRetries
+	return copy
+}
+
+// WithHTTPTimeout returns a transport client with an independently cloned HTTP
+// client. A standard transport is cloned too so its response-header deadline
+// cannot end a caller's larger operation timeout early.
+func (c *Client) WithHTTPTimeout(timeout time.Duration) *Client {
+	copy := c.WithAuth(c.AuthToken, c.ExtraHeaders)
+	if c.HTTPClient == nil {
+		transport := defaultTransport()
+		transport.ResponseHeaderTimeout = timeout
+		copy.HTTPClient = &http.Client{
+			Timeout:       timeout,
+			Transport:     transport,
+			CheckRedirect: safeRedirectPolicy,
+		}
+		return copy
+	}
+	httpCopy := *c.HTTPClient
+	httpCopy.Timeout = timeout
+	if transport, ok := c.HTTPClient.Transport.(*http.Transport); ok && transport != nil {
+		transportCopy := transport.Clone()
+		transportCopy.ResponseHeaderTimeout = timeout
+		httpCopy.Transport = transportCopy
+	}
+	copy.HTTPClient = &httpCopy
+	return copy
+}
+
+// WithRedirectsDisabled exposes 3xx responses instead of allowing net/http to
+// replay a POST body at a redirect target.
+func (c *Client) WithRedirectsDisabled() *Client {
+	copy := c.WithAuth(c.AuthToken, c.ExtraHeaders)
+	if c.HTTPClient == nil {
+		copy.HTTPClient = &http.Client{Timeout: defaultHTTPTimeout, Transport: defaultTransport()}
+	} else {
+		httpCopy := *c.HTTPClient
+		copy.HTTPClient = &httpCopy
+	}
+	copy.HTTPClient.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return copy
+}
+
+// WithExecutionId returns a shallow copy of c with the given execution ID.
+// The execution ID is included in requests for tracing and debugging.
+func (c *Client) WithExecutionId(executionId string) *Client {
+	copy := c.WithAuth(c.AuthToken, c.ExtraHeaders)
+	copy.ExecutionId = executionId
+	return copy
+}
+
+func SupportedProtocolVersions() []string {
+	return append([]string(nil), supportedProtocolVersions...)
+}
+
+func (c *Client) Initialize(ctx context.Context, endpoint string) (InitializeResult, error) {
+	var lastErr error
+	for _, version := range SupportedProtocolVersions() {
+		params := map[string]any{
+			"capabilities": map[string]any{},
+			"clientInfo": map[string]any{
+				"name":    "dws",
+				"version": "0.0.0-dev",
+			},
+			"protocolVersion": version,
+		}
+
+		var payload InitializeResult
+		err := c.callJSONRPC(ctx, endpoint, requestEnvelope{
+			JSONRPC: "2.0",
+			ID:      1,
+			Method:  "initialize",
+			Params:  params,
+		}, true, &payload)
+		if err == nil {
+			if payload.ProtocolVersion == "" {
+				payload.ProtocolVersion = version
+			}
+			payload.RequestedProtocolVersion = version
+			return payload, nil
+		}
+		lastErr = err
+		// Only protocol-level JSON-RPC errors justify trying another version.
+		// Transport/HTTP failures (dial timeout, connection refused, HTTP 5xx,
+		// etc.) fail identically regardless of protocol version, so looping
+		// over three versions only multiplies the dial cost — e.g. on an
+		// unreachable endpoint, three 3-second dials amount to 9 seconds
+		// before the outer context surrenders.
+		var callErr *CallError
+		if !errors.As(err, &callErr) || callErr.Stage != CallStageJSONRPC {
+			return InitializeResult{}, err
+		}
+	}
+	if lastErr != nil {
+		return InitializeResult{}, lastErr
+	}
+	return InitializeResult{}, apperrors.NewDiscovery(fmt.Sprintf("initialize failed for all supported protocol versions at %s", RedactURL(endpoint)))
+}
+
+func (c *Client) NotifyInitialized(ctx context.Context, endpoint string) error {
+	return c.callJSONRPC(ctx, endpoint, requestEnvelope{
+		JSONRPC: "2.0",
+		Method:  "notifications/initialized",
+		Params:  map[string]any{},
+	}, false, nil)
+}
+
+func (c *Client) ListTools(ctx context.Context, endpoint string) (ToolsListResult, error) {
+	return c.ListToolsPage(ctx, endpoint, "")
+}
+
+func (c *Client) ListToolsPage(ctx context.Context, endpoint, cursor string) (ToolsListResult, error) {
+	var params map[string]any
+	if cursor != "" {
+		params = map[string]any{"cursor": cursor}
+	}
+	var payload ToolsListResult
+	if err := c.callJSONRPC(ctx, endpoint, requestEnvelope{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "tools/list",
+		Params:  params,
+	}, true, &payload); err != nil {
+		return ToolsListResult{}, err
+	}
+	return payload, nil
+}
+
+func (c *Client) CallTool(ctx context.Context, endpoint, tool string, arguments map[string]any) (ToolCallResult, error) {
+	// Validate tool name to prevent injection via control chars or path traversal.
+	if err := validate.RejectControlChars(tool, "tool name"); err != nil {
+		return ToolCallResult{}, apperrors.NewValidation(err.Error())
+	}
+	// Validate string arguments at the transport boundary.
+	if err := validateCallArguments(arguments); err != nil {
+		return ToolCallResult{}, apperrors.NewValidation(err.Error())
+	}
+	var payload ToolCallResult
+	if err := c.callJSONRPC(ctx, endpoint, requestEnvelope{
+		JSONRPC: "2.0",
+		ID:      3,
+		Method:  "tools/call",
+		Params: map[string]any{
+			"name":      tool,
+			"arguments": arguments,
+		},
+	}, true, &payload); err != nil {
+		return ToolCallResult{}, err
+	}
+	return payload, nil
+}
+
+func cloneAnyMap(src map[string]any) map[string]any {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(src))
+	for key, value := range src {
+		out[key] = value
+	}
+	return out
+}
+
+func (c *Client) callJSONRPC(ctx context.Context, endpoint string, request requestEnvelope, expectResponse bool, out any) error {
+	body, err := json.Marshal(request)
+	if err != nil {
+		return apperrors.NewInternal(
+			"failed to encode JSON-RPC request",
+			apperrors.WithOperation(request.Method),
+			apperrors.WithExecutionStarted(false),
+			apperrors.WithRetryable(false),
+		)
+	}
+
+	logging.LogRequest(c.FileLogger, request.Method, endpoint, c.ExecutionId, len(body))
+	// Log request body details for tools/call (arguments are sanitized).
+	if params, ok := request.Params.(map[string]any); ok {
+		toolName, _ := params["name"].(string)
+		args, _ := params["arguments"].(map[string]any)
+		logging.LogRequestBody(c.FileLogger, request.Method, c.ExecutionId, toolName, args)
+	}
+	callStart := time.Now()
+
+	resp, err := c.doWithRetry(ctx, endpoint, body, request.Method)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Extract trace ID from response headers for correlation.
+	headerTraceID := ExtractTraceIDFromHeaders(resp.Header)
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, config.MaxResponseBodySize+1))
+	logging.LogResponse(c.FileLogger, request.Method, endpoint, c.ExecutionId, resp.StatusCode, len(data), time.Since(callStart), err)
+	if err != nil {
+		return apperrors.NewDiscovery(
+			"failed to read JSON-RPC response",
+			apperrors.WithOperation(request.Method),
+			apperrors.WithReason(reasonForMethod(request.Method, "response_read_failed")),
+			apperrors.WithHint(i18n.T("检查服务连通性后重试；如持续失败，请确认 MCP 服务响应正常。")),
+			apperrors.WithActions(discoveryActions("")...),
+			apperrors.WithTraceID(headerTraceID),
+		)
+	}
+	if len(data) > config.MaxResponseBodySize {
+		return apperrors.NewDiscovery(
+			fmt.Sprintf("JSON-RPC %s response exceeds safety limit of %d bytes", request.Method, config.MaxResponseBodySize),
+			apperrors.WithOperation(request.Method),
+			apperrors.WithReason(reasonForMethod(request.Method, "response_too_large")),
+		)
+	}
+	snapshotPath := ""
+	if c.SnapshotRecorder != nil && (expectResponse || resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices || len(bytes.TrimSpace(data)) > 0) {
+		snapshotPath = c.SnapshotRecorder.RecordJSONRPC(request.Method, endpoint, body, data)
+	}
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		logging.LogResponseBody(c.FileLogger, request.Method, c.ExecutionId, resp.StatusCode, data, headerTraceID)
+		return httpStatusError(request.Method, endpoint, resp.StatusCode, snapshotPath, headerTraceID)
+	}
+
+	if !expectResponse {
+		return nil
+	}
+
+	if err := jsonutil.RejectDuplicateObjectKeys(data); err != nil {
+		return apperrors.NewDiscovery(
+			fmt.Sprintf("unexpected protocol response from %s", RedactURL(endpoint)),
+			apperrors.WithOperation(request.Method),
+			apperrors.WithReason(reasonForMethod(request.Method, "invalid_response")),
+			apperrors.WithHint(i18n.T("MCP 服务返回了包含重复字段或无法解析的协议响应。")),
+			apperrors.WithSnapshot(snapshotPath),
+			apperrors.WithTraceID(headerTraceID),
+		)
+	}
+	if err := jsonutil.RejectNonCanonicalObjectKeys(data, "jsonrpc", "id", "result", "error"); err != nil {
+		return apperrors.NewDiscovery(
+			fmt.Sprintf("unexpected protocol response from %s", RedactURL(endpoint)),
+			apperrors.WithOperation(request.Method),
+			apperrors.WithReason(reasonForMethod(request.Method, "invalid_response")),
+			apperrors.WithHint(i18n.T("MCP 服务返回了字段大小写不规范的协议响应。")),
+			apperrors.WithSnapshot(snapshotPath),
+			apperrors.WithTraceID(headerTraceID),
+		)
+	}
+	var envelope responseEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return apperrors.NewDiscovery(
+			fmt.Sprintf("unexpected protocol response from %s", RedactURL(endpoint)),
+			apperrors.WithOperation(request.Method),
+			apperrors.WithReason(reasonForMethod(request.Method, "invalid_response")),
+			apperrors.WithHint(i18n.T("MCP 服务返回了无法解析的协议响应；检查服务版本或上游代理。")),
+			apperrors.WithActions(discoveryActions(snapshotPath)...),
+			apperrors.WithSnapshot(snapshotPath),
+			apperrors.WithTraceID(headerTraceID),
+		)
+	}
+	if envelope.JSONRPC != "2.0" || envelope.ID != request.ID {
+		return apperrors.NewDiscovery(
+			fmt.Sprintf("JSON-RPC %s response does not match request id %d", request.Method, request.ID),
+			apperrors.WithOperation(request.Method),
+			apperrors.WithReason(reasonForMethod(request.Method, "invalid_response")),
+			apperrors.WithHint(i18n.T("MCP 服务返回了不匹配的协议版本或请求 ID；不要使用该响应。")),
+			apperrors.WithSnapshot(snapshotPath),
+			apperrors.WithTraceID(headerTraceID),
+		)
+	}
+	if envelope.Error != nil {
+		logging.LogResponseBody(c.FileLogger, request.Method, c.ExecutionId, resp.StatusCode, data, headerTraceID)
+		return jsonrpcEnvelopeError(request.Method, envelope.Error, snapshotPath, headerTraceID)
+	}
+	if len(envelope.Result) == 0 {
+		return apperrors.NewDiscovery(
+			fmt.Sprintf("JSON-RPC %s returned an empty result payload", request.Method),
+			apperrors.WithOperation(request.Method),
+			apperrors.WithReason(reasonForMethod(request.Method, "empty_result")),
+			apperrors.WithHint(i18n.T("服务返回了空结果；请稍后重试。")),
+			apperrors.WithActions(discoveryActions(snapshotPath)...),
+			apperrors.WithSnapshot(snapshotPath),
+		)
+	}
+	if out == nil {
+		return nil
+	}
+	if err := json.Unmarshal(envelope.Result, out); err != nil {
+		return apperrors.NewDiscovery(
+			fmt.Sprintf("failed to decode JSON-RPC %s result", request.Method),
+			apperrors.WithOperation(request.Method),
+			apperrors.WithReason(reasonForMethod(request.Method, "result_decode_failed")),
+			apperrors.WithHint(i18n.T("结果格式与客户端预期不一致；请检查服务协议变更或回退到最近可用版本。")),
+			apperrors.WithActions(discoveryActions(snapshotPath)...),
+			apperrors.WithSnapshot(snapshotPath),
+		)
+	}
+	if result, ok := out.(*ToolsListResult); ok {
+		result.RawResponseBytes = len(data)
+	}
+	return nil
+}
+
+func (c *Client) doWithRetry(ctx context.Context, endpoint string, body []byte, method string) (*http.Response, error) {
+	endpoint = sanitizeJSONRPCEndpoint(endpoint)
+	operation := strings.TrimSpace(method)
+	if operation == "" {
+		operation = "jsonrpc"
+	}
+	var lastErr error
+	for attempt := 0; attempt <= c.MaxRetries; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, apperrors.NewDiscovery(
+				"failed to create JSON-RPC request",
+				apperrors.WithOperation(operation),
+				apperrors.WithReason("request_build_failed"),
+				apperrors.WithExecutionStarted(false),
+				apperrors.WithRetryable(false),
+				apperrors.WithHint(i18n.T("请检查服务 endpoint 是否为空或格式不合法。")),
+				apperrors.WithCause(&CallError{
+					Stage: CallStageRequest,
+					Cause: err,
+				}),
+			)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		// Set security headers for request tracing
+		req.Header.Set(HeaderSource, SourceValue)
+		if c.ExecutionId != "" {
+			req.Header.Set(HeaderExecutionId, c.ExecutionId)
+		}
+		if token := sanitizeBearerToken(c.AuthToken); token != "" {
+			if c.isEndpointTrusted(endpoint) {
+				req.Header.Set("Authorization", "Bearer "+token)
+				req.Header.Set("x-user-access-token", token)
+			}
+		}
+		for key, value := range c.ExtraHeaders {
+			if key != "" && value != "" {
+				req.Header.Set(key, value)
+			}
+		}
+
+		// Diagnostic: log identity-related headers on first attempt.
+		if attempt == 0 && c.FileLogger != nil {
+			c.FileLogger.LogAttrs(context.Background(), slog.LevelDebug, "http_request_headers",
+				slog.String("endpoint", RedactURL(endpoint)),
+				slog.String("x-user-access-token-present", fmt.Sprintf("%t", req.Header.Get("x-user-access-token") != "")),
+				slog.Int("extra_headers_count", len(c.ExtraHeaders)),
+			)
+		}
+
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			lastErr = err
+			if isTimeoutError(err) {
+				break
+			}
+		} else if !retryable(resp.StatusCode) || attempt == c.MaxRetries {
+			return resp, nil
+		} else {
+			lastErr = fmt.Errorf("retryable HTTP %d", resp.StatusCode)
+			resp.Body.Close()
+		}
+
+		if attempt < c.MaxRetries {
+			retryAfter := ""
+			statusForLog := 0
+			if resp != nil {
+				retryAfter = respRetryAfter(resp)
+				statusForLog = resp.StatusCode
+			}
+			delay := c.retryDelayForAttempt(attempt, retryAfter)
+			logging.LogRetryAttempt(c.FileLogger, operation, c.ExecutionId, attempt, c.MaxRetries, statusForLog, delay, lastErr)
+			if err := c.sleepForRetry(ctx, delay); err != nil {
+				opts := []apperrors.Option{
+					apperrors.WithOperation(operation),
+					apperrors.WithReason("request_cancelled"),
+					apperrors.WithHint(i18n.T("请求在重试过程中被取消；请检查调用侧超时设置。")),
+					apperrors.WithCause(&CallError{
+						Stage: CallStageRequest,
+						Cause: err,
+					}),
+				}
+				if operation == "tools/call" {
+					opts = append(opts, apperrors.WithActions(networkActions("")...))
+					return nil, apperrors.NewAPI("request cancelled during retry", opts...)
+				}
+				opts = append(opts, apperrors.WithActions(discoveryActions("")...))
+				return nil, apperrors.NewDiscovery("request cancelled during retry", opts...)
+			}
+		}
+	}
+	reason, hint := classifyRequestFailure(lastErr)
+	category := apperrors.CategoryDiscovery
+	actions := discoveryActions("")
+	if operation == "tools/call" {
+		category = apperrors.CategoryAPI
+		actions = networkActions("")
+	}
+	logging.LogErrorClassified(c.FileLogger, operation, c.ExecutionId,
+		string(category), reason, 0, 0,
+		!isTimeoutError(lastErr), "")
+	opts := []apperrors.Option{
+		apperrors.WithOperation(operation),
+		apperrors.WithReason(reason),
+		apperrors.WithRetryable(!isTimeoutError(lastErr)),
+		apperrors.WithHint(hint),
+		apperrors.WithActions(actions...),
+		apperrors.WithCause(&CallError{
+			Stage: CallStageRequest,
+			Cause: lastErr,
+		}),
+	}
+	message := fmt.Sprintf("request to %s failed: %v", RedactURL(endpoint), lastErr)
+	if category == apperrors.CategoryAPI {
+		return nil, apperrors.NewAPI(message, opts...)
+	}
+	return nil, apperrors.NewDiscovery(message, opts...)
+}
+
+// ValidateTrustedEndpoint rejects network destinations that are outside the
+// configured MCP trust boundary before any request or credential is sent.
+func (c *Client) ValidateTrustedEndpoint(endpoint string) error {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil || !c.isEndpointTrusted(endpoint) {
+		return apperrors.NewDiscovery(
+			"refusing to contact an untrusted MCP endpoint",
+			apperrors.WithReason("untrusted_mcp_endpoint"),
+			apperrors.WithExecutionStarted(false),
+			apperrors.WithRetryable(false),
+		)
+	}
+	return nil
+}
+
+func sanitizeJSONRPCEndpoint(endpoint string) string {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || parsed.Host == "" {
+		return validate.StripQueryFragment(endpoint)
+	}
+	parsed.Fragment = ""
+	if shouldPreserveEndpointQuery(parsed) {
+		return parsed.String()
+	}
+	parsed.RawQuery = ""
+	return parsed.String()
+}
+
+func shouldPreserveEndpointQuery(parsed *url.URL) bool {
+	if parsed == nil || !strings.EqualFold(parsed.Scheme, "https") {
+		return false
+	}
+	switch strings.ToLower(parsed.Hostname()) {
+	case "mcp-gw.dingtalk.com", "pre-mcp-gw.dingtalk.com", "mcp-gw.dingtalk.io", "pre-mcp-gw.dingtalk.io":
+		return true
+	default:
+		return false
+	}
+}
+
+func retryable(statusCode int) bool {
+	return statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError
+}
+
+// isTimeoutError returns true for errors caused by context deadline or HTTP
+// client timeout. These are typically deterministic (server overloaded or
+// unreachable) and retrying immediately is unlikely to help.
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	if os.IsTimeout(err) {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Client.Timeout exceeded") ||
+		strings.Contains(msg, "TLS handshake timeout")
+}
+
+// classifyRequestFailure returns a machine-readable reason and a user-facing
+// hint tailored to the specific failure type, so users get actionable guidance
+// instead of opaque Go error strings.
+func classifyRequestFailure(err error) (reason, hint string) {
+	if err == nil {
+		return "request_failed", i18n.T("请检查网络连通性和 MCP 服务状态后重试。")
+	}
+	msg := err.Error()
+
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "request_timeout",
+			i18n.T("请求超时（上下文截止时间已到）。可通过 --timeout 增大超时时间，或检查网络连接。")
+	case errors.Is(err, context.Canceled):
+		return "request_cancelled",
+			i18n.T("请求已取消。如果非手动取消，请检查调用侧超时设置。")
+	case strings.Contains(msg, "Client.Timeout exceeded"):
+		return "http_client_timeout",
+			i18n.T("HTTP 请求超时（等待服务端响应超时）。可通过 --timeout 增大超时时间，或检查服务端是否正常。")
+	case strings.Contains(msg, "TLS handshake timeout"):
+		return "tls_timeout",
+			i18n.T("TLS 握手超时。请检查网络连接或代理设置。")
+	case strings.Contains(msg, "connection refused"):
+		return "connection_refused",
+			i18n.T("连接被拒绝。请确认服务端已启动并正在监听。")
+	case strings.Contains(msg, "no such host"):
+		return "dns_resolution_failed",
+			i18n.T("DNS 解析失败。请检查域名拼写和网络 DNS 配置。")
+	case strings.Contains(msg, "i/o timeout"):
+		return "io_timeout",
+			i18n.T("网络 I/O 超时。可通过 --timeout 增大超时时间，或检查网络连接。")
+	default:
+		return "request_failed",
+			i18n.T("请检查网络连通性和 MCP 服务状态后重试。")
+	}
+}
+
+func respRetryAfter(resp *http.Response) string {
+	if resp == nil {
+		return ""
+	}
+	return strings.TrimSpace(resp.Header.Get("Retry-After"))
+}
+
+func (c *Client) retryDelayForAttempt(attempt int, retryAfter string) time.Duration {
+	base := c.RetryDelay
+	if base <= 0 {
+		base = 10 * time.Millisecond
+	}
+	maxDelay := c.RetryMaxDelay
+	if maxDelay <= 0 {
+		maxDelay = base * 8
+	}
+	if delay, ok := parseRetryAfter(retryAfter); ok {
+		if delay > maxDelay {
+			return maxDelay
+		}
+		if delay > 0 {
+			return delay
+		}
+	}
+	delay := base << attempt
+	if delay > maxDelay {
+		return maxDelay
+	}
+	return delay
+}
+
+func (c *Client) sleepForRetry(ctx context.Context, delay time.Duration) error {
+	if c != nil && c.sleep != nil {
+		return c.sleep(ctx, delay)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func parseRetryAfter(raw string) (time.Duration, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
+	}
+	if seconds, err := time.ParseDuration(raw + "s"); err == nil && seconds > 0 {
+		return seconds, true
+	}
+	deadline, err := http.ParseTime(raw)
+	if err != nil {
+		return 0, false
+	}
+	delay := time.Until(deadline)
+	if delay < 0 {
+		return 0, true
+	}
+	return delay, true
+}
+
+// isEndpointTrusted checks whether the endpoint is HTTPS and belongs to a
+// trusted domain. When no auth token is set this is a no-op.
+// Set DWS_ALLOW_HTTP_ENDPOINTS=1 for development/testing to allow HTTP, but
+// only for loopback addresses (127.0.0.1, ::1, localhost).
+// Set DWS_TRUSTED_DOMAINS=* to trust all domains.
+func (c *Client) isEndpointTrusted(endpoint string) bool {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") {
+		if !strings.EqualFold(parsed.Scheme, "http") {
+			return false
+		}
+		if os.Getenv("DWS_ALLOW_HTTP_ENDPOINTS") != "1" {
+			return false
+		}
+		// Even with the bypass, only allow loopback addresses.
+		host := parsed.Hostname()
+		if host != "127.0.0.1" && host != "::1" && host != "localhost" {
+			return false
+		}
+		return true
+	}
+	host := parsed.Hostname()
+	domains := c.trustedDomainsList()
+	for _, pattern := range domains {
+		if pattern == "*" {
+			c.warnWildcardDomains()
+			return true
+		}
+		if matchDomain(host, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Client) trustedDomainsList() []string {
+	if len(c.TrustedDomains) > 0 {
+		return c.TrustedDomains
+	}
+	if envVal := strings.TrimSpace(os.Getenv(trustedDomainsEnv)); envVal != "" {
+		return strings.Split(envVal, ",")
+	}
+	return strings.Split(defaultTrustedDomains, ",")
+}
+
+func (c *Client) warnWildcardDomains() {
+	c.wildcardOnce.Do(func() {
+		w := c.Stderr
+		if w == nil {
+			w = os.Stderr
+		}
+		fmt.Fprintln(w, "[WARN] DWS_TRUSTED_DOMAINS=* sends bearer token to ANY HTTPS endpoint. Use only for development.")
+	})
+}
+
+func matchDomain(host, pattern string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	if pattern == "" {
+		return false
+	}
+	if strings.HasPrefix(pattern, "*.") {
+		suffix := pattern[1:] // e.g. ".dingtalk.com"
+		return strings.HasSuffix(host, suffix) || host == pattern[2:]
+	}
+	return host == pattern
+}
+
+func RedactURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "<invalid-endpoint>"
+	}
+	parsed.User = nil
+	parsed.Path = ""
+	parsed.RawPath = ""
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func sanitizeBearerToken(raw string) string {
+	token := strings.TrimSpace(raw)
+	if token == "" {
+		return ""
+	}
+	for _, r := range token {
+		if r < 0x20 || r == 0x7f {
+			return ""
+		}
+	}
+	return token
+}
+
+func httpStatusError(method, endpoint string, statusCode int, snapshotPath, headerTraceID string) error {
+	message := fmt.Sprintf("request to %s returned HTTP %d", RedactURL(endpoint), statusCode)
+	opts := []apperrors.Option{
+		apperrors.WithOperation(method),
+		apperrors.WithReason(fmt.Sprintf("http_%d", statusCode)),
+		apperrors.WithRetryable(retryable(statusCode)),
+		apperrors.WithSnapshot(snapshotPath),
+		apperrors.WithTraceID(headerTraceID),
+		apperrors.WithCause(&CallError{
+			Stage:      CallStageHTTP,
+			HTTPStatus: statusCode,
+			TraceID:    headerTraceID,
+			Cause:      errors.New(message),
+		}),
+	}
+
+	switch {
+	case statusCode == http.StatusUnauthorized:
+		opts = append(opts,
+			apperrors.WithHint(i18n.T("认证失败；请检查登录状态或产品 URL 覆盖。")),
+			apperrors.WithActions(authActions(snapshotPath)...),
+		)
+		return apperrors.NewAuth(message, opts...)
+	case statusCode == http.StatusForbidden:
+		opts = append(opts,
+			apperrors.WithHint(i18n.T("权限不足；请检查当前身份是否有权限访问该服务或工具。")),
+			apperrors.WithActions(permissionActions(snapshotPath)...),
+		)
+		return apperrors.NewAuth(message, opts...)
+	case statusCode >= http.StatusBadRequest && statusCode < http.StatusInternalServerError:
+		opts = append(opts,
+			apperrors.WithHint(i18n.T("请求被上游服务拒绝；请检查参数、认证和权限配置。")),
+			apperrors.WithActions(runtimeActions(snapshotPath)...),
+		)
+		if method != "tools/call" {
+			opts = append(opts, apperrors.WithActions(discoveryActions(snapshotPath)...))
+			return apperrors.NewDiscovery(message, opts...)
+		}
+		return apperrors.NewAPI(message, opts...)
+	default:
+		opts = append(opts,
+			apperrors.WithHint(i18n.T("上游服务异常；可稍后重试。")),
+			apperrors.WithActions(actionsForMethod(method, snapshotPath)...),
+		)
+		if method == "tools/call" {
+			return apperrors.NewAPI(message, opts...)
+		}
+		return apperrors.NewDiscovery(message, opts...)
+	}
+}
+
+func jsonrpcEnvelopeError(method string, rpcErr *RPCError, snapshotPath, headerTraceID string) error {
+	message := fmt.Sprintf("JSON-RPC %s failed with code %d: %s", method, rpcErr.Code, rpcErr.Message)
+	reason := reasonForMethod(method, "jsonrpc_"+jsonrpcCodeLabel(rpcErr.Code))
+
+	// Extract structured diagnostics from rpc error data.
+	diag := ExtractServerDiagnostics(rpcErr.Data)
+	// Prefer trace ID from structured data; fall back to HTTP header.
+	if diag.TraceID == "" && headerTraceID != "" {
+		diag.TraceID = headerTraceID
+	}
+
+	opts := []apperrors.Option{
+		apperrors.WithOperation(method),
+		apperrors.WithReason(reason),
+		apperrors.WithRPCCode(rpcErr.Code),
+		apperrors.WithRPCData(rpcErr.Data),
+		apperrors.WithSnapshot(snapshotPath),
+		apperrors.WithServerDiag(diag),
+		apperrors.WithCause(&CallError{
+			Stage:   CallStageJSONRPC,
+			RPCCode: rpcErr.Code,
+			TraceID: diag.TraceID,
+			Cause:   errors.New(message),
+		}),
+	}
+
+	if rpcErr.Code == -32602 {
+		opts = append(opts,
+			apperrors.WithHint(i18n.T("参数不符合工具输入 schema；请检查 --json/--params/flags。")),
+			apperrors.WithActions(runtimeActions(snapshotPath)...),
+		)
+		return apperrors.NewValidation(message, opts...)
+	}
+
+	if looksPermissionRPCError(rpcErr) {
+		opts = append(opts,
+			apperrors.WithReason("rpc_forbidden"),
+			apperrors.WithHint(i18n.T("调用被拒绝；请检查当前身份、资源权限或应用授权范围。")),
+			apperrors.WithActions(permissionActions(snapshotPath)...),
+		)
+		return apperrors.NewAuth(message, opts...)
+	}
+
+	if looksAuthRPCError(rpcErr) {
+		opts = append(opts,
+			apperrors.WithHint(i18n.T("调用被拒绝；请检查认证状态、租户身份或访问权限。")),
+			apperrors.WithActions(authActions(snapshotPath)...),
+		)
+		return apperrors.NewAuth(message, opts...)
+	}
+
+	if method == "tools/call" {
+		if rpcErr.Code == -32600 || rpcErr.Code == -32601 {
+			opts = append(opts,
+				apperrors.WithHint(i18n.T("工具协议不兼容；请检查服务版本、工具名或升级到包含最新静态端点的 dws 版本。")),
+				apperrors.WithActions(discoveryActions(snapshotPath)...),
+			)
+			return apperrors.NewDiscovery(message, opts...)
+		}
+		opts = append(opts,
+			apperrors.WithHint(i18n.T("工具调用失败；请检查参数和上游服务状态。")),
+			apperrors.WithActions(runtimeActions(snapshotPath)...),
+		)
+		return apperrors.NewAPI(message, opts...)
+	}
+
+	opts = append(opts,
+		apperrors.WithHint(i18n.T("静态端点/协商失败；请检查网络、服务版本或升级到包含最新静态端点的 dws 版本。")),
+		apperrors.WithActions(discoveryActions(snapshotPath)...),
+	)
+	return apperrors.NewDiscovery(message, opts...)
+}
+
+func looksAuthRPCError(rpcErr *RPCError) bool {
+	if rpcErr == nil {
+		return false
+	}
+	if rpcErr.Code == http.StatusUnauthorized || rpcErr.Code == http.StatusForbidden {
+		return true
+	}
+	return looksAuthRelated(rpcErr.Message)
+}
+
+func looksPermissionRPCError(rpcErr *RPCError) bool {
+	if rpcErr == nil {
+		return false
+	}
+	if rpcErr.Code == http.StatusForbidden {
+		return true
+	}
+	normalized := strings.ToLower(strings.TrimSpace(rpcErr.Message))
+	for _, marker := range []string{"forbidden", "permission", "insufficient_scope", "access denied"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func jsonrpcCodeLabel(code int) string {
+	switch code {
+	case -32700:
+		return "parse_error"
+	case -32600:
+		return "invalid_request"
+	case -32601:
+		return "method_not_found"
+	case -32602:
+		return "invalid_params"
+	case -32603:
+		return "internal_error"
+	default:
+		if code < 0 {
+			return fmt.Sprintf("server_error_%d", -code)
+		}
+		return fmt.Sprintf("error_%d", code)
+	}
+}
+
+func reasonForMethod(method, suffix string) string {
+	replacer := strings.NewReplacer("/", "_", "-", "_", " ", "_")
+	method = replacer.Replace(strings.TrimSpace(method))
+	if method == "" {
+		method = "jsonrpc"
+	}
+	return method + "_" + suffix
+}
+
+func looksAuthRelated(message string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	for _, token := range []string{
+		"unauthorized",
+		"forbidden",
+		"permission",
+		"access denied",
+		"auth",
+		"token",
+		"credential",
+		"login",
+	} {
+		if strings.Contains(normalized, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func actionsForMethod(method, snapshotPath string) []string {
+	if method == "tools/call" {
+		return runtimeActions(snapshotPath)
+	}
+	return discoveryActions(snapshotPath)
+}
+
+func authActions(snapshotPath string) []string {
+	actions := []string{
+		i18n.T("检查登录状态后重试"),
+		i18n.T("运行 dws auth status 确认凭证有效，必要时重新登录"),
+		apperrors.DoctorCommand,
+	}
+	_ = snapshotPath
+	return actions
+}
+
+func permissionActions(snapshotPath string) []string {
+	actions := []string{
+		i18n.T("确认当前 profile 和身份是否正确"),
+		i18n.T("检查目标资源权限与应用授权范围后重试"),
+	}
+	_ = snapshotPath
+	return actions
+}
+
+func runtimeActions(snapshotPath string) []string {
+	actions := []string{
+		i18n.T("检查认证、权限和参数后重试原命令"),
+		i18n.T("持续失败时保留 Trace ID 和 Server Code 联系服务端排查"),
+	}
+	_ = snapshotPath
+	return actions
+}
+
+func networkActions(snapshotPath string) []string {
+	actions := []string{
+		i18n.T("检查网络、代理和 DNS 配置后重试原命令"),
+		i18n.T("确认 MCP 服务可访问；若持续失败请稍后重试"),
+		apperrors.DoctorCommand,
+	}
+	_ = snapshotPath
+	return actions
+}
+
+// validateCallArguments checks string values in tool call arguments for
+// control characters and dangerous Unicode at the transport boundary.
+func validateCallArguments(args map[string]any) error {
+	for key, value := range args {
+		switch typed := value.(type) {
+		case string:
+			if err := validate.RejectControlChars(typed, key); err != nil {
+				return err
+			}
+		case map[string]any:
+			if err := validateCallArguments(typed); err != nil {
+				return err
+			}
+		case []any:
+			for i, item := range typed {
+				if s, ok := item.(string); ok {
+					if err := validate.RejectControlChars(s, fmt.Sprintf("%s[%d]", key, i)); err != nil {
+						return err
+					}
+				}
+				if m, ok := item.(map[string]any); ok {
+					if err := validateCallArguments(m); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func discoveryActions(snapshotPath string) []string {
+	actions := []string{
+		i18n.T("检查 internal/syncdata 静态端点生成物是否包含目标 server"),
+		i18n.T("运行 sync-oss 重新生成静态端点与路由后重试"),
+		i18n.T("检查服务连通性和协议版本后重试"),
+	}
+	_ = snapshotPath
+	return actions
+}

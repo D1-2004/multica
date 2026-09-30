@@ -596,6 +596,9 @@ func main() {
 	if h.ChannelSupervisor != nil {
 		go h.ChannelSupervisor.Run(sweepCtx)
 	}
+	if h.DWSEvents != nil {
+		go h.DWSEvents.Run(sweepCtx)
+	}
 
 	// Media intent-ledger reconciler (PR #5580): settles uploaded-but-unbound
 	// channel media objects. An independent worker so object-storage latency
@@ -681,6 +684,9 @@ func main() {
 	if h.ChannelSupervisor != nil {
 		h.ChannelSupervisor.BeginShutdown()
 	}
+	if h.DWSEvents != nil {
+		h.DWSEvents.BeginShutdown()
+	}
 	autopilotCancel()
 
 	// Order matters: drain in-flight HTTP first so any heartbeat handlers
@@ -694,6 +700,16 @@ func main() {
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
 	apiShutdownCancel()
+	// DWS event streams hand over alongside the channel streams below, not
+	// after them, so the two drains share one budget.
+	dwsHandoff := make(chan struct{})
+	go func() {
+		defer close(dwsHandoff)
+		if h.DWSEvents != nil && !h.DWSEvents.WaitForHandoffs(h.DWSEvents.DrainTimeout()) {
+			slog.Warn("DWS event streams: graceful handoff timed out; forcing shutdown",
+				"event", "dws_event_handoff_timeout", "timeout", h.DWSEvents.DrainTimeout().String())
+		}
+	}()
 	if h.ChannelSupervisor != nil {
 		if !h.ChannelSupervisor.WaitForHandoffs(h.ChannelSupervisor.StreamDrainTimeout()) {
 			slog.Warn("channel supervisor: graceful Stream handoff timed out; forcing shutdown",
@@ -702,6 +718,7 @@ func main() {
 			)
 		}
 	}
+	<-dwsHandoff
 
 	// HTTP is fully drained — safe to stop the sweeper and flush the
 	// final batch of queued heartbeat bumps.
@@ -751,6 +768,15 @@ func main() {
 	// debounced run triggers and join any in-flight outbound replies
 	// (each bounded by ReplyTimeout) so a binding card / offline notice is
 	// not lost on shutdown.
+	// Joined alongside the channel supervisor below, within one budget.
+	dwsExit := make(chan struct{})
+	go func() {
+		defer close(dwsExit)
+		if h.DWSEvents != nil && !h.DWSEvents.WaitWithTimeout(h.DWSEvents.ShutdownTimeout()) {
+			slog.Warn("DWS event streams did not exit within shutdown timeout; proceeding",
+				"timeout", h.DWSEvents.ShutdownTimeout().String())
+		}
+	}()
 	if h.ChannelSupervisor != nil {
 		if !h.ChannelSupervisor.WaitWithTimeout(h.ChannelSupervisor.ShutdownTimeout()) {
 			slog.Warn("channel supervisor: connections did not exit within shutdown timeout; proceeding",
@@ -765,6 +791,7 @@ func main() {
 			drainCancel()
 		}
 	}
+	<-dwsExit
 
 	if metricsServer != nil {
 		metricsShutdownCtx, metricsShutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)

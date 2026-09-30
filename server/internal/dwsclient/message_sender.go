@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"github.com/multica-ai/multica/server/pkg/dws"
 )
 
 // ResolveMessageSender reads the trusted source message using the sending
@@ -14,7 +16,8 @@ func (c CLI) ResolveMessageSender(ctx context.Context, dir, conversationID, mess
 	if strings.TrimSpace(conversationID) == "" || strings.TrimSpace(messageID) == "" || strings.Contains(messageID, ",") {
 		return "", errors.New("DWS source message reference is incomplete")
 	}
-	raw, err := c.messageCommand(ctx, dir, []string{"chat", "message", "list-by-ids", "--msg-ids", messageID, "--format", "json"})
+	raw, err := c.messageOp(ctx, dir, []string{"chat", "message", "list-by-ids", "--msg-ids", messageID, "--format", "json"},
+		func(client *dws.Client) ([]byte, error) { return messagesByIDsSDK(ctx, client, messageID) })
 	if err != nil {
 		return "", err
 	}

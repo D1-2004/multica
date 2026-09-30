@@ -93,32 +93,46 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) (HistoryP
 			Err:  fmt.Errorf("DWS identity org does not match scene"),
 		}
 	}
-	runID := "scene-memory-dws-" + uuid.NewString()
-	issued, err := r.issuer.CreateContext(readCtx, agentidentityhsf.CreateContextRequest{
-		RequestID: runID, TaskID: runID,
-		AgentID:     util.UUIDToString(row.AgentID),
-		RuntimeType: "SERVER", RuntimeID: runID,
-		Reason: "Multica scene memory DingTalk history",
-		Source: map[string]string{"app": "dt-fde-multica", "identity_source": "scene_memory_dws"},
-		UID:    identity.DwsUid, OrgID: identity.OrgID, TTLSeconds: 120,
-	})
-	if err != nil {
-		return HistoryPage{}, fmt.Errorf("issue DWS history identity: %w", err)
+	mint := func(ctx context.Context) (dwsclient.Credential, error) {
+		runID := "scene-memory-dws-" + uuid.NewString()
+		issued, err := r.issuer.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
+			RequestID: runID, TaskID: runID,
+			AgentID:     util.UUIDToString(row.AgentID),
+			RuntimeType: "SERVER", RuntimeID: runID,
+			Reason: "Multica scene memory DingTalk history",
+			Source: map[string]string{"app": "dt-fde-multica", "identity_source": "scene_memory_dws"},
+			UID:    identity.DwsUid, OrgID: identity.OrgID, TTLSeconds: 120,
+		})
+		if err != nil {
+			return dwsclient.Credential{}, fmt.Errorf("issue DWS history identity: %w", err)
+		}
+		return r.redeem.Redeem(ctx, issued.ContextToken)
 	}
-	credential, err := r.redeem.Redeem(readCtx, issued.ContextToken)
-	if err != nil {
-		return HistoryPage{}, err
-	}
-	dir, err := os.MkdirTemp("", "multica-scene-memory-dws-")
-	if err != nil {
-		return HistoryPage{}, errors.New("create isolated DWS history directory")
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return HistoryPage{}, errors.New("secure isolated DWS history directory")
-	}
-	if err := r.cli.Exchange(readCtx, dir, credential); err != nil {
-		return HistoryPage{}, err
+	// The SDK transport reuses the identity's shared token and mints only
+	// without one; the dws CLI exchanges a credential for this read.
+	dir, cleanup, shared, err := dwsclient.Shared{CLI: r.cli}.Open(readCtx,
+		dwsclient.Identity{AgentID: util.UUIDToString(row.AgentID), UID: identity.DwsUid, OrgID: identity.OrgID}, mint)
+	if shared {
+		if err != nil {
+			return HistoryPage{}, err
+		}
+		defer cleanup()
+	} else {
+		credential, err := mint(readCtx)
+		if err != nil {
+			return HistoryPage{}, err
+		}
+		dir, err = os.MkdirTemp("", "multica-scene-memory-dws-")
+		if err != nil {
+			return HistoryPage{}, errors.New("create isolated DWS history directory")
+		}
+		defer func() { _ = os.RemoveAll(dir) }()
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return HistoryPage{}, errors.New("secure isolated DWS history directory")
+		}
+		if err := r.cli.Exchange(readCtx, dir, credential); err != nil {
+			return HistoryPage{}, err
+		}
 	}
 	// A claim commits one DWS page. Its exact continuation is committed with
 	// the memory, so a page limit or a restart never loses newer evidence.

@@ -82,6 +82,11 @@ type FeatureConfig struct {
 type RuntimeConfig struct {
 	// FCE2BSDKRollout is the FC/E2B SDK switch; nil keeps the e2b CLI.
 	FCE2BSDKRollout *FCE2BSDKRollout `json:"fc_e2b_sdk_rollout,omitempty"`
+	// UseDWSForTag sends the server's DingTalk calls (history reads, sends,
+	// send status, A2UI cards, card-action events) through the in-process DWS
+	// gateway SDK (pkg/dwsrpc) instead of the dws CLI. Absent or false keeps
+	// the CLI.
+	UseDWSForTag bool `json:"use_dws_for_tag,omitempty"`
 
 	AgenticFS AgenticFSConfig `json:"agentic_fs"`
 	LLM       LLMConfig       `json:"llm"`

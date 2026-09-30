@@ -90,22 +90,16 @@ func (p *dwsProvider) authenticate(ctx context.Context, in ActionInput) (string,
 	if p == nil || p.issuer == nil {
 		return "", nil, errors.New("DWS response provider is not configured")
 	}
-	runID := "response-dws-" + uuid.NewString()
-	issued, err := p.issuer.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
-		RequestID: runID, TaskID: runID, AgentID: in.AgentID, RuntimeType: "SERVER", RuntimeID: runID,
-		Reason: "Multica DingTalk response action",
-		Source: map[string]string{"app": "dt-fde-multica", "identity_source": "response_action"},
-		UID:    in.DWSUID, OrgID: in.DWSOrgID, TTLSeconds: 120,
-	})
-	if err != nil {
-		return "", nil, fmt.Errorf("issue DWS response identity: %w", err)
+	mint := func(ctx context.Context) (dwsclient.Credential, error) { return p.mint(ctx, in) }
+	// The SDK transport reuses the identity's shared token and mints only
+	// without one; the dws CLI exchanges a credential per call.
+	if dir, cleanup, ok, err := (dwsclient.Shared{CLI: p.cli}).Open(ctx,
+		dwsclient.Identity{AgentID: in.AgentID, UID: in.DWSUID, OrgID: in.DWSOrgID}, mint); ok {
+		return dir, cleanup, err
 	}
-	credential, err := p.redeem.Redeem(ctx, issued.ContextToken)
+	credential, err := mint(ctx)
 	if err != nil {
 		return "", nil, err
-	}
-	if credential.UID != in.DWSUID {
-		return "", nil, errors.New("DWS response identity changed during redemption")
 	}
 	dir, err := os.MkdirTemp("", "multica-response-dws-")
 	if err != nil {
@@ -121,4 +115,30 @@ func (p *dwsProvider) authenticate(ctx context.Context, in ActionInput) (string,
 		return "", nil, err
 	}
 	return dir, cleanup, nil
+}
+
+// mint issues an Agent Identity context for the action's sender and
+// redeems it.
+func (p *dwsProvider) mint(ctx context.Context, in ActionInput) (dwsclient.Credential, error) {
+	if p == nil || p.issuer == nil {
+		return dwsclient.Credential{}, errors.New("DWS response provider is not configured")
+	}
+	runID := "response-dws-" + uuid.NewString()
+	issued, err := p.issuer.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
+		RequestID: runID, TaskID: runID, AgentID: in.AgentID, RuntimeType: "SERVER", RuntimeID: runID,
+		Reason: "Multica DingTalk response action",
+		Source: map[string]string{"app": "dt-fde-multica", "identity_source": "response_action"},
+		UID:    in.DWSUID, OrgID: in.DWSOrgID, TTLSeconds: 120,
+	})
+	if err != nil {
+		return dwsclient.Credential{}, fmt.Errorf("issue DWS response identity: %w", err)
+	}
+	credential, err := p.redeem.Redeem(ctx, issued.ContextToken)
+	if err != nil {
+		return dwsclient.Credential{}, err
+	}
+	if credential.UID != in.DWSUID {
+		return dwsclient.Credential{}, errors.New("DWS response identity changed during redemption")
+	}
+	return credential, nil
 }

@@ -82,6 +82,16 @@ func IsCrossOrgPermissionDenied(err error) bool {
 // RenewCrossOrgRead is invoked only for identities whose owner opted into
 // renewal. The grant is restricted to chat data reads and expires in seven days.
 func (c CLI) RenewCrossOrgRead(ctx context.Context, configDir string) error {
+	if client, _, ok, err := sdkClient(configDir); ok {
+		if err != nil {
+			return err
+		}
+		raw, err := renewCrossOrgReadSDK(ctx, client)
+		if err != nil {
+			return err
+		}
+		return confirmCrossOrgGrant(raw)
+	}
 	cmd := exec.CommandContext(ctx, c.path(), "chat", "data-auth", "cross-org",
 		"--all", "--agentCode", "wukong", "--grant-type", "timed", "--ttl", "7d", "--yes", "--format", "json")
 	cmd.Env = c.commandEnv(configDir, nil)
@@ -91,6 +101,10 @@ func (c CLI) RenewCrossOrgRead(ctx context.Context, configDir string) error {
 	if err := cmd.Run(); err != nil {
 		return commandFailed(ctx, "DWS cross-org chat read renewal failed", err)
 	}
+	return confirmCrossOrgGrant(stdout.Bytes())
+}
+
+func confirmCrossOrgGrant(raw []byte) error {
 	var response struct {
 		Success bool `json:"success"`
 		Result  struct {
@@ -99,7 +113,7 @@ func (c CLI) RenewCrossOrgRead(ctx context.Context, configDir string) error {
 			ExpireAt  int64  `json:"expireAt"`
 		} `json:"result"`
 	}
-	if stdout.Len() > MaxResponseBytes || json.Unmarshal(stdout.Bytes(), &response) != nil || !response.Success || response.Result.Scope != "chat.data:cross-org" || response.Result.GrantType != "timed" || response.Result.ExpireAt <= time.Now().UnixMilli() {
+	if len(raw) > MaxResponseBytes || json.Unmarshal(raw, &response) != nil || !response.Success || response.Result.Scope != "chat.data:cross-org" || response.Result.GrantType != "timed" || response.Result.ExpireAt <= time.Now().UnixMilli() {
 		return errors.New("DWS cross-org chat read renewal was not confirmed")
 	}
 	return nil
@@ -115,6 +129,12 @@ func (c CLI) path() string {
 func (c CLI) Exchange(ctx context.Context, configDir string, credential Credential) error {
 	if strings.TrimSpace(c.ClientSecret) == "" {
 		return errors.New("DWS client secret is not configured")
+	}
+	// Every Exchange, on either transport, drops clients of removed
+	// directories, so switching off never strands their tokens in memory.
+	pruneSDKClients()
+	if sdkSelected() {
+		return c.exchangeSDK(ctx, configDir, credential)
 	}
 	if raw := strings.TrimSpace(c.MCPBaseURL); raw != "" {
 		endpoint, err := url.Parse(raw)
@@ -163,6 +183,12 @@ func (c CLI) List(ctx context.Context, configDir string, req ListRequest) ([]byt
 	// DWS nextCursor carries milliseconds. Rounding it to a displayed second
 	// replays or skips messages at the page boundary.
 	queryTime := before.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02 15:04:05.000")
+	if client, _, ok, err := sdkClient(configDir); ok {
+		if err != nil {
+			return nil, err
+		}
+		return listSDK(ctx, client, req, queryTime)
+	}
 	cmd := exec.CommandContext(ctx, c.path(),
 		"chat", "message", "list",
 		"--group", req.ConversationID,

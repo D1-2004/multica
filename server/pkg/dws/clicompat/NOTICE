@@ -1,0 +1,202 @@
+This directory contains code copied from DingTalk Workspace CLI
+(github.com/DingTalk-Real-AI/dingtalk-workspace-cli), tag v1.0.62-beta.8,
+licensed under the Apache License, Version 2.0.
+
+1. Files copied whole. Each starts with a one-line provenance comment; the
+   code is unmodified except that dws import paths point at these copies
+   (re-sorted by gofmt) and github.com/fatih/color at internal/stub/color.
+   chatmsg/chatmsg.go is the one modified file: normalizeMessageKey reuses
+   one package-level strings.Replacer (performance only; same result).
+
+   chatmsg/card_ref.go                                   <- internal/shortcut/chatmsg/card_ref.go
+   chatmsg/card_update.go                                <- internal/shortcut/chatmsg/card_update.go
+   chatmsg/chatmsg.go                                    <- internal/shortcut/chatmsg/chatmsg.go
+   chatmsg/search.go                                     <- internal/shortcut/chatmsg/search.go
+   chatmsg/send_status.go                                <- internal/shortcut/chatmsg/send_status.go
+   internal/upstream/errors/diagnostics.go               <- internal/errors/diagnostics.go
+   internal/upstream/errors/errors.go                    <- internal/errors/errors.go
+   internal/upstream/errors/exitcodes.go                 <- internal/errors/exitcodes.go
+   internal/upstream/errors/pat.go                       <- internal/errors/pat.go
+   internal/upstream/errors/recovery.go                  <- internal/errors/recovery.go
+   internal/upstream/errors/validate.go                  <- internal/errors/validate.go
+   internal/upstream/errors/wire.go                      <- internal/errors/wire.go
+   internal/upstream/i18n/i18n.go                        <- internal/i18n/i18n.go
+   internal/upstream/i18n/locales/en.json                <- internal/i18n/locales/en.json
+   internal/upstream/i18n/locales/zh.json                <- internal/i18n/locales/zh.json
+   internal/upstream/jsonutil/json.go                    <- internal/jsonutil/json.go
+   internal/upstream/logging/auth_debug.go               <- internal/logging/auth_debug.go
+   internal/upstream/logging/logger.go                   <- internal/logging/logger.go
+   internal/upstream/logging/multi_handler.go            <- internal/logging/multi_handler.go
+   internal/upstream/logging/redact.go                   <- internal/logging/redact.go
+   internal/upstream/logging/transport.go                <- internal/logging/transport.go
+   internal/upstream/pkg/config/constants.go             <- pkg/config/constants.go
+   internal/upstream/pkg/configmeta/registry.go          <- pkg/configmeta/registry.go
+   internal/upstream/pkg/validate/input.go               <- pkg/validate/input.go
+   internal/upstream/pkg/validate/resource.go            <- pkg/validate/resource.go
+   internal/upstream/pkg/validate/sanitize.go            <- pkg/validate/sanitize.go
+   internal/upstream/profilectx/profile.go               <- internal/profilectx/profile.go
+   internal/upstream/requestmeta/headers.go              <- internal/requestmeta/headers.go
+   internal/upstream/shortcut/targetresolver/resolver.go <- internal/shortcut/targetresolver/resolver.go
+   internal/upstream/transport/call_error.go             <- internal/transport/call_error.go
+   internal/upstream/transport/client.go                 <- internal/transport/client.go
+   internal/upstream/transport/diagnostics.go            <- internal/transport/diagnostics.go
+   internal/upstream/transport/stdio.go                  <- internal/transport/stdio.go
+   internal/upstream/tui/theme.go                        <- internal/tui/theme.go
+   internal/upstream/output/envelope.go                  <- internal/output/envelope.go
+   internal/upstream/output/redaction.go                 <- internal/output/redaction.go
+
+2. Declarations copied verbatim, doc comments included, from dws files that
+   cannot be vendored whole (internal/helpers, internal/app,
+   internal/shortcut/chat and the rest of internal/output import cobra or
+   gojq). Each file's header lists its declarations with source file and
+   line; documented modifications: projectChatMessageItem begins with the
+   complexity guard of budget.go, and errorInfoFromExecutionError refers to
+   helpers.CLIError as CLIError.
+
+   dws_helpers.go:
+     const ExitSuccess                              <- internal/helpers/errors.go:12
+     const CodeAuthNotConfigured                    <- internal/helpers/errors.go:21
+     type CLIError                                  <- internal/helpers/errors.go:48
+     method CLIError.Error                          <- internal/helpers/errors.go:56
+     method CLIError.Unwrap                         <- internal/helpers/errors.go:67
+     method CLIError.ExitCode                       <- internal/helpers/errors.go:69
+     func suggestForBusinessErrorText               <- internal/helpers/errors.go:411
+     const genericPermissionSuggestion              <- internal/helpers/errors.go:477
+     func permissionDeniedSuggestion                <- internal/helpers/errors.go:483
+     func documentPermissionErrorText               <- internal/helpers/errors.go:453
+     const permissionApplySteps                     <- internal/helpers/errors.go:561
+     const permissionApplyGuidance                  <- internal/helpers/errors.go:565
+     func isBusinessError                           <- internal/helpers/helpers.go:793
+     func isErrorCodeValue                          <- internal/helpers/helpers.go:831
+     func isNotLoggedInError                        <- internal/helpers/helpers.go:858
+     var dwsGatewayErrors                           <- internal/helpers/helpers.go:890
+     func getDWSGatewayErrorCode                    <- internal/helpers/helpers.go:905
+     func suggestForBusinessError                   <- internal/helpers/helpers.go:916
+     func businessErrorMessage                      <- internal/helpers/helpers.go:922
+     func businessErrorDisplayMessage               <- internal/helpers/helpers.go:934
+     func normalizeA2UIUpdateFlowStatus             <- internal/helpers/chat.go:35
+     func parseA2UIMessages                         <- internal/helpers/chat.go:60
+     func parseA2UIAnnotations                      <- internal/helpers/chat.go:74
+     func applyProjectedChatPagination              <- internal/helpers/chat.go:205
+     func withProjectedChatOperation                <- internal/helpers/chat.go:261
+     func projectChatMessagesPayloadWithLedger      <- internal/helpers/chat.go:334
+     func chatDecryptFailure                        <- internal/helpers/chat.go:473
+     func firstChatMapValue                         <- internal/helpers/chat.go:485
+     func firstNonEmptyLiteral                      <- internal/helpers/chat.go:494
+     func projectExistingChatMessageCollections     <- internal/helpers/chat.go:503
+     func projectChatConversationMessageGroups      <- internal/helpers/chat.go:528
+     func projectChatMessageItems                   <- internal/helpers/chat.go:554
+     func chatMessageMapItems                       <- internal/helpers/chat.go:566
+     func projectChatMessageItem                    <- internal/helpers/chat.go:585 (modified, see below)
+     func defaultChatMessageListTime                <- internal/helpers/chat.go:1462
+     func sanitizeTitleFromText                     <- internal/helpers/chat.go:2057
+     func truncateTitleToBytes                      <- internal/helpers/chat.go:2093
+     func marshalJSONRaw                            <- internal/helpers/chat.go:2111
+     func normalizeAtPlaceholders                   <- internal/helpers/chat.go:2223
+     func NormalizeMessageMentions                  <- internal/helpers/chat.go:2249
+     func applyCurrentUserGroupMentions             <- internal/helpers/chat.go:2266
+     func addMissingCurrentUserMentionPlaceholders  <- internal/helpers/chat.go:2284
+     func containsMessageMention                    <- internal/helpers/chat.go:2308
+     func cloneStringAnyMap                         <- internal/helpers/chat.go:3174
+     func unmarshalJSONUseNumber                    <- internal/helpers/chat.go:3182
+     func ParseChatA2UIMessages                     <- internal/helpers/chat_shortcut_bridge.go:17
+     func PrepareChatReplyMentions                  <- internal/helpers/chat_shortcut_bridge.go:21
+     func parseCSVValues                            <- internal/helpers/contact.go:22
+     func cleanStringValues                         <- internal/helpers/contact.go:38
+     var agoalLoadLocation                          <- internal/helpers/agoal.go:11
+     func shanghaiLocation                          <- internal/helpers/agoal.go:630
+   dws_app.go:
+     func detectBusinessError                       <- internal/app/runner.go:1209
+     func detectBusinessErrorAtDepth                <- internal/app/runner.go:1213
+     func detectNestedBusinessError                 <- internal/app/runner.go:1237
+     func extractMCPErrorMessage                    <- internal/app/runner.go:1261
+     var dingRobotRejectionPattern                  <- internal/app/server_failure_classifier.go:25
+     type serverFailureClass                        <- internal/app/server_failure_classifier.go:27
+     func classifyServerFailure                     <- internal/app/server_failure_classifier.go:39
+     func newServerFailureAPIError                  <- internal/app/server_failure_classifier.go:131
+     func errorInfoFromExecutionError               <- internal/app/root.go:408 (modified, see below)
+     func errorTypeForExitCode                      <- internal/app/root.go:497
+     func interruptionExitCode                      <- internal/app/signal.go:39
+     type processInterruption                       <- internal/app/signal.go:46
+     method processInterruption.Error               <- internal/app/signal.go:51
+     method processInterruption.Unwrap              <- internal/app/signal.go:59
+     method processInterruption.ExitCode            <- internal/app/signal.go:78
+     method processInterruption.Subtype             <- internal/app/signal.go:82
+     type authRefreshFailureError                   <- internal/app/auth_refresh_retry.go:35
+     method authRefreshFailureError.Error           <- internal/app/auth_refresh_retry.go:40
+     method authRefreshFailureError.Unwrap          <- internal/app/auth_refresh_retry.go:44
+   dws_chat.go:
+     func replyResponseValue                        <- internal/shortcut/chat/lark_alignment.go:333
+     func findOpenDingTalkID                        <- internal/shortcut/chat/lark_alignment.go:386
+     func findMessageSenderOpenDingTalkID           <- internal/shortcut/chat/lark_alignment.go:419
+     func shortcutMessageMaps                       <- internal/shortcut/chat/lark_alignment.go:437
+     func shortcutString                            <- internal/shortcut/chat/chat_group.go:1701
+     func appendUniqueShortcutString                <- internal/shortcut/chat/chat_group.go:1719
+     func uniqueShortcutStrings                     <- internal/shortcut/chat/chat_message.go:1525
+     func containsCurrentUserMentionToken           <- internal/shortcut/chat/unified_send.go:293
+     func currentUserMentionBodyIDs                 <- internal/shortcut/chat/unified_send.go:312
+     func addMessagesSendUserTarget                 <- internal/shortcut/chat/unified_send.go:799
+   internal/upstream/output/excerpts.go:
+     type CommandResult                             <- internal/output/result.go:19
+     type commandResult                             <- internal/output/result.go:25
+     method commandResult.Outcome                   <- internal/output/result.go:31
+     method commandResult.ExitCode                  <- internal/output/result.go:32
+     method commandResult.envelope                  <- internal/output/result.go:33
+     type ResultOption                              <- internal/output/result.go:39
+     func Success                                   <- internal/output/result.go:54
+     func Pending                                   <- internal/output/result.go:59
+     func FailureWithExitCode                       <- internal/output/result.go:89
+     func newCommandResult                          <- internal/output/result.go:97
+     func newCommandResultWithExitCode              <- internal/output/result.go:101
+     func cloneEnvelope                             <- internal/output/result.go:120
+     func cloneMeta                                 <- internal/output/result.go:146
+     func cloneResultData                           <- internal/output/result.go:166
+     type cloneVisit                                <- internal/output/result.go:173
+     func cloneReflectValue                         <- internal/output/result.go:180
+     func cloneErrorInfo                            <- internal/output/result.go:254
+     func ValidateResult                            <- internal/output/result.go:279
+     func EnvelopeFromResult                        <- internal/output/result.go:472
+     const exitCodeOK                               <- internal/output/emitter.go:451
+     const subtypeConfirmationRequired              <- internal/output/emitter.go:464
+     func ExitCodeForEnvelope                       <- internal/output/emitter.go:478
+     func exitCodeForErrorInfo                      <- internal/output/emitter.go:498
+     func toGeneric                                 <- internal/output/filter.go:216
+     var marshalJSON                                <- internal/output/formatter.go:61
+     func unmarshalJSONUseNumber                    <- internal/output/formatter.go:68
+     func normalizeSafeJSONNumbers                  <- internal/output/formatter.go:84
+     func WriteJSON                                 <- internal/output/formatter.go:385
+
+3. Statements copied from dws functions that take a cobra command or a
+   shortcut runtime (command RunE bodies, runner and transport branches) are
+   in the glue files requests.go, render.go, payload.go and callfailure.go,
+   each citing its dws file and lines. Not from dws: the public API glue
+   (doc.go, failure.go, payload.go, callfailure.go, requests.go, render.go,
+   validate.go), budget.go, internal/stub/color, and the files
+   internal/upstream/{transport,output}/zz_clicompat_exports.go that export
+   unexported dws functions of those packages to clicompat.
+
+testdata/dws_goldens.json holds outputs recorded from dws itself;
+testdata/golden_gen/clicompat_golden_test.go.txt is a test written against dws's
+test/mock_mcp package that records them.
+
+The NOTICE of DingTalk Workspace CLI follows.
+
+-------------------------------------------------------------------------------
+
+DingTalk Workspace CLI (dws)
+Copyright 2026 Alibaba Group
+
+This product includes software developed at
+DingTalk (https://www.dingtalk.com/).
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
