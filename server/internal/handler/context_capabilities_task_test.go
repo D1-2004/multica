@@ -266,7 +266,7 @@ func ctxcapReplayed(taskContext []byte) []byte {
 
 // ctxcapFailingDB fails every query that touches one of the context
 // capability tables, as a transient error or a replica running before
-// migrations 9316+ would.
+// migrations 9400+ would.
 type ctxcapFailingDB struct{ dbExecutor }
 
 func (d ctxcapFailingDB) fails(sql string) bool {

@@ -410,7 +410,7 @@ The mobile start endpoint and the new detail fields are in
 
 ### Rollout
 
-- Run migrations 9325–9328 before the new binary serves traffic (the Aone
+- Run migrations 9409–9412 before the new binary serves traffic (the Aone
   start script does this). They are idempotent and add no foreign keys, and
   the unique catalog index is built concurrently in its own file.
 - During a rolling deploy, an old binary does not serve the new routes

@@ -72,12 +72,12 @@ var preMigrationHooks = map[string]preMigrationHook{
 	"261_agent_task_queue_terminal_completed_at_v2":         cleanupInvalidConcurrentIndexHook("idx_agent_task_queue_terminal_completed_at_v2"),
 	// Context capability unique indexes are ON CONFLICT arbiters. An INVALID
 	// leftover would satisfy IF NOT EXISTS yet never serve as an arbiter.
-	"9317_context_capability_binding_scope_idx":    cleanupInvalidConcurrentIndexHook("context_capability_binding_scope_idx"),
-	"9318_context_capability_binding_resource_idx": cleanupInvalidConcurrentIndexHook("context_capability_binding_resource_idx"),
-	"9320_context_connector_credential_scope_idx":  cleanupInvalidConcurrentIndexHook("context_connector_credential_scope_idx"),
-	"9322_context_config_grant_scope_idx":          cleanupInvalidConcurrentIndexHook("context_config_grant_scope_idx"),
+	"9401_context_capability_binding_scope_idx":    cleanupInvalidConcurrentIndexHook("context_capability_binding_scope_idx"),
+	"9402_context_capability_binding_resource_idx": cleanupInvalidConcurrentIndexHook("context_capability_binding_resource_idx"),
+	"9404_context_connector_credential_scope_idx":  cleanupInvalidConcurrentIndexHook("context_connector_credential_scope_idx"),
+	"9406_context_config_grant_scope_idx":          cleanupInvalidConcurrentIndexHook("context_config_grant_scope_idx"),
 	// One official app connector per workspace and catalog slug.
-	"9326_internal_connector_catalog_slug_idx": cleanupInvalidConcurrentIndexHook("internal_connector_catalog_slug_idx"),
+	"9410_internal_connector_catalog_slug_idx": cleanupInvalidConcurrentIndexHook("internal_connector_catalog_slug_idx"),
 }
 
 func repairIssueOriginTypeConstraintHook(ctx context.Context, pool *pgxpool.Pool) error {

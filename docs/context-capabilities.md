@@ -91,7 +91,7 @@ does not count as available, so the next layer applies. An official app
 connector is also not mounted until its tools have been discovered.
 `auth_mode='none'` connectors need no credential. When the scene or
 person layers cannot be read (a transient error, or a replica before
-migrations 9316+), the task keeps its global connectors with workspace
+migrations 9400+), the task keeps its global connectors with workspace
 credentials instead of losing them.
 
 Skills: effective set = `agent_skill` (enabled) ∪ scene/person skill bindings,
@@ -249,7 +249,7 @@ offers, and their GET lists only the connectors already offered.
   binary. Manual reruns created by an old replica
   without `rerun_of_task_id` (issue-level reruns) carry no replay marker and
   can still inherit layers until the rollout completes.
-- Official apps (9325+): an old replica answers 404 on the new routes and
+- Official apps (9409+): an old replica answers 404 on the new routes and
   its credentials PUT still refuses a GitHub PAT (400). It does not check
   `auth_mode` when mounting or relaying (it treats `oauth` like `bearer`);
   only its host allowlist keeps it from calling catalog URLs, so keep the
@@ -258,7 +258,7 @@ offers, and their GET lists only the connectors already offered.
   credential keeps `bearer` equal to the access token, so the payload stays
   readable by the old binary's opener. The GitHub connect needs the GitHub
   App's callback to stay `/api/github/authorize`.
-- Tables are fork-owned (9316+), created with `IF NOT EXISTS`, no FKs, every
+- Tables are fork-owned (9400+), created with `IF NOT EXISTS`, no FKs, every
   index `CONCURRENTLY` in its own file, and registered in the workspace deletion
   manifest. Skill deletion (manual and managed-agent source sync) sweeps
   `resource_type='skill'` bindings.
