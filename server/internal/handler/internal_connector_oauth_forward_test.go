@@ -16,6 +16,7 @@ import (
 
 const (
 	forwardProdOrigin = "https://prod.example.test"
+	forwardPreOrigin  = "https://pre-prod.example.test"
 	forwardRandom     = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 )
 
@@ -66,47 +67,63 @@ func TestConnectorOAuthStateHomeOrigin(t *testing.T) {
 			t.Errorf("normalizeConnectorOAuthOrigin(%q) = %q", bad, got)
 		}
 	}
-	t.Setenv(connectorOAuthForwardOriginsEnv, " https://pre.example.test/ ,http://insecure.example.test,,not an origin, https://Other.example.test")
-	if got := strings.Join(connectorOAuthForwardOrigins(), ","); got != "https://pre.example.test,https://other.example.test" {
-		t.Fatalf("forward origins = %q", got)
+	// A pre-release origin is "https://pre-" + the production host.
+	for origin, want := range map[string]string{
+		"https://pre-fde-workbench.dingtalk.com": "https://fde-workbench.dingtalk.com",
+		"https://Pre-Prod.example.test/":         "https://prod.example.test",
+		"https://pre-prod.example.test:8443":     "https://prod.example.test:8443",
+	} {
+		if got, pre := connectorOAuthProductionOrigin(origin); !pre || got != want {
+			t.Errorf("connectorOAuthProductionOrigin(%q) = %q %v, want %q", origin, got, pre, want)
+		}
 	}
-	t.Setenv(connectorOAuthClientNameEnv, "")
-	if connectorOAuthClientName() != "Multica" {
-		t.Fatal("default client name")
+	for _, origin := range []string{
+		"https://fde-workbench.dingtalk.com", "http://pre-prod.example.test", "https://pre-localhost", "https://prep-prod.example.test",
+		"https://x.pre-prod.example.test", "http://localhost:3000", "", "not an origin",
+		// An apex or public-suffix production host: "pre-" + it is registrable
+		// by anyone.
+		"https://pre-qwentag.com", "https://pre-foo.github.io", "https://pre-example.co.uk",
+	} {
+		if got, pre := connectorOAuthProductionOrigin(origin); pre {
+			t.Errorf("connectorOAuthProductionOrigin(%q) = %q, want no production origin", origin, got)
+		}
 	}
-	t.Setenv(connectorOAuthClientNameEnv, "  QwenTagPre ")
-	if connectorOAuthClientName() != "QwenTagPre" {
-		t.Fatal("configured client name")
-	}
-	t.Setenv(connectorOAuthClientNameEnv, "bad\nname")
-	if connectorOAuthClientName() != "Multica" {
-		t.Fatal("client name with a control character")
+	// The consent-screen name follows the deployment.
+	for appURL, want := range map[string]string{
+		"https://pre-fde-workbench.dingtalk.com": "QwenTagPre",
+		"https://fde-workbench.dingtalk.com":     "QwenTag",
+		"http://localhost:3000":                  "QwenTag",
+	} {
+		h := &Handler{cfg: Config{AppURL: appURL, FrontendOrigin: appURL}}
+		if got := h.connectorOAuthClientName(); got != want {
+			t.Errorf("client name on %s = %q, want %q", appURL, got, want)
+		}
 	}
 }
 
-// The callback deployment forwards a state that names another listed https
-// origin to that origin's same callback path and raw query, before any local
-// handling, on both callback routes; anything else is refused.
+// Production forwards a state that names its own pre-release origin
+// ("https://pre-" + its host) to that origin's same callback path and raw
+// query, before any local handling, on both callback routes; anything else
+// is refused. No configuration is involved.
 func TestConnectorOAuthCallbackForwarding(t *testing.T) {
 	prod := &Handler{cfg: Config{AppURL: forwardProdOrigin, FrontendOrigin: forwardProdOrigin}}
 	router := catalogAPIRouter(prod)
-	t.Setenv(connectorOAuthForwardOriginsEnv, "https://pre.example.test,http://insecure.example.test")
 
 	for _, path := range []string{ConnectorOAuthCallbackPath, connectorOAuthGitHubCallback} {
-		state := forwardState("https://pre.example.test")
+		state := forwardState(forwardPreOrigin)
 		rawQuery := "code=the+code&state=" + url.QueryEscape(state) + "&iss=https%3A%2F%2Fprovider.example"
 		rec := browserGet(router, path+"?"+rawQuery)
-		want := "https://pre.example.test" + path + "?" + rawQuery
+		want := forwardPreOrigin + path + "?" + rawQuery
 		if rec.Code != http.StatusFound || rec.Header().Get("Location") != want || rec.Header().Get("Referrer-Policy") != "no-referrer" ||
 			rec.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("%s forward: %d %q, want %q", path, rec.Code, rec.Header().Get("Location"), want)
 		}
 		for name, home := range map[string]string{
-			"unlisted origin":       "https://evil.example.test",
-			"listed http origin":    "http://insecure.example.test",
-			"listed host, http":     "http://pre.example.test",
-			"listed host, a port":   "https://pre.example.test:8443",
-			"a subdomain of listed": "https://x.pre.example.test",
+			"another origin":                   "https://evil.example.test",
+			"another deployment's pre-release": "https://pre-evil.example.test",
+			"own pre-release over http":        "http://pre-prod.example.test",
+			"own pre-release with a port":      "https://pre-prod.example.test:8443",
+			"a subdomain of the pre-release":   "https://x.pre-prod.example.test",
 		} {
 			rec := browserGet(router, path+"?code=c&state="+url.QueryEscape(forwardState(home)))
 			if rec.Code != http.StatusBadRequest || rec.Header().Get("Location") != "" || !strings.Contains(rec.Body.String(), "连接已失效") {
@@ -126,29 +143,38 @@ func TestConnectorOAuthCallbackForwarding(t *testing.T) {
 			t.Fatalf("state %q was forwarded", state)
 		}
 	}
-	// Without a forward list every foreign state is refused.
-	t.Setenv(connectorOAuthForwardOriginsEnv, "")
-	rec := browserGet(router, ConnectorOAuthCallbackPath+"?code=c&state="+url.QueryEscape(forwardState("https://pre.example.test")))
+	// A deployment that is not the production of the named pre-release (here
+	// a pre-release itself) refuses the state.
+	pre := &Handler{cfg: Config{AppURL: forwardPreOrigin, FrontendOrigin: forwardPreOrigin}}
+	rec := browserGet(catalogAPIRouter(pre), ConnectorOAuthCallbackPath+"?code=c&state="+url.QueryEscape(forwardState("https://pre-other.example.test")))
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("forward without a list: %d %q", rec.Code, rec.Header().Get("Location"))
+		t.Fatalf("foreign pre-release state on a pre-release: %d %q", rec.Code, rec.Header().Get("Location"))
 	}
 	// The router's GitHub dispatch still sends such states to the connector
 	// flow.
-	if !IsConnectorOAuthCallback(httptest.NewRequest(http.MethodGet, connectorOAuthGitHubCallback+"?state="+url.QueryEscape(forwardState("https://pre.example.test")), nil)) {
+	if !IsConnectorOAuthCallback(httptest.NewRequest(http.MethodGet, connectorOAuthGitHubCallback+"?state="+url.QueryEscape(forwardState(forwardPreOrigin)), nil)) {
 		t.Fatal("a state with a home origin is not a connector callback")
 	}
 }
 
-// Pre-release sends providers the production callback: the redirect URI
-// moves to the callback origin, the state names this deployment, the binding
-// cookie stays on this deployment's own origin, and the connect completes
-// here once production forwards the callback.
+// preReleaseOf is the pre-release origin of a production origin.
+func preReleaseOf(origin string) string {
+	return strings.Replace(origin, "https://", "https://pre-", 1)
+}
+
+// Pre-release sends providers the production callback: the redirect URI is
+// on the production origin, the state names the pre-release, the binding
+// cookie stays on the pre-release origin, and the connect completes there
+// once production forwards the callback.
 func TestConnectorOAuthCallbackOriginRoundTrip(t *testing.T) {
 	f := newCatalogFixture(t)
 	ctx := context.Background()
-	homeRouter := catalogAPIRouter(f.h)
-	prod := &Handler{cfg: Config{AppURL: forwardProdOrigin, FrontendOrigin: forwardProdOrigin}}
-	prodRouter := catalogAPIRouter(prod)
+	// The fixture's own origins play production; a copy of the handler on
+	// the "pre-" hosts is its pre-release (same database).
+	prodRouter := catalogAPIRouter(f.h)
+	pre := *f.h
+	pre.cfg.AppURL, pre.cfg.FrontendOrigin = preReleaseOf(catalogAppOrigin), preReleaseOf(catalogWebOrigin)
+	preRouter := catalogAPIRouter(&pre)
 	dcr := f.storeTools(t, f.create(t, f.dcr))
 	gh := f.storeTools(t, f.create(t, f.gh))
 	f.offer(t, dcr.ID, gh.ID)
@@ -157,27 +183,25 @@ func TestConnectorOAuthCallbackOriginRoundTrip(t *testing.T) {
 		return f.scope(connectorID, contextcap.ScopePerson, catalogTestStaff)
 	}
 
-	// Without an override the redirect URI and state are unchanged.
+	// Production uses its own callback and a state without a home origin.
 	_, query, _ := f.start(t, scope(dcr.ID), "")
 	if query.Get("redirect_uri") != catalogAppOrigin+connectorOAuthCallbackPath || strings.Contains(strings.TrimPrefix(query.Get("state"), connectorOAuthStatePrefix), ".") {
-		t.Fatalf("start without an override = %v", query)
+		t.Fatalf("production start = %v", query)
 	}
 	if registrations, _, _, _ := f.provider.counts(); registrations != 1 {
 		t.Fatalf("registrations = %d", registrations)
 	}
 
-	t.Setenv(connectorOAuthCallbackOriginEnv, forwardProdOrigin+"/")
-	t.Setenv(connectorOAuthForwardOriginsEnv, catalogAppOrigin+","+catalogWebOrigin)
 	for _, tc := range []struct {
 		connector internalConnector
 		path      string
 		home      string
 		via       string
 	}{
-		{dcr, connectorOAuthCallbackPath, catalogAppOrigin, connectorOAuthViaDCR},
-		{gh, connectorOAuthGitHubCallback, catalogWebOrigin, connectorOAuthViaGitHub},
+		{dcr, connectorOAuthCallbackPath, pre.cfg.AppURL, connectorOAuthViaDCR},
+		{gh, connectorOAuthGitHubCallback, pre.cfg.FrontendOrigin, connectorOAuthViaGitHub},
 	} {
-		started, err := f.h.startConnectorOAuth(ctx, connectorOAuthStart{connectorOAuthScope: scope(tc.connector.ID)})
+		started, err := pre.startConnectorOAuth(ctx, connectorOAuthStart{connectorOAuthScope: scope(tc.connector.ID)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -186,7 +210,8 @@ func TestConnectorOAuthCallbackOriginRoundTrip(t *testing.T) {
 		if home, ok := splitConnectorOAuthState(state); !ok || home != tc.home {
 			t.Fatalf("%s state %q home = %q %v", tc.via, state, home, ok)
 		}
-		if query.Get("redirect_uri") != forwardProdOrigin+tc.path {
+		production, _ := connectorOAuthProductionOrigin(tc.home)
+		if query.Get("redirect_uri") != production+tc.path {
 			t.Fatalf("%s redirect_uri = %q", tc.via, query.Get("redirect_uri"))
 		}
 		cookie := started.Cookie
@@ -194,7 +219,8 @@ func TestConnectorOAuthCallbackOriginRoundTrip(t *testing.T) {
 			t.Fatalf("%s cookie = %+v", tc.via, cookie)
 		}
 		// The provider returns to production, which forwards the callback
-		// home; the browser there still has the binding cookie.
+		// home; the browser there still has the binding cookie, and the code
+		// is exchanged with the redirect URI the authorization used.
 		rawQuery := "code=good-code&state=" + url.QueryEscape(state)
 		forwarded := browserGet(prodRouter, tc.path+"?"+rawQuery)
 		if forwarded.Code != http.StatusFound || forwarded.Header().Get("Location") != tc.home+tc.path+"?"+rawQuery {
@@ -204,60 +230,36 @@ func TestConnectorOAuthCallbackOriginRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// The override is removed while the connect is in flight (a restart
-		// or rolling deploy): the code is still exchanged with the redirect
-		// URI the authorization was requested with (the provider rejects
-		// any other).
-		t.Setenv(connectorOAuthCallbackOriginEnv, "")
-		done := browserGet(homeRouter, location.RequestURI(), cookie)
+		done := browserGet(preRouter, location.RequestURI(), cookie)
 		if done.Code != http.StatusFound || !strings.Contains(done.Header().Get("Location"), "connected="+url.QueryEscape(tc.connector.CatalogSlug)) {
 			t.Fatalf("%s completion at home: %d %q", tc.via, done.Code, done.Header().Get("Location"))
 		}
-		t.Setenv(connectorOAuthCallbackOriginEnv, forwardProdOrigin+"/")
 	}
 	if _, err := contextcap.GetCredential(ctx, testPool, f.personKey(dcr.ID)); err != nil {
 		t.Fatalf("forwarded connect stored nothing: %v", err)
 	}
-	// The DCR redirect URI changed, so a new client was registered for it.
+	// Pre-release's redirect URI (and name) differ, so it registered its
+	// own client, on the production callback.
 	if registrations, _, _, _ := f.provider.counts(); registrations != 2 {
-		t.Fatalf("registrations after the callback origin change = %d", registrations)
+		t.Fatalf("registrations after a pre-release connect = %d", registrations)
 	}
 	f.provider.mu.Lock()
 	registeredRedirect := f.provider.lastRegisteredRedirect
 	f.provider.mu.Unlock()
-	if registeredRedirect != forwardProdOrigin+connectorOAuthCallbackPath {
+	if registeredRedirect != catalogAppOrigin+connectorOAuthCallbackPath {
 		t.Fatalf("registered redirect = %q", registeredRedirect)
 	}
-
-	// The cookie follows this deployment's own origin, never the callback
-	// origin: an http own origin gets no Secure cookie even though the
-	// callback origin is https.
-	plain := *f.h
-	plain.cfg.AppURL, plain.cfg.FrontendOrigin = "http://pre.local.test", "http://pre.local.test"
-	started, err := plain.startConnectorOAuth(ctx, connectorOAuthStart{connectorOAuthScope: scope(dcr.ID)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	query = f.provideAuthorizeURL(t, started.AuthorizeURL)
-	if home, _ := splitConnectorOAuthState(query.Get("state")); home != "http://pre.local.test" || started.Cookie.Secure {
-		t.Fatalf("http own origin: home=%q cookie=%+v", home, started.Cookie)
-	}
-
-	// A malformed override is ignored.
-	t.Setenv(connectorOAuthCallbackOriginEnv, "prod.example.test/path")
+	// Back on production, its kept registration is promoted, not replaced.
 	_, query, _ = f.start(t, scope(dcr.ID), "")
-	if query.Get("redirect_uri") != catalogAppOrigin+connectorOAuthCallbackPath {
-		t.Fatalf("malformed override redirect_uri = %q", query.Get("redirect_uri"))
-	}
-	// Removing the override promotes the kept registration back.
 	if registrations, _, _, _ := f.provider.counts(); registrations != 2 || query.Get("client_id") != "dcr-client-1" {
-		t.Fatalf("after removing the override: registrations=%d client=%q", registrations, query.Get("client_id"))
+		t.Fatalf("production again: registrations=%d client=%q", registrations, query.Get("client_id"))
 	}
 }
 
-// The DCR client_name is configurable; a different name registers a new
-// client (a registration is reused only for the same redirect URI and name)
-// and the replaced one is kept for the tokens it issued.
+// The DCR client_name follows the deployment (QwenTag, QwenTagPre on
+// pre-release); a different name registers a new client (a registration is
+// reused only for the same redirect URI and name) and the replaced one is
+// kept for the tokens it issued.
 func TestConnectorOAuthClientNameRegistration(t *testing.T) {
 	f := newCatalogFixture(t)
 	ctx := context.Background()
@@ -272,8 +274,8 @@ func TestConnectorOAuthClientNameRegistration(t *testing.T) {
 	}
 
 	_, query, _ := f.start(t, scope, "")
-	if clientName() != "Multica" || query.Get("client_id") != "dcr-client-1" {
-		t.Fatalf("default registration: name=%q client=%q", clientName(), query.Get("client_id"))
+	if clientName() != "QwenTag" || query.Get("client_id") != "dcr-client-1" {
+		t.Fatalf("production registration: name=%q client=%q", clientName(), query.Get("client_id"))
 	}
 	_, query, _ = f.start(t, scope, "")
 	if registrations, _, _, _ := f.provider.counts(); registrations != 1 || query.Get("client_id") != "dcr-client-1" {
@@ -282,33 +284,35 @@ func TestConnectorOAuthClientNameRegistration(t *testing.T) {
 	// The registration records its name; one stored before names were
 	// recorded counts as "Multica", the name every earlier one was made with.
 	record, err := f.h.loadConnectorOAuthClient(ctx, testWorkspaceID, dcr.ID)
-	if err != nil || record.ClientName != "Multica" {
+	if err != nil || record.ClientName != "QwenTag" {
 		t.Fatalf("stored name = %q %v", record.ClientName, err)
 	}
 	if legacy := (connectorOAuthRegistration{RedirectURI: "https://x.example.test/cb"}); !legacy.serves("https://x.example.test/cb", "Multica") ||
-		legacy.serves("https://x.example.test/cb", "QwenTagPre") {
-		t.Fatal("an unnamed registration must serve exactly the default name")
+		legacy.serves("https://x.example.test/cb", "QwenTag") {
+		t.Fatal("an unnamed registration must serve exactly the legacy name")
 	}
 
-	t.Setenv(connectorOAuthClientNameEnv, "QwenTagPre")
-	_, query, _ = f.start(t, scope, "")
-	if registrations, _, _, _ := f.provider.counts(); registrations != 2 || clientName() != "QwenTagPre" || query.Get("client_id") != "dcr-client-2" {
-		t.Fatalf("renamed: registrations=%d name=%q client=%q", registrations, clientName(), query.Get("client_id"))
+	pre := *f.h
+	pre.cfg.AppURL, pre.cfg.FrontendOrigin = preReleaseOf(catalogAppOrigin), preReleaseOf(catalogWebOrigin)
+	if _, err := pre.startConnectorOAuth(ctx, connectorOAuthStart{connectorOAuthScope: scope}); err != nil {
+		t.Fatal(err)
+	}
+	if registrations, _, _, _ := f.provider.counts(); registrations != 2 || clientName() != "QwenTagPre" {
+		t.Fatalf("pre-release: registrations=%d name=%q", registrations, clientName())
 	}
 	record, err = f.h.loadConnectorOAuthClient(ctx, testWorkspaceID, dcr.ID)
 	if err != nil || record.ClientName != "QwenTagPre" || len(record.Previous) != 1 || record.Previous[0].Registration.ClientID != "dcr-client-1" ||
-		record.Previous[0].registeredName() != "Multica" {
-		t.Fatalf("record after renaming = %+v %v", record, err)
+		record.Previous[0].registeredName() != "QwenTag" {
+		t.Fatalf("record after the pre-release connect = %+v %v", record, err)
 	}
 	// Tokens of the earlier client still refresh with it.
 	if registration, ok := record.registrationFor("dcr-client-1"); !ok || registration.Registration.ClientID != "dcr-client-1" {
 		t.Fatalf("earlier client lookup = %+v %v", registration, ok)
 	}
-	// The name changes back: the kept registration is promoted, no new one.
-	t.Setenv(connectorOAuthClientNameEnv, "")
+	// Production again: the kept registration is promoted, no new one.
 	_, query, _ = f.start(t, scope, "")
 	if registrations, _, _, _ := f.provider.counts(); registrations != 2 || query.Get("client_id") != "dcr-client-1" {
-		t.Fatalf("name changed back: registrations=%d client=%q", registrations, query.Get("client_id"))
+		t.Fatalf("production again: registrations=%d client=%q", registrations, query.Get("client_id"))
 	}
 }
 

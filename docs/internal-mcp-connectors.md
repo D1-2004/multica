@@ -247,8 +247,8 @@ The OAuth flow works like this:
 1. The start endpoint checks authority: the admin role, or the caller's live
    grant plus the offer rule.
 2. It prepares the provider and stores a single-use state: 32 random bytes
-   behind the `mcpc.` prefix (plus, with a callback origin override, this
-   deployment's origin; see "Callback origin and forwarding"), stored only
+   behind the `mcpc.` prefix (plus, on pre-release, the pre-release
+   origin; see "Callback origin and forwarding"), stored only
    as a SHA-256 hash of the whole state in `connector_oauth_state` and valid
    for 10 minutes. The row also holds the validated `return_to` and a sealed
    payload: the PKCE verifier, the OAuth client the authorize URL was built
@@ -296,9 +296,9 @@ and clears that cookie and refuses a missing or different nonce
 The state is burned either way. The page that starts a connect must be
 served from this deployment's own callback origin (DCR apps:
 `MULTICA_APP_URL`, else `FRONTEND_ORIGIN`; GitHub: `FRONTEND_ORIGIN`), so keep
-`MULTICA_APP_URL` equal to `FRONTEND_ORIGIN`. That stays true with a callback
-origin override: the cookie is set on (and `Secure` follows) this
-deployment's own origin, never the override, and the forwarded callback
+`MULTICA_APP_URL` equal to `FRONTEND_ORIGIN`. That stays true on
+pre-release: the cookie is set on (and `Secure` follows) the pre-release
+origin, never the production callback origin, and the forwarded callback
 lands there.
 
 Every start binds this way, for the workspace scope and the mobile scopes
@@ -317,20 +317,20 @@ desktop list refetches on focus, so the new account shows up on return.
 
 - **DCR apps** discover the protected resource and authorization server
   metadata and register one client per connector (RFC 7591) under the
-  configured client name (see "Client name"). The registration is stored
+  deployment's client name (see "Client name"). The registration is stored
   sealed in `connector_oauth_client` together with that name and reused; it
-  is replaced only when the redirect URI or the configured name changes.
-  They redirect to `<app origin>/api/connector-oauth/callback`, or to
-  `<callback origin>/api/connector-oauth/callback` with the override. That route is public (no
+  is replaced only when the redirect URI or the name changes.
+  They redirect to `<app origin>/api/connector-oauth/callback` (pre-release:
+  the production origin's). That route is public (no
   Multica session; the hashed single-use state and its browser binding
   cookie are the proof) and is rate-limited per IP
   (`RATE_LIMIT_CONNECTOR_OAUTH_CALLBACK`, default 60 per minute, only
   enforced with `REDIS_URL`). The same limit covers the GitHub callback
   requests that carry a `mcpc.` state; other
   `/api/github/authorize` requests (the install flow) are unchanged.
-- **Replaced registrations are kept.** Changing the app origin or the
-  callback origin override changes the redirect URI, and changing the
-  client name changes the name; either way the next connect registers a new
+- **Replaced registrations are kept.** Changing the app origin changes the
+  redirect URI (and, between pre-release and any other origin, the client
+  name); either way the next connect registers a new
   client (or promotes a kept earlier registration for that URI and name; a
   registration stored before names were recorded counts as `Multica`). The replaced registration stays
   in the sealed row (`previous`, newest first, at most 8), and every OAuth
@@ -342,9 +342,9 @@ desktop list refetches on focus, so the new account shows up on return.
 - **GitHub** has no dynamic registration. It reuses the deployment's GitHub
   App (`GITHUB_APP_CLIENT_ID` / `GITHUB_APP_CLIENT_SECRET`; OAuth is offered
   only when both are set) and its registered callback
-  `<FRONTEND_ORIGIN>/api/github/authorize` (with the override,
-  `<callback origin>/api/github/authorize`, which is also the redirect URI of
-  the code exchange). `GitHubAuthorizeCallback`
+  `<FRONTEND_ORIGIN>/api/github/authorize` (pre-release: the production
+  origin's, which is also the redirect URI of the code exchange; the
+  pre-release GitHub App must list it). `GitHubAuthorizeCallback`
   hands states with the `mcpc.` prefix to the connector callback before its
   install-cookie check; every other state keeps the GitHub App install flow.
   **The GitHub App's callback URL must stay `/api/github/authorize`.**
@@ -354,59 +354,49 @@ desktop list refetches on focus, so the new account shows up on return.
 
 ### Callback origin and forwarding
 
-Pre-release (预发) cannot get provider callbacks back to its own domain:
-providers and the pre-release GitHub App only know the production domain.
-So pre-release sends providers the PRODUCTION callback, and production
-forwards the callbacks that belong to pre-release back to it, which
-completes them in the browser that started them.
+There is no configuration: the rule follows the deployment's own origin. A
+pre-release deployment serves the production host with a `pre-` prefix
+(`https://pre-fde-workbench.dingtalk.com` is the pre-release of
+`https://fde-workbench.dingtalk.com`).
 
-- `MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN` (optional, an http(s) origin
-  such as `https://fde-workbench.dingtalk.com`; a malformed value is ignored
-  with a warning): the redirect URI of DCR apps becomes
-  `<origin>/api/connector-oauth/callback` and that of the GitHub connect
-  `<origin>/api/github/authorize`, instead of this deployment's own origin.
-  Unset keeps today's behavior. Changing it changes the DCR redirect URI,
-  so the next connect registers a new client (see "Replaced registrations
-  are kept").
-- When the redirect origin differs from this deployment's own callback
-  origin, the state names this deployment:
-  `mcpc.<43 base64url random>.<base64url(own origin)>` (a canonical origin:
-  lowercase scheme and host, no path). The `mcpc.` prefix still routes
-  GitHub callbacks to the connector flow, and the home deployment hashes and
-  looks up the whole state unchanged. States without an origin keep the old
-  format.
-- `MULTICA_CONNECTOR_OAUTH_FORWARD_ORIGINS` (comma-separated https origins;
-  production: `https://pre-fde-workbench.dingtalk.com`): both callback
-  routes (`/api/connector-oauth/callback` and the `mcpc.` branch of
-  `/api/github/authorize`) look at the state before any local handling
-  (`internal_connector_oauth_forward.go`). A state naming an origin that is
-  not one of this deployment's own origins (`MULTICA_APP_URL`,
-  `FRONTEND_ORIGIN`) is sent with a 302 to `<that origin><same path>?<same
-  raw query>` when the origin is listed, and gets the invalid-connection
-  page (400) otherwise. Origins match exactly after canonicalization and
-  only https list entries count, so the forwarder is no open redirect; the
-  destination is always one of the configured origins plus a fixed
-  callback path. States without an origin, naming this deployment, or
-  malformed are handled locally as before.
-- The browser binding cookie is set by the start response on this
-  deployment's own origin (see "Browser binding"), so the forwarded callback
-  finds it; a callback opened anywhere else still fails with
-  `browser_mismatch`.
+- A connect started on pre-release sends providers the PRODUCTION callback:
+  `<production origin>/api/connector-oauth/callback` for DCR apps and
+  `<production origin>/api/github/authorize` for the GitHub connect. Its
+  state names the pre-release:
+  `mcpc.<43 base64url random>.<base64url(pre-release origin)>` (a canonical
+  origin: lowercase scheme and host, no path). The `mcpc.` prefix still
+  routes GitHub callbacks to the connector flow, and the pre-release hashes
+  and looks up the whole state unchanged. The sealed state keeps the redirect
+  URI the authorization used, and the code is exchanged with it.
+- A connect started anywhere else (production, local) uses its own callback
+  and a state without an origin, as before.
+- Production forwards: both callback routes (`/api/connector-oauth/callback`
+  and the `mcpc.` branch of `/api/github/authorize`) look at the state before
+  any local handling (`internal_connector_oauth_forward.go`, self-contained
+  so production can ship it alone). A state naming `https://pre-` + one of
+  production's own hosts (`MULTICA_APP_URL`, `FRONTEND_ORIGIN`) is sent with a
+  302 to `<that origin><same path>?<same raw query>`; a state naming any
+  other foreign origin gets the invalid-connection page (400). The
+  destination is always the own host's pre-release plus a fixed callback
+  path, so the forwarder is no open redirect. States without an origin,
+  naming this deployment, or malformed are handled locally.
+- The browser binding cookie is set by the start response on the
+  pre-release origin (see "Browser binding"), so the forwarded callback finds
+  it; a callback opened anywhere else still fails with `browser_mismatch`.
 - The GitHub install flow (non-`mcpc.` states) is unchanged and keeps using
-  this deployment's own `/api/github/authorize`; a GitHub App serving both
+  the deployment's own `/api/github/authorize`; a GitHub App serving both
   flows needs both callback URLs registered (GitHub Apps accept several).
 
 ### Client name
 
-`MULTICA_CONNECTOR_OAUTH_CLIENT_NAME` (default `Multica`; at most 100
-characters, no control characters, otherwise the default) is the
-`client_name` of dynamic client registrations, i.e. the name providers show
-on their consent screens. Pre-release sets `QwenTagPre` (its GitHub App is
-already named QwenTagPre, slug `qwen-tag-pre`; GitHub shows the App's own
-name, which this variable does not change). The stored registration records
-the name, and a registration is reused only for the same redirect URI and
-name, so changing the name re-registers once per connector (earlier
-registrations are kept for the tokens they issued).
+The `client_name` of dynamic client registrations (the name providers show
+on their consent screens) follows the deployment: `QwenTagPre` on
+pre-release, `QwenTag` elsewhere. The pre-release GitHub App is itself named
+QwenTagPre (slug `qwen-tag-pre`); GitHub shows the App's own name. The stored
+registration records the name, and a registration is reused only for the
+same redirect URI and name, so the first connect after this change
+re-registers once per connector (earlier registrations, made as `Multica`,
+are kept for the tokens they issued).
 
 ### Credentials, refresh and sessions
 
@@ -523,31 +513,21 @@ The mobile start endpoint and the new detail fields are in
   runs the new binary.
 - Every replica needs the same connector credential key, `GITHUB_APP_*`
   variables and app origin, because a state, registration or credential
-  created on one replica is completed or refreshed on another. The same holds
-  for `MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN`,
-  `MULTICA_CONNECTOR_OAUTH_FORWARD_ORIGINS` and
-  `MULTICA_CONNECTOR_OAUTH_CLIENT_NAME` (all whitelisted in `src/main.sh`).
-- Callback origin rollout order (a pre-release state with an origin can only
-  be completed once production forwards it, and only by a pre-release
-  replica that parses the new state format):
-  1. Production ships the forwarder (this binary) with
-     `MULTICA_CONNECTOR_OAUTH_FORWARD_ORIGINS=https://pre-fde-workbench.dingtalk.com`.
-     With no callback origin of its own, production's states and redirect
-     URIs are unchanged.
-  2. The pre-release GitHub App (QwenTagPre) gets the production callback
-     URL `https://fde-workbench.dingtalk.com/api/github/authorize` added
-     (keep its pre-release URL for the install flow).
-  3. Pre-release sets `MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN=https://fde-workbench.dingtalk.com`
-     (and `MULTICA_CONNECTOR_OAUTH_CLIENT_NAME=QwenTagPre`) once every
-     pre-release replica runs this binary; its DCR connectors re-register
-     on their next connect. Connects started before the switch complete on
-     the old redirect URI (the state seals the redirect URI its authorize
-     URL carried, and the code is exchanged with it); tokens keep
-     refreshing with the client that issued them.
+  created on one replica is completed or refreshed on another.
+- Callback forwarding rollout: from the first pre-release deploy of this
+  binary, pre-release connects call back to production, so they complete
+  only once production runs the forwarder (`internal_connector_oauth_forward.go`)
+  and the pre-release GitHub App (QwenTagPre) lists the production callback
+  URL `https://fde-workbench.dingtalk.com/api/github/authorize` (keep its
+  pre-release URL for the install flow). Until then a pre-release connect
+  ends on production's error page. Connects started before the deploy
+  complete on the old redirect URI (the state seals the redirect URI its
+  authorize URL carried, and the code is exchanged with it); tokens keep
+  refreshing with the client that issued them.
   An old production replica answers a forwarded-format callback with the
   invalid-connection page, and an old pre-release replica refuses such a
-  state (`invalid_state`); both windows close once the steps above are done
-  in order.
+  state (`invalid_state`); both windows close once every replica of both
+  deployments runs this binary.
 
 Semantica's current `semantica_mcp_relay` tool remains available during the
 migration to avoid breaking active pre-release tasks. Once its workspace
