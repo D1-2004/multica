@@ -113,6 +113,9 @@ import type {
   CreateAgentA2AClientRequest,
   UpdateAgentA2AClientRequest,
   CreateAgentA2ACredentialRequest,
+  AgentA2AOperatorConfig,
+  UpdateAgentA2AOperatorIdentityRequest,
+  UpdateAgentA2AProdForwardRequest,
   RuntimeUsage,
   IssueUsageSummary,
   RuntimeHourlyActivity,
@@ -556,6 +559,8 @@ import {
   EMPTY_AGENT_A2A_CONFIG,
   EMPTY_AGENT_A2A_CLIENT,
   EMPTY_AGENT_A2A_CREDENTIAL_SECRET_RESPONSE,
+  AgentA2AOperatorConfigSchema,
+  EMPTY_AGENT_A2A_OPERATOR_CONFIG,
   GitHubConnectResponseSchema,
   ListGitHubRepositoriesResponseSchema,
   EMPTY_GITHUB_CONNECT_RESPONSE,
@@ -4295,6 +4300,73 @@ export class ApiClient {
       throw new Error("Invalid A2A configuration response");
     }
     return parsed;
+  }
+
+  // Deployment operator settings. Non-operators receive operator=false.
+  async getAgentA2AOperatorConfig(agentId: string): Promise<AgentA2AOperatorConfig> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/a2a/operator`,
+    );
+    return parseWithFallback(
+      raw,
+      AgentA2AOperatorConfigSchema,
+      EMPTY_AGENT_A2A_OPERATOR_CONFIG,
+      { endpoint: "GET /api/agents/:id/a2a/operator", includeReceived: false },
+    );
+  }
+
+  async updateAgentA2AOperatorIdentity(
+    agentId: string,
+    data: UpdateAgentA2AOperatorIdentityRequest,
+  ): Promise<AgentA2AOperatorConfig> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/a2a/operator/dws-identity`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          uid: data.uid,
+          org_id: data.orgId,
+          display_name: data.displayName ?? "",
+          organization_name: data.organizationName ?? "",
+          deap_agent_uuid: data.deapAgentUuid ?? "",
+        }),
+      },
+    );
+    return parseWithFallback(
+      raw,
+      AgentA2AOperatorConfigSchema,
+      EMPTY_AGENT_A2A_OPERATOR_CONFIG,
+      { endpoint: "PUT /api/agents/:id/a2a/operator/dws-identity", includeReceived: false },
+    );
+  }
+
+  async deleteAgentA2AOperatorIdentity(agentId: string): Promise<AgentA2AOperatorConfig> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/a2a/operator/dws-identity`,
+      { method: "DELETE" },
+    );
+    return parseWithFallback(
+      raw,
+      AgentA2AOperatorConfigSchema,
+      EMPTY_AGENT_A2A_OPERATOR_CONFIG,
+      { endpoint: "DELETE /api/agents/:id/a2a/operator/dws-identity", includeReceived: false },
+    );
+  }
+
+  async updateAgentA2AProdForward(
+    agentId: string,
+    data: UpdateAgentA2AProdForwardRequest,
+  ): Promise<AgentA2AOperatorConfig> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/a2a/operator/prod-forward`,
+      { method: "PUT", body: JSON.stringify({ accept: data.accept }) },
+    );
+    return parseWithFallback(
+      raw,
+      AgentA2AOperatorConfigSchema,
+      EMPTY_AGENT_A2A_OPERATOR_CONFIG,
+      { endpoint: "PUT /api/agents/:id/a2a/operator/prod-forward", includeReceived: false },
+    );
   }
 
   async updateAgentA2AConfig(

@@ -158,6 +158,10 @@ type Task struct {
 	// A2AManagedRuntimeV2 attests that the managed Runtime configuration and
 	// daemon enable the a2a-invocation-v2 isolation contract.
 	A2AManagedRuntimeV2 bool `json:"a2a_managed_runtime_v2,omitempty"`
+	// A2ARunnerIdentity attests that the FC/E2B runner redeemed an operator
+	// binding ContextToken for this A2A turn; the daemon then restores the
+	// runner's task-local DWS/GitHub directories for the child.
+	A2ARunnerIdentity bool `json:"a2a_runner_identity,omitempty"`
 	// AuthToken is the task-scoped credential the server mints at claim time.
 	// The daemon injects it into the spawned agent as MULTICA_TOKEN so the
 	// agent never sees the daemon's own (often workspace-owner) credential.
