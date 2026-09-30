@@ -451,11 +451,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	if provision, err := dshStorageProvisioning(opts.RuntimeConfig); err != nil {
 		slog.Error("DSH storage provisioning configuration unavailable", "error", err)
-	} else {
-		h.FCE2BLauncher.ProvisionDSHStorage = provision
+	} else if provision != nil {
+		h.FCE2BLauncher.ProvisionDSHStorage = func(ctx context.Context, database dshhost.Database, key dshhost.Key) (dshhost.Host, error) {
+			host, err := provision(ctx, database, key)
+			if err == nil {
+				h.TaskService.NotifyDSHReadiness(ctx, database, key, "provisioning_ready")
+			}
+			return host, err
+		}
 		if provision != nil {
 			h.ProvisionDSHStorage = func(ctx context.Context, key dshhost.Key) (dshhost.Host, error) {
-				return provision(ctx, pool, key)
+				return h.FCE2BLauncher.ProvisionDSHStorage(ctx, pool, key)
 			}
 		}
 	}
@@ -510,6 +516,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
 		h.FCE2BLauncher.ConfigProvider = opts.RuntimeConfig.fce2b
+		h.TaskService.RuntimeStartRecoveryConfig = func() service.RuntimeStartRecoveryConfig {
+			return opts.RuntimeConfig.quickWins()
+		}
 	}
 	h.FCE2BLauncher.SetSandboxRelaySigner(opts.SandboxRelaySigner)
 	asbRuntime, err := service.NewASBEnterpriseRuntimeFromConfig(
@@ -835,6 +844,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	coordinator := inboundcoord.New(h.LLM, queries, h.Assoc)
 	if opts.RuntimeConfig != nil {
 		coordinator.ModelProvider = func() string { return opts.RuntimeConfig.current().Runtime.LLM.CoordinatorModel }
+		performanceAgent := func(agentID pgtype.UUID) bool {
+			raw := opts.RuntimeConfig.current().Runtime
+			if raw.PerformanceOptimization != nil {
+				return raw.PerformanceOptimization.AllowsAgent(util.UUIDToString(agentID))
+			}
+			return false
+		}
+		// A collect-window read happens before the claim; the claimed
+		// decision takes the switch from its own single snapshot below.
+		coordinator.HistoryPrefetchAgentProvider = performanceAgent
+		coordinator.DecisionConfigProvider = func(agentID pgtype.UUID) inboundcoord.DecisionConfig {
+			return opts.RuntimeConfig.coordinatorDecisionConfig(util.UUIDToString(agentID))
+		}
+		coordinator.BuildID = version + "@" + commit
 	}
 	if opts.DeploymentFence != nil {
 		coordinator.Ready = func(ctx context.Context) (bool, error) {
@@ -866,6 +889,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}))
 	}
 	h.InboundCoordinator = coordinator
+	if opts.RuntimeConfig != nil {
+		h.CoordinatorCollectQuiet = func(agentID pgtype.UUID) time.Duration {
+			return opts.RuntimeConfig.coordinatorCollectQuiet(util.UUIDToString(agentID))
+		}
+	}
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
 	decisionMCP := strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL"))
 	decisionEnv := "production"

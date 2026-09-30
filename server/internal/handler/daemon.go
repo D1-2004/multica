@@ -2044,9 +2044,16 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
 		}
 		if useSkillRefs {
-			_, skillRefs := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, runtime, taskBackend, messagePolicy)
+			bundles, skillRefs := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, runtime, taskBackend, messagePolicy)
 			agentSkillCount = len(skillRefs)
 			resp.Agent.SkillRefs = skillRefs
+			if h.TaskService.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).BatchSkillResolve && inlineSmallSkillSet(bundles) {
+				resp.Agent.SkillRefs = nil
+				resp.Agent.Skills = bundles
+				if h.TaskService.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).StartupObservability {
+					slog.Info("runtime skill bundles batched", "task_id", uuidToString(task.ID), "bundle_count", len(bundles))
+				}
+			}
 		} else {
 			skills := h.TaskService.LoadAgentExecutionSkills(r.Context(), task.AgentID, runtime, taskBackend, messagePolicy)
 			agentSkillCount = len(skills)
@@ -3114,6 +3121,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		applyLegacyDingTalkDispatchPrompt(&resp, task.Context, h.FeatureFlags, dispatchOverrides)
 	}
 
+	if supportsTaskInstruction && h.TaskService.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).DingTalkReplyCommand {
+		resp.Instruction = appendTaskReplyCommand(resp.Instruction, taskDingTalkReplyCommand(task.Context, uuidToString(task.ID)))
+	}
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
 }
 

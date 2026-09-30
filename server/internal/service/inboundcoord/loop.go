@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	openai "github.com/openai/openai-go/v3"
@@ -29,62 +30,32 @@ type Completer interface {
 }
 
 func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) {
+	loopStarted := time.Now()
 	ensureTurnTraceID(&turn)
 	lt := langfuse.TraceFromContext(ctx)
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(buildSystemPrompt(turn)), openai.UserMessage(buildUserPrompt(turn)),
 	}
 
-	var used []string
-	var recalls []recallCall
-	recalledIssues := map[string]struct{}{}
-	continuationIssues := map[string]struct{}{}
-	if turn.Loop == LoopTaskFinished && turn.IssueID != "" {
-		recalledIssues[turn.IssueID] = struct{}{}
-	}
-	steps := make([]protocol.ChatCoordinatorStep, 0, maxLoopRounds*2)
+	first := c.prepareFirstRound(ctx, &turn, c.startHistoryPrefetch)
+	used := first.used
+	recalls := first.recalls
+	recalledIssues := first.recalledIssues
+	continuationIssues := first.continuationIssues
+	steps := first.steps
 	appendStep := func(step protocol.ChatCoordinatorStep) { step.Seq = len(steps) + 1; steps = append(steps, step) }
 	finishChecks := map[string]finishCheckResult{}
-	readSequence := coordinationReadSequence(turn)
-	initialReadSequence := readSequence
-	latestFeedback := ""
+	readSequence := first.readSequence
+	initialReadSequence := first.initialReadSequence
+	latestFeedback := first.latestFeedback
 	latestReadFeedback := ""
 	latestProposal := ""
 	latestFeedbackNeedsHistory := false
 	latestFeedbackNeedsHistoryAttempt := false
 	unresolvedReviewFeedback := ""
 	modelRounds := 0
+	finishRepairs := 0
 	conversationRepliesRendered := false
-	if turn.Loop != LoopTaskFinished && len(turn.History)+len(turn.DingTalkHistory) > 0 {
-		if _, err := rememberCoordinationRead(&turn, &readSequence, toolContextRead, `{"kind":"history"}`, "", nil); err != nil {
-			latestFeedback = coordinationRepairFeedback(toolContextRead, err)
-		}
-	}
-	// The DingTalk history read runs concurrently with the scene recall so the
-	// first model request sees the question this employee asked a moment ago.
-	var pendingHistory <-chan historyPrefetchResult
-	if shouldPrefetchHistory(c, turn) {
-		pendingHistory = c.startHistoryPrefetch(ctx, turn)
-	}
-	if shouldPrefetchSceneRecall(turn) {
-		call, result, readErr := c.prefetchSceneRecall(ctx, &turn, &readSequence)
-		appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: call.Arguments, Content: "Host prefetch (read-only)"})
-		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: readErr != nil, Content: "Host prefetch (read-only)"})
-		used = append(used, call.Name)
-		if readErr == nil {
-			recalls = append(recalls, parseRecallCall(call.Arguments))
-			collectRecalledIssues(recalledIssues, continuationIssues, turn.ConversationID, result)
-		}
-	}
-	if pendingHistory != nil {
-		call, result, readErr := c.finishHistoryPrefetch(ctx, &turn, &readSequence, pendingHistory)
-		appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: call.Arguments, Content: "Host prefetch (read-only)"})
-		if readErr != nil {
-			result = marshalToolFailure(readErr)
-		}
-		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: readErr != nil, Content: "Host prefetch (read-only)"})
-		used = append(used, call.Name)
-	}
 	if turn.Loop == LoopTaskFinished {
 		logCoordinatorLLMRequest(turn, buildUserPrompt(turn), false)
 	} else {
@@ -115,11 +86,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			}
 			messages = buildCoordinationMessages(turn, recalled, latestFeedback, latestProposal)
 		}
-		turn.recalledIssueIDs = turn.recalledIssueIDs[:0]
-		for id := range recalledIssues {
-			turn.recalledIssueIDs = append(turn.recalledIssueIDs, id)
-		}
-		tools := withoutWithdrawnTools(toolsForDisclosure(turn, round, recalled), ledger)
+		tools := roundTools(&turn, round, recalled, recalledIssues, ledger)
 		manifest := policyManifestForStage(turn, recalled)
 		if lt != nil {
 			lt.AddMetadata(map[string]any{"policy_version": manifest.PolicyVersion, "assembly_version": manifest.AssemblyVersion, "prompt_hash": manifest.PromptHash, "modules": manifest.Modules, "active_rule_ids": manifest.ActiveRuleIDs, "history_status": turn.HistoryStatus, "history_before": turn.HistoryBefore, "dingtalk_history_count": len(turn.DingTalkHistory), "allowed_tools": toolParamNames(tools), "withdrawn_tools": ledger.withdrawnTools()})
@@ -127,15 +94,32 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				lt.AddMetadata(map[string]any{"read_snapshot_count": len(turn.CoordinationReads), "read_snapshot_runes": len([]rune(coordinationReadsJSON(turn))), "read_snapshot_truncated": turn.CoordinationReadsTruncated, "read_snapshot_budget": coordinationReadsBudget, "repair_proposal_runes": len([]rune(latestProposal)), "repair_proposal_budget": coordinationProposalBudget})
 			}
 		}
-		generation := traceRoundGeneration(lt, round, messages, tools, c.configuredModel())
-		modelRounds = round + 1
-		completion, err := c.complete(ctx, messages, tools)
+		generation := traceRoundGeneration(lt, round, messages, tools, c.configuredModel(), c.completionBudget(), c.finishRecoveryEnabled())
+		modelRounds++
+		params, err := c.wireParams(c.configuredModel(), messages, tools, c.completionBudget(), temperature, shared.ReasoningEffortNone)
+		var completion *openai.ChatCompletion
+		if err == nil {
+			if round == 0 && turn.Loop != LoopTaskFinished {
+				c.compareFirstRoundShadow(turn, params, latestFeedback, time.Since(loopStarted))
+			}
+			c.logFinishSchemaRequest(turn, "route", round, params)
+			completion, err = c.sendParams(ctx, params)
+		}
 		endRoundGeneration(generation, completion, err)
 		if err != nil {
 			return fail(err)
 		}
 		if len(completion.Choices) == 0 {
 			return fail(fmt.Errorf("coordinator loop: no choices"))
+		}
+		if c.finishRecoveryEnabled() && needsFinishSerializationRepair(completion) {
+			completion, err = c.repairFinishSerialization(ctx, turn, messages, tools, recalled, completion, &finishRepairs, &modelRounds)
+			if err != nil {
+				if errors.Is(err, errFinishSerialization) {
+					return failWith(loopStopFinishSerialization, err)
+				}
+				return fail(err)
+			}
 		}
 		msg := completion.Choices[0].Message
 		normalizeToolCallTypes(&msg)
@@ -263,7 +247,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					}
 					if callErr == nil {
 						decision.Steps = steps
-						decision.ToolRounds = round + 1
+						decision.ToolRounds = modelRounds
 						decision.ToolsUsed = append([]string(nil), used...)
 						if turn.UserDecisionEnabled && turn.Loop != LoopTaskFinished && decision.Action != ActionSilence {
 							return c.proposeUserDecision(ctx, turn, messages, recalls, recalledIssues, decision)
@@ -375,8 +359,83 @@ func finishToolOutput(decision Decision) string {
 	return string(raw)
 }
 
+// firstRound is what Host prepares before a decision's first model request:
+// the prefetched reads and the steps that record them.
+type firstRound struct {
+	readSequence        int
+	initialReadSequence int
+	latestFeedback      string
+	used                []string
+	recalls             []recallCall
+	recalledIssues      map[string]struct{}
+	continuationIssues  map[string]struct{}
+	steps               []protocol.ChatCoordinatorStep
+}
+
+// prepareFirstRound runs the Host reads that precede the first model request
+// and records them on turn. startHistory starts the DingTalk history read; the
+// claimed decision passes startHistoryPrefetch, the collect-window shadow a
+// read of the early history that leaves it for the claim.
+func (c *Coordinator) prepareFirstRound(ctx context.Context, turn *Turn, startHistory func(context.Context, Turn) <-chan historyPrefetchResult) firstRound {
+	first := firstRound{
+		recalledIssues:     map[string]struct{}{},
+		continuationIssues: map[string]struct{}{},
+		steps:              make([]protocol.ChatCoordinatorStep, 0, maxLoopRounds*2),
+	}
+	if turn.Loop == LoopTaskFinished && turn.IssueID != "" {
+		first.recalledIssues[turn.IssueID] = struct{}{}
+	}
+	appendStep := func(step protocol.ChatCoordinatorStep) {
+		step.Seq = len(first.steps) + 1
+		first.steps = append(first.steps, step)
+	}
+	first.readSequence = coordinationReadSequence(*turn)
+	first.initialReadSequence = first.readSequence
+	if turn.Loop != LoopTaskFinished && len(turn.History)+len(turn.DingTalkHistory) > 0 {
+		if _, err := rememberCoordinationRead(turn, &first.readSequence, toolContextRead, `{"kind":"history"}`, "", nil); err != nil {
+			first.latestFeedback = coordinationRepairFeedback(toolContextRead, err)
+		}
+	}
+	// The DingTalk history read runs concurrently with the scene recall so the
+	// first model request sees the question this employee asked a moment ago.
+	var pendingHistory <-chan historyPrefetchResult
+	if shouldPrefetchHistory(c, *turn) {
+		pendingHistory = startHistory(ctx, *turn)
+	}
+	if shouldPrefetchSceneRecall(*turn) {
+		call, result, readErr := c.prefetchSceneRecall(ctx, turn, &first.readSequence)
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: call.Arguments, Content: "Host prefetch (read-only)"})
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: readErr != nil, Content: "Host prefetch (read-only)"})
+		first.used = append(first.used, call.Name)
+		if readErr == nil {
+			first.recalls = append(first.recalls, parseRecallCall(call.Arguments))
+			collectRecalledIssues(first.recalledIssues, first.continuationIssues, turn.ConversationID, result)
+		}
+	}
+	if pendingHistory != nil {
+		call, result, readErr := c.finishHistoryPrefetch(ctx, turn, &first.readSequence, pendingHistory)
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: call.Arguments, Content: "Host prefetch (read-only)"})
+		if readErr != nil {
+			result = marshalToolFailure(readErr)
+		}
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: readErr != nil, Content: "Host prefetch (read-only)"})
+		first.used = append(first.used, call.Name)
+	}
+	return first
+}
+
+// roundTools lists the tools one inbound round discloses. The work_state
+// schema names the Issues recalled so far, so it records them on turn.
+func roundTools(turn *Turn, round int, recalled bool, recalledIssues map[string]struct{}, ledger *retryLedger) []openai.ChatCompletionToolUnionParam {
+	turn.recalledIssueIDs = turn.recalledIssueIDs[:0]
+	for id := range recalledIssues {
+		turn.recalledIssueIDs = append(turn.recalledIssueIDs, id)
+	}
+	return withoutWithdrawnTools(toolsForDisclosure(*turn, round, recalled), ledger)
+}
+
 func (c *Coordinator) complete(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam) (*openai.ChatCompletion, error) {
-	return c.completeWithLimit(ctx, messages, tools, maxCompletionTokens, temperature)
+	return c.completeWithLimit(ctx, messages, tools, c.completionBudget(), temperature)
 }
 
 func (c *Coordinator) completeWithLimit(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, limit int64, temp float64) (*openai.ChatCompletion, error) {
@@ -384,6 +443,15 @@ func (c *Coordinator) completeWithLimit(ctx context.Context, messages []openai.C
 }
 
 func (c *Coordinator) completeWithModelLimit(ctx context.Context, model string, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, limit int64, temp float64, reasoning shared.ReasoningEffort) (*openai.ChatCompletion, error) {
+	params, err := c.wireParams(model, messages, tools, limit, temp, reasoning)
+	if err != nil {
+		return nil, err
+	}
+	return c.sendParams(ctx, params)
+}
+
+// wireParams returns the exact request a model call sends.
+func (c *Coordinator) wireParams(model string, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, limit int64, temp float64, reasoning shared.ReasoningEffort) (openai.ChatCompletionNewParams, error) {
 	params := openai.ChatCompletionNewParams{
 		Messages:            messages,
 		Model:               shared.ChatModel(model),
@@ -397,16 +465,26 @@ func (c *Coordinator) completeWithModelLimit(ctx context.Context, model string, 
 		// validate the exact response tool before applying any result.
 		toolChoice = "auto"
 	}
-	params.SetExtraFields(map[string]any{
-		"enable_thinking": reasoning != shared.ReasoningEffortNone,
-		"tool_choice":     toolChoice,
-	})
-	params.Temperature = openai.Float(temp)
-	var err error
-	params, err = coordinatorWireParams(params)
-	if err != nil {
-		return nil, err
+	extra := map[string]any{"enable_thinking": reasoning != shared.ReasoningEffortNone, "tool_choice": toolChoice}
+	if c.finishRecoveryEnabled() && isDeepSeekFlash(model) {
+		params.ReasoningEffort = ""
+		extra["thinking"] = map[string]any{"type": "disabled"}
+		extra["enable_thinking"] = false
+		extra["tool_choice"] = "required"
 	}
+	params.SetExtraFields(extra)
+	params.Temperature = openai.Float(temp)
+	params, err := coordinatorWireParams(params)
+	if err != nil {
+		return params, err
+	}
+	if c.finishRecoveryEnabled() && c.finishSchemaAssignment.arm != finishSchemaExpanded {
+		pruneFinishSchemas(params.Tools)
+	}
+	return params, nil
+}
+
+func (c *Coordinator) sendParams(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
 	if c == nil || (c.Chat == nil && c.LLM == nil) {
 		return nil, fmt.Errorf("coordinator loop: llm is not configured")
 	}

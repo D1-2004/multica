@@ -87,6 +87,47 @@ type RuntimeConfig struct {
 	LLM       LLMConfig       `json:"llm"`
 	FCE2B     FCE2BConfig     `json:"fc_e2b"`
 	ASB       ASBConfig       `json:"asb"`
+	// A single Diamond rollout controls the performance batch. Missing or
+	// empty targets never opt an agent into a newly deployed optimization.
+	PerformanceOptimization *PerformanceOptimizationConfig `json:"performance_optimization,omitempty"`
+}
+
+type PerformanceOptimizationConfig struct {
+	Enabled  bool     `json:"enabled"`
+	AgentIDs []string `json:"agent_ids"`
+	// FinishSchemaExperiment temporarily splits the decisions of the agents
+	// above into two groups that differ only in whether the expanded finish
+	// schema is pruned. It has no effect unless Enabled allows the agent.
+	FinishSchemaExperiment *FinishSchemaExperimentConfig `json:"finish_schema_experiment,omitempty"`
+	// CollectQuietMS is the silence, in milliseconds, that ends an inbound
+	// Coordinator collect window for the agents above. Zero keeps the 4 s
+	// default; the 12 s window cap is unchanged.
+	CollectQuietMS int `json:"collect_quiet_ms,omitempty"`
+}
+
+// FinishSchemaExperimentConfig assigns each Coordinator job to a group by a
+// stable hash of its id and Salt; changing Salt reshuffles the groups, so
+// keep it fixed for one experiment. Mode "expanded" is the stop-loss: every
+// decision of the selected agents keeps the expanded finish schema while the
+// rest of the performance switch stays on.
+type FinishSchemaExperimentConfig struct {
+	Enabled bool   `json:"enabled"`
+	Mode    string `json:"mode,omitempty"`
+	Salt    string `json:"salt"`
+}
+
+const (
+	FinishSchemaModeSplit    = "split"
+	FinishSchemaModeExpanded = "expanded"
+)
+
+// SplitsGroups reports whether the experiment assigns jobs by hash.
+func (c FinishSchemaExperimentConfig) SplitsGroups() bool {
+	return c.Enabled && (c.Mode == "" || c.Mode == FinishSchemaModeSplit)
+}
+
+func (c PerformanceOptimizationConfig) AllowsAgent(agentID string) bool {
+	return c.Enabled && agentID != "" && slices.Contains(c.AgentIDs, agentID)
 }
 
 // AgenticFSConfig contains live defaults for newly provisioned spaces, not
@@ -119,6 +160,8 @@ func (c AgenticFSConfig) Defaults() AgenticFSConfig {
 }
 
 type LLMConfig struct {
+	CoordinatorFinishRecovery bool `json:"coordinator_finish_recovery,omitempty"`
+
 	BaseURL          string   `json:"base_url"`
 	Models           []string `json:"models"`
 	DefaultModel     string   `json:"default_model"`
@@ -126,6 +169,16 @@ type LLMConfig struct {
 }
 
 type FCE2BConfig struct {
+	DSHEventWakeup       bool `json:"dsh_event_wakeup,omitempty"`
+	DingTalkReplyCommand bool `json:"dingtalk_reply_command,omitempty"`
+	ASBEventWakeup       bool `json:"asb_event_wakeup,omitempty"`
+	StartupObservability bool `json:"startup_observability,omitempty"`
+	BoundedReadyExec     bool `json:"bounded_ready_exec,omitempty"`
+	CoalescedHotExec     bool `json:"coalesced_hot_exec,omitempty"`
+	BatchSkillResolve    bool `json:"batch_skill_resolve,omitempty"`
+
+	RecoverAbandonedLaunches     bool     `json:"recover_abandoned_launches,omitempty"`
+	BoundDSHHostWait             bool     `json:"bound_dsh_host_wait,omitempty"`
 	DWSMessagePolicyFingerprints []string `json:"dws_message_policy_fingerprints,omitempty"`
 	Enabled                      bool     `json:"enabled"`
 	StablePublisherUserIDs       []string `json:"stable_publisher_user_ids"`
@@ -243,6 +296,9 @@ func (c Config) normalized() Config {
 	c.Runtime.LLM.Models = normalizedUnique(c.Runtime.LLM.Models)
 	c.Runtime.LLM.DefaultModel = strings.TrimSpace(c.Runtime.LLM.DefaultModel)
 	c.Runtime.LLM.CoordinatorModel = strings.TrimSpace(c.Runtime.LLM.CoordinatorModel)
+	if c.Runtime.PerformanceOptimization != nil {
+		c.Runtime.PerformanceOptimization.AgentIDs = normalizedUnique(c.Runtime.PerformanceOptimization.AgentIDs)
+	}
 	c.Runtime.FCE2B.Template = strings.TrimSpace(c.Runtime.FCE2B.Template)
 	c.Runtime.FCE2B.StablePublisherUserIDs = normalizedUnique(c.Runtime.FCE2B.StablePublisherUserIDs)
 	c.Runtime.FCE2B.DWSMessagePolicyFingerprints = normalizedUnique(c.Runtime.FCE2B.DWSMessagePolicyFingerprints)
@@ -346,6 +402,31 @@ func (c IntegrationsConfig) validate() error {
 }
 
 func (c RuntimeConfig) validate() error {
+	if rollout := c.PerformanceOptimization; rollout != nil {
+		if err := validateUnique("performance_optimization.agent_ids", rollout.AgentIDs, false); err != nil {
+			return err
+		}
+		for _, agentID := range rollout.AgentIDs {
+			if parsed, err := uuid.Parse(strings.TrimSpace(agentID)); err != nil || parsed == uuid.Nil || parsed.String() != agentID {
+				return fmt.Errorf("performance_optimization.agent_ids contains invalid canonical UUID %q", agentID)
+			}
+		}
+		if rollout.CollectQuietMS != 0 && (rollout.CollectQuietMS < 500 || rollout.CollectQuietMS > 4000) {
+			return fmt.Errorf("performance_optimization.collect_quiet_ms must be between 500 and 4000")
+		}
+		if experiment := rollout.FinishSchemaExperiment; experiment != nil {
+			switch experiment.Mode {
+			case "", FinishSchemaModeSplit, FinishSchemaModeExpanded:
+			default:
+				return fmt.Errorf("performance_optimization.finish_schema_experiment.mode must be split or expanded")
+			}
+			if experiment.SplitsGroups() {
+				if salt := strings.TrimSpace(experiment.Salt); salt == "" || len(salt) > 64 || salt != experiment.Salt {
+					return fmt.Errorf("performance_optimization.finish_schema_experiment.salt must be 1-64 characters without surrounding spaces when the split is enabled")
+				}
+			}
+		}
+	}
 	quota := c.AgenticFS.Defaults()
 	if quota.SizeLimit < 10<<30 || quota.SizeLimit%(1<<30) != 0 || quota.FileCountLimit < 10000 || quota.FileCountLimit > 1000000000 {
 		return fmt.Errorf("agentic_fs requires size_limit >= 10 GiB in whole GiB and file_count_limit between 10000 and 1000000000")

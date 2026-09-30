@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-22.1`。装配版本：`42`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-26.1`。装配版本：`43`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -97,6 +97,10 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 
 同一批预取还读取本场景的有界钉钉历史（`shouldPrefetchHistory` / `history_prefetch.go`）：数字员工与机器人入站、可信 CID 与 DWS 身份齐全、history 尚未加载、且不是主动会话中未@本员工的群消息时，Host 与 assoc 预取并行调用 `DWSHistory.Load`，上限 2.5 秒。成功或空结果按原 `context_read(kind=history)` 快照登记（r2），首个模型请求同时装配 `dialogue` 模块，因此「对方回答了员工代问的问题」在首轮就有证据和规则。超时保持 `not_loaded`，模型仍可按需读一次；其它失败标 `unavailable`，不当作空会话。同一轮再次 `context_read(kind=history)` 时，若快照已在且状态不是 not_loaded，Host 返回复用提示而不重读，避免预发 trace `cb7dacb19ec246c584971e148ea8c11f` 那样连读 6 次的空转；basis=answer 的历史前置反馈仍按原路径解决。Langfuse 根 metadata 记 `history_prefetch_status / history_prefetch_elapsed_ms`，SLS 事件为 `inbound_coordinator_history_prefetch`。触发证据：正式 trace `bf0bcb544bed486ab4fbb16454dabe67`（须莫答「6 点」时 history not_loaded，被判 clarify）与 `39427c330a2b4182a5b10fe44503355f`（答复从未转告委托人，回复泄漏「任务状态为 completed」）。
 
+收集窗口内的历史预读（`window_history_prefetch.go`，PRI-47）：生产 85 条走模型的决策里，这次读取 85/85 位于首个模型请求之前，P50/P90 为 748/866 ms（身份上下文签发、凭证兑换、CLI 交换、列消息四步串行）。对 `runtime.performance_optimization` 白名单内、且 Coordinator 总开关开启的 agent，接收消息的副本在 job 入队或窗口合并提交后（在准入响应之外异步进行，不延迟 Router 的 202），按认领 worker 还原出的同一条持久化命令（`coordinatorHistoryInputs`）构造读取输入，在 4 秒收集窗口内提前执行同一个 `DWSHistory.Load`，并在收集截止时唤醒本副本的 worker（截止时间只会后移；同一 job 只保留最晚的截止唤醒，异步乱序到达的较早截止被忽略）。每副本同时最多 8 个预读，满额即不预读。认领后的决策只在这是 job 的首次、未被打扰的认领（`attempt_count=1` 且无 `last_error`；park、重试、租约接管后再认领一律现读）、读取输入完全相同（agent、CID、DWS uid/org、截止时间即窗口最新消息时间、窗口消息 evidence 集合）、预读成功、且预读开始不超过 8 秒时复用结果；等在途预读与失败后的现读共用原来从认领起算的 2.5 秒预算，关键路径不比原路径更长。输入相同不等于外部消息列表的回答相同，所以每次复用都在关键路径外做一次认领时影子读取并比对（`inbound_coordinator_window_history_shadow`，逐条比较模型可见的全部字段：角色、内容与截断、evidence、发送人、时间与原始时间、引用；outcome=match/mismatch/unavailable/skipped，只记条数不记内容）。输入不同、跨副本认领、超时或失败都回到认领时读取。结果只存进程内、被一次决策消费、90 秒后丢弃，不是共享状态。Langfuse 根 metadata 另记 `history_prefetch_window`（hit/miss/reclaimed/failed/timeout）与 `history_prefetch_wait_ms`，SLS 事件 `inbound_coordinator_history_prefetch` 带 `window / wait_ms`，窗口读取开始时记 `inbound_coordinator_window_history_started`（coord_trace_id 为 job id，`switch_ms` 为总开关查询耗时）。影子读会让命中的决策多一次 DWS 认证与查询，扩大灰度前需先定抽样率或成本上限。白名单关闭即恢复原路径；关闭前已开始的预读仍会完成，但不再被使用。
+
+首轮请求影子（`first_round_shadow.go`，PRI-47 第二项 A 阶段）：窗口内推测的决策只有在认领时会发出同样的模型请求时才可能被采用，所以先只测量、不推测。同一白名单下，对入站单聊（非群聊、非主动会话、非用户决策、无附件执行路径）的 job，接收消息的副本在窗口预读开始后，用认领相同的持久化命令、执行计划、agent 行、幂等键与认领上下文（job id 作为 trace id、历史截止）经共享的 `coordinatorDecisionTurn` 组装 Turn，再经与 `Decide`/`runLoop` 共用的 `decisionSnapshot`、`prefetchSceneMemory`、`normalizeDecisionHistory`、`prepareFirstRound`、`roundTools`、`wireParams` 构造首轮模型请求并计算规范 JSON 指纹。影子不调用模型、不启动 Langfuse trace、不输出 Coordinator 日志（上下文静默标记）、不调用 SavePlan/RecordDecision（没有 checkpoint 与观察者），钉钉历史只等待并查看同键的窗口预读、不取走也不自行读取；没有窗口预读就不建影子。认领的真实决策在首轮发送前对同一 `wireParams` 结果取指纹并比较，记 `inbound_coordinator_speculation_shadow`：outcome=same/diff/unavailable/not_ready/skipped，按段（system/messages/tools/route）与按输入类（message、agent、busy、scene_memory、history、recall_scope（召回读取自身的时间窗，since/until 取读取时刻）、recall_items、reads、work_state、route）列出差异，`unexplained` 标记输入类全同但请求不同的情形，另记影子构建耗时、影子年龄、认领侧从 `runLoop` 入口到首轮请求的组装耗时（`v_loop_first_ms`，不含 handler 组装与场景记忆读取）与比较耗时；只记哈希、长度与类别，不记内容。影子按 job id 与窗口读取键存放，合并后键变化，旧影子不会被认领使用；每副本最多 4 个在建影子，90 秒后丢弃。影子结果不被任何决策采用。认领路径在决策前的 `recordAssocInboundEvent` 写入发生在影子之后，若它改变召回结果会体现为 recall 类差异。
+
 这次预取针对事项关联，不是Scene Memory刷新或提交。问候/能力介绍等非工作请求也可能增加一次有界关联读取，内部可包含多条数据库查询，不能宣称所有请求提速。Langfuse根metadata记录 `scene_prefetch_status / scene_prefetch_elapsed_ms`，对应Tool observation标 `origin=host_prefetch`；SLS事件为 `inbound_coordinator_scene_prefetch`、字段 `status / elapsed_ms`。其工具步骤不算LLM发起的工具调用；模型轮数、Host读取耗时与额外读次数分别报告。
 
 `assoc_recall`先使用可信当前CID；用户明确给出其他合法openConversationId时按原ID读取。日志链接 `cid=数字` 不是会话ID。q只过滤明确范围，person_id只辅助排序。默认3项、最多5项，仅返回协调视图：精简原目标、意图、真实状态、等待对象、更新时间与可用状态引用；不传事件全文、原始评论、业务报告和执行结论。图关联/等待快照不冒充最新执行状态。读取保留scope、status_source、complete/truncated及unknown，默认48h范围不冒充全部历史；按明确旧请求可扩7d/30d。
@@ -177,7 +181,7 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 自然语言意图由LLM判断并审查。Host不再用ACK、停止回复、工具名称或诊断编号词表决定静默、拆窗或工作关联；自发事件、监听范围、去重与持久化状态继续按协议事实检查。
 
-collect 只按入站来源和生命周期区分，普通提问与礼貌收尾可在同一窗口。collect 只合并正在输入的消息：4 秒静默，创建起最多 12 秒。封窗、已 claim、重试或挂起的窗口不再吸收新消息。同 scene 同时一个 Coordinator 窗口，沙箱执行仍受容量保护；容量不能阻止新窗口判断聊天。collect/park 不提前 sync-silence 完成，回执随真实处理关闭。
+collect 只按入站来源和生命周期区分，普通提问与礼貌收尾可在同一窗口。collect 只合并正在输入的消息：默认 4 秒静默，创建起最多 12 秒。`runtime.performance_optimization.collect_quiet_ms`（500–4000，PRI-47）可对白名单 agent 缩短静默时长（如 1000），12 秒上限不变；受理与合并日志记 `collect_quiet_ms`。缩短后，间隔超过静默时长的后续消息会成为同 scene 的下一窗口（场景忙时按既有规则 park），不会并入正在判断的窗口。封窗、已 claim、重试或挂起的窗口不再吸收新消息。同 scene 同时一个 Coordinator 窗口，沙箱执行仍受容量保护；容量不能阻止新窗口判断聊天。collect/park 不提前 sync-silence 完成，回执随真实处理关闭。
 
 执行容量按「场景 × 委托人」计（`SceneDelegatorMaxInFlightMatters`，当前 2），归属取 assoc 的 `task_person` 边，人按 `assoc_person_alias` 双向归一（输入 → canonical person_key → 该人其它别名），所以同一人的 uid/staffId/openDingTalkId 算同一份预算，合窗内分组也用同一份闭包。续办他人事项成功后按当前委托人补建归属，否则准入算在当前发言人头上、执行却仍记在原委托人名下。一个人把自己的名额用满时只有他自己等待，同群其他人照常受理；合窗里每位发言人各自结算自己的新增事项。在飞只含 `queued/dispatched/running/waiting_local_directory`：`deferred` 与 `fire_at` 在未来的事项是排期或等外部输入，不占名额；非 running 的行超过在飞判定（2 小时）也不再占名额，running 由 daemon 心跳自证存活、长跑合法占用（真正卡死由 `cmd/server/runtime_sweeper.go` 负责失败）。没有任何 `task_person` 归属的在飞事项计入每个委托人，缺失身份不凭措辞或显示名归属；委托人身份不可信时退回按场景计数。单窗口一次最多起两项（`SceneWindowMaxItems`）不变。
 
@@ -425,3 +429,28 @@ collect 在是否启用选择不同的请求之间拆窗；所有人和指定名
 用户选择以 `coordinator.user_decision.choice` observation 写回原 Coordinator trace；问题、可选项和模型推荐为 input，实际 accepted submission 的 option ID/label/custom 与状态为 output，不能把推荐或拒绝事件当作选择。选择后的解释与审查沿用冻结 trace 并归到 choice 下，避免重新生成 trace ID。PostgreSQL 版本水位驱动独立重试，同一 decision 使用固定 observation ID；Langfuse 失败不阻塞卡片或派发。OTLP 接收成功与 Langfuse 查询可见分别验证。
 
 监听保留 PostgreSQL 跨副本租约、ready 后发卡、独立心跳与重连。短暂回调持久化失败在当前流内重试；退出/取消会主动解除 pipe 读取，避免子进程后代持有管道导致无法重连。严重进程或上游事件丢失仍不能仅凭本地重试宣称 exactly-once；业务首次有效选择由数据库事务与事件去重保证。
+
+
+## PRI-47 finish transport recovery
+
+2026-09-26 14:36 用户授权纳入 Q1。`runtime.llm.coordinator_finish_recovery`
+在每个 Decide 开始时冻结：开启后主输出预算4096，DeepSeek flash使用
+`thinking.type=disabled`（省略不兼容的reasoning_effort）；关闭恢复1536与原参数。
+截断或JSON不完整时，在同一证据快照内最多两次只提供finish工具重新序列化，
+不重做读取、不扩大总decision deadline、不提交旧候选；修复结果仍走全部Host与review。
+模型schema按kind使用与Host相同的允许字段，避免start_work被展示state_refs。
+依据：https://api-docs.deepseek.com/guides/thinking_mode/ 。
+结构检查、脚本Host测试、模型回放和真实投递证据分别报告。
+
+finish-only恢复耗尽后按确定性停止生成一次固定失败回执，不让外层job重跑整个决策；网络错误仍按原可恢复错误路径处理。
+
+### finish schema 裁剪对照实验（PRI-47，临时）
+
+`runtime.performance_optimization.finish_schema_experiment {enabled, mode, salt}` 只在父开关对该agent生效时起作用，缺省关闭；父开关关闭时与旧行为逐字节相同。每个决策在 `decisionSnapshot` 只调用一次 `DecisionConfigProvider`，从同一份运行时配置快照同时取模型、父开关、实验参数与配置指纹，并冻结到该决策的所有轮次和修复。
+
+- `mode` 缺省或 `split`：入站决策按持久化job UUID与salt的SHA-256一次性分组，`pruned` 组照常裁剪finish schema，`expanded` 组保留展开后的schema；4096预算、序列化修复、DeepSeek thinking、窗口历史预读、路由和其余参数两组相同。salt必须是1–64字符且首尾无空白，实验期间不得更换。
+- `mode=expanded` 是止损：父开关保持开启时，该agent所有决策（含没有job UUID与非入站循环）都保留展开schema，记 `reason=forced_expanded`。`enabled=false` 回到父开关的原裁剪，不是止损。
+
+首个 `included` 决策把 `{arm, salt_digest, config_sha256, config_generation}` 持租约写入job的 `command._finish_schema_experiment`；同一job再次认领时读取该记录：salt不变则沿用同组（`record=reused`），salt变更或实验已关闭则按当前配置执行并记 `excluded_config_changed`。恢复的plan checkpoint不发首轮请求，记 `excluded_checkpoint`；没有job UUID记 `excluded_no_job_id`，分裂模式下非入站循环记 `excluded_loop`。
+
+任何模型请求之前先写 `inbound_coordinator_finish_schema_assigned`（arm、reason、mode、job_id、record、route_error、build、config_sha256/generation、model）；模型路由解析失败被延后的决策同样记录（`route_error=true`）。每次携带finish工具的请求发出前写 `inbound_coordinator_finish_schema_request`（kind=`route`/`finish_repair`、round、实际finish schema哈希与字节数、工具数），同时写入Langfuse trace metadata。未发出请求或失败的决策仍在分母内。新键要求新二进制：先部署代码再写Diamond，回滚二进制前先删键。实验结论由真实流量统计给出，本节只约束分组与参数隔离。
