@@ -1,61 +1,135 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="description" content="直接迁入 Go BotLoop 的 EmployeeLoop 完整方案：统一事件、MessageRouter 兼容、能力复用、员工表达与迁移验收。"><title>EmployeeLoop：事件、事项与执行的统一协调方案</title><style>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><meta name="description" content="直接迁入 Go BotLoop 的 EmployeeLoop 完整方案：DWS原生事件与Host控制外壳、接入adapter兼容、能力复用、员工表达与迁移验收。"><title>EmployeeLoop：事件、事项与执行的统一协调方案</title><style>
 :root{color-scheme:light dark;--bg:#f5f5f1;--paper:#ffffff;--ink:#17232f;--muted:#526271;--line:#dce2e5;--accent:#155d74;--accent-tint:#e9f3f4;--code:#f3f5f6;--orange:#a14d22;--purple:#6b4da0;--green:#267b58;--shadow:0 10px 40px #17232f08}
-*{box-sizing:border-box}html{scroll-padding-top:26px;scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.8 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}a{color:var(--accent);text-underline-offset:4px;text-decoration-thickness:1px}a:hover{text-decoration-thickness:2px}a:focus-visible,button:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--accent);outline-offset:4px}.skip-link{position:fixed;top:8px;left:8px;z-index:50;padding:8px 16px;background:var(--paper);transform:translateY(-160%)}.skip-link:focus{transform:none}.layout{max-width:1380px;margin:0 auto;padding:42px 30px 100px;display:grid;grid-template-columns:224px minmax(0,1fr);gap:34px}.sidebar{position:sticky;top:30px;align-self:start;max-height:calc(100vh - 60px);overflow:auto;padding:12px 0 24px}.brand{font-size:13px;letter-spacing:.06em;font-weight:700;color:var(--accent);margin-bottom:20px}.sidebar-label{font-size:12px;color:var(--muted);letter-spacing:.12em;margin:24px 0 10px}.toc-list{list-style:none;padding:0;margin:0}.toc-list a{display:block;padding:7px 12px;border-left:2px solid transparent;color:var(--muted);font-size:13px;line-height:1.55;text-decoration:none}.toc-list a:hover{color:var(--ink);background:var(--accent-tint)}.toc-list a[aria-current="location"]{color:var(--accent);border-color:var(--accent);font-weight:650;background:var(--accent-tint)}.sidebar-meta{font-size:12px;line-height:1.7;color:var(--muted);padding:20px 12px 0}.sidebar-meta code{word-break:break-all;font-size:11px}.main{min-width:0}.hero{padding:40px 44px 30px;background:var(--paper);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}.eyebrow{color:var(--accent);font-size:12px;letter-spacing:.15em;font-weight:700;text-transform:uppercase}.hero h1{font-size:clamp(28px,3.3vw,42px);line-height:1.3;letter-spacing:-.03em;margin:12px 0 18px;max-width:850px}.hero-lede{font-size:18px;line-height:1.85;max-width:780px;margin:0 0 22px;color:var(--muted)}.chips{display:flex;flex-wrap:wrap;gap:8px}.chip{padding:4px 10px;border:1px solid var(--line);border-radius:999px;font-size:12px;line-height:1.5;color:var(--muted)}.chip.strong{background:var(--accent-tint);border-color:transparent;color:var(--accent)}.tools{display:flex;flex-wrap:wrap;gap:10px;margin-top:25px}button,.button{font:inherit;font-size:13px;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer;text-decoration:none}button:hover,.button:hover{background:var(--accent-tint)}.local-note{margin:24px 0 0;padding:12px 16px;border-left:3px solid var(--accent);font-size:13px;background:var(--accent-tint);color:var(--muted)}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}.summary-card{background:var(--paper);padding:20px 22px;border:1px solid var(--line);border-radius:12px}.summary-card .number{font:600 12px/1.5 ui-monospace,monospace;color:var(--accent);letter-spacing:.1em}.summary-card h2{font-size:18px;line-height:1.5;margin:7px 0}.summary-card p{font-size:14px;line-height:1.8;color:var(--muted);margin:0}.visual-card,.event-demo{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:25px 28px;margin:22px 0}.visual-card h2,.event-demo h2{font-size:22px;margin:0 0 8px;line-height:1.5}.section-label{font-size:12px;color:var(--accent);font-weight:700;letter-spacing:.12em}.figure-note{color:var(--muted);font-size:13px;margin:8px 0 0}.arch-svg{display:block;width:100%;height:auto}.arch-svg .canvas{fill:var(--paper)}.arch-svg .node{fill:var(--paper);stroke:var(--line);stroke-width:1.6}.arch-svg .accent-node{fill:var(--accent-tint);stroke:var(--accent);stroke-width:1.6}.arch-svg .node-title{fill:var(--ink);font-weight:650;font-size:17px}.arch-svg .node-sub{fill:var(--muted);font-size:13px}.arch-svg .label-bg{fill:var(--paper)}.arch-svg .label{fill:var(--muted);font-size:12px}.arch-svg .edge-main{fill:none;stroke:var(--accent);stroke-width:2}.arch-svg .edge-event{fill:none;stroke:var(--purple);stroke-width:1.7;stroke-dasharray:6 4}.arch-svg .edge-cap{fill:none;stroke:var(--green);stroke-width:1.7;stroke-dasharray:5 4}.arch-svg .edge-store{fill:none;stroke:var(--green);stroke-width:1.7}.arch-svg text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}.demo-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:17px 0}.demo-tabs button[aria-selected="true"]{color:var(--accent);background:var(--accent-tint);border-color:var(--accent);font-weight:650}.demo-content{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:22px;align-items:start}.demo-content pre{margin:0;font-size:12px}.demo-explanation{font-size:14px;color:var(--muted)}.demo-explanation strong{color:var(--ink)}.demo-content h3{font-size:17px;margin:0 0 8px}.mobile-toc{display:none}.document{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:6px 44px 40px;margin-top:22px}.document h2{font-size:26px;line-height:1.5;margin:0 0 18px;letter-spacing:-.015em}.document h3{font-size:20px;line-height:1.55;margin:34px 0 14px}.document h4{font-size:17px;margin:26px 0 10px}.document p{margin:14px 0}.document li{margin:7px 0}.document ul,.document ol{padding-left:25px}.document strong{font-weight:650}.document blockquote{border-left:3px solid var(--accent);margin:22px 0;padding:2px 0 2px 18px;color:var(--muted)}.doc-intro{padding:30px 0 12px;color:var(--muted);font-size:14px}.doc-section{padding:34px 0 18px;border-top:1px solid var(--line);scroll-margin-top:24px}.doc-section:first-of-type{margin-top:10px}code{font: .86em/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--code);padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}pre{background:var(--code);padding:18px 20px;overflow-x:auto;border:1px solid var(--line);border-radius:9px;font-size:13px;line-height:1.7;max-width:100%}pre code{padding:0;background:none;border-radius:0;white-space:pre;overflow-wrap:normal;font-size:inherit}.table-wrap{margin:20px 0;overflow-x:auto;width:100%;border:1px solid var(--line);border-radius:9px}table{border-collapse:collapse;width:100%;min-width:610px;font-size:13px;line-height:1.75}th,td{text-align:left;vertical-align:top;padding:12px 14px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}th{background:var(--code);font-weight:650;color:var(--muted)}tr:last-child td{border-bottom:0}table code{font-size:11.5px}.table-wrap table{margin:0}details{border:1px solid var(--line);border-radius:8px;margin:16px 0;background:var(--paper)}summary{cursor:pointer;padding:12px 16px;font-size:13px;font-weight:600;color:var(--muted)}details[open] summary{border-bottom:1px solid var(--line)}details>pre{margin:12px;border-radius:6px}.diagram-source{margin-top:12px}.offline-diagram{border:1px solid var(--line);border-radius:10px;padding:18px;margin:24px 0;background:var(--paper)}.offline-diagram figcaption{font-size:13px;color:var(--muted);margin:0 0 14px}.phase-flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.phase-flow .phase{border:1px solid var(--line);border-radius:8px;padding:12px;min-width:120px;flex:1;text-align:center;background:var(--code);font-size:14px;line-height:1.6}.phase-flow .phase strong{display:block}.phase-flow .arrow{color:var(--accent);font-size:20px}.phase-note{font-size:13px;color:var(--muted);margin:14px 0 0}.state-paths{display:grid;gap:9px}.state-path{padding:12px 15px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:var(--code)}.state-path b{display:block;color:var(--accent);font-size:12px;margin-bottom:4px}.footer{font-size:12px;color:var(--muted);margin:25px 5px 0;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.footer code{font-size:11px}.pending-note{padding:30px 0;color:var(--muted)}
+*{box-sizing:border-box}html{scroll-padding-top:26px;scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.8 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}a{color:var(--accent);text-underline-offset:4px;text-decoration-thickness:1px}a:hover{text-decoration-thickness:2px}a:focus-visible,button:focus-visible,summary:focus-visible,[tabindex]:focus-visible{outline:3px solid var(--accent);outline-offset:4px}.skip-link{position:fixed;top:8px;left:8px;z-index:50;padding:8px 16px;background:var(--paper);transform:translateY(-160%)}.skip-link:focus{transform:none}.layout{max-width:1380px;margin:0 auto;padding:42px 30px 100px;display:grid;grid-template-columns:224px minmax(0,1fr);gap:34px}.sidebar{position:sticky;top:30px;align-self:start;max-height:calc(100vh - 60px);overflow:auto;padding:12px 0 24px}.brand{font-size:13px;letter-spacing:.06em;font-weight:700;color:var(--accent);margin-bottom:20px}.sidebar-label{font-size:12px;color:var(--muted);letter-spacing:.12em;margin:24px 0 10px}.toc-list{list-style:none;padding:0;margin:0}.toc-list a{display:block;padding:7px 12px;border-left:2px solid transparent;color:var(--muted);font-size:13px;line-height:1.55;text-decoration:none}.toc-list a:hover{color:var(--ink);background:var(--accent-tint)}.toc-list a[aria-current="location"]{color:var(--accent);border-color:var(--accent);font-weight:650;background:var(--accent-tint)}.sidebar-meta{font-size:12px;line-height:1.7;color:var(--muted);padding:20px 12px 0}.sidebar-meta code{word-break:break-all;font-size:11px}.main{min-width:0}.hero{padding:40px 44px 30px;background:var(--paper);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow)}.eyebrow{color:var(--accent);font-size:12px;letter-spacing:.15em;font-weight:700;text-transform:uppercase}.hero h1{font-size:clamp(28px,3.3vw,42px);line-height:1.3;letter-spacing:-.03em;margin:12px 0 18px;max-width:850px}.hero-lede{font-size:18px;line-height:1.85;max-width:780px;margin:0 0 22px;color:var(--muted)}.chips{display:flex;flex-wrap:wrap;gap:8px}.chip{padding:4px 10px;border:1px solid var(--line);border-radius:999px;font-size:12px;line-height:1.5;color:var(--muted)}.chip.strong{background:var(--accent-tint);border-color:transparent;color:var(--accent)}.tools{display:flex;flex-wrap:wrap;gap:10px;margin-top:25px}button,.button{font:inherit;font-size:13px;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer;text-decoration:none}button:hover,.button:hover{background:var(--accent-tint)}.local-note{margin:24px 0 0;padding:12px 16px;border-left:3px solid var(--accent);font-size:13px;background:var(--accent-tint);color:var(--muted)}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}.summary-card{background:var(--paper);padding:20px 22px;border:1px solid var(--line);border-radius:12px}.summary-card .number{font:600 12px/1.5 ui-monospace,monospace;color:var(--accent);letter-spacing:.1em}.summary-card h2{font-size:18px;line-height:1.5;margin:7px 0}.summary-card p{font-size:14px;line-height:1.8;color:var(--muted);margin:0}.visual-card,.event-demo{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:25px 28px;margin:22px 0}.visual-card h2,.event-demo h2{font-size:22px;margin:0 0 8px;line-height:1.5}.section-label{font-size:12px;color:var(--accent);font-weight:700;letter-spacing:.12em}.figure-note{color:var(--muted);font-size:13px;margin:8px 0 0}.arch-svg{display:block;width:100%;height:auto}.diagram-scroll{overflow-x:auto}.arch-svg .canvas{fill:var(--paper)}.arch-svg .node{fill:var(--paper);stroke:var(--line);stroke-width:1.6}.arch-svg .accent-node{fill:var(--accent-tint);stroke:var(--accent);stroke-width:1.6}.arch-svg .node-title{fill:var(--ink);font-weight:650;font-size:17px}.arch-svg .node-sub{fill:var(--muted);font-size:13px}.arch-svg .label-bg{fill:var(--paper)}.arch-svg .label{fill:var(--muted);font-size:12px}.arch-svg .edge-main{fill:none;stroke:var(--accent);stroke-width:2}.arch-svg .edge-event{fill:none;stroke:var(--purple);stroke-width:1.7;stroke-dasharray:6 4}.arch-svg .edge-cap{fill:none;stroke:var(--green);stroke-width:1.7;stroke-dasharray:5 4}.arch-svg .edge-store{fill:none;stroke:var(--green);stroke-width:1.7}.arch-svg text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}.demo-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:17px 0}.demo-tabs button[aria-selected="true"],.demo-tabs button[aria-pressed="true"]{color:var(--accent);background:var(--accent-tint);border-color:var(--accent);font-weight:650}.demo-content{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:22px;align-items:start}.demo-content pre{margin:0;font-size:12px}.demo-explanation{font-size:14px;color:var(--muted)}.demo-explanation strong{color:var(--ink)}.demo-content h3{font-size:17px;margin:0 0 8px}.mobile-toc{display:none}.document{overflow-wrap:anywhere;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:6px 44px 40px;margin-top:22px}.document h2{font-size:26px;line-height:1.5;margin:0 0 18px;letter-spacing:-.015em}.document h3{font-size:20px;line-height:1.55;margin:34px 0 14px}.document h4{font-size:17px;margin:26px 0 10px}.document p{margin:14px 0}.document li{margin:7px 0}.document ul,.document ol{padding-left:25px}.document strong{font-weight:650}.document blockquote{border-left:3px solid var(--accent);margin:22px 0;padding:2px 0 2px 18px;color:var(--muted)}.doc-intro{padding:30px 0 12px;color:var(--muted);font-size:14px}.doc-section{padding:34px 0 18px;border-top:1px solid var(--line);scroll-margin-top:24px}.doc-section:first-of-type{margin-top:10px}.doc-subsection{padding:10px 0 18px}.document h5{font-size:16px;line-height:1.6;margin:20px 0 10px}code{font: .86em/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--code);padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}pre{background:var(--code);padding:18px 20px;overflow-x:auto;border:1px solid var(--line);border-radius:9px;font-size:13px;line-height:1.7;max-width:100%}pre code{padding:0;background:none;border-radius:0;white-space:pre;overflow-wrap:normal;font-size:inherit}.table-wrap{margin:20px 0;overflow-x:auto;width:100%;border:1px solid var(--line);border-radius:9px}table{border-collapse:collapse;width:100%;min-width:610px;font-size:13px;line-height:1.75}th,td{text-align:left;vertical-align:top;padding:12px 14px;border-bottom:1px solid var(--line);overflow-wrap:anywhere}th{background:var(--code);font-weight:650;color:var(--muted)}tr:last-child td{border-bottom:0}table code{font-size:11.5px}.table-wrap table{margin:0}details{border:1px solid var(--line);border-radius:8px;margin:16px 0;background:var(--paper)}summary{cursor:pointer;padding:12px 16px;font-size:13px;font-weight:600;color:var(--muted)}details[open] summary{border-bottom:1px solid var(--line)}details>pre{margin:12px;border-radius:6px}.diagram-source{margin-top:12px}.offline-diagram{border:1px solid var(--line);border-radius:10px;padding:18px;margin:24px 0;background:var(--paper)}.offline-diagram figcaption{font-size:13px;color:var(--muted);margin:0 0 14px}.phase-flow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.phase-flow .phase{border:1px solid var(--line);border-radius:8px;padding:12px;min-width:120px;flex:1;text-align:center;background:var(--code);font-size:14px;line-height:1.6}.phase-flow .phase strong{display:block}.phase-flow .arrow{color:var(--accent);font-size:20px}.phase-note{font-size:13px;color:var(--muted);margin:14px 0 0}.state-paths{display:grid;gap:9px}.state-path{padding:12px 15px;border:1px solid var(--line);border-radius:8px;font-size:14px;background:var(--code)}.state-path b{display:block;color:var(--accent);font-size:12px;margin-bottom:4px}.footer{font-size:12px;color:var(--muted);margin:25px 5px 0;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.footer code{font-size:11px}.pending-note{padding:30px 0;color:var(--muted)}
 @media(prefers-color-scheme:dark){:root{--bg:#151a1e;--paper:#1d252b;--ink:#e7edf0;--muted:#afbec6;--line:#35434b;--accent:#8dc8d1;--accent-tint:#263d43;--code:#222e35;--orange:#dfab85;--purple:#bd9de4;--green:#87c8a7;--shadow:none}.arch-svg .edge-main{stroke:var(--accent)}.arch-svg marker .main-fill{fill:var(--accent)}.arch-svg marker .event-fill{fill:var(--purple)}.arch-svg marker .cap-fill{fill:var(--green)}}
 @media(max-width:1080px){.layout{grid-template-columns:180px minmax(0,1fr);gap:22px;padding:30px 20px 70px}.hero{padding:32px}.document{padding:5px 30px 30px}.summary-card{padding:18px}.summary-grid{gap:10px}}
-@media(max-width:820px){.layout{display:block;padding:18px 18px 55px}.sidebar{display:none}.mobile-toc{display:block;margin:17px 0;background:var(--paper)}.mobile-toc .toc-list{padding:8px 12px 15px;columns:2;column-gap:14px}.mobile-toc .toc-list li{break-inside:avoid}.hero{padding:28px}.hero h1{font-size:32px}.hero-lede{font-size:16px}.summary-grid{grid-template-columns:1fr}.summary-card{padding:18px 22px}.summary-card h2{margin:4px 0}.visual-card,.event-demo{padding:20px}.document{padding:5px 25px 25px}.document h2{font-size:24px}.demo-content{grid-template-columns:1fr;gap:16px}.doc-section{padding-top:27px}.phase-flow .phase{min-width:140px}.figure-note{line-height:1.8}}
-@media(max-width:480px){body{font-size:15px;line-height:1.85}.layout{padding:12px 10px 40px}.hero{padding:24px 20px;border-radius:12px}.hero h1{font-size:28px}.hero-lede{font-size:15px}.tools{gap:8px}.visual-card,.event-demo{padding:18px 14px}.document{padding:5px 18px 24px;border-radius:12px}.document h2{font-size:22px}.document h3{font-size:18px}.mobile-toc .toc-list{columns:1}.table-wrap{margin:16px 0}pre{padding:14px;font-size:12px}.arch-svg{min-width:600px}.diagram-scroll{overflow-x:auto;padding-bottom:9px}.diagram-scroll:after{content:"窄屏可左右查看架构图";display:block;position:sticky;left:0;font-size:11px;color:var(--muted)}.phase-flow{display:grid;grid-template-columns:1fr}.phase-flow .arrow{text-align:center;transform:rotate(90deg)}.phase-flow .phase{min-width:0}.footer{display:block}.footer span{display:block;margin:8px 0}}
+@media(max-width:820px){.arch-svg{min-width:900px}.layout{display:block;padding:18px 18px 55px}.sidebar{display:none}.mobile-toc{display:block;margin:17px 0;background:var(--paper)}.mobile-toc .toc-list{padding:8px 12px 15px;columns:2;column-gap:14px}.mobile-toc .toc-list li{break-inside:avoid}.hero{padding:28px}.hero h1{font-size:32px}.hero-lede{font-size:16px}.summary-grid{grid-template-columns:1fr}.summary-card{padding:18px 22px}.summary-card h2{margin:4px 0}.visual-card,.event-demo{padding:20px}.document{padding:5px 25px 25px}.document h2{font-size:24px}.demo-content{grid-template-columns:minmax(0,1fr);gap:16px}.doc-section{padding-top:27px}.phase-flow .phase{min-width:140px}.figure-note{line-height:1.8}}
+@media(max-width:480px){body{font-size:15px;line-height:1.85}.layout{padding:12px 10px 40px}.hero{padding:24px 20px;border-radius:12px}.hero h1{font-size:28px}.hero-lede{font-size:15px}.tools{gap:8px}.visual-card,.event-demo{padding:18px 14px}.document{padding:5px 18px 24px;border-radius:12px}.document h2{font-size:22px}.document h3{font-size:18px}.mobile-toc .toc-list{columns:1}.table-wrap{margin:16px 0}pre{padding:14px;font-size:12px}.arch-svg{min-width:900px}.diagram-scroll{overflow-x:auto;padding-bottom:9px}.diagram-scroll:after{content:"窄屏可左右查看架构图";display:block;position:sticky;left:0;font-size:11px;color:var(--muted)}.phase-flow{display:grid;grid-template-columns:1fr}.phase-flow .arrow{text-align:center;transform:rotate(90deg)}.phase-flow .phase{min-width:0}.footer{display:block}.footer span{display:block;margin:8px 0}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}}
 @media print{html{scroll-behavior:auto}body{font:10.5pt/1.65 "PingFang SC","Microsoft YaHei",sans-serif;color:#17232f;background:#fff;--paper:#fff;--ink:#17232f;--muted:#526271;--line:#cdd5db;--accent:#155d74;--accent-tint:#edf5f5;--code:#f4f5f6;--purple:#6b4da0;--green:#267b58}.layout{display:block;max-width:none;padding:0}.sidebar,.mobile-toc,.tools,.event-demo,.skip-link{display:none!important}.hero{border:0;border-bottom:1px solid #ccc;box-shadow:none;border-radius:0;padding:0 0 18px}.hero h1{font-size:25pt;max-width:none}.hero-lede{font-size:12pt}.local-note{font-size:9pt}.summary-grid{gap:10px;margin:15px 0}.summary-card{padding:12px;border-radius:5px;break-inside:avoid}.summary-card h2{font-size:12pt}.summary-card p{font-size:9pt}.visual-card{border:0;padding:10px 0;margin:10px 0;break-inside:avoid}.visual-card h2{font-size:15pt}.arch-svg{min-width:0!important}.diagram-scroll{overflow:visible}.diagram-scroll:after{display:none}.document{border:0;border-radius:0;padding:0}.doc-intro{font-size:9pt;padding-top:15px}.doc-section{padding-top:20px}.document h2{font-size:17pt;break-after:avoid}.document h3{font-size:13pt;break-after:avoid}.document h4{font-size:11pt;break-after:avoid}.table-wrap{overflow:visible;border-radius:0}table{min-width:0;font-size:8pt;table-layout:fixed}th,td{padding:7px 8px;word-break:break-word}table code{font-size:7.2pt}thead{display:table-header-group}tr{break-inside:avoid}pre{overflow:visible;white-space:pre-wrap;word-break:break-word;font-size:8pt;padding:10px;break-inside:avoid}pre code{white-space:pre-wrap;font-size:inherit}p,li{orphans:3;widows:3}.offline-diagram{break-inside:avoid}.diagram-source{display:none}.phase-flow .phase{font-size:9pt;min-width:90px}.phase-flow .arrow{font-size:14pt}.footer{font-size:8pt;border-top:1px solid #ccc;padding-top:12px}a{color:inherit;text-decoration:underline}a[href^="http"]{overflow-wrap:anywhere}@page{size:A4;margin:16mm 13mm}}
 </style></head><body>
 <a class="skip-link" href="#document">跳到完整正文</a>
-<div class="layout"><aside class="sidebar" aria-label="阅读导航"><div class="brand">MULTICA · ENGINEERING</div><a href="#top">EmployeeLoop 完整方案</a><div class="sidebar-label">正文目录</div><nav aria-label="正文目录"><ul class="toc-list"><li><a href="#section-1">1. 结论与代码基线</a></li><li><a href="#section-2">2. 当前可以复用什么</a></li><li><a href="#section-3">3. 分层与对象关系</a></li><li><a href="#section-4">4. 身份、场域和权限模型</a></li><li><a href="#section-5">5. 统一事件层：EmployeeEvent与线上MessageRouter兼容契约</a></li><li><a href="#section-6">6. 钉钉离散讨论、历史与事项关联</a></li><li><a href="#section-7">7. EmployeeLoop 的状态机与决策边界</a></li><li><a href="#section-8">8. WorkObject 与 Issue / 自动化复用</a></li><li><a href="#section-9">9. 沙箱 Session 的补充、中断和恢复</a></li><li><a href="#section-10">10. 有人味的员工交互：记得约定、适时开口、知道找谁</a></li><li><a href="#section-11">11. Session Capsule 与产物</a></li><li><a href="#section-12">12. 方案比较与决策</a></li><li><a href="#section-13">13. 分阶段实施与文件责任</a></li><li><a href="#section-14">14. 可测试验收与运行证据</a></li><li><a href="#section-15">15. 代码依据补充与外部复用评估</a></li><li><a href="#section-16">16. 本次文档验证与后续评审</a></li></ul></nav><div class="sidebar-meta">创建 2026-09-30<br>R3 修订 2026-10-01<br>设计提案 · 未实施<br>全文离线可读<br><br>代码基线<br><code>develop@2a520dea5</code><br><code>contextcap@5aa21b5c3</code><br>分支尚未合并</div></aside>
-<main class="main" id="top"><header class="hero"><div class="eyebrow">Architecture proposal · R3 · 2026-10-01</div><h1>EmployeeLoop：事件、事项与执行的统一协调方案</h1><p class="hero-lede">直接 Copy Go BotLoop，让 EmployeeLoop 成为唯一运行主体。消息、定时、回调和人的回答进入统一事件层；能力、业务执行和可靠送达继续复用现有服务。</p><div class="chips"><span class="chip strong">固定 SHA 代码迁入</span><span class="chip">Coordinator 运行路径退役</span><span class="chip">能力服务复用</span><span class="chip">完整方案 · 未实施</span></div><div class="tools"><button id="print-button" type="button">打印 / 保存 PDF</button><a class="button" href="#document">阅读完整正文</a><a class="button" href="employee-loop-design.md">Markdown 源文档</a><a class="button" href="employee-loop-overview.md">方案导读</a></div><p class="local-note">本页是独立的技术方案阅读件。事件切换仅作本地演示；不执行工作、不发送消息、不修改授权。正文保留现有能力、建议改动与未来验收的边界。</p></header>
-<details class="mobile-toc"><summary>展开完整方案目录</summary><nav aria-label="移动端正文目录"><ul class="toc-list"><li><a href="#section-1">1. 结论与代码基线</a></li><li><a href="#section-2">2. 当前可以复用什么</a></li><li><a href="#section-3">3. 分层与对象关系</a></li><li><a href="#section-4">4. 身份、场域和权限模型</a></li><li><a href="#section-5">5. 统一事件层：EmployeeEvent与线上MessageRouter兼容契约</a></li><li><a href="#section-6">6. 钉钉离散讨论、历史与事项关联</a></li><li><a href="#section-7">7. EmployeeLoop 的状态机与决策边界</a></li><li><a href="#section-8">8. WorkObject 与 Issue / 自动化复用</a></li><li><a href="#section-9">9. 沙箱 Session 的补充、中断和恢复</a></li><li><a href="#section-10">10. 有人味的员工交互：记得约定、适时开口、知道找谁</a></li><li><a href="#section-11">11. Session Capsule 与产物</a></li><li><a href="#section-12">12. 方案比较与决策</a></li><li><a href="#section-13">13. 分阶段实施与文件责任</a></li><li><a href="#section-14">14. 可测试验收与运行证据</a></li><li><a href="#section-15">15. 代码依据补充与外部复用评估</a></li><li><a href="#section-16">16. 本次文档验证与后续评审</a></li></ul></nav></details>
-<div class="summary-grid" aria-label="方案核心决策"><section class="summary-card"><span class="number">01 / COPY</span><h2>直接复制可追溯内核</h2><p>保留 BotLoop 的 Tick、phase、队列、工具注册与 journal，并逐项列出需要修改的企业运行边界。</p></section><section class="summary-card"><span class="number">02 / REPLACE</span><h2>EmployeeLoop 唯一推进</h2><p>旧模型循环退出运行链。规则、有限动作和审查合同迁入新内核，避免两套循环先后决定同一件事。</p></section><section class="summary-card"><span class="number">03 / REUSE</span><h2>业务与权限服务复用</h2><p>继续使用能力解析、TaskService、定时与 webhook 受理、消息出站和送达证据，共用事实与授权来源。</p></section></div>
-<section class="visual-card" aria-labelledby="architecture-title"><div class="section-label">ARCHITECTURE</div><h2 id="architecture-title">同一件事，跨事件持续推进</h2><div class="diagram-scroll" tabindex="0" role="region" aria-label="架构图，可左右滚动"><svg class="arch-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 615" role="img" aria-labelledby="hero-arch-title hero-arch-desc">
-<title id="hero-arch-title">Go BotLoop 直接迁入后的 EmployeeLoop 架构</title>
-<desc id="hero-arch-desc">聊天、定时、webhook 和执行回调进入可靠事件入口，由唯一的 EmployeeLoop 运行 Go BotLoop；能力服务在调用与披露时复查，执行通过 TaskService，回复通过 ReplyComposer 和 MessageRouter，Capsule 保存执行现场。旧 Coordinator 的模型运行循环退役。</desc>
+<div class="layout"><aside class="sidebar" aria-label="阅读导航"><div class="brand">MULTICA · ENGINEERING</div><a href="#top">EmployeeLoop 完整方案</a><div class="sidebar-label">正文目录</div><nav aria-label="正文目录"><ul class="toc-list"><li><a href="#section-1">1. 结论与代码基线</a></li><li><a href="#section-2">2. 当前可以复用什么</a></li><li><a href="#section-3">3. 分层与对象关系</a></li><li><a href="#section-4">4. 身份、场域和权限模型</a></li><li><a href="#section-5">5. 统一事件层：复用DWS场域协议，兼容既有MessageRouter</a></li><li><a href="#section-6">6. 钉钉离散讨论、历史与事项关联</a></li><li><a href="#section-7">7. Task信号、内核状态与轻量动作提交</a></li><li><a href="#section-8">8. 统一Task与通用RunOnly：Issue是协作形态，不是默认入口</a></li><li><a href="#section-9">9. 沙箱 Session 的补充、中断和恢复</a></li><li><a href="#section-10">10. 有人味的员工交互：记得约定、适时开口、知道找谁</a></li><li><a href="#section-11">11. Session Capsule 与产物</a></li><li><a href="#section-12">12. 决策：新通道直接试BotLoop，旧通道保留灰度</a></li><li><a href="#section-13">13. 拆解与交付顺序</a></li><li><a href="#section-14">14. 可测试验收与运行证据</a></li><li><a href="#section-15">15. 代码依据补充与外部复用评估</a></li><li><a href="#section-16">16. 本轮修订覆盖与证据边界</a></li><li><a href="#appendix-delivery-plan-title">17. 实施拆解：13任务</a></li></ul></nav><div class="sidebar-meta">创建 2026-09-30<br>R5 修订 2026-10-01<br>设计提案 · 未实施<br>全文离线可读<br><br>代码基线<br><code>develop@7c9158985</code><br><code>contextcap@5aa21b5c3</code><br>分支尚未合并</div></aside>
+<main class="main" id="top"><header class="hero"><div class="eyebrow">Architecture proposal · R5 · 2026-10-01</div><h1>EmployeeLoop：事件、事项与执行的统一协调方案</h1><p class="hero-lede">直接 Copy Go BotLoop 建设新 EmployeeLoop。统一 Ingress 后，由 RouteOwner 为新任务选择一条通道；legacy Coordinator 保留独立灰度路径。新路径复用能力 guards，默认执行通用 Autopilot RunOnly，并在原 scope 持续通知关键发现、阻塞、问题和结果。</p><div class="chips"><span class="chip strong">固定 SHA 代码迁入</span><span class="chip">RouteOwner 单选灰度</span><span class="chip">能力服务复用</span><span class="chip">DWS 原生 schema + HostMeta</span><span class="chip">完整方案 · 未实施</span></div><div class="tools"><button id="print-button" type="button">打印 / 保存 PDF</button><a class="button" href="#document">阅读完整正文</a><a class="button" href="employee-loop-design.md">Markdown 源文档</a><a class="button" href="employee-loop-overview.md">方案导读</a><a class="button" href="#appendix-delivery-plan-title">13任务实施拆解</a></div><p class="local-note">本页是独立的技术方案阅读件。事件切换仅作本地演示；不执行工作、不发送消息、不修改授权。正文保留现有能力、建议改动与未来验收的边界。</p></header>
+<details class="mobile-toc"><summary>展开完整方案目录</summary><nav aria-label="移动端正文目录"><ul class="toc-list"><li><a href="#section-1">1. 结论与代码基线</a></li><li><a href="#section-2">2. 当前可以复用什么</a></li><li><a href="#section-3">3. 分层与对象关系</a></li><li><a href="#section-4">4. 身份、场域和权限模型</a></li><li><a href="#section-5">5. 统一事件层：复用DWS场域协议，兼容既有MessageRouter</a></li><li><a href="#section-6">6. 钉钉离散讨论、历史与事项关联</a></li><li><a href="#section-7">7. Task信号、内核状态与轻量动作提交</a></li><li><a href="#section-8">8. 统一Task与通用RunOnly：Issue是协作形态，不是默认入口</a></li><li><a href="#section-9">9. 沙箱 Session 的补充、中断和恢复</a></li><li><a href="#section-10">10. 有人味的员工交互：记得约定、适时开口、知道找谁</a></li><li><a href="#section-11">11. Session Capsule 与产物</a></li><li><a href="#section-12">12. 决策：新通道直接试BotLoop，旧通道保留灰度</a></li><li><a href="#section-13">13. 拆解与交付顺序</a></li><li><a href="#section-14">14. 可测试验收与运行证据</a></li><li><a href="#section-15">15. 代码依据补充与外部复用评估</a></li><li><a href="#section-16">16. 本轮修订覆盖与证据边界</a></li><li><a href="#appendix-delivery-plan-title">17. 实施拆解：13任务</a></li></ul></nav></details>
+<div class="summary-grid" aria-label="方案核心决策"><section class="summary-card"><span class="number">01 / COPY</span><h2>直接复制可追溯内核</h2><p>保留 BotLoop 的 Tick、phase、队列、工具注册与 journal，并逐项列出需要修改的企业运行边界。</p></section><section class="summary-card"><span class="number">02 / REPLACE</span><h2>每个任务只进一条通道</h2><p>RouteOwner 选择 legacy 或 new，并持久绑定。新路径以确定性 Builder 与轻量 HostGate 推进，旧通道仍可独立灰度。</p></section><section class="summary-card"><span class="number">03 / REUSE</span><h2>默认执行，持续场域通知</h2><p>默认复用通用 Autopilot RunOnly；Issue 承载跨场域、多阶段协作。已持久化 SceneNotice 可快路经过 HostGate，再由 ReplyComposer 交付原 scope 的文档或 IM。</p></section></div>
+<section class="visual-card" aria-labelledby="architecture-title"><div class="section-label">ARCHITECTURE</div><h2 id="architecture-title">同一件事，跨事件持续推进</h2><div class="diagram-scroll" tabindex="0" role="region" aria-label="架构图，可左右滚动"><svg class="arch-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 980" role="img" aria-labelledby="hero-arch-title hero-arch-desc">
+<title id="hero-arch-title">RouteOwner 单选灰度路径的 EmployeeLoop 架构</title>
+<desc id="hero-arch-desc">钉钉场域、绑定群或个人或企业的定时和Webhook、执行信号进入当前统一PG Ingress。RouteOwner为新任务单选独立legacy Coordinator或new EmployeeLoop，不双写。新路径在Loop前使用EmployeeBuilder与ContextBuilder，复用能力guards并使用轻量HostGate。默认以通用Autopilot RunOnly执行，一次ExecutionRun发回关键发现、阻塞、问题和结果的SceneNotice，ReplyComposer通过原scope的场域Outbox发DWS文档或IM。</desc>
 <defs><marker id="hero-arrow-main" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon class="main-fill" points="0 0,10 3.5,0 7" fill="#155d74"/></marker><marker id="hero-arrow-event" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon class="event-fill" points="0 0,10 3.5,0 7" fill="#6b4da0"/></marker><marker id="hero-arrow-cap" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon class="cap-fill" points="0 0,10 3.5,0 7" fill="#267b58"/></marker></defs>
-<rect class="canvas" width="920" height="615"/>
-<g transform="translate(50,30)"><path class="node" d="M 6 0 L 156 2 Q 160 2 160 8 L 159 72 Q 159 78 153 78 L 5 76 Q 0 76 1 70 L 0 7 Q 0 0 6 0 Z"/><text class="node-title" x="80" y="32" text-anchor="middle" style="font-size:14px">MessageRouter / IM</text><text class="node-sub" x="80" y="56" text-anchor="middle" style="font-size:12px">群消息与逐句身份</text></g>
-<g transform="translate(230,30)"><path class="node" d="M 6 0 L 156 2 Q 160 2 160 8 L 159 72 Q 159 78 153 78 L 5 76 Q 0 76 1 70 L 0 7 Q 0 0 6 0 Z"/><text class="node-title" x="80" y="32" text-anchor="middle" style="font-size:14px">定时器</text><text class="node-sub" x="80" y="56" text-anchor="middle" style="font-size:12px">可信规则与 planned_at</text></g>
-<g transform="translate(410,30)"><path class="node" d="M 6 0 L 156 2 Q 160 2 160 8 L 159 72 Q 159 78 153 78 L 5 76 Q 0 76 1 70 L 0 7 Q 0 0 6 0 Z"/><text class="node-title" x="80" y="32" text-anchor="middle" style="font-size:14px">Webhook</text><text class="node-sub" x="80" y="56" text-anchor="middle" style="font-size:12px">认证来源与订阅范围</text></g>
-<g transform="translate(590,30)"><path class="node" d="M 6 0 L 156 2 Q 160 2 160 8 L 159 72 Q 159 78 153 78 L 5 76 Q 0 76 1 70 L 0 7 Q 0 0 6 0 Z"/><text class="node-title" x="80" y="32" text-anchor="middle" style="font-size:14px">执行 / 人工回调</text><text class="node-sub" x="80" y="56" text-anchor="middle" style="font-size:12px">result_ref / question_id</text></g>
-<path fill="none" stroke="var(--accent)" stroke-width="2" d="M130 108 L130 127 L670 127 M310 108 L310 127 M490 108 L490 127 M670 108 L670 127"/><path class="edge-main" marker-end="url(#hero-arrow-main)" d="M440 127 L440 145"/>
-<g transform="translate(240,145)"><path class="accent-node" d="M8 0 L392 2 Q400 2 400 10 L399 75 Q399 82 392 82 L9 80 Q0 80 1 72 L0 9 Q0 0 8 0 Z"/><text class="node-title" x="200" y="32" text-anchor="middle">统一事件入口 · PG Inbox / Mailbox</text><text class="node-sub" x="200" y="58" text-anchor="middle">认证、去重、持久受理 · Scene / Episode 定位 · 恢复与唤醒</text></g>
-<path class="edge-main" marker-end="url(#hero-arrow-main)" d="M440 227 L440 262"/>
-<g transform="translate(240,262)"><path class="accent-node" d="M8 0 L391 2 Q400 2 400 10 L398 124 Q398 132 390 132 L9 129 Q0 129 1 120 L0 9 Q0 0 8 0 Z"/><path d="M10 9 L389 11 L388 120 L10 118 Z" fill="none" stroke="var(--accent)" stroke-width=".7" opacity=".45"/><text class="node-title" x="200" y="37" text-anchor="middle" style="font-size:23px">EmployeeLoop</text><text class="node-sub" x="200" y="65" text-anchor="middle">直接 Copy Go BotLoop · Tick / phases / queues / journal</text><text class="node-sub" x="200" y="91" text-anchor="middle">Scene 窗口 / WorkObject mailbox · 等待 · 控制 · 已验证计划</text><text class="node-sub" x="200" y="114" text-anchor="middle" style="font-size:12px">Coordinator 运行循环退役，规则与业务边界迁入</text></g>
-<g transform="translate(38,276)"><rect class="node" x="0" y="0" width="166" height="102" rx="10"/><text class="node-title" x="83" y="34" text-anchor="middle">能力服务复用</text><text class="node-sub" x="83" y="60" text-anchor="middle">contextcap / grant</text><text class="node-sub" x="83" y="81" text-anchor="middle">调用与披露分别复查</text></g>
-<path class="edge-cap" marker-end="url(#hero-arrow-cap)" d="M204 327 L240 327"/>
-<g transform="translate(692,276)"><rect class="node" x="0" y="0" width="166" height="102" rx="10"/><text class="node-title" x="83" y="33" text-anchor="middle">ReplyComposer</text><text class="node-sub" x="83" y="59" text-anchor="middle">已审意图 → outbox</text><text class="node-sub" x="83" y="81" text-anchor="middle">MessageRouter / DWS</text></g>
-<path class="edge-main" marker-end="url(#hero-arrow-main)" d="M640 327 L692 327"/>
-<rect class="label-bg" x="645" y="299" width="46" height="21"/><text class="label" x="668" y="314" text-anchor="middle">已审事实</text>
-<path class="edge-main" marker-end="url(#hero-arrow-main)" d="M440 394 L440 448"/>
-<rect class="label-bg" x="460" y="408" width="115" height="24"/><text class="label" x="468" y="425">ExecutionRequest</text>
-<g transform="translate(240,448)"><path class="node" d="M7 0 L393 2 Q400 2 400 9 L399 86 Q399 92 392 92 L6 90 Q0 90 0 83 L1 7 Q1 0 7 0 Z"/><text class="node-title" x="200" y="36" text-anchor="middle">共用执行入口 · TaskService</text><text class="node-sub" x="200" y="64" text-anchor="middle">direct / Issue → DSH / Claude / Codex</text></g>
-<path class="edge-event" marker-end="url(#hero-arrow-event)" d="M640 496 L887 496 L887 186 L640 186"/>
-<rect class="label-bg" x="734" y="459" width="120" height="25"/><text class="label" x="794" y="476" text-anchor="middle">进度 / 结果回到事件层</text>
-<g transform="translate(38,448)"><rect class="node" width="166" height="92" rx="10"/><text class="node-title" x="83" y="34" text-anchor="middle">Session Capsule</text><text class="node-sub" x="83" y="61" text-anchor="middle">现场同生命周期</text><text class="node-sub" x="83" y="80" text-anchor="middle">正式产物独立提升</text></g>
-<path class="edge-store" marker-end="url(#hero-arrow-cap)" d="M240 495 L204 495"/>
-<g transform="translate(48,583)"><path class="edge-main" marker-end="url(#hero-arrow-main)" d="M0 0 L30 0"/><text class="label" x="40" y="4">受理与已验证效果</text><path class="edge-event" marker-end="url(#hero-arrow-event)" d="M250 0 L280 0"/><text class="label" x="290" y="4">异步事件 / 唤醒</text><path class="edge-cap" marker-end="url(#hero-arrow-cap)" d="M490 0 L520 0"/><text class="label" x="530" y="4">授权复查 / 受限现场</text></g>
-</svg></div><p class="figure-note">图中的层次表示调度范围和服务边界，不表示串联两个业务推理循环。输入、工作、执行和人类输出各有独立证据。</p></section>
+<rect class="canvas" width="1040" height="980"/>
+<g transform="translate(56,28)"><path class="node" d="M8 0 L182 2 Q190 2 190 10 L189 74 Q189 82 182 82 L8 80 Q0 80 1 72 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="166" x="95.0" y="33" text-anchor="middle" style="font-size:14px">钉钉场域事件</text>
+<text class="node-sub" data-max-width="166" x="95.0" y="58" text-anchor="middle">消息 · 日程 · 文档@ · 审批</text>
+</g>
+<g transform="translate(280,28)"><path class="node" d="M8 0 L182 2 Q190 2 190 10 L189 74 Q189 82 182 82 L8 80 Q0 80 1 72 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="166" x="95.0" y="33" text-anchor="middle" style="font-size:14px">定时器</text>
+<text class="node-sub" data-max-width="166" x="95.0" y="58" text-anchor="middle">群 · 个人 · 企业绑定</text>
+</g>
+<g transform="translate(504,28)"><path class="node" d="M8 0 L182 2 Q190 2 190 10 L189 74 Q189 82 182 82 L8 80 Q0 80 1 72 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="166" x="95.0" y="33" text-anchor="middle" style="font-size:14px">Webhook</text>
+<text class="node-sub" data-max-width="166" x="95.0" y="58" text-anchor="middle">群 · 个人 · 企业绑定</text>
+</g>
+<g transform="translate(728,28)"><path class="node" d="M8 0 L182 2 Q190 2 190 10 L189 74 Q189 82 182 82 L8 80 Q0 80 1 72 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="166" x="95.0" y="33" text-anchor="middle" style="font-size:14px">执行信号</text>
+<text class="node-sub" data-max-width="166" x="95.0" y="58" text-anchor="middle">关键发现 · 阻塞 · 问题 · 结果</text>
+</g>
+<path fill="none" stroke="var(--accent)" stroke-width="2" d="M151 110 L151 132 L823 132 M375 110 L375 132 M599 110 L599 132 M823 110 L823 132"/><path class="edge-main" marker-end="url(#hero-arrow-main)" d="M500 132 L500 154"/>
+<g transform="translate(330,154)"><path class="accent-node" d="M8 0 L332 2 Q340 2 340 10 L339 70 Q339 78 332 78 L8 76 Q0 76 1 68 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="316" x="170.0" y="33" text-anchor="middle" style="font-size:18px">统一Ingress · 复用当前PG</text>
+<text class="node-sub" data-max-width="316" x="170.0" y="58" text-anchor="middle">原生schema / HostMeta · 去重与恢复</text>
+</g>
+<path class="edge-main" marker-end="url(#hero-arrow-main)" d="M500 232 L500 272"/>
+<g transform="translate(330,272)"><path class="accent-node" d="M8 0 L332 2 Q340 2 340 10 L339 68 Q339 76 332 76 L8 74 Q0 74 1 66 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="316" x="170.0" y="33" text-anchor="middle" style="font-size:20px">RouteOwner 灰度 gate</text>
+<text class="node-sub" data-max-width="316" x="170.0" y="58" text-anchor="middle">新任务持久选择一个owner，不双写</text>
+</g>
+<path class="edge-main" marker-end="url(#hero-arrow-main)" d="M330 309 L178 309 L178 385"/><path class="edge-main" marker-end="url(#hero-arrow-main)" d="M500 348 L500 385"/>
+<rect class="label-bg" x="80" y="338" width="125" height="23"/><text class="label" x="143" y="355" text-anchor="middle">owner = legacy</text>
+<g transform="translate(70,385)"><path class="node" d="M8 0 L207 2 Q215 2 215 10 L214 118 Q214 126 207 126 L8 124 Q0 124 1 116 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="191" x="107.5" y="33" text-anchor="middle" style="font-size:17px">legacy Coordinator</text>
+<text class="node-sub" data-max-width="191" x="107.5" y="58" text-anchor="middle">保留独立老通道，可灰度</text>
+<text class="node-sub" data-max-width="191" x="107.5" y="81" text-anchor="middle">不作为新Loop父对象</text>
+</g>
+<path class="edge-main" marker-end="url(#hero-arrow-main)" d="M178 511 L178 535"/>
+<g transform="translate(70,535)"><path class="node" d="M8 0 L207 2 Q215 2 215 10 L214 82 Q214 90 207 90 L8 88 Q0 88 1 80 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="191" x="107.5" y="33" text-anchor="middle" style="font-size:17px">既有TaskService / 回执</text>
+<text class="node-sub" data-max-width="191" x="107.5" y="58" text-anchor="middle">既有finish_check留在老通道</text>
+</g>
+<g transform="translate(330,385)"><path class="accent-node" d="M8 0 L332 2 Q340 2 340 10 L339 91 Q339 99 332 99 L8 97 Q0 97 1 89 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="316" x="170.0" y="33" text-anchor="middle" style="font-size:17px">EmployeeBuilder / ContextBuilder</text>
+<text class="node-sub" data-max-width="316" x="170.0" y="58" text-anchor="middle">历史ID去重 · 水位 · scope/source策略</text>
+<text class="node-sub" data-max-width="316" x="170.0" y="81" text-anchor="middle">确定性装配，不增加第二个LLM</text>
+</g>
+<path class="edge-main" marker-end="url(#hero-arrow-main)" d="M500 484 L500 535"/>
+<g transform="translate(330,535)"><path class="accent-node" d="M8 0 L332 2 Q340 2 340 10 L339 122 Q339 130 332 130 L8 128 Q0 128 1 120 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="316" x="170.0" y="33" text-anchor="middle" style="font-size:23px">new EmployeeLoop</text>
+<text class="node-sub" data-max-width="316" x="170.0" y="58" text-anchor="middle">Copy Go BotLoop · Tick / 队列 / journal</text>
+<text class="node-sub" data-max-width="316" x="170.0" y="81" text-anchor="middle">轻量HostGate · 已验证输出</text>
+<text class="node-sub" data-max-width="316" x="170.0" y="104" text-anchor="middle">EmployeeTask · 持续协调与等待</text>
+</g>
+<g transform="translate(70,670)"><path class="node" d="M8 0 L207 2 Q215 2 215 10 L214 102 Q214 110 207 110 L8 108 Q0 108 1 100 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="191" x="107.5" y="33" text-anchor="middle" style="font-size:17px">复用能力 guards</text>
+<text class="node-sub" data-max-width="191" x="107.5" y="58" text-anchor="middle">contextcap / 凭据 / 调用权限</text>
+<text class="node-sub" data-max-width="191" x="107.5" y="81" text-anchor="middle">恢复与输出仍检查scope</text>
+</g>
+<path class="edge-cap" marker-end="url(#hero-arrow-cap)" d="M285 725 L307 725 L307 432 L330 432"/><path class="edge-cap" marker-end="url(#hero-arrow-cap)" d="M307 600 L330 600"/>
+<g transform="translate(744,520)"><path class="node" d="M8 0 L222 2 Q230 2 230 10 L229 82 Q229 90 222 90 L8 88 Q0 88 1 80 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="206" x="115.0" y="33" text-anchor="middle" style="font-size:20px">轻量HostGate</text>
+<text class="node-sub" data-max-width="206" x="115.0" y="58" text-anchor="middle">authority / scope / 当前版本</text>
+</g>
+<path class="edge-main" marker-end="url(#hero-arrow-main)" d="M670 570 L744 570"/>
+<g transform="translate(744,642)"><path class="node" d="M8 0 L222 2 Q230 2 230 10 L229 96 Q229 104 222 104 L8 102 Q0 102 1 94 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="206" x="115.0" y="33" text-anchor="middle" style="font-size:20px">ReplyComposer</text>
+<text class="node-sub" data-max-width="206" x="115.0" y="58" text-anchor="middle">场域Outbox · DWS文档或IM</text>
+<text class="node-sub" data-max-width="206" x="115.0" y="81" text-anchor="middle">通知原scope已绑定的人</text>
+</g>
+<path class="edge-main" marker-end="url(#hero-arrow-main)" d="M859 610 L859 642"/>
+<path class="edge-main" marker-end="url(#hero-arrow-main)" d="M500 665 L500 746"/><rect class="label-bg" x="518" y="694" width="115" height="25"/><text class="label" x="575" y="712" text-anchor="middle">一次ExecutionRun</text>
+<g transform="translate(330,746)"><path class="node" d="M8 0 L332 2 Q340 2 340 10 L339 105 Q339 113 332 113 L8 111 Q0 111 1 103 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="316" x="170.0" y="33" text-anchor="middle" style="font-size:19px">通用Autopilot RunOnly</text>
+<text class="node-sub" data-max-width="316" x="170.0" y="58" text-anchor="middle">默认执行 · 每次ExecutionRun</text>
+<text class="node-sub" data-max-width="316" x="170.0" y="81" text-anchor="middle">Issue：跨场域 / 多阶段协作</text>
+<text class="node-sub" data-max-width="316" x="170.0" y="104" text-anchor="middle">TaskService → DSH / Claude / Codex</text>
+</g>
+<g transform="translate(744,804)"><path class="node" d="M8 0 L222 2 Q230 2 230 10 L229 102 Q229 110 222 110 L8 108 Q0 108 1 100 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="206" x="115.0" y="33" text-anchor="middle" style="font-size:20px">SceneNotice</text>
+<text class="node-sub" data-max-width="206" x="115.0" y="58" text-anchor="middle">关键发现 · 阻塞 · 问题 · 结果</text>
+<text class="node-sub" data-max-width="206" x="115.0" y="81" text-anchor="middle">先持久化，再走通知快路</text>
+</g>
+<path class="edge-event" marker-end="url(#hero-arrow-event)" d="M670 806 L706 806 L706 853 L744 853"/><path class="edge-event" marker-end="url(#hero-arrow-event)" d="M974 890 L1020 890 L1020 193 L670 193"/>
+<path class="edge-event" marker-end="url(#hero-arrow-event)" d="M974 858 L993 858 L993 566 L974 566"/>
+<g transform="translate(70,810)"><path class="node" d="M8 0 L207 2 Q215 2 215 10 L214 82 Q214 90 207 90 L8 88 Q0 88 1 80 L0 9 Q0 0 8 0 Z"/>
+<text class="node-title" data-max-width="191" x="107.5" y="33" text-anchor="middle" style="font-size:17px">Task / Run Capsule</text>
+<text class="node-sub" data-max-width="191" x="107.5" y="58" text-anchor="middle">两层现场独立保存与留存</text>
+</g>
+<path class="edge-store" marker-end="url(#hero-arrow-cap)" d="M330 805 L307 805 L307 853 L285 853"/>
+<g transform="translate(70,950)"><path class="edge-main" marker-end="url(#hero-arrow-main)" d="M0 0 L30 0"/><text class="label" x="40" y="4">单选路由 / 验证后的效果</text><path class="edge-event" marker-end="url(#hero-arrow-event)" d="M310 0 L340 0"/><text class="label" x="350" y="4">SceneNotice回流 / 原scope通知</text><path class="edge-cap" marker-end="url(#hero-arrow-cap)" d="M680 0 L710 0"/><text class="label" x="720" y="4">能力guards / 受限现场</text></g>
+</svg></div><p class="figure-note">DWS 原生 schema/payload 保留，Host 控制外壳不强制经过 Router。每个新 EmployeeTask 单选 RouteOwner，不向两条通道重复提交；非 IM 默认绑定 enterprise scene，resourceRef 单独保存。ContextBuilder 按消息ID去重、水位和 scope/source 策略装配，不增加第二个 LLM。确定的核心 SceneNotice 快路仍经过 HostGate，校验授权后再通知。最新 develop 复用 Go DWS、pkg/dws/events、dwseventsource/connmgr；CLI 27 与 SDK 28 分开记录，SDK缺失的原帧字段如实标注。</p></section>
 
 <section class="event-demo" aria-labelledby="event-demo-title">
-<div class="section-label">LOCAL EXAMPLE · 仅本地示例</div><h2 id="event-demo-title">不同来源，进入同一条事件链</h2>
-<p class="figure-note">点击仅切换建议内部结构的示意数据，不是可提交的线上 payload。内部 schema 1 与 Router Dispatch 2.0 分开；来源、身份、授权和送达分别保存。</p>
+<div class="section-label">LOCAL EXAMPLE · 仅本地示例</div><h2 id="event-demo-title">Scope、Builder 与单选 RouteOwner</h2>
+<p class="figure-note">只切换方案示意数据，不受理或执行线上任务。新 EmployeeTask 选择一条通道；执行信号是一个独立的既有new/group任务样例，沿其已保存owner与原scope；不来自前面选中的新任务，也不能在这里切换通道。</p>
 <div class="demo-tabs" role="tablist" aria-label="事件来源示例">
-<button id="tab-im" type="button" role="tab" data-event="im" aria-selected="true" aria-controls="event-example" tabindex="0">群聊请求</button>
-<button id="tab-cron" type="button" role="tab" data-event="cron" aria-selected="false" aria-controls="event-example" tabindex="-1">定时规则</button>
+<button id="tab-im" type="button" role="tab" data-event="im" aria-selected="true" aria-controls="event-example" tabindex="0">钉钉场域</button>
+<button id="tab-cron" type="button" role="tab" data-event="cron" aria-selected="false" aria-controls="event-example" tabindex="-1">定时绑定</button>
 <button id="tab-webhook" type="button" role="tab" data-event="webhook" aria-selected="false" aria-controls="event-example" tabindex="-1">Webhook</button>
-<button id="tab-result" type="button" role="tab" data-event="result" aria-selected="false" aria-controls="event-example" tabindex="-1">执行完成</button>
-</div><div id="event-example" class="demo-content" role="tabpanel" aria-labelledby="tab-im" tabindex="0"><pre tabindex="0" aria-label="代码示例，可左右滚动"><code id="event-json"></code></pre><div class="demo-explanation"><h3 id="event-heading"></h3><p id="event-explanation"></p><p><strong>共同提交门槛：</strong>先保存可信事件与 mailbox，校验 Scope / 授权 / 当前版本，再推进已保存工作；assistant 自述不证明效果。</p></div></div>
-</section><article class="document" id="document" aria-label="完整技术方案正文"><div class="doc-intro">
-<p>创建：2026-09-30。修订：2026-10-01，R3。状态：设计提案，未实施。配套：<a href="employee-loop-overview.md">方案导读</a>、<a href="employee-loop-design.html">HTML阅读版</a>。R3按用户最新要求：直接复制Go BotLoop核心，新建独立EmployeeLoop并替换Coordinator运行路径；能力服务复用；统一事件与MessageRouter兼容在第5节独立设计。本轮只交付方案、HTML和迁移清单，不迁入业务代码。</p>
+<button id="tab-result" type="button" role="tab" data-event="result" aria-selected="false" aria-controls="event-example" tabindex="-1">执行信号</button>
+</div>
+<div class="demo-controls" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin:12px 0 16px">
+<div id="native-kind-control"><label for="native-kind" style="font-size:13px">业务事件 </label><select id="native-kind" style="font:inherit;font-size:13px;padding:7px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink)"><option value="im">消息 IM @（已登记）</option><option value="approval">审批 OA（已登记）</option><option value="calendar">日程（Schema 槽位）</option><option value="document">文档@（Schema 槽位）</option></select></div>
+<div id="scope-kind-control" hidden><label for="scope-kind" style="font-size:13px">已配置绑定 </label><select id="scope-kind" style="font:inherit;font-size:13px;padding:7px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink)"><option value="group">群场域</option><option value="person">个人场域</option><option value="enterprise" selected>企业场域</option></select></div>
+<div id="notice-kind-control" hidden><label for="notice-kind" style="font-size:13px">SceneNotice </label><select id="notice-kind" style="font:inherit;font-size:13px;padding:7px;border:1px solid var(--line);border-radius:7px;background:var(--paper);color:var(--ink)"><option value="key_finding">关键发现</option><option value="blocked">阻塞</option><option value="question">问题</option><option value="result">结果</option></select></div>
+</div>
+<div class="demo-tabs" role="group" aria-label="仅新任务的通道选择"><span style="font-size:13px;color:var(--muted);align-self:center">RouteOwner </span><button type="button" data-owner="employee_loop" aria-pressed="true">new EmployeeLoop</button><button type="button" data-owner="legacy_coordinator" aria-pressed="false">legacy Coordinator</button></div><p id="route-hint" class="figure-note"></p>
+<div id="event-example" class="demo-content" role="tabpanel" aria-labelledby="tab-im" tabindex="0"><pre tabindex="0" aria-label="包装示例，可左右滚动"><code id="event-json"></code></pre><div class="demo-explanation"><h3 id="event-heading"></h3><p id="event-explanation"></p><p><strong>新路径：</strong>ContextBuilder 按ID去重、水位、scope/source策略装配，不加第二个LLM；轻量HostGate仍验证身份、能力、目标与输出。默认通用Autopilot RunOnly，Issue用于跨场域、多阶段协作。</p><p><strong>Scope 与资源：</strong>日程、审批、文档@等资源事件默认enterprise scene；定时/Webhook沿已配置scopeBinding。resourceRef单独保存，绑定不替代调用grant、run_as或披露权限。</p></div></div>
+<details class="dws-scope-note"><summary>DWS 证据范围与待登记槽位</summary><div style="padding:12px 16px;font-size:14px"><p>CLI v1.0.61 / 50eb73a0 的固定公开目录是27个key（IM16、OA7、VoIP1、Todo3）；最新develop中的Go SDK目录28项单独记录，不把两份证据合并成一个版本。Go DWS、pkg/dws/events、dwseventsource/connmgr是本仓复用底座；当前SDK Event未保完整headers/原WS包，JSON Schema generation尚未port。</p><p>日程、文档@协议槽位明确纳入；正式key/schema待登记，不用IM receive_at冒充文档@。DWS原生frame保持type=event、event_type=原key、data为JSON字符串；flatten仅派生投影。Todo.source_id是业务ID，不能当transportSource。</p><p><a href="dws-event-schema-snapshot.json">查看CLI固定Schema快照</a>。所有ID、内容与授权引用只是本地示意；性能沿用用户提供的9.3 / 24.5及2.63倍比较口径，属于给定基线，本轮未自测。</p></div></details>
+</section><article class="document" id="document" aria-label="完整技术方案正文"><div data-main-source="true"><div class="doc-intro">
+<p>创建：2026-09-30。修订：2026-10-01，R5。状态：设计提案，未实施。配套：<a href="employee-loop-overview.md">方案导读</a>、<a href="employee-loop-design.html">HTML阅读版</a>、<a href="#appendix-delivery-plan-title">实施拆解</a>。直接复制Go BotLoop核心，新建独立EmployeeLoop新通道，Coordinator保留独立legacy灰度；能力服务复用。R5纳入全部浏览器评论：Employee Builder、带场域的timer/webhook、企业默认资源域、统一Task/Run、RunOnly默认与Issue协作形态、关键场域通知、轻量校验和独立legacy灰度通道；优先复用最新DWS Go SDK。本轮交付方案、HTML、Schema快照与实施拆解，不迁入业务代码。</p>
 </div><section aria-labelledby="section-1" class="doc-section" id="section-1-block"><h2 id="section-1">1. 结论与代码基线</h2>
-<p>建议将GawkBot的Go <code>BotLoop</code>核心代码按固定版本直接复制到新包<code>server/internal/service/employeeloop/</code>，以EmployeeLoop命名这个独立运行主体。保留<code>Tick</code>、phase推进、队列优先级、工具注册、会话journal及运行控制结构；从旧Coordinator迁移纯政策/helpers到EmployeeLoop，接WorkObject、外部执行等待、场域权限和自然表达。</p>
-<p>EmployeeLoop是复制后的BotLoop在员工场景下的装配与扩展，负责跨事件、跨等待、跨执行协调。<strong>Coordinator是被替换的旧实现，不作为运行中的父对象或PolicyAdapter保留；新包不调用、不依赖Coordinator.Decide/runLoop。</strong>具体业务执行继续交给DSH、Claude Code、Codex等Harness；已有有限动作、Host校验、审查、可靠入站和送达证据迁入新内核。</p>
+<p>建议将GawkBot的Go <code>BotLoop</code>核心代码按固定版本直接复制到新包<code>server/internal/service/employeeloop/</code>，以EmployeeLoop命名这个独立运行主体。保留<code>Tick</code>、phase推进、队列优先级、工具注册、会话journal及运行控制结构；优先适配BotLoop及其任务管理设计，接EmployeeBuilder、EmployeeTask、通用RunOnly、场域通知及轻量HostGate；旧Coordinator仅保留独立legacy通道。</p>
+<p>EmployeeLoop是复制后的BotLoop在员工场景下的装配与扩展，负责跨事件、跨等待、跨执行协调。<strong>新EmployeeLoop不嵌套Coordinator；统一事件入口后的RouteOwner单选新通道或独立legacy Coordinator通道，保留可灰度能力。</strong>具体业务执行继续交给DSH、Claude Code、Codex等Harness；能力解析、可靠入站、事实引用、执行及送达基础继续复用；不把旧Coordinator的完整提示词和独立LLM审查迁入新通道。</p>
 <p>上一版将“不能从外部直接import internal包”过度推导为“只能借鉴设计”。重新读取完整bot包后，技术上可以vendor核心、替换少量边界并保留原测试。产品全仓依赖很多，但bot包主要是标准库，额外依赖uuid及RuntimeHomeDir配置函数。采用代码迁入优先；具体接缝见3.1–3.5，许可范围见15.4。</p>
 <p>本次事实基线：</p>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
@@ -68,9 +142,14 @@
 </thead>
 <tbody>
 <tr>
-<td>最新 <code>origin/develop</code></td>
+<td>旧通道源码基线</td>
 <td><code>2a520dea5ce616c05861aec0e72192c7c09fb596</code></td>
-<td>当前实现</td>
+<td>前轮固定引用、旧Coordinator/Dispatch合同</td>
+</tr>
+<tr>
+<td>本轮最新develop/提交基线</td>
+<td><code>7c91589854e06d6907cce18b944b46b66a34a553</code></td>
+<td>新增Go DWS SDK、连接管理/交接/重平衡</td>
 </tr>
 <tr>
 <td><code>origin/feat/context-capabilities</code></td>
@@ -94,7 +173,7 @@
 </tr>
 </tbody>
 </table></div>
-<p><code>develop</code> 和能力分支分别有 36 / 8 个独有提交。只读 <code>git merge-tree --write-tree</code> 检查发现 7 个冲突文件：连接器文档、四份 agents 翻译、<code>handler/daemon.go</code>、<code>handler/internal_connector.go</code>。此次没有合并能力分支；实施应先把能力分支 rebase 到最新 develop，处理 claim 和连接器鉴权冲突，再做本方案。文本自动合并不等于权限行为正确。</p>
+<p>上轮固定<code>2a520dea5</code>与能力分支的比较分别有36/8个独有提交，以下merge-tree结果是该旧基线证据。只读 <code>git merge-tree --write-tree</code> 检查发现 7 个冲突文件：连接器文档、四份 agents 翻译、<code>handler/daemon.go</code>、<code>handler/internal_connector.go</code>。此次没有合并能力分支；实施应先把能力分支 rebase 到最新 develop，处理 claim 和连接器鉴权冲突，再做本方案。文本自动合并不等于权限行为正确。</p>
 <p>下文区分 <strong>已存在</strong>、<strong>建议新增</strong>、<strong>待测目标</strong>。不将旧讨论中的阈值、开源生产状态或未运行验收升级为事实。</p>
 </section><section aria-labelledby="section-2" class="doc-section" id="section-2-block"><h2 id="section-2">2. 当前可以复用什么</h2>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
@@ -109,7 +188,7 @@
 <tr>
 <td>Coordinator 已有 inbound、task_finished、finish_check 等循环类型</td>
 <td><code>server/internal/service/inboundcoord/coordinator.go:72</code>；<code>docs/inbound-coordinator-loop.md</code></td>
-<td>迁移政策与校验，旧循环被新EmployeeLoop替换</td>
+<td>统一Task信号，能力服务复用；旧圈独立灰度，新圈不继承复杂review</td>
 </tr>
 <tr>
 <td>当前有限动作以 start_work / continue_work 提交业务工作，结果回报只处理当前 result_ref</td>
@@ -129,7 +208,7 @@
 <tr>
 <td>但 run_only 的归属、任务构建和运行状态仍依赖 AutopilotRun/Autopilot</td>
 <td><code>server/internal/service/autopilot.go:893</code>；见第 8 节</td>
-<td>不能只换一次 INSERT 就宣称支持 WorkObject direct</td>
+<td>不能只换一次 INSERT 就宣称支持 EmployeeTask direct</td>
 </tr>
 <tr>
 <td>定时自动化已有 PG lease、planned_at 幂等与过期恢复</td>
@@ -165,55 +244,121 @@
 </table></div>
 <p>本方案用Go BotLoop内核与这些存量能力补齐：统一事件边界、独立事项事实、运行控制协议、过程输出与执行现场生命周期。BotLoop提供持续推进的主体，本仓服务提供企业环境下的事实、权限和可靠副作用。</p>
 </section><section aria-labelledby="section-3" class="doc-section" id="section-3-block"><h2 id="section-3">3. 分层与对象关系</h2>
-<figure class="offline-diagram"><figcaption>直接迁入 BotLoop 后的统一架构</figcaption><div aria-label="架构图，可左右滚动" class="diagram-scroll" role="region" tabindex="0"><svg aria-labelledby="arch-title arch-desc" class="arch-svg" role="img" viewbox="0 0 920 615" xmlns="http://www.w3.org/2000/svg">
-<title id="arch-title">Go BotLoop 直接迁入后的 EmployeeLoop 架构</title>
-<desc id="arch-desc">聊天、定时、webhook 和执行回调进入可靠事件入口，由唯一的 EmployeeLoop 运行 Go BotLoop；能力服务在调用与披露时复查，执行通过 TaskService，回复通过 ReplyComposer 和 MessageRouter，Capsule 保存执行现场。旧 Coordinator 的模型运行循环退役。</desc>
-<defs><marker id="arrow-main" markerheight="7" markerwidth="10" orient="auto" refx="9" refy="3.5"><polygon class="main-fill" fill="#155d74" points="0 0,10 3.5,0 7"></polygon></marker><marker id="arrow-event" markerheight="7" markerwidth="10" orient="auto" refx="9" refy="3.5"><polygon class="event-fill" fill="#6b4da0" points="0 0,10 3.5,0 7"></polygon></marker><marker id="arrow-cap" markerheight="7" markerwidth="10" orient="auto" refx="9" refy="3.5"><polygon class="cap-fill" fill="#267b58" points="0 0,10 3.5,0 7"></polygon></marker></defs>
-<rect class="canvas" height="615" width="920"></rect>
-<g transform="translate(50,30)"><path class="node" d="M 6 0 L 156 2 Q 160 2 160 8 L 159 72 Q 159 78 153 78 L 5 76 Q 0 76 1 70 L 0 7 Q 0 0 6 0 Z"></path><text class="node-title" style="font-size:14px" text-anchor="middle" x="80" y="32">MessageRouter / IM</text><text class="node-sub" style="font-size:12px" text-anchor="middle" x="80" y="56">群消息与逐句身份</text></g>
-<g transform="translate(230,30)"><path class="node" d="M 6 0 L 156 2 Q 160 2 160 8 L 159 72 Q 159 78 153 78 L 5 76 Q 0 76 1 70 L 0 7 Q 0 0 6 0 Z"></path><text class="node-title" style="font-size:14px" text-anchor="middle" x="80" y="32">定时器</text><text class="node-sub" style="font-size:12px" text-anchor="middle" x="80" y="56">可信规则与 planned_at</text></g>
-<g transform="translate(410,30)"><path class="node" d="M 6 0 L 156 2 Q 160 2 160 8 L 159 72 Q 159 78 153 78 L 5 76 Q 0 76 1 70 L 0 7 Q 0 0 6 0 Z"></path><text class="node-title" style="font-size:14px" text-anchor="middle" x="80" y="32">Webhook</text><text class="node-sub" style="font-size:12px" text-anchor="middle" x="80" y="56">认证来源与订阅范围</text></g>
-<g transform="translate(590,30)"><path class="node" d="M 6 0 L 156 2 Q 160 2 160 8 L 159 72 Q 159 78 153 78 L 5 76 Q 0 76 1 70 L 0 7 Q 0 0 6 0 Z"></path><text class="node-title" style="font-size:14px" text-anchor="middle" x="80" y="32">执行 / 人工回调</text><text class="node-sub" style="font-size:12px" text-anchor="middle" x="80" y="56">result_ref / question_id</text></g>
-<path d="M130 108 L130 127 L670 127 M310 108 L310 127 M490 108 L490 127 M670 108 L670 127" fill="none" stroke="var(--accent)" stroke-width="2"></path><path class="edge-main" d="M440 127 L440 145" marker-end="url(#arrow-main)"></path>
-<g transform="translate(240,145)"><path class="accent-node" d="M8 0 L392 2 Q400 2 400 10 L399 75 Q399 82 392 82 L9 80 Q0 80 1 72 L0 9 Q0 0 8 0 Z"></path><text class="node-title" text-anchor="middle" x="200" y="32">统一事件入口 · PG Inbox / Mailbox</text><text class="node-sub" text-anchor="middle" x="200" y="58">认证、去重、持久受理 · Scene / Episode 定位 · 恢复与唤醒</text></g>
-<path class="edge-main" d="M440 227 L440 262" marker-end="url(#arrow-main)"></path>
-<g transform="translate(240,262)"><path class="accent-node" d="M8 0 L391 2 Q400 2 400 10 L398 124 Q398 132 390 132 L9 129 Q0 129 1 120 L0 9 Q0 0 8 0 Z"></path><path d="M10 9 L389 11 L388 120 L10 118 Z" fill="none" opacity=".45" stroke="var(--accent)" stroke-width=".7"></path><text class="node-title" style="font-size:23px" text-anchor="middle" x="200" y="37">EmployeeLoop</text><text class="node-sub" text-anchor="middle" x="200" y="65">直接 Copy Go BotLoop · Tick / phases / queues / journal</text><text class="node-sub" text-anchor="middle" x="200" y="91">Scene 窗口 / WorkObject mailbox · 等待 · 控制 · 已验证计划</text><text class="node-sub" style="font-size:12px" text-anchor="middle" x="200" y="114">Coordinator 运行循环退役，规则与业务边界迁入</text></g>
-<g transform="translate(38,276)"><rect class="node" height="102" rx="10" width="166" x="0" y="0"></rect><text class="node-title" text-anchor="middle" x="83" y="34">能力服务复用</text><text class="node-sub" text-anchor="middle" x="83" y="60">contextcap / grant</text><text class="node-sub" text-anchor="middle" x="83" y="81">调用与披露分别复查</text></g>
-<path class="edge-cap" d="M204 327 L240 327" marker-end="url(#arrow-cap)"></path>
-<g transform="translate(692,276)"><rect class="node" height="102" rx="10" width="166" x="0" y="0"></rect><text class="node-title" text-anchor="middle" x="83" y="33">ReplyComposer</text><text class="node-sub" text-anchor="middle" x="83" y="59">已审意图 → outbox</text><text class="node-sub" text-anchor="middle" x="83" y="81">MessageRouter / DWS</text></g>
-<path class="edge-main" d="M640 327 L692 327" marker-end="url(#arrow-main)"></path>
-<rect class="label-bg" height="21" width="46" x="645" y="299"></rect><text class="label" text-anchor="middle" x="668" y="314">已审事实</text>
-<path class="edge-main" d="M440 394 L440 448" marker-end="url(#arrow-main)"></path>
-<rect class="label-bg" height="24" width="115" x="460" y="408"></rect><text class="label" x="468" y="425">ExecutionRequest</text>
-<g transform="translate(240,448)"><path class="node" d="M7 0 L393 2 Q400 2 400 9 L399 86 Q399 92 392 92 L6 90 Q0 90 0 83 L1 7 Q1 0 7 0 Z"></path><text class="node-title" text-anchor="middle" x="200" y="36">共用执行入口 · TaskService</text><text class="node-sub" text-anchor="middle" x="200" y="64">direct / Issue → DSH / Claude / Codex</text></g>
-<path class="edge-event" d="M640 496 L887 496 L887 186 L640 186" marker-end="url(#arrow-event)"></path>
-<rect class="label-bg" height="25" width="120" x="734" y="459"></rect><text class="label" text-anchor="middle" x="794" y="476">进度 / 结果回到事件层</text>
-<g transform="translate(38,448)"><rect class="node" height="92" rx="10" width="166"></rect><text class="node-title" text-anchor="middle" x="83" y="34">Session Capsule</text><text class="node-sub" text-anchor="middle" x="83" y="61">现场同生命周期</text><text class="node-sub" text-anchor="middle" x="83" y="80">正式产物独立提升</text></g>
-<path class="edge-store" d="M240 495 L204 495" marker-end="url(#arrow-cap)"></path>
-<g transform="translate(48,583)"><path class="edge-main" d="M0 0 L30 0" marker-end="url(#arrow-main)"></path><text class="label" x="40" y="4">受理与已验证效果</text><path class="edge-event" d="M250 0 L280 0" marker-end="url(#arrow-event)"></path><text class="label" x="290" y="4">异步事件 / 唤醒</text><path class="edge-cap" d="M490 0 L520 0" marker-end="url(#arrow-cap)"></path><text class="label" x="530" y="4">授权复查 / 受限现场</text></g>
+<figure class="offline-diagram"><figcaption>统一Ingress与单选灰度路径</figcaption><div aria-label="架构图，可左右滚动" class="diagram-scroll" role="region" tabindex="0"><svg aria-labelledby="diagram-1-arch-title diagram-1-arch-desc" class="arch-svg" role="img" viewbox="0 0 1040 980" xmlns="http://www.w3.org/2000/svg">
+<title id="diagram-1-arch-title">RouteOwner 单选灰度路径的 EmployeeLoop 架构</title>
+<desc id="diagram-1-arch-desc">钉钉场域、绑定群或个人或企业的定时和Webhook、执行信号进入当前统一PG Ingress。RouteOwner为新任务单选独立legacy Coordinator或new EmployeeLoop，不双写。新路径在Loop前使用EmployeeBuilder与ContextBuilder，复用能力guards并使用轻量HostGate。默认以通用Autopilot RunOnly执行，一次ExecutionRun发回关键发现、阻塞、问题和结果的SceneNotice，ReplyComposer通过原scope的场域Outbox发DWS文档或IM。</desc>
+<defs><marker id="diagram-1-arrow-main" markerheight="7" markerwidth="10" orient="auto" refx="9" refy="3.5"><polygon class="main-fill" fill="#155d74" points="0 0,10 3.5,0 7"></polygon></marker><marker id="diagram-1-arrow-event" markerheight="7" markerwidth="10" orient="auto" refx="9" refy="3.5"><polygon class="event-fill" fill="#6b4da0" points="0 0,10 3.5,0 7"></polygon></marker><marker id="diagram-1-arrow-cap" markerheight="7" markerwidth="10" orient="auto" refx="9" refy="3.5"><polygon class="cap-fill" fill="#267b58" points="0 0,10 3.5,0 7"></polygon></marker></defs>
+<rect class="canvas" height="980" width="1040"></rect>
+<g transform="translate(56,28)"><path class="node" d="M8 0 L182 2 Q190 2 190 10 L189 74 Q189 82 182 82 L8 80 Q0 80 1 72 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="166" style="font-size:14px" text-anchor="middle" x="95.0" y="33">钉钉场域事件</text>
+<text class="node-sub" data-max-width="166" text-anchor="middle" x="95.0" y="58">消息 · 日程 · 文档@ · 审批</text>
+</g>
+<g transform="translate(280,28)"><path class="node" d="M8 0 L182 2 Q190 2 190 10 L189 74 Q189 82 182 82 L8 80 Q0 80 1 72 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="166" style="font-size:14px" text-anchor="middle" x="95.0" y="33">定时器</text>
+<text class="node-sub" data-max-width="166" text-anchor="middle" x="95.0" y="58">群 · 个人 · 企业绑定</text>
+</g>
+<g transform="translate(504,28)"><path class="node" d="M8 0 L182 2 Q190 2 190 10 L189 74 Q189 82 182 82 L8 80 Q0 80 1 72 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="166" style="font-size:14px" text-anchor="middle" x="95.0" y="33">Webhook</text>
+<text class="node-sub" data-max-width="166" text-anchor="middle" x="95.0" y="58">群 · 个人 · 企业绑定</text>
+</g>
+<g transform="translate(728,28)"><path class="node" d="M8 0 L182 2 Q190 2 190 10 L189 74 Q189 82 182 82 L8 80 Q0 80 1 72 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="166" style="font-size:14px" text-anchor="middle" x="95.0" y="33">执行信号</text>
+<text class="node-sub" data-max-width="166" text-anchor="middle" x="95.0" y="58">关键发现 · 阻塞 · 问题 · 结果</text>
+</g>
+<path d="M151 110 L151 132 L823 132 M375 110 L375 132 M599 110 L599 132 M823 110 L823 132" fill="none" stroke="var(--accent)" stroke-width="2"></path><path class="edge-main" d="M500 132 L500 154" marker-end="url(#diagram-1-arrow-main)"></path>
+<g transform="translate(330,154)"><path class="accent-node" d="M8 0 L332 2 Q340 2 340 10 L339 70 Q339 78 332 78 L8 76 Q0 76 1 68 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="316" style="font-size:18px" text-anchor="middle" x="170.0" y="33">统一Ingress · 复用当前PG</text>
+<text class="node-sub" data-max-width="316" text-anchor="middle" x="170.0" y="58">原生schema / HostMeta · 去重与恢复</text>
+</g>
+<path class="edge-main" d="M500 232 L500 272" marker-end="url(#diagram-1-arrow-main)"></path>
+<g transform="translate(330,272)"><path class="accent-node" d="M8 0 L332 2 Q340 2 340 10 L339 68 Q339 76 332 76 L8 74 Q0 74 1 66 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="316" style="font-size:20px" text-anchor="middle" x="170.0" y="33">RouteOwner 灰度 gate</text>
+<text class="node-sub" data-max-width="316" text-anchor="middle" x="170.0" y="58">新任务持久选择一个owner，不双写</text>
+</g>
+<path class="edge-main" d="M330 309 L178 309 L178 385" marker-end="url(#diagram-1-arrow-main)"></path><path class="edge-main" d="M500 348 L500 385" marker-end="url(#diagram-1-arrow-main)"></path>
+<rect class="label-bg" height="23" width="125" x="80" y="338"></rect><text class="label" text-anchor="middle" x="143" y="355">owner = legacy</text>
+<g transform="translate(70,385)"><path class="node" d="M8 0 L207 2 Q215 2 215 10 L214 118 Q214 126 207 126 L8 124 Q0 124 1 116 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="191" style="font-size:17px" text-anchor="middle" x="107.5" y="33">legacy Coordinator</text>
+<text class="node-sub" data-max-width="191" text-anchor="middle" x="107.5" y="58">保留独立老通道，可灰度</text>
+<text class="node-sub" data-max-width="191" text-anchor="middle" x="107.5" y="81">不作为新Loop父对象</text>
+</g>
+<path class="edge-main" d="M178 511 L178 535" marker-end="url(#diagram-1-arrow-main)"></path>
+<g transform="translate(70,535)"><path class="node" d="M8 0 L207 2 Q215 2 215 10 L214 82 Q214 90 207 90 L8 88 Q0 88 1 80 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="191" style="font-size:17px" text-anchor="middle" x="107.5" y="33">既有TaskService / 回执</text>
+<text class="node-sub" data-max-width="191" text-anchor="middle" x="107.5" y="58">既有finish_check留在老通道</text>
+</g>
+<g transform="translate(330,385)"><path class="accent-node" d="M8 0 L332 2 Q340 2 340 10 L339 91 Q339 99 332 99 L8 97 Q0 97 1 89 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="316" style="font-size:17px" text-anchor="middle" x="170.0" y="33">EmployeeBuilder / ContextBuilder</text>
+<text class="node-sub" data-max-width="316" text-anchor="middle" x="170.0" y="58">历史ID去重 · 水位 · scope/source策略</text>
+<text class="node-sub" data-max-width="316" text-anchor="middle" x="170.0" y="81">确定性装配，不增加第二个LLM</text>
+</g>
+<path class="edge-main" d="M500 484 L500 535" marker-end="url(#diagram-1-arrow-main)"></path>
+<g transform="translate(330,535)"><path class="accent-node" d="M8 0 L332 2 Q340 2 340 10 L339 122 Q339 130 332 130 L8 128 Q0 128 1 120 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="316" style="font-size:23px" text-anchor="middle" x="170.0" y="33">new EmployeeLoop</text>
+<text class="node-sub" data-max-width="316" text-anchor="middle" x="170.0" y="58">Copy Go BotLoop · Tick / 队列 / journal</text>
+<text class="node-sub" data-max-width="316" text-anchor="middle" x="170.0" y="81">轻量HostGate · 已验证输出</text>
+<text class="node-sub" data-max-width="316" text-anchor="middle" x="170.0" y="104">EmployeeTask · 持续协调与等待</text>
+</g>
+<g transform="translate(70,670)"><path class="node" d="M8 0 L207 2 Q215 2 215 10 L214 102 Q214 110 207 110 L8 108 Q0 108 1 100 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="191" style="font-size:17px" text-anchor="middle" x="107.5" y="33">复用能力 guards</text>
+<text class="node-sub" data-max-width="191" text-anchor="middle" x="107.5" y="58">contextcap / 凭据 / 调用权限</text>
+<text class="node-sub" data-max-width="191" text-anchor="middle" x="107.5" y="81">恢复与输出仍检查scope</text>
+</g>
+<path class="edge-cap" d="M285 725 L307 725 L307 432 L330 432" marker-end="url(#diagram-1-arrow-cap)"></path><path class="edge-cap" d="M307 600 L330 600" marker-end="url(#diagram-1-arrow-cap)"></path>
+<g transform="translate(744,520)"><path class="node" d="M8 0 L222 2 Q230 2 230 10 L229 82 Q229 90 222 90 L8 88 Q0 88 1 80 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="206" style="font-size:20px" text-anchor="middle" x="115.0" y="33">轻量HostGate</text>
+<text class="node-sub" data-max-width="206" text-anchor="middle" x="115.0" y="58">authority / scope / 当前版本</text>
+</g>
+<path class="edge-main" d="M670 570 L744 570" marker-end="url(#diagram-1-arrow-main)"></path>
+<g transform="translate(744,642)"><path class="node" d="M8 0 L222 2 Q230 2 230 10 L229 96 Q229 104 222 104 L8 102 Q0 102 1 94 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="206" style="font-size:20px" text-anchor="middle" x="115.0" y="33">ReplyComposer</text>
+<text class="node-sub" data-max-width="206" text-anchor="middle" x="115.0" y="58">场域Outbox · DWS文档或IM</text>
+<text class="node-sub" data-max-width="206" text-anchor="middle" x="115.0" y="81">通知原scope已绑定的人</text>
+</g>
+<path class="edge-main" d="M859 610 L859 642" marker-end="url(#diagram-1-arrow-main)"></path>
+<path class="edge-main" d="M500 665 L500 746" marker-end="url(#diagram-1-arrow-main)"></path><rect class="label-bg" height="25" width="115" x="518" y="694"></rect><text class="label" text-anchor="middle" x="575" y="712">一次ExecutionRun</text>
+<g transform="translate(330,746)"><path class="node" d="M8 0 L332 2 Q340 2 340 10 L339 105 Q339 113 332 113 L8 111 Q0 111 1 103 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="316" style="font-size:19px" text-anchor="middle" x="170.0" y="33">通用Autopilot RunOnly</text>
+<text class="node-sub" data-max-width="316" text-anchor="middle" x="170.0" y="58">默认执行 · 每次ExecutionRun</text>
+<text class="node-sub" data-max-width="316" text-anchor="middle" x="170.0" y="81">Issue：跨场域 / 多阶段协作</text>
+<text class="node-sub" data-max-width="316" text-anchor="middle" x="170.0" y="104">TaskService → DSH / Claude / Codex</text>
+</g>
+<g transform="translate(744,804)"><path class="node" d="M8 0 L222 2 Q230 2 230 10 L229 102 Q229 110 222 110 L8 108 Q0 108 1 100 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="206" style="font-size:20px" text-anchor="middle" x="115.0" y="33">SceneNotice</text>
+<text class="node-sub" data-max-width="206" text-anchor="middle" x="115.0" y="58">关键发现 · 阻塞 · 问题 · 结果</text>
+<text class="node-sub" data-max-width="206" text-anchor="middle" x="115.0" y="81">先持久化，再走通知快路</text>
+</g>
+<path class="edge-event" d="M670 806 L706 806 L706 853 L744 853" marker-end="url(#diagram-1-arrow-event)"></path><path class="edge-event" d="M974 890 L1020 890 L1020 193 L670 193" marker-end="url(#diagram-1-arrow-event)"></path>
+<path class="edge-event" d="M974 858 L993 858 L993 566 L974 566" marker-end="url(#diagram-1-arrow-event)"></path>
+<g transform="translate(70,810)"><path class="node" d="M8 0 L207 2 Q215 2 215 10 L214 82 Q214 90 207 90 L8 88 Q0 88 1 80 L0 9 Q0 0 8 0 Z"></path>
+<text class="node-title" data-max-width="191" style="font-size:17px" text-anchor="middle" x="107.5" y="33">Task / Run Capsule</text>
+<text class="node-sub" data-max-width="191" text-anchor="middle" x="107.5" y="58">两层现场独立保存与留存</text>
+</g>
+<path class="edge-store" d="M330 805 L307 805 L307 853 L285 853" marker-end="url(#diagram-1-arrow-cap)"></path>
+<g transform="translate(70,950)"><path class="edge-main" d="M0 0 L30 0" marker-end="url(#diagram-1-arrow-main)"></path><text class="label" x="40" y="4">单选路由 / 验证后的效果</text><path class="edge-event" d="M310 0 L340 0" marker-end="url(#diagram-1-arrow-event)"></path><text class="label" x="350" y="4">SceneNotice回流 / 原scope通知</text><path class="edge-cap" d="M680 0 L710 0" marker-end="url(#diagram-1-arrow-cap)"></path><text class="label" x="720" y="4">能力guards / 受限现场</text></g>
 </svg></div><details class="diagram-source"><summary>查看图的 Mermaid 源代码（离线保留）</summary><pre aria-label="代码与协议示例，可左右滚动" tabindex="0"><code>flowchart TD
-  IM[聊天 / 群观察] --&gt; IN[认证与来源适配器]
-  TM[定时器 / 例行规则] --&gt; IN
-  WH[Webhook / 业务事件] --&gt; IN
-  EX[执行结果 / 人工回答] --&gt; IN
-  IN --&gt; EV[持久事件入口 PG Inbox]
-  EV --&gt; SC[Scene Router 场域与事项定位]
-  SC --&gt; EP[Episode 讨论片段]
-  EP --&gt; WO[WorkObject EmployeeLoop / Go BotLoop内核]
-  WO --&gt;|ExecutionRequest| DR[统一执行入口]
-  DR --&gt; DI[Direct 执行]
-  DR --&gt; IS[Multica Issue 执行]
-  DI --&gt; HW[DSH / Claude / Codex / Runtime]
-  IS --&gt; HW
-  HW --&gt;|ExecutionEvent| EV
-  WO --&gt; OP[输出策略与 Durable Outbox]
-  OP --&gt; CH[群引用回复 / 指定个人 / 业务产物]
-  HW --&gt; CP[Session Capsule]
-  CP --&gt; AR[Promotion 正式产物]
-  CAP[contextcap 单一授权解析器] -.-&gt; IN
-  CAP -.-&gt; DR
-  CAP -.-&gt; HW
-  CAP -.-&gt; OP
+  DT[钉钉场域 / DWS原生事件] --&gt; AD[Source Adapter接当前入口]
+  TM[timer / 固定企业群个人绑定] --&gt; AD
+  WH[webhook / 固定场域及规则] --&gt; AD
+  EX[Run结果 / 关键SceneNotice / 回答] --&gt; AD
+  AD --&gt; PG[既有可靠受理 / PG receipt]
+  PG --&gt; RT[RouteOwnerGate / 单选灰度]
+  RT --&gt;|legacy| LC[独立旧Coordinator通道]
+  RT --&gt;|employee| BU[EmployeeBuilder / Scope与历史去重]
+  BU --&gt; EL[EmployeeLoop / 复制BotLoop及Task设计]
+  EL --&gt; HG[轻量HostGate / 无默认旧review]
+  HG --&gt; RUN[通用Autopilot RunOnly / TaskService]
+  LC --&gt; RUN
+  RUN --&gt; HW[DSH / Claude / Codex / Sandbox]
+  HW --&gt; EX
+  HG --&gt; OP[ReplyComposer / 场域outbox]
+  EX --&gt;|核心Notice快路无需再推理| HG
+  OP --&gt; CH[群 / 个人 / 文档等已授权surface]
+  HW --&gt; CP[Task与Run独立Capsule]
+  CP --&gt; ART[Promotion正式产物]
+  IS[Issue / 可选协作与渐进history] -.-&gt; RUN
+  CAP[contextcap / 权限与身份服务] -.-&gt; BU
+  CAP -.-&gt; HG
 </code></pre></details></figure>
 <p>三个循环分别回答：</p>
 <ol>
@@ -221,10 +366,10 @@
 <li><strong>EmployeeLoop</strong>：用迁入的BotLoop主体推进这件事，在事项内串行处理输入、等待、决策、工具及回报。</li>
 <li><strong>Execution Loop</strong>：怎么完成业务工作？由已有 Harness 执行，可异步并行。</li>
 </ol>
-<p>Employee Identity 是租户内的稳定数字员工；一个员工可服务多个 Scene。一个群只有一个对外员工身份，内部可以有多个 WorkObject。Actor 亲近度用于候选排序，不作为员工或事项 Session 的唯一键。</p>
+<p>Employee Identity 是租户内的稳定数字员工；一个员工可服务多个 Scene。一个群只有一个对外员工身份，内部可以有多个 EmployeeTask。Actor 亲近度用于候选排序，不作为员工或事项 Session 的唯一键。</p>
 <p>没有确定工作绑定的输入，在scene窗口装配一个EmployeeProfile协调wake；有可信绑定的输入，在work mailbox恢复同一profile。它们都由同一EmployeeLoop+EmployeePolicy推进。计划提交/拆项后mailbox只执行或恢复已保存效果，不再对同份输入跑第二轮语义路由与业务决策。图中的层次表示调度范围，不表示两次串联模型调用。</p>
-<p>第一期 Episode 只存锚点、相关事件、参与者和小摘要，可没有 WorkObject；产生明确持续工作时才绑定 WorkObject。不为每条群消息创建永久认知 Session，不为所有 ambient 消息调用 LLM 分段。</p>
-<p><strong>最小实现粒度：</strong>Scene 的有界协调窗口 + 每个 WorkObject 的 durable mailbox。Episode 可先作为轻量归属记录，不另增加常驻执行器。不同事项并行；同一事项默认只有一个主执行 lane。允许显式拆子事项，但不能为了同群多人 @ 自动多开会操作同一业务对象的 Worker。</p>
+<p>第一期 Episode 只存锚点、相关事件、参与者和小摘要，可没有 EmployeeTask；产生明确持续工作时才绑定 EmployeeTask。不为每条群消息创建永久认知 Session，不为所有 ambient 消息调用 LLM 分段。</p>
+<p><strong>最小实现粒度：</strong>Scene 的有界协调窗口 + 每个 EmployeeTask 的 durable mailbox。Episode 可先作为轻量归属记录，不另增加常驻执行器。不同事项并行；同一事项默认只有一个主执行 lane。允许显式拆子事项，但不能为了同群多人 @ 自动多开会操作同一业务对象的 Worker。</p>
 <h3 id="section-3-1">3.1 直接复用的代码范围</h3>
 <p>将固定SHA的<code>internal/bot</code>核心直接复制到<code>server/internal/service/employeeloop/</code>，保留来源SHA、原LICENSE、修改说明与patch清单。<code>BotLoop</code>/<code>BotService</code>类型在新包中命名为<code>EmployeeLoop</code>/<code>EmployeeService</code>，核心方法继续保留和patch；不再在外面包另一套Loop。移植是代码复用，不是<code>go get</code>整套GawkBot产品。当前仅是移植方案，仓库尚未新增这些Go文件。</p>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
@@ -282,16 +427,76 @@
 <p>复制交付清单：<code>loop.go / types.go / queues.go / service.go / session.go / task_runtime.go / tools.go / tools_shell_unix.go / tools_shell_windows.go / adoption.go / packs.go / templates.go / task_log_reader.go</code>及相关原测试；其中local-tool执行实现仅为原包依赖/测试来源，生产不注册。记录每文件原路径、固定SHA和内容hash；把config.RuntimeHomeDir换成注入的受限存储路径，不迁整个config产品模块。与本仓google/uuid依赖对齐，不复制一个新的模型SDK或CLI launcher。</p>
 <p>分三类提交便于审查：固定来源复制与名称变更；内核安全/协议patch；EmployeeLoop业务端口与迁移。每一份修改注明来源函数和为什么必须改。检验直接复用的标准是fake轨迹实际经过复制后的Tick/StreamLLM/ExecuteTool，而不是目录里存一份未调用源码。</p>
 <p>队列主键是LoopScope：已有work用workspace+employee+work+安全scope/epoch，尚未绑定工作用scene+冻结window/receipt。trigger actor是每条事件内容，不是Loop主键；不将上游botSlug或ActorKey机械替换成“一个人一个会话”。</p>
+<h3 id="section-3-1-1">3.1.1 类型命名与Task层一起适配</h3>
+<div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
+<thead>
+<tr>
+<th>原符号</th>
+<th>新包名称</th>
+<th>含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BotLoop / BotService</td>
+<td>EmployeeLoop / EmployeeService</td>
+<td>唯一新Loop内核及worker调度</td>
+</tr>
+<tr>
+<td>BotPhase / BotState</td>
+<td>EmployeePhase / EmployeeLoopState</td>
+<td>一次wake的内核阶段与状态，不等于业务Task状态</td>
+</tr>
+<tr>
+<td>StreamChunk / StreamFn</td>
+<td>ModelChunk / ModelStream</td>
+<td>模型输出与可取消调用</td>
+</tr>
+<tr>
+<td>BotTool / ToolRegistry</td>
+<td>EmployeeTool / EmployeeToolRegistry</td>
+<td>经能力约束的工具协议</td>
+</tr>
+<tr>
+<td>MessageQueues</td>
+<td>EmployeeInbox</td>
+<td>可信Task/SceneScope的输入优先级，PG为权威</td>
+</tr>
+<tr>
+<td>SessionEntry / SessionStore</td>
+<td>EmployeeJournalEntry / EmployeeJournalStore</td>
+<td>员工wake记录；与外部Harness Session分开</td>
+</tr>
+<tr>
+<td>WorkObject（上一版）</td>
+<td>EmployeeTask</td>
+<td>目标级任务，RunOnly与Issue共享同一个Task</td>
+</tr>
+<tr>
+<td>queue task_id</td>
+<td>ExecutorQueueTaskID</td>
+<td>既有agent_task_queue中的一次执行，不改成目标ID</td>
+</tr>
+<tr>
+<td>一次自动化执行</td>
+<td>ExecutionRun / AutopilotRunID</td>
+<td>一次执行记录及原服务绑定</td>
+</tr>
+</tbody>
+</table></div>
+<p>不仅复制bot包，也牵引GawkBot的任务细节：TaskDefinition及normalizeTaskDefinition（仅Goal必填，Deliverables/SuccessCriteria/AccessNeeded可选）、TaskLedger的结果/ContextUsed、依赖携带上游成果、HumanNotePending和资源lane设计。纯函数/数据结构可port；原完整Broker、强制定义审批、强制wiki/retrieval和reviewers pipeline不进入默认路径。</p>
+<p>Human note不复制上游单槽覆盖/整槽清空实现：改append-only的note ID/seq，逐note确认消费。暂停/停止/禁止外发等限制独立形成restrictive fence；普通追加材料、后到回答或note已读不解除它，只有对应有授权的resume/clear动作能改变。覆盖stop→普通补充→迟到完成的对照，不因后一句“好”丢掉暂停。</p>
+<p>任务身份固定为EmployeeTaskID+RunID+goalRevision+SceneBinding+principal，避免按员工/channel/时间窗猜最后一条输出。上游ledger只保有限brief，不能把它宣称成完整渐进历史；本仓按Task/Run引用追加history handle。详细来源见15.4。</p>
 <h3 id="section-3-2">3.2 EmployeeLoop在BotLoop里面怎样运行</h3>
 <p>新包里的<code>EmployeeLoop</code>直接来自复制后的BotLoop，实现绑定Scope、EmployeePolicy、持久store和执行/表达端口。它拥有唯一的模型/工具推进器；EmployeeProfile决定使用哪些上下文、工具、停止条件和等待方式，复制后的Tick依然推进状态。</p>
-<figure class="offline-diagram"><figcaption>唯一内核运行：BotLoop Tick 推进 EmployeeLoop</figcaption><div class="phase-flow"><div class="phase"><strong>Idle</strong>可信 Scope / 恢复 wake</div><span aria-hidden="true" class="arrow">→</span><div class="phase"><strong>BuildContext</strong>有界事实与合法工具</div><span aria-hidden="true" class="arrow">→</span><div class="phase"><strong>StreamLLM</strong>当前 purpose 的请求</div><span aria-hidden="true" class="arrow">→</span><div class="phase"><strong>ExecuteTool</strong>结构化结果与提交门槛</div><span aria-hidden="true" class="arrow">→</span><div class="phase"><strong>Done / Await</strong>保存结果或等待后释放</div></div><p class="phase-note">读取后可以继续当前 wake；合法 finish 经校验、表达、审查与保存后结束。外部执行、人类回答和 timer 以新的可信事件恢复事项，不轮询模型，也不嵌套运行旧 Coordinator。</p><details class="diagram-source"><summary>查看图的 Mermaid 源代码（离线保留）</summary><pre aria-label="代码与协议示例，可左右滚动" tabindex="0"><code>flowchart TD
+<figure class="offline-diagram"><figcaption>唯一内核运行：BotLoop Tick 推进 EmployeeLoop</figcaption><div class="phase-flow"><div class="phase"><strong>Idle</strong>可信 Scope / 恢复 wake</div><span aria-hidden="true" class="arrow">→</span><div class="phase"><strong>BuildContext</strong>有界事实与合法工具</div><span aria-hidden="true" class="arrow">→</span><div class="phase"><strong>StreamLLM</strong>当前 purpose 的请求</div><span aria-hidden="true" class="arrow">→</span><div class="phase"><strong>ExecuteTool</strong>结构化结果与提交门槛</div><span aria-hidden="true" class="arrow">→</span><div class="phase"><strong>Done / Await</strong>保存结果或等待后释放</div></div><p class="phase-note">读取后可以继续当前 wake；新路径由轻量 HostGate 校验身份、scope、目标与输出后提交效果，默认不装配旧复杂 finish_check。外部执行、人类回答和 timer 以新的可信事件恢复 EmployeeTask，不增加第二个业务协调 LLM。</p><details class="diagram-source"><summary>查看图的 Mermaid 源代码（离线保留）</summary><pre aria-label="代码与协议示例，可左右滚动" tabindex="0"><code>flowchart TD
   M[PG Mailbox与可信LoopScope] --&gt; K
   subgraph K[EmployeeLoop：装配Go BotLoop内核]
     I[Idle / 恢复wake] --&gt; C[BuildContext]
     C --&gt; L[StreamLLM / 当前purpose]
     L --&gt; T[ExecuteTool / 消费结构化结果]
     T --&gt;|继续同一wake| L
-    T --&gt; F[验证finish / render / review / 保存计划]
+    T --&gt; F[轻量HostGate / 保存Task动作与效果]
     F --&gt; D[WakeDone]
     F --&gt; W[AwaitHuman / AwaitExternal]
     P[迁入新包的EmployeePolicy与能力端口] -.-&gt; C
@@ -302,61 +507,61 @@
   W --&gt;|记录等待后释放worker| M
   X[外部结果 / 人类输入 / timer] --&gt; M
   F --&gt; E[TaskService / Issue或direct]
-  F --&gt; O[ReplyComposer / 已审输出outbox]
+  F --&gt; O[ReplyComposer / 已验证输出outbox]
 </code></pre></details></figure>
-<p>保留基础<code>Idle→BuildContext→StreamLLM→ExecuteTool</code>推进；新增<code>AwaitHuman/AwaitExternal</code>和明确的wake结束处置。工作完成与本轮Done是两层状态：一轮接单、问题或进度协调结束，不表示整个WorkObject完成。</p>
-<p>模型请求的<code>purpose</code>区分route、render、review和协议修复，都是现有职责。审查继续独立，表达只调整已选合法内容；这些不会重开“这件事到底做什么”的第二个业务决策圈。确定模板的timer/webhook可从BuildContext直接产出已验证effect plan，跳过不必要的主模型调用，权限和持久化门槛仍在。</p>
-<h3 id="section-3-3">3.3 旧Coordinator退出，新EmployeePolicy承接现有行为合同</h3>
-<p>在EmployeeLoop新包中迁入有价值的纯函数、规则装配、引用校验和审查协议，按<code>BeginWake / BuildRound / ConsumeModel / ExecuteRead / ConsumeToolResult / BuildReview / ConsumeReview / CommitFinish</code>整理为EmployeePolicy。名字为建议，不是现有API。它维护Turn、水位、合法目标、read snapshots、retry ledger、proposal和预算；Tick调用阶段函数，移除旧Coordinator的独立for-round和服务对象。</p>
+<p>保留基础<code>Idle→BuildContext→StreamLLM→ExecuteTool</code>推进；新增<code>AwaitHuman/AwaitExternal</code>和明确的wake结束处置。工作完成与本轮Done是两层状态：一轮接单、问题或进度协调结束，不表示整个EmployeeTask完成。</p>
+<p>新通道用主Loop的Task动作推进；表达只调整已有事实。正常路径不设route/render/review串联流水线，确定模板可直达，复杂表达才选有限render。确定模板的timer/webhook可从BuildContext直接产出已验证effect plan，跳过不必要的主模型调用，权限和持久化门槛仍在。</p>
+<h3 id="section-3-3">3.3 我们适配BotLoop，新通道不移植旧审查流水线</h3>
+<p>以复制后的Tick、工具注册、队列和Task接口为主线，先接当前能力服务完成一条新的RunOnly链路，再按真实差异补端口。旧Coordinator的8轮主模型、独立finish_check、岗位全文审查、12秒review repair和旧checkFinish缓存，不作为新通道前置。</p>
+<p>新的EmployeePolicy只装配当前任务、员工表达、允许工具与最小行为合同；模型用同一个Loop判断继续、修正、等待、发起Run或回报。工具/动作参数由Host确定性校验，敏感工具调用和发送继续查真实授权。模糊目标由当前Loop澄清，不能用第二个模型的allow来替代权限。</p>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
 <thead>
 <tr>
-<th>现有实现</th>
-<th>在BotLoop中的位置</th>
-<th>保留要求</th>
+<th>需要复用的能力</th>
+<th>接法</th>
+<th>不要求迁入</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>inboundcoord/coordinator.go:467</code>的配置/trace/恢复准备</td>
-<td>Idle/BeginWake</td>
-<td>原固定配置、总截止、恢复已审计划；不重新推理已保存效果</td>
+<td>assoc、任务证据与历史读取</td>
+<td>Builder按范围调用，返回有水位的事实和引用</td>
+<td>原runLoop/roundTools的整套调度与累计修复状态</td>
 </tr>
 <tr>
-<td><code>inboundcoord/loop.go:379</code>的prepareFirstRound</td>
-<td>首轮BuildContext</td>
-<td>scene/history预取及read状态、水位、trace</td>
+<td>contextcap与DWS身份/工具代理</td>
+<td>授权结果作为AllowedTools/ExecutionContext；调用时再核</td>
+<td>模型读取记忆或SOP来判断MCP权限</td>
 </tr>
 <tr>
-<td><code>coordination_context.go:82</code>、<code>loop.go:429</code>的messages/tools装配</td>
-<td>每次模型调用前BuildRound</td>
-<td>每轮重建有界上下文和可用工具；不累积JSONL旧正文</td>
+<td>persona/reply_tone与自然表达</td>
+<td>EmployeeProfile/ReplyComposer，直接表达已有任务事实</td>
+<td>每条普通回复、进度都追加独立LLM审查</td>
 </tr>
 <tr>
-<td><code>loop.go:78</code>后的主模型轮次逻辑</td>
-<td>StreamLLM</td>
-<td>原8轮与finish-only/修复预算，由kernel唯一驱动；移除原for-round</td>
+<td>TaskService、RunOnly、Issue和outbox</td>
+<td>EmployeeTask/ExecutionRun适配现有服务</td>
+<td>默认先建Issue、再走Issue协议才能干活</td>
 </tr>
 <tr>
-<td><code>loop.go:263</code>后的read结果消费</td>
-<td>ExecuteTool/ConsumeToolResult</td>
-<td>原引用集、预算、失败分类、重复读取与修复提示</td>
-</tr>
-<tr>
-<td><code>loop.go:184</code>的finish链</td>
-<td>ExecuteTool的terminal handler</td>
-<td>parseValidatedWindowPlan→受限render→checkFinish协议→SavePlan；成功后不再默认请求主模型</td>
-</tr>
-<tr>
-<td><code>finish_check.go:178</code>、<code>:260</code></td>
-<td>review/review_repair子阶段</td>
-<td>原审查结构、quote refs、混合动作、一次协议修复和12秒预算</td>
+<td>旧响应/回执协议</td>
+<td>当前入口后的LegacyWireAdapter冻结和转换</td>
+<td>在新Loop内部调用Coordinator.Decide</td>
 </tr>
 </tbody>
 </table></div>
-<p>表中路径均在<code>server/internal/service/</code>下，是迁移来源，不是新包运行依赖。Handler改调<code>EmployeeLoop</code>的受理/推进接口；旧Coordinator.Decide及其运行循环移除，已安装客户端和MessageRouter的HTTP契约另由入口adapter兼容。<strong>不把完整Decide/runLoop作为一个tool或StreamFn包进去</strong>，那样只复用了外壳，原模型/工具推进仍黑盒嵌套。</p>
-<p>政策注册目录与现行合同也迁到EmployeeLoop的唯一维护入口，保留F01–F19来源、撤回规则、版本和历史证据。迁移时更新checker/source-map/CLAUDE指针，不让两个目录各自维护一份同义prompt。旧历史Chat/trace保持可读，不能因运行对象退休把现有审计记录删除。</p>
-<p>首轮预取可以保持异步优化；每次ExecuteTool后重建下一轮请求，不重新从mailbox把后到消息塞进旧窗口。新的紧急控制按明确work及权限使当前候选失效/终止，封存的原授权不被后发消息改写。</p>
+<p><code>inbound</code>与<code>task_finished</code>在新模型中是Task输入和Run完成信号，不是两套独立认知Loop；<code>finish_check</code>是旧通道的实现机制，不定义一个Task生命周期状态。统一TaskSignal可以表达 input/amendment/answer/run_progress/run_completed/dependency_changed/timer_due/cancel。</p>
+<p>旧通道在统一事件接入后的独立legacy lane原样保持行为合同，便于比较、按场域灰度及退回；新通道拥有自己的简短合同和版本。各自的行为来源、trace和RouteOwner明确，不同一事件跑两遍或共享可变推理状态。</p>
+<h3 id="section-3-3-1">3.3.1 轻量HostGate</h3>
+<p>正常链路为：Builder → BotLoop主判断或已定义模板直达 → 本地/数据库HostGate → 保存effect → 执行/投递。HostGate检查结构、scope、actor/principal、目标归属、当前版本、操作授权、结果引用、幂等键和输出受众；它不再调用一个模型评价整段回复文风或要求将来结果提前存在。</p>
+<ul>
+<li>普通聊天、真实进度、已确定的Run结果和已授权控制：不跑独立review。</li>
+<li>已注册的timer/webhook TaskDefinition：无新的语义缺口时直接RunOnly，不重做需求规划。</li>
+<li>新目标或实质修改：只在主Loop内判语义；必要读取仍可调用工具，保留BotLoop工具循环。</li>
+<li>真正缺授权/收件目标、版本冲突或相互矛盾的输入：停止对应effect、具体澄清或重建当前Context；不拉长成重复主模型—review死锁。</li>
+<li>只有用户/业务规则明确要求的审批、或显式配置的特定审核才建立等待/定点审核。已经明确授权且规则允许的动作不再机械二次确认。</li>
+</ul>
+<p>可把确定性gate耗时作为独立指标，目标本地检查p95≤50ms，数据库检查另计；这是实施SLO而非当前成绩。普通路径独立review模型调用数必须为0。旧通道保留原成本用于对比，不把旧长审查借重命名搬进来。</p>
 <h3 id="section-3-4">3.4 必须修的内核接缝</h3>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
 <thead>
@@ -388,9 +593,9 @@
 <td>原限制、水位、author不丢；tool错误不变成人类指令</td>
 </tr>
 <tr>
-<td>明确<code>continue/terminal/await/deferred</code></td>
-<td>EOF/文本不代表合法finish；executeTool后不总是回StreamLLM</td>
-<td>只在校验、审查、保存计划后terminal；失败保留未决请求</td>
+<td>明确continue/reply/terminal/await/deferred</td>
+<td>模型结束不等于业务完成；普通对话可结束wake，任务效果要有结构化动作</td>
+<td>HostGate与保存后发reply/dispatch；不要求旧finish_check，不把EOF推进Task完成</td>
 </tr>
 <tr>
 <td>durable Scope和store端口</td>
@@ -404,16 +609,62 @@
 </tr>
 <tr>
 <td>candidate事件与人类输出隔离</td>
-<td>原EventMessage不能直连DWS，人类输出必须有已审事实</td>
-<td>未审流式正文、tool噪声不发群；已审intent按原outbox发送</td>
+<td>原EventMessage不能直连DWS，人类输出必须有已验证事实</td>
+<td>未审流式正文、tool噪声不发群；已验证intent按原outbox发送</td>
 </tr>
 </tbody>
 </table></div>
 <p>这些patch集中在loop/type/store边界，保留能安全复用的原函数和测试。它们不是可忽略的小补丁，也不需要因此重写整个BotLoop。实施按来源patch清单评审，不承诺没有依据的代码复用百分比。</p>
 <h3 id="section-3-5">3.5 外部执行是可等待的effect</h3>
-<p>EmployeeProfile协调工具继续是现有有限read/finish集合；业务shell、MCP和专业分析仍在执行Harness。finish通过后，Host把start/continue转成ExecutionRequest；保存effect/wait后kernel进入AwaitExternal。外部结果携带work、attempt、result_ref重新入mailbox，作为新wake事实，调用同一EmployeePolicy的完成合同。</p>
+<p>EmployeeProfile按实际能力注册Task、Context与场域工具；耗时或明确可执行工作用通用RunOnly，业务Harness继续执行。结构化Task动作经HostGate后生成RunSpec；保存effect/wait后kernel进入AwaitExternal。外部结果携带work、attempt、result_ref重新入mailbox，作为新wake事实，调用同一EmployeePolicy的完成合同。</p>
 <p>人类补充进入原队列优先级，但要带结构化ActorRef/authority而非仅一段文本。“先别上线”可产生明确control effect；本地BotLoop.Interrupt只终止协调阶段的provider/tool，并不自动停止另一个沙箱Worker。真正运行控制仍走第9节的durable command和quiescent证明。</p>
 <p>这保留BotLoop的持续性：它可以读上下文、有限思考、调用协调工具、结束一轮、等待外部世界再接着办；平台对外是同一个员工，计算现场可以替换。</p>
+<h3 id="section-3-6">3.6 挂在Employee上的Builder</h3>
+<p>EmployeeBuilder是员工的上下文与触发装配器，配置属于Employee；游标、任务材料和权限快照按Task/SceneScope/会话epoch隔离。它在Loop的BuildContext阶段工作，复用能力/历史/任务服务，不再做第二个LLM路由器。</p>
+<div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
+<thead>
+<tr>
+<th>输入</th>
+<th>Builder处理</th>
+<th>输出</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Native事件+可信订阅身份</td>
+<td>保原DWS数据，读取已绑定Scene/Rule与Task定位</td>
+<td>TriggerContext及明确来源/actor/资源状态</td>
+</tr>
+<tr>
+<td>SceneBinding+TaskDefinition+最新修正</td>
+<td>按enterprise/group/personal范围编译，保留用户约定</td>
+<td>TaskContext、必需限制和引用</td>
+</tr>
+<tr>
+<td>历史、quote、forward、Task ledger</td>
+<td>按source+scene+native message ID去重，当前请求只投影一次</td>
+<td>历史delta、ContextUsed manifest、loaded/unavailable/truncated</td>
+</tr>
+<tr>
+<td>cursor/watermark与会话epoch</td>
+<td>只加入尚未投喂且有权读取的材料；重试保持原水位</td>
+<td>ContextReceipt及下一游标候选</td>
+</tr>
+<tr>
+<td>contextcap与Run profile</td>
+<td>解析AllowedTools、固定principal、运行目录/恢复资料</td>
+<td>有作用域的RunSpec或主Loop上下文</td>
+</tr>
+<tr>
+<td>trigger策略</td>
+<td>已定义直达、交互、观察聚合、恢复、控制分别编译</td>
+<td>RunOnly意图、普通wake、receipt-only或ControlIntent</td>
+</tr>
+</tbody>
+</table></div>
+<p>Builder不按正文相同去重，也不按“最近一个任务”选目标。原消息、引用和被转发消息保留身份；current input与older history重复时优先保存当前原文与限制。只有成功且记录了消费/投喂证据才推进cursor；历史读取失败、截断或未知不越过未覆盖区间。重复wake从同一ContextReceipt恢复，不把后来消息倒灌旧授权。</p>
+<p>不同触发方式有不同装配策略：群@/DM带当前原句与相关delta；ambient只观察或有界聚合；timer/webhook使用绑定场域、固定TaskDefinition和本次参数；Run信号使用当前Run/Task事实，不重新载入整群历史；回答只带真实question及最新输入；控制优先带目标、权限和控制seq。</p>
+<p>Employee人格可共享，Builder材料不可跨Task/principal混用。文档/日程/审批资源事实读取仍核ACL；场域默认企业不等于人人可读全文。Builder只“编译已有事实”，语义判定由原BotLoop主循环做，权限由Host服务决定。</p>
 </section><section aria-labelledby="section-4" class="doc-section" id="section-4-block"><h2 id="section-4">4. 身份、场域和权限模型</h2>
 <h3 id="section-4-1">4.1 ID 必须分开</h3>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
@@ -478,22 +729,197 @@
 <p>能力分支提供能力 offer、场域/个人 binding、配置 grant、凭据和任务 claim/call-time 解析；由它继续决定“能用什么”。EmployeeLoop 只提供可信的事件场域、当前授权请求和执行身份，不复制 binding 表、不让模型根据 memory/catalog 判权限。</p>
 <p><code>context_config_grant</code> 仅授权修改场域/个人配置；到期并不自动撤销已保存的binding或credential。它不能当作工具数据授权、个人例行任务的delegation或群披露授权。后文的AuthorityRef标明原请求/规则授权证据；连接器可用性仍查原binding与credential。确需个人无人任务时，新增可撤销的invocation delegation应与原resolver集成，而非再建平行Connector ACL。</p>
 <p>必须明确当前边界：群场域能力与单一触发者个人能力已建设；DM 配置、<code>share_in_groups</code> 等字段不能仅因 UI/DB 存在就当成有效控制；cron/webhook/plain chat 没有匹配 dispatch 时目前仅全局能力，不能宣称已支持所有事件的场域授权。详细代码证据见第 15 节。</p>
-<p>新增 <code>CapabilityRequest</code> 是对原 resolver 的输入扩展：origin scene、operation、validated principal、授权证据、配置 revision、purpose boundary；resolver 返回引用和有效快照。凭据不放进 InputEvent、模型 prompt、公共日志或 WorkObject JSON。</p>
+<p>新增 <code>CapabilityRequest</code> 是对原 resolver 的输入扩展：origin scene、operation、validated principal、授权证据、配置 revision、purpose boundary；resolver 返回引用和有效快照。凭据不放进 InputEvent、模型 prompt、公共日志或 EmployeeTask JSON。</p>
 <p><strong>建议新增/保留的复查边界：</strong>受理 → 启动/claim → 敏感工具调用 → 恢复 Session → 产物与输出披露。当前connector每次调用已有复查，但skill bundle prepare只重验仍offered，不重新核scene/person binding；旧模型上下文不会自动清除。权限快照/fingerprint只帮助定位和复用，不能代替在线授权复查。撤权后旧日志、工具结果和Session内存也可能携带数据，不能只禁后续MCP调用就宣称已经隔离。</p>
 <p>当前credential选择为person→scene→workspace，可在个人凭据不可用或场域层读取失败时回落。对于“查我的日历”或长期无人规则，必须保存实际选定的credential/account身份和显式fallback policy；默认固定主体，失效则阻塞/重新授权，不能悄悄换企业共享账号继续做另一份数据。群使用opt-in须同时控制person binding和person credential覆盖global connector的路径。</p>
 <h3 id="section-4-3">4.3 群里多人补充</h3>
 <p>张三请求查自己的日历，李四补一句“也考虑周三”，可以归入同一讨论。是否能把它转成对张三日历的新查询，必须检查张三原授予的范围及允许参与者；李四不因进入同一 Episode 就继承凭据，也不成为张三的授权代理。</p>
 <p>遇到新主体、新资源或超出原 purpose：新建执行范围，或形成明确授权等待。不同 principal 的私有工具正文、native Session、工作目录及 Capsule 不相互注入。共享EmployeeLoop协调上下文只接收可在该场域披露的摘要；私有结果保留在对应执行域，通过独立的授权输出送给本人。</p>
 <p>文件夹路径分离不构成安全隔离。若两个执行挂同一可读写员工盘，命令行工具仍可读另一个目录；需验证挂载、运行身份/ACL或使用独立受限工作区。做不到时，该 runtime 不承接个人私有连接器并行任务。<code>/mnt/workspace/shared</code> 更不能作为个人 session-log 的默认存放处。</p>
-<h3 id="section-4-4">4.4 定时与 webhook 的授权</h3>
-<p>定时器是 <code>actor=system</code>；webhook 是验证后的 service/provider identity。配置 owner 只负责归属审计，不能自动变成个人凭据的授权主体。现有自动化已将 schedule/webhook 的 originator 留空，责任人从 trigger/rule owner 解析（<code>autopilot.go:893</code>）。</p>
-<p>建议规则保存明确 <code>run_as</code>：employee/service grant，或本人事先授予的 delegated grant。个人例行任务需具备服务端可验证、可撤销、限定操作/场域/期限的 delegation；首次可用当前全局/员工能力，不以人工 UID 填空绕过 resolver。每次 firing 都检查规则启用、授权、有效 scope，历史受理不延续已撤销授权。</p>
-<p>delegation必须绑定本人、委托执行的employee/service、操作与资源、场域、期限和撤销版本。<code>run_as</code>引用验证后的记录而非裸UID。<strong>基础MVP明确仅开放已有employee/service/global能力的cron/webhook；个人无人执行属于后续能力扩展，不是借当前配置grant就已具备。</strong></p>
-<p>Webhook payload 中的 <code>scene_id / work_id / uid / recipient</code> 只作为数据提示。Host 从受信 subscription 配置限定可指向的 scene、work 和输出目标，再做资源访问校验。有效签名不允许回调修改任意事项。</p>
-</section><section aria-labelledby="section-5" class="doc-section" id="section-5-block"><h2 id="section-5">5. 统一事件层：EmployeeEvent与线上MessageRouter兼容契约</h2>
+<h3 id="section-4-4">4.4 SceneBinding：企业、群与个人都可以挂触发器</h3>
+<p>SceneBinding是上下文/运行记录/输出的归属，不是工具授权本身。最低字段为scope_kind=enterprise/group/personal、tenant/org、employee、可信scope_key、owner/participants、visibility、配置revision、OutputPolicyRef；资源Ref另存。由授权的配置流程产生，不从webhook body或最近聊天推断。</p>
+<div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
+<thead>
+<tr>
+<th>来源</th>
+<th>默认场域</th>
+<th>必须明确的绑定</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>群内设置的timer/webhook</td>
+<td>该群group Scene</td>
+<td>群CID、允许管理者/参与者、可见运行记录与默认回报场域</td>
+</tr>
+<tr>
+<td>单聊/个人设置的timer/webhook</td>
+<td>personal Scene</td>
+<td>所属本人、可见性、允许执行的principal与回报对象</td>
+</tr>
+<tr>
+<td>企业配置的例行任务/订阅</td>
+<td>enterprise Scene</td>
+<td>企业范围、规则责任人和明确资源/输出范围</td>
+</tr>
+<tr>
+<td>钉钉日程、审批等非IM业务事件</td>
+<td><strong>先默认enterprise Scene</strong></td>
+<td>事件所属企业+calendar/process等资源Ref；显式绑定才关联群/个人</td>
+</tr>
+<tr>
+<td>文档@/评论等资源事件</td>
+<td>enterprise归属并保存文档资源Ref；显式配置可收窄</td>
+<td>文档ACL、真实actor、回复锚点，不伪造聊天CID</td>
+</tr>
+<tr>
+<td>群消息/单聊</td>
+<td>可信group/DM自然场域</td>
+<td>原消息参与者与输入权限，不能用subscriber替代sender</td>
+</tr>
+</tbody>
+</table></div>
+<p>解析顺序：受信显式SceneBinding优先；IM的自然group/DM其次；其他DingTalk资源事件先enterprise默认。订阅使用个人OAuth不自动让审批变个人场域；企业默认也不改变原资源ACL、扩大工具权限或让私有结果对整个企业公开。</p>
+<p>定时器actor是system，webhook actor是验证后的service/provider。绑定场域记录“在哪推进这件事”，rule owner只承担配置责任，不自动成为个人connector授权者。规则保存run_as授权引用、固定TaskDefinition、参数schema、overlap policy和OutputPolicy；每次触发核规则及grant版本。</p>
+<p>个人无人执行需要真实delegation：本人、被委托employee/service、操作/资源/范围/期限和撤销版本。已有employee/service/global授权可以先完成企业或群内例行工作；personal Scene归属不等于个人连接器能力已完整落地。context_config_grant仅配置权，不能用裸UID或旧sender补出执行权限。</p>
+<p>Webhook callback locators只供定位；Host用subscription绑定范围验证。收到事件不能由body改Scene、Task、principal或recipient。原触发配置的SceneBinding沿Task和ExecutionRun保存，沙箱退出不抹掉场域运行账本。</p>
+</section><section aria-labelledby="section-5" class="doc-section" id="section-5-block"><h2 id="section-5">5. 统一事件层：复用DWS场域协议，兼容既有MessageRouter</h2>
 <p>这是新EmployeeLoop的基础协议，独立于模型提示词与执行backend。第3节说明Loop怎样推进，本节定义它究竟接收什么、信任什么、如何恢复与如何回执。</p>
-<p>设计分三层：<strong>Source Wire → 认证与版本化Normalizer → EmployeeEvent</strong>。MessageRouter Dispatch 2.0、周期scheduler、webhook、Runtime回调和人类回答可以保留各自外部协议，但只进入一套内部事件信封、durable inbox和唤醒机制。替换Coordinator不要求Router立即改协议；只有新的work定位、输出类型和应用回执需要vNext协商。</p>
-<p>内部统一信封不将所有输入压成一条user text。来源、逐句作者、观察/请求/控制、业务状态、执行状态和披露对象都有类型；纯观测不会因进入事件层就授权工作。PG保存当前WorkObject状态，事件保存因果和审计，不要求回放全量日志才能查状态。</p>
+<p>设计分三层：<strong>钉钉/DWS等原生协议 → 认证与版本化Source Adapter → EmployeeEvent控制外壳</strong>。钉钉场域事件包括消息、日程、文档@/评论与审批等资源事件，未来可以由DWS Stream、业务事件网关、MessageRouter或其他受信连接器送入；不要求都经过MessageRouter，也不要求都先转换成message.created。周期scheduler、外部webhook与Runtime回调是另外的来源族，接同一durable inbox和唤醒机制。</p>
+<h3 id="section-5-0">5.0 DWS Schema优先复用，不重新发明平台事件正文</h3>
+<p><strong>最新develop直接复用Go DWS，而不是再造CLI订阅器。</strong>本轮fetch到<code>7c91589854e06d6907cce18b944b46b66a34a553</code>，已入仓<code>server/pkg/dws</code>、<code>server/pkg/dws/events</code>、<code>server/pkg/dws/redisstore</code>以及<code>internal/dwseventsource/connmgr</code>。SDK从<code>xdxer/dws-for-tag@ae29c2914dd9108e7ce451329bceeca411464b6b</code>同步；上游SDK修改在那里完成再resync。</p>
+<div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
+<thead>
+<tr>
+<th>可直接复用</th>
+<th>本轮核验边界/需要的适配</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Client.Events、SubscriptionSpec、订阅/Ticket及Fingerprint</td>
+<td>复用group/target/roles/filter等原生契约，不另定义订阅DTO</td>
+</tr>
+<tr>
+<td>events.Event及Typed()业务类型</td>
+<td>保ID/Key/SubscriptionID/CorpID/OccurredAt、Body/Data RawMessage，新Loop直接接此类型</td>
+</tr>
+<tr>
+<td>SDK registry</td>
+<td>当前28项，旧CLI27+互动卡片1；calendar/doc@ typed key仍未发布，Lookup/Available gate不允许凭空订阅</td>
+</tr>
+<tr>
+<td>dwseventsource.Consumer</td>
+<td>当前只EventKey+Identities+Handle(bytes)，需扩原生SubscriptionSpec及typed HandleEvent；不要经EventLine来回投影</td>
+</tr>
+<tr>
+<td>connmgr/Redis ownership、keepalive与交接</td>
+<td>复用连接、凭据、重连、ready、重平衡；交接可能短暂重叠，PG仍业务去重</td>
+</tr>
+<tr>
+<td>Listener持久后ACK</td>
+<td>Handle成功后MarkHandled/ACK；业务Adapter先事务记录receipt再返回成功，失败不ACK</td>
+</tr>
+</tbody>
+</table></div>
+<p>新版Event没有完整公开EventEnvelope类型：Body/Data保解包业务数据，但headers/specVersion/eventBornTime/原WS字节未全部保留。不能把兼容EventLine重建的CLI wrapper当无损原帧；可先记录SDK实际可得数据及缺失状态，需要完整安全packet时再经上游SDK hook扩展。SDK typed projection已移入，但JSON Schema generation尚未port，目录元数据也不是完整JSON Schema。旧CLI snapshot保留为结构证据，不与SDK当前28项混同。</p>
+<p>固定引用（7c9158985）：<code>server/pkg/dws/SYNC.md:3</code>、<code>events.go:59</code>、<code>:93</code>、<code>events/event.go:27</code>、<code>events/typed.go:1</code>；<code>server/internal/dwseventsource/source.go:37</code>、<code>:297</code>；<code>internal/connmgr/manager.go:626</code>。未带server前缀的SDK相对路径在server/pkg/dws下。</p>
+<p><strong>复用原则：</strong>DWS已发布的event key、原生envelope和业务payload保持其字段名、类型与含义；EmployeeLoop新增的租户绑定、工作关联、权限引用、去重和fence位于HostMeta外壳。Scene/Actor是有出处的派生索引，不回写DWS payload。MessageRouter Dispatch 2.0仍沿原响应/续接/控制/callback契约适配，属于载体，不是钉钉场域的定义。</p>
+<p>本轮只读查询本机DWS <code>v1.0.61 / commit 50eb73a0</code>，build <code>2026-08-31T14:46:17Z</code>。公开catalog包含IM16、OA7、VoIP1、Todo3共27项；<code>--include-pending</code>也未给出calendar或文档@的事件key。这只限定本机该版本的公开目录，<strong>不表示DWS整个产品没有这些事件</strong>。日程、文档@是必须支持的协议槽位，其正式key/payload schema需从DWS发布的对应目录/接口登记；不把IM的receive_at冒充文档@，不捏造<code>user_doc_*</code>或<code>user_calendar_*</code>键。</p>
+<p>已保存<a href="dws-event-schema-snapshot.json">只读Schema快照</a>：27项catalog以及每项raw/flatten，共54份原Schema输出，含CLI版本、binary hash、查询命令和每份export hash。后续代码生成/验证优先导入这些DWS Schema或对应发布包，避免手写一套同义JSON字段。快照是协议证据，不含真实业务事件、凭据或订阅状态；本轮未启动监听或订阅。</p>
+<div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
+<thead>
+<tr>
+<th>层</th>
+<th>直接复用的内容</th>
+<th>EmployeeLoop增加什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DWS原生envelope</td>
+<td>已发布type/event_type/event_id/data及transport元数据</td>
+<td>ProviderSchemaRef、NativeEventRef，保留完整默认安全输出的frame</td>
+</tr>
+<tr>
+<td>DWS业务schema</td>
+<td>event key对应的payload/flatten字段定义、类型、可选性</td>
+<td>SchemaRegistry引用及有版本的Decoder，不改名再包装成IM</td>
+</tr>
+<tr>
+<td>HostMeta</td>
+<td>不由DWS/body声明</td>
+<td>workspace/employee、订阅主体绑定、来源版本、本地seq、receipt、authority/fence</td>
+</tr>
+<tr>
+<td>派生场域索引</td>
+<td>按具体DWS Schema读取真实资源与操作者</td>
+<td>SceneRef、ActorRefs、Work/WaitRefs、OutputPolicyRefs及字段来源路径</td>
+</tr>
+<tr>
+<td>旧MessageRouter</td>
+<td>Dispatch 2.0 DTO及已有回执语义</td>
+<td>Legacy adapter；不声称该DTO等于完整DWS原始schema</td>
+</tr>
+</tbody>
+</table></div>
+<p>示意结构为<code>{host_meta, provider_event}</code>：provider_event保存<code>{schema_namespace, provider_event_key, schema_ref, native_event_ref, projection_ref?}</code>，native_event_ref指向按DWS安全边界保留的完整frame/payload；host_meta保存平台独有的协调事实。既有EmployeeEvent的SourceID/Kind/ActorRef等是控制元数据或派生索引，不是对DWS同名业务字段的覆盖。</p>
+<p><strong>当前raw envelope有14个已声明字段：</strong><code>type</code>、<code>event_type</code>、<code>event_id</code>、<code>data</code>、<code>headers</code>、<code>event_born_time</code>、<code>event_corp_id</code>、<code>event_scope</code>、<code>event_unified_app_id</code>、<code>received_at_unix_ms</code>、<code>seq</code>、<code>source_id</code>、<code>subscribe_id</code>、<code>rule_type</code>。<code>type="event"</code>、event_type为原event key，data是JSON字符串，业务读取路径为<code>.data | fromjson</code>。该raw schema没有进一步定义data内部的强类型结构；不能自行宣称解析后的任意对象已通过DWS业务schema。</p>
+<p>flatten是DWS的派生业务视图，type为event key、jq_root_path为<code>.</code>，包含字段映射与脱敏，<strong>不等同于只JSON.parse(data)</strong>。生产优先保留默认安全的native envelope，再引用同key的flatten/projection帮助模型理解。选择flatten的consumer可能回退raw envelope，Decoder必须识别已注册形状，不能固定假设每条都有content/sender。</p>
+<p>54份当前Schema均未声明<code>schema.required</code>；列在properties不等于每次必有。保留DWS可选性，执行所需的身份/目标/幂等等门槛由Host单独验证。未知字段保留在受限native frame中，不因DTO投影丢失，也不因为存在一个字段就授予工作权限。</p>
+<div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
+<thead>
+<tr>
+<th>场域/事件族</th>
+<th>已核验的协议依据</th>
+<th>基本包装与复用路线</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>消息、已读、撤回、reaction及群生命周期</td>
+<td>当前16项<code>user_im_*</code> raw/flatten Schema</td>
+<td>event key原样保留；sender/reader/recaller/operator依事件取，不只支持新消息</td>
+</tr>
+<tr>
+<td>审批任务/实例</td>
+<td>当前7项<code>user_oa_approval_*</code> Schema</td>
+<td>task/process资源场域；可无明确actor；状态字段保原值，不推断完整枚举</td>
+</tr>
+<tr>
+<td>日程资源事件</td>
+<td>本仓已有Router calendar.started；本机DWS公开catalog未给原生key</td>
+<td>同一DingTalkDomainEvent包装，待登记真实DWS schema；不是给日程强造CID或IM正文</td>
+</tr>
+<tr>
+<td>文档@/评论/协作事件</td>
+<td>需求明确；本机公开event catalog未给正式key</td>
+<td>DocumentScene+原生schema引用；文档/块/评论/@对象定位按发布schema取，不猜字段名</td>
+</tr>
+<tr>
+<td>Todo、VoIP与后续业务族</td>
+<td>当前Todo3/VoIP1 Schema可直接引用</td>
+<td>同一个平台schema registry扩展，不为每种产品另造Loop</td>
+</tr>
+<tr>
+<td>卡片人工操作</td>
+<td>仓库已消费user_card_action_triggered，独立parser合同</td>
+<td>保留实际frame变体和operator验证；不假装属于上述27项CLI目录</td>
+</tr>
+</tbody>
+</table></div>
+<p>文档@与IM @是不同资源语义：文档事件不一定有chat CID；资源读取权限来自对应账号和文档ACL，不因“被@”就默认可读全篇或可向群披露。日程或审批也不因为最终回报某群而继承该群的连接器能力。缺失scope/actor/资源定位保持未知或阻塞，不能用订阅账号代替操作人。</p>
+<p>回复锚点也按资源类型保存：聊天用原消息，文档事件保留DWS提供的文档/评论上下文，日程/审批保留对应资源定位；可用的文档评论回复、IM回报或仅记录由已验证OutputPolicy/渠道权限选择。不能为适配旧dws IM发送接口捏造群CID，也不能无依据把私有文档结果发到某群。</p>
+<p><strong>订阅主体与事件actor分开。</strong>Host从受信profile/OAuth/员工绑定和订阅记录建立<code>SubscribedPrincipalRef/SubscriptionBindingRef</code>，不是从payload的sender、参与者或target_uid反推。IM取sender，read取reader，recall取recaller，reaction/群操作取operator；OA/系统事件可能只报告资源状态。<code>event_corp_id</code>是来源声明，不能改写Host租户；账号组织与资源所属组织也分别记录。</p>
+<p>当前IM flatten有sender_open_dingtalk_id，不提供通用staffId。接contextcap个人能力层时，如需staffId只能通过受信且有组织范围的身份映射核验；未解析保持person scope未知/空，不把openID换个字段名或用订阅账号填成触发人。DWS安全投影也不能被当成当前已有group/person resolver已经支持所有新资源场域的证据。</p>
+<p>避免同名字段误用：Todo flatten的source_id是来源业务ID，不是raw envelope的transport source_id；flatten没有统一org/receiver/source字段。VoIP的corp_id/org_id/target_uid与caller/callee类型不同，按原Schema保留，不统一转成可丢精度的number。SchemaRegistry记录字段路径、形状和版本，再派生索引。</p>
+<p><strong>SchemaRegistry登记单元：</strong>provider namespace + event key + shape(raw/flatten/已验证frame变体) + DWS发布版本/hash + decoder/projection版本 +敏感字段策略+场域/actor解析规则。日程/文档@正式Schema发布后只新增登记与fixtures，不改核心信封或重写Loop。当前未注册的Schema可保留为受限待映射receipt，不能交LLM猜字段并自动执行；显式登记后可按原receipt/效果键受控重放。</p>
+<p>保存“原生frame”沿DWS默认脱敏输出边界，不打开debug-raw-events恢复已删敏感值；例如VoIP roomCode默认不进安全frame。JSONB保存语义字段不保证原字节，若需要完整frame digest或重放，另外存受限byte/blob及hash；派生对象只是索引。现有Dispatch固定DTO会丢未知业务字段（<code>server/internal/handler/agent_dispatch_v2_handler.go:188</code>、<code>:113</code>），新DWS入口应在认证后、投影前保存原frame。</p>
+<p>生产代码直接复用Go SDK的events.Event/typed payload与SubscriptionSpec；schema_ref/native ref是其出处及持久化引用，不再维护同义业务结构。CLI下述导出仍用于协议审计和补JSON Schema证据，不能代替Go typed实现。</p>
+<p>可复现只读查询：<code>dws event list --include-pending --format json</code>、<code>dws event schema &lt;已发布event_key&gt; --format json</code>、同命令加<code>--flatten</code>。<code>dws schema --cli-path "event schema"</code>查询的是CLI命令参数，不能替代event输出Schema；calendar event get或doc comment update是产品操作，也不能当Stream订阅key。</p>
+<p>存量DWS消费可复用来源：<code>server/internal/dwsclient/a2ui.go:90</code>接NDJSON frame bytes；<code>server/internal/service/userdecision/transport.go:7</code>与<code>event.go:43</code>处理卡片事件。它们是transport/parser模式，不作为所有钉钉事件的必填字段。DSH native的type/seq/time/data属于执行轨迹，不冒充DWS业务协议。</p>
+<p>后续5.1–5.11规定共同控制语义与旧Router兼容；这些规则不会把未来DWS事件限定为Router当前7种类型。</p>
+<p>内部统一信封不将所有输入压成一条user text。来源、逐句作者、观察/请求/控制、业务状态、执行状态和披露对象都有类型；纯观测不会因进入事件层就授权工作。PG保存当前EmployeeTask状态，事件保存因果和审计，不要求回放全量日志才能查状态。</p>
 <h3 id="section-5-1">5.1 三种事件，三种证据</h3>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
 <thead>
@@ -512,10 +938,10 @@
 <td>可靠输入、来源、去重、原授权水位</td>
 </tr>
 <tr>
-<td>WorkEvent</td>
-<td>work.defined、work.amended、work.waiting、work.cancelled</td>
+<td>TaskEvent</td>
+<td>task.defined、task.amended、task.waiting、task.cancelled</td>
 <td>投影/依赖者按规则</td>
-<td>状态迁移证据；WorkObject 行仍是当前状态权威</td>
+<td>状态迁移证据；EmployeeTask 行仍是当前状态权威</td>
 </tr>
 <tr>
 <td>ExecutionEvent</td>
@@ -526,7 +952,7 @@
 </tbody>
 </table></div>
 <p>token/text delta、thinking、工具原始输出留在执行流/日志，不进入高优先级业务 mailbox，也不默认发群。可靠执行终态和等待事件应先入库；现有 events.Bus / Tair 只做唤醒与实时展示提示。</p>
-<p>以下为建议内部协议示意，不是已实现Go类型。InputEvent/WorkEvent/ExecutionEvent是事件class，共用EmployeeEvent信封；<code>schema_version=1</code>是内部契约版本，不是Router的<code>schemaVersion=2.0</code>：</p>
+<p>以下为建议内部协议示意，不是已实现Go类型。InputEvent/TaskEvent/ExecutionEvent是事件class，共用EmployeeEvent信封；<code>schema_version=1</code>是内部契约版本，不是Router的<code>schemaVersion=2.0</code>：</p>
 <pre aria-label="代码与协议示例，可左右滚动" tabindex="0"><code class="language-go">type EmployeeEvent struct {
     SchemaVersion int
     ID, SourceID, SourceEventID string
@@ -542,14 +968,17 @@
     PayloadRef string
     SourceRevision int64
     AdapterVersion, PayloadSchemaVersion string
+    ProviderEventKey, ProviderSchemaRef, NativeEventRef string
+    ProjectionRef, SubscriptionBindingRef, SubscribedPrincipalRef string
     IngressReceiptID, NativeLocatorRef string
     DeliveryContractRef, CapabilityContextRef string
     IdentityBindingRef string
-    WorkRef, WaitRef, ExecutionRef string
+    NativeDWS *dwsevents.Event
+    TaskRef, WaitRef, ExecutionRef string
     Sensitivity, AudiencePolicyRef string
 }
 
-type WorkObject struct {
+type EmployeeTask struct {
     ID, WorkspaceID, EmployeeID string
     OriginSceneRef, EpisodeID string
     DefinitionRevision int64
@@ -563,8 +992,8 @@ type WorkObject struct {
 }
 </code></pre>
 <p>Actor/Authority/Scene 是 Host 在验证阶段构建的描述或引用。<code>payload_ref</code> 可以保存有界原文快照与平台证据引用；权限敏感正文放受限 blob。最小机器日志需要当前授权原句、引用、作者、水位、摘要/hash，不能只存一个将来可能读不到的钉钉消息 ID。</p>
-<p>Class固定为<code>input/work/execution</code>三值；<code>observation.message.*</code>只是input的Kind命名空间。Retired summary选择receipt-only，不进业务mailbox；statistics走专项采集，不因Class=input默认唤醒LLM。Envelope admission与业务唤醒是两个动作，receipt-only来源沿原回执合同可靠提交后结束。</p>
-<p>输出送达采用<code>Class=work / Kind=delivery.receipt</code>，只推进对应OutputIntent覆盖状态；不当作业务execution.completed。Raw delta、thinking和BotLoop本地observer callback是遥测信号，不等于持久EmployeeEvent，也不自动进业务mailbox。</p>
+<p>Class固定为<code>input/task/execution</code>三值；<code>observation.message.*</code>只是input的Kind命名空间。Retired summary选择receipt-only，不进业务mailbox；statistics走专项采集，不因Class=input默认唤醒LLM。Envelope admission与业务唤醒是两个动作，receipt-only来源沿原回执合同可靠提交后结束。</p>
+<p>输出送达采用<code>Class=task / Kind=delivery.receipt</code>，只推进对应OutputIntent覆盖状态；不当作业务execution.completed。Raw delta、thinking和BotLoop本地observer callback是遥测信号，不等于持久EmployeeEvent，也不自动进业务mailbox。</p>
 <p>IdentityBindingRef引用受理时不可变的<code>{workspace, employee, platform, org_id, employee_external_uid, binding_epoch}</code>。source/subscription revision、routing epoch与adapter version各有用途，不能代替绑定版本。claim、恢复、工具调用和输出前比较当下绑定；同org换账号也形成漂移，不自动让旧credential/log沿新账号使用。</p>
 <p>钉钉仍是人类对话历史的主来源；不额外镜像所有群历史作为机器唯一事实。现有可靠入站副本用于短期恢复、去重与协调审计；平台回读失败时明确 <code>unavailable</code>，不将缓存替代品伪装成完整历史。</p>
 <h3 id="section-5-2">5.2 来源与幂等</h3>
@@ -618,11 +1047,11 @@ type WorkObject struct {
 </table></div>
 <p>缺稳定 provider ID 的事件不能仅以正文相同无条件去重；采用调用方幂等键，或为该 subscription 定义明确的有限去重策略。重试仍指同一受理事件；人工“重做”是新事件、新 execution attempt。</p>
 <p>可靠受理事务写入 input row、mailbox 路由/待路由记录和受理结果后才 ACK。业务效果通过同一事务内 effect intent/outbox提交，不在事务持锁期间调用模型、provider 或 DWS。稳定唯一键包含 workspace/employee/source，保证不会跨租户命中。</p>
-<p>一次输入可产生多个明确工作，保存 <code>event_work_link(relation, source_refs, authority_ref)</code>，不能把 Event 与 WorkObject 建成一对一。一个事项可接多个事件；源 webhook、cron occurrence 和最终输出之间保留 causation。</p>
+<p>一次输入可产生多个明确工作，保存 <code>event_work_link(relation, source_refs, authority_ref)</code>，不能把 Event 与 EmployeeTask 建成一对一。一个事项可接多个事件；源 webhook、cron occurrence 和最终输出之间保留 causation。</p>
 <h3 id="section-5-3">5.3 PG actor 与多副本</h3>
 <p>使用短事务、<code>FOR UPDATE SKIP LOCKED</code>、租约、revision CAS 和 fencing generation。PG 持有当前业务事实、mailbox、控制命令及副作用 intent；Tair 负责跨副本唤醒、速率限制和短期协调，OSS 存受限大对象。无须给每个员工/群/事项保持永久 goroutine。</p>
 <p>逻辑串行不等于一整轮推理独占数据库锁。读取版本后在锁外决策；提交时比较 revision、最新控制边界与授权快照，变化则重新编译。旧 lease owner 的提交、迟到执行完成、旧 output intent 必须被 fence 拒绝。</p>
-<p>执行 lease 过期也不证明旧外部 Worker 已停止。重开主 lane 前确认停止，或撤销其工具/写入能力并隔离 workspace；结果 fencing 只能防止状态污染，不能撤回外部业务副作用。对同一资源有并发变更风险的 WorkObject，还需资源版本/幂等策略，单事项单写者并不足以保护跨事项资源。</p>
+<p>执行 lease 过期也不证明旧外部 Worker 已停止。重开主 lane 前确认停止，或撤销其工具/写入能力并隔离 workspace；结果 fencing 只能防止状态污染，不能撤回外部业务副作用。对同一资源有并发变更风险的 EmployeeTask，还需资源版本/幂等策略，单事项单写者并不足以保护跨事项资源。</p>
 <h3 id="section-5-4">5.4 信封字段、场域与权限的来源</h3>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
 <thead>
@@ -705,7 +1134,7 @@ type WorkObject struct {
 </tr>
 </tbody>
 </table></div>
-<p>统一类型建议：<code>MessagePayload</code>、<code>ReactionPayload</code>、<code>MessageStatisticsPayload</code>、<code>CalendarStartedPayload</code>、<code>ApprovalChangedPayload</code>、<code>TimerPayload</code>、<code>WebhookPayload</code>、<code>ExecutionPayload</code>、<code>HumanAnswerPayload</code>、<code>ControlPayload</code>。封包先经过类型验证，再进入EmployeePolicy；归一化不改变原业务意义。</p>
+<p>DWS来源的业务类型从已发布Schema导入/生成，不另写同义的MessagePayload、ReactionPayload或ApprovalChangedPayload字段模型；保留原key与字段。MessageRouter旧DTO属于独立schema namespace；TimerPayload、WebhookPayload、ExecutionPayload、HumanAnswerPayload、ControlPayload仅描述非DWS或平台内部协议。封包按具体Source Schema验证后再进入EmployeePolicy，派生索引不回写原payload。</p>
 <p>Calendar/Approval的资源场域与结果发布到的群分别记录。当前contextcap的group能力不会因为“最后想发到某群”自动应用到一个没有group invocation的calendar事件；第一期无人/业务事件仍按可验证的employee/service/global授权执行，后续扩资源场域resolver。权限只收窄，不由正规化字段拼接扩大。</p>
 <h3 id="section-5-5">5.5 当前MessageRouter事件逐项映射</h3>
 <p>这里的MessageRouter是当前业务Router，入口为<code>/api/webhooks/agent-dispatch/{endpointId}</code>，不是GawkBot的英文follow-up router。按<code>2a520dea5</code>代码核验如下；当前schema只接受精确Dispatch <code>2.0</code>进入v2路径。</p>
@@ -830,9 +1259,9 @@ type WorkObject struct {
 <h3 id="section-5-7">5.7 一个Router窗口包含多人消息时</h3>
 <p>先保存一个<strong>IngressReceipt</strong>，记录原Dispatch请求、fingerprint、callback contract及规范化版本；typed payload保留每条MessageRecord，含openMsgId、作者、时间、mentions、attachments、quote/reaction以及parent receipt。</p>
 <p>原请求的可恢复快照也分层：先按现有算法取fingerprint，再把contextToken、telemetry token等私有材料分离为受限secret reference；公开事件、HTML示例与模型上下文只得到允许的原文和非秘密locator。大对象通过payload_ref保存，不让临时下载URL/credential成为持久能力。</p>
-<p>同一次受理可以形成多个原句事实和多个WorkLink，但不为每句随意复制一份terminal callback。协调窗口按原水位编译，各WorkObject只得到它获授权的source_refs。拆项输出绑定本项trigger/recipient，而不是沿窗口首人的route兜底。</p>
+<p>同一次受理可以形成多个原句事实和多个WorkLink，但不为每句随意复制一份terminal callback。协调窗口按原水位编译，各EmployeeTask只得到它获授权的source_refs。拆项输出绑定本项trigger/recipient，而不是沿窗口首人的route兜底。</p>
 <p><code>mentions=null</code>是未知，<code>mentions=[]</code>是确证无@；保持跨durable serialization区别。quote作者只证明材料来自谁，reaction target的文本只证明对哪个消息操作。正文“停止”是否控制仍经目标/权限判断，不用关键词把所有同群运行全部停掉。</p>
-<p>Receipt记录子事项/效果outcome、待提交和已提交项，重试只恢复剩余效果。原Router回调何时结束严格按LegacyCompletionMode办理：旧2.0确有“接单即completed”的合同，必须保留，不能统一改成等工作完成；同时这个completed不能推进WorkObject为Completed。业务生命周期与旧Router一次dispatch回执含义分开，详见5.9。</p>
+<p>Receipt记录子事项/效果outcome、待提交和已提交项，重试只恢复剩余效果。原Router回调何时结束严格按LegacyCompletionMode办理：旧2.0确有“接单即completed”的合同，必须保留，不能统一改成等工作完成；同时这个completed不能推进EmployeeTask为Completed。业务生命周期与旧Router一次dispatch回执含义分开，详见5.9。</p>
 <h3 id="section-5-8">5.8 去重、ID与恢复</h3>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
 <thead>
@@ -864,7 +1293,7 @@ type WorkObject struct {
 <td>同受理重投恢复原ID；Normalizer升级不为旧受理生成新事件</td>
 </tr>
 <tr>
-<td>WorkObject ID</td>
+<td>EmployeeTask ID</td>
 <td>独立工作事实</td>
 <td>可绑定旧Issue/Chat locator；不冒充它们的UUID</td>
 </tr>
@@ -883,7 +1312,7 @@ type WorkObject struct {
 <p>保留已有Dispatch去重：Idempotency-Key有效且≤256时优先；否则calendar为calendarId:startTime、approval为formCode:status，其余为messages JSON hash。Acceptance在endpoint namespace下去重，同键不同fingerprint冲突，已受理重放原HTTP响应。切换Loop不能把旧key换前缀后再次执行已受理请求。</p>
 <p>Observed消息继续按workspace/agent/<code>dingtalk:org:employeeUID</code>/CID/openMsgId去重并识别旧inbox。Statistics继续按trigger/sourceId/eventId；sourceId须匹配真实active channel installation，不能由body指向其他订阅。统一信封在这些旧边界去重之后建立稳定事件，不假装当前所有source已经只有一个键。</p>
 <p>Statistics订阅不匹配时，保持原<code>202 / message_statistics_accepted / automations:0</code>及按需silence callback，不升级成Normalizer的403。它表示没有任何规则采集，不授予其他订阅权限；这个兼容no-op与认证失败/agent不匹配的拒绝不是同一种情况。</p>
-<p>新timer以trigger+canonical planned_at、一次性wait以wait+generation、webhook以subscription+provider delivery ID去重。内部event_work_link允许一事件多事项；当前事实仍读WorkObject行。原生数据出现更正/不同reaction version时保留有意义的新事实，不用正文hash代替用户新授权事件。</p>
+<p>新timer以trigger+canonical planned_at、一次性wait以wait+generation、webhook以subscription+provider delivery ID去重。内部event_work_link允许一事件多事项；当前事实仍读EmployeeTask行。原生数据出现更正/不同reaction version时保留有意义的新事实，不用正文hash代替用户新授权事件。</p>
 <p>去重分三层：来源delivery/receipt重投、同平台消息事实合并、同一授权effect幂等。一个native消息先被observed记录，后来被addressed输入接到时，不因“已见过事实”吞掉待响应请求；两条source receipt可以指向同一事实，执行效果按已保存授权计划只提交一次。员工自发消息通过绑定UID及send receipt/native message ID识别，不根据正文相同或昵称猜；自己的出站/receipt不会重新触发一个新任务。</p>
 <p>依据：<code>agent_dispatch_v2_handler.go:174</code>；<code>agent_dispatch_v2.go:1866</code>；<code>agent_dispatch_acceptance.go:65</code>、<code>:286</code>；<code>proactive_conversation.go:36</code>；<code>server/internal/service/autopilot_messages.go:67</code>、<code>:99</code>。本段未加server前缀者均为<code>server/internal/handler/</code>。</p>
 <h3 id="section-5-9">5.9 Callback、执行状态与送达兼容</h3>
@@ -947,12 +1376,12 @@ type WorkObject struct {
 <tr>
 <td><code>delegated_then_terminal</code></td>
 <td>task_finished_loop开启、task有效、不是proactive且存在updateUrl：先delegated_to_issue，再沿原执行/完成路径回调</td>
-<td>保留原先后顺序和幂等键；WorkObject状态依执行事实推进</td>
+<td>保留原先后顺序和幂等键；EmployeeTask状态依执行事实推进</td>
 </tr>
 <tr>
 <td><code>ack_completed</code></td>
 <td>上述条件不成立时，经EnqueueSynchronousWorkReceipt发送completed接单</td>
-<td>只代表旧Router受理回执完成，不是Worker或WorkObject完成</td>
+<td>只代表旧Router受理回执完成，不是Worker或EmployeeTask完成</td>
 </tr>
 <tr>
 <td><code>sync_reply_or_silence</code></td>
@@ -976,113 +1405,193 @@ type WorkObject struct {
 <p><strong>需要vNext而不能偷偷改2.0的能力：</strong>显式work continuation、新progress/question/blocked output、result/stage version与audience、command_id及received/applied/quiescent ACK、pause/resume、新的responsePolicy名称。版本协商必须有显式parser分支或新endpoint；当前非精确2.0会落legacy userPrompt parser，发送2.1不会自动得到新协议。</p>
 <p>内部schema可以先升级，Source Adapter继续读2.0并输出原外部契约。对已安装daemon/runner同样按版本能力选择控制路径，unsupported显式返回。公开API兼容位于adapter；EmployeeLoop内部不保留旧Coordinator执行路径，也不长驻两套工作事实。</p>
 <p>控制依据：<code>server/internal/handler/agent_dispatch_v2.go:500</code>；<code>agent_dispatch_v2_handler.go:804</code>；版本依据：<code>agent_dispatch.go:138</code>。</p>
-<h3 id="section-5-11">5.11 切换方案与事件层验收</h3>
-<ol>
-<li>先保存固定2.0契约fixtures：7类当前事件、legacy输入、多人窗口、attachments、quote/reaction、mentions null/[]、controls和callbacks；记录原HTTP响应与回执字段。</li>
-<li>新建EmployeeLoop及Source Adapter，shadow仅做规范化/协议比对，不执行业务、不发信、不调用另一套模型。旧已提交效果不能因规范化版本变化重放。</li>
-<li>按employee/endpoint设置持久路由epoch。切换前drain已认领旧Coordinator wake；已受理但未认领的旧计划/receipt导入兼容恢复记录，由新Loop沿原效果键恢复。新旧节点互斥消费，历史旧in-flight任务可正常完成回调。</li>
-<li>切换后的新业务输入只进EmployeeLoop。移除旧Coordinator worker、Decide/runLoop及内置对其依赖；保留公开wire/历史trace/旧receipt的适配，不保留第二个协调运行圈。</li>
-<li>再协商vNext与新的direct/control/output能力。回退通过更高routing epoch重新声明所有权，先阻止新claim并处理已提交effects；不能让旧代码读取新await状态后当普通queued重新执行。</li>
-</ol>
-<p>事件专项验收：同body重投不重派；同键不同fingerprint冲突；七类事件原wire一致；retired summary无新工作；statistics无普通LLM；reaction add/remove不伪造成目标消息作者发言；mentions null/[]不混；跨workspace/同org换绑被隔离；header/callback spoof拒绝；旧continuation不串人；旧control ACK不冒充applied；一输入多事项的callback聚合不提前终结；新旧epoch不能双消费；DWS unknown不重发。</p>
-<p>Normalizer和Host测试用固定fixtures证明协议；独立PG连接证明并发/lease/去重；预发MessageRouter真实联调证明ACK、callback目标和送达。源码矩阵不是已通过联调的证据。</p>
+<h3 id="section-5-11">5.11 一层Adapter接当前事件入口，两条独立灰度通道</h3>
+<p>MessageRouter v2/legacy wire和DWS SDK事件先通过Source Adapter进入当前接入/receipt层，保留原认证、幂等键和callback合同；不要求本轮重做整个入站平台。Adapter保存native/ref和必要HostMeta，不叠加一套业务模型分类器。</p>
+<p>当前入口后由RouteOwnerGate单选：<code>legacy_coordinator</code>或<code>employee_loop</code>。旧Coordinator为额外独立通道，新Loop不在内部调用它；它们可以复用能力/执行/回执服务，但不双处理同一业务事件。Transport开关runtime.use_dws_for_tag与Loop灰度是两种开关，不互相替代。</p>
+<ul>
+<li>首次目标按employee+SceneBinding+来源支持能力/明确cohort选owner，并持久化routing epoch及Task绑定；continuation/Run回调保持原Task owner。</li>
+<li>新消息、timer、webhook和DWS资源事件不能因为“刚换灰度比例”跨圈恢复一个仍在推进的目标。</li>
+<li>切流只针对新目标或已确认迁移的等待点；旧已认领/已提交计划留legacy完成，沿原requestId/效果键恢复。无需先搬完所有历史受理记录才能试新Loop。</li>
+<li>新Loop失败保持真实失败/未决，不能自动再调用legacy重派；需要切回时先核已有effect、停止/交接旧writer，再用更高routing epoch变更owner。</li>
+<li>新DWS key不在旧协议能力里时，不硬转一份虚构Dispatch；先按支持矩阵选新通道或受限receipt，不给legacy猜。</li>
+</ul>
+<p>未绑定输入的lane选择必须写清：先用TaskRef、continuation、quote/reply、真实questionRef或固定规则绑定归原Task owner；无结构锚点的输入走该场域持久SceneDefaultOwner。试点优先按场域整体灰度，旧活目标未drain前不随机按每条消息切owner。mixed-lane场域若主Loop才发现候选属于另一owner，只产生具体澄清/结构锚点请求，不改冻结receipt再跑第二圈，也不重派跨lane任务。明确的新目标/固定规则可选new，状态或续接仍按原目标；这一限制作为灰度期体验边界单独测试。</p>
+<p>灰度可按企业/员工/群/个人场域和任务模式配置，保留旧通道作为对照/回退。后续退役legacy是单独的验收决定，本方案不要求先删除它才能接入新Loop。相同Task只一个owner；跨节点路由状态、lease与幂等由数据库/既有服务保障，不靠进程内bool。</p>
+<p>事件验收：v2原7类及控制/callback响应保持；retired summary/statistics no-op不复活；DWS Native/Typed及订阅principal不混；sameorg rebind隔离；reaction/mentions保语义；legacy completed接单不推进Task完成；灰度不双派、回退不重放；SceneBinding参数不会变授权；RunOnly/Issue同Task的Run与关键Notice可回原场域。</p>
 </section><section aria-labelledby="section-6" class="doc-section" id="section-6-block"><h2 id="section-6">6. 钉钉离散讨论、历史与事项关联</h2>
-<p>顺序采用“结构证据优先，语义判定补齐”：显式 WorkObject/Issue 引用 → 被引用消息/已发问题的绑定 → 同场域已确认工作链接 → 有界召回候选 → 迁入EmployeePolicy的deliverable/advancement审查。</p>
+<p>顺序采用“结构证据优先，语义判定补齐”：显式 EmployeeTask/Issue 引用 → 被引用消息/已发问题的绑定 → 同场域已确认工作链接 → 有界召回候选 → 新Loop对当前目标/推进关系的一次语义判断。</p>
 <p><strong>引用只解决定位，不能自动授权执行。</strong>“做完了吗”即使精准引用也只是 report_status；“再发一次原报告”是明确 redelivery；“查最新 VOC”即使主题相同也可能是新交付物。唯一候选、同一个人、时间接近、排名第一都只用于检索。歧义保留未绑定或必要澄清，不自动 steering 任意忙任务。对应现行 F05/F07/F08/F13。</p>
 <p>不强制用户使用 Thread。员工对外的引用回复、交付物名和短事项摘要逐步产生结构锚点；后续顶层散句由场域路由找候选。用户说“停一下”但同群有两项且缺指向，保留安全暂停意图并询问具体事项，不猜一个 task，更不停止全群。</p>
 <p>合窗保留每句 source_ref、稳定 actor、平台 message ID、引用及原时间。工作定义从本次原文生成，不继承员工曾自行扩写的步骤。容量沿用现行“场景×委托人”的公平性，加 workspace/employee/runtime 总预算；先判定聊天/状态/控制，再判断执行容量。控制消息不能等在 4 秒静默/12 秒普通收集窗口后面；仅在明确目标和控制权限已由 Host 验证时走控制快路。</p>
 <p>上下文编译建议顺序：</p>
 <ol>
 <li>当前触发与精确来源/限制；不能被摘要剪掉。</li>
-<li>WorkObject definition、真实等待、当前 attempt、最新 control seq。</li>
+<li>EmployeeTask definition、真实等待、当前 attempt、最新 control seq。</li>
 <li>有水位的 quote/reply chain 和 Episode 相关消息。</li>
 <li>场域稳定记忆及已允许共享的 delta；不包含他人私有工具结果。</li>
 <li>按需读取历史、相关业务产物引用、Capsule resume manifest。</li>
 </ol>
 <p>ambient 消息是场域观察材料，默认不成为 user turn，也不成为新授权。主动参与继续用现有 Host 配置及 qualification / participation checks。只订阅平台真实可获取的历史；不假设钉钉能够读取加入前全量消息。<code>last_seen_seq</code> 是编译水位而非用户授权范围；跨权限变化不因“上次看过”就继续可见。</p>
 <p>Scene Memory 延用已提交 revision、CAS、容量和来源规则；Episode 摘要、工作状态及稳定记忆分开。已完成/取消的事项不能因 ambient 摘要中的旧承诺复活。</p>
-</section><section aria-labelledby="section-7" class="doc-section" id="section-7-block"><h2 id="section-7">7. EmployeeLoop 的状态机与决策边界</h2>
-<figure class="offline-diagram"><figcaption>工作生命周期：工作、执行和送达分别记录</figcaption><div class="state-paths"><div class="state-path"><b>正常推进</b>定义 → 可执行 → 运行 → 审查 → 完成；有明确剩余步骤时回到可执行</div><div class="state-path"><b>等待与恢复</b>运行 → 等待人工 / 等待外部 → 验证新输入 → 可执行</div><div class="state-path"><b>暂停</b>运行 → 暂停中 → 停止回执 + 检查点 → 已暂停 → 有效续接</div><div class="state-path"><b>取消与失败</b>可执行 / 运行 / 等待 / 暂停 → 取消中 → 已取消；确定执行失败 → 失败</div></div><details class="diagram-source"><summary>查看图的 Mermaid 源代码（离线保留）</summary><pre aria-label="代码与协议示例，可左右滚动" tabindex="0"><code>stateDiagram-v2
-  [*] --&gt; Defining
-  Defining --&gt; Ready: 工作定义与授权完整
-  Defining --&gt; WaitingHuman: 真实关键缺口
-  Ready --&gt; Running: 提交 ExecutionRequest
-  Running --&gt; WaitingHuman: needs_input
-  Running --&gt; WaitingExternal: 外部依赖
-  Running --&gt; Reviewing: 当前执行完成
-  Running --&gt; Pausing: pause / interrupt
-  Pausing --&gt; Paused: 停止回执和检查点
-  Paused --&gt; Ready: 新的有效续接
-  WaitingHuman --&gt; Ready: 允许的人回答真实问题
-  WaitingExternal --&gt; Ready: 匹配的依赖事件
-  Reviewing --&gt; Completed: 交付物满足定义
-  Reviewing --&gt; Ready: 已批准定义的明确下一阶段
-  Ready --&gt; Cancelling: cancel
-  Running --&gt; Cancelling: cancel
-  WaitingHuman --&gt; Cancelling: cancel
-  WaitingExternal --&gt; Cancelling: cancel
-  Paused --&gt; Cancelling: cancel
-  Cancelling --&gt; Cancelled: 执行停止被确认
+</section><section aria-labelledby="section-7" class="doc-section" id="section-7-block"><h2 id="section-7">7. Task信号、内核状态与轻量动作提交</h2>
+<p>EmployeeTask状态回答“目标做到哪”，EmployeePhase回答“当前wake推进到哪”，ExecutionRun状态回答“这一轮执行如何”，Delivery状态回答“核心信息送到了谁”。旧inbound/task_finished统一成Task输入/Run事件；finish_check不进入新Task状态机。</p>
+<figure class="offline-diagram"><figcaption>工作生命周期：工作、执行和送达分别记录</figcaption><div class="state-paths"><div class="state-path"><b>正常推进</b>定义 → 可执行 → 运行 → 审查 → 完成；有明确剩余步骤时回到可执行</div><div class="state-path"><b>等待与恢复</b>运行 → 等待人工 / 等待外部 → 验证新输入；有安全的活执行时回到运行，无活执行时进入可执行</div><div class="state-path"><b>暂停</b>运行 → 暂停中 → 停止回执 + 检查点 → 已暂停 → 有效续接</div><div class="state-path"><b>取消与失败</b>有活执行：取消中 → 确认停止 → 已取消；无活执行：可直接已取消；确定执行失败 → 失败</div></div><details class="diagram-source"><summary>查看图的 Mermaid 源代码（离线保留）</summary><pre aria-label="代码与协议示例，可左右滚动" tabindex="0"><code>stateDiagram-v2
+  [*] --&gt; Defined
+  Defined --&gt; Ready: 目标和授权足够
+  Defined --&gt; WaitingInput: 真实关键缺口
+  Ready --&gt; Running: 通用RunOnly或Issue Run
+  Running --&gt; WaitingInput: 需要允许的人回答
+  Running --&gt; WaitingDependency: 外部依赖
+  WaitingInput --&gt; Running: 活handle接受answer
+  WaitingDependency --&gt; Running: 活handle恢复
+  WaitingInput --&gt; Ready: 旧Run终结后有新执行输入
+  WaitingDependency --&gt; Ready: 无活Run且依赖就绪
+  Running --&gt; Pausing: 暂停请求
+  Pausing --&gt; Paused: 停止确认和checkpoint
+  Paused --&gt; Ready: 明确有效续接
+  Running --&gt; Completed: 当前Run交付满足目标
+  Running --&gt; Ready: 已定义多阶段的下一Run
   Running --&gt; Failed: 确定失败
-  Ready --&gt; Failed: 启动失败
-  Reviewing --&gt; Failed: 确定验收失败
-  Defining --&gt; Cancelled: 取消且没有活执行
-  Ready --&gt; Cancelled: 取消且没有活执行
-  Reviewing --&gt; Cancelling: 取消且尚有活执行
-  Pausing --&gt; Cancelling: 改为取消
-  Failed --&gt; Ready: 明确授权的retry
+  Ready --&gt; Cancelled: 无活执行直接取消
+  Running --&gt; Cancelling: 有活执行需停止
+  Cancelling --&gt; Cancelled: quiescent已确认
+  Failed --&gt; Ready: 明确retry或已定义有界策略
 </code></pre></details></figure>
-<p>工作状态、执行状态、送达状态分别记录。<code>Completed</code> 证明业务完成；群输出可为 pending/unknown/failed，界面和回报不能合称“已完成并已告知”。<code>Paused</code> 不是未知网络状态，需执行器确认；无法确认则继续 Pausing 并展示真实阻塞。</p>
-<p>图中Ready只允许不存在可继续的活execution。WaitingHuman/WaitingExternal可能保留一个仍活着且安全等待的handle；匹配answer/dependency时优先通过Control恢复该handle并转Running，不再Start。只有旧execution已terminal或quiescent且需下一次执行时才转Ready、新建attempt。无execution的Defining澄清同理，回答后才能首次Start。checkpoint/停止的失败保留Pausing/Cancelling与错误事实；审核暂不可用停留Reviewing并退避，确定失败才Failed；授权撤销先进入控制停止并阻断敏感effects，不默默改principal继续。</p>
-<p>任意非终态取消分两类：没有活execution即Cancelled，有活execution即Cancelling等待确认。图中只画典型边，Host迁移表须覆盖Defining、Ready、Running、Waiting、Reviewing、Pausing、Paused。Completed/Cancelled不被timer复活；Failed仅明确重试或既定有界重试策略回Ready。已完成产物的redelivery是独立输出动作，不重开业务执行。</p>
-<p>每次 wake 最多推进一个有界协调计划：build facts → 现有有限决策/校验 → commit state/effect intents → return。Waiting 状态不占模型请求或常驻 CPU；deadline、输入、回调唤醒。确定的 lease 恢复、控制 ACK、到期处理可纯 Host 状态迁移，无需每件事再请模型判断。</p>
-<p>Reviewing仅是执行结果/交付证据与已定义阶段的协调门槛，不是另设业务质量执行器。现行task_finished仍只有report_result/ignore。自动推进下一阶段必须来自已批准、不可变WorkDefinition或已审持久计划；不能从结果正文自己发明“再补做一步”。新增业务工作必须重新进入同一finish/finish_check工作审查；需要内容级评估时作为用户已授权定义中的独立执行任务。</p>
-<p>事件优先级：撤权与 cancel/安全限制 &gt; 已授权人类 steer/回答 &gt; 可靠 execution 终态/待输入 &gt; 普通补充 &gt; 例行 timer &gt; ambient。每类内部保持 seq；priority 不重排因果依赖，限制每轮 drain 数量并对低优先级 aging，防止 timers 永久饥饿。control 与 completion 竞争时执行第 9 节的 fence 规则。</p>
-<p>复用 <code>finish(actions)</code> 和 <code>finish_check</code>，把合法目标从仅 recalledIssueIDs 扩展成 Host 验证的 WorkRef。start_work 产生 WorkObject；continue_work 仍需 same_deliverable 与本轮推进。executor mode 由 Host/已版本化工作定义选择，模型不任意指定 run_as、credential、输出账号或绕过审查。新增 pause/cancel/answer 动作时同步 schema、工具 hint、Host、policy module/registry/cases 和现行合同，不通过“在 prompt 尾部加一个指令”实现。</p>
-<p>已有用户决策模式、人类选择记录和审查保留。同一明确批准不重复请求，批准绑定具体定义 revision；工作定义改变或授权过期时，不把旧批准移植到新范围。已注册确定模板的自动触发可跳过语义识别，仍经过相同 Host 权限与副作用校验。</p>
-</section><section aria-labelledby="section-8" class="doc-section" id="section-8-block"><h2 id="section-8">8. WorkObject 与 Issue / 自动化复用</h2>
-<h3 id="section-8-1">8.1 Issue 是业务投影与执行方式</h3>
-<p>WorkObject 是事件层承载的工作事实；Issue 是 Multica 的人类管理实体及现有执行入口。建议关系：一个 WorkObject 可零或一个主要 Issue，多次 Execution attempt；必要时显式子事项。直接工作不要求先建 Issue，但人工跟踪、负责人协作、代码交付或现有 Issue 工作流可选择 Issue adapter。</p>
-<p>这里的 adapter 是用户明确要求的多执行方式边界，不是维护两套重复内部流程。TaskService 的 claim、Runtime 选择、启动、归属、取消与完成继续共享。</p>
-<p><strong>直接执行不等于不持久化。</strong>WorkObject、ExecutionRequest、任务行和输出意图必须先持久化。Issue 与 WorkObject 若都有状态，WorkObject 以自己的目标/等待为权威；Issue 的 assigned/status/comments 通过明确映射同步，不让两个状态机相互反复触发。已有历史 Issue 可以通过唯一外部 ref 绑定 WorkObject，恢复不重复创建。</p>
-<h3 id="section-8-2">8.2 为什么不能直接调 Autopilot.run_only</h3>
-<p>当前 <code>dispatchRunOnlyTask</code> 已验证 agent、run、归属并写 task，但 claim、prompt、workspace lookup、completion 和 GC 会继续读取 run→autopilot。若为每个聊天 WorkObject 临时造一个 Autopilot，反而多出规则配置、run、权限和生命周期，难以变快。</p>
-<p>建议抽出内部共用执行入口，以下为契约示意：</p>
-<pre aria-label="代码与协议示例，可左右滚动" tabindex="0"><code class="language-go">type ExecutionRequest struct {
-    ID, WorkspaceID, EmployeeID, WorkObjectID string
-    WorkRevision int64
-    Mode string
-    OriginEventID, AuthorityRef, CapabilityRequestRef string
-    InstructionSnapshotRef, DefinitionRef string
-    OutputPolicyRef, ResumeCapsuleID string
-    RuntimeSelectorRef string
-    IdempotencyKey string
-}
-
-type ExecutionDriver interface {
-    Start(context.Context, ExecutionRequest) (ExecutionHandle, error)
-    Control(context.Context, ExecutionControl) (ControlReceipt, error)
-    Inspect(context.Context, ExecutionHandle) (ExecutionSnapshot, error)
-}
-</code></pre>
-<p><code>Mode</code> 是平台执行入口（direct / issue）；DSH、Claude、Codex 是执行 backend/harness；FC/本机是计算宿主。这三维不要混成同一个 enum。Capabilities 由 backend 与宿主共同报告，运行事实由 Inspect/回执证明。</p>
-<p>抽取顺序：定义不可变 ExecutionRequest 与 task binding → 统一 workspace/attribution/capability/指令装配 → 衔接现有 claim/complete → Autopilot、Issue 和 WorkObject direct 共同调用。迁移后 claim 不再依赖可变化的 Autopilot 当前 description 才能理解这次工作；规则更新只影响后续 firing。</p>
-<p>任务行增加明确的execution request/work scope关联，并扩展claim串行组。当前SQL主要按Issue/Chat串行，无这些关联的任务会落到同Agent的quick-create组（<code>pkg/db/queries/agent.sql:829</code>）。只把work_id塞进JSON会导致独立事项互挡，或同事项不能保证单主lane。建议<code>serialization_scope=(workspace,employee,work_id,primary_lane)</code>，使用数据库claim谓词和适当并发索引，保留runtime实际容量上限；不是在进程内加一个map就完成。</p>
-<p>不能省掉 <code>NotifyTaskEnqueued</code>、empty-claim cache 清理、运行时 launch lease 和退役 Session 检查。现有 run_only 正因绕过 Enqueue 才显式唤醒（<code>autopilot.go:952</code>）。</p>
-<h3 id="section-8-3">8.3 明确工作快速触发</h3>
-<p>已有经过配置校验的 WorkDefinition 保存：版本、输入 schema、目标/交付物、允许来源、principal grant、scene/output policy、runtime selector、超时与 overlap policy。调度或 webhook 匹配受信定义、输入有效、授权有效且无需人工决定时：</p>
-<p><code>Event → validate definition → WorkObject/ExecutionRequest → enqueue → claim</code>。</p>
-<p>一般聊天经过新EmployeeLoop及迁入的现有行为合同识别/审查；已经确认且定义不变的续接由已保存计划恢复，不重复做整轮业务解释。无需每次 firing 再建一个人工 Issue。模板的“方法步骤”来自已批准定义，不由协调器自行替用户发明。</p>
-<p>例行规则定义 <code>skip/coalesce/queue</code>，第一版默认同规则同目标不重叠、过期 firing latest-only；支持历史每次都执行时必须显式配置。一次性人类等待 deadline 不能套用周期任务 latest-only 而被吞掉。现有 cron 时区默认 UTC，用户配置用 Asia/Shanghai 时显式保存，planned_at 统一 UTC，测试 DST 和停机补偿。</p>
-<h3 id="section-8-4">8.4 速度评估</h3>
-<p>现在可以证明路径上有 Issue 创建/评论续接、窗口、模型审查、claim/运行时启动等成本；<strong>没有现场测量，不能说 Issue 就是主要瓶颈，也不能承诺 direct 快多少。</strong>当前 scheduler 默认 30 秒 tick（<code>scheduler/manager.go:23</code>），Coordinator普通窗口有 4 秒静默/12 秒上限（F09）；这些不能被归因成 Issue 数据库写耗时。</p>
-<p>实施前按同工作定义采样：ingress_commit、route_done、review_done、execution_enqueued、runtime_ready、claimed、first_progress、first_human_output、completed。对比 warm direct / warm issue / cold direct；分开 p50/p95、模型调用数和 token。先删冗余编排，再优化冷启动。下面指标是验收目标，不是当前成绩：</p>
-<ul>
-<li>已注册工作：受理至 enqueue 的服务端 p95 ≤ 300ms，排除 provider 网络、冷启动；公开样本数及负载。</li>
-<li>控制受理 p95 ≤ 300ms；健康且支持控制的 runtime p95 ≤ 2s 回 received/applied ACK。</li>
-<li>确定进度事件持久化后至输出 intent p95 ≤ 1s；实际钉钉发送单独计时，不合并宣称。</li>
-<li>自由语言协调保留审查，不承诺与上述模板直达相同延迟。</li>
-</ul>
+<p>图是常见边；任何未终结Task取消时，无活执行直接Cancelled，有活执行走Cancelling。停止未知保持Pausing/Cancelling并记录错误。Ready不允许有冲突活writer；回答与依赖先送原handle，只有旧Run终结/停止后才Start新Run。多次Run不自动意味着Issue，也不由Loop从结果正文发明新业务步骤。</p>
+<p>普通Run完成直接提交结果/状态，不增加Reviewing→独立审查模型的默认阶段。业务规则明确要求验收、审批或peer review时作为真实Task依赖/等待或独立执行，保留目的和允许的人；不能把所有输出都塞进旧Coordinator审核。</p>
+<p>一次wake：Builder编译Context → 主BotLoop工具/语义动作，或模板直达 → HostGate → 原子保存Task变更/RunSpec/NoticeIntent → 返回。等待不持有模型请求，出错不自动绕过授权；恢复已提交效果只查receipt和幂等键，不重做路由判断。</p>
+<p>Task动作最小集合可为reply、update_task、run_task、wait_input、wait_dependency、control_run、scene_notice、complete_task。动作名字是新接口设计；仍由原BotLoop工具推进，不要求旧finish.actions/quote_options/work_checks协议迁入。Actor、Target、Scope、GoalRevision和EffectKey由Host核验，动作只使用当前合法目标。</p>
+<p>主Loop负责语义：引用/同主题只是候选线索；状态询问不重跑；同一交付物实质补充才续接；不确定就具体澄清。Host校验数据结构、身份/授权/目标归属，不声称靠关键词或标题能确定业务语义。对照样本和真实模型回放验证这层质量，默认不再追加一个review模型来重复裁决。</p>
+<p>优先级：撤权/有效cancel与安全限制 &gt; 人类修正/真实回答 &gt; 可靠Run终态/需要输入 &gt; 普通补充 &gt; 例行timer &gt; ambient。保持每类seq/因果，等待不被stuck阈值误报，低优先级有aging。控制目标集合由真实角色与AuthorityRef形成，不按群成员身份全放行。</p>
+<p>多副本使用当前ingress/任务服务的PG幂等、租约与effect提交；运行内核没有数据库长锁。旧lease owner、旧goalRevision或旧Run generation不能提交/发消息。HostGate是执行边界，既不是第二个业务模型，也不是对外“我在审查”的员工人格。</p>
+</section><section aria-labelledby="section-8" class="doc-section" id="section-8-block"><h2 id="section-8">8. 统一Task与通用RunOnly：Issue是协作形态，不是默认入口</h2>
+<h3 id="section-8-1">8.1 目标Task、一次Run与队列任务分开</h3>
+<div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
+<thead>
+<tr>
+<th>概念</th>
+<th>含义</th>
+<th>关系</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>EmployeeTask</td>
+<td>用户希望达成的目标、Owner、修正、约定、依赖与等待</td>
+<td>默认run_only，可选issue_ref；场域账本承载任务和运行记录</td>
+</tr>
+<tr>
+<td>ExecutionRun</td>
+<td>围绕同一目标的一次执行</td>
+<td>绑定TaskID、goalRevision、SceneBinding、principal、context/capsule及结果</td>
+</tr>
+<tr>
+<td>ExecutorQueueTaskID</td>
+<td>agent_task_queue中的执行任务</td>
+<td>复用现有claim/取消/daemon/FC链，不冒充目标TaskID</td>
+</tr>
+<tr>
+<td>Autopilot机制</td>
+<td>通用运行、归属、记录及执行调度能力</td>
+<td>定时规则只是它的一种触发；普通事件也能run_now</td>
+</tr>
+<tr>
+<td>Issue</td>
+<td>Task的跨场域协作/持续管理投影</td>
+<td>挂在同一Task上；继承已有关联Run，不能产生竞争的第二目标权威</td>
+</tr>
+</tbody>
+</table></div>
+<p>默认路径：<code>Event → EmployeeBuilder → EmployeeTask/RunSpec → 通用Autopilot RunOnly → TaskService → Harness</code>。简单目标可以随首次Run/capsule原子保存轻量Task定义，不引入“建Task—规划—审查—建Issue—派单”的强制仪式。Goal必需，成功条件和产物格式有需要再明确，不能要求普通单次查询先填完整任务书。</p>
+<p>inbound、修正、人类答复、执行进度/终态、依赖与timer统一为TaskSignal；模型工具围绕Task操作，具体信号来源仍保留。内核一轮Done不是Task完成；结果回报也不是另一套业务Task。</p>
+<h3 id="section-8-2">8.2 RunOnly与Issue的选择边界</h3>
+<div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
+<thead>
+<tr>
+<th>情况</th>
+<th>默认选择</th>
+<th>理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>一次执行就能交付的查询、整理、分析或明确操作</td>
+<td>RunOnly</td>
+<td>直接给目标和当前材料，避免沙箱内Issue协议</td>
+</tr>
+<tr>
+<td>同场域内需要工具多步骤或短期人类答复</td>
+<td>RunOnly仍可适用</td>
+<td>步骤数/运行时长本身不要求Issue，Task/capsule可保存等待与续接</td>
+</tr>
+<tr>
+<td>复杂目标、多阶段反复执行、明确分工/依赖和共享管理</td>
+<td>评估Task+Issue</td>
+<td>Issue提供可管理的阶段、历史入口和协作状态</td>
+</tr>
+<tr>
+<td>跨群、单聊、文档等多场域协同且需要共享目标视图</td>
+<td>Task+Issue优先评估</td>
+<td>可追踪各场域责任与多次Run，需先验证可见范围</td>
+</tr>
+<tr>
+<td>已有Issue继续、用户明确要求建Issue</td>
+<td>Issue形态</td>
+<td>沿已有目标与权限推进，不转换成另一个任务</td>
+</tr>
+<tr>
+<td>跨场域但资料私密、不允许workspace可见</td>
+<td>不自动建Issue</td>
+<td>先收窄共享摘要/授权；必要时继续受限Task，不能靠Issue扩大披露</td>
+</tr>
+</tbody>
+</table></div>
+<p>复杂性与跨场域性质是选择因素，不按一个耗时阈值强制建Issue。多次运行也不是Issue的独占能力；其收益是业务协同、共享状态和沙箱按需渐进加载相关history。RunOnly任务可逐步升级Issue形态，保留TaskID/历史Run/产物来源，不重做已经完成的步骤。</p>
+<p>Issue一般沿Multica工作区访问规则可见，不能默认等同场域私有。RunOnly也不会天然更私密：必须给场域运行账本、结果、日志和产物加SceneBinding/ACL，授权查询不能只看workspace membership。自动升Issue时只放获准共享的目标/摘要，私有材料保留在受限ContextRef；“多个场域参与”本身不授权公开给整个工作区。</p>
+<h3 id="section-8-3">8.3 直接复用通用Autopilot，而非再造执行器</h3>
+<p>当前run_only已有agent readiness、调用权限、归责、agent_task_queue入队、wakeup和完成记录。保留它作为默认运行机制。需要适配的主要是<strong>输入快照和场域归属</strong>：不把每个即时任务伪装为一条永久cron规则，也不另起与Autopilot竞争的DirectRunner服务。</p>
+<p>建议内部通用调用：<code>RunTask(ctx, RunSpec) → ExecutionRun</code>。RunSpec包含EmployeeTaskID/goalRevision、Goal/DefinitionSnapshot、TriggerEventRef、SceneBindingRef、CapabilityContextRef、RuntimeProfile、HistoryContextRefs、OutputPolicyRef、幂等键；TriggerRegistrationRef可空。模式默认为run_only，IssueRef仅在任务协作形态需要时给出。</p>
+<p>保留并复用现有<code>dispatchRunOnlyTask</code>及TaskService启动链；将claim/prompt/workspace/归属/完成所需的当次资料固定为RunSpec快照，使它们无需重读变化中的Autopilot description。静态规则仍保留Autopilot/Trigger配置，普通任务调用同一运行内核并挂场域Run记录。这是对运行接口的适配，不是为了全平台抽象先重构所有来源。</p>
+<p>必要接缝：workspace与principal明确传递；serialization scope按Task/共享资源，不落到所有quick-create统一串行组；<code>NotifyTaskEnqueued</code>保留empty-claim bump/wakeup/launch lease；进度与消息用同一workspace/scene解析；终态GC等待capsule完整保存。旧2.0显式issue/chat surface在LegacyWireAdapter兼容；新的默认RunOnly不要求旧协议立即改变。</p>
+<h3 id="section-8-4">8.4 Task上下文与渐进历史</h3>
+<p>默认RunOnly capsule：当前目标、最新授权/修正、必要材料、最近结果brief、ContextUsed和引用。Task ledger按TaskID/RunID收集，不按同一员工在频道的时间窗猜最后输出。GawkBot有限ledger/brief可直接port，但它本身不是完整渐进history系统。</p>
+<p>Issue形态额外提供受限history handle，沙箱需要时按目标、Run、comments和产物逐段读取；不把整个Issue史或整个场域史固定注入每个prompt。上游依赖除了状态，还带已授权的结果/产物引用；review/unknown不冒充已验证完成。</p>
+<p>每次Builder记录实际ContextUsed与水位。权限变化、材料过期、读失败和截断都可见；任务连续不依赖同一个模型Session。回头重发原产物可只做redelivery，不因旧目标标题触发新研究。</p>
+<h3 id="section-8-5">8.5 同场域复用计算环境，Task上下文仍隔离</h3>
+<p>RunOnly与Issue形态在同场域可以复用符合条件的sandbox、repo基底、技能安装和工具缓存。计算环境key包含workspace/employee、SceneBinding、安全principal、权限版本、runtime/image和workspace policy；同group并不意味着不同人的个人凭据可以共享。</p>
+<p>Native模型Session和Task材料按TaskID/principal/epoch隔离。同一Task从RunOnly升为Issue且授权/环境兼容时可以继续原Session/capsule；不同Task只共享允许的基础环境，不自动共享模型历史、工作目录正文或私人文件。新writer开始前确认旧writer停止，共享资源由lane串行保护。</p>
+<p>首次M2 RunOnly交付也有最低持久化门槛：DB保存本轮结果/状态；本地文件产物必须先上传校验、形成稳定ArtifactRef与场域ACL，确认后才GC。没有保存回执时不得给人临时本地链接或删目录。完整workspace delta/native session恢复可留M3，但最低结果与正式产物保存不可留到M3。M2对活handle问答、跨沙箱resume仅开放已实测backend路径，其余可靠排队/停止后续接并诚实表达。</p>
+<p>当前FC暖复用主要按Issue/Chat、run_only默认新目录且终态可立即GC；这是要补的适配点，不把希望复用说成已经全部实现。员工NAS也不能证明隔离；同场域可见性之外的文件仍需受限挂载/目录ACL或独立实例。</p>
+<h3 id="section-8-6">8.6 性能基线与解释</h3>
+<p>用户提供的端到端中位数：</p>
+<div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
+<thead>
+<tr>
+<th>路径</th>
+<th>中位数</th>
+<th>来源/解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>自动化直接RunOnly</td>
+<td>9.3秒</td>
+<td>用户提供的已有测量；本轮未重新跑基准</td>
+</tr>
+<tr>
+<td>手工建Issue再派单</td>
+<td>24.5秒</td>
+<td>用户提供的已有测量；含Issue工作协议</td>
+</tr>
+<tr>
+<td>相对倍率</td>
+<td>约2.63倍</td>
+<td>24.5/9.3；两路径差15.2秒，不全部归因于review</td>
+</tr>
+</tbody>
+</table></div>
+<p>按用户对测量的说明，主要收益是<strong>进沙箱后无需再走Issue协议</strong>，不是声称沙箱冷启动消失。该数据支持简单目标默认直接RunOnly；不再用“没有性能证据”为理由把所有工作强制绕Issue。</p>
+<p>后续基准固定目标/Runtime/provider/材料，记录admission、Builder、HostGate、enqueue、sandbox ready、provider start、Issue协议调用数、first meaningful result和terminal，分warm/cold与样本量。独立review调用数在新普通路径应为0；9.3/24.5是端到端指标，不能从差值反推出某一阶段实际耗时。</p>
 </section><section aria-labelledby="section-9" class="doc-section" id="section-9-block"><h2 id="section-9">9. 沙箱 Session 的补充、中断和恢复</h2>
 <p>当前 TaskService 的 steer/cancel 和 runtime session resume 是可复用基础，但必须区分“结束当前任务再开下一次”与“将新输入插入正在运行的 turn”。原生DSH协议已接受queue/steer并能传给loopback Host（<code>pkg/protocol/dsh_native.go:125</code>），但native浏览器/反向输入入口已撤回（<code>internal/dshhost/README.md:129</code>）；因此应复用原语补齐受信控制传输，不宣称公共平台已具备运行中插话。原生DSH路径和传统CLI backend分别核验，见第15节。</p>
 <p>建议 durable control command：<code>command_id, execution_id, attempt, expected_work_revision, expected_generation, actor_ref, authority_ref, input_seq, kind, body_ref, expires_at</code>。所有 input 先保存，明确 ACK 阶段：persisted → received → applied；supported/rejected/superseded/expired/unknown 分开。HTTP 202 只证明 persisted，不能回复“已经改好了”。</p>
@@ -1129,12 +1638,53 @@ type ExecutionDriver interface {
 </table></div>
 <p>每个 backend 报告 <code>append/steer/interrupt/checkpoint/native_resume/needs_input</code> 等能力及版本；宿主也需支持传输与隔离。 unsupported 是显式结果。第一期可以交付诚实的 cancel+resume steering，但界面不能显示“正在运行的任务已实时吸收”。原生 turn 注入只在真实 canary 证明后打开。</p>
 <p>数据库cancelled仅证明平台受理停止。当前steer事务取消旧task后立即唤醒下一task（<code>service/task.go:2824</code>、<code>:2859</code>），旧daemon可能随后才收到取消。复用DSH已有workspace lock/witness与<code>NativeHostTaskQuiescent</code>原语，在重用同一工作区或Capsule前等quiescent receipt；未确认停止则不开新writer。新控制回执因此还应有<code>quiescent</code>阶段，不把applied ACK等同于进程/子进程已停止。</p>
-<p><strong>控制竞争：</strong>WorkObject 的 control seq/revision 和 execution attempt/generation 是提交门槛。cancel 已在数据库受理时，旧 Worker 的 completed 不能把工作改回成功；新 execution 已启动时旧结果只留审计。steer 与 completion 竞争时，Host判断该输入是否已被消费：未消费的合法变更需要下一步，旧结果不能覆盖它。最终群输出也校验同一结果版本/限制，不因迟到回调重复刷屏。</p>
+<p><strong>控制竞争：</strong>EmployeeTask 的 control seq/revision 和 execution attempt/generation 是提交门槛。cancel 已在数据库受理时，旧 Worker 的 completed 不能把工作改回成功；新 execution 已启动时旧结果只留审计。steer 与 completion 竞争时，Host判断该输入是否已被消费：未消费的合法变更需要下一步，旧结果不能覆盖它。最终群输出也校验同一结果版本/限制，不因迟到回调重复刷屏。</p>
 <p>“先别上线”需迅速撤销后续部署权限；单靠对 CLI 发 SIGTERM 不能保证已发 HTTP 的外部动作未发生。对可经平台网关的写动作使用 operation/idempotency token 和在线 fence；CLI 可直接走外网的动作不能宣称零竞态，需以步骤执行、确认边界和外部回读证明真实效果。不支持可控写动作的 backend 不能承担需要强即时停写保障的工作。</p>
 <p>恢复三级：同一健康且安全上下文一致的 Session → 从 Capsule 恢复受限文件/摘要并重新授权 → Capsule过期后只用工作状态与正式产物新开 execution。native session ID 是优化项，不是工作连续性的权威。权限、principal、runtime/workspace不匹配时重建，不盲目 resume。</p>
 <p>长任务还必须处理计算和token期限：当前FC默认沙箱约80分钟、daemon token约1小时；本机AgentTimeout=0不能据此推断FC可无限运行。需要按固定镜像/协议能力验证续租、凭据轮换、网络断开后恢复，以及期限前checkpoint。续租失败形成blocked/可恢复停止，而不是等provider销毁才保存现场。这是代码路径风险，尚未做跨60/80分钟现场测试。</p>
 </section><section aria-labelledby="section-10" class="doc-section" id="section-10-block"><h2 id="section-10">10. 有人味的员工交互：记得约定、适时开口、知道找谁</h2>
-<p>WorkObject 保存 requester、accountable、允许参与者和每个输出目标；真实 <code>HumanQuestion</code> 保存 question_id、work_revision、询问目的、允许回答者、answer schema、deadline、origin message、所用 grant。发出问题是协调效果，收到答复后精确关联真实问题，不把“好/行”泛化成任意权限批准。</p>
+<h3 id="section-10-0">10.0 SceneNotice：执行中核心点直接回到场域</h3>
+<p>Agent执行过程中必须有一个可靠的<code>scene_notice</code>/<code>EmitTaskSignal</code>端口，不仅等最终CompleteTask。Worker用当次任务token报告TaskID、RunID、goalRevision、signal seq、kind、事实/产物引用和NoticeIntent；Host取Task的SceneBinding与OutputPolicy，不能由Worker正文任意指定另一个群或人。</p>
+<div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
+<thead>
+<tr>
+<th>signal kind</th>
+<th>典型核心点</th>
+<th>处理</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>milestone/finding</td>
+<td>某段材料已整理、重要发现会影响下一步</td>
+<td>Host检查当前Run和事实引用，形成有意义的场域通知</td>
+</tr>
+<tr>
+<td>needs_input/action_required</td>
+<td>需要某人决定/提供缺口</td>
+<td>建立真实question/等待，找允许回答的人；不能等Run结束才问</td>
+</tr>
+<tr>
+<td>blocked</td>
+<td>真实依赖故障和已完成部分</td>
+<td>明确影响与缺口，有限提醒，不臆测原因</td>
+</tr>
+<tr>
+<td>control_applied/checkpoint</td>
+<td>修改已应用、执行已停止、现场已保存</td>
+<td>按各阶段回执表达，saved不等于applied/quiescent</td>
+</tr>
+<tr>
+<td>result</td>
+<td>阶段产物或最终结果</td>
+<td>引用本轮产物和版本；旧进度不覆盖新结果</td>
+</tr>
+</tbody>
+</table></div>
+<p>快速路径为<code>Worker signal → 当前事件接入Adapter → 持久TaskSignal/NoticeIntent → 轻量HostGate → ReplyComposer → 场域outbox/DWS</code>。已有自包含事实/收件绑定的核心通知不必重跑主模型，更不进入旧finish_check。需要语义判断下一步时才唤醒EmployeeLoop；生成表达不改目标与授权。</p>
+<p>notice key包含Task/Run/seq或stage/result version+kind+audience；按真实变化节流，重复信号不刷屏。数据量、thinking和每个tool log不成为群进度。Doc/日程/审批场域按已授权回复surface发送，群/个人规则回其SceneBinding；消息送达独立receipt确认。</p>
+<p>只有产物ref而不包含需披露的敏感正文时也检查audience权限。当前TaskService ReportProgress仅做realtime展示、DWS shim可直接发送业务消息；新端口统一关键语义和幂等receipt，避免Executor发过一次、EmployeeLoop再发一次。对legacy lane保持原callback协议，不把progress塞成delegated_to_issue。</p>
+<p>EmployeeTask 保存 requester、accountable、允许参与者和每个输出目标；真实 <code>HumanQuestion</code> 保存 question_id、work_revision、询问目的、允许回答者、answer schema、deadline、origin message、所用 grant。发出问题是协调效果，收到答复后精确关联真实问题，不把“好/行”泛化成任意权限批准。</p>
 <p>原请求群里的关键里程碑引用原消息并 @正确请求者；替某人问第三方时，第三方是 question recipient，结果仍回原 requester。webhook来源与人类结果目的地可以不同，但须在受信规则里明确绑定；无 output target 的事件不猜一个群发送。</p>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
 <thead>
@@ -1188,10 +1738,10 @@ type ExecutionDriver interface {
 <p>“已覆盖本目标”要求权威receipt匹配输出kind、当前result/stage版本和准确audience/recipient；执行器直接DWS发送的receipt也记录相同身份。已发question/progress不能覆盖final result；引用回复已有正确作者mention时无需重复@。</p>
 <p><strong>新增发送门槛：</strong>发送前在线验证AuthorityRef/有效grant、work revision、execution generation、output policy revision与目标元组；当前worker只发送冻结快照，需补这个guard（<code>dingtalkresponse/worker.go:135</code>）。撤权/取消可原子撤销未提交的pending intent；已进入unknown/provider_accepted的输出只reconciliation，不宣称还能撤回。门槛校验与外部网络写仍存在边界竞态，应以发送attempt/fence记录受理顺序；平台不保证撤销已经向DWS提交的消息。</p>
 <p>当前<code>SandboxResponseState</code>按task/issue/CID汇总任意delivered，中间问询或进度可能使最终结果被当AlreadyToldScene而静默（<code>dingtalkresponse/sandbox.go:159</code>→<code>handler/task_finished_loop.go:115</code>）；需改成明确输出类型和覆盖版本。合窗后每项输出保存它自己的trigger actor/message，不沿最初窗口route一概兜底；现有sync wrapup未保留root/terminal task ID的链路须专项验证。这些是代码结构发现/推断，不是已重现的线上事故。</p>
-<p>执行器输出只提报语义事件/结果；EmployeeLoop通过现有终结审查和策略生成可发文本。关键进度模板可在Host验证事实后直接形成intent，避免每个progress再走长协调推理。原始 connector数据必须先确定披露 audience；具有工具权限不等于可以在群公开。对确实需要执行器直接发业务通知的岗位工作，沿当前已授权 DWS路径留下receipt，避免与EmployeeLoop二次发送。</p>
+<p>执行器输出只提报语义事件/结果；EmployeeLoop通过轻量HostGate与OutputPolicy生成可发文本；新普通路径不做旧终结审查。关键进度模板可在Host验证事实后直接形成intent，避免每个progress再走长协调推理。原始 connector数据必须先确定披露 audience；具有工具权限不等于可以在群公开。对确实需要执行器直接发业务通知的岗位工作，沿当前已授权 DWS路径留下receipt，避免与EmployeeLoop二次发送。</p>
 <p>发送不确定要进入 reconciliation，回读平台 receipt/message，不能自动重发造成重复。个人明文不经群outbox；需要本人单聊且路径不可用时保存待交付，不能退化群发。通知频控以真实stage/change计，同一问题超时提醒按授权规则有限次处理；成功完成不由“assistant说完成”证明。</p>
 <h3 id="section-10-1">10.1 人味来自连续的员工行为</h3>
-<p>员工对外有稳定身份，能接着上次的约定办事：记得谁提出工作、哪些人允许补充、要交给谁、“先给草稿”和“暂不外发”等限制。模型、执行器和沙箱可以替换，这些工作约定由WorkObject、真实问题和已提交场域记忆维持。它可以说“我”“这份周报”“上次你要求先给草稿”，不能把账号主人的生活、其他人的发言或自己的旧推测当成现实经历。</p>
+<p>员工对外有稳定身份，能接着上次的约定办事：记得谁提出工作、哪些人允许补充、要交给谁、“先给草稿”和“暂不外发”等限制。模型、执行器和沙箱可以替换，这些工作约定由EmployeeTask、真实问题和已提交场域记忆维持。它可以说“我”“这份周报”“上次你要求先给草稿”，不能把账号主人的生活、其他人的发言或自己的旧推测当成现实经历。</p>
 <p>开口时回答人现在关心的变化。受理后说具体目标与关键边界；有新阶段、重要阻塞、需要人的决定、控制状态改变或最终结果再说。安静等待也可以是可靠行为，不用每个tick发“我还在处理”。被直接追问则忠实回应当前问题，不能因为没有新进展就静默，也不能把旧接单回执再发一次。</p>
 <p>当前已有persona/reply_tone与voice模块：<code>server/internal/service/inboundcoord/coordinator.go:333</code>、<code>policy/voice.md:1</code>。但接单在<code>work_receipt.go:51</code>和NormalizeWorkReceipts中被固定为“收到，我来处理”一类文案；只增加persona字段不会自动改变这条Host路径。迁到EmployeeLoop时应一起改这一处表达接口，继续保持所有工作真实提交后才发送的门槛。</p>
 <p>自然表达应给人有用的判断和下一步，只从已经验证的事实出发。失败说明已做步骤、真实缺口与影响；纠正说明哪条要求已经保存、哪份草稿是否已更新；暂停说明是否已停止，不用含糊“放心”。未知原因可以简短承认未知，不能编造网络、权限、个人忙碌或承诺没有依据的完成时间。</p>
@@ -1248,7 +1798,7 @@ type ExecutionDriver interface {
 </tr>
 </tbody>
 </table></div>
-<p>大多数receipt、控制与简单进度不增加模型调用。主模型已有合格文本时直接沿审查/保存计划通路使用；需要受限render时作为同一Tick驱动的purpose阶段，结果再审。原<code>conversationReplyInput</code>故意排除work records与执行事实（<code>conversation_reply.go:46</code>、<code>:129</code>、<code>:183</code>），保留这个边界；为工作输出新增有事实引用的Frame，而不是向纯闲聊输入塞全量事项历史。</p>
+<p>大多数receipt、控制与简单进度不增加模型调用。主Loop已有事实明确的文本时直接走HostGate/保存/发送；仅复杂表达选择有限render，不再默认追加独立review。原<code>conversationReplyInput</code>故意排除work records与执行事实（<code>conversation_reply.go:46</code>、<code>:129</code>、<code>:183</code>），保留这个边界；为工作输出新增有事实引用的Frame，而不是向纯闲聊输入塞全量事项历史。</p>
 <p><strong>什么情况下值得发消息：</strong>有明确直接待答请求、已受理的新目标、实质阶段变化、需要此人回答的问题、重要阻塞、控制状态变更、未覆盖的当前结果或用户明确授权的提醒。缺少新事实的轮询、thinking、原始tool输出不转成群消息。这个判断结合现行参与资格及结果覆盖，不能作为漏掉已明确请求的借口。</p>
 <h3 id="section-10-3">10.3 一件事怎样像同事一样持续推进</h3>
 <p>以下为目标交互示例，数量、名字与产物为示例，不是当前线上证据。每句话需要对应事实；群里最终使用稳定身份、引用回复与授权audience，不依赖昵称定位。</p>
@@ -1316,92 +1866,83 @@ type ExecutionDriver interface {
 <p>GC需覆盖native Session、私有盘临时目录、对象版本/缓存及备份保留边界；对象存储/备份受既定保留策略时，明确物理清除延迟，不能把索引删除当成字节立即清零。最小审计元数据可保留hash/来源/删除receipt，不保留被删除session正文。</p>
 <p>Promotion 记录 artifact ID、source capsule/execution、hash、业务类型、独立存储ref、ACL、发布者及交付receipt。复制并校验成功后才提交promotion；不能只给临时文件换名字。正式产物不依赖将来会删的Capsule链接。引用已有PR/钉钉文档时保留外部ACL和稳定ref；删除本地Capsule不等于自动删除外部正式产物。</p>
 <p>Capsule只能恢复到兼容安全域；撤权或principal变化不能重新注入旧私有对话。共享学习/记忆只从经过审批或授权的脱敏总结另行提升；不默认把session-log当员工公共记忆。</p>
-</section><section aria-labelledby="section-12" class="doc-section" id="section-12-block"><h2 id="section-12">12. 方案比较与决策</h2>
+</section><section aria-labelledby="section-12" class="doc-section" id="section-12-block"><h2 id="section-12">12. 决策：新通道直接试BotLoop，旧通道保留灰度</h2>
+<p>选择复制并适配Go BotLoop及可复用Task设计，不先把旧Coordinator完整拆解迁入。最初完成source adapter、SceneBinding/Builder、单员工单backend、通用RunOnly和关键Notice；先以fake/只读canary证明模型与任务推进，再打开有授权的执行。</p>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
 <thead>
 <tr>
-<th>路径</th>
-<th>收益</th>
-<th>主要代价</th>
-<th>判断</th>
+<th>决策点</th>
+<th>本版选择</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>直接复制bot核心，新建EmployeeLoop，复用能力服务</td>
-<td>保留已实现Loop主体；差异集中在事件、权限、存储、异步执行和表达端口</td>
-<td>必须修取消/锁/tool协议/finish闭合，并迁移政策和旧受理记录</td>
-<td><strong>推荐，也是用户明确要求的路线</strong></td>
+<td>主循环</td>
+<td>EmployeeLoop复制BotLoop主体；Task/工具/上下文按本仓能力适配</td>
 </tr>
 <tr>
-<td>自行重写新Loop，只借鉴GawkBot设计</td>
-<td>代码完全本仓控制</td>
-<td>重写重复phase/queue/控制逻辑，不能满足代码直接复用优先</td>
-<td>不选</td>
+<td>旧Coordinator</td>
+<td>当前事件层后的独立legacy lane，不嵌套、不双执行，保持可灰度</td>
 </tr>
 <tr>
-<td>引入完整GawkBot服务或保留旧Coordinator外包BotLoop</td>
-<td>全产品功能或初期包装方便</td>
-<td>前者重复身份/存储；后者嵌套协调并未融合核心</td>
-<td>不选；保留能力服务不等于保留旧协调运行圈</td>
+<td>默认任务执行</td>
+<td>通用Autopilot RunOnly；Run和Task挂场域</td>
+</tr>
+<tr>
+<td>Issue</td>
+<td>已有明确Issue目标或复杂/跨场域协作且可见范围获准时选择</td>
+</tr>
+<tr>
+<td>校验</td>
+<td>快速HostGate，普通没有独立LLM review；明确审批单独等待</td>
+</tr>
+<tr>
+<td>中间结果</td>
+<td>SceneNotice进场域outbox，关键问题/阻塞不等final</td>
+</tr>
+<tr>
+<td>原生事件</td>
+<td>直接复用最新Go DWS SDK/连接管理；现有入口做一层Adapter</td>
+</tr>
+<tr>
+<td>共享环境</td>
+<td>同场域且principal/权限/任务隔离允许时复用sandbox，历史与凭据不混</td>
 </tr>
 </tbody>
 </table></div>
-<p>决策驱动：权限来源唯一；工作连续性独立于沙箱；控制和送达诚实可证；复用当前Go执行链；减少自由语言以外的冗余模型调度。</p>
-<p>代价：新WorkObject成为协调权威后，需要明确Issue映射和历史回填；事件actor不能只在内存；native session和私有盘按更细安全范围隔离可能影响热启动收益。接受这些代价，不用以共享个人session换速度。</p>
-</section><section aria-labelledby="section-13" class="doc-section" id="section-13-block"><h2 id="section-13">13. 分阶段实施与文件责任</h2>
-<p>以下是实施顺序和验收边界，不是本次已完成清单。每阶段独立review；允许先上线只使用已有能力的事件源，不提前开放未验证权限模式。</p>
-<p><strong>按纵向切片交付，下面A–F是模块责任，不要求横向全部完成才运行第一条链路：</strong></p>
-<ol>
-<li><strong>V1 新Loop接管切片：</strong>先复制并patch bot核心、迁入EmployeePolicy；一个试点员工、一个已验证backend、MessageRouter现有事件的完整Normalizer，IM及执行结果作为主工作链，其他事件沿兼容专项处理。WorkObject接原Issue能力服务，证明两件工作独立、原Session答复恢复、结果版本/正确actor回报、重复事件及重启恢复。切换后新请求不再走Coordinator；仅抽实际需要的Start/Inspect，Episode先用锚点记录。</li>
-<li><strong>V2 明确工作直达切片：</strong>在V1底座增加已注册timer/webhook定义→direct ExecutionRequest，补run_only相关claim、workspace、指令快照、串行组和completion。证明真实无Issue执行并测量warm/cold收益。这一步是本需求的核心直达MVP，不以整个自由聊天改造作前提。</li>
-<li><strong>V3 可交互与恢复闭环：</strong>增加durable Control、quiescent证明、关键问题/进度、Capsule统一留存删除；后续按能力逐个开放更多backend、自由聊天direct、个人delegation和原生turn注入。每项分别验收，不能因一个backend通过就宣称全Runtime支持。</li>
-</ol>
-<p>V1/V2内只抽被使用的执行契约；未迁移来源保留它当前正常域服务入口，不能对同一次输入双写两个工作权威或跑两套决策。迁移某来源时切到唯一新入口并移除相应旧内部流程，不引入永久兼容shim。所有source最终收口是终态架构，不是V1先一次性重构全平台的前置条件。</p>
+<p>实际风险集中在ctx取消、锁外调用、工具关联、PG幂等、scope/actor、可见性和writer停止确认。按触发的差异修补，不能因为这些边界需要正确就先搭完整旧审查体系。旧通道与当前服务给试点退路，新通道失败不自动切旧重派。</p>
+</section><section aria-labelledby="section-13" class="doc-section" id="section-13-block"><h2 id="section-13">13. 拆解与交付顺序</h2>
+<p>详细执行清单见<a href="#appendix-delivery-plan-title">13任务实施拆解</a>，含责任文件、依赖、语义fixtures、fake-only/TDD步骤、PG并发和真实canary验收。所有步骤尚未实施。</p>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
 <thead>
 <tr>
-<th>阶段</th>
-<th>主要修改范围</th>
-<th>交付及通过条件</th>
+<th>里程碑</th>
+<th>交付</th>
+<th>明确不作前置</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>A：基线整合与复制验证</td>
-<td>能力分支rebase；复制bot包+原测试；patch清单/来源；warm/cold观测</td>
-<td>来源完整、fake核心测试可跑；旧行为合同迁移不倒退；不拉全产品依赖</td>
+<td>M1 新Loop可试且可灰度</td>
+<td>入口Adapter/RouteOwner、复制改名内核、Task/journal/mailbox、DWS native及Builder、轻量HostGate</td>
+<td>不删除旧Coordinator，不迁全旧policy/review，不回填所有历史Issue</td>
 </tr>
 <tr>
-<td>B：统一事件入口</td>
-<td>建议新增<code>internal/employeeevent</code>；Dispatch 2.0/legacy与scheduler/webhook适配；PG inbox/mailbox/outbox</td>
-<td>第5节七类事件、controls、callbacks逐项兼容；重复不重派、身份不伪造</td>
+<td>M2 场域RunOnly与及时回报</td>
+<td>通用Autopilot RunSpec、SceneBinding账本、关键Notice/问题、控制确认、任务12A最低结果/产物保存后GC、同scope隔离</td>
+<td>不为单次任务强制建Issue，不等全部backend都支持live steer</td>
 </tr>
 <tr>
-<td>C：独立工作与执行入口</td>
-<td>建议新增<code>internal/workobject</code>、<code>service/execution_request.go</code>；抽取autopilot/task/claim/complete</td>
-<td>direct无Issue但有正确workspace/attribution/指令/capability；旧Issue/自动化仍通过同入口</td>
-</tr>
-<tr>
-<td>D：EmployeeLoop接管与Episode</td>
-<td>新<code>service/employeeloop</code>；迁政策/helpers；复用assoc/userdecision/scenememory；删除旧协调运行路径</td>
-<td>逐Step主体是复制后的Tick；无Coordinator运行依赖/第二主模型圈；整窗正确、等待可恢复</td>
-</tr>
-<tr>
-<td>E：运行控制与过程输出</td>
-<td><code>pkg/protocol</code>、daemon/runner、backend adapters、responseworker</td>
-<td>命令三阶段ACK；cancel/steer竞争不丢；真实backend支持矩阵；关键进度找到指定对象</td>
-</tr>
-<tr>
-<td>F：Capsule与Promotion</td>
-<td>建议新增<code>internal/executioncapsule</code>；DSH session/workdir、存储、GC</td>
-<td>完整checkpoint才可恢复；撤权不可复用；逻辑删除同生共死；正式产物独立有效</td>
+<td>M3 协作与恢复闭环</td>
+<td>可选Issue形态、history handle、依赖、多场域、Capsule/Promotion、扩源schema和更多Runtime</td>
+<td>不将私有材料发布整个workspace，不把原生session当工作真相</td>
 </tr>
 </tbody>
 </table></div>
-<p>V1仅称持续协调试点；V2完成才称含明确工作直达的EmployeeLoop MVP。E控制与交互通过后才称“可交互长任务”；F是恢复现场闭环，不能用“私有盘还在”代替验收。A–F覆盖完整需求，后续切片也属于交付范围。</p>
-<p>新表建议最小化：employee_input_event、employee_mailbox、work_object、event_work_link、execution_request、execution_control、execution_capsule及manifest revision；Episode/等待/输出先复用合适的存量结构或作为work内有界结构。不要另造所有已有outbox。最终表名和拆分以查询/并发测试决定，所有状态都含workspace/employee范围。</p>
-<p>迁移使用fork <code>9000+</code>命名空间，无foreign key/cascade；每个索引单独<code>CREATE [UNIQUE] INDEX CONCURRENTLY</code>迁移；显式事务完成关系校验和清理。包含deployment fence安装、软删除/归档和租户删除manifest。多副本滚动期间旧节点只接受它能处理的schema/控制版本，新事件按声明能力路由；不把新kind交给旧节点猜。必要兼容仅放已安装daemon/runner公开协议边界，内部不长期双写两份事项权威。</p>
+<p>13个具体任务覆盖：入口及lane、内核与命名、持久Task/三ID、DWS订阅/typed event、Task细节与依赖、Builder、HostGuard、通用RunOnly、SceneNotice、控制、Issue/history、Capsule、灰度可见性与基准。</p>
+<p>新表/关系按最小需求复用/扩当前PG结构，不另造所有已有outbox。任何新增迁移使用未占用fork9000+范围、无FK/cascade、每个index单独CONCURRENTLY；租户删除、deployment fence和旧节点不认新状态的滚动边界分别验证。</p>
+<p>正式切流之前确认Source Consumer支持完整SubscriptionSpec、shared stream handoff双投递可PG去重；选定Runtime/image不可变版本，按仓库fc-runtime-dev-loop验证本机/FC及old/new protocol。私有并行任务若文件隔离无法证明，缩小试点scope，不以persona或目录名冒充权限边界。</p>
+<p>用户提供9.3/24.5秒作为RunOnly/Issue端到端基线；每个里程碑补采样来源/Runtime/样本数及分阶段时间。新普通review calls=0、没有Issue协议额外步骤、关键Notice早于Run结束，都是单独可验证的目标，不拿“健康”当实际任务正确。</p>
 </section><section aria-labelledby="section-14" class="doc-section" id="section-14-block"><h2 id="section-14">14. 可测试验收与运行证据</h2>
 <h3 id="section-14-1">14.1 核心用例</h3>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
@@ -1415,7 +1956,7 @@ type ExecutionDriver interface {
 <tbody>
 <tr>
 <td>同群三人同时@做不同事</td>
-<td>三个WorkObject，身份各自正确，受公平容量控制</td>
+<td>三个EmployeeTask，身份各自正确，受公平容量控制</td>
 <td>群级串行长任务；一个人的额度占掉别人</td>
 </tr>
 <tr>
@@ -1509,7 +2050,7 @@ type ExecutionDriver interface {
 </section><section aria-labelledby="section-15" class="doc-section" id="section-15-block"><h2 id="section-15">15. 代码依据补充与外部复用评估</h2>
 <p>这一节归集本次固定版本的代码评估；文中的设计类型/模块路径是建议新增。当前行为以 <code>docs/inbound-coordinator-loop.md</code> 与registry为准，旧dispatch文档的历史段落不得恢复已撤回的“唯一事项就续接”等行为。</p>
 <p>本节<code>handler/</code>、<code>service/</code>、<code>daemon/</code>、<code>contextcap/</code>为<code>server/internal/</code>下路径，<code>pkg/</code>为<code>server/pkg/</code>；带<code>internal/</code>的路径从<code>server/</code>开始。</p>
-<h3 id="section-15-1">15.1 Coordinator与送达</h3>
+<h3 id="section-15-1">15.1 旧Coordinator/Dispatch与共享送达能力（2a基线）</h3>
 <div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
 <thead>
 <tr>
@@ -1522,7 +2063,7 @@ type ExecutionDriver interface {
 <tr>
 <td>reliable admission + read-only Chat + acceptance落同事务</td>
 <td><code>handler/inbound_coordinator_job.go:667</code>、<code>:731</code></td>
-<td>复用可靠受理；Chat是界面投影，不是WorkObject权威</td>
+<td>复用可靠受理；Chat是界面投影，不是EmployeeTask权威</td>
 </tr>
 <tr>
 <td>claim lease / 同CID候选排他</td>
@@ -1552,7 +2093,7 @@ type ExecutionDriver interface {
 <tr>
 <td>现有finish唯一审查通路</td>
 <td><code>service/inboundcoord/loop.go:184</code>；<code>service/inboundcoord/finish_check.go:57</code></td>
-<td>WorkRef/合法目标集替换Issue耦合，同次审查完成</td>
+<td>legacy保持原合同；新Task目标/授权和HostGate重新适配，不迁默认review</td>
 </tr>
 <tr>
 <td>场域记忆不含Session，不存任务状态/权限</td>
@@ -1808,7 +2349,7 @@ type ExecutionDriver interface {
 <tr>
 <td>Task/Owner/Channel/Thread</td>
 <td>结构归属优先，歧义才内容评分</td>
-<td>在现有assoc与WorkRef上实现结构锚点；F07审查不被其自动关联规则替代</td>
+<td>在assoc与TaskRef上实现结构锚点；同产物/实质推进由新Loop一次判断，保留对照验收而不迁旧review</td>
 </tr>
 <tr>
 <td>WorkPacket / ContextUsed</td>
@@ -1873,28 +2414,237 @@ type ExecutionDriver interface {
 <tr>
 <td>当前Multica Go服务</td>
 <td>PG受理/claim/lease、scheduler、webhook、TaskService、contextcap、DWS outbox、native DSH session/trajectory</td>
-<td>域服务接入新EmployeeLoop；旧Coordinator运行路径退出，不建立第二事实权威</td>
+<td>域服务接入新EmployeeLoop；旧Coordinator独立legacy灰度，单Task owner避免竞争事实权威</td>
 </tr>
 </tbody>
 </table></div>
 <p>DWH事件接纳和cursor/ACK更接近本需求的服务事件层；EmployeeLoop coordinator做decision→sideEffects/nextState/events，DSH负责基础AgentLoop。普通聊天通过conversation的tail串行，调用followup不证明运行中steer。Session Bridge已实现Codex exec resume；根README“Codex仅发现”与源码不一致，因此本方案不沿用旧对话里的该断言。DWH为Apache-2.0，但实现仍非Go库。<a href="https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/lib/event-bus.cjs#L4" rel="noreferrer noopener">事件bus</a>、<a href="https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/plugins/employee-loop/coordinator.cjs#L1" rel="noreferrer noopener">effect coordinator</a>、<a href="https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/plugins/dingtalk-event-bridge/index.cjs#L1194" rel="noreferrer noopener">conversation排队</a>、<a href="https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/plugins/session-bridge/structured-cli.cjs#L8" rel="noreferrer noopener">Codex resume</a>、<a href="https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/plugins/employee-loop/service.cjs#L115" rel="noreferrer noopener">投递与业务状态</a>、<a href="https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/LICENSE" rel="noreferrer noopener">LICENSE</a>。</p>
-<p>Go实现复用的最终选择：<strong>Go BotLoop核心直接复制并扩展；本仓能力、执行和发送服务直接复用；新的WorkObject、统一事件、durable控制、表达与Capsule合同按本仓边界补齐。</strong>不引入新消息中间件或通用actor框架作为第一期前提，现有PG/Tair/OSS足以验证纵向切片。</p>
-</section><section aria-labelledby="section-16" class="doc-section" id="section-16-block"><h2 id="section-16">16. 本次文档验证与后续评审</h2>
-<p>已完成独立Coordinator/权限/执行/外部源码分析，并对正文做第二次架构审查。已采纳：scene与work只解释一次输入；活等待Session优先Control；异常/取消迁移及quiescent门槛；配置grant与个人delegation分离；task_finished不自行规划新业务步骤；发送门槛和输出覆盖版本；以纵向切片先证明直达价值。</p>
-<p>R3重新核验完整Go bot包的依赖与函数接缝，明确直接复制内核、新EmployeeLoop接管、旧Coordinator退出；事件专项独立审查已修正旧ack_completed/sync-wrapup兼容、真人controlled_targets、绑定epoch、观察class和statistics no-op回执。它们是设计与源码证据，不是已部署结果。</p>
-<p>隔离源码验证准备了13份原源文件、10份原测试、最小uuid依赖及scratch-only目录适配。尝试核心fake测试时Go不在PATH，命令exit127；未安装工具链。因此仅有静态依赖闭包与移植清单核验，不能声称核心已编译或测试通过。这也不改变本轮只交付文档/HTML的范围。</p>
-<p>运行<code>python3 scripts/check-coordinator-policy.py</code>返回<code>PASS_STRUCTURAL_ONLY</code>（policy <code>2026-09-26.1</code>，19条义务）；此结果只验证现有策略结构，不能证明拟议EmployeeLoop已实现。文档引用按固定branch逐项校验路径/行号范围；相互链接、code fence和<code>git diff --check</code>单独检查。没有运行业务单测、真实模型回放、CLI/FC canary或钉钉投递，因为本次交付仅为方案。</p>
-<p>仍需在实施切片中决定并记录：试点backend和可实际部署的控制版本、个人delegation的数据授权产品范围、租户Capsule保留期限、业务artifact长期ACL及实际延迟基线。基础设计给出了保守默认值和验证路径，这些选择不妨碍先完成V1/V2。</p></section></article><footer class="footer"><span>全文来源：employee-loop-design.md · 所有正文已嵌入本文件</span><span>源文件 SHA-256 <code>ca28db58c68ec45ca26d71f6876d3e5f8fa6d1d7fa58ce529a87636538a3ca8d</code></span></footer></main></div><script>
+<p>Go实现复用的最终选择：<strong>Go BotLoop核心直接复制并扩展；本仓能力、执行和发送服务直接复用；新的EmployeeTask、统一事件、durable控制、表达与Capsule合同按本仓边界补齐。</strong>不引入新消息中间件或通用actor框架作为第一期前提，现有PG/Tair/OSS足以验证纵向切片。</p>
+</section><section aria-labelledby="section-16" class="doc-section" id="section-16-block"><h2 id="section-16">16. 本轮修订覆盖与证据边界</h2>
+<p>本版按全部浏览器评论细化：钉钉场域协议与DWS复用、Task细节与名称、EmployeeBuilder、timer/webhook场域、日程审批企业默认、SceneNotice及时告知、轻量HostGate、独立legacy灰度、RunOnly默认、Issue协作/可见性边界及sandbox复用。用户9.3/24.5秒作为给定端到端基线，明确不是本轮测量。</p>
+<p>事实来源分别固定：旧Coordinator/Dispatch合同为2a520dea5；本轮最新develop及Go DWS/connmgr为7c9158985；能力分支5aa21b5c3；GawkBot71e82a1。旧CLI27与SDK28两个目录范围分开，calendar/doc@的未来key不编造。Schema快照只有定义，无真实业务事件或凭据。</p>
+<p>独立源码分析与设计复审覆盖事件身份/回执、直接复制与任务设计、执行与数据生命周期；文档检查、JSON schema export哈希、HTML source digest/链接/原生截图分别核验。Coordinator policy checker只能认证旧合同结构，不能证明新轻量Loop行为。</p>
+<p>本轮交付设计/HTML/Schema快照和13任务实施拆解，不实施EmployeeLoop源码，不部署、不运行真实Agent/模型回放/FC或DWS监听。隔离原bot包准备了13源+10测试但机器当时无Go命令，exit127，不作测试通过结论。未来实现的红绿、并发与真实canary按拆解文档执行，全部任务当前未完成。</p>
+<p>用户已授权本轮设计产物提交develop并在钉钉通知本人；提交以最新develop为基线做fast-forward，不覆盖其他worktree未提交工作，不触发未请求的部署。结果通知沿DWS产品命令与可核验发送回执，不把通知文案当成功证据。</p></section></div><section aria-labelledby="appendix-delivery-plan-title" class="doc-section" id="appendix-delivery-plan-block"><h2 id="appendix-delivery-plan-title">17. 实施拆解：13任务</h2><p class="figure-note">EmployeeLoop R5 实施拆解 · 已将实施拆解全文嵌入本文件，离线阅读无需相邻Markdown。</p><div data-plan-source="true"><div class="doc-intro">
+<blockquote>
+<p>面向实施 Agent：按 <code>subagent-driven-development</code> 或 <code>executing-plans</code> 逐任务执行；任务完成前保持 checkbox 未勾选。每个提交只包含本任务的已验证改动。</p>
+</blockquote>
+<p><strong>Goal:</strong> 交付独立 EmployeeLoop，以钉钉场域事件驱动持续任务、默认 RunOnly 执行和及时场域回报，并保留可独立降级的旧 Coordinator 灰度通道。</p>
+<p><strong>Architecture:</strong> 统一认证/事件受理入口冻结 legacy/new lane；新 lane 复制并改造 GawkBot Go Tick 内核，不调用旧 Coordinator，也不再串联分类模型。Builder 编译可信来源、历史和任务上下文；HostGuard 做轻量确定性守卫，ReplyComposer 只表达已验证事实；能力、执行、DWS 连接和 outbox 继续复用现有服务。</p>
+<p><strong>Tech Stack:</strong> Go 1.26.1、PG/sqlc、Redis/Tair、DWS Go SDK、现有 TaskService/daemon/DSH、既有 Web/desktop 配置入口。</p>
+<p>基线：<code>origin/develop@7c91589854e06d6907cce18b944b46b66a34a553</code>；GawkBot <code>71e82a1809565281cbd0bf8185d3c125b715d934</code>；DWS 同步源 <code>ae29c2914dd9108e7ce451329bceeca411464b6b</code>。实施先 rebase 最新 develop；能力分支单独整合，不恢复已撤回的关键词授权和唯一候选自动续接。</p>
+<p>本文件对应主方案R5。旧Coordinator仅为独立灰度通道；普通新路径默认RunOnly、无独立finish_check，按统一场域与Task/Run接口适配。</p>
+</div><section aria-labelledby="plan-section-d48a287d" class="doc-subsection" id="plan-section-d48a287d-block"><h3 id="plan-section-d48a287d">实施约束与共同夹具</h3>
+<ul>
+<li>EmployeeTask 是持续目标；ExecutionRun 是一次执行；ExecutorQueueTaskID 指向既有队列任务。Issue 仅是跨场域/复杂多阶段协作的可选投影，创建它不扩大结果 visibility。</li>
+<li>新 lane 默认 <code>finish_check_calls=0</code>；不复制旧 12 秒独立审核流程。旧 lane 保留自身合同；业务明确要求的人工批准绑定具体定义 revision，不启用第二个分类 LLM。</li>
+<li>source-specific Builder 挂在 Employee 上；消息、日程、文档、审批资源不强制使用聊天 CID。日程/审批默认企业场域；timer/webhook 明确绑定 enterprise/group/personal 场域。</li>
+<li>共享 sandbox 不共享 Task、nativeSession、credential 或私有文件权限；当前 runtime 做不到隔离时，不承接跨 principal 的私有并行工作。</li>
+<li>TDD 每题先建可编译的最小接口和夹具，再获得行为断言的红灯；编译错误、缺 DB、认证失败不算有效红灯。绿灯只实现该断言所需逻辑，不写镜像实现的测试。</li>
+<li>每题测试只用 fake 模型、fake backend、httptest DWS/provider；不得解析或执行用户安装的 Agent CLI。真实 canary 单独授权、单独记录。</li>
+</ul>
+<p>共同 fixture 保存于 <code>server/internal/employeeevent/testdata/</code>，使用普通自然语言和稳定测试 ID；字段最少为：</p>
+<pre aria-label="代码与协议示例，可左右滚动" tabindex="0"><code class="language-json">{"case":"approval_scope_is_enterprise","source_event_id":"event-1","source_kind":"dws","provider_key":"user_oa_approval_task_created","workspace_id":"test-ws","employee_id":"employee-e","subscribed_principal":"employee-account","actor_ref":null,"scene_kind":"enterprise","scene_ref":"enterprise-1","origin_ref":"resource-1","occurred_at":"2026-10-01T01:00:00Z","history_before":"2026-10-01T01:00:00Z","definition_revision":1,"grant_revision":1,"generation":1,"expected":{"lane":"new","dispatch_count":1,"finish_check_calls":0}}
+</code></pre>
+<p>生产 UUID 解析测试另用 canonical UUID fixture；上例描述语义，不能把测试 ID 发到业务服务。按题补 <code>source_refs/allowed_actors/question_ref/result_version/audience/anchor/control_seq/provider_outcome</code>；expected 检查权威记录与调用次数，不检查“收到”等固定关键词。</p>
+</section><section aria-labelledby="plan-section-13" class="doc-subsection" id="plan-section-13-block"><h3 id="plan-section-13">13 个可独立评审的小任务</h3>
+<h4 id="plan-section-4c4117f5">任务 1：冻结入口契约与 lane 选择</h4>
+<p><strong>责任文件：</strong>新增 <code>server/internal/employeeevent/ingress.go</code>、<code>ingress_test.go</code>、<code>testdata/dispatch_v2.json</code>；修改 <code>server/internal/handler/agent_dispatch.go</code>、<code>agent_dispatch_v2_handler.go</code>、<code>agent_dispatch_acceptance.go</code>。
+<strong>依赖：</strong>无；交付入口接口与 fake store，不改变现网默认 lane。</p>
+<ul>
+<li>[ ] 红：同事件两副本分别请求legacy/new；重试时开关变化；同群mixed-lane的无引用续接语义命中另一owner。断言只冻结一个lane、HTTP replay相同、结构锚点归原owner；无法证明的跨lane接续澄清而不重派，不运行第二圈。</li>
+<li>[ ] 绿：认证后保存source receipt；结构锚点先归Task owner，无锚点按SceneDefaultOwner，再冻结lane/config revision和原wire/callback；恢复只读取冻结 lane。legacy 和 new 分派互斥，新失败不自动执行 legacy。</li>
+<li>[ ] 验证：<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test ./internal/employeeevent -run 'TestIngressLane|TestWireReplay' -count=1</code>；红阶段断言失败，绿阶段 PASS。</li>
+</ul>
+<p><strong>兼容样本：</strong>7 类 Dispatch 2.0、legacy、mentions null/[]、reaction/quote、controls、callback 缺省；保留 responsePolicy v1 literal 和 summary retired/statistics 专项回执。</p>
+<h4 id="plan-section-db8f0175">任务 2：复制内核并改名，确保只有一条模型驱动循环</h4>
+<p><strong>责任文件：</strong>新增 <code>server/internal/service/employeeloop/{loop,types,tools,journal,queues}.go</code>、<code>loop_test.go</code>、<code>SOURCE_MAP.md</code>、许可通知；复制上游 <code>internal/bot</code> 核心及对应 fake 测试。
+<strong>依赖：</strong>任务 1 的新 lane 接口；新包先只做 fake Tick。</p>
+<ul>
+<li>[ ] 红：完整 tool batch、EOF 无提交、Interrupt 遇阻塞 tool、旧 generation 回调。断言无合法 finish 不完成、取消不中途卡 mutex、只有一个主模型驱动器。</li>
+<li>[ ] 绿：命名使用 EmployeeLoopState/EmployeePhase/EmployeeTool/ModelChunk/EmployeeJournal；给 StreamFn 传 ctx，锁外调用 tool/emit，保留原生 ToolCallID 和完整 batch，terminal disposition 明确。</li>
+<li>[ ] 验证：<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test -race ./internal/service/employeeloop -run 'TestTick|TestInterrupt|TestTerminal' -count=1</code>；绿阶段 PASS。</li>
+</ul>
+<p><strong>范围：</strong>来源账本记录固定 SHA、原文件/符号、目标文件、修改原因；不复制 GawkBot 整套 Broker、SQLite、UI 或 provider 启动器。</p>
+<h4 id="plan-section-b8c213a0">任务 3：持久 mailbox、日志与三种任务 ID</h4>
+<p><strong>责任文件：</strong>新增 <code>server/internal/employeetask/{model,store,mailbox}.go</code>、<code>store_integration_test.go</code>；新增 <code>server/pkg/db/queries/employee_task.sql</code>、<code>employee_event.sql</code>；在 <code>server/migrations/</code> 分配未占用 <code>9000+</code> 迁移编号。
+<strong>依赖：</strong>任务 1–2；仅增加新 lane 数据权威，不回填全部历史 Issue。</p>
+<ul>
+<li>[ ] 红：两个 PG connection 认领同 mailbox、lease steal、进程在 intent commit 后崩溃、callback 重投。断言一个 EmployeeTask/ExecutionRun/队列映射，旧 owner 提交被拒绝。</li>
+<li>[ ] 绿：PG 保存事件、任务、run、journal、effect intent；短事务认领与 revision/generation CAS，模型/provider 在锁外。Redis仅唤醒，不能成为任务真相。</li>
+<li>[ ] 验证：<code>make sqlc</code>；<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test ./internal/employeetask -run 'TestMailbox|TestLease|TestCrashReplay' -count=1</code>；使用现有 worktree DB、fake backend，绿阶段 PASS。</li>
+</ul>
+<p><strong>迁移门槛：</strong>无 FK/cascade；每个索引独立单语句 <code>CREATE [UNIQUE] INDEX CONCURRENTLY</code>；显式租户删除与关系清理。</p>
+<h4 id="plan-section-95dc758f">任务 4：DWS 原生事件入口与订阅配置</h4>
+<p><strong>责任文件：</strong>修改 <code>server/internal/dwseventsource/source.go</code>、<code>source_test.go</code>；新增 <code>server/internal/employeeevent/dws.go</code>、<code>dws_test.go</code>；复用 <code>server/pkg/dws/events</code>、<code>internal/connmgr</code>、<code>internal/dwsclient</code>。
+<strong>依赖：</strong>任务 3 的 durable receipt；每个已注册事件可独立接通。</p>
+<ul>
+<li>[ ] 红：group/target/roles/filter 不同却被合并；handover 双连接重投；Typed 失败但 Data/Body 非空。断言 scope fingerprint 不混、PG受理一次、未知/坏数据留证据而非伪造空事件。</li>
+<li>[ ] 绿：Consumer 扩完整 SubscriptionSpec 和 typed Event handle；保留 Native.Key/ID/Data/Body、订阅主体与 actor分离，Handle commit 后才 ACK，未知 key 不绕过 SDK registry。</li>
+<li>[ ] 验证：<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test ./internal/dwseventsource ./internal/employeeevent -run 'TestSubscription|TestNativeEvent|TestHandoff' -count=1</code>；fake ticket/WS，绿阶段 PASS。</li>
+</ul>
+<p><strong>范围：</strong>SDK28目录与旧CLI27目录分开；calendar/doc@ 的未发布 key 先在 dws-for-tag 上游登记后 sync，不本地修改 vendored SDK。</p>
+<h4 id="plan-section-c3627229">任务 5：TaskDefinition、ledger、human note 与依赖 lane</h4>
+<p><strong>责任文件：</strong>新增 <code>server/internal/employeetask/{definition,ledger,dependency,lane}.go</code>及对应测试；更新任务 2 的来源账本，映射上游 normalize、ContextUsed、humanNotePacketBlock、dependency result 与资源 lane 符号。
+<strong>依赖：</strong>任务 3；任务装配逻辑不依赖模型。</p>
+<ul>
+<li>[ ] 红：重复 normalize、多人human note（stop→普通补充→迟到完成）、依赖结果迟到、同资源并发写、不同资源独立。断言定义归一幂等，note按append-only ID/seq逐条消费，未解除的restrictive fence独立保留，旧依赖不能推进当前 generation。</li>
+<li>[ ] 绿：复制可复用任务流程并适配PG，排除上游note单槽覆盖和整槽清空；限制只允许有授权对应clear/resume解除；ledger保来源/ContextUsed/权限版本；同一任务主 lane 与资源冲突规则分开，Actor亲近度只排序候选。</li>
+<li>[ ] 验证：<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test ./internal/employeetask -run 'TestDefinitionNormalize|TestHumanNote|TestDependency|TestResourceLane' -count=1</code>；绿阶段 PASS。</li>
+</ul>
+<p><strong>范围：</strong>依赖结果只向允许 audience 注入；不把本地 ring buffer、英文 follow-up 前缀或30秒最近人规则搬成授权门槛。</p>
+<h4 id="plan-section-cc3a2f50">任务 6：Employee Builder 与 source-specific 上下文</h4>
+<p><strong>责任文件：</strong>新增 <code>server/internal/service/employeeloop/{builder,history,scope}.go</code>、<code>builder_test.go</code>及 <code>server/internal/handler/employee_builder.go</code>；修改 <code>server/internal/handler/agent_builder.go</code> 的配置装配边界，新增独立 Employee Builder 配置，不复用旧合同判定对象。
+<strong>依赖：</strong>任务 4–5；可独立以 fake history 验证，不启动执行器。</p>
+<ul>
+<li>[ ] 红：同ID历史重复、原水位后消息倒灌、跨场域引用、订阅主体被当actor、同名不同UID。断言准确去重、Watermark/Scope不扩大、当前原文限制不丢、第二分类模型调用数=0。</li>
+<li>[ ] 绿：Builder挂Employee，按 source schema 编译 current event、已定义任务、history-by-ID、记忆revision、有效grant与执行上下文；读失败保 unavailable，缺actor不补猜。</li>
+<li>[ ] 验证：<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test ./internal/service/employeeloop -run 'TestBuilder|TestHistoryWatermark|TestScope' -count=1</code>；绿阶段 PASS。</li>
+</ul>
+<p><strong>范围：</strong>原生DWS业务payload保持原shape；敏感工具正文不进共享Scene摘要，资源Scene不强制聊天CID。</p>
+<h4 id="plan-section-90a86fb3">任务 7：轻量 HostGuard 与单次主模型计划</h4>
+<p><strong>责任文件：</strong>新增 <code>server/internal/service/employeeloop/{guard,plan,policy}.go</code>、<code>guard_test.go</code>、<code>testdata/semantic_cases.json</code>；迁移纯 helpers/voice规范，legacy <code>inboundcoord</code> 运行包不变。
+<strong>依赖：</strong>任务 2、5–6；新 lane 主模型已有结果后只做确定性提交守卫。</p>
+<ul>
+<li>[ ] 红：唯一旧任务的新样本请求、状态询问、别人@、伪造work/run/grant/recipient、遗漏source。断言无错误dispatch/outbox，合法续接必须同交付物且有实质推进。</li>
+<li>[ ] 绿：HostGuard检查 schema、scope、已验证actor、target ownership、当前grant、source覆盖、revision/generation、动作幂等；不请求旧 finish_check，不隐藏新增岗位分析步骤。</li>
+<li>[ ] 验证：<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test ./internal/service/employeeloop -run 'TestHostGuard|TestPlanCoverage|TestContinuation' -count=1</code>；trace断言 <code>finish_check_calls=0</code>、<code>builder_classifier_calls=0</code>、模型回合仅由一个Tick驱动。</li>
+</ul>
+<p><strong>边界：</strong>模型语义回放单列；结构guard无法证明业务正确性，高风险操作用明确且有版本的人工批准，不暗加12秒审核模型。</p>
+<h4 id="plan-section-4dc3c49e">任务 8：默认通用 RunOnly，Issue 为可选投影</h4>
+<p><strong>责任文件：</strong>新增 <code>server/internal/service/employee_execution.go</code>、<code>employee_execution_test.go</code>、<code>server/internal/employeetask/issue_projection.go</code>；修改 <code>server/internal/service/autopilot.go</code>、<code>server/internal/service/task.go</code>、<code>server/internal/handler/daemon.go</code>、<code>server/pkg/db/queries/agent.sql</code> 的实际 seam。
+<strong>依赖：</strong>任务 3、5、7；这是第一条端到端执行切片的核心。</p>
+<ul>
+<li>[ ] 红：普通明确工作误建Issue、run-only claim依赖伪造Autopilot、跨task串行组误挡、Issue投影扩大visibility。断言默认无Issue，三个ID关联正确，claim/workspace/attribution从不可变run取得。</li>
+<li>[ ] 绿：抽通用RunOnly enqueue/claim/complete；调用现有NotifyTaskEnqueued与launch lease；Task/nativeSession/credential绑定task、run和principal；Issue仅在跨场域/复杂协作定义中显式选用，ACL仍按原scope/输出策略。</li>
+<li>[ ] 验证：<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test ./internal/service ./internal/handler -run 'TestEmployeeRunOnly|TestEmployeeClaim|TestIssueProjectionVisibility' -count=1</code>；fake executable/launcher，绿阶段 PASS。</li>
+</ul>
+<p><strong>范围：</strong>先迁新EmployeeTask来源，未迁Autopilot/Issue仍走自身域服务；不一次性重构所有公共API。</p>
+<h4 id="plan-section-5cf7ba3c">任务 9：timer/webhook 的场域绑定与无人触发</h4>
+<p><strong>责任文件：</strong>新增 <code>server/internal/employeeevent/{timer,webhook}.go</code>及测试；修改 <code>server/internal/scheduler/jobs_autopilot.go</code>、<code>handler/autopilot_webhook.go</code>、<code>service/autopilot.go</code> 的适配点。
+<strong>依赖：</strong>任务 4、6、8；受信定义直达不增加分类 LLM。</p>
+<ul>
+<li>[ ] 红：两副本同planned_at、旧定义重试、签名payload改scene/uid/recipient、默认日程/审批落个人。断言一次run，企业默认正确，个人例行无delegation被拒绝。</li>
+<li>[ ] 绿：规则绑定 enterprise/group/personal SceneRef、run_as/grant、定义revision和output policy；actor=system/service；每次firing重查授权，不把owner当个人凭据主体。</li>
+<li>[ ] 验证：<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test ./internal/employeeevent ./internal/scheduler ./internal/handler -run 'TestTimerOccurrence|TestWebhookScope|TestEnterpriseDefault' -count=1</code>；绿阶段 PASS。</li>
+</ul>
+<p><strong>范围：</strong>UTC planned_at与显式时区；overlap skip/coalesce/queue，等待deadline不套latest-only；模板参数仍受HostGuard。</p>
+<h4 id="plan-section-e7ce3533">任务 10：SceneNotice、ReplyComposer 与及时 outbox</h4>
+<p><strong>责任文件：</strong>新增 <code>server/internal/service/employeeloop/{notice,reply_composer}.go</code>及测试；修改 <code>service/dingtalkresponse/{service,worker,sandbox}.go</code>、<code>handler/dingtalk_response.go</code>、<code>pkg/protocol/messages.go</code> 的受版本保护字段。
+<strong>依赖：</strong>任务 3、7–8；关键成果/问题在运行中立即可交付，不等终态。</p>
+<ul>
+<li>[ ] 红：A委托/B答问/E订阅；stage v1 delivered 后result v2；Compose后撤权；provider已调用但响应丢。断言正确A/anchor、v1不覆盖v2、撤权调用数0、unknown仅reconcile。</li>
+<li>[ ] 绿：执行器提报 SceneNotice(kind/ref/version/audience)→事实/授权校验→ReplyComposer→已有场域outbox；固定目标与允许事实，voice/persona只改措辞，发送前复查grant/run/policy版本。</li>
+<li>[ ] 验证：<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test ./internal/service/employeeloop ./internal/service/dingtalkresponse -run 'TestSceneNotice|TestNoticeAudience|TestResultCoverage|TestSendTimeRevocation' -count=1</code>；绿阶段 PASS。</li>
+</ul>
+<p><strong>边界：</strong>业务结论来自执行证据，原始thinking/tool输出不群发；question记录先入库。迁新字段不重解释旧delegated_to_issue/response receipt语义。</p>
+<h4 id="plan-section-b2e97a53">任务 11：运行控制、等待与共享 sandbox 隔离</h4>
+<p><strong>责任文件：</strong>新增 <code>server/internal/employeetask/control.go</code>、<code>control_test.go</code>；修改 <code>server/pkg/protocol/messages.go</code>、<code>server/internal/daemon/daemon.go</code>、<code>server/pkg/agent/agent.go</code>、<code>server/pkg/agent/dsh_native.go</code>、<code>server/internal/dshhost/session.go</code> 的受信输入与quiescent seam。
+<strong>依赖：</strong>任务 8、10；只为试点backend打开已验能力。</p>
+<ul>
+<li>[ ] 红：活needs_input恢复误Start第二run、cancel/completed竞争、暂停无停止证据、共享sandbox读他人session/credential。断言Control既有handle、旧终态fence、无quiescent不复用writer。</li>
+<li>[ ] 绿：durable command/seq/expected revision，persisted/received/applied/quiescent区分；unsupported明确；同sandbox仍独立Task/nativeSession/credential/受限工作区。</li>
+<li>[ ] 验证：<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test ./internal/employeetask ./pkg/agent ./internal/daemon -run 'TestEmployeeControl|TestQuiescent|TestSharedSandboxIsolation' -count=1</code>；使用测试创建的fake程序，绿阶段 PASS。</li>
+</ul>
+<p><strong>边界：</strong>后台CLI取消不等于零外部副作用；不能隔离私有文件的runtime拒绝跨principal复用，不能以子目录名充当权限。</p>
+<h4 id="plan-section-35bd9183">任务 12：Capsule、正式产物与留存</h4>
+<p><strong>责任文件：</strong>新增 <code>server/internal/executioncapsule/{manifest,store,promotion,gc}.go</code>及测试；修改 <code>server/internal/daemon/gc.go</code>、<code>server/internal/handler/dsh_trajectory.go</code>、<code>server/internal/handler/dsh_trajectory_store.go</code> 对应保存/清理边界。
+<strong>依赖：</strong>任务 3、8、11；独立于第一条RunOnly切片上线。</p>
+<ul>
+<li>[ ] 红：上传半失败、GC与恢复/promotion竞争、session-log缺批、撤权后resume。断言不发布不完整manifest，deleting阻断恢复，正式产物独立，旧私有现场不可注入。</li>
+<li>[ ] 绿：staging→hash验证→PG发布完整revision；log/增量workspace/临时产物统一生命周期，promotion复制校验后独立ACL/ref；终态GC等待完整checkpoint确认。</li>
+<li>[ ] 验证：<code>cd server &amp;&amp; MULTICA_RUN_REAL_AGENT_SMOKE=0 go test ./internal/executioncapsule ./internal/daemon -run 'TestCapsule|TestPromotion|TestRetention' -count=1</code>；fake对象存储，绿阶段 PASS。</li>
+</ul>
+<p><strong>边界：</strong>native session ID仅优化；FC token/计算期限前checkpoint，续租失败可恢复停止，不宣称本机无绝对超时等于FC无限运行。</p>
+<p><strong>拆分交付：12A最低结果/产物保存进入M2：Run结果先入DB，本地文件上传+hash校验+稳定ArtifactRef/Scene ACL成功后才GC；测试上传失败保目录且不发布临时链接。12B完整workspace/nativeSession Capsule恢复留M3；M2活handle/resume只开放已验证backend。</strong></p>
+<h4 id="plan-section-294b40fa">任务 13：配置入口、灰度降级与证据交付</h4>
+<p><strong>责任文件：</strong>修改 <code>server/pkg/runtimeconfig</code>、<code>cmd/server/runtime_config.go</code>、Employee Builder handler；涉及UI仅改 <code>packages/core</code> API/schema和<code>packages/views</code>配置组件；更新主方案、HTML、使用文档和源码映射。
+<strong>依赖：</strong>任务 1–10可开始试点；11–12通过后才宣称可交互/可恢复长任务。</p>
+<ul>
+<li>[ ] 红：开关热变更让同事件换lane、缺新协议runtime仍接新命令、降级后旧run丢Notice。断言新受理切lane、在飞run沿冻结owner结算，旧协议拒绝新kind，UI不暴露尚未验能力。</li>
+<li>[ ] 绿：按workspace/employee/source灰度；保留独立legacy Coordinator lane，标注退出条件。Builder选择与场域/能力引用版本化，默认新RunOnly/轻量HostGuard明确显示。</li>
+<li>[ ] 验证：定向Go/TS检查通过后运行 <code>python3 scripts/check-coordinator-policy.py</code> 验legacy合同、<code>pnpm typecheck</code>；不得把结构PASS当新Loop模型/渠道验收。</li>
+</ul>
+<p><strong>提交：</strong>每题完成后提交原子commit；标题 <code>type(scope): 摘要</code>，用heredoc真实换行正文；优先rebase，返回 <code>git log -1 --pretty=%B</code>。部署/发信单独按授权执行。</p>
+</section><section aria-labelledby="plan-section-ea25925a" class="doc-subsection" id="plan-section-ea25925a-block"><h3 id="plan-section-ea25925a">里程碑、降级条件与真实验收</h3>
+<div aria-label="方案数据表，可左右滚动" class="table-wrap" role="region" tabindex="0"><table>
+<thead>
+<tr>
+<th>里程碑</th>
+<th>依赖</th>
+<th>可独立交付的结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>M1：内核与可靠事件</td>
+<td>1–4</td>
+<td>fake完整链及DWS受理持久化；默认仍legacy，未声称已执行真实任务</td>
+</tr>
+<tr>
+<td>M2：新通道RunOnly试点</td>
+<td>5–10、12A、13</td>
+<td>一个员工/一个backend/已注册来源，默认无Issue，运行中Notice正确回场域；这是最小可用交付</td>
+</tr>
+<tr>
+<td>M3：交互与恢复闭环</td>
+<td>11–12</td>
+<td>真实控制ACK/quiescent、权限隔离、完整Capsule恢复和删除；逐backend开放</td>
+</tr>
+</tbody>
+</table></div>
+<p>自动停止新受理灰度的条件：重复Executor派工/外部副作用、actor或audience串用、私有数据泄漏、lease失效后仍提交、发送时撤权被绕过、Notice丢失或错误覆盖最终结果；当前run先fence/停止并保留证据，不对同事件重新走legacy。普通性能退化按明确阈值降新受理比例，不牺牲授权与送达真实性。</p>
+<p>真实canary单独验证：两副本重启/交接；同群多人含同名；timer/webhook企业与个人边界；关键阶段→问题→回答→最终结果的实际DWS回读；共享sandbox负向文件/credential可见性；本机/FC old-new协议矩阵；cancel后quiescent；超过FC token/计算期限前续租与checkpoint；Capsule删除/promotion并发。</p>
+<p>涉及daemon/FC时使用 <code>fc-runtime-dev-loop</code>，固定镜像/commit/配置与canary任务ID；真实Agent仅在明确授权后使用 <code>agentintegration</code> 标签及 <code>MULTICA_RUN_REAL_AGENT_SMOKE=1</code>，不得把fake green或结构检查作为真实结果。</p>
+<p>性能证据按 ingress_commit→builder_done→plan_commit→queued→runtime_ready→claimed→first_notice→completed 分段，比较相同定义/模型/runtime的warm/cold、样本数、p50/p95、模型调用数/token。用户报告median 9.3s vs24.5s、约快2.63倍是需求输入，非本轮实测、非默认SLO或已验证归因。</p>
+<p>本轮仅设计文档；所有checkbox均未完成，没有实施业务源码、部署、发信或运行真实canary。先交付可review的完整方案/HTML/本拆解，再由根任务按已授权流程提交develop及钉钉本人。</p></section></div><p class="figure-note">独立实施拆解源SHA-256：<code data-plan-source-digest="true">bda5d9eec07811fa588638b221a6ffa75e80901e1e35798993cead7ac59bfa68</code></p></section></article><footer class="footer"><span>全文来源：employee-loop-design.md · 所有正文已嵌入本文件</span><span>源文件 SHA-256 <code>849ba74acf777d9d80132846675d3a54dd8a13554884277a7ead3b051b5f4595</code></span><span>实施拆解 SHA-256 <code data-footer-plan-digest="true">bda5d9eec07811fa588638b221a6ffa75e80901e1e35798993cead7ac59bfa68</code></span></footer></main></div><script>
 (()=>{
 const binding={workspace:'example-workspace',employee:'example-employee',platform:'dingtalk',org_id:'20001',employee_external_uid:'10001',binding_epoch:7};
-const samples={
-im:{title:'逐句身份与逐人授权，不共享整窗控制权',description:'保留每条消息作者与来源。示意中的 controlled_targets 是 Host 逐项验证后的控制目标，各自绑定 actor 和 authority；第一个发言人不获得整个群的控制权。IdentityBindingRef 同时绑定 org、员工 UID 和 binding epoch。观察事件的 Class 仍是 input，observation 只是 Kind；retired summary 仅 receipt，statistics 来源不匹配仍按旧合同返回 202、automations=0。',data:{schema_version:1,class:'input',kind:'input.message.received',source_wire:{schemaVersion:'2.0',domain:'channel',type:'message.created'},identity_binding_ref:'binding@7',binding_record:binding,scene_ref:'verified-group',message_actors:['verified-person-A','verified-person-B'],controlled_targets:[{source_ref:'u1',actor_ref:'verified-person-A',work_ref:'work-A',authority_ref:'validated-grant-A'},{source_ref:'u2',actor_ref:'verified-person-B',work_ref:'work-B',authority_ref:'validated-grant-B'}],output_target:'per-work origin + validated audience'}},
-cron:{title:'系统触发，以受信规则的 run_as 执行',description:'规则生成唯一 occurrence；触发者是 system，owner 不替代执行主体。基础 MVP 只开放已有 employee/service/global 能力；个人无人执行需另外落实 delegation。IdentityBindingRef 不可变，claim、恢复与调用时复查 UID/org/epoch。',data:{schema_version:1,class:'input',kind:'timer.due',trigger_actor:{kind:'system'},identity_binding_ref:'binding@7',binding_record:binding,definition_ref:'approved-rule@revision',run_as_ref:'validated-employee-service-global-grant',authority_ref:'current-valid-rule-authority',dedupe:'trigger + canonical-UTC-planned-at',output_target:'rule-bound audience'}},
-webhook:{title:'签名与订阅范围共同约束，正文不授予身份',description:'验证 provider/service identity，再用受信 subscription 限制群、事项、资源和输出目标。payload 内 UID、scene、work 和 recipient 只能帮助定位，不改变绑定记录或授权；无人事件不伪装成某人的钉钉发言。',data:{schema_version:1,class:'input',kind:'webhook.received',trigger_actor:{kind:'service',provider_ref:'verified-provider'},identity_binding_ref:'binding@7',binding_record:binding,subscription_ref:'trusted-subscription@revision',authority_ref:'subscription-allowed-scope',controlled_targets:[],dedupe:'subscription + provider-delivery-id',output_target:'subscription-bound audience'}},
-result:{title:'旧接单 completed 与真正业务完成分开',description:'真正 execution.completed 绑定当前 attempt/result_ref，唤醒结果审查；它不直接证明 WorkComplete 或 IM 送达。LegacyCompletionMode=ack_completed 的旧 completed 只是接单回执。sync-wrapup 可与它使用同一 callback、不同 requestId，不能被接单去重吞掉；delivery.receipt 是 Class=work。',data:{schema_version:1,class:'execution',kind:'completed',trigger_actor:'bound-runtime',identity_binding_ref:'binding@7',binding_record:binding,work_ref:'existing-work',attempt:'current-generation',result_ref:'host-verified-current-result',work_transition:'reviewing',legacy_delivery_contract:{acceptance:{mode:'ack_completed',callback_ref:'same-router-callback',request_id:'work-receipt/current-input',status:'completed',work_complete:false},wrapup:{mode:'sync_wrapup',callback_ref:'same-router-callback',request_id:'sync-wrapup/current-run'}},output_target:'saved-output-policy'}}};
-const tabs=[...document.querySelectorAll('[data-event]')];
-function select(key,focus=false){const item=samples[key];if(!item)return;tabs.forEach(t=>{const active=t.dataset.event===key;t.setAttribute('aria-selected',String(active));t.tabIndex=active?0:-1;if(active&&focus)t.focus()});document.getElementById('event-json').textContent=JSON.stringify(item.data,null,2);document.getElementById('event-heading').textContent=item.title;document.getElementById('event-explanation').textContent=item.description;document.getElementById('event-example').setAttribute('aria-labelledby','tab-'+key)}
-tabs.forEach((tab,index)=>{tab.addEventListener('click',()=>select(tab.dataset.event));tab.addEventListener('keydown',event=>{let next;if(event.key==='ArrowRight')next=(index+1)%tabs.length;if(event.key==='ArrowLeft')next=(index-1+tabs.length)%tabs.length;if(event.key==='Home')next=0;if(event.key==='End')next=tabs.length-1;if(next!==undefined){event.preventDefault();select(tabs[next].dataset.event,true)}})});select('im');
+const nativeTypes={
+im:{key:'user_im_message_receive_at',index:0,hash:'71d4804cabbfe73180fd5cbd4e32a1975834a1458f709cceb81074b4c5d43136',scope:'group',resource:'origin-message-ref',title:'消息：保留DWS原生key与frame'},
+approval:{key:'user_oa_approval_instance_started',index:19,hash:'61609ebde566e158040929dfb3570bd79d4c9385f6b3cc57a4b7427d72581309',scope:'enterprise',resource:'approval-resource-ref',title:'审批：默认enterprise scene，资源单列'},
+calendar:{key:null,index:null,hash:null,scope:'enterprise',resource:'calendar-resource-ref',title:'日程：明确协议槽位，等待正式Schema'},
+document:{key:null,index:null,hash:null,scope:'enterprise',resource:'document-resource-ref',title:'文档@：独立资源语义，不冒充IM @'}};
+let eventKind='im',selectedOwner='employee_loop',selectedScope='enterprise',nativeKind='im',noticeKind='key_finding';
+const tabs=[...document.querySelectorAll('[data-event]')],owners=[...document.querySelectorAll('[data-owner]')];
+function scopeBinding(kind,origin){return {scope_kind:kind,scope_ref:'verified-'+kind+'-scene',binding_ref:'validated-'+origin+'-binding@revision',principal_ref:'validated-principal'};}
+function builder(){return {type:'EmployeeBuilder/ContextBuilder',deterministic:true,extra_llm_calls:0,history_dedupe_by:'source_namespace + platform_message_id',watermark_ref:'committed-source-watermark',scope_source_policy_ref:'configured-scope-source-policy'};}
+function compose(){
+ const effectiveOwner=eventKind==='result'?'employee_loop':selectedOwner;
+ const scope=eventKind==='im'?nativeTypes[nativeKind].scope:eventKind==='result'?'group':selectedScope;
+ const data={host_meta:{schema_version:1,class:eventKind==='result'?'execution':'input',actor_ref:eventKind==='cron'?'system':eventKind==='webhook'?'verified-service':eventKind==='result'?'bound-runtime':'source-actor-ref',identity_binding_ref:'binding@7',binding_record:binding,scopeBinding:scopeBinding(scope,eventKind==='result'?'original-task':eventKind),resourceRef:eventKind==='im'?nativeTypes[nativeKind].resource:eventKind==='result'?'saved-business-resource':null,routeOwner:{owner:effectiveOwner,new_task_selection:eventKind!=='result',single_owner:true,dual_write:false,frozen_for_existing_task:eventKind==='result'},authority_ref:'validated-current-authority'}};
+ if(effectiveOwner==='employee_loop')data.new_path={builder:builder(),host_gate:'light',old_finish_check_enabled:false,target_type:'EmployeeTask',execution_type:'ExecutionRun',executor_queue_id_type:'ExecutorQueueTaskID',default_execution:'AutopilotRunOnly',issue_use:'cross-scope-or-multi-stage-collaboration'};
+ else data.legacy_path={isolated:true,existing_profile_ref:'legacy-coordinator-profile',kept_for_gray_routing:true};
+ let title,description;
+ if(eventKind==='im'){
+  const n=nativeTypes[nativeKind];title=n.title;
+  data.provider_event={schema_namespace:'dws',shape_evidence:'fixed-cli-snapshot',provider_event_key:n.key,schema_ref:n.key?'dws-event-schema-snapshot.json#/events/'+n.index+'/raw/document/schema':null,schema_export_sha256:n.hash,native_event_ref:n.key?'restricted-native:event-example':null,projection_ref:n.key?'derived-flatten:event-example':null};
+  if(n.key){data.native_frame_example={type:'event',event_type:n.key,event_id:'native-transport-example',data:JSON.stringify({})};data.current_sdk_boundary={input:'events.Event / Typed()',available:'ID/Key/SubscriptionID/CorpID/OccurredAt/Body/Data',complete_raw_headers:false,json_schema_generation:false,raw_packet_status:'record-available-fields-and-missing-status'};}
+  else {data.protocol_slot={domain:nativeKind,registration_status:'awaiting-formal-key-and-schema',admission:'restricted-pending-receipt',employee_task_not_created:true};}
+  description=n.key?'provider_event_key保持原样；这里CLI raw证据示例的data为JSON字符串，空payload不代表线上消息。新Go SDK直接接events.Event，并记录可得Body/Data及缺失状态；当前不保证完整headers或JSON Schema generation，不伪装成无损原帧。HostMeta补可信scope与控制事实；本例IM绑定群场域，审批默认企业场域，resourceRef独立于scene。':'该槽位纳入平台范围，当前不生成假key、原生字段或执行请求。默认enterprise scene与独立resourceRef；登记发布的Schema后接入同一Ingress与Builder。目录范围不等于产品不支持。';
+ }else if(eventKind==='cron'||eventKind==='webhook'){
+  title=eventKind==='cron'?'定时：按已保存的群/个人/企业绑定':'Webhook：订阅绑定scope，不从正文猜身份';
+  data.source_event={kind:eventKind==='cron'?'timer.due':'webhook.received',actor_ref:eventKind==='cron'?'system':'verified-service',definition_ref:'approved-definition@revision',scope_binding_source:eventKind==='cron'?'stored-rule-binding':'trusted-subscription-binding',run_as_ref:'validated-service-or-delegation-grant',dedupe_ref:eventKind==='cron'?'rule + UTC-planned-at':'subscription + provider-delivery-id'};
+  description='切换展示已配置绑定的scope，不是授予权限。配置owner不自动成为个人执行主体；规则与订阅保存授权、通知对象和目的，Source Adapter验证后进入统一Ingress。新任务由RouteOwner单选通道，不双写。';
+ }else{
+  title='SceneNotice：在原scope通知关键变化';
+  data.example_relation='independent-existing-new-group-task';data.employee_task_ref='independent-existing-employee-task';data.execution_run_ref='current-run@attempt';
+  data.scene_notice={notice_kind:noticeKind,original_scope_binding_ref:'saved-task-scope-binding',notify_targets_ref:'saved-original-scope-audience',semantic_fact_ref:'verified-'+noticeKind+'-fact',question_ref:noticeKind==='question'?'saved-human-question':null,result_ref:noticeKind==='result'?'current-run-result':null};
+  data.output={fast_path:'persisted-scene-notice -> light-HostGate -> ReplyComposer',authority_checks_required:true,composer:'ReplyComposer',channel:'scene-outbox',delivery:'DWS-document-or-IM',keep_original_scope:true};
+  description='本tab展示独立的既有new/group任务，不来自前面选中的定时、Webhook或新任务。它沿已保存的EmployeeTask owner与scope回到Ingress。关键发现、阻塞、真实问题和结果都可以形成SceneNotice；确定的通知可快路经过HostGate验证，再交ReplyComposer和场域Outbox，不只在最后一步通知。这里不修改已运行任务的RouteOwner。';
+ }
+ return {data,title,description,effectiveOwner};
+}
+function render(){
+ const item=compose();tabs.forEach(t=>{const active=t.dataset.event===eventKind;t.setAttribute('aria-selected',String(active));t.tabIndex=active?0:-1});
+ owners.forEach(b=>{b.setAttribute('aria-pressed',String(b.dataset.owner===item.effectiveOwner));b.disabled=eventKind==='result';});
+ document.getElementById('native-kind-control').hidden=eventKind!=='im';document.getElementById('scope-kind-control').hidden=!['cron','webhook'].includes(eventKind);document.getElementById('notice-kind-control').hidden=eventKind!=='result';
+ document.getElementById('route-hint').textContent=eventKind==='result'?'独立既有任务样例：new/group，不来自前面新任务选择；owner与原scope冻结，不做中途切换。':'仅新任务的通道示意：single owner，不向新旧两条路径同时提交。';
+ document.getElementById('event-json').textContent=JSON.stringify(item.data,null,2);document.getElementById('event-heading').textContent=item.title;document.getElementById('event-explanation').textContent=item.description;document.getElementById('event-example').setAttribute('aria-labelledby','tab-'+eventKind);
+}
+tabs.forEach((tab,index)=>{tab.addEventListener('click',()=>{eventKind=tab.dataset.event;render()});tab.addEventListener('keydown',event=>{let next;if(event.key==='ArrowRight')next=(index+1)%tabs.length;if(event.key==='ArrowLeft')next=(index-1+tabs.length)%tabs.length;if(event.key==='Home')next=0;if(event.key==='End')next=tabs.length-1;if(next!==undefined){event.preventDefault();eventKind=tabs[next].dataset.event;render();tabs[next].focus()}})});
+owners.forEach(b=>b.addEventListener('click',()=>{if(eventKind!=='result'){selectedOwner=b.dataset.owner;render()}}));
+document.getElementById('native-kind').addEventListener('change',e=>{nativeKind=e.target.value;render()});document.getElementById('scope-kind').addEventListener('change',e=>{selectedScope=e.target.value;render()});document.getElementById('notice-kind').addEventListener('change',e=>{noticeKind=e.target.value;render()});render();
 document.getElementById('print-button').addEventListener('click',()=>window.print());
 const tocLinks=[...document.querySelectorAll('.toc-list a')];const sections=[...document.querySelectorAll('.doc-section')];
 if('IntersectionObserver'in window){const intersecting=new Set();const observer=new IntersectionObserver(entries=>{entries.forEach(e=>{if(e.isIntersecting)intersecting.add(e.target);else intersecting.delete(e.target)});const visible=[...intersecting].sort((a,b)=>a.getBoundingClientRect().top-b.getBoundingClientRect().top);if(!visible.length)return;tocLinks.forEach(a=>{if(a.getAttribute('href')==='#'+visible[0].getAttribute('aria-labelledby'))a.setAttribute('aria-current','location');else a.removeAttribute('aria-current')})},{rootMargin:'-5% 0px -70% 0px',threshold:0});sections.forEach(s=>observer.observe(s))}

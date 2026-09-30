@@ -1,12 +1,12 @@
 # EmployeeLoop：事件、事项与执行的统一协调方案
 
-创建：2026-09-30。修订：2026-10-01，R3。状态：设计提案，未实施。配套：[方案导读](employee-loop-overview.md)、[HTML阅读版](employee-loop-design.html)。R3按用户最新要求：直接复制Go BotLoop核心，新建独立EmployeeLoop并替换Coordinator运行路径；能力服务复用；统一事件与MessageRouter兼容在第5节独立设计。本轮只交付方案、HTML和迁移清单，不迁入业务代码。
+创建：2026-09-30。修订：2026-10-01，R5。状态：设计提案，未实施。配套：[方案导读](employee-loop-overview.md)、[HTML阅读版](employee-loop-design.html)、[实施拆解](../2026-10-01/employee-loop-delivery-plan.md)。直接复制Go BotLoop核心，新建独立EmployeeLoop新通道，Coordinator保留独立legacy灰度；能力服务复用。R5纳入全部浏览器评论：Employee Builder、带场域的timer/webhook、企业默认资源域、统一Task/Run、RunOnly默认与Issue协作形态、关键场域通知、轻量校验和独立legacy灰度通道；优先复用最新DWS Go SDK。本轮交付方案、HTML、Schema快照与实施拆解，不迁入业务代码。
 
 ## 1. 结论与代码基线
 
-建议将GawkBot的Go `BotLoop`核心代码按固定版本直接复制到新包`server/internal/service/employeeloop/`，以EmployeeLoop命名这个独立运行主体。保留`Tick`、phase推进、队列优先级、工具注册、会话journal及运行控制结构；从旧Coordinator迁移纯政策/helpers到EmployeeLoop，接WorkObject、外部执行等待、场域权限和自然表达。
+建议将GawkBot的Go `BotLoop`核心代码按固定版本直接复制到新包`server/internal/service/employeeloop/`，以EmployeeLoop命名这个独立运行主体。保留`Tick`、phase推进、队列优先级、工具注册、会话journal及运行控制结构；优先适配BotLoop及其任务管理设计，接EmployeeBuilder、EmployeeTask、通用RunOnly、场域通知及轻量HostGate；旧Coordinator仅保留独立legacy通道。
 
-EmployeeLoop是复制后的BotLoop在员工场景下的装配与扩展，负责跨事件、跨等待、跨执行协调。**Coordinator是被替换的旧实现，不作为运行中的父对象或PolicyAdapter保留；新包不调用、不依赖Coordinator.Decide/runLoop。**具体业务执行继续交给DSH、Claude Code、Codex等Harness；已有有限动作、Host校验、审查、可靠入站和送达证据迁入新内核。
+EmployeeLoop是复制后的BotLoop在员工场景下的装配与扩展，负责跨事件、跨等待、跨执行协调。**新EmployeeLoop不嵌套Coordinator；统一事件入口后的RouteOwner单选新通道或独立legacy Coordinator通道，保留可灰度能力。**具体业务执行继续交给DSH、Claude Code、Codex等Harness；能力解析、可靠入站、事实引用、执行及送达基础继续复用；不把旧Coordinator的完整提示词和独立LLM审查迁入新通道。
 
 上一版将“不能从外部直接import internal包”过度推导为“只能借鉴设计”。重新读取完整bot包后，技术上可以vendor核心、替换少量边界并保留原测试。产品全仓依赖很多，但bot包主要是标准库，额外依赖uuid及RuntimeHomeDir配置函数。采用代码迁入优先；具体接缝见3.1–3.5，许可范围见15.4。
 
@@ -14,13 +14,14 @@ EmployeeLoop是复制后的BotLoop在员工场景下的装配与扩展，负责�
 
 | 对象 | 固定版本 | 用途 |
 | --- | --- | --- |
-| 最新 `origin/develop` | `2a520dea5ce616c05861aec0e72192c7c09fb596` | 当前实现 |
+| 旧通道源码基线 | `2a520dea5ce616c05861aec0e72192c7c09fb596` | 前轮固定引用、旧Coordinator/Dispatch合同 |
+| 本轮最新develop/提交基线 | `7c91589854e06d6907cce18b944b46b66a34a553` | 新增Go DWS SDK、连接管理/交接/重平衡 |
 | `origin/feat/context-capabilities` | `5aa21b5c31a74ae99529509719eff7b65ea1f512` | 已建设但未合入的场域能力底座 |
 | 两分支共同祖先 | `3cc998050d4dc8ef58ade627ffb574e8d48ab454` | 区分功能差异和 develop 后续演进 |
 | 本方案分支 | `codex/employee-loop-design-20260930` | 只保存方案 |
 | 讨论来源 | [比较消息处理架构](chatgpt-conversation://6abcd6d8-c3f4-83e8-82ad-8d8a0881a925) | 读取全部 11 轮；作为需求和设计讨论，不作为代码证明 |
 
-`develop` 和能力分支分别有 36 / 8 个独有提交。只读 `git merge-tree --write-tree` 检查发现 7 个冲突文件：连接器文档、四份 agents 翻译、`handler/daemon.go`、`handler/internal_connector.go`。此次没有合并能力分支；实施应先把能力分支 rebase 到最新 develop，处理 claim 和连接器鉴权冲突，再做本方案。文本自动合并不等于权限行为正确。
+上轮固定`2a520dea5`与能力分支的比较分别有36/8个独有提交，以下merge-tree结果是该旧基线证据。只读 `git merge-tree --write-tree` 检查发现 7 个冲突文件：连接器文档、四份 agents 翻译、`handler/daemon.go`、`handler/internal_connector.go`。此次没有合并能力分支；实施应先把能力分支 rebase 到最新 develop，处理 claim 和连接器鉴权冲突，再做本方案。文本自动合并不等于权限行为正确。
 
 下文区分 **已存在**、**建议新增**、**待测目标**。不将旧讨论中的阈值、开源生产状态或未运行验收升级为事实。
 
@@ -28,11 +29,11 @@ EmployeeLoop是复制后的BotLoop在员工场景下的装配与扩展，负责�
 
 | 当前事实 | 代码依据（develop，除注明者） | 设计含义 |
 | --- | --- | --- |
-| Coordinator 已有 inbound、task_finished、finish_check 等循环类型 | `server/internal/service/inboundcoord/coordinator.go:72`；`docs/inbound-coordinator-loop.md` | 迁移政策与校验，旧循环被新EmployeeLoop替换 |
+| Coordinator 已有 inbound、task_finished、finish_check 等循环类型 | `server/internal/service/inboundcoord/coordinator.go:72`；`docs/inbound-coordinator-loop.md` | 统一Task信号，能力服务复用；旧圈独立灰度，新圈不继承复杂review |
 | 当前有限动作以 start_work / continue_work 提交业务工作，结果回报只处理当前 result_ref | `docs/inbound-coordinator-loop.md:121`；`policy/registry.json` 的 F04/F07/F12/F13/F17 | 不回退旧通用 reply 协议，不把分析塞进协调回复 |
 | 自动化有 `create_issue`、`run_only` 两种执行模式 | `server/internal/service/autopilot.go:474`、`:510` | 不建 Issue 的执行能力已存在 |
 | run_only 创建 agent_task_queue 并唤醒原 TaskService | `server/internal/service/autopilot.go:917`、`:952` | 复用任务队列、调度、claim、启动与完成链 |
-| 但 run_only 的归属、任务构建和运行状态仍依赖 AutopilotRun/Autopilot | `server/internal/service/autopilot.go:893`；见第 8 节 | 不能只换一次 INSERT 就宣称支持 WorkObject direct |
+| 但 run_only 的归属、任务构建和运行状态仍依赖 AutopilotRun/Autopilot | `server/internal/service/autopilot.go:893`；见第 8 节 | 不能只换一次 INSERT 就宣称支持 EmployeeTask direct |
 | 定时自动化已有 PG lease、planned_at 幂等与过期恢复 | `server/internal/scheduler/jobs_autopilot.go:40`、`:55`、`:89` | 复用现有 scheduler，增事件 materializer |
 | webhook 已有认证、签名、过滤、delivery 去重、持久受理和异步恢复 | `server/internal/handler/autopilot_webhook.go:345`、`:547`、`:562` | 复用 ingress；签名只证来源，不能证明业务授权 |
 | 群观察消息已进入普通可靠 Coordinator 入口；proactive 标记由 Host 产生 | `server/internal/handler/agent_event_trigger.go:108` | 不另建一条群消息直派执行路径 |
@@ -46,29 +47,30 @@ EmployeeLoop是复制后的BotLoop在员工场景下的装配与扩展，负责�
 
 ```mermaid
 flowchart TD
-  IM[聊天 / 群观察] --> IN[认证与来源适配器]
-  TM[定时器 / 例行规则] --> IN
-  WH[Webhook / 业务事件] --> IN
-  EX[执行结果 / 人工回答] --> IN
-  IN --> EV[持久事件入口 PG Inbox]
-  EV --> SC[Scene Router 场域与事项定位]
-  SC --> EP[Episode 讨论片段]
-  EP --> WO[WorkObject EmployeeLoop / Go BotLoop内核]
-  WO -->|ExecutionRequest| DR[统一执行入口]
-  DR --> DI[Direct 执行]
-  DR --> IS[Multica Issue 执行]
-  DI --> HW[DSH / Claude / Codex / Runtime]
-  IS --> HW
-  HW -->|ExecutionEvent| EV
-  WO --> OP[输出策略与 Durable Outbox]
-  OP --> CH[群引用回复 / 指定个人 / 业务产物]
-  HW --> CP[Session Capsule]
-  CP --> AR[Promotion 正式产物]
-  CAP[contextcap 单一授权解析器] -.-> IN
-  CAP -.-> DR
-  CAP -.-> HW
-  CAP -.-> OP
+  DT[钉钉场域 / DWS原生事件] --> AD[Source Adapter接当前入口]
+  TM[timer / 固定企业群个人绑定] --> AD
+  WH[webhook / 固定场域及规则] --> AD
+  EX[Run结果 / 关键SceneNotice / 回答] --> AD
+  AD --> PG[既有可靠受理 / PG receipt]
+  PG --> RT[RouteOwnerGate / 单选灰度]
+  RT -->|legacy| LC[独立旧Coordinator通道]
+  RT -->|employee| BU[EmployeeBuilder / Scope与历史去重]
+  BU --> EL[EmployeeLoop / 复制BotLoop及Task设计]
+  EL --> HG[轻量HostGate / 无默认旧review]
+  HG --> RUN[通用Autopilot RunOnly / TaskService]
+  LC --> RUN
+  RUN --> HW[DSH / Claude / Codex / Sandbox]
+  HW --> EX
+  HG --> OP[ReplyComposer / 场域outbox]
+  EX -->|核心Notice快路无需再推理| HG
+  OP --> CH[群 / 个人 / 文档等已授权surface]
+  HW --> CP[Task与Run独立Capsule]
+  CP --> ART[Promotion正式产物]
+  IS[Issue / 可选协作与渐进history] -.-> RUN
+  CAP[contextcap / 权限与身份服务] -.-> BU
+  CAP -.-> HG
 ```
+
 
 三个循环分别回答：
 
@@ -76,13 +78,13 @@ flowchart TD
 2. **EmployeeLoop**：用迁入的BotLoop主体推进这件事，在事项内串行处理输入、等待、决策、工具及回报。
 3. **Execution Loop**：怎么完成业务工作？由已有 Harness 执行，可异步并行。
 
-Employee Identity 是租户内的稳定数字员工；一个员工可服务多个 Scene。一个群只有一个对外员工身份，内部可以有多个 WorkObject。Actor 亲近度用于候选排序，不作为员工或事项 Session 的唯一键。
+Employee Identity 是租户内的稳定数字员工；一个员工可服务多个 Scene。一个群只有一个对外员工身份，内部可以有多个 EmployeeTask。Actor 亲近度用于候选排序，不作为员工或事项 Session 的唯一键。
 
 没有确定工作绑定的输入，在scene窗口装配一个EmployeeProfile协调wake；有可信绑定的输入，在work mailbox恢复同一profile。它们都由同一EmployeeLoop+EmployeePolicy推进。计划提交/拆项后mailbox只执行或恢复已保存效果，不再对同份输入跑第二轮语义路由与业务决策。图中的层次表示调度范围，不表示两次串联模型调用。
 
-第一期 Episode 只存锚点、相关事件、参与者和小摘要，可没有 WorkObject；产生明确持续工作时才绑定 WorkObject。不为每条群消息创建永久认知 Session，不为所有 ambient 消息调用 LLM 分段。
+第一期 Episode 只存锚点、相关事件、参与者和小摘要，可没有 EmployeeTask；产生明确持续工作时才绑定 EmployeeTask。不为每条群消息创建永久认知 Session，不为所有 ambient 消息调用 LLM 分段。
 
-**最小实现粒度：**Scene 的有界协调窗口 + 每个 WorkObject 的 durable mailbox。Episode 可先作为轻量归属记录，不另增加常驻执行器。不同事项并行；同一事项默认只有一个主执行 lane。允许显式拆子事项，但不能为了同群多人 @ 自动多开会操作同一业务对象的 Worker。
+**最小实现粒度：**Scene 的有界协调窗口 + 每个 EmployeeTask 的 durable mailbox。Episode 可先作为轻量归属记录，不另增加常驻执行器。不同事项并行；同一事项默认只有一个主执行 lane。允许显式拆子事项，但不能为了同群多人 @ 自动多开会操作同一业务对象的 Worker。
 
 ### 3.1 直接复用的代码范围
 
@@ -107,6 +109,26 @@ Employee Identity 是租户内的稳定数字员工；一个员工可服务多�
 
 队列主键是LoopScope：已有work用workspace+employee+work+安全scope/epoch，尚未绑定工作用scene+冻结window/receipt。trigger actor是每条事件内容，不是Loop主键；不将上游botSlug或ActorKey机械替换成“一个人一个会话”。
 
+### 3.1.1 类型命名与Task层一起适配
+
+| 原符号 | 新包名称 | 含义 |
+| --- | --- | --- |
+| BotLoop / BotService | EmployeeLoop / EmployeeService | 唯一新Loop内核及worker调度 |
+| BotPhase / BotState | EmployeePhase / EmployeeLoopState | 一次wake的内核阶段与状态，不等于业务Task状态 |
+| StreamChunk / StreamFn | ModelChunk / ModelStream | 模型输出与可取消调用 |
+| BotTool / ToolRegistry | EmployeeTool / EmployeeToolRegistry | 经能力约束的工具协议 |
+| MessageQueues | EmployeeInbox | 可信Task/SceneScope的输入优先级，PG为权威 |
+| SessionEntry / SessionStore | EmployeeJournalEntry / EmployeeJournalStore | 员工wake记录；与外部Harness Session分开 |
+| WorkObject（上一版） | EmployeeTask | 目标级任务，RunOnly与Issue共享同一个Task |
+| queue task_id | ExecutorQueueTaskID | 既有agent_task_queue中的一次执行，不改成目标ID |
+| 一次自动化执行 | ExecutionRun / AutopilotRunID | 一次执行记录及原服务绑定 |
+
+不仅复制bot包，也牵引GawkBot的任务细节：TaskDefinition及normalizeTaskDefinition（仅Goal必填，Deliverables/SuccessCriteria/AccessNeeded可选）、TaskLedger的结果/ContextUsed、依赖携带上游成果、HumanNotePending和资源lane设计。纯函数/数据结构可port；原完整Broker、强制定义审批、强制wiki/retrieval和reviewers pipeline不进入默认路径。
+
+Human note不复制上游单槽覆盖/整槽清空实现：改append-only的note ID/seq，逐note确认消费。暂停/停止/禁止外发等限制独立形成restrictive fence；普通追加材料、后到回答或note已读不解除它，只有对应有授权的resume/clear动作能改变。覆盖stop→普通补充→迟到完成的对照，不因后一句“好”丢掉暂停。
+
+任务身份固定为EmployeeTaskID+RunID+goalRevision+SceneBinding+principal，避免按员工/channel/时间窗猜最后一条输出。上游ledger只保有限brief，不能把它宣称成完整渐进历史；本仓按Task/Run引用追加history handle。详细来源见15.4。
+
 ### 3.2 EmployeeLoop在BotLoop里面怎样运行
 
 新包里的`EmployeeLoop`直接来自复制后的BotLoop，实现绑定Scope、EmployeePolicy、持久store和执行/表达端口。它拥有唯一的模型/工具推进器；EmployeeProfile决定使用哪些上下文、工具、停止条件和等待方式，复制后的Tick依然推进状态。
@@ -119,7 +141,7 @@ flowchart TD
     C --> L[StreamLLM / 当前purpose]
     L --> T[ExecuteTool / 消费结构化结果]
     T -->|继续同一wake| L
-    T --> F[验证finish / render / review / 保存计划]
+    T --> F[轻量HostGate / 保存Task动作与效果]
     F --> D[WakeDone]
     F --> W[AwaitHuman / AwaitExternal]
     P[迁入新包的EmployeePolicy与能力端口] -.-> C
@@ -130,32 +152,42 @@ flowchart TD
   W -->|记录等待后释放worker| M
   X[外部结果 / 人类输入 / timer] --> M
   F --> E[TaskService / Issue或direct]
-  F --> O[ReplyComposer / 已审输出outbox]
+  F --> O[ReplyComposer / 已验证输出outbox]
 ```
 
-保留基础`Idle→BuildContext→StreamLLM→ExecuteTool`推进；新增`AwaitHuman/AwaitExternal`和明确的wake结束处置。工作完成与本轮Done是两层状态：一轮接单、问题或进度协调结束，不表示整个WorkObject完成。
+保留基础`Idle→BuildContext→StreamLLM→ExecuteTool`推进；新增`AwaitHuman/AwaitExternal`和明确的wake结束处置。工作完成与本轮Done是两层状态：一轮接单、问题或进度协调结束，不表示整个EmployeeTask完成。
 
-模型请求的`purpose`区分route、render、review和协议修复，都是现有职责。审查继续独立，表达只调整已选合法内容；这些不会重开“这件事到底做什么”的第二个业务决策圈。确定模板的timer/webhook可从BuildContext直接产出已验证effect plan，跳过不必要的主模型调用，权限和持久化门槛仍在。
+新通道用主Loop的Task动作推进；表达只调整已有事实。正常路径不设route/render/review串联流水线，确定模板可直达，复杂表达才选有限render。确定模板的timer/webhook可从BuildContext直接产出已验证effect plan，跳过不必要的主模型调用，权限和持久化门槛仍在。
 
-### 3.3 旧Coordinator退出，新EmployeePolicy承接现有行为合同
+### 3.3 我们适配BotLoop，新通道不移植旧审查流水线
 
-在EmployeeLoop新包中迁入有价值的纯函数、规则装配、引用校验和审查协议，按`BeginWake / BuildRound / ConsumeModel / ExecuteRead / ConsumeToolResult / BuildReview / ConsumeReview / CommitFinish`整理为EmployeePolicy。名字为建议，不是现有API。它维护Turn、水位、合法目标、read snapshots、retry ledger、proposal和预算；Tick调用阶段函数，移除旧Coordinator的独立for-round和服务对象。
+以复制后的Tick、工具注册、队列和Task接口为主线，先接当前能力服务完成一条新的RunOnly链路，再按真实差异补端口。旧Coordinator的8轮主模型、独立finish_check、岗位全文审查、12秒review repair和旧checkFinish缓存，不作为新通道前置。
 
-| 现有实现 | 在BotLoop中的位置 | 保留要求 |
+新的EmployeePolicy只装配当前任务、员工表达、允许工具与最小行为合同；模型用同一个Loop判断继续、修正、等待、发起Run或回报。工具/动作参数由Host确定性校验，敏感工具调用和发送继续查真实授权。模糊目标由当前Loop澄清，不能用第二个模型的allow来替代权限。
+
+| 需要复用的能力 | 接法 | 不要求迁入 |
 | --- | --- | --- |
-| `inboundcoord/coordinator.go:467`的配置/trace/恢复准备 | Idle/BeginWake | 原固定配置、总截止、恢复已审计划；不重新推理已保存效果 |
-| `inboundcoord/loop.go:379`的prepareFirstRound | 首轮BuildContext | scene/history预取及read状态、水位、trace |
-| `coordination_context.go:82`、`loop.go:429`的messages/tools装配 | 每次模型调用前BuildRound | 每轮重建有界上下文和可用工具；不累积JSONL旧正文 |
-| `loop.go:78`后的主模型轮次逻辑 | StreamLLM | 原8轮与finish-only/修复预算，由kernel唯一驱动；移除原for-round |
-| `loop.go:263`后的read结果消费 | ExecuteTool/ConsumeToolResult | 原引用集、预算、失败分类、重复读取与修复提示 |
-| `loop.go:184`的finish链 | ExecuteTool的terminal handler | parseValidatedWindowPlan→受限render→checkFinish协议→SavePlan；成功后不再默认请求主模型 |
-| `finish_check.go:178`、`:260` | review/review_repair子阶段 | 原审查结构、quote refs、混合动作、一次协议修复和12秒预算 |
+| assoc、任务证据与历史读取 | Builder按范围调用，返回有水位的事实和引用 | 原runLoop/roundTools的整套调度与累计修复状态 |
+| contextcap与DWS身份/工具代理 | 授权结果作为AllowedTools/ExecutionContext；调用时再核 | 模型读取记忆或SOP来判断MCP权限 |
+| persona/reply_tone与自然表达 | EmployeeProfile/ReplyComposer，直接表达已有任务事实 | 每条普通回复、进度都追加独立LLM审查 |
+| TaskService、RunOnly、Issue和outbox | EmployeeTask/ExecutionRun适配现有服务 | 默认先建Issue、再走Issue协议才能干活 |
+| 旧响应/回执协议 | 当前入口后的LegacyWireAdapter冻结和转换 | 在新Loop内部调用Coordinator.Decide |
 
-表中路径均在`server/internal/service/`下，是迁移来源，不是新包运行依赖。Handler改调`EmployeeLoop`的受理/推进接口；旧Coordinator.Decide及其运行循环移除，已安装客户端和MessageRouter的HTTP契约另由入口adapter兼容。**不把完整Decide/runLoop作为一个tool或StreamFn包进去**，那样只复用了外壳，原模型/工具推进仍黑盒嵌套。
+`inbound`与`task_finished`在新模型中是Task输入和Run完成信号，不是两套独立认知Loop；`finish_check`是旧通道的实现机制，不定义一个Task生命周期状态。统一TaskSignal可以表达 input/amendment/answer/run_progress/run_completed/dependency_changed/timer_due/cancel。
 
-政策注册目录与现行合同也迁到EmployeeLoop的唯一维护入口，保留F01–F19来源、撤回规则、版本和历史证据。迁移时更新checker/source-map/CLAUDE指针，不让两个目录各自维护一份同义prompt。旧历史Chat/trace保持可读，不能因运行对象退休把现有审计记录删除。
+旧通道在统一事件接入后的独立legacy lane原样保持行为合同，便于比较、按场域灰度及退回；新通道拥有自己的简短合同和版本。各自的行为来源、trace和RouteOwner明确，不同一事件跑两遍或共享可变推理状态。
 
-首轮预取可以保持异步优化；每次ExecuteTool后重建下一轮请求，不重新从mailbox把后到消息塞进旧窗口。新的紧急控制按明确work及权限使当前候选失效/终止，封存的原授权不被后发消息改写。
+### 3.3.1 轻量HostGate
+
+正常链路为：Builder → BotLoop主判断或已定义模板直达 → 本地/数据库HostGate → 保存effect → 执行/投递。HostGate检查结构、scope、actor/principal、目标归属、当前版本、操作授权、结果引用、幂等键和输出受众；它不再调用一个模型评价整段回复文风或要求将来结果提前存在。
+
+- 普通聊天、真实进度、已确定的Run结果和已授权控制：不跑独立review。
+- 已注册的timer/webhook TaskDefinition：无新的语义缺口时直接RunOnly，不重做需求规划。
+- 新目标或实质修改：只在主Loop内判语义；必要读取仍可调用工具，保留BotLoop工具循环。
+- 真正缺授权/收件目标、版本冲突或相互矛盾的输入：停止对应effect、具体澄清或重建当前Context；不拉长成重复主模型—review死锁。
+- 只有用户/业务规则明确要求的审批、或显式配置的特定审核才建立等待/定点审核。已经明确授权且规则允许的动作不再机械二次确认。
+
+可把确定性gate耗时作为独立指标，目标本地检查p95≤50ms，数据库检查另计；这是实施SLO而非当前成绩。普通路径独立review模型调用数必须为0。旧通道保留原成本用于对比，不把旧长审查借重命名搬进来。
 
 ### 3.4 必须修的内核接缝
 
@@ -165,20 +197,39 @@ flowchart TD
 | 把provider/tool/observer调用移出mutex | 原Tick/Execute/emit与Interrupt共享锁；阻塞调用可能挡住控制 | 阻塞tool期间能及时受理Interrupt；回调重入不死锁，提交核revision |
 | ToolCallID与完整调用batch | 原单pendingToolCall不足以保存本仓读取batch及finish独占规则 | 多read的call/result一一匹配；read+finish同批被拒 |
 | 原生tool role + Host证据状态 | 通用journal的tool结果转换不能被当成新的user授权 | 原限制、水位、author不丢；tool错误不变成人类指令 |
-| 明确`continue/terminal/await/deferred` | EOF/文本不代表合法finish；executeTool后不总是回StreamLLM | 只在校验、审查、保存计划后terminal；失败保留未决请求 |
+| 明确continue/reply/terminal/await/deferred | 模型结束不等于业务完成；普通对话可结束wake，任务效果要有结构化动作 | HostGate与保存后发reply/dispatch；不要求旧finish_check，不把EOF推进Task完成 |
 | durable Scope和store端口 | 原botSlug+本地JSONL/内存queue不支持企业多副本 | tenant/work/principal/epoch隔离、lease steal、重启恢复与确认消费 |
 | Await状态与typed wake | 外部工作需释放worker，后续结果/回答再推进 | 等待不轮询LLM、不触发普通stuck阈值；wake幂等且不重派 |
-| candidate事件与人类输出隔离 | 原EventMessage不能直连DWS，人类输出必须有已审事实 | 未审流式正文、tool噪声不发群；已审intent按原outbox发送 |
+| candidate事件与人类输出隔离 | 原EventMessage不能直连DWS，人类输出必须有已验证事实 | 未审流式正文、tool噪声不发群；已验证intent按原outbox发送 |
 
 这些patch集中在loop/type/store边界，保留能安全复用的原函数和测试。它们不是可忽略的小补丁，也不需要因此重写整个BotLoop。实施按来源patch清单评审，不承诺没有依据的代码复用百分比。
 
 ### 3.5 外部执行是可等待的effect
 
-EmployeeProfile协调工具继续是现有有限read/finish集合；业务shell、MCP和专业分析仍在执行Harness。finish通过后，Host把start/continue转成ExecutionRequest；保存effect/wait后kernel进入AwaitExternal。外部结果携带work、attempt、result_ref重新入mailbox，作为新wake事实，调用同一EmployeePolicy的完成合同。
+EmployeeProfile按实际能力注册Task、Context与场域工具；耗时或明确可执行工作用通用RunOnly，业务Harness继续执行。结构化Task动作经HostGate后生成RunSpec；保存effect/wait后kernel进入AwaitExternal。外部结果携带work、attempt、result_ref重新入mailbox，作为新wake事实，调用同一EmployeePolicy的完成合同。
 
 人类补充进入原队列优先级，但要带结构化ActorRef/authority而非仅一段文本。“先别上线”可产生明确control effect；本地BotLoop.Interrupt只终止协调阶段的provider/tool，并不自动停止另一个沙箱Worker。真正运行控制仍走第9节的durable command和quiescent证明。
 
 这保留BotLoop的持续性：它可以读上下文、有限思考、调用协调工具、结束一轮、等待外部世界再接着办；平台对外是同一个员工，计算现场可以替换。
+
+### 3.6 挂在Employee上的Builder
+
+EmployeeBuilder是员工的上下文与触发装配器，配置属于Employee；游标、任务材料和权限快照按Task/SceneScope/会话epoch隔离。它在Loop的BuildContext阶段工作，复用能力/历史/任务服务，不再做第二个LLM路由器。
+
+| 输入 | Builder处理 | 输出 |
+| --- | --- | --- |
+| Native事件+可信订阅身份 | 保原DWS数据，读取已绑定Scene/Rule与Task定位 | TriggerContext及明确来源/actor/资源状态 |
+| SceneBinding+TaskDefinition+最新修正 | 按enterprise/group/personal范围编译，保留用户约定 | TaskContext、必需限制和引用 |
+| 历史、quote、forward、Task ledger | 按source+scene+native message ID去重，当前请求只投影一次 | 历史delta、ContextUsed manifest、loaded/unavailable/truncated |
+| cursor/watermark与会话epoch | 只加入尚未投喂且有权读取的材料；重试保持原水位 | ContextReceipt及下一游标候选 |
+| contextcap与Run profile | 解析AllowedTools、固定principal、运行目录/恢复资料 | 有作用域的RunSpec或主Loop上下文 |
+| trigger策略 | 已定义直达、交互、观察聚合、恢复、控制分别编译 | RunOnly意图、普通wake、receipt-only或ControlIntent |
+
+Builder不按正文相同去重，也不按“最近一个任务”选目标。原消息、引用和被转发消息保留身份；current input与older history重复时优先保存当前原文与限制。只有成功且记录了消费/投喂证据才推进cursor；历史读取失败、截断或未知不越过未覆盖区间。重复wake从同一ContextReceipt恢复，不把后来消息倒灌旧授权。
+
+不同触发方式有不同装配策略：群@/DM带当前原句与相关delta；ambient只观察或有界聚合；timer/webhook使用绑定场域、固定TaskDefinition和本次参数；Run信号使用当前Run/Task事实，不重新载入整群历史；回答只带真实question及最新输入；控制优先带目标、权限和控制seq。
+
+Employee人格可共享，Builder材料不可跨Task/principal混用。文档/日程/审批资源事实读取仍核ACL；场域默认企业不等于人人可读全文。Builder只“编译已有事实”，语义判定由原BotLoop主循环做，权限由Host服务决定。
 
 ## 4. 身份、场域和权限模型
 
@@ -208,7 +259,7 @@ Scene Actor key 建议为 `(workspace, employee, verified scene_ref)`；组织/�
 
 必须明确当前边界：群场域能力与单一触发者个人能力已建设；DM 配置、`share_in_groups` 等字段不能仅因 UI/DB 存在就当成有效控制；cron/webhook/plain chat 没有匹配 dispatch 时目前仅全局能力，不能宣称已支持所有事件的场域授权。详细代码证据见第 15 节。
 
-新增 `CapabilityRequest` 是对原 resolver 的输入扩展：origin scene、operation、validated principal、授权证据、配置 revision、purpose boundary；resolver 返回引用和有效快照。凭据不放进 InputEvent、模型 prompt、公共日志或 WorkObject JSON。
+新增 `CapabilityRequest` 是对原 resolver 的输入扩展：origin scene、operation、validated principal、授权证据、配置 revision、purpose boundary；resolver 返回引用和有效快照。凭据不放进 InputEvent、模型 prompt、公共日志或 EmployeeTask JSON。
 
 **建议新增/保留的复查边界：**受理 → 启动/claim → 敏感工具调用 → 恢复 Session → 产物与输出披露。当前connector每次调用已有复查，但skill bundle prepare只重验仍offered，不重新核scene/person binding；旧模型上下文不会自动清除。权限快照/fingerprint只帮助定位和复用，不能代替在线授权复查。撤权后旧日志、工具结果和Session内存也可能携带数据，不能只禁后续MCP调用就宣称已经隔离。
 
@@ -222,35 +273,117 @@ Scene Actor key 建议为 `(workspace, employee, verified scene_ref)`；组织/�
 
 文件夹路径分离不构成安全隔离。若两个执行挂同一可读写员工盘，命令行工具仍可读另一个目录；需验证挂载、运行身份/ACL或使用独立受限工作区。做不到时，该 runtime 不承接个人私有连接器并行任务。`/mnt/workspace/shared` 更不能作为个人 session-log 的默认存放处。
 
-### 4.4 定时与 webhook 的授权
+### 4.4 SceneBinding：企业、群与个人都可以挂触发器
 
-定时器是 `actor=system`；webhook 是验证后的 service/provider identity。配置 owner 只负责归属审计，不能自动变成个人凭据的授权主体。现有自动化已将 schedule/webhook 的 originator 留空，责任人从 trigger/rule owner 解析（`autopilot.go:893`）。
+SceneBinding是上下文/运行记录/输出的归属，不是工具授权本身。最低字段为scope_kind=enterprise/group/personal、tenant/org、employee、可信scope_key、owner/participants、visibility、配置revision、OutputPolicyRef；资源Ref另存。由授权的配置流程产生，不从webhook body或最近聊天推断。
 
-建议规则保存明确 `run_as`：employee/service grant，或本人事先授予的 delegated grant。个人例行任务需具备服务端可验证、可撤销、限定操作/场域/期限的 delegation；首次可用当前全局/员工能力，不以人工 UID 填空绕过 resolver。每次 firing 都检查规则启用、授权、有效 scope，历史受理不延续已撤销授权。
+| 来源 | 默认场域 | 必须明确的绑定 |
+| --- | --- | --- |
+| 群内设置的timer/webhook | 该群group Scene | 群CID、允许管理者/参与者、可见运行记录与默认回报场域 |
+| 单聊/个人设置的timer/webhook | personal Scene | 所属本人、可见性、允许执行的principal与回报对象 |
+| 企业配置的例行任务/订阅 | enterprise Scene | 企业范围、规则责任人和明确资源/输出范围 |
+| 钉钉日程、审批等非IM业务事件 | **先默认enterprise Scene** | 事件所属企业+calendar/process等资源Ref；显式绑定才关联群/个人 |
+| 文档@/评论等资源事件 | enterprise归属并保存文档资源Ref；显式配置可收窄 | 文档ACL、真实actor、回复锚点，不伪造聊天CID |
+| 群消息/单聊 | 可信group/DM自然场域 | 原消息参与者与输入权限，不能用subscriber替代sender |
 
-delegation必须绑定本人、委托执行的employee/service、操作与资源、场域、期限和撤销版本。`run_as`引用验证后的记录而非裸UID。**基础MVP明确仅开放已有employee/service/global能力的cron/webhook；个人无人执行属于后续能力扩展，不是借当前配置grant就已具备。**
+解析顺序：受信显式SceneBinding优先；IM的自然group/DM其次；其他DingTalk资源事件先enterprise默认。订阅使用个人OAuth不自动让审批变个人场域；企业默认也不改变原资源ACL、扩大工具权限或让私有结果对整个企业公开。
 
-Webhook payload 中的 `scene_id / work_id / uid / recipient` 只作为数据提示。Host 从受信 subscription 配置限定可指向的 scene、work 和输出目标，再做资源访问校验。有效签名不允许回调修改任意事项。
+定时器actor是system，webhook actor是验证后的service/provider。绑定场域记录“在哪推进这件事”，rule owner只承担配置责任，不自动成为个人connector授权者。规则保存run_as授权引用、固定TaskDefinition、参数schema、overlap policy和OutputPolicy；每次触发核规则及grant版本。
 
-## 5. 统一事件层：EmployeeEvent与线上MessageRouter兼容契约
+个人无人执行需要真实delegation：本人、被委托employee/service、操作/资源/范围/期限和撤销版本。已有employee/service/global授权可以先完成企业或群内例行工作；personal Scene归属不等于个人连接器能力已完整落地。context_config_grant仅配置权，不能用裸UID或旧sender补出执行权限。
+
+Webhook callback locators只供定位；Host用subscription绑定范围验证。收到事件不能由body改Scene、Task、principal或recipient。原触发配置的SceneBinding沿Task和ExecutionRun保存，沙箱退出不抹掉场域运行账本。
+
+## 5. 统一事件层：复用DWS场域协议，兼容既有MessageRouter
 
 这是新EmployeeLoop的基础协议，独立于模型提示词与执行backend。第3节说明Loop怎样推进，本节定义它究竟接收什么、信任什么、如何恢复与如何回执。
 
-设计分三层：**Source Wire → 认证与版本化Normalizer → EmployeeEvent**。MessageRouter Dispatch 2.0、周期scheduler、webhook、Runtime回调和人类回答可以保留各自外部协议，但只进入一套内部事件信封、durable inbox和唤醒机制。替换Coordinator不要求Router立即改协议；只有新的work定位、输出类型和应用回执需要vNext协商。
+设计分三层：**钉钉/DWS等原生协议 → 认证与版本化Source Adapter → EmployeeEvent控制外壳**。钉钉场域事件包括消息、日程、文档@/评论与审批等资源事件，未来可以由DWS Stream、业务事件网关、MessageRouter或其他受信连接器送入；不要求都经过MessageRouter，也不要求都先转换成message.created。周期scheduler、外部webhook与Runtime回调是另外的来源族，接同一durable inbox和唤醒机制。
 
-内部统一信封不将所有输入压成一条user text。来源、逐句作者、观察/请求/控制、业务状态、执行状态和披露对象都有类型；纯观测不会因进入事件层就授权工作。PG保存当前WorkObject状态，事件保存因果和审计，不要求回放全量日志才能查状态。
+### 5.0 DWS Schema优先复用，不重新发明平台事件正文
+
+**最新develop直接复用Go DWS，而不是再造CLI订阅器。**本轮fetch到`7c91589854e06d6907cce18b944b46b66a34a553`，已入仓`server/pkg/dws`、`server/pkg/dws/events`、`server/pkg/dws/redisstore`以及`internal/dwseventsource/connmgr`。SDK从`xdxer/dws-for-tag@ae29c2914dd9108e7ce451329bceeca411464b6b`同步；上游SDK修改在那里完成再resync。
+
+| 可直接复用 | 本轮核验边界/需要的适配 |
+| --- | --- |
+| Client.Events、SubscriptionSpec、订阅/Ticket及Fingerprint | 复用group/target/roles/filter等原生契约，不另定义订阅DTO |
+| events.Event及Typed()业务类型 | 保ID/Key/SubscriptionID/CorpID/OccurredAt、Body/Data RawMessage，新Loop直接接此类型 |
+| SDK registry | 当前28项，旧CLI27+互动卡片1；calendar/doc@ typed key仍未发布，Lookup/Available gate不允许凭空订阅 |
+| dwseventsource.Consumer | 当前只EventKey+Identities+Handle(bytes)，需扩原生SubscriptionSpec及typed HandleEvent；不要经EventLine来回投影 |
+| connmgr/Redis ownership、keepalive与交接 | 复用连接、凭据、重连、ready、重平衡；交接可能短暂重叠，PG仍业务去重 |
+| Listener持久后ACK | Handle成功后MarkHandled/ACK；业务Adapter先事务记录receipt再返回成功，失败不ACK |
+
+新版Event没有完整公开EventEnvelope类型：Body/Data保解包业务数据，但headers/specVersion/eventBornTime/原WS字节未全部保留。不能把兼容EventLine重建的CLI wrapper当无损原帧；可先记录SDK实际可得数据及缺失状态，需要完整安全packet时再经上游SDK hook扩展。SDK typed projection已移入，但JSON Schema generation尚未port，目录元数据也不是完整JSON Schema。旧CLI snapshot保留为结构证据，不与SDK当前28项混同。
+
+固定引用（7c9158985）：`server/pkg/dws/SYNC.md:3`、`events.go:59`、`:93`、`events/event.go:27`、`events/typed.go:1`；`server/internal/dwseventsource/source.go:37`、`:297`；`internal/connmgr/manager.go:626`。未带server前缀的SDK相对路径在server/pkg/dws下。
+
+
+**复用原则：**DWS已发布的event key、原生envelope和业务payload保持其字段名、类型与含义；EmployeeLoop新增的租户绑定、工作关联、权限引用、去重和fence位于HostMeta外壳。Scene/Actor是有出处的派生索引，不回写DWS payload。MessageRouter Dispatch 2.0仍沿原响应/续接/控制/callback契约适配，属于载体，不是钉钉场域的定义。
+
+本轮只读查询本机DWS `v1.0.61 / commit 50eb73a0`，build `2026-08-31T14:46:17Z`。公开catalog包含IM16、OA7、VoIP1、Todo3共27项；`--include-pending`也未给出calendar或文档@的事件key。这只限定本机该版本的公开目录，**不表示DWS整个产品没有这些事件**。日程、文档@是必须支持的协议槽位，其正式key/payload schema需从DWS发布的对应目录/接口登记；不把IM的receive_at冒充文档@，不捏造`user_doc_*`或`user_calendar_*`键。
+
+已保存[只读Schema快照](dws-event-schema-snapshot.json)：27项catalog以及每项raw/flatten，共54份原Schema输出，含CLI版本、binary hash、查询命令和每份export hash。后续代码生成/验证优先导入这些DWS Schema或对应发布包，避免手写一套同义JSON字段。快照是协议证据，不含真实业务事件、凭据或订阅状态；本轮未启动监听或订阅。
+
+| 层 | 直接复用的内容 | EmployeeLoop增加什么 |
+| --- | --- | --- |
+| DWS原生envelope | 已发布type/event_type/event_id/data及transport元数据 | ProviderSchemaRef、NativeEventRef，保留完整默认安全输出的frame |
+| DWS业务schema | event key对应的payload/flatten字段定义、类型、可选性 | SchemaRegistry引用及有版本的Decoder，不改名再包装成IM |
+| HostMeta | 不由DWS/body声明 | workspace/employee、订阅主体绑定、来源版本、本地seq、receipt、authority/fence |
+| 派生场域索引 | 按具体DWS Schema读取真实资源与操作者 | SceneRef、ActorRefs、Work/WaitRefs、OutputPolicyRefs及字段来源路径 |
+| 旧MessageRouter | Dispatch 2.0 DTO及已有回执语义 | Legacy adapter；不声称该DTO等于完整DWS原始schema |
+
+示意结构为`{host_meta, provider_event}`：provider_event保存`{schema_namespace, provider_event_key, schema_ref, native_event_ref, projection_ref?}`，native_event_ref指向按DWS安全边界保留的完整frame/payload；host_meta保存平台独有的协调事实。既有EmployeeEvent的SourceID/Kind/ActorRef等是控制元数据或派生索引，不是对DWS同名业务字段的覆盖。
+
+**当前raw envelope有14个已声明字段：**`type`、`event_type`、`event_id`、`data`、`headers`、`event_born_time`、`event_corp_id`、`event_scope`、`event_unified_app_id`、`received_at_unix_ms`、`seq`、`source_id`、`subscribe_id`、`rule_type`。`type="event"`、event_type为原event key，data是JSON字符串，业务读取路径为`.data | fromjson`。该raw schema没有进一步定义data内部的强类型结构；不能自行宣称解析后的任意对象已通过DWS业务schema。
+
+flatten是DWS的派生业务视图，type为event key、jq_root_path为`.`，包含字段映射与脱敏，**不等同于只JSON.parse(data)**。生产优先保留默认安全的native envelope，再引用同key的flatten/projection帮助模型理解。选择flatten的consumer可能回退raw envelope，Decoder必须识别已注册形状，不能固定假设每条都有content/sender。
+
+54份当前Schema均未声明`schema.required`；列在properties不等于每次必有。保留DWS可选性，执行所需的身份/目标/幂等等门槛由Host单独验证。未知字段保留在受限native frame中，不因DTO投影丢失，也不因为存在一个字段就授予工作权限。
+
+| 场域/事件族 | 已核验的协议依据 | 基本包装与复用路线 |
+| --- | --- | --- |
+| 消息、已读、撤回、reaction及群生命周期 | 当前16项`user_im_*` raw/flatten Schema | event key原样保留；sender/reader/recaller/operator依事件取，不只支持新消息 |
+| 审批任务/实例 | 当前7项`user_oa_approval_*` Schema | task/process资源场域；可无明确actor；状态字段保原值，不推断完整枚举 |
+| 日程资源事件 | 本仓已有Router calendar.started；本机DWS公开catalog未给原生key | 同一DingTalkDomainEvent包装，待登记真实DWS schema；不是给日程强造CID或IM正文 |
+| 文档@/评论/协作事件 | 需求明确；本机公开event catalog未给正式key | DocumentScene+原生schema引用；文档/块/评论/@对象定位按发布schema取，不猜字段名 |
+| Todo、VoIP与后续业务族 | 当前Todo3/VoIP1 Schema可直接引用 | 同一个平台schema registry扩展，不为每种产品另造Loop |
+| 卡片人工操作 | 仓库已消费user_card_action_triggered，独立parser合同 | 保留实际frame变体和operator验证；不假装属于上述27项CLI目录 |
+
+文档@与IM @是不同资源语义：文档事件不一定有chat CID；资源读取权限来自对应账号和文档ACL，不因“被@”就默认可读全篇或可向群披露。日程或审批也不因为最终回报某群而继承该群的连接器能力。缺失scope/actor/资源定位保持未知或阻塞，不能用订阅账号代替操作人。
+
+回复锚点也按资源类型保存：聊天用原消息，文档事件保留DWS提供的文档/评论上下文，日程/审批保留对应资源定位；可用的文档评论回复、IM回报或仅记录由已验证OutputPolicy/渠道权限选择。不能为适配旧dws IM发送接口捏造群CID，也不能无依据把私有文档结果发到某群。
+
+**订阅主体与事件actor分开。**Host从受信profile/OAuth/员工绑定和订阅记录建立`SubscribedPrincipalRef/SubscriptionBindingRef`，不是从payload的sender、参与者或target_uid反推。IM取sender，read取reader，recall取recaller，reaction/群操作取operator；OA/系统事件可能只报告资源状态。`event_corp_id`是来源声明，不能改写Host租户；账号组织与资源所属组织也分别记录。
+
+当前IM flatten有sender_open_dingtalk_id，不提供通用staffId。接contextcap个人能力层时，如需staffId只能通过受信且有组织范围的身份映射核验；未解析保持person scope未知/空，不把openID换个字段名或用订阅账号填成触发人。DWS安全投影也不能被当成当前已有group/person resolver已经支持所有新资源场域的证据。
+
+避免同名字段误用：Todo flatten的source_id是来源业务ID，不是raw envelope的transport source_id；flatten没有统一org/receiver/source字段。VoIP的corp_id/org_id/target_uid与caller/callee类型不同，按原Schema保留，不统一转成可丢精度的number。SchemaRegistry记录字段路径、形状和版本，再派生索引。
+
+**SchemaRegistry登记单元：**provider namespace + event key + shape(raw/flatten/已验证frame变体) + DWS发布版本/hash + decoder/projection版本 +敏感字段策略+场域/actor解析规则。日程/文档@正式Schema发布后只新增登记与fixtures，不改核心信封或重写Loop。当前未注册的Schema可保留为受限待映射receipt，不能交LLM猜字段并自动执行；显式登记后可按原receipt/效果键受控重放。
+
+保存“原生frame”沿DWS默认脱敏输出边界，不打开debug-raw-events恢复已删敏感值；例如VoIP roomCode默认不进安全frame。JSONB保存语义字段不保证原字节，若需要完整frame digest或重放，另外存受限byte/blob及hash；派生对象只是索引。现有Dispatch固定DTO会丢未知业务字段（`server/internal/handler/agent_dispatch_v2_handler.go:188`、`:113`），新DWS入口应在认证后、投影前保存原frame。
+
+生产代码直接复用Go SDK的events.Event/typed payload与SubscriptionSpec；schema_ref/native ref是其出处及持久化引用，不再维护同义业务结构。CLI下述导出仍用于协议审计和补JSON Schema证据，不能代替Go typed实现。
+
+可复现只读查询：`dws event list --include-pending --format json`、`dws event schema <已发布event_key> --format json`、同命令加`--flatten`。`dws schema --cli-path "event schema"`查询的是CLI命令参数，不能替代event输出Schema；calendar event get或doc comment update是产品操作，也不能当Stream订阅key。
+
+存量DWS消费可复用来源：`server/internal/dwsclient/a2ui.go:90`接NDJSON frame bytes；`server/internal/service/userdecision/transport.go:7`与`event.go:43`处理卡片事件。它们是transport/parser模式，不作为所有钉钉事件的必填字段。DSH native的type/seq/time/data属于执行轨迹，不冒充DWS业务协议。
+
+后续5.1–5.11规定共同控制语义与旧Router兼容；这些规则不会把未来DWS事件限定为Router当前7种类型。
+
+内部统一信封不将所有输入压成一条user text。来源、逐句作者、观察/请求/控制、业务状态、执行状态和披露对象都有类型；纯观测不会因进入事件层就授权工作。PG保存当前EmployeeTask状态，事件保存因果和审计，不要求回放全量日志才能查状态。
 
 ### 5.1 三种事件，三种证据
 
 | 类别 | 示例 | 是否唤醒 | 持久用途 |
 | --- | --- | --- | --- |
 | InputEvent | message.addressed、message.observed、timer.due、webhook.received、human.answer | 按规则唤醒/仅观察 | 可靠输入、来源、去重、原授权水位 |
-| WorkEvent | work.defined、work.amended、work.waiting、work.cancelled | 投影/依赖者按规则 | 状态迁移证据；WorkObject 行仍是当前状态权威 |
+| TaskEvent | task.defined、task.amended、task.waiting、task.cancelled | 投影/依赖者按规则 | 状态迁移证据；EmployeeTask 行仍是当前状态权威 |
 | ExecutionEvent | started、progress、needs_input、checkpointed、completed、failed、control_ack | 状态事件唤醒；遥测不逐条推理 | 过程事实、输出锚点、执行回执 |
 
 token/text delta、thinking、工具原始输出留在执行流/日志，不进入高优先级业务 mailbox，也不默认发群。可靠执行终态和等待事件应先入库；现有 events.Bus / Tair 只做唤醒与实时展示提示。
 
-以下为建议内部协议示意，不是已实现Go类型。InputEvent/WorkEvent/ExecutionEvent是事件class，共用EmployeeEvent信封；`schema_version=1`是内部契约版本，不是Router的`schemaVersion=2.0`：
+以下为建议内部协议示意，不是已实现Go类型。InputEvent/TaskEvent/ExecutionEvent是事件class，共用EmployeeEvent信封；`schema_version=1`是内部契约版本，不是Router的`schemaVersion=2.0`：
 
 ```go
 type EmployeeEvent struct {
@@ -268,14 +401,17 @@ type EmployeeEvent struct {
     PayloadRef string
     SourceRevision int64
     AdapterVersion, PayloadSchemaVersion string
+    ProviderEventKey, ProviderSchemaRef, NativeEventRef string
+    ProjectionRef, SubscriptionBindingRef, SubscribedPrincipalRef string
     IngressReceiptID, NativeLocatorRef string
     DeliveryContractRef, CapabilityContextRef string
     IdentityBindingRef string
-    WorkRef, WaitRef, ExecutionRef string
+    NativeDWS *dwsevents.Event
+    TaskRef, WaitRef, ExecutionRef string
     Sensitivity, AudiencePolicyRef string
 }
 
-type WorkObject struct {
+type EmployeeTask struct {
     ID, WorkspaceID, EmployeeID string
     OriginSceneRef, EpisodeID string
     DefinitionRevision int64
@@ -291,9 +427,9 @@ type WorkObject struct {
 
 Actor/Authority/Scene 是 Host 在验证阶段构建的描述或引用。`payload_ref` 可以保存有界原文快照与平台证据引用；权限敏感正文放受限 blob。最小机器日志需要当前授权原句、引用、作者、水位、摘要/hash，不能只存一个将来可能读不到的钉钉消息 ID。
 
-Class固定为`input/work/execution`三值；`observation.message.*`只是input的Kind命名空间。Retired summary选择receipt-only，不进业务mailbox；statistics走专项采集，不因Class=input默认唤醒LLM。Envelope admission与业务唤醒是两个动作，receipt-only来源沿原回执合同可靠提交后结束。
+Class固定为`input/task/execution`三值；`observation.message.*`只是input的Kind命名空间。Retired summary选择receipt-only，不进业务mailbox；statistics走专项采集，不因Class=input默认唤醒LLM。Envelope admission与业务唤醒是两个动作，receipt-only来源沿原回执合同可靠提交后结束。
 
-输出送达采用`Class=work / Kind=delivery.receipt`，只推进对应OutputIntent覆盖状态；不当作业务execution.completed。Raw delta、thinking和BotLoop本地observer callback是遥测信号，不等于持久EmployeeEvent，也不自动进业务mailbox。
+输出送达采用`Class=task / Kind=delivery.receipt`，只推进对应OutputIntent覆盖状态；不当作业务execution.completed。Raw delta、thinking和BotLoop本地observer callback是遥测信号，不等于持久EmployeeEvent，也不自动进业务mailbox。
 
 IdentityBindingRef引用受理时不可变的`{workspace, employee, platform, org_id, employee_external_uid, binding_epoch}`。source/subscription revision、routing epoch与adapter version各有用途，不能代替绑定版本。claim、恢复、工具调用和输出前比较当下绑定；同org换账号也形成漂移，不自动让旧credential/log沿新账号使用。
 
@@ -314,7 +450,7 @@ IdentityBindingRef引用受理时不可变的`{workspace, employee, platform, or
 
 可靠受理事务写入 input row、mailbox 路由/待路由记录和受理结果后才 ACK。业务效果通过同一事务内 effect intent/outbox提交，不在事务持锁期间调用模型、provider 或 DWS。稳定唯一键包含 workspace/employee/source，保证不会跨租户命中。
 
-一次输入可产生多个明确工作，保存 `event_work_link(relation, source_refs, authority_ref)`，不能把 Event 与 WorkObject 建成一对一。一个事项可接多个事件；源 webhook、cron occurrence 和最终输出之间保留 causation。
+一次输入可产生多个明确工作，保存 `event_work_link(relation, source_refs, authority_ref)`，不能把 Event 与 EmployeeTask 建成一对一。一个事项可接多个事件；源 webhook、cron occurrence 和最终输出之间保留 causation。
 
 ### 5.3 PG actor 与多副本
 
@@ -322,7 +458,7 @@ IdentityBindingRef引用受理时不可变的`{workspace, employee, platform, or
 
 逻辑串行不等于一整轮推理独占数据库锁。读取版本后在锁外决策；提交时比较 revision、最新控制边界与授权快照，变化则重新编译。旧 lease owner 的提交、迟到执行完成、旧 output intent 必须被 fence 拒绝。
 
-执行 lease 过期也不证明旧外部 Worker 已停止。重开主 lane 前确认停止，或撤销其工具/写入能力并隔离 workspace；结果 fencing 只能防止状态污染，不能撤回外部业务副作用。对同一资源有并发变更风险的 WorkObject，还需资源版本/幂等策略，单事项单写者并不足以保护跨事项资源。
+执行 lease 过期也不证明旧外部 Worker 已停止。重开主 lane 前确认停止，或撤销其工具/写入能力并隔离 workspace；结果 fencing 只能防止状态污染，不能撤回外部业务副作用。对同一资源有并发变更风险的 EmployeeTask，还需资源版本/幂等策略，单事项单写者并不足以保护跨事项资源。
 
 ### 5.4 信封字段、场域与权限的来源
 
@@ -343,7 +479,7 @@ IdentityBindingRef引用受理时不可变的`{workspace, employee, platform, or
 | NativeLocator/OriginMessage/ReplyTo | 原平台ID和当前引用 | 本地uN不是消息ID；引用作者与新触发作者分开 |
 | PayloadRef/敏感标签/audience | 受限规范化payload + 来源材料 | token、callback凭据和个人明文不进公共event JSON/trace |
 
-统一类型建议：`MessagePayload`、`ReactionPayload`、`MessageStatisticsPayload`、`CalendarStartedPayload`、`ApprovalChangedPayload`、`TimerPayload`、`WebhookPayload`、`ExecutionPayload`、`HumanAnswerPayload`、`ControlPayload`。封包先经过类型验证，再进入EmployeePolicy；归一化不改变原业务意义。
+DWS来源的业务类型从已发布Schema导入/生成，不另写同义的MessagePayload、ReactionPayload或ApprovalChangedPayload字段模型；保留原key与字段。MessageRouter旧DTO属于独立schema namespace；TimerPayload、WebhookPayload、ExecutionPayload、HumanAnswerPayload、ControlPayload仅描述非DWS或平台内部协议。封包按具体Source Schema验证后再进入EmployeePolicy，派生索引不回写原payload。
 
 Calendar/Approval的资源场域与结果发布到的群分别记录。当前contextcap的group能力不会因为“最后想发到某群”自动应用到一个没有group invocation的calendar事件；第一期无人/业务事件仍按可验证的employee/service/global授权执行，后续扩资源场域resolver。权限只收窄，不由正规化字段拼接扩大。
 
@@ -393,11 +529,11 @@ Calendar/Approval的资源场域与结果发布到的群分别记录。当前con
 
 原请求的可恢复快照也分层：先按现有算法取fingerprint，再把contextToken、telemetry token等私有材料分离为受限secret reference；公开事件、HTML示例与模型上下文只得到允许的原文和非秘密locator。大对象通过payload_ref保存，不让临时下载URL/credential成为持久能力。
 
-同一次受理可以形成多个原句事实和多个WorkLink，但不为每句随意复制一份terminal callback。协调窗口按原水位编译，各WorkObject只得到它获授权的source_refs。拆项输出绑定本项trigger/recipient，而不是沿窗口首人的route兜底。
+同一次受理可以形成多个原句事实和多个WorkLink，但不为每句随意复制一份terminal callback。协调窗口按原水位编译，各EmployeeTask只得到它获授权的source_refs。拆项输出绑定本项trigger/recipient，而不是沿窗口首人的route兜底。
 
 `mentions=null`是未知，`mentions=[]`是确证无@；保持跨durable serialization区别。quote作者只证明材料来自谁，reaction target的文本只证明对哪个消息操作。正文“停止”是否控制仍经目标/权限判断，不用关键词把所有同群运行全部停掉。
 
-Receipt记录子事项/效果outcome、待提交和已提交项，重试只恢复剩余效果。原Router回调何时结束严格按LegacyCompletionMode办理：旧2.0确有“接单即completed”的合同，必须保留，不能统一改成等工作完成；同时这个completed不能推进WorkObject为Completed。业务生命周期与旧Router一次dispatch回执含义分开，详见5.9。
+Receipt记录子事项/效果outcome、待提交和已提交项，重试只恢复剩余效果。原Router回调何时结束严格按LegacyCompletionMode办理：旧2.0确有“接单即completed”的合同，必须保留，不能统一改成等工作完成；同时这个completed不能推进EmployeeTask为Completed。业务生命周期与旧Router一次dispatch回执含义分开，详见5.9。
 
 ### 5.8 去重、ID与恢复
 
@@ -407,7 +543,7 @@ Receipt记录子事项/效果outcome、待提交和已提交项，重试只恢�
 | Router dispatch ID | callback路径 | 关联该Router调用；不是Multica work/task/session ID |
 | native openMsgId | 平台消息 | 与当前scene/source绑定；reaction还需操作标识/时间，不能只按目标openMsgId吞掉后续add/remove |
 | EmployeeEvent ID | Host durable inbox | 同受理重投恢复原ID；Normalizer升级不为旧受理生成新事件 |
-| WorkObject ID | 独立工作事实 | 可绑定旧Issue/Chat locator；不冒充它们的UUID |
+| EmployeeTask ID | 独立工作事实 | 可绑定旧Issue/Chat locator；不冒充它们的UUID |
 | externalTaskId / externalRunId | 原root/terminal task绑定 | callback继续返回真实旧含义；sync无executor时允许空，不强塞work ID |
 | execution attempt / command seq / wait ID | EmployeeLoop控制与等待 | fence迟到结果、绑定真实问题和应用回执 |
 
@@ -417,7 +553,7 @@ Observed消息继续按workspace/agent/`dingtalk:org:employeeUID`/CID/openMsgId�
 
 Statistics订阅不匹配时，保持原`202 / message_statistics_accepted / automations:0`及按需silence callback，不升级成Normalizer的403。它表示没有任何规则采集，不授予其他订阅权限；这个兼容no-op与认证失败/agent不匹配的拒绝不是同一种情况。
 
-新timer以trigger+canonical planned_at、一次性wait以wait+generation、webhook以subscription+provider delivery ID去重。内部event_work_link允许一事件多事项；当前事实仍读WorkObject行。原生数据出现更正/不同reaction version时保留有意义的新事实，不用正文hash代替用户新授权事件。
+新timer以trigger+canonical planned_at、一次性wait以wait+generation、webhook以subscription+provider delivery ID去重。内部event_work_link允许一事件多事项；当前事实仍读EmployeeTask行。原生数据出现更正/不同reaction version时保留有意义的新事实，不用正文hash代替用户新授权事件。
 
 去重分三层：来源delivery/receipt重投、同平台消息事实合并、同一授权effect幂等。一个native消息先被observed记录，后来被addressed输入接到时，不因“已见过事实”吞掉待响应请求；两条source receipt可以指向同一事实，执行效果按已保存授权计划只提交一次。员工自发消息通过绑定UID及send receipt/native message ID识别，不根据正文相同或昵称猜；自己的出站/receipt不会重新触发一个新任务。
 
@@ -441,8 +577,8 @@ Statistics订阅不匹配时，保持原`202 / message_statistics_accepted / aut
 
 | mode | 原触发条件与回调 | 新Loop的解释 |
 | --- | --- | --- |
-| `delegated_then_terminal` | task_finished_loop开启、task有效、不是proactive且存在updateUrl：先delegated_to_issue，再沿原执行/完成路径回调 | 保留原先后顺序和幂等键；WorkObject状态依执行事实推进 |
-| `ack_completed` | 上述条件不成立时，经EnqueueSynchronousWorkReceipt发送completed接单 | 只代表旧Router受理回执完成，不是Worker或WorkObject完成 |
+| `delegated_then_terminal` | task_finished_loop开启、task有效、不是proactive且存在updateUrl：先delegated_to_issue，再沿原执行/完成路径回调 | 保留原先后顺序和幂等键；EmployeeTask状态依执行事实推进 |
+| `ack_completed` | 上述条件不成立时，经EnqueueSynchronousWorkReceipt发送completed接单 | 只代表旧Router受理回执完成，不是Worker或EmployeeTask完成 |
 | `sync_reply_or_silence` | 原纯协调回复、忽略或专项receipt，按原completed/silence结果 | 只结束本次沟通；不产生或关闭无关业务工作 |
 | `sync_wrapup` | 已有task_finished回原callback，独立sync-wrapup request kind | 可以与ack_completed共用callback但requestId不同，不被接单去重吞掉 |
 
@@ -466,21 +602,27 @@ Statistics订阅不匹配时，保持原`202 / message_statistics_accepted / aut
 
 控制依据：`server/internal/handler/agent_dispatch_v2.go:500`；`agent_dispatch_v2_handler.go:804`；版本依据：`agent_dispatch.go:138`。
 
-### 5.11 切换方案与事件层验收
+### 5.11 一层Adapter接当前事件入口，两条独立灰度通道
 
-1. 先保存固定2.0契约fixtures：7类当前事件、legacy输入、多人窗口、attachments、quote/reaction、mentions null/[]、controls和callbacks；记录原HTTP响应与回执字段。
-2. 新建EmployeeLoop及Source Adapter，shadow仅做规范化/协议比对，不执行业务、不发信、不调用另一套模型。旧已提交效果不能因规范化版本变化重放。
-3. 按employee/endpoint设置持久路由epoch。切换前drain已认领旧Coordinator wake；已受理但未认领的旧计划/receipt导入兼容恢复记录，由新Loop沿原效果键恢复。新旧节点互斥消费，历史旧in-flight任务可正常完成回调。
-4. 切换后的新业务输入只进EmployeeLoop。移除旧Coordinator worker、Decide/runLoop及内置对其依赖；保留公开wire/历史trace/旧receipt的适配，不保留第二个协调运行圈。
-5. 再协商vNext与新的direct/control/output能力。回退通过更高routing epoch重新声明所有权，先阻止新claim并处理已提交effects；不能让旧代码读取新await状态后当普通queued重新执行。
+MessageRouter v2/legacy wire和DWS SDK事件先通过Source Adapter进入当前接入/receipt层，保留原认证、幂等键和callback合同；不要求本轮重做整个入站平台。Adapter保存native/ref和必要HostMeta，不叠加一套业务模型分类器。
 
-事件专项验收：同body重投不重派；同键不同fingerprint冲突；七类事件原wire一致；retired summary无新工作；statistics无普通LLM；reaction add/remove不伪造成目标消息作者发言；mentions null/[]不混；跨workspace/同org换绑被隔离；header/callback spoof拒绝；旧continuation不串人；旧control ACK不冒充applied；一输入多事项的callback聚合不提前终结；新旧epoch不能双消费；DWS unknown不重发。
+当前入口后由RouteOwnerGate单选：`legacy_coordinator`或`employee_loop`。旧Coordinator为额外独立通道，新Loop不在内部调用它；它们可以复用能力/执行/回执服务，但不双处理同一业务事件。Transport开关runtime.use_dws_for_tag与Loop灰度是两种开关，不互相替代。
 
-Normalizer和Host测试用固定fixtures证明协议；独立PG连接证明并发/lease/去重；预发MessageRouter真实联调证明ACK、callback目标和送达。源码矩阵不是已通过联调的证据。
+- 首次目标按employee+SceneBinding+来源支持能力/明确cohort选owner，并持久化routing epoch及Task绑定；continuation/Run回调保持原Task owner。
+- 新消息、timer、webhook和DWS资源事件不能因为“刚换灰度比例”跨圈恢复一个仍在推进的目标。
+- 切流只针对新目标或已确认迁移的等待点；旧已认领/已提交计划留legacy完成，沿原requestId/效果键恢复。无需先搬完所有历史受理记录才能试新Loop。
+- 新Loop失败保持真实失败/未决，不能自动再调用legacy重派；需要切回时先核已有effect、停止/交接旧writer，再用更高routing epoch变更owner。
+- 新DWS key不在旧协议能力里时，不硬转一份虚构Dispatch；先按支持矩阵选新通道或受限receipt，不给legacy猜。
+
+未绑定输入的lane选择必须写清：先用TaskRef、continuation、quote/reply、真实questionRef或固定规则绑定归原Task owner；无结构锚点的输入走该场域持久SceneDefaultOwner。试点优先按场域整体灰度，旧活目标未drain前不随机按每条消息切owner。mixed-lane场域若主Loop才发现候选属于另一owner，只产生具体澄清/结构锚点请求，不改冻结receipt再跑第二圈，也不重派跨lane任务。明确的新目标/固定规则可选new，状态或续接仍按原目标；这一限制作为灰度期体验边界单独测试。
+
+灰度可按企业/员工/群/个人场域和任务模式配置，保留旧通道作为对照/回退。后续退役legacy是单独的验收决定，本方案不要求先删除它才能接入新Loop。相同Task只一个owner；跨节点路由状态、lease与幂等由数据库/既有服务保障，不靠进程内bool。
+
+事件验收：v2原7类及控制/callback响应保持；retired summary/statistics no-op不复活；DWS Native/Typed及订阅principal不混；sameorg rebind隔离；reaction/mentions保语义；legacy completed接单不推进Task完成；灰度不双派、回退不重放；SceneBinding参数不会变授权；RunOnly/Issue同Task的Run与关键Notice可回原场域。
 
 ## 6. 钉钉离散讨论、历史与事项关联
 
-顺序采用“结构证据优先，语义判定补齐”：显式 WorkObject/Issue 引用 → 被引用消息/已发问题的绑定 → 同场域已确认工作链接 → 有界召回候选 → 迁入EmployeePolicy的deliverable/advancement审查。
+顺序采用“结构证据优先，语义判定补齐”：显式 EmployeeTask/Issue 引用 → 被引用消息/已发问题的绑定 → 同场域已确认工作链接 → 有界召回候选 → 新Loop对当前目标/推进关系的一次语义判断。
 
 **引用只解决定位，不能自动授权执行。**“做完了吗”即使精准引用也只是 report_status；“再发一次原报告”是明确 redelivery；“查最新 VOC”即使主题相同也可能是新交付物。唯一候选、同一个人、时间接近、排名第一都只用于检索。歧义保留未绑定或必要澄清，不自动 steering 任意忙任务。对应现行 F05/F07/F08/F13。
 
@@ -491,7 +633,7 @@ Normalizer和Host测试用固定fixtures证明协议；独立PG连接证明并�
 上下文编译建议顺序：
 
 1. 当前触发与精确来源/限制；不能被摘要剪掉。
-2. WorkObject definition、真实等待、当前 attempt、最新 control seq。
+2. EmployeeTask definition、真实等待、当前 attempt、最新 control seq。
 3. 有水位的 quote/reply chain 和 Episode 相关消息。
 4. 场域稳定记忆及已允许共享的 delta；不包含他人私有工具结果。
 5. 按需读取历史、相关业务产物引用、Capsule resume manifest。
@@ -500,119 +642,120 @@ ambient 消息是场域观察材料，默认不成为 user turn，也不成为�
 
 Scene Memory 延用已提交 revision、CAS、容量和来源规则；Episode 摘要、工作状态及稳定记忆分开。已完成/取消的事项不能因 ambient 摘要中的旧承诺复活。
 
-## 7. EmployeeLoop 的状态机与决策边界
+## 7. Task信号、内核状态与轻量动作提交
+
+EmployeeTask状态回答“目标做到哪”，EmployeePhase回答“当前wake推进到哪”，ExecutionRun状态回答“这一轮执行如何”，Delivery状态回答“核心信息送到了谁”。旧inbound/task_finished统一成Task输入/Run事件；finish_check不进入新Task状态机。
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Defining
-  Defining --> Ready: 工作定义与授权完整
-  Defining --> WaitingHuman: 真实关键缺口
-  Ready --> Running: 提交 ExecutionRequest
-  Running --> WaitingHuman: needs_input
-  Running --> WaitingExternal: 外部依赖
-  Running --> Reviewing: 当前执行完成
-  Running --> Pausing: pause / interrupt
-  Pausing --> Paused: 停止回执和检查点
-  Paused --> Ready: 新的有效续接
-  WaitingHuman --> Ready: 允许的人回答真实问题
-  WaitingExternal --> Ready: 匹配的依赖事件
-  Reviewing --> Completed: 交付物满足定义
-  Reviewing --> Ready: 已批准定义的明确下一阶段
-  Ready --> Cancelling: cancel
-  Running --> Cancelling: cancel
-  WaitingHuman --> Cancelling: cancel
-  WaitingExternal --> Cancelling: cancel
-  Paused --> Cancelling: cancel
-  Cancelling --> Cancelled: 执行停止被确认
+  [*] --> Defined
+  Defined --> Ready: 目标和授权足够
+  Defined --> WaitingInput: 真实关键缺口
+  Ready --> Running: 通用RunOnly或Issue Run
+  Running --> WaitingInput: 需要允许的人回答
+  Running --> WaitingDependency: 外部依赖
+  WaitingInput --> Running: 活handle接受answer
+  WaitingDependency --> Running: 活handle恢复
+  WaitingInput --> Ready: 旧Run终结后有新执行输入
+  WaitingDependency --> Ready: 无活Run且依赖就绪
+  Running --> Pausing: 暂停请求
+  Pausing --> Paused: 停止确认和checkpoint
+  Paused --> Ready: 明确有效续接
+  Running --> Completed: 当前Run交付满足目标
+  Running --> Ready: 已定义多阶段的下一Run
   Running --> Failed: 确定失败
-  Ready --> Failed: 启动失败
-  Reviewing --> Failed: 确定验收失败
-  Defining --> Cancelled: 取消且没有活执行
-  Ready --> Cancelled: 取消且没有活执行
-  Reviewing --> Cancelling: 取消且尚有活执行
-  Pausing --> Cancelling: 改为取消
-  Failed --> Ready: 明确授权的retry
+  Ready --> Cancelled: 无活执行直接取消
+  Running --> Cancelling: 有活执行需停止
+  Cancelling --> Cancelled: quiescent已确认
+  Failed --> Ready: 明确retry或已定义有界策略
 ```
 
-工作状态、执行状态、送达状态分别记录。`Completed` 证明业务完成；群输出可为 pending/unknown/failed，界面和回报不能合称“已完成并已告知”。`Paused` 不是未知网络状态，需执行器确认；无法确认则继续 Pausing 并展示真实阻塞。
+图是常见边；任何未终结Task取消时，无活执行直接Cancelled，有活执行走Cancelling。停止未知保持Pausing/Cancelling并记录错误。Ready不允许有冲突活writer；回答与依赖先送原handle，只有旧Run终结/停止后才Start新Run。多次Run不自动意味着Issue，也不由Loop从结果正文发明新业务步骤。
 
-图中Ready只允许不存在可继续的活execution。WaitingHuman/WaitingExternal可能保留一个仍活着且安全等待的handle；匹配answer/dependency时优先通过Control恢复该handle并转Running，不再Start。只有旧execution已terminal或quiescent且需下一次执行时才转Ready、新建attempt。无execution的Defining澄清同理，回答后才能首次Start。checkpoint/停止的失败保留Pausing/Cancelling与错误事实；审核暂不可用停留Reviewing并退避，确定失败才Failed；授权撤销先进入控制停止并阻断敏感effects，不默默改principal继续。
+普通Run完成直接提交结果/状态，不增加Reviewing→独立审查模型的默认阶段。业务规则明确要求验收、审批或peer review时作为真实Task依赖/等待或独立执行，保留目的和允许的人；不能把所有输出都塞进旧Coordinator审核。
 
-任意非终态取消分两类：没有活execution即Cancelled，有活execution即Cancelling等待确认。图中只画典型边，Host迁移表须覆盖Defining、Ready、Running、Waiting、Reviewing、Pausing、Paused。Completed/Cancelled不被timer复活；Failed仅明确重试或既定有界重试策略回Ready。已完成产物的redelivery是独立输出动作，不重开业务执行。
+一次wake：Builder编译Context → 主BotLoop工具/语义动作，或模板直达 → HostGate → 原子保存Task变更/RunSpec/NoticeIntent → 返回。等待不持有模型请求，出错不自动绕过授权；恢复已提交效果只查receipt和幂等键，不重做路由判断。
 
-每次 wake 最多推进一个有界协调计划：build facts → 现有有限决策/校验 → commit state/effect intents → return。Waiting 状态不占模型请求或常驻 CPU；deadline、输入、回调唤醒。确定的 lease 恢复、控制 ACK、到期处理可纯 Host 状态迁移，无需每件事再请模型判断。
+Task动作最小集合可为reply、update_task、run_task、wait_input、wait_dependency、control_run、scene_notice、complete_task。动作名字是新接口设计；仍由原BotLoop工具推进，不要求旧finish.actions/quote_options/work_checks协议迁入。Actor、Target、Scope、GoalRevision和EffectKey由Host核验，动作只使用当前合法目标。
 
-Reviewing仅是执行结果/交付证据与已定义阶段的协调门槛，不是另设业务质量执行器。现行task_finished仍只有report_result/ignore。自动推进下一阶段必须来自已批准、不可变WorkDefinition或已审持久计划；不能从结果正文自己发明“再补做一步”。新增业务工作必须重新进入同一finish/finish_check工作审查；需要内容级评估时作为用户已授权定义中的独立执行任务。
+主Loop负责语义：引用/同主题只是候选线索；状态询问不重跑；同一交付物实质补充才续接；不确定就具体澄清。Host校验数据结构、身份/授权/目标归属，不声称靠关键词或标题能确定业务语义。对照样本和真实模型回放验证这层质量，默认不再追加一个review模型来重复裁决。
 
-事件优先级：撤权与 cancel/安全限制 > 已授权人类 steer/回答 > 可靠 execution 终态/待输入 > 普通补充 > 例行 timer > ambient。每类内部保持 seq；priority 不重排因果依赖，限制每轮 drain 数量并对低优先级 aging，防止 timers 永久饥饿。control 与 completion 竞争时执行第 9 节的 fence 规则。
+优先级：撤权/有效cancel与安全限制 > 人类修正/真实回答 > 可靠Run终态/需要输入 > 普通补充 > 例行timer > ambient。保持每类seq/因果，等待不被stuck阈值误报，低优先级有aging。控制目标集合由真实角色与AuthorityRef形成，不按群成员身份全放行。
 
-复用 `finish(actions)` 和 `finish_check`，把合法目标从仅 recalledIssueIDs 扩展成 Host 验证的 WorkRef。start_work 产生 WorkObject；continue_work 仍需 same_deliverable 与本轮推进。executor mode 由 Host/已版本化工作定义选择，模型不任意指定 run_as、credential、输出账号或绕过审查。新增 pause/cancel/answer 动作时同步 schema、工具 hint、Host、policy module/registry/cases 和现行合同，不通过“在 prompt 尾部加一个指令”实现。
+多副本使用当前ingress/任务服务的PG幂等、租约与effect提交；运行内核没有数据库长锁。旧lease owner、旧goalRevision或旧Run generation不能提交/发消息。HostGate是执行边界，既不是第二个业务模型，也不是对外“我在审查”的员工人格。
 
-已有用户决策模式、人类选择记录和审查保留。同一明确批准不重复请求，批准绑定具体定义 revision；工作定义改变或授权过期时，不把旧批准移植到新范围。已注册确定模板的自动触发可跳过语义识别，仍经过相同 Host 权限与副作用校验。
+## 8. 统一Task与通用RunOnly：Issue是协作形态，不是默认入口
 
-## 8. WorkObject 与 Issue / 自动化复用
+### 8.1 目标Task、一次Run与队列任务分开
 
-### 8.1 Issue 是业务投影与执行方式
+| 概念 | 含义 | 关系 |
+| --- | --- | --- |
+| EmployeeTask | 用户希望达成的目标、Owner、修正、约定、依赖与等待 | 默认run_only，可选issue_ref；场域账本承载任务和运行记录 |
+| ExecutionRun | 围绕同一目标的一次执行 | 绑定TaskID、goalRevision、SceneBinding、principal、context/capsule及结果 |
+| ExecutorQueueTaskID | agent_task_queue中的执行任务 | 复用现有claim/取消/daemon/FC链，不冒充目标TaskID |
+| Autopilot机制 | 通用运行、归属、记录及执行调度能力 | 定时规则只是它的一种触发；普通事件也能run_now |
+| Issue | Task的跨场域协作/持续管理投影 | 挂在同一Task上；继承已有关联Run，不能产生竞争的第二目标权威 |
 
-WorkObject 是事件层承载的工作事实；Issue 是 Multica 的人类管理实体及现有执行入口。建议关系：一个 WorkObject 可零或一个主要 Issue，多次 Execution attempt；必要时显式子事项。直接工作不要求先建 Issue，但人工跟踪、负责人协作、代码交付或现有 Issue 工作流可选择 Issue adapter。
+默认路径：`Event → EmployeeBuilder → EmployeeTask/RunSpec → 通用Autopilot RunOnly → TaskService → Harness`。简单目标可以随首次Run/capsule原子保存轻量Task定义，不引入“建Task—规划—审查—建Issue—派单”的强制仪式。Goal必需，成功条件和产物格式有需要再明确，不能要求普通单次查询先填完整任务书。
 
-这里的 adapter 是用户明确要求的多执行方式边界，不是维护两套重复内部流程。TaskService 的 claim、Runtime 选择、启动、归属、取消与完成继续共享。
+inbound、修正、人类答复、执行进度/终态、依赖与timer统一为TaskSignal；模型工具围绕Task操作，具体信号来源仍保留。内核一轮Done不是Task完成；结果回报也不是另一套业务Task。
 
-**直接执行不等于不持久化。**WorkObject、ExecutionRequest、任务行和输出意图必须先持久化。Issue 与 WorkObject 若都有状态，WorkObject 以自己的目标/等待为权威；Issue 的 assigned/status/comments 通过明确映射同步，不让两个状态机相互反复触发。已有历史 Issue 可以通过唯一外部 ref 绑定 WorkObject，恢复不重复创建。
+### 8.2 RunOnly与Issue的选择边界
 
-### 8.2 为什么不能直接调 Autopilot.run_only
+| 情况 | 默认选择 | 理由 |
+| --- | --- | --- |
+| 一次执行就能交付的查询、整理、分析或明确操作 | RunOnly | 直接给目标和当前材料，避免沙箱内Issue协议 |
+| 同场域内需要工具多步骤或短期人类答复 | RunOnly仍可适用 | 步骤数/运行时长本身不要求Issue，Task/capsule可保存等待与续接 |
+| 复杂目标、多阶段反复执行、明确分工/依赖和共享管理 | 评估Task+Issue | Issue提供可管理的阶段、历史入口和协作状态 |
+| 跨群、单聊、文档等多场域协同且需要共享目标视图 | Task+Issue优先评估 | 可追踪各场域责任与多次Run，需先验证可见范围 |
+| 已有Issue继续、用户明确要求建Issue | Issue形态 | 沿已有目标与权限推进，不转换成另一个任务 |
+| 跨场域但资料私密、不允许workspace可见 | 不自动建Issue | 先收窄共享摘要/授权；必要时继续受限Task，不能靠Issue扩大披露 |
 
-当前 `dispatchRunOnlyTask` 已验证 agent、run、归属并写 task，但 claim、prompt、workspace lookup、completion 和 GC 会继续读取 run→autopilot。若为每个聊天 WorkObject 临时造一个 Autopilot，反而多出规则配置、run、权限和生命周期，难以变快。
+复杂性与跨场域性质是选择因素，不按一个耗时阈值强制建Issue。多次运行也不是Issue的独占能力；其收益是业务协同、共享状态和沙箱按需渐进加载相关history。RunOnly任务可逐步升级Issue形态，保留TaskID/历史Run/产物来源，不重做已经完成的步骤。
 
-建议抽出内部共用执行入口，以下为契约示意：
+Issue一般沿Multica工作区访问规则可见，不能默认等同场域私有。RunOnly也不会天然更私密：必须给场域运行账本、结果、日志和产物加SceneBinding/ACL，授权查询不能只看workspace membership。自动升Issue时只放获准共享的目标/摘要，私有材料保留在受限ContextRef；“多个场域参与”本身不授权公开给整个工作区。
 
-```go
-type ExecutionRequest struct {
-    ID, WorkspaceID, EmployeeID, WorkObjectID string
-    WorkRevision int64
-    Mode string
-    OriginEventID, AuthorityRef, CapabilityRequestRef string
-    InstructionSnapshotRef, DefinitionRef string
-    OutputPolicyRef, ResumeCapsuleID string
-    RuntimeSelectorRef string
-    IdempotencyKey string
-}
+### 8.3 直接复用通用Autopilot，而非再造执行器
 
-type ExecutionDriver interface {
-    Start(context.Context, ExecutionRequest) (ExecutionHandle, error)
-    Control(context.Context, ExecutionControl) (ControlReceipt, error)
-    Inspect(context.Context, ExecutionHandle) (ExecutionSnapshot, error)
-}
-```
+当前run_only已有agent readiness、调用权限、归责、agent_task_queue入队、wakeup和完成记录。保留它作为默认运行机制。需要适配的主要是**输入快照和场域归属**：不把每个即时任务伪装为一条永久cron规则，也不另起与Autopilot竞争的DirectRunner服务。
 
-`Mode` 是平台执行入口（direct / issue）；DSH、Claude、Codex 是执行 backend/harness；FC/本机是计算宿主。这三维不要混成同一个 enum。Capabilities 由 backend 与宿主共同报告，运行事实由 Inspect/回执证明。
+建议内部通用调用：`RunTask(ctx, RunSpec) → ExecutionRun`。RunSpec包含EmployeeTaskID/goalRevision、Goal/DefinitionSnapshot、TriggerEventRef、SceneBindingRef、CapabilityContextRef、RuntimeProfile、HistoryContextRefs、OutputPolicyRef、幂等键；TriggerRegistrationRef可空。模式默认为run_only，IssueRef仅在任务协作形态需要时给出。
 
-抽取顺序：定义不可变 ExecutionRequest 与 task binding → 统一 workspace/attribution/capability/指令装配 → 衔接现有 claim/complete → Autopilot、Issue 和 WorkObject direct 共同调用。迁移后 claim 不再依赖可变化的 Autopilot 当前 description 才能理解这次工作；规则更新只影响后续 firing。
+保留并复用现有`dispatchRunOnlyTask`及TaskService启动链；将claim/prompt/workspace/归属/完成所需的当次资料固定为RunSpec快照，使它们无需重读变化中的Autopilot description。静态规则仍保留Autopilot/Trigger配置，普通任务调用同一运行内核并挂场域Run记录。这是对运行接口的适配，不是为了全平台抽象先重构所有来源。
 
-任务行增加明确的execution request/work scope关联，并扩展claim串行组。当前SQL主要按Issue/Chat串行，无这些关联的任务会落到同Agent的quick-create组（`pkg/db/queries/agent.sql:829`）。只把work_id塞进JSON会导致独立事项互挡，或同事项不能保证单主lane。建议`serialization_scope=(workspace,employee,work_id,primary_lane)`，使用数据库claim谓词和适当并发索引，保留runtime实际容量上限；不是在进程内加一个map就完成。
+必要接缝：workspace与principal明确传递；serialization scope按Task/共享资源，不落到所有quick-create统一串行组；`NotifyTaskEnqueued`保留empty-claim bump/wakeup/launch lease；进度与消息用同一workspace/scene解析；终态GC等待capsule完整保存。旧2.0显式issue/chat surface在LegacyWireAdapter兼容；新的默认RunOnly不要求旧协议立即改变。
 
-不能省掉 `NotifyTaskEnqueued`、empty-claim cache 清理、运行时 launch lease 和退役 Session 检查。现有 run_only 正因绕过 Enqueue 才显式唤醒（`autopilot.go:952`）。
+### 8.4 Task上下文与渐进历史
 
-### 8.3 明确工作快速触发
+默认RunOnly capsule：当前目标、最新授权/修正、必要材料、最近结果brief、ContextUsed和引用。Task ledger按TaskID/RunID收集，不按同一员工在频道的时间窗猜最后输出。GawkBot有限ledger/brief可直接port，但它本身不是完整渐进history系统。
 
-已有经过配置校验的 WorkDefinition 保存：版本、输入 schema、目标/交付物、允许来源、principal grant、scene/output policy、runtime selector、超时与 overlap policy。调度或 webhook 匹配受信定义、输入有效、授权有效且无需人工决定时：
+Issue形态额外提供受限history handle，沙箱需要时按目标、Run、comments和产物逐段读取；不把整个Issue史或整个场域史固定注入每个prompt。上游依赖除了状态，还带已授权的结果/产物引用；review/unknown不冒充已验证完成。
 
-`Event → validate definition → WorkObject/ExecutionRequest → enqueue → claim`。
+每次Builder记录实际ContextUsed与水位。权限变化、材料过期、读失败和截断都可见；任务连续不依赖同一个模型Session。回头重发原产物可只做redelivery，不因旧目标标题触发新研究。
 
-一般聊天经过新EmployeeLoop及迁入的现有行为合同识别/审查；已经确认且定义不变的续接由已保存计划恢复，不重复做整轮业务解释。无需每次 firing 再建一个人工 Issue。模板的“方法步骤”来自已批准定义，不由协调器自行替用户发明。
+### 8.5 同场域复用计算环境，Task上下文仍隔离
 
-例行规则定义 `skip/coalesce/queue`，第一版默认同规则同目标不重叠、过期 firing latest-only；支持历史每次都执行时必须显式配置。一次性人类等待 deadline 不能套用周期任务 latest-only 而被吞掉。现有 cron 时区默认 UTC，用户配置用 Asia/Shanghai 时显式保存，planned_at 统一 UTC，测试 DST 和停机补偿。
+RunOnly与Issue形态在同场域可以复用符合条件的sandbox、repo基底、技能安装和工具缓存。计算环境key包含workspace/employee、SceneBinding、安全principal、权限版本、runtime/image和workspace policy；同group并不意味着不同人的个人凭据可以共享。
 
-### 8.4 速度评估
+Native模型Session和Task材料按TaskID/principal/epoch隔离。同一Task从RunOnly升为Issue且授权/环境兼容时可以继续原Session/capsule；不同Task只共享允许的基础环境，不自动共享模型历史、工作目录正文或私人文件。新writer开始前确认旧writer停止，共享资源由lane串行保护。
 
-现在可以证明路径上有 Issue 创建/评论续接、窗口、模型审查、claim/运行时启动等成本；**没有现场测量，不能说 Issue 就是主要瓶颈，也不能承诺 direct 快多少。**当前 scheduler 默认 30 秒 tick（`scheduler/manager.go:23`），Coordinator普通窗口有 4 秒静默/12 秒上限（F09）；这些不能被归因成 Issue 数据库写耗时。
+首次M2 RunOnly交付也有最低持久化门槛：DB保存本轮结果/状态；本地文件产物必须先上传校验、形成稳定ArtifactRef与场域ACL，确认后才GC。没有保存回执时不得给人临时本地链接或删目录。完整workspace delta/native session恢复可留M3，但最低结果与正式产物保存不可留到M3。M2对活handle问答、跨沙箱resume仅开放已实测backend路径，其余可靠排队/停止后续接并诚实表达。
 
-实施前按同工作定义采样：ingress_commit、route_done、review_done、execution_enqueued、runtime_ready、claimed、first_progress、first_human_output、completed。对比 warm direct / warm issue / cold direct；分开 p50/p95、模型调用数和 token。先删冗余编排，再优化冷启动。下面指标是验收目标，不是当前成绩：
+当前FC暖复用主要按Issue/Chat、run_only默认新目录且终态可立即GC；这是要补的适配点，不把希望复用说成已经全部实现。员工NAS也不能证明隔离；同场域可见性之外的文件仍需受限挂载/目录ACL或独立实例。
 
-- 已注册工作：受理至 enqueue 的服务端 p95 ≤ 300ms，排除 provider 网络、冷启动；公开样本数及负载。
-- 控制受理 p95 ≤ 300ms；健康且支持控制的 runtime p95 ≤ 2s 回 received/applied ACK。
-- 确定进度事件持久化后至输出 intent p95 ≤ 1s；实际钉钉发送单独计时，不合并宣称。
-- 自由语言协调保留审查，不承诺与上述模板直达相同延迟。
+### 8.6 性能基线与解释
+
+用户提供的端到端中位数：
+
+| 路径 | 中位数 | 来源/解释 |
+| --- | --- | --- |
+| 自动化直接RunOnly | 9.3秒 | 用户提供的已有测量；本轮未重新跑基准 |
+| 手工建Issue再派单 | 24.5秒 | 用户提供的已有测量；含Issue工作协议 |
+| 相对倍率 | 约2.63倍 | 24.5/9.3；两路径差15.2秒，不全部归因于review |
+
+按用户对测量的说明，主要收益是**进沙箱后无需再走Issue协议**，不是声称沙箱冷启动消失。该数据支持简单目标默认直接RunOnly；不再用“没有性能证据”为理由把所有工作强制绕Issue。
+
+后续基准固定目标/Runtime/provider/材料，记录admission、Builder、HostGate、enqueue、sandbox ready、provider start、Issue协议调用数、first meaningful result和terminal，分warm/cold与样本量。独立review调用数在新普通路径应为0；9.3/24.5是端到端指标，不能从差值反推出某一阶段实际耗时。
 
 ## 9. 沙箱 Session 的补充、中断和恢复
 
@@ -633,7 +776,7 @@ type ExecutionDriver interface {
 
 数据库cancelled仅证明平台受理停止。当前steer事务取消旧task后立即唤醒下一task（`service/task.go:2824`、`:2859`），旧daemon可能随后才收到取消。复用DSH已有workspace lock/witness与`NativeHostTaskQuiescent`原语，在重用同一工作区或Capsule前等quiescent receipt；未确认停止则不开新writer。新控制回执因此还应有`quiescent`阶段，不把applied ACK等同于进程/子进程已停止。
 
-**控制竞争：**WorkObject 的 control seq/revision 和 execution attempt/generation 是提交门槛。cancel 已在数据库受理时，旧 Worker 的 completed 不能把工作改回成功；新 execution 已启动时旧结果只留审计。steer 与 completion 竞争时，Host判断该输入是否已被消费：未消费的合法变更需要下一步，旧结果不能覆盖它。最终群输出也校验同一结果版本/限制，不因迟到回调重复刷屏。
+**控制竞争：**EmployeeTask 的 control seq/revision 和 execution attempt/generation 是提交门槛。cancel 已在数据库受理时，旧 Worker 的 completed 不能把工作改回成功；新 execution 已启动时旧结果只留审计。steer 与 completion 竞争时，Host判断该输入是否已被消费：未消费的合法变更需要下一步，旧结果不能覆盖它。最终群输出也校验同一结果版本/限制，不因迟到回调重复刷屏。
 
 “先别上线”需迅速撤销后续部署权限；单靠对 CLI 发 SIGTERM 不能保证已发 HTTP 的外部动作未发生。对可经平台网关的写动作使用 operation/idempotency token 和在线 fence；CLI 可直接走外网的动作不能宣称零竞态，需以步骤执行、确认边界和外部回读证明真实效果。不支持可控写动作的 backend 不能承担需要强即时停写保障的工作。
 
@@ -643,7 +786,26 @@ type ExecutionDriver interface {
 
 ## 10. 有人味的员工交互：记得约定、适时开口、知道找谁
 
-WorkObject 保存 requester、accountable、允许参与者和每个输出目标；真实 `HumanQuestion` 保存 question_id、work_revision、询问目的、允许回答者、answer schema、deadline、origin message、所用 grant。发出问题是协调效果，收到答复后精确关联真实问题，不把“好/行”泛化成任意权限批准。
+### 10.0 SceneNotice：执行中核心点直接回到场域
+
+Agent执行过程中必须有一个可靠的`scene_notice`/`EmitTaskSignal`端口，不仅等最终CompleteTask。Worker用当次任务token报告TaskID、RunID、goalRevision、signal seq、kind、事实/产物引用和NoticeIntent；Host取Task的SceneBinding与OutputPolicy，不能由Worker正文任意指定另一个群或人。
+
+| signal kind | 典型核心点 | 处理 |
+| --- | --- | --- |
+| milestone/finding | 某段材料已整理、重要发现会影响下一步 | Host检查当前Run和事实引用，形成有意义的场域通知 |
+| needs_input/action_required | 需要某人决定/提供缺口 | 建立真实question/等待，找允许回答的人；不能等Run结束才问 |
+| blocked | 真实依赖故障和已完成部分 | 明确影响与缺口，有限提醒，不臆测原因 |
+| control_applied/checkpoint | 修改已应用、执行已停止、现场已保存 | 按各阶段回执表达，saved不等于applied/quiescent |
+| result | 阶段产物或最终结果 | 引用本轮产物和版本；旧进度不覆盖新结果 |
+
+快速路径为`Worker signal → 当前事件接入Adapter → 持久TaskSignal/NoticeIntent → 轻量HostGate → ReplyComposer → 场域outbox/DWS`。已有自包含事实/收件绑定的核心通知不必重跑主模型，更不进入旧finish_check。需要语义判断下一步时才唤醒EmployeeLoop；生成表达不改目标与授权。
+
+notice key包含Task/Run/seq或stage/result version+kind+audience；按真实变化节流，重复信号不刷屏。数据量、thinking和每个tool log不成为群进度。Doc/日程/审批场域按已授权回复surface发送，群/个人规则回其SceneBinding；消息送达独立receipt确认。
+
+只有产物ref而不包含需披露的敏感正文时也检查audience权限。当前TaskService ReportProgress仅做realtime展示、DWS shim可直接发送业务消息；新端口统一关键语义和幂等receipt，避免Executor发过一次、EmployeeLoop再发一次。对legacy lane保持原callback协议，不把progress塞成delegated_to_issue。
+
+
+EmployeeTask 保存 requester、accountable、允许参与者和每个输出目标；真实 `HumanQuestion` 保存 question_id、work_revision、询问目的、允许回答者、answer schema、deadline、origin message、所用 grant。发出问题是协调效果，收到答复后精确关联真实问题，不把“好/行”泛化成任意权限批准。
 
 原请求群里的关键里程碑引用原消息并 @正确请求者；替某人问第三方时，第三方是 question recipient，结果仍回原 requester。webhook来源与人类结果目的地可以不同，但须在受信规则里明确绑定；无 output target 的事件不猜一个群发送。
 
@@ -664,13 +826,13 @@ WorkObject 保存 requester、accountable、允许参与者和每个输出目标
 
 当前`SandboxResponseState`按task/issue/CID汇总任意delivered，中间问询或进度可能使最终结果被当AlreadyToldScene而静默（`dingtalkresponse/sandbox.go:159`→`handler/task_finished_loop.go:115`）；需改成明确输出类型和覆盖版本。合窗后每项输出保存它自己的trigger actor/message，不沿最初窗口route一概兜底；现有sync wrapup未保留root/terminal task ID的链路须专项验证。这些是代码结构发现/推断，不是已重现的线上事故。
 
-执行器输出只提报语义事件/结果；EmployeeLoop通过现有终结审查和策略生成可发文本。关键进度模板可在Host验证事实后直接形成intent，避免每个progress再走长协调推理。原始 connector数据必须先确定披露 audience；具有工具权限不等于可以在群公开。对确实需要执行器直接发业务通知的岗位工作，沿当前已授权 DWS路径留下receipt，避免与EmployeeLoop二次发送。
+执行器输出只提报语义事件/结果；EmployeeLoop通过轻量HostGate与OutputPolicy生成可发文本；新普通路径不做旧终结审查。关键进度模板可在Host验证事实后直接形成intent，避免每个progress再走长协调推理。原始 connector数据必须先确定披露 audience；具有工具权限不等于可以在群公开。对确实需要执行器直接发业务通知的岗位工作，沿当前已授权 DWS路径留下receipt，避免与EmployeeLoop二次发送。
 
 发送不确定要进入 reconciliation，回读平台 receipt/message，不能自动重发造成重复。个人明文不经群outbox；需要本人单聊且路径不可用时保存待交付，不能退化群发。通知频控以真实stage/change计，同一问题超时提醒按授权规则有限次处理；成功完成不由“assistant说完成”证明。
 
 ### 10.1 人味来自连续的员工行为
 
-员工对外有稳定身份，能接着上次的约定办事：记得谁提出工作、哪些人允许补充、要交给谁、“先给草稿”和“暂不外发”等限制。模型、执行器和沙箱可以替换，这些工作约定由WorkObject、真实问题和已提交场域记忆维持。它可以说“我”“这份周报”“上次你要求先给草稿”，不能把账号主人的生活、其他人的发言或自己的旧推测当成现实经历。
+员工对外有稳定身份，能接着上次的约定办事：记得谁提出工作、哪些人允许补充、要交给谁、“先给草稿”和“暂不外发”等限制。模型、执行器和沙箱可以替换，这些工作约定由EmployeeTask、真实问题和已提交场域记忆维持。它可以说“我”“这份周报”“上次你要求先给草稿”，不能把账号主人的生活、其他人的发言或自己的旧推测当成现实经历。
 
 开口时回答人现在关心的变化。受理后说具体目标与关键边界；有新阶段、重要阻塞、需要人的决定、控制状态改变或最终结果再说。安静等待也可以是可靠行为，不用每个tick发“我还在处理”。被直接追问则忠实回应当前问题，不能因为没有新进展就静默，也不能把旧接单回执再发一次。
 
@@ -704,7 +866,7 @@ type SpeechFrame struct {
 | 最终结果 | 当前产物、主要结论、限制与后续需要的人类决定 | result_ref忠实回报；交付链接为已Promotion的稳定产物 |
 | 日常交流 | 本轮有资格响应的对话 | 沿已迁入的窄对话renderer；不把工作/私有工具正文填进闲聊背景 |
 
-大多数receipt、控制与简单进度不增加模型调用。主模型已有合格文本时直接沿审查/保存计划通路使用；需要受限render时作为同一Tick驱动的purpose阶段，结果再审。原`conversationReplyInput`故意排除work records与执行事实（`conversation_reply.go:46`、`:129`、`:183`），保留这个边界；为工作输出新增有事实引用的Frame，而不是向纯闲聊输入塞全量事项历史。
+大多数receipt、控制与简单进度不增加模型调用。主Loop已有事实明确的文本时直接走HostGate/保存/发送；仅复杂表达选择有限render，不再默认追加独立review。原`conversationReplyInput`故意排除work records与执行事实（`conversation_reply.go:46`、`:129`、`:183`），保留这个边界；为工作输出新增有事实引用的Frame，而不是向纯闲聊输入塞全量事项历史。
 
 **什么情况下值得发消息：**有明确直接待答请求、已受理的新目标、实质阶段变化、需要此人回答的问题、重要阻塞、控制状态变更、未覆盖的当前结果或用户明确授权的提醒。缺少新事实的轮询、thinking、原始tool输出不转成群消息。这个判断结合现行参与资格及结果覆盖，不能作为漏掉已明确请求的借口。
 
@@ -797,44 +959,40 @@ Promotion 记录 artifact ID、source capsule/execution、hash、业务类型、
 
 Capsule只能恢复到兼容安全域；撤权或principal变化不能重新注入旧私有对话。共享学习/记忆只从经过审批或授权的脱敏总结另行提升；不默认把session-log当员工公共记忆。
 
-## 12. 方案比较与决策
+## 12. 决策：新通道直接试BotLoop，旧通道保留灰度
 
-| 路径 | 收益 | 主要代价 | 判断 |
-| --- | --- | --- | --- |
-| 直接复制bot核心，新建EmployeeLoop，复用能力服务 | 保留已实现Loop主体；差异集中在事件、权限、存储、异步执行和表达端口 | 必须修取消/锁/tool协议/finish闭合，并迁移政策和旧受理记录 | **推荐，也是用户明确要求的路线** |
-| 自行重写新Loop，只借鉴GawkBot设计 | 代码完全本仓控制 | 重写重复phase/queue/控制逻辑，不能满足代码直接复用优先 | 不选 |
-| 引入完整GawkBot服务或保留旧Coordinator外包BotLoop | 全产品功能或初期包装方便 | 前者重复身份/存储；后者嵌套协调并未融合核心 | 不选；保留能力服务不等于保留旧协调运行圈 |
+选择复制并适配Go BotLoop及可复用Task设计，不先把旧Coordinator完整拆解迁入。最初完成source adapter、SceneBinding/Builder、单员工单backend、通用RunOnly和关键Notice；先以fake/只读canary证明模型与任务推进，再打开有授权的执行。
 
-决策驱动：权限来源唯一；工作连续性独立于沙箱；控制和送达诚实可证；复用当前Go执行链；减少自由语言以外的冗余模型调度。
+| 决策点 | 本版选择 |
+| --- | --- |
+| 主循环 | EmployeeLoop复制BotLoop主体；Task/工具/上下文按本仓能力适配 |
+| 旧Coordinator | 当前事件层后的独立legacy lane，不嵌套、不双执行，保持可灰度 |
+| 默认任务执行 | 通用Autopilot RunOnly；Run和Task挂场域 |
+| Issue | 已有明确Issue目标或复杂/跨场域协作且可见范围获准时选择 |
+| 校验 | 快速HostGate，普通没有独立LLM review；明确审批单独等待 |
+| 中间结果 | SceneNotice进场域outbox，关键问题/阻塞不等final |
+| 原生事件 | 直接复用最新Go DWS SDK/连接管理；现有入口做一层Adapter |
+| 共享环境 | 同场域且principal/权限/任务隔离允许时复用sandbox，历史与凭据不混 |
 
-代价：新WorkObject成为协调权威后，需要明确Issue映射和历史回填；事件actor不能只在内存；native session和私有盘按更细安全范围隔离可能影响热启动收益。接受这些代价，不用以共享个人session换速度。
+实际风险集中在ctx取消、锁外调用、工具关联、PG幂等、scope/actor、可见性和writer停止确认。按触发的差异修补，不能因为这些边界需要正确就先搭完整旧审查体系。旧通道与当前服务给试点退路，新通道失败不自动切旧重派。
 
-## 13. 分阶段实施与文件责任
+## 13. 拆解与交付顺序
 
-以下是实施顺序和验收边界，不是本次已完成清单。每阶段独立review；允许先上线只使用已有能力的事件源，不提前开放未验证权限模式。
+详细执行清单见[13任务实施拆解](../2026-10-01/employee-loop-delivery-plan.md)，含责任文件、依赖、语义fixtures、fake-only/TDD步骤、PG并发和真实canary验收。所有步骤尚未实施。
 
-**按纵向切片交付，下面A–F是模块责任，不要求横向全部完成才运行第一条链路：**
-
-1. **V1 新Loop接管切片：**先复制并patch bot核心、迁入EmployeePolicy；一个试点员工、一个已验证backend、MessageRouter现有事件的完整Normalizer，IM及执行结果作为主工作链，其他事件沿兼容专项处理。WorkObject接原Issue能力服务，证明两件工作独立、原Session答复恢复、结果版本/正确actor回报、重复事件及重启恢复。切换后新请求不再走Coordinator；仅抽实际需要的Start/Inspect，Episode先用锚点记录。
-2. **V2 明确工作直达切片：**在V1底座增加已注册timer/webhook定义→direct ExecutionRequest，补run_only相关claim、workspace、指令快照、串行组和completion。证明真实无Issue执行并测量warm/cold收益。这一步是本需求的核心直达MVP，不以整个自由聊天改造作前提。
-3. **V3 可交互与恢复闭环：**增加durable Control、quiescent证明、关键问题/进度、Capsule统一留存删除；后续按能力逐个开放更多backend、自由聊天direct、个人delegation和原生turn注入。每项分别验收，不能因一个backend通过就宣称全Runtime支持。
-
-V1/V2内只抽被使用的执行契约；未迁移来源保留它当前正常域服务入口，不能对同一次输入双写两个工作权威或跑两套决策。迁移某来源时切到唯一新入口并移除相应旧内部流程，不引入永久兼容shim。所有source最终收口是终态架构，不是V1先一次性重构全平台的前置条件。
-
-| 阶段 | 主要修改范围 | 交付及通过条件 |
+| 里程碑 | 交付 | 明确不作前置 |
 | --- | --- | --- |
-| A：基线整合与复制验证 | 能力分支rebase；复制bot包+原测试；patch清单/来源；warm/cold观测 | 来源完整、fake核心测试可跑；旧行为合同迁移不倒退；不拉全产品依赖 |
-| B：统一事件入口 | 建议新增`internal/employeeevent`；Dispatch 2.0/legacy与scheduler/webhook适配；PG inbox/mailbox/outbox | 第5节七类事件、controls、callbacks逐项兼容；重复不重派、身份不伪造 |
-| C：独立工作与执行入口 | 建议新增`internal/workobject`、`service/execution_request.go`；抽取autopilot/task/claim/complete | direct无Issue但有正确workspace/attribution/指令/capability；旧Issue/自动化仍通过同入口 |
-| D：EmployeeLoop接管与Episode | 新`service/employeeloop`；迁政策/helpers；复用assoc/userdecision/scenememory；删除旧协调运行路径 | 逐Step主体是复制后的Tick；无Coordinator运行依赖/第二主模型圈；整窗正确、等待可恢复 |
-| E：运行控制与过程输出 | `pkg/protocol`、daemon/runner、backend adapters、responseworker | 命令三阶段ACK；cancel/steer竞争不丢；真实backend支持矩阵；关键进度找到指定对象 |
-| F：Capsule与Promotion | 建议新增`internal/executioncapsule`；DSH session/workdir、存储、GC | 完整checkpoint才可恢复；撤权不可复用；逻辑删除同生共死；正式产物独立有效 |
+| M1 新Loop可试且可灰度 | 入口Adapter/RouteOwner、复制改名内核、Task/journal/mailbox、DWS native及Builder、轻量HostGate | 不删除旧Coordinator，不迁全旧policy/review，不回填所有历史Issue |
+| M2 场域RunOnly与及时回报 | 通用Autopilot RunSpec、SceneBinding账本、关键Notice/问题、控制确认、任务12A最低结果/产物保存后GC、同scope隔离 | 不为单次任务强制建Issue，不等全部backend都支持live steer |
+| M3 协作与恢复闭环 | 可选Issue形态、history handle、依赖、多场域、Capsule/Promotion、扩源schema和更多Runtime | 不将私有材料发布整个workspace，不把原生session当工作真相 |
 
-V1仅称持续协调试点；V2完成才称含明确工作直达的EmployeeLoop MVP。E控制与交互通过后才称“可交互长任务”；F是恢复现场闭环，不能用“私有盘还在”代替验收。A–F覆盖完整需求，后续切片也属于交付范围。
+13个具体任务覆盖：入口及lane、内核与命名、持久Task/三ID、DWS订阅/typed event、Task细节与依赖、Builder、HostGuard、通用RunOnly、SceneNotice、控制、Issue/history、Capsule、灰度可见性与基准。
 
-新表建议最小化：employee_input_event、employee_mailbox、work_object、event_work_link、execution_request、execution_control、execution_capsule及manifest revision；Episode/等待/输出先复用合适的存量结构或作为work内有界结构。不要另造所有已有outbox。最终表名和拆分以查询/并发测试决定，所有状态都含workspace/employee范围。
+新表/关系按最小需求复用/扩当前PG结构，不另造所有已有outbox。任何新增迁移使用未占用fork9000+范围、无FK/cascade、每个index单独CONCURRENTLY；租户删除、deployment fence和旧节点不认新状态的滚动边界分别验证。
 
-迁移使用fork `9000+`命名空间，无foreign key/cascade；每个索引单独`CREATE [UNIQUE] INDEX CONCURRENTLY`迁移；显式事务完成关系校验和清理。包含deployment fence安装、软删除/归档和租户删除manifest。多副本滚动期间旧节点只接受它能处理的schema/控制版本，新事件按声明能力路由；不把新kind交给旧节点猜。必要兼容仅放已安装daemon/runner公开协议边界，内部不长期双写两份事项权威。
+正式切流之前确认Source Consumer支持完整SubscriptionSpec、shared stream handoff双投递可PG去重；选定Runtime/image不可变版本，按仓库fc-runtime-dev-loop验证本机/FC及old/new protocol。私有并行任务若文件隔离无法证明，缩小试点scope，不以persona或目录名冒充权限边界。
+
+用户提供9.3/24.5秒作为RunOnly/Issue端到端基线；每个里程碑补采样来源/Runtime/样本数及分阶段时间。新普通review calls=0、没有Issue协议额外步骤、关键Notice早于Run结束，都是单独可验证的目标，不拿“健康”当实际任务正确。
 
 ## 14. 可测试验收与运行证据
 
@@ -842,7 +1000,7 @@ V1仅称持续协调试点；V2完成才称含明确工作直达的EmployeeLoop 
 
 | 用例 | 必须观察到 | 禁止效果 |
 | --- | --- | --- |
-| 同群三人同时@做不同事 | 三个WorkObject，身份各自正确，受公平容量控制 | 群级串行长任务；一个人的额度占掉别人 |
+| 同群三人同时@做不同事 | 三个EmployeeTask，身份各自正确，受公平容量控制 | 群级串行长任务；一个人的额度占掉别人 |
 | 第三人补同一报告范围 | 原事项输入有seq和authority；只一主lane | 无依据继承个人connector；多worker改同工作区 |
 | 唯一旧事项但新样本请求 | 新事项；或确有缺口才澄清 | 自动continue唯一候选 |
 | 精准引用但问“做完了吗” | 真状态回报，无新增execution | 引用自动触发重跑 |
@@ -881,17 +1039,17 @@ V1仅称持续协调试点；V2完成才称含明确工作直达的EmployeeLoop 
 
 本节`handler/`、`service/`、`daemon/`、`contextcap/`为`server/internal/`下路径，`pkg/`为`server/pkg/`；带`internal/`的路径从`server/`开始。
 
-### 15.1 Coordinator与送达
+### 15.1 旧Coordinator/Dispatch与共享送达能力（2a基线）
 
 | 可复用点 / 缺口 | 精确依据 | 改造方式 |
 | --- | --- | --- |
-| reliable admission + read-only Chat + acceptance落同事务 | `handler/inbound_coordinator_job.go:667`、`:731` | 复用可靠受理；Chat是界面投影，不是WorkObject权威 |
+| reliable admission + read-only Chat + acceptance落同事务 | `handler/inbound_coordinator_job.go:667`、`:731` | 复用可靠受理；Chat是界面投影，不是EmployeeTask权威 |
 | claim lease / 同CID候选排他 | `pkg/db/queries/inbound_coordinator_job.sql:24` | 扩展work mailbox；跨副本/故障注入再证正确性 |
 | 4s/12s窗口与逐句callbacks | `handler/inbound_coordinator_collect.go:16`、`:72` | 分离控制快路，普通窗口仍保水位/封存 |
 | source_refs整窗覆盖与委托人 | `service/inboundcoord/window_plan.go:261`、`:381`；`handler/assoc.go:594` | 原生ActorRef传递，取消显示名桥接 |
 | 容量在source actor精确回填前仍有name overlay | `handler/agent_dispatch_v2_handler.go:1235`对比`:1297` | 容量预判也按source_ref可信身份 |
 | 快圈仅channel/message.created | `handler/agent_dispatch_v2_handler.go:1617`；`handler/inbound_coordinator_job.go:1026` | cron/webhook/DSH schedule通过新adapter，不只改enum |
-| 现有finish唯一审查通路 | `service/inboundcoord/loop.go:184`；`service/inboundcoord/finish_check.go:57` | WorkRef/合法目标集替换Issue耦合，同次审查完成 |
+| 现有finish唯一审查通路 | `service/inboundcoord/loop.go:184`；`service/inboundcoord/finish_check.go:57` | legacy保持原合同；新Task目标/授权和HostGate重新适配，不迁默认review |
 | 场域记忆不含Session，不存任务状态/权限 | `service/scenememory/model.go:64`；`service/scenememory/flush.go:434` | 独立work状态、Episode摘要与稳定memory |
 | TaskService progress仅事件总线 | `service/task.go:5665` | 新ExecutionEvent到IM output materializer |
 | 当前执行器已有DWS发送shim与receipt | `daemon/execenv/dws_shim.go:176`；`daemon/execenv/dws_shim_policy.go:250` | 保留直接业务发送证据，避免Host重复发 |
@@ -964,7 +1122,7 @@ backend能力不能以一个统一“支持Session”布尔字段表示；实施
 | 部件 | 已核实行为 | 本仓复用判断 |
 | --- | --- | --- |
 | Go BotLoop | 有context/reason/tool phase、输入优先级；生产Claude/Codex绕过它 | **直接复制为EmployeeLoop内核**；生产headless路径的事实不否定核心可复用性，业务Harness继续保留 |
-| Task/Owner/Channel/Thread | 结构归属优先，歧义才内容评分 | 在现有assoc与WorkRef上实现结构锚点；F07审查不被其自动关联规则替代 |
+| Task/Owner/Channel/Thread | 结构归属优先，歧义才内容评分 | 在assoc与TaskRef上实现结构锚点；同产物/实质推进由新Loop一次判断，保留对照验收而不迁旧review |
 | WorkPacket / ContextUsed | 线程根、工作、owner、回帖目标、使用过的上下文可明确交接 | 用本仓有界context compiler和Capsule manifest重新实现契约 |
 | HeadlessEvent / manifest | provider-neutral task/turn/parent、工具与结果摘要 | 拓展现有protocol/trace，保留ExecutionEvent与input journal区别 |
 | Headless queue | task/worktree资源定义lane；human输入可cancel同lane再处理下一轮 | 借鉴单资源串行/不同工作并行，新增PG durable control与quiescent证明 |
@@ -988,20 +1146,20 @@ DWH读取可访问fork`D1-2004/dingtalk-workforce-harness@e75312695f432430b857ca
 | --- | --- | --- |
 | GawkBot Go产品 | **直接复制bot核心**，复用WorkPacket、结构锚点、资源lane和执行manifest设计 | 完整Broker/权限/CLI launcher、GUI和TS sidecar不整体引入 |
 | DWH Node/CJS + DSH插件 | 规范事件journal、consumer cursor/ACK、decision→effects、业务执行与投递分离 | 另一套员工state、conversation排队、Node插件运行平面 |
-| 当前Multica Go服务 | PG受理/claim/lease、scheduler、webhook、TaskService、contextcap、DWS outbox、native DSH session/trajectory | 域服务接入新EmployeeLoop；旧Coordinator运行路径退出，不建立第二事实权威 |
+| 当前Multica Go服务 | PG受理/claim/lease、scheduler、webhook、TaskService、contextcap、DWS outbox、native DSH session/trajectory | 域服务接入新EmployeeLoop；旧Coordinator独立legacy灰度，单Task owner避免竞争事实权威 |
 
 DWH事件接纳和cursor/ACK更接近本需求的服务事件层；EmployeeLoop coordinator做decision→sideEffects/nextState/events，DSH负责基础AgentLoop。普通聊天通过conversation的tail串行，调用followup不证明运行中steer。Session Bridge已实现Codex exec resume；根README“Codex仅发现”与源码不一致，因此本方案不沿用旧对话里的该断言。DWH为Apache-2.0，但实现仍非Go库。[事件bus](https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/lib/event-bus.cjs#L4)、[effect coordinator](https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/plugins/employee-loop/coordinator.cjs#L1)、[conversation排队](https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/plugins/dingtalk-event-bridge/index.cjs#L1194)、[Codex resume](https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/plugins/session-bridge/structured-cli.cjs#L8)、[投递与业务状态](https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/plugins/employee-loop/service.cjs#L115)、[LICENSE](https://github.com/D1-2004/dingtalk-workforce-harness/blob/e75312695f432430b857ca8f950b332544d90604/LICENSE)。
 
-Go实现复用的最终选择：**Go BotLoop核心直接复制并扩展；本仓能力、执行和发送服务直接复用；新的WorkObject、统一事件、durable控制、表达与Capsule合同按本仓边界补齐。**不引入新消息中间件或通用actor框架作为第一期前提，现有PG/Tair/OSS足以验证纵向切片。
+Go实现复用的最终选择：**Go BotLoop核心直接复制并扩展；本仓能力、执行和发送服务直接复用；新的EmployeeTask、统一事件、durable控制、表达与Capsule合同按本仓边界补齐。**不引入新消息中间件或通用actor框架作为第一期前提，现有PG/Tair/OSS足以验证纵向切片。
 
-## 16. 本次文档验证与后续评审
+## 16. 本轮修订覆盖与证据边界
 
-已完成独立Coordinator/权限/执行/外部源码分析，并对正文做第二次架构审查。已采纳：scene与work只解释一次输入；活等待Session优先Control；异常/取消迁移及quiescent门槛；配置grant与个人delegation分离；task_finished不自行规划新业务步骤；发送门槛和输出覆盖版本；以纵向切片先证明直达价值。
+本版按全部浏览器评论细化：钉钉场域协议与DWS复用、Task细节与名称、EmployeeBuilder、timer/webhook场域、日程审批企业默认、SceneNotice及时告知、轻量HostGate、独立legacy灰度、RunOnly默认、Issue协作/可见性边界及sandbox复用。用户9.3/24.5秒作为给定端到端基线，明确不是本轮测量。
 
-R3重新核验完整Go bot包的依赖与函数接缝，明确直接复制内核、新EmployeeLoop接管、旧Coordinator退出；事件专项独立审查已修正旧ack_completed/sync-wrapup兼容、真人controlled_targets、绑定epoch、观察class和statistics no-op回执。它们是设计与源码证据，不是已部署结果。
+事实来源分别固定：旧Coordinator/Dispatch合同为2a520dea5；本轮最新develop及Go DWS/connmgr为7c9158985；能力分支5aa21b5c3；GawkBot71e82a1。旧CLI27与SDK28两个目录范围分开，calendar/doc@的未来key不编造。Schema快照只有定义，无真实业务事件或凭据。
 
-隔离源码验证准备了13份原源文件、10份原测试、最小uuid依赖及scratch-only目录适配。尝试核心fake测试时Go不在PATH，命令exit127；未安装工具链。因此仅有静态依赖闭包与移植清单核验，不能声称核心已编译或测试通过。这也不改变本轮只交付文档/HTML的范围。
+独立源码分析与设计复审覆盖事件身份/回执、直接复制与任务设计、执行与数据生命周期；文档检查、JSON schema export哈希、HTML source digest/链接/原生截图分别核验。Coordinator policy checker只能认证旧合同结构，不能证明新轻量Loop行为。
 
-运行`python3 scripts/check-coordinator-policy.py`返回`PASS_STRUCTURAL_ONLY`（policy `2026-09-26.1`，19条义务）；此结果只验证现有策略结构，不能证明拟议EmployeeLoop已实现。文档引用按固定branch逐项校验路径/行号范围；相互链接、code fence和`git diff --check`单独检查。没有运行业务单测、真实模型回放、CLI/FC canary或钉钉投递，因为本次交付仅为方案。
+本轮交付设计/HTML/Schema快照和13任务实施拆解，不实施EmployeeLoop源码，不部署、不运行真实Agent/模型回放/FC或DWS监听。隔离原bot包准备了13源+10测试但机器当时无Go命令，exit127，不作测试通过结论。未来实现的红绿、并发与真实canary按拆解文档执行，全部任务当前未完成。
 
-仍需在实施切片中决定并记录：试点backend和可实际部署的控制版本、个人delegation的数据授权产品范围、租户Capsule保留期限、业务artifact长期ACL及实际延迟基线。基础设计给出了保守默认值和验证路径，这些选择不妨碍先完成V1/V2。
+用户已授权本轮设计产物提交develop并在钉钉通知本人；提交以最新develop为基线做fast-forward，不覆盖其他worktree未提交工作，不触发未请求的部署。结果通知沿DWS产品命令与可核验发送回执，不把通知文案当成功证据。
