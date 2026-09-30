@@ -225,6 +225,12 @@ curl -i -X POST https://<api-host>/api/webhooks/github \
 | `401 invalid signature` | server 加载的 secret **不是**你以为的那个 | 进容器确认 env 实际生效（例如 `kubectl exec` → `echo -n "$GITHUB_WEBHOOK_SECRET" \| wc -c`），重新部署 |
 | `503 github webhooks not configured` | `GITHUB_WEBHOOK_SECRET` 在进程里是空的 | 配上 env，重启 API |
 
+## 通过正式入口接收预发 Webhook
+
+GitHub 无法访问预发入口时，在正式环境设置 `GITHUB_PRE_WEBHOOK_URL`（预发的固定 `/api/webhooks/github` 地址）和 `GITHUB_PRE_WEBHOOK_SECRET`（预发 App 的 Webhook Secret）。部署入口和配置后，将预发 App 的 Webhook URL 改为正式域名下的 `/api/webhooks/github/pre`。
+
+正式入口验签后原样转发，预发再次验签并处理安装和 PR 数据。正式 App 的入口及凭据保持独立。预发处理失败时，GitHub 会看到失败的投递记录；转发入口不会自动重试。预发 App 的 OAuth 和安装回调仍使用预发浏览器域名。
+
 ## 已知限制
 
 目前还没做的几个边界：
