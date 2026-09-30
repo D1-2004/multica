@@ -196,7 +196,31 @@ export const agentSceneMemoryKeys = {
     ["workspaces", wsId, "agent-scene-memory"] as const,
   list: (wsId: string, agentId: string) =>
     [...agentSceneMemoryKeys.all(wsId), agentId] as const,
+  // Nested under list so the memory mutations' list invalidation refreshes
+  // it too.
+  detail: (wsId: string, agentId: string, memoryId: string) =>
+    [...agentSceneMemoryKeys.list(wsId, agentId), "memory", memoryId] as const,
 };
+
+/** One scene memory row by id; the scene detail uses it because the list
+ * endpoint returns at most the 200 newest rows. */
+export function agentSceneMemoryDetailOptions(
+  wsId: string,
+  agentId: string,
+  memoryId: string,
+  enabled = true,
+) {
+  const active = enabled && !!wsId && !!agentId && !!memoryId;
+  return queryOptions({
+    queryKey: agentSceneMemoryKeys.detail(wsId, agentId, memoryId),
+    queryFn: () => api.getAgentSceneMemory(agentId, memoryId),
+    enabled: active,
+    staleTime: 15 * 1000,
+    gcTime: 5 * 60 * 1000,
+    refetchInterval: active ? 15 * 1000 : false,
+    refetchOnWindowFocus: true,
+  });
+}
 
 export function agentSceneMemoryOptions(
   wsId: string,

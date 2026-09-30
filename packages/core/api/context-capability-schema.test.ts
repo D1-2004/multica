@@ -82,7 +82,7 @@ describe("context capability mobile responses", () => {
       opts,
     );
     expect(result?.person?.bindings).toEqual([
-      { resourceType: "connector", resourceId: connectorId, enabled: true },
+      { resourceType: "connector", resourceId: connectorId, enabled: true, shareInGroups: false },
     ]);
   });
 
@@ -93,7 +93,7 @@ describe("context capability mobile responses", () => {
       credentials: null,
     });
     expect(result.bindings).toEqual([
-      { resourceType: "skill", resourceId: skillId, enabled: false },
+      { resourceType: "skill", resourceId: skillId, enabled: false, shareInGroups: false },
     ]);
     expect(result.credentials).toEqual([]);
   });
@@ -270,7 +270,7 @@ describe("context capability admin response", () => {
     const result = AgentContextCapabilitiesSchema.parse({
       enabled: true,
       library: {
-        connectors: [{ id: connectorId, name: "Wiki", enabled: true, auth_mode: "bearer", upstream_url: "https://x" }],
+        connectors: [{ id: connectorId, name: "Wiki", enabled: true, auth_mode: "oauth", catalog_slug: "github", upstream_url: "https://x" }],
         skills: null,
       },
       offers: { connector_ids: [connectorId], skill_ids: null },
@@ -288,7 +288,7 @@ describe("context capability admin response", () => {
     expect(result).toEqual({
       enabled: true,
       library: {
-        connectors: [{ id: connectorId, name: "Wiki", enabled: true, authMode: "bearer" }],
+        connectors: [{ id: connectorId, name: "Wiki", enabled: true, authMode: "oauth", catalogSlug: "github" }],
         skills: [],
       },
       offers: { connectorIds: [connectorId], skillIds: [] },
@@ -296,7 +296,7 @@ describe("context capability admin response", () => {
         {
           scopeKey: "cid1",
           scopeTitle: "Team",
-          bindings: [{ resourceType: "connector", resourceId: connectorId, enabled: true }],
+          bindings: [{ resourceType: "connector", resourceId: connectorId, enabled: true, shareInGroups: false }],
           credentialCount: 1,
         },
       ],

@@ -32,6 +32,7 @@ import {
   type ContextConfigAgentSummary,
   type ContextConnectorCredential,
   type ContextOfferedConnector,
+  type ContextSceneKind,
   type ContextScopeType,
   type ContextSkillItem,
 } from "@multica/core/context-capabilities";
@@ -138,10 +139,12 @@ function statusOf(error: unknown): number | null {
 }
 
 /**
- * Mobile (DingTalk H5) page where group members configure the connectors and
- * skills an agent may use in their group, and where a person configures the
- * ones used for their own messages. Platform-free: the web route injects
- * sign-in and the JSAPI group picker.
+ * Configuration page (DingTalk H5, also usable in a desktop browser) where
+ * the members of a chat configure the connectors and skills an agent may use
+ * in that chat (本会话: a group chat or a 1:1 chat, which is a scene just like
+ * a group), and where a person configures the ones used for their own
+ * messages (我的). Platform-free: the web route injects sign-in and the
+ * JSAPI group picker.
  */
 export function ContextConfigPage({
   linkToken,
@@ -259,8 +262,8 @@ export function ContextConfigPage({
   }
 
   return (
-    <main className="min-h-dvh bg-background px-4 py-6 text-foreground">
-      <div className="mx-auto flex w-full max-w-md flex-col gap-5">
+    <main className="min-h-dvh bg-background px-4 py-6 text-foreground sm:px-6 sm:py-10">
+      <div className="mx-auto flex w-full max-w-md flex-col gap-5 sm:max-w-2xl">
         <header className="space-y-1">
           <h1 className="text-title font-semibold text-balance">
             {t(($) => $.context_config.page_title)}
@@ -452,6 +455,8 @@ function AgentScopes({
     : (detail.scenes[0]?.scopeKey ?? "");
 
   const resolveScene = useResolveContextConfigScene(agentId);
+  const sceneKindLabel = useSceneKindLabel();
+  const sceneUntitled = useSceneUntitled();
   const [picking, setPicking] = useState(false);
   const canPickGroup =
     pickGroup !== undefined && detail.jsapiAvailable === true && detail.person !== null;
@@ -552,7 +557,9 @@ function AgentScopes({
                 >
                   {detail.scenes.map((scene) => (
                     <NativeSelectOption key={scene.scopeKey} value={scene.scopeKey}>
-                      {scene.scopeTitle || t(($) => $.context_config.scene_untitled)}
+                      {`${sceneKindLabel(scene.kind)} · ${
+                        scene.scopeTitle || sceneUntitled(scene.kind)
+                      }`}
                     </NativeSelectOption>
                   ))}
                 </NativeSelect>
@@ -562,6 +569,9 @@ function AgentScopes({
               key={activeSceneKey}
               agentId={agentId}
               sceneKey={activeSceneKey}
+              sceneKind={
+                detail.scenes.find((scene) => scene.scopeKey === activeSceneKey)?.kind ?? "group"
+              }
               detail={detail}
               reportError={reportError}
             />
@@ -596,15 +606,19 @@ function AgentScopes({
 function SceneScope({
   agentId,
   sceneKey,
+  sceneKind,
   detail,
   reportError,
 }: {
   agentId: string;
   sceneKey: string;
+  /** Kind from the agent detail; the scene detail's own kind wins. */
+  sceneKind: ContextSceneKind;
   detail: ContextConfigAgentDetail;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
+  const sceneUntitled = useSceneUntitled();
   const sceneQuery = useQuery(contextConfigSceneOptions(agentId, sceneKey));
   const reportErrorRef = useRef(reportError);
   reportErrorRef.current = reportError;
@@ -630,12 +644,16 @@ function SceneScope({
       />
     );
   }
+  // An older scene detail omits the kind (parsed as "group"); the agent
+  // detail may already know the chat is a 1:1 chat.
+  const kind: ContextSceneKind = scene.scene.kind === "dm" || sceneKind === "dm" ? "dm" : "group";
   return (
     <ScopeEditor
       agentId={agentId}
       scopeType="scene"
       scopeKey={scene.scene.scopeKey}
-      title={scene.scene.scopeTitle || t(($) => $.context_config.scene_untitled)}
+      sceneKind={kind}
+      title={scene.scene.scopeTitle || sceneUntitled(kind)}
       expiresAt={scene.scene.expiresAt}
       detail={detail}
       bindings={scene.bindings}
@@ -649,6 +667,7 @@ function ScopeEditor({
   agentId,
   scopeType,
   scopeKey,
+  sceneKind = "group",
   title,
   expiresAt,
   detail,
@@ -659,6 +678,8 @@ function ScopeEditor({
   agentId: string;
   scopeType: ContextScopeType;
   scopeKey: string;
+  /** Scene scopes only: a group chat or a 1:1 chat. */
+  sceneKind?: ContextSceneKind;
   title: string;
   expiresAt: string;
   detail: ContextConfigAgentDetail;
@@ -667,6 +688,7 @@ function ScopeEditor({
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
+  const sceneKindLabel = useSceneKindLabel();
   const setBinding = useSetContextCapabilityBinding(agentId);
   // One entry per row with a write in flight, so overlapping toggles of
   // different rows never clear each other's pending state.
@@ -678,6 +700,20 @@ function ScopeEditor({
         bindings
           .filter((binding) => binding.enabled === true)
           .map((binding) => `${binding.resourceType}:${binding.resourceId}`),
+      ),
+    [bindings],
+  );
+  const sharedConnectorIds = useMemo(
+    () =>
+      new Set(
+        bindings
+          .filter(
+            (binding) =>
+              binding.resourceType === "connector" &&
+              binding.enabled === true &&
+              binding.shareInGroups === true,
+          )
+          .map((binding) => binding.resourceId),
       ),
     [bindings],
   );
@@ -717,18 +753,63 @@ function ScopeEditor({
     }
   };
 
+  // Person connectors only: may this connector also serve group chats the
+  // person triggers? The binding stays enabled either way.
+  const toggleShare = async (resourceId: string, shareInGroups: boolean) => {
+    const key = `share:${resourceId}`;
+    if (busyKeys.has(key)) return;
+    setBusyKeys((current) => new Set(current).add(key));
+    try {
+      await setBinding.mutateAsync({
+        scopeType: "person",
+        scopeKey,
+        resourceType: "connector",
+        resourceId,
+        enabled: true,
+        shareInGroups,
+      });
+    } catch (error) {
+      if (!reportError(error)) {
+        toast.error(t(($) => $.context_config.share_in_groups_failed));
+      }
+    } finally {
+      setBusyKeys((current) => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
   const offers = detail.offers;
   const expiry = formatDate(expiresAt);
 
   return (
     <section className="space-y-4" aria-label={title}>
       <div className="space-y-1">
-        <p className="truncate text-body font-medium">{title}</p>
+        <div className="flex min-w-0 items-center gap-2">
+          <p className="truncate text-body font-medium">{title}</p>
+          {scopeType === "scene" && (
+            <Badge variant="outline" className="shrink-0">
+              {sceneKindLabel(sceneKind)}
+            </Badge>
+          )}
+        </div>
         <p className="text-caption text-muted-foreground">
           {scopeType === "scene"
-            ? t(($) => $.context_config.scene_scope_hint)
+            ? sceneKind === "dm"
+              ? t(($) => $.context_config.scene_scope_hint_dm)
+              : t(($) => $.context_config.scene_scope_hint)
             : t(($) => $.context_config.person_scope_hint)}
         </p>
+        {/* A 1:1 chat scene has no runtime scene layer yet
+            (docs/context-capabilities.md §1.2): say so before anyone turns
+            something on or connects an account here. */}
+        {scopeType === "scene" && sceneKind === "dm" && (
+          <p className="text-caption text-muted-foreground">
+            {t(($) => $.context_config.dm_pending_note)}
+          </p>
+        )}
         {expiry && (
           <p className="text-caption text-muted-foreground">
             {t(($) => $.context_config.access_until, { date: expiry })}
@@ -752,12 +833,22 @@ function ScopeEditor({
                   agentId={agentId}
                   scopeType={scopeType}
                   scopeKey={scopeKey}
+                  sceneKind={sceneKind}
                   connector={connector}
                   enabled={enabledKeys.has(`connector:${connector.id}`)}
                   alwaysOn={globalIds.has(connector.id)}
                   busy={busyKeys.has(`connector:${connector.id}`)}
                   credential={credentialByConnector.get(connector.id) ?? null}
                   onToggle={(enabled) => void toggle("connector", connector.id, enabled)}
+                  share={
+                    scopeType === "person"
+                      ? {
+                          checked: sharedConnectorIds.has(connector.id),
+                          busy: busyKeys.has(`share:${connector.id}`),
+                          onToggle: (next) => void toggleShare(connector.id, next),
+                        }
+                      : undefined
+                  }
                   reportError={reportError}
                 />
               ))}
@@ -783,27 +874,38 @@ function ScopeEditor({
   );
 }
 
+interface ShareInGroupsControl {
+  checked: boolean;
+  busy: boolean;
+  onToggle: (next: boolean) => void;
+}
+
 function ConnectorRow({
   agentId,
   scopeType,
   scopeKey,
+  sceneKind,
   connector,
   enabled,
   alwaysOn,
   busy,
   credential,
   onToggle,
+  share,
   reportError,
 }: {
   agentId: string;
   scopeType: ContextScopeType;
   scopeKey: string;
+  sceneKind: ContextSceneKind;
   connector: ContextOfferedConnector;
   enabled: boolean;
   alwaysOn: boolean;
   busy: boolean;
   credential: ContextConnectorCredential | null;
   onToggle: (enabled: boolean) => void;
+  /** Person scope only: 「在群聊中由我触发时也可用」. */
+  share?: ShareInGroupsControl;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
@@ -852,11 +954,15 @@ function ConnectorRow({
           />
         )}
       </div>
+      {share && enabled && !alwaysOn && (
+        <ShareInGroupsSwitch connector={connector} control={share} />
+      )}
       {connector.authMode === "oauth" ? (
         <OAuthConnectionControl
           agentId={agentId}
           scopeType={scopeType}
           scopeKey={scopeKey}
+          sceneKind={sceneKind}
           connector={connector}
           credential={credential}
           reportError={reportError}
@@ -866,12 +972,57 @@ function ConnectorRow({
           agentId={agentId}
           scopeType={scopeType}
           scopeKey={scopeKey}
+          sceneKind={sceneKind}
           connector={connector}
           credential={credential}
           reportError={reportError}
         />
       ) : null}
     </li>
+  );
+}
+
+/** Whether a personal connector may also serve group chats the person
+ * triggers. Off by default. The runtime does not read it yet: personal
+ * connectors still apply in every run the person triggers, group runs
+ * included (docs/context-capabilities.md §1.2), so the switch says it is
+ * only saved. */
+function ShareInGroupsSwitch({
+  connector,
+  control,
+}: {
+  connector: ContextOfferedConnector;
+  control: ShareInGroupsControl;
+}) {
+  const { t } = useT("agents");
+  const switchId = `context-share-${connector.id}`;
+  return (
+    <div className="flex items-start gap-3 rounded-md bg-muted/40 px-3 py-2.5">
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <label htmlFor={switchId} className="block text-caption font-medium">
+          {t(($) => $.context_config.share_in_groups)}
+        </label>
+        <p id={`${switchId}-hint`} className="text-caption text-muted-foreground">
+          {t(($) => $.context_config.share_in_groups_hint)}
+        </p>
+        <p id={`${switchId}-pending`} className="text-caption text-muted-foreground">
+          {t(($) => $.context_config.share_in_groups_pending_note)}
+        </p>
+      </div>
+      <span className="flex h-6 w-10 shrink-0 items-center justify-end">
+        {control.busy ? (
+          <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
+        ) : (
+          <Switch
+            id={switchId}
+            size="sm"
+            checked={control.checked}
+            onCheckedChange={(next) => control.onToggle(next)}
+            aria-describedby={`${switchId}-hint ${switchId}-pending`}
+          />
+        )}
+      </span>
+    </div>
   );
 }
 
@@ -885,6 +1036,7 @@ function OAuthConnectionControl({
   agentId,
   scopeType,
   scopeKey,
+  sceneKind,
   connector,
   credential,
   reportError,
@@ -892,6 +1044,7 @@ function OAuthConnectionControl({
   agentId: string;
   scopeType: ContextScopeType;
   scopeKey: string;
+  sceneKind: ContextSceneKind;
   connector: ContextOfferedConnector;
   credential: ContextConnectorCredential | null;
   reportError: (error: unknown) => boolean;
@@ -1000,7 +1153,9 @@ function OAuthConnectionControl({
           placeholder={t(($) => $.context_config.pat_placeholder)}
           note={
             scopeType === "scene"
-              ? t(($) => $.context_config.credential_scene_note)
+              ? sceneKind === "dm"
+                ? t(($) => $.context_config.credential_dm_note)
+                : t(($) => $.context_config.credential_scene_note)
               : t(($) => $.context_config.credential_person_note)
           }
           onClose={() => setPatOpen(false)}
@@ -1076,7 +1231,9 @@ function OAuthConnectionControl({
           )}
           <p className="text-caption text-muted-foreground">
             {scopeType === "scene"
-              ? t(($) => $.context_config.connect_scene_note, { name: connector.name })
+              ? sceneKind === "dm"
+                ? t(($) => $.context_config.connect_dm_note, { name: connector.name })
+                : t(($) => $.context_config.connect_scene_note, { name: connector.name })
               : t(($) => $.context_config.connect_person_note)}
           </p>
         </div>
@@ -1109,6 +1266,7 @@ function CredentialControl({
   agentId,
   scopeType,
   scopeKey,
+  sceneKind,
   connector,
   credential,
   reportError,
@@ -1116,6 +1274,7 @@ function CredentialControl({
   agentId: string;
   scopeType: ContextScopeType;
   scopeKey: string;
+  sceneKind: ContextSceneKind;
   connector: ContextOfferedConnector;
   credential: ContextConnectorCredential | null;
   reportError: (error: unknown) => boolean;
@@ -1175,7 +1334,9 @@ function CredentialControl({
           placeholder={t(($) => $.context_config.credential_placeholder)}
           note={
             scopeType === "scene"
-              ? t(($) => $.context_config.credential_scene_note)
+              ? sceneKind === "dm"
+                ? t(($) => $.context_config.credential_dm_note)
+                : t(($) => $.context_config.credential_scene_note)
               : t(($) => $.context_config.credential_person_note)
           }
           onClose={() => setEditing(false)}
@@ -1546,6 +1707,20 @@ function Banner({ children }: { children: React.ReactNode }) {
       <span>{children}</span>
     </div>
   );
+}
+
+function useSceneKindLabel(): (kind: ContextSceneKind) => string {
+  const { t } = useT("agents");
+  return (kind) =>
+    kind === "dm" ? t(($) => $.context_config.kind_dm) : t(($) => $.context_config.kind_group);
+}
+
+function useSceneUntitled(): (kind: ContextSceneKind) => string {
+  const { t } = useT("agents");
+  return (kind) =>
+    kind === "dm"
+      ? t(($) => $.context_config.scene_untitled_dm)
+      : t(($) => $.context_config.scene_untitled);
 }
 
 function formatDate(value: string): string {

@@ -41,6 +41,7 @@ import { Switch } from "@multica/ui/components/ui/switch";
 import { cn } from "@multica/ui/lib/utils";
 import { SkillAddDialog } from "../skill-add-dialog";
 import { useT } from "../../../i18n";
+import { ContextOffersSection } from "./context-offers-section";
 
 type SelectedSkill =
   | { kind: "workspace"; id: string }
@@ -244,6 +245,10 @@ export function SkillsTab({
           </ul>
         )}
       </CapabilitySection>
+
+      {canEdit ? (
+        <ContextOffersSection agentId={agent.id} wsId={wsId} resourceType="skill" />
+      ) : null}
 
       <CapabilitySection
         title={t(($) => $.tab_body.skills.runtime_title)}

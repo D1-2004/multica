@@ -1,6 +1,11 @@
 import { z } from "zod";
 import type {
   AgentContextCapabilities,
+  AgentSceneBinding,
+  AgentSceneDetail,
+  AgentScenePrompt,
+  AgentScenesPage,
+  AgentSceneSummary,
   ContextCapabilityBinding,
   ContextConfigAgentDetail,
   ContextConfigAgentSummary,
@@ -12,6 +17,7 @@ import type {
   ContextConnectorCredential,
   ContextCredentialKind,
   ContextResourceType,
+  ContextSceneKind,
   ContextScopeType,
   DingTalkJsapiConfig,
 } from "../types/context-capability";
@@ -39,6 +45,35 @@ function list<T extends z.ZodType>(item: T) {
 
 const strictTrue = z.unknown().transform((value) => value === true);
 
+const count = z
+  .number()
+  .int()
+  .nonnegative()
+  .nullish()
+  .catch(0)
+  .transform((value) => value ?? 0);
+
+// Older backends only served group scenes and sent no kind; anything that is
+// not literally "dm" is shown as a group chat.
+const sceneKind = z
+  .unknown()
+  .transform((value): ContextSceneKind => (value === "dm" ? "dm" : "group"));
+
+/** Drops malformed items instead of failing the whole list, so one bad row
+ * from a newer backend never empties a page. */
+function tolerantList<T extends z.ZodType>(item: T) {
+  return z
+    .array(z.unknown())
+    .nullish()
+    .catch(null)
+    .transform((values): z.output<T>[] =>
+      (values ?? []).flatMap((value) => {
+        const parsed = item.safeParse(value);
+        return parsed.success ? [parsed.data as z.output<T>] : [];
+      }),
+    );
+}
+
 function scopeTypeOf(value: string): ContextScopeType | null {
   return value === "scene" || value === "person" ? value : null;
 }
@@ -51,6 +86,8 @@ const BindingWireSchema = z.object({
   resource_type: z.string(),
   resource_id: id,
   enabled: strictTrue,
+  // Person connector bindings only; older backends omit it.
+  share_in_groups: strictTrue,
 });
 
 type BindingWire = z.output<typeof BindingWireSchema>;
@@ -58,7 +95,13 @@ type BindingWire = z.output<typeof BindingWireSchema>;
 function toBinding(wire: BindingWire): ContextCapabilityBinding | null {
   const resourceType = resourceTypeOf(wire.resource_type);
   if (!resourceType) return null;
-  return { resourceType, resourceId: wire.resource_id, enabled: wire.enabled };
+  return {
+    resourceType,
+    resourceId: wire.resource_id,
+    enabled: wire.enabled,
+    // Meaningful only for connectors; a skill binding never shares.
+    shareInGroups: resourceType === "connector" && wire.share_in_groups,
+  };
 }
 
 function toBindings(wires: BindingWire[]): ContextCapabilityBinding[] {
@@ -125,6 +168,7 @@ const SceneGrantSchema = z
     scope_title: text,
     source: text,
     expires_at: text,
+    kind: sceneKind,
   })
   .transform(
     (value): ContextConfigSceneGrant => ({
@@ -132,6 +176,7 @@ const SceneGrantSchema = z
       scopeTitle: value.scope_title,
       source: value.source,
       expiresAt: value.expires_at,
+      kind: value.kind,
     }),
   );
 
@@ -386,6 +431,7 @@ export const AgentContextCapabilitiesSchema = z
             name: text,
             enabled: strictTrue,
             auth_mode: text,
+            catalog_slug: catalogSlug,
           }),
         ),
         skills: list(SkillItemSchema),
@@ -410,6 +456,7 @@ export const AgentContextCapabilitiesSchema = z
           name: connector.name,
           enabled: connector.enabled,
           authMode: connector.auth_mode,
+          catalogSlug: connector.catalog_slug,
         })),
         skills: value.library?.skills ?? [],
       },
@@ -422,3 +469,138 @@ export const AgentContextCapabilitiesSchema = z
       configureUrl: value.configure_url,
     }),
   );
+
+// ---------------------------------------------------------------------------
+// Admin scenes (GET/PUT /api/agents/{id}/scenes...)
+// ---------------------------------------------------------------------------
+
+const AgentSceneSummaryWireSchema = z
+  .object({
+    scene_key: id,
+    kind: sceneKind,
+    title: text,
+    org_id: text,
+    last_active_at: text,
+    inbound_session_id: text,
+    inbound_count: count,
+    memory_id: text,
+    has_prompt: strictTrue,
+    connector_count: count,
+    skill_count: count,
+  })
+  .transform(
+    (value): AgentSceneSummary => ({
+      sceneKey: value.scene_key,
+      kind: value.kind,
+      title: value.title,
+      orgId: value.org_id,
+      lastActiveAt: value.last_active_at,
+      inboundSessionId: value.inbound_session_id,
+      inboundCount: value.inbound_count,
+      memoryId: value.memory_id,
+      hasPrompt: value.has_prompt,
+      connectorCount: value.connector_count,
+      skillCount: value.skill_count,
+    }),
+  );
+
+export const EMPTY_AGENT_SCENES_PAGE: AgentScenesPage = { scenes: [], hasMore: false };
+
+export const AgentScenesPageSchema = z
+  .object({
+    scenes: tolerantList(AgentSceneSummaryWireSchema),
+    has_more: strictTrue,
+  })
+  .transform((value): AgentScenesPage => ({
+    scenes: value.scenes,
+    hasMore: value.has_more,
+  }));
+
+const AgentScenePromptWireSchema = z
+  .object({
+    text: text,
+    updated_at: text,
+    updated_by_name: text,
+  })
+  .transform(
+    (value): AgentScenePrompt => ({
+      text: value.text,
+      updatedAt: value.updated_at,
+      updatedByName: value.updated_by_name,
+    }),
+  );
+
+export const EMPTY_AGENT_SCENE_PROMPT: AgentScenePrompt = {
+  text: "",
+  updatedAt: "",
+  updatedByName: "",
+};
+
+const AgentSceneBindingWireSchema = z.object({
+  resource_type: z.string(),
+  resource_id: id,
+  enabled: strictTrue,
+  updated_by_name: text,
+  updated_at: text,
+});
+
+function toAgentSceneBinding(
+  wire: z.output<typeof AgentSceneBindingWireSchema>,
+): AgentSceneBinding | null {
+  const resourceType = resourceTypeOf(wire.resource_type);
+  if (!resourceType) return null;
+  return {
+    resourceType,
+    resourceId: wire.resource_id,
+    enabled: wire.enabled,
+    updatedByName: wire.updated_by_name,
+    updatedAt: wire.updated_at,
+  };
+}
+
+export const AgentSceneDetailSchema = z
+  .object({
+    scene: AgentSceneSummaryWireSchema,
+    prompt: AgentScenePromptWireSchema.nullish().catch(null),
+    bindings: tolerantList(AgentSceneBindingWireSchema),
+    offers: z
+      .object({
+        connectors: tolerantList(
+          z.object({
+            id,
+            name: text,
+            catalog_slug: catalogSlug,
+            auth_mode: z.string().nullish().catch(null),
+          }),
+        ),
+        skills: tolerantList(SkillItemSchema),
+      })
+      .nullish()
+      .catch(null),
+  })
+  .transform(
+    (value): AgentSceneDetail => ({
+      scene: value.scene,
+      prompt: value.prompt ?? EMPTY_AGENT_SCENE_PROMPT,
+      bindings: value.bindings
+        .map(toAgentSceneBinding)
+        .filter((binding): binding is AgentSceneBinding => binding !== null),
+      offers: {
+        connectors: (value.offers?.connectors ?? []).map((connector) => ({
+          id: connector.id,
+          name: connector.name,
+          catalogSlug: connector.catalog_slug,
+          authMode: connectorAuthModeOf(connector.auth_mode, false),
+        })),
+        skills: value.offers?.skills ?? [],
+      },
+    }),
+  );
+
+export const AgentScenePromptResponseSchema = z
+  .object({ prompt: AgentScenePromptWireSchema })
+  .transform((value) => value.prompt);
+
+export const AgentSceneBindingResponseSchema = z
+  .object({ binding: AgentSceneBindingWireSchema })
+  .transform((value) => toAgentSceneBinding(value.binding));
