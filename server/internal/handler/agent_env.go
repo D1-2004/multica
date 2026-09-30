@@ -97,7 +97,7 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 	if !ok {
 		return db.Agent{}, db.Member{}, false
 	}
-	if !canManageAgentEnv(agent, member) {
+	if !memberManagesAgent(agent, member) {
 		writeError(w, http.StatusForbidden, "only the agent owner or a workspace owner/admin can manage this agent's env")
 		return db.Agent{}, db.Member{}, false
 	}
@@ -105,10 +105,11 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 	return agent, member, true
 }
 
-// canManageAgentEnv is the pure half of the env authorization rule:
-// a workspace owner/admin, or the human who owns the agent. Mirrors
-// canManageAgent (update/archive) so a member who can manage an agent
-// can also rotate its secrets.
+// memberManagesAgent is the pure agent-manage rule: a workspace
+// owner/admin, or the human who owns the agent. Mirrors canManageAgent
+// (update/archive); the env endpoints use it so a member who can manage an
+// agent can also rotate its secrets, and the mobile context capability API
+// uses it for agent managers.
 //
 // The owner comparison deliberately runs against member.UserID rather
 // than requestUserID(r). agent.owner_id is nullable (migration 001) and
@@ -117,7 +118,7 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 // readable by anyone. member.UserID only exists after the membership
 // lookup succeeded, and the empty-owner guard below closes the case
 // from the other side as well.
-func canManageAgentEnv(agent db.Agent, member db.Member) bool {
+func memberManagesAgent(agent db.Agent, member db.Member) bool {
 	if roleAllowed(member.Role, "owner", "admin") {
 		return true
 	}

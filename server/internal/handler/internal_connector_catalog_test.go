@@ -523,6 +523,47 @@ func listedConnector(t *testing.T, h *Handler, connectorID string) (map[string]a
 	return nil, ""
 }
 
+// Members' available list names each connector's official app
+// (catalog_slug), "" for an Aone FaaS connector.
+func TestAvailableInternalConnectorsCarryCatalogSlug(t *testing.T) {
+	f := newCatalogFixture(t)
+	ctx := context.Background()
+	dcr := f.storeTools(t, f.create(t, f.dcr))
+	f.grantGlobally(t, dcr.ID)
+	f.sealWorkspaceOAuth(t, dcr.ID, contextcap.OAuthToken{AccessToken: "acc-available", ExpiresAt: time.Now().Add(time.Hour).Unix(), Account: "octo"})
+	custom := uuid.NewString()
+	t.Cleanup(func() {
+		bg := context.Background()
+		_, _ = testPool.Exec(bg, `DELETE FROM internal_connector_agent WHERE connector_id = $1`, custom)
+		_, _ = testPool.Exec(bg, `DELETE FROM internal_connector WHERE id = $1`, custom)
+	})
+	if _, err := testPool.Exec(ctx, `INSERT INTO internal_connector (id, workspace_id, name, upstream_url, credential_ref, auth_mode, allowed_tools, enabled)
+		VALUES ($1, $2, $3, $4, $5, 'none', '["read"]'::jsonb, true)`,
+		custom, testWorkspaceID, "Custom "+custom[:8], "https://safe.example.test/"+custom, connectorCredentialRef(custom)); err != nil {
+		t.Fatal(err)
+	}
+	f.grantGlobally(t, custom)
+
+	rec := httptest.NewRecorder()
+	f.h.ListAvailableInternalConnectors(rec, withURLParam(newRequest(http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/internal-connectors/available", nil), "id", testWorkspaceID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("available connectors: %d %s", rec.Code, rec.Body.String())
+	}
+	var items []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &items); err != nil {
+		t.Fatal(err)
+	}
+	slugs := map[string]any{}
+	for _, item := range items {
+		if item["agent_id"] == f.agentID {
+			slugs[item["id"].(string)] = item["catalog_slug"]
+		}
+	}
+	if len(slugs) != 2 || slugs[dcr.ID] != f.dcr.Slug || slugs[custom] != "" {
+		t.Fatalf("available catalog slugs = %v; body %s", slugs, rec.Body.String())
+	}
+}
+
 func TestCatalogConnectorAddIsIdempotentAndBypassesOnlyTemplateURL(t *testing.T) {
 	f := newCatalogFixture(t)
 	ctx := context.Background()
@@ -870,11 +911,7 @@ func TestCatalogConnectorGitHubAppFlowUsesSharedCallbackAndHidesTokens(t *testin
 		item["discovered_tool_count"] != float64(2) {
 		t.Fatalf("listed GitHub connector = %v", item)
 	}
-	for _, secret := range []string{"acc-", "ref-", "gh-secret"} {
-		if strings.Contains(body, secret) {
-			t.Fatalf("connector list leaks %q: %s", secret, body)
-		}
-	}
+	assertNoTokenMaterial(t, "connector list", body)
 	if !connectorAcceptsBearer("oauth", f.gh.Slug) || connectorAcceptsBearer("oauth", f.dcr.Slug) || !connectorAcceptsBearer("bearer", "") || connectorAcceptsBearer("none", "") {
 		t.Fatal("PAT acceptance rules")
 	}

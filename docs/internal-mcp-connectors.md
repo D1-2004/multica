@@ -142,8 +142,9 @@ enable/disable action directly on each card; the management dialog presents
 the same state as a clear action rather than an unlabeled checkbox. It does
 not duplicate Agent chat or test conversations below the management list.
 The admin confirms connectivity and enables the connector for selected
-Agents. An Agent's MCP configuration page lists usable workspace-assigned
-connectors. Members use the Agent's existing chat surface to invoke native
+Agents. The Agent's connector tab (配置 → 能力 → 连接器) lists the Aone FaaS
+connectors granted to it in its 「MCP（由 Multica 管理）」 block, where a
+workspace admin can also add one from the library or remove a grant. Members use the Agent's existing chat surface to invoke native
 MCP tools. No upstream secret is placed in the Agent configuration, task
 prompt or member-facing page.
 
@@ -211,13 +212,19 @@ path refuses those URLs, so only the server writes them.
 
 Where it is managed (2026-09-30): official apps are the agent's global
 configuration, so they are added and managed in the agent's connector tab
-(agent detail → 配置 → 能力 → 连接器, DetailTab `mcp_config`). 「添加连接器」
-→ 官方应用 calls `POST /connector-catalog/{slug}` (idempotent; creates the
-workspace catalog connector when it is missing) and then grants that
-connector to the agent through the connector update. The shared-account
-connect, GitHub PAT, tool refresh and 允许写操作 controls live on that tab
-too. The workspace page `/{workspaceSlug}/internal-connectors` lists only
-custom (Aone FaaS) connectors; it no longer shows the official app gallery.
+(agent detail → 配置 → 能力 → 连接器, DetailTab `mcp_config`), in its
+「连接应用」 block: one card per app, each opening its own configuration
+page (`?app=<slug>`, layout and status rules in
+`docs/context-capabilities.md` §1.1 and §6 "Connected apps"). 添加 on an
+app page calls `POST /connector-catalog/{slug}` (idempotent; creates the
+workspace catalog connector when it is missing) and then offers that
+connector to the agent; it does not grant it. 「对所有用户启用」 is the grant
+(the connector update's `agent_ids`) and needs a usable shared account.
+The shared-account connect and disconnect, GitHub PAT, tool refresh and
+允许写操作 controls live on the app page too. Aone FaaS connectors are
+granted in the same tab's 「MCP（由 Multica 管理）」 block. The workspace page
+`/{workspaceSlug}/internal-connectors` lists only custom (Aone FaaS)
+connectors; it no longer shows the official app gallery.
 
 ### Connecting accounts
 
@@ -266,8 +273,9 @@ response directly) that links back to `/dingtalk/configure` and the app.
 (`MULTICA_APP_URL` / `FRONTEND_ORIGIN`). The default is
 `/dingtalk/configure?agent=<id>` for scene and person scopes and
 `/<workspace slug>/internal-connectors` for the workspace. The web client
-passes `return_to=/<workspace slug>/agents/<agent id>?view=mcp_config` for
-a workspace connect, so the admin lands back on the agent's connector tab.
+passes `return_to=/<workspace slug>/agents/<agent id>?view=mcp_config&app=<slug>`
+for a workspace connect, so the admin lands back on that app's page in the
+agent's connector tab.
 
 **Browser binding.** A state completes only in the browser that started it.
 Without this, anyone allowed to start a connect (for example any holder of a
@@ -293,9 +301,9 @@ authorized their own account into the admin's workspace; it was removed and
 `/api/connector-oauth/begin` is no longer routed). The desktop app's API
 responses land in its own cookie jar, not in the system browser that signs
 in, so the desktop never calls the start endpoint: "connect shared account"
-opens `<daemon_app_url>/<workspace slug>/agents/<agent id>?view=mcp_config`
-(the agent's connector tab on the web, with `daemon_app_url` from
-`/api/config`) in the system browser and tells the admin to finish
+opens `<daemon_app_url>/<workspace slug>/agents/<agent id>?view=mcp_config&app=<slug>`
+(the app's page in the agent's connector tab on the web, with
+`daemon_app_url` from `/api/config`) in the system browser and tells the admin to finish
 connecting there. When the server
 publishes no app URL, it asks the admin to open the web version instead. The
 desktop list refetches on focus, so the new account shows up on return.
@@ -411,12 +419,17 @@ the connector library (`RequireWorkspaceMCPHumanIssuer`):
 
 | Method | Path | Result |
 | --- | --- | --- |
-| GET | `/api/workspaces/{id}/connector-catalog` | `{apps: [{slug, name, mcp_url, auth_kind, allows_pat, oauth_available, connector_id, install_url?}]}`; `connector_id` is null until the app is added |
+| GET | `/api/workspaces/{id}/connector-catalog` | `{apps: [{slug, name, mcp_url, auth_kind, allows_pat, oauth_available, connector_id, install_url?}]}`; `connector_id` is null until the app is added. `allows_pat` and `oauth_available` describe this deployment, as in the agent's connected apps (`docs/context-capabilities.md` §6): a PAT also needs the connector credential key, and an OAuth connect also needs the key and an app origin |
 | POST | `/api/workspaces/{id}/connector-catalog/{slug}` | `{connector: <connector>}`; 201 when created, 200 when it already existed, 404 for an unknown slug |
 | POST | `/api/workspaces/{id}/internal-connectors/{connectorId}/oauth/start` | optional body `{return_to?}` → `{authorize_url}` for the workspace shared account, plus the browser binding cookie. Unknown body fields (including the removed `external_browser`) are 400 `invalid request body`. Errors are `{error, code}`: 403 `forbidden`; 400 `not_oauth` or `invalid_return_to`; 503 `oauth_unavailable`, `app_origin_missing` or `credential_storage_unavailable`; 502 `provider_unavailable` |
 | POST | `/api/workspaces/{id}/internal-connectors/{connectorId}/tools/refresh` | `{discovered, allowed_tools}`; 409 `no_connected_account`, 502 `discovery_failed`, 400 `not_official_app` |
+| DELETE | `/api/workspaces/{id}/internal-connectors/{connectorId}/credential` | removes the workspace's stored credential (disconnects an official app's shared account; works for any connector). 204, idempotent; 404 for an unknown connector. The provider grant is not revoked and an environment credential (`MULTICA_INTERNAL_MCP_BEARER_<id>`) is not affected |
 | PATCH | `/api/workspaces/{id}/internal-connectors/{connectorId}` | also accepts `write_enabled` (catalog connectors only, 400 otherwise) |
 | GET | `/api/workspaces/{id}/internal-connectors` | items add `catalog_slug`, `write_enabled`, `discovered_tool_count` and `credential_account` (`@login`, `OAuth` or `""`) |
+
+For members, the items of `GET /api/workspaces/{id}/internal-connectors/available`
+(usable connector/agent pairs) add `catalog_slug`: the official app, `""`
+for an Aone FaaS connector.
 
 The mobile start endpoint and the new detail fields are in
 `docs/context-capabilities.md` §6.

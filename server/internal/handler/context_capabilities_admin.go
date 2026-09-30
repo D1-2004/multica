@@ -83,12 +83,18 @@ func (h *Handler) contextCapAdminAgent(w http.ResponseWriter, r *http.Request) (
 	if !ok {
 		return contextCapAdminCaller{}, false
 	}
-	if !h.canManageAgent(w, r, agent) {
+	// canManageAgent's checks, keeping the member for the workspace-admin
+	// flag instead of looking it up twice.
+	member, ok := h.requireWorkspaceRole(w, r, uuidToString(agent.WorkspaceID), "agent not found", "owner", "admin", "member")
+	if !ok {
 		return contextCapAdminCaller{}, false
 	}
-	member, err := h.getWorkspaceMember(r.Context(), requestUserID(r), uuidToString(agent.WorkspaceID))
+	if !memberManagesAgent(agent, member) {
+		writeError(w, http.StatusForbidden, "only the agent owner can manage this agent")
+		return contextCapAdminCaller{}, false
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	return contextCapAdminCaller{agent: agent, workspaceAdmin: err == nil && roleAllowed(member.Role, "owner", "admin")}, true
+	return contextCapAdminCaller{agent: agent, workspaceAdmin: roleAllowed(member.Role, "owner", "admin")}, true
 }
 
 // contextCapConfigureURL is the mobile configuration page for the agent, or

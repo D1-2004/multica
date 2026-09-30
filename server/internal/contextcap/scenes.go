@@ -41,7 +41,8 @@ func ValidScenePrompt(prompt string) bool {
 
 // SceneSummary is one IM scene of an agent, merged from every place a scene
 // shows up: scene_memory, inbound Coordinator conversations
-// (inbound_coordinator_job), agent_scene_config and scene bindings. The raw
+// (inbound_coordinator_job), agent_scene_config, scene bindings and scene
+// credentials (a group can store a token without turning anything on). The raw
 // per-source titles are returned so the caller can pick a display title.
 type SceneSummary struct {
 	SceneKey string
@@ -57,10 +58,6 @@ type SceneSummary struct {
 	InboundCount     int
 	MemoryID         string
 	HasPrompt        bool
-	// ConnectorCount and SkillCount count enabled scene bindings whose
-	// resource is in the agent's enabled offer catalog.
-	ConnectorCount int
-	SkillCount     int
 
 	MemoryTitle       string
 	MemoryText        string
@@ -72,7 +69,9 @@ type SceneSummary struct {
 
 // SceneListQuery selects scenes of one agent under OrgID (the agent's current
 // DingTalk org, "" without an identity). Keys, when non-nil, restricts the
-// result to those scene keys. Limit is clamped to 1..200.
+// result to those scene keys; such a lookup is bounded by its key set and not
+// paged (Limit and Offset are ignored, every matching scene is returned).
+// Otherwise ListAgentScenes clamps Limit to 1..200.
 type SceneListQuery struct {
 	WorkspaceID string
 	AgentID     string
@@ -111,21 +110,45 @@ func ListAgentScenes(ctx context.Context, db DBTX, q SceneListQuery) ([]SceneSum
 	if limit <= 0 || limit > maxScenesPerPage {
 		limit = maxScenesPerPage
 	}
-	offset := q.Offset
-	if offset < 0 {
-		offset = 0
+	return listAgentScenes(ctx, db, q, limit, max(q.Offset, 0))
+}
+
+// MaxAllScenes bounds ListAllAgentScenes.
+const MaxAllScenes = 1000
+
+// ListAllAgentScenes returns up to limit (clamped to 1..MaxAllScenes) scenes
+// of the agent, newest activity first, and whether more exist. Unlike paging
+// through ListAgentScenes it is one statement: the agent's Coordinator jobs
+// and scene memory are scanned once, and the list is one consistent snapshot
+// (a scene whose activity moves it between pages is neither skipped nor
+// repeated). q.Limit and q.Offset are ignored. It is for internal callers
+// that need the whole list (the configure page of an agent manager); paged
+// HTTP listings use ListAgentScenes.
+func ListAllAgentScenes(ctx context.Context, db DBTX, q SceneListQuery, limit int) ([]SceneSummary, bool, error) {
+	if limit <= 0 || limit > MaxAllScenes {
+		limit = MaxAllScenes
+	}
+	return listAgentScenes(ctx, db, q, limit, 0)
+}
+
+// listAgentScenes runs the scene statement for one page (limit rows from
+// offset), or, for a Keys lookup, for every matching scene.
+func listAgentScenes(ctx context.Context, db DBTX, q SceneListQuery, limit, offset int) ([]SceneSummary, bool, error) {
+	if q.Keys != nil {
+		limit, offset = max(len(q.Keys), 1), 0
 	}
 	args := []any{q.WorkspaceID, q.AgentID, q.OrgID, limit + 1, offset}
 	// A Keys lookup filters every source by key inside its own scan, as a
 	// plain predicate (never "$n IS NULL OR ..."), so a cached generic plan
 	// still probes the indexes by key.
-	memKeys, jobKeys, cfgKeys, bindKeys := "", "", "", ""
+	memKeys, jobKeys, cfgKeys, bindKeys, credKeys := "", "", "", "", ""
 	if q.Keys != nil {
 		args = append(args, q.Keys)
 		memKeys = ` AND m.scene_key = ANY($6::text[])`
 		jobKeys = ` AND BTRIM(job.command #>> '{event,data,conversation,openConversationId}') = ANY($6::text[])`
 		cfgKeys = ` AND c.scene_key = ANY($6::text[])`
 		bindKeys = ` AND b.scope_key = ANY($6::text[])`
+		credKeys = ` AND k.scope_key = ANY($6::text[])`
 	}
 	rows, err := db.Query(ctx, `WITH mem AS (
 		  SELECT DISTINCT ON (m.scene_key) m.scene_key, m.scene_title, m.memory_text, m.org_id, m.id::text AS memory_id, m.updated_at
@@ -161,27 +184,27 @@ func ListAgentScenes(ctx context.Context, db DBTX, q SceneListQuery) ([]SceneSum
 		), bind AS (
 		  SELECT b.scope_key AS scene_key,
 		    COALESCE(max(b.scope_title) FILTER (WHERE b.scope_title <> ''), '') AS scope_title,
-		    count(*) FILTER (WHERE b.enabled AND b.resource_type = 'connector' AND o.resource_id IS NOT NULL) AS connector_count,
-		    count(*) FILTER (WHERE b.enabled AND b.resource_type = 'skill' AND o.resource_id IS NOT NULL) AS skill_count,
 		    max(b.updated_at) AS updated_at
 		  FROM context_capability_binding b
-		  LEFT JOIN context_capability_binding o ON o.workspace_id = b.workspace_id AND o.agent_id = b.agent_id
-		    AND o.scope_type = 'offer' AND o.org_id = '' AND o.scope_key = ''
-		    AND o.resource_type = b.resource_type AND o.resource_id = b.resource_id AND o.enabled
 		  WHERE b.workspace_id = $1::uuid AND b.agent_id = $2::uuid AND b.scope_type = 'scene' AND b.org_id = $3::text`+bindKeys+`
 		  GROUP BY b.scope_key
+		), cred AS (
+		  SELECT k.scope_key AS scene_key, max(k.updated_at) AS updated_at
+		  FROM context_connector_credential k
+		  WHERE k.workspace_id = $1::uuid AND k.agent_id = $2::uuid AND k.scope_type = 'scene' AND k.org_id = $3::text`+credKeys+`
+		  GROUP BY k.scope_key
 		), keys AS (
 		  SELECT scene_key FROM mem UNION SELECT scene_key FROM conv UNION SELECT scene_key FROM cfg UNION SELECT scene_key FROM bind
+		  UNION SELECT scene_key FROM cred
 		)
 		SELECT k.scene_key,
 		  CASE WHEN NULLIF(BTRIM(conv.conversation_type), '') IS NOT NULL
 		    THEN CASE WHEN lower(BTRIM(conv.conversation_type)) IN ('single', 'p2p', 'private', 'direct') THEN 'dm' ELSE 'group' END
 		    ELSE COALESCE(cfg.scene_kind, 'group') END,
 		  COALESCE(mem.org_id, $3::text),
-		  GREATEST(mem.updated_at, conv.updated_at, cfg.updated_at, bind.updated_at),
+		  GREATEST(mem.updated_at, conv.updated_at, cfg.updated_at, bind.updated_at, cred.updated_at),
 		  COALESCE(conv.session_id, ''), COALESCE(conv.session_count, 0),
 		  COALESCE(mem.memory_id, ''), COALESCE(cfg.has_prompt, FALSE),
-		  COALESCE(bind.connector_count, 0), COALESCE(bind.skill_count, 0),
 		  COALESCE(mem.scene_title, ''), COALESCE(mem.memory_text, ''),
 		  COALESCE(conv.conversation_title, ''), COALESCE(conv.sender_name, ''),
 		  COALESCE(cfg.scene_title, ''), COALESCE(bind.scope_title, '')
@@ -190,6 +213,7 @@ func ListAgentScenes(ctx context.Context, db DBTX, q SceneListQuery) ([]SceneSum
 		LEFT JOIN conv ON conv.scene_key = k.scene_key
 		LEFT JOIN cfg ON cfg.scene_key = k.scene_key
 		LEFT JOIN bind ON bind.scene_key = k.scene_key
+		LEFT JOIN cred ON cred.scene_key = k.scene_key
 		WHERE k.scene_key LIKE 'cid%' AND octet_length(k.scene_key) <= 256 AND k.scene_key !~ '[[:space:][:cntrl:]]'
 		ORDER BY 4 DESC NULLS LAST, k.scene_key
 		LIMIT $4 OFFSET $5`, args...)
@@ -201,16 +225,16 @@ func ListAgentScenes(ctx context.Context, db DBTX, q SceneListQuery) ([]SceneSum
 	for rows.Next() {
 		var s SceneSummary
 		var lastActive *time.Time
-		var inboundCount, connectorCount, skillCount int64
+		var inboundCount int64
 		if err := rows.Scan(&s.SceneKey, &s.Kind, &s.OrgID, &lastActive, &s.InboundSessionID, &inboundCount,
-			&s.MemoryID, &s.HasPrompt, &connectorCount, &skillCount,
+			&s.MemoryID, &s.HasPrompt,
 			&s.MemoryTitle, &s.MemoryText, &s.ConversationTitle, &s.SenderName, &s.ConfigTitle, &s.BindingTitle); err != nil {
 			return nil, false, err
 		}
 		if lastActive != nil {
 			s.LastActiveAt = *lastActive
 		}
-		s.InboundCount, s.ConnectorCount, s.SkillCount = int(inboundCount), int(connectorCount), int(skillCount)
+		s.InboundCount = int(inboundCount)
 		out = append(out, s)
 	}
 	if err := rows.Err(); err != nil {
@@ -260,7 +284,7 @@ func GetScene(ctx context.Context, db DBTX, workspaceID, agentID, orgID, sceneKe
 		return SceneSummary{}, ErrInvalidInput
 	}
 	scenes, _, err := ListAgentScenes(ctx, db, SceneListQuery{
-		WorkspaceID: workspaceID, AgentID: agentID, OrgID: orgID, Keys: []string{sceneKey}, Limit: 1,
+		WorkspaceID: workspaceID, AgentID: agentID, OrgID: orgID, Keys: []string{sceneKey},
 	})
 	if err != nil {
 		return SceneSummary{}, err

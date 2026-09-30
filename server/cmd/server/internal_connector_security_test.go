@@ -112,6 +112,7 @@ func TestInternalConnectorManagementRejectsTaskTokenAndURLChange(t *testing.T) {
 		{http.MethodPost, base, input},
 		{http.MethodPatch, base + "/" + connectorID, input},
 		{http.MethodPut, base + "/" + connectorID + "/credential", map[string]string{"bearer_token": "attacker"}},
+		{http.MethodDelete, base + "/" + connectorID + "/credential", nil},
 		{http.MethodPost, base + "/" + connectorID + "/test", nil},
 	} {
 		status, result := call(tc.method, tc.path, taskToken, tc.body)
@@ -178,6 +179,17 @@ func TestInternalConnectorManagementRejectsTaskTokenAndURLChange(t *testing.T) {
 	status, result = call(http.MethodPost, "/api/internal-connectors/"+connectorID+"/mcp", otherToken, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
 	if status != http.StatusForbidden {
 		t.Fatalf("other workspace task reached connector: %d %v", status, result)
+	}
+
+	// A human admin disconnects the workspace credential (idempotent).
+	for range 2 {
+		if status, result := call(http.MethodDelete, base+"/"+connectorID+"/credential", testToken, nil); status != http.StatusNoContent {
+			t.Fatalf("human credential removal: status=%d body=%v", status, result)
+		}
+	}
+	ciphertext = nil
+	if err := testPool.QueryRow(t.Context(), `SELECT credential_ciphertext FROM internal_connector WHERE id=$1::uuid`, connectorID).Scan(&ciphertext); err != nil || len(ciphertext) != 0 {
+		t.Fatalf("credential survived removal: len=%d err=%v", len(ciphertext), err)
 	}
 }
 
@@ -324,5 +336,40 @@ func TestConnectorOAuthBeginRouteIsNotRegistered(t *testing.T) {
 	}
 	if status, body := get("/api/connector-oauth/callback"); status == http.StatusNotFound || status == http.StatusUnauthorized {
 		t.Fatalf("DCR callback route answered %d: %s", status, body)
+	}
+}
+
+// The agent's connected-apps routes are wired under the workspace agent
+// routes (X-Workspace-ID selects the workspace).
+func TestAgentConnectedAppsRoutesAreWired(t *testing.T) {
+	var agentID string
+	if err := testPool.QueryRow(t.Context(), `SELECT id::text FROM agent WHERE workspace_id=$1::uuid AND kind='user' AND archived_at IS NULL LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) (int, string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, testServer.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		req.Header.Set("X-Workspace-ID", testWorkspaceID)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+	base := "/api/agents/" + agentID + "/connected-apps"
+	if status, body := get(base); status != http.StatusOK || !strings.Contains(body, `"apps":[`) || !strings.Contains(body, `"can_admin":true`) {
+		t.Fatalf("connected apps: %d %s", status, body)
+	}
+	if status, body := get(base + "/github"); status != http.StatusOK || !strings.Contains(body, `"slug":"github"`) || !strings.Contains(body, `"tool_list":`) {
+		t.Fatalf("connected app detail: %d %s", status, body)
+	}
+	if status, body := get(base + "/not-an-app"); status != http.StatusNotFound {
+		t.Fatalf("unknown connected app: %d %s", status, body)
 	}
 }

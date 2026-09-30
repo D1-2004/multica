@@ -98,6 +98,48 @@ func (h *Handler) PutInternalConnectorCredential(w http.ResponseWriter, r *http.
 	writeJSON(w, 200, response)
 }
 
+// DeleteInternalConnectorCredential removes the workspace's stored credential
+// of a connector: for an official app it disconnects the shared account
+// (所有人共用). Human workspace owner/admin only (same guards as PUT). It is
+// idempotent and answers 204; 404 for an unknown connector. The provider
+// grant of an OAuth account is not revoked, and an operator-managed
+// environment credential (MULTICA_INTERNAL_MCP_BEARER_<id>) is not affected.
+// An OAuth refresh holds the row lock while it reseals, so a disconnect
+// either waits for it or makes it answer "reconnect required"; it cannot be
+// undone by a concurrent refresh.
+func (h *Handler) DeleteInternalConnectorCredential(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	ws, ok := catalogWorkspaceID(w, r)
+	if !ok {
+		return
+	}
+	id, ok := catalogConnectorID(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	tag, err := h.DB.Exec(ctx, `UPDATE internal_connector SET credential_ciphertext = NULL, updated_at = now()
+		WHERE id = $1::uuid AND workspace_id = $2::uuid AND credential_ciphertext IS NOT NULL`, id, ws)
+	if err != nil {
+		slog.ErrorContext(ctx, "internal connector credential removal failed", "connector_id", id, "workspace_id", ws, "error", err)
+		writeError(w, http.StatusInternalServerError, "connector credential could not be removed")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		// Nothing was stored, or the connector does not exist.
+		if _, err := h.internalConnectorCatalogSlug(ctx, ws, id); errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "connector not found")
+			return
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, "connector configuration unavailable")
+			return
+		}
+	} else {
+		slog.InfoContext(ctx, "internal connector credential removed", "connector_id", id, "workspace_id", ws, "actor_id", requestUserID(r))
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // TestInternalConnector checks connectivity without invoking any upstream tool.
 // The response contains only allowlisted tool names and a generic failure.
 func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) {

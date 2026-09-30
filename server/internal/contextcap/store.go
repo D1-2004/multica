@@ -396,26 +396,11 @@ func ListScopeSummaries(ctx context.Context, db DBTX, workspaceID, agentID strin
 		return nil, err
 	}
 
-	rows, err = db.Query(ctx, `SELECT DISTINCT ON (scope_type, org_id, scope_key) scope_type, org_id, scope_key, scope_title
-		FROM context_config_grant
-		WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_title <> ''
-		ORDER BY scope_type, org_id, scope_key, updated_at DESC`, workspaceID, agentID)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var id scopeID
-		var title string
-		if err := rows.Scan(&id.scopeType, &id.orgID, &id.key, &title); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if summary, ok := byScope[id]; ok && summary.ScopeTitle == "" {
+	if err := eachNewestGrantTitle(ctx, db, workspaceID, agentID, nil, func(scopeType, orgID, scopeKey, title string) {
+		if summary, ok := byScope[scopeID{scopeType, orgID, scopeKey}]; ok && summary.ScopeTitle == "" {
 			summary.ScopeTitle = title
 		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	}); err != nil {
 		return nil, err
 	}
 
@@ -433,6 +418,35 @@ func ListScopeSummaries(ctx context.Context, db DBTX, workspaceID, agentID strin
 		return out[i].ScopeKey < out[j].ScopeKey
 	})
 	return out, nil
+}
+
+// eachNewestGrantTitle calls fn with the newest non-empty grant title of
+// every scene and person scope of the agent, under *orgID only when orgID is
+// not nil: the group title or the person's display name recorded when a
+// configuration link was minted.
+func eachNewestGrantTitle(ctx context.Context, db DBTX, workspaceID, agentID string, orgID *string, fn func(scopeType, orgID, scopeKey, title string)) error {
+	args := []any{workspaceID, agentID}
+	orgFilter := ""
+	if orgID != nil {
+		args = append(args, *orgID)
+		orgFilter = ` AND org_id = $3::text`
+	}
+	rows, err := db.Query(ctx, `SELECT DISTINCT ON (scope_type, org_id, scope_key) scope_type, org_id, scope_key, scope_title
+		FROM context_config_grant
+		WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_title <> ''`+orgFilter+`
+		ORDER BY scope_type, org_id, scope_key, updated_at DESC`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var scopeType, org, scopeKey, title string
+		if err := rows.Scan(&scopeType, &org, &scopeKey, &title); err != nil {
+			return err
+		}
+		fn(scopeType, org, scopeKey, title)
+	}
+	return rows.Err()
 }
 
 // Credential is one row of context_connector_credential. Ciphertext is nil in

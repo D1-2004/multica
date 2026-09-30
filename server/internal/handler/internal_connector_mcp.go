@@ -203,19 +203,31 @@ func (h *Handler) connectorCredentialReady(c internalConnector) bool {
 }
 
 func (h *Handler) connectorCredentialSource(c internalConnector) string {
+	source, _ := h.connectorWorkspaceCredential(c)
+	return source
+}
+
+// connectorWorkspaceCredential classifies the workspace-level credential of
+// c: source "workspace" for a usable stored credential (returned, so its
+// hint can be shown), "unavailable" for a stored one that cannot be opened
+// or is no longer usable, "environment" for the operator-managed
+// MULTICA_INTERNAL_MCP_BEARER_<id> fallback, and "none" for auth_mode 'none'
+// or no credential at all.
+func (h *Handler) connectorWorkspaceCredential(c internalConnector) (string, contextcap.Secret) {
 	if c.AuthMode == "none" {
-		return "none"
+		return "none", contextcap.Secret{}
 	}
 	if len(c.CredentialCiphertext) > 0 {
-		if h.connectorCredentialReady(c) {
-			return "workspace"
+		secret, err := h.connectorSecret(c)
+		if err != nil || !secret.Usable(time.Now()) {
+			return "unavailable", contextcap.Secret{}
 		}
-		return "unavailable"
+		return "workspace", secret
 	}
 	if connectorCredentialReady(c) {
-		return "environment"
+		return "environment", contextcap.Secret{}
 	}
-	return "none"
+	return "none", contextcap.Secret{}
 }
 
 func (h *Handler) connectorLimit(ctx context.Context, connectorID, task, agent, ws string) error {

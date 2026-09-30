@@ -172,15 +172,15 @@ func TestAgentScenesListMergesSourcesUnderCurrentOrg(t *testing.T) {
 	}
 	byKey := scenesByKey(list.Scenes)
 	bound := byKey[ctxcapScene]
-	// Only offered resources count: the planted unoffered connector and skill
-	// bindings are ignored.
-	if bound.Kind != "group" || bound.ConnectorCount != 1 || bound.SkillCount != 1 || bound.MemoryID != "" ||
-		bound.InboundSessionID != "" || bound.HasPrompt || bound.OrgID != ctxcapOrg || bound.LastActiveAt == "" {
+	// Known from its bindings alone (TestAgentScenePromptAndAdminBindings
+	// covers which bindings the detail lists).
+	if bound.Kind != "group" || bound.MemoryID != "" || bound.InboundSessionID != "" || bound.InboundCount != 0 ||
+		bound.HasPrompt || bound.OrgID != ctxcapOrg || bound.LastActiveAt == "" {
 		t.Fatalf("binding-only scene=%+v", bound)
 	}
 	memory := byKey[scenesMemoryKey]
 	if memory.Kind != "group" || memory.Title != "Memory group" || memory.MemoryID == "" || memory.InboundSessionID != memorySession ||
-		memory.InboundCount != 1 || memory.ConnectorCount != 0 {
+		memory.InboundCount != 1 {
 		t.Fatalf("memory scene=%+v", memory)
 	}
 	direct := byKey[scenesDirectKey]
@@ -623,8 +623,15 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 	var list scenesListResponse
 	ctxcapDecode(t, w, &list)
 	dm, ok := scenesByKey(list.Scenes)[dmKey]
-	if !ok || dm.Kind != "dm" || dm.Title != "Alice" || dm.ConnectorCount != 1 {
+	if !ok || dm.Kind != "dm" || dm.Title != "Alice" {
 		t.Fatalf("admin scenes=%+v", list.Scenes)
+	}
+	w = scenesAs(t, router, "", http.MethodGet, scenesPath(agentID, dmKey), nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "admin dm scene detail")
+	var dmDetail scenesDetailResponse
+	ctxcapDecode(t, w, &dmDetail)
+	if len(dmDetail.Bindings) != 1 || dmDetail.Bindings[0].ResourceID != dmOnly || !dmDetail.Bindings[0].Enabled {
+		t.Fatalf("admin dm scene bindings=%+v", dmDetail.Bindings)
 	}
 
 	// Configuration only: runs do not apply DM scene bindings yet.

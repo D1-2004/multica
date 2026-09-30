@@ -431,6 +431,7 @@ func (h *Handler) authorizedConnectors(ctx context.Context, workspaceID, agentID
 
 // ListAvailableInternalConnectors exposes only usable connector/Agent pairs to
 // members. Upstream addresses and credential references remain admin-only.
+// catalog_slug names the official app ("" for Aone FaaS connectors).
 func (h *Handler) ListAvailableInternalConnectors(w http.ResponseWriter, r *http.Request) {
 	items := []map[string]any{}
 	workspaceID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace_id")
@@ -472,7 +473,8 @@ func (h *Handler) ListAvailableInternalConnectors(w http.ResponseWriter, r *http
 		if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, ws) || !h.canInvokeAgent(r.Context(), agent, actorType, actorID, userID, ws) {
 			continue
 		}
-		items = append(items, map[string]any{"id": c.ID, "name": c.Name, "server_name": connectorServerName(c.ID), "agent_id": agentID, "agent_name": agent.Name, "tools": c.AllowedTools})
+		items = append(items, map[string]any{"id": c.ID, "name": c.Name, "server_name": connectorServerName(c.ID), "agent_id": agentID, "agent_name": agent.Name, "tools": c.AllowedTools,
+			"catalog_slug": c.CatalogSlug})
 	}
 	if rows.Err() != nil {
 		writeError(w, 500, "connector list unavailable")

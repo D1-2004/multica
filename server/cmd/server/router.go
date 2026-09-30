@@ -2147,7 +2147,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.With(handler.RequireDingTalkHumanActor).Post("/api/fde/onboarding", h.ProvisionFDEOnboarding)
 		// Context capability configuration (mobile H5 /dingtalk/configure).
 		// Not workspace-scoped: authority comes from the caller's
-		// context_config_grant rows, never from workspace membership.
+		// context_config_grant rows or, for an agent's scenes, from managing
+		// the agent (workspace owner/admin or agent owner); plain workspace
+		// membership grants nothing.
 		r.Route("/api/context-capabilities", func(r chi.Router) {
 			r.Use(handler.RequireDingTalkHumanActor)
 			r.Post("/links/redeem", h.RedeemContextConfigLink)
@@ -2278,6 +2280,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors", h.CreateInternalConnector)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Patch("/internal-connectors/{connectorId}", h.UpdateInternalConnector)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Put("/internal-connectors/{connectorId}/credential", h.PutInternalConnectorCredential)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Delete("/internal-connectors/{connectorId}/credential", h.DeleteInternalConnectorCredential)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/test", h.TestInternalConnector)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/oauth/start", h.StartInternalConnectorOAuth)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/tools/refresh", h.RefreshInternalConnectorTools)
@@ -2778,6 +2781,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// read-only scope summaries (docs/context-capabilities.md).
 					r.With(handler.RequireHumanActor).Get("/context-capabilities", h.GetAgentContextCapabilities)
 					r.With(handler.RequireHumanActor).Put("/context-capabilities/offers", h.PutAgentContextCapabilityOffers)
+					// Official apps of the agent's 连接器 tab (连接应用): status,
+					// usage and tools per app. Read-only; actions use the
+					// catalog, connector, offer and credential routes.
+					r.With(handler.RequireHumanActor).Get("/connected-apps", h.ListAgentConnectedApps)
+					r.With(handler.RequireHumanActor).Get("/connected-apps/{slug}", h.GetAgentConnectedApp)
 					// IM scenes (group and 1:1 chats): scene list, scene
 					// prompt and scene bindings. Configuration only; the
 					// scene key is a percent-encoded openConversationId.

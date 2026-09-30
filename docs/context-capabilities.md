@@ -3,7 +3,9 @@
 Status: v1 contract (2026-09-29), plus official app OAuth connections
 (2026-09-30, `docs/internal-mcp-connectors.md` "Official apps"), plus the
 configuration architecture for 智能体 / 场域 / 个人 (2026-09-30, migrations
-9413-9417, see §1.1 and §1.2). Modelled on Claude Tag (Claude in Slack):
+9413-9417, see §1.1 and §1.2), plus the 连接器 tab redesign with the
+connected-apps API and manager access to the configure page (2026-09-30, no
+migration, see §1.1, §5 and §6). Modelled on Claude Tag (Claude in Slack):
 admins own a library, channels and people opt in, and the effective toolset of
 one run depends on where the message came from and who sent it.
 
@@ -14,9 +16,9 @@ layers only ever ADD capabilities; they never remove a global one.
 
 | Layer | Key | Who edits | Where | Stored in |
 | --- | --- | --- | --- | --- |
-| Global (智能体) | agent | workspace admin / agent manager | web: agent detail → 配置 → 能力 → 连接器 / Skills (official apps, Aone FaaS grants, agent skills) | `internal_connector_agent`, `agent_skill` (existing) |
-| Offer catalog | agent | agent manager | web: agent detail → 配置 → 能力 → 连接器 / Skills, section 「允许在场域 / 个人中开启」 | `context_capability_binding` (`scope_type='offer'`) |
-| Scene (场域: 群聊 or 单聊) | agent + org_id + openConversationId | members of that DingTalk group (the person, for a 1:1 chat); admins from the web | web and mobile `/dingtalk/configure` tab 「本会话」; web agent detail → 场域 → scene → 配置 | `context_capability_binding` (`scope_type='scene'`), prompt in `agent_scene_config` |
+| Global (智能体) | agent | workspace admin / agent manager | web: agent detail → 配置 → 能力 → 连接器 (official apps: 「对所有用户启用」; Aone FaaS grants) / Skills (agent skills) | `internal_connector_agent`, `agent_skill` (existing) |
+| Offer catalog | agent | agent manager | web: agent detail → 配置 → 能力 → 连接器 (official app page switch 「允许群聊、个人连接自己的账号」; Aone FaaS row switch 「允许群聊 / 个人单独开启」) / Skills, section 「允许在场域 / 个人中开启」 | `context_capability_binding` (`scope_type='offer'`) |
+| Scene (场域: 群聊 or 单聊) | agent + org_id + openConversationId | members of that DingTalk group (the person, for a 1:1 chat); agent managers from the web and from the configure page | web and mobile `/dingtalk/configure` tab 「本会话」; web agent detail → 场域 → scene → 配置 | `context_capability_binding` (`scope_type='scene'`), prompt in `agent_scene_config` |
 | Personal (个人) | agent + org_id + staffId | that DingTalk person | web and mobile `/dingtalk/configure` tab 「我的」 | `context_capability_binding` (`scope_type='person'`) |
 
 - Resources are library items only: `resource_type='connector'` (an
@@ -31,12 +33,68 @@ layers only ever ADD capabilities; they never remove a global one.
 ### 1.1 Configuration layers and where they are managed
 
 - **智能体 (agent, global).** The agent's connector tab (web agent detail →
-  配置 → 能力 → 连接器, DetailTab `mcp_config`) is the agent's global
-  configuration: it applies to every user and every scene. Official apps
-  (GitHub, Notion, ...) and Aone FaaS connectors are added there; adding an
-  official app creates the workspace catalog connector if it is missing and
-  grants it to this agent. The workspace page `/{slug}/internal-connectors`
-  stays the Aone FaaS connector library.
+  配置 → 能力 → 连接器, DetailTab `mcp_config`) holds everything connector
+  related for the agent, in two blocks (web and desktop share the view):
+  - **「MCP（由 Multica 管理）」**: MCP servers Multica manages for this
+    agent, for every user and every scene. Sub-section 「Aone FaaS 连接器」
+    lists the Aone FaaS connectors granted to the agent, plus the Aone FaaS
+    connectors that are only offered, so an offer made elsewhere stays
+    visible and removable. A row shows its name, one status (工作区已停用,
+    else 仅群聊 / 个人开启 for an offered-only row, else 缺少凭证 for a
+    granted row without a usable workspace credential, else 已启用) and one
+    line of host · tool count · auth mode. An offered-only row never reads
+    缺少凭证: groups and people bring their own token there (person →
+    scene → workspace). Each row has 移除
+    (confirm; revokes the agent's grant and its offer, so the row really
+    goes away), a per-row switch 「允许群聊 / 个人单独开启」 (the connector's
+    offer; workspace admins only; turning off an offer in use asks first)
+    and the block has 「添加 Aone FaaS 连接器」 from the workspace library
+    (catalog connectors excluded), plus a link to the library page
+    `/{slug}/internal-connectors`. The library and grants stay
+    workspace-admin only. Everyone else sees one read-only list with a hint:
+    the Aone FaaS connectors granted to the agent from the member-visible
+    list (`GET .../internal-connectors/available`, official apps left out by
+    `catalog_slug`), plus, for an agent manager who can read the offer
+    catalog, the offered-only ones. Sub-section 「自定义 MCP 服务器」 is the agent's own
+    `mcp_config` (managed servers, runtime-inherited servers, Runner), shown
+    only when the runtime reads `mcp_config`.
+  - **「连接应用」**: one card per official app of the catalog (GitHub,
+    Notion, Linear, Atlassian, Sentry, Asana, Figma, Stripe): logo, name,
+    one-line description and one status built only from
+    `GET /api/agents/{id}/connected-apps` (§6). A card opens the app's
+    configuration page inside the tab (`app=<slug>`, deep-linkable). Its
+    header carries the status and, for an added app, 从智能体移除 (revoke
+    grant and offer; the workspace catalog connector stays). Under it, an
+    admin sees the one step still missing, if any: 添加, or 在工作区启用 for
+    a connector switched off in the workspace. Then three cards: 所有人共用
+    (the workspace shared account: OAuth connect when `oauth_available`,
+    GitHub PAT with a line explaining that the server has no OAuth for the
+    app, replace, disconnect, the GitHub App install link; switch
+    「对所有用户启用」 = the agent grant, which needs a usable shared
+    account), 群聊和个人自己连接 (switch 「允许群聊、个人连接自己的账号」 =
+    the offer, and the groups and people using it) and 工具 (discovered
+    tools, 允许写操作, 刷新工具). Results of actions are toasts; a
+    non-admin reads the page with one admin-only hint. 添加 (workspace admins only) creates the
+    workspace catalog connector when it is missing and then offers the app
+    to the agent (允许群聊、个人连接自己的账号), which is what makes it
+    `added`; it never grants it, because 对所有用户启用 needs a usable
+    shared account first. The block ends with the link to the configure
+    page (`configure_url`). Status details: the runtime mounts an app only
+    with at least one allowed tool, so a granted app with a connected
+    shared account but `tools.allowed == 0` (or an offered app with some
+    account connected) reads 还没有可用工具 in warning tone, and a missing
+    tool list says 尚未发现工具，请刷新工具 once any account is connected
+    (连接账号后发现工具 only before). A shared account from the deployment
+    environment has no 断开. The shared account, the tools and 允许写操作
+    belong to the workspace connector, and the page says they affect every
+    agent that uses the app. A shared-account sign-in result
+    (`connected` / `connect_error`) shows at the top of 连接应用, which
+    scrolls into view with the app page it returned to. The app list and
+    page refetch whenever the
+    window regains focus (`refetchOnWindowFocus: "always"`; the shared
+    staleTime is Infinity), so a connect made in the system browser
+    (desktop) or on a phone shows on return.
+  The Skills tab keeps its 「允许在场域 / 个人中开启」 skill section.
 - **场域 (scene).** Only DingTalk IM scenes: a group chat or a 1:1 chat. A 1:1
   chat is a scene exactly like a group (单聊在场域上等同群): it has its own
   scene prompt (场域提示词), scene connectors and scene skills, separate from
@@ -47,7 +105,8 @@ layers only ever ADD capabilities; they never remove a global one.
   The scene prompt is written only by the agent-manage set (workspace
   owner/admin or the agent owner) from the web; later the agent may maintain
   it itself. Scene connectors and skills are toggled by members on the
-  configure page, or by the same admin set from the web.
+  configure page, or by the same admin set from the web and from the
+  configure page (§5 "Managers").
 - **个人 (person).** A person's own connectors and skills. They are not
   carried into a group run by default: the person turns on
   「在群聊中由我触发时也可用」 per connector (`share_in_groups`, default off).
@@ -55,7 +114,9 @@ layers only ever ADD capabilities; they never remove a global one.
   to it, and its 我的 hint says personal items currently also apply when
   the person @s the agent in a group.
 - The configure page `/dingtalk/configure` works on phones (DingTalk
-  WebView) and desktop browsers alike.
+  WebView) and desktop browsers alike. The agent tab links to it as
+  `configure_url` (`/dingtalk/configure?agent=<id>`); a manager of the agent
+  who opens that link configures all of the agent's scenes there (§5).
 
 Agent detail IA (shared web and desktop views): top-level sections
 概览 | 工作 | 场域 | 配置. 场域 replaces the old 入站会话 and 记忆 sections and
@@ -257,6 +318,18 @@ The mobile page signs in with the existing DingTalk OAuth flow (a normal
   digital employee are usually not Multica members. They only ever see offered
   item names, descriptions and tool names, never URLs or credential status of the
   workspace library.
+- Managers (no link needed). A caller with the agent-manage permission of the
+  admin routes (a member of the agent's workspace who is a workspace
+  owner/admin or the agent's owner, as `canManageAgent` defines it) may
+  configure every SCENE of the agent from the configure page without a grant:
+  the agent is listed with `access: "manager"`, its detail lists all of the
+  agent's scenes (group and 1:1, the admin scene union of §6 "Scenes", source
+  `manager`, no expiry), and the scene read, bindings, credentials and connect
+  routes accept the manager for any scene the agent has seen (404 for another
+  key). The personal scope still needs the person grant: a manager is not that
+  person. Every offer gate applies to managers exactly as to grant holders,
+  and the OAuth callback re-checks the manager permission like a grant.
+  Manager access is computed per request and never stored as a grant.
 
 ## 6. API
 
@@ -264,8 +337,10 @@ Mobile (requires an `auth_method=dingtalk` human session; `RequireDingTalkHumanA
 not workspace-scoped). Every
 agent-scoped call loads the agent (must exist, not archived, a user agent) and
 requires the caller's live grant under the agent's current org: a scene read or
-write needs a scene grant for that exact cid, a person read or write needs a
-person grant for that exact staffId. Bodies are size-limited and reject unknown
+write needs a scene grant for that exact cid, or managing the agent and the cid
+being a scene the agent has seen (§5 "Managers"; 404 for an unknown scene); a
+person read or write needs a person grant for that exact staffId (managers
+included). Bodies are size-limited and reject unknown
 fields. `B = {resource_type, resource_id, enabled}`,
 `C = {connector_id, hint, updated_at, kind}` (`kind` is `oauth` or `bearer`);
 every `bindings` list contains only resources that are currently in the
@@ -279,13 +354,13 @@ registered there as `dm`).
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST | `/api/context-capabilities/links/redeem` | `{token}` → grant (source `agent_link`); returns `{agent_id, workspace_id, scope_type, scope_key, scope_title}` (for a 1:1 personal link with `extra_scene_key` the DM scene grant is added as well, §5); 410 when unknown, malformed, expired or (person) already consumed; 409 when a different account already holds that person's live grant. The link and the grant commit in one transaction |
-| GET | `/api/context-capabilities/agents` | `{agents: [{id, name, avatar_url, workspace_id, scopes: [{scope_type, scope_key, scope_title, source, expires_at}]}]}`: agents with a live grant for the caller |
-| GET | `/api/context-capabilities/agents/{agentId}` | `{agent, global: {connectors: [{id, name, catalog_slug}], skills: [{id, name, description}]}, offers: {connectors: [{id, name, tools, accepts_credential, credential_required, catalog_slug, auth_mode, accepts_pat, oauth_available, install_url?}], skills}, person: null \| {scope_key, scope_title, source, expires_at, bindings: [B], credentials: [C]}, scenes: [{scope_key, scope_title, source, expires_at, kind}], jsapi_available}`. Needs any grant for the agent (else 403). `global.connectors` are the agent's granted, enabled connectors with a ready workspace credential (and, for official apps, discovered tools). `catalog_slug` names the official app (`""` for custom connectors). `auth_mode` is `none`, `bearer` or `oauth`. `accepts_credential` means the connector accepts a pasted token: a Bearer connector, or an official app that allows a PAT. `accepts_pat = auth_mode == 'oauth' && accepts_credential`. `credential_required` means the connector uses a credential (Bearer or OAuth) and has no workspace credential. `oauth_available` means the server can run the app's OAuth sign-in (GitHub needs `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`); the page hides 连接 when it is false and offers the PAT form when `accepts_pat`, and treats a missing field (older backend) as true. `install_url` is the GitHub App installation page (omitted when there is none). `jsapi_available` is true only when H5 signing is configured and the caller has a person grant (the resolve endpoint needs one) |
-| GET | `/api/context-capabilities/agents/{agentId}/scenes/{sceneKey}` | `{scene: {scope_key, scope_title, source, expires_at, kind}, bindings: [B], credentials: [C]}` (scene grant required; a 1:1 scene works the same way). The key may be percent-encoded |
+| GET | `/api/context-capabilities/agents` | `{agents: [{id, name, avatar_url, workspace_id, access, scopes: [{scope_type, scope_key, scope_title, source, expires_at}]}]}`: agents with a live grant for the caller (`access: "grant"`, newest grant first), then the other non-archived user agents the caller manages (`access: "manager"`, `scopes: []`, by name). An agent both granted and managed is listed once with `access: "manager"` and its grants. Older backends send no `access` (read it as `grant`) |
+| GET | `/api/context-capabilities/agents/{agentId}` | `{agent, global: {connectors: [{id, name, catalog_slug}], skills: [{id, name, description}]}, offers: {connectors: [{id, name, tools, accepts_credential, credential_required, catalog_slug, auth_mode, accepts_pat, oauth_available, install_url?}], skills}, person: null \| {scope_key, scope_title, source, expires_at, bindings: [B], credentials: [C]}, scenes: [{scope_key, scope_title, source, expires_at, kind}], access, jsapi_available}`. Needs any grant for the agent or managing it (else 403). `access` is `manager` or `grant`. `scenes` lists the granted scenes and, for a manager, every other scene of the agent (newest activity first, at most 1000, `source: "manager"`, `expires_at: ""`, titles and kinds from the admin scene union). `global.connectors` are the agent's granted, enabled connectors with a ready workspace credential (and, for official apps, discovered tools). `catalog_slug` names the official app (`""` for custom connectors). `auth_mode` is `none`, `bearer` or `oauth`. `accepts_credential` means the connector accepts a pasted token: a Bearer connector, or an official app that allows a PAT. `accepts_pat = auth_mode == 'oauth' && accepts_credential`. `credential_required` means the connector uses a credential (Bearer or OAuth) and has no workspace credential. `oauth_available` means the server can run the app's OAuth sign-in (GitHub needs `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`; every app needs the connector credential key and an app origin, the other deployment checks of the start endpoint); the page shows 连接 only for a literal `true` (a missing field from an older backend hides it too) and offers the PAT form when `accepts_pat`. `install_url` is the GitHub App installation page (omitted when there is none). `jsapi_available` is true only when H5 signing is configured and the caller has a person grant (the resolve endpoint needs one) |
+| GET | `/api/context-capabilities/agents/{agentId}/scenes/{sceneKey}` | `{scene: {scope_key, scope_title, source, expires_at, kind}, bindings: [B], credentials: [C]}` (scene grant or manager required; a 1:1 scene works the same way; a manager gets `source: "manager"`). The key may be percent-encoded |
 | PUT | `/api/context-capabilities/agents/{agentId}/bindings` | `{scope_type, scope_key, resource_type, resource_id, enabled, share_in_groups?}` → `{binding: B}`; 403 unless the resource is in the enabled offer catalog (enable and disable alike). `share_in_groups` is only accepted for `scope_type='person'` and `resource_type='connector'` (else 400); omitted keeps the stored value |
 | PUT | `/api/context-capabilities/agents/{agentId}/credentials` | `{scope_type, scope_key, connector_id, bearer}` → `{credential: C}`. The connector must be enabled and offered to the agent, or (person scope only) globally granted to it (else 403). It must accept a pasted token: `auth_mode='bearer'`, or an official app that allows a PAT (GitHub) (else 400). bearer is 1..4096 bytes, with no CR/LF/NUL and no surrounding whitespace; 503 without a credential key. The first credential of an official app also discovers and pins its tools |
 | DELETE | `/api/context-capabilities/agents/{agentId}/credentials?scope_type=&scope_key=&connector_id=` | 204, idempotent; allowed after the offer was removed. For an OAuth credential this is "disconnect" (the provider grant is not revoked) |
-| POST | `/api/context-capabilities/agents/{agentId}/connections/start` | `{scope_type, scope_key, connector_id, return_to?}` → `{authorize_url}` for connecting an official app account through OAuth, plus the browser binding cookie (the WebView that calls it must also open the URL). The caller needs a live grant for exactly that scope (403). The connector must be an enabled official app that is offered to the agent (scene) or offered or globally granted (person); otherwise 403 with `code: "forbidden"`, including for an unknown connector. Other errors are `{error, code}`: 400 `not_oauth` or `invalid_return_to`; 503 `oauth_unavailable`, `app_origin_missing` or `credential_storage_unavailable`; 502 `provider_unavailable`. The browser returns to `return_to` (default `/dingtalk/configure?agent=<id>`) with `?connected=<slug>` or `?connect_error=<code>`. The callback re-checks the grant and offer, stores the credential for that scope and turns the connector on for it (see `docs/internal-mcp-connectors.md` "Official apps") |
+| POST | `/api/context-capabilities/agents/{agentId}/connections/start` | `{scope_type, scope_key, connector_id, return_to?}` → `{authorize_url}` for connecting an official app account through OAuth, plus the browser binding cookie (the WebView that calls it must also open the URL). The caller needs a live grant for exactly that scope, or, for a scene, to manage the agent (403; 404 for a manager's unknown scene). The connector must be an enabled official app that is offered to the agent (scene) or offered or globally granted (person); otherwise 403 with `code: "forbidden"`, including for an unknown connector. Other errors are `{error, code}`: 400 `not_oauth` or `invalid_return_to`; 503 `oauth_unavailable`, `app_origin_missing` or `credential_storage_unavailable`; 502 `provider_unavailable`. The browser returns to `return_to` (default `/dingtalk/configure?agent=<id>`) with `?connected=<slug>` or `?connect_error=<code>`. The callback re-checks the grant and offer, stores the credential for that scope and turns the connector on for it (see `docs/internal-mcp-connectors.md` "Official apps") |
 | POST | `/api/context-capabilities/agents/{agentId}/scenes/resolve` | `{chat_id, open_conversation_id?}` → `{scene: {scope_key, scope_title, source, expires_at, kind: "group"}}` (JSAPI path, see §5; group scenes only). 400 without `chat_id` or when `open_conversation_id` differs from the converted one; 403 without a person grant or for a group the agent never served; 503 when chatId conversion is unavailable; 502 when DingTalk rejects the chatId |
 | GET | `/api/dingtalk/jsapi-config?url=` | `dd.config` signature `{corp_id, agent_id, time_stamp, nonce_str, signature}` for the page URL without `#fragment`. Any authenticated human (`RequireHumanActor`). The URL must be absolute http(s) on the app origin (`MULTICA_APP_URL` / `FRONTEND_ORIGIN`); without an app origin the endpoint answers 503 rather than signing arbitrary pages. `signature = sha1("jsapi_ticket=<t>&noncestr=<n>&timestamp=<ts>&url=<url>")` in hex, where `<url>` has its query percent-decoded like DingTalk's reference signer and `time_stamp` is Unix seconds. The ticket (`GET {oapi}/get_jsapi_ticket`) is cached in process until 5 minutes before expiry and never returned; the corp access token it is fetched with is redacted from transport errors before they are logged. 503 when `DINGTALK_H5_CORP_ID` / `DINGTALK_H5_AGENT_ID` are unset, no app origin is configured, or the direct client is unavailable |
 
@@ -300,6 +375,74 @@ offers, and their GET lists only the connectors already offered.
 | GET | `/api/agents/{id}/context-capabilities` | `{enabled, library: {connectors: [{id, name, enabled, auth_mode}], skills: [{id, name, description}]}, offers: {connector_ids, skill_ids}, scenes: [{scope_key, scope_title, bindings: [B], credential_count}], persons: [...], configure_url}`; `configure_url = <app origin>/dingtalk/configure?agent=<id>` ("" without an app origin). For an owner/admin the library lists every workspace connector, so saving never drops connector offers. Offers whose connector or skill no longer exists are omitted (and dropped by the next save). `enabled` is always true (clients still handle false from older backends) |
 | PUT | `/api/agents/{id}/context-capabilities/offers` | `{connector_ids, skill_ids}` (both required, ≤ 256 each) replaces the catalog in one transaction and returns the GET body; 400 for an id outside the workspace library or a skill another agent's Git source manages (the `SetAgentSkills` rule); 403 when a non-admin adds a connector offer |
 
+### Connected apps (admin)
+
+Same routes group and permission (human actor, workspace owner/admin or the
+agent owner). Read-only views for the 连接应用 block of the agent's 连接器
+tab (§1.1); every action uses an existing route: add the app
+(`POST /api/workspaces/{ws}/connector-catalog/{slug}`, then the offers PUT
+below), grant or revoke it
+for the agent and 允许写操作 (`PATCH .../internal-connectors/{connectorId}`
+with `agent_ids` / `write_enabled`), offer it (`PUT
+/api/agents/{id}/context-capabilities/offers`), connect the shared account
+(`POST .../internal-connectors/{connectorId}/oauth/start`, or a GitHub PAT
+with `PUT .../credential`), disconnect it (`DELETE .../credential`, below)
+and refresh tools (`POST .../tools/refresh`). Those workspace routes stay
+workspace-admin only; `can_admin` tells the page whether the caller is one.
+
+`A = {slug, name, auth_kind, oauth_available, allows_pat, install_url,
+connector_id, added, enabled_in_workspace, global_enabled, offered,
+write_enabled, tools: {discovered, allowed, read_only}, shared_account:
+{connected, account, source}, usage: {scenes_enabled, scenes_connected,
+persons_enabled, persons_connected}}`, one per catalog app in catalog order:
+
+- `auth_kind` is `oauth_dcr` or `oauth_github_app`; `oauth_available` is the
+  mobile field's rule (the app's OAuth is configured, and the deployment has
+  a connector credential key and an app origin), so 连接 is never shown when
+  the start endpoint would refuse it for configuration reasons; `allows_pat`
+  means a Personal Access Token can be saved on this deployment (the app
+  accepts one, GitHub, and the connector credential key is configured, which
+  `PUT .../credential` requires), so the PAT form is never offered when the
+  save would answer 503; `install_url` is the GitHub App installation page
+  or `""`. There is no `description`; the page supplies its own copy.
+- `connector_id` is the workspace catalog connector, `null` until the app is
+  added to the workspace. `added` means the app is on this agent: the
+  connector exists and the agent grants (`global_enabled`) or offers
+  (`offered`) it. A connector that exists but is neither granted nor offered
+  (just added, or removed from this agent) has `added: false` and a
+  `connector_id`, so the page shows its controls. `enabled_in_workspace` is
+  the library switch (`internal_connector.enabled`, false without a
+  connector). The connector library is workspace-admin only (as in the
+  offer admin view): for an agent owner who is not a workspace admin, an
+  app whose connector is neither granted nor offered here reads like an app
+  not in the workspace (`connector_id: null`, no tools, no shared account;
+  the detail has no `tool_list` or usage).
+- `tools`: `discovered` counts the last discovery snapshot, `read_only` the
+  discovered tools marked read-only, `allowed` the pinned tools.
+- `shared_account.connected` is true only while the workspace credential is
+  usable (a pasted token, or an OAuth token that is unexpired or
+  refreshable: the `credential_ready` rule); `account` is its hint (`@login`
+  or `OAuth` for an OAuth account, `••••abcd` for a pasted token, `""` when
+  not connected, and always `""` for a caller who is not a workspace admin,
+  like the library's `credential_account`). `source` is `workspace` for the
+  stored workspace credential and `environment` for the operator's
+  `MULTICA_INTERNAL_MCP_BEARER_<id>` fallback, which serves runs (so it
+  counts as connected) but has no hint and cannot be removed by
+  `DELETE .../credential` (the page offers no 断开 for it); `""` when not
+  connected.
+- `usage` counts the agent's scene and person scopes under its current
+  DingTalk org: `*_connected` = a stored credential exists for the app in
+  that scope (OAuth account or pasted token), whether or not its switch is
+  on; `*_enabled` = an enabled binding while the app is offered (a binding
+  of an app that is not offered is stored but never applies, so it is not
+  counted). Scenes include 1:1 scenes.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/agents/{id}/connected-apps` | `{apps: [A], can_admin}`; `can_admin` is true for a workspace owner/admin |
+| GET | `/api/agents/{id}/connected-apps/{slug}` | `A` plus `scenes: [{scene_key, title, kind, enabled, connected, account}]`, `persons: [{scope_key, title, enabled, connected, account, share_in_groups}]`, `tool_list: [{name, read_only, allowed}]` and `can_admin`; 404 for a slug not in the catalog. `scenes` and `persons` list only the scopes that count in `usage` (enabled or connected); `account` is the scope credential's hint, for a person only to workspace admins (`""` for other agent managers, like the shared account's hint). Scene titles and kinds come from the admin scene union (newest activity first, unknown keys last); person titles are the binding's snapshot or the newest grant title (the DingTalk display name), people sorted by title |
+| DELETE | `/api/workspaces/{ws}/internal-connectors/{connectorId}/credential` | Workspace owner/admin (`RequireWorkspaceMCPHumanIssuer` plus the admin role): removes the workspace's stored credential of a connector, i.e. disconnects an official app's shared account. 204, idempotent; 404 for an unknown connector, 400 for a malformed id. The provider grant is not revoked and an environment credential (`MULTICA_INTERNAL_MCP_BEARER_<id>`) is not affected; a concurrent OAuth refresh holds the row lock, so it cannot restore the credential |
+
 ### Scenes (admin)
 
 Same routes group and permission (human actor, workspace owner/admin or the
@@ -309,8 +452,10 @@ mobile scene route); a malformed key answers 400. A scene is one the agent
 has seen: the union of its `scene_memory` rows (under the agent's org, or any
 org while it has no DingTalk identity), its inbound Coordinator conversations
 (`inbound_coordinator_job` openConversationIds, skipping jobs that recorded
-a different agent org), its `agent_scene_config` rows and its scene
-bindings. Kind is `dm` only on positive evidence: the newest Coordinator
+a different agent org), its `agent_scene_config` rows, its scene
+bindings and its scene credentials (a group can store a token without turning
+anything on; the scene still lists, so a manager can open it and remove the
+credential). Kind is `dm` only on positive evidence: the newest Coordinator
 job's conversation type is a 1:1 type (`single`, `p2p`, `private`,
 `direct`); when that job has no type, or there is no job, the configured kind
 (`agent_scene_config`, written by a 1:1 link redemption or a prompt save);
@@ -319,7 +464,7 @@ writer records `dm` for every type that is not `group`, empty or unknown
 types included.
 
 `S = {scene_key, kind, title, org_id, last_active_at, inbound_session_id,
-inbound_count, memory_id, has_prompt, connector_count, skill_count}`:
+inbound_count, memory_id, has_prompt}`:
 `inbound_session_id` is the newest Coordinator chat session of the
 conversation (open its transcript with
 `GET /api/agents/{id}/coordinator-conversations/{inbound_session_id}/messages`)
@@ -330,8 +475,8 @@ conversation under another endpoint namespace or source stay reachable in
 the full inbound conversation list. `memory_id` is the `scene_memory` row id
 (open it with `GET /api/agents/{id}/scene-memory/{memory_id}`, which also
 serves rows beyond the 200 newest that the list endpoint returns) or `""`;
-`connector_count` / `skill_count` count enabled scene bindings of offered
-resources; `last_active_at` is the newest update across the sources.
+`last_active_at` is the newest update across the sources. The list carries
+no binding counts; a scene's bindings are in its detail.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -400,6 +545,14 @@ still uses the index.
   leftover only costs speed). An old replica does not serve
   `GET /api/agents/{id}/scene-memory/{memoryId}` (405); the scene detail shows
   its memory load error until the rollout completes.
+- Connected apps and manager access (no migration): an old replica answers
+  404 on `/api/agents/{id}/connected-apps*` and 405 on `DELETE
+  .../internal-connectors/{connectorId}/credential`, lists only granted
+  agents on the configure page (no `access`), refuses a manager without a
+  grant (403) and reports `oauth_available` without the credential key and
+  app origin checks. Clients treat a missing `access` as `grant`; a
+  manager's configure page can show 「暂无可配置的智能体」 when served by such
+  a replica until the rollout completes.
 
 ## 8. Known limitations (v1)
 
@@ -422,10 +575,19 @@ still uses the index.
 - Per-user OAuth exists only for the official apps in the catalog; custom
   connectors take pasted Bearer tokens. GitHub App user tokens only see
   repositories where the App is installed.
+- A manager's scene list on the configure page is capped at the 1000 most
+  recently active scenes; older scenes stay configurable from the web scene
+  list and by key. It is read in one statement
+  (`contextcap.ListAllAgentScenes`: one scan of the agent's history, one
+  snapshot), and the page's scene writes (bindings, credentials) refresh
+  only that scene, not the agent detail; person writes refresh the agent
+  detail, which holds the personal scope. The page takes the manager state
+  (hint, empty states, 我的 note) from the detail's `access`, not from the
+  agent list.
 - The mobile page offers 连接 only for offered connectors. The server also
   accepts a person-scope connect for a connector that is only globally
-  granted, but the page does not show one; the admin gallery says so when an
-  app has no shared account.
+  granted, but the page does not show one; the agent's app page says so when
+  an app has no shared account.
 - Provider sign-in runs in the page's own browser (the DingTalk WebView),
   because the connect is bound to it. Providers whose Google sign-in refuses
   embedded WebViews need another sign-in method there or a PAT (GitHub).

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -20,10 +21,12 @@ import (
 )
 
 // Mobile context capability API (docs/context-capabilities.md §5-§6). Every
-// route is wrapped with RequireDingTalkHumanActor in the router and answers
-// 404 while the context_capabilities flag is off. Authority never comes from
-// workspace membership: the caller needs a live context_config_grant for the
-// exact (agent, org, scope) it reads or writes.
+// route is wrapped with RequireDingTalkHumanActor in the router. Authority
+// comes from a live context_config_grant for the exact (agent, org, scope)
+// the caller reads or writes, or, for the agent's scenes only, from managing
+// the agent (workspace owner/admin of its workspace, or the agent owner: the
+// agent-manage permission of the admin routes). Plain workspace membership
+// grants nothing, and a manager is never the person of a personal scope.
 
 const contextCapBodyLimit = 8 << 10
 
@@ -138,9 +141,12 @@ type contextCapAgentDetailResponse struct {
 		Connectors []contextCapOfferedConnectorDTO `json:"connectors"`
 		Skills     []contextCapSkillDTO            `json:"skills"`
 	} `json:"offers"`
-	Person         *contextCapPersonDTO `json:"person"`
-	Scenes         []contextCapSceneDTO `json:"scenes"`
-	JSAPIAvailable bool                 `json:"jsapi_available"`
+	Person *contextCapPersonDTO `json:"person"`
+	Scenes []contextCapSceneDTO `json:"scenes"`
+	// Access is "manager" when the caller manages the agent (Scenes then
+	// lists every scene of the agent), else "grant".
+	Access         string `json:"access"`
+	JSAPIAvailable bool   `json:"jsapi_available"`
 }
 
 func contextCapTime(t time.Time) string {
@@ -268,25 +274,124 @@ func (h *Handler) contextCapAgentOr404(w http.ResponseWriter, r *http.Request) (
 	return agent, true
 }
 
-// contextCapRequireGrant requires the caller's live grant for exactly
-// (agent, agent org, scopeType, scopeKey): 400 for a malformed scope, 403
-// without a grant.
-func (h *Handler) contextCapRequireGrant(w http.ResponseWriter, r *http.Request, a contextCapAgent, userID, scopeType, scopeKey string) (contextcap.Grant, bool) {
-	if !contextcap.ValidScopeKey(scopeType, scopeKey) {
-		writeError(w, http.StatusBadRequest, "invalid scope")
-		return contextcap.Grant{}, false
-	}
-	grant, err := contextcap.GetLiveGrant(r.Context(), h.DB, userID, a.ID, scopeType, a.OrgID, scopeKey)
-	if errors.Is(err, contextcap.ErrNotFound) || (err == nil && grant.WorkspaceID != a.WorkspaceID) {
-		writeError(w, http.StatusForbidden, "you are not allowed to configure this scope")
-		return contextcap.Grant{}, false
+// contextCapSourceManager is the source of a scene the caller configures as
+// a manager of the agent rather than through a grant; it has no expiry.
+const contextCapSourceManager = "manager"
+
+// Access of the caller to an agent on the configure page.
+const (
+	contextCapAccessGrant   = "grant"
+	contextCapAccessManager = "manager"
+)
+
+// contextCapScope is the scene or person scope one mobile call acts on: the
+// caller's live grant, or, for a scene of an agent the caller manages, a
+// grant-shaped stand-in (Manager, source "manager", no expiry) whose title
+// and kind come from the agent's scene records.
+type contextCapScope struct {
+	contextcap.Grant
+	Manager bool
+	// Kind is the scene kind (group or dm) of a manager scope; grant scopes
+	// look theirs up with contextCapSceneKinds.
+	Kind string
+}
+
+// contextCapManages reports whether userID holds the agent-manage permission
+// for agent a (memberManagesAgent, the rule canManageAgent applies on the
+// admin routes): a member of the agent's workspace who is a workspace
+// owner/admin or the agent's owner.
+func (h *Handler) contextCapManages(ctx context.Context, a contextCapAgent, userID string) (bool, error) {
+	member, err := h.getWorkspaceMember(ctx, userID, a.WorkspaceID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
 	}
 	if err != nil {
+		return false, err
+	}
+	return memberManagesAgent(a.Agent, member), nil
+}
+
+// contextCapManagedScope is the scope stand-in of a scene of agent a for a
+// manager of the agent.
+func contextCapManagedScope(a contextCapAgent, userID string, scene contextcap.SceneSummary) contextCapScope {
+	return contextCapScope{
+		Grant: contextcap.Grant{
+			UserID: userID, WorkspaceID: a.WorkspaceID, AgentID: a.ID, ScopeType: contextcap.ScopeScene, OrgID: a.OrgID,
+			ScopeKey: scene.SceneKey, ScopeTitle: agentSceneTitle(scene), Source: contextCapSourceManager,
+		},
+		Manager: true, Kind: scene.Kind,
+	}
+}
+
+// Errors of contextCapResolveScope besides contextcap.ErrInvalidInput (a
+// malformed scope) and contextcap.ErrNotFound (a manager's unknown scene).
+// Any other error is a failed lookup; errContextCapSceneLookup marks the
+// scene lookup among those.
+var (
+	errContextCapForbidden   = errors.New("not allowed to configure this scope")
+	errContextCapSceneLookup = errors.New("scene lookup failed")
+)
+
+// contextCapResolveScope resolves what userID may act on as exactly (agent,
+// agent org, scopeType, scopeKey): the caller's live grant for it, or, for a
+// scene only, managing the agent (contextCapManages) and the scene being one
+// the agent has seen (the admin scene union: memory, Coordinator
+// conversations, configuration, bindings). A personal scope always needs the
+// person grant. The HTTP routes (contextCapRequireScope) and the OAuth
+// connect (authorizeConnectorOAuthScope) map its errors to their responses.
+func (h *Handler) contextCapResolveScope(ctx context.Context, a contextCapAgent, userID, scopeType, scopeKey string) (contextCapScope, error) {
+	if !contextcap.ValidScopeKey(scopeType, scopeKey) {
+		return contextCapScope{}, contextcap.ErrInvalidInput
+	}
+	grant, err := contextcap.GetLiveGrant(ctx, h.DB, userID, a.ID, scopeType, a.OrgID, scopeKey)
+	switch {
+	case err == nil && grant.WorkspaceID == a.WorkspaceID:
+		return contextCapScope{Grant: grant}, nil
+	case err != nil && !errors.Is(err, contextcap.ErrNotFound):
+		return contextCapScope{}, fmt.Errorf("grant lookup: %w", err)
+	}
+	if scopeType != contextcap.ScopeScene {
+		return contextCapScope{}, errContextCapForbidden
+	}
+	manages, err := h.contextCapManages(ctx, a, userID)
+	if err != nil {
+		return contextCapScope{}, fmt.Errorf("manager lookup: %w", err)
+	}
+	if !manages {
+		return contextCapScope{}, errContextCapForbidden
+	}
+	scene, err := contextcap.GetScene(ctx, h.DB, a.WorkspaceID, a.ID, a.OrgID, scopeKey)
+	if errors.Is(err, contextcap.ErrNotFound) {
+		return contextCapScope{}, err
+	}
+	if err != nil {
+		return contextCapScope{}, fmt.Errorf("%w: %w", errContextCapSceneLookup, err)
+	}
+	return contextCapManagedScope(a, userID, scene), nil
+}
+
+// contextCapRequireScope authorizes a mobile call on exactly (agent, agent
+// org, scopeType, scopeKey) (contextCapResolveScope): 400 for a malformed
+// scope, 403 without authority, 404 for a manager's unknown scene.
+func (h *Handler) contextCapRequireScope(w http.ResponseWriter, r *http.Request, a contextCapAgent, userID, scopeType, scopeKey string) (contextCapScope, bool) {
+	scope, err := h.contextCapResolveScope(r.Context(), a, userID, scopeType, scopeKey)
+	switch {
+	case err == nil:
+		return scope, true
+	case errors.Is(err, contextcap.ErrInvalidInput):
+		writeError(w, http.StatusBadRequest, "invalid scope")
+	case errors.Is(err, errContextCapForbidden):
+		writeError(w, http.StatusForbidden, "you are not allowed to configure this scope")
+	case errors.Is(err, contextcap.ErrNotFound):
+		writeError(w, http.StatusNotFound, "scene not found")
+	case errors.Is(err, errContextCapSceneLookup):
+		slog.ErrorContext(r.Context(), "context capabilities: scene lookup failed", "agent_id", a.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "scene lookup failed")
+	default:
 		slog.ErrorContext(r.Context(), "context capabilities: grant lookup failed", "agent_id", a.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, "grant lookup failed")
-		return contextcap.Grant{}, false
 	}
-	return grant, true
+	return contextCapScope{}, false
 }
 
 // contextCapLiveGrants returns the caller's live grants for agent a under its
@@ -452,8 +557,12 @@ func (h *Handler) RedeemContextConfigLink(w http.ResponseWriter, r *http.Request
 }
 
 // ListContextConfigAgents lists the agents the caller holds a live grant for,
-// with those grants. Grants of archived agents or of a previous DingTalk org
-// of the agent are omitted.
+// with those grants (access "grant"), then the other agents the caller
+// manages (access "manager", no scopes): non-archived user agents of
+// workspaces where the caller is owner/admin, and agents the caller owns in
+// a workspace they belong to. An agent both granted and managed reports
+// "manager". Grants of archived agents or of a previous DingTalk org of the
+// agent are omitted.
 func (h *Handler) ListContextConfigAgents(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {
@@ -465,8 +574,17 @@ func (h *Handler) ListContextConfigAgents(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "grant lookup failed")
 		return
 	}
+	managed, err := h.contextCapManagedAgents(ctx, userID)
+	if err != nil {
+		slog.ErrorContext(ctx, "context capabilities: managed agent lookup failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "agent lookup failed")
+		return
+	}
 	type agentEntry struct {
 		contextCapAgentDTO
+		// Access is "grant" (configuration links only) or "manager" (the
+		// caller manages the agent and may configure all of its scenes).
+		Access string               `json:"access"`
 		Scopes []contextCapGrantDTO `json:"scopes"`
 	}
 	agents := []*agentEntry{}
@@ -490,20 +608,56 @@ func (h *Handler) ListContextConfigAgents(w http.ResponseWriter, r *http.Request
 		}
 		entry, ok := byID[agent.ID]
 		if !ok {
-			entry = &agentEntry{contextCapAgentDTO: contextCapAgentView(*agent), Scopes: []contextCapGrantDTO{}}
+			entry = &agentEntry{contextCapAgentDTO: contextCapAgentView(*agent), Access: contextCapAccessGrant, Scopes: []contextCapGrantDTO{}}
 			byID[agent.ID] = entry
 			agents = append(agents, entry)
 		}
 		entry.Scopes = append(entry.Scopes, contextCapGrantView(grant))
 	}
+	for _, agent := range managed {
+		if entry, ok := byID[agent.ID]; ok {
+			entry.Access = contextCapAccessManager
+			continue
+		}
+		entry := &agentEntry{contextCapAgentDTO: agent, Access: contextCapAccessManager, Scopes: []contextCapGrantDTO{}}
+		byID[agent.ID] = entry
+		agents = append(agents, entry)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"agents": agents})
+}
+
+// contextCapManagedAgents lists the non-archived user agents userID manages
+// (contextCapManages), ordered by name.
+func (h *Handler) contextCapManagedAgents(ctx context.Context, userID string) ([]contextCapAgentDTO, error) {
+	// The WHERE clause is the SQL form of memberManagesAgent: a workspace
+	// owner/admin, or the agent owner (a NULL owner_id never matches).
+	rows, err := h.DB.Query(ctx, `SELECT a.id::text, a.name, a.avatar_url, a.workspace_id::text
+		FROM agent a
+		JOIN member m ON m.workspace_id = a.workspace_id AND m.user_id = $1::uuid
+		WHERE a.archived_at IS NULL AND a.kind = 'user' AND (m.role IN ('owner', 'admin') OR a.owner_id = $1::uuid)
+		ORDER BY a.name, a.id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []contextCapAgentDTO{}
+	for rows.Next() {
+		var agent contextCapAgentDTO
+		if err := rows.Scan(&agent.ID, &agent.Name, &agent.AvatarURL, &agent.WorkspaceID); err != nil {
+			return nil, err
+		}
+		out = append(out, agent)
+	}
+	return out, rows.Err()
 }
 
 // GetContextConfigAgent returns what the caller may see and configure for one
 // agent: global items (read-only), the offer catalog, the caller's person
-// scope and granted scenes. It needs at least one live grant for the agent.
-// Upstream URLs, credential references and workspace credential material are
-// never returned.
+// scope and scenes: the granted ones, plus, for a manager of the agent, every
+// scene the agent has seen (source "manager"). It needs at least one live
+// grant for the agent or the agent-manage permission. Upstream URLs,
+// credential references and workspace credential material are never
+// returned.
 func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {
@@ -519,7 +673,13 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "grant lookup failed")
 		return
 	}
-	if len(grants) == 0 {
+	manages, err := h.contextCapManages(ctx, a, userID)
+	if err != nil {
+		slog.ErrorContext(ctx, "context capabilities: manager lookup failed", "agent_id", a.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "grant lookup failed")
+		return
+	}
+	if len(grants) == 0 && !manages {
 		writeError(w, http.StatusForbidden, "you are not allowed to configure this agent")
 		return
 	}
@@ -531,6 +691,10 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 
 	var resp contextCapAgentDetailResponse
 	resp.Agent = contextCapAgentView(a)
+	resp.Access = contextCapAccessGrant
+	if manages {
+		resp.Access = contextCapAccessManager
+	}
 	resp.Global.Connectors = []contextCapConnectorRefDTO{}
 	resp.Global.Skills = []contextCapSkillDTO{}
 	resp.Offers.Connectors = []contextCapOfferedConnectorDTO{}
@@ -561,7 +725,6 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "connector lookup failed")
 			return
 		}
-		githubOAuthConfigured := githubUserAuthorizationConfigured()
 		for _, c := range offered {
 			accepts := connectorAcceptsBearer(c.AuthMode, c.CatalogSlug)
 			usesCredential := c.AuthMode == "bearer" || c.AuthMode == "oauth"
@@ -577,7 +740,7 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 			}
 			if app, ok := catalogApp(c.CatalogSlug); ok {
 				item.InstallURL = catalogAppInstallURL(app)
-				item.OAuthAvailable = c.AuthMode == "oauth" && app.OAuthAvailable(githubOAuthConfigured)
+				item.OAuthAvailable = c.AuthMode == "oauth" && h.catalogOAuthAvailable(app)
 			}
 			resp.Offers.Connectors = append(resp.Offers.Connectors, item)
 		}
@@ -591,10 +754,29 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// A manager sees every scene of the agent (newest activity first, from
+	// one statement). The scene records know the kind better than the
+	// configuration alone (a Coordinator conversation's type is positive
+	// evidence), so only granted scenes outside that list look their kind up
+	// in the configuration.
+	var managed []contextcap.SceneSummary
+	managedKinds := map[string]string{}
+	if manages {
+		if managed, _, err = contextcap.ListAllAgentScenes(ctx, h.DB, contextcap.SceneListQuery{
+			WorkspaceID: a.WorkspaceID, AgentID: a.ID, OrgID: a.OrgID,
+		}, contextcap.MaxAllScenes); err != nil {
+			slog.ErrorContext(ctx, "context capabilities: scene list failed", "agent_id", a.ID, "error", err)
+			writeError(w, http.StatusInternalServerError, "scene lookup failed")
+			return
+		}
+		for _, scene := range managed {
+			managedKinds[scene.SceneKey] = scene.Kind
+		}
+	}
 	var person *contextcap.Grant
 	sceneKeys := []string{}
 	for i := range grants {
-		if grants[i].ScopeType == contextcap.ScopeScene {
+		if _, known := managedKinds[grants[i].ScopeKey]; grants[i].ScopeType == contextcap.ScopeScene && !known {
 			sceneKeys = append(sceneKeys, grants[i].ScopeKey)
 		}
 	}
@@ -603,6 +785,10 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "scene lookup failed")
 		return
 	}
+	for key, kind := range managedKinds {
+		kinds[key] = kind
+	}
+	listed := map[string]bool{}
 	for i := range grants {
 		switch grants[i].ScopeType {
 		case contextcap.ScopePerson:
@@ -610,8 +796,17 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 				person = &grants[i]
 			}
 		case contextcap.ScopeScene:
+			listed[grants[i].ScopeKey] = true
 			resp.Scenes = append(resp.Scenes, contextCapSceneView(grants[i], kinds[grants[i].ScopeKey]))
 		}
+	}
+	for _, scene := range managed {
+		if listed[scene.SceneKey] {
+			continue
+		}
+		listed[scene.SceneKey] = true
+		scope := contextCapManagedScope(a, userID, scene)
+		resp.Scenes = append(resp.Scenes, contextCapSceneView(scope.Grant, scope.Kind))
 	}
 	if person != nil {
 		bindings, err := contextcap.ListScopeBindings(ctx, h.DB, a.WorkspaceID, a.ID, contextcap.ScopePerson, a.OrgID, person.ScopeKey)
@@ -652,8 +847,9 @@ func (h *Handler) contextCapSkills(ctx context.Context, query string, args ...an
 	return out, rows.Err()
 }
 
-// GetContextConfigScene returns one granted scene's bindings and credential
-// hints.
+// GetContextConfigScene returns the bindings and credential hints of one
+// scene the caller holds a grant for or, as a manager of the agent, one the
+// agent has seen.
 func (h *Handler) GetContextConfigScene(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {
@@ -668,7 +864,7 @@ func (h *Handler) GetContextConfigScene(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid scope")
 		return
 	}
-	grant, ok := h.contextCapRequireGrant(w, r, a, userID, contextcap.ScopeScene, sceneKey)
+	grant, ok := h.contextCapRequireScope(w, r, a, userID, contextcap.ScopeScene, sceneKey)
 	if !ok {
 		return
 	}
@@ -688,13 +884,17 @@ func (h *Handler) GetContextConfigScene(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "credential lookup failed")
 		return
 	}
-	kinds, err := h.contextCapSceneKinds(ctx, a, []string{grant.ScopeKey})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "scene lookup failed")
-		return
+	kind := grant.Kind
+	if !grant.Manager {
+		kinds, err := h.contextCapSceneKinds(ctx, a, []string{grant.ScopeKey})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "scene lookup failed")
+			return
+		}
+		kind = kinds[grant.ScopeKey]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"scene":       contextCapSceneView(grant, kinds[grant.ScopeKey]),
+		"scene":       contextCapSceneView(grant.Grant, kind),
 		"bindings":    contextCapBindingViews(bindings, offers),
 		"credentials": contextCapCredentialViews(credentials),
 	})
@@ -737,7 +937,7 @@ func (h *Handler) PutContextConfigBinding(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid resource_id")
 		return
 	}
-	grant, ok := h.contextCapRequireGrant(w, r, a, userID, input.ScopeType, input.ScopeKey)
+	grant, ok := h.contextCapRequireScope(w, r, a, userID, input.ScopeType, input.ScopeKey)
 	if !ok {
 		return
 	}
@@ -848,7 +1048,7 @@ func (h *Handler) PutContextConfigCredential(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "invalid Bearer credential")
 		return
 	}
-	grant, ok := h.contextCapRequireGrant(w, r, a, userID, input.ScopeType, input.ScopeKey)
+	grant, ok := h.contextCapRequireScope(w, r, a, userID, input.ScopeType, input.ScopeKey)
 	if !ok {
 		return
 	}
@@ -906,7 +1106,7 @@ func (h *Handler) DeleteContextConfigCredential(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "invalid connector_id")
 		return
 	}
-	grant, ok := h.contextCapRequireGrant(w, r, a, userID, query.Get("scope_type"), query.Get("scope_key"))
+	grant, ok := h.contextCapRequireScope(w, r, a, userID, query.Get("scope_type"), query.Get("scope_key"))
 	if !ok {
 		return
 	}
