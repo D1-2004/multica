@@ -7,12 +7,11 @@ import (
 )
 
 // FCE2BSDKRollout is runtime.fc_e2b_sdk_rollout, the single switch of the
-// FC/E2B SDK change. It sits beside runtime.performance_optimization and
-// shares nothing with it. A scope it selects sends FC/E2B commands through
+// FC/E2B SDK change. A scope it selects sends FC/E2B commands through
 // the Go SDK instead of the e2b CLI, marks the task's runner with
-// FC_E2B_TASK_ID, and ends a cancelled task's processes in its sandboxes.
-// Absent, or with enabled false, every operation keeps the CLI and a
-// cancelled task's processes are left to the sandbox release, as before.
+// FC_E2B_TASK_ID, and ends a cancelled or failed task's processes in its
+// sandboxes. Absent, or with enabled false, every operation keeps the CLI and
+// an ended task's processes are left to the sandbox release, as before.
 //
 // The runtime document rejects unknown fields, so a binary that predates
 // this key refuses a document that carries it: publish the key only after
@@ -58,4 +57,17 @@ func (r *FCE2BSDKRollout) clone() *FCE2BSDKRollout {
 	out.AgentIDs = append([]string(nil), r.AgentIDs...)
 	out.RuntimeIDs = append([]string(nil), r.RuntimeIDs...)
 	return &out
+}
+
+// FCE2BSDKRollout returns runtime.fc_e2b_sdk_rollout without cloning the
+// whole snapshot: the transport reads it for every live FC/E2B operation.
+func (s *Service) FCE2BSDKRollout() FCE2BSDKRollout {
+	if s == nil {
+		return FCE2BSDKRollout{}
+	}
+	current := s.snapshot.Load()
+	if current == nil || current.Config.Runtime.FCE2BSDKRollout == nil {
+		return FCE2BSDKRollout{}
+	}
+	return *current.Config.Runtime.FCE2BSDKRollout.clone()
 }

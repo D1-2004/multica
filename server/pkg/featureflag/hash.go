@@ -22,11 +22,11 @@ func bucketFor(key, identifier string) int {
 	return int(h.Sum32() % 100)
 }
 
-// inPercent reports whether (key, identifier) falls within the first
+// InPercent reports whether (key, identifier) falls within the first
 // percent buckets. A percent of 0 disables the rule for everyone; a
 // percent of 100 enables it for everyone. Values outside [0, 100] are
 // clamped.
-func inPercent(key, identifier string, percent int) bool {
+func InPercent(key, identifier string, percent int) bool {
 	switch {
 	case percent <= 0:
 		return false

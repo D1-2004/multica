@@ -9,19 +9,23 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	e2b "github.com/aliyun-fc/e2b-go-sdk"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// A cancelled task stops only its own runner: the in-sandbox daemon ends the
-// agent, but agent tools start their commands in new sessions, and those
-// survived cancellation until the sandbox expired or, worse, kept running
-// into the next task that reused it (PRI-52). The server therefore ends the
-// cancelled task's processes inside each sandbox the task used.
+// A cancelled or failed task stops only its own runner: the in-sandbox daemon
+// ends the agent, but agent tools start their commands in new sessions, and
+// those survived the task until the sandbox expired or, worse, kept running
+// into the next task that reused it (PRI-52). The server therefore ends an
+// aborted task's processes inside each sandbox the task used. A completed
+// task's processes are left to the sandbox release.
 //
 // runtime.fc_e2b_sdk_rollout gates the stop and the runner marker together
 // with the SDK transport, by the task's workspace, agent and runtime: a scope
@@ -41,24 +45,36 @@ const (
 	fcE2BTaskMarkerEnv = "FC_E2B_TASK_ID"
 	// The in-sandbox daemon notices a cancellation within seconds and then
 	// tears its tree down, orphaning tool commands. The first pass runs at
-	// once to catch the tree intact; the second catches what was forked or
-	// orphaned in between.
+	// once to catch the tree intact; the second, 10 seconds after the task
+	// ended (at once when the first pass took longer), catches what was
+	// forked or orphaned in between.
 	fcE2BTaskStopSecondPass  = 10 * time.Second
 	fcE2BTaskStopExecTimeout = 45 * time.Second
 	fcE2BTaskStopBudget      = 2 * time.Minute
 	fcE2BTaskStopConcurrency = 4
+	// fcE2BTaskStopMaxPending bounds the stops waiting for a slot, so a burst
+	// of aborted tasks cannot pile up goroutines behind four slots.
+	fcE2BTaskStopMaxPending = 512
 )
 
 var (
-	fcE2BTaskStopSlots   = make(chan struct{}, fcE2BTaskStopConcurrency)
-	fcE2BTaskStopPending sync.Map
+	fcE2BTaskStopSlots        = make(chan struct{}, fcE2BTaskStopConcurrency)
+	fcE2BTaskStopPending      sync.Map
+	fcE2BTaskStopPendingCount atomic.Int64
 )
+
+// fcE2BTaskAborted reports a terminal status whose processes are ended.
+// Retries and reruns are new tasks, so an aborted task id never runs again.
+func fcE2BTaskAborted(status string) bool {
+	return status == "cancelled" || status == "failed"
+}
 
 // fcE2BTaskStopScript ends one task's processes in the sandbox. It takes the
 // runtime id, the task's health port and the task id. A process is the
 // task's when it is proven to be:
 //   - its runner: a command line carrying both --runtime-id <id> and
-//     --health-port <port>, unless its environment names another task;
+//     --health-port <port>, with an environment that can be read and names
+//     no other task (health ports of two tasks can collide);
 //   - marked: its environment carries MULTICA_TASK_ID=<task> or
 //     FC_E2B_TASK_ID=<task>, read under the process's own uid;
 //   - a descendant of a proven process;
@@ -76,9 +92,17 @@ var (
 //
 // The tree is frozen with SIGSTOP and rescanned before it is ended, so no
 // process escapes by forking or re-parenting meanwhile; then SIGTERM with
-// SIGCONT, and SIGKILL after a grace. The last line is a JSON receipt. It
-// runs as root under bash (mapfile, associative arrays) and needs setpriv to
-// read other users' environments.
+// SIGCONT, and SIGKILL after a grace. A process is known by its pid and start
+// time, checked again after every SIGSTOP: a stopped process keeps its pid,
+// so a pid that changed hands before the SIGSTOP reached it is resumed at
+// once and is not sent SIGTERM or SIGKILL. What bash cannot close is a
+// verified target that someone else kills and reaps in the instant between
+// the check and the signal, its pid reused in that instant; Linux allocates
+// pids cyclically, so that takes the pid space wrapping around meanwhile.
+// Signalling through a pidfd would close it, but bash has no pidfd and the
+// sandbox images promise no other interpreter. The last line is a JSON
+// receipt. It runs as root under bash (mapfile, associative arrays) and
+// needs setpriv to read other users' environments.
 const fcE2BTaskStopScript = `rt=$1 port=$2 task=$3
 uuid='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 if [[ ! $rt =~ $uuid || ! $task =~ $uuid || ! $port =~ ^[0-9]{1,5}$ ]]; then
@@ -98,9 +122,9 @@ for p; do
     done <"/proc/$p/environ"; } 2>/dev/null; then echo "U $p"; continue; fi
   if (( mine )); then echo "M $p"; elif (( other )); then echo "F $p"; fi
 done'
-declare -A ppid=() pgid=() sid=() runner=() infra=() marked=() foreign=() unreadable=() target=()
+declare -A ppid=() pgid=() sid=() start=() runner=() infra=() marked=() foreign=() unreadable=() target=() tstart=()
 scan() {
-  ppid=() pgid=() sid=() runner=() infra=() marked=() foreign=() unreadable=()
+  ppid=() pgid=() sid=() start=() runner=() infra=() marked=() foreign=() unreadable=()
   local d p raw f argv i has_rt has_port key a rest uid gid out kind
   local -A byuid=()
   for d in /proc/[0-9]*; do
@@ -110,7 +134,7 @@ scan() {
     read -r -a f <<<"${raw##*) }"
     # Zombies and kernel threads (PF_KTHREAD) own nothing.
     [[ ${f[0]} == Z ]] || (( f[6] & 0x200000 )) && continue
-    ppid[$p]=${f[1]} pgid[$p]=${f[2]} sid[$p]=${f[3]} uid= gid=
+    ppid[$p]=${f[1]} pgid[$p]=${f[2]} sid[$p]=${f[3]} start[$p]=${f[19]} uid= gid=
     { while read -r key a rest; do
         case $key in Uid:) uid=$a;; Gid:) gid=$a;; esac
       done <"$d/status"; } 2>/dev/null
@@ -145,7 +169,7 @@ scan() {
 owned() { (( $1 > 1 )) && { [[ -n ${target[$1]:-} ]] || [[ -z ${ppid[$1]:-} ]]; }; }
 collect() {
   local p changed=1 groups sessions
-  for p in "${!runner[@]}"; do [[ -z ${foreign[$p]:-} ]] && target[$p]=1; done
+  for p in "${!runner[@]}"; do provenrunner "$p" && target[$p]=1; done
   for p in "${!marked[@]}"; do [[ -z ${infra[$p]:-} ]] && target[$p]=1; done
   while (( changed )); do
     changed=0 groups=" " sessions=" "
@@ -163,19 +187,47 @@ collect() {
     done
   done
   unset "target[$self]" "target[1]"
+  for p in "${!target[@]}"; do [[ -n ${tstart[$p]:-} ]] || tstart[$p]=${start[$p]}; done
 }
-alive() { local raw; { read -r raw <"/proc/$1/stat"; } 2>/dev/null || return 1; raw=${raw##*) }; [[ ${raw%% *} != Z ]]; }
+# provenrunner: a runner command line whose environment was read and names no
+# other task. An unreadable one may be another task's on a colliding port.
+provenrunner() { [[ -z ${foreign[$1]:-} && -z ${unreadable[$1]:-} ]]; }
+# alive: the target is still the process that was proven, not a reused pid.
+alive() {
+  local raw f
+  { read -r raw <"/proc/$1/stat"; } 2>/dev/null || return 1
+  read -r -a f <<<"${raw##*) }"
+  [[ ${f[0]} != Z && ${f[19]} == "${tstart[$1]:-}" ]]
+}
 survivors() { local p; for p in "${!target[@]}"; do alive "$p" && printf '%s ' "$p"; done; }
 count() { set -- $1; echo $#; }
+# freeze stops the live targets, then resumes every pid that is no longer the
+# proven process: it changed hands before the SIGSTOP reached it. A stopped
+# process keeps its pid, so the targets left alive are the proven ones.
+freeze() {
+  local p live
+  live=$(survivors)
+  kill -STOP $live 2>/dev/null
+  for p in $live; do alive "$p" || kill -CONT "$p" 2>/dev/null; done
+}
 scan; collect
-found=${#target[@]} terminated=0 killed=0 remaining=0
-if (( found > 0 )); then
-  kill -STOP "${!target[@]}" 2>/dev/null
-  scan; collect
-  kill -STOP "${!target[@]}" 2>/dev/null
-  found=${#target[@]}
-  kill -TERM "${!target[@]}" 2>/dev/null
-  kill -CONT "${!target[@]}" 2>/dev/null
+found=0 terminated=0 killed=0 remaining=0
+if (( ${#target[@]} > 0 )); then
+  freeze
+  # Rescan the frozen tree: keep the targets that are still the same
+  # process, then add what was forked or re-parented meanwhile.
+  first=("${!target[@]}")
+  target=()
+  scan
+  for p in "${first[@]}"; do
+    if [[ ${start[$p]:-} == "${tstart[$p]}" ]]; then target[$p]=1; else unset "tstart[$p]"; fi
+  done
+  collect
+  freeze
+  live=$(survivors)
+  found=$(count "$live")
+  kill -TERM $live 2>/dev/null
+  kill -CONT $live 2>/dev/null
   for ((i = 0; i < 20; i++)); do
     [[ -z $(survivors) ]] && break
     sleep 0.25
@@ -183,6 +235,8 @@ if (( found > 0 )); then
   left=$(survivors)
   terminated=$(( found - $(count "$left") ))
   if [[ -n $left ]]; then
+    freeze
+    left=$(survivors)
     kill -KILL $left 2>/dev/null
     for ((i = 0; i < 8; i++)); do
       [[ -z $(survivors) ]] && break
@@ -193,7 +247,7 @@ if (( found > 0 )); then
   fi
 fi
 runners=0
-for p in "${!runner[@]}"; do [[ -z ${foreign[$p]:-} ]] && runners=$((runners + 1)); done
+for p in "${!runner[@]}"; do provenrunner "$p" && runners=$((runners + 1)); done
 printf '{"version":3,"runners":%d,"marked":%d,"unreadable":%d,"found":%d,"terminated":%d,"killed":%d,"remaining":%d}\n' "$runners" "${#marked[@]}" "${#unreadable[@]}" "$found" "$terminated" "$killed" "$remaining"
 `
 
@@ -243,32 +297,51 @@ func parseFCE2BTaskStopReceipt(out string) (fcE2BTaskStopReceipt, error) {
 	return receipt, nil
 }
 
-// scheduleCancelledTaskStop starts ending a cancelled task's processes off
-// the transition path. The event and the metrics path both notify for one
-// terminal write; only one stop runs per task at a time.
+// scheduleAbortedTaskStop starts ending a cancelled or failed task's
+// processes off the transition path and reports whether it did. The event and
+// the metrics path both notify for one terminal write; only one stop runs per
+// task at a time.
 //
 // One stop is one operation: both passes run under the configuration
-// snapshot in force when the cancellation was scheduled. Switching
-// runtime.fc_e2b_sdk_rollout meanwhile applies to stops scheduled later, so a
-// stop it selected still runs its second pass after a switch-off, and a stop
-// it did not select gains no second pass after a switch-on.
-func (l *FCE2BLauncher) scheduleCancelledTaskStop(task db.AgentTaskQueue) {
-	if l == nil || l.Pool == nil || task.Status != "cancelled" || !task.ID.Valid || !task.RuntimeID.Valid {
-		return
+// snapshot in force when the task ended. Switching runtime.fc_e2b_sdk_rollout
+// meanwhile applies to stops scheduled later, so a stop it selected still
+// runs its second pass after a switch-off, and a stop it did not select is
+// never started.
+func (l *FCE2BLauncher) scheduleAbortedTaskStop(task db.AgentTaskQueue) bool {
+	if l == nil || l.Pool == nil || !fcE2BTaskAborted(task.Status) || !task.ID.Valid || !task.RuntimeID.Valid {
+		return false
+	}
+	frozen := l.withCurrentConfig()
+	// The task's workspace is known only once its runtime is read, so a
+	// workspace list may still select a task that its agent and runtime do
+	// not.
+	rollout := frozen.Config.SDKRollout
+	scope := FCE2BScope{AgentID: pgFCE2BScopeID(task.AgentID), RuntimeID: pgFCE2BScopeID(task.RuntimeID)}
+	if !frozen.Config.Enabled || !(fcE2BRolloutSelects(rollout, scope) || rollout.Enabled && len(rollout.WorkspaceIDs) > 0) {
+		return false
 	}
 	taskKey := util.UUIDToString(task.ID)
 	if _, inFlight := fcE2BTaskStopPending.LoadOrStore(taskKey, struct{}{}); inFlight {
-		return
+		return false
 	}
-	frozen := l.withCurrentConfig()
+	if fcE2BTaskStopPendingCount.Add(1) > fcE2BTaskStopMaxPending {
+		fcE2BTaskStopPendingCount.Add(-1)
+		fcE2BTaskStopPending.Delete(taskKey)
+		slog.Warn("FC/E2B task processes not stopped", "event", "fc_e2b_task_processes_stopped", "task_id", taskKey, "outcome", "backlog_full")
+		return false
+	}
 	stopPass := l.stopPass
 	if stopPass == nil {
-		stopPass = func(ctx context.Context, frozen *FCE2BLauncher, taskID pgtype.UUID, pass int) {
-			frozen.stopCancelledTaskProcesses(ctx, taskID, pass)
+		stopPass = func(ctx context.Context, frozen *FCE2BLauncher, taskID pgtype.UUID, pass int) bool {
+			return frozen.stopAbortedTaskProcesses(ctx, taskID, pass)
 		}
 	}
+	ended := time.Now()
 	go func() {
-		defer fcE2BTaskStopPending.Delete(taskKey)
+		defer func() {
+			fcE2BTaskStopPendingCount.Add(-1)
+			fcE2BTaskStopPending.Delete(taskKey)
+		}()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("FC/E2B task stop panicked", "task_id", taskKey, "recovered", r)
@@ -280,50 +353,68 @@ func (l *FCE2BLauncher) scheduleCancelledTaskStop(task db.AgentTaskQueue) {
 		if l.sleep != nil {
 			sleep = l.sleep
 		}
-		for pass, wait := range []time.Duration{0, fcE2BTaskStopSecondPass} {
-			if err := sleep(ctx, wait); err != nil {
+		for pass, at := range []time.Time{ended, ended.Add(fcE2BTaskStopSecondPass)} {
+			if err := sleep(ctx, max(time.Until(at), 0)); err != nil {
 				return
 			}
-			select {
-			case fcE2BTaskStopSlots <- struct{}{}:
-			case <-ctx.Done():
+			more, ran := func() (bool, bool) {
+				select {
+				case fcE2BTaskStopSlots <- struct{}{}:
+					defer func() { <-fcE2BTaskStopSlots }()
+				case <-ctx.Done():
+					return false, false
+				}
+				return stopPass(ctx, frozen, task.ID, pass+1), true
+			}()
+			if !ran {
 				slog.Warn("FC/E2B task stop skipped: stop slots busy", "event", "fc_e2b_task_processes_stopped", "task_id", taskKey)
 				return
 			}
-			stopPass(ctx, frozen, task.ID, pass+1)
-			<-fcE2BTaskStopSlots
+			if !more {
+				return
+			}
 		}
 	}()
+	return true
 }
 
-// stopCancelledTaskProcesses ends the task's processes in every sandbox its
-// start attempts used. It rereads the task: only a cancelled task is stopped.
-func (l *FCE2BLauncher) stopCancelledTaskProcesses(ctx context.Context, taskID pgtype.UUID, pass int) {
+// stopAbortedTaskProcesses ends the task's processes in every sandbox its
+// start attempts used. It rereads the task: only an aborted task on an FC/E2B
+// runtime is stopped. It reports whether another pass may find more: false
+// when the task is not one to stop or used no sandbox.
+func (l *FCE2BLauncher) stopAbortedTaskProcesses(ctx context.Context, taskID pgtype.UUID, pass int) bool {
 	if l == nil || l.Queries == nil || l.Pool == nil || !l.Config.Enabled {
-		return
+		return false
 	}
 	task, err := l.Queries.GetAgentTask(ctx, taskID)
-	if err != nil || task.Status != "cancelled" {
-		return
+	if err != nil {
+		return !errors.Is(err, pgx.ErrNoRows)
+	}
+	if !fcE2BTaskAborted(task.Status) {
+		return false
 	}
 	runtime, err := l.Queries.GetAgentRuntime(ctx, task.RuntimeID)
-	if err != nil || !IsFCE2BRuntime(runtime) {
-		return
+	if err != nil {
+		return !errors.Is(err, pgx.ErrNoRows)
+	}
+	if !IsFCE2BRuntime(runtime) {
+		return false
 	}
 	conn, err := l.Pool.Acquire(ctx)
 	if err != nil {
 		slog.Warn("FC/E2B task stop could not acquire a connection", "task_id", util.UUIDToString(taskID), "error", err)
-		return
+		return true
 	}
 	sandboxes, err := taskSandboxIDs(ctx, conn, task.ID)
 	conn.Release()
 	if err != nil {
 		slog.Warn("FC/E2B task stop could not list sandboxes", "task_id", util.UUIDToString(taskID), "error", err)
-		return
+		return true
 	}
 	for _, sandboxID := range sandboxes {
 		l.stopTaskProcessesInSandbox(ctx, task, runtime, sandboxID, pass)
 	}
+	return len(sandboxes) > 0
 }
 
 // stopTaskProcessesInSandbox runs the stop script in one sandbox and logs the
@@ -375,9 +466,19 @@ func (l *FCE2BLauncher) stopTaskProcessesInSandbox(ctx context.Context, task db.
 	return receipt, nil
 }
 
-// fcE2BSandboxMissing reports a sandbox that no longer exists. Both
-// transports surface the control plane's 404 for the connect.
+// fcE2BSandboxMissing reports a sandbox that no longer exists. The SDK
+// reports it as a typed error; the CLI only as text, where a bare "404" can
+// come from anywhere in the output, so the text must also say "not found".
 func fcE2BSandboxMissing(err error) bool {
+	var sandboxNotFound *e2b.SandboxNotFoundError
+	var notFound *e2b.NotFoundError
+	if errors.As(err, &sandboxNotFound) || errors.As(err, &notFound) || errors.Is(err, errFCE2BSandboxGone) {
+		return true
+	}
+	var sdkErr *fcE2BSDKError
+	if errors.As(err, &sdkErr) {
+		return false
+	}
 	text := strings.ToLower(err.Error())
-	return strings.Contains(text, "sandbox not found") || strings.Contains(text, "404")
+	return strings.Contains(text, "sandbox not found") || strings.Contains(text, "404") && strings.Contains(text, "not found")
 }
