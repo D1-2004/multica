@@ -419,7 +419,7 @@ func (h *Handler) authorizedConnectors(ctx context.Context, workspaceID, agentID
 	out := []internalConnector{}
 	for _, c := range granted {
 		// Official app connectors count only once their tools are known.
-		if len(c.AllowedTools) > 0 && h.connectorCredentialReady(c) {
+		if (c.CatalogSlug == "" || len(c.AllowedTools) > 0) && h.connectorCredentialReady(c) {
 			out = append(out, c)
 		}
 	}

@@ -23,3 +23,5 @@ Capability link 从任意允许域名提取 token 并加密保存；保存去掉
 
 ## 冲突合并范围更新
 预发集成分支已有 Context Capabilities 和外部官方应用 OAuth/catalog 实现。解冲突保留场景/个人凭证解析、OAuth 刷新和外部 catalog 的写权限契约；本次域名接入规则作用于自定义内网 MCP。保留新界面/catalog 文案，仅更新本次工具提示。合并后的 relay 分开 raw discovery 和工具显示，不丢失官方应用的 session transport。
+
+合并复核：全局和场景挂载中空工具快照只阻塞 catalog；内网 MCP 无该条件，允许上游后续新增工具。
