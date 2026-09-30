@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/dshhost"
+	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/gitrepo"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
@@ -360,6 +361,11 @@ type Handler struct {
 	// cleanly when the DB is healthy without blocking process exit if the
 	// pool is frozen — at worst the next replica waits the full TTL.
 	ChannelSupervisor *engine.Supervisor
+
+	// DWSEvents is the server's DingTalk personal event source
+	// (runtime.use_dws_for_tag): one DWS event stream per identity across
+	// replicas, handed over on shutdown. Nil without Redis.
+	DWSEvents *dwseventsource.Source
 	// ChannelRouter is the channel-agnostic inbound pipeline (the shared
 	// handler the Supervisor injects into every Channel). main.go calls
 	// Drain on it during shutdown, after the Supervisor has stopped
