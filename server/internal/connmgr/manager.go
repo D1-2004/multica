@@ -17,9 +17,39 @@
 //   - BeginShutdown moves READY members to DRAINING. A DRAINING connection
 //     keeps consuming until a replacement on another replica is READY, then
 //     closes (graceful handoff for rolling deploys).
-//   - Before each Claim a replica waits in proportion to the connections it
-//     already holds, so replicas holding fewer win free members first and
-//     connections spread after restarts and rolling deploys.
+//
+// # Balancing
+//
+// Two mechanisms spread connections across replicas.
+//
+// Claim delay decides who wins a free key. Before each Claim a contender waits
+// ClaimDelayStep × (members this replica holds − the fewest READY
+// connections any other live replica reported), capped at ClaimDelayMax,
+// plus a random offset in [0, ClaimDelayStep). Members count from the moment
+// they are claimed and are re-read during the wait, so replicas that start
+// together take turns instead of one of them claiming every key at once. The
+// least-loaded replica waits only the offset, so a handoff or crash takeover
+// is not slowed by the delay (a crashed replica keeps reporting its old load
+// until its membership expires); only more-loaded replicas hold back. When no
+// other replica is known (no Peers, or none alive) the least peer load is
+// taken as 0 and the delay is ClaimDelayStep × (members held), which still
+// spreads replicas that boot together before their heartbeats meet.
+//
+// Shedding (requires Config.Peers) moves connections that are already held.
+// Every sweep a Manager heartbeats its node id and READY count into Peers
+// (TTL 3 × PollInterval; BeginShutdown leaves at once). On each
+// PollInterval tick, when at least two replicas are alive and this replica
+// holds more than fair = ceil(desired keys / live replicas) READY
+// connections, and some other replica reports fewer than fair, it hands ONE
+// READY connection over through the same DRAINING path as BeginShutdown: the
+// connection keeps consuming until a replacement on another replica is READY,
+// then its contender ends. The Manager never sheds below fair, runs at most
+// one shed at a time, and waits one PollInterval before contending for a shed
+// key again. If no replica takes the key within DrainTimeout the shed is
+// reported as stalled but the connection is never dropped: it keeps
+// consuming as DRAINING until a replacement is READY, and further sheds wait
+// until it has ended. Convergence is one connection per replica per
+// PollInterval.
 //
 // The package is a generalized port of the robot connector's coordinated
 // stream mode (internal/integrations/channel/engine). It has no knowledge of
@@ -30,6 +60,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	mathrand "math/rand/v2"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -97,12 +128,18 @@ type Config struct {
 	MaxBackoff        time.Duration // default 60s
 	ResetBackoffAfter time.Duration // default 60s
 
-	// Balancing: before each Claim a replica waits ClaimDelayStep × (members
-	// it holds), capped at ClaimDelayMax, plus a random offset in
-	// [0, ClaimDelayStep) that breaks ties between replicas that start
-	// together. Defaults 250ms and 5s.
+	// Claim delay (see the package doc): before each Claim a replica waits
+	// ClaimDelayStep × (members it holds − least READY count reported by a
+	// live peer), capped at ClaimDelayMax, plus a random offset in
+	// [0, ClaimDelayStep). Defaults 250ms and 5s.
 	ClaimDelayStep time.Duration
 	ClaimDelayMax  time.Duration
+
+	// Peers is the optional replica membership. When set, the Manager
+	// heartbeats every sweep, uses peer loads for the claim delay, and sheds
+	// READY connections above its fair share (see the package doc). Nil
+	// disables shedding.
+	Peers Peers
 
 	Now    func() time.Time
 	Logger *slog.Logger
@@ -220,30 +257,59 @@ type Manager struct {
 	// DRAINING members are counted in neither.
 	connecting atomic.Int64
 	ready      atomic.Int64
+	// minPeerHeld is the fewest READY connections another live replica
+	// reported in the last sweep; 0 when unknown (no Peers, no other live
+	// replica, or a membership error).
+	minPeerHeld atomic.Int64
 
 	running  atomic.Bool
 	stopChan chan struct{}
+	// left records that this node has left Peers. Only the Run goroutine
+	// touches it.
+	left bool
 
 	mu sync.Mutex
 	// entries keys each contender goroutine by Target.Key.
-	entries map[string]entry
+	entries map[string]*entry
 	// gen is the source of the monotonic generation stored on each entry and
 	// embedded in its lease token.
 	gen     uint64
 	wg      sync.WaitGroup
 	stopped bool
+	// shedding is the entry being handed over by rebalancing, until its
+	// contender ends. At most one shed runs at a time.
+	shedding *entry
+	// cooldown is, per shed key, the earliest time this replica contends for
+	// it again.
+	cooldown map[string]time.Time
 }
 
-// entry is the per-key state held for each contender goroutine. gen lets the
-// goroutine's deferred cleanup tell its own entry apart from a successor that
-// a fingerprint restart already swapped in.
+// entry is the per-key state held for each contender goroutine. The map holds
+// the pointer, so the contender's deferred cleanup can tell its own entry
+// apart from a successor that a fingerprint restart already swapped in.
 type entry struct {
+	key         string
 	cancel      context.CancelFunc
 	fingerprint string
 	gen         uint64
 	drain       chan struct{}
+	drainOnce   sync.Once
 	done        chan struct{}
+	// notBefore delays the first claim (shed cooldown). Set before start.
+	notBefore time.Time
+	// ready mirrors whether the contender currently holds a READY member.
+	ready atomic.Bool
+
+	// Guarded by Manager.mu.
+	shed      bool
+	shedAt    time.Time
+	stalled   bool
+	handedOff bool
 }
+
+// requestDrain asks the contender to hand its connection over (or stop, when
+// it holds no READY member). Shutdown and shedding share it; it is idempotent.
+func (e *entry) requestDrain() { e.drainOnce.Do(func() { close(e.drain) }) }
 
 // New validates cfg, applies defaults, and returns a Manager. No goroutine
 // starts until Run.
@@ -259,17 +325,19 @@ func New(cfg Config) (*Manager, error) {
 		nodeID:   newNodeID(),
 		kick:     make(chan struct{}, 1),
 		stopChan: make(chan struct{}),
-		entries:  make(map[string]entry),
+		entries:  make(map[string]*entry),
+		cooldown: make(map[string]time.Time),
 	}, nil
 }
 
 // NodeID is this process's identity; every lease token starts with it.
 func (m *Manager) NodeID() string { return m.nodeID }
 
-// Held reports the READY connections on this replica.
+// Held reports the READY connections on this replica (DRAINING excluded).
 func (m *Manager) Held() int { return int(m.ready.Load()) }
 
-// DrainTimeout is the graceful handoff budget to pass to WaitForHandoffs.
+// DrainTimeout is the graceful handoff budget to pass to WaitForHandoffs. It
+// is also the budget after which an unclaimed shed is reported as stalled.
 func (m *Manager) DrainTimeout() time.Duration { return m.cfg.DrainTimeout }
 
 // ShutdownTimeout is the deadline to pass to WaitWithTimeout.
@@ -277,7 +345,8 @@ func (m *Manager) ShutdownTimeout() time.Duration { return m.cfg.ShutdownTimeout
 
 // Kick requests an immediate sweep instead of waiting for the next
 // PollInterval tick. Non-blocking and safe from any goroutine; a kick while a
-// sweep request is already pending coalesces with it.
+// sweep request is already pending coalesces with it. Kicked sweeps never
+// shed; only PollInterval ticks do.
 func (m *Manager) Kick() {
 	select {
 	case m.kick <- struct{}{}:
@@ -286,9 +355,10 @@ func (m *Manager) Kick() {
 }
 
 // Run sweeps the desired set every PollInterval (and on Kick), starting a
-// contender for new keys, restarting keys whose Fingerprint changed, and
-// stopping removed keys. It returns when ctx is cancelled; call
-// WaitWithTimeout afterwards. Run must be called at most once.
+// contender for new keys, restarting keys whose Fingerprint changed, stopping
+// removed keys, and (with Peers) heartbeating and rebalancing. It returns when
+// ctx is cancelled; call WaitWithTimeout afterwards. Run must be called at
+// most once.
 func (m *Manager) Run(ctx context.Context) {
 	if !m.running.CompareAndSwap(false, true) {
 		m.log.Error(m.cfg.Name+" manager already running", "event", m.event("run_twice"))
@@ -298,7 +368,7 @@ func (m *Manager) Run(ctx context.Context) {
 
 	// First sweep immediately so a freshly started server does not wait a
 	// full PollInterval before contending for its connections.
-	m.sweep(ctx)
+	m.sweep(ctx, false)
 
 	t := time.NewTicker(m.cfg.PollInterval)
 	defer t.Stop()
@@ -306,11 +376,12 @@ func (m *Manager) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			m.cancelAll()
+			m.leave()
 			return
 		case <-t.C:
-			m.sweep(ctx)
+			m.sweep(ctx, true)
 		case <-m.kick:
-			m.sweep(ctx)
+			m.sweep(ctx, false)
 		}
 	}
 }
@@ -319,17 +390,20 @@ func (m *Manager) Run(ctx context.Context) {
 // cancelling Run's context: READY connections enter DRAINING and keep
 // consuming until replacement READY capacity exists elsewhere; contenders that
 // hold nothing (or are still CONNECTING) stop. No new contender starts after
-// this call. It is idempotent.
+// this call, and the next sweep removes this node from Peers so the others
+// stop counting it. It is idempotent.
 func (m *Manager) BeginShutdown() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.stopped {
+		m.mu.Unlock()
 		return
 	}
 	m.stopped = true
 	for _, e := range m.entries {
-		close(e.drain)
+		e.requestDrain()
 	}
+	m.mu.Unlock()
+	m.Kick()
 }
 
 // WaitForHandoffs waits for the contenders that existed when the call began to
@@ -399,8 +473,10 @@ func (m *Manager) wait() {
 
 // sweep reconciles running contenders with the desired set. A List error keeps
 // every current connection: a transient store failure must not tear down the
-// whole fleet.
-func (m *Manager) sweep(ctx context.Context) {
+// whole fleet. tick marks a PollInterval sweep, the only kind that may shed.
+func (m *Manager) sweep(ctx context.Context, tick bool) {
+	loads, membershipKnown := m.heartbeat(ctx)
+
 	targets, err := m.cfg.List(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -466,6 +542,11 @@ func (m *Manager) sweep(ctx context.Context) {
 			delete(m.entries, key)
 		}
 	}
+	for key := range m.cooldown {
+		if _, ok := desired[key]; !ok {
+			delete(m.cooldown, key)
+		}
+	}
 	if m.stopped {
 		return
 	}
@@ -475,6 +556,9 @@ func (m *Manager) sweep(ctx context.Context) {
 		}
 		m.startLocked(ctx, desired[key])
 	}
+	if tick && membershipKnown {
+		m.rebalanceLocked(len(desired), loads)
+	}
 }
 
 // startLocked starts one contender. Callers hold m.mu and have checked that
@@ -482,16 +566,214 @@ func (m *Manager) sweep(ctx context.Context) {
 func (m *Manager) startLocked(parent context.Context, target Target) {
 	ctx, cancel := context.WithCancel(parent)
 	m.gen++
-	e := entry{
+	e := &entry{
+		key:         target.Key,
 		cancel:      cancel,
 		fingerprint: target.Fingerprint,
 		gen:         m.gen,
 		drain:       make(chan struct{}),
 		done:        make(chan struct{}),
 	}
+	if until, ok := m.cooldown[target.Key]; ok {
+		delete(m.cooldown, target.Key)
+		if until.After(m.cfg.Now()) {
+			e.notBefore = until
+		}
+	}
 	m.entries[target.Key] = e
 	m.wg.Add(1)
-	go m.supervise(ctx, target, e.gen, e.drain, e.done)
+	go m.supervise(ctx, target, e)
+}
+
+// finishEntry is a contender's exit bookkeeping: drop its map entry (unless a
+// successor already replaced it) and close out a shed.
+func (m *Manager) finishEntry(e *entry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cur, ok := m.entries[e.key]; ok && cur == e {
+		delete(m.entries, e.key)
+	}
+	if !e.shed {
+		return
+	}
+	if m.shedding == e {
+		m.shedding = nil
+	}
+	if e.handedOff {
+		// The replacement is READY elsewhere, so a new contender here cannot
+		// win the key back while it lives; the cooldown also keeps this
+		// replica from reclaiming it right after a quick replacement failure.
+		m.cooldown[e.key] = m.cfg.Now().Add(m.cfg.PollInterval)
+	} else {
+		// The shed stream ended before anyone took it over (it dropped while
+		// DRAINING): contend again now, not at the next PollInterval.
+		m.Kick()
+	}
+	m.log.Info(m.cfg.Name+" shed finished",
+		"event", m.event("shed_finished"),
+		"key", e.key,
+		"node_id", m.nodeID,
+		"handed_off", e.handedOff,
+		"duration_ms", m.cfg.Now().Sub(e.shedAt).Milliseconds(),
+	)
+}
+
+// rebalanceLocked hands one READY connection to another replica when this
+// replica holds more than its fair share and some other replica holds less.
+// It runs only on PollInterval ticks, so at most one shed starts per
+// PollInterval, and never while an earlier shed's connection is still
+// DRAINING. Callers hold m.mu.
+func (m *Manager) rebalanceLocked(desired int, loads []PeerLoad) {
+	now := m.cfg.Now()
+	if s := m.shedding; s != nil {
+		if !s.stalled && now.Sub(s.shedAt) >= m.cfg.DrainTimeout {
+			// Abandon waiting, never the stream: the member keeps consuming as
+			// DRAINING until some replica's replacement is READY.
+			s.stalled = true
+			m.log.Warn(m.cfg.Name+" shed not taken over within the drain budget; connection keeps consuming",
+				"event", m.event("shed_stalled"),
+				"key", s.key,
+				"node_id", m.nodeID,
+				"waited_ms", now.Sub(s.shedAt).Milliseconds(),
+			)
+		}
+		return
+	}
+	alive := len(loads)
+	if alive < 2 || desired <= 0 {
+		return
+	}
+	fair := (desired + alive - 1) / alive
+	held := m.Held()
+	if held <= fair {
+		return
+	}
+	// Only shed when some replica can take the key without itself exceeding
+	// fair. With accurate reports this always holds when held > fair; it
+	// stops ping-pong while a vanished replica still counts as alive.
+	receiver := false
+	for _, p := range loads {
+		if p.Node != m.nodeID && p.Held < fair && p.Held <= held-2 {
+			receiver = true
+			break
+		}
+	}
+	if !receiver {
+		return
+	}
+	candidates := make([]*entry, 0, held)
+	for _, e := range m.entries {
+		if e.ready.Load() && !e.shed {
+			candidates = append(candidates, e)
+		}
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	e := candidates[mathrand.IntN(len(candidates))]
+	e.shed = true
+	e.shedAt = now
+	m.shedding = e
+	m.log.Info(m.cfg.Name+" shedding one connection to rebalance",
+		"event", m.event("shed"),
+		"key", e.key,
+		"node_id", m.nodeID,
+		"held", held,
+		"fair", fair,
+		"alive", alive,
+		"desired", desired,
+	)
+	e.requestDrain()
+}
+
+// heartbeat reports this replica to Peers and returns the live membership
+// (including this node). It returns false when membership is unknown: no
+// Peers, shutting down, or a membership error. It also refreshes the least
+// peer load used by the claim delay.
+func (m *Manager) heartbeat(ctx context.Context) ([]PeerLoad, bool) {
+	if m.cfg.Peers == nil {
+		return nil, false
+	}
+	m.mu.Lock()
+	stopped := m.stopped
+	m.mu.Unlock()
+	if stopped {
+		m.leave()
+		return nil, false
+	}
+	opCtx, cancel := context.WithTimeout(ctx, m.peersTimeout())
+	defer cancel()
+	held := m.Held()
+	if err := m.cfg.Peers.Heartbeat(opCtx, m.nodeID, held, m.membershipTTL()); err != nil {
+		m.membershipFailed(ctx, "heartbeat", err)
+		return nil, false
+	}
+	loads, err := m.cfg.Peers.Alive(opCtx)
+	if err != nil {
+		m.membershipFailed(ctx, "alive", err)
+		return nil, false
+	}
+	self := false
+	least := -1
+	for _, p := range loads {
+		if p.Node == m.nodeID {
+			self = true
+			continue
+		}
+		if least < 0 || p.Held < least {
+			least = p.Held
+		}
+	}
+	if !self {
+		loads = append(loads, PeerLoad{Node: m.nodeID, Held: held})
+	}
+	if least < 0 {
+		least = 0
+	}
+	m.minPeerHeld.Store(int64(least))
+	return loads, true
+}
+
+func (m *Manager) membershipFailed(ctx context.Context, op string, err error) {
+	m.minPeerHeld.Store(0)
+	if ctx.Err() != nil {
+		return
+	}
+	m.log.Warn(m.cfg.Name+" peer membership "+op+" failed; not rebalancing this sweep",
+		"event", m.event("peers_failed"),
+		"node_id", m.nodeID,
+		"error_class", errorClass(err),
+		"error", err,
+	)
+}
+
+// leave removes this node from Peers once. Only the Run goroutine calls it.
+func (m *Manager) leave() {
+	if m.cfg.Peers == nil || m.left {
+		return
+	}
+	m.left = true
+	ctx, cancel := context.WithTimeout(context.Background(), m.peersTimeout())
+	defer cancel()
+	if err := m.cfg.Peers.Leave(ctx, m.nodeID); err != nil {
+		m.log.Warn(m.cfg.Name+" leaving peer membership failed; it expires with the heartbeat TTL",
+			"event", m.event("peers_leave_failed"),
+			"node_id", m.nodeID,
+			"error", err,
+		)
+		return
+	}
+	m.log.Info(m.cfg.Name+" left peer membership", "event", m.event("peers_left"), "node_id", m.nodeID)
+}
+
+// membershipTTL keeps a replica alive across two missed sweeps.
+func (m *Manager) membershipTTL() time.Duration { return 3 * m.cfg.PollInterval }
+
+func (m *Manager) peersTimeout() time.Duration {
+	if m.cfg.PollInterval < maxReleaseTimeout {
+		return m.cfg.PollInterval
+	}
+	return maxReleaseTimeout
 }
 
 func (m *Manager) cancelAll() {
