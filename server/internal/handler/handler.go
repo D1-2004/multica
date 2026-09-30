@@ -95,6 +95,11 @@ type Config struct {
 	// pre-release and production (MULTICA_A2A_FORWARD_REGISTRATION_SECRET);
 	// both deployments share it and it must be at least 32 characters.
 	A2AForwardRegistrationSecret string
+	// GitHubPreWebhookURL and GitHubPreWebhookSecret enable a dedicated ingress
+	// that verifies the pre-release App's deliveries and forwards them unchanged.
+	// This deployment never processes their installation or PR state locally.
+	GitHubPreWebhookURL    string
+	GitHubPreWebhookSecret string
 	// StableRuntimePublisherUserIDs is the deployment-owned UUID allow-list for
 	// promoting immutable FC/E2B templates and controlling their rollout.
 	StableRuntimePublisherUserIDs map[string]struct{}
@@ -221,6 +226,10 @@ type enterpriseIdentityService interface {
 }
 
 type Handler struct {
+	// githubPreWebhookTransport is the fixed pre-release webhook hop; nil uses
+	// the bounded, non-redirecting default transport.
+	githubPreWebhookTransport http.RoundTripper
+
 	// a2aForwardTransport overrides the transport used to forward inbound A2A
 	// JSON-RPC to another environment; nil uses the default.
 	a2aForwardTransport      http.RoundTripper
