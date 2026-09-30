@@ -106,6 +106,8 @@ export const AvailableInternalConnectorSchema = z.object({
   agent_id: z.string().uuid(),
   agent_name: z.string(),
   tools: z.array(z.string()),
+  // Official app catalog slug, "" for Aone FaaS (custom) connectors.
+  catalog_slug: text,
 }).transform((v) => ({
   id: v.id,
   name: v.name,
@@ -113,6 +115,7 @@ export const AvailableInternalConnectorSchema = z.object({
   agentId: v.agent_id,
   agentName: v.agent_name,
   tools: v.tools,
+  catalogSlug: v.catalog_slug,
 }));
 export const AvailableInternalConnectorListSchema = z.array(AvailableInternalConnectorSchema);
 export type AvailableInternalConnector = z.infer<typeof AvailableInternalConnectorSchema>;
@@ -176,26 +179,6 @@ export type InternalConnectorTest = z.infer<typeof InternalConnectorTestSchema>;
 // Official app catalog (official remote MCP servers + OAuth)
 // ---------------------------------------------------------------------------
 
-/** How a catalog app signs users in. Unknown kinds from a newer backend keep
- * the app listed; the UI then offers no OAuth-specific affordance. */
-export type ConnectorCatalogAuthKind = "oauth_dcr" | "oauth_github_app" | "unknown";
-
-export interface ConnectorCatalogApp {
-  slug: string;
-  name: string;
-  mcpUrl: string;
-  authKind: ConnectorCatalogAuthKind;
-  /** The app also accepts a Personal Access Token (GitHub). */
-  allowsPat: boolean;
-  /** The server can run the OAuth flow for this app (client configured). */
-  oauthAvailable: boolean;
-  /** The workspace connector created from this app, or null when not added. */
-  connectorId: string | null;
-  /** Optional provider page where users grant the app access to their
-   * resources (GitHub App installation). "" when the server sends none. */
-  installUrl: string;
-}
-
 /** Only absolute https URLs (http on loopback for local development) may be
  * handed to window navigation; anything else is dropped. */
 export function safeExternalUrl(value: unknown): string {
@@ -212,53 +195,6 @@ export function safeExternalUrl(value: unknown): string {
   }
   return "";
 }
-
-const slug = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
-
-const CatalogAppWireSchema = z
-  .object({
-    slug,
-    name: text,
-    mcp_url: text,
-    auth_kind: text,
-    allows_pat: strictTrue,
-    oauth_available: strictTrue,
-    connector_id: z.string().uuid().nullish().catch(null),
-    install_url: z.unknown().optional(),
-  })
-  .transform(
-    (value): ConnectorCatalogApp => ({
-      slug: value.slug,
-      name: value.name || value.slug,
-      mcpUrl: value.mcp_url,
-      authKind:
-        value.auth_kind === "oauth_dcr" || value.auth_kind === "oauth_github_app"
-          ? value.auth_kind
-          : "unknown",
-      allowsPat: value.allows_pat,
-      oauthAvailable: value.oauth_available,
-      connectorId: value.connector_id ?? null,
-      installUrl: safeExternalUrl(value.install_url),
-    }),
-  );
-
-/** Drops malformed items instead of failing the whole list, so one bad app
- * from a newer backend never empties the gallery. */
-function tolerantList<T extends z.ZodType>(item: T) {
-  return z
-    .array(z.unknown())
-    .nullish()
-    .transform((values): z.output<T>[] =>
-      (values ?? []).flatMap((value) => {
-        const parsed = item.safeParse(value);
-        return parsed.success ? [parsed.data as z.output<T>] : [];
-      }),
-    );
-}
-
-export const ConnectorCatalogSchema = z
-  .object({ apps: tolerantList(CatalogAppWireSchema) })
-  .transform((value) => value.apps);
 
 /** `POST /connector-catalog/{slug}` echo. null when the connector JSON is
  * malformed; the caller refetches the list either way. */

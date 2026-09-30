@@ -66,6 +66,7 @@ const agentSummary: ContextConfigAgentSummary = {
   name: "Helper",
   avatarUrl: null,
   workspaceId: "ws-1",
+  access: "grant",
   scopes: [],
 };
 
@@ -100,6 +101,7 @@ function agentDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
     },
     scenes: [{ scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group" }],
     jsapiAvailable: false,
+    access: "grant",
     ...overrides,
   };
 }
@@ -763,6 +765,82 @@ describe("ContextConfigPage", () => {
     const column = screen.getByRole("main").firstElementChild;
     expect(column?.className).toContain("mx-auto");
     expect(column?.className).toContain("sm:max-w-2xl");
+  });
+
+  describe("agent managers", () => {
+    const managed: ContextConfigAgentSummary = { ...agentSummary, access: "manager" };
+
+    it("opens the admin configure link and configures every scene of a managed agent", async () => {
+      api.listContextConfigAgents.mockResolvedValue([managed]);
+      api.getContextConfigAgent.mockResolvedValue(
+        agentDetail({
+          person: null,
+          access: "manager",
+          scenes: [
+            { scopeKey: "cid-1", scopeTitle: "Sales team", source: "manager", expiresAt: "", kind: "group" },
+            { scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm" },
+          ],
+        }),
+      );
+      renderPage({ initialAgentId: "agent-1" });
+
+      expect(await screen.findByText(copy.manager_hint)).toBeInTheDocument();
+      expect(screen.getByText(copy.manager_badge)).toBeInTheDocument();
+      expect(screen.queryByText(copy.no_access_title)).not.toBeInTheDocument();
+      const picker = screen.getByRole("combobox");
+      expect(within(picker).getByRole("option", { name: `${copy.kind_group} · Sales team` })).toBeInTheDocument();
+      expect(within(picker).getByRole("option", { name: `${copy.kind_dm} · Bob` })).toBeInTheDocument();
+      expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
+    });
+
+    it("takes manager access from the agent detail, even when the agent list fails", async () => {
+      api.listContextConfigAgents.mockRejectedValue(new Error("list unavailable"));
+      api.getContextConfigAgent.mockResolvedValue(agentDetail({ person: null, scenes: [], access: "manager" }));
+      const user = userEvent.setup();
+      renderPage({ initialAgentId: "agent-1" });
+
+      expect(await screen.findByText(copy.manager_hint)).toBeInTheDocument();
+      expect(screen.getByText(copy.scene_empty_manager_title)).toBeInTheDocument();
+      await user.click(screen.getByRole("tab", { name: copy.tab_person }));
+      expect(screen.getByText(copy.person_manager_note)).toBeInTheDocument();
+    });
+
+    it("does not show manager copy for a grant-only detail", async () => {
+      // The list claims manager access, but the detail is authoritative.
+      api.listContextConfigAgents.mockResolvedValue([managed]);
+      api.getContextConfigAgent.mockResolvedValue(agentDetail());
+      renderPage({ initialAgentId: "agent-1" });
+
+      expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
+      expect(screen.queryByText(copy.manager_hint)).not.toBeInTheDocument();
+    });
+
+    it("lists managed agents in the picker with the manager label", async () => {
+      api.listContextConfigAgents.mockResolvedValue([
+        managed,
+        { ...agentSummary, id: "agent-2", name: "Planner", scopes: [{ scopeType: "person", scopeKey: "staff-1", scopeTitle: "", source: "agent_link", expiresAt: "" }] },
+      ]);
+      renderPage();
+
+      const helper = await screen.findByRole("button", { name: /Helper/ });
+      expect(within(helper).getByText(copy.manager_badge)).toBeInTheDocument();
+      expect(within(helper).getByText(copy.manager_all_scenes)).toBeInTheDocument();
+      const planner = screen.getByRole("button", { name: /Planner/ });
+      expect(within(planner).queryByText(copy.manager_badge)).not.toBeInTheDocument();
+    });
+
+    it("explains an empty scene list and that 我的 still needs a personal link", async () => {
+      api.listContextConfigAgents.mockResolvedValue([managed]);
+      api.getContextConfigAgent.mockResolvedValue(agentDetail({ person: null, scenes: [], access: "manager" }));
+      const user = userEvent.setup();
+      renderPage({ initialAgentId: "agent-1" });
+
+      expect(await screen.findByText(copy.scene_empty_manager_title)).toBeInTheDocument();
+      expect(screen.getByText(copy.scene_empty_manager_hint)).toBeInTheDocument();
+      await user.click(screen.getByRole("tab", { name: copy.tab_person }));
+      expect(screen.getByText(copy.person_empty_hint)).toBeInTheDocument();
+      expect(screen.getByText(copy.person_manager_note)).toBeInTheDocument();
+    });
   });
 
   it("lets a person with several agents choose one", async () => {

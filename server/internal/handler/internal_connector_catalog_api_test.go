@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -146,8 +147,13 @@ func catalogWorkspaceSlug(t *testing.T) string {
 	return slug
 }
 
+// uuidPattern matches the ids in a response; "acc-" can occur inside a
+// random UUID ("…2acc-…"), so ids are removed before looking for tokens.
+var uuidPattern = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+
 func assertNoTokenMaterial(t *testing.T, what, body string) {
 	t.Helper()
+	body = uuidPattern.ReplaceAllString(body, "")
 	for _, secret := range []string{"acc-", "ref-", "pat-", "gh-secret", "verifier"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("%s leaks %q: %s", what, secret, body)

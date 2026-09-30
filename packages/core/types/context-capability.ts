@@ -76,11 +76,19 @@ export interface ContextConfigRedeemResult {
   scopeTitle: string;
 }
 
+/** Why the caller may configure an agent on the configuration page: live
+ * scene/person grants, or agent management (workspace owner/admin or the
+ * agent owner), which covers every scene of the agent but not the personal
+ * scope of another person. Older backends only listed granted agents, so a
+ * missing value parses as "grant". */
+export type ContextConfigAccess = "grant" | "manager";
+
 export interface ContextConfigAgentSummary {
   id: string;
   name: string;
   avatarUrl: string | null;
   workspaceId: string;
+  access: ContextConfigAccess;
   scopes: ContextConfigGrant[];
 }
 
@@ -151,6 +159,9 @@ export interface ContextConfigAgentDetail {
   person: ContextPersonScope | null;
   scenes: ContextConfigSceneGrant[];
   jsapiAvailable: boolean;
+  /** "manager" when the caller manages the agent (scenes then lists every
+   * scene of the agent); "grant" otherwise and from older backends. */
+  access: ContextConfigAccess;
 }
 
 export interface ContextConfigSceneDetail {
@@ -269,8 +280,6 @@ export interface AgentSceneSummary {
   /** scene_memory row id, "" when the scene has no memory. */
   memoryId: string;
   hasPrompt: boolean;
-  connectorCount: number;
-  skillCount: number;
 }
 
 export interface AgentScenesPage {
@@ -322,4 +331,116 @@ export interface SetAgentSceneBindingInput {
   resourceType: ContextResourceType;
   resourceId: string;
   enabled: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Admin connected apps (agent detail → 配置 → 连接器 → 连接应用)
+// ---------------------------------------------------------------------------
+
+export interface ConnectedAppTools {
+  /** Tools the upstream server listed at the last discovery. */
+  discovered: number;
+  /** Tools currently exposed to agents (read-only unless writes are on). */
+  allowed: number;
+}
+
+/** Where a connected shared account comes from: the stored workspace
+ * credential (the page can disconnect it), the operator's deployment
+ * environment (it cannot), or "" when not connected or not reported. */
+export type ConnectedAppSharedAccountSource = "workspace" | "environment" | "";
+
+/** The workspace shared account (所有人共用). `connected` is true only when
+ * the workspace credential is usable. */
+export interface ConnectedAppSharedAccount {
+  connected: boolean;
+  /** Display hint ("@octocat", "OAuth", "••••abcd"), "" when none, for an
+   * environment credential and for callers who are not workspace admins. */
+  account: string;
+  source: ConnectedAppSharedAccountSource;
+}
+
+/** Server-computed use of an app by this agent's scenes and people.
+ * `*Enabled` counts enabled bindings (已开启); `*Connected` counts stored
+ * credentials at that scope (已连接). The two are independent. */
+export interface ConnectedAppUsage {
+  scenesEnabled: number;
+  scenesConnected: number;
+  personsEnabled: number;
+  personsConnected: number;
+}
+
+/** One official app as the agent's connector tab sees it. */
+export interface ConnectedApp {
+  slug: string;
+  name: string;
+  /** The server can run the app's OAuth sign-in, so the start endpoint
+   * accepts it. false unless the server sent a literal true. */
+  oauthAvailable: boolean;
+  /** A Personal Access Token can be saved for the app on this deployment
+   * (GitHub, with credential storage configured). */
+  allowsPat: boolean;
+  /** Provider installation page (GitHub App), "" when none or unsafe. */
+  installUrl: string;
+  /** The workspace catalog connector, null while none exists. */
+  connectorId: string | null;
+  added: boolean;
+  /** Workspace kill switch of the connector (`internal_connector.enabled`). */
+  enabledInWorkspace: boolean;
+  /** Granted to this agent: used for every user in every scene
+   * (对所有用户启用). */
+  globalEnabled: boolean;
+  /** In this agent's offer catalog: groups and people may connect their own
+   * accounts (允许群聊、个人连接自己的账号). */
+  offered: boolean;
+  writeEnabled: boolean;
+  tools: ConnectedAppTools;
+  sharedAccount: ConnectedAppSharedAccount;
+  usage: ConnectedAppUsage;
+}
+
+export interface ConnectedAppsList {
+  apps: ConnectedApp[];
+  /** The caller is a workspace owner/admin: may add apps, grant them,
+   * change their offers and manage the shared account. */
+  canAdmin: boolean;
+}
+
+/** One scene's use of an app. */
+export interface ConnectedAppSceneUsage {
+  sceneKey: string;
+  title: string;
+  kind: ContextSceneKind;
+  /** An enabled scene binding (已开启). */
+  enabled: boolean;
+  /** A stored scene credential (已连接). */
+  connected: boolean;
+  /** Credential hint ("@octocat", "OAuth", "••••abcd"), "" when none. */
+  account: string;
+}
+
+/** One person's use of an app. */
+export interface ConnectedAppPersonUsage {
+  scopeKey: string;
+  title: string;
+  enabled: boolean;
+  connected: boolean;
+  account: string;
+  /** 「在群聊中由我触发时也可用」. */
+  shareInGroups: boolean;
+}
+
+export interface ConnectedAppTool {
+  name: string;
+  readOnly: boolean;
+  /** Exposed to the agent right now. */
+  allowed: boolean;
+}
+
+export interface ConnectedAppDetail extends ConnectedApp {
+  scenes: ConnectedAppSceneUsage[];
+  persons: ConnectedAppPersonUsage[];
+  toolList: ConnectedAppTool[];
+  /** Same as ConnectedAppsList.canAdmin, so the app page does not depend on
+   * the list request. */
+  canAdmin: boolean;
 }

@@ -4,13 +4,11 @@ import {
   AddedCatalogConnectorSchema,
   AvailableInternalConnectorListSchema,
   ConnectorAuthorizeUrlSchema,
-  ConnectorCatalogSchema,
   InternalConnectorListSchema,
   InternalConnectorTestSchema,
   InternalConnectorToolsRefreshSchema,
   internalConnectorUpdateInput,
   safeExternalUrl,
-  type ConnectorCatalogApp,
   type InternalConnector,
   type InternalConnectorToolsRefresh,
 } from "./internal-connector-schema";
@@ -46,7 +44,7 @@ describe("internal connector API boundary", () => {
   it("keeps upstream URLs and credential references out of member-visible data", () => {
     const raw = [{id:"11111111-1111-4111-8111-111111111111",name:"Knowledge",agent_id:"22222222-2222-4222-8222-222222222222",agent_name:"Reader",tools:["lookup"],upstream_url:"https://private.example/mcp",credential_ref:"SECRET"}];
     const result = parseWithFallback(raw, AvailableInternalConnectorListSchema, [], opts);
-    expect(result).toEqual([{id:raw[0]!.id,name:"Knowledge",serverName:`internal-${raw[0]!.id}`,agentId:raw[0]!.agent_id,agentName:"Reader",tools:["lookup"]}]);
+    expect(result).toEqual([{id:raw[0]!.id,name:"Knowledge",serverName:`internal-${raw[0]!.id}`,agentId:raw[0]!.agent_id,agentName:"Reader",tools:["lookup"],catalogSlug:""}]);
     expect(JSON.stringify(result)).not.toContain("private.example");
     expect(JSON.stringify(result)).not.toContain("SECRET");
   });
@@ -62,6 +60,11 @@ describe("internal connector API boundary", () => {
   it("uses the server-provided compact name for chat guidance", () => {
     const result = AvailableInternalConnectorListSchema.parse([{id:"a3fc1b87-7e59-452f-951d-7a317e110709",name:"Semantica",server_name:"ca3fc1b877e59452f",agent_id:"22222222-2222-4222-8222-222222222222",agent_name:"Reader",tools:["get_knowledge_graph_schema"]}]);
     expect(result[0]?.serverName).toBe("ca3fc1b877e59452f");
+  });
+  it("tells official apps from Aone FaaS connectors in the member-visible list", () => {
+    const item = {id:"11111111-1111-4111-8111-111111111111",name:"GitHub",agent_id:"22222222-2222-4222-8222-222222222222",agent_name:"Reader",tools:[]};
+    const result = AvailableInternalConnectorListSchema.parse([{...item,catalog_slug:"github"},{...item,catalog_slug:null}]);
+    expect(result.map((connector) => connector.catalogSlug)).toEqual(["github", ""]);
   });
 });
 
@@ -146,82 +149,8 @@ describe("internalConnectorUpdateInput", () => {
   });
 });
 
-describe("connector catalog API boundary", () => {
+describe("catalog connector add echo", () => {
   const catalogOpts = { endpoint: "GET /api/workspaces/:id/connector-catalog" };
-
-  it("maps catalog apps and drops malformed items instead of emptying the gallery", () => {
-    const apps = parseWithFallback<ConnectorCatalogApp[]>(
-      {
-        apps: [
-          {
-            slug: "github",
-            name: "GitHub",
-            mcp_url: "https://api.githubcopilot.com/mcp/",
-            auth_kind: "oauth_github_app",
-            allows_pat: true,
-            oauth_available: true,
-            connector_id: "11111111-1111-4111-8111-111111111111",
-          },
-          { slug: "notion", name: "Notion", mcp_url: "https://mcp.notion.com/mcp", auth_kind: "oauth_dcr", allows_pat: false, oauth_available: "yes", connector_id: null },
-          { slug: "Bad Slug", name: "Broken" },
-          "not-an-object",
-          { slug: "future", name: "", auth_kind: "oauth_mtls", connector_id: "not-a-uuid" },
-        ],
-      },
-      ConnectorCatalogSchema,
-      [],
-      catalogOpts,
-    );
-    expect(apps).toEqual([
-      {
-        slug: "github",
-        name: "GitHub",
-        mcpUrl: "https://api.githubcopilot.com/mcp/",
-        authKind: "oauth_github_app",
-        allowsPat: true,
-        oauthAvailable: true,
-        connectorId: "11111111-1111-4111-8111-111111111111",
-        installUrl: "",
-      },
-      {
-        slug: "notion",
-        name: "Notion",
-        mcpUrl: "https://mcp.notion.com/mcp",
-        authKind: "oauth_dcr",
-        allowsPat: false,
-        oauthAvailable: false,
-        connectorId: null,
-        installUrl: "",
-      },
-      {
-        slug: "future",
-        name: "future",
-        mcpUrl: "",
-        authKind: "unknown",
-        allowsPat: false,
-        oauthAvailable: false,
-        connectorId: null,
-        installUrl: "",
-      },
-    ]);
-  });
-
-  it("falls back to an empty gallery when the body is malformed, and accepts a null list", () => {
-    expect(parseWithFallback({ apps: "nope" }, ConnectorCatalogSchema, [], catalogOpts)).toEqual([]);
-    expect(parseWithFallback(null, ConnectorCatalogSchema, [], catalogOpts)).toEqual([]);
-    expect(ConnectorCatalogSchema.parse({ apps: null })).toEqual([]);
-  });
-
-  it("only keeps an https install URL", () => {
-    const [app] = ConnectorCatalogSchema.parse({
-      apps: [{ slug: "github", name: "GitHub", install_url: "https://github.com/apps/multica/installations/new" }],
-    });
-    expect(app?.installUrl).toBe("https://github.com/apps/multica/installations/new");
-    const [unsafe] = ConnectorCatalogSchema.parse({
-      apps: [{ slug: "github", name: "GitHub", install_url: "javascript:alert(1)" }],
-    });
-    expect(unsafe?.installUrl).toBe("");
-  });
 
   it("returns null for a malformed add echo so the caller refetches", () => {
     expect(parseWithFallback<InternalConnector | null>({ connector: { id: "x" } }, AddedCatalogConnectorSchema, null, catalogOpts)).toBeNull();

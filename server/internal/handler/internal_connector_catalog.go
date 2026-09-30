@@ -87,6 +87,31 @@ func catalogApp(slug string) (connectorcatalog.App, bool) {
 	return connectorCatalog.Lookup(slug)
 }
 
+// connectorOAuthDeploymentError reports why an OAuth connect of app cannot
+// start on this deployment, as the start endpoint's *connectorOAuthError, or
+// nil when it can: credentials can be sealed, the app's OAuth flow is
+// configured (GitHub needs the GitHub App client id and secret) and an app
+// origin is set.
+func (h *Handler) connectorOAuthDeploymentError(app connectorcatalog.App) error {
+	switch {
+	case h.InternalConnectorSecretBox == nil:
+		return oauthStartError(http.StatusServiceUnavailable, "credential_storage_unavailable", "connector credential storage is not configured")
+	case !app.OAuthAvailable(githubUserAuthorizationConfigured()):
+		return oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
+	case h.connectorOAuthAppOrigin() == "":
+		return oauthStartError(http.StatusServiceUnavailable, "app_origin_missing", "no app origin is configured")
+	}
+	return nil
+}
+
+// catalogOAuthAvailable reports whether an OAuth connect of app can start on
+// this deployment (connectorOAuthDeploymentError), so a client that shows
+// 连接 only when it is true never offers a connect the start endpoint
+// refuses for configuration reasons.
+func (h *Handler) catalogOAuthAvailable(app connectorcatalog.App) bool {
+	return h.connectorOAuthDeploymentError(app) == nil
+}
+
 // connectorURLIsCatalogTemplate reports whether raw is exactly an official
 // app's MCP URL.
 func connectorURLIsCatalogTemplate(raw string) bool {
@@ -119,15 +144,32 @@ func githubAppInstallURL() string {
 	return "https://github.com/apps/" + url.PathEscape(slug) + "/installations/new"
 }
 
+// catalogAppFacts are what the connector catalog and an agent's connected
+// apps both say about one official app on this deployment.
+type catalogAppFacts struct {
+	Slug     string `json:"slug"`
+	Name     string `json:"name"`
+	AuthKind string `json:"auth_kind"`
+	// AllowsPAT: a Personal Access Token can be saved for the app on this
+	// deployment (the app accepts one and credential storage is configured,
+	// which the credential endpoints require).
+	AllowsPAT bool `json:"allows_pat"`
+	// OAuthAvailable: an OAuth connect can start (catalogOAuthAvailable).
+	OAuthAvailable bool `json:"oauth_available"`
+}
+
+func (h *Handler) catalogAppFactsView(app connectorcatalog.App) catalogAppFacts {
+	return catalogAppFacts{
+		Slug: app.Slug, Name: app.Name, AuthKind: string(app.AuthKind),
+		AllowsPAT: app.AllowsPAT && h.InternalConnectorSecretBox != nil, OAuthAvailable: h.catalogOAuthAvailable(app),
+	}
+}
+
 // catalogAppView is one entry of GET .../connector-catalog.
 type catalogAppView struct {
-	Slug           string  `json:"slug"`
-	Name           string  `json:"name"`
-	MCPURL         string  `json:"mcp_url"`
-	AuthKind       string  `json:"auth_kind"`
-	AllowsPAT      bool    `json:"allows_pat"`
-	OAuthAvailable bool    `json:"oauth_available"`
-	ConnectorID    *string `json:"connector_id"`
+	catalogAppFacts
+	MCPURL      string  `json:"mcp_url"`
+	ConnectorID *string `json:"connector_id"`
 }
 
 // connectorCatalogApps lists the official apps with the workspace's
@@ -150,13 +192,9 @@ func (h *Handler) connectorCatalogApps(ctx context.Context, workspaceID string) 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	githubConfigured := githubUserAuthorizationConfigured()
 	out := []catalogAppView{}
 	for _, app := range connectorCatalog.Apps() {
-		view := catalogAppView{
-			Slug: app.Slug, Name: app.Name, MCPURL: app.MCPURL, AuthKind: string(app.AuthKind),
-			AllowsPAT: app.AllowsPAT, OAuthAvailable: app.OAuthAvailable(githubConfigured),
-		}
+		view := catalogAppView{catalogAppFacts: h.catalogAppFactsView(app), MCPURL: app.MCPURL}
 		if id, ok := added[app.Slug]; ok {
 			id := id
 			view.ConnectorID = &id

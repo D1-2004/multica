@@ -239,6 +239,8 @@ export function AgentOverviewPane({
         params.delete("scene");
         params.delete("scene_tab");
       }
+      // The open app configuration page belongs to the connector tab.
+      if (next !== "mcp_config") params.delete("app");
       const query = params.toString();
       navigation.replace(`${navigation.pathname}${query ? `?${query}` : ""}`);
     },

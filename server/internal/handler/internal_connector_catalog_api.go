@@ -239,7 +239,8 @@ func (h *Handler) RefreshInternalConnectorTools(w http.ResponseWriter, r *http.R
 // StartContextConfigConnection starts connecting the caller's own account
 // (person scope) or a group's account (scene scope) of an official app
 // connector from the mobile configuration page. It requires the caller's
-// live grant for exactly that scope; startConnectorOAuth then applies the
+// live grant for exactly that scope, or for a scene of an agent the caller
+// manages (contextCapRequireScope); startConnectorOAuth then applies the
 // PUT credentials connector rule (scene: offered; person: offered or
 // globally granted) and re-checks it at the callback.
 func (h *Handler) StartContextConfigConnection(w http.ResponseWriter, r *http.Request) {
@@ -265,7 +266,7 @@ func (h *Handler) StartContextConfigConnection(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid connector_id")
 		return
 	}
-	grant, ok := h.contextCapRequireGrant(w, r, a, userID, input.ScopeType, input.ScopeKey)
+	grant, ok := h.contextCapRequireScope(w, r, a, userID, input.ScopeType, input.ScopeKey)
 	if !ok {
 		return
 	}

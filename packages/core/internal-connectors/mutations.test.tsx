@@ -7,9 +7,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import type { InternalConnector } from "../api/internal-connector-schema";
+import { contextCapabilityKeys } from "../context-capabilities/queries";
 import {
-  useAddAgentCatalogConnector,
-  useSetInternalConnectorAgentGrant,
+  useDeleteInternalConnectorCredential,
+  usePatchInternalConnector,
 } from "./mutations";
 import { internalConnectorKeys } from "./queries";
 
@@ -38,24 +39,31 @@ const github: InternalConnector = {
   credentialAccount: "",
 };
 
-describe("agent connector grants", () => {
+function newClient() {
+  return new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+}
+
+describe("library connector writes by id", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("adds an official app and grants it to the agent with the full connector body", async () => {
-    const addCatalogConnector = vi.fn().mockResolvedValue(github);
+  it("grants a connector to an agent from a fresh read with the full connector body", async () => {
+    const listInternalConnectors = vi.fn().mockResolvedValue([github]);
     const updateInternalConnector = vi.fn().mockResolvedValue(undefined);
-    setApiInstance({ addCatalogConnector, updateInternalConnector } as unknown as ApiClient);
-    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    setApiInstance({ listInternalConnectors, updateInternalConnector } as unknown as ApiClient);
+    const queryClient = newClient();
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    const { result } = renderHook(() => useAddAgentCatalogConnector("ws-1"), {
+    const { result } = renderHook(() => usePatchInternalConnector("ws-1"), {
       wrapper: createWrapper(queryClient),
     });
 
     await act(async () => {
-      await result.current.mutateAsync({ slug: "github", agentId: "agent-1" });
+      await result.current.mutateAsync({
+        connectorId: github.id,
+        grant: { agentId: "agent-1", granted: true },
+      });
     });
 
-    expect(addCatalogConnector).toHaveBeenCalledWith("ws-1", "github");
+    expect(listInternalConnectors).toHaveBeenCalledWith("ws-1");
     expect(updateInternalConnector).toHaveBeenCalledWith("ws-1", github.id, {
       name: "GitHub",
       upstream_url: github.upstreamUrl,
@@ -65,53 +73,84 @@ describe("agent connector grants", () => {
       auth_mode: "oauth",
       write_enabled: false,
     });
+    // Library changes also refresh the agent pages derived from it.
     expect(invalidate).toHaveBeenCalledWith({ queryKey: internalConnectorKeys.all("ws-1") });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.all("ws-1") });
   });
 
-  it("reads the connector back when the add echo is malformed and skips an existing grant", async () => {
-    const addCatalogConnector = vi.fn().mockResolvedValue(null);
+  it("revokes only this agent's grant and keeps the other fields", async () => {
     const listInternalConnectors = vi
       .fn()
-      .mockResolvedValue([{ ...github, agentIds: ["agent-1"] }]);
-    const updateInternalConnector = vi.fn();
-    setApiInstance({
-      addCatalogConnector,
-      listInternalConnectors,
-      updateInternalConnector,
-    } as unknown as ApiClient);
-    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    const { result } = renderHook(() => useAddAgentCatalogConnector("ws-1"), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    await act(async () => {
-      await result.current.mutateAsync({ slug: "github", agentId: "agent-1" });
-    });
-
-    expect(listInternalConnectors).toHaveBeenCalledWith("ws-1");
-    expect(updateInternalConnector).not.toHaveBeenCalled();
-  });
-
-  it("revokes only this agent's grant", async () => {
+      .mockResolvedValue([{ ...github, agentIds: ["agent-other", "agent-1"], writeEnabled: true }]);
     const updateInternalConnector = vi.fn().mockResolvedValue(undefined);
-    setApiInstance({ updateInternalConnector } as unknown as ApiClient);
-    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    const { result } = renderHook(() => useSetInternalConnectorAgentGrant("ws-1"), {
-      wrapper: createWrapper(queryClient),
+    setApiInstance({ listInternalConnectors, updateInternalConnector } as unknown as ApiClient);
+    const { result } = renderHook(() => usePatchInternalConnector("ws-1"), {
+      wrapper: createWrapper(newClient()),
     });
 
     await act(async () => {
       await result.current.mutateAsync({
-        connector: { ...github, agentIds: ["agent-other", "agent-1"] },
-        agentId: "agent-1",
-        granted: false,
+        connectorId: github.id,
+        grant: { agentId: "agent-1", granted: false },
       });
     });
 
     expect(updateInternalConnector).toHaveBeenCalledWith(
       "ws-1",
       github.id,
-      expect.objectContaining({ agent_ids: ["agent-other"] }),
+      expect.objectContaining({ agent_ids: ["agent-other"], write_enabled: true }),
     );
+  });
+
+  it("toggles write tools and the workspace switch", async () => {
+    const listInternalConnectors = vi.fn().mockResolvedValue([github]);
+    const updateInternalConnector = vi.fn().mockResolvedValue(undefined);
+    setApiInstance({ listInternalConnectors, updateInternalConnector } as unknown as ApiClient);
+    const { result } = renderHook(() => usePatchInternalConnector("ws-1"), {
+      wrapper: createWrapper(newClient()),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ connectorId: github.id, writeEnabled: true, enabled: false });
+    });
+
+    expect(updateInternalConnector).toHaveBeenCalledWith(
+      "ws-1",
+      github.id,
+      expect.objectContaining({ write_enabled: true, enabled: false, agent_ids: ["agent-other"] }),
+    );
+  });
+
+  it("refuses to write a connector that no longer exists", async () => {
+    const listInternalConnectors = vi.fn().mockResolvedValue([]);
+    const updateInternalConnector = vi.fn();
+    setApiInstance({ listInternalConnectors, updateInternalConnector } as unknown as ApiClient);
+    const { result } = renderHook(() => usePatchInternalConnector("ws-1"), {
+      wrapper: createWrapper(newClient()),
+    });
+
+    await act(async () => {
+      await expect(
+        result.current.mutateAsync({ connectorId: github.id, enabled: true }),
+      ).rejects.toThrow();
+    });
+    expect(updateInternalConnector).not.toHaveBeenCalled();
+  });
+
+  it("disconnects the shared account and refreshes both view families", async () => {
+    const deleteInternalConnectorCredential = vi.fn().mockResolvedValue(undefined);
+    setApiInstance({ deleteInternalConnectorCredential } as unknown as ApiClient);
+    const queryClient = newClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useDeleteInternalConnectorCredential("ws-1"), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync(github.id);
+    });
+
+    expect(deleteInternalConnectorCredential).toHaveBeenCalledWith("ws-1", github.id);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.all("ws-1") });
   });
 });

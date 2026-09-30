@@ -75,9 +75,7 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("./context-offers-section", () => ({
-  ContextOffersSection: ({ resourceType }: { resourceType: string }) => (
-    <div>{`offers:${resourceType}`}</div>
-  ),
+  ContextOffersSection: () => <div>offers:skill</div>,
 }));
 
 import { SkillsTab } from "./skills-tab";

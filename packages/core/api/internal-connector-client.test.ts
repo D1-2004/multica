@@ -36,32 +36,6 @@ const connectorJson = {
 };
 
 describe("official app catalog client", () => {
-  it("lists the catalog of the workspace", async () => {
-    const fetch = stubFetch({
-      apps: [
-        {
-          slug: "github",
-          name: "GitHub",
-          mcp_url: "https://api.githubcopilot.com/mcp/",
-          auth_kind: "oauth_github_app",
-          allows_pat: true,
-          oauth_available: false,
-          connector_id: null,
-        },
-      ],
-    });
-    const apps = await new ApiClient(base).listConnectorCatalog(workspaceId);
-    expect(requestOf(fetch).url).toBe(`${base}/api/workspaces/${workspaceId}/connector-catalog`);
-    expect(apps).toEqual([
-      expect.objectContaining({ slug: "github", allowsPat: true, oauthAvailable: false, connectorId: null }),
-    ]);
-  });
-
-  it("returns an empty gallery for a malformed catalog", async () => {
-    stubFetch({ apps: { github: true } });
-    expect(await new ApiClient(base).listConnectorCatalog(workspaceId)).toEqual([]);
-  });
-
   it("adds a catalog app with an encoded slug and returns the connector", async () => {
     const fetch = stubFetch({ connector: connectorJson });
     const connector = await new ApiClient(base).addCatalogConnector(workspaceId, "git hub");

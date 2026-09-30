@@ -31,6 +31,12 @@ export const contextCapabilityKeys = {
     [...contextCapabilityKeys.agent(wsId, agentId), "scenes"] as const,
   scene: (wsId: string, agentId: string, sceneKey: string) =>
     [...contextCapabilityKeys.scenes(wsId, agentId), sceneKey] as const,
+  /** Official apps with this agent's status (连接应用). Nested under the
+   * agent, so offer changes refresh them too. */
+  connectedApps: (wsId: string, agentId: string) =>
+    [...contextCapabilityKeys.agent(wsId, agentId), "connected-apps"] as const,
+  connectedApp: (wsId: string, agentId: string, slug: string) =>
+    [...contextCapabilityKeys.connectedApps(wsId, agentId), slug] as const,
 };
 
 /** Page size of the admin scene list. */
@@ -93,5 +99,29 @@ export function agentSceneOptions(wsId: string, agentId: string, sceneKey: strin
     queryFn: () => api.getAgentScene(wsId, agentId, sceneKey),
     enabled: Boolean(wsId && agentId && sceneKey),
     staleTime: 15_000,
+  });
+}
+
+/** Every official app with its status for this agent (admin view). */
+export function agentConnectedAppsOptions(wsId: string, agentId: string) {
+  return queryOptions({
+    queryKey: contextCapabilityKeys.connectedApps(wsId, agentId),
+    queryFn: () => api.listAgentConnectedApps(wsId, agentId),
+    enabled: Boolean(wsId && agentId),
+    // A provider sign-in (in the system browser on desktop) or a group
+    // connecting its account happens in another tab or on a phone; coming
+    // back shows the new state. "always": the shared staleTime is Infinity,
+    // under which `true` never refetches.
+    refetchOnWindowFocus: "always",
+  });
+}
+
+/** One official app's configuration page: status, usage and tools. */
+export function agentConnectedAppOptions(wsId: string, agentId: string, slug: string) {
+  return queryOptions({
+    queryKey: contextCapabilityKeys.connectedApp(wsId, agentId, slug),
+    queryFn: () => api.getAgentConnectedApp(wsId, agentId, slug),
+    enabled: Boolean(wsId && agentId && slug),
+    refetchOnWindowFocus: "always",
   });
 }

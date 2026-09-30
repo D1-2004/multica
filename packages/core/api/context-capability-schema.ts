@@ -6,7 +6,15 @@ import type {
   AgentScenePrompt,
   AgentScenesPage,
   AgentSceneSummary,
+  ConnectedApp,
+  ConnectedAppDetail,
+  ConnectedAppPersonUsage,
+  ConnectedAppSceneUsage,
+  ConnectedAppSharedAccountSource,
+  ConnectedAppsList,
+  ConnectedAppTool,
   ContextCapabilityBinding,
+  ContextConfigAccess,
   ContextConfigAgentDetail,
   ContextConfigAgentSummary,
   ContextConfigGrant,
@@ -235,23 +243,43 @@ const AgentSummaryWireSchema = z.object({
   workspace_id: text,
 });
 
+// Older backends listed granted agents only and sent no access; anything
+// that is not literally "manager" is a grant-based entry.
+const configAccess = z
+  .unknown()
+  .transform((value): ContextConfigAccess => (value === "manager" ? "manager" : "grant"));
+
 export const ContextConfigAgentListSchema = z
   .object({
     agents: list(
-      AgentSummaryWireSchema.extend({ scopes: list(GrantWireSchema) }),
+      AgentSummaryWireSchema.extend({ scopes: list(GrantWireSchema), access: configAccess }),
     ),
   })
-  .transform((value): ContextConfigAgentSummary[] =>
-    value.agents.map((agent) => ({
-      id: agent.id,
-      name: agent.name,
-      avatarUrl: agent.avatar_url,
-      workspaceId: agent.workspace_id,
-      scopes: agent.scopes
+  .transform((value): ContextConfigAgentSummary[] => {
+    // One entry per agent: an agent the caller both manages and holds grants
+    // for keeps manager access and every grant.
+    const byId = new Map<string, ContextConfigAgentSummary>();
+    for (const agent of value.agents) {
+      const scopes = agent.scopes
         .map(toGrant)
-        .filter((grant): grant is ContextConfigGrant => grant !== null),
-    })),
-  );
+        .filter((grant): grant is ContextConfigGrant => grant !== null);
+      const existing = byId.get(agent.id);
+      if (existing) {
+        existing.scopes.push(...scopes);
+        if (agent.access === "manager") existing.access = "manager";
+        continue;
+      }
+      byId.set(agent.id, {
+        id: agent.id,
+        name: agent.name,
+        avatarUrl: agent.avatar_url,
+        workspaceId: agent.workspace_id,
+        access: agent.access,
+        scopes,
+      });
+    }
+    return [...byId.values()];
+  });
 
 const SkillItemSchema = z
   .object({ id, name: text, description: text })
@@ -282,7 +310,7 @@ export const ContextConfigAgentDetailSchema = z
             catalog_slug: catalogSlug,
             auth_mode: z.string().nullish().catch(null),
             accepts_pat: strictTrue,
-            oauth_available: z.boolean().nullish().catch(null),
+            oauth_available: strictTrue,
             install_url: z.unknown().optional(),
           }),
         ),
@@ -301,6 +329,7 @@ export const ContextConfigAgentDetailSchema = z
       .nullish(),
     scenes: list(SceneGrantSchema),
     jsapi_available: strictTrue,
+    access: configAccess,
   })
   .transform(
     (value): ContextConfigAgentDetail => ({
@@ -336,10 +365,9 @@ export const ContextConfigAgentDetailSchema = z
             authMode,
             // A Personal Access Token is only an alternative to OAuth.
             acceptsPat: authMode === "oauth" && connector.accepts_pat,
-            // Only an explicit false hides the connect action: a backend
-            // that predates the field still offers it (and answers 503
-            // oauth_unavailable, which the page reports).
-            oauthAvailable: authMode === "oauth" && connector.oauth_available !== false,
+            // Only a literal true shows the connect action, so the page never
+            // offers a sign-in the start endpoint would reject.
+            oauthAvailable: authMode === "oauth" && connector.oauth_available,
             installUrl: safeExternalUrl(connector.install_url),
           };
         }),
@@ -357,6 +385,7 @@ export const ContextConfigAgentDetailSchema = z
         : null,
       scenes: value.scenes,
       jsapiAvailable: value.jsapi_available,
+      access: value.access,
     }),
   );
 
@@ -485,8 +514,6 @@ const AgentSceneSummaryWireSchema = z
     inbound_count: count,
     memory_id: text,
     has_prompt: strictTrue,
-    connector_count: count,
-    skill_count: count,
   })
   .transform(
     (value): AgentSceneSummary => ({
@@ -499,8 +526,6 @@ const AgentSceneSummaryWireSchema = z
       inboundCount: value.inbound_count,
       memoryId: value.memory_id,
       hasPrompt: value.has_prompt,
-      connectorCount: value.connector_count,
-      skillCount: value.skill_count,
     }),
   );
 
@@ -604,3 +629,163 @@ export const AgentScenePromptResponseSchema = z
 export const AgentSceneBindingResponseSchema = z
   .object({ binding: AgentSceneBindingWireSchema })
   .transform((value) => toAgentSceneBinding(value.binding));
+
+// ---------------------------------------------------------------------------
+// Admin connected apps (GET /api/agents/{id}/connected-apps[/{slug}])
+// ---------------------------------------------------------------------------
+
+const appSlug = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
+
+// A malformed or missing connector id means "not in the workspace yet": the
+// page then offers 添加 instead of controls that need a connector.
+const connectorIdOrNull = z.string().min(1).nullish().catch(null).transform((value) => value ?? null);
+
+// Unknown or missing sources read as "" (not reported): the page then keeps
+// its disconnect action, which is what older backends offered.
+const sharedAccountSource = z
+  .unknown()
+  .transform((value): ConnectedAppSharedAccountSource =>
+    value === "workspace" || value === "environment" ? value : "",
+  );
+
+const ConnectedAppWireSchema = z.object({
+  slug: appSlug,
+  name: text,
+  oauth_available: strictTrue,
+  allows_pat: strictTrue,
+  install_url: z.unknown().optional(),
+  connector_id: connectorIdOrNull,
+  added: strictTrue,
+  enabled_in_workspace: strictTrue,
+  global_enabled: strictTrue,
+  offered: strictTrue,
+  write_enabled: strictTrue,
+  tools: z
+    .object({ discovered: count, allowed: count })
+    .nullish()
+    .catch(null),
+  shared_account: z
+    .object({ connected: strictTrue, account: text.catch(""), source: sharedAccountSource })
+    .nullish()
+    .catch(null),
+  usage: z
+    .object({
+      scenes_enabled: count,
+      scenes_connected: count,
+      persons_enabled: count,
+      persons_connected: count,
+    })
+    .nullish()
+    .catch(null),
+});
+
+function toConnectedApp(wire: z.output<typeof ConnectedAppWireSchema>): ConnectedApp {
+  // A shared account can only be connected on a connector that exists.
+  const hasConnector = wire.connector_id !== null;
+  return {
+    slug: wire.slug,
+    name: wire.name || wire.slug,
+    oauthAvailable: wire.oauth_available,
+    allowsPat: wire.allows_pat,
+    installUrl: safeExternalUrl(wire.install_url),
+    connectorId: wire.connector_id,
+    added: wire.added,
+    enabledInWorkspace: hasConnector && wire.enabled_in_workspace,
+    globalEnabled: hasConnector && wire.global_enabled,
+    offered: hasConnector && wire.offered,
+    writeEnabled: wire.write_enabled,
+    tools: {
+      discovered: wire.tools?.discovered ?? 0,
+      allowed: wire.tools?.allowed ?? 0,
+    },
+    sharedAccount: {
+      connected: hasConnector && wire.shared_account?.connected === true,
+      account: wire.shared_account?.account ?? "",
+      source:
+        hasConnector && wire.shared_account?.connected === true ? (wire.shared_account?.source ?? "") : "",
+    },
+    usage: {
+      scenesEnabled: wire.usage?.scenes_enabled ?? 0,
+      scenesConnected: wire.usage?.scenes_connected ?? 0,
+      personsEnabled: wire.usage?.persons_enabled ?? 0,
+      personsConnected: wire.usage?.persons_connected ?? 0,
+    },
+  };
+}
+
+export const ConnectedAppsListSchema = z
+  .object({
+    apps: tolerantList(ConnectedAppWireSchema),
+    can_admin: strictTrue,
+  })
+  .transform(
+    (value): ConnectedAppsList => ({
+      apps: value.apps.map(toConnectedApp),
+      canAdmin: value.can_admin,
+    }),
+  );
+
+const ConnectedAppSceneWireSchema = z
+  .object({
+    scene_key: id,
+    title: text,
+    kind: sceneKind,
+    enabled: strictTrue,
+    connected: strictTrue,
+    account: text,
+  })
+  .transform(
+    (value): ConnectedAppSceneUsage => ({
+      sceneKey: value.scene_key,
+      title: value.title,
+      kind: value.kind,
+      enabled: value.enabled,
+      connected: value.connected,
+      account: value.account,
+    }),
+  );
+
+const ConnectedAppPersonWireSchema = z
+  .object({
+    scope_key: id,
+    title: text,
+    enabled: strictTrue,
+    connected: strictTrue,
+    account: text,
+    share_in_groups: strictTrue,
+  })
+  .transform(
+    (value): ConnectedAppPersonUsage => ({
+      scopeKey: value.scope_key,
+      title: value.title,
+      enabled: value.enabled,
+      connected: value.connected,
+      account: value.account,
+      shareInGroups: value.share_in_groups,
+    }),
+  );
+
+const ConnectedAppToolWireSchema = z
+  .object({ name: z.string().min(1), read_only: strictTrue, allowed: strictTrue })
+  .transform(
+    (value): ConnectedAppTool => ({
+      name: value.name,
+      readOnly: value.read_only,
+      allowed: value.allowed,
+    }),
+  );
+
+export const ConnectedAppDetailSchema = ConnectedAppWireSchema.extend({
+  scenes: tolerantList(ConnectedAppSceneWireSchema),
+  persons: tolerantList(ConnectedAppPersonWireSchema),
+  tool_list: tolerantList(ConnectedAppToolWireSchema),
+  can_admin: strictTrue,
+}).transform(
+  (value): ConnectedAppDetail => ({
+    ...toConnectedApp(value),
+    scenes: value.scenes,
+    persons: value.persons,
+    toolList: value.tool_list,
+    canAdmin: value.can_admin,
+  }),
+);

@@ -188,9 +188,6 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	if err != nil {
 		return connectorOAuthStarted{}, oauthStartError(http.StatusBadRequest, "invalid_scope", "invalid connection scope")
 	}
-	if h.InternalConnectorSecretBox == nil {
-		return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, "credential_storage_unavailable", "connector credential storage is not configured")
-	}
 	c, err := h.loadInternalConnector(ctx, scope.WorkspaceID, scope.ConnectorID)
 	if errors.Is(err, errConnectorNotFound) {
 		return connectorOAuthStarted{}, oauthStartError(http.StatusNotFound, "not_found", "connector not found")
@@ -202,16 +199,15 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	if !ok || c.AuthMode != "oauth" || c.UpstreamURL != app.MCPURL {
 		return connectorOAuthStarted{}, oauthStartError(http.StatusBadRequest, "not_oauth", "this connector does not connect through OAuth")
 	}
-	if !app.OAuthAvailable(githubUserAuthorizationConfigured()) {
-		return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
-	}
 	if err := h.authorizeConnectorOAuthScope(ctx, scope, c); err != nil {
 		return connectorOAuthStarted{}, err
 	}
-	origin := h.connectorOAuthAppOrigin()
-	if origin == "" {
-		return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, "app_origin_missing", "no app origin is configured")
+	// Deployment configuration is reported only to callers allowed to
+	// connect this scope.
+	if err := h.connectorOAuthDeploymentError(app); err != nil {
+		return connectorOAuthStarted{}, err
 	}
+	origin := h.connectorOAuthAppOrigin()
 	returnTo, err := h.connectorOAuthReturnTo(ctx, in.ReturnTo, scope)
 	if err != nil {
 		return connectorOAuthStarted{}, oauthStartError(http.StatusBadRequest, "invalid_return_to", "return_to must be on the app origin")
@@ -338,10 +334,11 @@ func canonicalOAuthUUID(raw string) (string, error) {
 // authorizeConnectorOAuthScope re-checks, at start and again at callback,
 // that scope.UserID may store a credential for the scope: a workspace
 // owner/admin for the workspace scope; for a scene or person scope a live
-// grant under the agent's current org and a connector that is enabled and
-// offered to the agent or, for a person scope, globally granted to it (the
-// PUT credential rule, see contextCapCredentialConnector). Errors are
-// *connectorOAuthError.
+// grant under the agent's current org (for a scene, managing the agent and
+// the scene being one the agent has seen also qualifies, as on the other
+// mobile routes) and a connector that is enabled and offered to the agent
+// or, for a person scope, globally granted to it (the PUT credential rule,
+// see contextCapCredentialConnector). Errors are *connectorOAuthError.
 func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connectorOAuthScope, c internalConnector) error {
 	forbidden := oauthStartError(http.StatusForbidden, connectOAuthErrForbidden, "you are not allowed to connect an account for this scope")
 	if scope.ScopeType == connectorOAuthScopeWorkspace {
@@ -358,12 +355,17 @@ func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connec
 	if err != nil {
 		return oauthStartError(http.StatusInternalServerError, "internal", "agent lookup failed")
 	}
-	grant, err := contextcap.GetLiveGrant(ctx, h.DB, scope.UserID, scope.AgentID, scope.ScopeType, scope.OrgID, scope.ScopeKey)
-	if errors.Is(err, contextcap.ErrNotFound) || (err == nil && grant.WorkspaceID != scope.WorkspaceID) {
-		return forbidden
-	}
-	if err != nil {
-		return oauthStartError(http.StatusInternalServerError, "internal", "grant lookup failed")
+	// The mobile routes' authority (contextCapResolveScope); a malformed
+	// scope and a manager's unknown scene are forbidden here.
+	if _, err := h.contextCapResolveScope(ctx, agent, scope.UserID, scope.ScopeType, scope.ScopeKey); err != nil {
+		switch {
+		case errors.Is(err, errContextCapForbidden), errors.Is(err, contextcap.ErrInvalidInput), errors.Is(err, contextcap.ErrNotFound):
+			return forbidden
+		case errors.Is(err, errContextCapSceneLookup):
+			return oauthStartError(http.StatusInternalServerError, "internal", "scene lookup failed")
+		default:
+			return oauthStartError(http.StatusInternalServerError, "internal", "grant lookup failed")
+		}
 	}
 	if !c.Enabled {
 		return forbidden

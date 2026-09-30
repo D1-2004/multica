@@ -172,3 +172,61 @@ func TestStoreScenePromptShareInGroupsAndDirectLinks(t *testing.T) {
 		t.Fatalf("redeemed=%+v err=%v", redeemed, err)
 	}
 }
+
+// ListAllAgentScenes returns more than one HTTP page from a single
+// statement, newest activity first, and reports what the cap cut off.
+func TestListAllAgentScenesBeyondOnePage(t *testing.T) {
+	f := openStoreTx(t)
+	ctx := context.Background()
+	var migrated bool
+	if err := f.tx.QueryRow(ctx, `SELECT to_regclass('agent_scene_config') IS NOT NULL`).Scan(&migrated); err != nil || !migrated {
+		t.Skip("agent_scene_config is not migrated")
+	}
+	const total = maxScenesPerPage + 5
+	if _, err := f.tx.Exec(ctx, `INSERT INTO agent_scene_config (workspace_id, agent_id, platform, org_id, scene_key, scene_kind, scene_title, prompt, updated_at)
+		SELECT $1::uuid, $2::uuid, 'dingtalk', 'org-1', 'cidAll' || lpad(n::text, 4, '0'), 'group', 'Scene ' || n, '', now() - n * interval '1 minute'
+		FROM generate_series(1, $3::int) AS n`, f.workspaceID, f.agentID, total); err != nil {
+		t.Fatal(err)
+	}
+	q := SceneListQuery{WorkspaceID: f.workspaceID, AgentID: f.agentID, OrgID: "org-1", Limit: MaxAllScenes}
+	page, more, err := ListAgentScenes(ctx, f.tx, q)
+	if err != nil || len(page) != maxScenesPerPage || !more {
+		t.Fatalf("paged listing: %d scenes, more=%v, err=%v", len(page), more, err)
+	}
+	all, more, err := ListAllAgentScenes(ctx, f.tx, q, MaxAllScenes)
+	if err != nil || len(all) != total || more {
+		t.Fatalf("whole listing: %d scenes, more=%v, err=%v", len(all), more, err)
+	}
+	if all[0].SceneKey != "cidAll0001" || all[total-1].SceneKey != "cidAll0205" {
+		t.Fatalf("order: first=%s last=%s", all[0].SceneKey, all[total-1].SceneKey)
+	}
+	capped, more, err := ListAllAgentScenes(ctx, f.tx, q, 3)
+	if err != nil || len(capped) != 3 || !more || capped[2].SceneKey != "cidAll0003" {
+		t.Fatalf("capped listing: %+v more=%v err=%v", capped, more, err)
+	}
+}
+
+func TestSceneWithOnlyACredentialIsListed(t *testing.T) {
+	f := openStoreTx(t)
+	ctx := context.Background()
+	var migrated bool
+	if err := f.tx.QueryRow(ctx, `SELECT to_regclass('context_connector_credential') IS NOT NULL`).Scan(&migrated); err != nil || !migrated {
+		t.Skip("context_connector_credential is not migrated")
+	}
+	// A group stored a token without turning anything on: no memory, job,
+	// config or binding row. The scene must still be found, so a manager
+	// can open it and remove the credential.
+	if _, err := f.tx.Exec(ctx, `INSERT INTO context_connector_credential (workspace_id, agent_id, connector_id, scope_type, org_id, scope_key, ciphertext, hint)
+		VALUES ($1::uuid, $2::uuid, gen_random_uuid(), 'scene', 'org-1', 'cidCredOnly==', '\x00'::bytea, 'x'),
+		       ($1::uuid, $2::uuid, gen_random_uuid(), 'scene', 'org-2', 'cidOtherOrg==', '\x00'::bytea, 'x')`,
+		f.workspaceID, f.agentID); err != nil {
+		t.Fatal(err)
+	}
+	scene, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "cidCredOnly==")
+	if err != nil || scene.SceneKey != "cidCredOnly==" || scene.Kind != SceneKindGroup {
+		t.Fatalf("credential-only scene = %+v, %v", scene, err)
+	}
+	if _, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "cidOtherOrg=="); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("another org's credential scene: err = %v, want ErrNotFound", err)
+	}
+}

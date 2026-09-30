@@ -44,10 +44,8 @@ type agentSceneDTO struct {
 	InboundSessionID string `json:"inbound_session_id"`
 	InboundCount     int    `json:"inbound_count"`
 	// MemoryID is the scene_memory row id ("" when the scene has none).
-	MemoryID       string `json:"memory_id"`
-	HasPrompt      bool   `json:"has_prompt"`
-	ConnectorCount int    `json:"connector_count"`
-	SkillCount     int    `json:"skill_count"`
+	MemoryID  string `json:"memory_id"`
+	HasPrompt bool   `json:"has_prompt"`
 }
 
 type agentScenePromptDTO struct {
@@ -84,12 +82,14 @@ type agentSceneDetailResponse struct {
 }
 
 // agentSceneCaller is the route agent of an admin scene call, its workspace
-// and agent ids, and its current DingTalk org ("" without an identity).
+// and agent ids, its current DingTalk org ("" without an identity) and
+// whether the caller is a workspace owner/admin (not only the agent owner).
 type agentSceneCaller struct {
-	agent       db.Agent
-	workspaceID string
-	agentID     string
-	orgID       string
+	agent          db.Agent
+	workspaceID    string
+	agentID        string
+	orgID          string
+	workspaceAdmin bool
 }
 
 // agentSceneAdmin loads the route agent for an admin scene call: a human
@@ -101,7 +101,7 @@ func (h *Handler) agentSceneAdmin(w http.ResponseWriter, r *http.Request) (agent
 		return agentSceneCaller{}, false
 	}
 	agent := caller.agent
-	out := agentSceneCaller{agent: agent, workspaceID: uuidToString(agent.WorkspaceID), agentID: uuidToString(agent.ID)}
+	out := agentSceneCaller{agent: agent, workspaceID: uuidToString(agent.WorkspaceID), agentID: uuidToString(agent.ID), workspaceAdmin: caller.workspaceAdmin}
 	if actorType, _ := h.resolveActor(r, requestUserID(r), out.workspaceID); actorType == "agent" {
 		writeError(w, http.StatusForbidden, "agents may not manage scenes")
 		return agentSceneCaller{}, false
@@ -156,7 +156,7 @@ func agentSceneView(s contextcap.SceneSummary) agentSceneDTO {
 	return agentSceneDTO{
 		SceneKey: s.SceneKey, Kind: s.Kind, Title: agentSceneTitle(s), OrgID: s.OrgID,
 		LastActiveAt: contextCapTime(s.LastActiveAt), InboundSessionID: s.InboundSessionID, InboundCount: s.InboundCount,
-		MemoryID: s.MemoryID, HasPrompt: s.HasPrompt, ConnectorCount: s.ConnectorCount, SkillCount: s.SkillCount,
+		MemoryID: s.MemoryID, HasPrompt: s.HasPrompt,
 	}
 }
 

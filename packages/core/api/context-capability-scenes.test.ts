@@ -39,8 +39,6 @@ const groupScene = {
   inbound_count: 3,
   memory_id: "55555555-5555-4555-8555-555555555555",
   has_prompt: true,
-  connector_count: 1,
-  skill_count: 2,
 };
 
 describe("admin scene list", () => {
@@ -68,8 +66,6 @@ describe("admin scene list", () => {
       inboundCount: 3,
       memoryId: "55555555-5555-4555-8555-555555555555",
       hasPrompt: true,
-      connectorCount: 1,
-      skillCount: 2,
     });
     expect(page.scenes[1]).toMatchObject({
       sceneKey: "cidDm==",
@@ -79,8 +75,6 @@ describe("admin scene list", () => {
       inboundCount: 0,
       memoryId: "",
       hasPrompt: false,
-      connectorCount: 0,
-      skillCount: 0,
     });
   });
 

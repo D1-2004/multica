@@ -247,7 +247,7 @@ export function SkillsTab({
       </CapabilitySection>
 
       {canEdit ? (
-        <ContextOffersSection agentId={agent.id} wsId={wsId} resourceType="skill" />
+        <ContextOffersSection agentId={agent.id} wsId={wsId} />
       ) : null}
 
       <CapabilitySection

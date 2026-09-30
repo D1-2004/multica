@@ -261,10 +261,10 @@ export function ScenesTab({
         <aside
           className={cn(
             "min-h-0 flex-col border-r",
-            isCompact ? (activeKey ? "hidden" : "flex w-full") : "flex w-80 shrink-0",
+            isCompact ? (activeKey ? "hidden" : "flex w-full") : "flex w-64 shrink-0",
           )}
         >
-          <div className="shrink-0 space-y-1 p-4">
+          <div className="shrink-0 px-3 pt-3 pb-2">
             <h2 className="text-body font-semibold">{t(($) => $.tabs.scenes)}</h2>
             <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.scenes.intro)}</p>
           </div>
@@ -323,12 +323,13 @@ export function ScenesTab({
               className="mt-6 space-y-1 px-2"
               aria-labelledby="scenes-other-records"
             >
-              <h3 id="scenes-other-records" className="text-caption font-medium text-muted-foreground">
+              <h3
+                id="scenes-other-records"
+                title={t(($) => $.tab_body.scenes.other_records_hint)}
+                className="text-caption font-medium text-muted-foreground"
+              >
                 {t(($) => $.tab_body.scenes.other_records_title)}
               </h3>
-              <p className="pb-1 text-caption text-pretty text-muted-foreground">
-                {t(($) => $.tab_body.scenes.other_records_hint)}
-              </p>
               <Button
                 variant="ghost"
                 size="sm"
@@ -404,39 +405,33 @@ function SceneRow({
         aria-current={selected ? "true" : undefined}
         aria-label={`${kind} ${title}`}
         onClick={onSelect}
-        className="mb-1 flex w-full min-w-0 items-start gap-2.5 rounded-md p-3 text-left transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring data-active:bg-accent data-active:font-semibold data-active:text-accent-foreground data-active:hover:bg-accent"
+        className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring data-active:bg-accent data-active:font-medium data-active:text-accent-foreground data-active:hover:bg-accent"
       >
-        <span
-          aria-hidden="true"
-          className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
-        >
-          {scene.kind === "dm" ? <MessageSquare className="size-3.5" /> : <Users className="size-3.5" />}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-body">{title}</span>
-          <span className="mt-1 flex min-w-0 items-center gap-1.5 text-caption font-normal text-muted-foreground">
-            <Badge variant="outline" className="shrink-0 font-normal">
-              {kind}
-            </Badge>
-            {scene.lastActiveAt ? (
-              <span className="truncate">{timeAgo(scene.lastActiveAt)}</span>
-            ) : null}
+        {scene.kind === "dm" ? (
+          <MessageSquare className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        ) : (
+          <Users className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        )}
+        <span className="min-w-0 flex-1 truncate text-body">{title}</span>
+        {scene.hasPrompt ? (
+          <FileText
+            className="size-3.5 shrink-0 text-muted-foreground"
+            role="img"
+            aria-label={t(($) => $.tab_body.scenes.has_prompt)}
+          />
+        ) : null}
+        {scene.memoryId ? (
+          <Brain
+            className="size-3.5 shrink-0 text-muted-foreground"
+            role="img"
+            aria-label={t(($) => $.tab_body.scenes.has_memory)}
+          />
+        ) : null}
+        {scene.lastActiveAt ? (
+          <span className="shrink-0 text-caption font-normal text-muted-foreground">
+            {timeAgo(scene.lastActiveAt)}
           </span>
-          <span className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-caption font-normal text-muted-foreground">
-            {scene.memoryId ? (
-              <Brain className="size-3.5" role="img" aria-label={t(($) => $.tab_body.scenes.has_memory)} />
-            ) : null}
-            {scene.hasPrompt ? (
-              <FileText className="size-3.5" role="img" aria-label={t(($) => $.tab_body.scenes.has_prompt)} />
-            ) : null}
-            {scene.connectorCount > 0 ? (
-              <span>{t(($) => $.tab_body.scenes.connector_count, { count: scene.connectorCount })}</span>
-            ) : null}
-            {scene.skillCount > 0 ? (
-              <span>{t(($) => $.tab_body.scenes.skill_count, { count: scene.skillCount })}</span>
-            ) : null}
-          </span>
-        </span>
+        ) : null}
       </button>
     </li>
   );

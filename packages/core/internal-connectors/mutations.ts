@@ -1,20 +1,20 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import {
   internalConnectorUpdateInput,
-  type InternalConnector,
+  type InternalConnectorInput,
 } from "../api/internal-connector-schema";
+import { contextCapabilityKeys } from "../context-capabilities/queries";
 import { internalConnectorKeys } from "./queries";
 
-/** Adds an official app to the workspace (idempotent on the server). The
- * new connector shows up in the list and the catalog after the refetch. */
-export function useAddCatalogConnector(wsId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (slug: string) => api.addCatalogConnector(wsId, slug),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
-  });
+/** A library change (grant, credential, tools, switches) also changes what
+ * the agent pages derive from it: connected apps, the offer library and
+ * scene offers. Refresh both families. */
+export function invalidateConnectorViews(queryClient: QueryClient, wsId: string) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
+    queryClient.invalidateQueries({ queryKey: contextCapabilityKeys.all(wsId) }),
+  ]);
 }
 
 export interface StartInternalConnectorOAuthInput {
@@ -38,29 +38,7 @@ export function useRefreshInternalConnectorTools(wsId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (connectorId: string) => api.refreshInternalConnectorTools(wsId, connectorId),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
-  });
-}
-
-export interface SetInternalConnectorWriteEnabledInput {
-  connector: InternalConnector;
-  writeEnabled: boolean;
-}
-
-/** Toggles write tools for a catalog connector. Not optimistic: the server
- * recomputes the pinned tool list from the discovered tools. */
-export function useSetInternalConnectorWriteEnabled(wsId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ connector, writeEnabled }: SetInternalConnectorWriteEnabledInput) =>
-      api.updateInternalConnector(
-        wsId,
-        connector.id,
-        internalConnectorUpdateInput(connector, { write_enabled: writeEnabled }),
-      ),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
+    onSettled: () => invalidateConnectorViews(queryClient, wsId),
   });
 }
 
@@ -78,89 +56,57 @@ export function useSetInternalConnectorCredential(wsId: string) {
     mutationFn: ({ connectorId, bearer }: SetInternalConnectorCredentialInput) =>
       api.setInternalConnectorCredential(wsId, connectorId, bearer),
     gcTime: 0,
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
+    onSettled: () => invalidateConnectorViews(queryClient, wsId),
   });
 }
 
-export interface SetInternalConnectorAgentGrantInput {
-  connector: InternalConnector;
-  agentId: string;
-  granted: boolean;
-}
-
-/** Grants a workspace connector to one agent (or revokes it) from the
- * agent's connector tab. The update endpoint replaces the connector
- * wholesale, so the write starts from the full current connector. */
-export function useSetInternalConnectorAgentGrant(wsId: string) {
+/** Disconnects the workspace shared account (OAuth account or pasted
+ * token) of a connector. Scene and personal credentials are untouched. */
+export function useDeleteInternalConnectorCredential(wsId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ connector, agentId, granted }: SetInternalConnectorAgentGrantInput) => {
-      const others = connector.agentIds.filter((id) => id !== agentId);
-      return api.updateInternalConnector(
-        wsId,
-        connector.id,
-        internalConnectorUpdateInput(connector, {
-          agent_ids: granted ? [...others, agentId] : others,
-        }),
-      );
-    },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
+    mutationFn: (connectorId: string) => api.deleteInternalConnectorCredential(wsId, connectorId),
+    onSettled: () => invalidateConnectorViews(queryClient, wsId),
   });
 }
 
-export interface SetInternalConnectorEnabledInput {
-  connector: InternalConnector;
-  enabled: boolean;
+export interface PatchInternalConnectorInput {
+  connectorId: string;
+  /** Workspace kill switch (every agent, scene and person). */
+  enabled?: boolean;
+  /** Catalog connectors only: expose write tools too. */
+  writeEnabled?: boolean;
+  /** Grants the connector to one agent (对所有用户启用) or revokes it. */
+  grant?: { agentId: string; granted: boolean };
 }
 
-/** Workspace kill switch of one connector (every agent, scene and person). */
-export function useSetInternalConnectorEnabled(wsId: string) {
+/** Changes one library connector by id and skips the write when nothing
+ * would change. The update endpoint replaces the connector wholesale, so
+ * the write starts from a fresh read of the stored connector instead of a
+ * possibly stale cache entry. */
+export async function patchInternalConnector(
+  wsId: string,
+  { connectorId, enabled, writeEnabled, grant }: PatchInternalConnectorInput,
+): Promise<void> {
+  const connector = (await api.listInternalConnectors(wsId)).find((item) => item.id === connectorId);
+  if (!connector) throw new Error("connector not found");
+  const patch: Partial<Pick<InternalConnectorInput, "agent_ids" | "enabled" | "write_enabled">> = {};
+  if (enabled !== undefined && enabled !== connector.enabled) patch.enabled = enabled;
+  if (writeEnabled !== undefined && writeEnabled !== connector.writeEnabled) patch.write_enabled = writeEnabled;
+  if (grant && connector.agentIds.includes(grant.agentId) !== grant.granted) {
+    const others = connector.agentIds.filter((id) => id !== grant.agentId);
+    patch.agent_ids = grant.granted ? [...others, grant.agentId] : others;
+  }
+  if (Object.keys(patch).length === 0) return;
+  await api.updateInternalConnector(wsId, connector.id, internalConnectorUpdateInput(connector, patch));
+}
+
+/** Not optimistic: the server recomputes the pinned tools and credential
+ * state. */
+export function usePatchInternalConnector(wsId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ connector, enabled }: SetInternalConnectorEnabledInput) =>
-      api.updateInternalConnector(
-        wsId,
-        connector.id,
-        internalConnectorUpdateInput(connector, { enabled }),
-      ),
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
-  });
-}
-
-export interface AddAgentCatalogConnectorInput {
-  slug: string;
-  agentId: string;
-}
-
-/** Adds an official app to one agent: creates the workspace catalog
- * connector when it is missing (idempotent on the server), then grants it
- * to the agent. Resolves to the granted connector. */
-export function useAddAgentCatalogConnector(wsId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ slug, agentId }: AddAgentCatalogConnectorInput): Promise<InternalConnector> => {
-      const echoed = await api.addCatalogConnector(wsId, slug);
-      // A malformed echo still created the connector; read it back so the
-      // grant starts from the stored connector.
-      const connector =
-        echoed ??
-        (await api.listInternalConnectors(wsId)).find((item) => item.catalogSlug === slug) ??
-        null;
-      if (!connector) throw new Error(`official app ${slug} was not added`);
-      if (connector.agentIds.includes(agentId)) return connector;
-      await api.updateInternalConnector(
-        wsId,
-        connector.id,
-        internalConnectorUpdateInput(connector, {
-          agent_ids: [...connector.agentIds, agentId],
-        }),
-      );
-      return { ...connector, agentIds: [...connector.agentIds, agentId] };
-    },
-    onSettled: () =>
-      queryClient.invalidateQueries({ queryKey: internalConnectorKeys.all(wsId) }),
+    mutationFn: (input: PatchInternalConnectorInput) => patchInternalConnector(wsId, input),
+    onSettled: () => invalidateConnectorViews(queryClient, wsId),
   });
 }

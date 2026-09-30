@@ -85,8 +85,6 @@ const groupScene: AgentSceneSummary = {
   inboundCount: 3,
   memoryId: "memory-1",
   hasPrompt: true,
-  connectorCount: 1,
-  skillCount: 2,
 };
 
 const dmScene: AgentSceneSummary = {
@@ -99,8 +97,6 @@ const dmScene: AgentSceneSummary = {
   inboundCount: 0,
   memoryId: "",
   hasPrompt: false,
-  connectorCount: 0,
-  skillCount: 0,
 };
 
 function detailOf(scene: AgentSceneSummary, overrides: Partial<AgentSceneDetail> = {}): AgentSceneDetail {
@@ -191,12 +187,12 @@ beforeEach(() => {
 });
 
 describe("ScenesTab list", () => {
-  it("lists group chats and 1:1 chats with what each scene holds", async () => {
+  it("lists group chats and 1:1 chats as compact one-line rows", async () => {
     renderTab();
 
     const group = await screen.findByRole("button", { name: `${copy.kind_group} Release crew` });
-    expect(within(group).getByText("1 connector")).toBeInTheDocument();
-    expect(within(group).getByText("2 skills")).toBeInTheDocument();
+    // Counts live in the scene detail; the row only flags memory and a prompt.
+    expect(within(group).queryByText(/connector|skill/)).not.toBeInTheDocument();
     expect(within(group).getByRole("img", { name: copy.has_memory })).toBeInTheDocument();
     expect(within(group).getByRole("img", { name: copy.has_prompt })).toBeInTheDocument();
 
