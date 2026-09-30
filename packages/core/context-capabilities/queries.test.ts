@@ -4,6 +4,7 @@ import { createQueryClient } from "../query-client";
 import {
   agentConnectedAppOptions,
   agentConnectedAppsOptions,
+  agentSceneOptions,
   agentScenesOptions,
   contextCapabilityKeys,
   contextConfigKeys,
@@ -54,13 +55,14 @@ describe("admin scene list paging", () => {
   });
 });
 
-describe("connected apps refetch on focus", () => {
+describe("connected apps and scene detail refetch on focus", () => {
   it("refetches when the window regains focus under the shared Infinity staleTime", async () => {
     // A connect finished in the system browser (desktop) or on a phone must
     // show when the admin comes back, although nothing invalidates the keys.
     for (const makeOptions of [
       () => agentConnectedAppsOptions("ws-1", "agent-1"),
       () => agentConnectedAppOptions("ws-1", "agent-1", "github"),
+      () => agentSceneOptions("ws-1", "agent-1", "cid1"),
     ]) {
       const client: QueryClient = createQueryClient();
       client.mount();

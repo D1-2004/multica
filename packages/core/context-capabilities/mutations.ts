@@ -1,9 +1,12 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type {
   AgentContextCapabilities,
   AgentSceneDetail,
+  ContextConfigSceneDetail,
+  DeleteAgentSceneCredentialInput,
   SetAgentSceneBindingInput,
+  SetAgentSceneCredentialInput,
   DeleteContextConnectorCredentialInput,
   ContextResourceType,
   ResolveContextConfigSceneInput,
@@ -37,13 +40,33 @@ function scopeWriteKey(agentId: string, input: { scopeType: string; scopeKey: st
     : contextConfigKeys.agent(agentId);
 }
 
+/** Refreshes what a scope write changed. A 1:1 chat scene is its person's
+ * configuration (the server writes the person scope), so a write there also
+ * refreshes the agent detail itself, which holds the caller's personal
+ * scope; only that entry, not every scene under it. */
+function invalidateScopeWrite(
+  queryClient: QueryClient,
+  agentId: string,
+  input: { scopeType: string; scopeKey: string },
+) {
+  const key = scopeWriteKey(agentId, input);
+  const scene =
+    input.scopeType === "scene" ? queryClient.getQueryData<ContextConfigSceneDetail | null>(key) : null;
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: key }),
+    scene?.scene.kind === "dm"
+      ? queryClient.invalidateQueries({ queryKey: contextConfigKeys.agent(agentId), exact: true })
+      : undefined,
+  ]);
+}
+
 export function useSetContextCapabilityBinding(agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (input: SetContextCapabilityBindingInput) =>
       api.setContextCapabilityBinding(agentId, input),
     onSettled: (_data, _error, input) =>
-      queryClient.invalidateQueries({ queryKey: scopeWriteKey(agentId, input) }),
+      invalidateScopeWrite(queryClient, agentId, input),
   });
 }
 
@@ -59,7 +82,7 @@ export function useSetContextConnectorCredential(agentId: string) {
     gcTime: 0,
     // Only the scope identity is read from the variables, never the secret.
     onSettled: (_data, _error, input) =>
-      queryClient.invalidateQueries({ queryKey: scopeWriteKey(agentId, input) }),
+      invalidateScopeWrite(queryClient, agentId, input),
   });
 }
 
@@ -69,7 +92,7 @@ export function useDeleteContextConnectorCredential(agentId: string) {
     mutationFn: (input: DeleteContextConnectorCredentialInput) =>
       api.deleteContextConnectorCredential(agentId, input),
     onSettled: (_data, _error, input) =>
-      queryClient.invalidateQueries({ queryKey: scopeWriteKey(agentId, input) }),
+      invalidateScopeWrite(queryClient, agentId, input),
   });
 }
 
@@ -154,6 +177,85 @@ export function useSetAgentSceneBinding(wsId: string, agentId: string) {
       queryClient.invalidateQueries({
         queryKey: contextCapabilityKeys.agent(wsId, agentId),
       }),
+  });
+}
+
+export interface SetAgentSceneMcpConfigInput {
+  sceneKey: string;
+  /** The whole `mcp_config` document of the scene page's scope; null clears
+   * it. */
+  mcpConfig: Record<string, unknown> | null;
+}
+
+/** Saves the custom MCP servers of a scene page's scope (the person for a
+ * 1:1 chat). Not optimistic: the server validates the document. The stored
+ * echo goes into the scene detail, which refetches on settle. */
+export function useSetAgentSceneMcpConfig(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sceneKey, mcpConfig }: SetAgentSceneMcpConfigInput) =>
+      api.setAgentSceneMcpConfig(wsId, agentId, sceneKey, mcpConfig),
+    onSuccess: (mcpConfig, { sceneKey }) => {
+      queryClient.setQueryData<AgentSceneDetail | null>(
+        contextCapabilityKeys.scene(wsId, agentId, sceneKey),
+        (current) => (current ? { ...current, mcpConfig } : current),
+      );
+    },
+    onSettled: (_data, _error, { sceneKey }) =>
+      queryClient.invalidateQueries({
+        queryKey: contextCapabilityKeys.scene(wsId, agentId, sceneKey),
+      }),
+  });
+}
+
+/** What an admin scene credential write changes: the scene detail (its
+ * connectors' credential state) and the connected-app usage counts. */
+function invalidateAdminSceneCredential(
+  queryClient: QueryClient,
+  wsId: string,
+  agentId: string,
+  sceneKey: string,
+) {
+  return Promise.all([
+    queryClient.invalidateQueries({ queryKey: contextCapabilityKeys.scene(wsId, agentId, sceneKey) }),
+    queryClient.invalidateQueries({ queryKey: contextCapabilityKeys.connectedApps(wsId, agentId) }),
+  ]);
+}
+
+/** Stores a scene's token (Bearer, or a Personal Access Token) from the
+ * admin scene page, through the configure-page credential route (the server
+ * maps a 1:1 chat to its person). The variables hold the secret, so the
+ * mutation is dropped as soon as nothing observes it (gcTime 0). */
+export function useSetAgentSceneCredential(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sceneKey, connectorId, bearer }: SetAgentSceneCredentialInput) =>
+      api.setContextConnectorCredential(agentId, {
+        scopeType: "scene",
+        scopeKey: sceneKey,
+        connectorId,
+        bearer,
+      }),
+    gcTime: 0,
+    // Only the scene key is read from the variables, never the secret.
+    onSettled: (_data, _error, { sceneKey }) =>
+      invalidateAdminSceneCredential(queryClient, wsId, agentId, sceneKey),
+  });
+}
+
+/** Removes a scene's token or disconnects its OAuth account from the admin
+ * scene page. */
+export function useDeleteAgentSceneCredential(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sceneKey, connectorId }: DeleteAgentSceneCredentialInput) =>
+      api.deleteContextConnectorCredential(agentId, {
+        scopeType: "scene",
+        scopeKey: sceneKey,
+        connectorId,
+      }),
+    onSettled: (_data, _error, { sceneKey }) =>
+      invalidateAdminSceneCredential(queryClient, wsId, agentId, sceneKey),
   });
 }
 

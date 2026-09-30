@@ -632,8 +632,8 @@ function AgentScopes({
           title={t(($) => $.context_config.person_empty_title)}
           hint={t(($) => $.context_config.person_empty_hint)}
         >
-          {/* Managing the agent covers its scenes, never another person's
-              own connectors and accounts. */}
+          {/* Managing the agent covers its scenes (a 1:1 chat's switches
+              are its person's), never another person's accounts. */}
           {isManager && (
             <p className="text-caption text-muted-foreground text-pretty">
               {t(($) => $.context_config.person_manager_note)}
@@ -691,17 +691,38 @@ function SceneScope({
   // An older scene detail omits the kind (parsed as "group"); the agent
   // detail may already know the chat is a 1:1 chat.
   const kind: ContextSceneKind = scene.scene.kind === "dm" || sceneKind === "dm" ? "dm" : "group";
+  // A 1:1 chat's configuration is its person's configuration; the server
+  // cannot always tell who that is yet.
+  if (scene.scope === null) {
+    return (
+      <EmptyState
+        icon={<MessageCircle className="size-6" />}
+        title={t(($) => $.context_config.dm_person_unknown)}
+      />
+    );
+  }
+  const person = scene.scope?.type === "person" ? scene.scope : null;
+  // A manager may switch things on in someone's 1:1 chat but never store or
+  // connect that person's account (the server answers 403); the person's
+  // own grant (their 1:1 chat link, or their personal link) may. Either the
+  // server's can_connect or the manager-in-a-1:1-chat shape hides connecting.
+  const ownerOnly =
+    scene.canConnect === false ||
+    (kind === "dm" &&
+      scene.scene.source === "manager" &&
+      !(person !== null && detail.person?.scopeKey === person.key));
   return (
     <ScopeEditor
       agentId={agentId}
       scopeType="scene"
       scopeKey={scene.scene.scopeKey}
       sceneKind={kind}
-      title={scene.scene.scopeTitle || sceneUntitled(kind)}
+      title={person?.title || scene.scene.scopeTitle || sceneUntitled(kind)}
       expiresAt={scene.scene.expiresAt}
       detail={detail}
       bindings={scene.bindings}
       credentials={scene.credentials}
+      ownerOnly={ownerOnly}
       reportError={reportError}
     />
   );
@@ -717,6 +738,7 @@ function ScopeEditor({
   detail,
   bindings,
   credentials,
+  ownerOnly = false,
   reportError,
 }: {
   agentId: string;
@@ -729,6 +751,9 @@ function ScopeEditor({
   detail: ContextConfigAgentDetail;
   bindings: ContextCapabilityBinding[];
   credentials: ContextConnectorCredential[];
+  /** Only the person connects accounts and tokens here (a manager viewing
+   * someone's 1:1 chat). */
+  ownerOnly?: boolean;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
@@ -846,14 +871,6 @@ function ScopeEditor({
               : t(($) => $.context_config.scene_scope_hint)
             : t(($) => $.context_config.person_scope_hint)}
         </p>
-        {/* A 1:1 chat scene has no runtime scene layer yet
-            (docs/context-capabilities.md §1.2): say so before anyone turns
-            something on or connects an account here. */}
-        {scopeType === "scene" && sceneKind === "dm" && (
-          <p className="text-caption text-muted-foreground">
-            {t(($) => $.context_config.dm_pending_note)}
-          </p>
-        )}
         {expiry && (
           <p className="text-caption text-muted-foreground">
             {t(($) => $.context_config.access_until, { date: expiry })}
@@ -883,6 +900,7 @@ function ScopeEditor({
                   alwaysOn={globalIds.has(connector.id)}
                   busy={busyKeys.has(`connector:${connector.id}`)}
                   credential={credentialByConnector.get(connector.id) ?? null}
+                  ownerOnly={ownerOnly}
                   onToggle={(enabled) => void toggle("connector", connector.id, enabled)}
                   share={
                     scopeType === "person"
@@ -934,6 +952,7 @@ function ConnectorRow({
   alwaysOn,
   busy,
   credential,
+  ownerOnly,
   onToggle,
   share,
   reportError,
@@ -947,6 +966,7 @@ function ConnectorRow({
   alwaysOn: boolean;
   busy: boolean;
   credential: ContextConnectorCredential | null;
+  ownerOnly: boolean;
   onToggle: (enabled: boolean) => void;
   /** Person scope only: 「在群聊中由我触发时也可用」. */
   share?: ShareInGroupsControl;
@@ -1009,6 +1029,7 @@ function ConnectorRow({
           sceneKind={sceneKind}
           connector={connector}
           credential={credential}
+          ownerOnly={ownerOnly}
           reportError={reportError}
         />
       ) : connector.acceptsCredential ? (
@@ -1019,6 +1040,7 @@ function ConnectorRow({
           sceneKind={sceneKind}
           connector={connector}
           credential={credential}
+          ownerOnly={ownerOnly}
           reportError={reportError}
         />
       ) : null}
@@ -1083,6 +1105,7 @@ function OAuthConnectionControl({
   sceneKind,
   connector,
   credential,
+  ownerOnly,
   reportError,
 }: {
   agentId: string;
@@ -1091,6 +1114,7 @@ function OAuthConnectionControl({
   sceneKind: ContextSceneKind;
   connector: ContextOfferedConnector;
   credential: ContextConnectorCredential | null;
+  ownerOnly: boolean;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
@@ -1186,7 +1210,9 @@ function OAuthConnectionControl({
         </p>
       </div>
 
-      {patOpen ? (
+      {ownerOnly ? (
+        <p className="text-caption text-muted-foreground">{t(($) => $.context_config.owner_connects)}</p>
+      ) : patOpen ? (
         <BearerForm
           agentId={agentId}
           scopeType={scopeType}
@@ -1313,6 +1339,7 @@ function CredentialControl({
   sceneKind,
   connector,
   credential,
+  ownerOnly,
   reportError,
 }: {
   agentId: string;
@@ -1321,6 +1348,7 @@ function CredentialControl({
   sceneKind: ContextSceneKind;
   connector: ContextOfferedConnector;
   credential: ContextConnectorCredential | null;
+  ownerOnly: boolean;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
@@ -1367,7 +1395,9 @@ function CredentialControl({
         </p>
       </div>
 
-      {editing ? (
+      {ownerOnly ? (
+        <p className="text-caption text-muted-foreground">{t(($) => $.context_config.owner_connects)}</p>
+      ) : editing ? (
         <BearerForm
           agentId={agentId}
           scopeType={scopeType}
@@ -1691,7 +1721,7 @@ function EmptyState({
 }: {
   icon: React.ReactNode;
   title: string;
-  hint: string;
+  hint?: string;
   children?: React.ReactNode;
 }) {
   return (
@@ -1699,7 +1729,7 @@ function EmptyState({
       <span className="text-faint-foreground">{icon}</span>
       <div className="space-y-1">
         <p className="text-body font-medium">{title}</p>
-        <p className="text-caption text-muted-foreground text-pretty">{hint}</p>
+        {hint ? <p className="text-caption text-muted-foreground text-pretty">{hint}</p> : null}
       </div>
       {children}
     </div>

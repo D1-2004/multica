@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ExternalLink, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { Loader2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Agent } from "@multica/core/types";
 import { ApiError, errorCode } from "@multica/core/api";
-import { useConfigStore } from "@multica/core/config";
 import {
   agentConnectedAppOptions,
   useAddConnectedApp,
@@ -26,143 +25,128 @@ import {
 import { useWorkspacePaths } from "@multica/core/paths";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
-import { Input } from "@multica/ui/components/ui/input";
+import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { ConnectorLogo, connectorBrandName } from "../../../common/connector-logo";
-import {
-  MAX_BEARER_LENGTH,
-  isValidBearer,
-  useResetOnBackForwardRestore,
-} from "../../../common/connector-credential";
-import { openExternal } from "../../../platform/open-external";
-import { isDesktopShell } from "../../../platform/local-directory";
+import { useResetOnBackForwardRestore } from "../../../common/connector-credential";
 import { useT } from "../../../i18n";
-import { ConnectedAppStatusPill, hasConnectedAccount, useOfficialAppDescription } from "./connected-app-labels";
-import { ConfirmDialog, ConnectorNotice, StatusPill, SwitchRow, errorMessage } from "./connectors-ui";
+import { APP_PARAM, useDesktopConnectHandoff } from "./connect-flow";
+import { ConnectedAppStatusPill, hasConnectedAccount } from "./connected-app-labels";
+import {
+  ConfirmDialog,
+  ConnectorNotice,
+  DialogSection,
+  InstallLink,
+  StatusPill,
+  SwitchRow,
+  TokenForm,
+  errorMessage,
+} from "./connectors-ui";
 
 /**
- * One official app's configuration page inside the 连接器 tab
- * (`?view=mcp_config&app=<slug>`): 所有人共用（共享账号）, 群聊和个人自己连接
- * and 工具, with 添加 / 移除 in the header. Every status comes from the
+ * One official app's configuration in a dialog, opened from its tile in the
+ * 连接器 tab (`?view=mcp_config&app=<slug>`): 共享账号, 群聊和个人 and 工具,
+ * with 添加 / 在工作区启用 and 从智能体移除. Every status comes from the
  * connected-app endpoint; actions reuse the connector library, grant, offer,
  * OAuth, credential and tool endpoints. Writes are workspace-admin-only (the
  * detail's `canAdmin`); everyone else reads.
  */
-export function ConnectedAppPage({
+export function ConnectedAppDialog({
   agent,
   wsId,
   slug,
-  onBack,
-  onLoaded,
+  onClose,
 }: {
   agent: Agent;
   wsId: string;
+  /** The open app; "" when closed. */
   slug: string;
-  onBack: () => void;
-  /** Called once the app's configuration has rendered (not on refetches). */
-  onLoaded?: () => void;
+  onClose: () => void;
 }) {
-  const { t } = useT("agents");
-  const query = useQuery(agentConnectedAppOptions(wsId, agent.id, slug));
-  const app = query.data ?? null;
-  const loaded = app !== null;
-  const onLoadedRef = useRef(onLoaded);
-  onLoadedRef.current = onLoaded;
-  useEffect(() => {
-    if (loaded) onLoadedRef.current?.();
-  }, [loaded]);
-
-  let body: React.ReactNode;
-  if (query.isLoading) {
-    body = <ConnectorNotice loading>{t(($) => $.tab_body.connected_apps.loading)}</ConnectorNotice>;
-  } else if (query.error instanceof ApiError && query.error.status === 404) {
-    body = <ConnectorNotice>{t(($) => $.tab_body.connected_apps.not_found)}</ConnectorNotice>;
-  } else if (query.isError || !app) {
-    body = (
-      <ConnectorNotice>
-        <span className="flex-1">{t(($) => $.tab_body.connected_apps.load_failed)}</span>
-        <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
-          {t(($) => $.tab_body.connectors.retry)}
-        </Button>
-      </ConnectorNotice>
-    );
-  } else {
-    body = <AppConfiguration agent={agent} wsId={wsId} app={app} />;
-  }
+  // Keep showing the last app while the dialog animates closed.
+  const [shownSlug, setShownSlug] = useState(slug);
+  if (slug && slug !== shownSlug) setShownSlug(slug);
 
   return (
-    <div className="space-y-4" aria-label={app?.name || connectorBrandName(slug)} role="region">
-      <Button variant="ghost" size="sm" className="-ml-2" onClick={onBack}>
-        <ArrowLeft className="size-4" aria-hidden="true" />
-        {t(($) => $.tab_body.connected_apps.back)}
-      </Button>
-      {body}
-    </div>
+    <Dialog
+      open={slug !== ""}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
+        {/* Keyed by app: a new app starts with fresh forms. */}
+        {shownSlug ? <AppDialogBody key={shownSlug} agent={agent} wsId={wsId} slug={shownSlug} /> : null}
+      </DialogContent>
+    </Dialog>
   );
 }
 
-function AppConfiguration({ agent, wsId, app }: { agent: Agent; wsId: string; app: ConnectedAppDetail }) {
+function AppDialogBody({ agent, wsId, slug }: { agent: Agent; wsId: string; slug: string }) {
   const { t } = useT("agents");
-  const describe = useOfficialAppDescription();
-  const connectorId = app.connectorId;
+  const query = useQuery(agentConnectedAppOptions(wsId, agent.id, slug));
+  const app = query.data ?? null;
 
+  if (!app) {
+    let body: React.ReactNode;
+    if (query.isLoading) {
+      body = <ConnectorNotice loading>{t(($) => $.tab_body.connected_apps.loading)}</ConnectorNotice>;
+    } else if (query.error instanceof ApiError && query.error.status === 404) {
+      body = <ConnectorNotice>{t(($) => $.tab_body.connected_apps.not_found)}</ConnectorNotice>;
+    } else {
+      body = (
+        <ConnectorNotice>
+          <span className="flex-1">{t(($) => $.tab_body.connected_apps.load_failed)}</span>
+          <Button variant="outline" size="sm" onClick={() => void query.refetch()}>
+            {t(($) => $.tab_body.connectors.retry)}
+          </Button>
+        </ConnectorNotice>
+      );
+    }
+    return (
+      <div className="space-y-4 p-4">
+        <DialogTitle className="flex items-center gap-2 pr-8 text-title font-semibold">
+          <ConnectorLogo slug={slug} />
+          {connectorBrandName(slug)}
+        </DialogTitle>
+        {body}
+      </div>
+    );
+  }
+
+  const connectorId = app.connectorId;
   return (
-    <div className="space-y-4">
-      <div className="flex items-start gap-3">
+    <>
+      <div className="flex items-center gap-3 border-b p-4 pr-12">
         <ConnectorLogo slug={app.slug} size="md" />
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h3 className="min-w-0 truncate text-title font-semibold">{app.name}</h3>
-            <ConnectedAppStatusPill app={app} />
-          </div>
-          <p className="text-caption text-muted-foreground">{describe(app.slug)}</p>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+          <DialogTitle className="min-w-0 truncate text-title font-semibold">{app.name}</DialogTitle>
+          <ConnectedAppStatusPill app={app} />
         </div>
         {app.canAdmin && app.added && connectorId !== null ? (
           <RemoveAppButton agent={agent} wsId={wsId} app={app} connectorId={connectorId} />
         ) : null}
       </div>
-      {app.canAdmin ? (
-        <SetupNotice agent={agent} wsId={wsId} app={app} />
-      ) : (
-        <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.connected_apps.admin_only)}</p>
-      )}
-      {connectorId !== null ? (
-        <>
-          <SharedAccountCard agent={agent} wsId={wsId} app={app} connectorId={connectorId} />
-          <ScopedCard agent={agent} wsId={wsId} app={app} connectorId={connectorId} />
-          <ToolsCard wsId={wsId} app={app} connectorId={connectorId} />
-        </>
-      ) : null}
-    </div>
-  );
-}
-
-function Card({
-  id,
-  title,
-  hint,
-  children,
-}: {
-  id: string;
-  title: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="space-y-4 rounded-lg border bg-card p-4" aria-labelledby={id}>
-      <div>
-        <h4 id={id} className="text-body font-medium">
-          {title}
-        </h4>
-        {hint ? <p className="mt-1 text-caption text-muted-foreground">{hint}</p> : null}
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+        {app.canAdmin ? (
+          <SetupStep agent={agent} wsId={wsId} app={app} />
+        ) : (
+          <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.connected_apps.admin_only)}</p>
+        )}
+        {connectorId !== null ? (
+          <>
+            <SharedAccountSection agent={agent} wsId={wsId} app={app} connectorId={connectorId} />
+            <ScopedSection agent={agent} wsId={wsId} app={app} connectorId={connectorId} />
+            <ToolsSection wsId={wsId} app={app} connectorId={connectorId} />
+          </>
+        ) : null}
       </div>
-      {children}
-    </section>
+    </>
   );
 }
 
-/** The one step an admin still has to take before the app can be used:
- * add it to this agent, or turn its workspace connector back on. */
-function SetupNotice({ agent, wsId, app }: { agent: Agent; wsId: string; app: ConnectedAppDetail }) {
+/** The one step an admin still has to take before the app can be used, as
+ * one row: add it to this agent, or turn its workspace connector back on. */
+function SetupStep({ agent, wsId, app }: { agent: Agent; wsId: string; app: ConnectedAppDetail }) {
   const { t } = useT("agents");
   const add = useAddConnectedApp(wsId, agent.id);
   const patch = usePatchInternalConnector(wsId);
@@ -187,7 +171,7 @@ function SetupNotice({ agent, wsId, app }: { agent: Agent; wsId: string; app: Co
   let text: string;
   let action: React.ReactNode;
   if (!app.added) {
-    text = t(($) => $.tab_body.connected_apps.add_hint, { name: app.name });
+    text = t(($) => $.tab_body.connected_apps.add_hint);
     action = (
       <Button size="sm" onClick={() => void addApp()} disabled={add.isPending}>
         {add.isPending && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
@@ -208,7 +192,7 @@ function SetupNotice({ agent, wsId, app }: { agent: Agent; wsId: string; app: Co
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted/40 px-4 py-3">
+    <div className="flex items-center gap-3 rounded-lg bg-muted/40 px-3 py-2">
       <p className="min-w-0 flex-1 text-caption text-muted-foreground">{text}</p>
       {action}
     </div>
@@ -245,7 +229,7 @@ function RemoveAppButton({
       <Button
         size="sm"
         variant="ghost"
-        className="shrink-0 text-muted-foreground hover:text-destructive"
+        className="h-7 shrink-0 px-2 text-caption text-destructive hover:text-destructive"
         onClick={() => setConfirming(true)}
       >
         {t(($) => $.tab_body.connected_apps.remove_action)}
@@ -267,10 +251,10 @@ function RemoveAppButton({
 }
 
 // ---------------------------------------------------------------------------
-// 所有人共用（共享账号）
+// 共享账号
 // ---------------------------------------------------------------------------
 
-function SharedAccountCard({
+function SharedAccountSection({
   agent,
   wsId,
   app,
@@ -285,32 +269,19 @@ function SharedAccountCard({
   const paths = useWorkspacePaths();
   const startOAuth = useStartInternalConnectorOAuth(wsId);
   const disconnect = useDeleteInternalConnectorCredential(wsId);
+  const savePat = useSetInternalConnectorCredential(wsId);
   const patch = usePatchInternalConnector(wsId);
-  const daemonAppUrl = useConfigStore((s) => s.daemonAppUrl);
+  const handOff = useDesktopConnectHandoff();
   const [patOpen, setPatOpen] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
   useResetOnBackForwardRestore(redirecting, () => setRedirecting(false));
   const canAdmin = app.canAdmin;
   const shared = app.sharedAccount;
-  const returnPath = `${paths.agentDetail(agent.id)}?view=mcp_config&app=${encodeURIComponent(app.slug)}`;
+  const returnPath = `${paths.agentDetail(agent.id)}?view=mcp_config&${APP_PARAM}=${encodeURIComponent(app.slug)}`;
 
   const connect = async () => {
-    if (isDesktopShell()) {
-      // The start response binds the sign-in to the browser that receives
-      // it, and desktop API responses land in the app's own cookie jar. So
-      // desktop never starts the connect: it opens this page on the web in
-      // the system browser, where the admin connects (this page refetches on
-      // focus).
-      const appUrl = daemonAppUrl.trim().replace(/\/+$/, "");
-      if (!appUrl) {
-        toast.error(t(($) => $.internal_mcp.catalog.connect_on_web));
-        return;
-      }
-      openExternal(`${appUrl}${returnPath}`);
-      toast.info(t(($) => $.internal_mcp.catalog.continue_in_browser));
-      return;
-    }
+    if (handOff(returnPath)) return;
     const failed = t(($) => $.internal_mcp.catalog.connect_failed, { name: app.name });
     try {
       const url = await startOAuth.mutateAsync({ connectorId, returnTo: returnPath });
@@ -326,6 +297,17 @@ function SharedAccountCard({
           ? t(($) => $.tab_body.connected_apps.auth_unavailable_hint, { name: app.name })
           : errorMessage(error, failed),
       );
+    }
+  };
+
+  const saveToken = async (bearer: string) => {
+    try {
+      await savePat.mutateAsync({ connectorId, bearer });
+      toast.success(t(($) => $.internal_mcp.catalog.pat_saved));
+      setPatOpen(false);
+    } finally {
+      // Drop the submitted secret from the mutation state right away.
+      savePat.reset();
     }
   };
 
@@ -349,7 +331,7 @@ function SharedAccountCard({
 
   const connecting = startOAuth.isPending || redirecting;
   // An operator-managed deployment credential: DELETE .../credential cannot
-  // remove it, so the page offers no disconnect.
+  // remove it, so there is no disconnect.
   const fromEnvironment = shared.connected && shared.source === "environment";
   // Turning it on needs a usable shared account; turning it off never does.
   const globalBlocked = !app.globalEnabled && !shared.connected;
@@ -361,39 +343,28 @@ function SharedAccountCard({
     );
   } else if (app.globalEnabled && !shared.connected) {
     globalNote = (
-      <p className="text-caption text-warning">
-        {t(($) => $.tab_body.connected_apps.global_no_account, { name: app.name })}
-      </p>
+      <p className="text-caption text-warning">{t(($) => $.tab_body.connected_apps.global_no_account)}</p>
     );
   } else if (app.globalEnabled && app.tools.allowed === 0) {
     // The runtime mounts an app only with at least one allowed tool.
-    globalNote = (
-      <p className="text-caption text-warning">
-        {t(($) => $.tab_body.connected_apps.global_no_tools, { name: app.name })}
-      </p>
-    );
+    globalNote = <p className="text-caption text-warning">{t(($) => $.tab_body.connected_apps.global_no_tools)}</p>;
   }
 
+  const status = shared.connected
+    ? shared.account
+      ? t(($) => $.tab_body.connected_apps.shared_connected_as, { account: shared.account })
+      : t(($) => $.tab_body.connected_apps.shared_connected)
+    : t(($) => $.tab_body.connected_apps.shared_none);
+
   return (
-    <Card
-      id={`app-shared-${app.slug}`}
-      title={t(($) => $.tab_body.connected_apps.section_shared)}
-      hint={t(($) => $.tab_body.connected_apps.shared_hint, { name: app.name })}
-    >
-      <div className="space-y-3">
-        <p className="text-caption">
-          {shared.connected ? (
-            <span className="text-foreground">
-              {shared.account
-                ? t(($) => $.tab_body.connected_apps.shared_connected_as, { account: shared.account })
-                : t(($) => $.tab_body.connected_apps.shared_connected)}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">{t(($) => $.tab_body.connected_apps.shared_none)}</span>
-          )}
-        </p>
+    <DialogSection id={`app-shared-${app.slug}`} title={t(($) => $.tab_body.connected_apps.section_shared)}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={shared.connected ? "text-body" : "text-body text-muted-foreground"}>{status}</span>
+        {fromEnvironment ? (
+          <span className="text-caption text-muted-foreground">{t(($) => $.tab_body.connected_apps.shared_env)}</span>
+        ) : null}
         {canAdmin ? (
-          <div className="flex flex-wrap gap-2">
+          <span className="ml-auto flex flex-wrap gap-1.5">
             {app.oauthAvailable ? (
               <Button
                 size="sm"
@@ -430,41 +401,36 @@ function SharedAccountCard({
                 {t(($) => $.tab_body.connected_apps.disconnect)}
               </Button>
             ) : null}
-          </div>
-        ) : null}
-        {fromEnvironment ? (
-          <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.connected_apps.shared_env)}</p>
-        ) : null}
-        {!app.oauthAvailable ? (
-          <p className="text-caption text-muted-foreground">
-            {app.allowsPat
-              ? t(($) => $.tab_body.connected_apps.auth_pat_only, { name: app.name })
-              : t(($) => $.tab_body.connected_apps.auth_unavailable_hint, { name: app.name })}
-          </p>
-        ) : null}
-        {app.installUrl ? <InstallHint url={app.installUrl} /> : null}
-        {patOpen ? (
-          <SharedTokenForm
-            wsId={wsId}
-            connectorId={connectorId}
-            appName={app.name}
-            onClose={() => setPatOpen(false)}
-          />
+          </span>
         ) : null}
       </div>
-
-      <div className="border-t pt-4">
-        <SwitchRow
-          id={`app-global-${app.slug}`}
-          label={t(($) => $.tab_body.connected_apps.global_label)}
-          hint={t(($) => $.tab_body.connected_apps.global_hint, { name: app.name })}
-          note={globalNote}
-          checked={app.globalEnabled}
-          disabled={!canAdmin || globalBlocked}
-          pending={patch.isPending}
-          onCheckedChange={(next) => void toggleGlobal(next)}
+      {!app.oauthAvailable ? (
+        <p className="text-caption text-muted-foreground">
+          {app.allowsPat
+            ? t(($) => $.tab_body.connected_apps.auth_pat_only, { name: app.name })
+            : t(($) => $.tab_body.connected_apps.auth_unavailable_hint, { name: app.name })}
+        </p>
+      ) : null}
+      {app.installUrl ? <InstallLink url={app.installUrl} /> : null}
+      {patOpen ? (
+        <TokenForm
+          inputId={`connector-pat-${connectorId}`}
+          label={t(($) => $.internal_mcp.catalog.pat_label, { name: app.name })}
+          placeholder={t(($) => $.internal_mcp.catalog.pat_placeholder)}
+          pending={savePat.isPending}
+          onSave={saveToken}
+          onCancel={() => setPatOpen(false)}
         />
-      </div>
+      ) : null}
+      <SwitchRow
+        id={`app-global-${app.slug}`}
+        label={t(($) => $.tab_body.connected_apps.global_label)}
+        note={globalNote}
+        checked={app.globalEnabled}
+        disabled={!canAdmin || globalBlocked}
+        pending={patch.isPending}
+        onCheckedChange={(next) => void toggleGlobal(next)}
+      />
 
       <ConfirmDialog
         open={confirmDisconnect}
@@ -475,116 +441,15 @@ function SharedAccountCard({
         pending={disconnect.isPending}
         onConfirm={() => void doDisconnect()}
       />
-    </Card>
-  );
-}
-
-/** Provider page where users grant the app access to their resources
- * (GitHub App installation). */
-function InstallHint({ url }: { url: string }) {
-  const { t } = useT("agents");
-  return (
-    <p className="text-caption text-muted-foreground">
-      {t(($) => $.internal_mcp.catalog.install_hint)}{" "}
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center gap-1 font-medium text-foreground underline-offset-4 hover:underline"
-        onClick={(event) => {
-          if (!isDesktopShell()) return;
-          event.preventDefault();
-          openExternal(url);
-        }}
-      >
-        {t(($) => $.internal_mcp.catalog.install_link)}
-        <ExternalLink className="size-3" aria-hidden="true" />
-      </a>
-    </p>
-  );
-}
-
-function SharedTokenForm({
-  wsId,
-  connectorId,
-  appName,
-  onClose,
-}: {
-  wsId: string;
-  connectorId: string;
-  appName: string;
-  onClose: () => void;
-}) {
-  const { t } = useT("agents");
-  const save = useSetInternalConnectorCredential(wsId);
-  const [token, setToken] = useState("");
-  const [error, setError] = useState("");
-  const inputId = `connector-pat-${connectorId}`;
-
-  async function submit() {
-    const value = token.trim();
-    if (!isValidBearer(value)) {
-      setError(t(($) => $.internal_mcp.catalog.pat_invalid));
-      return;
-    }
-    setError("");
-    try {
-      await save.mutateAsync({ connectorId, bearer: value });
-      setToken("");
-      toast.success(t(($) => $.internal_mcp.catalog.pat_saved));
-      onClose();
-    } catch (e) {
-      setError(errorMessage(e, t(($) => $.internal_mcp.catalog.pat_failed)));
-    } finally {
-      // Drop the submitted secret from the mutation state right away.
-      save.reset();
-    }
-  }
-
-  return (
-    <div className="space-y-2 rounded-lg border p-4">
-      <label htmlFor={inputId} className="block text-label font-medium">
-        {t(($) => $.internal_mcp.catalog.pat_label, { name: appName })}
-      </label>
-      <Input
-        id={inputId}
-        type="password"
-        autoComplete="off"
-        autoCapitalize="off"
-        spellCheck={false}
-        maxLength={MAX_BEARER_LENGTH}
-        value={token}
-        aria-invalid={error ? true : undefined}
-        placeholder={t(($) => $.internal_mcp.catalog.pat_placeholder)}
-        onChange={(event) => {
-          setToken(event.target.value);
-          setError("");
-        }}
-      />
-      <p
-        className={error ? "text-caption text-destructive" : "text-caption text-muted-foreground"}
-        role={error ? "alert" : undefined}
-      >
-        {error || t(($) => $.internal_mcp.catalog.pat_hint)}
-      </p>
-      <div className="flex flex-wrap justify-end gap-2">
-        <Button variant="ghost" size="sm" onClick={onClose} disabled={save.isPending}>
-          {t(($) => $.tab_body.connectors.cancel)}
-        </Button>
-        <Button size="sm" onClick={() => void submit()} disabled={save.isPending || !token.trim()}>
-          {save.isPending && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
-          {t(($) => $.internal_mcp.catalog.save)}
-        </Button>
-      </div>
-    </div>
+    </DialogSection>
   );
 }
 
 // ---------------------------------------------------------------------------
-// 群聊和个人自己连接
+// 群聊和个人
 // ---------------------------------------------------------------------------
 
-function ScopedCard({
+function ScopedSection({
   agent,
   wsId,
   app,
@@ -617,16 +482,13 @@ function ScopedCard({
   };
 
   return (
-    <Card id={`app-scoped-${app.slug}`} title={t(($) => $.tab_body.connected_apps.section_scoped)}>
+    <DialogSection id={`app-scoped-${app.slug}`} title={t(($) => $.tab_body.connected_apps.section_scoped)}>
       <SwitchRow
         id={`app-offer-${app.slug}`}
         label={t(($) => $.tab_body.connected_apps.offer_label)}
-        hint={t(($) => $.tab_body.connected_apps.offer_hint, { name: app.name })}
         note={
           app.offered && !app.oauthAvailable && !app.allowsPat ? (
-            <p className="text-caption text-warning">
-              {t(($) => $.tab_body.connected_apps.offer_no_auth, { name: app.name })}
-            </p>
+            <p className="text-caption text-warning">{t(($) => $.tab_body.connected_apps.offer_no_auth)}</p>
           ) : null
         }
         checked={app.offered}
@@ -634,17 +496,27 @@ function ScopedCard({
         pending={setOffer.isPending}
         onCheckedChange={toggle}
       />
-
-      <UsageList
-        title={t(($) => $.tab_body.connected_apps.scenes_title)}
-        empty={t(($) => $.tab_body.connected_apps.scenes_empty, { name: app.name })}
-        items={app.scenes.map((scene) => ({ key: scene.sceneKey, node: <SceneUsageRow scene={scene} /> }))}
-      />
-      <UsageList
-        title={t(($) => $.tab_body.connected_apps.persons_title)}
-        empty={t(($) => $.tab_body.connected_apps.persons_empty, { name: app.name })}
-        items={app.persons.map((person) => ({ key: person.scopeKey, node: <PersonUsageRow person={person} /> }))}
-      />
+      {app.scenes.length === 0 && app.persons.length === 0 ? (
+        <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.connected_apps.usage_none)}</p>
+      ) : (
+        <>
+          {app.scenes.length > 0 ? (
+            <UsageList
+              title={t(($) => $.tab_body.connected_apps.scenes_title)}
+              items={app.scenes.map((scene) => ({ key: scene.sceneKey, node: <SceneUsageRow scene={scene} /> }))}
+            />
+          ) : null}
+          {app.persons.length > 0 ? (
+            <UsageList
+              title={t(($) => $.tab_body.connected_apps.persons_title)}
+              items={app.persons.map((person) => ({
+                key: person.scopeKey,
+                node: <PersonUsageRow person={person} />,
+              }))}
+            />
+          ) : null}
+        </>
+      )}
 
       <ConfirmDialog
         open={confirmOff}
@@ -660,51 +532,31 @@ function ScopedCard({
           void save(false);
         }}
       />
-    </Card>
+    </DialogSection>
   );
 }
 
-function UsageList({
-  title,
-  empty,
-  items,
-}: {
-  title: string;
-  empty: string;
-  items: { key: string; node: React.ReactNode }[];
-}) {
+function UsageList({ title, items }: { title: string; items: { key: string; node: React.ReactNode }[] }) {
   return (
-    <div className="space-y-1.5">
-      <h5 className="text-caption font-medium text-muted-foreground">{title}</h5>
-      {items.length === 0 ? (
-        <p className="rounded-md border border-dashed px-3 py-3 text-caption text-muted-foreground">{empty}</p>
-      ) : (
-        <ul className="max-h-80 divide-y overflow-y-auto rounded-md border">
-          {items.map((item) => (
-            <li key={item.key} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5">
-              {item.node}
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="space-y-1">
+      <h4 className="text-caption text-muted-foreground">{title}</h4>
+      <ul className="max-h-60 divide-y overflow-y-auto rounded-md border">
+        {items.map((item) => (
+          <li key={item.key} className="flex items-center gap-2 px-3 py-1.5">
+            {item.node}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
 
 /** 已开启 (an enabled binding) and 已连接 (a stored credential) are separate
  * facts and shown separately. */
-function UsageBadges({
-  enabled,
-  connected,
-  account,
-}: {
-  enabled: boolean;
-  connected: boolean;
-  account: string;
-}) {
+function UsageBadges({ enabled, connected, account }: { enabled: boolean; connected: boolean; account: string }) {
   const { t } = useT("agents");
   return (
-    <span className="flex flex-wrap items-center gap-1.5">
+    <span className="flex shrink-0 flex-wrap items-center gap-1">
       <StatusPill tone={enabled ? "success" : "muted"}>
         {enabled
           ? t(($) => $.tab_body.connected_apps.usage_enabled)
@@ -729,11 +581,9 @@ function SceneUsageRow({ scene }: { scene: ConnectedAppSceneUsage }) {
     (scene.kind === "dm" ? t(($) => $.context_config.scene_untitled_dm) : t(($) => $.context_config.scene_untitled));
   return (
     <>
-      <span className="flex min-w-0 flex-1 items-center gap-2">
-        <Badge variant="outline" className="shrink-0 text-micro">
-          {kind}
-        </Badge>
-        <span className="min-w-0 truncate text-body">{title}</span>
+      <span className="min-w-0 flex-1 truncate text-body">
+        <span className="text-muted-foreground">{kind} · </span>
+        {title}
       </span>
       <UsageBadges enabled={scene.enabled} connected={scene.connected} account={scene.account} />
     </>
@@ -747,14 +597,12 @@ function PersonUsageRow({ person }: { person: ConnectedAppPersonUsage }) {
       <span className="min-w-0 flex-1 truncate text-body">
         {person.title || t(($) => $.tab_body.connected_apps.person_untitled)}
       </span>
-      <span className="flex flex-wrap items-center gap-1.5">
-        <UsageBadges enabled={person.enabled} connected={person.connected} account={person.account} />
-        {person.shareInGroups ? (
-          <Badge variant="secondary" className="text-micro">
-            {t(($) => $.tab_body.connected_apps.usage_share_in_groups)}
-          </Badge>
-        ) : null}
-      </span>
+      {person.shareInGroups ? (
+        <Badge variant="secondary" className="shrink-0 text-micro">
+          {t(($) => $.tab_body.connected_apps.usage_share_in_groups)}
+        </Badge>
+      ) : null}
+      <UsageBadges enabled={person.enabled} connected={person.connected} account={person.account} />
     </>
   );
 }
@@ -763,7 +611,7 @@ function PersonUsageRow({ person }: { person: ConnectedAppPersonUsage }) {
 // 工具
 // ---------------------------------------------------------------------------
 
-function ToolsCard({ wsId, app, connectorId }: { wsId: string; app: ConnectedAppDetail; connectorId: string }) {
+function ToolsSection({ wsId, app, connectorId }: { wsId: string; app: ConnectedAppDetail; connectorId: string }) {
   const { t } = useT("agents");
   const refresh = useRefreshInternalConnectorTools(wsId);
   const patch = usePatchInternalConnector(wsId);
@@ -797,23 +645,20 @@ function ToolsCard({ wsId, app, connectorId }: { wsId: string; app: ConnectedApp
   };
 
   return (
-    <Card
-      id={`app-tools-${app.slug}`}
-      title={t(($) => $.tab_body.connected_apps.section_tools)}
-      // The tools and the write switch belong to the workspace connector, so
-      // they change for every agent that uses the app.
-      hint={t(($) => $.tab_body.connected_apps.tools_scope_hint, { name: app.name })}
-    >
+    <DialogSection id={`app-tools-${app.slug}`} title={t(($) => $.tab_body.connected_apps.section_tools)}>
       {app.toolList.length === 0 ? (
-        <p className="rounded-md border border-dashed px-3 py-3 text-caption text-muted-foreground">
+        <p className="text-caption text-muted-foreground">
           {hasConnectedAccount(app)
             ? t(($) => $.tab_body.connected_apps.tools_refresh_needed)
             : t(($) => $.tab_body.connected_apps.tools_pending)}
         </p>
       ) : (
-        <ul className="flex max-h-72 flex-wrap gap-1.5 overflow-y-auto" aria-label={t(($) => $.tab_body.connected_apps.section_tools)}>
+        <ul
+          className="flex max-h-48 flex-wrap gap-1 overflow-y-auto"
+          aria-label={t(($) => $.tab_body.connected_apps.section_tools)}
+        >
           {app.toolList.map((tool) => (
-            <li key={tool.name} className="inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1">
+            <li key={tool.name} className="inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5">
               <span
                 className={
                   tool.allowed
@@ -836,25 +681,29 @@ function ToolsCard({ wsId, app, connectorId }: { wsId: string; app: ConnectedApp
       <SwitchRow
         id={`app-write-${app.slug}`}
         label={t(($) => $.internal_mcp.catalog.write_label)}
-        hint={t(($) => $.internal_mcp.catalog.write_hint)}
         checked={app.writeEnabled}
         disabled={!app.canAdmin}
         pending={patch.isPending}
         onCheckedChange={(next) => void toggleWrite(next)}
       />
-      {app.canAdmin ? (
-        <div>
-          {/* The server lists tools with the shared account or, without one,
-              with any group's or person's connected account; it reports when
-              nobody is connected. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* The tools and the write switch belong to the workspace connector,
+            so they change for every agent that uses the app. */}
+        <p className="min-w-0 flex-1 text-caption text-muted-foreground">
+          {t(($) => $.tab_body.connected_apps.tools_scope_hint)}
+        </p>
+        {app.canAdmin ? (
+          // The server lists tools with the shared account or, without one,
+          // with any group's or person's connected account; it reports when
+          // nobody is connected.
           <Button size="sm" variant="outline" disabled={refresh.isPending} onClick={() => void refreshTools()}>
             {refresh.isPending && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
             {refresh.isPending
               ? t(($) => $.internal_mcp.catalog.refreshing)
               : t(($) => $.internal_mcp.catalog.refresh_tools)}
           </Button>
-        </div>
-      ) : null}
-    </Card>
+        ) : null}
+      </div>
+    </DialogSection>
   );
 }

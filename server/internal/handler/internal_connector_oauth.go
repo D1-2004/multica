@@ -10,12 +10,18 @@ package handler
 //     browser redirect.
 //
 // DCR apps redirect to <app origin>/api/connector-oauth/callback and reuse
-// one dynamic client registration per connector (connector_oauth_client).
+// one dynamic client registration per connector (connector_oauth_client),
+// registered with the configured client_name
+// (MULTICA_CONNECTOR_OAUTH_CLIENT_NAME, default "Multica").
 // GitHub uses the deployment's GitHub App and its registered callback
 // <githubFrontend()>/api/github/authorize: its states carry the
 // connectorOAuthStatePrefix, and GitHubAuthorizeCallback hands those to
 // completeConnectorOAuth (Via connectorOAuthViaGitHub). States are 32 random
 // bytes, stored only as SHA-256 hashes, single use, valid for 10 minutes.
+// MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN moves both redirect URIs to another
+// deployment's origin, which forwards the callbacks back
+// (internal_connector_oauth_forward.go); the state then also names this
+// deployment's origin.
 //
 // Browser binding: a state only completes in the browser that started it.
 // The start response sets an HttpOnly, SameSite=Lax cookie holding a random
@@ -45,7 +51,10 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
@@ -118,6 +127,12 @@ type connectorOAuthScope struct {
 	AgentID  string
 	OrgID    string
 	ScopeKey string
+	// SceneKey is the 1:1 chat scene the caller asked to connect when the
+	// scope is that scene's person (contextCapResolveScope maps a dm scene
+	// to its person); "" otherwise. Authority is re-checked for that
+	// request, and the credential lands in the person scope. It travels in
+	// the sealed part of the state.
+	SceneKey string
 }
 
 // connectorOAuthStart is the input of startConnectorOAuth.
@@ -207,31 +222,49 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	if err := h.connectorOAuthDeploymentError(app); err != nil {
 		return connectorOAuthStarted{}, err
 	}
-	origin := h.connectorOAuthAppOrigin()
 	returnTo, err := h.connectorOAuthReturnTo(ctx, in.ReturnTo, scope)
 	if err != nil {
 		return connectorOAuthStarted{}, oauthStartError(http.StatusBadRequest, "invalid_return_to", "return_to must be on the app origin")
 	}
+	via := connectorOAuthViaDCR
+	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp {
+		via = connectorOAuthViaGitHub
+	}
+	// The provider redirects to the configured callback origin
+	// (MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN) or to this deployment. When
+	// that is another deployment, the state names this deployment's origin
+	// so the other one forwards the callback here, where the binding cookie
+	// lives (internal_connector_oauth_forward.go).
+	homeOrigin, _ := h.connectorOAuthCallbackTarget(via)
+	redirectOrigin := h.connectorOAuthRedirectOrigin(via)
 	state, err := randomOAuthValue()
 	if err != nil {
 		return connectorOAuthStarted{}, internalErr
 	}
 	state = connectorOAuthStatePrefix + state
+	if redirectOrigin != homeOrigin {
+		home, ok := normalizeConnectorOAuthOrigin(homeOrigin)
+		if !ok {
+			return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, "app_origin_missing", "the app origin is not configured")
+		}
+		state += connectorOAuthStateHomeSeparator + encodeConnectorOAuthStateHome(home)
+	}
 	verifier, err := randomOAuthValue()
 	if err != nil {
 		return connectorOAuthStarted{}, internalErr
 	}
-	payload := connectorSealedVerifier{StateHash: hashConnectorOAuthState(state), ConnectorID: scope.ConnectorID, Verifier: verifier}
+	payload := connectorSealedVerifier{StateHash: hashConnectorOAuthState(state), ConnectorID: scope.ConnectorID, Verifier: verifier, SceneKey: scope.SceneKey}
 	var authorizeURL string
 	switch app.AuthKind {
 	case connectorcatalog.AuthOAuthGitHubApp:
 		payload.Via, payload.ClientID = connectorOAuthViaGitHub, strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID"))
-		authorizeURL, err = githubConnectorAuthorizeURL(app, h.githubFrontend()+connectorOAuthGitHubCallback, state, verifier)
+		payload.RedirectURI = redirectOrigin + connectorOAuthGitHubCallback
+		authorizeURL, err = githubConnectorAuthorizeURL(app, payload.RedirectURI, state, verifier)
 	case connectorcatalog.AuthOAuthDCR:
 		var record connectorOAuthClientRecord
-		record, err = h.ensureConnectorOAuthClient(ctx, c, app, origin+connectorOAuthCallbackPath)
+		record, err = h.ensureConnectorOAuthClient(ctx, c, app, redirectOrigin+connectorOAuthCallbackPath, connectorOAuthClientName())
 		if err == nil {
-			payload.Via, payload.ClientID = connectorOAuthViaDCR, record.Registration.ClientID
+			payload.Via, payload.ClientID, payload.RedirectURI = connectorOAuthViaDCR, record.Registration.ClientID, record.RedirectURI
 			authorizeURL, err = remotemcp.BuildAuthorizationURL(remotemcp.OAuthMetadata{
 				ResourceEndpoint: record.Resource, AuthorizationEndpoint: record.AuthorizationEndpoint,
 			}, record.Registration, record.RedirectURI, state, verifier, record.Scope)
@@ -248,10 +281,13 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 		return connectorOAuthStarted{}, internalErr
 	}
 	payload.BrowserHash = hashConnectorOAuthState(nonce)
-	callbackOrigin, callbackPath := h.connectorOAuthCallbackTarget(payload.Via)
+	// The cookie belongs to this deployment's own origin (where the start
+	// response is served and a forwarded callback lands), never to the
+	// callback origin override.
+	_, callbackPath := h.connectorOAuthCallbackTarget(payload.Via)
 	started := connectorOAuthStarted{
 		AuthorizeURL: authorizeURL,
-		Cookie:       connectorOAuthBrowserCookie(payload.StateHash, nonce, callbackOrigin, callbackPath),
+		Cookie:       connectorOAuthBrowserCookie(payload.StateHash, nonce, homeOrigin, callbackPath),
 	}
 	if err := h.insertConnectorOAuthState(ctx, payload, scope, returnTo); err != nil {
 		slog.ErrorContext(ctx, "official app OAuth state insert failed", "connector_id", c.ID, "error", err)
@@ -262,15 +298,76 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	return started, nil
 }
 
-// connectorOAuthCallbackTarget returns the origin and path the provider
-// redirects a connect of the given route to: the GitHub App's registered
+// connectorOAuthCallbackTarget returns this deployment's own origin and the
+// path of the callback of a connect of the given route: the GitHub App
 // callback on FRONTEND_ORIGIN, or the DCR callback on the app origin. The
-// browser binding cookie must live there.
+// start response is served there, so the browser binding cookie lives there,
+// and a callback forwarded from the callback origin override lands there.
 func (h *Handler) connectorOAuthCallbackTarget(via string) (string, string) {
 	if via == connectorOAuthViaGitHub {
 		return h.githubFrontend(), connectorOAuthGitHubCallback
 	}
 	return h.connectorOAuthAppOrigin(), connectorOAuthCallbackPath
+}
+
+// connectorOAuthCallbackOriginEnv optionally moves every connector OAuth
+// redirect URI to another deployment's origin (pre-release completing its
+// provider callbacks through production). Unset keeps this deployment's own
+// origin.
+const connectorOAuthCallbackOriginEnv = "MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN"
+
+// connectorOAuthRedirectOrigin is the origin of the redirect URI a connect
+// of the given route sends to the provider (and exchanges its code with):
+// MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN when it is set to a valid origin,
+// else this deployment's own callback origin (connectorOAuthCallbackTarget).
+// Changing it changes the DCR redirect URI, so the next connect registers a
+// new client (ensureConnectorOAuthClient).
+func (h *Handler) connectorOAuthRedirectOrigin(via string) string {
+	if override, ok := connectorOAuthCallbackOriginOverride(); ok {
+		return override
+	}
+	origin, _ := h.connectorOAuthCallbackTarget(via)
+	return origin
+}
+
+// connectorOAuthCallbackOriginOverride returns the normalized callback
+// origin override, or false when it is unset or not an http(s) origin (a
+// malformed value is ignored with a warning rather than sending providers a
+// broken redirect URI).
+func connectorOAuthCallbackOriginOverride() (string, bool) {
+	raw := strings.TrimSpace(os.Getenv(connectorOAuthCallbackOriginEnv))
+	if raw == "" {
+		return "", false
+	}
+	origin, ok := normalizeConnectorOAuthOrigin(raw)
+	if !ok {
+		connectorOAuthBadCallbackOriginOnce.Do(func() {
+			slog.Warn("ignoring malformed connector OAuth callback origin", "env", connectorOAuthCallbackOriginEnv)
+		})
+		return "", false
+	}
+	return origin, true
+}
+
+var connectorOAuthBadCallbackOriginOnce sync.Once
+
+// connectorOAuthClientNameEnv names the OAuth client on provider consent
+// screens (the dynamic client registration's client_name).
+const connectorOAuthClientNameEnv = "MULTICA_CONNECTOR_OAUTH_CLIENT_NAME"
+
+// connectorOAuthDefaultClientName is the client_name used before it was
+// configurable; registrations stored without a name were made with it.
+const connectorOAuthDefaultClientName = "Multica"
+
+// connectorOAuthClientName is the configured DCR client_name
+// (MULTICA_CONNECTOR_OAUTH_CLIENT_NAME), or "Multica" when it is unset or
+// unusable (longer than 100 characters, or containing control characters).
+func connectorOAuthClientName() string {
+	name := strings.TrimSpace(os.Getenv(connectorOAuthClientNameEnv))
+	if name == "" || len([]rune(name)) > 100 || !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return connectorOAuthDefaultClientName
+	}
+	return name
 }
 
 // connectorOAuthCookieName is the name of the browser binding cookie of the
@@ -307,7 +404,7 @@ func normalizeConnectorOAuthScope(in connectorOAuthScope) (connectorOAuthScope, 
 	}
 	switch out.ScopeType {
 	case connectorOAuthScopeWorkspace:
-		out.AgentID, out.OrgID, out.ScopeKey = "", "", ""
+		out.AgentID, out.OrgID, out.ScopeKey, out.SceneKey = "", "", "", ""
 	case contextcap.ScopeScene, contextcap.ScopePerson:
 		id, err := canonicalOAuthUUID(out.AgentID)
 		if err != nil {
@@ -316,6 +413,9 @@ func normalizeConnectorOAuthScope(in connectorOAuthScope) (connectorOAuthScope, 
 		out.AgentID = id
 		if !contextcap.ValidScopeKey(out.ScopeType, out.ScopeKey) {
 			return out, errors.New("invalid scope key")
+		}
+		if out.SceneKey != "" && (out.ScopeType != contextcap.ScopePerson || !contextcap.ValidOpenConversationID(out.SceneKey)) {
+			return out, errors.New("invalid scene key")
 		}
 	default:
 		return out, errors.New("invalid scope type")
@@ -333,12 +433,15 @@ func canonicalOAuthUUID(raw string) (string, error) {
 
 // authorizeConnectorOAuthScope re-checks, at start and again at callback,
 // that scope.UserID may store a credential for the scope: a workspace
-// owner/admin for the workspace scope; for a scene or person scope a live
-// grant under the agent's current org (for a scene, managing the agent and
-// the scene being one the agent has seen also qualifies, as on the other
-// mobile routes) and a connector that is enabled and offered to the agent
-// or, for a person scope, globally granted to it (the PUT credential rule,
-// see contextCapCredentialConnector). Errors are *connectorOAuthError.
+// owner/admin for the workspace scope; for a scene or person scope the
+// mobile routes' authority (contextCapResolveScope, for the request the
+// caller made: scope.SceneKey when a 1:1 chat scene was asked for) must
+// still resolve to exactly this scope and allow connecting there (a live
+// grant, or managing the agent for a group scene the agent has seen; never a
+// manager for a person), and the connector must be enabled and offered to
+// the agent or, for a person scope, globally granted to it (the PUT
+// credential rule, see contextCapCredentialConnector). Errors are
+// *connectorOAuthError.
 func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connectorOAuthScope, c internalConnector) error {
 	forbidden := oauthStartError(http.StatusForbidden, connectOAuthErrForbidden, "you are not allowed to connect an account for this scope")
 	if scope.ScopeType == connectorOAuthScopeWorkspace {
@@ -355,9 +458,16 @@ func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connec
 	if err != nil {
 		return oauthStartError(http.StatusInternalServerError, "internal", "agent lookup failed")
 	}
-	// The mobile routes' authority (contextCapResolveScope); a malformed
-	// scope and a manager's unknown scene are forbidden here.
-	if _, err := h.contextCapResolveScope(ctx, agent, scope.UserID, scope.ScopeType, scope.ScopeKey); err != nil {
+	// The mobile routes' authority (contextCapResolveScope) for the request
+	// the caller made; a malformed scope and a manager's unknown scene are
+	// forbidden here, and so is a request that no longer resolves to this
+	// scope (a 1:1 chat now bound to someone else) or may not connect.
+	requestType, requestKey := scope.ScopeType, scope.ScopeKey
+	if scope.SceneKey != "" {
+		requestType, requestKey = contextcap.ScopeScene, scope.SceneKey
+	}
+	resolved, err := h.contextCapResolveScope(ctx, agent, scope.UserID, requestType, requestKey)
+	if err != nil {
 		switch {
 		case errors.Is(err, errContextCapForbidden), errors.Is(err, contextcap.ErrInvalidInput), errors.Is(err, contextcap.ErrNotFound):
 			return forbidden
@@ -366,6 +476,9 @@ func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connec
 		default:
 			return oauthStartError(http.StatusInternalServerError, "internal", "grant lookup failed")
 		}
+	}
+	if resolved.PersonUnknown || !resolved.CanConnect || resolved.ScopeType != scope.ScopeType || resolved.ScopeKey != scope.ScopeKey {
+		return forbidden
 	}
 	if !c.Enabled {
 		return forbidden
@@ -461,17 +574,6 @@ func hashConnectorOAuthState(state string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// validConnectorOAuthState accepts exactly the prefix plus 43 base64url
-// characters minted by startConnectorOAuth.
-func validConnectorOAuthState(state string) bool {
-	body, ok := strings.CutPrefix(state, connectorOAuthStatePrefix)
-	if !ok || len(body) != 43 {
-		return false
-	}
-	_, err := base64.RawURLEncoding.DecodeString(body)
-	return err == nil
-}
-
 // isConnectorOAuthState reports whether a GitHub callback state belongs to
 // the connector flow (GitHubAuthorizeCallback dispatches on it).
 func isConnectorOAuthState(state string) bool {
@@ -509,8 +611,17 @@ type connectorSealedVerifier struct {
 	// ClientID is the OAuth client the authorize URL was built for; the code
 	// is exchanged with that client.
 	ClientID string `json:"client_id"`
+	// RedirectURI is the redirect URI the authorize URL carried; the code
+	// is exchanged with it (providers require the same value), even when
+	// MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN changed in between. Empty in
+	// states started by an older binary, which exchange with the current
+	// one.
+	RedirectURI string `json:"redirect_uri,omitempty"`
 	// BrowserHash is the SHA-256 (hex) of the browser binding nonce.
 	BrowserHash string `json:"browser_hash,omitempty"`
+	// SceneKey is connectorOAuthScope.SceneKey: the 1:1 chat scene the
+	// connect was requested for when the state's scope is its person.
+	SceneKey string `json:"scene_key,omitempty"`
 }
 
 func (h *Handler) sealConnectorOAuthVerifier(payload connectorSealedVerifier) ([]byte, error) {
@@ -619,6 +730,10 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	if !ok || in.Via != wantVia || verifier.Via != wantVia {
 		return fail(connectOAuthErrInvalidState)
 	}
+	scope.SceneKey = verifier.SceneKey
+	if _, err := normalizeConnectorOAuthScope(scope); err != nil {
+		return fail(connectOAuthErrInvalidState)
+	}
 	// Only the browser that started the connect may complete it: the code
 	// must never land in another scope.
 	if verifier.BrowserHash == "" || in.BrowserNonce == "" ||
@@ -639,6 +754,9 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	if err != nil {
 		slog.WarnContext(ctx, "official app OAuth token endpoint unavailable", "connector_id", c.ID, "catalog_slug", app.Slug, "error", err)
 		return fail(connectOAuthErrExchangeFailed)
+	}
+	if verifier.RedirectURI != "" {
+		endpoint.redirectURI = verifier.RedirectURI
 	}
 	exchangeCtx, cancel := context.WithTimeout(ctx, connectorOAuthHTTPTimeout)
 	defer cancel()
@@ -753,7 +871,21 @@ type connectorOAuthRegistration struct {
 	TokenEndpoint         string
 	Resource              string
 	RedirectURI           string
-	Registration          remotemcp.OAuthClientRegistration
+	// ClientName is the client_name it was registered with ("" for
+	// registrations made before the name was recorded: "Multica").
+	ClientName   string
+	Registration remotemcp.OAuthClientRegistration
+}
+
+// registeredName is the client_name the registration was made with.
+func (r connectorOAuthRegistration) registeredName() string {
+	return firstNonEmpty(r.ClientName, connectorOAuthDefaultClientName)
+}
+
+// serves reports whether the registration was made for redirectURI and
+// clientName, so a connect can use it without registering again.
+func (r connectorOAuthRegistration) serves(redirectURI, clientName string) bool {
+	return r.RedirectURI == redirectURI && r.registeredName() == clientName
 }
 
 // connectorOAuthClientRecord is one row of connector_oauth_client with its
@@ -767,15 +899,18 @@ type connectorOAuthClientRecord struct {
 	Resource              string
 	Scope                 string
 	RedirectURI           string
-	Registration          remotemcp.OAuthClientRegistration
-	Previous              []connectorOAuthRegistration
+	// ClientName is the client_name of the current registration ("" when
+	// it was made before the name was recorded: "Multica").
+	ClientName   string
+	Registration remotemcp.OAuthClientRegistration
+	Previous     []connectorOAuthRegistration
 }
 
 // current returns the record's current registration.
 func (r connectorOAuthClientRecord) current() connectorOAuthRegistration {
 	return connectorOAuthRegistration{
 		AuthorizationEndpoint: r.AuthorizationEndpoint, TokenEndpoint: r.TokenEndpoint, Resource: r.Resource,
-		RedirectURI: r.RedirectURI, Registration: r.Registration,
+		RedirectURI: r.RedirectURI, ClientName: r.ClientName, Registration: r.Registration,
 	}
 }
 
@@ -800,6 +935,9 @@ type connectorSealedOAuthClient struct {
 	ClientID                string `json:"client_id"`
 	ClientSecret            string `json:"client_secret,omitempty"`
 	TokenEndpointAuthMethod string `json:"token_endpoint_auth_method"`
+	// ClientName is the client_name the current registration was made with
+	// (absent on registrations made before it was recorded: "Multica").
+	ClientName string `json:"client_name,omitempty"`
 	// Previous are the connector's earlier registrations, newest first, at
 	// most connectorOAuthClientHistory.
 	Previous []connectorSealedOAuthRegistration `json:"previous,omitempty"`
@@ -815,18 +953,21 @@ type connectorSealedOAuthRegistration struct {
 	TokenEndpoint           string `json:"token_endpoint"`
 	Resource                string `json:"resource,omitempty"`
 	RedirectURI             string `json:"redirect_uri"`
+	ClientName              string `json:"client_name,omitempty"`
 }
 
 func sealedOAuthRegistration(r connectorOAuthRegistration) connectorSealedOAuthRegistration {
 	return connectorSealedOAuthRegistration{
 		ClientID: r.Registration.ClientID, ClientSecret: r.Registration.ClientSecret, TokenEndpointAuthMethod: r.Registration.TokenEndpointAuthMethod,
 		AuthorizationEndpoint: r.AuthorizationEndpoint, TokenEndpoint: r.TokenEndpoint, Resource: r.Resource, RedirectURI: r.RedirectURI,
+		ClientName: r.ClientName,
 	}
 }
 
 func openedOAuthRegistration(s connectorSealedOAuthRegistration) connectorOAuthRegistration {
 	return connectorOAuthRegistration{
 		AuthorizationEndpoint: s.AuthorizationEndpoint, TokenEndpoint: s.TokenEndpoint, Resource: s.Resource, RedirectURI: s.RedirectURI,
+		ClientName:   s.ClientName,
 		Registration: remotemcp.OAuthClientRegistration{ClientID: s.ClientID, ClientSecret: s.ClientSecret, TokenEndpointAuthMethod: s.TokenEndpointAuthMethod},
 	}
 }
@@ -855,6 +996,7 @@ func (h *Handler) loadConnectorOAuthClientWith(ctx context.Context, q contextcap
 	out.Registration = remotemcp.OAuthClientRegistration{
 		ClientID: registration.ClientID, ClientSecret: registration.ClientSecret, TokenEndpointAuthMethod: registration.TokenEndpointAuthMethod,
 	}
+	out.ClientName = registration.ClientName
 	for _, previous := range registration.Previous {
 		if previous.ClientID != "" {
 			out.Previous = append(out.Previous, openedOAuthRegistration(previous))
@@ -864,18 +1006,20 @@ func (h *Handler) loadConnectorOAuthClientWith(ctx context.Context, q contextcap
 }
 
 // ensureConnectorOAuthClient returns the connector's DCR registration for
-// redirectURI, discovering the authorization server and registering a
+// redirectURI and clientName (the client_name providers show on their
+// consent screen), discovering the authorization server and registering a
 // client once. Registration is serialized per connector with an advisory
 // lock so concurrent starts on any replica register once.
 //
-// When the app origin (and so the redirect URI) changed, the registration
-// for the new redirect URI becomes current: a kept earlier registration for
-// that URI is promoted back, otherwise a new client is registered. The
-// replaced registration is kept (connectorOAuthClientHistory), because
-// every token it issued can only be refreshed by it; overwriting it would
-// turn each connection's next refresh into invalid_grant and delete it.
-func (h *Handler) ensureConnectorOAuthClient(ctx context.Context, c internalConnector, app connectorcatalog.App, redirectURI string) (connectorOAuthClientRecord, error) {
-	if record, err := h.loadConnectorOAuthClient(ctx, c.WorkspaceID, c.ID); err == nil && record.RedirectURI == redirectURI {
+// When the redirect URI (the app origin or the callback origin override) or
+// the configured client name changed, the registration for the new pair
+// becomes current: a kept earlier registration for that pair is promoted
+// back, otherwise a new client is registered. The replaced registration is
+// kept (connectorOAuthClientHistory), because every token it issued can only
+// be refreshed by it; overwriting it would turn each connection's next
+// refresh into invalid_grant and delete it.
+func (h *Handler) ensureConnectorOAuthClient(ctx context.Context, c internalConnector, app connectorcatalog.App, redirectURI, clientName string) (connectorOAuthClientRecord, error) {
+	if record, err := h.loadConnectorOAuthClient(ctx, c.WorkspaceID, c.ID); err == nil && record.current().serves(redirectURI, clientName) {
 		return record, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*connectorOAuthHTTPTimeout)
@@ -889,7 +1033,7 @@ func (h *Handler) ensureConnectorOAuthClient(ctx context.Context, c internalConn
 		return connectorOAuthClientRecord{}, err
 	}
 	existing, existingErr := h.loadConnectorOAuthClientWith(ctx, tx, c.WorkspaceID, c.ID)
-	if existingErr == nil && existing.RedirectURI == redirectURI {
+	if existingErr == nil && existing.current().serves(redirectURI, clientName) {
 		return existing, nil
 	}
 	var history []connectorOAuthRegistration
@@ -899,7 +1043,7 @@ func (h *Handler) ensureConnectorOAuthClient(ctx context.Context, c internalConn
 	var next connectorOAuthRegistration
 	promoted := false
 	for i, previous := range history {
-		if previous.RedirectURI == redirectURI && previous.AuthorizationEndpoint != "" && previous.TokenEndpoint != "" {
+		if previous.serves(redirectURI, clientName) && previous.AuthorizationEndpoint != "" && previous.TokenEndpoint != "" {
 			next, promoted = previous, true
 			history = append(history[:i:i], history[i+1:]...)
 			break
@@ -911,13 +1055,13 @@ func (h *Handler) ensureConnectorOAuthClient(ctx context.Context, c internalConn
 		if err != nil {
 			return connectorOAuthClientRecord{}, fmt.Errorf("discover OAuth metadata: %w", err)
 		}
-		registration, err := client.RegisterOAuthClient(ctx, metadata, redirectURI, "Multica")
+		registration, err := client.RegisterOAuthClient(ctx, metadata, redirectURI, clientName)
 		if err != nil {
 			return connectorOAuthClientRecord{}, err
 		}
 		next = connectorOAuthRegistration{
 			AuthorizationEndpoint: metadata.AuthorizationEndpoint, TokenEndpoint: metadata.TokenEndpoint,
-			Resource: metadata.ResourceEndpoint, RedirectURI: redirectURI, Registration: registration,
+			Resource: metadata.ResourceEndpoint, RedirectURI: redirectURI, ClientName: clientName, Registration: registration,
 		}
 	}
 	kept := make([]connectorOAuthRegistration, 0, connectorOAuthClientHistory)
@@ -932,7 +1076,7 @@ func (h *Handler) ensureConnectorOAuthClient(ctx context.Context, c internalConn
 	payload, err := json.Marshal(connectorSealedOAuthClient{
 		WorkspaceID: c.WorkspaceID, ConnectorID: c.ID, ClientID: next.Registration.ClientID,
 		ClientSecret: next.Registration.ClientSecret, TokenEndpointAuthMethod: next.Registration.TokenEndpointAuthMethod,
-		Previous: sealedHistory,
+		ClientName: next.registeredName(), Previous: sealedHistory,
 	})
 	if err != nil {
 		return connectorOAuthClientRecord{}, err
@@ -943,7 +1087,7 @@ func (h *Handler) ensureConnectorOAuthClient(ctx context.Context, c internalConn
 	}
 	record := connectorOAuthClientRecord{
 		AuthorizationEndpoint: next.AuthorizationEndpoint, TokenEndpoint: next.TokenEndpoint, Resource: next.Resource,
-		Scope: app.Scope, RedirectURI: redirectURI, Registration: next.Registration, Previous: kept,
+		Scope: app.Scope, RedirectURI: redirectURI, ClientName: next.registeredName(), Registration: next.Registration, Previous: kept,
 	}
 	if issuer, err := url.Parse(next.AuthorizationEndpoint); err == nil {
 		record.Issuer = issuer.Scheme + "://" + issuer.Host
@@ -963,6 +1107,7 @@ func (h *Handler) ensureConnectorOAuthClient(ctx context.Context, c internalConn
 		return connectorOAuthClientRecord{}, err
 	}
 	slog.InfoContext(ctx, "official app OAuth client registered", "connector_id", c.ID, "catalog_slug", app.Slug,
-		"token_endpoint_auth_method", next.Registration.TokenEndpointAuthMethod, "reused_previous", promoted, "kept_previous", len(kept))
+		"token_endpoint_auth_method", next.Registration.TokenEndpointAuthMethod, "client_name", next.registeredName(),
+		"reused_previous", promoted, "kept_previous", len(kept))
 	return record, nil
 }

@@ -294,6 +294,18 @@ describe("AgentOverviewPane primary navigation", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Work" }));
     expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=work");
   });
+
+  it("never carries a scene's app dialog into the connector tab", () => {
+    const { navigation } = renderPane([makeRuntime("claude")], {
+      initialView: "scenes",
+      search: { scene: "cid-1", scene_tab: "config", app: "notion" },
+    });
+    openConfiguration();
+    fireEvent.click(screen.getByRole("tab", { name: /^Connectors$/i }));
+    const urls = vi.mocked(navigation.replace).mock.calls.map(([url]) => url);
+    expect(urls.at(-1)).toBe("/acme/agents/agent-1?view=mcp_config");
+    expect(urls.some((url) => url.includes("app="))).toBe(false);
+  });
 });
 
 describe("AgentOverviewPane MCP tab visibility", () => {

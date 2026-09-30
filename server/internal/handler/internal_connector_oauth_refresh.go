@@ -306,7 +306,9 @@ func (h *Handler) connectorTokenEndpoint(ctx context.Context, c internalConnecto
 			return connectorTokenEndpointConfig{}, errConnectorOAuthClientReplaced
 		}
 		out.tokenURL = app.TokenEndpoint
-		out.redirectURI = h.githubFrontend() + connectorOAuthGitHubCallback
+		// The redirect URI the authorization was requested with (GitHub
+		// checks that it matches on the code exchange).
+		out.redirectURI = h.connectorOAuthRedirectOrigin(connectorOAuthViaGitHub) + connectorOAuthGitHubCallback
 		out.registration = remotemcp.OAuthClientRegistration{
 			ClientID:                appClientID,
 			ClientSecret:            os.Getenv("GITHUB_APP_CLIENT_SECRET"),

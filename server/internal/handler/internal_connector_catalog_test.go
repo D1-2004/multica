@@ -55,6 +55,10 @@ type fakeProvider struct {
 	lastResourceParam string
 	lastRefreshClient string
 	toolCalls         []string
+	// lastClientName and lastRegisteredRedirect are the client_name and
+	// first redirect URI of the last dynamic client registration.
+	lastClientName         string
+	lastRegisteredRedirect string
 }
 
 func newFakeProvider(t *testing.T) *fakeProvider {
@@ -72,9 +76,18 @@ func newFakeProvider(t *testing.T) *fakeProvider {
 		})
 	})
 	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			ClientName   string   `json:"client_name"`
+			RedirectURIs []string `json:"redirect_uris"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		p.mu.Lock()
 		p.registrations++
 		n := p.registrations
+		p.lastClientName = body.ClientName
+		if len(body.RedirectURIs) > 0 {
+			p.lastRegisteredRedirect = body.RedirectURIs[0]
+		}
 		p.mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"client_id": fmt.Sprintf("dcr-client-%d", n), "token_endpoint_auth_method": "none"})

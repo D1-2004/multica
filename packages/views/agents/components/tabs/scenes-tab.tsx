@@ -8,27 +8,19 @@ import {
   FileText,
   Loader2,
   MessageSquare,
-  Plug,
   RefreshCw,
   Users,
 } from "lucide-react";
-import { toast } from "sonner";
 import type { Agent } from "@multica/core/types";
 import {
   agentCoordinatorConversationsKeys,
   agentSceneMemoryDetailOptions,
 } from "@multica/core/agents";
 import {
-  agentContextCapabilitiesOptions,
   agentSceneOptions,
   agentScenesOptions,
   contextCapabilityKeys,
-  useSetAgentSceneBinding,
-  useSetAgentScenePrompt,
-  type AgentSceneBinding,
-  type AgentSceneDetail,
   type AgentSceneSummary,
-  type ContextResourceType,
   type ContextSceneKind,
 } from "@multica/core/context-capabilities";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -44,20 +36,13 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
-import { Switch } from "@multica/ui/components/ui/switch";
-import { Textarea } from "@multica/ui/components/ui/textarea";
 import { useIsCompact } from "@multica/ui/hooks/use-mobile";
 import { cn } from "@multica/ui/lib/utils";
-import { ConnectorLogo } from "../../../common/connector-logo";
 import { useNavigation } from "../../../navigation";
-import { SkillIcon } from "../../../skills/lib/skill-icon";
 import { useT, useTimeAgo } from "../../../i18n";
 import { CoordinatorConversationMessages, CoordinatorSessionsTab } from "./coordinator-sessions-tab";
-import { ConfigureLink } from "./context-offers-section";
+import { SceneConfigPanel } from "./scene-config-panel";
 import { MemoryFlagBar, SceneMemoryDetail, SceneMemoryTab } from "./scene-memory-tab";
-
-/** Server limit of a scene prompt, in characters. */
-export const SCENE_PROMPT_MAX_LENGTH = 8000;
 
 export type SceneSubTab = "inbound" | "memory" | "config";
 
@@ -150,6 +135,8 @@ export function ScenesTab({
     else params.delete("scene");
     if (sceneKey && tab !== "inbound") params.set("scene_tab", tab);
     else params.delete("scene_tab");
+    // An app dialog belongs to the scene it was opened in.
+    params.delete("app");
     const search = params.toString();
     navigation.replace(`${navigation.pathname}${search ? `?${search}` : ""}`);
   };
@@ -620,334 +607,6 @@ function SceneMemoryPanel({
     return <PanelNotice>{t(($) => $.tab_body.scenes.memory_empty)}</PanelNotice>;
   }
   return <SceneMemoryDetail agent={agent} memory={memory} canEdit={canEdit} showTitle={false} />;
-}
-
-function SceneConfigPanel({
-  agent,
-  detail,
-  canEdit,
-  onDirtyChange,
-}: {
-  agent: Agent;
-  detail: AgentSceneDetail;
-  canEdit: boolean;
-  onDirtyChange?: (dirty: boolean) => void;
-}) {
-  const { t } = useT("agents");
-  const wsId = useWorkspaceId();
-  const capabilities = useQuery({
-    ...agentContextCapabilitiesOptions(wsId, agent.id),
-    enabled: canEdit && Boolean(wsId),
-  });
-  const configureUrl = capabilities.data?.configureUrl ?? "";
-
-  return (
-    <div className="mx-auto w-full max-w-3xl space-y-10 p-4 sm:p-6">
-      <ScenePromptEditor
-        key={detail.scene.sceneKey}
-        agentId={agent.id}
-        sceneKey={detail.scene.sceneKey}
-        prompt={detail.prompt}
-        canEdit={canEdit}
-        onDirtyChange={onDirtyChange}
-      />
-      <SceneCapabilities agentId={agent.id} detail={detail} canEdit={canEdit} />
-      {configureUrl ? (
-        <div className="space-y-1.5">
-          <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.scenes.configure_hint)}</p>
-          <ConfigureLink url={configureUrl} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ScenePromptEditor({
-  agentId,
-  sceneKey,
-  prompt,
-  canEdit,
-  onDirtyChange,
-}: {
-  agentId: string;
-  sceneKey: string;
-  prompt: AgentSceneDetail["prompt"];
-  canEdit: boolean;
-  onDirtyChange?: (dirty: boolean) => void;
-}) {
-  const { t } = useT("agents");
-  const wsId = useWorkspaceId();
-  const timeAgo = useTimeAgo();
-  const save = useSetAgentScenePrompt(wsId, agentId);
-  const [draft, setDraft] = useState(prompt.text);
-  // The stored prompt the draft started from. When a save (this one or
-  // another admin's, via a refetch) changes the stored prompt, a draft
-  // without edits follows it; a draft with unsaved edits is kept.
-  const [baseline, setBaseline] = useState(prompt.text);
-  if (prompt.text !== baseline) {
-    setBaseline(prompt.text);
-    if (draft === baseline) setDraft(prompt.text);
-  }
-  const dirty = draft !== prompt.text;
-  const tooLong = draft.length > SCENE_PROMPT_MAX_LENGTH;
-  const inputId = `scene-prompt-${sceneKey}`;
-
-  useEffect(() => {
-    onDirtyChange?.(dirty);
-  }, [dirty, onDirtyChange]);
-  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
-
-  const submit = async () => {
-    if (!dirty || tooLong) return;
-    const submitted = draft;
-    try {
-      const saved = await save.mutateAsync({ sceneKey, prompt: submitted });
-      // The server trims the prompt; adopt the stored text unless the admin
-      // kept typing while the save was in flight.
-      setDraft((current) => (current === submitted ? saved.text : current));
-      toast.success(t(($) => $.tab_body.scenes.prompt_saved));
-    } catch (error) {
-      toast.error(
-        error instanceof Error && error.message
-          ? error.message
-          : t(($) => $.tab_body.scenes.prompt_save_failed),
-      );
-    }
-  };
-
-  const updated = prompt.updatedAt
-    ? prompt.updatedByName
-      ? t(($) => $.tab_body.scenes.prompt_updated, {
-          when: timeAgo(prompt.updatedAt),
-          name: prompt.updatedByName,
-        })
-      : t(($) => $.tab_body.scenes.prompt_updated_no_name, { when: timeAgo(prompt.updatedAt) })
-    : "";
-
-  return (
-    <section className="space-y-3" aria-labelledby={`${inputId}-title`}>
-      <div>
-        <h3 id={`${inputId}-title`} className="flex items-center gap-1.5 text-body font-medium">
-          <FileText className="size-4 text-muted-foreground" aria-hidden="true" />
-          {t(($) => $.tab_body.scenes.prompt_title)}
-        </h3>
-        <p className="mt-1 text-caption leading-5 text-muted-foreground">
-          {t(($) => $.tab_body.scenes.prompt_hint)}
-        </p>
-      </div>
-      {canEdit ? (
-        <>
-          <label htmlFor={inputId} className="sr-only">
-            {t(($) => $.tab_body.scenes.prompt_title)}
-          </label>
-          <Textarea
-            id={inputId}
-            value={draft}
-            rows={6}
-            placeholder={t(($) => $.tab_body.scenes.prompt_placeholder)}
-            aria-invalid={tooLong || undefined}
-            onChange={(event) => setDraft(event.target.value)}
-            className="min-h-32 text-body leading-6"
-          />
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className={cn("text-caption", tooLong ? "text-destructive" : "text-muted-foreground")}>
-              {tooLong
-                ? t(($) => $.tab_body.scenes.prompt_too_long, { max: SCENE_PROMPT_MAX_LENGTH })
-                : updated}
-            </p>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={!dirty || save.isPending}
-                onClick={() => setDraft(prompt.text)}
-              >
-                {t(($) => $.tab_body.scenes.prompt_discard)}
-              </Button>
-              <Button size="sm" disabled={!dirty || tooLong || save.isPending} onClick={() => void submit()}>
-                {save.isPending && (
-                  <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-                )}
-                {save.isPending
-                  ? t(($) => $.tab_body.scenes.prompt_saving)
-                  : t(($) => $.tab_body.scenes.prompt_save)}
-              </Button>
-            </div>
-          </div>
-        </>
-      ) : (
-        <>
-          <p className="whitespace-pre-wrap rounded-md border bg-muted/30 px-3 py-2 text-body">
-            {prompt.text || t(($) => $.tab_body.scenes.prompt_empty)}
-          </p>
-          {updated ? <p className="text-caption text-muted-foreground">{updated}</p> : null}
-          <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.scenes.prompt_read_only)}</p>
-        </>
-      )}
-      <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.scenes.prompt_pending_note)}</p>
-    </section>
-  );
-}
-
-function SceneCapabilities({
-  agentId,
-  detail,
-  canEdit,
-}: {
-  agentId: string;
-  detail: AgentSceneDetail;
-  canEdit: boolean;
-}) {
-  const { t } = useT("agents");
-  const wsId = useWorkspaceId();
-  const timeAgo = useTimeAgo();
-  const setBinding = useSetAgentSceneBinding(wsId, agentId);
-  // One entry per row with a write in flight, so overlapping toggles of
-  // different rows never clear each other's pending state.
-  const [busyKeys, setBusyKeys] = useState<ReadonlySet<string>>(() => new Set());
-  const bindings = useMemo(
-    () =>
-      new Map<string, AgentSceneBinding>(
-        detail.bindings.map((binding) => [`${binding.resourceType}:${binding.resourceId}`, binding]),
-      ),
-    [detail.bindings],
-  );
-  const { connectors, skills } = detail.offers;
-
-  const toggle = async (resourceType: ContextResourceType, resourceId: string, enabled: boolean) => {
-    const key = `${resourceType}:${resourceId}`;
-    if (busyKeys.has(key)) return;
-    setBusyKeys((current) => new Set(current).add(key));
-    try {
-      await setBinding.mutateAsync({
-        sceneKey: detail.scene.sceneKey,
-        resourceType,
-        resourceId,
-        enabled,
-      });
-    } catch (error) {
-      toast.error(
-        error instanceof Error && error.message
-          ? error.message
-          : t(($) => $.tab_body.scenes.toggle_failed),
-      );
-    } finally {
-      setBusyKeys((current) => {
-        const next = new Set(current);
-        next.delete(key);
-        return next;
-      });
-    }
-  };
-
-  const row = (
-    resourceType: ContextResourceType,
-    id: string,
-    name: string,
-    icon: React.ReactNode,
-    description?: string,
-  ) => {
-    const key = `${resourceType}:${id}`;
-    const binding = bindings.get(key);
-    const enabled = binding?.enabled === true;
-    const busy = busyKeys.has(key);
-    return (
-      <li key={key} className="flex items-center gap-3 p-3">
-        {icon}
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-body font-medium">{name}</p>
-          {description ? (
-            <p className="truncate text-caption text-muted-foreground">{description}</p>
-          ) : null}
-          {binding?.updatedByName ? (
-            <p className="text-caption text-muted-foreground">
-              {t(($) => $.tab_body.scenes.changed_by, {
-                name: binding.updatedByName,
-                when: binding.updatedAt ? timeAgo(binding.updatedAt) : "",
-              })}
-            </p>
-          ) : null}
-        </div>
-        <span className="flex h-8 w-10 shrink-0 items-center justify-end">
-          {busy ? (
-            <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden="true" />
-          ) : (
-            <Switch
-              checked={enabled}
-              disabled={!canEdit}
-              onCheckedChange={(next) => void toggle(resourceType, id, next)}
-              aria-label={t(($) => $.tab_body.scenes.toggle_aria, { name })}
-            />
-          )}
-        </span>
-      </li>
-    );
-  };
-
-  return (
-    <section className="space-y-3" aria-labelledby={`scene-capabilities-${detail.scene.sceneKey}`}>
-      <div>
-        <h3
-          id={`scene-capabilities-${detail.scene.sceneKey}`}
-          className="flex items-center gap-1.5 text-body font-medium"
-        >
-          <Plug className="size-4 text-muted-foreground" aria-hidden="true" />
-          {t(($) => $.tab_body.scenes.capabilities_title)}
-        </h3>
-        <p className="mt-1 text-caption leading-5 text-muted-foreground">
-          {t(($) => $.tab_body.scenes.capabilities_hint)}
-        </p>
-        {detail.scene.kind === "dm" ? (
-          <p className="mt-1 text-caption leading-5 text-muted-foreground">
-            {t(($) => $.tab_body.scenes.dm_pending_note)}
-          </p>
-        ) : null}
-      </div>
-      {connectors.length === 0 && skills.length === 0 ? (
-        <PanelNotice>{t(($) => $.tab_body.scenes.offers_empty)}</PanelNotice>
-      ) : (
-        <>
-          {connectors.length > 0 ? (
-            <div className="space-y-1.5">
-              <h4 className="text-caption font-medium text-muted-foreground">
-                {t(($) => $.tab_body.scenes.connectors_label)}
-              </h4>
-              <ul className="divide-y rounded-lg border bg-card">
-                {connectors.map((connector) =>
-                  row(
-                    "connector",
-                    connector.id,
-                    connector.name,
-                    <ConnectorLogo slug={connector.catalogSlug} />,
-                  ),
-                )}
-              </ul>
-            </div>
-          ) : null}
-          {skills.length > 0 ? (
-            <div className="space-y-1.5">
-              <h4 className="text-caption font-medium text-muted-foreground">
-                {t(($) => $.tab_body.scenes.skills_label)}
-              </h4>
-              <ul className="divide-y rounded-lg border bg-card">
-                {skills.map((skill) =>
-                  row(
-                    "skill",
-                    skill.id,
-                    skill.name,
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                      <SkillIcon className="size-4" />
-                    </span>,
-                    skill.description,
-                  ),
-                )}
-              </ul>
-            </div>
-          ) : null}
-        </>
-      )}
-    </section>
-  );
 }
 
 function PanelNotice({ children }: { children: React.ReactNode }) {

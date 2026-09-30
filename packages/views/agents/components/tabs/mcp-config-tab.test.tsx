@@ -127,6 +127,20 @@ describe("McpConfigTab", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
+  it("drops the explanations in compact mode and keeps the controls", () => {
+    const copy = enAgents.tab_body.mcp_config;
+    render(
+      <TestShell>
+        <McpConfigTab agent={{ ...baseAgent, mcp_config: null }} runtime={null} onSave={vi.fn()} compact />
+      </TestShell>,
+    );
+
+    expect(screen.queryByText(copy.intro)).not.toBeInTheDocument();
+    expect(screen.queryByText(copy.managed_hint)).not.toBeInTheDocument();
+    expect(screen.getByText(copy.managed_title)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /add mcp/i })).toBeInTheDocument();
+  });
+
   it("projects historical aggregate config into individually managed rows", () => {
     renderTab({
       mcp_config: {

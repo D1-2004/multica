@@ -2856,12 +2856,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Get("/connected-apps", h.ListAgentConnectedApps)
 					r.With(handler.RequireHumanActor).Get("/connected-apps/{slug}", h.GetAgentConnectedApp)
 					// IM scenes (group and 1:1 chats): scene list, scene
-					// prompt and scene bindings. Configuration only; the
+					// prompt, scene bindings and custom MCP servers (a 1:1
+					// chat's are its person's). Configuration only; the
 					// scene key is a percent-encoded openConversationId.
 					r.With(handler.RequireHumanActor).Get("/scenes", h.ListAgentScenes)
 					r.With(handler.RequireHumanActor).Get("/scenes/{sceneKey}", h.GetAgentScene)
 					r.With(handler.RequireHumanActor).Put("/scenes/{sceneKey}/prompt", h.PutAgentScenePrompt)
 					r.With(handler.RequireHumanActor).Put("/scenes/{sceneKey}/bindings", h.PutAgentSceneBinding)
+					r.With(handler.RequireHumanActor).Put("/scenes/{sceneKey}/mcp-config", h.PutAgentSceneMCPConfig)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)

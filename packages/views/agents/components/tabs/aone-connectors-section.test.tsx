@@ -149,6 +149,10 @@ describe("AoneConnectorsSection for workspace admins", () => {
       expect(within(row).getByRole("switch", { name: "Let groups and people turn on Knowledge" })).toBeChecked(),
     );
     expect(within(screen.getByRole("listitem", { name: "Wiki" })).getByRole("switch")).not.toBeChecked();
+    // One row per connector: the short switch label and an icon button for
+    // removal, no hint paragraph or extra strip.
+    expect(within(row).getByText(copy.offer_switch)).toHaveAttribute("aria-hidden", "true");
+    expect(within(row).getByRole("button", { name: "Remove Knowledge" })).not.toHaveTextContent(copy.remove);
     expect(screen.getByRole("link", { name: copy.aone_manage })).toHaveAttribute("href", "/acme/internal-connectors");
   });
 
@@ -212,7 +216,7 @@ describe("AoneConnectorsSection for workspace admins", () => {
     renderSection();
 
     await screen.findByRole("listitem", { name: "Knowledge" });
-    await user.click(screen.getByRole("button", { name: "Remove Knowledge from this agent" }));
+    await user.click(screen.getByRole("button", { name: "Remove Knowledge" }));
     expect(mocks.update).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("alertdialog");
     await user.click(within(dialog).getByRole("button", { name: copy.remove }));

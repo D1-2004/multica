@@ -52,8 +52,6 @@ vi.mock("@multica/core/api", async () => {
   };
 });
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() } }));
-// jsdom has no layout; the section scrolls an opened app page into view.
-Element.prototype.scrollIntoView = vi.fn();
 
 const copy = enAgents.tab_body.connected_apps;
 const agent = { id: "agent-1", name: "Helper" } as Agent;
@@ -198,12 +196,11 @@ beforeEach(() => {
 });
 
 describe("connected apps gallery", () => {
-  it("shows every app with a status built from the connected-apps response", async () => {
+  it("shows every app as a compact tile with a status built from the connected-apps response", async () => {
     renderSection();
 
     const gh = await screen.findByRole("button", { name: "Configure GitHub" });
     expect(within(gh).getByText(copy.status_everyone)).toBeInTheDocument();
-    expect(within(gh).getByText(enAgents.internal_mcp.catalog.apps.github)).toBeInTheDocument();
     expect(
       within(screen.getByRole("button", { name: "Configure Notion" })).getByText(copy.status_not_added),
     ).toBeInTheDocument();
@@ -215,23 +212,42 @@ describe("connected apps gallery", () => {
         enAgents.tab_body.connectors.disabled_in_workspace,
       ),
     ).toBeInTheDocument();
+    // Tiles carry only logo, name and status: no descriptions or counts.
+    expect(gh.textContent).toBe(`GitHub${copy.status_everyone}`);
+    // The configure page is a label and its URL.
     expect(await screen.findByDisplayValue("https://app.example/dingtalk/configure?agent=agent-1")).toBeInTheDocument();
+    expect(screen.getByText(enAgents.tab_body.context_offers.configure_title)).toBeInTheDocument();
   });
 
-  it("opens an app's configuration page through the address", async () => {
+  it("opens an app's dialog through the address", async () => {
     const user = userEvent.setup();
     const { navigation } = renderSection();
 
     await user.click(await screen.findByRole("button", { name: "Configure GitHub" }));
 
     expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=mcp_config&app=github");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("closing the dialog removes the app from the address", async () => {
+    const user = userEvent.setup();
+    const { navigation } = renderSection({ search: "view=mcp_config&app=github" });
+
+    const dialog = await screen.findByRole("dialog");
+    await within(dialog).findByRole("region", { name: copy.section_shared });
+    expect(within(dialog).getByRole("heading", { name: "GitHub" })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+
+    expect(navigation.replace).toHaveBeenLastCalledWith("/acme/agents/agent-1?view=mcp_config");
   });
 
   it("does not load apps for people who cannot manage the agent", () => {
-    renderSection({ canEdit: false });
+    renderSection({ canEdit: false, search: "view=mcp_config&app=github" });
 
     expect(screen.getByText(copy.viewer_only)).toBeInTheDocument();
     expect(mocks.apps).not.toHaveBeenCalled();
+    expect(mocks.app).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("shows a load error instead of an empty gallery for a malformed response", async () => {
@@ -242,31 +258,38 @@ describe("connected apps gallery", () => {
   });
 });
 
-describe("app configuration page", () => {
+describe("app dialog", () => {
   const openGithub = () => renderSection({ search: "view=mcp_config&app=github" });
 
   it("says why the shared account uses a token and links the app installation", async () => {
     openGithub();
 
     const shared = await screen.findByRole("region", { name: copy.section_shared });
-    expect(within(shared).getByText(/sign-in isn't set up on this server/)).toBeInTheDocument();
+    expect(within(shared).getByText(copy.auth_pat_only.replace("{{name}}", "GitHub"))).toBeInTheDocument();
     expect(within(shared).getByRole("link", { name: enAgents.internal_mcp.catalog.install_link })).toHaveAttribute(
       "href",
       github.installUrl,
     );
-    // The header status and the cards carry the state; there is no separate
-    // status card.
-    expect(screen.getByText(copy.status_everyone, { selector: "span" })).toBeInTheDocument();
+    // The header carries the status next to the name.
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText(copy.status_everyone, { selector: "span" })).toBeInTheDocument();
   });
 
   it("never offers an OAuth connect the server cannot run; a token replaces the shared account", async () => {
+    const user = userEvent.setup();
+    mocks.setCredential.mockResolvedValue(undefined);
     openGithub();
 
     const shared = await screen.findByRole("region", { name: copy.section_shared });
     expect(within(shared).getByText("Connected @octocat")).toBeInTheDocument();
     expect(within(shared).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
     expect(within(shared).queryByRole("button", { name: copy.reconnect })).not.toBeInTheDocument();
-    expect(within(shared).getByRole("button", { name: copy.replace_pat })).toBeInTheDocument();
+    await user.click(within(shared).getByRole("button", { name: copy.replace_pat }));
+    await user.type(within(shared).getByLabelText("Personal Access Token for GitHub"), "ghp_token");
+    await user.click(within(shared).getByRole("button", { name: enAgents.internal_mcp.catalog.save }));
+
+    await waitFor(() => expect(mocks.setCredential).toHaveBeenCalled());
+    expect(JSON.stringify(mocks.setCredential.mock.calls[0])).toContain("ghp_token");
   });
 
   it("disconnects the shared account after confirmation", async () => {
@@ -276,6 +299,7 @@ describe("app configuration page", () => {
     const shared = await screen.findByRole("region", { name: copy.section_shared });
     await user.click(within(shared).getByRole("button", { name: copy.disconnect }));
     const dialog = await screen.findByRole("alertdialog");
+    expect(within(dialog).getByText(/On for everyone stops working for GitHub on every agent/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: copy.disconnect }));
 
     await waitFor(() => expect(mocks.deleteCredential).toHaveBeenCalledWith("ws-1", GITHUB_ID));
@@ -324,6 +348,16 @@ describe("app configuration page", () => {
     expect(within(person).getByText(copy.usage_share_in_groups)).toBeInTheDocument();
   });
 
+  it("shows one line instead of empty usage lists", async () => {
+    mocks.app.mockResolvedValue({ ...githubDetail, scenes: [], persons: [] });
+    openGithub();
+
+    const scoped = await screen.findByRole("region", { name: copy.section_scoped });
+    expect(within(scoped).getByText(copy.usage_none)).toBeInTheDocument();
+    expect(within(scoped).queryByText(copy.scenes_title)).not.toBeInTheDocument();
+    expect(within(scoped).queryByText(copy.persons_title)).not.toBeInTheDocument();
+  });
+
   it("asks before taking away the offer while groups or people use it", async () => {
     const user = userEvent.setup();
     openGithub();
@@ -344,13 +378,14 @@ describe("app configuration page", () => {
     );
   });
 
-  it("lists tools with read-only badges and toggles write access", async () => {
+  it("lists tools with read-only badges, says they are workspace-wide and toggles write access", async () => {
     const user = userEvent.setup();
     openGithub();
 
     const tools = await screen.findByRole("region", { name: copy.section_tools });
     expect(within(tools).getByText("search_code")).toBeInTheDocument();
     expect(within(tools).getAllByText(copy.read_only)).toHaveLength(1);
+    expect(within(tools).getByText(copy.tools_scope_hint)).toBeInTheDocument();
     await user.click(within(tools).getByRole("switch", { name: enAgents.internal_mcp.catalog.write_label }));
 
     await waitFor(() =>
@@ -384,6 +419,7 @@ describe("app configuration page", () => {
     renderSection({ search: "view=mcp_config&app=notion" });
 
     const add = await screen.findByRole("button", { name: copy.add });
+    expect(screen.getByText(copy.add_hint)).toBeInTheDocument();
     // Without a workspace connector there is no account to manage yet.
     expect(screen.queryByRole("region", { name: copy.section_shared })).not.toBeInTheDocument();
     await user.click(add);
@@ -412,12 +448,11 @@ describe("app configuration page", () => {
     openGithub();
 
     expect(await screen.findByRole("button", { name: copy.add })).toBeInTheDocument();
-    expect(screen.getByText(copy.status_not_added)).toBeInTheDocument();
     // Nothing to remove from the agent.
     expect(screen.queryByRole("button", { name: copy.remove_action })).not.toBeInTheDocument();
   });
 
-  it("starts the shared-account sign-in with a return to this app page", async () => {
+  it("starts the shared-account sign-in with a return to this app's dialog", async () => {
     mocks.app.mockResolvedValue({
       ...notion,
       connectorId: "66666666-6666-4666-8666-666666666666",
@@ -477,17 +512,18 @@ describe("app configuration page", () => {
     mocks.app.mockResolvedValue(noTools);
     openGithub();
 
-    expect(await screen.findByText(copy.status_no_tools)).toBeInTheDocument();
-    expect(screen.queryByText(copy.tools_pending)).not.toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(copy.status_no_tools)).toBeInTheDocument();
+    expect(within(dialog).queryByText(copy.tools_pending)).not.toBeInTheDocument();
     // The switch label reads the same as the green status; only the label
     // may remain.
-    expect(screen.getAllByText(copy.status_everyone).every((node) => node.tagName === "LABEL")).toBe(true);
-    expect(screen.getByText("No tools are available yet, so the agent can't use GitHub. Refresh tools below.")).toBeInTheDocument();
-    const tools = screen.getByRole("region", { name: copy.section_tools });
+    expect(within(dialog).getAllByText(copy.status_everyone).every((node) => node.tagName === "LABEL")).toBe(true);
+    expect(within(dialog).getByText(copy.global_no_tools)).toBeInTheDocument();
+    const tools = within(dialog).getByRole("region", { name: copy.section_tools });
     expect(within(tools).getByText(copy.tools_refresh_needed)).toBeInTheDocument();
   });
 
-  it("marks a gallery card without allowed tools once an account is connected", async () => {
+  it("marks a tile without allowed tools once an account is connected", async () => {
     mocks.apps.mockResolvedValue({
       apps: [{ ...github, tools: { discovered: 0, allowed: 0 } }],
       canAdmin: true,
@@ -511,53 +547,42 @@ describe("app configuration page", () => {
     expect(within(shared).queryByRole("button", { name: copy.disconnect })).not.toBeInTheDocument();
   });
 
-  it("warns that the shared account and tool settings are workspace-wide", async () => {
-    const user = userEvent.setup();
-    openGithub();
-
-    const shared = await screen.findByRole("region", { name: copy.section_shared });
-    expect(within(shared).getByText(/affects every agent that uses GitHub/)).toBeInTheDocument();
-    const tools = screen.getByRole("region", { name: copy.section_tools });
-    expect(within(tools).getByText(/apply to every agent that uses it/)).toBeInTheDocument();
-    await user.click(within(shared).getByRole("button", { name: copy.disconnect }));
-    const dialog = await screen.findByRole("alertdialog");
-    expect(within(dialog).getByText(/On for everyone stops working for GitHub on every agent/)).toBeInTheDocument();
-  });
-
-  it("goes back to the gallery", async () => {
-    const user = userEvent.setup();
-    const { navigation } = openGithub();
-
-    await user.click(await screen.findByRole("button", { name: copy.back }));
-
-    expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=mcp_config");
-  });
-
-  it("reports a shared-account sign-in once and keeps its app page open", async () => {
-    const { navigation } = renderSection({ search: "view=mcp_config&app=github&connected=github" });
-
-    expect(await screen.findByText("GitHub connected.")).toBeInTheDocument();
-    expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=mcp_config&app=github");
-    expect(await screen.findByRole("region", { name: copy.section_shared })).toBeInTheDocument();
-  });
-
-  it("explains a cancelled sign-in", async () => {
-    renderSection({ search: "view=mcp_config&app=github&connect_error=access_denied" });
-    expect(await screen.findByRole("alert")).toHaveTextContent(enAgents.internal_mcp.catalog.returned_denied);
-  });
-
-  it("explains a sign-in that came back in another browser", async () => {
-    renderSection({ search: "view=mcp_config&connect_error=browser_mismatch" });
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      enAgents.internal_mcp.catalog.returned_browser_mismatch,
-    );
-  });
-
   it("says when the app does not exist", async () => {
     const { ApiError } = await import("@multica/core/api");
     mocks.app.mockRejectedValue(new ApiError("not found", 404, "Not Found"));
     renderSection({ search: "view=mcp_config&app=nope" });
 
     expect(await screen.findByText(copy.not_found)).toBeInTheDocument();
+  });
+});
+
+describe("provider sign-in results", () => {
+  it("reports a shared-account sign-in once as a toast and reopens that app's dialog", async () => {
+    const { navigation } = renderSection({ search: "view=mcp_config&app=github&connected=github" });
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("GitHub connected."));
+    expect(toast.success).toHaveBeenCalledTimes(1);
+    expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=mcp_config&app=github");
+    expect(await screen.findByRole("region", { name: copy.section_shared })).toBeInTheDocument();
+  });
+
+  it("reopens the connected app even when the return lost the app parameter", async () => {
+    const { navigation } = renderSection({ search: "view=mcp_config&connected=github" });
+
+    await waitFor(() =>
+      expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=mcp_config&app=github"),
+    );
+  });
+
+  it("explains a cancelled sign-in", async () => {
+    renderSection({ search: "view=mcp_config&app=github&connect_error=access_denied" });
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(enAgents.internal_mcp.catalog.returned_denied));
+  });
+
+  it("explains a sign-in that came back in another browser", async () => {
+    renderSection({ search: "view=mcp_config&connect_error=browser_mismatch" });
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(enAgents.internal_mcp.catalog.returned_browser_mismatch),
+    );
   });
 });

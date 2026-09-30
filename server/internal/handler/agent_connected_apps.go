@@ -122,6 +122,9 @@ type connectedAppsState struct {
 	granted    map[string]bool              // connector id → globally granted to the agent
 	offers     contextcap.Offers
 	uses       map[string][]contextcap.ConnectorScopeUse // connector id → scopes
+	// scenes are the used scenes the agent has seen (the admin scene
+	// union), newest activity first, for their title, kind and order.
+	scenes []contextcap.SceneSummary
 }
 
 // loadConnectedApps reads the workspace's catalog connectors, the agent's
@@ -172,7 +175,37 @@ func (h *Handler) loadConnectedApps(ctx context.Context, caller agentSceneCaller
 	if err != nil {
 		return state, err
 	}
+	sceneKeys := []string{}
+	seen := map[string]bool{}
 	for _, use := range uses {
+		if use.ScopeType == contextcap.ScopeScene && contextcap.ValidOpenConversationID(use.ScopeKey) && !seen[use.ScopeKey] {
+			seen[use.ScopeKey] = true
+			sceneKeys = append(sceneKeys, use.ScopeKey)
+		}
+	}
+	// A 1:1 chat's own scene key is skipped: its configuration is its
+	// person's, and the runtime ignores rows an earlier release stored there
+	// (docs/context-capabilities.md §1.1). A key lookup is not paged.
+	direct := map[string]bool{}
+	if len(sceneKeys) > 0 {
+		scenes, _, err := contextcap.ListAgentScenes(ctx, h.DB, contextcap.SceneListQuery{
+			WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: caller.orgID, Keys: sceneKeys,
+		})
+		if err != nil {
+			return state, err
+		}
+		for _, scene := range scenes {
+			if scene.Kind == contextcap.SceneKindDM {
+				direct[scene.SceneKey] = true
+				continue
+			}
+			state.scenes = append(state.scenes, scene)
+		}
+	}
+	for _, use := range uses {
+		if use.ScopeType == contextcap.ScopeScene && direct[use.ScopeKey] {
+			continue
+		}
 		state.uses[use.ConnectorID] = append(state.uses[use.ConnectorID], use)
 	}
 	return state, nil
@@ -332,15 +365,11 @@ func (h *Handler) buildConnectedAppDetail(ctx context.Context, app connectorcata
 
 	caller := state.caller
 	uses := []contextcap.ConnectorScopeUse{}
-	sceneKeys := []string{}
 	for _, use := range state.uses[c.ID] {
 		if !(use.Enabled && detail.Offered) && !use.Connected {
 			continue
 		}
 		uses = append(uses, use)
-		if use.ScopeType == contextcap.ScopeScene && contextcap.ValidOpenConversationID(use.ScopeKey) {
-			sceneKeys = append(sceneKeys, use.ScopeKey)
-		}
 	}
 	if len(uses) == 0 {
 		return detail, nil
@@ -349,22 +378,11 @@ func (h *Handler) buildConnectedAppDetail(ctx context.Context, app connectorcata
 	if err != nil {
 		return detail, err
 	}
-	// The used scenes the agent has seen (the admin scene union: memory,
-	// Coordinator conversations, configuration, bindings), newest activity
-	// first, for their title, kind and order. A key lookup is not paged.
-	var scenes []contextcap.SceneSummary
-	if len(sceneKeys) > 0 {
-		if scenes, _, err = contextcap.ListAgentScenes(ctx, h.DB, contextcap.SceneListQuery{
-			WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: caller.orgID, Keys: sceneKeys,
-		}); err != nil {
-			return detail, err
-		}
-	}
-	known := make(map[string]contextcap.SceneSummary, len(scenes))
-	for _, scene := range scenes {
+	known := make(map[string]contextcap.SceneSummary, len(state.scenes))
+	for _, scene := range state.scenes {
 		known[scene.SceneKey] = scene
 	}
-	entries := make(map[string]connectedAppSceneDTO, len(scenes))
+	entries := make(map[string]connectedAppSceneDTO, len(state.scenes))
 	unknown := []connectedAppSceneDTO{}
 	for _, use := range uses {
 		enabled := use.Enabled && detail.Offered
@@ -396,8 +414,10 @@ func (h *Handler) buildConnectedAppDetail(ctx context.Context, app connectorcata
 	}
 	// Scenes in activity order (newest first), unknown ones last by key;
 	// people by name.
-	for _, scene := range scenes {
-		detail.Scenes = append(detail.Scenes, entries[scene.SceneKey])
+	for _, scene := range state.scenes {
+		if entry, ok := entries[scene.SceneKey]; ok {
+			detail.Scenes = append(detail.Scenes, entry)
+		}
 	}
 	sort.Slice(unknown, func(i, j int) bool { return unknown[i].SceneKey < unknown[j].SceneKey })
 	detail.Scenes = append(detail.Scenes, unknown...)

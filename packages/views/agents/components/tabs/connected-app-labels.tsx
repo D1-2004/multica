@@ -4,33 +4,6 @@ import type { ConnectedApp } from "@multica/core/context-capabilities";
 import { useT } from "../../../i18n";
 import { StatusPill, type StatusTone } from "./connectors-ui";
 
-/** Localized one-line description of an official app. */
-export function useOfficialAppDescription(): (slug: string) => string {
-  const { t } = useT("agents");
-  return (slug) => {
-    switch (slug) {
-      case "github":
-        return t(($) => $.internal_mcp.catalog.apps.github);
-      case "notion":
-        return t(($) => $.internal_mcp.catalog.apps.notion);
-      case "linear":
-        return t(($) => $.internal_mcp.catalog.apps.linear);
-      case "atlassian":
-        return t(($) => $.internal_mcp.catalog.apps.atlassian);
-      case "sentry":
-        return t(($) => $.internal_mcp.catalog.apps.sentry);
-      case "asana":
-        return t(($) => $.internal_mcp.catalog.apps.asana);
-      case "figma":
-        return t(($) => $.internal_mcp.catalog.apps.figma);
-      case "stripe":
-        return t(($) => $.internal_mcp.catalog.apps.stripe);
-      default:
-        return t(($) => $.internal_mcp.catalog.apps.other);
-    }
-  };
-}
-
 /** Some account (the shared one, a group's or a person's) is connected, so
  * the first tool discovery has run: no tools then means it failed or found
  * nothing, and 刷新工具 is the way out rather than connecting an account. */

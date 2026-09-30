@@ -33,11 +33,14 @@ func scenesRouter(h *Handler) http.Handler {
 		r.Get("/agents/{agentId}", h.GetContextConfigAgent)
 		r.Get("/agents/{agentId}/scenes/{sceneKey}", h.GetContextConfigScene)
 		r.Put("/agents/{agentId}/bindings", h.PutContextConfigBinding)
+		r.Put("/agents/{agentId}/credentials", h.PutContextConfigCredential)
+		r.Delete("/agents/{agentId}/credentials", h.DeleteContextConfigCredential)
 	})
 	r.With(RequireHumanActor).Get("/api/agents/{id}/scenes", h.ListAgentScenes)
 	r.With(RequireHumanActor).Get("/api/agents/{id}/scenes/{sceneKey}", h.GetAgentScene)
 	r.With(RequireHumanActor).Put("/api/agents/{id}/scenes/{sceneKey}/prompt", h.PutAgentScenePrompt)
 	r.With(RequireHumanActor).Put("/api/agents/{id}/scenes/{sceneKey}/bindings", h.PutAgentSceneBinding)
+	r.With(RequireHumanActor).Put("/api/agents/{id}/scenes/{sceneKey}/mcp-config", h.PutAgentSceneMCPConfig)
 	return r
 }
 
@@ -49,11 +52,15 @@ type scenesListResponse struct {
 type scenesDetailResponse struct {
 	Scene    agentSceneDTO          `json:"scene"`
 	Prompt   agentScenePromptDTO    `json:"prompt"`
+	Scope    *contextCapScopeRef    `json:"scope"`
 	Bindings []agentSceneBindingDTO `json:"bindings"`
 	Offers   struct {
 		Connectors []agentSceneOfferedConnectorDTO `json:"connectors"`
 		Skills     []contextCapSkillDTO            `json:"skills"`
 	} `json:"offers"`
+	MCPConfig         json.RawMessage `json:"mcp_config"`
+	MCPConfigRedacted bool            `json:"mcp_config_redacted"`
+	CanConnect        bool            `json:"can_connect"`
 }
 
 func scenesAs(t *testing.T, router http.Handler, userID, method, path string, body any) *httptest.ResponseRecorder {
@@ -94,12 +101,25 @@ func (f *ctxcapFixture) coordinatorJob(t *testing.T, cid, conversationType, titl
 // and source type (the transcript partition of the conversation).
 func (f *ctxcapFixture) coordinatorJobFrom(t *testing.T, endpointNamespace, sourceType, cid, conversationType, title, sender, dispatchOrg string, age time.Duration) string {
 	t.Helper()
+	return f.insertCoordinatorJob(t, endpointNamespace, sourceType, cid, conversationType, title, map[string]any{"displayName": sender}, dispatchOrg, age)
+}
+
+// coordinatorDMJob plants a 1:1 chat Coordinator job whose sender carries a
+// staffId (the person a DM scene is bound to), under the fixture's org.
+func (f *ctxcapFixture) coordinatorDMJob(t *testing.T, cid, sender, staffID string, age time.Duration) string {
+	t.Helper()
+	return f.insertCoordinatorJob(t, testWorkspaceID, "digital_employee", cid, "single", "",
+		map[string]any{"displayName": sender, "staffId": staffID}, ctxcapOrg, age)
+}
+
+func (f *ctxcapFixture) insertCoordinatorJob(t *testing.T, endpointNamespace, sourceType, cid, conversationType, title string, sender map[string]any, dispatchOrg string, age time.Duration) string {
+	t.Helper()
 	ctx := context.Background()
 	command := map[string]any{
 		"source": map[string]any{"platform": "dingtalk", "type": sourceType},
 		"event": map[string]any{"data": map[string]any{
 			"conversation": map[string]any{"openConversationId": cid, "type": conversationType, "title": title},
-			"sender":       map[string]any{"displayName": sender},
+			"sender":       sender,
 		}},
 		"externalIdentity": map[string]any{"dws": map[string]any{"orgId": dispatchOrg}},
 	}
@@ -465,6 +485,9 @@ func TestContextCapabilitiesPersonShareInGroups(t *testing.T) {
 	agentID := uuidToString(f.agent)
 	alice := uuid.NewString()
 	f.grant(t, alice, contextcap.ScopePerson, ctxcapStaff, "Alice")
+	// A group grant too: share_in_groups is checked against the scope the
+	// request resolves to, after the caller's access to it.
+	f.grant(t, alice, contextcap.ScopeScene, ctxcapScene, "Ctxcap group")
 	bindingPath := "/api/context-capabilities/agents/" + agentID + "/bindings"
 	put := func(body map[string]any) *httptest.ResponseRecorder {
 		return ctxcapMobile(t, router, http.MethodPut, bindingPath, alice, body)
@@ -606,19 +629,34 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 	ctxcapExpectStatus(t, w, http.StatusOK, "dm scene detail")
 	var scene ctxcapSceneDetail
 	ctxcapDecode(t, w, &scene)
-	if scene.Scene.Kind != "dm" {
-		t.Fatalf("dm scene=%+v", scene.Scene)
+	// A 1:1 chat's configuration is its person's: the link's staffId.
+	if scene.Scene.Kind != "dm" || scene.Scene.ScopeKey != dmKey || scene.Scope == nil ||
+		*scene.Scope != (contextCapScopeRef{Type: contextcap.ScopePerson, Key: ctxcapStaff, Title: "Alice"}) || !scene.CanConnect ||
+		!ctxcapHasBinding(scene.Bindings, f.person, true) {
+		t.Fatalf("dm scene=%+v", scene)
 	}
 
-	// The person configures a DM scene connector; admins see the DM scene.
+	// The person turns a connector on in the DM: it lands in the person
+	// scope; admins see the DM scene with that configuration.
 	dmOnly := f.insertConnector(t, "none", "")
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM internal_connector WHERE id = $1`, dmOnly)
 	})
 	f.offer(t, f.scene, f.person, dmOnly)
-	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, "/api/context-capabilities/agents/"+agentID+"/bindings", alice, map[string]any{
+	w = ctxcapMobile(t, router, http.MethodPut, "/api/context-capabilities/agents/"+agentID+"/bindings", alice, map[string]any{
 		"scope_type": "scene", "scope_key": dmKey, "resource_type": "connector", "resource_id": dmOnly, "enabled": true,
-	}), http.StatusOK, "dm scene binding")
+	})
+	ctxcapExpectStatus(t, w, http.StatusOK, "dm scene binding")
+	var bindingResp struct {
+		Binding contextCapBindingDTO `json:"binding"`
+	}
+	ctxcapDecode(t, w, &bindingResp)
+	if bindingResp.Binding.ShareInGroups == nil || *bindingResp.Binding.ShareInGroups {
+		t.Fatalf("dm binding is not a personal connector binding: %+v", bindingResp.Binding)
+	}
+	if stored, err := contextcap.ListScopeBindings(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopeScene, ctxcapOrg, dmKey); err != nil || len(stored) != 0 {
+		t.Fatalf("dm scene scope rows=%+v err=%v", stored, err)
+	}
 	w = scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scenes", nil)
 	var list scenesListResponse
 	ctxcapDecode(t, w, &list)
@@ -630,12 +668,18 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 	ctxcapExpectStatus(t, w, http.StatusOK, "admin dm scene detail")
 	var dmDetail scenesDetailResponse
 	ctxcapDecode(t, w, &dmDetail)
-	if len(dmDetail.Bindings) != 1 || dmDetail.Bindings[0].ResourceID != dmOnly || !dmDetail.Bindings[0].Enabled {
-		t.Fatalf("admin dm scene bindings=%+v", dmDetail.Bindings)
+	adminBindings := map[string]bool{}
+	for _, binding := range dmDetail.Bindings {
+		adminBindings[binding.ResourceID] = binding.Enabled
+	}
+	if dmDetail.Scope == nil || dmDetail.Scope.Type != contextcap.ScopePerson || dmDetail.Scope.Key != ctxcapStaff ||
+		len(adminBindings) != 2 || !adminBindings[dmOnly] || !adminBindings[f.person] {
+		t.Fatalf("admin dm scene scope=%+v bindings=%+v", dmDetail.Scope, dmDetail.Bindings)
 	}
 
-	// Configuration only: runs do not apply DM scene bindings yet.
-	if _, mounted := f.resolve(t, dmTask)[dmOnly]; mounted {
-		t.Fatal("a DM scene binding was mounted at runtime")
+	// A DM's configuration is the person's, and the person's layer already
+	// applies to the DM's runs.
+	if _, mounted := f.resolve(t, dmTask)[dmOnly]; !mounted {
+		t.Fatal("the DM's configuration was not mounted through the person layer")
 	}
 }

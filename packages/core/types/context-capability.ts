@@ -164,10 +164,28 @@ export interface ContextConfigAgentDetail {
   access: ContextConfigAccess;
 }
 
+/** Where the configuration of one scene page lives: the scene itself (a
+ * group chat), or, for a 1:1 chat, the counterpart person's own scope (a
+ * 1:1 chat's configuration is that person's configuration). */
+export interface ContextSceneScope {
+  type: ContextScopeType;
+  key: string;
+  /** Group name, or the person's display name. "" when unknown. */
+  title: string;
+}
+
 export interface ContextConfigSceneDetail {
   scene: ContextConfigSceneGrant;
   bindings: ContextCapabilityBinding[];
   credentials: ContextConnectorCredential[];
+  /** Where these bindings and credentials live. Older backends send no
+   * scope: the scene itself. null when the server cannot tell who the
+   * person of a 1:1 chat is, so nothing can be configured there. */
+  scope: ContextSceneScope | null;
+  /** The caller may store, remove or connect credentials in `scope` (false
+   * for a manager viewing someone's 1:1 chat). null when an older backend
+   * does not say. */
+  canConnect: boolean | null;
 }
 
 export interface SetContextCapabilityBindingInput {
@@ -304,22 +322,57 @@ export interface AgentSceneBinding {
   updatedAt: string;
 }
 
+/** Credential of an offered connector in the scene page's scope. */
+export interface AgentSceneConnectorCredential {
+  connected: boolean;
+  /** Hint ("@octocat", "OAuth", "••••abcd"); "" when not connected or not
+   * shown to this caller. */
+  account: string;
+}
+
 export interface AgentSceneOfferedConnector {
   id: string;
   name: string;
   /** Official app catalog slug ("github", ...), "" for custom connectors. */
   catalogSlug: string;
   authMode: ContextConnectorAuthMode;
+  /** Takes a pasted token: a Bearer connector, or an official app that
+   * allows a Personal Access Token. */
+  acceptsCredential: boolean;
+  /** An OAuth app that also accepts a Personal Access Token (GitHub). */
+  acceptsPat: boolean;
+  /** The server can run this app's OAuth sign-in. */
+  oauthAvailable: boolean;
+  /** Provider installation page (GitHub App), "" when none. */
+  installUrl: string;
+  credential: AgentSceneConnectorCredential;
 }
 
 export interface AgentSceneDetail {
   scene: AgentSceneSummary;
   prompt: AgentScenePrompt;
+  /** Bindings of `scope`. */
   bindings: AgentSceneBinding[];
   offers: {
     connectors: AgentSceneOfferedConnector[];
     skills: ContextSkillItem[];
   };
+  /** Where this page's configuration lives (the person for a 1:1 chat).
+   * Older backends send none: the scene itself. null when a 1:1 chat's
+   * person is unknown, so nothing can be configured there. */
+  scope: ContextSceneScope | null;
+  /** Custom MCP servers of `scope` (the agent `mcp_config` document shape),
+   * null when none. Stored only; not applied at runtime yet. */
+  mcpConfig: Record<string, unknown> | null;
+  /** The backend knows custom MCP servers of a scope (it sent
+   * `mcp_config`, null included). An older backend sends none and has no
+   * route to save them, so the page hides the editor. */
+  mcpConfigSupported: boolean;
+  /** The workspace always redacts secrets, so an existing `mcpConfig` is
+   * withheld (null). The page must not save over it. */
+  mcpConfigRedacted: boolean;
+  /** The caller may store and connect credentials for `scope`. */
+  canConnect: boolean;
 }
 
 export interface ListAgentScenesParams {
@@ -331,6 +384,20 @@ export interface SetAgentSceneBindingInput {
   resourceType: ContextResourceType;
   resourceId: string;
   enabled: boolean;
+}
+
+/** Scene credential writes from the admin scene page. They use the
+ * configure-page credential routes with the scene key; the server maps a 1:1
+ * chat to its person. */
+export interface SetAgentSceneCredentialInput {
+  sceneKey: string;
+  connectorId: string;
+  bearer: string;
+}
+
+export interface DeleteAgentSceneCredentialInput {
+  sceneKey: string;
+  connectorId: string;
 }
 
 // ---------------------------------------------------------------------------

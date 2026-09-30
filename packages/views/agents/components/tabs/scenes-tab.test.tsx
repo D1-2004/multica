@@ -115,9 +115,26 @@ function detailOf(scene: AgentSceneSummary, overrides: Partial<AgentSceneDetail>
       },
     ],
     offers: {
-      connectors: [{ id: "conn-wiki", name: "Wiki", catalogSlug: "", authMode: "bearer" }],
+      connectors: [
+        {
+          id: "conn-wiki",
+          name: "Wiki",
+          catalogSlug: "",
+          authMode: "bearer",
+          acceptsCredential: true,
+          acceptsPat: false,
+          oauthAvailable: false,
+          installUrl: "",
+          credential: { connected: false, account: "" },
+        },
+      ],
       skills: [{ id: "skill-report", name: "Weekly report", description: "Writes reports" }],
     },
+    scope: { type: "scene", key: scene.sceneKey, title: scene.title },
+    mcpConfig: null,
+    mcpConfigSupported: true,
+    mcpConfigRedacted: false,
+    canConnect: true,
     ...overrides,
   };
 }
@@ -233,6 +250,15 @@ describe("ScenesTab scene detail", () => {
     );
   });
 
+  it("closes an app dialog of the previous scene when another scene opens", async () => {
+    const user = userEvent.setup();
+    const { navigation } = renderTab("view=scenes&scene=cid-group&scene_tab=inbound&app=github");
+
+    await user.click(await screen.findByRole("button", { name: `${copy.kind_dm} ${copy.untitled_dm}` }));
+
+    expect(navigation.replace).toHaveBeenLastCalledWith("/acme/agents/agent-1?view=scenes&scene=cid-dm");
+  });
+
   it("loads the memory of the scene by its id", async () => {
     // The agent-wide list is capped, so the scene row is fetched directly.
     mocks.getMemory.mockResolvedValue({ id: "memory-1", scene_key: "cid-group" } as AgentSceneMemory);
@@ -271,7 +297,9 @@ describe("ScenesTab scene configuration", () => {
 
     const input = await screen.findByRole("textbox", { name: copy.prompt_title });
     expect(input).toHaveValue("Answer briefly.");
-    expect(screen.getByText(copy.prompt_pending_note)).toBeInTheDocument();
+    // Under the prompt and under the scene's custom MCP servers: both are
+    // stored only.
+    expect(screen.getAllByText(copy.prompt_hint)).toHaveLength(2);
     await user.clear(input);
     await user.type(input, "Be brief.");
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
@@ -353,7 +381,7 @@ describe("ScenesTab scene configuration", () => {
     expect(screen.getByRole("button", { name: copy.prompt_save })).toBeDisabled();
   });
 
-  it("toggles offered connectors and skills for the scene and shows who changed them", async () => {
+  it("toggles offered connectors and skills for the scene", async () => {
     mocks.setBinding.mockResolvedValue({
       resourceType: "skill",
       resourceId: "skill-report",
@@ -364,10 +392,9 @@ describe("ScenesTab scene configuration", () => {
     const user = userEvent.setup();
     renderTab("view=scenes&scene=cid-group&scene_tab=config");
 
-    const wiki = await screen.findByRole("switch", { name: "Turn Wiki on or off in this scene" });
+    const wiki = await screen.findByRole("switch", { name: "Turn on Wiki in this scene" });
     expect(wiki).toBeChecked();
-    expect(screen.getByText(/^Bob · /)).toBeInTheDocument();
-    await user.click(screen.getByRole("switch", { name: "Turn Weekly report on or off in this scene" }));
+    await user.click(screen.getByRole("switch", { name: "Turn on Weekly report in this scene" }));
 
     await waitFor(() =>
       expect(mocks.setBinding).toHaveBeenCalledWith("ws-1", "agent-1", "cid-group", {
@@ -378,19 +405,6 @@ describe("ScenesTab scene configuration", () => {
     );
     // Members turn items on themselves from the configuration page.
     expect(await screen.findByDisplayValue("https://app.example/dingtalk/configure?agent=agent-1")).toBeInTheDocument();
-  });
-
-  it("says that 1:1 chat scene settings are stored but not applied yet", async () => {
-    renderTab("view=scenes&scene=cid-dm&scene_tab=config");
-
-    expect(await screen.findByText(copy.dm_pending_note)).toBeInTheDocument();
-  });
-
-  it("points to the offer sections when nothing is offered", async () => {
-    mocks.getScene.mockResolvedValue(detailOf(groupScene, { offers: { connectors: [], skills: [] }, bindings: [] }));
-    renderTab("view=scenes&scene=cid-group&scene_tab=config");
-
-    expect(await screen.findByText(copy.offers_empty)).toBeInTheDocument();
   });
 });
 

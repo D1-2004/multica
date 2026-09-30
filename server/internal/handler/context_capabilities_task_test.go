@@ -775,7 +775,7 @@ func TestContextCapabilitiesWorkspaceDeleteSweepsTables(t *testing.T) {
 	t.Cleanup(func() {
 		bg := context.Background()
 		_, _ = testPool.Exec(bg, `DELETE FROM workspace WHERE id = $1`, wsID)
-		for _, table := range []string{"context_capability_binding", "context_connector_credential", "context_config_grant", "context_config_link", "agent_scene_config"} {
+		for _, table := range []string{"context_capability_binding", "context_connector_credential", "context_config_grant", "context_config_link", "agent_scene_config", "context_scope_mcp_config"} {
 			_, _ = testPool.Exec(bg, `DELETE FROM `+table+` WHERE agent_id = ANY($1::uuid[])`, []string{agentID, keepAgentID})
 		}
 	})
@@ -790,6 +790,7 @@ func TestContextCapabilitiesWorkspaceDeleteSweepsTables(t *testing.T) {
 			`INSERT INTO context_config_grant (user_id, workspace_id, agent_id, scope_type, scope_key, source, expires_at) VALUES (gen_random_uuid(), $1, $2, 'person', 'staff', 'agent_link', now() + interval '1 day')`,
 			`INSERT INTO context_config_link (token_hash, workspace_id, agent_id, scope_type, scope_key, expires_at) VALUES (md5(random()::text) || md5(random()::text), $1, $2, 'scene', 'cidX', now() + interval '1 hour')`,
 			`INSERT INTO agent_scene_config (workspace_id, agent_id, scene_key, scene_kind, prompt) VALUES ($1, $2, 'cidX', 'group', 'be brief')`,
+			`INSERT INTO context_scope_mcp_config (workspace_id, agent_id, scope_type, scope_key, mcp_config) VALUES ($1, $2, 'scene', 'cidX', '{"mcpServers":{}}')`,
 		} {
 			if _, err := testPool.Exec(ctx, statement, workspaceID, agent); err != nil {
 				t.Fatal(err)
@@ -804,7 +805,7 @@ func TestContextCapabilitiesWorkspaceDeleteSweepsTables(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete workspace: %d %s", rec.Code, rec.Body.String())
 	}
-	for _, table := range []string{"context_capability_binding", "context_connector_credential", "context_config_grant", "context_config_link", "agent_scene_config"} {
+	for _, table := range []string{"context_capability_binding", "context_connector_credential", "context_config_grant", "context_config_link", "agent_scene_config", "context_scope_mcp_config"} {
 		var deleted, kept int
 		if err := testPool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE agent_id = $1), count(*) FILTER (WHERE agent_id = $2) FROM `+table,
 			agentID, keepAgentID).Scan(&deleted, &kept); err != nil {

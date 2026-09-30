@@ -3,6 +3,7 @@ import type {
   AgentContextCapabilities,
   AgentSceneBinding,
   AgentSceneDetail,
+  AgentSceneOfferedConnector,
   AgentScenePrompt,
   AgentScenesPage,
   AgentSceneSummary,
@@ -26,6 +27,7 @@ import type {
   ContextCredentialKind,
   ContextResourceType,
   ContextSceneKind,
+  ContextSceneScope,
   ContextScopeType,
   DingTalkJsapiConfig,
 } from "../types/context-capability";
@@ -88,6 +90,24 @@ function scopeTypeOf(value: string): ContextScopeType | null {
 
 function resourceTypeOf(value: string): ContextResourceType | null {
   return value === "connector" || value === "skill" ? value : null;
+}
+
+const SceneScopeWireSchema = z.object({ type: z.string(), key: id, title: text });
+
+/** `scope` of a scene read: where the scene page's configuration lives. A
+ * missing field (an older backend) means the scene itself; an explicit null
+ * means a 1:1 chat whose person is unknown. A malformed value also reads as
+ * null, so nothing is ever written to a guessed scope. */
+function sceneScopeOf(value: unknown, fallback: ContextSceneScope): ContextSceneScope | null {
+  if (value === undefined) return fallback;
+  const parsed = SceneScopeWireSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const type = scopeTypeOf(parsed.data.type);
+  return type ? { type, key: parsed.data.key, title: parsed.data.title } : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const BindingWireSchema = z.object({
@@ -394,12 +414,21 @@ export const ContextConfigSceneDetailSchema = z
     scene: SceneGrantSchema,
     bindings: BindingListSchema,
     credentials: list(CredentialWireSchema),
+    scope: z.unknown().optional(),
+    can_connect: z.unknown().optional(),
   })
   .transform(
     (value): ContextConfigSceneDetail => ({
       scene: value.scene,
       bindings: value.bindings,
       credentials: value.credentials,
+      scope: sceneScopeOf(value.scope, {
+        type: "scene",
+        key: value.scene.scopeKey,
+        title: value.scene.scopeTitle,
+      }),
+      // Only a literal true allows connecting; an older backend sends none.
+      canConnect: value.can_connect === undefined ? null : value.can_connect === true,
     }),
   );
 
@@ -583,6 +612,40 @@ function toAgentSceneBinding(
   };
 }
 
+const AgentSceneOfferedConnectorWireSchema = z
+  .object({
+    id,
+    name: text,
+    catalog_slug: catalogSlug,
+    auth_mode: z.string().nullish().catch(null),
+    accepts_credential: strictTrue,
+    accepts_pat: strictTrue,
+    oauth_available: strictTrue,
+    install_url: z.unknown().optional(),
+    credential: z
+      .object({ connected: strictTrue, account: text.catch("") })
+      .nullish()
+      .catch(null),
+  })
+  .transform((connector): AgentSceneOfferedConnector => {
+    const authMode = connectorAuthModeOf(connector.auth_mode, connector.accepts_credential);
+    const connected = connector.credential?.connected === true;
+    return {
+      id: connector.id,
+      name: connector.name,
+      catalogSlug: connector.catalog_slug,
+      authMode,
+      acceptsCredential: connector.accepts_credential,
+      // A Personal Access Token is only an alternative to OAuth.
+      acceptsPat: authMode === "oauth" && connector.accepts_pat,
+      // Only a literal true shows 连接, so the page never offers a sign-in
+      // the start endpoint would reject.
+      oauthAvailable: authMode === "oauth" && connector.oauth_available,
+      installUrl: safeExternalUrl(connector.install_url),
+      credential: { connected, account: connected ? (connector.credential?.account ?? "") : "" },
+    };
+  });
+
 export const AgentSceneDetailSchema = z
   .object({
     scene: AgentSceneSummaryWireSchema,
@@ -590,18 +653,15 @@ export const AgentSceneDetailSchema = z
     bindings: tolerantList(AgentSceneBindingWireSchema),
     offers: z
       .object({
-        connectors: tolerantList(
-          z.object({
-            id,
-            name: text,
-            catalog_slug: catalogSlug,
-            auth_mode: z.string().nullish().catch(null),
-          }),
-        ),
+        connectors: tolerantList(AgentSceneOfferedConnectorWireSchema),
         skills: tolerantList(SkillItemSchema),
       })
       .nullish()
       .catch(null),
+    scope: z.unknown().optional(),
+    mcp_config: z.unknown().optional(),
+    mcp_config_redacted: strictTrue,
+    can_connect: strictTrue,
   })
   .transform(
     (value): AgentSceneDetail => ({
@@ -611,16 +671,29 @@ export const AgentSceneDetailSchema = z
         .map(toAgentSceneBinding)
         .filter((binding): binding is AgentSceneBinding => binding !== null),
       offers: {
-        connectors: (value.offers?.connectors ?? []).map((connector) => ({
-          id: connector.id,
-          name: connector.name,
-          catalogSlug: connector.catalog_slug,
-          authMode: connectorAuthModeOf(connector.auth_mode, false),
-        })),
+        connectors: value.offers?.connectors ?? [],
         skills: value.offers?.skills ?? [],
       },
+      scope: sceneScopeOf(value.scope, {
+        type: "scene",
+        key: value.scene.sceneKey,
+        title: value.scene.title,
+      }),
+      mcpConfig: isRecord(value.mcp_config) ? value.mcp_config : null,
+      // Every backend with the mcp-config route sends the field (null when
+      // none); an older one omits it.
+      mcpConfigSupported: value.mcp_config !== undefined,
+      mcpConfigRedacted: value.mcp_config_redacted,
+      canConnect: value.can_connect,
     }),
   );
+
+/** Echo of `PUT /api/agents/{id}/scenes/{sceneKey}/mcp-config`. The field is
+ * required (an object, or null once cleared), so a body without it fails and
+ * the caller keeps what it sent. */
+export const AgentSceneMcpConfigResponseSchema = z
+  .object({ mcp_config: z.union([z.record(z.string(), z.unknown()), z.null()]) })
+  .transform((value): Record<string, unknown> | null => value.mcp_config);
 
 export const AgentScenePromptResponseSchema = z
   .object({ prompt: AgentScenePromptWireSchema })

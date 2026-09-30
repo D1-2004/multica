@@ -9,6 +9,7 @@ import {
   AgentContextCapabilitiesSchema,
   AgentSceneBindingResponseSchema,
   AgentSceneDetailSchema,
+  AgentSceneMcpConfigResponseSchema,
   AgentScenePromptResponseSchema,
   AgentScenesPageSchema,
   EMPTY_AGENT_SCENES_PAGE,
@@ -4570,6 +4571,30 @@ export class ApiClient {
       updatedByName: "",
       updatedAt: "",
     };
+  }
+
+  /** Saves the custom MCP servers of the scene page's scope (the scene, or
+   * the person of a 1:1 chat); null clears them. Resolves to the stored
+   * document, or to what was sent when the echo is malformed. */
+  async setAgentSceneMcpConfig(
+    workspaceId: string,
+    agentId: string,
+    sceneKey: string,
+    mcpConfig: Record<string, unknown> | null,
+  ): Promise<Record<string, unknown> | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}/mcp-config`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ mcp_config: mcpConfig }),
+        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+      },
+    );
+    return parseWithFallback<Record<string, unknown> | null>(raw, AgentSceneMcpConfigResponseSchema, mcpConfig, {
+      endpoint: "PUT /api/agents/{id}/scenes/{sceneKey}/mcp-config",
+      // MCP server configs can carry headers and environment values.
+      includeReceived: false,
+    });
   }
 
   // Admin connected apps (agent detail → 连接器 → 连接应用). Workspace-scoped

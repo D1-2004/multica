@@ -172,8 +172,10 @@ type ctxcapAgentDetail struct {
 
 type ctxcapSceneDetail struct {
 	Scene       contextCapSceneDTO        `json:"scene"`
+	Scope       *contextCapScopeRef       `json:"scope"`
 	Bindings    []contextCapBindingDTO    `json:"bindings"`
 	Credentials []contextCapCredentialDTO `json:"credentials"`
+	CanConnect  bool                      `json:"can_connect"`
 }
 
 func ctxcapHasBinding(bindings []contextCapBindingDTO, resourceID string, enabled bool) bool {

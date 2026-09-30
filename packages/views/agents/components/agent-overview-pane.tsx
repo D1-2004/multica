@@ -239,8 +239,9 @@ export function AgentOverviewPane({
         params.delete("scene");
         params.delete("scene_tab");
       }
-      // The open app configuration page belongs to the connector tab.
-      if (next !== "mcp_config") params.delete("app");
+      // An open app dialog belongs to the view it was opened in (the
+      // connector tab or a scene's configuration): never carry it over.
+      params.delete("app");
       const query = params.toString();
       navigation.replace(`${navigation.pathname}${query ? `?${query}` : ""}`);
     },

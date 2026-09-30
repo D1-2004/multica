@@ -57,6 +57,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"context_config_grant":            workspaceDelete,
 	"context_config_link":             workspaceDelete,
 	"context_connector_credential":    workspaceDelete,
+	"context_scope_mcp_config":        workspaceDelete,
 	"daemon_connection":               workspaceDelete,
 	"daemon_token":                    workspaceDelete,
 	"feedback":                        workspaceDeleteDetach,

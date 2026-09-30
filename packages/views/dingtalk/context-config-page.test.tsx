@@ -110,6 +110,8 @@ const sceneDetail: ContextConfigSceneDetail = {
   scene: { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group" },
   bindings: [{ resourceType: "connector", resourceId: "conn-wiki", enabled: true, shareInGroups: false }],
   credentials: [{ connectorId: "conn-wiki", hint: "••••abcd", updatedAt: "", kind: "bearer" }],
+  scope: { type: "scene", key: "cid-1", title: "Sales team" },
+  canConnect: true,
 };
 
 const githubConnector: ContextOfferedConnector = {
@@ -657,6 +659,8 @@ describe("ContextConfigPage", () => {
             scene: { scopeKey: "cid-dm", scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm" },
             bindings: [],
             credentials: [],
+            scope: { type: "person", key: "staff-1", title: "" },
+            canConnect: true,
           }
         : sceneDetail,
     );
@@ -676,10 +680,28 @@ describe("ContextConfigPage", () => {
     expect(within(dmRegion).getByText(copy.kind_dm)).toBeInTheDocument();
     expect(within(dmRegion).getByText(copy.scene_scope_hint_dm)).toBeInTheDocument();
     expect(within(dmRegion).getByText(copy.credential_required)).toBeInTheDocument();
-    // A 1:1 chat scene is stored only this round; the page must not promise
-    // runtime effect.
-    expect(within(dmRegion).getByText(copy.dm_pending_note)).toBeInTheDocument();
-    expect(within(groupRegion).queryByText(copy.dm_pending_note)).not.toBeInTheDocument();
+    // The person's own 1:1 chat link: they set their own token there.
+    expect(within(dmRegion).getByRole("button", { name: copy.set_credential })).toBeInTheDocument();
+    expect(within(dmRegion).queryByText(copy.owner_connects)).not.toBeInTheDocument();
+  });
+
+  it("says when the person of a 1:1 chat is not known and shows no settings", async () => {
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm" }],
+      }),
+    );
+    api.getContextConfigScene.mockResolvedValue({
+      scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm" },
+      bindings: [],
+      credentials: [],
+      scope: null,
+      canConnect: false,
+    });
+    renderPage({ initialAgentId: "agent-1" });
+
+    expect(await screen.findByText(copy.dm_person_unknown)).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Turn Wiki on or off" })).not.toBeInTheDocument();
   });
 
   it("saves the group-chat switch of a personal connector and says it is not applied yet", async () => {
@@ -791,6 +813,52 @@ describe("ContextConfigPage", () => {
       expect(within(picker).getByRole("option", { name: `${copy.kind_group} · Sales team` })).toBeInTheDocument();
       expect(within(picker).getByRole("option", { name: `${copy.kind_dm} · Bob` })).toBeInTheDocument();
       expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
+    });
+
+    it("lets the person connect in their own 1:1 chat: a manager sees 由本人连接", async () => {
+      api.getContextConfigAgent.mockResolvedValue(
+        oauthDetail({
+          person: null,
+          access: "manager",
+          scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm" }],
+        }),
+      );
+      api.getContextConfigScene.mockResolvedValue({
+        scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm" },
+        bindings: [],
+        credentials: [{ connectorId: "conn-github", hint: "@bob", updatedAt: "", kind: "oauth" }],
+        scope: { type: "person", key: "staff-bob", title: "Bob Li" },
+        canConnect: false,
+      });
+      renderPage({ initialAgentId: "agent-1" });
+
+      const region = await screen.findByRole("region", { name: "Bob Li" });
+      expect(within(region).getByText(copy.owner_connects)).toBeInTheDocument();
+      expect(within(region).getByText("Connected @bob")).toBeInTheDocument();
+      expect(within(region).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
+      expect(within(region).queryByRole("button", { name: copy.disconnect })).not.toBeInTheDocument();
+      // Switching the app on for the chat stays possible.
+      expect(within(region).getByRole("switch", { name: "Turn GitHub on or off" })).toBeInTheDocument();
+    });
+
+    it("hides connecting whenever the server says the caller may not connect", async () => {
+      api.getContextConfigAgent.mockResolvedValue(
+        oauthDetail({
+          scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm" }],
+        }),
+      );
+      api.getContextConfigScene.mockResolvedValue({
+        scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm" },
+        bindings: [],
+        credentials: [],
+        scope: { type: "person", key: "staff-bob", title: "Bob Li" },
+        canConnect: false,
+      });
+      renderPage({ initialAgentId: "agent-1" });
+
+      const region = await screen.findByRole("region", { name: "Bob Li" });
+      expect(within(region).getByText(copy.owner_connects)).toBeInTheDocument();
+      expect(within(region).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
     });
 
     it("takes manager access from the agent detail, even when the agent list fails", async () => {
