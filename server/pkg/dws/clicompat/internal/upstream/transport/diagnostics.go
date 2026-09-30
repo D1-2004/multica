@@ -1,0 +1,197 @@
+// Copied from github.com/DingTalk-Real-AI/dingtalk-workspace-cli tag v1.0.62-beta.8, path internal/transport/diagnostics.go; only import paths rewritten (and re-sorted by gofmt). Apache-2.0; see clicompat/NOTICE.
+// Copyright 2026 Alibaba Group
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package transport
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	apperrors "github.com/multica-ai/multica/server/pkg/dws/clicompat/internal/upstream/errors"
+)
+
+// ExtractServerDiagnostics parses server diagnostic fields from a JSON
+// payload (typically from RPCError.Data). Returns an empty struct if
+// the payload is empty or unparseable.
+func ExtractServerDiagnostics(data json.RawMessage) apperrors.ServerDiagnostics {
+	if len(data) == 0 {
+		return apperrors.ServerDiagnostics{}
+	}
+	var content map[string]any
+	if json.Unmarshal(data, &content) != nil {
+		return apperrors.ServerDiagnostics{}
+	}
+	return ExtractServerDiagnosticsFromMap(content)
+}
+
+// ExtractServerDiagnosticsFromMap parses server diagnostic fields from a
+// map[string]any (typically from ToolCallResult.Content for business errors).
+func ExtractServerDiagnosticsFromMap(content map[string]any) apperrors.ServerDiagnostics {
+	if len(content) == 0 {
+		return apperrors.ServerDiagnostics{}
+	}
+	diag := apperrors.ServerDiagnostics{
+		TraceID:         stringFromMapRecursive(content, 0, "trace_id", "traceId", "request_id", "requestId"),
+		ServerErrorCode: serverErrorCodeFromMap(content, 0),
+		TechnicalDetail: stringFromMapRecursive(content, 0, "technical_detail", "technicalDetail"),
+		FriendlyHint:    stringFromMapRecursive(content, 0, "friendly_hint", "friendlyHint"),
+		ActionURL:       stringFromMapRecursive(content, 0, "action_url", "actionUrl"),
+	}
+	if v, ok := boolFromMapRecursive(content, 0, "retryable", "server_retryable", "serverRetryable"); ok {
+		diag.ServerRetryable = &v
+	}
+	return diag
+}
+
+func boolFromMapRecursive(content map[string]any, depth int, keys ...string) (bool, bool) {
+	if content == nil || depth > 8 {
+		return false, false
+	}
+	for _, key := range keys {
+		if value, ok := content[key].(bool); ok {
+			return value, true
+		}
+	}
+	for _, key := range []string{"content", "result", "data"} {
+		switch child := content[key].(type) {
+		case map[string]any:
+			if value, ok := boolFromMapRecursive(child, depth+1, keys...); ok {
+				return value, true
+			}
+		case []any:
+			for _, item := range child {
+				childMap, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				if value, ok := boolFromMapRecursive(childMap, depth+1, keys...); ok {
+					return value, true
+				}
+			}
+		}
+	}
+	return false, false
+}
+
+func stringFromMapRecursive(content map[string]any, depth int, keys ...string) string {
+	if content == nil || depth > 8 {
+		return ""
+	}
+	if value := stringFromMap(content, keys...); value != "" {
+		return value
+	}
+	for _, key := range []string{"content", "result", "data"} {
+		switch child := content[key].(type) {
+		case map[string]any:
+			if value := stringFromMapRecursive(child, depth+1, keys...); value != "" {
+				return value
+			}
+		case []any:
+			for _, item := range child {
+				childMap, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				if value := stringFromMapRecursive(childMap, depth+1, keys...); value != "" {
+					return value
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// ExtractTraceIDFromHeaders reads a trace ID from standard HTTP response
+// headers. Returns empty string if none found.
+func ExtractTraceIDFromHeaders(headers http.Header) string {
+	for _, key := range []string{
+		"X-Trace-Id",
+		"X-Request-Id",
+		"x-dingtalk-trace-id",
+	} {
+		if v := headers.Get(key); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// coalesceStr returns the first non-empty string.
+func coalesceStr(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// stringFromMap returns the first non-empty string value found for any of
+// the given keys in the map.
+func stringFromMap(m map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := m[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func serverErrorCodeFromMap(content map[string]any, depth int) string {
+	if content == nil || depth > 8 {
+		return ""
+	}
+	direct := stringFromMap(content, "errorCode", "code", "server_error_code")
+	if isWrapperServerCode(direct) {
+		if nested := nestedServerErrorCode(content, depth); nested != "" {
+			return nested
+		}
+	}
+	if direct != "" {
+		return direct
+	}
+	return nestedServerErrorCode(content, depth)
+}
+
+func nestedServerErrorCode(content map[string]any, depth int) string {
+	for _, key := range []string{"content", "result", "data"} {
+		switch child := content[key].(type) {
+		case map[string]any:
+			if code := serverErrorCodeFromMap(child, depth+1); code != "" {
+				return code
+			}
+		case []any:
+			for _, item := range child {
+				childMap, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				if code := serverErrorCodeFromMap(childMap, depth+1); code != "" {
+					return code
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func isWrapperServerCode(code string) bool {
+	switch strings.ToUpper(strings.TrimSpace(code)) {
+	case "ERROR", "BUSINESS_ERROR", "-1":
+		return true
+	default:
+		return false
+	}
+}
