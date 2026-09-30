@@ -16,6 +16,7 @@ import { dingtalkInstallationsOptions } from "@multica/core/dingtalk";
 import { larkInstallationsOptions } from "@multica/core/lark";
 import { slackInstallationsOptions } from "@multica/core/slack";
 import { wecomInstallationsOptions } from "@multica/core/wecom";
+import { agentContextCapabilitiesOptions } from "@multica/core/context-capabilities";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,6 +32,7 @@ import { ActivityTab } from "./tabs/activity-tab";
 import { InstructionsTab } from "./tabs/instructions-tab";
 import { OKRTab } from "./tabs/okr-tab";
 import { SkillsTab } from "./tabs/skills-tab";
+import { ContextCapabilitiesTab } from "./tabs/context-capabilities-tab";
 import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
@@ -156,6 +158,15 @@ export function AgentOverviewPane({
     ...wecomInstallationsOptions(wsId),
     enabled: !!wsId,
   });
+  // The admin endpoint needs agent-manager rights and answers
+  // `enabled: false` while the server flag is off, so the tab only appears
+  // for editors on deployments that actually serve context capabilities.
+  // The tab reuses this cached query.
+  const { data: contextCapabilities } = useQuery({
+    ...agentContextCapabilitiesOptions(wsId, agent.id),
+    enabled: canEdit && !!wsId,
+  });
+  const contextCapabilitiesEnabled = contextCapabilities?.enabled === true;
 
   const botIntegrationsConfigured =
     larkListing?.configured === true ||
@@ -181,6 +192,9 @@ export function AgentOverviewPane({
         if (item.id === "dsh") return runtime?.provider === "dsh";
         if (item.id === "filesystem") return canEdit && agent.runtime_mode === "cloud";
         if (item.id === "composio_mcp") return showComposioMcp;
+        if (item.id === "context_capabilities") {
+          return canEdit && contextCapabilitiesEnabled;
+        }
         if (item.id === "integrations") return botIntegrationsConfigured;
         if (item.id === "mcp_access" || item.id === "a2a") {
           return isAgentOwner;
@@ -201,6 +215,7 @@ export function AgentOverviewPane({
     botIntegrationsConfigured,
     canEdit,
     composioMCPAppsEnabled,
+    contextCapabilitiesEnabled,
     isAgentOwner,
     runtime,
   ]);
@@ -515,6 +530,14 @@ export function AgentOverviewPane({
                   )}
                   {effectiveView === "composio_mcp" && (
                     <AgentMcpTab agent={agent} />
+                  )}
+                  {effectiveView === "context_capabilities" && (
+                    <ContextCapabilitiesTab
+                      agent={agent}
+                      wsId={wsId}
+                      canEdit={canEdit}
+                      onDirtyChange={setActiveDirty}
+                    />
                   )}
                   {effectiveView === "integrations" && (
                     <IntegrationsTab

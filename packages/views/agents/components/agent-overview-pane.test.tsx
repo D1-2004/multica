@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Agent, AgentRuntime, AgentSource } from "@multica/core/types";
 
@@ -83,6 +83,9 @@ vi.mock("./tabs/digital-employee-tab", () => ({
 vi.mock("./tabs/mcp-access-tab", () => ({
   AgentMCPAccessTab: () => <div>mcp-access-tab</div>,
 }));
+vi.mock("./tabs/context-capabilities-tab", () => ({
+  ContextCapabilitiesTab: () => <div>context-capabilities-tab</div>,
+}));
 
 // The pane now reads workspace context to decide whether the Integrations
 // tab is worth showing (it queries Lark installations to learn whether the
@@ -99,6 +102,20 @@ const dingtalkListingRef = vi.hoisted(() => ({
 }));
 const wecomListingRef = vi.hoisted(() => ({
   current: { installations: [] as unknown[], configured: false },
+}));
+// Admin context-capabilities body; `enabled` mirrors the server flag.
+const contextCapabilitiesRef = vi.hoisted(() => ({
+  current: { enabled: false } as { enabled: boolean } | null,
+}));
+const contextCapabilitiesFetch = vi.hoisted(() => vi.fn());
+vi.mock("@multica/core/context-capabilities", () => ({
+  agentContextCapabilitiesOptions: (wsId: string, agentId: string) => ({
+    queryKey: ["workspaces", wsId, "context-capabilities", agentId],
+    queryFn: () => {
+      contextCapabilitiesFetch(wsId, agentId);
+      return Promise.resolve(contextCapabilitiesRef.current);
+    },
+  }),
 }));
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
@@ -241,6 +258,8 @@ beforeEach(() => {
   slackListingRef.current = { installations: [], configured: false };
   dingtalkListingRef.current = { installations: [], configured: false };
   wecomListingRef.current = { installations: [], configured: false };
+  contextCapabilitiesRef.current = { enabled: false };
+  contextCapabilitiesFetch.mockClear();
 });
 
 describe("AgentOverviewPane primary navigation", () => {
@@ -450,6 +469,40 @@ describe("AgentOverviewPane Digital Employee tab", () => {
     expect(navigation.replace).toHaveBeenCalledWith(
       "/acme/agents/agent-1?view=instructions",
     );
+  });
+});
+
+describe("AgentOverviewPane Context capabilities tab", () => {
+  it("shows the tab to editors once the server reports the feature enabled", async () => {
+    contextCapabilitiesRef.current = { enabled: true };
+    renderPane([makeRuntime("claude")], { initialView: "context_capabilities" });
+
+    expect(
+      await screen.findByText("context-capabilities-tab"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /^Context capabilities$/i }),
+    ).toBeInTheDocument();
+    expect(contextCapabilitiesFetch).toHaveBeenCalledWith("ws-1", "agent-1");
+  });
+
+  it("hides the tab while the server flag is off", async () => {
+    renderPane([makeRuntime("claude")]);
+    openConfiguration();
+    await waitFor(() => expect(contextCapabilitiesFetch).toHaveBeenCalled());
+    expect(
+      screen.queryByRole("tab", { name: /^Context capabilities$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("never asks for the admin catalog on behalf of viewers", () => {
+    contextCapabilitiesRef.current = { enabled: true };
+    renderPane([makeRuntime("claude")], { canEdit: false });
+    openConfiguration();
+    expect(contextCapabilitiesFetch).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("tab", { name: /^Context capabilities$/i }),
+    ).not.toBeInTheDocument();
   });
 });
 

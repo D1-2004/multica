@@ -17,6 +17,10 @@ describe("agent configuration navigation", () => {
     ]);
     expect(groupForConfigView("digital_employee")).toBe("identity_goals");
     expect(groupForConfigView("mcp_config")).toBe("capabilities");
+    expect(groupForConfigView("context_capabilities")).toBe("capabilities");
+    expect(normalizeDetailView("context_capabilities")).toBe(
+      "context_capabilities",
+    );
     expect(groupForConfigView("integrations")).toBe("connections");
     expect(groupForConfigView("general")).toBe("execution");
     expect(groupForConfigView("dsh")).toBe("execution");
