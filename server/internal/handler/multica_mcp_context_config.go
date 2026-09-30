@@ -21,7 +21,7 @@ const multicaMCPContextConfigLinkToolDescription = `为当前钉钉群或当前�
 
 Call it when a user asks to configure, enable or connect connectors, skills or capabilities for this group (本群) or for themselves (我的 / 个人). Post the returned url to the user verbatim in your reply; never shorten, rewrite or paraphrase it.
 
-scope defaults to "scene" in a group chat and to "person" in a 1:1 chat. A scene link lets any member of this group who opens it within 30 minutes configure the group's capabilities. A person link is single-use, valid for 15 minutes, and is only issued in a 1:1 chat; in a group, ask the user to message you privately (私聊) and request it there.
+scope defaults to "scene" in a group chat and to "person" in a 1:1 chat. A scene link lets any member of this group who opens it within 30 minutes configure the group's capabilities. A person link is single-use, valid for 15 minutes, and is only issued in a 1:1 chat; it also lets the user configure this 1:1 chat (本会话). In a group, ask the user to message you privately (私聊) and request it there.
 
 Requires a task token of a run dispatched from DingTalk. Scene and person identities are taken from the server-side dispatch context, never from arguments.`
 
@@ -181,6 +181,9 @@ func (h *Handler) createContextConfigLink(r *http.Request, requestedScope string
 		}
 		link.ScopeKey = scope.PersonKey
 		link.ScopeTitle = scope.PersonName
+		// A 1:1 chat is a scene too: redeeming this link also grants the
+		// person that DM scene (configuration only this round).
+		link.ExtraSceneKey = scope.DirectSceneKey
 	}
 
 	token, err := contextcap.NewLinkToken()

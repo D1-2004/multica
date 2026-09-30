@@ -48,6 +48,9 @@ type contextCapBindingDTO struct {
 	ResourceType string `json:"resource_type"`
 	ResourceID   string `json:"resource_id"`
 	Enabled      bool   `json:"enabled"`
+	// ShareInGroups is present only on personal connector bindings: the
+	// 「在群聊中由我触发时也可用」 opt-in (stored only this round).
+	ShareInGroups *bool `json:"share_in_groups,omitempty"`
 }
 
 type contextCapCredentialDTO struct {
@@ -72,6 +75,8 @@ type contextCapSceneDTO struct {
 	ScopeTitle string `json:"scope_title"`
 	Source     string `json:"source"`
 	ExpiresAt  string `json:"expires_at"`
+	// Kind is "group" for a group chat and "dm" for a 1:1 chat.
+	Kind string `json:"kind"`
 }
 
 type contextCapPersonDTO struct {
@@ -153,12 +158,26 @@ func contextCapGrantView(g contextcap.Grant) contextCapGrantDTO {
 	return contextCapGrantDTO{ScopeType: g.ScopeType, ScopeKey: g.ScopeKey, ScopeTitle: g.ScopeTitle, Source: g.Source, ExpiresAt: contextCapTime(g.ExpiresAt)}
 }
 
-func contextCapSceneView(g contextcap.Grant) contextCapSceneDTO {
-	return contextCapSceneDTO{ScopeKey: g.ScopeKey, ScopeTitle: g.ScopeTitle, Source: g.Source, ExpiresAt: contextCapTime(g.ExpiresAt)}
+func contextCapSceneView(g contextcap.Grant, kind string) contextCapSceneDTO {
+	if kind != contextcap.SceneKindDM {
+		kind = contextcap.SceneKindGroup
+	}
+	return contextCapSceneDTO{ScopeKey: g.ScopeKey, ScopeTitle: g.ScopeTitle, Source: g.Source, ExpiresAt: contextCapTime(g.ExpiresAt), Kind: kind}
 }
 
 func contextCapBindingView(b contextcap.Binding) contextCapBindingDTO {
-	return contextCapBindingDTO{ResourceType: b.ResourceType, ResourceID: b.ResourceID, Enabled: b.Enabled}
+	view := contextCapBindingDTO{ResourceType: b.ResourceType, ResourceID: b.ResourceID, Enabled: b.Enabled}
+	if b.ScopeType == contextcap.ScopePerson && b.ResourceType == contextcap.ResourceConnector {
+		share := b.ShareInGroups
+		view.ShareInGroups = &share
+	}
+	return view
+}
+
+// contextCapSceneKinds returns the kind (group or dm) of each scene key of
+// agent a. Keys the agent's scene records do not know default to group.
+func (h *Handler) contextCapSceneKinds(ctx context.Context, a contextCapAgent, keys []string) (map[string]string, error) {
+	return contextcap.SceneKinds(ctx, h.DB, a.WorkspaceID, a.ID, a.OrgID, keys)
 }
 
 // contextCapBindingViews keeps only bindings whose resource is in offers, so
@@ -398,6 +417,25 @@ func (h *Handler) RedeemContextConfigLink(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "link redeem failed")
 		return
 	}
+	if link.ScopeType == contextcap.ScopePerson && link.ExtraSceneKey != "" {
+		// A personal link minted in a 1:1 chat also grants that 1:1
+		// conversation as a scene (a DM is a scene), for as long as the
+		// person grant: nobody but the person takes part in it. The DM is
+		// registered so it is listed before anything is configured for it.
+		if _, err := contextcap.UpsertGrant(ctx, tx, contextcap.Grant{
+			UserID: userID, WorkspaceID: link.WorkspaceID, AgentID: link.AgentID, ScopeType: contextcap.ScopeScene,
+			OrgID: link.OrgID, ScopeKey: link.ExtraSceneKey, ScopeTitle: link.ScopeTitle, Source: contextcap.GrantSourceAgentLink,
+		}, contextcap.GrantTTLPerson); err != nil {
+			slog.ErrorContext(ctx, "context capabilities: DM scene grant failed during redeem", "agent_id", link.AgentID, "error", err)
+			writeError(w, http.StatusInternalServerError, "link redeem failed")
+			return
+		}
+		if err := contextcap.RegisterDirectScene(ctx, tx, link.WorkspaceID, link.AgentID, link.OrgID, link.ExtraSceneKey, link.ScopeTitle); err != nil {
+			slog.ErrorContext(ctx, "context capabilities: DM scene registration failed during redeem", "agent_id", link.AgentID, "error", err)
+			writeError(w, http.StatusInternalServerError, "link redeem failed")
+			return
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "link redeem failed")
 		return
@@ -554,6 +592,17 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var person *contextcap.Grant
+	sceneKeys := []string{}
+	for i := range grants {
+		if grants[i].ScopeType == contextcap.ScopeScene {
+			sceneKeys = append(sceneKeys, grants[i].ScopeKey)
+		}
+	}
+	kinds, err := h.contextCapSceneKinds(ctx, a, sceneKeys)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "scene lookup failed")
+		return
+	}
 	for i := range grants {
 		switch grants[i].ScopeType {
 		case contextcap.ScopePerson:
@@ -561,7 +610,7 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 				person = &grants[i]
 			}
 		case contextcap.ScopeScene:
-			resp.Scenes = append(resp.Scenes, contextCapSceneView(grants[i]))
+			resp.Scenes = append(resp.Scenes, contextCapSceneView(grants[i], kinds[grants[i].ScopeKey]))
 		}
 	}
 	if person != nil {
@@ -639,15 +688,22 @@ func (h *Handler) GetContextConfigScene(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "credential lookup failed")
 		return
 	}
+	kinds, err := h.contextCapSceneKinds(ctx, a, []string{grant.ScopeKey})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "scene lookup failed")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"scene":       contextCapSceneView(grant),
+		"scene":       contextCapSceneView(grant, kinds[grant.ScopeKey]),
 		"bindings":    contextCapBindingViews(bindings, offers),
 		"credentials": contextCapCredentialViews(credentials),
 	})
 }
 
 // PutContextConfigBinding enables or disables one offered connector or skill
-// for a granted scene or person scope.
+// for a granted scene or person scope. The optional share_in_groups sets the
+// personal connector opt-in 「在群聊中由我触发时也可用」 (person scope and
+// connectors only; omitted keeps the stored value).
 func (h *Handler) PutContextConfigBinding(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {
@@ -658,17 +714,22 @@ func (h *Handler) PutContextConfigBinding(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var input struct {
-		ScopeType    string `json:"scope_type"`
-		ScopeKey     string `json:"scope_key"`
-		ResourceType string `json:"resource_type"`
-		ResourceID   string `json:"resource_id"`
-		Enabled      *bool  `json:"enabled"`
+		ScopeType     string `json:"scope_type"`
+		ScopeKey      string `json:"scope_key"`
+		ResourceType  string `json:"resource_type"`
+		ResourceID    string `json:"resource_id"`
+		Enabled       *bool  `json:"enabled"`
+		ShareInGroups *bool  `json:"share_in_groups"`
 	}
 	if !decodeContextCapBody(w, r, contextCapBodyLimit, &input) {
 		return
 	}
 	if input.Enabled == nil || (input.ResourceType != contextcap.ResourceConnector && input.ResourceType != contextcap.ResourceSkill) {
 		writeError(w, http.StatusBadRequest, "resource_type and enabled are required")
+		return
+	}
+	if input.ShareInGroups != nil && (input.ScopeType != contextcap.ScopePerson || input.ResourceType != contextcap.ResourceConnector) {
+		writeError(w, http.StatusBadRequest, "share_in_groups applies only to personal connectors")
 		return
 	}
 	resourceID, err := util.ParseUUID(strings.TrimSpace(input.ResourceID))
@@ -693,7 +754,7 @@ func (h *Handler) PutContextConfigBinding(w http.ResponseWriter, r *http.Request
 	binding, err := contextcap.UpsertBinding(ctx, h.DB, contextcap.BindingWrite{
 		WorkspaceID: a.WorkspaceID, AgentID: a.ID, ScopeType: grant.ScopeType, OrgID: a.OrgID, ScopeKey: grant.ScopeKey,
 		ScopeTitle: grant.ScopeTitle, ResourceType: input.ResourceType, ResourceID: uuidToString(resourceID),
-		Enabled: *input.Enabled, ActorID: userID,
+		Enabled: *input.Enabled, ShareInGroups: input.ShareInGroups, ActorID: userID,
 	})
 	switch {
 	case errors.Is(err, contextcap.ErrNotOffered):
@@ -709,7 +770,8 @@ func (h *Handler) PutContextConfigBinding(w http.ResponseWriter, r *http.Request
 		return
 	}
 	slog.InfoContext(ctx, "context capabilities: binding updated", "agent_id", a.ID, "scope_type", grant.ScopeType,
-		"resource_type", binding.ResourceType, "resource_id", binding.ResourceID, "enabled", binding.Enabled, "user_id", userID)
+		"resource_type", binding.ResourceType, "resource_id", binding.ResourceID, "enabled", binding.Enabled,
+		"share_in_groups", binding.ShareInGroups, "user_id", userID)
 	writeJSON(w, http.StatusOK, map[string]any{"binding": contextCapBindingView(binding)})
 }
 
@@ -956,7 +1018,8 @@ func (h *Handler) ResolveContextConfigScene(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	slog.InfoContext(ctx, "context capabilities: scene granted via JSAPI", "agent_id", a.ID, "user_id", userID)
-	writeJSON(w, http.StatusOK, map[string]any{"scene": contextCapSceneView(grant)})
+	// The JSAPI picker only ever grants a known group scene.
+	writeJSON(w, http.StatusOK, map[string]any{"scene": contextCapSceneView(grant, contextcap.SceneKindGroup)})
 }
 
 // contextCapGroupSceneTitle reports whether cid is a known DingTalk group

@@ -107,6 +107,12 @@ type Scope struct {
 	// SceneKey is the group's openConversationId; empty outside a valid group.
 	SceneKey   string
 	SceneTitle string
+	// DirectSceneKey is the openConversationId of a positively 1:1
+	// conversation (IsDirectConversationType), empty otherwise. A DM is a
+	// scene for configuration (a personal link minted there also grants it),
+	// but runtime resolution does not apply DM scenes yet: HasScene and
+	// SceneKey stay group-only.
+	DirectSceneKey string
 	// PersonKey is the trigger person's staffId; empty when the run merged
 	// messages from several senders or the sender is unknown.
 	PersonKey  string
@@ -244,6 +250,9 @@ func ScopeFromTaskContext(raw []byte) Scope {
 			conversation.Name,
 			conversation.SnakeTitle,
 		)
+	}
+	if IsDirectConversationType(scope.ConversationType) && ValidOpenConversationID(cid) {
+		scope.DirectSceneKey = cid
 	}
 
 	if staffID := strings.TrimSpace(data.Sender.StaffID); ValidStaffID(staffID) &&
