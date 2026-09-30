@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +18,34 @@ import (
 const (
 	defaultOpenAPIBase = "https://api.dingtalk.com"
 	defaultOAPIBase    = "https://oapi.dingtalk.com"
+
+	// jsapiTicketRefreshMargin refreshes the cached H5 JSAPI ticket this long
+	// before DingTalk expires it, so a signature never uses a ticket that
+	// expires while the page is still calling dd.config.
+	jsapiTicketRefreshMargin = 5 * time.Minute
+)
+
+// ErrUnsupported means the configured DingTalk client cannot perform the
+// operation at all (for example the private-agent client has no corp app
+// credentials for H5 JSAPI signing). Callers map it to "unavailable".
+var ErrUnsupported = errors.New("dingtalk: operation is not supported by this client")
+
+// JSAPIClient serves the H5 JSAPI flow of the context capability
+// configuration page: the corp jsapi_ticket used to sign dd.config and the
+// conversion of a picked group's chatId into its openConversationId. Both use
+// the corp app credentials, so only the direct client supports them.
+type JSAPIClient interface {
+	// JSAPISupported reports whether JSAPITicket and
+	// ConvertChatIDToOpenConversationID can succeed with this client's
+	// configuration.
+	JSAPISupported() bool
+	JSAPITicket(ctx context.Context) (string, error)
+	ConvertChatIDToOpenConversationID(ctx context.Context, chatID string) (string, error)
+}
+
+var (
+	_ JSAPIClient = (*Client)(nil)
+	_ JSAPIClient = (*AgentClient)(nil)
 )
 
 type Config struct {
@@ -40,6 +69,9 @@ type Client struct {
 
 	tokenMu sync.Mutex
 	token   tokenCache
+
+	ticketMu sync.Mutex
+	ticket   tokenCache
 }
 
 type tokenCache struct {
@@ -489,6 +521,109 @@ func (c *Client) AddGroupMembers(ctx context.Context, chatID string, userIDs []s
 		"chatid":         chatID,
 		"add_useridlist": cleaned,
 	}, nil)
+}
+
+// JSAPISupported reports whether the corp app credentials are configured.
+func (c *Client) JSAPISupported() bool {
+	return c.IsConfigured()
+}
+
+// JSAPITicket returns the corp H5 jsapi_ticket, cached in process until
+// jsapiTicketRefreshMargin before it expires. The ticket is a signing secret:
+// callers must never return or log it.
+func (c *Client) JSAPITicket(ctx context.Context) (string, error) {
+	if !c.IsConfigured() {
+		return "", &APIError{Code: "not_configured", Message: "DingTalk client is not configured"}
+	}
+	c.ticketMu.Lock()
+	defer c.ticketMu.Unlock()
+	if c.ticket.value != "" && time.Until(c.ticket.expiresAt) > jsapiTicketRefreshMargin {
+		return c.ticket.value, nil
+	}
+	token, err := c.accessToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	// The corp access token rides in the query string; every error below is
+	// redacted so a transport failure never logs it.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.oapiBase+"/get_jsapi_ticket?access_token="+url.QueryEscape(token), nil)
+	if err != nil {
+		return "", RedactURLError(err)
+	}
+	var resp struct {
+		ErrCode   json.RawMessage `json:"errcode"`
+		ErrMsg    string          `json:"errmsg"`
+		Ticket    string          `json:"ticket"`
+		ExpiresIn int64           `json:"expires_in"`
+	}
+	if err := c.doJSON(req, &resp, false); err != nil {
+		return "", RedactURLError(err)
+	}
+	envelope := legacyEnvelope{ErrCode: resp.ErrCode, ErrMsg: resp.ErrMsg}
+	if !envelope.OK() {
+		return "", &APIError{Code: envelope.CodeString(), Message: envelope.ErrMsg}
+	}
+	ticket := strings.TrimSpace(resp.Ticket)
+	if ticket == "" {
+		return "", &APIError{Code: "empty_jsapi_ticket", Message: "DingTalk returned no jsapi ticket"}
+	}
+	ttl := resp.ExpiresIn
+	if ttl <= 0 {
+		ttl = 7200
+	}
+	c.ticket = tokenCache{value: ticket, expiresAt: time.Now().Add(time.Duration(ttl) * time.Second)}
+	return ticket, nil
+}
+
+// RedactURLError returns err with the query string, userinfo and fragment
+// removed from the URL of any *url.Error (net/http transport and parse
+// errors print the full request URL, which may carry an access_token). The
+// underlying cause stays wrapped, so errors.Is(err, context.Canceled) and
+// similar checks keep working. Other errors are returned unchanged.
+func RedactURLError(err error) error {
+	var urlErr *url.Error
+	if err == nil || !errors.As(err, &urlErr) {
+		return err
+	}
+	target := "<redacted>"
+	if parsed, parseErr := url.Parse(urlErr.URL); parseErr == nil {
+		parsed.RawQuery, parsed.ForceQuery, parsed.User, parsed.Fragment, parsed.RawFragment = "", false, nil, "", ""
+		target = parsed.String()
+	}
+	cause := urlErr.Err
+	if cause != nil && urlErr.URL != "" && strings.Contains(cause.Error(), urlErr.URL) {
+		// Never let a cause that repeats the raw URL through.
+		cause = errors.New("request failed")
+	}
+	return &url.Error{Op: urlErr.Op, URL: target, Err: cause}
+}
+
+// ConvertChatIDToOpenConversationID converts a group chatId (as returned by
+// the H5 JSAPI group picker) into the group's openConversationId in the corp
+// app's organization.
+func (c *Client) ConvertChatIDToOpenConversationID(ctx context.Context, chatID string) (string, error) {
+	chatID = strings.TrimSpace(chatID)
+	if chatID == "" {
+		return "", &APIError{Code: "missing_chat_id", Message: "DingTalk chatId is required"}
+	}
+	if !c.IsConfigured() {
+		return "", &APIError{Code: "not_configured", Message: "DingTalk client is not configured"}
+	}
+	token, err := c.accessToken(ctx)
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		OpenConversationID string `json:"openConversationId"`
+	}
+	if err := c.postOpenAPI(ctx, "/v1.0/im/chat/"+url.PathEscape(chatID)+"/convertToOpenConversationId", token, map[string]any{}, &resp); err != nil {
+		return "", err
+	}
+	cid := strings.TrimSpace(resp.OpenConversationID)
+	if cid == "" {
+		return "", &APIError{Code: "empty_open_conversation_id", Message: "DingTalk returned no openConversationId"}
+	}
+	return cid, nil
 }
 
 func (c *Client) postOpenAPI(ctx context.Context, path, token string, body any, out any) error {

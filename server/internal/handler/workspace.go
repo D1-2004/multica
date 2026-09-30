@@ -1053,6 +1053,39 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
+			// Context capability tables have no FKs; sweep them explicitly.
+			name: "delete context capabilities",
+			run: func() error {
+				for _, statement := range []string{
+					`DELETE FROM context_config_link WHERE workspace_id=$1`,
+					`DELETE FROM context_config_grant WHERE workspace_id=$1`,
+					`DELETE FROM context_connector_credential WHERE workspace_id=$1`,
+					`DELETE FROM context_capability_binding WHERE workspace_id=$1`,
+				} {
+					if _, err := tx.Exec(ctx, statement, requester.WorkspaceID); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
+			// Official app OAuth tables (pending states, DCR client
+			// registrations) have no FKs; sweep them explicitly.
+			name: "delete connector OAuth state",
+			run: func() error {
+				for _, statement := range []string{
+					`DELETE FROM connector_oauth_state WHERE workspace_id=$1`,
+					`DELETE FROM connector_oauth_client WHERE workspace_id=$1`,
+				} {
+					if _, err := tx.Exec(ctx, statement, requester.WorkspaceID); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
 			name: "delete agents",
 			run:  func() error { return qtx.DeleteWorkspaceAgents(ctx, requester.WorkspaceID) },
 		},

@@ -1869,6 +1869,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	runnerDevicePollRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_RUNNER_DEVICE_POLL", 600), time.Minute, trustedProxies)
 	runnerChallengeRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_RUNNER_CHALLENGE", 120), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
+	// Official app (connector) OAuth callback: public, hit by the provider's
+	// browser redirect; the hashed single-use state is the credential.
+	connectorOAuthCallbackRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONNECTOR_OAUTH_CALLBACK", 60), time.Minute, trustedProxies)
 	// LOGIN_PROVIDERS (with LOGIN_DINGTALK_ONLY as its legacy alias) closes
 	// the login paths of unlisted providers entirely — not merely hidden in
 	// the UI: the routes simply aren't registered, so a direct POST 404s.
@@ -1954,7 +1957,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
 	r.Get("/api/github/install", h.GitHubInstallStart)
-	r.Get("/api/github/authorize", h.GitHubAuthorizeCallback)
+	// Also completes GitHub official app (MCP connector) connects: states with
+	// the "mcpc." prefix are delegated to the connector OAuth callback and
+	// rate-limited like it; other states keep the install flow unchanged.
+	githubAuthorize := http.HandlerFunc(h.GitHubAuthorizeCallback)
+	githubConnectorAuthorize := connectorOAuthCallbackRL(githubAuthorize)
+	r.Get("/api/github/authorize", func(w http.ResponseWriter, req *http.Request) {
+		if handler.IsConnectorOAuthCallback(req) {
+			githubConnectorAuthorize.ServeHTTP(w, req)
+			return
+		}
+		githubAuthorize(w, req)
+	})
+	// Official app OAuth callback for dynamically registered clients (Notion,
+	// Linear, ...). No Multica session: the single-use state and the browser
+	// binding cookie set by the start response are the proof.
+	r.With(connectorOAuthCallbackRL).Get(handler.ConnectorOAuthCallbackPath, h.ConnectorOAuthCallback)
 	// Slack OAuth callback (no Multica auth in the path — it is hit by Slack's
 	// browser redirect; the workspace/agent/initiator are recovered from the
 	// sealed state). It exchanges the code, upserts the install, then bounces
@@ -2120,6 +2138,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/rollback", h.RollbackFCE2BStableRelease)
 		r.With(handler.RequireDingTalkHumanActor).Get("/api/fde/onboarding", h.GetFDEOnboarding)
 		r.With(handler.RequireDingTalkHumanActor).Post("/api/fde/onboarding", h.ProvisionFDEOnboarding)
+		// Context capability configuration (mobile H5 /dingtalk/configure).
+		// Not workspace-scoped: authority comes from the caller's
+		// context_config_grant rows, never from workspace membership.
+		r.Route("/api/context-capabilities", func(r chi.Router) {
+			r.Use(handler.RequireDingTalkHumanActor)
+			r.Post("/links/redeem", h.RedeemContextConfigLink)
+			r.Get("/agents", h.ListContextConfigAgents)
+			r.Get("/agents/{agentId}", h.GetContextConfigAgent)
+			r.Get("/agents/{agentId}/scenes/{sceneKey}", h.GetContextConfigScene)
+			r.Post("/agents/{agentId}/scenes/resolve", h.ResolveContextConfigScene)
+			r.Put("/agents/{agentId}/bindings", h.PutContextConfigBinding)
+			r.Put("/agents/{agentId}/credentials", h.PutContextConfigCredential)
+			r.Delete("/agents/{agentId}/credentials", h.DeleteContextConfigCredential)
+			r.Post("/agents/{agentId}/connections/start", h.StartContextConfigConnection)
+		})
+		r.With(handler.RequireHumanActor).Get("/api/dingtalk/jsapi-config", h.GetDingTalkJSAPIConfig)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
 
 		// Note (MUL-4309): the generic OpenAI-compatible passthrough endpoints
@@ -2238,6 +2272,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Patch("/internal-connectors/{connectorId}", h.UpdateInternalConnector)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Put("/internal-connectors/{connectorId}/credential", h.PutInternalConnectorCredential)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/test", h.TestInternalConnector)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/oauth/start", h.StartInternalConnectorOAuth)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/tools/refresh", h.RefreshInternalConnectorTools)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Get("/connector-catalog", h.ListConnectorCatalog)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/connector-catalog/{slug}", h.AddCatalogConnector)
 					r.Get("/dingtalk/users/search", h.SearchDingTalkUsers)
 					r.Post("/dingtalk/members", h.AddDingTalkWorkspaceMembers)
 					r.Post("/dingtalk/group-members", h.AddDingTalkGroupMembers)
@@ -2728,6 +2766,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/scene-memory/{memoryId}", h.UpdateAgentSceneMemory)
 					r.Post("/scene-memory/{memoryId}/reset", h.ResetAgentSceneMemory)
 					r.Post("/scene-memory/{memoryId}/relations/clear", h.ClearAgentSceneRelations)
+					// Scene and personal capability layers: offer catalog and
+					// read-only scope summaries (docs/context-capabilities.md).
+					r.With(handler.RequireHumanActor).Get("/context-capabilities", h.GetAgentContextCapabilities)
+					r.With(handler.RequireHumanActor).Put("/context-capabilities/offers", h.PutAgentContextCapabilityOffers)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)

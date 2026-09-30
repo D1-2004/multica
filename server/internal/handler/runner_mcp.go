@@ -281,7 +281,8 @@ func (h *Handler) injectDEAPA2ARunnerMCP(
 	if err != nil {
 		return err
 	}
-	if err := h.injectRunnerMCP(ctx, runtime, task.AgentID, token, agentData, supportsRunnerMCPMounts, supportsManagedRelayRoutes); err != nil {
+	// A2A-origin tasks resolve to the global connector layer only.
+	if err := h.injectRunnerMCP(ctx, runtime, task, token, agentData, supportsRunnerMCPMounts, supportsManagedRelayRoutes); err != nil {
 		return err
 	}
 	_, err = h.Queries.CreateTaskToken(ctx, db.CreateTaskTokenParams{
@@ -295,14 +296,16 @@ func (h *Handler) injectDEAPA2ARunnerMCP(
 	return err
 }
 
-func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, agentID pgtype.UUID, taskToken string, agentData *TaskAgentData, supportsRunnerMCPMounts, supportsManagedRelayRoutes bool) error {
+// injectRunnerMCP mounts the backend-hosted multica MCP, the task's internal
+// connectors (global grants plus the task's scene/personal context layers,
+// see authorizedTaskConnectors) and any Agent-bound Runner MCP servers.
+func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, task db.AgentTaskQueue, taskToken string, agentData *TaskAgentData, supportsRunnerMCPMounts, supportsManagedRelayRoutes bool) error {
 	if agentData == nil {
 		return errors.New("claimed task is missing Agent data")
 	}
+	agentID := task.AgentID
 	if !supportsRunnerMCPMounts || !supportsManagedRelayRoutes {
-		if h.internalConnectorsEnabled(ctx) {
-			slog.WarnContext(ctx, "internal MCP connectors unavailable: sandbox daemon lacks managed MCP support", "agent_id", uuidToString(agentID), "runtime_id", uuidToString(runtime.ID), "supports_runner_mcp_mounts", supportsRunnerMCPMounts, "supports_managed_relay_routes", supportsManagedRelayRoutes)
-		}
+		slog.WarnContext(ctx, "internal MCP connectors unavailable: sandbox daemon lacks managed MCP support", "agent_id", uuidToString(agentID), "runtime_id", uuidToString(runtime.ID), "supports_runner_mcp_mounts", supportsRunnerMCPMounts, "supports_managed_relay_routes", supportsManagedRelayRoutes)
 		return h.injectLegacyRunnerMCP(ctx, runtime, agentID, taskToken, agentData, supportsRunnerMCPMounts)
 	}
 	if runnerMCPRuntimeUnsupported(runtime) {
@@ -321,7 +324,7 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	routes := map[string]MCPRelayRoute{
 		"multica": {Path: "/api/mcp", Authorization: "Bearer " + taskToken},
 	}
-	connectors, err := h.authorizedConnectors(ctx, uuidToString(runtime.WorkspaceID), uuidToString(agentID))
+	connectors, err := h.authorizedTaskConnectors(ctx, runtime.WorkspaceID, task)
 	if err != nil {
 		slog.WarnContext(ctx, "internal MCP connector discovery failed; continuing task claim without connectors", "agent_id", uuidToString(agentID), "runtime_id", uuidToString(runtime.ID), "error", err)
 		connectors = nil

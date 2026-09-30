@@ -463,6 +463,12 @@ func (s *Service) rolloutOne(ctx context.Context, source db.AgentSource, sha str
 		if err := qtx.DeleteAgentSourceSkill(ctx, db.DeleteAgentSourceSkillParams{AgentSourceID: locked.ID, SkillID: removed.SkillID}); err != nil {
 			return err
 		}
+		// Offers and scene/person bindings of the skill (context capabilities)
+		// go with it, as DeleteSkillDependents does for a manual delete.
+		if _, err := tx.Exec(ctx, `DELETE FROM context_capability_binding
+			WHERE workspace_id = $1 AND resource_type = 'skill' AND resource_id = $2`, agent.WorkspaceID, removed.SkillID); err != nil {
+			return err
+		}
 		if err := qtx.DeleteSkill(ctx, db.DeleteSkillParams{ID: removed.SkillID, WorkspaceID: agent.WorkspaceID}); err != nil {
 			return err
 		}

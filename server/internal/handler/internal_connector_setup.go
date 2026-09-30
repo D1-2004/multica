@@ -42,6 +42,11 @@ func (h *Handler) prepareInternalConnectorCreate(ctx context.Context, in *connec
 	if in.AutoDiscover && in.AuthMode == "bearer" && in.BearerToken == "" {
 		return nil, errors.New("Bearer credential is required to discover tools")
 	}
+	// Official app URLs bypass the host allowlist only for connectors the
+	// server creates from the catalog, never for a user-supplied URL.
+	if connectorURLIsCatalogTemplate(in.UpstreamURL) {
+		return nil, errors.New("add this official app from the connector catalog")
+	}
 	if err := validateConnectorURL(in.UpstreamURL); err != nil {
 		return nil, err
 	}
