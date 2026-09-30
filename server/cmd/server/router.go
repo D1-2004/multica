@@ -409,6 +409,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		A2AForwardAllowedOrigins:      splitAndTrim(os.Getenv("MULTICA_A2A_FORWARD_ALLOWED_ORIGINS")),
 		A2AForwardRegistryURLs:        splitAndTrim(os.Getenv("MULTICA_A2A_FORWARD_REGISTRY_URLS")),
 		A2AForwardRegistrationSecret:  strings.TrimSpace(os.Getenv("MULTICA_A2A_FORWARD_REGISTRATION_SECRET")),
+		GitHubPreWebhookURL:           strings.TrimSpace(os.Getenv("GITHUB_PRE_WEBHOOK_URL")),
+		GitHubPreWebhookSecret:        strings.TrimSpace(os.Getenv("GITHUB_PRE_WEBHOOK_SECRET")),
 		StableRuntimePublisherUserIDs: stableRuntimePublishers,
 		DisableWorkspaceCreation:      os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 		VCSIntegrationEnabled:         os.Getenv("MULTICA_VCS_INTEGRATION_ENABLED") == "true",
@@ -1990,6 +1992,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// GitHub App webhook (no Multica auth — requests are authenticated via
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
+	r.Post("/api/webhooks/github/pre", h.ForwardGitHubPreWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
 	r.Get("/api/github/install", h.GitHubInstallStart)
 	// Also completes GitHub official app (MCP connector) connects: states with
