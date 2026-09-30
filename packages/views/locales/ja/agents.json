@@ -1927,10 +1927,10 @@
     "bearer_auth": "Bearer token",
     "no_auth_hint": "No credential is needed. Calls do not send an Authorization header.",
     "rotate_credential": "Rotate Bearer credential",
-    "discovered_tools": "{{count}} tools were discovered and pinned automatically.",
+    "discovered_tools": "{{count}} 個のツールを検出しました。上流のすべてのツールを利用できます。",
     "name": "Name",
     "upstream": "Upstream MCP HTTPS URL",
-    "tools": "Read-only tool allowlist (one per line)",
+    "tools": "検出したツール",
     "agents": "Authorized agents",
     "enable": "Enable connector",
     "disable_action": "Disable connector",
@@ -1947,6 +1947,6 @@
     "step_define": "Admin defines the target, tools and agents",
     "step_credential": "Operator provisions a separate credential",
     "step_use": "Ask an authorized agent in chat",
-    "example": "Use the internal MCP connector {{name}} ({{server}}) to list approved read-only tools, call the suitable tool for my question, and report the actual result."
+    "example": "Use the internal MCP connector {{name}} ({{server}}) to list available tools, call the suitable tool for my question, and report the actual result."
   }
 }
