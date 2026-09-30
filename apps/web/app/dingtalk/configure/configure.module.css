@@ -1,0 +1,43 @@
+.shell {
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Older DingTalk WebViews cannot parse OKLCH, which leaves every token-based
+   surface transparent and every token-based control invisible. The tokens are
+   inlined into utilities (`@theme inline`), so re-pointing them to sRGB is
+   enough to keep the page legible there. `.shell` covers the page from its
+   first paint; `.legacyColorRoot` is put on <html> while this route is
+   mounted so portals outside the shell, the root-layout toaster above all
+   (its --normal-bg is var(--popover)), inherit the same palette.
+   `html.legacyColorRoot` outranks the `:root` token definitions. Light palette
+   only: those WebViews predate dark mode support in the DingTalk client. */
+@supports not (color: oklch(0 0 0)) {
+  .shell,
+  html.legacyColorRoot {
+    --background: #fafafa;
+    --foreground: #09090b;
+    --card: #ffffff;
+    --card-foreground: #09090b;
+    --popover: #ffffff;
+    --popover-foreground: #09090b;
+    --primary: #18181b;
+    --primary-foreground: #fafafa;
+    --secondary: #f4f4f5;
+    --secondary-foreground: #18181b;
+    --muted: #f4f4f5;
+    --muted-foreground: #6b6b76;
+    --faint-foreground: #8a8a94;
+    --accent: #f4f4f5;
+    --accent-foreground: #18181b;
+    --destructive: #dc2626;
+    --border: #ececef;
+    --input: #e4e4e7;
+    --ring: #a1a1aa;
+  }
+
+  .shell {
+    background-color: #fafafa;
+    color: #09090b;
+  }
+}

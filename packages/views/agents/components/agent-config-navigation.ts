@@ -25,6 +25,7 @@ export type DetailTab =
   | "filesystem"
   | "mcp_config"
   | "composio_mcp"
+  | "context_capabilities"
   | "integrations"
   | "mcp_access"
   | "a2a"
@@ -52,6 +53,7 @@ export type AgentTabLabelKey =
   | "filesystem"
   | "mcp_config"
   | "composio_mcp"
+  | "context_capabilities"
   | "integrations"
   | "mcp_access"
   | "a2a"
@@ -93,6 +95,7 @@ export const AGENT_CONFIG_GROUPS: readonly AgentConfigGroup[] = [
       { id: "skills", labelKey: "skills" },
       { id: "mcp_config", labelKey: "mcp_config" },
       { id: "composio_mcp", labelKey: "composio_mcp" },
+      { id: "context_capabilities", labelKey: "context_capabilities" },
     ],
   },
   {

@@ -1780,7 +1780,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		default:
 			tokenStr, ferr = auth.GenerateAgentTaskToken()
 			if ferr == nil {
-				if err := h.injectRunnerMCP(r.Context(), rt, task.AgentID, tokenStr, resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
+				if err := h.injectRunnerMCP(r.Context(), rt, task, tokenStr, resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
 					if errors.Is(err, errRunnerMCPMountsUnsupported) {
 						slog.Error("batch claim: sandbox daemon cannot route dynamic Runner MCP mounts; cancelling task",
 							"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
@@ -2043,8 +2043,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		if agent.SystemKey.String == service.MikaSystemKey {
 			resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
 		}
+		// Scene and personal skill bindings of this task's dispatch context
+		// extend the agent's own skills (nil when the layer does not apply).
+		contextSkillIDs := h.taskContextSkillIDs(r.Context(), runtime.WorkspaceID, *task)
 		if useSkillRefs {
-			bundles, skillRefs := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, runtime, taskBackend, messagePolicy)
+			bundles, skillRefs := h.TaskService.LoadTaskSkillBundles(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
 			agentSkillCount = len(skillRefs)
 			resp.Agent.SkillRefs = skillRefs
 			if h.TaskService.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).BatchSkillResolve && inlineSmallSkillSet(bundles) {
@@ -2055,7 +2058,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 		} else {
-			skills := h.TaskService.LoadAgentExecutionSkills(r.Context(), task.AgentID, runtime, taskBackend, messagePolicy)
+			skills := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
 			agentSkillCount = len(skills)
 			builtinSkills := h.TaskService.BuiltinSkills()
 			builtinSkillCount = len(builtinSkills)
@@ -3423,7 +3426,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	default:
 		tokenStr, ferr = auth.GenerateAgentTaskToken()
 		if ferr == nil {
-			if err := h.injectRunnerMCP(r.Context(), runtime, task.AgentID, tokenStr, resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
+			if err := h.injectRunnerMCP(r.Context(), runtime, *task, tokenStr, resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
 				if errors.Is(err, errRunnerMCPMountsUnsupported) {
 					outcome = "error_daemon_capability"
 					slog.Error("task claim: sandbox daemon cannot route dynamic Runner MCP mounts; cancelling task",
@@ -3554,7 +3557,14 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to load task sandbox backend")
 		return
 	}
-	bundles, _ := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, runtime, taskBackend)
+	// Accept agent skills plus, for a task with a scene or personal scope, the
+	// requested refs that are enabled offered skills, so a scene toggle between
+	// claim and resolution cannot 404.
+	requestedSkillIDs := make([]string, 0, len(req.Skills))
+	for _, ref := range req.Skills {
+		requestedSkillIDs = append(requestedSkillIDs, ref.ID)
+	}
+	bundles, _ := h.TaskService.LoadTaskSkillBundles(r.Context(), task.AgentID, h.resolvableContextSkillIDs(r.Context(), runtime.WorkspaceID, task, requestedSkillIDs), runtime, taskBackend)
 	var policyBundle *service.AgentSkillData
 	if dingTalkTaskPolicyCapable(r, runtime) && !service.IsA2ATaskOrigin(task.Context) {
 		// There are exactly two DWS documents. Preserve the static policy-aware

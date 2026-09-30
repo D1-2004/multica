@@ -74,6 +74,10 @@ type IntegrationsConfig struct {
 }
 
 type FeatureConfig struct {
+	// InternalMCPConnectors is deprecated and ignored: internal MCP connectors
+	// are always on. It stays parseable so existing Diamond configs that still
+	// carry features.internal_mcp_connectors keep loading under the strict
+	// features parser.
 	InternalMCPConnectors *bool `json:"internal_mcp_connectors,omitempty"`
 	SemanticaMCPRelay     *bool `json:"semantica_mcp_relay,omitempty"`
 	WorkspaceAccessTokens bool  `json:"workspace_access_tokens"`

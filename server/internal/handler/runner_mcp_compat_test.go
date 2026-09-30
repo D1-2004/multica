@@ -62,10 +62,10 @@ func TestInjectRunnerMCPLegacyDaemonCompatibility(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			h := &Handler{Queries: db.New(tx), cfg: Config{PublicURL: "https://multica.example"}}
+			h := &Handler{Queries: db.New(tx), DB: tx, cfg: Config{PublicURL: "https://multica.example"}}
 			original := json.RawMessage(`{"mcpServers":{"direct":{"type":"http","url":"https://direct.example/mcp"}}}`)
 			data := &TaskAgentData{McpConfig: append(json.RawMessage(nil), original...)}
-			err = h.injectRunnerMCP(ctx, runtime, agentID, "test-task-token", data, tc.mounts, tc.relayRoutes)
+			err = h.injectRunnerMCP(ctx, runtime, db.AgentTaskQueue{AgentID: agentID}, "test-task-token", data, tc.mounts, tc.relayRoutes)
 			if tc.wantUnsupported {
 				if !errors.Is(err, errRunnerMCPMountsUnsupported) {
 					t.Fatalf("error = %v, want unsupported mounts", err)

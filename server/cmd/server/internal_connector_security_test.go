@@ -301,3 +301,28 @@ func TestInternalConnectorCredentialKeySelection(t *testing.T) {
 		t.Fatalf("dedicated source was not selected: %q %v", source, err)
 	}
 }
+
+// The desktop external-browser begin link of official app connects is gone:
+// it bound whichever browser opened it, so an admin could hand it to someone
+// who then authorized their own account into the admin's workspace. The DCR
+// callback stays public; the begin path is not routed at all.
+func TestConnectorOAuthBeginRouteIsNotRegistered(t *testing.T) {
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	state := "mcpc." + strings.Repeat("A", 43)
+	get := func(path string) (int, string) {
+		t.Helper()
+		resp, err := client.Get(testServer.URL + path + "?state=" + state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(body)
+	}
+	if status, body := get("/api/connector-oauth/begin"); status != http.StatusNotFound {
+		t.Fatalf("begin route answered %d: %s", status, body)
+	}
+	if status, body := get("/api/connector-oauth/callback"); status == http.StatusNotFound || status == http.StatusUnauthorized {
+		t.Fatalf("DCR callback route answered %d: %s", status, body)
+	}
+}

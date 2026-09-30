@@ -1,0 +1,32 @@
+import { queryOptions } from "@tanstack/react-query";
+import { api } from "../api";
+
+/**
+ * Workspace connector library keys. The list key is the prefix of every
+ * other key, so invalidating the list also refreshes the catalog and the
+ * member-visible "available" view (which views read under
+ * `[...all(wsId), "available"]`).
+ */
+export const internalConnectorKeys = {
+  all: (wsId: string) => ["workspaces", wsId, "internal-connectors"] as const,
+  list: (wsId: string) => internalConnectorKeys.all(wsId),
+  available: (wsId: string) => [...internalConnectorKeys.all(wsId), "available"] as const,
+  catalog: (wsId: string) => [...internalConnectorKeys.all(wsId), "catalog"] as const,
+};
+
+export function internalConnectorListOptions(wsId: string) {
+  return queryOptions({
+    queryKey: internalConnectorKeys.list(wsId),
+    queryFn: () => api.listInternalConnectors(wsId),
+    enabled: Boolean(wsId),
+  });
+}
+
+/** Official app gallery (admin only). */
+export function connectorCatalogOptions(wsId: string) {
+  return queryOptions({
+    queryKey: internalConnectorKeys.catalog(wsId),
+    queryFn: () => api.listConnectorCatalog(wsId),
+    enabled: Boolean(wsId),
+  });
+}

@@ -126,6 +126,8 @@
     "./slack/queries": "./slack/queries.ts",
     "./dingtalk": "./dingtalk/index.ts",
     "./dingtalk/queries": "./dingtalk/queries.ts",
+    "./context-capabilities": "./context-capabilities/index.ts",
+    "./internal-connectors": "./internal-connectors/index.ts",
     "./dingtalk-account-bindings": "./dingtalk-account-bindings/index.ts",
     "./dingtalk-account-bindings/queries": "./dingtalk-account-bindings/queries.ts",
     "./dingtalk-account-bindings/mutations": "./dingtalk-account-bindings/mutations.ts",

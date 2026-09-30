@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS internal_connector_catalog_slug_idx;

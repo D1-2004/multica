@@ -1,4 +1,41 @@
 import { InternalConnectorListSchema, AvailableInternalConnectorListSchema, SavedInternalConnectorSchema, InternalConnectorTestSchema, type InternalConnector, type AvailableInternalConnector, type InternalConnectorInput, type InternalConnectorTest } from "./internal-connector-schema";
+import {
+  AddedCatalogConnectorSchema,
+  ConnectorAuthorizeUrlSchema,
+  ConnectorCatalogSchema,
+  InternalConnectorToolsRefreshSchema,
+  type ConnectorCatalogApp,
+  type InternalConnectorToolsRefresh,
+} from "./internal-connector-schema";
+import {
+  AgentContextCapabilitiesSchema,
+  ContextCapabilityBindingResponseSchema,
+  ContextConfigAgentDetailSchema,
+  ContextConfigAgentListSchema,
+  ContextConfigRedeemSchema,
+  ContextConfigSceneDetailSchema,
+  ContextConfigSceneResolveSchema,
+  ContextConnectorCredentialResponseSchema,
+  DingTalkJsapiConfigSchema,
+  EMPTY_CONTEXT_CONFIG_REDEEM,
+} from "./context-capability-schema";
+import type {
+  AgentContextCapabilities,
+  ContextCapabilityBinding,
+  ContextConfigAgentDetail,
+  ContextConfigAgentSummary,
+  ContextConfigRedeemResult,
+  ContextConfigSceneDetail,
+  ContextConfigSceneGrant,
+  ContextConnectorCredential,
+  DeleteContextConnectorCredentialInput,
+  DingTalkJsapiConfig,
+  ResolveContextConfigSceneInput,
+  SetAgentContextCapabilityOffersInput,
+  SetContextCapabilityBindingInput,
+  SetContextConnectorCredentialInput,
+  StartContextConnectorConnectionInput,
+} from "../types/context-capability";
 import { SemanticaMCPStatusSchema, EMPTY_SEMANTICA_MCP_STATUS, type SemanticaMCPStatus } from "./semantica-mcp-schema";
 import { WorkspaceMCPConnectionsSchema, WorkspaceMCPLinkSchema, type WorkspaceMCPConnection, type CreateWorkspaceMCPConnection } from "./workspace-mcp-schema";
 import {ModelProbeSchema, GlobalModelsSchema, EMPTY_GLOBAL_MODELS, DeveloperCapabilitiesSchema, DiscoveredModelsSchema, globalModelsWire, type GlobalModels, type ModelProvider} from "./global-models-schema";
@@ -720,6 +757,14 @@ function subscriberTarget(
 function workspaceHeader(slug?: string): Record<string, string> | undefined {
   return slug ? { "X-Workspace-Slug": slug } : undefined;
 }
+
+/**
+ * Blanks the workspace header for routes that are not workspace-scoped
+ * (context capability mobile configuration). Their callers are often not
+ * members of any workspace, so a stale current-workspace slug must never
+ * leak into the request.
+ */
+const NO_WORKSPACE_HEADER: Record<string, string> = { "X-Workspace-Slug": "" };
 
 export class ApiClient {
   private baseUrl: string;
@@ -4120,10 +4165,280 @@ export class ApiClient {
     });
   }
 
+  // Official app catalog (official remote MCP servers + OAuth). Admin only,
+  // same guard as the connector library.
+
+  async listConnectorCatalog(workspaceId: string): Promise<ConnectorCatalogApp[]> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/connector-catalog`);
+    return parseWithFallback<ConnectorCatalogApp[]>(raw, ConnectorCatalogSchema, [], {
+      endpoint: "GET /api/workspaces/:id/connector-catalog",
+    });
+  }
+
+  /** Creates (or returns the existing) workspace connector for a catalog
+   * app. Returns null when the echo is malformed; callers refetch the list. */
+  async addCatalogConnector(workspaceId: string, slug: string): Promise<InternalConnector | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/connector-catalog/${encodeURIComponent(slug)}`,
+      { method: "POST" },
+    );
+    return parseWithFallback<InternalConnector | null>(raw, AddedCatalogConnectorSchema, null, {
+      endpoint: "POST /api/workspaces/:id/connector-catalog/:slug",
+      includeReceived: false,
+    });
+  }
+
+  /** Starts the provider OAuth flow for the workspace-wide shared account.
+   * Resolves to "" when the server did not return a navigable https URL.
+   * The response also sets the cookie that binds the flow to this browser,
+   * so only a browser page that then navigates to the URL may call it. */
+  async startInternalConnectorOAuth(
+    workspaceId: string,
+    id: string,
+    returnTo?: string,
+  ): Promise<string> {
+    const body: Record<string, string> = {};
+    if (returnTo) body.return_to = returnTo;
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}/oauth/start`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+    return parseWithFallback<string>(raw, ConnectorAuthorizeUrlSchema, "", {
+      endpoint: "POST /api/workspaces/:id/internal-connectors/:connectorId/oauth/start",
+      includeReceived: false,
+    });
+  }
+
+  /** Re-discovers a catalog connector's tools with its workspace credential
+   * and re-pins them. null when the response is malformed. */
+  async refreshInternalConnectorTools(workspaceId: string, id: string): Promise<InternalConnectorToolsRefresh | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}/tools/refresh`,
+      { method: "POST" },
+    );
+    return parseWithFallback<InternalConnectorToolsRefresh | null>(raw, InternalConnectorToolsRefreshSchema, null, {
+      endpoint: "POST /api/workspaces/:id/internal-connectors/:connectorId/tools/refresh",
+    });
+  }
+
   async testInternalConnector(workspaceId: string, id: string): Promise<InternalConnectorTest> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}/test`, {method:"POST"});
     return parseWithFallback(raw, InternalConnectorTestSchema, {reachable:false,ready:false,missing_tools:[],message:"Invalid connection test response"}, {
       endpoint:"POST /api/workspaces/:id/internal-connectors/:connectorId/test",includeReceived:false,
+    });
+  }
+
+  // Context capabilities — mobile configuration (DingTalk H5). These routes
+  // are keyed by agent and authorized by the caller's scene/person grants,
+  // not by workspace membership, so no workspace header is sent.
+
+  async redeemContextConfigLink(token: string): Promise<ContextConfigRedeemResult> {
+    const raw = await this.fetch<unknown>("/api/context-capabilities/links/redeem", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+      headers: NO_WORKSPACE_HEADER,
+    });
+    return parseWithFallback(raw, ContextConfigRedeemSchema, EMPTY_CONTEXT_CONFIG_REDEEM, {
+      endpoint: "POST /api/context-capabilities/links/redeem",
+    });
+  }
+
+  async listContextConfigAgents(): Promise<ContextConfigAgentSummary[]> {
+    const raw = await this.fetch<unknown>("/api/context-capabilities/agents", {
+      headers: NO_WORKSPACE_HEADER,
+    });
+    return parseWithFallback<ContextConfigAgentSummary[]>(raw, ContextConfigAgentListSchema, [], {
+      endpoint: "GET /api/context-capabilities/agents",
+    });
+  }
+
+  async getContextConfigAgent(agentId: string): Promise<ContextConfigAgentDetail | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}`,
+      { headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextConfigAgentDetail | null>(raw, ContextConfigAgentDetailSchema, null, {
+      endpoint: "GET /api/context-capabilities/agents/{agentId}",
+      includeReceived: false,
+    });
+  }
+
+  async getContextConfigScene(agentId: string, sceneKey: string): Promise<ContextConfigSceneDetail | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}`,
+      { headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextConfigSceneDetail | null>(raw, ContextConfigSceneDetailSchema, null, {
+      endpoint: "GET /api/context-capabilities/agents/{agentId}/scenes/{sceneKey}",
+      includeReceived: false,
+    });
+  }
+
+  async setContextCapabilityBinding(
+    agentId: string,
+    input: SetContextCapabilityBindingInput,
+  ): Promise<ContextCapabilityBinding> {
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/bindings`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          scope_type: input.scopeType,
+          scope_key: input.scopeKey,
+          resource_type: input.resourceType,
+          resource_id: input.resourceId,
+          enabled: input.enabled,
+        }),
+        headers: NO_WORKSPACE_HEADER,
+      },
+    );
+    // The write succeeded; a malformed echo falls back to what was sent and
+    // the caller's invalidation refetches the authoritative state.
+    const binding = parseWithFallback<ContextCapabilityBinding | null>(
+      raw,
+      ContextCapabilityBindingResponseSchema,
+      null,
+      { endpoint: "PUT /api/context-capabilities/agents/{agentId}/bindings" },
+    );
+    return binding ?? {
+      resourceType: input.resourceType,
+      resourceId: input.resourceId,
+      enabled: input.enabled,
+    };
+  }
+
+  async setContextConnectorCredential(
+    agentId: string,
+    input: SetContextConnectorCredentialInput,
+  ): Promise<ContextConnectorCredential> {
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/credentials`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          scope_type: input.scopeType,
+          scope_key: input.scopeKey,
+          connector_id: input.connectorId,
+          bearer: input.bearer,
+        }),
+        headers: NO_WORKSPACE_HEADER,
+      },
+    );
+    return parseWithFallback<ContextConnectorCredential>(
+      raw,
+      ContextConnectorCredentialResponseSchema,
+      { connectorId: input.connectorId, hint: "", updatedAt: "", kind: "bearer" },
+      {
+        endpoint: "PUT /api/context-capabilities/agents/{agentId}/credentials",
+        includeReceived: false,
+      },
+    );
+  }
+
+  async deleteContextConnectorCredential(
+    agentId: string,
+    input: DeleteContextConnectorCredentialInput,
+  ): Promise<void> {
+    const params = new URLSearchParams({
+      scope_type: input.scopeType,
+      scope_key: input.scopeKey,
+      connector_id: input.connectorId,
+    });
+    await this.fetch<void>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/credentials?${params.toString()}`,
+      { method: "DELETE", headers: NO_WORKSPACE_HEADER },
+    );
+  }
+
+  /** Starts the provider OAuth flow that connects the caller's own account
+   * (person scope) or the group's account (scene scope) to an offered
+   * connector. Resolves to "" when the server did not return a navigable
+   * https URL. */
+  async startContextConnectorConnection(
+    agentId: string,
+    input: StartContextConnectorConnectionInput,
+  ): Promise<string> {
+    const body: Record<string, string> = {
+      scope_type: input.scopeType,
+      scope_key: input.scopeKey,
+      connector_id: input.connectorId,
+    };
+    if (input.returnTo) body.return_to = input.returnTo;
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/connections/start`,
+      { method: "POST", body: JSON.stringify(body), headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<string>(raw, ConnectorAuthorizeUrlSchema, "", {
+      endpoint: "POST /api/context-capabilities/agents/{agentId}/connections/start",
+      includeReceived: false,
+    });
+  }
+
+  async resolveContextConfigScene(
+    agentId: string,
+    input: ResolveContextConfigSceneInput,
+  ): Promise<ContextConfigSceneGrant | null> {
+    const body: Record<string, string> = {};
+    if (input.chatId) body.chat_id = input.chatId;
+    if (input.openConversationId) body.open_conversation_id = input.openConversationId;
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/resolve`,
+      { method: "POST", body: JSON.stringify(body), headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextConfigSceneGrant | null>(raw, ContextConfigSceneResolveSchema, null, {
+      endpoint: "POST /api/context-capabilities/agents/{agentId}/scenes/resolve",
+    });
+  }
+
+  /** `dd.config` signature for `url` (the page URL without its fragment).
+   * Returns null when the response is malformed so callers treat the JSAPI
+   * as unavailable instead of signing with partial data. */
+  async getDingTalkJsapiConfig(url: string): Promise<DingTalkJsapiConfig | null> {
+    const params = new URLSearchParams({ url });
+    const raw = await this.fetch<unknown>(`/api/dingtalk/jsapi-config?${params.toString()}`, {
+      headers: NO_WORKSPACE_HEADER,
+    });
+    return parseWithFallback<DingTalkJsapiConfig | null>(raw, DingTalkJsapiConfigSchema, null, {
+      endpoint: "GET /api/dingtalk/jsapi-config",
+      includeReceived: false,
+    });
+  }
+
+  // Context capabilities — admin (agent detail tab). Workspace-scoped: the
+  // workspace is pinned explicitly so the query key's wsId and the request
+  // always agree.
+
+  async getAgentContextCapabilities(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<AgentContextCapabilities | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/context-capabilities`,
+      { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+    return parseWithFallback<AgentContextCapabilities | null>(raw, AgentContextCapabilitiesSchema, null, {
+      endpoint: "GET /api/agents/{id}/context-capabilities",
+    });
+  }
+
+  async setAgentContextCapabilityOffers(
+    workspaceId: string,
+    agentId: string,
+    input: SetAgentContextCapabilityOffersInput,
+  ): Promise<AgentContextCapabilities | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/context-capabilities/offers`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          connector_ids: input.connectorIds,
+          skill_ids: input.skillIds,
+        }),
+        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+      },
+    );
+    return parseWithFallback<AgentContextCapabilities | null>(raw, AgentContextCapabilitiesSchema, null, {
+      endpoint: "PUT /api/agents/{id}/context-capabilities/offers",
     });
   }
 
