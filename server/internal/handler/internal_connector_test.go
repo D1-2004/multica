@@ -71,7 +71,7 @@ func TestInternalConnectorStoredCredentialIsBoundToWorkspaceAndConnector(t *test
 	}
 }
 
-func TestInternalConnectorRelayFiltersToolsAndHeaders(t *testing.T) {
+func TestInternalConnectorRelayPreservesToolsAndIsolatesHeaders(t *testing.T) {
 	id := "11111111-1111-4111-8111-111111111111"
 	t.Setenv(connectorCredentialRef(id), "upstream-only")
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +103,7 @@ func TestInternalConnectorRelayFiltersToolsAndHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(result)
-	if strings.Contains(string(encoded), "delete_knowledge") || !strings.Contains(string(encoded), "page3") {
+	if !strings.Contains(string(encoded), "delete_knowledge") || !strings.Contains(string(encoded), "page3") {
 		t.Fatalf("list boundary broken: %s", encoded)
 	}
 	result, err = h.callInternalConnectorUpstream(context.Background(), c, "tools/call", connectorRPCParams{Name: "read_knowledge", Arguments: json.RawMessage(`{}`)})
@@ -113,7 +113,7 @@ func TestInternalConnectorRelayFiltersToolsAndHeaders(t *testing.T) {
 	}
 }
 
-func TestInternalConnectorNoAuthDiscoveryPinsReadOnlyTools(t *testing.T) {
+func TestInternalConnectorNoAuthDiscoveryIncludesAllAnnotations(t *testing.T) {
 	id := "11111111-1111-4111-8111-111111111111"
 	ws := "33333333-3333-4333-8333-333333333333"
 	t.Setenv(connectorCredentialRef(id), "must-not-leak")
@@ -126,7 +126,7 @@ func TestInternalConnectorNoAuthDiscoveryPinsReadOnlyTools(t *testing.T) {
 	})}}
 	in := connectorInput{Name: "Agent", UpstreamURL: "https://pre-wiki.dingtalk.alibaba-inc.com/mcp", AuthMode: "none", AutoDiscover: true}
 	sealed, err := h.prepareInternalConnectorCreate(context.Background(), &in, id, ws)
-	if err != nil || len(sealed) != 0 || in.AuthMode != "none" || len(in.AllowedTools) != 1 || in.AllowedTools[0] != "describe_agent" {
+	if err != nil || len(sealed) != 0 || in.AuthMode != "none" || len(in.AllowedTools) != 2 || in.AllowedTools[0] != "delegate_task" {
 		t.Fatalf("no-auth setup failed: tools=%v mode=%q ciphertext=%d err=%v", in.AllowedTools, in.AuthMode, len(sealed), err)
 	}
 	if err := validateConnectorInput(in); err != nil {
@@ -147,7 +147,7 @@ func TestInternalConnectorAdminToolListRetriesOnlyTimeouts(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"read"}]}}`))}, nil
 	})}}
-	result, attempts, err := h.connectorToolListWithRetry(context.Background(), c, "", true)
+	result, attempts, err := h.connectorToolListWithRetry(context.Background(), c, "")
 	if err != nil || attempts != 2 || calls != 2 || len(result.(map[string]any)["tools"].([]map[string]any)) != 1 {
 		t.Fatalf("timed-out tools/list did not recover once: attempts=%d calls=%d result=%v err=%v", attempts, calls, result, err)
 	}
@@ -157,27 +157,24 @@ func TestInternalConnectorAdminToolListRetriesOnlyTimeouts(t *testing.T) {
 		calls++
 		return &http.Response{StatusCode: 401, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("rejected"))}, nil
 	})}
-	_, attempts, err = h.connectorToolListWithRetry(context.Background(), c, "", true)
+	_, attempts, err = h.connectorToolListWithRetry(context.Background(), c, "")
 	if attempts != 1 || calls != 1 || err == nil {
 		t.Fatalf("credential rejection was retried: attempts=%d calls=%d err=%v", attempts, calls, err)
 	}
 }
 
-func TestInternalConnectorCapabilityLinkMustBelongToThisDeployment(t *testing.T) {
+func TestInternalConnectorCapabilityLinkAcceptsAnyApprovedDeployment(t *testing.T) {
+	t.Setenv("MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES", "dingtalk.com,alibaba-inc.com")
 	token := "mca2a_" + strings.Repeat("a", 40)
-	base := "https://pre.example.test/base"
-	valid := base + "/api/mcp/connect/" + token
-	if got, err := parseInternalConnectorCapabilityLink(valid, base); err != nil || got != token {
-		t.Fatalf("same-deployment link rejected: token_valid=%v err=%v", got == token, err)
+	for _, base := range []string{"https://pre-fde-workbench.dingtalk.com", "https://fde-workbench.dingtalk.com/base"} {
+		canonical, got, err := parseInternalConnectorCapabilityLink(base + "/api/mcp/connect/" + token)
+		if err != nil || got != token || canonical != base+"/api/mcp/connect" {
+			t.Fatalf("approved capability rejected or not redacted: err=%v", err)
+		}
 	}
-	for _, raw := range []string{
-		"https://other.example.test/base/api/mcp/connect/" + token,
-		valid + "/extra",
-		valid + "?copy=1",
-		base + "/api/mcp/connect/mca2a_short",
-	} {
-		if got, err := parseInternalConnectorCapabilityLink(raw, base); err == nil || got != "" || strings.Contains(err.Error(), token) {
-			t.Fatalf("unsafe link accepted or leaked: token=%q err=%v", got, err)
+	for _, raw := range []string{"https://evil.test/api/mcp/connect/" + token, "https://fde-workbench.dingtalk.com/api/mcp/connect/" + token + "/extra"} {
+		if _, _, err := parseInternalConnectorCapabilityLink(raw); err == nil || strings.Contains(err.Error(), token) {
+			t.Fatal("invalid capability accepted or leaked")
 		}
 	}
 }
@@ -248,14 +245,11 @@ func TestInternalConnectorToolNamesStayWithinPiLimit(t *testing.T) {
 		if n := len("mcp__" + server + "__" + presented); n > 62 {
 			t.Fatalf("Pi MCP name remains too long: %d %q", n, presented)
 		}
-		if resolved, ok := connectorOriginalAllowedTool([]string{original}, presented); !ok || resolved != original {
+		if resolved, ok := connectorOriginalTool([]string{original}, presented); !ok || resolved != original {
 			t.Fatalf("alias did not resolve back to the allowed upstream tool: %q", presented)
 		}
 	}
-	longName := strings.Repeat("long_tool_", 12)
-	if err := validateConnectorInput(connectorInput{Name: "Knowledge", UpstreamURL: "https://pre-wiki.dingtalk.alibaba-inc.com/mcp", AllowedTools: []string{longName, connectorPresentedToolName(longName)}}); err == nil {
-		t.Fatal("alias collision was accepted")
-	}
+
 }
 
 func TestInternalConnectorLongToolListUsesResolvableAlias(t *testing.T) {
@@ -287,7 +281,41 @@ func TestInternalConnectorLongToolListUsesResolvableAlias(t *testing.T) {
 	if alias == longName || alias != connectorPresentedToolName(longName) || !strings.Contains(tools[0]["description"].(string), longName) {
 		t.Fatalf("long tool was not presented under a documented alias: %#v", tools[0])
 	}
-	if original, ok := connectorOriginalAllowedTool(c.AllowedTools, alias); !ok || original != longName {
+	if original, ok := connectorOriginalTool(c.AllowedTools, alias); !ok || original != longName {
 		t.Fatal("presented alias did not resolve to the authorized upstream tool")
+	}
+}
+
+func TestInternalConnectorCapabilityDiscoveryUsesRemoteCredentialAndAllTools(t *testing.T) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	const ws = "33333333-3333-4333-8333-333333333333"
+	t.Setenv("MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES", "dingtalk.com,alibaba-inc.com")
+	box, err := secretbox.New(bytes.Repeat([]byte("k"), secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, count := range []int{0, 70} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			token := "remote-capability-secret"
+			h := &Handler{InternalConnectorSecretBox: box, InternalConnectorClient: &http.Client{Transport: connectorTestRoundTrip(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Host != "pre-fde-workbench.dingtalk.com" || r.URL.Path != "/api/mcp/connect/"+token || r.Header.Get("Authorization") != "Bearer "+token || r.Header.Get("MCP-Protocol-Version") == "" {
+					t.Fatal("capability request lost its target, credential or protocol header")
+				}
+				tools := make([]map[string]any, count)
+				for i := range tools {
+					tools[i] = map[string]any{"name": fmt.Sprintf("tool_%d", i), "annotations": map[string]any{"readOnlyHint": false}}
+				}
+				raw, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "result": map[string]any{"tools": tools}})
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(raw))}, nil
+			})}}
+			in := connectorInput{Name: "Remote", UpstreamURL: "https://pre-fde-workbench.dingtalk.com/api/mcp/connect/" + token, AutoDiscover: true}
+			sealed, err := h.prepareInternalConnectorCreate(t.Context(), &in, id, ws)
+			if err != nil || len(in.AllowedTools) != count || strings.Contains(in.UpstreamURL, token) || bytes.Contains(sealed, []byte(token)) {
+				t.Fatalf("remote discovery failed or leaked credential: count=%d err=%v", len(in.AllowedTools), err)
+			}
+			if err := validateConnectorInput(in); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

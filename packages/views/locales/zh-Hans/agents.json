@@ -1915,7 +1915,7 @@
     "credential_failed": "保存凭证失败",
     "test_connection": "测试连通性",
     "testing": "测试中…",
-    "test_success": "上游连通；发现授权工具：{{tools}}",
+    "test_success": "上游连通；发现工具：{{tools}}",
     "test_missing_tools": "上游连通，但未找到配置的工具：{{tools}}。请核对工具名与上游列表，暂不能判定为可用。",
     "test_failed": "连通性测试失败，请检查地址和凭证。",
     "manage": "管理",
@@ -1935,10 +1935,10 @@
     "bearer_auth": "Bearer 令牌",
     "no_auth_hint": "此连接器无需凭证，调用上游时不会发送 Authorization Header。",
     "rotate_credential": "更换 Bearer 凭证",
-    "discovered_tools": "已自动发现并固定 {{count}} 个工具。",
+    "discovered_tools": "已发现 {{count}} 个工具；可使用上游全部工具。",
     "name": "名称",
     "upstream": "上游 MCP HTTPS 地址",
-    "tools": "只读工具白名单（每行一个）",
+    "tools": "已发现的工具",
     "agents": "授权智能体",
     "enable": "启用连接器",
     "disable_action": "停用连接器",
@@ -1954,7 +1954,7 @@
     "save_failed": "保存连接器失败",
     "step_define": "粘贴 MCP 地址并选择智能体",
     "step_credential": "自动发现工具并测试连通性",
-    "step_use": "启用后在授权智能体聊天中查询",
-    "example": "请使用内部 MCP 连接器「{{name}}」（{{server}}）列出可用的只读工具，并调用适合当前问题的工具；说明实际返回结果。"
+    "step_use": "启用后在授权智能体聊天中使用",
+    "example": "请使用内部 MCP 连接器「{{name}}」（{{server}}）列出可用工具，并调用适合当前问题的工具；说明实际返回结果。"
   }
 }

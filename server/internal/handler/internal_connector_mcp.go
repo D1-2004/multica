@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -38,10 +39,10 @@ const connectorListAttemptTimeout = 8 * time.Second
 // An administrator's tools/list is read-only and safe to retry once after a
 // transient network timeout. Keep this separate from task tools/call, which
 // can have side effects and must never be retried by the relay.
-func (h *Handler) connectorToolListWithRetry(ctx context.Context, c internalConnector, cursor string, filterTools bool) (any, int, error) {
+func (h *Handler) connectorToolListWithRetry(ctx context.Context, c internalConnector, cursor string) (any, int, error) {
 	for attempt := 1; attempt <= 2; attempt++ {
 		attemptCtx, cancel := context.WithTimeout(ctx, connectorListAttemptTimeout)
-		result, err := h.callInternalConnectorUpstreamFiltered(attemptCtx, c, "tools/list", connectorRPCParams{Cursor: cursor}, filterTools)
+		result, err := h.callInternalConnectorUpstreamRaw(attemptCtx, c, "tools/list", connectorRPCParams{Cursor: cursor})
 		cancel()
 		if err == nil {
 			return result, attempt, nil
@@ -260,12 +261,21 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if request.Method == "tools/call" {
-		original, allowed := connectorOriginalAllowedTool(c.AllowedTools, params.Name)
-		if !allowed || !internalMCPJSONObject(params.Arguments) {
-			h.writeMulticaMCPError(w, request.ID, -32602, "tool is not allowed or arguments are invalid")
+		if params.Name == "" || !internalMCPJSONObject(params.Arguments) {
+			h.writeMulticaMCPError(w, request.ID, -32602, "tool name or arguments are invalid")
 			return
 		}
-		params.Name = original
+		// Resolve compact aliases against live metadata, never a saved allowlist.
+		if strings.HasPrefix(params.Name, "t_") && len(params.Name) == 18 {
+			names, listErr := h.discoverInternalConnectorTools(r.Context(), *c)
+			if listErr != nil {
+				h.writeMulticaMCPError(w, request.ID, -32603, "upstream tool names unavailable")
+				return
+			}
+			if original, found := connectorOriginalTool(names, params.Name); found {
+				params.Name = original
+			}
+		}
 	}
 	if request.Method == "tools/list" && (params.Name != "" || len(params.Arguments) > 0) {
 		h.writeMulticaMCPError(w, request.ID, -32602, "invalid tools/list parameters")
@@ -308,15 +318,31 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalConnector, method string, params connectorRPCParams) (any, error) {
-	return h.callInternalConnectorUpstreamFiltered(ctx, c, method, params, true)
+	result, err := h.callInternalConnectorUpstreamRaw(ctx, c, method, params)
+	if err != nil || method != "tools/list" {
+		return result, err
+	}
+	list := result.(map[string]any)
+	seen := map[string]bool{}
+	for _, item := range list["tools"].([]map[string]any) {
+		name, _ := item["name"].(string)
+		presented := connectorPresentedToolName(name)
+		if name == "" || seen[presented] {
+			return nil, connectorUpstreamProtocolError{}
+		}
+		seen[presented] = true
+		if presented != name {
+			item["name"] = presented
+			description, _ := item["description"].(string)
+			item["description"] = "Upstream tool " + name + ". " + description
+		}
+	}
+	return list, nil
 }
 
-// Discovery runs only during administrator setup. It sees the upstream tool
-// definitions before the newly created connector has a pinned allowlist.
-func (h *Handler) callInternalConnectorUpstreamFiltered(ctx context.Context, c internalConnector, method string, params connectorRPCParams, filterTools bool) (any, error) {
-	if !filterTools && method != "tools/list" {
-		return nil, errors.New("unfiltered connector requests are limited to tools/list")
-	}
+// Raw discovery preserves every upstream definition. Presentation only aliases
+// long names for the runtime's name limit; it never filters tools.
+func (h *Handler) callInternalConnectorUpstreamRaw(ctx context.Context, c internalConnector, method string, params connectorRPCParams) (any, error) {
 	upstreamParams := map[string]any{}
 	if method == "tools/list" && params.Cursor != "" {
 		upstreamParams["cursor"] = params.Cursor
@@ -329,16 +355,26 @@ func (h *Handler) callInternalConnectorUpstreamFiltered(ctx context.Context, c i
 	if err != nil {
 		return nil, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.UpstreamURL, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json, text/event-stream")
 	bearer, err := h.connectorBearer(c)
 	if err != nil {
 		return nil, err
 	}
+	upstreamURL := c.UpstreamURL
+	// Stored capability addresses omit the encrypted token. Reconstruct it only
+	// at the final HTTP boundary so older remote deployments also work.
+	if strings.HasSuffix(upstreamURL, "/api/mcp/connect") {
+		if bearer == "" {
+			return nil, errors.New("connector capability credential unavailable")
+		}
+		upstreamURL += "/" + url.PathEscape(bearer)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(body))
+	if err != nil {
+		return nil, errors.New("invalid connector request URL")
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json, text/event-stream")
+	request.Header.Set("MCP-Protocol-Version", multicaMCPProtocolVersion)
 	if bearer != "" {
 		request.Header.Set("Authorization", "Bearer "+bearer)
 	}
@@ -375,27 +411,7 @@ func (h *Handler) callInternalConnectorUpstreamFiltered(ctx context.Context, c i
 		if json.Unmarshal(rpc.Result, &list) != nil || list.Tools == nil {
 			return nil, connectorUpstreamProtocolError{}
 		}
-		allowed := make(map[string]bool, len(c.AllowedTools))
-		for _, name := range c.AllowedTools {
-			allowed[name] = true
-		}
-		tools := []map[string]any{}
-		for _, item := range list.Tools {
-			name, _ := item["name"].(string)
-			if !filterTools || allowed[name] {
-				if !filterTools {
-					tools = append(tools, item)
-					continue
-				}
-				if presented := connectorPresentedToolName(name); presented != name {
-					item["name"] = presented
-					description, _ := item["description"].(string)
-					item["description"] = "Upstream tool " + name + ". " + description
-				}
-				tools = append(tools, item)
-			}
-		}
-		value := map[string]any{"tools": tools}
+		value := map[string]any{"tools": list.Tools}
 		if list.NextCursor != "" {
 			value["nextCursor"] = list.NextCursor
 		}

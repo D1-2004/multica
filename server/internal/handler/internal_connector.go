@@ -62,24 +62,8 @@ func validateConnectorInput(in connectorInput) error {
 	if err := validateConnectorURL(in.UpstreamURL); err != nil {
 		return err
 	}
-	if len(in.AllowedTools) == 0 || len(in.AllowedTools) > 64 {
-		return errors.New("allowed_tools must contain 1-64 tools")
-	}
 	if in.Enabled && len(in.AgentIDs) == 0 {
 		return errors.New("enabled connector requires an Agent grant")
-	}
-	seen := map[string]bool{}
-	presentedSeen := map[string]bool{}
-	for _, tool := range in.AllowedTools {
-		if len(tool) == 0 || len(tool) > 128 || strings.ContainsAny(tool, ",\r\n") || seen[tool] {
-			return errors.New("invalid or duplicate allowed tool")
-		}
-		seen[tool] = true
-		presented := connectorPresentedToolName(tool)
-		if presentedSeen[presented] {
-			return errors.New("allowed tools collide after MCP name shortening")
-		}
-		presentedSeen[presented] = true
 	}
 	agentSeen := map[string]bool{}
 	for _, id := range in.AgentIDs {
