@@ -46,12 +46,16 @@ export function McpConfigTab({
   onSave,
   onDirtyChange,
 	canEdit = true,
+  compact = false,
 }: {
   agent: Agent;
   runtime: AgentRuntime | null;
   onSave: (updates: { mcp_config: unknown | null }) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
 	canEdit?: boolean;
+  /** Drops the explanatory paragraphs (the connector tab); behavior is the
+   * same. */
+  compact?: boolean;
 }) {
   const { t } = useT("agents");
   const runtimeId =
@@ -136,10 +140,12 @@ export function McpConfigTab({
   };
 
   return (
-    <div className="space-y-8">
-      <p className="max-w-2xl break-words text-pretty text-body leading-6 text-muted-foreground">
-        {t(($) => $.tab_body.mcp_config.intro)}
-      </p>
+    <div className={compact ? "space-y-6" : "space-y-8"}>
+      {compact ? null : (
+        <p className="max-w-2xl break-words text-pretty text-body leading-6 text-muted-foreground">
+          {t(($) => $.tab_body.mcp_config.intro)}
+        </p>
+      )}
 
       <section className="space-y-3">
         <div className="flex items-start justify-between gap-4">
@@ -147,9 +153,11 @@ export function McpConfigTab({
             <h3 className="text-body font-medium">
               {t(($) => $.tab_body.mcp_config.managed_title)}
             </h3>
-            <p className="mt-1 max-w-2xl text-caption leading-5 text-muted-foreground">
-              {t(($) => $.tab_body.mcp_config.managed_hint)}
-            </p>
+            {compact ? null : (
+              <p className="mt-1 max-w-2xl text-caption leading-5 text-muted-foreground">
+                {t(($) => $.tab_body.mcp_config.managed_hint)}
+              </p>
+            )}
           </div>
           {!redacted && (
             <Button size="sm" variant="outline" onClick={openAddDialog}>
@@ -194,11 +202,13 @@ export function McpConfigTab({
             <h3 className="text-body font-medium">
               {t(($) => $.tab_body.mcp_config.runtime_title)}
             </h3>
-            <p className="mt-1 max-w-2xl text-caption leading-5 text-muted-foreground">
-              {t(($) => $.tab_body.mcp_config.runtime_hint, {
-                runtime: runtime ? runtimeDisplayLabel(runtime) : "Runtime",
-              })}
-            </p>
+            {compact ? null : (
+              <p className="mt-1 max-w-2xl text-caption leading-5 text-muted-foreground">
+                {t(($) => $.tab_body.mcp_config.runtime_hint, {
+                  runtime: runtime ? runtimeDisplayLabel(runtime) : "Runtime",
+                })}
+              </p>
+            )}
           </div>
           {runtimeId && (
             <Button
@@ -258,7 +268,7 @@ export function McpConfigTab({
         )}
       </section>
 
-	  <div className="border-t pt-5"><RunnerTab agent={agent} canBind={canEdit} mode="mcp" /></div>
+	  <div className="border-t pt-5"><RunnerTab agent={agent} canBind={canEdit} mode="mcp" compact={compact} /></div>
 
       {!redacted && (
 		<McpServerDialog
@@ -317,7 +327,7 @@ type McpServerView = {
   overridden?: boolean;
 };
 
-function McpServerList({
+export function McpServerList({
   servers,
   disabledLabel,
   overriddenLabel,

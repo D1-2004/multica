@@ -1,6 +1,7 @@
 "use client";
 
-import { Loader2 } from "lucide-react";
+import { useState } from "react";
+import { ExternalLink, Loader2 } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -11,8 +12,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
+import { Button } from "@multica/ui/components/ui/button";
+import { Input } from "@multica/ui/components/ui/input";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { cn } from "@multica/ui/lib/utils";
+import { ConnectorLogo } from "../../../common/connector-logo";
+import { MAX_BEARER_LENGTH, isValidBearer } from "../../../common/connector-credential";
+import { isDesktopShell } from "../../../platform/local-directory";
+import { openExternal } from "../../../platform/open-external";
 import { useT } from "../../../i18n";
 
 /** Server message of a failed write, else the localized fallback. */
@@ -70,13 +77,11 @@ export function SectionHeading({
   id,
   level,
   title,
-  hint,
   action,
 }: {
   id: string;
   level: 2 | 3;
   title: string;
-  hint?: string;
   action?: React.ReactNode;
 }) {
   const Heading = level === 2 ? "h2" : "h3";
@@ -89,23 +94,17 @@ export function SectionHeading({
         >
           {title}
         </Heading>
-        {hint ? (
-          <p className="mt-1 max-w-2xl text-pretty text-caption leading-5 text-muted-foreground">
-            {hint}
-          </p>
-        ) : null}
       </div>
       {action ? <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div> : null}
     </div>
   );
 }
 
-/** A labelled switch row: label and hint on the left, the switch (a spinner
- * while it saves) on the right. */
+/** A labelled switch row: label (and an optional note) on the left, the
+ * switch (a spinner while it saves) on the right. */
 export function SwitchRow({
   id,
   label,
-  hint,
   note,
   checked,
   disabled = false,
@@ -114,26 +113,19 @@ export function SwitchRow({
 }: {
   id: string;
   label: string;
-  hint?: string;
-  /** Extra line under the hint, e.g. why the switch is disabled. */
+  /** Extra line under the label, e.g. why the switch is disabled. */
   note?: React.ReactNode;
   checked: boolean;
   disabled?: boolean;
   pending?: boolean;
   onCheckedChange: (checked: boolean) => void;
 }) {
-  const hintId = hint ? `${id}-hint` : undefined;
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0 flex-1 space-y-0.5">
         <label htmlFor={id} className="block text-label font-medium">
           {label}
         </label>
-        {hint ? (
-          <p id={hintId} className="text-caption text-muted-foreground">
-            {hint}
-          </p>
-        ) : null}
         {note}
       </div>
       <span className="flex h-6 w-10 shrink-0 items-center justify-end">
@@ -145,7 +137,6 @@ export function SwitchRow({
             checked={checked}
             disabled={disabled}
             onCheckedChange={onCheckedChange}
-            aria-describedby={hintId}
           />
         )}
       </span>
@@ -201,5 +192,164 @@ export function ConfirmDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+  );
+}
+
+/** Grid of compact app tiles: two columns on phones, up to four on wide
+ * screens. */
+export function AppTileGrid({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <ul aria-label={label} className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+      {children}
+    </ul>
+  );
+}
+
+/** One app as a compact tile (logo, name, status); opens its dialog. */
+export function AppTile({
+  slug,
+  name,
+  ariaLabel,
+  onOpen,
+  children,
+}: {
+  slug: string;
+  name: string;
+  ariaLabel: string;
+  onOpen: () => void;
+  /** Status pills. */
+  children: React.ReactNode;
+}) {
+  return (
+    <li className="min-w-0">
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={ariaLabel}
+        className="flex h-full w-full min-w-0 flex-col gap-2 rounded-lg border bg-card p-3 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span className="flex w-full min-w-0 items-center gap-2">
+          <ConnectorLogo slug={slug} />
+          <span className="min-w-0 truncate text-body font-medium">{name}</span>
+        </span>
+        <span className="flex min-w-0 flex-wrap gap-1">{children}</span>
+      </button>
+    </li>
+  );
+}
+
+/** A titled section inside an app dialog. */
+export function DialogSection({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-3 border-t pt-4" aria-labelledby={id}>
+      <h3 id={id} className="text-label font-medium text-muted-foreground">
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+/** Provider page where users grant the app access to their resources
+ * (GitHub App installation). Desktop opens it in the system browser. */
+export function InstallLink({ url }: { url: string }) {
+  const { t } = useT("agents");
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex items-center gap-1 text-caption font-medium text-foreground underline-offset-4 hover:underline"
+      onClick={(event) => {
+        if (!isDesktopShell()) return;
+        event.preventDefault();
+        openExternal(url);
+      }}
+    >
+      {t(($) => $.internal_mcp.catalog.install_link)}
+      <ExternalLink className="size-3" aria-hidden="true" />
+    </a>
+  );
+}
+
+/** Write-only token input (a Bearer or a Personal Access Token). `onSave`
+ * stores it; a rejection shows its message under the input. */
+export function TokenForm({
+  inputId,
+  label,
+  placeholder,
+  pending,
+  onSave,
+  onCancel,
+}: {
+  inputId: string;
+  label: string;
+  placeholder: string;
+  pending: boolean;
+  onSave: (token: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const { t } = useT("agents");
+  const [token, setToken] = useState("");
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    const value = token.trim();
+    if (!isValidBearer(value)) {
+      setError(t(($) => $.internal_mcp.catalog.pat_invalid));
+      return;
+    }
+    setError("");
+    try {
+      await onSave(value);
+      setToken("");
+    } catch (e) {
+      setError(errorMessage(e, t(($) => $.internal_mcp.catalog.pat_failed)));
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <label htmlFor={inputId} className="sr-only">
+        {label}
+      </label>
+      <Input
+        id={inputId}
+        type="password"
+        autoComplete="off"
+        autoCapitalize="off"
+        spellCheck={false}
+        maxLength={MAX_BEARER_LENGTH}
+        value={token}
+        aria-invalid={error ? true : undefined}
+        placeholder={placeholder}
+        onChange={(event) => {
+          setToken(event.target.value);
+          setError("");
+        }}
+      />
+      {error ? (
+        <p role="alert" className="text-caption text-destructive">
+          {error}
+        </p>
+      ) : null}
+      <div className="flex justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={onCancel} disabled={pending}>
+          {t(($) => $.tab_body.connectors.cancel)}
+        </Button>
+        <Button size="sm" onClick={() => void submit()} disabled={pending || !token.trim()}>
+          {pending && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
+          {t(($) => $.internal_mcp.catalog.save)}
+        </Button>
+      </div>
+    </div>
   );
 }

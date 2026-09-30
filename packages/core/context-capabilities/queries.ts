@@ -99,6 +99,9 @@ export function agentSceneOptions(wsId: string, agentId: string, sceneKey: strin
     queryFn: () => api.getAgentScene(wsId, agentId, sceneKey),
     enabled: Boolean(wsId && agentId && sceneKey),
     staleTime: 15_000,
+    // A scene account connected in the system browser (desktop), by a group
+    // member or by the person on their phone shows when the admin comes back.
+    refetchOnWindowFocus: "always",
   });
 }
 

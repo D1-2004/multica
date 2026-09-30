@@ -10,7 +10,7 @@ import enAgents from "../../../locales/en/agents.json";
 import { NavigationProvider, type NavigationAdapter } from "../../../navigation";
 import { ConnectorsTab } from "./connectors-tab";
 
-const mocks = vi.hoisted(() => ({ role: "owner" as string, aone: vi.fn(), apps: vi.fn() }));
+const mocks = vi.hoisted(() => ({ role: "owner" as string, aone: vi.fn(), apps: vi.fn(), mcp: vi.fn() }));
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
 vi.mock("@multica/core/permissions", () => ({
@@ -28,7 +28,12 @@ vi.mock("./connected-apps-section", () => ({
     return <div>connected-apps</div>;
   },
 }));
-vi.mock("./mcp-config-tab", () => ({ McpConfigTab: () => <div>mcp-config-tab</div> }));
+vi.mock("./mcp-config-tab", () => ({
+  McpConfigTab: (props: { compact?: boolean }) => {
+    mocks.mcp(props);
+    return <div>mcp-config-tab</div>;
+  },
+}));
 
 const copy = enAgents.tab_body.connectors;
 const agent = { id: "agent-1", name: "Helper" } as Agent;
@@ -47,7 +52,7 @@ function renderTab({
     searchParams: new URLSearchParams(search),
     getShareableUrl: (path) => path,
   };
-  render(
+  const view = render(
     <I18nProvider locale="en" resources={{ en: { common: enCommon, agents: enAgents } }}>
       <NavigationProvider value={navigation}>
         <QueryClientProvider client={client}>
@@ -62,7 +67,7 @@ function renderTab({
       </NavigationProvider>
     </I18nProvider>,
   );
-  return { navigation };
+  return { navigation, container: view.container };
 }
 
 function follows(first: HTMLElement, second: HTMLElement) {
@@ -89,6 +94,15 @@ describe("ConnectorsTab", () => {
     expect(follows(screen.getByText("mcp-config-tab"), apps)).toBe(true);
     expect(mocks.aone).toHaveBeenCalledWith(expect.objectContaining({ canEdit: true, isAdmin: true }));
     expect(mocks.apps).toHaveBeenCalledWith(expect.objectContaining({ canEdit: true }));
+  });
+
+  it("keeps the one-line note and drops the section hints", () => {
+    const { container } = renderTab();
+
+    // The only paragraph of the tab itself is the note; the custom MCP
+    // servers render without their explanations.
+    expect([...container.querySelectorAll("p")].map((node) => node.textContent)).toEqual([copy.note]);
+    expect(mocks.mcp).toHaveBeenCalledWith(expect.objectContaining({ compact: true }));
   });
 
   it("tells the sections when the editor is not a workspace admin", () => {

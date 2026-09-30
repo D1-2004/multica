@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { ExternalLink, Loader2, Plus, Trash2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Agent } from "@multica/core/types";
@@ -18,13 +18,7 @@ import {
 } from "@multica/core/internal-connectors";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { Button } from "@multica/ui/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@multica/ui/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { AppLink } from "../../../navigation";
 import { ConnectorLogo } from "../../../common/connector-logo";
@@ -83,12 +77,7 @@ export function AoneConnectorsSection({
         <AdminAoneConnectors agent={agent} wsId={wsId} />
       ) : (
         <>
-          <SectionHeading
-            id="aone-connectors-title"
-            level={3}
-            title={t(($) => $.tab_body.connectors.aone_title)}
-            hint={t(($) => $.tab_body.connectors.aone_hint)}
-          />
+          <SectionHeading id="aone-connectors-title" level={3} title={t(($) => $.tab_body.connectors.aone_title)} />
           <ReadOnlyAoneConnectors agent={agent} wsId={wsId} canReadOffers={canEdit} />
           <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.connectors.aone_admin_only)}</p>
         </>
@@ -173,12 +162,14 @@ function AdminAoneConnectors({ agent, wsId }: { agent: Agent; wsId: string }) {
         id="aone-connectors-title"
         level={3}
         title={t(($) => $.tab_body.connectors.aone_title)}
-        hint={t(($) => $.tab_body.connectors.aone_hint)}
         action={
-          <Button size="sm" variant="outline" onClick={() => setAdding(true)} disabled={list.isLoading || list.isError}>
-            <Plus aria-hidden="true" />
-            {t(($) => $.tab_body.connectors.aone_add)}
-          </Button>
+          <>
+            <ManageLibraryLink />
+            <Button size="sm" variant="outline" onClick={() => setAdding(true)} disabled={list.isLoading || list.isError}>
+              <Plus aria-hidden="true" />
+              {t(($) => $.tab_body.connectors.aone_add)}
+            </Button>
+          </>
         }
       />
       {list.isLoading ? (
@@ -204,13 +195,13 @@ function AdminAoneConnectors({ agent, wsId }: { agent: Agent; wsId: string }) {
               onOfferChange={(next) => toggleOffer(row, next)}
               action={
                 <Button
-                  size="sm"
+                  size="icon-sm"
                   variant="ghost"
                   className="text-muted-foreground hover:text-destructive"
                   aria-label={t(($) => $.tab_body.connectors.remove_aria, { name: row.name })}
                   onClick={() => setRemoving(row)}
                 >
-                  {t(($) => $.tab_body.connectors.remove)}
+                  <Trash2 aria-hidden="true" />
                 </Button>
               }
             />
@@ -222,7 +213,6 @@ function AdminAoneConnectors({ agent, wsId }: { agent: Agent; wsId: string }) {
           {t(($) => $.tab_body.connectors.offers_load_failed)}
         </p>
       ) : null}
-      <ManageLibraryLink />
 
       <AddAoneConnectorDialog
         open={adding}
@@ -267,15 +257,17 @@ function AdminAoneConnectors({ agent, wsId }: { agent: Agent; wsId: string }) {
   );
 }
 
+/** Small ghost link to the workspace Aone FaaS library page. */
 function ManageLibraryLink() {
   const { t } = useT("agents");
   const paths = useWorkspacePaths();
   return (
     <AppLink
       href={paths.internalConnectors()}
-      className="text-caption font-medium text-primary underline-offset-4 hover:underline"
+      className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-caption font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
     >
       {t(($) => $.tab_body.connectors.aone_manage)}
+      <ExternalLink className="size-3" aria-hidden="true" />
     </AppLink>
   );
 }
@@ -293,27 +285,26 @@ function AoneConnectorRow({
 }) {
   const { t } = useT("agents");
   return (
-    <li className="space-y-3 p-4" aria-label={row.name}>
-      <div className="flex items-start gap-3">
-        <ConnectorLogo slug="" />
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <span className="min-w-0 truncate text-body font-medium">{row.name}</span>
-            {row.status ? <StatusPill tone={row.status.tone}>{row.status.label}</StatusPill> : null}
-          </div>
-          {row.meta ? <p className="break-all text-caption text-muted-foreground">{row.meta}</p> : null}
+    <li className="flex items-center gap-3 px-3 py-2.5" aria-label={row.name}>
+      <ConnectorLogo slug="" />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="min-w-0 truncate text-body font-medium">{row.name}</span>
+          {row.status ? <StatusPill tone={row.status.tone}>{row.status.label}</StatusPill> : null}
         </div>
-        {action ? <div className="flex shrink-0 items-center gap-1">{action}</div> : null}
+        {row.meta ? <p className="truncate text-caption text-muted-foreground">{row.meta}</p> : null}
       </div>
-      <div className="flex items-center justify-between gap-4 rounded-md bg-muted/40 px-3 py-2">
-        <span className="text-caption text-muted-foreground">{t(($) => $.tab_body.connectors.offer_switch)}</span>
+      <span className="flex shrink-0 items-center gap-1.5 text-caption text-muted-foreground">
+        <span aria-hidden="true">{t(($) => $.tab_body.connectors.offer_switch)}</span>
         <Switch
+          size="sm"
           checked={row.offered}
           disabled={offerDisabled}
           onCheckedChange={onOfferChange}
           aria-label={t(($) => $.tab_body.connectors.offer_switch_aria, { name: row.name })}
         />
-      </div>
+      </span>
+      {action ? <div className="flex shrink-0 items-center">{action}</div> : null}
     </li>
   );
 }
@@ -353,7 +344,6 @@ function AddAoneConnectorDialog({
       <DialogContent className="flex max-h-[85vh] flex-col gap-4 sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{t(($) => $.tab_body.connectors.dialog_title)}</DialogTitle>
-          <DialogDescription>{t(($) => $.tab_body.connectors.dialog_description)}</DialogDescription>
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {connectors.length === 0 ? (
@@ -390,7 +380,9 @@ function AddAoneConnectorDialog({
             </ul>
           )}
         </div>
-        <ManageLibraryLink />
+        <div>
+          <ManageLibraryLink />
+        </div>
       </DialogContent>
     </Dialog>
   );

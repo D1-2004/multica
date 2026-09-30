@@ -18,8 +18,8 @@ import { McpConfigTab } from "./mcp-config-tab";
  *    agent (with their per-connector offer switch), then the agent's own MCP
  *    servers, runtime-inherited servers and Runner servers — the latter only
  *    when the runtime reads mcp_config.
- * B. 「连接应用」: the official apps (GitHub, Notion, ...), each with its own
- *    configuration page (`?app=<slug>`).
+ * B. 「连接应用」: the official apps (GitHub, Notion, ...) as compact tiles,
+ *    each configured in a dialog (`?app=<slug>`).
  *
  * Aone FaaS connectors and apps go through the server relay and apply to
  * every runtime.
@@ -52,12 +52,7 @@ export function ConnectorsTab({
       </p>
 
       <section className="space-y-6" aria-labelledby="managed-mcp-title">
-        <SectionHeading
-          id="managed-mcp-title"
-          level={2}
-          title={t(($) => $.tab_body.connectors.mcp_title)}
-          hint={t(($) => $.tab_body.connectors.mcp_hint)}
-        />
+        <SectionHeading id="managed-mcp-title" level={2} title={t(($) => $.tab_body.connectors.mcp_title)} />
         {memberLoading ? (
           <ConnectorNotice loading>{t(($) => $.tab_body.connectors.loading)}</ConnectorNotice>
         ) : (
@@ -76,6 +71,7 @@ export function ConnectorsTab({
               onSave={onSave}
               onDirtyChange={onDirtyChange}
               canEdit={canEdit}
+              compact
             />
           </section>
         ) : null}

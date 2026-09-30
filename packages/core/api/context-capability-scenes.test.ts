@@ -7,6 +7,7 @@ import {
   AgentScenesPageSchema,
   ContextCapabilityBindingResponseSchema,
   ContextConfigAgentDetailSchema,
+  ContextConfigSceneDetailSchema,
   EMPTY_AGENT_SCENES_PAGE,
 } from "./context-capability-schema";
 
@@ -138,11 +139,138 @@ describe("admin scene detail", () => {
       { resourceType: "skill", resourceId: skillId, enabled: false, updatedByName: "", updatedAt: "" },
     ]);
     expect(detail?.offers).toEqual({
-      connectors: [{ id: connectorId, name: "GitHub", catalogSlug: "github", authMode: "oauth" }],
+      connectors: [
+        {
+          id: connectorId,
+          name: "GitHub",
+          catalogSlug: "github",
+          authMode: "oauth",
+          acceptsCredential: false,
+          acceptsPat: false,
+          oauthAvailable: false,
+          installUrl: "",
+          credential: { connected: false, account: "" },
+        },
+      ],
       skills: [{ id: skillId, name: "Report", description: "" }],
     });
     // Private connector fields never reach the view model.
     expect(JSON.stringify(detail)).not.toContain("upstream_url");
+  });
+
+  it("maps the scope, custom MCP servers, connect permission and connector credentials", () => {
+    const detail = AgentSceneDetailSchema.parse({
+      ...body,
+      scene: { ...groupScene, scene_key: "cidDm==", kind: "dm" },
+      scope: { type: "person", key: "staff-1", title: "Ada" },
+      offers: {
+        connectors: [
+          {
+            id: connectorId,
+            name: "GitHub",
+            catalog_slug: "github",
+            auth_mode: "oauth",
+            accepts_credential: true,
+            accepts_pat: true,
+            oauth_available: true,
+            install_url: "https://github.com/apps/qwen-tag-pre/installations/new",
+            credential: { connected: true, account: "@ada" },
+          },
+          {
+            id: skillId,
+            name: "Wiki",
+            catalog_slug: "",
+            auth_mode: "bearer",
+            accepts_credential: true,
+            credential: { connected: false, account: "••••abcd" },
+          },
+        ],
+      },
+      mcp_config: { mcpServers: { docs: { url: "https://mcp.example/docs" } } },
+      can_connect: true,
+    });
+    expect(detail.scope).toEqual({ type: "person", key: "staff-1", title: "Ada" });
+    expect(detail.mcpConfig).toEqual({ mcpServers: { docs: { url: "https://mcp.example/docs" } } });
+    expect(detail.mcpConfigSupported).toBe(true);
+    expect(detail.mcpConfigRedacted).toBe(false);
+    expect(detail.canConnect).toBe(true);
+    expect(detail.offers.connectors).toEqual([
+      {
+        id: connectorId,
+        name: "GitHub",
+        catalogSlug: "github",
+        authMode: "oauth",
+        acceptsCredential: true,
+        acceptsPat: true,
+        oauthAvailable: true,
+        installUrl: "https://github.com/apps/qwen-tag-pre/installations/new",
+        credential: { connected: true, account: "@ada" },
+      },
+      {
+        id: skillId,
+        name: "Wiki",
+        catalogSlug: "",
+        authMode: "bearer",
+        acceptsCredential: true,
+        acceptsPat: false,
+        oauthAvailable: false,
+        installUrl: "",
+        // A hint without a connected credential is never shown.
+        credential: { connected: false, account: "" },
+      },
+    ]);
+  });
+
+  it("reads a missing scope as the scene itself and an explicit or malformed one as unknown", () => {
+    // An older backend sends no scope: the configuration lives on the scene.
+    const old = AgentSceneDetailSchema.parse(body);
+    expect(old.scope).toEqual({ type: "scene", key: "cidGroup==", title: "Release crew" });
+    expect(old.mcpConfig).toBeNull();
+    // ...and has no custom MCP servers route: the editor stays hidden.
+    expect(old.mcpConfigSupported).toBe(false);
+    expect(old.mcpConfigRedacted).toBe(false);
+    // A backend with the route sends the field, null when there are none.
+    const none = AgentSceneDetailSchema.parse({ ...body, mcp_config: null });
+    expect(none.mcpConfig).toBeNull();
+    expect(none.mcpConfigSupported).toBe(true);
+    expect(old.canConnect).toBe(false);
+    // A 1:1 chat whose person is unknown.
+    expect(AgentSceneDetailSchema.parse({ ...body, scope: null }).scope).toBeNull();
+    // Never guess where to write.
+    expect(AgentSceneDetailSchema.parse({ ...body, scope: { type: "team", key: "x" } }).scope).toBeNull();
+    expect(AgentSceneDetailSchema.parse({ ...body, scope: "person" }).scope).toBeNull();
+  });
+
+  it("marks custom MCP servers withheld by the workspace's secret redaction", () => {
+    const detail = AgentSceneDetailSchema.parse({ ...body, mcp_config: null, mcp_config_redacted: true });
+    expect(detail.mcpConfig).toBeNull();
+    expect(detail.mcpConfigSupported).toBe(true);
+    expect(detail.mcpConfigRedacted).toBe(true);
+  });
+
+  it("tolerates malformed configuration fields without losing the scene", () => {
+    const detail = AgentSceneDetailSchema.parse({
+      ...body,
+      mcp_config: ["not", "an", "object"],
+      mcp_config_redacted: "yes",
+      can_connect: "true",
+      offers: {
+        connectors: [
+          { id: connectorId, name: "GitHub", catalog_slug: "github", auth_mode: "oauth", oauth_available: "yes", credential: "x" },
+          { name: "no id" },
+        ],
+        skills: null,
+      },
+    });
+    expect(detail.scene.sceneKey).toBe("cidGroup==");
+    expect(detail.mcpConfig).toBeNull();
+    expect(detail.mcpConfigRedacted).toBe(false);
+    expect(detail.canConnect).toBe(false);
+    expect(detail.offers.connectors).toHaveLength(1);
+    expect(detail.offers.connectors[0]).toMatchObject({
+      oauthAvailable: false,
+      credential: { connected: false, account: "" },
+    });
   });
 
   it("tolerates a missing prompt and offers", () => {
@@ -187,6 +315,38 @@ describe("share_in_groups and scene kinds on the mobile API", () => {
       ],
     });
     expect(detail.scenes.map((scene) => scene.kind)).toEqual(["group", "dm", "group"]);
+  });
+});
+
+describe("configure-page scene scope", () => {
+  const scene = { scope_key: "cidDm", scope_title: "Chat", source: "manager", expires_at: "", kind: "dm" };
+
+  it("maps the person a 1:1 chat is bound to", () => {
+    const detail = ContextConfigSceneDetailSchema.parse({
+      scene,
+      bindings: [],
+      credentials: [],
+      scope: { type: "person", key: "staff-1", title: "Ada" },
+    });
+    expect(detail.scope).toEqual({ type: "person", key: "staff-1", title: "Ada" });
+  });
+
+  it("reads a missing scope as the scene and a null or malformed one as unknown", () => {
+    expect(ContextConfigSceneDetailSchema.parse({ scene }).scope).toEqual({
+      type: "scene",
+      key: "cidDm",
+      title: "Chat",
+    });
+    expect(ContextConfigSceneDetailSchema.parse({ scene, scope: null }).scope).toBeNull();
+    expect(ContextConfigSceneDetailSchema.parse({ scene, scope: { type: "person" } }).scope).toBeNull();
+  });
+
+  it("reads whether the caller may connect, with only a literal true allowing it", () => {
+    expect(ContextConfigSceneDetailSchema.parse({ scene, can_connect: true }).canConnect).toBe(true);
+    expect(ContextConfigSceneDetailSchema.parse({ scene, can_connect: false }).canConnect).toBe(false);
+    expect(ContextConfigSceneDetailSchema.parse({ scene, can_connect: "true" }).canConnect).toBe(false);
+    // An older backend does not say.
+    expect(ContextConfigSceneDetailSchema.parse({ scene }).canConnect).toBeNull();
   });
 });
 
@@ -260,6 +420,32 @@ describe("admin scene client", () => {
       updatedByName: "",
       updatedAt: "",
     });
+  });
+
+  it("saves a scene's custom MCP servers and returns the stored document", async () => {
+    const config = { mcpServers: { docs: { url: "https://mcp.example/docs", headers: { Authorization: "x" } } } };
+    const fetch = stubFetch({ mcp_config: config });
+    const saved = await new ApiClient(base).setAgentSceneMcpConfig("ws-1", agentId, "cid+1", config);
+    const { url, init } = requestOf(fetch);
+    expect(url).toBe(`${base}/api/agents/${agentId}/scenes/cid%2B1/mcp-config`);
+    expect(init.method).toBe("PUT");
+    expect(init.headers["X-Workspace-ID"]).toBe("ws-1");
+    expect(JSON.parse(init.body as string)).toEqual({ mcp_config: config });
+    expect(saved).toEqual(config);
+  });
+
+  it("clears a scene's custom MCP servers with null", async () => {
+    const fetch = stubFetch({ mcp_config: null });
+    expect(await new ApiClient(base).setAgentSceneMcpConfig("ws-1", agentId, "cid1", null)).toBeNull();
+    expect(JSON.parse(requestOf(fetch).init.body as string)).toEqual({ mcp_config: null });
+  });
+
+  it("keeps the sent MCP document for a malformed echo", async () => {
+    const config = { mcpServers: { docs: { url: "https://mcp.example/docs" } } };
+    stubFetch({ ok: true });
+    expect(await new ApiClient(base).setAgentSceneMcpConfig("ws-1", agentId, "cid1", config)).toEqual(config);
+    stubFetch({ mcp_config: ["x"] });
+    expect(await new ApiClient(base).setAgentSceneMcpConfig("ws-1", agentId, "cid1", config)).toEqual(config);
   });
 
   it("sends share_in_groups only when the caller sets it", async () => {
