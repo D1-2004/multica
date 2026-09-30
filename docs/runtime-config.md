@@ -107,13 +107,13 @@ A compact m7 alias is display text and carries the opaque provider-combination f
 
 ## FC/E2B SDK rollout
 
-`runtime.fc_e2b_sdk_rollout` in `dt-fde-multica-runtime.json` is the single switch of the FC/E2B SDK change. It is a sibling of `runtime.performance_optimization` and independent of it: either can be switched without touching the other. For a selected scope it
+`runtime.fc_e2b_sdk_rollout` in `dt-fde-multica-runtime.json` is the single switch of the FC/E2B SDK change. For a selected scope it
 
 - sends FC/E2B commands (sandbox create, exec, template lookup) through the in-process Go SDK instead of the `e2b` CLI subprocess;
 - injects `FC_E2B_TASK_ID` into the runner, and
-- ends a cancelled task's processes in the sandboxes it used (see `docs/fc-sandbox-lifecycle.md`).
+- ends a cancelled or failed task's processes in the sandboxes it used (see `docs/fc-sandbox-lifecycle.md`).
 
-An unselected scope keeps the behavior from before the change: the CLI, no marker, and a cancelled task's processes are left to the sandbox release.
+An unselected scope keeps the behavior from before the change: the CLI, no marker, and an aborted task's processes are left to the sandbox release.
 
 ```json
 "fc_e2b_sdk_rollout": {
@@ -128,8 +128,8 @@ An unselected scope keeps the behavior from before the change: the CLI, no marke
 - `enabled` is the master switch. `false`, or the whole key absent, selects nothing whatever the lists say. Switch-off value: `{"enabled": false}`.
 - An operation is selected when its agent, runtime, or workspace is listed, or when its agent (else runtime, else workspace) falls in the `percent` bucket. `percent: 100` also covers operations without a scope, such as the stable-channel template scan.
 - Identifiers must be canonical lowercase UUIDs without duplicates; `percent` must be 0–100. Like any invalid runtime document, a rejected publication keeps the previous generation.
-- Operations that freeze one runtime snapshot route every command they send by it: a launch freezes one when it starts, and a cancelled-task stop freezes one when it is scheduled and uses it for both of its passes. A publication applies to such operations that start after it, without a restart; operations already running finish under their snapshot. A selected stop therefore still runs its second pass after a switch-off, and a stop that was not selected gains no pass after a switch-on. Commands sent outside such an operation, such as the template list, read the live document each time.
-- Each operation routed to the SDK logs `FC/E2B SDK transport` with `rollout_source=snapshot|live`, the outcome and, for a failure, `error_kind` (`exit`, `output_limit`, `deadline`, `canceled`, `failed`) with the exit code or the transport cause. Commands, environment values, and command output are never logged there. An unselected cancelled-task stop logs `event=fc_e2b_task_processes_stopped outcome=disabled`.
+- Operations that freeze one runtime snapshot route every command they send by it: a launch freezes one when it starts, and a stop of a cancelled or failed task freezes one when it is scheduled and uses it for both of its passes. A publication applies to such operations that start after it, without a restart; operations already running finish under their snapshot. A selected stop therefore still runs its second pass after a switch-off, and a stop that was not selected is not started after a switch-on. Commands sent outside such an operation, such as the template list, read the live document each time.
+- Each operation routed to the SDK logs `FC/E2B SDK transport` with `rollout_source=snapshot|live`, the outcome and, for a failure, `error_kind` (`exit`, `output_limit`, `deadline`, `canceled`, `failed`) with the exit code or the transport cause. Commands, environment values, and command output are never logged there. A stop the rollout cannot select is not scheduled at all; one refused because 512 stops are already pending logs `event=fc_e2b_task_processes_stopped outcome=backlog_full`, and a scheduled stop whose sandbox scope turns out unselected logs `outcome=disabled`.
 
 This key replaces the separate Data ID `dt-fde-multica-fc-e2b-sdk-rollout.json` and the environment fallback `MULTICA_FC_E2B_SDK_ROLLOUT`; neither is read any more.
 
@@ -164,7 +164,7 @@ Use this once, when an environment moves from environment traits to Diamond. Its
 
 ### Adding a runtime-document key
 
-Use this for every new key, such as `fc_e2b_sdk_rollout` or `performance_optimization`.
+Use this for every new key, such as `fc_e2b_sdk_rollout`.
 
 1. Release the binary that knows the key to every replica, with the document unchanged. Verify every replica runs the new build and logs `runtime Diamond config loaded` with the same generation and SHA-256, and that `mw diamond listener` shows each replica listening on the current MD5.
 2. Validate the new document with the released commit: `cd server && go run ./cmd/runtimeconfig -file /path/to/runtime.json` (add `-production` for production). The same command at the previous release commit must reject it with `unknown field`, which confirms the older binary cannot read it.
@@ -175,7 +175,7 @@ Use this for every new key, such as `fc_e2b_sdk_rollout` or `performance_optimiz
 
 - A publication applies to operations that start after every replica logs its generation. Operations that froze a snapshot finish under it, as each key describes. An invalid publication is rejected by every replica, which keeps its previous generation and logs `runtime Diamond update rejected; retaining previous snapshot`.
 - Behavior rollback: publish the key switched off (for example `{"enabled": false}`); no release is needed.
-- Binary rollback: first publish the document without every key the older binary does not know (for this batch `fc_e2b_sdk_rollout` and `performance_optimization`), verify every replica logged the new generation, then release the older binary. An older binary released while the document still carries such a key cannot start.
+- Binary rollback: first publish the document without every key the older binary does not know (for this batch `fc_e2b_sdk_rollout`), verify every replica logged the new generation, then release the older binary. An older binary released while the document still carries such a key cannot start.
 
 Never reuse a pre-release document in production. Publish and verify each unit independently.
 
@@ -183,6 +183,7 @@ Never reuse a pre-release document in production. Publish and verify each unit i
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-09-30 | The process stop also covers failed tasks; its second pass runs 10 seconds after the task ended; dropped the references to `runtime.performance_optimization`, which no binary reads. | A failed task leaves the same orphans as a cancelled one; the key was never implemented. |
 | 2026-09-28 | Split the release procedure into first adoption, adding a key, and hot updates and rollback; a cancelled-task stop now freezes one snapshot for both passes. | The general steps published the document before the binary, which older replicas reject once it carries a new key; each stop pass reread the switch (PRI-67). |
 | 2026-09-28 | Moved the FC/E2B SDK rollout into `runtime.fc_e2b_sdk_rollout`, which also gates the cancelled-task stop and its runner marker; dropped the separate Data ID and `MULTICA_FC_E2B_SDK_ROLLOUT`. | One runtime document carries every rollout switch; the SDK change and the performance batch keep separate, independent switches (PRI-47, option B). |
 | 2026-08-30 | Reused `web.site_connect_src` as the hosted-site fetch proxy server-side origin allowlist while retaining the connector default and CSP behavior. | Client exact-URL declarations are untrusted; a live Diamond origin boundary lets the server authorize destinations without adding a second configuration contract. |

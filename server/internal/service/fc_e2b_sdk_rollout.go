@@ -3,13 +3,13 @@ package service
 import (
 	"context"
 	"errors"
-	"hash/fnv"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/redact"
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
@@ -42,12 +42,9 @@ func fcE2BRolloutSelects(r FCE2BSDKRollout, scope FCE2BScope) bool {
 		containsFCE2BScopeID(r.WorkspaceIDs, scope.WorkspaceID) {
 		return true
 	}
-	if r.Percent <= 0 {
-		return false
-	}
 	for _, id := range []uuid.UUID{scope.AgentID, scope.RuntimeID, scope.WorkspaceID} {
 		if id != uuid.Nil {
-			return fcE2BRolloutBucket(id.String()) < r.Percent
+			return featureflag.InPercent(fcE2BSDKRolloutBucketKey, id.String(), r.Percent)
 		}
 	}
 	return false
@@ -63,15 +60,6 @@ func containsFCE2BScopeID(ids []string, id uuid.UUID) bool {
 		}
 	}
 	return false
-}
-
-// fcE2BRolloutBucket is the FNV-1a bucket scheme used by pkg/featureflag.
-func fcE2BRolloutBucket(identifier string) int {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(fcE2BSDKRolloutBucketKey))
-	_, _ = h.Write([]byte{0})
-	_, _ = h.Write([]byte(identifier))
-	return int(h.Sum32() % 100)
 }
 
 // FCE2BScope identifies whose work an FC/E2B operation performs. It only

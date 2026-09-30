@@ -116,7 +116,10 @@ func (c *appRuntimeConfig) current() runtimeconfig.Config {
 
 // fcE2BSDKRollout is the live runtime.fc_e2b_sdk_rollout.
 func (c *appRuntimeConfig) fcE2BSDKRollout() runtimeconfig.FCE2BSDKRollout {
-	return fcE2BSDKRolloutOf(c.current().Runtime)
+	if c == nil || c.remote == nil {
+		return runtimeconfig.FCE2BSDKRollout{}
+	}
+	return c.remote.FCE2BSDKRollout()
 }
 
 // fcE2BSDKRolloutOf is the rollout of one runtime document; absent selects

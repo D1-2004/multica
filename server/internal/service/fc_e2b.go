@@ -144,8 +144,8 @@ type FCE2BConfig struct {
 	SandboxReadyTimeout               time.Duration
 	ParseError                        error
 	// SDKRollout is runtime.fc_e2b_sdk_rollout of the snapshot this
-	// configuration came from; the zero value keeps the CLI and leaves a
-	// cancelled task's processes alone.
+	// configuration came from; the zero value keeps the CLI and leaves an
+	// aborted task's processes alone.
 	SDKRollout FCE2BSDKRollout
 }
 
@@ -976,9 +976,9 @@ type FCE2BLauncher struct {
 	sleep              func(context.Context, time.Duration) error
 	jitter             func(time.Duration) time.Duration
 	dshProvider        func(dshhost.Storage) (dshhost.Provider, error)
-	// stopPass runs one pass of a cancelled-task stop; nil runs
-	// stopCancelledTaskProcesses.
-	stopPass func(ctx context.Context, frozen *FCE2BLauncher, taskID pgtype.UUID, pass int)
+	// stopPass runs one pass of an aborted-task stop and reports whether
+	// another pass may find more; nil runs stopAbortedTaskProcesses.
+	stopPass func(ctx context.Context, frozen *FCE2BLauncher, taskID pgtype.UUID, pass int) bool
 
 	// LLMTraceCaptureAlways turns on sandbox model request/response capture
 	// for every task on a capable runtime image, independent of Router
@@ -2871,7 +2871,7 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "OPENAI_BASE_URL="+llmURL,
 		"-e", "OPENAI_API_KEY="+llmKey,
 	)
-	// The cancelled-task stop proves ownership by this marker, so it follows
+	// The aborted-task stop proves ownership by this marker, so it follows
 	// the same switch.
 	if fcE2BRolloutSelects(l.Config.SDKRollout, fcE2BScopeFrom(ctx)) {
 		args = append(args, "-e", fcE2BTaskMarkerEnv+"="+util.UUIDToString(taskID))
