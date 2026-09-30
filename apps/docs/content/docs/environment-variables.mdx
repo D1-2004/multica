@@ -256,12 +256,14 @@ These set a **fleet-wide default** layer of CLI flags for a backend — a conven
 
 ## GitHub integration
 
-The [GitHub PR ↔ issue integration](/github-integration) needs two variables. Set both to enable Connect GitHub in Settings and accept incoming webhooks. Two additional variables are optional but populate the connected account name on install.
+The [GitHub PR ↔ issue integration](/github-integration) uses an App slug and Webhook Secret for its entry points. New connections also require the App's OAuth Client ID and Client Secret. Repository-backed agents additionally require the App ID and private key.
 
 | Variable | Default | Description |
 |---|---|---|
 | `GITHUB_APP_SLUG` | empty | The slug of your GitHub App (the tail of `https://github.com/apps/<slug>`). Drives the Settings → GitHub install button URL |
 | `GITHUB_WEBHOOK_SECRET` | empty | The Webhook secret you set on the GitHub App. Used for HMAC-SHA256 verification of every `pull_request` / `installation` delivery, and as the HMAC key for the setup-callback state token |
+| `GITHUB_PRE_WEBHOOK_URL` | empty | Production-only fixed pre-release HTTPS destination for `/api/webhooks/github/pre`; must end in `/api/webhooks/github` |
+| `GITHUB_PRE_WEBHOOK_SECRET` | empty | Pre-release App's independent Webhook Secret used to authenticate the forwarding ingress; both forwarding keys are required |
 | `GITHUB_APP_ID` | empty | Optional for PR linking; required for repository-backed agents. Numeric App ID used with `GITHUB_APP_PRIVATE_KEY` to mint installation tokens |
 | `GITHUB_APP_PRIVATE_KEY` | empty | Optional for PR linking; required for repository-backed agents. Full PEM block of the App's RSA private key (including `-----BEGIN/END-----` lines, newlines preserved) |
 | `GITHUB_APP_CLIENT_ID` | empty | GitHub App Client ID; required for new installation connections and reconnects |
@@ -278,7 +280,7 @@ The [GitHub PR ↔ issue integration](/github-integration) needs two variables. 
 - The connection card briefly shows `Connected to unknown` after install. Multica refreshes the row to the real org/user name as soon as GitHub delivers the `installation.created` webhook (typically within a few seconds), and broadcasts a realtime update so any open Settings → GitHub tab reflects the change without a manual refresh.
 - PR linking continues to work, but creating or syncing an agent from a GitHub repository is unavailable.
 
-**Note:** `GITHUB_WEBHOOK_SECRET` is reused as the signing key for the install-flow state token, so operators only need to manage one secret. It is **not** the GitHub App's *Client* secret — Client secrets are OAuth-related and not used by this integration. See [GitHub integration → Self-host setup](/github-integration#self-host-setup) for the full walkthrough.
+**Note:** `GITHUB_WEBHOOK_SECRET` also signs install-flow state. It is **not** the GitHub App's Client secret: `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET` authenticate the GitHub user during new connections. The optional pre-release webhook forwarding keys do not change OAuth credentials or callbacks. See [GitHub integration → Self-host setup](/github-integration#self-host-setup) for the full walkthrough.
 
 ## Usage analytics
 

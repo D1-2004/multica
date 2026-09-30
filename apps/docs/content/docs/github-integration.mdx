@@ -225,6 +225,19 @@ curl -i -X POST https://<api-host>/api/webhooks/github \
 | `401 invalid signature` | Server's loaded secret is **not** what you think it is. | Confirm the env var landed in the running process (e.g. `kubectl exec` → `echo -n "$GITHUB_WEBHOOK_SECRET" | wc -c`). Re-deploy. |
 | `503 github webhooks not configured` | `GITHUB_WEBHOOK_SECRET` is empty in the process. | Set the env var, restart the API. |
 
+## Pre-release Webhooks through production
+
+When GitHub cannot reach your pre-release ingress, configure production with
+`GITHUB_PRE_WEBHOOK_URL` (the fixed pre-release `/api/webhooks/github` URL) and
+`GITHUB_PRE_WEBHOOK_SECRET` (the pre-release App's Webhook Secret). After
+deploying the route and configuration, set only the pre-release App's Webhook URL
+to the production origin's `/api/webhooks/github/pre`. Production verifies and
+forwards the original delivery; pre-release verifies it again and owns every
+installation and PR effect. The existing production App's route and credentials
+remain unchanged. A failed forwarding attempt remains a failed GitHub delivery,
+and the relay does not retry automatically. Pre-release OAuth and setup callbacks
+stay on their pre-release browser origin.
+
 ## Limitations
 
 A few rough edges to be aware of today:
