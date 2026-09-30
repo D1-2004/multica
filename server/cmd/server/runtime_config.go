@@ -150,6 +150,14 @@ func (c *appRuntimeConfig) coordinatorCollectQuiet(agentID string) time.Duration
 	return time.Duration(rollout.CollectQuietMS) * time.Millisecond
 }
 
+// useDWSForTag is the live runtime.use_dws_for_tag.
+func (c *appRuntimeConfig) useDWSForTag() bool {
+	if c == nil || c.remote == nil {
+		return false
+	}
+	return c.remote.UseDWSForTag()
+}
+
 // fcE2BSDKRollout is the live runtime.fc_e2b_sdk_rollout.
 func (c *appRuntimeConfig) fcE2BSDKRollout() runtimeconfig.FCE2BSDKRollout {
 	if c == nil || c.remote == nil {

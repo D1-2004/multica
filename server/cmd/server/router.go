@@ -33,6 +33,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/deploymentfence"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dwsclient"
+	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -65,6 +66,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/wsfs"
 	composiosdk "github.com/multica-ai/multica/server/pkg/composio"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dws"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
@@ -514,6 +516,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		setter.SetRunnerMachineDeliverer(h)
 	}
 	if opts.RuntimeConfig != nil {
+		// runtime.use_dws_for_tag moves DingTalk calls off the dws CLI live;
+		// replicas then share each identity's token through Redis.
+		dwsclient.SetTokenStore(dwsTokenStore(rdb))
+		dwsclient.SetSDKSelector(opts.RuntimeConfig.useDWSForTag)
 		h.FCE2BLauncher.Runner = service.NewFCE2BRolloutRunner(opts.RuntimeConfig.fcE2BSDKRollout)
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
@@ -903,6 +909,38 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		decisionEnv = "staging"
 	}
 	h.UserDecisions = &userdecision.Service{Pool: pool, Store: &userdecision.Store{DB: pool, Environment: decisionEnv, Blobs: h.Storage}, Transport: dingtalkresponse.NewDecisionTransport(dingtalkresponse.DWSConfig{AgentIdentity: agentidentityhsf.NewClient(), BaseURL: signupConfig.FCE2B.AgentIdentityControlBaseURL, BaseURLProvider: agentIdentityControlBaseURLProvider, ClientSecret: signupConfig.FCE2B.DWSClientSecret}, decisionMCP), Wake: h.InboundCoordinatorWorker.Notify}
+	// With runtime.use_dws_for_tag, card actions arrive over the server's
+	// DWS event source: one event stream per identity across replicas.
+	if rdb != nil {
+		if sessions, mint, ok := dingtalkresponse.DecisionSessions(h.UserDecisions.Transport); ok {
+			decisions := h.UserDecisions
+			source, err := dwseventsource.New(dwseventsource.Config{
+				Redis: rdb, Sessions: sessions, Mint: mint,
+				Deployment: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+				Enabled:    opts.RuntimeConfig.useDWSForTag,
+				Consumers: []dwseventsource.Consumer{{
+					EventKey: dws.EventCardAction,
+					Identities: func(ctx context.Context) ([]dwsclient.Identity, error) {
+						requests, err := decisions.ConsumerIdentities(ctx)
+						ids := make([]dwsclient.Identity, 0, len(requests))
+						for _, r := range requests {
+							ids = append(ids, dwsclient.Identity{AgentID: r.AgentID, UID: r.SenderUID, OrgID: r.SenderOrgID})
+						}
+						return ids, err
+					},
+					Handle: func(ctx context.Context, id dwsclient.Identity, line []byte) error {
+						return decisions.HandleCardEvent(ctx, id.AgentID, id.UID, id.OrgID, line)
+					},
+				}},
+			})
+			if err != nil {
+				slog.Error("DWS event source disabled", "event", "dws_event_source_disabled", "error", err)
+			} else {
+				h.DWSEvents = source
+				dingtalkresponse.SetDecisionEventConnections(h.UserDecisions.Transport, source)
+			}
+		}
+	}
 	h.UserDecisions.NotifyAlert = func(alert userdecision.Alert) {
 		var item map[string]any
 		if json.Unmarshal(alert.Item, &item) == nil {

@@ -61,7 +61,14 @@ type DWSHistoryConfig struct {
 	HTTPClient            *http.Client
 }
 
+// dwsSharedSessions opens directories on identities' shared SDK clients
+// (dwsclient.Shared); ok is false while the dws CLI serves DingTalk calls.
+type dwsSharedSessions interface {
+	Open(context.Context, dwsclient.Identity, func(context.Context) (dwsclient.Credential, error)) (string, func(), bool, error)
+}
+
 type dwsHistoryLoader struct {
+	shared                dwsSharedSessions
 	issuer                dwsContextIssuer
 	redeemer              dwsCredentialRedeemer
 	cli                   dwsHistoryCLI
@@ -82,6 +89,8 @@ func NewDWSHistoryLoader(cfg DWSHistoryConfig) DingTalkHistoryLoader {
 		cliPath = "dws"
 	}
 	return &dwsHistoryLoader{
+		shared: dwsclient.Shared{CLI: dwsclient.CLI{Path: cliPath, ClientSecret: strings.TrimSpace(cfg.ClientSecret),
+			MCPBaseURL: strings.TrimSpace(cfg.MCPBaseURL)}},
 		crossOrgRenewAgentIDs: authorizedHistoryRenewalAgents(cfg.CrossOrgRenewAgentIDs),
 		issuer:                cfg.AgentIdentity,
 		redeemer: &httpDWSCredentialRedeemer{
@@ -113,43 +122,11 @@ func (l *dwsHistoryLoader) Load(ctx context.Context, turn Turn) ([]HistoryLine, 
 		return nil, errors.New("DWS history requires a fixed window cutoff")
 	}
 
-	runID := "inbound-dws-" + uuid.NewString()
-	issued, err := l.issuer.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
-		RequestID:   runID,
-		TaskID:      runID,
-		AgentID:     util.UUIDToString(turn.AgentID),
-		RuntimeType: "SERVER",
-		RuntimeID:   runID,
-		Reason:      "Multica inbound coordinator DingTalk history",
-		Source: map[string]string{
-			"app":             "dt-fde-multica",
-			"identity_source": "inbound_dws_history",
-		},
-		UID:        uid,
-		OrgID:      orgID,
-		TTLSeconds: dwsHistoryContextTTLSeconds,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("issue DWS history identity: %w", err)
-	}
-	credential, err := l.redeemer.Redeem(ctx, issued.ContextToken)
+	dir, cleanup, err := l.openSession(ctx, turn, uid, orgID)
 	if err != nil {
 		return nil, err
 	}
-
-	dir, err := l.mkdir("", "multica-inbound-dws-")
-	if err != nil {
-		return nil, errors.New("create isolated DWS history directory")
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		_ = l.remove(dir)
-		return nil, errors.New("secure isolated DWS history directory")
-	}
-	defer func() { _ = l.remove(dir) }()
-
-	if err := l.cli.Exchange(ctx, dir, credential); err != nil {
-		return nil, err
-	}
+	defer cleanup()
 	raw, err := l.cli.ListMessages(ctx, dir, conversationID, turn.HistoryBefore, dwsHistoryQueryLimit)
 	if err != nil && l.crossOrgRenewAgentIDs[util.UUIDToString(turn.AgentID)] && dwsclient.IsCrossOrgPermissionDenied(err) {
 		renewer, ok := l.cli.(interface {
@@ -168,6 +145,67 @@ func (l *dwsHistoryLoader) Load(ctx context.Context, turn Turn) ([]HistoryLine, 
 		return nil, err
 	}
 	return parseDWSHistory(raw, turn)
+}
+
+// openSession authenticates as the turn's DWS identity: on the identity's
+// shared SDK client when the SDK transport is selected (minting only when
+// no shared token exists), else with a credential exchanged for this call.
+func (l *dwsHistoryLoader) openSession(ctx context.Context, turn Turn, uid, orgID string) (string, func(), error) {
+	mint := func(ctx context.Context) (dwsCredential, error) {
+		return l.mint(ctx, turn, uid, orgID)
+	}
+	if l.shared != nil {
+		dir, cleanup, ok, err := l.shared.Open(ctx, dwsclient.Identity{AgentID: util.UUIDToString(turn.AgentID), UID: uid, OrgID: orgID},
+			func(ctx context.Context) (dwsclient.Credential, error) {
+				c, err := mint(ctx)
+				return dwsclient.Credential{UID: c.UID, ClientID: c.ClientID, AuthCode: c.AuthCode}, err
+			})
+		if ok {
+			return dir, cleanup, err
+		}
+	}
+	credential, err := mint(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	dir, err := l.mkdir("", "multica-inbound-dws-")
+	if err != nil {
+		return "", nil, errors.New("create isolated DWS history directory")
+	}
+	cleanup := func() { _ = l.remove(dir) }
+	if err := os.Chmod(dir, 0o700); err != nil {
+		cleanup()
+		return "", nil, errors.New("secure isolated DWS history directory")
+	}
+	if err := l.cli.Exchange(ctx, dir, credential); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	return dir, cleanup, nil
+}
+
+// mint issues an Agent Identity context for this read and redeems it.
+func (l *dwsHistoryLoader) mint(ctx context.Context, turn Turn, uid, orgID string) (dwsCredential, error) {
+	runID := "inbound-dws-" + uuid.NewString()
+	issued, err := l.issuer.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
+		RequestID:   runID,
+		TaskID:      runID,
+		AgentID:     util.UUIDToString(turn.AgentID),
+		RuntimeType: "SERVER",
+		RuntimeID:   runID,
+		Reason:      "Multica inbound coordinator DingTalk history",
+		Source: map[string]string{
+			"app":             "dt-fde-multica",
+			"identity_source": "inbound_dws_history",
+		},
+		UID:        uid,
+		OrgID:      orgID,
+		TTLSeconds: dwsHistoryContextTTLSeconds,
+	})
+	if err != nil {
+		return dwsCredential{}, fmt.Errorf("issue DWS history identity: %w", err)
+	}
+	return l.redeemer.Redeem(ctx, issued.ContextToken)
 }
 
 func authorizedHistoryRenewalAgents(ids []string) map[string]bool {

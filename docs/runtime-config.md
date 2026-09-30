@@ -135,6 +135,25 @@ This key replaces the separate Data ID `dt-fde-multica-fc-e2b-sdk-rollout.json` 
 
 Rollout order: binaries older than this key reject a runtime document that carries it. Follow "Adding a runtime-document key" under the release procedure: every replica runs the supporting binary before the key is published, and the key is removed before an older binary is released.
 
+## DingTalk calls through the DWS SDK
+
+`runtime.use_dws_for_tag` (boolean, default false) sends the server's DingTalk calls through the in-process DWS gateway SDK (`server/pkg/dws`, synced from dws-for-tag by `scripts/sync-dws.sh`) instead of spawning the `dws` CLI:
+
+```json
+"use_dws_for_tag": true
+```
+
+- It is a server switch. Sandboxes are unaffected: the daemon and the dws shim keep the dws CLI, and sandbox-side shortcuts ship as the `dws-shortcuts` skill (dws-for-tag `skill/publish.py`), iterated by publishing a new skill version rather than through the server or the image.
+- It covers everything `server/internal/dwsclient` does: the AuthCode exchange, Coordinator and Scene Memory history reads, cross-org read renewal, message sends and quote replies, send-status queries, sender lookups, A2UI decision cards and the card-action event stream.
+- Callers are unchanged. `server/pkg/dws/clicompat` builds the tool arguments dws v1.0.62-beta.8 sends and renders what it prints, including its success rules and error JSON, so the existing parsers read the same bytes.
+- The switch is read live, once per operation: the session an operation opens picks the transport, and every later call of that operation follows it. A publication therefore applies to operations that start after it, and a running operation finishes on the transport it started with; the exception is a decision session's card consumer, which ends within seconds of a switch-off so the decision service reopens it on the dws CLI.
+- Credentials are shared, not per call. An identity (agent, DWS user, organization) is exchanged once; every operation and every replica then uses its token, and an Agent Identity context is minted only when no usable token exists. Tokens are stored in the store Redis, sealed with `MULTICA_DINGTALK_SECRET_KEY` under a per-deployment prefix, and refreshed by one replica at a time under a Redis lock, because the refresh token rotates. Without Redis or the key, tokens stay per process. Agent Identity therefore records the context of the first operation that minted, not one per call.
+- Event streams are the only state a replica holds. `server/internal/dwseventsource` is the server's DWS WebSocket event source: one DWS personal event stream per identity that some consumer needs (today: senders with open user decisions, for `user_card_action_triggered`), however many identities the deployment hosts. Where each stream runs is `server/internal/connmgr`'s business, a business-free connection manager built on the robot connector's proven design (the robot connector itself is unchanged): a Redis coordinator with one READY member per identity places each stream, a dropped stream is released and claimed again with backoff, a crashed holder is replaced after the lease TTL, and on shutdown the stream keeps consuming until another replica's replacement is READY, so rolling deploys hand streams over. A replica already holding more streams waits longer before claiming, which spreads streams across replicas. Event dedupe, subscription records and a short-lived per-identity ready marker live in Redis; delivery is at least once (a handoff overlaps two streams), and the decision service dedupes card actions by event id; any replica persists a card action through the decision service, and a decision session waits for its identity's stream instead of opening one.
+- Known difference: dws release binaries decrypt SafeChat (encrypted-group) messages with a native library. The SDK cannot; such messages keep their ciphertext in `content`, as dws does when its own decryption fails.
+- Behavior rollback: publish `false` or remove the key; no release is needed.
+
+Rollout order: as for any new key, release the binary that knows it to every replica first, then publish it (see "Adding a runtime-document key").
+
 ## Managed model pricing
 
 The model-pricing document is a strict, dynamically watched USD catalog. Every model listed in `runtime.llm.models` must have an exact price entry; the pricing document may be a superset so operators can publish a new price before adding the model to the Runtime catalog. This price-first order keeps every live generation valid.
@@ -164,7 +183,7 @@ Use this once, when an environment moves from environment traits to Diamond. Its
 
 ### Adding a runtime-document key
 
-Use this for every new key, such as `fc_e2b_sdk_rollout`.
+Use this for every new key, such as `fc_e2b_sdk_rollout` or `use_dws_for_tag`.
 
 1. Release the binary that knows the key to every replica, with the document unchanged. Verify every replica runs the new build and logs `runtime Diamond config loaded` with the same generation and SHA-256, and that `mw diamond listener` shows each replica listening on the current MD5.
 2. Validate the new document with the released commit: `cd server && go run ./cmd/runtimeconfig -file /path/to/runtime.json` (add `-production` for production). The same command at the previous release commit must reject it with `unknown field`, which confirms the older binary cannot read it.
@@ -175,7 +194,7 @@ Use this for every new key, such as `fc_e2b_sdk_rollout`.
 
 - A publication applies to operations that start after every replica logs its generation. Operations that froze a snapshot finish under it, as each key describes. An invalid publication is rejected by every replica, which keeps its previous generation and logs `runtime Diamond update rejected; retaining previous snapshot`.
 - Behavior rollback: publish the key switched off (for example `{"enabled": false}`); no release is needed.
-- Binary rollback: first publish the document without every key the older binary does not know (for this batch `fc_e2b_sdk_rollout`), verify every replica logged the new generation, then release the older binary. An older binary released while the document still carries such a key cannot start.
+- Binary rollback: first publish the document without every key the older binary does not know (for this batch `fc_e2b_sdk_rollout` and `use_dws_for_tag`), verify every replica logged the new generation, then release the older binary. An older binary released while the document still carries such a key cannot start.
 
 Never reuse a pre-release document in production. Publish and verify each unit independently.
 
@@ -183,7 +202,8 @@ Never reuse a pre-release document in production. Publish and verify each unit i
 
 | Date | Change | Reason |
 |---|---|---|
-| 2026-09-30 | The process stop also covers failed tasks; its second pass runs 10 seconds after the task ended; dropped the references to `runtime.performance_optimization`, which no binary reads. | A failed task leaves the same orphans as a cancelled one; the key was never implemented. |
+| 2026-09-30 | Added `runtime.use_dws_for_tag`. | Move the server's DingTalk calls from the dws subprocess to the in-process SDK behind a live switch. |
+| 2026-09-30 | The process stop also covers failed tasks; its second pass runs 10 seconds after the task ended; moved the references to `runtime.performance_optimization` out of this document. | A failed task leaves the same orphans as a cancelled one; that key is implemented and documented by the PRI-47 change, which is not on this branch yet. |
 | 2026-09-28 | Split the release procedure into first adoption, adding a key, and hot updates and rollback; a cancelled-task stop now freezes one snapshot for both passes. | The general steps published the document before the binary, which older replicas reject once it carries a new key; each stop pass reread the switch (PRI-67). |
 | 2026-09-28 | Moved the FC/E2B SDK rollout into `runtime.fc_e2b_sdk_rollout`, which also gates the cancelled-task stop and its runner marker; dropped the separate Data ID and `MULTICA_FC_E2B_SDK_ROLLOUT`. | One runtime document carries every rollout switch; the SDK change and the performance batch keep separate, independent switches (PRI-47, option B). |
 | 2026-08-30 | Reused `web.site_connect_src` as the hosted-site fetch proxy server-side origin allowlist while retaining the connector default and CSP behavior. | Client exact-URL declarations are untrusted; a live Diamond origin boundary lets the server authorize destinations without adding a second configuration contract. |

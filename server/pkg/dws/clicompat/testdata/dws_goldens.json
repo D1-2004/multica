@@ -1,0 +1,5049 @@
+[
+  {
+    "name": "list/measured",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"messages\":[{\"openMessageId\":\"msgA\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\",\"sender\":\"张三\",\"content\":\"hello \u003cb\u003e\u0026amp;\",\"createTime\":\"2026-09-30 11:58:03\",\"sendType\":\"normal\",\"quotedMessage\":{\"openMessageId\":\"msgQ\",\"sender\":\"李四\",\"content\":\"原文\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAAAAAAAAAAAAiEiE\"}},{\"openMessageId\":\"msgB\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAAAAAAAAAAAAiEiE\",\"senderId\":\"staff-2\",\"sender\":\"李四\",\"content\":\"line1\\nline2\",\"createTime\":\"2026-09-30 11:57:00\",\"updateTime\":\"2026-09-30 11:57:00\",\"msgType\":\"text\",\"emotionReplyList\":[{\"emoji\":\"赞\",\"count\":2,\"replyUsers\":[\"u1\",\"u2\"]}]}],\"hasMore\":true,\"nextCursor\":1790000000000}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": false,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 2,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 0,\n  \"failures\": [],\n  \"hasMore\": true,\n  \"messages\": [\n    {\n      \"content\": \"hello \u003cb\u003e\u0026amp;\",\n      \"conversationId\": \"cidTEST000000001\",\n      \"createTime\": \"2026-09-30 11:58:03\",\n      \"messageId\": \"msgA\",\n      \"openConversationId\": \"cidTEST000000001\",\n      \"openMessageId\": \"msgA\",\n      \"quotedMessage\": {\n        \"content\": \"原文\",\n        \"openMessageId\": \"msgQ\",\n        \"sender\": \"李四\",\n        \"senderOpenDingTalkId\": \"DAAAAAAAAAAAAAAAAAAAAAAiEiE\"\n      },\n      \"sendType\": \"normal\",\n      \"sender\": \"张三\",\n      \"senderId\": \"DAAAAAAAAAAAiE\",\n      \"senderOpenDingTalkId\": \"DAAAAAAAAAAAiE\",\n      \"text\": \"hello \u003cb\u003e\u0026amp;\"\n    },\n    {\n      \"content\": \"line1\\nline2\",\n      \"conversationId\": \"cidTEST000000001\",\n      \"createTime\": \"2026-09-30 11:57:00\",\n      \"emotionReplyList\": [\n        {\n          \"count\": 2,\n          \"emoji\": \"赞\",\n          \"replyUsers\": [\n            \"u1\",\n            \"u2\"\n          ]\n        }\n      ],\n      \"messageId\": \"msgB\",\n      \"messageType\": \"text\",\n      \"msgType\": \"text\",\n      \"openConversationId\": \"cidTEST000000001\",\n      \"openMessageId\": \"msgB\",\n      \"reactions\": {\n        \"counts\": [\n          {\n            \"count\": 2,\n            \"emoji\": \"赞\"\n          }\n        ],\n        \"details\": [\n          {\n            \"emoji\": \"赞\",\n            \"replyUsers\": [\n              \"u1\",\n              \"u2\"\n            ]\n          }\n        ]\n      },\n      \"sender\": \"李四\",\n      \"senderId\": \"staff-2\",\n      \"senderOpenDingTalkId\": \"DAAAAAAAAAAAAAAAAAAAAAAiEiE\",\n      \"text\": \"line1\\nline2\",\n      \"updateTime\": \"2026-09-30 11:57:00\"\n    }\n  ],\n  \"nextCursor\": 1790000000000,\n  \"nextPage\": {\n    \"direction\": \"older\",\n    \"nextCursor\": 1790000000000,\n    \"time\": \"2026-09-21T14:13:20Z\"\n  },\n  \"pagesFetched\": 1,\n  \"paginationKnown\": true,\n  \"partial\": false,\n  \"stopReason\": \"single_page\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/result-envelope",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"result\":{\"messages\":[{\"openMessageId\":\"msg-1\",\"content\":{\"text\":\"回复正文\"},\"createTime\":101,\"msgType\":\"reply\",\"quotedMessage\":{\"msgType\":\"merged_forward\",\"content\":{\"items\":[{\"text\":\"原消息\"}]}}},{\"openMessageId\":\"msg-2\",\"content\":{\"text\":\"图片回复\"},\"createTime\":102,\"msgType\":\"reply\",\"quotedMessage\":{\"msgType\":\"image\",\"content\":{\"mediaId\":\"media-1\"}}}],\"hasMore\":false}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": true,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 2,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 0,\n  \"failures\": [],\n  \"hasMore\": false,\n  \"messages\": [\n    {\n      \"content\": {\n        \"text\": \"回复正文\"\n      },\n      \"createTime\": 101,\n      \"messageId\": \"msg-1\",\n      \"messageType\": \"reply\",\n      \"msgType\": \"reply\",\n      \"openMessageId\": \"msg-1\",\n      \"quotedMessage\": {\n        \"content\": {\n          \"items\": [\n            {\n              \"text\": \"原消息\"\n            }\n          ]\n        },\n        \"msgType\": \"merged_forward\"\n      },\n      \"sender\": null,\n      \"text\": \"回复正文\"\n    },\n    {\n      \"content\": {\n        \"text\": \"图片回复\"\n      },\n      \"createTime\": 102,\n      \"messageId\": \"msg-2\",\n      \"messageType\": \"reply\",\n      \"msgType\": \"reply\",\n      \"openMessageId\": \"msg-2\",\n      \"quotedMessage\": {\n        \"content\": {\n          \"mediaId\": \"media-1\"\n        },\n        \"msgType\": \"image\"\n      },\n      \"resourceRefs\": [\n        {\n          \"download\": {\n            \"arguments\": {\n              \"resource-id\": \"media-1\",\n              \"type\": \"mediaId\"\n            },\n            \"missing\": [\n              \"message-id\",\n              \"open-conversation-id\"\n            ],\n            \"ready\": false,\n            \"shortcut\": \"+messages-resource-download\"\n          },\n          \"resourceId\": \"media-1\",\n          \"resourceIdType\": \"mediaId\",\n          \"type\": \"mediaId\"\n        }\n      ],\n      \"sender\": null,\n      \"text\": \"图片回复\"\n    }\n  ],\n  \"pagesFetched\": 1,\n  \"paginationKnown\": true,\n  \"partial\": false,\n  \"result\": {\n    \"hasMore\": false,\n    \"messages\": [\n      {\n        \"content\": {\n          \"text\": \"回复正文\"\n        },\n        \"createTime\": 101,\n        \"messageId\": \"msg-1\",\n        \"messageType\": \"reply\",\n        \"msgType\": \"reply\",\n        \"openMessageId\": \"msg-1\",\n        \"quotedMessage\": {\n          \"content\": {\n            \"items\": [\n              {\n                \"text\": \"原消息\"\n              }\n            ]\n          },\n          \"msgType\": \"merged_forward\"\n        },\n        \"sender\": null,\n        \"text\": \"回复正文\"\n      },\n      {\n        \"content\": {\n          \"text\": \"图片回复\"\n        },\n        \"createTime\": 102,\n        \"messageId\": \"msg-2\",\n        \"messageType\": \"reply\",\n        \"msgType\": \"reply\",\n        \"openMessageId\": \"msg-2\",\n        \"quotedMessage\": {\n          \"content\": {\n            \"mediaId\": \"media-1\"\n          },\n          \"msgType\": \"image\"\n        },\n        \"resourceRefs\": [\n          {\n            \"download\": {\n              \"arguments\": {\n                \"resource-id\": \"media-1\",\n                \"type\": \"mediaId\"\n              },\n              \"missing\": [\n                \"message-id\",\n                \"open-conversation-id\"\n              ],\n              \"ready\": false,\n              \"shortcut\": \"+messages-resource-download\"\n            },\n            \"resourceId\": \"media-1\",\n            \"resourceIdType\": \"mediaId\",\n            \"type\": \"mediaId\"\n          }\n        ],\n        \"sender\": null,\n        \"text\": \"图片回复\"\n      }\n    ]\n  },\n  \"stopReason\": \"source_complete\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/no-hasmore",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":true,\"messages\":[{\"openMessageId\":\"m1\",\"content\":\"x\",\"createTime\":\"2026-09-30 10:00:00\"}],\"nextCursor\":1790000000000}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": false,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 1,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 1,\n  \"failures\": [\n    {\n      \"error\": \"下层仅返回 cursor、未返回 hasMore，无法证明结果完整\",\n      \"stage\": \"pagination\"\n    }\n  ],\n  \"hasMore\": false,\n  \"messages\": [\n    {\n      \"content\": \"x\",\n      \"createTime\": \"2026-09-30 10:00:00\",\n      \"messageId\": \"m1\",\n      \"openMessageId\": \"m1\",\n      \"sender\": null,\n      \"text\": \"x\"\n    }\n  ],\n  \"nextCursor\": 1790000000000,\n  \"pagesFetched\": 1,\n  \"paginationKnown\": false,\n  \"partial\": false,\n  \"stopReason\": \"single_page\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/no-pagination",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"messages\":[]}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": false,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 0,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 1,\n  \"failures\": [\n    {\n      \"error\": \"下层未返回可靠的 hasMore/nextCursor，无法证明结果完整\",\n      \"stage\": \"pagination\"\n    }\n  ],\n  \"hasMore\": false,\n  \"messages\": [],\n  \"pagesFetched\": 1,\n  \"paginationKnown\": false,\n  \"partial\": false,\n  \"stopReason\": \"single_page\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/bad-cursor",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"messages\":[{\"openMessageId\":\"m1\",\"content\":\"x\"}],\"hasMore\":true,\"nextCursor\":\"abc\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": false,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 1,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 1,\n  \"failures\": [\n    {\n      \"error\": \"下层返回 hasMore=true，但 nextCursor 无效: 必须是正整数毫秒时间戳\",\n      \"stage\": \"pagination\"\n    }\n  ],\n  \"hasMore\": true,\n  \"messages\": [\n    {\n      \"content\": \"x\",\n      \"createTime\": null,\n      \"messageId\": \"m1\",\n      \"openMessageId\": \"m1\",\n      \"sender\": null,\n      \"text\": \"x\"\n    }\n  ],\n  \"nextCursor\": \"abc\",\n  \"pagesFetched\": 1,\n  \"paginationKnown\": true,\n  \"partial\": false,\n  \"stopReason\": \"single_page\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/string-cursor",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"messages\":[{\"openMessageId\":\"m1\",\"content\":\"x\"}],\"hasMore\":true,\"nextCursor\":\"1790000000000\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": false,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 1,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 0,\n  \"failures\": [],\n  \"hasMore\": true,\n  \"messages\": [\n    {\n      \"content\": \"x\",\n      \"createTime\": null,\n      \"messageId\": \"m1\",\n      \"openMessageId\": \"m1\",\n      \"sender\": null,\n      \"text\": \"x\"\n    }\n  ],\n  \"nextCursor\": \"1790000000000\",\n  \"nextPage\": {\n    \"direction\": \"older\",\n    \"nextCursor\": \"1790000000000\",\n    \"time\": \"2026-09-21T14:13:20Z\"\n  },\n  \"pagesFetched\": 1,\n  \"paginationKnown\": true,\n  \"partial\": false,\n  \"stopReason\": \"single_page\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/complete",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"messages\":[{\"openMessageId\":\"m1\",\"text\":\"t\",\"content\":\"c\",\"senderUid\":\"u1\",\"sender\":{\"name\":\"王五\",\"openDingTalkId\":\"DAAAAAAAAAAAiE\"}}],\"hasMore\":false}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": true,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 1,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 0,\n  \"failures\": [],\n  \"hasMore\": false,\n  \"messages\": [\n    {\n      \"content\": \"c\",\n      \"createTime\": null,\n      \"messageId\": \"m1\",\n      \"openMessageId\": \"m1\",\n      \"sender\": {\n        \"name\": \"王五\",\n        \"openDingTalkId\": \"DAAAAAAAAAAAiE\"\n      },\n      \"senderId\": \"DAAAAAAAAAAAiE\",\n      \"senderUid\": \"u1\",\n      \"text\": \"t\"\n    }\n  ],\n  \"pagesFetched\": 1,\n  \"paginationKnown\": true,\n  \"partial\": false,\n  \"stopReason\": \"source_complete\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/encrypted",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"messages\":[{\"openMessageId\":\"enc-1\",\"openConversationId\":\"cidTEST000000001\",\"content\":\"SwzNkAraDE6lUHUNlVT3mjFdbxL6dWvmt77XtjACdpJx9VFibzTbW9KtDbkzGOYP||2||1||1\",\"createTime\":\"2026-09-30 11:00:00\"},{\"openMessageId\":\"plain-1\",\"content\":\"明文\",\"createTime\":\"2026-09-30 11:00:01\"},{\"content\":\"SwzNkAraDE6lUHUNlVT3mjFdbxL6dWvmt77XtjACdpJx9VFibzTbW9KtDbkzGOYP||2||1||1\"}],\"hasMore\":false}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": true,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 3,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 1,\n  \"decryptFailedCount\": 1,\n  \"decryptFailures\": [\n    {\n      \"conversationId\": \"cidTEST000000001\",\n      \"messageId\": \"enc-1\",\n      \"reason\": \"读取登录态失败（先 dws auth login）: load access token: reading secure data file: open {{TMPDIR}}/008/config/.data: no such file or directory\",\n      \"stage\": \"message-decrypt\"\n    }\n  ],\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 0,\n  \"failures\": [],\n  \"hasMore\": false,\n  \"messages\": [\n    {\n      \"content\": \"SwzNkAraDE6lUHUNlVT3mjFdbxL6dWvmt77XtjACdpJx9VFibzTbW9KtDbkzGOYP||2||1||1\",\n      \"conversationId\": \"cidTEST000000001\",\n      \"createTime\": \"2026-09-30 11:00:00\",\n      \"messageId\": \"enc-1\",\n      \"openConversationId\": \"cidTEST000000001\",\n      \"openMessageId\": \"enc-1\",\n      \"sender\": null,\n      \"text\": \"[加密消息，无法解码]\"\n    },\n    {\n      \"content\": \"明文\",\n      \"createTime\": \"2026-09-30 11:00:01\",\n      \"messageId\": \"plain-1\",\n      \"openMessageId\": \"plain-1\",\n      \"sender\": null,\n      \"text\": \"明文\"\n    },\n    {\n      \"content\": \"SwzNkAraDE6lUHUNlVT3mjFdbxL6dWvmt77XtjACdpJx9VFibzTbW9KtDbkzGOYP||2||1||1\",\n      \"createTime\": null,\n      \"sender\": null,\n      \"text\": \"[加密消息，无法解码]\"\n    }\n  ],\n  \"pagesFetched\": 1,\n  \"paginationKnown\": true,\n  \"partial\": true,\n  \"stopReason\": \"source_complete\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/numbers",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"messages\":[{\"openMessageId\":\"m1\",\"content\":\"x\",\"createTime\":1790000000000,\"big\":12345678901234567891,\"f\":1.50,\"e\":1e3}],\"hasMore\":true,\"nextCursor\":1790000000000}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": false,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 1,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 0,\n  \"failures\": [],\n  \"hasMore\": true,\n  \"messages\": [\n    {\n      \"big\": 12345678901234567000,\n      \"content\": \"x\",\n      \"createTime\": 1790000000000,\n      \"e\": 1000,\n      \"f\": 1.5,\n      \"messageId\": \"m1\",\n      \"openMessageId\": \"m1\",\n      \"sender\": null,\n      \"text\": \"x\"\n    }\n  ],\n  \"nextCursor\": 1790000000000,\n  \"nextPage\": {\n    \"direction\": \"older\",\n    \"nextCursor\": 1790000000000,\n    \"time\": \"2026-09-21T14:13:20Z\"\n  },\n  \"pagesFetched\": 1,\n  \"paginationKnown\": true,\n  \"partial\": false,\n  \"stopReason\": \"single_page\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/business-crossorg",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"CrossOrgPermissionDenied\",\"errorMsg\":\"cross org read not granted\",\"traceId\":\"trace-xorg\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"cross org read not granted\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_error_code\": \"CrossOrgPermissionDenied\",\n    \"server_key\": \"chat\",\n    \"trace_id\": \"trace-xorg\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/business-numeric-code",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":130003,\"errorMsg\":\"OpenId is not in conversation\",\"requestId\":\"req-1\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"OpenId is not in conversation\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_key\": \"chat\",\n    \"trace_id\": \"req-1\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/business-string-130003",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"130003\",\"errorMsg\":\"OpenId is not in conversation\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"OpenId is not in conversation\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_error_code\": \"130003\",\n    \"server_key\": \"chat\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/business-nested",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":false,\"code\":\"BUSINESS_ERROR\",\"trace_id\":\"trace-002\",\"result\":{\"success\":false,\"errorCode\":\"ROBOT_NOT_FOUND\",\"errorMsg\":\"robot info is not exist\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"robot info is not exist\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_error_code\": \"ROBOT_NOT_FOUND\",\n    \"server_key\": \"chat\",\n    \"trace_id\": \"trace-002\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/business-nested-only",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"result\":{\"success\":false,\"errorCode\":\"X1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"business error: code X1\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_error_code\": \"X1\",\n    \"server_key\": \"chat\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/business-no-msg",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":false}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"business error: success=false\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_key\": \"chat\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/param-error",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"PARAM_ERROR\",\"errorMsg\":\"openconversation_id is invalid\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"请求未通过后端参数校验；请核对当前 leaf Help/Schema 和稳定 ID 类型后重试。\",\n    \"message\": \"openconversation_id is invalid\",\n    \"operation\": \"tools/call\",\n    \"origin\": \"dingtalk_api\",\n    \"reason\": \"invalid_request\",\n    \"server_error_code\": \"PARAM_ERROR\",\n    \"server_key\": \"chat\",\n    \"stage\": \"tool_validation\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/network-error",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"NETWORK_ERROR\",\"errorMsg\":\"backend down\",\"technicalDetail\":\"StatusCode.UNAVAILABLE\",\"retryable\":true}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"使用相同参数重试一次\",\n      \"持续失败时保留 Trace ID 并排查 MCP 后端依赖\",\n      \"dws doctor --json\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"请求参数无需修改；请使用相同参数稍后重试。持续失败时请提供 Trace ID 排查 MCP 服务。\",\n    \"message\": \"MCP 后端依赖暂时不可用\",\n    \"operation\": \"tools/call\",\n    \"origin\": \"mcp_gateway\",\n    \"reason\": \"backend_dependency_unavailable\",\n    \"retryable\": true,\n    \"server_error_code\": \"NETWORK_ERROR\",\n    \"server_key\": \"chat\",\n    \"stage\": \"backend_dependency\",\n    \"technical_detail\": \"StatusCode.UNAVAILABLE\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/npe",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"999\",\"errorMsg\":\"system error: java.lang.NullPointerException\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"检查目标资源的当前状态，确认本次操作是否已经生效\",\n      \"状态未确认前不要直接重试写操作\",\n      \"持续失败时携带 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"上游服务发生内部异常；请保留 Trace ID 和 Server Code，确认操作结果后再决定是否重试。\",\n    \"message\": \"system error: java.lang.NullPointerException\",\n    \"operation\": \"tools/call\",\n    \"origin\": \"dingtalk_api\",\n    \"reason\": \"upstream_internal_error\",\n    \"server_error_code\": \"999\",\n    \"server_key\": \"chat\",\n    \"stage\": \"upstream_execution\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/required-cid",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorMsg\":\"openCid or cid is required\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"请求未通过后端参数校验；请核对当前 leaf Help/Schema 和稳定 ID 类型后重试。\",\n    \"message\": \"openCid or cid is required\",\n    \"operation\": \"tools/call\",\n    \"origin\": \"dingtalk_api\",\n    \"reason\": \"invalid_request\",\n    \"server_key\": \"chat\",\n    \"stage\": \"tool_validation\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/code-200",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":true,\"code\":200,\"messages\":[]}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 1,\n    \"message\": \"[MCP_TOOL_ERROR] {\\\"code\\\":200,\\\"messages\\\":[],\\\"success\\\":true} (operation: chat/list_conversation_message_v2)\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/code-string",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"errorCode\":\"E_LIMIT\",\"errorMsg\":\"rate limit exceeded\",\"messages\":[]}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 1,\n    \"message\": \"[MCP_TOOL_ERROR] {\\\"errorCode\\\":\\\"E_LIMIT\\\",\\\"errorMsg\\\":\\\"rate limit exceeded\\\",\\\"messages\\\":[],\\\"success\\\":true} (operation: chat/list_conversation_message_v2)\\n  hint: API rate limit exceeded, wait a moment and retry\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/code-zero",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"code\":0,\"errcode\":\"0\",\"messages\":[],\"hasMore\":false}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"code\": 0,\n  \"complete\": true,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 0,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"errcode\": \"0\",\n  \"failedCount\": 0,\n  \"failures\": [],\n  \"hasMore\": false,\n  \"messages\": [],\n  \"pagesFetched\": 1,\n  \"paginationKnown\": true,\n  \"partial\": false,\n  \"stopReason\": \"source_complete\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/error-string",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"error\":\"no permission to read\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 1,\n    \"message\": \"[MCP_TOOL_ERROR] {\\\"error\\\":\\\"no permission to read\\\",\\\"success\\\":true} (operation: chat/list_conversation_message_v2)\\n  hint: Verify your account has permission for this resource\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/status-error",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"status\":\"error\",\"message\":\"permission denied\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 1,\n    \"message\": \"[MCP_TOOL_ERROR] {\\\"message\\\":\\\"permission denied\\\",\\\"status\\\":\\\"error\\\",\\\"success\\\":true} (operation: chat/list_conversation_message_v2)\\n  hint: Verify your account has permission for this resource\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/success-string-false",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":\"false\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 1,\n    \"message\": \"[MCP_TOOL_ERROR] {\\\"success\\\":\\\"false\\\"} (operation: chat/list_conversation_message_v2)\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/gateway-auth",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"errorCode\":\"DWS_SERVICE_UNAUTHORIZED\",\"errorMsg\":\"token expired\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 2,\n    \"message\": \"[AUTH_TOKEN_EXPIRED] {\\\"errorCode\\\":\\\"DWS_SERVICE_UNAUTHORIZED\\\",\\\"errorMsg\\\":\\\"token expired\\\",\\\"success\\\":true} (operation: chat/list_conversation_message_v2)\\n  hint: Re-authenticate: dws auth login\"\n  }\n}\n",
+    "exit": 2
+  },
+  {
+    "name": "list/gateway-auth-false",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"TOKEN_VERIFIED_FAILED\",\"errorMsg\":\"token verify failed\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"action_url\": \"https://open-dev.dingtalk.com/fe/old#/developerSettings\",\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"friendly_hint\": \"该组织尚未开启 CLI 数据访问权限，请联系组织主管理员开启。\",\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"token verify failed\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_error_code\": \"TOKEN_VERIFIED_FAILED\",\n    \"server_key\": \"chat\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/not-logged-in",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"error\":\"Missing service_id or access_key\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 2,\n    \"message\": \"[AUTH_NOT_CONFIGURED] 当前未登录 (operation: chat/list_conversation_message_v2)\\n  hint: 请先登录：dws auth login\"\n  }\n}\n",
+    "exit": 2
+  },
+  {
+    "name": "list/plain-text",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "hello world"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": false,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 0,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 1,\n  \"failures\": [\n    {\n      \"error\": \"下层未返回可靠的 hasMore/nextCursor，无法证明结果完整\",\n      \"stage\": \"pagination\"\n    }\n  ],\n  \"hasMore\": false,\n  \"messages\": [],\n  \"pagesFetched\": 1,\n  \"paginationKnown\": false,\n  \"partial\": false,\n  \"stopReason\": \"single_page\",\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/empty-text",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": false,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 0,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 1,\n  \"failures\": [\n    {\n      \"error\": \"下层未返回可靠的 hasMore/nextCursor，无法证明结果完整\",\n      \"stage\": \"pagination\"\n    }\n  ],\n  \"hasMore\": false,\n  \"messages\": [],\n  \"pagesFetched\": 1,\n  \"paginationKnown\": false,\n  \"partial\": false,\n  \"stopReason\": \"single_page\",\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/array-text",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "[1,2]"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": false,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 0,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 1,\n  \"failures\": [\n    {\n      \"error\": \"下层未返回可靠的 hasMore/nextCursor，无法证明结果完整\",\n      \"stage\": \"pagination\"\n    }\n  ],\n  \"hasMore\": false,\n  \"messages\": [],\n  \"pagesFetched\": 1,\n  \"paginationKnown\": false,\n  \"partial\": false,\n  \"stopReason\": \"single_page\",\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/is-error-json",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "isError",
+        "text": "{\"errorCode\":\"A_FAIL\",\"errorMsg\":\"tool failed\",\"traceId\":\"trace-iserr\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"MCP tool returned a business error; check tool parameters and refer to skill documentation.\",\n    \"message\": \"{\\\"errorCode\\\":\\\"A_FAIL\\\",\\\"errorMsg\\\":\\\"tool failed\\\",\\\"traceId\\\":\\\"trace-iserr\\\"}\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"mcp_tool_error\",\n    \"server_error_code\": \"A_FAIL\",\n    \"server_key\": \"chat\",\n    \"trace_id\": \"trace-iserr\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/is-error-text",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "isError",
+        "text": "tool exploded"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"MCP tool returned a business error; check tool parameters and refer to skill documentation.\",\n    \"message\": \"tool exploded\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"mcp_tool_error\",\n    \"server_key\": \"chat\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/http-400",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "http",
+        "text": "{\"error\":\"Missing service_id or access_key\"}",
+        "status": 400
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"Check authentication, permissions, and parameters, then retry\",\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"cause\": \"request to {{GATEWAY}} returned HTTP 400\",\n    \"code\": 1,\n    \"hint\": \"Request was rejected by upstream service; check parameters, authentication, and permissions.\",\n    \"message\": \"request to {{GATEWAY}} returned HTTP 400\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"http_400\",\n    \"retryable\": false\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/http-401",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "http",
+        "text": "unauthorized",
+        "status": 401
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"Check login status and retry\",\n      \"Run dws auth status to confirm credentials are valid; re-login if needed\",\n      \"dws doctor --json\"\n    ],\n    \"category\": \"auth\",\n    \"cause\": \"request to {{GATEWAY}} returned HTTP 401\",\n    \"code\": 2,\n    \"hint\": \"Authentication failed; check login status or product URL override.\",\n    \"message\": \"request to {{GATEWAY}} returned HTTP 401\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"http_401\",\n    \"retryable\": false\n  }\n}\n",
+    "exit": 2
+  },
+  {
+    "name": "list/http-403",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "http",
+        "text": "forbidden",
+        "status": 403
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"确认当前 profile 和身份是否正确\",\n      \"检查目标资源权限与应用授权范围后重试\"\n    ],\n    \"category\": \"auth\",\n    \"cause\": \"request to {{GATEWAY}} returned HTTP 403\",\n    \"code\": 2,\n    \"hint\": \"Insufficient permissions; check if current identity has access to this service or tool.\",\n    \"message\": \"request to {{GATEWAY}} returned HTTP 403\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"http_403\",\n    \"retryable\": false\n  }\n}\n",
+    "exit": 2
+  },
+  {
+    "name": "list/http-429",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "http",
+        "text": "slow down",
+        "status": 429
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"Check authentication, permissions, and parameters, then retry\",\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"cause\": \"request to {{GATEWAY}} returned HTTP 429\",\n    \"code\": 1,\n    \"hint\": \"Request was rejected by upstream service; check parameters, authentication, and permissions.\",\n    \"message\": \"request to {{GATEWAY}} returned HTTP 429\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"http_429\",\n    \"retryable\": true\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/http-502",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "http",
+        "text": "bad gateway",
+        "status": 502
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"Check authentication, permissions, and parameters, then retry\",\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"cause\": \"request to {{GATEWAY}} returned HTTP 502\",\n    \"code\": 1,\n    \"hint\": \"Upstream service error; retry later.\",\n    \"message\": \"request to {{GATEWAY}} returned HTTP 502\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"http_502\",\n    \"retryable\": true\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/rpc-invalid-params",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "rpc",
+        "rpcCode": -32602,
+        "rpcMessage": "invalid params: limit"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"Check authentication, permissions, and parameters, then retry\",\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"validation\",\n    \"cause\": \"JSON-RPC tools/call failed with code -32602: invalid params: limit\",\n    \"code\": 3,\n    \"hint\": \"Parameters do not match tool input schema; check --json/--params/flags.\",\n    \"message\": \"JSON-RPC tools/call failed with code -32602: invalid params: limit\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"tools_call_jsonrpc_invalid_params\",\n    \"rpc_code\": -32602\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "list/rpc-internal",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "rpc",
+        "rpcCode": -32603,
+        "rpcMessage": "internal failure"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"Check authentication, permissions, and parameters, then retry\",\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"cause\": \"JSON-RPC tools/call failed with code -32603: internal failure\",\n    \"code\": 1,\n    \"hint\": \"Tool invocation failed; check parameters and upstream service status.\",\n    \"message\": \"JSON-RPC tools/call failed with code -32603: internal failure\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"tools_call_jsonrpc_internal_error\",\n    \"rpc_code\": -32603\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/rpc-auth",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "rpc",
+        "rpcCode": -32001,
+        "rpcMessage": "token invalid"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"Check login status and retry\",\n      \"Run dws auth status to confirm credentials are valid; re-login if needed\",\n      \"dws doctor --json\"\n    ],\n    \"category\": \"auth\",\n    \"cause\": \"JSON-RPC tools/call failed with code -32001: token invalid\",\n    \"code\": 2,\n    \"hint\": \"Call rejected; check authentication status, tenant identity, or access permissions.\",\n    \"message\": \"JSON-RPC tools/call failed with code -32001: token invalid\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"tools_call_jsonrpc_server_error_32001\",\n    \"rpc_code\": -32001\n  }\n}\n",
+    "exit": 2
+  },
+  {
+    "name": "list/rpc-forbidden",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "rpc",
+        "rpcCode": -32002,
+        "rpcMessage": "Access denied for tool"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"确认当前 profile 和身份是否正确\",\n      \"检查目标资源权限与应用授权范围后重试\"\n    ],\n    \"category\": \"auth\",\n    \"cause\": \"JSON-RPC tools/call failed with code -32002: Access denied for tool\",\n    \"code\": 2,\n    \"hint\": \"调用被拒绝；请检查当前身份、资源权限或应用授权范围。\",\n    \"message\": \"JSON-RPC tools/call failed with code -32002: Access denied for tool\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"rpc_forbidden\",\n    \"rpc_code\": -32002\n  }\n}\n",
+    "exit": 2
+  },
+  {
+    "name": "list/rpc-method-not-found",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "rpc",
+        "rpcCode": -32601,
+        "rpcMessage": "no such tool"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"Check whether internal/syncdata static endpoint artifacts include the target server\",\n      \"Run sync-oss to regenerate static endpoints and routes, then retry\",\n      \"Check service connectivity and protocol version, then retry\"\n    ],\n    \"category\": \"discovery\",\n    \"cause\": \"JSON-RPC tools/call failed with code -32601: no such tool\",\n    \"code\": 6,\n    \"hint\": \"Tool protocol incompatible; check service version, tool name, or upgrade to a dws version with the latest static endpoints.\",\n    \"message\": \"JSON-RPC tools/call failed with code -32601: no such tool\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"tools_call_jsonrpc_method_not_found\",\n    \"rpc_code\": -32601\n  }\n}\n",
+    "exit": 6
+  },
+  {
+    "name": "list/rpc-401",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "rpc",
+        "rpcCode": 401,
+        "rpcMessage": "nope"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"Check login status and retry\",\n      \"Run dws auth status to confirm credentials are valid; re-login if needed\",\n      \"dws doctor --json\"\n    ],\n    \"category\": \"auth\",\n    \"cause\": \"JSON-RPC tools/call failed with code 401: nope\",\n    \"code\": 2,\n    \"hint\": \"Call rejected; check authentication status, tenant identity, or access permissions.\",\n    \"message\": \"JSON-RPC tools/call failed with code 401: nope\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"tools_call_jsonrpc_error_401\",\n    \"rpc_code\": 401\n  }\n}\n",
+    "exit": 2
+  },
+  {
+    "name": "list/control-char-group",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cid​X",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"openconversation_id contains dangerous Unicode characters\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "list/newer-no-limit",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      " cidTEST000000001 ",
+      "--time",
+      "2026-09-30 11:59:59",
+      "--direction",
+      "newer",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"messages\":[],\"hasMore\":false}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": true,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": true,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 0,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 0,\n  \"failures\": [],\n  \"hasMore\": false,\n  \"messages\": [],\n  \"pagesFetched\": 1,\n  \"paginationKnown\": true,\n  \"partial\": false,\n  \"stopReason\": \"source_complete\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "crossorg/success",
+    "args": [
+      "chat",
+      "data-auth",
+      "cross-org",
+      "--all",
+      "--agentCode",
+      "wukong",
+      "--grant-type",
+      "timed",
+      "--ttl",
+      "7d",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "chat_permission_grant": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"scope\":\"chat.data:cross-org\",\"grantType\":\"timed\",\"expireAt\":1790000000000,\"note\":\"\u003ca\u0026b\u003e\",\"ratio\":1.50,\"big\":12345678901234567891}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "chat_permission_grant",
+        "arguments": {
+          "agentCode": "wukong",
+          "grantCategory": "data",
+          "grantParams": "{\"targetOrgId\":\"*\"}",
+          "grantType": "timed",
+          "scope": "chat.data:cross-org",
+          "ttl": "7d"
+        }
+      }
+    ],
+    "stdout": "{\n  \"result\": {\n    \"big\": 12345678901234567000,\n    \"expireAt\": 1790000000000,\n    \"grantType\": \"timed\",\n    \"note\": \"\\u003ca\\u0026b\\u003e\",\n    \"ratio\": 1.5,\n    \"scope\": \"chat.data:cross-org\"\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "crossorg/no-success",
+    "args": [
+      "chat",
+      "data-auth",
+      "cross-org",
+      "--all",
+      "--agentCode",
+      "wukong",
+      "--grant-type",
+      "timed",
+      "--ttl",
+      "7d",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "chat_permission_grant": {
+        "kind": "text",
+        "text": "{\"result\":{\"scope\":\"chat.data:cross-org\",\"grantType\":\"timed\",\"expireAt\":1790000000000}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "chat_permission_grant",
+        "arguments": {
+          "agentCode": "wukong",
+          "grantCategory": "data",
+          "grantParams": "{\"targetOrgId\":\"*\"}",
+          "grantType": "timed",
+          "scope": "chat.data:cross-org",
+          "ttl": "7d"
+        }
+      }
+    ],
+    "stdout": "{\n  \"result\": {\n    \"expireAt\": 1790000000000,\n    \"grantType\": \"timed\",\n    \"scope\": \"chat.data:cross-org\"\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "crossorg/business",
+    "args": [
+      "chat",
+      "data-auth",
+      "cross-org",
+      "--all",
+      "--agentCode",
+      "wukong",
+      "--grant-type",
+      "timed",
+      "--ttl",
+      "7d",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "chat_permission_grant": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"NO_PERMISSION\",\"errorMsg\":\"没有权限\",\"traceId\":\"t-grant\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "chat_permission_grant",
+        "arguments": {
+          "agentCode": "wukong",
+          "grantCategory": "data",
+          "grantParams": "{\"targetOrgId\":\"*\"}",
+          "grantType": "timed",
+          "scope": "chat.data:cross-org",
+          "ttl": "7d"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"没有权限\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_error_code\": \"NO_PERMISSION\",\n    \"server_key\": \"im\",\n    \"trace_id\": \"t-grant\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "crossorg/untyped",
+    "args": [
+      "chat",
+      "data-auth",
+      "cross-org",
+      "--all",
+      "--agentCode",
+      "wukong",
+      "--grant-type",
+      "timed",
+      "--ttl",
+      "7d",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "chat_permission_grant": {
+        "kind": "text",
+        "text": "{\"success\":true,\"errcode\":5,\"errmsg\":\"quota\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "chat_permission_grant",
+        "arguments": {
+          "agentCode": "wukong",
+          "grantCategory": "data",
+          "grantParams": "{\"targetOrgId\":\"*\"}",
+          "grantType": "timed",
+          "scope": "chat.data:cross-org",
+          "ttl": "7d"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 1,\n    \"message\": \"[MCP_TOOL_ERROR] {\\\"errcode\\\":5,\\\"errmsg\\\":\\\"quota\\\",\\\"success\\\":true}\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "send/group-mention",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "@DAAAAAAAAAAAiE 请看 \u003cb\u003e\u0026",
+      "--idempotency-key",
+      "K1",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001",
+      "--at-open-dingtalk-ids",
+      "DAAAAAAAAAAAiE"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "atOpenDingTalkIds": [
+            "DAAAAAAAAAAAiE"
+          ],
+          "clawType": "openClaw",
+          "content": "{\"text\":\"\u003c@DAAAAAAAAAAAiE\u003e 请看 \u003cb\u003e\u0026\",\"title\":\"@DAAAAAAAAAAAiE 请看 \u003cb\u003e\u0026\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K1"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/group-two-mentions",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "@DAAAAAAAAAAAiE hi \u003c@DAAAAAAAAAAAAAAAAAAAAAAiEiE\u003e @DAAAAAAAAAAAiE",
+      "--idempotency-key",
+      "K2",
+      "--ai-tag=false",
+      "--format",
+      "json",
+      "--conversation-id",
+      " cidTEST000000001 ",
+      "--at-open-dingtalk-ids",
+      "DAAAAAAAAAAAiE, DAAAAAAAAAAAAAAAAAAAAAAiEiE"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "atOpenDingTalkIds": [
+            "DAAAAAAAAAAAiE",
+            " DAAAAAAAAAAAAAAAAAAAAAAiEiE"
+          ],
+          "clawType": "",
+          "content": "{\"text\":\"\u003c@DAAAAAAAAAAAiE\u003e hi \u003c@DAAAAAAAAAAAAAAAAAAAAAAiEiE\u003e \u003c@DAAAAAAAAAAAiE\u003e\",\"title\":\"@DAAAAAAAAAAAiE hi \u003c@DAAAAAAAA...\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K2"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/direct-title",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "  body text  ",
+      "--idempotency-key",
+      "K3",
+      "--ai-tag=false",
+      "--format",
+      "json",
+      "--title",
+      "自定义标题",
+      "--open-dingtalk-id",
+      "DAAAAAAAAAAAiE"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "",
+          "content": "{\"text\":\"  body text  \",\"title\":\"自定义标题\"}",
+          "msgType": "markdown",
+          "receiverOpenDingTalkId": "DAAAAAAAAAAAiE",
+          "uuid": "K3"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/title-url-middle",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "查看报告 https://example.com/a?b=1 谢谢",
+      "--idempotency-key",
+      "K4",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"查看报告 https://example.com/a?b=1 谢谢\",\"title\":\"查看报告\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K4"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/title-url-start",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "https://example.com/x 看这个",
+      "--idempotency-key",
+      "K5",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"https://example.com/x 看这个\",\"title\":\"消息\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K5"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/title-url-blank-prefix",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "   http://example.com/x",
+      "--idempotency-key",
+      "K5b",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"   http://example.com/x\",\"title\":\"   http://example.com/x\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K5b"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/title-percent",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "完成率 50%",
+      "--idempotency-key",
+      "K6",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"完成率 50%\",\"title\":\"消息\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K6"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/title-long-cjk",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中",
+      "--idempotency-key",
+      "K7",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中\",\"title\":\"中中中中中中中中中中中中中中中中中中中中中中中中中中中中中中...\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K7"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/title-long-emoji",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "--idempotency-key",
+      "K8",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀\",\"title\":\"😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀...\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K8"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/title-exact-30",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "--idempotency-key",
+      "K9",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"title\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K9"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/title-31-ascii",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "--idempotency-key",
+      "K10",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"title\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K10"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/title-mention-first",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "@DAAAAAAAAAAAiE ok",
+      "--idempotency-key",
+      "K11",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001",
+      "--at-open-dingtalk-ids",
+      "DAAAAAAAAAAAiE"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "atOpenDingTalkIds": [
+            "DAAAAAAAAAAAiE"
+          ],
+          "clawType": "openClaw",
+          "content": "{\"text\":\"\u003c@DAAAAAAAAAAAiE\u003e ok\",\"title\":\"@DAAAAAAAAAAAiE ok\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K11"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/success-no-task",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "x",
+      "--idempotency-key",
+      "K12",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"result\":{\"accepted\":true,\"ratio\":1.50}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"x\",\"title\":\"x\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K12"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"success\",\n  \"data\": {\n    \"result\": {\n      \"accepted\": true,\n      \"ratio\": 1.5\n    },\n    \"success\": true\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/task-nested-data",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "x",
+      "--idempotency-key",
+      "K13",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"data\":{\"taskId\":\" T9 \"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"x\",\"title\":\"x\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K13"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"data\": {\n      \"taskId\": \" T9 \"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T9\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T9\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/duplicate",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "x",
+      "--idempotency-key",
+      "K14",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"1001\",\"errorMsg\":\"sendPersonalMessageSyncByServerPush error: Request is repeated with uuid 'K14'.\",\"traceId\":\"trace-dup\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"x\",\"title\":\"x\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K14"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": false,\n  \"outcome\": \"failure\",\n  \"error\": {\n    \"type\": \"api\",\n    \"subtype\": \"business_error\",\n    \"exit_code\": 1,\n    \"upstream_code\": \"1001\",\n    \"message\": \"sendPersonalMessageSyncByServerPush error: Request is repeated with uuid 'K14'.\",\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"trace_id\": \"trace-dup\",\n    \"operation\": \"tools/call\",\n    \"server_key\": \"chat\",\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ]\n  }\n}\n",
+    "stderr": "",
+    "exit": 1
+  },
+  {
+    "name": "send/untyped",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "x",
+      "--idempotency-key",
+      "K15",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"code\":200,\"message\":\"rate limit hit\",\"token\":\"secret-value\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"x\",\"title\":\"x\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K15"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": false,\n  \"outcome\": \"failure\",\n  \"error\": {\n    \"type\": \"api\",\n    \"exit_code\": 1,\n    \"upstream_code\": \"MCP_TOOL_ERROR\",\n    \"message\": \"[MCP_TOOL_ERROR] {\\\"code\\\":200,\\\"message\\\":\\\"rate limit hit\\\",\\\"success\\\":true,\\\"token\\\":\\\"[REDACTED]\\\"}\\n  hint: API rate limit exceeded, wait a moment and retry\",\n    \"hint\": \"API rate limit exceeded, wait a moment and retry\"\n  }\n}\n",
+    "stderr": "",
+    "exit": 1
+  },
+  {
+    "name": "send/gateway-auth",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "x",
+      "--idempotency-key",
+      "K15b",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"code\":\"USER_TOKEN_ILLEGAL\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"x\",\"title\":\"x\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K15b"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": false,\n  \"outcome\": \"failure\",\n  \"error\": {\n    \"type\": \"auth\",\n    \"exit_code\": 2,\n    \"upstream_code\": \"AUTH_TOKEN_EXPIRED\",\n    \"message\": \"[AUTH_TOKEN_EXPIRED] {\\\"code\\\":\\\"USER_TOKEN_ILLEGAL\\\",\\\"success\\\":true}\\n  hint: Re-authenticate: dws auth login\",\n    \"hint\": \"Re-authenticate: dws auth login\"\n  }\n}\n",
+    "stderr": "",
+    "exit": 2
+  },
+  {
+    "name": "send/http-500",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "x",
+      "--idempotency-key",
+      "K16",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "http",
+        "text": "oops",
+        "status": 500
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"x\",\"title\":\"x\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K16"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": false,\n  \"outcome\": \"failure\",\n  \"error\": {\n    \"type\": \"api\",\n    \"subtype\": \"http_500\",\n    \"exit_code\": 1,\n    \"http_status\": 500,\n    \"message\": \"request to {{GATEWAY}} returned HTTP 500\",\n    \"hint\": \"Upstream service error; retry later.\",\n    \"retryable\": true,\n    \"operation\": \"tools/call\",\n    \"stage\": \"http\",\n    \"cause\": \"request to {{GATEWAY}} returned HTTP 500\",\n    \"actions\": [\n      \"Check authentication, permissions, and parameters, then retry\",\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ]\n  }\n}\n",
+    "stderr": "",
+    "exit": 1
+  },
+  {
+    "name": "send/is-error",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "x",
+      "--idempotency-key",
+      "K17",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "isError",
+        "text": "{\"errorCode\":\"PARAM_ERROR\",\"errorMsg\":\"bad content\",\"traceId\":\"t-is\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"x\",\"title\":\"x\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K17"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": false,\n  \"outcome\": \"failure\",\n  \"error\": {\n    \"type\": \"api\",\n    \"subtype\": \"invalid_request\",\n    \"exit_code\": 1,\n    \"upstream_code\": \"PARAM_ERROR\",\n    \"message\": \"{\\\"errorCode\\\":\\\"PARAM_ERROR\\\",\\\"errorMsg\\\":\\\"bad content\\\",\\\"traceId\\\":\\\"t-is\\\"}\",\n    \"hint\": \"请求未通过后端参数校验；请核对当前 leaf Help/Schema 和稳定 ID 类型后重试。\",\n    \"trace_id\": \"t-is\",\n    \"operation\": \"tools/call\",\n    \"server_key\": \"chat\",\n    \"origin\": \"dingtalk_api\",\n    \"stage\": \"tool_validation\",\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ]\n  }\n}\n",
+    "stderr": "",
+    "exit": 1
+  },
+  {
+    "name": "send/bad-open-id",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "x",
+      "--idempotency-key",
+      "K18",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--open-dingtalk-id",
+      "user-123"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "{\n  \"ok\": false,\n  \"outcome\": \"failure\",\n  \"error\": {\n    \"type\": \"validation\",\n    \"subtype\": \"target_type_mismatch\",\n    \"exit_code\": 3,\n    \"message\": \"--open-dingtalk-id 收到的值不符合当前 D 版本 openDingTalkId 格式\",\n    \"hint\": \"请传通讯录或消息结果中原样返回的 openDingTalkId；姓名或 userId 请使用对应的混合目标参数\",\n    \"origin\": \"client\",\n    \"stage\": \"request_validation\",\n    \"execution_started\": false,\n    \"details\": {\n      \"expectedType\": \"current_d_openDingTalkId\",\n      \"flag\": \"--open-dingtalk-id\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 3
+  },
+  {
+    "name": "send/zero-width",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "a​b",
+      "--idempotency-key",
+      "K19",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "{\n  \"ok\": false,\n  \"outcome\": \"failure\",\n  \"error\": {\n    \"type\": \"validation\",\n    \"exit_code\": 3,\n    \"message\": \"content contains dangerous Unicode characters\"\n  }\n}\n",
+    "stderr": "",
+    "exit": 3
+  },
+  {
+    "name": "send/cr-in-content",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "a\r\nb",
+      "--idempotency-key",
+      "K20",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"a\\r\\nb\",\"title\":\"a\\r\\nb\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K20"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/control-in-key",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "x",
+      "--idempotency-key",
+      "K\u0001",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "{\n  \"ok\": false,\n  \"outcome\": \"failure\",\n  \"error\": {\n    \"type\": \"validation\",\n    \"exit_code\": 3,\n    \"message\": \"uuid contains invalid control characters\"\n  }\n}\n",
+    "stderr": "",
+    "exit": 3
+  },
+  {
+    "name": "send/null-text",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "x",
+      "--idempotency-key",
+      "K21",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "not json"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"x\",\"title\":\"x\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K21"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"success\"\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "status/multica",
+    "args": [
+      "chat",
+      "message",
+      "query-send-status",
+      "--open-task-id",
+      "T1",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "query_message_send_status": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"sendStatus\":\"SUCCESS\",\"openConversationId\":\"cid\",\"openMessageId\":\"mid\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "query_message_send_status",
+        "arguments": {
+          "openTaskId": "T1"
+        }
+      }
+    ],
+    "stdout": "{\n  \"contractVersion\": \"im.message-send-status.v1\",\n  \"messageRef\": {\n    \"openConversationId\": \"cid\",\n    \"openMessageId\": \"mid\"\n  },\n  \"nextActions\": [\n    {\n      \"arguments\": {\n        \"conversation-id\": \"cid\",\n        \"msg-id\": \"mid\"\n      },\n      \"cliPath\": \"chat message recall\",\n      \"ready\": true\n    },\n    {\n      \"arguments\": {\n        \"conversation-id\": \"cid\",\n        \"msg-id\": \"mid\"\n      },\n      \"cliPath\": \"chat message edit\",\n      \"ready\": false,\n      \"requiredArguments\": [\n        \"text 或 content\"\n      ]\n    },\n    {\n      \"arguments\": {\n        \"conversation-id\": \"cid\",\n        \"message-id\": \"mid\"\n      },\n      \"cliPath\": \"chat message read-status\",\n      \"ready\": true\n    }\n  ],\n  \"openTaskId\": \"T1\",\n  \"readyForMessageActions\": true,\n  \"result\": {\n    \"openConversationId\": \"cid\",\n    \"openMessageId\": \"mid\",\n    \"sendStatus\": \"SUCCESS\"\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "status/dws",
+    "args": [
+      "chat",
+      "message",
+      "query-send-status",
+      "--open-task-id",
+      "T1",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "query_message_send_status": {
+        "kind": "text",
+        "text": "{\"result\":{\"taskId\":\"task-1\",\"openMessageId\":\"msg-1\",\"openConversationId\":\"cid-1\",\"status\":\"SUCCESS\"},\"traceId\":\"trace-1\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "query_message_send_status",
+        "arguments": {
+          "openTaskId": "T1"
+        }
+      }
+    ],
+    "stdout": "{\n  \"contractVersion\": \"im.message-send-status.v1\",\n  \"messageRef\": {\n    \"openConversationId\": \"cid-1\",\n    \"openMessageId\": \"msg-1\"\n  },\n  \"nextActions\": [\n    {\n      \"arguments\": {\n        \"conversation-id\": \"cid-1\",\n        \"msg-id\": \"msg-1\"\n      },\n      \"cliPath\": \"chat message recall\",\n      \"ready\": true\n    },\n    {\n      \"arguments\": {\n        \"conversation-id\": \"cid-1\",\n        \"msg-id\": \"msg-1\"\n      },\n      \"cliPath\": \"chat message edit\",\n      \"ready\": false,\n      \"requiredArguments\": [\n        \"text 或 content\"\n      ]\n    },\n    {\n      \"arguments\": {\n        \"conversation-id\": \"cid-1\",\n        \"message-id\": \"msg-1\"\n      },\n      \"cliPath\": \"chat message read-status\",\n      \"ready\": true\n    }\n  ],\n  \"openTaskId\": \"task-1\",\n  \"readyForMessageActions\": true,\n  \"result\": {\n    \"openConversationId\": \"cid-1\",\n    \"openMessageId\": \"msg-1\",\n    \"status\": \"SUCCESS\",\n    \"taskId\": \"task-1\"\n  },\n  \"success\": true,\n  \"traceId\": \"trace-1\"\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "status/pending",
+    "args": [
+      "chat",
+      "message",
+      "query-send-status",
+      "--open-task-id",
+      "T1",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "query_message_send_status": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"sendStatus\":\"PROCESSING\",\"count\":3}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "query_message_send_status",
+        "arguments": {
+          "openTaskId": "T1"
+        }
+      }
+    ],
+    "stdout": "{\n  \"contractVersion\": \"im.message-send-status.v1\",\n  \"nextActions\": [\n    {\n      \"arguments\": {\n        \"open-task-id\": \"T1\"\n      },\n      \"cliPath\": \"chat message query-send-status\",\n      \"ready\": false,\n      \"when\": \"投递任务尚未返回 openMessageId 和 openConversationId 时稍后重查\"\n    }\n  ],\n  \"openTaskId\": \"T1\",\n  \"readyForMessageActions\": false,\n  \"result\": {\n    \"count\": 3,\n    \"sendStatus\": \"PROCESSING\"\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "status/business",
+    "args": [
+      "chat",
+      "message",
+      "query-send-status",
+      "--open-task-id",
+      "T1",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "query_message_send_status": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"TASK_NOT_FOUND\",\"errorMsg\":\"task not found\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "query_message_send_status",
+        "arguments": {
+          "openTaskId": "T1"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"task not found\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_error_code\": \"TASK_NOT_FOUND\",\n    \"server_key\": \"im\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "status/untyped",
+    "args": [
+      "chat",
+      "message",
+      "query-send-status",
+      "--open-task-id",
+      "T1",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "query_message_send_status": {
+        "kind": "text",
+        "text": "{\"success\":true,\"errorCode\":\"E1\",\"errorMsg\":\"odd\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "query_message_send_status",
+        "arguments": {
+          "openTaskId": "T1"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 1,\n    \"message\": \"[MCP_TOOL_ERROR] {\\\"errorCode\\\":\\\"E1\\\",\\\"errorMsg\\\":\\\"odd\\\",\\\"success\\\":true} (operation: im/query_message_send_status)\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "byids/multica",
+    "args": [
+      "chat",
+      "message",
+      "list-by-ids",
+      "--msg-ids",
+      "msgTEST0001",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\"}]}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "{\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"result\": {\n    \"messages\": [\n      {\n        \"content\": null,\n        \"conversationId\": \"cidTEST000000001\",\n        \"createTime\": null,\n        \"messageId\": \"msgTEST0001\",\n        \"openConversationId\": \"cidTEST000000001\",\n        \"openMessageId\": \"msgTEST0001\",\n        \"sender\": \"DAAAAAAAAAAAiE\",\n        \"senderId\": \"DAAAAAAAAAAAiE\",\n        \"senderOpenDingTalkId\": \"DAAAAAAAAAAAiE\",\n        \"text\": null\n      }\n    ]\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "byids/array",
+    "args": [
+      "chat",
+      "message",
+      "list-by-ids",
+      "--msg-ids",
+      "msgTEST0001",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"result\":[{\"openMessageId\":\"msg-1\",\"openConversationId\":\"cid-1\",\"content\":{\"text\":\"正文\"},\"msgType\":\"text\",\"legacy\":\"keep\"}]}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "{\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"result\": [\n    {\n      \"content\": {\n        \"text\": \"正文\"\n      },\n      \"conversationId\": \"cid-1\",\n      \"createTime\": null,\n      \"legacy\": \"keep\",\n      \"messageId\": \"msg-1\",\n      \"messageType\": \"text\",\n      \"msgType\": \"text\",\n      \"openConversationId\": \"cid-1\",\n      \"openMessageId\": \"msg-1\",\n      \"sender\": null,\n      \"text\": \"正文\"\n    }\n  ],\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "byids/raw-senderid",
+    "args": [
+      "chat",
+      "message",
+      "list-by-ids",
+      "--msg-ids",
+      "msgTEST0001",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\",\"senderId\":\"staff-9\",\"createTime\":1790000000000}]}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "{\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"result\": {\n    \"messages\": [\n      {\n        \"content\": null,\n        \"conversationId\": \"cidTEST000000001\",\n        \"createTime\": 1790000000000,\n        \"messageId\": \"msgTEST0001\",\n        \"openConversationId\": \"cidTEST000000001\",\n        \"openMessageId\": \"msgTEST0001\",\n        \"sender\": \"staff-9\",\n        \"senderId\": \"staff-9\",\n        \"senderOpenDingTalkId\": \"DAAAAAAAAAAAiE\",\n        \"text\": null\n      }\n    ]\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "byids/encrypted",
+    "args": [
+      "chat",
+      "message",
+      "list-by-ids",
+      "--msg-ids",
+      "msgTEST0001",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\",\"content\":\"SwzNkAraDE6lUHUNlVT3mjFdbxL6dWvmt77XtjACdpJx9VFibzTbW9KtDbkzGOYP||2||1||1\"}]}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "{\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 1,\n  \"decryptFailedCount\": 1,\n  \"decryptFailures\": [\n    {\n      \"conversationId\": \"cidTEST000000001\",\n      \"messageId\": \"msgTEST0001\",\n      \"reason\": \"读取登录态失败（先 dws auth login）: load access token: reading secure data file: open {{TMPDIR}}/083/config/.data: no such file or directory\",\n      \"stage\": \"message-decrypt\"\n    }\n  ],\n  \"decryptedCount\": 0,\n  \"partial\": true,\n  \"result\": {\n    \"messages\": [\n      {\n        \"content\": \"SwzNkAraDE6lUHUNlVT3mjFdbxL6dWvmt77XtjACdpJx9VFibzTbW9KtDbkzGOYP||2||1||1\",\n        \"conversationId\": \"cidTEST000000001\",\n        \"createTime\": null,\n        \"messageId\": \"msgTEST0001\",\n        \"openConversationId\": \"cidTEST000000001\",\n        \"openMessageId\": \"msgTEST0001\",\n        \"sender\": \"DAAAAAAAAAAAiE\",\n        \"senderId\": \"DAAAAAAAAAAAiE\",\n        \"senderOpenDingTalkId\": \"DAAAAAAAAAAAiE\",\n        \"text\": \"[加密消息，无法解码]\"\n      }\n    ]\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "byids/top-messages",
+    "args": [
+      "chat",
+      "message",
+      "list-by-ids",
+      "--msg-ids",
+      "msgTEST0001",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"conversationId\":\"cidTEST000000001\",\"sender\":{\"openDingTalkId\":\"DAAAAAAAAAAAiE\",\"name\":\"n\"}}]}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "{\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"messages\": [\n    {\n      \"content\": null,\n      \"conversationId\": \"cidTEST000000001\",\n      \"createTime\": null,\n      \"messageId\": \"msgTEST0001\",\n      \"openMessageId\": \"msgTEST0001\",\n      \"sender\": {\n        \"name\": \"n\",\n        \"openDingTalkId\": \"DAAAAAAAAAAAiE\"\n      },\n      \"senderId\": \"DAAAAAAAAAAAiE\",\n      \"text\": null\n    }\n  ],\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "reply/ok-aitag",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "收到 \u003cb\u003e\u0026",
+      "--idempotency-key",
+      "RK1",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\",\"content\":\"原消息\"}]}}"
+      },
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"RT1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      },
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"content\":\"收到 \\u003cb\\u003e\\u0026\",\"referenceOpenMessageId\":\"msgTEST0001\",\"replyMsgType\":\"text\",\"srcMsgSendOpenDingTalkId\":\"DAAAAAAAAAAAiE\"}",
+          "msgType": "reply",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "RK1"
+        }
+      }
+    ],
+    "stdout": "{\n  \"contractVersion\": \"im.message-reply.v1\",\n  \"conversationId\": \"cidTEST000000001\",\n  \"deliveryStatus\": \"unknown\",\n  \"deliveryStatusKnown\": false,\n  \"idempotencyKey\": \"RK1\",\n  \"referencedMessage\": {\n    \"messageId\": \"msgTEST0001\",\n    \"resolutionSource\": \"message_lookup\",\n    \"senderOpenDingTalkId\": \"DAAAAAAAAAAAiE\"\n  },\n  \"result\": {\n    \"openTaskId\": \"RT1\"\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "reply/ok-no-aitag",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "  收到  ",
+      "--idempotency-key",
+      " RK2 ",
+      "--ai-tag=false",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      " cidTEST000000001 ",
+      "--message-id",
+      " msgTEST0001 "
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\",\"content\":\"原消息\"}]}}"
+      },
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"result\":{\"openTaskId\":\"RT2\",\"openMessageId\":\"om-2\",\"sendStatus\":\"SUCCESS\",\"n\":1.50}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      },
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "content": "{\"content\":\"收到\",\"referenceOpenMessageId\":\"msgTEST0001\",\"replyMsgType\":\"text\",\"srcMsgSendOpenDingTalkId\":\"DAAAAAAAAAAAiE\"}",
+          "msgType": "reply",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "RK2"
+        }
+      }
+    ],
+    "stdout": "{\n  \"contractVersion\": \"im.message-reply.v1\",\n  \"conversationId\": \"cidTEST000000001\",\n  \"deliveryStatus\": \"SUCCESS\",\n  \"deliveryStatusKnown\": true,\n  \"idempotencyKey\": \"RK2\",\n  \"messageId\": \"om-2\",\n  \"referencedMessage\": {\n    \"messageId\": \"msgTEST0001\",\n    \"resolutionSource\": \"message_lookup\",\n    \"senderOpenDingTalkId\": \"DAAAAAAAAAAAiE\"\n  },\n  \"result\": {\n    \"n\": 1.5,\n    \"openMessageId\": \"om-2\",\n    \"openTaskId\": \"RT2\",\n    \"sendStatus\": \"SUCCESS\"\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "reply/nested-sender",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK3",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":[{\"messageId\":\"msgTEST0001\",\"conversationId\":\"cidTEST000000001\",\"sender\":{\"openDingTalkId\":\"DAAAAAAAAAAAAAAAAAAAAAAiEiE\"}}]}"
+      },
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"RT3\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      },
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"content\":\"ok\",\"referenceOpenMessageId\":\"msgTEST0001\",\"replyMsgType\":\"text\",\"srcMsgSendOpenDingTalkId\":\"DAAAAAAAAAAAAAAAAAAAAAAiEiE\"}",
+          "msgType": "reply",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "RK3"
+        }
+      }
+    ],
+    "stdout": "{\n  \"contractVersion\": \"im.message-reply.v1\",\n  \"conversationId\": \"cidTEST000000001\",\n  \"deliveryStatus\": \"unknown\",\n  \"deliveryStatusKnown\": false,\n  \"idempotencyKey\": \"RK3\",\n  \"referencedMessage\": {\n    \"messageId\": \"msgTEST0001\",\n    \"resolutionSource\": \"message_lookup\",\n    \"senderOpenDingTalkId\": \"DAAAAAAAAAAAAAAAAAAAAAAiEiE\"\n  },\n  \"result\": {\n    \"openTaskId\": \"RT3\"\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "reply/alliance",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "@alliance hi",
+      "--idempotency-key",
+      "RK4",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\",\"content\":\"原消息\"}]}}"
+      },
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"RT4\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      },
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"content\":\"\\u003c@all\\u003eiance hi\",\"referenceOpenMessageId\":\"msgTEST0001\",\"replyMsgType\":\"text\",\"srcMsgSendOpenDingTalkId\":\"DAAAAAAAAAAAiE\"}",
+          "msgType": "reply",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "RK4"
+        }
+      }
+    ],
+    "stdout": "{\n  \"contractVersion\": \"im.message-reply.v1\",\n  \"conversationId\": \"cidTEST000000001\",\n  \"deliveryStatus\": \"unknown\",\n  \"deliveryStatusKnown\": false,\n  \"idempotencyKey\": \"RK4\",\n  \"referencedMessage\": {\n    \"messageId\": \"msgTEST0001\",\n    \"resolutionSource\": \"message_lookup\",\n    \"senderOpenDingTalkId\": \"DAAAAAAAAAAAiE\"\n  },\n  \"result\": {\n    \"openTaskId\": \"RT4\"\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "reply/undeclared-mention",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "hi @DAAAAAAAAAAAiE",
+      "--idempotency-key",
+      "RK5",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"正文 @成员占位符必须通过 --at-open-dingtalk-ids 声明\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "reply/at-all",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "hi @all",
+      "--idempotency-key",
+      "RK6",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"正文 \u003c@all\u003e 必须同时指定 --at-all\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "reply/blank-body",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "   ",
+      "--idempotency-key",
+      "RK7",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"必填参数 --content 不能为空\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "reply/conversation-mismatch",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK8",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidOTHER00000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\"}]}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"源消息会话与 --group/--conversation-id 不一致或下游未提供会话身份\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "reply/no-sender",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK9",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"sender\":\"张三\"}]}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"源消息缺少发送者 openDingTalkId，未执行回复\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "reply/duplicate-source",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK10",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\"},{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\"}]}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"消息 ID 返回重复记录，无法确定唯一源消息\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "reply/not-found",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK11",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"other\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\"}]}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"未找到精确匹配的源消息 ID；未执行写入\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "reply/missing-conversation",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK12",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\"}]}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"源消息会话与 --group/--conversation-id 不一致或下游未提供会话身份\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "reply/send-duplicate",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK13",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\",\"content\":\"原消息\"}]}}"
+      },
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"1001\",\"errorMsg\":\"sendPersonalMessageSyncByServerPush error: Request is repeated with uuid 'RK13'.\",\"traceId\":\"trace-rdup\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      },
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"content\":\"ok\",\"referenceOpenMessageId\":\"msgTEST0001\",\"replyMsgType\":\"text\",\"srcMsgSendOpenDingTalkId\":\"DAAAAAAAAAAAiE\"}",
+          "msgType": "reply",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "RK13"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"sendPersonalMessageSyncByServerPush error: Request is repeated with uuid 'RK13'.\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_error_code\": \"1001\",\n    \"server_key\": \"chat\",\n    \"trace_id\": \"trace-rdup\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "reply/lookup-business",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK14",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"130003\",\"errorMsg\":\"OpenId is not in conversation\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"OpenId is not in conversation\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_error_code\": \"130003\",\n    \"server_key\": \"im\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "reply/send-empty-object",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK15",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\",\"content\":\"原消息\"}]}}"
+      },
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      },
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"content\":\"ok\",\"referenceOpenMessageId\":\"msgTEST0001\",\"replyMsgType\":\"text\",\"srcMsgSendOpenDingTalkId\":\"DAAAAAAAAAAAiE\"}",
+          "msgType": "reply",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "RK15"
+        }
+      }
+    ],
+    "stdout": "{\n  \"contractVersion\": \"im.message-reply.v1\",\n  \"conversationId\": \"cidTEST000000001\",\n  \"deliveryStatus\": \"unknown\",\n  \"deliveryStatusKnown\": false,\n  \"idempotencyKey\": \"RK15\",\n  \"referencedMessage\": {\n    \"messageId\": \"msgTEST0001\",\n    \"resolutionSource\": \"message_lookup\",\n    \"senderOpenDingTalkId\": \"DAAAAAAAAAAAiE\"\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "reply/zero-width",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "a​b",
+      "--idempotency-key",
+      "RK16",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\",\"content\":\"原消息\"}]}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"content contains dangerous Unicode characters\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "reply/lookup-plain-text",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK17",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "plain"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"未找到精确匹配的源消息 ID；未执行写入\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "a2ui/group",
+    "args": [
+      "chat",
+      "+messages-send",
+      "--as",
+      "user",
+      "--chat-id",
+      "cidTEST000000001",
+      "--msg-type",
+      "a2ui",
+      "--a2ui-messages",
+      "[\"{\\\"version\\\":\\\"v1.0\\\",\\\"surfaceUpdate\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\",\"{\\\"b\\\":\\\"\u003cx\u003e\u0026\\\"}\"]",
+      "--biz-card-id",
+      "B1",
+      "--request-id",
+      "R1",
+      "--card-summary",
+      "摘要 \u003cs\u003e",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "create_and_send_a2ui_card": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"bizId\":\"B1\",\"cardInstanceId\":42,\"note\":\"\u003ca\u0026b\u003e\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "create_and_send_a2ui_card",
+        "arguments": {
+          "a2uiMessages": [
+            "{\"version\":\"v1.0\",\"surfaceUpdate\":{\"surfaceId\":\"s\"}}",
+            "{\"b\":\"\u003cx\u003e\u0026\"}"
+          ],
+          "bizCardId": "B1",
+          "flowStatus": "PROCESSING",
+          "openConversationId": "cidTEST000000001",
+          "protocolVersion": "1.0",
+          "requestId": "R1",
+          "summary": "摘要 \u003cs\u003e"
+        }
+      }
+    ],
+    "stdout": "{\n  \"identity\": \"user\",\n  \"ok\": true,\n  \"result\": {\n    \"result\": {\n      \"bizId\": \"B1\",\n      \"cardInstanceId\": 42,\n      \"note\": \"\u003ca\u0026b\u003e\"\n    },\n    \"success\": true\n  },\n  \"tool\": \"create_and_send_a2ui_card\"\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "a2ui/direct-big",
+    "args": [
+      "chat",
+      "+messages-send",
+      "--as",
+      "user",
+      "--open-dingtalk-id",
+      "DAAAAAAAAAAAiE",
+      "--msg-type",
+      "a2ui",
+      "--a2ui-messages",
+      "[\"{\\\"version\\\":\\\"v1.0\\\",\\\"surfaceUpdate\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\",\"{\\\"b\\\":\\\"\u003cx\u003e\u0026\\\"}\"]",
+      "--biz-card-id",
+      "B1",
+      "--request-id",
+      "R1",
+      "--card-summary",
+      "摘要 \u003cs\u003e",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "create_and_send_a2ui_card": {
+        "kind": "text",
+        "text": "{\"result\":{\"bizId\":\"B1\",\"cardInstanceId\":12345678901234567891}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "create_and_send_a2ui_card",
+        "arguments": {
+          "a2uiMessages": [
+            "{\"version\":\"v1.0\",\"surfaceUpdate\":{\"surfaceId\":\"s\"}}",
+            "{\"b\":\"\u003cx\u003e\u0026\"}"
+          ],
+          "bizCardId": "B1",
+          "flowStatus": "PROCESSING",
+          "protocolVersion": "1.0",
+          "receiverOpenDingTalkId": "DAAAAAAAAAAAiE",
+          "requestId": "R1",
+          "summary": "摘要 \u003cs\u003e"
+        }
+      }
+    ],
+    "stdout": "{\n  \"identity\": \"user\",\n  \"ok\": true,\n  \"result\": {\n    \"result\": {\n      \"bizId\": \"B1\",\n      \"cardInstanceId\": 12345678901234567000\n    },\n    \"success\": true\n  },\n  \"tool\": \"create_and_send_a2ui_card\"\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "a2ui/rejected",
+    "args": [
+      "chat",
+      "+messages-send",
+      "--as",
+      "user",
+      "--chat-id",
+      "cidTEST000000001",
+      "--msg-type",
+      "a2ui",
+      "--a2ui-messages",
+      "[\"{\\\"version\\\":\\\"v1.0\\\",\\\"surfaceUpdate\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\",\"{\\\"b\\\":\\\"\u003cx\u003e\u0026\\\"}\"]",
+      "--biz-card-id",
+      "B1",
+      "--request-id",
+      "R1",
+      "--card-summary",
+      "摘要 \u003cs\u003e",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "create_and_send_a2ui_card": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"A2UI_TARGET_INVALID\",\"errorMsg\":\"A2UI card target group does not belong to the creator organization\",\"traceId\":\"trace123\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "create_and_send_a2ui_card",
+        "arguments": {
+          "a2uiMessages": [
+            "{\"version\":\"v1.0\",\"surfaceUpdate\":{\"surfaceId\":\"s\"}}",
+            "{\"b\":\"\u003cx\u003e\u0026\"}"
+          ],
+          "bizCardId": "B1",
+          "flowStatus": "PROCESSING",
+          "openConversationId": "cidTEST000000001",
+          "protocolVersion": "1.0",
+          "requestId": "R1",
+          "summary": "摘要 \u003cs\u003e"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"A2UI card target group does not belong to the creator organization\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_error_code\": \"A2UI_TARGET_INVALID\",\n    \"server_key\": \"im\",\n    \"trace_id\": \"trace123\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "a2ui/bad-open-id",
+    "args": [
+      "chat",
+      "+messages-send",
+      "--as",
+      "user",
+      "--open-dingtalk-id",
+      "user-1",
+      "--msg-type",
+      "a2ui",
+      "--a2ui-messages",
+      "[\"{\\\"version\\\":\\\"v1.0\\\",\\\"surfaceUpdate\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\",\"{\\\"b\\\":\\\"\u003cx\u003e\u0026\\\"}\"]",
+      "--biz-card-id",
+      "B1",
+      "--request-id",
+      "R1",
+      "--card-summary",
+      "摘要 \u003cs\u003e",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"details\": {\n      \"expectedType\": \"current_d_openDingTalkId\",\n      \"flag\": \"--open-dingtalk-id\"\n    },\n    \"execution_started\": false,\n    \"hint\": \"请传通讯录或消息结果中原样返回的 openDingTalkId；姓名或 userId 请使用对应的混合目标参数\",\n    \"message\": \"--open-dingtalk-id 收到的值不符合当前 D 版本 openDingTalkId 格式\",\n    \"origin\": \"client\",\n    \"reason\": \"target_type_mismatch\",\n    \"retryable\": false,\n    \"stage\": \"request_validation\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "a2ui/trimmed",
+    "args": [
+      "chat",
+      "+messages-send",
+      "--as",
+      "user",
+      "--chat-id",
+      " cidTEST000000001 ",
+      "--msg-type",
+      "a2ui",
+      "--a2ui-messages",
+      " [\"{\\\"version\\\":\\\"v1.0\\\",\\\"surfaceUpdate\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\",\"{\\\"b\\\":\\\"\u003cx\u003e\u0026\\\"}\"] ",
+      "--biz-card-id",
+      " B2 ",
+      "--request-id",
+      " R2 ",
+      "--card-summary",
+      " s ",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "create_and_send_a2ui_card": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"bizId\":\"B2\",\"cardInstanceId\":7}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "create_and_send_a2ui_card",
+        "arguments": {
+          "a2uiMessages": [
+            "{\"version\":\"v1.0\",\"surfaceUpdate\":{\"surfaceId\":\"s\"}}",
+            "{\"b\":\"\u003cx\u003e\u0026\"}"
+          ],
+          "bizCardId": "B2",
+          "flowStatus": "PROCESSING",
+          "openConversationId": "cidTEST000000001",
+          "protocolVersion": "1.0",
+          "requestId": "R2",
+          "summary": "s"
+        }
+      }
+    ],
+    "stdout": "{\n  \"identity\": \"user\",\n  \"ok\": true,\n  \"result\": {\n    \"result\": {\n      \"bizId\": \"B2\",\n      \"cardInstanceId\": 7\n    },\n    \"success\": true\n  },\n  \"tool\": \"create_and_send_a2ui_card\"\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "a2ui/empty-messages",
+    "args": [
+      "chat",
+      "+messages-send",
+      "--as",
+      "user",
+      "--chat-id",
+      "cidTEST000000001",
+      "--msg-type",
+      "a2ui",
+      "--a2ui-messages",
+      "[]",
+      "--biz-card-id",
+      "B3",
+      "--request-id",
+      "R3",
+      "--card-summary",
+      "s",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 5,\n    \"message\": \"--content must contain at least one message\"\n  }\n}\n",
+    "exit": 5
+  },
+  {
+    "name": "update/confirming",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "B1",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "confirming",
+      "--a2ui-annotations",
+      "[{\"surfaceId\":\"s\",\"componentId\":\"question\",\"type\":\"artifact\"}]",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "update_a2ui_card": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"updated\":true,\"n\":1.50,\"html\":\"\u003cp\u003e\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "update_a2ui_card",
+        "arguments": {
+          "a2uiAnnotations": [
+            {
+              "componentId": "question",
+              "surfaceId": "s",
+              "type": "artifact"
+            }
+          ],
+          "a2uiMessages": [
+            "{\"updateDataModel\":{\"surfaceId\":\"s\"}}"
+          ],
+          "bizId": "B1",
+          "flowStatus": "CONFIRMING",
+          "requestId": "0b1d32b9-3bd8-4200-abfa-c0e0a80fb7c8"
+        }
+      }
+    ],
+    "stdout": "{\n  \"result\": {\n    \"html\": \"\\u003cp\\u003e\",\n    \"n\": 1.5,\n    \"updated\": true\n  },\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "update/numeric-status",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      " B1 ",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      " 8 ",
+      "--a2ui-annotations",
+      "[]",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "update_a2ui_card": {
+        "kind": "text",
+        "text": "{\"result\":true}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "update_a2ui_card",
+        "arguments": {
+          "a2uiAnnotations": [],
+          "a2uiMessages": [
+            "{\"updateDataModel\":{\"surfaceId\":\"s\"}}"
+          ],
+          "bizId": "B1",
+          "flowStatus": "CONFIRMING",
+          "requestId": "a4bfa90c-f538-4a87-a5a7-c6b31ce5b508"
+        }
+      }
+    ],
+    "stdout": "{\n  \"result\": true,\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "update/no-annotations",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "B1",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "FINISH",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "update_a2ui_card": {
+        "kind": "text",
+        "text": "{\"success\":true}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "update_a2ui_card",
+        "arguments": {
+          "a2uiAnnotations": [],
+          "a2uiMessages": [
+            "{\"updateDataModel\":{\"surfaceId\":\"s\"}}"
+          ],
+          "bizId": "B1",
+          "flowStatus": "FINISH",
+          "requestId": "28b1ea52-3e5a-48f9-aa96-8c90a0b8b53f"
+        }
+      }
+    ],
+    "stdout": "{\n  \"success\": true\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "update/bad-status",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "B1",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "DONE",
+      "--a2ui-annotations",
+      "[]",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 5,\n    \"message\": \"--flow-status must be one of PROCESSING, INPUTTING, FINISH, EXECUTING, ERROR, ABORTED, TIMEOUT, CONFIRMING, CONFIRMED\"\n  }\n}\n",
+    "exit": 5
+  },
+  {
+    "name": "update/space-biz",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "B 1",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "FINISH",
+      "--a2ui-annotations",
+      "[]",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 5,\n    \"message\": \"--biz-id 必须是 send-card 返回的单个不透明 ID，不能包含空白或控制字符\"\n  }\n}\n",
+    "exit": 5
+  },
+  {
+    "name": "update/placeholder-biz",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "\u003cbizId\u003e",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "FINISH",
+      "--a2ui-annotations",
+      "[]",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 5,\n    \"message\": \"--biz-id 仍是占位符 \\\"\u003cbizId\u003e\\\"；请传入 send-card 实际返回的 bizId\"\n  }\n}\n",
+    "exit": 5
+  },
+  {
+    "name": "update/null-annotations",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "B1",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "FINISH",
+      "--a2ui-annotations",
+      "null",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 5,\n    \"message\": \"--a2ui-annotations must be a JSON object array\"\n  }\n}\n",
+    "exit": 5
+  },
+  {
+    "name": "update/business",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "B1",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "FINISH",
+      "--a2ui-annotations",
+      "[]",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "update_a2ui_card": {
+        "kind": "text",
+        "text": "{\"success\":false,\"errorCode\":\"CARD_NOT_FOUND\",\"errorMsg\":\"card not found\"}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "update_a2ui_card",
+        "arguments": {
+          "a2uiAnnotations": [],
+          "a2uiMessages": [
+            "{\"updateDataModel\":{\"surfaceId\":\"s\"}}"
+          ],
+          "bizId": "B1",
+          "flowStatus": "FINISH",
+          "requestId": "c400991c-1fc9-4176-89a7-9bad09e49536"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"The API returned a business-level error. Check required parameters and values.\",\n    \"message\": \"card not found\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"business_error\",\n    \"server_error_code\": \"CARD_NOT_FOUND\",\n    \"server_key\": \"im\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "update/plain-text",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "B1",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "FINISH",
+      "--a2ui-annotations",
+      "[]",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "update_a2ui_card": {
+        "kind": "text",
+        "text": "ok"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "update_a2ui_card",
+        "arguments": {
+          "a2uiAnnotations": [],
+          "a2uiMessages": [
+            "{\"updateDataModel\":{\"surfaceId\":\"s\"}}"
+          ],
+          "bizId": "B1",
+          "flowStatus": "FINISH",
+          "requestId": "e6f06f6d-2887-4b5a-8696-609d4fe97f31"
+        }
+      }
+    ],
+    "stdout": "null\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "update/empty-biz",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "FINISH",
+      "--a2ui-annotations",
+      "[]",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"missing required flag(s): --biz-id\\n  usage: dws chat message update-a2ui-card [flags]\\n  example:\\n  dws chat message update-a2ui-card --biz-id \u003cbizId\u003e --content '[\\\"{\\\\\\\"version\\\\\\\":\\\\\\\"v1.0\\\\\\\",\\\\\\\"updateDataModel\\\\\\\":{\\\\\\\"surfaceId\\\\\\\":\\\\\\\"surface\\\\\\\",\\\\\\\"path\\\\\\\":\\\\\\\"/status\\\\\\\",\\\\\\\"value\\\\\\\":\\\\\\\"finished\\\\\\\"}}\\\"]' --flow-status FINISH\",\n    \"reason\": \"missing_required_flags\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "update/blank-biz",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "   ",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "FINISH",
+      "--a2ui-annotations",
+      "[]",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 5,\n    \"message\": \"--biz-id 不能为空\"\n  }\n}\n",
+    "exit": 5
+  },
+  {
+    "name": "update/zero-width-biz",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "B​1",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "FINISH",
+      "--a2ui-annotations",
+      "[]",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"validation\",\n    \"code\": 3,\n    \"message\": \"bizId contains dangerous Unicode characters\"\n  }\n}\n",
+    "exit": 3
+  },
+  {
+    "name": "update/non-object-annotation",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "B1",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "FINISH",
+      "--a2ui-annotations",
+      "[null]",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 5,\n    \"message\": \"--a2ui-annotations must contain only JSON objects\"\n  }\n}\n",
+    "exit": 5
+  },
+  {
+    "name": "update/scalar-annotations",
+    "args": [
+      "chat",
+      "message",
+      "update-a2ui-card",
+      "--biz-id",
+      "B1",
+      "--content",
+      "[\"{\\\"updateDataModel\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\"]",
+      "--flow-status",
+      "FINISH",
+      "--a2ui-annotations",
+      "[1]",
+      "--format",
+      "json"
+    ],
+    "responses": null,
+    "requests": [],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"category\": \"internal\",\n    \"code\": 5,\n    \"message\": \"--a2ui-annotations must be a JSON object array\"\n  }\n}\n",
+    "exit": 5
+  },
+  {
+    "name": "crossorg/plain-text",
+    "args": [
+      "chat",
+      "data-auth",
+      "cross-org",
+      "--all",
+      "--agentCode",
+      "wukong",
+      "--grant-type",
+      "timed",
+      "--ttl",
+      "7d",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "chat_permission_grant": {
+        "kind": "text",
+        "text": "granted"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "chat_permission_grant",
+        "arguments": {
+          "agentCode": "wukong",
+          "grantCategory": "data",
+          "grantParams": "{\"targetOrgId\":\"*\"}",
+          "grantType": "timed",
+          "scope": "chat.data:cross-org",
+          "ttl": "7d"
+        }
+      }
+    ],
+    "stdout": "null\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "status/plain-text",
+    "args": [
+      "chat",
+      "message",
+      "query-send-status",
+      "--open-task-id",
+      "T1",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "query_message_send_status": {
+        "kind": "text",
+        "text": "done"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "query_message_send_status",
+        "arguments": {
+          "openTaskId": "T1"
+        }
+      }
+    ],
+    "stdout": "{\n  \"contractVersion\": \"im.message-send-status.v1\",\n  \"nextActions\": [\n    {\n      \"arguments\": {\n        \"open-task-id\": \"T1\"\n      },\n      \"cliPath\": \"chat message query-send-status\",\n      \"ready\": false,\n      \"when\": \"投递任务尚未返回 openMessageId 和 openConversationId 时稍后重查\"\n    }\n  ],\n  \"openTaskId\": \"T1\",\n  \"readyForMessageActions\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "byids/plain-text",
+    "args": [
+      "chat",
+      "message",
+      "list-by-ids",
+      "--msg-ids",
+      "msgTEST0001",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "none"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "{\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "a2ui/plain-text",
+    "args": [
+      "chat",
+      "+messages-send",
+      "--as",
+      "user",
+      "--chat-id",
+      "cidTEST000000001",
+      "--msg-type",
+      "a2ui",
+      "--a2ui-messages",
+      "[\"{\\\"version\\\":\\\"v1.0\\\",\\\"surfaceUpdate\\\":{\\\"surfaceId\\\":\\\"s\\\"}}\",\"{\\\"b\\\":\\\"\u003cx\u003e\u0026\\\"}\"]",
+      "--biz-card-id",
+      "B1",
+      "--request-id",
+      "R1",
+      "--card-summary",
+      "摘要 \u003cs\u003e",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "create_and_send_a2ui_card": {
+        "kind": "text",
+        "text": "sent"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "create_and_send_a2ui_card",
+        "arguments": {
+          "a2uiMessages": [
+            "{\"version\":\"v1.0\",\"surfaceUpdate\":{\"surfaceId\":\"s\"}}",
+            "{\"b\":\"\u003cx\u003e\u0026\"}"
+          ],
+          "bizCardId": "B1",
+          "flowStatus": "PROCESSING",
+          "openConversationId": "cidTEST000000001",
+          "protocolVersion": "1.0",
+          "requestId": "R1",
+          "summary": "摘要 \u003cs\u003e"
+        }
+      }
+    ],
+    "stdout": "{\n  \"identity\": \"user\",\n  \"ok\": true,\n  \"result\": null,\n  \"tool\": \"create_and_send_a2ui_card\"\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "reply/send-plain-text",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK18",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"messages\":[{\"openMessageId\":\"msgTEST0001\",\"openConversationId\":\"cidTEST000000001\",\"senderOpenDingTalkId\":\"DAAAAAAAAAAAiE\",\"content\":\"原消息\"}]}}"
+      },
+      "send_personal_message": {
+        "kind": "text",
+        "text": "sent"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      },
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"content\":\"ok\",\"referenceOpenMessageId\":\"msgTEST0001\",\"replyMsgType\":\"text\",\"srcMsgSendOpenDingTalkId\":\"DAAAAAAAAAAAiE\"}",
+          "msgType": "reply",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "RK18"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "Error: internal panic: assignment to entry in nil map\n",
+    "exit": 5
+  },
+  {
+    "name": "reply/lookup-is-error",
+    "args": [
+      "chat",
+      "+messages-reply",
+      "--content",
+      "ok",
+      "--idempotency-key",
+      "RK19",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--yes",
+      "--group",
+      "cidTEST000000001",
+      "--message-id",
+      "msgTEST0001"
+    ],
+    "responses": {
+      "list_messages_by_ids": {
+        "kind": "isError",
+        "text": "lookup failed"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "list_messages_by_ids",
+        "arguments": {
+          "openMsgIds": [
+            "msgTEST0001"
+          ]
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"MCP tool returned a business error; check tool parameters and refer to skill documentation.\",\n    \"message\": \"lookup failed\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"mcp_tool_error\",\n    \"server_key\": \"im\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "send/big-number",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "x",
+      "--idempotency-key",
+      "K22",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--conversation-id",
+      "cidTEST000000001"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T22\",\"n\":12345678901234567891,\"f\":1.50}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "clawType": "openClaw",
+          "content": "{\"text\":\"x\",\"title\":\"x\"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K22"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"f\": 1.5,\n      \"n\": 12345678901234567000,\n      \"openTaskId\": \"T22\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T22\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T22\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "send/title-and-mention",
+    "args": [
+      "chat",
+      "message",
+      "send",
+      "--content",
+      "@DAAAAAAAAAAAiE 看 https://x.test",
+      "--idempotency-key",
+      "K23",
+      "--ai-tag=true",
+      "--format",
+      "json",
+      "--title",
+      "  标题  ",
+      "--conversation-id",
+      "cidTEST000000001",
+      "--at-open-dingtalk-ids",
+      "DAAAAAAAAAAAiE"
+    ],
+    "responses": {
+      "send_personal_message": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"openTaskId\":\"T1\"}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "send_personal_message",
+        "arguments": {
+          "atOpenDingTalkIds": [
+            "DAAAAAAAAAAAiE"
+          ],
+          "clawType": "openClaw",
+          "content": "{\"text\":\"\u003c@DAAAAAAAAAAAiE\u003e 看 https://x.test\",\"title\":\"  标题  \"}",
+          "msgType": "markdown",
+          "openConversationId": "cidTEST000000001",
+          "uuid": "K23"
+        }
+      }
+    ],
+    "stdout": "{\n  \"ok\": true,\n  \"outcome\": \"pending\",\n  \"data\": {\n    \"result\": {\n      \"openTaskId\": \"T1\"\n    },\n    \"success\": true\n  },\n  \"meta\": {\n    \"operation\": {\n      \"id\": \"T1\",\n      \"state\": \"processing\",\n      \"next_command\": \"dws chat message query-send-status --open-task-id T1\"\n    }\n  }\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "list/is-error-empty",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "isError"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"code\": 1,\n    \"hint\": \"MCP tool returned a business error; check tool parameters and refer to skill documentation.\",\n    \"message\": \"MCP tool returned an error response\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"mcp_tool_error\",\n    \"server_key\": \"chat\"\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/http-404",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "http",
+        "text": "not found",
+        "status": 404
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "",
+    "stderr": "{\n  \"error\": {\n    \"actions\": [\n      \"Check authentication, permissions, and parameters, then retry\",\n      \"持续失败时保留 Trace ID 和 Server Code 联系服务端排查\"\n    ],\n    \"category\": \"api\",\n    \"cause\": \"request to {{GATEWAY}} returned HTTP 404\",\n    \"code\": 1,\n    \"hint\": \"Request was rejected by upstream service; check parameters, authentication, and permissions.\",\n    \"message\": \"request to {{GATEWAY}} returned HTTP 404\",\n    \"operation\": \"tools/call\",\n    \"reason\": \"http_404\",\n    \"retryable\": false\n  }\n}\n",
+    "exit": 1
+  },
+  {
+    "name": "list/conversation-groups",
+    "args": [
+      "chat",
+      "message",
+      "list",
+      "--group",
+      "cidTEST000000001",
+      "--time",
+      "2026-09-30 11:59:59.123",
+      "--direction",
+      "older",
+      "--limit",
+      "21",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "list_conversation_message_v2": {
+        "kind": "text",
+        "text": "{\"result\":{\"conversationMessagesList\":[{\"openConversationId\":\"cid-g\",\"title\":\"群\",\"messages\":[{\"openMessageId\":\"g1\",\"content\":\"hi\"}]}],\"hasMore\":false}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/chat",
+        "tool": "list_conversation_message_v2",
+        "arguments": {
+          "forward": false,
+          "limit": 21,
+          "openconversation_id": "cidTEST000000001",
+          "time": "2026-09-30 11:59:59.123"
+        }
+      }
+    ],
+    "stdout": "{\n  \"complete\": true,\n  \"contractVersion\": \"im.message-list.v1\",\n  \"count\": 0,\n  \"decryptAllowedCount\": 0,\n  \"decryptCandidateCount\": 0,\n  \"decryptFailedCount\": 0,\n  \"decryptedCount\": 0,\n  \"enrichedCount\": 0,\n  \"failedCount\": 0,\n  \"failures\": [],\n  \"hasMore\": false,\n  \"messages\": [],\n  \"pagesFetched\": 1,\n  \"paginationKnown\": true,\n  \"partial\": false,\n  \"result\": {\n    \"conversationMessagesList\": [\n      {\n        \"messages\": [\n          {\n            \"content\": \"hi\",\n            \"conversationId\": \"cid-g\",\n            \"conversationTitle\": \"群\",\n            \"createTime\": null,\n            \"messageId\": \"g1\",\n            \"openConversationId\": \"cid-g\",\n            \"openMessageId\": \"g1\",\n            \"sender\": null,\n            \"text\": \"hi\"\n          }\n        ],\n        \"openConversationId\": \"cid-g\",\n        \"title\": \"群\"\n      }\n    ],\n    \"hasMore\": false\n  },\n  \"stopReason\": \"source_complete\",\n  \"success\": true,\n  \"truncated\": false\n}\n",
+    "stderr": "",
+    "exit": 0
+  },
+  {
+    "name": "a2ui/default-ids",
+    "args": [
+      "chat",
+      "+messages-send",
+      "--as",
+      "user",
+      "--chat-id",
+      "cidTEST000000001",
+      "--msg-type",
+      "a2ui",
+      "--a2ui-messages",
+      "[\"a\",\"b\"]",
+      "--yes",
+      "--format",
+      "json"
+    ],
+    "responses": {
+      "create_and_send_a2ui_card": {
+        "kind": "text",
+        "text": "{\"success\":true,\"result\":{\"bizId\":\"auto\",\"cardInstanceId\":1}}"
+      }
+    },
+    "requests": [
+      {
+        "path": "/server/im",
+        "tool": "create_and_send_a2ui_card",
+        "arguments": {
+          "a2uiMessages": [
+            "a",
+            "b"
+          ],
+          "bizCardId": "bb8f792a-e907-47d1-a9a9-2fa3b765c5c2",
+          "flowStatus": "PROCESSING",
+          "openConversationId": "cidTEST000000001",
+          "protocolVersion": "1.0",
+          "requestId": "d8915e5d-51ea-4fcd-b1f5-a2966cd7d258",
+          "summary": "a\nb"
+        }
+      }
+    ],
+    "stdout": "{\n  \"identity\": \"user\",\n  \"ok\": true,\n  \"result\": {\n    \"result\": {\n      \"bizId\": \"auto\",\n      \"cardInstanceId\": 1\n    },\n    \"success\": true\n  },\n  \"tool\": \"create_and_send_a2ui_card\"\n}\n",
+    "stderr": "",
+    "exit": 0
+  }
+]

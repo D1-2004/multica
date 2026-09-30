@@ -439,7 +439,9 @@
         "server/internal/handler/coordinator_user_decision_test.go",
         "server/internal/service/inboundcoord/user_decision_trace.go",
         "server/internal/service/userdecision/trace.go",
-        "server/internal/dwsclient/a2ui.go"
+        "server/internal/dwsclient/a2ui.go",
+        "server/internal/dwsclient/sdk_events.go",
+        "server/internal/dwseventsource/source.go"
       ],
       "case_file": "cases.json"
     },
@@ -1074,6 +1076,8 @@
         "server/internal/handler/dingtalk_origin_reply.go",
         "server/internal/service/dingtalkresponse/provider.go",
         "server/internal/dwsclient/send.go",
+        "server/internal/dwsclient/sdk_ops.go",
+        "server/internal/dwsclient/sdk_shared.go",
         "server/internal/handler/dingtalk_response_test.go",
         "server/internal/integrations/agentmessagerouter/dws_delivery.go",
         "server/internal/integrations/agentmessagerouter/dws_delivery_test.go",
