@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { agentScenesOptions, contextCapabilityKeys, contextConfigKeys } from "./queries";
+import { focusManager, QueryObserver, type QueryClient } from "@tanstack/react-query";
+import { createQueryClient } from "../query-client";
+import {
+  agentConnectedAppOptions,
+  agentConnectedAppsOptions,
+  agentScenesOptions,
+  contextCapabilityKeys,
+  contextConfigKeys,
+} from "./queries";
 
 describe("context capability query keys", () => {
   it("scopes admin keys by workspace and agent", () => {
@@ -43,5 +51,35 @@ describe("admin scene list paging", () => {
     expect(getNextPageParam(page(50, false), [], 50, [])).toBeUndefined();
     // A server that claims more but sends nothing must not loop.
     expect(getNextPageParam(page(0, true), [], 50, [])).toBeUndefined();
+  });
+});
+
+describe("connected apps refetch on focus", () => {
+  it("refetches when the window regains focus under the shared Infinity staleTime", async () => {
+    // A connect finished in the system browser (desktop) or on a phone must
+    // show when the admin comes back, although nothing invalidates the keys.
+    for (const makeOptions of [
+      () => agentConnectedAppsOptions("ws-1", "agent-1"),
+      () => agentConnectedAppOptions("ws-1", "agent-1", "github"),
+    ]) {
+      const client: QueryClient = createQueryClient();
+      client.mount();
+      let calls = 0;
+      const options = { ...makeOptions(), queryFn: async () => ({ call: ++calls }) } as never;
+      const observer = new QueryObserver(client, options);
+      const unsubscribe = observer.subscribe(() => undefined);
+      await client.fetchQuery(options);
+      const before = calls;
+
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(calls).toBeGreaterThan(before);
+      unsubscribe();
+      focusManager.setFocused(undefined);
+      client.unmount();
+      client.clear();
+    }
   });
 });

@@ -285,6 +285,15 @@ describe("AgentOverviewPane primary navigation", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Work" }));
     expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=work");
   });
+
+  it("drops the open app page when leaving the connector tab", () => {
+    const { navigation } = renderPane([makeRuntime("claude")], {
+      initialView: "mcp_config",
+      search: { app: "github" },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Work" }));
+    expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=work");
+  });
 });
 
 describe("AgentOverviewPane MCP tab visibility", () => {

@@ -5,18 +5,24 @@ import type { Agent, AgentRuntime } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentMember } from "@multica/core/permissions";
 import { useT } from "../../../i18n";
-import { AgentConnectorsSection } from "./agent-connectors-section";
-import { ContextOffersSection } from "./context-offers-section";
+import { AoneConnectorsSection } from "./aone-connectors-section";
+import { ConnectedAppsSection } from "./connected-apps-section";
+import { ConnectorNotice, SectionHeading } from "./connectors-ui";
 import { McpConfigTab } from "./mcp-config-tab";
 
 /**
- * 配置 → 能力 → 连接器: the agent's global connector configuration. Top to
- * bottom: (a) connectors enabled for this agent (official apps and Aone
- * FaaS grants, with the shared-account controls and 添加连接器), (b) the
- * connector part of the offer catalog (允许在场域 / 个人中开启), (c) the
- * agent's own MCP servers, runtime-inherited servers and Runner servers —
- * shown only when the runtime reads mcp_config; (a) and (b) go through the
- * server relay and apply to every runtime.
+ * 配置 → 能力 → 连接器, the agent's global connector configuration in two
+ * blocks:
+ *
+ * A. 「MCP（由 Multica 管理）」: the Aone FaaS connectors granted to the
+ *    agent (with their per-connector offer switch), then the agent's own MCP
+ *    servers, runtime-inherited servers and Runner servers — the latter only
+ *    when the runtime reads mcp_config.
+ * B. 「连接应用」: the official apps (GitHub, Notion, ...), each with its own
+ *    configuration page (`?app=<slug>`).
+ *
+ * Aone FaaS connectors and apps go through the server relay and apply to
+ * every runtime.
  */
 export function ConnectorsTab({
   agent,
@@ -35,8 +41,8 @@ export function ConnectorsTab({
 }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
-  const { role } = useCurrentMember(wsId);
-  const isWorkspaceAdmin = role === "owner" || role === "admin";
+  const { role, isLoading: memberLoading } = useCurrentMember(wsId);
+  const isAdmin = role === "owner" || role === "admin";
 
   return (
     <div className="space-y-10">
@@ -45,29 +51,39 @@ export function ConnectorsTab({
         {t(($) => $.tab_body.connectors.note)}
       </p>
 
-      <AgentConnectorsSection agent={agent} />
-
-      {canEdit ? (
-        <ContextOffersSection
-          agentId={agent.id}
-          wsId={wsId}
-          resourceType="connector"
-          isWorkspaceAdmin={isWorkspaceAdmin}
-          showConfigureLink
+      <section className="space-y-6" aria-labelledby="managed-mcp-title">
+        <SectionHeading
+          id="managed-mcp-title"
+          level={2}
+          title={t(($) => $.tab_body.connectors.mcp_title)}
+          hint={t(($) => $.tab_body.connectors.mcp_hint)}
         />
-      ) : null}
+        {memberLoading ? (
+          <ConnectorNotice loading>{t(($) => $.tab_body.connectors.loading)}</ConnectorNotice>
+        ) : (
+          <AoneConnectorsSection agent={agent} wsId={wsId} canEdit={canEdit} isAdmin={isAdmin} />
+        )}
+        {supportsOwnMcpConfig ? (
+          <section className="space-y-3 border-t pt-6" aria-labelledby="custom-mcp-title">
+            <SectionHeading
+              id="custom-mcp-title"
+              level={3}
+              title={t(($) => $.tab_body.connectors.custom_title)}
+            />
+            <McpConfigTab
+              agent={agent}
+              runtime={runtime}
+              onSave={onSave}
+              onDirtyChange={onDirtyChange}
+              canEdit={canEdit}
+            />
+          </section>
+        ) : null}
+      </section>
 
-      {supportsOwnMcpConfig ? (
-        <div className="border-t pt-8">
-          <McpConfigTab
-            agent={agent}
-            runtime={runtime}
-            onSave={onSave}
-            onDirtyChange={onDirtyChange}
-            canEdit={canEdit}
-          />
-        </div>
-      ) : null}
+      <div className="border-t pt-8">
+        <ConnectedAppsSection agent={agent} wsId={wsId} canEdit={canEdit} />
+      </div>
     </div>
   );
 }

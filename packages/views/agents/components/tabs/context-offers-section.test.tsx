@@ -71,7 +71,7 @@ function renderSection(props: Partial<React.ComponentProps<typeof ContextOffersS
   render(
     <I18nProvider locale="en" resources={{ en: { common: enCommon, agents: enAgents } }}>
       <QueryClientProvider client={client}>
-        <ContextOffersSection agentId="agent-1" wsId="ws-1" resourceType="connector" {...props} />
+        <ContextOffersSection agentId="agent-1" wsId="ws-1" {...props} />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -96,20 +96,20 @@ describe("offer usage", () => {
 });
 
 describe("ContextOffersSection", () => {
-  it("lists the connector library with usage counts for offered items", async () => {
-    renderSection({ isWorkspaceAdmin: true });
+  it("lists the skill library with usage counts for offered skills, never connectors", async () => {
+    renderSection();
 
-    const wiki = await screen.findByRole("switch", { name: "Allow Wiki in scenes and for people" });
-    expect(wiki).toBeChecked();
-    expect(screen.getByText("Scenes: 1 · People: 1")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Allow Jira in scenes and for people" })).not.toBeChecked();
-    expect(screen.getByText(copy.connector_disabled)).toBeInTheDocument();
-    expect(screen.queryByText("Weekly report")).not.toBeInTheDocument();
+    const report = await screen.findByRole("switch", { name: "Allow Weekly report in scenes and for people" });
+    expect(report).toBeChecked();
+    expect(screen.getByText("Scenes: 1 · People: 0")).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Allow Triage in scenes and for people" })).not.toBeChecked();
+    // Connector offers are switched per connector in the 连接器 tab.
+    expect(screen.queryByText("Wiki")).not.toBeInTheDocument();
   });
 
   it("offers a skill at once and keeps the connector part unchanged", async () => {
     const user = userEvent.setup();
-    renderSection({ resourceType: "skill" });
+    renderSection();
 
     await user.click(await screen.findByRole("switch", { name: "Allow Triage in scenes and for people" }));
 
@@ -121,34 +121,22 @@ describe("ContextOffersSection", () => {
     );
   });
 
-  it("asks before taking away an item that scenes or people use", async () => {
+  it("asks before taking away a skill that scenes or people use", async () => {
     const user = userEvent.setup();
-    renderSection({ isWorkspaceAdmin: true });
+    renderSection();
 
-    await user.click(await screen.findByRole("switch", { name: "Allow Wiki in scenes and for people" }));
+    await user.click(await screen.findByRole("switch", { name: "Allow Weekly report in scenes and for people" }));
     expect(mocks.set).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("alertdialog");
-    expect(within(dialog).getByText("It turns off at once wherever it is on (scenes: 1, people: 1).")).toBeInTheDocument();
+    expect(within(dialog).getByText("It turns off at once wherever it is on (scenes: 1, people: 0).")).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: copy.remove_confirm }));
 
     await waitFor(() =>
       expect(mocks.set).toHaveBeenCalledWith("ws-1", "agent-1", {
-        connectorIds: [],
-        skillIds: ["skill-report"],
+        connectorIds: ["conn-wiki"],
+        skillIds: [],
       }),
     );
-  });
-
-  it("tells a non-admin that only admins can offer more connectors", async () => {
-    renderSection({ isWorkspaceAdmin: false });
-
-    expect(await screen.findByText(copy.admin_only_connectors)).toBeInTheDocument();
-  });
-
-  it("shows the configuration page link when asked", async () => {
-    renderSection({ showConfigureLink: true });
-
-    expect(await screen.findByDisplayValue(body.configureUrl)).toBeInTheDocument();
   });
 
   it("offers a retry when the catalog cannot load", async () => {

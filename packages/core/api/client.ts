@@ -2,9 +2,7 @@ import { InternalConnectorListSchema, AvailableInternalConnectorListSchema, Save
 import {
   AddedCatalogConnectorSchema,
   ConnectorAuthorizeUrlSchema,
-  ConnectorCatalogSchema,
   InternalConnectorToolsRefreshSchema,
-  type ConnectorCatalogApp,
   type InternalConnectorToolsRefresh,
 } from "./internal-connector-schema";
 import {
@@ -14,6 +12,8 @@ import {
   AgentScenePromptResponseSchema,
   AgentScenesPageSchema,
   EMPTY_AGENT_SCENES_PAGE,
+  ConnectedAppDetailSchema,
+  ConnectedAppsListSchema,
   ContextCapabilityBindingResponseSchema,
   ContextConfigAgentDetailSchema,
   ContextConfigAgentListSchema,
@@ -30,6 +30,8 @@ import type {
   AgentSceneDetail,
   AgentScenePrompt,
   AgentScenesPage,
+  ConnectedAppDetail,
+  ConnectedAppsList,
   ContextCapabilityBinding,
   ContextConfigAgentDetail,
   ContextConfigAgentSummary,
@@ -4190,15 +4192,17 @@ export class ApiClient {
     });
   }
 
+  /** Disconnects the workspace shared credential of a connector (OAuth
+   * account or pasted token). Scene and personal credentials stay. */
+  async deleteInternalConnectorCredential(workspaceId: string, id: string): Promise<void> {
+    await this.fetch<void>(
+      `/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}/credential`,
+      { method: "DELETE" },
+    );
+  }
+
   // Official app catalog (official remote MCP servers + OAuth). Admin only,
   // same guard as the connector library.
-
-  async listConnectorCatalog(workspaceId: string): Promise<ConnectorCatalogApp[]> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/connector-catalog`);
-    return parseWithFallback<ConnectorCatalogApp[]>(raw, ConnectorCatalogSchema, [], {
-      endpoint: "GET /api/workspaces/:id/connector-catalog",
-    });
-  }
 
   /** Creates (or returns the existing) workspace connector for a catalog
    * app. Returns null when the echo is malformed; callers refetch the list. */
@@ -4566,6 +4570,41 @@ export class ApiClient {
       updatedByName: "",
       updatedAt: "",
     };
+  }
+
+  // Admin connected apps (agent detail → 连接器 → 连接应用). Workspace-scoped
+  // like the other agent admin routes: the workspace is pinned explicitly so
+  // the query key's wsId and the request always agree.
+
+  /** Every official app with this agent's status. null when the body is
+   * malformed, so the page shows a load error instead of an empty gallery. */
+  async listAgentConnectedApps(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<ConnectedAppsList | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/connected-apps`,
+      { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+    return parseWithFallback<ConnectedAppsList | null>(raw, ConnectedAppsListSchema, null, {
+      endpoint: "GET /api/agents/{id}/connected-apps",
+      includeReceived: false,
+    });
+  }
+
+  async getAgentConnectedApp(
+    workspaceId: string,
+    agentId: string,
+    slug: string,
+  ): Promise<ConnectedAppDetail | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/connected-apps/${encodeURIComponent(slug)}`,
+      { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+    return parseWithFallback<ConnectedAppDetail | null>(raw, ConnectedAppDetailSchema, null, {
+      endpoint: "GET /api/agents/{id}/connected-apps/{slug}",
+      includeReceived: false,
+    });
   }
 
   async getSemanticaMCPStatus(workspaceId: string): Promise<SemanticaMCPStatus> {

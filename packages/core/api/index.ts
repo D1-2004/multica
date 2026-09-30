@@ -20,8 +20,6 @@ export type {
   AvailableInternalConnector,
   InternalConnectorAuthMode,
   InternalConnectorCredentialSource,
-  ConnectorCatalogApp,
-  ConnectorCatalogAuthKind,
   InternalConnectorToolsRefresh,
 } from "./internal-connector-schema";
 export { DuplicateIssueErrorBodySchema } from "./schemas";

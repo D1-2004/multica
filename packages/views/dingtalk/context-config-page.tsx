@@ -47,6 +47,7 @@ import { Switch } from "@multica/ui/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
 import { cn } from "@multica/ui/lib/utils";
 import { ConnectorLogo, ConnectorMark, connectorBrandName } from "../common/connector-logo";
+import { MAX_BEARER_LENGTH, isValidBearer, useResetOnBackForwardRestore } from "../common/connector-credential";
 import { SkillIcon } from "../skills/lib/skill-icon";
 import { useT } from "../i18n";
 
@@ -119,9 +120,6 @@ function isReloadRequired(error: unknown): boolean {
 type RedeemStatus = "idle" | "pending" | "done" | "expired" | "taken" | "failed";
 
 type PreferredScope = ContextConfigScopeRef;
-
-/** Bearer rules shared with the server: 1..4096 chars, no CR/LF/NUL. */
-const MAX_BEARER_LENGTH = 4096;
 
 export function isContextConfigAuthError(error: unknown): boolean {
   if (!(error instanceof ApiError)) return false;
@@ -343,15 +341,29 @@ function AgentPicker({
             >
               <AgentAvatar name={agent.name} avatarUrl={agent.avatarUrl} />
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-body font-medium">{agent.name}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-body font-medium">{agent.name}</span>
+                  {agent.access === "manager" && (
+                    <Badge variant="secondary" className="shrink-0 text-micro">
+                      {t(($) => $.context_config.manager_badge)}
+                    </Badge>
+                  )}
+                </span>
                 <span className="block truncate text-caption text-muted-foreground">
-                  {agent.scopes
-                    .map((scope) =>
-                      scope.scopeType === "person"
-                        ? t(($) => $.context_config.tab_person)
-                        : scope.scopeTitle || t(($) => $.context_config.scene_untitled),
-                    )
-                    .join(" · ")}
+                  {[
+                    ...(agent.access === "manager"
+                      ? [t(($) => $.context_config.manager_all_scenes)]
+                      : []),
+                    ...agent.scopes
+                      // A manager already reaches every scene; list the
+                      // personal grant only.
+                      .filter((scope) => agent.access !== "manager" || scope.scopeType === "person")
+                      .map((scope) =>
+                        scope.scopeType === "person"
+                          ? t(($) => $.context_config.tab_person)
+                          : scope.scopeTitle || t(($) => $.context_config.scene_untitled),
+                      ),
+                  ].join(" · ")}
                 </span>
               </span>
             </button>
@@ -436,6 +448,10 @@ function AgentScopes({
 }) {
   const { t } = useT("agents");
   const agentId = detail.agent.id;
+  // The detail says whether the caller manages this agent (every scene is
+  // then configurable), so the hint does not wait for, or depend on, the
+  // agent list.
+  const isManager = detail.access === "manager";
   const [tab, setTab] = useState<ContextScopeType>(() => {
     if (preferredScope) return preferredScope.scopeType;
     if (detail.scenes.length === 0 && detail.person) return "person";
@@ -507,12 +523,24 @@ function AgentScopes({
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3">
-        <AgentAvatar name={detail.agent.name} avatarUrl={detail.agent.avatarUrl} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-body-lg font-medium">{detail.agent.name}</p>
+      <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          <AgentAvatar name={detail.agent.name} avatarUrl={detail.agent.avatarUrl} />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <p className="truncate text-body-lg font-medium">{detail.agent.name}</p>
+            {isManager && (
+              <Badge variant="secondary" className="shrink-0">
+                {t(($) => $.context_config.manager_badge)}
+              </Badge>
+            )}
+          </div>
+          {canSwitchAgent && <SwitchAgentButton onClick={onSwitchAgent} />}
         </div>
-        {canSwitchAgent && <SwitchAgentButton onClick={onSwitchAgent} />}
+        {isManager && (
+          <p className="text-caption text-muted-foreground">
+            {t(($) => $.context_config.manager_hint)}
+          </p>
+        )}
       </div>
 
       <Tabs
@@ -538,8 +566,16 @@ function AgentScopes({
         detail.scenes.length === 0 ? (
           <EmptyState
             icon={<Users className="size-6" />}
-            title={t(($) => $.context_config.scene_empty_title)}
-            hint={t(($) => $.context_config.scene_empty_hint)}
+            title={
+              isManager
+                ? t(($) => $.context_config.scene_empty_manager_title)
+                : t(($) => $.context_config.scene_empty_title)
+            }
+            hint={
+              isManager
+                ? t(($) => $.context_config.scene_empty_manager_hint)
+                : t(($) => $.context_config.scene_empty_hint)
+            }
           >
             {pickGroupButton}
           </EmptyState>
@@ -595,7 +631,15 @@ function AgentScopes({
           icon={<MessageCircle className="size-6" />}
           title={t(($) => $.context_config.person_empty_title)}
           hint={t(($) => $.context_config.person_empty_hint)}
-        />
+        >
+          {/* Managing the agent covers its scenes, never another person's
+              own connectors and accounts. */}
+          {isManager && (
+            <p className="text-caption text-muted-foreground text-pretty">
+              {t(($) => $.context_config.person_manager_note)}
+            </p>
+          )}
+        </EmptyState>
       )}
 
       <DefaultCapabilities detail={detail} />
@@ -1389,22 +1433,6 @@ function CredentialControl({
   );
 }
 
-/** Coming Back from the provider can restore this page from the
- * back/forward cache with its "redirecting" state intact; clear it then so
- * the connect button works again. */
-function useResetOnBackForwardRestore(active: boolean, reset: () => void) {
-  const resetRef = useRef(reset);
-  resetRef.current = reset;
-  useEffect(() => {
-    if (!active) return;
-    const onPageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) resetRef.current();
-    };
-    window.addEventListener("pageshow", onPageShow);
-    return () => window.removeEventListener("pageshow", onPageShow);
-  }, [active]);
-}
-
 /** Write-only token input for a scene or personal credential (Bearer, or a
  * Personal Access Token for an OAuth connector that accepts one). */
 function BearerForm({
@@ -1437,7 +1465,7 @@ function BearerForm({
 
   const save = async () => {
     const value = bearer.trim();
-    if (!value || value.length > MAX_BEARER_LENGTH || /[\r\n\0]/.test(value)) {
+    if (!isValidBearer(value)) {
       setInvalid(true);
       return;
     }

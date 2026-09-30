@@ -108,6 +108,13 @@ describe("context capability mobile responses", () => {
     });
   });
 
+  it("reads manager access from the agent detail, defaulting to grant", () => {
+    expect(ContextConfigAgentDetailSchema.parse({ ...raw(detail), access: "manager" }).access).toBe("manager");
+    expect(ContextConfigAgentDetailSchema.parse({ ...raw(detail), access: "owner?" }).access).toBe("grant");
+    // An older backend sends no access.
+    expect(ContextConfigAgentDetailSchema.parse(raw(detail)).access).toBe("grant");
+  });
+
   it("falls back to null when the agent identity is missing", () => {
     const body: Record<string, unknown> = raw(detail);
     delete body.agent;
@@ -131,6 +138,25 @@ describe("context capability mobile responses", () => {
     });
     expect(result[0]?.scopes).toEqual([
       { scopeType: "scene", scopeKey: "cid1", scopeTitle: "Team", source: "agent_link", expiresAt: "" },
+    ]);
+    // An older backend sends no access: the entry comes from grants.
+    expect(result[0]?.access).toBe("grant");
+  });
+
+  it("lists managed agents once, keeping manager access and every grant", () => {
+    const scene = { scope_type: "scene", scope_key: "cid1", scope_title: "Team", source: "agent_link", expires_at: "" };
+    const result = ContextConfigAgentListSchema.parse({
+      agents: [
+        { id: agentId, name: "Helper", workspace_id: "ws-1", access: "grant", scopes: [scene] },
+        { id: agentId, name: "Helper", workspace_id: "ws-1", access: "manager", scopes: null },
+        { id: "agent-2", name: "Ops", workspace_id: "ws-1", access: "manager", scopes: [] },
+        { id: "agent-3", name: "Odd", workspace_id: "ws-1", access: "owner?", scopes: [] },
+      ],
+    });
+    expect(result.map((agent) => [agent.id, agent.access, agent.scopes.length])).toEqual([
+      [agentId, "manager", 1],
+      ["agent-2", "manager", 0],
+      ["agent-3", "grant", 0],
     ]);
   });
 
@@ -207,8 +233,9 @@ describe("context capability OAuth connector fields", () => {
       catalogSlug: "github",
       authMode: "oauth",
       acceptsPat: true,
-      // A backend that predates oauth_available keeps the connect action.
-      oauthAvailable: true,
+      // Without a literal oauth_available the page never offers a sign-in
+      // the start endpoint could reject.
+      oauthAvailable: false,
       // OAuth connectors hold scoped credentials through the provider sign-in.
       credentialRequired: true,
       installUrl: "https://github.com/apps/multica/installations/new",
@@ -235,7 +262,7 @@ describe("context capability OAuth connector fields", () => {
     expect(result.person?.credentials[0]?.kind).toBe("unknown");
   });
 
-  it("hides the OAuth connect action only when the server says it is unavailable", () => {
+  it("offers the OAuth connect action only when the server says it is available", () => {
     const connectorWith = (fields: Record<string, unknown>) => {
       const body = raw(detail);
       Object.assign(body.offers.connectors[0]!, { catalog_slug: "github", auth_mode: "oauth", accepts_pat: true, ...fields });
@@ -243,9 +270,10 @@ describe("context capability OAuth connector fields", () => {
     };
     expect(connectorWith({ oauth_available: false })).toMatchObject({ oauthAvailable: false, acceptsPat: true });
     expect(connectorWith({ oauth_available: true })?.oauthAvailable).toBe(true);
-    // A malformed value is treated like a missing one, never as a reason to
-    // drop the connector.
-    expect(connectorWith({ oauth_available: "no" })?.oauthAvailable).toBe(true);
+    // A malformed value is treated like a missing one (not available), never
+    // as a reason to drop the connector.
+    expect(connectorWith({ oauth_available: "yes" })?.oauthAvailable).toBe(false);
+    expect(connectorWith({})?.oauthAvailable).toBe(false);
     expect(connectorWith({ auth_mode: "bearer", oauth_available: true })?.oauthAvailable).toBe(false);
   });
 
