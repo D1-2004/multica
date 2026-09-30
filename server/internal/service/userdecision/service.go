@@ -89,7 +89,7 @@ func (s *Service) Run(ctx context.Context) {
 		if err := s.refreshExecution(ctx); err != nil && ctx.Err() == nil {
 			slog.Error("user decision execution tracking failed", "event", "user_decision_execution_tracking_failed")
 		}
-		rows, err := s.Pool.Query(ctx, `SELECT DISTINCT ON (sender_uid,sender_org_id) to_jsonb(d) FROM coordinator_user_decision d WHERE environment=$1 AND (state IN ('prepared','sending','send_unknown','waiting','accepted','resuming') OR card_update_pending) ORDER BY sender_uid,sender_org_id,created_at`, s.Store.Environment)
+		rows, err := s.Pool.Query(ctx, activeIdentitiesQuery, s.Store.Environment)
 		if err == nil {
 			for rows.Next() {
 				var raw []byte
@@ -126,6 +126,58 @@ func (s *Service) Run(ctx context.Context) {
 		}
 	}
 }
+
+// activeIdentitiesQuery selects one decision per sender identity that
+// needs card events now; runIdentity starts a worker for each.
+const activeIdentitiesQuery = `SELECT DISTINCT ON (sender_uid,sender_org_id) to_jsonb(d) FROM coordinator_user_decision d WHERE environment=$1 AND (state IN ('prepared','sending','send_unknown','waiting','accepted','resuming') OR card_update_pending) ORDER BY sender_uid,sender_org_id,created_at`
+
+// ConsumerIdentities lists, as one request each, the sender identities
+// whose decisions need card events now. A shared event connection
+// (dwseventsource) subscribes for exactly these.
+func (s *Service) ConsumerIdentities(ctx context.Context) ([]Request, error) {
+	rows, err := s.Pool.Query(ctx, activeIdentitiesQuery, s.Store.Environment)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Request
+	for rows.Next() {
+		var raw []byte
+		if rows.Scan(&raw) != nil {
+			continue
+		}
+		var r Request
+		if json.Unmarshal(raw, &r) == nil {
+			out = append(out, r)
+		}
+	}
+	return out, rows.Err()
+}
+
+// HandleCardEvent persists one card action received for the sender
+// identity. The identity's consumer and the shared event connection, on
+// whichever replica holds it, both deliver here. An error leaves the event
+// unacknowledged so it is delivered again.
+func (s *Service) HandleCardEvent(ctx context.Context, agentID, senderUID, senderOrgID string, raw []byte) error {
+	e, err := ParseAuditEvent(raw)
+	if err != nil {
+		slog.Warn("user decision event could not be decoded", "event", "user_decision_event_decode_failed", "agent_id", agentID, "bytes", len(raw))
+		return nil
+	}
+	outcome, err := persistCardEvent(ctx, func(attemptCtx context.Context) (string, error) {
+		return s.Store.AcceptFrom(attemptCtx, e, senderUID, senderOrgID)
+	}, 250*time.Millisecond)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		slog.Error("user decision callback persistence failed", "event", "user_decision_callback_persist_failed", "decision_id", e.RequestID)
+		return err
+	}
+	slog.Info("user decision callback", "event", "user_decision_callback", "decision_id", e.RequestID, "outcome", outcome)
+	return nil
+}
+
 func (s *Service) runIdentity(parent context.Context, r Request) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -154,23 +206,7 @@ func (s *Service) runIdentity(parent context.Context, r Request) {
 		defer close(done)
 		defer cancel()
 		consumeErr := session.Consume(ctx, func() { once.Do(func() { close(ready) }) }, func(raw []byte) error {
-			e, err := ParseAuditEvent(raw)
-			if err != nil {
-				slog.Warn("user decision event could not be decoded", "event", "user_decision_event_decode_failed", "agent_id", r.AgentID, "bytes", len(raw))
-				return nil
-			}
-			outcome, err := persistCardEvent(ctx, func(attemptCtx context.Context) (string, error) {
-				return s.Store.AcceptFrom(attemptCtx, e, r.SenderUID, r.SenderOrgID)
-			}, 250*time.Millisecond)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
-			if err != nil {
-				slog.Error("user decision callback persistence failed", "event", "user_decision_callback_persist_failed", "decision_id", e.RequestID)
-				return err
-			}
-			slog.Info("user decision callback", "event", "user_decision_callback", "decision_id", e.RequestID, "outcome", outcome)
-			return nil
+			return s.HandleCardEvent(ctx, r.AgentID, r.SenderUID, r.SenderOrgID, raw)
 		})
 		slog.Info("user decision consumer stopped", "event", "user_decision_consumer_stopped", "agent_id", r.AgentID, "cancelled", ctx.Err() != nil, "failed", consumeErr != nil)
 	}()

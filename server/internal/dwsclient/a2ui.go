@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/dws"
 )
 
 type A2UIAnnotation struct {
@@ -41,7 +43,8 @@ func (c CLI) SendA2UI(ctx context.Context, dir string, in A2UISendRequest) (A2UI
 	if in.ReceiverOpenDingTalkID != "" {
 		targetFlag, targetID = "--open-dingtalk-id", in.ReceiverOpenDingTalkID
 	}
-	raw, err := c.messageCommand(ctx, dir, []string{"chat", "+messages-send", "--as", "user", targetFlag, targetID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--yes", "--format", "json"})
+	raw, err := c.messageOp(ctx, dir, []string{"chat", "+messages-send", "--as", "user", targetFlag, targetID, "--msg-type", "a2ui", "--a2ui-messages", string(body), "--biz-card-id", in.BizID, "--request-id", in.RequestID, "--card-summary", in.Summary, "--yes", "--format", "json"},
+		func(client *dws.Client) ([]byte, error) { return sendA2UISDK(ctx, client, in) })
 	if err != nil {
 		return A2UIReceipt{}, err
 	}
@@ -70,7 +73,10 @@ func (c CLI) UpdateA2UI(ctx context.Context, dir, bizID, status string, messages
 		annotations = []A2UIAnnotation{}
 	}
 	annotationJSON, _ := json.Marshal(annotations)
-	raw, err := c.messageCommand(ctx, dir, []string{"chat", "message", "update-a2ui-card", "--biz-id", bizID, "--content", string(body), "--flow-status", status, "--a2ui-annotations", string(annotationJSON), "--format", "json"})
+	raw, err := c.messageOp(ctx, dir, []string{"chat", "message", "update-a2ui-card", "--biz-id", bizID, "--content", string(body), "--flow-status", status, "--a2ui-annotations", string(annotationJSON), "--format", "json"},
+		func(client *dws.Client) ([]byte, error) {
+			return updateA2UISDK(ctx, client, bizID, status, messages, annotations)
+		})
 	if err != nil {
 		return err
 	}
@@ -90,6 +96,12 @@ func (c CLI) UpdateA2UI(ctx context.Context, dir, bizID, status string, messages
 func (c CLI) ConsumeCardEvents(ctx context.Context, dir string, ready func(), consume func([]byte) error) error {
 	if ready == nil || consume == nil {
 		return errors.New("card consumer callbacks are required")
+	}
+	if client, session, ok, err := sdkClient(dir); ok {
+		if err != nil {
+			return err
+		}
+		return consumeCardEventsSDK(ctx, client, session, ready, consume)
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -180,6 +192,12 @@ func decisionIdentityError(code string) error  { return &DecisionIdentityError{C
 // DWS owns channel capability checks. Group type and owning organization must
 // not be used to reject external groups or direct conversations locally.
 func (c CLI) DecisionOrganization(ctx context.Context, dir string) (string, error) {
+	if client, session, ok, err := sdkClient(dir); ok {
+		if err != nil {
+			return "", decisionIdentityError("user_decision_sender_profile_lookup_failed")
+		}
+		return decisionOrganizationSDK(ctx, client, session)
+	}
 	raw, err := c.messageCommand(ctx, dir, []string{"profile", "list", "--format", "json"})
 	if err != nil {
 		return "", decisionIdentityError("user_decision_sender_profile_lookup_failed")

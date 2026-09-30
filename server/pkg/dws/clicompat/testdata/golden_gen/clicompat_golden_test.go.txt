@@ -1,0 +1,339 @@
+package mock_mcp_test
+
+// Golden generator for github.com/xdxer/dws-for-tag/dws/clicompat. It runs the real
+// dws v1.0.62-beta.8 production entrypoint (TestCLIHelperProcess re-exec)
+// against a fake MCP gateway and records the tool calls dws made plus its
+// stdout, stderr and exit code. Run with DWSCLI_GOLDEN_OUT=<file>.
+//
+// To regenerate dws/clicompat/testdata/dws_goldens.json: check out
+// github.com/DingTalk-Real-AI/dingtalk-workspace-cli at tag v1.0.62-beta.8,
+// copy this file to test/mock_mcp/clicompat_golden_test.go (it reuses that
+// package's isolatedCLIEnv, runCLI and TestCLIHelperProcess), and run
+//
+//	DWSCLI_GOLDEN_OUT=$PWD/dws_goldens.json go test ./test/mock_mcp/ -run TestDWSCLIGolden -count=1
+//
+// with CGO enabled (the default on macOS/Linux) so the SafeChat backend is
+// compiled in as in release builds.
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+)
+
+type goldenResponse struct {
+	Kind       string `json:"kind"` // text | isError | http | rpc | structured
+	Text       string `json:"text,omitempty"`
+	Status     int    `json:"status,omitempty"`
+	RPCCode    int    `json:"rpcCode,omitempty"`
+	RPCMessage string `json:"rpcMessage,omitempty"`
+}
+
+type goldenRequest struct {
+	Path      string          `json:"path"`
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+type goldenCase struct {
+	Name      string                    `json:"name"`
+	Args      []string                  `json:"args"`
+	Responses map[string]goldenResponse `json:"responses"`
+	Requests  []goldenRequest           `json:"requests"`
+	Stdout    string                    `json:"stdout"`
+	Stderr    string                    `json:"stderr"`
+	Exit      int                       `json:"exit"`
+}
+
+func text(s string) goldenResponse { return goldenResponse{Kind: "text", Text: s} }
+
+// goldenTempDir matches the per-run isolated config directory dws mentions in
+// SafeChat login-state errors.
+var goldenTempDir = regexp.MustCompile(`/[^"\s]*/TestDWSCLIGolden[0-9]+/`)
+
+const (
+	gCID    = "cidTEST000000001"
+	gMID    = "msgTEST0001"
+	gDID    = "DAAAAAAAAAAAiE"
+	gDID2   = "DAAAAAAAAAAAAAAAAAAAAAAiEiE"
+	gCipher = "SwzNkAraDE6lUHUNlVT3mjFdbxL6dWvmt77XtjACdpJx9VFibzTbW9KtDbkzGOYP||2||1||1"
+)
+
+func listArgs() []string {
+	return []string{"chat", "message", "list", "--group", gCID, "--time", "2026-09-30 11:59:59.123", "--direction", "older", "--limit", "21", "--format", "json"}
+}
+
+func sendArgs(extra ...string) []string {
+	return append([]string{"chat", "message", "send"}, extra...)
+}
+
+func replyArgs(content, key, aiTag, group, mid string) []string {
+	return []string{"chat", "+messages-reply", "--content", content, "--idempotency-key", key, "--ai-tag=" + aiTag, "--format", "json", "--yes", "--group", group, "--message-id", mid}
+}
+
+func goldenCases() []goldenCase {
+	listTool := "list_conversation_message_v2"
+	measured := `{"messages":[{"openMessageId":"msgA","openConversationId":"` + gCID + `","senderOpenDingTalkId":"` + gDID + `","sender":"张三","content":"hello <b>&amp;","createTime":"2026-09-30 11:58:03","sendType":"normal","quotedMessage":{"openMessageId":"msgQ","sender":"李四","content":"原文","senderOpenDingTalkId":"` + gDID2 + `"}},{"openMessageId":"msgB","openConversationId":"` + gCID + `","senderOpenDingTalkId":"` + gDID2 + `","senderId":"staff-2","sender":"李四","content":"line1\nline2","createTime":"2026-09-30 11:57:00","updateTime":"2026-09-30 11:57:00","msgType":"text","emotionReplyList":[{"emoji":"赞","count":2,"replyUsers":["u1","u2"]}]}],"hasMore":true,"nextCursor":1790000000000}`
+	cases := []goldenCase{
+		{Name: "list/measured", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(measured)}},
+		{Name: "list/result-envelope", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"result":{"messages":[{"openMessageId":"msg-1","content":{"text":"回复正文"},"createTime":101,"msgType":"reply","quotedMessage":{"msgType":"merged_forward","content":{"items":[{"text":"原消息"}]}}},{"openMessageId":"msg-2","content":{"text":"图片回复"},"createTime":102,"msgType":"reply","quotedMessage":{"msgType":"image","content":{"mediaId":"media-1"}}}],"hasMore":false}}`)}},
+		{Name: "list/no-hasmore", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":true,"messages":[{"openMessageId":"m1","content":"x","createTime":"2026-09-30 10:00:00"}],"nextCursor":1790000000000}`)}},
+		{Name: "list/no-pagination", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"messages":[]}`)}},
+		{Name: "list/bad-cursor", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"messages":[{"openMessageId":"m1","content":"x"}],"hasMore":true,"nextCursor":"abc"}`)}},
+		{Name: "list/string-cursor", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"messages":[{"openMessageId":"m1","content":"x"}],"hasMore":true,"nextCursor":"1790000000000"}`)}},
+		{Name: "list/complete", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"messages":[{"openMessageId":"m1","text":"t","content":"c","senderUid":"u1","sender":{"name":"王五","openDingTalkId":"` + gDID + `"}}],"hasMore":false}`)}},
+		{Name: "list/encrypted", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"messages":[{"openMessageId":"enc-1","openConversationId":"` + gCID + `","content":"` + gCipher + `","createTime":"2026-09-30 11:00:00"},{"openMessageId":"plain-1","content":"明文","createTime":"2026-09-30 11:00:01"},{"content":"` + gCipher + `"}],"hasMore":false}`)}},
+		{Name: "list/numbers", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"messages":[{"openMessageId":"m1","content":"x","createTime":1790000000000,"big":12345678901234567891,"f":1.50,"e":1e3}],"hasMore":true,"nextCursor":1790000000000}`)}},
+		{Name: "list/business-crossorg", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":false,"errorCode":"CrossOrgPermissionDenied","errorMsg":"cross org read not granted","traceId":"trace-xorg"}`)}},
+		{Name: "list/business-numeric-code", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":false,"errorCode":130003,"errorMsg":"OpenId is not in conversation","requestId":"req-1"}`)}},
+		{Name: "list/business-string-130003", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":false,"errorCode":"130003","errorMsg":"OpenId is not in conversation"}`)}},
+		{Name: "list/business-nested", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":false,"code":"BUSINESS_ERROR","trace_id":"trace-002","result":{"success":false,"errorCode":"ROBOT_NOT_FOUND","errorMsg":"robot info is not exist"}}`)}},
+		{Name: "list/business-nested-only", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"result":{"success":false,"errorCode":"X1"}}`)}},
+		{Name: "list/business-no-msg", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":false}`)}},
+		{Name: "list/param-error", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":false,"errorCode":"PARAM_ERROR","errorMsg":"openconversation_id is invalid"}`)}},
+		{Name: "list/network-error", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":false,"errorCode":"NETWORK_ERROR","errorMsg":"backend down","technicalDetail":"StatusCode.UNAVAILABLE","retryable":true}`)}},
+		{Name: "list/npe", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":false,"errorCode":"999","errorMsg":"system error: java.lang.NullPointerException"}`)}},
+		{Name: "list/required-cid", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":false,"errorMsg":"openCid or cid is required"}`)}},
+		{Name: "list/code-200", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":true,"code":200,"messages":[]}`)}},
+		{Name: "list/code-string", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"errorCode":"E_LIMIT","errorMsg":"rate limit exceeded","messages":[]}`)}},
+		{Name: "list/code-zero", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"code":0,"errcode":"0","messages":[],"hasMore":false}`)}},
+		{Name: "list/error-string", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"error":"no permission to read"}`)}},
+		{Name: "list/status-error", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"status":"error","message":"permission denied"}`)}},
+		{Name: "list/success-string-false", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":"false"}`)}},
+		{Name: "list/gateway-auth", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"errorCode":"DWS_SERVICE_UNAUTHORIZED","errorMsg":"token expired"}`)}},
+		{Name: "list/gateway-auth-false", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"success":false,"errorCode":"TOKEN_VERIFIED_FAILED","errorMsg":"token verify failed"}`)}},
+		{Name: "list/not-logged-in", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"error":"Missing service_id or access_key"}`)}},
+		{Name: "list/plain-text", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`hello world`)}},
+		{Name: "list/empty-text", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(``)}},
+		{Name: "list/array-text", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`[1,2]`)}},
+		{Name: "list/is-error-json", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "isError", Text: `{"errorCode":"A_FAIL","errorMsg":"tool failed","traceId":"trace-iserr"}`}}},
+		{Name: "list/is-error-text", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "isError", Text: `tool exploded`}}},
+		{Name: "list/http-400", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "http", Status: 400, Text: `{"error":"Missing service_id or access_key"}`}}},
+		{Name: "list/http-401", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "http", Status: 401, Text: `unauthorized`}}},
+		{Name: "list/http-403", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "http", Status: 403, Text: `forbidden`}}},
+		{Name: "list/http-429", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "http", Status: 429, Text: `slow down`}}},
+		{Name: "list/http-502", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "http", Status: 502, Text: `bad gateway`}}},
+		{Name: "list/rpc-invalid-params", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "rpc", RPCCode: -32602, RPCMessage: "invalid params: limit"}}},
+		{Name: "list/rpc-internal", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "rpc", RPCCode: -32603, RPCMessage: "internal failure"}}},
+		{Name: "list/rpc-auth", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "rpc", RPCCode: -32001, RPCMessage: "token invalid"}}},
+		{Name: "list/rpc-forbidden", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "rpc", RPCCode: -32002, RPCMessage: "Access denied for tool"}}},
+		{Name: "list/rpc-method-not-found", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "rpc", RPCCode: -32601, RPCMessage: "no such tool"}}},
+		{Name: "list/rpc-401", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "rpc", RPCCode: 401, RPCMessage: "nope"}}},
+		{Name: "list/control-char-group", Args: []string{"chat", "message", "list", "--group", "cid​X", "--time", "2026-09-30 11:59:59.123", "--direction", "older", "--limit", "21", "--format", "json"}},
+		{Name: "list/newer-no-limit", Args: []string{"chat", "message", "list", "--group", " " + gCID + " ", "--time", "2026-09-30 11:59:59", "--direction", "newer", "--format", "json"}, Responses: map[string]goldenResponse{listTool: text(`{"messages":[],"hasMore":false}`)}},
+	}
+
+	crossArgs := []string{"chat", "data-auth", "cross-org", "--all", "--agentCode", "wukong", "--grant-type", "timed", "--ttl", "7d", "--yes", "--format", "json"}
+	grant := "chat_permission_grant"
+	cases = append(cases,
+		goldenCase{Name: "crossorg/success", Args: crossArgs, Responses: map[string]goldenResponse{grant: text(`{"success":true,"result":{"scope":"chat.data:cross-org","grantType":"timed","expireAt":1790000000000,"note":"<a&b>","ratio":1.50,"big":12345678901234567891}}`)}},
+		goldenCase{Name: "crossorg/no-success", Args: crossArgs, Responses: map[string]goldenResponse{grant: text(`{"result":{"scope":"chat.data:cross-org","grantType":"timed","expireAt":1790000000000}}`)}},
+		goldenCase{Name: "crossorg/business", Args: crossArgs, Responses: map[string]goldenResponse{grant: text(`{"success":false,"errorCode":"NO_PERMISSION","errorMsg":"没有权限","traceId":"t-grant"}`)}},
+		goldenCase{Name: "crossorg/untyped", Args: crossArgs, Responses: map[string]goldenResponse{grant: text(`{"success":true,"errcode":5,"errmsg":"quota"}`)}},
+	)
+
+	sendTool := "send_personal_message"
+	pending := text(`{"success":true,"result":{"openTaskId":"T1"}}`)
+	cases = append(cases,
+		goldenCase{Name: "send/group-mention", Args: sendArgs("--content", "@"+gDID+" 请看 <b>&", "--idempotency-key", "K1", "--ai-tag=true", "--format", "json", "--conversation-id", gCID, "--at-open-dingtalk-ids", gDID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/group-two-mentions", Args: sendArgs("--content", "@"+gDID+" hi <@"+gDID2+"> @"+gDID, "--idempotency-key", "K2", "--ai-tag=false", "--format", "json", "--conversation-id", " "+gCID+" ", "--at-open-dingtalk-ids", gDID+", "+gDID2), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/direct-title", Args: sendArgs("--content", "  body text  ", "--idempotency-key", "K3", "--ai-tag=false", "--format", "json", "--title", "自定义标题", "--open-dingtalk-id", gDID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/title-url-middle", Args: sendArgs("--content", "查看报告 https://example.com/a?b=1 谢谢", "--idempotency-key", "K4", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/title-url-start", Args: sendArgs("--content", "https://example.com/x 看这个", "--idempotency-key", "K5", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/title-url-blank-prefix", Args: sendArgs("--content", "   http://example.com/x", "--idempotency-key", "K5b", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/title-percent", Args: sendArgs("--content", "完成率 50%", "--idempotency-key", "K6", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/title-long-cjk", Args: sendArgs("--content", strings.Repeat("中", 40), "--idempotency-key", "K7", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/title-long-emoji", Args: sendArgs("--content", strings.Repeat("😀", 30), "--idempotency-key", "K8", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/title-exact-30", Args: sendArgs("--content", strings.Repeat("a", 30), "--idempotency-key", "K9", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/title-31-ascii", Args: sendArgs("--content", strings.Repeat("a", 31), "--idempotency-key", "K10", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/title-mention-first", Args: sendArgs("--content", "@"+gDID+" ok", "--idempotency-key", "K11", "--ai-tag=true", "--format", "json", "--conversation-id", gCID, "--at-open-dingtalk-ids", gDID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/success-no-task", Args: sendArgs("--content", "x", "--idempotency-key", "K12", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: text(`{"result":{"accepted":true,"ratio":1.50}}`)}},
+		goldenCase{Name: "send/task-nested-data", Args: sendArgs("--content", "x", "--idempotency-key", "K13", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: text(`{"data":{"taskId":" T9 "}}`)}},
+		goldenCase{Name: "send/duplicate", Args: sendArgs("--content", "x", "--idempotency-key", "K14", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: text(`{"success":false,"errorCode":"1001","errorMsg":"sendPersonalMessageSyncByServerPush error: Request is repeated with uuid 'K14'.","traceId":"trace-dup"}`)}},
+		goldenCase{Name: "send/untyped", Args: sendArgs("--content", "x", "--idempotency-key", "K15", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: text(`{"success":true,"code":200,"message":"rate limit hit","token":"secret-value"}`)}},
+		goldenCase{Name: "send/gateway-auth", Args: sendArgs("--content", "x", "--idempotency-key", "K15b", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: text(`{"code":"USER_TOKEN_ILLEGAL"}`)}},
+		goldenCase{Name: "send/http-500", Args: sendArgs("--content", "x", "--idempotency-key", "K16", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: {Kind: "http", Status: 500, Text: `oops`}}},
+		goldenCase{Name: "send/is-error", Args: sendArgs("--content", "x", "--idempotency-key", "K17", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: {Kind: "isError", Text: `{"errorCode":"PARAM_ERROR","errorMsg":"bad content","traceId":"t-is"}`}}},
+		goldenCase{Name: "send/bad-open-id", Args: sendArgs("--content", "x", "--idempotency-key", "K18", "--ai-tag=true", "--format", "json", "--open-dingtalk-id", "user-123")},
+		goldenCase{Name: "send/zero-width", Args: sendArgs("--content", "a​b", "--idempotency-key", "K19", "--ai-tag=true", "--format", "json", "--conversation-id", gCID)},
+		goldenCase{Name: "send/cr-in-content", Args: sendArgs("--content", "a\r\nb", "--idempotency-key", "K20", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "send/control-in-key", Args: sendArgs("--content", "x", "--idempotency-key", "K\x01", "--ai-tag=true", "--format", "json", "--conversation-id", gCID)},
+		goldenCase{Name: "send/null-text", Args: sendArgs("--content", "x", "--idempotency-key", "K21", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: text(`not json`)}},
+	)
+
+	statusArgs := []string{"chat", "message", "query-send-status", "--open-task-id", "T1", "--format", "json"}
+	statusTool := "query_message_send_status"
+	cases = append(cases,
+		goldenCase{Name: "status/multica", Args: statusArgs, Responses: map[string]goldenResponse{statusTool: text(`{"success":true,"result":{"sendStatus":"SUCCESS","openConversationId":"cid","openMessageId":"mid"}}`)}},
+		goldenCase{Name: "status/dws", Args: statusArgs, Responses: map[string]goldenResponse{statusTool: text(`{"result":{"taskId":"task-1","openMessageId":"msg-1","openConversationId":"cid-1","status":"SUCCESS"},"traceId":"trace-1"}`)}},
+		goldenCase{Name: "status/pending", Args: statusArgs, Responses: map[string]goldenResponse{statusTool: text(`{"success":true,"result":{"sendStatus":"PROCESSING","count":3}}`)}},
+		goldenCase{Name: "status/business", Args: statusArgs, Responses: map[string]goldenResponse{statusTool: text(`{"success":false,"errorCode":"TASK_NOT_FOUND","errorMsg":"task not found"}`)}},
+		goldenCase{Name: "status/untyped", Args: statusArgs, Responses: map[string]goldenResponse{statusTool: text(`{"success":true,"errorCode":"E1","errorMsg":"odd"}`)}},
+	)
+
+	byIDsArgs := []string{"chat", "message", "list-by-ids", "--msg-ids", gMID, "--format", "json"}
+	byIDs := "list_messages_by_ids"
+	cases = append(cases,
+		goldenCase{Name: "byids/multica", Args: byIDsArgs, Responses: map[string]goldenResponse{byIDs: text(`{"success":true,"result":{"messages":[{"openMessageId":"` + gMID + `","openConversationId":"` + gCID + `","senderOpenDingTalkId":"` + gDID + `"}]}}`)}},
+		goldenCase{Name: "byids/array", Args: byIDsArgs, Responses: map[string]goldenResponse{byIDs: text(`{"result":[{"openMessageId":"msg-1","openConversationId":"cid-1","content":{"text":"正文"},"msgType":"text","legacy":"keep"}]}`)}},
+		goldenCase{Name: "byids/raw-senderid", Args: byIDsArgs, Responses: map[string]goldenResponse{byIDs: text(`{"success":true,"result":{"messages":[{"openMessageId":"` + gMID + `","openConversationId":"` + gCID + `","senderOpenDingTalkId":"` + gDID + `","senderId":"staff-9","createTime":1790000000000}]}}`)}},
+		goldenCase{Name: "byids/encrypted", Args: byIDsArgs, Responses: map[string]goldenResponse{byIDs: text(`{"success":true,"result":{"messages":[{"openMessageId":"` + gMID + `","openConversationId":"` + gCID + `","senderOpenDingTalkId":"` + gDID + `","content":"` + gCipher + `"}]}}`)}},
+		goldenCase{Name: "byids/top-messages", Args: byIDsArgs, Responses: map[string]goldenResponse{byIDs: text(`{"messages":[{"openMessageId":"` + gMID + `","conversationId":"` + gCID + `","sender":{"openDingTalkId":"` + gDID + `","name":"n"}}]}`)}},
+	)
+
+	lookupOK := text(`{"success":true,"result":{"messages":[{"openMessageId":"` + gMID + `","openConversationId":"` + gCID + `","senderOpenDingTalkId":"` + gDID + `","content":"原消息"}]}}`)
+	cases = append(cases,
+		goldenCase{Name: "reply/ok-aitag", Args: replyArgs("收到 <b>&", "RK1", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: lookupOK, sendTool: text(`{"success":true,"result":{"openTaskId":"RT1"}}`)}},
+		goldenCase{Name: "reply/ok-no-aitag", Args: replyArgs("  收到  ", " RK2 ", "false", " "+gCID+" ", " "+gMID+" "), Responses: map[string]goldenResponse{byIDs: lookupOK, sendTool: text(`{"result":{"openTaskId":"RT2","openMessageId":"om-2","sendStatus":"SUCCESS","n":1.50}}`)}},
+		goldenCase{Name: "reply/nested-sender", Args: replyArgs("ok", "RK3", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: text(`{"success":true,"result":[{"messageId":"` + gMID + `","conversationId":"` + gCID + `","sender":{"openDingTalkId":"` + gDID2 + `"}}]}`), sendTool: text(`{"success":true,"result":{"openTaskId":"RT3"}}`)}},
+		goldenCase{Name: "reply/alliance", Args: replyArgs("@alliance hi", "RK4", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: lookupOK, sendTool: text(`{"success":true,"result":{"openTaskId":"RT4"}}`)}},
+		goldenCase{Name: "reply/undeclared-mention", Args: replyArgs("hi @"+gDID, "RK5", "true", gCID, gMID)},
+		goldenCase{Name: "reply/at-all", Args: replyArgs("hi @all", "RK6", "true", gCID, gMID)},
+		goldenCase{Name: "reply/blank-body", Args: replyArgs("   ", "RK7", "true", gCID, gMID)},
+		goldenCase{Name: "reply/conversation-mismatch", Args: replyArgs("ok", "RK8", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: text(`{"success":true,"result":{"messages":[{"openMessageId":"` + gMID + `","openConversationId":"cidOTHER00000001","senderOpenDingTalkId":"` + gDID + `"}]}}`)}},
+		goldenCase{Name: "reply/no-sender", Args: replyArgs("ok", "RK9", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: text(`{"success":true,"result":{"messages":[{"openMessageId":"` + gMID + `","openConversationId":"` + gCID + `","sender":"张三"}]}}`)}},
+		goldenCase{Name: "reply/duplicate-source", Args: replyArgs("ok", "RK10", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: text(`{"success":true,"result":{"messages":[{"openMessageId":"` + gMID + `","openConversationId":"` + gCID + `","senderOpenDingTalkId":"` + gDID + `"},{"openMessageId":"` + gMID + `","openConversationId":"` + gCID + `","senderOpenDingTalkId":"` + gDID + `"}]}}`)}},
+		goldenCase{Name: "reply/not-found", Args: replyArgs("ok", "RK11", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: text(`{"success":true,"result":{"messages":[{"openMessageId":"other","openConversationId":"` + gCID + `","senderOpenDingTalkId":"` + gDID + `"}]}}`)}},
+		goldenCase{Name: "reply/missing-conversation", Args: replyArgs("ok", "RK12", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: text(`{"success":true,"result":{"messages":[{"openMessageId":"` + gMID + `","senderOpenDingTalkId":"` + gDID + `"}]}}`)}},
+		goldenCase{Name: "reply/send-duplicate", Args: replyArgs("ok", "RK13", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: lookupOK, sendTool: text(`{"success":false,"errorCode":"1001","errorMsg":"sendPersonalMessageSyncByServerPush error: Request is repeated with uuid 'RK13'.","traceId":"trace-rdup"}`)}},
+		goldenCase{Name: "reply/lookup-business", Args: replyArgs("ok", "RK14", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: text(`{"success":false,"errorCode":"130003","errorMsg":"OpenId is not in conversation"}`)}},
+		goldenCase{Name: "reply/send-empty-object", Args: replyArgs("ok", "RK15", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: lookupOK, sendTool: text(`{}`)}},
+		goldenCase{Name: "reply/zero-width", Args: replyArgs("a​b", "RK16", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: lookupOK}},
+		goldenCase{Name: "reply/lookup-plain-text", Args: replyArgs("ok", "RK17", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: text(`plain`)}},
+	)
+
+	a2uiTool := "create_and_send_a2ui_card"
+	a2uiMsgs := `["{\"version\":\"v1.0\",\"surfaceUpdate\":{\"surfaceId\":\"s\"}}","{\"b\":\"<x>&\"}"]`
+	a2uiArgs := func(target, id string) []string {
+		return []string{"chat", "+messages-send", "--as", "user", target, id, "--msg-type", "a2ui", "--a2ui-messages", a2uiMsgs, "--biz-card-id", "B1", "--request-id", "R1", "--card-summary", "摘要 <s>", "--yes", "--format", "json"}
+	}
+	cases = append(cases,
+		goldenCase{Name: "a2ui/group", Args: a2uiArgs("--chat-id", gCID), Responses: map[string]goldenResponse{a2uiTool: text(`{"success":true,"result":{"bizId":"B1","cardInstanceId":42,"note":"<a&b>"}}`)}},
+		goldenCase{Name: "a2ui/direct-big", Args: a2uiArgs("--open-dingtalk-id", gDID), Responses: map[string]goldenResponse{a2uiTool: text(`{"result":{"bizId":"B1","cardInstanceId":12345678901234567891}}`)}},
+		goldenCase{Name: "a2ui/rejected", Args: a2uiArgs("--chat-id", gCID), Responses: map[string]goldenResponse{a2uiTool: text(`{"success":false,"errorCode":"A2UI_TARGET_INVALID","errorMsg":"A2UI card target group does not belong to the creator organization","traceId":"trace123"}`)}},
+		goldenCase{Name: "a2ui/bad-open-id", Args: a2uiArgs("--open-dingtalk-id", "user-1")},
+		goldenCase{Name: "a2ui/trimmed", Args: []string{"chat", "+messages-send", "--as", "user", "--chat-id", " " + gCID + " ", "--msg-type", "a2ui", "--a2ui-messages", " " + a2uiMsgs + " ", "--biz-card-id", " B2 ", "--request-id", " R2 ", "--card-summary", " s ", "--yes", "--format", "json"}, Responses: map[string]goldenResponse{a2uiTool: text(`{"success":true,"result":{"bizId":"B2","cardInstanceId":7}}`)}},
+		goldenCase{Name: "a2ui/empty-messages", Args: []string{"chat", "+messages-send", "--as", "user", "--chat-id", gCID, "--msg-type", "a2ui", "--a2ui-messages", `[]`, "--biz-card-id", "B3", "--request-id", "R3", "--card-summary", "s", "--yes", "--format", "json"}},
+	)
+
+	updTool := "update_a2ui_card"
+	updArgs := func(biz, status, annotations string) []string {
+		args := []string{"chat", "message", "update-a2ui-card", "--biz-id", biz, "--content", `["{\"updateDataModel\":{\"surfaceId\":\"s\"}}"]`, "--flow-status", status}
+		if annotations != "-" {
+			args = append(args, "--a2ui-annotations", annotations)
+		}
+		return append(args, "--format", "json")
+	}
+	cases = append(cases,
+		goldenCase{Name: "update/confirming", Args: updArgs("B1", "confirming", `[{"surfaceId":"s","componentId":"question","type":"artifact"}]`), Responses: map[string]goldenResponse{updTool: text(`{"success":true,"result":{"updated":true,"n":1.50,"html":"<p>"}}`)}},
+		goldenCase{Name: "update/numeric-status", Args: updArgs(" B1 ", " 8 ", `[]`), Responses: map[string]goldenResponse{updTool: text(`{"result":true}`)}},
+		goldenCase{Name: "update/no-annotations", Args: updArgs("B1", "FINISH", "-"), Responses: map[string]goldenResponse{updTool: text(`{"success":true}`)}},
+		goldenCase{Name: "update/bad-status", Args: updArgs("B1", "DONE", `[]`)},
+		goldenCase{Name: "update/space-biz", Args: updArgs("B 1", "FINISH", `[]`)},
+		goldenCase{Name: "update/placeholder-biz", Args: updArgs("<bizId>", "FINISH", `[]`)},
+		goldenCase{Name: "update/null-annotations", Args: updArgs("B1", "FINISH", `null`)},
+		goldenCase{Name: "update/business", Args: updArgs("B1", "FINISH", `[]`), Responses: map[string]goldenResponse{updTool: text(`{"success":false,"errorCode":"CARD_NOT_FOUND","errorMsg":"card not found"}`)}},
+		goldenCase{Name: "update/plain-text", Args: updArgs("B1", "FINISH", `[]`), Responses: map[string]goldenResponse{updTool: text(`ok`)}},
+		goldenCase{Name: "update/empty-biz", Args: updArgs("", "FINISH", `[]`)},
+		goldenCase{Name: "update/blank-biz", Args: updArgs("   ", "FINISH", `[]`)},
+		goldenCase{Name: "update/zero-width-biz", Args: updArgs("B​1", "FINISH", `[]`)},
+		goldenCase{Name: "update/non-object-annotation", Args: updArgs("B1", "FINISH", `[null]`)},
+		goldenCase{Name: "update/scalar-annotations", Args: updArgs("B1", "FINISH", `[1]`)},
+	)
+
+	// Null payloads (plain-text tool answers) and remaining edges.
+	cases = append(cases,
+		goldenCase{Name: "crossorg/plain-text", Args: crossArgs, Responses: map[string]goldenResponse{grant: text(`granted`)}},
+		goldenCase{Name: "status/plain-text", Args: statusArgs, Responses: map[string]goldenResponse{statusTool: text(`done`)}},
+		goldenCase{Name: "byids/plain-text", Args: byIDsArgs, Responses: map[string]goldenResponse{byIDs: text(`none`)}},
+		goldenCase{Name: "a2ui/plain-text", Args: a2uiArgs("--chat-id", gCID), Responses: map[string]goldenResponse{a2uiTool: text(`sent`)}},
+		goldenCase{Name: "reply/send-plain-text", Args: replyArgs("ok", "RK18", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: lookupOK, sendTool: text(`sent`)}},
+		goldenCase{Name: "reply/lookup-is-error", Args: replyArgs("ok", "RK19", "true", gCID, gMID), Responses: map[string]goldenResponse{byIDs: {Kind: "isError", Text: `lookup failed`}}},
+		goldenCase{Name: "send/big-number", Args: sendArgs("--content", "x", "--idempotency-key", "K22", "--ai-tag=true", "--format", "json", "--conversation-id", gCID), Responses: map[string]goldenResponse{sendTool: text(`{"success":true,"result":{"openTaskId":"T22","n":12345678901234567891,"f":1.50}}`)}},
+		goldenCase{Name: "send/title-and-mention", Args: sendArgs("--content", "@"+gDID+" 看 https://x.test", "--idempotency-key", "K23", "--ai-tag=true", "--format", "json", "--title", "  标题  ", "--conversation-id", gCID, "--at-open-dingtalk-ids", gDID), Responses: map[string]goldenResponse{sendTool: pending}},
+		goldenCase{Name: "list/is-error-empty", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "isError", Text: ``}}},
+		goldenCase{Name: "list/http-404", Args: listArgs(), Responses: map[string]goldenResponse{listTool: {Kind: "http", Status: 404, Text: `not found`}}},
+		goldenCase{Name: "list/conversation-groups", Args: listArgs(), Responses: map[string]goldenResponse{listTool: text(`{"result":{"conversationMessagesList":[{"openConversationId":"cid-g","title":"群","messages":[{"openMessageId":"g1","content":"hi"}]}],"hasMore":false}}`)}},
+		goldenCase{Name: "a2ui/default-ids", Args: []string{"chat", "+messages-send", "--as", "user", "--chat-id", gCID, "--msg-type", "a2ui", "--a2ui-messages", `["a","b"]`, "--yes", "--format", "json"}, Responses: map[string]goldenResponse{a2uiTool: text(`{"success":true,"result":{"bizId":"auto","cardInstanceId":1}}`)}},
+	)
+	return cases
+}
+
+func TestDWSCLIGolden(t *testing.T) {
+	out := strings.TrimSpace(os.Getenv("DWSCLI_GOLDEN_OUT"))
+	if out == "" {
+		t.Skip("DWSCLI_GOLDEN_OUT not set")
+	}
+	cases := goldenCases()
+	for i := range cases {
+		c := &cases[i]
+		var mu sync.Mutex
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var envelope struct {
+				ID     int `json:"id"`
+				Params struct {
+					Name      string          `json:"name"`
+					Arguments json.RawMessage `json:"arguments"`
+				} `json:"params"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			mu.Lock()
+			c.Requests = append(c.Requests, goldenRequest{Path: r.URL.Path, Tool: envelope.Params.Name, Arguments: envelope.Params.Arguments})
+			mu.Unlock()
+			spec, ok := c.Responses[envelope.Params.Name]
+			if !ok {
+				spec = goldenResponse{Kind: "rpc", RPCCode: -32601, RPCMessage: "unexpected tool " + envelope.Params.Name}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			switch spec.Kind {
+			case "http":
+				w.WriteHeader(spec.Status)
+				_, _ = w.Write([]byte(spec.Text))
+			case "rpc":
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": envelope.ID, "error": map[string]any{"code": spec.RPCCode, "message": spec.RPCMessage}})
+			default:
+				result := map[string]any{"content": []map[string]any{{"type": "text", "text": spec.Text}}}
+				if spec.Kind == "isError" {
+					result["isError"] = true
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": envelope.ID, "result": result})
+			}
+		}))
+		env := isolatedCLIEnv(t, map[string]string{
+			"DINGTALK_CHAT_MCP_URL": server.URL + "/server/chat",
+			"DINGTALK_IM_MCP_URL":   server.URL + "/server/im",
+			"DWS_LANG":              "en",
+		})
+		args := append([]string{"--token", "ci-smoke-token"}, c.Args...)
+		stdout, stderr, err := runCLI(t, env, args...)
+		server.Close()
+		c.Stdout = goldenTempDir.ReplaceAllString(strings.ReplaceAll(stdout, server.URL, "{{GATEWAY}}"), "{{TMPDIR}}/")
+		c.Stderr = goldenTempDir.ReplaceAllString(strings.ReplaceAll(stderr, server.URL, "{{GATEWAY}}"), "{{TMPDIR}}/")
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			c.Exit = exitErr.ExitCode()
+		} else if err != nil {
+			t.Fatalf("%s: %v", c.Name, err)
+		}
+		if c.Requests == nil {
+			c.Requests = []goldenRequest{}
+		}
+	}
+	data, err := json.MarshalIndent(cases, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
