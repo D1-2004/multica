@@ -1,7 +1,7 @@
 # Internal MCP connectors
 
 An internal connector is a workspace-owned declaration of one fixed HTTPS MCP
-server. It has a name, upstream URL, authentication mode, a pinned tool set,
+server. It has a name, upstream URL, authentication mode, a discovered tool snapshot,
 authorized Agent IDs and an enabled state. Semantica is the first instance,
 not a different transport or a special-purpose relay.
 
@@ -9,7 +9,7 @@ This adapts the workspace/Agent grant and audit model from
 `feat/faas-mcp-relay` while removing its separate FaaS and platform-to-FaaS
 HMAC hop. Multica already authenticates the short-lived, revocable `mat_`
 Agent task token and has a shared Tair client. Each call rechecks the active
-task, workspace, Agent grant, connector state and tool allowlist. The request
+task, workspace, Agent grant, connector state. The request
 goes directly from the Multica server to the configured upstream. It forwards
 only the JSON-RPC body, an optional fixed Bearer credential and MCP transport
 headers, never the `mat_` token or caller-provided URL. Use the existing
@@ -24,13 +24,13 @@ Agent. (Towards an official app's upstream the server does keep MCP sessions;
 see "Official apps" below.) Expose an authorized connector as
 its own MCP server with a stable compact name (`c` plus the first 16 UUID hex
 digits) in the Agent's task-scoped
-MCP configuration. `initialize` is handled locally; `tools/list` fetches the
-upstream list and returns only the pinned allowlist. `tools/call` requires
-a tool in that allowlist and an object argument. The simplified administrator
-flow pins tools that the approved upstream marks `readOnlyHint=true`; legacy
-API callers may still supply an explicit tool list. The trusted upstream and
-workspace/Agent grant remain the authority boundary: MCP annotations are
-hints, not a guarantee of read-only behavior. JSON and SSE replies are normalized by
+MCP configuration. `initialize` is handled locally; `tools/list` exposes every upstream tool and
+`tools/call` forwards the requested tool with object arguments. No read-only,
+annotation, deployment-origin, tool-count or saved-snapshot filter applies.
+The stored `allowed_tools` field is retained as discovery metadata for existing
+clients, not as an authorization boundary. New upstream tools become visible
+on the next list request. Upstream authentication decides permitted operations.
+JSON and SSE replies are normalized by
 the existing bounded parser (2 MiB, 45 seconds, no redirects). Long calls
 flush response headers after authorization to survive the outer 30-second
 header deadline. Upstream tool errors retain bounded text so the Agent can
@@ -41,8 +41,7 @@ overlong names before the Agent starts. The compact server name and a bounded
 tool presentation name keep that composite at most 62 bytes. Upstream names
 over 38 bytes are exposed under stable `t_<hash>` aliases; tool descriptions
 retain the original names, and `tools/call` resolves aliases back to the
-original only after the configured allowlist check. Alias collisions in one
-connector are rejected at configuration time. The relay URL and authorization
+original using the live upstream list. Alias collisions in an upstream list are reported as invalid MCP metadata. The relay URL and authorization
 continue to use the full connector UUID; shortening the display name does not
 shorten the security identifier.
 
@@ -80,9 +79,8 @@ shorten the security identifier.
   key option remains for deployments with supported secret injection.
 - The admin connectivity check sends a bounded `tools/list` request to the
   connector's immutable URL with its selected authentication mode. It returns a
-  sanitized reachability result, the discovered allowlisted tool names, and
-  any configured names not found in the bounded list. Reachable without all
-  configured tools is a warning, never a ready/green result. Failure reasons
+  sanitized reachability result, all discovered tool names. A valid upstream list, including an empty list,
+  is ready; stale discovery metadata does not block connectivity. Failure reasons
   identify safe categories (credential rejected, timeout, HTTP status or MCP
   parse failure) without returning upstream bodies, credentials or URLs;
   it does not call a tool, grant an Agent, or expose the Bearer or raw response.
@@ -94,14 +92,13 @@ shorten the security identifier.
 - `MULTICA_INTERNAL_MCP_ALLOWED_HOST_SUFFIXES` is an operator-set list of
   approved upstream DNS names/suffixes. URLs must be fixed HTTPS origins plus
   path, with no userinfo, query or fragment. Host validation uses exact match
-  or dot-bounded suffix; callers cannot override the target. Operators should
-  configure exact upstream hostnames in pre-release and production. A
+  or dot-bounded suffix; callers cannot override the target. Pre-release and production use the approved domain families
+  `dingtalk.com,alibaba-inc.com`. A
   connector's URL is immutable after creation, keeping its operator-provisioned
   credential bound to that destination. A different URL requires a new
-  connector and credential reference. Production starts with an empty allowlist
-  and the feature off. Official app (catalog) connectors are the only
-  exception: they bypass this allowlist for exactly their catalog MCP URL
-  (see "Official apps").
+  connector and credential reference. Official app (catalog) connectors are
+  a separate external-app flow: they bypass this allowlist for exactly their
+  catalog MCP URL (see "Official apps").
 - The existing Tair client atomically increments task/Agent/workspace rate
   counters with TTL, namespaced by environment and connector ID. A missing
   client or rejected counter fails closed. Audit records IDs, method, tool,
@@ -117,22 +114,18 @@ shorten the security identifier.
 In `/{workspaceSlug}/internal-connectors`, a human workspace owner/admin enters a
 name, an approved HTTPS MCP URL and the Agents that may use it. The creation
 form does not ask the admin to transcribe tool names. It discovers the bounded
-tool list from the upstream and pins only tools explicitly marked with MCP
-`annotations.readOnlyHint=true` in the existing server-side allowlist. Later
-changes to the upstream tool list do not silently grant new tools. A connector
-with no such tools cannot be created through this simplified flow. Annotations
-are untrusted hints, so approved hostnames and administrator trust in the
-upstream remain necessary; the annotation alone is not a security guarantee.
+tool list from the upstream without filtering annotations or tool names.
+An empty list is valid. The snapshot is display metadata only; changes to the
+upstream list do not require recreating the connector.
 
 Authentication has two explicit modes: no authentication, which sends no
 Authorization header at all, and Bearer, whose value is sealed before database
-storage. A URL generated by this deployment in the shape
-`/api/mcp/connect/<access-token>` is a capability link, not an ordinary
-upstream address. On import, the server validates the token against its own
-credential store, resolves its immutable public Agent ID, stores the canonical
-`/api/mcp/agents/<id>` URL, and seals the token as a Bearer. It never saves,
-returns, logs or displays the secret-bearing path. URLs from other deployments
-are not silently reinterpreted as local capability links. The page does not
+storage. A URL in the shape `/api/mcp/connect/<access-token>` from any approved
+domain is a capability link. Import removes the token from the stored URL and
+seals it as a Bearer credential. Only the outgoing request reconstructs the
+capability path. The target deployment validates its own credential; the relay
+never looks it up in the local credential store. The secret-bearing URL is
+never persisted in plaintext, returned, logged or displayed. The page does not
 show an empty Bearer input for no-auth connectors; an existing Bearer is only
 changed through an explicit rotation action.
 

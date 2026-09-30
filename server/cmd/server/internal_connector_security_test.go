@@ -99,8 +99,8 @@ func TestInternalConnectorManagementRejectsTaskTokenAndURLChange(t *testing.T) {
 	}
 	handler.InternalConnectorClient = &http.Client{Transport: connectorTestTransport{t: t, empty: true}}
 	status, result = call(http.MethodPost, base+"/"+connectorID+"/test", testToken, nil)
-	if status != http.StatusOK || result["reachable"] != true || result["ready"] != false || !strings.Contains(fmt.Sprint(result["missing_tools"]), "read") {
-		t.Fatalf("empty upstream tool list was presented as ready: status=%d body=%v", status, result)
+	if status != http.StatusOK || result["reachable"] != true || result["ready"] != true || strings.Contains(fmt.Sprint(result["missing_tools"]), "read") {
+		t.Fatalf("empty upstream tool list was rejected: status=%d body=%v", status, result)
 	}
 	handler.InternalConnectorClient = &http.Client{Transport: connectorTestTransport{t: t}}
 
@@ -245,7 +245,7 @@ func TestInternalConnectorImportsHostedAgentCapabilityWithoutPersistingItsLink(t
 		FROM internal_connector WHERE id=$1::uuid`, id).Scan(&storedURL, &mode, &ciphertext, &allowed); err != nil {
 		t.Fatal(err)
 	}
-	if storedURL != "https://safe.example.test/api/mcp/agents/"+publicAgentID || mode != "bearer" || len(ciphertext) == 0 ||
+	if storedURL != "https://safe.example.test/api/mcp/connect" || mode != "bearer" || len(ciphertext) == 0 ||
 		strings.Contains(storedURL, capability) || bytes.Contains(ciphertext, []byte(capability)) || !strings.Contains(allowed, "read") {
 		t.Fatalf("capability was not safely normalized: url=%q mode=%q ciphertext_len=%d tools=%s", storedURL, mode, len(ciphertext), allowed)
 	}

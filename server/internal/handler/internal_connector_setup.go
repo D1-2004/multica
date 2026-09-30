@@ -8,20 +8,16 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/multica-ai/multica/server/internal/auth"
-	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 )
 
-// prepareInternalConnectorCreate resolves only this deployment's capability
-// links. The secret-bearing URL is never persisted or returned. Ordinary MCP
-// URLs remain fixed HTTPS targets and may use no auth or an optional Bearer.
+// Capability links from any approved host keep their token encrypted. The
+// target deployment authenticates the credential, not the local database.
 func (h *Handler) prepareInternalConnectorCreate(ctx context.Context, in *connectorInput, connectorID, workspaceID string) ([]byte, error) {
 	if in.Enabled {
 		return nil, errors.New("create the connector before enabling it")
 	}
 	if strings.Contains(in.UpstreamURL, "/api/mcp/connect/") {
-		canonical, token, err := h.resolveInternalConnectorCapabilityLink(ctx, in.UpstreamURL)
+		canonical, token, err := parseInternalConnectorCapabilityLink(in.UpstreamURL)
 		if err != nil {
 			return nil, err
 		}
@@ -79,46 +75,29 @@ func validInternalConnectorBearer(token string) bool {
 	return token != "" && len(token) <= 4096 && strings.TrimSpace(token) == token && !strings.ContainsAny(token, "\r\n\x00")
 }
 
-func (h *Handler) resolveInternalConnectorCapabilityLink(ctx context.Context, raw string) (string, string, error) {
-	invalid := errors.New("invalid or expired MCP capability link for this deployment")
-	base, err := normalizeAgentA2APublicBaseURL(h.currentConfig().PublicURL)
-	if err != nil {
-		return "", "", invalid
+func parseInternalConnectorCapabilityLink(raw string) (string, string, error) {
+	if err := validateConnectorURL(raw); err != nil {
+		return "", "", err
 	}
-	token, err := parseInternalConnectorCapabilityLink(raw, base)
-	if err != nil {
-		return "", "", invalid
-	}
-	credential, err := h.Queries.GetAgentA2ACredentialByTokenHash(ctx, auth.HashToken(token))
-	if err != nil || !credential.AgentOwnerID.Valid || !credential.DelegatedByUserID.Valid || credential.AgentOwnerID.Bytes != credential.DelegatedByUserID.Bytes {
-		return "", "", invalid
-	}
-	canonical, err := a2aintegration.AgentMCPURL(base, credential.PublicAgentID)
-	if err != nil {
-		return "", "", invalid
-	}
-	return canonical, token, nil
-}
-
-func parseInternalConnectorCapabilityLink(raw, base string) (string, error) {
-	invalid := errors.New("invalid MCP capability link")
-	baseURL, _ := url.Parse(base)
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != baseURL.Scheme || !strings.EqualFold(u.Host, baseURL.Host) || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", invalid
+	if err != nil {
+		return "", "", errors.New("invalid MCP capability link")
 	}
-	prefix := strings.TrimRight(baseURL.Path, "/") + "/api/mcp/connect/"
-	if !strings.HasPrefix(u.Path, prefix) {
-		return "", invalid
+	const marker = "/api/mcp/connect/"
+	index := strings.Index(u.Path, marker)
+	if index < 0 {
+		return "", "", errors.New("invalid MCP capability link")
 	}
-	token := strings.TrimPrefix(u.Path, prefix)
-	if !validAgentAccessToken(token) {
-		return "", invalid
+	token := u.Path[index+len(marker):]
+	if !validInternalConnectorBearer(token) || strings.Contains(token, "/") {
+		return "", "", errors.New("invalid MCP capability link")
 	}
-	return token, nil
+	u.Path = u.Path[:index] + strings.TrimSuffix(marker, "/")
+	u.RawPath = ""
+	return u.String(), token, nil
 }
 
-// Discovery pins tool names at creation. No upstream mutation is invoked.
+// Discovery records all tool names as metadata. No upstream mutation is invoked.
 func (h *Handler) discoverInternalConnectorTools(ctx context.Context, c internalConnector) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -126,7 +105,7 @@ func (h *Handler) discoverInternalConnectorTools(ctx context.Context, c internal
 	seenCursors := map[string]bool{}
 	cursor := ""
 	for page := 0; page < 8; page++ {
-		result, _, err := h.connectorToolListWithRetry(ctx, c, cursor, false)
+		result, _, err := h.connectorToolListWithRetry(ctx, c, cursor)
 		if err != nil {
 			return nil, errors.New("could not discover MCP tools; check the address and authentication")
 		}
@@ -143,14 +122,7 @@ func (h *Handler) discoverInternalConnectorTools(ctx context.Context, c internal
 			if name == "" {
 				return nil, errors.New("upstream MCP tool has no name")
 			}
-			annotations, _ := tool["annotations"].(map[string]any)
-			if annotations["readOnlyHint"] != true {
-				continue
-			}
 			seen[name] = true
-			if len(seen) > 64 {
-				return nil, errors.New("MCP server has more than 64 tools")
-			}
 		}
 		next, _ := list["nextCursor"].(string)
 		if next == "" {
@@ -161,9 +133,6 @@ func (h *Handler) discoverInternalConnectorTools(ctx context.Context, c internal
 		}
 		seenCursors[next] = true
 		cursor = next
-	}
-	if len(seen) == 0 {
-		return nil, errors.New("MCP server has no tools marked read-only")
 	}
 	names := make([]string, 0, len(seen))
 	for name := range seen {
