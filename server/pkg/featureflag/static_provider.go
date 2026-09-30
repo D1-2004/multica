@@ -176,7 +176,7 @@ func evaluateRule(key string, rule Rule, ec EvalContext) Decision {
 		// That's the desired behavior for percent rollouts at the edge:
 		// anonymous users get a single shared rollout decision per
 		// flag, not a uniformly random one.
-		if inPercent(key, identifier, rule.Percent.Percent) {
+		if InPercent(key, identifier, rule.Percent.Percent) {
 			return decisionFromRule(key, rule, true, ReasonPercent)
 		}
 		return decisionFromRule(key, rule, false, ReasonPercent)

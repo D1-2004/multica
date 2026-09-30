@@ -87,7 +87,7 @@ func (p *EnvProvider) Lookup(ctx context.Context, key string) (Decision, bool) {
 		}
 		ec := EvalContextFrom(ctx)
 		ident, _ := ec.Lookup("user_id")
-		enabled := inPercent(key, ident, pct)
+		enabled := InPercent(key, ident, pct)
 		return Decision{
 			Key:     key,
 			Enabled: enabled,

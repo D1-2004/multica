@@ -212,8 +212,8 @@ func (a *processMemoryAggregator) add(point processMemoryPoint) {
 	w.containerWorkingMax = max(w.containerWorkingMax, point.containerWorking)
 	w.containerWorkingLast = point.containerWorking
 	w.containerPeak = point.containerPeakSeen
-	// A child that exited is not counted again if its PID is reused later
-	// in the same process lifetime; keep the sets bounded to live children.
+	// Keep the sets bounded to live children: a child that exited is
+	// forgotten, so a later child that reuses its PID counts as started.
 	for pid := range a.seenNode {
 		if _, live := point.nodeChildren[pid]; !live {
 			delete(a.seenNode, pid)

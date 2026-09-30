@@ -27,11 +27,11 @@ DWH 一格开发（取源 + OpenCode 30–60 分钟 + 提 PR + 打包）经常�
 
 任务结束时 `daemon run-once` 退出，但它只杀 agent 自己的进程组；agent
 工具起的命令在新的进程组或会话里，`nohup` / `setsid` 的进程也一样，会一直
-活到沙箱被释放或过期，Issue / 聊天 scope 复用时还会带进下一轮任务。取消的
-任务由服务端主动结束这些进程，见下文「取消后结束沙箱内进程」；完成和失败的
-任务不结束进程，沙箱按「任务结束后的释放」处理。后台作业语义尚未提供。
+活到沙箱被释放或过期，Issue / 聊天 scope 复用时还会带进下一轮任务。取消和
+失败的任务由服务端主动结束这些进程，见下文「取消或失败后结束沙箱内进程」；
+完成的任务不结束进程，沙箱按「任务结束后的释放」处理。后台作业语义尚未提供。
 
-## 取消后结束沙箱内进程
+## 取消或失败后结束沙箱内进程
 
 PRI-52 实测：从界面取消 run 后，SDK / CLI 两条路径都写回 `cancelled` 并在
 30 秒后 `idle_trimmed`，但沙箱内的 Python 和 `sleep` 在取消后 80 多秒仍在运行，
@@ -44,21 +44,25 @@ FC 沙箱里 root 没有 `CAP_SYS_PTRACE`，直接读其他用户进程的 `/pro
 会被拒绝；用 `setpriv --reuid/--regid --clear-groups` 切到该进程的 uid 后可以读。
 `stat` 和 `cmdline` 任何人都可读。
 
-任务一进入 `cancelled`，`TaskRuntimeTerminalObserver` 立即（与下面的释放并行，
+任务一进入 `cancelled` 或 `failed`，`TaskRuntimeTerminalObserver` 立即（与下面的释放并行，
 不等 30 秒宽限）对该任务每个 start attempt 用过的沙箱执行一次
-`fc_e2b_task_stop.go` 的脚本，10 秒后再执行一次，补上期间新 fork 或被 daemon
-拆树后成为孤儿的进程。这一步和 runner 注入 `FC_E2B_TASK_ID` 都受
+`fc_e2b_task_stop.go` 的脚本；任务结束 10 秒后再执行一次（第一遍超过 10 秒时紧接着执行），
+补上期间新 fork 或被 daemon 拆树后成为孤儿的进程。第一遍发现任务不在 FC/E2B runtime 上、
+状态已变或没用过沙箱时不再跑第二遍。重试和重跑都是新任务、新 task id，所以失败任务的
+标记不会出现在后续任务里。开关不可能选中的任务（总开关关、agent / runtime 不在名单且
+百分比没抽中、也没有 workspace 名单）根本不排期；排期中的清理最多 512 个，超出时记
+`outcome=backlog_full` 并跳过。这一步和 runner 注入 `FC_E2B_TASK_ID` 都受
 `runtime.fc_e2b_sdk_rollout` 控制：只对开关选中的 workspace / agent / runtime 执行，
 随 SDK 传输一起生效；没选中的任务保持改造前的行为（不注入标记、不结束进程，交给沙箱释放）。
-一次取消清理在排期时（任务写成 `cancelled` 的那一刻）冻结一份运行配置快照，两遍都按它判定、选传输：
-两遍之间热关，已选中的这次清理照样执行第二遍；两遍之间热开，之前没选中的这次取消也不补跑第二遍。
+一次清理在排期时（任务写成 `cancelled` / `failed` 的那一刻）冻结一份运行配置快照，两遍都按它判定、选传输：
+两遍之间热关，已选中的这次清理照样执行第二遍；两遍之间热开，之前没选中的这次任务也不补跑。
 热切换只影响之后新发生的取消和新的启动。
 脚本以 root 运行，参数是 runtime id、本任务健康端口（由 task id 算出）和 task id。
 只结束能证明属于本任务的进程；证明不了的一律留下，不按启动时间或父进程猜。
 
 - **能证明属于本任务**：
-  - runner：命令行同时带 `--runtime-id <runtime>` 和 `--health-port <本任务端口>`；
-    环境里写着别的任务 id 时不算（端口碰撞）。
+  - runner：命令行同时带 `--runtime-id <runtime>` 和 `--health-port <本任务端口>`，
+    且环境读得到、没写别的任务 id；环境读不到或写着别的任务 id 时不算（端口可能碰撞）。
   - 任务标记：环境里有 `MULTICA_TASK_ID=<task>` 或 `FC_E2B_TASK_ID=<task>`，
     按进程自己的 uid 读取。runner 启动时两个都注入；daemon 给 agent 重新写入
     `MULTICA_TASK_ID`，`FC_E2B_TASK_ID` 原样继承；pi 以 `detached` 启动工具命令，
@@ -80,19 +84,25 @@ FC 沙箱里 root 没有 `CAP_SYS_PTRACE`，直接读其他用户进程的 `/pro
   - 环境读不到的进程：改过身份后变成 non-dumpable 的进程，以及 envd 这类能力集比
     执行者更高的 root 进程。计入回执 `unreadable`，不结束。
   - 显式改写了 `MULTICA_TASK_ID` / `FC_E2B_TASK_ID` 的进程，按改写后的值归属。
-  - 处理取消的副本在这几秒内重启时，回退到 TTL。
+  - 处理取消或失败的副本在这几秒内重启时，回退到 TTL。
 - **DSH 原生任务**：DSH host 和员工级 DSH 进程启动时不继承调用方环境，不带任务 id，
   各自是存活的会话 leader，不会被结束；DSH 工具命令带着所属任务的
   `MULTICA_TASK_ID`，取消时只结束本任务的那些。这一条依据模板代码，尚未在 DSH
   沙箱实跑。
 - **结束**：先 `SIGSTOP` 冻结并重扫一次，防止 fork 或改父进程逃逸；再 `SIGTERM`
-  加 `SIGCONT`，最多等 5 秒后 `SIGKILL`。回执为
+  加 `SIGCONT`，最多等 5 秒后 `SIGKILL`。进程按 PID 加启动时间认定，每次 `SIGSTOP`
+  之后都再核对一遍：停住的进程不会让出 PID，所以 `SIGSTOP` 送达前已被复用的 PID
+  会立刻补发 `SIGCONT`，且不会收到 `SIGTERM` / `SIGKILL`。剩下 bash 关不掉的窗口：已核对
+  的目标恰好在核对与发信号之间被别人杀掉并回收，PID 又在这一瞬间被复用。Linux 循环分配
+  PID，这要求期间 PID 空间转完一圈。用 pidfd 发信号可以彻底关掉，但 bash 没有 pidfd，
+  沙箱镜像也不保证有别的解释器。重扫时已退出的目标剔除，`found` 只计重扫后仍存活的目标。回执为
   `{"version":3,"runners","marked","unreadable","found","terminated","killed","remaining"}`，
   写日志 `event=fc_e2b_task_processes_stopped`（带 `pass`），有残留时为 Warn。
 
 回归：`TestFCE2BTaskStopScriptEndsOnlyTheTaskProcesses`（Linux）在同一会话里放两个
 任务的进程，真实执行脚本。以 root 运行时，fixture 切到 nobody，按 FC 的方式经
-`setpriv` 读取标记。
+`setpriv` 读取标记。有 python3 时还放一个 non-dumpable、端口碰撞的 runner，验证环境
+读不到的 runner 不被结束。
 
 沙箱本身仍按下文释放：Issue / 聊天 scope 剩 10 分钟，到期由云平台销毁。
 
@@ -207,6 +217,7 @@ lifecycle 日志归属。
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-09-30 | 失败任务也结束沙箱内进程；第二遍按任务结束后 10 秒执行；开关选不中的任务不排期，排期上限 512；环境读不到的 runner 不再算本任务；按 PID 加启动时间认定进程并在 `SIGSTOP` 后复核；沙箱已删除按 SDK 类型化错误判定 | 失败任务留下的孤儿与取消相同；读不到环境的 runner 可能是端口碰撞的另一任务；PID 复用会让重扫前的旧目标误伤新进程；CLI 输出里任意 `404` 曾被当成沙箱已删除 |
 | 2026-09-28 | 一次取消清理的两遍固定使用排期时的配置快照 | PRI-67：两遍各自重读配置，两遍之间热关会漏掉补杀，热开会给没选中的任务补跑第二遍 |
 | 2026-09-28 | 取消清理和 `FC_E2B_TASK_ID` 注入改由 `runtime.fc_e2b_sdk_rollout` 按作用域控制，与 SDK 传输共用一个开关 | E2B 改造整体可灰度、可热关，不再“部署即生效”；与性能优化开关分开（PRI-47 方案 B） |
 | 2026-09-27 | 取消后只结束能证明属于本任务的沙箱进程：runner 命令行、按进程 uid 读取的任务标记、其子孙及由本任务创建的会话；runner 额外注入 `FC_E2B_TASK_ID`；去掉按启动时间认领孤儿 | PRI-61 在真实 FC 上发现，按“被 PID 1 接管且在 runner 之后启动”认领孤儿，会结束同沙箱另一任务之后放出的孤儿 |
