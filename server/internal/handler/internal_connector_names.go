@@ -28,8 +28,8 @@ func connectorPresentedToolName(name string) string {
 	return "t_" + hex.EncodeToString(sum[:8])
 }
 
-func connectorOriginalAllowedTool(allowed []string, presented string) (string, bool) {
-	for _, name := range allowed {
+func connectorOriginalTool(names []string, presented string) (string, bool) {
+	for _, name := range names {
 		if connectorPresentedToolName(name) == presented {
 			return name, true
 		}
