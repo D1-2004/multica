@@ -132,3 +132,35 @@ func TestDispatchByEventKey(t *testing.T) {
 		t.Fatalf("dispatched = %v", got)
 	}
 }
+
+// A stream authenticates and dispatches as its account's current agent: the
+// agent it was dialled for may have stopped needing it.
+func TestStreamsFollowTheAccountsCurrentAgent(t *testing.T) {
+	first := dwsclient.Identity{AgentID: "agent-1", UID: "42", OrgID: "org-1"}
+	second := dwsclient.Identity{AgentID: "agent-2", UID: "42", OrgID: "org-1"}
+	listed := []dwsclient.Identity{first}
+	s := testSource(t, []Consumer{{EventKey: dws.EventCardAction,
+		Identities: func(context.Context) ([]dwsclient.Identity, error) { return listed, nil }}}, true)
+	targets, err := s.targets(context.Background())
+	if err != nil || len(targets) != 1 {
+		t.Fatalf("targets = %v, %v", targets, err)
+	}
+	key := targets[0].Key
+	if got := s.identity(key, first); got != first {
+		t.Fatalf("identity = %+v", got)
+	}
+	// The first agent's decision resolved; another agent of the account
+	// still needs the stream, which keeps its key and fingerprint.
+	listed = []dwsclient.Identity{second}
+	again, _ := s.targets(context.Background())
+	if len(again) != 1 || again[0].Key != key || again[0].Fingerprint != targets[0].Fingerprint {
+		t.Fatalf("the stream must not restart for a new agent: %v", again)
+	}
+	if got := s.identity(key, first); got != second {
+		t.Fatalf("identity = %+v, want the account's current agent", got)
+	}
+	// A key the latest sweep did not list keeps the dialled identity.
+	if got := s.identity("unknown", first); got != first {
+		t.Fatalf("identity = %+v", got)
+	}
+}

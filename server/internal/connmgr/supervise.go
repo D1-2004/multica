@@ -27,21 +27,14 @@ var (
 // Claim → Dial → Run (READY gating, renewal, drain) → release → back off.
 // One process runs at most one contender per key; the coordinator admits the
 // global READY target across every process. It returns when ctx is cancelled
-// or once a drain request has been honoured.
-func (m *Manager) supervise(ctx context.Context, target Target, gen uint64, drain <-chan struct{}, done chan<- struct{}) {
+// or once a drain request (shutdown or shed) has been honoured.
+func (m *Manager) supervise(ctx context.Context, target Target, e *entry) {
 	defer m.wg.Done()
-	defer close(done)
-	defer func() {
-		// Only clear the map entry if it still belongs to us: a fingerprint
-		// restart may already have installed a successor under this key.
-		m.mu.Lock()
-		if e, ok := m.entries[target.Key]; ok && e.gen == gen {
-			delete(m.entries, target.Key)
-		}
-		m.mu.Unlock()
-	}()
+	defer close(e.done)
+	defer m.finishEntry(e)
 
-	token := leaseToken(m.nodeID, gen)
+	drain := e.drain
+	token := leaseToken(m.nodeID, e.gen)
 	log := m.log.With(
 		"key", target.Key,
 		"node_id", m.nodeID,
@@ -49,6 +42,13 @@ func (m *Manager) supervise(ctx context.Context, target Target, gen uint64, drai
 	)
 	backoff := m.cfg.MinBackoff
 	var unmet targetUnmetLimiter
+
+	// Shed cooldown: do not contend for a key this replica just handed over.
+	if !e.notBefore.IsZero() {
+		if wait := e.notBefore.Sub(m.cfg.Now()); wait > 0 && sleepWithDrain(ctx, drain, wait) {
+			return
+		}
+	}
 
 	for {
 		if ctx.Err() != nil || channelClosed(drain) {
@@ -84,7 +84,12 @@ func (m *Manager) supervise(ctx context.Context, target Target, gen uint64, drai
 			"state", string(lease.State),
 		}, snapshotAttrs(snapshot)...)...)
 
-		drainRequested, uptime := m.runAttempt(ctx, target, lease, snapshot, drain, log, &unmet)
+		drainRequested, uptime, stopReason := m.runAttempt(ctx, target, e, lease, snapshot, log, &unmet)
+		if drainRequested && stopReason == "handoff_ready" {
+			m.mu.Lock()
+			e.handedOff = true
+			m.mu.Unlock()
+		}
 		if ctx.Err() != nil || drainRequested || channelClosed(drain) {
 			return
 		}
@@ -103,6 +108,7 @@ func (m *Manager) supervise(ctx context.Context, target Target, gen uint64, drai
 // attempt is one claimed member from Claim to Release.
 type attempt struct {
 	m         *Manager
+	entry     *entry
 	log       *slog.Logger
 	unmet     *targetUnmetLimiter
 	runCancel context.CancelFunc
@@ -115,29 +121,42 @@ type attempt struct {
 	wasReady    bool
 	readyFailed bool
 	finished    bool
+	// shedDeferred records that a shed met another member's handoff and
+	// waits for it (logged once).
+	shedDeferred bool
+}
+
+// shedding reports whether this attempt's drain request is a rebalancing
+// shed rather than a shutdown. It takes Manager.mu under a.mu, the only
+// order in which the two are ever held together.
+func (a *attempt) shedding() bool {
+	a.m.mu.Lock()
+	defer a.m.mu.Unlock()
+	return a.entry.shed && !a.m.stopped
 }
 
 // runAttempt runs one claimed member to completion and releases it. It reports
-// whether a drain was requested and how long the attempt lived.
+// whether a drain was requested, how long the attempt lived, and why it
+// stopped.
 func (m *Manager) runAttempt(
 	ctx context.Context,
 	target Target,
+	e *entry,
 	lease Lease,
 	snapshot Snapshot,
-	drain <-chan struct{},
 	log *slog.Logger,
 	unmet *targetUnmetLimiter,
-) (bool, time.Duration) {
+) (bool, time.Duration, string) {
 	startedAt := m.cfg.Now()
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
-	a := &attempt{m: m, log: log, unmet: unmet, runCancel: runCancel, lease: lease}
+	a := &attempt{m: m, entry: e, log: log, unmet: unmet, runCancel: runCancel, lease: lease}
 	a.account(StateConnecting)
 	a.deadline = m.cfg.Now().Add(m.remaining(snapshot))
 	a.watchdog = newLeaseWatchdog(runCancel, m.cfg.Now, a.deadline)
 
-	stopReason, runErr, drainRequested := a.run(ctx, runCtx, target, drain)
+	stopReason, runErr, drainRequested := a.run(ctx, runCtx, target, e.drain)
 
 	a.watchdog.Stop()
 	runCancel()
@@ -152,7 +171,7 @@ func (m *Manager) runAttempt(
 		"ready", wasReady,
 		"error", runErr,
 	)
-	return drainRequested, uptime
+	return drainRequested, uptime, stopReason
 }
 
 // run dials and supervises the Conn until a stop reason is reached, then
@@ -291,6 +310,15 @@ func (a *attempt) tick(runCtx context.Context, drainRequested bool) string {
 			if snapshot.ReadyTargetMet() {
 				stopReason = "handoff_ready"
 			}
+		case errors.Is(err, ErrDrainInProgress) && a.shedding():
+			// A shed is optional: keep serving and begin the handoff again on
+			// a later renewal, once the other member's handoff has finished.
+			if !a.shedDeferred {
+				a.shedDeferred = true
+				a.log.Info(m.cfg.Name+" handoff already in progress; shed deferred",
+					"event", m.event("shed_deferred"),
+				)
+			}
 		case errors.Is(err, ErrDrainInProgress):
 			// Another old member already owns the one handoff credit. Closing
 			// this READY member lets replacements fill the non-draining slots
@@ -365,6 +393,7 @@ func (a *attempt) account(next State) {
 		next = ""
 	}
 	a.counted = next
+	a.entry.ready.Store(next == StateReady)
 }
 
 func (a *attempt) isReady() bool {
@@ -419,13 +448,15 @@ func (m *Manager) release(lease Lease, log *slog.Logger) {
 }
 
 // waitClaimTurn delays a claim for balancing: ClaimDelayStep per member this
-// replica holds (CONNECTING or READY, capped at ClaimDelayMax) plus a random
-// offset in [0, ClaimDelayStep). The held count is re-read whenever the wait
-// runs out, so a sibling contender's win during the wait pushes this claim
-// back by another step; replicas that start together therefore take turns
-// instead of one replica claiming every free key in the same instant. The
-// wait is measured by elapsed timers, not the injectable clock. It returns
-// true when the contender must stop.
+// replica holds (CONNECTING or READY) beyond the least-loaded live peer,
+// capped at ClaimDelayMax, plus a random offset in [0, ClaimDelayStep). The
+// held count is re-read whenever the wait runs out, so a sibling contender's
+// win during the wait pushes this claim back by another step; replicas that
+// start together therefore take turns instead of one replica claiming every
+// free key in the same instant. The least-loaded replica waits only the
+// offset, so takeovers are not slowed. The wait is measured by elapsed
+// timers, not the injectable clock. It returns true when the contender must
+// stop.
 func (m *Manager) waitClaimTurn(ctx context.Context, drain <-chan struct{}) bool {
 	offset := randomDuration(m.cfg.ClaimDelayStep)
 	var waited time.Duration
@@ -443,7 +474,7 @@ func (m *Manager) waitClaimTurn(ctx context.Context, drain <-chan struct{}) bool
 }
 
 func (m *Manager) claimDelay() time.Duration {
-	held := m.connecting.Load() + m.ready.Load()
+	held := m.connecting.Load() + m.ready.Load() - m.minPeerHeld.Load()
 	if held <= 0 {
 		return 0
 	}

@@ -768,10 +768,15 @@ func main() {
 	// debounced run triggers and join any in-flight outbound replies
 	// (each bounded by ReplyTimeout) so a binding card / offline notice is
 	// not lost on shutdown.
-	if h.DWSEvents != nil && !h.DWSEvents.WaitWithTimeout(h.DWSEvents.ShutdownTimeout()) {
-		slog.Warn("DWS event streams did not exit within shutdown timeout; proceeding",
-			"timeout", h.DWSEvents.ShutdownTimeout().String())
-	}
+	// Joined alongside the channel supervisor below, within one budget.
+	dwsExit := make(chan struct{})
+	go func() {
+		defer close(dwsExit)
+		if h.DWSEvents != nil && !h.DWSEvents.WaitWithTimeout(h.DWSEvents.ShutdownTimeout()) {
+			slog.Warn("DWS event streams did not exit within shutdown timeout; proceeding",
+				"timeout", h.DWSEvents.ShutdownTimeout().String())
+		}
+	}()
 	if h.ChannelSupervisor != nil {
 		if !h.ChannelSupervisor.WaitWithTimeout(h.ChannelSupervisor.ShutdownTimeout()) {
 			slog.Warn("channel supervisor: connections did not exit within shutdown timeout; proceeding",
@@ -786,6 +791,7 @@ func main() {
 			drainCancel()
 		}
 	}
+	<-dwsExit
 
 	if metricsServer != nil {
 		metricsShutdownCtx, metricsShutdownCancel := context.WithTimeout(context.Background(), 3*time.Second)

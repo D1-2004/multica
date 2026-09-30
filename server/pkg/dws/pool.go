@@ -167,6 +167,10 @@ func (p *Pool) fromStore(ctx context.Context, key string) *Client {
 	if err != nil || !ok {
 		return nil
 	}
+	if tok.MintedAt.IsZero() {
+		// Stored before lineages were dated: count from now.
+		tok.MintedAt = p.Config.now()
+	}
 	cfg := p.Config
 	cfg.SkipVerify = true
 	c, err := NewWithToken(ctx, cfg, tok)

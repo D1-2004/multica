@@ -27,6 +27,8 @@ type memCoordinator struct {
 	// extraReady simulates READY members held by other replicas in every
 	// group; it counts toward capacity and toward Snapshot.Ready.
 	extraReady int
+	// extraReadyGroup does the same for single groups.
+	extraReadyGroup map[string]int
 
 	claims       int
 	claimGroups  []string
@@ -47,7 +49,7 @@ type memCoordinator struct {
 }
 
 func newMemCoordinator(target int, ttl time.Duration) *memCoordinator {
-	return &memCoordinator{target: target, ttl: ttl, members: make(map[string]map[string]State)}
+	return &memCoordinator{target: target, ttl: ttl, members: make(map[string]map[string]State), extraReadyGroup: make(map[string]int)}
 }
 
 func (f *memCoordinator) snapshotLocked(group string, state State) Snapshot {
@@ -63,8 +65,8 @@ func (f *memCoordinator) snapshotLocked(group string, state State) Snapshot {
 			s.Draining++
 		}
 	}
-	s.Total += f.extraReady
-	s.Ready += f.extraReady
+	s.Total += f.extraReady + f.extraReadyGroup[group]
+	s.Ready += f.extraReady + f.extraReadyGroup[group]
 	now := time.Now()
 	s.ServerNow = now
 	s.ExpiresAt = now.Add(f.ttl)

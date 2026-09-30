@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -60,6 +61,9 @@ type Config struct {
 	// Enabled gates the source live (runtime.use_dws_for_tag); off, it holds
 	// no streams.
 	Enabled func() bool
+	// Tune adjusts connection management timings (tests, operations); nil
+	// keeps connmgr's defaults.
+	Tune func(*connmgr.Config, *connmgr.RedisCoordinatorConfig)
 }
 
 // Source owns this replica's share of the event streams.
@@ -68,6 +72,24 @@ type Source struct {
 	prefix  string
 	store   *redisstore.Store
 	manager *connmgr.Manager
+
+	mu sync.Mutex
+	// current is each stream key's identity as of the latest sweep. A stream
+	// outlives the agent it was dialled for (the account's oldest decision
+	// may resolve while another agent still needs it), so it authenticates
+	// and dispatches as the account's current agent.
+	current map[string]dwsclient.Identity
+}
+
+// identity returns the current identity of stream key, or dialled when the
+// latest sweep did not list it.
+func (s *Source) identity(key string, dialled dwsclient.Identity) dwsclient.Identity {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id, ok := s.current[key]; ok {
+		return id
+	}
+	return dialled
 }
 
 const (
@@ -83,19 +105,25 @@ func New(cfg Config) (*Source, error) {
 	sum := sha256.Sum256([]byte(cfg.Deployment))
 	deployment := hex.EncodeToString(sum[:6])
 	s := &Source{cfg: cfg, prefix: "multica:dws-events:v1:" + deployment + ":"}
+	var err error
 	s.store = &redisstore.Store{Redis: cfg.Redis, Prefix: s.prefix + "state:"}
-	coordinator, err := connmgr.NewRedisCoordinator(cfg.Redis, connmgr.RedisCoordinatorConfig{
-		KeyPrefix: s.prefix + "conn:", TargetReady: 1,
-	})
+	coordinatorCfg := connmgr.RedisCoordinatorConfig{KeyPrefix: s.prefix + "conn:", TargetReady: 1}
+	managerCfg := connmgr.Config{Name: "dws_event_stream", List: s.targets, Dial: s.dial}
+	// Membership lets replicas shed streams above their fair share, so the
+	// streams spread again after a rolling deploy.
+	managerCfg.Peers, err = connmgr.NewRedisPeers(cfg.Redis, connmgr.RedisPeersConfig{KeyPrefix: s.prefix + "conn:", Name: managerCfg.Name})
 	if err != nil {
 		return nil, err
 	}
-	s.manager, err = connmgr.New(connmgr.Config{
-		Name:        "dws_event_stream",
-		List:        s.targets,
-		Dial:        s.dial,
-		Coordinator: coordinator,
-	})
+	if cfg.Tune != nil {
+		cfg.Tune(&managerCfg, &coordinatorCfg)
+	}
+	coordinator, err := connmgr.NewRedisCoordinator(cfg.Redis, coordinatorCfg)
+	if err != nil {
+		return nil, err
+	}
+	managerCfg.Coordinator = coordinator
+	s.manager, err = connmgr.New(managerCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -125,9 +153,11 @@ func (s *Source) Ready(ctx context.Context, identity dwsclient.Identity) bool {
 
 func (s *Source) readyKey(key string) string { return s.prefix + "ready:" + key }
 
-// targetKey names an identity without its account ids.
+// targetKey names an identity's stream without its account ids. It is the
+// DingTalk account (user, organization) alone: the event stream belongs to
+// the account, so a different agent carrying the same account shares it.
 func targetKey(id dwsclient.Identity) string {
-	sum := sha256.Sum256([]byte(id.AgentID + "\x00" + id.UID + "\x00" + id.OrgID))
+	sum := sha256.Sum256([]byte(id.UID + "\x00" + id.OrgID))
 	return hex.EncodeToString(sum[:16])
 }
 
@@ -165,10 +195,15 @@ func (s *Source) targets(ctx context.Context) ([]connmgr.Target, error) {
 		}
 	}
 	out := make([]connmgr.Target, 0, len(wanted))
+	current := make(map[string]dwsclient.Identity, len(wanted))
 	for key, sub := range wanted {
 		sort.Strings(sub.EventKeys)
 		out = append(out, connmgr.Target{Key: key, Fingerprint: strings.Join(sub.EventKeys, ","), Value: *sub})
+		current[key] = sub.Identity
 	}
+	s.mu.Lock()
+	s.current = current
+	s.mu.Unlock()
 	return out, nil
 }
 
@@ -190,6 +225,17 @@ func (s *Source) dial(t connmgr.Target) (connmgr.Conn, error) {
 }
 
 var errDisconnected = errors.New("dwseventsource: event stream failed or disconnected")
+
+// claimMarker sets the ready marker when it is free or already this
+// stream's: during a handoff the draining stream and its replacement never
+// overwrite each other's marker.
+var claimMarker = redis.NewScript(`
+local v = redis.call('GET', KEYS[1])
+if (not v) or v == ARGV[1] then
+  redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])
+  return 1
+end
+return 0`)
 
 // releaseMarker deletes the ready marker only while it is this stream's, so
 // a stream ending after a handoff never clears its replacement's marker.
@@ -218,7 +264,7 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 	var connected, failed, marked atomic.Bool
 	marker := newMarkerValue()
 	markerDone := make(chan struct{})
-	defer close(markerDone)
+	var markerLoop sync.WaitGroup
 	status := &statusStore{Store: s.store, onState: func(state dwsevents.State) {
 		switch {
 		case state == dwsevents.StateConnected && connected.CompareAndSwap(false, true):
@@ -227,7 +273,11 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 				return
 			}
 			marked.Store(true)
-			go st.keepReady(ctx, marker, markerDone)
+			markerLoop.Add(1)
+			go func() {
+				defer markerLoop.Done()
+				st.keepReady(ctx, marker, markerDone)
+			}()
 		case state == dwsevents.StateReconnecting:
 			// The Listener would retry by itself; connmgr decides instead.
 			failed.Store(true)
@@ -235,6 +285,9 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 		}
 	}}
 	defer func() {
+		// Stop refreshing first, so no refresh in flight brings it back.
+		close(markerDone)
+		markerLoop.Wait()
 		if marked.Load() {
 			rctx, rcancel := context.WithTimeout(context.Background(), 2*time.Second)
 			_ = releaseMarker.Run(rctx, s.cfg.Redis, []string{s.readyKey(st.key)}, marker).Err()
@@ -248,13 +301,14 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 	listener := &dwsevents.Listener{
 		Identity: st.key,
 		Client: func(ctx context.Context) (*dws.Client, error) {
-			return s.cfg.Sessions.Client(ctx, id, func(ctx context.Context) (dwsclient.Credential, error) {
-				return s.cfg.Mint(ctx, id)
+			current := s.identity(st.key, id)
+			return s.cfg.Sessions.Client(ctx, current, func(ctx context.Context) (dwsclient.Credential, error) {
+				return s.cfg.Mint(ctx, current)
 			})
 		},
 		Subscriptions: specs,
 		Handle: func(ctx context.Context, ev dwsevents.Event) error {
-			return s.dispatch(ctx, id, ev)
+			return s.dispatch(ctx, s.identity(st.key, id), ev)
 		},
 		Store: status,
 	}
@@ -273,7 +327,7 @@ func (st *stream) keepReady(ctx context.Context, marker string, done <-chan stru
 	t := time.NewTicker(readyRefresh)
 	defer t.Stop()
 	for {
-		_ = st.s.cfg.Redis.Set(ctx, st.s.readyKey(st.key), marker, readyTTL).Err()
+		_ = claimMarker.Run(ctx, st.s.cfg.Redis, []string{st.s.readyKey(st.key)}, marker, readyTTL.Milliseconds()).Err()
 		select {
 		case <-ctx.Done():
 			return
