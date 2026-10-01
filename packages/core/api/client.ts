@@ -234,6 +234,7 @@ import type {
   BindDingTalkMessageRouteManuallyRequest,
   DingTalkNativeSubscriptionResponse,
   DingTalkNativeSubscriptionStatus,
+  SetDingTalkNativeDEAPLinkRequest,
   AgentIdentityGitHubStatusResponse,
   BeginAgentIdentityGitHubOAuthResponse,
   DisconnectAgentIdentityGitHubConnectionResponse,
@@ -6492,6 +6493,33 @@ export class ApiClient {
         endpoint:
           "GET /api/workspaces/:id/dingtalk/account-bindings/:agentId/native-subscription",
       },
+    );
+  }
+
+  // Operator-only: names the DEAP digital employee and supervisor through
+  // whom the identity's native event credential is issued. Callers re-read
+  // the native subscription status for the result.
+  async setDingTalkNativeDEAPLink(
+    workspaceId: string,
+    agentId: string,
+    request: SetDingTalkNativeDEAPLinkRequest,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}/native-subscription/deap-link`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          deap_agent_uuid: request.deapAgentUuid,
+          supervisor_uid: request.supervisorUid,
+        }),
+      },
+    );
+  }
+
+  async removeDingTalkNativeDEAPLink(workspaceId: string, agentId: string): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}/native-subscription/deap-link`,
+      { method: "DELETE" },
     );
   }
 

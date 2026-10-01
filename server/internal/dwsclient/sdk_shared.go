@@ -22,6 +22,10 @@ type Identity struct {
 	AgentID string
 	UID     string
 	OrgID   string
+	// CredentialVersion names how the identity's credential is minted when
+	// that can change (a native subscription's DEAP link); a new version is
+	// minted afresh instead of reusing the shared token. Empty is the usual.
+	CredentialVersion string
 }
 
 // Shared opens directories on identities' shared SDK clients. With the SDK
@@ -84,7 +88,7 @@ func (s Shared) Open(ctx context.Context, id Identity, mint func(context.Context
 	if err != nil {
 		return "", nil, true, err
 	}
-	identityKey := mcp + "\x00" + id.AgentID + "\x00" + id.UID + "\x00" + id.OrgID
+	identityKey := s.identityKey(mcp, id)
 	started := time.Now()
 	var mintErr error
 	minted := false
@@ -98,7 +102,8 @@ func (s Shared) Open(ctx context.Context, id Identity, mint func(context.Context
 			mintErr = err
 			return dws.AuthCode{}, err
 		}
-		return dws.AuthCode{Code: credential.AuthCode, ClientID: credential.ClientID}, nil
+		return dws.AuthCode{Code: credential.AuthCode, ClientID: credential.ClientID,
+			ExpectUserID: credential.ExpectUserID, ExpectCorpID: credential.ExpectCorpID}, nil
 	})
 	if err != nil {
 		if mintErr != nil {
@@ -132,6 +137,19 @@ func (s Shared) Open(ctx context.Context, id Identity, mint func(context.Context
 	return dir, cleanup, true, nil
 }
 
+// identityKey names id's credentials in the pool and the shared token store.
+// The usual scope keeps the key it always had.
+func (s Shared) identityKey(mcp string, id Identity) string {
+	key := mcp + "\x00" + id.AgentID + "\x00" + id.UID + "\x00" + id.OrgID
+	if scope := strings.TrimSpace(s.CLI.CredentialScope); scope != "" {
+		key += "\x00" + scope
+	}
+	if version := strings.TrimSpace(id.CredentialVersion); version != "" {
+		key += "\x00" + version
+	}
+	return key
+}
+
 // Client returns id's shared SDK client, for long-lived work such as an
 // event connection; mint runs only when no usable token exists. It does
 // not depend on the switch: callers that hold a connection decide that.
@@ -147,7 +165,7 @@ func (s Shared) Client(ctx context.Context, id Identity, mint func(context.Conte
 		return nil, err
 	}
 	var mintErr error
-	client, err := s.pool(mcp, gateway).ClientWith(ctx, mcp+"\x00"+id.AgentID+"\x00"+id.UID+"\x00"+id.OrgID,
+	client, err := s.pool(mcp, gateway).ClientWith(ctx, s.identityKey(mcp, id),
 		func(ctx context.Context) (dws.AuthCode, error) {
 			credential, err := mint(ctx)
 			if err == nil && credential.UID != id.UID {
@@ -157,7 +175,8 @@ func (s Shared) Client(ctx context.Context, id Identity, mint func(context.Conte
 				mintErr = err
 				return dws.AuthCode{}, err
 			}
-			return dws.AuthCode{Code: credential.AuthCode, ClientID: credential.ClientID}, nil
+			return dws.AuthCode{Code: credential.AuthCode, ClientID: credential.ClientID,
+				ExpectUserID: credential.ExpectUserID, ExpectCorpID: credential.ExpectCorpID}, nil
 		})
 	if err != nil {
 		if mintErr != nil {

@@ -56,6 +56,10 @@ type Credential struct {
 	UID      string
 	ClientID string
 	AuthCode string
+	// ExpectUserID and ExpectCorpID, when set, are checked against the
+	// exchanged token's identity (a code another party issued).
+	ExpectUserID string
+	ExpectCorpID string
 }
 
 type ListRequest struct {
@@ -73,6 +77,11 @@ type CLI struct {
 	// StreamTicketMode is the SDK's personal event stream ticket mode ("" or
 	// "custom"); only event sources open streams.
 	StreamTicketMode string
+	// CredentialScope keeps an identity's credentials minted another way
+	// (native subscriptions exchange theirs through DEAP) apart from its
+	// usual ones, in this process and in the shared token store. Empty is
+	// the usual scope.
+	CredentialScope string
 }
 
 // IsCrossOrgPermissionDenied matches the server's typed scope rejection only.

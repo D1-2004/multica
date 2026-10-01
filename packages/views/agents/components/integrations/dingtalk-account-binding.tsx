@@ -16,6 +16,7 @@ import type {
   DingTalkMessageRouteOutcome,
   DingTalkProcessingSurface,
   DingTalkNativeStream,
+  DingTalkNativeDEAPLink,
 } from "@multica/core/types";
 import { errorCode } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -27,6 +28,8 @@ import {
   useBindDingTalkMessageRouteManually,
   useDeleteDingTalkAccountBinding,
   useSetDingTalkNativeSubscription,
+  useSetDingTalkNativeDEAPLink,
+  useRemoveDingTalkNativeDEAPLink,
   dingtalkNativeSubscriptionStatusOptions,
   useUpdateDingTalkAccountBindingSurface,
 } from "@multica/core/dingtalk-account-bindings";
@@ -603,6 +606,156 @@ function NativeStreamIndicator({ stream }: { stream: DingTalkNativeStream | unde
   );
 }
 
+const DEAP_AGENT_UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+// A digital employee's native event credential is issued by DEAP through its
+// supervisor. Everyone sees the link; only deployment operators edit it.
+function NativeDEAPLink({ agentId, link, editable }: {
+  agentId: string;
+  link: DingTalkNativeDEAPLink | null;
+  editable: boolean;
+}) {
+  const { t } = useT("agents");
+  const wsId = useWorkspaceId();
+  const setLink = useSetDingTalkNativeDEAPLink(wsId);
+  const removeLink = useRemoveDingTalkNativeDEAPLink(wsId);
+  const [employee, setEmployee] = useState(link?.deapAgentUuid ?? "");
+  const [supervisor, setSupervisor] = useState(link?.supervisorUid ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const trimmedEmployee = employee.trim();
+  const trimmedSupervisor = supervisor.trim();
+  const employeeInvalid = trimmedEmployee !== "" && !DEAP_AGENT_UUID.test(trimmedEmployee);
+  const supervisorInvalid = trimmedSupervisor !== "" && !DINGTALK_DECIMAL_ID.test(trimmedSupervisor);
+  const valid = DEAP_AGENT_UUID.test(trimmedEmployee) && DINGTALK_DECIMAL_ID.test(trimmedSupervisor);
+  const pending = setLink.isPending || removeLink.isPending;
+  const unchanged = link !== null && trimmedEmployee === link.deapAgentUuid && trimmedSupervisor === link.supervisorUid;
+  const employeeFieldId = `dingtalk-deap-employee-${agentId}`;
+  const supervisorFieldId = `dingtalk-deap-supervisor-${agentId}`;
+
+  function failure(cause: unknown): string {
+    switch (errorCode(cause)) {
+      case "operator_only":
+        return t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_operator_only);
+      case "invalid_deap_link":
+        return t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_invalid);
+      case "native_subscription_requires_identity":
+        return t(($) => $.tab_body.integrations.dingtalk_identity_native_subscription_requires_identity);
+      default:
+        return t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_failed);
+    }
+  }
+
+  async function save() {
+    if (!valid || pending) return;
+    setError(null);
+    try {
+      await setLink.mutateAsync({ agentId, deapAgentUuid: trimmedEmployee, supervisorUid: trimmedSupervisor });
+    } catch (cause) {
+      setError(failure(cause));
+    }
+  }
+
+  async function remove() {
+    if (pending) return;
+    setError(null);
+    try {
+      await removeLink.mutateAsync(agentId);
+    } catch (cause) {
+      setError(failure(cause));
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded-md bg-muted/30 p-3" data-testid="dingtalk-native-deap-link">
+      <div className="space-y-1">
+        <h4 className="text-caption font-medium">
+          {t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_title)}
+        </h4>
+        <p className="text-caption leading-relaxed text-muted-foreground">
+          {t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_description)}
+        </p>
+      </div>
+      {editable ? (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="min-w-0 space-y-1.5">
+              <Label htmlFor={employeeFieldId} className="text-caption">
+                {t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_employee)}
+              </Label>
+              <Input
+                id={employeeFieldId}
+                autoComplete="off"
+                spellCheck={false}
+                value={employee}
+                onChange={(event) => setEmployee(event.target.value)}
+                disabled={pending}
+                aria-invalid={employeeInvalid || undefined}
+                aria-describedby={employeeInvalid ? `${employeeFieldId}-error` : undefined}
+                className="font-mono"
+              />
+              {employeeInvalid ? (
+                <p id={`${employeeFieldId}-error`} className="text-caption text-destructive">
+                  {t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_invalid_employee)}
+                </p>
+              ) : null}
+            </div>
+            <div className="min-w-0 space-y-1.5">
+              <Label htmlFor={supervisorFieldId} className="text-caption">
+                {t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_supervisor)}
+              </Label>
+              <Input
+                id={supervisorFieldId}
+                inputMode="numeric"
+                autoComplete="off"
+                value={supervisor}
+                onChange={(event) => setSupervisor(event.target.value)}
+                disabled={pending}
+                aria-invalid={supervisorInvalid || undefined}
+                aria-describedby={supervisorInvalid ? `${supervisorFieldId}-error` : undefined}
+                className="font-mono"
+              />
+              {supervisorInvalid ? (
+                <p id={`${supervisorFieldId}-error`} className="text-caption text-destructive">
+                  {t(($) => $.tab_body.integrations.dingtalk_account_manual_invalid_id)}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {link ? (
+              <Button variant="outline" size="sm" onClick={() => void remove()} disabled={pending}>
+                {t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_remove)}
+              </Button>
+            ) : null}
+            <Button size="sm" onClick={() => void save()} disabled={!valid || unchanged || pending}>
+              {setLink.isPending
+                ? t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_saving)
+                : t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_save)}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <div className="space-y-1 text-caption text-muted-foreground">
+          <p className="break-all">
+            {link
+              ? t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_current, {
+                employee: link.deapAgentUuid,
+                supervisor: link.supervisorUid,
+              })
+              : t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_none)}
+          </p>
+          <p>{t(($) => $.tab_body.integrations.dingtalk_identity_deap_link_operator_only)}</p>
+        </div>
+      )}
+      {error ? (
+        <p className="text-caption text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 // Operator-only form that binds the digital-employee message route by DingTalk
 // corpId/UID instead of the QR scan. The server re-checks operator access.
 function ManualMessageBinding({
@@ -826,8 +979,10 @@ function DingTalkBindingModeCard({
   const nativeSubscriptionHintId = `${nativeSubscriptionSwitchId}-hint`;
   const nativeSubscriptionBlockedId = `${nativeSubscriptionSwitchId}-blocked`;
   const nativeStreamWatched = showNativeSubscription && nativeSubscriptionOn;
+  // Read for a bound identity (its DEAP link shows before native is on);
+  // polled only while the stream is watched.
   const nativeStatus = useQuery(
-    dingtalkNativeSubscriptionStatusOptions(wsId, agentId, nativeStreamWatched),
+    dingtalkNativeSubscriptionStatusOptions(wsId, agentId, showNativeSubscription, nativeStreamWatched),
   );
   const nativeStream = nativeStreamWatched ? nativeStatus.data?.stream : undefined;
 
@@ -1110,6 +1265,14 @@ function DingTalkBindingModeCard({
                   </p>
                 ) : null}
               </div>
+            ) : null}
+            {showNativeSubscription && nativeStatus.data ? (
+              <NativeDEAPLink
+                key={`${nativeStatus.data.deapLink?.deapAgentUuid ?? ""}:${nativeStatus.data.deapLink?.supervisorUid ?? ""}`}
+                agentId={agentId}
+                link={nativeStatus.data.deapLink}
+                editable={nativeStatus.data.deapLinkEditable}
+              />
             ) : null}
           </div>
         ) : (

@@ -238,43 +238,68 @@ func (h *Handler) GetDWSNativeSubscription(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	off := map[string]any{"native_subscription": false, "stream": nativeStreamView{State: nativeStreamOff}}
+	// The DEAP link is shown to everyone and editable by deployment
+	// operators only.
+	response := map[string]any{
+		"native_subscription": false,
+		"stream":              nativeStreamView{State: nativeStreamOff},
+		"deap_link":           nil,
+		"deap_link_editable":  h.requestIsOperator(r),
+	}
 	store := h.nativeSubscriptions()
 	if store == nil {
-		writeJSON(w, http.StatusOK, off)
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	ctx := r.Context()
-	row, err := store.GetAgentDWSNativeSubscription(ctx, db.GetAgentDWSNativeSubscriptionParams{
-		WorkspaceID: workspaceID, AgentID: agentID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeJSON(w, http.StatusOK, off)
-		return
-	}
-	if err != nil {
-		writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "native_subscription_failed", "failed to load native subscription")
-		return
-	}
 	identity, err := store.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
 		WorkspaceID: workspaceID, AgentID: agentID,
 	})
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (identity.DwsUid != row.DwsUid || identity.OrgID != row.OrgID)) {
-		// As the bindings list: a rebound identity is not subscribed until
-		// enabled again.
-		writeJSON(w, http.StatusOK, off)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	if err != nil {
 		writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "native_subscription_failed", "failed to load the execution identity")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"native_subscription": true,
-		"stream": h.nativeStreamView(ctx, dwsclient.Identity{
-			AgentID: util.UUIDToString(agentID), UID: row.DwsUid, OrgID: row.OrgID,
-		}),
+	link, err := h.nativeDEAPLinkFor(ctx, workspaceID, agentID, identity)
+	if err != nil {
+		writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "native_subscription_failed", "failed to load the DEAP link")
+		return
+	}
+	if link != nil {
+		response["deap_link"] = link
+	}
+	row, err := store.GetAgentDWSNativeSubscription(ctx, db.GetAgentDWSNativeSubscriptionParams{
+		WorkspaceID: workspaceID, AgentID: agentID,
 	})
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (identity.DwsUid != row.DwsUid || identity.OrgID != row.OrgID)) {
+		// As the bindings list: a rebound identity is not subscribed until
+		// enabled again.
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	if err != nil {
+		writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "native_subscription_failed", "failed to load native subscription")
+		return
+	}
+	response["native_subscription"] = true
+	response["stream"] = h.nativeStreamView(ctx, dwsclient.Identity{
+		AgentID: util.UUIDToString(agentID), UID: row.DwsUid, OrgID: row.OrgID,
+	})
+	writeJSON(w, http.StatusOK, response)
+}
+
+// requestIsOperator reports whether the request's human actor is a
+// deployment operator.
+func (h *Handler) requestIsOperator(r *http.Request) bool {
+	userID := requestUserID(r)
+	if userID == "" {
+		return false
+	}
+	actorID, err := util.ParseUUID(userID)
+	return err == nil && h.isAgentA2AOperator(r, actorID)
 }
 
 // nativeStreamView reads identity's stream across replicas: the ready marker
@@ -520,6 +545,14 @@ func (h *Handler) clearNativeSubscription(ctx context.Context, workspaceID, agen
 		slog.Warn("native subscription cleanup failed", "event", "dws_native_subscription_cleanup_failed",
 			"workspace_id", util.UUIDToString(workspaceID), "agent_id", util.UUIDToString(agentID), "error", err)
 		return err
+	}
+	// The DEAP link goes with the identity it was made for.
+	if links := h.nativeDEAPLinks(); links != nil {
+		if err := links.DeleteDWSNativeDEAPLink(ctx, db.DeleteDWSNativeDEAPLinkParams{WorkspaceID: workspaceID, AgentID: agentID}); err != nil {
+			slog.Warn("native DEAP link cleanup failed", "event", "dws_native_subscription_cleanup_failed",
+				"workspace_id", util.UUIDToString(workspaceID), "agent_id", util.UUIDToString(agentID), "error", err)
+			return err
+		}
 	}
 	h.nativeSubscriptionChanged(workspaceID, agentID, actor, false)
 	return nil

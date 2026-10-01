@@ -417,6 +417,8 @@ type Handler struct {
 	dingTalkAccountBindingMetadata       dingTalkAccountBindingMetadataStore
 	dingTalkIdentityReuse                dingTalkIdentityReuseStore
 	dwsNativeSubscriptions               dwsNativeSubscriptionStore
+	dwsNativeDEAPLinks                   nativeDEAPLinkStore
+	nativeDEAPSupervisor                 deapSupervisorOpener
 	dwsNativeDispatch                    nativeDispatchStore
 	dwsNativeOwnership                   nativeOwnershipStore
 	nativeSourceActive                   func() bool

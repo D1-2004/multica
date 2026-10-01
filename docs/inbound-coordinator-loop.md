@@ -287,6 +287,14 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 **只用托管回复。** 原生命令恒带 `responsePolicy.mode=multica_coordinator`，资格与 Router 策略同步相同：入站判断与钉钉回复开关都开、策略 revision≥1、运行时具备 `dws_message_policy_v1`。开启原生订阅时校验不满足返回 409 `native_subscription_requires_managed_response`。回调属于服务端自己的派发任务 `dwsn-<hash>`，完成目标是 `agentmessagerouter.NativeTargetIdentity()`（与 Router 目标同形，outbox 原样路由）；有线请求不得使用该命名空间。回复语义与托管数字员工一致：冻结触发消息的 openMsgId，群聊引用回复并 @ 发信人，单聊同样引用回复。`response_route` 与等待说明冻结 `dws_environment=production`。原生完成 worker 只确认回调：托管出站已接手即完成，路由缺失且有话要说则死信；回执只关闭收集窗口，不调用 Router。
 
+**数字员工换票（DEAP 主管）。** 数字员工（DEAP）的 Agent Identity 凭证订阅时落在另一个主体上，收不到员工本人的任何消息（2026-10-01 实测：线上、预发网关都是零帧；普通账号「东翔测试」用同样的凭证能收到）。个人消息事件只投递给员工本人的主体，按 `filterSubId=<内部uid>_<组织>_11_<clientId>` 匹配。DEAP 能签发员工本人的 DWS auth code，但只签给员工的主管。所以原生订阅可以配一条 DEAP 关联（表 `agent_dws_native_deap_link`，只有部署运维可以 `PUT/DELETE …/native-subscription/deap-link`，其他人只读）：
+- 关联包含员工的 DEAP agentUuid 和主管 uid，组织取身份所在的组织。
+- 原生事件源换票时，先用我们的 Agent Identity 签发主管凭证，再调 DEAP MCP（`deap-dev`）：先用 `get_digital_employee_detail` 核对员工发布的 `profile.userId` 等于订阅身份，对不上就拒绝；再用 `get_dws_auth_code` 换出员工本人的 code。
+- 这个 code 只给事件流用。原生会话的凭证作用域是 `native-subscription`，与回复、历史、任务的凭证在本进程和 Redis 共享 token 中都互不相通；那些路径仍用智能体自己的 Agent Identity 凭证。
+- 关联改变后，身份的凭证版本（`dwsclient.Identity.CredentialVersion`，取关联的哈希）随之改变。事件流目标的指纹也跟着变，持有该流的副本会重新换票、订阅并连接。
+
+没有关联的身份照旧使用 Agent Identity 凭证。
+
 **连接指示灯。** 身份卡开关旁的指示灯读 `GET …/dingtalk/account-bindings/{agentId}/native-subscription`，开启期间每 10 秒轮询一次。返回的事件流状态如下：
 - `connected`：任一副本持有已连接的事件流（Redis ready 标记）。
 - `disconnected`：没有已连接的流，且该账号事件流最后上报的状态带错误或失败次数，同时附上最近错误（截断到 300 字符，应用密钥已脱敏）和本次断连以来的失败次数。每次重连都是新的 Listener；事件源按 `DownSince` 判断是否仍是同一次断连，把错误和计数带下去，所以重试期间不会在红灯和黄灯之间来回闪。

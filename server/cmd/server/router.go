@@ -954,16 +954,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// The stream is registered for the app the subscriptions name
 			// (the dws CLI's custom ticket mode).
 			native.CLI.StreamTicketMode = "custom"
-			identities := func(ctx context.Context) ([]dwsclient.Identity, error) {
-				rows, err := h.Queries.ListActiveDWSNativeSubscriptions(ctx)
-				ids := make([]dwsclient.Identity, 0, len(rows))
-				for _, row := range rows {
-					ids = append(ids, dwsclient.Identity{AgentID: util.UUIDToString(row.AgentID), UID: row.DwsUid, OrgID: row.OrgID})
-				}
-				return ids, err
-			}
+			// Event credentials of a digital employee come from DEAP through
+			// its supervisor (a DEAP link); they live in their own scope, so
+			// replies, history and tasks keep the agent's own credentials.
+			native.CLI.CredentialScope = handler.NativeCredentialScope
+			identities := h.NativeSubscriptionIdentities
 			nativeSource, err := dwseventsource.New(dwseventsource.Config{
-				Redis: rdb, Sessions: native, Mint: mint,
+				Redis: rdb, Sessions: native, Mint: h.NativeSubscriptionMint(mint, native),
 				// v2: subscriptions name the token's app; the namespace is new so
 				// no record of an earlier app-less subscription is reused.
 				Deployment: "native-v2:" + strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
@@ -2456,6 +2453,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/dingtalk/account-bindings/{agentId}/surface", h.UpdateDingTalkAccountBindingSurface)
 					r.Get("/dingtalk/account-bindings/{agentId}/native-subscription", h.GetDWSNativeSubscription)
 					r.Put("/dingtalk/account-bindings/{agentId}/native-subscription", h.SetDWSNativeSubscription)
+					r.With(handler.RequireHumanActor).Put("/dingtalk/account-bindings/{agentId}/native-subscription/deap-link", h.SetDWSNativeDEAPLink)
+					r.With(handler.RequireHumanActor).Delete("/dingtalk/account-bindings/{agentId}/native-subscription/deap-link", h.SetDWSNativeDEAPLink)
 					r.Post("/dingtalk/account-bindings/{agentId}/message-route/manual", h.BindDingTalkMessageRouteManually)
 					r.Delete("/dingtalk/account-bindings/{agentId}", h.UnbindDingTalkAccountBinding)
 					r.Get("/agent-identity/github/status", h.GetAgentIdentityGitHubStatus)

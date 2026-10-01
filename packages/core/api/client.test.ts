@@ -2131,12 +2131,51 @@ describe("ApiClient", () => {
         lastError: "dial: refused",
         failures: 2,
       },
+      deapLink: null,
+      deapLinkEditable: false,
     });
     const drifted = await client.getDingTalkNativeSubscriptionStatus("workspace-1", "agent-1");
     expect(drifted.stream.state).toBe("unknown");
     expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method ?? "GET"])).toEqual([
       ["https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/agent-1/native-subscription", "GET"],
       ["https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/agent-1/native-subscription", "GET"],
+    ]);
+  });
+
+  it("uses the native subscription DEAP link HTTP contract", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ deap_link: { deap_agent_uuid: "uuid", supervisor_uid: "6753994909" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ deap_link: null }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await client.setDingTalkNativeDEAPLink("workspace-1", "agent-1", {
+      deapAgentUuid: "de2a8cc1-413c-47f0-a79b-fede1b853847",
+      supervisorUid: "6753994909",
+    });
+    await client.removeDingTalkNativeDEAPLink("workspace-1", "agent-1");
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method, init?.body])).toEqual([
+      [
+        "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/agent-1/native-subscription/deap-link",
+        "PUT",
+        JSON.stringify({ deap_agent_uuid: "de2a8cc1-413c-47f0-a79b-fede1b853847", supervisor_uid: "6753994909" }),
+      ],
+      [
+        "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/agent-1/native-subscription/deap-link",
+        "DELETE",
+        undefined,
+      ],
     ]);
   });
 

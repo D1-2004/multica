@@ -230,7 +230,13 @@ func (s *Source) targets(ctx context.Context) ([]connmgr.Target, error) {
 	current := make(map[string]dwsclient.Identity, len(wanted))
 	for key, sub := range wanted {
 		sort.Strings(sub.EventKeys)
-		out = append(out, connmgr.Target{Key: key, Fingerprint: strings.Join(sub.EventKeys, ","), Value: *sub})
+		fingerprint := strings.Join(sub.EventKeys, ",")
+		// A new credential version restarts the stream: it subscribes and
+		// connects with the newly minted credential.
+		if version := sub.Identity.CredentialVersion; version != "" {
+			fingerprint += "|" + version
+		}
+		out = append(out, connmgr.Target{Key: key, Fingerprint: fingerprint, Value: *sub})
 		current[key] = sub.Identity
 	}
 	s.mu.Lock()

@@ -3,6 +3,7 @@ import { api } from "../api";
 import { dingtalkAccountBindingKeys } from "./queries";
 import type {
   BindDingTalkMessageRouteManuallyRequest,
+  SetDingTalkNativeDEAPLinkRequest,
   DingTalkBindingMode,
   DingTalkProcessingSurface,
 } from "../types";
@@ -65,6 +66,34 @@ export function useSetDingTalkNativeSubscription(wsId: string) {
   return useMutation({
     mutationFn: ({ agentId, enabled }: { agentId: string; enabled: boolean }) =>
       api.setDingTalkNativeSubscription(wsId, agentId, enabled),
+    onSettled: () =>
+      queryClient.invalidateQueries({
+        queryKey: dingtalkAccountBindingKeys.all(wsId),
+      }),
+  });
+}
+
+// The DEAP link changes how the native stream's credential is issued; the
+// status refetch carries the result (the server restarts the stream).
+export function useSetDingTalkNativeDEAPLink(wsId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      agentId,
+      ...request
+    }: SetDingTalkNativeDEAPLinkRequest & { agentId: string }) =>
+      api.setDingTalkNativeDEAPLink(wsId, agentId, request),
+    onSettled: () =>
+      queryClient.invalidateQueries({
+        queryKey: dingtalkAccountBindingKeys.all(wsId),
+      }),
+  });
+}
+
+export function useRemoveDingTalkNativeDEAPLink(wsId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (agentId: string) => api.removeDingTalkNativeDEAPLink(wsId, agentId),
     onSettled: () =>
       queryClient.invalidateQueries({
         queryKey: dingtalkAccountBindingKeys.all(wsId),
