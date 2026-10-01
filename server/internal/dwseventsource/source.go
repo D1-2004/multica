@@ -64,6 +64,9 @@ type Config struct {
 	// Tune adjusts connection management timings (tests, operations); nil
 	// keeps connmgr's defaults.
 	Tune func(*connmgr.Config, *connmgr.RedisCoordinatorConfig)
+	// LogFrames logs the type and topic of every frame a stream reads
+	// (diagnostics for a gateway whose events do not arrive).
+	LogFrames bool
 }
 
 // Source owns this replica's share of the event streams.
@@ -311,6 +314,12 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 			return s.dispatch(ctx, s.identity(st.key, id), ev)
 		},
 		Store: status,
+	}
+	if s.cfg.LogFrames {
+		key := st.key
+		listener.OnFrame = func(frameType, topic string) {
+			slog.Info("DWS event frame", "event", "dws_event_frame", "key", key, "frame_type", frameType, "topic", topic)
+		}
 	}
 	err := listener.Run(ctx)
 	if failed.Load() {

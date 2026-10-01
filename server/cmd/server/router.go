@@ -964,7 +964,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// v2: subscriptions name the token's app; the namespace is new so
 				// no record of an earlier app-less subscription is reused.
 				Deployment: "native-v2:" + strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
-				Enabled:    opts.RuntimeConfig.useDWSForTag,
+				// Native streams are new on production DWS: log what arrives.
+				LogFrames: true,
+				Enabled:   opts.RuntimeConfig.useDWSForTag,
 				Consumers: []dwseventsource.Consumer{
 					{EventKey: dws.EventIMAt, Identities: identities, Handle: h.HandleDWSNativeEvent},
 					{EventKey: dws.EventIMAllSingleChats, Identities: identities, Handle: h.HandleDWSNativeEvent},
