@@ -275,6 +275,10 @@ export type {
   DingTalkAccountBindingsResponse,
   BeginDingTalkAccountBindingResponse,
   DingTalkBindingMode,
+  DingTalkExecutionIdentityOutcome,
+  DingTalkNativeSubscriptionResponse,
+  DingTalkManualMessageScope,
+  BindDingTalkMessageRouteManuallyRequest,
 } from "./dingtalk-account-binding";
 export type {
   AgentIdentityGitHubConnection,
