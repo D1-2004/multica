@@ -7,11 +7,15 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/dwsclient"
+	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -39,7 +43,8 @@ type dwsNativeSubscriptionStore interface {
 	// Account-level guards: who owns an account, and whether a Router
 	// message binding routes it.
 	nativeOwnershipStore
-	HasActiveDingTalkMessageRouteForAccount(context.Context, db.HasActiveDingTalkMessageRouteForAccountParams) (bool, error)
+	HasActiveDingTalkMessageRouteForAccount(context.Context, string) (bool, error)
+	IsDWSNativeOwnedUID(context.Context, string) (bool, error)
 	DeleteStaleDWSNativeSubscriptionsForAccount(context.Context, db.DeleteStaleDWSNativeSubscriptionsForAccountParams) error
 	ListAgentDingTalkIdentities(context.Context, pgtype.UUID) ([]db.AgentDingtalkIdentity, error)
 }
@@ -61,12 +66,17 @@ type setDWSNativeSubscriptionRequest struct {
 }
 
 type bindDingTalkMessageRouteManuallyRequest struct {
-	OrgID        string `json:"org_id"`
+	// CorpID names the organization the way the Router does (ding…).
+	CorpID       string `json:"corp_id"`
 	UID          string `json:"uid"`
 	MessageScope string `json:"message_scope"`
 }
 
-var dingTalkDecimalID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
+var (
+	dingTalkDecimalID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
+	// dingTalkCorpID is an organization's corpId: the Router's tenant id.
+	dingTalkCorpID = regexp.MustCompile(`^ding[0-9A-Za-z]{8,64}$`)
+)
 
 // SetDWSNativeSubscription switches native subscription for an agent's bound
 // execution identity.
@@ -133,9 +143,7 @@ func (h *Handler) SetDWSNativeSubscription(w http.ResponseWriter, r *http.Reques
 		// Any agent's message binding that routes this account through the
 		// Router; the per-message ownership rule is what keeps deliveries
 		// exclusive, this only keeps the switch honest.
-		active, err = store.HasActiveDingTalkMessageRouteForAccount(ctx, db.HasActiveDingTalkMessageRouteForAccountParams{
-			OrgID: identity.OrgID, DwsUid: identity.DwsUid,
-		})
+		active, err = store.HasActiveDingTalkMessageRouteForAccount(ctx, identity.DwsUid)
 	}
 	if err != nil {
 		writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "native_subscription_failed", "failed to load the message binding")
@@ -174,6 +182,139 @@ func (h *Handler) SetDWSNativeSubscription(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{"native_subscription": true})
 }
 
+// nativeStreamSource is the native event source as the stream indicator
+// reads it; h.DWSNativeEvents in production.
+type nativeStreamSource interface {
+	Active() bool
+	StreamStatus(context.Context, dwsclient.Identity) (dwseventsource.StreamStatus, error)
+}
+
+func (h *Handler) nativeStreams() nativeStreamSource {
+	if h.nativeStreamStatus != nil {
+		return h.nativeStreamStatus
+	}
+	if h.DWSNativeEvents != nil {
+		return h.DWSNativeEvents
+	}
+	return nil
+}
+
+// Native stream states, the identity card's indicator.
+const (
+	// nativeStreamOff: native subscription is not on for the identity.
+	nativeStreamOff = "off"
+	// nativeStreamUnavailable: the native event source is not running here
+	// (no Redis, or runtime.use_dws_for_tag off), so no stream can exist.
+	nativeStreamUnavailable = "unavailable"
+	// nativeStreamConnected: some replica holds the identity's open stream.
+	nativeStreamConnected = "connected"
+	// nativeStreamConnecting: no stream is up yet and none has failed.
+	nativeStreamConnecting = "connecting"
+	// nativeStreamDisconnected: no stream is up and the last attempt failed.
+	nativeStreamDisconnected = "disconnected"
+	// nativeStreamUnknown: the shared stream state could not be read.
+	nativeStreamUnknown = "unknown"
+)
+
+// nativeStreamErrorLimit bounds the reported last error (runes).
+const nativeStreamErrorLimit = 300
+
+type nativeStreamView struct {
+	State           string     `json:"state"`
+	LastConnectedAt *time.Time `json:"last_connected_at,omitempty"`
+	LastEventAt     *time.Time `json:"last_event_at,omitempty"`
+	LastError       string     `json:"last_error,omitempty"`
+	Failures        int        `json:"failures,omitempty"`
+}
+
+// GetDWSNativeSubscription reports an agent's native subscription and the
+// state of its event stream, for the identity card's indicator.
+func (h *Handler) GetDWSNativeSubscription(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace id")
+	if !ok {
+		return
+	}
+	agentID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "agentId"), "agent id")
+	if !ok {
+		return
+	}
+	off := map[string]any{"native_subscription": false, "stream": nativeStreamView{State: nativeStreamOff}}
+	store := h.nativeSubscriptions()
+	if store == nil {
+		writeJSON(w, http.StatusOK, off)
+		return
+	}
+	ctx := r.Context()
+	row, err := store.GetAgentDWSNativeSubscription(ctx, db.GetAgentDWSNativeSubscriptionParams{
+		WorkspaceID: workspaceID, AgentID: agentID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, off)
+		return
+	}
+	if err != nil {
+		writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "native_subscription_failed", "failed to load native subscription")
+		return
+	}
+	identity, err := store.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: workspaceID, AgentID: agentID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (identity.DwsUid != row.DwsUid || identity.OrgID != row.OrgID)) {
+		// As the bindings list: a rebound identity is not subscribed until
+		// enabled again.
+		writeJSON(w, http.StatusOK, off)
+		return
+	}
+	if err != nil {
+		writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "native_subscription_failed", "failed to load the execution identity")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"native_subscription": true,
+		"stream": h.nativeStreamView(ctx, dwsclient.Identity{
+			AgentID: util.UUIDToString(agentID), UID: row.DwsUid, OrgID: row.OrgID,
+		}),
+	})
+}
+
+// nativeStreamView reads identity's stream across replicas: the ready marker
+// decides whether it is up, the stored status why not.
+func (h *Handler) nativeStreamView(ctx context.Context, identity dwsclient.Identity) nativeStreamView {
+	source := h.nativeStreams()
+	if source == nil || !source.Active() {
+		return nativeStreamView{State: nativeStreamUnavailable}
+	}
+	stream, err := source.StreamStatus(ctx, identity)
+	if err != nil {
+		slog.Warn("native stream status unavailable", "event", "dws_native_stream_status_failed",
+			"agent_id", identity.AgentID, "error", err)
+		return nativeStreamView{State: nativeStreamUnknown}
+	}
+	view := nativeStreamView{State: nativeStreamConnecting}
+	if t := stream.Status.LastConnectedAt; !t.IsZero() {
+		view.LastConnectedAt = &t
+	}
+	if t := stream.Status.LastEventAt; !t.IsZero() {
+		view.LastEventAt = &t
+	}
+	switch {
+	case stream.Connected:
+		view.State = nativeStreamConnected
+	case stream.Reported && (stream.Status.LastError != "" || stream.Status.Failures > 0):
+		view.State = nativeStreamDisconnected
+		view.LastError = truncateRunes(stream.Status.LastError, nativeStreamErrorLimit)
+		view.Failures = stream.Status.Failures
+	}
+	return view
+}
+
+func truncateRunes(s string, limit int) string {
+	if utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	return string([]rune(s)[:limit]) + "…"
+}
+
 // digitalEmployeeBinder binds a digital employee account to an agent's
 // message route directly, without the DBase scan.
 type digitalEmployeeBinder interface {
@@ -209,9 +350,11 @@ func (h *Handler) BindDingTalkMessageRouteManually(w http.ResponseWriter, r *htt
 	if err := decodeLimitedJSON(w, r, 1<<10, &request, "invalid_request"); err != nil {
 		return
 	}
-	request.OrgID, request.UID = strings.TrimSpace(request.OrgID), strings.TrimSpace(request.UID)
-	if !dingTalkDecimalID.MatchString(request.OrgID) || !dingTalkDecimalID.MatchString(request.UID) {
-		writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "invalid_identity", "org_id and uid must be DingTalk decimal ids")
+	request.CorpID, request.UID = strings.TrimSpace(request.CorpID), strings.TrimSpace(request.UID)
+	// The Router keys a digital employee by corpId and user id; a numeric
+	// org id is rejected by its subscription create, so it is refused here.
+	if !dingTalkCorpID.MatchString(request.CorpID) || !dingTalkDecimalID.MatchString(request.UID) {
+		writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "invalid_identity", "corp_id must be a DingTalk corpId (ding…) and uid a decimal user id")
 		return
 	}
 	scope := strings.TrimSpace(request.MessageScope)
@@ -239,7 +382,9 @@ func (h *Handler) BindDingTalkMessageRouteManually(w http.ResponseWriter, r *htt
 		return
 	}
 	if store := h.nativeSubscriptions(); store != nil {
-		if _, owned, err := nativeAccountOwner(r.Context(), store, request.UID, request.OrgID); err != nil {
+		// An identity carries the numeric org id, not the corpId, so the user
+		// id decides; the per-message rule keeps deliveries exclusive.
+		if owned, err := store.IsDWSNativeOwnedUID(r.Context(), request.UID); err != nil {
 			writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "binding_internal_error", "failed to load native subscription")
 			return
 		} else if owned {
@@ -271,7 +416,7 @@ func (h *Handler) BindDingTalkMessageRouteManually(w http.ResponseWriter, r *htt
 			},
 		},
 		InitiatorID:       actorID,
-		TenantID:          request.OrgID,
+		TenantID:          request.CorpID,
 		DigitalEmployeeID: request.UID,
 		SurfaceType:       agentmessagerouter.DingTalkSurfaceAuto,
 		MessageScope:      scope,

@@ -3,18 +3,23 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/dwsclient"
+	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	dwsevents "github.com/multica-ai/multica/server/pkg/dws/events"
 )
 
 const (
@@ -43,6 +48,10 @@ type fakeNativeStore struct {
 	ownerAgent string
 	// accountRouted: some agent's active message binding routes the account.
 	accountRouted bool
+	// uidOwned: native subscription owns an account with the user id.
+	uidOwned bool
+	// checkedUIDs records the user ids the account guards were asked about.
+	checkedUIDs   []string
 	enableErr     error
 	disableErr    error
 	enabledParams db.EnableAgentDWSNativeSubscriptionParams
@@ -55,8 +64,16 @@ func (f *fakeNativeStore) GetDWSNativeAccountOwner(context.Context, db.GetDWSNat
 	return db.GetDWSNativeAccountOwnerRow{AgentID: parseUUID(f.ownerAgent)}, nil
 }
 
-func (f *fakeNativeStore) HasActiveDingTalkMessageRouteForAccount(context.Context, db.HasActiveDingTalkMessageRouteForAccountParams) (bool, error) {
+func (f *fakeNativeStore) HasActiveDingTalkMessageRouteForAccount(_ context.Context, uid string) (bool, error) {
+	f.checkedUIDs = append(f.checkedUIDs, uid)
 	return f.accountRouted, nil
+}
+
+// IsDWSNativeOwnedUID reports uidOwned: another agent's native
+// subscription owns an account with the user id.
+func (f *fakeNativeStore) IsDWSNativeOwnedUID(_ context.Context, uid string) (bool, error) {
+	f.checkedUIDs = append(f.checkedUIDs, uid)
+	return f.uidOwned, nil
 }
 
 func (f *fakeNativeStore) GetAgentDingTalkResponsePolicy(context.Context, pgtype.UUID) (db.GetAgentDingTalkResponsePolicyRow, error) {
@@ -87,7 +104,7 @@ func (f *fakeNativeStore) GetAgentDWSNativeSubscription(_ context.Context, p db.
 	if !f.enabled[util.UUIDToString(p.AgentID)] {
 		return db.AgentDwsNativeSubscription{}, pgx.ErrNoRows
 	}
-	return db.AgentDwsNativeSubscription{AgentID: p.AgentID, WorkspaceID: p.WorkspaceID}, nil
+	return db.AgentDwsNativeSubscription{AgentID: p.AgentID, WorkspaceID: p.WorkspaceID, DwsUid: "1001", OrgID: "2002"}, nil
 }
 
 func (f *fakeNativeStore) EnableAgentDWSNativeSubscription(_ context.Context, p db.EnableAgentDWSNativeSubscriptionParams) (db.AgentDwsNativeSubscription, error) {
@@ -140,7 +157,26 @@ func (f *fakeNativeStore) GetAgentDingTalkIdentity(context.Context, db.GetAgentD
 	if !f.identity {
 		return db.AgentDingtalkIdentity{}, pgx.ErrNoRows
 	}
-	return db.AgentDingtalkIdentity{DwsUid: "1001", OrgID: "2002"}, nil
+	uid := "1001"
+	if f.reboundUID != "" {
+		uid = f.reboundUID
+	}
+	return db.AgentDingtalkIdentity{DwsUid: uid, OrgID: "2002"}, nil
+}
+
+// fakeNativeStreams is the native event source's shared stream state.
+type fakeNativeStreams struct {
+	inactive bool
+	status   dwseventsource.StreamStatus
+	err      error
+	asked    []dwsclient.Identity
+}
+
+func (f *fakeNativeStreams) Active() bool { return !f.inactive }
+
+func (f *fakeNativeStreams) StreamStatus(_ context.Context, id dwsclient.Identity) (dwseventsource.StreamStatus, error) {
+	f.asked = append(f.asked, id)
+	return f.status, f.err
 }
 
 func (f *fakeNativeStore) GetDingTalkAccountBindingByAgent(context.Context, db.GetDingTalkAccountBindingByAgentParams) (db.ChannelInstallation, error) {
@@ -315,19 +351,23 @@ func TestBindDingTalkMessageRouteManually(t *testing.T) {
 		body     string
 		operator bool
 		native   bool
+		uidOwned bool
 		want     int
 		code     string
 	}{
-		{name: "operator", body: `{"org_id":"439446171","uid":"123456"}`, operator: true, want: 200},
-		{name: "not an operator", body: `{"org_id":"439446171","uid":"123456"}`, want: 403, code: "operator_only"},
-		{name: "native subscription on", body: `{"org_id":"439446171","uid":"123456"}`, operator: true, native: true,
+		{name: "operator", body: `{"corp_id":"ding8196cd9a2b2405da24f2f5cc6abecb85","uid":"123456"}`, operator: true, want: 200},
+		{name: "not an operator", body: `{"corp_id":"ding8196cd9a2b2405da24f2f5cc6abecb85","uid":"123456"}`, want: 403, code: "operator_only"},
+		{name: "native subscription on", body: `{"corp_id":"ding8196cd9a2b2405da24f2f5cc6abecb85","uid":"123456"}`, operator: true, native: true,
 			want: 409, code: "message_binding_conflicts_with_native_subscription"},
-		{name: "ids must be decimal", body: `{"org_id":"ding123","uid":"123456"}`, operator: true, want: 400, code: "invalid_identity"},
-		{name: "scope is checked", body: `{"org_id":"439446171","uid":"123456","message_scope":"custom"}`, operator: true,
+		{name: "another agent's native subscription owns the user", body: `{"corp_id":"ding8196cd9a2b2405da24f2f5cc6abecb85","uid":"123456"}`, operator: true,
+			uidOwned: true, want: 409, code: "message_binding_conflicts_with_native_subscription"},
+		{name: "a numeric org id is not a corpId", body: `{"corp_id":"439446171","uid":"123456"}`, operator: true, want: 400, code: "invalid_identity"},
+		{name: "uid must be decimal", body: `{"corp_id":"ding8196cd9a2b2405da24f2f5cc6abecb85","uid":"abc"}`, operator: true, want: 400, code: "invalid_identity"},
+		{name: "scope is checked", body: `{"corp_id":"ding8196cd9a2b2405da24f2f5cc6abecb85","uid":"123456","message_scope":"custom"}`, operator: true,
 			want: 400, code: "invalid_message_scope"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			store := &fakeNativeStore{enabled: map[string]bool{}}
+			store := &fakeNativeStore{enabled: map[string]bool{}, uidOwned: tt.uidOwned}
 			if tt.native {
 				store.enabled[nativeTestAgent] = true
 			}
@@ -345,10 +385,90 @@ func TestBindDingTalkMessageRouteManually(t *testing.T) {
 				return
 			}
 			p := service.bindParams
-			if service.bindCalls != 1 || p.TenantID != "439446171" || p.DigitalEmployeeID != "123456" ||
+			if service.bindCalls != 1 || p.TenantID != "ding8196cd9a2b2405da24f2f5cc6abecb85" || p.DigitalEmployeeID != "123456" ||
 				p.MessageScope != agentmessagerouter.DingTalkMessageScopeAll || p.InitiatorID != parseUUID(nativeTestUser) ||
 				p.Agent.Name != "Native Agent" || p.Agent.Workspace.Name != "Native Workspace" {
 				t.Fatalf("bind params = %#v", p)
+			}
+			// Identities carry the numeric org id, so the guards ask about
+			// the user id, never the corpId.
+			if len(store.checkedUIDs) == 0 {
+				t.Fatal("the account guards were not consulted")
+			}
+			for _, uid := range store.checkedUIDs {
+				if uid != "123456" {
+					t.Fatalf("account guard asked about %q, want the user id", uid)
+				}
+			}
+		})
+	}
+}
+
+// The identity card's indicator: the stream state of the subscribed account,
+// read across replicas.
+func TestGetDWSNativeSubscriptionReportsTheStream(t *testing.T) {
+	path := "/api/workspaces/" + nativeTestWorkspace + "/dingtalk/account-bindings/" + nativeTestAgent + "/native-subscription"
+	lastEvent := time.Date(2026, 10, 1, 7, 20, 0, 0, time.UTC)
+	longError := strings.Repeat("被拒绝", 200)
+	for _, tt := range []struct {
+		name       string
+		enabled    bool
+		reboundUID string
+		streams    *fakeNativeStreams
+		native     bool
+		state      string
+		lastError  string
+		lastEvent  bool
+		failures   int
+	}{
+		{name: "off", streams: &fakeNativeStreams{}, state: "off"},
+		{name: "a rebound identity is not subscribed", enabled: true, reboundUID: "9999", streams: &fakeNativeStreams{}, state: "off"},
+		{name: "source not running", enabled: true, streams: &fakeNativeStreams{inactive: true}, native: true, state: "unavailable"},
+		{name: "connected", enabled: true, native: true, state: "connected", lastEvent: true, streams: &fakeNativeStreams{
+			status: dwseventsource.StreamStatus{Connected: true, Reported: true, Status: dwsevents.Status{
+				State: dwsevents.StateConnected, LastEventAt: lastEvent, LastError: "stale", Failures: 1}}}},
+		{name: "never connected yet", enabled: true, native: true, state: "connecting", streams: &fakeNativeStreams{}},
+		{name: "failing", enabled: true, native: true, state: "disconnected", lastError: string([]rune(longError)[:300]) + "…", failures: 3,
+			streams: &fakeNativeStreams{status: dwseventsource.StreamStatus{Reported: true, Status: dwsevents.Status{
+				State: dwsevents.StateReconnecting, LastError: longError, Failures: 3}}}},
+		{name: "shared state unreadable", enabled: true, native: true, state: "unknown", streams: &fakeNativeStreams{err: errors.New("redis down")}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeNativeStore{enabled: map[string]bool{}, identity: true, reboundUID: tt.reboundUID}
+			if tt.enabled {
+				store.enabled[nativeTestAgent] = true
+			}
+			h := nativeTestHandler(store, &fakeDingTalkAccountBindingService{}, false)
+			h.nativeStreamStatus = tt.streams
+			w := httptest.NewRecorder()
+			h.GetDWSNativeSubscription(w, nativeRequest(http.MethodGet, path, ""))
+			var body struct {
+				NativeSubscription bool `json:"native_subscription"`
+				Stream             struct {
+					State       string     `json:"state"`
+					LastEventAt *time.Time `json:"last_event_at"`
+					LastError   string     `json:"last_error"`
+					Failures    int        `json:"failures"`
+				} `json:"stream"`
+			}
+			if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &body) != nil {
+				t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+			}
+			if body.NativeSubscription != tt.native || body.Stream.State != tt.state || body.Stream.LastError != tt.lastError ||
+				body.Stream.Failures != tt.failures || (body.Stream.LastEventAt != nil) != tt.lastEvent {
+				t.Fatalf("body = %s", w.Body.String())
+			}
+			if tt.lastEvent && !body.Stream.LastEventAt.Equal(lastEvent) {
+				t.Fatalf("last event = %v", body.Stream.LastEventAt)
+			}
+			// The stream is the subscribed account's.
+			for _, id := range tt.streams.asked {
+				if id != (dwsclient.Identity{AgentID: nativeTestAgent, UID: "1001", OrgID: "2002"}) {
+					t.Fatalf("asked about %+v", id)
+				}
+			}
+			if !tt.native && len(tt.streams.asked) != 0 {
+				t.Fatal("an unsubscribed identity has no stream to read")
 			}
 		})
 	}

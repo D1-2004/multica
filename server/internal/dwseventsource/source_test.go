@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/pkg/dws"
 	dwsevents "github.com/multica-ai/multica/server/pkg/dws/events"
+	"github.com/multica-ai/multica/server/pkg/dws/redisstore"
 )
 
 func testSource(t *testing.T, consumers []Consumer, enabled bool) *Source {
@@ -162,5 +165,135 @@ func TestStreamsFollowTheAccountsCurrentAgent(t *testing.T) {
 	// A key the latest sweep did not list keeps the dialled identity.
 	if got := s.identity("unknown", first); got != first {
 		t.Fatalf("identity = %+v", got)
+	}
+}
+
+// redisTestDB is dedicated to this package (see connmgr's REDIS_TEST_URL
+// suites for the others).
+const redisTestDB = 9
+
+// newRedisTestClient returns a client on the flushed test DB, or skips when
+// REDIS_TEST_URL is unset or unreachable.
+func newRedisTestClient(t *testing.T) *redis.Client {
+	t.Helper()
+	rawURL := os.Getenv("REDIS_TEST_URL")
+	if rawURL == "" {
+		t.Skip("REDIS_TEST_URL not set")
+	}
+	opts, err := redis.ParseURL(rawURL)
+	if err != nil {
+		t.Fatalf("parse REDIS_TEST_URL: %v", err)
+	}
+	opts.DB = redisTestDB
+	client := redis.NewClient(opts)
+	ctx := context.Background()
+	if err := client.Ping(ctx).Err(); err != nil {
+		client.Close()
+		t.Skipf("REDIS_TEST_URL unreachable: %v", err)
+	}
+	if err := client.FlushDB(ctx).Err(); err != nil {
+		client.Close()
+		t.Fatalf("flush Redis test DB: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = client.FlushDB(context.Background()).Err()
+		_ = client.Close()
+	})
+	return client
+}
+
+// StreamStatus joins every replica's view: the ready marker says whether a
+// stream is up, the stored status what it last reported.
+func TestStreamStatusReadsTheSharedState(t *testing.T) {
+	client := newRedisTestClient(t)
+	ctx := context.Background()
+	s, err := New(Config{
+		Redis: client,
+		Mint: func(context.Context, dwsclient.Identity) (dwsclient.Credential, error) {
+			return dwsclient.Credential{}, nil
+		},
+		Deployment: "native-v2:https://pre.example",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := dwsclient.Identity{AgentID: "agent-1", UID: "42", OrgID: "org-1"}
+
+	if got, err := s.StreamStatus(ctx, id); err != nil || got.Connected || got.Reported {
+		t.Fatalf("no stream yet: %+v, %v", got, err)
+	}
+	failed := dwsevents.Status{Identity: targetKey(id), State: dwsevents.StateReconnecting, LastError: "dial: refused", Failures: 2}
+	if err := s.store.SetStatus(ctx, failed); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.StreamStatus(ctx, id)
+	if err != nil || got.Connected || !got.Reported || got.Status.LastError != "dial: refused" || got.Status.Failures != 2 {
+		t.Fatalf("failing stream: %+v, %v", got, err)
+	}
+	if err := claimMarker.Run(ctx, client, []string{s.readyKey(targetKey(id))}, "m", readyTTL.Milliseconds()).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.StreamStatus(ctx, id); err != nil || !got.Connected {
+		t.Fatalf("connected stream: %+v, %v", got, err)
+	}
+	// Another account's stream is not this one's.
+	other := dwsclient.Identity{AgentID: "agent-1", UID: "43", OrgID: "org-1"}
+	if got, err := s.StreamStatus(ctx, other); err != nil || got.Connected || got.Reported {
+		t.Fatalf("another account: %+v, %v", got, err)
+	}
+}
+
+// Each attempt is a new Listener that starts its status afresh but continues
+// the outage: the stored status keeps the outage's last error and counts its
+// failures until a connection proves healthy, and never carries the secret.
+func TestStatusKeepsTheOutageAcrossAttempts(t *testing.T) {
+	client := newRedisTestClient(t)
+	ctx := context.Background()
+	store := &redisstore.Store{Redis: client, Prefix: "multica:dws-events-test:state:"}
+	key := "stream-1"
+	down := time.Date(2026, 10, 1, 7, 0, 0, 0, time.UTC)
+	stored := func() dwsevents.Status {
+		t.Helper()
+		st, ok, err := store.Status(ctx, key)
+		if err != nil || !ok {
+			t.Fatalf("status = %+v %v %v", st, ok, err)
+		}
+		return st
+	}
+	attempt := func() *statusStore {
+		return &statusStore{Store: store, secret: "app-secret", onState: func(dwsevents.State) {}}
+	}
+
+	first := attempt()
+	_ = first.SetStatus(ctx, dwsevents.Status{Identity: key, State: dwsevents.StateConnecting, DownSince: down})
+	_ = first.SetStatus(ctx, dwsevents.Status{Identity: key, State: dwsevents.StateReconnecting, DownSince: down,
+		LastError: "ticket: client_secret=app-secret rejected", Failures: 1})
+	if st := stored(); st.Failures != 1 || st.LastError != "ticket: client_secret=[redacted] rejected" {
+		t.Fatalf("first attempt = %+v", st)
+	}
+
+	second := attempt()
+	_ = second.SetStatus(ctx, dwsevents.Status{Identity: key, State: dwsevents.StateConnecting, DownSince: down})
+	if st := stored(); st.Failures != 1 || st.LastError == "" || st.State != dwsevents.StateConnecting {
+		t.Fatalf("a new attempt dropped the outage: %+v", st)
+	}
+	_ = second.SetStatus(ctx, dwsevents.Status{Identity: key, State: dwsevents.StateReconnecting, DownSince: down,
+		LastError: "dial: refused", Failures: 1})
+	if st := stored(); st.Failures != 2 || st.LastError != "dial: refused" {
+		t.Fatalf("second attempt = %+v", st)
+	}
+
+	third := attempt()
+	_ = third.SetStatus(ctx, dwsevents.Status{Identity: key, State: dwsevents.StateConnected, DownSince: down})
+	_ = third.SetStatus(ctx, dwsevents.Status{Identity: key, State: dwsevents.StateConnected})
+	if st := stored(); st.Failures != 0 || st.LastError != "" {
+		t.Fatalf("a healthy connection ends the outage: %+v", st)
+	}
+
+	// A later outage starts its own count.
+	fourth := attempt()
+	_ = fourth.SetStatus(ctx, dwsevents.Status{Identity: key, State: dwsevents.StateConnecting, DownSince: down.Add(time.Hour)})
+	if st := stored(); st.Failures != 0 || st.LastError != "" {
+		t.Fatalf("a new outage = %+v", st)
 	}
 }

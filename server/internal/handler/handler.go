@@ -420,6 +420,7 @@ type Handler struct {
 	dwsNativeDispatch                    nativeDispatchStore
 	dwsNativeOwnership                   nativeOwnershipStore
 	nativeSourceActive                   func() bool
+	nativeStreamStatus                   nativeStreamSource
 	operatorUsers                        operatorUserStore
 	dingTalkAccountBindingPermissions    agentInvocationPermissionStore
 	multicaMCPBindingTasks               multicaMCPBindingTaskStore

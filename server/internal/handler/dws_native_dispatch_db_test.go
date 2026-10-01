@@ -340,9 +340,16 @@ func TestNativeOwnershipIsExclusivePerMessage(t *testing.T) {
 		testWorkspaceID, f.agentID, f.identity.UID, testUserID); err != nil {
 		t.Fatal(err)
 	}
-	routed, err := f.h.Queries.HasActiveDingTalkMessageRouteForAccount(ctx, db.HasActiveDingTalkMessageRouteForAccountParams{OrgID: "2002", DwsUid: f.identity.UID})
+	routed, err := f.h.Queries.HasActiveDingTalkMessageRouteForAccount(ctx, f.identity.UID)
 	if err != nil || !routed {
 		t.Fatalf("account route = %v err = %v", routed, err)
+	}
+	// The manual binding guard matches native ownership by user id alone.
+	if owned, err := f.h.Queries.IsDWSNativeOwnedUID(ctx, f.identity.UID); err != nil || !owned {
+		t.Fatalf("native owns the user id = %v err = %v", owned, err)
+	}
+	if owned, err := f.h.Queries.IsDWSNativeOwnedUID(ctx, "9"+f.identity.UID); err != nil || owned {
+		t.Fatalf("native owns another user id = %v err = %v", owned, err)
 	}
 	streams, err := f.h.Queries.ListActiveDWSNativeSubscriptions(ctx)
 	if err != nil {

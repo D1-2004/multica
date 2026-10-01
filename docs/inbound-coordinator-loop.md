@@ -289,6 +289,15 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 **只用托管回复。** 原生命令恒带 `responsePolicy.mode=multica_coordinator`，资格与 Router 策略同步相同：入站判断与钉钉回复开关都开、策略 revision≥1、运行时具备 `dws_message_policy_v1`。开启原生订阅时校验不满足返回 409 `native_subscription_requires_managed_response`。回调属于服务端自己的派发任务 `dwsn-<hash>`，完成目标是 `agentmessagerouter.NativeTargetIdentity()`（与 Router 目标同形，outbox 原样路由）；有线请求不得使用该命名空间。回复语义与托管数字员工一致：冻结触发消息的 openMsgId，群聊引用回复并 @ 发信人，单聊同样引用回复。`response_route` 与等待说明冻结 `dws_environment=production`。原生完成 worker 只确认回调：托管出站已接手即完成，路由缺失且有话要说则死信；回执只关闭收集窗口，不调用 Router。
 
+**连接指示灯。** 身份卡开关旁的指示灯读 `GET …/dingtalk/account-bindings/{agentId}/native-subscription`，开启期间每 10 秒轮询一次。返回的事件流状态如下：
+- `connected`：任一副本持有已连接的事件流（Redis ready 标记）。
+- `disconnected`：没有已连接的流，且该账号事件流最后上报的状态带错误或失败次数，同时附上最近错误（截断到 300 字符，应用密钥已脱敏）和本次断连以来的失败次数。每次重连都是新的 Listener；事件源按 `DownSince` 判断是否仍是同一次断连，把错误和计数带下去，所以重试期间不会在红灯和黄灯之间来回闪。
+- `connecting`：没有已连接的流，也没有失败记录。
+- `unavailable`：事件源未运行。
+- `unknown`：共享状态读不到。
+
+`last_event_at` 只记真正交给消费方的事件，不含 SYSTEM ping。所以「已连接但从未收到消息」说明问题在推送而不在连接。
+
 **其他 DWS 流量不变。** 历史预取、场域记忆、用户决策卡片与沙箱内的 DWS 调用仍走本部署配置的网关。预发上的原生 Agent 因此混用网关，读历史与发卡是否可用须以预发 E2E 为准。
 
 **已知缺口。**

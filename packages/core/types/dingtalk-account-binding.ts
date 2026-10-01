@@ -82,13 +82,38 @@ export interface DingTalkNativeSubscriptionResponse {
   nativeSubscription: boolean;
 }
 
+// The state of a native subscription's DWS event stream (WebSocket), as every
+// server replica sees it. "unknown" also covers states this client predates.
+export type DingTalkNativeStreamState =
+  | "connected"
+  | "connecting"
+  | "disconnected"
+  | "unavailable"
+  | "off"
+  | "unknown";
+
+export interface DingTalkNativeStream {
+  state: DingTalkNativeStreamState;
+  lastConnectedAt: string | null;
+  lastEventAt: string | null;
+  // Reported only while disconnected.
+  lastError: string | null;
+  failures: number;
+}
+
+export interface DingTalkNativeSubscriptionStatus {
+  nativeSubscription: boolean;
+  stream: DingTalkNativeStream;
+}
+
 export type DingTalkManualMessageScope = Extract<
   DingTalkMessageScope,
   "all" | "direct_only"
 >;
 
 export interface BindDingTalkMessageRouteManuallyRequest {
-  orgId: string;
+  // The organization's corpId (ding…), which the Router uses as tenant id.
+  corpId: string;
   uid: string;
   messageScope: DingTalkManualMessageScope;
 }

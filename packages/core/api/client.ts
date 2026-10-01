@@ -296,6 +296,7 @@ import type {
   BeginDingTalkAccountBindingResponse,
   BindDingTalkMessageRouteManuallyRequest,
   DingTalkNativeSubscriptionResponse,
+  DingTalkNativeSubscriptionStatus,
   AgentIdentityGitHubStatusResponse,
   BeginAgentIdentityGitHubOAuthResponse,
   DisconnectAgentIdentityGitHubConnectionResponse,
@@ -599,6 +600,8 @@ import {
   BeginDingTalkAccountBindingResponseSchema,
   DingTalkAccountBindingsResponseSchema,
   DingTalkNativeSubscriptionResponseSchema,
+  DingTalkNativeSubscriptionStatusSchema,
+  UNKNOWN_DINGTALK_NATIVE_SUBSCRIPTION_STATUS,
   ReusableDingTalkIdentitiesSchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
   EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
@@ -7196,8 +7199,28 @@ export class ApiClient {
     );
   }
 
+  // Native subscription and its event stream's state (the identity card's
+  // indicator). A drifted response reads as an unknown state.
+  async getDingTalkNativeSubscriptionStatus(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<DingTalkNativeSubscriptionStatus> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}/native-subscription`,
+    );
+    return parseWithFallback(
+      raw,
+      DingTalkNativeSubscriptionStatusSchema,
+      UNKNOWN_DINGTALK_NATIVE_SUBSCRIPTION_STATUS,
+      {
+        endpoint:
+          "GET /api/workspaces/:id/dingtalk/account-bindings/:agentId/native-subscription",
+      },
+    );
+  }
+
   // Operator-only: binds the digital-employee message route by DingTalk
-  // organization and account id instead of the DBase scan. Callers only rely
+  // corpId and account id instead of the DBase scan. Callers only rely
   // on success and re-read the bindings list for the resulting state.
   async bindDingTalkMessageRouteManually(
     workspaceId: string,
@@ -7209,7 +7232,7 @@ export class ApiClient {
       {
         method: "POST",
         body: JSON.stringify({
-          org_id: request.orgId,
+          corp_id: request.corpId,
           uid: request.uid,
           message_scope: request.messageScope,
         }),

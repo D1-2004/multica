@@ -21,6 +21,7 @@ const reuseIdentity = vi.fn();
 const deleteBinding = vi.fn();
 const updateBindingSurface = vi.fn();
 const setNativeSubscription = vi.fn();
+const getNativeSubscriptionStatus = vi.fn();
 const bindManually = vi.fn();
 const mid2Url = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
@@ -143,6 +144,7 @@ beforeEach(() => {
     deleteDingTalkAccountBinding: deleteBinding,
     updateDingTalkAccountBindingSurface: updateBindingSurface,
     setDingTalkNativeSubscription: setNativeSubscription,
+    getDingTalkNativeSubscriptionStatus: getNativeSubscriptionStatus,
     bindDingTalkMessageRouteManually: bindManually,
   } as unknown as ApiClient);
   listBindings.mockResolvedValue({ bindings: [], configured: true });
@@ -156,8 +158,19 @@ beforeEach(() => {
   deleteBinding.mockResolvedValue(undefined);
   updateBindingSurface.mockResolvedValue(undefined);
   setNativeSubscription.mockResolvedValue({ nativeSubscription: true });
+  getNativeSubscriptionStatus.mockResolvedValue(nativeStatus("connected"));
   bindManually.mockResolvedValue(undefined);
 });
+
+function nativeStatus(
+  state: string,
+  stream: Record<string, unknown> = {},
+) {
+  return {
+    nativeSubscription: true,
+    stream: { state, lastConnectedAt: null, lastEventAt: null, lastError: null, failures: 0, ...stream },
+  };
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -1039,6 +1052,65 @@ describe("DWS native subscription on the execution identity", () => {
     expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
   });
 
+  it.each([
+    ["connected", "Subscription connected"],
+    ["connecting", "Subscription connecting"],
+    ["disconnected", "Subscription disconnected"],
+    ["unavailable", "Native subscription is not running in this environment"],
+    ["unknown", "Subscription status unknown"],
+  ])("shows the %s stream as a status light", async (state, label) => {
+    listBindings.mockResolvedValue({ bindings: [nativeOnBinding], configured: true });
+    getNativeSubscriptionStatus.mockResolvedValue(nativeStatus(state));
+
+    renderCard("identity");
+
+    const light = await screen.findByRole("img", { name: new RegExp(`^${label}`) });
+    expect(light).toHaveAttribute("data-state", state);
+    expect(getNativeSubscriptionStatus).toHaveBeenCalledWith("workspace-1", "agent-1");
+    // The light sits next to the switch on the bound row.
+    expect(screen.getByTestId("dingtalk-identity-binding-active-row")).toContainElement(light);
+  });
+
+  it("explains a disconnected stream under the switch", async () => {
+    listBindings.mockResolvedValue({ bindings: [nativeOnBinding], configured: true });
+    getNativeSubscriptionStatus.mockResolvedValue(
+      nativeStatus("disconnected", { lastError: "dial: handshake refused", failures: 3 }),
+    );
+
+    renderCard("identity");
+
+    expect(
+      await screen.findByText(
+        "Subscription disconnected (failed attempts: 3): dial: handshake refused",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("names a connected stream that has not received a message yet", async () => {
+    listBindings.mockResolvedValue({ bindings: [nativeOnBinding], configured: true });
+    getNativeSubscriptionStatus.mockResolvedValue(
+      nativeStatus("connected", { lastConnectedAt: new Date().toISOString() }),
+    );
+
+    renderCard("identity");
+
+    expect(
+      await screen.findByRole("img", {
+        name: "Subscription connected · No message received since connecting",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not watch the stream while native subscription is off", async () => {
+    listBindings.mockResolvedValue({ bindings: [identityOnlyBinding], configured: true });
+
+    renderCard("identity");
+
+    await screen.findByRole("switch", { name: "Native subscription" });
+    expect(screen.queryByTestId("dingtalk-native-stream")).not.toBeInTheDocument();
+    expect(getNativeSubscriptionStatus).not.toHaveBeenCalled();
+  });
+
   it("turns native subscription on and refreshes the bindings", async () => {
     listBindings.mockResolvedValue({ bindings: [identityOnlyBinding], configured: true });
     const user = userEvent.setup();
@@ -1165,7 +1237,7 @@ describe("operator manual message binding", () => {
     expect(screen.queryByTestId("dingtalk-manual-message-binding")).not.toBeInTheDocument();
   });
 
-  it("validates decimal ids and binds with the chosen scope", async () => {
+  it("validates the corpId and user id and binds with the chosen scope", async () => {
     listBindings.mockResolvedValue({ bindings: [], configured: true, manualBindingAllowed: true });
     const user = userEvent.setup();
 
@@ -1174,22 +1246,25 @@ describe("operator manual message binding", () => {
     expect(await screen.findByTestId("dingtalk-manual-message-binding")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Bind digital employee/i })).toBeEnabled();
     const submit = screen.getByRole("button", { name: "Bind directly" });
-    const orgId = screen.getByLabelText("OrgID");
+    const corpId = screen.getByLabelText("CorpID");
     const uid = screen.getByLabelText("UID");
     const scope = screen.getByLabelText("Message scope");
     expect(scope).toHaveValue("all");
     expect(submit).toBeDisabled();
 
-    await user.type(orgId, "0123");
+    // A numeric OrgID is not a corpId.
+    await user.type(corpId, "439446171");
     await user.type(uid, "abc");
-    expect(screen.getAllByText("Enter a numeric DingTalk ID.")).toHaveLength(2);
-    expect(orgId).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("Enter a DingTalk corpId (starts with ding).")).toBeInTheDocument();
+    expect(screen.getByText("Enter a numeric DingTalk ID.")).toBeInTheDocument();
+    expect(corpId).toHaveAttribute("aria-invalid", "true");
     expect(submit).toBeDisabled();
 
-    await user.clear(orgId);
-    await user.type(orgId, "123456");
+    await user.clear(corpId);
+    await user.type(corpId, "ding8196cd9a2b2405da24f2f5cc6abecb85");
     await user.clear(uid);
     await user.type(uid, "7890");
+    expect(screen.queryByText("Enter a DingTalk corpId (starts with ding).")).not.toBeInTheDocument();
     expect(screen.queryByText("Enter a numeric DingTalk ID.")).not.toBeInTheDocument();
     await user.selectOptions(scope, "direct_only");
     expect(submit).toBeEnabled();
@@ -1198,7 +1273,7 @@ describe("operator manual message binding", () => {
 
     await waitFor(() =>
       expect(bindManually).toHaveBeenCalledWith("workspace-1", "agent-1", {
-        orgId: "123456",
+        corpId: "ding8196cd9a2b2405da24f2f5cc6abecb85",
         uid: "7890",
         messageScope: "direct_only",
       }),
@@ -1215,7 +1290,7 @@ describe("operator manual message binding", () => {
     const user = userEvent.setup();
 
     renderCard("message");
-    await user.type(await screen.findByLabelText("OrgID"), "123456");
+    await user.type(await screen.findByLabelText("CorpID"), "ding8196cd9a2b2405da24f2f5cc6abecb85");
     await user.type(screen.getByLabelText("UID"), "7890");
     await user.click(screen.getByRole("button", { name: "Bind directly" }));
 
@@ -1237,7 +1312,7 @@ describe("operator manual message binding", () => {
       enAgents.tab_body.integrations.dingtalk_account_native_subscription_blocked,
     )).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Bind digital employee/i })).toBeDisabled();
-    expect(screen.getByLabelText("OrgID")).toBeDisabled();
+    expect(screen.getByLabelText("CorpID")).toBeDisabled();
     expect(screen.getByLabelText("UID")).toBeDisabled();
     expect(screen.getByLabelText("Message scope")).toBeDisabled();
     expect(screen.getByRole("button", { name: "Bind directly" })).toBeDisabled();
