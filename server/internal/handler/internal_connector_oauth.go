@@ -274,6 +274,19 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 		slog.ErrorContext(ctx, "official app OAuth state insert failed", "connector_id", c.ID, "error", err)
 		return connectorOAuthStarted{}, internalErr
 	}
+	// Production forwards a pre-release callback only for a connect this
+	// pre-release registered (internal_connector_oauth_forward.go).
+	if redirectOrigin != homeOrigin {
+		home, _ := normalizeConnectorOAuthOrigin(homeOrigin)
+		if err := h.registerConnectorOAuthForward(ctx, redirectOrigin, state, connectorOAuthForwardRegistration{
+			HomeOrigin: home, WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID, ConnectorID: scope.ConnectorID,
+			ScopeType: scope.ScopeType, ExpiresAtMs: time.Now().Add(connectorOAuthStateTTL).UnixMilli(),
+		}); err != nil {
+			slog.ErrorContext(ctx, "official app OAuth forward registration failed", "connector_id", c.ID, "production", redirectOrigin, "error", err)
+			return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, "forward_unavailable",
+				"production cannot forward this connection's callback right now")
+		}
+	}
 	slog.InfoContext(ctx, "official app OAuth started", "connector_id", c.ID, "catalog_slug", c.CatalogSlug, "scope_type", scope.ScopeType,
 		"user_id", scope.UserID)
 	return started, nil

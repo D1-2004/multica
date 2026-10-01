@@ -15,16 +15,28 @@ package handler
 // the "mcpc." prefix still routes GitHub callbacks to the connector flow.
 // Every other deployment (production, local) uses its own callback.
 //
-// Before any local handling, both callback routes of production
-// (/api/connector-oauth/callback and the "mcpc." branch of
-// /api/github/authorize) send a callback whose state names production's own
-// pre-release origin to that origin with the same path and raw query (302);
-// a state naming any other foreign origin gets the invalid-connection page
-// (400). Only "https://pre-" + an own host below its registrable domain
-// qualifies (connectorOAuthProductionOrigin), so the forwarder is no open
-// redirect and needs no configuration. The home deployment completes
-// the forwarded callback in the browser that started it: the binding cookie
-// was set on its own origin by the start response.
+// Production forwards only connects its pre-release registered, the same
+// shape as the A2A forward registrations (agent_a2a_forward_registration.go):
+// pre-release signs, production verifies. When a pre-release starts a
+// connect it registers it with production before the browser leaves:
+// {sha256(state), its origin, workspace, agent, connector, scope, expiry},
+// signed with HMAC-SHA256 over the timestamp and body using
+// MULTICA_A2A_FORWARD_REGISTRATION_SECRET, which both deployments already
+// share (signAgentA2AForwardRegistration). Production keeps the
+// registration in Redis until the state expires. On a callback, both
+// callback routes of production (/api/connector-oauth/callback and the
+// "mcpc." branch of /api/github/authorize) take the registration of the
+// state (single use) and send the callback to that pre-release with the
+// same path and raw query (302) only when it exists and names the same
+// origin; anything else naming a foreign origin gets the invalid-connection
+// page (400). Only "https://pre-" + an own host below its registrable domain
+// can register (connectorOAuthProductionOrigin), so production is no open
+// redirect, and a callback no pre-release Workspace/Agent connect started is
+// never forwarded. Without the secret or Redis it fails closed: the
+// pre-release refuses to start such a connect, and production forwards
+// nothing. The home deployment completes the forwarded callback in the
+// browser that started it: the binding cookie was set on its own origin by
+// the start response.
 //
 // This file is self-contained: it holds the callback routes' entry points
 // and everything the forwarder needs, so a build without the connector flow
@@ -35,14 +47,26 @@ package handler
 // every branch that carries it.
 
 import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"html"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/net/publicsuffix"
 )
 
@@ -190,13 +214,207 @@ func (h *Handler) forwardConnectorOAuthCallback(w http.ResponseWriter, r *http.R
 		h.writeConnectorOAuthInvalidPage(w)
 		return true
 	}
+	// Only a connect the pre-release registered for one of its Workspaces
+	// and Agents is forwarded, once.
+	registration, err := h.takeConnectorOAuthForward(r.Context(), r.URL.Query().Get("state"))
+	if err != nil || registration.HomeOrigin != home {
+		slog.WarnContext(r.Context(), "connector OAuth callback forward refused", "event", "connector_oauth_forward_refused",
+			"home_origin", home, "via", via, "registered", err == nil, "error", err)
+		h.writeConnectorOAuthInvalidPage(w)
+		return true
+	}
 	_, path := h.connectorOAuthCallbackTarget(via)
 	target := home + path
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
+	slog.InfoContext(r.Context(), "connector OAuth callback forwarded", "event", "connector_oauth_forwarded",
+		"home_origin", home, "via", via, "workspace_id", registration.WorkspaceID, "agent_id", registration.AgentID,
+		"connector_id", registration.ConnectorID, "scope_type", registration.ScopeType)
 	http.Redirect(w, r, target, http.StatusFound)
 	return true
+}
+
+const (
+	// ConnectorOAuthForwardRegistrationPath is production's endpoint for its
+	// pre-release's connect registrations. No Multica session: the
+	// shared-secret signature is the credential.
+	ConnectorOAuthForwardRegistrationPath = "/api/internal/connector-oauth/forward-registrations"
+	connectorOAuthForwardSignatureHeader  = "X-Multica-Connector-OAuth-Forward-Signature"
+	connectorOAuthForwardTimestampHeader  = "X-Multica-Connector-OAuth-Forward-Timestamp"
+	connectorOAuthForwardMaxBody          = 8 << 10
+	connectorOAuthForwardMaxSkew          = 5 * time.Minute
+	// connectorOAuthForwardMaxTTL bounds how long production keeps a
+	// registration (a state lives 10 minutes).
+	connectorOAuthForwardMaxTTL    = 15 * time.Minute
+	connectorOAuthForwardKeyPrefix = "connector_oauth_forward:"
+)
+
+// connectorOAuthForwardSetScript stores a registration until it expires;
+// connectorOAuthForwardTakeScript returns it and deletes it (single use).
+const (
+	connectorOAuthForwardSetScript  = `return redis.call('SET', KEYS[1], ARGV[1], 'PX', ARGV[2])`
+	connectorOAuthForwardTakeScript = `local v = redis.call('GET', KEYS[1]) if v then redis.call('DEL', KEYS[1]) end return v`
+)
+
+// connectorOAuthForwardHTTPClient sends registrations to production; it
+// never follows redirects or uses a proxy.
+var connectorOAuthForwardHTTPClient = &http.Client{
+	Timeout:   10 * time.Second,
+	Transport: &http.Transport{Proxy: nil, TLSHandshakeTimeout: 5 * time.Second},
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
+var errConnectorOAuthForwardUnavailable = errors.New("connector OAuth forwarding is not configured")
+
+// connectorOAuthForwardRegistration is one pre-release connect production
+// may forward the callback of. AgentID is "" for a workspace connect.
+type connectorOAuthForwardRegistration struct {
+	StateSHA256 string `json:"state_sha256"`
+	HomeOrigin  string `json:"home_origin"`
+	WorkspaceID string `json:"workspace_id"`
+	AgentID     string `json:"agent_id"`
+	ConnectorID string `json:"connector_id"`
+	ScopeType   string `json:"scope_type"`
+	ExpiresAtMs int64  `json:"expires_at_ms"`
+}
+
+func connectorOAuthForwardStateSHA256(state string) string {
+	digest := sha256.Sum256([]byte(state))
+	return hex.EncodeToString(digest[:])
+}
+
+func (reg connectorOAuthForwardRegistration) valid(now time.Time) bool {
+	if len(reg.StateSHA256) != 64 || reg.ScopeType == "" || len(reg.ScopeType) > 32 {
+		return false
+	}
+	if _, err := hex.DecodeString(reg.StateSHA256); err != nil {
+		return false
+	}
+	if _, err := parseStrictUUID(reg.WorkspaceID); err != nil {
+		return false
+	}
+	if _, err := parseStrictUUID(reg.ConnectorID); err != nil {
+		return false
+	}
+	if reg.AgentID != "" {
+		if _, err := parseStrictUUID(reg.AgentID); err != nil {
+			return false
+		}
+	}
+	expires := time.UnixMilli(reg.ExpiresAtMs)
+	return expires.After(now) && !expires.After(now.Add(connectorOAuthForwardMaxTTL))
+}
+
+// registerConnectorOAuthForward registers a connect of this pre-release with
+// its production (the redirect origin), before the browser goes to the
+// provider. It fails closed: without the shared secret or a 200 from
+// production the connect must not start, because its callback would not be
+// forwarded.
+func (h *Handler) registerConnectorOAuthForward(ctx context.Context, production, state string, reg connectorOAuthForwardRegistration) error {
+	secret := h.agentA2AForwardSecret()
+	if secret == nil {
+		return errConnectorOAuthForwardUnavailable
+	}
+	reg.StateSHA256 = connectorOAuthForwardStateSHA256(state)
+	body, err := json.Marshal(reg)
+	if err != nil {
+		return err
+	}
+	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, production+ConnectorOAuthForwardRegistrationPath, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(connectorOAuthForwardTimestampHeader, timestamp)
+	req.Header.Set(connectorOAuthForwardSignatureHeader, signAgentA2AForwardRegistration(secret, timestamp, body))
+	resp, err := connectorOAuthForwardHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("production answered the connect registration with %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// HandleConnectorOAuthForwardRegistration is production's registration
+// endpoint: a signed registration of its own pre-release origin is kept
+// until the state expires. 404 when this deployment cannot keep
+// registrations (no shared secret or Redis).
+func (h *Handler) HandleConnectorOAuthForwardRegistration(w http.ResponseWriter, r *http.Request) {
+	secret := h.agentA2AForwardSecret()
+	if secret == nil || h.InternalConnectorRedis == nil {
+		http.NotFound(w, r)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, connectorOAuthForwardMaxBody))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid registration body")
+		return
+	}
+	timestamp := strings.TrimSpace(r.Header.Get(connectorOAuthForwardTimestampHeader))
+	signedAtMs, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil || absDuration(time.Since(time.UnixMilli(signedAtMs))) > connectorOAuthForwardMaxSkew ||
+		!hmac.Equal([]byte(signAgentA2AForwardRegistration(secret, timestamp, body)), []byte(strings.TrimSpace(r.Header.Get(connectorOAuthForwardSignatureHeader)))) {
+		writeError(w, http.StatusUnauthorized, "invalid registration signature")
+		return
+	}
+	var reg connectorOAuthForwardRegistration
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&reg); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid registration body")
+		return
+	}
+	now := time.Now()
+	home, ok := normalizeConnectorOAuthOrigin(reg.HomeOrigin)
+	if !ok || home != reg.HomeOrigin || !reg.valid(now) {
+		writeError(w, http.StatusBadRequest, "invalid registration")
+		return
+	}
+	if production, pre := connectorOAuthProductionOrigin(home); !pre || !h.connectorOAuthOwnOrigin(production) {
+		writeError(w, http.StatusForbidden, "not this deployment's pre-release")
+		return
+	}
+	ttl := time.UnixMilli(reg.ExpiresAtMs).Sub(now)
+	if err := h.InternalConnectorRedis.Eval(r.Context(), connectorOAuthForwardSetScript,
+		[]string{connectorOAuthForwardKeyPrefix + reg.StateSHA256}, string(body), ttl.Milliseconds()).Err(); err != nil {
+		slog.ErrorContext(r.Context(), "connector OAuth forward registration not stored", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "registration not stored")
+		return
+	}
+	slog.InfoContext(r.Context(), "connector OAuth forward registered", "event", "connector_oauth_forward_registered",
+		"home_origin", home, "workspace_id", reg.WorkspaceID, "agent_id", reg.AgentID, "connector_id", reg.ConnectorID, "scope_type", reg.ScopeType)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "registered"})
+}
+
+// takeConnectorOAuthForward returns and removes the registration of state.
+func (h *Handler) takeConnectorOAuthForward(ctx context.Context, state string) (connectorOAuthForwardRegistration, error) {
+	var reg connectorOAuthForwardRegistration
+	if h.InternalConnectorRedis == nil {
+		return reg, errConnectorOAuthForwardUnavailable
+	}
+	value, err := h.InternalConnectorRedis.Eval(ctx, connectorOAuthForwardTakeScript,
+		[]string{connectorOAuthForwardKeyPrefix + connectorOAuthForwardStateSHA256(state)}).Text()
+	if errors.Is(err, redis.Nil) {
+		return reg, errors.New("no registration for this state")
+	}
+	if err != nil {
+		return reg, err
+	}
+	if err := json.Unmarshal([]byte(value), &reg); err != nil {
+		return reg, err
+	}
+	if reg.StateSHA256 != connectorOAuthForwardStateSHA256(state) || time.Now().After(time.UnixMilli(reg.ExpiresAtMs)) {
+		return reg, errors.New("registration does not match this state")
+	}
+	return reg, nil
 }
 
 const (
