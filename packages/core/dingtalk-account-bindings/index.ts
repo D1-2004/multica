@@ -8,4 +8,6 @@ export {
   useReuseDingTalkIdentity,
   useDeleteDingTalkAccountBinding,
   useUpdateDingTalkAccountBindingSurface,
+  useSetDingTalkNativeSubscription,
+  useBindDingTalkMessageRouteManually,
 } from "./mutations";

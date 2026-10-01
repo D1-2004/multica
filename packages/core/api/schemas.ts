@@ -298,6 +298,8 @@ const DingTalkAccountBindingOutcomeSchema = z
     account_avatar_url: z.string().nullable().optional(),
     bound_at: z.string().nullable().optional(),
     error: DingTalkBindingErrorSchema.nullable().optional().catch(undefined),
+    // Absent on older servers and on identities without native subscription.
+    native_subscription: z.boolean().optional().catch(undefined),
   })
   .loose()
   .transform((outcome) => ({
@@ -308,6 +310,7 @@ const DingTalkAccountBindingOutcomeSchema = z
     accountAvatarUrl: outcome.account_avatar_url,
     boundAt: outcome.bound_at,
     error: outcome.error,
+    nativeSubscription: outcome.native_subscription === true,
   }));
 
 const DingTalkConversationSummarySchema = z
@@ -438,18 +441,31 @@ export const DingTalkAccountBindingsResponseSchema = z
   .object({
     bindings: z.array(DingTalkAccountBindingSchema),
     configured: z.boolean(),
+    // Operator-only affordance; anything but an explicit true hides it.
+    manual_binding_allowed: z.boolean().optional().catch(undefined),
   })
   .loose()
   .transform((response) => ({
     bindings: response.bindings,
     configured: response.configured,
+    manualBindingAllowed: response.manual_binding_allowed === true,
   }));
 
 export const EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE: DingTalkAccountBindingsResponse =
   {
     bindings: [],
     configured: false,
+    manualBindingAllowed: false,
   };
+
+export const DingTalkNativeSubscriptionResponseSchema = z
+  .object({
+    native_subscription: z.boolean(),
+  })
+  .loose()
+  .transform((response) => ({
+    nativeSubscription: response.native_subscription,
+  }));
 
 export const BeginDingTalkAccountBindingResponseSchema = z
   .object({

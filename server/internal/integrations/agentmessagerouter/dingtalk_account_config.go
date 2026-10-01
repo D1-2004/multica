@@ -110,6 +110,9 @@ type PublicDingTalkBindingOutcome struct {
 	EmojiConversations   []DingTalkConversationSnapshot        `json:"emoji_conversations,omitempty"`
 	BoundAt              *time.Time                            `json:"bound_at,omitempty"`
 	Error                *BindingTaskError                     `json:"error,omitempty"`
+	// NativeSubscription marks an execution identity that receives its own
+	// messages through DWS native subscriptions (set by the handler).
+	NativeSubscription bool `json:"native_subscription,omitempty"`
 }
 
 // PublicDingTalkMessageScopeView 是绑定查询接口返回的双维度新视图（dm-bind 方案 §2.4

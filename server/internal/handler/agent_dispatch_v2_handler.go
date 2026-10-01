@@ -201,9 +201,21 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Native dispatch tasks are Multica's own; only the in-process native
+	// subscription path may name one, or a delivery could steer its
+	// completions away from the Router.
+	if dispatchCommandClaimsNativeNamespace(command) && !isNativeDispatch(r.Context()) {
+		writeError(w, http.StatusBadRequest, "completionCallback uses a reserved dispatch task namespace")
+		return
+	}
 	command, err := bindDispatchCompletionTarget(command, h.TaskCompletionTargetIdentity)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
+		return
+	}
+	// One owner per DingTalk account and message: a Router delivery for an
+	// account native subscription owns is dropped before anything is recorded.
+	if h.dropNativeOwnedDelivery(w, r, command, dispatchContext) {
 		return
 	}
 	if h.handleMessageStatistics(w, r, command, dispatchContext) {
@@ -533,6 +545,10 @@ func (h *Handler) agentAlwaysCreatesNewIssue(ctx context.Context, workspaceID, a
 	return agent.DispatchAlwaysNewIssue
 }
 
+// bindDispatchCompletionTarget stamps each callback with the target that
+// drains it: the Router's, or the native target for native dispatch tasks
+// (completionTargetFor). Targets are not persisted with a Coordinator job,
+// so every restore binds again from the callback URLs.
 func bindDispatchCompletionTarget(
 	command DispatchCommand,
 	targetIdentity string,
@@ -541,16 +557,31 @@ func bindDispatchCompletionTarget(
 	if command.CompletionCallback == nil && len(command.ExtraCompletionCallbacks) == 0 {
 		return command, nil
 	}
-	if !routerCompletionTargetPattern.MatchString(targetIdentity) {
-		return DispatchCommand{}, errors.New("task completion target is not configured")
+	bind := func(callback DispatchCompletionCallback) (DispatchCompletionCallback, error) {
+		target := completionTargetFor(callback.URL, targetIdentity)
+		if !routerCompletionTargetPattern.MatchString(target) {
+			return callback, errors.New("task completion target is not configured")
+		}
+		callback.Target = target
+		return callback, nil
 	}
 	if command.CompletionCallback != nil {
-		callback := *command.CompletionCallback
-		callback.Target = targetIdentity
+		callback, err := bind(*command.CompletionCallback)
+		if err != nil {
+			return DispatchCommand{}, err
+		}
 		command.CompletionCallback = &callback
 	}
-	for i := range command.ExtraCompletionCallbacks {
-		command.ExtraCompletionCallbacks[i].Target = targetIdentity
+	if len(command.ExtraCompletionCallbacks) > 0 {
+		extras := make([]DispatchCompletionCallback, len(command.ExtraCompletionCallbacks))
+		for i, extra := range command.ExtraCompletionCallbacks {
+			callback, err := bind(extra)
+			if err != nil {
+				return DispatchCommand{}, err
+			}
+			extras[i] = callback
+		}
+		command.ExtraCompletionCallbacks = extras
 	}
 	return command, nil
 }

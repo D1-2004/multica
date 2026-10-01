@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import { setApiInstance } from "@multica/core/api";
+import { ApiError, setApiInstance } from "@multica/core/api";
 import type { ApiClient } from "@multica/core/api/client";
 import { dingtalkAccountBindingKeys } from "@multica/core/dingtalk-account-bindings";
 import enCommon from "../../../locales/en/common.json";
@@ -20,6 +20,8 @@ const listReusable = vi.fn();
 const reuseIdentity = vi.fn();
 const deleteBinding = vi.fn();
 const updateBindingSurface = vi.fn();
+const setNativeSubscription = vi.fn();
+const bindManually = vi.fn();
 const mid2Url = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 
@@ -140,6 +142,8 @@ beforeEach(() => {
     beginDingTalkAccountBinding: beginBinding,
     deleteDingTalkAccountBinding: deleteBinding,
     updateDingTalkAccountBindingSurface: updateBindingSurface,
+    setDingTalkNativeSubscription: setNativeSubscription,
+    bindDingTalkMessageRouteManually: bindManually,
   } as unknown as ApiClient);
   listBindings.mockResolvedValue({ bindings: [], configured: true });
   listReusable.mockResolvedValue([]);
@@ -151,6 +155,8 @@ beforeEach(() => {
   });
   deleteBinding.mockResolvedValue(undefined);
   updateBindingSurface.mockResolvedValue(undefined);
+  setNativeSubscription.mockResolvedValue({ nativeSubscription: true });
+  bindManually.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -998,5 +1004,272 @@ describe("reusable execution identity", () => {
     renderCard("message");
     await screen.findByRole("button", { name: "Bind digital employee" });
     expect(listReusable).not.toHaveBeenCalled();
+  });
+});
+
+function conflict(code: string): ApiError {
+  return new ApiError("conflict", 409, "Conflict", { code, error: "conflict" });
+}
+
+// Identity bound, no digital-employee message projection.
+const identityOnlyBinding = {
+  ...activeBinding,
+  dwsIdentity: { ...activeBinding.dwsIdentity, nativeSubscription: false },
+  messageRoute: { status: "unbound", messageScope: "direct_only" },
+};
+
+const nativeOnBinding = {
+  ...identityOnlyBinding,
+  dwsIdentity: { ...identityOnlyBinding.dwsIdentity, nativeSubscription: true },
+};
+
+describe("DWS native subscription on the execution identity", () => {
+  it("shows the switch on a bound identity and reflects the server state", async () => {
+    listBindings.mockResolvedValue({ bindings: [nativeOnBinding], configured: true });
+
+    renderCard("identity");
+
+    const toggle = await screen.findByRole("switch", { name: "Native subscription" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(toggle).not.toHaveAttribute("data-disabled");
+    expect(screen.getByText(enAgents.tab_body.integrations.dingtalk_identity_native_subscription_hint))
+      .toBeInTheDocument();
+    // The switch sits on the bound row, next to Unbind.
+    expect(screen.getByTestId("dingtalk-identity-binding-active-row")).toContainElement(toggle);
+    expect(screen.getByRole("button", { name: /^Unbind$/i })).toBeInTheDocument();
+  });
+
+  it("turns native subscription on and refreshes the bindings", async () => {
+    listBindings.mockResolvedValue({ bindings: [identityOnlyBinding], configured: true });
+    const user = userEvent.setup();
+
+    renderCard("identity");
+
+    const toggle = await screen.findByRole("switch", { name: "Native subscription" });
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await user.click(toggle);
+
+    await waitFor(() =>
+      expect(setNativeSubscription).toHaveBeenCalledWith("workspace-1", "agent-1", true),
+    );
+    await waitFor(() => expect(listBindings).toHaveBeenCalledTimes(2));
+  });
+
+  it("turns native subscription off", async () => {
+    listBindings.mockResolvedValue({ bindings: [nativeOnBinding], configured: true });
+    const user = userEvent.setup();
+
+    renderCard("identity");
+    await user.click(await screen.findByRole("switch", { name: "Native subscription" }));
+
+    await waitFor(() =>
+      expect(setNativeSubscription).toHaveBeenCalledWith("workspace-1", "agent-1", false),
+    );
+  });
+
+  it("disables the switch while the digital employee message binding is active", async () => {
+    listBindings.mockResolvedValue({ bindings: [activeBinding], configured: true });
+    const user = userEvent.setup();
+
+    renderCard("identity");
+
+    const toggle = await screen.findByRole("switch", { name: "Native subscription" });
+    expect(toggle).toHaveAttribute("data-disabled");
+    expect(screen.getByText(
+      enAgents.tab_body.integrations.dingtalk_identity_native_subscription_blocked,
+    )).toBeInTheDocument();
+    await user.click(toggle);
+    expect(setNativeSubscription).not.toHaveBeenCalled();
+  });
+
+  it("does not render the switch while the identity is unbound", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [{ ...identityOnlyBinding, dwsIdentity: { status: "unbound" } }],
+      configured: true,
+    });
+
+    renderCard("identity");
+
+    expect(await screen.findByRole("button", { name: /Bind execution identity/i })).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  });
+
+  it("keeps the switch off the message-binding card", async () => {
+    listBindings.mockResolvedValue({ bindings: [activeBinding], configured: true });
+
+    renderCard("message");
+
+    expect(await screen.findByText("Zhang San")).toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  });
+
+  it("maps a server conflict code to a friendly message", async () => {
+    listBindings.mockResolvedValue({ bindings: [identityOnlyBinding], configured: true });
+    setNativeSubscription.mockRejectedValue(
+      conflict("native_subscription_conflicts_with_message_binding"),
+    );
+    const user = userEvent.setup();
+
+    renderCard("identity");
+    await user.click(await screen.findByRole("switch", { name: "Native subscription" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      enAgents.tab_body.integrations.dingtalk_identity_native_subscription_blocked,
+    );
+  });
+
+  it.each([
+    ["native_subscription_requires_managed_response", "dingtalk_identity_native_subscription_requires_managed_response"],
+    ["native_subscription_account_in_use", "dingtalk_identity_native_subscription_account_in_use"],
+    ["native_subscription_unavailable", "dingtalk_identity_native_subscription_unavailable"],
+  ] as const)("maps %s to a friendly message", async (code, key) => {
+    listBindings.mockResolvedValue({ bindings: [identityOnlyBinding], configured: true });
+    setNativeSubscription.mockRejectedValue(conflict(code));
+    const user = userEvent.setup();
+
+    renderCard("identity");
+    await user.click(await screen.findByRole("switch", { name: "Native subscription" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(enAgents.tab_body.integrations[key]);
+  });
+
+  it("blocks unauthorized toggles without calling the API", async () => {
+    listBindings.mockResolvedValue({ bindings: [identityOnlyBinding], configured: true });
+    const user = userEvent.setup();
+
+    renderCard("identity", false);
+    await user.click(await screen.findByRole("switch", { name: "Native subscription" }));
+
+    expect(toastError).toHaveBeenCalledWith(
+      "You don't have permission to perform this action. Contact this agent's administrator.",
+    );
+    expect(setNativeSubscription).not.toHaveBeenCalled();
+  });
+});
+
+describe("operator manual message binding", () => {
+  it("is hidden unless the server allows manual binding", async () => {
+    renderCard("message");
+
+    expect(await screen.findByRole("button", { name: /Bind digital employee/i })).toBeInTheDocument();
+    expect(screen.queryByTestId("dingtalk-manual-message-binding")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Bind directly" })).not.toBeInTheDocument();
+  });
+
+  it("never shows the manual form on the execution identity card", async () => {
+    listBindings.mockResolvedValue({ bindings: [], configured: true, manualBindingAllowed: true });
+
+    renderCard("identity");
+
+    expect(await screen.findByRole("button", { name: /Bind execution identity/i })).toBeInTheDocument();
+    expect(screen.queryByTestId("dingtalk-manual-message-binding")).not.toBeInTheDocument();
+  });
+
+  it("validates decimal ids and binds with the chosen scope", async () => {
+    listBindings.mockResolvedValue({ bindings: [], configured: true, manualBindingAllowed: true });
+    const user = userEvent.setup();
+
+    renderCard("message");
+
+    expect(await screen.findByTestId("dingtalk-manual-message-binding")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Bind digital employee/i })).toBeEnabled();
+    const submit = screen.getByRole("button", { name: "Bind directly" });
+    const orgId = screen.getByLabelText("OrgID");
+    const uid = screen.getByLabelText("UID");
+    const scope = screen.getByLabelText("Message scope");
+    expect(scope).toHaveValue("all");
+    expect(submit).toBeDisabled();
+
+    await user.type(orgId, "0123");
+    await user.type(uid, "abc");
+    expect(screen.getAllByText("Enter a numeric DingTalk ID.")).toHaveLength(2);
+    expect(orgId).toHaveAttribute("aria-invalid", "true");
+    expect(submit).toBeDisabled();
+
+    await user.clear(orgId);
+    await user.type(orgId, "123456");
+    await user.clear(uid);
+    await user.type(uid, "7890");
+    expect(screen.queryByText("Enter a numeric DingTalk ID.")).not.toBeInTheDocument();
+    await user.selectOptions(scope, "direct_only");
+    expect(submit).toBeEnabled();
+
+    await user.click(submit);
+
+    await waitFor(() =>
+      expect(bindManually).toHaveBeenCalledWith("workspace-1", "agent-1", {
+        orgId: "123456",
+        uid: "7890",
+        messageScope: "direct_only",
+      }),
+    );
+    await waitFor(() => expect(listBindings).toHaveBeenCalledTimes(2));
+    expect(beginBinding).not.toHaveBeenCalled();
+  });
+
+  it("shows a friendly message for an operator-only rejection", async () => {
+    listBindings.mockResolvedValue({ bindings: [], configured: true, manualBindingAllowed: true });
+    bindManually.mockRejectedValue(
+      new ApiError("forbidden", 403, "Forbidden", { code: "operator_only", error: "forbidden" }),
+    );
+    const user = userEvent.setup();
+
+    renderCard("message");
+    await user.type(await screen.findByLabelText("OrgID"), "123456");
+    await user.type(screen.getByLabelText("UID"), "7890");
+    await user.click(screen.getByRole("button", { name: "Bind directly" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      enAgents.tab_body.integrations.dingtalk_account_manual_operator_only,
+    );
+  });
+
+  it("disables QR and manual binding while native subscription is on", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [nativeOnBinding],
+      configured: true,
+      manualBindingAllowed: true,
+    });
+
+    renderCard("message");
+
+    expect(await screen.findByText(
+      enAgents.tab_body.integrations.dingtalk_account_native_subscription_blocked,
+    )).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Bind digital employee/i })).toBeDisabled();
+    expect(screen.getByLabelText("OrgID")).toBeDisabled();
+    expect(screen.getByLabelText("UID")).toBeDisabled();
+    expect(screen.getByLabelText("Message scope")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Bind directly" })).toBeDisabled();
+  });
+
+  it("explains a QR begin rejected by native subscription", async () => {
+    beginBinding.mockRejectedValue(conflict("message_binding_conflicts_with_native_subscription"));
+    const user = userEvent.setup();
+
+    renderCard("message");
+    await user.click(await screen.findByRole("button", { name: /Bind digital employee/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      enAgents.tab_body.integrations.dingtalk_account_native_subscription_blocked,
+    );
+  });
+
+  it("keeps the exact Chinese native subscription copy", () => {
+    const integrations = zhHansAgents.tab_body.integrations;
+
+    expect(integrations.dingtalk_identity_native_subscription).toBe("原生订阅");
+    expect(integrations.dingtalk_identity_native_subscription_hint).toBe(
+      "开启后，这个身份的单聊和群里 @ 它的消息通过线上 DWS 原生订阅进入智能体；与上方数字员工消息绑定二选一。",
+    );
+    expect(integrations.dingtalk_identity_native_subscription_blocked).toBe(
+      "已绑定数字员工消息，需先解除才能开启原生订阅",
+    );
+    expect(integrations.dingtalk_account_native_subscription_blocked).toBe(
+      "已开启原生订阅，需先关闭才能绑定数字员工消息",
+    );
+    expect(integrations.dingtalk_account_manual_submit).toBe("直接绑定");
+    expect(integrations.dingtalk_account_manual_scope_all).toBe("全部消息");
+    expect(integrations.dingtalk_account_manual_scope_direct_only).toBe("仅单聊");
   });
 });

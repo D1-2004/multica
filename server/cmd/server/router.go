@@ -637,6 +637,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			agentmessagerouter.NewDBDispatchEndpointStore(queries),
 			endpointServiceConfig,
 		)
+		if endpointErr == nil {
+			// Native subscription accepts events under the endpoint namespace
+			// without the Router.
+			h.DispatchEndpoints = endpointService
+		}
 		if routerClientErr == nil && endpointErr == nil {
 			agentDispatchEndpoints = endpointService
 		}
@@ -940,6 +945,35 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				h.DWSEvents = source
 				dingtalkresponse.SetDecisionEventConnections(h.UserDecisions.Transport, source)
 			}
+			// Native subscriptions: execution identities that receive their
+			// own messages (group @-mentions and single chats) over DWS
+			// personal event subscriptions, always on the production DWS
+			// gateway whatever this deployment is. runtime.use_dws_for_tag
+			// gates the source; the per-agent switch selects identities.
+			native := sessions
+			native.CLI.MCPBaseURL, native.CLI.Environment = "", "production"
+			identities := func(ctx context.Context) ([]dwsclient.Identity, error) {
+				rows, err := h.Queries.ListActiveDWSNativeSubscriptions(ctx)
+				ids := make([]dwsclient.Identity, 0, len(rows))
+				for _, row := range rows {
+					ids = append(ids, dwsclient.Identity{AgentID: util.UUIDToString(row.AgentID), UID: row.DwsUid, OrgID: row.OrgID})
+				}
+				return ids, err
+			}
+			nativeSource, err := dwseventsource.New(dwseventsource.Config{
+				Redis: rdb, Sessions: native, Mint: mint,
+				Deployment: "native:" + strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+				Enabled:    opts.RuntimeConfig.useDWSForTag,
+				Consumers: []dwseventsource.Consumer{
+					{EventKey: dws.EventIMAt, Identities: identities, Handle: h.HandleDWSNativeEvent},
+					{EventKey: dws.EventIMAllSingleChats, Identities: identities, Handle: h.HandleDWSNativeEvent},
+				},
+			})
+			if err != nil {
+				slog.Error("DWS native subscription source disabled", "event", "dws_native_source_disabled", "error", err)
+			} else {
+				h.DWSNativeEvents = nativeSource
+			}
 		}
 	}
 	h.UserDecisions.NotifyAlert = func(alert userdecision.Alert) {
@@ -973,15 +1007,30 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		return raw, interpretation, err
 	}
 
-	if agentMessageRouterClient != nil {
+	// Managed responses serve Router dispatches and native subscription
+	// dispatches alike; the receipt sender tells their targets apart.
+	if agentMessageRouterClient != nil || h.DWSNativeEvents != nil {
 		h.DingTalkResponses = dingtalkresponse.NewService(pool, dingtalkresponse.NewDWSProvider(dingtalkresponse.DWSConfig{
 			AgentIdentity:   agentidentityhsf.NewClient(),
 			BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
 			BaseURLProvider: agentIdentityControlBaseURLProvider,
 			ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
 		}), handler.RouterResponseReceiptSender{Client: agentMessageRouterClient, Handler: h})
-		h.TaskCompletionWorker.ResponseActions = h
+		if h.TaskCompletionWorker != nil {
+			h.TaskCompletionWorker.ResponseActions = h
+		}
 		h.DingTalkResponses.OnSandboxDelivered = h.BindVerifiedDingTalkSend
+		// Native dispatches complete to their own target. The worker exists
+		// whenever managed responses do, so queued native callbacks drain
+		// even after runtime.use_dws_for_tag is switched off.
+		responses := h.DingTalkResponses
+		h.NativeCompletionWorker = agentmessagerouter.NewCompletionWorker(queries,
+			agentmessagerouter.NewNativeCallbackClient(func(ctx context.Context, callback string) (bool, error) {
+				route, err := responses.FindRoute(ctx, callback)
+				return route != nil, err
+			}), h.TaskService)
+		h.NativeCompletionWorker.ResponseActions = h
+		h.TaskService.CompletionNotifier = agentmessagerouter.CompletionNotifiers{h.TaskCompletionWorker, h.NativeCompletionWorker}
 	}
 	h.SceneMemoryStore = scenememory.NewStore(queries)
 	coordinator.SceneMemory = h.SceneMemoryStore
@@ -2440,6 +2489,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/dingtalk/account-bindings/{agentId}/status", h.GetDingTalkAccountBindingStatus)
 					r.Post("/dingtalk/account-bindings/begin", h.BeginDingTalkAccountBinding)
 					r.Patch("/dingtalk/account-bindings/{agentId}/surface", h.UpdateDingTalkAccountBindingSurface)
+					r.Put("/dingtalk/account-bindings/{agentId}/native-subscription", h.SetDWSNativeSubscription)
+					r.Post("/dingtalk/account-bindings/{agentId}/message-route/manual", h.BindDingTalkMessageRouteManually)
 					r.Delete("/dingtalk/account-bindings/{agentId}", h.UnbindDingTalkAccountBinding)
 					r.Get("/agent-identity/github/status", h.GetAgentIdentityGitHubStatus)
 					r.Post("/agent-identity/github/oauth/start", h.BeginAgentIdentityGitHubOAuth)

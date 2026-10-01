@@ -61,6 +61,7 @@ func (h *Handler) registerDingTalkResponseRoute(ctx context.Context, tx db.DBTX,
 		ReplyToOpenMsgID:     dispatchOriginOpenMsgID(c),
 		IsGroup:              strings.EqualFold(c.Event.Data.Conversation.Type, "group"),
 		ShowAITag:            c.ResponsePolicy.ShowAITag,
+		DWSEnvironment:       commandDWSEnvironment(c),
 		CallbackURL:          c.CompletionCallback.ResponseURL, CallbackTarget: c.CompletionCallback.Target,
 	}
 	// Register both supplied callback paths; never reconstruct one from another.
@@ -198,12 +199,22 @@ func (h *Handler) fillDingTalkResponseOrigin(ctx context.Context, in dingtalkres
 }
 
 // RouterResponseReceiptSender pins pending receipts to their original Router.
+// Native dispatches have no Router: their receipt only closes the window.
 type RouterResponseReceiptSender struct {
 	Client  *agentmessagerouter.Client
 	Handler *Handler
 }
 
 func (s RouterResponseReceiptSender) SendResponseReceipt(ctx context.Context, callback, target string, receipt protocol.DingTalkResponseReceipt) error {
+	if target == agentmessagerouter.NativeTargetIdentity() {
+		if !agentmessagerouter.IsNativeDispatchCallback(callback) {
+			return errors.New("native response receipt callback is invalid")
+		}
+		if s.Handler == nil {
+			return nil
+		}
+		return s.Handler.closeDeliveredCoordinatorWindow(ctx, callback, target, receipt)
+	}
 	if s.Client == nil || s.Client.TargetIdentity() != target {
 		return errors.New("response receipt Router target changed")
 	}
@@ -242,7 +253,7 @@ func (h *Handler) closeDeliveredCoordinatorWindow(ctx context.Context, callback,
 		if !routerCompletionCallbackPattern.MatchString(cb.URL) {
 			return errors.New("invalid collected completion callback")
 		}
-		if err := h.TaskService.EnqueueSynchronousSilence(ctx, cb.URL, target, agentID); err != nil {
+		if err := h.TaskService.EnqueueSynchronousSilence(ctx, cb.URL, completionTargetFor(cb.URL, target), agentID); err != nil {
 			return err
 		}
 	}

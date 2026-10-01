@@ -292,6 +292,8 @@ import type {
   RedeemDingTalkBindingTokenResponse,
   DingTalkAccountBindingsResponse,
   BeginDingTalkAccountBindingResponse,
+  BindDingTalkMessageRouteManuallyRequest,
+  DingTalkNativeSubscriptionResponse,
   AgentIdentityGitHubStatusResponse,
   BeginAgentIdentityGitHubOAuthResponse,
   DisconnectAgentIdentityGitHubConnectionResponse,
@@ -594,6 +596,7 @@ import {
   EMPTY_SYNC_AGENT_SOURCE_RESPONSE,
   BeginDingTalkAccountBindingResponseSchema,
   DingTalkAccountBindingsResponseSchema,
+  DingTalkNativeSubscriptionResponseSchema,
   ReusableDingTalkIdentitiesSchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
   EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
@@ -7081,6 +7084,52 @@ export class ApiClient {
       {
         method: "PATCH",
         body: JSON.stringify({ surface_type: surfaceType }),
+      },
+    );
+  }
+
+  async setDingTalkNativeSubscription(
+    workspaceId: string,
+    agentId: string,
+    enabled: boolean,
+  ): Promise<DingTalkNativeSubscriptionResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}/native-subscription`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      },
+    );
+    // A 2xx means the server applied the switch; when the echo drifts, report
+    // the requested state and let the bindings refetch carry the truth.
+    return parseWithFallback(
+      raw,
+      DingTalkNativeSubscriptionResponseSchema,
+      { nativeSubscription: enabled },
+      {
+        endpoint:
+          "PUT /api/workspaces/:id/dingtalk/account-bindings/:agentId/native-subscription",
+      },
+    );
+  }
+
+  // Operator-only: binds the digital-employee message route by DingTalk
+  // organization and account id instead of the DBase scan. Callers only rely
+  // on success and re-read the bindings list for the resulting state.
+  async bindDingTalkMessageRouteManually(
+    workspaceId: string,
+    agentId: string,
+    request: BindDingTalkMessageRouteManuallyRequest,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}/message-route/manual`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          org_id: request.orgId,
+          uid: request.uid,
+          message_scope: request.messageScope,
+        }),
       },
     );
   }

@@ -25,6 +25,15 @@ export interface DingTalkAccountBindingOutcome {
   error?: DingTalkBindingError | null;
 }
 
+// The execution identity outcome additionally reports whether inbound DingTalk
+// messages for that identity reach the agent through the DWS native
+// subscription. It is mutually exclusive with the digital-employee message
+// binding.
+export interface DingTalkExecutionIdentityOutcome
+  extends DingTalkAccountBindingOutcome {
+  nativeSubscription: boolean;
+}
+
 export type DingTalkMessageScope = "direct_only" | "custom" | "all";
 export type DingTalkProcessingSurface = "issue" | "chat" | "auto";
 
@@ -57,13 +66,31 @@ export interface DingTalkAccountBinding {
   id: string;
   workspaceId: string;
   agentId: string;
-  dwsIdentity: DingTalkAccountBindingOutcome;
+  dwsIdentity: DingTalkExecutionIdentityOutcome;
   messageRoute: DingTalkMessageRouteOutcome;
 }
 
 export interface DingTalkAccountBindingsResponse {
   bindings: DingTalkAccountBinding[];
   configured: boolean;
+  // True only for deployment operators, who may bind the message route by
+  // DingTalk organization and account id instead of scanning.
+  manualBindingAllowed: boolean;
+}
+
+export interface DingTalkNativeSubscriptionResponse {
+  nativeSubscription: boolean;
+}
+
+export type DingTalkManualMessageScope = Extract<
+  DingTalkMessageScope,
+  "all" | "direct_only"
+>;
+
+export interface BindDingTalkMessageRouteManuallyRequest {
+  orgId: string;
+  uid: string;
+  messageScope: DingTalkManualMessageScope;
 }
 
 export interface BeginDingTalkAccountBindingResponse {

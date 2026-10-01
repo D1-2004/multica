@@ -148,3 +148,63 @@ func TestDWSProviderRejectsRedeemedIdentityMismatchBeforeSend(t *testing.T) {
 		t.Fatalf("error=%v", err)
 	}
 }
+
+// An action pinned to a DWS environment exchanges and sends through that
+// gateway whatever the deployment's ambient one; unpinned actions keep it.
+func TestDWSProviderPinsActionEnvironment(t *testing.T) {
+	redeem := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"identity":{"key":"dws","type":"DWS_UID","uid":"123","clientId":"client"},"credential":{"type":"DWS_AUTH_CODE","authCode":"ephemeral-auth-code"}}`))
+	}))
+	defer redeem.Close()
+	dir := t.TempDir()
+	capture := filepath.Join(dir, "capture")
+	captureJSON, _ := json.Marshal(capture)
+	exe := filepath.Join(dir, "fake-dws")
+	script := `#!/usr/bin/env python3
+import json,os,sys
+config=os.environ['DWS_CONFIG_DIR']
+mcp_file=os.path.join(config,'mcp_url')
+pinned=open(mcp_file).read() if os.path.exists(mcp_file) else ''
+with open(` + string(captureJSON) + `, 'a') as f: f.write(sys.argv[1]+' '+os.environ.get('DWS_MCP_URL','')+' '+os.environ.get('DWS_USE_PRE','')+' '+pinned+'\n')
+if sys.argv[1:3] == ['auth','exchange']:
+    raise SystemExit(0)
+print(json.dumps({'success':True,'openTaskId':'sent-task'}))
+`
+	if err := os.WriteFile(exe, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DWS_MCP_URL", "https://pre-mcp.dingtalk.com")
+	t.Setenv("DWS_USE_PRE", "1")
+	p := NewDWSProvider(DWSConfig{AgentIdentity: &fakeIssuer{}, BaseURL: redeem.URL, ClientSecret: "server-client-secret", CLIPath: exe, HTTPClient: redeem.Client()})
+	for _, tt := range []struct {
+		environment string
+		want        string
+	}{
+		{"production", "auth https://mcp.dingtalk.com 0 https://mcp.dingtalk.com\nchat https://mcp.dingtalk.com 0 https://mcp.dingtalk.com\n"},
+		{"staging", "auth https://pre-mcp.dingtalk.com 1 https://pre-mcp.dingtalk.com\nchat https://pre-mcp.dingtalk.com 1 https://pre-mcp.dingtalk.com\n"},
+		{"", "auth https://pre-mcp.dingtalk.com 1 \nchat https://pre-mcp.dingtalk.com 1 \n"},
+	} {
+		_ = os.Remove(capture)
+		in := inputFixture()
+		in.DWSEnvironment = tt.environment
+		if _, err := p.Send(context.Background(), in, "stable-key"); err != nil {
+			t.Fatalf("%q send: %v", tt.environment, err)
+		}
+		raw, err := os.ReadFile(capture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(raw) != tt.want {
+			t.Fatalf("%q environment:\n%s\nwant:\n%s", tt.environment, raw, tt.want)
+		}
+	}
+	in := inputFixture()
+	in.DWSEnvironment = "gray"
+	var notSubmitted *NotSubmittedError
+	if _, err := p.Send(context.Background(), in, "stable-key"); !errors.As(err, &notSubmitted) {
+		t.Fatalf("unknown environment error = %v, want not submitted", err)
+	}
+	if err := validateInput(in); err == nil {
+		t.Fatal("unknown environment accepted by the outbox")
+	}
+}
