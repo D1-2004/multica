@@ -481,6 +481,12 @@ func main() {
 		slog.Info("langfuse tracing disabled", "event", "langfuse_disabled")
 	}
 
+	eventRouteConfig, err := newEventRouteConfigProvider(appRuntimeConfig, os.Getenv("MULTICA_EVENT_SCENE_ROUTER_CONFIG"))
+	if err != nil {
+		slog.Error("event router deployment configuration is invalid", "error", err)
+		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
+	}
+
 	r, h := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
 		Langfuse:           langfuseClient,
 		HTTPMetrics:        httpMetrics,
@@ -494,6 +500,7 @@ func main() {
 		SandboxRelaySigner: sandboxRelaySigner,
 		SandboxRelay:       sandboxRelayMiddleware,
 		RuntimeConfig:      appRuntimeConfig,
+		EventRouteConfig:   eventRouteConfig,
 		DeploymentFence:    deploymentFence,
 	})
 

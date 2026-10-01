@@ -77,7 +77,12 @@ release them.
 
 ## Configured canary and rollback
 
-`runtime.event_scene_router` is absent/off by default. Targets are exact
+`runtime.event_scene_router` is absent/off by default. Deployment-local
+`MULTICA_EVENT_SCENE_ROUTER_CONFIG` can override just this selection using the
+same `{enabled,targets}` JSON; it is validated at boot and its digest is added
+to the receipt's configuration version. Prefer this override for pre-release
+when the Diamond document is shared with an older production binary; do not
+write a new schema key to a shared document before those readers support it. Targets are exact
 `{workspace_id, agent_id, tenant_org_id}` triples; an empty target list admits
 nobody. Each request reads one configuration snapshot. Both selected and
 unselected traffic persist a receipt, selecting `unified` or `legacy` once.

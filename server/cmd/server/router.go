@@ -339,9 +339,10 @@ type RouterOptions struct {
 	// SandboxRelay is nil on ordinary deployments. Production injects the
 	// signed pre-release sandbox relay here so requests carrying the routing
 	// assertion are intercepted before local authentication and routing.
-	SandboxRelay    func(http.Handler) http.Handler
-	RuntimeConfig   *appRuntimeConfig
-	DeploymentFence *deploymentfence.Service
+	SandboxRelay     func(http.Handler) http.Handler
+	EventRouteConfig func(string, string, string) (string, string)
+	RuntimeConfig    *appRuntimeConfig
+	DeploymentFence  *deploymentfence.Service
 	// Langfuse is the LLM trace exporter shared by the inbound coordinator,
 	// the scene memory flusher, and the agent task lifecycle. Nil disables
 	// every export.
@@ -529,17 +530,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.FCE2BLauncher.Runner = service.NewFCE2BRolloutRunner(opts.RuntimeConfig.fcE2BSDKRollout)
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
 		h.EventRouteConfig = opts.RuntimeConfig.eventRouteConfig
-		if opts.DeploymentFence != nil {
-			h.EventRouteReady = func(ctx context.Context) (bool, error) {
-				return opts.DeploymentFence.AllLiveReplicasSupport(ctx, eventrouter.ReplicaMarker)
-			}
-		}
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
 		h.FCE2BLauncher.ConfigProvider = opts.RuntimeConfig.fce2b
 		h.TaskService.RuntimeStartRecoveryConfig = func() service.RuntimeStartRecoveryConfig {
 			return opts.RuntimeConfig.quickWins()
 		}
 	}
+	if opts.EventRouteConfig != nil {
+		h.EventRouteConfig = opts.EventRouteConfig
+	}
+	if opts.DeploymentFence != nil {
+		h.EventRouteReady = func(ctx context.Context) (bool, error) {
+			return opts.DeploymentFence.AllLiveReplicasSupport(ctx, eventrouter.ReplicaMarker)
+		}
+	}
+
 	h.FCE2BLauncher.SetSandboxRelaySigner(opts.SandboxRelaySigner)
 	asbRuntime, err := service.NewASBEnterpriseRuntimeFromConfig(
 		queries,

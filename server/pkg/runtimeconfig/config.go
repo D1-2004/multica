@@ -117,6 +117,24 @@ func (c EventSceneRouterConfig) Allows(workspaceID, agentID, orgID string) bool 
 	return c.Enabled && slices.Contains(c.Targets, EventSceneRouterTarget{workspaceID, agentID, orgID})
 }
 
+// Validate rejects broad or ambiguous deployment targets.
+func (rollout EventSceneRouterConfig) Validate() error {
+	seen := make(map[EventSceneRouterTarget]bool)
+	for _, target := range rollout.Targets {
+		for _, id := range []string{target.WorkspaceID, target.AgentID} {
+			if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil || parsed.String() != id {
+				return fmt.Errorf("event_scene_router.targets requires canonical workspace and agent UUIDs")
+			}
+		}
+		if target.TenantOrgID == "" || len(target.TenantOrgID) > 128 || strings.TrimSpace(target.TenantOrgID) != target.TenantOrgID || seen[target] {
+			return fmt.Errorf("event_scene_router.targets requires unique targets with non-empty tenant_org_id")
+		}
+		seen[target] = true
+	}
+
+	return nil
+}
+
 type PerformanceOptimizationConfig struct {
 	Enabled  bool     `json:"enabled"`
 	AgentIDs []string `json:"agent_ids"`
@@ -429,17 +447,8 @@ func (c IntegrationsConfig) validate() error {
 
 func (c RuntimeConfig) validate() error {
 	if rollout := c.EventSceneRouter; rollout != nil {
-		seen := make(map[EventSceneRouterTarget]bool)
-		for _, target := range rollout.Targets {
-			for _, id := range []string{target.WorkspaceID, target.AgentID} {
-				if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil || parsed.String() != id {
-					return fmt.Errorf("event_scene_router.targets requires canonical workspace and agent UUIDs")
-				}
-			}
-			if target.TenantOrgID == "" || len(target.TenantOrgID) > 128 || strings.TrimSpace(target.TenantOrgID) != target.TenantOrgID || seen[target] {
-				return fmt.Errorf("event_scene_router.targets requires unique targets with non-empty tenant_org_id")
-			}
-			seen[target] = true
+		if err := rollout.Validate(); err != nil {
+			return err
 		}
 	}
 	if rollout := c.PerformanceOptimization; rollout != nil {
