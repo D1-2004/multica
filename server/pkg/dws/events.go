@@ -372,9 +372,17 @@ func (t Ticket) URL() string {
 
 // Ticket requests a stream ticket. Fetch a new one for every connection.
 func (s *EventService) Ticket(ctx context.Context) (Ticket, error) {
+	body := map[string]string{"sourceId": DefaultSourceID, "mode": "normal"}
+	if s.c.cfg.StreamTicketMode == "custom" {
+		clientID := strings.TrimSpace(s.c.Token().ClientID)
+		if clientID == "" || s.c.cfg.ClientSecret == "" {
+			return Ticket{}, errors.New("dws: a custom stream ticket needs the token's app and its secret")
+		}
+		body = map[string]string{"sourceId": DefaultSourceID, "mode": "custom",
+			"clientId": clientID, "clientSecret": s.c.cfg.ClientSecret}
+	}
 	var raw json.RawMessage
-	err := s.do(ctx, http.MethodPost, "/stream/connections/ticket", nil,
-		map[string]string{"sourceId": DefaultSourceID, "mode": "normal"}, &raw)
+	err := s.do(ctx, http.MethodPost, "/stream/connections/ticket", nil, body, &raw)
 	if err != nil {
 		return Ticket{}, err
 	}

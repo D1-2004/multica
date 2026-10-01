@@ -952,6 +952,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// gates the source; the per-agent switch selects identities.
 			native := sessions
 			native.CLI.MCPBaseURL, native.CLI.Environment = "", "production"
+			// The stream is registered for the app the subscriptions name
+			// (the dws CLI's custom ticket mode).
+			native.CLI.StreamTicketMode = "custom"
 			identities := func(ctx context.Context) ([]dwsclient.Identity, error) {
 				rows, err := h.Queries.ListActiveDWSNativeSubscriptions(ctx)
 				ids := make([]dwsclient.Identity, 0, len(rows))
