@@ -23,13 +23,14 @@ package handler
 // signed with HMAC-SHA256 over the timestamp and body using
 // MULTICA_A2A_FORWARD_REGISTRATION_SECRET, which both deployments already
 // share (signAgentA2AForwardRegistration). Production keeps the
-// registration in Redis until the state expires. On a callback, both
-// callback routes of production (/api/connector-oauth/callback and the
-// "mcpc." branch of /api/github/authorize) take the registration of the
-// state (single use) and send the callback to that pre-release with the
-// same path and raw query (302) only when it exists and names the same
-// origin; anything else naming a foreign origin gets the invalid-connection
-// page (400). Only "https://pre-" + an own host below its registrable domain
+// registration in Redis until the state expires. On a callback, production's
+// callback routes (/api/connector-oauth/callback, the console-registered
+// alias /api/connectors/oauth/callback, and the "mcpc." branch of
+// /api/github/authorize) take the registration of the state (single use)
+// and send the callback to that pre-release. The DCR routes forward to the
+// canonical v0 path with the raw query (302); the GitHub route forwards to
+// its own path. Anything else naming a foreign origin gets the
+// invalid-connection page (400). Only "https://pre-" + an own host below its registrable domain
 // can register (connectorOAuthProductionOrigin), so production is no open
 // redirect, and a callback no pre-release Workspace/Agent connect started is
 // never forwarded. Without the secret or Redis it fails closed: the
@@ -73,9 +74,14 @@ import (
 const (
 	// connectorOAuthStatePrefix marks connector OAuth states, so the shared
 	// GitHub App callback can tell them from GitHub App install states.
-	connectorOAuthStatePrefix    = "mcpc."
-	connectorOAuthCallbackPath   = "/api/connector-oauth/callback"
-	connectorOAuthGitHubCallback = "/api/github/authorize"
+	connectorOAuthStatePrefix  = "mcpc."
+	connectorOAuthCallbackPath = "/api/connector-oauth/callback"
+	// connectorOAuthCallbackAliasPath is the DCR callback registered in
+	// provider consoles. It is served by the same handler as
+	// connectorOAuthCallbackPath, which stays registered so existing
+	// redirect URIs keep working.
+	connectorOAuthCallbackAliasPath = "/api/connectors/oauth/callback"
+	connectorOAuthGitHubCallback    = "/api/github/authorize"
 )
 
 const (
@@ -423,9 +429,14 @@ const (
 	connectorOAuthViaGitHub = "github"
 )
 
-// ConnectorOAuthCallbackPath is the public DCR OAuth callback route. The
+// ConnectorOAuthCallbackPath is the public v0 DCR OAuth callback route. The
 // router registers it outside the authenticated group.
 const ConnectorOAuthCallbackPath = connectorOAuthCallbackPath
+
+// ConnectorOAuthCallbackAliasPath is the console-registered DCR callback.
+// The router registers it beside ConnectorOAuthCallbackPath; both call
+// ConnectorOAuthCallback.
+const ConnectorOAuthCallbackAliasPath = connectorOAuthCallbackAliasPath
 
 // IsConnectorOAuthCallback reports whether a GitHub App callback request
 // completes an official app connect (a "mcpc." state), so the router can
