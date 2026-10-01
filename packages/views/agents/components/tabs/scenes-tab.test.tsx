@@ -159,12 +159,15 @@ function nodeDetail(overrides: Partial<ContextNodeDetail> = {}): ContextNodeDeta
   return {
     scope: { type: "org", orgId: "dingA", key: "dingA", title: "Acme" },
     scene: null,
-    prompts: [{ id: "p1", name: "Tone", order: 1, text: "Answer briefly.", updatedByName: "Ada", updatedAt: "" }],
+    prompts: [
+      { id: "p1", name: "Tone", order: 1, text: "Answer briefly.", enabled: true, updatedByName: "Ada", updatedAt: "" },
+    ],
     connectors: [],
     skills: [{ id: "skill-report", name: "Weekly report", description: "", enabled: false }],
     mcpConfig: null,
     mcpConfigRedacted: false,
     canConnect: true,
+    rights: null,
     effective: { prompts: [], connectors: [], skills: [], mcpServers: [] },
     ...overrides,
   };

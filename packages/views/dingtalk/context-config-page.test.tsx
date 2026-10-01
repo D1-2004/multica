@@ -26,6 +26,8 @@ const api = vi.hoisted(() => ({
   deleteContextConnectorCredential: vi.fn(),
   resolveContextConfigScene: vi.fn(),
   startContextConnectorConnection: vi.fn(),
+  setContextConfigPrompts: vi.fn(),
+  setContextConfigMcpConfig: vi.fn(),
 }));
 
 const { ApiError, errorCode } = vi.hoisted(() => {
@@ -57,9 +59,16 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
-import { ContextConfigPage, type ContextConfigPageProps } from "./context-config-page";
+import {
+  ContextConfigPage,
+  type ContextConfigBinding,
+  type ContextConfigPageProps,
+} from "./context-config-page";
 
 const copy = enAgents.context_config;
+
+/** Scope content from a backend without rights, prompts or MCP servers. */
+const noContent = { rights: null, prompts: [], mcpConfig: null, mcpConfigRedacted: false };
 
 const agentSummary: ContextConfigAgentSummary = {
   id: "agent-1",
@@ -98,6 +107,7 @@ function agentDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
       expiresAt: "",
       bindings: [],
       credentials: [],
+      ...noContent,
     },
     scenes: [{ scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" }],
     tenant: null,
@@ -115,6 +125,7 @@ const sceneDetail: ContextConfigSceneDetail = {
   credentials: [{ connectorId: "conn-wiki", hint: "••••abcd", updatedAt: "", kind: "bearer" }],
   scope: { type: "scene", key: "cid-1", title: "Sales team" },
   canConnect: true,
+  ...noContent,
 };
 
 const githubConnector: ContextOfferedConnector = {
@@ -182,18 +193,18 @@ describe("ContextConfigPage", () => {
       scopeTitle: "Sales team",
     });
     const user = userEvent.setup();
-    renderPage({ linkToken: "link-token" });
+    const onBind = vi.fn();
+    renderPage({ linkToken: "link-token", onBind });
 
     expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
     expect(api.redeemContextConfigLink).toHaveBeenCalledTimes(1);
     expect(api.redeemContextConfigLink).toHaveBeenCalledWith("link-token");
     expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", "cid-1", "");
+    expect(onBind).toHaveBeenCalledWith({ agentId: "agent-1", scopeType: "scene", scopeKey: "cid-1", orgId: "" });
 
     const wikiToggle = screen.getByRole("switch", { name: "Turn Wiki on or off" });
     expect(wikiToggle).toBeChecked();
     expect(screen.getByText("Credential saved (••••abcd)")).toBeInTheDocument();
-    // Globally granted items are listed read-only.
-    expect(screen.getByText("Docs")).toBeInTheDocument();
 
     await user.click(screen.getByRole("switch", { name: "Turn Weekly report on or off" }));
 
@@ -948,6 +959,7 @@ describe("ContextConfigPage", () => {
       bindings: [{ resourceType: "skill" as const, resourceId: "skill-report", enabled: true, shareInGroups: false }],
       credentials: [{ connectorId: "conn-wiki", hint: "", updatedAt: "", kind: "bearer" as const }],
       canEdit: false,
+      ...noContent,
     };
 
     it("shows the enterprise level read-only to members", async () => {
@@ -1184,7 +1196,8 @@ describe("ContextConfigPage", () => {
 
       const region = await screen.findByRole("region", { name: "Alice" });
       expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "dingB");
-      expect(screen.getByRole("tab", { name: copy.tab_person })).toHaveAttribute("aria-selected", "true");
+      // Bound to the person: no other level to open.
+      expect(screen.queryByRole("tab", { name: copy.tab_person })).not.toBeInTheDocument();
 
       await user.click(within(region).getByRole("switch", { name: "Turn Weekly report on or off" }));
       await waitFor(() =>
@@ -1241,5 +1254,402 @@ describe("ContextConfigPage", () => {
 
     await waitFor(() => expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", ""));
     expect(await screen.findByRole("button", { name: copy.switch_agent })).toBeInTheDocument();
+  });
+});
+
+const allRights = { toggle: true, connect: true, editPrompts: true, editMcp: true };
+const noRights = { toggle: false, connect: false, editPrompts: false, editMcp: false };
+const groupBinding: ContextConfigBinding = { agentId: "agent-1", scopeType: "scene", scopeKey: "cid-1", orgId: "" };
+const personBinding: ContextConfigBinding = { agentId: "agent-1", scopeType: "person", scopeKey: "staff-1", orgId: "" };
+const toneprompt = { id: "p1", name: "Tone", order: 1, text: "Be brief.", enabled: true, updatedByName: "", updatedAt: "" };
+
+function personDetail(overrides: Partial<NonNullable<ContextConfigAgentDetail["person"]>> = {}) {
+  const detail = agentDetail();
+  return agentDetail({ person: { ...detail.person!, ...overrides } });
+}
+
+describe("bound configuration page", () => {
+  it("shows only the bound group: no agent, tenant, level, scene or group switchers", async () => {
+    const acme = { orgId: "dingA", name: "Acme", source: "identity" };
+    const beta = { orgId: "dingB", name: "Beta", source: "created" };
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        tenant: acme,
+        tenants: [acme, beta],
+        jsapiAvailable: true,
+        scenes: [
+          { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
+          { scopeKey: "cid-2", scopeTitle: "Ops", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
+        ],
+      }),
+    );
+    api.listContextConfigAgents.mockResolvedValue([agentSummary, { ...agentSummary, id: "agent-2", name: "Planner" }]);
+    renderPage({ binding: groupBinding, pickGroup: vi.fn() });
+
+    expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
+    expect(api.redeemContextConfigLink).not.toHaveBeenCalled();
+    expect(api.listContextConfigAgents).not.toHaveBeenCalled();
+    expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "");
+    for (const level of [copy.tab_org, copy.tab_scene, copy.tab_person]) {
+      expect(screen.queryByRole("tab", { name: level })).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.switch_agent })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.pick_group })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Ops" })).not.toBeInTheDocument();
+  });
+
+  it("binds a personal link to the person only", async () => {
+    renderPage({ binding: personBinding });
+
+    expect(await screen.findByRole("region", { name: "Alice" })).toBeInTheDocument();
+    expect(api.getContextConfigScene).not.toHaveBeenCalled();
+    expect(screen.queryByRole("region", { name: "Sales team" })).not.toBeInTheDocument();
+  });
+
+  it("opens no other person's scope", async () => {
+    renderPage({ binding: { ...personBinding, scopeKey: "staff-2" } });
+
+    expect(await screen.findByText(copy.scene_no_access)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Alice" })).not.toBeInTheDocument();
+  });
+
+  it("adds the enterprise level for the agent's managers only", async () => {
+    const acme = { orgId: "dingA", name: "Acme", source: "identity" };
+    const org = { scopeKey: "dingA", scopeTitle: "Acme", bindings: [], credentials: [], canEdit: true, ...noContent };
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({ access: "manager", tenant: acme, tenants: [acme], org: { ...org, rights: allRights } }),
+    );
+    renderPage({ binding: groupBinding });
+
+    expect(await screen.findByRole("heading", { name: copy.org_section_title })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Acme" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
+  });
+
+  it("never shows the enterprise level to a member", async () => {
+    const acme = { orgId: "dingA", name: "Acme", source: "identity" };
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        tenant: acme,
+        tenants: [acme],
+        org: { scopeKey: "dingA", scopeTitle: "Acme", bindings: [], credentials: [], canEdit: false, ...noContent },
+      }),
+    );
+    renderPage({ binding: groupBinding });
+
+    expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: copy.org_section_title })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Acme" })).not.toBeInTheDocument();
+  });
+
+  it("lets a group link holder only view: the agent's managers maintain group settings", async () => {
+    api.getContextConfigScene.mockResolvedValue({
+      ...sceneDetail,
+      rights: noRights,
+      prompts: [toneprompt],
+      mcpConfig: { mcpServers: { docs: { url: "https://mcp.example/docs" } } },
+    });
+    renderPage({ binding: groupBinding });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    expect(within(region).getByText(copy.scene_read_only)).toBeInTheDocument();
+    for (const toggle of within(region).getAllByRole("switch")) {
+      expect(toggle).toHaveAttribute("aria-disabled", "true");
+    }
+    // The stored account shows; nothing can be stored, removed or added.
+    expect(within(region).getByText("Credential saved (••••abcd)")).toBeInTheDocument();
+    expect(within(region).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(region).getByRole("listitem", { name: "Tone" })).toBeInTheDocument();
+    expect(within(region).getByRole("listitem", { name: "docs" })).toBeInTheDocument();
+  });
+
+  it("says a person maintains their own 1:1 chat", async () => {
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        access: "manager",
+        scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" }],
+      }),
+    );
+    api.getContextConfigScene.mockResolvedValue({
+      scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" },
+      bindings: [],
+      credentials: [],
+      scope: { type: "person", key: "staff-bob", title: "Bob Li" },
+      canConnect: false,
+      ...noContent,
+      rights: noRights,
+    });
+    renderPage({ binding: { ...groupBinding, scopeKey: "cid-dm" } });
+
+    const region = await screen.findByRole("region", { name: "Bob Li" });
+    expect(within(region).getByText(copy.person_read_only)).toBeInTheDocument();
+    expect(within(region).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("returns a provider sign-in to the bound page", async () => {
+    api.getContextConfigAgent.mockResolvedValue(oauthDetail({ person: { ...personDetail().person!, rights: allRights } }));
+    api.startContextConnectorConnection.mockResolvedValue("https://github.com/login/oauth/authorize?state=b");
+    const openAuthorizeUrl = vi.fn();
+    const returnTo = "/dingtalk/configure?agent=agent-1&scope_type=person&scope_key=staff-1";
+    const user = userEvent.setup();
+    renderPage({ binding: personBinding, openAuthorizeUrl, connectReturnTo: returnTo });
+
+    const region = await screen.findByRole("region", { name: "Alice" });
+    await user.click(within(region).getByRole("button", { name: copy.connect }));
+    await waitFor(() =>
+      expect(api.startContextConnectorConnection).toHaveBeenCalledWith("agent-1", {
+        scopeType: "person",
+        scopeKey: "staff-1",
+        connectorId: "conn-github",
+        returnTo,
+      }),
+    );
+  });
+});
+
+describe("top-level tabs", () => {
+  it("opens 公开能力 from the tab parameter with common and published capabilities", async () => {
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        global: {
+          connectors: [{ id: "conn-global", name: "Docs", catalogSlug: "" }],
+          skills: [{ id: "skill-report", name: "Weekly report", description: "Writes reports" }],
+        },
+      }),
+    );
+    renderPage({ binding: groupBinding, initialTab: "public" });
+
+    const common = await screen.findByRole("region", { name: copy.public_common_title });
+    const published = screen.getByRole("region", { name: copy.public_org_title });
+    expect(screen.getByRole("tab", { name: copy.tab_public })).toHaveAttribute("aria-selected", "true");
+    expect(within(common).getByText("Docs")).toBeInTheDocument();
+    expect(within(common).getByText("Weekly report")).toBeInTheDocument();
+    // An offer that is also granted is a common capability, listed once.
+    expect(within(published).getByText("Wiki")).toBeInTheDocument();
+    expect(within(published).queryByText("Weekly report")).not.toBeInTheDocument();
+    expect(within(published).queryByText("Docs")).not.toBeInTheDocument();
+    // Read-only: no switches on this tab.
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  });
+
+  it("opens the default tab for an unknown id and reports switching", async () => {
+    const onTabChange = vi.fn();
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, initialTab: "routines", onTabChange });
+
+    expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: copy.tab_scope })).toHaveAttribute("aria-selected", "true");
+    await user.click(screen.getByRole("tab", { name: copy.tab_public }));
+    expect(onTabChange).toHaveBeenLastCalledWith("public");
+    expect(await screen.findByRole("region", { name: copy.public_common_title })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Sales team" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the browse page's levels under 场域能力", async () => {
+    const user = userEvent.setup();
+    renderPage({ initialAgentId: "agent-1" });
+
+    expect(await screen.findByRole("tab", { name: copy.tab_scene })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: copy.tab_public }));
+    expect(screen.queryByRole("tab", { name: copy.tab_scene })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: copy.tab_scope }));
+    expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
+  });
+});
+
+describe("scope prompts", () => {
+  beforeEach(() => {
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: allRights, prompts: [toneprompt] });
+    api.setContextConfigPrompts.mockResolvedValue([]);
+  });
+
+  it("adds a prompt after checking it, saving the whole list", async () => {
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    await user.click(within(region).getByRole("button", { name: copy.prompt_add }));
+    await user.click(within(region).getByRole("button", { name: copy.save }));
+    expect(within(region).getByRole("alert")).toHaveTextContent(
+      enAgents.tab_body.context_builder.prompt_name_required,
+    );
+    await user.type(within(region).getByLabelText(copy.prompt_name), "Tone");
+    await user.type(within(region).getByLabelText(copy.prompt_text), "x");
+    await user.click(within(region).getByRole("button", { name: copy.save }));
+    expect(within(region).getByRole("alert")).toHaveTextContent(
+      enAgents.tab_body.context_builder.prompt_name_duplicate,
+    );
+    expect(api.setContextConfigPrompts).not.toHaveBeenCalled();
+
+    await user.clear(within(region).getByLabelText(copy.prompt_name));
+    await user.type(within(region).getByLabelText(copy.prompt_name), "Format");
+    await user.clear(within(region).getByLabelText(copy.prompt_text));
+    await user.type(within(region).getByLabelText(copy.prompt_text), "Use lists.");
+    await user.click(within(region).getByRole("button", { name: copy.save }));
+    await waitFor(() =>
+      expect(api.setContextConfigPrompts).toHaveBeenCalledWith("agent-1", { scopeType: "scene", scopeKey: "cid-1" }, [
+        { name: "Tone", order: 1, text: "Be brief.", enabled: true },
+        { name: "Format", order: 2, text: "Use lists.", enabled: true },
+      ]),
+    );
+    await waitFor(() => expect(within(region).queryByLabelText(copy.prompt_name)).not.toBeInTheDocument());
+  });
+
+  it("switches, edits and deletes a prompt", async () => {
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    const row = within(region).getByRole("listitem", { name: "Tone" });
+    await user.click(within(row).getByRole("switch", { name: "Turn Tone on or off" }));
+    await waitFor(() =>
+      expect(api.setContextConfigPrompts).toHaveBeenLastCalledWith(
+        "agent-1",
+        { scopeType: "scene", scopeKey: "cid-1" },
+        [{ name: "Tone", order: 1, text: "Be brief.", enabled: false }],
+      ),
+    );
+
+    await user.click(
+      await within(region).findByRole("button", { name: copy.prompt_edit.replace("{{name}}", "Tone") }),
+    );
+    const text = within(region).getByLabelText(copy.prompt_text);
+    expect(text).toHaveValue("Be brief.");
+    await user.clear(text);
+    await user.type(text, "Be very brief.");
+    await user.click(within(region).getByRole("button", { name: copy.save }));
+    await waitFor(() =>
+      expect(api.setContextConfigPrompts).toHaveBeenLastCalledWith(
+        "agent-1",
+        { scopeType: "scene", scopeKey: "cid-1" },
+        [{ name: "Tone", order: 1, text: "Be very brief.", enabled: true }],
+      ),
+    );
+
+    await user.click(
+      await within(region).findByRole("button", { name: copy.prompt_delete.replace("{{name}}", "Tone") }),
+    );
+    const confirm = await screen.findByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: copy.prompt_delete.replace("{{name}}", "Tone") }));
+    await waitFor(() =>
+      expect(api.setContextConfigPrompts).toHaveBeenLastCalledWith(
+        "agent-1",
+        { scopeType: "scene", scopeKey: "cid-1" },
+        [],
+      ),
+    );
+  });
+
+  it("offers no prompt or MCP editing on a backend without rights", async () => {
+    api.getContextConfigScene.mockResolvedValue(sceneDetail);
+    renderPage({ binding: groupBinding });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    expect(within(region).queryByText(copy.prompts_title)).not.toBeInTheDocument();
+    expect(within(region).queryByText(copy.mcp_title)).not.toBeInTheDocument();
+  });
+});
+
+describe("scope MCP servers", () => {
+  beforeEach(() => {
+    api.getContextConfigAgent.mockResolvedValue(personDetail({ rights: allRights }));
+    api.setContextConfigMcpConfig.mockImplementation(
+      async (_agentId: string, _scope: unknown, config: Record<string, unknown> | null) => config,
+    );
+  });
+
+  it("adds a remote URL server only", async () => {
+    const user = userEvent.setup();
+    renderPage({ binding: personBinding });
+
+    const region = await screen.findByRole("region", { name: "Alice" });
+    await user.click(within(region).getByRole("button", { name: copy.mcp_add }));
+    // A remote server only: no command, arguments or environment.
+    expect(within(region).queryByLabelText(/command/i)).not.toBeInTheDocument();
+    expect(within(region).getByText(copy.mcp_remote_only)).toBeInTheDocument();
+
+    await user.type(within(region).getByLabelText(copy.mcp_name), "multica");
+    await user.type(within(region).getByLabelText(copy.mcp_url), "https://mcp.example/docs");
+    await user.click(within(region).getByRole("button", { name: copy.save }));
+    expect(within(region).getByRole("alert")).toHaveTextContent(copy.mcp_name_reserved);
+
+    await user.clear(within(region).getByLabelText(copy.mcp_name));
+    await user.type(within(region).getByLabelText(copy.mcp_name), "docs");
+    await user.clear(within(region).getByLabelText(copy.mcp_url));
+    await user.type(within(region).getByLabelText(copy.mcp_url), "file:///usr/bin/server");
+    await user.click(within(region).getByRole("button", { name: copy.save }));
+    expect(within(region).getByRole("alert")).toHaveTextContent(copy.mcp_url_invalid);
+    expect(api.setContextConfigMcpConfig).not.toHaveBeenCalled();
+
+    await user.clear(within(region).getByLabelText(copy.mcp_url));
+    await user.type(within(region).getByLabelText(copy.mcp_url), "https://mcp.example/docs");
+    await user.click(within(region).getByRole("button", { name: copy.mcp_header_add }));
+    await user.type(within(region).getByLabelText(copy.mcp_header_name), "Authorization");
+    await user.type(within(region).getByLabelText(copy.mcp_header_value), "Bearer t");
+    await user.click(within(region).getByRole("button", { name: copy.save }));
+    await waitFor(() =>
+      expect(api.setContextConfigMcpConfig).toHaveBeenCalledWith(
+        "agent-1",
+        { scopeType: "person", scopeKey: "staff-1" },
+        {
+          mcpServers: {
+            docs: { type: "http", url: "https://mcp.example/docs", headers: { Authorization: "Bearer t" } },
+          },
+        },
+      ),
+    );
+  });
+
+  it("switches a server off and deletes it", async () => {
+    api.getContextConfigAgent.mockResolvedValue(
+      personDetail({ rights: allRights, mcpConfig: { mcpServers: { docs: { url: "https://mcp.example/docs" } } } }),
+    );
+    const user = userEvent.setup();
+    renderPage({ binding: personBinding });
+
+    const region = await screen.findByRole("region", { name: "Alice" });
+    await user.click(within(region).getByRole("switch", { name: "Turn docs on or off" }));
+    await waitFor(() =>
+      expect(api.setContextConfigMcpConfig).toHaveBeenLastCalledWith(
+        "agent-1",
+        { scopeType: "person", scopeKey: "staff-1" },
+        { mcpServers: { docs: { url: "https://mcp.example/docs", disabled: true } } },
+      ),
+    );
+
+    await user.click(
+      await within(region).findByRole("button", { name: copy.mcp_delete.replace("{{name}}", "docs") }),
+    );
+    const confirm = await screen.findByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: copy.mcp_delete.replace("{{name}}", "docs") }));
+    await waitFor(() =>
+      expect(api.setContextConfigMcpConfig).toHaveBeenLastCalledWith(
+        "agent-1",
+        { scopeType: "person", scopeKey: "staff-1" },
+        { mcpServers: {} },
+      ),
+    );
+  });
+
+  it("lists a document holding a local server read-only", async () => {
+    api.getContextConfigAgent.mockResolvedValue(
+      personDetail({
+        rights: allRights,
+        mcpConfig: {
+          mcpServers: { docs: { url: "https://mcp.example/docs" }, local: { command: "npx", args: ["server"] } },
+        },
+      }),
+    );
+    renderPage({ binding: personBinding });
+
+    const region = await screen.findByRole("region", { name: "Alice" });
+    expect(within(region).getByRole("listitem", { name: "local" })).toBeInTheDocument();
+    expect(within(region).getByText(copy.mcp_locked)).toBeInTheDocument();
+    expect(within(region).queryByRole("button", { name: copy.mcp_add })).not.toBeInTheDocument();
+    expect(within(region).getByRole("switch", { name: "Turn docs on or off" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 });

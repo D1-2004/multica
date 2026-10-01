@@ -21,15 +21,15 @@ import (
 )
 
 // Mobile context capability API (docs/context-capabilities.md §5-§6). Every
-// route is wrapped with RequireDingTalkHumanActor in the router. Authority
-// comes from a live context_config_grant for the exact (agent, org, scope)
-// the caller reads or writes, or, for the agent's scenes and org
-// (enterprise) scopes, from managing the agent (workspace owner/admin of its
-// workspace, or the agent owner: the agent-manage permission of the admin
-// routes). A request works in one tenant org of the agent (its optional
-// org_id, else the identity org); any live grant under that org lets the
-// caller read its org scope. Plain workspace membership grants nothing, and
-// a manager is never the person of a personal scope.
+// route is wrapped with RequireDingTalkHumanActor in the router. Reading a
+// scope takes a live context_config_grant for the exact (agent, org, scope),
+// or, for the agent's scenes and org (enterprise) scopes, managing the agent
+// (workspace owner/admin of its workspace, or the agent owner: the
+// agent-manage permission of the admin routes). What the caller may change
+// there is decided by one policy, contextCapScopeRights. A request works in
+// one tenant org of the agent (its optional org_id, else the identity org).
+// Plain workspace membership grants nothing, and a manager is never the
+// person of a personal scope.
 
 const contextCapBodyLimit = 8 << 10
 
@@ -105,16 +105,20 @@ type contextCapTenantRefDTO struct {
 }
 
 // contextCapOrgLayerDTO is the enterprise (org) layer of the configure
-// page's org: its bindings (offered resources only) and credentials.
-// Credential hints are blank for a caller who cannot edit it.
+// page's org: its bindings (offered resources only), credentials, prompt
+// components and custom MCP servers. Only agent managers get it
+// (contextCapScopeRights). Credential hints are blank for a caller who
+// cannot connect there.
 type contextCapOrgLayerDTO struct {
 	ScopeKey    string                    `json:"scope_key"`
 	ScopeTitle  string                    `json:"scope_title"`
 	Bindings    []contextCapBindingDTO    `json:"bindings"`
 	Credentials []contextCapCredentialDTO `json:"credentials"`
-	// CanEdit: the caller manages the agent (bindings, credentials and
-	// connects of the org scope); otherwise the layer is read-only.
+	// Rights is what the caller may change in the org scope.
+	Rights contextCapRights `json:"rights"`
+	// CanEdit is Rights.Toggle, kept for older clients.
 	CanEdit bool `json:"can_edit"`
+	contextCapScopeComponentsDTO
 }
 
 type contextCapPersonDTO struct {
@@ -124,6 +128,9 @@ type contextCapPersonDTO struct {
 	ExpiresAt   string                    `json:"expires_at"`
 	Bindings    []contextCapBindingDTO    `json:"bindings"`
 	Credentials []contextCapCredentialDTO `json:"credentials"`
+	// Rights is what the caller (the person) may change in the scope.
+	Rights contextCapRights `json:"rights"`
+	contextCapScopeComponentsDTO
 }
 
 type contextCapSkillDTO struct {
@@ -189,9 +196,8 @@ type contextCapAgentDetailResponse struct {
 	// Tenants are the orgs the caller may open: every tenant for a manager,
 	// else the tenants the caller holds a live grant under.
 	Tenants []contextCapTenantRefDTO `json:"tenants"`
-	// Org is the enterprise layer of Tenant; null when the caller may not
-	// read it (no grant under that org and not a manager) or there is no
-	// tenant.
+	// Org is the enterprise layer of Tenant; null unless the caller manages
+	// the agent (contextCapScopeRights), and when there is no tenant.
 	Org *contextCapOrgLayerDTO `json:"org"`
 }
 
@@ -452,14 +458,12 @@ type contextCapScope struct {
 	// then names no scope: reads show the scene without configuration and
 	// writes answer 409 dm_person_unknown.
 	PersonUnknown bool
-	// CanConnect: the caller may store, remove or connect credentials in
-	// the effective scope. A manager acting on a dm scene's person scope may
-	// read it and write its bindings and custom MCP servers, but not connect
-	// someone else's account.
-	CanConnect bool
-	// ReadOnly: the caller may only read the scope (a member of an org who
-	// is not an agent manager reading the org scope).
-	ReadOnly bool
+	// Self: the caller is the person of the effective person scope (their
+	// live person grant, or the live grant of that person's 1:1 chat).
+	Self bool
+	// Rights is what the caller may change in the effective scope
+	// (contextCapScopeRights); zero when a dm scene's person is unknown.
+	Rights contextCapRights
 }
 
 // contextCapNeed is what a scope request intends to do with the scope.
@@ -468,11 +472,74 @@ type contextCapNeed int
 const (
 	// contextCapNeedRead reads the scope.
 	contextCapNeedRead contextCapNeed = iota
-	// contextCapNeedWrite writes bindings or custom MCP servers.
-	contextCapNeedWrite
-	// contextCapNeedCredential stores, removes or connects a credential.
+	// contextCapNeedToggle switches an offered connector or skill
+	// (bindings): contextCapRights.Toggle.
+	contextCapNeedToggle
+	// contextCapNeedPrompts replaces the prompt components:
+	// contextCapRights.EditPrompts.
+	contextCapNeedPrompts
+	// contextCapNeedMCP replaces the custom MCP servers:
+	// contextCapRights.EditMCP.
+	contextCapNeedMCP
+	// contextCapNeedCredential stores, removes or connects a credential:
+	// contextCapRights.Connect.
 	contextCapNeedCredential
+	// contextCapNeedRevoke revokes the configure-page grants of a group or
+	// person scope. It is a manager action of the admin routes (which
+	// already require managing the agent), not one of the rights; it only
+	// needs the scope to be known.
+	contextCapNeedRevoke
 )
+
+// contextCapRights is what one caller may change in one org, scene or person
+// scope of the Context Builder, on the configure page and on the admin
+// routes alike (contextCapScopeRights).
+type contextCapRights struct {
+	// Toggle: switch offered connectors and skills on or off (bindings,
+	// share_in_groups).
+	Toggle bool `json:"toggle"`
+	// Connect: store, remove or connect accounts and tokens (credentials and
+	// OAuth connects).
+	Connect bool `json:"connect"`
+	// EditPrompts: add, edit, delete and switch prompt components.
+	EditPrompts bool `json:"edit_prompts"`
+	// EditMCP: add, edit, delete and switch custom MCP servers.
+	EditMCP bool `json:"edit_mcp"`
+}
+
+// contextCapAllRights may change everything in a scope.
+var contextCapAllRights = contextCapRights{Toggle: true, Connect: true, EditPrompts: true, EditMCP: true}
+
+// contextCapScopeRights is the one edit-rights policy of the Context Builder
+// (docs/context-capabilities.md §5 "Who may change what"). Every write path
+// decides through it: the configure page's bindings, credentials, connects,
+// prompts and custom MCP servers, the admin Context Builder's node writes,
+// and the OAuth connect at start and at the callback
+// (authorizeConnectorOAuthScope). scopeType is the EFFECTIVE scope (a 1:1
+// chat's is its person's); manages is the agent-manage permission
+// (workspace owner/admin or the agent owner, contextCapManages); self is
+// whether the caller is the person of a person scope (contextCapScope.Self).
+//
+//	scope         agent manager      the person   anyone else (link holders)
+//	org           everything         -            nothing (not shown either)
+//	scene/group   everything         -            nothing (view only)
+//	person        nothing (view)     everything   nothing
+//
+// A caller who is both a manager and the person edits the person scope as
+// the person.
+func contextCapScopeRights(scopeType string, manages, self bool) contextCapRights {
+	switch scopeType {
+	case contextcap.ScopeOrg, contextcap.ScopeScene:
+		if manages {
+			return contextCapAllRights
+		}
+	case contextcap.ScopePerson:
+		if self {
+			return contextCapAllRights
+		}
+	}
+	return contextCapRights{}
+}
 
 // contextCapScopeRef is the {type, key, title} of an effective scope in API
 // responses (null for a dm scene whose person is unknown).
@@ -523,7 +590,7 @@ func (h *Handler) contextCapWorkspaceAdmin(ctx context.Context, a contextCapAgen
 // for a manager of the agent.
 func contextCapManagedScope(a contextCapAgent, userID string, scene contextcap.SceneSummary) contextCapScope {
 	grant := contextCapManagedSceneGrant(a, userID, scene.SceneKey, agentSceneTitle(scene))
-	return contextCapScope{Grant: grant, Manager: true, Kind: scene.Kind, Scene: grant, CanConnect: true}
+	return contextCapScope{Grant: grant, Manager: true, Kind: scene.Kind, Scene: grant}
 }
 
 // contextCapManagedSceneGrant is the grant-shaped stand-in (source
@@ -551,39 +618,38 @@ type contextCapResolveOptions struct {
 	Scene *contextcap.SceneSummary
 	// Manages is the caller's agent-manage permission when already known.
 	Manages *bool
-	// ManagerPersons lets a manager read a person scope and write its
-	// bindings, prompt components and custom MCP servers without that
-	// person's grant (CanConnect false), as for a 1:1 chat. The admin
-	// Context Builder sets it; the mobile routes never do.
+	// ManagerPersons lets a manager read a person scope without that
+	// person's grant (view only, contextCapScopeRights), as for a 1:1 chat.
+	// The admin Context Builder sets it; the mobile routes never do.
 	ManagerPersons bool
 }
 
 // contextCapResolveScope is the single place that maps an org, scene or
 // person request of userID on agent a (under a.OrgID, a tenant org of the
-// agent) to the effective scope and the caller's authority on it
+// agent) to the effective scope and the caller's access to it
 // (contextCapScope). The mobile routes (contextCapRequireScope), the admin
 // Context Builder routes and the OAuth connect (authorizeConnectorOAuthScope,
-// at start and at the callback) all use it.
+// at start and at the callback) all use it. Who may read is decided here;
+// what the caller may change is contextCapScopeRights, which it fills into
+// Rights from the effective scope type, the caller's agent-manage
+// permission and Self.
 //
-//   - Org request (scope key = a.OrgID): managing the agent gives full
-//     access (connect included); any live grant of the caller under that
-//     org gives read-only access (ReadOnly).
+//   - Org request (scope key = a.OrgID): managing the agent, or any live
+//     grant of the caller under that org (no rights; the configure page
+//     shows the org layer to managers only).
 //   - Person request: the caller's live person grant for exactly that
-//     staffId (a manager is not the person). Full access. With
-//     ManagerPersons (admin routes only), a manager reads it and writes its
-//     bindings, prompt components and custom MCP servers (CanConnect false).
-//   - Group scene request: the caller's live scene grant (full access), or
-//     managing the agent (contextCapManages) and the scene being one the
-//     agent has seen (the admin scene union: memory, Coordinator
-//     conversations, configuration, bindings, credentials; 404 otherwise),
-//     which includes connecting a group account.
+//     staffId (Self; a manager is not the person). With ManagerPersons
+//     (admin routes only), a manager reads it too.
+//   - Group scene request: the caller's live scene grant, or managing the
+//     agent (contextCapManages) and the scene being one the agent has seen
+//     (the admin scene union: memory, Coordinator conversations,
+//     configuration, bindings, credentials; 404 otherwise).
 //   - dm scene request: the effective scope is the scene's person
 //     (contextcap.DirectScenePerson). The caller's live person grant for that
 //     staffId or live scene grant for the dm key (a DM link grants both)
-//     gives full access; managing the agent (for a scene the agent has
-//     seen) gives read, bindings and custom MCP servers but not credentials
-//     or connect (CanConnect false). A dm scene whose person is unknown
-//     resolves with PersonUnknown for the same callers.
+//     makes the caller that person (Self); managing the agent (for a scene
+//     the agent has seen) lets the caller read it. A dm scene whose person
+//     is unknown resolves with PersonUnknown for the same callers.
 //
 // The kind is the admin scene union's (dm only on positive evidence); a
 // scene the union does not know is a group.
@@ -606,21 +672,38 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 			return contextcap.Grant{}, false, fmt.Errorf("grant lookup: %w", err)
 		}
 	}
+	managesKnown, managesValue := false, false
 	manages := func() (bool, error) {
 		if opts.Manages != nil {
 			return *opts.Manages, nil
 		}
-		manages, err := h.contextCapManages(ctx, a, userID)
-		if err != nil {
-			return false, fmt.Errorf("manager lookup: %w", err)
+		if !managesKnown {
+			value, err := h.contextCapManages(ctx, a, userID)
+			if err != nil {
+				return false, fmt.Errorf("manager lookup: %w", err)
+			}
+			managesKnown, managesValue = true, value
 		}
-		return manages, nil
+		return managesValue, nil
+	}
+	// withRights fills in what the caller may change in the resolved scope,
+	// through the one policy (contextCapScopeRights).
+	withRights := func(scope contextCapScope) (contextCapScope, error) {
+		isManager, err := manages()
+		if err != nil {
+			return contextCapScope{}, err
+		}
+		if !scope.PersonUnknown {
+			scope.Rights = contextCapScopeRights(scope.ScopeType, isManager, scope.Self)
+		}
+		return scope, nil
 	}
 
 	if scopeType == contextcap.ScopeOrg {
 		// The org (enterprise) scope of the org the call works in: agent
 		// managers configure it; people holding any live grant under that
-		// org may read it.
+		// org resolve it without rights (so their writes answer
+		// manager_only), and the configure page does not show it to them.
 		if scopeKey != a.OrgID {
 			return contextCapScope{}, contextcap.ErrInvalidInput
 		}
@@ -633,8 +716,8 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 			return contextCapScope{}, err
 		}
 		if isManager {
-			scope.Manager, scope.CanConnect = true, true
-			return scope, nil
+			scope.Manager = true
+			return withRights(scope)
 		}
 		grants, err := contextcap.ListLiveGrantsForUser(ctx, h.DB, userID, a.ID)
 		if err != nil {
@@ -642,8 +725,8 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 		}
 		for _, grant := range grants {
 			if grant.WorkspaceID == a.WorkspaceID && grant.OrgID == a.OrgID {
-				scope.Source, scope.ExpiresAt, scope.ReadOnly = grant.Source, grant.ExpiresAt, true
-				return scope, nil
+				scope.Source, scope.ExpiresAt = grant.Source, grant.ExpiresAt
+				return withRights(scope)
 			}
 		}
 		return contextCapScope{}, errContextCapForbidden
@@ -655,7 +738,7 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 			return contextCapScope{}, err
 		}
 		if ok {
-			return contextCapScope{Grant: grant, CanConnect: true}, nil
+			return withRights(contextCapScope{Grant: grant, Self: true})
 		}
 		if opts.ManagerPersons {
 			isManager, err := manages()
@@ -663,10 +746,10 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 				return contextCapScope{}, err
 			}
 			if isManager {
-				return contextCapScope{Grant: contextcap.Grant{
+				return withRights(contextCapScope{Grant: contextcap.Grant{
 					UserID: userID, WorkspaceID: a.WorkspaceID, AgentID: a.ID, ScopeType: contextcap.ScopePerson, OrgID: a.OrgID,
 					ScopeKey: scopeKey, Source: contextCapSourceManager,
-				}, Manager: true}, nil
+				}, Manager: true})
 			}
 		}
 		return contextCapScope{}, errContextCapForbidden
@@ -692,7 +775,7 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 	}
 	if !found || scene.Kind != contextcap.SceneKindDM {
 		if hasSceneGrant {
-			return contextCapScope{Grant: sceneGrant, Kind: contextcap.SceneKindGroup, Scene: sceneGrant, CanConnect: true}, nil
+			return withRights(contextCapScope{Grant: sceneGrant, Kind: contextcap.SceneKindGroup, Scene: sceneGrant})
 		}
 		isManager, err := manages()
 		if err != nil {
@@ -704,7 +787,7 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 		if !found {
 			return contextCapScope{}, contextcap.ErrNotFound
 		}
-		return contextCapManagedScope(a, userID, scene), nil
+		return withRights(contextCapManagedScope(a, userID, scene))
 	}
 
 	// A 1:1 chat: its configuration is its person's.
@@ -724,11 +807,11 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 	switch {
 	case hasSceneGrant:
 		out.Scene = sceneGrant
-		out.CanConnect = true
+		out.Self = true
 	case hasPersonGrant:
 		out.Scene = personGrant
 		out.Scene.ScopeType = contextcap.ScopeScene
-		out.CanConnect = true
+		out.Self = true
 	default:
 		isManager, err := manages()
 		if err != nil {
@@ -742,27 +825,27 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 	}
 	out.Scene.ScopeKey, out.Scene.ScopeTitle = scopeKey, sceneTitle
 	if staffID == "" {
-		out.PersonUnknown, out.CanConnect = true, false
+		out.PersonUnknown, out.Self = true, false
 		out.Grant = contextcap.Grant{
 			UserID: userID, WorkspaceID: a.WorkspaceID, AgentID: a.ID, OrgID: a.OrgID,
 			Source: out.Scene.Source, ExpiresAt: out.Scene.ExpiresAt,
 		}
-		return out, nil
+		return withRights(out)
 	}
 	out.Grant = contextcap.Grant{
 		UserID: userID, WorkspaceID: a.WorkspaceID, AgentID: a.ID, ScopeType: contextcap.ScopePerson, OrgID: a.OrgID,
 		ScopeKey: staffID, ScopeTitle: firstNonEmpty(personGrant.ScopeTitle, personTitle, sceneTitle),
 		Source: out.Scene.Source, ExpiresAt: out.Scene.ExpiresAt,
 	}
-	return out, nil
+	return withRights(out)
 }
 
 // contextCapRequireScope authorizes a mobile call on exactly (agent, agent
-// org, scopeType, scopeKey) for need (contextCapResolveScope) and writes
-// the error response otherwise: 400 for a malformed scope, 403 without
-// authority (also for a credential write the caller may not make, code
-// person_only), 404 for a manager's unknown scene, 409 dm_person_unknown for
-// a write to a dm scene whose person is unknown.
+// org, scopeType, scopeKey) for need (contextCapResolveScope, then
+// contextCapScopeAllows) and writes the error response otherwise: 400 for a
+// malformed scope, 403 without access or without the right need asks for
+// (codes manager_only and person_only), 404 for a manager's unknown scene,
+// 409 dm_person_unknown for a write to a dm scene whose person is unknown.
 func (h *Handler) contextCapRequireScope(w http.ResponseWriter, r *http.Request, a contextCapAgent, userID, scopeType, scopeKey string, need contextCapNeed) (contextCapScope, bool) {
 	return h.contextCapRequireScopeWith(w, r, a, userID, scopeType, scopeKey, need, contextCapResolveOptions{})
 }
@@ -788,29 +871,48 @@ func (h *Handler) contextCapRequireScopeWith(w http.ResponseWriter, r *http.Requ
 	return contextCapScope{}, false
 }
 
-// contextCapScopeAllows checks need against a resolved scope and writes the
-// refusal: 409 dm_person_unknown for a write to a dm scene whose person is
-// unknown, 403 person_only for a credential write the caller may not make.
+// contextCapScopeAllows checks need against a resolved scope's Rights
+// (contextCapScopeRights) and writes the refusal: 409 dm_person_unknown for a
+// write to a dm scene whose person is unknown; 403 person_only when a person
+// scope's right is missing (only the person changes it), else 403
+// manager_only (only agent managers change org and group scopes).
 func contextCapScopeAllows(w http.ResponseWriter, scope contextCapScope, need contextCapNeed) bool {
 	if need == contextCapNeedRead {
 		return true
-	}
-	if scope.ReadOnly {
-		writeErrorCode(w, http.StatusForbidden, contextCapErrManagerOnly,
-			"only an agent manager can change the enterprise configuration")
-		return false
 	}
 	if scope.PersonUnknown {
 		writeErrorCode(w, http.StatusConflict, contextCapErrDMPersonUnknown,
 			"this 1:1 chat is not linked to a person yet; its configuration is that person's")
 		return false
 	}
-	if need == contextCapNeedCredential && !scope.CanConnect {
-		writeErrorCode(w, http.StatusForbidden, contextCapErrPersonOnly,
-			"only the person can connect or change their own account")
-		return false
+	allowed := false
+	switch need {
+	case contextCapNeedToggle:
+		allowed = scope.Rights.Toggle
+	case contextCapNeedPrompts:
+		allowed = scope.Rights.EditPrompts
+	case contextCapNeedMCP:
+		allowed = scope.Rights.EditMCP
+	case contextCapNeedCredential:
+		allowed = scope.Rights.Connect
+	case contextCapNeedRevoke:
+		allowed = true
 	}
-	return true
+	if allowed {
+		return true
+	}
+	switch scope.ScopeType {
+	case contextcap.ScopePerson:
+		writeErrorCode(w, http.StatusForbidden, contextCapErrPersonOnly,
+			"only the person can change their own configuration")
+	case contextcap.ScopeOrg:
+		writeErrorCode(w, http.StatusForbidden, contextCapErrManagerOnly,
+			"only an agent manager can change the enterprise configuration")
+	default:
+		writeErrorCode(w, http.StatusForbidden, contextCapErrManagerOnly,
+			"only an agent manager can change the group configuration")
+	}
+	return false
 }
 
 // Error codes of scope requests.
@@ -818,11 +920,11 @@ const (
 	// contextCapErrDMPersonUnknown: a write to a 1:1 chat scene whose person
 	// could not be determined.
 	contextCapErrDMPersonUnknown = "dm_person_unknown"
-	// contextCapErrPersonOnly: a credential write or connect on a person's
-	// scope (a 1:1 chat scene) by a manager who is not that person.
+	// contextCapErrPersonOnly: a write to a person's scope (or a 1:1 chat
+	// scene's) by someone who is not that person, a manager included.
 	contextCapErrPersonOnly = "person_only"
-	// contextCapErrManagerOnly: a write to an org scope by someone who may
-	// only read it.
+	// contextCapErrManagerOnly: a write to an org or group scope by someone
+	// who does not manage the agent (a configure-link holder).
 	contextCapErrManagerOnly = "manager_only"
 	// contextCapErrTenantNotFound: the request named an org that is not a
 	// tenant of the agent.
@@ -1126,11 +1228,13 @@ func (h *Handler) contextCapManagedAgents(ctx context.Context, userID string) ([
 // agent in one of its tenant orgs (?org_id=, else the identity org, or, for
 // a caller without a grant there who does not manage the agent, the org of
 // the caller's newest grant): global items (read-only), the offer catalog,
-// the org (enterprise) layer, the caller's person scope and scenes: the
-// granted ones, plus, for a manager of the agent, every scene the agent has
-// seen in that org (source "manager"). It needs at least one live grant for
-// the agent in that org or the agent-manage permission. Upstream URLs,
-// credential references and workspace credential material are never
+// the org (enterprise) layer (agent managers only), the caller's person
+// scope and scenes: the granted ones, plus, for a manager of the agent,
+// every scene the agent has seen in that org (source "manager"). The org
+// layer and the person scope carry their rights (contextCapScopeRights),
+// prompt components and custom MCP servers. It needs at least one live
+// grant for the agent in that org or the agent-manage permission. Upstream
+// URLs, credential references and workspace credential material are never
 // returned.
 func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)
@@ -1218,35 +1322,42 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 			resp.Tenants = append(resp.Tenants, ref)
 		}
 	}
-	if resp.Tenant != nil {
+	// The enterprise layer is for agent managers only: nobody else may
+	// change it (contextCapScopeRights), and it is not shown to them either.
+	if resp.Tenant != nil && manages {
 		orgScope, err := h.contextCapResolveScopeWith(ctx, a, userID, contextcap.ScopeOrg, a.OrgID, contextCapResolveOptions{Manages: &manages})
-		switch {
-		case err == nil:
-			bindings, err := contextcap.ListScopeBindings(ctx, h.DB, a.WorkspaceID, a.ID, contextcap.ScopeOrg, a.OrgID, a.OrgID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "binding lookup failed")
-				return
-			}
-			credentials, err := contextcap.ListScopeCredentials(ctx, h.DB, a.WorkspaceID, a.ID, contextcap.ScopeOrg, a.OrgID, a.OrgID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "credential lookup failed")
-				return
-			}
-			layer := &contextCapOrgLayerDTO{
-				ScopeKey: a.OrgID, ScopeTitle: orgScope.ScopeTitle, Bindings: contextCapBindingViews(bindings, offers),
-				Credentials: contextCapCredentialViews(credentials), CanEdit: !orgScope.ReadOnly,
-			}
-			if orgScope.ReadOnly {
-				for i := range layer.Credentials {
-					layer.Credentials[i].Hint = ""
-				}
-			}
-			resp.Org = layer
-		case !errors.Is(err, errContextCapForbidden):
+		if err != nil {
 			slog.ErrorContext(ctx, "context capabilities: org scope lookup failed", "agent_id", a.ID, "error", err)
 			writeError(w, http.StatusInternalServerError, "grant lookup failed")
 			return
 		}
+		bindings, err := contextcap.ListScopeBindings(ctx, h.DB, a.WorkspaceID, a.ID, contextcap.ScopeOrg, a.OrgID, a.OrgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "binding lookup failed")
+			return
+		}
+		credentials, err := contextcap.ListScopeCredentials(ctx, h.DB, a.WorkspaceID, a.ID, contextcap.ScopeOrg, a.OrgID, a.OrgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "credential lookup failed")
+			return
+		}
+		components, err := h.contextCapScopeComponents(ctx, a, contextcap.ScopeOrg, a.OrgID)
+		if err != nil {
+			slog.ErrorContext(ctx, "context capabilities: org components lookup failed", "agent_id", a.ID, "error", err)
+			writeError(w, http.StatusInternalServerError, "component lookup failed")
+			return
+		}
+		layer := &contextCapOrgLayerDTO{
+			ScopeKey: a.OrgID, ScopeTitle: orgScope.ScopeTitle, Bindings: contextCapBindingViews(bindings, offers),
+			Credentials: contextCapCredentialViews(credentials), Rights: orgScope.Rights, CanEdit: orgScope.Rights.Toggle,
+			contextCapScopeComponentsDTO: components,
+		}
+		if !orgScope.Rights.Connect {
+			for i := range layer.Credentials {
+				layer.Credentials[i].Hint = ""
+			}
+		}
+		resp.Org = layer
 	}
 
 	// Every granted connector is a 通用能力, including one that waits for an
@@ -1374,9 +1485,18 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "credential lookup failed")
 			return
 		}
+		components, err := h.contextCapScopeComponents(ctx, a, contextcap.ScopePerson, person.ScopeKey)
+		if err != nil {
+			slog.ErrorContext(ctx, "context capabilities: person components lookup failed", "agent_id", a.ID, "error", err)
+			writeError(w, http.StatusInternalServerError, "component lookup failed")
+			return
+		}
 		resp.Person = &contextCapPersonDTO{
 			ScopeKey: person.ScopeKey, ScopeTitle: person.ScopeTitle, Source: person.Source, ExpiresAt: contextCapTime(person.ExpiresAt),
 			Bindings: contextCapBindingViews(bindings, offers), Credentials: contextCapCredentialViews(credentials),
+			// The caller's own person grant: the caller is that person.
+			Rights:                       contextCapScopeRights(contextcap.ScopePerson, manages, true),
+			contextCapScopeComponentsDTO: components,
 		}
 	}
 	// The JSAPI group picker needs H5 signing and a verified person grant
@@ -1403,11 +1523,12 @@ func (h *Handler) contextCapSkills(ctx context.Context, query string, args ...an
 }
 
 // GetContextConfigScene returns one scene the caller holds a grant for or,
-// as a manager of the agent, one the agent has seen, with the bindings and
-// credential hints of its effective scope: the scene itself for a group, the
-// counterpart person's scope for a 1:1 chat (scope says which; null with no
-// configuration when a dm scene's person is unknown). can_connect tells
-// whether the caller may store or connect credentials there.
+// as a manager of the agent, one the agent has seen, with the bindings,
+// credential hints, prompt components and custom MCP servers of its
+// effective scope: the scene itself for a group, the counterpart person's
+// scope for a 1:1 chat (scope says which; null with no configuration when a
+// dm scene's person is unknown). rights says what the caller may change
+// there (contextCapScopeRights); can_connect is rights.connect.
 func (h *Handler) GetContextConfigScene(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {
@@ -1432,6 +1553,7 @@ func (h *Handler) GetContextConfigScene(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	bindingViews := []contextCapBindingDTO{}
 	credentialViews := []contextCapCredentialDTO{}
+	components := contextCapScopeComponentsDTO{Prompts: []contextCapPromptDTO{}}
 	if !scope.PersonUnknown {
 		offers, err := h.contextCapVisibleOffers(ctx, a)
 		if err != nil {
@@ -1449,11 +1571,16 @@ func (h *Handler) GetContextConfigScene(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		bindingViews, credentialViews = contextCapBindingViews(bindings, offers), contextCapCredentialViews(credentials)
+		if components, err = h.contextCapScopeComponents(ctx, a, scope.ScopeType, scope.ScopeKey); err != nil {
+			slog.ErrorContext(ctx, "context capabilities: scene components lookup failed", "agent_id", a.ID, "error", err)
+			writeError(w, http.StatusInternalServerError, "component lookup failed")
+			return
+		}
 		// A person's account hint (their provider login, or the tail of their
 		// token) reaches workspace admins and that person only, as on the
 		// admin scene page and the connected-apps page. A manager reading a
 		// 1:1 chat's person keeps the connected state without the hint.
-		if scope.ScopeType == contextcap.ScopePerson && !scope.CanConnect && len(credentialViews) > 0 {
+		if scope.ScopeType == contextcap.ScopePerson && !scope.Self && len(credentialViews) > 0 {
 			admin, err := h.contextCapWorkspaceAdmin(ctx, a, userID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "member lookup failed")
@@ -1467,18 +1594,23 @@ func (h *Handler) GetContextConfigScene(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"scene":       contextCapSceneView(scope.Scene, scope.Kind),
-		"scope":       scope.ref(),
-		"bindings":    bindingViews,
-		"credentials": credentialViews,
-		"can_connect": scope.CanConnect && !scope.PersonUnknown,
+		"scene":               contextCapSceneView(scope.Scene, scope.Kind),
+		"scope":               scope.ref(),
+		"bindings":            bindingViews,
+		"credentials":         credentialViews,
+		"rights":              scope.Rights,
+		"can_connect":         scope.Rights.Connect && !scope.PersonUnknown,
+		"prompts":             components.Prompts,
+		"mcp_config":          components.MCPConfig,
+		"mcp_config_redacted": components.MCPConfigRedacted,
 	})
 }
 
 // PutContextConfigBinding enables or disables one offered connector or skill
-// for a granted scene or person scope. The optional share_in_groups sets the
-// personal connector opt-in 「在群聊中由我触发时也可用」 (person scope and
-// connectors only; omitted keeps the stored value).
+// in an org, scene or person scope the caller may toggle
+// (contextCapRights.Toggle). The optional share_in_groups sets the personal
+// connector opt-in 「在群聊中由我触发时也可用」 (person scope and connectors
+// only; omitted keeps the stored value).
 func (h *Handler) PutContextConfigBinding(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {
@@ -1516,22 +1648,15 @@ func (h *Handler) PutContextConfigBinding(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid resource_id")
 		return
 	}
-	grant, ok := h.contextCapRequireScope(w, r, a, userID, input.ScopeType, input.ScopeKey, contextCapNeedWrite)
+	grant, ok := h.contextCapRequireScope(w, r, a, userID, input.ScopeType, input.ScopeKey, contextCapNeedToggle)
 	if !ok {
 		return
 	}
 	// share_in_groups is the person's own opt-in: it applies to a person
-	// scope (a 1:1 chat's is its person's), and only the person sets it,
-	// never a manager configuring their 1:1 chat.
-	if input.ShareInGroups != nil {
-		if grant.ScopeType != contextcap.ScopePerson {
-			writeError(w, http.StatusBadRequest, "share_in_groups applies only to personal connectors")
-			return
-		}
-		if !grant.CanConnect {
-			writeErrorCode(w, http.StatusForbidden, contextCapErrPersonOnly, "only the person can change this setting")
-			return
-		}
+	// scope (a 1:1 chat's is its person's), which only the person toggles.
+	if input.ShareInGroups != nil && grant.ScopeType != contextcap.ScopePerson {
+		writeError(w, http.StatusBadRequest, "share_in_groups applies only to personal connectors")
+		return
 	}
 	ctx := r.Context()
 	offers, err := h.contextCapVisibleOffers(ctx, a)
@@ -1609,8 +1734,9 @@ func (h *Handler) contextCapCredentialConnector(w http.ResponseWriter, r *http.R
 }
 
 // PutContextConfigCredential stores a write-only Bearer credential for one
-// connector in a granted scene or person scope. The response carries only the
-// hint and update time.
+// connector in an org, scene or person scope the caller may connect in
+// (contextCapRights.Connect). The response carries only the hint and update
+// time.
 func (h *Handler) PutContextConfigCredential(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {

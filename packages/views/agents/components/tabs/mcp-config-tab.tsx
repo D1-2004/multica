@@ -29,6 +29,7 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { Switch } from "@multica/ui/components/ui/switch";
 import { toast } from "sonner";
 import { useT } from "../../../i18n";
 import {
@@ -335,6 +336,9 @@ export function McpServerList({
   onDelete,
   editLabel,
   deleteLabel,
+  onToggle,
+  toggleLabel,
+  togglePending = false,
 }: {
   servers: McpServerView[];
   disabledLabel: string;
@@ -343,6 +347,10 @@ export function McpServerList({
   onDelete?: (server: ManagedMcpServer) => void;
   editLabel?: string;
   deleteLabel?: string;
+  /** Switches a server on or off; omitted → no switch. */
+  onToggle?: (server: ManagedMcpServer, enabled: boolean) => void;
+  toggleLabel?: (name: string) => string;
+  togglePending?: boolean;
 }) {
   return (
     <ul className="divide-y rounded-lg border bg-surface-raised/40">
@@ -360,8 +368,17 @@ export function McpServerList({
           </div>
           {server.overridden && overriddenLabel ? (
             <Badge variant="outline">{overriddenLabel}</Badge>
-          ) : !server.enabled ? (
+          ) : !server.enabled && !onToggle ? (
             <Badge variant="outline">{disabledLabel}</Badge>
+          ) : null}
+          {onToggle ? (
+            <Switch
+              size="sm"
+              checked={server.enabled}
+              disabled={togglePending}
+              aria-label={toggleLabel ? toggleLabel(server.name) : server.name}
+              onCheckedChange={(enabled) => onToggle(server as ManagedMcpServer, enabled)}
+            />
           ) : null}
           {onEdit && onDelete && (
             <div className="flex items-center gap-1">

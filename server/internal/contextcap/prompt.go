@@ -35,6 +35,10 @@ type PromptComponent struct {
 	Name      string
 	Order     int
 	Text      string
+	// Disabled is the inverse of the enabled column (9431): a disabled
+	// component stays stored but takes no part in MergeContext. The zero
+	// value is enabled.
+	Disabled bool
 	// UpdatedBy is the user who last changed the component ("" when
 	// unknown); UpdatedByName is that user's name.
 	UpdatedBy     string
@@ -44,10 +48,12 @@ type PromptComponent struct {
 }
 
 // PromptComponentInput is one component of a ReplacePromptComponents list.
+// Disabled stores the component switched off (the zero value is enabled).
 type PromptComponentInput struct {
-	Name  string
-	Order int
-	Text  string
+	Name     string
+	Order    int
+	Text     string
+	Disabled bool
 }
 
 // NormalizePromptComponents trims names and texts and validates a full
@@ -73,7 +79,7 @@ func NormalizePromptComponents(in []PromptComponentInput) ([]PromptComponentInpu
 			return nil, ErrDuplicatePromptName
 		}
 		seen[name] = true
-		out = append(out, PromptComponentInput{Name: name, Order: component.Order, Text: text})
+		out = append(out, PromptComponentInput{Name: name, Order: component.Order, Text: text, Disabled: component.Disabled})
 	}
 	return out, nil
 }
@@ -90,11 +96,11 @@ func validPromptComponentName(name string) bool {
 	return true
 }
 
-const promptComponentColumns = `p.id::text, p.scope_type, p.org_id, p.scope_key, p.name, p.position, p.text,
+const promptComponentColumns = `p.id::text, p.scope_type, p.org_id, p.scope_key, p.name, p.position, p.text, p.enabled,
 	COALESCE(p.updated_by::text, ''), COALESCE((SELECT u.name FROM "user" u WHERE u.id = p.updated_by), ''), p.created_at, p.updated_at`
 
 // ListPromptComponents returns the prompt components of one org, scene or
-// person scope, ordered by order, then name.
+// person scope, disabled ones included, ordered by order, then name.
 func ListPromptComponents(ctx context.Context, db DBTX, workspaceID, agentID, scopeType, orgID, scopeKey string) ([]PromptComponent, error) {
 	if !ValidConfigScope(scopeType, orgID, scopeKey) {
 		return nil, ErrInvalidInput
@@ -110,10 +116,12 @@ func ListPromptComponents(ctx context.Context, db DBTX, workspaceID, agentID, sc
 	out := []PromptComponent{}
 	for rows.Next() {
 		var c PromptComponent
-		if err := rows.Scan(&c.ID, &c.ScopeType, &c.OrgID, &c.ScopeKey, &c.Name, &c.Order, &c.Text,
+		var enabled bool
+		if err := rows.Scan(&c.ID, &c.ScopeType, &c.OrgID, &c.ScopeKey, &c.Name, &c.Order, &c.Text, &enabled,
 			&c.UpdatedBy, &c.UpdatedByName, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
+		c.Disabled = !enabled
 		out = append(out, c)
 	}
 	return out, rows.Err()
@@ -134,7 +142,7 @@ type PromptComponentsWrite struct {
 // ReplacePromptComponents replaces the prompt components of one org, scene
 // or person scope with exactly in.Components (NormalizePromptComponents
 // first). A component whose name stays keeps its id and creation time, and
-// its update stamp when neither order nor text changed. Run it inside a
+// its update stamp when neither order, text nor its enabled switch changed. Run it inside a
 // transaction: concurrent replacements of one scope serialize on an
 // advisory lock. It returns the stored list (ListPromptComponents).
 func ReplacePromptComponents(ctx context.Context, tx DBTX, in PromptComponentsWrite) ([]PromptComponent, error) {
@@ -170,14 +178,16 @@ func ReplacePromptComponents(ctx context.Context, tx DBTX, in PromptComponentsWr
 	}
 	for _, component := range components {
 		tag, err := tx.Exec(ctx, `INSERT INTO context_prompt_component AS p
-			(workspace_id, agent_id, scope_type, org_id, scope_key, name, position, text, updated_by)
-			VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::uuid)
+			(workspace_id, agent_id, scope_type, org_id, scope_key, name, position, text, enabled, updated_by)
+			VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10::uuid)
 			ON CONFLICT (agent_id, scope_type, org_id, scope_key, name)
-			DO UPDATE SET position = EXCLUDED.position, text = EXCLUDED.text,
-			  updated_by = CASE WHEN p.position = EXCLUDED.position AND p.text = EXCLUDED.text THEN p.updated_by ELSE EXCLUDED.updated_by END,
-			  updated_at = CASE WHEN p.position = EXCLUDED.position AND p.text = EXCLUDED.text THEN p.updated_at ELSE now() END
+			DO UPDATE SET position = EXCLUDED.position, text = EXCLUDED.text, enabled = EXCLUDED.enabled,
+			  updated_by = CASE WHEN p.position = EXCLUDED.position AND p.text = EXCLUDED.text AND p.enabled = EXCLUDED.enabled
+			    THEN p.updated_by ELSE EXCLUDED.updated_by END,
+			  updated_at = CASE WHEN p.position = EXCLUDED.position AND p.text = EXCLUDED.text AND p.enabled = EXCLUDED.enabled
+			    THEN p.updated_at ELSE now() END
 			WHERE p.workspace_id = EXCLUDED.workspace_id`,
-			in.WorkspaceID, in.AgentID, in.ScopeType, in.OrgID, in.ScopeKey, component.Name, component.Order, component.Text, actor)
+			in.WorkspaceID, in.AgentID, in.ScopeType, in.OrgID, in.ScopeKey, component.Name, component.Order, component.Text, !component.Disabled, actor)
 		if err != nil {
 			return nil, err
 		}

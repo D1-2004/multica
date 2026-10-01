@@ -594,8 +594,12 @@ func TestContextCapabilitiesPersonShareInGroups(t *testing.T) {
 	}
 	ctxcapExpectStatus(t, put(map[string]any{"scope_type": "person", "scope_key": ctxcapStaff, "resource_type": "skill", "resource_id": f.skillScene, "enabled": true, "share_in_groups": true}),
 		http.StatusBadRequest, "share_in_groups on a skill")
-	ctxcapExpectStatus(t, put(map[string]any{"scope_type": "scene", "scope_key": ctxcapScene, "resource_type": "connector", "resource_id": f.scene, "enabled": true, "share_in_groups": true}),
-		http.StatusBadRequest, "share_in_groups on a scene")
+	// A group takes no share_in_groups. Its link holder may not toggle the
+	// group at all (403); a manager, who may, gets the 400.
+	sceneShare := map[string]any{"scope_type": "scene", "scope_key": ctxcapScene, "resource_type": "connector", "resource_id": f.scene, "enabled": true, "share_in_groups": true}
+	ctxcapExpectStatus(t, put(sceneShare), http.StatusForbidden, "share_in_groups on a scene by its link holder")
+	f.sceneMemoryRow(t, ctxcapOrg, ctxcapScene, "group", "Ctxcap group", time.Minute)
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, bindingPath, testUserID, sceneShare), http.StatusBadRequest, "share_in_groups on a scene")
 	ctxcapExpectStatus(t, put(personConnector(map[string]any{"share_in_groups": "yes"})), http.StatusBadRequest, "non-boolean share_in_groups")
 
 	// Person connector bindings carry the field; skill bindings do not.

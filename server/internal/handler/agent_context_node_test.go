@@ -145,25 +145,47 @@ func TestAgentContextNodeLivesInTheScopeOfTheScene(t *testing.T) {
 	}
 
 	// Dora writes in the chat: her personal scope is the DM's configuration.
+	// A manager reads it but changes nothing there (contextCapScopeRights).
 	f.coordinatorDMJob(t, nodeDirect, "Dora", nodeDirectStaff, time.Minute)
 	node = ctxNode(t, router, "", agentID, contextcap.ScopeScene, nodeDirect)
-	if node.Scope == nil || *node.Scope != (agentContextScopeDTO{Type: contextcap.ScopePerson, OrgID: ctxcapOrg, Key: nodeDirectStaff, Title: "Dora"}) || node.CanConnect {
+	if node.Scope == nil || *node.Scope != (agentContextScopeDTO{Type: contextcap.ScopePerson, OrgID: ctxcapOrg, Key: nodeDirectStaff, Title: "Dora"}) ||
+		node.CanConnect || node.CanEdit || node.Rights != (contextCapRights{}) {
 		t.Fatalf("DM of Dora for a manager = %+v", node)
 	}
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/mcp-config", map[string]any{"mcp_config": servers}), http.StatusOK, "DM MCP config")
+	for name, w := range map[string]*httptest.ResponseRecorder{
+		"mcp config": scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/mcp-config", map[string]any{"mcp_config": servers}),
+		"prompts": scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/prompts",
+			map[string]any{"prompts": []map[string]any{{"name": "语气", "text": "Be brief."}}}),
+		"binding": scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/bindings",
+			map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true}),
+		"person node prompts": scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopePerson, nodeDirectStaff)+"/prompts",
+			map[string]any{"prompts": []map[string]any{{"name": "语气", "text": "Be brief."}}}),
+	} {
+		if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextCapErrPersonOnly {
+			t.Fatalf("manager %s write to Dora's scope: %d %s", name, w.Code, w.Body.String())
+		}
+	}
+	// Dora herself writes it on the configure page through her 1:1 chat; it
+	// lands in her person scope.
+	dora := uuid.NewString()
+	f.grant(t, dora, contextcap.ScopePerson, nodeDirectStaff, "Dora")
+	mobile := ctxcapRouter(f.h)
+	doraWrites := func(what string, body map[string]any) *httptest.ResponseRecorder {
+		body["scope_type"], body["scope_key"] = contextcap.ScopeScene, nodeDirect
+		return ctxcapMobile(t, mobile, http.MethodPut, "/api/context-capabilities/agents/"+agentID+"/"+what, dora, body)
+	}
+	ctxcapExpectStatus(t, doraWrites("mcp-config", map[string]any{"mcp_config": servers}), http.StatusOK, "DM MCP config")
 	if _, err := contextcap.GetScopeMCPConfig(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopePerson, ctxcapOrg, nodeDirectStaff); err != nil {
 		t.Fatalf("DM MCP config not in the person scope: %v", err)
 	}
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/prompts",
-		map[string]any{"prompts": []map[string]any{{"name": "语气", "text": "Be brief."}}}), http.StatusOK, "DM prompts")
+	ctxcapExpectStatus(t, doraWrites("prompts", map[string]any{"prompts": []map[string]any{{"name": "语气", "text": "Be brief."}}}), http.StatusOK, "DM prompts")
 	if prompts, err := contextcap.ListPromptComponents(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopePerson, ctxcapOrg, nodeDirectStaff); err != nil ||
 		len(prompts) != 1 || prompts[0].Text != "Be brief." {
 		t.Fatalf("DM prompts not in the person scope: %+v %v", prompts, err)
 	}
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/bindings",
-		map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true}), http.StatusOK, "DM binding")
+	ctxcapExpectStatus(t, doraWrites("bindings", map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true}), http.StatusOK, "DM binding")
 	if stored, err := contextcap.ListScopeBindings(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopePerson, ctxcapOrg, nodeDirectStaff); err != nil ||
-		!ctxcapStoredBinding(stored, f.person, true, testUserID) {
+		!ctxcapStoredBinding(stored, f.person, true, dora) {
 		t.Fatalf("DM binding not in the person scope: %+v %v", stored, err)
 	}
 	// The person node is the same scope, with Dora's 1:1 chat as its scene.
@@ -204,7 +226,7 @@ func TestAgentContextNodeLivesInTheScopeOfTheScene(t *testing.T) {
 	// Dora is the agent owner: her own account and connect.
 	f.grant(t, owner, contextcap.ScopePerson, nodeDirectStaff, "Dora")
 	node = ctxNode(t, router, owner, agentID, contextcap.ScopeScene, nodeDirect)
-	if got := ctxNodeConnector(t, node, f.scene).Credential; got.Account != "••••oken" || !node.CanConnect {
+	if got := ctxNodeConnector(t, node, f.scene).Credential; got.Account != "••••oken" || !node.CanConnect || node.Rights != contextCapAllRights {
 		t.Fatalf("DM node for Dora: credential=%+v can_connect=%v", got, node.CanConnect)
 	}
 	ctxcapExpectStatus(t, scenesAs(t, router, owner, http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopePerson, nodeDirectStaff)+"/credentials",

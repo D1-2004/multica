@@ -58,7 +58,8 @@ func (f storeFixture) bindIdentity(t *testing.T, identityOrg, orgName string) st
 func tenantMigrated(t *testing.T, f storeFixture) {
 	t.Helper()
 	var migrated bool
-	if err := f.tx.QueryRow(context.Background(), `SELECT to_regclass('agent_tenant') IS NOT NULL AND to_regclass('context_prompt_component') IS NOT NULL`).Scan(&migrated); err != nil || !migrated {
+	if err := f.tx.QueryRow(context.Background(), `SELECT to_regclass('agent_tenant') IS NOT NULL AND to_regclass('context_prompt_component') IS NOT NULL
+		AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'context_prompt_component' AND column_name = 'enabled')`).Scan(&migrated); err != nil || !migrated {
 		t.Skip("tenant tables are not migrated")
 	}
 }

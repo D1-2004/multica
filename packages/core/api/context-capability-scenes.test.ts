@@ -235,6 +235,11 @@ describe("configure-page tenants", () => {
       bindings: [{ resourceType: "skill", resourceId: skillId, enabled: true, shareInGroups: false }],
       credentials: [{ connectorId, hint: "", updatedAt: "2026-09-30T08:00:00Z", kind: "oauth" }],
       canEdit: false,
+      // An older backend sends no rights, prompts or MCP servers.
+      rights: null,
+      prompts: [],
+      mcpConfig: null,
+      mcpConfigRedacted: false,
     });
   });
 

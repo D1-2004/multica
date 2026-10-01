@@ -2287,6 +2287,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Put("/agents/{agentId}/credentials", h.PutContextConfigCredential)
 			r.Delete("/agents/{agentId}/credentials", h.DeleteContextConfigCredential)
 			r.Post("/agents/{agentId}/connections/start", h.StartContextConfigConnection)
+			r.Put("/agents/{agentId}/prompts", h.PutContextConfigPrompts)
+			r.Put("/agents/{agentId}/mcp-config", h.PutContextConfigMCPConfig)
 		})
 		r.With(handler.RequireHumanActor).Get("/api/dingtalk/jsapi-config", h.GetDingTalkJSAPIConfig)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)

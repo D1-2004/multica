@@ -3,6 +3,7 @@ import { api } from "../api";
 import type {
   AgentContextCapabilities,
   ContextConfigSceneDetail,
+  ContextConfigScopeInput,
   ContextNodeDetail,
   ContextNodeRef,
   ContextPromptComponentInput,
@@ -102,6 +103,42 @@ export function useDeleteContextConnectorCredential(agentId: string) {
       api.deleteContextConnectorCredential(agentId, input),
     onSettled: (_data, _error, input) =>
       invalidateScopeWrite(queryClient, agentId, input),
+  });
+}
+
+export interface SetContextConfigPromptsInput extends ContextConfigScopeInput {
+  /** The whole list: the PUT replaces the scope's prompt components. */
+  prompts: ContextPromptComponentInput[];
+}
+
+/** Saves a configure-page scope's prompt components (add, edit, delete and
+ * switch all send the whole list). Not optimistic: the server validates the
+ * list; the settle-time refetch shows the stored one. */
+export function useSetContextConfigPrompts(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ prompts, ...scope }: SetContextConfigPromptsInput) =>
+      api.setContextConfigPrompts(agentId, scope, prompts),
+    onSettled: (_data, _error, input) => invalidateScopeWrite(queryClient, agentId, input),
+  });
+}
+
+export interface SetContextConfigMcpConfigInput extends ContextConfigScopeInput {
+  /** The scope's whole `mcp_config` document (`{"mcpServers": {...}}`). */
+  mcpConfig: Record<string, unknown> | null;
+}
+
+/** Saves a configure-page scope's remote MCP servers. Server headers can
+ * hold tokens, so the mutation is dropped as soon as nothing observes it
+ * (gcTime 0). Not optimistic: the server only accepts remote URL servers. */
+export function useSetContextConfigMcpConfig(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ mcpConfig, ...scope }: SetContextConfigMcpConfigInput) =>
+      api.setContextConfigMcpConfig(agentId, scope, mcpConfig),
+    gcTime: 0,
+    // Only the scope identity is read from the variables.
+    onSettled: (_data, _error, input) => invalidateScopeWrite(queryClient, agentId, input),
   });
 }
 

@@ -43,6 +43,7 @@ import type {
   ContextConfigRedeemResult,
   ContextConfigSceneDetail,
   ContextConfigSceneGrant,
+  ContextConfigScopeInput,
   ContextConnectorCredential,
   ContextNodeDetail,
   ContextNodeRef,
@@ -793,6 +794,26 @@ function workspaceHeader(slug?: string): Record<string, string> | undefined {
  * leak into the request.
  */
 const NO_WORKSPACE_HEADER: Record<string, string> = { "X-Workspace-Slug": "" };
+
+/** The scope fields of a configure-page write; `org_id` only for a tenant
+ * other than the agent's own org (the server's default). */
+function contextConfigScopeBody(scope: ContextConfigScopeInput): Record<string, string> {
+  return {
+    scope_type: scope.scopeType,
+    scope_key: scope.scopeKey,
+    ...(scope.orgId ? { org_id: scope.orgId } : {}),
+  };
+}
+
+/** Prompt components as the list PUTs take them; a missing switch is on. */
+function promptComponentsBody(prompts: ContextPromptComponentInput[]) {
+  return prompts.map((prompt) => ({
+    name: prompt.name,
+    order: prompt.order,
+    text: prompt.text,
+    enabled: prompt.enabled !== false,
+  }));
+}
 
 export class ApiClient {
   private baseUrl: string;
@@ -4438,6 +4459,51 @@ export class ApiClient {
     });
   }
 
+  /** Replaces a configure-page scope's prompt components (the whole list).
+   * Resolves to the stored list, or null when the echo is malformed (the
+   * caller refetches). */
+  async setContextConfigPrompts(
+    agentId: string,
+    scope: ContextConfigScopeInput,
+    prompts: ContextPromptComponentInput[],
+  ): Promise<ContextPromptComponent[] | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/prompts`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ ...contextConfigScopeBody(scope), prompts: promptComponentsBody(prompts) }),
+        headers: NO_WORKSPACE_HEADER,
+      },
+    );
+    return parseWithFallback<ContextPromptComponent[] | null>(raw, ContextPromptComponentsResponseSchema, null, {
+      endpoint: "PUT /api/context-capabilities/agents/{agentId}/prompts",
+      includeReceived: false,
+    });
+  }
+
+  /** Replaces a configure-page scope's MCP servers (remote URL servers only;
+   * the server rejects local commands). Resolves to the stored document, or
+   * to what was sent when the echo is malformed. */
+  async setContextConfigMcpConfig(
+    agentId: string,
+    scope: ContextConfigScopeInput,
+    mcpConfig: Record<string, unknown> | null,
+  ): Promise<Record<string, unknown> | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/mcp-config`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ ...contextConfigScopeBody(scope), mcp_config: mcpConfig }),
+        headers: NO_WORKSPACE_HEADER,
+      },
+    );
+    return parseWithFallback<Record<string, unknown> | null>(raw, ContextNodeMcpConfigResponseSchema, mcpConfig, {
+      endpoint: "PUT /api/context-capabilities/agents/{agentId}/mcp-config",
+      // Remote MCP servers can carry headers with tokens.
+      includeReceived: false,
+    });
+  }
+
   async resolveContextConfigScene(
     agentId: string,
     input: ResolveContextConfigSceneInput,
@@ -4656,9 +4722,7 @@ export class ApiClient {
   ): Promise<ContextPromptComponent[] | null> {
     const raw = await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/prompts`, {
       method: "PUT",
-      body: JSON.stringify({
-        prompts: prompts.map((prompt) => ({ name: prompt.name, order: prompt.order, text: prompt.text })),
-      }),
+      body: JSON.stringify({ prompts: promptComponentsBody(prompts) }),
       headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
     });
     return parseWithFallback<ContextPromptComponent[] | null>(raw, ContextPromptComponentsResponseSchema, null, {

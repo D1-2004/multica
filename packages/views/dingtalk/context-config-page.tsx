@@ -7,13 +7,16 @@ import {
   Building2,
   CheckCircle2,
   ExternalLink,
+  Globe,
   KeyRound,
   Link2,
   Loader2,
   MessageCircle,
   Plug,
+  SlidersHorizontal,
   User,
   Users,
+  type LucideIcon,
 } from "lucide-react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -31,6 +34,7 @@ import {
   type ContextCapabilityBinding,
   type ContextConfigAgentDetail,
   type ContextConfigAgentSummary,
+  type ContextConfigScopeContent,
   type ContextConnectorCredential,
   type ContextOfferedConnector,
   type ContextSceneKind,
@@ -48,10 +52,14 @@ import {
 import { Switch } from "@multica/ui/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
 import { cn } from "@multica/ui/lib/utils";
-import { ConnectorLogo, ConnectorMark, connectorBrandName } from "../common/connector-logo";
+import { ConnectorLogo, connectorBrandName } from "../common/connector-logo";
 import { MAX_BEARER_LENGTH, isValidBearer, useResetOnBackForwardRestore } from "../common/connector-credential";
 import { SkillIcon } from "../skills/lib/skill-icon";
 import { useT } from "../i18n";
+import { ScopeMcpServers } from "./context-config-mcp";
+import { ScopePrompts } from "./context-config-prompts";
+import { PublicCapabilities } from "./context-config-public";
+import { ItemGroup, ToggleControl } from "./context-config-ui";
 
 /** One configurable scope of one agent: a chat, a person, or the
  * enterprise level of a tenant (its key is the OrgId). */
@@ -61,6 +69,18 @@ export interface ContextConfigScopeRef {
   /** Tenant (DingTalk org) of the scope; omitted or "" lets the server
    * choose. */
   orgId?: string;
+}
+
+/** The one scope a page opened from a configuration link shows: a group
+ * chat (`scene`) or a person (`person`; a 1:1 chat is its person). The
+ * page then offers no way to browse or switch to another agent, tenant or
+ * scope. */
+export interface ContextConfigBinding {
+  agentId: string;
+  scopeType: ContextScopeType;
+  scopeKey: string;
+  /** Tenant of the scope; "" for the agent's own org. */
+  orgId: string;
 }
 
 /** Where a connector OAuth round trip was started from. */
@@ -76,9 +96,15 @@ export type ContextConfigConnectResult =
 
 type OpenAuthorizeUrl = (url: string, target: ContextConfigConnectTarget) => void;
 
-// Platform plumbing: the navigation callback the connect buttons use. Kept
-// in context so the scope editors do not drill it through every level.
-const OpenAuthorizeUrlContext = createContext<OpenAuthorizeUrl | undefined>(undefined);
+interface ConnectPlumbing {
+  open?: OpenAuthorizeUrl;
+  /** Where the provider sign-in returns; undefined → the server's default. */
+  returnTo?: string;
+}
+
+// Platform plumbing the connect buttons use. Kept in context so the scope
+// editors do not drill it through every level.
+const ConnectPlumbingContext = createContext<ConnectPlumbing>({});
 
 export interface ContextConfigPickedGroup {
   /** Required by the server: only a picked chatId proves group membership. */
@@ -88,10 +114,21 @@ export interface ContextConfigPickedGroup {
 }
 
 export interface ContextConfigPageProps {
-  /** Agent-issued link token (`?link=`). Redeemed once on mount. */
+  /** Agent-issued link token (`?link=`). Redeemed once on mount; a link to
+   * a scope binds the page to it. */
   linkToken?: string;
   /** Preselected agent (`?agent=`), e.g. from the admin configure link. */
   initialAgentId?: string;
+  /** The scope the page is bound to (kept in the URL after a link was
+   * redeemed). A redeemed link's scope wins. */
+  binding?: ContextConfigBinding | null;
+  /** Called when a redeemed link binds the page, so the platform can keep
+   * the binding across reloads and sign-in round trips. */
+  onBind?: (binding: ContextConfigBinding) => void;
+  /** Tab to open first (`?tab=`); an unknown id opens the default tab. */
+  initialTab?: string;
+  /** Called when the caller switches tabs, so the platform can keep it. */
+  onTabChange?: (tab: ContextConfigTabId) => void;
   /**
    * DingTalk JSAPI group picker. Omitted outside the DingTalk client. It
    * resolves to null when the user cancels, and rejects with an error whose
@@ -108,11 +145,58 @@ export interface ContextConfigPageProps {
    * redirects back. Omitted → OAuth connectors offer no connect action.
    */
   openAuthorizeUrl?: OpenAuthorizeUrl;
+  /** Path on the app origin the provider sign-in returns to (the bound
+   * page's URL); omitted → the server's default page. */
+  connectReturnTo?: string;
   /** Scope to open first, e.g. the one an OAuth round trip started from.
    * A redeemed link's scope wins. */
   initialScope?: ContextConfigScopeRef;
   /** Outcome of a connector OAuth round trip, shown once as a banner. */
   connectResult?: ContextConfigConnectResult | null;
+}
+
+type AgentsT = ReturnType<typeof useT<"agents">>["t"];
+
+/** What a top-level tab renders with. */
+export interface ContextConfigTabProps {
+  detail: ContextConfigAgentDetail;
+  /** The bound scope; null while browsing. */
+  binding: ContextConfigBinding | null;
+  browse: ContextConfigBrowseState;
+  reportError: (error: unknown) => boolean;
+}
+
+export interface ContextConfigTab {
+  id: string;
+  label: (t: AgentsT) => string;
+  icon: LucideIcon;
+  render: (props: ContextConfigTabProps) => React.ReactNode;
+}
+
+/**
+ * The page's top-level tabs, in order; the first is the default. `?tab=<id>`
+ * opens one directly. A new tab (例行任务, ...) is one more entry here.
+ */
+export const CONTEXT_CONFIG_TABS = [
+  {
+    id: "scope",
+    label: (t: AgentsT) => t(($) => $.context_config.tab_scope),
+    icon: SlidersHorizontal,
+    render: (props: ContextConfigTabProps) => <ScopeTab {...props} />,
+  },
+  {
+    id: "public",
+    label: (t: AgentsT) => t(($) => $.context_config.tab_public),
+    icon: Globe,
+    render: ({ detail }: ContextConfigTabProps) => <PublicCapabilities detail={detail} />,
+  },
+] as const satisfies readonly ContextConfigTab[];
+
+export type ContextConfigTabId = (typeof CONTEXT_CONFIG_TABS)[number]["id"];
+
+/** The tab `value` names, or the default tab. */
+export function contextConfigTabId(value: string | null | undefined): ContextConfigTabId {
+  return CONTEXT_CONFIG_TABS.find((tab) => tab.id === value)?.id ?? CONTEXT_CONFIG_TABS[0].id;
 }
 
 function isReloadRequired(error: unknown): boolean {
@@ -136,6 +220,18 @@ function orgField(orgId: string): { orgId?: string } {
 
 type PreferredScope = ContextConfigScopeRef;
 
+/** Browse mode's state: the open level, where to start, the group picker. */
+export interface ContextConfigBrowseState {
+  /** The open level; null until the caller picks one. */
+  level: ConfigLevel | null;
+  onLevelChange: (level: ConfigLevel) => void;
+  /** The chosen scene; "" until the caller picks one. */
+  sceneKey: string;
+  onSceneKeyChange: (sceneKey: string) => void;
+  preferredScope: PreferredScope | null;
+  pickGroup?: () => Promise<ContextConfigPickedGroup | null>;
+}
+
 export function isContextConfigAuthError(error: unknown): boolean {
   if (!(error instanceof ApiError)) return false;
   if (error.status === 401) return true;
@@ -152,20 +248,25 @@ function statusOf(error: unknown): number | null {
 }
 
 /**
- * Configuration page (DingTalk H5, also usable in a desktop browser) in three
- * levels: 企业 (the tenant: edited by the agent's managers, read-only for
- * everyone else), 本会话 (where the members of a chat configure the
- * connectors and skills an agent may use in that chat: a group chat, or a
- * 1:1 chat, which is its person) and 我的 (the ones used for the person's own
- * messages). Platform-free: the web route injects sign-in and the JSAPI
- * group picker.
+ * Configuration page (DingTalk H5, also usable in a desktop browser). A page
+ * opened from a configuration link is bound to that link's scope: a group
+ * chat, or a person (a 1:1 chat is its person), plus the enterprise level
+ * for the agent's managers. Opened without a scope (the admin `?agent=`
+ * link) it browses three levels: 企业 (the tenant: edited by the agent's
+ * managers), 本会话 (a group chat or a 1:1 chat) and 我的. Platform-free: the
+ * web route injects sign-in, the URL plumbing and the JSAPI group picker.
  */
 export function ContextConfigPage({
   linkToken,
   initialAgentId,
+  binding,
+  onBind,
+  initialTab,
+  onTabChange,
   pickGroup,
   onAuthRequired,
   openAuthorizeUrl,
+  connectReturnTo,
   initialScope,
   connectResult,
 }: ContextConfigPageProps) {
@@ -175,14 +276,20 @@ export function ContextConfigPage({
     linkToken ? "pending" : "idle",
   );
   const [selectedAgentId, setSelectedAgentId] = useState(initialAgentId ?? "");
+  const [bound, setBound] = useState<ContextConfigBinding | null>(binding ?? null);
   const [preferredScope, setPreferredScope] = useState<PreferredScope | null>(
     initialScope ?? null,
   );
+  const [tab, setTab] = useState<ContextConfigTabId>(() => contextConfigTabId(initialTab));
   const redeemedToken = useRef<string | null>(null);
   const authRequested = useRef(false);
 
   const requireAuth = useRef(onAuthRequired);
   requireAuth.current = onAuthRequired;
+  const bindRef = useRef(onBind);
+  bindRef.current = onBind;
+  const tabChangeRef = useRef(onTabChange);
+  tabChangeRef.current = onTabChange;
   const reportError = (error: unknown): boolean => {
     if (!isContextConfigAuthError(error)) return false;
     if (!authRequested.current) {
@@ -202,14 +309,19 @@ export function ContextConfigPage({
     redeemLink(linkToken)
       .then((result) => {
         setRedeemStatus("done");
-        if (result.agentId) setSelectedAgentId(result.agentId);
-        if (result.scopeType && result.scopeKey) {
-          setPreferredScope({
+        if (result.agentId && result.scopeType && result.scopeKey) {
+          // A link to a scope binds the page to it.
+          const next: ContextConfigBinding = {
+            agentId: result.agentId,
             scopeType: result.scopeType,
             scopeKey: result.scopeKey,
-            ...orgField(result.orgId),
-          });
+            orgId: result.orgId || "",
+          };
+          setBound(next);
+          bindRef.current?.(next);
+          return;
         }
+        if (result.agentId) setSelectedAgentId(result.agentId);
       })
       .catch((error: unknown) => {
         if (reportErrorRef.current(error)) {
@@ -225,7 +337,8 @@ export function ContextConfigPage({
 
   const agentsQuery = useQuery({
     ...contextConfigAgentsOptions(),
-    enabled: redeemStatus !== "pending",
+    // A bound page never lists or switches agents.
+    enabled: redeemStatus !== "pending" && bound === null,
   });
 
   useEffect(() => {
@@ -234,11 +347,16 @@ export function ContextConfigPage({
 
   const agents = agentsQuery.data ?? [];
   const effectiveAgentId =
-    selectedAgentId || (agents.length === 1 ? (agents[0]?.id ?? "") : "");
+    bound?.agentId || selectedAgentId || (agents.length === 1 ? (agents[0]?.id ?? "") : "");
 
   const pickAgent = (agentId: string) => {
     setSelectedAgentId(agentId);
     setPreferredScope(null);
+  };
+
+  const changeTab = (next: ContextConfigTabId) => {
+    setTab(next);
+    tabChangeRef.current?.(next);
   };
 
   let body: React.ReactNode;
@@ -257,12 +375,15 @@ export function ContextConfigPage({
       <AgentConfig
         key={effectiveAgentId}
         agentId={effectiveAgentId}
+        binding={bound}
         // A preselected `?agent=` may be one the caller has no grant for, so
         // switching is offered whenever any other granted agent exists.
-        canSwitchAgent={agents.some((agent) => agent.id !== effectiveAgentId)}
+        canSwitchAgent={bound === null && agents.some((agent) => agent.id !== effectiveAgentId)}
         onSwitchAgent={() => pickAgent("")}
         preferredScope={preferredScope}
         pickGroup={pickGroup}
+        tab={tab}
+        onTabChange={changeTab}
         reportError={reportError}
       />
     );
@@ -282,13 +403,10 @@ export function ContextConfigPage({
   return (
     <main className="min-h-dvh bg-background px-4 py-6 text-foreground sm:px-6 sm:py-10">
       <div className="mx-auto flex w-full max-w-md flex-col gap-5 sm:max-w-2xl">
-        <header className="space-y-1">
+        <header>
           <h1 className="text-title font-semibold text-balance">
             {t(($) => $.context_config.page_title)}
           </h1>
-          <p className="text-caption text-muted-foreground">
-            {t(($) => $.context_config.page_description)}
-          </p>
         </header>
         {redeemStatus === "expired" && (
           <Banner>{t(($) => $.context_config.link_expired)}</Banner>
@@ -300,9 +418,9 @@ export function ContextConfigPage({
           <Banner>{t(($) => $.context_config.link_failed)}</Banner>
         )}
         {connectResult && <ConnectResultBanner result={connectResult} />}
-        <OpenAuthorizeUrlContext.Provider value={openAuthorizeUrl}>
+        <ConnectPlumbingContext.Provider value={{ open: openAuthorizeUrl, returnTo: connectReturnTo }}>
           {body}
-        </OpenAuthorizeUrlContext.Provider>
+        </ConnectPlumbingContext.Provider>
       </div>
     </main>
   );
@@ -396,24 +514,32 @@ function AgentPicker({
 
 function AgentConfig({
   agentId,
+  binding,
   canSwitchAgent,
   onSwitchAgent,
   preferredScope,
   pickGroup,
+  tab,
+  onTabChange,
   reportError,
 }: {
   agentId: string;
+  binding: ContextConfigBinding | null;
   canSwitchAgent: boolean;
   onSwitchAgent: () => void;
   preferredScope: PreferredScope | null;
   pickGroup?: () => Promise<ContextConfigPickedGroup | null>;
+  tab: ContextConfigTabId;
+  onTabChange: (tab: ContextConfigTabId) => void;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
-  // The tenant the page shows: a redeemed link's, else the server's choice
-  // until the caller picks another one.
-  const [orgId, setOrgId] = useState(preferredScope?.orgId ?? "");
+  // The tenant the page shows: the bound scope's or a redeemed link's, else
+  // the server's choice until the caller picks another one.
+  const [orgId, setOrgId] = useState(binding ? binding.orgId : (preferredScope?.orgId ?? ""));
+  // Browse state lives here, so it survives switching the top-level tab.
   const [level, setLevel] = useState<ConfigLevel | null>(null);
+  const [sceneKey, setSceneKey] = useState("");
   const detailQuery = useQuery({
     ...contextConfigAgentOptions(agentId, orgId),
     // Switching the tenant keeps the page (and the open level) in place.
@@ -454,47 +580,254 @@ function AgentConfig({
     );
   }
   return (
-    <AgentScopes
+    <AgentView
       detail={detail}
+      binding={binding}
       canSwitchAgent={canSwitchAgent}
       onSwitchAgent={onSwitchAgent}
       onSelectTenant={setOrgId}
-      level={level}
-      onLevelChange={setLevel}
-      preferredScope={preferredScope}
-      pickGroup={pickGroup}
+      browse={{
+        level,
+        onLevelChange: setLevel,
+        sceneKey,
+        onSceneKeyChange: setSceneKey,
+        preferredScope,
+        pickGroup,
+      }}
+      tab={tab}
+      onTabChange={onTabChange}
       reportError={reportError}
     />
   );
 }
 
-function AgentScopes({
+/** The agent's header (and, while browsing, its tenant) above the
+ * top-level tabs. */
+function AgentView({
   detail,
+  binding,
   canSwitchAgent,
   onSwitchAgent,
   onSelectTenant,
-  level,
-  onLevelChange,
-  preferredScope,
-  pickGroup,
+  browse,
+  tab,
+  onTabChange,
   reportError,
 }: {
   detail: ContextConfigAgentDetail;
+  binding: ContextConfigBinding | null;
   canSwitchAgent: boolean;
   onSwitchAgent: () => void;
   onSelectTenant: (orgId: string) => void;
-  /** The open level; null until the caller picks one. */
-  level: ConfigLevel | null;
-  onLevelChange: (level: ConfigLevel) => void;
-  preferredScope: PreferredScope | null;
-  pickGroup?: () => Promise<ContextConfigPickedGroup | null>;
+  browse: ContextConfigBrowseState;
+  tab: ContextConfigTabId;
+  onTabChange: (tab: ContextConfigTabId) => void;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
-  const agentId = detail.agent.id;
   // The detail says whether the caller manages this agent (every scene is
   // then configurable), so the hint does not wait for, or depend on, the
   // agent list.
+  const isManager = detail.access === "manager";
+  const tenantOptions =
+    detail.tenant && !detail.tenants.some((tenant) => tenant.orgId === detail.tenant?.orgId)
+      ? [detail.tenant, ...detail.tenants]
+      : detail.tenants;
+  const active = CONTEXT_CONFIG_TABS.find((entry) => entry.id === tab) ?? CONTEXT_CONFIG_TABS[0];
+
+  return (
+    <div className="space-y-5">
+      <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          <AgentAvatar name={detail.agent.name} avatarUrl={detail.agent.avatarUrl} />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <p className="truncate text-body-lg font-medium">{detail.agent.name}</p>
+            {isManager && (
+              <Badge variant="secondary" className="shrink-0">
+                {t(($) => $.context_config.manager_badge)}
+              </Badge>
+            )}
+          </div>
+          {canSwitchAgent && <SwitchAgentButton onClick={onSwitchAgent} />}
+        </div>
+        {isManager && binding === null && (
+          <p className="text-caption text-muted-foreground">
+            {t(($) => $.context_config.manager_hint)}
+          </p>
+        )}
+        {binding === null && detail.tenant && tenantOptions.length > 1 ? (
+          <label className="block space-y-1.5">
+            <span className="text-caption font-medium text-muted-foreground">
+              {t(($) => $.context_config.tab_org)}
+            </span>
+            <NativeSelect
+              className="w-full"
+              value={detail.tenant.orgId}
+              onChange={(event) => onSelectTenant(event.target.value)}
+            >
+              {tenantOptions.map((tenant) => (
+                <NativeSelectOption key={tenant.orgId} value={tenant.orgId}>
+                  {tenant.name || tenant.orgId}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </label>
+        ) : null}
+      </div>
+
+      <Tabs
+        value={active.id}
+        onValueChange={(value) => {
+          const next = CONTEXT_CONFIG_TABS.find((entry) => entry.id === value);
+          if (next) onTabChange(next.id);
+        }}
+      >
+        <TabsList variant="line" className="w-full" aria-label={t(($) => $.context_config.page_title)}>
+          {CONTEXT_CONFIG_TABS.map((entry) => (
+            <TabsTrigger key={entry.id} value={entry.id}>
+              <entry.icon className="size-4" />
+              {entry.label(t)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+
+      {active.render({ detail, binding, browse, reportError })}
+    </div>
+  );
+}
+
+/** 场域能力: the bound scope, or the three browsable levels. */
+function ScopeTab({ detail, binding, browse, reportError }: ContextConfigTabProps) {
+  return binding ? (
+    <BoundScope detail={detail} binding={binding} reportError={reportError} />
+  ) : (
+    <BrowseScopes detail={detail} browse={browse} reportError={reportError} />
+  );
+}
+
+/** A bound page: only the bound group chat or person, and the enterprise
+ * level for the agent's managers. */
+function BoundScope({
+  detail,
+  binding,
+  reportError,
+}: {
+  detail: ContextConfigAgentDetail;
+  binding: ContextConfigBinding;
+  reportError: (error: unknown) => boolean;
+}) {
+  const { t } = useT("agents");
+  const pageOrg = detail.tenant?.orgId ?? "";
+  let scope: React.ReactNode;
+  if (binding.scopeType === "scene") {
+    const scene = detail.scenes.find((entry) => entry.scopeKey === binding.scopeKey);
+    scope = (
+      <SceneScope
+        agentId={detail.agent.id}
+        sceneKey={binding.scopeKey}
+        sceneKind={scene?.kind ?? "group"}
+        // The detail's tenant follows the binding unless that tenant is
+        // gone (the page then shows the server's choice).
+        orgId={scene?.orgId || pageOrg || binding.orgId}
+        detail={detail}
+        reportError={reportError}
+      />
+    );
+  } else if (detail.person && detail.person.scopeKey === binding.scopeKey) {
+    scope = <PersonScope detail={detail} person={detail.person} orgId={pageOrg} reportError={reportError} />;
+  } else {
+    scope = (
+      <EmptyState icon={<User className="size-6" />} title={t(($) => $.context_config.scene_no_access)} />
+    );
+  }
+  return (
+    <div className="space-y-8">
+      {scope}
+      {detail.access === "manager" && detail.org ? (
+        <section className="space-y-3" aria-labelledby="context-config-org-section">
+          <h2 id="context-config-org-section" className="text-body font-semibold">
+            {t(($) => $.context_config.org_section_title)}
+          </h2>
+          <OrgScope detail={detail} org={detail.org} reportError={reportError} />
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function OrgScope({
+  detail,
+  org,
+  reportError,
+}: {
+  detail: ContextConfigAgentDetail;
+  org: NonNullable<ContextConfigAgentDetail["org"]>;
+  reportError: (error: unknown) => boolean;
+}) {
+  return (
+    <ScopeEditor
+      // Another tenant starts with fresh rows.
+      key={org.scopeKey}
+      agentId={detail.agent.id}
+      scopeType="org"
+      scopeKey={org.scopeKey}
+      orgId={org.scopeKey}
+      title={org.scopeTitle || detail.tenant?.name || org.scopeKey}
+      expiresAt=""
+      detail={detail}
+      bindings={org.bindings}
+      credentials={org.credentials}
+      content={org}
+      readOnly={org.canEdit !== true}
+      reportError={reportError}
+    />
+  );
+}
+
+function PersonScope({
+  detail,
+  person,
+  orgId,
+  reportError,
+}: {
+  detail: ContextConfigAgentDetail;
+  person: NonNullable<ContextConfigAgentDetail["person"]>;
+  orgId: string;
+  reportError: (error: unknown) => boolean;
+}) {
+  const { t } = useT("agents");
+  return (
+    <ScopeEditor
+      agentId={detail.agent.id}
+      scopeType="person"
+      scopeKey={person.scopeKey}
+      orgId={orgId}
+      title={person.scopeTitle || t(($) => $.context_config.tab_person)}
+      expiresAt={person.expiresAt}
+      detail={detail}
+      bindings={person.bindings}
+      credentials={person.credentials}
+      content={person}
+      reportError={reportError}
+    />
+  );
+}
+
+/** A page without a bound scope: 企业 / 本会话 / 我的, the scene list and
+ * the DingTalk group picker. */
+function BrowseScopes({
+  detail,
+  browse,
+  reportError,
+}: {
+  detail: ContextConfigAgentDetail;
+  browse: ContextConfigBrowseState;
+  reportError: (error: unknown) => boolean;
+}) {
+  const { t } = useT("agents");
+  const { level, onLevelChange, preferredScope, pickGroup, sceneKey, onSceneKeyChange: setSceneKey } = browse;
+  const agentId = detail.agent.id;
   const isManager = detail.access === "manager";
   const tab: ConfigLevel =
     level ??
@@ -504,21 +837,11 @@ function AgentScopes({
   // Every scope on the page lives in this tenant ("" when the server names
   // none: the agent's own org).
   const pageOrg = detail.tenant?.orgId ?? "";
-  const tenantOptions =
-    detail.tenant && !detail.tenants.some((tenant) => tenant.orgId === detail.tenant?.orgId)
-      ? [detail.tenant, ...detail.tenants]
-      : detail.tenants;
-  const [sceneKey, setSceneKey] = useState<string>(() => {
-    if (
-      preferredScope?.scopeType === "scene" &&
-      detail.scenes.some((scene) => scene.scopeKey === preferredScope.scopeKey)
-    ) {
-      return preferredScope.scopeKey;
-    }
-    return detail.scenes[0]?.scopeKey ?? "";
-  });
-  const activeSceneKey = detail.scenes.some((scene) => scene.scopeKey === sceneKey)
-    ? sceneKey
+  // The picked scene, else the preferred one, else the first.
+  const wantedSceneKey =
+    sceneKey || (preferredScope?.scopeType === "scene" ? preferredScope.scopeKey : "");
+  const activeSceneKey = detail.scenes.some((scene) => scene.scopeKey === wantedSceneKey)
+    ? wantedSceneKey
     : (detail.scenes[0]?.scopeKey ?? "");
 
   const resolveScene = useResolveContextConfigScene(agentId);
@@ -574,44 +897,6 @@ function AgentScopes({
 
   return (
     <div className="space-y-5">
-      <div className="space-y-2">
-        <div className="flex items-center gap-3">
-          <AgentAvatar name={detail.agent.name} avatarUrl={detail.agent.avatarUrl} />
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <p className="truncate text-body-lg font-medium">{detail.agent.name}</p>
-            {isManager && (
-              <Badge variant="secondary" className="shrink-0">
-                {t(($) => $.context_config.manager_badge)}
-              </Badge>
-            )}
-          </div>
-          {canSwitchAgent && <SwitchAgentButton onClick={onSwitchAgent} />}
-        </div>
-        {isManager && (
-          <p className="text-caption text-muted-foreground">
-            {t(($) => $.context_config.manager_hint)}
-          </p>
-        )}
-        {detail.tenant && tenantOptions.length > 1 ? (
-          <label className="block space-y-1.5">
-            <span className="text-caption font-medium text-muted-foreground">
-              {t(($) => $.context_config.tab_org)}
-            </span>
-            <NativeSelect
-              className="w-full"
-              value={detail.tenant.orgId}
-              onChange={(event) => onSelectTenant(event.target.value)}
-            >
-              {tenantOptions.map((tenant) => (
-                <NativeSelectOption key={tenant.orgId} value={tenant.orgId}>
-                  {tenant.name || tenant.orgId}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </label>
-        ) : null}
-      </div>
-
       <Tabs
         value={tab}
         onValueChange={(value) => {
@@ -637,21 +922,7 @@ function AgentScopes({
 
       {tab === "org" ? (
         detail.org ? (
-          <ScopeEditor
-            // Another tenant starts with fresh rows.
-            key={detail.org.scopeKey}
-            agentId={agentId}
-            scopeType="org"
-            scopeKey={detail.org.scopeKey}
-            orgId={detail.org.scopeKey}
-            title={detail.org.scopeTitle || detail.tenant?.name || detail.org.scopeKey}
-            expiresAt=""
-            detail={detail}
-            bindings={detail.org.bindings}
-            credentials={detail.org.credentials}
-            readOnly={detail.org.canEdit !== true}
-            reportError={reportError}
-          />
+          <OrgScope detail={detail} org={detail.org} reportError={reportError} />
         ) : (
           <EmptyState
             icon={<Building2 className="size-6" />}
@@ -712,18 +983,7 @@ function AgentScopes({
           </div>
         )
       ) : detail.person ? (
-        <ScopeEditor
-          agentId={agentId}
-          scopeType="person"
-          scopeKey={detail.person.scopeKey}
-          orgId={pageOrg}
-          title={detail.person.scopeTitle || t(($) => $.context_config.tab_person)}
-          expiresAt={detail.person.expiresAt}
-          detail={detail}
-          bindings={detail.person.bindings}
-          credentials={detail.person.credentials}
-          reportError={reportError}
-        />
+        <PersonScope detail={detail} person={detail.person} orgId={pageOrg} reportError={reportError} />
       ) : (
         <EmptyState
           icon={<MessageCircle className="size-6" />}
@@ -739,8 +999,6 @@ function AgentScopes({
           )}
         </EmptyState>
       )}
-
-      <DefaultCapabilities detail={detail} />
     </div>
   );
 }
@@ -824,6 +1082,7 @@ function SceneScope({
       detail={detail}
       bindings={scene.bindings}
       credentials={scene.credentials}
+      content={scene}
       ownerOnly={ownerOnly}
       reportError={reportError}
     />
@@ -841,6 +1100,7 @@ function ScopeEditor({
   detail,
   bindings,
   credentials,
+  content,
   ownerOnly = false,
   readOnly = false,
   reportError,
@@ -857,16 +1117,29 @@ function ScopeEditor({
   detail: ContextConfigAgentDetail;
   bindings: ContextCapabilityBinding[];
   credentials: ContextConnectorCredential[];
-  /** Only the person connects accounts and tokens here (a manager viewing
-   * someone's 1:1 chat). */
+  /** The scope's rights, prompts and MCP servers. */
+  content: ContextConfigScopeContent;
+  /** Older backends (no `rights`): only the person connects accounts and
+   * tokens here (a manager viewing someone's 1:1 chat). */
   ownerOnly?: boolean;
-  /** Nothing can be changed here (the enterprise level for a member). */
+  /** Older backends (no `rights`): nothing can be changed here (the
+   * enterprise level for a member). */
   readOnly?: boolean;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
   const sceneKindLabel = useSceneKindLabel();
   const setBinding = useSetContextCapabilityBinding(agentId);
+  // The server's rights decide; an older backend sends none and the page
+  // keeps its own reading of who may change what.
+  const rights = content.rights;
+  const canToggle = rights ? rights.toggle : !readOnly;
+  const canConnect = rights ? rights.connect : !readOnly && !ownerOnly;
+  // Accounts are shown, but who connects them is said only when the rest of
+  // the scope stays editable (a manager in someone's 1:1 chat).
+  const credentialReadOnly = !canConnect && !canToggle;
+  const credentialOwnerOnly = !canConnect && canToggle;
+  const scopeInput = { scopeType, scopeKey, ...orgField(orgId) };
   // One entry per row with a write in flight, so overlapping toggles of
   // different rows never clear each other's pending state.
   const [busyKeys, setBusyKeys] = useState<ReadonlySet<string>>(() => new Set());
@@ -926,7 +1199,7 @@ function ScopeEditor({
     enabled: boolean,
   ) => {
     const key = `${resourceType}:${resourceId}`;
-    if (readOnly || busyKeys.has(key)) return;
+    if (!canToggle || busyKeys.has(key)) return;
     setBusyKeys((current) => new Set(current).add(key));
     try {
       await setBinding.mutateAsync({ scopeType, scopeKey, ...orgField(orgId), resourceType, resourceId, enabled });
@@ -988,14 +1261,18 @@ function ScopeEditor({
         </div>
         <p className="text-caption text-muted-foreground">
           {scopeType === "org"
-            ? readOnly
+            ? !canToggle
               ? t(($) => $.context_config.org_read_only)
               : t(($) => $.context_config.org_scope_hint)
-            : scopeType === "scene"
-              ? sceneKind === "dm"
-                ? t(($) => $.context_config.scene_scope_hint_dm)
-                : t(($) => $.context_config.scene_scope_hint)
-              : t(($) => $.context_config.person_scope_hint)}
+            : rights && !canToggle
+              ? scopeType === "scene" && sceneKind !== "dm"
+                ? t(($) => $.context_config.scene_read_only)
+                : t(($) => $.context_config.person_read_only)
+              : scopeType === "scene"
+                ? sceneKind === "dm"
+                  ? t(($) => $.context_config.scene_scope_hint_dm)
+                  : t(($) => $.context_config.scene_scope_hint)
+                : t(($) => $.context_config.person_scope_hint)}
         </p>
         {expiry && (
           <p className="text-caption text-muted-foreground">
@@ -1028,11 +1305,12 @@ function ScopeEditor({
                   byOrg={orgEnabledKeys.has(`connector:${connector.id}`)}
                   busy={busyKeys.has(`connector:${connector.id}`)}
                   credential={credentialByConnector.get(connector.id) ?? null}
-                  ownerOnly={ownerOnly}
-                  readOnly={readOnly}
+                  ownerOnly={credentialOwnerOnly}
+                  readOnly={!canToggle}
+                  credentialReadOnly={credentialReadOnly}
                   onToggle={(enabled) => void toggle("connector", connector.id, enabled)}
                   share={
-                    scopeType === "person"
+                    scopeType === "person" && canToggle
                       ? {
                           checked: sharedConnectorIds.has(connector.id),
                           busy: busyKeys.has(`share:${connector.id}`),
@@ -1055,7 +1333,7 @@ function ScopeEditor({
                   alwaysOn={globalIds.has(skill.id)}
                   byOrg={orgEnabledKeys.has(`skill:${skill.id}`)}
                   busy={busyKeys.has(`skill:${skill.id}`)}
-                  readOnly={readOnly}
+                  readOnly={!canToggle}
                   onToggle={(enabled) => void toggle("skill", skill.id, enabled)}
                 />
               ))}
@@ -1063,6 +1341,26 @@ function ScopeEditor({
           )}
         </>
       )}
+      {/* Prompts and MCP servers need a backend that reports rights. */}
+      {rights ? (
+        <>
+          <ScopePrompts
+            agentId={agentId}
+            scope={scopeInput}
+            prompts={content.prompts}
+            canEdit={rights.editPrompts}
+            reportError={reportError}
+          />
+          <ScopeMcpServers
+            agentId={agentId}
+            scope={scopeInput}
+            mcpConfig={content.mcpConfig}
+            redacted={content.mcpConfigRedacted}
+            canEdit={rights.editMcp}
+            reportError={reportError}
+          />
+        </>
+      ) : null}
     </section>
   );
 }
@@ -1087,6 +1385,7 @@ function ConnectorRow({
   credential,
   ownerOnly,
   readOnly,
+  credentialReadOnly,
   onToggle,
   share,
   reportError,
@@ -1103,8 +1402,12 @@ function ConnectorRow({
   byOrg: boolean;
   busy: boolean;
   credential: ContextConnectorCredential | null;
+  /** Accounts are connected by the person only (shown as a note). */
   ownerOnly: boolean;
+  /** The switch cannot be changed. */
   readOnly: boolean;
+  /** Accounts and tokens cannot be changed (no note). */
+  credentialReadOnly: boolean;
   onToggle: (enabled: boolean) => void;
   /** Person scope only: 「在群聊中由我触发时也可用」. */
   share?: ShareInGroupsControl;
@@ -1175,7 +1478,7 @@ function ConnectorRow({
           connector={connector}
           credential={credential}
           ownerOnly={ownerOnly}
-          readOnly={readOnly}
+          readOnly={credentialReadOnly}
           reportError={reportError}
         />
       ) : connector.acceptsCredential ? (
@@ -1188,7 +1491,7 @@ function ConnectorRow({
           connector={connector}
           credential={credential}
           ownerOnly={ownerOnly}
-          readOnly={readOnly}
+          readOnly={credentialReadOnly}
           reportError={reportError}
         />
       ) : null}
@@ -1271,7 +1574,7 @@ function OAuthConnectionControl({
 }) {
   const { t } = useT("agents");
   const credentialNote = useCredentialNote(scopeType, sceneKind);
-  const openAuthorizeUrl = useContext(OpenAuthorizeUrlContext);
+  const { open: openAuthorizeUrl, returnTo } = useContext(ConnectPlumbingContext);
   const start = useStartContextConnectorConnection(agentId);
   const deleteCredential = useDeleteContextConnectorCredential(agentId);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
@@ -1290,7 +1593,13 @@ function OAuthConnectionControl({
   const connect = async () => {
     if (!openAuthorizeUrl || connecting) return;
     try {
-      const url = await start.mutateAsync({ scopeType, scopeKey, ...orgField(orgId), connectorId: connector.id });
+      const url = await start.mutateAsync({
+        scopeType,
+        scopeKey,
+        ...orgField(orgId),
+        connectorId: connector.id,
+        ...(returnTo ? { returnTo } : {}),
+      });
       if (!url) {
         toast.error(t(($) => $.context_config.connect_failed));
         return;
@@ -1777,76 +2086,6 @@ function SkillRow({
         />
       )}
     </li>
-  );
-}
-
-function ToggleControl({
-  busy,
-  checked,
-  disabled = false,
-  label,
-  onToggle,
-}: {
-  busy: boolean;
-  checked: boolean;
-  disabled?: boolean;
-  label: string;
-  onToggle: (enabled: boolean) => void;
-}) {
-  return (
-    <span className="flex h-8 w-10 shrink-0 items-center justify-end">
-      {busy ? (
-        <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
-      ) : (
-        <Switch
-          checked={checked}
-          disabled={disabled}
-          onCheckedChange={(next) => onToggle(next)}
-          aria-label={label}
-        />
-      )}
-    </span>
-  );
-}
-
-function DefaultCapabilities({ detail }: { detail: ContextConfigAgentDetail }) {
-  const { t } = useT("agents");
-  const { connectors, skills } = detail.global;
-  if (connectors.length === 0 && skills.length === 0) return null;
-  return (
-    <section className="space-y-2" aria-labelledby="context-config-defaults">
-      <div>
-        <h2 id="context-config-defaults" className="text-body font-medium">
-          {t(($) => $.context_config.defaults_title)}
-        </h2>
-        <p className="text-caption text-muted-foreground">
-          {t(($) => $.context_config.defaults_hint)}
-        </p>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {connectors.map((connector) => (
-          <Badge key={`c:${connector.id}`} variant="outline" className="max-w-full">
-            <ConnectorMark slug={connector.catalogSlug} className="size-3" />
-            <span className="truncate">{connector.name}</span>
-          </Badge>
-        ))}
-        {skills.map((skill) => (
-          <Badge key={`s:${skill.id}`} variant="outline" className="max-w-full">
-            <SkillIcon className="size-3" />
-            <span className="truncate">{skill.name}</span>
-          </Badge>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function ItemGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="space-y-1.5">
-      <h3 className="text-caption font-medium text-muted-foreground">{label}</h3>
-      <ul className="divide-y rounded-lg border bg-card">{children}</ul>
-    </div>
   );
 }
 
