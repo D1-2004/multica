@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -172,12 +173,15 @@ func (s *Service) BindDigitalEmployee(ctx context.Context, params DirectBindingP
 	}
 	precheck, err := s.checkDirectDigitalEmployeeBinding(ctx, bindingKey)
 	if err != nil {
+		logDirectBindingFailure(bindingKey, "precheck", "", err)
 		return DirectDigitalEmployeeBinding{}, err
 	}
 	if precheck.Status == "bound_to_other_agent" || precheck.Status == "inconsistent" {
+		logDirectBindingFailure(bindingKey, "precheck", precheck.Status, ErrBindingConflict)
 		return DirectDigitalEmployeeBinding{}, ErrBindingConflict
 	}
 	if precheck.Status != "unbound" && precheck.Status != "valid" {
+		logDirectBindingFailure(bindingKey, "precheck", precheck.Status, ErrRouterUnavailable)
 		return DirectDigitalEmployeeBinding{}, ErrRouterUnavailable
 	}
 
@@ -196,6 +200,7 @@ func (s *Service) BindDigitalEmployee(ctx context.Context, params DirectBindingP
 	}
 	issued, err := s.router.IssueBindingToken(ctx, descriptor)
 	if err != nil || strings.TrimSpace(issued.BindingToken) == "" || !issued.ExpiresAt.After(s.now()) {
+		logDirectBindingFailure(bindingKey, "issue_binding_token", precheck.Status, err)
 		return DirectDigitalEmployeeBinding{}, ErrRouterUnavailable
 	}
 	subscription, createErr := creator.CreateHTTPCallbackSubscription(ctx, CreateSubscriptionParams{
@@ -211,6 +216,7 @@ func (s *Service) BindDigitalEmployee(ctx context.Context, params DirectBindingP
 		ReplaceExisting:    false,
 	})
 	if createErr != nil {
+		logDirectBindingFailure(bindingKey, "create_subscription", precheck.Status, createErr)
 		if precheck.Status == "unbound" {
 			if check, checkErr := s.checkDirectDigitalEmployeeBinding(ctx, bindingKey); checkErr == nil && check.Status == "valid" {
 				if !s.directBindingAttemptIsCurrent(ctx, row, config.CallbackTokenHash, bindingKey) {
@@ -440,4 +446,25 @@ func directUnboundDigitalEmployeeBinding(workspaceID, agentID pgtype.UUID) Direc
 		WorkspaceID: util.UUIDToString(workspaceID), AgentID: util.UUIDToString(agentID),
 		Status: "unbound", RouterBindingStatus: "unbound", RetryStatus: "not_required",
 	}
+}
+
+// logDirectBindingFailure records why a direct digital-employee binding
+// failed: the stage, the Router's error code when it gave one, and the
+// precheck status. It carries no credential.
+func logDirectBindingFailure(key DigitalEmployeeBindingKey, stage, precheckStatus string, err error) {
+	code := ""
+	var routerErr *RouterAPIError
+	if errors.As(err, &routerErr) {
+		code = routerErr.Code
+	}
+	message := ""
+	if err != nil {
+		message = err.Error()
+		if len(message) > 300 {
+			message = message[:300]
+		}
+	}
+	slog.Warn("digital employee direct binding failed", "event", "digital_employee_direct_binding_failed",
+		"stage", stage, "agent_id", key.AgentID, "tenant_id", key.TenantID, "account_id", key.AccountID,
+		"precheck_status", precheckStatus, "router_code", code, "error", message)
 }
