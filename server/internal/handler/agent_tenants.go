@@ -219,9 +219,31 @@ func (h *Handler) RenameAgentTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	tenant, err := contextcap.RenameTenant(ctx, h.DB, contextcap.TenantWrite{
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to rename the tenant")
+		return
+	}
+	defer tx.Rollback(ctx)
+	// Renaming the identity tenant stores a row; a Tag agent holds none (its
+	// enterprise is named on the Tag page), so it cannot outlive a rebind.
+	if err := tag.LockAgentTenancy(ctx, tx, caller.agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to rename the tenant")
+		return
+	}
+	if role, err := tag.AgentRole(ctx, tx, caller.workspaceID, caller.agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check the tag")
+		return
+	} else if role != tag.RoleNone {
+		writeErrorCode(w, http.StatusConflict, agentTenantErrTagManaged, "tenants of the tag are managed on the tag page")
+		return
+	}
+	tenant, err := contextcap.RenameTenant(ctx, tx, contextcap.TenantWrite{
 		WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: current.OrgID, Name: input.Name, ActorID: requestUserID(r),
 	})
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
 	switch {
 	case errors.Is(err, contextcap.ErrNotFound):
 		writeErrorCode(w, http.StatusNotFound, contextCapErrTenantNotFound, "tenant not found")

@@ -160,6 +160,14 @@ func InsertTenant(ctx context.Context, tx DBTX, workspaceID, tagAgentID, employe
 	if multiOrg {
 		return Tenant{}, ErrAgentServesSeveralOrgs
 	}
+	// What remains is at most an alias row naming the identity org. The Tag
+	// tenant's name replaces it, and a Tag employee holds no contextcap
+	// tenant rows at all: a row kept here would survive a later rebind to
+	// another org as a second enterprise.
+	if _, err := tx.Exec(ctx, `DELETE FROM agent_tenant WHERE workspace_id = $1::uuid AND agent_id = $2::uuid`,
+		workspaceID, employeeAgentID); err != nil {
+		return Tenant{}, err
+	}
 	var id string
 	err = tx.QueryRow(ctx, `INSERT INTO tag_tenant (workspace_id, tag_agent_id, employee_agent_id, name, created_by)
 		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::uuid) RETURNING id::text`,

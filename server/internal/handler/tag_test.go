@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/tag"
 )
@@ -33,6 +34,7 @@ func tagTestRouter(h *Handler) http.Handler {
 		})
 		r.Post("/api/agents/{id}/archive", h.ArchiveAgent)
 		r.With(RequireHumanActor).Post("/api/agents/{id}/tenants", h.CreateAgentTenant)
+		r.With(RequireHumanActor).Patch("/api/agents/{id}/tenants/{orgId}", h.RenameAgentTenant)
 		r.Put("/api/agents/{id}/a2a/operator/dws-identity", h.UpdateAgentA2AOperatorIdentity)
 		r.With(RequireHumanActor).Post("/api/workspaces/{id}/dingtalk/execution-identities/reuse", h.ReuseDingTalkIdentity)
 	})
@@ -396,5 +398,66 @@ func TestContextCapTenantWaitsForTagMembership(t *testing.T) {
 	}
 	if extra != 0 {
 		t.Fatalf("agent gained %d contextcap tenants", extra)
+	}
+}
+
+// A Tag employee keeps exactly one enterprise even when it is rebound: it
+// holds no contextcap tenant rows that could outlive its identity org (S4 B5).
+func TestTagEmployeeKeepsOneEnterpriseAcrossRebind(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	cleanupTag(t)
+	useTagOperator(t, true)
+	router := tagTestRouter(testHandler)
+	ctx := context.Background()
+
+	tagDecode[TagStateResponse](t, tagDo(t, router, http.MethodPost, "/api/tag",
+		map[string]string{"name": "TagTest " + uuid.NewString()[:8], "runtime_id": testRuntimeID}))
+	agentID := createHandlerTestAgent(t, "TagTest bound "+uuid.NewString()[:8], nil)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_dingtalk_identity WHERE agent_id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_tenant WHERE agent_id = $1`, agentID)
+	})
+	if _, err := testPool.Exec(ctx, `INSERT INTO agent_dingtalk_identity (agent_id, workspace_id, dws_uid, org_id, bound_by)
+		VALUES ($1, $2, '1001', 'orgA', $3)`, agentID, testWorkspaceID, testUserID); err != nil {
+		t.Fatal(err)
+	}
+	// Before joining the Tag the agent names its identity org: an alias row.
+	tagExpect(t, tagDo(t, router, http.MethodPatch, "/api/agents/"+agentID+"/tenants/orgA", map[string]string{"name": "A 公司"}),
+		http.StatusOK, "alias the identity tenant")
+
+	w := tagDo(t, router, http.MethodPost, "/api/tag/tenants/adopt", map[string]string{"agent_id": agentID, "name": "A 公司"})
+	tagExpect(t, w, http.StatusCreated, "adopt bound agent")
+	if adopted := tagDecode[TagTenantMutationResponse](t, w); !adopted.Tenant.Bound || adopted.Tenant.OrgID != "orgA" {
+		t.Fatalf("adopted tenant = %+v", adopted.Tenant)
+	}
+	var rows int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_tenant WHERE agent_id = $1`, agentID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("employee kept %d contextcap tenant rows", rows)
+	}
+	// The contextcap rename cannot store a new alias row for the employee.
+	w = tagDo(t, router, http.MethodPatch, "/api/agents/"+agentID+"/tenants/orgA", map[string]string{"name": "A again"})
+	tagExpect(t, w, http.StatusConflict, "alias on a tag employee")
+	if !strings.Contains(w.Body.String(), agentTenantErrTagManaged) {
+		t.Fatalf("refused for another reason: %s", w.Body.String())
+	}
+
+	// Rebind to another org: the employee serves only the new one.
+	if _, err := testPool.Exec(ctx, `UPDATE agent_dingtalk_identity SET org_id = 'orgB' WHERE agent_id = $1`, agentID); err != nil {
+		t.Fatal(err)
+	}
+	tenants, err := contextcap.AgentTenants(ctx, testPool, testWorkspaceID, agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tenants) != 1 || tenants[0].OrgID != "orgB" {
+		t.Fatalf("tenants after rebind = %+v", tenants)
+	}
+	if _, err := testPool.Exec(ctx, `DELETE FROM tag_tenant WHERE employee_agent_id = $1`, agentID); err != nil {
+		t.Fatal(err)
 	}
 }
