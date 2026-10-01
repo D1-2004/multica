@@ -351,7 +351,9 @@ desktop list refetches on focus, so the new account shows up on return.
 
 ### Callback origin and forwarding
 
-There is no configuration: the rule follows the deployment's own origin. A
+The origins follow the deployment (no origin configuration); the only
+setting is the shared secret both deployments already have for A2A forward
+registrations (`MULTICA_A2A_FORWARD_REGISTRATION_SECRET`). A
 pre-release deployment serves the production host with a `pre-` prefix
 (`https://pre-fde-workbench.dingtalk.com` is the pre-release of
 `https://fde-workbench.dingtalk.com`).
@@ -367,16 +369,34 @@ pre-release deployment serves the production host with a `pre-` prefix
   URI the authorization used, and the code is exchanged with it.
 - A connect started anywhere else (production, local) uses its own callback
   and a state without an origin, as before.
+- Registration (the A2A forward registration shape: pre-release signs,
+  production verifies). Before returning the authorize URL, the pre-release
+  registers the connect with its production:
+  `POST <production>/api/internal/connector-oauth/forward-registrations`
+  with `{state_sha256, home_origin, workspace_id, agent_id, connector_id,
+  scope_type, expires_at_ms}`, signed with HMAC-SHA256 over
+  `<timestamp ms>\n<body>` (`X-Multica-Connector-OAuth-Forward-Timestamp` /
+  `-Signature`, the A2A signing function and secret). Production accepts
+  only its own `pre-` origin, a fresh signature (±5 minutes) and an expiry
+  within 15 minutes, and keeps the registration in Redis until the state
+  expires. Without the secret, Redis or a 200 the pre-release refuses to
+  start the connect (`forward_unavailable`, 503), so a callback is never
+  stranded.
 - Production forwards: both callback routes (`/api/connector-oauth/callback`
   and the `mcpc.` branch of `/api/github/authorize`) look at the state before
   any local handling (`internal_connector_oauth_forward.go`, self-contained
-  so production can ship it alone). A state naming `https://pre-` + one of
-  production's own hosts (`MULTICA_APP_URL`, `FRONTEND_ORIGIN`) is sent with a
-  302 to `<that origin><same path>?<same raw query>`; a state naming any
-  other foreign origin gets the invalid-connection page (400). The
-  destination is always the own host's pre-release plus a fixed callback
-  path, so the forwarder is no open redirect. States without an origin,
-  naming this deployment, or malformed are handled locally.
+  and byte-identical on the forwarder-only branch
+  `feat/connector-oauth-forwarder`, which production can ship alone). A
+  state naming `https://pre-` + one of production's own hosts
+  (`MULTICA_APP_URL`, `FRONTEND_ORIGIN`) is sent with a 302 to
+  `<that origin><same path>?<same raw query>` only when the pre-release
+  registered that state for one of its Workspaces/Agents; the registration
+  is taken (single use). An unregistered, used or expired state, or one
+  naming any other foreign origin, gets the invalid-connection page (400).
+  Each forward and refusal is logged (`connector_oauth_forwarded` /
+  `connector_oauth_forward_refused`, with workspace, agent and connector).
+  States without an origin, naming this deployment, or malformed are
+  handled locally.
 - The browser binding cookie is set by the start response on the
   pre-release origin (see "Browser binding"), so the forwarded callback finds
   it; a callback opened anywhere else still fails with `browser_mismatch`.

@@ -107,10 +107,19 @@ func TestConnectorOAuthStateHomeOrigin(t *testing.T) {
 // is refused. No configuration is involved.
 func TestConnectorOAuthCallbackForwarding(t *testing.T) {
 	prod := &Handler{cfg: Config{AppURL: forwardProdOrigin, FrontendOrigin: forwardProdOrigin}}
+	useConnectorOAuthForward(t, prod)
+	pre := &Handler{cfg: Config{AppURL: forwardPreOrigin, FrontendOrigin: forwardPreOrigin, A2AForwardRegistrationSecret: connectorOAuthForwardTestSecret}}
 	router := catalogAPIRouter(prod)
 
 	for _, path := range []string{ConnectorOAuthCallbackPath, connectorOAuthGitHubCallback} {
 		state := forwardState(forwardPreOrigin)
+		// Production forwards only a connect its pre-release registered.
+		if err := pre.registerConnectorOAuthForward(context.Background(), forwardProdOrigin, state, connectorOAuthForwardRegistration{
+			HomeOrigin: forwardPreOrigin, WorkspaceID: testWorkspaceID, ConnectorID: uuid.NewString(), ScopeType: "workspace",
+			ExpiresAtMs: time.Now().Add(10 * time.Minute).UnixMilli(),
+		}); err != nil {
+			t.Fatal(err)
+		}
 		rawQuery := "code=the+code&state=" + url.QueryEscape(state) + "&iss=https%3A%2F%2Fprovider.example"
 		rec := browserGet(router, path+"?"+rawQuery)
 		want := forwardPreOrigin + path + "?" + rawQuery
@@ -145,7 +154,6 @@ func TestConnectorOAuthCallbackForwarding(t *testing.T) {
 	}
 	// A deployment that is not the production of the named pre-release (here
 	// a pre-release itself) refuses the state.
-	pre := &Handler{cfg: Config{AppURL: forwardPreOrigin, FrontendOrigin: forwardPreOrigin}}
 	rec := browserGet(catalogAPIRouter(pre), ConnectorOAuthCallbackPath+"?code=c&state="+url.QueryEscape(forwardState("https://pre-other.example.test")))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("foreign pre-release state on a pre-release: %d %q", rec.Code, rec.Header().Get("Location"))
@@ -172,6 +180,9 @@ func TestConnectorOAuthCallbackOriginRoundTrip(t *testing.T) {
 	// The fixture's own origins play production; a copy of the handler on
 	// the "pre-" hosts is its pre-release (same database).
 	prodRouter := catalogAPIRouter(f.h)
+	// The pre-release registers each connect with production, which then
+	// forwards that connect's callback (and nothing else).
+	useConnectorOAuthForward(t, f.h)
 	pre := *f.h
 	pre.cfg.AppURL, pre.cfg.FrontendOrigin = preReleaseOf(catalogAppOrigin), preReleaseOf(catalogWebOrigin)
 	preRouter := catalogAPIRouter(&pre)
@@ -292,6 +303,7 @@ func TestConnectorOAuthClientNameRegistration(t *testing.T) {
 		t.Fatal("an unnamed registration must serve exactly the legacy name")
 	}
 
+	useConnectorOAuthForward(t, f.h)
 	pre := *f.h
 	pre.cfg.AppURL, pre.cfg.FrontendOrigin = preReleaseOf(catalogAppOrigin), preReleaseOf(catalogWebOrigin)
 	if _, err := pre.startConnectorOAuth(ctx, connectorOAuthStart{connectorOAuthScope: scope}); err != nil {

@@ -2006,6 +2006,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Pre-release -> production forward registrations; authenticated only by
 	// the shared-secret signature.
 	r.Post("/api/internal/a2a/forward-registrations", h.HandleA2AForwardRegistration)
+	// Production keeps its pre-release's connector OAuth connects, so it
+	// forwards only their callbacks (signed like the A2A registrations).
+	r.Post(handler.ConnectorOAuthForwardRegistrationPath, h.HandleConnectorOAuthForwardRegistration)
 	// The header-authenticated URL is canonical. The secret-bearing connect URL
 	// exists so a local Coding Agent can be configured with one copied command.
 	r.Post("/api/mcp/agents/{publicAgentId}", h.HandleAgentMCP)
