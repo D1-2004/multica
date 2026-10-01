@@ -159,6 +159,32 @@ describe("TagTenantConfig", () => {
     expect(await screen.findByText(copy.supervisor_unsupported)).toBeTruthy();
   });
 
+  it("turns on managed replies before native perception for an employee without them", async () => {
+    const user = userEvent.setup();
+    data.bindings = [binding({ identity: "active" })];
+    const onUpdate = vi.fn().mockResolvedValue(undefined);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <I18nProvider locale="en" resources={{ en: { common: enCommon, agents: enAgents } }}>
+        <QueryClientProvider client={client}>
+          <TagTenantConfig
+            agent={{ ...agent, inbound_coordinator: false, dingtalk_response_enabled: false }}
+            canEdit
+            onUpdate={onUpdate}
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("switch", { name: copy.mode_native })).not.toHaveAttribute("aria-disabled", "true"),
+    );
+    await user.click(screen.getByRole("switch", { name: copy.mode_native }));
+    await waitFor(() => expect(mocks.setNative).toHaveBeenCalled());
+    expect(onUpdate).toHaveBeenCalledWith({ inbound_coordinator: true, dingtalk_response_enabled: true });
+    expect(onUpdate.mock.invocationCallOrder[0]).toBeLessThan(mocks.setNative.mock.invocationCallOrder[0] ?? 0);
+    expect(mocks.setNative.mock.calls[0]?.[0]).toEqual({ agentId: "employee-1", enabled: true });
+  });
+
   it("keeps direct filling to platform operators", async () => {
     const user = userEvent.setup();
     data.operator = { operator: false, dwsIdentity: null };

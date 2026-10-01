@@ -81,6 +81,17 @@ var seededAgentColumns = []string{
 	"inbound_coordinator_user_decision_audience",
 }
 
+// responsePolicyColumns are the seeded columns that make up the agent's
+// DingTalk response policy (versioned by dingtalk_response_policy_revision).
+var responsePolicyColumns = []string{
+	"inbound_coordinator",
+	"inbound_coordinator_user_decision",
+	"inbound_coordinator_user_decision_names",
+	"inbound_coordinator_user_decision_audience",
+	"dingtalk_show_ai_tag",
+	"dingtalk_response_enabled",
+}
+
 // captureAgentSQL builds the agent part of a snapshot as one jsonb object.
 func captureAgentSQL() string {
 	parts := make([]string, 0, len(managedAgentColumns))
@@ -127,6 +138,14 @@ func SeedAgent(ctx context.Context, tx DBTX, workspaceID, fromAgentID, toAgentID
 	for _, c := range seededAgentColumns {
 		sets = append(sets, fmt.Sprintf("%s = s.%s", c, c))
 	}
+	// The DingTalk response policy is synced to the Router by revision: a
+	// seed that changes it bumps the revision like UpdateAgentDingTalkResponsePolicy.
+	policyChanged := make([]string, 0, len(responsePolicyColumns))
+	for _, c := range responsePolicyColumns {
+		policyChanged = append(policyChanged, fmt.Sprintf("t.%s IS DISTINCT FROM s.%s", c, c))
+	}
+	sets = append(sets, "dingtalk_response_policy_revision = t.dingtalk_response_policy_revision + CASE WHEN "+
+		strings.Join(policyChanged, " OR ")+" THEN 1 ELSE 0 END")
 	sets = append(sets, "updated_at = now()")
 	updated, err := tx.Exec(ctx, `UPDATE agent t SET `+strings.Join(sets, ", ")+`
 		FROM agent s

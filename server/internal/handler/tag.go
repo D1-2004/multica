@@ -374,6 +374,13 @@ func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A Tag serves DingTalk digital employees: the inbound Coordinator and
+	// managed DingTalk replies are on by default (native subscription needs
+	// both), and new tenants inherit them from the template.
+	if err := enableTagManagedResponses(r.Context(), qtx, template.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to set the tag response policy")
+		return
+	}
 	if _, err := tag.Create(r.Context(), tx, workspaceID, templateID, userID); err != nil {
 		if errors.Is(err, tag.ErrAlreadyExists) {
 			writeError(w, http.StatusConflict, "this workspace already has a tag")
@@ -564,6 +571,11 @@ func (h *Handler) CreateTagTenant(w http.ResponseWriter, r *http.Request) {
 	// reply behaviour, scene memory); from here on they are the tenant's.
 	if err := tag.SeedAgent(r.Context(), tx, workspaceID, t.AgentID, uuidToString(employee.ID)); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to seed the tenant employee")
+		return
+	}
+	// Also for a template created before the Tag defaulted them on.
+	if err := enableTagManagedResponses(r.Context(), qtx, employee.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to set the tenant response policy")
 		return
 	}
 	result, err := tag.Apply(r.Context(), tx, workspaceID, tenant, rev, userID)
@@ -944,4 +956,15 @@ func tagEmployeeConnectorGrantsChanged(ctx context.Context, tx tag.DBTX, workspa
 		    OR EXISTS (SELECT id FROM requested EXCEPT SELECT id FROM current)`,
 		workspaceID, connectorID, agentIDs).Scan(&changed)
 	return changed, err
+}
+
+// enableTagManagedResponses turns on the inbound Coordinator and managed
+// DingTalk replies through the versioned response policy update.
+func enableTagManagedResponses(ctx context.Context, q *db.Queries, agentID pgtype.UUID) error {
+	_, err := q.UpdateAgentDingTalkResponsePolicy(ctx, db.UpdateAgentDingTalkResponsePolicyParams{
+		ID:                 agentID,
+		InboundCoordinator: pgtype.Bool{Bool: true, Valid: true},
+		ResponseEnabled:    pgtype.Bool{Bool: true, Valid: true},
+	})
+	return err
 }

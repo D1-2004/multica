@@ -558,3 +558,41 @@ func TestTagEmployeeConfigIsReadOnly(t *testing.T) {
 		}
 	}
 }
+
+// Native subscription needs the inbound Coordinator and managed DingTalk
+// replies: a Tag turns both on for its template and every new employee,
+// through the versioned response policy.
+func TestTagDefaultsManagedResponses(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	cleanupTag(t)
+	useTagOperator(t, true)
+	router := tagTestRouter(testHandler)
+	ctx := context.Background()
+
+	created := tagDecode[TagStateResponse](t, tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"runtime_id": testRuntimeID}))
+	templateID := created.Tag.AgentID
+	policy := func(agentID string) (bool, bool, int64) {
+		t.Helper()
+		var coordinator, response bool
+		var revision int64
+		if err := testPool.QueryRow(ctx, `SELECT inbound_coordinator, dingtalk_response_enabled, dingtalk_response_policy_revision FROM agent WHERE id = $1`,
+			agentID).Scan(&coordinator, &response, &revision); err != nil {
+			t.Fatal(err)
+		}
+		return coordinator, response, revision
+	}
+	if coordinator, response, revision := policy(templateID); !coordinator || !response || revision < 2 {
+		t.Fatalf("template policy = coordinator %v response %v revision %d", coordinator, response, revision)
+	}
+
+	// Even when the template has turned them off, a new employee starts on.
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET inbound_coordinator = false, dingtalk_response_enabled = false WHERE id = $1`, templateID); err != nil {
+		t.Fatal(err)
+	}
+	tenant := tagDecode[TagTenantMutationResponse](t, tagDo(t, router, http.MethodPost, "/api/tag/tenants", map[string]string{"name": "托管回复"}))
+	if coordinator, response, revision := policy(tenant.Tenant.EmployeeAgentID); !coordinator || !response || revision < 2 {
+		t.Fatalf("employee policy = coordinator %v response %v revision %d", coordinator, response, revision)
+	}
+}

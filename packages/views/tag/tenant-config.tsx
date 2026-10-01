@@ -61,13 +61,21 @@ export function TagTenantConfig({
 }) {
   return (
     <div className="space-y-10">
-      <EmployeeIdentitySection agent={agent} canEdit={canEdit} />
+      <EmployeeIdentitySection agent={agent} canEdit={canEdit} onUpdate={onUpdate} />
       <InboundCoordinatorSetting agent={agent} canEdit={canEdit} onUpdate={onUpdate} />
     </div>
   );
 }
 
-function EmployeeIdentitySection({ agent, canEdit }: { agent: Agent; canEdit: boolean }) {
+function EmployeeIdentitySection({
+  agent,
+  canEdit,
+  onUpdate,
+}: {
+  agent: Agent;
+  canEdit: boolean;
+  onUpdate: (data: Record<string, unknown>) => Promise<void>;
+}) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const { data: listing } = useQuery(dingtalkAccountBindingsOptions(wsId));
@@ -98,6 +106,7 @@ function EmployeeIdentitySection({ agent, canEdit }: { agent: Agent; canEdit: bo
             routeActive={routeActive}
             routeOrganization={binding?.messageRoute.organizationName ?? ""}
             nativeOn={nativeOn}
+            onUpdate={onUpdate}
             onScanRoute={() => setQrMode("message")}
           />
         </Layer>
@@ -377,6 +386,7 @@ function EventPerception({
   routeActive,
   routeOrganization,
   nativeOn,
+  onUpdate,
   onScanRoute,
 }: {
   agent: Agent;
@@ -385,6 +395,7 @@ function EventPerception({
   routeActive: boolean;
   routeOrganization: string;
   nativeOn: boolean;
+  onUpdate: (data: Record<string, unknown>) => Promise<void>;
   onScanRoute: () => void;
 }) {
   const { t } = useT("agents");
@@ -424,7 +435,19 @@ function EventPerception({
               disabled={!canEdit || setNative.isPending || (!nativeOn && nativeBlockedReason !== null)}
               onCheckedChange={(checked) => {
                 setError(null);
-                setNative.mutate({ agentId: agent.id, enabled: checked === true }, { onError: fail });
+                void (async () => {
+                  // Native events are answered through the Coordinator and
+                  // managed DingTalk replies; turn them on first if needed.
+                  if (checked === true && (agent.inbound_coordinator !== true || agent.dingtalk_response_enabled !== true)) {
+                    try {
+                      await onUpdate({ inbound_coordinator: true, dingtalk_response_enabled: true });
+                    } catch (e) {
+                      fail(e);
+                      return;
+                    }
+                  }
+                  setNative.mutate({ agentId: agent.id, enabled: checked === true }, { onError: fail });
+                })();
               }}
             />
           }
