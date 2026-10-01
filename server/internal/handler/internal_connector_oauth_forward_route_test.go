@@ -187,6 +187,22 @@ func TestConnectorOAuthForwarderRoutes(t *testing.T) {
 		t.Fatalf("registry without the secret = %d", rec.Code)
 	}
 
+	// The console-registered alias is the same handler. An unregistered
+	// state is refused, and a registered one is forwarded to the canonical
+	// v0 path (the path the binding cookie and redirect URI use).
+	aliasState := stateOf("I", preOrigin)
+	aliasQuery := "code=the+code&state=" + url.QueryEscape(aliasState)
+	if rec := callback(prod.ConnectorOAuthCallback, connectorOAuthCallbackAliasPath, aliasQuery); !refused(rec) {
+		t.Fatalf("alias unregistered = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if err := pre.registerConnectorOAuthForward(context.Background(), prodOrigin, aliasState, registration(preOrigin)); err != nil {
+		t.Fatalf("alias register: %v", err)
+	}
+	rec = callback(prod.ConnectorOAuthCallback, connectorOAuthCallbackAliasPath, aliasQuery)
+	if want := preOrigin + connectorOAuthCallbackPath + "?" + aliasQuery; rec.Code != http.StatusFound || rec.Header().Get("Location") != want {
+		t.Fatalf("alias forward = %d %q, want %q", rec.Code, rec.Header().Get("Location"), want)
+	}
+
 	// Without the connector flow in the build, a callback of production's
 	// own connect gets the invalid-connection page.
 	if connectorOAuthCompleteLocal == nil {

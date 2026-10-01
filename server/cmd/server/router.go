@@ -2119,8 +2119,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 	// Official app OAuth callback for dynamically registered clients (Notion,
 	// Linear, ...). No Multica session: the single-use state and the browser
-	// binding cookie set by the start response are the proof.
+	// binding cookie set by the start response are the proof. The
+	// console-registered path and the v0 path are the same handler.
 	r.With(connectorOAuthCallbackRL).Get(handler.ConnectorOAuthCallbackPath, h.ConnectorOAuthCallback)
+	r.With(connectorOAuthCallbackRL).Get(handler.ConnectorOAuthCallbackAliasPath, h.ConnectorOAuthCallback)
 	// Slack OAuth callback (no Multica auth in the path — it is hit by Slack's
 	// browser redirect; the workspace/agent/initiator are recovered from the
 	// sealed state). It exchanges the code, upserts the install, then bounces

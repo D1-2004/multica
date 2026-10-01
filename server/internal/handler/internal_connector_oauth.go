@@ -138,8 +138,12 @@ type connectorOAuthStarted struct {
 	// AuthorizeURL is the provider's authorize URL the browser goes to next.
 	AuthorizeURL string
 	// Cookie binds the state to the browser that receives the start
-	// response; the API layer sets it.
+	// response; the API layer sets it. Path is the canonical callback.
 	Cookie *http.Cookie
+	// ExtraCookies are the same binding on any other path that serves this
+	// callback (the console-registered DCR alias). The API layer sets them
+	// too. A browser sends only the cookie whose path matches the redirect.
+	ExtraCookies []*http.Cookie
 }
 
 // connectorOAuthCallback is the input of completeConnectorOAuth.
@@ -269,6 +273,15 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	started := connectorOAuthStarted{
 		AuthorizeURL: authorizeURL,
 		Cookie:       connectorOAuthBrowserCookie(payload.StateHash, nonce, homeOrigin, callbackPath),
+	}
+	// Provider consoles register the alias. The canonical path stays the
+	// redirect URI, so a forwarded callback still lands on it. A direct hit
+	// on the alias needs its own cookie: cookie path matching does not treat
+	// /api/connector-oauth/callback and /api/connectors/oauth/callback as one.
+	if payload.Via == connectorOAuthViaDCR && callbackPath != connectorOAuthCallbackAliasPath {
+		started.ExtraCookies = []*http.Cookie{
+			connectorOAuthBrowserCookie(payload.StateHash, nonce, homeOrigin, connectorOAuthCallbackAliasPath),
+		}
 	}
 	if err := h.insertConnectorOAuthState(ctx, payload, scope, returnTo); err != nil {
 		slog.ErrorContext(ctx, "official app OAuth state insert failed", "connector_id", c.ID, "error", err)
