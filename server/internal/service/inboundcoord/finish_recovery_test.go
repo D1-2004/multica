@@ -83,7 +83,7 @@ func TestFinishSerializationRepairOnlyCallsFinish(t *testing.T) {
 	if !strings.Contains(string(raw), "unchanged evidence") || !strings.Contains(string(raw), "policy:finish_repair") {
 		t.Fatal("repair lost evidence/provenance")
 	}
-	if _, err := parseValidatedWindowPlan(`{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"perform scoped synthetic task","state_refs":["invented"]}]}`, Turn{Source: SourceWeb, Message: "do work"}, nil, nil); err == nil {
+	if _, err := parseValidatedWindowPlan(`{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"perform scoped synthetic task","memory_revision":3}]}`, Turn{Source: SourceWeb, Message: "do work"}, nil, nil); err == nil {
 		t.Fatal("Host validation was weakened")
 	}
 }

@@ -56,6 +56,10 @@ type Credential struct {
 	UID      string
 	ClientID string
 	AuthCode string
+	// ExpectUserID and ExpectCorpID, when set, are checked against the
+	// exchanged token's identity (a code another party issued).
+	ExpectUserID string
+	ExpectCorpID string
 }
 
 type ListRequest struct {

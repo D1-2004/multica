@@ -22,16 +22,19 @@ export const dingtalkAccountBindingsOptions = (wsId: string) =>
 // native subscription switch refreshes it on settle.
 export const DINGTALK_NATIVE_STREAM_POLL_MS = 10_000;
 
+// enabled reads the status (and its DEAP link) for a bound identity; poll
+// keeps the stream state fresh while native subscription is on.
 export const dingtalkNativeSubscriptionStatusOptions = (
   wsId: string,
   agentId: string,
   enabled: boolean,
+  poll = enabled,
 ) =>
   queryOptions({
     queryKey: [...dingtalkAccountBindingKeys.all(wsId), "native-subscription", agentId],
     queryFn: () => api.getDingTalkNativeSubscriptionStatus(wsId, agentId),
     enabled: enabled && !!wsId && !!agentId,
-    refetchInterval: enabled ? DINGTALK_NATIVE_STREAM_POLL_MS : false,
+    refetchInterval: enabled && poll ? DINGTALK_NATIVE_STREAM_POLL_MS : false,
     refetchOnWindowFocus: "always",
   });
 

@@ -307,7 +307,7 @@ func TestCardEventLineParsesAsADecision(t *testing.T) {
 func TestSharedSessionsMintOncePerIdentity(t *testing.T) {
 	f, _, _ := startSDK(t, func(string, map[string]any) string { return toolOK(`{"openTaskId":"task-1"}`) })
 	mints := 0
-	mint := func(context.Context) (Credential, error) {
+	mint := func(context.Context, Identity) (Credential, error) {
 		mints++
 		return Credential{UID: "42", ClientID: "client-1", AuthCode: "code-2"}, nil
 	}
@@ -336,11 +336,11 @@ func TestSharedSessionsMintOncePerIdentity(t *testing.T) {
 	}
 	boom := errors.New("identity context unavailable")
 	if _, _, ok, err := shared.Open(context.Background(), Identity{AgentID: "agent-2", UID: "43", OrgID: "org-1"},
-		func(context.Context) (Credential, error) { return Credential{}, boom }); !ok || !errors.Is(err, boom) {
+		func(context.Context, Identity) (Credential, error) { return Credential{}, boom }); !ok || !errors.Is(err, boom) {
 		t.Fatalf("mint failure = %v %v", ok, err)
 	}
 	if _, _, _, err := shared.Open(context.Background(), Identity{AgentID: "agent-3", UID: "44", OrgID: "org-1"},
-		func(context.Context) (Credential, error) {
+		func(context.Context, Identity) (Credential, error) {
 			return Credential{UID: "99", ClientID: "c", AuthCode: "a"}, nil
 		}); err == nil {
 		t.Fatal("a credential for another user was accepted")

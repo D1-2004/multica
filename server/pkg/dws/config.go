@@ -23,14 +23,20 @@ const (
 	ServerChat    Server = "chat"
 	ServerIM      Server = "im"
 	ServerContact Server = "contact"
+	// ServerDEAP is the DingTalk digital employee platform's developer MCP
+	// ("deap-dev"): digital employee details and their DWS auth codes, called
+	// as the employee's supervisor.
+	ServerDEAP Server = "deap"
 )
 
-// serverIDs mirrors dingtalk-workspace-cli internal/syncdata/endpoints.go.
-// The staging gateway serves the same IDs.
+// serverIDs mirrors dingtalk-workspace-cli internal/syncdata/endpoints.go
+// (deap-dev: internal/app/direct_runtime.go deapDevServerPath). The staging
+// gateway serves the same IDs.
 var serverIDs = map[Server]string{
 	ServerChat:    "0a1609437385696b77fc4771c3ddaf5656b487f809966c0cc8d4755e7b1d3b74",
 	ServerIM:      "450eede6b54d83e030140e66ec77c98a2e89a0869ef4db481f8217a98a42f821",
 	ServerContact: "db4b26cb38ea6a8739ad55d1997fa1da608cd36b33a6cf0f77884f70c49382fe",
+	ServerDEAP:    "68e7e41374caa1336dc642bc3dd220de6f1e7077356dc0d4fc128f62d52d7d9b",
 }
 
 // DingTalkUserAccessTokenURL is DingTalk's OAuth token endpoint, used when a

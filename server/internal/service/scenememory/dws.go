@@ -93,15 +93,15 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) (HistoryP
 			Err:  fmt.Errorf("DWS identity org does not match scene"),
 		}
 	}
-	mint := func(ctx context.Context) (dwsclient.Credential, error) {
+	mint := func(ctx context.Context, id dwsclient.Identity) (dwsclient.Credential, error) {
 		runID := "scene-memory-dws-" + uuid.NewString()
 		issued, err := r.issuer.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
 			RequestID: runID, TaskID: runID,
-			AgentID:     util.UUIDToString(row.AgentID),
+			AgentID:     id.AgentID,
 			RuntimeType: "SERVER", RuntimeID: runID,
 			Reason: "Multica scene memory DingTalk history",
 			Source: map[string]string{"app": "dt-fde-multica", "identity_source": "scene_memory_dws"},
-			UID:    identity.DwsUid, OrgID: identity.OrgID, TTLSeconds: 120,
+			UID:    id.UID, OrgID: id.OrgID, TTLSeconds: 120,
 		})
 		if err != nil {
 			return dwsclient.Credential{}, fmt.Errorf("issue DWS history identity: %w", err)
@@ -110,15 +110,15 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) (HistoryP
 	}
 	// The SDK transport reuses the identity's shared token and mints only
 	// without one; the dws CLI exchanges a credential for this read.
-	dir, cleanup, shared, err := dwsclient.Shared{CLI: r.cli}.Open(readCtx,
-		dwsclient.Identity{AgentID: util.UUIDToString(row.AgentID), UID: identity.DwsUid, OrgID: identity.OrgID}, mint)
+	reader := dwsclient.Identity{AgentID: util.UUIDToString(row.AgentID), UID: identity.DwsUid, OrgID: identity.OrgID}
+	dir, cleanup, shared, err := dwsclient.Shared{CLI: r.cli}.Open(readCtx, reader, mint)
 	if shared {
 		if err != nil {
 			return HistoryPage{}, err
 		}
 		defer cleanup()
 	} else {
-		credential, err := mint(readCtx)
+		credential, err := dwsclient.Shared{CLI: r.cli}.Mint(readCtx, reader, mint)
 		if err != nil {
 			return HistoryPage{}, err
 		}

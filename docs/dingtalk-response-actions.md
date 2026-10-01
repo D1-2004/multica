@@ -31,7 +31,7 @@ Router 注册、订阅读取、策略 PATCH 和 dispatch 使用同一可选快�
 
 `PATCH /api/subscriptions/{sourceId}/response-policy` 使用现有 Multica 服务凭据，输入 `{agentId,responsePolicy}`，不会重建上游订阅。能力探测为 `GET /api/subscriptions/response-policy-capabilities`。同步 worker 持久化 desired policy，PATCH 后 GET 回读；旧修订不能覆盖新值，修订号由平台维护。关闭的员工若从未同步过，不创建 Router 策略记录；曾启用过的员工关闭后会同步为 legacy。
 
-Daemon 在任务领取时声明 `dws_message_policy_v1`，Windows 不声明。FC 必须同时具备精确模板指纹的能力证明；不能因为 provider 名称相同就给旧镜像加能力。任务的 `dingtalk_message_policy` 含 `show_ai_tag` 和 `platform_managed_lifecycle`，缺失时 wrapper 保持旧行为。
+Daemon 在任务领取时声明 `dws_message_policy_v1`，Windows 不声明。FC 以 Runtime provider catalog 登记为准：登记过 providers 的镜像都声明该能力，不再逐个指纹证明。任务的 `dingtalk_message_policy` 含 `show_ai_tag` 和 `platform_managed_lifecycle`，缺失时 wrapper 保持旧行为。
 
 ## 响应动作与回执
 
@@ -80,7 +80,7 @@ task-finished 遇到 pending/accepted/unknown 时延期，不将其当作“已�
 
 统一响应由员工页面的开关控制，默认关闭，不再依赖 Diamond 或环境变量总开关。旧 Diamond 两字段仅为兼容既有配置快照而接受解析，不参与行为判断；无需修改 Diamond。9158 迁移新增员工开关并提高既有数据库同步版本，防止滚动期间旧配置驱动副本覆盖员工设置；此版本由平台维护，不是第二个配置开关。
 
-FC 能力使用 `runtime.fc_e2b.dws_message_policy_fingerprints` 精确 allowlist；无 Diamond 时使用 `MULTICA_FC_E2B_DWS_MESSAGE_POLICY_FINGERPRINTS` JSON 数组。候选镜像当前指纹为 `dd95d8b615567a87`；仍须在 Runtime provider catalog 中注册该指纹对应的 providers。
+FC 能力不再按镜像指纹 allowlist 授予：Runtime provider catalog 里登记过 providers 的镜像都声明 `dws_message_policy_v1`，未登记的镜像不声明。`runtime.fc_e2b.dws_message_policy_fingerprints` 仅为兼容既有 Diamond 配置而保留解析，不参与判断；`MULTICA_FC_E2B_DWS_MESSAGE_POLICY_FINGERPRINTS` 已不读取。能力在创建 Runtime 或更新模板时写入 Runtime：已有的 candidate Runtime 需重新选择一次模板才会带上；stable 托管的 Runtime 能力来自发布时冻结的 release manifest，只有部署后新验证的 stable release 才会带上。不带 wrapper 的镜像在沙箱里发出的消息不进响应账本，可能与服务端回复重复。
 
 先部署兼容 Router API/SQL、Multica 服务及候选 Runtime，再用隔离员工验证能力、实际 DWS 状态格式、消息回读和延迟。开关保存后异步同步到 Router，确认回读后才表示路由已切换。回滚应用前先关闭员工开关并确认 Router 同步为 legacy，仅影响新入站；已有动作按冻结归属完成。待发送动作、回执和沙箱查询计入部署 drain。
 

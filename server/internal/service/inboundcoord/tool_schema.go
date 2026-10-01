@@ -28,10 +28,37 @@ func coordinatorWireParams(params openai.ChatCompletionNewParams) (openai.ChatCo
 			return params, fmt.Errorf("decode Coordinator tool schema: %w", err)
 		}
 		expandToolSchemaBranches(schema)
+		if functionTool.Function.Name == toolFinish {
+			withholdStateRefs(schema)
+		}
 		functionTool.Function.Parameters = shared.FunctionParameters(schema)
 		params.Tools[i].OfFunction = &functionTool
 	}
 	return params, nil
+}
+
+// withholdStateRefs keeps state_refs, a read reference, on the report_status
+// branch only. It applies to every model whatever the performance switch or
+// the finish schema experiment group: a weaker model copies the reference
+// onto start_work when every branch offers it.
+func withholdStateRefs(value any) {
+	switch schema := value.(type) {
+	case []any:
+		for _, v := range schema {
+			withholdStateRefs(v)
+		}
+	case map[string]any:
+		if props, ok := schema["properties"].(map[string]any); ok {
+			if kind, ok := props["kind"].(map[string]any); ok {
+				if names, ok := kind["enum"].([]any); ok && len(names) == 1 && names[0] != "report_status" {
+					delete(props, "state_refs")
+				}
+			}
+		}
+		for _, v := range schema {
+			withholdStateRefs(v)
+		}
+	}
 }
 
 func expandToolSchemaBranches(value any) {
