@@ -18,13 +18,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/multica-ai/multica/server/internal/connmgr"
@@ -306,6 +310,9 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 				defer markerLoop.Done()
 				st.keepReady(ctx, marker, markerDone)
 			}()
+			if s.cfg.LogFrames {
+				go s.logSetup(ctx, st.key, s.identity(st.key, id))
+			}
 		case state == dwsevents.StateReconnecting:
 			// The Listener would retry by itself; connmgr decides instead.
 			failed.Store(true)
@@ -345,6 +352,19 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 		listener.OnFrame = func(frameType, topic string) {
 			slog.Info("DWS event frame", "event", "dws_event_frame", "key", key, "frame_type", frameType, "topic", topic)
 		}
+		// The address only: the ticket rides in the URL, never in addr.
+		listener.Dialer = &websocket.Dialer{Proxy: http.ProxyFromEnvironment, HandshakeTimeout: 15 * time.Second,
+			// Behind a proxy addr is the proxy's (this becomes its forward dialer).
+			NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+				if err != nil {
+					slog.Info("DWS event stream dial", "event", "dws_event_stream_dial", "key", key, "addr", addr, "error", err)
+					return nil, err
+				}
+				slog.Info("DWS event stream dial", "event", "dws_event_stream_dial", "key", key, "addr", addr,
+					"remote", conn.RemoteAddr().String())
+				return conn, nil
+			}}
 	}
 	err := listener.Run(ctx)
 	if failed.Load() {
@@ -354,6 +374,44 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 		return nil
 	}
 	return err
+}
+
+// logSetup records, once per connection, what decides whether DWS routes an
+// event to this stream: whom the gateway takes the token for, the app the
+// subscriptions and the stream belong to, and the live subscriptions. DWS
+// keys a personal event by (account, organization, subscribing app).
+func (s *Source) logSetup(ctx context.Context, key string, id dwsclient.Identity) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	client, err := s.cfg.Sessions.Client(ctx, id, func(ctx context.Context) (dwsclient.Credential, error) {
+		return s.cfg.Mint(ctx, id)
+	})
+	if err != nil {
+		slog.Warn("DWS event stream setup unreadable", "event", "dws_event_stream_setup", "key", key,
+			"agent_id", id.AgentID, "error", err)
+		return
+	}
+	token := client.Token()
+	attrs := []any{"event", "dws_event_stream_setup", "key", key, "agent_id", id.AgentID,
+		"client_id", token.ClientID, "token_corp_id", token.CorpID}
+	if me, err := client.Contacts.Me(ctx); err != nil {
+		attrs = append(attrs, "me_error", err.Error())
+	} else {
+		attrs = append(attrs, "me_is_identity", me.UserID == id.UID, "me_corp_id", me.CorpID)
+		if me.UserID != id.UID {
+			attrs = append(attrs, "me_user_id", me.UserID)
+		}
+	}
+	if subs, err := client.Events.List(ctx); err != nil {
+		attrs = append(attrs, "list_error", err.Error())
+	} else {
+		live := make([]string, 0, len(subs))
+		for _, sub := range subs {
+			live = append(live, fmt.Sprintf("%s:%s:%d", sub.EventKey, sub.ID, sub.Status))
+		}
+		attrs = append(attrs, "subscriptions", strings.Join(live, ","))
+	}
+	slog.Info("DWS event stream setup", attrs...)
 }
 
 // keepReady publishes the connected state for every replica's Ready.
