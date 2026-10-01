@@ -12,4 +12,6 @@ export {
   useUpdateDingTalkAccountBindingSurface,
   useSetDingTalkNativeSubscription,
   useBindDingTalkMessageRouteManually,
+  useSetDingTalkNativeDEAPLink,
+  useRemoveDingTalkNativeDEAPLink,
 } from "./mutations";

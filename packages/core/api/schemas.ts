@@ -26,6 +26,7 @@ import type {
   DingTalkAccountBindingsResponse,
   DingTalkNativeStreamState,
   DingTalkNativeSubscriptionStatus,
+  DingTalkNativeDEAPLink,
   DingTalkMessageScope,
   DingTalkProcessingSurface,
   AgentIdentityGitHubStatusResponse,
@@ -481,9 +482,25 @@ function dingTalkNativeStreamState(state: unknown): DingTalkNativeStreamState {
   return dingTalkNativeStreamStates.find((known) => known === state) ?? "unknown";
 }
 
+const DingTalkNativeDEAPLinkSchema = z
+  .object({
+    deap_agent_uuid: z.string(),
+    supervisor_uid: z.string(),
+    updated_at: z.string().nullish().catch(null),
+  })
+  .loose()
+  .transform((link): DingTalkNativeDEAPLink => ({
+    deapAgentUuid: link.deap_agent_uuid,
+    supervisorUid: link.supervisor_uid,
+    updatedAt: link.updated_at ?? null,
+  }));
+
 export const DingTalkNativeSubscriptionStatusSchema = z
   .object({
     native_subscription: z.boolean().optional().catch(undefined),
+    // Absent on older servers; a drifted link reads as none.
+    deap_link: DingTalkNativeDEAPLinkSchema.nullish().catch(null),
+    deap_link_editable: z.boolean().optional().catch(undefined),
     stream: z
       .object({
         state: z.unknown().optional(),
@@ -506,10 +523,14 @@ export const DingTalkNativeSubscriptionStatusSchema = z
       lastError: response.stream?.last_error ?? null,
       failures: response.stream?.failures ?? 0,
     },
+    deapLink: response.deap_link ?? null,
+    deapLinkEditable: response.deap_link_editable === true,
   }));
 
 export const UNKNOWN_DINGTALK_NATIVE_SUBSCRIPTION_STATUS: DingTalkNativeSubscriptionStatus = {
   nativeSubscription: false,
+  deapLink: null,
+  deapLinkEditable: false,
   stream: {
     state: "unknown",
     lastConnectedAt: null,

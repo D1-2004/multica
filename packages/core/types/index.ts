@@ -280,6 +280,8 @@ export type {
   DingTalkNativeStreamState,
   DingTalkNativeStream,
   DingTalkNativeSubscriptionStatus,
+  DingTalkNativeDEAPLink,
+  SetDingTalkNativeDEAPLinkRequest,
   DingTalkManualMessageScope,
   BindDingTalkMessageRouteManuallyRequest,
 } from "./dingtalk-account-binding";

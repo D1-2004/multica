@@ -101,9 +101,24 @@ export interface DingTalkNativeStream {
   failures: number;
 }
 
+// A digital employee's native event credential comes from DEAP through its
+// supervisor; deployment operators set who that supervisor is.
+export interface DingTalkNativeDEAPLink {
+  deapAgentUuid: string;
+  supervisorUid: string;
+  updatedAt: string | null;
+}
+
 export interface DingTalkNativeSubscriptionStatus {
   nativeSubscription: boolean;
   stream: DingTalkNativeStream;
+  deapLink: DingTalkNativeDEAPLink | null;
+  deapLinkEditable: boolean;
+}
+
+export interface SetDingTalkNativeDEAPLinkRequest {
+  deapAgentUuid: string;
+  supervisorUid: string;
 }
 
 export type DingTalkManualMessageScope = Extract<

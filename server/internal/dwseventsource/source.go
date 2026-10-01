@@ -58,8 +58,8 @@ type Config struct {
 	// Sessions carries the app secret and DWS environment of the identities.
 	Sessions dwsclient.Shared
 	// Mint issues an Agent Identity context for identity and redeems it; it
-	// runs only when no shared token exists.
-	Mint func(ctx context.Context, identity dwsclient.Identity) (dwsclient.Credential, error)
+	// runs only when no shared token exists (through the IdentityProvider).
+	Mint dwsclient.IdentityMint
 	// Deployment separates deployments sharing a Redis (the public URL).
 	Deployment string
 	// Enabled gates the source live (runtime.use_dws_for_tag); off, it holds
@@ -230,7 +230,13 @@ func (s *Source) targets(ctx context.Context) ([]connmgr.Target, error) {
 	current := make(map[string]dwsclient.Identity, len(wanted))
 	for key, sub := range wanted {
 		sort.Strings(sub.EventKeys)
-		out = append(out, connmgr.Target{Key: key, Fingerprint: strings.Join(sub.EventKeys, ","), Value: *sub})
+		fingerprint := strings.Join(sub.EventKeys, ",")
+		// A new credential version restarts the stream: it subscribes and
+		// connects with the newly minted credential.
+		if version := sub.Identity.CredentialVersion; version != "" {
+			fingerprint += "|" + version
+		}
+		out = append(out, connmgr.Target{Key: key, Fingerprint: fingerprint, Value: *sub})
 		current[key] = sub.Identity
 	}
 	s.mu.Lock()
@@ -337,9 +343,7 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 		Identity: st.key,
 		Client: func(ctx context.Context) (*dws.Client, error) {
 			current := s.identity(st.key, id)
-			return s.cfg.Sessions.Client(ctx, current, func(ctx context.Context) (dwsclient.Credential, error) {
-				return s.cfg.Mint(ctx, current)
-			})
+			return s.cfg.Sessions.Client(ctx, current, s.cfg.Mint)
 		},
 		Subscriptions: specs,
 		Handle: func(ctx context.Context, ev dwsevents.Event) error {
@@ -383,9 +387,7 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 func (s *Source) logSetup(ctx context.Context, key string, id dwsclient.Identity) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	client, err := s.cfg.Sessions.Client(ctx, id, func(ctx context.Context) (dwsclient.Credential, error) {
-		return s.cfg.Mint(ctx, id)
-	})
+	client, err := s.cfg.Sessions.Client(ctx, id, s.cfg.Mint)
 	if err != nil {
 		slog.Warn("DWS event stream setup unreadable", "event", "dws_event_stream_setup", "key", key,
 			"agent_id", id.AgentID, "error", err)

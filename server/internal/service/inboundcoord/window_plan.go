@@ -215,6 +215,7 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 		}
 		var rawKind string
 		_ = json.Unmarshal(fields["kind"], &rawKind)
+		normalized := false
 		if workCoordinationKind(rawKind) {
 			// Work receipt text is Host-owned. Ignore even malformed legacy
 			// reply values before decoding the model-owned execution fields.
@@ -225,6 +226,17 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 					delete(fields, "receipt_language")
 				}
 			}
+			normalized = true
+		}
+		if _, ok := fields["state_refs"]; ok && workCoordinationKind(rawKind) {
+			// A read reference means nothing on work; a weaker model copies it
+			// onto start_work and resubmits it unchanged. Drop it instead of
+			// rejecting the plan. On a non-work action it more likely marks a
+			// mislabelled report_status, so it stays an error there.
+			delete(fields, "state_refs")
+			normalized = true
+		}
+		if normalized {
 			entry, _ = json.Marshal(fields)
 		}
 		if rawIntent, present := fields["intent"]; present {
