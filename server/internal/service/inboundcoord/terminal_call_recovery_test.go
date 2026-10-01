@@ -100,7 +100,7 @@ func TestTerminalCallRecoveryUsesSameReviewAndPersistenceGate(t *testing.T) {
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("original-call", "start_work", recoveredWorkArgs)}}
 	saved := []Decision{}
 	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(d Decision) error { saved = append(saved, d); return nil })
-	d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(ctx, Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", SenderName: "用户", Message: "查证审批数据导出范围"})
+	d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(ctx, Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", SenderName: "用户", Message: "查证审批数据导出范围"})
 	if err != nil || d.Action != ActionIssue || len(saved) != 1 || len(d.Items) != 1 || chat.calls != 1 || chat.checkCalls != 1 {
 		t.Fatalf("recovered proposal did not use the standard path: %#v err=%v saves=%d checks=%d", d, err, len(saved), chat.checkCalls)
 	}
@@ -142,7 +142,7 @@ func TestTerminalCallRecoveryCannotBypassRecallCoverageOrReview(t *testing.T) {
 			}
 			saves := 0
 			ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { saves++; return nil })
-			d, err := (&Coordinator{Chat: chat, Tools: tc.tools}).runLoop(ctx, Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", SenderName: "用户", Message: "查证审批数据导出范围"})
+			d, err := (&Coordinator{Chat: chat, Tools: tc.tools}).runLoop(ctx, Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", SenderName: "用户", Message: "查证审批数据导出范围"})
 			// The identical proposal is refused for the same defect each round;
 			// the retry budget stops the run after three identical rejections
 			// instead of spending the whole round cap.
@@ -185,7 +185,7 @@ func (h *terminalRecoveryHistory) Load(context.Context, Turn) ([]HistoryLine, er
 }
 
 func recoveryTurn() Turn {
-	return Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", SenderName: "用户", Message: "按确认的范围起草说明，不要发送。", HistoryStatus: "not_loaded", HistoryBefore: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)}
+	return Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", SenderName: "用户", Message: "按确认的范围起草说明，不要发送。", HistoryStatus: "not_loaded", HistoryBefore: time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)}
 }
 
 func TestTerminalCallRecoveryHistoryMarkerComesFromParser(t *testing.T) {

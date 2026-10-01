@@ -103,6 +103,7 @@ func TestDecideReadsDWSHistoryOnDemandForRobotAndDigitalEmployee(t *testing.T) {
 				ChatType:       "p2p",
 				Message:        "刚才聊了什么",
 				AgentID:        testAgentID(),
+				SceneID:        testSceneID("cid-real"),
 				ConversationID: "cid-real",
 				DWSUID:         "24710833",
 				DWSOrgID:       "439446171",
@@ -138,6 +139,7 @@ func TestDecideDWSHistoryTimeoutStillRunsLLM(t *testing.T) {
 		ConversationTitle: "OwnerGraph",
 		Message:           "刚才口径是什么",
 		AgentID:           testAgentID(),
+		SceneID:           testSceneID("cid-ownergraph"),
 		ConversationID:    "cid-ownergraph",
 		DWSUID:            "24710833",
 		DWSOrgID:          "439446171",
@@ -165,6 +167,7 @@ func TestDecidePrefetchesDWSHistoryBeforeFirstModelCall(t *testing.T) {
 		ChatType:       "p2p",
 		Message:        "6 点",
 		AgentID:        testAgentID(),
+		SceneID:        testSceneID("cid-real"),
 		ConversationID: "cid-real",
 		DWSUID:         "24710833",
 		DWSOrgID:       "439446171",
@@ -194,6 +197,7 @@ func TestDecideRepeatedHistoryReadReusesPrefetchedSnapshot(t *testing.T) {
 		ChatType:       "p2p",
 		Message:        "刚才聊了什么",
 		AgentID:        testAgentID(),
+		SceneID:        testSceneID("cid-real"),
 		ConversationID: "cid-real",
 		DWSUID:         "24710833",
 		DWSOrgID:       "439446171",
@@ -217,6 +221,7 @@ func TestDecideDWSHistoryFailureStillRunsLLM(t *testing.T) {
 		ChatType:       "p2p",
 		Message:        "刚才聊了什么",
 		AgentID:        testAgentID(),
+		SceneID:        testSceneID("cid-real"),
 		ConversationID: "cid-real",
 		DWSUID:         "24710833",
 		DWSOrgID:       "439446171",
@@ -334,6 +339,7 @@ func TestDWSHistoryLoaderIsolatesConcurrentCallsAndKeepsLatestTen(t *testing.T) 
 	turn := Turn{
 		Source:         SourceRobot,
 		AgentID:        testAgentID(),
+		SceneID:        testSceneID("cid-real"),
 		ConversationID: "cid-real",
 		DWSUID:         "24710833",
 		DWSOrgID:       "439446171",
@@ -603,7 +609,7 @@ func TestDWSHistoryRenewsAuthorizedCrossOrgReadOnce(t *testing.T) {
 			cli := &renewingHistoryTestCLI{denial: denied, grantFails: tc.grantFails, retryFails: tc.retryFails}
 			loader := &dwsHistoryLoader{issuer: fakeDWSIssuer{}, redeemer: fakeDWSRedeemer{}, cli: cli, mkdir: os.MkdirTemp, remove: os.RemoveAll,
 				crossOrgRenewAgentIDs: map[string]bool{util.UUIDToString(testAgentID()): tc.enabled}}
-			_, err := loader.Load(context.Background(), Turn{AgentID: testAgentID(), ConversationID: "cid-test", DWSUID: "24710833", DWSOrgID: "439446171", HistoryBefore: time.Now()})
+			_, err := loader.Load(context.Background(), Turn{AgentID: testAgentID(), SceneID: testSceneID("cid-test"), ConversationID: "cid-test", DWSUID: "24710833", DWSOrgID: "439446171", HistoryBefore: time.Now()})
 			if (err == nil) != tc.wantOK || cli.lists != tc.wantLists || cli.grants != tc.wantGrants {
 				t.Fatalf("err=%v lists=%d grants=%d", err, cli.lists, cli.grants)
 			}

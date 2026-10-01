@@ -30,41 +30,37 @@ func TestRecallAssocRequiresSince(t *testing.T) {
 }
 
 func TestRecallAssocByConversation(t *testing.T) {
-	store := assoc.NewMemory()
+	f := newAssocSceneFixture(t)
 	ctx := context.Background()
-	now := time.Now().UTC()
-	ws := "22222222-2222-2222-2222-222222222222"
-	ag := "11111111-1111-1111-1111-111111111111"
-	issue := "33333333-3333-3333-3333-333333333333"
-	task, err := store.InsertTask(ctx, assoc.Task{
-		WorkspaceID:   ws,
-		AgentID:       ag,
-		IssueID:       issue,
+	sc := f.scene(t, "dm", "cid-a")
+	task, err := f.store.InsertTask(ctx, assoc.Task{
+		WorkspaceID:   f.ws,
+		AgentID:       f.agentID,
+		IssueID:       f.issueID,
 		Purpose:       "预约A与B本周五下午30分钟",
-		LastTouchedAt: now,
+		LastTouchedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.InsertEdge(ctx, assoc.Edge{
-		WorkspaceID: ws,
-		AgentID:     ag,
+	if _, err := f.store.InsertEdge(ctx, assoc.Edge{
+		WorkspaceID: f.ws,
+		AgentID:     f.agentID,
 		SrcType:     assoc.NodeTask,
 		SrcID:       task.ID,
 		DstType:     assoc.NodeScene,
-		DstID:       "cid-a",
+		DstID:       uuidToString(sc.ID),
 		Rel:         assoc.RelOutreach,
+		Props:       map[string]any{"conversation_id": "cid-a"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-
-	h := &Handler{Assoc: assoc.NewService(store)}
 	req := httptest.NewRequest(http.MethodGet, "/api/assoc/recall?conversation_id=cid-a&since=48h", nil)
 	req.Header.Set("X-Actor-Source", "task_token")
-	req.Header.Set("X-Agent-ID", ag)
-	req = req.WithContext(middleware.SetMemberContext(ctx, ws, db.Member{}))
+	req.Header.Set("X-Agent-ID", f.agentID)
+	req = req.WithContext(middleware.SetMemberContext(ctx, f.ws, db.Member{}))
 	rec := httptest.NewRecorder()
-	h.RecallAssoc(rec, req)
+	f.h.RecallAssoc(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -72,61 +68,57 @@ func TestRecallAssocByConversation(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Items) != 1 || out.Items[0].TaskID != task.ID {
-		t.Fatalf("items = %+v", out.Items)
+	if len(out.Items) != 1 || out.Items[0].TaskID != task.ID || out.SceneID != uuidToString(sc.ID) {
+		t.Fatalf("result = %+v", out)
+	}
+	// A conversation the agent has no scene for recalls nothing.
+	if other := f.recallConversation(t, "cid-never-seen"); len(other.Items) != 0 || other.SceneID != "" {
+		t.Fatalf("unseen conversation = %+v", other)
 	}
 }
 
 func TestBindAssocOutboundFromToolLinksReceipt(t *testing.T) {
-	store := assoc.NewMemory()
-	h := &Handler{Assoc: assoc.NewService(store)}
-	ws := "22222222-2222-2222-2222-222222222222"
-	ag := parseUUID("11111111-1111-1111-1111-111111111111")
-	issue := parseUUID("33333333-3333-3333-3333-333333333333")
-	taskID := parseUUID("44444444-4444-4444-4444-444444444444")
-	task := db.AgentTaskQueue{
-		ID:      taskID,
-		AgentID: ag,
-		IssueID: issue,
-	}
-	h.bindAssocOutboundFromTool(context.Background(), task, ws, TaskMessageRequest{
+	f := newAssocSceneFixture(t)
+	const cid = "cid+bEFv7ngm9n79Q1vL9HYJw=="
+	sc := f.scene(t, "dm", cid)
+	f.h.bindAssocOutboundFromTool(context.Background(), f.task(), f.ws, TaskMessageRequest{
 		Type:    "tool",
 		Tool:    "Bash",
 		Content: "dws chat message send --conversation-id cid-flag --content 今晚吃什么",
 		Output:  `{"openConversationId":"cid+bEFv7ngm9n79Q1vL9HYJw==","openMsgId":"msg-live"}`,
 	})
-	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
-		WorkspaceID:    ws,
-		AgentID:        uuidToString(ag),
-		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
-		Since:          time.Now().UTC().Add(-time.Hour),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Items) != 1 || got.Items[0].Issue != uuidToString(issue) {
+	got := f.recallConversation(t, cid)
+	if len(got.Items) != 1 || got.Items[0].IssueID != f.issueID {
 		t.Fatalf("recall=%+v", got.Items)
 	}
-	ev, err := store.GetEventByEvidence(context.Background(), ws, uuidToString(ag), "msg-live")
+	ev, err := f.store.GetEventByEvidence(context.Background(), f.ws, f.agentID, "msg-live")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ev.SceneKey != "cid+bEFv7ngm9n79Q1vL9HYJw==" {
+	if ev.SceneID != uuidToString(sc.ID) {
 		t.Fatalf("event=%+v", ev)
 	}
 }
 
-func TestBindAssocOutboundFromToolIgnoresCommandTextAsCID(t *testing.T) {
-	store := assoc.NewMemory()
-	h := &Handler{Assoc: assoc.NewService(store)}
-	ws := "22222222-2222-2222-2222-222222222222"
-	ag := parseUUID("11111111-1111-1111-1111-111111111111")
-	issue := parseUUID("33333333-3333-3333-3333-333333333333")
-	task := db.AgentTaskQueue{
-		ID:      parseUUID("44444444-4444-4444-4444-444444444444"),
-		AgentID: ag,
-		IssueID: issue,
+// A send into a conversation the agent has no scene for, without a person
+// that proves a 1:1 chat, binds nothing: its kind would be a guess.
+func TestBindAssocOutboundFromToolSkipsUnknownConversation(t *testing.T) {
+	f := newAssocSceneFixture(t)
+	f.h.bindAssocOutboundFromTool(context.Background(), f.task(), f.ws, TaskMessageRequest{
+		Type:    "tool",
+		Tool:    "Bash",
+		Content: "dws chat message send --conversation-id cidUnknown== --content hi",
+		Output:  `{"openConversationId":"cidUnknown==","openMsgId":"msg-unknown"}`,
+	})
+	if _, err := f.store.GetEventByEvidence(context.Background(), f.ws, f.agentID, "msg-unknown"); err == nil {
+		t.Fatal("an unknown conversation was bound")
 	}
+}
+
+func TestBindAssocOutboundFromToolIgnoresCommandTextAsCID(t *testing.T) {
+	f := newAssocSceneFixture(t)
+	h, ws, task := f.h, f.ws, f.task()
+	ag, issue := task.AgentID, task.IssueID
 	h.bindAssocOutboundFromTool(context.Background(), task, ws, TaskMessageRequest{
 		Type:    "tool",
 		Tool:    "Bash",
@@ -149,17 +141,8 @@ func TestBindAssocOutboundFromToolIgnoresCommandTextAsCID(t *testing.T) {
 }
 
 func TestBindAssocOutboundFromUserSendAndQuerySendStatus(t *testing.T) {
-	store := assoc.NewMemory()
-	h := &Handler{Assoc: assoc.NewService(store)}
-	ws := "22222222-2222-2222-2222-222222222222"
-	ag := parseUUID("11111111-1111-1111-1111-111111111111")
-	issue := parseUUID("33333333-3333-3333-3333-333333333333")
-	task := db.AgentTaskQueue{
-		ID:      parseUUID("44444444-4444-4444-4444-444444444444"),
-		AgentID: ag,
-		IssueID: issue,
-	}
-	h.bindAssocOutboundFromTools(context.Background(), task, ws, []TaskMessageRequest{
+	f := newAssocSceneFixture(t)
+	f.h.bindAssocOutboundFromTools(context.Background(), f.task(), f.ws, []TaskMessageRequest{
 		{
 			Type:    "tool",
 			Tool:    "Bash",
@@ -173,62 +156,45 @@ func TestBindAssocOutboundFromUserSendAndQuerySendStatus(t *testing.T) {
 			Output:  `{"openConversationId":"cid+bEFv7ngm9n79Q1vL9HYJw==","openMessageId":"msg-live"}`,
 		},
 	})
-	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
-		WorkspaceID:    ws,
-		AgentID:        uuidToString(ag),
-		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
-		Since:          time.Now().UTC().Add(-time.Hour),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Items) != 1 || got.Items[0].Issue != uuidToString(issue) {
+	got := f.recallConversation(t, "cid+bEFv7ngm9n79Q1vL9HYJw==")
+	if len(got.Items) != 1 || got.Items[0].IssueID != f.issueID {
 		t.Fatalf("recall=%+v", got.Items)
+	}
+	// The send to a person registered the 1:1 chat's scene.
+	if got.SceneID == "" || len(got.Items[0].Conversations) != 1 || got.Items[0].Conversations[0].Kind != "dm" {
+		t.Fatalf("scene=%q conversations=%+v", got.SceneID, got.Items[0].Conversations)
 	}
 }
 
 func TestBindAssocOutboundFromUserSendReusesPersonScene(t *testing.T) {
-	store := assoc.NewMemory()
-	h := &Handler{Assoc: assoc.NewService(store)}
-	ws := "22222222-2222-2222-2222-222222222222"
-	ag := parseUUID("11111111-1111-1111-1111-111111111111")
+	f := newAssocSceneFixture(t)
+	h, ws := f.h, f.ws
+	ag := parseUUID(f.agentID)
+	sc := f.scene(t, "dm", "cid+bEFv7ngm9n79Q1vL9HYJw==")
 	_, err := h.Assoc.BindOutbound(context.Background(), assoc.BindOutboundInput{
-		WorkspaceID:    ws,
-		AgentID:        uuidToString(ag),
-		IssueID:        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-		IssueTitle:     "向冬翔确认今晚想吃什么",
-		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
-		PersonID:       "0104644667680872",
-		EvidenceID:     "msg-old",
-		Kind:           "dm",
+		WorkspaceID: ws,
+		AgentID:     uuidToString(ag),
+		IssueID:     "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		IssueTitle:  "向冬翔确认今晚想吃什么",
+		Scene:       testSceneNode(sc),
+		PersonID:    "0104644667680872",
+		EvidenceID:  "msg-old",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	issue := parseUUID("33333333-3333-3333-3333-333333333333")
-	task := db.AgentTaskQueue{
-		ID:      parseUUID("44444444-4444-4444-4444-444444444444"),
-		AgentID: ag,
-		IssueID: issue,
-	}
+	issue := parseUUID(f.issueID)
+	task := f.task()
 	h.bindAssocOutboundFromTool(context.Background(), task, ws, TaskMessageRequest{
 		Type:    "tool",
 		Tool:    "Bash",
 		Content: `dws chat message send --user 0104644667680872 --content hi --format json --yes`,
 		Output:  `{"result":{"openTaskId":"task-only"},"success":true}`,
 	})
-	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
-		WorkspaceID:    ws,
-		AgentID:        uuidToString(ag),
-		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
-		Since:          time.Now().UTC().Add(-time.Hour),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := f.recallConversation(t, "cid+bEFv7ngm9n79Q1vL9HYJw==")
 	found := false
 	for _, item := range got.Items {
-		if item.Issue == uuidToString(issue) {
+		if item.IssueID == uuidToString(issue) {
 			found = true
 		}
 	}
@@ -238,63 +204,30 @@ func TestBindAssocOutboundFromUserSendReusesPersonScene(t *testing.T) {
 }
 
 func TestBindAssocOutboundFromReply(t *testing.T) {
-	store := assoc.NewMemory()
-	h := &Handler{Assoc: assoc.NewService(store)}
-	ws := "22222222-2222-2222-2222-222222222222"
-	ag := parseUUID("11111111-1111-1111-1111-111111111111")
-	issue := parseUUID("33333333-3333-3333-3333-333333333333")
-	task := db.AgentTaskQueue{
-		ID:      parseUUID("44444444-4444-4444-4444-444444444444"),
-		AgentID: ag,
-		IssueID: issue,
-	}
-	h.bindAssocOutboundFromTool(context.Background(), task, ws, TaskMessageRequest{
+	f := newAssocSceneFixture(t)
+	f.scene(t, "group", "cid+reply==")
+	f.h.bindAssocOutboundFromTool(context.Background(), f.task(), f.ws, TaskMessageRequest{
 		Type:    "tool",
 		Tool:    "Bash",
 		Content: `dws chat message reply --conversation-id cid+reply== --content 收到`,
 		Output:  `{"openConversationId":"cid+reply==","openMsgId":"msg-reply"}`,
 	})
-	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
-		WorkspaceID:    ws,
-		AgentID:        uuidToString(ag),
-		ConversationID: "cid+reply==",
-		Since:          time.Now().UTC().Add(-time.Hour),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Items) != 1 || got.Items[0].Issue != uuidToString(issue) {
+	got := f.recallConversation(t, "cid+reply==")
+	if len(got.Items) != 1 || got.Items[0].IssueID != f.issueID {
 		t.Fatalf("recall=%+v", got.Items)
 	}
 }
 
 func TestBindAssocOutboundFromToolIgnoresList(t *testing.T) {
-	store := assoc.NewMemory()
-	h := &Handler{Assoc: assoc.NewService(store)}
-	ws := "22222222-2222-2222-2222-222222222222"
-	ag := parseUUID("11111111-1111-1111-1111-111111111111")
-	issue := parseUUID("33333333-3333-3333-3333-333333333333")
-	task := db.AgentTaskQueue{
-		ID:      parseUUID("44444444-4444-4444-4444-444444444444"),
-		AgentID: ag,
-		IssueID: issue,
-	}
-	h.bindAssocOutboundFromTool(context.Background(), task, ws, TaskMessageRequest{
+	f := newAssocSceneFixture(t)
+	f.scene(t, "dm", "cid+bEFv7ngm9n79Q1vL9HYJw==")
+	f.h.bindAssocOutboundFromTool(context.Background(), f.task(), f.ws, TaskMessageRequest{
 		Type:    "tool",
 		Tool:    "Bash",
 		Content: "dws chat message list --conversation-id cid+bEFv7ngm9n79Q1vL9HYJw==",
 		Output:  `{"openConversationId":"cid+bEFv7ngm9n79Q1vL9HYJw==","openMsgId":"msg-list"}`,
 	})
-	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
-		WorkspaceID:    ws,
-		AgentID:        uuidToString(ag),
-		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
-		Since:          time.Now().UTC().Add(-time.Hour),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Items) != 0 {
+	if got := f.recallConversation(t, "cid+bEFv7ngm9n79Q1vL9HYJw=="); len(got.Items) != 0 {
 		t.Fatalf("list must not bind: %+v", got.Items)
 	}
 }
@@ -311,18 +244,25 @@ func TestBindAssocOutboundRequiresTaskToken(t *testing.T) {
 }
 
 func TestBindAssocOutboundWithoutIssueRecordsUnlinked(t *testing.T) {
-	h := &Handler{Assoc: assoc.NewService(assoc.NewMemory())}
-	ws := "22222222-2222-2222-2222-222222222222"
-	ag := "11111111-1111-1111-1111-111111111111"
-	req := httptest.NewRequest(http.MethodPost, "/api/assoc/bind-outbound", strings.NewReader(`{"conversation_id":"cid-a","evidence_id":"msg-1"}`))
+	f := newAssocSceneFixture(t)
+	// A task without an issue binds the scene event only.
+	var taskID string
+	if err := testPool.QueryRow(context.Background(), `INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority)
+		VALUES ($1, $2, 'running', 0) RETURNING id::text`, f.agentID, testRuntimeID).Scan(&taskID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/assoc/bind-outbound", strings.NewReader(`{"conversation_id":"cid-a","kind":"dm","evidence_id":"msg-1"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Actor-Source", "task_token")
-	req.Header.Set("X-Agent-ID", ag)
-	req.Header.Set("X-Task-ID", "44444444-4444-4444-4444-444444444444")
-	req.Header.Set("X-Workspace-ID", ws)
-	req = req.WithContext(middleware.SetMemberContext(context.Background(), ws, db.Member{}))
+	req.Header.Set("X-Agent-ID", f.agentID)
+	req.Header.Set("X-Task-ID", taskID)
+	req.Header.Set("X-Workspace-ID", f.ws)
+	req = req.WithContext(middleware.SetMemberContext(context.Background(), f.ws, db.Member{}))
 	rec := httptest.NewRecorder()
-	h.BindAssocOutbound(rec, req)
+	f.h.BindAssocOutbound(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -330,53 +270,49 @@ func TestBindAssocOutboundWithoutIssueRecordsUnlinked(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if out.Linked || out.ConversationID != "cid-a" {
+	if out.Linked || out.ConversationID != "cid-a" || out.SceneID == "" {
 		t.Fatalf("got %+v", out)
+	}
+	// A new conversation needs its kind: it is never guessed.
+	req = httptest.NewRequest(http.MethodPost, "/api/assoc/bind-outbound", strings.NewReader(`{"conversation_id":"cid-b","evidence_id":"msg-2"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Actor-Source", "task_token")
+	req.Header.Set("X-Agent-ID", f.agentID)
+	req.Header.Set("X-Task-ID", taskID)
+	req.Header.Set("X-Workspace-ID", f.ws)
+	req = req.WithContext(middleware.SetMemberContext(context.Background(), f.ws, db.Member{}))
+	rec = httptest.NewRecorder()
+	f.h.BindAssocOutbound(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bind without a kind: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
 func TestBindAssocOutboundMemberWithIssue(t *testing.T) {
-	store := assoc.NewMemory()
-	h := &Handler{Assoc: assoc.NewService(store)}
-	ws := "22222222-2222-2222-2222-222222222222"
-	ag := "11111111-1111-1111-1111-111111111111"
-	issue := "33333333-3333-3333-3333-333333333333"
-	body := `{"conversation_id":"cid+bEFv7ngm9n79Q1vL9HYJw==","evidence_id":"msg-live","issue_id":"` + issue + `","agent_id":"` + ag + `","purpose":"向冬翔确认今天下午喝茶还是咖啡","person_id":"0104644667680872"}`
+	f := newAssocSceneFixture(t)
+	body := `{"conversation_id":"cid+bEFv7ngm9n79Q1vL9HYJw==","kind":"dm","evidence_id":"msg-live","issue_id":"` + f.issueID + `","agent_id":"` + f.agentID + `","purpose":"向冬翔确认今天下午喝茶还是咖啡","person_id":"0104644667680872"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/assoc/bind-outbound", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(middleware.SetMemberContext(context.Background(), ws, db.Member{}))
+	req = req.WithContext(middleware.SetMemberContext(context.Background(), f.ws, db.Member{}))
 	rec := httptest.NewRecorder()
-	h.BindAssocOutbound(rec, req)
+	f.h.BindAssocOutbound(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
-		WorkspaceID:    ws,
-		AgentID:        ag,
-		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
-		Since:          time.Now().UTC().Add(-time.Hour),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got.Items) != 1 || got.Items[0].Issue != issue {
+	got := f.recallConversation(t, "cid+bEFv7ngm9n79Q1vL9HYJw==")
+	if len(got.Items) != 1 || got.Items[0].IssueID != f.issueID {
 		t.Fatalf("recall=%+v", got.Items)
 	}
 }
 
 func TestRecordAssocInboundThenAssociate(t *testing.T) {
-	store := assoc.NewMemory()
-	h := &Handler{Assoc: assoc.NewService(store)}
-	ws, err := util.ParseUUID("22222222-2222-2222-2222-222222222222")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ag, err := util.ParseUUID("11111111-1111-1111-1111-111111111111")
-	if err != nil {
-		t.Fatal(err)
-	}
-	issue := "33333333-3333-3333-3333-333333333333"
+	f := newAssocSceneFixture(t)
+	store, h := f.store, f.h
+	ws, ag := parseUUID(f.ws), parseUUID(f.agentID)
+	issue := f.issueID
+	sc := f.scene(t, "dm", "cid-a")
 	cmd := DispatchCommand{
+		AgentScene: testSceneRef(sc),
 		Event: DispatchEvent{
 			Data: DispatchEventData{
 				Conversation: DispatchConversation{OpenConversationID: "cid-a"},
@@ -400,22 +336,14 @@ func TestRecordAssocInboundThenAssociate(t *testing.T) {
 	}
 	h.associateDispatchIssue(ctx, cmd, dc, issue, "预约A与B本周五下午30分钟", "44444444-4444-4444-4444-444444444444", "", inboundcoord.Decision{})
 
-	result, rerr := h.Assoc.Recall(ctx, assoc.Query{
-		WorkspaceID:    uuidToString(ws),
-		AgentID:        uuidToString(ag),
-		ConversationID: "cid-a",
-		Since:          time.Now().UTC().Add(-time.Hour),
-	})
-	if rerr != nil {
-		t.Fatal(rerr)
-	}
+	result := f.recallConversation(t, "cid-a")
 	if len(result.Items) != 1 {
 		t.Fatalf("items=%+v", result.Items)
 	}
-	if result.Items[0].Issue != issue {
+	if result.Items[0].IssueID != issue {
 		t.Fatalf("issue=%q", result.Items[0].Issue)
 	}
-	if result.Items[0].Origin == nil || result.Items[0].Origin.ConversationID != "cid-a" {
+	if result.Items[0].Origin == nil || result.Items[0].Origin.ConversationID != "cid-a" || result.Items[0].Origin.SceneID != uuidToString(sc.ID) {
 		t.Fatalf("origin=%+v", result.Items[0].Origin)
 	}
 	foundPerson := false
@@ -457,27 +385,25 @@ func TestListAssocEventsRequiresSinceAndConversation(t *testing.T) {
 }
 
 func TestListAssocEventsReturnsSceneTaggedRows(t *testing.T) {
-	store := assoc.NewMemory()
-	ws := "22222222-2222-2222-2222-222222222222"
-	ag := "11111111-1111-1111-1111-111111111111"
-	if _, err := store.InsertEvent(context.Background(), assoc.Event{
-		WorkspaceID: ws,
-		AgentID:     ag,
+	f := newAssocSceneFixture(t)
+	sc := f.scene(t, "dm", "cid-a")
+	if _, err := f.store.InsertEvent(context.Background(), assoc.Event{
+		WorkspaceID: f.ws,
+		AgentID:     f.agentID,
 		Source:      "outbound_im",
 		Direction:   assoc.DirOutbound,
 		EvidenceID:  "msg-out-1",
-		SceneKey:    "cid-a",
+		SceneID:     uuidToString(sc.ID),
 		OccurredAt:  time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	h := &Handler{Assoc: assoc.NewService(store)}
 	req := httptest.NewRequest(http.MethodGet, "/api/assoc/events?conversation_id=cid-a&since=48h", nil)
 	req.Header.Set("X-Actor-Source", "task_token")
-	req.Header.Set("X-Agent-ID", ag)
-	req = req.WithContext(middleware.SetMemberContext(context.Background(), ws, db.Member{}))
+	req.Header.Set("X-Agent-ID", f.agentID)
+	req = req.WithContext(middleware.SetMemberContext(context.Background(), f.ws, db.Member{}))
 	rec := httptest.NewRecorder()
-	h.ListAssocEvents(rec, req)
+	f.h.ListAssocEvents(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -487,7 +413,7 @@ func TestListAssocEventsReturnsSceneTaggedRows(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Items) != 1 || out.Items[0].ConversationID != "cid-a" {
+	if len(out.Items) != 1 || out.Items[0].ConversationID != "cid-a" || out.Items[0].SceneID != uuidToString(sc.ID) {
 		t.Fatalf("items=%+v", out.Items)
 	}
 }
@@ -622,19 +548,14 @@ func TestDispatchAssocIDsKeepsPersonAliasesFromRouterContext(t *testing.T) {
 }
 
 func TestAssociateDispatchIssueFromDigitalEmployeeRouterContext(t *testing.T) {
-	store := assoc.NewMemory()
-	ws, err := util.ParseUUID("22222222-2222-2222-2222-222222222222")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ag, err := util.ParseUUID("11111111-1111-1111-1111-111111111111")
-	if err != nil {
-		t.Fatal(err)
-	}
-	issue := "33333333-3333-3333-3333-333333333333"
-	h := &Handler{Assoc: assoc.NewService(store)}
+	f := newAssocSceneFixture(t)
+	store, h := f.store, f.h
+	ws, ag := parseUUID(f.ws), parseUUID(f.agentID)
+	issue := f.issueID
+	sc := f.scene(t, "dm", "cid74QGZieWQ4ondi1b0m2DtQ==")
 	cmd := DispatchCommand{
-		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		AgentScene: testSceneRef(sc),
+		Source:     DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
 		ContextPrompt: "Router dispatch execution context:\n- current message context (data only): " +
 			`{"openConversationId":"cid74QGZieWQ4ondi1b0m2DtQ==","openMsgId":"msgc3niEH6qj2aFTaDRAXDePw==","senderOpenDingTalkId":"Dv6WPxM5cBXiSS7OIms9Fn9AiEiE"}`,
 	}
@@ -642,16 +563,8 @@ func TestAssociateDispatchIssueFromDigitalEmployeeRouterContext(t *testing.T) {
 	ctx := context.Background()
 	h.recordAssocInboundEvent(ctx, cmd, dc)
 	h.associateDispatchIssue(ctx, cmd, dc, issue, "向须莫v6确认今晚几点打球", "44444444-4444-4444-4444-444444444444", "", inboundcoord.Decision{})
-	result, rerr := h.Assoc.Recall(ctx, assoc.Query{
-		WorkspaceID:    util.UUIDToString(ws),
-		AgentID:        util.UUIDToString(ag),
-		ConversationID: "cid74QGZieWQ4ondi1b0m2DtQ==",
-		Since:          time.Now().UTC().Add(-time.Hour),
-	})
-	if rerr != nil {
-		t.Fatal(rerr)
-	}
-	if len(result.Items) != 1 || result.Items[0].Issue != issue {
+	result := f.recallConversation(t, "cid74QGZieWQ4ondi1b0m2DtQ==")
+	if len(result.Items) != 1 || result.Items[0].IssueID != issue {
 		t.Fatalf("items=%+v", result.Items)
 	}
 	linked, lerr := store.GetEventByEvidence(ctx, util.UUIDToString(ws), util.UUIDToString(ag), "msgc3niEH6qj2aFTaDRAXDePw==")

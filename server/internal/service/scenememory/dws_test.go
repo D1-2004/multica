@@ -248,7 +248,7 @@ func TestParseDWSPageMarksSelfByDisplayName(t *testing.T) {
 func TestHistoryLookbackRespectsBootstrap(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	cutoff := now.Add(-time.Minute)
-	row := db.SceneMemory{LeaseTargetThroughAt: timestamptz(cutoff)}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{LeaseTargetThroughAt: timestamptz(cutoff)}, Scene: db.AgentScene{}}
 	off := HistoryLookback(row, false, now)
 	on := HistoryLookback(row, true, now)
 	if !off.After(now.Add(-2 * time.Hour)) {
@@ -274,10 +274,7 @@ func TestHistoryLookbackRespectsBootstrap(t *testing.T) {
 func TestHistoryLookbackBootstrapIncludesOlderPendingTrigger(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	older := now.Add(-20 * 24 * time.Hour)
-	row := db.SceneMemory{
-		LastTriggerAt:         timestamptz(older),
-		LastTriggerEvidenceID: "msg-old",
-	}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{LastTriggerAt: timestamptz(older), LastTriggerEvidenceID: "msg-old"}, Scene: db.AgentScene{}}
 	got := HistoryLookback(row, true, now)
 	if !got.Equal(older) {
 		t.Fatalf("bootstrap lookback must reach an older pending trigger, got %s", got)
@@ -288,11 +285,7 @@ func TestHistoryLookbackIncludesPendingTriggerBeforeCursor(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	cursor := now.Add(-time.Hour)
 	trigger := now.Add(-2 * time.Hour)
-	row := db.SceneMemory{
-		SourceCursorAt:        timestamptz(cursor),
-		LastTriggerAt:         timestamptz(trigger),
-		LastTriggerEvidenceID: "msg-early",
-	}
+	row := Memory{AgentSceneMemory: db.AgentSceneMemory{SourceCursorAt: timestamptz(cursor), LastTriggerAt: timestamptz(trigger), LastTriggerEvidenceID: "msg-early"}, Scene: db.AgentScene{}}
 	lookback := HistoryLookback(row, false, now)
 	if !lookback.Equal(trigger) {
 		t.Fatalf("lookback=%s want pending trigger %s", lookback, trigger)
@@ -307,13 +300,8 @@ func TestHistoryLookbackIncludesPendingTriggerBeforeCursor(t *testing.T) {
 	}
 }
 
-func testFlushRow(text string) db.SceneMemory {
-	return db.SceneMemory{
-		SceneTitle:     "冬翔",
-		SceneKind:      KindDM,
-		MemoryText:     text,
-		MemoryRevision: 3,
-	}
+func testFlushRow(text string) Memory {
+	return Memory{AgentSceneMemory: db.AgentSceneMemory{MemoryText: text, MemoryRevision: 3}, Scene: db.AgentScene{Title: "冬翔", SceneKind: KindDM}}
 }
 
 func parseFlushTime() time.Time {

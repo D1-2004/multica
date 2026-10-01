@@ -119,7 +119,7 @@ func TestAgentTenantsLifecycle(t *testing.T) {
 	if err := ReplaceOffers(ctx, f.tx, f.workspaceID, f.agentID, []string{f.connectorID}, []string{f.skillID}, actor); err != nil {
 		t.Fatal(err)
 	}
-	for _, scope := range []struct{ scopeType, key string }{{ScopeOrg, "org-b"}, {ScopeScene, "cidBetaGroup"}} {
+	for _, scope := range []struct{ scopeType, key string }{{ScopeOrg, "org-b"}, {ScopeScene, "bbbbbbbb-0000-4000-8000-000000000001"}} {
 		if _, err := UpsertBinding(ctx, f.tx, BindingWrite{WorkspaceID: f.workspaceID, AgentID: f.agentID, ScopeType: scope.scopeType,
 			OrgID: "org-b", ScopeKey: scope.key, ResourceType: ResourceSkill, ResourceID: f.skillID, Enabled: true}); err != nil {
 			t.Fatal(err)
@@ -161,13 +161,15 @@ func TestAgentTenantsLifecycle(t *testing.T) {
 func TestOrgActivityAndPersons(t *testing.T) {
 	f := openStoreTx(t)
 	tenantMigrated(t, f)
+	requireSceneTables(t, f)
 	ctx := context.Background()
 	f.bindIdentity(t, "org-home", "")
 
-	// org-home: a group job, a 1:1 job with a sender recorded without an
-	// org (it belongs to the identity), a person binding.
-	f.groupJob(t, "cidHomeGroup", "org-home", time.Hour)
-	f.directJob(t, "cidHomeDirect", "staff-ann", "Ann", "", 2*time.Hour)
+	// org-home: a group scene, a 1:1 scene whose job names a sender recorded
+	// without an org (it belongs to the identity), a person binding.
+	homeGroup := f.insertScene(t, "org-home", "group", "cidHomeGroup", "Home", time.Hour)
+	annDM := f.insertScene(t, "org-home", "dm", "cidHomeDirect", "Ann", 2*time.Hour)
+	f.directSceneJob(t, "cidHomeDirect", annDM, "staff-ann", "Ann", "", 2*time.Hour)
 	if err := ReplaceOffers(ctx, f.tx, f.workspaceID, f.agentID, nil, []string{f.skillID}, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -175,14 +177,12 @@ func TestOrgActivityAndPersons(t *testing.T) {
 		OrgID: "org-home", ScopeKey: "staff-bo", ScopeTitle: "Bo", ResourceType: ResourceSkill, ResourceID: f.skillID, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	// org-x (not a tenant): a group job and a scene memory row.
-	f.groupJob(t, "cidForeignGroup", "org-x", time.Minute)
-	if _, err := f.tx.Exec(ctx, `INSERT INTO scene_memory (workspace_id, agent_id, platform, org_id, scene_key, scene_kind)
-		VALUES ($1::uuid, $2::uuid, 'dingtalk', 'org-x', 'cidForeignMemory', 'group')`, f.workspaceID, f.agentID); err != nil {
-		t.Fatal(err)
-	}
-	// A person link redeemed in a 1:1 chat under org-x.
-	f.directLink(t, "org-x", "cidForeignDirect", "staff-cy", "Cy", uuid.NewString(), time.Hour)
+	// org-x (not a tenant): two group scenes and a 1:1 scene a personal
+	// link was redeemed from.
+	f.insertScene(t, "org-x", "group", "cidForeignGroup", "Foreign", time.Minute)
+	f.insertScene(t, "org-x", "group", "cidForeignMemory", "Foreign memory", 3*time.Minute)
+	cyDM := f.insertScene(t, "org-x", "dm", "cidForeignDirect", "Cy", 0)
+	f.directLink(t, "org-x", cyDM, "staff-cy", "Cy", uuid.NewString(), time.Hour)
 
 	activity, err := ListAgentOrgActivity(ctx, f.tx, f.workspaceID, f.agentID, "org-home")
 	if err != nil {
@@ -203,33 +203,23 @@ func TestOrgActivityAndPersons(t *testing.T) {
 		t.Fatalf("org-home persons=%+v err=%v", persons, err)
 	}
 	ann, ok := FindPerson(persons, "staff-ann")
-	if !ok || ann.Title != "Ann" || ann.DMSceneKey != "cidHomeDirect" || ann.LastActiveAt.IsZero() {
+	if !ok || ann.Title != "Ann" || ann.DMSceneID != annDM || ann.LastActiveAt.IsZero() {
 		t.Fatalf("ann=%+v", ann)
 	}
-	if bo, ok := FindPerson(persons, "staff-bo"); !ok || bo.Title != "Bo" || bo.DMSceneKey != "" {
+	if bo, ok := FindPerson(persons, "staff-bo"); !ok || bo.Title != "Bo" || bo.DMSceneID != "" {
 		t.Fatalf("bo=%+v", bo)
 	}
-	// The unrecorded 1:1 job belongs to the identity only.
 	persons, err = ListOrgPersons(ctx, f.tx, f.workspaceID, f.agentID, "org-x", "org-home")
-	if err != nil || len(persons) != 1 || persons[0].StaffID != "staff-cy" || persons[0].Title != "Cy" || persons[0].DMSceneKey != "cidForeignDirect" {
+	if err != nil || len(persons) != 1 || persons[0].StaffID != "staff-cy" || persons[0].Title != "Cy" || persons[0].DMSceneID != cyDM {
 		t.Fatalf("org-x persons=%+v err=%v", persons, err)
 	}
 
-	// The scene list of a non-identity org skips jobs without a recorded org.
-	scenes, _, err := ListAgentScenes(ctx, f.tx, SceneListQuery{WorkspaceID: f.workspaceID, AgentID: f.agentID, OrgID: "org-x", IdentityOrgID: "org-home"})
-	if err != nil {
-		t.Fatal(err)
+	scenes, _, err := ListAgentScenes(ctx, f.tx, SceneListQuery{WorkspaceID: f.workspaceID, AgentID: f.agentID, OrgID: "org-x"})
+	if err != nil || len(scenes) != 3 {
+		t.Fatalf("org-x scenes=%+v err=%v", scenes, err)
 	}
-	keys := map[string]string{}
-	for _, scene := range scenes {
-		keys[scene.SceneKey] = scene.Kind
-	}
-	if len(keys) != 2 || keys["cidForeignGroup"] != SceneKindGroup || keys["cidForeignMemory"] != SceneKindGroup {
-		t.Fatalf("org-x scenes=%v", keys)
-	}
-	groups, _, err := ListAgentScenes(ctx, f.tx, SceneListQuery{WorkspaceID: f.workspaceID, AgentID: f.agentID, OrgID: "org-home",
-		IdentityOrgID: "org-home", GroupsOnly: true})
-	if err != nil || len(groups) != 1 || groups[0].SceneKey != "cidHomeGroup" {
+	groups, _, err := ListAgentScenes(ctx, f.tx, SceneListQuery{WorkspaceID: f.workspaceID, AgentID: f.agentID, OrgID: "org-home", GroupsOnly: true})
+	if err != nil || len(groups) != 1 || groups[0].SceneID != homeGroup {
 		t.Fatalf("org-home groups=%+v err=%v", groups, err)
 	}
 

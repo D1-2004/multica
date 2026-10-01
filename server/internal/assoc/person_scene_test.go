@@ -12,14 +12,13 @@ func TestRecentPersonOutreachScene(t *testing.T) {
 	store := NewMemory()
 	svc := NewService(store)
 	_, err := BindOutbound(ctx, store, BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-1",
-		IssueTitle:     "向冬翔确认今晚想吃什么",
-		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
-		PersonID:       "0104644667680872",
-		EvidenceID:     "msg-old",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-1",
+		IssueTitle:  "向冬翔确认今晚想吃什么",
+		Scene:       sceneOf("cid+bEFv7ngm9n79Q1vL9HYJw=="),
+		PersonID:    "0104644667680872",
+		EvidenceID:  "msg-old",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +27,7 @@ func TestRecentPersonOutreachScene(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "cid+bEFv7ngm9n79Q1vL9HYJw==" {
+	if got != sceneIDOf("cid+bEFv7ngm9n79Q1vL9HYJw==") {
 		t.Fatalf("got %q", got)
 	}
 	none, err := svc.RecentPersonOutreachScene(ctx, "ws", "ag", "unknown")

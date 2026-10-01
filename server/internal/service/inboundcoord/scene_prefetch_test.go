@@ -18,7 +18,7 @@ func (f scenePrefetchToolFunc) Call(ctx context.Context, turn Turn, name, args s
 }
 
 func TestScenePrefetchFirstModelCanPlanWork(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", SenderName: "用户", Message: "请查证主持人和参会人开启听记会产生几份记录。"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", SenderName: "用户", Message: "请查证主持人和参会人开启听记会产生几份记录。"}
 	reads := 0
 	tools := scenePrefetchToolFunc(func(ctx context.Context, got Turn, name, args string) (string, error) {
 		reads++
@@ -70,7 +70,7 @@ func TestScenePrefetchFailureRemainsUnavailableAndRetryable(t *testing.T) {
 		{"other_scene", `{"conversation_id":"cid-other","items":[]}`, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", SenderName: "用户", Message: "请查证听记的生成规则。"}
+			turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", SenderName: "用户", Message: "请查证听记的生成规则。"}
 			readCount := 0
 			tools := scenePrefetchToolFunc(func(_ context.Context, _ Turn, _ string, _ string) (string, error) {
 				readCount++
@@ -97,7 +97,7 @@ func TestScenePrefetchFailureRemainsUnavailableAndRetryable(t *testing.T) {
 }
 
 func TestScenePrefetchFailureDoesNotBlockConversation(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "你好"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "你好"}
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("f1", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"你好。"}]}`)}}
 	tools := scenePrefetchToolFunc(func(context.Context, Turn, string, string) (string, error) { return "", errors.New("read unavailable") })
 	d, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), turn)
@@ -113,7 +113,7 @@ func TestScenePrefetchFailureDoesNotBlockConversation(t *testing.T) {
 func TestScenePrefetchHonorsShorterParentDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current"}
 	seq := 0
 	tools := scenePrefetchToolFunc(func(ctx context.Context, _ Turn, _ string, _ string) (string, error) {
 		<-ctx.Done()
@@ -145,7 +145,7 @@ func TestScenePrefetchSkipsNoSceneAndCompletion(t *testing.T) {
 }
 
 func TestObservedGroupAssessesParticipationBeforeReadingOldWork(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, ConversationID: "group", Message: "同事在吗"}
+	turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, SceneID: testSceneID("group"), ConversationID: "group", Message: "同事在吗"}
 	if shouldPrefetchSceneRecall(turn) {
 		t.Fatal("observation must not preload unrelated old work")
 	}

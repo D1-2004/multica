@@ -59,6 +59,7 @@ func windowTurn(cutoff time.Time) Turn {
 		Addressed:      true,
 		ChatType:       "p2p",
 		AgentID:        testAgentID(),
+		SceneID:        testSceneID("cid-real"),
 		ConversationID: "cid-real",
 		DWSUID:         "24710833",
 		DWSOrgID:       "439446171",

@@ -104,7 +104,7 @@ func (f *ctxcapFixture) cleanupGrantsAndLinks(t *testing.T) {
 		for _, statement := range []string{
 			`DELETE FROM context_config_grant WHERE agent_id = $1`,
 			`DELETE FROM context_config_link WHERE agent_id = $1`,
-			`DELETE FROM scene_memory WHERE agent_id = $1`,
+			`DELETE FROM agent_scene_memory WHERE agent_id = $1`,
 		} {
 			_, _ = testPool.Exec(context.Background(), statement, agentID)
 		}
@@ -118,27 +118,30 @@ func ctxcapScenePath(agentID, sceneKey string) string {
 	return "/api/context-capabilities/agents/" + agentID + "/scenes/" + strings.ReplaceAll(url.QueryEscape(sceneKey), "+", "%20")
 }
 
-func TestContextCapabilitiesScenePathKeepsEscapedOpenConversationID(t *testing.T) {
+// The scene path segment is the scene_id; the conversation id behind it is
+// never a path key, escaped or not.
+func TestContextCapabilitiesScenePathTakesTheSceneID(t *testing.T) {
 	f := newCtxcapFixture(t)
 	router := ctxcapRouter(f.h)
 	agentID := uuidToString(f.agent)
 	alice := uuid.NewString()
-	const slashyScene = "cidAb+Cd/Ef=="
-	f.grant(t, alice, contextcap.ScopeScene, slashyScene, "Slashy group")
-	path := ctxcapScenePath(agentID, slashyScene)
+	const slashyCID = "cidAb+Cd/Ef=="
+	f.registerScene(t, "c7c7c7c7-0000-4000-8000-000000000003", ctxcapOrg, "group", slashyCID, "Slashy group")
+	f.grant(t, alice, contextcap.ScopeScene, "c7c7c7c7-0000-4000-8000-000000000003", "Slashy group")
+	w := ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, "c7c7c7c7-0000-4000-8000-000000000003"), alice, nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "scene id")
+	var scene ctxcapSceneDetail
+	ctxcapDecode(t, w, &scene)
+	if scene.Scene.ScopeKey != "c7c7c7c7-0000-4000-8000-000000000003" || scene.Scene.ScopeTitle != "Slashy group" {
+		t.Fatalf("scene=%+v", scene.Scene)
+	}
+	path := ctxcapScenePath(agentID, slashyCID)
 	if !strings.Contains(path, "%2B") || !strings.Contains(path, "%2F") || !strings.Contains(path, "%3D") {
 		t.Fatalf("path %q does not exercise escaping", path)
 	}
-	w := ctxcapMobile(t, router, http.MethodGet, path, alice, nil)
-	ctxcapExpectStatus(t, w, http.StatusOK, "escaped scene key")
-	var scene ctxcapSceneDetail
-	ctxcapDecode(t, w, &scene)
-	if scene.Scene.ScopeKey != slashyScene || scene.Scene.ScopeTitle != "Slashy group" {
-		t.Fatalf("scene=%+v", scene.Scene)
-	}
-	// Unescaped padding also works (no RawPath).
-	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID+"/scenes/"+ctxcapScene, alice, nil),
-		http.StatusForbidden, "raw padding, no grant")
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, path, alice, nil), http.StatusBadRequest, "conversation id as the key")
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, ctxcapScene), alice, nil),
+		http.StatusForbidden, "another scene, no grant")
 }
 
 type ctxcapAgentDetail struct {
@@ -744,12 +747,12 @@ func TestContextCapabilitiesSceneResolveViaJSAPI(t *testing.T) {
 	alice := uuid.NewString()
 	f.cleanupGrantsAndLinks(t)
 	f.h.DingTalk = &ctxcapFakeDingTalk{supported: true, ticket: "ticket", chats: map[string]string{
-		"chat-other": ctxcapOtherScene, "chat-unknown": "cidNeverServed==",
+		"chat-other": ctxcapOtherCID, "chat-unknown": "cidNeverServed==", "chat-direct": "cidJSAPIDirect==",
 	}}
-	if _, err := testPool.Exec(context.Background(), `INSERT INTO scene_memory (workspace_id, agent_id, org_id, scene_key, scene_kind, scene_title)
-		VALUES ($1, $2, $3, $4, 'group', 'Other group')`, testWorkspaceID, agentID, ctxcapOrg, ctxcapOtherScene); err != nil {
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent_scene SET title = 'Other group' WHERE id = $1`, ctxcapOtherScene); err != nil {
 		t.Fatal(err)
 	}
+	f.registerScene(t, "c7c7c7c7-0000-4000-8000-000000000004", ctxcapOrg, "dm", "cidJSAPIDirect==", "Alice")
 	resolvePath := "/api/context-capabilities/agents/" + agentID + "/scenes/resolve"
 
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPost, resolvePath, alice, map[string]any{"chat_id": "chat-other"}), http.StatusForbidden, "no person grant")
@@ -757,10 +760,12 @@ func TestContextCapabilitiesSceneResolveViaJSAPI(t *testing.T) {
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPost, resolvePath, alice, map[string]any{}), http.StatusBadRequest, "empty body")
 	// A bare openConversationId is not proof of membership: it is not a
 	// secret (every scene-grant holder sees it), so only a picked chatId counts.
-	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPost, resolvePath, alice, map[string]any{"open_conversation_id": ctxcapOtherScene}), http.StatusBadRequest, "bare open_conversation_id")
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPost, resolvePath, alice, map[string]any{"open_conversation_id": ctxcapOtherCID}), http.StatusBadRequest, "bare open_conversation_id")
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPost, resolvePath, alice, map[string]any{"chat_id": "chat-unknown"}), http.StatusForbidden, "group the agent never served")
+	// The picker grants groups only: a 1:1 chat's scene is not a group.
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPost, resolvePath, alice, map[string]any{"chat_id": "chat-direct"}), http.StatusForbidden, "1:1 chat")
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPost, resolvePath, alice, map[string]any{"chat_id": "chat-missing"}), http.StatusBadGateway, "conversion failure")
-	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPost, resolvePath, alice, map[string]any{"chat_id": "chat-other", "open_conversation_id": ctxcapScene}), http.StatusBadRequest, "mismatched ids")
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPost, resolvePath, alice, map[string]any{"chat_id": "chat-other", "open_conversation_id": ctxcapSceneCID}), http.StatusBadRequest, "mismatched ids")
 
 	w := ctxcapMobile(t, router, http.MethodPost, resolvePath, alice, map[string]any{"chat_id": "chat-other"})
 	ctxcapExpectStatus(t, w, http.StatusOK, "resolve")
@@ -800,8 +805,9 @@ func TestContextCapabilitiesSceneResolveViaJSAPI(t *testing.T) {
 }
 
 // An agent without agent_dingtalk_identity keeps its grants and bindings under
-// org "", while scene memory records its groups under the dispatch's DWS org.
-// The JSAPI path must still recognise those groups.
+// org "", while its scenes belong to the tenant org of the dispatch that
+// registered them. A scene is never looked up across orgs: the org ""
+// page does not reach a group of the dispatch org.
 func TestContextCapabilitiesSceneResolveWithoutDingTalkIdentity(t *testing.T) {
 	f := newCtxcapFixture(t)
 	router := ctxcapRouter(f.h)
@@ -812,29 +818,18 @@ func TestContextCapabilitiesSceneResolveWithoutDingTalkIdentity(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `DELETE FROM agent_dingtalk_identity WHERE agent_id = $1`, agentID); err != nil {
 		t.Fatal(err)
 	}
-	f.h.DingTalk = &ctxcapFakeDingTalk{supported: true, ticket: "ticket", chats: map[string]string{"chat-other": ctxcapOtherScene}}
-	if _, err := testPool.Exec(ctx, `INSERT INTO scene_memory (workspace_id, agent_id, org_id, scene_key, scene_kind, scene_title)
-		VALUES ($1, $2, 'dws-org-fallback', $3, 'group', 'Other group')`, testWorkspaceID, agentID, ctxcapOtherScene); err != nil {
-		t.Fatal(err)
-	}
+	f.h.DingTalk = &ctxcapFakeDingTalk{supported: true, ticket: "ticket", chats: map[string]string{"chat-fallback": "cidDispatchOrgGroup=="}}
+	f.registerScene(t, "c7c7c7c7-0000-4000-8000-000000000005", "dws-org-fallback", "group", "cidDispatchOrgGroup==", "Other group")
 	if _, err := contextcap.UpsertGrant(ctx, testPool, contextcap.Grant{
 		UserID: alice, WorkspaceID: testWorkspaceID, AgentID: agentID, ScopeType: contextcap.ScopePerson,
 		OrgID: "", ScopeKey: ctxcapStaff, Source: contextcap.GrantSourceAgentLink,
 	}, contextcap.GrantTTLPerson); err != nil {
 		t.Fatal(err)
 	}
-	w := ctxcapMobile(t, router, http.MethodPost, "/api/context-capabilities/agents/"+agentID+"/scenes/resolve", alice, map[string]any{"chat_id": "chat-other"})
-	ctxcapExpectStatus(t, w, http.StatusOK, "resolve without DingTalk identity")
-	var resolved struct {
-		Scene contextCapSceneDTO `json:"scene"`
-	}
-	ctxcapDecode(t, w, &resolved)
-	if resolved.Scene.ScopeKey != ctxcapOtherScene || resolved.Scene.ScopeTitle != "Other group" {
-		t.Fatalf("resolved scene=%+v", resolved.Scene)
-	}
-	grant, err := contextcap.GetLiveGrant(ctx, testPool, alice, agentID, contextcap.ScopeScene, "", ctxcapOtherScene)
-	if err != nil || grant.Source != contextcap.GrantSourceJSAPI {
-		t.Fatalf("scene grant under org \"\" = %+v err=%v", grant, err)
+	w := ctxcapMobile(t, router, http.MethodPost, "/api/context-capabilities/agents/"+agentID+"/scenes/resolve", alice, map[string]any{"chat_id": "chat-fallback"})
+	ctxcapExpectStatus(t, w, http.StatusForbidden, "a group of another org")
+	if _, err := contextcap.GetLiveGrant(ctx, testPool, alice, agentID, contextcap.ScopeScene, "", "c7c7c7c7-0000-4000-8000-000000000005"); err == nil {
+		t.Fatal("a scene of the dispatch org was granted under org \"\"")
 	}
 }
 

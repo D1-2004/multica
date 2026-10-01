@@ -133,9 +133,9 @@ func TestRecallByConversationFindsOutreach(t *testing.T) {
 		SrcType:       NodeTask,
 		SrcID:         task.ID,
 		DstType:       NodeScene,
-		DstID:         "cid-a",
+		DstID:         sceneIDOf("cid-a"),
 		Rel:           RelOutreach,
-		Props:         map[string]any{"kind": "dm"},
+		Props:         map[string]any{"kind": "dm", "conversation_id": "cid-a"},
 		LastTouchedAt: now.Add(-30 * time.Minute),
 	}); err != nil {
 		t.Fatal(err)
@@ -146,7 +146,8 @@ func TestRecallByConversationFindsOutreach(t *testing.T) {
 		SrcType:       NodeTask,
 		SrcID:         task.ID,
 		DstType:       NodeScene,
-		DstID:         "cid-a",
+		DstID:         sceneIDOf("cid-a"),
+		Props:         map[string]any{"conversation_id": "cid-a"},
 		Rel:           RelWaitingOn,
 		LastTouchedAt: now.Add(-30 * time.Minute),
 	}); err != nil {
@@ -156,6 +157,7 @@ func TestRecallByConversationFindsOutreach(t *testing.T) {
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          now.Add(-48 * time.Hour),
 	})
@@ -183,7 +185,9 @@ func TestRecallByConversationFindsOutreach(t *testing.T) {
 	}
 }
 
-func TestRecallMergesQuotedConversationIDs(t *testing.T) {
+// Scene nodes are scene ids. Edges recorded before scene ids existed name a
+// raw conversation id; they are not scene nodes and never surface.
+func TestRecallIgnoresLegacyConversationSceneNodes(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	store := NewMemory()
@@ -196,55 +200,42 @@ func TestRecallMergesQuotedConversationIDs(t *testing.T) {
 		Status:        StatusWaiting,
 		LastTouchedAt: now.Add(-30 * time.Minute),
 	})
-	for _, dst := range []string{`"cid74QGZieWQ4ondi1b0m2DtQ=="`, "cid74QGZieWQ4ondi1b0m2DtQ=="} {
-		if _, err := store.InsertEdge(ctx, Edge{
-			WorkspaceID:   "ws",
-			AgentID:       "ag",
-			SrcType:       NodeTask,
-			SrcID:         task.ID,
-			DstType:       NodeScene,
-			DstID:         dst,
-			Rel:           RelTaskScene,
-			LastTouchedAt: now.Add(-30 * time.Minute),
-		}); err != nil {
+	edges := []Edge{
+		{DstID: "cid74QGZieWQ4ondi1b0m2DtQ==", Rel: RelTaskScene},
+		{DstID: sceneIDOf("cid74QGZieWQ4ondi1b0m2DtQ=="), Rel: RelTaskScene,
+			Props: map[string]any{"conversation_id": "cid74QGZieWQ4ondi1b0m2DtQ=="}},
+		{DstID: sceneIDOf("cidviyliGA6bfBKZARuuy0RzA=="), Rel: RelOutreach,
+			Props: map[string]any{"conversation_id": "cidviyliGA6bfBKZARuuy0RzA=="}},
+	}
+	for _, edge := range edges {
+		edge.WorkspaceID, edge.AgentID = "ws", "ag"
+		edge.SrcType, edge.SrcID, edge.DstType = NodeTask, task.ID, NodeScene
+		edge.LastTouchedAt = now.Add(-30 * time.Minute)
+		if _, err := store.InsertEdge(ctx, edge); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if _, err := store.InsertEdge(ctx, Edge{
-		WorkspaceID:   "ws",
-		AgentID:       "ag",
-		SrcType:       NodeTask,
-		SrcID:         task.ID,
-		DstType:       NodeScene,
-		DstID:         `"cidviyliGA6bfBKZARuuy0RzA=="`,
-		Rel:           RelOutreach,
-		LastTouchedAt: now.Add(-30 * time.Minute),
-	}); err != nil {
-		t.Fatal(err)
 	}
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
-		ConversationID: `"cid74QGZieWQ4ondi1b0m2DtQ=="`,
+		SceneID:        sceneIDOf("cid74QGZieWQ4ondi1b0m2DtQ=="),
+		ConversationID: "cid74QGZieWQ4ondi1b0m2DtQ==",
 		Since:          now.Add(-48 * time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if result.ConversationID != "cid74QGZieWQ4ondi1b0m2DtQ==" {
-		t.Fatalf("conversation_id=%q", result.ConversationID)
 	}
 	if len(result.Items) != 1 {
 		t.Fatalf("items=%+v", result.Items)
 	}
 	ids := map[string]string{}
 	for _, conv := range result.Items[0].Conversations {
-		if strings.Contains(conv.ConversationID, `"`) {
-			t.Fatalf("quoted cid leaked: %+v", conv)
+		if conv.SceneID == "" || strings.HasPrefix(conv.SceneID, "cid") {
+			t.Fatalf("legacy conversation node surfaced: %+v", conv)
 		}
 		ids[conv.ConversationID] = conv.Rel
 	}
-	if ids["cid74QGZieWQ4ondi1b0m2DtQ=="] == "" || ids["cidviyliGA6bfBKZARuuy0RzA=="] != RelOutreach {
+	if len(ids) != 2 || ids["cid74QGZieWQ4ondi1b0m2DtQ=="] == "" || ids["cidviyliGA6bfBKZARuuy0RzA=="] != RelOutreach {
 		t.Fatalf("conversations=%+v", result.Items[0].Conversations)
 	}
 	if !result.Items[0].OnThisScene {
@@ -271,7 +262,8 @@ func TestRecallWaitingOnForeignSceneIsNotOnThisScene(t *testing.T) {
 		SrcType:       NodeTask,
 		SrcID:         task.ID,
 		DstType:       NodeScene,
-		DstID:         "cid-g2",
+		DstID:         sceneIDOf("cid-g2"),
+		Props:         map[string]any{"conversation_id": "cid-g2"},
 		Rel:           RelTaskScene,
 		LastTouchedAt: now.Add(-20 * time.Minute),
 	}); err != nil {
@@ -283,7 +275,8 @@ func TestRecallWaitingOnForeignSceneIsNotOnThisScene(t *testing.T) {
 		SrcType:       NodeTask,
 		SrcID:         task.ID,
 		DstType:       NodeScene,
-		DstID:         "cid-r9b",
+		DstID:         sceneIDOf("cid-r9b"),
+		Props:         map[string]any{"conversation_id": "cid-r9b"},
 		Rel:           RelWaitingOn,
 		LastTouchedAt: now.Add(-20 * time.Minute),
 	}); err != nil {
@@ -293,6 +286,7 @@ func TestRecallWaitingOnForeignSceneIsNotOnThisScene(t *testing.T) {
 	foreign, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-r9b"),
 		ConversationID: "cid-r9b",
 		Since:          now.Add(-48 * time.Hour),
 	})
@@ -312,6 +306,7 @@ func TestRecallWaitingOnForeignSceneIsNotOnThisScene(t *testing.T) {
 	home, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-g2"),
 		ConversationID: "cid-g2",
 		Since:          now.Add(-48 * time.Hour),
 	})
@@ -342,7 +337,8 @@ func TestRecallWindowKeywordIsNotOnThisScene(t *testing.T) {
 		SrcType:       NodeTask,
 		SrcID:         task.ID,
 		DstType:       NodeScene,
-		DstID:         "cid-chenshi",
+		DstID:         sceneIDOf("cid-chenshi"),
+		Props:         map[string]any{"conversation_id": "cid-chenshi"},
 		Rel:           RelOutreach,
 		LastTouchedAt: now.Add(-time.Hour),
 	}); err != nil {
@@ -395,7 +391,8 @@ func TestRecallExpiredOutreachMisses(t *testing.T) {
 		SrcType:       NodeTask,
 		SrcID:         task.ID,
 		DstType:       NodeScene,
-		DstID:         "cid-a",
+		DstID:         sceneIDOf("cid-a"),
+		Props:         map[string]any{"conversation_id": "cid-a"},
 		Rel:           RelOutreach,
 		LastTouchedAt: now.Add(-72 * time.Hour),
 	}); err != nil {
@@ -404,6 +401,7 @@ func TestRecallExpiredOutreachMisses(t *testing.T) {
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          now.Add(-48 * time.Hour),
 	})
@@ -433,7 +431,8 @@ func TestRecallIsolatesAgents(t *testing.T) {
 		SrcType:     NodeTask,
 		SrcID:       task.ID,
 		DstType:     NodeScene,
-		DstID:       "cid-a",
+		DstID:       sceneIDOf("cid-a"),
+		Props:       map[string]any{"conversation_id": "cid-a"},
 		Rel:         RelOutreach,
 	}); err != nil {
 		t.Fatal(err)
@@ -441,6 +440,7 @@ func TestRecallIsolatesAgents(t *testing.T) {
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          now.Add(-time.Hour),
 	})
@@ -471,9 +471,9 @@ func TestRecallByIssueListsConversations(t *testing.T) {
 			SrcType:     NodeTask,
 			SrcID:       task.ID,
 			DstType:     NodeScene,
-			DstID:       cid,
+			DstID:       sceneIDOf(cid),
 			Rel:         RelOutreach,
-			Props:       map[string]any{"kind": "dm"},
+			Props:       map[string]any{"kind": "dm", "conversation_id": cid},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -521,7 +521,8 @@ func TestRecallKeywordFiltersPurpose(t *testing.T) {
 			SrcType:     NodeTask,
 			SrcID:       task.ID,
 			DstType:     NodeScene,
-			DstID:       "cid-a",
+			DstID:       sceneIDOf("cid-a"),
+			Props:       map[string]any{"conversation_id": "cid-a"},
 			Rel:         RelTaskScene,
 		}); err != nil {
 			t.Fatal(err)
@@ -530,6 +531,7 @@ func TestRecallKeywordFiltersPurpose(t *testing.T) {
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Q:              "本周五",
 		Since:          now.Add(-time.Hour),
@@ -572,7 +574,8 @@ func TestRecallRecentFirstAndExtraPersonIsNewEdge(t *testing.T) {
 			SrcType:       NodeTask,
 			SrcID:         pair.task.ID,
 			DstType:       NodeScene,
-			DstID:         "cid-a",
+			DstID:         sceneIDOf("cid-a"),
+			Props:         map[string]any{"conversation_id": "cid-a"},
 			Rel:           RelOutreach,
 			LastTouchedAt: now.Add(-pair.age),
 		}); err != nil {
@@ -594,6 +597,7 @@ func TestRecallRecentFirstAndExtraPersonIsNewEdge(t *testing.T) {
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          now.Add(-48 * time.Hour),
 	})
@@ -629,7 +633,8 @@ func TestRecallConversationHitsWhenPersonDoesNotMatch(t *testing.T) {
 		SrcType:     NodeTask,
 		SrcID:       task.ID,
 		DstType:     NodeScene,
-		DstID:       "cid-dongxiang",
+		DstID:       sceneIDOf("cid-dongxiang"),
+		Props:       map[string]any{"conversation_id": "cid-dongxiang"},
 		Rel:         RelOutreach,
 	}); err != nil {
 		t.Fatal(err)
@@ -637,6 +642,7 @@ func TestRecallConversationHitsWhenPersonDoesNotMatch(t *testing.T) {
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-dongxiang"),
 		ConversationID: "cid-dongxiang",
 		PersonID:       "25698887",
 		Since:          now.Add(-time.Hour),
@@ -685,7 +691,8 @@ func TestRecallPersonOnlyStillFilters(t *testing.T) {
 		SrcType:     NodeTask,
 		SrcID:       miss.ID,
 		DstType:     NodeScene,
-		DstID:       "cid-other",
+		DstID:       sceneIDOf("cid-other"),
+		Props:       map[string]any{"conversation_id": "cid-other"},
 		Rel:         RelTaskScene,
 	}); err != nil {
 		t.Fatal(err)
@@ -733,7 +740,8 @@ func TestRecallPersonMatchRanksAboveSceneOnly(t *testing.T) {
 			SrcType:     NodeTask,
 			SrcID:       task.ID,
 			DstType:     NodeScene,
-			DstID:       "cid-shared",
+			DstID:       sceneIDOf("cid-shared"),
+			Props:       map[string]any{"conversation_id": "cid-shared"},
 			Rel:         RelOutreach,
 		}); err != nil {
 			t.Fatal(err)
@@ -753,6 +761,7 @@ func TestRecallPersonMatchRanksAboveSceneOnly(t *testing.T) {
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-shared"),
 		ConversationID: "cid-shared",
 		PersonID:       "25698887",
 		Since:          now.Add(-time.Hour),
@@ -778,7 +787,7 @@ func TestInsertEventDedupsEvidence(t *testing.T) {
 		Source:      "outbound_im",
 		Direction:   DirOutbound,
 		EvidenceID:  "msg-1",
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -789,7 +798,7 @@ func TestInsertEventDedupsEvidence(t *testing.T) {
 		Source:      "inbound_im",
 		Direction:   DirInbound,
 		EvidenceID:  "msg-1",
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -804,14 +813,13 @@ func TestInsertEventKeepsBodyAndRecallExposesText(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemory()
 	if _, err := BindOutbound(ctx, store, BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-1",
-		IssueTitle:     "向须莫v6确认今晚几点打球",
-		Purpose:        "向须莫v6确认今晚几点打球",
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-out",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-1",
+		IssueTitle:  "向须莫v6确认今晚几点打球",
+		Purpose:     "向须莫v6确认今晚几点打球",
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-out",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -822,13 +830,14 @@ func TestInsertEventKeepsBodyAndRecallExposesText(t *testing.T) {
 		Direction:   DirInbound,
 		EvidenceID:  "msg-in",
 		Body:        "7点",
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          time.Now().UTC().Add(-time.Hour),
 	})
@@ -852,13 +861,12 @@ func TestRecallInboundOnPreviousOutboundUnionsRelsAndEvents(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemory()
 	if _, err := BindOutbound(ctx, store, BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-1",
-		IssueTitle:     "预约A与B本周五下午30分钟",
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-out-a",
-		Kind:           "dm",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-1",
+		IssueTitle:  "预约A与B本周五下午30分钟",
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-out-a",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -868,17 +876,17 @@ func TestRecallInboundOnPreviousOutboundUnionsRelsAndEvents(t *testing.T) {
 		Source:      "inbound_im",
 		Direction:   DirInbound,
 		EvidenceID:  "msg-in-a",
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := AssociateIssueConversation(ctx, store, AssociateInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-1",
-		IssueTitle:     "预约A与B本周五下午30分钟",
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-in-a",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-1",
+		IssueTitle:  "预约A与B本周五下午30分钟",
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-in-a",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -886,6 +894,7 @@ func TestRecallInboundOnPreviousOutboundUnionsRelsAndEvents(t *testing.T) {
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          time.Now().Add(-time.Hour),
 	})
@@ -927,22 +936,22 @@ func TestRecallInboundOnPreviousOutboundKeepsSeparateIssues(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemory()
 	if _, err := BindOutbound(ctx, store, BindOutboundInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-out",
-		IssueTitle:     "向冬翔确认今晚高铁还是开车",
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-out-a",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-out",
+		IssueTitle:  "向冬翔确认今晚高铁还是开车",
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-out-a",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := AssociateIssueConversation(ctx, store, AssociateInput{
-		WorkspaceID:    "ws",
-		AgentID:        "ag",
-		IssueID:        "issue-in",
-		IssueTitle:     "冬翔回复后跟进订票",
-		ConversationID: "cid-a",
-		EvidenceID:     "msg-in-a",
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		IssueID:     "issue-in",
+		IssueTitle:  "冬翔回复后跟进订票",
+		Scene:       sceneOf("cid-a"),
+		EvidenceID:  "msg-in-a",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -952,7 +961,7 @@ func TestRecallInboundOnPreviousOutboundKeepsSeparateIssues(t *testing.T) {
 		Source:      "inbound_im",
 		Direction:   DirInbound,
 		EvidenceID:  "msg-in-a",
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -960,6 +969,7 @@ func TestRecallInboundOnPreviousOutboundKeepsSeparateIssues(t *testing.T) {
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          time.Now().Add(-time.Hour),
 	})
@@ -1000,7 +1010,7 @@ func TestRecallDedupesEventEvidenceAndEventLinkedTasks(t *testing.T) {
 		Source:      "outbound_im",
 		Direction:   DirOutbound,
 		EvidenceID:  "msg-1",
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 		TaskID:      task.ID,
 		OccurredAt:  now,
 	})
@@ -1013,7 +1023,7 @@ func TestRecallDedupesEventEvidenceAndEventLinkedTasks(t *testing.T) {
 		Source:      "inbound_im",
 		Direction:   DirInbound,
 		EvidenceID:  "msg-1",
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 		OccurredAt:  now,
 	})
 	if err != nil {
@@ -1026,6 +1036,7 @@ func TestRecallDedupesEventEvidenceAndEventLinkedTasks(t *testing.T) {
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          now.Add(-time.Hour),
 	})
@@ -1061,7 +1072,7 @@ func TestRecallEventOnlyMarksMatchedViaEvent(t *testing.T) {
 		EvidenceID:  "msg-in-event",
 		Body:        "晚饭想吃什么",
 		OccurredAt:  now.Add(-2 * time.Hour),
-		SceneKey:    "cid-a",
+		SceneID:     sceneIDOf("cid-a"),
 		TaskID:      task.ID,
 	}); err != nil {
 		t.Fatal(err)
@@ -1069,6 +1080,7 @@ func TestRecallEventOnlyMarksMatchedViaEvent(t *testing.T) {
 	result, err := Recall(ctx, store, Query{
 		WorkspaceID:    "ws",
 		AgentID:        "ag",
+		SceneID:        sceneIDOf("cid-a"),
 		ConversationID: "cid-a",
 		Since:          now.Add(-48 * time.Hour),
 	})

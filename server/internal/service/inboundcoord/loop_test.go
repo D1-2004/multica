@@ -33,7 +33,7 @@ type scriptedCompleter struct {
 }
 
 func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "帮我沉淀这条决策", SenderName: "冬翔"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "帮我沉淀这条决策", SenderName: "冬翔"}
 	raw := `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我来整理这条决策","purpose":"整理当前决策及判断依据","intent":"other"}]}`
 	for _, recalls := range [][]recallCall{nil, {{ConversationID: "cid-other"}}} {
 		if _, err := parseValidatedWindowPlan(raw, turn, recalls, nil); err == nil {
@@ -44,7 +44,7 @@ func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
 	if err != nil || len(got.Items) != 1 || got.Items[0].IssueID != "" {
 		t.Fatalf("plan=%#v err=%v", got, err)
 	}
-	if _, err := parseValidatedWindowPlan(`{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"在，你说。"}]}`, Turn{ConversationID: "cid-current", Message: "你说话"}, nil, nil); err != nil {
+	if _, err := parseValidatedWindowPlan(`{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"在，你说。"}]}`, Turn{SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "你说话"}, nil, nil); err != nil {
 		t.Fatalf("presence needs no work lookup: %v", err)
 	}
 }
@@ -146,7 +146,7 @@ func TestLoopPlansBusyContinuationWithoutWriting(t *testing.T) {
 			assistantTool("plan", toolFinish, `{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把番茄这个答复带过去","purpose":"向须莫确认番茄还是菠萝的偏好","intent":"confirm","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","basis":"answer"}]}`),
 		}}
 		tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认番茄还是菠萝","on_this_scene":true}]}`, errors: map[string]error{toolIssueCommentAdd: ErrIssueBusy}}
-		got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: "番茄", SenderName: "须莫", ConversationID: "cid-v6", Busy: busy, HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "员工", Content: "你更喜欢番茄还是菠萝？"}}})
+		got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: "番茄", SenderName: "须莫", SceneID: testSceneID("cid-v6"), ConversationID: "cid-v6", Busy: busy, HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "员工", Content: "你更喜欢番茄还是菠萝？"}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -175,7 +175,7 @@ func TestLoopBusyFloodRemainsConversationWithoutWriting(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("reply", toolFinish, `{"actions":[{"kind":"ignore","source_refs":["u1"],"reason":"没有请求"}]}`)}}
 	tools := &stubTools{errors: map[string]error{toolIssueCommentAdd: ErrIssueBusy}}
-	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "灌水11：食堂窗口11今天供应番茄炒蛋，与工作无关。", ConversationID: "cid-v6", Busy: true})
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "灌水11：食堂窗口11今天供应番茄炒蛋，与工作无关。", SceneID: testSceneID("cid-v6"), ConversationID: "cid-v6", Busy: true})
 	if err != nil || got.Action != ActionSilence || len(got.Items) != 0 || len(tools.calls) != 1 || !strings.HasPrefix(tools.calls[0], toolAssocRecall) || chat.calls != 1 {
 		t.Fatalf("busy chatter cannot write or enter a retry storm: %#v calls=%v err=%v", got, tools.calls, err)
 	}
@@ -188,7 +188,7 @@ func TestLoopBusyProgressDoesNotRequestAnotherTask(t *testing.T) {
 		assistantTool("reply", toolFinish, `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"这件事还在排队，完成后我告诉你。"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认口味","status":"queued","on_this_scene":true}]}`}
-	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, Message: "怎么还没好", ConversationID: "cid-v6", Busy: true})
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, Message: "怎么还没好", SceneID: testSceneID("cid-v6"), ConversationID: "cid-v6", Busy: true})
 	if err != nil || got.Action != ActionReply || len(got.Items) != 0 || len(tools.calls) != 1 {
 		t.Fatalf("progress must remain read-only at capacity: %#v calls=%v err=%v", got, tools.calls, err)
 	}
@@ -211,7 +211,7 @@ func TestLoopBusyAnswersAndNoiseHaveDistinctPlans(t *testing.T) {
 			}
 		}
 		tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"确认同事对当前安排的选择","on_this_scene":true}]}`}
-		got, err := (&Coordinator{Chat: &scriptedCompleter{rounds: rounds}, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: tc.message, SenderName: "须莫", ConversationID: "cid-current", Busy: tc.busy, HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "员工", Content: "这个安排可以吗？"}}})
+		got, err := (&Coordinator{Chat: &scriptedCompleter{rounds: rounds}, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: tc.message, SenderName: "须莫", SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Busy: tc.busy, HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "员工", Content: "这个安排可以吗？"}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -276,6 +276,7 @@ func TestLoopLogsLLMRequestAndFinish(t *testing.T) {
 	if _, err := c.runLoop(context.Background(), Turn{
 		Source:         SourceDigitalEmployee,
 		Message:        "问一下冬翔，今天想吃什么",
+		SceneID:        testSceneID("cid-dongxiang"),
 		ConversationID: "cid-dongxiang",
 		SenderName:     "冬翔",
 		AgentName:      "预发测试智能体",
@@ -317,6 +318,7 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	got, err := c.runLoop(context.Background(), Turn{
 		Source:         SourceDigitalEmployee,
 		Message:        "问一下冬翔，今天想吃什么",
+		SceneID:        testSceneID("cid-dongxiang"),
 		ConversationID: "cid-dongxiang",
 		PersonID:       "uid-dx",
 		SenderName:     "冬翔",
@@ -379,6 +381,7 @@ func TestLoopRecallFillsInboundConversationID(t *testing.T) {
 		Addressed:      true,
 		ChatType:       "p2p",
 		Message:        "和辰驷确认一下，明天几点有空去打球。",
+		SceneID:        testSceneID(inbound),
 		ConversationID: inbound,
 	})
 	if err != nil {
@@ -407,6 +410,7 @@ func TestLoopNewDeliverableFinishSkipsForcedComment(t *testing.T) {
 		Addressed:      true,
 		ChatType:       "p2p",
 		Message:        "你去问下须莫v6，今天晚饭想吃什么",
+		SceneID:        testSceneID("cid-v6"),
 		ConversationID: "cid-v6",
 		SenderName:     "冬翔",
 	})
@@ -429,7 +433,7 @@ func TestLoopInboundOutreachReplyContinuesRecalledIssue(t *testing.T) {
 		assistantTool("finish", toolFinish, `{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把七点这个答复带过去","purpose":"向须莫确认今晚几点可以打球","intent":"confirm","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","basis":"answer"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认今晚几点打球","on_this_scene":true}]}`}
-	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Message: "7点", SenderName: "须莫", ConversationID: "cid-v6", HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "员工", Content: "今晚几点方便打球？"}}})
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Message: "7点", SenderName: "须莫", SceneID: testSceneID("cid-v6"), ConversationID: "cid-v6", HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "员工", Content: "今晚几点方便打球？"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,6 +457,7 @@ func TestLoopOneSceneCardAllowsNewIssueWhenPurposeDiffers(t *testing.T) {
 		Addressed:      true,
 		ChatType:       "p2p",
 		Message:        "和辰驷确认一下，明天几点有空去打球。",
+		SceneID:        testSceneID("cid-inbound"),
 		ConversationID: "cid-inbound",
 		SenderName:     "冬翔",
 	})
@@ -479,6 +484,7 @@ func TestLoopWindowKeywordHitDoesNotForceComment(t *testing.T) {
 		Addressed:      true,
 		ChatType:       "p2p",
 		Message:        "和辰驷确认一下，明天几点有空去打球。",
+		SceneID:        testSceneID("cid-inbound"),
 		ConversationID: "cid-inbound",
 		SenderName:     "冬翔",
 	})
@@ -506,6 +512,7 @@ func TestLoopBindWithoutIssueIDIsRejected(t *testing.T) {
 		Addressed:      true,
 		ChatType:       "p2p",
 		Message:        "你再问一下须莫v6明早有没有会议",
+		SceneID:        testSceneID("cid-v6"),
 		ConversationID: "cid-v6",
 		SenderName:     "须莫🥥",
 	})
@@ -547,6 +554,7 @@ func TestLoopNewIssueFinishRequiresPurpose(t *testing.T) {
 		Source:         SourceDigitalEmployee,
 		Addressed:      true,
 		Message:        "问一下须莫v6明早有没有会议",
+		SceneID:        testSceneID("cid-v6"),
 		ConversationID: "cid-v6",
 		SenderName:     "须莫🥥",
 	})
@@ -591,7 +599,7 @@ func TestLoopContentJSONWithoutToolCallsNudgeThenFinish(t *testing.T) {
 
 func TestLoopLastRoundOnlyFinish(t *testing.T) {
 	t.Parallel()
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", HistoryStatus: "not_loaded"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", HistoryStatus: "not_loaded"}
 	for _, round := range []int{maxLoopRounds - 2, maxLoopRounds - 1} {
 		names := toolDefNamesFromDefs(toolsForDisclosure(turn, round, true))
 		if strings.Join(names, ",") != toolFinish {
@@ -658,6 +666,7 @@ func TestLoopNamedCIDFinishWithoutRecallIsRejected(t *testing.T) {
 		Source:         SourceRobot,
 		Addressed:      true,
 		Message:        fake + " 里面聊了什么",
+		SceneID:        testSceneID("cid-robot"),
 		ConversationID: "cid-robot",
 	})
 	if err != nil {
@@ -714,6 +723,7 @@ func TestLoopReportLinkDoesNotRequireNamedConversationRecall(t *testing.T) {
 	c := &Coordinator{Chat: chat, Tools: tools}
 	got, err := c.runLoop(context.Background(), Turn{
 		Source:         SourceDigitalEmployee,
+		SceneID:        testSceneID("cid58bvFJhm51zIMVj1WGa/vMyRqIqidBhxeJFn667zqMY="),
 		ConversationID: "cid58bvFJhm51zIMVj1WGa/vMyRqIqidBhxeJFn667zqMY=",
 		Message: "今日最重要进展：PC 官网迭代。围绕\n" +
 			"[日志](https://landray.dingtalkapps.com/alid/app/report/viewReport_new.html?id=report&cid=75953554200&cname=team)\n" +
@@ -744,6 +754,7 @@ func TestLinkedConversationStillRequiresRecall(t *testing.T) {
 	cid := "cid+bEFv7ngm9n79Q1vL9HYJ1w=="
 	turn := Turn{
 		Source:            SourceDigitalEmployee,
+		SceneID:           testSceneID("cid-current"),
 		ConversationID:    "cid-current",
 		Message:           "这个会话在跟什么事 dingtalk://dingtalkclient/action/openapp?openConversationId=" + cid,
 		CoordinationReads: []CoordinationRead{{ReadRef: "r1", Tool: toolAssocRecall}},
@@ -777,6 +788,7 @@ func TestDecideNamedConversationRecallThenReply(t *testing.T) {
 		Addressed:      true,
 		ChatType:       "p2p",
 		Message:        "cid+bEFv7ngm9n79Q1vL9HYJw== 里面聊了什么",
+		SceneID:        testSceneID("cid-robot"),
 		ConversationID: "cid-robot",
 		DWSUID:         "24710833",
 		DWSOrgID:       "439446171",
@@ -819,7 +831,7 @@ func TestWindowPlanPreservesActualDingTalkSpeaker(t *testing.T) {
 	t.Parallel()
 	const issue = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	for _, source := range []Source{SourceDigitalEmployee, SourceRobot} {
-		turn := Turn{Source: source, SenderName: "被联系的同事", ConversationID: "cid-current", Message: "周五三点可以", HistoryStatus: "loaded"}
+		turn := Turn{Source: source, SenderName: "被联系的同事", SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "周五三点可以", HistoryStatus: "loaded"}
 		got, err := parseValidatedWindowPlan(`{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把这个答复带过去","issue_id":"`+issue+`","purpose":"确认同事周五三点是否可以开会","intent":"confirm","basis":"answer"}]}`, turn, []recallCall{{ConversationID: turn.ConversationID}}, map[string]struct{}{issue: {}})
 		if err != nil || len(got.Items) != 1 {
 			t.Fatalf("source=%s plan=%#v err=%v", source, got, err)
@@ -832,7 +844,7 @@ func TestWindowPlanPreservesActualDingTalkSpeaker(t *testing.T) {
 
 func TestWindowPlanCannotIntroduceUnrecalledTarget(t *testing.T) {
 	t.Parallel()
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "改成线上会议", SenderName: "冬翔"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "改成线上会议", SenderName: "冬翔"}
 	raw := `{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把会议方式改成线上","purpose":"将这次会议的地点改成线上会议","intent":"confirm","issue_id":"unrecalled-issue","basis":"change"}]}`
 	if _, err := parseValidatedWindowPlan(raw, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil); err == nil {
 		t.Fatal("a continuation cannot introduce a target absent from recall")
@@ -852,7 +864,7 @@ func TestWindowPlanCannotIntroduceUnrecalledTarget(t *testing.T) {
 
 func TestWindowPlanWorkReceiptDoesNotRequireModelText(t *testing.T) {
 	t.Parallel()
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "106201", Message: "看下你的环境变量和dws身份 mcp和skills有什么"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-env"), ConversationID: "cid-env", SenderName: "106201", Message: "看下你的环境变量和dws身份 mcp和skills有什么"}
 	recalls := []recallCall{{ConversationID: turn.ConversationID}}
 	empty := `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup"}]}`
 	d, err := parseValidatedWindowPlan(empty, turn, recalls, nil)
@@ -868,7 +880,7 @@ func TestWindowPlanWorkReceiptDoesNotRequireModelText(t *testing.T) {
 
 func TestWindowPlanAcceptsTechnicalSubject(t *testing.T) {
 	t.Parallel()
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-tech", SenderName: "乔宁", Message: "请排查 dws chat data-auth 授权失败"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-tech"), ConversationID: "cid-tech", SenderName: "乔宁", Message: "请排查 dws chat data-auth 授权失败"}
 	d, err := parseValidatedWindowPlan(`{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我来排查授权失败的原因。","purpose":"排查 dws chat data-auth 授权失败的原因和修复方法","intent":"lookup"}]}`, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil)
 	if err != nil || d.Action != ActionIssue || len(d.Items) != 1 {
 		t.Fatalf("technical subject must reach semantic review: d=%+v err=%v", d, err)
@@ -879,7 +891,7 @@ func TestFinishMissingWorkReplyDoesNotSpendRepairRound(t *testing.T) {
 	t.Parallel()
 	empty := `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup"}]}`
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("r0", toolAssocRecall, `{"conversation_id":"cid-env"}`), assistantTool("f0", toolFinish, empty)}}
-	d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "106201", Message: "看下你的环境变量和dws身份 mcp和skills有什么"})
+	d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-env"), ConversationID: "cid-env", SenderName: "106201", Message: "看下你的环境变量和dws身份 mcp和skills有什么"})
 	if err != nil || d.Action != ActionIssue || chat.calls != 2 || chat.checkCalls != 1 || d.UserText != hostWorkReceipt("start_work", "zh") {
 		t.Fatalf("unnecessary reply repair: %+v calls=%d err=%v", d, chat.calls, err)
 	}
@@ -960,7 +972,7 @@ func TestLoopFinishTopLevelIssueIDIsRejectedThenScopedPlan(t *testing.T) {
 		assistantTool("fixed", toolFinish, `{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把七点这个答复带过去","purpose":"向须莫确认今晚几点可以打球","intent":"confirm","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","basis":"answer"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认今晚几点打球","on_this_scene":true}]}`}
-	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Message: "7点", SenderName: "须莫", ConversationID: "cid-v6", HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "员工", Content: "今晚几点打球？"}}})
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Message: "7点", SenderName: "须莫", SceneID: testSceneID("cid-v6"), ConversationID: "cid-v6", HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "员工", Content: "今晚几点打球？"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -981,7 +993,7 @@ func TestLoopFinishTopLevelIssueIDIsRejectedThenScopedPlan(t *testing.T) {
 func TestLoopFinishIssueMissingModelReplyGetsHostReceipt(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("finish", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"向冬翔确认今天吃什么","intent":"ask"}]}`)}}
-	got, err := (&Coordinator{Chat: chat, Tools: &stubTools{recall: `{"items":[]}`}}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Message: "问一下冬翔，今天想吃什么", ConversationID: "cid-dongxiang", SenderName: "冬翔"})
+	got, err := (&Coordinator{Chat: chat, Tools: &stubTools{recall: `{"items":[]}`}}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Message: "问一下冬翔，今天想吃什么", SceneID: testSceneID("cid-dongxiang"), ConversationID: "cid-dongxiang", SenderName: "冬翔"})
 	if err != nil || got.Action != ActionIssue || got.UserText != hostWorkReceipt("start_work", "zh") || got.IssueID != "" || chat.calls != 1 {
 		t.Fatalf("missing work text caused a repair: %+v err=%v", got, err)
 	}
@@ -1113,6 +1125,7 @@ func TestBuildUserPromptIncludesConversationID(t *testing.T) {
 	prompt := buildUserPrompt(Turn{
 		Source:         SourceDigitalEmployee,
 		Addressed:      true,
+		SceneID:        testSceneID("cid-dongxiang"),
 		ConversationID: "cid-dongxiang",
 		PersonID:       "123456",
 		IdentityNote:   IdentityNote(SourceDigitalEmployee, "cid-dongxiang", "123456"),
@@ -1133,7 +1146,7 @@ func TestLoopIssueBusyAckSilences(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("done", toolFinish, `{"actions":[{"kind":"ignore","source_refs":["u1"],"reason":"已结束且没有新请求"}]}`)}}
 	tools := &stubTools{}
-	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "谢谢", ConversationID: "cid-v6", Busy: true})
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "谢谢", SceneID: testSceneID("cid-v6"), ConversationID: "cid-v6", Busy: true})
 	if err != nil || got.Action != ActionSilence || len(got.Items) != 0 || len(tools.calls) != 1 || !strings.HasPrefix(tools.calls[0], toolAssocRecall) {
 		t.Fatalf("closure ACK is no work even at capacity: %#v %v", got, err)
 	}
@@ -1172,7 +1185,7 @@ func TestLoopTaskFinishedSilencesRedundantWrapup(t *testing.T) {
 	delivery := TaskDeliveryContext{Status: "loaded", TaskID: "current-run", Scope: "current_task", Deliveries: []TaskDeliveryEvidence{{ConversationID: "cid-current", MessageID: "msg-result", SentText: "劳动合同法第三条的解释如下。", TextComplete: true}}}
 	result := "劳动合同法第三条的解释如下。"
 	chat := &scriptedCompleter{}
-	got := (&Coordinator{Chat: chat}).Decide(context.Background(), Turn{Loop: LoopTaskFinished, Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "任务已完成", ConversationID: "cid-current", TaskResult: result, AlreadyToldScene: TaskFinishedResultAlreadyDelivered(result, "cid-current", delivery)})
+	got := (&Coordinator{Chat: chat}).Decide(context.Background(), Turn{Loop: LoopTaskFinished, Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "任务已完成", SceneID: testSceneID("cid-current"), ConversationID: "cid-current", TaskResult: result, AlreadyToldScene: TaskFinishedResultAlreadyDelivered(result, "cid-current", delivery)})
 	if got.Action != ActionSilence || got.UserText != "" || chat.calls != 0 {
 		t.Fatalf("this exact result already reached this scene: %#v calls=%d", got, chat.calls)
 	}
@@ -1184,8 +1197,8 @@ func TestLoopTaskFinishedSilencesRedundantWrapup(t *testing.T) {
 func TestLoopTaskFinishedKeepsUntoldProgressForDelegator(t *testing.T) {
 	t.Parallel()
 	delivery := `{"status":"loaded","task_id":"current-run","scope":"current_task","complete":false,"deliveries":[{"conversation_id":"cid-dxxh","message_id":"msg-ask","sent_text":"明天几点开会？","text_complete":true}]}`
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("finish", toolFinish, completionFinishJSON(Turn{ConversationID: "cid-delegator", TaskResult: "已向 dxxh 询问明天开会时间，还没有对方回答。", TaskDeliveryContext: delivery}, "已问 dxxh 明天开会时间，等他回。"))}}
-	got, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{Loop: LoopTaskFinished, Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", ConversationID: "cid-delegator", Message: "任务已完成", TaskResult: "已向 dxxh 询问明天开会时间，还没有对方回答。", TaskDeliveryContext: delivery})
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("finish", toolFinish, completionFinishJSON(Turn{SceneID: testSceneID("cid-delegator"), ConversationID: "cid-delegator", TaskResult: "已向 dxxh 询问明天开会时间，还没有对方回答。", TaskDeliveryContext: delivery}, "已问 dxxh 明天开会时间，等他回。"))}}
+	got, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{Loop: LoopTaskFinished, Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", SceneID: testSceneID("cid-delegator"), ConversationID: "cid-delegator", Message: "任务已完成", TaskResult: "已向 dxxh 询问明天开会时间，还没有对方回答。", TaskDeliveryContext: delivery})
 	if err != nil || got.Action != ActionReply || got.UserText == "" {
 		t.Fatalf("a useful outcome not yet told to this scene must not be blacklisted: %#v err=%v", got, err)
 	}
@@ -1235,6 +1248,7 @@ func TestBuildUserPromptIncludesTaskFinishedWindow(t *testing.T) {
 		Loop:           LoopTaskFinished,
 		Source:         SourceDigitalEmployee,
 		Addressed:      true,
+		SceneID:        testSceneID("cid-dongxiang"),
 		ConversationID: "cid-dongxiang",
 		IssueID:        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
 		TaskResult:     "须莫说周五三点可以。",
@@ -1265,7 +1279,7 @@ func TestLoopShortAnswerRequiresOriginalQuestionBeforePlan(t *testing.T) {
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"确认须莫周五三点是否方便开会","on_this_scene":true}]}`}
 	history := &dwsHistoryStub{history: []HistoryLine{{Role: "员工", Content: "周五三点方便开会吗？", EvidenceID: "question-before-answer"}}}
-	got, err := (&Coordinator{Chat: chat, Tools: tools, DWSHistory: history}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, Message: "三点可以", SenderName: "须莫", ConversationID: "cid-current", HistoryStatus: "not_loaded"})
+	got, err := (&Coordinator{Chat: chat, Tools: tools, DWSHistory: history}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, Message: "三点可以", SenderName: "须莫", SceneID: testSceneID("cid-current"), ConversationID: "cid-current", HistoryStatus: "not_loaded"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1291,7 +1305,7 @@ func TestLoopFailedRecallCannotUnlockNewWork(t *testing.T) {
 		assistantTool("clarify", toolFinish, `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r2"],"reply":"暂时没读到之前的处理记录，我还不能确认是否已接过这件事。"}]}`),
 	}}
 	tools := &stubTools{errors: map[string]error{toolAssocRecall: fmt.Errorf("temporary read failure")}}
-	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ConversationID: "cid-current", Message: "整理这次决策", SenderName: "冬翔"})
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "整理这次决策", SenderName: "冬翔"})
 	if err != nil || got.Action != ActionReply || len(got.Items) != 0 || len(tools.calls) != 2 || chat.calls != 3 {
 		t.Fatalf("failed read cannot authorize duplicate execution: %#v calls=%v err=%v", got, tools.calls, err)
 	}
@@ -1307,7 +1321,7 @@ func TestLoopRepeatedAcceptedRequestRepliesWithoutWork(t *testing.T) {
 		assistantTool("reply", toolFinish, `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"这件事已经排上了，整理好我发你。"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"整理今天会议的决策和行动项","status":"queued","on_this_scene":true}]}`}
-	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, Message: "帮我整理今天会议的决策和行动项", ConversationID: "cid-current", Busy: true})
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, Message: "帮我整理今天会议的决策和行动项", SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Busy: true})
 	if err != nil || got.Action != ActionReply || len(got.Items) != 0 || got.IssueComment != nil || len(tools.calls) != 1 {
 		t.Fatalf("repeating an accepted request is not a second execution: %#v calls=%v err=%v", got, tools.calls, err)
 	}

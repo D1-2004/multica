@@ -27,7 +27,8 @@ import (
 const (
 	catalogTestOrg   = "org-catalog"
 	catalogTestStaff = "staff-catalog-1"
-	catalogTestScene = "cidCatalogScene=="
+	// catalogTestScene is the scene id of a group the catalog agent serves.
+	catalogTestScene = "ca7a1095-0000-4000-8000-000000000001"
 	catalogAppOrigin = "https://app.example.test"
 	catalogWebOrigin = "https://web.example.test"
 )
@@ -336,6 +337,7 @@ func newCatalogFixture(t *testing.T) *catalogFixture {
 		VALUES ($1, $2, $3, $4, $5, now() - interval '1 hour')`, f.agentID, testWorkspaceID, "dws-"+f.agentID, catalogTestOrg, testUserID); err != nil {
 		t.Fatal(err)
 	}
+	registerFixedScene(t, f.agentID, catalogTestOrg, "group", catalogTestScene, "cidCatalogScene==", "Known scene", time.Hour)
 	return f
 }
 

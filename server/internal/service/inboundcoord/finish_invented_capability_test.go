@@ -33,7 +33,7 @@ func TestFinishRevisionHintNamesKindChangeForDifferentDeliverable(t *testing.T) 
 }
 
 func TestFinishCheckAllowsStartWorkWhenReviewerCitesMemoryAsJobPolicy(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-aone", Message: "帮我新建一个事项，标题写成 DIRTY-MEM-FIX"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-aone"), ConversationID: "cid-aone", Message: "帮我新建一个事项，标题写成 DIRTY-MEM-FIX"}
 	raw := `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"新建事项 DIRTY-MEM-FIX","reply":"收到，我这就去建。"}]}`
 	candidate, err := parseValidatedWindowPlan(raw, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil)
 	if err != nil {
@@ -47,7 +47,7 @@ func TestFinishCheckAllowsStartWorkWhenReviewerCitesMemoryAsJobPolicy(t *testing
 }
 
 func TestFinishCheckAllowsStartWorkWhenReviewerInventsCatalogLimit(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-aone", Message: "@VOC决策助理(金龙) 帮我给岚调新建一个aone，内容是支持semantica的能力"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-aone"), ConversationID: "cid-aone", Message: "@VOC决策助理(金龙) 帮我给岚调新建一个aone，内容是支持semantica的能力"}
 	raw := `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"为岚调新建 Aone 工单，内容为支持 semantica 的能力","reply":"收到，我这就用 Aone MCP 给岚调新建工单。"}]}`
 	candidate, err := parseValidatedWindowPlan(raw, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil)
 	if err != nil {

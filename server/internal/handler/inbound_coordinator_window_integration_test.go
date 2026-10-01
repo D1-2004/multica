@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -160,6 +161,7 @@ func TestCoordinatorFreshWindowJudgedAtCapacity(t *testing.T) {
 	ctx := context.Background()
 	agentID := createHandlerTestAgent(t, "collect-capacity-pings", nil)
 	cid := "cid-capacity-" + uuid.NewString()
+	sceneID := uuid.NewString()
 	for i := 0; i < 2; i++ {
 		issueID := createTestIssue(t, fmt.Sprintf("capacity fixture %d", i), "todo", "medium")
 		t.Cleanup(func() { deleteTestIssue(t, issueID) })
@@ -168,7 +170,7 @@ func TestCoordinatorFreshWindowJudgedAtCapacity(t *testing.T) {
 		if err := testPool.QueryRow(ctx, `INSERT INTO assoc_task (workspace_id,agent_id,issue_id,purpose) VALUES ($1,$2,$3,'bounded collect capacity fixture') RETURNING id`, testWorkspaceID, agentID, issueID).Scan(&assocID); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := testPool.Exec(ctx, `INSERT INTO assoc_edge (workspace_id,agent_id,src_type,src_id,dst_type,dst_id,rel) VALUES ($1,$2,'task',$3,'scene',$4,'task_scene')`, testWorkspaceID, agentID, assocID, cid); err != nil {
+		if _, err := testPool.Exec(ctx, `INSERT INTO assoc_edge (workspace_id,agent_id,src_type,src_id,dst_type,dst_id,rel) VALUES ($1,$2,'task',$3,'scene',$4,'task_scene')`, testWorkspaceID, agentID, assocID, sceneID); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
@@ -177,13 +179,13 @@ func TestCoordinatorFreshWindowJudgedAtCapacity(t *testing.T) {
 		})
 	}
 	q := testHandler.Queries
-	count, err := q.CountActiveTasksForConversation(ctx, db.CountActiveTasksForConversationParams{WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID), ConversationID: cid, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
+	count, err := q.CountActiveTasksForConversation(ctx, db.CountActiveTasksForConversationParams{WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID), SceneID: sceneID, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
 	if err != nil || count != 2 {
 		t.Fatalf("fixture capacity=%d err=%v", count, err)
 	}
 	worker := NewInboundCoordinatorJobWorker(testHandler)
 	for _, text := range []string{"你干了吗？", "你没干活啊", "你说话", "你", "说话", "你好", "一项真正的新任务"} {
-		command := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{Conversation: DispatchConversation{OpenConversationID: cid, Type: "single"}, Messages: []DispatchMessage{{Text: text}}}}}
+		command := DispatchCommand{AgentScene: &scene.Ref{SceneID: sceneID}, Event: DispatchEvent{Data: DispatchEventData{Conversation: DispatchConversation{OpenConversationID: cid, Type: "single"}, Messages: []DispatchMessage{{Text: text}}}}}
 		raw, _ := json.Marshal(command)
 		job, err := q.CreateInboundCoordinatorJob(ctx, db.CreateInboundCoordinatorJobParams{AcceptanceID: parseUUID(uuid.NewString()), WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID), UserID: parseUUID(testUserID), EndpointNamespaceID: parseUUID(uuid.NewString()), DispatchEndpointID: "test", IdempotencyKey: uuid.NewString(), Command: raw, ChatSessionID: parseUUID(uuid.NewString()), UserMessageID: parseUUID(uuid.NewString()), AvailableAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}})
 		if err != nil {
@@ -232,6 +234,7 @@ func TestCoordinatorSceneCapacityIsPerDelegatorAndBounded(t *testing.T) {
 	ctx := context.Background()
 	agentID := createHandlerTestAgent(t, "scene-capacity-per-delegator", nil)
 	cid := "cid-delegator-" + uuid.NewString()
+	sceneID := uuid.NewString()
 	q := testHandler.Queries
 	bindMatter := func(label, personKey, status string, fireAt any) {
 		t.Helper()
@@ -246,7 +249,7 @@ func TestCoordinatorSceneCapacityIsPerDelegatorAndBounded(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, edge := range []struct{ dstType, dstID, rel string }{
-			{"scene", cid, "task_scene"},
+			{"scene", sceneID, "task_scene"},
 			{"person", personKey, "task_person"},
 		} {
 			if _, err := testPool.Exec(ctx, `INSERT INTO assoc_edge (workspace_id,agent_id,src_type,src_id,dst_type,dst_id,rel) VALUES ($1,$2,'task',$3,$4,$5,$6)`, testWorkspaceID, agentID, assocID, edge.dstType, edge.dstID, edge.rel); err != nil {
@@ -267,7 +270,7 @@ func TestCoordinatorSceneCapacityIsPerDelegatorAndBounded(t *testing.T) {
 	delegatorCount := func(key string) int64 {
 		t.Helper()
 		count, err := q.CountActiveDelegatorTasksForConversation(ctx, db.CountActiveDelegatorTasksForConversationParams{
-			WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID), ConversationID: cid,
+			WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID), SceneID: sceneID,
 			StaleAfterSecs: sceneCapacityStaleAfter.Seconds(), PersonKeys: []string{key},
 		})
 		if err != nil {
@@ -285,7 +288,7 @@ func TestCoordinatorSceneCapacityIsPerDelegatorAndBounded(t *testing.T) {
 	worker := NewInboundCoordinatorJobWorker(testHandler)
 	judged := func(staffID string) (db.InboundCoordinatorJob, DispatchCommand) {
 		t.Helper()
-		command := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
+		command := DispatchCommand{AgentScene: &scene.Ref{SceneID: sceneID}, Event: DispatchEvent{Data: DispatchEventData{
 			Conversation: DispatchConversation{OpenConversationID: cid, Type: "group"},
 			Sender:       DispatchSender{DisplayName: staffID, StaffID: staffID},
 			Messages:     []DispatchMessage{{Text: "一项真正的新任务", SenderDisplayName: staffID, SenderStaffID: staffID}},
@@ -341,7 +344,7 @@ func TestCoordinatorSceneCapacityIsPerDelegatorAndBounded(t *testing.T) {
 func TestSceneCapacityFollowsThePersonAcrossIdentifiers(t *testing.T) {
 	ctx := context.Background()
 	agentID := createHandlerTestAgent(t, "scene-capacity-alias", nil)
-	cid := "cid-alias-" + uuid.NewString()
+	sceneID := uuid.NewString()
 	suffix := uuid.NewString()
 	staffKey, uidKey := "staff-"+suffix, "8"+suffix[:6]
 	// The historical matter was bound when only the staffId was known.
@@ -353,7 +356,7 @@ func TestSceneCapacityFollowsThePersonAcrossIdentifiers(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, edge := range []struct{ dstType, dstID, rel string }{
-		{"scene", cid, "task_scene"},
+		{"scene", sceneID, "task_scene"},
 		{"person", staffKey, "task_person"},
 	} {
 		if _, err := testPool.Exec(ctx, `INSERT INTO assoc_edge (workspace_id,agent_id,src_type,src_id,dst_type,dst_id,rel) VALUES ($1,$2,'task',$3,$4,$5,$6)`, testWorkspaceID, agentID, assocID, edge.dstType, edge.dstID, edge.rel); err != nil {
@@ -374,22 +377,22 @@ func TestSceneCapacityFollowsThePersonAcrossIdentifiers(t *testing.T) {
 	})
 
 	count, err := testHandler.Queries.CountActiveDelegatorTasksForConversation(ctx, db.CountActiveDelegatorTasksForConversationParams{
-		WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID), ConversationID: cid,
+		WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID), SceneID: sceneID,
 		StaleAfterSecs: sceneCapacityStaleAfter.Seconds(), PersonKeys: []string{uidKey},
 	})
 	if err != nil || count != 1 {
 		t.Fatalf("the uid must still see the matter bound under the staffId: count=%d err=%v", count, err)
 	}
-	resolved := resolveSceneDelegator(ctx, testHandler, parseUUID(testWorkspaceID), parseUUID(agentID), sceneDelegator{ConversationID: cid, Keys: []string{uidKey}})
+	resolved := resolveSceneDelegator(ctx, testHandler, parseUUID(testWorkspaceID), parseUUID(agentID), sceneDelegator{SceneID: sceneID, Keys: []string{uidKey}})
 	if !resolved.resolved || len(resolved.Keys) < 2 {
 		t.Fatalf("grouping must use the alias closure: %+v", resolved)
 	}
-	fromStaff := resolveSceneDelegator(ctx, testHandler, parseUUID(testWorkspaceID), parseUUID(agentID), sceneDelegator{ConversationID: cid, Keys: []string{staffKey}})
+	fromStaff := resolveSceneDelegator(ctx, testHandler, parseUUID(testWorkspaceID), parseUUID(agentID), sceneDelegator{SceneID: sceneID, Keys: []string{staffKey}})
 	if fromStaff.key() != resolved.key() {
 		t.Fatalf("both identifiers must group onto one budget: %q vs %q", fromStaff.key(), resolved.key())
 	}
 	stranger, err := testHandler.Queries.CountActiveDelegatorTasksForConversation(ctx, db.CountActiveDelegatorTasksForConversationParams{
-		WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID), ConversationID: cid,
+		WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(agentID), SceneID: sceneID,
 		StaleAfterSecs: sceneCapacityStaleAfter.Seconds(), PersonKeys: []string{"staff-other-" + suffix},
 	})
 	if err != nil || stranger != 0 {

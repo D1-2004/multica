@@ -190,7 +190,7 @@ func TestPromptComponentsAndLayersStore(t *testing.T) {
 	}
 	for _, scope := range []struct{ scopeType, key, resourceType, resourceID string }{
 		{ScopeOrg, "org-home", ResourceConnector, f.connectorID},
-		{ScopeScene, "cidLayers", ResourceSkill, f.skillID},
+		{ScopeScene, "aaaaaaaa-0000-4000-8000-000000000001", ResourceSkill, f.skillID},
 		{ScopePerson, "staff-1", ResourceConnector, f.connectorID},
 	} {
 		if _, err := UpsertBinding(ctx, f.tx, BindingWrite{WorkspaceID: f.workspaceID, AgentID: f.agentID, ScopeType: scope.scopeType, OrgID: "org-home",
@@ -211,7 +211,7 @@ func TestPromptComponentsAndLayersStore(t *testing.T) {
 		ScopeKey: "org-home", MCPConfig: json.RawMessage(`{"mcpServers":{"crm":{"url":"https://crm"}}}`)}); err != nil {
 		t.Fatal(err)
 	}
-	layers, err := LoadLayers(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-home", Org: true, SceneKey: "cidLayers", PersonKey: "staff-1"})
+	layers, err := LoadLayers(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-home", Org: true, SceneID: "aaaaaaaa-0000-4000-8000-000000000001", PersonKey: "staff-1"})
 	if err != nil || len(layers) != 3 {
 		t.Fatalf("layers=%+v err=%v", layers, err)
 	}
@@ -231,25 +231,25 @@ func TestPromptComponentsAndLayersStore(t *testing.T) {
 		t.Fatalf("merged=%+v", merged)
 	}
 	// Credentials of the selected layers, person first.
-	for _, scope := range []struct{ scopeType, key string }{{ScopeOrg, "org-home"}, {ScopeScene, "cidLayers"}, {ScopePerson, "staff-1"}, {ScopePerson, "staff-2"}} {
+	for _, scope := range []struct{ scopeType, key string }{{ScopeOrg, "org-home"}, {ScopeScene, "aaaaaaaa-0000-4000-8000-000000000001"}, {ScopePerson, "staff-1"}, {ScopePerson, "staff-2"}} {
 		if _, err := UpsertCredential(ctx, f.tx, CredentialBinding{WorkspaceID: f.workspaceID, AgentID: f.agentID, ConnectorID: f.connectorID,
 			ScopeType: scope.scopeType, OrgID: "org-home", ScopeKey: scope.key}, []byte{1}, scope.scopeType, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
-	credentials, err := LayerCredentials(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-home", Org: true, SceneKey: "cidLayers", PersonKey: "staff-1"})
+	credentials, err := LayerCredentials(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-home", Org: true, SceneID: "aaaaaaaa-0000-4000-8000-000000000001", PersonKey: "staff-1"})
 	if err != nil || len(credentials) != 3 || credentials[0].ScopeType != ScopePerson || credentials[0].ScopeKey != "staff-1" ||
 		credentials[1].ScopeType != ScopeScene || credentials[2].ScopeType != ScopeOrg || len(credentials[2].Ciphertext) == 0 {
 		t.Fatalf("layer credentials=%+v err=%v", credentials, err)
 	}
-	if credentials, err := LayerCredentials(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-home", SceneKey: "cidLayers"}); err != nil ||
+	if credentials, err := LayerCredentials(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-home", SceneID: "aaaaaaaa-0000-4000-8000-000000000001"}); err != nil ||
 		len(credentials) != 1 || credentials[0].ScopeType != ScopeScene {
 		t.Fatalf("scene-only credentials=%+v err=%v", credentials, err)
 	}
 	if none, err := LoadLayers(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-home"}); err != nil || len(none) != 0 {
 		t.Fatalf("empty selection=%+v err=%v", none, err)
 	}
-	if _, err := LoadLayers(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-home", SceneKey: "not-a-cid"}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := LoadLayers(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-home", SceneID: "cidNotASceneID"}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("bad scene key: %v", err)
 	}
 }

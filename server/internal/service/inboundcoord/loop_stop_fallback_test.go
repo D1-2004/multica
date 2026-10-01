@@ -96,7 +96,7 @@ func TestDeterministicLoopStopFallsBackInsteadOfDeferring(t *testing.T) {
 		for _, addressed := range []bool{true, false} {
 			chat, tools := script()
 			// An unaddressed proactive group can end silently; a DM cannot.
-			turn := Turn{Source: SourceDigitalEmployee, Addressed: addressed, ProactiveConversation: !addressed, ChatType: "group", ConversationID: "cid-current", Message: "继续整理那条决策", SenderName: "冬翔"}
+			turn := Turn{Source: SourceDigitalEmployee, Addressed: addressed, ProactiveConversation: !addressed, ChatType: "group", SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "继续整理那条决策", SenderName: "冬翔"}
 			var saved []Decision
 			ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(d Decision) error { saved = append(saved, d); return nil })
 			d := (&Coordinator{LLM: llm.New(llm.Config{APIKey: "test-key"}), Chat: chat, Tools: tools}).Decide(ctx, turn)
@@ -115,7 +115,7 @@ func TestDeterministicLoopStopFallsBackInsteadOfDeferring(t *testing.T) {
 func TestLoopStopFallbackStaysDeferredWhenCheckpointFails(t *testing.T) {
 	chat, tools := loopStopScripts(t)[loopStopReviewDeadlock]()
 	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { return errors.New("db down") })
-	turn := Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", ConversationID: "cid-current", Message: "收到了吗", SenderName: "冬翔"}
+	turn := Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "收到了吗", SenderName: "冬翔"}
 	d := (&Coordinator{LLM: llm.New(llm.Config{APIKey: "test-key"}), Chat: chat, Tools: tools}).Decide(ctx, turn)
 	if d.Action != ActionDeferred || d.UserText != "" || d.Reason != loopStopReviewDeadlock {
 		t.Fatalf("an unsaved fallback must not be spoken: %#v", d)
@@ -140,7 +140,7 @@ func TestTransientLoopFailureStaysDeferred(t *testing.T) {
 	// One scripted round, then the completer runs dry: a model error, which
 	// the job worker should retry rather than answer with the fallback.
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("recall", toolAssocRecall, `{"since":"48h"}`)}}
-	turn := Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", ConversationID: "cid-current", Message: "在吗", SenderName: "冬翔"}
+	turn := Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: "在吗", SenderName: "冬翔"}
 	d := (&Coordinator{LLM: llm.New(llm.Config{APIKey: "test-key"}), Chat: chat, Tools: &stubTools{}}).Decide(context.Background(), turn)
 	if d.Action != ActionDeferred || d.Reason != "coordinator_undecided" || d.UserText != "" || d.LoopStopFallback() {
 		t.Fatalf("model errors must stay deferred for the job retry: %#v", d)

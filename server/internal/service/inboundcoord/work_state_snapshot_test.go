@@ -36,7 +36,7 @@ func workStateSnapshotFixture(t *testing.T) string {
 }
 
 func workStateSnapshotTurn() Turn {
-	return Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", SenderName: "当前用户", Message: "这个任务执行得怎么样了？", HistoryStatus: "not_loaded"}
+	return Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", SenderName: "当前用户", Message: "这个任务执行得怎么样了？", HistoryStatus: "not_loaded"}
 }
 
 func TestWorkStateSnapshotReuseKeepsPartialEvidenceAndReadRef(t *testing.T) {

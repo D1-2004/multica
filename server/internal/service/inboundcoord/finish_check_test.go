@@ -405,7 +405,7 @@ func TestFinishCheckRejectsUnknownQuoteReferencesBeforeSaving(t *testing.T) {
 			}
 			saves := 0
 			ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { saves++; return nil })
-			d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(ctx, Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: requestText, Instructions: "Only draft. Do not send without approval."})
+			d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(ctx, Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", Message: requestText, Instructions: "Only draft. Do not send without approval."})
 			if err == nil || d.Action != ActionDeferred || saves != 0 || chat.checkCalls != 2 {
 				t.Fatalf("ungrounded quotation must not allow any durable plan: action=%s saves=%d checks=%d err=%v", d.Action, saves, chat.checkCalls, err)
 			}

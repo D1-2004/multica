@@ -151,7 +151,7 @@ type coordinatorReplayFixture struct {
 func coordinatorReplayFixtures() []coordinatorReplayFixture {
 	stamp := time.Date(2026, 9, 7, 11, 14, 1, 0, time.UTC)
 	base := func(message string) Turn {
-		return Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", ConversationID: "cidReplaySyntheticSceneA==", PersonID: "synthetic-speaker", SenderName: "小周", AgentName: "小助", Message: message, HistoryStatus: "not_loaded", SkillsStatus: "empty", SceneMemoryStatus: "empty", MessageTimestamp: stamp, HistoryBefore: stamp, EvidenceID: "synthetic-current"}
+		return Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", SceneID: testSceneID("cidReplaySyntheticSceneA=="), ConversationID: "cidReplaySyntheticSceneA==", PersonID: "synthetic-speaker", SenderName: "小周", AgentName: "小助", Message: message, HistoryStatus: "not_loaded", SkillsStatus: "empty", SceneMemoryStatus: "empty", MessageTimestamp: stamp, HistoryBefore: stamp, EvidenceID: "synthetic-current"}
 	}
 	history := func(question string) []HistoryLine {
 		return []HistoryLine{{Role: "assistant", Content: question, EvidenceID: "synthetic-prior-question", SenderID: "synthetic-agent", Timestamp: stamp.Add(-time.Minute)}}
