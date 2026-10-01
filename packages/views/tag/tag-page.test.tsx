@@ -1,10 +1,13 @@
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TagState } from "@multica/core/tag";
 import { renderWithI18n } from "../test/i18n";
 import { TagPage } from "./tag-page";
 
-const { detailProps, navigation, tagQuery } = vi.hoisted(() => ({
+const { detailProps, navigation, tagQuery, renameMutate, deleteMutate } = vi.hoisted(() => ({
+  renameMutate: vi.fn(),
+  deleteMutate: vi.fn(),
   detailProps: { current: null as null | { agentId: string; tagView?: { role: string; backHref?: string; backLabel?: string } } },
   navigation: { current: { pathname: "/acme/tag", searchParams: new URLSearchParams() } },
   tagQuery: { current: { data: undefined as TagState | undefined, isLoading: false } },
@@ -19,7 +22,8 @@ vi.mock("@multica/core/tag", () => ({
   useAdoptTagTenant: () => ({ mutate: vi.fn(), isPending: false }),
   useApplyTag: () => ({ mutate: vi.fn(), isPending: false }),
   useCreateTagTenant: () => ({ mutate: vi.fn(), isPending: false }),
-  useDeleteTagTenant: () => ({ mutate: vi.fn(), isPending: false }),
+  useDeleteTagTenant: () => ({ mutate: deleteMutate, isPending: false }),
+  useRenameTagTenant: () => ({ mutate: renameMutate, isPending: false }),
 }));
 vi.mock("../navigation", () => ({
   AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
@@ -78,6 +82,8 @@ function stateWith(overrides: Partial<TagState> = {}): TagState {
 
 describe("TagPage", () => {
   beforeEach(() => {
+    renameMutate.mockReset();
+    deleteMutate.mockReset();
     detailProps.current = null;
     navigation.current = { pathname: "/acme/tag", searchParams: new URLSearchParams() };
   });
@@ -129,5 +135,30 @@ describe("TagPage", () => {
     expect(
       screen.getByText("The shared configuration has changes that are not applied to any tenant yet."),
     ).toBeTruthy();
+  });
+
+  it("manages tenants: renames one and deletes it with its employee archived", async () => {
+    const user = userEvent.setup();
+    tagQuery.current = { data: stateWith(), isLoading: false };
+    renderWithI18n(<TagPage />);
+
+    await user.click(screen.getByRole("button", { name: "Switch tenant" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Manage tenants…" }));
+    const manage = await screen.findByRole("dialog", { name: "Manage tenants" });
+
+    const name = within(manage).getByLabelText("Enterprise name");
+    await user.clear(name);
+    await user.type(name, "Think");
+    await user.click(within(manage).getByRole("button", { name: "Save" }));
+    expect(renameMutate).toHaveBeenCalledWith({ tenantId: "t-1", name: "Think" }, expect.anything());
+
+    await user.click(within(manage).getByRole("button", { name: "Delete tenant Think测试组织" }));
+    const confirm = await screen.findByRole("dialog", { name: "Delete tenant" });
+    expect(within(confirm).getByRole("checkbox")).toBeChecked();
+    await user.click(within(confirm).getByRole("button", { name: "Delete tenant" }));
+    expect(deleteMutate).toHaveBeenCalledWith(
+      { tenantId: "t-1", employeeAgentId: "employee-1", archiveEmployee: true },
+      expect.anything(),
+    );
   });
 });

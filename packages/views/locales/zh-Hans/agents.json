@@ -1727,6 +1727,7 @@
       "all_memory": "全部记忆",
       "empty_title": "还没有租户",
       "empty_hint": "用钉钉 OrgId 新建租户。智能体在钉钉里对话后，群聊和个人会出现在这里。",
+      "tag_empty_hint": "这个租户的企业就是它所绑定数字员工的钉钉组织。先在「配置 → 数字员工」里绑定，数字员工在钉钉里对话后，群聊和个人会出现在这里。",
       "untitled_group": "未命名群聊",
       "select_prompt": "选择一个租户、群聊或个人。",
       "back": "场域",
@@ -2428,7 +2429,20 @@
     "tenant_adopted": "已添加租户 {{name}}",
     "action_failed": "操作失败：{{message}}",
     "template_badge": "模板",
-    "remove_tenant": "移出 Tag",
-    "remove_tenant_confirm": "把 {{name}} 移出 Tag？智能体、数字员工绑定和场域都会保留。"
+    "manage_tenants": "管理租户…",
+    "manage_title": "管理租户",
+    "manage_description": "改名或删除租户。员工智能体还是默认名时，改名会一起改它的名字。",
+    "tenants_empty": "还没有租户",
+    "employee_agent": "员工智能体：{{name}}",
+    "save": "保存",
+    "close": "关闭",
+    "tenant_renamed": "已改名为 {{name}}",
+    "delete_tenant": "删除租户",
+    "delete_tenant_named": "删除租户 {{name}}",
+    "delete_tenant_confirm": "删除租户「{{name}}」？它会被移出 Tag。",
+    "archive_employee": "同时归档员工智能体「{{name}}」",
+    "archive_employee_hint": "会解除它的钉钉数字员工绑定，不再接单。",
+    "keep_employee_hint": "智能体、数字员工绑定和场域保留，成为普通智能体。",
+    "tenant_deleted": "已删除租户 {{name}}"
   }
 }

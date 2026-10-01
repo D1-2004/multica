@@ -65,14 +65,23 @@ export function useRenameTagTenant(wsId: string) {
   return useMutation({
     mutationFn: (input: { tenantId: string; name: string }) =>
       api.renameTagTenant(wsId, input.tenantId, input.name),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: tagKeys.all(wsId) }),
+    // The employee agent may be renamed along with the tenant.
+    onSettled: () => invalidateTagViews(queryClient, wsId),
   });
 }
 
+/**
+ * Removes a tenant from the Tag. With archiveEmployee its employee agent is
+ * archived afterwards (which also unbinds its DingTalk digital employee);
+ * otherwise it stays as an ordinary agent.
+ */
 export function useDeleteTagTenant(wsId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (tenantId: string) => api.deleteTagTenant(wsId, tenantId),
+    mutationFn: async (input: { tenantId: string; employeeAgentId: string; archiveEmployee: boolean }) => {
+      await api.deleteTagTenant(wsId, input.tenantId);
+      if (input.archiveEmployee) await api.archiveAgent(input.employeeAgentId);
+    },
     onSettled: () => invalidateTagViews(queryClient, wsId),
   });
 }

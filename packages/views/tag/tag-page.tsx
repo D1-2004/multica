@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlertCircle, Building2, Check, ChevronDown, Globe, Plus, RefreshCw, Tag as TagIcon, UserPlus, Unlink } from "lucide-react";
+import { AlertCircle, Building2, Check, ChevronDown, Globe, Plus, RefreshCw, Settings2, Tag as TagIcon, Trash2, UserPlus } from "lucide-react";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
@@ -12,6 +12,7 @@ import {
   useApplyTag,
   useCreateTagTenant,
   useDeleteTagTenant,
+  useRenameTagTenant,
   useWorkspaceTag,
   type TagState,
   type TagSummary,
@@ -52,7 +53,7 @@ const TENANT_PARAM = "tag_tenant";
 /** Params that only mean something inside one agent's page. */
 const AGENT_SCOPED_PARAMS = ["tenant", "node", "scene", "scene_tab", "app"];
 
-type TagDialog = "new" | "adopt" | "apply" | "remove" | null;
+type TagDialog = "new" | "adopt" | "apply" | "manage" | null;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -71,6 +72,7 @@ export function TagPage() {
   const navigation = useNavigation();
   const { data: state, isLoading } = useWorkspaceTag(wsId);
   const [dialog, setDialog] = useState<TagDialog>(null);
+  const [deleting, setDeleting] = useState<TagTenant | null>(null);
 
   const selectedId = navigation.searchParams.get(TENANT_PARAM);
   const tag = state?.tag ?? null;
@@ -206,14 +208,18 @@ export function TagPage() {
         />
       ) : null}
       {dialog === "apply" ? <ApplyDialog wsId={wsId} state={state} onClose={() => setDialog(null)} /> : null}
-      {dialog === "remove" && tenant ? (
-        <RemoveTenantDialog
+      {dialog === "manage" ? (
+        <ManageTenantsDialog wsId={wsId} state={state} onClose={() => setDialog(null)} onDelete={setDeleting} />
+      ) : null}
+      {deleting ? (
+        <DeleteTenantDialog
           wsId={wsId}
-          tenant={tenant}
-          onClose={() => setDialog(null)}
-          onRemoved={() => {
-            setDialog(null);
-            selectTenant(null);
+          tenant={deleting}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            // Leave the deleted tenant's page; the manage dialog stays open.
+            if (deleting.id === tenant?.id) selectTenant(null);
+            setDeleting(null);
           }}
         />
       ) : null}
@@ -330,10 +336,10 @@ function TagTenantSwitcher({
                   {t(($) => $.tag_page.apply)}
                 </DropdownMenuItem>
               ) : null}
-              {selected ? (
-                <DropdownMenuItem variant="destructive" onClick={() => onDialog("remove")}>
-                  <Unlink className="h-4 w-4" aria-hidden="true" />
-                  {t(($) => $.tag_page.remove_tenant)}
+              {state.tenants.length > 0 ? (
+                <DropdownMenuItem onClick={() => onDialog("manage")}>
+                  <Settings2 className="h-4 w-4" aria-hidden="true" />
+                  {t(($) => $.tag_page.manage_tenants)}
                 </DropdownMenuItem>
               ) : null}
             </DropdownMenuGroup>
@@ -566,33 +572,146 @@ function ApplyDialog({ wsId, state, onClose }: { wsId: string; state: TagState; 
   );
 }
 
-function RemoveTenantDialog({
+/** 管理租户: rename or delete any tenant of the Tag. */
+function ManageTenantsDialog({
+  wsId,
+  state,
+  onClose,
+  onDelete,
+}: {
+  wsId: string;
+  state: TagState;
+  onClose: () => void;
+  onDelete: (tenant: TagTenant) => void;
+}) {
+  const { t } = useT("agents");
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{t(($) => $.tag_page.manage_title)}</DialogTitle>
+          <DialogDescription>{t(($) => $.tag_page.manage_description)}</DialogDescription>
+        </DialogHeader>
+        {state.tenants.length === 0 ? (
+          <p className="py-6 text-center text-caption text-muted-foreground">{t(($) => $.tag_page.tenants_empty)}</p>
+        ) : (
+          <div className="max-h-[60vh] divide-y overflow-y-auto rounded-lg border">
+            {state.tenants.map((item) => (
+              <ManagedTenantRow key={item.id} wsId={wsId} tenant={item} onDelete={() => onDelete(item)} />
+            ))}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            {t(($) => $.tag_page.close)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ManagedTenantRow({ wsId, tenant, onDelete }: { wsId: string; tenant: TagTenant; onDelete: () => void }) {
+  const { t } = useT("agents");
+  const rename = useRenameTagTenant(wsId);
+  const [name, setName] = useState(tenant.name);
+  const trimmed = name.trim();
+  const changed = trimmed !== "" && trimmed !== tenant.name;
+
+  const save = () => {
+    if (!changed || rename.isPending) return;
+    rename.mutate(
+      { tenantId: tenant.id, name: trimmed },
+      {
+        onSuccess: () => toast.success(t(($) => $.tag_page.tenant_renamed, { name: trimmed })),
+        onError: (error) => toast.error(t(($) => $.tag_page.action_failed, { message: errorMessage(error) })),
+      },
+    );
+  };
+
+  return (
+    <div className="flex items-start gap-3 px-3 py-3">
+      <Building2 className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <div className="flex gap-2">
+          <Input
+            value={name}
+            maxLength={64}
+            aria-label={t(($) => $.tag_page.tenant_name)}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") save();
+            }}
+          />
+          <Button variant="outline" disabled={!changed || rename.isPending} onClick={save}>
+            {t(($) => $.tag_page.save)}
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+          {tenant.orgId ? <span className="font-mono text-caption text-muted-foreground">{tenant.orgId}</span> : null}
+          <TenantStatus tenant={tenant} />
+          <span className="min-w-0 truncate text-caption text-muted-foreground">
+            {t(($) => $.tag_page.employee_agent, { name: tenant.employeeName })}
+          </span>
+        </div>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="shrink-0 text-destructive hover:text-destructive"
+        aria-label={t(($) => $.tag_page.delete_tenant_named, { name: tenant.name })}
+        onClick={onDelete}
+      >
+        <Trash2 className="h-4 w-4" aria-hidden="true" />
+      </Button>
+    </div>
+  );
+}
+
+function DeleteTenantDialog({
   wsId,
   tenant,
   onClose,
-  onRemoved,
+  onDeleted,
 }: {
   wsId: string;
   tenant: TagTenant;
   onClose: () => void;
-  onRemoved: () => void;
+  onDeleted: () => void;
 }) {
   const { t } = useT("agents");
   const remove = useDeleteTagTenant(wsId);
+  // An archived employee has nothing left to archive.
+  const [archiveEmployee, setArchiveEmployee] = useState(!tenant.employeeArchived);
   return (
     <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
-      <DialogContent className="max-w-sm" showCloseButton={false}>
-        <div className="flex items-center gap-3">
+      <DialogContent className="max-w-md" showCloseButton={false}>
+        <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10">
             <AlertCircle className="h-5 w-5 text-destructive" />
           </div>
           <DialogHeader className="flex-1 gap-1">
-            <DialogTitle className="text-body font-semibold">{t(($) => $.tag_page.remove_tenant)}</DialogTitle>
+            <DialogTitle className="text-body font-semibold">{t(($) => $.tag_page.delete_tenant)}</DialogTitle>
             <DialogDescription className="text-caption">
-              {t(($) => $.tag_page.remove_tenant_confirm, { name: tenant.name })}
+              {t(($) => $.tag_page.delete_tenant_confirm, { name: tenant.name })}
             </DialogDescription>
           </DialogHeader>
         </div>
+        {tenant.employeeArchived ? null : (
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5">
+            <Checkbox
+              className="mt-0.5"
+              checked={archiveEmployee}
+              onCheckedChange={(checked) => setArchiveEmployee(checked === true)}
+            />
+            <div className="min-w-0 space-y-0.5">
+              <div className="text-body">{t(($) => $.tag_page.archive_employee, { name: tenant.employeeName })}</div>
+              <div className="text-caption text-muted-foreground">
+                {archiveEmployee ? t(($) => $.tag_page.archive_employee_hint) : t(($) => $.tag_page.keep_employee_hint)}
+              </div>
+            </div>
+          </label>
+        )}
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             {t(($) => $.tag_page.cancel)}
@@ -601,13 +720,19 @@ function RemoveTenantDialog({
             variant="destructive"
             disabled={remove.isPending}
             onClick={() =>
-              remove.mutate(tenant.id, {
-                onSuccess: onRemoved,
-                onError: (error) => toast.error(t(($) => $.tag_page.action_failed, { message: errorMessage(error) })),
-              })
+              remove.mutate(
+                { tenantId: tenant.id, employeeAgentId: tenant.employeeAgentId, archiveEmployee },
+                {
+                  onSuccess: () => {
+                    toast.success(t(($) => $.tag_page.tenant_deleted, { name: tenant.name }));
+                    onDeleted();
+                  },
+                  onError: (error) => toast.error(t(($) => $.tag_page.action_failed, { message: errorMessage(error) })),
+                },
+              )
             }
           >
-            {t(($) => $.tag_page.remove_tenant)}
+            {t(($) => $.tag_page.delete_tenant)}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -1536,6 +1536,7 @@
       "all_memory": "모든 기억",
       "empty_title": "아직 테넌트가 없습니다",
       "empty_hint": "DingTalk OrgId로 테넌트를 만드세요. 에이전트가 DingTalk에서 대화하면 그룹과 개인이 여기에 표시됩니다.",
+      "tag_empty_hint": "This tenant's enterprise is the DingTalk organization of its digital employee. Bind the digital employee under Configuration → Digital employee; its groups and people appear here after it talks in DingTalk.",
       "untitled_group": "이름 없는 그룹 채팅",
       "select_prompt": "테넌트, 그룹 또는 개인을 선택하세요.",
       "back": "장면",
@@ -2420,7 +2421,20 @@
     "tenant_adopted": "Added tenant {{name}}",
     "action_failed": "Failed: {{message}}",
     "template_badge": "Template",
-    "remove_tenant": "Remove from Tag",
-    "remove_tenant_confirm": "Remove {{name}} from the Tag? Its agent, digital employee binding and scenes are kept."
+    "manage_tenants": "Manage tenants…",
+    "manage_title": "Manage tenants",
+    "manage_description": "Rename or delete tenants. Renaming also renames the tenant's employee agent while it still has its default name.",
+    "tenants_empty": "No tenants yet",
+    "employee_agent": "Employee agent: {{name}}",
+    "save": "Save",
+    "close": "Close",
+    "tenant_renamed": "Renamed to {{name}}",
+    "delete_tenant": "Delete tenant",
+    "delete_tenant_named": "Delete tenant {{name}}",
+    "delete_tenant_confirm": "Delete tenant {{name}}? It is removed from the Tag.",
+    "archive_employee": "Also archive its employee agent {{name}}",
+    "archive_employee_hint": "Unbinds its DingTalk digital employee; it stops taking work.",
+    "keep_employee_hint": "The agent, its digital employee binding and its scenes stay as an ordinary agent.",
+    "tenant_deleted": "Deleted tenant {{name}}"
   }
 }
