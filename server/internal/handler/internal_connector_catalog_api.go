@@ -26,7 +26,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -37,17 +36,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
 	"github.com/multica-ai/multica/server/internal/util"
 )
-
-// ConnectorOAuthCallbackPath is the public DCR OAuth callback route. The
-// router registers it outside the authenticated group.
-const ConnectorOAuthCallbackPath = connectorOAuthCallbackPath
-
-// IsConnectorOAuthCallback reports whether a GitHub App callback request
-// completes an official app connect (a "mcpc." state), so the router can
-// rate-limit those like the DCR callback without touching the install flow.
-func IsConnectorOAuthCallback(r *http.Request) bool {
-	return isConnectorOAuthState(r.URL.Query().Get("state"))
-}
 
 const (
 	// connectorOAuthStartBodyLimit bounds the optional start body.
@@ -295,25 +283,21 @@ func (h *Handler) StartContextConfigConnection(w http.ResponseWriter, r *http.Re
 	writeConnectorOAuthStarted(w, started)
 }
 
-// ConnectorOAuthCallback is the provider redirect of DCR official apps.
-func (h *Handler) ConnectorOAuthCallback(w http.ResponseWriter, r *http.Request) {
-	h.serveConnectorOAuthCallback(w, r, connectorOAuthViaDCR)
+func init() {
+	connectorOAuthCompleteLocal = (*Handler).completeConnectorOAuthCallback
 }
 
-// serveConnectorOAuthCallback completes a connect from a provider redirect
-// and sends the browser to the destination recorded at start with
+// completeConnectorOAuthCallback completes a connect of this deployment
+// from a provider redirect (serveConnectorOAuthCallback has already
+// forwarded other deployments' callbacks) and sends the browser to the
+// destination recorded at start with
 // ?connected=<slug> or ?connect_error=<code>. It reads and clears the
 // state's browser binding cookie. An unknown, expired or replayed state has
 // no trusted destination and gets a small page linking back to the app
 // instead. The work runs detached from the browser request (bounded by its
 // own timeout), because the state is consumed first and a dropped
 // connection must not lose a code that was already accepted.
-func (h *Handler) serveConnectorOAuthCallback(w http.ResponseWriter, r *http.Request, via string) {
-	// A callback of another deployment's connect (its state names that
-	// deployment) is forwarded there or refused before any local handling.
-	if h.forwardConnectorOAuthCallback(w, r, via) {
-		return
-	}
+func (h *Handler) completeConnectorOAuthCallback(w http.ResponseWriter, r *http.Request, via string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	query := r.URL.Query()
@@ -338,30 +322,6 @@ func (h *Handler) serveConnectorOAuthCallback(w http.ResponseWriter, r *http.Req
 		return
 	}
 	http.Redirect(w, r, outcome.RedirectURL, http.StatusFound)
-}
-
-// writeConnectorOAuthInvalidPage answers an unknown, expired or replayed
-// connect callback with a small same-origin page instead of a
-// JSON body: the browser, often the DingTalk WebView, shows the response
-// directly. It links to the app's pages; nothing in it comes from the
-// request.
-func (h *Handler) writeConnectorOAuthInvalidPage(w http.ResponseWriter) {
-	origin := html.EscapeString(h.connectorOAuthAppOrigin())
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
-	w.WriteHeader(http.StatusBadRequest)
-	_, _ = io.WriteString(w, `<!doctype html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>连接已失效</title></head>
-<body style="font-family:system-ui,-apple-system,sans-serif;max-width:32rem;margin:12vh auto;padding:0 16px;line-height:1.6;color:#1f2328;background:#fff">
-<h1 style="font-size:1.25rem;margin:0 0 .5rem">连接已失效</h1>
-<p style="margin:0 0 .5rem">这次连接已过期或已被使用。请回到原页面重新连接。</p>
-<p lang="en" style="margin:0 0 1.5rem;color:#59636e">This connection attempt is invalid or has expired. Go back and connect again.</p>
-<p style="margin:0"><a href="`+origin+`/dingtalk/configure">返回连接配置页</a> · <a href="`+origin+`/">返回工作台</a></p>
-</body>
-</html>
-`)
 }
 
 // writeConnectorOAuthStartError maps a startConnectorOAuth error to a
