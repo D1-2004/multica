@@ -103,7 +103,7 @@ WITH candidate AS (
       AND sm.available_at <= now()
       AND sm.blocked_at IS NULL
       AND (sm.lease_token IS NULL OR sm.lease_expires_at <= now())
-      AND a.agent_scene_memory_write_enabled
+      AND a.scene_memory_write_enabled
       AND a.archived_at IS NULL
     ORDER BY sm.available_at, sm.dirty_since NULLS FIRST, sm.scene_id
     FOR UPDATE OF sm SKIP LOCKED

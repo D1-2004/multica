@@ -26,14 +26,14 @@ import (
 // ActionInput is a frozen dispatch snapshot. Credential material must never be
 // included here: this value is persisted before any external operation.
 type ActionInput struct {
-	ActionID             string `json:"action_id,omitempty"`
-	WorkspaceID          string `json:"workspace_id"`
-	AgentID              string `json:"agent_id"`
-	TaskID               string `json:"task_id,omitempty"`
-	IssueID              string `json:"issue_id,omitempty"`
-	RequestID            string `json:"request_id"`
-	DWSUID               string `json:"dws_uid"`
-	DWSOrgID             string `json:"dws_org_id"`
+	ActionID    string `json:"action_id,omitempty"`
+	WorkspaceID string `json:"workspace_id"`
+	AgentID     string `json:"agent_id"`
+	TaskID      string `json:"task_id,omitempty"`
+	IssueID     string `json:"issue_id,omitempty"`
+	RequestID   string `json:"request_id"`
+	DWSUID      string `json:"dws_uid"`
+	DWSOrgID    string `json:"dws_org_id"`
 	// SceneID is the Agent work scene the response goes to
 	// (docs/agent-scene.md); ConversationID is that scene's external
 	// conversation id as the scene directory records it.

@@ -1864,55 +1864,61 @@ func (h *Handler) tryDispatchResetMemory(
 	var closeErr error
 	closedEdges := 0
 	unlinkedEvents := 0
-	if h != nil && h.Assoc != nil && conversationID != "" {
+	sceneID := ""
+	// Reset clears the dispatch's scene: its graph links and its memory.
+	// A dispatch without a resolved scene has nothing to clear.
+	var sc db.AgentScene
+	hasScene := false
+	if h != nil && h.Queries != nil && command.AgentScene != nil {
+		found, sceneErr := dispatchScene(r.Context(), h.Queries, command, dispatchContext)
+		if sceneErr != nil {
+			closeErr = sceneErr
+		} else {
+			sc, hasScene, sceneID = found, true, uuidToString(found.ID)
+		}
+	}
+	if hasScene && h.Assoc != nil {
 		result, err := h.Assoc.CloseSceneAssociations(
 			r.Context(),
 			uuidToString(dispatchContext.WorkspaceID),
 			uuidToString(dispatchContext.AgentID),
-			conversationID,
+			sceneID,
 		)
 		closeErr = err
 		closedEdges = result.ClosedEdges
 		unlinkedEvents = result.UnlinkedEvents
 	}
-	if h != nil && h.SceneMemoryStore != nil && conversationID != "" &&
-		command.Source.Type == "digital_employee" {
-		sc, sceneErr := dispatchScene(r.Context(), h.Queries, command, dispatchContext)
-		if sceneErr != nil {
+	if hasScene && h.SceneMemoryStore != nil && command.Source.Type == "digital_employee" {
+		oldRevision := int64(0)
+		if existing, err := h.SceneMemoryStore.Get(r.Context(), sc); err == nil {
+			oldRevision = existing.MemoryRevision
+		}
+		if _, err := h.SceneMemoryStore.Reset(r.Context(), sc, scenememory.DirtyTrigger{
+			OccurredAt: dispatchMessageOccurredAt(command),
+			EvidenceID: ids.EvidenceID,
+		}); err != nil {
+			slog.Warn("scene memory reset-memory failed",
+				"event", "scene_memory_reset",
+				"scene_id", sceneID,
+				"old_revision", oldRevision,
+				"error", err,
+			)
 			if closeErr == nil {
-				closeErr = sceneErr
+				closeErr = err
 			}
 		} else {
-			oldRevision := int64(0)
-			if existing, err := h.SceneMemoryStore.Get(r.Context(), sc); err == nil {
-				oldRevision = existing.MemoryRevision
-			}
-			if _, err := h.SceneMemoryStore.Reset(r.Context(), sc, scenememory.DirtyTrigger{
-				OccurredAt: dispatchMessageOccurredAt(command),
-				EvidenceID: ids.EvidenceID,
-			}); err != nil {
-				slog.Warn("scene memory reset-memory failed",
-					"event", "scene_memory_reset",
-					"scene_id", uuidToString(sc.ID),
-					"old_revision", oldRevision,
-					"error", err,
-				)
-				if closeErr == nil {
-					closeErr = err
-				}
-			} else {
-				slog.Info("scene memory reset",
-					"event", "scene_memory_reset",
-					"scene_id", uuidToString(sc.ID),
-					"old_revision", oldRevision,
-				)
-			}
+			slog.Info("scene memory reset",
+				"event", "scene_memory_reset",
+				"scene_id", sceneID,
+				"old_revision", oldRevision,
+			)
 		}
 	}
 	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
 		"outcome", "reset_memory",
 		"event", "inbound_reset_memory",
 		"protocol", "dispatch_command_v2",
+		"scene_id", sceneID,
 		"conversation_id", conversationID,
 		"closed_edges", closedEdges,
 		"unlinked_events", unlinkedEvents,
@@ -1921,6 +1927,7 @@ func (h *Handler) tryDispatchResetMemory(
 	if closeErr != nil {
 		slog.Error("assoc reset-memory failed",
 			"event", "inbound_reset_memory",
+			"scene_id", sceneID,
 			"conversation_id", conversationID,
 			"error", closeErr,
 		)

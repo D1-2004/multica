@@ -62,8 +62,8 @@ func (f *MemoryFlusher) startFlushTrace(ctx context.Context, row Memory, started
 func flushIndexKeys(row Memory) map[string]string {
 	coord := strings.TrimSpace(row.LastTriggerCoordTraceID)
 	keys := map[string]string{
-		"scene_id": util.UUIDToString(row.SceneID),
-		"coord_trace_id":  coord,
+		"scene_id":       util.UUIDToString(row.SceneID),
+		"coord_trace_id": coord,
 	}
 	if job := util.UUIDToString(row.LastTriggerJobID); job != "" && job != coord {
 		keys["job_id"] = job
@@ -75,7 +75,7 @@ func flushTraceOptions(row Memory, agentName string, started time.Time) langfuse
 	metadata := map[string]any{
 		"loop":                flushTraceName,
 		"agent_name":          agentName,
-		"scene_id":     util.UUIDToString(row.SceneID),
+		"scene_id":            util.UUIDToString(row.SceneID),
 		"scene_key":           strings.TrimSpace(row.ConversationID()),
 		"conversation_id":     strings.TrimSpace(row.ConversationID()),
 		"scene_kind":          strings.TrimSpace(row.Kind()),

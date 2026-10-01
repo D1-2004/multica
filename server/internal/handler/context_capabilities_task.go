@@ -107,9 +107,11 @@ func (h *Handler) resolveTaskContextScope(ctx context.Context, workspaceID pgtyp
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			// An agent without a DingTalk identity (a robot channel) keeps
-			// its scene and personal configuration under org "", its
-			// implicit tenant (contextCapAgentInOrg, configuration links):
-			// the scene and person layers apply, there is no org layer.
+			// its personal configuration under org "", its implicit tenant
+			// (contextCapAgentInOrg, configuration links): the person layer
+			// applies, there is no org layer and no scene, since every
+			// Agent work scene belongs to a tenant org.
+			scope.SceneID, scope.SceneTitle = "", ""
 			return scope, ""
 		case err != nil:
 			slog.WarnContext(ctx, "context capabilities: agent DingTalk identity unavailable; skipping org, scene and personal layers",
@@ -133,6 +135,7 @@ func (h *Handler) resolveTaskContextScope(ctx context.Context, workspaceID pgtyp
 		orgID = strings.TrimSpace(identity.OrgID)
 		if orgID == "" {
 			// An identity without an org is orgless too.
+			scope.SceneID, scope.SceneTitle = "", ""
 			return scope, ""
 		}
 	}
@@ -146,9 +149,9 @@ func (h *Handler) resolveTaskContextScope(ctx context.Context, workspaceID pgtyp
 	}
 	scope.OrgID = orgID
 	// The scene layer is the task's Agent work scene only while that scene
-	// is the agent's in the task's tenant org (the use-time fence of
-	// docs/agent-scene.md); otherwise the task keeps its org and person
-	// layers without one.
+	// is the agent's conversation scene in the task's tenant org (the
+	// use-time fence of docs/agent-scene.md); otherwise the task keeps its
+	// org and person layers without one.
 	if scope.SceneID != "" {
 		if _, err := contextcap.GetScene(ctx, h.DB, uuidToString(workspaceID), uuidToString(task.AgentID), orgID, scope.SceneID); err != nil {
 			if !errors.Is(err, contextcap.ErrNotFound) && !errors.Is(err, contextcap.ErrInvalidInput) {
