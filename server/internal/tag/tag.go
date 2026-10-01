@@ -55,6 +55,9 @@ var (
 	// beyond its own DingTalk identity through contextcap tenants; a Tag
 	// employee serves exactly one enterprise.
 	ErrAgentServesSeveralOrgs = errors.New("tag: agent serves several organizations")
+	// ErrTagChanged means the Tag was removed or replaced while the caller
+	// was working from an earlier read of it.
+	ErrTagChanged = errors.New("tag: the tag was removed or replaced")
 )
 
 // Role tells how an agent participates in its workspace Tag.
@@ -86,6 +89,15 @@ func Get(ctx context.Context, db DBTX, workspaceID string) (Tag, error) {
 		return Tag{}, ErrNotFound
 	}
 	return t, err
+}
+
+// LockAgentTenancy serializes the decisions about which organizations an
+// agent serves: becoming a Tag tenant (InsertTenant) and gaining a contextcap
+// tenant (handler CreateAgentTenant) both check the other under this lock,
+// in the same transaction as their write.
+func LockAgentTenancy(ctx context.Context, tx DBTX, agentID string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('agent_tenancy:' || $1::text, 0))`, agentID)
+	return err
 }
 
 // LockWorkspace serializes Tag provisioning and tenant changes of one

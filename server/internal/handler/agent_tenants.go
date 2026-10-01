@@ -128,19 +128,33 @@ func (h *Handler) CreateAgentTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create the tenant")
+		return
+	}
+	defer tx.Rollback(ctx)
 	// A Tag's enterprises are its tenants, each embodied by its own employee
 	// agent. Extra organizations on the template or on an employee would
-	// bypass that one-tenant-per-employee model.
-	if role, err := tag.AgentRole(ctx, h.DB, caller.workspaceID, caller.agentID); err != nil {
+	// bypass that one-tenant-per-employee model. The tenancy lock makes this
+	// check and the insert atomic against the agent joining the Tag.
+	if err := tag.LockAgentTenancy(ctx, tx, caller.agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create the tenant")
+		return
+	}
+	if role, err := tag.AgentRole(ctx, tx, caller.workspaceID, caller.agentID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check the tag")
 		return
 	} else if role != tag.RoleNone {
 		writeErrorCode(w, http.StatusConflict, agentTenantErrTagManaged, "tenants of the tag are managed on the tag page")
 		return
 	}
-	tenant, err := contextcap.CreateTenant(ctx, h.DB, contextcap.TenantWrite{
+	tenant, err := contextcap.CreateTenant(ctx, tx, contextcap.TenantWrite{
 		WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: orgID, Name: input.Name, ActorID: requestUserID(r),
 	})
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
 	switch {
 	case errors.Is(err, contextcap.ErrTenantExists):
 		writeErrorCode(w, http.StatusConflict, agentTenantErrExists, "this organization is already a tenant of the agent")

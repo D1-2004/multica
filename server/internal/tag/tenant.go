@@ -113,14 +113,28 @@ func lockTenant(ctx context.Context, tx DBTX, workspaceID, tenantID string) erro
 
 // InsertTenant links employeeAgentID to the Tag as a new tenant. The employee
 // must be a live agent of the workspace that is neither the template nor
-// another tenant's employee. The caller holds LockWorkspace.
+// another tenant's employee, and serves no organization beyond its own
+// identity. The caller holds LockWorkspace, so the Tag checked here cannot
+// be removed before the caller commits.
 func InsertTenant(ctx context.Context, tx DBTX, workspaceID, tagAgentID, employeeAgentID, name, createdBy string) (Tenant, error) {
 	name, err := NormalizeTenantName(name)
 	if err != nil {
 		return Tenant{}, err
 	}
+	// The caller read the Tag before taking the workspace lock; it may have
+	// been removed (or removed and recreated) since.
+	current, err := Get(ctx, tx, workspaceID)
+	if errors.Is(err, ErrNotFound) || (err == nil && current.AgentID != tagAgentID) {
+		return Tenant{}, ErrTagChanged
+	}
+	if err != nil {
+		return Tenant{}, err
+	}
 	if employeeAgentID == tagAgentID {
 		return Tenant{}, ErrAgentInUse
+	}
+	if err := LockAgentTenancy(ctx, tx, employeeAgentID); err != nil {
+		return Tenant{}, err
 	}
 	if err := requireLiveAgent(ctx, tx, workspaceID, employeeAgentID); err != nil {
 		return Tenant{}, err

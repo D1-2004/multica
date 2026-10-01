@@ -83,6 +83,7 @@ type TagApplyTenantResult struct {
 	SkippedSkillIDs     []string `json:"skipped_skill_ids"`
 	SkippedConnectorIDs []string `json:"skipped_connector_ids"`
 	SkippedPluginIDs    []string `json:"skipped_plugin_ids"`
+	SkippedOfferIDs     []string `json:"skipped_offer_ids"`
 }
 
 type TagApplyResponse struct {
@@ -749,7 +750,7 @@ func (h *Handler) ApplyTag(w http.ResponseWriter, r *http.Request) {
 		if tenant.EmployeeArchived {
 			response.Results = append(response.Results, TagApplyTenantResult{
 				TenantID: id, Reason: "employee_archived",
-				SkippedSkillIDs: []string{}, SkippedConnectorIDs: []string{}, SkippedPluginIDs: []string{},
+				SkippedSkillIDs: []string{}, SkippedConnectorIDs: []string{}, SkippedPluginIDs: []string{}, SkippedOfferIDs: []string{},
 			})
 			continue
 		}
@@ -780,6 +781,7 @@ func applyResultToResponse(tenantID string, result tag.ApplyResult) TagApplyTena
 		SkippedSkillIDs:     result.SkippedSkillIDs,
 		SkippedConnectorIDs: result.SkippedConnectorIDs,
 		SkippedPluginIDs:    result.SkippedPluginIDs,
+		SkippedOfferIDs:     result.SkippedOfferIDs,
 	}
 }
 
@@ -791,6 +793,8 @@ func writeTagTenantError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "name must be 1-64 characters")
 	case errors.Is(err, tag.ErrAgentInUse):
 		writeError(w, http.StatusConflict, "this agent already belongs to the tag")
+	case errors.Is(err, tag.ErrTagChanged):
+		writeError(w, http.StatusConflict, "the tag was removed or replaced; reload and try again")
 	case errors.Is(err, tag.ErrAgentServesSeveralOrgs):
 		writeError(w, http.StatusConflict, "this agent serves several organizations; remove its extra tenants before adding it to the tag")
 	case errors.Is(err, tag.ErrAgentUnavailable):

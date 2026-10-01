@@ -302,3 +302,78 @@ func TestApplyCopiesSharedConfigOnly(t *testing.T) {
 		t.Fatalf("unapplied template edit leaked to the employee: %q", instructions)
 	}
 }
+
+func TestInsertTenantRejectsAStaleTag(t *testing.T) {
+	f := openTx(t)
+	ctx := context.Background()
+	// No Tag at all (removed before the caller took the workspace lock).
+	if _, err := InsertTenant(ctx, f.tx, f.workspaceID, f.templateID, f.employeeID, "Think", f.userID); !errors.Is(err, ErrTagChanged) {
+		t.Fatalf("insert without a tag: %v", err)
+	}
+	if _, err := Create(ctx, f.tx, f.workspaceID, f.templateID, f.userID); err != nil {
+		t.Fatal(err)
+	}
+	// A Tag exists, but not the one the caller read (removed and recreated).
+	if _, err := InsertTenant(ctx, f.tx, f.workspaceID, uuid.NewString(), f.employeeID, "Think", f.userID); !errors.Is(err, ErrTagChanged) {
+		t.Fatalf("insert for a replaced tag: %v", err)
+	}
+	if _, err := InsertTenant(ctx, f.tx, f.workspaceID, f.templateID, f.employeeID, "Think", f.userID); err != nil {
+		t.Fatalf("insert for the current tag: %v", err)
+	}
+}
+
+func TestApplySkipsOffersTheEmployeeMayNotMake(t *testing.T) {
+	f := openTx(t)
+	ctx := context.Background()
+	// A skill that another agent's Git source manages, offered by the template.
+	var other, sourceID, managedSkill string
+	if err := f.tx.QueryRow(ctx, `INSERT INTO agent (workspace_id, name, runtime_mode) VALUES ($1::uuid, 'source owner', 'cloud') RETURNING id::text`,
+		f.workspaceID).Scan(&other); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.tx.QueryRow(ctx, `INSERT INTO agent_source (agent_id, workspace_id, repo_owner, repo_name, ref, synced_commit_sha, created_by)
+		VALUES ($1::uuid, $2::uuid, 'acme', 'tag', 'main', '0123456789012345678901234567890123456789', $3::uuid) RETURNING id::text`,
+		other, f.workspaceID, f.userID).Scan(&sourceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.tx.QueryRow(ctx, `INSERT INTO skill (workspace_id, name, description, content) VALUES ($1::uuid, 'managed-' || $2, 'desc', 'body') RETURNING id::text`,
+		f.workspaceID, uuid.NewString()).Scan(&managedSkill); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.tx.Exec(ctx, `INSERT INTO agent_source_skill (agent_source_id, skill_id, source_path) VALUES ($1::uuid, $2::uuid, 'skills/managed')`,
+		sourceID, managedSkill); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.tx.Exec(ctx, `INSERT INTO context_capability_binding (workspace_id, agent_id, scope_type, resource_type, resource_id, enabled)
+		VALUES ($1::uuid, $2::uuid, 'offer', 'skill', $3::uuid, TRUE)`, f.workspaceID, f.templateID, managedSkill); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Create(ctx, f.tx, f.workspaceID, f.templateID, f.userID); err != nil {
+		t.Fatal(err)
+	}
+	tenant, err := InsertTenant(ctx, f.tx, f.workspaceID, f.templateID, f.employeeID, "Think", f.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev, _, err := PublishIfChanged(ctx, f.tx, f.workspaceID, f.templateID, f.userID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Apply(ctx, f.tx, f.workspaceID, tenant, rev, f.userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.SkippedOfferIDs) != 1 || result.SkippedOfferIDs[0] != managedSkill {
+		t.Fatalf("skipped offers = %v, want [%s]", result.SkippedOfferIDs, managedSkill)
+	}
+	var managedOffers, freeOffers int
+	if err := f.tx.QueryRow(ctx, `SELECT
+			(SELECT count(*) FROM context_capability_binding WHERE agent_id = $1::uuid AND scope_type = 'offer' AND resource_id = $2::uuid),
+			(SELECT count(*) FROM context_capability_binding WHERE agent_id = $1::uuid AND scope_type = 'offer' AND resource_id = $3::uuid)`,
+		f.employeeID, managedSkill, f.skillID).Scan(&managedOffers, &freeOffers); err != nil {
+		t.Fatal(err)
+	}
+	if managedOffers != 0 || freeOffers != 1 {
+		t.Fatalf("employee offers: managed=%d free=%d", managedOffers, freeOffers)
+	}
+}

@@ -166,6 +166,9 @@ func (h *Handler) UpdateAgentA2AOperatorIdentity(w http.ResponseWriter, r *http.
 		}
 		deapAgentUUID = pgtype.Text{String: value, Valid: true}
 	}
+	if !h.rejectTagTemplateBinding(w, r, scope.WorkspaceID, scope.Agent.ID) {
+		return
+	}
 
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {

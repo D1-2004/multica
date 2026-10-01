@@ -76,13 +76,13 @@ describe("Tag mutation schemas", () => {
       revision: 5,
       published: true,
       results: [
-        { tenant_id: "t-1", applied: true, skipped_skill_ids: ["s-1", 2], skipped_connector_ids: null },
+        { tenant_id: "t-1", applied: true, skipped_skill_ids: ["s-1", 2], skipped_connector_ids: null, skipped_offer_ids: ["o-1"] },
         { applied: true },
       ],
     });
     expect(parsed.revision).toBe(5);
     expect(parsed.results).toEqual([
-      { tenantId: "t-1", applied: true, reason: "", skippedSkillIds: ["s-1"], skippedConnectorIds: [], skippedPluginIds: [] },
+      { tenantId: "t-1", applied: true, reason: "", skippedSkillIds: ["s-1"], skippedConnectorIds: [], skippedPluginIds: [], skippedOfferIds: ["o-1"] },
     ]);
     expect(parseWithFallback(undefined, TagApplyResponseSchema, EMPTY_TAG_APPLY, { endpoint: "test" })).toEqual(EMPTY_TAG_APPLY);
   });

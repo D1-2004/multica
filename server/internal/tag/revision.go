@@ -260,6 +260,10 @@ type ApplyResult struct {
 	// workspace.
 	SkippedConnectorIDs []string
 	SkippedPluginIDs    []string
+	// SkippedOfferIDs are offered skills or connectors the employee may not
+	// offer: gone from the workspace, or a skill another agent's Git source
+	// manages (the rule contextcap applies to offer edits).
+	SkippedOfferIDs []string
 }
 
 // Apply copies revision rev onto the tenant's employee agent and records it
@@ -325,7 +329,7 @@ func copySnapshot(ctx context.Context, tx DBTX, workspaceID, agentID string, raw
 		return ApplyResult{}, fmt.Errorf("tag: decode snapshot: %w", err)
 	}
 	employee := agentID
-	result := ApplyResult{SkippedSkillIDs: []string{}, SkippedConnectorIDs: []string{}, SkippedPluginIDs: []string{}}
+	result := ApplyResult{SkippedSkillIDs: []string{}, SkippedConnectorIDs: []string{}, SkippedPluginIDs: []string{}, SkippedOfferIDs: []string{}}
 
 	if len(snapshot.Agent) > 0 && string(snapshot.Agent) != "null" {
 		updated, err := tx.Exec(ctx, applyAgentSQL(), []byte(snapshot.Agent), workspaceID, employee)
@@ -389,13 +393,22 @@ func copySnapshot(ctx context.Context, tx DBTX, workspaceID, agentID string, raw
 		return ApplyResult{}, err
 	}
 	for _, o := range snapshot.Offers {
-		if _, err := tx.Exec(ctx, `INSERT INTO context_capability_binding
+		inserted, err := tx.Exec(ctx, `INSERT INTO context_capability_binding
 			(workspace_id, agent_id, scope_type, org_id, scope_key, resource_type, resource_id, enabled, created_by, updated_by)
-			VALUES ($1::uuid, $2::uuid, 'offer', '', '', $3, $4::uuid, $5, $6::uuid, $6::uuid)
+			SELECT $1::uuid, $2::uuid, 'offer', '', '', $3::text, $4::uuid, $5, $6::uuid, $6::uuid
+			WHERE ($3::text = 'skill' AND EXISTS (SELECT 1 FROM skill sk WHERE sk.id = $4::uuid AND sk.workspace_id = $1::uuid)
+			        AND NOT EXISTS (SELECT 1 FROM agent_source_skill ass
+			            WHERE ass.skill_id = $4::uuid
+			              AND NOT EXISTS (SELECT 1 FROM agent_source src WHERE src.id = ass.agent_source_id AND src.agent_id = $2::uuid)))
+			   OR ($3::text = 'connector' AND EXISTS (SELECT 1 FROM internal_connector c WHERE c.id = $4::uuid AND c.workspace_id = $1::uuid))
 			ON CONFLICT (agent_id, scope_type, org_id, scope_key, resource_type, resource_id)
 			DO UPDATE SET enabled = EXCLUDED.enabled, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-			workspaceID, employee, o.ResourceType, o.ResourceID, o.Enabled, actor); err != nil {
+			workspaceID, employee, o.ResourceType, o.ResourceID, o.Enabled, actor)
+		if err != nil {
 			return ApplyResult{}, fmt.Errorf("tag: apply offer %s: %w", o.ResourceID, err)
+		}
+		if inserted.RowsAffected() == 0 {
+			result.SkippedOfferIDs = append(result.SkippedOfferIDs, o.ResourceID)
 		}
 	}
 

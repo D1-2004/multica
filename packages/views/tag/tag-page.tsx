@@ -517,7 +517,7 @@ function ApplyDialog({ wsId, state, onClose }: { wsId: string; state: TagState; 
           const applied = result.results.filter((item) => item.applied).length;
           toast.success(t(($) => $.tag_page.apply_done, { revision: result.revision, count: applied }));
           const skipped = result.results.reduce(
-            (sum, item) => sum + item.skippedSkillIds.length + item.skippedConnectorIds.length + item.skippedPluginIds.length,
+            (sum, item) => sum + item.skippedSkillIds.length + item.skippedConnectorIds.length + item.skippedPluginIds.length + item.skippedOfferIds.length,
             0,
           );
           if (skipped > 0) toast.warning(t(($) => $.tag_page.apply_skipped, { count: skipped }));

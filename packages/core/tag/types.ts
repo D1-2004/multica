@@ -57,6 +57,7 @@ export interface TagApplyTenantResult {
   skippedSkillIds: string[];
   skippedConnectorIds: string[];
   skippedPluginIds: string[];
+  skippedOfferIds: string[];
 }
 
 export interface TagApplyResponse {

@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/tag"
 )
 
 func tagTestRouter(h *Handler) http.Handler {
@@ -30,6 +33,8 @@ func tagTestRouter(h *Handler) http.Handler {
 		})
 		r.Post("/api/agents/{id}/archive", h.ArchiveAgent)
 		r.With(RequireHumanActor).Post("/api/agents/{id}/tenants", h.CreateAgentTenant)
+		r.Put("/api/agents/{id}/a2a/operator/dws-identity", h.UpdateAgentA2AOperatorIdentity)
+		r.With(RequireHumanActor).Post("/api/workspaces/{id}/dingtalk/execution-identities/reuse", h.ReuseDingTalkIdentity)
 	})
 	return r
 }
@@ -301,5 +306,95 @@ func TestTagCreateCopyFromKeepsExplicitFields(t *testing.T) {
 	// from the source; the runtime is the requested one.
 	if description != "typed description" || model != "source-model" || instructions != "source instructions" || runtimeID != testRuntimeID {
 		t.Fatalf("template = description %q model %q instructions %q runtime %q", description, model, instructions, runtimeID)
+	}
+}
+
+func TestTagTemplateRefusesEveryIdentityWrite(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	cleanupTag(t)
+	useTagOperator(t, true)
+	router := tagTestRouter(testHandler)
+	ctx := context.Background()
+
+	created := tagDecode[TagStateResponse](t, tagDo(t, router, http.MethodPost, "/api/tag",
+		map[string]string{"name": "TagTest " + uuid.NewString()[:8], "runtime_id": testRuntimeID}))
+	templateID := created.Tag.AgentID
+
+	reuse := tagDo(t, router, http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/dingtalk/execution-identities/reuse",
+		map[string]string{"agent_id": templateID, "source_agent_id": uuid.NewString()})
+	tagExpect(t, reuse, http.StatusBadRequest, "reuse identity on template")
+	manual := tagDo(t, router, http.MethodPut, "/api/agents/"+templateID+"/a2a/operator/dws-identity",
+		map[string]string{"uid": "7015073760", "org_id": "439446171", "display_name": "Taggg", "organization_name": "钉钉"})
+	tagExpect(t, manual, http.StatusBadRequest, "operator identity on template")
+	for _, w := range []*httptest.ResponseRecorder{reuse, manual} {
+		if !strings.Contains(w.Body.String(), "tag_template_not_bindable") {
+			t.Fatalf("identity write refused for another reason: %s", w.Body.String())
+		}
+	}
+	var identities int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_dingtalk_identity WHERE agent_id = $1`, templateID).Scan(&identities); err != nil {
+		t.Fatal(err)
+	}
+	if identities != 0 {
+		t.Fatalf("template got %d identities", identities)
+	}
+}
+
+// A contextcap tenant insert and the agent joining the Tag decide under one
+// lock: the insert waits for the join and then sees the agent as a tenant.
+func TestContextCapTenantWaitsForTagMembership(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	router := tagTestRouter(testHandler)
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "TagTest race "+uuid.NewString()[:8], nil)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM tag_tenant WHERE employee_agent_id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_tenant WHERE agent_id = $1`, agentID)
+	})
+
+	join, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer join.Rollback(ctx)
+	if err := tag.LockAgentTenancy(ctx, join, agentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := join.Exec(ctx, `INSERT INTO tag_tenant (workspace_id, tag_agent_id, employee_agent_id, name, created_by) VALUES ($1, $2, $3, 'race', $4)`,
+		testWorkspaceID, uuid.NewString(), agentID, testUserID); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- tagDo(t, router, http.MethodPost, "/api/agents/"+agentID+"/tenants", map[string]string{"org_id": "org-race", "name": "Race"})
+	}()
+	select {
+	case w := <-done:
+		t.Fatalf("contextcap insert did not wait for the tenancy lock: %d %s", w.Code, w.Body.String())
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := join.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case w := <-done:
+		tagExpect(t, w, http.StatusConflict, "contextcap insert after joining the tag")
+		if !strings.Contains(w.Body.String(), agentTenantErrTagManaged) {
+			t.Fatalf("refused for another reason: %s", w.Body.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("contextcap insert still blocked after the join committed")
+	}
+	var extra int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_tenant WHERE agent_id = $1`, agentID).Scan(&extra); err != nil {
+		t.Fatal(err)
+	}
+	if extra != 0 {
+		t.Fatalf("agent gained %d contextcap tenants", extra)
 	}
 }

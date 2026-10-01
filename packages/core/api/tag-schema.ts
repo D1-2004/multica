@@ -124,6 +124,7 @@ const TagApplyTenantResultWireSchema = z
     skipped_skill_ids: idList,
     skipped_connector_ids: idList,
     skipped_plugin_ids: idList,
+    skipped_offer_ids: idList,
   })
   .transform(
     (value): TagApplyTenantResult => ({
@@ -133,6 +134,7 @@ const TagApplyTenantResultWireSchema = z
       skippedSkillIds: value.skipped_skill_ids,
       skippedConnectorIds: value.skipped_connector_ids,
       skippedPluginIds: value.skipped_plugin_ids,
+      skippedOfferIds: value.skipped_offer_ids,
     }),
   );
 
