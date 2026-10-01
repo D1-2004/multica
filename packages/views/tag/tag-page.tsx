@@ -1,9 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlertCircle, Building2, Check, ChevronDown, Globe, Plus, RefreshCw, Settings2, Tag as TagIcon, Trash2, UserPlus } from "lucide-react";
+import {
+  AlertCircle,
+  Building2,
+  Check,
+  ChevronDown,
+  Copy,
+  List,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Plus,
+  RefreshCw,
+  Settings2,
+  Tag as TagIcon,
+  Trash2,
+  UserPlus,
+} from "lucide-react";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
@@ -15,7 +30,6 @@ import {
   useRenameTagTenant,
   useWorkspaceTag,
   type TagState,
-  type TagSummary,
   type TagTenant,
 } from "@multica/core/tag";
 import { Button } from "@multica/ui/components/ui/button";
@@ -43,6 +57,7 @@ import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/nati
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { AgentDetailPage } from "../agents/components/agent-detail-page";
+import { TagTenantConfig } from "./tenant-config";
 import { AppLink, useNavigation } from "../navigation";
 import { useT } from "../i18n";
 
@@ -50,7 +65,10 @@ import { useT } from "../i18n";
  * (template) configuration. Distinct from the scenes tab's `tenant` param. */
 const TENANT_PARAM = "tag_tenant";
 
-/** Params that only mean something inside one agent's page. */
+/** View param of the tenant pane; the shared pane keeps `view`. */
+const TENANT_VIEW_PARAM = "tview";
+
+/** Params that only mean something inside one tenant's pane. */
 const AGENT_SCOPED_PARAMS = ["tenant", "node", "scene", "scene_tab", "app"];
 
 type TagDialog = "new" | "adopt" | "apply" | "manage" | null;
@@ -60,10 +78,11 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * The workspace Tag: the agent detail page of either the template (shared
- * configuration) or one tenant's employee, with a tenant switcher at the
- * right end of the tab bar. Tenants are the first-level directory: scenes,
- * work and the digital employee all belong to the selected tenant.
+ * The workspace Tag, laid out left and right: the shared configuration every
+ * tenant inherits (the template agent's instructions, skills, connectors and
+ * runtime) on the left; the selected tenant on the right, with its identity,
+ * event perception, scenes and recent work. Without a tenant the right side
+ * lists the tenants.
  */
 export function TagPage() {
   const { t } = useT("agents");
@@ -73,6 +92,7 @@ export function TagPage() {
   const { data: state, isLoading } = useWorkspaceTag(wsId);
   const [dialog, setDialog] = useState<TagDialog>(null);
   const [deleting, setDeleting] = useState<TagTenant | null>(null);
+  const [sharedCollapsed, setSharedCollapsed] = useState(false);
 
   const selectedId = navigation.searchParams.get(TENANT_PARAM);
   const tag = state?.tag ?? null;
@@ -83,8 +103,8 @@ export function TagPage() {
     const params = new URLSearchParams(navigation.searchParams);
     if (id) params.set(TENANT_PARAM, id);
     else params.delete(TENANT_PARAM);
-    for (const key of AGENT_SCOPED_PARAMS) params.delete(key);
-    if (view) params.set("view", view);
+    for (const key of [...AGENT_SCOPED_PARAMS, TENANT_VIEW_PARAM]) params.delete(key);
+    if (view) params.set(TENANT_VIEW_PARAM, view);
     const query = params.toString();
     navigation.replace(`${navigation.pathname}${query ? `?${query}` : ""}`);
   };
@@ -122,7 +142,6 @@ export function TagPage() {
     );
   }
 
-  const agentId = tenant ? tenant.employeeAgentId : tag.agentId;
   const behind =
     tag.latestRevision != null && tenants.some((item) => item.appliedRevision !== tag.latestRevision);
   const showBanner = state.canManage && tenants.length > 0 && (tag.hasUnpublishedChanges || behind);
@@ -148,42 +167,104 @@ export function TagPage() {
         </div>
       ) : null}
 
-      <AgentDetailPage
-        key={agentId}
-        agentId={agentId}
-        tagView={{
-          role: tenant ? "employee" : "template",
-          backHref: paths.tag(),
-          backLabel: t(($) => $.tag_page.breadcrumb),
-          tabBarExtra: (
-            <TagTenantSwitcher
-              state={state}
-              tag={tag}
-              selected={tenant}
-              onSelect={(id) => selectTenant(id)}
-              onDialog={setDialog}
+      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-3 sm:px-6">
+        <TagIcon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+        <h1 className="text-title-sm font-semibold">{t(($) => $.tag_page.title)}</h1>
+        {tag.latestRevision != null ? (
+          <span className="text-caption text-muted-foreground">
+            {t(($) => $.tag_page.latest, { revision: tag.latestRevision })}
+          </span>
+        ) : null}
+        <span className="text-caption text-muted-foreground">
+          {t(($) => $.tag_page.tenants_heading, { count: tenants.length })}
+        </span>
+        {state.canManage ? (
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => setDialog("new")}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {t(($) => $.tag_page.new_tenant)}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setDialog("adopt")}>
+              <UserPlus className="h-4 w-4" aria-hidden="true" />
+              {t(($) => $.tag_page.adopt_tenant)}
+            </Button>
+            {tenants.length > 0 ? (
+              <>
+                <Button size="sm" variant="outline" onClick={() => setDialog("apply")}>
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  {t(($) => $.tag_page.apply)}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setDialog("manage")}>
+                  <Settings2 className="h-4 w-4" aria-hidden="true" />
+                  {t(($) => $.tag_page.manage_tenants)}
+                </Button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+      </header>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+        <section
+          aria-label={t(($) => $.tag_page.shared_title)}
+          className={cn(
+            "flex flex-col border-b lg:min-h-0 lg:border-b-0 lg:border-r",
+            sharedCollapsed ? "lg:w-12 lg:shrink-0" : "min-h-[560px] lg:w-[44%] lg:shrink-0",
+          )}
+        >
+          <PaneHeader
+            collapsed={sharedCollapsed}
+            title={t(($) => $.tag_page.shared_title)}
+            hint={t(($) => $.tag_page.shared_hint)}
+            action={
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                aria-label={sharedCollapsed ? t(($) => $.tag_page.shared_expand) : t(($) => $.tag_page.shared_collapse)}
+                aria-expanded={!sharedCollapsed}
+                onClick={() => setSharedCollapsed((value) => !value)}
+              >
+                {sharedCollapsed ? (
+                  <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
+                )}
+              </Button>
+            }
+          />
+          {sharedCollapsed ? null : (
+            <AgentDetailPage key={tag.agentId} agentId={tag.agentId} tagView={{ role: "template", embedded: true }} />
+          )}
+        </section>
+
+        <section aria-label={t(($) => $.tag_page.tenant_pane_title)} className="flex min-h-[560px] min-w-0 flex-1 flex-col lg:min-h-0">
+          <PaneHeader
+            title={t(($) => $.tag_page.tenant_pane_title)}
+            hint={tenant ? <AgentIdChip agentId={tenant.employeeAgentId} /> : t(($) => $.tag_page.tenant_pane_hint)}
+            action={<TagTenantSwitcher state={state} selected={tenant} onSelect={(id) => selectTenant(id)} />}
+          />
+          {tenant ? (
+            <AgentDetailPage
+              key={tenant.employeeAgentId}
+              agentId={tenant.employeeAgentId}
+              tagView={{
+                role: "employee",
+                embedded: true,
+                viewParam: TENANT_VIEW_PARAM,
+                renderTenantConfig: (props) => <TagTenantConfig {...props} />,
+              }}
             />
-          ),
-          templateScenesNotice: (
-            <div className="flex h-full items-center justify-center p-6">
-              <div className="max-w-md rounded-lg border border-dashed px-6 py-10 text-center">
-                <Building2 className="mx-auto h-6 w-6 text-muted-foreground" aria-hidden="true" />
-                <p className="mt-3 text-body font-medium">{t(($) => $.tag_page.template_scenes_title)}</p>
-                <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.tag_page.template_scenes_body)}</p>
-                {tenants.length > 0 ? (
-                  <div className="mt-4 flex flex-wrap justify-center gap-2">
-                    {tenants.map((item) => (
-                      <Button key={item.id} variant="outline" size="sm" onClick={() => selectTenant(item.id, "scenes")}>
-                        {item.name}
-                      </Button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          ),
-        }}
-      />
+          ) : (
+            <TenantOverview
+              tenants={tenants}
+              canManage={state.canManage}
+              onSelect={(id) => selectTenant(id)}
+              onNew={() => setDialog("new")}
+            />
+          )}
+        </section>
+      </div>
 
       {dialog === "new" ? (
         <NewTenantDialog
@@ -191,8 +272,8 @@ export function TagPage() {
           onClose={() => setDialog(null)}
           onCreated={(id) => {
             setDialog(null);
-            // The new employee binds its DingTalk digital employee next.
-            selectTenant(id, "digital_employee");
+            // A new tenant starts by issuing its digital employee's identity.
+            selectTenant(id);
           }}
         />
       ) : null}
@@ -227,6 +308,112 @@ export function TagPage() {
   );
 }
 
+function PaneHeader({
+  title,
+  hint,
+  action,
+  collapsed = false,
+}: {
+  title: string;
+  hint: ReactNode;
+  action?: ReactNode;
+  collapsed?: boolean;
+}) {
+  if (collapsed) {
+    return <div className="flex shrink-0 justify-center border-b px-2 py-2">{action}</div>;
+  }
+  return (
+    <div className="flex shrink-0 items-center gap-3 border-b bg-muted/30 px-4 py-2.5 sm:px-6">
+      <div className="min-w-0 flex-1">
+        <h2 className="text-body font-semibold">{title}</h2>
+        <div className="truncate text-caption text-muted-foreground">{hint}</div>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+/** The tenant employee's Agent ID: the one identifier a tenant keeps of its
+ * own, for calls and logs. */
+function AgentIdChip({ agentId }: { agentId: string }) {
+  const { t } = useT("agents");
+  return (
+    <span className="inline-flex max-w-full items-center gap-1.5">
+      <span>{t(($) => $.tag_page.agent_id)}</span>
+      <code className="truncate font-mono">{agentId}</code>
+      <button
+        type="button"
+        className="rounded p-0.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={t(($) => $.tag_page.copy_agent_id)}
+        onClick={() => {
+          void navigator.clipboard?.writeText(agentId).then(
+            () => toast.success(t(($) => $.tag_page.copied)),
+            () => undefined,
+          );
+        }}
+      >
+        <Copy className="h-3 w-3" aria-hidden="true" />
+      </button>
+    </span>
+  );
+}
+
+function TenantOverview({
+  tenants,
+  canManage,
+  onSelect,
+  onNew,
+}: {
+  tenants: TagTenant[];
+  canManage: boolean;
+  onSelect: (id: string) => void;
+  onNew: () => void;
+}) {
+  const { t } = useT("agents");
+  if (tenants.length === 0) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-6">
+        <div className="max-w-sm rounded-lg border border-dashed px-6 py-10 text-center">
+          <Building2 className="mx-auto h-6 w-6 text-muted-foreground" aria-hidden="true" />
+          <p className="mt-3 text-body font-medium">{t(($) => $.tag_page.tenants_empty)}</p>
+          <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.tag_page.tenants_empty_hint)}</p>
+          {canManage ? (
+            <Button className="mt-4" size="sm" onClick={onNew}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {t(($) => $.tag_page.new_tenant)}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <ul className="grid gap-3 xl:grid-cols-2">
+        {tenants.map((item) => (
+          <li key={item.id}>
+            <button
+              type="button"
+              onClick={() => onSelect(item.id)}
+              className="flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-body font-medium">{item.name}</span>
+                  {item.orgId ? <span className="font-mono text-caption text-muted-foreground">{item.orgId}</span> : null}
+                </div>
+                <TenantStatus tenant={item} />
+                <div className="truncate font-mono text-caption text-muted-foreground">{item.employeeAgentId}</div>
+              </div>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function TenantStatus({ tenant, className }: { tenant: TagTenant; className?: string }) {
   const { t } = useT("agents");
   const warn = !tenant.bound || tenant.employeeArchived;
@@ -242,106 +429,58 @@ function TenantStatus({ tenant, className }: { tenant: TagTenant; className?: st
   );
 }
 
+/** Picks the tenant shown on the right; 租户列表 goes back to the list. */
 function TagTenantSwitcher({
   state,
-  tag,
   selected,
   onSelect,
-  onDialog,
 }: {
   state: TagState;
-  tag: TagSummary;
   selected: TagTenant | null;
   onSelect: (id: string | null) => void;
-  onDialog: (dialog: TagDialog) => void;
 }) {
   const { t } = useT("agents");
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={<Button variant="outline" size="sm" className="h-8 gap-1.5" />}
+        render={<Button variant="outline" size="sm" className="h-8 max-w-[260px] gap-1.5" />}
         aria-label={t(($) => $.tag_page.switcher_aria)}
       >
-        {selected ? (
-          <>
-            <Building2 className="h-3.5 w-3.5" aria-hidden="true" />
-            <span className="max-w-[180px] truncate font-medium">{selected.name}</span>
-            {selected.orgId ? (
-              <span className="font-mono text-caption text-muted-foreground">{selected.orgId}</span>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <Globe className="h-3.5 w-3.5" aria-hidden="true" />
-            <span className="font-medium">{t(($) => $.tag_page.all_tenants)}</span>
-            <span className="text-caption text-muted-foreground">{t(($) => $.tag_page.all_tenants_hint)}</span>
-          </>
-        )}
-        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+        <Building2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <span className="truncate font-medium">{selected ? selected.name : t(($) => $.tag_page.pick_tenant)}</span>
+        {selected?.orgId ? <span className="font-mono text-caption text-muted-foreground">{selected.orgId}</span> : null}
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
         <DropdownMenuGroup>
-          <DropdownMenuItem onClick={() => onSelect(null)} className="items-start gap-2 py-2">
-            <Globe className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <span className="font-medium">{t(($) => $.tag_page.all_tenants)}</span>
-                <span className="text-caption text-muted-foreground">{t(($) => $.tag_page.all_tenants_hint)}</span>
-              </div>
-              {tag.latestRevision != null ? (
-                <div className="text-caption text-muted-foreground">
-                  {t(($) => $.tag_page.latest, { revision: tag.latestRevision })}
-                </div>
-              ) : null}
-            </div>
+          <DropdownMenuItem onClick={() => onSelect(null)} className="gap-2">
+            <List className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span className="flex-1">{t(($) => $.tag_page.tenant_list)}</span>
             {!selected ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
           </DropdownMenuItem>
         </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuLabel className="text-caption text-muted-foreground">
-            {t(($) => $.tag_page.tenants_heading, { count: state.tenants.length })}
-          </DropdownMenuLabel>
-          {state.tenants.map((item) => (
-            <DropdownMenuItem key={item.id} onClick={() => onSelect(item.id)} className="items-start gap-2 py-2">
-              <Building2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                  <span className="truncate font-medium">{item.name}</span>
-                  {item.orgId ? (
-                    <span className="font-mono text-caption text-muted-foreground">{item.orgId}</span>
-                  ) : null}
-                </div>
-                <TenantStatus tenant={item} />
-              </div>
-              {selected?.id === item.id ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuGroup>
-        {state.canManage ? (
+        {state.tenants.length > 0 ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem onClick={() => onDialog("new")}>
-                <Plus className="h-4 w-4" aria-hidden="true" />
-                {t(($) => $.tag_page.new_tenant)}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onDialog("adopt")}>
-                <UserPlus className="h-4 w-4" aria-hidden="true" />
-                {t(($) => $.tag_page.adopt_tenant)}
-              </DropdownMenuItem>
-              {state.tenants.length > 0 ? (
-                <DropdownMenuItem onClick={() => onDialog("apply")}>
-                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                  {t(($) => $.tag_page.apply)}
+              <DropdownMenuLabel className="text-caption text-muted-foreground">
+                {t(($) => $.tag_page.tenants_heading, { count: state.tenants.length })}
+              </DropdownMenuLabel>
+              {state.tenants.map((item) => (
+                <DropdownMenuItem key={item.id} onClick={() => onSelect(item.id)} className="items-start gap-2 py-2">
+                  <Building2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate font-medium">{item.name}</span>
+                      {item.orgId ? (
+                        <span className="font-mono text-caption text-muted-foreground">{item.orgId}</span>
+                      ) : null}
+                    </div>
+                    <TenantStatus tenant={item} />
+                  </div>
+                  {selected?.id === item.id ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
                 </DropdownMenuItem>
-              ) : null}
-              {state.tenants.length > 0 ? (
-                <DropdownMenuItem onClick={() => onDialog("manage")}>
-                  <Settings2 className="h-4 w-4" aria-hidden="true" />
-                  {t(($) => $.tag_page.manage_tenants)}
-                </DropdownMenuItem>
-              ) : null}
+              ))}
             </DropdownMenuGroup>
           </>
         ) : null}

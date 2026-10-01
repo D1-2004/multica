@@ -382,6 +382,27 @@ describe("ScenesTab for a Tag employee", () => {
     // The org node keeps its Context Builder but has no 设置 (rename/delete).
     expect(await screen.findByRole("tab", { name: copy.tab_config })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByRole("tab", { name: copy.tab_settings })).not.toBeInTheDocument();
+    // Scene memory runs on defaults: no flag bar and no memory archive.
+    expect(screen.queryByText("memory-flag-bar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.all_memory })).not.toBeInTheDocument();
+    // The level sits under the Tag's default access bundle, and its skills,
+    // connectors and credentials are framed as this level's access bundle.
+    const tagCopy = enAgents.tag_tenant;
+    const path = await screen.findByRole("navigation", { name: tagCopy.level_aria });
+    expect(within(path).getByText(tagCopy.level_tag)).toBeInTheDocument();
+    expect(within(path).getByText(tagCopy.level_org)).toHaveAttribute("aria-current", "step");
+    expect(screen.getByRole("heading", { name: tagCopy.level_bundle_title })).toBeInTheDocument();
+  });
+
+  it("opens a group on its configuration, with inbound history and no memory tab", async () => {
+    renderTab("view=scenes&tenant=dingA&node=scene:cid-group", true);
+
+    const tabs = await screen.findAllByRole("tab");
+    const labels = tabs.map((tab) => tab.textContent);
+    expect(labels).toContain(copy.tab_config);
+    expect(labels).toContain(copy.tab_inbound);
+    expect(labels).not.toContain(copy.tab_memory);
+    expect(screen.getByRole("tab", { name: copy.tab_config })).toHaveAttribute("aria-selected", "true");
   });
 
   it("falls back to the Context Builder for an old settings link", async () => {

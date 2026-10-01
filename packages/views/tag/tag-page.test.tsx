@@ -8,7 +8,7 @@ import { TagPage } from "./tag-page";
 const { detailProps, navigation, tagQuery, renameMutate, deleteMutate } = vi.hoisted(() => ({
   renameMutate: vi.fn(),
   deleteMutate: vi.fn(),
-  detailProps: { current: null as null | { agentId: string; tagView?: { role: string; backHref?: string; backLabel?: string } } },
+  detailProps: { current: [] as { agentId: string; tagView?: { role: string; embedded?: boolean; viewParam?: string } }[] },
   navigation: { current: { pathname: "/acme/tag", searchParams: new URLSearchParams() } },
   tagQuery: { current: { data: undefined as TagState | undefined, isLoading: false } },
 }));
@@ -35,15 +35,12 @@ vi.mock("../navigation", () => ({
   }),
 }));
 vi.mock("../agents/components/agent-detail-page", () => ({
-  AgentDetailPage: (props: { agentId: string; tagView?: { role: string; tabBarExtra?: React.ReactNode } }) => {
-    detailProps.current = props;
-    return (
-      <div data-testid="agent-detail" data-agent={props.agentId} data-role={props.tagView?.role}>
-        {props.tagView?.tabBarExtra}
-      </div>
-    );
+  AgentDetailPage: (props: { agentId: string; tagView?: { role: string; embedded?: boolean; viewParam?: string } }) => {
+    detailProps.current.push(props);
+    return <div data-testid="agent-detail" data-agent={props.agentId} data-role={props.tagView?.role} />;
   },
 }));
+vi.mock("./tenant-config", () => ({ TagTenantConfig: () => null }));
 
 const tenant = {
   id: "t-1",
@@ -84,7 +81,7 @@ describe("TagPage", () => {
   beforeEach(() => {
     renameMutate.mockReset();
     deleteMutate.mockReset();
-    detailProps.current = null;
+    detailProps.current = [];
     navigation.current = { pathname: "/acme/tag", searchParams: new URLSearchParams() };
   });
 
@@ -102,27 +99,44 @@ describe("TagPage", () => {
     expect(screen.getByText("Open settings").closest("a")?.getAttribute("href")).toBe("/acme/settings?tab=tag");
   });
 
-  it("shows the template for the shared configuration", () => {
+  it("puts the shared configuration on the left and lists tenants on the right", () => {
     tagQuery.current = { data: stateWith(), isLoading: false };
     renderWithI18n(<TagPage />);
-    const detail = screen.getByTestId("agent-detail");
+    const shared = screen.getByRole("region", { name: "Shared configuration" });
+    const detail = within(shared).getByTestId("agent-detail");
     expect(detail.getAttribute("data-agent")).toBe("template-1");
     expect(detail.getAttribute("data-role")).toBe("template");
-    // The tenant switcher sits in the tab bar and starts on the shared view.
-    expect(screen.getByText("Shared")).toBeTruthy();
-    // The breadcrumb leads back to the Tag page, not the agent list.
-    expect(detailProps.current?.tagView?.backHref).toBe("/acme/tag");
-    expect(detailProps.current?.tagView?.backLabel).toBe("Tag");
+    // No tenant selected: the right side lists the tenants instead of an agent.
+    const tenantPane = screen.getByRole("region", { name: "Tenant configuration" });
+    expect(within(tenantPane).queryByTestId("agent-detail")).toBeNull();
+    expect(within(tenantPane).getByRole("button", { name: /Think测试组织/ })).toBeTruthy();
+    expect(detailProps.current.every((props) => props.tagView?.embedded === true)).toBe(true);
   });
 
-  it("shows the selected tenant's employee", () => {
+  it("shows the selected tenant's employee next to the shared configuration", () => {
     tagQuery.current = { data: stateWith(), isLoading: false };
     navigation.current = { pathname: "/acme/tag", searchParams: new URLSearchParams("tag_tenant=t-1") };
     renderWithI18n(<TagPage />);
-    const detail = screen.getByTestId("agent-detail");
+    const tenantPane = screen.getByRole("region", { name: "Tenant configuration" });
+    const detail = within(tenantPane).getByTestId("agent-detail");
     expect(detail.getAttribute("data-agent")).toBe("employee-1");
     expect(detail.getAttribute("data-role")).toBe("employee");
-    expect(screen.getByText("177928186")).toBeTruthy();
+    // The two panes keep separate view params.
+    expect(detailProps.current.find((props) => props.agentId === "employee-1")?.tagView?.viewParam).toBe("tview");
+    // The tenant keeps its own Agent ID.
+    expect(within(tenantPane).getByText("employee-1")).toBeTruthy();
+    expect(within(tenantPane).getByText("177928186")).toBeTruthy();
+  });
+
+  it("collapses the shared configuration", async () => {
+    const user = userEvent.setup();
+    tagQuery.current = { data: stateWith(), isLoading: false };
+    navigation.current = { pathname: "/acme/tag", searchParams: new URLSearchParams("tag_tenant=t-1") };
+    renderWithI18n(<TagPage />);
+    await user.click(screen.getByRole("button", { name: "Collapse shared configuration" }));
+    const shared = screen.getByRole("region", { name: "Shared configuration" });
+    expect(within(shared).queryByTestId("agent-detail")).toBeNull();
+    expect(screen.getByRole("button", { name: "Expand shared configuration" })).toBeTruthy();
   });
 
   it("asks to apply when the template has unpublished changes", () => {
@@ -142,8 +156,7 @@ describe("TagPage", () => {
     tagQuery.current = { data: stateWith(), isLoading: false };
     renderWithI18n(<TagPage />);
 
-    await user.click(screen.getByRole("button", { name: "Switch tenant" }));
-    await user.click(await screen.findByRole("menuitem", { name: "Manage tenants…" }));
+    await user.click(screen.getByRole("button", { name: "Manage tenants…" }));
     const manage = await screen.findByRole("dialog", { name: "Manage tenants" });
 
     const name = within(manage).getByLabelText("Enterprise name");

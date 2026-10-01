@@ -1,0 +1,628 @@
+"use client";
+
+import { useEffect, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { QRCode } from "react-qr-code";
+import { CheckCircle2, Circle, QrCode, RefreshCw } from "lucide-react";
+import type { Agent } from "@multica/core/types";
+import { ApiError } from "@multica/core/api";
+import { useWorkspaceId } from "@multica/core/hooks";
+import {
+  agentA2AConfigOptions,
+  agentA2AOperatorConfigOptions,
+  useUpdateAgentA2AConfig,
+  useUpdateAgentA2AOperatorIdentity,
+} from "@multica/core/agent-a2a";
+import {
+  dingtalkAccountBindingsOptions,
+  dingtalkNativeSubscriptionStatusOptions,
+  useBeginDingTalkAccountBinding,
+  useDeleteDingTalkAccountBinding,
+  useSetDingTalkNativeSubscription,
+} from "@multica/core/dingtalk-account-bindings";
+import { useSetTagEmployeeSupervisorLink } from "@multica/core/tag";
+import { Button } from "@multica/ui/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@multica/ui/components/ui/dialog";
+import { Input } from "@multica/ui/components/ui/input";
+import { Label } from "@multica/ui/components/ui/label";
+import { Switch } from "@multica/ui/components/ui/switch";
+import { cn } from "@multica/ui/lib/utils";
+import { InboundCoordinatorSetting } from "../agents/components/agent-message-settings";
+import { SettingsSection } from "../settings/components/settings-layout";
+import { useT } from "../i18n";
+
+type BindingMode = "identity" | "message";
+
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+/**
+ * 租户配置 of a Tag tenant's employee. Everything shared (instructions,
+ * skills, connectors, runtime) is inherited from the Tag and edited on its
+ * left; a tenant only configures who its digital employee is, how its
+ * DingTalk events reach it, and how the inbound coordinator receives them.
+ */
+export function TagTenantConfig({
+  agent,
+  canEdit,
+  onUpdate,
+}: {
+  agent: Agent;
+  canEdit: boolean;
+  onUpdate: (data: Record<string, unknown>) => Promise<void>;
+}) {
+  return (
+    <div className="space-y-10">
+      <EmployeeIdentitySection agent={agent} canEdit={canEdit} />
+      <InboundCoordinatorSetting agent={agent} canEdit={canEdit} onUpdate={onUpdate} />
+    </div>
+  );
+}
+
+function EmployeeIdentitySection({ agent, canEdit }: { agent: Agent; canEdit: boolean }) {
+  const { t } = useT("agents");
+  const wsId = useWorkspaceId();
+  const { data: listing } = useQuery(dingtalkAccountBindingsOptions(wsId));
+  const binding = listing?.bindings.find((item) => item.agentId === agent.id) ?? null;
+  const identityActive = binding?.dwsIdentity.status === "active";
+  const routeActive = binding?.messageRoute.status === "active";
+  const nativeOn = binding?.dwsIdentity.nativeSubscription === true;
+  const [qrMode, setQrMode] = useState<BindingMode | null>(null);
+
+  return (
+    <SettingsSection title={t(($) => $.tag_tenant.identity_title)} description={t(($) => $.tag_tenant.identity_hint)}>
+      <div className="space-y-6">
+        <Layer step="1" title={t(($) => $.tag_tenant.issue_title)} hint={t(($) => $.tag_tenant.issue_hint)}>
+          <IdentityIssuance
+            agent={agent}
+            canEdit={canEdit}
+            identityActive={identityActive}
+            organizationName={binding?.dwsIdentity.organizationName ?? ""}
+            accountName={binding?.dwsIdentity.accountDisplayName ?? ""}
+            onScan={() => setQrMode("identity")}
+          />
+        </Layer>
+        <Layer step="2" title={t(($) => $.tag_tenant.perceive_title)} hint={t(($) => $.tag_tenant.perceive_hint)}>
+          <EventPerception
+            agent={agent}
+            canEdit={canEdit}
+            identityActive={identityActive}
+            routeActive={routeActive}
+            routeOrganization={binding?.messageRoute.organizationName ?? ""}
+            nativeOn={nativeOn}
+            onScanRoute={() => setQrMode("message")}
+          />
+        </Layer>
+      </div>
+      {qrMode ? <BindingQrDialog agent={agent} mode={qrMode} onClose={() => setQrMode(null)} /> : null}
+    </SettingsSection>
+  );
+}
+
+function Layer({ step, title, hint, children }: { step: string; title: string; hint: string; children: ReactNode }) {
+  return (
+    <section className="rounded-xl border">
+      <header className="flex items-start gap-3 border-b px-4 py-3">
+        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-muted text-caption font-medium">
+          {step}
+        </span>
+        <div className="min-w-0">
+          <h3 className="text-body font-medium">{title}</h3>
+          <p className="text-caption text-muted-foreground">{hint}</p>
+        </div>
+      </header>
+      <div className="space-y-4 px-4 py-4">{children}</div>
+    </section>
+  );
+}
+
+function IdentityIssuance({
+  agent,
+  canEdit,
+  identityActive,
+  organizationName,
+  accountName,
+  onScan,
+}: {
+  agent: Agent;
+  canEdit: boolean;
+  identityActive: boolean;
+  organizationName: string;
+  accountName: string;
+  onScan: () => void;
+}) {
+  const { t } = useT("agents");
+  const wsId = useWorkspaceId();
+  const { data: operator } = useQuery(agentA2AOperatorConfigOptions(wsId, agent.id));
+  const removeBinding = useDeleteDingTalkAccountBinding(wsId);
+  const [method, setMethod] = useState<"scan" | "fill">("scan");
+  const [error, setError] = useState<string | null>(null);
+  const filled = operator?.dwsIdentity ?? null;
+
+  return (
+    <>
+      <div className="flex items-center gap-3 rounded-lg bg-muted/40 px-3 py-2.5">
+        {identityActive ? (
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+        ) : (
+          <Circle className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        )}
+        <div className="min-w-0 flex-1 text-body">
+          {identityActive ? (
+            <>
+              <span className="font-medium">{accountName || filled?.displayName || filled?.uid}</span>
+              <span className="text-muted-foreground"> · {organizationName || filled?.organizationName}</span>
+              {filled ? (
+                <div className="font-mono text-caption text-muted-foreground">
+                  {t(($) => $.tag_tenant.identity_ids, { orgId: filled.orgId, uid: filled.uid })}
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <span className="text-muted-foreground">{t(($) => $.tag_tenant.identity_none)}</span>
+          )}
+        </div>
+        {identityActive && canEdit ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={removeBinding.isPending}
+            onClick={() =>
+              removeBinding.mutate(
+                { agentId: agent.id, bindingMode: "identity" },
+                { onError: (e) => setError(errorMessage(e, t(($) => $.tag_tenant.action_failed))) },
+              )
+            }
+          >
+            {t(($) => $.tag_tenant.identity_unbind)}
+          </Button>
+        ) : null}
+      </div>
+
+      <div role="radiogroup" aria-label={t(($) => $.tag_tenant.issue_title)} className="grid gap-2 sm:grid-cols-2">
+        <MethodOption
+          selected={method === "scan"}
+          title={t(($) => $.tag_tenant.method_scan)}
+          hint={t(($) => $.tag_tenant.method_scan_hint)}
+          onSelect={() => setMethod("scan")}
+        />
+        <MethodOption
+          selected={method === "fill"}
+          title={t(($) => $.tag_tenant.method_fill)}
+          hint={t(($) => $.tag_tenant.method_fill_hint)}
+          onSelect={() => setMethod("fill")}
+        />
+      </div>
+
+      {method === "scan" ? (
+        <Button variant="outline" disabled={!canEdit} onClick={onScan}>
+          <QrCode className="h-4 w-4" aria-hidden="true" />
+          {identityActive ? t(($) => $.tag_tenant.scan_again) : t(($) => $.tag_tenant.scan_identity)}
+        </Button>
+      ) : operator?.operator === true ? (
+        <DirectIdentityForm agent={agent} canEdit={canEdit} initialOrgId={filled?.orgId ?? ""} initialUid={filled?.uid ?? ""} />
+      ) : (
+        <p className="text-caption text-muted-foreground">{t(($) => $.tag_tenant.fill_operator_only)}</p>
+      )}
+      {error ? <p role="alert" className="text-caption text-destructive">{error}</p> : null}
+    </>
+  );
+}
+
+function MethodOption({
+  selected,
+  title,
+  hint,
+  onSelect,
+}: {
+  selected: boolean;
+  title: string;
+  hint: string;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      className={cn(
+        "rounded-lg border px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        selected ? "border-foreground font-medium" : "hover:bg-muted/40",
+      )}
+    >
+      <div className="text-body">{title}</div>
+      <div className="text-caption font-normal text-muted-foreground">{hint}</div>
+    </button>
+  );
+}
+
+const DECIMAL_ID = /^[1-9][0-9]{0,19}$/;
+
+/** 直接填写: the digital employee's own uid and its supervisor's uid, both
+ * scoped to the organization's numeric OrgId (not a corpId). */
+function DirectIdentityForm({
+  agent,
+  canEdit,
+  initialOrgId,
+  initialUid,
+}: {
+  agent: Agent;
+  canEdit: boolean;
+  initialOrgId: string;
+  initialUid: string;
+}) {
+  const { t } = useT("agents");
+  const wsId = useWorkspaceId();
+  const saveIdentity = useUpdateAgentA2AOperatorIdentity(wsId, agent.id);
+  const saveSupervisor = useSetTagEmployeeSupervisorLink(wsId);
+  const [orgId, setOrgId] = useState(initialOrgId);
+  const [uid, setUid] = useState(initialUid);
+  const [supervisorUid, setSupervisorUid] = useState("");
+  const [deapAgentUuid, setDeapAgentUuid] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
+  const [notice, setNotice] = useState<{ tone: "ok" | "warn" | "error"; text: string } | null>(null);
+
+  const idsValid = DECIMAL_ID.test(orgId.trim()) && DECIMAL_ID.test(uid.trim());
+  const supervisorValid = supervisorUid.trim() === "" || DECIMAL_ID.test(supervisorUid.trim());
+  const wantsSupervisor = supervisorUid.trim() !== "";
+  const supervisorComplete = !wantsSupervisor || deapAgentUuid.trim() !== "";
+  const busy = saveIdentity.isPending || saveSupervisor.isPending;
+  const canSubmit = canEdit && idsValid && supervisorValid && supervisorComplete && !busy;
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setNotice(null);
+    try {
+      await saveIdentity.mutateAsync({
+        uid: uid.trim(),
+        orgId: orgId.trim(),
+        displayName: displayName.trim() || undefined,
+        organizationName: organizationName.trim() || undefined,
+        deapAgentUuid: deapAgentUuid.trim() || undefined,
+      });
+    } catch (error) {
+      setNotice({ tone: "error", text: errorMessage(error, t(($) => $.tag_tenant.action_failed)) });
+      return;
+    }
+    if (!wantsSupervisor) {
+      setNotice({ tone: "ok", text: t(($) => $.tag_tenant.fill_saved) });
+      return;
+    }
+    try {
+      await saveSupervisor.mutateAsync({
+        agentId: agent.id,
+        deapAgentUuid: deapAgentUuid.trim(),
+        supervisorUid: supervisorUid.trim(),
+      });
+      setNotice({ tone: "ok", text: t(($) => $.tag_tenant.fill_saved_supervisor) });
+    } catch (error) {
+      setNotice(
+        error instanceof ApiError && error.status === 404
+          ? { tone: "warn", text: t(($) => $.tag_tenant.supervisor_unsupported) }
+          : { tone: "error", text: errorMessage(error, t(($) => $.tag_tenant.action_failed)) },
+      );
+    }
+  };
+
+  const field = (id: string, label: string, value: string, set: (v: string) => void, placeholder?: string, mono = true) => (
+    <div className="grid gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        value={value}
+        placeholder={placeholder}
+        className={mono ? "font-mono" : undefined}
+        disabled={!canEdit}
+        onChange={(event) => set(event.target.value)}
+      />
+    </div>
+  );
+
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        {field(`tag-fill-org-${agent.id}`, t(($) => $.tag_tenant.fill_org_id), orgId, setOrgId, "439446171")}
+        {field(`tag-fill-uid-${agent.id}`, t(($) => $.tag_tenant.fill_uid), uid, setUid, "7015073760")}
+        {field(`tag-fill-supervisor-${agent.id}`, t(($) => $.tag_tenant.fill_supervisor_uid), supervisorUid, setSupervisorUid)}
+        {field(`tag-fill-deap-${agent.id}`, t(($) => $.tag_tenant.fill_deap_agent), deapAgentUuid, setDeapAgentUuid)}
+        {field(`tag-fill-name-${agent.id}`, t(($) => $.tag_tenant.fill_display_name), displayName, setDisplayName, undefined, false)}
+        {field(`tag-fill-orgname-${agent.id}`, t(($) => $.tag_tenant.fill_org_name), organizationName, setOrganizationName, undefined, false)}
+      </div>
+      <p className="text-caption text-muted-foreground">{t(($) => $.tag_tenant.fill_ids_note)}</p>
+      {!supervisorComplete ? (
+        <p className="text-caption text-amber-700 dark:text-amber-300">{t(($) => $.tag_tenant.fill_supervisor_needs_deap)}</p>
+      ) : null}
+      {notice ? (
+        <p
+          role={notice.tone === "error" ? "alert" : "status"}
+          className={cn(
+            "text-caption",
+            notice.tone === "ok" && "text-emerald-700 dark:text-emerald-300",
+            notice.tone === "warn" && "text-amber-700 dark:text-amber-300",
+            notice.tone === "error" && "text-destructive",
+          )}
+        >
+          {notice.text}
+        </p>
+      ) : null}
+      <div className="flex justify-end">
+        <Button type="submit" disabled={!canSubmit}>
+          {t(($) => $.tag_tenant.fill_submit)}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+function EventPerception({
+  agent,
+  canEdit,
+  identityActive,
+  routeActive,
+  routeOrganization,
+  nativeOn,
+  onScanRoute,
+}: {
+  agent: Agent;
+  canEdit: boolean;
+  identityActive: boolean;
+  routeActive: boolean;
+  routeOrganization: string;
+  nativeOn: boolean;
+  onScanRoute: () => void;
+}) {
+  const { t } = useT("agents");
+  const wsId = useWorkspaceId();
+  const setNative = useSetDingTalkNativeSubscription(wsId);
+  const removeBinding = useDeleteDingTalkAccountBinding(wsId);
+  const { data: nativeStatus } = useQuery(dingtalkNativeSubscriptionStatusOptions(wsId, agent.id, nativeOn));
+  const { data: a2a } = useQuery(agentA2AConfigOptions(wsId, agent.id));
+  const updateA2A = useUpdateAgentA2AConfig(wsId, agent.id);
+  const endpoint = a2a?.endpoint ?? null;
+  const a2aOn = endpoint?.enabled === true;
+  const [error, setError] = useState<string | null>(null);
+  const fail = (e: unknown) => setError(errorMessage(e, t(($) => $.tag_tenant.action_failed)));
+
+  const nativeBlockedReason = !identityActive
+    ? t(($) => $.tag_tenant.native_needs_identity)
+    : routeActive
+      ? t(($) => $.tag_tenant.native_blocked_by_route)
+      : null;
+
+  return (
+    <>
+      <div role="list" className="space-y-2">
+        <PerceptionOption
+          active={nativeOn}
+          title={t(($) => $.tag_tenant.mode_native)}
+          hint={t(($) => $.tag_tenant.mode_native_hint)}
+          status={
+            nativeOn
+              ? t(($) => $.tag_tenant.native_stream, { state: nativeStatus?.stream.state ?? "unknown" })
+              : nativeBlockedReason ?? t(($) => $.tag_tenant.mode_off)
+          }
+          control={
+            <Switch
+              aria-label={t(($) => $.tag_tenant.mode_native)}
+              checked={nativeOn}
+              disabled={!canEdit || setNative.isPending || (!nativeOn && nativeBlockedReason !== null)}
+              onCheckedChange={(checked) => {
+                setError(null);
+                setNative.mutate({ agentId: agent.id, enabled: checked === true }, { onError: fail });
+              }}
+            />
+          }
+        />
+        <PerceptionOption
+          active={routeActive}
+          title={t(($) => $.tag_tenant.mode_backend)}
+          hint={t(($) => $.tag_tenant.mode_backend_hint)}
+          status={
+            routeActive
+              ? t(($) => $.tag_tenant.route_bound, { organization: routeOrganization })
+              : nativeOn
+                ? t(($) => $.tag_tenant.route_blocked_by_native)
+                : t(($) => $.tag_tenant.mode_off)
+          }
+          control={
+            routeActive ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!canEdit || removeBinding.isPending}
+                onClick={() => {
+                  setError(null);
+                  removeBinding.mutate({ agentId: agent.id, bindingMode: "message" }, { onError: fail });
+                }}
+              >
+                {t(($) => $.tag_tenant.route_unbind)}
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" disabled={!canEdit || nativeOn} onClick={onScanRoute}>
+                <QrCode className="h-3.5 w-3.5" aria-hidden="true" />
+                {t(($) => $.tag_tenant.route_scan)}
+              </Button>
+            )
+          }
+        />
+        <PerceptionOption
+          active={a2aOn}
+          title={t(($) => $.tag_tenant.mode_a2a)}
+          hint={t(($) => $.tag_tenant.mode_a2a_hint)}
+          status={
+            endpoint === null
+              ? t(($) => $.tag_tenant.a2a_unavailable)
+              : a2aOn
+                ? t(($) => $.tag_tenant.a2a_on, { id: endpoint.publicAgentId })
+                : t(($) => $.tag_tenant.mode_off)
+          }
+          control={
+            <Switch
+              aria-label={t(($) => $.tag_tenant.mode_a2a)}
+              checked={a2aOn}
+              disabled={!canEdit || endpoint === null || updateA2A.isPending}
+              onCheckedChange={(checked) => {
+                if (!endpoint) return;
+                setError(null);
+                updateA2A.mutate(
+                  {
+                    enabled: checked === true,
+                    cardName: endpoint.cardName,
+                    cardDescription: endpoint.cardDescription,
+                    cardVersion: endpoint.cardVersion,
+                    cardSkills: endpoint.cardSkills,
+                  },
+                  { onError: fail },
+                );
+              }}
+            />
+          }
+        />
+      </div>
+      {error ? <p role="alert" className="text-caption text-destructive">{error}</p> : null}
+    </>
+  );
+}
+
+function PerceptionOption({
+  active,
+  title,
+  hint,
+  status,
+  control,
+}: {
+  active: boolean;
+  title: string;
+  hint: string;
+  status: string;
+  control: ReactNode;
+}) {
+  const { t } = useT("agents");
+  return (
+    <div role="listitem" className={cn("flex items-start gap-3 rounded-lg border px-3 py-3", active && "border-foreground/40 bg-muted/30")}>
+      {active ? (
+        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+      ) : (
+        <Circle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+      )}
+      <div className="min-w-0 flex-1 space-y-0.5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-body font-medium">{title}</span>
+          {active ? (
+            <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-caption text-emerald-700 dark:text-emerald-300">
+              {t(($) => $.tag_tenant.mode_active)}
+            </span>
+          ) : null}
+        </div>
+        <p className="text-caption text-muted-foreground">{hint}</p>
+        <p className="text-caption">{status}</p>
+      </div>
+      <div className="shrink-0">{control}</div>
+    </div>
+  );
+}
+
+/** Scan flow for both layers: identity issuance (binding_mode=identity) and
+ * backend subscription (binding_mode=message). The binding list refreshes
+ * when the scan completes, which closes the dialog. */
+function BindingQrDialog({ agent, mode, onClose }: { agent: Agent; mode: BindingMode; onClose: () => void }) {
+  const { t } = useT("agents");
+  const wsId = useWorkspaceId();
+  const begin = useBeginDingTalkAccountBinding(wsId);
+  const { data: listing } = useQuery({ ...dingtalkAccountBindingsOptions(wsId), refetchInterval: 3_000 });
+  const binding = listing?.bindings.find((item) => item.agentId === agent.id) ?? null;
+  const status = mode === "identity" ? binding?.dwsIdentity.status : binding?.messageRoute.status;
+  const [attempt, setAttempt] = useState<{ qrCodeUrl: string; expiresAt: string } | null>(null);
+  const [startedFrom] = useState(status);
+  const [error, setError] = useState<string | null>(null);
+  const [expired, setExpired] = useState(false);
+
+  const start = () => {
+    setError(null);
+    setExpired(false);
+    begin.mutate(
+      { agentId: agent.id, bindingMode: mode },
+      {
+        onSuccess: (next) => {
+          if (!next.qrCodeUrl || !next.expiresAt) setError(t(($) => $.tag_tenant.action_failed));
+          else setAttempt({ qrCodeUrl: next.qrCodeUrl, expiresAt: next.expiresAt });
+        },
+        onError: (e) => setError(errorMessage(e, t(($) => $.tag_tenant.action_failed))),
+      },
+    );
+  };
+
+  // Start once when the dialog opens.
+  useEffect(() => {
+    start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!attempt) return;
+    const remaining = Date.parse(attempt.expiresAt) - Date.now();
+    if (!Number.isFinite(remaining) || remaining <= 0) {
+      setExpired(true);
+      return;
+    }
+    const timer = setTimeout(() => setExpired(true), remaining);
+    return () => clearTimeout(timer);
+  }, [attempt]);
+
+  // A fresh active binding means the scan completed.
+  useEffect(() => {
+    if (attempt && status === "active" && startedFrom !== "active") onClose();
+  }, [attempt, onClose, startedFrom, status]);
+
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>
+            {mode === "identity" ? t(($) => $.tag_tenant.qr_identity_title) : t(($) => $.tag_tenant.qr_route_title)}
+          </DialogTitle>
+          <DialogDescription>{t(($) => $.tag_tenant.qr_hint, { agent: agent.name })}</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col items-center gap-3 py-2">
+          {attempt && !expired ? (
+            <div className="rounded-md border bg-white p-3">
+              <QRCode value={attempt.qrCodeUrl} size={192} aria-label={t(($) => $.tag_tenant.qr_label)} />
+            </div>
+          ) : expired ? (
+            <p className="text-caption text-muted-foreground">{t(($) => $.tag_tenant.qr_expired)}</p>
+          ) : (
+            <p className="text-caption text-muted-foreground">{t(($) => $.tag_tenant.qr_loading)}</p>
+          )}
+          {error ? <p role="alert" className="text-caption text-destructive">{error}</p> : null}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>
+            {t(($) => $.tag_page.close)}
+          </Button>
+          {expired || error ? (
+            <Button size="sm" disabled={begin.isPending} onClick={start}>
+              <RefreshCw className="h-3 w-3" aria-hidden="true" />
+              {t(($) => $.tag_tenant.qr_new)}
+            </Button>
+          ) : null}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

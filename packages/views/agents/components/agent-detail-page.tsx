@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import type { ReactNode } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -12,6 +11,7 @@ import {
   MoreHorizontal,
   Plus,
   Server,
+  Tag as TagIcon,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -64,7 +64,13 @@ import { PageHeader } from "../../layout/page-header";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { AgentPresenceIndicator } from "./agent-presence-indicator";
 import { VisibilityBadge } from "./visibility-badge";
-import { AgentOverviewPane, type AgentTagRole, type DetailTab } from "./agent-overview-pane";
+import {
+  AgentOverviewPane,
+  type AgentTagRole,
+  type DetailTab,
+  type TagTenantConfigRenderer,
+} from "./agent-overview-pane";
+import { useWorkspaceTag } from "@multica/core/tag";
 import { ExpandableDescription } from "../../common/expandable-description";
 import { useT, useTimeAgo } from "../../i18n";
 
@@ -74,10 +80,12 @@ interface AgentDetailPageProps {
    * tenant employees. */
   tagView?: {
     role: AgentTagRole;
-    tabBarExtra?: ReactNode;
-    templateScenesNotice?: ReactNode;
-    backHref?: string;
-    backLabel?: string;
+    /** Rendered as one pane of the Tag page: no header, the Tag page names
+     * the pane itself. */
+    embedded?: boolean;
+    renderTenantConfig?: TagTenantConfigRenderer;
+    /** URL param of this pane's view (two panes share the Tag page). */
+    viewParam?: string;
   };
 }
 
@@ -126,10 +134,27 @@ export function AgentDetailPage({ agentId, tagView }: AgentDetailPageProps) {
   // and restore identically to edit, so a single `canEdit` covers them all.
   const {
     canAssign,
-    canEdit,
+    canEdit: canEditPermission,
     canTransferOwner,
     isLoading: permissionsLoading,
   } = useAgentPermissions(agent, wsId);
+
+  // Opened from the agent list, a Tag agent points back to the Tag page; a
+  // tenant's employee is read-only there, since its configuration comes from
+  // the Tag and its tenant settings live on the Tag page.
+  const { data: tagState } = useWorkspaceTag(wsId);
+  const tagTenant = tagState?.tenants.find((item) => item.employeeAgentId === agentId) ?? null;
+  const outsideTagRole: AgentTagRole | null = tagView
+    ? null
+    : tagState?.tag?.agentId === agentId
+      ? "template"
+      : tagTenant
+        ? "employee"
+        : null;
+  const canEdit =
+    outsideTagRole === "employee"
+      ? { ...canEditPermission, allowed: false }
+      : canEditPermission;
 
   const [confirmArchive, setConfirmArchive] = useState(false);
 
@@ -372,24 +397,54 @@ export function AgentDetailPage({ agentId, tagView }: AgentDetailPageProps) {
     useModalStore.getState().open("quick-create-issue", { agent_id: agent.id });
   };
 
+  const embedded = tagView?.embedded === true;
+  const isEmployee = tagView?.role === "employee" || outsideTagRole === "employee";
+
   return (
     <div className="flex flex-1 min-h-0 flex-col">
-      <DetailHeader
+      {embedded ? null : <DetailHeader
         agent={agent}
         runtime={runtime}
         presence={presence}
-        backHref={tagView?.backHref ?? paths.agents()}
-        backLabel={tagView?.backLabel}
+        backHref={paths.agents()}
         canAssign={canAssign.allowed}
         canArchive={canEdit.allowed}
         dmPending={permissionsLoading}
         dmHref={`${paths.chat()}?agent=${agent.id}`}
         onDm={handleDm}
         onAssign={handleAssign}
-        onArchive={agent.system_key || tagView?.role === "template" ? undefined : () => setConfirmArchive(true)}
-      />
+        onArchive={agent.system_key || tagView?.role === "template" || outsideTagRole === "template" ? undefined : () => setConfirmArchive(true)}
+      />}
 
-      {!canEdit.allowed && (
+      {outsideTagRole ? (
+        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/50 px-6 py-2 text-caption text-muted-foreground">
+          <TagIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span className="flex-1">
+            {outsideTagRole === "employee"
+              ? t(($) => $.tag_tenant.outside_employee_banner, { name: tagTenant?.name ?? "" })
+              : t(($) => $.tag_tenant.outside_template_banner)}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 text-caption"
+            render={
+              <AppLink
+                href={
+                  tagTenant
+                    ? `${paths.tag()}?tag_tenant=${encodeURIComponent(tagTenant.id)}`
+                    : paths.tag()
+                }
+              />
+            }
+            nativeButton={false}
+          >
+            {t(($) => $.tag_tenant.open_in_tag)}
+          </Button>
+        </div>
+      ) : null}
+
+      {!canEdit.allowed && !embedded && outsideTagRole !== "employee" && (
         <div className="px-6 pt-3">
           <CapabilityBanner
             reason={canEdit.reason}
@@ -416,7 +471,7 @@ export function AgentDetailPage({ agentId, tagView }: AgentDetailPageProps) {
         </div>
       )}
 
-      {!isArchived && !runtimeBound && (
+      {!isArchived && !runtimeBound && !isEmployee && (
         <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-6 py-2 text-caption text-amber-900 dark:text-amber-100">
           <Server className="h-3.5 w-3.5 shrink-0" />
           <span className="flex-1">
@@ -439,8 +494,8 @@ export function AgentDetailPage({ agentId, tagView }: AgentDetailPageProps) {
         <AgentOverviewPane
           agent={agent}
           tagRole={tagView?.role}
-          tabBarExtra={tagView?.tabBarExtra}
-          templateScenesNotice={tagView?.templateScenesNotice}
+          renderTenantConfig={tagView?.renderTenantConfig}
+          viewParam={tagView?.viewParam}
           runtime={runtime}
           owner={owner}
           runtimes={runtimes}
@@ -509,7 +564,6 @@ function DetailHeader({
   runtime,
   presence,
   backHref,
-  backLabel,
   canAssign,
   canArchive,
   dmPending,
@@ -522,8 +576,6 @@ function DetailHeader({
   runtime: AgentRuntime | null;
   presence: AgentPresenceDetail | null;
   backHref: string;
-  /** Breadcrumb label for backHref; defaults to the agents page title. */
-  backLabel?: string;
   canAssign: boolean;
   canArchive: boolean;
   dmPending: boolean;
@@ -549,7 +601,7 @@ function DetailHeader({
             href={backHref}
             className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {backLabel ?? t(($) => $.page.title)}
+            {t(($) => $.page.title)}
           </AppLink>
           <span aria-hidden="true">/</span>
           <span className="truncate text-foreground">{agent.name}</span>

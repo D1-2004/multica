@@ -139,11 +139,16 @@ export function ContextBuilderPanel({
   onOpenAppChange,
   onDirtyChange,
   footer,
+  tagFraming = false,
 }: {
   wsId: string;
   agentId: string;
   node: ContextNodeRef;
   canEdit: boolean;
+  /** A Tag tenant's scene: show where this level sits under the Tag's default
+   * access bundle, and frame its skills, connectors and credentials as the
+   * access bundle of this level. */
+  tagFraming?: boolean;
   connect: ContextBuilderConnect;
   /** Catalog slug of the open app dialog, "" when closed. */
   openApp: string;
@@ -176,8 +181,21 @@ export function ContextBuilderPanel({
     return <ConnectorNotice>{t(($) => $.tab_body.context_builder.scope_unknown)}</ConnectorNotice>;
   }
   const rights = contextLevelRights(detail, canEdit);
+  const capabilities = (
+    <NodeCapabilities
+      wsId={wsId}
+      agentId={agentId}
+      node={node}
+      detail={detail}
+      rights={rights}
+      connect={connect}
+      openApp={openApp}
+      onOpenAppChange={onOpenAppChange}
+    />
+  );
   return (
     <div className="space-y-8">
+      {tagFraming ? <TagLevelPath level={detail.scope?.type ?? node.scopeType} /> : null}
       <PromptSection
         // A new level starts with a fresh draft.
         key={`${node.orgId}/${node.scopeType}/${node.scopeKey}`}
@@ -188,20 +206,52 @@ export function ContextBuilderPanel({
         canEdit={rights.editPrompts}
         onDirtyChange={onDirtyChange}
       />
-      <NodeCapabilities
-        wsId={wsId}
-        agentId={agentId}
-        node={node}
-        detail={detail}
-        rights={rights}
-        connect={connect}
-        openApp={openApp}
-        onOpenAppChange={onOpenAppChange}
-      />
+      {tagFraming ? (
+        <section className="space-y-4 rounded-xl border px-4 py-4">
+          <header>
+            <h3 className="text-body font-semibold">{t(($) => $.tag_tenant.level_bundle_title)}</h3>
+            <p className="text-caption text-muted-foreground">{t(($) => $.tag_tenant.level_bundle_hint)}</p>
+          </header>
+          {capabilities}
+        </section>
+      ) : (
+        capabilities
+      )}
       <EffectiveSection detail={detail} />
       {canEdit ? <AccessSection wsId={wsId} agentId={agentId} node={node} detail={detail} /> : null}
       {footer}
     </div>
+  );
+}
+
+/** Tag 默认能力包 → 企业 → 群聊 / 个人, with this level marked: each level
+ * inherits the one before and adds its own prompt and access bundle. */
+function TagLevelPath({ level }: { level: string }) {
+  const { t } = useT("agents");
+  const steps: { id: string; label: string }[] = [
+    { id: "tag", label: t(($) => $.tag_tenant.level_tag) },
+    { id: "org", label: t(($) => $.tag_tenant.level_org) },
+    { id: "leaf", label: level === "person" ? t(($) => $.tag_tenant.level_person) : t(($) => $.tag_tenant.level_scene) },
+  ];
+  const current = level === "org" ? "org" : "leaf";
+  const visible = current === "org" ? steps.slice(0, 2) : steps;
+  return (
+    <nav aria-label={t(($) => $.tag_tenant.level_aria)} className="flex flex-wrap items-center gap-1.5 text-caption">
+      {visible.map((step, index) => (
+        <span key={step.id} className="flex items-center gap-1.5">
+          {index > 0 ? <span aria-hidden="true" className="text-muted-foreground">→</span> : null}
+          <span
+            aria-current={step.id === current ? "step" : undefined}
+            className={cn(
+              "rounded-full border px-2 py-0.5",
+              step.id === current ? "border-foreground font-medium text-foreground" : "text-muted-foreground",
+            )}
+          >
+            {step.label}
+          </span>
+        </span>
+      ))}
+    </nav>
   );
 }
 
