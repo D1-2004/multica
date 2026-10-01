@@ -78,3 +78,11 @@ identified only by `scene_id` from `agent_scene` (`docs/agent-scene.md`).
 - `assoc_scene` and `scene_memory` are retired: no reads, writes or fallbacks.
 
 See CLAUDE.md for the authoritative rules and common commands.
+
+## Unified event admission
+
+Provider facts pass through `internal/eventrouter` before scene business handling
+(`docs/event-scene-router.md`). Host constructs owner/principal/tenant metadata;
+payload actors grant nothing. `scene_event_receipt` freezes one source/id receipt and
+SceneRef. Canary targets are exact workspace/agent/org triples; retries retain
+their route. Unknown locators are held, never sent to a guessed scene.

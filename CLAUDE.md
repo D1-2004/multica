@@ -240,6 +240,15 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 
 ## Domain Reminders
 
+- Provider event admission (`docs/event-scene-router.md`): `internal/eventrouter`
+  persists one `scene_event_receipt` envelope/routing receipt per owner/source/id before
+  scene business handling. Host supplies authenticated owner/principal/tenant;
+  payload actors or SceneRefs grant no authority. Resolve once via `scene.Resolve`,
+  retain route/ref on retries and fence the current tenant at entry. Unknown
+  locators are unmapped, never guessed. `runtime.event_scene_router` selects exact
+  workspace/agent/tenant triples and defaults off; no dual handling. EmployeeLoop,
+  Task execution and connector binding models are outside this layer.
+
 - Workspace shared disk and the employee private disk are separate stores. The shared-disk grant does not change `/mnt/multica` or the DSH profile. See `docs/workspace-storage-boundaries.md`.
 
 - Before any Coordinator-related change in `inboundcoord`, handlers/dispatch/callbacks, assoc, scenememory, or trace, read `docs/inbound-coordinator-loop.md` (current behavior contract) and `server/internal/service/inboundcoord/policy/registry.json` (versioned obligations, modules, and superseded incident safeguards). Update source mapping, relevant tool/Host contracts, contrast cases, and evidence status together; run `python3 scripts/check-coordinator-policy.py`. Historical Plans are evidence, not a competing current contract.

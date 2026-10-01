@@ -1214,7 +1214,6 @@ type Feedback struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
-
 type GithubPendingCheckSuite struct {
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
 	InstallationID int64              `json:"installation_id"`
@@ -2236,7 +2235,6 @@ type DshPluginCatalogEntry struct {
 	RefreshedAt    pgtype.Timestamptz `json:"refreshed_at"`
 }
 
-
 type GitConnection struct {
 	ID               pgtype.UUID        `json:"id"`
 	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
@@ -2249,4 +2247,22 @@ type GitConnection struct {
 	CreatedBy        pgtype.UUID        `json:"created_by"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SceneEventReceipt struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	AgentID       pgtype.UUID        `json:"agent_id"`
+	PrincipalID   pgtype.UUID        `json:"principal_id"`
+	TenantOrgID   string             `json:"tenant_org_id"`
+	Source        string             `json:"source"`
+	SourceEventID string             `json:"source_event_id"`
+	Fingerprint   string             `json:"fingerprint"`
+	Envelope      []byte             `json:"envelope"`
+	SceneID       pgtype.UUID        `json:"scene_id"`
+	Route         string             `json:"route"`
+	State         string             `json:"state"`
+	Reason        string             `json:"reason"`
+	ConfigVersion string             `json:"config_version"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }

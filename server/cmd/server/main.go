@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/deploymentfence"
 	"github.com/multica-ai/multica/server/internal/dshschedule"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
+	"github.com/multica-ai/multica/server/internal/eventrouter"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/langfuse"
@@ -454,7 +455,7 @@ func main() {
 		slog.Error("deployment fence instance identity failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
-	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker)
+	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker+" "+eventrouter.ReplicaMarker)
 	if err != nil {
 		slog.Error("deployment fence initialization failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)

@@ -186,7 +186,7 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 		// reads no scene state of the old org.
 		command.AgentScene = w.handler.fenceSceneRef(ctx, command.AgentScene,
 			scene.Owner{WorkspaceID: job.WorkspaceID, AgentID: job.AgentID}, dispatchRecordedOrg(command))
-	} else if strings.TrimSpace(command.TaskFinishedTaskID) == "" {
+	} else if strings.TrimSpace(command.TaskFinishedTaskID) == "" && command.EventReceiptID == "" {
 		// A job an older replica admitted during the rollout carries no
 		// SceneRef: resolve it from the persisted command with the same
 		// resolver the dispatch uses (docs/agent-scene.md, rolling window).

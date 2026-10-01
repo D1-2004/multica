@@ -119,6 +119,15 @@ func (c *appRuntimeConfig) snapshot() runtimeconfig.Snapshot {
 	return c.remote.Current()
 }
 
+func (c *appRuntimeConfig) eventRouteConfig(workspaceID, agentID, orgID string) (string, string) {
+	snapshot := c.snapshot()
+	route := "legacy"
+	if rollout := snapshot.Config.Runtime.EventSceneRouter; rollout != nil && rollout.Allows(workspaceID, agentID, orgID) {
+		route = "unified"
+	}
+	return route, fmt.Sprintf("%s:%d", snapshot.SHA256, snapshot.Generation)
+}
+
 // coordinatorDecisionConfig reads, from one runtime configuration snapshot,
 // the Coordinator model, whether the performance switch selects agentID,
 // and the finish schema experiment, which only applies under that switch.

@@ -35,6 +35,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/dwsidentity"
+	"github.com/multica-ai/multica/server/internal/eventrouter"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -527,6 +528,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		dwsclient.SetIdentityProvider(&dwsidentity.Provider{Links: queries})
 		h.FCE2BLauncher.Runner = service.NewFCE2BRolloutRunner(opts.RuntimeConfig.fcE2BSDKRollout)
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
+		h.EventRouteConfig = opts.RuntimeConfig.eventRouteConfig
+		if opts.DeploymentFence != nil {
+			h.EventRouteReady = func(ctx context.Context) (bool, error) {
+				return opts.DeploymentFence.AllLiveReplicasSupport(ctx, eventrouter.ReplicaMarker)
+			}
+		}
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
 		h.FCE2BLauncher.ConfigProvider = opts.RuntimeConfig.fce2b
 		h.TaskService.RuntimeStartRecoveryConfig = func() service.RuntimeStartRecoveryConfig {

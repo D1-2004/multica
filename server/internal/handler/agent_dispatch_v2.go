@@ -246,6 +246,9 @@ type DispatchCommand struct {
 	// (docs/agent-scene.md). Persisted with Coordinator jobs; never read from
 	// the Router request (AgentDispatchV2Request does not expose it).
 	AgentScene *scene.Ref `json:"agent_scene,omitempty"`
+	// EventReceiptID distinguishes a frozen admission with no scene from
+	// an old replica's command that still needs resolution at claim.
+	EventReceiptID string `json:"event_receipt_id,omitempty"`
 }
 
 type DispatchPrompt struct {

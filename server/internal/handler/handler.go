@@ -252,38 +252,41 @@ type Handler struct {
 	CoordinatorCollectQuiet  func(agentID pgtype.UUID) time.Duration
 	UserDecisions            *userdecision.Service
 	InboundCoordinatorWorker *InboundCoordinatorJobWorker
-	SceneMemoryStore         *scenememory.Store
-	SceneMemoryWorker        *scenememory.Worker
-	A2AService               *service.A2AService
-	A2AProtocol              http.Handler
-	A2APushWorker            *service.A2APushWorker
-	FCE2BLauncher            *service.FCE2BLauncher
-	ProvisionDSHStorage      func(context.Context, dshhost.Key) (dshhost.Host, error)
-	ASBLauncher              *service.ASBLauncher
-	EnterpriseIdentity       enterpriseIdentityService
-	FCE2BStable              *service.FCE2BStableService
-	IssueService             *service.IssueService
-	IssueCommentService      *service.IssueCommentService
-	AutopilotService         *service.AutopilotService
-	MessageAutomations       *service.MessageAutomationService
-	EventTriggers            *service.EventTriggerService
-	EmailService             *service.EmailService
-	UpdateStore              UpdateStore
-	ModelListStore           ModelListStore
-	LocalSkillListStore      LocalSkillListStore
-	LocalSkillImportStore    LocalSkillImportStore
-	FeatureFlags             *featureflag.Service
-	SemanticaMCPRelay        *SemanticaMCPRelay
-	InternalConnectorRedis   internalConnectorRedis
-	InternalConnectorClient  *http.Client
-	LivenessStore            LivenessStore
-	HeartbeatScheduler       HeartbeatScheduler
-	Storage                  storage.Storage
-	SiteHosting              StaticSiteHostingService
-	AgentDispatchHTTPClient  *http.Client
-	AgentDispatchKeys        *agentmessagerouter.DispatchKeyring
-	CFSigner                 *auth.CloudFrontSigner
-	Analytics                analytics.Client
+	// EventRouteConfig returns a single runtime snapshot's choice and version.
+	EventRouteConfig        func(workspaceID, agentID, orgID string) (route, version string)
+	EventRouteReady         func(context.Context) (bool, error)
+	SceneMemoryStore        *scenememory.Store
+	SceneMemoryWorker       *scenememory.Worker
+	A2AService              *service.A2AService
+	A2AProtocol             http.Handler
+	A2APushWorker           *service.A2APushWorker
+	FCE2BLauncher           *service.FCE2BLauncher
+	ProvisionDSHStorage     func(context.Context, dshhost.Key) (dshhost.Host, error)
+	ASBLauncher             *service.ASBLauncher
+	EnterpriseIdentity      enterpriseIdentityService
+	FCE2BStable             *service.FCE2BStableService
+	IssueService            *service.IssueService
+	IssueCommentService     *service.IssueCommentService
+	AutopilotService        *service.AutopilotService
+	MessageAutomations      *service.MessageAutomationService
+	EventTriggers           *service.EventTriggerService
+	EmailService            *service.EmailService
+	UpdateStore             UpdateStore
+	ModelListStore          ModelListStore
+	LocalSkillListStore     LocalSkillListStore
+	LocalSkillImportStore   LocalSkillImportStore
+	FeatureFlags            *featureflag.Service
+	SemanticaMCPRelay       *SemanticaMCPRelay
+	InternalConnectorRedis  internalConnectorRedis
+	InternalConnectorClient *http.Client
+	LivenessStore           LivenessStore
+	HeartbeatScheduler      HeartbeatScheduler
+	Storage                 storage.Storage
+	SiteHosting             StaticSiteHostingService
+	AgentDispatchHTTPClient *http.Client
+	AgentDispatchKeys       *agentmessagerouter.DispatchKeyring
+	CFSigner                *auth.CloudFrontSigner
+	Analytics               analytics.Client
 	// DaemonPendingWork pushes "heartbeat now" hints for queued
 	// heartbeat-carried requests (MUL-5444). Optional: when nil,
 	// requestDaemonPendingWork falls back to the local DaemonHub, which is the

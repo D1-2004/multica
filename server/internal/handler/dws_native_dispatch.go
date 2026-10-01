@@ -445,7 +445,7 @@ func (h *Handler) acceptNativeMessage(ctx context.Context, id dwsclient.Identity
 		AgentID:             agent.ID,
 	}
 	key := nativeDispatchIdempotencyKey(id.OrgID, command.Event.Data.Conversation.OpenConversationID, command.Event.Data.Messages[0].OpenMsgID)
-	status, body, err := h.submitNativeDispatch(ctx, command, dispatchContext, key)
+	status, body, err := h.submitNativeDispatch(withNativeEvent(ctx, ev), command, dispatchContext, key)
 	if err != nil {
 		return err
 	}

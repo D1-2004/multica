@@ -226,6 +226,19 @@ func (h *Handler) handleAgentDispatchV2(
 	if h.handleMessageStatistics(w, r, command, dispatchContext) {
 		return
 	}
+	if command.AgentID != "" {
+		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
+		if !ok {
+			return
+		}
+		if agentID != dispatchContext.AgentID {
+			writeError(w, http.StatusForbidden, "agentId does not match dispatch endpoint")
+			return
+		}
+	}
+	if h.admitDispatchEvent(w, r, raw, &command, dispatchContext) {
+		return
+	}
 	if h.handleObservedEvent(w, r, &command, dispatchContext) {
 		return
 	}
@@ -292,18 +305,6 @@ func (h *Handler) handleAgentDispatchV2(
 		"serverOutboundSuppressed", plan.SuppressServerOutbound,
 		"displayBytes", len(plan.Prompt.DisplayContent),
 	)
-	if command.AgentID != "" {
-		agentID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(command.AgentID), "agentId")
-		if !ok {
-			return
-		}
-		if agentID != dispatchContext.AgentID {
-			writeError(w, http.StatusForbidden, "agentId does not match dispatch endpoint")
-			return
-		}
-	}
-	h.attachDispatchScene(r.Context(), &command, dispatchContext)
-
 	if command.CompletionCallback == nil && !command.ProactiveConversation {
 		h.executeAgentDispatchV2(w, r, command, plan, dispatchContext)
 		return
