@@ -791,6 +791,8 @@ func writeTagTenantError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "name must be 1-64 characters")
 	case errors.Is(err, tag.ErrAgentInUse):
 		writeError(w, http.StatusConflict, "this agent already belongs to the tag")
+	case errors.Is(err, tag.ErrAgentServesSeveralOrgs):
+		writeError(w, http.StatusConflict, "this agent serves several organizations; remove its extra tenants before adding it to the tag")
 	case errors.Is(err, tag.ErrAgentUnavailable):
 		writeError(w, http.StatusBadRequest, "agent not found in this workspace")
 	default:

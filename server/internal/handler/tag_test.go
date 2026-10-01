@@ -243,6 +243,17 @@ func TestTagTenantsAndApply(t *testing.T) {
 	}
 	tagExpect(t, tagDo(t, router, http.MethodPost, "/api/tag/tenants/adopt", map[string]string{"agent_id": templateID, "name": "self"}),
 		http.StatusConflict, "adopt template")
+	// An agent that already serves another org through a contextcap tenant
+	// is not one enterprise's employee.
+	if _, err := testPool.Exec(ctx, `INSERT INTO agent_tenant (workspace_id, agent_id, org_id, name) VALUES ($1, $2, 'org-other', 'Other')`,
+		testWorkspaceID, adoptee); err != nil {
+		t.Fatal(err)
+	}
+	tagExpect(t, tagDo(t, router, http.MethodPost, "/api/tag/tenants/adopt", map[string]string{"agent_id": adoptee, "name": "钉钉"}),
+		http.StatusConflict, "adopt multi-org agent")
+	if _, err := testPool.Exec(ctx, `DELETE FROM agent_tenant WHERE agent_id = $1`, adoptee); err != nil {
+		t.Fatal(err)
+	}
 	w = tagDo(t, router, http.MethodPost, "/api/tag/tenants/adopt", map[string]string{"agent_id": adoptee, "name": "钉钉"})
 	tagExpect(t, w, http.StatusCreated, "adopt")
 	adopted := tagDecode[TagTenantMutationResponse](t, w)

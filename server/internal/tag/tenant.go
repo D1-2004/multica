@@ -132,6 +132,20 @@ func InsertTenant(ctx context.Context, tx DBTX, workspaceID, tagAgentID, employe
 	if role != RoleNone {
 		return Tenant{}, ErrAgentInUse
 	}
+	// One employee, one enterprise: an agent whose contextcap tenants reach
+	// another org than its own identity cannot become a Tag tenant. A
+	// tenant row for the identity org itself only renames it.
+	var multiOrg bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM agent_tenant t
+			LEFT JOIN agent_dingtalk_identity i ON i.agent_id = t.agent_id
+			WHERE t.workspace_id = $1::uuid AND t.agent_id = $2::uuid
+			  AND t.org_id IS DISTINCT FROM i.org_id)`, workspaceID, employeeAgentID).Scan(&multiOrg); err != nil {
+		return Tenant{}, err
+	}
+	if multiOrg {
+		return Tenant{}, ErrAgentServesSeveralOrgs
+	}
 	var id string
 	err = tx.QueryRow(ctx, `INSERT INTO tag_tenant (workspace_id, tag_agent_id, employee_agent_id, name, created_by)
 		VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5::uuid) RETURNING id::text`,

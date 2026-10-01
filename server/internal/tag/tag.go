@@ -51,6 +51,10 @@ var (
 	ErrAgentInUse = errors.New("tag: agent already belongs to the tag")
 	// ErrHasTenants means the Tag still has tenants.
 	ErrHasTenants = errors.New("tag: tag still has tenants")
+	// ErrAgentServesSeveralOrgs means the agent already serves organizations
+	// beyond its own DingTalk identity through contextcap tenants; a Tag
+	// employee serves exactly one enterprise.
+	ErrAgentServesSeveralOrgs = errors.New("tag: agent serves several organizations")
 )
 
 // Role tells how an agent participates in its workspace Tag.
