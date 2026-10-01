@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS context_config_grant_agent_scope_idx;

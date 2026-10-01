@@ -19,6 +19,7 @@ import {
   useDeleteContextConnectorCredential,
   useDeleteContextNodeCredential,
   useRemoveAgentConnector,
+  useRevokeContextNodeGrants,
   useSetAgentOffer,
   useSetContextCapabilityBinding,
   useSetContextConnectorCredential,
@@ -433,6 +434,28 @@ describe("Context Builder node writes", () => {
       JSON.stringify(queryClient.getMutationCache().getAll().map((mutation) => mutation.state.variables ?? null)),
     ).not.toContain("secret-token");
   });
+
+  it("revokes a person's configure-page access and refreshes the nodes and the people list", async () => {
+    const revokeContextNodeGrants = vi.fn().mockResolvedValue(2);
+    setApiInstance({ revokeContextNodeGrants } as unknown as ApiClient);
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useRevokeContextNodeGrants("ws-1", "agent-1"), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    let revoked: number | null = null;
+    await act(async () => {
+      revoked = await result.current.mutateAsync(personNode);
+    });
+
+    expect(revoked).toBe(2);
+    expect(revokeContextNodeGrants).toHaveBeenCalledWith("ws-1", "agent-1", personNode);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.contextNodes("ws-1", "agent-1") });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: contextCapabilityKeys.tenantPersons("ws-1", "agent-1", "ding1"),
+    });
+  });
 });
 
 describe("connector offer and removal", () => {
@@ -502,12 +525,22 @@ describe("connector offer and removal", () => {
     expect(setAgentContextCapabilityOffers).not.toHaveBeenCalled();
   });
 
-  it("adds an official app: creates the workspace connector, then offers it without a grant", async () => {
+  it("adds an official app: creates the workspace connector, then grants it as a common capability", async () => {
     const addCatalogConnector = vi.fn().mockResolvedValue(null);
-    const listInternalConnectors = vi
-      .fn()
-      .mockResolvedValue([{ id: "c-notion", catalogSlug: "notion", agentIds: [] }]);
-    const updateInternalConnector = vi.fn();
+    const listInternalConnectors = vi.fn().mockResolvedValue([
+      {
+        id: "c-notion",
+        name: "Notion",
+        upstreamUrl: "https://mcp.notion.com/mcp",
+        allowedTools: [],
+        agentIds: ["agent-2"],
+        enabled: true,
+        authMode: "oauth",
+        catalogSlug: "notion",
+        writeEnabled: false,
+      },
+    ]);
+    const updateInternalConnector = vi.fn().mockResolvedValue(undefined);
     const getAgentContextCapabilities = vi.fn().mockResolvedValue(withOffers(["c1"]));
     const setAgentContextCapabilityOffers = vi.fn().mockResolvedValue(withOffers(["c1", "c-notion"]));
     setApiInstance({
@@ -532,11 +565,13 @@ describe("connector offer and removal", () => {
     expect(addCatalogConnector).toHaveBeenCalledWith("ws-1", "notion");
     // A malformed echo is read back from the library.
     expect(listInternalConnectors).toHaveBeenCalledWith("ws-1");
-    expect(setAgentContextCapabilityOffers).toHaveBeenCalledWith("ws-1", "agent-1", {
-      connectorIds: ["c1", "c-notion"],
-      skillIds: ["s1"],
-    });
-    expect(updateInternalConnector).not.toHaveBeenCalled();
+    // Added means granted (通用能力), not published to scenes.
+    expect(updateInternalConnector).toHaveBeenCalledWith(
+      "ws-1",
+      "c-notion",
+      expect.objectContaining({ agent_ids: ["agent-2", "agent-1"] }),
+    );
+    expect(setAgentContextCapabilityOffers).not.toHaveBeenCalled();
     expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.all("ws-1") });
   });
 

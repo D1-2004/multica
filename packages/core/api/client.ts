@@ -12,6 +12,7 @@ import {
   AgentTenantResponseSchema,
   AgentTenantsListSchema,
   ContextNodeDetailSchema,
+  ContextNodeGrantsRevokedSchema,
   ContextNodeMcpConfigResponseSchema,
   ContextPromptComponentsResponseSchema,
   EMPTY_AGENT_SCENES_PAGE,
@@ -4712,6 +4713,24 @@ export class ApiClient {
     await this.fetch<void>(`${this.contextNodePath(agentId, node)}/credentials?${params.toString()}`, {
       method: "DELETE",
       headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+  }
+
+  /** Revokes every configure-page grant (from configuration links or the
+   * DingTalk group picker) on a group or person level; the level's
+   * configuration stays. Resolves to how many grants were removed, null when
+   * the echo is malformed. */
+  async revokeContextNodeGrants(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+  ): Promise<number | null> {
+    const raw = await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/grants`, {
+      method: "DELETE",
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<number | null>(raw, ContextNodeGrantsRevokedSchema, null, {
+      endpoint: "DELETE /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}/grants",
     });
   }
 

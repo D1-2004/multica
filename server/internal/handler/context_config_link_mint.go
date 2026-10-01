@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -29,25 +28,18 @@ const (
 
 // contextConfigLinkPagePath is the configure page a link opens; the bearer
 // token follows it.
-const contextConfigLinkPagePath = "/dingtalk/configure?link="
+const contextConfigLinkPagePath = inboundcoord.ConfigLinkPagePath
 
-// contextConfigLinkPattern matches a configuration link URL (the page path
-// and its URL-safe base64 token, contextcap.NewLinkToken).
-var contextConfigLinkPattern = regexp.MustCompile(`(?:https?://\S*?)?` + regexp.QuoteMeta(contextConfigLinkPagePath) + `[A-Za-z0-9_%-]+`)
-
-// contextConfigLinkRedacted replaces a configuration link in stored text.
-const contextConfigLinkRedacted = "[configuration link]"
-
-// redactContextConfigLinks removes configuration link URLs from text that is
-// stored beyond the delivery path: a link is a bearer token (a personal one
-// hands over that person's scope), so the Coordinator transcript, which
-// managers and allow-listed members can read and the Coordinator rereads as
-// history, keeps only a placeholder. The DingTalk reply keeps the link.
+// redactContextConfigLinks removes configuration link URLs (plain or
+// percent-encoded) from text that is stored beyond the delivery path: a link
+// is a bearer token (a personal one hands over that person's scope), so the
+// Coordinator transcript, which managers and allow-listed members can read
+// and the Coordinator rereads as history, keeps only a placeholder. The
+// DingTalk reply keeps the link, and so do the executor task's own messages:
+// the delivery fallback and the wrap-up "already delivered" check read them
+// back and must see the text that was sent.
 func redactContextConfigLinks(text string) string {
-	if !strings.Contains(text, contextConfigLinkPagePath) {
-		return text
-	}
-	return contextConfigLinkPattern.ReplaceAllString(text, contextConfigLinkRedacted)
+	return inboundcoord.RedactConfigLinks(text)
 }
 
 // contextConfigLinkMint is one link to mint for a resolved dispatch scope.

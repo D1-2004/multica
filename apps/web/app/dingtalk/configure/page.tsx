@@ -19,8 +19,10 @@ import {
   readConnectResult,
   replaceCurrentPage,
   savePendingConnect,
+  savePendingConnectResult,
   savePendingParams,
   takePendingConnect,
+  takePendingConnectResult,
   takePendingParams,
   type ConfigureParams,
   type ConnectTarget,
@@ -37,6 +39,16 @@ type Stage =
 
 type ConnectResult = NonNullable<ContextConfigPageProps["connectResult"]>;
 type ScopeRef = NonNullable<ContextConfigPageProps["initialScope"]>;
+
+/** How long after a provider sign-in returned its outcome is still carried
+ * through a DingTalk sign-in the page needs first. */
+const CONNECT_RETURN_CARRY_MS = 5 * 60 * 1000;
+
+interface ConnectReturn {
+  target: ConnectTarget | null;
+  result: ConnectResult;
+  at: number;
+}
 
 // Leaves for a connector's provider sign-in, remembering the scope it was
 // started from; the provider flow returns to this route (see oauth.ts).
@@ -63,6 +75,10 @@ function DingTalkConfigureContent() {
   >(undefined);
   const booted = useRef(false);
   const completedOAuth = useRef(false);
+  // A provider sign-in outcome this page load took from the URL and the
+  // scope it started from: a DingTalk sign-in the page needs right after
+  // must not lose them.
+  const connectReturn = useRef<ConnectReturn | null>(null);
 
   const beginOAuth = useCallback(async (current: ConfigureParams) => {
     if (completedOAuth.current) {
@@ -79,6 +95,11 @@ function DingTalkConfigureContent() {
         return;
       }
       savePendingParams(current);
+      const carried = connectReturn.current;
+      if (carried && Date.now() - carried.at < CONNECT_RETURN_CARRY_MS) {
+        if (carried.target) savePendingConnect(carried.target);
+        savePendingConnectResult(carried.result);
+      }
       const state = beginOAuthState();
       replaceCurrentPage(
         buildDingTalkOAuthUrl(config.dingtalk_client_id, window.location.origin, state),
@@ -137,6 +158,20 @@ function DingTalkConfigureContent() {
           setStage({ kind: "error", error: "failed" });
           return;
         }
+        // A provider sign-in returned just before this DingTalk sign-in:
+        // reopen its scope and report it now.
+        const carriedResult = takePendingConnectResult();
+        if (carriedResult) {
+          const target = takePendingConnect();
+          if (target && target.agentId === restored.agentId) {
+            setInitialScope({
+              scopeType: target.scopeType,
+              scopeKey: target.scopeKey,
+              ...(target.orgId ? { orgId: target.orgId } : {}),
+            });
+          }
+          setConnectResult(carriedResult);
+        }
         setStage({ kind: "ready" });
         return;
       }
@@ -159,6 +194,7 @@ function DingTalkConfigureContent() {
           });
         }
         setConnectResult(returned);
+        connectReturn.current = { target: pending, result: returned, at: Date.now() };
       }
       // Drop the link token and the connect outcome from the address bar
       // before anything can copy, share or sign (dd.config) the URL.

@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   deleteCredential: vi.fn(),
   setMcpConfig: vi.fn(),
   startConnection: vi.fn(),
+  revokeGrants: vi.fn(),
 }));
 
 vi.mock("@multica/core/api", () => ({
@@ -29,6 +30,7 @@ vi.mock("@multica/core/api", () => ({
     deleteContextNodeCredential: mocks.deleteCredential,
     setContextNodeMcpConfig: mocks.setMcpConfig,
     startContextNodeConnection: mocks.startConnection,
+    revokeContextNodeGrants: mocks.revokeGrants,
   },
   errorCode: () => undefined,
 }));
@@ -57,6 +59,7 @@ function detailOf(overrides: Partial<ContextNodeDetail> = {}): ContextNodeDetail
         acceptsPat: false,
         oauthAvailable: false,
         installUrl: "",
+        global: false,
         enabled: true,
         credential: { connected: false, account: "" },
       },
@@ -69,6 +72,7 @@ function detailOf(overrides: Partial<ContextNodeDetail> = {}): ContextNodeDetail
         acceptsPat: true,
         oauthAvailable: true,
         installUrl: "",
+        global: false,
         enabled: false,
         credential: { connected: false, account: "" },
       },
@@ -283,6 +287,33 @@ describe("ContextBuilderPanel capabilities", () => {
     );
   });
 
+  function grantAll() {
+    const detail = detailOf();
+    mocks.getNode.mockResolvedValue({
+      ...detail,
+      connectors: detail.connectors.map((connector) => ({ ...connector, global: true, enabled: false })),
+    });
+  }
+
+  it("shows a granted connector as 通用能力 with a token action but no switch", async () => {
+    grantAll();
+    renderPanel();
+
+    const wiki = await screen.findByRole("listitem", { name: "Wiki" });
+    expect(within(wiki).getByText(enAgents.tab_body.connectors.status_enabled)).toBeInTheDocument();
+    expect(within(wiki).queryByRole("switch")).not.toBeInTheDocument();
+    expect(within(wiki).getByRole("button", { name: copy.token_set })).toBeInTheDocument();
+  });
+
+  it("shows a granted app's dialog without the level switch", async () => {
+    grantAll();
+    renderPanel({ openApp: "github" });
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(copy.common_note)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("switch")).not.toBeInTheDocument();
+  });
+
   it("stores a level's token for an Aone FaaS connector", async () => {
     mocks.setCredential.mockResolvedValue(undefined);
     const user = userEvent.setup();
@@ -345,5 +376,39 @@ describe("ContextBuilderPanel capabilities", () => {
 
     expect(await screen.findByText(copy.scope_unknown)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: copy.prompt_add })).not.toBeInTheDocument();
+  });
+});
+
+describe("ContextBuilderPanel configure-page access", () => {
+  const personNode: ContextNodeRef = { orgId: "dingA", scopeType: "person", scopeKey: "staff-1" };
+
+  it("revokes a person's configure-page access after confirming", async () => {
+    mocks.getNode.mockResolvedValue(
+      detailOf({ scope: { type: "person", orgId: "dingA", key: "staff-1", title: "Ada" }, canConnect: false }),
+    );
+    mocks.revokeGrants.mockResolvedValue(2);
+    const user = userEvent.setup();
+    renderPanel({ node: personNode });
+
+    const section = await screen.findByRole("region", { name: copy.access_title });
+    await user.click(within(section).getByRole("button", { name: copy.access_revoke }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByText(copy.access_revoke_person)).toBeInTheDocument();
+    await user.click(within(confirm).getByRole("button", { name: copy.access_revoke }));
+
+    await waitFor(() => expect(mocks.revokeGrants).toHaveBeenCalledWith("ws-1", "agent-1", personNode));
+  });
+
+  it("offers no revoke without edit rights", async () => {
+    renderPanel({ canEdit: false });
+    expect(await screen.findByRole("listitem", { name: "Tone" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: copy.access_title })).not.toBeInTheDocument();
+  });
+
+  it("offers no revoke at the enterprise level, which has no grants", async () => {
+    mocks.getNode.mockResolvedValue(detailOf({ scope: { type: "org", orgId: "dingA", key: "dingA", title: "Acme" } }));
+    renderPanel({ node: { orgId: "dingA", scopeType: "org", scopeKey: "dingA" } });
+    expect(await screen.findByRole("listitem", { name: "Tone" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: copy.access_title })).not.toBeInTheDocument();
   });
 });

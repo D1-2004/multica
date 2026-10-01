@@ -8,6 +8,7 @@ import { errorCode } from "@multica/core/api";
 import {
   contextNodeOptions,
   useDeleteContextNodeCredential,
+  useRevokeContextNodeGrants,
   useSetContextNodeBinding,
   useSetContextNodeCredential,
   useSetContextNodeMcpConfig,
@@ -178,8 +179,75 @@ export function ContextBuilderPanel({
         onOpenAppChange={onOpenAppChange}
       />
       <EffectiveSection detail={detail} />
+      {canEdit ? <AccessSection wsId={wsId} agentId={agentId} node={node} detail={detail} /> : null}
       {footer}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Configure-page access
+// ---------------------------------------------------------------------------
+
+/** Who may configure a group or person level from the DingTalk configure
+ * page (configuration links, the group picker), and the manager's revoke:
+ * a person whose forwarded link handed their scope to someone else gets it
+ * back by asking for a new personal link. */
+function AccessSection({
+  wsId,
+  agentId,
+  node,
+  detail,
+}: {
+  wsId: string;
+  agentId: string;
+  node: ContextNodeRef;
+  detail: ContextNodeDetail;
+}) {
+  const { t } = useT("agents");
+  const revoke = useRevokeContextNodeGrants(wsId, agentId);
+  const [confirming, setConfirming] = useState(false);
+  const level = detail.scope?.type ?? node.scopeType;
+  if (level !== "scene" && level !== "person") return null;
+  const titleId = `context-access-${node.scopeType}-${node.scopeKey}`;
+  const doRevoke = async () => {
+    try {
+      const revoked = await revoke.mutateAsync(node);
+      setConfirming(false);
+      toast.success(t(($) => $.tab_body.context_builder.access_revoked, { count: revoked ?? 0 }));
+    } catch (error) {
+      toast.error(errorMessage(error, t(($) => $.tab_body.context_builder.access_revoke_failed)));
+    }
+  };
+  return (
+    <section className="space-y-3" aria-labelledby={titleId}>
+      <SectionHeading
+        id={titleId}
+        level={3}
+        title={t(($) => $.tab_body.context_builder.access_title)}
+        action={
+          <Button size="sm" variant="outline" onClick={() => setConfirming(true)}>
+            {t(($) => $.tab_body.context_builder.access_revoke)}
+          </Button>
+        }
+      />
+      <p className="text-caption text-muted-foreground text-pretty">
+        {t(($) => $.tab_body.context_builder.access_description)}
+      </p>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title={t(($) => $.tab_body.context_builder.access_revoke_title)}
+        description={
+          level === "person"
+            ? t(($) => $.tab_body.context_builder.access_revoke_person)
+            : t(($) => $.tab_body.context_builder.access_revoke_scene)
+        }
+        confirmLabel={t(($) => $.tab_body.context_builder.access_revoke)}
+        pending={revoke.isPending}
+        onConfirm={() => void doRevoke()}
+      />
+    </section>
   );
 }
 
@@ -697,11 +765,15 @@ function CredentialPills({ connector, showCredential }: { connector: ContextNode
   const enabled = connector.enabled === true;
   return (
     <>
-      <StatusPill tone={enabled ? "success" : "muted"}>
-        {enabled
-          ? t(($) => $.tab_body.connected_apps.usage_enabled)
-          : t(($) => $.tab_body.connected_apps.usage_not_enabled)}
-      </StatusPill>
+      {connector.global === true ? (
+        <StatusPill tone="success">{t(($) => $.tab_body.connectors.status_enabled)}</StatusPill>
+      ) : (
+        <StatusPill tone={enabled ? "success" : "muted"}>
+          {enabled
+            ? t(($) => $.tab_body.connected_apps.usage_enabled)
+            : t(($) => $.tab_body.connected_apps.usage_not_enabled)}
+        </StatusPill>
+      )}
       {showCredential ? (
         <StatusPill tone={connected ? "success" : "muted"}>
           {connected
@@ -782,13 +854,16 @@ function ConnectorRow({
             <span className="hidden text-caption text-muted-foreground sm:inline">{connectNote}</span>
           )
         ) : null}
-        <BindingSwitch
-          bindings={bindings}
-          resourceType="connector"
-          resourceId={connector.id}
-          name={connector.name}
-          canEdit={canEdit}
-        />
+        {/* A 通用能力 is on at every level; a level only gives it an account. */}
+        {connector.global === true ? null : (
+          <BindingSwitch
+            bindings={bindings}
+            resourceType="connector"
+            resourceId={connector.id}
+            name={connector.name}
+            canEdit={canEdit}
+          />
+        )}
       </div>
       {takesToken && !canConnect ? (
         <p className="text-caption text-muted-foreground sm:hidden">{connectNote}</p>
@@ -953,6 +1028,7 @@ function AppsSection({
       ) : (
         <AppTileGrid label={t(($) => $.tab_body.connected_apps.title)}>
           {apps.map((app) => {
+            const common = app.global === true;
             const enabled = bindings.isEnabled("connector", app.id);
             const connected = app.credential?.connected === true;
             return (
@@ -963,7 +1039,9 @@ function AppsSection({
                 ariaLabel={t(($) => $.tab_body.connected_apps.card_aria, { name: app.name })}
                 onOpen={() => onOpenAppChange(app.catalogSlug)}
               >
-                {enabled ? (
+                {common ? (
+                  <StatusPill tone="success">{t(($) => $.tab_body.connectors.status_enabled)}</StatusPill>
+                ) : enabled ? (
                   <StatusPill tone="success">{t(($) => $.tab_body.connected_apps.usage_enabled)}</StatusPill>
                 ) : null}
                 {connected ? (
@@ -973,7 +1051,7 @@ function AppsSection({
                       : t(($) => $.tab_body.connected_apps.shared_connected)}
                   </StatusPill>
                 ) : null}
-                {!enabled && !connected ? (
+                {!common && !enabled && !connected ? (
                   <StatusPill tone="muted">{t(($) => $.tab_body.connected_apps.usage_not_enabled)}</StatusPill>
                 ) : null}
               </AppTile>
@@ -996,6 +1074,7 @@ function AppDialog({
   app: ContextNodeConnector | null;
   onClose: () => void;
 }) {
+  const { t } = useT("agents");
   const { detail, canEdit, bindings } = context;
   const enableLabel = useEnableLabel(detail.scope?.type ?? context.node.scopeType);
   // Keep showing the last app while the dialog animates closed.
@@ -1017,14 +1096,20 @@ function AppDialog({
               <DialogTitle className="min-w-0 truncate text-title font-semibold">{shown.name}</DialogTitle>
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-              <SwitchRow
-                id={`context-app-${shown.id}`}
-                label={enableLabel}
-                checked={bindings.isEnabled("connector", shown.id)}
-                disabled={!canEdit}
-                pending={bindings.isBusy("connector", shown.id)}
-                onCheckedChange={(next) => bindings.toggle("connector", shown.id, next)}
-              />
+              {shown.global === true ? (
+                <p className="text-caption text-muted-foreground">
+                  {t(($) => $.tab_body.context_builder.common_note)}
+                </p>
+              ) : (
+                <SwitchRow
+                  id={`context-app-${shown.id}`}
+                  label={enableLabel}
+                  checked={bindings.isEnabled("connector", shown.id)}
+                  disabled={!canEdit}
+                  pending={bindings.isBusy("connector", shown.id)}
+                  onCheckedChange={(next) => bindings.toggle("connector", shown.id, next)}
+                />
+              )}
               <AppAccount
                 // A new app starts with a fresh form (never another app's
                 // typed token).

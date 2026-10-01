@@ -333,15 +333,12 @@ function SharedAccountSection({
   // An operator-managed deployment credential: DELETE .../credential cannot
   // remove it, so there is no disconnect.
   const fromEnvironment = shared.connected && shared.source === "environment";
-  // Turning it on needs a usable shared account; turning it off never does.
-  const globalBlocked = !app.globalEnabled && !shared.connected;
-
-  let globalNote: React.ReactNode = null;
-  if (globalBlocked) {
-    globalNote = (
-      <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.connected_apps.global_needs_account)}</p>
-    );
-  } else if (app.globalEnabled && !shared.connected) {
+  // A 通用能力 needs no shared account: groups and people may connect their
+  // own.
+  let globalNote: React.ReactNode = (
+    <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.connected_apps.global_hint)}</p>
+  );
+  if (app.globalEnabled && !shared.connected) {
     globalNote = (
       <p className="text-caption text-warning">{t(($) => $.tab_body.connected_apps.global_no_account)}</p>
     );
@@ -427,7 +424,7 @@ function SharedAccountSection({
         label={t(($) => $.tab_body.connected_apps.global_label)}
         note={globalNote}
         checked={app.globalEnabled}
-        disabled={!canAdmin || globalBlocked}
+        disabled={!canAdmin}
         pending={patch.isPending}
         onCheckedChange={(next) => void toggleGlobal(next)}
       />
@@ -483,19 +480,26 @@ function ScopedSection({
 
   return (
     <DialogSection id={`app-scoped-${app.slug}`} title={t(($) => $.tab_body.connected_apps.section_scoped)}>
-      <SwitchRow
-        id={`app-offer-${app.slug}`}
-        label={t(($) => $.tab_body.connected_apps.offer_label)}
-        note={
-          app.offered && !app.oauthAvailable && !app.allowsPat ? (
-            <p className="text-caption text-warning">{t(($) => $.tab_body.connected_apps.offer_no_auth)}</p>
-          ) : null
-        }
-        checked={app.offered}
-        disabled={!app.canAdmin}
-        pending={setOffer.isPending}
-        onCheckedChange={toggle}
-      />
+      {app.globalEnabled ? (
+        // A 通用能力 is on in every scope already; publishing it adds nothing.
+        <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.connected_apps.offer_common)}</p>
+      ) : (
+        <SwitchRow
+          id={`app-offer-${app.slug}`}
+          label={t(($) => $.tab_body.connected_apps.offer_label)}
+          note={
+            app.offered && !app.oauthAvailable && !app.allowsPat ? (
+              <p className="text-caption text-warning">{t(($) => $.tab_body.connected_apps.offer_no_auth)}</p>
+            ) : (
+              <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.connected_apps.offer_hint)}</p>
+            )
+          }
+          checked={app.offered}
+          disabled={!app.canAdmin}
+          pending={setOffer.isPending}
+          onCheckedChange={toggle}
+        />
+      )}
       {app.scenes.length === 0 && app.persons.length === 0 ? (
         <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.connected_apps.usage_none)}</p>
       ) : (

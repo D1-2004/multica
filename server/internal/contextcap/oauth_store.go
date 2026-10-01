@@ -5,11 +5,24 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// ErrLocked means another transaction holds the row lock a NOWAIT lock
+// asked for (SQLSTATE 55P03, lock_not_available).
+var ErrLocked = errors.New("contextcap: row is locked")
+
+// IsLockNotAvailable reports whether err is Postgres' lock_not_available.
+func IsLockNotAvailable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "55P03"
+}
+
 // LockCredential loads one scene or person credential with its ciphertext
-// and locks the row until tx ends (SELECT ... FOR UPDATE). OAuth refresh
-// takes this lock so concurrent replicas refresh a token once. ErrNotFound
+// and locks the row until tx ends (SELECT ... FOR UPDATE NOWAIT). OAuth
+// refresh takes this lock so concurrent replicas refresh a token once; it
+// never waits for it (ErrLocked while another refresh holds it), so no
+// pooled connection queues behind a provider's token request. ErrNotFound
 // when the row is gone (for example disconnected meanwhile).
 func LockCredential(ctx context.Context, tx DBTX, key CredentialBinding) (Credential, error) {
 	key, err := key.normalized()
@@ -21,11 +34,14 @@ func LockCredential(ctx context.Context, tx DBTX, key CredentialBinding) (Creden
 		FROM context_connector_credential
 		WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND connector_id = $3::uuid
 		  AND scope_type = $4 AND org_id = $5 AND scope_key = $6
-		FOR UPDATE`,
+		FOR UPDATE NOWAIT`,
 		key.WorkspaceID, key.AgentID, key.ConnectorID, key.ScopeType, key.OrgID, key.ScopeKey,
 	).Scan(&out.WorkspaceID, &out.AgentID, &out.ConnectorID, &out.ScopeType, &out.OrgID, &out.ScopeKey, &out.Ciphertext, &out.Hint, &out.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Credential{}, ErrNotFound
+	}
+	if IsLockNotAvailable(err) {
+		return Credential{}, ErrLocked
 	}
 	return out, err
 }

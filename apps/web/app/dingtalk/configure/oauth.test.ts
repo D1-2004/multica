@@ -7,8 +7,10 @@ import {
   oauthStateMatches,
   readConnectResult,
   savePendingConnect,
+  savePendingConnectResult,
   savePendingParams,
   takePendingConnect,
+  takePendingConnectResult,
   takePendingParams,
 } from "./oauth";
 
@@ -167,5 +169,23 @@ describe("connector OAuth round trip helpers", () => {
     expect(takePendingConnect([local], 1)).toBeNull();
     local.setItem("multica_context_config_connect", "{not json");
     expect(takePendingConnect([local], 1)).toBeNull();
+  });
+
+  it("round-trips a connect outcome once, validated like the callback's parameters", () => {
+    const session = memoryStorage();
+    const local = memoryStorage();
+    savePendingConnectResult({ kind: "connected", slug: "github" }, [session, local], 0);
+    expect(takePendingConnectResult([session, local], 1)).toEqual({ kind: "connected", slug: "github" });
+    expect(takePendingConnectResult([session, local], 1)).toBeNull();
+
+    savePendingConnectResult({ kind: "error", code: "access_denied" }, [local], 0);
+    expect(takePendingConnectResult([local], 1)).toEqual({ kind: "error", code: "access_denied" });
+
+    local.setItem("multica_context_config_connect_result", JSON.stringify({ connected: "Not A Slug", saved_at: 0 }));
+    expect(takePendingConnectResult([local], 1)).toEqual({ kind: "error", code: "unknown" });
+    savePendingConnectResult({ kind: "connected", slug: "github" }, [local], 0);
+    expect(takePendingConnectResult([local], 31 * 60 * 1000)).toBeNull();
+    local.setItem("multica_context_config_connect_result", "{not json");
+    expect(takePendingConnectResult([local], 1)).toBeNull();
   });
 });

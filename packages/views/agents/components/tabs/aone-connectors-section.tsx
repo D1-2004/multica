@@ -39,6 +39,9 @@ interface AoneRow {
   name: string;
   /** Upstream host, tool count and auth mode; what the caller may see. */
   meta: string;
+  /** Granted to the agent: a 通用能力, on in every scope, so it has no
+   * 公开给场域 switch. */
+  granted: boolean;
   offered: boolean;
   /** null when the caller cannot read the library state. */
   status: { tone: StatusTone; label: string } | null;
@@ -123,6 +126,7 @@ function AdminAoneConnectors({ agent, wsId }: { agent: Agent; wsId: string }) {
       ]
         .filter(Boolean)
         .join(" · "),
+      granted: connector.agentIds.includes(agent.id),
       offered: offered.has(connector.id),
       status: statusOf(connector, connector.agentIds.includes(agent.id)),
     }));
@@ -294,16 +298,18 @@ function AoneConnectorRow({
         </div>
         {row.meta ? <p className="truncate text-caption text-muted-foreground">{row.meta}</p> : null}
       </div>
-      <span className="flex shrink-0 items-center gap-1.5 text-caption text-muted-foreground">
-        <span aria-hidden="true">{t(($) => $.tab_body.connectors.offer_switch)}</span>
-        <Switch
-          size="sm"
-          checked={row.offered}
-          disabled={offerDisabled}
-          onCheckedChange={onOfferChange}
-          aria-label={t(($) => $.tab_body.connectors.offer_switch_aria, { name: row.name })}
-        />
-      </span>
+      {row.granted ? null : (
+        <span className="flex shrink-0 items-center gap-1.5 text-caption text-muted-foreground">
+          <span aria-hidden="true">{t(($) => $.tab_body.connectors.offer_switch)}</span>
+          <Switch
+            size="sm"
+            checked={row.offered}
+            disabled={offerDisabled}
+            onCheckedChange={onOfferChange}
+            aria-label={t(($) => $.tab_body.connectors.offer_switch_aria, { name: row.name })}
+          />
+        </span>
+      )}
       {action ? <div className="flex shrink-0 items-center">{action}</div> : null}
     </li>
   );
@@ -423,6 +429,7 @@ function ReadOnlyAoneConnectors({
       id: connector.id,
       name: connector.name,
       meta: t(($) => $.tab_body.connectors.tools_count, { count: connector.tools.length }),
+      granted: true,
       offered: offered.has(connector.id),
       status: null,
     });
@@ -433,6 +440,7 @@ function ReadOnlyAoneConnectors({
       id: connector.id,
       name: connector.name,
       meta: "",
+      granted: false,
       offered: true,
       status: statusOf(null, false),
     });
@@ -451,9 +459,9 @@ function ReadOnlyAoneConnectors({
 }
 
 /** State of an Aone FaaS connector for this agent: 工作区已停用 wins; a
- * connector only offered (no grant) is 仅群聊 / 个人开启 and runs on the
- * group's or person's own credential; a granted one needs a usable
- * workspace credential unless it uses no auth. `connector` is null when the
+ * connector only offered (no grant) is 公开给场域 and runs on the group's or
+ * person's own credential; a granted one is a 通用能力, which warns about a
+ * missing workspace credential only when it cannot take per-scope ones. `connector` is null when the
  * caller cannot read the library (only the grant is known). */
 function useAoneStatus(): (
   connector: InternalConnector | null,
@@ -465,7 +473,14 @@ function useAoneStatus(): (
       return { tone: "muted", label: t(($) => $.tab_body.connectors.disabled_in_workspace) };
     }
     if (!granted) return { tone: "muted", label: t(($) => $.tab_body.connectors.status_offer_only) };
-    if (connector && connector.authMode !== "none" && connector.credentialReady !== true) {
+    // A connector that takes per-chat or per-person credentials needs no
+    // workspace credential (the library shows it as enabled too).
+    if (
+      connector &&
+      connector.authMode !== "none" &&
+      connector.credentialReady !== true &&
+      connector.credentialOptional !== true
+    ) {
       return { tone: "warning", label: t(($) => $.tab_body.connectors.status_missing_credential) };
     }
     return { tone: "success", label: t(($) => $.tab_body.connectors.status_enabled) };

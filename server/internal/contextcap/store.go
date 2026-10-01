@@ -623,6 +623,53 @@ func PersonHeldByOther(ctx context.Context, tx DBTX, userID, agentID, orgID, sta
 	return held, err
 }
 
+// RevokeGrants removes every configuration grant on one scene or person
+// scope of the agent and reports how many it removed. A person scope also
+// loses the 1:1 chat grants its personal links handed to the same accounts
+// (a DM link grants both), and takes PersonHeldByOther's lock, so a
+// redemption racing the revoke either lands before it (and is removed) or
+// after it (and the person may redeem again). tx must be a transaction.
+func RevokeGrants(ctx context.Context, tx DBTX, workspaceID, agentID, scopeType, orgID, scopeKey string) (int64, error) {
+	if (scopeType != ScopeScene && scopeType != ScopePerson) || !ValidScopeKey(scopeType, scopeKey) || !ValidOrgID(orgID) {
+		return 0, ErrInvalidInput
+	}
+	for _, id := range []string{workspaceID, agentID} {
+		if _, err := canonicalUUID(id); err != nil {
+			return 0, err
+		}
+	}
+	if scopeType == ScopeScene {
+		tag, err := tx.Exec(ctx, `DELETE FROM context_config_grant
+			WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type = 'scene' AND org_id = $3 AND scope_key = $4`,
+			workspaceID, agentID, orgID, scopeKey)
+		if err != nil {
+			return 0, err
+		}
+		return tag.RowsAffected(), nil
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('context_config_person:' || $1 || ':' || $2 || ':' || $3, 0))`,
+		agentID, orgID, scopeKey); err != nil {
+		return 0, err
+	}
+	var removed int64
+	err := tx.QueryRow(ctx, `WITH dm AS (
+		  DELETE FROM context_config_grant g
+		  USING context_config_link l
+		  WHERE g.workspace_id = $1::uuid AND g.agent_id = $2::uuid AND g.scope_type = 'scene' AND g.org_id = $3
+		    AND l.workspace_id = $1::uuid AND l.agent_id = $2::uuid AND l.org_id = $3
+		    AND l.scope_type = 'person' AND l.scope_key = $4 AND l.extra_scene_key <> ''
+		    AND l.consumed_by = g.user_id AND g.scope_key = l.extra_scene_key
+		  RETURNING g.id
+		), person AS (
+		  DELETE FROM context_config_grant
+		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type = 'person' AND org_id = $3 AND scope_key = $4
+		  RETURNING id
+		)
+		SELECT (SELECT count(DISTINCT id) FROM dm) + (SELECT count(*) FROM person)`,
+		workspaceID, agentID, orgID, scopeKey).Scan(&removed)
+	return removed, err
+}
+
 // ListLiveGrantsForUser returns the user's unexpired grants, newest first.
 // An empty agentID lists grants for every agent.
 func ListLiveGrantsForUser(ctx context.Context, db DBTX, userID, agentID string) ([]Grant, error) {

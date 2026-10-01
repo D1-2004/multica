@@ -211,7 +211,10 @@ func (r *Router) materializeChannelCoordinatorPlan(ctx context.Context, inst Res
 		work.CompletedActionKeys = append(work.CompletedActionKeys, item.ActionKey)
 		work.IssueResults = append(work.IssueResults, protocol.ChatCoordinatorIssueResult{Action: action, IssueID: uuidString(issue.ID), IssueIdentifier: service.IssueIdentifier(prefix, issue.Number), IssueTitle: issue.Title, CommentID: uuidString(commentID), TaskID: uuidString(task.ID)})
 	}
-	encoded, err := json.Marshal(work)
+	// The stored receipt is readable beyond the reply that delivers a
+	// capability answer's configuration link, so it keeps a placeholder; a
+	// redelivery of this window answers without the link.
+	encoded, err := json.Marshal(work.WithoutConfigLinks())
 	if err != nil {
 		return err
 	}

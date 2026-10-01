@@ -241,6 +241,50 @@ export function takePendingConnect(
   return result;
 }
 
+const CONNECT_RESULT_KEY = "multica_context_config_connect_result";
+
+/** Keeps a connect outcome the page could not show yet across a DingTalk
+ * sign-in redirect (the session was rejected right after the provider
+ * returned). Pair it with savePendingConnect for the scope. */
+export function savePendingConnectResult(
+  result: ConnectResult,
+  storages: StorageLike[] = browserStorages(),
+  now: number = Date.now(),
+): void {
+  const value = JSON.stringify({
+    ...(result.kind === "connected" ? { connected: result.slug } : { connect_error: result.code }),
+    saved_at: now,
+  });
+  for (const storage of storages) safeSet(storage, CONNECT_RESULT_KEY, value);
+}
+
+/** Reads and clears the outcome saved before a DingTalk sign-in redirect,
+ * validated like the callback's own parameters. */
+export function takePendingConnectResult(
+  storages: StorageLike[] = browserStorages(),
+  now: number = Date.now(),
+): ConnectResult | null {
+  let result: ConnectResult | null = null;
+  for (const storage of storages) {
+    const raw = safeGet(storage, CONNECT_RESULT_KEY);
+    safeRemove(storage, CONNECT_RESULT_KEY);
+    if (!raw || result) continue;
+    try {
+      const parsed = JSON.parse(raw) as { connected?: unknown; connect_error?: unknown; saved_at?: unknown };
+      if (typeof parsed.saved_at !== "number" || now - parsed.saved_at > CONNECT_TTL_MS) continue;
+      result = readConnectResult({
+        get: (name: string) => {
+          const value = name === "connected" ? parsed.connected : name === "connect_error" ? parsed.connect_error : undefined;
+          return typeof value === "string" ? value : null;
+        },
+      });
+    } catch {
+      // Ignore corrupt entries.
+    }
+  }
+  return result;
+}
+
 /** Hands the current WebView to the provider's authorization page. `assign`
  * (not `replace`) keeps this page in history so Back returns here. */
 export function navigateToAuthorization(url: string): void {

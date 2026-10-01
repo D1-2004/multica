@@ -163,7 +163,7 @@ describe("SkillsTab", () => {
     renderSkillsTab();
 
     expect(
-      await screen.findByText("Assigned to agent"),
+      await screen.findByText(enAgents.tab_body.skills.assigned_title),
     ).toBeInTheDocument();
     expect(screen.getByText("Inherited from runtime")).toBeInTheDocument();
     expect(screen.getByText(/Assign a local runtime/i)).toBeInTheDocument();

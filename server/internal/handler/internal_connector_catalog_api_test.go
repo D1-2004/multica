@@ -378,8 +378,8 @@ func TestCatalogAPIMobileConnectionStartCallbackAndDetail(t *testing.T) {
 	ctxcapExpectStatus(t, start(testUserID, contextcap.ScopePerson, catalogTestStaff, uuid.NewString(), nil), http.StatusForbidden, "unknown connector")
 	ctxcapExpectStatus(t, start(testUserID, contextcap.ScopePerson, catalogTestStaff, "not-a-uuid", nil), http.StatusBadRequest, "malformed connector id")
 	ctxcapExpectStatus(t, start(testUserID, contextcap.ScopePerson, catalogTestStaff, dcr.ID, map[string]string{"extra": "x"}), http.StatusBadRequest, "unknown body field")
+	ctxcapExpectStatus(t, start(testUserID, contextcap.ScopeScene, catalogTestScene, dcr.ID, nil), http.StatusForbidden, "scene start, connector neither offered nor granted")
 	f.grantGlobally(t, dcr.ID)
-	ctxcapExpectStatus(t, start(testUserID, contextcap.ScopeScene, catalogTestScene, dcr.ID, nil), http.StatusForbidden, "scene start for an unoffered connector")
 	f.offer(t, dcr.ID, gh.ID)
 	f.takeAuthorizeURL(t, start(testUserID, contextcap.ScopeScene, catalogTestScene, dcr.ID, nil))
 	rec = start(testUserID, contextcap.ScopePerson, catalogTestStaff, dcr.ID, map[string]string{"external_browser": "true"})
@@ -506,7 +506,13 @@ func TestCatalogAPIMobileConnectionStartCallbackAndDetail(t *testing.T) {
 		c["oauth_available"] != true {
 		t.Fatalf("offered GitHub connector = %v", c)
 	}
-	if len(detail.Global.Connectors) != 1 || detail.Global.Connectors[0]["id"] != gh.ID || detail.Global.Connectors[0]["catalog_slug"] != f.gh.Slug {
+	// Both are granted (通用能力); the DCR app has no workspace account yet
+	// and is listed all the same, since every scope may connect its own.
+	global := map[string]any{}
+	for _, c := range detail.Global.Connectors {
+		global[c["id"].(string)] = c["catalog_slug"]
+	}
+	if len(global) != 2 || global[gh.ID] != f.gh.Slug || global[dcr.ID] != f.dcr.Slug {
 		t.Fatalf("global connectors = %v", detail.Global.Connectors)
 	}
 	if detail.Person == nil {

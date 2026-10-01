@@ -32,7 +32,6 @@ type Completer interface {
 func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) {
 	loopStarted := time.Now()
 	ensureTurnTraceID(&turn)
-	turn.configLinkOffered = c.configLinkEligible(turn)
 	lt := langfuse.TraceFromContext(ctx)
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(buildSystemPrompt(turn)), openai.UserMessage(buildUserPrompt(turn)),
@@ -386,6 +385,9 @@ type firstRound struct {
 // claimed decision passes startHistoryPrefetch, the collect-window shadow a
 // read of the early history that leaves it for the claim.
 func (c *Coordinator) prepareFirstRound(ctx context.Context, turn *Turn, startHistory func(context.Context, Turn) <-chan historyPrefetchResult) firstRound {
+	// The finish tool's schema says whether Host appends the configuration
+	// link, so the claim and its first-round shadow must agree on it.
+	turn.configLinkOffered = c.configLinkEligible(*turn)
 	first := firstRound{
 		recalledIssues:     map[string]struct{}{},
 		continuationIssues: map[string]struct{}{},

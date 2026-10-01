@@ -75,9 +75,9 @@ func TestAgentContextNodeLivesInTheScopeOfTheScene(t *testing.T) {
 		t.Fatal("context node leaks the credential")
 	}
 	for name, body := range map[string]any{
-		"granted only": map[string]string{"connector_id": f.global, "bearer": "x-token-1"},
-		"no-auth":      map[string]string{"connector_id": f.person, "bearer": "x-token-1"},
-		"bad bearer":   map[string]string{"connector_id": f.scene, "bearer": " x"},
+		"not offered": map[string]string{"connector_id": f.notOffered, "bearer": "x-token-1"},
+		"no-auth":     map[string]string{"connector_id": f.person, "bearer": "x-token-1"},
+		"bad bearer":  map[string]string{"connector_id": f.scene, "bearer": " x"},
 	} {
 		if w := scenesAs(t, router, "", http.MethodPut, credentialsPath, body); w.Code != http.StatusForbidden && w.Code != http.StatusBadRequest {
 			t.Fatalf("%s: %d %s", name, w.Code, w.Body.String())
@@ -253,6 +253,18 @@ func TestAgentContextNodeOrgAndEffective(t *testing.T) {
 		len(node.Effective.Skills) != 1 || node.Effective.Skills[0].ID != f.skillAgent || len(node.Effective.MCPServers) != 2 || len(node.Effective.Prompts) != 0 {
 		t.Fatalf("org node effective = %+v", node.Effective)
 	}
+	// The granted Bearer connector is a 通用能力: listed at every level as
+	// global, never switched there, and the level may give it its own token.
+	if granted := ctxNodeConnector(t, node, f.global); !granted.Global || granted.Enabled || !granted.AcceptsCredential {
+		t.Fatalf("granted connector on the org node = %+v", granted)
+	}
+	if offered := ctxNodeConnector(t, node, f.scene); offered.Global {
+		t.Fatalf("offered connector marked global: %+v", offered)
+	}
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, orgPath+"/credentials", map[string]string{"connector_id": f.global, "bearer": "org-global-token"}),
+		http.StatusOK, "org credential for a granted connector")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, orgPath+"/bindings", map[string]any{"resource_type": "connector", "resource_id": f.global, "enabled": true}),
+		http.StatusForbidden, "binding a granted, unoffered connector")
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeOrg, "org-else"), nil), http.StatusBadRequest, "org key mismatch")
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, ctxNodePath(agentID, ctxcapOrg, "channel", "x"), nil), http.StatusBadRequest, "unknown scope type")
 
@@ -421,5 +433,99 @@ func TestAgentContextNodeConnectsOrgAccount(t *testing.T) {
 	rec = catalogAdmin(t, r, http.MethodPost, startPath, testUserID, map[string]string{"connector_id": dcr.ID})
 	if rec.Code != http.StatusNotFound || catalogErrorCode(t, rec) != contextCapErrTenantNotFound {
 		t.Fatalf("connect for a deleted tenant: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// A manager revokes the configure-page access granted on a group or a
+// person: a person whose forwarded link handed their scope to someone else
+// can then redeem a new personal link; the scope's configuration stays.
+func TestAgentContextNodeRevokesGrants(t *testing.T) {
+	f := newCtxcapFixture(t)
+	f.cleanupScenes(t)
+	f.cleanupGrantsAndLinks(t)
+	router := scenesRouter(f.h)
+	agentID := uuidToString(f.agent)
+	ctx := context.Background()
+	const (
+		victimStaff = "staff-context-node-victim"
+		victimDM    = "cidContextNodeVictimDM=="
+	)
+	mallory, alice := uuid.NewString(), uuid.NewString()
+
+	// Mallory redeemed the victim's forwarded personal link (minted in the
+	// victim's 1:1 chat): the person grant and the 1:1 chat grant.
+	token, err := contextcap.NewLinkToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := contextcap.InsertLink(ctx, testPool, contextcap.Link{
+		TokenHash: contextcap.HashLinkToken(token), WorkspaceID: testWorkspaceID, AgentID: agentID, ScopeType: contextcap.ScopePerson,
+		OrgID: ctxcapOrg, ScopeKey: victimStaff, ScopeTitle: "Victim", ExtraSceneKey: victimDM,
+	}, contextcap.LinkTTL(contextcap.ScopePerson)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := contextcap.RedeemLink(ctx, testPool, contextcap.HashLinkToken(token), mallory); err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range []contextcap.Grant{
+		{UserID: mallory, ScopeType: contextcap.ScopePerson, ScopeKey: victimStaff, ScopeTitle: "Victim"},
+		{UserID: mallory, ScopeType: contextcap.ScopeScene, ScopeKey: victimDM},
+		{UserID: alice, ScopeType: contextcap.ScopeScene, ScopeKey: ctxcapScene},
+	} {
+		g.WorkspaceID, g.AgentID, g.OrgID, g.Source = testWorkspaceID, agentID, ctxcapOrg, contextcap.GrantSourceAgentLink
+		if _, err := contextcap.UpsertGrant(ctx, testPool, g, contextcap.GrantTTL(g.ScopeType)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	held := func() bool {
+		t.Helper()
+		tx, err := testPool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		held, err := contextcap.PersonHeldByOther(ctx, tx, uuid.NewString(), agentID, ctxcapOrg, victimStaff)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return held
+	}
+	if !held() {
+		t.Fatal("fixture: the victim's scope must be held by another account")
+	}
+	liveGrants := func(userID string) int {
+		t.Helper()
+		grants, err := contextcap.ListLiveGrantsForUser(ctx, testPool, userID, agentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(grants)
+	}
+
+	personGrants := ctxNodePath(agentID, ctxcapOrg, contextcap.ScopePerson, victimStaff) + "/grants"
+	member := createPermissionTestMember(t, "context-node-revoke-"+uuid.NewString()[:8]+"@example.test")
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE user_id = $1`, member)
+	})
+	ctxcapExpectStatus(t, scenesAs(t, router, member, http.MethodDelete, personGrants, nil), http.StatusForbidden, "plain member revoke")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodDelete, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeOrg, ctxcapOrg)+"/grants", nil),
+		http.StatusBadRequest, "org level has no grants")
+
+	w := scenesAs(t, router, "", http.MethodDelete, personGrants, nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "manager revokes the person")
+	if strings.TrimSpace(w.Body.String()) != `{"revoked":2}` {
+		t.Fatalf("person revoke = %s", w.Body.String())
+	}
+	if held() || liveGrants(mallory) != 0 {
+		t.Fatalf("after the person revoke: held=%v mallory grants=%d", held(), liveGrants(mallory))
+	}
+	if liveGrants(alice) != 1 {
+		t.Fatal("a person revoke must not touch other scopes")
+	}
+
+	w = scenesAs(t, router, "", http.MethodDelete, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, ctxcapScene)+"/grants", nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "manager revokes the group")
+	if strings.TrimSpace(w.Body.String()) != `{"revoked":1}` || liveGrants(alice) != 0 {
+		t.Fatalf("group revoke = %s, alice grants=%d", w.Body.String(), liveGrants(alice))
 	}
 }

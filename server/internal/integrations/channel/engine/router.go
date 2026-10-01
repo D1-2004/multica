@@ -1320,6 +1320,9 @@ type coordinatorChatWriter interface {
 
 func (r *Router) persistCoordinatorAssistant(ctx context.Context, workspaceID, sessionID, agentID pgtype.UUID, decision inboundcoord.Decision) error {
 	writer, ok := r.reader.(coordinatorChatWriter)
+	// A capability answer's configuration link is a bearer token delivered
+	// by the reply alone; the transcript and its broadcast keep a placeholder.
+	decision = decision.WithoutConfigLinks()
 	text := strings.TrimSpace(decision.UserText)
 	if !ok || text == "" || !sessionID.Valid {
 		return nil

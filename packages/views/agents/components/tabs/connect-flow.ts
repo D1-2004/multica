@@ -12,6 +12,10 @@ import { useT } from "../../../i18n";
 /** URL parameter of the open app dialog (deep-linkable). */
 export const APP_PARAM = "app";
 
+/** An official app's catalog slug, as the connector OAuth callback sends it
+ * back in `?connected=` (the server's appSlug rule). */
+const CONNECTED_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
 /** Replaces the current URL with `edit` applied to its search parameters. */
 export function useReplaceSearch(): (edit: (params: URLSearchParams) => void) => void {
   const navigation = useNavigation();
@@ -28,20 +32,22 @@ export function useReplaceSearch(): (edit: (params: URLSearchParams) => void) =>
  * (`?connected=<slug>` or `?connect_error=<code>`) once as a toast, and
  * removes those parameters so a reload does not repeat it. `app` stays (or,
  * after a success, is set to the connected app), so the dialog the sign-in
- * started from opens again.
+ * started from opens again. A `connected` value that is not an app slug (a
+ * crafted link) reads as a failed sign-in and opens nothing.
  */
 export function useConnectReturnToast() {
   const { t } = useT("agents");
   const navigation = useNavigation();
   const replaceSearch = useReplaceSearch();
   const consumed = useRef(false);
-  const connected = navigation.searchParams.get("connected");
+  const connectedParam = navigation.searchParams.get("connected");
   const error = navigation.searchParams.get("connect_error");
 
   useEffect(() => {
-    if (consumed.current || (connected === null && error === null)) return;
+    if (consumed.current || (connectedParam === null && error === null)) return;
     consumed.current = true;
-    if (error !== null) {
+    const connected = connectedParam !== null && CONNECTED_SLUG_PATTERN.test(connectedParam) ? connectedParam : null;
+    if (error !== null || connected === null) {
       toast.error(
         error === "access_denied"
           ? t(($) => $.internal_mcp.catalog.returned_denied)
@@ -50,16 +56,14 @@ export function useConnectReturnToast() {
             : t(($) => $.internal_mcp.catalog.returned_error),
       );
     } else {
-      toast.success(
-        t(($) => $.internal_mcp.catalog.returned_connected, { name: connectorBrandName(connected ?? "") }),
-      );
+      toast.success(t(($) => $.internal_mcp.catalog.returned_connected, { name: connectorBrandName(connected) }));
     }
     replaceSearch((params) => {
       params.delete("connected");
       params.delete("connect_error");
       if (connected && error === null && !params.get(APP_PARAM)) params.set(APP_PARAM, connected);
     });
-  }, [connected, error, replaceSearch, t]);
+  }, [connectedParam, error, replaceSearch, t]);
 }
 
 /**

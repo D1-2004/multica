@@ -438,7 +438,7 @@ func ListAgentOrgActivity(ctx context.Context, db DBTX, workspaceID, agentID, id
 		UNION SELECT scope_type, org_id, scope_key FROM context_connector_credential
 		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type IN ('scene', 'person')
 		UNION SELECT scope_type, org_id, scope_key FROM context_config_grant
-		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type IN ('scene', 'person')
+		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type IN ('scene', 'person') AND expires_at > now()
 		UNION SELECT scope_type, org_id, scope_key FROM context_prompt_component
 		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type IN ('scene', 'person')
 		UNION SELECT scope_type, org_id, scope_key FROM context_scope_mcp_config
@@ -504,8 +504,8 @@ type PersonSummary struct {
 
 // ListOrgPersons returns the people known for orgID of the agent, newest
 // activity first: 1:1 chat senders (the DirectScenePerson job source; jobs
-// without a recorded org belong to identityOrgID), person grants and the 1:1
-// chats of personal links, and every person scope with stored configuration
+// without a recorded org belong to identityOrgID), live person grants and the
+// 1:1 chats of personal links, and every person scope with stored configuration
 // (bindings, credentials, prompt components, custom MCP servers).
 func ListOrgPersons(ctx context.Context, db DBTX, workspaceID, agentID, orgID, identityOrgID string) ([]PersonSummary, error) {
 	if !ValidOrgID(orgID) {
@@ -577,6 +577,7 @@ func ListOrgPersons(ctx context.Context, db DBTX, workspaceID, agentID, orgID, i
 		    ORDER BY l.created_at DESC LIMIT 1), '')
 		FROM context_config_grant g
 		WHERE g.workspace_id = $1::uuid AND g.agent_id = $2::uuid AND g.scope_type = 'person' AND g.org_id = $3::text
+		  AND g.expires_at > now()
 		ORDER BY g.updated_at`, workspaceID, agentID, orgID)
 	if err != nil {
 		return nil, err
