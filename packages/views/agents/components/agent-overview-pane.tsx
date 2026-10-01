@@ -459,6 +459,7 @@ export function AgentOverviewPane({
               key={agent.id}
               agent={agent}
               canEdit={canEdit}
+              tagManaged={tagRole === "employee"}
               onUpdate={onUpdate}
               onDirtyChange={setActiveDirty}
             />

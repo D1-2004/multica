@@ -98,11 +98,16 @@ type SceneArchive = "inbound" | "memory";
 export function ScenesTab({
   agent,
   canEdit,
+  tagManaged = false,
   onUpdate,
   onDirtyChange,
 }: {
   agent: Agent;
   canEdit: boolean;
+  /** The agent is a Tag tenant's employee: its one enterprise is its DingTalk
+   * identity and tenants are created, renamed and removed on the Tag page, so
+   * the tree offers no 新建租户 and org nodes have no 设置. */
+  tagManaged?: boolean;
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
@@ -301,7 +306,9 @@ export function ScenesTab({
                   <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-muted-foreground">
                     <Building2 className="size-8 text-faint-foreground" aria-hidden="true" />
                     <p className="text-body font-medium text-foreground">{t(($) => $.tab_body.scenes.empty_title)}</p>
-                    <p className="text-caption text-pretty">{t(($) => $.tab_body.scenes.empty_hint)}</p>
+                    <p className="text-caption text-pretty">
+                      {tagManaged ? t(($) => $.tab_body.scenes.tag_empty_hint) : t(($) => $.tab_body.scenes.empty_hint)}
+                    </p>
                   </div>
                 ) : null}
                 <SceneTree
@@ -311,7 +318,7 @@ export function ScenesTab({
                   unassignedOrgs={unassignedOrgs}
                   selection={selection}
                   onSelect={select}
-                  onCreateTenant={(orgId) => setCreating({ orgId: orgId ?? "" })}
+                  onCreateTenant={tagManaged ? undefined : (orgId) => setCreating({ orgId: orgId ?? "" })}
                 />
               </>
             )}
@@ -344,9 +351,10 @@ export function ScenesTab({
               selection={selection}
               tenant={selectedTenant}
               tenantsLoading={tenantsQuery.isLoading}
-              subTab={subTab}
+              subTab={tagManaged && subTab === "settings" ? "config" : subTab}
               onSubTab={selectSubTab}
               canEdit={canEdit}
+              tagManaged={tagManaged}
               onBack={isCompact ? () => select(null) : undefined}
               onTenantDeleted={() => {
                 const next = tenants.find((tenant) => tenant.orgId !== selection.orgId);
@@ -411,6 +419,7 @@ function NodeDetail({
   subTab,
   onSubTab,
   canEdit,
+  tagManaged,
   onBack,
   onTenantDeleted,
   onDirtyChange,
@@ -422,6 +431,7 @@ function NodeDetail({
   subTab: SceneSubTab;
   onSubTab: (tab: SceneSubTab) => void;
   canEdit: boolean;
+  tagManaged: boolean;
   onBack?: () => void;
   onTenantDeleted: () => void;
   onDirtyChange?: (dirty: boolean) => void;
@@ -574,23 +584,25 @@ function NodeDetail({
         role="tablist"
         aria-label={title}
       >
-        {SUB_TABS[selection.type].map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            role="tab"
-            aria-selected={subTab === tab}
-            onClick={() => onSubTab(tab)}
-            className={cn(
-              "relative shrink-0 py-2.5 text-body transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              subTab === tab
-                ? "font-medium text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {labels[tab]}
-          </button>
-        ))}
+        {SUB_TABS[selection.type]
+          .filter((tab) => !(tagManaged && tab === "settings"))
+          .map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={subTab === tab}
+              onClick={() => onSubTab(tab)}
+              className={cn(
+                "relative shrink-0 py-2.5 text-body transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                subTab === tab
+                  ? "font-medium text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {labels[tab]}
+            </button>
+          ))}
       </div>
       {body}
     </div>

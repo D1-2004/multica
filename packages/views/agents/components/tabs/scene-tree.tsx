@@ -59,8 +59,10 @@ export function SceneTree({
   unassignedOrgs: AgentUnassignedOrg[];
   selection: SceneSelection | null;
   onSelect: (selection: SceneSelection) => void;
-  /** Opens 新建租户, prefilled with an OrgId for an unassigned org. */
-  onCreateTenant: (orgId?: string) => void;
+  /** Opens 新建租户, prefilled with an OrgId for an unassigned org. Absent
+   * when tenants are managed elsewhere (a Tag employee's single enterprise
+   * is its DingTalk identity), which hides every create entry. */
+  onCreateTenant?: (orgId?: string) => void;
 }) {
   const { t } = useT("agents");
   const [open, setOpen] = useState<ReadonlySet<string>>(() => {
@@ -173,30 +175,34 @@ export function SceneTree({
             >
               <Building2 className="size-4 shrink-0 opacity-60" aria-hidden="true" />
               <span className="min-w-0 flex-1 truncate font-mono text-caption opacity-80">{org.orgId}</span>
-              <Button
-                size="xs"
-                variant="ghost"
-                className="shrink-0"
-                aria-label={t(($) => $.tab_body.scenes.tenant_create_for, { orgId: org.orgId })}
-                onClick={() => onCreateTenant(org.orgId)}
-              >
-                {t(($) => $.tab_body.scenes.tenant_create_short)}
-              </Button>
+              {onCreateTenant ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="shrink-0"
+                  aria-label={t(($) => $.tab_body.scenes.tenant_create_for, { orgId: org.orgId })}
+                  onClick={() => onCreateTenant(org.orgId)}
+                >
+                  {t(($) => $.tab_body.scenes.tenant_create_short)}
+                </Button>
+              ) : null}
             </li>
           ))}
         </ul>
       ) : null}
-      <div className="pt-1">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="w-full justify-start text-muted-foreground"
-          onClick={() => onCreateTenant()}
-        >
-          <Plus className="size-3.5" aria-hidden="true" />
-          {t(($) => $.tab_body.scenes.tenant_create)}
-        </Button>
-      </div>
+      {onCreateTenant ? (
+        <div className="pt-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="w-full justify-start text-muted-foreground"
+            onClick={() => onCreateTenant()}
+          >
+            <Plus className="size-3.5" aria-hidden="true" />
+            {t(($) => $.tab_body.scenes.tenant_create)}
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

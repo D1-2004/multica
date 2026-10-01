@@ -173,7 +173,7 @@ function nodeDetail(overrides: Partial<ContextNodeDetail> = {}): ContextNodeDeta
   };
 }
 
-function renderTab(search = "view=scenes") {
+function renderTab(search = "view=scenes", tagManaged = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const navigation: NavigationAdapter = {
     push: vi.fn(),
@@ -188,7 +188,7 @@ function renderTab(search = "view=scenes") {
     <I18nProvider locale="en" resources={{ en: { common: enCommon, agents: enAgents } }}>
       <NavigationProvider value={navigation}>
         <QueryClientProvider client={client}>
-          <ScenesTab agent={agent} canEdit onUpdate={vi.fn()} onDirtyChange={onDirtyChange} />
+          <ScenesTab agent={agent} canEdit tagManaged={tagManaged} onUpdate={vi.fn()} onDirtyChange={onDirtyChange} />
         </QueryClientProvider>
       </NavigationProvider>
     </I18nProvider>,
@@ -365,6 +365,30 @@ describe("ScenesTab tree", () => {
 
     expect(await screen.findByText(copy.empty_title)).toBeInTheDocument();
     expect(screen.getByText(copy.empty_hint)).toBeInTheDocument();
+  });
+});
+
+describe("ScenesTab for a Tag employee", () => {
+  it("offers no tenant creation and no tenant settings: the Tag page manages tenants", async () => {
+    renderTab("view=scenes", true);
+
+    expect(await screen.findByRole("button", { name: /^Acme/ })).toBeInTheDocument();
+    // The unassigned org is still listed, but without 创建租户.
+    expect(screen.getByText("dingC")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: copy.tenant_create_for.replace("{{orgId}}", "dingC") }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.tenant_create })).not.toBeInTheDocument();
+    // The org node keeps its Context Builder but has no 设置 (rename/delete).
+    expect(await screen.findByRole("tab", { name: copy.tab_config })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tab", { name: copy.tab_settings })).not.toBeInTheDocument();
+  });
+
+  it("falls back to the Context Builder for an old settings link", async () => {
+    renderTab("view=scenes&tenant=dingA&scene_tab=settings", true);
+
+    expect(await screen.findByRole("tab", { name: copy.tab_config })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByLabelText(copy.tenant_name)).not.toBeInTheDocument();
   });
 });
 
