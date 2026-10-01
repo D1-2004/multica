@@ -5,6 +5,7 @@ import {
   AlertCircle,
   ArrowLeftRight,
   Building2,
+  CalendarClock,
   CheckCircle2,
   ExternalLink,
   Globe,
@@ -58,6 +59,7 @@ import { SkillIcon } from "../skills/lib/skill-icon";
 import { useT } from "../i18n";
 import { ScopeMcpServers } from "./context-config-mcp";
 import { ScopePrompts } from "./context-config-prompts";
+import { ScopeRoutines } from "./context-config-routines";
 import { PublicCapabilities } from "./context-config-public";
 import { ItemGroup, ToggleControl } from "./context-config-ui";
 
@@ -189,6 +191,12 @@ export const CONTEXT_CONFIG_TABS = [
     label: (t: AgentsT) => t(($) => $.context_config.tab_public),
     icon: Globe,
     render: ({ detail }: ContextConfigTabProps) => <PublicCapabilities detail={detail} />,
+  },
+  {
+    id: "routines",
+    label: (t: AgentsT) => t(($) => $.context_config.tab_routines),
+    icon: CalendarClock,
+    render: (props: ContextConfigTabProps) => <RoutinesTab {...props} />,
   },
 ] as const satisfies readonly ContextConfigTab[];
 
@@ -694,6 +702,68 @@ function AgentView({
       </Tabs>
 
       {active.render({ detail, binding, browse, reportError })}
+    </div>
+  );
+}
+
+/** 例行任务: the routines of the bound chat, or of the chat picked while
+ * browsing (the same pick as 场域能力). A person or enterprise level has
+ * none. Who may change them comes from the scene's rights. */
+function RoutinesTab({ detail, binding, browse, reportError }: ContextConfigTabProps) {
+  const { t } = useT("agents");
+  const sceneKindLabel = useSceneKindLabel();
+  const sceneUntitled = useSceneUntitled();
+  const pageOrg = detail.tenant?.orgId ?? "";
+  const wantedSceneKey =
+    binding?.scopeType === "scene"
+      ? binding.scopeKey
+      : browse.sceneKey ||
+        (browse.preferredScope?.scopeType === "scene" ? browse.preferredScope.scopeKey : "");
+  const scene =
+    detail.scenes.find((entry) => entry.scopeKey === wantedSceneKey) ??
+    (binding === null ? detail.scenes[0] : undefined);
+  const sceneKey = binding?.scopeType === "scene" ? binding.scopeKey : (scene?.scopeKey ?? "");
+  const orgId = scene?.orgId || pageOrg || (binding?.orgId ?? "");
+  const sceneDetail = useQuery({
+    ...contextConfigSceneOptions(detail.agent.id, sceneKey, orgId),
+    enabled: Boolean(sceneKey),
+  });
+
+  if (!sceneKey) {
+    return (
+      <EmptyState
+        icon={<CalendarClock className="size-6" />}
+        title={t(($) => $.context_config.routines.not_scene_title)}
+        hint={t(($) => $.context_config.routines.not_scene_hint)}
+      />
+    );
+  }
+  return (
+    <div className="space-y-4">
+      {binding === null && detail.scenes.length > 1 ? (
+        <label className="block space-y-1.5">
+          <span className="text-caption font-medium text-muted-foreground">
+            {t(($) => $.context_config.scene_label)}
+          </span>
+          <NativeSelect
+            className="w-full"
+            value={sceneKey}
+            onChange={(event) => browse.onSceneKeyChange(event.target.value)}
+          >
+            {detail.scenes.map((entry) => (
+              <NativeSelectOption key={entry.scopeKey} value={entry.scopeKey}>
+                {`${sceneKindLabel(entry.kind)} · ${entry.scopeTitle || sceneUntitled(entry.kind)}`}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </label>
+      ) : null}
+      <ScopeRoutines
+        key={sceneKey}
+        target={{ kind: "config", agentId: detail.agent.id, sceneId: sceneKey, orgId }}
+        canEdit={sceneDetail.data?.rights?.editRoutines === true}
+        reportError={reportError}
+      />
     </div>
   );
 }

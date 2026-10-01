@@ -1,6 +1,6 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
-import type { ContextNodeRef } from "../types/context-capability";
+import type { ContextNodeRef, SceneRoutinesTarget } from "../types/context-capability";
 
 /**
  * Mobile configuration keys. The `/api/context-capabilities/*` routes are
@@ -22,6 +22,9 @@ export const contextConfigKeys = {
     [...contextConfigKeys.agent(agentId), "scenes"] as const,
   scene: (agentId: string, sceneId: string) =>
     [...contextConfigKeys.scenes(agentId), sceneId] as const,
+  /** A scene's routines (例行任务). */
+  sceneRoutines: (agentId: string, sceneId: string) =>
+    [...contextConfigKeys.scene(agentId, sceneId), "routines"] as const,
 };
 
 /**
@@ -54,6 +57,9 @@ export const contextCapabilityKeys = {
       node.scopeType,
       node.scopeKey,
     ] as const,
+  /** A scene node's routines (例行任务), under the node. */
+  contextNodeRoutines: (wsId: string, agentId: string, node: ContextNodeRef) =>
+    [...contextCapabilityKeys.contextNode(wsId, agentId, node), "routines"] as const,
   /** Official apps with this agent's status (连接应用). Nested under the
    * agent, so offer changes refresh them too. */
   connectedApps: (wsId: string, agentId: string) =>
@@ -177,5 +183,32 @@ export function agentConnectedAppOptions(wsId: string, agentId: string, slug: st
     queryFn: () => api.getAgentConnectedApp(wsId, agentId, slug),
     enabled: Boolean(wsId && agentId && slug),
     refetchOnWindowFocus: "always",
+  });
+}
+
+/** The query key of a scene's routines on the configure page or an admin
+ * scene node. */
+export function sceneRoutinesKey(target: SceneRoutinesTarget) {
+  return target.kind === "node"
+    ? contextCapabilityKeys.contextNodeRoutines(target.wsId, target.agentId, target.node)
+    : contextConfigKeys.sceneRoutines(target.agentId, target.sceneId);
+}
+
+function sceneRoutinesTargetReady(target: SceneRoutinesTarget): boolean {
+  return target.kind === "node"
+    ? Boolean(target.wsId && target.agentId && target.node.orgId && target.node.scopeKey)
+    : Boolean(target.agentId && target.sceneId);
+}
+
+/** A scene's routines with their next runs and last result. Refetched on
+ * focus and every minute while shown, so a run started elsewhere (cron,
+ * webhook, the agent) shows its result. */
+export function sceneRoutinesOptions(target: SceneRoutinesTarget) {
+  return queryOptions({
+    queryKey: sceneRoutinesKey(target),
+    queryFn: () => api.listSceneRoutines(target),
+    enabled: sceneRoutinesTargetReady(target),
+    staleTime: 15_000,
+    refetchInterval: 60_000,
   });
 }

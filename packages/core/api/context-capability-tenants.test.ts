@@ -275,7 +275,7 @@ describe("Context Builder node", () => {
     });
     expect(sceneNode.scope).toEqual({ type: "scene", orgId: "dingA", key: dmSceneId, title: "Ada" });
     expect(sceneNode.scene).toMatchObject({ sceneId: dmSceneId, kind: "dm", memoryId: dmSceneId, hasMemory: true });
-    expect(sceneNode.rights).toEqual({ toggle: true, connect: true, editPrompts: true, editMcp: true });
+    expect(sceneNode.rights).toEqual({ toggle: true, connect: true, editPrompts: true, editMcp: true, editRoutines: false });
 
     const personNode = ContextNodeDetailSchema.parse({
       scope: { type: "person", org_id: "dingA", key: "staff-1", title: "Ada" },

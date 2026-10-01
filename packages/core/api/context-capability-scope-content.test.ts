@@ -36,7 +36,7 @@ describe("configure-page scope rights, prompts and MCP servers", () => {
       mcp_config: { mcpServers: { docs: { url: "https://mcp.example/docs" } } },
       mcp_config_redacted: false,
     });
-    expect(detail.rights).toEqual({ toggle: true, connect: true, editPrompts: true, editMcp: false });
+    expect(detail.rights).toEqual({ toggle: true, connect: true, editPrompts: true, editMcp: false, editRoutines: false });
     expect(detail.prompts).toEqual([
       // A prompt without a switch (an older backend) is on.
       { id: "p1", name: "Tone", order: 1, text: "Be brief.", enabled: true, updatedByName: "", updatedAt: "" },
@@ -53,6 +53,7 @@ describe("configure-page scope rights, prompts and MCP servers", () => {
       connect: false,
       editPrompts: false,
       editMcp: false,
+      editRoutines: false,
     });
     expect(parse(undefined)).toBeNull();
     expect(parse(null)).toBeNull();
@@ -107,7 +108,7 @@ describe("configure-page scope rights, prompts and MCP servers", () => {
     expect(detail.person?.rights?.editMcp).toBe(true);
     expect(detail.person?.prompts.map((prompt) => prompt.name)).toEqual(["Tone"]);
     expect(detail.person?.mcpConfig).toBeNull();
-    expect(detail.org?.rights).toEqual({ toggle: true, connect: true, editPrompts: true, editMcp: true });
+    expect(detail.org?.rights).toEqual({ toggle: true, connect: true, editPrompts: true, editMcp: true, editRoutines: false });
     expect(detail.org?.mcpConfig).toEqual({ mcpServers: { wiki: { url: "https://wiki.example/mcp", disabled: true } } });
   });
 
@@ -117,7 +118,7 @@ describe("configure-page scope rights, prompts and MCP servers", () => {
       rights: { toggle: false, connect: false, edit_prompts: false, edit_mcp: false },
     });
     expect(node.prompts[0]?.enabled).toBe(false);
-    expect(node.rights).toEqual({ toggle: false, connect: false, editPrompts: false, editMcp: false });
+    expect(node.rights).toEqual({ toggle: false, connect: false, editPrompts: false, editMcp: false, editRoutines: false });
     expect(ContextNodeDetailSchema.parse({}).rights).toBeNull();
   });
 

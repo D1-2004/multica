@@ -41,15 +41,16 @@ import { CoordinatorConversationMessages, CoordinatorSessionsTab } from "./coord
 import { MemoryFlagBar, SceneMemoryDetail, SceneMemoryTab } from "./scene-memory-tab";
 import { SceneTree, type SceneSelection } from "./scene-tree";
 import { TenantCreateDialog, TenantSettings } from "./tenant-dialog";
+import { ScopeRoutines } from "../../../dingtalk/context-config-routines";
 
-export type SceneSubTab = "inbound" | "memory" | "config" | "settings";
+export type SceneSubTab = "inbound" | "memory" | "config" | "routines" | "settings";
 
 /** Sub-tabs of each node: a tenant has its 配置 and 设置; a scene (a group
- * chat or a 1:1 chat) and a person have 入站记录, 记忆 and 配置. The first one
- * is the default. */
+ * chat or a 1:1 chat) has 入站记录, 记忆, 配置 and 例行任务; a person has
+ * 入站记录, 记忆 and 配置. The first one is the default. */
 const SUB_TABS: Record<SceneSelection["type"], readonly SceneSubTab[]> = {
   org: ["config", "settings"],
-  scene: ["inbound", "memory", "config"],
+  scene: ["inbound", "memory", "config", "routines"],
   person: ["inbound", "memory", "config"],
 };
 
@@ -57,7 +58,7 @@ const SUB_TABS: Record<SceneSelection["type"], readonly SceneSubTab[]> = {
  * on the Tag page, so a level is its configuration and its inbound history. */
 const TAG_SUB_TABS: Record<SceneSelection["type"], readonly SceneSubTab[]> = {
   org: ["config"],
-  scene: ["config", "inbound"],
+  scene: ["config", "routines", "inbound"],
   person: ["config", "inbound"],
 };
 
@@ -493,6 +494,7 @@ function NodeDetail({
     inbound: t(($) => $.tab_body.scenes.tab_inbound),
     memory: t(($) => $.tab_body.scenes.tab_memory),
     config: t(($) => $.tab_body.scenes.tab_config),
+    routines: t(($) => $.tab_body.scenes.tab_routines),
     settings: t(($) => $.tab_body.scenes.tab_settings),
   };
   const tenantTitle = tenant ? tenant.name || tenant.orgId : selection.orgId;
@@ -591,6 +593,14 @@ function NodeDetail({
       />
     ) : (
       <PanelNotice>{t(($) => $.tab_body.scenes.inbound_empty)}</PanelNotice>
+    );
+  } else if (subTab === "routines" && selection.type === "scene") {
+    body = (
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-3xl p-4 sm:p-6">
+          <SceneRoutinesPanel wsId={wsId} agentId={agent.id} node={nodeOf(selection)} canEdit={canEdit} />
+        </div>
+      </div>
     );
   } else if (subTab === "memory") {
     body = (
@@ -746,6 +756,28 @@ function SceneMemoryPanel({
     return <PanelNotice>{t(($) => $.tab_body.scenes.memory_empty)}</PanelNotice>;
   }
   return <SceneMemoryDetail agent={agent} memory={memory} canEdit={canEdit} showTitle={false} />;
+}
+
+/** A scene node's 例行任务. Who may change them is the node's rights. */
+function SceneRoutinesPanel({
+  wsId,
+  agentId,
+  node,
+  canEdit,
+}: {
+  wsId: string;
+  agentId: string;
+  node: ContextNodeRef;
+  canEdit: boolean;
+}) {
+  const detail = useQuery(contextNodeOptions(wsId, agentId, node));
+  return (
+    <ScopeRoutines
+      target={{ kind: "node", wsId, agentId, node }}
+      canEdit={canEdit && detail.data?.rights?.editRoutines === true}
+      reportError={() => false}
+    />
+  );
 }
 
 function PanelNotice({ children }: { children: React.ReactNode }) {

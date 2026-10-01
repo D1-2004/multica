@@ -15,6 +15,10 @@ import {
   ContextNodeGrantsRevokedSchema,
   ContextNodeMcpConfigResponseSchema,
   ContextPromptComponentsResponseSchema,
+  ContextRoutineEnvelopeSchema,
+  ContextRoutineRunEnvelopeSchema,
+  ContextRoutineWriteSchema,
+  ContextRoutinesListSchema,
   EMPTY_AGENT_SCENES_PAGE,
   EMPTY_AGENT_TENANTS,
   ConnectedAppDetailSchema,
@@ -49,11 +53,17 @@ import type {
   ContextNodeRef,
   ContextPromptComponent,
   ContextPromptComponentInput,
+  ContextRoutine,
+  ContextRoutineInput,
+  ContextRoutinePatch,
+  ContextRoutineRun,
+  ContextRoutineWriteResult,
   CreateAgentTenantInput,
   DeleteContextConnectorCredentialInput,
   DingTalkJsapiConfig,
   ListAgentScenesParams,
   ResolveContextConfigSceneInput,
+  SceneRoutinesTarget,
   SetAgentContextCapabilityOffersInput,
   SetContextCapabilityBindingInput,
   SetContextConnectorCredentialInput,
@@ -4854,6 +4864,115 @@ export class ApiClient {
     return parseWithFallback<Record<string, unknown> | null>(raw, ContextNodeMcpConfigResponseSchema, mcpConfig, {
       endpoint: "PUT /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}/mcp-config",
       // MCP server configs can carry headers and environment values.
+      includeReceived: false,
+    });
+  }
+
+  /** Request path, query and headers of a scene's routines: the configure
+   * page (org_id in the query, no workspace header) or an admin scene node. */
+  private sceneRoutinesRequest(
+    target: SceneRoutinesTarget,
+    suffix = "",
+  ): { path: string; headers: Record<string, string>; query: URLSearchParams } {
+    if (target.kind === "node") {
+      return {
+        path: `${this.contextNodePath(target.agentId, target.node)}/routines${suffix}`,
+        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": target.wsId },
+        query: new URLSearchParams(),
+      };
+    }
+    const query = new URLSearchParams();
+    if (target.orgId) query.set("org_id", target.orgId);
+    return {
+      path: `/api/context-capabilities/agents/${encodeURIComponent(target.agentId)}/routines${suffix}`,
+      headers: { ...NO_WORKSPACE_HEADER },
+      query,
+    };
+  }
+
+  private sceneRoutinesUrl(request: { path: string; query: URLSearchParams }): string {
+    const query = request.query.toString();
+    return query ? `${request.path}?${query}` : request.path;
+  }
+
+  /** The routines (例行任务) of one group or 1:1 chat scene. */
+  async listSceneRoutines(target: SceneRoutinesTarget): Promise<ContextRoutine[]> {
+    const request = this.sceneRoutinesRequest(target);
+    if (target.kind === "config") request.query.set("scene_id", target.sceneId);
+    const raw = await this.fetch<unknown>(this.sceneRoutinesUrl(request), { headers: request.headers });
+    return parseWithFallback<ContextRoutine[]>(raw, ContextRoutinesListSchema, [], {
+      endpoint: "GET …/routines",
+      // Routine instructions and webhook hints are user content.
+      includeReceived: false,
+    });
+  }
+
+  /** Creates a routine in the scene, or updates the scene's routine with the
+   * same purpose and schedule (`updated`). null when the echo is malformed. */
+  async createSceneRoutine(
+    target: SceneRoutinesTarget,
+    input: ContextRoutineInput,
+  ): Promise<ContextRoutineWriteResult | null> {
+    const request = this.sceneRoutinesRequest(target);
+    const body: Record<string, unknown> = { ...input };
+    if (target.kind === "config") {
+      body.scene_id = target.sceneId;
+      if (target.orgId) body.org_id = target.orgId;
+    }
+    const raw = await this.fetch<unknown>(request.path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: request.headers,
+    });
+    return parseWithFallback<ContextRoutineWriteResult | null>(raw, ContextRoutineWriteSchema, null, {
+      endpoint: "POST …/routines",
+      // A new webhook routine's response carries its full URL.
+      includeReceived: false,
+    });
+  }
+
+  async updateSceneRoutine(
+    target: SceneRoutinesTarget,
+    routineId: string,
+    patch: ContextRoutinePatch,
+  ): Promise<ContextRoutineWriteResult | null> {
+    const request = this.sceneRoutinesRequest(target, `/${encodeURIComponent(routineId)}`);
+    const body: Record<string, unknown> = { ...patch };
+    if (target.kind === "config" && target.orgId) body.org_id = target.orgId;
+    const raw = await this.fetch<unknown>(request.path, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      headers: request.headers,
+    });
+    return parseWithFallback<ContextRoutineWriteResult | null>(raw, ContextRoutineWriteSchema, null, {
+      endpoint: "PATCH …/routines/{routineId}",
+      includeReceived: false,
+    });
+  }
+
+  /** Deletes a routine; its run history stays. */
+  async deleteSceneRoutine(target: SceneRoutinesTarget, routineId: string): Promise<void> {
+    const request = this.sceneRoutinesRequest(target, `/${encodeURIComponent(routineId)}`);
+    await this.fetch<unknown>(this.sceneRoutinesUrl(request), { method: "DELETE", headers: request.headers });
+  }
+
+  /** Runs a routine now; resolves to the run it started (null when none). */
+  async runSceneRoutine(target: SceneRoutinesTarget, routineId: string): Promise<ContextRoutineRun | null> {
+    const request = this.sceneRoutinesRequest(target, `/${encodeURIComponent(routineId)}/run`);
+    const raw = await this.fetch<unknown>(this.sceneRoutinesUrl(request), { method: "POST", headers: request.headers });
+    return parseWithFallback<ContextRoutineRun | null>(raw, ContextRoutineRunEnvelopeSchema, null, {
+      endpoint: "POST …/routines/{routineId}/run",
+      includeReceived: false,
+    });
+  }
+
+  /** Mints a new webhook URL (the old one stops working); the result carries
+   * the full URL once. */
+  async rotateSceneRoutineWebhook(target: SceneRoutinesTarget, routineId: string): Promise<ContextRoutine | null> {
+    const request = this.sceneRoutinesRequest(target, `/${encodeURIComponent(routineId)}/rotate-webhook`);
+    const raw = await this.fetch<unknown>(this.sceneRoutinesUrl(request), { method: "POST", headers: request.headers });
+    return parseWithFallback<ContextRoutine | null>(raw, ContextRoutineEnvelopeSchema, null, {
+      endpoint: "POST …/routines/{routineId}/rotate-webhook",
       includeReceived: false,
     });
   }

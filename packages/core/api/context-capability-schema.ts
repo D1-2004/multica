@@ -38,6 +38,10 @@ import type {
   ContextNodeScopeType,
   ContextPromptComponent,
   ContextResourceType,
+  ContextRoutine,
+  ContextRoutineRun,
+  ContextRoutineTrigger,
+  ContextRoutineWriteResult,
   ContextSceneKind,
   ContextSceneScope,
   ContextScopeRights,
@@ -266,6 +270,7 @@ const scopeRights = z
     connect: strictTrue,
     edit_prompts: strictTrue,
     edit_mcp: strictTrue,
+    edit_routines: strictTrue,
   })
   .transform(
     (value): ContextScopeRights => ({
@@ -273,6 +278,7 @@ const scopeRights = z
       connect: value.connect,
       editPrompts: value.edit_prompts,
       editMcp: value.edit_mcp,
+      editRoutines: value.edit_routines,
     }),
   )
   .nullish()
@@ -1177,3 +1183,118 @@ export const ConnectedAppDetailSchema = ConnectedAppWireSchema.extend({
     canAdmin: value.can_admin,
   }),
 );
+
+// ---------------------------------------------------------------------------
+// Scene routines (GET/POST/PATCH … /routines on the configure page and the
+// admin Context Builder)
+
+const nullableText = z
+  .string()
+  .nullish()
+  .transform((value) => value ?? null);
+
+const RoutineTriggerSchema = z
+  .object({
+    id: text,
+    kind: text,
+    cron: text,
+    timezone: text,
+    next_run_at: nullableText,
+    next_runs: list(z.string()),
+    webhook_url_masked: text,
+    webhook_url: text,
+  })
+  .transform(
+    (value): ContextRoutineTrigger => ({
+      id: value.id,
+      kind: value.kind,
+      cron: value.cron,
+      timezone: value.timezone,
+      nextRunAt: value.next_run_at,
+      nextRuns: value.next_runs,
+      webhookUrlMasked: value.webhook_url_masked,
+      webhookUrl: value.webhook_url,
+    }),
+  );
+
+const RoutineRunSchema = z
+  .object({
+    id,
+    status: text,
+    source: text,
+    failure_reason: text,
+    created_at: text,
+    completed_at: nullableText,
+  })
+  .transform(
+    (value): ContextRoutineRun => ({
+      id: value.id,
+      status: value.status,
+      source: value.source,
+      failureReason: value.failure_reason,
+      createdAt: value.created_at,
+      completedAt: value.completed_at,
+    }),
+  );
+
+export const ContextRoutineSchema = z
+  .object({
+    id,
+    scene_id: text,
+    scene_kind: text,
+    autopilot_id: text,
+    title: text,
+    instructions: text,
+    enabled: strictTrue,
+    pause_reason: text,
+    trigger: RoutineTriggerSchema,
+    last_run: RoutineRunSchema.nullish().catch(null),
+    created_by_type: text,
+    created_at: text,
+    updated_at: text,
+  })
+  .transform(
+    (value): ContextRoutine => ({
+      id: value.id,
+      sceneId: value.scene_id,
+      sceneKind: value.scene_kind,
+      autopilotId: value.autopilot_id,
+      title: value.title,
+      instructions: value.instructions,
+      enabled: value.enabled,
+      pauseReason: value.pause_reason,
+      trigger: value.trigger,
+      lastRun: value.last_run ?? null,
+      createdByType: value.created_by_type,
+      createdAt: value.created_at,
+      updatedAt: value.updated_at,
+    }),
+  );
+
+/** A scene's routines; a malformed entry is dropped, not the whole list. */
+export const ContextRoutinesListSchema = z
+  .object({ routines: tolerantList(ContextRoutineSchema) })
+  .transform((value): ContextRoutine[] => value.routines);
+
+/** Create and edit responses: the stored routine and whether a create
+ * updated an existing one. null when malformed (the caller refetches). */
+export const ContextRoutineWriteSchema = z
+  .object({ routine: ContextRoutineSchema, updated: strictTrue })
+  .transform((value): ContextRoutineWriteResult => ({ routine: value.routine, updated: value.updated }))
+  .nullable()
+  .catch(null);
+
+/** Rotate response: the routine with its new full webhook URL. */
+export const ContextRoutineEnvelopeSchema = z
+  .object({ routine: ContextRoutineSchema })
+  .transform((value): ContextRoutine => value.routine)
+  .nullable()
+  .catch(null);
+
+/** Run-now response: the run it started (null when the run was not created
+ * or the body is malformed). */
+export const ContextRoutineRunEnvelopeSchema = z
+  .object({ run: RoutineRunSchema.nullish() })
+  .transform((value): ContextRoutineRun | null => value.run ?? null)
+  .nullable()
+  .catch(null);

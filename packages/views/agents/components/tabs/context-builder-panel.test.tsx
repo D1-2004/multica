@@ -45,7 +45,7 @@ const GROUP_SCENE = "66666666-6666-4666-8666-666666666666";
 const DM_SCENE = "77777777-7777-4777-8777-777777777777";
 const sceneNode: ContextNodeRef = { orgId: "dingA", scopeType: "scene", scopeKey: GROUP_SCENE };
 const dmNode: ContextNodeRef = { orgId: "dingA", scopeType: "scene", scopeKey: DM_SCENE };
-const allRights = { toggle: true, connect: true, editPrompts: true, editMcp: true };
+const allRights = { toggle: true, connect: true, editPrompts: true, editMcp: true, editRoutines: false };
 
 const dmScene: AgentSceneSummary = {
   sceneId: DM_SCENE,
@@ -308,7 +308,7 @@ describe("ContextBuilderPanel rights", () => {
       detailOf({
         scope: personScope,
         canConnect: false,
-        rights: { toggle: false, connect: false, editPrompts: false, editMcp: false },
+        rights: { toggle: false, connect: false, editPrompts: false, editMcp: false, editRoutines: false },
       }),
     );
     renderPanel({ node: personNode });

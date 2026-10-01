@@ -127,7 +127,8 @@ export function contextLevelRights(detail: ContextNodeDetail, canEdit: boolean):
   if (detail.rights) return detail.rights;
   const canConnect = detail.canConnect === true;
   const allowed = canEdit && (detail.scope?.type !== "person" || canConnect);
-  return { toggle: allowed, connect: canConnect, editPrompts: allowed, editMcp: allowed };
+  // A server without rights has no routine routes either.
+  return { toggle: allowed, connect: canConnect, editPrompts: allowed, editMcp: allowed, editRoutines: false };
 }
 
 /**

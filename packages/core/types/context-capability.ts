@@ -163,6 +163,9 @@ export interface ContextScopeRights {
   editPrompts: boolean;
   /** Add, edit, delete and switch the scope's remote MCP servers. */
   editMcp: boolean;
+  /** Create, edit, run and delete the scene's routines (例行任务). Only group
+   * and 1:1 chat scenes have routines. */
+  editRoutines: boolean;
 }
 
 /** A configure-page scope's own prompt components and MCP servers, and what
@@ -733,3 +736,94 @@ export interface ConnectedAppDetail extends ConnectedApp {
    * the list request. */
   canAdmin: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Scene routines (例行任务): cron or webhook runs bound to one group or 1:1
+// chat scene. Each run uses the scene's configuration; the server posts a
+// start and an end notice into the scene.
+
+/** "schedule" or "webhook"; other values come from a newer backend and are
+ * shown generically. */
+export type ContextRoutineTriggerKind = "schedule" | "webhook" | (string & {});
+
+export interface ContextRoutineTrigger {
+  id: string;
+  kind: ContextRoutineTriggerKind;
+  /** Five-field cron expression; "" for a webhook. */
+  cron: string;
+  /** IANA timezone of the schedule; "" for a webhook. */
+  timezone: string;
+  /** Next scheduled run (ISO), null when paused or not a schedule. */
+  nextRunAt: string | null;
+  /** The next few scheduled runs (ISO), empty when paused or a webhook. */
+  nextRuns: string[];
+  /** The webhook URL with the token masked; "" for a schedule. */
+  webhookUrlMasked: string;
+  /** The full webhook URL, only right after it was minted (create, rotate). */
+  webhookUrl: string;
+}
+
+export interface ContextRoutineRun {
+  id: string;
+  /** Autopilot run status ("running", "completed", "failed", "skipped", …). */
+  status: string;
+  /** "schedule", "webhook" or "manual". */
+  source: string;
+  failureReason: string;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface ContextRoutine {
+  id: string;
+  sceneId: string;
+  /** "group" or "dm". */
+  sceneKind: string;
+  autopilotId: string;
+  title: string;
+  instructions: string;
+  /** Runs on its trigger only when true. */
+  enabled: boolean;
+  /** Why the system paused it ("" when none). */
+  pauseReason: string;
+  trigger: ContextRoutineTrigger;
+  lastRun: ContextRoutineRun | null;
+  /** "member" (configure page) or "agent" (created from a conversation). */
+  createdByType: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Outcome of a create or edit. `updated` is true when a create matched a
+ * routine of the scene with the same purpose and schedule and updated it. */
+export interface ContextRoutineWriteResult {
+  routine: ContextRoutine;
+  updated: boolean;
+}
+
+export interface ContextRoutineInput {
+  title: string;
+  instructions: string;
+  trigger: {
+    kind: "schedule" | "webhook";
+    cron?: string;
+    timezone?: string;
+  };
+}
+
+/** Fields of an edit; omitted ones stay. A schedule may change its cron and
+ * timezone; the trigger kind never changes. */
+export interface ContextRoutinePatch {
+  title?: string;
+  instructions?: string;
+  enabled?: boolean;
+  cron?: string;
+  timezone?: string;
+}
+
+/** Where a scene's routines are read and written: the configure page
+ * (authorized by the caller's grant) or the admin Context Builder (a
+ * workspace-scoped scene node). */
+export type SceneRoutinesTarget =
+  | { kind: "config"; agentId: string; sceneId: string; orgId: string }
+  | { kind: "node"; wsId: string; agentId: string; node: ContextNodeRef };

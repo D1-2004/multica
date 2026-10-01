@@ -28,6 +28,12 @@ const api = vi.hoisted(() => ({
   startContextConnectorConnection: vi.fn(),
   setContextConfigPrompts: vi.fn(),
   setContextConfigMcpConfig: vi.fn(),
+  listSceneRoutines: vi.fn(),
+  createSceneRoutine: vi.fn(),
+  updateSceneRoutine: vi.fn(),
+  deleteSceneRoutine: vi.fn(),
+  runSceneRoutine: vi.fn(),
+  rotateSceneRoutineWebhook: vi.fn(),
 }));
 
 const { ApiError, errorCode } = vi.hoisted(() => {
@@ -56,7 +62,7 @@ const { ApiError, errorCode } = vi.hoisted(() => {
 vi.mock("@multica/core/api", () => ({ api, ApiError, errorCode }));
 
 vi.mock("sonner", () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
+  toast: { error: vi.fn(), success: vi.fn(), message: vi.fn() },
 }));
 
 import {
@@ -176,6 +182,7 @@ beforeEach(() => {
   api.listContextConfigAgents.mockResolvedValue([agentSummary]);
   api.getContextConfigAgent.mockResolvedValue(agentDetail());
   api.getContextConfigScene.mockResolvedValue(sceneDetail);
+  api.listSceneRoutines.mockResolvedValue([]);
   api.setContextCapabilityBinding.mockImplementation(
     async (
       _agentId: string,
@@ -1285,8 +1292,8 @@ describe("ContextConfigPage", () => {
   });
 });
 
-const allRights = { toggle: true, connect: true, editPrompts: true, editMcp: true };
-const noRights = { toggle: false, connect: false, editPrompts: false, editMcp: false };
+const allRights = { toggle: true, connect: true, editPrompts: true, editMcp: true, editRoutines: false };
+const noRights = { toggle: false, connect: false, editPrompts: false, editMcp: false, editRoutines: false };
 const groupBinding: ContextConfigBinding = { agentId: "agent-1", scopeType: "scene", scopeKey: SALES_SCENE, orgId: "" };
 const personBinding: ContextConfigBinding = { agentId: "agent-1", scopeType: "person", scopeKey: "staff-1", orgId: "" };
 const toneprompt = { id: "p1", name: "Tone", order: 1, text: "Be brief.", enabled: true, updatedByName: "", updatedAt: "" };
@@ -1465,7 +1472,7 @@ describe("top-level tabs", () => {
   it("opens the default tab for an unknown id and reports switching", async () => {
     const onTabChange = vi.fn();
     const user = userEvent.setup();
-    renderPage({ binding: groupBinding, initialTab: "routines", onTabChange });
+    renderPage({ binding: groupBinding, initialTab: "no-such-tab", onTabChange });
 
     expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: copy.tab_scope })).toHaveAttribute("aria-selected", "true");
@@ -1680,5 +1687,113 @@ describe("scope MCP servers", () => {
       "aria-disabled",
       "true",
     );
+  });
+});
+
+const routineCopy = copy.routines;
+
+const standupRoutine = {
+  id: "routine-1",
+  sceneId: SALES_SCENE,
+  sceneKind: "group",
+  autopilotId: "ap-1",
+  title: "Weekday standup",
+  instructions: "Remind the team.",
+  enabled: true,
+  pauseReason: "",
+  trigger: {
+    id: "trigger-1",
+    kind: "schedule",
+    cron: "0 9 * * 1-5",
+    timezone: "Asia/Shanghai",
+    nextRunAt: "2026-10-05T01:00:00Z",
+    nextRuns: ["2026-10-05T01:00:00Z"],
+    webhookUrlMasked: "",
+    webhookUrl: "",
+  },
+  lastRun: null,
+  createdByType: "agent",
+  createdAt: "",
+  updatedAt: "",
+};
+
+describe("routines tab", () => {
+  it("lists a group's routines read-only without the routines right", async () => {
+    api.listSceneRoutines.mockResolvedValue([standupRoutine]);
+    renderPage({ binding: groupBinding, initialTab: "routines" });
+
+    expect(await screen.findByText("Weekday standup")).toBeInTheDocument();
+    expect(api.listSceneRoutines).toHaveBeenCalledWith({ kind: "config", agentId: "agent-1", sceneId: SALES_SCENE, orgId: "" });
+    expect(screen.getByText(routineCopy.read_only)).toBeInTheDocument();
+    expect(screen.getByText(routineCopy.created_in_chat)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: routineCopy.add })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  });
+
+  it("creates a webhook routine for a manager and shows its URL once", async () => {
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: { ...allRights, editRoutines: true } });
+    api.createSceneRoutine.mockResolvedValue({
+      updated: false,
+      routine: {
+        ...standupRoutine,
+        id: "routine-2",
+        title: "Deploy summary",
+        trigger: {
+          ...standupRoutine.trigger,
+          kind: "webhook",
+          cron: "",
+          timezone: "",
+          nextRunAt: null,
+          nextRuns: [],
+          webhookUrl: "https://multica.example/api/webhooks/autopilots/awt_secret_token",
+        },
+      },
+    });
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, initialTab: "routines" });
+
+    await user.click(await screen.findByRole("button", { name: routineCopy.add }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: routineCopy.create }));
+    expect(within(dialog).getByText(routineCopy.field_title_required)).toBeInTheDocument();
+    expect(api.createSceneRoutine).not.toHaveBeenCalled();
+
+    await user.type(within(dialog).getByLabelText(routineCopy.field_title), "Deploy summary");
+    await user.type(within(dialog).getByLabelText(routineCopy.field_instructions), "Summarize the deploy.");
+    await user.click(within(dialog).getByRole("tab", { name: routineCopy.trigger_webhook }));
+    await user.click(within(dialog).getByRole("button", { name: routineCopy.create }));
+
+    await waitFor(() =>
+      expect(api.createSceneRoutine).toHaveBeenCalledWith(
+        { kind: "config", agentId: "agent-1", sceneId: SALES_SCENE, orgId: "" },
+        { title: "Deploy summary", instructions: "Summarize the deploy.", trigger: { kind: "webhook" } },
+      ),
+    );
+    expect(
+      await screen.findByRole("heading", { name: routineCopy.webhook_reveal_title.replace("{{name}}", "Deploy summary") }),
+    ).toBeInTheDocument();
+  });
+
+  it("pauses a routine through its switch", async () => {
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: { ...allRights, editRoutines: true } });
+    api.listSceneRoutines.mockResolvedValue([standupRoutine]);
+    api.updateSceneRoutine.mockResolvedValue({ updated: false, routine: { ...standupRoutine, enabled: false } });
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, initialTab: "routines" });
+
+    await user.click(await screen.findByRole("switch", { name: routineCopy.toggle.replace("{{name}}", "Weekday standup") }));
+    await waitFor(() =>
+      expect(api.updateSceneRoutine).toHaveBeenCalledWith(
+        { kind: "config", agentId: "agent-1", sceneId: SALES_SCENE, orgId: "" },
+        "routine-1",
+        { enabled: false },
+      ),
+    );
+  });
+
+  it("says a person level has no routines", async () => {
+    renderPage({ binding: personBinding, initialTab: "routines" });
+    expect(await screen.findByText(routineCopy.not_scene_title)).toBeInTheDocument();
+    expect(api.listSceneRoutines).not.toHaveBeenCalled();
   });
 });

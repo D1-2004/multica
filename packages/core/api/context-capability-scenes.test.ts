@@ -206,7 +206,7 @@ describe("configure-page scene scope", () => {
     });
     expect(detail.scene).toMatchObject({ scopeKey: dmSceneId, kind: "dm" });
     expect(detail.scope).toEqual({ type: "scene", key: dmSceneId, title: "Chat" });
-    expect(detail.rights).toEqual({ toggle: true, connect: true, editPrompts: true, editMcp: true });
+    expect(detail.rights).toEqual({ toggle: true, connect: true, editPrompts: true, editMcp: true, editRoutines: false });
   });
 
   it("reads a missing scope as the scene and a null or malformed one as unknown", () => {
