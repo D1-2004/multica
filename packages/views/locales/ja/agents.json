@@ -1268,7 +1268,7 @@
       "dingtalk_identity_reuse_retry": "再試行",
       "dingtalk_identity_reuse_failed": "実行 ID を再利用できません。更新して再試行してください。",
       "dingtalk_identity_native_subscription": "ネイティブ購読",
-      "dingtalk_identity_native_subscription_hint": "オンにすると、この ID への個別チャットと、グループでこの ID に @ メンションしたメッセージが、DWS ネイティブ購読を通じてエージェントに届きます。上のデジタル従業員のメッセージ連携とはどちらか一方のみ使用できます。",
+      "dingtalk_identity_native_subscription_hint": "オンにすると、この ID への個別チャットと、グループでこの ID に @ メンションしたメッセージが、本番環境の DWS ネイティブ購読を通じてエージェントに届きます。上のデジタル従業員のメッセージ連携とはどちらか一方のみ使用できます。",
       "dingtalk_identity_native_subscription_blocked": "デジタル従業員のメッセージ連携が有効です。ネイティブ購読をオンにするには、先に連携を解除してください。",
       "dingtalk_identity_native_subscription_requires_identity": "ネイティブ購読をオンにする前に、実行 ID を関連付けてください。",
       "dingtalk_identity_native_subscription_requires_managed_response": "ネイティブ購読には、Coordinator を有効にし、DingTalk の返信を Multica が管理する設定が必要です。先に返信設定で有効にしてください。",

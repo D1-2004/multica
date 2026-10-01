@@ -1467,7 +1467,7 @@
       "dingtalk_identity_reuse_retry": "重试",
       "dingtalk_identity_reuse_failed": "复用身份失败，请刷新后重试。",
       "dingtalk_identity_native_subscription": "原生订阅",
-      "dingtalk_identity_native_subscription_hint": "开启后，这个身份的单聊和群里 @ 它的消息通过 DWS 原生订阅进入智能体；与上方数字员工消息绑定二选一。",
+      "dingtalk_identity_native_subscription_hint": "开启后，这个身份的单聊和群里 @ 它的消息通过线上 DWS 原生订阅进入智能体；与上方数字员工消息绑定二选一。",
       "dingtalk_identity_native_subscription_blocked": "已绑定数字员工消息，需先解除才能开启原生订阅",
       "dingtalk_identity_native_subscription_requires_identity": "请先绑定执行身份，再开启原生订阅。",
       "dingtalk_identity_native_subscription_requires_managed_response": "原生订阅需要智能体已开启 Coordinator 并由 Multica 托管钉钉回复，请先在回复设置里开启。",
