@@ -2157,6 +2157,18 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A Tag employee's instructions, MCP, runtime, model and profile come
+	// from the Tag; only its tenant-owned settings (inbound coordinator,
+	// dispatch) are written here.
+	if req.Name != nil || req.Description != nil || req.AvatarURL != nil || req.Instructions != nil ||
+		req.McpConfig != nil || req.RuntimeID != nil || req.RuntimeConfig != nil || req.CustomArgs != nil ||
+		req.MaxConcurrentTasks != nil || req.Model != nil || req.ThinkingLevel != nil || req.ServiceTier != nil ||
+		req.ComposioToolkitAllowlist != nil {
+		if h.refuseTagEmployeeWrite(w, r, uuidToString(existing.WorkspaceID), uuidToString(existing.ID)) {
+			return
+		}
+	}
+
 	params := db.UpdateAgentParams{
 		ID: existing.ID,
 	}

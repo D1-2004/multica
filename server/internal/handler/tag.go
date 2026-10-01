@@ -17,6 +17,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/tag"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -887,4 +888,60 @@ func (h *Handler) rejectTagTemplateBinding(w http.ResponseWriter, r *http.Reques
 		return false
 	}
 	return true
+}
+
+// tagEmployeeInheritedCode marks a write refused because a Tag tenant's
+// employee inherits that configuration from the Tag.
+const tagEmployeeInheritedCode = "tag_employee_inherited"
+
+// refuseTagEmployeeWrite writes 409 and returns true when agentID is a Tag
+// tenant's employee: its instructions, skills, connectors, MCP, DSH plugins,
+// runtime, model, environment and profile come from the Tag (by apply, or
+// from the tenant's name) and are read-only on the employee itself.
+func (h *Handler) refuseTagEmployeeWrite(w http.ResponseWriter, r *http.Request, workspaceID, agentID string) bool {
+	if h.DB == nil {
+		return false
+	}
+	role, err := tag.AgentRole(r.Context(), h.DB, workspaceID, agentID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check the tag")
+		return true
+	}
+	if role != tag.RoleEmployee {
+		return false
+	}
+	writeErrorCode(w, http.StatusConflict, tagEmployeeInheritedCode,
+		"this agent is a tag tenant's employee; its configuration is inherited from the tag")
+	return true
+}
+
+// RefuseTagEmployeeConfigWrites guards the agent configuration routes keyed by
+// {id} (skills, DSH plugins, environment, offers) for Tag employees. An {id}
+// that is not a UUID is left to the handler's own loader.
+func (h *Handler) RefuseTagEmployeeConfigWrites(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agentID, err := util.ParseUUID(chi.URLParam(r, "id"))
+		if err == nil && h.refuseTagEmployeeWrite(w, r, ctxWorkspaceID(r.Context()), uuidToString(agentID)) {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// tagEmployeeConnectorGrantsChanged reports whether setting a connector's
+// agents to agentIDs would add or remove a Tag employee: an employee's
+// connectors come from the Tag. Other agents in the list are unaffected.
+func tagEmployeeConnectorGrantsChanged(ctx context.Context, tx tag.DBTX, workspaceID, connectorID string, agentIDs []string) (bool, error) {
+	var changed bool
+	err := tx.QueryRow(ctx, `WITH employees AS (
+			SELECT employee_agent_id AS id FROM tag_tenant WHERE workspace_id = $1::uuid),
+		current AS (
+			SELECT agent_id AS id FROM internal_connector_agent
+			WHERE connector_id = $2::uuid AND workspace_id = $1::uuid AND agent_id IN (SELECT id FROM employees)),
+		requested AS (
+			SELECT DISTINCT id::uuid AS id FROM unnest($3::text[]) AS id WHERE id::uuid IN (SELECT id FROM employees))
+		SELECT EXISTS (SELECT id FROM current EXCEPT SELECT id FROM requested)
+		    OR EXISTS (SELECT id FROM requested EXCEPT SELECT id FROM current)`,
+		workspaceID, connectorID, agentIDs).Scan(&changed)
+	return changed, err
 }

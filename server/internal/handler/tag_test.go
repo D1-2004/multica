@@ -34,6 +34,9 @@ func tagTestRouter(h *Handler) http.Handler {
 		})
 		r.Post("/api/agents/{id}/archive", h.ArchiveAgent)
 		r.Put("/api/agents/{id}", h.UpdateAgent)
+		r.With(h.RefuseTagEmployeeConfigWrites).Put("/api/agents/{id}/skills", h.SetAgentSkills)
+		r.With(h.RefuseTagEmployeeConfigWrites).Put("/api/agents/{id}/env", h.UpdateAgentEnv)
+		r.With(RequireHumanActor, h.RefuseTagEmployeeConfigWrites).Put("/api/agents/{id}/context-capabilities/offers", h.PutAgentContextCapabilityOffers)
 		r.With(RequireHumanActor).Post("/api/agents/{id}/tenants", h.CreateAgentTenant)
 		r.With(RequireHumanActor).Patch("/api/agents/{id}/tenants/{orgId}", h.RenameAgentTenant)
 		r.Put("/api/agents/{id}/a2a/operator/dws-identity", h.UpdateAgentA2AOperatorIdentity)
@@ -466,5 +469,92 @@ func TestTagEmployeeKeepsOneEnterpriseAcrossRebind(t *testing.T) {
 	}
 	if _, err := testPool.Exec(ctx, `DELETE FROM tag_tenant WHERE employee_agent_id = $1`, agentID); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A tenant's employee inherits its configuration from the Tag: it is readable
+// but every write path refuses it, while its tenant-owned settings stay
+// writable and the template stays fully writable.
+func TestTagEmployeeConfigIsReadOnly(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	cleanupTag(t)
+	useTagOperator(t, true)
+	router := tagTestRouter(testHandler)
+	ctx := context.Background()
+
+	created := tagDecode[TagStateResponse](t, tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"runtime_id": testRuntimeID}))
+	templatePath := "/api/agents/" + created.Tag.AgentID
+	tenant := tagDecode[TagTenantMutationResponse](t, tagDo(t, router, http.MethodPost, "/api/tag/tenants", map[string]string{"name": "只读"}))
+	employeeID := tenant.Tenant.EmployeeAgentID
+	employeePath := "/api/agents/" + employeeID
+
+	inherited := []struct {
+		what   string
+		method string
+		path   string
+		body   any
+	}{
+		{"instructions", http.MethodPut, employeePath, map[string]string{"instructions": "x"}},
+		{"model", http.MethodPut, employeePath, map[string]string{"model": "m"}},
+		{"name", http.MethodPut, employeePath, map[string]string{"name": "Renamed"}},
+		{"avatar", http.MethodPut, employeePath, map[string]string{"avatar_url": "emoji:🐨"}},
+		{"skills", http.MethodPut, employeePath + "/skills", map[string][]string{"skill_ids": {}}},
+		{"env", http.MethodPut, employeePath + "/env", map[string]any{"custom_env": map[string]string{}}},
+		{"offers", http.MethodPut, employeePath + "/context-capabilities/offers", map[string]any{"offers": []any{}}},
+	}
+	for _, c := range inherited {
+		w := tagDo(t, router, c.method, c.path, c.body)
+		tagExpect(t, w, http.StatusConflict, "employee "+c.what)
+		if !strings.Contains(w.Body.String(), tagEmployeeInheritedCode) {
+			t.Fatalf("employee %s refused for another reason: %s", c.what, w.Body.String())
+		}
+	}
+	// The inbound coordinator belongs to the tenant.
+	tagExpect(t, tagDo(t, router, http.MethodPut, employeePath, map[string]bool{"inbound_coordinator": true}), http.StatusOK, "employee coordinator")
+	// The template is where the shared configuration is written.
+	tagExpect(t, tagDo(t, router, http.MethodPut, templatePath, map[string]string{"instructions": "shared"}), http.StatusOK, "template instructions")
+	tagExpect(t, tagDo(t, router, http.MethodPut, templatePath+"/skills", map[string][]string{"skill_ids": {}}), http.StatusOK, "template skills")
+
+	// Connector grants: an employee's membership cannot change from the
+	// connector side; other agents in the same list can.
+	connectorID := uuid.NewString()
+	if _, err := testPool.Exec(ctx, `INSERT INTO internal_connector (id, workspace_id, name, upstream_url, credential_ref, allowed_tools, enabled)
+		VALUES ($1, $2, 'TagTest connector', 'https://safe.example.test/mcp', 'REF', '["read"]'::jsonb, true)`, connectorID, testWorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM internal_connector_agent WHERE connector_id = $1`, connectorID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM internal_connector WHERE id = $1`, connectorID)
+	})
+	other := createHandlerTestAgent(t, "TagTest other "+uuid.NewString()[:8], nil)
+	for _, c := range []struct {
+		agents []string
+		want   bool
+	}{
+		{[]string{other}, false},
+		{[]string{other, employeeID}, true},
+	} {
+		changed, err := tagEmployeeConnectorGrantsChanged(ctx, testPool, testWorkspaceID, connectorID, c.agents)
+		if err != nil || changed != c.want {
+			t.Fatalf("grants %v: changed=%v err=%v, want %v", c.agents, changed, err, c.want)
+		}
+	}
+	if _, err := testPool.Exec(ctx, `INSERT INTO internal_connector_agent (connector_id, workspace_id, agent_id) VALUES ($1, $2, $3)`,
+		connectorID, testWorkspaceID, employeeID); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		agents []string
+		want   bool
+	}{
+		{[]string{other, employeeID}, false},
+		{[]string{other}, true},
+	} {
+		changed, err := tagEmployeeConnectorGrantsChanged(ctx, testPool, testWorkspaceID, connectorID, c.agents)
+		if err != nil || changed != c.want {
+			t.Fatalf("grants with employee granted %v: changed=%v err=%v, want %v", c.agents, changed, err, c.want)
+		}
 	}
 }

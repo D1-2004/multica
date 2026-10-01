@@ -2871,7 +2871,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// Scene and personal capability layers: offer catalog and
 					// read-only scope summaries (docs/context-capabilities.md).
 					r.With(handler.RequireHumanActor).Get("/context-capabilities", h.GetAgentContextCapabilities)
-					r.With(handler.RequireHumanActor).Put("/context-capabilities/offers", h.PutAgentContextCapabilityOffers)
+					r.With(handler.RequireHumanActor, h.RefuseTagEmployeeConfigWrites).Put("/context-capabilities/offers", h.PutAgentContextCapabilityOffers)
 					// Official apps of the agent's 连接器 tab (连接应用): status,
 					// usage and tools per app. Read-only; actions use the
 					// catalog, connector, offer and credential routes.
@@ -2896,13 +2896,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/connections/start", h.StartAgentContextConnection)
 					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/grants", h.RevokeAgentContextGrants)
 					r.Get("/skills", h.ListAgentSkills)
-					r.Put("/skills", h.SetAgentSkills)
-					r.Post("/skills/add", h.AddAgentSkills)
+					r.With(h.RefuseTagEmployeeConfigWrites).Put("/skills", h.SetAgentSkills)
+					r.With(h.RefuseTagEmployeeConfigWrites).Post("/skills/add", h.AddAgentSkills)
 					// Which DSH plugins this agent boots with. The daemon
 					// composes these into the profile the sandbox builds.
 					r.Get("/dsh-plugins", h.ListAgentDshPlugins)
 					r.With(handler.RequireHumanActor).Get("/dsh-plugins/{pluginId}/config", h.GetAgentDshPluginConfig)
-					r.With(handler.RequireHumanActor).Put("/dsh-plugins/{pluginId}/config", h.UpdateAgentDshPluginConfig)
+					r.With(handler.RequireHumanActor, h.RefuseTagEmployeeConfigWrites).Put("/dsh-plugins/{pluginId}/config", h.UpdateAgentDshPluginConfig)
 					r.With(handler.RequireHumanActor).Get("/dsh-profile", h.GetDSHProfile)
 					r.With(handler.RequireHumanActor).Post("/dsh-profile", h.PrepareDSHProfile)
 					r.With(handler.RequireHumanActor).Post("/dsh-profile/retry", h.RetryDSHProfileBuild)
@@ -2910,8 +2910,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Post("/dsh-home", h.EnsureDSHHome)
 					r.With(handler.RequireHumanActor).Get("/filesystem", h.GetDSHHome)
 					r.With(handler.RequireHumanActor).Post("/filesystem", h.EnsureDSHHome)
-					r.Put("/dsh-plugins", h.SetAgentDshPlugins)
-					r.Delete("/dsh-plugins/{pluginId}", h.RemoveAgentDshPlugin)
+					r.With(h.RefuseTagEmployeeConfigWrites).Put("/dsh-plugins", h.SetAgentDshPlugins)
+					r.With(h.RefuseTagEmployeeConfigWrites).Delete("/dsh-plugins/{pluginId}", h.RemoveAgentDshPlugin)
 					// OKRs materialize as workspace labels the agent tags
 					// issues with; the catalog is injected into its prompt.
 					r.Get("/okrs", h.ListAgentOKRs)
@@ -2919,9 +2919,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/labels", h.ListLabelsForAgent)
 					r.Post("/labels", h.AttachLabelToAgent)
 					r.Delete("/labels/{labelId}", h.DetachLabelFromAgent)
-					r.Put("/skills/{skillId}/enabled", h.SetAgentSkillEnabled)
-					r.Put("/runtime-skills/enabled", h.SetAgentRuntimeSkillEnabled)
-					r.Delete("/skills/{skillId}", h.RemoveAgentSkill)
+					r.With(h.RefuseTagEmployeeConfigWrites).Put("/skills/{skillId}/enabled", h.SetAgentSkillEnabled)
+					r.With(h.RefuseTagEmployeeConfigWrites).Put("/runtime-skills/enabled", h.SetAgentRuntimeSkillEnabled)
+					r.With(h.RefuseTagEmployeeConfigWrites).Delete("/skills/{skillId}", h.RemoveAgentSkill)
 					r.Route("/a2a", func(r chi.Router) {
 						r.Use(handler.RequireHumanActor)
 						r.Get("/", h.GetAgentA2AConfig)
@@ -2941,7 +2941,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// activity_log. See MUL-2600, MUL-5438 and
 					// internal/handler/agent_env.go.
 					r.Get("/env", h.GetAgentEnv)
-					r.Put("/env", h.UpdateAgentEnv)
+					r.With(h.RefuseTagEmployeeConfigWrites).Put("/env", h.UpdateAgentEnv)
 					r.With(handler.RequireHumanActor).Get("/runner-bindings", h.ListAgentRunnerBindings)
 					r.With(handler.RequireHumanActor).Put("/runner-mount", h.MountAgentRunnerMachine)
 					r.With(handler.RequireHumanActor).Post("/runner-pairings", h.CreateAgentRunnerPairing)
