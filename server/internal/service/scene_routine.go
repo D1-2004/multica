@@ -29,6 +29,12 @@ type SceneRoutines interface {
 	// An error rolls the terminal transition back, so it is returned only
 	// for database failures; an unusable scene is logged and skipped.
 	RoutineTaskFinished(ctx context.Context, tx pgx.Tx, task db.AgentTaskQueue, status string, result []byte, errMessage string) error
+	// RoutineTaskSettled posts the end notice of a routine run whose task
+	// reached a terminal status without a completion transaction (cancel,
+	// the stale-task sweeper, a runtime that failed to start). Best effort:
+	// it does nothing when the end notice exists or another attempt of the
+	// run is still active.
+	RoutineTaskSettled(ctx context.Context, task db.AgentTaskQueue)
 }
 
 // ErrSceneRoutineUnusable marks a routine whose scene can no longer be used:

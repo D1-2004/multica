@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	neturl "net/url"
 	"sort"
 	"strings"
 	"time"
@@ -278,11 +279,12 @@ const (
 	sceneConfigToolRoutineRun    = "scene_routine_run"
 )
 
-// sceneConfigWriteTools change the scene; a routine run may not call them.
+// sceneConfigWriteTools change the scene or hand out access to it; a routine
+// run (cron or webhook input, nobody asking in the chat) may not call them.
 var sceneConfigWriteTools = map[string]bool{
 	sceneConfigToolPromptUpsert: true, sceneConfigToolPromptDelete: true,
 	sceneConfigToolMCPUpsert: true, sceneConfigToolMCPDelete: true,
-	sceneConfigToolCapabilitySet: true,
+	sceneConfigToolCapabilitySet: true, sceneConfigToolConnectLink: true,
 	sceneConfigToolRoutineCreate: true, sceneConfigToolRoutineUpdate: true,
 	sceneConfigToolRoutineDelete: true, sceneConfigToolRoutineRun: true,
 }
@@ -313,8 +315,12 @@ func sceneConfigToolDefinitions(kind string) []any {
 		"required": []string{"kind"},
 	}
 	where := "this group chat"
+	mcpUpsertTitle := "Switch a remote MCP server on or off"
+	mcpUpsertDescription := "Switch an existing remote MCP server of " + where + " on or off with disabled. Adding a server or changing its url or headers in a group is done by an agent manager on the configuration page (scene_connect_link); tell the person so."
 	if kind == scene.KindDM {
 		where = "this 1:1 chat"
+		mcpUpsertTitle = "Add or change a remote MCP server"
+		mcpUpsertDescription = "Add a remote MCP server to " + where + ", or change the fields you pass of the one of that name (omitted fields keep their values). http(s) url only; never local commands. Put no secrets in headers: connect accounts through scene_connect_link instead."
 	}
 	return []any{
 		sceneConfigTool(sceneConfigToolGet, "Read this scene's configuration",
@@ -330,15 +336,14 @@ func sceneConfigToolDefinitions(kind string) []any {
 			}, []string{"name", "text"}, false),
 		sceneConfigTool(sceneConfigToolPromptDelete, "Delete a prompt", "Delete the prompt of that name from "+where+".",
 			map[string]any{"name": str("Prompt name.")}, []string{"name"}, false),
-		sceneConfigTool(sceneConfigToolMCPUpsert, "Add or change a remote MCP server",
-			"Add a remote MCP server to "+where+", or replace the one of that name. http(s) url only; never local commands. Put no secrets in headers: connect accounts through scene_connect_link instead.",
+		sceneConfigTool(sceneConfigToolMCPUpsert, mcpUpsertTitle, mcpUpsertDescription,
 			map[string]any{
 				"name":     str("Server name; multica, config-qwen-tag-scene and c<16 hex> are reserved."),
-				"url":      str("https URL of the server."),
+				"url":      str("https URL of the server; required to add one, omit to keep the stored one."),
 				"type":     map[string]any{"type": "string", "enum": []string{"http", "sse"}},
-				"headers":  map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+				"headers":  map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "Replaces all stored headers; omit to keep them."},
 				"disabled": map[string]any{"type": "boolean"},
-			}, []string{"name", "url"}, false),
+			}, []string{"name"}, false),
 		sceneConfigTool(sceneConfigToolMCPDelete, "Delete a remote MCP server", "Remove the MCP server of that name from "+where+".",
 			map[string]any{"name": str("Server name.")}, []string{"name"}, false),
 		sceneConfigTool(sceneConfigToolCapabilitySet, "Switch an offered skill or connector",
@@ -531,7 +536,7 @@ func (h *Handler) sceneConfigGet(ctx context.Context, target sceneConfigTarget) 
 			Disabled bool              `json:"disabled"`
 		}
 		_ = json.Unmarshal(servers[name], &server)
-		view := sceneConfigMCPServerView{Name: name, URL: server.URL, Type: server.Type, Disabled: server.Disabled}
+		view := sceneConfigMCPServerView{Name: name, URL: maskMCPServerURL(server.URL), Type: server.Type, Disabled: server.Disabled}
 		for header := range server.Headers {
 			view.HeaderNames = append(view.HeaderNames, header)
 		}
@@ -761,13 +766,19 @@ func (h *Handler) writeSceneConfigPrompts(ctx context.Context, target sceneConfi
 
 // ── MCP servers ─────────────────────────────────────────────────────────────
 
+// sceneConfigMCPUpsert adds a remote MCP server or changes the fields the
+// call passes; omitted fields (headers above all, whose values the agent
+// never sees) keep their stored values. In a group only an existing server
+// can be switched on or off: every member's runs there call the group's
+// servers, so adding one or pointing it elsewhere is left to an agent
+// manager on the configuration page.
 func (h *Handler) sceneConfigMCPUpsert(ctx context.Context, target sceneConfigTarget, raw json.RawMessage) (any, string, error) {
 	var args struct {
-		Name     string            `json:"name"`
-		URL      string            `json:"url"`
-		Type     string            `json:"type"`
-		Headers  map[string]string `json:"headers"`
-		Disabled bool              `json:"disabled"`
+		Name     string             `json:"name"`
+		URL      *string            `json:"url"`
+		Type     *string            `json:"type"`
+		Headers  *map[string]string `json:"headers"`
+		Disabled *bool              `json:"disabled"`
 	}
 	if err := decodeSceneConfigArguments(raw, &args); err != nil {
 		return nil, "", err
@@ -777,28 +788,75 @@ func (h *Handler) sceneConfigMCPUpsert(ctx context.Context, target sceneConfigTa
 	if err != nil {
 		return nil, "", err
 	}
-	server := map[string]any{"url": strings.TrimSpace(args.URL)}
-	if args.Type != "" {
-		server["type"] = args.Type
+	stored, existed := servers[name]
+	server := map[string]any{}
+	if existed {
+		if err := json.Unmarshal(stored, &server); err != nil || server == nil {
+			server = map[string]any{}
+		}
 	}
-	if len(args.Headers) > 0 {
-		server["headers"] = args.Headers
+	storedURL, _ := server["url"].(string)
+	if args.URL != nil {
+		server["url"] = strings.TrimSpace(*args.URL)
 	}
-	if args.Disabled {
-		server["disabled"] = true
+	if args.Type != nil {
+		if strings.TrimSpace(*args.Type) == "" {
+			delete(server, "type")
+		} else {
+			server["type"] = strings.TrimSpace(*args.Type)
+		}
 	}
-	_, existed := servers[name]
+	if args.Headers != nil {
+		if len(*args.Headers) == 0 {
+			delete(server, "headers")
+		} else {
+			server["headers"] = *args.Headers
+		}
+	}
+	if args.Disabled != nil {
+		if *args.Disabled {
+			server["disabled"] = true
+		} else {
+			delete(server, "disabled")
+		}
+	}
+	url, _ := server["url"].(string)
+	if url == "" {
+		return nil, "", toolRefusal("invalid_mcp_config", "url is required to add a server")
+	}
+	if target.scene.Kind == scene.KindGroup && (!existed || url != storedURL || args.Headers != nil || args.Type != nil) {
+		return nil, "", toolRefusal("mcp_server_needs_config_page",
+			"in a group chat, adding a remote MCP server or changing its address or headers is done by an agent manager on the configuration page, because every member's runs here call it; this chat can only switch an existing server on or off, or delete it")
+	}
 	encoded, _ := json.Marshal(server)
 	servers[name] = encoded
 	if err := h.writeSceneConfigMCPServers(ctx, target, servers); err != nil {
 		return nil, "", err
 	}
+	disabled, _ := server["disabled"].(bool)
 	verb := "更新"
-	if !existed {
+	switch {
+	case !existed:
 		verb = "新增"
+	case args.URL == nil && args.Headers == nil && args.Type == nil && args.Disabled != nil:
+		verb = map[bool]string{true: "停用", false: "启用"}[disabled]
 	}
-	return map[string]any{"name": name, "url": server["url"], "disabled": args.Disabled},
+	return map[string]any{"name": name, "url": maskMCPServerURL(url), "disabled": disabled},
 		fmt.Sprintf("%s MCP 服务器「%s」", verb, name), nil
+}
+
+// maskMCPServerURL hides what may carry a credential in a server URL (user
+// info, query and fragment) before it is shown in a conversation.
+func maskMCPServerURL(raw string) string {
+	u, err := neturl.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "[hidden]"
+	}
+	masked := u.Scheme + "://" + u.Host + u.EscapedPath()
+	if u.RawQuery != "" || u.Fragment != "" {
+		masked += "?…"
+	}
+	return masked
 }
 
 func (h *Handler) sceneConfigMCPDelete(ctx context.Context, target sceneConfigTarget, raw json.RawMessage) (any, string, error) {
@@ -899,7 +957,7 @@ func (h *Handler) sceneConfigResourceName(ctx context.Context, workspaceID, kind
 // ── Routines ────────────────────────────────────────────────────────────────
 
 func sceneConfigActor(target sceneConfigTarget) sceneRoutineActor {
-	return sceneRoutineActor{Type: contextcap.RoutineCreatedByAgent, AgentID: target.task.AgentID, TaskID: target.task.ID}
+	return sceneRoutineActor{Type: contextcap.RoutineCreatedByAgent, AgentID: target.task.AgentID, TaskID: target.task.ID, PersonKey: target.scope.PersonKey}
 }
 
 // sceneConfigRoutineView keeps a full webhook URL out of the conversation:
@@ -997,6 +1055,13 @@ func (h *Handler) sceneConfigRoutineRun(ctx context.Context, target sceneConfigT
 	routine, err := h.sceneConfigRoutine(ctx, target, args.RoutineID)
 	if err != nil {
 		return nil, "", err
+	}
+	// Anyone in the chat can ask for a run, so a run from the chat keeps the
+	// routines' minimum interval after the previous run of any kind.
+	if runs, err := h.Queries.ListAutopilotRuns(ctx, db.ListAutopilotRunsParams{AutopilotID: parseUUID(routine.AutopilotID), Limit: 1}); err != nil {
+		return nil, "", err
+	} else if len(runs) > 0 && runs[0].CreatedAt.Valid && time.Since(runs[0].CreatedAt.Time) < sceneRoutineMinInterval {
+		return nil, "", toolRefusal("routine_run_too_soon", "this routine ran less than 15 minutes ago; run it from the configuration page if it is needed sooner")
 	}
 	run, err := h.runSceneRoutine(ctx, routine, sceneConfigActor(target))
 	if err != nil {

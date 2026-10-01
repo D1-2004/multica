@@ -185,6 +185,15 @@ func SetRoutineDedupeKey(ctx context.Context, db DBTX, id, dedupeKey string) err
 	return err
 }
 
+// ClearRoutinePerson drops the 1:1 counterpart's personal layer from a
+// routine: someone other than that person changed what it runs.
+func ClearRoutinePerson(ctx context.Context, db DBTX, id string) error {
+	if _, err := db.Exec(ctx, `UPDATE context_scope_routine SET person_staff_id = '', updated_at = now() WHERE id = $1::uuid`, id); err != nil {
+		return fmt.Errorf("clear scene routine person: %w", err)
+	}
+	return nil
+}
+
 // validUUID accepts a canonical lowercase UUID (a routine or autopilot id).
 func validUUID(id string) bool { return ValidSceneID(id) }
 

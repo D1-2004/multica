@@ -8,6 +8,10 @@
 | Routine runs are read-only | `server/internal/handler/scene_config_mcp.go` (`routine_run_read_only`), `server/internal/service/scene_routine.go` (`IsSceneRoutineContext`) |
 | Routines: dedupe, pause kept, 15-minute floor, Asia/Shanghai default, start/end notices | `server/internal/handler/scene_routines.go` |
 | Remote MCP servers only; reserved names refused | `server/internal/contextcap/mcp_config.go` (`NormalizeRemoteMCPConfig`), `server/internal/handler/context_capabilities_task.go` (`reservedMCPServerName`) |
+| In a group only switch/delete an existing server; omitted fields keep stored values; URLs shown masked | `server/internal/handler/scene_config_mcp.go` (`sceneConfigMCPUpsert`, `maskMCPServerURL`) |
+| Routine runs issue no configuration link | `server/internal/handler/scene_config_mcp.go` (`sceneConfigWriteTools`), `server/internal/handler/multica_mcp_context_config.go` (`createContextConfigLink`) |
+| Chat runs keep the 15-minute minimum (`routine_run_too_soon`) | `server/internal/handler/scene_config_mcp.go` (`sceneConfigRoutineRun`) |
+| A dm routine's personal layer: only when the person created it, dropped when someone else edits | `server/internal/handler/scene_routines.go` (`createSceneRoutine`, `updateSceneRoutine`), `server/internal/contextcap/routine.go` (`ClearRoutinePerson`) |
 | Only offered skills and connectors can be switched | `server/internal/contextcap/store.go` (`UpsertBinding`) |
 | Account connection goes through a configuration link | `server/internal/handler/context_config_link_mint.go` |
 | The skill is injected at claim and resolved by the same check | `server/internal/handler/daemon.go` (claim and `ResolveTaskSkillBundles`), `server/internal/service/scene_config_skill.go` |

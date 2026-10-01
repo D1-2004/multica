@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -132,6 +133,11 @@ func (h *Handler) createContextConfigLink(r *http.Request, requestedScope string
 	}
 	if task.Status != "running" && task.Status != "dispatched" {
 		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "source task is not active"}
+	}
+	if service.IsSceneRoutineContext(task.Context) {
+		// A routine run acts on cron or webhook input with nobody asking in
+		// the chat, so it never hands out access to a scene or a person.
+		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "a routine run cannot issue configuration links; ask in the chat instead"}
 	}
 	origin, err := h.contextConfigLinkOrigin()
 	if err != nil {

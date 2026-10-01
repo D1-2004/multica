@@ -132,9 +132,9 @@ func TestSceneConfigMCPRefusesForeignOrStaleTokens(t *testing.T) {
 	}
 }
 
-// The tools read and change the task's own scene only: a prompt and a
-// remote MCP server written from group A land in group A and are invisible
-// from group B; reserved names, local servers and unoffered items are
+// The tools read and change the task's own scene only: a prompt written
+// from group A lands in group A and is invisible from group B; a group's
+// remote MCP servers can only be switched from the chat; unoffered items are
 // refused.
 func TestSceneConfigMCPToolsActOnTheTaskScene(t *testing.T) {
 	f := newCtxcapFixture(t)
@@ -160,23 +160,39 @@ func TestSceneConfigMCPToolsActOnTheTaskScene(t *testing.T) {
 		t.Fatalf("group B view = %#v %q", got, refusal)
 	}
 
+	// In a group a remote MCP server is added or re-pointed on the
+	// configuration page; the chat can switch one on or off. Stored headers
+	// survive a switch, and the view hides header values and URL secrets.
 	if _, refusal := f.sceneConfigTool(t, pathA, groupA, sceneConfigToolMCPUpsert, map[string]any{
-		"name": "docs", "url": "https://docs.safe.example.test/mcp", "headers": map[string]string{"X-Team": "a"},
-	}); refusal != "" {
-		t.Fatal(refusal)
+		"name": "docs", "url": "https://docs.safe.example.test/mcp",
+	}); !strings.HasPrefix(refusal, "mcp_server_needs_config_page") {
+		t.Fatalf("group add: %q", refusal)
+	}
+	if _, err := contextcap.PutScopeMCPConfig(ctx, testPool, contextcap.ScopeMCPConfigWrite{
+		WorkspaceID: testWorkspaceID, AgentID: agentID, ScopeType: contextcap.ScopeScene, OrgID: ctxcapOrg, ScopeKey: ctxcapScene,
+		MCPConfig: json.RawMessage(`{"mcpServers":{"docs":{"url":"https://docs.safe.example.test/mcp?key=s3cret","headers":{"X-Team":"hidden-a"}}}}`),
+	}); err != nil {
+		t.Fatal(err)
 	}
 	got, _ = f.sceneConfigTool(t, pathA, groupA, sceneConfigToolGet, nil)
 	servers := got["mcp_servers"].([]any)
-	if len(servers) != 1 || servers[0].(map[string]any)["name"] != "docs" || strings.Contains(sceneJSON(t, got), `"a"`) {
-		t.Fatalf("group A servers (header values must stay hidden) = %s", sceneJSON(t, got))
+	if len(servers) != 1 || servers[0].(map[string]any)["name"] != "docs" || strings.Contains(sceneJSON(t, got), "hidden-a") || strings.Contains(sceneJSON(t, got), "s3cret") {
+		t.Fatalf("group A servers (header values and url secrets must stay hidden) = %s", sceneJSON(t, got))
 	}
 	for name, args := range map[string]map[string]any{
-		"reserved name": {"name": sceneConfigMCPServerName, "url": "https://docs.safe.example.test/mcp"},
-		"local url":     {"name": "local", "url": "file:///bin/sh"},
+		"new url":     {"name": "docs", "url": "https://elsewhere.example.test/mcp"},
+		"new headers": {"name": "docs", "headers": map[string]string{"X-Team": "b"}},
 	} {
-		if _, refusal := f.sceneConfigTool(t, pathA, groupA, sceneConfigToolMCPUpsert, args); !strings.HasPrefix(refusal, "invalid_mcp_config") {
-			t.Errorf("%s: %q", name, refusal)
+		if _, refusal := f.sceneConfigTool(t, pathA, groupA, sceneConfigToolMCPUpsert, args); !strings.HasPrefix(refusal, "mcp_server_needs_config_page") {
+			t.Errorf("group %s: %q", name, refusal)
 		}
+	}
+	if _, refusal := f.sceneConfigTool(t, pathA, groupA, sceneConfigToolMCPUpsert, map[string]any{"name": "docs", "disabled": true}); refusal != "" {
+		t.Fatal(refusal)
+	}
+	config, err := contextcap.GetScopeMCPConfig(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopeScene, ctxcapOrg, ctxcapScene)
+	if err != nil || !strings.Contains(string(config.MCPConfig), "hidden-a") || !strings.Contains(strings.ReplaceAll(string(config.MCPConfig), " ", ""), `"disabled":true`) {
+		t.Fatalf("switched server lost its headers: %s %v", config.MCPConfig, err)
 	}
 	if _, refusal := f.sceneConfigTool(t, pathA, groupA, sceneConfigToolCapabilitySet, map[string]any{
 		"kind": "connector", "id": f.notOffered, "enabled": true,
@@ -217,6 +233,13 @@ func TestSceneConfigMCPRoutineRunIsReadOnly(t *testing.T) {
 	if _, refusal := f.sceneConfigTool(t, path, run, sceneConfigToolPromptUpsert, map[string]any{"name": "x", "text": "y"}); !strings.HasPrefix(refusal, "routine_run_read_only") {
 		t.Fatalf("write in a routine run: %q", refusal)
 	}
+	// Nor does it hand out access: no configuration link from either tool.
+	if _, refusal := f.sceneConfigTool(t, path, run, sceneConfigToolConnectLink, nil); !strings.HasPrefix(refusal, "routine_run_read_only") {
+		t.Fatalf("link in a routine run: %q", refusal)
+	}
+	if _, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, run, nil)); !isError || !strings.Contains(text, "routine run") {
+		t.Fatalf("create_context_config_link in a routine run: isError=%v %q", isError, text)
+	}
 	routines, refusal := f.sceneConfigTool(t, path, run, sceneConfigToolRoutineList, nil)
 	if refusal != "" || len(routines["routines"].([]any)) != 1 || strings.Contains(sceneJSON(t, routines), `"webhook_url":`) {
 		t.Fatalf("routine list (no webhook token) = %s %q", sceneJSON(t, routines), refusal)
@@ -239,6 +262,14 @@ func TestSceneConfigMCPCreatesARoutineInTheTaskScene(t *testing.T) {
 	if routine["scene_id"] != ctxcapScene || routine["created_by_type"] != "agent" || strings.Contains(sceneJSON(t, got), `"webhook_url":`) {
 		t.Fatalf("created = %s", sceneJSON(t, got))
 	}
+	// Anyone in the chat can ask for a run, so the chat keeps the minimum
+	// interval between runs.
+	if _, refusal := f.sceneConfigTool(t, path, group, sceneConfigToolRoutineRun, map[string]any{"routine_id": routine["id"]}); refusal != "" {
+		t.Fatalf("first run from the chat: %q", refusal)
+	}
+	if _, refusal := f.sceneConfigTool(t, path, group, sceneConfigToolRoutineRun, map[string]any{"routine_id": routine["id"]}); !strings.HasPrefix(refusal, "routine_run_too_soon") {
+		t.Fatalf("second run from the chat: %q", refusal)
+	}
 	if _, refusal := f.sceneConfigTool(t, path, group, sceneConfigToolRoutineUpdate, map[string]any{
 		"routine_id": routine["id"], "enabled": false,
 	}); refusal != "" {
@@ -249,6 +280,57 @@ func TestSceneConfigMCPCreatesARoutineInTheTaskScene(t *testing.T) {
 		"routine_id": routine["id"],
 	}); !strings.HasPrefix(refusal, "routine_not_found") {
 		t.Fatalf("another scene's routine: %q", refusal)
+	}
+}
+
+// sceneConfigDMTask is a running task of Alice's 1:1 chat whose dispatch
+// sender carries her openDingTalkId.
+func (f *ctxcapFixture) sceneConfigDMTask(t *testing.T) db.AgentTaskQueue {
+	t.Helper()
+	var payload map[string]any
+	_ = json.Unmarshal(ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff), &payload)
+	payload["dispatch_event_data"].(map[string]any)["sender"].(map[string]any)["openDingTalkId"] = "$:LWCP_v1:$alice"
+	raw, _ := json.Marshal(payload)
+	return f.task(t, raw)
+}
+
+// In a 1:1 chat the person adds and changes remote MCP servers; fields left
+// out of a change (headers above all) keep their stored values, and
+// reserved names or local servers are refused. A routine Alice creates there
+// runs with her personal layer.
+func TestSceneConfigMCPDMServersAndRoutines(t *testing.T) {
+	f, _ := routineFixture(t)
+	f.registerDirectScene(t)
+	ctx := context.Background()
+	dm := f.sceneConfigDMTask(t)
+	path := f.sceneConfigPath(t, dm)
+	if _, refusal := f.sceneConfigTool(t, path, dm, sceneConfigToolMCPUpsert, map[string]any{
+		"name": "notes", "url": "https://notes.example.test/mcp", "headers": map[string]string{"X-Key": "hidden-k"},
+	}); refusal != "" {
+		t.Fatal(refusal)
+	}
+	got, refusal := f.sceneConfigTool(t, path, dm, sceneConfigToolMCPUpsert, map[string]any{"name": "notes", "disabled": true})
+	if refusal != "" || got["disabled"] != true {
+		t.Fatalf("switch off = %#v %q", got, refusal)
+	}
+	config, err := contextcap.GetScopeMCPConfig(ctx, testPool, testWorkspaceID, uuidToString(f.agent), contextcap.ScopeScene, ctxcapOrg, ctxcapDirectScene)
+	if err != nil || !strings.Contains(string(config.MCPConfig), "hidden-k") || !strings.Contains(string(config.MCPConfig), "notes.example.test") {
+		t.Fatalf("switched server lost its fields: %s %v", config.MCPConfig, err)
+	}
+	for name, args := range map[string]map[string]any{
+		"reserved name": {"name": sceneConfigMCPServerName, "url": "https://docs.safe.example.test/mcp"},
+		"local url":     {"name": "local", "url": "file:///bin/sh"},
+		"no url":        {"name": "empty"},
+	} {
+		if _, refusal := f.sceneConfigTool(t, path, dm, sceneConfigToolMCPUpsert, args); !strings.HasPrefix(refusal, "invalid_mcp_config") {
+			t.Errorf("%s: %q", name, refusal)
+		}
+	}
+	created, refusal := f.sceneConfigTool(t, path, dm, sceneConfigToolRoutineCreate, map[string]any{
+		"title": "Evening plan", "instructions": "Plan my evening.", "trigger": map[string]any{"kind": "schedule", "cron": "0 18 * * *"},
+	})
+	if refusal != "" || created["routine"].(map[string]any)["person_capabilities"] != true {
+		t.Fatalf("Alice's routine = %#v %q", created, refusal)
 	}
 }
 

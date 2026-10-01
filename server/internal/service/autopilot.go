@@ -1036,6 +1036,9 @@ func (s *AutopilotService) SyncRunFromTask(ctx context.Context, task db.AgentTas
 	if !task.AutopilotRunID.Valid {
 		return
 	}
+	if s.SceneRoutines != nil && IsSceneRoutineContext(task.Context) {
+		defer s.SceneRoutines.RoutineTaskSettled(ctx, task)
+	}
 
 	run, err := s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID)
 	if err != nil {

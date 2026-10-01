@@ -173,6 +173,12 @@ const (
 // no Router callback to receipt.
 const routineNoticeTarget = "scene-routine"
 
+// RoutineNoticeRequestID is the idempotency key of a routine run's start or
+// end notice.
+func RoutineNoticeRequestID(runID, phase string) string {
+	return "routine:" + runID + ":" + phase
+}
+
 // EnqueueRoutineNotice records the start or end notice of a scene routine run
 // (docs/context-capabilities.md §9). The request id is derived from the run
 // and phase, so a retried dispatch or terminal transition enqueues the same
@@ -186,7 +192,7 @@ func (s *Service) EnqueueRoutineNotice(ctx context.Context, tx DBTX, in ActionIn
 		return "", errors.New("routine notice phase is invalid")
 	}
 	in.RoutineRunID = runID
-	in.RequestID = "routine:" + runID + ":" + phase
+	in.RequestID = RoutineNoticeRequestID(runID, phase)
 	in.ActionID = ""
 	in.CoordinatorWaitJobID = ""
 	// No task or issue id: a notice is not a task's reply, so nothing that

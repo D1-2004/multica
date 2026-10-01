@@ -297,7 +297,8 @@ func TestSceneRoutineDMNeedsItsCounterpart(t *testing.T) {
 	if _, err := f.h.sceneRoutineDMCounterpart(ctx, a, ctxcapDirectScene); routineCode(err) != "dm_target_unknown" {
 		t.Fatalf("no inbound message yet: %v", err)
 	}
-	created, err := f.h.createSceneRoutine(ctx, a, sc, routineMember(), sceneRoutineCounterpart{OpenDingTalkID: "$:LWCP_v1:$alice", StaffID: ctxcapStaff}, in)
+	alice := sceneRoutineCounterpart{OpenDingTalkID: "$:LWCP_v1:$alice", StaffID: ctxcapStaff}
+	created, err := f.h.createSceneRoutine(ctx, a, sc, routineMember(), alice, in)
 	if err != nil || created.Routine.SceneKind != "dm" {
 		t.Fatalf("dm routine = %+v %v", created, err)
 	}
@@ -306,13 +307,173 @@ func TestSceneRoutineDMNeedsItsCounterpart(t *testing.T) {
 	if err != nil || notice.IsGroup || notice.SenderOpenDingTalkID != "$:LWCP_v1:$alice" || notice.ConversationID != ctxcapCoordinatorDirect {
 		t.Fatalf("dm notice = %+v %v", notice, err)
 	}
-	ap, _ := f.h.Queries.GetAutopilot(ctx, parseUUID(created.Routine.AutopilotID))
+	// A manager's routine in Alice's 1:1 chat sends to her but never runs
+	// with her personal connectors and credentials.
+	if created.Routine.PersonCapabilities || routineScope(t, f, created).PersonKey != "" {
+		t.Fatalf("a manager's dm routine carries the counterpart's personal layer: %+v", created.Routine)
+	}
+}
+
+// A dm routine carries its counterpart's personal layer only when that
+// person created it in the chat, and only until someone else changes what it
+// runs or resumes it; pausing keeps it.
+func TestSceneRoutineDMPersonalLayerFollowsThePerson(t *testing.T) {
+	f, a := routineFixture(t)
+	f.registerDirectScene(t)
+	ctx := context.Background()
+	sc, err := f.h.sceneRoutineScene(ctx, a, ctxcapDirectScene)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asAlice := sceneRoutineActor{Type: contextcap.RoutineCreatedByAgent, AgentID: f.agent, PersonKey: ctxcapStaff}
+	asBob := sceneRoutineActor{Type: contextcap.RoutineCreatedByAgent, AgentID: f.agent, PersonKey: ctxcapOtherStaff}
+	alice := sceneRoutineCounterpart{OpenDingTalkID: "$:LWCP_v1:$alice", StaffID: ctxcapStaff}
+	in := sceneRoutineInput{Title: "Calendar check", Instructions: "Check my calendar.", Trigger: sceneRoutineTrigger{Kind: "schedule", Cron: "0 21 * * *"}}
+	if created, err := f.h.createSceneRoutine(ctx, a, sc, asBob, alice, sceneRoutineInput{
+		Title: "Other", Instructions: "x", Trigger: in.Trigger,
+	}); err != nil || created.Routine.PersonCapabilities {
+		t.Fatalf("someone else's create = %+v %v", created.Routine, err)
+	}
+	created, err := f.h.createSceneRoutine(ctx, a, sc, asAlice, alice, in)
+	if err != nil || !created.Routine.PersonCapabilities || routineScope(t, f, created).PersonKey != ctxcapStaff {
+		t.Fatalf("Alice's own routine = %+v %v", created.Routine, err)
+	}
+	routine := func() contextcap.Routine { return mustRoutine(t, f, a, created.Routine.ID) }
+	paused := false
+	if got, err := f.h.updateSceneRoutine(ctx, a, routine(), routineMember(), sceneRoutinePatch{Enabled: &paused}); err != nil || !got.Routine.PersonCapabilities {
+		t.Fatalf("pause by a manager = %+v %v", got.Routine, err)
+	}
+	resumed := true
+	if got, err := f.h.updateSceneRoutine(ctx, a, routine(), asAlice, sceneRoutinePatch{Enabled: &resumed}); err != nil || !got.Routine.PersonCapabilities {
+		t.Fatalf("resume by Alice = %+v %v", got.Routine, err)
+	}
+	instructions := "Check my calendar and email my boss."
+	got, err := f.h.updateSceneRoutine(ctx, a, routine(), routineMember(), sceneRoutinePatch{Instructions: &instructions})
+	if err != nil || got.Routine.PersonCapabilities || routine().PersonStaffID != "" || routineScope(t, f, created).PersonKey != "" {
+		t.Fatalf("instructions changed by a manager = %+v %v", got.Routine, err)
+	}
+}
+
+// routineScope is the context scope a run of the routine gets.
+func routineScope(t *testing.T, f *ctxcapFixture, created sceneRoutineResult) contextcap.Scope {
+	t.Helper()
+	ap, err := f.h.Queries.GetAutopilot(context.Background(), parseUUID(created.Routine.AutopilotID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := f.h.RoutineRuntimeContext(context.Background(), ap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return contextcap.ScopeFromTaskContext(raw)
+}
+
+// A routine whose autopilot was archived outside the scene API (an old
+// replica) does not block creating it again.
+func TestSceneRoutineCreateReplacesAStaleRoutine(t *testing.T) {
+	f, a := routineFixture(t)
+	ctx := context.Background()
+	in := sceneRoutineInput{Title: "Stale", Instructions: "x", Trigger: sceneRoutineTrigger{Kind: "schedule", Cron: "0 6 * * *"}}
+	first := createGroupRoutine(t, f, a, in)
+	if _, err := testPool.Exec(ctx, `UPDATE autopilot SET status = 'archived' WHERE id = $1`, first.Routine.AutopilotID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.h.updateSceneRoutine(ctx, a, mustRoutine(t, f, a, first.Routine.ID), routineMember(), sceneRoutinePatch{Title: &in.Title}); routineCode(err) != "routine_gone" {
+		t.Fatalf("update of a stale routine: %v", err)
+	}
+	second := createGroupRoutine(t, f, a, in)
+	if second.Updated || second.Routine.ID == first.Routine.ID || second.Routine.AutopilotID == first.Routine.AutopilotID {
+		t.Fatalf("recreated = %+v (first %+v)", second.Routine, first.Routine)
+	}
+	if _, err := f.h.loadSceneRoutine(ctx, a, first.Routine.ID); routineCode(err) != "routine_not_found" {
+		t.Fatalf("stale routine kept: %v", err)
+	}
+}
+
+// A run that ends without a completion transaction (cancelled, swept) still
+// gets one end notice, unless another attempt of the run is active; an end
+// notice already enqueued is left alone. The in-transaction notice runs
+// under a savepoint, so its failure leaves the terminal transaction usable.
+func TestSceneRoutineEndNoticeOnEveryTerminalPath(t *testing.T) {
+	f, a := routineFixture(t)
+	ctx := context.Background()
+	created := createGroupRoutine(t, f, a, sceneRoutineInput{
+		Title: "Settle", Instructions: "x", Trigger: sceneRoutineTrigger{Kind: "schedule", Cron: "0 5 * * *"},
+	})
+	ap, err := f.h.Queries.GetAutopilot(ctx, parseUUID(created.Routine.AutopilotID))
+	if err != nil {
+		t.Fatal(err)
+	}
 	raw, err := f.h.RoutineRuntimeContext(ctx, ap)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if scope := contextcap.ScopeFromTaskContext(raw); scope.SceneID != ctxcapDirectScene || scope.PersonKey != ctxcapStaff {
-		t.Fatalf("dm scope = %+v", scope)
+	runTask := func(status string) db.AgentTaskQueue {
+		run, err := f.h.Queries.CreateAutopilotRun(ctx, db.CreateAutopilotRunParams{AutopilotID: ap.ID, Source: "schedule", Status: "running", RuntimeContext: raw})
+		if err != nil {
+			t.Fatal(err)
+		}
+		task := f.task(t, raw)
+		if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET autopilot_run_id = $2, status = $3 WHERE id = $1`, uuidToString(task.ID), uuidToString(run.ID), status); err != nil {
+			t.Fatal(err)
+		}
+		task.AutopilotRunID, task.Status = run.ID, status
+		return task
+	}
+	endNotices := func(task db.AgentTaskQueue) []string {
+		rows, err := testPool.Query(ctx, `SELECT input->>'text' FROM response_action WHERE request_id = $1`, "routine:"+uuidToString(task.AutopilotRunID)+":end")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var texts []string
+		for rows.Next() {
+			var text string
+			_ = rows.Scan(&text)
+			texts = append(texts, text)
+		}
+		return texts
+	}
+
+	cancelled := runTask("cancelled")
+	f.h.RoutineTaskSettled(ctx, cancelled)
+	f.h.RoutineTaskSettled(ctx, cancelled)
+	if got := endNotices(cancelled); len(got) != 1 || !strings.Contains(got[0], "已取消") {
+		t.Fatalf("cancelled run notices = %q", got)
+	}
+
+	failed := runTask("failed")
+	retry := f.task(t, raw)
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET autopilot_run_id = $2, status = 'queued' WHERE id = $1`, uuidToString(retry.ID), uuidToString(failed.AutopilotRunID)); err != nil {
+		t.Fatal(err)
+	}
+	f.h.RoutineTaskSettled(ctx, failed)
+	if got := endNotices(failed); len(got) != 0 {
+		t.Fatalf("notice while a retry is active = %q", got)
+	}
+
+	completed := runTask("completed")
+	output, _ := json.Marshal(protocol.TaskCompletedPayload{Output: "Done."})
+	if err := f.h.RoutineTaskFinished(ctx, nil, completed, "completed", output, ""); err != nil {
+		t.Fatal(err)
+	}
+	f.h.RoutineTaskSettled(ctx, completed)
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	// A different end text for the same run conflicts with the stored
+	// action; the savepoint keeps the outer transaction alive.
+	if err := f.h.RoutineTaskFinished(ctx, tx, completed, "failed", nil, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	var one int
+	if err := tx.QueryRow(ctx, `SELECT 1`).Scan(&one); err != nil {
+		t.Fatalf("terminal transaction aborted by the notice: %v", err)
+	}
+	if got := endNotices(completed); len(got) != 1 || !strings.Contains(got[0], "Done.") {
+		t.Fatalf("completed run notices = %q", got)
 	}
 }
 

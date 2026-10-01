@@ -101,6 +101,10 @@ type sceneRoutineActor struct {
 	UserID  pgtype.UUID
 	AgentID pgtype.UUID
 	TaskID  pgtype.UUID
+	// PersonKey is the proven DingTalk staffId of the person who asked: the
+	// dispatch sender of an agent actor's task. A member on a configure page
+	// has none (a manager is not the person).
+	PersonKey string
 }
 
 func (a sceneRoutineActor) id() pgtype.UUID {
@@ -149,19 +153,22 @@ type sceneRoutineRunView struct {
 }
 
 type sceneRoutineView struct {
-	ID            string                  `json:"id"`
-	SceneID       string                  `json:"scene_id"`
-	SceneKind     string                  `json:"scene_kind"`
-	AutopilotID   string                  `json:"autopilot_id"`
-	Title         string                  `json:"title"`
-	Instructions  string                  `json:"instructions"`
-	Enabled       bool                    `json:"enabled"`
-	PauseReason   string                  `json:"pause_reason,omitempty"`
-	Trigger       sceneRoutineTriggerView `json:"trigger"`
-	LastRun       *sceneRoutineRunView    `json:"last_run"`
-	CreatedByType string                  `json:"created_by_type"`
-	CreatedAt     string                  `json:"created_at"`
-	UpdatedAt     string                  `json:"updated_at"`
+	ID           string `json:"id"`
+	SceneID      string `json:"scene_id"`
+	SceneKind    string `json:"scene_kind"`
+	AutopilotID  string `json:"autopilot_id"`
+	Title        string `json:"title"`
+	Instructions string `json:"instructions"`
+	Enabled      bool   `json:"enabled"`
+	PauseReason  string `json:"pause_reason,omitempty"`
+	// PersonCapabilities: runs carry the 1:1 counterpart's personal layer
+	// (the person created it in the chat and nobody else changed it since).
+	PersonCapabilities bool                    `json:"person_capabilities"`
+	Trigger            sceneRoutineTriggerView `json:"trigger"`
+	LastRun            *sceneRoutineRunView    `json:"last_run"`
+	CreatedByType      string                  `json:"created_by_type"`
+	CreatedAt          string                  `json:"created_at"`
+	UpdatedAt          string                  `json:"updated_at"`
 }
 
 // sceneRoutineResult is a write's outcome. Updated is true when a create
@@ -277,19 +284,20 @@ func (h *Handler) routineIdentity(ctx context.Context, q *db.Queries, workspaceI
 	return identity, err
 }
 
-// sceneRoutineDMCounterpart finds the 1:1 counterpart of a dm scene from its
-// newest trusted inbound Coordinator job (the server-written dispatch
-// sender). A configure-page create uses it; a task in the 1:1 chat passes its
-// own sender instead.
+// sceneRoutineDMCounterpart finds who a configure-page routine of a dm scene
+// sends to: the sender of the scene's newest trusted inbound Coordinator job
+// (the server-written dispatch sender). It never carries that person's
+// staffId: a manager's routine must not run with the counterpart's personal
+// connectors and credentials. A task in the 1:1 chat passes its own sender
+// instead, who is that person.
 func (h *Handler) sceneRoutineDMCounterpart(ctx context.Context, a contextCapAgent, sceneID string) (sceneRoutineCounterpart, error) {
 	var cp sceneRoutineCounterpart
 	err := h.DB.QueryRow(ctx, `SELECT
-			BTRIM(COALESCE(NULLIF(command #>> '{event,data,sender,openDingTalkId}', ''), command #>> '{event,data,sender,senderOpenDingTalkId}', '')),
-			BTRIM(COALESCE(command #>> '{event,data,sender,staffId}', ''))
+			BTRIM(COALESCE(NULLIF(command #>> '{event,data,sender,openDingTalkId}', ''), command #>> '{event,data,sender,senderOpenDingTalkId}', ''))
 		FROM inbound_coordinator_job
 		WHERE agent_id = $2::uuid AND workspace_id = $1::uuid AND command #>> '{agent_scene,scene_id}' = $3
 		ORDER BY created_at DESC, id DESC
-		LIMIT 1`, a.WorkspaceID, a.ID, sceneID).Scan(&cp.OpenDingTalkID, &cp.StaffID)
+		LIMIT 1`, a.WorkspaceID, a.ID, sceneID).Scan(&cp.OpenDingTalkID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = nil
 	}
@@ -299,9 +307,6 @@ func (h *Handler) sceneRoutineDMCounterpart(ctx context.Context, a contextCapAge
 	if cp.OpenDingTalkID == "" {
 		return cp, routineRefusal(http.StatusConflict, "dm_target_unknown",
 			"this 1:1 chat has no message from its counterpart yet; send the agent a message there first")
-	}
-	if !contextcap.ValidStaffID(cp.StaffID) {
-		cp.StaffID = ""
 	}
 	return cp, nil
 }
@@ -317,7 +322,13 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 	sceneID := util.UUIDToString(sc.ID)
 	key := routineDedupeKey(in.Title, in.Trigger)
 	if existing, err := contextcap.GetRoutineByDedupe(ctx, h.DB, sceneID, key); err == nil {
-		return h.refreshDuplicateRoutine(ctx, a, existing, actor, in)
+		result, err := h.refreshDuplicateRoutine(ctx, a, existing, actor, in)
+		if !isRoutineGone(err) {
+			return result, err
+		}
+		if err := h.deleteSceneRoutine(ctx, a, existing, actor); err != nil {
+			return sceneRoutineResult{}, err
+		}
 	} else if !errors.Is(err, contextcap.ErrNotFound) {
 		return sceneRoutineResult{}, err
 	}
@@ -329,6 +340,10 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 	}
 	if sc.SceneKind != scene.KindDM {
 		cp = sceneRoutineCounterpart{}
+	}
+	if !contextcap.ValidStaffID(cp.StaffID) || cp.StaffID != actor.PersonKey {
+		// The personal layer is attached only when the person asked.
+		cp.StaffID = ""
 	}
 
 	tx, err := h.TxStarter.Begin(ctx)
@@ -491,6 +506,12 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 			return sceneRoutineResult{}, err
 		}
 	}
+	// A routine that runs with its 1:1 counterpart's personal layer keeps it
+	// only while that person decides what it runs and when: anyone else who
+	// changes its title, instructions or schedule, or resumes it, detaches the
+	// layer (pausing does not).
+	dropPerson := routine.PersonStaffID != "" && actor.PersonKey != routine.PersonStaffID &&
+		(title != ap.Title || instructions != ap.Description.String || scheduleChanged || (status == "active" && ap.Status != "active"))
 
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
@@ -529,6 +550,12 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 		if err := service.RecordAutopilotRuleVersion(ctx, qtx, updated, actor.Type, actor.id()); err != nil {
 			return sceneRoutineResult{}, err
 		}
+	}
+	if dropPerson {
+		if err := contextcap.ClearRoutinePerson(ctx, tx, routine.ID); err != nil {
+			return sceneRoutineResult{}, err
+		}
+		routine.PersonStaffID = ""
 	}
 	if key := routineDedupeKey(title, schedule); key != routine.DedupeKey {
 		if err := contextcap.SetRoutineDedupeKey(ctx, tx, routine.ID, key); err != nil {
@@ -663,7 +690,11 @@ func (h *Handler) loadSceneRoutine(ctx context.Context, a contextCapAgent, id st
 	return routine, err
 }
 
-var errRoutineGone = errors.New("routine autopilot is gone")
+// errRoutineGone: the routine's autopilot was archived or lost its trigger
+// outside the scene API (an old replica during a rollout). The routine is
+// still deletable; create drops it and starts over.
+var errRoutineGone error = &sceneRoutineError{Status: http.StatusConflict, Code: "routine_gone",
+	Message: "this routine's autopilot was removed outside the scene configuration; delete the routine and create it again"}
 
 func isRoutineGone(err error) bool { return errors.Is(err, errRoutineGone) }
 
@@ -699,7 +730,7 @@ func (h *Handler) sceneRoutineView(ctx context.Context, routine contextcap.Routi
 	view := sceneRoutineView{
 		ID: routine.ID, SceneID: routine.SceneID, SceneKind: routine.SceneKind, AutopilotID: routine.AutopilotID,
 		Title: ap.Title, Instructions: ap.Description.String, Enabled: ap.Status == "active",
-		PauseReason: ap.PauseReason.String, CreatedByType: routine.CreatedByType,
+		PauseReason: ap.PauseReason.String, PersonCapabilities: routine.PersonStaffID != "", CreatedByType: routine.CreatedByType,
 		CreatedAt: routine.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: timestampToString(ap.UpdatedAt),
 		Trigger: sceneRoutineTriggerView{ID: util.UUIDToString(trigger.ID), Kind: trigger.Kind, NextRuns: []string{}},
 	}
@@ -876,17 +907,75 @@ func (h *Handler) RoutineTaskQueued(ctx context.Context, ap db.Autopilot, run db
 }
 
 // RoutineTaskFinished implements service.SceneRoutines: the end notice,
-// enqueued in the task's terminal transaction. Only database failures are
-// returned; an unusable scene or identity skips the notice.
+// enqueued in the task's terminal transaction under a savepoint, so a failed
+// notice never aborts the terminal transition. Only a failure to open or
+// release the savepoint is returned; an unusable scene or identity skips the
+// notice.
 func (h *Handler) RoutineTaskFinished(ctx context.Context, tx pgx.Tx, task db.AgentTaskQueue, status string, result []byte, errMessage string) error {
 	if h.DingTalkResponses == nil || !task.AutopilotRunID.Valid {
 		return nil
 	}
-	q := h.Queries
-	var exec contextcap.DBTX = h.DB
-	if tx != nil {
-		q, exec = h.Queries.WithTx(tx), tx
+	if tx == nil {
+		if err := h.enqueueRoutineEndNotice(ctx, h.Queries, h.DB, task, status, result, errMessage); err != nil {
+			slog.WarnContext(ctx, "scene routine end notice failed", "task_id", util.UUIDToString(task.ID), "error", err)
+		}
+		return nil
 	}
+	savepoint, err := tx.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	if err := h.enqueueRoutineEndNotice(ctx, h.Queries.WithTx(savepoint), savepoint, task, status, result, errMessage); err != nil {
+		slog.WarnContext(ctx, "scene routine end notice failed", "task_id", util.UUIDToString(task.ID), "error", err)
+		return savepoint.Rollback(ctx)
+	}
+	return savepoint.Commit(ctx)
+}
+
+// RoutineTaskSettled implements service.SceneRoutines: the end notice of a
+// run whose task ended outside a completion transaction (cancel, the
+// stale-task sweeper, a runtime that failed to start). It runs after the
+// terminal transition committed, so a notice enqueued there is already
+// visible and is left alone.
+func (h *Handler) RoutineTaskSettled(ctx context.Context, task db.AgentTaskQueue) {
+	if h.DingTalkResponses == nil || h.DB == nil || !task.AutopilotRunID.Valid {
+		return
+	}
+	switch task.Status {
+	case "completed", "failed", "cancelled":
+	default:
+		return
+	}
+	runID := util.UUIDToString(task.AutopilotRunID)
+	run, err := h.Queries.GetAutopilotRun(ctx, task.AutopilotRunID)
+	if err != nil {
+		return
+	}
+	routine, err := contextcap.GetRoutineByAutopilot(ctx, h.DB, util.UUIDToString(run.AutopilotID))
+	if err != nil {
+		return
+	}
+	var settled bool
+	err = h.DB.QueryRow(ctx, `SELECT
+			EXISTS (SELECT 1 FROM agent_task_queue WHERE autopilot_run_id = $1::uuid AND status IN ('queued', 'dispatched', 'running'))
+			OR EXISTS (SELECT 1 FROM response_action WHERE id = $2)`,
+		runID, dingtalkresponse.StableActionID(routine.WorkspaceID, routine.AgentID,
+			dingtalkresponse.RoutineNoticeRequestID(runID, dingtalkresponse.RoutineNoticeEnd), "message.send")).Scan(&settled)
+	if err != nil {
+		slog.WarnContext(ctx, "scene routine end notice: settle check failed", "run_id", runID, "error", err)
+		return
+	}
+	if settled {
+		return
+	}
+	if err := h.enqueueRoutineEndNotice(ctx, h.Queries, h.DB, task, task.Status, task.Result, task.Error.String); err != nil {
+		slog.WarnContext(ctx, "scene routine end notice failed", "run_id", runID, "error", err)
+	}
+}
+
+// enqueueRoutineEndNotice enqueues the end notice of the routine run of task
+// through q/exec (a transaction or the pool).
+func (h *Handler) enqueueRoutineEndNotice(ctx context.Context, q *db.Queries, exec contextcap.DBTX, task db.AgentTaskQueue, status string, result []byte, errMessage string) error {
 	run, err := q.GetAutopilotRun(ctx, task.AutopilotRunID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -908,8 +997,7 @@ func (h *Handler) RoutineTaskFinished(ctx context.Context, tx pgx.Tx, task db.Ag
 		return nil
 	}
 	if _, err := h.DingTalkResponses.EnqueueRoutineNotice(ctx, exec, in, util.UUIDToString(run.ID), dingtalkresponse.RoutineNoticeEnd); err != nil {
-		slog.WarnContext(ctx, "scene routine end notice: enqueue failed", "run_id", util.UUIDToString(run.ID), "error", err)
-		return nil
+		return fmt.Errorf("enqueue: %w", err)
 	}
 	h.DingTalkResponses.Notify()
 	return nil
@@ -1012,7 +1100,7 @@ func routineEndText(title string, task db.AgentTaskQueue, status string, result 
 			output = string(runes[:sceneRoutineNoticeMax]) + "\n\n（内容过长已截断，完整结果见例行任务的运行记录）"
 		}
 		return fmt.Sprintf("例行任务「%s」已完成%s：\n\n%s", title, elapsed, output)
-	case "cancelled":
+	case "cancelled", "canceled":
 		return fmt.Sprintf("例行任务「%s」已取消。", title)
 	default:
 		reason := strings.TrimSpace(redact.Text(errMessage))

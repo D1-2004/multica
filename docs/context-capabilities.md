@@ -1139,7 +1139,8 @@ arrives. There are no org-level or person-level routines.
 - **Storage.** A routine is a `run_only` autopilot assigned to the agent plus a
   `context_scope_routine` row (migrations 9520–9522) binding it to its
   `scene_id`, tenant org and kind, with the 1:1 counterpart's
-  `openDingTalkId` (and staffId when proven) frozen at creation. The autopilot
+  `openDingTalkId` frozen at creation (and its staffId when that person
+  created the routine in the chat, see below). The autopilot
   keeps the trigger, schedule and run history; scene-managed autopilots
   answer 409 `managed_by_scene` on the autopilot routes.
 - **Runs carry the scene.** Every run (cron, webhook, run now) carries
@@ -1147,13 +1148,22 @@ arrives. There are no org-level or person-level routines.
   (`protocol.SceneRoutineContextKey`) and no inbound message.
   `ScopeFromTaskContext` reads it as the scene layer in the routine's org; a
   group routine never carries a person layer (it runs with the scene's
-  capabilities, never its creator's), a 1:1 routine carries its counterpart
-  only when the creation proved the staffId. The scene is fenced when the
+  capabilities, never its creator's). A 1:1 routine carries its
+  counterpart's personal layer only when that person created it in the
+  chat (the task's proven dispatch sender); a routine created on the
+  configure page never does, and anyone else who changes its title,
+  instructions or schedule, or resumes it, detaches the layer for good
+  (pausing keeps it). Views report it as `person_capabilities`. The scene is fenced when the
   run is created (`scene.CheckTenant`): a routine of an org the agent left is
   recorded as skipped, never run elsewhere. Reruns get no layers.
 - **Notices.** The Host posts a start notice when the run's task is queued
-  and an end notice from the task's terminal transaction (the clipped final
-  output, the failure reason, or 已取消), through `dingtalkresponse` routine
+  and an end notice from the task's terminal transaction, under a savepoint
+  so a failed notice never aborts the transition (the clipped final
+  output, the failure reason, or 已取消). Terminal paths without a
+  completion transaction (cancel, the stale-task sweeper, a runtime that
+  fails to start) post it from the task event that `SyncRunFromTask`
+  handles, unless the end notice exists or another attempt of the run is
+  still active. Both go through `dingtalkresponse` routine
   notices: no Router callback, request ids `routine:<run_id>:start|end`, no
   @ in a group, the frozen counterpart in a 1:1 chat. The run's prompt asks
   the agent not to post the result itself. Completion is not routed through
@@ -1175,7 +1185,9 @@ arrives. There are no org-level or person-level routines.
   the same under `/api/agents/{id}/tenants/{orgId}/context/scene/{scene_id}/routines`.
   Errors carry codes: `invalid_routine`, `routine_requires_dingtalk_identity`,
   `dm_target_unknown`, `agent_runtime_required`, `routine_duplicate`,
-  `routine_paused`, `scene_kind_without_routines`.
+  `routine_paused`, `scene_kind_without_routines`, `routine_gone` (the
+  autopilot was archived or lost its trigger outside the scene API; delete
+  the routine, or create it again, which replaces the stale row).
 
 ## 10. Scene configuration from a conversation (config-qwen-tag-scene)
 
@@ -1194,12 +1206,25 @@ earlier binding, an unknown scene) gets neither.
   and the sandbox relay log.
 - **Tools** (no scene argument): `scene_config_get`, `scene_prompt_upsert`,
   `scene_prompt_delete`, `scene_mcp_server_upsert` (remote servers only;
-  `multica`, `config-qwen-tag-scene` and `c<16 hex>` reserved),
+  `multica`, `config-qwen-tag-scene` and `c<16 hex>` reserved; fields left
+  out keep their stored values),
   `scene_mcp_server_delete`, `scene_capability_set` (offered items only),
   `scene_connect_link` (accounts are never connected in chat),
   `scene_routine_list|create|update|delete|run`.
-- **Guards.** A routine run is read-only (`routine_run_read_only`): its input
-  may come from a webhook. Every write posts a Host change notice into the
-  scene. Header values and full webhook URLs never enter the conversation.
-- **Skill.** Added at claim and accepted at bundle resolution by the same
-  check (`taskHasConfigScene`); a workspace skill of the same name gives way.
+- **Guards.**
+  - A routine run is read-only (`routine_run_read_only`): its input may come
+    from a webhook. It also issues no configuration link, from
+    `scene_connect_link` or the multica `create_context_config_link` tool.
+  - In a group, the chat can only switch an existing remote MCP server on or
+    off or delete it; adding one or changing its URL, type or headers answers
+    `mcp_server_needs_config_page` (every member's runs there call it, and
+    the chat cannot tell who is asking). A 1:1 chat changes its own servers.
+  - `scene_routine_run` from the chat keeps the 15-minute minimum after the
+    routine's previous run (`routine_run_too_soon`).
+  - Every write posts a Host change notice into the scene. Header values,
+    URL user info and query strings, and full webhook URLs never enter the
+    conversation.
+- **Skill.** Added at claim when the task has a current scene
+  (`taskHasConfigScene`); bundle resolution serves the static skill to any
+  task whose claim listed it, so a failing scene lookup cannot fail the
+  resolve. A workspace skill of the same name gives way.

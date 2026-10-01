@@ -37,6 +37,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
+	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
@@ -3609,8 +3610,15 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 		requestedSkillIDs = append(requestedSkillIDs, ref.ID)
 	}
 	skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, h.resolvableContextSkillIDs(r.Context(), runtime.WorkspaceID, task, requestedSkillIDs), runtime, taskBackend)
-	if h.taskHasConfigScene(r.Context(), runtime.WorkspaceID, task) {
-		skillList = service.WithSceneConfigSkill(skillList)
+	// The scene configuration skill is static documentation: serve it to any
+	// task whose claim listed it, so a scene lookup failing now cannot fail
+	// the whole resolve. Claim alone decides whether a task gets it (and its
+	// MCP server).
+	for _, ref := range req.Skills {
+		if ref.Source == skillbundle.SourceBuiltin && ref.ID == skillbundle.SourceBuiltin+":"+service.SceneConfigSkillName {
+			skillList = service.WithSceneConfigSkill(skillList)
+			break
+		}
 	}
 	bundles, _ := service.BuildAgentSkillBundles(skillList)
 	var policyBundle *service.AgentSkillData
