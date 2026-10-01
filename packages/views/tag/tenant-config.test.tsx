@@ -142,6 +142,21 @@ describe("TagTenantConfig", () => {
     expect(await screen.findByText(copy.fill_saved_supervisor)).toBeTruthy();
   });
 
+  it("tells how to find the employee userId with a local dws command for the entered DEAP employee", async () => {
+    const user = userEvent.setup();
+    renderConfig();
+    await user.click(screen.getByRole("radio", { name: new RegExp(copy.method_fill) }));
+    await user.type(await screen.findByLabelText(copy.fill_deap_agent), "e6b9cb47-74ff-4d7d-b46d-123bdb9fbecb");
+    await user.click(screen.getByRole("button", { name: copy.tip_label.replace("{{field}}", copy.fill_uid) }));
+    const command =
+      "dws dingtalk-tag manage detail --agent-uuid e6b9cb47-74ff-4d7d-b46d-123bdb9fbecb --jq '.data.profile.userId'";
+    expect(await screen.findByText(command)).toBeTruthy();
+    expect(screen.getByText(copy.tip_uid_check)).toBeTruthy();
+    const copyButtons = screen.getAllByRole("button", { name: copy.tip_copy });
+    await user.click(copyButtons[copyButtons.length - 1]!);
+    expect(await navigator.clipboard.readText()).toBe(command);
+  });
+
   it("explains a native stream that fails because the DEAP employee is another account", async () => {
     data.bindings = [binding({ identity: "active", native: true })];
     data.native = {

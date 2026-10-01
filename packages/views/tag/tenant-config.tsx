@@ -3,7 +3,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { QRCode } from "react-qr-code";
-import { CheckCircle2, Circle, QrCode, RefreshCw } from "lucide-react";
+import { CheckCircle2, Circle, CircleHelp, Copy, QrCode, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import type { Agent } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
@@ -32,6 +33,7 @@ import {
 } from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { cn } from "@multica/ui/lib/utils";
 import { InboundCoordinatorSetting } from "../agents/components/agent-message-settings";
@@ -270,8 +272,61 @@ function MethodOption({
 
 const DECIMAL_ID = /^[1-9][0-9]{0,19}$/;
 
-/** 直接填写: the digital employee's own uid and its supervisor's uid, both
- * scoped to the organization's numeric OrgId (not a corpId). */
+// Local dws commands, run as the supervisor, that read the DEAP profile the
+// cloud checks the identity against.
+const DEAP_LIST_COMMAND = "dws dingtalk-tag manage list --jq '.data[] | {name, agentUuid}'";
+
+function deapUserIdCommand(agentUuid: string): string {
+  return `dws dingtalk-tag manage detail --agent-uuid ${agentUuid} --jq '.data.profile.userId'`;
+}
+
+/** A "?" next to a field label that opens how to find the value. */
+function FieldTip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            aria-label={label}
+            className="rounded-full text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <CircleHelp className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        }
+      />
+      <PopoverContent align="start" className="w-[26rem] max-w-[calc(100vw-2rem)] space-y-2 text-caption">
+        {children}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** One command line in a field tip, copyable as is. */
+function TipCommand({ command }: { command: string }) {
+  const { t } = useT("agents");
+  return (
+    <div className="flex items-start gap-1.5 rounded-md bg-muted px-2 py-1.5">
+      <code className="min-w-0 flex-1 break-all font-mono text-caption">{command}</code>
+      <button
+        type="button"
+        className="rounded p-0.5 hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-label={t(($) => $.tag_tenant.tip_copy)}
+        onClick={() => {
+          void navigator.clipboard?.writeText(command).then(
+            () => toast.success(t(($) => $.tag_tenant.tip_copied)),
+            () => undefined,
+          );
+        }}
+      >
+        <Copy className="h-3 w-3" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+/** 直接填写: the digital employee's userId within the organization's numeric
+ * OrgId (not a corpId), as DEAP reports it, and its supervisor's uid. */
 function DirectIdentityForm({
   agent,
   canEdit,
@@ -333,9 +388,20 @@ function DirectIdentityForm({
     }
   };
 
-  const field = (id: string, label: string, value: string, set: (v: string) => void, placeholder?: string, mono = true) => (
+  const field = (
+    id: string,
+    label: string,
+    value: string,
+    set: (v: string) => void,
+    placeholder?: string,
+    mono = true,
+    tip?: ReactNode,
+  ) => (
     <div className="grid gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
+      <div className="flex items-center gap-1">
+        <Label htmlFor={id}>{label}</Label>
+        {tip ? <FieldTip label={t(($) => $.tag_tenant.tip_label, { field: label })}>{tip}</FieldTip> : null}
+      </div>
       <Input
         id={id}
         value={value}
@@ -356,10 +422,30 @@ function DirectIdentityForm({
       }}
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        {field(`tag-fill-org-${agent.id}`, t(($) => $.tag_tenant.fill_org_id), orgId, setOrgId, "439446171")}
-        {field(`tag-fill-uid-${agent.id}`, t(($) => $.tag_tenant.fill_uid), uid, setUid, "7015073760")}
-        {field(`tag-fill-supervisor-${agent.id}`, t(($) => $.tag_tenant.fill_supervisor_uid), supervisorUid, setSupervisorUid)}
-        {field(`tag-fill-deap-${agent.id}`, t(($) => $.tag_tenant.fill_deap_agent), deapAgentUuid, setDeapAgentUuid)}
+        {field(`tag-fill-org-${agent.id}`, t(($) => $.tag_tenant.fill_org_id), orgId, setOrgId, "439446171", true, (
+          <p>{t(($) => $.tag_tenant.tip_org)}</p>
+        ))}
+        {field(`tag-fill-deap-${agent.id}`, t(($) => $.tag_tenant.fill_deap_agent), deapAgentUuid, setDeapAgentUuid, undefined, true, (
+          <>
+            <p>{t(($) => $.tag_tenant.tip_deap)}</p>
+            <TipCommand command={DEAP_LIST_COMMAND} />
+            <p className="text-muted-foreground">{t(($) => $.tag_tenant.tip_profile)}</p>
+          </>
+        ))}
+        {field(`tag-fill-uid-${agent.id}`, t(($) => $.tag_tenant.fill_uid), uid, setUid, "858957531", true, (
+          <>
+            <p>{t(($) => $.tag_tenant.tip_uid)}</p>
+            <TipCommand command={DEAP_LIST_COMMAND} />
+            <TipCommand
+              command={deapUserIdCommand(deapAgentUuid.trim() || t(($) => $.tag_tenant.tip_deap_placeholder))}
+            />
+            <p>{t(($) => $.tag_tenant.tip_uid_check)}</p>
+            <p className="text-muted-foreground">{t(($) => $.tag_tenant.tip_profile)}</p>
+          </>
+        ))}
+        {field(`tag-fill-supervisor-${agent.id}`, t(($) => $.tag_tenant.fill_supervisor_uid), supervisorUid, setSupervisorUid, undefined, true, (
+          <p>{t(($) => $.tag_tenant.tip_supervisor)}</p>
+        ))}
         {field(`tag-fill-name-${agent.id}`, t(($) => $.tag_tenant.fill_display_name), displayName, setDisplayName, undefined, false)}
         {field(`tag-fill-orgname-${agent.id}`, t(($) => $.tag_tenant.fill_org_name), organizationName, setOrganizationName, undefined, false)}
       </div>
