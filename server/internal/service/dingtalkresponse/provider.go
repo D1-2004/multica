@@ -52,8 +52,29 @@ type NotSubmittedError struct{ Err error }
 func (e *NotSubmittedError) Error() string { return "DWS response was not submitted" }
 func (e *NotSubmittedError) Unwrap() error { return e.Err }
 
+// cliFor is the CLI of one action: the provider's, pinned to the action's
+// DWS environment when it names one.
+func (p *dwsProvider) cliFor(in ActionInput) (dwsclient.CLI, error) {
+	cli := p.cli
+	switch in.DWSEnvironment {
+	case "":
+	case "production", "staging":
+		cli.Environment, cli.MCPBaseURL = in.DWSEnvironment, ""
+	default:
+		return dwsclient.CLI{}, errors.New("unsupported DWS response environment")
+	}
+	return cli, nil
+}
+
 func (p *dwsProvider) Send(ctx context.Context, in ActionInput, key string) (dwsclient.SendResult, error) {
-	dir, cleanup, err := p.authenticate(ctx, in)
+	if p == nil {
+		return dwsclient.SendResult{}, &NotSubmittedError{Err: errors.New("DWS response provider is not configured")}
+	}
+	cli, err := p.cliFor(in)
+	if err != nil {
+		return dwsclient.SendResult{}, &NotSubmittedError{Err: err}
+	}
+	dir, cleanup, err := p.authenticateWith(ctx, cli, in)
 	if err != nil {
 		return dwsclient.SendResult{}, &NotSubmittedError{Err: err}
 	}
@@ -74,26 +95,42 @@ func (p *dwsProvider) Send(ctx context.Context, in ActionInput, key string) (dws
 	} else {
 		req.RecipientOpenDingTalkID = in.SenderOpenDingTalkID
 	}
-	return p.cli.Send(ctx, dir, req)
+	return cli.Send(ctx, dir, req)
 }
 
 func (p *dwsProvider) Query(ctx context.Context, in ActionInput, taskID string) (dwsclient.SendStatus, error) {
-	dir, cleanup, err := p.authenticate(ctx, in)
+	if p == nil {
+		return dwsclient.SendStatus{}, errors.New("DWS response provider is not configured")
+	}
+	cli, err := p.cliFor(in)
+	if err != nil {
+		return dwsclient.SendStatus{}, err
+	}
+	dir, cleanup, err := p.authenticateWith(ctx, cli, in)
 	if err != nil {
 		return dwsclient.SendStatus{}, err
 	}
 	defer cleanup()
-	return p.cli.QuerySendStatus(ctx, dir, taskID)
+	return cli.QuerySendStatus(ctx, dir, taskID)
 }
 
 func (p *dwsProvider) authenticate(ctx context.Context, in ActionInput) (string, func(), error) {
+	if p == nil {
+		return "", nil, errors.New("DWS response provider is not configured")
+	}
+	return p.authenticateWith(ctx, p.cli, in)
+}
+
+// authenticateWith opens a directory authenticated as the action's sender
+// on cli's DWS gateway.
+func (p *dwsProvider) authenticateWith(ctx context.Context, cli dwsclient.CLI, in ActionInput) (string, func(), error) {
 	if p == nil || p.issuer == nil {
 		return "", nil, errors.New("DWS response provider is not configured")
 	}
 	mint := func(ctx context.Context) (dwsclient.Credential, error) { return p.mint(ctx, in) }
 	// The SDK transport reuses the identity's shared token and mints only
 	// without one; the dws CLI exchanges a credential per call.
-	if dir, cleanup, ok, err := (dwsclient.Shared{CLI: p.cli}).Open(ctx,
+	if dir, cleanup, ok, err := (dwsclient.Shared{CLI: cli}).Open(ctx,
 		dwsclient.Identity{AgentID: in.AgentID, UID: in.DWSUID, OrgID: in.DWSOrgID}, mint); ok {
 		return dir, cleanup, err
 	}
@@ -110,7 +147,7 @@ func (p *dwsProvider) authenticate(ctx context.Context, in ActionInput) (string,
 		cleanup()
 		return "", nil, errors.New("secure isolated DWS response directory")
 	}
-	if err := p.cli.Exchange(ctx, dir, credential); err != nil {
+	if err := cli.Exchange(ctx, dir, credential); err != nil {
 		cleanup()
 		return "", nil, err
 	}

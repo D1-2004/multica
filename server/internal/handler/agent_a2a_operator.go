@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -89,6 +90,12 @@ type updateAgentA2AProdForwardRequest struct {
 	Accept *bool `json:"accept"`
 }
 
+// operatorUserStore looks up the actor's account for the operator check;
+// h.Queries in production.
+type operatorUserStore interface {
+	GetUser(context.Context, pgtype.UUID) (db.User, error)
+}
+
 // isAgentA2AOperator reports whether the human actor's account email is listed
 // in the deployment operator allow-list. An empty list admits nobody.
 func (h *Handler) isAgentA2AOperator(r *http.Request, actorID pgtype.UUID) bool {
@@ -96,7 +103,14 @@ func (h *Handler) isAgentA2AOperator(r *http.Request, actorID pgtype.UUID) bool 
 	if len(operators) == 0 || !actorID.Valid {
 		return false
 	}
-	user, err := h.Queries.GetUser(r.Context(), actorID)
+	var users operatorUserStore = h.operatorUsers
+	if users == nil {
+		if h.Queries == nil {
+			return false
+		}
+		users = h.Queries
+	}
+	user, err := users.GetUser(r.Context(), actorID)
 	if err != nil {
 		return false
 	}
@@ -194,6 +208,14 @@ func (h *Handler) UpdateAgentA2AOperatorIdentity(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to save DingTalk identity")
 		return
 	}
+	// A native subscription follows its account, not the agent: rebinding to
+	// another account ends it until it is enabled again.
+	if err := queries.ClearDWSNativeSubscriptionOnAccountChange(r.Context(), db.ClearDWSNativeSubscriptionOnAccountChangeParams{
+		AgentID: scope.Agent.ID, DwsUid: uid, OrgID: orgID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save DingTalk identity")
+		return
+	}
 	if err := queries.SetAgentA2AIdentityEnabled(r.Context(), db.SetAgentA2AIdentityEnabledParams{
 		AgentID:            scope.Agent.ID,
 		WorkspaceID:        scope.WorkspaceID,
@@ -229,6 +251,14 @@ func (h *Handler) DeleteAgentA2AOperatorIdentity(w http.ResponseWriter, r *http.
 		WorkspaceID: scope.WorkspaceID,
 		AgentID:     scope.Agent.ID,
 	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to clear DingTalk identity")
+		return
+	}
+	// Native subscription belongs to the identity and goes with it.
+	if err := queries.DisableAgentDWSNativeSubscription(r.Context(), db.DisableAgentDWSNativeSubscriptionParams{
+		WorkspaceID: scope.WorkspaceID,
+		AgentID:     scope.Agent.ID,
+	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to clear DingTalk identity")
 		return
 	}

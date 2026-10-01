@@ -70,6 +70,9 @@ type CLI struct {
 	ClientSecret string
 	MCPBaseURL   string
 	Environment  string
+	// StreamTicketMode is the SDK's personal event stream ticket mode ("" or
+	// "custom"); only event sources open streams.
+	StreamTicketMode string
 }
 
 // IsCrossOrgPermissionDenied matches the server's typed scope rejection only.

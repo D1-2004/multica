@@ -308,6 +308,16 @@ type AgentDingtalkIdentityAttempt struct {
 	CompletedUid      pgtype.Text        `json:"completed_uid"`
 }
 
+type AgentDwsNativeSubscription struct {
+	AgentID            pgtype.UUID        `json:"agent_id"`
+	WorkspaceID        pgtype.UUID        `json:"workspace_id"`
+	EnabledBy          pgtype.UUID        `json:"enabled_by"`
+	EnabledAt          pgtype.Timestamptz `json:"enabled_at"`
+	DwsUid             string             `json:"dws_uid"`
+	OrgID              string             `json:"org_id"`
+	SelfOpenDingtalkID string             `json:"self_open_dingtalk_id"`
+}
+
 type AgentDispatchAcceptance struct {
 	ID                  pgtype.UUID        `json:"id"`
 	EndpointID          pgtype.UUID        `json:"endpoint_id"`

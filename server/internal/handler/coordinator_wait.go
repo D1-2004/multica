@@ -31,7 +31,7 @@ func freezeCoordinatorWaitDelivery(c DispatchCommand, scope agentDispatchContext
 	if !policy.DingtalkResponseEnabled || !policy.InboundCoordinator || policy.DingtalkResponsePolicyRevision < 1 || c.ProactiveConversation || c.TaskFinishedTaskID != "" || c.Source.Type != "digital_employee" || c.Event.Domain != "channel" || c.Event.Type != "message.created" || c.Outbound.Mode != protocol.DispatchOutboundModeDWS || (c.Control != nil && c.Control.Action == "cancel") || c.CompletionCallback == nil || !routerCompletionTargetPattern.MatchString(c.CompletionCallback.Target) || c.ExternalIdentity.DWS == nil {
 		return d
 	}
-	d.Input = dingtalkresponse.ActionInput{WorkspaceID: util.UUIDToString(scope.WorkspaceID), AgentID: util.UUIDToString(scope.AgentID), DWSUID: c.ExternalIdentity.DWS.UID, DWSOrgID: c.ExternalIdentity.DWS.OrgID, ConversationID: dispatchConversationID(c), SenderOpenDingTalkID: firstNonEmpty(c.Event.Data.Sender.OpenDingTalkID, c.Event.Data.Sender.SenderOpenDingTalkID), IsGroup: strings.EqualFold(c.Event.Data.Conversation.Type, "group"), ShowAITag: policy.DingtalkShowAiTag, CallbackTarget: c.CompletionCallback.Target}
+	d.Input = dingtalkresponse.ActionInput{WorkspaceID: util.UUIDToString(scope.WorkspaceID), AgentID: util.UUIDToString(scope.AgentID), DWSUID: c.ExternalIdentity.DWS.UID, DWSOrgID: c.ExternalIdentity.DWS.OrgID, ConversationID: dispatchConversationID(c), SenderOpenDingTalkID: firstNonEmpty(c.Event.Data.Sender.OpenDingTalkID, c.Event.Data.Sender.SenderOpenDingTalkID), IsGroup: strings.EqualFold(c.Event.Data.Conversation.Type, "group"), ShowAITag: policy.DingtalkShowAiTag, CallbackTarget: c.CompletionCallback.Target, DWSEnvironment: commandDWSEnvironment(c)}
 	d.Enabled = d.Input.DWSUID != "" && d.Input.DWSOrgID != "" && d.Input.ConversationID != "" && (d.Input.IsGroup || d.Input.SenderOpenDingTalkID != "")
 	return d
 }
@@ -163,7 +163,11 @@ func (h *Handler) persistCoordinatorWait(ctx context.Context, job db.InboundCoor
 			}
 		}
 	}
-	if in != nil && h.DingTalkResponses != nil && in.WorkspaceID == util.UUIDToString(job.WorkspaceID) && in.AgentID == util.UUIDToString(job.AgentID) && in.ConversationID == dispatchConversationID(command) && in.CallbackTarget == strings.TrimSpace(h.TaskCompletionTargetIdentity) && in.DWSUID != "" && in.DWSOrgID != "" && (in.IsGroup || in.SenderOpenDingTalkID != "") {
+	expectedTarget := strings.TrimSpace(h.TaskCompletionTargetIdentity)
+	if command.CompletionCallback != nil {
+		expectedTarget = completionTargetFor(command.CompletionCallback.URL, expectedTarget)
+	}
+	if in != nil && h.DingTalkResponses != nil && in.WorkspaceID == util.UUIDToString(job.WorkspaceID) && in.AgentID == util.UUIDToString(job.AgentID) && in.ConversationID == dispatchConversationID(command) && in.CallbackTarget == expectedTarget && in.DWSUID != "" && in.DWSOrgID != "" && (in.IsGroup || in.SenderOpenDingTalkID != "") {
 		in.Text = text
 		if len(command.Event.Data.Messages) > 0 {
 			in.ReplyToOpenMsgID = command.Event.Data.Messages[0].OpenMsgID

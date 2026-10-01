@@ -294,6 +294,9 @@ import type {
   RedeemDingTalkBindingTokenResponse,
   DingTalkAccountBindingsResponse,
   BeginDingTalkAccountBindingResponse,
+  BindDingTalkMessageRouteManuallyRequest,
+  DingTalkNativeSubscriptionResponse,
+  DingTalkNativeSubscriptionStatus,
   AgentIdentityGitHubStatusResponse,
   BeginAgentIdentityGitHubOAuthResponse,
   DisconnectAgentIdentityGitHubConnectionResponse,
@@ -596,6 +599,9 @@ import {
   EMPTY_SYNC_AGENT_SOURCE_RESPONSE,
   BeginDingTalkAccountBindingResponseSchema,
   DingTalkAccountBindingsResponseSchema,
+  DingTalkNativeSubscriptionResponseSchema,
+  DingTalkNativeSubscriptionStatusSchema,
+  UNKNOWN_DINGTALK_NATIVE_SUBSCRIPTION_STATUS,
   ReusableDingTalkIdentitiesSchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
   EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
@@ -7164,6 +7170,72 @@ export class ApiClient {
       {
         method: "PATCH",
         body: JSON.stringify({ surface_type: surfaceType }),
+      },
+    );
+  }
+
+  async setDingTalkNativeSubscription(
+    workspaceId: string,
+    agentId: string,
+    enabled: boolean,
+  ): Promise<DingTalkNativeSubscriptionResponse> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}/native-subscription`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ enabled }),
+      },
+    );
+    // A 2xx means the server applied the switch; when the echo drifts, report
+    // the requested state and let the bindings refetch carry the truth.
+    return parseWithFallback(
+      raw,
+      DingTalkNativeSubscriptionResponseSchema,
+      { nativeSubscription: enabled },
+      {
+        endpoint:
+          "PUT /api/workspaces/:id/dingtalk/account-bindings/:agentId/native-subscription",
+      },
+    );
+  }
+
+  // Native subscription and its event stream's state (the identity card's
+  // indicator). A drifted response reads as an unknown state.
+  async getDingTalkNativeSubscriptionStatus(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<DingTalkNativeSubscriptionStatus> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}/native-subscription`,
+    );
+    return parseWithFallback(
+      raw,
+      DingTalkNativeSubscriptionStatusSchema,
+      UNKNOWN_DINGTALK_NATIVE_SUBSCRIPTION_STATUS,
+      {
+        endpoint:
+          "GET /api/workspaces/:id/dingtalk/account-bindings/:agentId/native-subscription",
+      },
+    );
+  }
+
+  // Operator-only: binds the digital-employee message route by DingTalk
+  // corpId and account id instead of the DBase scan. Callers only rely
+  // on success and re-read the bindings list for the resulting state.
+  async bindDingTalkMessageRouteManually(
+    workspaceId: string,
+    agentId: string,
+    request: BindDingTalkMessageRouteManuallyRequest,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/workspaces/${workspaceId}/dingtalk/account-bindings/${agentId}/message-route/manual`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          corp_id: request.corpId,
+          uid: request.uid,
+          message_scope: request.messageScope,
+        }),
       },
     );
   }

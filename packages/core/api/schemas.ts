@@ -24,6 +24,8 @@ import type {
   DingTalkUserSearchResponse,
   BeginDingTalkAccountBindingResponse,
   DingTalkAccountBindingsResponse,
+  DingTalkNativeStreamState,
+  DingTalkNativeSubscriptionStatus,
   DingTalkMessageScope,
   DingTalkProcessingSurface,
   AgentIdentityGitHubStatusResponse,
@@ -298,6 +300,8 @@ const DingTalkAccountBindingOutcomeSchema = z
     account_avatar_url: z.string().nullable().optional(),
     bound_at: z.string().nullable().optional(),
     error: DingTalkBindingErrorSchema.nullable().optional().catch(undefined),
+    // Absent on older servers and on identities without native subscription.
+    native_subscription: z.boolean().optional().catch(undefined),
   })
   .loose()
   .transform((outcome) => ({
@@ -308,6 +312,7 @@ const DingTalkAccountBindingOutcomeSchema = z
     accountAvatarUrl: outcome.account_avatar_url,
     boundAt: outcome.bound_at,
     error: outcome.error,
+    nativeSubscription: outcome.native_subscription === true,
   }));
 
 const DingTalkConversationSummarySchema = z
@@ -438,18 +443,81 @@ export const DingTalkAccountBindingsResponseSchema = z
   .object({
     bindings: z.array(DingTalkAccountBindingSchema),
     configured: z.boolean(),
+    // Operator-only affordance; anything but an explicit true hides it.
+    manual_binding_allowed: z.boolean().optional().catch(undefined),
   })
   .loose()
   .transform((response) => ({
     bindings: response.bindings,
     configured: response.configured,
+    manualBindingAllowed: response.manual_binding_allowed === true,
   }));
 
 export const EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE: DingTalkAccountBindingsResponse =
   {
     bindings: [],
     configured: false,
+    manualBindingAllowed: false,
   };
+
+export const DingTalkNativeSubscriptionResponseSchema = z
+  .object({
+    native_subscription: z.boolean(),
+  })
+  .loose()
+  .transform((response) => ({
+    nativeSubscription: response.native_subscription,
+  }));
+
+const dingTalkNativeStreamStates = [
+  "connected",
+  "connecting",
+  "disconnected",
+  "unavailable",
+  "off",
+] as const;
+
+function dingTalkNativeStreamState(state: unknown): DingTalkNativeStreamState {
+  return dingTalkNativeStreamStates.find((known) => known === state) ?? "unknown";
+}
+
+export const DingTalkNativeSubscriptionStatusSchema = z
+  .object({
+    native_subscription: z.boolean().optional().catch(undefined),
+    stream: z
+      .object({
+        state: z.unknown().optional(),
+        last_connected_at: z.string().nullish().catch(null),
+        last_event_at: z.string().nullish().catch(null),
+        last_error: z.string().nullish().catch(null),
+        failures: z.number().optional().catch(undefined),
+      })
+      .loose()
+      .optional()
+      .catch(undefined),
+  })
+  .loose()
+  .transform((response): DingTalkNativeSubscriptionStatus => ({
+    nativeSubscription: response.native_subscription === true,
+    stream: {
+      state: dingTalkNativeStreamState(response.stream?.state),
+      lastConnectedAt: response.stream?.last_connected_at ?? null,
+      lastEventAt: response.stream?.last_event_at ?? null,
+      lastError: response.stream?.last_error ?? null,
+      failures: response.stream?.failures ?? 0,
+    },
+  }));
+
+export const UNKNOWN_DINGTALK_NATIVE_SUBSCRIPTION_STATUS: DingTalkNativeSubscriptionStatus = {
+  nativeSubscription: false,
+  stream: {
+    state: "unknown",
+    lastConnectedAt: null,
+    lastEventAt: null,
+    lastError: null,
+    failures: 0,
+  },
+};
 
 export const BeginDingTalkAccountBindingResponseSchema = z
   .object({

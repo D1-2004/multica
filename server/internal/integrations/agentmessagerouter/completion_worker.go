@@ -39,7 +39,7 @@ type ResponseActionInterceptor interface {
 type CompletionWorker struct {
 	queries         *db.Queries
 	dwsSender       DWSReplySender
-	client          *Client
+	client          ExecutionCallbackClient
 	targetIdentity  string
 	reconciler      CompletionReconciler
 	ResponseActions ResponseActionInterceptor
@@ -49,13 +49,17 @@ type CompletionWorker struct {
 
 func NewCompletionWorker(
 	queries *db.Queries,
-	client *Client,
+	client ExecutionCallbackClient,
 	reconciler CompletionReconciler,
 ) *CompletionWorker {
+	targetIdentity := ""
+	if client != nil {
+		targetIdentity = client.TargetIdentity()
+	}
 	return &CompletionWorker{
 		queries:        queries,
 		client:         client,
-		targetIdentity: client.TargetIdentity(),
+		targetIdentity: targetIdentity,
 		reconciler:     reconciler,
 		notify:         make(chan struct{}, completionWorkerConcurrency),
 		done:           make(chan struct{}),

@@ -18,7 +18,9 @@ package handler
 // Public provider callbacks (no session; the hashed single-use state plus the
 // browser binding cookie set by the start response are the proof, and the
 // router rate-limits the routes):
-//   - GET /api/connector-oauth/callback (DCR apps)
+//   - GET /api/connectors/oauth/callback (DCR apps; path registered in
+//     provider consoles)
+//   - GET /api/connector-oauth/callback (v0 alias of the same handler)
 //   - GET /api/github/authorize with a "mcpc." state (GitHub App), delegated
 //     from GitHubAuthorizeCallback
 
@@ -175,9 +177,13 @@ func (h *Handler) StartInternalConnectorOAuth(w http.ResponseWriter, r *http.Req
 }
 
 // writeConnectorOAuthStarted answers a start with {"authorize_url"} and sets
-// the state's browser binding cookie.
+// the state's browser binding cookies (canonical callback path, plus the
+// console-registered alias when the connect uses it).
 func writeConnectorOAuthStarted(w http.ResponseWriter, started connectorOAuthStarted) {
 	http.SetCookie(w, started.Cookie)
+	for _, cookie := range started.ExtraCookies {
+		http.SetCookie(w, cookie)
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"authorize_url": started.AuthorizeURL})
 }
 
@@ -312,6 +318,9 @@ func (h *Handler) completeConnectorOAuthCallback(w http.ResponseWriter, r *http.
 			callback.BrowserNonce = cookie.Value
 			origin, path := h.connectorOAuthCallbackTarget(via)
 			http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, path))
+			if via == connectorOAuthViaDCR && path != connectorOAuthCallbackLegacyPath {
+				http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, connectorOAuthCallbackLegacyPath))
+			}
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), connectorOAuthCallbackTimeout)

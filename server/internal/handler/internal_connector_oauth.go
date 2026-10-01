@@ -9,7 +9,7 @@ package handler
 //     the account label, run the first tool discovery, and compute the
 //     browser redirect.
 //
-// DCR apps redirect to <app origin>/api/connector-oauth/callback and reuse
+// DCR apps redirect to <production origin>/api/connectors/oauth/callback and reuse
 // one dynamic client registration per connector (connector_oauth_client),
 // registered with the client_name connectorOAuthClientName picks.
 // GitHub uses the deployment's GitHub App and its registered callback
@@ -138,13 +138,17 @@ type connectorOAuthStarted struct {
 	// AuthorizeURL is the provider's authorize URL the browser goes to next.
 	AuthorizeURL string
 	// Cookie binds the state to the browser that receives the start
-	// response; the API layer sets it.
+	// response; the API layer sets it. Path is the canonical callback.
 	Cookie *http.Cookie
+	// ExtraCookies are the same binding on any other path that serves this
+	// callback (the console-registered DCR alias). The API layer sets them
+	// too. A browser sends only the cookie whose path matches the redirect.
+	ExtraCookies []*http.Cookie
 }
 
 // connectorOAuthCallback is the input of completeConnectorOAuth.
 type connectorOAuthCallback struct {
-	// Via is connectorOAuthViaDCR (GET /api/connector-oauth/callback) or
+	// Via is connectorOAuthViaDCR (GET /api/connectors/oauth/callback) or
 	// connectorOAuthViaGitHub (delegated from GitHubAuthorizeCallback).
 	Via   string
 	State string
@@ -269,6 +273,15 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	started := connectorOAuthStarted{
 		AuthorizeURL: authorizeURL,
 		Cookie:       connectorOAuthBrowserCookie(payload.StateHash, nonce, homeOrigin, callbackPath),
+	}
+	// Consoles register only the canonical path, and production forwards
+	// there. The legacy path stays mounted, so a client already registered
+	// with it can still present the binding cookie. Cookie path matching
+	// does not treat the two paths as one.
+	if payload.Via == connectorOAuthViaDCR && callbackPath != connectorOAuthCallbackLegacyPath {
+		started.ExtraCookies = []*http.Cookie{
+			connectorOAuthBrowserCookie(payload.StateHash, nonce, homeOrigin, connectorOAuthCallbackLegacyPath),
+		}
 	}
 	if err := h.insertConnectorOAuthState(ctx, payload, scope, returnTo); err != nil {
 		slog.ErrorContext(ctx, "official app OAuth state insert failed", "connector_id", c.ID, "error", err)

@@ -18,13 +18,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/multica-ai/multica/server/internal/connmgr"
@@ -64,6 +68,9 @@ type Config struct {
 	// Tune adjusts connection management timings (tests, operations); nil
 	// keeps connmgr's defaults.
 	Tune func(*connmgr.Config, *connmgr.RedisCoordinatorConfig)
+	// LogFrames logs the type and topic of every frame a stream reads
+	// (diagnostics for a gateway whose events do not arrive).
+	LogFrames bool
 }
 
 // Source owns this replica's share of the event streams.
@@ -152,6 +159,31 @@ func (s *Source) Ready(ctx context.Context, identity dwsclient.Identity) bool {
 }
 
 func (s *Source) readyKey(key string) string { return s.prefix + "ready:" + key }
+
+// StreamStatus is an identity's event stream as every replica sees it.
+type StreamStatus struct {
+	// Connected: some replica holds a connected stream (Ready).
+	Connected bool
+	// Reported: a stream for the identity has published Status, its latest
+	// state, last event and last error. It may outlive a replica that died,
+	// so Connected, not Status.State, says whether a stream is up.
+	Reported bool
+	Status   dwsevents.Status
+}
+
+// StreamStatus reports identity's event stream.
+func (s *Source) StreamStatus(ctx context.Context, identity dwsclient.Identity) (StreamStatus, error) {
+	key := targetKey(identity)
+	n, err := s.cfg.Redis.Exists(ctx, s.readyKey(key)).Result()
+	if err != nil {
+		return StreamStatus{}, err
+	}
+	st, reported, err := s.store.Status(ctx, key)
+	if err != nil {
+		return StreamStatus{}, err
+	}
+	return StreamStatus{Connected: n == 1, Reported: reported, Status: st}, nil
+}
 
 // targetKey names an identity's stream without its account ids. It is the
 // DingTalk account (user, organization) alone: the event stream belongs to
@@ -265,7 +297,7 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 	marker := newMarkerValue()
 	markerDone := make(chan struct{})
 	var markerLoop sync.WaitGroup
-	status := &statusStore{Store: s.store, onState: func(state dwsevents.State) {
+	status := &statusStore{Store: s.store, secret: s.cfg.Sessions.CLI.ClientSecret, onState: func(state dwsevents.State) {
 		switch {
 		case state == dwsevents.StateConnected && connected.CompareAndSwap(false, true):
 			if ready(ctx) != nil {
@@ -278,6 +310,9 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 				defer markerLoop.Done()
 				st.keepReady(ctx, marker, markerDone)
 			}()
+			if s.cfg.LogFrames {
+				go s.logSetup(ctx, st.key, s.identity(st.key, id))
+			}
 		case state == dwsevents.StateReconnecting:
 			// The Listener would retry by itself; connmgr decides instead.
 			failed.Store(true)
@@ -312,6 +347,25 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 		},
 		Store: status,
 	}
+	if s.cfg.LogFrames {
+		key := st.key
+		listener.OnFrame = func(frameType, topic string) {
+			slog.Info("DWS event frame", "event", "dws_event_frame", "key", key, "frame_type", frameType, "topic", topic)
+		}
+		// The address only: the ticket rides in the URL, never in addr.
+		listener.Dialer = &websocket.Dialer{Proxy: http.ProxyFromEnvironment, HandshakeTimeout: 15 * time.Second,
+			// Behind a proxy addr is the proxy's (this becomes its forward dialer).
+			NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+				if err != nil {
+					slog.Info("DWS event stream dial", "event", "dws_event_stream_dial", "key", key, "addr", addr, "error", err)
+					return nil, err
+				}
+				slog.Info("DWS event stream dial", "event", "dws_event_stream_dial", "key", key, "addr", addr,
+					"remote", conn.RemoteAddr().String())
+				return conn, nil
+			}}
+	}
 	err := listener.Run(ctx)
 	if failed.Load() {
 		return errDisconnected
@@ -320,6 +374,44 @@ func (st *stream) Run(ctx context.Context, ready func(context.Context) error) er
 		return nil
 	}
 	return err
+}
+
+// logSetup records, once per connection, what decides whether DWS routes an
+// event to this stream: whom the gateway takes the token for, the app the
+// subscriptions and the stream belong to, and the live subscriptions. DWS
+// keys a personal event by (account, organization, subscribing app).
+func (s *Source) logSetup(ctx context.Context, key string, id dwsclient.Identity) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	client, err := s.cfg.Sessions.Client(ctx, id, func(ctx context.Context) (dwsclient.Credential, error) {
+		return s.cfg.Mint(ctx, id)
+	})
+	if err != nil {
+		slog.Warn("DWS event stream setup unreadable", "event", "dws_event_stream_setup", "key", key,
+			"agent_id", id.AgentID, "error", err)
+		return
+	}
+	token := client.Token()
+	attrs := []any{"event", "dws_event_stream_setup", "key", key, "agent_id", id.AgentID,
+		"client_id", token.ClientID, "token_corp_id", token.CorpID}
+	if me, err := client.Contacts.Me(ctx); err != nil {
+		attrs = append(attrs, "me_error", err.Error())
+	} else {
+		attrs = append(attrs, "me_is_identity", me.UserID == id.UID, "me_corp_id", me.CorpID)
+		if me.UserID != id.UID {
+			attrs = append(attrs, "me_user_id", me.UserID)
+		}
+	}
+	if subs, err := client.Events.List(ctx); err != nil {
+		attrs = append(attrs, "list_error", err.Error())
+	} else {
+		live := make([]string, 0, len(subs))
+		for _, sub := range subs {
+			live = append(live, fmt.Sprintf("%s:%s:%d", sub.EventKey, sub.ID, sub.Status))
+		}
+		attrs = append(attrs, "subscriptions", strings.Join(live, ","))
+	}
+	slog.Info("DWS event stream setup", attrs...)
 }
 
 // keepReady publishes the connected state for every replica's Ready.
@@ -360,13 +452,43 @@ func (s *Source) dispatch(ctx context.Context, id dwsclient.Identity, ev dwseven
 	return nil
 }
 
-// statusStore reports the Listener's state transitions.
+// statusStore reports the Listener's state transitions and keeps its stored
+// status about the outage rather than the latest attempt.
 type statusStore struct {
 	*redisstore.Store
 	onState func(dwsevents.State)
+	// secret is redacted from reported errors (the stream ticket carries it).
+	secret string
+
+	// Every connection attempt is a new Listener (connmgr claims again after
+	// a failure), which starts its status afresh but continues the outage
+	// (DownSince). loaded records that the outage's earlier error and
+	// failure count were read; they are carried until the outage ends.
+	loaded    bool
+	lastError string
+	failures  int
 }
 
 func (s *statusStore) SetStatus(ctx context.Context, st dwsevents.Status) error {
 	s.onState(st.State)
+	if !s.loaded {
+		s.loaded = true
+		prev, ok, err := s.Store.Status(ctx, st.Identity)
+		if err == nil && ok && !prev.DownSince.IsZero() && prev.DownSince.Equal(st.DownSince) {
+			s.lastError, s.failures = prev.LastError, prev.Failures
+		}
+	}
+	if st.DownSince.IsZero() {
+		// The connection proved healthy: the outage is over.
+		s.lastError, s.failures = "", 0
+	} else {
+		st.Failures += s.failures
+		if st.LastError == "" {
+			st.LastError = s.lastError
+		}
+	}
+	if s.secret != "" {
+		st.LastError = strings.ReplaceAll(st.LastError, s.secret, "[redacted]")
+	}
 	return s.Store.SetStatus(ctx, st)
 }
