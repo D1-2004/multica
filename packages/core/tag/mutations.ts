@@ -1,6 +1,5 @@
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { dingtalkAccountBindingKeys } from "../dingtalk-account-bindings/queries";
 import { workspaceKeys } from "../workspace/queries";
 import type { CreateTagInput, TagState } from "./types";
 import { tagKeys } from "./queries";
@@ -93,19 +92,5 @@ export function useApplyTag(wsId: string) {
     mutationFn: (input: { tenantIds: string[]; note?: string }) =>
       api.applyTag(wsId, input.tenantIds, input.note ?? ""),
     onSettled: () => invalidateTagViews(queryClient, wsId),
-  });
-}
-
-/** Direct identity issuance for a tenant's employee: the DEAP digital
- * employee and its supervisor, after the execution identity is bound. */
-export function useSetTagEmployeeSupervisorLink(wsId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (input: { agentId: string; deapAgentUuid: string; supervisorUid: string }) =>
-      api.setTagEmployeeSupervisorLink(wsId, input.agentId, {
-        deapAgentUuid: input.deapAgentUuid,
-        supervisorUid: input.supervisorUid,
-      }),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: dingtalkAccountBindingKeys.all(wsId) }),
   });
 }

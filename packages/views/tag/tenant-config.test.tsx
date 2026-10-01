@@ -15,6 +15,7 @@ const { data, mocks } = vi.hoisted(() => ({
     bindings: [] as unknown[],
     operator: { operator: true, dwsIdentity: null } as unknown,
     a2a: { endpoint: null, agentCard: null, clients: [] } as unknown,
+    native: { nativeSubscription: true, stream: { state: "connected" }, deapLink: null, deapLinkEditable: true } as unknown,
   },
   mocks: {
     saveIdentity: vi.fn(),
@@ -34,8 +35,9 @@ vi.mock("@multica/core/dingtalk-account-bindings", () => ({
   }),
   dingtalkNativeSubscriptionStatusOptions: () => ({
     queryKey: ["native"],
-    queryFn: () => ({ nativeSubscription: true, stream: { state: "connected" } }),
+    queryFn: () => data.native,
   }),
+  useSetDingTalkNativeDEAPLink: () => ({ mutateAsync: mocks.saveSupervisor, isPending: false }),
   useBeginDingTalkAccountBinding: () => ({ mutate: mocks.begin, isPending: false }),
   useDeleteDingTalkAccountBinding: () => ({ mutate: mocks.removeBinding, isPending: false }),
   useSetDingTalkNativeSubscription: () => ({ mutate: mocks.setNative, isPending: false }),
@@ -45,9 +47,6 @@ vi.mock("@multica/core/agent-a2a", () => ({
   agentA2AOperatorConfigOptions: () => ({ queryKey: ["operator"], queryFn: () => data.operator }),
   useUpdateAgentA2AConfig: () => ({ mutate: mocks.updateA2A, isPending: false }),
   useUpdateAgentA2AOperatorIdentity: () => ({ mutateAsync: mocks.saveIdentity, isPending: false }),
-}));
-vi.mock("@multica/core/tag", () => ({
-  useSetTagEmployeeSupervisorLink: () => ({ mutateAsync: mocks.saveSupervisor, isPending: false }),
 }));
 vi.mock("../agents/components/agent-message-settings", () => ({
   InboundCoordinatorSetting: () => <div>inbound-coordinator</div>,
@@ -86,6 +85,7 @@ beforeEach(() => {
   data.bindings = [];
   data.operator = { operator: true, dwsIdentity: null };
   data.a2a = { endpoint: null, agentCard: null, clients: [] };
+  data.native = { nativeSubscription: true, stream: { state: "connected" }, deapLink: null, deapLinkEditable: true };
 });
 
 describe("TagTenantConfig", () => {
@@ -109,7 +109,7 @@ describe("TagTenantConfig", () => {
     await waitFor(() =>
       expect(screen.getByRole("switch", { name: copy.mode_native })).toHaveAttribute("aria-checked", "true"),
     );
-    expect(await screen.findByText(copy.native_stream.replace("{{state}}", "connected"))).toBeTruthy();
+    expect(await screen.findByText(copy.stream_connected)).toBeTruthy();
     expect(screen.getByText(copy.route_blocked_by_native)).toBeTruthy();
     expect(screen.getByRole("button", { name: copy.route_scan })).toBeDisabled();
   });
@@ -142,21 +142,27 @@ describe("TagTenantConfig", () => {
     expect(await screen.findByText(copy.fill_saved_supervisor)).toBeTruthy();
   });
 
-  it("says so when the deployment has no supervisor exchange", async () => {
-    const user = userEvent.setup();
-    const { ApiError } = await import("@multica/core/api");
-    mocks.saveIdentity.mockResolvedValue(undefined);
-    mocks.saveSupervisor.mockRejectedValue(new ApiError("not found", 404, "Not Found"));
+  it("explains a native stream that fails because the DEAP employee is another account", async () => {
+    data.bindings = [binding({ identity: "active", native: true })];
+    data.native = {
+      nativeSubscription: true,
+      stream: {
+        state: "disconnected",
+        lastError: "client: the DEAP digital employee is not this identity's account",
+        failures: 26,
+      },
+      deapLink: { deapAgentUuid: "e6b9cb47", supervisorUid: "6753994909", updatedAt: null },
+      deapLinkEditable: true,
+    };
     renderConfig();
-
-    await user.click(screen.getByRole("radio", { name: new RegExp(copy.method_fill) }));
-    await user.type(await screen.findByLabelText(copy.fill_org_id), "439446171");
-    await user.type(screen.getByLabelText(copy.fill_uid), "7015073760");
-    await user.type(screen.getByLabelText(copy.fill_supervisor_uid), "6753994909");
-    await user.type(screen.getByLabelText(copy.fill_deap_agent), "deap-1");
-    await user.click(screen.getByRole("button", { name: copy.fill_submit }));
-
-    expect(await screen.findByText(copy.supervisor_unsupported)).toBeTruthy();
+    expect(await screen.findByText(copy.stream_deap_mismatch)).toBeTruthy();
+    expect(screen.getByText(new RegExp(copy.stream_disconnected))).toBeTruthy();
+    // The identity shows which supervisor and DEAP employee it was linked to.
+    expect(
+      await screen.findByText(
+        copy.supervisor_link.replace("{{supervisor}}", "6753994909").replace("{{deap}}", "e6b9cb47"),
+      ),
+    ).toBeTruthy();
   });
 
   it("turns on managed replies before native perception for an employee without them", async () => {

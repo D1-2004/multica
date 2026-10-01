@@ -2551,7 +2551,6 @@
     "fill_submit": "Save identity",
     "fill_saved": "Identity saved",
     "fill_saved_supervisor": "Identity and supervisor exchange saved",
-    "supervisor_unsupported": "Identity saved; this environment does not support the supervisor exchange, so the supervisor UID was not saved.",
     "perceive_title": "Event perception",
     "perceive_hint": "How the digital employee receives DingTalk messages and events. Native and backend subscription are mutually exclusive.",
     "mode_native": "DWS native",
@@ -2564,7 +2563,6 @@
     "mode_off": "Off",
     "native_needs_identity": "Issue an identity first",
     "native_blocked_by_route": "A backend subscription is bound; unbind it first",
-    "native_stream": "Stream: {{state}}",
     "route_bound": "Bound: {{organization}}",
     "route_blocked_by_native": "Native is on; turn it off first",
     "route_scan": "Scan to bind",
@@ -2592,6 +2590,15 @@
     "level_scene": "Group chat",
     "level_person": "Person",
     "level_bundle_title": "Access bundle",
-    "level_bundle_hint": "Inherits the Tag's default access bundle (shared skills, connectors and hosted credentials). Switch on more of what is published to scenes, or host this level's own credentials."
+    "level_bundle_hint": "Inherits the Tag's default access bundle (shared skills, connectors and hosted credentials). Switch on more of what is published to scenes, or host this level's own credentials.",
+    "supervisor_link": "Supervisor exchange: supervisor UID {{supervisor}} · DEAP employee {{deap}}",
+    "stream_connected": "Connected, receiving messages",
+    "stream_connecting": "Connecting…",
+    "stream_disconnected": "Failed to connect",
+    "stream_unavailable": "This deployment has no native subscription service",
+    "stream_off": "Off",
+    "stream_unknown": "Unknown",
+    "stream_failures": "failed {{count}} times",
+    "stream_deap_mismatch": "The DEAP employee ID and the digital employee UID are not the same person: DEAP returned a different account. Check both under Fill in."
   }
 }

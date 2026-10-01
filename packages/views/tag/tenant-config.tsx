@@ -5,7 +5,6 @@ import { useQuery } from "@tanstack/react-query";
 import { QRCode } from "react-qr-code";
 import { CheckCircle2, Circle, QrCode, RefreshCw } from "lucide-react";
 import type { Agent } from "@multica/core/types";
-import { ApiError } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   agentA2AConfigOptions,
@@ -18,9 +17,10 @@ import {
   dingtalkNativeSubscriptionStatusOptions,
   useBeginDingTalkAccountBinding,
   useDeleteDingTalkAccountBinding,
+  useSetDingTalkNativeDEAPLink,
   useSetDingTalkNativeSubscription,
 } from "@multica/core/dingtalk-account-bindings";
-import { useSetTagEmployeeSupervisorLink } from "@multica/core/tag";
+import type { DingTalkNativeStream } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
@@ -151,6 +151,12 @@ function IdentityIssuance({
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const { data: operator } = useQuery(agentA2AOperatorConfigOptions(wsId, agent.id));
+  // The native status carries the DEAP supervisor link of this identity.
+  const { data: nativeStatus } = useQuery({
+    ...dingtalkNativeSubscriptionStatusOptions(wsId, agent.id, identityActive),
+    refetchInterval: false,
+  });
+  const supervisorLink = nativeStatus?.deapLink ?? null;
   const removeBinding = useDeleteDingTalkAccountBinding(wsId);
   const [method, setMethod] = useState<"scan" | "fill">("scan");
   const [error, setError] = useState<string | null>(null);
@@ -172,6 +178,14 @@ function IdentityIssuance({
               {filled ? (
                 <div className="font-mono text-caption text-muted-foreground">
                   {t(($) => $.tag_tenant.identity_ids, { orgId: filled.orgId, uid: filled.uid })}
+                </div>
+              ) : null}
+              {supervisorLink ? (
+                <div className="font-mono text-caption text-muted-foreground">
+                  {t(($) => $.tag_tenant.supervisor_link, {
+                    supervisor: supervisorLink.supervisorUid,
+                    deap: supervisorLink.deapAgentUuid,
+                  })}
                 </div>
               ) : null}
             </>
@@ -272,7 +286,7 @@ function DirectIdentityForm({
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const saveIdentity = useUpdateAgentA2AOperatorIdentity(wsId, agent.id);
-  const saveSupervisor = useSetTagEmployeeSupervisorLink(wsId);
+  const saveSupervisor = useSetDingTalkNativeDEAPLink(wsId);
   const [orgId, setOrgId] = useState(initialOrgId);
   const [uid, setUid] = useState(initialUid);
   const [supervisorUid, setSupervisorUid] = useState("");
@@ -315,11 +329,7 @@ function DirectIdentityForm({
       });
       setNotice({ tone: "ok", text: t(($) => $.tag_tenant.fill_saved_supervisor) });
     } catch (error) {
-      setNotice(
-        error instanceof ApiError && error.status === 404
-          ? { tone: "warn", text: t(($) => $.tag_tenant.supervisor_unsupported) }
-          : { tone: "error", text: errorMessage(error, t(($) => $.tag_tenant.action_failed)) },
-      );
+      setNotice({ tone: "error", text: errorMessage(error, t(($) => $.tag_tenant.action_failed)) });
     }
   };
 
@@ -425,7 +435,7 @@ function EventPerception({
           hint={t(($) => $.tag_tenant.mode_native_hint)}
           status={
             nativeOn
-              ? t(($) => $.tag_tenant.native_stream, { state: nativeStatus?.stream.state ?? "unknown" })
+              ? <NativeStreamStatus stream={nativeStatus?.stream ?? null} />
               : nativeBlockedReason ?? t(($) => $.tag_tenant.mode_off)
           }
           control={
@@ -533,7 +543,7 @@ function PerceptionOption({
   active: boolean;
   title: string;
   hint: string;
-  status: string;
+  status: ReactNode;
   control: ReactNode;
 }) {
   const { t } = useT("agents");
@@ -554,9 +564,43 @@ function PerceptionOption({
           ) : null}
         </div>
         <p className="text-caption text-muted-foreground">{hint}</p>
-        <p className="text-caption">{status}</p>
+        <div className="text-caption">{status}</div>
       </div>
       <div className="shrink-0">{control}</div>
+    </div>
+  );
+}
+
+/** The native stream in words. While it keeps failing, the server's reason
+ * is shown, translated when it is a known identity mismatch. */
+function NativeStreamStatus({ stream }: { stream: DingTalkNativeStream | null }) {
+  const { t } = useT("agents");
+  const state = stream?.state ?? "unknown";
+  const label =
+    state === "connected"
+      ? t(($) => $.tag_tenant.stream_connected)
+      : state === "connecting"
+        ? t(($) => $.tag_tenant.stream_connecting)
+        : state === "disconnected"
+          ? t(($) => $.tag_tenant.stream_disconnected)
+          : state === "unavailable"
+            ? t(($) => $.tag_tenant.stream_unavailable)
+            : state === "off"
+              ? t(($) => $.tag_tenant.stream_off)
+              : t(($) => $.tag_tenant.stream_unknown);
+  const failing = state !== "connected" && !!stream?.lastError;
+  const deapMismatch = stream?.lastError?.includes("DEAP digital employee is not this identity") === true;
+  return (
+    <div className="space-y-0.5">
+      <p className={cn(state === "connected" ? "text-emerald-700 dark:text-emerald-300" : failing && "text-destructive")}>
+        {label}
+        {failing && stream?.failures ? ` · ${t(($) => $.tag_tenant.stream_failures, { count: stream.failures })}` : null}
+      </p>
+      {failing ? (
+        <p role="alert" className="text-destructive">
+          {deapMismatch ? t(($) => $.tag_tenant.stream_deap_mismatch) : stream?.lastError}
+        </p>
+      ) : null}
     </div>
   );
 }

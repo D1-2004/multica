@@ -4667,27 +4667,6 @@ export class ApiClient {
     });
   }
 
-  /**
-   * DEAP 主管换票 for a Tag tenant's employee: names its DEAP digital employee
-   * and supervisor (an org-scoped uid). Served by the native subscription
-   * DEAP link endpoint where the deployment has it; ApiError 404 means it
-   * does not. The employee's execution identity must be bound first.
-   */
-  async setTagEmployeeSupervisorLink(
-    workspaceId: string,
-    agentId: string,
-    input: { deapAgentUuid: string; supervisorUid: string },
-  ): Promise<void> {
-    await this.fetch<unknown>(
-      `/api/workspaces/${encodeURIComponent(workspaceId)}/dingtalk/account-bindings/${encodeURIComponent(agentId)}/native-subscription/deap-link`,
-      {
-        method: "PUT",
-        body: JSON.stringify({ deap_agent_uuid: input.deapAgentUuid, supervisor_uid: input.supervisorUid }),
-        headers: this.tagHeaders(workspaceId),
-      },
-    );
-  }
-
   async applyTag(workspaceId: string, tenantIds: string[], note = ""): Promise<TagApplyResponse> {
     const raw = await this.fetch<unknown>("/api/tag/apply", {
       method: "POST",

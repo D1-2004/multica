@@ -2523,7 +2523,6 @@
     "fill_submit": "保存身份",
     "fill_saved": "身份已保存",
     "fill_saved_supervisor": "身份和主管换票都已保存",
-    "supervisor_unsupported": "身份已保存；当前环境不支持主管换票，主管 UID 没有保存。",
     "perceive_title": "事件感知",
     "perceive_hint": "数字员工通过哪种方式收到钉钉里的消息和事件。原生感知和后端订阅二选一。",
     "mode_native": "DWS 原生感知",
@@ -2536,7 +2535,6 @@
     "mode_off": "未开启",
     "native_needs_identity": "先完成身份颁发",
     "native_blocked_by_route": "已绑定后端订阅，先解除再开启",
-    "native_stream": "连接状态：{{state}}",
     "route_bound": "已绑定：{{organization}}",
     "route_blocked_by_native": "原生感知开启中，先关闭再绑定",
     "route_scan": "扫码绑定",
@@ -2564,6 +2562,15 @@
     "level_scene": "群聊",
     "level_person": "个人",
     "level_bundle_title": "能力包（Access Bundle）",
-    "level_bundle_hint": "继承 Tag 的默认能力包（通用 Skills、连接器和凭证托管）；本级可以再开启「公开给场域」的能力，或托管本级自己的凭证。"
+    "level_bundle_hint": "继承 Tag 的默认能力包（通用 Skills、连接器和凭证托管）；本级可以再开启「公开给场域」的能力，或托管本级自己的凭证。",
+    "supervisor_link": "主管换票：主管 UID {{supervisor}} · DEAP 员工 {{deap}}",
+    "stream_connected": "已连接，正在接收消息",
+    "stream_connecting": "正在连接…",
+    "stream_disconnected": "连接失败",
+    "stream_unavailable": "当前环境没有原生订阅服务",
+    "stream_off": "未开启",
+    "stream_unknown": "状态未知",
+    "stream_failures": "已失败 {{count}} 次",
+    "stream_deap_mismatch": "DEAP 员工 ID 和数字员工 UID 不是同一个人：DEAP 返回的员工账号不是当前身份。请在「直接填写」里核对数字员工 UID 和 DEAP 员工 ID。"
   }
 }
