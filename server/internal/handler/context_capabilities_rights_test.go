@@ -437,8 +437,15 @@ func TestContextBuilderDisabledComponentsAndNodeRights(t *testing.T) {
 		t.Fatalf("claim MCP config with the group's crm off = %s", agent.McpConfig)
 	}
 
-	// Switched back on (enabled omitted = on), both override again.
+	// A client that omits the switch keeps the stored one (off) ...
 	b.put(t, ctxcapOrg, contextcap.ScopeScene, ctxcapScene, "prompts", ctxBuilderPrompts([3]any{"tone", 1, "group tone"}))
+	if node = ctxNode(t, b.router, "", b.agentID, contextcap.ScopeScene, ctxcapScene); len(node.Prompts) != 1 || node.Prompts[0].Enabled {
+		t.Fatalf("group prompts after a save without the switch = %+v", node.Prompts)
+	}
+	// ... switched back on, both override again.
+	b.put(t, ctxcapOrg, contextcap.ScopeScene, ctxcapScene, "prompts", map[string]any{"prompts": []map[string]any{
+		{"name": "tone", "order": 1, "text": "group tone", "enabled": true},
+	}})
 	b.put(t, ctxcapOrg, contextcap.ScopeScene, ctxcapScene, "mcp-config", ctxBuilderServers(map[string]string{"crm": "https://group-crm.example.test"}))
 	agent = b.claim(t, b.task(t, ctxBuilderGroupTask(ctxcapStaff, ctxcapStaff)))
 	if !strings.Contains(agent.Instructions, "### tone\n\ngroup tone") || ctxBuilderMCPServers(t, agent.McpConfig)["crm"] != "https://group-crm.example.test" {

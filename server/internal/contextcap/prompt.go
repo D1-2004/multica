@@ -49,11 +49,15 @@ type PromptComponent struct {
 
 // PromptComponentInput is one component of a ReplacePromptComponents list.
 // Disabled stores the component switched off (the zero value is enabled).
+// KeepSwitch means the caller did not send the switch (a client older than
+// the switch): an existing component keeps its stored switch and a new one
+// is enabled; Disabled is then ignored.
 type PromptComponentInput struct {
-	Name     string
-	Order    int
-	Text     string
-	Disabled bool
+	Name       string
+	Order      int
+	Text       string
+	Disabled   bool
+	KeepSwitch bool
 }
 
 // NormalizePromptComponents trims names and texts and validates a full
@@ -79,7 +83,7 @@ func NormalizePromptComponents(in []PromptComponentInput) ([]PromptComponentInpu
 			return nil, ErrDuplicatePromptName
 		}
 		seen[name] = true
-		out = append(out, PromptComponentInput{Name: name, Order: component.Order, Text: text, Disabled: component.Disabled})
+		out = append(out, PromptComponentInput{Name: name, Order: component.Order, Text: text, Disabled: component.Disabled, KeepSwitch: component.KeepSwitch})
 	}
 	return out, nil
 }
@@ -177,17 +181,23 @@ func ReplacePromptComponents(ctx context.Context, tx DBTX, in PromptComponentsWr
 		return nil, err
 	}
 	for _, component := range components {
+		// NULL keeps an existing component's switch (KeepSwitch).
+		var enabled *bool
+		if !component.KeepSwitch {
+			on := !component.Disabled
+			enabled = &on
+		}
 		tag, err := tx.Exec(ctx, `INSERT INTO context_prompt_component AS p
 			(workspace_id, agent_id, scope_type, org_id, scope_key, name, position, text, enabled, updated_by)
-			VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10::uuid)
+			VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, COALESCE($9::boolean, true), $10::uuid)
 			ON CONFLICT (agent_id, scope_type, org_id, scope_key, name)
-			DO UPDATE SET position = EXCLUDED.position, text = EXCLUDED.text, enabled = EXCLUDED.enabled,
-			  updated_by = CASE WHEN p.position = EXCLUDED.position AND p.text = EXCLUDED.text AND p.enabled = EXCLUDED.enabled
+			DO UPDATE SET position = EXCLUDED.position, text = EXCLUDED.text, enabled = COALESCE($9::boolean, p.enabled),
+			  updated_by = CASE WHEN p.position = EXCLUDED.position AND p.text = EXCLUDED.text AND p.enabled = COALESCE($9::boolean, p.enabled)
 			    THEN p.updated_by ELSE EXCLUDED.updated_by END,
-			  updated_at = CASE WHEN p.position = EXCLUDED.position AND p.text = EXCLUDED.text AND p.enabled = EXCLUDED.enabled
+			  updated_at = CASE WHEN p.position = EXCLUDED.position AND p.text = EXCLUDED.text AND p.enabled = COALESCE($9::boolean, p.enabled)
 			    THEN p.updated_at ELSE now() END
 			WHERE p.workspace_id = EXCLUDED.workspace_id`,
-			in.WorkspaceID, in.AgentID, in.ScopeType, in.OrgID, in.ScopeKey, component.Name, component.Order, component.Text, !component.Disabled, actor)
+			in.WorkspaceID, in.AgentID, in.ScopeType, in.OrgID, in.ScopeKey, component.Name, component.Order, component.Text, enabled, actor)
 		if err != nil {
 			return nil, err
 		}
