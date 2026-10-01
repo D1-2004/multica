@@ -31,8 +31,8 @@ import (
 const (
 	tagMaxNameLength         = 64
 	tagTemplateConcurrency   = 6
-	tagTemplateVisibility    = "private"
-	tagTemplatePermission    = "private"
+	tagTemplateVisibility    = "workspace"
+	tagTemplatePermission    = "public_to"
 	tagEmployeeVisibility    = "workspace"
 	tagEmployeePermission    = "public_to"
 	tagEmployeeNameSeparator = " · "
@@ -346,6 +346,15 @@ func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Warn("create tag template failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to create the tag")
+		return
+	}
+	// Workspace-visible like any shared agent, so every member can open the
+	// Tag page. The template can never hold a DingTalk binding, so it only runs
+	// when a member invokes it directly (e.g. to try the shared config).
+	if err := replaceInvocationTargetsWithQueries(r.Context(), qtx, template.ID, parseUUID(userID), []targetSpec{
+		{targetType: invocationTargetWorkspace, targetID: parseUUID(workspaceID)},
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save agent access")
 		return
 	}
 	templateID := uuidToString(template.ID)
