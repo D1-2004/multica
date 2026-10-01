@@ -42,6 +42,10 @@ export function ConnectorsTab() {
   const [resolveProject, setResolveProject] = useState("");
   const [resolveEnvironment, setResolveEnvironment] = useState("");
   const [resolved, setResolved] = useState<ConnectorResolveResult | null>(null);
+  const callbackModeItems = [
+    { value: "production_forward", label: t(($) => $.connectors.callback_forward) },
+    { value: "self", label: t(($) => $.connectors.callback_self) },
+  ];
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
@@ -124,7 +128,11 @@ export function ConnectorsTab() {
             <Field label={t(($) => $.connectors.token_endpoint)} value={tokenEndpoint} onChange={setTokenEndpoint} />
             <label className="space-y-1 text-caption text-muted-foreground">
               <span>{t(($) => $.connectors.callback_mode)}</span>
-              <Select value={callbackMode} onValueChange={setCallbackMode}>
+              <Select
+                items={callbackModeItems}
+                value={callbackMode}
+                onValueChange={(value) => { if (value) setCallbackMode(value); }}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="production_forward">{t(($) => $.connectors.callback_forward)}</SelectItem>
@@ -198,6 +206,12 @@ function AppCard({
   onDelete: () => void;
 }) {
   const { t } = useT("settings");
+  const scopeKindItems = [
+    { value: "agent", label: t(($) => $.connectors.scope_agent) },
+    { value: "project", label: t(($) => $.connectors.scope_project) },
+    { value: "environment", label: t(($) => $.connectors.scope_environment) },
+    { value: "workspace", label: t(($) => $.connectors.scope_workspace) },
+  ];
   const [secret, setSecret] = useState("");
   const [label, setLabel] = useState("");
   const [login, setLogin] = useState("");
@@ -292,7 +306,11 @@ function AppCard({
             <Field label={t(($) => $.connectors.token)} value={token} onChange={setToken} secret />
             <label className="space-y-1 text-caption text-muted-foreground">
               <span>{t(($) => $.connectors.scope_kind)}</span>
-              <Select value={scopeKind} onValueChange={setScopeKind}>
+              <Select
+                items={scopeKindItems}
+                value={scopeKind}
+                onValueChange={(value) => { if (value) setScopeKind(value); }}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="agent">{t(($) => $.connectors.scope_agent)}</SelectItem>
