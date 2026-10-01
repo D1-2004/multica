@@ -497,7 +497,7 @@ func TestAgentSceneMemoryBySceneID(t *testing.T) {
 	ctxcapExpectStatus(t, w, http.StatusOK, "memory by scene id")
 	var memory sceneMemoryResponse
 	ctxcapDecode(t, w, &memory)
-	if memory.ID != sceneID || memory.SceneID != sceneID || memory.SceneKey != key || memory.OrgID != "org-previous" || memory.MemoryText != "notes" {
+	if memory.ID != sceneID || memory.SceneID != sceneID || memory.SceneKey != sceneID || memory.ConversationID != key || memory.OrgID != "org-previous" || memory.MemoryText != "notes" {
 		t.Fatalf("memory=%+v", memory)
 	}
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scene-memory/"+uuid.NewString(), nil), http.StatusNotFound, "unknown scene")
