@@ -455,7 +455,7 @@ export interface ContextNodeConnectorCredential {
   account: string;
 }
 
-/** An offered connector with this node's switch and credential. */
+/** An offered or granted connector with this node's switch and credential. */
 export interface ContextNodeConnector {
   id: string;
   name: string;
@@ -471,6 +471,9 @@ export interface ContextNodeConnector {
   oauthAvailable: boolean;
   /** Provider installation page (GitHub App), "" when none. */
   installUrl: string;
+  /** Granted to the agent (通用能力): on at every level, which may only give
+   * it its own account, never switch it. */
+  global: boolean;
   /** Switched on at this level. */
   enabled: boolean;
   credential: ContextNodeConnectorCredential;

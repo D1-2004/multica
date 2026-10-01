@@ -84,8 +84,9 @@ func (h *Handler) taskContextScope(ctx context.Context, workspaceID pgtype.UUID,
 // a task from a deleted tenant, an org without a tenant or an earlier binding
 // never reads another org's bindings or credentials. Retries and Coordinator
 // item tasks carry the original dispatch context, so the recorded org is the
-// reliable signal; a task without one that was created before the agent was
-// (re)bound may come from the earlier binding and gets no layer either.
+// reliable signal; a task without one whose dispatch was created before the
+// agent was (re)bound (for a retry: its first attempt) may come from the
+// earlier binding and gets no layer either.
 func (h *Handler) resolveTaskContextScope(ctx context.Context, workspaceID pgtype.UUID, task db.AgentTaskQueue) (contextcap.Scope, string) {
 	if service.IsA2ATaskOrigin(task.Context) {
 		return contextcap.Scope{}, taskContextA2A
@@ -116,6 +117,18 @@ func (h *Handler) resolveTaskContextScope(ctx context.Context, workspaceID pgtyp
 			return contextcap.Scope{}, taskContextLookupFailed
 		case identity.BoundAt.Valid && task.CreatedAt.Valid && identity.BoundAt.Time.After(task.CreatedAt.Time):
 			return contextcap.Scope{}, taskContextEarlierBinding
+		case identity.BoundAt.Valid && (task.RetryOfTaskID.Valid || task.ParentTaskID.Valid):
+			// A retry is created now but carries its first attempt's
+			// dispatch, so the binding is compared with that attempt.
+			dispatchedAt, err := h.taskChainCreatedAt(ctx, task)
+			if err != nil {
+				slog.WarnContext(ctx, "context capabilities: retry lineage unavailable; skipping org, scene and personal layers",
+					"task_id", uuidToString(task.ID), "agent_id", uuidToString(task.AgentID), "error", err)
+				return contextcap.Scope{}, taskContextLookupFailed
+			}
+			if !dispatchedAt.IsZero() && identity.BoundAt.Time.After(dispatchedAt) {
+				return contextcap.Scope{}, taskContextEarlierBinding
+			}
 		}
 		orgID = strings.TrimSpace(identity.OrgID)
 		if orgID == "" {
@@ -133,6 +146,34 @@ func (h *Handler) resolveTaskContextScope(ctx context.Context, workspaceID pgtyp
 	}
 	scope.OrgID = orgID
 	return scope, ""
+}
+
+// taskChainCreatedAt is when the first attempt of task's retry chain was
+// created: the earliest created_at along retry_of_task_id (else
+// parent_task_id, the older retry lineage), bounded to 32 hops. Zero when
+// none of the earlier attempts exists any more.
+func (h *Handler) taskChainCreatedAt(ctx context.Context, task db.AgentTaskQueue) (time.Time, error) {
+	previous := task.RetryOfTaskID
+	if !previous.Valid {
+		previous = task.ParentTaskID
+	}
+	var earliest pgtype.Timestamptz
+	err := h.DB.QueryRow(ctx, `WITH RECURSIVE chain AS (
+		  SELECT t.id, COALESCE(t.retry_of_task_id, t.parent_task_id) AS previous, t.created_at, 1 AS depth
+		  FROM agent_task_queue t WHERE t.id = $1 AND t.agent_id = $2
+		  UNION ALL
+		  SELECT t.id, COALESCE(t.retry_of_task_id, t.parent_task_id), t.created_at, chain.depth + 1
+		  FROM agent_task_queue t JOIN chain ON t.id = chain.previous
+		  WHERE t.agent_id = $2 AND chain.depth < 32
+		)
+		SELECT min(created_at) FROM chain`, previous, task.AgentID).Scan(&earliest)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !earliest.Valid {
+		return time.Time{}, nil
+	}
+	return earliest.Time, nil
 }
 
 // taskEffectiveContext is the effective context of one task
@@ -389,20 +430,18 @@ func (h *Handler) queryInternalConnectors(ctx context.Context, query string, arg
 
 // taskConnectorContext is the org/scene/person part of one task's connector
 // resolution: connectors the task's scope layers switch on (with their
-// binding layer), the scope's credentials, and the agent's enabled connector
-// offers.
+// binding layer) and the scope's credentials.
 type taskConnectorContext struct {
 	bindingLayer map[string]string
 	bound        []internalConnector
 	credentials  []contextcap.Credential
-	offered      map[string]bool
 }
 
 // loadTaskConnectorContext reads the connector side of a task's effective
 // context. A connector the global layer has keeps its global binding layer;
 // any other takes the nearest layer that switches it on (MergeContext).
 func (h *Handler) loadTaskConnectorContext(ctx context.Context, ws, agent string, task taskEffectiveContext) (taskConnectorContext, error) {
-	out := taskConnectorContext{bindingLayer: map[string]string{}, offered: map[string]bool{}}
+	out := taskConnectorContext{bindingLayer: map[string]string{}}
 	var boundIDs []string
 	for _, connector := range task.Effective.Connectors {
 		if connector.Layer == contextcap.LayerGlobal {
@@ -422,15 +461,6 @@ func (h *Handler) loadTaskConnectorContext(ctx context.Context, ws, agent string
 	}
 	if out.credentials, err = contextcap.LayerCredentials(ctx, h.DB, ws, agent, task.Scope.Selection()); err != nil {
 		return out, err
-	}
-	if task.Scope.HasOrg() || task.Scope.HasScene() {
-		offers, err := contextcap.ListOffers(ctx, h.DB, ws, agent)
-		if err != nil {
-			return out, err
-		}
-		for _, id := range offers.ConnectorIDs {
-			out.offered[id] = true
-		}
 	}
 	return out, nil
 }
@@ -489,7 +519,7 @@ func (h *Handler) authorizedTaskConnectors(ctx context.Context, workspaceID pgty
 		if !globalIDs[c.ID] {
 			c.bindingLayer = layers.bindingLayer[c.ID]
 		}
-		if !h.resolveTaskConnectorCredential(ctx, &c, task, scope, layers.credentials, layers.offered[c.ID]) {
+		if !h.resolveTaskConnectorCredential(ctx, &c, task, scope, layers.credentials) {
 			continue
 		}
 		out = append(out, c)
@@ -499,16 +529,14 @@ func (h *Handler) authorizedTaskConnectors(ctx context.Context, workspaceID pgty
 
 // resolveTaskConnectorCredential fixes the credential the relay will send for
 // c and reports whether any applicable layer provides one, first match wins:
-// person, scene, org, workspace. A person credential applies to any connector
-// the task may use; a scene or org credential only to a connector in the
-// agent's enabled offer catalog (offered), because it serves every member's
-// run in the group or the tenant and the admin opts a connector into that
-// configuration by offering it. A scoped credential that fails to open is
+// person, scene, org, workspace. Every connector a task may use is granted
+// (通用能力) or offered (公开给场域), so each layer may bring its own
+// account for it. A scoped credential that fails to open is
 // treated as absent (and logged without any secret material), and so is an
 // expired OAuth credential without a refresh token. A usable OAuth credential
 // keeps its OAuth part and row location, so the relay can refresh it (under a
 // row lock) right before calling upstream.
-func (h *Handler) resolveTaskConnectorCredential(ctx context.Context, c *internalConnector, task db.AgentTaskQueue, scope contextcap.Scope, credentials []contextcap.Credential, offered bool) bool {
+func (h *Handler) resolveTaskConnectorCredential(ctx context.Context, c *internalConnector, task db.AgentTaskQueue, scope contextcap.Scope, credentials []contextcap.Credential) bool {
 	if c.AuthMode == "none" {
 		c.setResolvedCredential("", connectorCredentialNone)
 		return true
@@ -522,7 +550,7 @@ func (h *Handler) resolveTaskConnectorCredential(ctx context.Context, c *interna
 		scopeType string
 		key       string
 	}{{contextcap.ScopePerson, scope.PersonKey}, {contextcap.ScopeScene, scope.SceneKey}, {contextcap.ScopeOrg, orgKey}} {
-		if layer.key == "" || (layer.scopeType != contextcap.ScopePerson && !offered) {
+		if layer.key == "" {
 			continue
 		}
 		for _, credential := range credentials {

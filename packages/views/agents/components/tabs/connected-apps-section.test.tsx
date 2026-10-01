@@ -300,7 +300,7 @@ describe("app dialog", () => {
     const shared = await screen.findByRole("region", { name: copy.section_shared });
     await user.click(within(shared).getByRole("button", { name: copy.disconnect }));
     const dialog = await screen.findByRole("alertdialog");
-    expect(within(dialog).getByText(/On for everyone stops working for GitHub on every agent/)).toBeInTheDocument();
+    expect(within(dialog).getByText(copy.disconnect_description.replace("{{name}}", "GitHub"))).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: copy.disconnect }));
 
     await waitFor(() => expect(mocks.deleteCredential).toHaveBeenCalledWith("ws-1", GITHUB_ID));
@@ -321,17 +321,38 @@ describe("app dialog", () => {
     );
   });
 
-  it("cannot turn on 对所有用户启用 without a working shared account", async () => {
+  it("turns on 通用能力 without a shared account, and offers 公开给场域 only while it is off", async () => {
     mocks.app.mockResolvedValue({
       ...githubDetail,
       globalEnabled: false,
       sharedAccount: { connected: false, account: "", source: "" },
     });
+    mocks.list.mockResolvedValue([{ ...libraryGithub, agentIds: ["agent-other"] }]);
+    const user = userEvent.setup();
     openGithub();
 
     const toggle = await screen.findByRole("switch", { name: copy.global_label });
-    expect(toggle).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByText(copy.global_needs_account)).toBeInTheDocument();
+    expect(toggle).not.toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText(copy.global_hint)).toBeInTheDocument();
+    const scoped = screen.getByRole("region", { name: copy.section_scoped });
+    expect(within(scoped).getByRole("switch", { name: copy.offer_label })).toBeInTheDocument();
+    await user.click(toggle);
+
+    await waitFor(() =>
+      expect(mocks.update).toHaveBeenCalledWith(
+        "ws-1",
+        GITHUB_ID,
+        expect.objectContaining({ agent_ids: ["agent-other", "agent-1"] }),
+      ),
+    );
+  });
+
+  it("has no 公开给场域 switch for a 通用能力", async () => {
+    openGithub();
+
+    const scoped = await screen.findByRole("region", { name: copy.section_scoped });
+    expect(within(scoped).getByText(copy.offer_common)).toBeInTheDocument();
+    expect(within(scoped).queryByRole("switch", { name: copy.offer_label })).not.toBeInTheDocument();
   });
 
   it("lists group, 1:1 and personal use with 已开启 and 已连接 reported separately", async () => {
@@ -360,6 +381,8 @@ describe("app dialog", () => {
   });
 
   it("asks before taking away the offer while groups or people use it", async () => {
+    // Only an app that is not a 通用能力 has the 公开给场域 switch.
+    mocks.app.mockResolvedValue({ ...githubDetail, globalEnabled: false });
     const user = userEvent.setup();
     openGithub();
 
@@ -413,9 +436,11 @@ describe("app dialog", () => {
     );
   });
 
-  it("adds an app that is not in the workspace yet: connector plus offer, never a grant", async () => {
+  it("adds an app that is not in the workspace yet: connector plus grant (通用能力), never an offer", async () => {
     const notionId = "77777777-7777-4777-8777-777777777777";
-    mocks.addCatalog.mockResolvedValue({ ...libraryGithub, id: notionId, name: "Notion", catalogSlug: "notion", agentIds: [] });
+    const notion = { ...libraryGithub, id: notionId, name: "Notion", catalogSlug: "notion", agentIds: [] };
+    mocks.addCatalog.mockResolvedValue(notion);
+    mocks.list.mockResolvedValue([libraryGithub, notion]);
     const user = userEvent.setup();
     renderSection({ search: "view=mcp_config&app=notion" });
 
@@ -427,13 +452,10 @@ describe("app dialog", () => {
 
     await waitFor(() => expect(mocks.addCatalog).toHaveBeenCalledWith("ws-1", "notion"));
     await waitFor(() =>
-      expect(mocks.setOffers).toHaveBeenCalledWith("ws-1", "agent-1", {
-        connectorIds: [GITHUB_ID, "other-offer", notionId],
-        skillIds: ["skill-1"],
-      }),
+      expect(mocks.update).toHaveBeenCalledWith("ws-1", notionId, expect.objectContaining({ agent_ids: ["agent-1"] })),
     );
-    // On for everyone needs a working shared account first.
-    expect(mocks.update).not.toHaveBeenCalled();
+    // A 通用能力 needs no shared account; adding never publishes to scenes.
+    expect(mocks.setOffers).not.toHaveBeenCalled();
   });
 
   it("offers 添加 for an app whose workspace connector exists but this agent does not use", async () => {
@@ -573,6 +595,14 @@ describe("provider sign-in results", () => {
     await waitFor(() =>
       expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=mcp_config&app=github"),
     );
+  });
+
+  it("treats a connected value that is not an app slug as a failed sign-in", async () => {
+    const { navigation } = renderSection({ search: "view=mcp_config&connected=Your%20account%20was%20hacked" });
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(enAgents.internal_mcp.catalog.returned_error));
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=mcp_config");
   });
 
   it("explains a cancelled sign-in", async () => {

@@ -24,8 +24,8 @@ layer wins.
 
 | Layer | Key | Who edits | Where | Stored in |
 | --- | --- | --- | --- | --- |
-| Global (智能体) | agent | workspace admin / agent manager | web: agent detail → 配置 → 能力 → 连接器 (official apps: 「对所有用户启用」; Aone FaaS grants) / Skills (agent skills) | `internal_connector_agent`, `agent_skill` (existing) |
-| Offer catalog | agent | agent manager | web: agent detail → 配置 → 能力 → 连接器 (official app dialog switch 「允许群聊、个人连接自己的账号」; Aone FaaS row switch 「群聊/个人」) / Skills, section 「允许在场域 / 个人中开启」 | `context_capability_binding` (`scope_type='offer'`) |
+| Global (智能体, 「通用能力」: on for every tenant and scene) | agent | workspace admin / agent manager | web: agent detail → 配置 → 能力 → 连接器 (official apps: 「通用能力」 switch, set by 添加, no shared account needed; Aone FaaS grants, no offer switch) / Skills (section 「通用能力」) | `internal_connector_agent`, `agent_skill` (existing) |
+| Offer catalog (「公开给场域」) | agent | agent manager | web: agent detail → 配置 → 能力 → 连接器 (official app dialog switch 「公开给场域」, shown only while the app is not a 通用能力; Aone FaaS row switch 「公开给场域」 on offer-only rows) / Skills, section 「公开给场域」 (skills not assigned to the agent) | `context_capability_binding` (`scope_type='offer'`) |
 | Enterprise (企业级, a tenant) | agent + org_id (scope key = org_id) | agent managers (web and configure page); people with a live grant under that org read it on the configure page | web agent detail → 场域 → tenant → 配置; mobile 「企业」 | `agent_tenant` (the tenant), `context_capability_binding` / `context_connector_credential` / `context_scope_mcp_config` / `context_prompt_component` with `scope_type='org'` |
 | Scene (场域: 群聊) | agent + org_id + openConversationId | members of that DingTalk group; agent managers from the web and from the configure page | web and mobile `/dingtalk/configure` tab 「本会话」; web agent detail → 场域 → tenant → 群聊 → 配置 | `context_capability_binding` (`scope_type='scene'`), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
 | Personal (个人), also every 1:1 chat (单聊) scene | agent + org_id + staffId | that DingTalk person; agent managers for bindings, prompt components and custom MCP servers (not accounts) | web and mobile `/dingtalk/configure` tab 「我的」, or the 1:1 chat's scene there; web agent detail → 场域 → tenant → 个人 → 配置 | `context_capability_binding` (`scope_type='person'`), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
@@ -329,11 +329,13 @@ sandbox.
 Credential selection per connector call, first match wins:
 
 1. personal credential — only when the task's trigger person set one;
-2. scene credential — only when the task's scene set one and the connector
-   is in the agent's enabled offer catalog (a scene credential serves every
-   member's run in the group; offering is the admin's opt-in to that);
-3. org credential — only when the task's tenant org set one and, like a
-   scene credential, the connector is in the enabled offer catalog
+2. scene credential — when the task's scene set one. Every connector a task
+   may use is granted (通用能力) or offered (公开给场域), and either takes a
+   scene account; a scene credential serves every member's run in the
+   group, so whoever may connect at scene level (an agent manager, or a
+   member holding the group's configure link) can replace the workspace
+   account there;
+3. org credential — when the task's tenant org set one, under the same rule
    (`contextcap.LayerCredentials` returns person, scene, org in that order);
 4. workspace credential (existing sealed ciphertext or environment fallback).
 
@@ -466,8 +468,17 @@ The mobile page signs in with the existing DingTalk OAuth flow (a normal
   same links for its capability answer (「你有哪些能力」,
   `docs/inbound-coordinator-loop.md` COORD.F04); the link reaches only the
   DingTalk reply, and the Coordinator transcript (`chat_message`, which
-  managers and allow-listed members can read) stores `[configuration link]`
-  in its place.
+  managers and allow-listed members can read, in both the job path and the
+  channel engine), the channel engine's stored plan, Issue descriptions
+  and the DingTalk history read back into the Coordinator store
+  `[configuration link]` in its place (`inboundcoord.RedactConfigLinks`,
+  plain and percent-encoded forms). A link the executor mints stays in that
+  run's own records: its task messages, its final output and the issue
+  comment a comment-triggered run replies with. The DingTalk reply is sent
+  from them, the failed-run fallback reply reads the task messages back, and
+  the task_finished wrap-up compares the sent text with the result to see
+  that the reply already went out; members who can see the run can see the
+  link (personal links are single use for 15 minutes and can be revoked).
 - JSAPI group picker (secondary). With a person grant for the agent in the
   page's tenant (a verified DingTalk identity; `org_id` names the tenant),
   the page signs `dd.config` through
@@ -772,12 +783,15 @@ updated_at}`:
 | PUT | `.../context/{scopeType}/{scopeKey}/credentials` | `{connector_id, bearer}` → `{credential: C}`; the mobile PUT's connector rules (an org or group credential needs an offered connector) |
 | DELETE | `.../context/{scopeType}/{scopeKey}/credentials?connector_id=` | 204, idempotent |
 | POST | `.../context/{scopeType}/{scopeKey}/connections/start` | `{connector_id, return_to?}` → `{authorize_url}` plus the browser binding cookie; the mobile start's rules and errors; the state stores the tenant org |
+| DELETE | `.../context/{scopeType}/{scopeKey}/grants` | Managers revoke every configure-page grant of a group or person scope (a 1:1 chat node revokes its person's) → `{revoked: n}`. A person scope also loses the 1:1 chat grants its personal links gave the same accounts, under the redemption lock (`contextcap.RevokeGrants`), so the person can redeem a new personal link (no more 409); the scope's configuration stays. 400 for an org node (no grants). The web Context Builder shows it as 配置页访问 → 撤销访问 on group and person levels |
 
 ## 7. Rollout and gating
 
 - Always on: there is no feature flag for the scene and personal layers.
   Connectors are always on as well; they still need a credential key and
-  the host allowlist (`docs/internal-mcp-connectors.md`).
+  the host allowlist (`docs/internal-mcp-connectors.md`, which also covers
+  the production rolling window: the previous binary defaulted connectors
+  off there).
 - New env: `DINGTALK_H5_CORP_ID`, `DINGTALK_H5_AGENT_ID` (JSAPI signing only;
   whitelisted in `src/main.sh`, documented in `.env.example`). The JSAPI path
   also needs the direct DingTalk corp client; the agent-issued link flow needs
@@ -858,16 +872,48 @@ updated_at}`:
   `connector_oauth_state` to `org` (`DROP CONSTRAINT IF EXISTS` + `ADD
   CONSTRAINT`, every existing row passes); 9428 copies every non-empty
   `agent_scene_config.prompt` into a 「场域提示词」 component (a 1:1 chat's
-  into its person's scope, skipped while the person is unknown; `ON
-  CONFLICT DO NOTHING`, so a replay keeps edited components). All are
-  idempotent; the down migrations drop org rows before narrowing a check.
-  During the rollout an old replica answers 404 on `/api/agents/{id}/tenants*`
-  (the 场域 tree stays empty until the rollout completes), still serves the
-  removed `/api/agents/{id}/scenes*` routes (a scene prompt it saves lands in
-  `agent_scene_config.prompt`, which the new binary no longer reads, so
-  re-enter it as a component after the rollout), ignores org rows (its
-  queries name `scene` and `person` explicitly) and rejects a mobile body
-  carrying `org_id` (400, unknown field).
+  into its person's scope, resolved like `DirectScenePerson`: an org-less
+  job belongs to the identity org and only live grants count; skipped
+  while the person is unknown; when two 1:1 chats resolve to one person the
+  most recently edited prompt wins; `ON CONFLICT DO NOTHING`, so a replay
+  keeps edited components). All are idempotent; the down migrations drop
+  org rows before narrowing a check. During the rollout an old replica
+  answers 404 on `/api/agents/{id}/tenants*` (the 场域 tree stays empty until
+  the rollout completes), still serves the removed `/api/agents/{id}/scenes*`
+  routes (a scene prompt it saves lands in `agent_scene_config.prompt`,
+  which the new binary no longer reads, so re-enter it as a component after
+  the rollout) and rejects a mobile body carrying `org_id` (400, unknown
+  field). Its binding queries name `scene` and `person` explicitly, but its
+  credential usage queries do not: until the rollout completes (or after a
+  rollback) the connected-apps page it serves lists enterprise (org)
+  credentials as usage rows with `scope_type: "org"` (display only; it
+  never resolves or sends them).
+- Stored configuration that becomes applied (9428 and the claim-time
+  builder): scene prompts and per-scope custom MCP servers were saved
+  under a "configuration only, not applied" contract (9413, 9418). After
+  this release they are applied: a 1:1 chat's prompt becomes its person's
+  component, and person-level custom MCP servers (possibly with tokens in
+  their headers) also apply to group runs that person triggers alone (§8,
+  `share_in_groups`). Before deploying, list them and tell their owners or
+  clear them:
+  `SELECT workspace_id, agent_id, org_id, scene_key FROM agent_scene_config
+  WHERE scene_kind = 'dm' AND BTRIM(prompt) <> '';` and
+  `SELECT workspace_id, agent_id, scope_type, org_id, scope_key FROM
+  context_scope_mcp_config WHERE scope_type IN ('person', 'scene');`.
+- 9429-9430 add plain performance indexes concurrently, each alone in its
+  file (no pre-migration hook: an invalid leftover only costs speed):
+  `context_config_link (agent_id, extra_scene_key)` for the 1:1 chat person
+  lookup, and `context_config_grant (agent_id, scope_type, org_id,
+  scope_key)` for the personal-scope holder check and grant revokes.
+- Workspace deletion: an old replica deletes a workspace without sweeping
+  the tables this release adds (no FKs), so during the window or after a
+  rollback their rows can outlive the workspace. After the rollout, remove
+  them once per table, for example `DELETE FROM context_prompt_component
+  WHERE workspace_id NOT IN (SELECT id FROM workspace);` for
+  `context_capability_binding`, `context_connector_credential`,
+  `context_config_grant`, `context_config_link`, `agent_scene_config`,
+  `context_scope_mcp_config`, `agent_tenant`, `context_prompt_component`,
+  `connector_oauth_client` and `connector_oauth_state`.
 - Claim-time Context Builder (§3, same release, no further migration):
   during the rollout a task claimed on an old replica gets no org layer, no
   prompt components and no custom MCP servers of any scope, and its group
@@ -947,10 +993,34 @@ updated_at}`:
   differ from the one JSAPI returns in the user's org; use the agent-issued link.
 - A personal link proves delivery to the person's 1:1 chat, not the identity
   of whoever opens it first. If the person forwards it before redeeming it,
-  the recipient holds the scope until an admin clears the grant. Verifying the
-  redeeming DingTalk account against the sender (unionId ↔ staffId through
-  the corp app, or a code the person sends back to the agent) is the
-  follow-up.
+  the recipient holds the scope until a manager revokes it (Context Builder
+  → 配置页访问 → 撤销访问, §6 "Context nodes"); the person then redeems a
+  new link. Verifying the redeeming DingTalk account against the sender
+  (unionId ↔ staffId through the corp app, or a code the person sends back
+  to the agent) is the follow-up.
+- The run that posts an executor-minted link keeps it in its delivery copy
+  (final output, or the reply comment of a comment-triggered run): members
+  who can read that Issue can see a link minted by a run tied to it. Task
+  messages, transcripts and Issue descriptions hold the placeholder. A
+  person link is single use and lives 15 minutes, and a leaked one can be
+  revoked as above.
+- Renaming the identity tenant stores an `agent_tenant` row for that org. If
+  the agent is later bound to another DingTalk org, the old org stays a
+  (created) tenant with its configuration until it is deleted from the 场域
+  tree; tasks that recorded the old org then keep its layers.
+- Deleting a tenant and a concurrent enterprise-level write (bindings,
+  credential, prompts, custom MCP servers) of that org are not serialized:
+  the write can commit after the delete and leave org rows that come back
+  if the tenant is created again. Re-check the enterprise level after
+  re-creating a tenant.
+- A dynamic client registration is reused while its redirect URI and client
+  name match; an expired or deleted client (`invalid_client`) is not
+  re-registered automatically. A credential whose client is gone, a revoked
+  PAT and a revoked token without a refresh token stay stored and keep
+  winning person > scene > org > workspace until someone disconnects them
+  (the relay answers "reconnect" instead of falling back to the next layer).
+- Configuration links are never purged; expired rows only cost space (the
+  lookups are indexed, 9429-9430).
 - Personal scopes are keyed by `staffId` under the agent's org. The dispatch
   carries no sender corp id, so v1 relies on the dispatcher reporting
   `sender.staffId` only for members of the agent's org (DingTalk robot

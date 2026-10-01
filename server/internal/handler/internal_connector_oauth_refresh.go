@@ -3,12 +3,20 @@ package handler
 // OAuth token freshness for official app connectors. A credential is sealed
 // in one row (internal_connector.credential_ciphertext for the workspace
 // layer, context_connector_credential for scene and person layers); a
-// refresh locks that row (SELECT ... FOR UPDATE in its own transaction),
-// re-opens it, refreshes only if it is still stale, reseals and commits, so
-// concurrent relay calls on any replica refresh a token exactly once and the
-// others pick up the new token. A refresh token the provider rejects
-// (invalid_grant) deletes the credential: the connection is lost and the UI
-// shows it as not connected.
+// refresh locks that row (SELECT ... FOR UPDATE NOWAIT in its own
+// transaction), re-opens it, refreshes only if it is still stale, reseals and
+// commits, so concurrent relay calls on any replica refresh a token exactly
+// once and the others pick up the new token. A refresh token the provider
+// rejects (invalid_grant) deletes the credential: the connection is lost and
+// the UI shows it as not connected.
+//
+// Nothing waits on the row lock while a provider answers: concurrent callers
+// of one process share one refresh (singleflight), and a caller that finds
+// the row locked by another replica keeps using its still-valid token, or,
+// when it needs the new one, polls for it outside any transaction. A refresh
+// that failed is not retried by every following call for
+// connectorOAuthRefreshBackoff. So a slow or failing token endpoint holds at
+// most one pooled connection per credential and replica.
 //
 // The locked section is detached from the caller's request: providers that
 // rotate refresh tokens (GitHub ghr_, most DCR apps) invalidate the old one
@@ -19,27 +27,38 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
 	// connectorOAuthRefreshSkew refreshes a token that expires this soon.
 	connectorOAuthRefreshSkew = 60 * time.Second
 	connectorOAuthHTTPTimeout = 20 * time.Second
-	// connectorOAuthRefreshTimeout bounds one locked refresh: the row lock
-	// wait, the token request, the reseal and the commit.
+	// connectorOAuthRefreshTimeout bounds one refresh: polling for another
+	// replica's refresh, the token request, the reseal and the commit.
 	connectorOAuthRefreshTimeout = connectorOAuthHTTPTimeout + 10*time.Second
+	// connectorOAuthBusyPoll is how often a caller that needs a new token
+	// looks again while another replica refreshes it.
+	connectorOAuthBusyPoll = 250 * time.Millisecond
+	// connectorOAuthRefreshBackoff keeps a credential whose refresh just
+	// failed (provider down, network) from being refreshed again by every
+	// following call.
+	connectorOAuthRefreshBackoff = 30 * time.Second
 )
 
 var (
@@ -52,7 +71,62 @@ var (
 	// registration was replaced beyond the kept history), so the token
 	// cannot be exchanged or refreshed.
 	errConnectorOAuthClientReplaced = errors.New("the OAuth client that issued this token is no longer configured")
+	// errConnectorRefreshBusy means another replica holds the credential's
+	// refresh and its result did not land in time.
+	errConnectorRefreshBusy = errors.New("another refresh of this connector credential is in progress")
+	// errConnectorRefreshBackoff means the credential's last refresh failed
+	// moments ago and its token is no longer usable.
+	errConnectorRefreshBackoff = errors.New("connector token refresh failed recently; try again shortly")
 )
+
+// connectorRefreshGate collapses concurrent refreshes of one credential in
+// this process and remembers recent refresh failures.
+type connectorRefreshGate struct {
+	flights     singleflight.Group
+	mu          sync.Mutex
+	failedUntil map[string]time.Time
+}
+
+var connectorRefreshes = &connectorRefreshGate{failedUntil: map[string]time.Time{}}
+
+func (g *connectorRefreshGate) backingOff(key string, now time.Time) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	until, ok := g.failedUntil[key]
+	if ok && !now.Before(until) {
+		delete(g.failedUntil, key)
+		return false
+	}
+	return ok
+}
+
+func (g *connectorRefreshGate) recordFailure(key string, now time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.failedUntil) >= 4096 {
+		for k, until := range g.failedUntil {
+			if !now.Before(until) {
+				delete(g.failedUntil, k)
+			}
+		}
+	}
+	g.failedUntil[key] = now.Add(connectorOAuthRefreshBackoff)
+}
+
+func (g *connectorRefreshGate) clear(key string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.failedUntil, key)
+}
+
+// connectorRefreshKey identifies the stored credential behind c.
+func connectorRefreshKey(c *internalConnector) string {
+	if !c.bearerResolved || c.credentialLayer == connectorCredentialWorkspace {
+		return "workspace\x00" + c.WorkspaceID + "\x00" + c.ID
+	}
+	k := c.credentialKey
+	return strings.Join([]string{c.credentialLayer, k.WorkspaceID, k.AgentID, k.ConnectorID, k.ScopeType, k.OrgID, k.ScopeKey}, "\x00")
+}
 
 // callCatalogConnector sends one JSON-RPC request of a relay call to an
 // official app connector. The token is refreshed first when it is about to
@@ -112,16 +186,44 @@ func (h *Handler) freshConnectorToken(ctx context.Context, c *internalConnector,
 	if rejected != "" {
 		used = rejected
 	}
-	fresh, err := h.refreshConnectorCredential(ctx, c, used, rejected != "")
+	force := rejected != ""
+	// The current token still works unless upstream rejected it or it
+	// expired: then the caller must wait for a new one.
+	needNew := force || secret.OAuth.ExpiresWithin(now, 0)
+	key := connectorRefreshKey(c)
+	if connectorRefreshes.backingOff(key, now) {
+		if !needNew {
+			return secret.Bearer, nil
+		}
+		return "", errConnectorRefreshBackoff
+	}
+	usedHash := sha256.Sum256([]byte(used))
+	flight := key + "\x00" + hex.EncodeToString(usedHash[:])
+	if force {
+		flight += "\x00force"
+	}
+	if needNew {
+		flight += "\x00wait"
+	}
+	value, err, _ := connectorRefreshes.flights.Do(flight, func() (any, error) {
+		return h.refreshConnectorCredential(ctx, c, used, force, needNew)
+	})
 	if err != nil {
-		if !errors.Is(err, errConnectorReconnectRequired) && rejected == "" && !secret.OAuth.ExpiresWithin(now, 0) {
-			// A transient refresh failure must not break a call while the
-			// current token is still valid.
-			slog.WarnContext(ctx, "official app token refresh failed; using the current token", "connector_id", c.ID, "credential_layer", c.credentialLayer, "error", err)
+		if !errors.Is(err, errConnectorReconnectRequired) && !errors.Is(err, errConnectorRefreshBusy) {
+			connectorRefreshes.recordFailure(key, time.Now())
+		}
+		if !errors.Is(err, errConnectorReconnectRequired) && !needNew {
+			// A transient refresh failure, or another replica refreshing,
+			// must not break a call while the current token is still valid.
+			if !errors.Is(err, errConnectorRefreshBusy) {
+				slog.WarnContext(ctx, "official app token refresh failed; using the current token", "connector_id", c.ID, "credential_layer", c.credentialLayer, "error", err)
+			}
 			return secret.Bearer, nil
 		}
 		return "", err
 	}
+	connectorRefreshes.clear(key)
+	fresh := value.(contextcap.Secret)
 	layer := c.credentialLayer
 	if !c.bearerResolved {
 		layer = connectorCredentialWorkspace
@@ -134,19 +236,47 @@ func (h *Handler) freshConnectorToken(ctx context.Context, c *internalConnector,
 // under its row lock. usedToken is the access token the caller holds; when
 // the stored token differs, another caller already refreshed (or the user
 // reconnected) and the stored secret is returned without a token request.
-// force refreshes even a token that is not near expiry (after a 401). It
+// force refreshes even a token that is not near expiry (after a 401). When
+// another replica holds the lock it returns errConnectorRefreshBusy at once,
+// or, with wait, polls outside any transaction until that refresh lands. It
 // runs detached from ctx's cancellation (see the file comment), bounded by
 // connectorOAuthRefreshTimeout.
-func (h *Handler) refreshConnectorCredential(ctx context.Context, c *internalConnector, usedToken string, force bool) (contextcap.Secret, error) {
-	layer := c.credentialLayer
-	if !c.bearerResolved {
-		layer = connectorCredentialWorkspace
-	}
+func (h *Handler) refreshConnectorCredential(ctx context.Context, c *internalConnector, usedToken string, force, wait bool) (contextcap.Secret, error) {
 	if h.TxStarter == nil {
 		return contextcap.Secret{}, errors.New("connector store unavailable")
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), connectorOAuthRefreshTimeout)
 	defer cancel()
+	polling := false
+	for {
+		fresh, err := h.refreshConnectorCredentialOnce(ctx, c, usedToken, force)
+		if polling && err != nil && ctx.Err() != nil {
+			// The bound ran out while another replica's refresh held the
+			// row: still busy, not a failed refresh (no failure backoff).
+			return contextcap.Secret{}, errConnectorRefreshBusy
+		}
+		if !errors.Is(err, errConnectorRefreshBusy) || !wait {
+			return fresh, err
+		}
+		polling = true
+		timer := time.NewTimer(connectorOAuthBusyPoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return contextcap.Secret{}, errConnectorRefreshBusy
+		case <-timer.C:
+		}
+	}
+}
+
+// refreshConnectorCredentialOnce is one locked attempt of
+// refreshConnectorCredential; errConnectorRefreshBusy when the row is
+// locked.
+func (h *Handler) refreshConnectorCredentialOnce(ctx context.Context, c *internalConnector, usedToken string, force bool) (contextcap.Secret, error) {
+	layer := c.credentialLayer
+	if !c.bearerResolved {
+		layer = connectorCredentialWorkspace
+	}
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return contextcap.Secret{}, err
@@ -157,8 +287,11 @@ func (h *Handler) refreshConnectorCredential(ctx context.Context, c *internalCon
 	switch layer {
 	case connectorCredentialWorkspace:
 		var ciphertext []byte
-		err := tx.QueryRow(ctx, `SELECT credential_ciphertext FROM internal_connector WHERE id = $1::uuid AND workspace_id = $2::uuid FOR UPDATE`,
+		err := tx.QueryRow(ctx, `SELECT credential_ciphertext FROM internal_connector WHERE id = $1::uuid AND workspace_id = $2::uuid FOR UPDATE NOWAIT`,
 			c.ID, c.WorkspaceID).Scan(&ciphertext)
+		if contextcap.IsLockNotAvailable(err) {
+			return contextcap.Secret{}, errConnectorRefreshBusy
+		}
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && len(ciphertext) == 0) {
 			return contextcap.Secret{}, errConnectorReconnectRequired
 		}
@@ -170,6 +303,9 @@ func (h *Handler) refreshConnectorCredential(ctx context.Context, c *internalCon
 		}
 	case connectorCredentialOrg, connectorCredentialScene, connectorCredentialPerson:
 		credential, err := contextcap.LockCredential(ctx, tx, c.credentialKey)
+		if errors.Is(err, contextcap.ErrLocked) {
+			return contextcap.Secret{}, errConnectorRefreshBusy
+		}
 		if errors.Is(err, contextcap.ErrNotFound) {
 			return contextcap.Secret{}, errConnectorReconnectRequired
 		}

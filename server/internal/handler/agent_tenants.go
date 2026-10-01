@@ -464,11 +464,14 @@ type agentContextPromptDTO struct {
 	UpdatedAt     string `json:"updated_at"`
 }
 
-// agentContextConnectorDTO is one offered connector on a node: the
-// configure page's offer flags, this scope's credential and whether this
+// agentContextConnectorDTO is one offered or granted connector on a node:
+// the configure page's offer flags, this scope's credential and whether this
 // scope switches it on.
 type agentContextConnectorDTO struct {
 	agentSceneOfferedConnectorDTO
+	// Global: the agent grants it (通用能力), so it is on at every node and
+	// the node may only give it its own account.
+	Global  bool `json:"global"`
 	Enabled bool `json:"enabled"`
 }
 
@@ -630,21 +633,29 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 	// only; an org's or a group's reaches every manager.
 	showAccount := scope.ScopeType != contextcap.ScopePerson || caller.workspaceAdmin || scope.CanConnect
 
-	if len(offers.ConnectorIDs) > 0 {
-		offered, err := h.queryInternalConnectors(ctx, `SELECT `+internalConnectorSelect+`
+	if scopeIDs := scopeConnectorIDs(offers.ConnectorIDs, global.ConnectorIDs); len(scopeIDs) > 0 {
+		granted := make(map[string]bool, len(global.ConnectorIDs))
+		for _, id := range global.ConnectorIDs {
+			granted[id] = true
+		}
+		listed, err := h.queryInternalConnectors(ctx, `SELECT `+internalConnectorSelect+`
 			FROM internal_connector c
 			WHERE c.workspace_id = $1::uuid AND c.id = ANY($2::uuid[]) AND c.enabled
-			ORDER BY c.name, c.id`, caller.workspaceID, offers.ConnectorIDs)
+			ORDER BY c.name, c.id`, caller.workspaceID, scopeIDs)
 		if err != nil {
 			return resp, err
 		}
-		for _, c := range offered {
+		for _, c := range listed {
+			if !offers.Contains(contextcap.ResourceConnector, c.ID) && !takesScopeAccount(c) {
+				continue
+			}
 			accepts := connectorAcceptsBearer(c.AuthMode, c.CatalogSlug)
 			item := agentContextConnectorDTO{
 				agentSceneOfferedConnectorDTO: agentSceneOfferedConnectorDTO{
 					ID: c.ID, Name: c.Name, CatalogSlug: c.CatalogSlug, AuthMode: c.AuthMode,
 					AcceptsCredential: accepts, AcceptsPAT: c.AuthMode == "oauth" && accepts,
 				},
+				Global:  granted[c.ID],
 				Enabled: enabled[contextcap.ResourceConnector+":"+c.ID],
 			}
 			if app, ok := catalogApp(c.CatalogSlug); ok {
@@ -1007,6 +1018,44 @@ func (h *Handler) DeleteAgentContextCredential(w http.ResponseWriter, r *http.Re
 	slog.InfoContext(r.Context(), "agent context: credential removed", "agent_id", node.caller.agentID, "connector_id", connectorID,
 		"scope_type", node.scope.ScopeType, "actor_id", requestUserID(r))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// RevokeAgentContextGrants removes every configuration grant on a group or
+// person node: DELETE .../context/{scopeType}/{scopeKey}/grants →
+// {revoked: n}. Configure-page access from links and the group picker ends
+// at once (a 1:1 chat node revokes its person's grants, including the 1:1
+// chat grants their personal links gave); the scope's configuration stays.
+// A person whose personal scope a forwarded link handed to someone else can
+// then redeem a new personal link. 400 for the org level, which has no
+// grants. Managers only, like the other node writes.
+func (h *Handler) RevokeAgentContextGrants(w http.ResponseWriter, r *http.Request) {
+	node, ok := h.agentContextNodeFromRoute(w, r, contextCapNeedWrite)
+	if !ok {
+		return
+	}
+	if node.scope.ScopeType != contextcap.ScopeScene && node.scope.ScopeType != contextcap.ScopePerson {
+		writeError(w, http.StatusBadRequest, "only group and person levels have configuration grants")
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to revoke access")
+		return
+	}
+	defer tx.Rollback(ctx)
+	revoked, err := contextcap.RevokeGrants(ctx, tx, node.caller.workspaceID, node.caller.agentID, node.scope.ScopeType, node.tenant.OrgID, node.scope.ScopeKey)
+	if err == nil {
+		err = tx.Commit(ctx)
+	}
+	if err != nil {
+		slog.ErrorContext(ctx, "agent context: grant revoke failed", "agent_id", node.caller.agentID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to revoke access")
+		return
+	}
+	slog.InfoContext(ctx, "agent context: grants revoked", "agent_id", node.caller.agentID, "workspace_id", node.caller.workspaceID,
+		"org_id", node.tenant.OrgID, "scope_type", node.scope.ScopeType, "revoked", revoked, "actor_id", requestUserID(r))
+	writeJSON(w, http.StatusOK, map[string]any{"revoked": revoked})
 }
 
 // StartAgentContextConnection starts connecting an official app account for

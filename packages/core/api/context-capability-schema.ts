@@ -791,6 +791,7 @@ const NodeConnectorWireSchema = z
     accepts_pat: strictTrue,
     oauth_available: strictTrue,
     install_url: z.unknown().optional(),
+    global: strictTrue,
     enabled: strictTrue,
     credential: z
       .object({ connected: strictTrue, account: text.catch("") })
@@ -812,6 +813,7 @@ const NodeConnectorWireSchema = z
       // the start endpoint would reject.
       oauthAvailable: authMode === "oauth" && connector.oauth_available,
       installUrl: safeExternalUrl(connector.install_url),
+      global: connector.global,
       enabled: connector.enabled,
       credential: { connected, account: connected ? (connector.credential?.account ?? "") : "" },
     };
@@ -919,6 +921,14 @@ export const ContextPromptComponentsResponseSchema = z
 export const ContextNodeMcpConfigResponseSchema = z
   .object({ mcp_config: z.union([z.record(z.string(), z.unknown()), z.null()]) })
   .transform((value): Record<string, unknown> | null => value.mcp_config);
+
+/** Echo of the grants DELETE: how many configure-page grants it removed.
+ * null when malformed (the revoke still happened; the caller refetches). */
+export const ContextNodeGrantsRevokedSchema = z
+  .object({ revoked: z.number().int().nonnegative() })
+  .transform((value): number => value.revoked)
+  .nullable()
+  .catch(null);
 
 // ---------------------------------------------------------------------------
 // Admin connected apps (GET /api/agents/{id}/connected-apps[/{slug}])

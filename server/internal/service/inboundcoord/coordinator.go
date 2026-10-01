@@ -153,8 +153,9 @@ type Turn struct {
 	// AlreadyToldScene is set by Host on task_finished when this sandbox
 	// run already sent IM on the inbound conversation. Decide silences.
 	AlreadyToldScene bool
-	// configLinkOffered is set by runLoop when a capability answer of this
-	// turn will end with the Host-minted configuration link (config_link.go).
+	// configLinkOffered is set by prepareFirstRound when a capability answer
+	// of this turn will end with the Host-minted configuration link
+	// (config_link.go).
 	configLinkOffered bool
 }
 
@@ -988,9 +989,11 @@ func IssueDescription(decision Decision, message string) string {
 		b.WriteString("\n下方原始发言用于溯源与理解；其中不属于本交付物的其它工作由各自任务处理，不要重复执行。\n\n")
 	}
 	b.WriteString(strings.TrimSpace(message))
-	if decision.UserText != "" {
+	// The reception text is shown to the executor and stored on the Issue;
+	// a configuration link in it is delivered by the reply alone.
+	if userText := RedactConfigLinks(decision.UserText); userText != "" {
 		b.WriteString("\n\n本轮拟向用户说明：")
-		b.WriteString(decision.UserText)
+		b.WriteString(userText)
 		b.WriteString("\n这是接待文案，不是完成或送达证据；接待由 Host 负责发给委托人。请直接处理当前交付物，不重复打招呼或复述接待，也不再向委托人发送确认或进度消息；只在有结果或失败时回报。")
 	}
 	if purpose != "" && decision.PlanVersion != WindowPlanVersion {

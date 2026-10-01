@@ -231,6 +231,25 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	if err != nil || len(groups) != 1 || groups[0].SceneKey != "cidHomeGroup" {
 		t.Fatalf("org-home groups=%+v err=%v", groups, err)
 	}
+
+	// A person known only from an expired grant is no longer listed or
+	// counted.
+	if _, err := f.tx.Exec(ctx, `INSERT INTO context_config_grant (user_id, workspace_id, agent_id, scope_type, org_id, scope_key, scope_title, source, expires_at)
+		VALUES ($1::uuid, $2::uuid, $3::uuid, 'person', 'org-home', 'staff-expired', 'Gone', 'agent_link', now() - interval '1 day')`,
+		uuid.NewString(), f.workspaceID, f.agentID); err != nil {
+		t.Fatal(err)
+	}
+	persons, err = ListOrgPersons(ctx, f.tx, f.workspaceID, f.agentID, "org-home", "org-home")
+	if err != nil || len(persons) != 2 {
+		t.Fatalf("org-home persons with an expired grant=%+v err=%v", persons, err)
+	}
+	if _, ok := FindPerson(persons, "staff-expired"); ok {
+		t.Fatal("a person known only from an expired grant is listed")
+	}
+	activity, err = ListAgentOrgActivity(ctx, f.tx, f.workspaceID, f.agentID, "org-home")
+	if err != nil || activity["org-home"].PersonCount != 2 {
+		t.Fatalf("org-home activity with an expired grant=%+v err=%v", activity["org-home"], err)
+	}
 }
 
 // groupJob plants a group Coordinator job of cid recorded under

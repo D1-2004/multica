@@ -376,9 +376,8 @@ func LoadLayers(ctx context.Context, db DBTX, workspaceID, agentID string, sel L
 // the org, scene and person layers of sel (the scopes LoadLayers reads),
 // ordered by connector, then person, scene, org. An empty selection reads
 // nothing. Callers open each with OpenCredentialSecret and apply the
-// person > scene > org > workspace precedence; like a scene credential, an
-// org credential only serves a connector in the agent's enabled offer
-// catalog.
+// person > scene > org > workspace precedence to every connector a task may
+// use (granted or offered).
 func LayerCredentials(ctx context.Context, db DBTX, workspaceID, agentID string, sel LayerSelection) ([]Credential, error) {
 	orgKey := ""
 	if sel.Org {

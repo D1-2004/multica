@@ -58,14 +58,24 @@ export function offerUsageByResource(
 }
 
 /**
- * 「允许在场域 / 个人中开启」 for skills: the skill part of the agent's offer
- * catalog. Group chats, 1:1 chats and people may turn offered skills on for
- * themselves on the configuration page. Each switch saves at once; taking
- * away a skill that is in use asks first, because it turns off everywhere.
- * The catalog is saved whole, so the connector offers (switched per
- * connector in the 连接器 tab) are sent unchanged.
+ * 「公开给场域」 for skills: the skill part of the agent's offer catalog.
+ * Group chats, 1:1 chats and people may turn published skills on for
+ * themselves on the configuration page. Skills assigned to the agent and on
+ * are its 通用能力, on everywhere already, so they are not listed unless an
+ * earlier offer is still there to withdraw. Each switch saves
+ * at once; taking away a skill that is in use asks first, because it turns
+ * off everywhere. The catalog is saved whole, so the connector offers
+ * (switched per connector in the 连接器 tab) are sent unchanged.
  */
-export function ContextOffersSection({ agentId, wsId }: { agentId: string; wsId: string }) {
+export function ContextOffersSection({
+  agentId,
+  wsId,
+  commonSkillIds,
+}: {
+  agentId: string;
+  wsId: string;
+  commonSkillIds: readonly string[];
+}) {
   const { t } = useT("agents");
   const query = useQuery(agentContextCapabilitiesOptions(wsId, agentId));
   const data = query.data ?? null;
@@ -90,7 +100,7 @@ export function ContextOffersSection({ agentId, wsId }: { agentId: string; wsId:
           </Button>
         </ConnectorNotice>
       ) : data.enabled !== true ? null : (
-        <OfferList agentId={agentId} wsId={wsId} data={data} />
+        <OfferList agentId={agentId} wsId={wsId} data={data} commonSkillIds={commonSkillIds} />
       )}
     </section>
   );
@@ -100,10 +110,12 @@ function OfferList({
   agentId,
   wsId,
   data,
+  commonSkillIds,
 }: {
   agentId: string;
   wsId: string;
   data: AgentContextCapabilities;
+  commonSkillIds: readonly string[];
 }) {
   const { t } = useT("agents");
   const setOffer = useSetAgentOffer(wsId, agentId);
@@ -112,6 +124,10 @@ function OfferList({
   );
   const usage = useMemo(() => offerUsageByResource(data), [data]);
   const offered = useMemo(() => new Set(data.offers.skillIds), [data.offers.skillIds]);
+  const skills = useMemo(() => {
+    const common = new Set(commonSkillIds);
+    return data.library.skills.filter((skill) => !common.has(skill.id) || offered.has(skill.id));
+  }, [data.library.skills, commonSkillIds, offered]);
 
   const save = async (id: string, next: boolean) => {
     try {
@@ -134,11 +150,11 @@ function OfferList({
 
   return (
     <>
-      {data.library.skills.length === 0 ? (
+      {skills.length === 0 ? (
         <ConnectorNotice>{t(($) => $.tab_body.context_offers.skills_empty)}</ConnectorNotice>
       ) : (
         <ul className="max-h-96 divide-y overflow-y-auto rounded-lg border bg-surface-raised/40">
-          {data.library.skills.map((skill) => {
+          {skills.map((skill) => {
             const isOffered = offered.has(skill.id);
             const used = usage.get(usageKey("skill", skill.id)) ?? NO_USAGE;
             return (

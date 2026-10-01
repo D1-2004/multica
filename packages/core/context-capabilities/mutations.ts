@@ -322,6 +322,18 @@ export function useDeleteContextNodeCredential(wsId: string, agentId: string) {
   });
 }
 
+/** Revokes the configure-page grants of a group or person level and
+ * resolves to how many were removed (null when the echo is malformed). A
+ * person known only through a grant leaves the tenant's people list. */
+export function useRevokeContextNodeGrants(wsId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (node: ContextNodeRef) => api.revokeContextNodeGrants(wsId, agentId, node),
+    onSettled: (_data, _error, node) =>
+      invalidateNodeWrite(queryClient, wsId, agentId, node, { usage: false }),
+  });
+}
+
 export interface StartContextNodeConnectionMutationInput extends StartContextNodeConnectionInput {
   node: ContextNodeRef;
 }
@@ -377,8 +389,8 @@ export function useSetAgentOffer(wsId: string, agentId: string) {
 
 /** Adds an official app to this agent (未添加 → 添加): creates the workspace
  * catalog connector when it is missing (idempotent on the server), then
- * offers it so groups and people may connect their own accounts. Adding
- * never grants it to everyone: that needs a working shared account first.
+ * grants it, so it is a 通用能力 for every tenant and scene; groups and
+ * people may connect their own accounts, and the shared account is optional.
  * Resolves to the connector id. */
 export function useAddConnectedApp(wsId: string, agentId: string) {
   const queryClient = useQueryClient();
@@ -391,7 +403,7 @@ export function useAddConnectedApp(wsId: string, agentId: string) {
         (await api.listInternalConnectors(wsId)).find((item) => item.catalogSlug === slug) ??
         null;
       if (!connector) throw new Error(`official app ${slug} was not added`);
-      await writeOffer(wsId, agentId, { resourceType: "connector", resourceId: connector.id, offered: true });
+      await patchInternalConnector(wsId, { connectorId: connector.id, grant: { agentId, granted: true } });
       return connector.id;
     },
     onSettled: () => invalidateConnectorViews(queryClient, wsId),

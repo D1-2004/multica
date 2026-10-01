@@ -244,7 +244,7 @@ func (h *Handler) RefreshInternalConnectorTools(w http.ResponseWriter, r *http.R
 // person's account, which only that person may do (403 person_only for a
 // manager; 409 dm_person_unknown when the person is unknown).
 // startConnectorOAuth then applies the PUT credentials connector rule
-// (scene: offered; person: offered or globally granted) and re-checks it at
+// (offered or globally granted) and re-checks it at
 // the callback.
 func (h *Handler) StartContextConfigConnection(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)

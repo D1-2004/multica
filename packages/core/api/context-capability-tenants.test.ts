@@ -145,10 +145,13 @@ describe("Context Builder node", () => {
         accepts_pat: true,
         oauth_available: true,
         install_url: "https://github.com/apps/qwen-tag-pre/installations/new",
+        global: true,
         enabled: true,
         credential: { connected: true, account: "@ada" },
         upstream_url: "https://secret.example",
       },
+      // Only a literal true counts as global (通用能力) or switched on.
+      { id: "c-2", name: "Notion", catalog_slug: "notion", auth_mode: "oauth", global: "true", enabled: 1 },
     ],
     skills: [{ id: skillId, name: "Report", description: "Weekly", enabled: false }],
     mcp_config: { mcpServers: { docs: { url: "https://mcp.example/docs" } } },
@@ -202,8 +205,22 @@ describe("Context Builder node", () => {
         acceptsPat: true,
         oauthAvailable: true,
         installUrl: "https://github.com/apps/qwen-tag-pre/installations/new",
+        global: true,
         enabled: true,
         credential: { connected: true, account: "@ada" },
+      },
+      {
+        id: "c-2",
+        name: "Notion",
+        catalogSlug: "notion",
+        authMode: "oauth",
+        acceptsCredential: false,
+        acceptsPat: false,
+        oauthAvailable: false,
+        installUrl: "",
+        global: false,
+        enabled: false,
+        credential: { connected: false, account: "" },
       },
     ]);
     expect(node?.skills).toEqual([{ id: skillId, name: "Report", description: "Weekly", enabled: false }]);
@@ -408,5 +425,17 @@ describe("tenant and Context Builder client", () => {
     });
     stubFetch({ authorize_url: "javascript:alert(1)" });
     expect(await client.startContextNodeConnection("ws-1", agentId, node, { connectorId })).toBe("");
+  });
+
+  it("revokes a level's grants and reads a malformed echo as null", async () => {
+    const client = new ApiClient(base);
+    const revoke = stubFetch({ revoked: 2 });
+    expect(await client.revokeContextNodeGrants("ws-1", agentId, node)).toBe(2);
+    expect(requestOf(revoke).url).toBe(`${nodePath}/grants`);
+    expect(requestOf(revoke).init.method).toBe("DELETE");
+    for (const body of [{}, { revoked: "2" }, { revoked: -1 }, "nope", null]) {
+      stubFetch(body);
+      expect(await client.revokeContextNodeGrants("ws-1", agentId, node)).toBeNull();
+    }
   });
 });

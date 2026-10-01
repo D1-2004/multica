@@ -385,12 +385,12 @@ func TestContextCapabilitiesConnectorLayeringAndCredentialPrecedence(t *testing.
 			},
 		},
 		{
-			// f.global is granted but never offered, so its scene credential
-			// (which would serve every member of the group) does not apply.
+			// f.global is granted (通用能力) and never offered: the group's
+			// own account still replaces the workspace one.
 			name:    "multi-sender run gets no personal layer",
 			context: ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff),
 			want: map[string]ctxcapResolved{
-				f.global: {connectorBindingGlobal, connectorCredentialWorkspace, "workspace-secret"},
+				f.global: {connectorBindingGlobal, connectorCredentialScene, "scene-global-secret"},
 				f.scene:  {connectorBindingScene, connectorCredentialScene, "scene-connector-secret"},
 			},
 		},
@@ -398,7 +398,7 @@ func TestContextCapabilitiesConnectorLayeringAndCredentialPrecedence(t *testing.
 			name:    "unstamped messages of a merged window get no personal layer",
 			context: []byte(`{"dispatch_event_data":{"conversation":{"openConversationId":"` + ctxcapScene + `","type":"group"},"sender":{"staffId":"` + ctxcapStaff + `"},"messages":[{"openMsgId":"x"},{"openMsgId":"y"}]}}`),
 			want: map[string]ctxcapResolved{
-				f.global: {connectorBindingGlobal, connectorCredentialWorkspace, "workspace-secret"},
+				f.global: {connectorBindingGlobal, connectorCredentialScene, "scene-global-secret"},
 				f.scene:  {connectorBindingScene, connectorCredentialScene, "scene-connector-secret"},
 			},
 		},
@@ -452,15 +452,6 @@ func TestContextCapabilitiesConnectorLayeringAndCredentialPrecedence(t *testing.
 		got := f.resolve(t, f.rerunTask(t, ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff)))
 		if len(got) != 1 || got[f.global] != (ctxcapResolved{connectorBindingGlobal, connectorCredentialWorkspace, "workspace-secret"}) {
 			t.Fatalf("rerun resolution = %#v", got)
-		}
-	})
-
-	t.Run("scene credential of a granted connector applies once it is offered", func(t *testing.T) {
-		f.offer(t, f.scene, f.person, f.global)
-		defer f.offer(t, f.scene, f.person)
-		got := f.resolve(t, f.task(t, ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff)))
-		if got[f.global] != (ctxcapResolved{connectorBindingGlobal, connectorCredentialScene, "scene-global-secret"}) {
-			t.Fatalf("offered global connector = %#v", got[f.global])
 		}
 	})
 
@@ -621,9 +612,8 @@ func (f *ctxcapFixture) relay(t *testing.T, task db.AgentTaskQueue, connectorID 
 func TestContextCapabilitiesRelayResolvesPerCallAndRevokes(t *testing.T) {
 	f := newCtxcapFixture(t)
 	ctx := context.Background()
-	// Offering the granted connector opts it into group configuration, so its
-	// scene credential takes part in person > scene > workspace below.
-	f.offer(t, f.scene, f.person, f.global)
+	// The granted connector is never offered: its scene credential takes
+	// part in person > scene > workspace below all the same.
 	f.setCredential(t, f.global, contextcap.ScopeScene, ctxcapScene, "scene-global-secret")
 	f.setCredential(t, f.global, contextcap.ScopePerson, ctxcapStaff, "person-global-secret")
 	f.setCredential(t, f.scene, contextcap.ScopeScene, ctxcapScene, "scene-connector-secret")
@@ -932,4 +922,23 @@ func TestContextCapabilitiesSkipsTasksDispatchedUnderEarlierBinding(t *testing.T
 	newer := f.task(t, group)
 	newer.CreatedAt = pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true}
 	expectLayers("created after the rebind", newer, true)
+
+	// A retry is created after the rebind but carries its first attempt's
+	// dispatch: the first attempt decides.
+	retryOf := func(name string, first db.AgentTaskQueue, firstCreated time.Time) {
+		t.Helper()
+		if _, err := testPool.Exec(context.Background(), `UPDATE agent_task_queue SET created_at = $2 WHERE id = $1`, first.ID, firstCreated); err != nil {
+			t.Fatal(err)
+		}
+		var id string
+		if err := testPool.QueryRow(context.Background(), `INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, context, retry_of_task_id, parent_task_id)
+			VALUES ($1, $2, 'running', 0, $3, $4, $4) RETURNING id::text`, uuidToString(f.agent), testRuntimeID, group, uuidToString(first.ID)).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		retry := db.AgentTaskQueue{ID: parseUUID(id), AgentID: f.agent, Status: "running", Context: group, RetryOfTaskID: first.ID, ParentTaskID: first.ID,
+			CreatedAt: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true}}
+		expectLayers(name, retry, firstCreated.After(time.Now()))
+	}
+	retryOf("retry of a task from before the rebind", f.task(t, group), time.Now().Add(-time.Hour))
+	retryOf("retry of a task from after the rebind", f.task(t, group), time.Now().Add(time.Minute))
 }

@@ -257,9 +257,8 @@ func contextCapCredentialViews(credentials []contextcap.Credential) []contextCap
 	return out
 }
 
-// contextCapMobileUser gates a mobile endpoint: 404 while the feature flag is
-// off, 401 without a valid user. It returns the canonical user id and marks
-// the response uncacheable.
+// contextCapMobileUser gates a mobile endpoint: 401 without a valid user. It
+// returns the canonical user id and marks the response uncacheable.
 func (h *Handler) contextCapMobileUser(w http.ResponseWriter, r *http.Request) (string, bool) {
 	w.Header().Set("Cache-Control", "no-store")
 	raw, ok := requireUserID(w, r)
@@ -1250,13 +1249,17 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	global, err := h.authorizedConnectors(ctx, a.WorkspaceID, a.ID)
+	// Every granted connector is a 通用能力, including one that waits for an
+	// account: a scope may connect its own.
+	global, err := h.grantedConnectors(ctx, a.WorkspaceID, a.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "connector lookup failed")
 		return
 	}
+	grantedIDs := make([]string, 0, len(global))
 	for _, c := range global {
 		resp.Global.Connectors = append(resp.Global.Connectors, contextCapConnectorRefDTO{ID: c.ID, Name: c.Name, CatalogSlug: c.CatalogSlug})
+		grantedIDs = append(grantedIDs, c.ID)
 	}
 	if resp.Global.Skills, err = h.contextCapSkills(ctx, `SELECT s.id::text, s.name, s.description
 		FROM skill s JOIN agent_skill ask ON ask.skill_id = s.id
@@ -1265,16 +1268,19 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "skill lookup failed")
 		return
 	}
-	if len(offers.ConnectorIDs) > 0 {
-		offered, err := h.queryInternalConnectors(ctx, `SELECT `+internalConnectorSelect+`
+	if scopeIDs := scopeConnectorIDs(offers.ConnectorIDs, grantedIDs); len(scopeIDs) > 0 {
+		listed, err := h.queryInternalConnectors(ctx, `SELECT `+internalConnectorSelect+`
 			FROM internal_connector c
 			WHERE c.workspace_id=$1::uuid AND c.id = ANY($2::uuid[]) AND c.enabled
-			ORDER BY c.name, c.id`, a.WorkspaceID, offers.ConnectorIDs)
+			ORDER BY c.name, c.id`, a.WorkspaceID, scopeIDs)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "connector lookup failed")
 			return
 		}
-		for _, c := range offered {
+		for _, c := range listed {
+			if !offers.Contains(contextcap.ResourceConnector, c.ID) && !takesScopeAccount(c) {
+				continue
+			}
 			accepts := connectorAcceptsBearer(c.AuthMode, c.CatalogSlug)
 			usesCredential := c.AuthMode == "bearer" || c.AuthMode == "oauth"
 			tools := c.AllowedTools
@@ -1561,15 +1567,14 @@ func (h *Handler) PutContextConfigBinding(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"binding": contextCapBindingView(binding)})
 }
 
-// contextCapCredentialConnector checks that a scene or person credential may
-// be stored for connectorID: an enabled connector of the agent's workspace
-// that accepts a pasted token (a Bearer connector, or an official app that
-// allows a Personal Access Token) and is offered to the agent or, for a
-// person credential only, globally granted to it. A scene credential serves
-// every member's run in the group, so it needs the admin's opt-in by offering
-// the connector; bringing a personal token for a globally granted connector
-// only affects the caller's own runs. It returns the connector's catalog slug
-// ("" for custom connectors), or writes the error response and returns false.
+// contextCapCredentialConnector checks that an org, scene or person
+// credential may be stored for connectorID: an enabled connector of the
+// agent's workspace that accepts a pasted token (a Bearer connector, or an
+// official app that allows a Personal Access Token) and is offered to the
+// agent or globally granted to it. A granted connector is a 通用能力, on in
+// every scope, and each scope may bring its own account for it. It returns
+// the connector's catalog slug ("" for custom connectors), or writes the
+// error response and returns false.
 func (h *Handler) contextCapCredentialConnector(w http.ResponseWriter, r *http.Request, a contextCapAgent, scopeType, connectorID string) (string, bool) {
 	ctx := r.Context()
 	var authMode, catalogSlug string
@@ -1592,8 +1597,7 @@ func (h *Handler) contextCapCredentialConnector(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "offer lookup failed")
 		return "", false
 	}
-	usable := offered || (granted && scopeType == contextcap.ScopePerson)
-	if !enabled || !usable {
+	if !enabled || !(offered || granted) {
 		writeError(w, http.StatusForbidden, "this connector is not available for the agent")
 		return "", false
 	}
@@ -1842,4 +1846,28 @@ func (h *Handler) contextCapGroupSceneTitle(ctx context.Context, workspaceID, ag
 		return "", false, err
 	}
 	return strings.TrimSpace(title), true, nil
+}
+
+// scopeConnectorIDs is the connectors an org, scene or person scope
+// configures: the offered ones (公开给场域), which the scope switches on
+// itself, and the agent's granted ones (通用能力), on in every scope, which a
+// scope may only give its own account. Callers drop a granted connector that
+// is not offered and takes no account (takesScopeAccount) once it is loaded.
+func scopeConnectorIDs(offered, granted []string) []string {
+	ids := make([]string, 0, len(offered)+len(granted))
+	seen := make(map[string]bool, len(offered)+len(granted))
+	for _, list := range [][]string{offered, granted} {
+		for _, id := range list {
+			if !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
+}
+
+// takesScopeAccount reports whether a scope can bring its own account for c.
+func takesScopeAccount(c internalConnector) bool {
+	return c.AuthMode == "bearer" || c.AuthMode == "oauth"
 }

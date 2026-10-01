@@ -22,8 +22,9 @@ function useStatus(app: ConnectedApp): { tone: StatusTone; label: string } {
     return { tone: "muted", label: t(($) => $.tab_body.connectors.disabled_in_workspace) };
   }
   if (app.globalEnabled) {
-    // Granted, but without a usable shared account nobody's run gets it.
-    if (!app.sharedAccount.connected) {
+    // A 通用能力 runs on the shared account or on a group's or person's
+    // own; with no account at all nobody's run gets it.
+    if (!hasConnectedAccount(app)) {
       return { tone: "warning", label: t(($) => $.tab_body.connected_apps.status_everyone_no_account) };
     }
     return app.tools.allowed > 0

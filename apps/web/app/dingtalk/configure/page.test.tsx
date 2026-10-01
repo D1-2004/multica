@@ -253,6 +253,38 @@ describe("DingTalk configure route", () => {
     expect(pageProps.current?.initialScope).toBeUndefined();
   });
 
+  it("keeps a connect outcome and its scope across a DingTalk sign-in the page needs first", async () => {
+    localStorage.setItem(
+      "multica_context_config_connect",
+      JSON.stringify({ agent: "agent-1", scope_type: "person", scope_key: "staff-1", saved_at: Date.now() }),
+    );
+    mockSearchParams.current = new URLSearchParams({ agent: "agent-1", connected: "github" });
+    const first = renderPage();
+    await screen.findByTestId("context-config-page");
+
+    // The session turns out to be rejected: the page signs in again.
+    await act(async () => {
+      pageProps.current?.onAuthRequired();
+    });
+    await waitFor(() => expect(mockReplaceCurrentPage).toHaveBeenCalledOnce());
+    const state = new URL(mockReplaceCurrentPage.mock.calls[0]![0] as string).searchParams.get("state") ?? "";
+    first.unmount();
+    pageProps.current = null;
+
+    mockSearchParams.current = new URLSearchParams({ authCode: "code-1", state });
+    renderPage();
+
+    expect(await screen.findByTestId("context-config-page")).toBeInTheDocument();
+    expect(mockDingTalkLogin).toHaveBeenCalledWith("code-1");
+    expect(pageProps.current).toMatchObject({
+      initialAgentId: "agent-1",
+      initialScope: { scopeType: "person", scopeKey: "staff-1" },
+      connectResult: { kind: "connected", slug: "github" },
+    });
+    expect(localStorage.getItem("multica_context_config_connect")).toBeNull();
+    expect(localStorage.getItem("multica_context_config_connect_result")).toBeNull();
+  });
+
   it("does not loop back to DingTalk when a fresh session is still rejected", async () => {
     sessionStorage.setItem("multica_context_config_oauth_state", "state-1");
     mockSearchParams.current = new URLSearchParams({ authCode: "code-1", state: "state-1" });

@@ -277,9 +277,15 @@ func TestContextCapabilitiesMobileGrantsGateReadsAndWrites(t *testing.T) {
 			if c.AcceptsCredential || c.CredentialRequired {
 				t.Fatalf("auth none connector offer=%+v", c)
 			}
+		case f.global:
+			// Granted, not offered (通用能力): listed so the group and the
+			// person can bring their own account.
+			if !c.AcceptsCredential || c.CredentialRequired {
+				t.Fatalf("granted connector=%+v", c)
+			}
 		}
 	}
-	if len(offered) != 2 || !offered[f.scene] || !offered[f.person] || len(detail.Offers.Skills) != 1 || detail.Offers.Skills[0].ID != f.skillScene {
+	if len(offered) != 3 || !offered[f.scene] || !offered[f.person] || !offered[f.global] || len(detail.Offers.Skills) != 1 || detail.Offers.Skills[0].ID != f.skillScene {
 		t.Fatalf("offers=%+v", detail.Offers)
 	}
 	if detail.Person == nil || detail.Person.ScopeKey != ctxcapStaff || detail.Person.Source != contextcap.GrantSourceAgentLink ||
@@ -410,11 +416,10 @@ func TestContextCapabilitiesMobileCredentialsAreWriteOnly(t *testing.T) {
 		t.Fatal("scene connector mounted with another person's credential")
 	}
 
-	// A globally granted Bearer connector that is not offered accepts a
-	// personal token (it only serves Alice's own runs) but no scene token,
-	// which would serve every member's runs without the admin's opt-in.
+	// A globally granted Bearer connector (通用能力) that is not offered
+	// takes a personal token and a group token alike.
 	ctxcapExpectStatus(t, put(alice, contextcap.ScopePerson, ctxcapStaff, f.global, "person-secret-for-global"), http.StatusOK, "global connector person credential")
-	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.global, "scene-secret-for-global"), http.StatusForbidden, "global connector scene credential")
+	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.global, "scene-secret-for-global"), http.StatusOK, "global connector scene credential")
 	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.scene, "scene-secret-for-scene"), http.StatusOK, "offered connector scene credential")
 	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.person, "whatever-bearer"), http.StatusBadRequest, "auth none connector")
 	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.notOffered, "whatever-bearer"), http.StatusForbidden, "not offered connector")
@@ -431,7 +436,11 @@ func TestContextCapabilitiesMobileCredentialsAreWriteOnly(t *testing.T) {
 	}
 	var scene ctxcapSceneDetail
 	ctxcapDecode(t, w, &scene)
-	if len(scene.Credentials) != 1 || scene.Credentials[0].ConnectorID != f.scene || scene.Credentials[0].Hint != "••••cene" {
+	hints := map[string]string{}
+	for _, credential := range scene.Credentials {
+		hints[credential.ConnectorID] = credential.Hint
+	}
+	if len(hints) != 2 || hints[f.scene] != "••••cene" || hints[f.global] != "••••obal" {
 		t.Fatalf("scene credentials=%+v", scene.Credentials)
 	}
 

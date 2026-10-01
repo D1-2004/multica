@@ -404,9 +404,8 @@ func canonicalOAuthUUID(raw string) (string, error) {
 // still resolve to exactly this scope and allow connecting there (a live
 // grant, or managing the agent for a group scene the agent has seen; never a
 // manager for a person), and the connector must be enabled and offered to
-// the agent or, for a person scope, globally granted to it (the PUT
-// credential rule, see contextCapCredentialConnector). Errors are
-// *connectorOAuthError.
+// or globally granted to the agent (the PUT credential rule, see
+// contextCapCredentialConnector). Errors are *connectorOAuthError.
 func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connectorOAuthScope, c internalConnector) error {
 	forbidden := oauthStartError(http.StatusForbidden, connectOAuthErrForbidden, "you are not allowed to connect an account for this scope")
 	if scope.ScopeType == connectorOAuthScopeWorkspace {
@@ -465,9 +464,6 @@ func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connec
 	}
 	if offered {
 		return nil
-	}
-	if scope.ScopeType != contextcap.ScopePerson {
-		return forbidden
 	}
 	var granted bool
 	if err := h.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM internal_connector_agent WHERE connector_id = $1::uuid AND workspace_id = $2::uuid AND agent_id = $3::uuid)`,
@@ -805,7 +801,7 @@ func (h *Handler) storeConnectorOAuthCredential(ctx context.Context, scope conne
 
 // enableConnectedScopeBinding turns the connector on for the scene or person
 // scope that just connected an account ("连接" means "use it here"). It only
-// applies to offered connectors; a person connecting a globally granted,
+// applies to offered connectors; a scope connecting a globally granted,
 // unoffered connector already gets it through the global grant. Failures are
 // logged: the credential is stored and the toggle stays available.
 func (h *Handler) enableConnectedScopeBinding(ctx context.Context, scope connectorOAuthScope) {

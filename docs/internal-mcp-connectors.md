@@ -407,16 +407,24 @@ are kept for the tokens they issued).
   `OAuth`, never token material. Scene and personal credential views carry
   `kind` (`oauth` or `bearer`); the admin list carries `credential_account`.
 - Refresh happens when a token expires within 60 seconds, and after any
-  upstream 401. It runs under a row lock (`SELECT … FOR UPDATE` in its own
-  transaction; re-open, refresh only if still stale, reseal, commit), so
-  concurrent relay calls on all replicas refresh once. An upstream 401 causes
+  upstream 401. It runs under a row lock (`SELECT … FOR UPDATE NOWAIT` in
+  its own transaction; re-open, refresh only if still stale, reseal,
+  commit), so concurrent relay calls on all replicas refresh once. Nothing
+  queues on that lock while a provider answers: callers in one process share
+  one refresh (singleflight per credential and token), a caller that finds
+  the row locked by another replica keeps using its token while it is still
+  valid, and one whose token expired or was rejected polls every 250 ms,
+  outside any transaction, until the other refresh lands (or the 30-second
+  bound). A refresh that failed (provider error, network) is not tried again
+  by following calls for 30 seconds: they keep a still-valid token, and an
+  expired one fails fast. So a slow or failing token endpoint holds at most
+  one pooled connection per credential and replica. An upstream 401 causes
   one forced refresh and one retry, because a 401 proves the call did not
-  run. A pasted PAT is never retried. A transient refresh failure keeps
-  using a token that is still valid. The locked section (lock wait, token
-  request, reseal, commit; bounded to 30 seconds) runs detached from the
-  relay request: providers that rotate refresh tokens invalidate the old one
-  as soon as they answer, so an answer must be stored even when the call
-  that triggered it was cancelled.
+  run. A pasted PAT is never retried. The refresh (token request, reseal,
+  commit; bounded to 30 seconds) runs detached from the relay request:
+  providers that rotate refresh tokens invalidate the old one as soon as
+  they answer, so an answer must be stored even when the call that
+  triggered it was cancelled.
 - `invalid_grant` deletes the credential (a workspace credential is
   cleared). The UI then shows it as not connected, and the Agent gets a tool
   error asking the user to reconnect (audit outcome `reconnect_required`). An
@@ -511,6 +519,12 @@ The mobile start endpoint and the new detail fields are in
 - Every replica needs the same connector credential key, `GITHUB_APP_*`
   variables and app origin, because a state, registration or credential
   created on one replica is completed or refreshed on another.
+- Rolling window in production: the previous binary read
+  `features.internal_mcp_connectors` and defaulted it off outside
+  pre-release; this one has no flag. Set that Diamond key to `true` in
+  production before the release so old replicas also serve the relay calls
+  of connectors that new replicas mount (otherwise 404 until the rollout
+  completes). The new binary ignores the key.
 - Callback forwarding rollout: from the first pre-release deploy of this
   binary, pre-release connects call back to production, so they complete
   only once production runs the forwarder (`internal_connector_oauth_forward.go`)

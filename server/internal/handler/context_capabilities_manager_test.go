@@ -101,7 +101,7 @@ func TestContextCapabilitiesManagerAccess(t *testing.T) {
 	for _, scene := range detail.Scenes {
 		scenes[scene.ScopeKey] = scene
 	}
-	if detail.Access != contextCapAccessManager || detail.Person != nil || detail.JSAPIAvailable || len(detail.Offers.Connectors) != 2 {
+	if detail.Access != contextCapAccessManager || detail.Person != nil || detail.JSAPIAvailable || len(detail.Offers.Connectors) != 3 {
 		t.Fatalf("manager detail = %+v", detail)
 	}
 	if got := scenes[ctxcapScene]; got.Source != contextCapSourceManager || got.Kind != "group" || got.ExpiresAt != "" {
@@ -233,7 +233,7 @@ func TestContextCapabilitiesManagerAccess(t *testing.T) {
 	if len(scene.Credentials) != 1 || scene.Credentials[0].ConnectorID != f.scene || scene.Credentials[0].Hint != "••••oken" {
 		t.Fatalf("manager scene credentials = %+v", scene.Credentials)
 	}
-	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, credentialsPath, testUserID, credential(contextcap.ScopeScene, ctxcapScene, f.global)), http.StatusForbidden, "manager, scene credential for an unoffered connector")
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, credentialsPath, testUserID, credential(contextcap.ScopeScene, ctxcapScene, f.notOffered)), http.StatusForbidden, "manager, scene credential for a connector neither offered nor granted")
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, credentialsPath, testUserID, credential(contextcap.ScopePerson, ctxcapStaff, f.global)), http.StatusForbidden, "manager, person credential")
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, credentialsPath, member, credential(contextcap.ScopeScene, ctxcapScene, f.scene)), http.StatusForbidden, "plain member credential")
 	// A 1:1 chat's credentials are its person's: a manager may not connect

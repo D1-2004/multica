@@ -47,7 +47,7 @@ type fakeProvider struct {
 	registrations     int
 	codeExchanges     int
 	refreshRequests   int
-	refreshMode       string // "" or "invalid_grant"
+	refreshMode       string // "", "invalid_grant" or "error" (HTTP 500)
 	refreshDelay      time.Duration
 	nextToken         int
 	initializes       int
@@ -161,6 +161,10 @@ func (p *fakeProvider) token(w http.ResponseWriter, r *http.Request) {
 		delay, mode := p.refreshDelay, p.refreshMode
 		p.mu.Unlock()
 		time.Sleep(delay)
+		if mode == "error" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		if mode == "invalid_grant" {
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": "invalid_grant", "error_description": "refresh token " + r.Form.Get("refresh_token") + " revoked"})
@@ -801,16 +805,20 @@ func TestCatalogConnectorOAuthStartAndCallbackAuthorization(t *testing.T) {
 	if err := start(person, ""); status(err) != http.StatusForbidden {
 		t.Fatalf("person grant, connector neither offered nor granted: %v", err)
 	}
-	f.grantGlobally(t, c.ID)
-	if err := start(person, ""); err != nil {
-		t.Fatalf("person with a globally granted connector: %v", err)
-	}
 	if err := start(scene, ""); status(err) != http.StatusForbidden {
-		t.Fatalf("scene connect needs an offered connector: %v", err)
+		t.Fatalf("scene grant, connector neither offered nor granted: %v", err)
 	}
 	f.offer(t, c.ID)
 	if err := start(scene, ""); err != nil {
 		t.Fatalf("scene with offer: %v", err)
+	}
+	f.offer(t)
+	f.grantGlobally(t, c.ID)
+	if err := start(person, ""); err != nil {
+		t.Fatalf("person with a globally granted connector: %v", err)
+	}
+	if err := start(scene, ""); err != nil {
+		t.Fatalf("scene with a globally granted connector: %v", err)
 	}
 	outsider := f.scope(c.ID, connectorOAuthScopeWorkspace, "")
 	outsider.UserID = uuid.NewString()

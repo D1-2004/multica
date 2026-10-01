@@ -72,7 +72,7 @@ function renderSection(props: Partial<React.ComponentProps<typeof ContextOffersS
   render(
     <I18nProvider locale="en" resources={{ en: { common: enCommon, agents: enAgents } }}>
       <QueryClientProvider client={client}>
-        <ContextOffersSection agentId="agent-1" wsId="ws-1" {...props} />
+        <ContextOffersSection agentId="agent-1" wsId="ws-1" commonSkillIds={[]} {...props} />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -116,19 +116,27 @@ describe("ContextOffersSection", () => {
   it("lists the skill library with usage counts for offered skills, never connectors", async () => {
     renderSection();
 
-    const report = await screen.findByRole("switch", { name: "Allow Weekly report in scenes and for people" });
+    const report = await screen.findByRole("switch", { name: copy.toggle_aria.replace("{{name}}", "Weekly report") });
     expect(report).toBeChecked();
     expect(screen.getByText("Scenes: 1 · People: 0")).toBeInTheDocument();
-    expect(screen.getByRole("switch", { name: "Allow Triage in scenes and for people" })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: copy.toggle_aria.replace("{{name}}", "Triage") })).not.toBeChecked();
     // Connector offers are switched per connector in the 连接器 tab.
     expect(screen.queryByText("Wiki")).not.toBeInTheDocument();
+  });
+
+  it("leaves out the agent's 通用能力 skills unless an earlier offer is left to withdraw", async () => {
+    renderSection({ commonSkillIds: ["skill-triage", "skill-report"] });
+
+    // skill-report is offered: still listed so the offer can be withdrawn.
+    expect(await screen.findByRole("switch", { name: copy.toggle_aria.replace("{{name}}", "Weekly report") })).toBeChecked();
+    expect(screen.queryByText("Triage")).not.toBeInTheDocument();
   });
 
   it("offers a skill at once and keeps the connector part unchanged", async () => {
     const user = userEvent.setup();
     renderSection();
 
-    await user.click(await screen.findByRole("switch", { name: "Allow Triage in scenes and for people" }));
+    await user.click(await screen.findByRole("switch", { name: copy.toggle_aria.replace("{{name}}", "Triage") }));
 
     await waitFor(() =>
       expect(mocks.set).toHaveBeenCalledWith("ws-1", "agent-1", {
@@ -142,7 +150,7 @@ describe("ContextOffersSection", () => {
     const user = userEvent.setup();
     renderSection();
 
-    await user.click(await screen.findByRole("switch", { name: "Allow Weekly report in scenes and for people" }));
+    await user.click(await screen.findByRole("switch", { name: copy.toggle_aria.replace("{{name}}", "Weekly report") }));
     expect(mocks.set).not.toHaveBeenCalled();
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText("It turns off at once wherever it is on (scenes: 1, people: 0).")).toBeInTheDocument();

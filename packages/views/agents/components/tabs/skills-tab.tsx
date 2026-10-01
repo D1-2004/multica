@@ -247,7 +247,7 @@ export function SkillsTab({
       </CapabilitySection>
 
       {canEdit ? (
-        <ContextOffersSection agentId={agent.id} wsId={wsId} />
+        <ContextOffersSection agentId={agent.id} wsId={wsId} commonSkillIds={agent.skills.filter((skill) => skill.enabled !== false).map((skill) => skill.id)} />
       ) : null}
 
       <CapabilitySection

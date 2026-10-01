@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 )
@@ -103,6 +104,103 @@ func TestCatalogConnectorRefreshSurvivesCallerCancellation(t *testing.T) {
 	}
 	if stored.OAuth.ClientID != "gh-client" {
 		t.Fatalf("refreshed token client = %q", stored.OAuth.ClientID)
+	}
+}
+
+// A refresh never queues on the credential's row lock while another replica
+// asks the provider: a caller whose token still works keeps using it, one
+// that needs the new token polls for it outside any transaction. A failed
+// refresh is not retried by every following call.
+func TestCatalogConnectorRefreshDoesNotQueueOnTheRowLock(t *testing.T) {
+	f := newCatalogFixture(t)
+	ctx := context.Background()
+	c := f.create(t, f.gh)
+	key := f.personKey(c.ID)
+	resolve := func() internalConnector {
+		t.Helper()
+		credential, err := contextcap.GetCredential(ctx, testPool, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		secret, err := contextcap.OpenCredentialSecret(f.box, key, credential.Ciphertext)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolved := c
+		resolved.setResolvedSecret(secret, contextcap.ScopePerson, key)
+		return resolved
+	}
+	refreshes := func() int {
+		_, _, n, _ := f.provider.counts()
+		return n
+	}
+	otherReplica := func() pgx.Tx {
+		t.Helper()
+		tx, err := testPool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := contextcap.LockCredential(ctx, tx, key); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		return tx
+	}
+
+	// The token still works: the caller does not wait for the other
+	// replica's refresh.
+	f.sealPersonOAuth(t, c.ID, contextcap.OAuthToken{AccessToken: "soon-access", RefreshToken: "soon-refresh", ExpiresAt: time.Now().Add(10 * time.Second).Unix(), Account: "octo"})
+	resolved := resolve()
+	t.Cleanup(func() { connectorRefreshes.clear(connectorRefreshKey(&resolved)) })
+	other := otherReplica()
+	started := time.Now()
+	token, err := f.h.freshConnectorToken(ctx, &resolved, "")
+	_ = other.Rollback(ctx)
+	if err != nil || token != "soon-access" || time.Since(started) > 2*time.Second || refreshes() != 0 {
+		t.Fatalf("locked refresh with a working token = %q %v after %s, refreshes %d", token, err, time.Since(started), refreshes())
+	}
+
+	// The token expired: the caller picks up the other replica's result
+	// once it commits, without a token request of its own.
+	f.sealPersonOAuth(t, c.ID, contextcap.OAuthToken{AccessToken: "expired-access", RefreshToken: "expired-refresh", ExpiresAt: time.Now().Add(-time.Minute).Unix(), Account: "octo"})
+	resolved = resolve()
+	other = otherReplica()
+	sealed, err := contextcap.SealOAuthCredential(f.box, key, contextcap.OAuthToken{AccessToken: "other-replica-access", RefreshToken: "other-replica-refresh",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(), Account: "octo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := contextcap.ReplaceCredentialSecret(ctx, other, key, sealed, contextcap.OAuthHint("octo")); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		_ = other.Commit(context.Background())
+	}()
+	token, err = f.h.freshConnectorToken(ctx, &resolved, "")
+	if err != nil || token != "other-replica-access" || refreshes() != 0 {
+		t.Fatalf("expired token behind another replica's refresh = %q %v, refreshes %d", token, err, refreshes())
+	}
+
+	// The provider fails: the working token is used and the next calls do
+	// not ask again until the backoff passes.
+	f.provider.mu.Lock()
+	f.provider.refreshMode = "error"
+	f.provider.mu.Unlock()
+	f.sealPersonOAuth(t, c.ID, contextcap.OAuthToken{AccessToken: "soon-access-2", RefreshToken: "soon-refresh-2", ExpiresAt: time.Now().Add(10 * time.Second).Unix(), Account: "octo"})
+	for i := 0; i < 3; i++ {
+		resolved = resolve()
+		if token, err := f.h.freshConnectorToken(ctx, &resolved, ""); err != nil || token != "soon-access-2" {
+			t.Fatalf("call %d with a failing provider = %q %v", i, token, err)
+		}
+	}
+	if refreshes() != 1 {
+		t.Fatalf("failing provider asked %d times, want 1", refreshes())
+	}
+	f.sealPersonOAuth(t, c.ID, contextcap.OAuthToken{AccessToken: "expired-access-2", RefreshToken: "expired-refresh-2", ExpiresAt: time.Now().Add(-time.Minute).Unix(), Account: "octo"})
+	resolved = resolve()
+	if _, err := f.h.freshConnectorToken(ctx, &resolved, ""); !errors.Is(err, errConnectorRefreshBackoff) || refreshes() != 1 {
+		t.Fatalf("expired token during the backoff = %v, refreshes %d", err, refreshes())
 	}
 }
 

@@ -51,6 +51,7 @@ func scenesRouter(h *Handler) http.Handler {
 		r.Put("/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.PutAgentContextCredential)
 		r.Delete("/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.DeleteAgentContextCredential)
 		r.Post("/{orgId}/context/{scopeType}/{scopeKey}/connections/start", h.StartAgentContextConnection)
+		r.Delete("/{orgId}/context/{scopeType}/{scopeKey}/grants", h.RevokeAgentContextGrants)
 	})
 	return r
 }
@@ -329,7 +330,9 @@ func TestAgentContextNodePromptsAndBindings(t *testing.T) {
 	if enabled := ctxNodeEnabled(node); len(enabled) != 2 || !enabled[f.scene] || !enabled[f.skillScene] {
 		t.Fatalf("node switches=%v, want only the offered scene connector and skill", enabled)
 	}
-	if len(node.Connectors) != 2 || ctxNodeConnector(t, node, f.scene).AuthMode != "bearer" || ctxNodeConnector(t, node, f.person).AuthMode != "none" ||
+	// The offered connectors and the granted one (通用能力, for the group's own account).
+	if len(node.Connectors) != 3 || ctxNodeConnector(t, node, f.scene).AuthMode != "bearer" || ctxNodeConnector(t, node, f.person).AuthMode != "none" ||
+		!ctxNodeConnector(t, node, f.global).Global ||
 		len(node.Skills) != 1 || node.Skills[0].ID != f.skillScene {
 		t.Fatalf("node offers connectors=%+v skills=%+v", node.Connectors, node.Skills)
 	}

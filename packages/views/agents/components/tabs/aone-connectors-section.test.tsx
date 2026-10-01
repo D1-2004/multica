@@ -86,7 +86,7 @@ function caps(connectorIds: string[]): AgentContextCapabilities {
       {
         scopeKey: "cid-1",
         scopeTitle: "Sales",
-        bindings: [{ resourceType: "connector", resourceId: knowledge.id, enabled: true, shareInGroups: false }],
+        bindings: [{ resourceType: "connector", resourceId: search.id, enabled: true, shareInGroups: false }],
         credentialCount: 0,
       },
     ],
@@ -146,13 +146,18 @@ describe("AoneConnectorsSection for workspace admins", () => {
     expect(screen.queryByRole("listitem", { name: "GitHub" })).not.toBeInTheDocument();
     expect(screen.queryByRole("listitem", { name: "Billing" })).not.toBeInTheDocument();
 
+    // A granted connector is a 通用能力: no 公开给场域 switch. Only an
+    // offered-only one has it.
     await waitFor(() =>
-      expect(within(row).getByRole("switch", { name: "Let groups and people turn on Knowledge" })).toBeChecked(),
+      expect(
+        within(offeredOnly).getByRole("switch", { name: copy.offer_switch_aria.replace("{{name}}", "Search") }),
+      ).toBeChecked(),
     );
-    expect(within(screen.getByRole("listitem", { name: "Wiki" })).getByRole("switch")).not.toBeChecked();
+    expect(within(row).queryByRole("switch")).not.toBeInTheDocument();
+    expect(within(screen.getByRole("listitem", { name: "Wiki" })).queryByRole("switch")).not.toBeInTheDocument();
     // One row per connector: the short switch label and an icon button for
     // removal, no hint paragraph or extra strip.
-    expect(within(row).getByText(copy.offer_switch)).toHaveAttribute("aria-hidden", "true");
+    expect(within(offeredOnly).getByText(copy.offer_switch)).toHaveAttribute("aria-hidden", "true");
     expect(within(row).getByRole("button", { name: "Remove Knowledge" })).not.toHaveTextContent(copy.remove);
     expect(screen.getByRole("link", { name: copy.aone_manage })).toHaveAttribute("href", "/acme/internal-connectors");
   });
@@ -172,29 +177,23 @@ describe("AoneConnectorsSection for workspace admins", () => {
     expect(within(screen.getByRole("listitem", { name: "Wiki" })).getByText(copy.status_missing_credential)).toBeInTheDocument();
   });
 
-  it("offers a connector to groups and people at once", async () => {
-    const user = userEvent.setup();
+  it("does not report a missing credential for a granted connector that uses scoped credentials", async () => {
+    // Granted, no workspace credential, but groups and people bring their
+    // own (credential_optional): the library shows it as enabled too.
+    const scoped = { ...wiki, id: "88888888-8888-4888-8888-888888888888", name: "Scoped", credentialOptional: true };
+    mocks.list.mockResolvedValue([knowledge, scoped]);
     renderSection();
 
-    const row = await screen.findByRole("listitem", { name: "Wiki" });
-    const toggle = within(row).getByRole("switch");
-    // Base UI marks a disabled switch with aria-disabled.
-    await waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled", "true"));
-    await user.click(toggle);
-
-    await waitFor(() =>
-      expect(mocks.setOffers).toHaveBeenCalledWith("ws-1", "agent-1", {
-        connectorIds: [knowledge.id, search.id, wiki.id],
-        skillIds: ["skill-1"],
-      }),
-    );
+    const row = await screen.findByRole("listitem", { name: "Scoped" });
+    expect(within(row).getByText(copy.status_enabled)).toBeInTheDocument();
+    expect(within(row).queryByText(copy.status_missing_credential)).not.toBeInTheDocument();
   });
 
   it("asks before taking away an offer that scenes use", async () => {
     const user = userEvent.setup();
     renderSection();
 
-    const row = await screen.findByRole("listitem", { name: "Knowledge" });
+    const row = await screen.findByRole("listitem", { name: "Search" });
     const toggle = within(row).getByRole("switch");
     // Base UI marks a disabled switch with aria-disabled.
     await waitFor(() => expect(toggle).not.toHaveAttribute("aria-disabled", "true"));
@@ -206,7 +205,7 @@ describe("AoneConnectorsSection for workspace admins", () => {
 
     await waitFor(() =>
       expect(mocks.setOffers).toHaveBeenCalledWith("ws-1", "agent-1", {
-        connectorIds: [search.id],
+        connectorIds: [knowledge.id],
         skillIds: ["skill-1"],
       }),
     );
@@ -264,11 +263,14 @@ describe("AoneConnectorsSection for agent owners who are not admins", () => {
     renderSection({ isAdmin: false });
 
     const row = await screen.findByRole("listitem", { name: "Knowledge" });
-    expect(within(row).getByRole("switch")).toHaveAttribute("aria-disabled", "true");
-    expect(within(row).getByRole("switch")).toBeChecked();
-    // Offered-only Aone connectors come from the offer catalog.
+    // Granted: a 通用能力 without a 公开给场域 switch.
+    expect(within(row).queryByRole("switch")).not.toBeInTheDocument();
+    // Offered-only Aone connectors come from the offer catalog, switched
+    // read only.
     const search = screen.getByRole("listitem", { name: "Search" });
     expect(within(search).getByText(copy.status_offer_only)).toBeInTheDocument();
+    expect(within(search).getByRole("switch")).toHaveAttribute("aria-disabled", "true");
+    expect(within(search).getByRole("switch")).toBeChecked();
     expect(screen.queryByRole("listitem", { name: "GitHub" })).not.toBeInTheDocument();
     expect(screen.queryByRole("listitem", { name: "Billing" })).not.toBeInTheDocument();
     expect(screen.getByText(copy.aone_admin_only)).toBeInTheDocument();
