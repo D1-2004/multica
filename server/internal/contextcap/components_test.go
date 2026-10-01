@@ -141,4 +141,16 @@ func TestPromptComponentEnabledStore(t *testing.T) {
 	if merged := MergeContext(layers...); len(merged.Prompts) != 0 || merged.PromptBlock() != "" {
 		t.Fatalf("merged=%+v", merged)
 	}
+
+	// A client older than the switch omits it (KeepSwitch): an existing
+	// component keeps its stored switch, a new one starts enabled.
+	write.Components = []PromptComponentInput{
+		{Name: "on", Text: "edited by an old client", KeepSwitch: true},
+		{Name: "fresh", Order: 1, Text: "new", Disabled: true, KeepSwitch: true},
+	}
+	kept, err := ReplacePromptComponents(ctx, f.tx, write)
+	if err != nil || len(kept) != 2 || kept[0].Name != "on" || !kept[0].Disabled || kept[0].Text != "edited by an old client" ||
+		kept[1].Name != "fresh" || kept[1].Disabled {
+		t.Fatalf("kept=%+v err=%v", kept, err)
+	}
 }

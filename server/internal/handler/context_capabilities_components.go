@@ -87,7 +87,8 @@ type contextPromptInput struct {
 	Name  string `json:"name"`
 	Order int    `json:"order"`
 	Text  string `json:"text"`
-	// Enabled is the component's switch; omitted means enabled.
+	// Enabled is the component's switch. Omitted (a client older than the
+	// switch) keeps an existing component's switch; a new one is enabled.
 	Enabled *bool `json:"enabled"`
 }
 
@@ -99,6 +100,7 @@ func contextPromptComponents(w http.ResponseWriter, prompts []contextPromptInput
 	for _, prompt := range prompts {
 		components = append(components, contextcap.PromptComponentInput{
 			Name: prompt.Name, Order: prompt.Order, Text: prompt.Text, Disabled: prompt.Enabled != nil && !*prompt.Enabled,
+			KeepSwitch: prompt.Enabled == nil,
 		})
 	}
 	if _, err := contextcap.NormalizePromptComponents(components); err != nil {
