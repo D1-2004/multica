@@ -637,6 +637,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			agentmessagerouter.NewDBDispatchEndpointStore(queries),
 			endpointServiceConfig,
 		)
+		if endpointErr == nil {
+			// Native subscription accepts events under the endpoint namespace
+			// without the Router.
+			h.DispatchEndpoints = endpointService
+		}
 		if routerClientErr == nil && endpointErr == nil {
 			agentDispatchEndpoints = endpointService
 		}
@@ -940,6 +945,54 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				h.DWSEvents = source
 				dingtalkresponse.SetDecisionEventConnections(h.UserDecisions.Transport, source)
 			}
+			// Native subscriptions: execution identities that receive their
+			// own messages (group @-mentions and single chats) over DWS
+			// personal event subscriptions, on the gateway of the Agent
+			// Identity that issues their credentials (production, or staging
+			// for a deployment that reaches only the staging Agent Identity).
+			// runtime.use_dws_for_tag gates the source; the per-agent switch
+			// selects identities.
+			identityBase := signupConfig.FCE2B.AgentIdentityControlBaseURL
+			if agentIdentityControlBaseURLProvider != nil {
+				if live := agentIdentityControlBaseURLProvider(); live != "" {
+					identityBase = live
+				}
+			}
+			nativeEnvironment := handler.NativeDWSEnvironmentFor(identityBase)
+			handler.SetNativeDWSEnvironment(nativeEnvironment)
+			slog.Info("DWS native subscription gateway", "event", "dws_native_environment", "environment", nativeEnvironment)
+			native := sessions
+			native.CLI.MCPBaseURL, native.CLI.Environment = "", nativeEnvironment
+			// The stream is registered for the app the subscriptions name
+			// (the dws CLI's custom ticket mode).
+			native.CLI.StreamTicketMode = "custom"
+			identities := func(ctx context.Context) ([]dwsclient.Identity, error) {
+				rows, err := h.Queries.ListActiveDWSNativeSubscriptions(ctx)
+				ids := make([]dwsclient.Identity, 0, len(rows))
+				for _, row := range rows {
+					ids = append(ids, dwsclient.Identity{AgentID: util.UUIDToString(row.AgentID), UID: row.DwsUid, OrgID: row.OrgID})
+				}
+				return ids, err
+			}
+			nativeSource, err := dwseventsource.New(dwseventsource.Config{
+				Redis: rdb, Sessions: native, Mint: mint,
+				// v2: subscriptions name the token's app; the namespace is new so
+				// no record of an earlier app-less subscription is reused. A
+				// staging gateway keeps its records apart from production's.
+				Deployment: nativeSourceNamespace(nativeEnvironment) + strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+				// Native streams are new on DWS: log what arrives.
+				LogFrames: true,
+				Enabled:   opts.RuntimeConfig.useDWSForTag,
+				Consumers: []dwseventsource.Consumer{
+					{EventKey: dws.EventIMAt, Identities: identities, Handle: h.HandleDWSNativeEvent},
+					{EventKey: dws.EventIMAllSingleChats, Identities: identities, Handle: h.HandleDWSNativeEvent},
+				},
+			})
+			if err != nil {
+				slog.Error("DWS native subscription source disabled", "event", "dws_native_source_disabled", "error", err)
+			} else {
+				h.DWSNativeEvents = nativeSource
+			}
 		}
 	}
 	h.UserDecisions.NotifyAlert = func(alert userdecision.Alert) {
@@ -973,15 +1026,30 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		return raw, interpretation, err
 	}
 
-	if agentMessageRouterClient != nil {
+	// Managed responses serve Router dispatches and native subscription
+	// dispatches alike; the receipt sender tells their targets apart.
+	if agentMessageRouterClient != nil || h.DWSNativeEvents != nil {
 		h.DingTalkResponses = dingtalkresponse.NewService(pool, dingtalkresponse.NewDWSProvider(dingtalkresponse.DWSConfig{
 			AgentIdentity:   agentidentityhsf.NewClient(),
 			BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
 			BaseURLProvider: agentIdentityControlBaseURLProvider,
 			ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
 		}), handler.RouterResponseReceiptSender{Client: agentMessageRouterClient, Handler: h})
-		h.TaskCompletionWorker.ResponseActions = h
+		if h.TaskCompletionWorker != nil {
+			h.TaskCompletionWorker.ResponseActions = h
+		}
 		h.DingTalkResponses.OnSandboxDelivered = h.BindVerifiedDingTalkSend
+		// Native dispatches complete to their own target. The worker exists
+		// whenever managed responses do, so queued native callbacks drain
+		// even after runtime.use_dws_for_tag is switched off.
+		responses := h.DingTalkResponses
+		h.NativeCompletionWorker = agentmessagerouter.NewCompletionWorker(queries,
+			agentmessagerouter.NewNativeCallbackClient(func(ctx context.Context, callback string) (bool, error) {
+				route, err := responses.FindRoute(ctx, callback)
+				return route != nil, err
+			}), h.TaskService)
+		h.NativeCompletionWorker.ResponseActions = h
+		h.TaskService.CompletionNotifier = agentmessagerouter.CompletionNotifiers{h.TaskCompletionWorker, h.NativeCompletionWorker}
 	}
 	h.SceneMemoryStore = scenememory.NewStore(queries)
 	coordinator.SceneMemory = h.SceneMemoryStore
@@ -2051,8 +2119,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 	// Official app OAuth callback for dynamically registered clients (Notion,
 	// Linear, ...). No Multica session: the single-use state and the browser
-	// binding cookie set by the start response are the proof.
+	// binding cookie set by the start response are the proof. Provider
+	// consoles register only ConnectorOAuthCallbackPath. The legacy path is
+	// the same handler.
 	r.With(connectorOAuthCallbackRL).Get(handler.ConnectorOAuthCallbackPath, h.ConnectorOAuthCallback)
+	r.With(connectorOAuthCallbackRL).Get(handler.ConnectorOAuthCallbackLegacyPath, h.ConnectorOAuthCallback)
 	// Slack OAuth callback (no Multica auth in the path — it is hit by Slack's
 	// browser redirect; the workspace/agent/initiator are recovered from the
 	// sealed state). It exchanges the code, upserts the install, then bounces
@@ -2445,6 +2516,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/dingtalk/account-bindings/{agentId}/status", h.GetDingTalkAccountBindingStatus)
 					r.Post("/dingtalk/account-bindings/begin", h.BeginDingTalkAccountBinding)
 					r.Patch("/dingtalk/account-bindings/{agentId}/surface", h.UpdateDingTalkAccountBindingSurface)
+					r.Get("/dingtalk/account-bindings/{agentId}/native-subscription", h.GetDWSNativeSubscription)
+					r.Put("/dingtalk/account-bindings/{agentId}/native-subscription", h.SetDWSNativeSubscription)
+					r.Post("/dingtalk/account-bindings/{agentId}/message-route/manual", h.BindDingTalkMessageRouteManually)
 					r.Delete("/dingtalk/account-bindings/{agentId}", h.UnbindDingTalkAccountBinding)
 					r.Get("/agent-identity/github/status", h.GetAgentIdentityGitHubStatus)
 					r.Post("/agent-identity/github/oauth/start", h.BeginAgentIdentityGitHubOAuth)
@@ -3346,6 +3420,15 @@ func cloudRuntimeFleetURLFromEnv() string {
 		return url
 	}
 	return strings.TrimSpace(os.Getenv("MULTICA_FLEET_URL"))
+}
+
+// nativeSourceNamespace prefixes the native event source's Redis namespace:
+// production keeps the one its records already live in.
+func nativeSourceNamespace(environment string) string {
+	if environment == "production" {
+		return "native-v2:"
+	}
+	return "native-v2-" + environment + ":"
 }
 
 func agentIdentityControlBaseURLFromEnv() string {

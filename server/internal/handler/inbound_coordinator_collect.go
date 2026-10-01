@@ -66,6 +66,11 @@ func sameCoordinatorCollectKind(base, extra DispatchCommand) bool {
 	if !sameDingTalkResponsePolicy(base.ResponsePolicy, extra.ResponsePolicy) {
 		return false
 	}
+	// Native subscription and Router deliveries complete to different
+	// targets; one window never mixes them.
+	if isNativeDispatchCommand(base) != isNativeDispatchCommand(extra) {
+		return false
+	}
 	return coordinatorCollectKind(base) == coordinatorCollectKind(extra)
 }
 

@@ -12,20 +12,34 @@ import type {
   DingTalkAccountBindingsResponse,
   DingTalkBindingMode,
   DingTalkConversationSummary,
+  DingTalkManualMessageScope,
   DingTalkMessageRouteOutcome,
   DingTalkProcessingSurface,
+  DingTalkNativeStream,
 } from "@multica/core/types";
+import { errorCode } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   dingtalkAccountBindingsOptions,
   reusableDingTalkIdentitiesOptions,
   useReuseDingTalkIdentity,
   useBeginDingTalkAccountBinding,
+  useBindDingTalkMessageRouteManually,
   useDeleteDingTalkAccountBinding,
+  useSetDingTalkNativeSubscription,
+  dingtalkNativeSubscriptionStatusOptions,
   useUpdateDingTalkAccountBindingSurface,
 } from "@multica/core/dingtalk-account-bindings";
 import { Button } from "@multica/ui/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@multica/ui/components/ui/avatar";
+import { Input } from "@multica/ui/components/ui/input";
+import { Label } from "@multica/ui/components/ui/label";
+import {
+  NativeSelect,
+  NativeSelectOption,
+} from "@multica/ui/components/ui/native-select";
+import { Switch } from "@multica/ui/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
 import {
   Popover,
   PopoverContent,
@@ -53,10 +67,52 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
-import { useT } from "../../../i18n";
+import { useT, useTimeAgo } from "../../../i18n";
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
+}
+
+// DingTalk account (user) ids are positive decimal integers.
+const DINGTALK_DECIMAL_ID = /^[1-9][0-9]{0,19}$/;
+// An organization's corpId, the Router's tenant id; the numeric OrgID is not
+// accepted by the Router's subscription create.
+const DINGTALK_CORP_ID = /^ding[0-9A-Za-z]{8,64}$/;
+
+// Localizes the stable `code` the native-subscription and manual-binding
+// endpoints attach to failures; unknown codes fall back to the server text.
+function useNativeSubscriptionErrorMessage() {
+  const { t } = useT("agents");
+  return (error: unknown, fallback: string): string => {
+    switch (errorCode(error)) {
+      case "agent_binding_forbidden":
+        return t(($) => $.tab_body.integrations.dingtalk_account_permission_denied);
+      case "native_subscription_requires_identity":
+        return t(($) => $.tab_body.integrations.dingtalk_identity_native_subscription_requires_identity);
+      case "native_subscription_conflicts_with_message_binding":
+        return t(($) => $.tab_body.integrations.dingtalk_identity_native_subscription_blocked);
+      case "native_subscription_requires_managed_response":
+        return t(($) => $.tab_body.integrations.dingtalk_identity_native_subscription_requires_managed_response);
+      case "native_subscription_account_in_use":
+        return t(($) => $.tab_body.integrations.dingtalk_identity_native_subscription_account_in_use);
+      case "native_subscription_unavailable":
+        return t(($) => $.tab_body.integrations.dingtalk_identity_native_subscription_unavailable);
+      case "message_binding_conflicts_with_native_subscription":
+        return t(($) => $.tab_body.integrations.dingtalk_account_native_subscription_blocked);
+      case "operator_only":
+        return t(($) => $.tab_body.integrations.dingtalk_account_manual_operator_only);
+      case "binding_already_active":
+        return t(($) => $.tab_body.integrations.dingtalk_account_manual_already_active);
+      case "invalid_identity":
+        return t(($) => $.tab_body.integrations.dingtalk_account_manual_invalid_identity);
+      case "invalid_message_scope":
+        return t(($) => $.tab_body.integrations.dingtalk_account_manual_invalid_scope);
+      case "subscription_verify_failed":
+        return t(($) => $.tab_body.integrations.dingtalk_account_manual_verify_failed);
+      default:
+        return errorMessage(error, fallback);
+    }
+  };
 }
 
 function displayName(outcome: DingTalkAccountBindingOutcome, fallback: string): string {
@@ -480,6 +536,219 @@ function ReusableExecutionIdentity({ agentId }: { agentId: string }) {
   );
 }
 
+// The native subscription's event stream (WebSocket) as a status light: green
+// connected, amber connecting, red disconnected, grey when no stream can run
+// or the state is unknown. Details are on hover and focus.
+function NativeStreamIndicator({ stream }: { stream: DingTalkNativeStream | undefined }) {
+  const { t } = useT("agents");
+  const timeAgo = useTimeAgo();
+  const state = stream?.state ?? "unknown";
+  let label: string;
+  let dot: string;
+  switch (state) {
+    case "connected":
+      label = t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_connected);
+      dot = "bg-success";
+      break;
+    case "connecting":
+      label = t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_connecting);
+      dot = "animate-pulse bg-warning";
+      break;
+    case "disconnected":
+      label = t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_disconnected);
+      dot = "bg-destructive";
+      break;
+    case "unavailable":
+      label = t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_unavailable);
+      dot = "bg-muted-foreground/40";
+      break;
+    default:
+      label = t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_unknown);
+      dot = "bg-muted-foreground/40";
+  }
+  const details = [label];
+  if (state === "connected") {
+    details.push(stream?.lastEventAt
+      ? t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_last_event, {
+        when: timeAgo(stream.lastEventAt),
+      })
+      : t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_no_event));
+  } else if (stream?.lastConnectedAt) {
+    details.push(t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_last_connected, {
+      when: timeAgo(stream.lastConnectedAt),
+    }));
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            tabIndex={0}
+            // Tooltips are not announced: the accessible name carries the
+            // details too.
+            aria-label={details.join(" · ")}
+            data-testid="dingtalk-native-stream"
+            data-state={state}
+            className="inline-flex size-4 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        }
+      >
+        <span aria-hidden className={`size-2 rounded-full ${dot}`} />
+      </TooltipTrigger>
+      <TooltipContent className="flex-col items-start">
+        {details.map((line) => <p key={line}>{line}</p>)}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+// Operator-only form that binds the digital-employee message route by DingTalk
+// corpId/UID instead of the QR scan. The server re-checks operator access.
+function ManualMessageBinding({
+  agentId,
+  disabled,
+  rejectUnauthorizedOperation,
+}: {
+  agentId: string;
+  disabled: boolean;
+  rejectUnauthorizedOperation: () => boolean;
+}) {
+  const { t } = useT("agents");
+  const wsId = useWorkspaceId();
+  const bindManually = useBindDingTalkMessageRouteManually(wsId);
+  const localizeError = useNativeSubscriptionErrorMessage();
+  const [corpId, setCorpId] = useState("");
+  const [uid, setUid] = useState("");
+  const [messageScope, setMessageScope] = useState<DingTalkManualMessageScope>("all");
+  const [error, setError] = useState<string | null>(null);
+
+  const trimmedCorpId = corpId.trim();
+  const trimmedUid = uid.trim();
+  const corpIdInvalid = trimmedCorpId !== "" && !DINGTALK_CORP_ID.test(trimmedCorpId);
+  const uidInvalid = trimmedUid !== "" && !DINGTALK_DECIMAL_ID.test(trimmedUid);
+  const identityValid = DINGTALK_CORP_ID.test(trimmedCorpId) && DINGTALK_DECIMAL_ID.test(trimmedUid);
+  const controlsDisabled = disabled || bindManually.isPending;
+  const corpIdFieldId = `dingtalk-manual-corp-${agentId}`;
+  const uidFieldId = `dingtalk-manual-uid-${agentId}`;
+  const scopeFieldId = `dingtalk-manual-scope-${agentId}`;
+  const invalidId = t(($) => $.tab_body.integrations.dingtalk_account_manual_invalid_id);
+
+  async function submit() {
+    if (!identityValid || controlsDisabled) return;
+    if (rejectUnauthorizedOperation()) return;
+    setError(null);
+    try {
+      await bindManually.mutateAsync({
+        agentId,
+        corpId: trimmedCorpId,
+        uid: trimmedUid,
+        messageScope,
+      });
+      setCorpId("");
+      setUid("");
+      setMessageScope("all");
+    } catch (cause) {
+      setError(localizeError(
+        cause,
+        t(($) => $.tab_body.integrations.dingtalk_account_manual_failed),
+      ));
+    }
+  }
+
+  return (
+    <div
+      className="space-y-3 rounded-md bg-muted/30 p-3"
+      data-testid="dingtalk-manual-message-binding"
+    >
+      <div className="space-y-1">
+        <h4 className="text-caption font-medium">
+          {t(($) => $.tab_body.integrations.dingtalk_account_manual_title)}
+        </h4>
+        <p className="text-caption leading-relaxed text-muted-foreground">
+          {t(($) => $.tab_body.integrations.dingtalk_account_manual_description)}
+        </p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="min-w-0 space-y-1.5">
+          <Label htmlFor={corpIdFieldId} className="text-caption">
+            {t(($) => $.tab_body.integrations.dingtalk_account_manual_corp_id)}
+          </Label>
+          <Input
+            id={corpIdFieldId}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="ding…"
+            value={corpId}
+            onChange={(event) => setCorpId(event.target.value)}
+            disabled={controlsDisabled}
+            aria-invalid={corpIdInvalid || undefined}
+            aria-describedby={corpIdInvalid ? `${corpIdFieldId}-error` : undefined}
+            className="font-mono"
+          />
+          {corpIdInvalid ? (
+            <p id={`${corpIdFieldId}-error`} className="text-caption text-destructive">
+              {t(($) => $.tab_body.integrations.dingtalk_account_manual_invalid_corp_id)}
+            </p>
+          ) : null}
+        </div>
+        <div className="min-w-0 space-y-1.5">
+          <Label htmlFor={uidFieldId} className="text-caption">
+            {t(($) => $.tab_body.integrations.dingtalk_account_manual_uid)}
+          </Label>
+          <Input
+            id={uidFieldId}
+            inputMode="numeric"
+            autoComplete="off"
+            value={uid}
+            onChange={(event) => setUid(event.target.value)}
+            disabled={controlsDisabled}
+            aria-invalid={uidInvalid || undefined}
+            aria-describedby={uidInvalid ? `${uidFieldId}-error` : undefined}
+            className="font-mono"
+          />
+          {uidInvalid ? (
+            <p id={`${uidFieldId}-error`} className="text-caption text-destructive">
+              {invalidId}
+            </p>
+          ) : null}
+        </div>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-0 space-y-1.5">
+          <Label htmlFor={scopeFieldId} className="text-caption">
+            {t(($) => $.tab_body.integrations.dingtalk_account_manual_scope)}
+          </Label>
+          <NativeSelect
+            id={scopeFieldId}
+            value={messageScope}
+            onChange={(event) =>
+              setMessageScope(event.target.value === "direct_only" ? "direct_only" : "all")}
+            disabled={controlsDisabled}
+          >
+            <NativeSelectOption value="all">
+              {t(($) => $.tab_body.integrations.dingtalk_account_manual_scope_all)}
+            </NativeSelectOption>
+            <NativeSelectOption value="direct_only">
+              {t(($) => $.tab_body.integrations.dingtalk_account_manual_scope_direct_only)}
+            </NativeSelectOption>
+          </NativeSelect>
+        </div>
+        <Button
+          type="button"
+          onClick={() => void submit()}
+          disabled={controlsDisabled || !identityValid}
+        >
+          {bindManually.isPending
+            ? t(($) => $.tab_body.integrations.dingtalk_account_manual_submitting)
+            : t(($) => $.tab_body.integrations.dingtalk_account_manual_submit)}
+        </Button>
+      </div>
+      {error ? <p className="text-caption text-destructive" role="alert">{error}</p> : null}
+    </div>
+  );
+}
+
 function DingTalkBindingModeCard({
   agentId,
   agentName,
@@ -502,6 +771,8 @@ function DingTalkBindingModeCard({
   const beginBinding = useBeginDingTalkAccountBinding(wsId);
   const deleteBinding = useDeleteDingTalkAccountBinding(wsId);
   const updateBindingSurface = useUpdateDingTalkAccountBindingSurface(wsId);
+  const setNativeSubscription = useSetDingTalkNativeSubscription(wsId);
+  const localizeError = useNativeSubscriptionErrorMessage();
   const [attempt, setAttempt] = useState<BeginDingTalkAccountBindingResponse | null>(null);
   const [expired, setExpired] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -518,11 +789,20 @@ function DingTalkBindingModeCard({
   // messageScope itself is not evidence: the API parser defaults it.
   const hasMessageProjection = currentBinding?.messageRoute.messageScopeVersion !== undefined ||
     Boolean(currentBinding?.messageRoute.boundAt);
+  const messageRouteNeedsReconciliation =
+    (currentBinding?.messageRoute.status === "unbound" && hasMessageProjection) ||
+    currentBinding?.messageRoute.status === "bound_to_other_agent" ||
+    currentBinding?.messageRoute.status === "inconsistent" ||
+    currentBinding?.messageRoute.status === "router_unavailable";
   const messageRouteReconciliationState = bindingMode === "message" &&
-    ((currentBinding?.messageRoute.status === "unbound" && hasMessageProjection) ||
-      currentBinding?.messageRoute.status === "bound_to_other_agent" ||
-      currentBinding?.messageRoute.status === "inconsistent" ||
-      currentBinding?.messageRoute.status === "router_unavailable");
+    messageRouteNeedsReconciliation;
+  // Native subscription and the digital-employee message binding are mutually
+  // exclusive. The message card counts as bound whenever it offers Unbind.
+  const nativeSubscriptionOn = currentBinding?.dwsIdentity.nativeSubscription === true;
+  const messageBindingPresent = messageRouteActive || messageRouteNeedsReconciliation;
+  const nativeSubscriptionBlocked = messageBindingPresent && !nativeSubscriptionOn;
+  const messageBindingBlocked = bindingMode === "message" && nativeSubscriptionOn;
+  const showManualBinding = bindingMode === "message" && data?.manualBindingAllowed === true;
   const messageBindingFailed = bindingMode === "message" &&
     currentBinding?.messageRoute.status === "failed";
   const retryMessageBinding = bindingMode === "message" &&
@@ -538,6 +818,18 @@ function DingTalkBindingModeCard({
   const accountOutcome = bindingMode === "message"
     ? currentBinding?.messageRoute
     : currentBinding?.dwsIdentity;
+  const showNativeSubscription = bindingMode === "identity" && identityActive;
+  const nativeSubscriptionDisabled = permissionLoading || setNativeSubscription.isPending ||
+    deleteBinding.isPending || nativeSubscriptionBlocked;
+  const nativeSubscriptionSwitchId = `dingtalk-native-subscription-${agentId}`;
+  const nativeSubscriptionLabelId = `${nativeSubscriptionSwitchId}-label`;
+  const nativeSubscriptionHintId = `${nativeSubscriptionSwitchId}-hint`;
+  const nativeSubscriptionBlockedId = `${nativeSubscriptionSwitchId}-blocked`;
+  const nativeStreamWatched = showNativeSubscription && nativeSubscriptionOn;
+  const nativeStatus = useQuery(
+    dingtalkNativeSubscriptionStatusOptions(wsId, agentId, nativeStreamWatched),
+  );
+  const nativeStream = nativeStreamWatched ? nativeStatus.data?.stream : undefined;
 
   const title = bindingMode === "message"
     ? t(($) => $.tab_body.integrations.dingtalk_account_title)
@@ -621,7 +913,25 @@ function DingTalkBindingModeCard({
       }
       setAttempt(nextAttempt);
     } catch (error) {
-      setActionError(errorMessage(error, beginFailed));
+      setActionError(
+        errorCode(error) === "message_binding_conflicts_with_native_subscription"
+          ? t(($) => $.tab_body.integrations.dingtalk_account_native_subscription_blocked)
+          : errorMessage(error, beginFailed),
+      );
+    }
+  }
+
+  async function toggleNativeSubscription(enabled: boolean) {
+    if (rejectUnauthorizedOperation()) return;
+    if (enabled && nativeSubscriptionBlocked) return;
+    setActionError(null);
+    try {
+      await setNativeSubscription.mutateAsync({ agentId, enabled });
+    } catch (error) {
+      setActionError(localizeError(
+        error,
+        t(($) => $.tab_body.integrations.dingtalk_identity_native_subscription_failed),
+      ));
     }
   }
 
@@ -683,79 +993,133 @@ function DingTalkBindingModeCard({
             {t(($) => $.tab_body.integrations.dingtalk_account_not_configured)}
           </p>
         ) : showBoundAccount && accountOutcome ? (
-          <div
-            className="flex items-start justify-between gap-3"
-            data-testid={bindingMode === "message"
-              ? "dingtalk-account-binding-active-row"
-              : "dingtalk-identity-binding-active-row"}
-          >
-            <div className="flex min-w-0 items-start gap-3">
-              <Avatar>
-                {accountOutcome.accountAvatarUrl ? (
-                  <AvatarImage src={accountOutcome.accountAvatarUrl} alt={displayName(accountOutcome, fallbackName)} />
-                ) : null}
-                <AvatarFallback>{displayName(accountOutcome, fallbackName).slice(0, 1)}</AvatarFallback>
-              </Avatar>
-              <div className="min-w-0">
-                <p className="truncate text-body font-medium">{displayName(accountOutcome, fallbackName)}</p>
-                <div className="mt-1 text-caption text-muted-foreground">
-                  {bindingMode === "message" && currentBinding?.messageRoute.status === "active" ? (
-                    <DingTalkMessageScopeSummary outcome={currentBinding.messageRoute} />
-                  ) : bindingMode === "message" &&
-                    (currentBinding?.messageRoute.status === "bound_to_other_agent" ||
-                      currentBinding?.messageRoute.status === "inconsistent") ? (
-                    <p className="text-destructive" role="alert">
-                      {t(($) => $.tab_body.integrations.dingtalk_account_binding_invalid_warning)}
+          <div className="space-y-3">
+            <div
+              className="flex items-start justify-between gap-3"
+              data-testid={bindingMode === "message"
+                ? "dingtalk-account-binding-active-row"
+                : "dingtalk-identity-binding-active-row"}
+            >
+              <div className="flex min-w-0 items-start gap-3">
+                <Avatar>
+                  {accountOutcome.accountAvatarUrl ? (
+                    <AvatarImage src={accountOutcome.accountAvatarUrl} alt={displayName(accountOutcome, fallbackName)} />
+                  ) : null}
+                  <AvatarFallback>{displayName(accountOutcome, fallbackName).slice(0, 1)}</AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <p className="truncate text-body font-medium">{displayName(accountOutcome, fallbackName)}</p>
+                  <div className="mt-1 text-caption text-muted-foreground">
+                    {bindingMode === "message" && currentBinding?.messageRoute.status === "active" ? (
+                      <DingTalkMessageScopeSummary outcome={currentBinding.messageRoute} />
+                    ) : bindingMode === "message" &&
+                      (currentBinding?.messageRoute.status === "bound_to_other_agent" ||
+                        currentBinding?.messageRoute.status === "inconsistent") ? (
+                      <p className="text-destructive" role="alert">
+                        {t(($) => $.tab_body.integrations.dingtalk_account_binding_invalid_warning)}
+                      </p>
+                    ) : bindingMode === "message" && currentBinding?.messageRoute.status === "router_unavailable" ? (
+                      <p className="text-amber-700 dark:text-amber-400" role="status">
+                        {t(($) => $.tab_body.integrations.dingtalk_account_router_unavailable_warning)}
+                      </p>
+                    ) : bindingMode === "message" && currentBinding ? (
+                      <p className="text-destructive" role="alert">
+                        {t(($) => $.tab_body.integrations.dingtalk_account_unbound_warning)}
+                      </p>
+                    ) : (
+                      <p>{t(($) => $.tab_body.integrations.dingtalk_identity_connected)}</p>
+                    )}
+                  </div>
+                  {accountOutcome.organizationName?.trim() ? (
+                    <p className="mt-1 text-caption text-muted-foreground">
+                      {t(($) => $.tab_body.integrations.dingtalk_account_organization)}: {accountOutcome.organizationName}
                     </p>
-                  ) : bindingMode === "message" && currentBinding?.messageRoute.status === "router_unavailable" ? (
-                    <p className="text-amber-700 dark:text-amber-400" role="status">
-                      {t(($) => $.tab_body.integrations.dingtalk_account_router_unavailable_warning)}
-                    </p>
-                  ) : bindingMode === "message" && currentBinding ? (
-                    <p className="text-destructive" role="alert">
-                      {t(($) => $.tab_body.integrations.dingtalk_account_unbound_warning)}
-                    </p>
-                  ) : (
-                    <p>{t(($) => $.tab_body.integrations.dingtalk_identity_connected)}</p>
-                  )}
+                  ) : null}
+                  {bindingMode === "message" && messageRouteActive && currentBinding?.messageRoute.surfaceType ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <span className="text-caption text-muted-foreground">
+                        {t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}
+                      </span>
+                      <DingTalkRunModePicker
+                        value={currentBinding.messageRoute.surfaceType}
+                        disabled={permissionLoading || updateBindingSurface.isPending}
+                        readOnly={!canOperate}
+                        onReadOnlyClick={rejectUnauthorizedOperation}
+                        onConfirm={updateSurface}
+                      />
+                    </div>
+                  ) : null}
                 </div>
-                {accountOutcome.organizationName?.trim() ? (
-                  <p className="mt-1 text-caption text-muted-foreground">
-                    {t(($) => $.tab_body.integrations.dingtalk_account_organization)}: {accountOutcome.organizationName}
-                  </p>
-                ) : null}
-                {bindingMode === "message" && messageRouteActive && currentBinding?.messageRoute.surfaceType ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className="text-caption text-muted-foreground">
-                      {t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}
-                    </span>
-                    <DingTalkRunModePicker
-                      value={currentBinding.messageRoute.surfaceType}
-                      disabled={permissionLoading || updateBindingSurface.isPending}
-                      readOnly={!canOperate}
-                      onReadOnlyClick={rejectUnauthorizedOperation}
-                      onConfirm={updateSurface}
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-4 gap-y-2">
+                {showNativeSubscription ? (
+                  <div className="flex items-center gap-2">
+                    <Label
+                      id={nativeSubscriptionLabelId}
+                      htmlFor={nativeSubscriptionSwitchId}
+                      className={`text-caption ${nativeSubscriptionDisabled ? "text-muted-foreground" : ""}`}
+                    >
+                      {t(($) => $.tab_body.integrations.dingtalk_identity_native_subscription)}
+                    </Label>
+                    <Switch
+                      id={nativeSubscriptionSwitchId}
+                      size="sm"
+                      checked={nativeSubscriptionOn}
+                      disabled={nativeSubscriptionDisabled}
+                      aria-labelledby={nativeSubscriptionLabelId}
+                      aria-describedby={nativeSubscriptionBlocked
+                        ? `${nativeSubscriptionHintId} ${nativeSubscriptionBlockedId}`
+                        : nativeSubscriptionHintId}
+                      aria-busy={setNativeSubscription.isPending || undefined}
+                      onCheckedChange={(enabled) => void toggleNativeSubscription(enabled)}
                     />
+                    {nativeStreamWatched ? <NativeStreamIndicator stream={nativeStream} /> : null}
                   </div>
                 ) : null}
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => {
+                    if (!rejectUnauthorizedOperation()) setConfirmOpen(true);
+                  }}
+                  className="shrink-0"
+                  disabled={permissionLoading || deleteBinding.isPending || updateBindingSurface.isPending ||
+                    setNativeSubscription.isPending}
+                >
+                  <Trash2 className="h-3 w-3" />
+                  {t(($) => $.tab_body.integrations.dingtalk_account_unbind)}
+                </Button>
               </div>
             </div>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => {
-                if (!rejectUnauthorizedOperation()) setConfirmOpen(true);
-              }}
-              className="shrink-0"
-              disabled={permissionLoading || deleteBinding.isPending || updateBindingSurface.isPending}
-            >
-              <Trash2 className="h-3 w-3" />
-              {t(($) => $.tab_body.integrations.dingtalk_account_unbind)}
-            </Button>
+            {showNativeSubscription ? (
+              <div className="space-y-1 text-caption leading-relaxed text-muted-foreground">
+                <p id={nativeSubscriptionHintId}>
+                  {t(($) => $.tab_body.integrations.dingtalk_identity_native_subscription_hint)}
+                </p>
+                {nativeSubscriptionBlocked ? (
+                  <p id={nativeSubscriptionBlockedId} className="text-foreground">
+                    {t(($) => $.tab_body.integrations.dingtalk_identity_native_subscription_blocked)}
+                  </p>
+                ) : null}
+                {nativeStream?.state === "disconnected" && nativeStream.lastError ? (
+                  <p className="break-words text-destructive" role="status">
+                    {t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_error, {
+                      failures: nativeStream.failures,
+                      error: nativeStream.lastError,
+                    })}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="space-y-3">
             {bindingMode === "identity" && canOperate && !permissionLoading ? <ReusableExecutionIdentity key={agentId} agentId={agentId} /> : null}
+            {messageBindingBlocked ? (
+              <p className="text-caption text-foreground" role="note">
+                {t(($) => $.tab_body.integrations.dingtalk_account_native_subscription_blocked)}
+              </p>
+            ) : null}
             {bindingMode === "message" && messageRoutePending ? (
               <p className="text-caption text-muted-foreground">
                 {t(($) => $.tab_body.integrations.dingtalk_account_pending_restart)}
@@ -778,7 +1142,7 @@ function DingTalkBindingModeCard({
               variant="outline"
               size="sm"
               onClick={() => void startBinding()}
-              disabled={permissionLoading || beginBinding.isPending}
+              disabled={permissionLoading || beginBinding.isPending || messageBindingBlocked}
             >
               {retryMessageBinding ? <RefreshCw className="h-3 w-3" /> : null}
               {beginBinding.isPending ? startingLabel :
@@ -786,6 +1150,13 @@ function DingTalkBindingModeCard({
                   ? t(($) => $.tab_body.integrations.dingtalk_account_new_qr)
                   : connectLabel}
             </Button>
+            {showManualBinding ? (
+              <ManualMessageBinding
+                agentId={agentId}
+                disabled={permissionLoading || messageBindingBlocked}
+                rejectUnauthorizedOperation={rejectUnauthorizedOperation}
+              />
+            ) : null}
           </div>
         )}
 

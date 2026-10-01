@@ -45,6 +45,11 @@ type Config struct {
 	// ClientSecret switches code exchange and refresh to DingTalk OAuth with
 	// the app secret. Empty uses the DWS-hosted exchange (/oauth2/getToken).
 	ClientSecret string
+	// StreamTicketMode is the personal event stream ticket mode: empty or
+	// "normal" registers the stream for the token's user only; "custom" also
+	// names the token's app with ClientSecret (the dws CLI's custom mode), so
+	// events of subscriptions that name the app are routed to this stream.
+	StreamTicketMode string
 	// SkipVerify skips the identity check at the end of New.
 	SkipVerify bool
 	// RefreshSkew refreshes the token this long before it expires (default 5m).

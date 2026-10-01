@@ -131,7 +131,8 @@ func (c CLI) sdkEndpoints() (string, string, error) {
 var sdkTestConfig func(*dws.Config)
 
 func (c CLI) sdkConfig(mcp, gateway string) dws.Config {
-	cfg := dws.Config{ClientSecret: strings.TrimSpace(c.ClientSecret), SkipVerify: true, AuthURL: mcp, GatewayURL: gateway}
+	cfg := dws.Config{ClientSecret: strings.TrimSpace(c.ClientSecret), SkipVerify: true, AuthURL: mcp, GatewayURL: gateway,
+		StreamTicketMode: c.StreamTicketMode}
 	if sdkTestConfig != nil {
 		sdkTestConfig(&cfg)
 	}

@@ -45,6 +45,10 @@ type ActionInput struct {
 	CloseState           string `json:"close_state,omitempty"`
 	// Set only by EnqueueCoordinatorWait, never by a caller-supplied send flag.
 	CoordinatorWaitJobID string `json:"coordinator_wait_job_id,omitempty"`
+	// DWSEnvironment pins the DWS gateway ("production" or "staging") the
+	// send goes through. Empty keeps the provider's configured gateway; native
+	// subscriptions set "production", where their events come from.
+	DWSEnvironment string `json:"dws_environment,omitempty"`
 }
 
 type Route struct {
@@ -308,6 +312,9 @@ func validateScope(in ActionInput) error {
 			return errors.New("response scope UUID is invalid")
 		}
 	}
+	if !validDWSEnvironment(in.DWSEnvironment) {
+		return errors.New("response DWS environment is invalid")
+	}
 	if in.CallbackTarget == "" {
 		return errors.New("response callback target is required")
 	}
@@ -375,4 +382,8 @@ func parseCallback(raw string, isReceipt bool) (parsedCallback, error) {
 		origin = parsed.Scheme + "://" + parsed.Host
 	}
 	return parsedCallback{task: match[1], origin: origin}, nil
+}
+
+func validDWSEnvironment(environment string) bool {
+	return environment == "" || environment == "production" || environment == "staging"
 }

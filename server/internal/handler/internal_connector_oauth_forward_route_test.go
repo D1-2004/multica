@@ -187,6 +187,22 @@ func TestConnectorOAuthForwarderRoutes(t *testing.T) {
 		t.Fatalf("registry without the secret = %d", rec.Code)
 	}
 
+	// The legacy DCR path is the same handler. An unregistered state is
+	// refused, and a registered one is forwarded to the console-registered
+	// path (the path new connects put in redirect_uri and on the cookie).
+	legacyState := stateOf("I", preOrigin)
+	legacyQuery := "code=the+code&state=" + url.QueryEscape(legacyState)
+	if rec := callback(prod.ConnectorOAuthCallback, connectorOAuthCallbackLegacyPath, legacyQuery); !refused(rec) {
+		t.Fatalf("legacy unregistered = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if err := pre.registerConnectorOAuthForward(context.Background(), prodOrigin, legacyState, registration(preOrigin)); err != nil {
+		t.Fatalf("legacy register: %v", err)
+	}
+	rec = callback(prod.ConnectorOAuthCallback, connectorOAuthCallbackLegacyPath, legacyQuery)
+	if want := preOrigin + connectorOAuthCallbackPath + "?" + legacyQuery; rec.Code != http.StatusFound || rec.Header().Get("Location") != want {
+		t.Fatalf("legacy forward = %d %q, want %q", rec.Code, rec.Header().Get("Location"), want)
+	}
+
 	// Without the connector flow in the build, a callback of production's
 	// own connect gets the invalid-connection page.
 	if connectorOAuthCompleteLocal == nil {

@@ -257,6 +257,64 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 群内名字优先从当前有效的 message 路由绑定获取，与执行身份授权独立。新绑定的 account/tenant 必须与可信入站身份一致；存量无 account-key 的绑定使用同一认证工作区/Agent 下的有效路由显示名，不据此新增身份权限。只有不存在消息绑定时才尝试精确匹配执行身份。
 
+### 原生订阅入站（DWS native subscription，2026-10-01）
+
+执行身份开启「原生订阅」后，不经 Agent Message Router，由服务端自己的 DWS 个人事件流收它本人的钉钉消息：`user_im_message_receive_at`（群里 @ 本账号）与 `user_im_message_receive_o2o_all`（全部单聊）。事件源 `h.DWSNativeEvents` 由运行时键 `runtime.use_dws_for_tag` 开关，事件源没有运行时不能开启（409 `native_subscription_unavailable`）。事件流与原生回复走**签发其凭证的 Agent Identity 所在环境**的 DWS 网关（`handler.NativeDWSEnvironmentFor`）：正式部署走生产网关（`mcp.dingtalk.com`）；预发部署只能经 HSF 访问预发 Agent Identity（兑换地址 `pre-agent-identity.*`），所以走预发网关（`pre-mcp.dingtalk.com`），事件源的 Redis 命名空间也与生产分开（`native-v2-staging:`）。原因（2026-10-01 实测）：预发签发的 code 能在生产网关换出 token，但生产网关不把它当作该身份——`get_current_user_profile` 返回业务错误，建的订阅不在该账号名下，个人事件按 `filterSubId=<内部uid>_<组织>_11_<clientId>` 匹配不到，事件流一帧都收不到；同一账号用生产签发的身份在生产网关订阅则立即收到。
+
+**账号归属，逐条消息生效。** 一个钉钉账号（dws uid + org）归原生订阅，当且仅当存在它的 `agent_dws_native_subscription` 行、该行的 Agent 未归档、且该 Agent 当前绑定的身份仍是这个账号；否则归 Router。两条入口对每条消息都用这一条规则（`GetDWSNativeAccountOwner`，`server/internal/handler/dws_native_ownership.go`），所以即使开关层的防护被绕过，一条消息也只会被处理一次，账号也不会无人认领：
+
+- Router 的数字员工渠道投递（`source=digital_employee`、`event.domain=channel`）若账号归原生，在记录 assoc 与受理之前丢弃：记 `MULTICA_AGENT_DISPATCH_REQUEST outcome=skipped_native_owned`，记一次 Silence 决策，按自发消息分支同样静默关闭 Router 回调（否则 202），Router 不重试也不回复。机器人、日程、审批投递不受影响，原生订阅只收账号的 IM 消息。归属读不到时返回 503 让 Router 重试，不两边都处理。
+- 原生事件只在本 Agent 的行拥有该账号时处理；数字员工消息路由的存在不再影响原生流，事件源按归属列出账号。
+- 行记录开启时的账号；`(org_id, dws_uid)` 唯一索引（迁移 9461）保证一个账号只有一个 Agent，冲突返回 409 `native_subscription_account_in_use`。身份换绑到别的账号后，旧行不再拥有任何账号，需对新身份重新开启。
+- 开关层防护按账号：任一活跃的数字员工消息路由（Router tenant/account 等于该身份）时拒绝开启原生（409 `native_subscription_conflicts_with_message_binding`）；手动消息绑定的账号已归原生时拒绝。扫码绑定可能存其他 ID 格式，正确性以逐条消息规则为准。
+- 解绑执行身份时先关闭原生订阅；关闭失败则解绑整体失败（500 `native_subscription_cleanup_failed`），不留下孤行在同账号重新绑定时被复活。
+
+**服务端即 Router。** `acceptNativeMessage`（`server/internal/handler/dws_native_dispatch.go`）把一条事件投影成 Router 数字员工路由会送来的 DispatchCommand v2（`source=dingtalk/digital_employee`、`channel/message.created`、`surface=auto`、`outbound=dws`），在进程内调用 `handleAgentDispatchV2`。受理幂等、收集窗口、主动会话转换、用户决策、Coordinator job、任务与 task_finished 全部沿用本合同，不另开入口。受理键为 `dws-native:v1:` + sha256(org, CID, openMessageId)，命令是事件的纯函数：重投回放原受理结果；并发重投得到 409 pending 时不确认事件，稍后重投再回放。被引用者是否为本员工取决于回执何时落库，可能在两次投递之间变化，因此不计入原生受理指纹（`nativeFingerprintEvent`），重投只会回放、不会 409 冲突。进程内受理与事件流的 context 脱钩、限时 60 秒，事件流交接时已开始的受理照常完成或释放。
+
+**可信事实（COORD.F01）。**
+
+- 发言人只有 `senderOpenDingTalkId` 与显示名（DingTalk 省略时的字面 `null` 视为缺失），不补造 uid，人员归属按 staffId/openDingTalkId 的现有别名规则。
+- 群消息的「@ 本员工」来自订阅键本身，记为对接收 uid 的可信 mention。同句是否还 @ 了别人未知，不能据此断言只 @ 了员工。单聊的 mentions 是已知的空列表，按单聊恒需回应。
+- 被引用消息只有在其 openMessageId 命中本员工已记录的出站回执（`response_action` / `sandbox_send_receipt` 的 provider_message_id）时才标为员工本人；与当前发言人 openDingTalkId 相同则标当前发言人；否则保持未知，不当作他人。
+- 事件没有附件与会话名：纯媒体或空内容事件确认后丢弃，不进入窗口。
+
+**每条事件都复查。** 账号归属（见上）与托管回复资格。任一不满足即确认并记 `dws_native_event_skipped`，不投递。事件流按账号建立、只在下次巡检时更新所属 Agent；账号若已转到另一个 Agent 的原生订阅，这条事件按当前所有者处理（`dws_native_event_owner_moved`），不会两条都不处理。开启原生订阅时先清掉同一账号已不再拥有它的旧行（Agent 已归档或身份已换绑），运营身份换绑到其他账号时清掉本 Agent 的原生订阅，列表只在旧行仍对应当前身份时显示已开启。
+
+**不自激（COORD.F01）。** DWS 会把账号自己发出的消息也推回来（dws CLI 的 DEAP 通道靠 SelfOpenDingTalkID 过滤），而 `get_current_user_profile` 不给 openDingTalkId，uid 型自发检查看不见只有 openDingTalkId 的发信人。原生入口依次用四道防护，均确认后丢弃：
+
+1. 事件消息 ID 命中本员工已记录的出站回执（`response_action` / `sandbox_send_receipt` 的 provider_message_id）：丢弃（`own_message`），并把它的发信人 openDingTalkId 记为该账号的 `self_open_dingtalk_id`（仅在为空时写入，换绑后清空）。引用了已证实的本员工消息时，被引用者的 openDingTalkId 同样可用于学习。
+2. 发信人等于已学到的 `self_open_dingtalk_id`：丢弃（`self_sender`）。
+3. 单聊事件、且该账号的 openDingTalkId 尚未学到时，本 Agent 10 分钟内在同一会话发过、去掉首尾空白后正文相同的托管回复：丢弃（`echo_of_own_reply`）。群事件只在有人 @ 本账号时到达，本账号自己的回复不会 @ 自己，所以群里有人复述回复不会被当回声；学到 openDingTalkId 后由第 2 条精确判断，不再按正文丢弃真人消息。
+4. 进程内滑动窗口：同一 Agent、同一会话、同一发信人 60 秒内超过 10 条不同的原生投递视为回环，丢弃并记 Warn `dws_native_loop_suspected`。按发信人计数：回环只会重复同一发信人，真人连发或群里多人 @ 不会触发。同一消息的重投不重复计数；该计数随事件流换副本而重置，最多推迟一个窗口生效。
+
+**只用托管回复。** 原生命令恒带 `responsePolicy.mode=multica_coordinator`，资格与 Router 策略同步相同：入站判断与钉钉回复开关都开、策略 revision≥1、运行时具备 `dws_message_policy_v1`。开启原生订阅时校验不满足返回 409 `native_subscription_requires_managed_response`。回调属于服务端自己的派发任务 `dwsn-<hash>`，完成目标是 `agentmessagerouter.NativeTargetIdentity()`（与 Router 目标同形，outbox 原样路由）；有线请求不得使用该命名空间。回复语义与托管数字员工一致：冻结触发消息的 openMsgId，群聊引用回复并 @ 发信人，单聊同样引用回复。`response_route` 与等待说明冻结原生网关（正式为 `dws_environment=production`，预发为 `staging`）。原生完成 worker 只确认回调：托管出站已接手即完成，路由缺失且有话要说则死信；回执只关闭收集窗口，不调用 Router。
+
+**连接指示灯。** 身份卡开关旁的指示灯读 `GET …/dingtalk/account-bindings/{agentId}/native-subscription`，开启期间每 10 秒轮询一次。返回的事件流状态如下：
+- `connected`：任一副本持有已连接的事件流（Redis ready 标记）。
+- `disconnected`：没有已连接的流，且该账号事件流最后上报的状态带错误或失败次数，同时附上最近错误（截断到 300 字符，应用密钥已脱敏）和本次断连以来的失败次数。每次重连都是新的 Listener；事件源按 `DownSince` 判断是否仍是同一次断连，把错误和计数带下去，所以重试期间不会在红灯和黄灯之间来回闪。
+- `connecting`：没有已连接的流，也没有失败记录。
+- `unavailable`：事件源未运行。
+- `unknown`：共享状态读不到。
+
+`last_event_at` 只记真正交给消费方的事件，不含 SYSTEM ping。所以「已连接但从未收到消息」说明问题在推送而不在连接。
+
+**其他 DWS 流量不变。** 历史预取、场域记忆、用户决策卡片与沙箱内的 DWS 调用仍走本部署配置的网关（`MULTICA_DWS_HISTORY_MCP_URL`）。原生网关跟随 Agent Identity 的签发环境；预发上两者都是预发网关，正式上都是生产网关。原生网关在启动时确定，运行中改 `control_base_url` 要重启后才会同步。
+
+**已知缺口。**
+
+- 没有 Router 负责的已读回执与「处理中/思考中」生命周期表情。
+- 群内未 @ 的主动会话消息需要 `user_im_message_receive_group_all`，v1 未订阅。
+- 不带附件，也没有 Router contextPrompt 与 LLM trace 回传（Langfuse 不受影响）。
+- DWS 断连超过其未确认事件保留期时消息会丢，没有 Router 侧重放。
+
+**滚动发布。**
+
+- 按回调 URL 选完成目标的修正、Router 侧的归属丢弃与原生入站在同一二进制发布。否则旧副本认领原生 job 时会把完成绑回 Router 目标（Router 返回 404），旧副本也不会丢弃原生账号的 Router 投递。
+- 只有全部副本都运行新二进制后，才能对 Agent 开启原生订阅。
+- 回滚时先关闭 Agent 开关或运行时键，排空 `target_identity` 为原生目标的 outbox 与 job，再回退二进制。
+
+**验证状态。** 已完成 Host 单测，以及在本地迁移副本库上的 DB 测试：`TestNativeMessageRunsTheRouterPipeline`、`TestNativeMessageOwnOutputAndQuotes`、`TestNativeOwnershipIsExclusivePerMessage`（同一消息两路只处理一次、切换归属、Router 绑定与原生同时存在）、`TestNativeSubscriptionAccountIsUnique`、`TestNativeEchoOfOwnReplyIsDropped`。DWS 是否真的回推账号自己的消息、真实预发投递、模型回放均未验证。对照案例 `f01_native_ingress_trusted_facts`、`f01_native_own_output_not_reentered`、`f01_native_account_owned_by_one_path` 保持 `not_run`。
+
 ## 11. 回复恢复的当前证据边界
 
 本次恢复登记针对正式`.4`的日志目标/进度被旧skills事项带偏，以及后续answer历史门槛、重复读取、有限动作误作工具和source_refs编码造成的协议循环。另有new-eb0e/d8b2真实trace简称对应的对象误澄清：岗位已指明成长日志，却被旧skill事项带偏；完整证据与fixture待主线程回填。最新真实回放还暴露将领域材料改问成工程任务记录，以及N_progress列旧skills；新增对象层次对照，五条真实消息候选仍待复跑。另有78项回归报告的intent/basis混淆、原报告重发误当answer、clarify被写入审核work_checks。精确日志/trace和测试输出尚待关联，新增病例统一为`not_run`；本文与结构检查不能代替运行证据。
