@@ -24,13 +24,15 @@ package handler
 // MULTICA_A2A_FORWARD_REGISTRATION_SECRET, which both deployments already
 // share (signAgentA2AForwardRegistration). Production keeps the
 // registration in Redis until the state expires. On a callback, production's
-// callback routes (/api/connector-oauth/callback, the console-registered
-// alias /api/connectors/oauth/callback, and the "mcpc." branch of
+// callback routes (/api/connectors/oauth/callback, the legacy
+// /api/connector-oauth/callback, and the "mcpc." branch of
 // /api/github/authorize) take the registration of the state (single use)
-// and send the callback to that pre-release. The DCR routes forward to the
-// canonical v0 path with the raw query (302); the GitHub route forwards to
-// its own path. Anything else naming a foreign origin gets the
-// invalid-connection page (400). Only "https://pre-" + an own host below its registrable domain
+// and send the callback to that pre-release. Provider consoles register only
+// https://fde-workbench.dingtalk.com/api/connectors/oauth/callback, so both
+// DCR routes forward to that path on the pre-release with the raw query
+// (302). The GitHub route forwards to its own path. A state naming this
+// deployment is completed here. Anything else naming a foreign origin gets
+// the invalid-connection page (400). Only "https://pre-" + an own host below its registrable domain
 // can register (connectorOAuthProductionOrigin), so production is no open
 // redirect, and a callback no pre-release Workspace/Agent connect started is
 // never forwarded. Without the secret or Redis it fails closed: the
@@ -74,14 +76,16 @@ import (
 const (
 	// connectorOAuthStatePrefix marks connector OAuth states, so the shared
 	// GitHub App callback can tell them from GitHub App install states.
-	connectorOAuthStatePrefix  = "mcpc."
-	connectorOAuthCallbackPath = "/api/connector-oauth/callback"
-	// connectorOAuthCallbackAliasPath is the DCR callback registered in
-	// provider consoles. It is served by the same handler as
-	// connectorOAuthCallbackPath, which stays registered so existing
-	// redirect URIs keep working.
-	connectorOAuthCallbackAliasPath = "/api/connectors/oauth/callback"
-	connectorOAuthGitHubCallback    = "/api/github/authorize"
+	connectorOAuthStatePrefix = "mcpc."
+	// connectorOAuthCallbackPath is the only DCR callback provider consoles
+	// register. Production completes its own connects on it. A registered
+	// pre-release connect is forwarded to the same path on the pre-release.
+	connectorOAuthCallbackPath = "/api/connectors/oauth/callback"
+	// connectorOAuthCallbackLegacyPath is the previous DCR callback. The same
+	// handler still serves it so a client already registered with it can
+	// finish. New connects do not send it.
+	connectorOAuthCallbackLegacyPath = "/api/connector-oauth/callback"
+	connectorOAuthGitHubCallback     = "/api/github/authorize"
 )
 
 const (
@@ -429,14 +433,14 @@ const (
 	connectorOAuthViaGitHub = "github"
 )
 
-// ConnectorOAuthCallbackPath is the public v0 DCR OAuth callback route. The
-// router registers it outside the authenticated group.
+// ConnectorOAuthCallbackPath is the DCR callback registered in provider
+// consoles. The router registers it outside the authenticated group.
 const ConnectorOAuthCallbackPath = connectorOAuthCallbackPath
 
-// ConnectorOAuthCallbackAliasPath is the console-registered DCR callback.
-// The router registers it beside ConnectorOAuthCallbackPath; both call
-// ConnectorOAuthCallback.
-const ConnectorOAuthCallbackAliasPath = connectorOAuthCallbackAliasPath
+// ConnectorOAuthCallbackLegacyPath is the previous DCR callback. The router
+// registers it beside ConnectorOAuthCallbackPath; both call
+// ConnectorOAuthCallback. Forwarding still targets ConnectorOAuthCallbackPath.
+const ConnectorOAuthCallbackLegacyPath = connectorOAuthCallbackLegacyPath
 
 // IsConnectorOAuthCallback reports whether a GitHub App callback request
 // completes an official app connect (a "mcpc." state), so the router can
@@ -459,9 +463,10 @@ func (h *Handler) connectorOAuthAppOrigin() string {
 
 // connectorOAuthCallbackTarget returns this deployment's own origin and the
 // path of the callback of a connect of the given route: the GitHub App
-// callback on FRONTEND_ORIGIN, or the DCR callback on the app origin. The
-// start response is served there, so the browser binding cookie lives there,
-// and a callback production forwards to a pre-release lands there.
+// callback on FRONTEND_ORIGIN, or the console-registered DCR callback on the
+// app origin. The start response is served on this deployment, so the
+// browser binding cookie lives here, and a callback production forwards to a
+// pre-release lands on this path.
 func (h *Handler) connectorOAuthCallbackTarget(via string) (string, string) {
 	if via == connectorOAuthViaGitHub {
 		return h.githubFrontend(), connectorOAuthGitHubCallback
