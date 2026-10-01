@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -96,9 +97,22 @@ func (h *Handler) ListDingTalkAccountBindings(w http.ResponseWriter, r *http.Req
 		writeDingTalkAccountBindingError(w, err)
 		return
 	}
+	if err := h.markNativeSubscriptions(r.Context(), workspaceID, bindings); err != nil {
+		writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "binding_internal_error", "failed to load native subscriptions")
+		return
+	}
+	// Deployment operators may bind a message route by organization and
+	// account id instead of scanning.
+	manualBinding := false
+	if userID := requestUserID(r); userID != "" {
+		if actorID, err := util.ParseUUID(userID); err == nil {
+			manualBinding = h.isAgentA2AOperator(r, actorID)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"bindings":   bindings,
-		"configured": true,
+		"bindings":               bindings,
+		"configured":             true,
+		"manual_binding_allowed": manualBinding,
 	})
 }
 
@@ -140,6 +154,16 @@ func (h *Handler) BeginDingTalkAccountBinding(w http.ResponseWriter, r *http.Req
 	)
 	if !ok {
 		return
+	}
+	if request.BindingMode == agentmessagerouter.BindingModeMessage {
+		if blocked, err := h.nativeSubscriptionEnabled(r.Context(), workspaceID, agentID); err != nil {
+			writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "binding_internal_error", "failed to load native subscription")
+			return
+		} else if blocked {
+			writeDingTalkAccountBindingAPIError(w, http.StatusConflict, "message_binding_conflicts_with_native_subscription",
+				"turn native subscription off before binding the digital employee message route")
+			return
+		}
 	}
 	metadataStore := h.dingTalkAccountBindingMetadata
 	if metadataStore == nil {
@@ -254,6 +278,15 @@ func (h *Handler) UnbindDingTalkAccountBinding(w http.ResponseWriter, r *http.Re
 		agentID,
 	); !ok {
 		return
+	}
+	// Native subscription goes with the identity, before it: a failure leaves
+	// both in place rather than an orphan row for a later rebind to revive.
+	if bindingMode == agentmessagerouter.BindingModeIdentity {
+		if err := h.clearNativeSubscription(r.Context(), workspaceID, agentID, userID); err != nil {
+			writeDingTalkAccountBindingAPIError(w, http.StatusInternalServerError, "native_subscription_cleanup_failed",
+				"failed to turn native subscription off before unbinding the identity")
+			return
+		}
 	}
 	result, err := h.DingTalkAccountBindings.Unbind(r.Context(), agentmessagerouter.UnbindParams{
 		WorkspaceID: workspaceID,

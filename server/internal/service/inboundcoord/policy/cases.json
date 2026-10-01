@@ -1603,6 +1603,36 @@
       "context_b": "report_status schema",
       "expected_effects": "前者不展示state_refs，后者保留state_refs；Host依旧拒绝start_work携带state_refs",
       "verification": "not_run"
+    },
+    {
+      "id": "f01_native_ingress_trusted_facts",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "原生订阅 user_im_message_receive_at 事件：群里有人 @ 本员工并引用员工自己此前送达的回复",
+      "context_b": "同一群同一句话经 Router 数字员工路由送达（带 uid 与 mentions）",
+      "expected_effects": "两路都进入同一 Coordinator 窗口且 response_required；原生路只以 openDingTalkId 识别发言人、不补造 uid；@ 本员工来自订阅键；只有已送达回执能证明的被引用消息才标为员工本人，其余被引用作者保持未知而不是他人",
+      "verification": "not_run"
+    },
+    {
+      "id": "f01_native_own_output_not_reentered",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "原生订阅收到的消息 openMessageId 等于本员工 response_action/sandbox_send_receipt 已记录的送达消息",
+      "context_b": "同会话里真人发来的新消息",
+      "expected_effects": "前者确认并丢弃，不建 Coordinator 窗口；后者正常入窗；uid 型自发检查看不见 openDingTalkId 发信人，不能依赖它防自激",
+      "verification": "not_run"
+    },
+    {
+      "id": "f01_native_account_owned_by_one_path",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "账号已开启原生订阅（行存在、Agent 未归档、当前身份仍是该账号）：同一条群消息既经 Router 数字员工路由送达，又经原生事件送达；该账号另有一条漏网的 Router 消息绑定",
+      "context_b": "同一 Agent 关闭原生订阅，或身份换绑到别的账号之后，再收到这条消息",
+      "expected_effects": "前者只由原生入口建窗回复，Router 投递在受理前静默关闭且不回复；后者只由 Router 入口处理，原生事件确认后丢弃；任何时候一条消息只有一个入口处理，账号不会无人认领",
+      "verification": "not_run"
     }
   ]
 }

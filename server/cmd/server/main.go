@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/deploymentfence"
 	"github.com/multica-ai/multica/server/internal/dshschedule"
+	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/langfuse"
@@ -547,6 +549,9 @@ func main() {
 	if h.TaskCompletionWorker != nil {
 		go h.TaskCompletionWorker.Run(sweepCtx)
 	}
+	if h.NativeCompletionWorker != nil {
+		go h.NativeCompletionWorker.Run(sweepCtx)
+	}
 	if h.DingTalkResponses != nil {
 		go h.DingTalkResponses.Run(sweepCtx)
 	}
@@ -596,8 +601,8 @@ func main() {
 	if h.ChannelSupervisor != nil {
 		go h.ChannelSupervisor.Run(sweepCtx)
 	}
-	if h.DWSEvents != nil {
-		go h.DWSEvents.Run(sweepCtx)
+	for _, source := range dwsEventSources(h) {
+		go source.Run(sweepCtx)
 	}
 
 	// Media intent-ledger reconciler (PR #5580): settles uploaded-but-unbound
@@ -684,8 +689,8 @@ func main() {
 	if h.ChannelSupervisor != nil {
 		h.ChannelSupervisor.BeginShutdown()
 	}
-	if h.DWSEvents != nil {
-		h.DWSEvents.BeginShutdown()
+	for _, source := range dwsEventSources(h) {
+		source.BeginShutdown()
 	}
 	autopilotCancel()
 
@@ -705,10 +710,12 @@ func main() {
 	dwsHandoff := make(chan struct{})
 	go func() {
 		defer close(dwsHandoff)
-		if h.DWSEvents != nil && !h.DWSEvents.WaitForHandoffs(h.DWSEvents.DrainTimeout()) {
-			slog.Warn("DWS event streams: graceful handoff timed out; forcing shutdown",
-				"event", "dws_event_handoff_timeout", "timeout", h.DWSEvents.DrainTimeout().String())
-		}
+		eachDWSEventSource(h, func(source *dwseventsource.Source) {
+			if !source.WaitForHandoffs(source.DrainTimeout()) {
+				slog.Warn("DWS event streams: graceful handoff timed out; forcing shutdown",
+					"event", "dws_event_handoff_timeout", "timeout", source.DrainTimeout().String())
+			}
+		})
 	}()
 	if h.ChannelSupervisor != nil {
 		if !h.ChannelSupervisor.WaitForHandoffs(h.ChannelSupervisor.StreamDrainTimeout()) {
@@ -737,6 +744,9 @@ func main() {
 	}
 	if h.TaskCompletionWorker != nil && !h.TaskCompletionWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("task completion worker did not exit within shutdown timeout")
+	}
+	if h.NativeCompletionWorker != nil && !h.NativeCompletionWorker.WaitWithTimeout(5*time.Second) {
+		slog.Warn("native task completion worker did not exit within shutdown timeout")
 	}
 	if h.DingTalkResponses != nil && !h.DingTalkResponses.WaitWithTimeout(context.Background(), 5*time.Second) {
 		slog.Warn("DingTalk response worker did not exit within shutdown timeout")
@@ -772,10 +782,12 @@ func main() {
 	dwsExit := make(chan struct{})
 	go func() {
 		defer close(dwsExit)
-		if h.DWSEvents != nil && !h.DWSEvents.WaitWithTimeout(h.DWSEvents.ShutdownTimeout()) {
-			slog.Warn("DWS event streams did not exit within shutdown timeout; proceeding",
-				"timeout", h.DWSEvents.ShutdownTimeout().String())
-		}
+		eachDWSEventSource(h, func(source *dwseventsource.Source) {
+			if !source.WaitWithTimeout(source.ShutdownTimeout()) {
+				slog.Warn("DWS event streams did not exit within shutdown timeout; proceeding",
+					"timeout", source.ShutdownTimeout().String())
+			}
+		})
 	}()
 	if h.ChannelSupervisor != nil {
 		if !h.ChannelSupervisor.WaitWithTimeout(h.ChannelSupervisor.ShutdownTimeout()) {
@@ -818,4 +830,30 @@ func closeConfigResourcesAndExit(flags *featureflag.Service, runtime *runtimecon
 	_ = flags.Close()
 	_ = runtime.Close()
 	os.Exit(code)
+}
+
+// dwsEventSources are the server's DWS event sources: card actions
+// (runtime.use_dws_for_tag) and native subscriptions.
+func dwsEventSources(h *handler.Handler) []*dwseventsource.Source {
+	var sources []*dwseventsource.Source
+	for _, source := range []*dwseventsource.Source{h.DWSEvents, h.DWSNativeEvents} {
+		if source != nil {
+			sources = append(sources, source)
+		}
+	}
+	return sources
+}
+
+// eachDWSEventSource runs fn for every event source concurrently and waits,
+// so the sources share one shutdown budget.
+func eachDWSEventSource(h *handler.Handler, fn func(*dwseventsource.Source)) {
+	var wg sync.WaitGroup
+	for _, source := range dwsEventSources(h) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn(source)
+		}()
+	}
+	wg.Wait()
 }

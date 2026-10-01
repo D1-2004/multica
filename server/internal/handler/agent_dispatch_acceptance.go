@@ -63,6 +63,10 @@ func (w *bufferedDispatchResponse) Forward(target http.ResponseWriter) {
 }
 
 func dispatchRequestFingerprint(command DispatchCommand, idempotencyKey string) string {
+	event := command.Event
+	if isNativeDispatchCommand(command) {
+		event = nativeFingerprintEvent(event)
+	}
 	payload := struct {
 		SchemaVersion  string                     `json:"schemaVersion"`
 		AgentID        string                     `json:"agentId,omitempty"`
@@ -83,7 +87,7 @@ func dispatchRequestFingerprint(command DispatchCommand, idempotencyKey string) 
 		AgentID:        command.AgentID,
 		Continuation:   command.Continuation,
 		Source:         command.Source,
-		Event:          command.Event,
+		Event:          event,
 		Surface:        command.Surface,
 		Outbound:       command.Outbound,
 		Control:        command.Control,

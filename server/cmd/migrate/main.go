@@ -70,6 +70,9 @@ var preMigrationHooks = map[string]preMigrationHook{
 	"257_agent_task_queue_channel_media_pending_unique_v2":  cleanupInvalidConcurrentIndexHook("idx_one_pending_task_per_issue_agent_v2"),
 	"260_issue_origin_dingtalk_chat_validate":               repairIssueOriginTypeConstraintHook,
 	"261_agent_task_queue_terminal_completed_at_v2":         cleanupInvalidConcurrentIndexHook("idx_agent_task_queue_terminal_completed_at_v2"),
+	// An interrupted build leaves an INVALID unique index that IF NOT EXISTS
+	// would accept as done.
+	"9461_agent_dws_native_subscription_account_idx": cleanupInvalidConcurrentIndexHook("idx_agent_dws_native_subscription_account"),
 }
 
 func repairIssueOriginTypeConstraintHook(ctx context.Context, pool *pgxpool.Pool) error {
