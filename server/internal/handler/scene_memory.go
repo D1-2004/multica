@@ -104,6 +104,18 @@ func (h *Handler) ListAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// GetAgentSceneMemory returns one scene memory row by id:
+// GET /api/agents/{id}/scene-memory/{memoryId}. The scene detail (场域 →
+// 记忆) opens the row a scene reports as memory_id, which the list above may
+// not contain once the agent has more than 200 rows.
+func (h *Handler) GetAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
+	agent, row, ok := h.loadManagedSceneMemory(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, sceneMemoryToResponse(row, h.sceneMemorySelfNames(r.Context(), agent)...))
+}
+
 func (h *Handler) loadManagedSceneMemory(w http.ResponseWriter, r *http.Request) (db.Agent, db.SceneMemory, bool) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)

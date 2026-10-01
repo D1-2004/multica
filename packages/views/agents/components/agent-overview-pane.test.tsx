@@ -48,8 +48,10 @@ vi.mock("./tabs/env-tab", () => ({
 vi.mock("./tabs/custom-args-tab", () => ({
   CustomArgsTab: () => <div>custom-args-tab</div>,
 }));
-vi.mock("./tabs/mcp-config-tab", () => ({
-  McpConfigTab: () => <div>mcp-config-tab</div>,
+vi.mock("./tabs/connectors-tab", () => ({
+  ConnectorsTab: ({ supportsOwnMcpConfig }: { supportsOwnMcpConfig?: boolean }) => (
+    <div>connectors-tab own-mcp:{String(supportsOwnMcpConfig)}</div>
+  ),
 }));
 vi.mock("./tabs/integrations-tab", () => ({
   IntegrationsTab: () => <div>integrations-tab</div>,
@@ -74,8 +76,8 @@ vi.mock("./tabs/export-tab", () => ({ ExportTab: () => <div>export-tab</div> }))
 vi.mock("./tabs/publish-tab", () => ({
   PublishTab: () => <div>publish-tab</div>,
 }));
-vi.mock("./tabs/scene-memory-tab", () => ({
-  SceneMemoryTab: () => <div>scene-memory-tab</div>,
+vi.mock("./tabs/scenes-tab", () => ({
+  ScenesTab: () => <div>scenes-tab</div>,
 }));
 vi.mock("./tabs/digital-employee-tab", () => ({
   DigitalEmployeeTab: () => <div>digital-employee-tab</div>,
@@ -185,6 +187,7 @@ function renderPane(
     agentOverrides?: Partial<Agent>;
     canEdit?: boolean;
     initialView?: string;
+    search?: Record<string, string>;
     source?: AgentSource;
   } = {},
 ) {
@@ -196,9 +199,10 @@ function renderPane(
     replace: vi.fn(),
     back: vi.fn(),
     pathname: "/acme/agents/agent-1",
-    searchParams: new URLSearchParams(
-      options.initialView ? { view: options.initialView } : undefined,
-    ),
+    searchParams: new URLSearchParams({
+      ...(options.initialView ? { view: options.initialView } : {}),
+      ...options.search,
+    }),
     getShareableUrl: (path) => path,
   };
   const tree = () => (
@@ -244,27 +248,63 @@ beforeEach(() => {
 });
 
 describe("AgentOverviewPane primary navigation", () => {
-  it("shows five plain-language destinations", () => {
+  it("shows four plain-language destinations", () => {
     renderPane([makeRuntime("claude")]);
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Overview",
       "Work",
-      "Inbound conversations",
-      "Memory",
+      "Scenes",
       "Configuration",
     ]);
   });
 
-  it("allows viewers to read inbound history without edit permission", () => {
-    renderPane([makeRuntime("claude")], { canEdit: false, initialView: "inbound" });
-    expect(screen.getByText("coordinator-sessions-tab")).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Memory" })).not.toBeInTheDocument();
+  it("opens scenes for someone who can manage the agent", () => {
+    const { navigation } = renderPane([makeRuntime("claude")], { initialView: "scenes" });
+    expect(screen.getByText("scenes-tab")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Scenes" })).toHaveAttribute("aria-selected", "true");
+    expect(navigation.replace).not.toHaveBeenCalled();
   });
 
-  it("opens inbound deep links without redirecting", () => {
-    const { navigation } = renderPane([makeRuntime("claude")], { initialView: "inbound" });
+  it("keeps inbound history readable for viewers without edit permission", () => {
+    renderPane([makeRuntime("claude")], { canEdit: false, initialView: "scenes" });
     expect(screen.getByText("coordinator-sessions-tab")).toBeInTheDocument();
-    expect(navigation.replace).not.toHaveBeenCalled();
+    expect(screen.queryByText("scenes-tab")).not.toBeInTheDocument();
+  });
+
+  it.each(["inbound", "memory"])("moves old ?view=%s links into scenes", (view) => {
+    const { navigation } = renderPane([makeRuntime("claude")], { initialView: view });
+    expect(screen.getByText("scenes-tab")).toBeInTheDocument();
+    expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=scenes");
+  });
+
+  it("drops the selected scene when leaving the scenes section", () => {
+    const { navigation } = renderPane([makeRuntime("claude")], {
+      initialView: "scenes",
+      search: { scene: "cid-1", scene_tab: "config" },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Work" }));
+    expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=work");
+  });
+
+  it("drops the open app page when leaving the connector tab", () => {
+    const { navigation } = renderPane([makeRuntime("claude")], {
+      initialView: "mcp_config",
+      search: { app: "github" },
+    });
+    fireEvent.click(screen.getByRole("tab", { name: "Work" }));
+    expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=work");
+  });
+
+  it("never carries a scene's app dialog into the connector tab", () => {
+    const { navigation } = renderPane([makeRuntime("claude")], {
+      initialView: "scenes",
+      search: { scene: "cid-1", scene_tab: "config", app: "notion" },
+    });
+    openConfiguration();
+    fireEvent.click(screen.getByRole("tab", { name: /^Connectors$/i }));
+    const urls = vi.mocked(navigation.replace).mock.calls.map(([url]) => url);
+    expect(urls.at(-1)).toBe("/acme/agents/agent-1?view=mcp_config");
+    expect(urls.some((url) => url.includes("app="))).toBe(false);
   });
 });
 
@@ -284,34 +324,32 @@ describe("AgentOverviewPane MCP tab visibility", () => {
       renderPane([makeRuntime(provider)]);
       openConfiguration();
       expect(
-        screen.getByRole("tab", { name: /^MCP Tools$/i }),
+        screen.getByRole("tab", { name: /^Connectors$/i }),
       ).toBeInTheDocument();
     },
   );
 
-  it("hides the MCP tab for providers whose backend does not read mcp_config", () => {
-    // Saving an MCP config on e.g. Gemini would be a silent no-op at run
-    // time — that's the bug this hiding logic is meant to prevent.
+  it("keeps Connectors for runtimes that do not read mcp_config but hides their own MCP servers", () => {
+    // Official apps, Aone FaaS grants and offers go through the server relay
+    // and work on every runtime. Only the agent's own mcp_config servers
+    // would be a silent no-op on e.g. Gemini, so only that block is hidden.
     renderPane([makeRuntime("gemini")]);
     openConfiguration();
-    expect(
-      screen.queryByRole("tab", { name: /^MCP Tools$/i }),
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /^Connectors$/i }));
+    expect(screen.getByText("connectors-tab own-mcp:false")).toBeInTheDocument();
   });
 
-  it("shows MCP only for Pi runtimes whose template declares the capability", () => {
+  it("shows the agent's own MCP servers only for Pi runtimes whose template declares the capability", () => {
     const { unmount } = renderPane([makeRuntime("pi", ["pi", "mcp"])]);
     openConfiguration();
-    expect(
-      screen.getByRole("tab", { name: /^MCP Tools$/i }),
-    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /^Connectors$/i }));
+    expect(screen.getByText("connectors-tab own-mcp:true")).toBeInTheDocument();
     unmount();
 
     renderPane([makeRuntime("pi", ["pi", "dws"])]);
     openConfiguration();
-    expect(
-      screen.queryByRole("tab", { name: /^MCP Tools$/i }),
-    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /^Connectors$/i }));
+    expect(screen.getByText("connectors-tab own-mcp:false")).toBeInTheDocument();
   });
 
   it("keeps the MCP tab visible when the runtime row hasn't loaded yet", () => {
@@ -321,7 +359,7 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     renderPane([]);
     openConfiguration();
     expect(
-      screen.getByRole("tab", { name: /^MCP Tools$/i }),
+      screen.getByRole("tab", { name: /^Connectors$/i }),
     ).toBeInTheDocument();
   });
 });
@@ -453,19 +491,26 @@ describe("AgentOverviewPane Digital Employee tab", () => {
   });
 });
 
-describe("AgentOverviewPane Memory tab", () => {
-  it("shows Memory to someone who can manage the agent", () => {
+describe("AgentOverviewPane Connectors tab", () => {
+  it("replaces the group and personal capabilities tab", () => {
     renderPane([makeRuntime("claude")]);
-    expect(screen.getByRole("tab", { name: /^Memory$/i })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("tab", { name: /^Memory$/i }));
-    expect(screen.getByText("scene-memory-tab")).toBeInTheDocument();
+    openConfiguration();
+    expect(screen.getByRole("tab", { name: /^Connectors$/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("tab", { name: /^Context capabilities$/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it("hides Memory from users who cannot manage the agent", () => {
-    renderPane([makeRuntime("claude")], { canEdit: false });
-    expect(
-      screen.queryByRole("tab", { name: /^Memory$/i }),
-    ).not.toBeInTheDocument();
+  it("sends old context capability links to the Connectors tab", () => {
+    const { navigation } = renderPane([makeRuntime("claude")], {
+      initialView: "context_capabilities",
+    });
+    expect(screen.getByText(/^connectors-tab/)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /^Connectors$/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(navigation.replace).toHaveBeenCalledWith("/acme/agents/agent-1?view=mcp_config");
   });
 });
 

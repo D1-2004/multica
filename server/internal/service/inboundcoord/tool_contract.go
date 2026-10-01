@@ -25,6 +25,9 @@ type toolContract struct {
 	issueIDs             []string
 	memoryRevision       int64
 	boundaryQuotes       []string
+	// configLink is set when Host appends this conversation's configuration
+	// link to a describe_capabilities reply after review (config_link.go).
+	configLink bool
 }
 
 // boundaryQuoteLimit bounds the decline quote options offered in the schema.
@@ -47,6 +50,7 @@ func toolContractFor(turn Turn) toolContract {
 	contract.issueIDs = append([]string(nil), turn.recalledIssueIDs...)
 	sort.Strings(contract.issueIDs)
 	contract.boundaryQuotes = boundaryQuoteOptions(turn)
+	contract.configLink = turn.configLinkOffered
 	return contract
 }
 

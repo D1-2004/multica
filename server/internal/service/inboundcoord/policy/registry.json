@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-26.1",
-  "assembly_version": "43",
+  "policy_version": "2026-10-01.1",
+  "assembly_version": "44",
   "modules": [
     {
       "id": "core",
@@ -616,7 +616,7 @@
     {
       "id": "COORD.F04",
       "family": "F04",
-      "obligation": "能力说明使用describe_capabilities；实际工作通过start_work/continue_work交执行器。产品机制、专业分析、回源查证即使是短问句也属于执行，不能放入任何动作的reply字段；召回只证明关联和状态。无关场域禁令不能挡住正常授权工作。 岗位业务材料/产物与Coordinator自己的issue/task记录分开解释；取样/查看领域材料是岗位数据范围内的有界检索请求，关联缺名不否认能力。仅明确询问所做工作的执行/进度才使用任务元数据，并针对该工作；技能目录已列出的岗位业务对象用状态句式提问仍是工作，审查对这类 report_status 返回 revise。 明确单项工作遇依赖故障只记录步骤/原始错误/阻塞，不自行寻找修改凭证或扩展未经授权的登录/环境维修。 Coordinator技能目录与场域记忆不是执行器工具集；空constraint_quote的目录/MCP权限revise由Host放行合法工作。  purpose 复述用户请求的交付物与对象原话，不替执行器设计方法，也不添加窗口未请求的处理、转交、评审或审批步骤；reply 同样不先替员工承诺某条处理路径。完整岗位工作流归执行器；用户自己说明的方法保留。工作审查对这类越界 purpose 返回 revise，点名要去掉的步骤并回到被请求的结果。",
+      "obligation": "能力说明使用describe_capabilities；实际工作通过start_work/continue_work交执行器。产品机制、专业分析、回源查证即使是短问句也属于执行，不能放入任何动作的reply字段；召回只证明关联和状态。无关场域禁令不能挡住正常授权工作。 岗位业务材料/产物与Coordinator自己的issue/task记录分开解释；取样/查看领域材料是岗位数据范围内的有界检索请求，关联缺名不否认能力。仅明确询问所做工作的执行/进度才使用任务元数据，并针对该工作；技能目录已列出的岗位业务对象用状态句式提问仍是工作，审查对这类 report_status 返回 revise。 明确单项工作遇依赖故障只记录步骤/原始错误/阻塞，不自行寻找修改凭证或扩展未经授权的登录/环境维修。 Coordinator技能目录与场域记忆不是执行器工具集；空constraint_quote的目录/MCP权限revise由Host放行合法工作。  purpose 复述用户请求的交付物与对象原话，不替执行器设计方法，也不添加窗口未请求的处理、转交、评审或审批步骤；reply 同样不先替员工承诺某条处理路径。完整岗位工作流归执行器；用户自己说明的方法保留。工作审查对这类越界 purpose 返回 revise，点名要去掉的步骤并回到被请求的结果。 钉钉入站轮的describe_capabilities在审查通过、落checkpoint前由Host附上本会话能力配置链接作末行（群聊=本群场域链接，30分钟可复用；单聊=个人链接，15分钟单次，并授权该单聊场域），复用执行器create_context_config_link的铸造、TTL与审计；模型不写、不提、不承诺链接，审查只看模型原话；无签发器、无可信场域或任何失败都不附链接且原回复逐字不变；Web、task_finished、A2UI选择卡与未启用Coordinator的Agent不变；链接不进Coordinator日志、trace、会话记录（含渠道引擎的会话记录与其存档计划）、Issue描述与之后读回的钉钉历史（均为占位符，只有钉钉回复带链接；渠道引擎重投恢复的计划因此回复占位符）；首轮影子请求与认领请求对本轮是否附链接的判断一致。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -647,7 +647,8 @@
         "f04_other_recipient_work_keywords",
         "f04_contextual_conversation",
         "f14_advice_without_biography",
-        "f04_requested_outcome_vs_invented_method"
+        "f04_requested_outcome_vs_invented_method",
+        "f04_capability_answer_config_link"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -655,7 +656,9 @@
         "dws_execution_recovery_host_tests": "passed_local_2026-09-10",
         "dws_execution_recovery_live_delivery": "not_run",
         "receiving_identity_2026_09_15": "Host verification pending; production incident ba5f8899-ad45-44df-bb10-8d428136209a; real delivery pending.",
-        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md"
+        "contextual_replies_2026_09_15": "verified within reported scope: .8 pre run3108396520 eleven functional cases completed; UID group contrasts use frozen-model replay and Host checks, not group IM; S3 environment retry and delayed recovery delivery retained in docs/reports/2026-09-15-coordinator-contextual-replies-e2e.md",
+        "context_config_link_2026_09_30": "host_tests_passed_local: inboundcoord config_link_test (group scene line and 1:1 personal line end the answer; checkpoint carries the link and a restored plan mints nothing; reviewer, logs and steps never see the URL; issuer error/panic/timeout/malformed result leaves the reply unchanged; web, A2UI, task_finished, no issuer and Coordinator-off turns unchanged) and handler DB tests (issuer reads the real dispatch envelope, mints scene/person links with executor TTL/single use, redeem grants, fail-closed cases; executor create_context_config_link tests unchanged; the Coordinator transcript stores [configuration link] instead of the URL: TestRedactContextConfigLinks, persistCoordinatorJobChat). model_replay_not_run; pre_e2e_not_run.",
+        "context_config_link_redaction_2026_10_01": "host_tests_passed_local: inboundcoord config_link_redact_test (plain and percent-encoded links redacted; Issue description and DingTalk history lines, quotes included, never carry the link; the first-round shadow equals the claim's first request when ConfigLinks is wired) and engine TestPersistCoordinatorAssistantRedactsConfigLinks (channel-engine transcript row and broadcast store the placeholder, the reply keeps the link); handler TestReportTaskMessagesRedactsContextConfigLinks (executor task messages). model_replay_not_run; pre_e2e_not_run."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -680,7 +683,21 @@
         "server/internal/service/inboundcoord/contextual_reply_test.go",
         "docs/plans/2026-09-15-coordinator-contextual-replies.md",
         "server/internal/service/inboundcoord/conversation_reply.go",
-        "server/internal/service/inboundcoord/policy/conversation_reply.md"
+        "server/internal/service/inboundcoord/policy/conversation_reply.md",
+        "server/internal/service/inboundcoord/config_link.go",
+        "server/internal/service/inboundcoord/config_link_test.go",
+        "server/internal/service/inboundcoord/tool_contract.go",
+        "server/internal/handler/context_config_link_mint.go",
+        "server/internal/handler/context_config_link_mint_test.go",
+        "server/internal/handler/inbound_coordinator_job.go#persistCoordinatorJobChat",
+        "server/internal/handler/multica_mcp_context_config.go",
+        "server/internal/service/inboundcoord/config_link_redact.go",
+        "server/internal/service/inboundcoord/config_link_redact_test.go",
+        "server/internal/service/inboundcoord/dws_history.go",
+        "server/internal/service/inboundcoord/loop.go#prepareFirstRound",
+        "server/internal/integrations/channel/engine/router.go#persistCoordinatorAssistant",
+        "server/internal/integrations/channel/engine/coordinator_plan.go",
+        "server/internal/integrations/channel/engine/coordinator_config_link_test.go"
       ],
       "case_file": "cases.json"
     },

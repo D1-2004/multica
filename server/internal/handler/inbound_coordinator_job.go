@@ -962,7 +962,9 @@ func windowHistoryEligibleJob(job db.InboundCoordinatorJob) bool {
 }
 
 func (h *Handler) persistCoordinatorJobChat(ctx context.Context, job db.InboundCoordinatorJob, decision inboundcoord.Decision) error {
-	content := strings.TrimSpace(decision.UserText)
+	// The capability answer's configuration link is delivered in the
+	// DingTalk reply only; the transcript keeps a placeholder.
+	content := strings.TrimSpace(redactContextConfigLinks(decision.UserText))
 	if content == "" {
 		switch decision.Action {
 		case inboundcoord.ActionIssue:

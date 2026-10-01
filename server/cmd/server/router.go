@@ -878,6 +878,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	coordinator.RouteProvider = h.Models.CoordinatorSnapshot
 	coordinator.SetIssueCommentWriter(handler.NewInboundCoordinatorIssueCommentWriter(h))
+	coordinator.ConfigLinks = handler.NewCoordinatorConfigLinkIssuer(h)
 	coordinator.DWSHistory = inboundcoord.NewDWSHistoryLoader(inboundcoord.DWSHistoryConfig{
 		MCPBaseURL:            strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL")),
 		CrossOrgRenewAgentIDs: strings.Split(os.Getenv("MULTICA_DWS_HISTORY_CROSS_ORG_RENEW_AGENT_IDS"), ","),
@@ -1941,6 +1942,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	runnerDevicePollRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_RUNNER_DEVICE_POLL", 600), time.Minute, trustedProxies)
 	runnerChallengeRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_RUNNER_CHALLENGE", 120), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
+	// Official app (connector) OAuth callback: public, hit by the provider's
+	// browser redirect; the hashed single-use state is the credential.
+	connectorOAuthCallbackRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONNECTOR_OAUTH_CALLBACK", 60), time.Minute, trustedProxies)
 	// LOGIN_PROVIDERS (with LOGIN_DINGTALK_ONLY as its legacy alias) closes
 	// the login paths of unlisted providers entirely — not merely hidden in
 	// the UI: the routes simply aren't registered, so a direct POST 404s.
@@ -2002,6 +2006,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Pre-release -> production forward registrations; authenticated only by
 	// the shared-secret signature.
 	r.Post("/api/internal/a2a/forward-registrations", h.HandleA2AForwardRegistration)
+	// Production keeps its pre-release's connector OAuth connects, so it
+	// forwards only their callbacks (signed like the A2A registrations).
+	r.Post(handler.ConnectorOAuthForwardRegistrationPath, h.HandleConnectorOAuthForwardRegistration)
 	// The header-authenticated URL is canonical. The secret-bearing connect URL
 	// exists so a local Coding Agent can be configured with one copied command.
 	r.Post("/api/mcp/agents/{publicAgentId}", h.HandleAgentMCP)
@@ -2030,7 +2037,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Post("/api/webhooks/github/pre", h.ForwardGitHubPreWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
 	r.Get("/api/github/install", h.GitHubInstallStart)
-	r.Get("/api/github/authorize", h.GitHubAuthorizeCallback)
+	// Also completes GitHub official app (MCP connector) connects: states with
+	// the "mcpc." prefix are delegated to the connector OAuth callback and
+	// rate-limited like it; other states keep the install flow unchanged.
+	githubAuthorize := http.HandlerFunc(h.GitHubAuthorizeCallback)
+	githubConnectorAuthorize := connectorOAuthCallbackRL(githubAuthorize)
+	r.Get("/api/github/authorize", func(w http.ResponseWriter, req *http.Request) {
+		if handler.IsConnectorOAuthCallback(req) {
+			githubConnectorAuthorize.ServeHTTP(w, req)
+			return
+		}
+		githubAuthorize(w, req)
+	})
+	// Official app OAuth callback for dynamically registered clients (Notion,
+	// Linear, ...). No Multica session: the single-use state and the browser
+	// binding cookie set by the start response are the proof.
+	r.With(connectorOAuthCallbackRL).Get(handler.ConnectorOAuthCallbackPath, h.ConnectorOAuthCallback)
 	// Slack OAuth callback (no Multica auth in the path — it is hit by Slack's
 	// browser redirect; the workspace/agent/initiator are recovered from the
 	// sealed state). It exchanges the code, upserts the install, then bounces
@@ -2196,6 +2218,26 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/runtimes/cloud-sandbox/stable-releases/{releaseId}/rollback", h.RollbackFCE2BStableRelease)
 		r.With(handler.RequireDingTalkHumanActor).Get("/api/fde/onboarding", h.GetFDEOnboarding)
 		r.With(handler.RequireDingTalkHumanActor).Post("/api/fde/onboarding", h.ProvisionFDEOnboarding)
+		// Context capability configuration (mobile H5 /dingtalk/configure).
+		// Not workspace-scoped: authority comes from the caller's
+		// context_config_grant rows or, for an agent's scenes, from managing
+		// the agent (workspace owner/admin or agent owner); plain workspace
+		// membership grants nothing.
+		r.Route("/api/context-capabilities", func(r chi.Router) {
+			r.Use(handler.RequireDingTalkHumanActor)
+			r.Post("/links/redeem", h.RedeemContextConfigLink)
+			r.Get("/agents", h.ListContextConfigAgents)
+			r.Get("/agents/{agentId}", h.GetContextConfigAgent)
+			r.Get("/agents/{agentId}/scenes/{sceneKey}", h.GetContextConfigScene)
+			r.Post("/agents/{agentId}/scenes/resolve", h.ResolveContextConfigScene)
+			r.Put("/agents/{agentId}/bindings", h.PutContextConfigBinding)
+			r.Put("/agents/{agentId}/credentials", h.PutContextConfigCredential)
+			r.Delete("/agents/{agentId}/credentials", h.DeleteContextConfigCredential)
+			r.Post("/agents/{agentId}/connections/start", h.StartContextConfigConnection)
+			r.Put("/agents/{agentId}/prompts", h.PutContextConfigPrompts)
+			r.Put("/agents/{agentId}/mcp-config", h.PutContextConfigMCPConfig)
+		})
+		r.With(handler.RequireHumanActor).Get("/api/dingtalk/jsapi-config", h.GetDingTalkJSAPIConfig)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
 
 		// Note (MUL-4309): the generic OpenAI-compatible passthrough endpoints
@@ -2313,7 +2355,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors", h.CreateInternalConnector)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Patch("/internal-connectors/{connectorId}", h.UpdateInternalConnector)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Put("/internal-connectors/{connectorId}/credential", h.PutInternalConnectorCredential)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Delete("/internal-connectors/{connectorId}/credential", h.DeleteInternalConnectorCredential)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/test", h.TestInternalConnector)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/oauth/start", h.StartInternalConnectorOAuth)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/tools/refresh", h.RefreshInternalConnectorTools)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Get("/connector-catalog", h.ListConnectorCatalog)
+					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/connector-catalog/{slug}", h.AddCatalogConnector)
 					r.Get("/dingtalk/users/search", h.SearchDingTalkUsers)
 					r.Post("/dingtalk/members", h.AddDingTalkWorkspaceMembers)
 					r.Post("/dingtalk/group-members", h.AddDingTalkGroupMembers)
@@ -2801,9 +2848,37 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/coordinator-conversations", h.ListAgentCoordinatorConversations)
 					r.Get("/coordinator-conversations/{sessionId}/messages", h.ListAgentCoordinatorConversationMessages)
 					r.Get("/scene-memory", h.ListAgentSceneMemory)
+					r.Get("/scene-memory/{memoryId}", h.GetAgentSceneMemory)
 					r.Put("/scene-memory/{memoryId}", h.UpdateAgentSceneMemory)
 					r.Post("/scene-memory/{memoryId}/reset", h.ResetAgentSceneMemory)
 					r.Post("/scene-memory/{memoryId}/relations/clear", h.ClearAgentSceneRelations)
+					// Scene and personal capability layers: offer catalog and
+					// read-only scope summaries (docs/context-capabilities.md).
+					r.With(handler.RequireHumanActor).Get("/context-capabilities", h.GetAgentContextCapabilities)
+					r.With(handler.RequireHumanActor).Put("/context-capabilities/offers", h.PutAgentContextCapabilityOffers)
+					// Official apps of the agent's 连接器 tab (连接应用): status,
+					// usage and tools per app. Read-only; actions use the
+					// catalog, connector, offer and credential routes.
+					r.With(handler.RequireHumanActor).Get("/connected-apps", h.ListAgentConnectedApps)
+					r.With(handler.RequireHumanActor).Get("/connected-apps/{slug}", h.GetAgentConnectedApp)
+					// Tenants (one per enterprise / DingTalk org) and the
+					// Context Builder of each node of the 场域 tree: org,
+					// group scene, person (a 1:1 chat is its person). Keys
+					// are percent-encoded.
+					r.With(handler.RequireHumanActor).Get("/tenants", h.ListAgentTenants)
+					r.With(handler.RequireHumanActor).Post("/tenants", h.CreateAgentTenant)
+					r.With(handler.RequireHumanActor).Patch("/tenants/{orgId}", h.RenameAgentTenant)
+					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}", h.DeleteAgentTenant)
+					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/groups", h.ListAgentTenantGroups)
+					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/persons", h.ListAgentTenantPersons)
+					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/context/{scopeType}/{scopeKey}", h.GetAgentContextNode)
+					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/bindings", h.PutAgentContextBinding)
+					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/prompts", h.PutAgentContextPrompts)
+					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/mcp-config", h.PutAgentContextMCPConfig)
+					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.PutAgentContextCredential)
+					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.DeleteAgentContextCredential)
+					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/connections/start", h.StartAgentContextConnection)
+					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/grants", h.RevokeAgentContextGrants)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)

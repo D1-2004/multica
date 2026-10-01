@@ -28,6 +28,17 @@ describe("agent configuration navigation", () => {
     expect(sectionForView("publish")).toBe("configuration");
   });
 
+  it("lists skills, connectors and MCP apps as the capabilities", () => {
+    const capabilities = AGENT_CONFIG_GROUPS.find(
+      (group) => group.id === "capabilities",
+    );
+    expect(capabilities?.items.map((item) => item.id)).toEqual([
+      "skills",
+      "mcp_config",
+      "composio_mcp",
+    ]);
+  });
+
   it("moves legacy identity links into Digital Employee", () => {
     expect(normalizeDetailView("identity")).toBe("digital_employee");
     expect(sectionForView("digital_employee")).toBe("configuration");
@@ -37,8 +48,18 @@ describe("agent configuration navigation", () => {
     expect(normalizeDetailView("not-a-view")).toBeNull();
   });
 
-  it("restores inbound deep links as a primary section", () => {
-    expect(normalizeDetailView("inbound")).toBe("inbound");
-    expect(sectionForView("inbound")).toBe("inbound");
+  it("opens scenes as a primary section", () => {
+    expect(normalizeDetailView("scenes")).toBe("scenes");
+    expect(sectionForView("scenes")).toBe("scenes");
+  });
+
+  it("sends old inbound and memory links to scenes", () => {
+    expect(normalizeDetailView("inbound")).toBe("scenes");
+    expect(normalizeDetailView("memory")).toBe("scenes");
+  });
+
+  it("sends old context capability links to the connectors tab", () => {
+    expect(normalizeDetailView("context_capabilities")).toBe("mcp_config");
+    expect(sectionForView("mcp_config")).toBe("configuration");
   });
 });

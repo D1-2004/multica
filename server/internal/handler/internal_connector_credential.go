@@ -14,15 +14,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/contextcap"
 )
 
 // PutInternalConnectorCredential accepts a new Bearer only from a human
 // workspace owner/admin. The route has both guards; the value is write-only.
 func (h *Handler) PutInternalConnectorCredential(w http.ResponseWriter, r *http.Request) {
-	if !h.internalConnectorsEnabled(r.Context()) {
-		http.NotFound(w, r)
-		return
-	}
 	if h.InternalConnectorSecretBox == nil {
 		writeError(w, http.StatusServiceUnavailable, "connector credential storage is not configured")
 		return
@@ -38,15 +35,17 @@ func (h *Handler) PutInternalConnectorCredential(w http.ResponseWriter, r *http.
 		return
 	}
 	ws, id = uuidToString(wsUUID), uuidToString(idUUID)
-	var authMode string
-	if err := h.DB.QueryRow(r.Context(), `SELECT auth_mode FROM internal_connector WHERE id=$1::uuid AND workspace_id=$2::uuid`, id, ws).Scan(&authMode); errors.Is(err, pgx.ErrNoRows) {
+	var authMode, catalogSlug string
+	if err := h.DB.QueryRow(r.Context(), `SELECT auth_mode, catalog_slug FROM internal_connector WHERE id=$1::uuid AND workspace_id=$2::uuid`, id, ws).Scan(&authMode, &catalogSlug); errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "connector not found")
 		return
 	} else if err != nil {
 		writeError(w, 500, "connector configuration unavailable")
 		return
 	}
-	if authMode != "bearer" {
+	// Bearer connectors, and official apps that accept a Personal Access
+	// Token (GitHub) as the workspace's shared account.
+	if !connectorAcceptsBearer(authMode, catalogSlug) {
 		writeError(w, 400, "connector does not use a Bearer credential")
 		return
 	}
@@ -87,16 +86,64 @@ func (h *Handler) PutInternalConnectorCredential(w http.ResponseWriter, r *http.
 		return
 	}
 	slog.InfoContext(r.Context(), "internal connector credential rotated", "connector_id", id, "workspace_id", ws, "actor_id", requestUserID(r))
-	writeJSON(w, 200, map[string]any{"credential_ready": true, "credential_source": "workspace"})
+	response := map[string]any{"credential_ready": true, "credential_source": "workspace"}
+	if catalogSlug != "" {
+		// First credential of an official app: pin its tools now. Failure is
+		// not fatal; the admin can refresh tools later.
+		result, _, err := h.discoverCatalogToolsIfEmpty(r.Context(), ws, id, contextcap.Secret{Bearer: input.BearerToken}, connectorCredentialWorkspace, contextcap.CredentialBinding{})
+		if err != nil {
+			slog.WarnContext(r.Context(), "official app first tool discovery failed", "connector_id", id, "error", err)
+		}
+		response["discovered_tool_count"] = result.Discovered
+	}
+	writeJSON(w, 200, response)
+}
+
+// DeleteInternalConnectorCredential removes the workspace's stored credential
+// of a connector: for an official app it disconnects the shared account
+// (所有人共用). Human workspace owner/admin only (same guards as PUT). It is
+// idempotent and answers 204; 404 for an unknown connector. The provider
+// grant of an OAuth account is not revoked, and an operator-managed
+// environment credential (MULTICA_INTERNAL_MCP_BEARER_<id>) is not affected.
+// An OAuth refresh holds the row lock while it reseals, so a disconnect
+// either waits for it or makes it answer "reconnect required"; it cannot be
+// undone by a concurrent refresh.
+func (h *Handler) DeleteInternalConnectorCredential(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	ws, ok := catalogWorkspaceID(w, r)
+	if !ok {
+		return
+	}
+	id, ok := catalogConnectorID(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	tag, err := h.DB.Exec(ctx, `UPDATE internal_connector SET credential_ciphertext = NULL, updated_at = now()
+		WHERE id = $1::uuid AND workspace_id = $2::uuid AND credential_ciphertext IS NOT NULL`, id, ws)
+	if err != nil {
+		slog.ErrorContext(ctx, "internal connector credential removal failed", "connector_id", id, "workspace_id", ws, "error", err)
+		writeError(w, http.StatusInternalServerError, "connector credential could not be removed")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		// Nothing was stored, or the connector does not exist.
+		if _, err := h.internalConnectorCatalogSlug(ctx, ws, id); errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "connector not found")
+			return
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, "connector configuration unavailable")
+			return
+		}
+	} else {
+		slog.InfoContext(ctx, "internal connector credential removed", "connector_id", id, "workspace_id", ws, "actor_id", requestUserID(r))
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // TestInternalConnector checks connectivity without invoking any upstream tool.
 // The response contains discovered tool names and a sanitized failure category.
 func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) {
-	if !h.internalConnectorsEnabled(r.Context()) {
-		http.NotFound(w, r)
-		return
-	}
 	w.Header().Set("Cache-Control", "no-store")
 	ws, id := chi.URLParam(r, "id"), chi.URLParam(r, "connectorId")
 	wsUUID, ok := parseUUIDOrBadRequest(w, ws, "workspace id")
@@ -108,20 +155,16 @@ func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	ws, id = uuidToString(wsUUID), uuidToString(idUUID)
-	var c internalConnector
-	var raw []byte
-	err := h.DB.QueryRow(r.Context(), `SELECT id::text,workspace_id::text,name,upstream_url,credential_ref,auth_mode,allowed_tools,enabled,credential_ciphertext
-		FROM internal_connector WHERE id=$1::uuid AND workspace_id=$2::uuid`, id, ws).
-		Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &c.AuthMode, &raw, &c.Enabled, &c.CredentialCiphertext)
-	if errors.Is(err, pgx.ErrNoRows) {
+	c, err := h.loadInternalConnector(r.Context(), ws, id)
+	if errors.Is(err, errConnectorNotFound) {
 		writeError(w, 404, "connector not found")
 		return
 	}
-	if err != nil || json.Unmarshal(raw, &c.AllowedTools) != nil {
+	if err != nil {
 		writeError(w, 500, "connector configuration unavailable")
 		return
 	}
-	if err := validateConnectorInput(connectorInput{Name: c.Name, UpstreamURL: c.UpstreamURL, AllowedTools: c.AllowedTools}); err != nil {
+	if err := validateConnectorInput(connectorInput{Name: c.Name, UpstreamURL: c.UpstreamURL, AuthMode: c.AuthMode, AllowedTools: c.AllowedTools, catalogSlug: c.CatalogSlug}); err != nil {
 		writeError(w, 503, "connector configuration unavailable")
 		return
 	}

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS context_capability_binding_resource_idx;

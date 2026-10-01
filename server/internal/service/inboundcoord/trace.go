@@ -188,7 +188,7 @@ func finishCoordinatorTrace(t *langfuse.Trace, decision Decision, loopErr error)
 		"action":             action,
 		"coordination_kinds": decision.CoordinationKinds(),
 		"issue_id":           strings.TrimSpace(decision.IssueID),
-		"user_text":          clipRunes(strings.TrimSpace(decision.UserText), traceOutputTextBudget),
+		"user_text":          clipRunes(strings.TrimSpace(redactConfigLink(decision.UserText, decision.configLinkURL)), traceOutputTextBudget),
 		"look_into":          clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
 		"purpose":            clipRunes(strings.TrimSpace(decision.Purpose), llmLogFieldBudget),
 		"intent":             strings.TrimSpace(decision.Intent),
@@ -197,7 +197,7 @@ func finishCoordinatorTrace(t *langfuse.Trace, decision Decision, loopErr error)
 		"tools_used":         decision.ToolsUsed,
 		"elapsed_ms":         decision.ElapsedMs,
 	}
-	output["coordination_actions"] = decision.CoordinationActions
+	output["coordination_actions"] = redactConfigLinkActions(decision.CoordinationActions, decision.configLinkURL)
 	if decision.IssueComment != nil {
 		output["issue_comment"] = decision.IssueComment
 	}

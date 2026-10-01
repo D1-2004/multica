@@ -246,10 +246,18 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 						}
 					}
 					if callErr == nil {
+						userDecision := turn.UserDecisionEnabled && turn.Loop != LoopTaskFinished && decision.Action != ActionSilence
+						if !userDecision {
+							// Reviewed and not yet durable: the checkpoint and every
+							// redelivery carry the same capability answer and link.
+							for _, step := range c.attachConfigLink(ctx, turn, &decision) {
+								appendStep(step)
+							}
+						}
 						decision.Steps = steps
 						decision.ToolRounds = modelRounds
 						decision.ToolsUsed = append([]string(nil), used...)
-						if turn.UserDecisionEnabled && turn.Loop != LoopTaskFinished && decision.Action != ActionSilence {
+						if userDecision {
 							return c.proposeUserDecision(ctx, turn, messages, recalls, recalledIssues, decision)
 						}
 						if saveErr := SavePlan(ctx, decision); saveErr != nil {
@@ -345,9 +353,9 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 func finishToolOutput(decision Decision) string {
 	raw, err := json.Marshal(map[string]any{
 		"action":               string(decision.Action),
-		"coordination_actions": decision.CoordinationActions,
+		"coordination_actions": redactConfigLinkActions(decision.CoordinationActions, decision.configLinkURL),
 		"issue_id":             strings.TrimSpace(decision.IssueID),
-		"text":                 clipRunes(strings.TrimSpace(decision.UserText), traceOutputTextBudget),
+		"text":                 clipRunes(strings.TrimSpace(redactConfigLink(decision.UserText, decision.configLinkURL)), traceOutputTextBudget),
 		"look_into":            clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
 		"purpose":              clipRunes(strings.TrimSpace(decision.Purpose), llmLogFieldBudget),
 		"intent":               strings.TrimSpace(decision.Intent),
@@ -377,6 +385,9 @@ type firstRound struct {
 // claimed decision passes startHistoryPrefetch, the collect-window shadow a
 // read of the early history that leaves it for the claim.
 func (c *Coordinator) prepareFirstRound(ctx context.Context, turn *Turn, startHistory func(context.Context, Turn) <-chan historyPrefetchResult) firstRound {
+	// The finish tool's schema says whether Host appends the configuration
+	// link, so the claim and its first-round shadow must agree on it.
+	turn.configLinkOffered = c.configLinkEligible(*turn)
 	first := firstRound{
 		recalledIssues:     map[string]struct{}{},
 		continuationIssues: map[string]struct{}{},
@@ -808,10 +819,10 @@ func logCoordinatorLLMFinish(turn Turn, round int, arguments string, decision De
 			"round", round,
 			"arguments", clipRunes(strings.TrimSpace(arguments), llmLogToolBudget),
 			"action", string(decision.Action),
-			"coordination_actions", decision.CoordinationActions,
+			"coordination_actions", redactConfigLinkActions(decision.CoordinationActions, decision.configLinkURL),
 			"coordination_kinds", decision.CoordinationKinds(),
 			"issue_id", strings.TrimSpace(decision.IssueID),
-			"text", clipRunes(strings.TrimSpace(decision.UserText), llmLogFieldBudget),
+			"text", clipRunes(strings.TrimSpace(redactConfigLink(decision.UserText, decision.configLinkURL)), llmLogFieldBudget),
 			"look_into", clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
 			"reason", clipRunes(strings.TrimSpace(decision.Reason), llmLogFieldBudget),
 		)...)

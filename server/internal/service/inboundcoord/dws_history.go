@@ -340,7 +340,9 @@ func parseDWSHistory(raw []byte, turn Turn) ([]HistoryLine, error) {
 		if !turn.HistoryBefore.IsZero() && !timestamp.IsZero() && !timestamp.Before(turn.HistoryBefore) {
 			continue
 		}
-		contentRaw := strings.TrimSpace(message.Content)
+		// A configuration link the bot posted earlier (or a member quoted)
+		// is a live bearer token: the model and the trace never see it.
+		contentRaw := RedactConfigLinks(strings.TrimSpace(message.Content))
 		content := clipRunes(contentRaw, 160)
 		if content == "" {
 			continue
@@ -358,8 +360,9 @@ func parseDWSHistory(raw []byte, turn Turn) ([]HistoryLine, error) {
 		if message.QuotedMessage != nil {
 			line.ReplyToEvidenceID = message.QuotedMessage.OpenMessageID
 			line.ReplyToSenderID = firstNonEmpty(message.QuotedMessage.SenderUID, message.QuotedMessage.SenderID)
-			quotedContent := clipRunes(strings.TrimSpace(message.QuotedMessage.Content), 160)
-			line.ContentTruncated = line.ContentTruncated || utf8.RuneCountInString(strings.TrimSpace(message.QuotedMessage.Content)) > 160
+			quotedRaw := RedactConfigLinks(strings.TrimSpace(message.QuotedMessage.Content))
+			quotedContent := clipRunes(quotedRaw, 160)
+			line.ContentTruncated = line.ContentTruncated || utf8.RuneCountInString(quotedRaw) > 160
 			if quotedContent != "" {
 				quotedSender := clipRunes(strings.Join(strings.Fields(message.QuotedMessage.Sender), " "), 40)
 				if quotedSender == "" {

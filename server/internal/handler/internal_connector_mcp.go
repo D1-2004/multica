@@ -18,6 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -96,32 +97,105 @@ type connectorSealedCredential struct {
 	WorkspaceID string `json:"workspace_id"`
 	ConnectorID string `json:"connector_id"`
 	Bearer      string `json:"bearer"`
+	// OAuth is set for a credential stored by an OAuth connect. Bearer then
+	// mirrors its access token, so an older binary can still use an
+	// unexpired token.
+	OAuth *contextcap.OAuthToken `json:"oauth,omitempty"`
 }
 
-func (h *Handler) connectorBearer(c internalConnector) (string, error) {
+// connectorSecret returns the credential the relay sends for c: the
+// task-resolved one (person > scene > workspace) when set, else the sealed
+// workspace credential, else the environment fallback. auth_mode 'none'
+// yields an empty secret. The OAuth part may be expired; callers that send
+// it use freshConnectorToken.
+func (h *Handler) connectorSecret(c internalConnector) (contextcap.Secret, error) {
 	if c.AuthMode == "none" {
-		return "", nil
+		return contextcap.Secret{}, nil
+	}
+	if c.bearerResolved {
+		if c.resolvedBearer == "" || strings.ContainsAny(c.resolvedBearer, "\r\n\x00") {
+			return contextcap.Secret{}, errors.New("connector credential unavailable")
+		}
+		return contextcap.Secret{Bearer: c.resolvedBearer, OAuth: c.resolvedOAuth}, nil
 	}
 	id, err := uuid.Parse(c.ID)
 	if err != nil || id == uuid.Nil || c.CredentialRef != connectorCredentialRef(id.String()) {
-		return "", errors.New("invalid connector credential reference")
+		return contextcap.Secret{}, errors.New("invalid connector credential reference")
 	}
 	if len(c.CredentialCiphertext) > 0 {
-		if h.InternalConnectorSecretBox == nil {
-			return "", errors.New("connector credential key unavailable")
-		}
-		plain, err := h.InternalConnectorSecretBox.Open(c.CredentialCiphertext)
-		var sealed connectorSealedCredential
-		if err != nil || json.Unmarshal(plain, &sealed) != nil || sealed.WorkspaceID != c.WorkspaceID || sealed.ConnectorID != c.ID ||
-			sealed.Bearer == "" || strings.ContainsAny(sealed.Bearer, "\r\n\x00") {
-			return "", errors.New("connector credential unavailable")
-		}
-		return sealed.Bearer, nil
+		return h.openWorkspaceConnectorSecret(c.WorkspaceID, c.ID, c.CredentialCiphertext)
 	}
 	if !connectorCredentialReady(c) {
-		return "", errors.New("connector credential unavailable")
+		return contextcap.Secret{}, errors.New("connector credential unavailable")
 	}
-	return os.Getenv(c.CredentialRef), nil
+	return contextcap.Secret{Bearer: os.Getenv(c.CredentialRef)}, nil
+}
+
+// openWorkspaceConnectorSecret opens a workspace connector credential and
+// checks that it is bound to this workspace and connector.
+func (h *Handler) openWorkspaceConnectorSecret(workspaceID, connectorID string, ciphertext []byte) (contextcap.Secret, error) {
+	if h.InternalConnectorSecretBox == nil {
+		return contextcap.Secret{}, errors.New("connector credential key unavailable")
+	}
+	plain, err := h.InternalConnectorSecretBox.Open(ciphertext)
+	var sealed connectorSealedCredential
+	if err != nil || json.Unmarshal(plain, &sealed) != nil || sealed.WorkspaceID != workspaceID || sealed.ConnectorID != connectorID {
+		return contextcap.Secret{}, errors.New("connector credential unavailable")
+	}
+	secret, err := contextcap.OpenSecretPayload(sealed.Bearer, sealed.OAuth)
+	if err != nil {
+		return contextcap.Secret{}, errors.New("connector credential unavailable")
+	}
+	return secret, nil
+}
+
+// sealWorkspaceConnectorSecret seals a workspace credential bound to the
+// workspace and connector.
+func (h *Handler) sealWorkspaceConnectorSecret(workspaceID, connectorID string, secret contextcap.Secret) ([]byte, error) {
+	if h.InternalConnectorSecretBox == nil {
+		return nil, errors.New("connector credential key unavailable")
+	}
+	if secret.OAuth != nil {
+		if !secret.OAuth.Valid() || secret.OAuth.AccessToken != secret.Bearer {
+			return nil, errors.New("invalid OAuth credential")
+		}
+	} else if !validInternalConnectorBearer(secret.Bearer) {
+		return nil, errors.New("invalid connector credential")
+	}
+	payload, err := json.Marshal(connectorSealedCredential{WorkspaceID: workspaceID, ConnectorID: connectorID, Bearer: secret.Bearer, OAuth: secret.OAuth})
+	if err != nil {
+		return nil, err
+	}
+	return h.InternalConnectorSecretBox.Seal(payload)
+}
+
+// connectorBearer returns a usable Bearer for c ("" for auth_mode 'none').
+// An expired OAuth token without a refresh token is not usable.
+func (h *Handler) connectorBearer(c internalConnector) (string, error) {
+	secret, err := h.connectorSecret(c)
+	if err != nil {
+		return "", err
+	}
+	if c.AuthMode == "none" {
+		return "", nil
+	}
+	if !secret.Usable(time.Now()) {
+		return "", errors.New("connector credential expired")
+	}
+	return secret.Bearer, nil
+}
+
+// connectorCredentialAccount is the display hint of the workspace
+// credential: "@<account>" or "OAuth" for an OAuth credential, "" otherwise.
+func (h *Handler) connectorCredentialAccount(c internalConnector) string {
+	if c.AuthMode == "none" || len(c.CredentialCiphertext) == 0 {
+		return ""
+	}
+	secret, err := h.openWorkspaceConnectorSecret(c.WorkspaceID, c.ID, c.CredentialCiphertext)
+	if err != nil || secret.OAuth == nil {
+		return ""
+	}
+	return contextcap.OAuthHint(secret.OAuth.Account)
 }
 
 func (h *Handler) connectorCredentialReady(c internalConnector) bool {
@@ -130,19 +204,31 @@ func (h *Handler) connectorCredentialReady(c internalConnector) bool {
 }
 
 func (h *Handler) connectorCredentialSource(c internalConnector) string {
+	source, _ := h.connectorWorkspaceCredential(c)
+	return source
+}
+
+// connectorWorkspaceCredential classifies the workspace-level credential of
+// c: source "workspace" for a usable stored credential (returned, so its
+// hint can be shown), "unavailable" for a stored one that cannot be opened
+// or is no longer usable, "environment" for the operator-managed
+// MULTICA_INTERNAL_MCP_BEARER_<id> fallback, and "none" for auth_mode 'none'
+// or no credential at all.
+func (h *Handler) connectorWorkspaceCredential(c internalConnector) (string, contextcap.Secret) {
 	if c.AuthMode == "none" {
-		return "none"
+		return "none", contextcap.Secret{}
 	}
 	if len(c.CredentialCiphertext) > 0 {
-		if h.connectorCredentialReady(c) {
-			return "workspace"
+		secret, err := h.connectorSecret(c)
+		if err != nil || !secret.Usable(time.Now()) {
+			return "unavailable", contextcap.Secret{}
 		}
-		return "unavailable"
+		return "workspace", secret
 	}
 	if connectorCredentialReady(c) {
-		return "environment"
+		return "environment", contextcap.Secret{}
 	}
-	return "none"
+	return "none", contextcap.Secret{}
 }
 
 func (h *Handler) connectorLimit(ctx context.Context, connectorID, task, agent, ws string) error {
@@ -170,19 +256,15 @@ func (h *Handler) connectorAudit(r *http.Request, c internalConnector, task, age
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
 	defer cancel()
 	_, err := h.DB.Exec(ctx, `INSERT INTO internal_connector_call_audit
-  (connector_id,workspace_id,agent_id,task_id,method,tool_name,outcome)
-  VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7)`, c.ID, c.WorkspaceID, agent, task, method, tool, outcome)
+  (connector_id,workspace_id,agent_id,task_id,method,tool_name,outcome,binding_layer,credential_layer)
+  VALUES ($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9)`, c.ID, c.WorkspaceID, agent, task, method, tool, outcome, c.bindingLayer, c.credentialLayer)
 	if err == nil {
-		slog.InfoContext(r.Context(), "internal connector call", "event", "internal_mcp_connector_call", "connector_id", c.ID, "workspace_id", c.WorkspaceID, "agent_id", agent, "task_id", task, "method", method, "tool_name", tool, "outcome", outcome)
+		slog.InfoContext(r.Context(), "internal connector call", "event", "internal_mcp_connector_call", "connector_id", c.ID, "workspace_id", c.WorkspaceID, "agent_id", agent, "task_id", task, "method", method, "tool_name", tool, "outcome", outcome, "binding_layer", c.bindingLayer, "credential_layer", c.credentialLayer)
 	}
 	return err
 }
 
 func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) {
-	if !h.internalConnectorsEnabled(r.Context()) {
-		http.NotFound(w, r)
-		return
-	}
 	if !multicaMCPTaskTokenAuthenticated(r) || !h.multicaMCPOriginAllowed(r) {
 		writeError(w, http.StatusForbidden, "task token required")
 		return
@@ -208,7 +290,10 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 403, "task is not active or authorized")
 		return
 	}
-	connectors, err := h.authorizedConnectors(r.Context(), ws, agent)
+	// Re-resolve on every call with the task's own scope, so a scene or
+	// personal toggle, offer removal or credential revoke applies to the next
+	// tool call of a running task.
+	connectors, err := h.authorizedTaskConnectors(r.Context(), wsUUID, active)
 	if err != nil {
 		writeError(w, 503, "connector store unavailable")
 		return
@@ -265,8 +350,17 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 			h.writeMulticaMCPError(w, request.ID, -32602, "tool name or arguments are invalid")
 			return
 		}
-		// Resolve compact aliases against live metadata, never a saved allowlist.
-		if strings.HasPrefix(params.Name, "t_") && len(params.Name) == 18 {
+		if c.CatalogSlug != "" {
+			// External official apps keep their pinned tools (read-only unless
+			// writes are enabled).
+			original, allowed := connectorOriginalTool(c.AllowedTools, params.Name)
+			if !allowed {
+				h.writeMulticaMCPError(w, request.ID, -32602, "tool is not allowed")
+				return
+			}
+			params.Name = original
+		} else if strings.HasPrefix(params.Name, "t_") && len(params.Name) == 18 {
+			// Resolve compact aliases against live metadata, never a saved allowlist.
 			names, listErr := h.discoverInternalConnectorTools(r.Context(), *c)
 			if listErr != nil {
 				h.writeMulticaMCPError(w, request.ID, -32603, "upstream tool names unavailable")
@@ -299,7 +393,14 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 	_ = http.NewResponseController(w).Flush()
 	result, err := h.callInternalConnectorUpstream(r.Context(), *c, request.Method, params)
 	outcome := "ok"
-	if err != nil {
+	failure := "Internal MCP tool list unavailable"
+	if errors.Is(err, errConnectorReconnectRequired) {
+		// The account behind this credential was disconnected or its grant
+		// was revoked; tell the agent to have the user reconnect.
+		outcome = "reconnect_required"
+		failure = connectorReconnectMessage(*c)
+		result = multicaMCPToolResult{IsError: true, Content: []multicaMCPContent{{Type: "text", Text: failure}}}
+	} else if err != nil {
 		outcome = "upstream_error"
 		result = multicaMCPToolResult{IsError: true, Content: []multicaMCPContent{{Type: "text", Text: "Internal MCP upstream unavailable"}}}
 	}
@@ -309,9 +410,10 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 	if auditErr := h.connectorAudit(r, *c, task, agent, request.Method, params.Name, outcome); auditErr != nil {
 		result = multicaMCPToolResult{IsError: true, Content: []multicaMCPContent{{Type: "text", Text: "connector audit unavailable"}}}
 		outcome = "audit_error"
+		failure = "Internal MCP tool list unavailable"
 	}
 	if request.Method == "tools/list" && outcome != "ok" {
-		_ = json.NewEncoder(w).Encode(multicaMCPResponse{JSONRPC: "2.0", ID: request.ID, Error: &multicaMCPError{Code: -32603, Message: "Internal MCP tool list unavailable"}})
+		_ = json.NewEncoder(w).Encode(multicaMCPResponse{JSONRPC: "2.0", ID: request.ID, Error: &multicaMCPError{Code: -32603, Message: failure}})
 		return
 	}
 	_ = json.NewEncoder(w).Encode(multicaMCPResponse{JSONRPC: "2.0", ID: request.ID, Result: result})
@@ -323,6 +425,21 @@ func (h *Handler) callInternalConnectorUpstream(ctx context.Context, c internalC
 		return result, err
 	}
 	list := result.(map[string]any)
+	if c.CatalogSlug != "" {
+		// External official apps keep their separate write opt-in contract.
+		allowed := map[string]bool{}
+		for _, name := range c.AllowedTools {
+			allowed[name] = true
+		}
+		tools := []map[string]any{}
+		for _, item := range list["tools"].([]map[string]any) {
+			name, _ := item["name"].(string)
+			if allowed[name] {
+				tools = append(tools, item)
+			}
+		}
+		list["tools"] = tools
+	}
 	seen := map[string]bool{}
 	for _, item := range list["tools"].([]map[string]any) {
 		name, _ := item["name"].(string)
@@ -351,6 +468,24 @@ func (h *Handler) callInternalConnectorUpstreamRaw(ctx context.Context, c intern
 		upstreamParams["name"] = params.Name
 		upstreamParams["arguments"] = params.Arguments
 	}
+	var result json.RawMessage
+	var err error
+	if c.CatalogSlug != "" {
+		// Official apps: proxy-aware, host-pinned, session-aware client with
+		// OAuth refresh (internal_connector_oauth_refresh.go).
+		result, err = h.callCatalogConnector(ctx, &c, method, upstreamParams)
+	} else {
+		result, err = h.postInternalConnectorRPC(ctx, c, method, upstreamParams)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return connectorRPCResult(method, result)
+}
+
+// postInternalConnectorRPC sends one JSON-RPC request to a custom (Aone
+// FaaS) connector through InternalConnectorClient and returns its result.
+func (h *Handler) postInternalConnectorRPC(ctx context.Context, c internalConnector, method string, upstreamParams map[string]any) (json.RawMessage, error) {
 	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": upstreamParams})
 	if err != nil {
 		return nil, err
@@ -403,12 +538,17 @@ func (h *Handler) callInternalConnectorUpstreamRaw(ctx context.Context, c intern
 	if json.Unmarshal(raw, &rpc) != nil || rpc.JSONRPC != "2.0" || string(rpc.ID) != "1" || (len(rpc.Error) > 0 && string(rpc.Error) != "null") {
 		return nil, connectorUpstreamProtocolError{}
 	}
+	return rpc.Result, nil
+}
+
+// connectorRPCResult preserves raw tool lists and bounds tool errors.
+func connectorRPCResult(method string, result json.RawMessage) (any, error) {
 	if method == "tools/list" {
 		var list struct {
 			Tools      []map[string]any `json:"tools"`
 			NextCursor string           `json:"nextCursor"`
 		}
-		if json.Unmarshal(rpc.Result, &list) != nil || list.Tools == nil {
+		if json.Unmarshal(result, &list) != nil || list.Tools == nil {
 			return nil, connectorUpstreamProtocolError{}
 		}
 		value := map[string]any{"tools": list.Tools}
@@ -417,15 +557,15 @@ func (h *Handler) callInternalConnectorUpstreamRaw(ctx context.Context, c intern
 		}
 		return value, nil
 	}
-	var result multicaMCPToolResult
-	if json.Unmarshal(rpc.Result, &result) != nil || len(result.Content) == 0 {
-		return result, errors.New("invalid upstream tool result")
+	var toolResult multicaMCPToolResult
+	if json.Unmarshal(result, &toolResult) != nil || len(toolResult.Content) == 0 {
+		return toolResult, errors.New("invalid upstream tool result")
 	}
-	if result.IsError {
+	if toolResult.IsError {
 		const maxToolErrorRunes = 4096
-		content := make([]multicaMCPContent, 0, len(result.Content))
+		content := make([]multicaMCPContent, 0, len(toolResult.Content))
 		remaining := maxToolErrorRunes
-		for _, item := range result.Content {
+		for _, item := range toolResult.Content {
 			if item.Type != "text" || item.Text == "" || remaining == 0 {
 				continue
 			}
@@ -441,5 +581,5 @@ func (h *Handler) callInternalConnectorUpstreamRaw(ctx context.Context, c intern
 		}
 		return multicaMCPToolResult{IsError: true, Content: content}, nil
 	}
-	return result, nil
+	return toolResult, nil
 }

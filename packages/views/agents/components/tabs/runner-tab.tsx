@@ -20,7 +20,18 @@ import { McpServerDetailsList } from "../../../runner/mcp-server-details-list";
 
 // Pairing and machine lifecycle are account concerns in General settings;
 // this panel selects the Agent execution mount and shows its dynamic inventory.
-export function RunnerTab({ agent, canBind, mode = "all" }: { agent: Agent; canBind: boolean; mode?: "all" | "execution" | "mcp" }) {
+export function RunnerTab({
+  agent,
+  canBind,
+  mode = "all",
+  compact = false,
+}: {
+  agent: Agent;
+  canBind: boolean;
+  mode?: "all" | "execution" | "mcp";
+  /** Drops the explanatory paragraphs; behavior is the same. */
+  compact?: boolean;
+}) {
   const { t } = useT("agents");
   const workspaceId = useWorkspaceId();
   const userId = useAuthStore((state) => state.user?.id ?? "");
@@ -123,7 +134,7 @@ export function RunnerTab({ agent, canBind, mode = "all" }: { agent: Agent; canB
         </section>
       ) : null}
 	  {mode !== "execution" && <section className="space-y-3">
-        <div><p className="text-body font-medium">{t(($) => $.tab_body.runner.local_mcp_title)}</p><p className="text-caption text-muted-foreground">{t(($) => $.tab_body.runner.local_mcp_hint)}</p></div>
+        <div><p className="text-body font-medium">{t(($) => $.tab_body.runner.local_mcp_title)}</p>{compact ? null : <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.runner.local_mcp_hint)}</p>}</div>
         {!mounted ? <RunnerMcpNotice text={t(($) => $.tab_body.runner.mount_first)} /> : mounted.mcpServers.length === 0 ? <RunnerMcpNotice text={mounted.online ? t(($) => $.tab_body.runner.mcp_empty) : t(($) => $.tab_body.runner.mcp_offline)} /> : (
           <McpServerDetailsList servers={mounted.mcpServers} online={mounted.online} />
         )}

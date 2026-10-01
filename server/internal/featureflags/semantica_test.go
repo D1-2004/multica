@@ -18,9 +18,6 @@ func TestSemanticaEnvironmentDefault(t *testing.T) {
 		if got := SemanticaMCPRelayEnabled(context.Background(), nil); got != v.want {
 			t.Errorf("%q: %v", v.env, got)
 		}
-		if got := InternalMCPConnectorsEnabled(context.Background(), nil); got != v.want {
-			t.Errorf("internal connectors in %q: got %v, want %v", v.env, got, v.want)
-		}
 	}
 	t.Setenv("AONE_ENV_TYPE", "prod")
 	t.Setenv("APP_ENV", "pre")

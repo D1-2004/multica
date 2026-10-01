@@ -65,10 +65,14 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 	if len(contract.sourceRefs) > 0 {
 		sourceRefSchema = stringEnum(contract.sourceRefs)
 	}
+	replyDescription := "Required for non-work operations except ignore. For start_work/continue_work, omit reply: Host owns and supplies the receipt after all work is committed. Any supplied work reply is discarded; never put a deliverable here. Non-work replies stay within their operation, without business answers or internal routing narration."
+	if contract.configLink {
+		replyDescription += " describe_capabilities: after review Host appends this chat's capability configuration link as the last line; do not write, mention or promise a link."
+	}
 	props := map[string]any{
 		"kind":        map[string]any{"type": "string", "enum": kinds},
 		"source_refs": map[string]any{"type": "array", "minItems": 1, "items": sourceRefSchema, "description": "Exact current-window uN refs. Every uN in current_message must be covered by at least one action, including non-work. Multiple intents may share a ref."},
-		"reply":       map[string]any{"type": "string", "description": "Required for non-work operations except ignore. For start_work/continue_work, omit reply: Host owns and supplies the receipt after all work is committed. Any supplied work reply is discarded; never put a deliverable here. Non-work replies stay within their operation, without business answers or internal routing narration."},
+		"reply":       map[string]any{"type": "string", "description": replyDescription},
 		"reason":      map[string]any{"type": "string", "description": "Only ignore: why no response/work is needed."},
 	}
 	// A contract without window refs is the legacy unscoped schema used by

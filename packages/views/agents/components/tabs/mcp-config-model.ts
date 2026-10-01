@@ -75,6 +75,26 @@ export function upsertManagedMcpServer(
   return document;
 }
 
+/** Switches one server on or off in place: off writes `disabled: true`
+ * (the flag the merge reads), on drops both off markers. */
+export function setManagedMcpServerEnabled(
+  value: unknown,
+  server: ManagedMcpServer,
+  enabled: boolean,
+): Record<string, unknown> {
+  const document = isRecord(value) ? { ...value } : {};
+  const container = isRecord(document[server.container])
+    ? { ...(document[server.container] as Record<string, unknown>) }
+    : {};
+  const entry = isRecord(container[server.name]) ? { ...(container[server.name] as Record<string, unknown>) } : {};
+  delete entry.disabled;
+  if (entry.enabled === false) delete entry.enabled;
+  if (!enabled) entry.disabled = true;
+  container[server.name] = entry;
+  document[server.container] = container;
+  return document;
+}
+
 export function removeManagedMcpServer(
   value: unknown,
   server: ManagedMcpServer,

@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
@@ -5237,6 +5238,10 @@ func rerunDispatchContext(sourceTask db.AgentTaskQueue) ([]byte, error) {
 	delete(payload, protocol.AgentIdentityContextTokenJSONKey)
 	delete(payload, protocol.AgentIdentityContextTokenExpiresAtJSONKey)
 	delete(payload, protocol.AgentIdentityContextTokenSourceJSONKey)
+	// The rerun is triggered by whoever clicked rerun, not by the DingTalk
+	// sender the copied dispatch data names, so it must not inherit that
+	// sender's scene or personal capability layers.
+	payload[contextcap.ReplayedDispatchContextKey] = json.RawMessage("true")
 
 	stableDWS, hasStableDWS, err := fcE2BExternalDWSIdentity(sourceTask)
 	if err != nil {
@@ -5745,7 +5750,21 @@ func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) 
 // platform built-ins, and runtime-specific skills implied by the exact Runtime
 // that claimed the task.
 func (s *TaskService) LoadAgentExecutionSkills(ctx context.Context, agentID pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) []AgentSkillData {
-	skills := filterAgentSkillsForRuntime(s.LoadAgentSkills(ctx, agentID), runtime, taskBackend)
+	return s.LoadTaskExecutionSkills(ctx, agentID, nil, runtime, taskBackend, messagePolicy...)
+}
+
+// LoadTaskExecutionSkills is LoadAgentExecutionSkills for one claimed task:
+// the agent's enabled skills plus extraSkillIDs (scene / personal context
+// skills), deduplicated by skill id with agent rows first. Extra skills are
+// loaded only from the runtime's workspace and pass the same runtime filter;
+// unknown or foreign ids are skipped. Built-ins and the DWS skill follow as
+// usual.
+func (s *TaskService) LoadTaskExecutionSkills(ctx context.Context, agentID pgtype.UUID, extraSkillIDs []pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) []AgentSkillData {
+	workspaceSkills := s.LoadAgentSkills(ctx, agentID)
+	if len(extraSkillIDs) > 0 {
+		workspaceSkills = append(workspaceSkills, s.loadWorkspaceSkillsByID(ctx, runtime.WorkspaceID, extraSkillIDs, workspaceSkills)...)
+	}
+	skills := filterAgentSkillsForRuntime(workspaceSkills, runtime, taskBackend)
 	skills = append(skills, s.BuiltinSkills()...)
 	if CloudSandboxRuntimeHasCapability(runtime, "dws") {
 		var policy *protocol.DingTalkMessagePolicy
@@ -5760,7 +5779,50 @@ func (s *TaskService) LoadAgentExecutionSkills(ctx context.Context, agentID pgty
 // LoadAgentSkillBundles returns every skill visible to an agent, including
 // built-ins, with stable bundle hashes and lightweight refs for slim claims.
 func (s *TaskService) LoadAgentSkillBundles(ctx context.Context, agentID pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) ([]AgentSkillData, []AgentSkillRefData) {
-	return BuildAgentSkillBundles(s.LoadAgentExecutionSkills(ctx, agentID, runtime, taskBackend, messagePolicy...))
+	return s.LoadTaskSkillBundles(ctx, agentID, nil, runtime, taskBackend, messagePolicy...)
+}
+
+// LoadTaskSkillBundles is LoadAgentSkillBundles over LoadTaskExecutionSkills.
+func (s *TaskService) LoadTaskSkillBundles(ctx context.Context, agentID pgtype.UUID, extraSkillIDs []pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) ([]AgentSkillData, []AgentSkillRefData) {
+	return BuildAgentSkillBundles(s.LoadTaskExecutionSkills(ctx, agentID, extraSkillIDs, runtime, taskBackend, messagePolicy...))
+}
+
+// loadWorkspaceSkillsByID loads skills of workspaceID by id with their files,
+// skipping ids already present in existing, duplicates, and ids that do not
+// belong to the workspace.
+func (s *TaskService) loadWorkspaceSkillsByID(ctx context.Context, workspaceID pgtype.UUID, ids []pgtype.UUID, existing []AgentSkillData) []AgentSkillData {
+	if !workspaceID.Valid {
+		return nil
+	}
+	seen := make(map[string]bool, len(existing)+len(ids))
+	for _, skill := range existing {
+		seen[skill.ID] = true
+	}
+	out := make([]AgentSkillData, 0, len(ids))
+	for _, id := range ids {
+		key := util.UUIDToString(id)
+		if !id.Valid || seen[key] {
+			continue
+		}
+		seen[key] = true
+		sk, err := s.Queries.GetSkillInWorkspace(ctx, db.GetSkillInWorkspaceParams{ID: id, WorkspaceID: workspaceID})
+		if err != nil {
+			continue
+		}
+		data := AgentSkillData{
+			ID:          util.UUIDToString(sk.ID),
+			Name:        sk.Name,
+			Description: sk.Description,
+			Content:     sk.Content,
+			Config:      append(json.RawMessage(nil), sk.Config...),
+		}
+		files, _ := s.Queries.ListSkillFiles(ctx, sk.ID)
+		for _, f := range files {
+			data.Files = append(data.Files, AgentSkillFileData{Path: f.Path, Content: f.Content})
+		}
+		out = append(out, data)
+	}
+	return out
 }
 
 func BuildAgentSkillBundles(skills []AgentSkillData) ([]AgentSkillData, []AgentSkillRefData) {
