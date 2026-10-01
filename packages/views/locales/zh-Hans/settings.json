@@ -331,7 +331,7 @@
     "field_app_key": "App key（Client ID）",
     "field_app_secret": "App secret（Client Secret）",
     "where_github": "github.com/settings/apps → 选中应用 → General：App ID、Client ID、Generate client secret、Generate private key。回调地址填到 Callback URL。",
-    "where_slack": "api.slack.com/apps → 选中应用 → Basic Information → App Credentials。回调地址填到 OAuth & Permissions → Redirect URLs。",
+    "where_slack": "api.slack.com/apps → 选中应用 → Basic Information → App Credentials。回调地址填到 OAuth & Permissions → Redirect URLs。User Token Scopes 要包含页面上预置的范围（用户令牌，不是 Bot）。",
     "where_asana": "app.asana.com/0/my-apps → 选中 MCP app → OAuth：App credentials。回调地址填到 Redirect URLs。",
     "where_google": "console.cloud.google.com → APIs & Services → OAuth consent screen（先配置），再到 Credentials → Create OAuth client（Web application）。回调地址填到 Authorized redirect URIs。Drive、Gmail、Calendar 三个 API 要分别启用。",
     "where_dropbox": "dropbox.com/developers/apps",

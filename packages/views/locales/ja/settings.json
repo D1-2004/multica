@@ -331,7 +331,7 @@
     "field_app_key": "App key（Client ID）",
     "field_app_secret": "App secret（Client Secret）",
     "where_github": "github.com/settings/apps → アプリ → General。コールバックは Callback URL に入力します。",
-    "where_slack": "api.slack.com/apps → Basic Information → App Credentials。コールバックは Redirect URLs に入力します。",
+    "where_slack": "api.slack.com/apps → Basic Information → App Credentials。コールバックは Redirect URLs に入力します。User Token Scopes にはこのページの事前設定スコープを含めてください（ユーザートークン。Bot ではありません）。",
     "where_asana": "app.asana.com/0/my-apps → MCP app → OAuth。API app のトークンは Asana MCP に拒否されます。",
     "where_google": "console.cloud.google.com → OAuth 同意画面のあと、ウェブアプリの OAuth クライアントを作成します。Drive、Gmail、Calendar の API をそれぞれ有効にします。",
     "where_dropbox": "dropbox.com/developers/apps",

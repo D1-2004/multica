@@ -40,6 +40,11 @@ func TestSettingsCatalogMatchesTheProductList(t *testing.T) {
 	if !ok || asana.KnownClientID != "1219049145290369" || !asana.OAuthConnect {
 		t.Fatalf("asana settings = %+v", asana)
 	}
+	slack, ok := SettingsSpecFor("slack")
+	if !ok || !slack.OAuthConnect || slack.MCPURL != "https://mcp.slack.com/mcp" || slack.Scopes == "" ||
+		slack.AuthorizationEndpoint != "https://slack.com/oauth/v2_user/authorize" {
+		t.Fatalf("slack settings = %+v", slack)
+	}
 	if ProductionCallbackURL != "https://fde-workbench.dingtalk.com/api/connectors/oauth/callback" {
 		t.Fatal(ProductionCallbackURL)
 	}

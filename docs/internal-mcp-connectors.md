@@ -188,6 +188,7 @@ contact for it:
 | Slug | MCP URL | Authorization |
 | --- | --- | --- |
 | `github` | `https://api.githubcopilot.com/mcp/` | the deployment's GitHub App (`oauth_github_app`); a Personal Access Token is also accepted |
+| `slack` | `https://mcp.slack.com/mcp` | pre-registered Slack app (`oauth_preregistered`); user token via `oauth.v2.user.access`. No dynamic registration |
 | `notion` | `https://mcp.notion.com/mcp` | MCP OAuth with dynamic client registration and S256 PKCE (`oauth_dcr`) |
 | `linear` | `https://mcp.linear.app/mcp` | `oauth_dcr` |
 | `atlassian` | `https://mcp.atlassian.com/v1/mcp` | `oauth_dcr` (authorization server metadata at the MCP origin) |

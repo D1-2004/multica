@@ -31,9 +31,9 @@ type SettingsSpec struct {
 	OAuthConnect bool `json:"oauth_connect"`
 }
 
-// SettingsCatalog is the settings page, in display order. It includes apps
-// that are not remote MCP servers yet (Slack, Google, Dropbox, Box); those
-// rows store credentials only.
+// SettingsCatalog is the settings page, in display order. Google, Dropbox
+// and Box store credentials only. Slack is a catalog app: saving its client
+// is what lets the connection directory start OAuth.
 func SettingsCatalog() []SettingsSpec {
 	return []SettingsSpec{
 		{
@@ -52,10 +52,12 @@ func SettingsCatalog() []SettingsSpec {
 			},
 		},
 		{
-			Slug: "slack", Name: "Slack", Mode: "preregistered",
+			Slug: "slack", Name: "Slack", Mode: "preregistered", OAuthConnect: true,
 			DocsURL:               "https://api.slack.com/apps",
-			AuthorizationEndpoint: "https://slack.com/oauth/v2/authorize",
-			TokenEndpoint:         "https://slack.com/api/oauth.v2.access",
+			AuthorizationEndpoint: "https://slack.com/oauth/v2_user/authorize",
+			TokenEndpoint:         "https://slack.com/api/oauth.v2.user.access",
+			Scopes:                slackUserScopes,
+			MCPURL:                "https://mcp.slack.com/mcp",
 			Fields: []SettingsField{
 				{Key: "client_id"},
 				{Key: "client_secret"},

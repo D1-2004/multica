@@ -331,7 +331,7 @@
     "field_app_key": "App key(Client ID)",
     "field_app_secret": "App secret(Client Secret)",
     "where_github": "github.com/settings/apps → 앱 → General. 콜백은 Callback URL에 입력합니다.",
-    "where_slack": "api.slack.com/apps → Basic Information → App Credentials. 콜백은 Redirect URLs에 입력합니다.",
+    "where_slack": "api.slack.com/apps → Basic Information → App Credentials. 콜백은 Redirect URLs에 입력합니다. User Token Scopes에 이 페이지의 사전 설정 범위를 포함하세요(사용자 토큰, Bot 아님).",
     "where_asana": "app.asana.com/0/my-apps → MCP app → OAuth. API app 토큰은 Asana MCP가 거부합니다.",
     "where_google": "console.cloud.google.com → OAuth 동의 화면을 구성한 뒤 웹 애플리케이션 OAuth 클라이언트를 만듭니다. Drive, Gmail, Calendar API를 각각 사용 설정합니다.",
     "where_dropbox": "dropbox.com/developers/apps",

@@ -331,7 +331,7 @@
     "field_app_key": "App key (Client ID)",
     "field_app_secret": "App secret (Client Secret)",
     "where_github": "github.com/settings/apps → the app → General: App ID, Client ID, Generate a client secret, Generate a private key. Put the callback in Callback URL.",
-    "where_slack": "api.slack.com/apps → the app → Basic Information → App Credentials. Put the callback in OAuth & Permissions → Redirect URLs.",
+    "where_slack": "api.slack.com/apps → the app → Basic Information → App Credentials. Put the callback in OAuth & Permissions → Redirect URLs. User Token Scopes must include the preset scopes on this page (a user token, not a bot token).",
     "where_asana": "app.asana.com/0/my-apps → the MCP app → OAuth → App credentials. Put the callback in Redirect URLs. This must be the MCP app. A token from an API app is rejected by Asana MCP.",
     "where_google": "console.cloud.google.com → APIs & Services → OAuth consent screen, then Credentials → Create OAuth client (Web application). Put the callback in Authorized redirect URIs. Enable the Drive, Gmail and Calendar APIs separately.",
     "where_dropbox": "dropbox.com/developers/apps",
