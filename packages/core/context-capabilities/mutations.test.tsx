@@ -8,21 +8,24 @@ import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import type {
   AgentContextCapabilities,
-  AgentSceneDetail,
   ContextConfigSceneDetail,
+  ContextNodeDetail,
+  ContextNodeRef,
 } from "../types/context-capability";
 import {
   useAddConnectedApp,
-  useDeleteAgentSceneCredential,
+  useCreateAgentTenant,
+  useDeleteAgentTenant,
   useDeleteContextConnectorCredential,
+  useDeleteContextNodeCredential,
   useRemoveAgentConnector,
   useSetAgentOffer,
-  useSetAgentSceneBinding,
-  useSetAgentSceneCredential,
-  useSetAgentSceneMcpConfig,
-  useSetAgentScenePrompt,
   useSetContextCapabilityBinding,
   useSetContextConnectorCredential,
+  useSetContextNodeBinding,
+  useSetContextNodeCredential,
+  useSetContextNodeMcpConfig,
+  useSetContextNodePrompts,
 } from "./mutations";
 import { contextCapabilityKeys, contextConfigKeys } from "./queries";
 
@@ -36,6 +39,7 @@ const tabBody: AgentContextCapabilities = {
   enabled: true,
   library: { connectors: [], skills: [] },
   offers: { connectorIds: ["c1"], skillIds: [] },
+  orgs: [],
   scenes: [],
   persons: [],
   configureUrl: "",
@@ -101,12 +105,43 @@ describe("context capability mutations", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: contextConfigKeys.agent("agent-1") });
   });
 
+  it("refreshes the agent details, which hold the enterprise level, after an enterprise write", async () => {
+    const setContextConnectorCredential = vi.fn().mockResolvedValue(undefined);
+    setApiInstance({ setContextConnectorCredential } as unknown as ApiClient);
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useSetContextConnectorCredential("agent-1"), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        scopeType: "org",
+        scopeKey: "dingA",
+        orgId: "dingA",
+        connectorId: "c1",
+        bearer: "secret",
+      });
+    });
+
+    expect(setContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
+      scopeType: "org",
+      scopeKey: "dingA",
+      orgId: "dingA",
+      connectorId: "c1",
+      bearer: "secret",
+    });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextConfigKeys.details("agent-1") });
+    // Scene details stay cached.
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: contextConfigKeys.agent("agent-1") });
+  });
+
   it("also refreshes the agent detail after a write in a 1:1 chat scene, which is the person's scope", async () => {
     const setContextCapabilityBinding = vi.fn().mockResolvedValue(undefined);
     setApiInstance({ setContextCapabilityBinding } as unknown as ApiClient);
     const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     queryClient.setQueryData(contextConfigKeys.scene("agent-1", "cid-dm"), {
-      scene: { scopeKey: "cid-dm", scopeTitle: "Ada", source: "agent_link", expiresAt: "", kind: "dm" },
+      scene: { scopeKey: "cid-dm", scopeTitle: "Ada", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
       bindings: [],
       credentials: [],
       scope: { type: "person", key: "staff-1", title: "Ada" },
@@ -128,8 +163,9 @@ describe("context capability mutations", () => {
     });
 
     expect(invalidate).toHaveBeenCalledWith({ queryKey: contextConfigKeys.scene("agent-1", "cid-dm") });
-    // Only the agent detail entry: every other scene stays cached.
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextConfigKeys.agent("agent-1"), exact: true });
+    // Only the agent details: every other scene stays cached.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextConfigKeys.details("agent-1") });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: contextConfigKeys.agent("agent-1") });
   });
 
   it("offers a skill from a fresh read, keeps the connector offers and caches the saved catalog", async () => {
@@ -194,143 +230,196 @@ describe("context capability mutations", () => {
   });
 });
 
-describe("admin scene mutations", () => {
+describe("tenant mutations", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("writes a saved scene prompt into the scene detail and refreshes the scene list", async () => {
-    const prompt = { text: "Be brief.", updatedAt: "t", updatedByName: "Ada" };
-    const setAgentScenePrompt = vi.fn().mockResolvedValue(prompt);
-    setApiInstance({ setAgentScenePrompt } as unknown as ApiClient);
+  it("creates a tenant and refreshes only the tenant list", async () => {
+    const tenant = { orgId: "ding1", name: "Acme", source: "created", groupCount: 0, personCount: 0 };
+    const createAgentTenant = vi.fn().mockResolvedValue(tenant);
+    setApiInstance({ createAgentTenant } as unknown as ApiClient);
     const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    const sceneKey = contextCapabilityKeys.scene("ws-1", "agent-1", "cid1");
-    const detail = {
-      scene: { sceneKey: "cid1" },
-      prompt: { text: "", updatedAt: "", updatedByName: "" },
-      bindings: [],
-      offers: { connectors: [], skills: [] },
-    } as unknown as AgentSceneDetail;
-    queryClient.setQueryData(sceneKey, detail);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    const { result } = renderHook(() => useSetAgentScenePrompt("ws-1", "agent-1"), {
+    const { result } = renderHook(() => useCreateAgentTenant("ws-1", "agent-1"), {
       wrapper: createWrapper(queryClient),
     });
 
     await act(async () => {
-      await result.current.mutateAsync({ sceneKey: "cid1", prompt: "Be brief." });
+      expect(await result.current.mutateAsync({ orgId: "ding1", name: "Acme" })).toEqual(tenant);
     });
 
-    expect(setAgentScenePrompt).toHaveBeenCalledWith("ws-1", "agent-1", "cid1", "Be brief.");
-    expect(queryClient.getQueryData<AgentSceneDetail>(sceneKey)?.prompt).toEqual(prompt);
+    expect(createAgentTenant).toHaveBeenCalledWith("ws-1", "agent-1", { orgId: "ding1", name: "Acme" });
+    expect(invalidate).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledWith({
-      queryKey: contextCapabilityKeys.scenes("ws-1", "agent-1"),
+      queryKey: contextCapabilityKeys.tenants("ws-1", "agent-1"),
+      exact: true,
     });
   });
 
-  it("refreshes the whole agent after an admin scene toggle, even when it fails", async () => {
-    const setAgentSceneBinding = vi.fn().mockRejectedValue(new Error("403"));
-    setApiInstance({ setAgentSceneBinding } as unknown as ApiClient);
+  it("refreshes the tree, every node and the app usage after a tenant delete, even a failed one", async () => {
+    const deleteAgentTenant = vi.fn().mockRejectedValue(new Error("409"));
+    setApiInstance({ deleteAgentTenant } as unknown as ApiClient);
     const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    const { result } = renderHook(() => useSetAgentSceneBinding("ws-1", "agent-1"), {
+    const { result } = renderHook(() => useDeleteAgentTenant("ws-1", "agent-1"), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync("ding1").catch(() => undefined);
+    });
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.tenants("ws-1", "agent-1") });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.contextNodes("ws-1", "agent-1") });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.connectedApps("ws-1", "agent-1") });
+  });
+});
+
+describe("Context Builder node writes", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const orgNode: ContextNodeRef = { orgId: "ding1", scopeType: "org", scopeKey: "ding1" };
+  const personNode: ContextNodeRef = { orgId: "ding1", scopeType: "person", scopeKey: "staff-1" };
+  const detail = {
+    scope: { type: "org", orgId: "ding1", key: "ding1", title: "Acme" },
+    scene: null,
+    prompts: [],
+    connectors: [],
+    skills: [],
+    mcpConfig: null,
+    mcpConfigRedacted: false,
+    canConnect: true,
+    effective: { prompts: [], connectors: [], skills: [], mcpServers: [] },
+  } satisfies ContextNodeDetail;
+
+  it("caches saved prompt components and refreshes every node's effective preview", async () => {
+    const stored = [{ id: "p1", name: "Tone", order: 1, text: "Be brief.", updatedByName: "Ada", updatedAt: "t" }];
+    const setContextNodePrompts = vi.fn().mockResolvedValue(stored);
+    setApiInstance({ setContextNodePrompts } as unknown as ApiClient);
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const nodeKey = contextCapabilityKeys.contextNode("ws-1", "agent-1", orgNode);
+    queryClient.setQueryData(nodeKey, detail);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useSetContextNodePrompts("ws-1", "agent-1"), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ node: orgNode, prompts: [{ name: "Tone", order: 1, text: "Be brief." }] });
+    });
+
+    expect(setContextNodePrompts).toHaveBeenCalledWith("ws-1", "agent-1", orgNode, [
+      { name: "Tone", order: 1, text: "Be brief." },
+    ]);
+    expect(queryClient.getQueryData<ContextNodeDetail>(nodeKey)?.prompts).toEqual(stored);
+    // A level feeds the levels below it: every node refetches.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.contextNodes("ws-1", "agent-1") });
+    // Prompts do not move connector or offer usage.
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.connectedApps("ws-1", "agent-1") });
+    expect(invalidate).not.toHaveBeenCalledWith({
+      queryKey: contextCapabilityKeys.agent("ws-1", "agent-1"),
+      exact: true,
+    });
+  });
+
+  it("keeps the cached prompts when the echo is malformed", async () => {
+    const setContextNodePrompts = vi.fn().mockResolvedValue(null);
+    setApiInstance({ setContextNodePrompts } as unknown as ApiClient);
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const nodeKey = contextCapabilityKeys.contextNode("ws-1", "agent-1", orgNode);
+    queryClient.setQueryData(nodeKey, detail);
+    const { result } = renderHook(() => useSetContextNodePrompts("ws-1", "agent-1"), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ node: orgNode, prompts: [] });
+    });
+    expect(queryClient.getQueryData<ContextNodeDetail>(nodeKey)?.prompts).toEqual([]);
+  });
+
+  it("saves custom MCP servers into the node", async () => {
+    const stored = { mcpServers: { docs: { url: "https://mcp.example/docs" } } };
+    const setContextNodeMcpConfig = vi.fn().mockResolvedValue(stored);
+    setApiInstance({ setContextNodeMcpConfig } as unknown as ApiClient);
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const nodeKey = contextCapabilityKeys.contextNode("ws-1", "agent-1", orgNode);
+    queryClient.setQueryData(nodeKey, detail);
+    const { result } = renderHook(() => useSetContextNodeMcpConfig("ws-1", "agent-1"), {
+      wrapper: createWrapper(queryClient),
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ node: orgNode, mcpConfig: stored });
+    });
+    expect(setContextNodeMcpConfig).toHaveBeenCalledWith("ws-1", "agent-1", orgNode, stored);
+    expect(queryClient.getQueryData<ContextNodeDetail>(nodeKey)?.mcpConfig).toEqual(stored);
+  });
+
+  it("refreshes nodes, app and offer usage and the tenant's people after a person switch, even a failed one", async () => {
+    const setContextNodeBinding = vi.fn().mockRejectedValue(new Error("403"));
+    setApiInstance({ setContextNodeBinding } as unknown as ApiClient);
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useSetContextNodeBinding("ws-1", "agent-1"), {
       wrapper: createWrapper(queryClient),
     });
 
     await act(async () => {
       await result.current
-        .mutateAsync({ sceneKey: "cid1", resourceType: "skill", resourceId: "s1", enabled: true })
+        .mutateAsync({ node: personNode, resourceType: "skill", resourceId: "s1", enabled: true })
         .catch(() => undefined);
     });
 
-    expect(setAgentSceneBinding).toHaveBeenCalledWith("ws-1", "agent-1", "cid1", {
+    expect(setContextNodeBinding).toHaveBeenCalledWith("ws-1", "agent-1", personNode, {
       resourceType: "skill",
       resourceId: "s1",
       enabled: true,
     });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.contextNodes("ws-1", "agent-1") });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.connectedApps("ws-1", "agent-1") });
+    // The offer switches count usage from the agent's capabilities, which
+    // never go stale on their own.
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: contextCapabilityKeys.agent("ws-1", "agent-1"),
+      exact: true,
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: contextCapabilityKeys.tenantPersons("ws-1", "agent-1", "ding1"),
     });
   });
-});
 
-describe("admin scene configuration writes", () => {
-  afterEach(() => vi.restoreAllMocks());
-
-  const detail = {
-    scene: { sceneKey: "cid1" },
-    prompt: { text: "", updatedAt: "", updatedByName: "" },
-    bindings: [],
-    offers: { connectors: [], skills: [] },
-    scope: { type: "scene", key: "cid1", title: "" },
-    mcpConfig: null,
-    mcpConfigSupported: true,
-    mcpConfigRedacted: false,
-    canConnect: true,
-  } as unknown as AgentSceneDetail;
-
-  it("saves a scene's custom MCP servers, caches the echo and refreshes that scene", async () => {
-    const stored = { mcpServers: { docs: { url: "https://mcp.example/docs" } } };
-    const setAgentSceneMcpConfig = vi.fn().mockResolvedValue(stored);
-    setApiInstance({ setAgentSceneMcpConfig } as unknown as ApiClient);
-    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    const sceneKey = contextCapabilityKeys.scene("ws-1", "agent-1", "cid1");
-    queryClient.setQueryData(sceneKey, detail);
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    const { result } = renderHook(() => useSetAgentSceneMcpConfig("ws-1", "agent-1"), {
-      wrapper: createWrapper(queryClient),
-    });
-
-    await act(async () => {
-      await result.current.mutateAsync({ sceneKey: "cid1", mcpConfig: stored });
-    });
-
-    expect(setAgentSceneMcpConfig).toHaveBeenCalledWith("ws-1", "agent-1", "cid1", stored);
-    expect(queryClient.getQueryData<AgentSceneDetail>(sceneKey)?.mcpConfig).toEqual(stored);
-    expect(invalidate).toHaveBeenCalledTimes(1);
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: sceneKey });
-  });
-
-  it("stores and removes a scene token through the configure-page routes and refreshes the admin views", async () => {
-    const setContextConnectorCredential = vi.fn().mockRejectedValue(new Error("403"));
-    const deleteContextConnectorCredential = vi.fn().mockResolvedValue(undefined);
-    setApiInstance({ setContextConnectorCredential, deleteContextConnectorCredential } as unknown as ApiClient);
+  it("stores and removes a level's token without keeping the secret in the mutation cache", async () => {
+    const setContextNodeCredential = vi.fn().mockRejectedValue(new Error("403"));
+    const deleteContextNodeCredential = vi.fn().mockResolvedValue(undefined);
+    setApiInstance({ setContextNodeCredential, deleteContextNodeCredential } as unknown as ApiClient);
     const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const { result } = renderHook(
       () => ({
-        save: useSetAgentSceneCredential("ws-1", "agent-1"),
-        remove: useDeleteAgentSceneCredential("ws-1", "agent-1"),
+        save: useSetContextNodeCredential("ws-1", "agent-1"),
+        remove: useDeleteContextNodeCredential("ws-1", "agent-1"),
       }),
       { wrapper: createWrapper(queryClient) },
     );
 
     await act(async () => {
       await result.current.save
-        .mutateAsync({ sceneKey: "cid-dm", connectorId: "c1", bearer: "secret-token" })
+        .mutateAsync({ node: orgNode, connectorId: "c1", bearer: "secret-token" })
         .catch(() => undefined);
-      await result.current.remove.mutateAsync({ sceneKey: "cid-dm", connectorId: "c1" });
+      await result.current.remove.mutateAsync({ node: orgNode, connectorId: "c1" });
     });
 
-    // The server maps a 1:1 chat key to its person; the page sends the scene.
-    expect(setContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
-      scopeType: "scene",
-      scopeKey: "cid-dm",
+    expect(setContextNodeCredential).toHaveBeenCalledWith("ws-1", "agent-1", orgNode, {
       connectorId: "c1",
       bearer: "secret-token",
     });
-    expect(deleteContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
-      scopeType: "scene",
-      scopeKey: "cid-dm",
-      connectorId: "c1",
-    });
+    expect(deleteContextNodeCredential).toHaveBeenCalledWith("ws-1", "agent-1", orgNode, "c1");
     // Admin keys (workspace-scoped), never the configure-page keys.
     for (const call of invalidate.mock.calls) {
       expect(call[0]?.queryKey?.[0]).toBe("workspaces");
     }
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.scene("ws-1", "agent-1", "cid-dm") });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: contextCapabilityKeys.connectedApps("ws-1", "agent-1") });
-    expect(invalidate).toHaveBeenCalledTimes(4);
 
-    // gcTime 0: the submitted secret is gone once the form resets the mutation.
     vi.useFakeTimers();
     try {
       act(() => result.current.save.reset());

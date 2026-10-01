@@ -110,6 +110,51 @@ describe("connector OAuth round trip helpers", () => {
     expect(local.store.size).toBe(0);
   });
 
+  it("round-trips the tenant and the enterprise level", () => {
+    const local = memoryStorage();
+    savePendingConnect(
+      { agentId: "agent-1", scopeType: "person", scopeKey: "staff-1", orgId: "dingB" },
+      [local],
+      1_000,
+    );
+    expect(takePendingConnect([local], 2_000)).toEqual({
+      agentId: "agent-1",
+      scopeType: "person",
+      scopeKey: "staff-1",
+      orgId: "dingB",
+    });
+
+    savePendingConnect(
+      { agentId: "agent-1", scopeType: "org", scopeKey: "dingB", orgId: "dingB" },
+      [local],
+      1_000,
+    );
+    expect(takePendingConnect([local], 2_000)).toEqual({
+      agentId: "agent-1",
+      scopeType: "org",
+      scopeKey: "dingB",
+      orgId: "dingB",
+    });
+  });
+
+  it("drops a malformed tenant, and an enterprise level without one", () => {
+    const local = memoryStorage();
+    local.setItem(
+      "multica_context_config_connect",
+      JSON.stringify({ agent: "agent-1", scope_type: "scene", scope_key: "cid", org_id: "a b", saved_at: 0 }),
+    );
+    expect(takePendingConnect([local], 1)).toEqual({
+      agentId: "agent-1",
+      scopeType: "scene",
+      scopeKey: "cid",
+    });
+    local.setItem(
+      "multica_context_config_connect",
+      JSON.stringify({ agent: "agent-1", scope_type: "org", scope_key: "dingB", saved_at: 0 }),
+    );
+    expect(takePendingConnect([local], 1)).toBeNull();
+  });
+
   it("drops an expired or corrupt connecting scope", () => {
     const local = memoryStorage();
     savePendingConnect({ agentId: "agent-1", scopeType: "person", scopeKey: "staff-1" }, [local], 0);

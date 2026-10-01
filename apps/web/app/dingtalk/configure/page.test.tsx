@@ -221,6 +221,24 @@ describe("DingTalk configure route", () => {
     expect(mockReplaceCurrentPage).not.toHaveBeenCalled();
   });
 
+  it("reopens the enterprise level of the tenant a connection started from", async () => {
+    localStorage.setItem(
+      "multica_context_config_connect",
+      JSON.stringify({
+        agent: "agent-1",
+        scope_type: "org",
+        scope_key: "dingB",
+        org_id: "dingB",
+        saved_at: Date.now(),
+      }),
+    );
+    mockSearchParams.current = new URLSearchParams({ agent: "agent-1", connected: "github" });
+    renderPage();
+
+    expect(await screen.findByTestId("context-config-page")).toBeInTheDocument();
+    expect(pageProps.current?.initialScope).toEqual({ scopeType: "org", scopeKey: "dingB", orgId: "dingB" });
+  });
+
   it("reports a failed connection without reopening another agent's scope", async () => {
     localStorage.setItem(
       "multica_context_config_connect",

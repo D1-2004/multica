@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import {
   AlertCircle,
   ArrowLeftRight,
+  Building2,
   CheckCircle2,
   ExternalLink,
   KeyRound,
@@ -14,7 +15,7 @@ import {
   User,
   Users,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError, errorCode } from "@multica/core/api";
 import {
@@ -35,6 +36,7 @@ import {
   type ContextSceneKind,
   type ContextScopeType,
   type ContextSkillItem,
+  type ContextWriteScopeType,
 } from "@multica/core/context-capabilities";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
@@ -51,10 +53,14 @@ import { MAX_BEARER_LENGTH, isValidBearer, useResetOnBackForwardRestore } from "
 import { SkillIcon } from "../skills/lib/skill-icon";
 import { useT } from "../i18n";
 
-/** One configurable scope of one agent. */
+/** One configurable scope of one agent: a chat, a person, or the
+ * enterprise level of a tenant (its key is the OrgId). */
 export interface ContextConfigScopeRef {
-  scopeType: ContextScopeType;
+  scopeType: ContextWriteScopeType;
   scopeKey: string;
+  /** Tenant (DingTalk org) of the scope; omitted or "" lets the server
+   * choose. */
+  orgId?: string;
 }
 
 /** Where a connector OAuth round trip was started from. */
@@ -119,6 +125,15 @@ function isReloadRequired(error: unknown): boolean {
 
 type RedeemStatus = "idle" | "pending" | "done" | "expired" | "taken" | "failed";
 
+/** The page's levels: 企业, 本会话 and 我的. */
+type ConfigLevel = "org" | ContextScopeType;
+
+/** `org_id` of a scope request: only for a tenant other than the agent's
+ * own org, which is the server's default. */
+function orgField(orgId: string): { orgId?: string } {
+  return orgId ? { orgId } : {};
+}
+
 type PreferredScope = ContextConfigScopeRef;
 
 export function isContextConfigAuthError(error: unknown): boolean {
@@ -137,12 +152,13 @@ function statusOf(error: unknown): number | null {
 }
 
 /**
- * Configuration page (DingTalk H5, also usable in a desktop browser) where
- * the members of a chat configure the connectors and skills an agent may use
- * in that chat (本会话: a group chat or a 1:1 chat, which is a scene just like
- * a group), and where a person configures the ones used for their own
- * messages (我的). Platform-free: the web route injects sign-in and the
- * JSAPI group picker.
+ * Configuration page (DingTalk H5, also usable in a desktop browser) in three
+ * levels: 企业 (the tenant: edited by the agent's managers, read-only for
+ * everyone else), 本会话 (where the members of a chat configure the
+ * connectors and skills an agent may use in that chat: a group chat, or a
+ * 1:1 chat, which is its person) and 我的 (the ones used for the person's own
+ * messages). Platform-free: the web route injects sign-in and the JSAPI
+ * group picker.
  */
 export function ContextConfigPage({
   linkToken,
@@ -188,7 +204,11 @@ export function ContextConfigPage({
         setRedeemStatus("done");
         if (result.agentId) setSelectedAgentId(result.agentId);
         if (result.scopeType && result.scopeKey) {
-          setPreferredScope({ scopeType: result.scopeType, scopeKey: result.scopeKey });
+          setPreferredScope({
+            scopeType: result.scopeType,
+            scopeKey: result.scopeKey,
+            ...orgField(result.orgId),
+          });
         }
       })
       .catch((error: unknown) => {
@@ -390,7 +410,15 @@ function AgentConfig({
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
-  const detailQuery = useQuery(contextConfigAgentOptions(agentId));
+  // The tenant the page shows: a redeemed link's, else the server's choice
+  // until the caller picks another one.
+  const [orgId, setOrgId] = useState(preferredScope?.orgId ?? "");
+  const [level, setLevel] = useState<ConfigLevel | null>(null);
+  const detailQuery = useQuery({
+    ...contextConfigAgentOptions(agentId, orgId),
+    // Switching the tenant keeps the page (and the open level) in place.
+    placeholderData: keepPreviousData,
+  });
   const detail = detailQuery.data ?? null;
   const reportErrorRef = useRef(reportError);
   reportErrorRef.current = reportError;
@@ -398,6 +426,12 @@ function AgentConfig({
   useEffect(() => {
     if (detailQuery.error) reportErrorRef.current(detailQuery.error);
   }, [detailQuery.error]);
+
+  // A tenant that is gone since the link was made: fall back to the
+  // server's choice.
+  useEffect(() => {
+    if (orgId && statusOf(detailQuery.error) === 404) setOrgId("");
+  }, [detailQuery.error, orgId]);
 
   if (detailQuery.isLoading) {
     return <Status text={t(($) => $.context_config.loading)} />;
@@ -424,6 +458,9 @@ function AgentConfig({
       detail={detail}
       canSwitchAgent={canSwitchAgent}
       onSwitchAgent={onSwitchAgent}
+      onSelectTenant={setOrgId}
+      level={level}
+      onLevelChange={setLevel}
       preferredScope={preferredScope}
       pickGroup={pickGroup}
       reportError={reportError}
@@ -435,6 +472,9 @@ function AgentScopes({
   detail,
   canSwitchAgent,
   onSwitchAgent,
+  onSelectTenant,
+  level,
+  onLevelChange,
   preferredScope,
   pickGroup,
   reportError,
@@ -442,6 +482,10 @@ function AgentScopes({
   detail: ContextConfigAgentDetail;
   canSwitchAgent: boolean;
   onSwitchAgent: () => void;
+  onSelectTenant: (orgId: string) => void;
+  /** The open level; null until the caller picks one. */
+  level: ConfigLevel | null;
+  onLevelChange: (level: ConfigLevel) => void;
   preferredScope: PreferredScope | null;
   pickGroup?: () => Promise<ContextConfigPickedGroup | null>;
   reportError: (error: unknown) => boolean;
@@ -452,11 +496,18 @@ function AgentScopes({
   // then configurable), so the hint does not wait for, or depend on, the
   // agent list.
   const isManager = detail.access === "manager";
-  const [tab, setTab] = useState<ContextScopeType>(() => {
-    if (preferredScope) return preferredScope.scopeType;
-    if (detail.scenes.length === 0 && detail.person) return "person";
-    return "scene";
-  });
+  const tab: ConfigLevel =
+    level ??
+    preferredScope?.scopeType ??
+    (detail.scenes.length === 0 && detail.person ? "person" : "scene");
+  const setTab = onLevelChange;
+  // Every scope on the page lives in this tenant ("" when the server names
+  // none: the agent's own org).
+  const pageOrg = detail.tenant?.orgId ?? "";
+  const tenantOptions =
+    detail.tenant && !detail.tenants.some((tenant) => tenant.orgId === detail.tenant?.orgId)
+      ? [detail.tenant, ...detail.tenants]
+      : detail.tenants;
   const [sceneKey, setSceneKey] = useState<string>(() => {
     if (
       preferredScope?.scopeType === "scene" &&
@@ -483,7 +534,7 @@ function AgentScopes({
     try {
       const picked = await pickGroup();
       if (!picked?.chatId) return;
-      const scene = await resolveScene.mutateAsync(picked);
+      const scene = await resolveScene.mutateAsync(pageOrg ? { ...picked, orgId: pageOrg } : picked);
       if (scene) {
         setSceneKey(scene.scopeKey);
         setTab("scene");
@@ -541,16 +592,38 @@ function AgentScopes({
             {t(($) => $.context_config.manager_hint)}
           </p>
         )}
+        {detail.tenant && tenantOptions.length > 1 ? (
+          <label className="block space-y-1.5">
+            <span className="text-caption font-medium text-muted-foreground">
+              {t(($) => $.context_config.tab_org)}
+            </span>
+            <NativeSelect
+              className="w-full"
+              value={detail.tenant.orgId}
+              onChange={(event) => onSelectTenant(event.target.value)}
+            >
+              {tenantOptions.map((tenant) => (
+                <NativeSelectOption key={tenant.orgId} value={tenant.orgId}>
+                  {tenant.name || tenant.orgId}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </label>
+        ) : null}
       </div>
 
       <Tabs
         value={tab}
         onValueChange={(value) => {
-          if (value === "scene" || value === "person") setTab(value);
+          if (value === "org" || value === "scene" || value === "person") setTab(value);
         }}
         className="gap-4"
       >
         <TabsList className="!h-10 w-full">
+          <TabsTrigger value="org">
+            <Building2 className="size-4" />
+            {t(($) => $.context_config.tab_org)}
+          </TabsTrigger>
           <TabsTrigger value="scene">
             <Users className="size-4" />
             {t(($) => $.context_config.tab_scene)}
@@ -562,7 +635,30 @@ function AgentScopes({
         </TabsList>
       </Tabs>
 
-      {tab === "scene" ? (
+      {tab === "org" ? (
+        detail.org ? (
+          <ScopeEditor
+            // Another tenant starts with fresh rows.
+            key={detail.org.scopeKey}
+            agentId={agentId}
+            scopeType="org"
+            scopeKey={detail.org.scopeKey}
+            orgId={detail.org.scopeKey}
+            title={detail.org.scopeTitle || detail.tenant?.name || detail.org.scopeKey}
+            expiresAt=""
+            detail={detail}
+            bindings={detail.org.bindings}
+            credentials={detail.org.credentials}
+            readOnly={detail.org.canEdit !== true}
+            reportError={reportError}
+          />
+        ) : (
+          <EmptyState
+            icon={<Building2 className="size-6" />}
+            title={t(($) => $.context_config.org_unavailable)}
+          />
+        )
+      ) : tab === "scene" ? (
         detail.scenes.length === 0 ? (
           <EmptyState
             icon={<Users className="size-6" />}
@@ -608,6 +704,7 @@ function AgentScopes({
               sceneKind={
                 detail.scenes.find((scene) => scene.scopeKey === activeSceneKey)?.kind ?? "group"
               }
+              orgId={detail.scenes.find((scene) => scene.scopeKey === activeSceneKey)?.orgId || pageOrg}
               detail={detail}
               reportError={reportError}
             />
@@ -619,6 +716,7 @@ function AgentScopes({
           agentId={agentId}
           scopeType="person"
           scopeKey={detail.person.scopeKey}
+          orgId={pageOrg}
           title={detail.person.scopeTitle || t(($) => $.context_config.tab_person)}
           expiresAt={detail.person.expiresAt}
           detail={detail}
@@ -651,6 +749,7 @@ function SceneScope({
   agentId,
   sceneKey,
   sceneKind,
+  orgId,
   detail,
   reportError,
 }: {
@@ -658,12 +757,14 @@ function SceneScope({
   sceneKey: string;
   /** Kind from the agent detail; the scene detail's own kind wins. */
   sceneKind: ContextSceneKind;
+  /** Tenant of the scene; "" is the agent's own org. */
+  orgId: string;
   detail: ContextConfigAgentDetail;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
   const sceneUntitled = useSceneUntitled();
-  const sceneQuery = useQuery(contextConfigSceneOptions(agentId, sceneKey));
+  const sceneQuery = useQuery(contextConfigSceneOptions(agentId, sceneKey, orgId));
   const reportErrorRef = useRef(reportError);
   reportErrorRef.current = reportError;
 
@@ -716,6 +817,7 @@ function SceneScope({
       agentId={agentId}
       scopeType="scene"
       scopeKey={scene.scene.scopeKey}
+      orgId={scene.scene.orgId || orgId}
       sceneKind={kind}
       title={person?.title || scene.scene.scopeTitle || sceneUntitled(kind)}
       expiresAt={scene.scene.expiresAt}
@@ -732,6 +834,7 @@ function ScopeEditor({
   agentId,
   scopeType,
   scopeKey,
+  orgId,
   sceneKind = "group",
   title,
   expiresAt,
@@ -739,11 +842,14 @@ function ScopeEditor({
   bindings,
   credentials,
   ownerOnly = false,
+  readOnly = false,
   reportError,
 }: {
   agentId: string;
-  scopeType: ContextScopeType;
+  scopeType: ConfigLevel;
   scopeKey: string;
+  /** Tenant of the scope; "" is the agent's own org. */
+  orgId: string;
   /** Scene scopes only: a group chat or a 1:1 chat. */
   sceneKind?: ContextSceneKind;
   title: string;
@@ -754,6 +860,8 @@ function ScopeEditor({
   /** Only the person connects accounts and tokens here (a manager viewing
    * someone's 1:1 chat). */
   ownerOnly?: boolean;
+  /** Nothing can be changed here (the enterprise level for a member). */
+  readOnly?: boolean;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
@@ -798,6 +906,19 @@ function ScopeEditor({
     () => new Map(credentials.map((credential) => [credential.connectorId, credential])),
     [credentials],
   );
+  // Items the enterprise level turned on: they apply here whatever this
+  // level's switch says (switches add up across levels).
+  const orgEnabledKeys = useMemo(
+    () =>
+      new Set(
+        scopeType === "org"
+          ? []
+          : (detail.org?.bindings ?? [])
+              .filter((binding) => binding.enabled === true)
+              .map((binding) => `${binding.resourceType}:${binding.resourceId}`),
+      ),
+    [detail.org, scopeType],
+  );
 
   const toggle = async (
     resourceType: "connector" | "skill",
@@ -805,10 +926,10 @@ function ScopeEditor({
     enabled: boolean,
   ) => {
     const key = `${resourceType}:${resourceId}`;
-    if (busyKeys.has(key)) return;
+    if (readOnly || busyKeys.has(key)) return;
     setBusyKeys((current) => new Set(current).add(key));
     try {
-      await setBinding.mutateAsync({ scopeType, scopeKey, resourceType, resourceId, enabled });
+      await setBinding.mutateAsync({ scopeType, scopeKey, ...orgField(orgId), resourceType, resourceId, enabled });
     } catch (error) {
       if (!reportError(error)) {
         toast.error(t(($) => $.context_config.toggle_failed));
@@ -832,6 +953,7 @@ function ScopeEditor({
       await setBinding.mutateAsync({
         scopeType: "person",
         scopeKey,
+        ...orgField(orgId),
         resourceType: "connector",
         resourceId,
         enabled: true,
@@ -865,11 +987,15 @@ function ScopeEditor({
           )}
         </div>
         <p className="text-caption text-muted-foreground">
-          {scopeType === "scene"
-            ? sceneKind === "dm"
-              ? t(($) => $.context_config.scene_scope_hint_dm)
-              : t(($) => $.context_config.scene_scope_hint)
-            : t(($) => $.context_config.person_scope_hint)}
+          {scopeType === "org"
+            ? readOnly
+              ? t(($) => $.context_config.org_read_only)
+              : t(($) => $.context_config.org_scope_hint)
+            : scopeType === "scene"
+              ? sceneKind === "dm"
+                ? t(($) => $.context_config.scene_scope_hint_dm)
+                : t(($) => $.context_config.scene_scope_hint)
+              : t(($) => $.context_config.person_scope_hint)}
         </p>
         {expiry && (
           <p className="text-caption text-muted-foreground">
@@ -894,13 +1020,16 @@ function ScopeEditor({
                   agentId={agentId}
                   scopeType={scopeType}
                   scopeKey={scopeKey}
+                  orgId={orgId}
                   sceneKind={sceneKind}
                   connector={connector}
                   enabled={enabledKeys.has(`connector:${connector.id}`)}
                   alwaysOn={globalIds.has(connector.id)}
+                  byOrg={orgEnabledKeys.has(`connector:${connector.id}`)}
                   busy={busyKeys.has(`connector:${connector.id}`)}
                   credential={credentialByConnector.get(connector.id) ?? null}
                   ownerOnly={ownerOnly}
+                  readOnly={readOnly}
                   onToggle={(enabled) => void toggle("connector", connector.id, enabled)}
                   share={
                     scopeType === "person"
@@ -924,7 +1053,9 @@ function ScopeEditor({
                   skill={skill}
                   enabled={enabledKeys.has(`skill:${skill.id}`)}
                   alwaysOn={globalIds.has(skill.id)}
+                  byOrg={orgEnabledKeys.has(`skill:${skill.id}`)}
                   busy={busyKeys.has(`skill:${skill.id}`)}
+                  readOnly={readOnly}
                   onToggle={(enabled) => void toggle("skill", skill.id, enabled)}
                 />
               ))}
@@ -946,27 +1077,34 @@ function ConnectorRow({
   agentId,
   scopeType,
   scopeKey,
+  orgId,
   sceneKind,
   connector,
   enabled,
   alwaysOn,
+  byOrg,
   busy,
   credential,
   ownerOnly,
+  readOnly,
   onToggle,
   share,
   reportError,
 }: {
   agentId: string;
-  scopeType: ContextScopeType;
+  scopeType: ConfigLevel;
   scopeKey: string;
+  orgId: string;
   sceneKind: ContextSceneKind;
   connector: ContextOfferedConnector;
   enabled: boolean;
   alwaysOn: boolean;
+  /** Turned on at the enterprise level. */
+  byOrg: boolean;
   busy: boolean;
   credential: ContextConnectorCredential | null;
   ownerOnly: boolean;
+  readOnly: boolean;
   onToggle: (enabled: boolean) => void;
   /** Person scope only: 「在群聊中由我触发时也可用」. */
   share?: ShareInGroupsControl;
@@ -985,6 +1123,11 @@ function ConnectorRow({
             {alwaysOn && (
               <Badge variant="secondary" className="text-micro">
                 {t(($) => $.context_config.always_on)}
+              </Badge>
+            )}
+            {byOrg && !alwaysOn && (
+              <Badge variant="secondary" className="text-micro">
+                {t(($) => $.context_config.on_for_org)}
               </Badge>
             )}
           </div>
@@ -1013,6 +1156,7 @@ function ConnectorRow({
           <ToggleControl
             busy={busy}
             checked={enabled}
+            disabled={readOnly}
             label={t(($) => $.context_config.toggle_aria, { name: connector.name })}
             onToggle={onToggle}
           />
@@ -1026,10 +1170,12 @@ function ConnectorRow({
           agentId={agentId}
           scopeType={scopeType}
           scopeKey={scopeKey}
+          orgId={orgId}
           sceneKind={sceneKind}
           connector={connector}
           credential={credential}
           ownerOnly={ownerOnly}
+          readOnly={readOnly}
           reportError={reportError}
         />
       ) : connector.acceptsCredential ? (
@@ -1037,10 +1183,12 @@ function ConnectorRow({
           agentId={agentId}
           scopeType={scopeType}
           scopeKey={scopeKey}
+          orgId={orgId}
           sceneKind={sceneKind}
           connector={connector}
           credential={credential}
           ownerOnly={ownerOnly}
+          readOnly={readOnly}
           reportError={reportError}
         />
       ) : null}
@@ -1102,22 +1250,27 @@ function OAuthConnectionControl({
   agentId,
   scopeType,
   scopeKey,
+  orgId,
   sceneKind,
   connector,
   credential,
   ownerOnly,
+  readOnly,
   reportError,
 }: {
   agentId: string;
-  scopeType: ContextScopeType;
+  scopeType: ConfigLevel;
   scopeKey: string;
+  orgId: string;
   sceneKind: ContextSceneKind;
   connector: ContextOfferedConnector;
   credential: ContextConnectorCredential | null;
   ownerOnly: boolean;
+  readOnly: boolean;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
+  const credentialNote = useCredentialNote(scopeType, sceneKind);
   const openAuthorizeUrl = useContext(OpenAuthorizeUrlContext);
   const start = useStartContextConnectorConnection(agentId);
   const deleteCredential = useDeleteContextConnectorCredential(agentId);
@@ -1137,13 +1290,15 @@ function OAuthConnectionControl({
   const connect = async () => {
     if (!openAuthorizeUrl || connecting) return;
     try {
-      const url = await start.mutateAsync({ scopeType, scopeKey, connectorId: connector.id });
+      const url = await start.mutateAsync({ scopeType, scopeKey, ...orgField(orgId), connectorId: connector.id });
       if (!url) {
         toast.error(t(($) => $.context_config.connect_failed));
         return;
       }
       setRedirecting(true);
-      openAuthorizeUrl(url, { agentId, scopeType, scopeKey });
+      // The platform reopens this level (and its tenant) when the provider
+      // returns.
+      openAuthorizeUrl(url, { agentId, scopeType, scopeKey, ...orgField(orgId) });
     } catch (error) {
       if (reportError(error)) return;
       // Retrying cannot fix these two, so they are not reported as "try again".
@@ -1166,7 +1321,7 @@ function OAuthConnectionControl({
 
   const disconnect = async () => {
     try {
-      await deleteCredential.mutateAsync({ scopeType, scopeKey, connectorId: connector.id });
+      await deleteCredential.mutateAsync({ scopeType, scopeKey, ...orgField(orgId), connectorId: connector.id });
       setConfirmingRemove(false);
       toast.success(t(($) => $.context_config.disconnected));
     } catch (error) {
@@ -1210,24 +1365,19 @@ function OAuthConnectionControl({
         </p>
       </div>
 
-      {ownerOnly ? (
+      {readOnly ? null : ownerOnly ? (
         <p className="text-caption text-muted-foreground">{t(($) => $.context_config.owner_connects)}</p>
       ) : patOpen ? (
         <BearerForm
           agentId={agentId}
           scopeType={scopeType}
           scopeKey={scopeKey}
+          orgId={orgId}
           connectorId={connector.id}
           inputId={`context-pat-${scopeType}-${connector.id}`}
           inputLabel={t(($) => $.context_config.pat_input_label, { name: connector.name })}
           placeholder={t(($) => $.context_config.pat_placeholder)}
-          note={
-            scopeType === "scene"
-              ? sceneKind === "dm"
-                ? t(($) => $.context_config.credential_dm_note)
-                : t(($) => $.context_config.credential_scene_note)
-              : t(($) => $.context_config.credential_person_note)
-          }
+          note={credentialNote}
           onClose={() => setPatOpen(false)}
           reportError={reportError}
         />
@@ -1300,16 +1450,18 @@ function OAuthConnectionControl({
             </p>
           )}
           <p className="text-caption text-muted-foreground">
-            {scopeType === "scene"
-              ? sceneKind === "dm"
-                ? t(($) => $.context_config.connect_dm_note, { name: connector.name })
-                : t(($) => $.context_config.connect_scene_note, { name: connector.name })
-              : t(($) => $.context_config.connect_person_note)}
+            {scopeType === "org"
+              ? t(($) => $.context_config.connect_org_note)
+              : scopeType === "scene"
+                ? sceneKind === "dm"
+                  ? t(($) => $.context_config.connect_dm_note, { name: connector.name })
+                  : t(($) => $.context_config.connect_scene_note, { name: connector.name })
+                : t(($) => $.context_config.connect_person_note)}
           </p>
         </div>
       )}
 
-      {connector.catalogSlug === "github" && (
+      {connector.catalogSlug === "github" && !readOnly && (
         <p className="text-caption text-muted-foreground">
           {t(($) => $.context_config.install_hint)}
           {connector.installUrl && (
@@ -1336,29 +1488,34 @@ function CredentialControl({
   agentId,
   scopeType,
   scopeKey,
+  orgId,
   sceneKind,
   connector,
   credential,
   ownerOnly,
+  readOnly,
   reportError,
 }: {
   agentId: string;
-  scopeType: ContextScopeType;
+  scopeType: ConfigLevel;
   scopeKey: string;
+  orgId: string;
   sceneKind: ContextSceneKind;
   connector: ContextOfferedConnector;
   credential: ContextConnectorCredential | null;
   ownerOnly: boolean;
+  readOnly: boolean;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
+  const credentialNote = useCredentialNote(scopeType, sceneKind);
   const deleteCredential = useDeleteContextConnectorCredential(agentId);
   const [editing, setEditing] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   const remove = async () => {
     try {
-      await deleteCredential.mutateAsync({ scopeType, scopeKey, connectorId: connector.id });
+      await deleteCredential.mutateAsync({ scopeType, scopeKey, ...orgField(orgId), connectorId: connector.id });
       setConfirmingRemove(false);
       toast.success(t(($) => $.context_config.credential_removed));
     } catch (error) {
@@ -1395,24 +1552,19 @@ function CredentialControl({
         </p>
       </div>
 
-      {ownerOnly ? (
+      {readOnly ? null : ownerOnly ? (
         <p className="text-caption text-muted-foreground">{t(($) => $.context_config.owner_connects)}</p>
       ) : editing ? (
         <BearerForm
           agentId={agentId}
           scopeType={scopeType}
           scopeKey={scopeKey}
+          orgId={orgId}
           connectorId={connector.id}
           inputId={`context-credential-${scopeType}-${connector.id}`}
           inputLabel={t(($) => $.context_config.credential_input_label, { name: connector.name })}
           placeholder={t(($) => $.context_config.credential_placeholder)}
-          note={
-            scopeType === "scene"
-              ? sceneKind === "dm"
-                ? t(($) => $.context_config.credential_dm_note)
-                : t(($) => $.context_config.credential_scene_note)
-              : t(($) => $.context_config.credential_person_note)
-          }
+          note={credentialNote}
           onClose={() => setEditing(false)}
           reportError={reportError}
         />
@@ -1463,12 +1615,29 @@ function CredentialControl({
   );
 }
 
-/** Write-only token input for a scene or personal credential (Bearer, or a
- * Personal Access Token for an OAuth connector that accepts one). */
+/** Note under a token input: who the stored token serves. */
+function useCredentialNote(scopeType: ConfigLevel, sceneKind: ContextSceneKind): string {
+  const { t } = useT("agents");
+  switch (scopeType) {
+    case "org":
+      return t(($) => $.context_config.credential_org_note);
+    case "scene":
+      return sceneKind === "dm"
+        ? t(($) => $.context_config.credential_dm_note)
+        : t(($) => $.context_config.credential_scene_note);
+    default:
+      return t(($) => $.context_config.credential_person_note);
+  }
+}
+
+/** Write-only token input for an enterprise, scene or personal credential
+ * (Bearer, or a Personal Access Token for an OAuth connector that accepts
+ * one). */
 function BearerForm({
   agentId,
   scopeType,
   scopeKey,
+  orgId,
   connectorId,
   inputId,
   inputLabel,
@@ -1478,8 +1647,9 @@ function BearerForm({
   reportError,
 }: {
   agentId: string;
-  scopeType: ContextScopeType;
+  scopeType: ConfigLevel;
   scopeKey: string;
+  orgId: string;
   connectorId: string;
   inputId: string;
   inputLabel: string;
@@ -1500,7 +1670,7 @@ function BearerForm({
       return;
     }
     try {
-      await setCredential.mutateAsync({ scopeType, scopeKey, connectorId, bearer: value });
+      await setCredential.mutateAsync({ scopeType, scopeKey, ...orgField(orgId), connectorId, bearer: value });
       setBearer("");
       onClose();
       toast.success(t(($) => $.context_config.credential_saved));
@@ -1559,13 +1729,18 @@ function SkillRow({
   skill,
   enabled,
   alwaysOn,
+  byOrg,
   busy,
+  readOnly,
   onToggle,
 }: {
   skill: ContextSkillItem;
   enabled: boolean;
   alwaysOn: boolean;
+  /** Turned on at the enterprise level. */
+  byOrg: boolean;
   busy: boolean;
+  readOnly: boolean;
   onToggle: (enabled: boolean) => void;
 }) {
   const { t } = useT("agents");
@@ -1582,6 +1757,11 @@ function SkillRow({
               {t(($) => $.context_config.always_on)}
             </Badge>
           )}
+          {byOrg && !alwaysOn && (
+            <Badge variant="secondary" className="text-micro">
+              {t(($) => $.context_config.on_for_org)}
+            </Badge>
+          )}
         </div>
         {skill.description ? (
           <p className="line-clamp-2 text-caption text-muted-foreground">{skill.description}</p>
@@ -1591,6 +1771,7 @@ function SkillRow({
         <ToggleControl
           busy={busy}
           checked={enabled}
+          disabled={readOnly}
           label={t(($) => $.context_config.toggle_aria, { name: skill.name })}
           onToggle={onToggle}
         />
@@ -1602,11 +1783,13 @@ function SkillRow({
 function ToggleControl({
   busy,
   checked,
+  disabled = false,
   label,
   onToggle,
 }: {
   busy: boolean;
   checked: boolean;
+  disabled?: boolean;
   label: string;
   onToggle: (enabled: boolean) => void;
 }) {
@@ -1615,7 +1798,12 @@ function ToggleControl({
       {busy ? (
         <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
       ) : (
-        <Switch checked={checked} onCheckedChange={(next) => onToggle(next)} aria-label={label} />
+        <Switch
+          checked={checked}
+          disabled={disabled}
+          onCheckedChange={(next) => onToggle(next)}
+          aria-label={label}
+        />
       )}
     </span>
   );
