@@ -366,7 +366,8 @@
         "user_decision_three_modes",
         "f01_native_ingress_trusted_facts",
         "f01_native_own_output_not_reentered",
-        "f01_native_account_owned_by_one_path"
+        "f01_native_account_owned_by_one_path",
+        "f01_native_backlog_not_answered"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -395,7 +396,7 @@
         "user_decision_send_rejection": "Definite DWS rejection atomically resumes reply-only error feedback with sanitized provider message; ambiguous sends remain reconciliation-only. Local four-package tests, vet, server build and structural policy check passed; preproduction transaction and live delivery pending.",
         "user_decision_audience_trace_listener": "2026-09-24: local scoped tests/typechecks/build/vet/race passed. Pre run3109734020 deploy161891040 SUCCESS/allEnd=true; migrations9304/9305 and three PostgreSQL projection tests passed. Live API normalization/clear/preserve/revision passed; two enabled agents limited to 冬翔. Actual Langfuse traces2326de29f86d464d825c84d7f252e07e and30d30a33d5394ee689cf647d81ef568c each contain one matching historical choice; original trace/root I/O unchanged. New native click loop blocked by DWS CONTEXT_PROCESSING_ERROR.",
         "user_decision_three_modes": "2026-09-24: Host mode/API mapping tests, core62+views36, typecheck/build/vet/sqlc/structural checks passed. Pre run3109768297 deploy161907060 SUCCESS/allEnd=true; migration9306 applied. Targete2293e9e modeoff/revision14 confirmed in details/list; invalid/null/conflicting request live400 and no policy mutation. Three DB integration tests not run; direct rollback probe was terminated. Native IM and browser verification not run (browser under user control).",
-        "native_dws_ingress_host_tests": "passed_local_2026-10-01: handler unit tests (projection, target binding, wire namespace guard, ownership, self-loop guards, loop breaker, fingerprint, switch guards) and DB tests TestNativeMessageRunsTheRouterPipeline/TestNativeMessageOwnOutputAndQuotes/TestNativeOwnershipIsExclusivePerMessage/TestNativeSubscriptionAccountIsUnique/TestNativeEchoOfOwnReplyIsDropped on a migrated local copy; no model replay",
+        "native_dws_ingress_host_tests": "passed_local_2026-10-01: handler unit tests (projection, target binding, wire namespace guard, ownership, self-loop guards, loop breaker, fingerprint, switch guards) and DB tests TestNativeMessageRunsTheRouterPipeline/TestNativeMessageOwnOutputAndQuotes/TestNativeOwnershipIsExclusivePerMessage/TestNativeSubscriptionAccountIsUnique/TestNativeEchoOfOwnReplyIsDropped on a migrated local copy; no model replay. passed_local_2026-10-02: TestAcceptNativeMessageSkipsReplayedBacklog (sent before subscription, older than 10 minutes, short outage, clock skew, no send time) and TestNativeSubscriptionAccountIsUnique enabled_at kept for the same account and restarted for a rebound one",
         "native_dws_ingress_live_delivery": "not_run"
       },
       "implementation_refs": [

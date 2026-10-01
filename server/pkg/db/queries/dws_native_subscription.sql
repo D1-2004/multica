@@ -8,11 +8,19 @@ WHERE workspace_id = sqlc.arg('workspace_id')
 -- Enabling names the account; re-enabling after a rebind moves the row to
 -- the new account and forgets the old account's learned openDingTalkId. The
 -- (org_id, dws_uid) unique index rejects an account another agent holds.
+-- A new account also restarts enabled_at: messages it received before belong
+-- to no subscription of this agent and are not answered.
 INSERT INTO agent_dws_native_subscription (agent_id, workspace_id, enabled_by, dws_uid, org_id)
 VALUES (sqlc.arg('agent_id'), sqlc.arg('workspace_id'), sqlc.arg('enabled_by'), sqlc.arg('dws_uid'), sqlc.arg('org_id'))
 ON CONFLICT (agent_id) DO UPDATE
 SET dws_uid = EXCLUDED.dws_uid,
     org_id = EXCLUDED.org_id,
+    enabled_at = CASE
+        WHEN agent_dws_native_subscription.dws_uid = EXCLUDED.dws_uid
+         AND agent_dws_native_subscription.org_id = EXCLUDED.org_id
+        THEN agent_dws_native_subscription.enabled_at
+        ELSE now()
+    END,
     self_open_dingtalk_id = CASE
         WHEN agent_dws_native_subscription.dws_uid = EXCLUDED.dws_uid
          AND agent_dws_native_subscription.org_id = EXCLUDED.org_id

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -28,6 +29,10 @@ type nativeDBFixture struct {
 }
 
 var nativeTestRouterTarget = "router-target:v1:sha256:" + strings.Repeat("e", 64)
+
+// nativeTestSentAt is when nativeTestEventLine's message was sent; fixtures
+// subscribe the account an hour before it and judge age a minute after it.
+var nativeTestSentAt = time.UnixMilli(1783483235983)
 
 // newNativeDBFixture creates an agent eligible for native subscription: a
 // runtime with the managed DWS wrapper, the Coordinator and DingTalk
@@ -50,14 +55,16 @@ func newNativeDBFixture(t *testing.T) *nativeDBFixture {
 		{`UPDATE agent_runtime SET metadata='{"client_capabilities":["dws_message_policy_v1"]}'::jsonb WHERE id=$1`, []any{runtimeID}},
 		{`UPDATE agent SET inbound_coordinator=true, dingtalk_response_enabled=true, dingtalk_response_policy_revision=2, dingtalk_show_ai_tag=true WHERE id=$1`, []any{agentID}},
 		{`INSERT INTO agent_dingtalk_identity (agent_id, workspace_id, dws_uid, org_id, bound_by) VALUES ($1,$2,$3,'2002',$4)`, []any{agentID, testWorkspaceID, uid, testUserID}},
-		{`INSERT INTO agent_dws_native_subscription (agent_id, workspace_id, enabled_by, dws_uid, org_id) VALUES ($1,$2,$3,$4,'2002')`, []any{agentID, testWorkspaceID, testUserID, uid}},
+		{`INSERT INTO agent_dws_native_subscription (agent_id, workspace_id, enabled_by, dws_uid, org_id, enabled_at) VALUES ($1,$2,$3,$4,'2002',$5)`, []any{agentID, testWorkspaceID, testUserID, uid, nativeTestSentAt.Add(-time.Hour)}},
 		{`INSERT INTO agent_dispatch_endpoint (workspace_id, agent_id, actor_user_id, endpoint_id, dispatch_url) VALUES ($1,$2,$3,$4,'/api/webhooks/agent-dispatch/native')`, []any{testWorkspaceID, agentID, testUserID, "k1_native" + uuid.NewString()[:8]}},
 	} {
 		if _, err := testPool.Exec(ctx, stmt.sql, stmt.args...); err != nil {
 			t.Fatalf("setup %q: %v", stmt.sql, err)
 		}
 	}
+	nativeClock = func() time.Time { return nativeTestSentAt.Add(time.Minute) }
 	t.Cleanup(func() {
+		nativeClock = time.Now
 		for _, table := range []string{"response_action", "response_route", "task_completion_outbox", "task_execution_update_outbox",
 			"inbound_coordinator_job", "agent_dispatch_acceptance", "agent_dispatch_endpoint", "agent_dingtalk_identity", "agent_dws_native_subscription",
 			"channel_installation"} {
@@ -396,6 +403,11 @@ func TestNativeOwnershipIsExclusivePerMessage(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Re-enabling for the rebound account restarted the subscription; the
+	// message below is sent after it.
+	if _, err := testPool.Exec(ctx, `UPDATE agent_dws_native_subscription SET enabled_at=$2 WHERE agent_id=$1`, f.agentID, nativeTestSentAt.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
 	f.routerDelivery(t, other, "m5")
 	f.native(t, other, "m5")
 	if r, n := f.acceptances(t, nativeTestRouterTarget), f.acceptances(t, native); r != 2 || n != 3 {
@@ -404,7 +416,8 @@ func TestNativeOwnershipIsExclusivePerMessage(t *testing.T) {
 }
 
 // The database holds one native row per account, and re-enabling after a
-// rebind moves the row and forgets the old account's learned self id.
+// rebind moves the row, forgets the old account's learned self id and
+// restarts the subscription time.
 func TestNativeSubscriptionAccountIsUnique(t *testing.T) {
 	f := newNativeDBFixture(t)
 	ctx := context.Background()
@@ -428,13 +441,15 @@ func TestNativeSubscriptionAccountIsUnique(t *testing.T) {
 	row, err := f.h.Queries.EnableAgentDWSNativeSubscription(ctx, db.EnableAgentDWSNativeSubscriptionParams{
 		AgentID: parseUUID(f.agentID), WorkspaceID: parseUUID(testWorkspaceID), EnabledBy: parseUUID(testUserID), DwsUid: f.identity.UID, OrgID: "2002",
 	})
-	if err != nil || row.SelfOpenDingtalkID != "open-employee" {
+	if err != nil || row.SelfOpenDingtalkID != "open-employee" || !row.EnabledAt.Time.Equal(nativeTestSentAt.Add(-time.Hour)) {
 		t.Fatalf("re-enable same account: %+v %v", row, err)
 	}
 	row, err = f.h.Queries.EnableAgentDWSNativeSubscription(ctx, db.EnableAgentDWSNativeSubscriptionParams{
 		AgentID: parseUUID(f.agentID), WorkspaceID: parseUUID(testWorkspaceID), EnabledBy: parseUUID(testUserID), DwsUid: "777777", OrgID: "2002",
 	})
-	if err != nil || row.DwsUid != "777777" || row.SelfOpenDingtalkID != "" {
+	// A new account restarts enabled_at: what it received before is not this
+	// subscription's backlog.
+	if err != nil || row.DwsUid != "777777" || row.SelfOpenDingtalkID != "" || time.Since(row.EnabledAt.Time) > time.Minute {
 		t.Fatalf("re-enable for a rebound account: %+v %v", row, err)
 	}
 	if _, owned, err := nativeAccountOwner(ctx, f.h.Queries, f.identity.UID, "2002"); err != nil || owned {

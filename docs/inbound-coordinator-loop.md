@@ -265,7 +265,7 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 - Router 的数字员工渠道投递（`source=digital_employee`、`event.domain=channel`）若账号归原生，在记录 assoc 与受理之前丢弃：记 `MULTICA_AGENT_DISPATCH_REQUEST outcome=skipped_native_owned`，记一次 Silence 决策，按自发消息分支同样静默关闭 Router 回调（否则 202），Router 不重试也不回复。机器人、日程、审批投递不受影响，原生订阅只收账号的 IM 消息。归属读不到时返回 503 让 Router 重试，不两边都处理。
 - 原生事件只在本 Agent 的行拥有该账号时处理；数字员工消息路由的存在不再影响原生流，事件源按归属列出账号。
-- 行记录开启时的账号；`(org_id, dws_uid)` 唯一索引（迁移 9461）保证一个账号只有一个 Agent，冲突返回 409 `native_subscription_account_in_use`。身份换绑到别的账号后，旧行不再拥有任何账号，需对新身份重新开启。
+- 行记录开启时的账号和开启时间（换账号时重置，见「不补答积压」）；`(org_id, dws_uid)` 唯一索引（迁移 9461）保证一个账号只有一个 Agent，冲突返回 409 `native_subscription_account_in_use`。身份换绑到别的账号后，旧行不再拥有任何账号，需对新身份重新开启。
 - 开关层防护按账号：任一活跃的数字员工消息路由（Router tenant/account 等于该身份）时拒绝开启原生（409 `native_subscription_conflicts_with_message_binding`）；手动消息绑定的账号已归原生时拒绝。扫码绑定可能存其他 ID 格式，正确性以逐条消息规则为准。
 - 解绑执行身份时先关闭原生订阅；关闭失败则解绑整体失败（500 `native_subscription_cleanup_failed`），不留下孤行在同账号重新绑定时被复活。
 
@@ -286,6 +286,13 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 2. 发信人等于已学到的 `self_open_dingtalk_id`：丢弃（`self_sender`）。
 3. 单聊事件、且该账号的 openDingTalkId 尚未学到时，本 Agent 10 分钟内在同一会话发过、去掉首尾空白后正文相同的托管回复：丢弃（`echo_of_own_reply`）。群事件只在有人 @ 本账号时到达，本账号自己的回复不会 @ 自己，所以群里有人复述回复不会被当回声；学到 openDingTalkId 后由第 2 条精确判断，不再按正文丢弃真人消息。
 4. 进程内滑动窗口：同一 Agent、同一会话、同一发信人 60 秒内超过 10 条不同的原生投递视为回环，丢弃并记 Warn `dws_native_loop_suspected`。按发信人计数：回环只会重复同一发信人，真人连发或群里多人 @ 不会触发。同一消息的重投不重复计数；该计数随事件流换副本而重置，最多推迟一个窗口生效。
+
+**不补答积压。** 账号没有事件流消费时，DWS 会保留它的事件，事件流一连上就把积压一次补推过来。原生入口按消息自身的发送时间（`event_time`，缺省用投递的 `occurredAtMs`），把两类旧消息确认后丢弃，记 Warn `dws_native_event_skipped`，不建窗、不回复：
+
+- 发送早于本 Agent 为该账号开启原生订阅的时间（`agent_dws_native_subscription.enabled_at`，容忍 30 秒时钟偏差）：`sent_before_subscription`。同一账号重复开启时保留原时间；换绑到别的账号后再开启，时间从这次开启算起。关闭订阅会删掉行，所以关闭期间、换绑期间收到的消息都不补答。
+- 送达时已超过 10 分钟：`stale_message`。短暂断流（重连、滚动发布）期间几分钟内的消息照常处理。
+
+这是投递层的新鲜度规则，不是对话延续的时间阈值。事件没有发送时间时，不按时间丢弃。来源：2026-10-02 预发「Tag · 钉钉」事件流修复连通后，01:27–01:42 的 4 条旧消息在 01:49–01:53 被补推。每条都单独建窗，并回了排队、开工和结果三轮回复。
 
 **只用托管回复。** 原生命令恒带 `responsePolicy.mode=multica_coordinator`，资格与 Router 策略同步相同：入站判断与钉钉回复开关都开、策略 revision≥1、运行时具备 `dws_message_policy_v1`。开启原生订阅时校验不满足返回 409 `native_subscription_requires_managed_response`。回调属于服务端自己的派发任务 `dwsn-<hash>`，完成目标是 `agentmessagerouter.NativeTargetIdentity()`（与 Router 目标同形，outbox 原样路由）；有线请求不得使用该命名空间。回复语义与托管数字员工一致：冻结触发消息的 openMsgId，群聊引用回复并 @ 发信人，单聊同样引用回复。`response_route` 与等待说明冻结 `dws_environment=production`。原生完成 worker 只确认回调：托管出站已接手即完成，路由缺失且有话要说则死信；回执只关闭收集窗口，不调用 Router。
 
