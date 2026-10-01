@@ -961,7 +961,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			}
 			nativeSource, err := dwseventsource.New(dwseventsource.Config{
 				Redis: rdb, Sessions: native, Mint: mint,
-				Deployment: "native:" + strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+				// v2: subscriptions name the token's app; the namespace is new so
+				// no record of an earlier app-less subscription is reused.
+				Deployment: "native-v2:" + strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
 				Enabled:    opts.RuntimeConfig.useDWSForTag,
 				Consumers: []dwseventsource.Consumer{
 					{EventKey: dws.EventIMAt, Identities: identities, Handle: h.HandleDWSNativeEvent},

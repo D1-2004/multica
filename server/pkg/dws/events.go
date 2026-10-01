@@ -271,7 +271,18 @@ func (s *EventService) Subscribe(ctx context.Context, spec SubscriptionSpec) (Su
 	filter, _, _ := spec.FilterRule()
 	ruleParam, _ := json.Marshal(param)
 	fp := spec.Fingerprint()
-	ext := map[string]any{"ruleType": ruleType, "idempotencyKey": "dws-for-tag-" + fp}
+	// The subscription names the token's app, as the dws CLI does: DWS
+	// delivers personal events to the stream of the subscribing app, and a
+	// subscription without one may never reach this client's stream (seen
+	// for IM events on production). The app is part of the idempotency key,
+	// so an earlier app-less subscription of the same spec is not reused.
+	clientID := strings.TrimSpace(s.c.Token().ClientID)
+	idempotencyKey := "dws-for-tag-" + fp
+	if clientID != "" {
+		sum := sha256.Sum256([]byte(clientID))
+		idempotencyKey += "-" + hex.EncodeToString(sum[:4])
+	}
+	ext := map[string]any{"ruleType": ruleType, "idempotencyKey": idempotencyKey}
 	if spec.Name != "" {
 		ext["name"] = spec.Name
 	}
@@ -279,7 +290,7 @@ func (s *EventService) Subscribe(ctx context.Context, spec SubscriptionSpec) (Su
 		ext["filter"] = filter
 	}
 	body := map[string]any{
-		"clientId": "", "sourceId": DefaultSourceID, "eventKey": spec.EventKey,
+		"clientId": clientID, "sourceId": DefaultSourceID, "eventKey": spec.EventKey,
 		"filterRule": string(ruleParam), "deliveryPref": "realtime", "ext": ext,
 	}
 	if spec.TTLSeconds > 0 {
