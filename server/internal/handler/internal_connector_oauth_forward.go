@@ -26,17 +26,32 @@ package handler
 // the forwarded callback in the browser that started it: the binding cookie
 // was set on its own origin by the start response.
 //
-// This file is self-contained so production can ship the forwarder on its
-// own.
+// This file is self-contained: it holds the callback routes' entry points
+// and everything the forwarder needs, so a build without the connector flow
+// (a forwarder-only production release cut from develop) compiles it
+// unchanged. The connector flow plugs its local completion in through
+// connectorOAuthCompleteLocal; without it, a callback of this deployment's
+// own state gets the invalid-connection page. Keep this file identical on
+// every branch that carries it.
 
 import (
 	"encoding/base64"
+	"html"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"golang.org/x/net/publicsuffix"
+)
+
+const (
+	// connectorOAuthStatePrefix marks connector OAuth states, so the shared
+	// GitHub App callback can tell them from GitHub App install states.
+	connectorOAuthStatePrefix    = "mcpc."
+	connectorOAuthCallbackPath   = "/api/connector-oauth/callback"
+	connectorOAuthGitHubCallback = "/api/github/authorize"
 )
 
 const (
@@ -182,4 +197,98 @@ func (h *Handler) forwardConnectorOAuthCallback(w http.ResponseWriter, r *http.R
 	}
 	http.Redirect(w, r, target, http.StatusFound)
 	return true
+}
+
+const (
+	// Callback routes a state may complete on.
+	connectorOAuthViaDCR    = "dcr"
+	connectorOAuthViaGitHub = "github"
+)
+
+// ConnectorOAuthCallbackPath is the public DCR OAuth callback route. The
+// router registers it outside the authenticated group.
+const ConnectorOAuthCallbackPath = connectorOAuthCallbackPath
+
+// IsConnectorOAuthCallback reports whether a GitHub App callback request
+// completes an official app connect (a "mcpc." state), so the router can
+// rate-limit those like the DCR callback without touching the install flow.
+func IsConnectorOAuthCallback(r *http.Request) bool {
+	return isConnectorOAuthState(r.URL.Query().Get("state"))
+}
+
+// isConnectorOAuthState reports whether a GitHub callback state belongs to
+// the connector flow (GitHubAuthorizeCallback dispatches on it).
+func isConnectorOAuthState(state string) bool {
+	return strings.HasPrefix(state, connectorOAuthStatePrefix)
+}
+
+// connectorOAuthAppOrigin is the browser-facing origin OAuth callbacks and
+// return pages live on ("" when none is configured).
+func (h *Handler) connectorOAuthAppOrigin() string {
+	return strings.TrimRight(firstNonEmpty(h.currentConfig().AppURL, h.currentConfig().FrontendOrigin), "/")
+}
+
+// connectorOAuthCallbackTarget returns this deployment's own origin and the
+// path of the callback of a connect of the given route: the GitHub App
+// callback on FRONTEND_ORIGIN, or the DCR callback on the app origin. The
+// start response is served there, so the browser binding cookie lives there,
+// and a callback production forwards to a pre-release lands there.
+func (h *Handler) connectorOAuthCallbackTarget(via string) (string, string) {
+	if via == connectorOAuthViaGitHub {
+		return h.githubFrontend(), connectorOAuthGitHubCallback
+	}
+	return h.connectorOAuthAppOrigin(), connectorOAuthCallbackPath
+}
+
+// ConnectorOAuthCallback is the provider redirect of DCR official apps.
+func (h *Handler) ConnectorOAuthCallback(w http.ResponseWriter, r *http.Request) {
+	h.serveConnectorOAuthCallback(w, r, connectorOAuthViaDCR)
+}
+
+// connectorOAuthCompleteLocal completes a callback whose state belongs to
+// this deployment. The connector flow sets it at init
+// (internal_connector_catalog_api.go); a build without the flow leaves it
+// nil.
+var connectorOAuthCompleteLocal func(h *Handler, w http.ResponseWriter, r *http.Request, via string)
+
+// serveConnectorOAuthCallback handles a provider redirect on either callback
+// route: a callback of another deployment's connect (its state names that
+// deployment) is forwarded there or refused before any local handling;
+// anything else is completed locally, or gets the invalid-connection page
+// when this build has no connector flow.
+func (h *Handler) serveConnectorOAuthCallback(w http.ResponseWriter, r *http.Request, via string) {
+	if h.forwardConnectorOAuthCallback(w, r, via) {
+		return
+	}
+	if connectorOAuthCompleteLocal == nil {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		h.writeConnectorOAuthInvalidPage(w)
+		return
+	}
+	connectorOAuthCompleteLocal(h, w, r, via)
+}
+
+// writeConnectorOAuthInvalidPage answers an unknown, expired or replayed
+// connect callback with a small same-origin page instead of a
+// JSON body: the browser, often the DingTalk WebView, shows the response
+// directly. It links to the app's pages; nothing in it comes from the
+// request.
+func (h *Handler) writeConnectorOAuthInvalidPage(w http.ResponseWriter) {
+	origin := html.EscapeString(h.connectorOAuthAppOrigin())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+	w.WriteHeader(http.StatusBadRequest)
+	_, _ = io.WriteString(w, `<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>连接已失效</title></head>
+<body style="font-family:system-ui,-apple-system,sans-serif;max-width:32rem;margin:12vh auto;padding:0 16px;line-height:1.6;color:#1f2328;background:#fff">
+<h1 style="font-size:1.25rem;margin:0 0 .5rem">连接已失效</h1>
+<p style="margin:0 0 .5rem">这次连接已过期或已被使用。请回到原页面重新连接。</p>
+<p lang="en" style="margin:0 0 1.5rem;color:#59636e">This connection attempt is invalid or has expired. Go back and connect again.</p>
+<p style="margin:0"><a href="`+origin+`/dingtalk/configure">返回连接配置页</a> · <a href="`+origin+`/">返回工作台</a></p>
+</body>
+</html>
+`)
 }

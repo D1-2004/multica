@@ -59,12 +59,7 @@ import (
 )
 
 const (
-	// connectorOAuthStatePrefix marks connector OAuth states, so the shared
-	// GitHub App callback can tell them from GitHub App install states.
-	connectorOAuthStatePrefix    = "mcpc."
 	connectorOAuthStateTTL       = 10 * time.Minute
-	connectorOAuthCallbackPath   = "/api/connector-oauth/callback"
-	connectorOAuthGitHubCallback = "/api/github/authorize"
 	connectorOAuthScopeWorkspace = "workspace"
 	connectorOAuthMaxReturnTo    = 2048
 	// connectorOAuthCookiePrefix names the browser binding cookie of one
@@ -73,10 +68,6 @@ const (
 	// connectorOAuthClientHistory is how many replaced dynamic client
 	// registrations a connector keeps for refreshing the tokens they issued.
 	connectorOAuthClientHistory = 8
-
-	// Callback routes a state may complete on.
-	connectorOAuthViaDCR    = "dcr"
-	connectorOAuthViaGitHub = "github"
 )
 
 // Callback error codes appended as ?connect_error=<code>.
@@ -180,12 +171,6 @@ type connectorOAuthOutcome struct {
 	// Discovered is the number of tools discovered right after connecting
 	// (0 when tools were already known or discovery failed).
 	Discovered int
-}
-
-// connectorOAuthAppOrigin is the browser-facing origin OAuth callbacks and
-// return pages live on ("" when none is configured).
-func (h *Handler) connectorOAuthAppOrigin() string {
-	return strings.TrimRight(firstNonEmpty(h.currentConfig().AppURL, h.currentConfig().FrontendOrigin), "/")
 }
 
 // startConnectorOAuth checks that in.UserID may connect an account for the
@@ -292,18 +277,6 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	slog.InfoContext(ctx, "official app OAuth started", "connector_id", c.ID, "catalog_slug", c.CatalogSlug, "scope_type", scope.ScopeType,
 		"user_id", scope.UserID)
 	return started, nil
-}
-
-// connectorOAuthCallbackTarget returns this deployment's own origin and the
-// path of the callback of a connect of the given route: the GitHub App
-// callback on FRONTEND_ORIGIN, or the DCR callback on the app origin. The
-// start response is served there, so the browser binding cookie lives there,
-// and a callback production forwards to a pre-release lands there.
-func (h *Handler) connectorOAuthCallbackTarget(via string) (string, string) {
-	if via == connectorOAuthViaGitHub {
-		return h.githubFrontend(), connectorOAuthGitHubCallback
-	}
-	return h.connectorOAuthAppOrigin(), connectorOAuthCallbackPath
 }
 
 // connectorOAuthRedirectOrigin is the origin of the redirect URI a connect
@@ -545,12 +518,6 @@ func randomOAuthValue() (string, error) {
 func hashConnectorOAuthState(state string) string {
 	sum := sha256.Sum256([]byte(state))
 	return hex.EncodeToString(sum[:])
-}
-
-// isConnectorOAuthState reports whether a GitHub callback state belongs to
-// the connector flow (GitHubAuthorizeCallback dispatches on it).
-func isConnectorOAuthState(state string) bool {
-	return strings.HasPrefix(state, connectorOAuthStatePrefix)
 }
 
 func githubConnectorAuthorizeURL(app connectorcatalog.App, redirectURI, state, verifier string) (string, error) {
