@@ -249,6 +249,7 @@
       "labels": "Labels",
       "sites": "Websites",
       "properties": "Properties",
+      "tag": "Tag",
       "quick_actions": "Quick Actions",
       "workspace_access": "DTA Access"
     }
@@ -1428,5 +1429,30 @@
     "bailian_discovered": "Bailian: checked {{checked}} text/tool models, kept {{count}}; {{unavailable}} rejected, {{unverified}} unverified. Save to apply.",
     "diamond_help": "Append the Diamond Coordinator model after this fallback chain, skipping duplicates. It is also used before global models are configured.",
     "coordinator_choice": "Coordinator model {{index}}"
+  },
+  "tag": {
+    "title": "Tag",
+    "description": "A Tag is one digital employee that serves several enterprises and always runs on a cloud runtime. A workspace has at most one.",
+    "operator_only": "Only platform operators see this setting.",
+    "empty": "This workspace has no Tag, so the sidebar shows no Tag entry.",
+    "create_heading": "Create the Tag",
+    "name": "Name",
+    "description_label": "Description",
+    "runtime": "Cloud runtime",
+    "runtime_hint": "A Tag only runs on a cloud runtime.",
+    "no_cloud_runtime": "This workspace has no cloud runtime yet.",
+    "model": "Model (optional)",
+    "copy_from": "Copy configuration from an agent (optional)",
+    "copy_none": "Don't copy",
+    "submit": "Create Tag",
+    "sidebar_visible": "Show in sidebar",
+    "sidebar_hint": "When off, members don't see the Tag entry; configuration and tenants are kept.",
+    "open": "Open",
+    "tenants_count": "{{count}} tenants",
+    "remove": "Remove Tag",
+    "remove_hint": "Remove every tenant first. The template agent is kept as an ordinary agent.",
+    "created": "Tag created",
+    "removed": "Tag removed",
+    "failed": "Failed: {{message}}"
   }
 }

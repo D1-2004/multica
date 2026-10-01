@@ -10,6 +10,8 @@ const stub = vi.hoisted(
   () => (name: string) => () => ({ [name]: () => <div>{name}</div> }),
 );
 vi.mock("@multica/core/global-models", () => ({useDeveloperCapabilities:()=>({data:{developer:false}})}));
+vi.mock("@multica/core/tag", () => ({ useWorkspaceTag: () => ({ data: undefined }) }));
+vi.mock("./tag-settings-tab", stub("TagSettingsTab"));
 vi.mock("./developer-tab", stub("DeveloperTab"));
 vi.mock("./account-tab", stub("AccountTab"));
 vi.mock("./preferences-tab", stub("PreferencesTab"));

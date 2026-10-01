@@ -249,6 +249,7 @@
       "labels": "标签",
       "sites": "网站",
       "properties": "属性",
+      "tag": "Tag",
       "quick_actions": "快捷操作",
       "workspace_access": "DTA Token"
     }
@@ -1426,5 +1427,30 @@
     "bailian_discovered": "百炼：检查 {{checked}} 个文本工具模型，保留 {{count}} 个；{{unavailable}} 个调用被拒绝，{{unverified}} 个暂未验证。保存后生效。",
     "diamond_help": "勾选后，在上述降级链末尾追加 Diamond 中的 Coordinator 模型，重复项不再添加。未配置全局模型时，也会使用该默认模型。",
     "coordinator_choice": "Coordinator 模型 {{index}}"
+  },
+  "tag": {
+    "title": "Tag",
+    "description": "Tag 是一个能服务多家企业的数字员工，固定在云端运行。每个工作区最多一个。",
+    "operator_only": "这个设置只对平台管理员可见。",
+    "empty": "这个工作区还没有 Tag，侧边栏也不显示 Tag 入口。",
+    "create_heading": "创建 Tag",
+    "name": "名称",
+    "description_label": "描述",
+    "runtime": "云端运行时",
+    "runtime_hint": "Tag 只能运行在云端运行时。",
+    "no_cloud_runtime": "这个工作区还没有云端运行时。",
+    "model": "模型（可选）",
+    "copy_from": "从已有智能体复制配置（可选）",
+    "copy_none": "不复制",
+    "submit": "创建 Tag",
+    "sidebar_visible": "在侧边栏展示",
+    "sidebar_hint": "关闭后成员看不到 Tag 入口，配置和租户保留。",
+    "open": "打开",
+    "tenants_count": "{{count}} 个租户",
+    "remove": "移除 Tag",
+    "remove_hint": "先移出全部租户才能移除 Tag。模板智能体会保留为普通智能体。",
+    "created": "已创建 Tag",
+    "removed": "已移除 Tag",
+    "failed": "操作失败：{{message}}"
   }
 }

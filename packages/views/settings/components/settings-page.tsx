@@ -22,6 +22,7 @@ import {
   Laptop,
   Zap,
   Globe2,
+  Tag as TagIcon,
 } from "lucide-react";
 import {
   Tabs,
@@ -54,6 +55,8 @@ import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
 import { WorkspaceAccessTab } from "./workspace-access-tab";
 import { LocalRunnerTab } from "./local-runner-tab";
 import { HostedSitesTab } from "./hosted-sites-tab";
+import { TagSettingsTab } from "./tag-settings-tab";
+import { useWorkspaceTag } from "@multica/core/tag";
 import { CollapsedNavTrigger } from "../../layout/page-header";
 import { useT } from "../../i18n";
 
@@ -91,6 +94,7 @@ const WORKSPACE_TAB_KEYS = [
   "workspace_access",
   "properties",
   "quick_actions",
+  "tag",
 ] as const;
 const WORKSPACE_TAB_VALUES = {
   general: "workspace",
@@ -103,6 +107,7 @@ const WORKSPACE_TAB_VALUES = {
   workspace_access: "workspace_access",
   properties: "properties",
   quick_actions: "quick-actions",
+  tag: "tag",
 } as const;
 const WORKSPACE_TAB_ICONS = {
   general: Settings,
@@ -115,6 +120,7 @@ const WORKSPACE_TAB_ICONS = {
   workspace_access: ShieldCheck,
   properties: SlidersHorizontal,
   quick_actions: Zap,
+  tag: TagIcon,
 } as const;
 
 const DEFAULT_TAB = "profile";
@@ -157,6 +163,14 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   );
   const navigation = useNavigation();
   const isMobile = useIsMobile();
+  // Settings → Tag exists only for platform operators.
+  const tagOperator = useWorkspaceTag(workspace?.id ?? "").data?.canOperate === true;
+  const workspaceTabVisible = React.useCallback(
+    (key: (typeof WORKSPACE_TAB_KEYS)[number]) =>
+      (key !== "workspace_access" || (workspaceAccessEnabled && role === "owner")) &&
+      (key !== "tag" || tagOperator),
+    [role, tagOperator, workspaceAccessEnabled],
+  );
 
   // Whitelist of valid tab values; unknown ?tab=… values silently fall back to
   // the default. Whitelisting also blocks junk like ?tab=<script> from
@@ -166,16 +180,12 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
       new Set<string>([
         ...ACCOUNT_TAB_KEYS,
         ...(developer ? ["developer"] : []),
-        ...Object.entries(WORKSPACE_TAB_VALUES)
-          .filter(
-            ([key]) =>
-              key !== "workspace_access" ||
-              (workspaceAccessEnabled && role === "owner"),
-          )
-          .map(([, value]) => value),
+        ...WORKSPACE_TAB_KEYS.filter(workspaceTabVisible).map(
+          (key) => WORKSPACE_TAB_VALUES[key],
+        ),
         ...(extraAccountTabs?.map((tab) => tab.value) ?? []),
       ]),
-    [extraAccountTabs, role, workspaceAccessEnabled, developer],
+    [extraAccountTabs, workspaceTabVisible, developer],
   );
 
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
@@ -263,11 +273,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <span className="hidden truncate px-2 pb-1 pt-4 text-caption font-medium text-muted-foreground md:block">
             {workspaceName ?? t(($) => $.page.workspace_fallback)}
           </span>
-          {WORKSPACE_TAB_KEYS.filter(
-            (key) =>
-              key !== "workspace_access" ||
-              (workspaceAccessEnabled && role === "owner"),
-          ).map((key) => {
+          {WORKSPACE_TAB_KEYS.filter(workspaceTabVisible).map((key) => {
             const Icon = WORKSPACE_TAB_ICONS[key];
             return (
               <TabsTrigger
@@ -362,6 +368,11 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="quick-actions">
             <QuickActionsTab />
           </TabsContent>
+          {tagOperator ? (
+            <TabsContent value="tag">
+              <TagSettingsTab />
+            </TabsContent>
+          ) : null}
           {extraAccountTabs?.map((tab) => (
             <TabsContent key={tab.value} value={tab.value}>
               {tab.content}

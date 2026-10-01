@@ -5,8 +5,9 @@ import { ApiError } from "@multica/core/api";
 import enLayout from "../locales/en/layout.json";
 import { AppSidebar } from "./app-sidebar";
 
-const { appForeground, chatSessions, chatStore, detail, deletePin, inboxItems, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
+const { appForeground, chatSessions, chatStore, detail, deletePin, inboxItems, navigation, pins, sidebarState, summary, tagState, workspaces } = vi.hoisted(() => ({
   appForeground: { current: true },
+  tagState: { current: null as null | { tag: { name: string; sidebarVisible: boolean } | null } },
   sidebarState: { setOpenMobile: vi.fn() },
   chatSessions: { current: [] as { id?: string; unread_count?: number }[] },
   chatStore: { current: { activeSessionId: null as string | null, isOpen: false } },
@@ -167,14 +168,17 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     issues: () => "/acme/issues",
     projects: () => "/acme/projects",
     autopilots: () => "/acme/autopilots",
+    tag: () => "/acme/tag",
     agents: () => "/acme/agents",
     squads: () => "/acme/squads",
     usage: () => "/acme/usage",
     sites: () => "/acme/sites",
+    files: () => "/acme/files",
     runtimes: () => "/acme/runtimes",
     runners: () => "/acme/runners",
     skills: () => "/acme/skills",
     dshPlugins: () => "/acme/dsh-plugins",
+    internalConnectors: () => "/acme/internal-connectors",
     featureUpdates: () => "/acme/features",
     settings: () => "/acme/settings",
     settingsIntegrations: () => "/acme/settings?tab=integrations",
@@ -226,6 +230,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
     if (queryKey[0] === "issue") return detail.current;
     if (queryKey[0] === "inbox" && queryKey[1] === "unread-summary") return { data: summary.current };
     if (queryKey[0] === "inbox") return { data: inboxItems.current };
+    if (queryKey[0] === "workspaces" && queryKey[2] === "tag") return { data: tagState.current };
     if (queryKey[0] === "workspaces") return { data: workspaces.current };
     if (queryKey[0] === "chat" && queryKey[2] === "sessions") return { data: chatSessions.current };
     return { data: [] };
@@ -239,6 +244,26 @@ describe("workspace navigation groups", () => {
       pathname: "/acme/issues",
       searchParams: new URLSearchParams(),
     };
+  });
+
+  it("shows the Tag entry above agents only when the workspace Tag is visible", () => {
+    tagState.current = null;
+    const { container, unmount } = render(<AppSidebar />);
+    expect(container.querySelector('button[data-href="/acme/tag"]')).toBeNull();
+    unmount();
+
+    tagState.current = { tag: { name: "QwenTag", sidebarVisible: false } };
+    const hidden = render(<AppSidebar />);
+    expect(hidden.container.querySelector('button[data-href="/acme/tag"]')).toBeNull();
+    hidden.unmount();
+
+    tagState.current = { tag: { name: "QwenTag", sidebarVisible: true } };
+    const shown = render(<AppSidebar />);
+    const entry = shown.container.querySelector('button[data-href="/acme/tag"]');
+    expect(entry?.textContent).toContain("QwenTag");
+    const hrefs = [...shown.container.querySelectorAll("button[data-href]")].map((node) => node.getAttribute("data-href"));
+    expect(hrefs.indexOf("/acme/tag")).toBeLessThan(hrefs.indexOf("/acme/agents"));
+    tagState.current = null;
   });
 
   it("keeps everyday work destinations directly visible", () => {

@@ -63,6 +63,7 @@ import {
   useActiveIssueViewStore,
 } from "@multica/core/issue-views/active-view-store";
 import { useCurrentWorkspace, useWorkspacePaths, paths } from "@multica/core/paths";
+import { useWorkspaceTag } from "@multica/core/tag";
 import { workspaceListOptions, myInvitationListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -129,6 +130,7 @@ type NavKey =
   | "issues"
   | "projects"
   | "autopilots"
+  | "tag"
   | "agents"
   | "squads"
   | "usage"
@@ -151,6 +153,7 @@ type NavLabelKey =
   | "issues"
   | "projects"
   | "autopilots"
+  | "tag"
   | "agents"
   | "squads"
   | "usage"
@@ -203,6 +206,8 @@ const workspaceDomains: WorkspaceDomain[] = [
   {
     labelKey: "agent_group",
     items: [
+      // Shown only when the workspace has a Tag that is set visible.
+      { key: "tag", labelKey: "tag" },
       { key: "agents", labelKey: "agents", primary: true },
       { key: "squads", labelKey: "squads" },
       { key: "skills", labelKey: "skills" },
@@ -488,6 +493,8 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
   const logout = useLogout();
   const workspace = useCurrentWorkspace();
   const p = useWorkspacePaths();
+  const { data: tagState } = useWorkspaceTag(workspace?.id ?? "");
+  const visibleTag = tagState?.tag?.sidebarVisible === true ? tagState.tag : null;
   const { data: workspaces = EMPTY_WORKSPACES } = useQuery(workspaceListOptions());
   const { data: myInvitations = EMPTY_INVITATIONS } = useQuery(myInvitationListOptions());
   const workspaceCreationDisabled = useConfigStore((s) => s.workspaceCreationDisabled);
@@ -894,6 +901,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
               <SidebarGroupContent>
                 <SidebarMenu className="gap-0.5">
                   {domain.items.map((item) => {
+                    if (item.key === "tag" && !visibleTag) return null;
                     const href = p[item.key]();
                     const Icon = routeIconForPath(href);
                     const isActive = !isActivePinnedRoute && isNavItemActive(
@@ -922,7 +930,11 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                           ) : (
                             <Icon />
                           )}
-                          <span>{t(($) => $.nav[item.labelKey])}</span>
+                          <span className="min-w-0 truncate">
+                            {item.key === "tag" && visibleTag?.name
+                              ? visibleTag.name
+                              : t(($) => $.nav[item.labelKey])}
+                          </span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     );

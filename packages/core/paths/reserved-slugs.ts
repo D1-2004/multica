@@ -90,6 +90,7 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "runners",
   "skills",
   "internal-connectors",
+  "tag",
   "dsh-plugins",
   "features",
   "settings",

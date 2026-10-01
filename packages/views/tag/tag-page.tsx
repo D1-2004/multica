@@ -1,0 +1,615 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { AlertCircle, Building2, Check, ChevronDown, Globe, Plus, RefreshCw, Tag as TagIcon, UserPlus, Unlink } from "lucide-react";
+import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
+import { agentListOptions } from "@multica/core/workspace/queries";
+import {
+  useAdoptTagTenant,
+  useApplyTag,
+  useCreateTagTenant,
+  useDeleteTagTenant,
+  useWorkspaceTag,
+  type TagState,
+  type TagSummary,
+  type TagTenant,
+} from "@multica/core/tag";
+import { Button } from "@multica/ui/components/ui/button";
+import { Checkbox } from "@multica/ui/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@multica/ui/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
+import { Input } from "@multica/ui/components/ui/input";
+import { Label } from "@multica/ui/components/ui/label";
+import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/native-select";
+import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { cn } from "@multica/ui/lib/utils";
+import { AgentDetailPage } from "../agents/components/agent-detail-page";
+import { AppLink, useNavigation } from "../navigation";
+import { useT } from "../i18n";
+
+/** URL query param holding the selected tenant id; absent means the shared
+ * (template) configuration. Distinct from the scenes tab's `tenant` param. */
+const TENANT_PARAM = "tag_tenant";
+
+/** Params that only mean something inside one agent's page. */
+const AGENT_SCOPED_PARAMS = ["tenant", "node", "scene", "scene_tab", "app"];
+
+type TagDialog = "new" | "adopt" | "apply" | "remove" | null;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The workspace Tag: the agent detail page of either the template (shared
+ * configuration) or one tenant's employee, with a tenant switcher at the
+ * right end of the tab bar. Tenants are the first-level directory: scenes,
+ * work and the digital employee all belong to the selected tenant.
+ */
+export function TagPage() {
+  const { t } = useT("agents");
+  const wsId = useWorkspaceId();
+  const paths = useWorkspacePaths();
+  const navigation = useNavigation();
+  const { data: state, isLoading } = useWorkspaceTag(wsId);
+  const [dialog, setDialog] = useState<TagDialog>(null);
+
+  const selectedId = navigation.searchParams.get(TENANT_PARAM);
+  const tag = state?.tag ?? null;
+  const tenants = state?.tenants ?? [];
+  const tenant = selectedId ? (tenants.find((item) => item.id === selectedId) ?? null) : null;
+
+  const selectTenant = (id: string | null, view?: string) => {
+    const params = new URLSearchParams(navigation.searchParams);
+    if (id) params.set(TENANT_PARAM, id);
+    else params.delete(TENANT_PARAM);
+    for (const key of AGENT_SCOPED_PARAMS) params.delete(key);
+    if (view) params.set("view", view);
+    const query = params.toString();
+    navigation.replace(`${navigation.pathname}${query ? `?${query}` : ""}`);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-1 flex-col gap-4 p-6">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
+
+  if (!tag || !state) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-6">
+        <div className="max-w-md rounded-lg border border-dashed px-6 py-10 text-center">
+          <TagIcon className="mx-auto h-6 w-6 text-muted-foreground" aria-hidden="true" />
+          <p className="mt-3 text-body font-medium">{t(($) => $.tag_page.empty_title)}</p>
+          <p className="mt-1 text-caption text-muted-foreground">
+            {state?.canOperate ? t(($) => $.tag_page.empty_operator) : t(($) => $.tag_page.empty_member)}
+          </p>
+          {state?.canOperate ? (
+            <Button
+              className="mt-4"
+              size="sm"
+              render={<AppLink href={`${paths.settings()}?tab=tag`} />}
+              nativeButton={false}
+            >
+              {t(($) => $.tag_page.open_settings)}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
+
+  const agentId = tenant ? tenant.employeeAgentId : tag.agentId;
+  const behind =
+    tag.latestRevision != null && tenants.some((item) => item.appliedRevision !== tag.latestRevision);
+  const showBanner = state.canManage && tenants.length > 0 && (tag.hasUnpublishedChanges || behind);
+
+  return (
+    <div className="flex flex-1 min-h-0 flex-col">
+      {showBanner ? (
+        <div className="flex shrink-0 items-center gap-2 border-b border-amber-500/30 bg-amber-500/10 px-6 py-2 text-caption text-amber-900 dark:text-amber-100">
+          <RefreshCw className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span className="flex-1">
+            {tag.hasUnpublishedChanges
+              ? t(($) => $.tag_page.pending_banner)
+              : t(($) => $.tag_page.behind_banner, { revision: tag.latestRevision ?? 0 })}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-6 border-amber-500/40 bg-background/70 text-caption"
+            onClick={() => setDialog("apply")}
+          >
+            {t(($) => $.tag_page.apply)}
+          </Button>
+        </div>
+      ) : null}
+
+      <AgentDetailPage
+        key={agentId}
+        agentId={agentId}
+        tagView={{
+          role: tenant ? "employee" : "template",
+          backHref: paths.tag(),
+          tabBarExtra: (
+            <TagTenantSwitcher
+              state={state}
+              tag={tag}
+              selected={tenant}
+              onSelect={(id) => selectTenant(id)}
+              onDialog={setDialog}
+            />
+          ),
+          templateScenesNotice: (
+            <div className="flex h-full items-center justify-center p-6">
+              <div className="max-w-md rounded-lg border border-dashed px-6 py-10 text-center">
+                <Building2 className="mx-auto h-6 w-6 text-muted-foreground" aria-hidden="true" />
+                <p className="mt-3 text-body font-medium">{t(($) => $.tag_page.template_scenes_title)}</p>
+                <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.tag_page.template_scenes_body)}</p>
+                {tenants.length > 0 ? (
+                  <div className="mt-4 flex flex-wrap justify-center gap-2">
+                    {tenants.map((item) => (
+                      <Button key={item.id} variant="outline" size="sm" onClick={() => selectTenant(item.id, "scenes")}>
+                        {item.name}
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ),
+        }}
+      />
+
+      {dialog === "new" ? (
+        <NewTenantDialog
+          wsId={wsId}
+          onClose={() => setDialog(null)}
+          onCreated={(id) => {
+            setDialog(null);
+            // The new employee binds its DingTalk digital employee next.
+            selectTenant(id, "digital_employee");
+          }}
+        />
+      ) : null}
+      {dialog === "adopt" ? (
+        <AdoptTenantDialog
+          wsId={wsId}
+          state={state}
+          onClose={() => setDialog(null)}
+          onAdopted={(id) => {
+            setDialog(null);
+            selectTenant(id);
+          }}
+        />
+      ) : null}
+      {dialog === "apply" ? <ApplyDialog wsId={wsId} state={state} onClose={() => setDialog(null)} /> : null}
+      {dialog === "remove" && tenant ? (
+        <RemoveTenantDialog
+          wsId={wsId}
+          tenant={tenant}
+          onClose={() => setDialog(null)}
+          onRemoved={() => {
+            setDialog(null);
+            selectTenant(null);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function TenantStatus({ tenant, className }: { tenant: TagTenant; className?: string }) {
+  const { t } = useT("agents");
+  const warn = !tenant.bound || tenant.employeeArchived;
+  let label: string;
+  if (tenant.employeeArchived) label = t(($) => $.tag_page.employee_archived);
+  else if (!tenant.bound) label = t(($) => $.tag_page.unbound);
+  else if (tenant.appliedRevision != null) label = t(($) => $.tag_page.applied, { revision: tenant.appliedRevision });
+  else label = t(($) => $.tag_page.not_applied);
+  return (
+    <div className={cn("text-caption", warn ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground", className)}>
+      {label}
+    </div>
+  );
+}
+
+function TagTenantSwitcher({
+  state,
+  tag,
+  selected,
+  onSelect,
+  onDialog,
+}: {
+  state: TagState;
+  tag: TagSummary;
+  selected: TagTenant | null;
+  onSelect: (id: string | null) => void;
+  onDialog: (dialog: TagDialog) => void;
+}) {
+  const { t } = useT("agents");
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={<Button variant="outline" size="sm" className="h-8 gap-1.5" />}
+        aria-label={t(($) => $.tag_page.switcher_aria)}
+      >
+        {selected ? (
+          <>
+            <Building2 className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="max-w-[180px] truncate font-medium">{selected.name}</span>
+            {selected.orgId ? (
+              <span className="font-mono text-caption text-muted-foreground">{selected.orgId}</span>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <Globe className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="font-medium">{t(($) => $.tag_page.all_tenants)}</span>
+            <span className="text-caption text-muted-foreground">{t(($) => $.tag_page.all_tenants_hint)}</span>
+          </>
+        )}
+        <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80">
+        <DropdownMenuGroup>
+          <DropdownMenuItem onClick={() => onSelect(null)} className="items-start gap-2 py-2">
+            <Globe className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <span className="font-medium">{t(($) => $.tag_page.all_tenants)}</span>
+                <span className="text-caption text-muted-foreground">{t(($) => $.tag_page.all_tenants_hint)}</span>
+              </div>
+              {tag.latestRevision != null ? (
+                <div className="text-caption text-muted-foreground">
+                  {t(($) => $.tag_page.latest, { revision: tag.latestRevision })}
+                </div>
+              ) : null}
+            </div>
+            {!selected ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="text-caption text-muted-foreground">
+            {t(($) => $.tag_page.tenants_heading, { count: state.tenants.length })}
+          </DropdownMenuLabel>
+          {state.tenants.map((item) => (
+            <DropdownMenuItem key={item.id} onClick={() => onSelect(item.id)} className="items-start gap-2 py-2">
+              <Building2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate font-medium">{item.name}</span>
+                  {item.orgId ? (
+                    <span className="font-mono text-caption text-muted-foreground">{item.orgId}</span>
+                  ) : null}
+                </div>
+                <TenantStatus tenant={item} />
+              </div>
+              {selected?.id === item.id ? <Check className="h-4 w-4 shrink-0" aria-hidden="true" /> : null}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
+        {state.canManage ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              <DropdownMenuItem onClick={() => onDialog("new")}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                {t(($) => $.tag_page.new_tenant)}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => onDialog("adopt")}>
+                <UserPlus className="h-4 w-4" aria-hidden="true" />
+                {t(($) => $.tag_page.adopt_tenant)}
+              </DropdownMenuItem>
+              {state.tenants.length > 0 ? (
+                <DropdownMenuItem onClick={() => onDialog("apply")}>
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                  {t(($) => $.tag_page.apply)}
+                </DropdownMenuItem>
+              ) : null}
+              {selected ? (
+                <DropdownMenuItem variant="destructive" onClick={() => onDialog("remove")}>
+                  <Unlink className="h-4 w-4" aria-hidden="true" />
+                  {t(($) => $.tag_page.remove_tenant)}
+                </DropdownMenuItem>
+              ) : null}
+            </DropdownMenuGroup>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function NewTenantDialog({
+  wsId,
+  onClose,
+  onCreated,
+}: {
+  wsId: string;
+  onClose: () => void;
+  onCreated: (tenantId: string) => void;
+}) {
+  const { t } = useT("agents");
+  const [name, setName] = useState("");
+  const create = useCreateTagTenant(wsId);
+  const trimmed = name.trim();
+
+  const submit = () => {
+    if (!trimmed || create.isPending) return;
+    create.mutate(trimmed, {
+      onSuccess: (result) => {
+        toast.success(t(($) => $.tag_page.tenant_created, { name: trimmed }));
+        if (result.tenant) onCreated(result.tenant.id);
+        else onClose();
+      },
+      onError: (error) => toast.error(t(($) => $.tag_page.action_failed, { message: errorMessage(error) })),
+    });
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t(($) => $.tag_page.new_tenant_title)}</DialogTitle>
+          <DialogDescription>{t(($) => $.tag_page.new_tenant_description)}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2">
+          <Label htmlFor="tag-tenant-name">{t(($) => $.tag_page.tenant_name)}</Label>
+          <Input
+            id="tag-tenant-name"
+            value={name}
+            maxLength={64}
+            autoFocus
+            placeholder={t(($) => $.tag_page.tenant_name_placeholder)}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") submit();
+            }}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            {t(($) => $.tag_page.cancel)}
+          </Button>
+          <Button disabled={!trimmed || create.isPending} onClick={submit}>
+            {t(($) => $.tag_page.create)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AdoptTenantDialog({
+  wsId,
+  state,
+  onClose,
+  onAdopted,
+}: {
+  wsId: string;
+  state: TagState;
+  onClose: () => void;
+  onAdopted: (tenantId: string) => void;
+}) {
+  const { t } = useT("agents");
+  const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const adopt = useAdoptTagTenant(wsId);
+  const taken = useMemo(
+    () => new Set([state.tag?.agentId ?? "", ...state.tenants.map((item) => item.employeeAgentId)]),
+    [state],
+  );
+  const candidates = agents.filter((agent) => !agent.archived_at && !taken.has(agent.id));
+  const [agentId, setAgentId] = useState("");
+  const [name, setName] = useState("");
+  const trimmed = name.trim();
+
+  const submit = () => {
+    if (!agentId || !trimmed || adopt.isPending) return;
+    adopt.mutate(
+      { agentId, name: trimmed },
+      {
+        onSuccess: (result) => {
+          toast.success(t(($) => $.tag_page.tenant_adopted, { name: trimmed }));
+          if (result.tenant) onAdopted(result.tenant.id);
+          else onClose();
+        },
+        onError: (error) => toast.error(t(($) => $.tag_page.action_failed, { message: errorMessage(error) })),
+      },
+    );
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t(($) => $.tag_page.adopt_title)}</DialogTitle>
+          <DialogDescription>{t(($) => $.tag_page.adopt_description)}</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4">
+          <div className="grid gap-2">
+            <Label htmlFor="tag-adopt-agent">{t(($) => $.tag_page.adopt_agent)}</Label>
+            <NativeSelect
+              id="tag-adopt-agent"
+              value={agentId}
+              onChange={(event) => {
+                const next = event.target.value;
+                setAgentId(next);
+                if (!name.trim()) setName(agents.find((agent) => agent.id === next)?.name ?? "");
+              }}
+            >
+              <NativeSelectOption value="">{t(($) => $.tag_page.adopt_agent_placeholder)}</NativeSelectOption>
+              {candidates.map((agent) => (
+                <NativeSelectOption key={agent.id} value={agent.id}>
+                  {agent.name}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="tag-adopt-name">{t(($) => $.tag_page.tenant_name)}</Label>
+            <Input
+              id="tag-adopt-name"
+              value={name}
+              maxLength={64}
+              placeholder={t(($) => $.tag_page.tenant_name_placeholder)}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            {t(($) => $.tag_page.cancel)}
+          </Button>
+          <Button disabled={!agentId || !trimmed || adopt.isPending} onClick={submit}>
+            {t(($) => $.tag_page.adopt_submit)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ApplyDialog({ wsId, state, onClose }: { wsId: string; state: TagState; onClose: () => void }) {
+  const { t } = useT("agents");
+  const applicable = state.tenants.filter((item) => !item.employeeArchived);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(applicable.map((item) => item.id)));
+  const [note, setNote] = useState("");
+  const apply = useApplyTag(wsId);
+
+  const toggle = (id: string) =>
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const submit = () => {
+    if (selected.size === 0 || apply.isPending) return;
+    apply.mutate(
+      { tenantIds: [...selected], note: note.trim() },
+      {
+        onSuccess: (result) => {
+          const applied = result.results.filter((item) => item.applied).length;
+          toast.success(t(($) => $.tag_page.apply_done, { revision: result.revision, count: applied }));
+          const skipped = result.results.reduce(
+            (sum, item) => sum + item.skippedSkillIds.length + item.skippedConnectorIds.length + item.skippedPluginIds.length,
+            0,
+          );
+          if (skipped > 0) toast.warning(t(($) => $.tag_page.apply_skipped, { count: skipped }));
+          onClose();
+        },
+        onError: (error) => toast.error(t(($) => $.tag_page.action_failed, { message: errorMessage(error) })),
+      },
+    );
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{t(($) => $.tag_page.apply_title)}</DialogTitle>
+          <DialogDescription>{t(($) => $.tag_page.apply_description)}</DialogDescription>
+        </DialogHeader>
+        <div className="divide-y rounded-lg border">
+          {applicable.map((item) => (
+            <label key={item.id} className="flex cursor-pointer items-center gap-3 px-3 py-2.5">
+              <Checkbox checked={selected.has(item.id)} onCheckedChange={() => toggle(item.id)} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="truncate text-body font-medium">{item.name}</span>
+                  {item.orgId ? <span className="font-mono text-caption text-muted-foreground">{item.orgId}</span> : null}
+                </div>
+                <TenantStatus tenant={item} />
+              </div>
+            </label>
+          ))}
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="tag-apply-note">{t(($) => $.tag_page.apply_note)}</Label>
+          <Input id="tag-apply-note" value={note} maxLength={200} onChange={(event) => setNote(event.target.value)} />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            {t(($) => $.tag_page.cancel)}
+          </Button>
+          <Button disabled={selected.size === 0 || apply.isPending} onClick={submit}>
+            {t(($) => $.tag_page.apply_submit, { count: selected.size })}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RemoveTenantDialog({
+  wsId,
+  tenant,
+  onClose,
+  onRemoved,
+}: {
+  wsId: string;
+  tenant: TagTenant;
+  onClose: () => void;
+  onRemoved: () => void;
+}) {
+  const { t } = useT("agents");
+  const remove = useDeleteTagTenant(wsId);
+  return (
+    <Dialog open onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <DialogContent className="max-w-sm" showCloseButton={false}>
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10">
+            <AlertCircle className="h-5 w-5 text-destructive" />
+          </div>
+          <DialogHeader className="flex-1 gap-1">
+            <DialogTitle className="text-body font-semibold">{t(($) => $.tag_page.remove_tenant)}</DialogTitle>
+            <DialogDescription className="text-caption">
+              {t(($) => $.tag_page.remove_tenant_confirm, { name: tenant.name })}
+            </DialogDescription>
+          </DialogHeader>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            {t(($) => $.tag_page.cancel)}
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={remove.isPending}
+            onClick={() =>
+              remove.mutate(tenant.id, {
+                onSuccess: onRemoved,
+                onError: (error) => toast.error(t(($) => $.tag_page.action_failed, { message: errorMessage(error) })),
+              })
+            }
+          >
+            {t(($) => $.tag_page.remove_tenant)}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

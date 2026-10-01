@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { ReactNode } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -63,15 +64,23 @@ import { PageHeader } from "../../layout/page-header";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { AgentPresenceIndicator } from "./agent-presence-indicator";
 import { VisibilityBadge } from "./visibility-badge";
-import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
+import { AgentOverviewPane, type AgentTagRole, type DetailTab } from "./agent-overview-pane";
 import { ExpandableDescription } from "../../common/expandable-description";
 import { useT, useTimeAgo } from "../../i18n";
 
 interface AgentDetailPageProps {
   agentId: string;
+  /** Set when the page renders the workspace Tag's template or one of its
+   * tenant employees. */
+  tagView?: {
+    role: AgentTagRole;
+    tabBarExtra?: ReactNode;
+    templateScenesNotice?: ReactNode;
+    backHref?: string;
+  };
 }
 
-export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
+export function AgentDetailPage({ agentId, tagView }: AgentDetailPageProps) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
@@ -368,14 +377,14 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
         agent={agent}
         runtime={runtime}
         presence={presence}
-        backHref={paths.agents()}
+        backHref={tagView?.backHref ?? paths.agents()}
         canAssign={canAssign.allowed}
         canArchive={canEdit.allowed}
         dmPending={permissionsLoading}
         dmHref={`${paths.chat()}?agent=${agent.id}`}
         onDm={handleDm}
         onAssign={handleAssign}
-        onArchive={agent.system_key ? undefined : () => setConfirmArchive(true)}
+        onArchive={agent.system_key || tagView?.role === "template" ? undefined : () => setConfirmArchive(true)}
       />
 
       {!canEdit.allowed && (
@@ -427,6 +436,9 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
         <AgentOverviewPane
           agent={agent}
+          tagRole={tagView?.role}
+          tabBarExtra={tagView?.tabBarExtra}
+          templateScenesNotice={tagView?.templateScenesNotice}
           runtime={runtime}
           owner={owner}
           runtimes={runtimes}

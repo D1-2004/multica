@@ -371,6 +371,15 @@ import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
+import {
+  EMPTY_TAG_APPLY,
+  EMPTY_TAG_STATE,
+  EMPTY_TAG_TENANT_MUTATION,
+  TagApplyResponseSchema,
+  TagStateSchema,
+  TagTenantMutationSchema,
+} from "./tag-schema";
+import type { CreateTagInput, TagApplyResponse, TagState, TagTenantMutationResult } from "../tag/types";
 import type {
   AgentDshPlugin,
   DshPlugin,
@@ -4568,6 +4577,98 @@ export class ApiClient {
     );
     return parseWithFallback<AgentContextCapabilities | null>(raw, AgentContextCapabilitiesSchema, null, {
       endpoint: "PUT /api/agents/{id}/context-capabilities/offers",
+    });
+  }
+
+  // The workspace Tag (one multi-tenant digital employee per workspace).
+  // Workspace-scoped: the workspace is pinned explicitly so the query key's
+  // wsId and the request always agree.
+
+  private tagHeaders(workspaceId: string): Record<string, string> {
+    return { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId };
+  }
+
+  async getTag(workspaceId: string): Promise<TagState> {
+    const raw = await this.fetch<unknown>("/api/tag", { headers: this.tagHeaders(workspaceId) });
+    return parseWithFallback<TagState>(raw, TagStateSchema, EMPTY_TAG_STATE, { endpoint: "GET /api/tag" });
+  }
+
+  async createTag(workspaceId: string, input: CreateTagInput): Promise<TagState> {
+    const raw = await this.fetch<unknown>("/api/tag", {
+      method: "POST",
+      body: JSON.stringify({
+        name: input.name,
+        description: input.description ?? "",
+        runtime_id: input.runtimeId,
+        model: input.model ?? "",
+        copy_from_agent_id: input.copyFromAgentId ?? "",
+      }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagState>(raw, TagStateSchema, EMPTY_TAG_STATE, { endpoint: "POST /api/tag" });
+  }
+
+  async setTagSidebarVisible(workspaceId: string, visible: boolean): Promise<TagState> {
+    const raw = await this.fetch<unknown>("/api/tag", {
+      method: "PATCH",
+      body: JSON.stringify({ sidebar_visible: visible }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagState>(raw, TagStateSchema, EMPTY_TAG_STATE, { endpoint: "PATCH /api/tag" });
+  }
+
+  async deleteTag(workspaceId: string): Promise<void> {
+    await this.fetch<unknown>("/api/tag", { method: "DELETE", headers: this.tagHeaders(workspaceId) });
+  }
+
+  async createTagTenant(workspaceId: string, name: string): Promise<TagTenantMutationResult> {
+    const raw = await this.fetch<unknown>("/api/tag/tenants", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagTenantMutationResult>(raw, TagTenantMutationSchema, EMPTY_TAG_TENANT_MUTATION, {
+      endpoint: "POST /api/tag/tenants",
+    });
+  }
+
+  async adoptTagTenant(workspaceId: string, agentId: string, name: string): Promise<TagTenantMutationResult> {
+    const raw = await this.fetch<unknown>("/api/tag/tenants/adopt", {
+      method: "POST",
+      body: JSON.stringify({ agent_id: agentId, name }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagTenantMutationResult>(raw, TagTenantMutationSchema, EMPTY_TAG_TENANT_MUTATION, {
+      endpoint: "POST /api/tag/tenants/adopt",
+    });
+  }
+
+  async renameTagTenant(workspaceId: string, tenantId: string, name: string): Promise<TagTenantMutationResult> {
+    const raw = await this.fetch<unknown>(`/api/tag/tenants/${encodeURIComponent(tenantId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagTenantMutationResult>(raw, TagTenantMutationSchema, EMPTY_TAG_TENANT_MUTATION, {
+      endpoint: "PATCH /api/tag/tenants/{id}",
+    });
+  }
+
+  async deleteTagTenant(workspaceId: string, tenantId: string): Promise<void> {
+    await this.fetch<unknown>(`/api/tag/tenants/${encodeURIComponent(tenantId)}`, {
+      method: "DELETE",
+      headers: this.tagHeaders(workspaceId),
+    });
+  }
+
+  async applyTag(workspaceId: string, tenantIds: string[], note = ""): Promise<TagApplyResponse> {
+    const raw = await this.fetch<unknown>("/api/tag/apply", {
+      method: "POST",
+      body: JSON.stringify({ tenant_ids: tenantIds, note }),
+      headers: this.tagHeaders(workspaceId),
+    });
+    return parseWithFallback<TagApplyResponse>(raw, TagApplyResponseSchema, EMPTY_TAG_APPLY, {
+      endpoint: "POST /api/tag/apply",
     });
   }
 

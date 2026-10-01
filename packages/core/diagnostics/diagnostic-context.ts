@@ -59,8 +59,11 @@ const WORKSPACE_ROUTES: readonly RoutePattern[] = [
   ["projects", ":id"],
   ["autopilots"],
   ["autopilots", ":id"],
+  ["tag"],
   ["agents"],
   ["agents", "new"],
+  ["agents", "new", "git"],
+  ["agents", "new", "local"],
   ["agents", "new", "manual"],
   ["agents", "new", "ai"],
   ["agents", "new", "ai", ":sessionId"],
@@ -84,6 +87,8 @@ const WORKSPACE_ROUTES: readonly RoutePattern[] = [
   ["dsh-plugins", ":id"],
   ["features"],
   ["features", ":id"],
+  ["files"],
+  ["internal-connectors"],
   // `sites` was added to paths.ts without a pattern here, so every hosted-site
   // URL fell back to the `/:slug/*` mask in diagnostics.
   ["sites"],

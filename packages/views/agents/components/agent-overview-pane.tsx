@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type {
   Agent,
@@ -75,8 +76,27 @@ const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
   { id: "configuration", labelKey: "configuration" },
 ];
 
+/** How the agent takes part in the workspace Tag. The template holds the
+ * Tag's shared configuration; an employee embodies one tenant and owns its
+ * digital employee and scenes, so its shared configuration is managed by the
+ * Tag rather than edited here. */
+export type AgentTagRole = "template" | "employee";
+
+/** Config views a Tag agent shows; everything else (this computer, local
+ * MCP access, runtime-specific tuning, export/publish, access) does not apply
+ * to a cloud-only multi-tenant employee. */
+const TAG_TEMPLATE_VIEWS = new Set<DetailTab>(["instructions", "skills", "mcp_config", "dsh", "general", "llm_trace"]);
+const TAG_EMPLOYEE_VIEWS = new Set<DetailTab>(["digital_employee", "integrations", "llm_trace"]);
+
 interface AgentOverviewPaneProps {
   agent: Agent;
+  /** Set when the agent is shown on the Tag page. */
+  tagRole?: AgentTagRole;
+  /** Rendered at the right end of the top tab bar (the Tag tenant switcher). */
+  tabBarExtra?: ReactNode;
+  /** Shown instead of the scenes tree for the Tag template, which has no
+   * scenes of its own. */
+  templateScenesNotice?: ReactNode;
   runtime: AgentRuntime | null;
   owner: MemberWithUser | null;
   runtimes: AgentRuntime[];
@@ -105,6 +125,9 @@ interface AgentOverviewPaneProps {
  */
 export function AgentOverviewPane({
   agent,
+  tagRole,
+  tabBarExtra,
+  templateScenesNotice,
   runtime,
   owner,
   runtimes,
@@ -176,9 +199,12 @@ export function AgentOverviewPane({
     const showComposioMcp =
       composioMCPAppsEnabled && isAgentOwner;
 
+    const tagViews =
+      tagRole === "template" ? TAG_TEMPLATE_VIEWS : tagRole === "employee" ? TAG_EMPLOYEE_VIEWS : null;
     return AGENT_CONFIG_GROUPS.map((group) => ({
       ...group,
       items: group.items.filter((item) => {
+        if (tagViews && !tagViews.has(item.id)) return false;
         if (item.id === "dsh") return runtime?.provider === "dsh";
         if (item.id === "filesystem") return canEdit && agent.runtime_mode === "cloud";
         if (item.id === "composio_mcp") return showComposioMcp;
@@ -204,6 +230,7 @@ export function AgentOverviewPane({
     composioMCPAppsEnabled,
     isAgentOwner,
     runtime,
+    tagRole,
   ]);
 
   const visibleViews = useMemo(
@@ -379,6 +406,7 @@ export function AgentOverviewPane({
               {t(($) => $.tabs[tab.labelKey])}
             </button>
           ))}
+          {tabBarExtra ? <div className="flex shrink-0 items-center py-2">{tabBarExtra}</div> : null}
         </div>
       </div>
 
@@ -423,7 +451,9 @@ export function AgentOverviewPane({
 
         {/* The admin scene API needs agent-manager rights; everyone else
             keeps read access to the inbound conversation history. */}
+        {effectiveView === "scenes" && tagRole === "template" && templateScenesNotice}
         {effectiveView === "scenes" &&
+          tagRole !== "template" &&
           (canEdit ? (
             <ScenesTab
               key={agent.id}
