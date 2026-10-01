@@ -134,7 +134,6 @@ type FCE2BConfig struct {
 	LLMAPIKey                         string
 	LLMModels                         []string
 	RuntimeProviderFingerprints       map[string][]string
-	DWSMessagePolicyFingerprints      []string
 	AgentIdentityControlBaseURL       string
 	AgentIdentitySandboxBaseURL       string
 	AgentIdentityBaseURL              string
@@ -184,17 +183,6 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		SandboxReadyTimeout:               defaultFCE2BSandboxReadyTimeout,
 	}
 	models, err := parseFCE2BModels(os.Getenv("MULTICA_FC_E2B_OPENAI_MODELS"))
-	if raw := strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_DWS_MESSAGE_POLICY_FINGERPRINTS")); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &cfg.DWSMessagePolicyFingerprints); err != nil {
-			cfg.ParseError = errors.Join(cfg.ParseError, errors.New("invalid MULTICA_FC_E2B_DWS_MESSAGE_POLICY_FINGERPRINTS: expected a JSON string array"))
-		} else {
-			for _, fingerprint := range cfg.DWSMessagePolicyFingerprints {
-				if !regexp.MustCompile(`^[0-9a-f]{16}$`).MatchString(fingerprint) {
-					cfg.ParseError = errors.Join(cfg.ParseError, errors.New("invalid DWS message policy fingerprint"))
-				}
-			}
-		}
-	}
 	if err != nil {
 		cfg.ParseError = errors.Join(cfg.ParseError, err)
 	} else {
@@ -792,7 +780,7 @@ func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunn
 	if err != nil {
 		return nil, fmt.Errorf("FC/E2B template list failed: %w", err)
 	}
-	templates, err := parseFCE2BTemplates(out, cfg.RuntimeProviderFingerprints, cfg.DWSMessagePolicyFingerprints)
+	templates, err := parseFCE2BTemplates(out, cfg.RuntimeProviderFingerprints)
 	if err != nil {
 		return nil, err
 	}
@@ -802,11 +790,7 @@ func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunn
 	return templates, nil
 }
 
-func parseFCE2BTemplates(
-	output string,
-	providerFingerprints map[string][]string,
-	dwsMessagePolicyFingerprints ...[]string,
-) ([]FCE2BTemplate, error) {
+func parseFCE2BTemplates(output string, providerFingerprints map[string][]string) ([]FCE2BTemplate, error) {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
 		return nil, errors.New("FC/E2B template list returned empty output")
@@ -874,29 +858,16 @@ func parseFCE2BTemplates(
 			}
 			t.ManifestVersion = 7
 			t.Providers = append([]string(nil), providers...)
-			t.Capabilities = runtimeconfig.CapabilitiesForProviders(providers)
-			// Provider support alone does not attest the new send hook. Only
-			// exact fingerprints whose image-level canary has passed may opt in.
-			if hasDWSMessagePolicyFingerprint(matches[1], dwsMessagePolicyFingerprints) {
-				t.Capabilities = append(t.Capabilities, protocol.DWSMessagePolicyCapability)
-			}
+			// Every catalogued image is taken to run the managed DWS wrapper;
+			// there is no per-fingerprint attestation. An image without it
+			// sends from its sandbox outside the response ledger.
+			t.Capabilities = append(runtimeconfig.CapabilitiesForProviders(providers), protocol.DWSMessagePolicyCapability)
 			break
 		}
 		t.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
 		templates = append(templates, t)
 	}
 	return templates, nil
-}
-
-func hasDWSMessagePolicyFingerprint(fingerprint string, allowlists [][]string) bool {
-	for _, allowlist := range allowlists {
-		for _, candidate := range allowlist {
-			if candidate == fingerprint {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 var fcE2BTemplateProviderFingerprintAliasPattern = regexp.MustCompile(`^multica-m7-v([0-9a-f]{16})-r1-[0-9a-f]{6}$`)

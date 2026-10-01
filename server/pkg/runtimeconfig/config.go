@@ -2,7 +2,6 @@ package runtimeconfig
 
 import (
 	"bytes"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -182,8 +181,10 @@ type FCE2BConfig struct {
 	CoalescedHotExec     bool `json:"coalesced_hot_exec,omitempty"`
 	BatchSkillResolve    bool `json:"batch_skill_resolve,omitempty"`
 
-	RecoverAbandonedLaunches     bool     `json:"recover_abandoned_launches,omitempty"`
-	BoundDSHHostWait             bool     `json:"bound_dsh_host_wait,omitempty"`
+	RecoverAbandonedLaunches bool `json:"recover_abandoned_launches,omitempty"`
+	BoundDSHHostWait         bool `json:"bound_dsh_host_wait,omitempty"`
+	// No longer consulted: every catalogued image gets dws_message_policy_v1.
+	// Still decoded so configurations that set it keep parsing.
 	DWSMessagePolicyFingerprints []string `json:"dws_message_policy_fingerprints,omitempty"`
 	Enabled                      bool     `json:"enabled"`
 	StablePublisherUserIDs       []string `json:"stable_publisher_user_ids"`
@@ -306,7 +307,6 @@ func (c Config) normalized() Config {
 	}
 	c.Runtime.FCE2B.Template = strings.TrimSpace(c.Runtime.FCE2B.Template)
 	c.Runtime.FCE2B.StablePublisherUserIDs = normalizedUnique(c.Runtime.FCE2B.StablePublisherUserIDs)
-	c.Runtime.FCE2B.DWSMessagePolicyFingerprints = normalizedUnique(c.Runtime.FCE2B.DWSMessagePolicyFingerprints)
 	c.Runtime.FCE2B.ServerURL = trimURL(c.Runtime.FCE2B.ServerURL)
 	c.Runtime.FCE2B.APIURL = trimURL(c.Runtime.FCE2B.APIURL)
 	c.Runtime.FCE2B.Domain = strings.TrimSpace(c.Runtime.FCE2B.Domain)
@@ -442,11 +442,6 @@ func (c RuntimeConfig) validate() error {
 		}
 	} else if c.AgenticFS.CredentialResource != "" {
 		return fmt.Errorf("agentic_fs.credential_resource requires placement")
-	}
-	for _, fingerprint := range c.FCE2B.DWSMessagePolicyFingerprints {
-		if _, err := hex.DecodeString(fingerprint); err != nil || len(fingerprint) != 16 || fingerprint != strings.ToLower(fingerprint) {
-			return fmt.Errorf("fc_e2b.dws_message_policy_fingerprints must contain exact lowercase 16-character fingerprints")
-		}
 	}
 	if err := validateHTTPURL(c.LLM.BaseURL, true); err != nil {
 		return fmt.Errorf("llm.base_url: %w", err)
