@@ -146,7 +146,7 @@ func TestRunAssocBind(t *testing.T) {
 	cmd.Flags().String("conversation", "", "")
 	cmd.Flags().String("evidence", "", "")
 	cmd.Flags().String("person", "", "")
-	cmd.Flags().String("kind", "dm", "")
+	cmd.Flags().String("kind", "", "")
 	cmd.Flags().String("output", "json", "")
 	_ = cmd.Flags().Set("conversation", "cid-a")
 	_ = cmd.Flags().Set("evidence", "msg-1")
@@ -157,7 +157,9 @@ func TestRunAssocBind(t *testing.T) {
 	if gotMethod != http.MethodPost || gotPath != "/api/assoc/bind-outbound" {
 		t.Fatalf("request %s %s", gotMethod, gotPath)
 	}
-	if gotBody["conversation_id"] != "cid-a" || gotBody["evidence_id"] != "msg-1" {
+	// No kind is sent unless the caller states one: the server keeps a known
+	// conversation's kind and refuses to guess a new one.
+	if _, sent := gotBody["kind"]; gotBody["conversation_id"] != "cid-a" || gotBody["evidence_id"] != "msg-1" || sent {
 		t.Fatalf("body=%#v", gotBody)
 	}
 }

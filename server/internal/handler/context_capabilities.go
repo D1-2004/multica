@@ -522,14 +522,14 @@ var contextCapAllRights = contextCapRights{Toggle: true, Connect: true, EditProm
 // decides through it: the configure page's bindings, credentials, connects,
 // prompts and custom MCP servers, the admin Context Builder's node writes,
 // and the OAuth connect at start and at the callback
-// (authorizeConnectorOAuthScope). scopeType is the EFFECTIVE scope (a 1:1
-// chat's is its person's); manages is the agent-manage permission
+// (authorizeConnectorOAuthScope). scopeType is the scope's type (a 1:1 chat
+// is a scene like a group); manages is the agent-manage permission
 // (workspace owner/admin or the agent owner, contextCapManages); self is
 // whether the caller is the person of a person scope (contextCapScope.Self).
 //
 //	scope         agent manager      the person   anyone else (link holders)
 //	org           everything         -            nothing (not shown either)
-//	scene/group   everything         -            nothing (view only)
+//	scene         everything         -            nothing (view only)
 //	person        nothing (view)     everything   nothing
 //
 // A caller who is both a manager and the person edits the person scope as
@@ -793,8 +793,7 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 // org, scopeType, scopeKey) for need (contextCapResolveScope, then
 // contextCapScopeAllows) and writes the error response otherwise: 400 for a
 // malformed scope, 403 without access or without the right need asks for
-// (codes manager_only and person_only), 404 for a manager's unknown scene,
-// 409 dm_person_unknown for a write to a dm scene whose person is unknown.
+// (codes manager_only and person_only), 404 for a manager's unknown scene.
 func (h *Handler) contextCapRequireScope(w http.ResponseWriter, r *http.Request, a contextCapAgent, userID, scopeType, scopeKey string, need contextCapNeed) (contextCapScope, bool) {
 	return h.contextCapRequireScopeWith(w, r, a, userID, scopeType, scopeKey, need, contextCapResolveOptions{})
 }
@@ -1590,7 +1589,7 @@ func (h *Handler) PutContextConfigBinding(w http.ResponseWriter, r *http.Request
 		return
 	}
 	// share_in_groups is the person's own opt-in: it applies to a person
-	// scope (a 1:1 chat's is its person's), which only the person toggles.
+	// scope only, which only the person toggles (a 1:1 chat is a scene).
 	if input.ShareInGroups != nil && grant.ScopeType != contextcap.ScopePerson {
 		writeError(w, http.StatusBadRequest, "share_in_groups applies only to personal connectors")
 		return

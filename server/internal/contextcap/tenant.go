@@ -423,10 +423,11 @@ type PersonSummary struct {
 }
 
 // ListOrgPersons returns the people known for orgID of the agent, newest
-// activity first: 1:1 chat senders (the DirectScenePerson job source; jobs
-// without a recorded org belong to identityOrgID), live person grants and the
-// 1:1 chats of personal links, and every person scope with stored configuration
-// (bindings, credentials, prompt components, custom MCP servers).
+// activity first: 1:1 chat senders (Coordinator jobs of the agent's dm
+// scenes; jobs without a recorded org belong to identityOrgID), live person
+// grants and the 1:1 chats of personal links, and every person scope with
+// stored configuration (bindings, credentials, prompt components, custom MCP
+// servers).
 func ListOrgPersons(ctx context.Context, db DBTX, workspaceID, agentID, orgID, identityOrgID string) ([]PersonSummary, error) {
 	if !ValidOrgID(orgID) {
 		return nil, ErrInvalidInput

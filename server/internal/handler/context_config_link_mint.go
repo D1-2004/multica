@@ -94,7 +94,9 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 	}
 	switch scopeType {
 	case contextcap.ScopeScene:
-		if !scope.HasScene() {
+		// A reusable scene link is for a group. In a 1:1 chat the personal
+		// link is the way in, and it also grants that chat's scene.
+		if !scope.HasScene() || direct {
 			return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "This run did not come from a DingTalk group chat, so there is no group to configure. In a 1:1 chat with the user, use scope=person."}
 		}
 		link.ScopeKey = scope.SceneID

@@ -233,10 +233,9 @@ func (h *Handler) RefreshInternalConnectorTools(w http.ResponseWriter, r *http.R
 // StartContextConfigConnection starts connecting the caller's own account
 // (person scope) or a group's account (scene scope) of an official app
 // connector from the mobile configuration page. It requires the caller's
-// live grant for exactly that scope, or for a group scene of an agent the
-// caller manages (contextCapRequireScope). A 1:1 chat scene connects its
-// person's account, which only that person may do (403 person_only for a
-// manager).
+// live grant for exactly that scope, or for a scene (a group or a 1:1 chat)
+// of an agent the caller manages (contextCapRequireScope). Only managers
+// connect a scene's account; only the person connects their own.
 // startConnectorOAuth then applies the PUT credentials connector rule
 // (offered or globally granted) and re-checks it at
 // the callback.

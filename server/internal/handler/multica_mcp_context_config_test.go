@@ -220,10 +220,15 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 			}
 		}
 	}
-	// A 1:1 run has no scene, and a merged multi-sender run has no person.
+	// A 1:1 chat gets no reusable scene link, with or without its scene:
+	// the personal link is the way in and also grants the chat. A merged
+	// multi-sender run has no person.
 	dmTask := f.task(t, ctxcapDispatch("single", "", ctxcapStaff, ctxcapStaff))
-	if _, isError, _ := ctxcapToolResult(t, f.ctxcapToolCall(t, dmTask, map[string]any{"scope": "scene"})); !isError {
-		t.Fatal("scene link minted in a 1:1 chat")
+	f.registerDirectScene(t)
+	for _, task := range []db.AgentTaskQueue{dmTask, f.task(t, ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff))} {
+		if _, isError, _ := ctxcapToolResult(t, f.ctxcapToolCall(t, task, map[string]any{"scope": "scene"})); !isError {
+			t.Fatal("scene link minted in a 1:1 chat")
+		}
 	}
 	mixedTask := f.task(t, ctxcapDispatch("single", "", ctxcapStaff, ctxcapStaff, ctxcapOtherStaff))
 	if _, isError, _ := ctxcapToolResult(t, f.ctxcapToolCall(t, mixedTask, nil)); !isError {
