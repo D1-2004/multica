@@ -1335,7 +1335,7 @@ describe("operator manual message binding", () => {
 
     expect(integrations.dingtalk_identity_native_subscription).toBe("原生订阅");
     expect(integrations.dingtalk_identity_native_subscription_hint).toBe(
-      "开启后，这个身份的单聊和群里 @ 它的消息通过线上 DWS 原生订阅进入智能体；与上方数字员工消息绑定二选一。",
+      "开启后，这个身份的单聊和群里 @ 它的消息通过 DWS 原生订阅进入智能体；与上方数字员工消息绑定二选一。",
     );
     expect(integrations.dingtalk_identity_native_subscription_blocked).toBe(
       "已绑定数字员工消息，需先解除才能开启原生订阅",

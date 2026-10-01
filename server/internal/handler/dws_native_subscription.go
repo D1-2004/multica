@@ -23,8 +23,9 @@ import (
 )
 
 // An execution identity with native subscription receives its own DingTalk
-// messages through DWS personal event subscriptions (always the production
-// DWS gateway) instead of the Agent Message Router. It is mutually exclusive
+// messages through DWS personal event subscriptions (on the gateway of the
+// Agent Identity that issues its credentials, see NativeDWSEnvironmentFor)
+// instead of the Agent Message Router. It is mutually exclusive
 // with the agent's digital-employee message binding.
 
 // dwsNativeSubscriptionStore is what native subscription reads and writes;
