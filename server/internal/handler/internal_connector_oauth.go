@@ -290,7 +290,7 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 		if requestedScope == "" {
 			requestedScope = app.Scope
 		}
-		authorizeURL, err = preregisteredAuthorizeURL(endpoint, preregistered.ClientID, requestedScope, payload.RedirectURI, state, verifier)
+		authorizeURL, err = preregisteredAuthorizeURL(endpoint, preregistered.ClientID, requestedScope, payload.RedirectURI, state, verifier, app.Resource)
 	case connectorcatalog.AuthOAuthDCR:
 		var record connectorOAuthClientRecord
 		record, err = h.ensureConnectorOAuthClient(ctx, c, app, redirectOrigin+connectorOAuthCallbackPath, h.connectorOAuthClientName())
@@ -608,7 +608,7 @@ func githubConnectorAuthorizeURL(endpoint, clientID, scope, redirectURI, state, 
 // preregisteredAuthorizeURL is the confidential-client authorize URL. It
 // sets response_type, which providers such as Asana require and GitHub's
 // authorize URL does not.
-func preregisteredAuthorizeURL(endpoint, clientID, scope, redirectURI, state, verifier string) (string, error) {
+func preregisteredAuthorizeURL(endpoint, clientID, scope, redirectURI, state, verifier, resource string) (string, error) {
 	built, err := githubConnectorAuthorizeURL(endpoint, clientID, scope, redirectURI, state, verifier)
 	if err != nil {
 		return "", err
@@ -619,6 +619,9 @@ func preregisteredAuthorizeURL(endpoint, clientID, scope, redirectURI, state, ve
 	}
 	query := parsed.Query()
 	query.Set("response_type", "code")
+	if strings.TrimSpace(resource) != "" {
+		query.Set("resource", resource)
+	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String(), nil
 }

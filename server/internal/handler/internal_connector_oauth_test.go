@@ -334,6 +334,24 @@ func TestCatalogConnectorRefreshToolsSkipsCredentialsThatCannotList(t *testing.T
 
 // The router rate-limits GitHub App callbacks that complete a connector
 // connect, and only those.
+func TestPreregisteredAuthorizeURLPinsAsanaResource(t *testing.T) {
+	got, err := preregisteredAuthorizeURL(
+		"https://app.asana.com/-/oauth_authorize", "cid", "",
+		"https://example.test/cb", "state", "verifier", "https://mcp.asana.com/v2",
+	)
+	if err != nil || !strings.Contains(got, "resource=https%3A%2F%2Fmcp.asana.com%2Fv2") ||
+		strings.Contains(got, "scope=") || !strings.Contains(got, "response_type=code") {
+		t.Fatalf("asana authorize = %s %v", got, err)
+	}
+	slack, err := preregisteredAuthorizeURL(
+		"https://slack.com/oauth/v2_user/authorize", "cid", "search:read.public",
+		"https://example.test/cb", "state", "verifier", "",
+	)
+	if err != nil || strings.Contains(slack, "resource=") || !strings.Contains(slack, "scope=search") {
+		t.Fatalf("slack authorize = %s %v", slack, err)
+	}
+}
+
 func TestIsConnectorOAuthCallbackSelectsConnectorStates(t *testing.T) {
 	for target, want := range map[string]bool{
 		"/api/github/authorize?code=c&state=mcpc.abc":             true,

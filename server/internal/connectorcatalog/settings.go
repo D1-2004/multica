@@ -69,7 +69,7 @@ func SettingsCatalog() []SettingsSpec {
 			DocsURL:               "https://app.asana.com/0/my-apps",
 			AuthorizationEndpoint: "https://app.asana.com/-/oauth_authorize",
 			TokenEndpoint:         "https://app.asana.com/-/oauth_token",
-			MCPURL:                "https://mcp.asana.com/mcp",
+			MCPURL:                "https://mcp.asana.com/v2/mcp",
 			KnownClientID:         "1219049145290369",
 			Fields: []SettingsField{
 				{Key: "client_id"},

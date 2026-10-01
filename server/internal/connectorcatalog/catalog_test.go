@@ -28,7 +28,8 @@ func TestDefaultCatalogHasGitHubAndValidEntries(t *testing.T) {
 		t.Fatalf("notion entry = %+v", notion)
 	}
 	asana, ok := Default().Lookup("asana")
-	if !ok || asana.AuthKind != AuthOAuthPreregistered || asana.AuthorizationEndpoint == "" || asana.TokenEndpoint == "" {
+	if !ok || asana.AuthKind != AuthOAuthPreregistered || asana.AuthorizationEndpoint == "" || asana.TokenEndpoint == "" ||
+		asana.MCPURL != "https://mcp.asana.com/v2/mcp" || asana.Resource != "https://mcp.asana.com/v2" || asana.Scope != "" {
 		t.Fatalf("asana entry = %+v", asana)
 	}
 	if asana.OAuthAvailable(true) {

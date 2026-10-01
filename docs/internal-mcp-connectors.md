@@ -193,7 +193,7 @@ contact for it:
 | `linear` | `https://mcp.linear.app/mcp` | `oauth_dcr` |
 | `atlassian` | `https://mcp.atlassian.com/v1/mcp` | `oauth_dcr` (authorization server metadata at the MCP origin) |
 | `sentry` | `https://mcp.sentry.dev/mcp` | `oauth_dcr` |
-| `asana` | `https://mcp.asana.com/mcp` | pre-registered MCP app (`oauth_preregistered`); app.asana.com has no registration endpoint |
+| `asana` | `https://mcp.asana.com/v2/mcp` | pre-registered MCP app (`oauth_preregistered`); authorize and token send `resource=https://mcp.asana.com/v2` |
 | `figma` | `https://mcp.figma.com/mcp` | `oauth_dcr` (confidential client) |
 | `stripe` | `https://mcp.stripe.com/` | `oauth_dcr` |
 

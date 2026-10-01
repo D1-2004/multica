@@ -29,8 +29,7 @@ const (
 	AuthOAuthGitHubApp AuthKind = "oauth_github_app"
 	// AuthOAuthPreregistered uses a workspace-configured confidential client
 	// and the fixed authorization and token endpoints on the app. The
-	// provider has no dynamic registration. Asana MCP is this kind: its
-	// authorization server does not advertise a registration_endpoint.
+	// provider has no dynamic registration. Asana MCP is this kind.
 	AuthOAuthPreregistered AuthKind = "oauth_preregistered"
 )
 
@@ -52,6 +51,11 @@ type App struct {
 	// discover them at runtime.
 	AuthorizationEndpoint string
 	TokenEndpoint         string
+	// Resource is the RFC 8707 resource indicator sent on authorize, token
+	// and refresh. Empty for providers that reject it (Slack). Asana MCP
+	// issues an API token, which mcp.asana.com rejects, unless this is
+	// https://mcp.asana.com/v2.
+	Resource string
 	// AccountURL answers GET with a JSON object whose "login" names the
 	// connected account (GitHub). Empty when the app has no such endpoint.
 	AccountURL string
@@ -168,6 +172,11 @@ func validateApp(app App) error {
 		}
 		if err := checkURL(app.TokenEndpoint, app.Hosts, false); err != nil {
 			return fmt.Errorf("token endpoint: %w", err)
+		}
+		if app.Resource != "" {
+			if err := checkURL(app.Resource, app.Hosts, false); err != nil {
+				return fmt.Errorf("resource: %w", err)
+			}
 		}
 	default:
 		return errors.New("unknown auth kind")

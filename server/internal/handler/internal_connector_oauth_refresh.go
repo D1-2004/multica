@@ -479,6 +479,7 @@ func (h *Handler) connectorTokenEndpoint(ctx context.Context, c internalConnecto
 		homeOrigin, _ := h.connectorOAuthCallbackTarget(connectorOAuthViaDCR)
 		forwarded := h.connectorOAuthRedirectOrigin(connectorOAuthViaDCR)
 		out.redirectURI = githubOAuthRedirectOrigin(homeOrigin, forwarded, client.CallbackMode) + connectorOAuthCallbackPath
+		out.resource = app.Resource
 		out.registration = remotemcp.OAuthClientRegistration{
 			ClientID:                client.ClientID,
 			ClientSecret:            client.ClientSecret,

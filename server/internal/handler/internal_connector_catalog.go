@@ -220,7 +220,36 @@ func (h *Handler) loadInternalConnector(ctx context.Context, workspaceID, connec
 	if errors.Is(err, pgx.ErrNoRows) {
 		return internalConnector{}, errConnectorNotFound
 	}
-	return c, err
+	if err != nil {
+		return internalConnector{}, err
+	}
+	return h.alignLegacyCatalogURL(ctx, c), nil
+}
+
+// asanaLegacyMCPURL is the v1 path stored before the catalog moved to
+// Asana MCP v2. A token for /v2 is rejected by this path.
+const asanaLegacyMCPURL = "https://mcp.asana.com/mcp"
+
+// alignLegacyCatalogURL moves an Asana connector still pointed at the v1
+// MCP path onto the current catalog URL. Other mismatches are left alone
+// so a drifted custom URL stays visible to the caller that checks it.
+func (h *Handler) alignLegacyCatalogURL(ctx context.Context, c internalConnector) internalConnector {
+	if c.CatalogSlug != "asana" || c.UpstreamURL != asanaLegacyMCPURL {
+		return c
+	}
+	app, ok := catalogApp(c.CatalogSlug)
+	if !ok || app.MCPURL == c.UpstreamURL || app.MCPURL == "" {
+		return c
+	}
+	tag, err := h.DB.Exec(ctx, `UPDATE internal_connector SET upstream_url = $3, updated_at = now()
+		WHERE id = $1::uuid AND workspace_id = $2::uuid AND upstream_url = $4`,
+		c.ID, c.WorkspaceID, app.MCPURL, asanaLegacyMCPURL)
+	if err != nil || tag.RowsAffected() != 1 {
+		slog.WarnContext(ctx, "asana connector URL was not moved to v2", "connector_id", c.ID, "error", err)
+		return c
+	}
+	c.UpstreamURL = app.MCPURL
+	return c
 }
 
 // createCatalogConnector adds the official app slug to the workspace's

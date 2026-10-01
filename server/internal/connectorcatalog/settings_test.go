@@ -37,7 +37,7 @@ func TestSettingsCatalogMatchesTheProductList(t *testing.T) {
 		}
 	}
 	asana, ok := SettingsSpecFor("asana")
-	if !ok || asana.KnownClientID != "1219049145290369" || !asana.OAuthConnect {
+	if !ok || asana.KnownClientID != "1219049145290369" || !asana.OAuthConnect || asana.MCPURL != "https://mcp.asana.com/v2/mcp" || asana.Scopes != "" {
 		t.Fatalf("asana settings = %+v", asana)
 	}
 	slack, ok := SettingsSpecFor("slack")
