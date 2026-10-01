@@ -761,7 +761,7 @@ func routineEnabledLabel(enabled bool) string {
 
 func routineCreatedMessage(view sceneRoutineView) string {
 	if view.Trigger.Kind == sceneRoutineTriggerHook {
-		return fmt.Sprintf("已在这个场域创建例行任务「%s」，由 Webhook 触发。完整的 Webhook 地址只在配置页显示，请到「例行任务」里复制。", view.Title)
+		return fmt.Sprintf("已在这个场域创建例行任务「%s」，由 Webhook 触发。完整的 Webhook 地址不会发在会话里：请智能体管理员在配置页的「例行任务」里点「重新生成 Webhook 地址」获取并复制。", view.Title)
 	}
 	next := "暂无"
 	if len(view.Trigger.NextRuns) > 0 {

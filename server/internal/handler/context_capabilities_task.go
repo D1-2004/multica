@@ -254,10 +254,11 @@ func (h *Handler) taskEffectiveContext(ctx context.Context, workspaceID pgtype.U
 var connectorServerNamePattern = regexp.MustCompile(`^c[0-9a-f]{16}$`)
 
 // reservedMCPServerName reports a server name the claim's managed MCP
-// servers use: the multica server and the connector servers. A custom server
+// servers use: the multica server, the scene configuration server and the
+// connector servers. A custom server
 // of that name would make the managed merge (injectRunnerMCP) fail the claim.
 func reservedMCPServerName(name string) bool {
-	return name == "multica" || connectorServerNamePattern.MatchString(name)
+	return name == "multica" || name == sceneConfigMCPServerName || connectorServerNamePattern.MatchString(name)
 }
 
 // mergeTaskContext is the one merge of an effective context, used by the

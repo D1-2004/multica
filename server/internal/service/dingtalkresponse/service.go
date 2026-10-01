@@ -53,6 +53,10 @@ type ActionInput struct {
 	// scene routine run (start or end), sent into the routine's scene with
 	// no dispatch to close and no Router callback.
 	RoutineRunID string `json:"routine_run_id,omitempty"`
+	// SceneNoticeID is set only by EnqueueSceneNotice: a Host notice that a
+	// conversation changed its scene's configuration, sent into that scene
+	// with no dispatch to close and no Router callback.
+	SceneNoticeID string `json:"scene_notice_id,omitempty"`
 	// DWSEnvironment pins the DWS gateway ("production" or "staging") the
 	// send goes through. Empty keeps the provider's configured gateway; native
 	// subscriptions set "production", where their events come from.
@@ -187,6 +191,23 @@ func (s *Service) EnqueueRoutineNotice(ctx context.Context, tx DBTX, in ActionIn
 	in.CoordinatorWaitJobID = ""
 	// No task or issue id: a notice is not a task's reply, so nothing that
 	// reads a task's responses (delivery evidence, close states) sees it.
+	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState, in.ReplyToOpenMsgID = "", "", "", "", ""
+	in.CallbackTarget = routineNoticeTarget
+	return s.enqueue(ctx, tx, in)
+}
+
+// EnqueueSceneNotice records a Host notice into a scene (a configuration
+// change made from a conversation). noticeID makes it idempotent; like a
+// routine notice it closes no dispatch and has no Router callback.
+func (s *Service) EnqueueSceneNotice(ctx context.Context, tx DBTX, in ActionInput, noticeID string) (string, error) {
+	if _, err := uuid.Parse(noticeID); err != nil {
+		return "", errors.New("scene notice id is invalid")
+	}
+	in.SceneNoticeID = noticeID
+	in.RoutineRunID = ""
+	in.RequestID = "scene-notice:" + noticeID
+	in.ActionID = ""
+	in.CoordinatorWaitJobID = ""
 	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState, in.ReplyToOpenMsgID = "", "", "", "", ""
 	in.CallbackTarget = routineNoticeTarget
 	return s.enqueue(ctx, tx, in)
@@ -371,9 +392,12 @@ func validateInput(in ActionInput) error {
 		if in.CallbackURL != "" || in.TaskID != "" || in.IssueID != "" || in.CloseState != "" || in.Text == "" {
 			return errors.New("coordinator wait cannot close a dispatch or claim a task")
 		}
-	case in.RoutineRunID != "":
-		if _, err := uuid.Parse(in.RoutineRunID); err != nil {
-			return errors.New("routine run id is invalid")
+	case in.RoutineRunID != "" || in.SceneNoticeID != "":
+		if in.RoutineRunID != "" && in.SceneNoticeID != "" {
+			return errors.New("a notice is a routine notice or a scene notice, not both")
+		}
+		if _, err := uuid.Parse(in.RoutineRunID + in.SceneNoticeID); err != nil {
+			return errors.New("notice id is invalid")
 		}
 		if in.CallbackURL != "" || in.TaskID != "" || in.IssueID != "" || in.CloseState != "" || in.ReplyToOpenMsgID != "" || in.Text == "" {
 			return errors.New("routine notice cannot close a dispatch, claim a task or quote a message")

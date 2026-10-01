@@ -40,7 +40,22 @@ const (
 	// ({"routine_id", "tenant_org_id", "kind", "person_staff_id", ...}). It
 	// travels with AgentSceneContextKey and carries no inbound message.
 	SceneRoutineContextKey = "scene_routine"
+	// SceneConfigMCPPathPrefix is the route of a task's config-qwen-tag-scene
+	// MCP server; the segment after it is the task's signed scene token, so
+	// every log that prints request paths redacts it
+	// (RedactSceneConfigMCPPath).
+	SceneConfigMCPPathPrefix = "/api/scene-config/mcp/"
 )
+
+// RedactSceneConfigMCPPath returns path with the scene token of a
+// config-qwen-tag-scene route replaced by "[redacted]"; other paths pass
+// through.
+func RedactSceneConfigMCPPath(path string) string {
+	if len(path) > len(SceneConfigMCPPathPrefix) && path[:len(SceneConfigMCPPathPrefix)] == SceneConfigMCPPathPrefix {
+		return SceneConfigMCPPathPrefix + "[redacted]"
+	}
+	return path
+}
 
 // DingTalkMessagePolicy is trusted per-task state, not agent custom_env.
 type DingTalkMessagePolicy struct {

@@ -2067,8 +2067,15 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// Skills the org, scene and person layers switch on extend the
 		// agent's own skills (nil when no layer applies).
 		contextSkillIDs := claimContext.contextSkillIDs()
+		// A task with a current scene to configure also gets the
+		// config-qwen-tag-scene skill (the resolve path decides the same).
+		sceneConfig := h.taskHasConfigScene(r.Context(), runtime.WorkspaceID, *task)
 		if useSkillRefs {
-			bundles, skillRefs := h.TaskService.LoadTaskSkillBundles(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
+			skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
+			if sceneConfig {
+				skillList = service.WithSceneConfigSkill(skillList)
+			}
+			bundles, skillRefs := service.BuildAgentSkillBundles(skillList)
 			agentSkillCount = len(skillRefs)
 			resp.Agent.SkillRefs = skillRefs
 			if h.TaskService.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).BatchSkillResolve && inlineSmallSkillSet(bundles) {
@@ -2080,6 +2087,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		} else {
 			skills := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
+			if sceneConfig {
+				skills = service.WithSceneConfigSkill(skills)
+			}
 			agentSkillCount = len(skills)
 			builtinSkills := h.TaskService.BuiltinSkills()
 			builtinSkillCount = len(builtinSkills)
@@ -3598,7 +3608,11 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 	for _, ref := range req.Skills {
 		requestedSkillIDs = append(requestedSkillIDs, ref.ID)
 	}
-	bundles, _ := h.TaskService.LoadTaskSkillBundles(r.Context(), task.AgentID, h.resolvableContextSkillIDs(r.Context(), runtime.WorkspaceID, task, requestedSkillIDs), runtime, taskBackend)
+	skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, h.resolvableContextSkillIDs(r.Context(), runtime.WorkspaceID, task, requestedSkillIDs), runtime, taskBackend)
+	if h.taskHasConfigScene(r.Context(), runtime.WorkspaceID, task) {
+		skillList = service.WithSceneConfigSkill(skillList)
+	}
+	bundles, _ := service.BuildAgentSkillBundles(skillList)
 	var policyBundle *service.AgentSkillData
 	if dingTalkTaskPolicyCapable(r, runtime) && !service.IsA2ATaskOrigin(task.Context) {
 		// There are exactly two DWS documents. Preserve the static policy-aware

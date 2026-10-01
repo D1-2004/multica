@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -64,6 +65,8 @@ func redactWebhookPath(path string) string {
 	}
 	if strings.HasPrefix(path, agentMCPConnectPathPrefix) {
 		prefix = agentMCPConnectPathPrefix
+	} else if strings.HasPrefix(path, protocol.SceneConfigMCPPathPrefix) {
+		return protocol.RedactSceneConfigMCPPath(path)
 	} else if !strings.HasPrefix(path, webhookIngressPathPrefix) {
 		return path
 	}
