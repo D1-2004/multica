@@ -178,10 +178,15 @@ func TestContextCapStrictRightsOnTheConfigurePage(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "https://docs.example.test/mcp") {
 		t.Fatalf("put MCP config = %s", w.Body.String())
 	}
+	// The holder reads the prompts; the MCP servers (whose headers and URLs
+	// often carry tokens) are withheld from a caller who may not edit them.
 	view = sceneOf(holder, ctxcapScene)
 	if len(view.Prompts) != 2 || view.Prompts[0].Name != "tone" || !view.Prompts[0].Enabled || view.Prompts[1].Name != "draft" || view.Prompts[1].Enabled ||
-		!strings.Contains(string(view.MCPConfig), "docs.example.test") || view.MCPConfigRedacted {
+		!jsonNull(view.MCPConfig) || !view.MCPConfigRedacted {
 		t.Fatalf("group view after the manager's edits = %+v", view)
+	}
+	if view = sceneOf(manager, ctxcapScene); !strings.Contains(string(view.MCPConfig), "docs.example.test") || view.MCPConfigRedacted {
+		t.Fatalf("group view for the manager after the edits = %+v", view)
 	}
 
 	// The person edits their own level; the detail carries it.
@@ -199,7 +204,7 @@ func TestContextCapStrictRightsOnTheConfigurePage(t *testing.T) {
 	f.coordinatorDMJob(t, dm, "Alice", ctxcapStaff, time.Minute)
 	view = sceneOf(manager, dm)
 	if view.Scope == nil || view.Scope.Type != contextcap.ScopePerson || view.Scope.Key != ctxcapStaff || view.Rights != (contextCapRights{}) ||
-		view.CanConnect || len(view.Prompts) != 1 || !strings.Contains(string(view.MCPConfig), "docs.example.test") {
+		view.CanConnect || len(view.Prompts) != 1 || !jsonNull(view.MCPConfig) || !view.MCPConfigRedacted {
 		t.Fatalf("person view for a manager = %+v", view)
 	}
 	expectRefused(contextCapErrPersonOnly, map[string]*httptest.ResponseRecorder{

@@ -453,14 +453,25 @@ func TestContextCapabilitiesMobileCredentialsAreWriteOnly(t *testing.T) {
 	if strings.Contains(w.Body.String(), "scene-secret-for-scene") {
 		t.Fatalf("scene detail echoes a secret: %s", w.Body.String())
 	}
-	var scene ctxcapSceneDetail
-	ctxcapDecode(t, w, &scene)
-	hints := map[string]string{}
-	for _, credential := range scene.Credentials {
-		hints[credential.ConnectorID] = credential.Hint
+	hintsOf := func(userID string) map[string]string {
+		t.Helper()
+		w := ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, ctxcapScene), userID, nil)
+		ctxcapExpectStatus(t, w, http.StatusOK, "scene detail")
+		var scene ctxcapSceneDetail
+		ctxcapDecode(t, w, &scene)
+		hints := map[string]string{}
+		for _, credential := range scene.Credentials {
+			hints[credential.ConnectorID] = credential.Hint
+		}
+		return hints
 	}
-	if len(hints) != 2 || hints[f.scene] != "••••cene" || hints[f.global] != "••••obal" {
-		t.Fatalf("scene credentials=%+v", scene.Credentials)
+	// The link holder, who may not connect here, sees which accounts are
+	// connected but not their hints; the manager sees the hints.
+	if hints := hintsOf(alice); len(hints) != 2 || hints[f.scene] != "" || hints[f.global] != "" {
+		t.Fatalf("scene credentials for the link holder = %+v", hints)
+	}
+	if hints := hintsOf(manager); len(hints) != 2 || hints[f.scene] != "••••cene" || hints[f.global] != "••••obal" {
+		t.Fatalf("scene credentials for the manager = %+v", hints)
 	}
 
 	// Delete is idempotent and scoped to the grant.

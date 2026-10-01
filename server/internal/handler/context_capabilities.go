@@ -1341,7 +1341,7 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "credential lookup failed")
 			return
 		}
-		components, err := h.contextCapScopeComponents(ctx, a, contextcap.ScopeOrg, a.OrgID)
+		components, err := h.contextCapScopeComponents(ctx, a, contextcap.ScopeOrg, a.OrgID, orgScope.Rights)
 		if err != nil {
 			slog.ErrorContext(ctx, "context capabilities: org components lookup failed", "agent_id", a.ID, "error", err)
 			writeError(w, http.StatusInternalServerError, "component lookup failed")
@@ -1485,7 +1485,7 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, "credential lookup failed")
 			return
 		}
-		components, err := h.contextCapScopeComponents(ctx, a, contextcap.ScopePerson, person.ScopeKey)
+		components, err := h.contextCapScopeComponents(ctx, a, contextcap.ScopePerson, person.ScopeKey, contextCapScopeRights(contextcap.ScopePerson, manages, true))
 		if err != nil {
 			slog.ErrorContext(ctx, "context capabilities: person components lookup failed", "agent_id", a.ID, "error", err)
 			writeError(w, http.StatusInternalServerError, "component lookup failed")
@@ -1571,20 +1571,23 @@ func (h *Handler) GetContextConfigScene(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		bindingViews, credentialViews = contextCapBindingViews(bindings, offers), contextCapCredentialViews(credentials)
-		if components, err = h.contextCapScopeComponents(ctx, a, scope.ScopeType, scope.ScopeKey); err != nil {
+		if components, err = h.contextCapScopeComponents(ctx, a, scope.ScopeType, scope.ScopeKey, scope.Rights); err != nil {
 			slog.ErrorContext(ctx, "context capabilities: scene components lookup failed", "agent_id", a.ID, "error", err)
 			writeError(w, http.StatusInternalServerError, "component lookup failed")
 			return
 		}
-		// A person's account hint (their provider login, or the tail of their
-		// token) reaches workspace admins and that person only, as on the
-		// admin scene page and the connected-apps page. A manager reading a
-		// 1:1 chat's person keeps the connected state without the hint.
-		if scope.ScopeType == contextcap.ScopePerson && !scope.Self && len(credentialViews) > 0 {
-			admin, err := h.contextCapWorkspaceAdmin(ctx, a, userID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "member lookup failed")
-				return
+		// An account hint (a provider login, or the tail of a token) reaches
+		// whoever may connect in this scope, and for a person also workspace
+		// admins, as on the admin scene page and the connected-apps page. A
+		// group link holder or a manager reading a 1:1 chat's person keeps the
+		// connected state without the hint.
+		if !scope.Rights.Connect && len(credentialViews) > 0 {
+			admin := false
+			if scope.ScopeType == contextcap.ScopePerson {
+				if admin, err = h.contextCapWorkspaceAdmin(ctx, a, userID); err != nil {
+					writeError(w, http.StatusInternalServerError, "member lookup failed")
+					return
+				}
 			}
 			if !admin {
 				for i := range credentialViews {
