@@ -24,6 +24,8 @@ import type {
   DingTalkUserSearchResponse,
   BeginDingTalkAccountBindingResponse,
   DingTalkAccountBindingsResponse,
+  DingTalkNativeStreamState,
+  DingTalkNativeSubscriptionStatus,
   DingTalkMessageScope,
   DingTalkProcessingSurface,
   AgentIdentityGitHubStatusResponse,
@@ -466,6 +468,56 @@ export const DingTalkNativeSubscriptionResponseSchema = z
   .transform((response) => ({
     nativeSubscription: response.native_subscription,
   }));
+
+const dingTalkNativeStreamStates = [
+  "connected",
+  "connecting",
+  "disconnected",
+  "unavailable",
+  "off",
+] as const;
+
+function dingTalkNativeStreamState(state: unknown): DingTalkNativeStreamState {
+  return dingTalkNativeStreamStates.find((known) => known === state) ?? "unknown";
+}
+
+export const DingTalkNativeSubscriptionStatusSchema = z
+  .object({
+    native_subscription: z.boolean().optional().catch(undefined),
+    stream: z
+      .object({
+        state: z.unknown().optional(),
+        last_connected_at: z.string().nullish().catch(null),
+        last_event_at: z.string().nullish().catch(null),
+        last_error: z.string().nullish().catch(null),
+        failures: z.number().optional().catch(undefined),
+      })
+      .loose()
+      .optional()
+      .catch(undefined),
+  })
+  .loose()
+  .transform((response): DingTalkNativeSubscriptionStatus => ({
+    nativeSubscription: response.native_subscription === true,
+    stream: {
+      state: dingTalkNativeStreamState(response.stream?.state),
+      lastConnectedAt: response.stream?.last_connected_at ?? null,
+      lastEventAt: response.stream?.last_event_at ?? null,
+      lastError: response.stream?.last_error ?? null,
+      failures: response.stream?.failures ?? 0,
+    },
+  }));
+
+export const UNKNOWN_DINGTALK_NATIVE_SUBSCRIPTION_STATUS: DingTalkNativeSubscriptionStatus = {
+  nativeSubscription: false,
+  stream: {
+    state: "unknown",
+    lastConnectedAt: null,
+    lastEventAt: null,
+    lastError: null,
+    failures: 0,
+  },
+};
 
 export const BeginDingTalkAccountBindingResponseSchema = z
   .object({

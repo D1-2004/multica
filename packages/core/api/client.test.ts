@@ -2054,14 +2054,14 @@ describe("ApiClient", () => {
     ).resolves.toEqual({ nativeSubscription: false });
     await expect(
       client.bindDingTalkMessageRouteManually("workspace-1", "agent-1", {
-        orgId: "123456",
+        corpId: "ding8196cd9a2b2405da24f2f5cc6abecb85",
         uid: "7890",
         messageScope: "direct_only",
       }),
     ).resolves.toBeUndefined();
     const conflict = await client
       .bindDingTalkMessageRouteManually("workspace-1", "agent-1", {
-        orgId: "123456",
+        corpId: "ding8196cd9a2b2405da24f2f5cc6abecb85",
         uid: "7890",
         messageScope: "all",
       })
@@ -2089,13 +2089,54 @@ describe("ApiClient", () => {
       {
         url: "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/agent-1/message-route/manual",
         method: "POST",
-        body: JSON.stringify({ org_id: "123456", uid: "7890", message_scope: "direct_only" }),
+        body: JSON.stringify({ corp_id: "ding8196cd9a2b2405da24f2f5cc6abecb85", uid: "7890", message_scope: "direct_only" }),
       },
       {
         url: "https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/agent-1/message-route/manual",
         method: "POST",
-        body: JSON.stringify({ org_id: "123456", uid: "7890", message_scope: "all" }),
+        body: JSON.stringify({ corp_id: "ding8196cd9a2b2405da24f2f5cc6abecb85", uid: "7890", message_scope: "all" }),
       },
+    ]);
+  });
+
+  it("reads the native subscription stream status and survives a drifted response", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            native_subscription: true,
+            stream: { state: "disconnected", last_error: "dial: refused", failures: 2 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ stream: "connected" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(
+      client.getDingTalkNativeSubscriptionStatus("workspace-1", "agent-1"),
+    ).resolves.toEqual({
+      nativeSubscription: true,
+      stream: {
+        state: "disconnected",
+        lastConnectedAt: null,
+        lastEventAt: null,
+        lastError: "dial: refused",
+        failures: 2,
+      },
+    });
+    const drifted = await client.getDingTalkNativeSubscriptionStatus("workspace-1", "agent-1");
+    expect(drifted.stream.state).toBe("unknown");
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method ?? "GET"])).toEqual([
+      ["https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/agent-1/native-subscription", "GET"],
+      ["https://api.example.test/api/workspaces/workspace-1/dingtalk/account-bindings/agent-1/native-subscription", "GET"],
     ]);
   });
 

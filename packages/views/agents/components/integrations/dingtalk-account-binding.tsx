@@ -15,6 +15,7 @@ import type {
   DingTalkManualMessageScope,
   DingTalkMessageRouteOutcome,
   DingTalkProcessingSurface,
+  DingTalkNativeStream,
 } from "@multica/core/types";
 import { errorCode } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -26,6 +27,7 @@ import {
   useBindDingTalkMessageRouteManually,
   useDeleteDingTalkAccountBinding,
   useSetDingTalkNativeSubscription,
+  dingtalkNativeSubscriptionStatusOptions,
   useUpdateDingTalkAccountBindingSurface,
 } from "@multica/core/dingtalk-account-bindings";
 import { Button } from "@multica/ui/components/ui/button";
@@ -37,6 +39,7 @@ import {
   NativeSelectOption,
 } from "@multica/ui/components/ui/native-select";
 import { Switch } from "@multica/ui/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
 import {
   Popover,
   PopoverContent,
@@ -64,14 +67,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
-import { useT } from "../../../i18n";
+import { useT, useTimeAgo } from "../../../i18n";
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-// DingTalk organization and account ids are positive decimal integers.
+// DingTalk account (user) ids are positive decimal integers.
 const DINGTALK_DECIMAL_ID = /^[1-9][0-9]{0,19}$/;
+// An organization's corpId, the Router's tenant id; the numeric OrgID is not
+// accepted by the Router's subscription create.
+const DINGTALK_CORP_ID = /^ding[0-9A-Za-z]{8,64}$/;
 
 // Localizes the stable `code` the native-subscription and manual-binding
 // endpoints attach to failures; unknown codes fall back to the server text.
@@ -530,8 +536,75 @@ function ReusableExecutionIdentity({ agentId }: { agentId: string }) {
   );
 }
 
+// The native subscription's event stream (WebSocket) as a status light: green
+// connected, amber connecting, red disconnected, grey when no stream can run
+// or the state is unknown. Details are on hover and focus.
+function NativeStreamIndicator({ stream }: { stream: DingTalkNativeStream | undefined }) {
+  const { t } = useT("agents");
+  const timeAgo = useTimeAgo();
+  const state = stream?.state ?? "unknown";
+  let label: string;
+  let dot: string;
+  switch (state) {
+    case "connected":
+      label = t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_connected);
+      dot = "bg-success";
+      break;
+    case "connecting":
+      label = t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_connecting);
+      dot = "animate-pulse bg-warning";
+      break;
+    case "disconnected":
+      label = t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_disconnected);
+      dot = "bg-destructive";
+      break;
+    case "unavailable":
+      label = t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_unavailable);
+      dot = "bg-muted-foreground/40";
+      break;
+    default:
+      label = t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_unknown);
+      dot = "bg-muted-foreground/40";
+  }
+  const details = [label];
+  if (state === "connected") {
+    details.push(stream?.lastEventAt
+      ? t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_last_event, {
+        when: timeAgo(stream.lastEventAt),
+      })
+      : t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_no_event));
+  } else if (stream?.lastConnectedAt) {
+    details.push(t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_last_connected, {
+      when: timeAgo(stream.lastConnectedAt),
+    }));
+  }
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="img"
+            tabIndex={0}
+            // Tooltips are not announced: the accessible name carries the
+            // details too.
+            aria-label={details.join(" · ")}
+            data-testid="dingtalk-native-stream"
+            data-state={state}
+            className="inline-flex size-4 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        }
+      >
+        <span aria-hidden className={`size-2 rounded-full ${dot}`} />
+      </TooltipTrigger>
+      <TooltipContent className="flex-col items-start">
+        {details.map((line) => <p key={line}>{line}</p>)}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 // Operator-only form that binds the digital-employee message route by DingTalk
-// OrgID/UID instead of the QR scan. The server re-checks operator access.
+// corpId/UID instead of the QR scan. The server re-checks operator access.
 function ManualMessageBinding({
   agentId,
   disabled,
@@ -545,18 +618,18 @@ function ManualMessageBinding({
   const wsId = useWorkspaceId();
   const bindManually = useBindDingTalkMessageRouteManually(wsId);
   const localizeError = useNativeSubscriptionErrorMessage();
-  const [orgId, setOrgId] = useState("");
+  const [corpId, setCorpId] = useState("");
   const [uid, setUid] = useState("");
   const [messageScope, setMessageScope] = useState<DingTalkManualMessageScope>("all");
   const [error, setError] = useState<string | null>(null);
 
-  const trimmedOrgId = orgId.trim();
+  const trimmedCorpId = corpId.trim();
   const trimmedUid = uid.trim();
-  const orgIdInvalid = trimmedOrgId !== "" && !DINGTALK_DECIMAL_ID.test(trimmedOrgId);
+  const corpIdInvalid = trimmedCorpId !== "" && !DINGTALK_CORP_ID.test(trimmedCorpId);
   const uidInvalid = trimmedUid !== "" && !DINGTALK_DECIMAL_ID.test(trimmedUid);
-  const identityValid = DINGTALK_DECIMAL_ID.test(trimmedOrgId) && DINGTALK_DECIMAL_ID.test(trimmedUid);
+  const identityValid = DINGTALK_CORP_ID.test(trimmedCorpId) && DINGTALK_DECIMAL_ID.test(trimmedUid);
   const controlsDisabled = disabled || bindManually.isPending;
-  const orgIdFieldId = `dingtalk-manual-org-${agentId}`;
+  const corpIdFieldId = `dingtalk-manual-corp-${agentId}`;
   const uidFieldId = `dingtalk-manual-uid-${agentId}`;
   const scopeFieldId = `dingtalk-manual-scope-${agentId}`;
   const invalidId = t(($) => $.tab_body.integrations.dingtalk_account_manual_invalid_id);
@@ -568,11 +641,11 @@ function ManualMessageBinding({
     try {
       await bindManually.mutateAsync({
         agentId,
-        orgId: trimmedOrgId,
+        corpId: trimmedCorpId,
         uid: trimmedUid,
         messageScope,
       });
-      setOrgId("");
+      setCorpId("");
       setUid("");
       setMessageScope("all");
     } catch (cause) {
@@ -598,23 +671,24 @@ function ManualMessageBinding({
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="min-w-0 space-y-1.5">
-          <Label htmlFor={orgIdFieldId} className="text-caption">
-            {t(($) => $.tab_body.integrations.dingtalk_account_manual_org_id)}
+          <Label htmlFor={corpIdFieldId} className="text-caption">
+            {t(($) => $.tab_body.integrations.dingtalk_account_manual_corp_id)}
           </Label>
           <Input
-            id={orgIdFieldId}
-            inputMode="numeric"
+            id={corpIdFieldId}
             autoComplete="off"
-            value={orgId}
-            onChange={(event) => setOrgId(event.target.value)}
+            spellCheck={false}
+            placeholder="ding…"
+            value={corpId}
+            onChange={(event) => setCorpId(event.target.value)}
             disabled={controlsDisabled}
-            aria-invalid={orgIdInvalid || undefined}
-            aria-describedby={orgIdInvalid ? `${orgIdFieldId}-error` : undefined}
+            aria-invalid={corpIdInvalid || undefined}
+            aria-describedby={corpIdInvalid ? `${corpIdFieldId}-error` : undefined}
             className="font-mono"
           />
-          {orgIdInvalid ? (
-            <p id={`${orgIdFieldId}-error`} className="text-caption text-destructive">
-              {invalidId}
+          {corpIdInvalid ? (
+            <p id={`${corpIdFieldId}-error`} className="text-caption text-destructive">
+              {t(($) => $.tab_body.integrations.dingtalk_account_manual_invalid_corp_id)}
             </p>
           ) : null}
         </div>
@@ -751,6 +825,11 @@ function DingTalkBindingModeCard({
   const nativeSubscriptionLabelId = `${nativeSubscriptionSwitchId}-label`;
   const nativeSubscriptionHintId = `${nativeSubscriptionSwitchId}-hint`;
   const nativeSubscriptionBlockedId = `${nativeSubscriptionSwitchId}-blocked`;
+  const nativeStreamWatched = showNativeSubscription && nativeSubscriptionOn;
+  const nativeStatus = useQuery(
+    dingtalkNativeSubscriptionStatusOptions(wsId, agentId, nativeStreamWatched),
+  );
+  const nativeStream = nativeStreamWatched ? nativeStatus.data?.stream : undefined;
 
   const title = bindingMode === "message"
     ? t(($) => $.tab_body.integrations.dingtalk_account_title)
@@ -994,6 +1073,7 @@ function DingTalkBindingModeCard({
                       aria-busy={setNativeSubscription.isPending || undefined}
                       onCheckedChange={(enabled) => void toggleNativeSubscription(enabled)}
                     />
+                    {nativeStreamWatched ? <NativeStreamIndicator stream={nativeStream} /> : null}
                   </div>
                 ) : null}
                 <Button
@@ -1019,6 +1099,14 @@ function DingTalkBindingModeCard({
                 {nativeSubscriptionBlocked ? (
                   <p id={nativeSubscriptionBlockedId} className="text-foreground">
                     {t(($) => $.tab_body.integrations.dingtalk_identity_native_subscription_blocked)}
+                  </p>
+                ) : null}
+                {nativeStream?.state === "disconnected" && nativeStream.lastError ? (
+                  <p className="break-words text-destructive" role="status">
+                    {t(($) => $.tab_body.integrations.dingtalk_identity_native_stream_error, {
+                      failures: nativeStream.failures,
+                      error: nativeStream.lastError,
+                    })}
                   </p>
                 ) : null}
               </div>

@@ -79,12 +79,33 @@ SELECT EXISTS (
 
 -- name: HasActiveDingTalkMessageRouteForAccount :one
 -- Whether an active digital-employee message binding routes this DingTalk
--- account through the Router (by its Router tenant and account ids).
+-- account through the Router. Router bindings name the organization by
+-- corpId while identities carry the numeric org id, so the account id alone
+-- decides (conservative: an equal user id in another organization also
+-- counts); the per-message ownership rule is what guarantees exclusivity.
 SELECT EXISTS (
     SELECT 1
     FROM channel_installation ci
     WHERE ci.channel_type = 'dingtalk_account'
       AND ci.status = 'active'
-      AND ci.config->>'router_tenant_id' = sqlc.arg('org_id')::text
       AND ci.config->>'router_account_id' = sqlc.arg('dws_uid')::text
 )::boolean AS bound;
+
+-- name: IsDWSNativeOwnedUID :one
+-- Whether native subscription owns an account with this user id in any
+-- organization (a manual Router binding names the organization by corpId,
+-- which the numeric org id of an identity cannot be matched against).
+SELECT EXISTS (
+    SELECT 1
+    FROM agent_dws_native_subscription sub
+    JOIN agent_dingtalk_identity identity
+      ON identity.agent_id = sub.agent_id
+     AND identity.workspace_id = sub.workspace_id
+     AND identity.dws_uid = sub.dws_uid
+     AND identity.org_id = sub.org_id
+    JOIN agent a
+      ON a.id = sub.agent_id
+     AND a.workspace_id = sub.workspace_id
+    WHERE sub.dws_uid = sqlc.arg('dws_uid')::text
+      AND a.archived_at IS NULL
+)::boolean AS owned;

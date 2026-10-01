@@ -277,6 +277,9 @@ export type {
   DingTalkBindingMode,
   DingTalkExecutionIdentityOutcome,
   DingTalkNativeSubscriptionResponse,
+  DingTalkNativeStreamState,
+  DingTalkNativeStream,
+  DingTalkNativeSubscriptionStatus,
   DingTalkManualMessageScope,
   BindDingTalkMessageRouteManuallyRequest,
 } from "./dingtalk-account-binding";

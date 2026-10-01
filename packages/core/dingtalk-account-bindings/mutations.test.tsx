@@ -85,14 +85,14 @@ describe("DingTalk native subscription mutations", () => {
     await act(async () => {
       await result.current.mutateAsync({
         agentId: "agent-1",
-        orgId: "123456",
+        corpId: "ding8196cd9a2b2405da24f2f5cc6abecb85",
         uid: "7890",
         messageScope: "all",
       });
     });
 
     expect(bindDingTalkMessageRouteManually).toHaveBeenCalledWith("ws-1", "agent-1", {
-      orgId: "123456",
+      corpId: "ding8196cd9a2b2405da24f2f5cc6abecb85",
       uid: "7890",
       messageScope: "all",
     });

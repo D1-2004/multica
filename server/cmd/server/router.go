@@ -2454,6 +2454,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/dingtalk/account-bindings/{agentId}/status", h.GetDingTalkAccountBindingStatus)
 					r.Post("/dingtalk/account-bindings/begin", h.BeginDingTalkAccountBinding)
 					r.Patch("/dingtalk/account-bindings/{agentId}/surface", h.UpdateDingTalkAccountBindingSurface)
+					r.Get("/dingtalk/account-bindings/{agentId}/native-subscription", h.GetDWSNativeSubscription)
 					r.Put("/dingtalk/account-bindings/{agentId}/native-subscription", h.SetDWSNativeSubscription)
 					r.Post("/dingtalk/account-bindings/{agentId}/message-route/manual", h.BindDingTalkMessageRouteManually)
 					r.Delete("/dingtalk/account-bindings/{agentId}", h.UnbindDingTalkAccountBinding)

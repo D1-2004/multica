@@ -90,23 +90,47 @@ SELECT EXISTS (
     FROM channel_installation ci
     WHERE ci.channel_type = 'dingtalk_account'
       AND ci.status = 'active'
-      AND ci.config->>'router_tenant_id' = $1::text
-      AND ci.config->>'router_account_id' = $2::text
+      AND ci.config->>'router_account_id' = $1::text
 )::boolean AS bound
 `
 
-type HasActiveDingTalkMessageRouteForAccountParams struct {
-	OrgID  string `json:"org_id"`
-	DwsUid string `json:"dws_uid"`
-}
-
 // Whether an active digital-employee message binding routes this DingTalk
-// account through the Router (by its Router tenant and account ids).
-func (q *Queries) HasActiveDingTalkMessageRouteForAccount(ctx context.Context, arg HasActiveDingTalkMessageRouteForAccountParams) (bool, error) {
-	row := q.db.QueryRow(ctx, hasActiveDingTalkMessageRouteForAccount, arg.OrgID, arg.DwsUid)
+// account through the Router. Router bindings name the organization by
+// corpId while identities carry the numeric org id, so the account id alone
+// decides (conservative: an equal user id in another organization also
+// counts); the per-message ownership rule is what guarantees exclusivity.
+func (q *Queries) HasActiveDingTalkMessageRouteForAccount(ctx context.Context, dwsUid string) (bool, error) {
+	row := q.db.QueryRow(ctx, hasActiveDingTalkMessageRouteForAccount, dwsUid)
 	var bound bool
 	err := row.Scan(&bound)
 	return bound, err
+}
+
+const isDWSNativeOwnedUID = `-- name: IsDWSNativeOwnedUID :one
+SELECT EXISTS (
+    SELECT 1
+    FROM agent_dws_native_subscription sub
+    JOIN agent_dingtalk_identity identity
+      ON identity.agent_id = sub.agent_id
+     AND identity.workspace_id = sub.workspace_id
+     AND identity.dws_uid = sub.dws_uid
+     AND identity.org_id = sub.org_id
+    JOIN agent a
+      ON a.id = sub.agent_id
+     AND a.workspace_id = sub.workspace_id
+    WHERE sub.dws_uid = $1::text
+      AND a.archived_at IS NULL
+)::boolean AS owned
+`
+
+// Whether native subscription owns an account with this user id in any
+// organization (a manual Router binding names the organization by corpId,
+// which the numeric org id of an identity cannot be matched against).
+func (q *Queries) IsDWSNativeOwnedUID(ctx context.Context, dwsUid string) (bool, error) {
+	row := q.db.QueryRow(ctx, isDWSNativeOwnedUID, dwsUid)
+	var owned bool
+	err := row.Scan(&owned)
+	return owned, err
 }
 
 const isAgentOwnDingTalkMessage = `-- name: IsAgentOwnDingTalkMessage :one

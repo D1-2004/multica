@@ -751,13 +751,13 @@ func TestSetDWSNativeSubscriptionPreconditions(t *testing.T) {
 // whichever agent owns it.
 func TestManualMessageBindingRefusesNativeOwnedAccount(t *testing.T) {
 	path := "/api/workspaces/" + nativeTestWorkspace + "/dingtalk/account-bindings/" + nativeTestAgent + "/message-route/manual"
-	for _, owner := range []string{"", "ffffffff-ffff-4fff-8fff-ffffffffffff"} {
-		store := &fakeNativeStore{enabled: map[string]bool{}, ownerAgent: owner}
+	for _, owned := range []bool{false, true} {
+		store := &fakeNativeStore{enabled: map[string]bool{}, uidOwned: owned}
 		service := &fakeDirectBindingService{}
 		h := nativeTestHandler(store, service, true)
 		w := httptest.NewRecorder()
-		h.BindDingTalkMessageRouteManually(w, nativeRequest(http.MethodPost, path, `{"org_id":"2002","uid":"1001"}`))
-		if owner == "" {
+		h.BindDingTalkMessageRouteManually(w, nativeRequest(http.MethodPost, path, `{"corp_id":"ding8196cd9a2b2405da24f2f5cc6abecb85","uid":"1001"}`))
+		if !owned {
 			if w.Code != http.StatusOK || service.bindCalls != 1 {
 				t.Fatalf("unowned: status = %d body = %s binds = %d", w.Code, w.Body.String(), service.bindCalls)
 			}
