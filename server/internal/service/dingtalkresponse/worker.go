@@ -158,6 +158,14 @@ func (s *Service) send(ctx context.Context, a *action) error {
 			state, code = "failed", dwsclient.SafeCode(rejected.Code)
 		default:
 			state, code = "unknown", "send_result_unknown"
+			// Nothing else records why: keep the provider's (allowlisted)
+			// error for diagnosis.
+			msg := err.Error()
+			if len(msg) > 300 {
+				msg = msg[:300]
+			}
+			slog.Warn("response send result unknown", "event", "response_send_result_unknown", "action_id", a.ID,
+				"agent_id", a.Input.AgentID, "dws_environment", a.Input.DWSEnvironment, "error", msg)
 		}
 	} else if result.OpenTaskID == "" {
 		state, code = "unknown", "send_task_id_missing"
