@@ -147,7 +147,45 @@ export interface ContextOfferedConnector {
   installUrl: string;
 }
 
-export interface ContextPersonScope {
+/** What the caller may change in one configure-page scope, decided by the
+ * server's single rights function. Each is true only when the server sent a
+ * literal true. */
+export interface ContextScopeRights {
+  /** Switch offered connectors and skills on or off. */
+  toggle: boolean;
+  /** Store, remove or connect accounts and tokens. */
+  connect: boolean;
+  /** Add, edit, delete and switch the scope's prompt components. */
+  editPrompts: boolean;
+  /** Add, edit, delete and switch the scope's remote MCP servers. */
+  editMcp: boolean;
+}
+
+/** A configure-page scope's own prompt components and MCP servers, and what
+ * the caller may change there. */
+export interface ContextConfigScopeContent {
+  /** null from an older backend: the page then falls back to `canEdit` /
+   * `canConnect` and offers no prompt or MCP editing. */
+  rights: ContextScopeRights | null;
+  /** This scope's own prompt components in merge order. */
+  prompts: ContextPromptComponent[];
+  /** This scope's own MCP servers (`{"mcpServers": {...}}`), null when none
+   * or withheld. */
+  mcpConfig: Record<string, unknown> | null;
+  /** The workspace redacts secrets, so an existing `mcpConfig` is withheld
+   * (null). The page must not save over it. */
+  mcpConfigRedacted: boolean;
+}
+
+/** Scope of a configure-page write. */
+export interface ContextConfigScopeInput {
+  scopeType: ContextWriteScopeType;
+  scopeKey: string;
+  /** Tenant of the scope; omitted or "" means the agent's own org. */
+  orgId?: string;
+}
+
+export interface ContextPersonScope extends ContextConfigScopeContent {
   scopeKey: string;
   scopeTitle: string;
   source: ContextGrantSource;
@@ -166,7 +204,7 @@ export interface ContextConfigTenantRef {
 
 /** The enterprise level of the page's tenant: its switches and accounts.
  * Read-only unless `canEdit` (the caller manages the agent). */
-export interface ContextConfigOrgScope {
+export interface ContextConfigOrgScope extends ContextConfigScopeContent {
   /** The OrgId. */
   scopeKey: string;
   scopeTitle: string;
@@ -211,7 +249,7 @@ export interface ContextSceneScope {
   title: string;
 }
 
-export interface ContextConfigSceneDetail {
+export interface ContextConfigSceneDetail extends ContextConfigScopeContent {
   scene: ContextConfigSceneGrant;
   bindings: ContextCapabilityBinding[];
   credentials: ContextConnectorCredential[];
@@ -436,6 +474,9 @@ export interface ContextPromptComponent {
   name: string;
   order: number;
   text: string;
+  /** A disabled component takes no part in the merge (it does not replace
+   * an upper one either). Older backends omit it: enabled. */
+  enabled: boolean;
   updatedByName: string;
   updatedAt: string;
 }
@@ -445,6 +486,8 @@ export interface ContextPromptComponentInput {
   name: string;
   order: number;
   text: string;
+  /** Omitted means enabled. */
+  enabled?: boolean;
 }
 
 /** Credential of an offered connector in the node's scope. */
@@ -540,6 +583,9 @@ export interface ContextNodeDetail {
   /** The caller may store, remove or connect credentials here (false for a
    * manager on someone's personal level). */
   canConnect: boolean;
+  /** What the caller may change at this level; null when the server does
+   * not say (the panel then reads a person level as its person's only). */
+  rights: ContextScopeRights | null;
   effective: ContextNodeEffective;
 }
 

@@ -44,7 +44,9 @@ func layerRank(layer string) int {
 // layer (for scope layers: enabled bindings of offered resources; for the
 // global layer: the agent's grants and agent skills). MCPConfig is the
 // layer's custom MCP servers in the agent mcp_config format
-// ({"mcpServers": {<name>: <server>}}), nil when none.
+// ({"mcpServers": {<name>: <server>}}), nil when none. Prompts may include
+// disabled components and a scope layer's servers may carry
+// "disabled": true; MergeContext leaves both out.
 type ContextLayer struct {
 	Layer        string
 	ScopeKey     string
@@ -108,8 +110,13 @@ type EffectiveContext struct {
 // names are unique by construction.
 //
 //   - Prompt components: nearest layer wins by name; the losers are kept with
-//     OverriddenBy.
-//   - Custom MCP servers: nearest layer wins by server name, likewise.
+//     OverriddenBy. A disabled component takes no part: it neither applies
+//     nor overrides an outer component of the same name.
+//   - Custom MCP servers: nearest layer wins by server name, likewise. A
+//     scope layer's server with "disabled": true takes no part either, and
+//     the "disabled" key is dropped from the servers that apply
+//     (scopeMCPServer). The global layer (the agent's own mcp_config) is
+//     taken as it is, as the runtime passes it.
 //   - Connectors and skills: union, deduplicated by id; the layer is global
 //     when the global layer has it, else the nearest layer that has it (the
 //     connector resolver's binding-layer rule).
@@ -125,11 +132,16 @@ func MergeContext(layers ...ContextLayer) EffectiveContext {
 	promptWinner := map[string]string{}
 	for _, layer := range ordered {
 		for _, prompt := range layer.Prompts {
-			promptWinner[prompt.Name] = layer.Layer
+			if !prompt.Disabled {
+				promptWinner[prompt.Name] = layer.Layer
+			}
 		}
 	}
 	for _, layer := range ordered {
 		for _, prompt := range layer.Prompts {
+			if prompt.Disabled {
+				continue
+			}
 			item := EffectivePrompt{Name: prompt.Name, Order: prompt.Order, Text: prompt.Text, Layer: layer.Layer}
 			if winner := promptWinner[prompt.Name]; winner != layer.Layer {
 				item.OverriddenBy = winner
@@ -163,6 +175,16 @@ func MergeContext(layers ...ContextLayer) EffectiveContext {
 			out.InvalidMCPLayers = append(out.InvalidMCPLayers, layer.Layer)
 			continue
 		}
+		if layer.Layer != LayerGlobal {
+			for name, config := range servers {
+				cleaned, disabled := scopeMCPServer(config)
+				if disabled {
+					delete(servers, name)
+					continue
+				}
+				servers[name] = cleaned
+			}
+		}
 		parsed = append(parsed, layerServers{layer: layer.Layer, servers: servers})
 		for name := range servers {
 			serverWinner[name] = layer.Layer
@@ -185,6 +207,32 @@ func MergeContext(layers ...ContextLayer) EffectiveContext {
 		return layerRank(a.Layer) < layerRank(b.Layer)
 	})
 	return out
+}
+
+// MCPServerDisabledKey is the key of a scope's custom MCP server object that
+// switches the server off ("disabled": true) without deleting it.
+const MCPServerDisabledKey = "disabled"
+
+// scopeMCPServer reads the switch of one scope custom MCP server: it reports
+// whether the server object carries "disabled": true, and returns the object
+// without the "disabled" key, which no runtime reads. A server that is not a
+// JSON object, or has no such key, is returned unchanged and enabled.
+func scopeMCPServer(config json.RawMessage) (json.RawMessage, bool) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(config, &fields); err != nil || fields == nil {
+		return config, false
+	}
+	raw, ok := fields[MCPServerDisabledKey]
+	if !ok {
+		return config, false
+	}
+	disabled := bytes.Equal(bytes.TrimSpace(raw), []byte("true"))
+	delete(fields, MCPServerDisabledKey)
+	cleaned, err := json.Marshal(fields)
+	if err != nil {
+		return config, disabled
+	}
+	return cleaned, disabled
 }
 
 // mergeResources unions the ids ids(layer) returns across ordered layers.

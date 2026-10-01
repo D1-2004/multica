@@ -13,9 +13,69 @@ const OAUTH_STATE_KEY = "multica_context_config_oauth_state";
 const PENDING_KEY = "multica_context_config_pending";
 const PENDING_TTL_MS = 30 * 60 * 1000;
 
+/** The one scope a page opened from a configuration link stays bound to:
+ * a group chat or a person of `agentId`. */
+export interface ConfigureBinding {
+  scopeType: "scene" | "person";
+  scopeKey: string;
+  /** Tenant (DingTalk OrgId); omitted for the agent's own org. */
+  orgId?: string;
+}
+
 export interface ConfigureParams {
   linkToken?: string;
   agentId?: string;
+  /** Kept in the URL after a link is redeemed, so a reload, a DingTalk
+   * sign-in or a provider sign-in reopens the same scope only. */
+  binding?: ConfigureBinding;
+  /** Top-level tab (`?tab=`); the page opens its default for an unknown
+   * one. */
+  tab?: string;
+}
+
+const SCOPE_KEY_MAX_LENGTH = 512;
+const TAB_PATTERN = /^[a-z][a-z0-9_-]{0,31}$/;
+
+/** A binding from untrusted input (the URL or storage), or undefined. A
+ * malformed tenant drops the whole binding: a person's key only means that
+ * person within its own org. */
+export function configureBindingOf(
+  scopeType: unknown,
+  scopeKey: unknown,
+  orgId: unknown,
+): ConfigureBinding | undefined {
+  if (scopeType !== "scene" && scopeType !== "person") return undefined;
+  if (
+    typeof scopeKey !== "string" ||
+    scopeKey === "" ||
+    scopeKey.length > SCOPE_KEY_MAX_LENGTH ||
+    /[\s\p{Cc}]/u.test(scopeKey)
+  ) {
+    return undefined;
+  }
+  if (orgId === undefined || orgId === null || orgId === "") return { scopeType, scopeKey };
+  return isOrgId(orgId) ? { scopeType, scopeKey, orgId } : undefined;
+}
+
+function tabOf(value: unknown): string | undefined {
+  return typeof value === "string" && TAB_PATTERN.test(value) ? value : undefined;
+}
+
+/** The page parameters of a configure URL: `link`, `agent`, the bound
+ * scope (`org`, `scope_type`, `scope_key`; only with an agent) and `tab`. */
+export function readConfigureParams(params: Pick<URLSearchParams, "get">): ConfigureParams {
+  const agentId = params.get("agent") || undefined;
+  const binding = agentId
+    ? configureBindingOf(params.get("scope_type"), params.get("scope_key"), params.get("org"))
+    : undefined;
+  const result: ConfigureParams = {};
+  const linkToken = params.get("link") || undefined;
+  if (linkToken) result.linkToken = linkToken;
+  if (agentId) result.agentId = agentId;
+  if (binding) result.binding = binding;
+  const tab = tabOf(params.get("tab"));
+  if (tab) result.tab = tab;
+  return result;
 }
 
 type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -59,11 +119,21 @@ function safeRemove(storage: StorageLike, key: string) {
   }
 }
 
-/** The page URL with the link token removed; `agent` is kept so a reload
- * reopens the same agent. */
-export function cleanConfigureUrl(agentId?: string): string {
-  if (!agentId) return CONFIGURE_PATH;
-  return `${CONFIGURE_PATH}?${new URLSearchParams({ agent: agentId }).toString()}`;
+/** The page URL without the link token: `agent`, the bound scope and the
+ * tab are kept so a reload reopens the same page. */
+export function cleanConfigureUrl(params: Omit<ConfigureParams, "linkToken"> = {}): string {
+  const query = new URLSearchParams();
+  if (params.agentId) {
+    query.set("agent", params.agentId);
+    if (params.binding) {
+      if (params.binding.orgId) query.set("org", params.binding.orgId);
+      query.set("scope_type", params.binding.scopeType);
+      query.set("scope_key", params.binding.scopeKey);
+    }
+  }
+  if (params.tab) query.set("tab", params.tab);
+  const search = query.toString();
+  return search ? `${CONFIGURE_PATH}?${search}` : CONFIGURE_PATH;
 }
 
 export function savePendingParams(
@@ -78,6 +148,10 @@ export function savePendingParams(
   const value = JSON.stringify({
     link: params.linkToken ?? "",
     agent: params.agentId ?? "",
+    scope_type: params.binding?.scopeType ?? "",
+    scope_key: params.binding?.scopeKey ?? "",
+    org: params.binding?.orgId ?? "",
+    tab: params.tab ?? "",
     saved_at: now,
   });
   for (const storage of storages) safeSet(storage, PENDING_KEY, value);
@@ -94,12 +168,25 @@ export function takePendingParams(
     safeRemove(storage, PENDING_KEY);
     if (!raw || result.linkToken || result.agentId) continue;
     try {
-      const parsed = JSON.parse(raw) as { link?: unknown; agent?: unknown; saved_at?: unknown };
+      const parsed = JSON.parse(raw) as {
+        link?: unknown;
+        agent?: unknown;
+        scope_type?: unknown;
+        scope_key?: unknown;
+        org?: unknown;
+        tab?: unknown;
+        saved_at?: unknown;
+      };
       if (typeof parsed.saved_at !== "number" || now - parsed.saved_at > PENDING_TTL_MS) continue;
+      const agentId = typeof parsed.agent === "string" && parsed.agent ? parsed.agent : undefined;
       result = {
         linkToken: typeof parsed.link === "string" && parsed.link ? parsed.link : undefined,
-        agentId: typeof parsed.agent === "string" && parsed.agent ? parsed.agent : undefined,
+        agentId,
       };
+      const binding = agentId ? configureBindingOf(parsed.scope_type, parsed.scope_key, parsed.org) : undefined;
+      if (binding) result.binding = binding;
+      const tab = tabOf(parsed.tab);
+      if (tab) result.tab = tab;
     } catch {
       // Ignore corrupt entries.
     }

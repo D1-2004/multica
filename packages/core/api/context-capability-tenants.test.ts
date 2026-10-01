@@ -192,6 +192,8 @@ describe("Context Builder node", () => {
       name: "Tone",
       order: 1,
       text: "Be brief.",
+      // An older backend has no prompt switch: on.
+      enabled: true,
       updatedByName: "Ada",
       updatedAt: "t1",
     });
@@ -266,7 +268,9 @@ describe("Context Builder node", () => {
     // Never guess where to write.
     expect(node.scope).toBeNull();
     expect(node.scene).toBeNull();
-    expect(node.prompts).toEqual([{ id: "", name: "Ok", order: 0, text: "", updatedByName: "", updatedAt: "" }]);
+    expect(node.prompts).toEqual([
+      { id: "", name: "Ok", order: 0, text: "", enabled: true, updatedByName: "", updatedAt: "" },
+    ]);
     expect(node.connectors).toHaveLength(1);
     expect(node.connectors[0]).toMatchObject({
       enabled: false,
@@ -298,6 +302,7 @@ describe("Context Builder node", () => {
       mcpConfig: null,
       mcpConfigRedacted: false,
       canConnect: false,
+      rights: null,
       effective: { prompts: [], connectors: [], skills: [], mcpServers: [] },
     });
     expect(parseWithFallback("nope", ContextNodeDetailSchema, null, opts)).toBeNull();
@@ -389,7 +394,7 @@ describe("tenant and Context Builder client", () => {
     const saved = await client.setContextNodePrompts("ws-1", agentId, node, [{ name: "Tone", order: 1, text: "Be brief." }]);
     expect(requestOf(prompts).url).toBe(`${nodePath}/prompts`);
     expect(JSON.parse(requestOf(prompts).init.body as string)).toEqual({
-      prompts: [{ name: "Tone", order: 1, text: "Be brief." }],
+      prompts: [{ name: "Tone", order: 1, text: "Be brief.", enabled: true }],
     });
     expect(saved?.[0]).toMatchObject({ id: "p1", name: "Tone" });
     stubFetch({ ok: true });

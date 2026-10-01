@@ -18,6 +18,7 @@ import type {
   ContextConfigAccess,
   ContextConfigAgentDetail,
   ContextConfigOrgScope,
+  ContextConfigScopeContent,
   ContextConfigTenantRef,
   ContextConfigAgentSummary,
   ContextConfigGrant,
@@ -39,6 +40,7 @@ import type {
   ContextResourceType,
   ContextSceneKind,
   ContextSceneScope,
+  ContextScopeRights,
   ContextScopeType,
   DingTalkJsapiConfig,
 } from "../types/context-capability";
@@ -225,6 +227,82 @@ export const ContextConnectorCredentialResponseSchema = z
   .object({ credential: CredentialWireSchema })
   .transform((value) => value.credential);
 
+const PromptComponentWireSchema = z
+  .object({
+    id: text,
+    name: z.string().min(1),
+    order: z.number().int().nullish().catch(0).transform((value) => value ?? 0),
+    text: text,
+    // Older backends have no switch: every component is on. Only a literal
+    // false turns one off.
+    enabled: z.unknown().transform((value) => value !== false),
+    updated_by_name: text,
+    updated_at: text,
+  })
+  .transform(
+    (value): ContextPromptComponent => ({
+      id: value.id,
+      name: value.name,
+      order: value.order,
+      text: value.text,
+      enabled: value.enabled,
+      updatedByName: value.updated_by_name,
+      updatedAt: value.updated_at,
+    }),
+  );
+
+/** Prompt components in the order the runtime composes them: by `order`,
+ * then by name. */
+function sortPrompts(prompts: ContextPromptComponent[]): ContextPromptComponent[] {
+  return [...prompts].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+}
+
+/** `rights` of a scope: what the caller may change there. Each right is on
+ * only for a literal true; a missing or malformed value reads as null (an
+ * older backend), never as a guessed grant. */
+const scopeRights = z
+  .object({
+    toggle: strictTrue,
+    connect: strictTrue,
+    edit_prompts: strictTrue,
+    edit_mcp: strictTrue,
+  })
+  .transform(
+    (value): ContextScopeRights => ({
+      toggle: value.toggle,
+      connect: value.connect,
+      editPrompts: value.edit_prompts,
+      editMcp: value.edit_mcp,
+    }),
+  )
+  .nullish()
+  .catch(null)
+  .transform((value) => value ?? null);
+
+/** Wire fields of a configure-page scope's own prompts and MCP servers. */
+const scopeContentWire = {
+  rights: scopeRights,
+  prompts: tolerantList(PromptComponentWireSchema),
+  mcp_config: z.unknown().optional(),
+  mcp_config_redacted: strictTrue,
+};
+
+function toScopeContent(value: {
+  rights: ContextScopeRights | null;
+  prompts: ContextPromptComponent[];
+  mcp_config?: unknown;
+  mcp_config_redacted: boolean;
+}): ContextConfigScopeContent {
+  const redacted = value.mcp_config_redacted;
+  return {
+    rights: value.rights,
+    prompts: sortPrompts(value.prompts),
+    // A withheld document is never shown or saved over.
+    mcpConfig: !redacted && isRecord(value.mcp_config) ? value.mcp_config : null,
+    mcpConfigRedacted: redacted,
+  };
+}
+
 // A DingTalk OrgId (corp id). Anything else reads as "" (the agent's own
 // org), so a malformed value is never sent back as a scope.
 const orgIdOf = z.unknown().transform((value) => (isOrgId(value) ? value : ""));
@@ -377,6 +455,7 @@ const ConfigOrgScopeSchema = z
     bindings: BindingListSchema,
     credentials: list(CredentialWireSchema),
     can_edit: strictTrue,
+    ...scopeContentWire,
   })
   .transform(
     (value): ContextConfigOrgScope => ({
@@ -385,6 +464,7 @@ const ConfigOrgScopeSchema = z
       bindings: value.bindings,
       credentials: value.credentials,
       canEdit: value.can_edit,
+      ...toScopeContent(value),
     }),
   );
 
@@ -424,6 +504,7 @@ export const ContextConfigAgentDetailSchema = z
         expires_at: text,
         bindings: BindingListSchema,
         credentials: list(CredentialWireSchema),
+        ...scopeContentWire,
       })
       .nullish(),
     scenes: list(SceneGrantSchema),
@@ -479,6 +560,7 @@ export const ContextConfigAgentDetailSchema = z
             expiresAt: value.person.expires_at,
             bindings: value.person.bindings,
             credentials: value.person.credentials,
+            ...toScopeContent(value.person),
           }
         : null,
       scenes: value.scenes,
@@ -497,12 +579,14 @@ export const ContextConfigSceneDetailSchema = z
     credentials: list(CredentialWireSchema),
     scope: z.unknown().optional(),
     can_connect: z.unknown().optional(),
+    ...scopeContentWire,
   })
   .transform(
     (value): ContextConfigSceneDetail => ({
       scene: value.scene,
       bindings: value.bindings,
       credentials: value.credentials,
+      ...toScopeContent(value),
       scope: sceneScopeOf(value.scope, {
         type: "scene",
         key: value.scene.scopeKey,
@@ -755,32 +839,6 @@ function nodeScopeOf(value: unknown): ContextNodeScope | null {
   return type ? { type, orgId: parsed.data.org_id, key: parsed.data.key, title: parsed.data.title } : null;
 }
 
-const PromptComponentWireSchema = z
-  .object({
-    id: text,
-    name: z.string().min(1),
-    order: z.number().int().nullish().catch(0).transform((value) => value ?? 0),
-    text: text,
-    updated_by_name: text,
-    updated_at: text,
-  })
-  .transform(
-    (value): ContextPromptComponent => ({
-      id: value.id,
-      name: value.name,
-      order: value.order,
-      text: value.text,
-      updatedByName: value.updated_by_name,
-      updatedAt: value.updated_at,
-    }),
-  );
-
-/** Prompt components in the order the runtime composes them: by `order`,
- * then by name. */
-function sortPrompts(prompts: ContextPromptComponent[]): ContextPromptComponent[] {
-  return [...prompts].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
-}
-
 const NodeConnectorWireSchema = z
   .object({
     id,
@@ -878,6 +936,7 @@ export const ContextNodeDetailSchema = z
     mcp_config: z.unknown().optional(),
     mcp_config_redacted: strictTrue,
     can_connect: strictTrue,
+    rights: scopeRights,
     effective: z
       .object({
         prompts: tolerantList(EffectivePromptWireSchema),
@@ -898,6 +957,7 @@ export const ContextNodeDetailSchema = z
       mcpConfig: isRecord(value.mcp_config) ? value.mcp_config : null,
       mcpConfigRedacted: value.mcp_config_redacted,
       canConnect: value.can_connect,
+      rights: value.rights,
       effective: {
         prompts: value.effective?.prompts ?? [],
         connectors: value.effective?.connectors ?? [],

@@ -161,13 +161,20 @@ func TestContextCapabilitiesManagerAccess(t *testing.T) {
 	if scene.Scope != nil || scene.CanConnect || len(scene.Bindings) != 0 || scene.Scene.Kind != "dm" {
 		t.Fatalf("manager DM scene of an unknown person = %+v", scene)
 	}
-	// The Coordinator saw Bob write in that chat: the DM is Bob's, and the
-	// manager's toggle lands in Bob's personal scope.
+	// The Coordinator saw Bob write in that chat: the DM is Bob's. A manager
+	// reads it but may not change it (contextCapScopeRights); Bob's toggle
+	// through his 1:1 chat lands in his personal scope.
 	f.coordinatorDMJob(t, ctxcapManagerDirect, "Bob", ctxcapManagerDirectStaff, time.Minute)
 	w = ctxcapMobile(t, router, http.MethodPut, bindingsPath, owner, body(contextcap.ScopeScene, ctxcapManagerDirect, f.person, true))
-	ctxcapExpectStatus(t, w, http.StatusOK, "manager enables a connector in a DM")
+	if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextCapErrPersonOnly {
+		t.Fatalf("manager toggles in Bob's DM: %d %s", w.Code, w.Body.String())
+	}
+	bob := uuid.NewString()
+	f.grant(t, bob, contextcap.ScopePerson, ctxcapManagerDirectStaff, "Bob")
+	w = ctxcapMobile(t, router, http.MethodPut, bindingsPath, bob, body(contextcap.ScopeScene, ctxcapManagerDirect, f.person, true))
+	ctxcapExpectStatus(t, w, http.StatusOK, "Bob enables a connector in his DM")
 	stored, err = contextcap.ListScopeBindings(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopePerson, ctxcapOrg, ctxcapManagerDirectStaff)
-	if err != nil || len(stored) != 1 || !ctxcapStoredBinding(stored, f.person, true, owner) || stored[0].ScopeTitle != "Bob" {
+	if err != nil || len(stored) != 1 || !ctxcapStoredBinding(stored, f.person, true, bob) || stored[0].ScopeTitle != "Bob" {
 		t.Fatalf("stored DM binding = %+v %v", stored, err)
 	}
 	if stored, err := contextcap.ListScopeBindings(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopeScene, ctxcapOrg, ctxcapManagerDirect); err != nil || len(stored) != 0 {
@@ -177,7 +184,7 @@ func TestContextCapabilitiesManagerAccess(t *testing.T) {
 	scene = ctxcapSceneDetail{}
 	ctxcapDecode(t, w, &scene)
 	if scene.Scope == nil || *scene.Scope != (contextCapScopeRef{Type: contextcap.ScopePerson, Key: ctxcapManagerDirectStaff, Title: "Bob"}) ||
-		scene.CanConnect || !ctxcapHasBinding(scene.Bindings, f.person, true) || scene.Scene.Source != contextCapSourceManager {
+		scene.CanConnect || scene.Rights != (contextCapRights{}) || !ctxcapHasBinding(scene.Bindings, f.person, true) || scene.Scene.Source != contextCapSourceManager {
 		t.Fatalf("manager DM scene of Bob = %+v", scene)
 	}
 	// Bob's own account: the agent owner (a plain member) sees that it is
@@ -206,8 +213,6 @@ func TestContextCapabilitiesManagerAccess(t *testing.T) {
 	if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextCapErrPersonOnly {
 		t.Fatalf("manager, share_in_groups in a DM: %d %s", w.Code, w.Body.String())
 	}
-	bob := uuid.NewString()
-	f.grant(t, bob, contextcap.ScopePerson, ctxcapManagerDirectStaff, "Bob")
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, bindingsPath, bob, shareBody), http.StatusOK, "Bob opts in through his DM")
 	stored, err = contextcap.ListScopeBindings(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopePerson, ctxcapOrg, ctxcapManagerDirectStaff)
 	if err != nil || len(stored) != 1 || !stored[0].ShareInGroups {

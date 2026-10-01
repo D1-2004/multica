@@ -32,6 +32,8 @@ type ctxBuilder struct {
 	agentID  string
 	orgConn  string // offered bearer connector without a workspace credential
 	orgSkill string // offered skill
+	// personUser holds the fixture person's grant once putPerson ran.
+	personUser string
 }
 
 func newCtxBuilder(t *testing.T) *ctxBuilder {
@@ -98,6 +100,10 @@ func ctxBuilderServers(servers map[string]string) map[string]any {
 //     scene connector and skill to the group and the no-auth connector to
 //     the person);
 //   - org credentials: orgConn, the scene connector and the global one.
+//
+// The person layer is the person's own (contextCapScopeRights): it is
+// written on the configure page by the holder of the person grant, not by
+// the manager.
 func (b *ctxBuilder) configureIdentityTenant(t *testing.T) {
 	t.Helper()
 	b.put(t, ctxcapOrg, contextcap.ScopeOrg, ctxcapOrg, "prompts", ctxBuilderPrompts([3]any{"tone", 1, "org tone"}, [3]any{"rules", 2, "org rules"}))
@@ -113,8 +119,24 @@ func (b *ctxBuilder) configureIdentityTenant(t *testing.T) {
 	b.put(t, ctxcapOrg, contextcap.ScopeScene, ctxcapScene, "mcp-config", ctxBuilderServers(map[string]string{
 		"crm": "https://group-crm.example.test", "multica": "https://hijack.example.test",
 	}))
-	b.put(t, ctxcapOrg, contextcap.ScopePerson, ctxcapStaff, "prompts", ctxBuilderPrompts([3]any{"me", 3, "person note"}))
-	b.put(t, ctxcapOrg, contextcap.ScopePerson, ctxcapStaff, "mcp-config", ctxBuilderServers(map[string]string{"notes": "https://person-notes.example.test"}))
+	b.putPerson(t, "prompts", ctxBuilderPrompts([3]any{"me", 3, "person note"}))
+	b.putPerson(t, "mcp-config", ctxBuilderServers(map[string]string{"notes": "https://person-notes.example.test"}))
+}
+
+// putPerson writes the fixture person's scope through the configure page as
+// that person (a live person grant).
+func (b *ctxBuilder) putPerson(t *testing.T, what string, body map[string]any) {
+	t.Helper()
+	if b.personUser == "" {
+		b.personUser = uuid.NewString()
+		b.grant(t, b.personUser, contextcap.ScopePerson, ctxcapStaff, "Ctxcap person")
+	}
+	payload := map[string]any{"scope_type": contextcap.ScopePerson, "scope_key": ctxcapStaff}
+	for key, value := range body {
+		payload[key] = value
+	}
+	ctxcapExpectStatus(t, ctxcapMobile(t, ctxcapRouter(b.h), http.MethodPut, "/api/context-capabilities/agents/"+b.agentID+"/"+what, b.personUser, payload),
+		http.StatusOK, "person "+what)
 }
 
 // claim builds the claim payload of task as the daemon claim does.

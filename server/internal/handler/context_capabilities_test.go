@@ -33,6 +33,9 @@ func ctxcapRouter(h *Handler) http.Handler {
 		r.Put("/agents/{agentId}/bindings", h.PutContextConfigBinding)
 		r.Put("/agents/{agentId}/credentials", h.PutContextConfigCredential)
 		r.Delete("/agents/{agentId}/credentials", h.DeleteContextConfigCredential)
+		r.Post("/agents/{agentId}/connections/start", h.StartContextConfigConnection)
+		r.Put("/agents/{agentId}/prompts", h.PutContextConfigPrompts)
+		r.Put("/agents/{agentId}/mcp-config", h.PutContextConfigMCPConfig)
 	})
 	r.With(RequireHumanActor).Get("/api/dingtalk/jsapi-config", h.GetDingTalkJSAPIConfig)
 	r.Route("/api/agents/{id}", func(r chi.Router) {
@@ -171,11 +174,15 @@ type ctxcapAgentDetail struct {
 }
 
 type ctxcapSceneDetail struct {
-	Scene       contextCapSceneDTO        `json:"scene"`
-	Scope       *contextCapScopeRef       `json:"scope"`
-	Bindings    []contextCapBindingDTO    `json:"bindings"`
-	Credentials []contextCapCredentialDTO `json:"credentials"`
-	CanConnect  bool                      `json:"can_connect"`
+	Scene             contextCapSceneDTO        `json:"scene"`
+	Scope             *contextCapScopeRef       `json:"scope"`
+	Bindings          []contextCapBindingDTO    `json:"bindings"`
+	Credentials       []contextCapCredentialDTO `json:"credentials"`
+	CanConnect        bool                      `json:"can_connect"`
+	Rights            contextCapRights          `json:"rights"`
+	Prompts           []contextCapPromptDTO     `json:"prompts"`
+	MCPConfig         json.RawMessage           `json:"mcp_config"`
+	MCPConfigRedacted bool                      `json:"mcp_config_redacted"`
 }
 
 func ctxcapHasBinding(bindings []contextCapBindingDTO, resourceID string, enabled bool) bool {
@@ -336,9 +343,15 @@ func TestContextCapabilitiesMobileGrantsGateReadsAndWrites(t *testing.T) {
 	if bindingResp.Binding.Enabled {
 		t.Fatal("binding still enabled")
 	}
-	ctxcapExpectStatus(t, write(alice, contextcap.ScopeScene, ctxcapScene, contextcap.ResourceConnector, f.notOffered, true), http.StatusForbidden, "non-offered connector")
-	ctxcapExpectStatus(t, write(alice, contextcap.ScopeScene, ctxcapScene, contextcap.ResourceSkill, f.skillFree, false), http.StatusForbidden, "non-offered skill disable")
-	ctxcapExpectStatus(t, write(alice, contextcap.ScopeScene, ctxcapScene, contextcap.ResourceSkill, f.skillAgent, true), http.StatusForbidden, "global-only skill")
+	ctxcapExpectStatus(t, write(alice, contextcap.ScopePerson, ctxcapStaff, contextcap.ResourceConnector, f.notOffered, true), http.StatusForbidden, "non-offered connector")
+	ctxcapExpectStatus(t, write(alice, contextcap.ScopePerson, ctxcapStaff, contextcap.ResourceSkill, f.skillFree, false), http.StatusForbidden, "non-offered skill disable")
+	ctxcapExpectStatus(t, write(alice, contextcap.ScopePerson, ctxcapStaff, contextcap.ResourceSkill, f.skillAgent, true), http.StatusForbidden, "global-only skill")
+	// Alice holds the group's link: she reads the group, only agent managers
+	// change it (contextCapScopeRights).
+	if w = write(alice, contextcap.ScopeScene, ctxcapScene, contextcap.ResourceSkill, f.skillScene, true); w.Code != http.StatusForbidden ||
+		catalogErrorCode(t, w) != contextCapErrManagerOnly {
+		t.Fatalf("group link holder toggles the group: %d %s", w.Code, w.Body.String())
+	}
 	ctxcapExpectStatus(t, write(bob, contextcap.ScopeScene, ctxcapScene, contextcap.ResourceSkill, f.skillScene, true), http.StatusForbidden, "bob write")
 	ctxcapExpectStatus(t, write(alice, contextcap.ScopeScene, ctxcapOtherScene, contextcap.ResourceSkill, f.skillScene, true), http.StatusForbidden, "ungranted scene write")
 	ctxcapExpectStatus(t, write(alice, contextcap.ScopePerson, ctxcapOtherStaff, contextcap.ResourceSkill, f.skillScene, true), http.StatusForbidden, "other person write")
@@ -360,7 +373,7 @@ func TestContextCapabilitiesMobileGrantsGateReadsAndWrites(t *testing.T) {
 		t.Fatalf("org_id of a non-tenant: %d %s", w.Code, w.Body.String())
 	}
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, bindingPath, alice, map[string]any{
-		"scope_type": contextcap.ScopeScene, "scope_key": ctxcapScene, "resource_type": contextcap.ResourceSkill, "resource_id": f.skillScene,
+		"scope_type": contextcap.ScopePerson, "scope_key": ctxcapStaff, "resource_type": contextcap.ResourceSkill, "resource_id": f.skillScene,
 		"enabled": true, "org_id": ctxcapOrg,
 	}), http.StatusOK, "explicit identity org")
 }
@@ -417,15 +430,21 @@ func TestContextCapabilitiesMobileCredentialsAreWriteOnly(t *testing.T) {
 	}
 
 	// A globally granted Bearer connector (通用能力) that is not offered
-	// takes a personal token and a group token alike.
+	// takes a personal token and a group token alike. A group's tokens are
+	// the agent managers' (contextCapScopeRights): Alice, who holds the
+	// group's link, may not replace the group's account.
 	ctxcapExpectStatus(t, put(alice, contextcap.ScopePerson, ctxcapStaff, f.global, "person-secret-for-global"), http.StatusOK, "global connector person credential")
-	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.global, "scene-secret-for-global"), http.StatusOK, "global connector scene credential")
-	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.scene, "scene-secret-for-scene"), http.StatusOK, "offered connector scene credential")
-	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.person, "whatever-bearer"), http.StatusBadRequest, "auth none connector")
-	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.notOffered, "whatever-bearer"), http.StatusForbidden, "not offered connector")
-	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, uuid.NewString(), "whatever-bearer"), http.StatusForbidden, "unknown connector")
-	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.scene, "bad\nbearer"), http.StatusBadRequest, "header-unsafe bearer")
-	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.scene, ""), http.StatusBadRequest, "empty bearer")
+	if w = put(alice, contextcap.ScopeScene, ctxcapScene, f.global, "alice-secret-for-global"); w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextCapErrManagerOnly {
+		t.Fatalf("group link holder stores a group token: %d %s", w.Code, w.Body.String())
+	}
+	manager := testUserID
+	ctxcapExpectStatus(t, put(manager, contextcap.ScopeScene, ctxcapScene, f.global, "scene-secret-for-global"), http.StatusOK, "global connector scene credential")
+	ctxcapExpectStatus(t, put(manager, contextcap.ScopeScene, ctxcapScene, f.scene, "scene-secret-for-scene"), http.StatusOK, "offered connector scene credential")
+	ctxcapExpectStatus(t, put(manager, contextcap.ScopeScene, ctxcapScene, f.person, "whatever-bearer"), http.StatusBadRequest, "auth none connector")
+	ctxcapExpectStatus(t, put(manager, contextcap.ScopeScene, ctxcapScene, f.notOffered, "whatever-bearer"), http.StatusForbidden, "not offered connector")
+	ctxcapExpectStatus(t, put(manager, contextcap.ScopeScene, ctxcapScene, uuid.NewString(), "whatever-bearer"), http.StatusForbidden, "unknown connector")
+	ctxcapExpectStatus(t, put(manager, contextcap.ScopeScene, ctxcapScene, f.scene, "bad\nbearer"), http.StatusBadRequest, "header-unsafe bearer")
+	ctxcapExpectStatus(t, put(manager, contextcap.ScopeScene, ctxcapScene, f.scene, ""), http.StatusBadRequest, "empty bearer")
 	ctxcapExpectStatus(t, put(bob, contextcap.ScopeScene, ctxcapScene, f.scene, "bob-bearer-1234"), http.StatusForbidden, "bob credential")
 
 	// Listing shows only hints.

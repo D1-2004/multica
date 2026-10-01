@@ -22,6 +22,7 @@ import {
   type ContextNodeScopeType,
   type ContextPromptComponent,
   type ContextResourceType,
+  type ContextScopeRights,
 } from "@multica/core/context-capabilities";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
@@ -38,6 +39,12 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
 import { ConnectorLogo } from "../../../common/connector-logo";
 import { useResetOnBackForwardRestore } from "../../../common/connector-credential";
+import {
+  PROMPT_COMPONENT_MAX,
+  PROMPT_NAME_MAX_LENGTH,
+  promptProblem,
+  usePromptProblemMessage,
+} from "../../../common/context-prompt-rules";
 import { SkillIcon } from "../../../skills/lib/skill-icon";
 import { useT } from "../../../i18n";
 import {
@@ -57,16 +64,17 @@ import { McpServerList } from "./mcp-config-tab";
 import {
   listManagedMcpServers,
   removeManagedMcpServer,
+  setManagedMcpServerEnabled,
   upsertManagedMcpServer,
   type ManagedMcpServer,
 } from "./mcp-config-model";
 import { McpServerDialog } from "./mcp-server-dialog";
 
-/** Server limits of a level's prompt components. */
-export const PROMPT_COMPONENT_MAX = 20;
-export const PROMPT_NAME_MAX_LENGTH = 64;
-export const PROMPT_TEXT_MAX_LENGTH = 8000;
-const PROMPT_NAME_FORBIDDEN = /\p{Cc}/u;
+export {
+  PROMPT_COMPONENT_MAX,
+  PROMPT_NAME_MAX_LENGTH,
+  PROMPT_TEXT_MAX_LENGTH,
+} from "../../../common/context-prompt-rules";
 
 /** How an account connect leaves the page and comes back. Platform plumbing
  * injected by the host page (agent detail on web and desktop, or the
@@ -99,6 +107,17 @@ export function useLayerLabel(): (layer: ContextEffectiveLayer) => string {
         return String(layer);
     }
   };
+}
+
+/** What the caller may change at a level. The server's rights decide; a
+ * server that does not send them leaves a person level to its person (the
+ * one who may connect accounts there) and the others to the agent's
+ * managers. */
+export function contextLevelRights(detail: ContextNodeDetail, canEdit: boolean): ContextScopeRights {
+  if (detail.rights) return detail.rights;
+  const canConnect = detail.canConnect === true;
+  const allowed = canEdit && (detail.scope?.type !== "person" || canConnect);
+  return { toggle: allowed, connect: canConnect, editPrompts: allowed, editMcp: allowed };
 }
 
 /**
@@ -156,6 +175,7 @@ export function ContextBuilderPanel({
     // nothing is written there. A tenant or a person is its own address.
     return <ConnectorNotice>{t(($) => $.tab_body.context_builder.scope_unknown)}</ConnectorNotice>;
   }
+  const rights = contextLevelRights(detail, canEdit);
   return (
     <div className="space-y-8">
       <PromptSection
@@ -165,7 +185,7 @@ export function ContextBuilderPanel({
         agentId={agentId}
         node={node}
         detail={detail}
-        canEdit={canEdit}
+        canEdit={rights.editPrompts}
         onDirtyChange={onDirtyChange}
       />
       <NodeCapabilities
@@ -173,7 +193,7 @@ export function ContextBuilderPanel({
         agentId={agentId}
         node={node}
         detail={detail}
-        canEdit={canEdit}
+        rights={rights}
         connect={connect}
         openApp={openApp}
         onOpenAppChange={onOpenAppChange}
@@ -260,6 +280,8 @@ interface PromptDraft {
   key: string;
   name: string;
   text: string;
+  /** Off: the component takes no part in the merge. */
+  enabled: boolean;
 }
 
 function draftsOf(prompts: ContextPromptComponent[]): PromptDraft[] {
@@ -267,11 +289,18 @@ function draftsOf(prompts: ContextPromptComponent[]): PromptDraft[] {
     key: prompt.id || `${prompt.name}#${index}`,
     name: prompt.name,
     text: prompt.text,
+    enabled: prompt.enabled !== false,
   }));
 }
 
 function sameDrafts(a: PromptDraft[], b: PromptDraft[]): boolean {
-  return a.length === b.length && a.every((item, index) => item.name === b[index]?.name && item.text === b[index]?.text);
+  return (
+    a.length === b.length &&
+    a.every(
+      (item, index) =>
+        item.name === b[index]?.name && item.text === b[index]?.text && item.enabled === b[index]?.enabled,
+    )
+  );
 }
 
 function PromptSection({
@@ -338,7 +367,12 @@ function PromptSection({
     try {
       await save.mutateAsync({
         node,
-        prompts: submitted.map((item, index) => ({ name: item.name, order: index + 1, text: item.text })),
+        prompts: submitted.map((item, index) => ({
+          name: item.name,
+          order: index + 1,
+          text: item.text,
+          enabled: item.enabled,
+        })),
       });
       // The saved list is the new baseline: the next stored list (the echo
       // or a refetch) replaces the draft unless it was edited meanwhile.
@@ -353,7 +387,7 @@ function PromptSection({
     if (editing === "new") {
       addedCount.current += 1;
       const key = `new-${addedCount.current}`;
-      setDraft((current) => [...current, { key, name, text }]);
+      setDraft((current) => [...current, { key, name, text, enabled: true }]);
     } else if (editingKey) {
       setDraft((current) => current.map((item) => (item.key === editingKey ? { ...item, name, text } : item)));
     }
@@ -384,12 +418,22 @@ function PromptSection({
               <span className="mt-0.5 w-5 shrink-0 text-right text-caption tabular-nums text-muted-foreground">
                 {index + 1}
               </span>
-              <div className="min-w-0 flex-1">
+              <div className={cn("min-w-0 flex-1", !item.enabled && "opacity-60")}>
                 <p className="truncate text-body font-medium">{item.name}</p>
                 <p className="line-clamp-2 whitespace-pre-wrap break-words text-caption text-muted-foreground">
                   {item.text}
                 </p>
               </div>
+              <Switch
+                size="sm"
+                className="mt-1"
+                checked={item.enabled}
+                disabled={!canEdit}
+                aria-label={t(($) => $.tab_body.context_builder.toggle_aria, { name: item.name })}
+                onCheckedChange={(enabled) =>
+                  setDraft((current) => current.map((entry) => (entry.key === item.key ? { ...entry, enabled } : entry)))
+                }
+              />
               {canEdit ? (
                 <div className="flex shrink-0 items-center">
                   <Button
@@ -484,6 +528,7 @@ function PromptDialog({
   onSubmit: (name: string, text: string) => void;
 }) {
   const { t } = useT("agents");
+  const problemMessage = usePromptProblemMessage();
   const [name, setName] = useState("");
   const [text, setText] = useState("");
   const [touched, setTouched] = useState(false);
@@ -499,22 +544,8 @@ function PromptDialog({
   const trimmedText = text.trim();
   // The server's rules: lengths in characters (code points), no control
   // characters in a name, no NUL in the content.
-  const error =
-    trimmedName === ""
-      ? t(($) => $.tab_body.context_builder.prompt_name_required)
-      : [...trimmedName].length > PROMPT_NAME_MAX_LENGTH
-        ? t(($) => $.tab_body.context_builder.prompt_name_too_long, { max: PROMPT_NAME_MAX_LENGTH })
-        : PROMPT_NAME_FORBIDDEN.test(trimmedName)
-          ? t(($) => $.tab_body.context_builder.prompt_name_invalid)
-          : otherNames.has(trimmedName)
-            ? t(($) => $.tab_body.context_builder.prompt_name_duplicate)
-            : trimmedText === ""
-              ? t(($) => $.tab_body.context_builder.prompt_text_required)
-              : [...trimmedText].length > PROMPT_TEXT_MAX_LENGTH
-                ? t(($) => $.tab_body.context_builder.prompt_text_too_long, { max: PROMPT_TEXT_MAX_LENGTH })
-                : trimmedText.includes("\u0000")
-                  ? t(($) => $.tab_body.context_builder.prompt_text_invalid)
-                  : "";
+  const problem = promptProblem(trimmedName, trimmedText, otherNames);
+  const error = problem ? problemMessage(problem) : "";
   const listId = "context-prompt-name-suggestions";
 
   return (
@@ -698,7 +729,12 @@ interface NodeContext {
   agentId: string;
   node: ContextNodeRef;
   detail: ContextNodeDetail;
+  /** May switch connectors and skills here. */
   canEdit: boolean;
+  /** May store, remove or connect accounts here. */
+  canConnect: boolean;
+  /** May change the level's own MCP servers. */
+  canEditMcp: boolean;
   connect: ContextBuilderConnect;
   bindings: NodeBindings;
 }
@@ -708,7 +744,7 @@ function NodeCapabilities({
   agentId,
   node,
   detail,
-  canEdit,
+  rights,
   connect,
   openApp,
   onOpenAppChange,
@@ -717,13 +753,23 @@ function NodeCapabilities({
   agentId: string;
   node: ContextNodeRef;
   detail: ContextNodeDetail;
-  canEdit: boolean;
+  rights: ContextScopeRights;
   connect: ContextBuilderConnect;
   openApp: string;
   onOpenAppChange: (slug: string) => void;
 }) {
   const bindings = useNodeBindings(wsId, agentId, node, detail);
-  const context: NodeContext = { wsId, agentId, node, detail, canEdit, connect, bindings };
+  const context: NodeContext = {
+    wsId,
+    agentId,
+    node,
+    detail,
+    canEdit: rights.toggle,
+    canConnect: rights.connect,
+    canEditMcp: rights.editMcp,
+    connect,
+    bindings,
+  };
   return (
     <>
       <McpSection context={context} />
@@ -798,14 +844,13 @@ function ConnectorRow({
   connectNote: string;
 }) {
   const { t } = useT("agents");
-  const { wsId, agentId, node, detail, canEdit, bindings } = context;
+  const { wsId, agentId, node, canEdit, canConnect, bindings } = context;
   const saveToken = useSetContextNodeCredential(wsId, agentId);
   const removeToken = useDeleteContextNodeCredential(wsId, agentId);
   const [editing, setEditing] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
   const takesToken = connector.acceptsCredential === true;
   const connected = connector.credential?.connected === true;
-  const canConnect = detail.canConnect === true;
 
   const save = async (bearer: string) => {
     try {
@@ -896,11 +941,11 @@ function ConnectorRow({
  * shown as locked and never saved over. */
 function CustomMcpServers({ context }: { context: NodeContext }) {
   const { t } = useT("agents");
-  const { wsId, agentId, node, detail, canEdit } = context;
+  const { wsId, agentId, node, detail, canEditMcp } = context;
   const save = useSetContextNodeMcpConfig(wsId, agentId);
   const mcpConfig = detail.mcpConfig ?? null;
   const redacted = detail.mcpConfigRedacted === true;
-  const editable = canEdit && !redacted;
+  const editable = canEditMcp && !redacted;
   const servers = useMemo(() => listManagedMcpServers(mcpConfig), [mcpConfig]);
   const names = useMemo(() => new Set(servers.map((server) => server.name)), [servers]);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -928,6 +973,15 @@ function CustomMcpServers({ context }: { context: NodeContext }) {
       toast.success(t(($) => $.tab_body.mcp_config.deleted_toast));
     } catch (error) {
       toast.error(errorMessage(error, t(($) => $.tab_body.mcp_config.delete_failed_toast)));
+    }
+  };
+
+  // A switched-off server takes no part in the merge.
+  const toggleServer = async (server: ManagedMcpServer, enabled: boolean) => {
+    try {
+      await save.mutateAsync({ node, mcpConfig: setManagedMcpServerEnabled(mcpConfig, server, enabled) });
+    } catch (error) {
+      toast.error(errorMessage(error, t(($) => $.tab_body.mcp_config.save_failed_toast)));
     }
   };
 
@@ -971,6 +1025,9 @@ function CustomMcpServers({ context }: { context: NodeContext }) {
               : undefined
           }
           onDelete={editable ? setDeleting : undefined}
+          onToggle={editable ? (server, enabled) => void toggleServer(server, enabled) : undefined}
+          toggleLabel={(name) => t(($) => $.tab_body.context_builder.toggle_aria, { name })}
+          togglePending={save.isPending}
         />
       ) : (
         <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.context_builder.none)}</p>
@@ -1130,7 +1187,7 @@ function AppDialog({
  * who connects it. */
 function AppAccount({ context, app }: { context: NodeContext; app: ContextNodeConnector }) {
   const { t } = useT("agents");
-  const { wsId, agentId, node, detail, connect } = context;
+  const { wsId, agentId, node, detail, connect, canConnect } = context;
   const start = useStartContextNodeConnection(wsId, agentId);
   const saveToken = useSetContextNodeCredential(wsId, agentId);
   const disconnect = useDeleteContextNodeCredential(wsId, agentId);
@@ -1139,7 +1196,6 @@ function AppAccount({ context, app }: { context: NodeContext; app: ContextNodeCo
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
   useResetOnBackForwardRestore(redirecting, () => setRedirecting(false));
-  const canConnect = detail.canConnect === true;
   const connected = app.credential?.connected === true;
   const account = app.credential?.account ?? "";
   const connecting = start.isPending || redirecting;

@@ -285,6 +285,102 @@ describe("DingTalk configure route", () => {
     expect(localStorage.getItem("multica_context_config_connect_result")).toBeNull();
   });
 
+  it("keeps a redeemed link's scope in the URL and returns provider sign-ins there", async () => {
+    mockSearchParams.current = new URLSearchParams({ link: "secret-link" });
+    renderPage();
+    await screen.findByTestId("context-config-page");
+    expect(pageProps.current?.binding).toBeNull();
+
+    act(() => {
+      pageProps.current?.onBind?.({ agentId: "agent-1", scopeType: "scene", scopeKey: "cid+1", orgId: "dingB" });
+    });
+
+    const bound = "/dingtalk/configure?agent=agent-1&org=dingB&scope_type=scene&scope_key=cid%2B1";
+    expect(replaceState).toHaveBeenLastCalledWith({}, "", bound);
+    await waitFor(() =>
+      expect(pageProps.current).toMatchObject({
+        binding: { agentId: "agent-1", scopeType: "scene", scopeKey: "cid+1", orgId: "dingB" },
+        connectReturnTo: bound,
+        linkToken: undefined,
+      }),
+    );
+
+    act(() => {
+      pageProps.current?.onTabChange?.("public");
+    });
+    expect(replaceState).toHaveBeenLastCalledWith({}, "", `${bound}&tab=public`);
+  });
+
+  it("reopens the bound scope and tab from the URL on reload", async () => {
+    mockSearchParams.current = new URLSearchParams({
+      agent: "agent-1",
+      scope_type: "person",
+      scope_key: "staff-1",
+      tab: "public",
+    });
+    renderPage();
+
+    expect(await screen.findByTestId("context-config-page")).toBeInTheDocument();
+    expect(pageProps.current).toMatchObject({
+      initialAgentId: "agent-1",
+      binding: { agentId: "agent-1", scopeType: "person", scopeKey: "staff-1", orgId: "" },
+      initialTab: "public",
+      connectReturnTo: "/dingtalk/configure?agent=agent-1&scope_type=person&scope_key=staff-1",
+    });
+    expect(pageProps.current?.linkToken).toBeUndefined();
+    // Nothing to strip from the address bar.
+    expect(replaceState).not.toHaveBeenCalled();
+  });
+
+  it("keeps the bound scope when a provider sign-in returns, dropping only the outcome", async () => {
+    mockSearchParams.current = new URLSearchParams({
+      agent: "agent-1",
+      org: "dingB",
+      scope_type: "scene",
+      scope_key: "cid-1",
+      connected: "github",
+    });
+    renderPage();
+
+    expect(await screen.findByTestId("context-config-page")).toBeInTheDocument();
+    expect(replaceState).toHaveBeenCalledWith(
+      {},
+      "",
+      "/dingtalk/configure?agent=agent-1&org=dingB&scope_type=scene&scope_key=cid-1",
+    );
+    expect(pageProps.current).toMatchObject({
+      binding: { agentId: "agent-1", scopeType: "scene", scopeKey: "cid-1", orgId: "dingB" },
+      connectResult: { kind: "connected", slug: "github" },
+    });
+  });
+
+  it("keeps the bound scope across a DingTalk sign-in", async () => {
+    mockSearchParams.current = new URLSearchParams({ agent: "agent-1", scope_type: "person", scope_key: "staff-1" });
+    const first = renderPage();
+    await screen.findByTestId("context-config-page");
+
+    await act(async () => {
+      pageProps.current?.onAuthRequired();
+    });
+    await waitFor(() => expect(mockReplaceCurrentPage).toHaveBeenCalledOnce());
+    const state = new URL(mockReplaceCurrentPage.mock.calls[0]![0] as string).searchParams.get("state") ?? "";
+    first.unmount();
+    pageProps.current = null;
+
+    mockSearchParams.current = new URLSearchParams({ authCode: "code-1", state });
+    renderPage();
+
+    expect(await screen.findByTestId("context-config-page")).toBeInTheDocument();
+    expect(replaceState).toHaveBeenLastCalledWith(
+      {},
+      "",
+      "/dingtalk/configure?agent=agent-1&scope_type=person&scope_key=staff-1",
+    );
+    expect(pageProps.current).toMatchObject({
+      binding: { agentId: "agent-1", scopeType: "person", scopeKey: "staff-1", orgId: "" },
+    });
+  });
+
   it("does not loop back to DingTalk when a fresh session is still rejected", async () => {
     sessionStorage.setItem("multica_context_config_oauth_state", "state-1");
     mockSearchParams.current = new URLSearchParams({ authCode: "code-1", state: "state-1" });

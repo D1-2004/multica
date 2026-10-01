@@ -6,7 +6,11 @@ import { AlertCircle, Loader2 } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { Button } from "@multica/ui/components/ui/button";
-import { ContextConfigPage, type ContextConfigPageProps } from "@multica/views/dingtalk";
+import {
+  ContextConfigPage,
+  type ContextConfigBinding,
+  type ContextConfigPageProps,
+} from "@multica/views/dingtalk";
 import { useT } from "@multica/views/i18n";
 import { createGroupPicker, isDingTalk, type PickedGroup } from "./jsapi";
 import {
@@ -16,6 +20,7 @@ import {
   clearOAuthState,
   navigateToAuthorization,
   oauthStateMatches,
+  readConfigureParams,
   readConnectResult,
   replaceCurrentPage,
   savePendingConnect,
@@ -60,14 +65,22 @@ function openAuthorizeUrl(url: string, target: ConnectTarget) {
 // /dingtalk/configure is the mobile page where DingTalk group members and
 // individuals configure an agent's context capabilities. It is opened from an
 // agent-issued link (`?link=<token>`) or the admin configure link
-// (`?agent=<id>`). Sign-in reuses the FDE DingTalk OAuth flow; this route owns
-// only that platform plumbing and the JSAPI group picker.
+// (`?agent=<id>`). A redeemed link binds the page to its scope, kept in the
+// URL as `?agent=&org=&scope_type=&scope_key=` (plus `tab=`), so reloads and
+// sign-in round trips reopen that scope only. Sign-in reuses the FDE DingTalk
+// OAuth flow; this route owns only that platform plumbing, the URL and the
+// JSAPI group picker.
 function DingTalkConfigureContent() {
   const { t } = useT("agents");
   const searchParams = useSearchParams();
   const setUser = useAuthStore((state) => state.setUser);
   const [stage, setStage] = useState<Stage>({ kind: "boot" });
-  const [params, setParams] = useState<ConfigureParams>({});
+  const [params, setParamsState] = useState<ConfigureParams>({});
+  const paramsRef = useRef<ConfigureParams>({});
+  const setParams = useCallback((next: ConfigureParams) => {
+    paramsRef.current = next;
+    setParamsState(next);
+  }, []);
   const [connectResult, setConnectResult] = useState<ConnectResult | null>(null);
   const [initialScope, setInitialScope] = useState<ScopeRef | undefined>(undefined);
   const [pickGroup, setPickGroup] = useState<
@@ -132,10 +145,10 @@ function DingTalkConfigureContent() {
       if (code || oauthError) {
         const pending = takePendingParams();
         const restored: ConfigureParams = {
-          linkToken: pending.linkToken,
-          agentId: pending.agentId ?? (searchParams.get("agent") || undefined),
+          ...pending,
+          agentId: pending.agentId ?? readConfigureParams(searchParams).agentId,
         };
-        window.history.replaceState({}, "", cleanConfigureUrl(restored.agentId));
+        window.history.replaceState({}, "", cleanConfigureUrl(restored));
         setParams(restored);
         if (oauthError) {
           clearOAuthState();
@@ -176,10 +189,7 @@ function DingTalkConfigureContent() {
         return;
       }
 
-      const initial: ConfigureParams = {
-        linkToken: searchParams.get("link") || undefined,
-        agentId: searchParams.get("agent") || undefined,
-      };
+      const initial = readConfigureParams(searchParams);
       // Back from a connector's provider sign-in: reopen the scope the
       // connection was started from and report the outcome once.
       const returned = readConnectResult(searchParams);
@@ -199,17 +209,60 @@ function DingTalkConfigureContent() {
       // Drop the link token and the connect outcome from the address bar
       // before anything can copy, share or sign (dd.config) the URL.
       if (initial.linkToken || returned) {
-        window.history.replaceState({}, "", cleanConfigureUrl(initial.agentId));
+        window.history.replaceState({}, "", cleanConfigureUrl(initial));
       }
       setParams(initial);
       setStage({ kind: "ready" });
     };
     void run();
-  }, [beginOAuth, searchParams, setUser]);
+  }, [beginOAuth, searchParams, setParams, setUser]);
+
+  // A redeemed link binds the page: the URL keeps the scope (and drops the
+  // spent link) for reloads and sign-in round trips.
+  const bind = useCallback(
+    (binding: ContextConfigBinding) => {
+      const next: ConfigureParams = {
+        agentId: binding.agentId,
+        binding: {
+          scopeType: binding.scopeType,
+          scopeKey: binding.scopeKey,
+          ...(binding.orgId ? { orgId: binding.orgId } : {}),
+        },
+        ...(paramsRef.current.tab ? { tab: paramsRef.current.tab } : {}),
+      };
+      setParams(next);
+      window.history.replaceState({}, "", cleanConfigureUrl(next));
+    },
+    [setParams],
+  );
+
+  const changeTab = useCallback(
+    (tab: string) => {
+      const next = { ...paramsRef.current, tab };
+      setParams(next);
+      window.history.replaceState({}, "", cleanConfigureUrl(next));
+    },
+    [setParams],
+  );
+
+  const binding: ContextConfigBinding | null =
+    params.agentId && params.binding
+      ? {
+          agentId: params.agentId,
+          scopeType: params.binding.scopeType,
+          scopeKey: params.binding.scopeKey,
+          orgId: params.binding.orgId ?? "",
+        }
+      : null;
+  // A provider sign-in returns to the bound scope (on the default tab).
+  const connectReturnTo =
+    params.agentId && params.binding
+      ? cleanConfigureUrl({ agentId: params.agentId, binding: params.binding })
+      : undefined;
 
   const retry = () => {
     completedOAuth.current = false;
-    void beginOAuth(params);
+    void beginOAuth(paramsRef.current);
   };
 
   let content: React.ReactNode;
@@ -218,9 +271,14 @@ function DingTalkConfigureContent() {
       <ContextConfigPage
         linkToken={params.linkToken}
         initialAgentId={params.agentId}
+        binding={binding}
+        onBind={bind}
+        initialTab={params.tab}
+        onTabChange={changeTab}
         pickGroup={pickGroup}
-        onAuthRequired={() => void beginOAuth(params)}
+        onAuthRequired={() => void beginOAuth(paramsRef.current)}
         openAuthorizeUrl={openAuthorizeUrl}
+        connectReturnTo={connectReturnTo}
         initialScope={initialScope}
         connectResult={connectResult}
       />

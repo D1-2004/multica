@@ -242,7 +242,8 @@ func TestContextConfigMobileTenantOrg(t *testing.T) {
 	w = ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID, bob, nil)
 	ctxcapExpectStatus(t, w, http.StatusOK, "bob detail")
 	ctxcapDecode(t, w, &got)
-	if got.Tenant == nil || got.Tenant.OrgID != betaOrg || len(got.Tenants) != 1 || got.Org == nil || got.Org.CanEdit ||
+	// The enterprise layer is for agent managers only: Bob does not see it.
+	if got.Tenant == nil || got.Tenant.OrgID != betaOrg || len(got.Tenants) != 1 || got.Org != nil ||
 		len(got.Scenes) != 1 || got.Scenes[0].ScopeKey != betaScene || got.Scenes[0].OrgID != betaOrg {
 		t.Fatalf("bob detail = %+v", got)
 	}
@@ -292,15 +293,17 @@ func TestContextConfigMobileTenantOrg(t *testing.T) {
 		http.StatusBadRequest, "org key of another org")
 
 	w = ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID+"?org_id="+betaOrg, bob, nil)
+	got.Org = nil
 	ctxcapDecode(t, w, &got)
-	if got.Org == nil || !ctxcapHasBinding(got.Org.Bindings, f.skillScene, true) || len(got.Org.Credentials) != 1 || got.Org.Credentials[0].Hint != "" {
-		t.Fatalf("bob org layer = %+v", got.Org)
+	if got.Org != nil {
+		t.Fatalf("bob org layer = %+v, want none", got.Org)
 	}
 	// The manager sees every tenant, the identity org by default, and the
 	// enterprise layer as editable.
 	w = ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID, testUserID, nil)
 	ctxcapDecode(t, w, &got)
-	if got.Access != contextCapAccessManager || got.Tenant == nil || got.Tenant.OrgID != ctxcapOrg || len(got.Tenants) != 2 || got.Org == nil || !got.Org.CanEdit {
+	if got.Access != contextCapAccessManager || got.Tenant == nil || got.Tenant.OrgID != ctxcapOrg || len(got.Tenants) != 2 || got.Org == nil || !got.Org.CanEdit ||
+		got.Org.Rights != contextCapAllRights {
 		t.Fatalf("manager detail = %+v", got)
 	}
 	w = ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID+"?org_id="+betaOrg, testUserID, nil)

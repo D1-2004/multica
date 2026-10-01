@@ -5,6 +5,7 @@ import {
   cleanConfigureUrl,
   clearOAuthState,
   oauthStateMatches,
+  readConfigureParams,
   readConnectResult,
   savePendingConnect,
   savePendingConnectResult,
@@ -33,9 +34,62 @@ describe("configure OAuth helpers", () => {
     expect(url.searchParams.get("state")).toBe("state-1");
   });
 
-  it("keeps only the agent in the cleaned URL", () => {
+  it("keeps the agent, the bound scope and the tab in the cleaned URL, never the link", () => {
     expect(cleanConfigureUrl()).toBe("/dingtalk/configure");
-    expect(cleanConfigureUrl("agent 1")).toBe("/dingtalk/configure?agent=agent+1");
+    expect(cleanConfigureUrl({ agentId: "agent 1" })).toBe("/dingtalk/configure?agent=agent+1");
+    expect(
+      cleanConfigureUrl({
+        agentId: "agent-1",
+        binding: { scopeType: "scene", scopeKey: "cid+a/b==", orgId: "dingB" },
+        tab: "public",
+        ...({ linkToken: "secret" } as object),
+      }),
+    ).toBe("/dingtalk/configure?agent=agent-1&org=dingB&scope_type=scene&scope_key=cid%2Ba%2Fb%3D%3D&tab=public");
+    // A binding only means something with its agent.
+    expect(cleanConfigureUrl({ binding: { scopeType: "person", scopeKey: "staff-1" } })).toBe("/dingtalk/configure");
+  });
+
+  it("reads the bound scope and the tab back from the URL", () => {
+    const url = new URL(
+      `https://app.example${cleanConfigureUrl({
+        agentId: "agent-1",
+        binding: { scopeType: "scene", scopeKey: "cid+a/b==", orgId: "dingB" },
+        tab: "public",
+      })}`,
+    );
+    expect(readConfigureParams(url.searchParams)).toEqual({
+      agentId: "agent-1",
+      binding: { scopeType: "scene", scopeKey: "cid+a/b==", orgId: "dingB" },
+      tab: "public",
+    });
+    expect(
+      readConfigureParams(new URLSearchParams({ agent: "agent-1", scope_type: "person", scope_key: "staff-1" })),
+    ).toEqual({ agentId: "agent-1", binding: { scopeType: "person", scopeKey: "staff-1" } });
+  });
+
+  it("drops a malformed binding or tab instead of guessing a scope", () => {
+    const read = (query: Record<string, string>) => readConfigureParams(new URLSearchParams(query));
+    expect(read({ scope_type: "scene", scope_key: "cid-1" })).toEqual({});
+    expect(read({ agent: "a", scope_type: "org", scope_key: "dingA" })).toEqual({ agentId: "a" });
+    expect(read({ agent: "a", scope_type: "scene", scope_key: "" })).toEqual({ agentId: "a" });
+    expect(read({ agent: "a", scope_type: "scene", scope_key: "cid 1" })).toEqual({ agentId: "a" });
+    expect(read({ agent: "a", scope_type: "person", scope_key: "staff-1", org: "bad org!" })).toEqual({ agentId: "a" });
+    expect(read({ agent: "a", tab: "<script>" })).toEqual({ agentId: "a" });
+    expect(read({ link: "tok" })).toEqual({ linkToken: "tok" });
+  });
+
+  it("keeps the bound scope and tab across a sign-in redirect", () => {
+    const local = memoryStorage();
+    savePendingParams(
+      { agentId: "agent-1", binding: { scopeType: "person", scopeKey: "staff-1", orgId: "dingB" }, tab: "public" },
+      [local],
+      1_000,
+    );
+    expect(takePendingParams([local], 2_000)).toEqual({
+      agentId: "agent-1",
+      binding: { scopeType: "person", scopeKey: "staff-1", orgId: "dingB" },
+      tab: "public",
+    });
   });
 
   it("round-trips link and agent once through either storage", () => {

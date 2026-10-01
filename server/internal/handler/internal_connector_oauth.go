@@ -401,9 +401,10 @@ func canonicalOAuthUUID(raw string) (string, error) {
 // owner/admin for the workspace scope; for a scene or person scope the
 // mobile routes' authority (contextCapResolveScope, for the request the
 // caller made: scope.SceneKey when a 1:1 chat scene was asked for) must
-// still resolve to exactly this scope and allow connecting there (a live
-// grant, or managing the agent for a group scene the agent has seen; never a
-// manager for a person), and the connector must be enabled and offered to
+// still resolve to exactly this scope and allow connecting there
+// (contextCapRights.Connect from contextCapScopeRights: managing the agent
+// for an org or group scope, being the person for a person scope; never a
+// configure-link holder of a group), and the connector must be enabled and offered to
 // or globally granted to the agent (the PUT credential rule, see
 // contextCapCredentialConnector). Errors are *connectorOAuthError.
 func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connectorOAuthScope, c internalConnector) error {
@@ -452,7 +453,7 @@ func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connec
 			return oauthStartError(http.StatusInternalServerError, "internal", "grant lookup failed")
 		}
 	}
-	if resolved.PersonUnknown || !resolved.CanConnect || resolved.ScopeType != scope.ScopeType || resolved.ScopeKey != scope.ScopeKey {
+	if resolved.PersonUnknown || !resolved.Rights.Connect || resolved.ScopeType != scope.ScopeType || resolved.ScopeKey != scope.ScopeKey {
 		return forbidden
 	}
 	if !c.Enabled {

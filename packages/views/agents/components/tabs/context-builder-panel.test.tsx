@@ -46,8 +46,8 @@ function detailOf(overrides: Partial<ContextNodeDetail> = {}): ContextNodeDetail
     scope: { type: "scene", orgId: "dingA", key: "cid-group", title: "Release crew" },
     scene: null,
     prompts: [
-      { id: "p1", name: "Tone", order: 1, text: "Be brief.", updatedByName: "Ada", updatedAt: "" },
-      { id: "p2", name: "Format", order: 2, text: "Use lists.", updatedByName: "Ada", updatedAt: "" },
+      { id: "p1", name: "Tone", order: 1, text: "Be brief.", enabled: true, updatedByName: "Ada", updatedAt: "" },
+      { id: "p2", name: "Format", order: 2, text: "Use lists.", enabled: true, updatedByName: "Ada", updatedAt: "" },
     ],
     connectors: [
       {
@@ -81,6 +81,7 @@ function detailOf(overrides: Partial<ContextNodeDetail> = {}): ContextNodeDetail
     mcpConfig: null,
     mcpConfigRedacted: false,
     canConnect: true,
+    rights: null,
     effective: {
       prompts: [
         { name: "Tone", text: "Be formal.", layer: "org", overridden: true, overriddenBy: "scene" },
@@ -181,8 +182,8 @@ describe("ContextBuilderPanel prompts", () => {
     await user.click(screen.getByRole("button", { name: copy.save }));
     await waitFor(() =>
       expect(mocks.setPrompts).toHaveBeenCalledWith("ws-1", "agent-1", sceneNode, [
-        { name: "Glossary", order: 1, text: "PR means pull request." },
-        { name: "Tone", order: 2, text: "Be very brief." },
+        { name: "Glossary", order: 1, text: "PR means pull request.", enabled: true },
+        { name: "Tone", order: 2, text: "Be very brief.", enabled: true },
       ]),
     );
     await waitFor(() => expect(screen.queryByRole("button", { name: copy.save })).not.toBeInTheDocument());
@@ -249,6 +250,83 @@ describe("ContextBuilderPanel prompts", () => {
     expect(screen.getByRole("switch", { name: copy.toggle_aria.replace("{{name}}", "Wiki") })).toHaveAttribute(
       "aria-disabled",
       "true",
+    );
+  });
+
+  it("switches a component off and saves it with the list", async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(await screen.findByRole("switch", { name: copy.toggle_aria.replace("{{name}}", "Format") }));
+    await user.click(screen.getByRole("button", { name: copy.save }));
+    await waitFor(() =>
+      expect(mocks.setPrompts).toHaveBeenCalledWith("ws-1", "agent-1", sceneNode, [
+        { name: "Tone", order: 1, text: "Be brief.", enabled: true },
+        { name: "Format", order: 2, text: "Use lists.", enabled: false },
+      ]),
+    );
+  });
+});
+
+describe("ContextBuilderPanel rights", () => {
+  const personNode: ContextNodeRef = { orgId: "dingA", scopeType: "person", scopeKey: "staff-1" };
+  const personScope = { type: "person" as const, orgId: "dingA", key: "staff-1", title: "Ada" };
+
+  it("follows the server's rights: a manager only views someone's personal level", async () => {
+    mocks.getNode.mockResolvedValue(
+      detailOf({
+        scope: personScope,
+        canConnect: false,
+        rights: { toggle: false, connect: false, editPrompts: false, editMcp: false },
+      }),
+    );
+    renderPanel({ node: personNode });
+
+    expect(await screen.findByRole("listitem", { name: "Tone" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.prompt_add })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: enAgents.tab_body.mcp_config.add_action })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: copy.toggle_aria.replace("{{name}}", "Wiki") })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("reads a personal level as its person's own when the server sends no rights", async () => {
+    mocks.getNode.mockResolvedValue(detailOf({ scope: personScope, canConnect: false }));
+    renderPanel({ node: personNode });
+
+    expect(await screen.findByRole("listitem", { name: "Tone" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: copy.prompt_add })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: copy.toggle_aria.replace("{{name}}", "Wiki") })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("lets the person edit their own level", async () => {
+    mocks.getNode.mockResolvedValue(detailOf({ scope: personScope, canConnect: true }));
+    renderPanel({ node: personNode });
+
+    expect(await screen.findByRole("button", { name: copy.prompt_add })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: copy.toggle_aria.replace("{{name}}", "Wiki") })).not.toHaveAttribute(
+      "aria-disabled",
+    );
+  });
+
+  it("switches a level's own MCP server off with the disabled flag", async () => {
+    const config = { mcpServers: { docs: { url: "https://mcp.example/docs" } } };
+    mocks.getNode.mockResolvedValue(detailOf({ mcpConfig: config }));
+    mocks.setMcpConfig.mockImplementation(
+      async (_ws: string, _agent: string, _node: ContextNodeRef, mcpConfig: unknown) => mcpConfig,
+    );
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(await screen.findByRole("switch", { name: copy.toggle_aria.replace("{{name}}", "docs") }));
+    await waitFor(() =>
+      expect(mocks.setMcpConfig).toHaveBeenCalledWith("ws-1", "agent-1", sceneNode, {
+        mcpServers: { docs: { url: "https://mcp.example/docs", disabled: true } },
+      }),
     );
   });
 });

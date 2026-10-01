@@ -361,10 +361,11 @@ type agentContextNode struct {
 // agentContextNodeFromRoute resolves /tenants/{orgId}/context/{scopeType}/{scopeKey}
 // for need: org (scopeKey = orgId), scene (a group or 1:1 chat the agent
 // has seen in that org; a 1:1 chat maps to its person) or person (a person
-// known for that org). 400 for a malformed scope, 404 for an unknown
-// tenant, scene or person, 409 dm_person_unknown for a write to a 1:1 chat
-// whose person is unknown, 403 person_only for a credential write on
-// someone else's person scope.
+// known for that org). Managers read every node; what they may change is
+// contextCapScopeRights (org and group scopes, not someone else's person
+// scope). 400 for a malformed scope, 404 for an unknown tenant, scene or
+// person, 409 dm_person_unknown for a write to a 1:1 chat whose person is
+// unknown, 403 person_only for a write to someone else's person scope.
 func (h *Handler) agentContextNodeFromRoute(w http.ResponseWriter, r *http.Request, need contextCapNeed) (agentContextNode, bool) {
 	caller, ok := h.agentSceneAdmin(w, r)
 	if !ok {
@@ -456,10 +457,13 @@ type agentContextScopeDTO struct {
 }
 
 type agentContextPromptDTO struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Order         int    `json:"order"`
-	Text          string `json:"text"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Order int    `json:"order"`
+	Text  string `json:"text"`
+	// Enabled: the component takes part in the merge (a disabled one is
+	// stored but neither applies nor overrides an outer one).
+	Enabled       bool   `json:"enabled"`
 	UpdatedByName string `json:"updated_by_name"`
 	UpdatedAt     string `json:"updated_at"`
 }
@@ -522,9 +526,13 @@ type agentContextNodeResponse struct {
 	// MCPConfig is the scope's custom MCP servers (null when none).
 	MCPConfig         json.RawMessage `json:"mcp_config"`
 	MCPConfigRedacted bool            `json:"mcp_config_redacted"`
-	// CanConnect: the caller may store, remove or connect credentials of
-	// Scope (managers for org and group scopes; only the person for a
-	// person scope).
+	// Rights is what the caller may change in Scope (contextCapScopeRights:
+	// managers the org and group scopes, only the person a person scope);
+	// all false while a 1:1 chat's person is unknown.
+	Rights contextCapRights `json:"rights"`
+	// CanEdit is Rights.Toggle and CanConnect is Rights.Connect, kept for
+	// older clients.
+	CanEdit    bool                     `json:"can_edit"`
 	CanConnect bool                     `json:"can_connect"`
 	Effective  agentContextEffectiveDTO `json:"effective"`
 }
@@ -553,7 +561,7 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 	org := node.tenant.OrgID
 	resp := agentContextNodeResponse{
 		Prompts: []agentContextPromptDTO{}, Connectors: []agentContextConnectorDTO{}, Skills: []agentContextSkillDTO{},
-		CanConnect: scope.CanConnect && !scope.PersonUnknown,
+		Rights: scope.Rights, CanEdit: scope.Rights.Toggle, CanConnect: scope.Rights.Connect && !scope.PersonUnknown,
 		Effective: agentContextEffectiveDTO{
 			Prompts: []agentContextEffectivePromptDTO{}, Connectors: []agentContextEffectiveResourceDTO{},
 			Skills: []agentContextEffectiveResourceDTO{}, MCPServers: []agentContextEffectiveServerDTO{},
@@ -612,10 +620,7 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 		// The node's own layer is the last loaded one.
 		own := layers[len(layers)-1]
 		for _, prompt := range own.Prompts {
-			resp.Prompts = append(resp.Prompts, agentContextPromptDTO{
-				ID: prompt.ID, Name: prompt.Name, Order: prompt.Order, Text: prompt.Text,
-				UpdatedByName: prompt.UpdatedByName, UpdatedAt: contextCapTime(prompt.UpdatedAt),
-			})
+			resp.Prompts = append(resp.Prompts, agentContextPromptView(prompt))
 		}
 		if len(own.MCPConfig) > 0 {
 			redact, err := h.agentSceneRedactsMCPConfig(ctx, caller.workspaceID)
@@ -631,7 +636,7 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 	}
 	// A person's account hint reaches workspace admins and that person
 	// only; an org's or a group's reaches every manager.
-	showAccount := scope.ScopeType != contextcap.ScopePerson || caller.workspaceAdmin || scope.CanConnect
+	showAccount := scope.ScopeType != contextcap.ScopePerson || caller.workspaceAdmin || scope.Self
 
 	if scopeIDs := scopeConnectorIDs(offers.ConnectorIDs, global.ConnectorIDs); len(scopeIDs) > 0 {
 		granted := make(map[string]bool, len(global.ConnectorIDs))
@@ -757,7 +762,7 @@ func (node agentContextNode) bindingTitle() string {
 // PutAgentContextBinding turns one offered connector or skill on or off for
 // a node: PUT .../context/{scopeType}/{scopeKey}/bindings
 // {resource_type, resource_id, enabled} → {binding}. Offer-gated (403 unless
-// offered, enable and disable alike).
+// offered, enable and disable alike); contextCapRights.Toggle.
 func (h *Handler) PutAgentContextBinding(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		ResourceType string `json:"resource_type"`
@@ -776,7 +781,7 @@ func (h *Handler) PutAgentContextBinding(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	resourceID := uuidToString(resourceUUID)
-	node, ok := h.agentContextNodeFromRoute(w, r, contextCapNeedWrite)
+	node, ok := h.agentContextNodeFromRoute(w, r, contextCapNeedToggle)
 	if !ok {
 		return
 	}
@@ -819,16 +824,13 @@ func (h *Handler) PutAgentContextBinding(w http.ResponseWriter, r *http.Request)
 
 // PutAgentContextPrompts replaces a node's prompt components:
 // PUT .../context/{scopeType}/{scopeKey}/prompts {prompts: [{name, order,
-// text}]} → {prompts: [P]}. At most 20; names 1..64 characters and unique
-// (400 duplicate_prompt_name); texts 1..8000 characters (400
-// invalid_prompts). An empty list clears them.
+// text, enabled?}]} → {prompts: [P]}. At most 20; names 1..64 characters and
+// unique (400 duplicate_prompt_name); texts 1..8000 characters (400
+// invalid_prompts); enabled defaults to true. An empty list clears them.
+// contextCapRights.EditPrompts.
 func (h *Handler) PutAgentContextPrompts(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Prompts *[]struct {
-			Name  string `json:"name"`
-			Order int    `json:"order"`
-			Text  string `json:"text"`
-		} `json:"prompts"`
+		Prompts *[]contextPromptInput `json:"prompts"`
 	}
 	if !decodeContextCapBody(w, r, agentContextPromptsBodyLim, &input) {
 		return
@@ -837,54 +839,23 @@ func (h *Handler) PutAgentContextPrompts(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "prompts is required")
 		return
 	}
-	components := make([]contextcap.PromptComponentInput, 0, len(*input.Prompts))
-	for _, prompt := range *input.Prompts {
-		components = append(components, contextcap.PromptComponentInput{Name: prompt.Name, Order: prompt.Order, Text: prompt.Text})
-	}
-	if _, err := contextcap.NormalizePromptComponents(components); err != nil {
-		if errors.Is(err, contextcap.ErrDuplicatePromptName) {
-			writeErrorCode(w, http.StatusBadRequest, agentContextErrDuplicate, "two prompts have the same name")
-			return
-		}
-		writeErrorCode(w, http.StatusBadRequest, agentContextErrPrompts,
-			"at most 20 prompts, each with a name of 1-64 characters and a text of 1-8000 characters")
-		return
-	}
-	node, ok := h.agentContextNodeFromRoute(w, r, contextCapNeedWrite)
+	components, ok := contextPromptComponents(w, *input.Prompts)
 	if !ok {
 		return
 	}
-	ctx := r.Context()
-	caller := node.caller
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save the prompts")
+	node, ok := h.agentContextNodeFromRoute(w, r, contextCapNeedPrompts)
+	if !ok {
 		return
 	}
-	defer tx.Rollback(ctx)
-	stored, err := contextcap.ReplacePromptComponents(ctx, tx, contextcap.PromptComponentsWrite{
+	caller := node.caller
+	out, ok := h.replaceContextPrompts(w, r, contextcap.PromptComponentsWrite{
 		WorkspaceID: caller.workspaceID, AgentID: caller.agentID, ScopeType: node.scope.ScopeType, OrgID: node.tenant.OrgID,
 		ScopeKey: node.scope.ScopeKey, Components: components, ActorID: requestUserID(r),
 	})
-	switch {
-	case errors.Is(err, contextcap.ErrInvalidInput), errors.Is(err, contextcap.ErrNotFound):
-		writeErrorCode(w, http.StatusBadRequest, agentContextErrPrompts, "invalid prompts")
-		return
-	case err != nil:
-		slog.ErrorContext(ctx, "agent context: prompt write failed", "agent_id", caller.agentID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to save the prompts")
+	if !ok {
 		return
 	}
-	if err := tx.Commit(ctx); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save the prompts")
-		return
-	}
-	out := make([]agentContextPromptDTO, 0, len(stored))
-	for _, prompt := range stored {
-		out = append(out, agentContextPromptDTO{ID: prompt.ID, Name: prompt.Name, Order: prompt.Order, Text: prompt.Text,
-			UpdatedByName: prompt.UpdatedByName, UpdatedAt: contextCapTime(prompt.UpdatedAt)})
-	}
-	slog.InfoContext(ctx, "agent context: prompts updated", "agent_id", caller.agentID, "workspace_id", caller.workspaceID,
+	slog.InfoContext(r.Context(), "agent context: prompts updated", "agent_id", caller.agentID, "workspace_id", caller.workspaceID,
 		"scope_type", node.scope.ScopeType, "prompt_count", len(out), "actor_id", requestUserID(r))
 	writeJSON(w, http.StatusOK, map[string]any{"prompts": out})
 }
@@ -892,7 +863,8 @@ func (h *Handler) PutAgentContextPrompts(w http.ResponseWriter, r *http.Request)
 // PutAgentContextMCPConfig stores a node's custom MCP servers:
 // PUT .../context/{scopeType}/{scopeKey}/mcp-config {mcp_config: object|null}
 // → {mcp_config}. The agent mcp_config format, a JSON object of at most 64
-// KiB; null or {} clears it.
+// KiB; null or {} clears it. A server object may carry "disabled": true to
+// keep it stored but out of the merge. contextCapRights.EditMCP.
 func (h *Handler) PutAgentContextMCPConfig(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		MCPConfig json.RawMessage `json:"mcp_config"`
@@ -908,37 +880,28 @@ func (h *Handler) PutAgentContextMCPConfig(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "mcp_config must be a JSON object of at most 64 KiB, or null")
 		return
 	}
-	node, ok := h.agentContextNodeFromRoute(w, r, contextCapNeedWrite)
+	node, ok := h.agentContextNodeFromRoute(w, r, contextCapNeedMCP)
 	if !ok {
 		return
 	}
-	ctx := r.Context()
 	caller := node.caller
-	stored, err := contextcap.PutScopeMCPConfig(ctx, h.DB, contextcap.ScopeMCPConfigWrite{
+	stored, ok := h.putContextMCPConfig(w, r, contextcap.ScopeMCPConfigWrite{
 		WorkspaceID: caller.workspaceID, AgentID: caller.agentID, ScopeType: node.scope.ScopeType, OrgID: node.tenant.OrgID,
 		ScopeKey: node.scope.ScopeKey, MCPConfig: input.MCPConfig, ActorID: requestUserID(r),
 	})
-	switch {
-	case errors.Is(err, contextcap.ErrInvalidInput):
-		writeError(w, http.StatusBadRequest, "invalid mcp_config")
-		return
-	case errors.Is(err, contextcap.ErrNotFound):
-		writeError(w, http.StatusNotFound, "scope not found")
-		return
-	case err != nil:
-		slog.ErrorContext(ctx, "agent context: MCP config write failed", "agent_id", caller.agentID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to save the custom MCP servers")
+	if !ok {
 		return
 	}
-	slog.InfoContext(ctx, "agent context: custom MCP servers updated", "agent_id", caller.agentID, "workspace_id", caller.workspaceID,
+	slog.InfoContext(r.Context(), "agent context: custom MCP servers updated", "agent_id", caller.agentID, "workspace_id", caller.workspaceID,
 		"scope_type", node.scope.ScopeType, "cleared", stored.MCPConfig == nil, "actor_id", requestUserID(r))
 	writeJSON(w, http.StatusOK, map[string]any{"mcp_config": stored.MCPConfig})
 }
 
 // PutAgentContextCredential stores a pasted token for one connector in a
 // node's scope: PUT .../context/{scopeType}/{scopeKey}/credentials
-// {connector_id, bearer} → {credential: C}. Managers for org and group
-// scopes; a person scope only by that person (403 person_only).
+// {connector_id, bearer} → {credential: C}. contextCapRights.Connect:
+// managers for org and group scopes; a person scope only by that person (403
+// person_only).
 func (h *Handler) PutAgentContextCredential(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		ConnectorID string `json:"connector_id"`
@@ -1027,9 +990,10 @@ func (h *Handler) DeleteAgentContextCredential(w http.ResponseWriter, r *http.Re
 // chat grants their personal links gave); the scope's configuration stays.
 // A person whose personal scope a forwarded link handed to someone else can
 // then redeem a new personal link. 400 for the org level, which has no
-// grants. Managers only, like the other node writes.
+// grants. Managers only (every admin node route requires managing the
+// agent), also on a person level, which they may not edit otherwise.
 func (h *Handler) RevokeAgentContextGrants(w http.ResponseWriter, r *http.Request) {
-	node, ok := h.agentContextNodeFromRoute(w, r, contextCapNeedWrite)
+	node, ok := h.agentContextNodeFromRoute(w, r, contextCapNeedRevoke)
 	if !ok {
 		return
 	}

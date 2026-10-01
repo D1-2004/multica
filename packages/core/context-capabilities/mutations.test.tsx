@@ -22,6 +22,8 @@ import {
   useRevokeContextNodeGrants,
   useSetAgentOffer,
   useSetContextCapabilityBinding,
+  useSetContextConfigMcpConfig,
+  useSetContextConfigPrompts,
   useSetContextConnectorCredential,
   useSetContextNodeBinding,
   useSetContextNodeCredential,
@@ -147,6 +149,10 @@ describe("context capability mutations", () => {
       credentials: [],
       scope: { type: "person", key: "staff-1", title: "Ada" },
       canConnect: true,
+      rights: null,
+      prompts: [],
+      mcpConfig: null,
+      mcpConfigRedacted: false,
     } satisfies ContextConfigSceneDetail);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const { result } = renderHook(() => useSetContextCapabilityBinding("agent-1"), {
@@ -229,6 +235,77 @@ describe("context capability mutations", () => {
     }
     expect(leaked()).toBe(false);
   });
+
+  it("saves a scope's prompts and MCP servers and refreshes what the scope write changed", async () => {
+    const setContextConfigPrompts = vi.fn().mockResolvedValue([]);
+    const setContextConfigMcpConfig = vi.fn().mockRejectedValue(new Error("400"));
+    setApiInstance({ setContextConfigPrompts, setContextConfigMcpConfig } as unknown as ApiClient);
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(
+      () => ({ prompts: useSetContextConfigPrompts("agent-1"), mcp: useSetContextConfigMcpConfig("agent-1") }),
+      { wrapper: createWrapper(queryClient) },
+    );
+    const config = { mcpServers: { docs: { url: "https://mcp.example/docs" } } };
+
+    await act(async () => {
+      await result.current.prompts.mutateAsync({
+        scopeType: "scene",
+        scopeKey: "cid1",
+        orgId: "dingA",
+        prompts: [{ name: "Tone", order: 1, text: "Be brief.", enabled: false }],
+      });
+      // A rejected save still refreshes the scope.
+      await result.current.mcp
+        .mutateAsync({ scopeType: "org", scopeKey: "dingA", orgId: "dingA", mcpConfig: config })
+        .catch(() => undefined);
+    });
+
+    expect(setContextConfigPrompts).toHaveBeenCalledWith(
+      "agent-1",
+      { scopeType: "scene", scopeKey: "cid1", orgId: "dingA" },
+      [{ name: "Tone", order: 1, text: "Be brief.", enabled: false }],
+    );
+    expect(setContextConfigMcpConfig).toHaveBeenCalledWith(
+      "agent-1",
+      { scopeType: "org", scopeKey: "dingA", orgId: "dingA" },
+      config,
+    );
+    expect(invalidate).toHaveBeenNthCalledWith(1, { queryKey: contextConfigKeys.scene("agent-1", "cid1") });
+    expect(invalidate).toHaveBeenNthCalledWith(2, { queryKey: contextConfigKeys.details("agent-1") });
+  });
+
+  it("does not keep MCP server headers in the mutation cache", async () => {
+    const setContextConfigMcpConfig = vi.fn().mockResolvedValue(null);
+    setApiInstance({ setContextConfigMcpConfig } as unknown as ApiClient);
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const { result } = renderHook(() => useSetContextConfigMcpConfig("agent-1"), {
+      wrapper: createWrapper(queryClient),
+    });
+    const leaked = () =>
+      queryClient
+        .getMutationCache()
+        .getAll()
+        .some((mutation) => JSON.stringify(mutation.state.variables ?? null).includes("top-secret"));
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        scopeType: "person",
+        scopeKey: "staff-1",
+        mcpConfig: { mcpServers: { docs: { url: "https://mcp.example", headers: { Authorization: "top-secret" } } } },
+      });
+    });
+    vi.useFakeTimers();
+    try {
+      act(() => result.current.reset());
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(leaked()).toBe(false);
+  });
 });
 
 describe("tenant mutations", () => {
@@ -289,6 +366,7 @@ describe("Context Builder node writes", () => {
     mcpConfig: null,
     mcpConfigRedacted: false,
     canConnect: true,
+    rights: null,
     effective: { prompts: [], connectors: [], skills: [], mcpServers: [] },
   } satisfies ContextNodeDetail;
 
