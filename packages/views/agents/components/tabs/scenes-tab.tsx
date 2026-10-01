@@ -328,7 +328,9 @@ export function ScenesTab({
                 {tenants.length === 0 && unassignedOrgs.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-muted-foreground">
                     <Building2 className="size-8 text-faint-foreground" aria-hidden="true" />
-                    <p className="text-body font-medium text-foreground">{t(($) => $.tab_body.scenes.empty_title)}</p>
+                    <p className="text-body font-medium text-foreground">
+                      {tagManaged ? t(($) => $.tab_body.scenes.tag_empty_title) : t(($) => $.tab_body.scenes.empty_title)}
+                    </p>
                     <p className="text-caption text-pretty">
                       {tagManaged ? t(($) => $.tab_body.scenes.tag_empty_hint) : t(($) => $.tab_body.scenes.empty_hint)}
                     </p>
