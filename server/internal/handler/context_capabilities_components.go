@@ -35,8 +35,9 @@ type contextCapPromptDTO struct {
 
 // contextCapScopeComponentsDTO is a scope's own prompt components (ordered)
 // and custom MCP servers on the configure page. MCPConfig is null when the
-// scope has none, and withheld (MCPConfigRedacted) when the workspace always
-// redacts secrets, as on the admin Context Builder node.
+// scope has none, and withheld (MCPConfigRedacted) from a caller who may not
+// edit it (its headers and URLs often carry tokens) or when the workspace
+// always redacts secrets, as on the admin Context Builder node.
 type contextCapScopeComponentsDTO struct {
 	Prompts           []contextCapPromptDTO `json:"prompts"`
 	MCPConfig         json.RawMessage       `json:"mcp_config"`
@@ -44,8 +45,9 @@ type contextCapScopeComponentsDTO struct {
 }
 
 // contextCapScopeComponents reads the prompt components and custom MCP
-// servers of one scope of agent a under a.OrgID.
-func (h *Handler) contextCapScopeComponents(ctx context.Context, a contextCapAgent, scopeType, scopeKey string) (contextCapScopeComponentsDTO, error) {
+// servers of one scope of agent a under a.OrgID. rights are the caller's in
+// that scope: the MCP servers are withheld without EditMCP.
+func (h *Handler) contextCapScopeComponents(ctx context.Context, a contextCapAgent, scopeType, scopeKey string, rights contextCapRights) (contextCapScopeComponentsDTO, error) {
 	out := contextCapScopeComponentsDTO{Prompts: []contextCapPromptDTO{}}
 	prompts, err := contextcap.ListPromptComponents(ctx, h.DB, a.WorkspaceID, a.ID, scopeType, a.OrgID, scopeKey)
 	if err != nil {
@@ -62,6 +64,10 @@ func (h *Handler) contextCapScopeComponents(ctx context.Context, a contextCapAge
 	}
 	if err != nil {
 		return out, err
+	}
+	if !rights.EditMCP {
+		out.MCPConfigRedacted = true
+		return out, nil
 	}
 	redact, err := h.agentSceneRedactsMCPConfig(ctx, a.WorkspaceID)
 	if err != nil {
