@@ -665,7 +665,7 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 			}
 			if app, ok := catalogApp(c.CatalogSlug); ok {
 				item.InstallURL = catalogAppInstallURL(app)
-				item.OAuthAvailable = c.AuthMode == "oauth" && h.catalogOAuthAvailable(app)
+				item.OAuthAvailable = c.AuthMode == "oauth" && h.catalogOAuthAvailableFor(ctx, caller.workspaceID, app)
 			}
 			if hint, connected := hints[c.ID]; connected {
 				item.Credential.Connected = true

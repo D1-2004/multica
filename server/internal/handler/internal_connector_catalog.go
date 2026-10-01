@@ -194,7 +194,7 @@ func (h *Handler) connectorCatalogApps(ctx context.Context, workspaceID string) 
 	}
 	out := []catalogAppView{}
 	for _, app := range connectorCatalog.Apps() {
-		view := catalogAppView{catalogAppFacts: h.catalogAppFactsView(app), MCPURL: app.MCPURL}
+		view := catalogAppView{catalogAppFacts: h.catalogAppFactsFor(ctx, workspaceID, app), MCPURL: app.MCPURL}
 		if id, ok := added[app.Slug]; ok {
 			id := id
 			view.ConnectorID = &id

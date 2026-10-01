@@ -33,7 +33,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -434,20 +433,25 @@ func (h *Handler) connectorTokenEndpoint(ctx context.Context, c internalConnecto
 	out := connectorTokenEndpointConfig{client: catalogExternalClient(app)}
 	switch app.AuthKind {
 	case connectorcatalog.AuthOAuthGitHubApp:
-		if !githubUserAuthorizationConfigured() {
+		ghClient, err := h.githubOAuthClient(ctx, c.WorkspaceID)
+		if err != nil || strings.TrimSpace(ghClient.ClientID) == "" || ghClient.ClientSecret == "" {
 			return connectorTokenEndpointConfig{}, errors.New("GitHub App client credentials are not configured")
 		}
-		appClientID := strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID"))
-		if clientID != "" && clientID != appClientID {
+		if clientID != "" && clientID != ghClient.ClientID {
 			return connectorTokenEndpointConfig{}, errConnectorOAuthClientReplaced
 		}
-		out.tokenURL = app.TokenEndpoint
-		// The redirect URI the authorization was requested with (GitHub
-		// checks that it matches on the code exchange).
-		out.redirectURI = h.connectorOAuthRedirectOrigin(connectorOAuthViaGitHub) + connectorOAuthGitHubCallback
+		out.tokenURL = ghClient.TokenEndpoint
+		if out.tokenURL == "" {
+			out.tokenURL = app.TokenEndpoint
+		}
+		// A code exchange prefers the redirect URI stored with the state.
+		// Refresh recomputes it from the app's current callback mode.
+		homeOrigin, _ := h.connectorOAuthCallbackTarget(connectorOAuthViaGitHub)
+		forwarded := h.connectorOAuthRedirectOrigin(connectorOAuthViaGitHub)
+		out.redirectURI = githubOAuthRedirectOrigin(homeOrigin, forwarded, ghClient.CallbackMode) + connectorOAuthGitHubCallback
 		out.registration = remotemcp.OAuthClientRegistration{
-			ClientID:                appClientID,
-			ClientSecret:            os.Getenv("GITHUB_APP_CLIENT_SECRET"),
+			ClientID:                ghClient.ClientID,
+			ClientSecret:            ghClient.ClientSecret,
 			TokenEndpointAuthMethod: "client_secret_post",
 		}
 		return out, nil

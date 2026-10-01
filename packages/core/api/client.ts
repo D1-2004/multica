@@ -64,6 +64,7 @@ import type {
 } from "../types/context-capability";
 import { SemanticaMCPStatusSchema, EMPTY_SEMANTICA_MCP_STATUS, type SemanticaMCPStatus } from "./semantica-mcp-schema";
 import { WorkspaceMCPConnectionsSchema, WorkspaceMCPLinkSchema, type WorkspaceMCPConnection, type CreateWorkspaceMCPConnection } from "./workspace-mcp-schema";
+import type { ConnectorApp, ConnectorAppInput, ConnectorAppList, ConnectorAuthInstance, ConnectorBinding, ConnectorInstanceInput, ConnectorResolveResult } from "./connector-apps";
 import {ModelProbeSchema, GlobalModelsSchema, EMPTY_GLOBAL_MODELS, DeveloperCapabilitiesSchema, DiscoveredModelsSchema, globalModelsWire, type GlobalModels, type ModelProvider} from "./global-models-schema";
 import { DSHProfileSchema, type DSHProfileStatus } from "./dsh-profile-schema";
 import { AgentDshPluginConfigSchema } from "./agent-dsh-plugin-config-schema";
@@ -4896,6 +4897,57 @@ export class ApiClient {
 
   async revokePersonalAccessToken(id: string): Promise<void> {
     await this.fetch(`/api/tokens/${id}`, { method: "DELETE" });
+  }
+
+  async listConnectorApps(workspaceId: string): Promise<ConnectorAppList> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps`);
+  }
+
+  async createConnectorApp(workspaceId: string, data: ConnectorAppInput): Promise<ConnectorApp> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateConnectorApp(workspaceId: string, appId: string, data: Partial<ConnectorAppInput>): Promise<ConnectorApp> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteConnectorApp(workspaceId: string, appId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}`, { method: "DELETE" });
+  }
+
+  async createConnectorInstance(workspaceId: string, appId: string, data: ConnectorInstanceInput): Promise<ConnectorAuthInstance> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}/instances`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async replaceConnectorBindings(
+    workspaceId: string,
+    appId: string,
+    instanceId: string,
+    bindings: ConnectorBinding[],
+  ): Promise<{ bindings: ConnectorBinding[] }> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}/instances/${instanceId}/bindings`, {
+      method: "PUT",
+      body: JSON.stringify({ bindings }),
+    });
+  }
+
+  async resolveConnectorApp(
+    workspaceId: string,
+    data: { provider: string; agent_id?: string; project_id?: string; environment?: string },
+  ): Promise<ConnectorResolveResult> {
+    return this.fetch(`/api/workspaces/${workspaceId}/connector-apps/resolve`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
   }
 
   // Owner-managed DTA workspace access. These credentials are intentionally

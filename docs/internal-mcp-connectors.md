@@ -349,6 +349,30 @@ desktop list refetches on focus, so the new account shows up on return.
   so the UI links `https://github.com/apps/<GITHUB_APP_SLUG>/installations/new`
   (`install_url`, omitted when `GITHUB_APP_SLUG` is unset).
 
+  A workspace owner or admin can register that client on Settings →
+  连接器配置, or with the same admin API
+  (`/api/workspaces/{id}/connector-apps`, including a `wmcp_` token bound
+  to that workspace). The client secret and each authorization instance's
+  token are sealed with the internal connector secret box and are never
+  returned; an empty secret on update keeps the stored one. Dynamic client
+  registration does not read this table. When the workspace has no enabled
+  GitHub application, `GITHUB_APP_CLIENT_ID` /
+  `GITHUB_APP_CLIENT_SECRET` remain the fallback and can be removed after
+  the workspace application is in use.
+
+  One application has many authorization instances (accounts, orgs, or
+  installations). Each instance binds to a workspace, an agent, a project,
+  or a deployment environment (`AONE_ENV_TYPE`, else `ENV_TYPE`, else
+  `APP_ENV`). A call uses the most specific enabled binding: agent, then
+  project, then environment, then workspace. A disabled instance is
+  skipped. An enabled match with no usable token does not fall through to
+  another account. No match keeps the existing person, scene, org, and
+  workspace credentials. Several enabled applications for one provider use
+  the oldest as the catalog client; further accounts are instances of that
+  application. `callback_mode` `production_forward` (the default) keeps a
+  pre-release connect on the production callback. `self` uses this
+  deployment's own callback. The callback path does not change.
+
 ### Callback origin and forwarding
 
 The origins follow the deployment (no origin configuration); the only
