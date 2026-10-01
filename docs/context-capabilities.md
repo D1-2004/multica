@@ -13,14 +13,17 @@ level and the Context Builder of prompt, MCP and skill components
 nodes"), plus the strict edit rights, the 「启用」 switch of prompt
 components and custom MCP servers, and prompt / remote MCP editing on the
 configure page (2026-10-01, migration 9431, see §5 "Who may change what" and
-§6). Modelled on Claude Tag (Claude in Slack):
+§6), plus scene identity by `scene_id` (2026-10-02, migration 9510): a scene
+scope is keyed by its Agent work scene (`docs/agent-scene.md`), and a 1:1
+chat is its own scene again instead of its person's (see §1.1, §2, §5, §6
+and §7). Modelled on Claude Tag (Claude in Slack):
 admins own a library, channels and people opt in, and the effective toolset of
 one run depends on where the message came from and who sent it.
 
 ## 1. Layers
 
 A claimed task's context is merged from four layers, outermost first:
-global → enterprise (org) → group scene → person (§1.3). For connectors and
+global → enterprise (org) → scene (a group or a 1:1 chat) → person (§1.3). For connectors and
 skills the scope layers only ever ADD capabilities; they never remove a
 global one. Prompt components and custom MCP servers merge by name, nearest
 layer wins.
@@ -30,8 +33,8 @@ layer wins.
 | Global (智能体, 「通用能力」: on for every tenant and scene) | agent | workspace admin / agent manager | web: agent detail → 配置 → 能力 → 连接器 (official apps: 「通用能力」 switch, set by 添加, no shared account needed; Aone FaaS grants, no offer switch) / Skills (section 「通用能力」) | `internal_connector_agent`, `agent_skill` (existing) |
 | Offer catalog (「公开给场域」) | agent | agent manager | web: agent detail → 配置 → 能力 → 连接器 (official app dialog switch 「公开给场域」, shown only while the app is not a 通用能力; Aone FaaS row switch 「公开给场域」 on offer-only rows) / Skills, section 「公开给场域」 (skills not assigned to the agent) | `context_capability_binding` (`scope_type='offer'`) |
 | Enterprise (企业级, a tenant) | agent + org_id (scope key = org_id) | agent managers only (web and configure page); nobody else sees it | web agent detail → 场域 → tenant → 配置; mobile 「企业」 | `agent_tenant` (the tenant), `context_capability_binding` / `context_connector_credential` / `context_scope_mcp_config` / `context_prompt_component` with `scope_type='org'` |
-| Scene (场域: 群聊) | agent + org_id + openConversationId | agent managers (web and configure page); members holding the group's configure link only view it | web and mobile `/dingtalk/configure` tab 「本会话」; web agent detail → 场域 → tenant → 群聊 → 配置 | `context_capability_binding` (`scope_type='scene'`), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
-| Personal (个人), also every 1:1 chat (单聊) scene | agent + org_id + staffId | that DingTalk person only; agent managers only view it | web and mobile `/dingtalk/configure` tab 「我的」, or the 1:1 chat's scene there; web agent detail → 场域 → tenant → 个人 → 配置 | `context_capability_binding` (`scope_type='person'`), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
+| Scene (场域: 群聊 or 单聊) | agent + org_id + `scene_id` (the Agent work scene, `docs/agent-scene.md`) | agent managers (web and configure page); members holding a group's configure link, and the person of a 1:1 chat (through their personal link), only view it | web and mobile `/dingtalk/configure` tab 「本会话」; web agent detail → 场域 → tenant → 群聊和单聊 → 配置 | `context_capability_binding` (`scope_type='scene'`, `scope_key` = scene_id), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
+| Personal (个人) | agent + org_id + staffId | that DingTalk person only; agent managers only view it | web and mobile `/dingtalk/configure` tab 「我的」; web agent detail → 场域 → tenant → 个人 → 配置 | `context_capability_binding` (`scope_type='person'`), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
 
 - Resources are library items only: `resource_type='connector'` (an
   `internal_connector` row) or `resource_type='skill'` (a workspace `skill`
@@ -88,8 +91,8 @@ layer wins.
     the server has no OAuth for the app, replace, disconnect, the GitHub App
     install link; switch 「对所有用户启用」 = the agent grant, which needs a
     usable shared account), 群聊和个人 (switch
-    「允许群聊、个人连接自己的账号」 = the offer, and the groups and people
-    using it) and 工具 (discovered tools, 允许写操作, 刷新工具). Results of
+    「允许群聊、个人连接自己的账号」 = the offer, and the scenes (groups and
+    1:1 chats) and people using it) and 工具 (discovered tools, 允许写操作, 刷新工具). Results of
     actions are toasts; a non-admin reads the dialog with one short
     admin-only line. 添加 (workspace admins only) creates the
     workspace catalog connector when it is missing and then offers the app
@@ -112,49 +115,42 @@ layer wins.
     (desktop) or on a phone shows on return.
   The Skills tab keeps its 「允许在场域 / 个人中开启」 skill section.
 - **场域 (scene; the per-scene side).** Three levels under each tenant
-  (§1.3): 企业级 (the tenant's org), 群聊级 (a group chat) and 个人及单聊级
-  (a person; a 1:1 chat is its person). Scenes are DingTalk IM scenes
-  only: a group chat or a 1:1 chat. Scene identity everywhere is (agent,
-  platform `dingtalk`, org_id = the tenant org, scene_key =
-  openConversationId); kind is `dm` for positively 1:1 conversation types
-  (`contextcap.IsDirectConversationType`), else `group`. Every level has a
-  Context Builder (§1.3): prompt components, MCP components and skill
-  components. The old per-scene prompt (场域提示词,
+  (§1.3): 企业级 (the tenant's org), 群聊级 / 单聊级 (a scene: a group chat
+  or a 1:1 chat) and 个人级 (a person). A scene is an Agent work scene
+  (`docs/agent-scene.md`, the source of truth for scene identity): agent +
+  tenant org + kind + openConversationId → one `scene_id` in the
+  `agent_scene` directory, registered only from trusted data (an admitted
+  dispatch, a channel conversation, an agent's send to a person, an
+  explicit bind; `docs/agent-scene.md` §4). The scene scope is keyed by
+  that id everywhere (`scope_type='scene'`, `scope_key` = scene_id); the
+  openConversationId is only the scene's external locator. Kind (`group`
+  or `dm`) is the directory's, set when the scene was registered and never
+  guessed. Every level has a Context Builder (§1.3): prompt components, MCP
+  components and skill components. The old per-scene prompt (场域提示词,
   `agent_scene_config.prompt`) became the prompt component 「场域提示词」
-  of the scene (a 1:1 chat's of its person, migration 9428); its API is
-  gone.
-  - A **group** scene has its own configuration: scene connectors and
-    skills, scene credentials (accounts and tokens a group connects),
-    prompt components and custom MCP servers. Agent managers change it,
-    from the web and from the configure page (§5 "Managers"); members
-    holding the group's configure link only view it (§5 "Who may change
-    what").
-  - A **1:1 chat** (`dm`) scene's configuration IS its counterpart
-    person's (单聊绑定到人): its bindings, credentials and custom MCP servers
-    read and write that person's scope, the same scope as 「我的」 on the
-    configure page. The person is `contextcap.DirectScenePerson`: the
-    sender staffId of the newest inbound Coordinator job of the conversation
-    that names one (`command` `event.data.sender.staffId`, the dispatch
-    sender the task scope reads, skipping jobs recorded under another agent
-    org), else the staffId of a live person grant redeemed from a personal
-    link minted in that chat (`context_config_link.extra_scene_key`); the
-    title is the sender's display name or the grant title. When neither
-    exists the scene reads with `scope: null` and no configuration, and
-    writes answer 409 `dm_person_unknown`. `contextCapResolveScope` is the
-    one place that maps a scene request to this effective scope, on every
-    mobile and admin scene route and in the OAuth connect. Rows an earlier
-    release stored on a 1:1 chat's own scene key (scene bindings,
-    credentials) are ignored: neither shown nor applied.
-  - The web 场域 tab is a tree: tenant (name + OrgId) → 「群聊」 /
-    「个人」. A node's 配置 is its Context Builder (§1.3, §6 "Context
-    nodes"): 「Prompt」 (prompt components), 「MCP」 (the offered Aone FaaS
-    connectors switched on for the node, their token, and the node's own
-    「自定义 MCP 服务器」), 「连接应用」 (the offered official apps: switch
-    and account), 「Skills」 (offered skills) and 「生效预览」 (the node's
-    effective context with layer badges). Account actions use the node's
-    own credential and connect routes and are offered only when the node's
-    `can_connect` is true (managers for org and group nodes; only the
-    person for a person node).
+  of the scene (a 1:1 chat's of its then person, migration 9428); its API
+  is gone.
+  - Every scene, a **group** or a **1:1 chat** (`dm`) alike, has its own
+    configuration: scene connectors and skills, scene credentials
+    (accounts and tokens connected for that chat), prompt components and
+    custom MCP servers. Agent managers change it, from the web and from
+    the configure page (§5 "Managers"); members holding a group's
+    configure link, and the person of a 1:1 chat (whose personal link also
+    grants the chat, §5), only view it (§5 "Who may change what"). Two 1:1
+    chats with the same person are two scenes. A 1:1 chat is never mapped
+    to its counterpart person: the person's own configuration is the
+    separate person scope (「我的」), which only that person changes.
+  - The web 场域 tab is a tree: tenant (name + OrgId) → 「群聊和单聊」
+    (the tenant's scenes) / 「个人」 (people's personal levels). A node's
+    配置 is its Context Builder (§1.3, §6 "Context nodes"): 「Prompt」
+    (prompt components), 「MCP」 (the offered Aone FaaS connectors switched
+    on for the node, their token, and the node's own 「自定义 MCP 服务器」),
+    「连接应用」 (the offered official apps: switch and account),
+    「Skills」 (offered skills) and 「生效预览」 (the node's effective context
+    with layer badges). Account actions use the node's own credential and
+    connect routes and are offered only when the node's `can_connect` is
+    true (managers for org and scene nodes; only the person for a person
+    node).
 - **个人 (person).** A person's own connectors and skills. They are not
   carried into a group run by default: the person turns on
   「在群聊中由我触发时也可用」 per connector (`share_in_groups`, default off).
@@ -169,17 +165,17 @@ layer wins.
 Agent detail IA (shared web and desktop views): top-level sections
 概览 | 工作 | 场域 | 配置. 场域 replaces the old 入站会话 and 记忆 sections and
 shows the tenant tree; a tenant opens 配置 (its Context Builder) and 设置
-(rename, delete); a group opens 入站记录 (its Coordinator transcript, via
-`inbound_session_id`), 记忆 (its `scene_memory` row, loaded by
-`memory_id`) and 配置; a person opens 入站记录 and 记忆 of their 1:1 chat
-(the node's `scene`, when there is one) and 配置. Under the tree, 其他记录
-opens the full inbound conversation list (the old 入站会话 view) and the full
-scene memory list, so conversations the scene list does not cover (no
-openConversationId, another DingTalk org or robot endpoint) and memory rows
-of an earlier DingTalk binding stay reachable. On the configure page a 1:1
-chat scene is labelled 「单聊 · {title}」 and edits its person's
-configuration; a manager who is not that person only views it (its
-`rights` are all false, §5 "Who may change what").
+(rename, delete); a scene (a group chat or a 1:1 chat) opens 入站记录 (its
+Coordinator transcript, via `inbound_session_id`), 记忆 (its Scene Memory,
+loaded by its scene_id) and 配置; a person opens 入站记录 and 记忆 of their
+1:1 chat (the node's `scene`, when there is one) and 配置 (their personal
+level). Under the tree, 其他记录 opens the full inbound conversation list
+(the old 入站会话 view) and the full scene memory list, so conversations the
+scene list does not cover (no registered scene: no openConversationId,
+another DingTalk org or robot endpoint) and Scene Memory of another org's
+scenes stay reachable. On the configure page a 1:1 chat scene is labelled
+「单聊 · {title}」 and edited like a group: agent managers change it, and
+its person only views it (`rights` all false, §5 "Who may change what").
 
 ### 1.2 配置 vs 生效 (stored vs applied at runtime)
 
@@ -192,12 +188,12 @@ context, and the admin 「生效预览」 runs the same merge.
 | Agent global connectors and skills | yes | yes |
 | Offer catalog | yes | yes (gates org, scene and personal bindings) |
 | Enterprise (org) connectors, skills, credentials | yes | yes, for tasks dispatched in that tenant org |
-| Group scene connectors, skills, credentials | yes | yes |
+| Scene connectors, skills, credentials (a group or a 1:1 chat) | yes | yes, as the scene layer of runs in that chat, while it is the agent's scene in the task's tenant org (§2); in a 1:1 chat the person's layer applies on top |
 | Personal connectors, skills, credentials | yes | yes, in every run the person triggers, including group runs (see below) |
-| 1:1 chat connectors, skills, credentials (= its person's, §1.1) | yes, in the person scope | yes, as the personal layer: a 1:1 run carries its person (§2) and no scene layer |
-| Rows an earlier release stored on a 1:1 chat's own scene key | yes | no, and no longer shown either (not on the scene pages, not in connected-apps usage) |
-| Prompt components of an org, group or person scope (`context_prompt_component`) | yes | yes: merged by name, nearest layer wins, appended to the task instructions as one block |
-| Custom MCP servers of an org, group or person scope (`context_scope_mcp_config`) | yes | yes: merged into the agent's `mcp_config` by server name, nearest layer wins |
+| Rows an earlier release stored on a 1:1 chat's own scene key (an openConversationId) | yes, re-keyed by 9510 to that chat's scene_id (§7) | yes, as that 1:1 chat's own scene configuration |
+| Scene rows 9510 could not re-key (no tenant org, or a key that is not a conversation id) | yes | no |
+| Prompt components of an org, scene or person scope (`context_prompt_component`) | yes | yes: merged by name, nearest layer wins, appended to the task instructions as one block |
+| Custom MCP servers of an org, scene or person scope (`context_scope_mcp_config`) | yes | yes: merged into the agent's `mcp_config` by server name, nearest layer wins |
 | A switched-off prompt component (`enabled = false`, 9431) or custom MCP server (`"disabled": true` in its server object) | yes | no: it takes no part in the merge, so it neither applies nor overrides an outer component or server of the same name (runtime and 生效预览 alike); the `disabled` key never reaches the runtime config |
 | Old scene prompt (`agent_scene_config.prompt`) | kept for the rolling window | no (migrated into the 「场域提示词」 component, §1.1) |
 | `share_in_groups` (「在群聊中由我触发时也可用」) | yes | no: until the runtime reads it, the whole personal layer (connectors and skills, and also prompt components and custom MCP servers) still applies in group runs the person triggers alone, regardless of the switch (§8) |
@@ -221,15 +217,18 @@ then created tenants by name). The agent's global connectors and skills
   `connector_oauth_state` (9424-9427 widen the checks). Org bindings and
   credentials are offer-gated like scene ones. Only agent managers see
   and edit it (web and configure page, §5 "Who may change what").
-- **Groups and people of a tenant** live under its org: group scenes are the
-  scene union of §6 "Scenes" for that org (Coordinator jobs that recorded no
-  agent org belong to the identity org); people are 1:1 chat senders, person
-  grants (and the 1:1 chat of a personal link) and every person scope with
-  stored configuration (`contextcap.ListOrgPersons`). Orgs that scene or
-  person data mentions without a tenant are listed as unassigned
-  (`contextcap.ListAgentOrgActivity`); deleting a tenant keeps its group and
-  person data (the org shows as unassigned again) and removes only its org
-  scope configuration.
+- **Scenes and people of a tenant** live under its org: its scenes are the
+  agent's group and 1:1 chat scenes registered in the `agent_scene`
+  directory under that org (§6 "Scenes"); people are 1:1 chat senders
+  (Coordinator jobs that recorded no agent org belong to the identity org),
+  live person grants and every person scope with stored configuration
+  (`contextcap.ListOrgPersons`). A person's 1:1 chat (`dm_scene_key`) is the
+  scene of their newest 1:1 Coordinator job, else the 1:1 chat of their
+  redeemed personal link; it is a scene of its own, not the person. Orgs
+  that scenes or person data mention without a tenant are listed as
+  unassigned (`contextcap.ListAgentOrgActivity`); deleting a tenant keeps
+  its scene and person data (the org shows as unassigned again) and removes
+  only its org scope configuration.
 - **Context Builder components** per level: prompt components
   (`context_prompt_component`, 9422-9423: several per scope, each `{name,
   order, text, enabled}`, at most 20, names unique per scope and 1..64
@@ -239,7 +238,7 @@ then created tenants by name). The agent's global connectors and skills
   object may carry `"disabled": true`) and skill components (offered skills
   switched on). A switched-off component or server stays stored and takes no
   part in the merge.
-- **Effective context** = global → org → group → person
+- **Effective context** = global → org → scene → person
   (`contextcap.MergeContext`, through the handler's `mergeTaskContext`, the
   one merge the preview and the runtime share, §3): prompt components and
   custom MCP servers merge by name, the
@@ -249,10 +248,10 @@ then created tenants by name). The agent's global connectors and skills
   connectors and skills are a union whose layer is `global` when the agent
   has it globally, else the nearest layer that switches it on. Applied
   prompts are ordered by `order`, then layer (outermost first), then name.
-  The preview of an org node is global + org, of a group node global + org
-  + group, of a person node global + org + person.
+  The preview of an org node is global + org, of a scene node (a group or
+  a 1:1 chat) global + org + scene, of a person node global + org + person.
 - Runtime helpers: `contextcap.LoadLayers(ctx, db, ws, agent,
-  LayerSelection{OrgID, Org, SceneKey, PersonKey})` reads the scope layers
+  LayerSelection{OrgID, Org, SceneID, PersonKey})` reads the scope layers
   (enabled bindings of offered resources, prompt components, custom MCP
   servers), `contextcap.LoadGlobalLayer` the agent's own (preview only),
   `contextcap.LayerCredentials` the layers' credentials (person > scene >
@@ -271,13 +270,17 @@ server-written DingTalk dispatch context. Nothing is read from the prompt.
   `rerun_of_task_id` is excluded as well. The member who reran the task, not
   the DingTalk sender, triggered it, so it can neither use that sender's
   personal/scene connectors and credentials nor mint a configuration link.
-- Scene: `dispatch_event_data.conversation.openConversationId` when
-  `conversation.type == "group"` and the id passes the `cid…` validator
-  (`dingtalkOpenConversationID`). 1:1 chats have no runtime scene layer:
-  their configuration is their person's (§1.1), which the person layer
-  below already applies. `Scope.DirectSceneKey` records a positively 1:1
-  conversation's openConversationId only so a personal link can also grant
-  that DM scene (§5); `HasScene`/`SceneKey` stay group-only.
+- Scene: the dispatch's SceneRef, `agent_scene.scene_id` in the task
+  context (`protocol.AgentSceneContextKey`, written by the Host, never taken
+  from Router input; `docs/agent-scene.md` §5), a group or a 1:1 chat
+  alike (`Scope.SceneID`). Nothing is derived from the openConversationId.
+  The scene layer applies only while that SceneRef names a conversation
+  scene of the agent in the task's tenant org (`contextcap.GetScene` in
+  `resolveTaskContextScope`, the use-time fence of `docs/agent-scene.md`
+  §6); otherwise (another org, another agent, an enterprise scene, an
+  unknown id) the task keeps its org and person layers without one. A 1:1
+  run therefore carries its chat's scene layer and, nearer, its person's
+  layer.
 - Person: `dispatch_event_data.sender.staffId`, only when the run positively
   comes from that one person: with no messages (event dispatches) the sender
   is the actor; exactly one message must not name anyone else
@@ -295,13 +298,15 @@ server-written DingTalk dispatch context. Nothing is read from the prompt.
   without a recorded org that was created before the agent's current
   binding (`bound_at`) may come from the earlier binding and gets only the
   global layer. An agent without a DingTalk identity (or with an identity
-  that names no org), for a task without a recorded org, keeps org `""`:
-  its implicit tenant, where its configure page, links and JSAPI grants
-  write (§5), so the task gets its group and person layers under org `""`
-  and no org layer. Bindings store the org_id they were created under and
-  resolution matches it exactly.
-- Tenant gate: a staffId or openConversationId only means something inside
-  the org it was dispatched in, and the org, scene and person layers apply
+  that names no org), for a task without a recorded org, is orgless and
+  keeps org `""`: its implicit tenant, where its configure page and
+  personal links write (§5), so the task gets only its person layer under
+  org `""`, no org layer and no scene layer (every Agent work scene
+  belongs to a tenant org, `docs/agent-scene.md` §3). Bindings store the
+  org_id they were created under and resolution matches it exactly.
+- Tenant gate: a staffId only means something inside the org it was
+  dispatched in (a scene_id belongs to one tenant org by construction), and
+  the org, scene and person layers apply
   only while that org is one of the agent's tenants
   (`contextcap.AgentTenants`, §1.3; org `""` of an agent without an
   identity, above, counts as its tenant). A task from any other org (a deleted
@@ -312,7 +317,7 @@ server-written DingTalk dispatch context. Nothing is read from the prompt.
   place this runs (`taskContextScope` for links); `contextcap.Scope` then
   carries `Dispatched` and the tenant `OrgID`.
 - Org layer: every dispatched task of a tenant org carries it, also without
-  a group scene or a single sender (a merged multi-sender run, an unknown
+  a scene or a single sender (a merged multi-sender run, an unknown
   sender, an event dispatch without a conversation).
 - Tasks with no dispatch context (web comments, autopilot, plain chat) get only
   the global layer.
@@ -325,8 +330,8 @@ Claim time (`buildClaimedTaskResponse` → `injectRunnerMCP`) and call time
 (`CallInternalConnector`) run the same resolver, so a toggle or revoke applies
 to the next tool call of a running task.
 
-The scope layers of a task are its tenant org's org layer, its group scene
-and its trigger person (§2), read with `contextcap.LoadLayers` and merged
+The scope layers of a task are its tenant org's org layer, its scene and
+its trigger person (§2), read with `contextcap.LoadLayers` and merged
 with the global layer by `contextcap.MergeContext` (§1.3).
 
 Connectors: effective set = global grants ∪ org/scene/person bindings
@@ -339,10 +344,10 @@ Credential selection per connector call, first match wins:
 1. personal credential — only when the task's trigger person set one;
 2. scene credential — when the task's scene set one. Every connector a task
    may use is granted (通用能力) or offered (公开给场域), and either takes a
-   scene account; a scene credential serves every member's run in the
-   group, so only agent managers may connect at scene level (§5 "Who may
-   change what"; a member holding the group's configure link may not
-   replace the group's account);
+   scene account; a scene credential serves every run in that chat (every
+   member's, in a group), so only agent managers may connect at scene
+   level, for a group and a 1:1 chat alike (§5 "Who may change what"; a
+   configure-link holder may not replace the scene's account);
 3. org credential — when the task's tenant org set one, under the same rule
    (`contextcap.LayerCredentials` returns person, scene, org in that order);
 4. workspace credential (existing sealed ciphertext or environment fallback).
@@ -448,16 +453,19 @@ The mobile page signs in with the existing DingTalk OAuth flow (a normal
   dispatch conversation type is positively 1:1 (`single`, `p2p`, `private`,
   `direct`, the dispatcher's DM allow-list), otherwise `scene`. Manual reruns
   cannot mint links (§2):
-  - in a group chat → a scene link bound to (agent, org_id, cid, title). Anyone
-    who opens it within 30 minutes gets a 30-day scene grant (it was posted in
-    the group, so its readers are group members);
+  - in a group chat → a scene link bound to (agent, org_id, the group's
+    scene_id, title); it needs the run's scene (§2), so an orgless agent
+    cannot mint one. Anyone who opens it within 30 minutes gets a 30-day
+    scene grant (it was posted in the group, so its readers are group
+    members);
   - in a 1:1 chat → a personal link bound to (agent, org_id, sender staffId).
     Single use, 15 minutes, 365-day person grant. A 1:1 chat is also a scene:
-    when the dispatch carries the DM's openConversationId, the link stores it
-    as `extra_scene_key` and redemption also grants that DM scene for the
-    same 365 days (only the person takes part in it) and registers it as a
-    `dm` scene in `agent_scene_config` (empty prompt), in the same
-    transaction. The first account to
+    when the run carries its 1:1 chat's scene (§2), the link stores that
+    scene_id as `extra_scene_key` and redemption also grants that scene for
+    the same 365 days, in the same transaction (only the person takes part
+    in it; the grant lets them view the chat's configuration, which agent
+    managers edit). The scene itself was registered when the chat's message
+    arrived (`docs/agent-scene.md` §4). The first account to
     redeem a person's link holds that personal scope: while its grant is live,
     a later personal link for the same person redeemed by a different account
     answers 409 and stays unconsumed, so a forwarded or leaked link cannot take
@@ -493,20 +501,19 @@ The mobile page signs in with the existing DingTalk OAuth flow (a normal
   `GET /api/dingtalk/jsapi-config` (`jsApiList: ["biz.chat.chooseConversationByCorpId"]`)
   and calls `biz.chat.chooseConversationByCorpId`; the server converts `chatId`
   with `POST /v1.0/im/chat/{chatId}/convertToOpenConversationId` using the corp
-  app token and grants the scene (source `jsapi`, 30 days) only if it is a
-  known group scene of this agent under its current org (`scene_memory`,
-  platform `dingtalk`, kind `group`). Both calls need the direct DingTalk
-  client (`DINGTALK_CLIENT_ID`/`SECRET` without `DINGTALK_AGENT_BASE_URL`); the
+  app token and grants the scene (source `jsapi`, 30 days, keyed by its
+  scene_id) only if the agent has a registered group scene for that
+  conversation in the page's tenant org (`scene.Lookup` on `agent_scene`,
+  kind `group`): a 1:1 chat, a conversation the agent never served there
+  and a group of another org are never reached. Both calls need the direct
+  DingTalk client (`DINGTALK_CLIENT_ID`/`SECRET` without `DINGTALK_AGENT_BASE_URL`); the
   private-agent client answers "unsupported" and the API returns 503.
   Residual risk: DingTalk offers no general "is this user in this group" API,
   so the server trusts that only group members can obtain a group's chatId.
   `chat_id` is therefore required: an openConversationId is not a secret
-  (every scene-grant holder sees it as `scope_key`, and it outlives
-  membership), so `open_conversation_id` is only cross-checked against the
-  converted chatId, never accepted alone. For an agent without
-  `agent_dingtalk_identity` (org `""`), the `scene_memory` check matches the
-  agent's group scenes of any org, because scene memory records them under
-  the dispatch's DWS org.
+  (it outlives membership), so `open_conversation_id` is only cross-checked
+  against the converted chatId, never accepted alone. An orgless agent
+  (org `""`) has no scenes, so the picker grants nothing there.
 - Workspace membership is not required: ordinary group members who talk to the
   digital employee are usually not Multica members. They only ever see offered
   item names, descriptions and tool names, never URLs or credential status of the
@@ -516,25 +523,25 @@ The mobile page signs in with the existing DingTalk OAuth flow (a normal
   owner/admin or the agent's owner, as `canManageAgent` defines it) may
   configure every SCENE of the agent from the configure page without a grant:
   the agent is listed with `access: "manager"`, its detail lists all of the
-  agent's scenes (group and 1:1, the admin scene union of §6 "Scenes", source
-  `manager`, no expiry), and the scene read, bindings, credentials and connect
-  routes accept the manager for any scene the agent has seen (404 for another
-  key). The personal scope still needs the person grant: a manager is not that
-  person. Managers also configure the enterprise (org) scope of every tenant
-  (bindings, credentials, connect, prompt components, custom MCP servers);
+  agent's scenes in the tenant (groups and 1:1 chats, from the scene
+  directory of §6 "Scenes", source `manager`, no expiry), and the scene
+  read, bindings, credentials, connect, prompt and custom MCP server routes
+  accept the manager for any scene of the agent in that tenant org (404 for
+  another scene_id). The personal scope still needs the person grant: a
+  manager is not that person. Managers also configure the enterprise (org)
+  scope of every tenant (bindings, credentials, connect, prompt components,
+  custom MCP servers);
   nobody else sees it (the detail's `org` is null for them) and their writes
   answer 403 `{error, code: "manager_only"}`. Every offer gate applies to
   managers exactly as to grant holders, and the OAuth callback re-checks the
   manager permission like a grant. Manager access is computed per request
   and never stored as a grant.
-- 1:1 chat scenes (§1.1): the effective scope is the person's. The caller's
-  live person grant for that staffId or live scene grant for the 1:1 chat's
-  key (a DM link grants both) gives full access, accounts included. A
-  manager may only read it: every write there (bindings, accounts,
-  connects, prompt components, custom MCP servers) answers 403 `{error,
-  code: "person_only"}`. For a 1:1 chat whose person is unknown, writes
-  answer 409 `{error, code: "dm_person_unknown"}` and reads return the scene
-  with `scope: null`.
+- 1:1 chat scenes (§1.1) follow the scene rules: managers change them
+  (bindings, accounts, connects, prompt components, custom MCP servers);
+  the person, whose personal link also granted the chat's scene_id, only
+  views it, and their writes there answer 403 `{error, code:
+  "manager_only"}`. The person's own configuration is their person scope
+  (「我的」), which only they change.
 
 ### Who may change what
 
@@ -543,24 +550,22 @@ admin Context Builder alike: `contextCapScopeRights(scopeType, manages,
 self) contextCapRights` in
 `server/internal/handler/context_capabilities.go`. `contextCapRights` is
 `{Toggle, Connect, EditPrompts, EditMCP}` (JSON `rights: {toggle, connect,
-edit_prompts, edit_mcp}`); `scopeType` is the effective scope (a 1:1 chat's
-is its person's), `manages` the agent-manage permission (workspace
+edit_prompts, edit_mcp}`); `scopeType` is the scope (a 1:1 chat is a
+`scene`, like a group), `manages` the agent-manage permission (workspace
 owner/admin or the agent owner) and `self` whether the caller is the person
-of a person scope (their live person grant, or the grant of that person's
-1:1 chat).
+of a person scope (their live person grant).
 
 | Level | Agent manager | The person | Anyone else (configure-link holders) |
 | --- | --- | --- | --- |
 | 企业级 (`org`) | everything | — | nothing, and the configure page does not show the level |
-| 群聊级 (`scene`, a group) | everything | — | view only |
-| 个人级 (`person`; a 1:1 chat is its person) | view only (configure page and admin Context Builder) | everything | — |
+| 群聊级 / 单聊级 (`scene`: a group or a 1:1 chat) | everything | view only (the person of a 1:1 chat, through their personal link) | view only |
+| 个人级 (`person`) | view only (configure page and admin Context Builder) | everything | — |
 
 A manager who also holds the person's grant edits that person level as the
 person. `contextCapResolveScope` decides who may read a scope and fills in
 `Rights`; `contextCapScopeAllows` refuses a write whose right is missing with
-403 `person_only` on a person level and 403 `manager_only` on an org or group
-level (409 `dm_person_unknown` first for a 1:1 chat whose person is
-unknown). Every write path goes through it: the configure page's bindings
+403 `person_only` on a person level and 403 `manager_only` on an org or
+scene level. Every write path goes through it: the configure page's bindings
 (`toggle`), credentials and OAuth connects (`connect`), prompts
 (`edit_prompts`) and custom MCP servers (`edit_mcp`); the admin node
 writes of the same four kinds; and `authorizeConnectorOAuthScope`, which
@@ -586,17 +591,16 @@ routes do not tell which org ids are tenants. Grants, scenes and person scopes a
 org only. `scope_type` may also be `org` (scope key = the org id): only
 managers read and write it (anyone else's writes answer 403 `manager_only`).
 What the caller may change is `contextCapScopeRights` (§5 "Who may change
-what"): a missing right answers 403 `manager_only` on an org or group
+what"): a missing right answers 403 `manager_only` on an org or scene
 scope and 403 `person_only` on a person scope. The call then
 requires the caller's access under that org: a scene read needs a scene
-grant for that exact cid, or managing the agent and the cid being a scene the
-agent has seen (§5 "Managers"; 404 for an unknown scene), and a scene write
-needs the latter; a person read or write needs a person grant for that exact
-staffId (managers included). A request naming a 1:1 chat scene (`scope_type: "scene"` with its
-key) acts on that chat's person scope with the §5 "1:1 chat scenes"
-authority: 403 `person_only` for any write of a manager who is not that
-person, 409 `dm_person_unknown` for a write when the person is unknown. Bodies are size-limited and reject unknown
-fields (an old replica therefore answers 400 to a body carrying `org_id`;
+grant for that exact scene_id, or managing the agent and the scene_id being
+one of the agent's scenes in that org (§5 "Managers"; 404 for an unknown
+scene), and a scene write needs the latter; a scene key that is not a
+scene_id (an openConversationId, for example) answers 400; a person read or
+write needs a person grant for that exact staffId (managers included). A
+1:1 chat is a scene like a group (§5 "1:1 chat scenes"). Bodies are
+size-limited and reject unknown fields (an old replica therefore answers 400 to a body carrying `org_id`;
 send it only for an org other than the identity org). `B = {resource_type, resource_id, enabled}`,
 `C = {connector_id, hint, updated_at, kind}` (`kind` is `oauth` or `bearer`),
 `R = {toggle, connect, edit_prompts, edit_mcp}` (what the caller may change
@@ -609,23 +613,23 @@ every `bindings` list contains only resources that are currently in the
 enabled offer catalog. A personal connector binding also carries
 `share_in_groups` (boolean, 「在群聊中由我触发时也可用」, default false);
 other bindings omit it. Scene entries `{scope_key, scope_title, source,
-expires_at, kind, org_id}` carry `kind`: `group` or `dm` (the `agent_scene_config`
-kind, else `group`; a 1:1 scene reached through a personal link is always
-registered there as `dm`) and the tenant org they live in.
+expires_at, kind, org_id}` carry the scene_id as `scope_key`, `kind`:
+`group` or `dm` (the scene directory's, `group` for an id it does not
+know) and the tenant org they live in.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/api/context-capabilities/links/redeem` | `{token}` → grant (source `agent_link`); returns `{agent_id, workspace_id, scope_type, scope_key, scope_title, org_id}` (`org_id` is the org the link was minted in; pass it on the next calls when it is not the identity org; for a 1:1 personal link with `extra_scene_key` the DM scene grant is added as well, §5); 410 when unknown, malformed, expired or (person) already consumed; 409 when a different account already holds that person's live grant. The link and the grant commit in one transaction |
+| POST | `/api/context-capabilities/links/redeem` | `{token}` → grant (source `agent_link`); returns `{agent_id, workspace_id, scope_type, scope_key, scope_title, org_id}` (`org_id` is the org the link was minted in; pass it on the next calls when it is not the identity org; for a 1:1 personal link with `extra_scene_key` the grant of that 1:1 chat's scene_id is added as well, §5); 410 when unknown, malformed, expired or (person) already consumed; 409 when a different account already holds that person's live grant. The link and the grant commit in one transaction |
 | GET | `/api/context-capabilities/agents` | `{agents: [{id, name, avatar_url, workspace_id, access, scopes: [{scope_type, scope_key, scope_title, source, expires_at, org_id}]}]}`: agents with a live grant for the caller under one of the agent's tenant orgs (`access: "grant"`, newest grant first; grants under an org that is not a tenant are left out), then the other non-archived user agents the caller manages (`access: "manager"`, `scopes: []`, by name). An agent both granted and managed is listed once with `access: "manager"` and its grants. Older backends send no `access` (read it as `grant`) |
-| GET | `/api/context-capabilities/agents/{agentId}?org_id=` | `{agent, global: {connectors: [{id, name, catalog_slug}], skills: [{id, name, description}]}, offers: {connectors: [{id, name, tools, accepts_credential, credential_required, catalog_slug, auth_mode, accepts_pat, oauth_available, install_url?}], skills}, person: null \| {scope_key, scope_title, source, expires_at, bindings: [B], credentials: [C], rights: R, prompts: [P], mcp_config: M, mcp_config_redacted}, scenes: [{scope_key, scope_title, source, expires_at, kind, org_id}], access, jsapi_available, tenant: null \| {org_id, name, source}, tenants: [{org_id, name, source}], org: null \| {scope_key, scope_title, bindings: [B], credentials: [C], rights: R, can_edit, prompts: [P], mcp_config: M, mcp_config_redacted}}` for one tenant org: `org_id`, else the identity org, else (a caller who does not manage the agent and holds no grant there) the org of the caller's newest grant. `tenant` is that org (null for an agent without a DingTalk identity when none was named), `tenants` the orgs the caller may switch to (every tenant for a manager, else those holding a grant of the caller), `org` its enterprise layer (null unless the caller manages the agent); `can_edit` is `rights.toggle`, kept for older clients. `person.rights` is the person's own (everything). Needs any grant for the agent in that org or managing it (else 403). `access` is `manager` or `grant`. `scenes` lists the granted scenes and, for a manager, every other scene of the agent (newest activity first, at most 1000, `source: "manager"`, `expires_at: ""`, titles and kinds from the admin scene union). `global.connectors` are the agent's granted, enabled connectors with a ready workspace credential (and, for official apps, discovered tools). `catalog_slug` names the official app (`""` for custom connectors). `auth_mode` is `none`, `bearer` or `oauth`. `accepts_credential` means the connector accepts a pasted token: a Bearer connector, or an official app that allows a PAT. `accepts_pat = auth_mode == 'oauth' && accepts_credential`. `credential_required` means the connector uses a credential (Bearer or OAuth) and has no workspace credential. `oauth_available` means the server can run the app's OAuth sign-in (GitHub needs `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`; every app needs the connector credential key and an app origin, the other deployment checks of the start endpoint); the page shows 连接 only for a literal `true` (a missing field from an older backend hides it too) and offers the PAT form when `accepts_pat`. `install_url` is the GitHub App installation page (omitted when there is none). `jsapi_available` is true only when H5 signing is configured and the caller has a person grant (the resolve endpoint needs one) |
-| GET | `/api/context-capabilities/agents/{agentId}/scenes/{sceneKey}?org_id=` | `{scene: {scope_key, scope_title, source, expires_at, kind, org_id}, scope: null \| {type, key, title}, bindings: [B], credentials: [C], rights: R, can_connect, prompts: [P], mcp_config: M, mcp_config_redacted}` (scene grant or manager required; for a 1:1 chat also its person's grant; a manager without a grant gets `source: "manager"`). `scope` is where the configuration lives: `{type: "scene", key: <cid>}` for a group, `{type: "person", key: <staffId>, title}` for a 1:1 chat, `null` (with empty lists) for a 1:1 chat whose person is unknown. `bindings` and `credentials` are those of `scope` (a person's connector bindings carry `share_in_groups`). `rights` is what the caller may change there (all false for a group's link holder, for a manager on a 1:1 chat and while the person is unknown); `can_connect` is `rights.connect`, kept for older clients. `prompts` and `mcp_config` are those of `scope`. A manager on a 1:1 chat who is not a workspace owner/admin gets that person's credentials with `hint: ""` (the connected state, `kind` and `updated_at` stay), as on the admin scene page and the connected-apps page. `kind` comes from the admin scene union (a key it does not know is `group`). The key may be percent-encoded |
-| PUT | `/api/context-capabilities/agents/{agentId}/bindings` | `{scope_type, scope_key, org_id?, resource_type, resource_id, enabled, share_in_groups?}` → `{binding: B}` (`scope_type` `org`, `scene` or `person`; needs `rights.toggle`); 403 unless the resource is in the enabled offer catalog (enable and disable alike). `share_in_groups` is only accepted for a person scope (`scope_type='person'`, or a 1:1 chat's scene key, which maps to its person) and `resource_type='connector'` (else 400), and only from the person (a manager on a 1:1 chat gets 403 `person_only`, like any of their writes there); omitted keeps the stored value |
+| GET | `/api/context-capabilities/agents/{agentId}?org_id=` | `{agent, global: {connectors: [{id, name, catalog_slug}], skills: [{id, name, description}]}, offers: {connectors: [{id, name, tools, accepts_credential, credential_required, catalog_slug, auth_mode, accepts_pat, oauth_available, install_url?}], skills}, person: null \| {scope_key, scope_title, source, expires_at, bindings: [B], credentials: [C], rights: R, prompts: [P], mcp_config: M, mcp_config_redacted}, scenes: [{scope_key, scope_title, source, expires_at, kind, org_id}], access, jsapi_available, tenant: null \| {org_id, name, source}, tenants: [{org_id, name, source}], org: null \| {scope_key, scope_title, bindings: [B], credentials: [C], rights: R, can_edit, prompts: [P], mcp_config: M, mcp_config_redacted}}` for one tenant org: `org_id`, else the identity org, else (a caller who does not manage the agent and holds no grant there) the org of the caller's newest grant. `tenant` is that org (null for an agent without a DingTalk identity when none was named), `tenants` the orgs the caller may switch to (every tenant for a manager, else those holding a grant of the caller), `org` its enterprise layer (null unless the caller manages the agent); `can_edit` is `rights.toggle`, kept for older clients. `person.rights` is the person's own (everything). Needs any grant for the agent in that org or managing it (else 403). `access` is `manager` or `grant`. `scenes` lists the granted scenes and, for a manager, every other scene of the agent in that org, groups and 1:1 chats (newest activity first, at most 1000, `source: "manager"`, `expires_at: ""`, titles and kinds from the scene directory; none for an orgless agent). `global.connectors` are the agent's granted, enabled connectors with a ready workspace credential (and, for official apps, discovered tools). `catalog_slug` names the official app (`""` for custom connectors). `auth_mode` is `none`, `bearer` or `oauth`. `accepts_credential` means the connector accepts a pasted token: a Bearer connector, or an official app that allows a PAT. `accepts_pat = auth_mode == 'oauth' && accepts_credential`. `credential_required` means the connector uses a credential (Bearer or OAuth) and has no workspace credential. `oauth_available` means the server can run the app's OAuth sign-in (GitHub needs `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`; every app needs the connector credential key and an app origin, the other deployment checks of the start endpoint); the page shows 连接 only for a literal `true` (a missing field from an older backend hides it too) and offers the PAT form when `accepts_pat`. `install_url` is the GitHub App installation page (omitted when there is none). `jsapi_available` is true only when H5 signing is configured and the caller has a person grant (the resolve endpoint needs one) |
+| GET | `/api/context-capabilities/agents/{agentId}/scenes/{sceneKey}?org_id=` | `{scene: {scope_key, scope_title, source, expires_at, kind, org_id}, scope: {type, key, title}, bindings: [B], credentials: [C], rights: R, can_connect, prompts: [P], mcp_config: M, mcp_config_redacted}` for one scene, a group or a 1:1 chat: `{sceneKey}` is its scene_id (a conversation id is 400). Scene grant or manager required; a manager without a grant gets `source: "manager"`. `scope` is the scene itself (`{type: "scene", key: <scene_id>, title}`); `bindings`, `credentials`, `prompts` and `mcp_config` are the scene's. `rights` is what the caller may change there (everything for a manager, nothing for a link holder: a group member, or the person of a 1:1 chat); `can_connect` is `rights.connect`, kept for older clients. A caller without `rights.connect` gets the credentials with `hint: ""` (the connected state, `kind` and `updated_at` stay). `kind` comes from the scene directory (an id it does not know is `group`) |
+| PUT | `/api/context-capabilities/agents/{agentId}/bindings` | `{scope_type, scope_key, org_id?, resource_type, resource_id, enabled, share_in_groups?}` → `{binding: B}` (`scope_type` `org`, `scene` or `person`; needs `rights.toggle`); 403 unless the resource is in the enabled offer catalog (enable and disable alike). `share_in_groups` is only accepted for a person scope (`scope_type='person'`; a scene, 1:1 chats included, answers 400) and `resource_type='connector'` (else 400), and only from the person (a manager gets 403 `person_only`, like any of their person-scope writes); omitted keeps the stored value |
 | PUT | `/api/context-capabilities/agents/{agentId}/credentials` | `{scope_type, scope_key, org_id?, connector_id, bearer}` → `{credential: C}` (needs `rights.connect`; an `org` credential, like a scene credential, needs an offered or granted connector). The connector must be enabled and offered to the agent, or (person scope only) globally granted to it (else 403). It must accept a pasted token: `auth_mode='bearer'`, or an official app that allows a PAT (GitHub) (else 400). bearer is 1..4096 bytes, with no CR/LF/NUL and no surrounding whitespace; 503 without a credential key. The first credential of an official app also discovers and pins its tools |
 | DELETE | `/api/context-capabilities/agents/{agentId}/credentials?scope_type=&scope_key=&connector_id=&org_id=` | 204, idempotent; needs `rights.connect`; allowed after the offer was removed. For an OAuth credential this is "disconnect" (the provider grant is not revoked) |
-| POST | `/api/context-capabilities/agents/{agentId}/connections/start` | `{scope_type, scope_key, org_id?, connector_id, return_to?}` → `{authorize_url}` (an `org` scope needs a manager; the state stores the tenant org and the callback re-checks that it is still a tenant) for connecting an official app account through OAuth, plus the browser binding cookie (the WebView that calls it must also open the URL). The caller needs `rights.connect` there: managing the agent for an org or group scope (403 `manager_only` for a group's link holder; 404 for a manager's unknown scene), being the person for a person scope. A 1:1 chat scene connects its person's account: the state stores the person scope (and, sealed, the requested chat, so the callback re-checks that same request), only the person may start it (403 `person_only` for a manager), and an unknown person answers 409 `dm_person_unknown`. The connector must be an enabled official app that is offered to the agent (scene) or offered or globally granted (person); otherwise 403 with `code: "forbidden"`, including for an unknown connector. Other errors are `{error, code}`: 400 `not_oauth` or `invalid_return_to`; 503 `oauth_unavailable`, `app_origin_missing` or `credential_storage_unavailable`; 502 `provider_unavailable`. The browser returns to `return_to` (default `/dingtalk/configure?agent=<id>`) with `?connected=<slug>` or `?connect_error=<code>`. The callback re-checks the grant and offer, stores the credential for that scope and turns the connector on for it (see `docs/internal-mcp-connectors.md` "Official apps") |
-| PUT | `/api/context-capabilities/agents/{agentId}/prompts` | `{scope_type, scope_key, org_id?, prompts: [{name, order, text, enabled?}]}` → `{prompts: [{id, name, order, text, enabled, updated_by_name, updated_at}]}`: replaces the scope's prompt components (a 1:1 chat's key acts on its person), like the admin node PUT and with its validation (at most 20; names trimmed, 1..64 characters, unique, 400 `duplicate_prompt_name`; texts trimmed, 1..8000 characters, 400 `invalid_prompts`; `enabled` defaults to true; `[]` clears them). 403 without `rights.edit_prompts` |
-| PUT | `/api/context-capabilities/agents/{agentId}/mcp-config` | `{scope_type, scope_key, org_id?, mcp_config: {mcpServers: {...}} \| null}` → `{mcp_config}`: replaces the scope's custom MCP servers (a 1:1 chat's key acts on its person). Remote servers only (`contextcap.NormalizeRemoteMCPConfig`): the document holds only `mcpServers`; each server is an object with a `url` (http or https, with a host) and otherwise only `type` (`http`, `sse` or `streamable-http`), `headers` (header name → string, no CR/LF/NUL) and `disabled` (boolean); `command`, `args`, `env`, `cwd` and any other key, names that are empty, longer than 64 characters or padded, and the reserved names `multica` and `c<16 hex>` answer 400 `invalid_mcp_config` with a reason. `null`, `{}` and `{"mcpServers": {}}` clear it. At most 64 KiB. 403 without `rights.edit_mcp`. While the workspace redacts (`mcp_config_redacted`), the page cannot see the stored servers and a PUT still replaces them all |
-| POST | `/api/context-capabilities/agents/{agentId}/scenes/resolve?org_id=` | `{chat_id, open_conversation_id?}` → `{scene: {scope_key, scope_title, source, expires_at, kind: "group", org_id}}` (JSAPI path, see §5; group scenes only) in the tenant `org_id` names (default the identity org): the person grant must be in that tenant and the scene grant is stored under it. 400 without `chat_id` or when `open_conversation_id` differs from the converted one; 403 without a person grant in that tenant or for a group the agent never served there; 404 `tenant_not_found`; 503 when chatId conversion is unavailable; 502 when DingTalk rejects the chatId |
+| POST | `/api/context-capabilities/agents/{agentId}/connections/start` | `{scope_type, scope_key, org_id?, connector_id, return_to?}` → `{authorize_url}` (an `org` scope needs a manager; the state stores the tenant org and the callback re-checks that it is still a tenant) for connecting an official app account through OAuth, plus the browser binding cookie (the WebView that calls it must also open the URL). The caller needs `rights.connect` there: managing the agent for an org or scene scope, a group or a 1:1 chat alike (403 `manager_only` for a link holder, the person of a 1:1 chat included; 404 for a manager's unknown scene), being the person for a person scope. The connector must be an enabled official app that is offered to the agent (scene) or offered or globally granted (person); otherwise 403 with `code: "forbidden"`, including for an unknown connector. Other errors are `{error, code}`: 400 `not_oauth` or `invalid_return_to`; 503 `oauth_unavailable`, `app_origin_missing` or `credential_storage_unavailable`; 502 `provider_unavailable`. The browser returns to `return_to` (default `/dingtalk/configure?agent=<id>`) with `?connected=<slug>` or `?connect_error=<code>`. The callback re-checks the grant and offer, stores the credential for that scope and turns the connector on for it (see `docs/internal-mcp-connectors.md` "Official apps") |
+| PUT | `/api/context-capabilities/agents/{agentId}/prompts` | `{scope_type, scope_key, org_id?, prompts: [{name, order, text, enabled?}]}` → `{prompts: [{id, name, order, text, enabled, updated_by_name, updated_at}]}`: replaces the scope's prompt components, like the admin node PUT and with its validation (at most 20; names trimmed, 1..64 characters, unique, 400 `duplicate_prompt_name`; texts trimmed, 1..8000 characters, 400 `invalid_prompts`; `enabled` defaults to true; `[]` clears them). 403 without `rights.edit_prompts` |
+| PUT | `/api/context-capabilities/agents/{agentId}/mcp-config` | `{scope_type, scope_key, org_id?, mcp_config: {mcpServers: {...}} \| null}` → `{mcp_config}`: replaces the scope's custom MCP servers. Remote servers only (`contextcap.NormalizeRemoteMCPConfig`): the document holds only `mcpServers`; each server is an object with a `url` (http or https, with a host) and otherwise only `type` (`http`, `sse` or `streamable-http`), `headers` (header name → string, no CR/LF/NUL) and `disabled` (boolean); `command`, `args`, `env`, `cwd` and any other key, names that are empty, longer than 64 characters or padded, and the reserved names `multica` and `c<16 hex>` answer 400 `invalid_mcp_config` with a reason. `null`, `{}` and `{"mcpServers": {}}` clear it. At most 64 KiB. 403 without `rights.edit_mcp`. While the workspace redacts (`mcp_config_redacted`), the page cannot see the stored servers and a PUT still replaces them all |
+| POST | `/api/context-capabilities/agents/{agentId}/scenes/resolve?org_id=` | `{chat_id, open_conversation_id?}` → `{scene: {scope_key, scope_title, source, expires_at, kind: "group", org_id}}` (JSAPI path, see §5; registered group scenes only, `scope_key` = the group's scene_id) in the tenant `org_id` names (default the identity org): the person grant must be in that tenant and the scene grant is stored under it. 400 without `chat_id` or when `open_conversation_id` differs from the converted one; 403 without a person grant in that tenant or when the agent has no registered group scene for that conversation there (a 1:1 chat, a group of another org, an orgless agent); 404 `tenant_not_found`; 503 when chatId conversion is unavailable; 502 when DingTalk rejects the chatId |
 | GET | `/api/dingtalk/jsapi-config?url=` | `dd.config` signature `{corp_id, agent_id, time_stamp, nonce_str, signature}` for the page URL without `#fragment`. Any authenticated human (`RequireHumanActor`). The URL must be absolute http(s) on the app origin (`MULTICA_APP_URL` / `FRONTEND_ORIGIN`); without an app origin the endpoint answers 503 rather than signing arbitrary pages. `signature = sha1("jsapi_ticket=<t>&noncestr=<n>&timestamp=<ts>&url=<url>")` in hex, where `<url>` has its query percent-decoded like DingTalk's reference signer and `time_stamp` is Unix seconds. The ticket (`GET {oapi}/get_jsapi_ticket`) is cached in process until 5 minutes before expiry and never returned; the corp access token it is fetched with is redacted from transport errors before they are logged. 503 when `DINGTALK_H5_CORP_ID` / `DINGTALK_H5_AGENT_ID` are unset, no app origin is configured, or the direct client is unavailable |
 
 Admin (workspace routes, human actor, the same permission as editing the
@@ -699,105 +703,98 @@ persons_enabled, persons_connected}}`, one per catalog app in catalog order:
   that scope (OAuth account or pasted token), whether or not its switch is
   on; `*_enabled` = an enabled binding while the app is offered (a binding
   of an app that is not offered is stored but never applies, so it is not
-  counted). Rows stored on a 1:1 chat's own scene key (the admin scene
-  union says `dm`) are skipped: a 1:1 chat's configuration is its person's
-  (§1.1) and the runtime ignores those rows. A 1:1 chat's account and
-  switches show up as its person.
+  counted). Scenes are groups and 1:1 chats alike, each counted once by
+  its scene_id; a 1:1 chat's account and switches count as that scene,
+  not as its person.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/agents/{id}/connected-apps` | `{apps: [A], can_admin}`; `can_admin` is true for a workspace owner/admin |
-| GET | `/api/agents/{id}/connected-apps/{slug}` | `A` plus `scenes: [{scene_key, title, kind, enabled, connected, account}]`, `persons: [{scope_key, title, enabled, connected, account, share_in_groups}]`, `tool_list: [{name, read_only, allowed}]` and `can_admin`; 404 for a slug not in the catalog. `scenes` and `persons` list only the scopes that count in `usage` (enabled or connected); `account` is the scope credential's hint, for a person only to workspace admins (`""` for other agent managers, like the shared account's hint). Scene titles and kinds come from the admin scene union (newest activity first, unknown keys last); person titles are the binding's snapshot or the newest grant title (the DingTalk display name), people sorted by title |
+| GET | `/api/agents/{id}/connected-apps/{slug}` | `A` plus `scenes: [{scene_id, scene_key, title, kind, enabled, connected, account}]` (`scene_key` carries the same scene_id), `persons: [{scope_key, title, enabled, connected, account, share_in_groups}]`, `tool_list: [{name, read_only, allowed}]` and `can_admin`; 404 for a slug not in the catalog. `scenes` and `persons` list only the scopes that count in `usage` (enabled or connected); `account` is the scope credential's hint, for a person only to workspace admins (`""` for other agent managers, like the shared account's hint). Scene titles and kinds come from the scene directory (newest activity first; a key the directory does not know is listed last, as a group); person titles are the binding's snapshot or the newest grant title (the DingTalk display name), people sorted by title |
 | DELETE | `/api/workspaces/{ws}/internal-connectors/{connectorId}/credential` | Workspace owner/admin (`RequireWorkspaceMCPHumanIssuer` plus the admin role): removes the workspace's stored credential of a connector, i.e. disconnects an official app's shared account. 204, idempotent; 404 for an unknown connector, 400 for a malformed id. The provider grant is not revoked and an environment credential (`MULTICA_INTERNAL_MCP_BEARER_<id>`) is not affected; a concurrent OAuth refresh holds the row lock, so it cannot restore the credential |
 
 ### Scenes (admin)
 
 Same routes group and permission (human actor, workspace owner/admin or the
-agent owner; agent actors get 403). Scene keys are percent-encoded
-openConversationIds (decoded once, like the mobile scene route); a malformed
-key answers 400. A scene of an org is one the agent has seen there: the
-union of its `scene_memory` rows (under that org, or any org for the org
-"" of an agent without a DingTalk identity), its inbound Coordinator
-conversations (`inbound_coordinator_job` openConversationIds recorded under
-that agent org; a job that recorded none belongs to the identity org), its
-`agent_scene_config` rows, its scene bindings, scene credentials and scene
-prompt components (a group can store a token without turning anything on;
-the scene still lists, so a manager can open it and remove the credential).
-Kind is `dm` only on positive evidence: the newest Coordinator job's
-conversation type is a 1:1 type (`single`, `p2p`, `private`, `direct`); when
-that job has no type, or there is no job, the configured kind
-(`agent_scene_config`, written by a 1:1 link redemption); else `group`.
-`scene_memory.scene_kind` is not used, because the memory writer records
-`dm` for every type that is not `group`, empty or unknown types included. A
-1:1 chat's configuration (bindings, credentials, prompt components, custom
-MCP servers) is its person's (§1.1): the Context Builder routes act on that
-scope through the same resolver as the mobile routes (the caller manages the
-agent; a manager who also holds the person's grant is that person).
+agent owner; agent actors get 403). A scene is an Agent work scene
+(`docs/agent-scene.md`) and its key in these routes is its scene_id; an
+openConversationId or another malformed key answers 400. The scenes of an
+org are the agent's group and 1:1 chat scenes in the `agent_scene`
+directory under that tenant org (`contextcap.ListAgentScenes`); nothing is
+discovered by unioning memory, Coordinator jobs, configuration or bindings.
+Kind is the directory's (`group` or `dm`, set when the scene was
+registered, `docs/agent-scene.md` §4). An orgless agent (org `""`) has no
+scenes. A 1:1 chat's configuration (bindings, credentials, prompt
+components, custom MCP servers) is its own, like a group's: the Context
+Builder routes act on the scene through the same resolver as the mobile
+routes.
 
-`S = {scene_key, kind, title, org_id, last_active_at, inbound_session_id,
-inbound_count, memory_id, has_prompt}` (`has_prompt`: the scene has prompt
-components):
-`inbound_session_id` is the newest Coordinator chat session of the
-conversation (open its transcript with
+`S = {scene_id, scene_key, conversation_id, kind, title, org_id,
+last_active_at, inbound_session_id, inbound_count, memory_id, has_memory,
+has_prompt}` (`has_prompt`: the scene has prompt components). `scene_key`
+carries the same scene_id for older clients; `conversation_id` is the
+scene's openConversationId, for display only. `title` is the directory's
+(the group title or the 1:1 counterpart), else the locating line of its
+Scene Memory.
+`inbound_session_id` is the newest Coordinator chat session of the scene
+(jobs whose command carries its SceneRef; open its transcript with
 `GET /api/agents/{id}/coordinator-conversations/{inbound_session_id}/messages`)
 or `""`; `inbound_count` counts the sessions that transcript shows (the
 messages endpoint's anchor partition: same endpoint namespace, source
 platform and source type as that session); sessions of the same
 conversation under another endpoint namespace or source stay reachable in
-the full inbound conversation list. `memory_id` is the `scene_memory` row id
-(open it with `GET /api/agents/{id}/scene-memory/{memory_id}`, which also
-serves rows beyond the 200 newest that the list endpoint returns) or `""`;
-`last_active_at` is the newest update across the sources. The list carries
-no binding counts; a scene's bindings are in its detail.
+the full inbound conversation list. `memory_id` is the scene_id when the
+scene has Scene Memory (`has_memory`), else `""` (open it with
+`GET /api/agents/{id}/scene-memory/{scene_id}`, which also serves scenes
+beyond the 200 newest that the list endpoint returns); `last_active_at` is
+the directory's last activity. The list carries no binding counts; a
+scene's bindings are in its detail.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/agents/{id}/scene-memory/{memoryId}` | One scene memory row (the scene memory list item shape); same permission as the other scene memory routes; 400 for a malformed id, 404 when the agent has no such row |
+| GET | `/api/agents/{id}/scene-memory/{sceneId}` | The Scene Memory of one scene by its scene_id (the scene memory list item shape, `id`, `scene_id` and `scene_key` = the scene_id, `conversation_id` for display); same permission as the other scene memory routes; 400 for a malformed id, 404 when the agent has no memory for that scene |
 
 The agent-wide scene list (`GET /api/agents/{id}/scenes`) and the scene
 detail, prompt, bindings and custom MCP server routes of
 `/api/agents/{id}/scenes/{sceneKey}` are gone: the per-tenant `groups` and
-`persons` lists and the Context Builder routes below replace them (a 1:1
-chat is reached through its person, or by its key as a scene node). The
-lists and the single-scene lookup behind the context nodes read the agent's Coordinator jobs through
-`inbound_coordinator_job_agent_conversation_idx` (9417, `(agent_id,
-BTRIM(command #>> '{event,data,conversation,openConversationId}'))`): the
-list scans the agent's jobs only, and a single scene probes its own
-conversation. The key filter is a plain predicate so a cached generic plan
-still uses the index.
+`persons` lists and the Context Builder routes below replace them. The
+lists and the single-scene lookup behind the context nodes and the task
+claim read the directory (`agent_scene_agent_active_idx`, 9503) and, per
+scene, its Coordinator jobs through `inbound_coordinator_job_agent_scene_idx`
+(9507, `(agent_id, command #>> '{agent_scene,scene_id}')`).
 
 ### Tenants (admin)
 
 Same routes group and permission. `T = {org_id, name, source, group_count,
 person_count}`: `source` is `identity` for the agent's DingTalk identity org
 (listed first, with or without a row) or `created`; `group_count` counts the
-org's group scenes and `person_count` its people (§1.3), from every scene
-and person source. Errors carry `{error, code}`.
+org's group scenes in the directory (1:1 chats left out) and `person_count`
+its people (§1.3). Errors carry `{error, code}`.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/agents/{id}/tenants` | `{tenants: [T], unassigned_orgs: [{org_id, group_count, person_count}]}`; `unassigned_orgs` are the non-empty orgs scene or person data mentions without a tenant, by org id |
+| GET | `/api/agents/{id}/tenants` | `{tenants: [T], unassigned_orgs: [{org_id, group_count, person_count}]}`; `unassigned_orgs` are the non-empty orgs that scenes or person data mention without a tenant, by org id |
 | POST | `/api/agents/{id}/tenants` | `{org_id, name}` → 201 `{tenant: T}`. `org_id` 1..64 of `[A-Za-z0-9_-]` (400 `invalid_org_id`), `name` trimmed, 1..64 characters (400 `invalid_name`); 409 `tenant_exists` for a tenant row or the identity org |
 | PATCH | `/api/agents/{id}/tenants/{orgId}` | `{name}` → `{tenant: T}`; renaming the identity tenant stores a row for it; 404 `tenant_not_found`, 400 `invalid_name` |
 | DELETE | `/api/agents/{id}/tenants/{orgId}` | 204: removes the tenant row and its org-scope configuration (bindings, credentials, prompt components, custom MCP servers, pending org OAuth connects) in one transaction; group and person data stays and the org shows as unassigned. 409 `identity_tenant` for the identity org, 404 `tenant_not_found` |
-| GET | `/api/agents/{id}/tenants/{orgId}/groups?limit=&offset=` | `{scenes: [S], has_more}`: the tenant's group scenes (1:1 chats left out), newest activity first; `limit` 1..200 (default 50), `offset` ≥ 0, else 400 |
-| GET | `/api/agents/{id}/tenants/{orgId}/persons` | `{persons: [{staff_id, title, dm_scene_key, last_active_at}]}`: the tenant's people, newest activity first. `title` is the newest 1:1 sender display name, else the person grant title, else the binding title; `dm_scene_key` their 1:1 chat with the agent (`""` when unknown) |
+| GET | `/api/agents/{id}/tenants/{orgId}/groups?limit=&offset=&groups_only=` | `{scenes: [S], has_more}`: the tenant's scenes, groups and 1:1 chats (`groups_only=true`: groups only), newest activity first; `limit` 1..200 (default 50), `offset` ≥ 0, else 400 |
+| GET | `/api/agents/{id}/tenants/{orgId}/persons` | `{persons: [{staff_id, title, dm_scene_key, last_active_at}]}`: the tenant's people, newest activity first. `title` is the newest 1:1 sender display name, else the person grant title, else the binding title; `dm_scene_key` is the scene_id of their 1:1 chat with the agent (§1.3; `""` when unknown), a scene node of its own, not the person's configuration |
 
 ### Context nodes (admin)
 
 A node of the 场域 tree is `(orgId, scopeType, scopeKey)` under
 `/api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}`:
-`scopeType` `org` (`scopeKey` = `orgId`, else 400), `scene` (a scene of that
-org, 404 otherwise; a 1:1 chat's key maps to its person, `scope: null` and
-409 `dm_person_unknown` on writes while its person is unknown) or `person`
-(a person of that org, §1.3; 404 otherwise). Same routes group and
+`scopeType` `org` (`scopeKey` = `orgId`, else 400), `scene` (`scopeKey` = a
+scene_id of the agent in that org, a group or a 1:1 chat; 400 for a key
+that is not a scene_id, 404 for another scene) or `person` (a person of
+that org, §1.3; 404 otherwise). Same routes group and
 permission (workspace owner/admin or agent owner); what the caller may
 change is `contextCapScopeRights` (§5 "Who may change what"): managers
-change org and group scopes, while a person scope is only that person's (a
+change org and scene scopes, while a person scope is only that person's (a
 live person grant of the caller): a manager reads it and every write there
 answers 403 `person_only`. Unknown tenant: 404 `tenant_not_found`.
 
-`N = {scope: null | {type, org_id, key, title}, scene: null | S, prompts:
+`N = {scope: {type, org_id, key, title}, scene: null | S, prompts:
 [P], connectors: [{id, name, catalog_slug, auth_mode, accepts_credential,
 accepts_pat, oauth_available, install_url?, credential: {connected,
 account}, enabled}], skills: [{id, name, description, enabled}],
@@ -808,10 +805,9 @@ layer}], skills: [{id, name, layer}], mcp_servers: [{name, layer,
 overridden_by?}]}}` with `P = {id, name, order, text, enabled,
 updated_by_name, updated_at}`:
 
-- `scope` is where the node's configuration lives (the org, the group, or
-  the person; a 1:1 chat's person); `scene` is the group of a scene node or
-  the person's 1:1 chat (null for org nodes and people without one), for
-  入站记录 and 记忆.
+- `scope` is the node's own scope (the org, the scene, or the person);
+  `scene` is the scene of a scene node or the person's 1:1 chat scene
+  (null for org nodes and people without one), for 入站记录 and 记忆.
 - `connectors` and `skills` are the offer catalog (connectors enabled in the
   library, with the configure page's flag rules); `enabled` is this scope's
   binding, `credential` this scope's stored credential (`account` is its
@@ -820,10 +816,10 @@ updated_by_name, updated_at}`:
   with `mcp_config_redacted: true` when the workspace always redacts
   secrets).
 - `rights`: what the caller may change in `scope` (§5 "Who may change
-  what"; all false while a 1:1 chat's person is unknown); `can_edit` is
+  what"); `can_edit` is
   `rights.toggle` and `can_connect` is `rights.connect`, kept for older
   clients.
-- `effective` is `contextcap.MergeContext` over global + org (+ group for a
+- `effective` is `contextcap.MergeContext` over global + org (+ scene for a
   scene node, + person for a person node): `layer` is `global`, `org`,
   `scene` or `person`; `overridden_by` names the nearer layer whose
   component of the same name replaces this one (omitted when it applies).
@@ -836,10 +832,10 @@ updated_by_name, updated_at}`:
 | PUT | `.../context/{scopeType}/{scopeKey}/bindings` | `{resource_type, resource_id, enabled}` → `{binding: {resource_type, resource_id, enabled, updated_by_name, updated_at}}`; `rights.toggle`; offer-gated (403 unless offered, enable and disable alike) |
 | PUT | `.../context/{scopeType}/{scopeKey}/prompts` | `{prompts: [{name, order, text, enabled?}]}` (required) replaces the scope's prompt components → `{prompts: [P]}` ordered by order, then name; `rights.edit_prompts`. At most 20; names trimmed, 1..64 characters, unique (400 `duplicate_prompt_name`); texts trimmed, 1..8000 characters, no NUL (400 `invalid_prompts`); `enabled` defaults to true; `[]` clears them. A component whose name stays keeps its id, and its update stamp when neither order, text nor `enabled` changed |
 | PUT | `.../context/{scopeType}/{scopeKey}/mcp-config` | `{mcp_config: object \| null}` (required) → `{mcp_config}`; `rights.edit_mcp`: the agent `mcp_config` format, a JSON object of at most 64 KiB (local command servers allowed here, unlike the configure page); a server object may carry `"disabled": true`; `null` or `{}` clears it |
-| PUT | `.../context/{scopeType}/{scopeKey}/credentials` | `{connector_id, bearer}` → `{credential: C}`; `rights.connect`; the mobile PUT's connector rules (an org or group credential needs an offered connector) |
+| PUT | `.../context/{scopeType}/{scopeKey}/credentials` | `{connector_id, bearer}` → `{credential: C}`; `rights.connect`; the mobile PUT's connector rules (an org or scene credential needs an offered connector) |
 | DELETE | `.../context/{scopeType}/{scopeKey}/credentials?connector_id=` | 204, idempotent |
 | POST | `.../context/{scopeType}/{scopeKey}/connections/start` | `{connector_id, return_to?}` → `{authorize_url}` plus the browser binding cookie; the mobile start's rules and errors; the state stores the tenant org |
-| DELETE | `.../context/{scopeType}/{scopeKey}/grants` | Managers revoke every configure-page grant of a group or person scope (a 1:1 chat node revokes its person's) → `{revoked: n}`. A person scope also loses the 1:1 chat grants its personal links gave the same accounts, under the redemption lock (`contextcap.RevokeGrants`), so the person can redeem a new personal link (no more 409); the scope's configuration stays. 400 for an org node (no grants). The web Context Builder shows it as 配置页访问 → 撤销访问 on group and person levels |
+| DELETE | `.../context/{scopeType}/{scopeKey}/grants` | Managers revoke every configure-page grant of a scene or person scope → `{revoked: n}` (a 1:1 chat node revokes the chat's view grants; the person grant stays). A person scope also loses the 1:1 chat grants its personal links gave the same accounts, under the redemption lock (`contextcap.RevokeGrants`), so the person can redeem a new personal link (no more 409); the scope's configuration stays. 400 for an org node (no grants). The web Context Builder shows it as 配置页访问 → 撤销访问 on scene and person levels |
 
 ## 7. Rollout and gating
 
@@ -913,7 +909,8 @@ updated_by_name, updated_at}`:
   fields from the scene detail (clients read a missing `scope` as the scene
   itself and a missing `can_connect` as false), and still treats a 1:1 chat
   as its own scene: a write it serves lands on the chat's scene key, which
-  the new binary ignores (§1.2), so repeat it after the rollout. A connect
+  that release's binary ignored (since 9510 such rows are that 1:1 chat's
+  own configuration again, §1.2), so repeat it after the rollout. A connect
   started on a new replica for a 1:1 chat stores the person scope; if an old
   replica serves its callback, it re-checks the person grant, so a manager
   can never complete one.
@@ -928,8 +925,10 @@ updated_by_name, updated_at}`:
   `connector_oauth_state` to `org` (`DROP CONSTRAINT IF EXISTS` + `ADD
   CONSTRAINT`, every existing row passes); 9428 copies every non-empty
   `agent_scene_config.prompt` into a 「场域提示词」 component (a 1:1 chat's
-  into its person's scope, resolved like `DirectScenePerson`: an org-less
-  job belongs to the identity org and only live grants count; skipped
+  into its person's scope, resolved as that release mapped a 1:1 chat to
+  its person, since removed: an org-less job belongs to the identity org
+  and only live grants count; such components stay in the person scope
+  after 9510; skipped
   while the person is unknown; when two 1:1 chats resolve to one person the
   most recently edited prompt wins; `ON CONFLICT DO NOTHING`, so a replay
   keeps edited components). All are idempotent; the down migrations drop
@@ -959,7 +958,8 @@ updated_by_name, updated_at}`:
 - 9429-9430 add plain performance indexes concurrently, each alone in its
   file (no pre-migration hook: an invalid leftover only costs speed):
   `context_config_link (agent_id, extra_scene_key)` for the 1:1 chat person
-  lookup, and `context_config_grant (agent_id, scope_type, org_id,
+  lookup of that release (gone since scene ids), and
+  `context_config_grant (agent_id, scope_type, org_id,
   scope_key)` for the personal-scope holder check and grant revokes.
 - Workspace deletion: an old replica deletes a workspace without sweeping
   the tables this release adds (no FKs), so during the window or after a
@@ -995,6 +995,29 @@ updated_by_name, updated_at}`:
   components and custom MCP servers. These close once every replica runs
   this binary; switch things off again after the rollout if a test in the
   window depended on it.
+- Scene ids (9510; `docs/agent-scene.md` §8): 9510 registers in
+  `agent_scene` every conversation for which stored scene configuration
+  (bindings, credentials, grants, links, custom MCP servers, prompt
+  components, `agent_scene_config`) had a tenant org and an
+  openConversationId, and re-keys those rows (`scope_key`, and a personal
+  link's `extra_scene_key`) to its scene_id. A conversation is registered
+  as `dm` only on positive evidence (a personal link's extra scene, or a
+  stored `dm` kind), else as `group`. Rows without an org or with a
+  malformed key are left untouched and no longer apply (§1.2); re-running
+  it changes nothing. Scene credentials seal their scope key, so
+  `ReconcileSceneCredentials` reseals them under the scene_id at every
+  server start (idempotent, monotonic); until it ran, a credential still
+  under a conversation id is not found. Person rows are not touched:
+  configuration a 1:1 chat stored in its person's scope while a 1:1 chat
+  was its person (9418 until 9510) stays that person's and is not moved
+  into the chat's scene. During the rollout an old replica still keys
+  scenes by openConversationId: it finds no configuration under re-keyed
+  scenes (a task it claims gets no scene layer), answers 400 to a scene_id
+  key, and a scene write it serves lands under the conversation id, which
+  the new binary does not read (repeat it after the rollout; a credential
+  stored that way is re-keyed at the next server start when its
+  conversation has a scene). A task an old replica dispatched carries no
+  SceneRef and gets no scene layer on any replica.
 
 ## 8. Known limitations (v1)
 
@@ -1005,39 +1028,44 @@ updated_by_name, updated_at}`:
   into a person-level custom MCP server's headers; connect the account
   instead. The next round gates the personal layer in group runs on the
   switch.
-- An agent without a DingTalk identity has its scene and person
-  configuration under org `""` (§2), which is not a tenant row: the web 场域
-  tree does not list it; it is configured on the mobile page (links and the
-  group picker) only.
+- An orgless agent (no DingTalk identity and no recorded dispatch org) has
+  no scenes, so its tasks get no scene layer (`docs/agent-scene.md` §3);
+  only its person configuration under org `""` applies (§2). Org `""` is
+  not a tenant row: the web 场域 tree does not list it; it is configured on
+  the mobile page through personal links only.
 - The configure page edits prompt components and remote custom MCP servers
   (url, type, headers, switch); servers that run a local command are added
   on the web only (agent detail → 场域). While the workspace always redacts
   secrets, the page does not see the stored servers and a save replaces
   them all.
-- A 1:1 chat is bound to its person only once the Coordinator has seen that
-  person write in it (a job with a sender staffId) or the person redeemed a
-  personal link minted there; until then the chat has no configuration.
-  Old rows stored on a 1:1 chat's own scene key are ignored, not migrated.
-- A tenant's group list, its people and the tenant counts read every
-  Coordinator job of the agent (through the 9417 index, not the whole
-  workspace) and decode their JSON to group them; a single-scene lookup
-  reads only that conversation's jobs. The mobile page's scene `kind` lookup
-  reads only the indexed `agent_scene_config`.
-- Groups and people are listed per tenant; memory rows and conversations of
-  an org that is not a tenant are reachable through its unassigned org
-  (create a tenant for it) or through 其他记录 (the full lists, the memory
-  list capped at the 200 newest rows).
+- A scene exists only once it was registered from trusted data
+  (`docs/agent-scene.md` §4); a conversation the agent has not seen has no
+  scene, so it cannot be configured or granted yet. Scene configuration
+  9510 could not re-key (no tenant org, a malformed key) no longer applies,
+  and configuration a 1:1 chat stored in its person's scope stays that
+  person's (§7).
+- A tenant's scene list reads the `agent_scene` directory and, per listed
+  scene, its newest Coordinator session and session count (through the
+  9507 index); its people and the tenant person counts still read every
+  1:1 Coordinator job of the agent and decode their JSON. The mobile page's
+  scene `kind` comes from the directory.
+- Scenes and people are listed per tenant; scenes, memory and
+  conversations of an org that is not a tenant are reachable through its
+  unassigned org (create a tenant for it) or through 其他记录 (the full
+  lists, the memory list capped at the 200 newest rows).
 - A tenant's people list is not paged; it holds every person the agent has
   seen there.
-- The connected-apps usage counts and lists cover group scenes and people of
-  the identity org; enterprise (org) credentials and switches, and the
-  groups and people of other tenants, are not counted there (the 场域 tree
-  shows them per tenant). The offer switches' 「在用」 confirmation does count
+- The connected-apps usage counts and lists cover scenes (groups and 1:1
+  chats) and people of the identity org; enterprise (org) credentials and
+  switches, and the scenes and people of other tenants, are not counted
+  there (the 场域 tree shows them per tenant). The offer switches' 「在用」
+  confirmation does count
   enterprise switches (as scenes, from the admin view's `orgs`).
-- Each relay tool call re-resolves the scope (tenants, prompt components,
-  custom MCP servers, bindings, credentials), about three times the queries
-  of the scene-only resolver; tenant lists read the agent's Coordinator jobs
-  twice per request. Fine at today's volumes; cache per task if it shows.
+- Each relay tool call re-resolves the scope (tenants, the scene fence,
+  prompt components, custom MCP servers, bindings, credentials), about
+  three times the queries of the scene-only resolver; tenant lists read
+  the agent's 1:1 Coordinator jobs once per request. Fine at today's
+  volumes; cache per task if it shows.
 - The Coordinator's routing catalog (`inboundcoord` `FillSkills`) still sees
   agent skills only; scene/personal skills are available to the executing task.
 - Robot Stream path tasks get only the global layer.
@@ -1046,9 +1074,9 @@ updated_by_name, updated_at}`:
   repositories where the App is installed.
 - A manager's scene list on the configure page is capped at the 1000 most
   recently active scenes of the selected tenant; older scenes stay
-  configurable from the web 场域 tree and by key. It is read in one statement
-  (`contextcap.ListAllAgentScenes`: one scan of the agent's history, one
-  snapshot), and the page's scene writes (bindings, credentials) refresh
+  configurable from the web 场域 tree and by scene_id. It is read in one
+  statement (`contextcap.ListAllAgentScenes`: one read of the scene
+  directory, one snapshot), and the page's scene writes (bindings, credentials) refresh
   only that scene, not the agent detail; person writes refresh the agent
   detail, which holds the personal scope. The page takes the manager state
   (hint, empty states, 我的 note) from the detail's `access`, not from the

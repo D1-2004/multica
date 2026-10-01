@@ -7,8 +7,12 @@ allowed-tools: Bash(multica *)
 
 # Scene graph: Issue ↔ DingTalk conversation
 
-The platform graph tags each send/reply with a DingTalk `openConversationId`
-(scene). Query it. Do not reconstruct the relationship from chat history.
+The platform graph tags each send/reply with your work scene: one `scene_id`
+per conversation you work in (a group or a 1:1 chat, in your tenant org).
+You name a conversation by its `openConversationId`; the platform resolves it
+to the scene and every result also returns `scene_id`. Two 1:1 chats are two
+scenes even with the same person. Query the graph. Do not reconstruct the
+relationship from chat history.
 
 Outreach to another person is not the reply the platform delivers back to the
 waiting sender.
@@ -53,11 +57,14 @@ Bind those. Never invent a cid for web inbound.
 ## After outbound send — bind
 
 ```bash
-multica assoc bind --conversation <openConversationId> [--evidence <openMsgId>] [--person <uid>] --output json
+multica assoc bind --conversation <openConversationId> [--kind dm|group] [--evidence <openMsgId>] [--person <uid>] --output json
 ```
 
 Or use the sandbox MCP `assoc_bind` for the current Issue. Never invent an
-Issue or a conversation ID. Coordinator itself does not call this write tool:
+Issue or a conversation ID. `--kind` is required only for a conversation you
+have no scene for yet (dm for a 1:1 chat, group for a group chat, as the
+send receipt shows); a known conversation keeps its kind. Never guess it: if
+you do not know, omit it and the bind is refused instead of mis-filed. Coordinator itself does not call this write tool:
 Host binds a newly committed Issue to its source scene. An existing matter is
 continued only when the current message adds substantive input to that same
 deliverable, not merely because a candidate matched.
@@ -90,8 +97,9 @@ not drop the cid. Coordinator recall JSON is a short card (`read_this` /
 comparing purpose to the current message.
 
 An inbound `/reset-memory` (first token, optional leading @mention) closes this
-conversation's Issue associations and does not start a sandbox. It is not
-`/reset`. After that, recall for the cid should be empty of items.
+scene's Issue associations and clears its Scene Memory, and does not start a
+sandbox. It is not `/reset`. After that, recall for the cid should be empty of
+items. Recall for a conversation you have no scene for is empty too.
 
 ## Purpose
 

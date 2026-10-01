@@ -70,7 +70,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 | --- | --- | --- |
 | 可信入站及原文引用 | 谁说了什么、当前限制 | 评论账号就是委托人 |
 | `agent_skills` | 已提供的安装能力目录 | 未展示即未安装、已有所有权限 |
-| `scene_memory` 与 revision | 本场景已提交的稳定知识 | 合法 issue_id、当前未完成工作、待写已生效 |
+| 场域记忆（`agent_scene_memory`，按 `scene_id`）与 revision | 本场域已提交的稳定知识 | 合法 issue_id、当前未完成工作、待写已生效 |
 | 有水位的历史 | 上一问、对象、短答的上下文 | 新消息替旧消息授权、外群事实属于本群 |
 | 召回与任务证据 | 有限范围内的工作及状态 | 空 48h 结果等于全部历史无事、外部查询结果 |
 | 当前运行送达上下文 | 哪个结果已覆盖哪个接收场域 | 同任务任意旧出站已送达新答案 |
@@ -86,6 +86,8 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 审查Reason始终保留具体缺陷诊断，引文不能替换Reason。constraint_quote字段必填：allow或无规则依据填空；规则驱动revise须提供最多200字符的逐字指令/所需固定话术，避免要求主模型猜不可见SOP。对非空 `constraint_quote` 原文，Host逐个来源验证它是当前限制、已加载岗位约束或实际可见persona/reply_tone的逐字子串，不跨字段拼接，再供主循环decline引用。真实引文只供修复，不构成额外授权。revise的非空摘录若伪改写、去Markdown或不匹配来源，复用现有一次、共用12秒截止的审核协议修正；仍失败则停止提交，不静默清空并缓存无依据revise。allow夹带无效附加引文仍丢弃并记录 `finish_check_boundary_quote_discarded=true`，不阻塞合法裁决；必填quote ref及verdict仍严格校验。该短摘录只证明这条限制，不是运行时生成的新合同或长SOP摘要。读取失败/缺失不得描述为无约束。
 
 数字员工Tab的人格和语气通过 `GetAgentVoice` 读取；主prompt、Host引用校验与侧审核共用persona400/reply_tone200字符的同一投影，审核同时注明各字段是否截断。逐字出处不等于限制适用：配置仅可收窄，不覆盖岗位或当前授权，decline仍需独立审核；记忆、旧报告、旧工具结果及不可见尾部不新增边界来源。已启用技能通过 `ListEnabledAgentSkillCardMetadata` 提供名称与简介。网页、机器人及数字员工 Dispatch 都由 `FillVoice` 调用 `FillSkills`，延续预发已有的技能快照链路。快循环仍最多展示24条、1200字符，单条描述80字符并注明覆盖范围。元描述为空或仅Managed by标记时，只从最多4096字符前缀内完整frontmatter的已声明description补充能力简介；普通已有描述保持不变，前缀不完整不猜测。模型不加载正文/SOP，简介不等于权限或执行结果；明确请求技能对应工作时，仍按新建/续接计划进入沙箱，不能仅复述能力。
+
+场域身份（`docs/agent-scene.md`）：一个场域 = 一个 Agent 在一个租户企业里的一个群或单聊，唯一标识是服务端登记的 `scene_id`。入站命令在受理前由 Host 解析并带 `agent_scene`（SceneRef），Turn、记忆预读、召回、绑定、容量与出站目标都按它；单聊按会话、不按人。模型在工具里写的 `conversation_id` 只经场域目录查找：未登记的会话没有关联（召回为空，`assoc_bind` 拒绝，`waiting_on` 记为未解析），从不按会话类型或发言人猜一个新场域。旧副本入队、命令无 SceneRef 的 job 在认领时用同一解析器补齐。
 
 记忆读取保留预发的员工自述清洗：`prefetchSceneMemory` 同时使用智能体名称与绑定钉钉身份的 `AccountDisplayName`，避免数字员工自己的发言被当作人的稳定记忆。`scene_memory_status` 根据清洗后的实际快照区分 `loaded/empty`，不会把被清除的自述当作有效知识。
 

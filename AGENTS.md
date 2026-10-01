@@ -64,4 +64,17 @@ rules that break production if missed are in CLAUDE.md ("Aone Fork").
 Coordinator Scene Memory e2e plays (next-turn SLS recall) are in
 `docs/plans/2026-09-02-coordinator-scene-memory-e2e.md`.
 
+### Agent work scene (`scene_id`) — hard rules
+
+A scene is one agent in one tenant org in one group, 1:1 chat or enterprise,
+identified only by `scene_id` from `agent_scene` (`docs/agent-scene.md`).
+
+- Never use an openConversationId, staffId, UID or chat title as a scene key.
+  A 1:1 chat is keyed by its conversation, never by its person.
+- Register or find scenes only through `scene.Resolve` / `scene.Lookup`
+  (`server/internal/scene`); unknown kinds are rejected, never guessed.
+- New events and records carry `scene.Ref` (`agent_scene`) resolved at
+  admission; resource events use the enterprise scene.
+- `assoc_scene` and `scene_memory` are retired: no reads, writes or fallbacks.
+
 See CLAUDE.md for the authoritative rules and common commands.
