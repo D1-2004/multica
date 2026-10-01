@@ -58,3 +58,21 @@ WHERE workspace_id = @workspace_id
 
 -- name: DeleteAgentScenesByAgent :exec
 DELETE FROM agent_scene WHERE workspace_id = @workspace_id AND agent_id = @agent_id;
+
+-- name: SettleAgentSceneKind :one
+-- A trusted inbound event that states the conversation type settles a kind
+-- migration 9510 assigned without evidence (kind_source = 'migrated',
+-- docs/agent-scene.md §8). An observed kind is never changed.
+UPDATE agent_scene
+SET scene_kind = @scene_kind, kind_source = 'observed', updated_at = now()
+WHERE id = @id AND workspace_id = @workspace_id AND agent_id = @agent_id
+  AND kind_source = 'migrated'
+RETURNING *;
+
+-- name: AgentServesTenantOrg :one
+-- Whether a tenant was created for the agent in org_id (agent_tenant); the
+-- identity org is a tenant without a row (docs/agent-scene.md §3).
+SELECT EXISTS (
+    SELECT 1 FROM agent_tenant
+    WHERE workspace_id = @workspace_id AND agent_id = @agent_id AND org_id = @org_id
+)::bool AS served;

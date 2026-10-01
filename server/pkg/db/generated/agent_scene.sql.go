@@ -11,6 +11,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const agentServesTenantOrg = `-- name: AgentServesTenantOrg :one
+SELECT EXISTS (
+    SELECT 1 FROM agent_tenant
+    WHERE workspace_id = $1 AND agent_id = $2 AND org_id = $3
+)::bool AS served
+`
+
+type AgentServesTenantOrgParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	OrgID       string      `json:"org_id"`
+}
+
+// Whether a tenant was created for the agent in org_id (agent_tenant); the
+// identity org is a tenant without a row (docs/agent-scene.md §3).
+func (q *Queries) AgentServesTenantOrg(ctx context.Context, arg AgentServesTenantOrgParams) (bool, error) {
+	row := q.db.QueryRow(ctx, agentServesTenantOrg, arg.WorkspaceID, arg.AgentID, arg.OrgID)
+	var served bool
+	err := row.Scan(&served)
+	return served, err
+}
+
 const deleteAgentScenesByAgent = `-- name: DeleteAgentScenesByAgent :exec
 DELETE FROM agent_scene WHERE workspace_id = $1 AND agent_id = $2
 `
@@ -26,7 +48,7 @@ func (q *Queries) DeleteAgentScenesByAgent(ctx context.Context, arg DeleteAgentS
 }
 
 const findAgentSceneByLocator = `-- name: FindAgentSceneByLocator :one
-SELECT id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at FROM agent_scene
+SELECT id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at, kind_source FROM agent_scene
 WHERE workspace_id = $1
   AND agent_id = $2
   AND provider = $3
@@ -67,13 +89,14 @@ func (q *Queries) FindAgentSceneByLocator(ctx context.Context, arg FindAgentScen
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.KindSource,
 	)
 	return i, err
 }
 
 const getAgentScene = `-- name: GetAgentScene :one
 
-SELECT id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at FROM agent_scene
+SELECT id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at, kind_source FROM agent_scene
 WHERE id = $1 AND workspace_id = $2 AND agent_id = $3
 `
 
@@ -101,6 +124,7 @@ func (q *Queries) GetAgentScene(ctx context.Context, arg GetAgentSceneParams) (A
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.KindSource,
 	)
 	return i, err
 }
@@ -115,7 +139,7 @@ INSERT INTO agent_scene (
 )
 ON CONFLICT (workspace_id, agent_id, provider, tenant_org_id, source_namespace, external_scene_id)
 DO NOTHING
-RETURNING id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at
+RETURNING id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at, kind_source
 `
 
 type InsertAgentSceneParams struct {
@@ -158,12 +182,13 @@ func (q *Queries) InsertAgentScene(ctx context.Context, arg InsertAgentScenePara
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.KindSource,
 	)
 	return i, err
 }
 
 const listAgentScenesByIDs = `-- name: ListAgentScenesByIDs :many
-SELECT id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at FROM agent_scene
+SELECT id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at, kind_source FROM agent_scene
 WHERE workspace_id = $1
   AND agent_id = $2
   AND id = ANY($3::uuid[])
@@ -197,6 +222,7 @@ func (q *Queries) ListAgentScenesByIDs(ctx context.Context, arg ListAgentScenesB
 			&i.LastActiveAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.KindSource,
 		); err != nil {
 			return nil, err
 		}
@@ -209,7 +235,7 @@ func (q *Queries) ListAgentScenesByIDs(ctx context.Context, arg ListAgentScenesB
 }
 
 const listAgentScenesByTenant = `-- name: ListAgentScenesByTenant :many
-SELECT id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at FROM agent_scene
+SELECT id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at, kind_source FROM agent_scene
 WHERE workspace_id = $1
   AND agent_id = $2
   AND tenant_org_id = $3
@@ -259,6 +285,7 @@ func (q *Queries) ListAgentScenesByTenant(ctx context.Context, arg ListAgentScen
 			&i.LastActiveAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.KindSource,
 		); err != nil {
 			return nil, err
 		}
@@ -270,13 +297,57 @@ func (q *Queries) ListAgentScenesByTenant(ctx context.Context, arg ListAgentScen
 	return items, nil
 }
 
+const settleAgentSceneKind = `-- name: SettleAgentSceneKind :one
+UPDATE agent_scene
+SET scene_kind = $1, kind_source = 'observed', updated_at = now()
+WHERE id = $2 AND workspace_id = $3 AND agent_id = $4
+  AND kind_source = 'migrated'
+RETURNING id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at, kind_source
+`
+
+type SettleAgentSceneKindParams struct {
+	SceneKind   string      `json:"scene_kind"`
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+}
+
+// A trusted inbound event that states the conversation type settles a kind
+// migration 9510 assigned without evidence (kind_source = 'migrated',
+// docs/agent-scene.md §8). An observed kind is never changed.
+func (q *Queries) SettleAgentSceneKind(ctx context.Context, arg SettleAgentSceneKindParams) (AgentScene, error) {
+	row := q.db.QueryRow(ctx, settleAgentSceneKind,
+		arg.SceneKind,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.AgentID,
+	)
+	var i AgentScene
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.Provider,
+		&i.TenantOrgID,
+		&i.SourceNamespace,
+		&i.SceneKind,
+		&i.ExternalSceneID,
+		&i.Title,
+		&i.LastActiveAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.KindSource,
+	)
+	return i, err
+}
+
 const touchAgentScene = `-- name: TouchAgentScene :one
 UPDATE agent_scene
 SET title = CASE WHEN $1::text = '' THEN title ELSE $1::text END,
     last_active_at = GREATEST(last_active_at, $2::timestamptz),
     updated_at = now()
 WHERE id = $3 AND workspace_id = $4 AND agent_id = $5
-RETURNING id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at
+RETURNING id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at, created_at, updated_at, kind_source
 `
 
 type TouchAgentSceneParams struct {
@@ -311,6 +382,7 @@ func (q *Queries) TouchAgentScene(ctx context.Context, arg TouchAgentSceneParams
 		&i.LastActiveAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.KindSource,
 	)
 	return i, err
 }

@@ -67,8 +67,8 @@ func (h *Handler) registerDingTalkResponseRoute(ctx context.Context, tx db.DBTX,
 		DWSEnvironment:       commandDWSEnvironment(c),
 		CallbackURL:          c.CompletionCallback.ResponseURL, CallbackTarget: c.CompletionCallback.Target,
 	}
-	// The reply goes to the dispatch's scene: its conversation id is read
-	// back from the scene directory, not taken from the event again.
+	// The reply goes to the dispatch's scene: its conversation id and kind
+	// are read back from the scene directory, not taken from the event again.
 	if c.AgentScene != nil {
 		sc, err := dispatchScene(ctx, db.New(tx), c, scope)
 		if err != nil {
@@ -77,6 +77,18 @@ func (h *Handler) registerDingTalkResponseRoute(ctx context.Context, tx db.DBTX,
 		in.SceneID = uuidToString(sc.ID)
 		in.ConversationID = sc.ExternalSceneID
 		in.IsGroup = sc.SceneKind == scene.KindGroup
+	} else if _, known := scene.KindFromConversationType(c.Event.Data.Conversation.Type); !known && in.ReplyToOpenMsgID == "" {
+		// Without a scene and a known kind, the only way to answer would be
+		// a 1:1 send to the sender, which guesses the conversation kind. A
+		// quote reply into the event's own conversation needs no guess; with
+		// nothing to quote no managed route is registered.
+		slog.InfoContext(ctx, "managed DingTalk response route skipped; conversation kind unknown",
+			"event", "dingtalk_response_route_skipped",
+			"agent_id", uuidToString(scope.AgentID),
+			"conversation_type", c.Event.Data.Conversation.Type,
+			"reason", "scene_unresolved",
+		)
+		return nil
 	}
 	// Register both supplied callback paths; never reconstruct one from another.
 	for _, callback := range []string{c.CompletionCallback.URL, c.CompletionCallback.UpdateURL} {
@@ -306,7 +318,7 @@ func (h *Handler) BindVerifiedDingTalkSend(ctx context.Context, in dingtalkrespo
 		node, found = h.sceneNodeByID(ctx, in.WorkspaceID, in.AgentID, in.SceneID)
 	} else {
 		var err error
-		node, found, err = h.conversationSceneNode(ctx, in.WorkspaceID, in.AgentID, cid, "", in.DWSOrgID, false)
+		node, found, err = h.conversationSceneNode(ctx, in.WorkspaceID, in.AgentID, cid, "", in.DWSOrgID, false, false)
 		if err != nil {
 			return err
 		}

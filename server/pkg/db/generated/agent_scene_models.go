@@ -21,6 +21,7 @@ type AgentScene struct {
 	LastActiveAt    pgtype.Timestamptz `json:"last_active_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	KindSource      string             `json:"kind_source"`
 }
 
 type AgentSceneMemory struct {

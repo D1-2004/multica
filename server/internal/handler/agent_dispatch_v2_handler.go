@@ -1701,10 +1701,7 @@ func coordinatorHistoryInputs(command DispatchCommand, agentID pgtype.UUID, fall
 	if command.Source.Type == "digital_employee" {
 		source = inboundcoord.SourceDigitalEmployee
 	}
-	chatType := "p2p"
-	if strings.EqualFold(strings.TrimSpace(command.Event.Data.Conversation.Type), "group") {
-		chatType = "group"
-	}
+	chatType := coordinatorChatType(command.Event.Data.Conversation.Type)
 	ids := dispatchAssocIDs(command)
 	turn := inboundcoord.Turn{
 		Source:                source,

@@ -48,6 +48,8 @@ func newCoordinatorPlanFixture(t *testing.T, texts ...string) coordinatorPlanFix
 		baseKey: uuid.NewString(),
 	}
 	f.command = DispatchCommand{SchemaVersion: "2.0", AgentID: agentID, DispatchEndpointID: uuidToString(namespace), Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"}, Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{Conversation: DispatchConversation{OpenConversationID: "cid-plan-" + uuid.NewString(), Type: "group"}, Sender: DispatchSender{DisplayName: "甲", UID: "uid-a"}}}}
+	// The dispatch records the agent's org; its scene lives there.
+	f.command.ExternalIdentity = AgentDispatchExternalIdentity{DWS: &AgentDispatchDWSIdentity{UID: "plan-fixture", OrgID: "org-plan"}}
 	f.scene = registerTestScene(t, agentID, "org-plan", scene.KindGroup, f.command.Event.Data.Conversation.OpenConversationID)
 	f.command.AgentScene = testSceneRef(f.scene)
 	for i, text := range texts {

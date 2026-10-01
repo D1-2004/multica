@@ -5027,23 +5027,10 @@ func (h *Handler) bindAssocOutboundFromTools(ctx context.Context, task db.AgentT
 	}
 	agentID := uuidToString(task.AgentID)
 	for _, outbound := range execenv.FilterOutboundChat(events) {
+		// A 1:1 chat is identified by its conversation, never by its person:
+		// a send whose receipt names no conversation binds nothing.
 		cid := outbound.ConversationID
 		var node assoc.SceneNode
-		if cid == "" && outbound.PersonID != "" {
-			if resolved, err := h.Assoc.RecentPersonOutreachScene(ctx, workspaceID, agentID, outbound.PersonID); err != nil {
-				slog.Warn("assoc outbound person scene lookup failed",
-					"event", "assoc_outbound_bind_skipped",
-					"task_id", uuidToString(task.ID),
-					"person_id", outbound.PersonID,
-					"error", err,
-				)
-			} else if resolved != "" {
-				if found, ok := h.sceneNodeByID(ctx, workspaceID, agentID, resolved); ok {
-					node = found
-					cid = found.ConversationID
-				}
-			}
-		}
 		if cid == "" {
 			slog.Info("assoc outbound bind skipped; no conversation in tool output",
 				"event", "assoc_outbound_bind_skipped",
@@ -5066,7 +5053,7 @@ func (h *Handler) bindAssocOutboundFromTools(ctx context.Context, task db.AgentT
 			if outbound.PersonID != "" {
 				kind = scene.KindDM
 			}
-			resolved, found, err := h.conversationSceneNode(ctx, workspaceID, agentID, cid, kind, "", kind != "")
+			resolved, found, err := h.conversationSceneNode(ctx, workspaceID, agentID, cid, kind, contextDispatchOrg(task.Context), kind != "", kind != "")
 			if err != nil || !found {
 				slog.Info("assoc outbound bind skipped; conversation has no scene",
 					"event", "assoc_outbound_bind_skipped",

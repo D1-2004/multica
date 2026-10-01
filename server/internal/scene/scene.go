@@ -200,16 +200,31 @@ func (l Locator) Normalize() (Locator, error) {
 	return l, nil
 }
 
+// Kind sources (agent_scene.kind_source): a kind observed from a trusted
+// source, or one migration 9510 assigned without evidence (docs/agent-scene.md
+// §8).
+const (
+	KindSourceObserved = "observed"
+	KindSourceMigrated = "migrated"
+)
+
 // Observation is what an event says about the scene besides its identity.
 type Observation struct {
-	Title    string
-	ActiveAt time.Time
+	// KindStated: the locator's kind is the conversation type a trusted
+	// inbound event states (a Router or DWS dispatch, a channel callback, a
+	// send to a person). Only such an observation settles a migrated kind;
+	// a kind a model or a client names never does.
+	KindStated bool
+	Title      string
+	ActiveAt   time.Time
 }
 
 // Resolve returns the scene of owner at loc, registering it on first sight.
 // Concurrent first sightings return the same scene_id. A registered scene of
-// another kind at the same external id is ErrKindConflict. obs updates the
-// stored title (when non-empty) and moves last_active_at forward.
+// another kind at the same external id is ErrKindConflict, except that an
+// observation with KindStated settles a kind migration 9510 assigned
+// without evidence (KindSourceMigrated). obs updates the stored title (when
+// non-empty) and moves last_active_at forward.
 func Resolve(ctx context.Context, q *db.Queries, owner Owner, loc Locator, obs Observation) (db.AgentScene, error) {
 	if q == nil || !owner.valid() {
 		return db.AgentScene{}, ErrUnresolved
@@ -247,6 +262,22 @@ func Resolve(ctx context.Context, q *db.Queries, owner Owner, loc Locator, obs O
 	}
 	if err != nil {
 		return db.AgentScene{}, err
+	}
+	if existing.KindSource == KindSourceMigrated && obs.KindStated {
+		settled, settleErr := q.SettleAgentSceneKind(ctx, db.SettleAgentSceneKindParams{
+			SceneKind: loc.Kind, ID: existing.ID, WorkspaceID: owner.WorkspaceID, AgentID: owner.AgentID,
+		})
+		switch {
+		case settleErr == nil:
+			existing = settled
+		case errors.Is(settleErr, pgx.ErrNoRows):
+			// A concurrent observation settled it first; compare with that.
+			if existing, err = find(ctx, q, owner, loc); err != nil {
+				return db.AgentScene{}, err
+			}
+		default:
+			return db.AgentScene{}, settleErr
+		}
 	}
 	if existing.SceneKind != loc.Kind {
 		return db.AgentScene{}, ErrKindConflict

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -119,4 +120,50 @@ func (f assocSceneFixture) recallConversation(t *testing.T, cid string) assoc.Re
 // task is the fixture task as the daemon reports its messages.
 func (f assocSceneFixture) task() db.AgentTaskQueue {
 	return db.AgentTaskQueue{ID: parseUUID(f.taskID), AgentID: parseUUID(f.agentID), IssueID: parseUUID(f.issueID)}
+}
+
+// A persisted SceneRef is used only while the agent still serves the
+// scene's org: after the agent is re-bound to another org, a job or task
+// admitted before reads no scene (docs/agent-scene.md §6).
+func TestFenceSceneRefAfterTheAgentIsReBound(t *testing.T) {
+	f := newAssocSceneFixture(t)
+	ctx := context.Background()
+	sc := f.scene(t, "group", "cid-fence-group==")
+	owner := scene.Owner{WorkspaceID: parseUUID(f.ws), AgentID: parseUUID(f.agentID)}
+	ref := testSceneRef(sc)
+	if got := f.h.fenceSceneRef(ctx, ref, owner, f.orgID); got == nil || got.SceneID != ref.SceneID {
+		t.Fatalf("current binding: %+v", got)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent_dingtalk_identity SET org_id = 'org-rebound' WHERE agent_id = $1`, f.agentID); err != nil {
+		t.Fatal(err)
+	}
+	for _, dispatchOrg := range []string{f.orgID, "", "org-rebound"} {
+		if got := f.h.fenceSceneRef(ctx, ref, owner, dispatchOrg); got != nil {
+			t.Fatalf("dispatch org %q: a scene of the old org passed the fence: %+v", dispatchOrg, got)
+		}
+	}
+	command := DispatchCommand{AgentScene: ref, ExternalIdentity: AgentDispatchExternalIdentity{DWS: &AgentDispatchDWSIdentity{OrgID: f.orgID}}}
+	if _, err := dispatchScene(ctx, f.h.Queries, command, agentDispatchContext{WorkspaceID: owner.WorkspaceID, AgentID: owner.AgentID}); !errors.Is(err, scene.ErrStaleTenant) {
+		t.Fatalf("dispatchScene after re-binding: %v", err)
+	}
+	// A tenant created for the old org keeps it served: a dispatch that
+	// recorded that org still uses its scenes (context capabilities §2).
+	if _, err := testPool.Exec(ctx, `INSERT INTO agent_tenant (workspace_id, agent_id, org_id, name) VALUES ($1, $2, $3, 'Old org')`, f.ws, f.agentID, f.orgID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM agent_tenant WHERE agent_id = $1`, f.agentID) })
+	if got := f.h.fenceSceneRef(ctx, ref, owner, f.orgID); got == nil {
+		t.Fatal("a scene of a served tenant org was fenced")
+	}
+	if got := f.h.fenceSceneRef(ctx, ref, owner, ""); got != nil {
+		t.Fatalf("without a recorded org the identity org applies: %+v", got)
+	}
+}
+
+func TestCoordinatorChatTypeNeverAssumesADirectChat(t *testing.T) {
+	for raw, want := range map[string]string{"group": "group", "2": "group", "single": "p2p", "p2p": "p2p", "1": "p2p", "": "unknown", "channel": "unknown"} {
+		if got := coordinatorChatType(raw); got != want {
+			t.Errorf("coordinatorChatType(%q) = %q, want %q", raw, got, want)
+		}
+	}
 }

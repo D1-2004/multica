@@ -80,6 +80,7 @@ func (h *Handler) RecallAssoc(w http.ResponseWriter, r *http.Request) {
 		Q:              r.URL.Query().Get("q"),
 		Intent:         r.URL.Query().Get("intent"),
 		Limit:          limit,
+		TaskID:         strings.TrimSpace(r.Header.Get("X-Task-ID")),
 	})
 	if err != nil {
 		if errors.Is(err, assoc.ErrInvalidQuery) {
@@ -121,7 +122,7 @@ func (h *Handler) ListAssocEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "conversation_id is required")
 		return
 	}
-	node, found, err := h.conversationSceneNode(r.Context(), workspaceID, agentID, cid, "", "", false)
+	node, found, err := h.conversationSceneNode(r.Context(), workspaceID, agentID, cid, "", h.taskDispatchOrg(r.Context(), workspaceID, r.Header.Get("X-Task-ID")), false, false)
 	if err != nil {
 		if errors.Is(err, assoc.ErrInvalidQuery) {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -248,7 +249,7 @@ func (h *Handler) handleMulticaMCPAssocBind(w http.ResponseWriter, r *http.Reque
 		h.writeMulticaMCPToolError(w, id, "workspace, agent, and task identity are required")
 		return
 	}
-	node, _, err := h.conversationSceneNode(r.Context(), workspaceID, agentID, args.ConversationID, args.Kind, "", true)
+	node, _, err := h.conversationSceneNode(r.Context(), workspaceID, agentID, args.ConversationID, args.Kind, h.taskDispatchOrg(r.Context(), workspaceID, taskID), true, false)
 	if err != nil {
 		h.writeMulticaMCPToolError(w, id, err.Error())
 		return
@@ -313,7 +314,7 @@ func (h *Handler) recallAssoc(ctx context.Context, workspaceID, agentID string, 
 			node, found = h.sceneNodeByID(ctx, workspaceID, agentID, sceneRef)
 		} else {
 			var lookupErr error
-			node, found, lookupErr = h.conversationSceneNode(ctx, workspaceID, agentID, cid, "", "", false)
+			node, found, lookupErr = h.conversationSceneNode(ctx, workspaceID, agentID, cid, "", h.taskDispatchOrg(ctx, workspaceID, in.TaskID), false, false)
 			if lookupErr != nil {
 				return assoc.Result{}, lookupErr
 			}
@@ -488,7 +489,7 @@ func (h *Handler) BindAssocOutbound(w http.ResponseWriter, r *http.Request) {
 			in.Purpose = title
 		}
 	}
-	node, _, err := h.conversationSceneNode(r.Context(), workspaceID, in.AgentID, body.ConversationID, body.Kind, "", true)
+	node, _, err := h.conversationSceneNode(r.Context(), workspaceID, in.AgentID, body.ConversationID, body.Kind, h.taskDispatchOrg(r.Context(), workspaceID, in.RunID), true, false)
 	if err != nil {
 		if errors.Is(err, assoc.ErrInvalidQuery) {
 			writeError(w, http.StatusBadRequest, err.Error())

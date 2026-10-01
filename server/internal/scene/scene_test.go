@@ -237,3 +237,57 @@ func TestResolveConcurrentFirstSightingReturnsOneID(t *testing.T) {
 		t.Fatalf("directory rows = %d, want 1", rows)
 	}
 }
+
+// A kind migration 9510 assigned without evidence is settled by the first
+// trusted observation that states the conversation type, keeping the
+// scene_id; a kind a caller merely names never changes it, and an observed
+// kind is never changed again.
+func TestResolveSettlesAMigratedKindOnlyFromAStatedKind(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	q := db.New(tx)
+	var hasColumn bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'agent_scene' AND column_name = 'kind_source')`).Scan(&hasColumn); err != nil || !hasColumn {
+		t.Skip("agent_scene.kind_source is not migrated")
+	}
+	owner := newOwner()
+	group := DingTalkConversation("org1", KindGroup, "cidMigratedDirect")
+	migrated, err := Resolve(ctx, q, owner, group, Observation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE agent_scene SET kind_source = 'migrated' WHERE id = $1`, migrated.ID); err != nil {
+		t.Fatal(err)
+	}
+	dm := DingTalkConversation("org1", KindDM, "cidMigratedDirect")
+	if _, err := Resolve(ctx, q, owner, dm, Observation{}); !errors.Is(err, ErrKindConflict) {
+		t.Fatalf("a named kind settled a migrated scene: %v", err)
+	}
+	settled, err := Resolve(ctx, q, owner, dm, Observation{KindStated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settled.ID != migrated.ID || settled.SceneKind != KindDM || settled.KindSource != KindSourceObserved {
+		t.Fatalf("settled=%+v", settled)
+	}
+	if _, err := Resolve(ctx, q, owner, group, Observation{KindStated: true}); !errors.Is(err, ErrKindConflict) {
+		t.Fatalf("an observed kind changed: %v", err)
+	}
+	// A stated kind that agrees with the migrated one confirms it.
+	other, err := Resolve(ctx, q, owner, DingTalkConversation("org1", KindGroup, "cidMigratedGroup"), Observation{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE agent_scene SET kind_source = 'migrated' WHERE id = $1`, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	confirmed, err := Resolve(ctx, q, owner, DingTalkConversation("org1", KindGroup, "cidMigratedGroup"), Observation{KindStated: true})
+	if err != nil || confirmed.ID != other.ID || confirmed.KindSource != KindSourceObserved {
+		t.Fatalf("confirmed=%+v err=%v", confirmed, err)
+	}
+}

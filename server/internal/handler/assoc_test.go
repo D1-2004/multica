@@ -183,14 +183,15 @@ func TestBindAssocOutboundFromUserSendAndQuerySendStatus(t *testing.T) {
 	}
 }
 
-func TestBindAssocOutboundFromUserSendReusesPersonScene(t *testing.T) {
+// A send to a person whose receipt names no conversation binds nothing: the
+// person's earlier 1:1 chat is another scene, never looked up by person.
+func TestBindAssocOutboundFromUserSendWithoutConversationBindsNothing(t *testing.T) {
 	f := newAssocSceneFixture(t)
 	h, ws := f.h, f.ws
-	ag := parseUUID(f.agentID)
 	sc := f.scene(t, "dm", "cid+bEFv7ngm9n79Q1vL9HYJw==")
 	_, err := h.Assoc.BindOutbound(context.Background(), assoc.BindOutboundInput{
 		WorkspaceID: ws,
-		AgentID:     uuidToString(ag),
+		AgentID:     f.agentID,
 		IssueID:     "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
 		IssueTitle:  "向冬翔确认今晚想吃什么",
 		Scene:       testSceneNode(sc),
@@ -200,23 +201,19 @@ func TestBindAssocOutboundFromUserSendReusesPersonScene(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	issue := parseUUID(f.issueID)
-	task := f.task()
-	h.bindAssocOutboundFromTool(context.Background(), task, ws, TaskMessageRequest{
+	h.bindAssocOutboundFromTool(context.Background(), f.task(), ws, TaskMessageRequest{
 		Type:    "tool",
 		Tool:    "Bash",
 		Content: `dws chat message send --user 0104644667680872 --content hi --format json --yes`,
 		Output:  `{"result":{"openTaskId":"task-only"},"success":true}`,
 	})
-	got := f.recallConversation(t, "cid+bEFv7ngm9n79Q1vL9HYJw==")
-	found := false
-	for _, item := range got.Items {
-		if item.IssueID == uuidToString(issue) {
-			found = true
+	for _, item := range f.recallConversation(t, "cid+bEFv7ngm9n79Q1vL9HYJw==").Items {
+		if item.IssueID == f.issueID {
+			t.Fatalf("a send without a conversation was bound through the person's earlier chat: %+v", item)
 		}
 	}
-	if !found {
-		t.Fatalf("expected new issue bound via person scene, recall=%+v", got.Items)
+	if _, err := f.store.GetEventByEvidence(context.Background(), ws, f.agentID, "task-only"); err == nil {
+		t.Fatal("a send without a conversation recorded an event")
 	}
 }
 

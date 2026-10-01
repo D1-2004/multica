@@ -180,7 +180,13 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if err != nil {
 		return true, w.fail(ctx, job, command, "invalid persisted dispatch command")
 	}
-	if command.AgentScene == nil && strings.TrimSpace(command.TaskFinishedTaskID) == "" {
+	if command.AgentScene != nil {
+		// The persisted SceneRef is used only while it passes the use-time
+		// fence: a job admitted before the agent was re-bound to another org
+		// reads no scene state of the old org.
+		command.AgentScene = w.handler.fenceSceneRef(ctx, command.AgentScene,
+			scene.Owner{WorkspaceID: job.WorkspaceID, AgentID: job.AgentID}, dispatchRecordedOrg(command))
+	} else if strings.TrimSpace(command.TaskFinishedTaskID) == "" {
 		// A job an older replica admitted during the rollout carries no
 		// SceneRef: resolve it from the persisted command with the same
 		// resolver the dispatch uses (docs/agent-scene.md, rolling window).

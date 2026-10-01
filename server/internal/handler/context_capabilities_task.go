@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -149,12 +150,22 @@ func (h *Handler) resolveTaskContextScope(ctx context.Context, workspaceID pgtyp
 	}
 	scope.OrgID = orgID
 	// The scene layer is the task's Agent work scene only while that scene
-	// is the agent's conversation scene in the task's tenant org (the
-	// use-time fence of docs/agent-scene.md); otherwise the task keeps its
-	// org and person layers without one.
+	// is the agent's conversation scene in the task's tenant org and the
+	// agent still serves that org through its binding (the use-time fence of
+	// docs/agent-scene.md, agentTenantOrg); otherwise the task keeps its org
+	// and person layers without one.
 	if scope.SceneID != "" {
-		if _, err := contextcap.GetScene(ctx, h.DB, uuidToString(workspaceID), uuidToString(task.AgentID), orgID, scope.SceneID); err != nil {
-			if !errors.Is(err, contextcap.ErrNotFound) && !errors.Is(err, contextcap.ErrInvalidInput) {
+		_, err := contextcap.GetScene(ctx, h.DB, uuidToString(workspaceID), uuidToString(task.AgentID), orgID, scope.SceneID)
+		if err == nil {
+			var current string
+			current, err = agentTenantOrg(ctx, h.Queries, scene.Owner{WorkspaceID: workspaceID, AgentID: task.AgentID}, scope.DispatchOrgID)
+			if err == nil && current != orgID {
+				err = scene.ErrStaleTenant
+			}
+		}
+		if err != nil {
+			if !errors.Is(err, contextcap.ErrNotFound) && !errors.Is(err, contextcap.ErrInvalidInput) &&
+				!errors.Is(err, scene.ErrStaleTenant) && !errors.Is(err, scene.ErrUnresolved) {
 				slog.WarnContext(ctx, "context capabilities: task scene lookup failed; skipping the scene layer",
 					"task_id", uuidToString(task.ID), "agent_id", uuidToString(task.AgentID), "error", err)
 			}

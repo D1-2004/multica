@@ -49,7 +49,12 @@ Natural key (`agent_scene`):
 Uniqueness is enforced on the key without `scene_kind`
 (`agent_scene_locator_idx`): one external id carries one kind, and a kind
 mismatch is `scene.ErrKindConflict`, never a second scene. `title` and
-`last_active_at` are state, not identity.
+`last_active_at` are state, not identity. `kind_source` says where the kind
+came from: `observed` (a trusted source stated it) or `migrated` (9510
+assigned it without evidence, §8). Only an observation whose kind a trusted
+event states (`scene.Observation.KindStated`: an inbound dispatch, a channel
+callback, a send to a person) settles a migrated kind, keeping the scene_id;
+every other mismatch stays a conflict.
 
 ## 2. Storage
 
@@ -71,13 +76,17 @@ are not deleted by this change; only workspace deletion still cleans them up.
 
 ## 3. Tenant org
 
-`agentTenantOrg` (`server/internal/handler/agent_scene.go`):
+`agentTenantOrg` (`server/internal/handler/agent_scene.go`), the same org
+context capabilities resolve for a task (docs/context-capabilities.md §2):
 
-1. The agent's DingTalk identity org (`agent_dingtalk_identity.org_id`).
-2. Without an identity: the dispatch's recorded org
-   (`external_identity.dws.orgId`).
-3. Identity and dispatch org disagree → `scene.ErrStaleTenant` (a dispatch from
-   an earlier binding); neither → `scene.ErrUnresolved`.
+1. The org the dispatch recorded for the agent's DWS identity
+   (`external_identity.dws.orgId`); a tool call inside a task uses its task's
+   recorded org.
+2. Else the agent's DingTalk identity org (`agent_dingtalk_identity.org_id`).
+3. The org must be one the agent serves now: its identity org, a tenant
+   created for it (`agent_tenant`), or, for an agent without an identity,
+   the dispatch org itself. Any other org comes from an earlier binding →
+   `scene.ErrStaleTenant`; no org at all → `scene.ErrUnresolved`.
 
 An agent with neither (an orgless robot channel) has **no scenes**: its tasks
 get no scene layer and no scene memory, only the person layer under org `""`.
@@ -97,7 +106,7 @@ Who may **register** a scene (all through `Resolve`):
 | --- | --- | --- |
 | Inbound dispatch (Router, DWS native, Coordinator jobs) | `attachDispatchScene` before admission; the job worker re-resolves a job an older replica admitted without one | conversation type (`single`/`p2p`/… → dm, `group` → group); non-channel domains → the enterprise scene |
 | Channel engine conversation (robot channel) | `AssociateChannelConversation` | chat type |
-| Agent tool send to a person (`dws chat message send --user`) | `bindAssocOutboundFromTools` | dm: the send itself proves a 1:1 chat with that person |
+| Agent tool send to a person (`dws chat message send --user`, with the conversation id from its receipt or `query-send-status`) | `bindAssocOutboundFromTools` | dm: the send itself proves a 1:1 chat with that person. A receipt without a conversation id binds nothing; a person's earlier chat is never looked up in its place |
 | Explicit assoc bind (HTTP/MCP `assoc_bind`) | `conversationSceneNode(register=true)` | the caller's `kind` (required for a new conversation) |
 
 Everything else only **looks up** (`register=false`): recall, events, the
@@ -125,15 +134,28 @@ conversation id.
 
 ## 6. Use-time fences
 
-A scene is used only while it is still the agent's in the current tenant org:
+A persisted SceneRef is used only while the scene is still the agent's and
+belongs to the org its event happened in, and the agent still serves that
+org (`agentTenantOrg`, §3; `fencedScene` / `fenceSceneRef`). A job or
+task admitted before the agent was re-bound to another org reads no scene
+state of the old org:
 
+- Coordinator job claim re-checks the job's SceneRef (and resolves one for a
+  job an older replica admitted without it); a failing ref is dropped.
+- `dispatchScene` (memory marks, reset, reply routes, associations) and the
+  task-finished loop's envelope ref go through the same fence.
 - Task claim: the scene layer applies only if `contextcap.GetScene` finds the
-  scene among the agent's conversation scenes in the task's org; otherwise the
-  task keeps its org and person layers without one.
+  scene among the agent's conversation scenes in the task's org and that org
+  is still the agent's current one; otherwise the task keeps its org and
+  person layers without one.
 - Scene Memory DWS history read: `scene.CheckTenant(scene, identity org)`;
   a mismatch fails closed (`route_inactive`).
 - Admin and mobile scene routes resolve `{scene_id}` within the requested
   tenant org; a scene of another org or agent is 404.
+- A managed DingTalk reply targets the dispatch scene's conversation and
+  kind from the directory. Without a scene it never assumes a 1:1 chat: an
+  unknown conversation type with no message to quote registers no managed
+  route, and the Coordinator's chat type is `unknown`, not `p2p`.
 
 ## 7. API surface
 
@@ -161,10 +183,17 @@ A scene is used only while it is still the agent's in the current tenant org:
   only on positive evidence (a personal link's extra scene, or a stored dm
   kind); otherwise group. Rows without an org or with a malformed key are left
   untouched and no longer apply. Re-running it changes nothing.
+- `9511` adds `kind_source`. Scenes 9510 registered from stored
+  configuration that no inbound event has referenced are `migrated`; those
+  whose retired Scene Memory kind and inbound Coordinator job conversation
+  types agree on one kind take it and become `observed`. The rest are
+  settled by their next trusted inbound event (§1).
 - Scene connector credentials are sealed with their scope key, so
-  `ReconcileSceneCredentials` reseals them under the scene_id at server start
-  (idempotent, monotonic). Until it ran, a credential under a conversation id
-  is simply not found.
+  `ReconcileSceneCredentials` reseals them under the scene_id at server start:
+  per row, compare-and-swap on the old key and ciphertext (an older replica's
+  newer write wins and moves on a later start); a scene that already holds a
+  credential under its scene_id keeps it. Until it ran, a credential under a
+  conversation id is simply not found.
 - Old Scene Memory and old graph scene nodes (conversation ids) are not
   migrated: memory rebuilds from new trusted inbound messages, and legacy
   conversation-id nodes are ignored.
