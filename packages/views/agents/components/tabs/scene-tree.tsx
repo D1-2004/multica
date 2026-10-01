@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { Building2, ChevronRight, Loader2, Plus, User, Users } from "lucide-react";
+import { Building2, ChevronRight, Loader2, MessageSquare, MessagesSquare, Plus, User, Users } from "lucide-react";
 import {
   agentTenantGroupsOptions,
   agentTenantPersonsOptions,
@@ -14,14 +14,15 @@ import { cn } from "@multica/ui/lib/utils";
 import { useT, useTimeAgo } from "../../../i18n";
 
 /** A selected node of the 场域 tree: a tenant (`org`, key = OrgId), one of
- * its group chats (`scene`) or one of its people (`person`). */
+ * its scenes (`scene`, key = scene_id; a group chat or a 1:1 chat) or one of
+ * its people (`person`, key = staffId). */
 export interface SceneSelection {
   orgId: string;
   type: "org" | "scene" | "person";
   key: string;
 }
 
-type Category = "groups" | "persons";
+type Category = "chats" | "persons";
 
 function categoryKey(orgId: string, category: Category): string {
   return `${orgId}:${category}`;
@@ -32,17 +33,17 @@ function categoryKey(orgId: string, category: Category): string {
 function openedBy(selection: SceneSelection | null): string[] {
   if (!selection) return [];
   if (selection.type === "org") return [selection.orgId];
-  return [selection.orgId, categoryKey(selection.orgId, selection.type === "scene" ? "groups" : "persons")];
+  return [selection.orgId, categoryKey(selection.orgId, selection.type === "scene" ? "chats" : "persons")];
 }
 
 const ROW =
   "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-body transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring data-active:bg-accent data-active:font-medium data-active:text-accent-foreground data-active:hover:bg-accent";
 
 /**
- * Left tree of the 场域 tab: each tenant (name + OrgId) with its 「群聊」
- * (newest first, paged) and 「个人」 (people, their 1:1 chats included), then
- * the orgs seen without a tenant, dimmed, each with 「创建租户」. Categories
- * load when they open.
+ * Left tree of the 场域 tab: each tenant (name + OrgId) with its 「群聊和单聊」
+ * (its scenes, a group chat or a 1:1 chat each, newest first, paged) and
+ * 「个人」 (people's personal levels), then the orgs seen without a tenant,
+ * dimmed, each with 「创建租户」. Categories load when they open.
  */
 export function SceneTree({
   wsId,
@@ -67,11 +68,11 @@ export function SceneTree({
   const { t } = useT("agents");
   const [open, setOpen] = useState<ReadonlySet<string>>(() => {
     const initial = new Set(openedBy(selection));
-    // A single tenant opens with its group chats listed.
+    // A single tenant opens with its chats listed.
     const only = tenants.length === 1 ? tenants[0] : undefined;
     if (only) {
       initial.add(only.orgId);
-      initial.add(categoryKey(only.orgId, "groups"));
+      initial.add(categoryKey(only.orgId, "chats"));
     }
     return initial;
   });
@@ -130,13 +131,13 @@ export function SceneTree({
               {expanded ? (
                 <ul className="ml-3 border-l pl-1.5">
                   <CategoryNode
-                    label={t(($) => $.tab_body.scenes.category_groups)}
-                    icon={<Users className="size-3.5 shrink-0" aria-hidden="true" />}
-                    count={tenant.groupCount}
-                    expanded={open.has(categoryKey(tenant.orgId, "groups"))}
-                    onToggle={() => toggle(categoryKey(tenant.orgId, "groups"))}
+                    label={t(($) => $.tab_body.scenes.category_chats)}
+                    // No count: the tenant's group count leaves 1:1 chats out.
+                    icon={<MessagesSquare className="size-3.5 shrink-0" aria-hidden="true" />}
+                    expanded={open.has(categoryKey(tenant.orgId, "chats"))}
+                    onToggle={() => toggle(categoryKey(tenant.orgId, "chats"))}
                   >
-                    <GroupList
+                    <SceneList
                       wsId={wsId}
                       agentId={agentId}
                       orgId={tenant.orgId}
@@ -247,7 +248,7 @@ function CategoryNode({
 }: {
   label: string;
   icon: React.ReactNode;
-  count: number;
+  count?: number;
   expanded: boolean;
   onToggle: () => void;
   children: React.ReactNode;
@@ -266,7 +267,7 @@ function CategoryNode({
         />
         {icon}
         <span className="min-w-0 truncate">{label}</span>
-        {count > 0 ? <span className="ml-auto shrink-0 tabular-nums font-normal">{count}</span> : null}
+        {count !== undefined && count > 0 ? <span className="ml-auto shrink-0 tabular-nums font-normal">{count}</span> : null}
       </button>
       {expanded ? <div className="pl-3">{children}</div> : null}
     </li>
@@ -277,7 +278,9 @@ function ListNotice({ children }: { children: React.ReactNode }) {
   return <p className="px-2 py-1 text-caption text-muted-foreground">{children}</p>;
 }
 
-function GroupList({
+/** A tenant's scenes, group chats and 1:1 chats alike, each opening its own
+ * scene node (keyed by its scene_id). */
+function SceneList({
   wsId,
   agentId,
   orgId,
@@ -287,17 +290,17 @@ function GroupList({
   wsId: string;
   agentId: string;
   orgId: string;
-  isSelected: (key: string) => boolean;
-  onSelect: (key: string) => void;
+  isSelected: (sceneId: string) => boolean;
+  onSelect: (sceneId: string) => void;
 }) {
   const { t } = useT("agents");
   const timeAgo = useTimeAgo();
   const query = useInfiniteQuery(agentTenantGroupsOptions(wsId, agentId, orgId));
-  const groups = [
+  const scenes = [
     ...new Map(
-      (query.data?.pages ?? []).flatMap((page) => page.scenes).map((scene) => [scene.sceneKey, scene]),
+      (query.data?.pages ?? []).flatMap((page) => page.scenes).map((scene) => [scene.sceneId, scene]),
     ).values(),
-  ].filter((scene) => scene.kind !== "dm");
+  ];
 
   if (query.isLoading) {
     return (
@@ -307,7 +310,7 @@ function GroupList({
       </ListNotice>
     );
   }
-  if (query.isError && groups.length === 0) {
+  if (query.isError && scenes.length === 0) {
     return (
       <div className="flex items-center gap-2 px-2 py-1">
         <span className="text-caption text-muted-foreground">{t(($) => $.tab_body.scenes.load_failed)}</span>
@@ -317,25 +320,33 @@ function GroupList({
       </div>
     );
   }
-  if (groups.length === 0) return <ListNotice>{t(($) => $.tab_body.scenes.none)}</ListNotice>;
+  if (scenes.length === 0) return <ListNotice>{t(($) => $.tab_body.scenes.none)}</ListNotice>;
   return (
     <ul>
-      {groups.map((group) => {
-        const title = group.title || t(($) => $.tab_body.scenes.untitled_group);
-        const selected = isSelected(group.sceneKey);
+      {scenes.map((scene) => {
+        const dm = scene.kind === "dm";
+        const title =
+          scene.title ||
+          (dm ? t(($) => $.context_config.scene_untitled_dm) : t(($) => $.tab_body.scenes.untitled_group));
+        const KindIcon = dm ? MessageSquare : Users;
+        const selected = isSelected(scene.sceneId);
         return (
-          <li key={group.sceneKey}>
+          <li key={scene.sceneId}>
             <button
               type="button"
               data-active={selected ? "true" : undefined}
               aria-current={selected ? "true" : undefined}
-              onClick={() => onSelect(group.sceneKey)}
+              onClick={() => onSelect(scene.sceneId)}
               className={ROW}
             >
+              <KindIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="sr-only">
+                {dm ? t(($) => $.context_config.kind_dm) : t(($) => $.context_config.kind_group)}
+              </span>
               <span className="min-w-0 flex-1 truncate">{title}</span>
-              {group.lastActiveAt ? (
+              {scene.lastActiveAt ? (
                 <span className="shrink-0 text-caption font-normal text-muted-foreground">
-                  {timeAgo(group.lastActiveAt)}
+                  {timeAgo(scene.lastActiveAt)}
                 </span>
               ) : null}
             </button>

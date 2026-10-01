@@ -20,8 +20,8 @@ export const contextConfigKeys = {
     [...contextConfigKeys.details(agentId), orgId] as const,
   scenes: (agentId: string) =>
     [...contextConfigKeys.agent(agentId), "scenes"] as const,
-  scene: (agentId: string, sceneKey: string) =>
-    [...contextConfigKeys.scenes(agentId), sceneKey] as const,
+  scene: (agentId: string, sceneId: string) =>
+    [...contextConfigKeys.scenes(agentId), sceneId] as const,
 };
 
 /**
@@ -81,14 +81,14 @@ export function contextConfigAgentOptions(agentId: string, orgId = "") {
   });
 }
 
-/** One scene of the configure page. `orgId` is the scene's tenant ("" for
- * the agent's own org); a cid is unique across orgs, so it is not part of
- * the key. */
-export function contextConfigSceneOptions(agentId: string, sceneKey: string, orgId = "") {
+/** One scene of the configure page, by its scene_id. `orgId` is the
+ * scene's tenant ("" for the agent's own org); a scene_id names one scene of
+ * one org, so it is not part of the key. */
+export function contextConfigSceneOptions(agentId: string, sceneId: string, orgId = "") {
   return queryOptions({
-    queryKey: contextConfigKeys.scene(agentId, sceneKey),
-    queryFn: () => api.getContextConfigScene(agentId, sceneKey, orgId),
-    enabled: Boolean(agentId && sceneKey),
+    queryKey: contextConfigKeys.scene(agentId, sceneId),
+    queryFn: () => api.getContextConfigScene(agentId, sceneId, orgId),
+    enabled: Boolean(agentId && sceneId),
   });
 }
 
@@ -110,7 +110,8 @@ export function agentTenantsOptions(wsId: string, agentId: string) {
   });
 }
 
-/** A tenant's group chats, newest activity first, paged by offset. */
+/** A tenant's scenes (group chats and 1:1 chats), newest activity first,
+ * paged by offset. */
 export function agentTenantGroupsOptions(wsId: string, agentId: string, orgId: string) {
   return infiniteQueryOptions({
     queryKey: contextCapabilityKeys.tenantGroups(wsId, agentId, orgId),

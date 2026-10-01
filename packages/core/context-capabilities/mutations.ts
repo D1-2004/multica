@@ -2,7 +2,6 @@ import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-q
 import { api } from "../api";
 import type {
   AgentContextCapabilities,
-  ContextConfigSceneDetail,
   ContextConfigScopeInput,
   ContextNodeDetail,
   ContextNodeRef,
@@ -50,24 +49,14 @@ function scopeWriteKey(agentId: string, input: { scopeType: string; scopeKey: st
   }
 }
 
-/** Refreshes what a scope write changed. A 1:1 chat scene is its person's
- * configuration (the server writes the person scope), so a write there also
- * refreshes the agent details, which hold the caller's personal scope; not
- * every scene under the agent. */
+/** Refreshes what a scope write changed. A scene, a group or a 1:1 chat
+ * alike, is its own scope, so a scene write refreshes that scene only. */
 function invalidateScopeWrite(
   queryClient: QueryClient,
   agentId: string,
   input: { scopeType: string; scopeKey: string },
 ) {
-  const key = scopeWriteKey(agentId, input);
-  const scene =
-    input.scopeType === "scene" ? queryClient.getQueryData<ContextConfigSceneDetail | null>(key) : null;
-  return Promise.all([
-    queryClient.invalidateQueries({ queryKey: key }),
-    scene?.scene.kind === "dm"
-      ? queryClient.invalidateQueries({ queryKey: contextConfigKeys.details(agentId) })
-      : undefined,
-  ]);
+  return queryClient.invalidateQueries({ queryKey: scopeWriteKey(agentId, input) });
 }
 
 export function useSetContextCapabilityBinding(agentId: string) {

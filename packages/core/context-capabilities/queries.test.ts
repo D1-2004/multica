@@ -25,7 +25,7 @@ describe("context capability query keys", () => {
 
   it("nests scene detail under the agent so one invalidation covers both", () => {
     const agentKey = contextConfigKeys.agent("agent-1");
-    const sceneKey = contextConfigKeys.scene("agent-1", "cid1");
+    const sceneKey = contextConfigKeys.scene("agent-1", "66666666-6666-4666-8666-666666666666");
     expect(sceneKey.slice(0, agentKey.length)).toEqual([...agentKey]);
     expect(contextConfigKeys.agent("agent-2")).not.toEqual(agentKey);
   });

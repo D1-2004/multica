@@ -131,10 +131,10 @@ function resourceTypeOf(value: string): ContextResourceType | null {
 
 const SceneScopeWireSchema = z.object({ type: z.string(), key: id, title: text });
 
-/** `scope` of a scene read: where the scene page's configuration lives. A
- * missing field (an older backend) means the scene itself; an explicit null
- * means a 1:1 chat whose person is unknown. A malformed value also reads as
- * null, so nothing is ever written to a guessed scope. */
+/** `scope` of a scene read: where the scene page's configuration lives,
+ * the scene itself for a group and a 1:1 chat alike. A missing field (an
+ * older backend) means the scene itself; a null or malformed value reads as
+ * null. */
 function sceneScopeOf(value: unknown, fallback: ContextSceneScope): ContextSceneScope | null {
   if (value === undefined) return fallback;
   const parsed = SceneScopeWireSchema.safeParse(value);
@@ -701,29 +701,55 @@ export const AgentContextCapabilitiesSchema = z
 // (/api/agents/{id}/tenants...)
 // ---------------------------------------------------------------------------
 
+/** A scene's identity: scene_id, else scene_key (which carries the same
+ * scene_id). A row naming neither is dropped. */
+const sceneIdentity = {
+  scene_id: text.catch(""),
+  scene_key: text.catch(""),
+};
+
+function sceneIdOf(value: { scene_id: string; scene_key: string }): string {
+  return value.scene_id || value.scene_key;
+}
+
+const hasSceneId = (value: { scene_id: string; scene_key: string }) => sceneIdOf(value) !== "";
+
+/** One Agent work scene (docs/agent-scene.md). The conversation id is
+ * display-only; memory is known from has_memory or a memory_id, and opened
+ * by the scene_id. */
 const AgentSceneSummaryWireSchema = z
   .object({
-    scene_key: id,
+    ...sceneIdentity,
+    conversation_id: text.catch(""),
     kind: sceneKind,
     title: text,
     org_id: text,
     last_active_at: text,
     inbound_session_id: text,
     inbound_count: count,
-    memory_id: text,
+    memory_id: text.catch(""),
+    has_memory: strictTrue,
+    has_prompt: strictTrue,
   })
-  .transform(
-    (value): AgentSceneSummary => ({
-      sceneKey: value.scene_key,
+  .refine(hasSceneId)
+  .transform((value): AgentSceneSummary => {
+    const sceneId = sceneIdOf(value);
+    const hasMemory = value.has_memory || value.memory_id !== "";
+    return {
+      sceneId,
+      sceneKey: sceneId,
+      conversationId: value.conversation_id,
       kind: value.kind,
       title: value.title,
       orgId: value.org_id,
       lastActiveAt: value.last_active_at,
       inboundSessionId: value.inbound_session_id,
       inboundCount: value.inbound_count,
-      memoryId: value.memory_id,
-    }),
-  );
+      memoryId: value.memory_id || (hasMemory ? sceneId : ""),
+      hasMemory,
+      hasPrompt: value.has_prompt,
+    };
+  });
 
 export const EMPTY_AGENT_SCENES_PAGE: AgentScenesPage = { scenes: [], hasMore: false };
 
@@ -1087,16 +1113,18 @@ export const ConnectedAppsListSchema = z
 
 const ConnectedAppSceneWireSchema = z
   .object({
-    scene_key: id,
+    ...sceneIdentity,
     title: text,
     kind: sceneKind,
     enabled: strictTrue,
     connected: strictTrue,
     account: text,
   })
+  .refine(hasSceneId)
   .transform(
     (value): ConnectedAppSceneUsage => ({
-      sceneKey: value.scene_key,
+      sceneId: sceneIdOf(value),
+      sceneKey: sceneIdOf(value),
       title: value.title,
       kind: value.kind,
       enabled: value.enabled,

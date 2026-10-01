@@ -16,8 +16,8 @@ export type ContextWriteScopeType = ContextScopeType | "org";
 export type ContextResourceType = "connector" | "skill";
 
 /** Kind of an IM scene: a DingTalk group chat or a 1:1 chat (a 1:1 chat is a
- * scene exactly like a group). Older backends only knew group scenes, so a
- * missing kind parses as "group". */
+ * scene exactly like a group, with its own configuration). Older backends
+ * only knew group scenes, so a missing kind parses as "group". */
 export type ContextSceneKind = "group" | "dm";
 
 /** How the caller obtained the right to configure a scope. Kept as a plain
@@ -56,6 +56,8 @@ export type ContextConnectorAuthMode = "none" | "bearer" | "oauth" | "unknown";
 /** A live grant that lets the caller configure one scope of an agent. */
 export interface ContextConfigGrant {
   scopeType: ContextScopeType;
+  /** The scene_id of a scene (a group or 1:1 chat), the staffId of a
+   * person. */
   scopeKey: string;
   scopeTitle: string;
   source: ContextGrantSource;
@@ -64,6 +66,8 @@ export interface ContextConfigGrant {
 
 /** Scene grant as returned inside agent detail (scope type is implied). */
 export interface ContextConfigSceneGrant {
+  /** The scene_id (docs/agent-scene.md), sent back as-is on every scene
+   * path and write. */
   scopeKey: string;
   scopeTitle: string;
   source: ContextGrantSource;
@@ -239,13 +243,12 @@ export interface ContextConfigAgentDetail {
   access: ContextConfigAccess;
 }
 
-/** Where the configuration of one scene page lives: the scene itself (a
- * group chat), or, for a 1:1 chat, the counterpart person's own scope (a
- * 1:1 chat's configuration is that person's configuration). */
+/** Where the configuration of one scene page lives: the scene itself, a
+ * group chat or a 1:1 chat alike (key = its scene_id). */
 export interface ContextSceneScope {
   type: ContextScopeType;
   key: string;
-  /** Group name, or the person's display name. "" when unknown. */
+  /** The chat's title. "" when unknown. */
   title: string;
 }
 
@@ -253,13 +256,12 @@ export interface ContextConfigSceneDetail extends ContextConfigScopeContent {
   scene: ContextConfigSceneGrant;
   bindings: ContextCapabilityBinding[];
   credentials: ContextConnectorCredential[];
-  /** Where these bindings and credentials live. Older backends send no
-   * scope: the scene itself. null when the server cannot tell who the
-   * person of a 1:1 chat is, so nothing can be configured there. */
+  /** Where these bindings and credentials live: the scene itself. Older
+   * backends send no scope (the scene itself too); null when the value is
+   * malformed. */
   scope: ContextSceneScope | null;
-  /** The caller may store, remove or connect credentials in `scope` (false
-   * for a manager viewing someone's 1:1 chat). null when an older backend
-   * does not say. */
+  /** The caller may store, remove or connect credentials in `scope`. null
+   * when an older backend does not say. */
   canConnect: boolean | null;
 }
 
@@ -371,11 +373,18 @@ export interface SetAgentContextCapabilityOffersInput {
 // people, and the Context Builder of each level
 // ---------------------------------------------------------------------------
 
-/** One IM scene of an agent (a DingTalk group chat or 1:1 chat) as listed
- * by `GET /api/agents/{id}/tenants/{orgId}/groups`. */
+/** One Agent work scene (a DingTalk group chat or 1:1 chat, see
+ * docs/agent-scene.md) as listed by
+ * `GET /api/agents/{id}/tenants/{orgId}/groups`. */
 export interface AgentSceneSummary {
-  /** openConversationId of the conversation. */
+  /** The scene's identity (a server-generated UUID): the key of its
+   * Context Builder node, its Scene Memory and its relations. */
+  sceneId: string;
+  /** Same as sceneId (the server sends both). */
   sceneKey: string;
+  /** DingTalk openConversationId of the chat, for display only; "" when
+   * the server does not say. */
+  conversationId: string;
   kind: ContextSceneKind;
   title: string;
   orgId: string;
@@ -385,8 +394,12 @@ export interface AgentSceneSummary {
    * there is none. */
   inboundSessionId: string;
   inboundCount: number;
-  /** scene_memory row id, "" when the scene has no memory. */
+  /** The scene_id when the scene has Scene Memory, "" otherwise. */
   memoryId: string;
+  /** The scene has Scene Memory (opened by sceneId). */
+  hasMemory: boolean;
+  /** The scene has prompt components of its own. */
+  hasPrompt: boolean;
 }
 
 export interface AgentScenesPage {
@@ -430,11 +443,12 @@ export interface CreateAgentTenantInput {
   name: string;
 }
 
-/** A person known under a tenant (a 1:1 chat is its person). */
+/** A person known under a tenant: their personal level. Their 1:1 chat is
+ * a scene of its own. */
 export interface AgentTenantPerson {
   staffId: string;
   title: string;
-  /** openConversationId of the person's 1:1 chat, "" when none. */
+  /** scene_id of the person's 1:1 chat scene, "" when unknown. */
   dmSceneKey: string;
   lastActiveAt: string;
 }
@@ -451,8 +465,8 @@ export type ContextLayer = "global" | "org" | "scene" | "person";
 export type ContextEffectiveLayer = ContextLayer | (string & {});
 
 /** Address of one Context Builder node: the tenant itself (`org`, key =
- * OrgId), one of its group chats (`scene`, key = openConversationId; a 1:1
- * chat key maps to its person) or one of its people (`person`, key =
+ * OrgId), one of its scenes (`scene`, key = scene_id; a group chat or a 1:1
+ * chat, each its own scope) or one of its people (`person`, key =
  * staffId). */
 export interface ContextNodeRef {
   orgId: string;
@@ -563,13 +577,12 @@ export interface ContextNodeEffective {
 }
 
 export interface ContextNodeDetail {
-  /** Where this node's configuration lives (a 1:1 chat key reads its
-   * person). null for a 1:1 chat whose person is unknown, so nothing is
-   * writable there. */
+  /** Where this node's configuration lives: the node's own scope. null
+   * when the value is malformed. */
   scope: ContextNodeScope | null;
-  /** The node's chat: the group of a group node, the 1:1 chat of a person
-   * (its inbound session and memory). null for a tenant, a person without a
-   * 1:1 chat, and from a server that does not say. */
+  /** The node's chat: the scene of a scene node, the 1:1 chat scene of a
+   * person (its inbound session and memory). null for a tenant, a person
+   * without a 1:1 chat, and from a server that does not say. */
   scene: AgentSceneSummary | null;
   prompts: ContextPromptComponent[];
   connectors: ContextNodeConnector[];
@@ -680,6 +693,9 @@ export interface ConnectedAppsList {
 
 /** One scene's use of an app. */
 export interface ConnectedAppSceneUsage {
+  /** The scene's scene_id. */
+  sceneId: string;
+  /** Same as sceneId (the server sends both). */
   sceneKey: string;
   title: string;
   kind: ContextSceneKind;

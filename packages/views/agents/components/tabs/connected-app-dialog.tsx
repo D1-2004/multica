@@ -507,7 +507,7 @@ function ScopedSection({
           {app.scenes.length > 0 ? (
             <UsageList
               title={t(($) => $.tab_body.connected_apps.scenes_title)}
-              items={app.scenes.map((scene) => ({ key: scene.sceneKey, node: <SceneUsageRow scene={scene} /> }))}
+              items={app.scenes.map((scene) => ({ key: scene.sceneId, node: <SceneUsageRow scene={scene} /> }))}
             />
           ) : null}
           {app.persons.length > 0 ? (

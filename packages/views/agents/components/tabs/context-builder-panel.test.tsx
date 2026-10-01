@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ContextNodeDetail, ContextNodeRef } from "@multica/core/context-capabilities";
+import type { AgentSceneSummary, ContextNodeDetail, ContextNodeRef } from "@multica/core/context-capabilities";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../../locales/en/common.json";
 import enAgents from "../../../locales/en/agents.json";
@@ -39,11 +39,42 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn(), info: vi.f
 const copy = enAgents.tab_body.context_builder;
 const apps = enAgents.tab_body.connected_apps;
 
-const sceneNode: ContextNodeRef = { orgId: "dingA", scopeType: "scene", scopeKey: "cid-group" };
+// Scene nodes are keyed by scene_id; the DingTalk conversation id is
+// display-only.
+const GROUP_SCENE = "66666666-6666-4666-8666-666666666666";
+const DM_SCENE = "77777777-7777-4777-8777-777777777777";
+const sceneNode: ContextNodeRef = { orgId: "dingA", scopeType: "scene", scopeKey: GROUP_SCENE };
+const dmNode: ContextNodeRef = { orgId: "dingA", scopeType: "scene", scopeKey: DM_SCENE };
+const allRights = { toggle: true, connect: true, editPrompts: true, editMcp: true };
+
+const dmScene: AgentSceneSummary = {
+  sceneId: DM_SCENE,
+  sceneKey: DM_SCENE,
+  conversationId: "cidDm==",
+  kind: "dm",
+  title: "Ada",
+  orgId: "dingA",
+  lastActiveAt: "",
+  inboundSessionId: "",
+  inboundCount: 0,
+  memoryId: "",
+  hasMemory: false,
+  hasPrompt: false,
+};
+
+/** A 1:1 chat's own scene node, as a manager reads it: full rights. */
+function dmDetail(overrides: Partial<ContextNodeDetail> = {}): ContextNodeDetail {
+  return detailOf({
+    scope: { type: "scene", orgId: "dingA", key: DM_SCENE, title: "Ada" },
+    scene: dmScene,
+    rights: allRights,
+    ...overrides,
+  });
+}
 
 function detailOf(overrides: Partial<ContextNodeDetail> = {}): ContextNodeDetail {
   return {
-    scope: { type: "scene", orgId: "dingA", key: "cid-group", title: "Release crew" },
+    scope: { type: "scene", orgId: "dingA", key: GROUP_SCENE, title: "Release crew" },
     scene: null,
     prompts: [
       { id: "p1", name: "Tone", order: 1, text: "Be brief.", enabled: true, updatedByName: "Ada", updatedAt: "" },
@@ -346,6 +377,16 @@ describe("ContextBuilderPanel effective preview", () => {
     expect(within(docs).getByText(copy.layer_global)).toBeInTheDocument();
     expect(within(preview).getByText("search")).toBeInTheDocument();
   });
+
+  it("names a 1:1 chat scene's own layer as a 1:1 chat", async () => {
+    mocks.getNode.mockResolvedValue(dmDetail());
+    renderPanel({ node: dmNode });
+
+    const preview = await screen.findByRole("region", { name: copy.effective_title });
+    const brief = within(preview).getByText("Be brief.").closest("li")!;
+    expect(within(brief).getByText(enAgents.context_config.kind_dm)).toBeInTheDocument();
+    expect(within(brief).queryByText(copy.layer_scene)).not.toBeInTheDocument();
+  });
 });
 
 describe("ContextBuilderPanel capabilities", () => {
@@ -448,12 +489,33 @@ describe("ContextBuilderPanel capabilities", () => {
     expect(screen.queryByRole("button", { name: enAgents.tab_body.mcp_config.add_action })).not.toBeInTheDocument();
   });
 
-  it("says when a level cannot be configured", async () => {
+  it("configures a 1:1 chat as its own scene: a manager switches and connects its account", async () => {
+    mocks.getNode.mockResolvedValue(dmDetail());
+    mocks.startConnection.mockResolvedValue("https://github.com/login/oauth/authorize?state=dm");
+    const user = userEvent.setup();
+    renderPanel({ node: dmNode, openApp: "github" });
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("switch", { name: copy.enable_dm })).not.toBeChecked();
+    // Nothing is left to the chat's person: the scene is not their level.
+    expect(within(dialog).queryByText(copy.owner_connects)).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: apps.connect }));
+
+    await waitFor(() =>
+      expect(mocks.startConnection).toHaveBeenCalledWith("ws-1", "agent-1", dmNode, {
+        connectorId: "conn-github",
+        returnTo: "/acme/agents/agent-1?app=github",
+      }),
+    );
+    expect(mocks.getNode).toHaveBeenCalledWith("ws-1", "agent-1", dmNode);
+  });
+
+  it("keeps a scene node's own builder when its scope is malformed", async () => {
     mocks.getNode.mockResolvedValue(detailOf({ scope: null }));
     renderPanel();
 
-    expect(await screen.findByText(copy.scope_unknown)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: copy.prompt_add })).not.toBeInTheDocument();
+    expect(await screen.findByRole("listitem", { name: "Tone" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: copy.prompt_add })).toBeInTheDocument();
   });
 });
 
@@ -475,6 +537,21 @@ describe("ContextBuilderPanel configure-page access", () => {
     await user.click(within(confirm).getByRole("button", { name: copy.access_revoke }));
 
     await waitFor(() => expect(mocks.revokeGrants).toHaveBeenCalledWith("ws-1", "agent-1", personNode));
+  });
+
+  it("revokes a 1:1 chat's configure-page access by its scene_id", async () => {
+    mocks.getNode.mockResolvedValue(dmDetail());
+    mocks.revokeGrants.mockResolvedValue(1);
+    const user = userEvent.setup();
+    renderPanel({ node: dmNode });
+
+    const section = await screen.findByRole("region", { name: copy.access_title });
+    await user.click(within(section).getByRole("button", { name: copy.access_revoke }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByText(copy.access_revoke_dm)).toBeInTheDocument();
+    await user.click(within(confirm).getByRole("button", { name: copy.access_revoke }));
+
+    await waitFor(() => expect(mocks.revokeGrants).toHaveBeenCalledWith("ws-1", "agent-1", dmNode));
   });
 
   it("offers no revoke without edit rights", async () => {

@@ -67,6 +67,12 @@ import {
 
 const copy = enAgents.context_config;
 
+// A scene's scope key is its scene_id (a group chat or a 1:1 chat alike).
+const SALES_SCENE = "66666666-6666-4666-8666-666666666666";
+const OPS_SCENE = "77777777-7777-4777-8777-777777777777";
+const DM_SCENE = "88888888-8888-4888-8888-888888888888";
+const PARTNER_SCENE = "99999999-9999-4999-8999-999999999999";
+
 /** Scope content from a backend without rights, prompts or MCP servers. */
 const noContent = { rights: null, prompts: [], mcpConfig: null, mcpConfigRedacted: false };
 
@@ -109,7 +115,7 @@ function agentDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
       credentials: [],
       ...noContent,
     },
-    scenes: [{ scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" }],
+    scenes: [{ scopeKey: SALES_SCENE, scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" }],
     tenant: null,
     tenants: [],
     org: null,
@@ -120,10 +126,10 @@ function agentDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
 }
 
 const sceneDetail: ContextConfigSceneDetail = {
-  scene: { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
+  scene: { scopeKey: SALES_SCENE, scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
   bindings: [{ resourceType: "connector", resourceId: "conn-wiki", enabled: true, shareInGroups: false }],
   credentials: [{ connectorId: "conn-wiki", hint: "••••abcd", updatedAt: "", kind: "bearer" }],
-  scope: { type: "scene", key: "cid-1", title: "Sales team" },
+  scope: { type: "scene", key: SALES_SCENE, title: "Sales team" },
   canConnect: true,
   ...noContent,
 };
@@ -189,7 +195,7 @@ describe("ContextConfigPage", () => {
       agentId: "agent-1",
       workspaceId: "ws-1",
       scopeType: "scene",
-      scopeKey: "cid-1",
+      scopeKey: SALES_SCENE,
       scopeTitle: "Sales team",
     });
     const user = userEvent.setup();
@@ -199,8 +205,8 @@ describe("ContextConfigPage", () => {
     expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
     expect(api.redeemContextConfigLink).toHaveBeenCalledTimes(1);
     expect(api.redeemContextConfigLink).toHaveBeenCalledWith("link-token");
-    expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", "cid-1", "");
-    expect(onBind).toHaveBeenCalledWith({ agentId: "agent-1", scopeType: "scene", scopeKey: "cid-1", orgId: "" });
+    expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", SALES_SCENE, "");
+    expect(onBind).toHaveBeenCalledWith({ agentId: "agent-1", scopeType: "scene", scopeKey: SALES_SCENE, orgId: "" });
 
     const wikiToggle = screen.getByRole("switch", { name: "Turn Wiki on or off" });
     expect(wikiToggle).toBeChecked();
@@ -211,7 +217,7 @@ describe("ContextConfigPage", () => {
     await waitFor(() =>
       expect(api.setContextCapabilityBinding).toHaveBeenCalledWith("agent-1", {
         scopeType: "scene",
-        scopeKey: "cid-1",
+        scopeKey: SALES_SCENE,
         resourceType: "skill",
         resourceId: "skill-report",
         enabled: true,
@@ -307,7 +313,7 @@ describe("ContextConfigPage", () => {
     await waitFor(() =>
       expect(api.deleteContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
         scopeType: "scene",
-        scopeKey: "cid-1",
+        scopeKey: SALES_SCENE,
         connectorId: "conn-wiki",
       }),
     );
@@ -327,7 +333,7 @@ describe("ContextConfigPage", () => {
   it("links a group through the DingTalk picker when a personal grant exists", async () => {
     api.getContextConfigAgent.mockResolvedValue(agentDetail({ scenes: [], jsapiAvailable: true }));
     api.resolveContextConfigScene.mockResolvedValue({
-      scopeKey: "cid-2",
+      scopeKey: OPS_SCENE,
       scopeTitle: "Ops",
       source: "jsapi",
       expiresAt: "",
@@ -352,7 +358,7 @@ describe("ContextConfigPage", () => {
       agentDetail({ scenes: [], jsapiAvailable: true, tenant: beta, tenants: [beta] }),
     );
     api.resolveContextConfigScene.mockResolvedValue({
-      scopeKey: "cid-2",
+      scopeKey: OPS_SCENE,
       scopeTitle: "Ops",
       source: "jsapi",
       expiresAt: "",
@@ -488,12 +494,12 @@ describe("ContextConfigPage", () => {
       await waitFor(() =>
         expect(openAuthorizeUrl).toHaveBeenCalledWith(
           "https://github.com/login/oauth/authorize?state=mcpc.x",
-          { agentId: "agent-1", scopeType: "scene", scopeKey: "cid-1" },
+          { agentId: "agent-1", scopeType: "scene", scopeKey: SALES_SCENE },
         ),
       );
       expect(api.startContextConnectorConnection).toHaveBeenCalledWith("agent-1", {
         scopeType: "scene",
-        scopeKey: "cid-1",
+        scopeKey: SALES_SCENE,
         connectorId: "conn-github",
       });
       // The page is leaving for the provider; a second tap cannot start another flow.
@@ -687,19 +693,21 @@ describe("ContextConfigPage", () => {
     api.getContextConfigAgent.mockResolvedValue(
       agentDetail({
         scenes: [
-          { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
-          { scopeKey: "cid-dm", scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
+          { scopeKey: SALES_SCENE, scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
+          { scopeKey: DM_SCENE, scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
         ],
       }),
     );
-    api.getContextConfigScene.mockImplementation(async (_agentId: string, sceneKey: string) =>
-      sceneKey === "cid-dm"
+    api.getContextConfigScene.mockImplementation(async (_agentId: string, sceneId: string) =>
+      sceneId === DM_SCENE
         ? {
-            scene: { scopeKey: "cid-dm", scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
+            scene: { scopeKey: DM_SCENE, scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
             bindings: [],
             credentials: [],
-            scope: { type: "person", key: "staff-1", title: "" },
+            // A 1:1 chat is its own scene, never its person's scope.
+            scope: { type: "scene", key: DM_SCENE, title: "" },
             canConnect: true,
+            ...noContent,
           }
         : sceneDetail,
     );
@@ -713,34 +721,54 @@ describe("ContextConfigPage", () => {
 
     const picker = screen.getByRole("combobox");
     expect(within(picker).getByRole("option", { name: `${copy.kind_dm} · ${copy.scene_untitled_dm}` })).toBeInTheDocument();
-    await user.selectOptions(picker, "cid-dm");
+    await user.selectOptions(picker, DM_SCENE);
 
     const dmRegion = await screen.findByRole("region", { name: copy.scene_untitled_dm });
     expect(within(dmRegion).getByText(copy.kind_dm)).toBeInTheDocument();
     expect(within(dmRegion).getByText(copy.scene_scope_hint_dm)).toBeInTheDocument();
     expect(within(dmRegion).getByText(copy.credential_required)).toBeInTheDocument();
-    // The person's own 1:1 chat link: they set their own token there.
+    // An older backend without rights that lets the caller connect: the
+    // chat's own token is set here.
     expect(within(dmRegion).getByRole("button", { name: copy.set_credential })).toBeInTheDocument();
     expect(within(dmRegion).queryByText(copy.owner_connects)).not.toBeInTheDocument();
+    expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", DM_SCENE, "");
   });
 
-  it("says when the person of a 1:1 chat is not known and shows no settings", async () => {
+  it("writes a 1:1 chat's switches to the chat's own scene, with the manager's full rights", async () => {
     api.getContextConfigAgent.mockResolvedValue(
       agentDetail({
-        scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" }],
+        access: "manager",
+        scenes: [{ scopeKey: DM_SCENE, scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" }],
       }),
     );
     api.getContextConfigScene.mockResolvedValue({
-      scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
+      scene: { scopeKey: DM_SCENE, scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" },
       bindings: [],
       credentials: [],
-      scope: null,
-      canConnect: false,
+      scope: { type: "scene", key: DM_SCENE, title: "Bob" },
+      canConnect: true,
+      ...noContent,
+      rights: allRights,
     });
+    const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1" });
 
-    expect(await screen.findByText(copy.dm_person_unknown)).toBeInTheDocument();
-    expect(screen.queryByRole("switch", { name: "Turn Wiki on or off" })).not.toBeInTheDocument();
+    const region = await screen.findByRole("region", { name: "Bob" });
+    expect(within(region).getByText(copy.kind_dm)).toBeInTheDocument();
+    expect(within(region).getByText(copy.scene_scope_hint_dm)).toBeInTheDocument();
+    expect(within(region).queryByText(copy.owner_connects)).not.toBeInTheDocument();
+    expect(within(region).getByRole("button", { name: copy.set_credential })).toBeInTheDocument();
+    await user.click(within(region).getByRole("switch", { name: "Turn Wiki on or off" }));
+
+    await waitFor(() =>
+      expect(api.setContextCapabilityBinding).toHaveBeenCalledWith("agent-1", {
+        scopeType: "scene",
+        scopeKey: DM_SCENE,
+        resourceType: "connector",
+        resourceId: "conn-wiki",
+        enabled: true,
+      }),
+    );
   });
 
   it("saves the group-chat switch of a personal connector and says it is not applied yet", async () => {
@@ -838,8 +866,8 @@ describe("ContextConfigPage", () => {
           person: null,
           access: "manager",
           scenes: [
-            { scopeKey: "cid-1", scopeTitle: "Sales team", source: "manager", expiresAt: "", kind: "group", orgId: "" },
-            { scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" },
+            { scopeKey: SALES_SCENE, scopeTitle: "Sales team", source: "manager", expiresAt: "", kind: "group", orgId: "" },
+            { scopeKey: DM_SCENE, scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" },
           ],
         }),
       );
@@ -854,48 +882,48 @@ describe("ContextConfigPage", () => {
       expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
     });
 
-    it("lets the person connect in their own 1:1 chat: a manager sees 由本人连接", async () => {
+    it("lets a manager connect a 1:1 chat's own account: nothing is left to its person", async () => {
       api.getContextConfigAgent.mockResolvedValue(
         oauthDetail({
           person: null,
           access: "manager",
-          scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" }],
+          scenes: [{ scopeKey: DM_SCENE, scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" }],
         }),
       );
       api.getContextConfigScene.mockResolvedValue({
-        scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" },
+        scene: { scopeKey: DM_SCENE, scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" },
         bindings: [],
         credentials: [{ connectorId: "conn-github", hint: "@bob", updatedAt: "", kind: "oauth" }],
-        scope: { type: "person", key: "staff-bob", title: "Bob Li" },
-        canConnect: false,
+        scope: { type: "scene", key: DM_SCENE, title: "Bob" },
+        canConnect: true,
+        ...noContent,
+        rights: allRights,
       });
       renderPage({ initialAgentId: "agent-1" });
 
-      const region = await screen.findByRole("region", { name: "Bob Li" });
-      expect(within(region).getByText(copy.owner_connects)).toBeInTheDocument();
+      const region = await screen.findByRole("region", { name: "Bob" });
+      expect(within(region).queryByText(copy.owner_connects)).not.toBeInTheDocument();
       expect(within(region).getByText("Connected @bob")).toBeInTheDocument();
-      expect(within(region).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
-      expect(within(region).queryByRole("button", { name: copy.disconnect })).not.toBeInTheDocument();
-      // Switching the app on for the chat stays possible.
+      expect(within(region).getByRole("button", { name: copy.disconnect })).toBeInTheDocument();
       expect(within(region).getByRole("switch", { name: "Turn GitHub on or off" })).toBeInTheDocument();
     });
 
     it("hides connecting whenever the server says the caller may not connect", async () => {
       api.getContextConfigAgent.mockResolvedValue(
         oauthDetail({
-          scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" }],
+          scenes: [{ scopeKey: DM_SCENE, scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" }],
         }),
       );
       api.getContextConfigScene.mockResolvedValue({
-        scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
+        scene: { scopeKey: DM_SCENE, scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
         bindings: [],
         credentials: [],
-        scope: { type: "person", key: "staff-bob", title: "Bob Li" },
+        scope: { type: "scene", key: DM_SCENE, title: "Bob" },
         canConnect: false,
       });
       renderPage({ initialAgentId: "agent-1" });
 
-      const region = await screen.findByRole("region", { name: "Bob Li" });
+      const region = await screen.findByRole("region", { name: "Bob" });
       expect(within(region).getByText(copy.owner_connects)).toBeInTheDocument();
       expect(within(region).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
     });
@@ -1104,17 +1132,17 @@ describe("ContextConfigPage", () => {
               tenant: beta,
               tenants: [acme, beta],
               scenes: [
-                { scopeKey: "cid-b", scopeTitle: "Partner", source: "agent_link", expiresAt: "", kind: "group", orgId: "dingB" },
+                { scopeKey: PARTNER_SCENE, scopeTitle: "Partner", source: "agent_link", expiresAt: "", kind: "group", orgId: "dingB" },
               ],
             })
           : agentDetail({ tenant: acme, tenants: [acme, beta] }),
       );
       api.getContextConfigScene.mockImplementation(async (_agentId: string, sceneKey: string) =>
-        sceneKey === "cid-b"
+        sceneKey === PARTNER_SCENE
           ? {
               ...sceneDetail,
-              scene: { scopeKey: "cid-b", scopeTitle: "Partner", source: "agent_link", expiresAt: "", kind: "group", orgId: "dingB" },
-              scope: { type: "scene", key: "cid-b", title: "Partner" },
+              scene: { scopeKey: PARTNER_SCENE, scopeTitle: "Partner", source: "agent_link", expiresAt: "", kind: "group", orgId: "dingB" },
+              scope: { type: "scene", key: PARTNER_SCENE, title: "Partner" },
               bindings: [],
             }
           : sceneDetail,
@@ -1130,12 +1158,12 @@ describe("ContextConfigPage", () => {
 
       const region = await screen.findByRole("region", { name: "Partner" });
       expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "dingB");
-      expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", "cid-b", "dingB");
+      expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", PARTNER_SCENE, "dingB");
       await user.click(within(region).getByRole("switch", { name: "Turn Weekly report on or off" }));
       await waitFor(() =>
         expect(api.setContextCapabilityBinding).toHaveBeenCalledWith("agent-1", {
           scopeType: "scene",
-          scopeKey: "cid-b",
+          scopeKey: PARTNER_SCENE,
           orgId: "dingB",
           resourceType: "skill",
           resourceId: "skill-report",
@@ -1149,7 +1177,7 @@ describe("ContextConfigPage", () => {
         agentId: "agent-1",
         workspaceId: "ws-1",
         scopeType: "scene",
-        scopeKey: "cid-1",
+        scopeKey: SALES_SCENE,
         scopeTitle: "Sales team",
         orgId: "dingGone",
       });
@@ -1259,7 +1287,7 @@ describe("ContextConfigPage", () => {
 
 const allRights = { toggle: true, connect: true, editPrompts: true, editMcp: true };
 const noRights = { toggle: false, connect: false, editPrompts: false, editMcp: false };
-const groupBinding: ContextConfigBinding = { agentId: "agent-1", scopeType: "scene", scopeKey: "cid-1", orgId: "" };
+const groupBinding: ContextConfigBinding = { agentId: "agent-1", scopeType: "scene", scopeKey: SALES_SCENE, orgId: "" };
 const personBinding: ContextConfigBinding = { agentId: "agent-1", scopeType: "person", scopeKey: "staff-1", orgId: "" };
 const toneprompt = { id: "p1", name: "Tone", order: 1, text: "Be brief.", enabled: true, updatedByName: "", updatedAt: "" };
 
@@ -1278,8 +1306,8 @@ describe("bound configuration page", () => {
         tenants: [acme, beta],
         jsapiAvailable: true,
         scenes: [
-          { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
-          { scopeKey: "cid-2", scopeTitle: "Ops", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
+          { scopeKey: SALES_SCENE, scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
+          { scopeKey: OPS_SCENE, scopeTitle: "Ops", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
         ],
       }),
     );
@@ -1364,27 +1392,28 @@ describe("bound configuration page", () => {
     expect(within(region).getByRole("listitem", { name: "docs" })).toBeInTheDocument();
   });
 
-  it("says a person maintains their own 1:1 chat", async () => {
+  it("lets a 1:1 chat link holder only view: the agent's managers maintain the chat", async () => {
     api.getContextConfigAgent.mockResolvedValue(
       agentDetail({
-        access: "manager",
-        scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" }],
+        scenes: [{ scopeKey: DM_SCENE, scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" }],
       }),
     );
     api.getContextConfigScene.mockResolvedValue({
-      scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" },
+      scene: { scopeKey: DM_SCENE, scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
       bindings: [],
       credentials: [],
-      scope: { type: "person", key: "staff-bob", title: "Bob Li" },
+      scope: { type: "scene", key: DM_SCENE, title: "Bob" },
       canConnect: false,
       ...noContent,
       rights: noRights,
     });
-    renderPage({ binding: { ...groupBinding, scopeKey: "cid-dm" } });
+    renderPage({ binding: { ...groupBinding, scopeKey: DM_SCENE } });
 
-    const region = await screen.findByRole("region", { name: "Bob Li" });
-    expect(within(region).getByText(copy.person_read_only)).toBeInTheDocument();
+    const region = await screen.findByRole("region", { name: "Bob" });
+    expect(within(region).getByText(copy.scene_read_only_dm)).toBeInTheDocument();
+    expect(within(region).queryByText(copy.person_read_only)).not.toBeInTheDocument();
     expect(within(region).queryByRole("button")).not.toBeInTheDocument();
+    expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", DM_SCENE, "");
   });
 
   it("returns a provider sign-in to the bound page", async () => {
@@ -1488,7 +1517,7 @@ describe("scope prompts", () => {
     await user.type(within(region).getByLabelText(copy.prompt_text), "Use lists.");
     await user.click(within(region).getByRole("button", { name: copy.save }));
     await waitFor(() =>
-      expect(api.setContextConfigPrompts).toHaveBeenCalledWith("agent-1", { scopeType: "scene", scopeKey: "cid-1" }, [
+      expect(api.setContextConfigPrompts).toHaveBeenCalledWith("agent-1", { scopeType: "scene", scopeKey: SALES_SCENE }, [
         { name: "Tone", order: 1, text: "Be brief.", enabled: true },
         { name: "Format", order: 2, text: "Use lists.", enabled: true },
       ]),
@@ -1506,7 +1535,7 @@ describe("scope prompts", () => {
     await waitFor(() =>
       expect(api.setContextConfigPrompts).toHaveBeenLastCalledWith(
         "agent-1",
-        { scopeType: "scene", scopeKey: "cid-1" },
+        { scopeType: "scene", scopeKey: SALES_SCENE },
         [{ name: "Tone", order: 1, text: "Be brief.", enabled: false }],
       ),
     );
@@ -1522,7 +1551,7 @@ describe("scope prompts", () => {
     await waitFor(() =>
       expect(api.setContextConfigPrompts).toHaveBeenLastCalledWith(
         "agent-1",
-        { scopeType: "scene", scopeKey: "cid-1" },
+        { scopeType: "scene", scopeKey: SALES_SCENE },
         [{ name: "Tone", order: 1, text: "Be very brief.", enabled: true }],
       ),
     );
@@ -1535,7 +1564,7 @@ describe("scope prompts", () => {
     await waitFor(() =>
       expect(api.setContextConfigPrompts).toHaveBeenLastCalledWith(
         "agent-1",
-        { scopeType: "scene", scopeKey: "cid-1" },
+        { scopeType: "scene", scopeKey: SALES_SCENE },
         [],
       ),
     );

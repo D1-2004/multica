@@ -81,18 +81,18 @@ vi.mock("@multica/core/agents", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/agents")>();
   return {
     ...actual,
-    agentSceneMemoryDetailOptions: (wsId: string, agentId: string, memoryId: string, enabled = true) =>
+    agentSceneMemoryDetailOptions: (wsId: string, agentId: string, sceneId: string, enabled = true) =>
       queryOptions({
-        queryKey: ["mem", wsId, agentId, memoryId, enabled],
-        queryFn: () => mocks.getMemory(memoryId) as Promise<AgentSceneMemory>,
-        enabled: enabled && Boolean(memoryId),
+        queryKey: ["mem", wsId, agentId, sceneId, enabled],
+        queryFn: () => mocks.getMemory(sceneId) as Promise<AgentSceneMemory>,
+        enabled: enabled && Boolean(sceneId),
       }),
   };
 });
 vi.mock("@multica/ui/hooks/use-mobile", () => ({ useIsCompact: () => mocks.compact }));
 vi.mock("./scene-memory-tab", () => ({
   MemoryFlagBar: () => <div>memory-flag-bar</div>,
-  SceneMemoryDetail: ({ memory }: { memory: AgentSceneMemory }) => <div>{`memory-detail:${memory.id}`}</div>,
+  SceneMemoryDetail: ({ memory }: { memory: AgentSceneMemory }) => <div>{`memory-detail:${memory.scene_id}`}</div>,
   SceneMemoryTab: () => <div>all-memory-list</div>,
 }));
 vi.mock("../../../chat/components/chat-message-list", () => ({
@@ -125,34 +125,48 @@ const tenants: AgentTenantsList = {
   unassignedOrgs: [{ orgId: "dingC", groupCount: 2, personCount: 0 }],
 };
 
+// Agent work scenes are keyed by scene_id; the DingTalk conversation id is
+// display-only.
+const GROUP_SCENE = "66666666-6666-4666-8666-666666666666";
+const DM_SCENE = "77777777-7777-4777-8777-777777777777";
+
 const groupScene: AgentSceneSummary = {
-  sceneKey: "cid-group",
+  sceneId: GROUP_SCENE,
+  sceneKey: GROUP_SCENE,
+  conversationId: "cid-group",
   kind: "group",
   title: "Release crew",
   orgId: "dingA",
   lastActiveAt: "2026-09-30T08:00:00Z",
   inboundSessionId: "session-1",
   inboundCount: 3,
-  memoryId: "memory-1",
+  memoryId: GROUP_SCENE,
+  hasMemory: true,
+  hasPrompt: false,
 };
 
 const person: AgentTenantPerson = {
   staffId: "staff-1",
   title: "Ada",
-  dmSceneKey: "cid-dm",
+  dmSceneKey: DM_SCENE,
   lastActiveAt: "",
 };
 
-// The person's 1:1 chat, as the person node reports it.
+// Ada's 1:1 chat: a scene of its own, listed with the groups; the person
+// node reports it as the person's chat.
 const dmScene: AgentSceneSummary = {
-  sceneKey: "cid-dm",
+  sceneId: DM_SCENE,
+  sceneKey: DM_SCENE,
+  conversationId: "cid-dm",
   kind: "dm",
   title: "Ada",
   orgId: "dingA",
   lastActiveAt: "",
   inboundSessionId: "",
   inboundCount: 0,
-  memoryId: "memory-dm",
+  memoryId: DM_SCENE,
+  hasMemory: true,
+  hasPrompt: false,
 };
 
 function nodeDetail(overrides: Partial<ContextNodeDetail> = {}): ContextNodeDetail {
@@ -200,7 +214,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.compact = false;
   mocks.listTenants.mockResolvedValue(tenants);
-  mocks.listGroups.mockResolvedValue({ scenes: [groupScene], hasMore: false });
+  mocks.listGroups.mockResolvedValue({ scenes: [groupScene, dmScene], hasMore: false });
   mocks.listPersons.mockResolvedValue([person]);
   mocks.getNode.mockImplementation(
     async (_ws: string, _agent: string, node: { scopeType: string; scopeKey: string }) =>
@@ -208,11 +222,12 @@ beforeEach(() => {
         ? nodeDetail()
         : nodeDetail({
             scope: { type: node.scopeType as "scene", orgId: "dingA", key: node.scopeKey, title: "" },
-            scene: node.scopeType === "scene" ? groupScene : dmScene,
+            // A scene node reports its own scene; a person node their 1:1 chat.
+            scene: node.scopeType === "scene" && node.scopeKey === GROUP_SCENE ? groupScene : dmScene,
             prompts: [],
           }),
   );
-  mocks.getMemory.mockResolvedValue({ id: "", scene_key: "" });
+  mocks.getMemory.mockResolvedValue({ id: "", scene_id: "", scene_key: "" });
   mocks.conversations.mockResolvedValue({
     conversations: [
       {
@@ -278,18 +293,19 @@ describe("ScenesTab tree", () => {
     expect(await screen.findByRole("button", { name: copy.collapse.replace("{{name}}", "Acme") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: copy.expand.replace("{{name}}", "Beta") })).toBeInTheDocument();
     expect(mocks.listGroups).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: new RegExp(copy.category_groups) }));
+    await user.click(screen.getByRole("button", { name: new RegExp(copy.category_chats) }));
     expect(await screen.findByRole("button", { name: /Release crew/ })).toBeInTheDocument();
     expect(mocks.listGroups).toHaveBeenCalledWith("ws-1", "agent-1", "dingA", { limit: 50, offset: 0 });
 
     await user.click(screen.getByRole("button", { name: new RegExp(copy.category_persons) }));
-    expect(await screen.findByRole("button", { name: /Ada/ })).toBeInTheDocument();
+    const people = screen.getByRole("button", { name: new RegExp(copy.category_persons) }).closest("li")!;
+    expect(await within(people).findByRole("button", { name: /Ada/ })).toBeInTheDocument();
     expect(mocks.listPersons).toHaveBeenCalledWith("ws-1", "agent-1", "dingA");
   });
 
   it("keeps the selected group and sub-tab in the address", async () => {
     const user = userEvent.setup();
-    const { navigation } = renderTab("view=scenes&tenant=dingA&node=scene:cid-group");
+    const { navigation } = renderTab(`view=scenes&tenant=dingA&node=scene:${GROUP_SCENE}`);
 
     expect(await screen.findByText("hello from the group")).toBeInTheDocument();
     expect(mocks.messages).toHaveBeenCalledWith("agent-1", "session-1", null);
@@ -297,34 +313,73 @@ describe("ScenesTab tree", () => {
 
     await user.click(screen.getByRole("tab", { name: copy.tab_config }));
     expect(navigation.replace).toHaveBeenLastCalledWith(
-      "/acme/agents/agent-1?view=scenes&tenant=dingA&node=scene%3Acid-group&scene_tab=config",
+      `/acme/agents/agent-1?view=scenes&tenant=dingA&node=scene%3A${GROUP_SCENE}&scene_tab=config`,
     );
 
     // The selected group's category is open; people open on demand.
     expect(screen.getByRole("button", { name: /Release crew/ })).toHaveAttribute("aria-current", "true");
     await user.click(screen.getByRole("button", { name: new RegExp(copy.category_persons) }));
-    await user.click(await screen.findByRole("button", { name: /Ada/ }));
+    const people = screen.getByRole("button", { name: new RegExp(copy.category_persons) }).closest("li")!;
+    await user.click(await within(people).findByRole("button", { name: /Ada/ }));
     expect(navigation.replace).toHaveBeenLastCalledWith(
       "/acme/agents/agent-1?view=scenes&tenant=dingA&node=person%3Astaff-1",
     );
   });
 
-  it("maps an old scene link to the group under the agent's own org", async () => {
-    const { navigation } = renderTab("view=scenes&scene=cid-group&scene_tab=memory&app=github");
-    mocks.getMemory.mockResolvedValue({ id: "memory-1", scene_key: "cid-group" } as AgentSceneMemory);
+  it("lists 1:1 chats with the groups and opens one as its own scene node", async () => {
+    const user = userEvent.setup();
+    const { navigation } = renderTab();
 
-    expect(await screen.findByText("memory-detail:memory-1")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: new RegExp(copy.category_chats) }));
+    const group = await screen.findByRole("button", { name: /Release crew/ });
+    expect(within(group).getByText(enAgents.context_config.kind_group)).toBeInTheDocument();
+    const dm = screen.getByRole("button", { name: new RegExp(`${enAgents.context_config.kind_dm}.*Ada`) });
+    await user.click(dm);
+
+    // The 1:1 chat's own scene node, by its scene_id: never its person's.
+    expect(navigation.replace).toHaveBeenLastCalledWith(
+      `/acme/agents/agent-1?view=scenes&tenant=dingA&node=scene%3A${DM_SCENE}`,
+    );
+    expect(await screen.findByRole("heading", { level: 2, name: "Ada" })).toBeInTheDocument();
+    expect(dm).toHaveAttribute("aria-current", "true");
+    await waitFor(() =>
+      expect(mocks.getNode).toHaveBeenCalledWith("ws-1", "agent-1", {
+        orgId: "dingA",
+        scopeType: "scene",
+        scopeKey: DM_SCENE,
+      }),
+    );
+    expect(mocks.getNode).not.toHaveBeenCalledWith("ws-1", "agent-1", expect.objectContaining({ scopeType: "person" }));
+    // The header names the chat's kind.
+    const header = screen.getByRole("heading", { level: 2, name: "Ada" }).parentElement!.parentElement!;
+    expect(within(header).getByText(enAgents.context_config.kind_dm)).toBeInTheDocument();
+  });
+
+  it("opens a 1:1 chat scene's memory by its scene_id", async () => {
+    mocks.getMemory.mockResolvedValue({ id: DM_SCENE, scene_id: DM_SCENE, scene_key: DM_SCENE } as AgentSceneMemory);
+    renderTab(`view=scenes&tenant=dingA&node=scene:${DM_SCENE}&scene_tab=memory`);
+
+    expect(await screen.findByText(`memory-detail:${DM_SCENE}`)).toBeInTheDocument();
+    expect(mocks.getMemory).toHaveBeenCalledWith(DM_SCENE);
+  });
+
+  it("maps an old scene link to the scene under the agent's own org", async () => {
+    const { navigation } = renderTab(`view=scenes&scene=${GROUP_SCENE}&scene_tab=memory&app=github`);
+    mocks.getMemory.mockResolvedValue({ id: GROUP_SCENE, scene_id: GROUP_SCENE, scene_key: GROUP_SCENE } as AgentSceneMemory);
+
+    expect(await screen.findByText(`memory-detail:${GROUP_SCENE}`)).toBeInTheDocument();
+    expect(mocks.getMemory).toHaveBeenCalledWith(GROUP_SCENE);
     expect(navigation.replace).toHaveBeenCalledWith(
-      "/acme/agents/agent-1?view=scenes&tenant=dingA&node=scene%3Acid-group&scene_tab=memory",
+      `/acme/agents/agent-1?view=scenes&tenant=dingA&node=scene%3A${GROUP_SCENE}&scene_tab=memory`,
     );
   });
 
   it("opens a person's memory through their 1:1 chat", async () => {
-    mocks.getMemory.mockResolvedValue({ id: "memory-dm", scene_key: "cid-dm" } as AgentSceneMemory);
+    mocks.getMemory.mockResolvedValue({ id: DM_SCENE, scene_id: DM_SCENE, scene_key: DM_SCENE } as AgentSceneMemory);
     renderTab("view=scenes&tenant=dingA&node=person:staff-1&scene_tab=memory");
 
-    expect(await screen.findByText("memory-detail:memory-dm")).toBeInTheDocument();
-    expect(mocks.getMemory).toHaveBeenCalledWith("memory-dm");
+    expect(await screen.findByText(`memory-detail:${DM_SCENE}`)).toBeInTheDocument();
+    expect(mocks.getMemory).toHaveBeenCalledWith(DM_SCENE);
     expect(mocks.getNode).toHaveBeenCalledWith("ws-1", "agent-1", {
       orgId: "dingA",
       scopeType: "person",
@@ -334,7 +389,7 @@ describe("ScenesTab tree", () => {
 
   it("titles a deep-linked group beyond the loaded page from its node", async () => {
     mocks.listGroups.mockResolvedValue({ scenes: [], hasMore: true });
-    renderTab("view=scenes&tenant=dingA&node=scene:cid-group");
+    renderTab(`view=scenes&tenant=dingA&node=scene:${GROUP_SCENE}`);
 
     expect(await screen.findByRole("heading", { level: 2, name: "Release crew" })).toBeInTheDocument();
     expect(await screen.findByText("hello from the group")).toBeInTheDocument();
@@ -395,7 +450,7 @@ describe("ScenesTab for a Tag employee", () => {
   });
 
   it("opens a group on its configuration, with inbound history and no memory tab", async () => {
-    renderTab("view=scenes&tenant=dingA&node=scene:cid-group", true);
+    renderTab(`view=scenes&tenant=dingA&node=scene:${GROUP_SCENE}`, true);
 
     const tabs = await screen.findAllByRole("tab");
     const labels = tabs.map((tab) => tab.textContent);

@@ -14,6 +14,7 @@ import {
   contextNodeOptions,
   type AgentTenant,
   type ContextNodeRef,
+  type ContextSceneKind,
 } from "@multica/core/context-capabilities";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -43,8 +44,9 @@ import { TenantCreateDialog, TenantSettings } from "./tenant-dialog";
 
 export type SceneSubTab = "inbound" | "memory" | "config" | "settings";
 
-/** Sub-tabs of each node: a tenant has its 配置 and 设置; a group chat and a
- * person have 入站记录, 记忆 and 配置. The first one is the default. */
+/** Sub-tabs of each node: a tenant has its 配置 and 设置; a scene (a group
+ * chat or a 1:1 chat) and a person have 入站记录, 记忆 and 配置. The first one
+ * is the default. */
 const SUB_TABS: Record<SceneSelection["type"], readonly SceneSubTab[]> = {
   org: ["config", "settings"],
   scene: ["inbound", "memory", "config"],
@@ -68,8 +70,9 @@ function subTabFor(type: SceneSelection["type"], value: string | null, tagManage
   return tabs.find((tab) => tab === value) ?? tabs[0] ?? "config";
 }
 
-/** `?tenant=<orgId>&node=<scopeType>:<scopeKey>`; a tenant itself has no
- * `node` (or `node=org:<orgId>`). */
+/** `?tenant=<orgId>&node=<scopeType>:<scopeKey>` (a scene's key is its
+ * scene_id, a person's their staffId); a tenant itself has no `node` (or
+ * `node=org:<orgId>`). */
 function selectionFromParams(params: URLSearchParams): SceneSelection | null {
   const orgId = params.get("tenant") ?? "";
   if (!orgId) return null;
@@ -96,12 +99,14 @@ type SceneArchive = "inbound" | "memory";
 
 /**
  * 场域: a tree of the agent's tenants (企业, each with its DingTalk OrgId)
- * and, under each, its 群聊 and 个人 (a 1:1 chat is its person). A tenant
- * opens on 配置 (its Context Builder) and 设置; a group chat and a person on
- * 入站记录, 记忆 and 配置. The selection lives in the URL (`tenant`, `node`,
- * `scene_tab`); an old `scene=<key>` link opens that group under the agent's
- * own org. 其他记录 opens the full inbound conversation and scene memory
- * lists, which also cover records the tree does not list.
+ * and, under each, its scenes (群聊和单聊: a group chat or a 1:1 chat, each its
+ * own scene keyed by scene_id) and its 个人 (people's personal levels). A
+ * tenant opens on 配置 (its Context Builder) and 设置; a scene and a person on
+ * 入站记录, 记忆 and 配置 (a person's records are their 1:1 chat's). The
+ * selection lives in the URL (`tenant`, `node`, `scene_tab`); an old
+ * `scene=<key>` link opens that scene under the agent's own org. 其他记录
+ * opens the full inbound conversation and scene memory lists, which also
+ * cover records the tree does not list.
  *
  * Switching node, sub-tab or view unmounts the prompt editor, so it goes
  * through the same discard confirmation as the pane's own tabs while the
@@ -491,20 +496,25 @@ function NodeDetail({
     settings: t(($) => $.tab_body.scenes.tab_settings),
   };
   const tenantTitle = tenant ? tenant.name || tenant.orgId : selection.orgId;
+  const dm = selection.type === "scene" && summary.kind === "dm";
   const title =
     selection.type === "org"
       ? tenantTitle
       : summary.title ||
-        (selection.type === "scene"
-          ? t(($) => $.tab_body.scenes.untitled_group)
-          : selection.key);
+        (selection.type === "person"
+          ? selection.key
+          : dm
+            ? t(($) => $.context_config.scene_untitled_dm)
+            : t(($) => $.tab_body.scenes.untitled_group));
   const kindLabel =
     selection.type === "org"
       ? t(($) => $.tab_body.context_builder.layer_org)
-      : selection.type === "scene"
-        ? t(($) => $.tab_body.context_builder.layer_scene)
-        : t(($) => $.tab_body.context_builder.layer_person);
-  const Icon = selection.type === "org" ? Building2 : selection.type === "scene" ? Users : User;
+      : selection.type === "person"
+        ? t(($) => $.tab_body.context_builder.layer_person)
+        : dm
+          ? t(($) => $.context_config.kind_dm)
+          : t(($) => $.tab_body.context_builder.layer_scene);
+  const Icon = selection.type === "org" ? Building2 : selection.type === "person" ? User : dm ? MessageSquare : Users;
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: contextCapabilityKeys.tenants(wsId, agent.id) });
@@ -584,7 +594,12 @@ function NodeDetail({
     );
   } else if (subTab === "memory") {
     body = (
-      <SceneMemoryPanel agent={agent} memoryId={summary.memoryId} loading={summary.loading} canEdit={canEdit} />
+      <SceneMemoryPanel
+        agent={agent}
+        sceneId={summary.memorySceneId}
+        loading={summary.loading}
+        canEdit={canEdit}
+      />
     );
   } else {
     body = builder;
@@ -647,14 +662,17 @@ function NodeDetail({
 interface NodeSummary {
   loading: boolean;
   title: string;
+  /** Kind of the node's chat; "group" until it is known. */
+  kind: ContextSceneKind;
   inboundSessionId: string;
-  memoryId: string;
+  /** scene_id of the node's chat when it has Scene Memory, else "". */
+  memorySceneId: string;
 }
 
-/** What the detail shows about the selected group or person: its title,
- * and its chat's newest inbound session and memory row. The node's own read
- * (shared with the builder) names the chat, a person's 1:1 chat included; a
- * group's list row answers first when the tree has it. */
+/** What the detail shows about the selected scene or person: its title,
+ * and its chat's kind, newest inbound session and memory. The node's own
+ * read (shared with the builder) names the chat, a person's 1:1 chat scene
+ * included; a scene's list row answers first when the tree has it. */
 function useNodeSummary(wsId: string, agentId: string, selection: SceneSelection): NodeSummary {
   const leaf = selection.type !== "org";
   const node = useQuery({
@@ -662,45 +680,46 @@ function useNodeSummary(wsId: string, agentId: string, selection: SceneSelection
     enabled: leaf && Boolean(wsId && agentId && selection.orgId && selection.key),
   });
   // The tree's lists, read from the cache only.
-  const groups = useInfiniteQuery({ ...agentTenantGroupsOptions(wsId, agentId, selection.orgId), enabled: false });
+  const scenes = useInfiniteQuery({ ...agentTenantGroupsOptions(wsId, agentId, selection.orgId), enabled: false });
   const persons = useQuery({ ...agentTenantPersonsOptions(wsId, agentId, selection.orgId), enabled: false });
-  if (!leaf) return { loading: false, title: "", inboundSessionId: "", memoryId: "" };
-  const listedGroup =
+  if (!leaf) return { loading: false, title: "", kind: "group", inboundSessionId: "", memorySceneId: "" };
+  const listedScene =
     selection.type === "scene"
-      ? (groups.data?.pages ?? []).flatMap((page) => page.scenes).find((scene) => scene.sceneKey === selection.key)
+      ? (scenes.data?.pages ?? []).flatMap((page) => page.scenes).find((scene) => scene.sceneId === selection.key)
       : undefined;
   const listedPerson =
     selection.type === "person" ? (persons.data ?? []).find((entry) => entry.staffId === selection.key) : undefined;
-  const scene = node.data?.scene ?? listedGroup ?? null;
+  const scene = node.data?.scene ?? listedScene ?? null;
   return {
-    loading: node.isLoading && !listedGroup,
-    title: listedGroup?.title || listedPerson?.title || node.data?.scope?.title || scene?.title || "",
+    loading: node.isLoading && !listedScene,
+    title: listedScene?.title || listedPerson?.title || node.data?.scope?.title || scene?.title || "",
+    kind: scene?.kind ?? "group",
     inboundSessionId: scene?.inboundSessionId ?? "",
-    memoryId: scene?.memoryId ?? "",
+    memorySceneId: scene?.hasMemory === true ? scene.sceneId : "",
   };
 }
 
-/** A group's or person's memory row, loaded by id (the agent-wide list
- * holds only the 200 newest rows). */
+/** A scene's or person's memory, loaded by the scene_id of its chat (the
+ * agent-wide list holds only the 200 newest rows). */
 function SceneMemoryPanel({
   agent,
-  memoryId,
+  sceneId,
   loading,
   canEdit,
 }: {
   agent: Agent;
-  memoryId: string;
+  sceneId: string;
   loading: boolean;
   canEdit: boolean;
 }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const uiEnabled = agent.scene_memory_ui_enabled === true;
-  const query = useQuery(agentSceneMemoryDetailOptions(wsId, agent.id, memoryId, uiEnabled));
+  const query = useQuery(agentSceneMemoryDetailOptions(wsId, agent.id, sceneId, uiEnabled));
   if (!uiEnabled) {
     return <PanelNotice>{t(($) => $.tab_body.scenes.memory_ui_off)}</PanelNotice>;
   }
-  if (loading || (memoryId && query.isLoading)) {
+  if (loading || (sceneId && query.isLoading)) {
     return (
       <PanelNotice>
         <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
@@ -708,7 +727,7 @@ function SceneMemoryPanel({
       </PanelNotice>
     );
   }
-  if (!memoryId) {
+  if (!sceneId) {
     return <PanelNotice>{t(($) => $.tab_body.scenes.memory_empty)}</PanelNotice>;
   }
   if (query.isError) {
@@ -721,8 +740,8 @@ function SceneMemoryPanel({
       </PanelNotice>
     );
   }
-  // A malformed response parses to a row without an id.
-  const memory = query.data?.id ? query.data : null;
+  // A malformed response parses to a row without a scene_id.
+  const memory = query.data?.scene_id ? query.data : null;
   if (!memory) {
     return <PanelNotice>{t(($) => $.tab_body.scenes.memory_empty)}</PanelNotice>;
   }

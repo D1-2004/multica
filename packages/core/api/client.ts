@@ -3160,70 +3160,71 @@ export class ApiClient {
     );
   }
 
-  /** One scene memory row by id (the scene detail's 记忆 sub-tab). A
-   * malformed response parses to a row with an empty id. */
-  async getAgentSceneMemory(agentId: string, memoryId: string): Promise<AgentSceneMemory> {
+  /** One scene's memory by its scene_id (the scene detail's 记忆
+   * sub-tab). A malformed response parses to a row with an empty id. */
+  async getAgentSceneMemory(agentId: string, sceneId: string): Promise<AgentSceneMemory> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}`,
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}`,
     );
     return parseWithFallback(
       raw,
       AgentSceneMemorySchema,
       EMPTY_AGENT_SCENE_MEMORY,
-      { endpoint: "GET /api/agents/{id}/scene-memory/{memoryId}" },
+      { endpoint: "GET /api/agents/{id}/scene-memory/{sceneId}" },
     );
   }
 
   async updateAgentSceneMemory(
     agentId: string,
-    memoryId: string,
+    sceneId: string,
     body: { memory_text: string; expected_revision: number },
   ): Promise<AgentSceneMemory> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}`,
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}`,
       { method: "PUT", body: JSON.stringify(body) },
     );
     return parseWithFallback(
       raw,
       AgentSceneMemorySchema,
       EMPTY_AGENT_SCENE_MEMORY,
-      { endpoint: "PUT /api/agents/{id}/scene-memory/{memoryId}" },
+      { endpoint: "PUT /api/agents/{id}/scene-memory/{sceneId}" },
     );
   }
 
   async resetAgentSceneMemory(
     agentId: string,
-    memoryId: string,
+    sceneId: string,
   ): Promise<AgentSceneMemory> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}/reset`,
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}/reset`,
       { method: "POST" },
     );
     return parseWithFallback(
       raw,
       AgentSceneMemorySchema,
       EMPTY_AGENT_SCENE_MEMORY,
-      { endpoint: "POST /api/agents/{id}/scene-memory/{memoryId}/reset" },
+      { endpoint: "POST /api/agents/{id}/scene-memory/{sceneId}/reset" },
     );
   }
 
   async clearAgentSceneRelations(
     agentId: string,
-    memoryId: string,
+    sceneId: string,
   ): Promise<void> {
     await this.fetch(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}/relations/clear`,
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}/relations/clear`,
       { method: "POST" },
     );
   }
 
+  /** Issues linked to one scene in the last 7 days, by its scene_id. */
   async listAgentSceneRelations(
     agentId: string,
-    conversationId: string,
+    sceneId: string,
   ): Promise<AgentSceneRelation[]> {
     const search = new URLSearchParams({
       agent_id: agentId,
-      conversation_id: conversationId,
+      scene_id: sceneId,
       since: "7d",
     });
     const raw = await this.fetch<unknown>(`/api/assoc/recall?${search.toString()}`);
@@ -4345,20 +4346,21 @@ export class ApiClient {
     });
   }
 
-  /** One scene the caller may configure. `orgId` names the scene's tenant
-   * when it is not the agent's own org. */
+  /** One scene the caller may configure, by its scene_id (the scope key
+   * the server lists). `orgId` names the scene's tenant when it is not the
+   * agent's own org. */
   async getContextConfigScene(
     agentId: string,
-    sceneKey: string,
+    sceneId: string,
     orgId = "",
   ): Promise<ContextConfigSceneDetail | null> {
     const query = orgId ? `?${new URLSearchParams({ org_id: orgId }).toString()}` : "";
     const raw = await this.fetch<unknown>(
-      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}${query}`,
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneId)}${query}`,
       { headers: NO_WORKSPACE_HEADER },
     );
     return parseWithFallback<ContextConfigSceneDetail | null>(raw, ContextConfigSceneDetailSchema, null, {
-      endpoint: "GET /api/context-capabilities/agents/{agentId}/scenes/{sceneKey}",
+      endpoint: "GET /api/context-capabilities/agents/{agentId}/scenes/{sceneId}",
       includeReceived: false,
     });
   }
@@ -4739,7 +4741,8 @@ export class ApiClient {
     );
   }
 
-  /** Group chats of one tenant, newest activity first. */
+  /** Scenes of one tenant (group chats and 1:1 chats), newest activity
+   * first. */
   async listAgentTenantGroups(
     workspaceId: string,
     agentId: string,
@@ -4759,7 +4762,7 @@ export class ApiClient {
     });
   }
 
-  /** People known under one tenant (a 1:1 chat is its person). */
+  /** People known under one tenant (their personal levels). */
   async listAgentTenantPersons(
     workspaceId: string,
     agentId: string,
