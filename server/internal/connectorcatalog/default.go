@@ -34,9 +34,16 @@ var defaultApps = []App{
 		AuthKind: AuthOAuthDCR, Hosts: []string{"mcp.sentry.dev"},
 	},
 	{
-		// The protected resource is the origin (https://mcp.asana.com).
+		// Asana's authorization server (app.asana.com) does not advertise a
+		// registration_endpoint, so dynamic registration cannot start.
+		// Workspace settings hold the pre-registered MCP app's client id and
+		// secret. The catalog template stays https://mcp.asana.com/mcp so
+		// connectors already added still match; /v2/mcp is the same host.
 		Slug: "asana", Name: "Asana", MCPURL: "https://mcp.asana.com/mcp",
-		AuthKind: AuthOAuthDCR, Hosts: []string{"mcp.asana.com"},
+		AuthKind:              AuthOAuthPreregistered,
+		Hosts:                 []string{"mcp.asana.com", "app.asana.com"},
+		AuthorizationEndpoint: "https://app.asana.com/-/oauth_authorize",
+		TokenEndpoint:         "https://app.asana.com/-/oauth_token",
 	},
 	{
 		// Authorization server api.figma.com, browser consent on

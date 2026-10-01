@@ -15,6 +15,7 @@ export type {
   ConnectorApp,
   ConnectorAppInput,
   ConnectorAppList,
+  SettingsConnectorSpec,
   ConnectorAuthInstance,
   ConnectorBinding,
   ConnectorInstanceInput,

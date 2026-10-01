@@ -38,6 +38,12 @@ type App struct {
 	TokenEndpoint         string
 	CallbackMode          string
 	Enabled               bool
+	AppIdentifier         string
+	InstallSlug           string
+	PrivateKeyCiphertext  []byte
+	PrivateKeyHint        string
+	OptionalCiphertext    []byte
+	OptionalHint          string
 	Instances             []InstanceRecord
 }
 
@@ -61,6 +67,16 @@ type AppInput struct {
 	CallbackMode          string
 	Enabled               *bool
 	PublicClient          bool
+	AppIdentifier         string
+	InstallSlug           string
+	PrivateCipher         []byte
+	PrivateHint           string
+	RotatePrivate         bool
+	ClearPrivate          bool
+	OptionalCipher        []byte
+	OptionalHint          string
+	RotateOptional        bool
+	ClearOptional         bool
 }
 
 // InstanceInput is a create or update of an authorization instance.
@@ -84,7 +100,7 @@ func mapDB(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		switch pgErr.Code {
-		case "42P01":
+		case "42P01", "42703":
 			return ErrSchemaMissing
 		case "23505":
 			return ErrConflict
@@ -97,13 +113,15 @@ func mapDB(err error) error {
 
 const appColumns = `id::text, workspace_id::text, provider, display_name, client_id,
 	client_secret_ciphertext, client_secret_hint, scopes, authorization_endpoint, token_endpoint,
-	callback_mode, enabled`
+	callback_mode, enabled, app_identifier, install_slug, private_key_ciphertext, private_key_hint,
+	optional_secret_ciphertext, optional_secret_hint`
 
 func scanApp(row pgx.Row) (App, error) {
 	var app App
 	err := row.Scan(&app.ID, &app.WorkspaceID, &app.Provider, &app.DisplayName, &app.ClientID,
 		&app.SecretCiphertext, &app.SecretHint, &app.Scopes, &app.AuthorizationEndpoint, &app.TokenEndpoint,
-		&app.CallbackMode, &app.Enabled)
+		&app.CallbackMode, &app.Enabled, &app.AppIdentifier, &app.InstallSlug, &app.PrivateKeyCiphertext, &app.PrivateKeyHint,
+		&app.OptionalCiphertext, &app.OptionalHint)
 	return app, mapDB(err)
 }
 
@@ -194,14 +212,21 @@ func Create(ctx context.Context, db DB, workspaceID, createdBy string, in AppInp
 	if in.Enabled != nil {
 		enabled = *in.Enabled
 	}
+	identifier, slug, err := normalizeAppExtras(in.AppIdentifier, in.InstallSlug)
+	if err != nil {
+		return App{}, err
+	}
 	row := db.QueryRow(ctx, `INSERT INTO connector_app
 		(workspace_id, provider, display_name, client_id, client_secret_ciphertext, client_secret_hint,
-		 scopes, authorization_endpoint, token_endpoint, callback_mode, enabled, created_by)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULLIF($12, '')::uuid)
+		 scopes, authorization_endpoint, token_endpoint, callback_mode, enabled, created_by,
+		 app_identifier, install_slug, private_key_ciphertext, private_key_hint,
+		 optional_secret_ciphertext, optional_secret_hint)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULLIF($12, '')::uuid,
+		 $13, $14, $15, $16, $17, $18)
 		RETURNING `+appColumns,
 		workspaceID, provider, strings.TrimSpace(in.DisplayName), strings.TrimSpace(in.ClientID), secretCiphertext, hint,
 		strings.TrimSpace(in.Scopes), strings.TrimSpace(in.AuthorizationEndpoint), strings.TrimSpace(in.TokenEndpoint),
-		callback, enabled, createdBy)
+		callback, enabled, createdBy, identifier, slug, in.PrivateCipher, in.PrivateHint, in.OptionalCipher, in.OptionalHint)
 	return scanApp(row)
 }
 
@@ -260,16 +285,44 @@ func Update(ctx context.Context, db DB, workspaceID, appID string, in AppInput, 
 	} else if rotateSecret {
 		ciphertext, secretHint = secretCiphertext, hint
 	}
+	identifier, installSlug, err := normalizeAppExtras(in.AppIdentifier, in.InstallSlug)
+	if err != nil {
+		return App{}, err
+	}
+	privateCipher, privateHint := current.PrivateKeyCiphertext, current.PrivateKeyHint
+	if in.ClearPrivate {
+		privateCipher, privateHint = nil, ""
+	} else if in.RotatePrivate {
+		privateCipher, privateHint = in.PrivateCipher, in.PrivateHint
+	}
+	optionalCipher, optionalHint := current.OptionalCiphertext, current.OptionalHint
+	if in.ClearOptional {
+		optionalCipher, optionalHint = nil, ""
+	} else if in.RotateOptional {
+		optionalCipher, optionalHint = in.OptionalCipher, in.OptionalHint
+	}
 	if len(clientID) < 1 || len(clientID) > 512 || len(display) > 120 || len(scopes) > 2048 || !validOAuthEndpoint(authz) || !validOAuthEndpoint(tokenURL) {
 		return App{}, ErrInvalid
 	}
 	row := db.QueryRow(ctx, `UPDATE connector_app SET
 		provider = $3, display_name = $4, client_id = $5, client_secret_ciphertext = $6, client_secret_hint = $7,
-		scopes = $8, authorization_endpoint = $9, token_endpoint = $10, callback_mode = $11, enabled = $12, updated_at = now()
+		scopes = $8, authorization_endpoint = $9, token_endpoint = $10, callback_mode = $11, enabled = $12,
+		app_identifier = $13, install_slug = $14, private_key_ciphertext = $15, private_key_hint = $16,
+		optional_secret_ciphertext = $17, optional_secret_hint = $18, updated_at = now()
 		WHERE workspace_id = $1::uuid AND id = $2::uuid
 		RETURNING `+appColumns,
-		workspaceID, appID, provider, display, clientID, ciphertext, secretHint, scopes, authz, tokenURL, callback, enabled)
+		workspaceID, appID, provider, display, clientID, ciphertext, secretHint, scopes, authz, tokenURL, callback, enabled,
+		identifier, installSlug, privateCipher, privateHint, optionalCipher, optionalHint)
 	return scanApp(row)
+}
+
+func normalizeAppExtras(identifier, installSlug string) (string, string, error) {
+	identifier = strings.TrimSpace(identifier)
+	installSlug = strings.TrimSpace(installSlug)
+	if len(identifier) > 64 || len(installSlug) > 128 || strings.ContainsAny(identifier, " \r\n\x00") || strings.ContainsAny(installSlug, " \r\n\x00/") {
+		return "", "", ErrInvalid
+	}
+	return identifier, installSlug, nil
 }
 
 // Get loads one application without instances.

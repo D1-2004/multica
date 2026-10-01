@@ -182,7 +182,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
         ...ACCOUNT_TAB_KEYS,
         ...(developer ? ["developer"] : []),
         ...Object.entries(WORKSPACE_TAB_VALUES)
-          .filter(([key]) => workspaceTabVisible(key, role, workspaceAccessEnabled))
+          .filter(([key]) => workspaceTabVisible(key as (typeof WORKSPACE_TAB_KEYS)[number], role, workspaceAccessEnabled))
           .map(([, value]) => value),
         ...(extraAccountTabs?.map((tab) => tab.value) ?? []),
       ]),

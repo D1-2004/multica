@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/connectorcatalog"
 	"github.com/multica-ai/multica/server/internal/connectorconfig"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 )
 
-const connectorAppBodyLimit = 64 << 10
+const connectorAppBodyLimit = 256 << 10
 
 // connectorAppView is the public shape of an OAuth application. The client
 // secret and instance tokens are never copied onto it.
@@ -31,6 +32,12 @@ type connectorAppView struct {
 	CallbackMode          string                  `json:"callback_mode"`
 	Enabled               bool                    `json:"enabled"`
 	ActiveForCatalog      bool                    `json:"active_for_catalog"`
+	AppIdentifier         string                  `json:"app_identifier"`
+	InstallSlug           string                  `json:"install_slug"`
+	PrivateKeySet         bool                    `json:"private_key_set"`
+	PrivateKeyHint        string                  `json:"private_key_hint"`
+	OptionalSecretSet     bool                    `json:"optional_secret_set"`
+	OptionalSecretHint    string                  `json:"optional_secret_hint"`
 	Instances             []connectorInstanceView `json:"instances"`
 }
 
@@ -63,6 +70,12 @@ type connectorAppWrite struct {
 	CallbackMode          *string `json:"callback_mode"`
 	Enabled               *bool   `json:"enabled"`
 	PublicClient          *bool   `json:"public_client"`
+	AppIdentifier         *string `json:"app_identifier"`
+	InstallSlug           *string `json:"install_slug"`
+	PrivateKey            *string `json:"private_key"`
+	ClearPrivateKey       *bool   `json:"clear_private_key"`
+	OptionalSecret        *string `json:"optional_secret"`
+	ClearOptionalSecret   *bool   `json:"clear_optional_secret"`
 }
 
 type connectorInstanceWrite struct {
@@ -110,8 +123,10 @@ func (h *Handler) ListConnectorApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"apps":     views,
-		"priority": connectorconfig.Priority,
+		"apps":         views,
+		"priority":     connectorconfig.Priority,
+		"catalog":      h.settingsCatalogViews(r.Context(), workspaceID),
+		"callback_url": connectorcatalog.ProductionCallbackURL,
 	})
 }
 
@@ -135,6 +150,13 @@ func (h *Handler) CreateConnectorApp(w http.ResponseWriter, r *http.Request) {
 		CallbackMode:          derefString(body.CallbackMode),
 		Enabled:               body.Enabled,
 		PublicClient:          body.PublicClient != nil && *body.PublicClient,
+		AppIdentifier:         derefString(body.AppIdentifier),
+		InstallSlug:           derefString(body.InstallSlug),
+	}
+	applySettingsPreset(&in)
+	if err := h.sealConnectorAppExtras(&in, derefString(body.PrivateKey), derefString(body.OptionalSecret)); err != nil {
+		writeConnectorConfigErrorStatus(w, err)
+		return
 	}
 	ciphertext, hint, sealErr := h.sealConnectorAppSecret(in.ClientSecret)
 	if sealErr != nil && in.ClientSecret != "" {
@@ -192,6 +214,15 @@ func (h *Handler) UpdateConnectorApp(w http.ResponseWriter, r *http.Request) {
 		CallbackMode:          firstSet(body.CallbackMode, current.CallbackMode),
 		Enabled:               body.Enabled,
 		ClearSecret:           body.ClearClientSecret != nil && *body.ClearClientSecret,
+		AppIdentifier:         firstSet(body.AppIdentifier, current.AppIdentifier),
+		InstallSlug:           firstSet(body.InstallSlug, current.InstallSlug),
+		ClearPrivate:          body.ClearPrivateKey != nil && *body.ClearPrivateKey,
+		ClearOptional:         body.ClearOptionalSecret != nil && *body.ClearOptionalSecret,
+	}
+	applySettingsPreset(&in)
+	if err := h.sealConnectorAppExtras(&in, derefString(body.PrivateKey), derefString(body.OptionalSecret)); err != nil {
+		writeConnectorConfigErrorStatus(w, err)
+		return
 	}
 	var ciphertext []byte
 	var hint string
@@ -497,7 +528,87 @@ func appView(app connectorconfig.App, active bool) connectorAppView {
 		ClientSecretHint: app.SecretHint, ClientSecretSet: len(app.SecretCiphertext) > 0,
 		Scopes: app.Scopes, AuthorizationEndpoint: app.AuthorizationEndpoint, TokenEndpoint: app.TokenEndpoint,
 		CallbackMode: app.CallbackMode, Enabled: app.Enabled, ActiveForCatalog: active, Instances: instances,
+		AppIdentifier: app.AppIdentifier, InstallSlug: app.InstallSlug,
+		PrivateKeySet: len(app.PrivateKeyCiphertext) > 0, PrivateKeyHint: app.PrivateKeyHint,
+		OptionalSecretSet: len(app.OptionalCiphertext) > 0, OptionalSecretHint: app.OptionalHint,
 	}
+}
+
+func applySettingsPreset(in *connectorconfig.AppInput) {
+	spec, ok := connectorcatalog.SettingsSpecFor(strings.ToLower(strings.TrimSpace(in.Provider)))
+	if !ok || spec.Mode != "preregistered" {
+		return
+	}
+	if spec.AuthorizationEndpoint != "" {
+		in.AuthorizationEndpoint = spec.AuthorizationEndpoint
+	}
+	if spec.TokenEndpoint != "" {
+		in.TokenEndpoint = spec.TokenEndpoint
+	}
+	in.Scopes = spec.Scopes
+	if strings.TrimSpace(in.DisplayName) == "" {
+		in.DisplayName = spec.Name
+	}
+	if strings.TrimSpace(in.CallbackMode) == "" {
+		in.CallbackMode = connectorconfig.CallbackProductionForward
+	}
+}
+
+func (h *Handler) sealConnectorAppExtras(in *connectorconfig.AppInput, privateKey, optional string) error {
+	privateKey = strings.TrimSpace(privateKey)
+	if privateKey != "" {
+		if !strings.Contains(privateKey, "PRIVATE KEY") || !strings.Contains(privateKey, "-----BEGIN") {
+			return connectorconfig.ErrInvalid
+		}
+		sealed, err := connectorconfig.SealBytes(h.InternalConnectorSecretBox, privateKey)
+		if err != nil {
+			return err
+		}
+		in.PrivateCipher, in.PrivateHint, in.RotatePrivate = sealed, connectorconfig.Hint(privateKey), true
+	}
+	optional = strings.TrimSpace(optional)
+	if optional != "" {
+		sealed, err := connectorconfig.SealString(h.InternalConnectorSecretBox, optional)
+		if err != nil {
+			return err
+		}
+		in.OptionalCipher, in.OptionalHint, in.RotateOptional = sealed, connectorconfig.Hint(optional), true
+	}
+	return nil
+}
+
+type settingsCatalogView struct {
+	connectorcatalog.SettingsSpec
+	EnvConfigured bool   `json:"env_configured"`
+	ConnectorID   string `json:"connector_id,omitempty"`
+}
+
+func (h *Handler) settingsCatalogViews(ctx context.Context, workspaceID string) []settingsCatalogView {
+	added := map[string]string{}
+	rows, err := h.DB.Query(ctx, `SELECT catalog_slug, id::text FROM internal_connector
+		WHERE workspace_id = $1::uuid AND catalog_slug <> ''
+		ORDER BY created_at ASC`, workspaceID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var slug, id string
+			if scanErr := rows.Scan(&slug, &id); scanErr == nil {
+				if _, exists := added[slug]; !exists {
+					added[slug] = id
+				}
+			}
+		}
+	}
+	specs := connectorcatalog.SettingsCatalog()
+	out := make([]settingsCatalogView, 0, len(specs))
+	for _, spec := range specs {
+		out = append(out, settingsCatalogView{
+			SettingsSpec:  spec,
+			EnvConfigured: connectorAppEnvConfigured(spec.Slug),
+			ConnectorID:   added[spec.Slug],
+		})
+	}
+	return out
 }
 
 func instanceView(rec connectorconfig.InstanceRecord) connectorInstanceView {

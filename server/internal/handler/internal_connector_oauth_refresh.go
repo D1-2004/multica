@@ -39,6 +39,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
+	"github.com/multica-ai/multica/server/internal/connectorconfig"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 	"golang.org/x/sync/singleflight"
@@ -446,12 +447,41 @@ func (h *Handler) connectorTokenEndpoint(ctx context.Context, c internalConnecto
 		}
 		// A code exchange prefers the redirect URI stored with the state.
 		// Refresh recomputes it from the app's current callback mode.
-		homeOrigin, _ := h.connectorOAuthCallbackTarget(connectorOAuthViaGitHub)
-		forwarded := h.connectorOAuthRedirectOrigin(connectorOAuthViaGitHub)
-		out.redirectURI = githubOAuthRedirectOrigin(homeOrigin, forwarded, ghClient.CallbackMode) + connectorOAuthGitHubCallback
+		// Workspace apps use the console callback; the environment client
+		// keeps the GitHub App callback.
+		callbackVia := connectorOAuthViaGitHub
+		callbackPath := connectorOAuthGitHubCallback
+		if ghClient.Source == connectorconfig.SourceWorkspace {
+			callbackVia = connectorOAuthViaDCR
+			callbackPath = connectorOAuthCallbackPath
+		}
+		homeOrigin, _ := h.connectorOAuthCallbackTarget(callbackVia)
+		forwarded := h.connectorOAuthRedirectOrigin(callbackVia)
+		out.redirectURI = githubOAuthRedirectOrigin(homeOrigin, forwarded, ghClient.CallbackMode) + callbackPath
 		out.registration = remotemcp.OAuthClientRegistration{
 			ClientID:                ghClient.ClientID,
 			ClientSecret:            ghClient.ClientSecret,
+			TokenEndpointAuthMethod: "client_secret_post",
+		}
+		return out, nil
+	case connectorcatalog.AuthOAuthPreregistered:
+		client, err := h.preregisteredOAuthClient(ctx, c.WorkspaceID, app)
+		if err != nil || strings.TrimSpace(client.ClientID) == "" || client.ClientSecret == "" {
+			return connectorTokenEndpointConfig{}, errors.New("pre-registered client credentials are not configured")
+		}
+		if clientID != "" && clientID != client.ClientID {
+			return connectorTokenEndpointConfig{}, errConnectorOAuthClientReplaced
+		}
+		out.tokenURL = client.TokenEndpoint
+		if out.tokenURL == "" {
+			out.tokenURL = app.TokenEndpoint
+		}
+		homeOrigin, _ := h.connectorOAuthCallbackTarget(connectorOAuthViaDCR)
+		forwarded := h.connectorOAuthRedirectOrigin(connectorOAuthViaDCR)
+		out.redirectURI = githubOAuthRedirectOrigin(homeOrigin, forwarded, client.CallbackMode) + connectorOAuthCallbackPath
+		out.registration = remotemcp.OAuthClientRegistration{
+			ClientID:                client.ClientID,
+			ClientSecret:            client.ClientSecret,
 			TokenEndpointAuthMethod: "client_secret_post",
 		}
 		return out, nil

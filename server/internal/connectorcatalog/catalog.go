@@ -27,6 +27,11 @@ const (
 	// (GITHUB_APP_CLIENT_ID / GITHUB_APP_CLIENT_SECRET) and its registered
 	// /api/github/authorize callback. GitHub has no dynamic registration.
 	AuthOAuthGitHubApp AuthKind = "oauth_github_app"
+	// AuthOAuthPreregistered uses a workspace-configured confidential client
+	// and the fixed authorization and token endpoints on the app. The
+	// provider has no dynamic registration. Asana MCP is this kind: its
+	// authorization server does not advertise a registration_endpoint.
+	AuthOAuthPreregistered AuthKind = "oauth_preregistered"
 )
 
 // App is one official app. Hosts lists every host the server contacts for
@@ -43,7 +48,8 @@ type App struct {
 	Scope string
 	Hosts []string
 	// AuthorizationEndpoint and TokenEndpoint are fixed for pre-registered
-	// clients (AuthOAuthGitHubApp); DCR apps discover them at runtime.
+	// clients (AuthOAuthGitHubApp, AuthOAuthPreregistered); DCR apps
+	// discover them at runtime.
 	AuthorizationEndpoint string
 	TokenEndpoint         string
 	// AccountURL answers GET with a JSON object whose "login" names the
@@ -60,6 +66,10 @@ func (a App) OAuthAvailable(githubAppConfigured bool) bool {
 		return true
 	case AuthOAuthGitHubApp:
 		return githubAppConfigured
+	case AuthOAuthPreregistered:
+		// The client id and secret live on the workspace, not in the
+		// process environment. Availability is decided per workspace.
+		return false
 	default:
 		return false
 	}
@@ -152,7 +162,7 @@ func validateApp(app App) error {
 		if app.AuthorizationEndpoint != "" || app.TokenEndpoint != "" {
 			return errors.New("DCR apps discover their OAuth endpoints")
 		}
-	case AuthOAuthGitHubApp:
+	case AuthOAuthGitHubApp, AuthOAuthPreregistered:
 		if err := checkURL(app.AuthorizationEndpoint, app.Hosts, true); err != nil {
 			return fmt.Errorf("authorization endpoint: %w", err)
 		}

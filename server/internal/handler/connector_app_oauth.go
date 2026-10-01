@@ -74,17 +74,68 @@ func githubOAuthRedirectOrigin(homeOrigin, forwardedOrigin, mode string) string 
 	return forwardedOrigin
 }
 
+func connectorAppEnvConfigured(provider string) bool {
+	if provider != "github" {
+		return false
+	}
+	return strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")) != "" && os.Getenv("GITHUB_APP_CLIENT_SECRET") != ""
+}
+
+// preregisteredOAuthClient is the workspace's confidential client for an
+// app that cannot dynamically register (Asana). An empty client means the
+// workspace has not saved one. A saved secret that cannot be opened is an
+// error and does not fall through to another registration.
+func (h *Handler) preregisteredOAuthClient(ctx context.Context, workspaceID string, app connectorcatalog.App) (githubOAuthClient, error) {
+	saved, err := connectorconfig.OldestEnabled(ctx, h.DB, workspaceID, app.Slug)
+	if err != nil {
+		if errors.Is(err, connectorconfig.ErrNotFound) || errors.Is(err, connectorconfig.ErrSchemaMissing) || errors.Is(err, connectorconfig.ErrInvalid) {
+			return githubOAuthClient{}, nil
+		}
+		return githubOAuthClient{}, err
+	}
+	secret, err := connectorconfig.OpenString(h.InternalConnectorSecretBox, saved.SecretCiphertext)
+	if err != nil {
+		return githubOAuthClient{}, connectorconfig.ErrSecretUnavailable
+	}
+	client := githubOAuthClient{
+		Source: connectorconfig.SourceWorkspace, AppID: saved.ID, ClientID: saved.ClientID, ClientSecret: secret,
+		Scopes: saved.Scopes, AuthorizationEndpoint: saved.AuthorizationEndpoint, TokenEndpoint: saved.TokenEndpoint,
+		CallbackMode: saved.CallbackMode,
+	}
+	if client.AuthorizationEndpoint == "" {
+		client.AuthorizationEndpoint = app.AuthorizationEndpoint
+	}
+	if client.TokenEndpoint == "" {
+		client.TokenEndpoint = app.TokenEndpoint
+	}
+	if client.Scopes == "" {
+		client.Scopes = app.Scope
+	}
+	if client.CallbackMode == "" {
+		client.CallbackMode = connectorconfig.CallbackProductionForward
+	}
+	return client, nil
+}
+
 func (h *Handler) connectorOAuthDeploymentErrorFor(ctx context.Context, workspaceID string, app connectorcatalog.App) error {
 	if h.InternalConnectorSecretBox == nil {
 		return oauthStartError(http.StatusServiceUnavailable, "credential_storage_unavailable", "connector credential storage is not configured")
 	}
-	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp {
+	switch app.AuthKind {
+	case connectorcatalog.AuthOAuthGitHubApp:
 		client, err := h.githubOAuthClient(ctx, workspaceID)
 		if err != nil || strings.TrimSpace(client.ClientID) == "" || client.ClientSecret == "" {
 			return oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
 		}
-	} else if !app.OAuthAvailable(githubUserAuthorizationConfigured()) {
-		return oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
+	case connectorcatalog.AuthOAuthPreregistered:
+		client, err := h.preregisteredOAuthClient(ctx, workspaceID, app)
+		if err != nil || strings.TrimSpace(client.ClientID) == "" || client.ClientSecret == "" {
+			return oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
+		}
+	default:
+		if !app.OAuthAvailable(githubUserAuthorizationConfigured()) {
+			return oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
+		}
 	}
 	if h.connectorOAuthAppOrigin() == "" {
 		return oauthStartError(http.StatusServiceUnavailable, "app_origin_missing", "no app origin is configured")
@@ -153,6 +204,53 @@ func (h *Handler) issueProjectID(ctx context.Context, workspaceID string, issueI
 		return ""
 	}
 	return projectID
+}
+
+// attachOAuthTokenToAuthInstance writes the access token from a completed
+// catalog connect onto the newest pending authorization instance. The
+// settings page creates that instance before redirecting. A connect that
+// did not create one leaves the shared connector credential as the only
+// credential, so an ordinary catalog connect does not shadow it. The token
+// is the instance credential the runtime uses when that instance is
+// selected. Failure here does not undo the connector credential that was
+// just stored.
+func (h *Handler) attachOAuthTokenToAuthInstance(ctx context.Context, workspaceID, provider, account, accessToken string) {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" || h.InternalConnectorSecretBox == nil || provider == "" {
+		return
+	}
+	app, records, err := connectorconfig.InstancesForProvider(ctx, h.DB, workspaceID, provider)
+	if err != nil {
+		return
+	}
+	ciphertext, hint, err := h.sealConnectorInstanceToken(accessToken)
+	if err != nil {
+		slog.WarnContext(ctx, "connector auth instance token was not stored", "provider", provider, "error", err)
+		return
+	}
+	account = strings.TrimSpace(account)
+	if len(account) > 128 {
+		account = account[:128]
+	}
+	for i := len(records) - 1; i >= 0; i-- {
+		rec := records[i]
+		if !rec.Enabled || rec.Status != connectorconfig.StatusPending || len(rec.TokenCiphertext) > 0 {
+			continue
+		}
+		login := account
+		if login == "" {
+			login = rec.ExternalLogin
+		}
+		enabled := true
+		_, err = connectorconfig.UpdateInstance(ctx, h.DB, workspaceID, app.ID, rec.ID, connectorconfig.InstanceInput{
+			Label: rec.Label, ExternalSubject: rec.ExternalSubject, ExternalLogin: login,
+			Status: connectorconfig.StatusActive, Enabled: &enabled,
+		}, ciphertext, hint, true)
+		if err != nil {
+			slog.WarnContext(ctx, "connector auth instance token was not stored", "provider", provider, "error", err)
+		}
+		return
+	}
 }
 
 func deploymentEnvironmentName() string {

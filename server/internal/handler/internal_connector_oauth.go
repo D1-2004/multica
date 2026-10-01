@@ -53,6 +53,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
+	"github.com/multica-ai/multica/server/internal/connectorconfig"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
@@ -218,12 +219,28 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	homeOrigin, _ := h.connectorOAuthCallbackTarget(via)
 	redirectOrigin := h.connectorOAuthRedirectOrigin(via)
 	var ghClient githubOAuthClient
+	var preregistered githubOAuthClient
 	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp {
 		ghClient, err = h.githubOAuthClient(ctx, scope.WorkspaceID)
 		if err != nil {
 			return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
 		}
+		// A GitHub App saved on the settings page registers the same console
+		// callback as every other app. The environment client keeps the
+		// GitHub App callback its existing registration already uses.
+		if ghClient.Source == connectorconfig.SourceWorkspace {
+			via = connectorOAuthViaDCR
+			homeOrigin, _ = h.connectorOAuthCallbackTarget(via)
+			redirectOrigin = h.connectorOAuthRedirectOrigin(via)
+		}
 		redirectOrigin = githubOAuthRedirectOrigin(homeOrigin, redirectOrigin, ghClient.CallbackMode)
+	}
+	if app.AuthKind == connectorcatalog.AuthOAuthPreregistered {
+		preregistered, err = h.preregisteredOAuthClient(ctx, scope.WorkspaceID, app)
+		if err != nil || strings.TrimSpace(preregistered.ClientID) == "" || preregistered.ClientSecret == "" {
+			return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
+		}
+		redirectOrigin = githubOAuthRedirectOrigin(homeOrigin, redirectOrigin, preregistered.CallbackMode)
 	}
 	state, err := randomOAuthValue()
 	if err != nil {
@@ -245,8 +262,14 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	var authorizeURL string
 	switch app.AuthKind {
 	case connectorcatalog.AuthOAuthGitHubApp:
-		payload.Via, payload.ClientID = connectorOAuthViaGitHub, ghClient.ClientID
-		payload.RedirectURI = redirectOrigin + connectorOAuthGitHubCallback
+		payload.ClientID = ghClient.ClientID
+		if ghClient.Source == connectorconfig.SourceWorkspace {
+			payload.Via = connectorOAuthViaDCR
+			payload.RedirectURI = redirectOrigin + connectorOAuthCallbackPath
+		} else {
+			payload.Via = connectorOAuthViaGitHub
+			payload.RedirectURI = redirectOrigin + connectorOAuthGitHubCallback
+		}
 		endpoint := ghClient.AuthorizationEndpoint
 		if endpoint == "" {
 			endpoint = app.AuthorizationEndpoint
@@ -256,6 +279,18 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 			requestedScope = app.Scope
 		}
 		authorizeURL, err = githubConnectorAuthorizeURL(endpoint, ghClient.ClientID, requestedScope, payload.RedirectURI, state, verifier)
+	case connectorcatalog.AuthOAuthPreregistered:
+		payload.Via, payload.ClientID = connectorOAuthViaDCR, preregistered.ClientID
+		payload.RedirectURI = redirectOrigin + connectorOAuthCallbackPath
+		endpoint := preregistered.AuthorizationEndpoint
+		if endpoint == "" {
+			endpoint = app.AuthorizationEndpoint
+		}
+		requestedScope := preregistered.Scopes
+		if requestedScope == "" {
+			requestedScope = app.Scope
+		}
+		authorizeURL, err = preregisteredAuthorizeURL(endpoint, preregistered.ClientID, requestedScope, payload.RedirectURI, state, verifier)
 	case connectorcatalog.AuthOAuthDCR:
 		var record connectorOAuthClientRecord
 		record, err = h.ensureConnectorOAuthClient(ctx, c, app, redirectOrigin+connectorOAuthCallbackPath, h.connectorOAuthClientName())
@@ -570,6 +605,24 @@ func githubConnectorAuthorizeURL(endpoint, clientID, scope, redirectURI, state, 
 	return parsed.String(), nil
 }
 
+// preregisteredAuthorizeURL is the confidential-client authorize URL. It
+// sets response_type, which providers such as Asana require and GitHub's
+// authorize URL does not.
+func preregisteredAuthorizeURL(endpoint, clientID, scope, redirectURI, state, verifier string) (string, error) {
+	built, err := githubConnectorAuthorizeURL(endpoint, clientID, scope, redirectURI, state, verifier)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(built)
+	if err != nil {
+		return "", err
+	}
+	query := parsed.Query()
+	query.Set("response_type", "code")
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
 // connectorSealedVerifier is the sealed part of one state: the PKCE
 // verifier, the OAuth client and route it was started with, and its browser
 // binding.
@@ -694,7 +747,13 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	out.Slug = app.Slug
 	wantVia := connectorOAuthViaDCR
 	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp {
-		wantVia = connectorOAuthViaGitHub
+		client, clientErr := h.githubOAuthClient(ctx, scope.WorkspaceID)
+		if clientErr != nil {
+			return fail(connectOAuthErrExchangeFailed)
+		}
+		if client.Source != connectorconfig.SourceWorkspace {
+			wantVia = connectorOAuthViaGitHub
+		}
 	}
 	verifier, ok := h.openConnectorOAuthVerifier(state.verifier, state.stateHash, scope.ConnectorID)
 	if !ok || in.Via != wantVia || verifier.Via != wantVia {
@@ -762,6 +821,7 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	}
 	out.ErrorCode = ""
 	out.RedirectURL = withOAuthResult(state.returnTo, "connected", app.Slug)
+	h.attachOAuthTokenToAuthInstance(ctx, scope.WorkspaceID, app.Slug, token.Account, token.AccessToken)
 	slog.InfoContext(ctx, "official app OAuth connected", "connector_id", c.ID, "catalog_slug", app.Slug, "scope_type", scope.ScopeType, "user_id", scope.UserID)
 	return out
 }

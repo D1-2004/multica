@@ -27,6 +27,13 @@ func TestDefaultCatalogHasGitHubAndValidEntries(t *testing.T) {
 	if !notion.OAuthAvailable(false) || notion.AllowsPAT {
 		t.Fatalf("notion entry = %+v", notion)
 	}
+	asana, ok := Default().Lookup("asana")
+	if !ok || asana.AuthKind != AuthOAuthPreregistered || asana.AuthorizationEndpoint == "" || asana.TokenEndpoint == "" {
+		t.Fatalf("asana entry = %+v", asana)
+	}
+	if asana.OAuthAvailable(true) {
+		t.Fatal("Asana OAuth availability is per workspace, not the process environment")
+	}
 	for _, app := range apps {
 		if slug, ok := Default().SlugForURL(app.MCPURL); !ok || slug != app.Slug {
 			t.Fatalf("SlugForURL(%q) = %q %v", app.MCPURL, slug, ok)

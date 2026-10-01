@@ -3,6 +3,7 @@ package connectorconfig
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/multica-ai/multica/server/internal/contextcap"
 )
@@ -21,6 +22,19 @@ var ErrSecretUnavailable = errors.New("connector secret unavailable")
 type tokenPayload struct {
 	Bearer string                 `json:"bearer"`
 	OAuth  *contextcap.OAuthToken `json:"oauth,omitempty"`
+}
+
+// SealBytes seals a private key or other multiline secret. The plaintext
+// must not be logged.
+func SealBytes(box Sealer, plain string) ([]byte, error) {
+	if box == nil || plain == "" || len(plain) > 64*1024 || strings.Contains(plain, "\x00") {
+		return nil, ErrSecretUnavailable
+	}
+	sealed, err := box.Seal([]byte(plain))
+	if err != nil {
+		return nil, ErrSecretUnavailable
+	}
+	return sealed, nil
 }
 
 // SealString seals a client secret. The caller stores only the ciphertext

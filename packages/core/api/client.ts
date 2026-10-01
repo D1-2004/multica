@@ -4921,6 +4921,10 @@ export class ApiClient {
     await this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}`, { method: "DELETE" });
   }
 
+  async deleteConnectorInstance(workspaceId: string, appId: string, instanceId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}/instances/${instanceId}`, { method: "DELETE" });
+  }
+
   async createConnectorInstance(workspaceId: string, appId: string, data: ConnectorInstanceInput): Promise<ConnectorAuthInstance> {
     return this.fetch(`/api/workspaces/${workspaceId}/connector-apps/${appId}/instances`, {
       method: "POST",
