@@ -33,6 +33,7 @@ func tagTestRouter(h *Handler) http.Handler {
 			r.With(RequireHumanActor).Post("/apply", h.ApplyTag)
 		})
 		r.Post("/api/agents/{id}/archive", h.ArchiveAgent)
+		r.Put("/api/agents/{id}", h.UpdateAgent)
 		r.With(RequireHumanActor).Post("/api/agents/{id}/tenants", h.CreateAgentTenant)
 		r.With(RequireHumanActor).Patch("/api/agents/{id}/tenants/{orgId}", h.RenameAgentTenant)
 		r.Put("/api/agents/{id}/a2a/operator/dws-identity", h.UpdateAgentA2AOperatorIdentity)
@@ -71,12 +72,12 @@ func cleanupTag(t *testing.T) {
 	t.Cleanup(func() {
 		ctx := context.Background()
 		for _, stmt := range []string{
-			`DELETE FROM agent_skill WHERE agent_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND name LIKE 'TagTest%')`,
-			`DELETE FROM agent_invocation_target WHERE agent_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND name LIKE 'TagTest%')`,
+			`DELETE FROM agent_skill WHERE agent_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND (name LIKE 'TagTest%' OR name = 'Tag' OR name LIKE 'Tag · %'))`,
+			`DELETE FROM agent_invocation_target WHERE agent_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND (name LIKE 'TagTest%' OR name = 'Tag' OR name LIKE 'Tag · %'))`,
 			`DELETE FROM tag_config_revision WHERE workspace_id = $1`,
 			`DELETE FROM tag_tenant WHERE workspace_id = $1`,
 			`DELETE FROM workspace_tag WHERE workspace_id = $1`,
-			`DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'TagTest%'`,
+			`DELETE FROM agent WHERE workspace_id = $1 AND (name LIKE 'TagTest%' OR name = 'Tag' OR name LIKE 'Tag · %')`,
 		} {
 			if _, err := testPool.Exec(ctx, stmt, testWorkspaceID); err != nil {
 				t.Logf("cleanup %q: %v", stmt, err)
@@ -100,14 +101,12 @@ func TestTagCreateIsOperatorOnlyAndCloudOnly(t *testing.T) {
 	}
 	cleanupTag(t)
 	router := tagTestRouter(testHandler)
-	name := "TagTest " + uuid.NewString()[:8]
-
 	useTagOperator(t, false)
 	state := tagDecode[TagStateResponse](t, tagDo(t, router, http.MethodGet, "/api/tag", nil))
 	if state.Tag != nil || state.CanOperate {
 		t.Fatalf("state for non-operator = %+v", state)
 	}
-	tagExpect(t, tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"name": name, "runtime_id": testRuntimeID}),
+	tagExpect(t, tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"runtime_id": testRuntimeID}),
 		http.StatusForbidden, "non-operator create")
 
 	useTagOperator(t, true)
@@ -119,17 +118,17 @@ func TestTagCreateIsOperatorOnlyAndCloudOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, localRuntime) })
-	tagExpect(t, tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"name": name, "runtime_id": localRuntime}),
+	tagExpect(t, tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"runtime_id": localRuntime}),
 		http.StatusBadRequest, "local runtime")
 
-	w := tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"name": name, "runtime_id": testRuntimeID, "description": "多企业数字员工"})
+	w := tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"runtime_id": testRuntimeID, "description": "多企业数字员工"})
 	tagExpect(t, w, http.StatusCreated, "operator create")
 	created := tagDecode[TagStateResponse](t, w)
-	if created.Tag == nil || created.Tag.Name != name || created.Tag.LatestRevision == nil || *created.Tag.LatestRevision != 1 ||
+	if created.Tag == nil || created.Tag.Name != "Tag" || created.Tag.LatestRevision == nil || *created.Tag.LatestRevision != 1 ||
 		!created.Tag.SidebarVisible || created.Tag.HasUnpublishedChanges || !created.CanOperate || !created.CanManage {
 		t.Fatalf("created state = %+v", created)
 	}
-	tagExpect(t, tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"name": name + "2", "runtime_id": testRuntimeID}),
+	tagExpect(t, tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"runtime_id": testRuntimeID}),
 		http.StatusConflict, "second tag")
 
 	// Sidebar visibility is an operator switch too.
@@ -162,9 +161,7 @@ func TestTagTenantsAndApply(t *testing.T) {
 	useTagOperator(t, true)
 	router := tagTestRouter(testHandler)
 	ctx := context.Background()
-	name := "TagTest " + uuid.NewString()[:8]
-
-	created := tagDecode[TagStateResponse](t, tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"name": name, "runtime_id": testRuntimeID}))
+	created := tagDecode[TagStateResponse](t, tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{"runtime_id": testRuntimeID}))
 	templateID := created.Tag.AgentID
 	if _, err := testPool.Exec(ctx, `UPDATE agent SET instructions = 'v1 instructions', persona = 'calm' WHERE id = $1`, templateID); err != nil {
 		t.Fatal(err)
@@ -174,7 +171,7 @@ func TestTagTenantsAndApply(t *testing.T) {
 	w := tagDo(t, router, http.MethodPost, "/api/tag/tenants", map[string]string{"name": "Think测试组织"})
 	tagExpect(t, w, http.StatusCreated, "create tenant")
 	tenant := tagDecode[TagTenantMutationResponse](t, w)
-	if tenant.Tenant.EmployeeName != name+" · Think测试组织" || tenant.Tenant.Bound || tenant.Tenant.AppliedRevision == nil || *tenant.Tenant.AppliedRevision != 2 ||
+	if tenant.Tenant.EmployeeName != "Tag · Think测试组织" || tenant.Tenant.Bound || tenant.Tenant.AppliedRevision == nil || *tenant.Tenant.AppliedRevision != 2 ||
 		tenant.Apply == nil || !tenant.Apply.Applied {
 		t.Fatalf("tenant = %+v apply=%+v", tenant.Tenant, tenant.Apply)
 	}
@@ -241,6 +238,16 @@ func TestTagTenantsAndApply(t *testing.T) {
 		t.Fatalf("apply overwrote the tenant's persona: %q", persona)
 	}
 
+	// The Tag is always called Tag; renaming the tenant renames its employee
+	// while the employee still carries its derived name.
+	tagExpect(t, tagDo(t, router, http.MethodPut, "/api/agents/"+templateID, map[string]string{"name": "QwenTag"}),
+		http.StatusConflict, "rename the template")
+	w = tagDo(t, router, http.MethodPatch, "/api/tag/tenants/"+tenant.Tenant.ID, map[string]string{"name": "Think 组织"})
+	tagExpect(t, w, http.StatusOK, "rename tenant")
+	if renamed := tagDecode[TagTenantMutationResponse](t, w); renamed.Tenant.Name != "Think 组织" || renamed.Tenant.EmployeeName != "Tag · Think 组织" {
+		t.Fatalf("renamed tenant = %+v", renamed.Tenant)
+	}
+
 	// Adopt an existing agent, rename, then detach it again.
 	var adoptee string
 	if err := testPool.QueryRow(ctx, `INSERT INTO agent (workspace_id, name, runtime_mode, runtime_config, runtime_id, visibility, permission_mode, max_concurrent_tasks, owner_id)
@@ -268,7 +275,7 @@ func TestTagTenantsAndApply(t *testing.T) {
 		t.Fatalf("adopted tenant applied before an apply: %+v", adopted.Tenant)
 	}
 	renamed := tagDecode[TagTenantMutationResponse](t, tagDo(t, router, http.MethodPatch, "/api/tag/tenants/"+adopted.Tenant.ID, map[string]string{"name": "钉钉 FDE"}))
-	if renamed.Tenant.Name != "钉钉 FDE" {
+	if renamed.Tenant.Name != "钉钉 FDE" || renamed.Tenant.EmployeeName != "TagTest adoptee" {
 		t.Fatalf("renamed = %+v", renamed.Tenant)
 	}
 	tagExpect(t, tagDo(t, router, http.MethodDelete, "/api/tag", nil), http.StatusConflict, "remove tag with tenants")
@@ -293,7 +300,7 @@ func TestTagCreateCopyFromKeepsExplicitFields(t *testing.T) {
 	}
 
 	w := tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{
-		"name": "TagTest " + uuid.NewString()[:8], "runtime_id": testRuntimeID,
+		"runtime_id":  testRuntimeID,
 		"description": "typed description", "copy_from_agent_id": sourceID,
 	})
 	tagExpect(t, w, http.StatusCreated, "create from source")
@@ -321,7 +328,7 @@ func TestTagTemplateRefusesEveryIdentityWrite(t *testing.T) {
 	ctx := context.Background()
 
 	created := tagDecode[TagStateResponse](t, tagDo(t, router, http.MethodPost, "/api/tag",
-		map[string]string{"name": "TagTest " + uuid.NewString()[:8], "runtime_id": testRuntimeID}))
+		map[string]string{"runtime_id": testRuntimeID}))
 	templateID := created.Tag.AgentID
 
 	reuse := tagDo(t, router, http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/dingtalk/execution-identities/reuse",
@@ -413,7 +420,7 @@ func TestTagEmployeeKeepsOneEnterpriseAcrossRebind(t *testing.T) {
 	ctx := context.Background()
 
 	tagDecode[TagStateResponse](t, tagDo(t, router, http.MethodPost, "/api/tag",
-		map[string]string{"name": "TagTest " + uuid.NewString()[:8], "runtime_id": testRuntimeID}))
+		map[string]string{"runtime_id": testRuntimeID}))
 	agentID := createHandlerTestAgent(t, "TagTest bound "+uuid.NewString()[:8], nil)
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_dingtalk_identity WHERE agent_id = $1`, agentID)

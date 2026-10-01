@@ -1435,6 +1435,8 @@
     "empty": "这个工作区还没有 Tag，侧边栏也不显示 Tag 入口。",
     "create_heading": "创建 Tag",
     "name": "名称",
+    "fixed_name": "Tag",
+    "name_fixed_hint": "每个工作区只有一个 Tag，名字固定叫 Tag。",
     "description_label": "描述",
     "runtime": "云端运行时",
     "runtime_hint": "Tag 只能运行在云端运行时。",

@@ -260,7 +260,9 @@ describe("workspace navigation groups", () => {
     tagState.current = { tag: { name: "QwenTag", sidebarVisible: true } };
     const shown = render(<AppSidebar />);
     const entry = shown.container.querySelector('button[data-href="/acme/tag"]');
-    expect(entry?.textContent).toContain("QwenTag");
+    // The Tag is always called Tag, whatever its template agent is named.
+    expect(entry?.textContent).toContain("Tag");
+    expect(entry?.textContent).not.toContain("QwenTag");
     const hrefs = [...shown.container.querySelectorAll("button[data-href]")].map((node) => node.getAttribute("data-href"));
     expect(hrefs.indexOf("/acme/tag")).toBeLessThan(hrefs.indexOf("/acme/agents"));
     tagState.current = null;

@@ -47,7 +47,7 @@ export function TagSettingsTab() {
               label={
                 <span className="flex items-center gap-2">
                   <TagIcon className="h-4 w-4" aria-hidden="true" />
-                  {tag.name}
+                  {t(($) => $.tag.fixed_name)}
                 </span>
               }
               description={t(($) => $.tag.tenants_count, { count: state?.tenants.length ?? 0 })}
@@ -99,19 +99,17 @@ function CreateTagForm({ wsId }: { wsId: string }) {
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const create = useCreateTag(wsId);
   const cloudRuntimes = runtimes.filter((runtime) => runtime.runtime_mode === "cloud");
-  const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [runtimeId, setRuntimeId] = useState("");
   const [model, setModel] = useState("");
   const [copyFrom, setCopyFrom] = useState("");
   const effectiveRuntime = runtimeId || cloudRuntimes[0]?.id || "";
-  const canSubmit = name.trim() !== "" && effectiveRuntime !== "" && !create.isPending;
+  const canSubmit = effectiveRuntime !== "" && !create.isPending;
 
   const submit = () => {
     if (!canSubmit) return;
     create.mutate(
       {
-        name: name.trim(),
         description: description.trim(),
         runtimeId: effectiveRuntime,
         model: model.trim(),
@@ -127,8 +125,11 @@ function CreateTagForm({ wsId }: { wsId: string }) {
   return (
     <SettingsSection title={t(($) => $.tag.create_heading)} description={t(($) => $.tag.empty)}>
       <SettingsCard>
-        <SettingsRow label={t(($) => $.tag.name)} size="text">
-          <Input value={name} maxLength={64} placeholder="QwenTag" onChange={(event) => setName(event.target.value)} />
+        <SettingsRow label={t(($) => $.tag.name)} description={t(($) => $.tag.name_fixed_hint)}>
+          <span className="flex items-center gap-2 text-body font-medium">
+            <TagIcon className="h-4 w-4" aria-hidden="true" />
+            {t(($) => $.tag.fixed_name)}
+          </span>
         </SettingsRow>
         <SettingsRow label={t(($) => $.tag.description_label)} size="text">
           <Input value={description} onChange={(event) => setDescription(event.target.value)} />

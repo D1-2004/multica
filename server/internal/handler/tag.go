@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -29,7 +28,9 @@ import (
 // tenants and applies are managed by whoever can manage the template agent.
 
 const (
-	tagMaxNameLength         = 64
+	// tagTemplateName is the template agent's fixed name: the workspace has
+	// one Tag and it is simply called Tag.
+	tagTemplateName          = "Tag"
 	tagTemplateConcurrency   = 6
 	tagTemplateVisibility    = "workspace"
 	tagTemplatePermission    = "public_to"
@@ -123,11 +124,6 @@ func (h *Handler) isTagOperator(r *http.Request, userID string) bool {
 // canManageAgentQuiet mirrors canManageAgent without writing a response.
 func canManageAgentQuiet(member db.Member, agent db.Agent, userID string) bool {
 	return roleAllowed(member.Role, "owner", "admin") || uuidToString(agent.OwnerID) == userID
-}
-
-func normalizeTagName(name string) (string, bool) {
-	name = strings.TrimSpace(name)
-	return name, name != "" && utf8.RuneCountInString(name) <= tagMaxNameLength
 }
 
 // loadTagTemplate returns the workspace Tag and its template agent; it writes
@@ -238,7 +234,6 @@ func (h *Handler) GetTag(w http.ResponseWriter, r *http.Request) {
 }
 
 type createTagRequest struct {
-	Name        string  `json:"name"`
 	Description string  `json:"description"`
 	AvatarURL   *string `json:"avatar_url"`
 	RuntimeID   string  `json:"runtime_id"`
@@ -267,11 +262,7 @@ func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	name, ok := normalizeTagName(req.Name)
-	if !ok {
-		writeError(w, http.StatusBadRequest, "name must be 1-64 characters")
-		return
-	}
+	name := tagTemplateName
 	runtimeID, ok := parseUUIDOrBadRequest(w, req.RuntimeID, "runtime_id")
 	if !ok {
 		return
@@ -650,7 +641,7 @@ type renameTagTenantRequest struct {
 }
 
 func (h *Handler) RenameTagTenant(w http.ResponseWriter, r *http.Request) {
-	_, t, _, ok := h.requireTagManager(w, r)
+	userID, t, template, ok := h.requireTagManager(w, r)
 	if !ok {
 		return
 	}
@@ -663,10 +654,48 @@ func (h *Handler) RenameTagTenant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	tenant, err := tag.RenameTenant(r.Context(), h.DB, t.WorkspaceID, uuidToString(tenantID), req.Name)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start tenant rename transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	before, err := tag.GetTenant(r.Context(), tx, t.WorkspaceID, uuidToString(tenantID))
 	if err != nil {
 		writeTagTenantError(w, err)
 		return
+	}
+	tenant, err := tag.RenameTenant(r.Context(), tx, t.WorkspaceID, before.ID, req.Name)
+	if err != nil {
+		writeTagTenantError(w, err)
+		return
+	}
+	// The employee follows the tenant's name while it still carries the name
+	// it was created with ("Tag · <tenant>"); a name changed by hand stays.
+	renamedEmployee := false
+	if before.EmployeeName == template.Name+tagEmployeeNameSeparator+before.Name && tenant.Name != before.Name {
+		next := template.Name + tagEmployeeNameSeparator + tenant.Name
+		if _, err := tx.Exec(r.Context(), `UPDATE agent SET name = $3, updated_at = now() WHERE workspace_id = $1::uuid AND id = $2::uuid`,
+			t.WorkspaceID, tenant.EmployeeAgentID, next); err != nil {
+			if agentNameTaken(err) {
+				writeError(w, http.StatusConflict, fmt.Sprintf("an agent named %q already exists in this workspace", next))
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to rename the tenant employee")
+			return
+		}
+		renamedEmployee = true
+		if tenant, err = tag.GetTenant(r.Context(), tx, t.WorkspaceID, tenant.ID); err != nil {
+			writeTagTenantError(w, err)
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit tenant rename")
+		return
+	}
+	if renamedEmployee {
+		h.announceAgentUpdated(r, t.WorkspaceID, userID, parseUUID(tenant.EmployeeAgentID))
 	}
 	writeJSON(w, http.StatusOK, TagTenantMutationResponse{Tenant: tagTenantToResponse(tenant)})
 }

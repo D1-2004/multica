@@ -2161,6 +2161,18 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		ID: existing.ID,
 	}
 	if req.Name != nil {
+		// The workspace Tag is always called "Tag".
+		if *req.Name != existing.Name && h.DB != nil {
+			role, err := tag.AgentRole(r.Context(), h.DB, uuidToString(existing.WorkspaceID), uuidToString(existing.ID))
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to check the tag")
+				return
+			}
+			if role == tag.RoleTemplate {
+				writeError(w, http.StatusConflict, "the tag's name is fixed")
+				return
+			}
+		}
 		params.Name = pgtype.Text{String: *req.Name, Valid: true}
 	}
 	if req.Description != nil {

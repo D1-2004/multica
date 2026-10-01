@@ -4597,7 +4597,6 @@ export class ApiClient {
     const raw = await this.fetch<unknown>("/api/tag", {
       method: "POST",
       body: JSON.stringify({
-        name: input.name,
         description: input.description ?? "",
         runtime_id: input.runtimeId,
         model: input.model ?? "",

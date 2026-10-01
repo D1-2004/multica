@@ -66,8 +66,8 @@ export interface TagApplyResponse {
   results: TagApplyTenantResult[];
 }
 
+/** The Tag is always called "Tag"; it has no name of its own to choose. */
 export interface CreateTagInput {
-  name: string;
   description?: string;
   runtimeId: string;
   model?: string;

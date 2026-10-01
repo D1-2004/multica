@@ -1435,6 +1435,8 @@
     "empty": "This workspace has no Tag, so the sidebar shows no Tag entry.",
     "create_heading": "Create the Tag",
     "name": "Name",
+    "fixed_name": "Tag",
+    "name_fixed_hint": "The workspace has one Tag and it is always called Tag.",
     "description_label": "Description",
     "runtime": "Cloud runtime",
     "runtime_hint": "A Tag only runs on a cloud runtime.",

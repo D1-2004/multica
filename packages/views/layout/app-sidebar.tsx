@@ -931,9 +931,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                             <Icon />
                           )}
                           <span className="min-w-0 truncate">
-                            {item.key === "tag" && visibleTag?.name
-                              ? visibleTag.name
-                              : t(($) => $.nav[item.labelKey])}
+                            {t(($) => $.nav[item.labelKey])}
                           </span>
                         </SidebarMenuButton>
                       </SidebarMenuItem>
