@@ -614,7 +614,7 @@ function RoutineEditor({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">{form}</div>
-        <DialogFooter className="border-t px-6 py-3">{actions}</DialogFooter>
+        <DialogFooter className="mx-0 mb-0 px-6 py-3">{actions}</DialogFooter>
       </DialogContent>
     </Dialog>
   );
