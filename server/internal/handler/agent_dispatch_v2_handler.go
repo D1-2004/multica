@@ -146,6 +146,11 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 	if origin := dispatchOriginOpenMsgID(c); origin != "" {
 		payload[protocol.DingTalkReplyToOpenMsgIDContextKey] = origin
 	}
+	if c.AgentScene != nil {
+		// SceneRef of the Agent work scene (docs/agent-scene.md); scene
+		// configuration and follow-ups read it instead of the conversation.
+		payload[protocol.AgentSceneContextKey] = c.AgentScene
+	}
 	if c.DispatchEndpointID != "" {
 		payload["dispatch_endpoint_id"] = c.DispatchEndpointID
 	}
@@ -297,6 +302,7 @@ func (h *Handler) handleAgentDispatchV2(
 			return
 		}
 	}
+	h.attachDispatchScene(r.Context(), &command, dispatchContext)
 
 	if command.CompletionCallback == nil && !command.ProactiveConversation {
 		h.executeAgentDispatchV2(w, r, command, plan, dispatchContext)
@@ -1706,6 +1712,7 @@ func coordinatorHistoryInputs(command DispatchCommand, agentID pgtype.UUID, fall
 		ProactiveConversation: command.ProactiveConversation,
 		ChatType:              chatType,
 		AgentID:               agentID,
+		SceneID:               dispatchSceneID(command),
 		ConversationID:        ids.ConversationID,
 		PersonID:              ids.PersonID,
 		EvidenceID:            ids.EvidenceID,
@@ -1801,7 +1808,9 @@ func (h *Handler) inboundCoordinator() *inboundcoord.Coordinator {
 	if h.InboundCoordinator != nil {
 		return h.InboundCoordinator
 	}
-	return inboundcoord.New(h.LLM, h.Queries, h.Assoc)
+	c := inboundcoord.New(h.LLM, h.Queries, h.Assoc)
+	c.SetSceneLookup(coordinatorSceneLookup{h: h})
+	return c
 }
 
 const inboundResetMemoryCommand = "/reset-memory"
@@ -1849,7 +1858,7 @@ func (h *Handler) tryDispatchResetMemory(
 	}
 	ids := dispatchAssocIDs(command)
 	conversationID := ids.ConversationID
-	if conversationID != "" && !assoc.ValidSceneID(conversationID) {
+	if conversationID != "" && !assoc.ValidConversationID(conversationID) {
 		conversationID = ""
 	}
 	var closeErr error
@@ -1868,50 +1877,23 @@ func (h *Handler) tryDispatchResetMemory(
 	}
 	if h != nil && h.SceneMemoryStore != nil && conversationID != "" &&
 		command.Source.Type == "digital_employee" {
-		kind, title := dispatchSceneIdentity(command)
-		orgID := ""
-		var identityErr error
-		if h.Queries != nil {
-			identity, err := h.Queries.GetAgentDingTalkIdentity(r.Context(), db.GetAgentDingTalkIdentityParams{
-				WorkspaceID: dispatchContext.WorkspaceID,
-				AgentID:     dispatchContext.AgentID,
-			})
-			if err == nil {
-				orgID = identity.OrgID
-			} else {
-				identityErr = err
+		sc, sceneErr := dispatchScene(r.Context(), h.Queries, command, dispatchContext)
+		if sceneErr != nil {
+			if closeErr == nil {
+				closeErr = sceneErr
 			}
-		}
-		if orgID == "" && command.ExternalIdentity.DWS != nil {
-			orgID = strings.TrimSpace(command.ExternalIdentity.DWS.OrgID)
-		}
-		if orgID == "" && closeErr == nil {
-			if identityErr != nil {
-				closeErr = identityErr
-			} else {
-				closeErr = errors.New("scene memory identity is unavailable")
-			}
-		}
-		if orgID != "" {
-			identity := scenememory.Identity{
-				WorkspaceID: dispatchContext.WorkspaceID,
-				AgentID:     dispatchContext.AgentID,
-				OrgID:       orgID,
-				SceneKey:    conversationID,
-				SceneKind:   kind,
-				SceneTitle:  title,
-			}
+		} else {
 			oldRevision := int64(0)
-			if existing, err := h.SceneMemoryStore.Get(r.Context(), identity); err == nil {
+			if existing, err := h.SceneMemoryStore.Get(r.Context(), sc); err == nil {
 				oldRevision = existing.MemoryRevision
 			}
-			if _, err := h.SceneMemoryStore.Reset(r.Context(), identity, scenememory.DirtyTrigger{
+			if _, err := h.SceneMemoryStore.Reset(r.Context(), sc, scenememory.DirtyTrigger{
 				OccurredAt: dispatchMessageOccurredAt(command),
 				EvidenceID: ids.EvidenceID,
 			}); err != nil {
 				slog.Warn("scene memory reset-memory failed",
 					"event", "scene_memory_reset",
-					"scene_key", conversationID,
+					"scene_id", uuidToString(sc.ID),
 					"old_revision", oldRevision,
 					"error", err,
 				)
@@ -1921,7 +1903,7 @@ func (h *Handler) tryDispatchResetMemory(
 			} else {
 				slog.Info("scene memory reset",
 					"event", "scene_memory_reset",
-					"scene_key", conversationID,
+					"scene_id", uuidToString(sc.ID),
 					"old_revision", oldRevision,
 				)
 			}

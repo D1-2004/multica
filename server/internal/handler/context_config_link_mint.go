@@ -97,10 +97,10 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 		if !scope.HasScene() {
 			return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "This run did not come from a DingTalk group chat, so there is no group to configure. In a 1:1 chat with the user, use scope=person."}
 		}
-		link.ScopeKey = scope.SceneKey
+		link.ScopeKey = scope.SceneID
 		link.ScopeTitle = scope.SceneTitle
 		if link.ScopeTitle == "" {
-			if title, found, err := h.contextCapGroupSceneTitle(ctx, link.WorkspaceID, in.AgentID, scope.OrgID, scope.SceneKey); err == nil && found {
+			if title, found, err := h.contextCapSceneTitle(ctx, link.WorkspaceID, in.AgentID, scope.OrgID, scope.SceneID); err == nil && found {
 				link.ScopeTitle = title
 			}
 		}
@@ -114,8 +114,8 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 		link.ScopeKey = scope.PersonKey
 		link.ScopeTitle = scope.PersonName
 		// A 1:1 chat is a scene too: redeeming this link also grants the
-		// person that DM scene (configuration only this round).
-		link.ExtraSceneKey = scope.DirectSceneKey
+		// person that DM scene.
+		link.ExtraSceneID = scope.SceneID
 	default:
 		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: `scope must be "scene" or "person"`}
 	}

@@ -329,9 +329,10 @@ func agentScenesPage(w http.ResponseWriter, r *http.Request) (int, int, bool) {
 	return limit, offset, true
 }
 
-// ListAgentTenantGroups lists the group scenes of one tenant, newest
-// activity first: GET /api/agents/{id}/tenants/{orgId}/groups?limit=&offset=
-// → {scenes: [S], has_more}.
+// ListAgentTenantGroups lists the conversation scenes (groups and 1:1 chats,
+// docs/agent-scene.md) of one tenant, newest activity first:
+// GET /api/agents/{id}/tenants/{orgId}/groups?limit=&offset=&groups_only=
+// → {scenes: [S], has_more}. groups_only=true keeps groups only.
 func (h *Handler) ListAgentTenantGroups(w http.ResponseWriter, r *http.Request) {
 	caller, ok := h.agentSceneAdmin(w, r)
 	if !ok {
@@ -346,8 +347,8 @@ func (h *Handler) ListAgentTenantGroups(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	scenes, hasMore, err := contextcap.ListAgentScenes(r.Context(), h.DB, contextcap.SceneListQuery{
-		WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: tenant.OrgID, IdentityOrgID: caller.orgID,
-		Limit: limit, Offset: offset, GroupsOnly: true,
+		WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: tenant.OrgID,
+		Limit: limit, Offset: offset, GroupsOnly: r.URL.Query().Get("groups_only") == "true",
 	})
 	if err != nil {
 		slog.ErrorContext(r.Context(), "agent tenants: group list failed", "agent_id", caller.agentID, "error", err)
@@ -364,7 +365,8 @@ func (h *Handler) ListAgentTenantGroups(w http.ResponseWriter, r *http.Request) 
 type agentTenantPersonDTO struct {
 	StaffID string `json:"staff_id"`
 	Title   string `json:"title"`
-	// DMSceneKey is the person's 1:1 chat with the agent ("" when unknown).
+	// DMSceneKey is the scene_id of the person's 1:1 chat with the agent
+	// ("" when unknown); the chat is its own scene, not this person.
 	DMSceneKey   string `json:"dm_scene_key"`
 	LastActiveAt string `json:"last_active_at"`
 }
@@ -389,15 +391,15 @@ func (h *Handler) ListAgentTenantPersons(w http.ResponseWriter, r *http.Request)
 	}
 	out := make([]agentTenantPersonDTO, 0, len(persons))
 	for _, p := range persons {
-		out = append(out, agentTenantPersonDTO{StaffID: p.StaffID, Title: p.Title, DMSceneKey: p.DMSceneKey, LastActiveAt: contextCapTime(p.LastActiveAt)})
+		out = append(out, agentTenantPersonDTO{StaffID: p.StaffID, Title: p.Title, DMSceneKey: p.DMSceneID, LastActiveAt: contextCapTime(p.LastActiveAt)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"persons": out})
 }
 
 // agentContextNode is one node of the 场域 tree resolved for a Context
 // Builder call: the tenant, the agent working in the tenant's org, the
-// effective scope (a 1:1 chat's is its person's) and the scene shown with
-// it (the group, or the person's 1:1 chat).
+// node's scope and the scene shown with it (the scene of a scene node, or a
+// person's 1:1 chat scene).
 type agentContextNode struct {
 	caller agentSceneCaller
 	tenant contextcap.Tenant
@@ -407,13 +409,12 @@ type agentContextNode struct {
 }
 
 // agentContextNodeFromRoute resolves /tenants/{orgId}/context/{scopeType}/{scopeKey}
-// for need: org (scopeKey = orgId), scene (a group or 1:1 chat the agent
-// has seen in that org; a 1:1 chat maps to its person) or person (a person
-// known for that org). Managers read every node; what they may change is
-// contextCapScopeRights (org and group scopes, not someone else's person
+// for need: org (scopeKey = orgId), scene (scopeKey = a scene_id of the
+// agent in that org, a group or 1:1 chat) or person (a person known for that
+// org). Managers read every node; what they may change is
+// contextCapScopeRights (org and scene scopes, not someone else's person
 // scope). 400 for a malformed scope, 404 for an unknown tenant, scene or
-// person, 409 dm_person_unknown for a write to a 1:1 chat whose person is
-// unknown, 403 person_only for a write to someone else's person scope.
+// person, 403 person_only for a write to someone else's person scope.
 func (h *Handler) agentContextNodeFromRoute(w http.ResponseWriter, r *http.Request, need contextCapNeed) (agentContextNode, bool) {
 	caller, ok := h.agentSceneAdmin(w, r)
 	if !ok {
@@ -442,7 +443,7 @@ func (h *Handler) agentContextNodeFromRoute(w http.ResponseWriter, r *http.Reque
 			return agentContextNode{}, false
 		}
 	case contextcap.ScopeScene:
-		scene, err := contextcap.GetScene(ctx, h.DB, caller.workspaceID, caller.agentID, tenant.OrgID, caller.orgID, scopeKey)
+		scene, err := contextcap.GetScene(ctx, h.DB, caller.workspaceID, caller.agentID, tenant.OrgID, scopeKey)
 		if errors.Is(err, contextcap.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "scene not found")
 			return agentContextNode{}, false
@@ -466,8 +467,8 @@ func (h *Handler) agentContextNodeFromRoute(w http.ResponseWriter, r *http.Reque
 			return agentContextNode{}, false
 		}
 		personTitle = person.Title
-		if person.DMSceneKey != "" {
-			scene, err := contextcap.GetScene(ctx, h.DB, caller.workspaceID, caller.agentID, tenant.OrgID, caller.orgID, person.DMSceneKey)
+		if person.DMSceneID != "" {
+			scene, err := contextcap.GetScene(ctx, h.DB, caller.workspaceID, caller.agentID, tenant.OrgID, person.DMSceneID)
 			switch {
 			case err == nil:
 				node.scene = &scene
@@ -609,15 +610,13 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 	org := node.tenant.OrgID
 	resp := agentContextNodeResponse{
 		Prompts: []agentContextPromptDTO{}, Connectors: []agentContextConnectorDTO{}, Skills: []agentContextSkillDTO{},
-		Rights: scope.Rights, CanEdit: scope.Rights.Toggle, CanConnect: scope.Rights.Connect && !scope.PersonUnknown,
+		Rights: scope.Rights, CanEdit: scope.Rights.Toggle, CanConnect: scope.Rights.Connect,
 		Effective: agentContextEffectiveDTO{
 			Prompts: []agentContextEffectivePromptDTO{}, Connectors: []agentContextEffectiveResourceDTO{},
 			Skills: []agentContextEffectiveResourceDTO{}, MCPServers: []agentContextEffectiveServerDTO{},
 		},
 	}
-	if !scope.PersonUnknown {
-		resp.Scope = &agentContextScopeDTO{Type: scope.ScopeType, OrgID: org, Key: scope.ScopeKey, Title: scope.ScopeTitle}
-	}
+	resp.Scope = &agentContextScopeDTO{Type: scope.ScopeType, OrgID: org, Key: scope.ScopeKey, Title: scope.ScopeTitle}
 	if node.scene != nil {
 		view := agentSceneView(*node.scene)
 		resp.Scene = &view
@@ -629,13 +628,11 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 	}
 	// The layers of the node: org, then the node's own scope.
 	selection := contextcap.LayerSelection{OrgID: org, Org: true}
-	if !scope.PersonUnknown {
-		switch scope.ScopeType {
-		case contextcap.ScopeScene:
-			selection.SceneKey = scope.ScopeKey
-		case contextcap.ScopePerson:
-			selection.PersonKey = scope.ScopeKey
-		}
+	switch scope.ScopeType {
+	case contextcap.ScopeScene:
+		selection.SceneID = scope.ScopeKey
+	case contextcap.ScopePerson:
+		selection.PersonKey = scope.ScopeKey
 	}
 	layers, err := contextcap.LoadLayers(ctx, h.DB, caller.workspaceID, caller.agentID, selection)
 	if err != nil {
@@ -648,7 +645,7 @@ func (h *Handler) buildAgentContextNode(ctx context.Context, node agentContextNo
 
 	enabled := map[string]bool{}
 	hints := map[string]string{}
-	if !scope.PersonUnknown {
+	{
 		bindings, err := contextcap.ListScopeBindings(ctx, h.DB, caller.workspaceID, caller.agentID, scope.ScopeType, org, scope.ScopeKey)
 		if err != nil {
 			return resp, err
@@ -1095,7 +1092,6 @@ func (h *Handler) StartAgentContextConnection(w http.ResponseWriter, r *http.Req
 		connectorOAuthScope: connectorOAuthScope{
 			WorkspaceID: node.caller.workspaceID, ConnectorID: uuidToString(connectorUUID), UserID: requestUserID(r),
 			ScopeType: node.scope.ScopeType, AgentID: node.caller.agentID, OrgID: node.tenant.OrgID, ScopeKey: node.scope.ScopeKey,
-			SceneKey: node.scope.DirectSceneKey,
 		},
 		ReturnTo: input.ReturnTo,
 	})

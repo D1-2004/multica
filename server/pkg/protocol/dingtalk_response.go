@@ -32,6 +32,9 @@ const (
 	// DingTalkReplyToOpenMsgIDContextKey is the inbound openMsgId this task
 	// should quote. IndependentIssueTaskContext preserves unknown keys.
 	DingTalkReplyToOpenMsgIDContextKey = "dingtalk_reply_to_open_msg_id"
+	// AgentSceneContextKey holds the task's SceneRef ({"scene_id": …}), the
+	// server-resolved Agent work scene of the dispatch (docs/agent-scene.md).
+	AgentSceneContextKey = "agent_scene"
 )
 
 // DingTalkMessagePolicy is trusted per-task state, not agent custom_env.

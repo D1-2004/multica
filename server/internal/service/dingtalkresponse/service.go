@@ -34,6 +34,10 @@ type ActionInput struct {
 	RequestID            string `json:"request_id"`
 	DWSUID               string `json:"dws_uid"`
 	DWSOrgID             string `json:"dws_org_id"`
+	// SceneID is the Agent work scene the response goes to
+	// (docs/agent-scene.md); ConversationID is that scene's external
+	// conversation id as the scene directory records it.
+	SceneID              string `json:"scene_id,omitempty"`
 	ConversationID       string `json:"conversation_id"`
 	SenderOpenDingTalkID string `json:"sender_open_dingtalk_id"`
 	IsGroup              bool   `json:"is_group"`

@@ -576,6 +576,7 @@ func main() {
 	if h.SceneMemoryWorker != nil {
 		go h.SceneMemoryWorker.Run(sweepCtx)
 	}
+	go h.ReconcileSceneCredentials(sweepCtx)
 	if h.DingTalkStreamInbox != nil {
 		go h.DingTalkStreamInbox.Run(sweepCtx)
 	}

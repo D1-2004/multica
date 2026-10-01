@@ -14,7 +14,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/util"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // Langfuse instrumentation for the memory loop. One claimed flush is one
@@ -40,7 +39,7 @@ type flushOutcome struct {
 	Committed       bool
 }
 
-func (f *MemoryFlusher) startFlushTrace(ctx context.Context, row db.SceneMemory, started time.Time) *langfuse.Trace {
+func (f *MemoryFlusher) startFlushTrace(ctx context.Context, row Memory, started time.Time) *langfuse.Trace {
 	if f == nil || f.Langfuse == nil {
 		return nil
 	}
@@ -60,10 +59,10 @@ func (f *MemoryFlusher) startFlushTrace(ctx context.Context, row db.SceneMemory,
 // session is the scene key and the tags carry the agent and the workspace,
 // so only the row id and the triggering turn (coord_trace_id, plus the job id
 // when it differs) are indexed.
-func flushIndexKeys(row db.SceneMemory) map[string]string {
+func flushIndexKeys(row Memory) map[string]string {
 	coord := strings.TrimSpace(row.LastTriggerCoordTraceID)
 	keys := map[string]string{
-		"scene_memory_id": util.UUIDToString(row.ID),
+		"scene_id": util.UUIDToString(row.SceneID),
 		"coord_trace_id":  coord,
 	}
 	if job := util.UUIDToString(row.LastTriggerJobID); job != "" && job != coord {
@@ -72,20 +71,20 @@ func flushIndexKeys(row db.SceneMemory) map[string]string {
 	return keys
 }
 
-func flushTraceOptions(row db.SceneMemory, agentName string, started time.Time) langfuse.TraceOptions {
+func flushTraceOptions(row Memory, agentName string, started time.Time) langfuse.TraceOptions {
 	metadata := map[string]any{
 		"loop":                flushTraceName,
 		"agent_name":          agentName,
-		"scene_memory_id":     util.UUIDToString(row.ID),
-		"scene_key":           strings.TrimSpace(row.SceneKey),
-		"conversation_id":     strings.TrimSpace(row.SceneKey),
-		"scene_kind":          strings.TrimSpace(row.SceneKind),
-		"conversation_kind":   strings.TrimSpace(row.SceneKind),
-		"scene_title":         clipRunes(strings.TrimSpace(row.SceneTitle), 80),
-		"conversation_name":   clipRunes(strings.TrimSpace(row.SceneTitle), 80),
-		"platform":            strings.TrimSpace(row.Platform),
-		"org_id":              strings.TrimSpace(row.OrgID),
-		"dws_org_id":          strings.TrimSpace(row.OrgID),
+		"scene_id":     util.UUIDToString(row.SceneID),
+		"scene_key":           strings.TrimSpace(row.ConversationID()),
+		"conversation_id":     strings.TrimSpace(row.ConversationID()),
+		"scene_kind":          strings.TrimSpace(row.Kind()),
+		"conversation_kind":   strings.TrimSpace(row.Kind()),
+		"scene_title":         clipRunes(strings.TrimSpace(row.Title()), 80),
+		"conversation_name":   clipRunes(strings.TrimSpace(row.Title()), 80),
+		"platform":            strings.TrimSpace(row.Scene.Provider),
+		"org_id":              strings.TrimSpace(row.OrgID()),
+		"dws_org_id":          strings.TrimSpace(row.OrgID()),
 		"workspace_id":        util.UUIDToString(row.WorkspaceID),
 		"agent_id":            util.UUIDToString(row.AgentID),
 		"memory_revision":     row.MemoryRevision,
@@ -100,7 +99,7 @@ func flushTraceOptions(row db.SceneMemory, agentName string, started time.Time) 
 	}
 	tags := []string{flushTraceTag}
 	for _, tag := range []string{
-		langfuse.Tag("kind", row.SceneKind),
+		langfuse.Tag("kind", row.Kind()),
 		langfuse.Tag("agent", util.UUIDToString(row.AgentID)),
 		langfuse.Tag("agent_name", agentName),
 		langfuse.Tag("workspace", util.UUIDToString(row.WorkspaceID)),
@@ -123,7 +122,7 @@ func flushTraceOptions(row db.SceneMemory, agentName string, started time.Time) 
 	return langfuse.TraceOptions{
 		Name:      flushTraceName,
 		Type:      langfuse.TypeChain,
-		SessionID: strings.TrimSpace(row.SceneKey),
+		SessionID: strings.TrimSpace(row.ConversationID()),
 		Tags:      tags,
 		Metadata:  metadata,
 		Input:     input,
@@ -198,11 +197,11 @@ func errorCodeOrEmpty(err error) string {
 	return FlushErrorCode(err)
 }
 
-func traceHistoryRead(t *langfuse.Trace, row db.SceneMemory) *langfuse.Observation {
+func traceHistoryRead(t *langfuse.Trace, row Memory) *langfuse.Observation {
 	if t == nil {
 		return nil
 	}
-	input := map[string]any{"scene_key": strings.TrimSpace(row.SceneKey)}
+	input := map[string]any{"scene_key": strings.TrimSpace(row.ConversationID())}
 	if row.SourceCursorAt.Valid {
 		input["since"] = row.SourceCursorAt.Time.UTC().Format(time.RFC3339)
 	}
@@ -216,7 +215,7 @@ func traceHistoryRead(t *langfuse.Trace, row db.SceneMemory) *langfuse.Observati
 	})
 }
 
-func endHistoryRead(obs *langfuse.Observation, row db.SceneMemory, page HistoryPage, err error) {
+func endHistoryRead(obs *langfuse.Observation, row Memory, page HistoryPage, err error) {
 	if obs == nil {
 		return
 	}
@@ -231,7 +230,7 @@ func endHistoryRead(obs *langfuse.Observation, row db.SceneMemory, page HistoryP
 	obs.End(end)
 }
 
-func historyReadTraceOutput(row db.SceneMemory, page HistoryPage) map[string]any {
+func historyReadTraceOutput(row Memory, page HistoryPage) map[string]any {
 	out := map[string]any{
 		"event_count": len(page.Events), "raw_count": page.RawCount,
 		"evidence_count": len(page.EvidenceIDs), "has_more": page.HasMore,

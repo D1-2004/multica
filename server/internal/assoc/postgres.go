@@ -26,14 +26,19 @@ RETURNING id, workspace_id, agent_id, src_type, src_id, dst_type, dst_id, rel, s
 
 const eventUpsertSQL = `
 INSERT INTO assoc_event (
-    workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, body
+    workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_id, person_key, task_id, body
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT (workspace_id, agent_id, evidence_id)
 DO UPDATE SET
     direction = CASE WHEN assoc_event.direction = '' THEN EXCLUDED.direction ELSE assoc_event.direction END,
     task_id = COALESCE(assoc_event.task_id, EXCLUDED.task_id),
+    scene_id = COALESCE(assoc_event.scene_id, EXCLUDED.scene_id),
     body = CASE WHEN assoc_event.body = '' THEN EXCLUDED.body ELSE assoc_event.body END
-RETURNING id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at, body`
+RETURNING ` + eventColumns
+
+// eventColumns is the event projection; scene_id is NULL for events without
+// a resolved scene (and for events recorded before scene ids existed).
+const eventColumns = `id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_id, person_key, task_id, created_at, body`
 
 type DBTX interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
@@ -340,10 +345,10 @@ WHERE workspace_id = $1 AND agent_id = $2 AND src_type = $3 AND src_id = $4`,
 	return scanEdges(rows)
 }
 
-func (s *SQLStore) CloseSceneAssociations(ctx context.Context, workspaceID, agentID, sceneKey string) (CloseSceneResult, error) {
-	sceneKey = strings.TrimSpace(sceneKey)
-	if sceneKey == "" {
-		return CloseSceneResult{}, fmt.Errorf("%w: conversation_id is required", ErrInvalidQuery)
+func (s *SQLStore) CloseSceneAssociations(ctx context.Context, workspaceID, agentID, sceneID string) (CloseSceneResult, error) {
+	sceneID = strings.TrimSpace(sceneID)
+	if !validSceneNodeID(sceneID) {
+		return CloseSceneResult{}, fmt.Errorf("%w: scene_id is required", ErrInvalidQuery)
 	}
 	ws, err := requireUUID(workspaceID)
 	if err != nil {
@@ -366,18 +371,18 @@ WHERE workspace_id = $1 AND agent_id = $2 AND status <> 'closed'
     OR (
       src_type = 'event' AND src_id IN (
         SELECT id::text FROM assoc_event
-        WHERE workspace_id = $1 AND agent_id = $2 AND scene_key = $3
+        WHERE workspace_id = $1 AND agent_id = $2 AND scene_id = $3::uuid
       )
     )
-  )`, ws, agent, sceneKey, now)
+  )`, ws, agent, sceneID, now)
 	if err != nil {
 		return CloseSceneResult{}, err
 	}
 	eventTag, err := s.db.Exec(ctx, `
 UPDATE assoc_event
 SET task_id = NULL
-WHERE workspace_id = $1 AND agent_id = $2 AND scene_key = $3 AND task_id IS NOT NULL`,
-		ws, agent, sceneKey)
+WHERE workspace_id = $1 AND agent_id = $2 AND scene_id = $3::uuid AND task_id IS NOT NULL`,
+		ws, agent, sceneID)
 	if err != nil {
 		return CloseSceneResult{}, err
 	}
@@ -403,9 +408,13 @@ func (s *SQLStore) InsertEvent(ctx context.Context, event Event) (Event, error) 
 	if err != nil {
 		return Event{}, err
 	}
+	sceneID, err := optionalUUID(event.SceneID)
+	if err != nil {
+		return Event{}, err
+	}
 	return scanEvent(s.db.QueryRow(ctx, eventUpsertSQL,
 		ws, agent, event.Source, event.Direction, event.EvidenceID, event.OccurredAt,
-		event.SceneKey, event.PersonKey, taskID, ClipBody(event.Body, EventBodyMaxRunes),
+		sceneID, event.PersonKey, taskID, ClipBody(event.Body, EventBodyMaxRunes),
 	))
 }
 
@@ -419,7 +428,7 @@ func (s *SQLStore) GetEventByEvidence(ctx context.Context, workspaceID, agentID,
 		return Event{}, err
 	}
 	row := s.db.QueryRow(ctx, `
-SELECT id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at, body
+SELECT `+eventColumns+`
 FROM assoc_event
 WHERE workspace_id = $1 AND agent_id = $2 AND evidence_id = $3`,
 		ws, agent, evidenceID)
@@ -430,7 +439,10 @@ WHERE workspace_id = $1 AND agent_id = $2 AND evidence_id = $3`,
 	return event, err
 }
 
-func (s *SQLStore) ListEventsByScene(ctx context.Context, workspaceID, agentID, sceneKey string, since time.Time, limit int) ([]Event, error) {
+func (s *SQLStore) ListEventsByScene(ctx context.Context, workspaceID, agentID, sceneID string, since time.Time, limit int) ([]Event, error) {
+	if !validSceneNodeID(sceneID) {
+		return []Event{}, nil
+	}
 	ws, err := requireUUID(workspaceID)
 	if err != nil {
 		return nil, err
@@ -446,12 +458,12 @@ func (s *SQLStore) ListEventsByScene(ctx context.Context, workspaceID, agentID, 
 		limit = MaxLimit
 	}
 	rows, err := s.db.Query(ctx, `
-SELECT id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at, body
+SELECT `+eventColumns+`
 FROM assoc_event
-WHERE workspace_id = $1 AND agent_id = $2 AND scene_key = $3 AND occurred_at >= $4
+WHERE workspace_id = $1 AND agent_id = $2 AND scene_id = $3::uuid AND occurred_at >= $4
 ORDER BY occurred_at DESC
 LIMIT $5`,
-		ws, agent, sceneKey, since, limit)
+		ws, agent, sceneID, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -491,34 +503,6 @@ WHERE workspace_id = $1 AND agent_id = $2 AND evidence_id = $3`,
 		return ErrNotFound
 	}
 	return nil
-}
-
-func (s *SQLStore) EnsureScene(ctx context.Context, workspaceID, agentID, sceneKey, kind string, at time.Time) error {
-	sceneKey = strings.TrimSpace(sceneKey)
-	if sceneKey == "" {
-		return nil
-	}
-	if kind == "" {
-		kind = "dm"
-	}
-	if at.IsZero() {
-		at = time.Now().UTC()
-	}
-	ws, err := requireUUID(workspaceID)
-	if err != nil {
-		return err
-	}
-	agent, err := requireUUID(agentID)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(ctx, `
-INSERT INTO assoc_scene (workspace_id, agent_id, scene_key, kind, last_touched_at)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (agent_id, scene_key) DO UPDATE
-SET last_touched_at = EXCLUDED.last_touched_at, kind = EXCLUDED.kind, updated_at = EXCLUDED.last_touched_at`,
-		ws, agent, sceneKey, kind, at)
-	return err
 }
 
 func (s *SQLStore) EnsurePerson(ctx context.Context, workspaceID, agentID, personKey, displayName string, aliases []string) error {
@@ -688,11 +672,11 @@ func scanEdges(rows pgx.Rows) ([]Edge, error) {
 
 func scanEvent(row rowScanner) (Event, error) {
 	var (
-		id, ws, agent                              pgtype.UUID
-		source, direction, evidence, scene, person string
-		occurred, created                          time.Time
-		taskID                                     pgtype.UUID
-		body                                       string
+		id, ws, agent, scene                pgtype.UUID
+		source, direction, evidence, person string
+		occurred, created                   time.Time
+		taskID                              pgtype.UUID
+		body                                string
 	)
 	if err := row.Scan(&id, &ws, &agent, &source, &direction, &evidence, &occurred, &scene, &person, &taskID, &created, &body); err != nil {
 		return Event{}, err
@@ -706,7 +690,7 @@ func scanEvent(row rowScanner) (Event, error) {
 		EvidenceID:  evidence,
 		Body:        body,
 		OccurredAt:  occurred,
-		SceneKey:    scene,
+		SceneID:     util.UUIDToString(scene),
 		PersonKey:   person,
 		CreatedAt:   created,
 	}

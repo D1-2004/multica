@@ -144,6 +144,7 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 		AgentName:            agent.Name,
 		Instructions:         agent.Instructions,
 		WorkspaceID:          uuidToString(agent.WorkspaceID),
+		SceneID:              envelopeSceneID(envelope),
 		ConversationID:       cid,
 		IssueID:              uuidToString(task.IssueID),
 		TaskResult:           fullResult,
@@ -263,6 +264,14 @@ func parseTaskFinishedEnvelope(raw []byte) (persistedDispatchContext, bool) {
 	return envelope, true
 }
 
+// envelopeSceneID is the task's scene_id from its dispatch context.
+func envelopeSceneID(envelope persistedDispatchContext) string {
+	if envelope.AgentScene == nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.AgentScene.SceneID)
+}
+
 func coordinatorChatType(raw string) string {
 	if strings.EqualFold(strings.TrimSpace(raw), "group") {
 		return "group"
@@ -332,6 +341,7 @@ func (h *Handler) enqueueTaskFinishedLoop(ctx context.Context, task *db.AgentTas
 	cid := strings.TrimSpace(envelope.EventData.Conversation.OpenConversationID)
 	command := DispatchCommand{
 		TaskFinishedTaskID: uuidToString(task.ID),
+		AgentScene:         envelope.AgentScene,
 		Source:             DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
 		Event: DispatchEvent{
 			Domain: "channel",

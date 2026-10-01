@@ -115,12 +115,6 @@ type connectorOAuthScope struct {
 	AgentID  string
 	OrgID    string
 	ScopeKey string
-	// SceneKey is the 1:1 chat scene the caller asked to connect when the
-	// scope is that scene's person (contextCapResolveScope maps a dm scene
-	// to its person); "" otherwise. Authority is re-checked for that
-	// request, and the credential lands in the person scope. It travels in
-	// the sealed part of the state.
-	SceneKey string
 }
 
 // connectorOAuthStart is the input of startConnectorOAuth.
@@ -238,7 +232,7 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	if err != nil {
 		return connectorOAuthStarted{}, internalErr
 	}
-	payload := connectorSealedVerifier{StateHash: hashConnectorOAuthState(state), ConnectorID: scope.ConnectorID, Verifier: verifier, SceneKey: scope.SceneKey}
+	payload := connectorSealedVerifier{StateHash: hashConnectorOAuthState(state), ConnectorID: scope.ConnectorID, Verifier: verifier}
 	var authorizeURL string
 	switch app.AuthKind {
 	case connectorcatalog.AuthOAuthGitHubApp:
@@ -368,7 +362,7 @@ func normalizeConnectorOAuthScope(in connectorOAuthScope) (connectorOAuthScope, 
 	}
 	switch out.ScopeType {
 	case connectorOAuthScopeWorkspace:
-		out.AgentID, out.OrgID, out.ScopeKey, out.SceneKey = "", "", "", ""
+		out.AgentID, out.OrgID, out.ScopeKey = "", "", ""
 	case contextcap.ScopeOrg, contextcap.ScopeScene, contextcap.ScopePerson:
 		id, err := canonicalOAuthUUID(out.AgentID)
 		if err != nil {
@@ -377,9 +371,6 @@ func normalizeConnectorOAuthScope(in connectorOAuthScope) (connectorOAuthScope, 
 		out.AgentID = id
 		if !contextcap.ValidConfigScope(out.ScopeType, out.OrgID, out.ScopeKey) {
 			return out, errors.New("invalid scope key")
-		}
-		if out.SceneKey != "" && (out.ScopeType != contextcap.ScopePerson || !contextcap.ValidOpenConversationID(out.SceneKey)) {
-			return out, errors.New("invalid scene key")
 		}
 	default:
 		return out, errors.New("invalid scope type")
@@ -398,9 +389,8 @@ func canonicalOAuthUUID(raw string) (string, error) {
 // authorizeConnectorOAuthScope re-checks, at start and again at callback,
 // that scope.UserID may store a credential for the scope: a workspace
 // owner/admin for the workspace scope; for a scene or person scope the
-// mobile routes' authority (contextCapResolveScope, for the request the
-// caller made: scope.SceneKey when a 1:1 chat scene was asked for) must
-// still resolve to exactly this scope and allow connecting there
+// mobile routes' authority (contextCapResolveScope) must still resolve to
+// exactly this scope and allow connecting there
 // (contextCapRights.Connect from contextCapScopeRights: managing the agent
 // for an org or group scope, being the person for a person scope; never a
 // configure-link holder of a group), and the connector must be enabled and offered to
@@ -436,12 +426,8 @@ func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connec
 	// The mobile routes' authority (contextCapResolveScope) for the request
 	// the caller made; a malformed scope and a manager's unknown scene are
 	// forbidden here, and so is a request that no longer resolves to this
-	// scope (a 1:1 chat now bound to someone else) or may not connect.
-	requestType, requestKey := scope.ScopeType, scope.ScopeKey
-	if scope.SceneKey != "" {
-		requestType, requestKey = contextcap.ScopeScene, scope.SceneKey
-	}
-	resolved, err := h.contextCapResolveScope(ctx, agent, scope.UserID, requestType, requestKey)
+	// scope or may not connect.
+	resolved, err := h.contextCapResolveScope(ctx, agent, scope.UserID, scope.ScopeType, scope.ScopeKey)
 	if err != nil {
 		switch {
 		case errors.Is(err, errContextCapForbidden), errors.Is(err, contextcap.ErrInvalidInput), errors.Is(err, contextcap.ErrNotFound):
@@ -452,7 +438,7 @@ func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connec
 			return oauthStartError(http.StatusInternalServerError, "internal", "grant lookup failed")
 		}
 	}
-	if resolved.PersonUnknown || !resolved.Rights.Connect || resolved.ScopeType != scope.ScopeType || resolved.ScopeKey != scope.ScopeKey {
+	if !resolved.Rights.Connect || resolved.ScopeType != scope.ScopeType || resolved.ScopeKey != scope.ScopeKey {
 		return forbidden
 	}
 	if !c.Enabled {
@@ -584,9 +570,6 @@ type connectorSealedVerifier struct {
 	RedirectURI string `json:"redirect_uri,omitempty"`
 	// BrowserHash is the SHA-256 (hex) of the browser binding nonce.
 	BrowserHash string `json:"browser_hash,omitempty"`
-	// SceneKey is connectorOAuthScope.SceneKey: the 1:1 chat scene the
-	// connect was requested for when the state's scope is its person.
-	SceneKey string `json:"scene_key,omitempty"`
 }
 
 func (h *Handler) sealConnectorOAuthVerifier(payload connectorSealedVerifier) ([]byte, error) {
@@ -695,7 +678,6 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	if !ok || in.Via != wantVia || verifier.Via != wantVia {
 		return fail(connectOAuthErrInvalidState)
 	}
-	scope.SceneKey = verifier.SceneKey
 	if _, err := normalizeConnectorOAuthScope(scope); err != nil {
 		return fail(connectOAuthErrInvalidState)
 	}

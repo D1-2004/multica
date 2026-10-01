@@ -126,16 +126,21 @@ type Turn struct {
 	IdentityNote               string
 	RelatedTasks               string
 	WorkspaceID                string
-	ConversationID             string
-	PersonID                   string
-	DWSUID                     string
-	DWSOrgID                   string
-	EvidenceID                 string
-	Kind                       string
-	TraceID                    string
-	IssueDispatchContext       []byte
-	SceneMemory                string
-	SceneMemoryRevision        int64
+	// SceneID is the server-resolved Agent work scene of the turn
+	// (docs/agent-scene.md); "" when the source named no resolvable scene.
+	// Scene memory and associations are read by it; ConversationID stays the
+	// provider locator for history reads and tool arguments.
+	SceneID              string
+	ConversationID       string
+	PersonID             string
+	DWSUID               string
+	DWSOrgID             string
+	EvidenceID           string
+	Kind                 string
+	TraceID              string
+	IssueDispatchContext []byte
+	SceneMemory          string
+	SceneMemoryRevision  int64
 	// SceneTitle is the conversation title Scene Memory recorded for this
 	// scene (the DM peer's name or the group title). Channel turns often
 	// carry only a sender id, so it is the human-readable conversation name
@@ -311,7 +316,7 @@ type Coordinator struct {
 }
 
 type sceneMemoryReader interface {
-	Get(ctx context.Context, id scenememory.Identity) (db.SceneMemory, error)
+	GetByScene(ctx context.Context, workspaceID, agentID, sceneID pgtype.UUID) (scenememory.Memory, error)
 }
 
 // New wires the loop. assocSvc may be nil; missing required evidence defers
@@ -326,6 +331,17 @@ func New(llmClient *llm.Client, queries historyReader, assocSvc *assoc.Service) 
 		c.Tools = tools
 	}
 	return c
+}
+
+// SetSceneLookup wires the resolver for conversation ids the model names
+// other than the turn's own (docs/agent-scene.md).
+func (c *Coordinator) SetSceneLookup(lookup SceneLookup) {
+	if c == nil {
+		return
+	}
+	if tools, ok := c.Tools.(*AssocTools); ok {
+		tools.Scenes = lookup
+	}
 }
 
 // SetIssueCommentWriter wires the normal member-comment path before the
@@ -709,7 +725,8 @@ func (c *Coordinator) injectRelatedTasks(ctx context.Context, turn Turn) Turn {
 		return turn
 	}
 	cid := strings.TrimSpace(turn.ConversationID)
-	if cid == "" {
+	sceneID := strings.TrimSpace(turn.SceneID)
+	if sceneID == "" {
 		return turn
 	}
 	now := time.Now().UTC()
@@ -720,6 +737,7 @@ func (c *Coordinator) injectRelatedTasks(ctx context.Context, turn Turn) Turn {
 	result, err := c.Assoc.Recall(ctx, assoc.Query{
 		WorkspaceID:    turn.WorkspaceID,
 		AgentID:        util.UUIDToString(turn.AgentID),
+		SceneID:        sceneID,
 		ConversationID: cid,
 		Since:          since,
 		Until:          now,
@@ -829,7 +847,8 @@ func (c *Coordinator) prefetchSceneMemory(ctx context.Context, turn *Turn) {
 	if turn.Source != SourceDigitalEmployee {
 		return
 	}
-	if strings.TrimSpace(turn.ConversationID) == "" || !turn.AgentID.Valid {
+	sceneID, err := util.ParseUUID(strings.TrimSpace(turn.SceneID))
+	if err != nil || !sceneID.Valid || !turn.AgentID.Valid {
 		return
 	}
 	turn.SceneMemoryStatus = "not_loaded"
@@ -841,14 +860,7 @@ func (c *Coordinator) prefetchSceneMemory(ctx context.Context, turn *Turn) {
 	if err != nil {
 		return
 	}
-	kind := scenememory.KindFromChatType(turn.ChatType)
-	row, err := c.SceneMemory.Get(ctx, scenememory.Identity{
-		WorkspaceID: workspaceID,
-		AgentID:     turn.AgentID,
-		OrgID:       turn.DWSOrgID,
-		SceneKey:    turn.ConversationID,
-		SceneKind:   kind,
-	})
+	row, err := c.SceneMemory.GetByScene(ctx, workspaceID, turn.AgentID, sceneID)
 	if err != nil {
 		return
 	}
@@ -865,14 +877,14 @@ func (c *Coordinator) prefetchSceneMemory(ctx context.Context, turn *Turn) {
 		turn.SceneMemoryStatus = "empty"
 	}
 	turn.SceneMemoryRevision = row.MemoryRevision
-	turn.SceneTitle = strings.TrimSpace(row.SceneTitle)
+	turn.SceneTitle = strings.TrimSpace(row.Title())
 	if hostQuiet(ctx) {
 		return
 	}
 	slog.Info("scene memory injected into coordinator",
 		append(coordinatorLogIndex(*turn),
 			"event", "scene_memory_recall_injected",
-			"scene_key", row.SceneKey,
+			"scene_key", row.ConversationID(),
 			"scene_memory_revision", row.MemoryRevision,
 			"code_points", utf8.RuneCountInString(row.MemoryText),
 		)...)

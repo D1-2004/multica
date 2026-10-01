@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
 // Scope types stored in context_capability_binding.scope_type. ScopeOrg is
@@ -118,15 +120,11 @@ type Scope struct {
 	// DingTalk identity nor a recorded dispatch org: its scene and person
 	// layers live under org "" and it has no org layer.
 	OrgID string
-	// SceneKey is the group's openConversationId; empty outside a valid group.
-	SceneKey   string
+	// SceneID is the task's Agent work scene (agent_scene.id, the SceneRef
+	// the dispatch resolved; docs/agent-scene.md), a group or a 1:1 chat;
+	// empty when the dispatch had none. The scene layer is keyed by it.
+	SceneID    string
 	SceneTitle string
-	// DirectSceneKey is the openConversationId of a positively 1:1
-	// conversation (IsDirectConversationType), empty otherwise. A DM is a
-	// scene for configuration (a personal link minted there also grants it),
-	// but runtime resolution does not apply DM scenes yet: HasScene and
-	// SceneKey stay group-only.
-	DirectSceneKey string
 	// PersonKey is the trigger person's staffId; empty when the run merged
 	// messages from several senders or the sender is unknown.
 	PersonKey  string
@@ -146,7 +144,7 @@ type Scope struct {
 func (s Scope) HasOrg() bool { return s.Dispatched && s.OrgID != "" }
 
 // HasScene reports whether the task carries a scene layer.
-func (s Scope) HasScene() bool { return s.SceneKey != "" }
+func (s Scope) HasScene() bool { return s.SceneID != "" }
 
 // HasPerson reports whether the task carries a personal layer.
 func (s Scope) HasPerson() bool { return s.PersonKey != "" }
@@ -157,7 +155,7 @@ func (s Scope) HasLayers() bool { return s.HasOrg() || s.HasScene() || s.HasPers
 // Selection returns the layers of the scope for LoadLayers and
 // LayerCredentials.
 func (s Scope) Selection() LayerSelection {
-	return LayerSelection{OrgID: s.OrgID, Org: s.HasOrg(), SceneKey: s.SceneKey, PersonKey: s.PersonKey}
+	return LayerSelection{OrgID: s.OrgID, Org: s.HasOrg(), SceneID: s.SceneID, PersonKey: s.PersonKey}
 }
 
 // ValidOpenConversationID accepts a DingTalk openConversationId: non-empty,
@@ -180,15 +178,22 @@ func ValidOrgID(id string) bool {
 	return validScopeKey(id)
 }
 
+// ValidSceneID accepts a scene scope key: an agent_scene id in canonical
+// lowercase UUID form (docs/agent-scene.md).
+func ValidSceneID(id string) bool {
+	parsed, err := uuid.Parse(id)
+	return err == nil && parsed != uuid.Nil && parsed.String() == id
+}
+
 // ValidScopeKey reports whether key is acceptable for scopeType: a valid org
-// id for the org scope, a valid openConversationId for scenes and a valid
-// staffId for persons.
+// id for the org scope, a scene_id for scenes and a valid staffId for
+// persons.
 func ValidScopeKey(scopeType, key string) bool {
 	switch scopeType {
 	case ScopeOrg:
 		return ValidOrgID(key)
 	case ScopeScene:
-		return ValidOpenConversationID(key)
+		return ValidSceneID(key)
 	case ScopePerson:
 		return ValidStaffID(key)
 	default:
@@ -225,6 +230,10 @@ type taskContextMessage struct {
 type taskContextEnvelope struct {
 	// Replayed is ReplayedDispatchContextKey.
 	Replayed bool `json:"replayed_dispatch_context"`
+	// AgentScene is the dispatch's SceneRef (protocol.AgentSceneContextKey).
+	AgentScene *struct {
+		SceneID string `json:"scene_id"`
+	} `json:"agent_scene"`
 	// FollowUpCommentIDs lists the Coordinator follow-up comments coalesced
 	// into one issue task (service/coordinator_follow_up.go); more than one
 	// entry means the run may combine several speakers' follow-ups.
@@ -252,8 +261,8 @@ type taskContextEnvelope struct {
 // ScopeFromTaskContext derives the scene and trigger person from a task's
 // server-written DingTalk dispatch context (agent_task_queue.context).
 //
-//   - SceneKey is conversation.openConversationId, only when conversation.type
-//     is "group" and the id passes ValidOpenConversationID.
+//   - SceneID is the dispatch's SceneRef (agent_scene.scene_id), a group or a
+//     1:1 chat; the caller checks it is the agent's scene in the task's org.
 //   - PersonKey is sender.staffId, only when the run positively comes from
 //     that one person (see singleTriggerPerson), so one person's credentials
 //     never serve a merged run that contains someone else's message.
@@ -280,9 +289,8 @@ func ScopeFromTaskContext(raw []byte) Scope {
 		DispatchOrgID:    strings.TrimSpace(envelope.ExternalIdentity.DWS.OrgID),
 	}
 
-	cid := strings.TrimSpace(conversation.OpenConversationID)
-	if scope.ConversationType == ConversationTypeGroup && ValidOpenConversationID(cid) {
-		scope.SceneKey = cid
+	if envelope.AgentScene != nil && ValidSceneID(strings.TrimSpace(envelope.AgentScene.SceneID)) {
+		scope.SceneID = strings.TrimSpace(envelope.AgentScene.SceneID)
 		scope.SceneTitle = firstNonEmpty(
 			conversation.Title,
 			conversation.ConversationTitle,
@@ -290,9 +298,6 @@ func ScopeFromTaskContext(raw []byte) Scope {
 			conversation.Name,
 			conversation.SnakeTitle,
 		)
-	}
-	if IsDirectConversationType(scope.ConversationType) && ValidOpenConversationID(cid) {
-		scope.DirectSceneKey = cid
 	}
 
 	if staffID := strings.TrimSpace(data.Sender.StaffID); ValidStaffID(staffID) &&

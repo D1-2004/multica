@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,8 +14,12 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// sceneMemoryResponse is the Scene Memory of one Agent work scene. id and
+// scene_id are both the scene_id (docs/agent-scene.md); scene_key is the
+// scene's external conversation id, shown for reference only.
 type sceneMemoryResponse struct {
 	ID             string `json:"id"`
+	SceneID        string `json:"scene_id"`
 	WorkspaceID    string `json:"workspace_id"`
 	AgentID        string `json:"agent_id"`
 	OrgID          string `json:"org_id"`
@@ -48,15 +51,16 @@ func (h *Handler) sceneMemorySelfNames(ctx context.Context, agent db.Agent) []st
 	return append(names, ident.AccountDisplayName)
 }
 
-func sceneMemoryToResponse(row db.SceneMemory, selfNames ...string) sceneMemoryResponse {
+func sceneMemoryToResponse(row scenememory.Memory, selfNames ...string) sceneMemoryResponse {
 	resp := sceneMemoryResponse{
-		ID:             uuidToString(row.ID),
+		ID:             uuidToString(row.SceneID),
+		SceneID:        uuidToString(row.SceneID),
 		WorkspaceID:    uuidToString(row.WorkspaceID),
 		AgentID:        uuidToString(row.AgentID),
-		OrgID:          row.OrgID,
-		SceneKey:       row.SceneKey,
-		SceneKind:      row.SceneKind,
-		SceneTitle:     scenememory.DisplayTitle(row.SceneTitle, row.MemoryText),
+		OrgID:          row.OrgID(),
+		SceneKey:       row.ConversationID(),
+		SceneKind:      row.Kind(),
+		SceneTitle:     scenememory.DisplayTitle(row.Title(), row.MemoryText),
 		MemoryText:     scenememory.SanitizeMemoryTextForAgent(row.MemoryText, selfNames...),
 		MemoryRevision: row.MemoryRevision,
 		Status:         scenememory.StatusOf(row),
@@ -104,10 +108,10 @@ func (h *Handler) ListAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// GetAgentSceneMemory returns one scene memory row by id:
-// GET /api/agents/{id}/scene-memory/{memoryId}. The scene detail (场域 →
-// 记忆) opens the row a scene reports as memory_id, which the list above may
-// not contain once the agent has more than 200 rows.
+// GetAgentSceneMemory returns the memory of one scene by its scene_id:
+// GET /api/agents/{id}/scene-memory/{sceneId}. The scene detail (场域 →
+// 记忆) opens the scene it lists, which the list above may not contain once
+// the agent has more than 200 rows.
 func (h *Handler) GetAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
 	agent, row, ok := h.loadManagedSceneMemory(w, r)
 	if !ok {
@@ -116,32 +120,32 @@ func (h *Handler) GetAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sceneMemoryToResponse(row, h.sceneMemorySelfNames(r.Context(), agent)...))
 }
 
-func (h *Handler) loadManagedSceneMemory(w http.ResponseWriter, r *http.Request) (db.Agent, db.SceneMemory, bool) {
+func (h *Handler) loadManagedSceneMemory(w http.ResponseWriter, r *http.Request) (db.Agent, scenememory.Memory, bool) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
 	if !ok {
-		return db.Agent{}, db.SceneMemory{}, false
+		return db.Agent{}, scenememory.Memory{}, false
 	}
 	actorType, _ := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
 	if actorType == "agent" {
 		writeError(w, http.StatusForbidden, "agents may not manage scene memory")
-		return db.Agent{}, db.SceneMemory{}, false
+		return db.Agent{}, scenememory.Memory{}, false
 	}
 	if !h.canManageAgent(w, r, agent) {
-		return db.Agent{}, db.SceneMemory{}, false
+		return db.Agent{}, scenememory.Memory{}, false
 	}
-	memoryID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "memoryId"), "memory id")
+	sceneID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "sceneId"), "scene id")
 	if !ok {
-		return db.Agent{}, db.SceneMemory{}, false
+		return db.Agent{}, scenememory.Memory{}, false
 	}
 	if h.SceneMemoryStore == nil {
 		writeError(w, http.StatusServiceUnavailable, "scene memory is not configured")
-		return db.Agent{}, db.SceneMemory{}, false
+		return db.Agent{}, scenememory.Memory{}, false
 	}
-	row, err := h.SceneMemoryStore.GetByID(r.Context(), agent.WorkspaceID, agent.ID, memoryID)
+	row, err := h.SceneMemoryStore.GetByScene(r.Context(), agent.WorkspaceID, agent.ID, sceneID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "scene memory not found")
-		return db.Agent{}, db.SceneMemory{}, false
+		return db.Agent{}, scenememory.Memory{}, false
 	}
 	return agent, row, true
 }
@@ -161,9 +165,7 @@ func (h *Handler) UpdateAgentSceneMemory(w http.ResponseWriter, r *http.Request)
 	}
 	names := h.sceneMemorySelfNames(r.Context(), agent)
 	body.MemoryText = scenememory.SanitizeMemoryTextForAgent(body.MemoryText, names...)
-	updated, err := h.SceneMemoryStore.ReplaceText(
-		r.Context(), row.WorkspaceID, row.AgentID, row.ID, body.ExpectedRevision, body.MemoryText,
-	)
+	updated, err := h.SceneMemoryStore.ReplaceText(r.Context(), row, body.ExpectedRevision, body.MemoryText)
 	if errors.Is(err, scenememory.ErrMemoryText) {
 		writeError(w, http.StatusBadRequest, "memory_text exceeds 1600 code points")
 		return
@@ -178,7 +180,7 @@ func (h *Handler) UpdateAgentSceneMemory(w http.ResponseWriter, r *http.Request)
 	}
 	slog.Info("scene memory owner replace",
 		"event", "scene_memory_owner_replace",
-		"scene_key", updated.SceneKey,
+		"scene_id", uuidToString(updated.SceneID),
 		"memory_revision", updated.MemoryRevision,
 	)
 	writeJSON(w, http.StatusOK, sceneMemoryToResponse(updated, names...))
@@ -189,8 +191,7 @@ func (h *Handler) ResetAgentSceneMemory(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	identity := scenememory.IdentityFromRow(row)
-	updated, err := h.SceneMemoryStore.Reset(r.Context(), identity, scenememory.DirtyTrigger{
+	updated, err := h.SceneMemoryStore.Reset(r.Context(), row.Scene, scenememory.DirtyTrigger{
 		OccurredAt: time.Now().UTC(),
 		EvidenceID: "owner-reset",
 	})
@@ -200,17 +201,17 @@ func (h *Handler) ResetAgentSceneMemory(w http.ResponseWriter, r *http.Request) 
 	}
 	closedEdges := 0
 	unlinkedEvents := 0
-	if h.Assoc != nil && strings.TrimSpace(row.SceneKey) != "" {
+	if h.Assoc != nil {
 		result, closeErr := h.Assoc.CloseSceneAssociations(
 			r.Context(),
 			uuidToString(agent.WorkspaceID),
 			uuidToString(agent.ID),
-			row.SceneKey,
+			uuidToString(row.SceneID),
 		)
 		if closeErr != nil {
 			slog.Error("scene memory owner reset assoc failed",
 				"event", "scene_memory_owner_reset",
-				"scene_key", row.SceneKey,
+				"scene_id", uuidToString(row.SceneID),
 				"error", closeErr,
 			)
 			writeError(w, http.StatusInternalServerError, "failed to clear scene associations")
@@ -221,7 +222,7 @@ func (h *Handler) ResetAgentSceneMemory(w http.ResponseWriter, r *http.Request) 
 	}
 	slog.Info("scene memory owner reset",
 		"event", "scene_memory_reset",
-		"scene_key", updated.SceneKey,
+		"scene_id", uuidToString(updated.SceneID),
 		"memory_revision", updated.MemoryRevision,
 		"closed_edges", closedEdges,
 		"unlinked_events", unlinkedEvents,
@@ -242,7 +243,7 @@ func (h *Handler) ClearAgentSceneRelations(w http.ResponseWriter, r *http.Reques
 		r.Context(),
 		uuidToString(agent.WorkspaceID),
 		uuidToString(agent.ID),
-		row.SceneKey,
+		uuidToString(row.SceneID),
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to clear scene associations")
@@ -250,7 +251,7 @@ func (h *Handler) ClearAgentSceneRelations(w http.ResponseWriter, r *http.Reques
 	}
 	slog.Info("scene memory owner clear relations",
 		"event", "scene_memory_owner_clear_relations",
-		"scene_key", row.SceneKey,
+		"scene_id", uuidToString(row.SceneID),
 		"closed_edges", result.ClosedEdges,
 		"unlinked_events", result.UnlinkedEvents,
 	)

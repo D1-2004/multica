@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/util"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const (
@@ -21,7 +20,7 @@ const (
 // Flusher runs one claimed Scene Memory job. Nil means the worker will not
 // claim rows — MarkDirty can still queue work for a later binary.
 type Flusher interface {
-	Flush(context.Context, db.SceneMemory) error
+	Flush(context.Context, Memory) error
 }
 
 type Worker struct {
@@ -118,8 +117,8 @@ func (w *Worker) ProcessNext(ctx context.Context) (bool, error) {
 	}
 	slog.Info("scene memory claimed",
 		"event", "scene_memory_claimed",
-		"scene_memory_id", util.UUIDToString(row.ID),
-		"scene_key", row.SceneKey,
+		"scene_id", util.UUIDToString(row.SceneID),
+		"scene_key", row.ConversationID(),
 		"attempt", row.AttemptCount,
 	)
 	if err := w.flusher.Flush(ctx, row); err != nil {
@@ -134,8 +133,8 @@ func (w *Worker) ProcessNext(ctx context.Context) (bool, error) {
 		}
 		slog.Warn("scene memory flush failed",
 			"event", "scene_memory_flush_failed",
-			"scene_memory_id", util.UUIDToString(row.ID),
-			"scene_key", row.SceneKey,
+			"scene_id", util.UUIDToString(row.SceneID),
+			"scene_key", row.ConversationID(),
 			"agent_id", util.UUIDToString(row.AgentID),
 			"workspace_id", util.UUIDToString(row.WorkspaceID),
 			"attempt", row.AttemptCount,
@@ -157,9 +156,9 @@ func (w *Worker) ProcessNext(ctx context.Context) (bool, error) {
 			// trigger from that scene arrives, so operators must see it.
 			slog.Error("scene memory blocked",
 				"event", "scene_memory_blocked",
-				"scene_memory_id", util.UUIDToString(row.ID),
-				"scene_key", row.SceneKey,
-				"scene_title", row.SceneTitle,
+				"scene_id", util.UUIDToString(row.SceneID),
+				"scene_key", row.ConversationID(),
+				"scene_title", row.Title(),
 				"agent_id", util.UUIDToString(row.AgentID),
 				"workspace_id", util.UUIDToString(row.WorkspaceID),
 				"attempt", row.AttemptCount,

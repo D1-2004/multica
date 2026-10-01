@@ -1050,6 +1050,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	h.SceneMemoryStore = scenememory.NewStore(queries)
 	coordinator.SceneMemory = h.SceneMemoryStore
+	coordinator.SetSceneLookup(handler.CoordinatorSceneLookup(h))
 	sceneFlusher := &scenememory.MemoryFlusher{
 		Store: h.SceneMemoryStore,
 		History: scenememory.NewDWSRangeReader(scenememory.DWSRangeConfig{
@@ -1083,7 +1084,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		return opts.DeploymentFence.Snapshot().State == deploymentfence.StateNormal
 	})
 	channelRouter.SetInboundCoordinator(coordinator)
-	channelRouter.SetSceneAssociator(h.Assoc)
+	channelRouter.SetSceneAssociator(h)
 	// So an inbound DingTalk/Slack/Lark message appears in a web client
 	// watching the same chat without a reload: the engine writes through the
 	// service layer and inherits no handler broadcast of its own.
@@ -2937,10 +2938,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/coordinator-conversations", h.ListAgentCoordinatorConversations)
 					r.Get("/coordinator-conversations/{sessionId}/messages", h.ListAgentCoordinatorConversationMessages)
 					r.Get("/scene-memory", h.ListAgentSceneMemory)
-					r.Get("/scene-memory/{memoryId}", h.GetAgentSceneMemory)
-					r.Put("/scene-memory/{memoryId}", h.UpdateAgentSceneMemory)
-					r.Post("/scene-memory/{memoryId}/reset", h.ResetAgentSceneMemory)
-					r.Post("/scene-memory/{memoryId}/relations/clear", h.ClearAgentSceneRelations)
+					r.Get("/scene-memory/{sceneId}", h.GetAgentSceneMemory)
+					r.Put("/scene-memory/{sceneId}", h.UpdateAgentSceneMemory)
+					r.Post("/scene-memory/{sceneId}/reset", h.ResetAgentSceneMemory)
+					r.Post("/scene-memory/{sceneId}/relations/clear", h.ClearAgentSceneRelations)
 					// Scene and personal capability layers: offer catalog and
 					// read-only scope summaries (docs/context-capabilities.md).
 					r.With(handler.RequireHumanActor).Get("/context-capabilities", h.GetAgentContextCapabilities)

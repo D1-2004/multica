@@ -69,7 +69,7 @@ func NewDWSRangeReader(cfg DWSRangeConfig) *DWSRangeReader {
 	}
 }
 
-func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) (HistoryPage, error) {
+func (r *DWSRangeReader) Read(ctx context.Context, row Memory) (HistoryPage, error) {
 	if r == nil || r.queries == nil || r.issuer == nil {
 		return HistoryPage{}, errors.New("scene memory DWS reader is not configured")
 	}
@@ -87,7 +87,7 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) (HistoryP
 		}
 		return HistoryPage{}, fmt.Errorf("resolve DWS identity: %w", err)
 	}
-	if strings.TrimSpace(identity.OrgID) != strings.TrimSpace(row.OrgID) {
+	if strings.TrimSpace(identity.OrgID) != strings.TrimSpace(row.OrgID()) {
 		return HistoryPage{}, &FlushError{
 			Code: ErrorRouteInactive,
 			Err:  fmt.Errorf("DWS identity org does not match scene"),
@@ -137,7 +137,7 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) (HistoryP
 	// A claim commits one DWS page. Its exact continuation is committed with
 	// the memory, so a page limit or a restart never loses newer evidence.
 	limit := flushBatchEvents
-	if row.SceneKind == KindGroup {
+	if row.Kind() == KindGroup {
 		limit = 30
 	}
 	bootstrap := false
@@ -146,7 +146,7 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) (HistoryP
 	}
 	after := historyStartAfter(row, bootstrap, time.Now().UTC())
 	raw, err := r.cli.List(readCtx, dir, dwsclient.ListRequest{
-		ConversationID: row.SceneKey,
+		ConversationID: row.ConversationID(),
 		Before:         after,
 		Direction:      "newer",
 		Limit:          limit,
@@ -167,7 +167,7 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) (HistoryP
 	return page, nil
 }
 
-func historyStartAfter(row db.SceneMemory, bootstrap bool, now time.Time) time.Time {
+func historyStartAfter(row Memory, bootstrap bool, now time.Time) time.Time {
 	if progress, ok := restoredHistoryProgress(row); ok {
 		return progress.After
 	}
@@ -201,7 +201,7 @@ func filterAfterLookback(events []HistoryEvent, lookback time.Time) []HistoryEve
 	return out
 }
 
-func HistoryLookback(row db.SceneMemory, bootstrap bool, now time.Time) time.Time {
+func HistoryLookback(row Memory, bootstrap bool, now time.Time) time.Time {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -230,7 +230,7 @@ func HistoryLookback(row db.SceneMemory, bootstrap bool, now time.Time) time.Tim
 	return now.UTC().Add(-time.Hour)
 }
 
-func historyNeedReach(row db.SceneMemory) time.Time {
+func historyNeedReach(row Memory) time.Time {
 	var need time.Time
 	if row.SourceCursorAt.Valid && !row.SourceCursorAt.Time.IsZero() {
 		need = row.SourceCursorAt.Time.UTC()

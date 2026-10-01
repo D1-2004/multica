@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// RecentPersonOutreachScene returns the most recently touched outbound DM cid
-// already linked to this person. Used when dws send --user returns only openTaskId.
+// RecentPersonOutreachScene returns the scene_id of the most recently touched
+// outbound conversation already linked to this person. Used when dws send --user returns only openTaskId.
 func (s *Service) RecentPersonOutreachScene(ctx context.Context, workspaceID, agentID, personID string) (string, error) {
 	if s == nil || s.store == nil {
 		return "", nil
@@ -51,7 +51,7 @@ func (s *Service) RecentPersonOutreachScene(ctx context.Context, workspaceID, ag
 				if te.Rel != RelOutreach && te.Rel != RelWaitingOn {
 					continue
 				}
-				if !ValidSceneID(te.DstID) {
+				if !validSceneNodeID(te.DstID) {
 					continue
 				}
 				if te.LastTouchedAt.After(bestAt) {

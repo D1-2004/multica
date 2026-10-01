@@ -115,6 +115,15 @@ func (h *Handler) ListAssocEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "conversation_id is required")
 		return
 	}
+	node, found, err := h.conversationSceneNode(r.Context(), workspaceID, agentID, cid, "", "", false)
+	if err != nil {
+		if errors.Is(err, assoc.ErrInvalidQuery) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to resolve conversation scene")
+		return
+	}
 	now := time.Now().UTC()
 	since, err := assoc.ParseSince(r.URL.Query().Get("since"), now)
 	if err != nil {
@@ -130,7 +139,10 @@ func (h *Handler) ListAssocEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	events, err := h.Assoc.ListEventsByScene(r.Context(), workspaceID, agentID, cid, since, limit)
+	events := []assoc.Event{}
+	if found {
+		events, err = h.Assoc.ListEventsByScene(r.Context(), workspaceID, agentID, node.SceneID, since, limit)
+	}
 	if err != nil {
 		if errors.Is(err, assoc.ErrInvalidQuery) {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -145,7 +157,8 @@ func (h *Handler) ListAssocEvents(w http.ResponseWriter, r *http.Request) {
 			EvidenceID:     event.EvidenceID,
 			Direction:      event.Direction,
 			Source:         event.Source,
-			ConversationID: event.SceneKey,
+			SceneID:        event.SceneID,
+			ConversationID: node.ConversationID,
 			PersonID:       event.PersonKey,
 			TaskID:         event.TaskID,
 			OccurredAt:     event.OccurredAt,
@@ -162,6 +175,7 @@ type assocEventResponse struct {
 	EvidenceID     string    `json:"evidence_id"`
 	Direction      string    `json:"direction"`
 	Source         string    `json:"source"`
+	SceneID        string    `json:"scene_id"`
 	ConversationID string    `json:"conversation_id"`
 	PersonID       string    `json:"person_id,omitempty"`
 	TaskID         string    `json:"task_id,omitempty"`
@@ -228,15 +242,19 @@ func (h *Handler) handleMulticaMCPAssocBind(w http.ResponseWriter, r *http.Reque
 		h.writeMulticaMCPToolError(w, id, "workspace, agent, and task identity are required")
 		return
 	}
+	node, _, err := h.conversationSceneNode(r.Context(), workspaceID, agentID, args.ConversationID, args.Kind, "", true)
+	if err != nil {
+		h.writeMulticaMCPToolError(w, id, err.Error())
+		return
+	}
 	in := assoc.BindOutboundInput{
-		WorkspaceID:    workspaceID,
-		AgentID:        agentID,
-		RunID:          taskID,
-		ConversationID: strings.TrimSpace(args.ConversationID),
-		EvidenceID:     strings.TrimSpace(args.EvidenceID),
-		PersonID:       strings.TrimSpace(args.PersonID),
-		Kind:           strings.TrimSpace(args.Kind),
-		Purpose:        strings.TrimSpace(args.Purpose),
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+		RunID:       taskID,
+		Scene:       node,
+		EvidenceID:  strings.TrimSpace(args.EvidenceID),
+		PersonID:    strings.TrimSpace(args.PersonID),
+		Purpose:     strings.TrimSpace(args.Purpose),
 	}
 	issueID, title, err := h.issueForTaskToken(r.Context(), workspaceID, taskID)
 	if err != nil {
@@ -275,11 +293,24 @@ func (h *Handler) recallAssoc(ctx context.Context, workspaceID, agentID string, 
 	if err != nil {
 		return assoc.Result{}, err
 	}
+	sceneID := ""
+	if cid := strings.TrimSpace(in.ConversationID); cid != "" {
+		node, found, lookupErr := h.conversationSceneNode(ctx, workspaceID, agentID, cid, "", "", false)
+		if lookupErr != nil {
+			return assoc.Result{}, lookupErr
+		}
+		if !found && issueID == "" && strings.TrimSpace(in.Q) == "" {
+			// A conversation without a registered scene has no graph links.
+			return assoc.Result{ReadThis: assoc.RecallReadThis, Since: since, Until: until, ConversationID: cid, Items: []assoc.Item{}, Events: []assoc.EventRef{}}, nil
+		}
+		sceneID = node.SceneID
+	}
 	result, err := h.Assoc.Recall(ctx, assoc.Query{
 		WorkspaceID:    workspaceID,
 		AgentID:        agentID,
 		Since:          since,
 		Until:          until,
+		SceneID:        sceneID,
 		ConversationID: strings.TrimSpace(in.ConversationID),
 		PersonID:       strings.TrimSpace(in.PersonID),
 		IssueID:        issueID,
@@ -382,13 +413,11 @@ func (h *Handler) BindAssocOutbound(w http.ResponseWriter, r *http.Request) {
 		workspaceID = strings.TrimSpace(r.Header.Get("X-Workspace-ID"))
 	}
 	in := assoc.BindOutboundInput{
-		WorkspaceID:    workspaceID,
-		ConversationID: strings.TrimSpace(body.ConversationID),
-		EvidenceID:     strings.TrimSpace(body.EvidenceID),
-		PersonID:       strings.TrimSpace(body.PersonID),
-		Kind:           strings.TrimSpace(body.Kind),
-		Intent:         strings.TrimSpace(body.Intent),
-		Purpose:        strings.TrimSpace(body.Purpose),
+		WorkspaceID: workspaceID,
+		EvidenceID:  strings.TrimSpace(body.EvidenceID),
+		PersonID:    strings.TrimSpace(body.PersonID),
+		Intent:      strings.TrimSpace(body.Intent),
+		Purpose:     strings.TrimSpace(body.Purpose),
 	}
 	if r.Header.Get("X-Actor-Source") == "task_token" {
 		in.AgentID = strings.TrimSpace(r.Header.Get("X-Agent-ID"))
@@ -437,6 +466,16 @@ func (h *Handler) BindAssocOutbound(w http.ResponseWriter, r *http.Request) {
 			in.Purpose = title
 		}
 	}
+	node, _, err := h.conversationSceneNode(r.Context(), workspaceID, in.AgentID, body.ConversationID, body.Kind, "", true)
+	if err != nil {
+		if errors.Is(err, assoc.ErrInvalidQuery) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to resolve conversation scene")
+		return
+	}
+	in.Scene = node
 	result, err := h.Assoc.BindOutbound(r.Context(), in)
 	if err != nil {
 		if errors.Is(err, assoc.ErrInvalidQuery) || errors.Is(err, assoc.ErrInvalidTask) {
@@ -514,6 +553,10 @@ func (h *Handler) recordAssocInboundEvent(ctx context.Context, command DispatchC
 	if ids.ConversationID == "" || ids.EvidenceID == "" {
 		return
 	}
+	sceneID := dispatchSceneID(command)
+	if sceneID == "" {
+		return
+	}
 	if _, err := h.Assoc.RecordEvent(ctx, assoc.Event{
 		WorkspaceID: uuidToString(dispatchContext.WorkspaceID),
 		AgentID:     uuidToString(dispatchContext.AgentID),
@@ -522,10 +565,10 @@ func (h *Handler) recordAssocInboundEvent(ctx context.Context, command DispatchC
 		EvidenceID:  ids.EvidenceID,
 		Body:        assoc.ClipBody(dispatchInboundEventBody(command), assoc.EventBodyMaxRunes),
 		OccurredAt:  time.Now().UTC(),
-		SceneKey:    ids.ConversationID,
+		SceneID:     sceneID,
 		PersonKey:   ids.PersonID,
 	}); err != nil {
-		slog.Error("assoc inbound event not recorded", "error", err, "conversation_id", ids.ConversationID)
+		slog.Error("assoc inbound event not recorded", "error", err, "scene_id", sceneID)
 	}
 }
 
@@ -542,19 +585,18 @@ func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCo
 		purpose = strings.TrimSpace(issueTitle)
 	}
 	if err := h.Assoc.AssociateIssueConversation(ctx, assoc.AssociateInput{
-		WorkspaceID:    uuidToString(dispatchContext.WorkspaceID),
-		AgentID:        uuidToString(dispatchContext.AgentID),
-		IssueID:        issueID,
-		IssueTitle:     purpose,
-		Purpose:        purpose,
-		Intent:         strings.TrimSpace(decision.Intent),
-		RunID:          runID,
-		ConversationID: ids.ConversationID,
-		EvidenceID:     ids.EvidenceID,
-		PersonID:       ids.PersonID,
-		PersonAliases:  ids.PersonAliases,
-		DisplayName:    strings.TrimSpace(command.Event.Data.Sender.DisplayName),
-		Kind:           ids.Kind,
+		WorkspaceID:   uuidToString(dispatchContext.WorkspaceID),
+		AgentID:       uuidToString(dispatchContext.AgentID),
+		IssueID:       issueID,
+		IssueTitle:    purpose,
+		Purpose:       purpose,
+		Intent:        strings.TrimSpace(decision.Intent),
+		RunID:         runID,
+		Scene:         h.dispatchSceneNode(ctx, command, dispatchContext),
+		EvidenceID:    ids.EvidenceID,
+		PersonID:      ids.PersonID,
+		PersonAliases: ids.PersonAliases,
+		DisplayName:   strings.TrimSpace(command.Event.Data.Sender.DisplayName),
 	}); err != nil {
 		slog.Error("assoc issue conversation not linked", "error", err, "issue_id", issueID)
 		return err
@@ -736,7 +778,7 @@ func fillDispatchAssocFromMap(ids *dispatchAssocIdentity, payload map[string]any
 
 func dingtalkOpenConversationID(raw string) string {
 	s := strings.TrimSpace(raw)
-	if s == "" || !assoc.ValidSceneID(s) {
+	if s == "" || !assoc.ValidConversationID(s) {
 		return ""
 	}
 	lower := strings.ToLower(s)

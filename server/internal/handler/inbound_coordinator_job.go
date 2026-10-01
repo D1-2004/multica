@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
@@ -615,14 +615,21 @@ func coordinatorSource(command DispatchCommand) inboundcoord.Source {
 	return inboundcoord.SourceRobot
 }
 
+// dispatchSceneIdentity is the display kind and name of a dispatch's
+// conversation for job titles: a type that is not positively a group reads
+// as a 1:1 chat here; scene identity never uses this guess (see
+// dispatchSceneLocator).
 func dispatchSceneIdentity(command DispatchCommand) (kind, title string) {
 	chatType := strings.TrimSpace(command.Event.Data.Conversation.Type)
 	if chatType == "" {
 		chatType = strings.TrimSpace(dispatchAssocIDs(command).Kind)
 	}
-	kind = scenememory.KindFromChatType(chatType)
+	kind = scene.KindDM
+	if k, ok := scene.KindFromConversationType(chatType); ok && k == scene.KindGroup {
+		kind = scene.KindGroup
+	}
 	title = strings.TrimSpace(command.Event.Data.Conversation.Title)
-	if title == "" && kind == scenememory.KindDM {
+	if title == "" && kind == scene.KindDM {
 		title = strings.TrimSpace(command.Event.Data.Sender.DisplayName)
 	}
 	return kind, title
@@ -631,7 +638,7 @@ func dispatchSceneIdentity(command DispatchCommand) (kind, title string) {
 func coordinatorJobTitle(command DispatchCommand) string {
 	kind, name := dispatchSceneIdentity(command)
 	label := "单聊"
-	if kind == scenememory.KindGroup {
+	if kind == scene.KindGroup {
 		label = "群聊"
 	}
 	text := ""
@@ -1082,31 +1089,17 @@ func (h *Handler) markSceneMemoryDirty(
 	if err != nil || !flags.WriteEnabled {
 		return
 	}
-	ids := dispatchAssocIDs(command)
-	if ids.ConversationID == "" || !assoc.ValidSceneID(ids.ConversationID) {
-		return
-	}
-	identity, err := qtx.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
-		WorkspaceID: dispatchContext.WorkspaceID,
-		AgentID:     dispatchContext.AgentID,
-	})
+	sc, err := dispatchScene(ctx, qtx, command, dispatchContext)
 	if err != nil {
-		slog.Warn("scene memory mark dirty skipped; no DWS identity",
+		slog.Info("scene memory mark dirty skipped; no agent scene",
 			"event", "scene_memory_mark_dirty",
 			"error", err,
 		)
 		return
 	}
-	kind, title := dispatchSceneIdentity(command)
+	ids := dispatchAssocIDs(command)
 	store := scenememory.NewStore(qtx)
-	row, err := store.MarkDirty(ctx, scenememory.Identity{
-		WorkspaceID: dispatchContext.WorkspaceID,
-		AgentID:     dispatchContext.AgentID,
-		OrgID:       identity.OrgID,
-		SceneKey:    ids.ConversationID,
-		SceneKind:   kind,
-		SceneTitle:  title,
-	}, scenememory.DirtyTrigger{
+	row, err := store.MarkDirty(ctx, sc, scenememory.DirtyTrigger{
 		OccurredAt:     dispatchMessageOccurredAt(command),
 		EvidenceID:     ids.EvidenceID,
 		JobID:          job.ID,
@@ -1116,7 +1109,7 @@ func (h *Handler) markSceneMemoryDirty(
 	if err != nil {
 		slog.Warn("scene memory mark dirty failed",
 			"event", "scene_memory_mark_dirty",
-			"conversation_id", ids.ConversationID,
+			"scene_id", util.UUIDToString(sc.ID),
 			"error", err,
 		)
 		return
@@ -1125,10 +1118,10 @@ func (h *Handler) markSceneMemoryDirty(
 		"event", "scene_memory_mark_dirty",
 		"workspace_id", util.UUIDToString(dispatchContext.WorkspaceID),
 		"agent_id", util.UUIDToString(dispatchContext.AgentID),
-		"scene_key", ids.ConversationID,
+		"scene_id", util.UUIDToString(sc.ID),
+		"scene_key", sc.ExternalSceneID,
 		"dirty_revision", row.DirtyRevision,
 		"idempotency", firstNonEmpty(strings.TrimSpace(idempotencyKey), job.IdempotencyKey),
-		"scene_memory_id", util.UUIDToString(row.ID),
 	)
 }
 

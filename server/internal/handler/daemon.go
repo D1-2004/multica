@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
@@ -5027,6 +5028,7 @@ func (h *Handler) bindAssocOutboundFromTools(ctx context.Context, task db.AgentT
 	agentID := uuidToString(task.AgentID)
 	for _, outbound := range execenv.FilterOutboundChat(events) {
 		cid := outbound.ConversationID
+		var node assoc.SceneNode
 		if cid == "" && outbound.PersonID != "" {
 			if resolved, err := h.Assoc.RecentPersonOutreachScene(ctx, workspaceID, agentID, outbound.PersonID); err != nil {
 				slog.Warn("assoc outbound person scene lookup failed",
@@ -5035,8 +5037,11 @@ func (h *Handler) bindAssocOutboundFromTools(ctx context.Context, task db.AgentT
 					"person_id", outbound.PersonID,
 					"error", err,
 				)
-			} else {
-				cid = resolved
+			} else if resolved != "" {
+				if found, ok := h.sceneNodeByID(ctx, workspaceID, agentID, resolved); ok {
+					node = found
+					cid = found.ConversationID
+				}
 			}
 		}
 		if cid == "" {
@@ -5054,17 +5059,36 @@ func (h *Handler) bindAssocOutboundFromTools(ctx context.Context, task db.AgentT
 		if evidence == "" {
 			evidence = outbound.OpenTaskID
 		}
+		if node.SceneID == "" {
+			// A send to a person is a 1:1 chat; any other send binds only a
+			// conversation the agent already has a scene for.
+			kind := ""
+			if outbound.PersonID != "" {
+				kind = scene.KindDM
+			}
+			resolved, found, err := h.conversationSceneNode(ctx, workspaceID, agentID, cid, kind, "", kind != "")
+			if err != nil || !found {
+				slog.Info("assoc outbound bind skipped; conversation has no scene",
+					"event", "assoc_outbound_bind_skipped",
+					"task_id", uuidToString(task.ID),
+					"reason", "scene_unresolved",
+					"conversation_id", cid,
+					"error", err,
+				)
+				continue
+			}
+			node = resolved
+		}
 		result, bindErr := h.Assoc.BindOutbound(ctx, assoc.BindOutboundInput{
-			WorkspaceID:    workspaceID,
-			AgentID:        agentID,
-			IssueID:        issueID,
-			IssueTitle:     title,
-			RunID:          uuidToString(task.ID),
-			ConversationID: cid,
-			EvidenceID:     evidence,
-			PersonID:       outbound.PersonID,
-			Kind:           "dm",
-			Purpose:        purpose,
+			WorkspaceID: workspaceID,
+			AgentID:     agentID,
+			IssueID:     issueID,
+			IssueTitle:  title,
+			RunID:       uuidToString(task.ID),
+			Scene:       node,
+			EvidenceID:  evidence,
+			PersonID:    outbound.PersonID,
+			Purpose:     purpose,
 		})
 		if bindErr != nil {
 			slog.Error("assoc outbound bind from tool failed",

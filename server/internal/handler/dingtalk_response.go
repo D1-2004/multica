@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/util"
 	"regexp"
 	"strings"
@@ -63,6 +65,17 @@ func (h *Handler) registerDingTalkResponseRoute(ctx context.Context, tx db.DBTX,
 		ShowAITag:            c.ResponsePolicy.ShowAITag,
 		DWSEnvironment:       commandDWSEnvironment(c),
 		CallbackURL:          c.CompletionCallback.ResponseURL, CallbackTarget: c.CompletionCallback.Target,
+	}
+	// The reply goes to the dispatch's scene: its conversation id is read
+	// back from the scene directory, not taken from the event again.
+	if c.AgentScene != nil {
+		sc, err := dispatchScene(ctx, db.New(tx), c, scope)
+		if err != nil {
+			return fmt.Errorf("load dispatch scene: %w", err)
+		}
+		in.SceneID = uuidToString(sc.ID)
+		in.ConversationID = sc.ExternalSceneID
+		in.IsGroup = sc.SceneKind == scene.KindGroup
 	}
 	// Register both supplied callback paths; never reconstruct one from another.
 	for _, callback := range []string{c.CompletionCallback.URL, c.CompletionCallback.UpdateURL} {
@@ -282,9 +295,17 @@ func (h *Handler) BindVerifiedDingTalkSend(ctx context.Context, in dingtalkrespo
 		}
 		title = issue.Title
 	}
-	_, err := h.Assoc.BindOutbound(ctx, assoc.BindOutboundInput{
+	kind := scene.KindDM
+	if in.IsGroup {
+		kind = scene.KindGroup
+	}
+	node, _, err := h.conversationSceneNode(ctx, in.WorkspaceID, in.AgentID, cid, kind, in.DWSOrgID, true)
+	if err != nil {
+		return err
+	}
+	_, err = h.Assoc.BindOutbound(ctx, assoc.BindOutboundInput{
 		WorkspaceID: in.WorkspaceID, AgentID: in.AgentID, IssueID: in.IssueID, IssueTitle: title,
-		RunID: in.TaskID, ConversationID: cid, EvidenceID: messageID,
+		RunID: in.TaskID, Scene: node, EvidenceID: messageID,
 	})
 	return err
 }

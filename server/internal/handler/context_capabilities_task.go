@@ -145,6 +145,19 @@ func (h *Handler) resolveTaskContextScope(ctx context.Context, workspaceID pgtyp
 		return contextcap.Scope{}, taskContextLookupFailed
 	}
 	scope.OrgID = orgID
+	// The scene layer is the task's Agent work scene only while that scene
+	// is the agent's in the task's tenant org (the use-time fence of
+	// docs/agent-scene.md); otherwise the task keeps its org and person
+	// layers without one.
+	if scope.SceneID != "" {
+		if _, err := contextcap.GetScene(ctx, h.DB, uuidToString(workspaceID), uuidToString(task.AgentID), orgID, scope.SceneID); err != nil {
+			if !errors.Is(err, contextcap.ErrNotFound) && !errors.Is(err, contextcap.ErrInvalidInput) {
+				slog.WarnContext(ctx, "context capabilities: task scene lookup failed; skipping the scene layer",
+					"task_id", uuidToString(task.ID), "agent_id", uuidToString(task.AgentID), "error", err)
+			}
+			scope.SceneID, scope.SceneTitle = "", ""
+		}
+	}
 	return scope, ""
 }
 
@@ -549,7 +562,7 @@ func (h *Handler) resolveTaskConnectorCredential(ctx context.Context, c *interna
 	for _, layer := range []struct {
 		scopeType string
 		key       string
-	}{{contextcap.ScopePerson, scope.PersonKey}, {contextcap.ScopeScene, scope.SceneKey}, {contextcap.ScopeOrg, orgKey}} {
+	}{{contextcap.ScopePerson, scope.PersonKey}, {contextcap.ScopeScene, scope.SceneID}, {contextcap.ScopeOrg, orgKey}} {
 		if layer.key == "" {
 			continue
 		}

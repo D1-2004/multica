@@ -236,7 +236,7 @@ func (h *Handler) RefreshInternalConnectorTools(w http.ResponseWriter, r *http.R
 // live grant for exactly that scope, or for a group scene of an agent the
 // caller manages (contextCapRequireScope). A 1:1 chat scene connects its
 // person's account, which only that person may do (403 person_only for a
-// manager; 409 dm_person_unknown when the person is unknown).
+// manager).
 // startConnectorOAuth then applies the PUT credentials connector rule
 // (offered or globally granted) and re-checks it at
 // the callback.
@@ -271,14 +271,10 @@ func (h *Handler) StartContextConfigConnection(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	// The state stores the effective scope (a 1:1 chat scene's person), so
-	// the account lands there; SceneKey keeps the dm scene the caller asked
-	// for, so the callback re-checks the same request.
 	started, err := h.startConnectorOAuth(r.Context(), connectorOAuthStart{
 		connectorOAuthScope: connectorOAuthScope{
 			WorkspaceID: a.WorkspaceID, ConnectorID: uuidToString(connectorUUID), UserID: userID,
 			ScopeType: grant.ScopeType, AgentID: a.ID, OrgID: a.OrgID, ScopeKey: grant.ScopeKey,
-			SceneKey: grant.DirectSceneKey,
 		},
 		ReturnTo: input.ReturnTo,
 	})
