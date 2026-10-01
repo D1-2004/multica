@@ -13,8 +13,9 @@ import (
 
 // snapshotSchema versions the snapshot JSON so an apply can tell which keys a
 // revision was captured with. Keys missing from an older snapshot leave the
-// employee's current value in place.
-const snapshotSchema = 1
+// employee's current value in place; keys no longer managed are ignored.
+// Schema 2 dropped the tenant-owned columns (seededAgentColumns).
+const snapshotSchema = 2
 
 // columnKind says how a snapshot value is read back into an agent column.
 type columnKind int
@@ -28,17 +29,14 @@ const (
 	kindTextArray
 )
 
-// sharedAgentColumns are the agent columns that make up the Tag's shared
-// configuration. Identity and ownership columns (name, owner, visibility,
-// permission mode, kind, system key, archive state) and per-binding state
-// (DingTalk response policy revision) are deliberately absent: they belong
-// to each tenant's employee.
-var sharedAgentColumns = []struct {
+// managedAgentColumns are the agent columns of the Tag's shared configuration:
+// what the template's views edit (instructions, MCP, runtime and model). They
+// are versioned in each revision and overwritten on every apply. Skills,
+// connectors, offers and DSH plugins travel in the snapshot alongside them.
+var managedAgentColumns = []struct {
 	name string
 	kind columnKind
 }{
-	{"description", kindText},
-	{"avatar_url", kindText},
 	{"instructions", kindText},
 	{"mcp_config", kindJSONB},
 	{"model", kindText},
@@ -52,29 +50,41 @@ var sharedAgentColumns = []struct {
 	{"max_concurrent_tasks", kindInt},
 	{"composio_toolkit_allowlist", kindTextArray},
 	{"disabled_runtime_skills", kindJSONB},
-	{"dispatch_always_new_issue", kindBool},
-	{"dispatch_prompt_overrides", kindJSONB},
-	{"coordinator_contract", kindJSONB},
-	{"chat_session_resume", kindBool},
-	{"inbound_coordinator", kindBool},
-	{"persona", kindText},
-	{"reply_tone", kindText},
-	{"scene_memory_write_enabled", kindBool},
-	{"scene_memory_recall_enabled", kindBool},
-	{"scene_memory_ui_enabled", kindBool},
-	{"scene_memory_bootstrap_enabled", kindBool},
-	{"task_finished_loop_enabled", kindBool},
-	{"dingtalk_show_ai_tag", kindBool},
-	{"dingtalk_response_enabled", kindBool},
-	{"inbound_coordinator_user_decision", kindBool},
-	{"inbound_coordinator_user_decision_names", kindTextArray},
-	{"inbound_coordinator_user_decision_audience", kindText},
+}
+
+// seededAgentColumns belong to each tenant's employee: its profile, how it
+// answers in DingTalk, its scene memory and its dispatch prompt, all edited
+// on the tenant's own views. A new employee starts from the template's
+// values, after which applies never touch them. Identity and ownership
+// columns (name, owner, visibility, permission mode, kind, system key,
+// archive state) and per-binding state (DingTalk response policy revision)
+// are neither managed nor seeded.
+var seededAgentColumns = []string{
+	"description",
+	"avatar_url",
+	"dispatch_always_new_issue",
+	"dispatch_prompt_overrides",
+	"coordinator_contract",
+	"chat_session_resume",
+	"inbound_coordinator",
+	"persona",
+	"reply_tone",
+	"scene_memory_write_enabled",
+	"scene_memory_recall_enabled",
+	"scene_memory_ui_enabled",
+	"scene_memory_bootstrap_enabled",
+	"task_finished_loop_enabled",
+	"dingtalk_show_ai_tag",
+	"dingtalk_response_enabled",
+	"inbound_coordinator_user_decision",
+	"inbound_coordinator_user_decision_names",
+	"inbound_coordinator_user_decision_audience",
 }
 
 // captureAgentSQL builds the agent part of a snapshot as one jsonb object.
 func captureAgentSQL() string {
-	parts := make([]string, 0, len(sharedAgentColumns))
-	for _, c := range sharedAgentColumns {
+	parts := make([]string, 0, len(managedAgentColumns))
+	for _, c := range managedAgentColumns {
 		parts = append(parts, fmt.Sprintf("'%s', to_jsonb(a.%s)", c.name, c.name))
 	}
 	return `SELECT jsonb_build_object(` + strings.Join(parts, ", ") + `)
@@ -83,8 +93,8 @@ func captureAgentSQL() string {
 
 // applyAgentSQL copies the agent part of a snapshot ($1) onto an employee.
 func applyAgentSQL() string {
-	sets := make([]string, 0, len(sharedAgentColumns)+1)
-	for _, c := range sharedAgentColumns {
+	sets := make([]string, 0, len(managedAgentColumns)+1)
+	for _, c := range managedAgentColumns {
 		value := fmt.Sprintf("($1::jsonb)->'%s'", c.name)
 		text := fmt.Sprintf("($1::jsonb)->>'%s'", c.name)
 		var expr string
@@ -107,6 +117,29 @@ func applyAgentSQL() string {
 	sets = append(sets, "updated_at = now()")
 	return `UPDATE agent SET ` + strings.Join(sets, ", ") + `
 		WHERE id = $3::uuid AND workspace_id = $2::uuid AND archived_at IS NULL`
+}
+
+// SeedAgent copies the tenant-owned columns (seededAgentColumns) from one
+// agent to another: the template's defaults for a new employee, or a source
+// agent's for a new template.
+func SeedAgent(ctx context.Context, tx DBTX, workspaceID, fromAgentID, toAgentID string) error {
+	sets := make([]string, 0, len(seededAgentColumns)+1)
+	for _, c := range seededAgentColumns {
+		sets = append(sets, fmt.Sprintf("%s = s.%s", c, c))
+	}
+	sets = append(sets, "updated_at = now()")
+	updated, err := tx.Exec(ctx, `UPDATE agent t SET `+strings.Join(sets, ", ")+`
+		FROM agent s
+		WHERE s.id = $2::uuid AND s.workspace_id = $1::uuid AND s.archived_at IS NULL
+		  AND t.id = $3::uuid AND t.workspace_id = $1::uuid AND t.archived_at IS NULL`,
+		workspaceID, fromAgentID, toAgentID)
+	if err != nil {
+		return fmt.Errorf("tag: seed agent: %w", err)
+	}
+	if updated.RowsAffected() == 0 {
+		return ErrAgentUnavailable
+	}
+	return nil
 }
 
 // CaptureSnapshot reads the template agent's shared configuration. The
@@ -251,17 +284,24 @@ func Apply(ctx context.Context, tx DBTX, workspaceID string, tenant Tenant, rev 
 	return result, nil
 }
 
-// CopyConfig copies the shared configuration of one agent onto another, used
-// to seed a new Tag template from an existing agent.
+// CopyConfig copies one agent's whole configuration (managed and seeded)
+// onto another, used to start a new Tag template from an existing agent.
 func CopyConfig(ctx context.Context, tx DBTX, workspaceID, fromAgentID, toAgentID, actor string) (ApplyResult, error) {
 	snapshot, err := CaptureSnapshot(ctx, tx, workspaceID, fromAgentID)
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	return copySnapshot(ctx, tx, workspaceID, toAgentID, snapshot, actor)
+	result, err := copySnapshot(ctx, tx, workspaceID, toAgentID, snapshot, actor)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if err := SeedAgent(ctx, tx, workspaceID, fromAgentID, toAgentID); err != nil {
+		return ApplyResult{}, err
+	}
+	return result, nil
 }
 
-// copySnapshot replaces agentID's shared configuration with the snapshot's.
+// copySnapshot replaces agentID's managed configuration with the snapshot's.
 func copySnapshot(ctx context.Context, tx DBTX, workspaceID, agentID string, raw json.RawMessage, actor string) (ApplyResult, error) {
 	var snapshot struct {
 		Agent  json.RawMessage `json:"agent"`

@@ -365,9 +365,18 @@ func (h *Handler) CreateTag(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// The template always runs on the requested cloud runtime, whatever
-		// the source agent used.
-		if _, err := tx.Exec(r.Context(), `UPDATE agent SET runtime_id = $2::uuid, runtime_mode = $3, updated_at = now() WHERE id = $1::uuid`,
-			templateID, uuidToString(runtime.ID), runtime.RuntimeMode); err != nil {
+		// the source agent used, and fields the operator filled in on the
+		// create form win over the copied ones.
+		if _, err := tx.Exec(r.Context(), `UPDATE agent SET
+				runtime_id = $2::uuid,
+				runtime_mode = $3,
+				description = CASE WHEN $4::text <> '' THEN $4::text ELSE description END,
+				model = CASE WHEN $5::text <> '' THEN $5::text ELSE model END,
+				avatar_url = COALESCE($6::text, avatar_url),
+				updated_at = now()
+			WHERE id = $1::uuid`,
+			templateID, uuidToString(runtime.ID), runtime.RuntimeMode,
+			strings.TrimSpace(req.Description), strings.TrimSpace(req.Model), avatar); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to set the tag runtime")
 			return
 		}
@@ -556,6 +565,12 @@ func (h *Handler) CreateTagTenant(w http.ResponseWriter, r *http.Request) {
 	tenant, err := tag.InsertTenant(r.Context(), tx, workspaceID, t.AgentID, uuidToString(employee.ID), name, userID)
 	if err != nil {
 		writeTagTenantError(w, err)
+		return
+	}
+	// The employee starts from the template's tenant-owned defaults (profile,
+	// reply behaviour, scene memory); from here on they are the tenant's.
+	if err := tag.SeedAgent(r.Context(), tx, workspaceID, t.AgentID, uuidToString(employee.ID)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to seed the tenant employee")
 		return
 	}
 	result, err := tag.Apply(r.Context(), tx, workspaceID, tenant, rev, userID)

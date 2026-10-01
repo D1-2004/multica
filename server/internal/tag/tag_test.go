@@ -244,11 +244,36 @@ func TestApplyCopiesSharedConfigOnly(t *testing.T) {
 		f.employeeID).Scan(&name, &instructions, &model, &persona, &permission, &coordinator, &mcp); err != nil {
 		t.Fatal(err)
 	}
-	if instructions != "shared instructions" || model != "model-a" || persona != "friendly" || !coordinator || string(mcp) != `{"mcpServers": {}}` {
-		t.Fatalf("shared config not applied: instructions=%q model=%q persona=%q coordinator=%v mcp=%s", instructions, model, persona, coordinator, mcp)
+	if instructions != "shared instructions" || model != "model-a" || string(mcp) != `{"mcpServers": {}}` {
+		t.Fatalf("shared config not applied: instructions=%q model=%q mcp=%s", instructions, model, mcp)
 	}
-	if name != "QwenTag · Think" || permission != "public_to" {
-		t.Fatalf("employee identity changed: name=%q permission=%q", name, permission)
+	// Tenant-owned columns (persona, inbound coordinator) and identity stay
+	// the employee's own across applies.
+	if persona != "" || coordinator || name != "QwenTag · Think" || permission != "public_to" {
+		t.Fatalf("apply touched tenant-owned columns: name=%q permission=%q persona=%q coordinator=%v", name, permission, persona, coordinator)
+	}
+	// Seeding is what gives a new employee the template's defaults.
+	if err := SeedAgent(ctx, f.tx, f.workspaceID, f.templateID, f.employeeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.tx.QueryRow(ctx, `SELECT name, persona, inbound_coordinator, instructions FROM agent WHERE id = $1::uuid`,
+		f.employeeID).Scan(&name, &persona, &coordinator, &instructions); err != nil {
+		t.Fatal(err)
+	}
+	if persona != "friendly" || !coordinator || name != "QwenTag · Think" || instructions != "shared instructions" {
+		t.Fatalf("seed: name=%q persona=%q coordinator=%v instructions=%q", name, persona, coordinator, instructions)
+	}
+	if _, err := f.tx.Exec(ctx, `UPDATE agent SET persona = 'tenant voice' WHERE id = $1::uuid`, f.employeeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ctx, f.tx, f.workspaceID, tenant, rev, f.userID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.tx.QueryRow(ctx, `SELECT persona FROM agent WHERE id = $1::uuid`, f.employeeID).Scan(&persona); err != nil {
+		t.Fatal(err)
+	}
+	if persona != "tenant voice" {
+		t.Fatalf("re-apply overwrote the tenant's persona: %q", persona)
 	}
 	var skills, connectors, offers int
 	if err := f.tx.QueryRow(ctx, `SELECT

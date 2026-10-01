@@ -211,6 +211,29 @@ func TestTagTenantsAndApply(t *testing.T) {
 		t.Fatalf("applied instructions = %q", instructions)
 	}
 
+	// Tenant-owned settings are neither versioned nor overwritten: a persona
+	// edited on the template is not a pending change, and an apply keeps the
+	// tenant's own persona.
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET persona = 'tenant voice' WHERE id = $1`, tenant.Tenant.EmployeeAgentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET persona = 'template voice' WHERE id = $1`, templateID); err != nil {
+		t.Fatal(err)
+	}
+	if st := tagDecode[TagStateResponse](t, tagDo(t, router, http.MethodGet, "/api/tag", nil)); st.Tag == nil || st.Tag.HasUnpublishedChanges {
+		t.Fatalf("persona edit counted as a shared change: %+v", st.Tag)
+	}
+	reapplied := tagDecode[TagApplyResponse](t, tagDo(t, router, http.MethodPost, "/api/tag/apply", map[string]any{"tenant_ids": []string{tenant.Tenant.ID}}))
+	if reapplied.Published || reapplied.Revision != 3 {
+		t.Fatalf("re-apply = %+v", reapplied)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT persona FROM agent WHERE id = $1`, tenant.Tenant.EmployeeAgentID).Scan(&persona); err != nil {
+		t.Fatal(err)
+	}
+	if persona != "tenant voice" {
+		t.Fatalf("apply overwrote the tenant's persona: %q", persona)
+	}
+
 	// Adopt an existing agent, rename, then detach it again.
 	var adoptee string
 	if err := testPool.QueryRow(ctx, `INSERT INTO agent (workspace_id, name, runtime_mode, runtime_config, runtime_id, visibility, permission_mode, max_concurrent_tasks, owner_id)
@@ -234,4 +257,38 @@ func TestTagTenantsAndApply(t *testing.T) {
 	tagExpect(t, tagDo(t, router, http.MethodDelete, "/api/tag/tenants/"+adopted.Tenant.ID, nil), http.StatusNoContent, "detach adoptee")
 	tagExpect(t, tagDo(t, router, http.MethodDelete, "/api/tag/tenants/"+tenant.Tenant.ID, nil), http.StatusNoContent, "detach employee")
 	tagExpect(t, tagDo(t, router, http.MethodDelete, "/api/tag", nil), http.StatusNoContent, "remove tag")
+}
+
+func TestTagCreateCopyFromKeepsExplicitFields(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	cleanupTag(t)
+	useTagOperator(t, true)
+	router := tagTestRouter(testHandler)
+	ctx := context.Background()
+
+	sourceID := createHandlerTestAgent(t, "TagTest source "+uuid.NewString()[:8], nil)
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET description = 'source description', model = 'source-model',
+		instructions = 'source instructions' WHERE id = $1`, sourceID); err != nil {
+		t.Fatal(err)
+	}
+
+	w := tagDo(t, router, http.MethodPost, "/api/tag", map[string]string{
+		"name": "TagTest " + uuid.NewString()[:8], "runtime_id": testRuntimeID,
+		"description": "typed description", "copy_from_agent_id": sourceID,
+	})
+	tagExpect(t, w, http.StatusCreated, "create from source")
+	created := tagDecode[TagStateResponse](t, w)
+
+	var description, model, instructions, runtimeID string
+	if err := testPool.QueryRow(ctx, `SELECT description, COALESCE(model, ''), instructions, runtime_id::text FROM agent WHERE id = $1`,
+		created.Tag.AgentID).Scan(&description, &model, &instructions, &runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	// The typed description wins; the empty model and the instructions come
+	// from the source; the runtime is the requested one.
+	if description != "typed description" || model != "source-model" || instructions != "source instructions" || runtimeID != testRuntimeID {
+		t.Fatalf("template = description %q model %q instructions %q runtime %q", description, model, instructions, runtimeID)
+	}
 }
