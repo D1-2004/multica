@@ -14,9 +14,10 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// sceneMemoryResponse is the Scene Memory of one Agent work scene. id and
-// scene_id are both the scene_id (docs/agent-scene.md); scene_key is the
-// scene's external conversation id, shown for reference only.
+// sceneMemoryResponse is the Scene Memory of one Agent work scene. id,
+// scene_id and scene_key all carry the scene_id (docs/agent-scene.md);
+// conversation_id is the scene's DingTalk openConversationId, for display
+// and for reading the scene's relations by conversation.
 type sceneMemoryResponse struct {
 	ID             string `json:"id"`
 	SceneID        string `json:"scene_id"`
@@ -24,6 +25,7 @@ type sceneMemoryResponse struct {
 	AgentID        string `json:"agent_id"`
 	OrgID          string `json:"org_id"`
 	SceneKey       string `json:"scene_key"`
+	ConversationID string `json:"conversation_id"`
 	SceneKind      string `json:"scene_kind"`
 	SceneTitle     string `json:"scene_title"`
 	MemoryText     string `json:"memory_text"`
@@ -58,7 +60,8 @@ func sceneMemoryToResponse(row scenememory.Memory, selfNames ...string) sceneMem
 		WorkspaceID:    uuidToString(row.WorkspaceID),
 		AgentID:        uuidToString(row.AgentID),
 		OrgID:          row.OrgID(),
-		SceneKey:       row.ConversationID(),
+		SceneKey:       uuidToString(row.SceneID),
+		ConversationID: row.ConversationID(),
 		SceneKind:      row.Kind(),
 		SceneTitle:     scenememory.DisplayTitle(row.Title(), row.MemoryText),
 		MemoryText:     scenememory.SanitizeMemoryTextForAgent(row.MemoryText, selfNames...),

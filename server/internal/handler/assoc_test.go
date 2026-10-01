@@ -75,6 +75,22 @@ func TestRecallAssocByConversation(t *testing.T) {
 	if other := f.recallConversation(t, "cid-never-seen"); len(other.Items) != 0 || other.SceneID != "" {
 		t.Fatalf("unseen conversation = %+v", other)
 	}
+	// The scene_id names the scene directly, also where a client passes a
+	// scene's scene_key as conversation_id; another agent's scene id
+	// recalls nothing.
+	for _, params := range []assocRecallParams{
+		{Since: "1h", SceneID: uuidToString(sc.ID)},
+		{Since: "1h", ConversationID: uuidToString(sc.ID)},
+	} {
+		got, err := f.h.recallAssoc(ctx, f.ws, f.agentID, params)
+		if err != nil || len(got.Items) != 1 || got.SceneID != uuidToString(sc.ID) || got.ConversationID != "cid-a" {
+			t.Fatalf("recall %+v = %+v err=%v", params, got, err)
+		}
+	}
+	foreign := registerTestScene(t, createHandlerTestAgent(t, "assoc-foreign-"+uuidToString(sc.ID)[:8], nil), f.orgID, "dm", "cid-a")
+	if got, err := f.h.recallAssoc(ctx, f.ws, f.agentID, assocRecallParams{Since: "1h", SceneID: uuidToString(foreign.ID)}); err != nil || len(got.Items) != 0 {
+		t.Fatalf("another agent's scene = %+v err=%v", got, err)
+	}
 }
 
 func TestBindAssocOutboundFromToolLinksReceipt(t *testing.T) {

@@ -14,14 +14,19 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 type assocRecallParams struct {
-	Since          string
-	Until          string
+	Since string
+	Until string
+	// SceneID names the agent's scene directly (scene_id). ConversationID is
+	// the DingTalk openConversationId the model sees; a scene_id passed
+	// there (clients that send a scene's scene_key) names that scene too.
+	SceneID        string
 	ConversationID string
 	PersonID       string
 	Issue          string
@@ -68,6 +73,7 @@ func (h *Handler) RecallAssoc(w http.ResponseWriter, r *http.Request) {
 	result, err := h.recallAssoc(r.Context(), workspaceID, agentID, assocRecallParams{
 		Since:          r.URL.Query().Get("since"),
 		Until:          r.URL.Query().Get("until"),
+		SceneID:        r.URL.Query().Get("scene_id"),
 		ConversationID: r.URL.Query().Get("conversation_id"),
 		PersonID:       r.URL.Query().Get("person_id"),
 		Issue:          r.URL.Query().Get("issue"),
@@ -293,17 +299,33 @@ func (h *Handler) recallAssoc(ctx context.Context, workspaceID, agentID string, 
 	if err != nil {
 		return assoc.Result{}, err
 	}
+	sceneRef, cid := strings.TrimSpace(in.SceneID), strings.TrimSpace(in.ConversationID)
+	if _, err := scene.ParseID(cid); sceneRef == "" && err == nil {
+		sceneRef, cid = cid, ""
+	}
 	sceneID := ""
-	if cid := strings.TrimSpace(in.ConversationID); cid != "" {
-		node, found, lookupErr := h.conversationSceneNode(ctx, workspaceID, agentID, cid, "", "", false)
-		if lookupErr != nil {
-			return assoc.Result{}, lookupErr
+	if sceneRef != "" || cid != "" {
+		var (
+			node  assoc.SceneNode
+			found bool
+		)
+		if sceneRef != "" {
+			node, found = h.sceneNodeByID(ctx, workspaceID, agentID, sceneRef)
+		} else {
+			var lookupErr error
+			node, found, lookupErr = h.conversationSceneNode(ctx, workspaceID, agentID, cid, "", "", false)
+			if lookupErr != nil {
+				return assoc.Result{}, lookupErr
+			}
 		}
 		if !found && issueID == "" && strings.TrimSpace(in.Q) == "" {
 			// A conversation without a registered scene has no graph links.
 			return assoc.Result{ReadThis: assoc.RecallReadThis, Since: since, Until: until, ConversationID: cid, Items: []assoc.Item{}, Events: []assoc.EventRef{}}, nil
 		}
 		sceneID = node.SceneID
+		if found {
+			cid = node.ConversationID
+		}
 	}
 	result, err := h.Assoc.Recall(ctx, assoc.Query{
 		WorkspaceID:    workspaceID,
@@ -311,7 +333,7 @@ func (h *Handler) recallAssoc(ctx context.Context, workspaceID, agentID string, 
 		Since:          since,
 		Until:          until,
 		SceneID:        sceneID,
-		ConversationID: strings.TrimSpace(in.ConversationID),
+		ConversationID: cid,
 		PersonID:       strings.TrimSpace(in.PersonID),
 		IssueID:        issueID,
 		Q:              strings.TrimSpace(in.Q),
