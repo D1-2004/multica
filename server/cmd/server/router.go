@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
+	"github.com/multica-ai/multica/server/internal/dwsidentity"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -520,6 +521,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// replicas then share each identity's token through Redis.
 		dwsclient.SetTokenStore(dwsTokenStore(rdb))
 		dwsclient.SetSDKSelector(opts.RuntimeConfig.useDWSForTag)
+		// Every server path that acts as an execution identity issues its
+		// credential through the identity provider: Agent Identity, or DEAP
+		// through the supervisor for a linked digital employee.
+		dwsclient.SetIdentityProvider(&dwsidentity.Provider{Links: queries})
 		h.FCE2BLauncher.Runner = service.NewFCE2BRolloutRunner(opts.RuntimeConfig.fcE2BSDKRollout)
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
@@ -947,40 +952,32 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			}
 			// Native subscriptions: execution identities that receive their
 			// own messages (group @-mentions and single chats) over DWS
-			// personal event subscriptions, on the gateway of the Agent
-			// Identity that issues their credentials (production, or staging
-			// for a deployment that reaches only the staging Agent Identity).
-			// runtime.use_dws_for_tag gates the source; the per-agent switch
-			// selects identities.
-			identityBase := signupConfig.FCE2B.AgentIdentityControlBaseURL
-			if agentIdentityControlBaseURLProvider != nil {
-				if live := agentIdentityControlBaseURLProvider(); live != "" {
-					identityBase = live
-				}
-			}
-			nativeEnvironment := handler.NativeDWSEnvironmentFor(identityBase)
-			handler.SetNativeDWSEnvironment(nativeEnvironment)
-			slog.Info("DWS native subscription gateway", "event", "dws_native_environment", "environment", nativeEnvironment)
+			// personal event subscriptions, always on the production DWS
+			// gateway whatever this deployment is. runtime.use_dws_for_tag
+			// gates the source; the per-agent switch selects identities.
 			native := sessions
-			native.CLI.MCPBaseURL, native.CLI.Environment = "", nativeEnvironment
+			native.CLI.MCPBaseURL, native.CLI.Environment = "", "production"
 			// The stream is registered for the app the subscriptions name
 			// (the dws CLI's custom ticket mode).
 			native.CLI.StreamTicketMode = "custom"
-			identities := func(ctx context.Context) ([]dwsclient.Identity, error) {
-				rows, err := h.Queries.ListActiveDWSNativeSubscriptions(ctx)
-				ids := make([]dwsclient.Identity, 0, len(rows))
-				for _, row := range rows {
-					ids = append(ids, dwsclient.Identity{AgentID: util.UUIDToString(row.AgentID), UID: row.DwsUid, OrgID: row.OrgID})
+			// A digital employee's credential comes from DEAP through its
+			// supervisor (the DWS identity provider); identities carry the
+			// link's credential version, so a changed link restarts the stream.
+			identities := h.NativeSubscriptionIdentities
+			// A task sandbox of a digital employee exchanges the AuthCode the
+			// same identity provider issues, not Agent Identity's.
+			if h.FCE2BLauncher != nil {
+				h.FCE2BLauncher.DWSAuthCodeIssuer = func(ctx context.Context, agentID, uid, orgID string) (string, string, bool, error) {
+					credential, ok, err := native.Issue(ctx, dwsclient.Identity{AgentID: agentID, UID: uid, OrgID: orgID}, mint)
+					return credential.ClientID, credential.AuthCode, ok, err
 				}
-				return ids, err
 			}
 			nativeSource, err := dwseventsource.New(dwseventsource.Config{
 				Redis: rdb, Sessions: native, Mint: mint,
 				// v2: subscriptions name the token's app; the namespace is new so
-				// no record of an earlier app-less subscription is reused. A
-				// staging gateway keeps its records apart from production's.
-				Deployment: nativeSourceNamespace(nativeEnvironment) + strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
-				// Native streams are new on DWS: log what arrives.
+				// no record of an earlier app-less subscription is reused.
+				Deployment: "native-v2:" + strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+				// Native streams are new on production DWS: log what arrives.
 				LogFrames: true,
 				Enabled:   opts.RuntimeConfig.useDWSForTag,
 				Consumers: []dwseventsource.Consumer{
@@ -2518,6 +2515,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Patch("/dingtalk/account-bindings/{agentId}/surface", h.UpdateDingTalkAccountBindingSurface)
 					r.Get("/dingtalk/account-bindings/{agentId}/native-subscription", h.GetDWSNativeSubscription)
 					r.Put("/dingtalk/account-bindings/{agentId}/native-subscription", h.SetDWSNativeSubscription)
+					r.With(handler.RequireHumanActor).Put("/dingtalk/account-bindings/{agentId}/native-subscription/deap-link", h.SetDWSNativeDEAPLink)
+					r.With(handler.RequireHumanActor).Delete("/dingtalk/account-bindings/{agentId}/native-subscription/deap-link", h.SetDWSNativeDEAPLink)
 					r.Post("/dingtalk/account-bindings/{agentId}/message-route/manual", h.BindDingTalkMessageRouteManually)
 					r.Delete("/dingtalk/account-bindings/{agentId}", h.UnbindDingTalkAccountBinding)
 					r.Get("/agent-identity/github/status", h.GetAgentIdentityGitHubStatus)
@@ -3420,15 +3419,6 @@ func cloudRuntimeFleetURLFromEnv() string {
 		return url
 	}
 	return strings.TrimSpace(os.Getenv("MULTICA_FLEET_URL"))
-}
-
-// nativeSourceNamespace prefixes the native event source's Redis namespace:
-// production keeps the one its records already live in.
-func nativeSourceNamespace(environment string) string {
-	if environment == "production" {
-		return "native-v2:"
-	}
-	return "native-v2-" + environment + ":"
 }
 
 func agentIdentityControlBaseURLFromEnv() string {

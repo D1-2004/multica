@@ -297,3 +297,25 @@ func TestStatusKeepsTheOutageAcrossAttempts(t *testing.T) {
 		t.Fatalf("a new outage = %+v", st)
 	}
 }
+
+// A changed credential version restarts the identity's stream, under the
+// same key.
+func TestCredentialVersionRestartsTheStream(t *testing.T) {
+	id := dwsclient.Identity{AgentID: "agent-1", UID: "42", OrgID: "org-1"}
+	listed := []dwsclient.Identity{id}
+	s := testSource(t, []Consumer{{EventKey: dws.EventIMAt,
+		Identities: func(context.Context) ([]dwsclient.Identity, error) { return listed, nil }}}, true)
+	before, err := s.targets(context.Background())
+	if err != nil || len(before) != 1 {
+		t.Fatalf("targets = %v, %v", before, err)
+	}
+	id.CredentialVersion = "deap:employee:supervisor"
+	listed = []dwsclient.Identity{id}
+	after, _ := s.targets(context.Background())
+	if len(after) != 1 || after[0].Key != before[0].Key || after[0].Fingerprint == before[0].Fingerprint {
+		t.Fatalf("before %+v after %+v", before, after)
+	}
+	if got := s.identity(after[0].Key, dwsclient.Identity{}); got.CredentialVersion != id.CredentialVersion {
+		t.Fatalf("stream identity = %+v", got)
+	}
+}

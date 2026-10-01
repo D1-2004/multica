@@ -57,6 +57,15 @@ const (
 	TaskInitiatorTypeDingTalkUser             = "dingtalk_user"
 )
 
+// DWSAuthCodeEnvKey carries a one-time DWS AuthCode the server's identity
+// provider issued for the task (a digital employee's supervisor through DEAP);
+// the runner exchanges it in place of the one Agent Identity redeems.
+// DWSAuthCodeClientIDEnvKey names the AuthCode's DWS app.
+const (
+	DWSAuthCodeEnvKey         = "MULTICA_DWS_AUTH_CODE"
+	DWSAuthCodeClientIDEnvKey = "MULTICA_DWS_AUTH_CLIENT_ID"
+)
+
 const (
 	DispatchSurfaceTypeIssue     = "issue"
 	DispatchSurfaceTypeChat      = "chat"

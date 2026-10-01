@@ -22,6 +22,8 @@ const deleteBinding = vi.fn();
 const updateBindingSurface = vi.fn();
 const setNativeSubscription = vi.fn();
 const getNativeSubscriptionStatus = vi.fn();
+const setDEAPLink = vi.fn();
+const removeDEAPLink = vi.fn();
 const bindManually = vi.fn();
 const mid2Url = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
@@ -145,6 +147,8 @@ beforeEach(() => {
     updateDingTalkAccountBindingSurface: updateBindingSurface,
     setDingTalkNativeSubscription: setNativeSubscription,
     getDingTalkNativeSubscriptionStatus: getNativeSubscriptionStatus,
+    setDingTalkNativeDEAPLink: setDEAPLink,
+    removeDingTalkNativeDEAPLink: removeDEAPLink,
     bindDingTalkMessageRouteManually: bindManually,
   } as unknown as ApiClient);
   listBindings.mockResolvedValue({ bindings: [], configured: true });
@@ -159,16 +163,22 @@ beforeEach(() => {
   updateBindingSurface.mockResolvedValue(undefined);
   setNativeSubscription.mockResolvedValue({ nativeSubscription: true });
   getNativeSubscriptionStatus.mockResolvedValue(nativeStatus("connected"));
+  setDEAPLink.mockResolvedValue(undefined);
+  removeDEAPLink.mockResolvedValue(undefined);
   bindManually.mockResolvedValue(undefined);
 });
 
 function nativeStatus(
   state: string,
   stream: Record<string, unknown> = {},
+  deap: { deapLink?: unknown; deapLinkEditable?: boolean } = {},
 ) {
   return {
     nativeSubscription: true,
     stream: { state, lastConnectedAt: null, lastEventAt: null, lastError: null, failures: 0, ...stream },
+    deapLink: null,
+    deapLinkEditable: false,
+    ...deap,
   };
 }
 
@@ -1101,14 +1111,59 @@ describe("DWS native subscription on the execution identity", () => {
     ).toBeInTheDocument();
   });
 
-  it("does not watch the stream while native subscription is off", async () => {
+  it("shows no stream light while native subscription is off", async () => {
     listBindings.mockResolvedValue({ bindings: [identityOnlyBinding], configured: true });
+    getNativeSubscriptionStatus.mockResolvedValue({ ...nativeStatus("off"), nativeSubscription: false });
 
     renderCard("identity");
 
     await screen.findByRole("switch", { name: "Native subscription" });
+    // The status is still read for the identity's DEAP link.
+    expect(await screen.findByTestId("dingtalk-native-deap-link")).toBeInTheDocument();
     expect(screen.queryByTestId("dingtalk-native-stream")).not.toBeInTheDocument();
-    expect(getNativeSubscriptionStatus).not.toHaveBeenCalled();
+  });
+
+  it("lets an operator link the DEAP supervisor", async () => {
+    listBindings.mockResolvedValue({ bindings: [identityOnlyBinding], configured: true });
+    getNativeSubscriptionStatus.mockResolvedValue(nativeStatus("off", {}, { deapLinkEditable: true }));
+    const user = userEvent.setup();
+
+    renderCard("identity");
+
+    const employee = await screen.findByLabelText("DEAP employee ID");
+    const supervisor = screen.getByLabelText("Supervisor UID");
+    const save = screen.getByRole("button", { name: "Save" });
+    await user.type(employee, "not-a-uuid");
+    expect(screen.getByText("Enter the DEAP employee ID (agentUuid).")).toBeInTheDocument();
+    expect(save).toBeDisabled();
+    await user.clear(employee);
+    await user.type(employee, "de2a8cc1-413c-47f0-a79b-fede1b853847");
+    await user.type(supervisor, "6753994909");
+    await user.click(save);
+
+    await waitFor(() =>
+      expect(setDEAPLink).toHaveBeenCalledWith("workspace-1", "agent-1", {
+        deapAgentUuid: "de2a8cc1-413c-47f0-a79b-fede1b853847",
+        supervisorUid: "6753994909",
+      }),
+    );
+  });
+
+  it("shows other members the DEAP link read-only", async () => {
+    listBindings.mockResolvedValue({ bindings: [nativeOnBinding], configured: true });
+    getNativeSubscriptionStatus.mockResolvedValue(nativeStatus("connected", {}, {
+      deapLink: { deapAgentUuid: "de2a8cc1-413c-47f0-a79b-fede1b853847", supervisorUid: "6753994909", updatedAt: null },
+    }));
+
+    renderCard("identity");
+
+    expect(await screen.findByText(
+      "Employee de2a8cc1-413c-47f0-a79b-fede1b853847, supervisor UID 6753994909",
+    )).toBeInTheDocument();
+    expect(screen.getByText(
+      "Only 冬翔 (deployment operator) can configure the supervisor credential.",
+    )).toBeInTheDocument();
+    expect(screen.queryByLabelText("DEAP employee ID")).not.toBeInTheDocument();
   });
 
   it("turns native subscription on and refreshes the bindings", async () => {
@@ -1335,7 +1390,7 @@ describe("operator manual message binding", () => {
 
     expect(integrations.dingtalk_identity_native_subscription).toBe("原生订阅");
     expect(integrations.dingtalk_identity_native_subscription_hint).toBe(
-      "开启后，这个身份的单聊和群里 @ 它的消息通过 DWS 原生订阅进入智能体；与上方数字员工消息绑定二选一。",
+      "开启后，这个身份的单聊和群里 @ 它的消息通过线上 DWS 原生订阅进入智能体；与上方数字员工消息绑定二选一。",
     );
     expect(integrations.dingtalk_identity_native_subscription_blocked).toBe(
       "已绑定数字员工消息，需先解除才能开启原生订阅",

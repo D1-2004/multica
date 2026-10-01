@@ -32,31 +32,12 @@ import (
 // windows, the Coordinator job, tasks and task_finished all run unchanged.
 // Its callbacks name a Multica-owned dispatch task (dwsn-…) bound to
 // agentmessagerouter.NativeTargetIdentity; replies are always managed
-// responses sent as the identity through the native gateway
-// (nativeDWSEnvironment).
+// responses sent through the production DWS gateway as the identity.
 
-// nativeDWSEnvironment is the DWS gateway of native subscriptions, pinned once
-// at startup (SetNativeDWSEnvironment); their replies go back through it.
-var nativeDWSEnvironment = "production"
-
-// NativeDWSEnvironmentFor is the native gateway for credentials issued by the
-// Agent Identity at identityBaseURL. A gateway takes an Agent Identity
-// credential as the identity only when its own environment issued it: a
-// staging code redeemed on the production gateway subscribes as another
-// principal and receives none of the identity's events. A staging deployment
-// reaches only the staging Agent Identity, so it uses the staging gateway;
-// everything else uses production.
-func NativeDWSEnvironmentFor(identityBaseURL string) string {
-	if strings.Contains(strings.ToLower(identityBaseURL), "pre-agent-identity.") {
-		return "staging"
-	}
-	return "production"
-}
-
-// SetNativeDWSEnvironment pins the native gateway; call before serving.
-func SetNativeDWSEnvironment(environment string) {
-	nativeDWSEnvironment = environment
-}
+// nativeDWSEnvironment is the DWS gateway of native subscriptions: their
+// events come from production DWS whatever this deployment is, so their
+// replies go back through it.
+const nativeDWSEnvironment = "production"
 
 // nativeDispatchContextKey marks the in-process native dispatch. Only it may
 // use the native dispatch task namespace; a wire delivery may not.

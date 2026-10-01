@@ -259,7 +259,7 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 ### 原生订阅入站（DWS native subscription，2026-10-01）
 
-执行身份开启「原生订阅」后，不经 Agent Message Router，由服务端自己的 DWS 个人事件流收它本人的钉钉消息：`user_im_message_receive_at`（群里 @ 本账号）与 `user_im_message_receive_o2o_all`（全部单聊）。事件源 `h.DWSNativeEvents` 由运行时键 `runtime.use_dws_for_tag` 开关，事件源没有运行时不能开启（409 `native_subscription_unavailable`）。事件流与原生回复走**签发其凭证的 Agent Identity 所在环境**的 DWS 网关（`handler.NativeDWSEnvironmentFor`）：正式部署走生产网关（`mcp.dingtalk.com`）；预发部署只能经 HSF 访问预发 Agent Identity（兑换地址 `pre-agent-identity.*`），所以走预发网关（`pre-mcp.dingtalk.com`），事件源的 Redis 命名空间也与生产分开（`native-v2-staging:`）。原因（2026-10-01 实测）：预发签发的 code 能在生产网关换出 token，但生产网关不把它当作该身份——`get_current_user_profile` 返回业务错误，建的订阅不在该账号名下，个人事件按 `filterSubId=<内部uid>_<组织>_11_<clientId>` 匹配不到，事件流一帧都收不到；同一账号用生产签发的身份在生产网关订阅则立即收到。
+执行身份开启「原生订阅」后，不经 Agent Message Router，由服务端自己的 DWS 个人事件流收它本人的钉钉消息：`user_im_message_receive_at`（群里 @ 本账号）与 `user_im_message_receive_o2o_all`（全部单聊）。事件源 `h.DWSNativeEvents` 由运行时键 `runtime.use_dws_for_tag` 开关，事件源没有运行时不能开启（409 `native_subscription_unavailable`）。事件流与原生回复始终走生产 DWS 网关（`mcp.dingtalk.com`），不论本部署是预发还是正式。
 
 **账号归属，逐条消息生效。** 一个钉钉账号（dws uid + org）归原生订阅，当且仅当存在它的 `agent_dws_native_subscription` 行、该行的 Agent 未归档、且该 Agent 当前绑定的身份仍是这个账号；否则归 Router。两条入口对每条消息都用这一条规则（`GetDWSNativeAccountOwner`，`server/internal/handler/dws_native_ownership.go`），所以即使开关层的防护被绕过，一条消息也只会被处理一次，账号也不会无人认领：
 
@@ -287,7 +287,27 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 3. 单聊事件、且该账号的 openDingTalkId 尚未学到时，本 Agent 10 分钟内在同一会话发过、去掉首尾空白后正文相同的托管回复：丢弃（`echo_of_own_reply`）。群事件只在有人 @ 本账号时到达，本账号自己的回复不会 @ 自己，所以群里有人复述回复不会被当回声；学到 openDingTalkId 后由第 2 条精确判断，不再按正文丢弃真人消息。
 4. 进程内滑动窗口：同一 Agent、同一会话、同一发信人 60 秒内超过 10 条不同的原生投递视为回环，丢弃并记 Warn `dws_native_loop_suspected`。按发信人计数：回环只会重复同一发信人，真人连发或群里多人 @ 不会触发。同一消息的重投不重复计数；该计数随事件流换副本而重置，最多推迟一个窗口生效。
 
-**只用托管回复。** 原生命令恒带 `responsePolicy.mode=multica_coordinator`，资格与 Router 策略同步相同：入站判断与钉钉回复开关都开、策略 revision≥1、运行时具备 `dws_message_policy_v1`。开启原生订阅时校验不满足返回 409 `native_subscription_requires_managed_response`。回调属于服务端自己的派发任务 `dwsn-<hash>`，完成目标是 `agentmessagerouter.NativeTargetIdentity()`（与 Router 目标同形，outbox 原样路由）；有线请求不得使用该命名空间。回复语义与托管数字员工一致：冻结触发消息的 openMsgId，群聊引用回复并 @ 发信人，单聊同样引用回复。`response_route` 与等待说明冻结原生网关（正式为 `dws_environment=production`，预发为 `staging`）。原生完成 worker 只确认回调：托管出站已接手即完成，路由缺失且有话要说则死信；回执只关闭收集窗口，不调用 Router。
+**只用托管回复。** 原生命令恒带 `responsePolicy.mode=multica_coordinator`，资格与 Router 策略同步相同：入站判断与钉钉回复开关都开、策略 revision≥1、运行时具备 `dws_message_policy_v1`。开启原生订阅时校验不满足返回 409 `native_subscription_requires_managed_response`。回调属于服务端自己的派发任务 `dwsn-<hash>`，完成目标是 `agentmessagerouter.NativeTargetIdentity()`（与 Router 目标同形，outbox 原样路由）；有线请求不得使用该命名空间。回复语义与托管数字员工一致：冻结触发消息的 openMsgId，群聊引用回复并 @ 发信人，单聊同样引用回复。`response_route` 与等待说明冻结 `dws_environment=production`。原生完成 worker 只确认回调：托管出站已接手即完成，路由缺失且有话要说则死信；回执只关闭收集窗口，不调用 Router。
+
+**DWS 身份提供方（Identity Provider）与数字员工换票。** 服务端每条以执行身份操作钉钉的路径都通过同一个 DWS 身份提供方（`internal/dwsidentity`，在 `dwsclient.SetIdentityProvider` 注册）拿凭证。这些路径包括：原生事件流、托管回复、用户决策卡片、Coordinator 历史预取、场域记忆，以及 Router 回调投递。提供方决定执行身份的 DWS 凭证由谁签发：
+- 默认由 Agent Identity 签发，即调用方自己的 mint。
+- DingTalk 数字员工（DEAP）由 DEAP 签发。
+
+**为什么数字员工要单独处理（2026-10-01 预发实测）。** 数字员工的 Agent Identity 凭证落在另一个主体上：
+- 订阅收不到员工的任何消息，线上、预发网关都是零帧；普通账号「东翔测试」用同样的凭证能收到。
+- 以员工身份引用回复返回 `PARAM_ERROR`，历史预取 `unavailable`。
+- 同一条引用回复命令改用员工本人的 DEAP 凭证就能成功。
+
+个人消息事件按 `filterSubId=<内部uid>_<组织>_11_<clientId>` 只投递给员工本人的主体。DEAP 能签发员工本人的 DWS auth code，但只签给员工的主管。
+
+**DEAP 关联。** 关联存在表 `agent_dws_native_deap_link`，只有部署运维（真人）可以 `PUT/DELETE …/native-subscription/deap-link`，其他人只读。关联包含员工的 DEAP agentUuid 和主管 uid，组织取身份所在的组织。有关联的身份这样签发凭证：
+1. 用调用方的 Agent Identity mint 签发主管凭证，主管是普通身份。
+2. 调 DEAP MCP（`deap-dev`，用 `CallRaw` 读取 `{success, data}`）：先用 `get_digital_employee_detail` 核对员工发布的 `profile.userId` 是不是这个身份，对不上就拒绝；再用 `get_dws_auth_code` 换出员工本人的 code。
+3. SDK 通道（`runtime.use_dws_for_tag`）换 token 时，要求结果确实是这个员工的 userId 和 corpId。dws CLI 通道只有第 2 步的发布详情核对。
+
+**凭证版本与缓存。** 关联的哈希就是凭证版本（`dwsclient.Identity.CredentialVersion`），它会进入共享 token 的键，所以 DEAP 签发的 token 和 Agent Identity token 互不复用。同一次关联读取同时决定这个键和 mint，两者不会错位。关联改变后版本随之改变：原生事件源的目标指纹跟着变，持有流的副本会重新换票、订阅并连接；其他路径在下次打开会话时换新 token。读不到关联时，这次会话直接失败，不会退回到错误的主体；因为所有身份都要读关联，这类失败会影响所有身份。决策卡片的事件流要等下次重连才会换上新凭证。没有关联的身份照旧使用 Agent Identity 凭证。
+
+**沙箱同样经过身份提供方。** FC 启动任务时，若身份提供方拥有该智能体绑定的 DWS 身份（有主管关联的数字员工），服务端用同一个 `Shared.Issue` 换出 AuthCode，经 `MULTICA_DWS_AUTH_CODE` / `MULTICA_DWS_AUTH_CLIENT_ID` 交给沙箱；runner 用它执行 `dws auth exchange`，替代 Agent Identity 兑出的 AuthCode，ContextToken 只再用于 GitHub。签发失败直接让启动失败，不回退到 Agent Identity（那条路对数字员工会在换票后的身份核对处失败）。旧镜像不认识这两个变量，仍走 Agent Identity。
 
 **连接指示灯。** 身份卡开关旁的指示灯读 `GET …/dingtalk/account-bindings/{agentId}/native-subscription`，开启期间每 10 秒轮询一次。返回的事件流状态如下：
 - `connected`：任一副本持有已连接的事件流（Redis ready 标记）。
@@ -298,7 +318,7 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 `last_event_at` 只记真正交给消费方的事件，不含 SYSTEM ping。所以「已连接但从未收到消息」说明问题在推送而不在连接。
 
-**其他 DWS 流量不变。** 历史预取、场域记忆、用户决策卡片与沙箱内的 DWS 调用仍走本部署配置的网关（`MULTICA_DWS_HISTORY_MCP_URL`）。原生网关跟随 Agent Identity 的签发环境；预发上两者都是预发网关，正式上都是生产网关。原生网关在启动时确定，运行中改 `control_base_url` 要重启后才会同步。
+**其他 DWS 流量不变。** 历史预取、场域记忆、用户决策卡片与沙箱内的 DWS 调用仍走本部署配置的网关。预发上的原生 Agent 因此混用网关，读历史与发卡是否可用须以预发 E2E 为准。
 
 **已知缺口。**
 
@@ -498,7 +518,7 @@ collect 在是否启用选择不同的请求之间拆窗；所有人和指定名
 `thinking.type=disabled`（省略不兼容的reasoning_effort）；关闭恢复1536与原参数。
 截断或JSON不完整时，在同一证据快照内最多两次只提供finish工具重新序列化，
 不重做读取、不扩大总decision deadline、不提交旧候选；修复结果仍走全部Host与review。
-模型schema按kind使用与Host相同的允许字段，避免start_work被展示state_refs。
+模型schema按kind使用与Host相同的允许字段，避免start_work被展示state_refs；state_refs的这条剪枝对所有模型、所有finish schema实验分组都生效（`withholdStateRefs`）。工作动作（start_work/continue_work）误带state_refs时，Host窄规范化丢弃该字段而不是拒绝整份计划，它也不计入重复计划指纹；非工作动作携带它仍拒绝，因为那多半是标错kind的report_status：2026-10-01预发 deepseek-v4.1-flash 曾在start_work上反复附带state_refs，连拒3次后只能兜底回复。其他未允许字段仍拒绝。
 依据：https://api-docs.deepseek.com/guides/thinking_mode/ 。
 结构检查、脚本Host测试、模型回放和真实投递证据分别报告。
 

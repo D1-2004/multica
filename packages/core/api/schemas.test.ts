@@ -606,7 +606,32 @@ describe("DingTalk account binding schemas", () => {
         lastError: null,
         failures: 0,
       },
+      deapLink: null,
+      deapLinkEditable: false,
     });
+    // The DEAP link is shown to everyone; editable only for operators.
+    expect(
+      DingTalkNativeSubscriptionStatusSchema.parse({
+        native_subscription: false,
+        deap_link: {
+          deap_agent_uuid: "de2a8cc1-413c-47f0-a79b-fede1b853847",
+          supervisor_uid: "6753994909",
+          updated_at: "2026-10-01T10:00:00Z",
+        },
+        deap_link_editable: true,
+      }),
+    ).toMatchObject({
+      deapLink: {
+        deapAgentUuid: "de2a8cc1-413c-47f0-a79b-fede1b853847",
+        supervisorUid: "6753994909",
+        updatedAt: "2026-10-01T10:00:00Z",
+      },
+      deapLinkEditable: true,
+    });
+    // A drifted link reads as none instead of throwing.
+    expect(
+      DingTalkNativeSubscriptionStatusSchema.parse({ deap_link: { supervisor_uid: 1 }, deap_link_editable: "yes" }),
+    ).toMatchObject({ deapLink: null, deapLinkEditable: false });
     // A state this client predates, and drifted fields, never throw.
     expect(
       DingTalkNativeSubscriptionStatusSchema.parse({
