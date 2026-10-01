@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/multica-ai/multica/server/internal/tag"
 	"io"
 	"net"
 	"net/http"
@@ -142,18 +141,6 @@ func (h *Handler) BeginDingTalkAccountBinding(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	// The Tag template only holds shared configuration; each tenant's
-	// employee agent binds its own digital employee. Handlers built without
-	// a database (unit harnesses with a fake binding service) have no Tag.
-	if h.DB != nil {
-		if role, err := tag.AgentRole(r.Context(), h.DB, uuidToString(workspaceID), uuidToString(agent.ID)); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to check the tag")
-			return
-		} else if role == tag.RoleTemplate {
-			writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "tag_template_not_bindable", "bind the digital employee on a tenant of the tag, not on the tag template")
-			return
-		}
-	}
 	metadataStore := h.dingTalkAccountBindingMetadata
 	if metadataStore == nil {
 		metadataStore = h.Queries
@@ -165,6 +152,9 @@ func (h *Handler) BeginDingTalkAccountBinding(w http.ResponseWriter, r *http.Req
 		} else {
 			writeError(w, http.StatusInternalServerError, "failed to load workspace")
 		}
+		return
+	}
+	if !h.rejectTagTemplateBinding(w, r, workspaceID, agent.ID) {
 		return
 	}
 	result, err := h.DingTalkAccountBindings.Begin(r.Context(), agentmessagerouter.BeginParams{

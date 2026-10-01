@@ -817,3 +817,24 @@ func (h *Handler) announceAgentUpdated(r *http.Request, workspaceID, userID stri
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	h.publish(protocol.EventAgentStatus, workspaceID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 }
+
+// rejectTagTemplateBinding refuses a DingTalk binding on the Tag template: the
+// template only holds shared configuration, and each tenant's employee agent
+// binds its own digital employee. Handlers built without a database (unit
+// harnesses with a fake binding service) have no Tag. Returns false after
+// writing the error response.
+func (h *Handler) rejectTagTemplateBinding(w http.ResponseWriter, r *http.Request, workspaceID, agentID pgtype.UUID) bool {
+	if h.DB == nil {
+		return true
+	}
+	role, err := tag.AgentRole(r.Context(), h.DB, uuidToString(workspaceID), uuidToString(agentID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check the tag")
+		return false
+	}
+	if role == tag.RoleTemplate {
+		writeDingTalkAccountBindingAPIError(w, http.StatusBadRequest, "tag_template_not_bindable", "bind the digital employee on a tenant of the tag, not on the tag template")
+		return false
+	}
+	return true
+}
