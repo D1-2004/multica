@@ -121,6 +121,20 @@ func (c *AgentClient) SendPersonalNotification(ctx context.Context, req Personal
 	return c.doJSON(ctx, http.MethodPost, "/internal/dingtalk/notifications/personal", req, nil)
 }
 
+// JSAPISupported is always false: the private agent holds the corp app
+// credentials, and it exposes no H5 JSAPI signing or chat id conversion.
+func (c *AgentClient) JSAPISupported() bool { return false }
+
+// JSAPITicket is unsupported in private-agent mode.
+func (c *AgentClient) JSAPITicket(context.Context) (string, error) {
+	return "", ErrUnsupported
+}
+
+// ConvertChatIDToOpenConversationID is unsupported in private-agent mode.
+func (c *AgentClient) ConvertChatIDToOpenConversationID(context.Context, string) (string, error) {
+	return "", ErrUnsupported
+}
+
 func (c *AgentClient) doJSON(ctx context.Context, method, path string, body any, out any) error {
 	if !c.IsConfigured() {
 		return &APIError{Code: "agent_not_configured", Message: "DingTalk agent client is not configured"}

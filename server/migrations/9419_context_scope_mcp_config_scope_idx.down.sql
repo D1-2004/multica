@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS context_scope_mcp_config_scope_idx;

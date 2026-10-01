@@ -281,7 +281,8 @@ func (h *Handler) injectDEAPA2ARunnerMCP(
 	if err != nil {
 		return err
 	}
-	if err := h.injectRunnerMCP(ctx, runtime, task.AgentID, token, agentData, supportsRunnerMCPMounts, supportsManagedRelayRoutes); err != nil {
+	// A2A-origin tasks resolve to the global connector layer only.
+	if err := h.injectRunnerMCP(ctx, runtime, task, token, agentData, supportsRunnerMCPMounts, supportsManagedRelayRoutes); err != nil {
 		return err
 	}
 	_, err = h.Queries.CreateTaskToken(ctx, db.CreateTaskTokenParams{
@@ -295,14 +296,16 @@ func (h *Handler) injectDEAPA2ARunnerMCP(
 	return err
 }
 
-func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, agentID pgtype.UUID, taskToken string, agentData *TaskAgentData, supportsRunnerMCPMounts, supportsManagedRelayRoutes bool) error {
+// injectRunnerMCP mounts the backend-hosted multica MCP, the task's internal
+// connectors (global grants plus the task's scene/personal context layers,
+// see authorizedTaskConnectors) and any Agent-bound Runner MCP servers.
+func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, task db.AgentTaskQueue, taskToken string, agentData *TaskAgentData, supportsRunnerMCPMounts, supportsManagedRelayRoutes bool) error {
 	if agentData == nil {
 		return errors.New("claimed task is missing Agent data")
 	}
+	agentID := task.AgentID
 	if !supportsRunnerMCPMounts || !supportsManagedRelayRoutes {
-		if h.internalConnectorsEnabled(ctx) {
-			slog.WarnContext(ctx, "internal MCP connectors unavailable: sandbox daemon lacks managed MCP support", "agent_id", uuidToString(agentID), "runtime_id", uuidToString(runtime.ID), "supports_runner_mcp_mounts", supportsRunnerMCPMounts, "supports_managed_relay_routes", supportsManagedRelayRoutes)
-		}
+		slog.WarnContext(ctx, "internal MCP connectors unavailable: sandbox daemon lacks managed MCP support", "agent_id", uuidToString(agentID), "runtime_id", uuidToString(runtime.ID), "supports_runner_mcp_mounts", supportsRunnerMCPMounts, "supports_managed_relay_routes", supportsManagedRelayRoutes)
 		return h.injectLegacyRunnerMCP(ctx, runtime, agentID, taskToken, agentData, supportsRunnerMCPMounts)
 	}
 	if runnerMCPRuntimeUnsupported(runtime) {
@@ -321,7 +324,7 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	routes := map[string]MCPRelayRoute{
 		"multica": {Path: "/api/mcp", Authorization: "Bearer " + taskToken},
 	}
-	connectors, err := h.authorizedConnectors(ctx, uuidToString(runtime.WorkspaceID), uuidToString(agentID))
+	connectors, err := h.authorizedTaskConnectors(ctx, runtime.WorkspaceID, task)
 	if err != nil {
 		slog.WarnContext(ctx, "internal MCP connector discovery failed; continuing task claim without connectors", "agent_id", uuidToString(agentID), "runtime_id", uuidToString(runtime.ID), "error", err)
 		connectors = nil
@@ -365,6 +368,7 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 		if !found {
 			continue
 		}
+		effectiveConfig, agentData.contextMCPServers = dropContextMCPServersShadowingRunner(ctx, task, effectiveConfig, rawConfig, agentData.contextMCPServers)
 		var names []string
 		effectiveConfig, names, err = mergeManagedMCPConfig(effectiveConfig, rawConfig)
 		if err != nil {
@@ -380,6 +384,57 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	agentData.McpConfig = effectiveConfig
 	agentData.McpRelayRoutes = routes
 	return nil
+}
+
+// dropContextMCPServersShadowingRunner leaves out of config the custom MCP
+// servers of the task's context layers (contextServers) that the Runner MCP
+// config runner also defines, so a scene, person or org server never makes
+// the managed merge fail the claim (mcp_server_name_conflict) and requeue
+// it forever: the agent's Runner mount keeps its name. It returns the
+// context servers still in config. A config it cannot read is returned as
+// it is, for the merge to report.
+func dropContextMCPServersShadowingRunner(ctx context.Context, task db.AgentTaskQueue, config, runner json.RawMessage, contextServers []string) (json.RawMessage, []string) {
+	if len(contextServers) == 0 {
+		return config, contextServers
+	}
+	runnerNames, err := mcpServerNames(runner)
+	if err != nil {
+		return config, contextServers
+	}
+	var dropped, kept []string
+	for _, name := range contextServers {
+		if _, shadowed := runnerNames[name]; shadowed {
+			dropped = append(dropped, name)
+		} else {
+			kept = append(kept, name)
+		}
+	}
+	if len(dropped) == 0 {
+		return config, contextServers
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(config, &document); err != nil || document == nil {
+		return config, contextServers
+	}
+	servers, err := unmarshalServerMap(document["mcpServers"])
+	if err != nil {
+		return config, contextServers
+	}
+	for _, name := range dropped {
+		delete(servers, name)
+	}
+	encoded, err := json.Marshal(servers)
+	if err != nil {
+		return config, contextServers
+	}
+	document["mcpServers"] = encoded
+	merged, err := json.Marshal(document)
+	if err != nil {
+		return config, contextServers
+	}
+	slog.WarnContext(ctx, "context builder: custom MCP servers share a Runner MCP server name; the Runner mount keeps the name",
+		"task_id", uuidToString(task.ID), "agent_id", uuidToString(task.AgentID), "servers", dropped)
+	return merged, kept
 }
 
 func (h *Handler) injectLegacyRunnerMCP(ctx context.Context, runtime db.AgentRuntime, agentID pgtype.UUID, taskToken string, agentData *TaskAgentData, supportsRunnerMCPMounts bool) error {

@@ -43,8 +43,8 @@ func TestCanManageAgentEnv_Pure(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			member := db.Member{UserID: util.MustParseUUID(tc.userID), Role: tc.role}
-			if got := canManageAgentEnv(tc.agent, member); got != tc.want {
-				t.Fatalf("canManageAgentEnv(owner=%q, user=%s, role=%s) = %v; want %v",
+			if got := memberManagesAgent(tc.agent, member); got != tc.want {
+				t.Fatalf("memberManagesAgent(owner=%q, user=%s, role=%s) = %v; want %v",
 					uuidToString(tc.agent.OwnerID), tc.userID, tc.role, got, tc.want)
 			}
 		})

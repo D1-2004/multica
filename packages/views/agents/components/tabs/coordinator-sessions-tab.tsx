@@ -19,21 +19,22 @@ import {
 } from "../../../chat/components/chat-message-list";
 import { useT, useTimeAgo } from "../../../i18n";
 
-function CoordinatorConversationMessages({
+/**
+ * Transcript of one inbound Coordinator chat session. Also used by the scene
+ * detail (场域 → 入站记录), which knows the latest session of its
+ * conversation.
+ */
+export function CoordinatorConversationMessages({
   agentId,
-  conversation,
+  sessionId,
 }: {
   agentId: string;
-  conversation: CoordinatorConversation;
+  sessionId: string;
 }) {
   const wsId = useWorkspaceId();
   const { t } = useT("agents");
   const query = useInfiniteQuery(
-    agentCoordinatorConversationMessagesOptions(
-      wsId,
-      agentId,
-      conversation.session_id,
-    ),
+    agentCoordinatorConversationMessagesOptions(wsId, agentId, sessionId),
   );
   const pages = query.data?.pages ?? [];
   const messages = [...pages].reverse().flatMap((page) => page.messages);
@@ -247,7 +248,7 @@ export function CoordinatorSessionsTab({ agent }: { agent: Agent }) {
             <CoordinatorConversationMessages
               key={selected.id}
               agentId={agent.id}
-              conversation={selected}
+              sessionId={selected.session_id}
             />
           </>
         ) : (

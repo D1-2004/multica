@@ -1,9 +1,4 @@
-export type DetailSection =
-  | "overview"
-  | "work"
-  | "inbound"
-  | "memory"
-  | "configuration";
+export type DetailSection = "overview" | "work" | "scenes" | "configuration";
 
 export type ConfigGroupId =
   | "identity_goals"
@@ -15,8 +10,7 @@ export type ConfigGroupId =
 export type DetailTab =
   | "overview"
   | "work"
-  | "inbound"
-  | "memory"
+  | "scenes"
   | "digital_employee"
   | "instructions"
   | "okr"
@@ -41,8 +35,7 @@ export type DetailTab =
 export type AgentTabLabelKey =
   | "overview"
   | "work"
-  | "inbound"
-  | "memory"
+  | "scenes"
   | "configuration"
   | "digital_employee"
   | "instructions"
@@ -138,12 +131,15 @@ const CONFIG_GROUP_BY_VIEW = new Map<DetailTab, ConfigGroupId>(
 const DETAIL_VIEWS = new Set<DetailTab>([
   "overview",
   "work",
-  "inbound",
-  "memory",
+  "scenes",
   ...CONFIG_GROUP_BY_VIEW.keys(),
 ]);
 
 export function normalizeDetailView(value: string | null): DetailTab | null {
+  // Inbound conversations and scene memory now live inside a scene.
+  if (value === "inbound" || value === "memory") return "scenes";
+  // The 群与个人能力 tab split into the Connectors and Skills tabs.
+  if (value === "context_capabilities") return "mcp_config";
   if (value === "dsh_plugins" || value === "dsh_home") return "dsh";
   if (value === "import_export") return "publish";
   if (value === "identity") return "digital_employee";
@@ -162,12 +158,7 @@ export function isConfigView(view: DetailTab): boolean {
 }
 
 export function sectionForView(view: DetailTab): DetailSection {
-  if (
-    view === "overview" ||
-    view === "work" ||
-    view === "inbound" ||
-    view === "memory"
-  ) {
+  if (view === "overview" || view === "work" || view === "scenes") {
     return view;
   }
   return "configuration";

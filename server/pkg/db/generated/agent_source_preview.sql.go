@@ -110,6 +110,10 @@ WITH removed_files AS (
     DELETE FROM agent_skill WHERE agent_skill.skill_id = $1
 ), removed_source_mapping AS (
     DELETE FROM agent_source_skill WHERE agent_source_skill.skill_id = $1
+), removed_context_bindings AS (
+    DELETE FROM context_capability_binding
+    WHERE context_capability_binding.workspace_id = (SELECT skill.workspace_id FROM skill WHERE skill.id = $1)
+      AND context_capability_binding.resource_type = 'skill' AND context_capability_binding.resource_id = $1
 )
 DELETE FROM skill_to_label WHERE skill_to_label.skill_id = $1
 `

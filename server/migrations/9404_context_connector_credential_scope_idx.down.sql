@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS context_connector_credential_scope_idx;

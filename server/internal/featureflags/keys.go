@@ -103,8 +103,4 @@ func SemanticaMCPRelayEnabled(ctx context.Context, flags *featureflag.Service) b
 	return flags.IsEnabled(ctx, "semantica_mcp_relay", DeploymentEnvironment() == "pre")
 }
 
-func InternalMCPConnectorsEnabled(ctx context.Context, flags *featureflag.Service) bool {
-	return flags.IsEnabled(ctx, "internal_mcp_connectors", DeploymentEnvironment() == "pre")
-}
-
 func SemanticaEnvironment() string { return DeploymentEnvironment() }

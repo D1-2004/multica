@@ -13,28 +13,63 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func (h *Handler) internalConnectorsEnabled(ctx context.Context) bool {
-	return featureflags.InternalMCPConnectorsEnabled(ctx, h.FeatureFlags)
+type internalConnector struct {
+	ID               string   `json:"id"`
+	WorkspaceID      string   `json:"workspace_id"`
+	Name             string   `json:"name"`
+	UpstreamURL      string   `json:"upstream_url"`
+	CredentialRef    string   `json:"credential_ref"`
+	AuthMode         string   `json:"auth_mode"`
+	AllowedTools     []string `json:"allowed_tools"`
+	AgentIDs         []string `json:"agent_ids"`
+	Enabled          bool     `json:"enabled"`
+	CredentialReady  bool     `json:"credential_ready"`
+	CredentialSource string   `json:"credential_source"`
+	// CredentialOptional reports that the connector may be enabled without a
+	// workspace credential because groups and people can bring their own
+	// (context capabilities). Until one does, it is not mounted.
+	CredentialOptional   bool   `json:"credential_optional"`
+	CredentialCiphertext []byte `json:"-"`
+	// Official app (catalog) connectors. CatalogSlug is "" for custom
+	// connectors; allowed_tools of a catalog connector is server-managed
+	// (pinnedCatalogTools over DiscoveredTools and WriteEnabled).
+	CatalogSlug         string                    `json:"catalog_slug"`
+	WriteEnabled        bool                      `json:"write_enabled"`
+	DiscoveredToolCount int                       `json:"discovered_tool_count"`
+	CredentialAccount   string                    `json:"credential_account"`
+	DiscoveredTools     []discoveredConnectorTool `json:"-"`
+
+	// Task-scoped resolution (authorizedTaskConnectors). Never serialized and
+	// never logged: resolvedBearer and resolvedOAuth are upstream secrets.
+	bindingLayer    string
+	credentialLayer string
+	resolvedBearer  string
+	resolvedOAuth   *contextcap.OAuthToken
+	bearerResolved  bool
+	// credentialKey locates a scene or person credential for OAuth refresh.
+	credentialKey contextcap.CredentialBinding
 }
 
-type internalConnector struct {
-	ID                   string   `json:"id"`
-	WorkspaceID          string   `json:"workspace_id"`
-	Name                 string   `json:"name"`
-	UpstreamURL          string   `json:"upstream_url"`
-	CredentialRef        string   `json:"credential_ref"`
-	AuthMode             string   `json:"auth_mode"`
-	AllowedTools         []string `json:"allowed_tools"`
-	AgentIDs             []string `json:"agent_ids"`
-	Enabled              bool     `json:"enabled"`
-	CredentialReady      bool     `json:"credential_ready"`
-	CredentialSource     string   `json:"credential_source"`
-	CredentialCiphertext []byte   `json:"-"`
+// setResolvedCredential pins the credential the relay sends upstream for this
+// task, so connectorBearer does not fall back to the workspace credential.
+func (c *internalConnector) setResolvedCredential(bearer, layer string) {
+	c.setResolvedSecret(contextcap.Secret{Bearer: bearer}, layer, contextcap.CredentialBinding{})
+}
+
+// setResolvedSecret pins a credential together with its OAuth part and, for
+// a scene or person credential, the row that holds it (OAuth refresh
+// rewrites that row).
+func (c *internalConnector) setResolvedSecret(secret contextcap.Secret, layer string, key contextcap.CredentialBinding) {
+	c.resolvedBearer = secret.Bearer
+	c.resolvedOAuth = secret.OAuth
+	c.credentialLayer = layer
+	c.credentialKey = key
+	c.bearerResolved = true
 }
 
 type connectorInput struct {
@@ -46,6 +81,44 @@ type connectorInput struct {
 	AllowedTools []string `json:"allowed_tools"`
 	AgentIDs     []string `json:"agent_ids"`
 	Enabled      bool     `json:"enabled"`
+	// WriteEnabled toggles write tools of an official app connector on
+	// update (nil = unchanged). Rejected for custom connectors.
+	WriteEnabled *bool `json:"write_enabled,omitempty"`
+
+	// catalogSlug is set by the server from the stored row, never decoded.
+	// A catalog connector must use exactly its catalog MCP URL, may use
+	// auth_mode 'oauth' and may have no tools until an account is connected.
+	catalogSlug string
+}
+
+// internalConnectorSelect is the internal_connector column list read by
+// scanInternalConnector, qualified by the alias c.
+const internalConnectorSelect = `c.id::text, c.workspace_id::text, c.name, c.upstream_url, c.credential_ref, c.auth_mode, c.allowed_tools, c.enabled,
+	c.credential_ciphertext, c.catalog_slug, c.write_enabled, c.discovered_tools`
+
+// scanInternalConnector scans internalConnectorSelect followed by extra
+// destinations.
+func scanInternalConnector(row pgx.Row, extra ...any) (internalConnector, error) {
+	var c internalConnector
+	var allowed, discovered []byte
+	dest := append([]any{&c.ID, &c.WorkspaceID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &c.AuthMode, &allowed, &c.Enabled,
+		&c.CredentialCiphertext, &c.CatalogSlug, &c.WriteEnabled, &discovered}, extra...)
+	if err := row.Scan(dest...); err != nil {
+		return c, err
+	}
+	if err := json.Unmarshal(allowed, &c.AllowedTools); err != nil {
+		return c, err
+	}
+	if c.AllowedTools == nil {
+		c.AllowedTools = []string{}
+	}
+	if len(discovered) > 0 && json.Unmarshal(discovered, &c.DiscoveredTools) != nil {
+		// A malformed discovery snapshot only hides discovered tools; the
+		// pinned allowed_tools stay authoritative.
+		c.DiscoveredTools = nil
+	}
+	c.DiscoveredToolCount = len(c.DiscoveredTools)
+	return c, nil
 }
 
 func connectorCredentialRef(id string) string {
@@ -53,17 +126,43 @@ func connectorCredentialRef(id string) string {
 }
 
 func validateConnectorInput(in connectorInput) error {
-	if in.AuthMode != "" && in.AuthMode != "none" && in.AuthMode != "bearer" {
+	if in.AuthMode != "" && in.AuthMode != "none" && in.AuthMode != "bearer" && (in.AuthMode != "oauth" || in.catalogSlug == "") {
 		return errors.New("invalid connector auth mode")
 	}
 	if len(strings.TrimSpace(in.Name)) < 1 || len(in.Name) > 120 {
 		return errors.New("name must contain 1-120 characters")
 	}
-	if err := validateConnectorURL(in.UpstreamURL); err != nil {
+	if in.catalogSlug != "" {
+		// An official app connector is pinned to its catalog template URL
+		// and has no tools until an account is connected and discovered.
+		app, ok := catalogApp(in.catalogSlug)
+		if !ok || in.UpstreamURL != app.MCPURL {
+			return errors.New("official app connector URL does not match the catalog")
+		}
+		if len(in.AllowedTools) > maxPinnedConnectorTools {
+			return errors.New("allowed_tools must contain at most 64 tools")
+		}
+	} else if err := validateConnectorURL(in.UpstreamURL); err != nil {
 		return err
 	}
-	if in.Enabled && len(in.AgentIDs) == 0 {
-		return errors.New("enabled connector requires an Agent grant")
+	// An enabled connector may have no global Agent grant: it can be offered
+	// to agents' scene and personal layers only (context capabilities).
+	if in.catalogSlug != "" {
+		// Official apps keep their pinned tools (read-only unless writes are
+		// enabled), so the pinned names must stay unambiguous.
+		seen := map[string]bool{}
+		presentedSeen := map[string]bool{}
+		for _, tool := range in.AllowedTools {
+			if len(tool) == 0 || len(tool) > 128 || strings.ContainsAny(tool, ",\r\n") || seen[tool] {
+				return errors.New("invalid or duplicate allowed tool")
+			}
+			seen[tool] = true
+			presented := connectorPresentedToolName(tool)
+			if presentedSeen[presented] {
+				return errors.New("allowed tools collide after MCP name shortening")
+			}
+			presentedSeen[presented] = true
+		}
 	}
 	agentSeen := map[string]bool{}
 	for _, id := range in.AgentIDs {
@@ -79,6 +178,13 @@ func validateConnectorInput(in connectorInput) error {
 }
 
 func validateConnectorURL(raw string) error {
+	// An official app's exact template URL bypasses the deployment host
+	// allowlist. Only the server writes it (createCatalogConnector); the
+	// custom connector create path refuses it, and upstream_url never
+	// changes after creation.
+	if connectorURLIsCatalogTemplate(raw) {
+		return nil
+	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || (u.Port() != "" && u.Port() != "443") || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
 		return errors.New("upstream_url must be a fixed HTTPS URL")
@@ -98,74 +204,51 @@ func validateConnectorURL(raw string) error {
 }
 
 func (h *Handler) ListInternalConnectors(w http.ResponseWriter, r *http.Request) {
-	if !h.internalConnectorsEnabled(r.Context()) {
-		writeJSON(w, http.StatusOK, []internalConnector{})
-		return
-	}
 	ws := chi.URLParam(r, "id")
-	rows, err := h.DB.Query(r.Context(), `SELECT id::text, workspace_id::text, name, upstream_url, credential_ref, auth_mode, allowed_tools, enabled, credential_ciphertext
-		FROM internal_connector WHERE workspace_id = $1::uuid ORDER BY updated_at DESC`, ws)
+	items, err := h.queryInternalConnectors(r.Context(), `SELECT `+internalConnectorSelect+`
+		FROM internal_connector c WHERE c.workspace_id = $1::uuid ORDER BY c.updated_at DESC`, ws)
 	if err != nil {
 		writeError(w, 500, "failed to list connectors")
 		return
 	}
-	defer rows.Close()
-	items := []internalConnector{}
-	for rows.Next() {
-		var c internalConnector
-		var raw []byte
-		if rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &c.AuthMode, &raw, &c.Enabled, &c.CredentialCiphertext) != nil {
-			writeError(w, 500, "failed to scan connectors")
-			return
-		}
-		if err := json.Unmarshal(raw, &c.AllowedTools); err != nil {
-			writeError(w, 500, "invalid connector tool configuration")
-			return
-		}
-		c.CredentialReady = h.connectorCredentialReady(c)
-		c.CredentialSource = h.connectorCredentialSource(c)
-		c.AgentIDs = []string{}
-		agentRows, e := h.DB.Query(r.Context(), `SELECT agent_id::text FROM internal_connector_agent WHERE connector_id=$1::uuid AND workspace_id=$2::uuid`, c.ID, ws)
-		if e != nil {
+	for i := range items {
+		if err := h.decorateInternalConnectorView(r.Context(), &items[i]); err != nil {
 			writeError(w, 500, "failed to list connector grants")
 			return
 		}
-		for agentRows.Next() {
-			var id string
-			if err := agentRows.Scan(&id); err != nil {
-				agentRows.Close()
-				writeError(w, 500, "failed to scan connector grants")
-				return
-			}
-			c.AgentIDs = append(c.AgentIDs, id)
-		}
-		if err := agentRows.Err(); err != nil {
-			agentRows.Close()
-			writeError(w, 500, "failed to list connector grants")
-			return
-		}
-		agentRows.Close()
-		items = append(items, c)
-	}
-	if rows.Err() != nil {
-		writeError(w, 500, "failed to list connectors")
-		return
 	}
 	writeJSON(w, 200, items)
 }
 
-func (h *Handler) CreateInternalConnector(w http.ResponseWriter, r *http.Request) {
-	if !h.internalConnectorsEnabled(r.Context()) {
-		http.NotFound(w, r)
-		return
+// decorateInternalConnectorView fills the admin-facing derived fields of one
+// connector: credential readiness, source and account hint, and its global
+// agent grants. It never exposes credential material.
+func (h *Handler) decorateInternalConnectorView(ctx context.Context, c *internalConnector) error {
+	c.CredentialReady = h.connectorCredentialReady(*c)
+	c.CredentialSource = h.connectorCredentialSource(*c)
+	c.CredentialOptional = c.AuthMode == "bearer" || c.AuthMode == "oauth"
+	c.CredentialAccount = h.connectorCredentialAccount(*c)
+	c.DiscoveredToolCount = len(c.DiscoveredTools)
+	c.AgentIDs = []string{}
+	rows, err := h.DB.Query(ctx, `SELECT agent_id::text FROM internal_connector_agent WHERE connector_id=$1::uuid AND workspace_id=$2::uuid ORDER BY agent_id`, c.ID, c.WorkspaceID)
+	if err != nil {
+		return err
 	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		c.AgentIDs = append(c.AgentIDs, id)
+	}
+	return rows.Err()
+}
+
+func (h *Handler) CreateInternalConnector(w http.ResponseWriter, r *http.Request) {
 	h.saveInternalConnector(w, r, true)
 }
 func (h *Handler) UpdateInternalConnector(w http.ResponseWriter, r *http.Request) {
-	if !h.internalConnectorsEnabled(r.Context()) {
-		http.NotFound(w, r)
-		return
-	}
 	h.saveInternalConnector(w, r, false)
 }
 
@@ -209,6 +292,28 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		id = uuidToString(idUUID)
+		slug, err := h.internalConnectorCatalogSlug(r.Context(), ws, id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 404, "connector not found")
+			return
+		}
+		if err != nil {
+			writeError(w, 500, "failed to load connector")
+			return
+		}
+		in.catalogSlug = slug
+		if slug == "" && in.WriteEnabled != nil {
+			writeError(w, 400, "write_enabled applies to official app connectors only")
+			return
+		}
+		if slug != "" {
+			// Server-managed: recomputed from the discovered tools below.
+			in.AllowedTools = nil
+		}
+	}
+	if create && in.WriteEnabled != nil {
+		writeError(w, 400, "write_enabled applies to official app connectors only")
+		return
 	}
 	if err := validateConnectorInput(in); err != nil {
 		writeError(w, 400, err.Error())
@@ -238,8 +343,12 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 	} else {
 		var existingURL string
 		var existingMode string
-		var ciphertext []byte
-		e := tx.QueryRow(r.Context(), `SELECT upstream_url, auth_mode, credential_ciphertext FROM internal_connector WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`, id, ws).Scan(&existingURL, &existingMode, &ciphertext)
+		var existingSlug string
+		var existingWrite bool
+		var ciphertext, discoveredRaw []byte
+		e := tx.QueryRow(r.Context(), `SELECT upstream_url, auth_mode, credential_ciphertext, catalog_slug, write_enabled, discovered_tools
+			FROM internal_connector WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`, id, ws).
+			Scan(&existingURL, &existingMode, &ciphertext, &existingSlug, &existingWrite, &discoveredRaw)
 		if errors.Is(e, pgx.ErrNoRows) {
 			writeError(w, 404, "connector not found")
 			return
@@ -256,12 +365,24 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 			writeError(w, 400, "connector auth mode cannot be changed after creation")
 			return
 		}
-		if in.Enabled && !h.connectorCredentialReady(internalConnector{ID: id, WorkspaceID: ws, CredentialRef: connectorCredentialRef(id), AuthMode: existingMode, CredentialCiphertext: ciphertext}) {
-			writeError(w, 400, "connector credential is not configured")
+		if existingSlug != in.catalogSlug {
+			writeError(w, 409, "connector changed concurrently; reload and try again")
 			return
 		}
-		tag, e := tx.Exec(r.Context(), `UPDATE internal_connector SET name=$3,allowed_tools=$4,enabled=$5,updated_at=now()
-			WHERE id=$1::uuid AND workspace_id=$2::uuid`, id, ws, strings.TrimSpace(in.Name), raw, in.Enabled)
+		writeEnabled := existingWrite
+		if existingSlug != "" {
+			if in.WriteEnabled != nil {
+				writeEnabled = *in.WriteEnabled
+			}
+			raw, _ = json.Marshal(pinnedCatalogTools(decodeDiscoveredTools(discoveredRaw), writeEnabled))
+		}
+		// A Bearer connector may be enabled without a shared workspace
+		// credential: groups and people then bring their own token
+		// (docs/context-capabilities.md), and until a layer supplies one the
+		// connector is not mounted (authorizedConnectors and
+		// authorizedTaskConnectors both require a usable credential).
+		tag, e := tx.Exec(r.Context(), `UPDATE internal_connector SET name=$3,allowed_tools=$4,enabled=$5,write_enabled=$6,updated_at=now()
+			WHERE id=$1::uuid AND workspace_id=$2::uuid`, id, ws, strings.TrimSpace(in.Name), raw, in.Enabled, writeEnabled)
 		err = e
 		if err == nil && tag.RowsAffected() != 1 {
 			err = errors.New("connector update affected no rows")
@@ -288,48 +409,37 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 	writeJSON(w, 200, map[string]string{"id": id, "credential_ref": connectorCredentialRef(id)})
 }
 
+// authorizedConnectors returns the agent's globally granted, enabled
+// connectors whose workspace credential is ready. It knows nothing about a
+// task's scene or trigger person; task execution paths (claim injection and
+// the relay) use authorizedTaskConnectors instead.
 func (h *Handler) authorizedConnectors(ctx context.Context, workspaceID, agentID string) ([]internalConnector, error) {
-	if !h.internalConnectorsEnabled(ctx) {
-		return nil, nil
-	}
-	rows, err := h.DB.Query(ctx, `SELECT c.id::text,c.workspace_id::text,c.name,c.upstream_url,c.credential_ref,c.auth_mode,c.allowed_tools,c.enabled,c.credential_ciphertext
-		FROM internal_connector c JOIN internal_connector_agent g ON g.connector_id=c.id AND g.workspace_id=c.workspace_id
-		WHERE c.workspace_id=$1::uuid AND g.agent_id=$2::uuid AND c.enabled`, workspaceID, agentID)
+	granted, err := h.grantedConnectors(ctx, workspaceID, agentID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []internalConnector{}
-	for rows.Next() {
-		var c internalConnector
-		var raw []byte
-		if err = rows.Scan(&c.ID, &c.WorkspaceID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &c.AuthMode, &raw, &c.Enabled, &c.CredentialCiphertext); err != nil {
-			return nil, err
-		}
-		if err = json.Unmarshal(raw, &c.AllowedTools); err != nil {
-			return nil, err
-		}
-		if h.connectorCredentialReady(c) {
+	for _, c := range granted {
+		// Official app connectors count only once their tools are known;
+		// custom connectors expose the live upstream list, so no snapshot gate.
+		if (c.CatalogSlug == "" || len(c.AllowedTools) > 0) && h.connectorCredentialReady(c) {
 			out = append(out, c)
 		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ListAvailableInternalConnectors exposes only usable connector/Agent pairs to
 // members. Upstream addresses and credential references remain admin-only.
+// catalog_slug names the official app ("" for Aone FaaS connectors).
 func (h *Handler) ListAvailableInternalConnectors(w http.ResponseWriter, r *http.Request) {
 	items := []map[string]any{}
-	if !h.internalConnectorsEnabled(r.Context()) {
-		writeJSON(w, http.StatusOK, items)
-		return
-	}
 	workspaceID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "workspace_id")
 	if !ok {
 		return
 	}
 	ws := uuidToString(workspaceID)
-	rows, err := h.DB.Query(r.Context(), `SELECT c.id::text,c.name,c.upstream_url,c.credential_ref,c.auth_mode,c.allowed_tools,g.agent_id::text,c.credential_ciphertext
+	rows, err := h.DB.Query(r.Context(), `SELECT `+internalConnectorSelect+`, g.agent_id::text
 		FROM internal_connector c JOIN internal_connector_agent g ON g.connector_id=c.id AND g.workspace_id=c.workspace_id
 		WHERE c.workspace_id=$1::uuid AND c.enabled ORDER BY c.name,g.agent_id`, ws)
 	if err != nil {
@@ -340,15 +450,13 @@ func (h *Handler) ListAvailableInternalConnectors(w http.ResponseWriter, r *http
 	userID := requestUserID(r)
 	actorType, actorID := h.resolveActor(r, userID, ws)
 	for rows.Next() {
-		var c internalConnector
 		var agentID string
-		var raw []byte
-		if err := rows.Scan(&c.ID, &c.Name, &c.UpstreamURL, &c.CredentialRef, &c.AuthMode, &raw, &agentID, &c.CredentialCiphertext); err != nil {
+		c, err := scanInternalConnector(rows, &agentID)
+		if err != nil {
 			writeError(w, 500, "connector list unavailable")
 			return
 		}
-		c.WorkspaceID = ws
-		if json.Unmarshal(raw, &c.AllowedTools) != nil || !h.connectorCredentialReady(c) {
+		if !h.connectorCredentialReady(c) {
 			continue
 		}
 		if validateConnectorInput(connectorInput{Name: c.Name, UpstreamURL: c.UpstreamURL, AllowedTools: c.AllowedTools, AgentIDs: []string{agentID}, Enabled: true}) != nil {
@@ -365,7 +473,8 @@ func (h *Handler) ListAvailableInternalConnectors(w http.ResponseWriter, r *http
 		if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, ws) || !h.canInvokeAgent(r.Context(), agent, actorType, actorID, userID, ws) {
 			continue
 		}
-		items = append(items, map[string]any{"id": c.ID, "name": c.Name, "server_name": connectorServerName(c.ID), "agent_id": agentID, "agent_name": agent.Name, "tools": c.AllowedTools})
+		items = append(items, map[string]any{"id": c.ID, "name": c.Name, "server_name": connectorServerName(c.ID), "agent_id": agentID, "agent_name": agent.Name, "tools": c.AllowedTools,
+			"catalog_slug": c.CatalogSlug})
 	}
 	if rows.Err() != nil {
 		writeError(w, 500, "connector list unavailable")

@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-26.1`。装配版本：`43`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-10-01.1`。装配版本：`44`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -124,6 +124,8 @@ report_status.state_refs仍只能引用Host本轮实际提供的rN状态证据�
 
 审核请求的分段（`finish_check.go`）：finish_check 请求固定为 system（按提案形态选出的策略模块）、Agent 配置段（岗位说明或短合同、技能目录、persona、reply_tone、配置范围说明）、本轮段（收信身份与账号、合同读取元数据、会话、@、历史状态与水位、场域记忆、read_evidence、交付保证、task_finished 字段）、提案段（窗口原文、candidate.actions、quote_options）四条消息。配置段只取决于 Agent，同一 Agent 连续两轮字节相同，模型侧前缀缓存可以命中 system 加配置段；之前所有字段放在一个 JSON 里按键名排序，`conversation_id`、`history_before` 排在 `job_policy` 之前，每轮前缀在几百 token 处就断掉（正式 trace `39427c330a2b4182a5b10fe44503355f` 的审核只命中共享的 core 模块 1152 token）。内容和字段一个不少，只是分段；审核缓存 key 仍取四段整体哈希。
 
+能力说明附配置链接（`config_link.go`，COORD.F04，对照 `f04_capability_answer_config_link`）：钉钉入站轮（数字员工或机器人、带服务端写入的派发上下文、非 A2UI 选择卡、非 task_finished）的计划含 `describe_capabilities` 时，Host 在 finish_check 通过之后、`SavePlan` 之前执行一次 Host 效果 `context_config_link`（2 秒超时），把本会话的能力配置链接作为最后一条 `describe_capabilities` 回复的末行：群聊为本群场域链接（30 分钟内可复用），单聊为个人链接（15 分钟、单次，兑换时同时授权该单聊场域）。场域与发信人只从派发上下文按执行器任务同一规则推出（`taskContextScope`：A2A、手动重跑、组织不属于该 Agent、未知会话类型、多人合窗都没有链接），铸造复用执行器 `create_context_config_link` 的同一函数（`handler/context_config_link_mint.go`），TTL、单次使用和 `context capabilities: configuration link issued` 审计行不变，审计行另记 `issuer=coordinator` 与 `coord_trace_id`，`source_task_id` 为空。末行是 Host 固定文案（语言随原文 zh/en/ja/ko），URL 放在最后；模型只从 finish schema 的 reply 说明得知「Host 会附链接，不写、不提、不承诺链接」（仅在本轮确实可能附链接时出现），审查只看模型原话。链接随 checkpoint 保存（只在服务端 job 行内，用于重投），重投恢复同一回复、不再铸造；钉钉回复是链接唯一的送达面，Coordinator 会话记录（`chat_message.content`，管理者与可见成员能读，也是下一轮的历史）在 `persistCoordinatorJobChat` 写入前把配置链接替换为 `[configuration link]`（`inboundcoord.RedactConfigLinks`，按 `/dingtalk/configure?link=` 及其百分号编码形式识别，重投恢复的计划同样处理）；渠道引擎路径（`engine/router.go` `persistCoordinatorAssistant` 与 `coordinator_plan.go` 存进任务上下文的计划）同样只存占位符（`Decision.WithoutConfigLinks`），所以渠道引擎重投恢复的计划回复的是占位符而不是链接；`IssueDescription` 写给执行器的接待文案、之后读回的钉钉历史行（含引用消息，`dws_history.go`）都在进入 Issue、模型与 trace 之前替换为占位符；执行器 `create_context_config_link` 的结果与回复留在该任务自己的记录里（任务消息、最终输出），因为送达、失败兜底回复和 task_finished 的「已送达」比对都要读回原文。首轮影子请求（`first_round_shadow.go`）与认领请求在 `prepareFirstRound` 里用同一判断决定本轮是否附链接，finish schema 两边一致；Coordinator 自己的日志与 Langfuse 输出也把该 URL 替换为 `[configuration link]`，只记 `config_link_status / config_link_scope / config_link_elapsed_ms` 与 SLS 事件 `inbound_coordinator_config_link`。没有签发器、没有可信场域、签发报错/超时/panic、结果缺 URL/范围/有效期或个人链接非单次时都不附链接，回复逐字不变，不增加模型调用；Web、task_finished、A2UI 选择卡和未启用 Coordinator 的 Agent 不变。模型规则正文不改：DM 主循环 system 已在 9500 门槛边缘（9494），该约束由工具合同与 Host 承载。验证见 COORD.F04 的 `context_config_link_2026_09_30`；模型回放与预发真实送达未做。
+
 确定性停止的兜底（`loop_stop_fallback.go`）：`rounds_exhausted`、`repeated_invalid_plan`、`review_deadlock` 三种停止只取决于窗口和规则，job worker 重投 6 次只会原样重演，所以 Host 不再返回 deferred：被 @ 或单聊的入站轮以固定文案回复「这条我没接住，麻烦再说一遍或者换个说法，我再看。」，未被 @ 的轮 silence；两者都不带任何工作项、不经 finish_check（不是模型提案），按 `window-plan-v1` 存 checkpoint（重投的 job 直接恢复该裁决，不再推理；checkpoint 存不下则仍 deferred），没有回复通道的入口对兜底返回 503 而不落沙箱，`Decision.Reason` 保留停止原因，Langfuse 根 metadata 记 `loop_stop_fallback=reply|silence`，SLS `inbound_coordinator_decided` 带 `loop_stop_reason`、`loop_stop_fallback`。模型/审核/存储错误（`coordinator_undecided`）和 `task_finished` 循环仍 deferred，由 worker 重试。触发证据 `342b8b1cfe8040a29f79e4a613a59ecf`：真人在群里 @ 后 6 次 deferred、48 次 generation，当天没有任何出站。
 
 模型只能调用 `finish({actions:[...]})`。旧顶层 `action=reply|issue|silence`、`text`、`issue_id`和`items`不接受。入站动作如下；所有动作以 `source_refs`关联当前 `uN` 原文，回复内聚到动作，不存在通用回复动作。
@@ -135,7 +137,7 @@ report_status.state_refs仍只能引用Host本轮实际提供的rN状态证据�
 | `clarify` | 真正必要缺口：missing_fields从intent/recipient/message_body/scope/timing/authorization/work_target/source_material选择，reply只问具体缺口 |
 | `report_status` | 已读工作进度：state_refs与忠实的reply，不重做结果 |
 | `acknowledge` | ack_kind=greeting/thanks/correction/receipt；reply仅完成对应协调表达 |
-| `describe_capabilities` | 根据已加载目录说明能力，不实际做业务分析 |
+| `describe_capabilities` | 根据已加载目录说明能力，不实际做业务分析；钉钉入站轮审查通过后Host在末尾附本会话能力配置链接（见「能力说明附配置链接」） |
 | `report_memory` | 引用当前memory_revision盘点已提交稳定记忆，不假称待写已成功 |
 | `decline` | reason_code=scope/authorization/privacy；constraint_quote逐字引用适用当前限制、有效合同、可见persona/reply_tone限制或Host验证的边界摘录，reply仅解释该边界 |
 | `ignore` | reason说明为何没有待答复或待执行请求；直接web请求不能用其结束 |

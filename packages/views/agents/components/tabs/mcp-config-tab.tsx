@@ -12,9 +12,7 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
-import { ApiError, api } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { ApiError } from "@multica/core/api";
 import {
   runtimeCapabilitiesOptions,
   runtimeDisplayLabel,
@@ -31,6 +29,7 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import { Switch } from "@multica/ui/components/ui/switch";
 import { toast } from "sonner";
 import { useT } from "../../../i18n";
 import {
@@ -48,27 +47,23 @@ export function McpConfigTab({
   onSave,
   onDirtyChange,
 	canEdit = true,
+  compact = false,
 }: {
   agent: Agent;
   runtime: AgentRuntime | null;
   onSave: (updates: { mcp_config: unknown | null }) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
 	canEdit?: boolean;
+  /** Drops the explanatory paragraphs (the connector tab); behavior is the
+   * same. */
+  compact?: boolean;
 }) {
   const { t } = useT("agents");
-  const workspaceId = useWorkspaceId();
-  const paths = useWorkspacePaths();
   const runtimeId =
     runtime?.runtime_mode === "local" && runtime.status === "online"
       ? runtime.id
       : null;
   const runtimeQuery = useQuery(runtimeCapabilitiesOptions(runtimeId));
-  const assignedConnectorQuery = useQuery({
-    queryKey: ["workspaces", workspaceId, "internal-connectors", "available"],
-    queryFn: () => api.listAvailableInternalConnectors(workspaceId),
-    enabled: !!workspaceId,
-  });
-  const assignedConnectors = assignedConnectorQuery.data?.filter((connector) => connector.agentId === agent.id) ?? [];
   const redacted = agent.mcp_config_redacted === true;
   const managedServers = useMemo(
     () => listManagedMcpServers(agent.mcp_config),
@@ -146,10 +141,12 @@ export function McpConfigTab({
   };
 
   return (
-    <div className="space-y-8">
-      <p className="max-w-2xl break-words text-pretty text-body leading-6 text-muted-foreground">
-        {t(($) => $.tab_body.mcp_config.intro)}
-      </p>
+    <div className={compact ? "space-y-6" : "space-y-8"}>
+      {compact ? null : (
+        <p className="max-w-2xl break-words text-pretty text-body leading-6 text-muted-foreground">
+          {t(($) => $.tab_body.mcp_config.intro)}
+        </p>
+      )}
 
       <section className="space-y-3">
         <div className="flex items-start justify-between gap-4">
@@ -157,9 +154,11 @@ export function McpConfigTab({
             <h3 className="text-body font-medium">
               {t(($) => $.tab_body.mcp_config.managed_title)}
             </h3>
-            <p className="mt-1 max-w-2xl text-caption leading-5 text-muted-foreground">
-              {t(($) => $.tab_body.mcp_config.managed_hint)}
-            </p>
+            {compact ? null : (
+              <p className="mt-1 max-w-2xl text-caption leading-5 text-muted-foreground">
+                {t(($) => $.tab_body.mcp_config.managed_hint)}
+              </p>
+            )}
           </div>
           {!redacted && (
             <Button size="sm" variant="outline" onClick={openAddDialog}>
@@ -193,42 +192,9 @@ export function McpConfigTab({
             editLabel={t(($) => $.tab_body.mcp_config.edit_aria)}
             deleteLabel={t(($) => $.tab_body.mcp_config.delete_aria)}
           />
-        ) : assignedConnectors.length === 0 && !assignedConnectorQuery.isLoading ? (
-          <McpNotice text={t(($) => $.tab_body.mcp_config.managed_empty)} />
-        ) : null}
-
-      <div className="space-y-3 border-t border-border pt-4">
-        <div>
-          <h3 className="text-body font-medium">{t(($) => $.tab_body.mcp_config.workspace_connectors_title)}</h3>
-          <p className="mt-1 max-w-2xl text-caption leading-5 text-muted-foreground">
-            {t(($) => $.tab_body.mcp_config.workspace_connectors_hint)}
-          </p>
-        </div>
-        {assignedConnectorQuery.isLoading ? (
-          <McpNotice loading text={t(($) => $.tab_body.mcp_config.runtime_discovering)} />
-        ) : assignedConnectorQuery.isError ? (
-          <McpNotice text={t(($) => $.tab_body.mcp_config.workspace_connectors_failed)} />
-        ) : assignedConnectors.length === 0 ? (
-          <McpNotice text={t(($) => $.tab_body.mcp_config.workspace_connectors_empty)} />
         ) : (
-          <div className="space-y-2">
-            {assignedConnectors.map((connector) => (
-              <div key={connector.id} className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3">
-                <div>
-                  <p className="text-body font-medium">{connector.name}</p>
-                  <p className="mt-1 text-caption text-muted-foreground">
-                    {t(($) => $.tab_body.mcp_config.workspace_connector_tools, { count: connector.tools.length })}
-                  </p>
-                </div>
-                <Badge variant="secondary">{t(($) => $.tab_body.mcp_config.workspace_connector_assigned)}</Badge>
-              </div>
-            ))}
-          </div>
+          <McpNotice text={t(($) => $.tab_body.mcp_config.managed_empty)} />
         )}
-        <a className="inline-block text-caption font-medium text-primary underline-offset-4 hover:underline" href={paths.internalConnectors()}>
-          {t(($) => $.tab_body.mcp_config.workspace_connectors_open)}
-        </a>
-      </div>
       </section>
 
       <section className="space-y-3">
@@ -237,11 +203,13 @@ export function McpConfigTab({
             <h3 className="text-body font-medium">
               {t(($) => $.tab_body.mcp_config.runtime_title)}
             </h3>
-            <p className="mt-1 max-w-2xl text-caption leading-5 text-muted-foreground">
-              {t(($) => $.tab_body.mcp_config.runtime_hint, {
-                runtime: runtime ? runtimeDisplayLabel(runtime) : "Runtime",
-              })}
-            </p>
+            {compact ? null : (
+              <p className="mt-1 max-w-2xl text-caption leading-5 text-muted-foreground">
+                {t(($) => $.tab_body.mcp_config.runtime_hint, {
+                  runtime: runtime ? runtimeDisplayLabel(runtime) : "Runtime",
+                })}
+              </p>
+            )}
           </div>
           {runtimeId && (
             <Button
@@ -301,7 +269,7 @@ export function McpConfigTab({
         )}
       </section>
 
-	  <div className="border-t pt-5"><RunnerTab agent={agent} canBind={canEdit} mode="mcp" /></div>
+	  <div className="border-t pt-5"><RunnerTab agent={agent} canBind={canEdit} mode="mcp" compact={compact} /></div>
 
       {!redacted && (
 		<McpServerDialog
@@ -360,7 +328,7 @@ type McpServerView = {
   overridden?: boolean;
 };
 
-function McpServerList({
+export function McpServerList({
   servers,
   disabledLabel,
   overriddenLabel,
@@ -368,6 +336,9 @@ function McpServerList({
   onDelete,
   editLabel,
   deleteLabel,
+  onToggle,
+  toggleLabel,
+  togglePending = false,
 }: {
   servers: McpServerView[];
   disabledLabel: string;
@@ -376,6 +347,10 @@ function McpServerList({
   onDelete?: (server: ManagedMcpServer) => void;
   editLabel?: string;
   deleteLabel?: string;
+  /** Switches a server on or off; omitted → no switch. */
+  onToggle?: (server: ManagedMcpServer, enabled: boolean) => void;
+  toggleLabel?: (name: string) => string;
+  togglePending?: boolean;
 }) {
   return (
     <ul className="divide-y rounded-lg border bg-surface-raised/40">
@@ -393,8 +368,17 @@ function McpServerList({
           </div>
           {server.overridden && overriddenLabel ? (
             <Badge variant="outline">{overriddenLabel}</Badge>
-          ) : !server.enabled ? (
+          ) : !server.enabled && !onToggle ? (
             <Badge variant="outline">{disabledLabel}</Badge>
+          ) : null}
+          {onToggle ? (
+            <Switch
+              size="sm"
+              checked={server.enabled}
+              disabled={togglePending}
+              aria-label={toggleLabel ? toggleLabel(server.name) : server.name}
+              onCheckedChange={(enabled) => onToggle(server as ManagedMcpServer, enabled)}
+            />
           ) : null}
           {onEdit && onDelete && (
             <div className="flex items-center gap-1">

@@ -1,4 +1,67 @@
 import { InternalConnectorListSchema, AvailableInternalConnectorListSchema, SavedInternalConnectorSchema, InternalConnectorTestSchema, type InternalConnector, type AvailableInternalConnector, type InternalConnectorInput, type InternalConnectorTest } from "./internal-connector-schema";
+import {
+  AddedCatalogConnectorSchema,
+  ConnectorAuthorizeUrlSchema,
+  InternalConnectorToolsRefreshSchema,
+  type InternalConnectorToolsRefresh,
+} from "./internal-connector-schema";
+import {
+  AgentContextCapabilitiesSchema,
+  AgentScenesPageSchema,
+  AgentTenantPersonsSchema,
+  AgentTenantResponseSchema,
+  AgentTenantsListSchema,
+  ContextNodeDetailSchema,
+  ContextNodeGrantsRevokedSchema,
+  ContextNodeMcpConfigResponseSchema,
+  ContextPromptComponentsResponseSchema,
+  EMPTY_AGENT_SCENES_PAGE,
+  EMPTY_AGENT_TENANTS,
+  ConnectedAppDetailSchema,
+  ConnectedAppsListSchema,
+  ContextCapabilityBindingResponseSchema,
+  ContextConfigAgentDetailSchema,
+  ContextConfigAgentListSchema,
+  ContextConfigRedeemSchema,
+  ContextConfigSceneDetailSchema,
+  ContextConfigSceneResolveSchema,
+  ContextConnectorCredentialResponseSchema,
+  DingTalkJsapiConfigSchema,
+  EMPTY_CONTEXT_CONFIG_REDEEM,
+} from "./context-capability-schema";
+import type {
+  AgentContextCapabilities,
+  AgentScenesPage,
+  AgentTenant,
+  AgentTenantPerson,
+  AgentTenantsList,
+  ConnectedAppDetail,
+  ConnectedAppsList,
+  ContextCapabilityBinding,
+  ContextConfigAgentDetail,
+  ContextConfigAgentSummary,
+  ContextConfigRedeemResult,
+  ContextConfigSceneDetail,
+  ContextConfigSceneGrant,
+  ContextConfigScopeInput,
+  ContextConnectorCredential,
+  ContextNodeDetail,
+  ContextNodeRef,
+  ContextPromptComponent,
+  ContextPromptComponentInput,
+  CreateAgentTenantInput,
+  DeleteContextConnectorCredentialInput,
+  DingTalkJsapiConfig,
+  ListAgentScenesParams,
+  ResolveContextConfigSceneInput,
+  SetAgentContextCapabilityOffersInput,
+  SetContextCapabilityBindingInput,
+  SetContextConnectorCredentialInput,
+  SetContextNodeBindingInput,
+  SetContextNodeCredentialInput,
+  StartContextConnectorConnectionInput,
+  StartContextNodeConnectionInput,
+} from "../types/context-capability";
 import { SemanticaMCPStatusSchema, EMPTY_SEMANTICA_MCP_STATUS, type SemanticaMCPStatus } from "./semantica-mcp-schema";
 import { WorkspaceMCPConnectionsSchema, WorkspaceMCPLinkSchema, type WorkspaceMCPConnection, type CreateWorkspaceMCPConnection } from "./workspace-mcp-schema";
 import {ModelProbeSchema, GlobalModelsSchema, EMPTY_GLOBAL_MODELS, DeveloperCapabilitiesSchema, DiscoveredModelsSchema, globalModelsWire, type GlobalModels, type ModelProvider} from "./global-models-schema";
@@ -719,6 +782,34 @@ function subscriberTarget(
  */
 function workspaceHeader(slug?: string): Record<string, string> | undefined {
   return slug ? { "X-Workspace-Slug": slug } : undefined;
+}
+
+/**
+ * Blanks the workspace header for routes that are not workspace-scoped
+ * (context capability mobile configuration). Their callers are often not
+ * members of any workspace, so a stale current-workspace slug must never
+ * leak into the request.
+ */
+const NO_WORKSPACE_HEADER: Record<string, string> = { "X-Workspace-Slug": "" };
+
+/** The scope fields of a configure-page write; `org_id` only for a tenant
+ * other than the agent's own org (the server's default). */
+function contextConfigScopeBody(scope: ContextConfigScopeInput): Record<string, string> {
+  return {
+    scope_type: scope.scopeType,
+    scope_key: scope.scopeKey,
+    ...(scope.orgId ? { org_id: scope.orgId } : {}),
+  };
+}
+
+/** Prompt components as the list PUTs take them; a missing switch is on. */
+function promptComponentsBody(prompts: ContextPromptComponentInput[]) {
+  return prompts.map((prompt) => ({
+    name: prompt.name,
+    order: prompt.order,
+    text: prompt.text,
+    enabled: prompt.enabled !== false,
+  }));
 }
 
 export class ApiClient {
@@ -3053,6 +3144,20 @@ export class ApiClient {
     );
   }
 
+  /** One scene memory row by id (the scene detail's 记忆 sub-tab). A
+   * malformed response parses to a row with an empty id. */
+  async getAgentSceneMemory(agentId: string, memoryId: string): Promise<AgentSceneMemory> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}`,
+    );
+    return parseWithFallback(
+      raw,
+      AgentSceneMemorySchema,
+      EMPTY_AGENT_SCENE_MEMORY,
+      { endpoint: "GET /api/agents/{id}/scene-memory/{memoryId}" },
+    );
+  }
+
   async updateAgentSceneMemory(
     agentId: string,
     memoryId: string,
@@ -4120,10 +4225,629 @@ export class ApiClient {
     });
   }
 
+  /** Disconnects the workspace shared credential of a connector (OAuth
+   * account or pasted token). Scene and personal credentials stay. */
+  async deleteInternalConnectorCredential(workspaceId: string, id: string): Promise<void> {
+    await this.fetch<void>(
+      `/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}/credential`,
+      { method: "DELETE" },
+    );
+  }
+
+  // Official app catalog (official remote MCP servers + OAuth). Admin only,
+  // same guard as the connector library.
+
+  /** Creates (or returns the existing) workspace connector for a catalog
+   * app. Returns null when the echo is malformed; callers refetch the list. */
+  async addCatalogConnector(workspaceId: string, slug: string): Promise<InternalConnector | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/connector-catalog/${encodeURIComponent(slug)}`,
+      { method: "POST" },
+    );
+    return parseWithFallback<InternalConnector | null>(raw, AddedCatalogConnectorSchema, null, {
+      endpoint: "POST /api/workspaces/:id/connector-catalog/:slug",
+      includeReceived: false,
+    });
+  }
+
+  /** Starts the provider OAuth flow for the workspace-wide shared account.
+   * Resolves to "" when the server did not return a navigable https URL.
+   * The response also sets the cookie that binds the flow to this browser,
+   * so only a browser page that then navigates to the URL may call it. */
+  async startInternalConnectorOAuth(
+    workspaceId: string,
+    id: string,
+    returnTo?: string,
+  ): Promise<string> {
+    const body: Record<string, string> = {};
+    if (returnTo) body.return_to = returnTo;
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}/oauth/start`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+    return parseWithFallback<string>(raw, ConnectorAuthorizeUrlSchema, "", {
+      endpoint: "POST /api/workspaces/:id/internal-connectors/:connectorId/oauth/start",
+      includeReceived: false,
+    });
+  }
+
+  /** Re-discovers a catalog connector's tools with its workspace credential
+   * and re-pins them. null when the response is malformed. */
+  async refreshInternalConnectorTools(workspaceId: string, id: string): Promise<InternalConnectorToolsRefresh | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}/tools/refresh`,
+      { method: "POST" },
+    );
+    return parseWithFallback<InternalConnectorToolsRefresh | null>(raw, InternalConnectorToolsRefreshSchema, null, {
+      endpoint: "POST /api/workspaces/:id/internal-connectors/:connectorId/tools/refresh",
+    });
+  }
+
   async testInternalConnector(workspaceId: string, id: string): Promise<InternalConnectorTest> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/internal-connectors/${encodeURIComponent(id)}/test`, {method:"POST"});
     return parseWithFallback(raw, InternalConnectorTestSchema, {reachable:false,ready:false,missing_tools:[],message:"Invalid connection test response"}, {
       endpoint:"POST /api/workspaces/:id/internal-connectors/:connectorId/test",includeReceived:false,
+    });
+  }
+
+  // Context capabilities — mobile configuration (DingTalk H5). These routes
+  // are keyed by agent and authorized by the caller's scene/person grants,
+  // not by workspace membership, so no workspace header is sent.
+
+  async redeemContextConfigLink(token: string): Promise<ContextConfigRedeemResult> {
+    const raw = await this.fetch<unknown>("/api/context-capabilities/links/redeem", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+      headers: NO_WORKSPACE_HEADER,
+    });
+    return parseWithFallback(raw, ContextConfigRedeemSchema, EMPTY_CONTEXT_CONFIG_REDEEM, {
+      endpoint: "POST /api/context-capabilities/links/redeem",
+    });
+  }
+
+  async listContextConfigAgents(): Promise<ContextConfigAgentSummary[]> {
+    const raw = await this.fetch<unknown>("/api/context-capabilities/agents", {
+      headers: NO_WORKSPACE_HEADER,
+    });
+    return parseWithFallback<ContextConfigAgentSummary[]>(raw, ContextConfigAgentListSchema, [], {
+      endpoint: "GET /api/context-capabilities/agents",
+    });
+  }
+
+  /** What the caller may configure for one agent in one tenant: `orgId`,
+   * else the server's default (the agent's own org, or the tenant of the
+   * caller's newest grant). */
+  async getContextConfigAgent(agentId: string, orgId = ""): Promise<ContextConfigAgentDetail | null> {
+    const query = orgId ? `?${new URLSearchParams({ org_id: orgId }).toString()}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}${query}`,
+      { headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextConfigAgentDetail | null>(raw, ContextConfigAgentDetailSchema, null, {
+      endpoint: "GET /api/context-capabilities/agents/{agentId}",
+      includeReceived: false,
+    });
+  }
+
+  /** One scene the caller may configure. `orgId` names the scene's tenant
+   * when it is not the agent's own org. */
+  async getContextConfigScene(
+    agentId: string,
+    sceneKey: string,
+    orgId = "",
+  ): Promise<ContextConfigSceneDetail | null> {
+    const query = orgId ? `?${new URLSearchParams({ org_id: orgId }).toString()}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}${query}`,
+      { headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextConfigSceneDetail | null>(raw, ContextConfigSceneDetailSchema, null, {
+      endpoint: "GET /api/context-capabilities/agents/{agentId}/scenes/{sceneKey}",
+      includeReceived: false,
+    });
+  }
+
+  async setContextCapabilityBinding(
+    agentId: string,
+    input: SetContextCapabilityBindingInput,
+  ): Promise<ContextCapabilityBinding> {
+    const body: Record<string, string | boolean> = {
+      scope_type: input.scopeType,
+      scope_key: input.scopeKey,
+      resource_type: input.resourceType,
+      resource_id: input.resourceId,
+      enabled: input.enabled,
+    };
+    if (input.orgId) body.org_id = input.orgId;
+    // Only sent when the caller changes it; the server rejects it outside
+    // person connector bindings.
+    if (input.shareInGroups !== undefined) body.share_in_groups = input.shareInGroups;
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/bindings`,
+      {
+        method: "PUT",
+        body: JSON.stringify(body),
+        headers: NO_WORKSPACE_HEADER,
+      },
+    );
+    // The write succeeded; a malformed echo falls back to what was sent and
+    // the caller's invalidation refetches the authoritative state.
+    const binding = parseWithFallback<ContextCapabilityBinding | null>(
+      raw,
+      ContextCapabilityBindingResponseSchema,
+      null,
+      { endpoint: "PUT /api/context-capabilities/agents/{agentId}/bindings" },
+    );
+    return binding ?? {
+      resourceType: input.resourceType,
+      resourceId: input.resourceId,
+      enabled: input.enabled,
+      shareInGroups: input.resourceType === "connector" && input.shareInGroups === true,
+    };
+  }
+
+  async setContextConnectorCredential(
+    agentId: string,
+    input: SetContextConnectorCredentialInput,
+  ): Promise<ContextConnectorCredential> {
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/credentials`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          scope_type: input.scopeType,
+          scope_key: input.scopeKey,
+          ...(input.orgId ? { org_id: input.orgId } : {}),
+          connector_id: input.connectorId,
+          bearer: input.bearer,
+        }),
+        headers: NO_WORKSPACE_HEADER,
+      },
+    );
+    return parseWithFallback<ContextConnectorCredential>(
+      raw,
+      ContextConnectorCredentialResponseSchema,
+      { connectorId: input.connectorId, hint: "", updatedAt: "", kind: "bearer" },
+      {
+        endpoint: "PUT /api/context-capabilities/agents/{agentId}/credentials",
+        includeReceived: false,
+      },
+    );
+  }
+
+  async deleteContextConnectorCredential(
+    agentId: string,
+    input: DeleteContextConnectorCredentialInput,
+  ): Promise<void> {
+    const params = new URLSearchParams({
+      scope_type: input.scopeType,
+      scope_key: input.scopeKey,
+      connector_id: input.connectorId,
+    });
+    if (input.orgId) params.set("org_id", input.orgId);
+    await this.fetch<void>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/credentials?${params.toString()}`,
+      { method: "DELETE", headers: NO_WORKSPACE_HEADER },
+    );
+  }
+
+  /** Starts the provider OAuth flow that connects the caller's own account
+   * (person scope) or the group's account (scene scope) to an offered
+   * connector. Resolves to "" when the server did not return a navigable
+   * https URL. */
+  async startContextConnectorConnection(
+    agentId: string,
+    input: StartContextConnectorConnectionInput,
+  ): Promise<string> {
+    const body: Record<string, string> = {
+      scope_type: input.scopeType,
+      scope_key: input.scopeKey,
+      connector_id: input.connectorId,
+    };
+    if (input.orgId) body.org_id = input.orgId;
+    if (input.returnTo) body.return_to = input.returnTo;
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/connections/start`,
+      { method: "POST", body: JSON.stringify(body), headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<string>(raw, ConnectorAuthorizeUrlSchema, "", {
+      endpoint: "POST /api/context-capabilities/agents/{agentId}/connections/start",
+      includeReceived: false,
+    });
+  }
+
+  /** Replaces a configure-page scope's prompt components (the whole list).
+   * Resolves to the stored list, or null when the echo is malformed (the
+   * caller refetches). */
+  async setContextConfigPrompts(
+    agentId: string,
+    scope: ContextConfigScopeInput,
+    prompts: ContextPromptComponentInput[],
+  ): Promise<ContextPromptComponent[] | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/prompts`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ ...contextConfigScopeBody(scope), prompts: promptComponentsBody(prompts) }),
+        headers: NO_WORKSPACE_HEADER,
+      },
+    );
+    return parseWithFallback<ContextPromptComponent[] | null>(raw, ContextPromptComponentsResponseSchema, null, {
+      endpoint: "PUT /api/context-capabilities/agents/{agentId}/prompts",
+      includeReceived: false,
+    });
+  }
+
+  /** Replaces a configure-page scope's MCP servers (remote URL servers only;
+   * the server rejects local commands). Resolves to the stored document, or
+   * to what was sent when the echo is malformed. */
+  async setContextConfigMcpConfig(
+    agentId: string,
+    scope: ContextConfigScopeInput,
+    mcpConfig: Record<string, unknown> | null,
+  ): Promise<Record<string, unknown> | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/mcp-config`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ ...contextConfigScopeBody(scope), mcp_config: mcpConfig }),
+        headers: NO_WORKSPACE_HEADER,
+      },
+    );
+    return parseWithFallback<Record<string, unknown> | null>(raw, ContextNodeMcpConfigResponseSchema, mcpConfig, {
+      endpoint: "PUT /api/context-capabilities/agents/{agentId}/mcp-config",
+      // Remote MCP servers can carry headers with tokens.
+      includeReceived: false,
+    });
+  }
+
+  async resolveContextConfigScene(
+    agentId: string,
+    input: ResolveContextConfigSceneInput,
+  ): Promise<ContextConfigSceneGrant | null> {
+    const body: Record<string, string> = {};
+    if (input.chatId) body.chat_id = input.chatId;
+    if (input.openConversationId) body.open_conversation_id = input.openConversationId;
+    // The tenant goes in the query: the body takes only the picker's ids.
+    const query = input.orgId ? `?${new URLSearchParams({ org_id: input.orgId }).toString()}` : "";
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/resolve${query}`,
+      { method: "POST", body: JSON.stringify(body), headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextConfigSceneGrant | null>(raw, ContextConfigSceneResolveSchema, null, {
+      endpoint: "POST /api/context-capabilities/agents/{agentId}/scenes/resolve",
+    });
+  }
+
+  /** `dd.config` signature for `url` (the page URL without its fragment).
+   * Returns null when the response is malformed so callers treat the JSAPI
+   * as unavailable instead of signing with partial data. */
+  async getDingTalkJsapiConfig(url: string): Promise<DingTalkJsapiConfig | null> {
+    const params = new URLSearchParams({ url });
+    const raw = await this.fetch<unknown>(`/api/dingtalk/jsapi-config?${params.toString()}`, {
+      headers: NO_WORKSPACE_HEADER,
+    });
+    return parseWithFallback<DingTalkJsapiConfig | null>(raw, DingTalkJsapiConfigSchema, null, {
+      endpoint: "GET /api/dingtalk/jsapi-config",
+      includeReceived: false,
+    });
+  }
+
+  // Context capabilities — admin (agent detail tab). Workspace-scoped: the
+  // workspace is pinned explicitly so the query key's wsId and the request
+  // always agree.
+
+  async getAgentContextCapabilities(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<AgentContextCapabilities | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/context-capabilities`,
+      { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+    return parseWithFallback<AgentContextCapabilities | null>(raw, AgentContextCapabilitiesSchema, null, {
+      endpoint: "GET /api/agents/{id}/context-capabilities",
+    });
+  }
+
+  async setAgentContextCapabilityOffers(
+    workspaceId: string,
+    agentId: string,
+    input: SetAgentContextCapabilityOffersInput,
+  ): Promise<AgentContextCapabilities | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/context-capabilities/offers`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          connector_ids: input.connectorIds,
+          skill_ids: input.skillIds,
+        }),
+        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+      },
+    );
+    return parseWithFallback<AgentContextCapabilities | null>(raw, AgentContextCapabilitiesSchema, null, {
+      endpoint: "PUT /api/agents/{id}/context-capabilities/offers",
+    });
+  }
+
+  // Admin 场域 (agent detail → 场域): tenants, their group chats and people,
+  // and the Context Builder of each level. Workspace-scoped like the context
+  // capability admin routes: the workspace is pinned explicitly so the query
+  // key's wsId and the request always agree.
+
+  async listAgentTenants(workspaceId: string, agentId: string): Promise<AgentTenantsList> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/tenants`, {
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<AgentTenantsList>(raw, AgentTenantsListSchema, EMPTY_AGENT_TENANTS, {
+      endpoint: "GET /api/agents/{id}/tenants",
+    });
+  }
+
+  /** Creates a tenant (企业) for a DingTalk OrgId. Resolves to the echoed
+   * tenant, or to what was sent when the echo is malformed. */
+  async createAgentTenant(
+    workspaceId: string,
+    agentId: string,
+    input: CreateAgentTenantInput,
+  ): Promise<AgentTenant> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/tenants`, {
+      method: "POST",
+      body: JSON.stringify({ org_id: input.orgId, name: input.name }),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return (
+      parseWithFallback<AgentTenant | null>(raw, AgentTenantResponseSchema, null, {
+        endpoint: "POST /api/agents/{id}/tenants",
+      }) ?? { orgId: input.orgId, name: input.name, source: "created", groupCount: 0, personCount: 0 }
+    );
+  }
+
+  async renameAgentTenant(
+    workspaceId: string,
+    agentId: string,
+    orgId: string,
+    name: string,
+  ): Promise<AgentTenant | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/tenants/${encodeURIComponent(orgId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+      },
+    );
+    return parseWithFallback<AgentTenant | null>(raw, AgentTenantResponseSchema, null, {
+      endpoint: "PATCH /api/agents/{id}/tenants/{orgId}",
+    });
+  }
+
+  /** Deletes a tenant and its enterprise-level configuration. Its group and
+   * person data stay (the org then shows as unassigned). */
+  async deleteAgentTenant(workspaceId: string, agentId: string, orgId: string): Promise<void> {
+    await this.fetch<void>(
+      `/api/agents/${encodeURIComponent(agentId)}/tenants/${encodeURIComponent(orgId)}`,
+      { method: "DELETE", headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+  }
+
+  /** Group chats of one tenant, newest activity first. */
+  async listAgentTenantGroups(
+    workspaceId: string,
+    agentId: string,
+    orgId: string,
+    params: ListAgentScenesParams = {},
+  ): Promise<AgentScenesPage> {
+    const search = new URLSearchParams();
+    if (params.limit !== undefined) search.set("limit", String(params.limit));
+    if (params.offset !== undefined) search.set("offset", String(params.offset));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/tenants/${encodeURIComponent(orgId)}/groups${query ? `?${query}` : ""}`,
+      { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+    return parseWithFallback<AgentScenesPage>(raw, AgentScenesPageSchema, EMPTY_AGENT_SCENES_PAGE, {
+      endpoint: "GET /api/agents/{id}/tenants/{orgId}/groups",
+    });
+  }
+
+  /** People known under one tenant (a 1:1 chat is its person). */
+  async listAgentTenantPersons(
+    workspaceId: string,
+    agentId: string,
+    orgId: string,
+  ): Promise<AgentTenantPerson[]> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/tenants/${encodeURIComponent(orgId)}/persons`,
+      { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+    return parseWithFallback<AgentTenantPerson[]>(raw, AgentTenantPersonsSchema, [], {
+      endpoint: "GET /api/agents/{id}/tenants/{orgId}/persons",
+    });
+  }
+
+  private contextNodePath(agentId: string, node: ContextNodeRef): string {
+    return (
+      `/api/agents/${encodeURIComponent(agentId)}/tenants/${encodeURIComponent(node.orgId)}` +
+      `/context/${encodeURIComponent(node.scopeType)}/${encodeURIComponent(node.scopeKey)}`
+    );
+  }
+
+  /** One level's Context Builder: its prompt components, connector and
+   * skill switches, custom MCP servers and the effective preview. */
+  async getContextNode(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+  ): Promise<ContextNodeDetail | null> {
+    const raw = await this.fetch<unknown>(this.contextNodePath(agentId, node), {
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<ContextNodeDetail | null>(raw, ContextNodeDetailSchema, null, {
+      endpoint: "GET /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}",
+      // Custom MCP servers can carry headers and environment values.
+      includeReceived: false,
+    });
+  }
+
+  /** Switches one offered connector or skill on or off at a level. */
+  async setContextNodeBinding(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+    input: SetContextNodeBindingInput,
+  ): Promise<void> {
+    await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/bindings`, {
+      method: "PUT",
+      body: JSON.stringify({
+        resource_type: input.resourceType,
+        resource_id: input.resourceId,
+        enabled: input.enabled,
+      }),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+  }
+
+  /** Replaces a level's prompt components. Resolves to the stored list, or
+   * null when the echo is malformed (the caller refetches). */
+  async setContextNodePrompts(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+    prompts: ContextPromptComponentInput[],
+  ): Promise<ContextPromptComponent[] | null> {
+    const raw = await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/prompts`, {
+      method: "PUT",
+      body: JSON.stringify({ prompts: promptComponentsBody(prompts) }),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<ContextPromptComponent[] | null>(raw, ContextPromptComponentsResponseSchema, null, {
+      endpoint: "PUT /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}/prompts",
+      includeReceived: false,
+    });
+  }
+
+  /** Saves a level's custom MCP servers; null clears them. Resolves to the
+   * stored document, or to what was sent when the echo is malformed. */
+  async setContextNodeMcpConfig(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+    mcpConfig: Record<string, unknown> | null,
+  ): Promise<Record<string, unknown> | null> {
+    const raw = await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/mcp-config`, {
+      method: "PUT",
+      body: JSON.stringify({ mcp_config: mcpConfig }),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<Record<string, unknown> | null>(raw, ContextNodeMcpConfigResponseSchema, mcpConfig, {
+      endpoint: "PUT /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}/mcp-config",
+      // MCP server configs can carry headers and environment values.
+      includeReceived: false,
+    });
+  }
+
+  /** Stores a level's token for a connector (a Bearer, or a Personal Access
+   * Token for an app that allows one). */
+  async setContextNodeCredential(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+    input: SetContextNodeCredentialInput,
+  ): Promise<void> {
+    await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/credentials`, {
+      method: "PUT",
+      body: JSON.stringify({ connector_id: input.connectorId, bearer: input.bearer }),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+  }
+
+  /** Removes a level's token or disconnects its OAuth account. */
+  async deleteContextNodeCredential(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+    connectorId: string,
+  ): Promise<void> {
+    const params = new URLSearchParams({ connector_id: connectorId });
+    await this.fetch<void>(`${this.contextNodePath(agentId, node)}/credentials?${params.toString()}`, {
+      method: "DELETE",
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+  }
+
+  /** Revokes every configure-page grant (from configuration links or the
+   * DingTalk group picker) on a group or person level; the level's
+   * configuration stays. Resolves to how many grants were removed, null when
+   * the echo is malformed. */
+  async revokeContextNodeGrants(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+  ): Promise<number | null> {
+    const raw = await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/grants`, {
+      method: "DELETE",
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<number | null>(raw, ContextNodeGrantsRevokedSchema, null, {
+      endpoint: "DELETE /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}/grants",
+    });
+  }
+
+  /** Starts connecting an official app account for a level. Resolves to the
+   * provider authorization URL, "" when the server sent no navigable URL. */
+  async startContextNodeConnection(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+    input: StartContextNodeConnectionInput,
+  ): Promise<string> {
+    const body: Record<string, string> = { connector_id: input.connectorId };
+    if (input.returnTo) body.return_to = input.returnTo;
+    const raw = await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/connections/start`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<string>(raw, ConnectorAuthorizeUrlSchema, "", {
+      endpoint: "POST /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}/connections/start",
+      includeReceived: false,
+    });
+  }
+
+  // Admin connected apps (agent detail → 连接器 → 连接应用). Workspace-scoped
+  // like the other agent admin routes: the workspace is pinned explicitly so
+  // the query key's wsId and the request always agree.
+
+  /** Every official app with this agent's status. null when the body is
+   * malformed, so the page shows a load error instead of an empty gallery. */
+  async listAgentConnectedApps(
+    workspaceId: string,
+    agentId: string,
+  ): Promise<ConnectedAppsList | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/connected-apps`,
+      { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+    return parseWithFallback<ConnectedAppsList | null>(raw, ConnectedAppsListSchema, null, {
+      endpoint: "GET /api/agents/{id}/connected-apps",
+      includeReceived: false,
+    });
+  }
+
+  async getAgentConnectedApp(
+    workspaceId: string,
+    agentId: string,
+    slug: string,
+  ): Promise<ConnectedAppDetail | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/connected-apps/${encodeURIComponent(slug)}`,
+      { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+    return parseWithFallback<ConnectedAppDetail | null>(raw, ConnectedAppDetailSchema, null, {
+      endpoint: "GET /api/agents/{id}/connected-apps/{slug}",
+      includeReceived: false,
     });
   }
 

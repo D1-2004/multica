@@ -70,6 +70,23 @@ var preMigrationHooks = map[string]preMigrationHook{
 	"257_agent_task_queue_channel_media_pending_unique_v2":  cleanupInvalidConcurrentIndexHook("idx_one_pending_task_per_issue_agent_v2"),
 	"260_issue_origin_dingtalk_chat_validate":               repairIssueOriginTypeConstraintHook,
 	"261_agent_task_queue_terminal_completed_at_v2":         cleanupInvalidConcurrentIndexHook("idx_agent_task_queue_terminal_completed_at_v2"),
+	// Context capability unique indexes are ON CONFLICT arbiters. An INVALID
+	// leftover would satisfy IF NOT EXISTS yet never serve as an arbiter.
+	"9401_context_capability_binding_scope_idx":    cleanupInvalidConcurrentIndexHook("context_capability_binding_scope_idx"),
+	"9402_context_capability_binding_resource_idx": cleanupInvalidConcurrentIndexHook("context_capability_binding_resource_idx"),
+	"9404_context_connector_credential_scope_idx":  cleanupInvalidConcurrentIndexHook("context_connector_credential_scope_idx"),
+	"9406_context_config_grant_scope_idx":          cleanupInvalidConcurrentIndexHook("context_config_grant_scope_idx"),
+	// One official app connector per workspace and catalog slug.
+	"9410_internal_connector_catalog_slug_idx": cleanupInvalidConcurrentIndexHook("internal_connector_catalog_slug_idx"),
+	// One scene configuration row per agent scene (ON CONFLICT arbiter).
+	"9414_agent_scene_config_scene_idx": cleanupInvalidConcurrentIndexHook("agent_scene_config_scene_idx"),
+	// One custom MCP server configuration per scene or person scope (ON
+	// CONFLICT arbiter).
+	"9419_context_scope_mcp_config_scope_idx": cleanupInvalidConcurrentIndexHook("context_scope_mcp_config_scope_idx"),
+	// One tenant row per agent and org, and one prompt component per scope
+	// and name (ON CONFLICT arbiters).
+	"9421_agent_tenant_org_idx":              cleanupInvalidConcurrentIndexHook("agent_tenant_org_idx"),
+	"9423_context_prompt_component_name_idx": cleanupInvalidConcurrentIndexHook("context_prompt_component_name_idx"),
 }
 
 func repairIssueOriginTypeConstraintHook(ctx context.Context, pool *pgxpool.Pool) error {

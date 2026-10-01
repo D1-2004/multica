@@ -1,0 +1,306 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiClient } from "./client";
+import { parseWithFallback } from "./schema";
+import type { AgentScenesPage } from "../types/context-capability";
+import {
+  AgentScenesPageSchema,
+  ContextCapabilityBindingResponseSchema,
+  ContextConfigAgentDetailSchema,
+  ContextConfigRedeemSchema,
+  ContextConfigSceneDetailSchema,
+  EMPTY_AGENT_SCENES_PAGE,
+} from "./context-capability-schema";
+
+afterEach(() => vi.unstubAllGlobals());
+
+const base = "https://pre.example.test";
+const agentId = "11111111-1111-4111-8111-111111111111";
+const connectorId = "22222222-2222-4222-8222-222222222222";
+const skillId = "33333333-3333-4333-8333-333333333333";
+const opts = { endpoint: "test", includeReceived: false };
+
+function stubFetch(body: unknown, status = 200) {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(body), { status }));
+  vi.stubGlobal("fetch", fetch);
+  return fetch;
+}
+
+function requestOf(fetch: ReturnType<typeof vi.fn>) {
+  const [url, init] = fetch.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+  return { url, init };
+}
+
+const groupScene = {
+  scene_key: "cidGroup==",
+  kind: "group",
+  title: "Release crew",
+  org_id: "ding-org",
+  last_active_at: "2026-09-30T08:00:00Z",
+  inbound_session_id: "44444444-4444-4444-8444-444444444444",
+  inbound_count: 3,
+  memory_id: "55555555-5555-4555-8555-555555555555",
+};
+
+describe("tenant group list", () => {
+  it("maps group and 1:1 scenes to camelCase", () => {
+    const page = parseWithFallback<AgentScenesPage>(
+      {
+        scenes: [
+          groupScene,
+          { scene_key: "cidDm==", kind: "dm", title: null },
+        ],
+        has_more: true,
+      },
+      AgentScenesPageSchema,
+      EMPTY_AGENT_SCENES_PAGE,
+      opts,
+    );
+    expect(page.hasMore).toBe(true);
+    expect(page.scenes[0]).toEqual({
+      sceneKey: "cidGroup==",
+      kind: "group",
+      title: "Release crew",
+      orgId: "ding-org",
+      lastActiveAt: "2026-09-30T08:00:00Z",
+      inboundSessionId: "44444444-4444-4444-8444-444444444444",
+      inboundCount: 3,
+      memoryId: "55555555-5555-4555-8555-555555555555",
+    });
+    expect(page.scenes[1]).toMatchObject({
+      sceneKey: "cidDm==",
+      kind: "dm",
+      title: "",
+      inboundSessionId: "",
+      inboundCount: 0,
+      memoryId: "",
+    });
+  });
+
+  it("drops malformed rows and unknown flags instead of emptying the list", () => {
+    const page = AgentScenesPageSchema.parse({
+      scenes: [
+        { kind: "group" },
+        { ...groupScene, kind: "channel", inbound_count: -2 },
+      ],
+      has_more: "yes",
+    });
+    expect(page.hasMore).toBe(false);
+    expect(page.scenes).toHaveLength(1);
+    expect(page.scenes[0]).toMatchObject({ kind: "group", inboundCount: 0 });
+  });
+
+  it("falls back to an empty page for a malformed body", () => {
+    expect(
+      parseWithFallback<AgentScenesPage>("nope", AgentScenesPageSchema, EMPTY_AGENT_SCENES_PAGE, opts),
+    ).toEqual(EMPTY_AGENT_SCENES_PAGE);
+    expect(AgentScenesPageSchema.parse({ scenes: null })).toEqual(EMPTY_AGENT_SCENES_PAGE);
+  });
+});
+
+describe("share_in_groups and scene kinds on the mobile API", () => {
+  it("reports share_in_groups only for a literal true on a connector binding", () => {
+    expect(
+      ContextCapabilityBindingResponseSchema.parse({
+        binding: { resource_type: "connector", resource_id: connectorId, enabled: true, share_in_groups: true },
+      }),
+    ).toEqual({ resourceType: "connector", resourceId: connectorId, enabled: true, shareInGroups: true });
+    expect(
+      ContextCapabilityBindingResponseSchema.parse({
+        binding: { resource_type: "connector", resource_id: connectorId, enabled: true, share_in_groups: "true" },
+      })?.shareInGroups,
+    ).toBe(false);
+    expect(
+      ContextCapabilityBindingResponseSchema.parse({
+        binding: { resource_type: "skill", resource_id: skillId, enabled: true, share_in_groups: true },
+      })?.shareInGroups,
+    ).toBe(false);
+  });
+
+  it("labels agent detail scenes as group or 1:1 chats", () => {
+    const detail = ContextConfigAgentDetailSchema.parse({
+      agent: { id: agentId, name: "Helper" },
+      scenes: [
+        { scope_key: "cidGroup", scope_title: "Team", kind: "group" },
+        { scope_key: "cidDm", scope_title: "Ada", kind: "dm" },
+        { scope_key: "cidOld", scope_title: "Legacy" },
+      ],
+    });
+    expect(detail.scenes.map((scene) => scene.kind)).toEqual(["group", "dm", "group"]);
+  });
+});
+
+describe("configure-page scene scope", () => {
+  const scene = { scope_key: "cidDm", scope_title: "Chat", source: "manager", expires_at: "", kind: "dm" };
+
+  it("maps the person a 1:1 chat is bound to", () => {
+    const detail = ContextConfigSceneDetailSchema.parse({
+      scene,
+      bindings: [],
+      credentials: [],
+      scope: { type: "person", key: "staff-1", title: "Ada" },
+    });
+    expect(detail.scope).toEqual({ type: "person", key: "staff-1", title: "Ada" });
+  });
+
+  it("reads a missing scope as the scene and a null or malformed one as unknown", () => {
+    expect(ContextConfigSceneDetailSchema.parse({ scene }).scope).toEqual({
+      type: "scene",
+      key: "cidDm",
+      title: "Chat",
+    });
+    expect(ContextConfigSceneDetailSchema.parse({ scene, scope: null }).scope).toBeNull();
+    expect(ContextConfigSceneDetailSchema.parse({ scene, scope: { type: "person" } }).scope).toBeNull();
+  });
+
+  it("reads whether the caller may connect, with only a literal true allowing it", () => {
+    expect(ContextConfigSceneDetailSchema.parse({ scene, can_connect: true }).canConnect).toBe(true);
+    expect(ContextConfigSceneDetailSchema.parse({ scene, can_connect: false }).canConnect).toBe(false);
+    expect(ContextConfigSceneDetailSchema.parse({ scene, can_connect: "true" }).canConnect).toBe(false);
+    // An older backend does not say.
+    expect(ContextConfigSceneDetailSchema.parse({ scene }).canConnect).toBeNull();
+  });
+});
+
+describe("configure-page scope writes", () => {
+  it("sends share_in_groups only when the caller sets it", async () => {
+    const fetch = stubFetch({
+      binding: { resource_type: "connector", resource_id: connectorId, enabled: true, share_in_groups: true },
+    });
+    const binding = await new ApiClient(base).setContextCapabilityBinding(agentId, {
+      scopeType: "person",
+      scopeKey: "staff-1",
+      resourceType: "connector",
+      resourceId: connectorId,
+      enabled: true,
+      shareInGroups: true,
+    });
+    expect(JSON.parse(requestOf(fetch).init.body as string)).toEqual({
+      scope_type: "person",
+      scope_key: "staff-1",
+      resource_type: "connector",
+      resource_id: connectorId,
+      enabled: true,
+      share_in_groups: true,
+    });
+    expect(binding.shareInGroups).toBe(true);
+  });
+});
+
+describe("configure-page tenants", () => {
+  it("reads the tenant of each scene and drops malformed org ids", () => {
+    const detail = ContextConfigAgentDetailSchema.parse({
+      agent: { id: agentId, name: "Helper" },
+      scenes: [
+        { scope_key: "cidA", scope_title: "Team", kind: "group", org_id: "dingA" },
+        { scope_key: "cidB", scope_title: "Other", kind: "group", org_id: "bad org!" },
+        { scope_key: "cidC", scope_title: "Old" },
+      ],
+    });
+    expect(detail.scenes.map((scene) => scene.orgId)).toEqual(["dingA", "", ""]);
+    // An older backend names no tenant and no enterprise level.
+    expect(detail.tenant).toBeNull();
+    expect(detail.tenants).toEqual([]);
+    expect(detail.org).toBeNull();
+  });
+
+  it("maps the page's tenant, the tenants the caller may open and the enterprise level", () => {
+    const detail = ContextConfigAgentDetailSchema.parse({
+      agent: { id: agentId, name: "Helper" },
+      tenant: { org_id: "dingA", name: "Acme", source: "identity" },
+      tenants: [
+        { org_id: "dingA", name: "Acme", source: "identity" },
+        { org_id: "dingB", name: "Beta", source: "created" },
+        { org_id: "dingB", name: "dup", source: "created" },
+        { org_id: "bad org!", name: "x", source: "created" },
+      ],
+      org: {
+        scope_key: "dingA",
+        scope_title: "Acme",
+        bindings: [
+          { resource_type: "skill", resource_id: skillId, enabled: true },
+          { resource_type: "widget", resource_id: connectorId, enabled: true },
+        ],
+        credentials: [{ connector_id: connectorId, hint: "", updated_at: "2026-09-30T08:00:00Z", kind: "oauth" }],
+        can_edit: false,
+      },
+    });
+    expect(detail.tenant).toEqual({ orgId: "dingA", name: "Acme", source: "identity" });
+    expect(detail.tenants.map((tenant) => [tenant.orgId, tenant.name])).toEqual([
+      ["dingA", "Acme"],
+      ["dingB", "dup"],
+    ]);
+    expect(detail.org).toEqual({
+      scopeKey: "dingA",
+      scopeTitle: "Acme",
+      bindings: [{ resourceType: "skill", resourceId: skillId, enabled: true, shareInGroups: false }],
+      credentials: [{ connectorId, hint: "", updatedAt: "2026-09-30T08:00:00Z", kind: "oauth" }],
+      canEdit: false,
+      // An older backend sends no rights, prompts or MCP servers.
+      rights: null,
+      prompts: [],
+      mcpConfig: null,
+      mcpConfigRedacted: false,
+    });
+  });
+
+  it("allows editing the enterprise level only for a literal true, and reads a malformed one as none", () => {
+    const org = { scope_key: "dingA", scope_title: "Acme", bindings: [], credentials: [] };
+    const parse = (value: unknown) =>
+      ContextConfigAgentDetailSchema.parse({ agent: { id: agentId }, org: value }).org;
+    expect(parse({ ...org, can_edit: true })?.canEdit).toBe(true);
+    expect(parse({ ...org, can_edit: "true" })?.canEdit).toBe(false);
+    expect(parse({ ...org, scope_key: "bad org!" })).toBeNull();
+    expect(parse({ scope_title: "no key" })).toBeNull();
+    expect(parse("dingA")).toBeNull();
+    expect(
+      ContextConfigAgentDetailSchema.parse({ agent: { id: agentId }, tenant: { org_id: "" } }).tenant,
+    ).toBeNull();
+  });
+
+  it("reads the tenant of a redeemed link", () => {
+    const base = { agent_id: agentId, workspace_id: "ws", scope_type: "person", scope_key: "staff-1" };
+    expect(ContextConfigRedeemSchema.parse({ ...base, org_id: "dingB" }).orgId).toBe("dingB");
+    expect(ContextConfigRedeemSchema.parse({ ...base, org_id: "bad org!" }).orgId).toBe("");
+    expect(ContextConfigRedeemSchema.parse(base).orgId).toBe("");
+  });
+
+  it("sends org_id on scope requests only for another tenant", async () => {
+    const fetch = stubFetch({ binding: { resource_type: "skill", resource_id: skillId, enabled: true } });
+    const client = new ApiClient(base);
+    await client.setContextCapabilityBinding(agentId, {
+      scopeType: "scene",
+      scopeKey: "cidB",
+      orgId: "dingB",
+      resourceType: "skill",
+      resourceId: skillId,
+      enabled: true,
+    });
+    expect(JSON.parse(requestOf(fetch).init.body as string)).toMatchObject({ org_id: "dingB" });
+
+    const own = stubFetch({ binding: { resource_type: "skill", resource_id: skillId, enabled: true } });
+    await client.setContextCapabilityBinding(agentId, {
+      scopeType: "scene",
+      scopeKey: "cidA",
+      orgId: "",
+      resourceType: "skill",
+      resourceId: skillId,
+      enabled: true,
+    });
+    expect(JSON.parse(requestOf(own).init.body as string)).not.toHaveProperty("org_id");
+
+    const scene = stubFetch({ scene: { scope_key: "cidB" } });
+    await client.getContextConfigScene(agentId, "cid+B", "dingB");
+    expect(requestOf(scene).url).toBe(
+      `${base}/api/context-capabilities/agents/${agentId}/scenes/cid%2BB?org_id=dingB`,
+    );
+
+    const remove = stubFetch({});
+    await client.deleteContextConnectorCredential(agentId, {
+      scopeType: "person",
+      scopeKey: "staff-1",
+      orgId: "dingB",
+      connectorId,
+    });
+    expect(requestOf(remove).url).toContain("org_id=dingB");
+  });
+});

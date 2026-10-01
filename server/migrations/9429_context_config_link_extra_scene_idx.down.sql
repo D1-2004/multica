@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS context_config_link_extra_scene_idx;

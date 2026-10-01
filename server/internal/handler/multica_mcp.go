@@ -288,6 +288,9 @@ func (h *Handler) MulticaMCP(w http.ResponseWriter, r *http.Request) {
 		if h.semanticaRelayVisible(r) {
 			tools = append(tools, semanticaRelayDefinition())
 		}
+		if h.multicaMCPContextConfigLinkVisible(r) {
+			tools = append(tools, multicaMCPContextConfigLinkDefinition())
+		}
 		h.writeMulticaMCPResult(w, req.ID, map[string]any{"tools": tools})
 	case "tools/call":
 		h.handleMulticaMCPToolsCall(w, r, req)
@@ -640,6 +643,10 @@ func (h *Handler) handleMulticaMCPToolsCall(w http.ResponseWriter, r *http.Reque
 	}
 	if params.Name == multicaMCPAssocBindTool {
 		h.handleMulticaMCPAssocBind(w, r, req.ID, params.Arguments)
+		return
+	}
+	if params.Name == multicaMCPContextConfigLinkTool {
+		h.handleMulticaMCPContextConfigLink(w, r, req.ID, params.Arguments)
 		return
 	}
 	if params.Name != multicaMCPChatSendTool {

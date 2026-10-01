@@ -113,6 +113,8 @@ func TestMulticaMCPToolsListIsAlwaysAvailableAndPublishesAllActions(t *testing.T
 		"get_static_site_deploy",
 		multicaMCPAssocRecallTool,
 		multicaMCPAssocBindTool,
+		// Task-token callers also get the context capability link tool.
+		multicaMCPContextConfigLinkTool,
 	}
 	if len(tools) != len(wantNames) {
 		t.Fatalf("tools=%#v", tools)
@@ -391,7 +393,7 @@ func TestMulticaMCPStaticSiteToolsUseAuthenticatedUserAuthority(t *testing.T) {
 		t.Fatalf("workspace-less PAT prepare result=%#v", personalResult)
 	}
 	forgedWorkspaceRequest := personalMCPRequest(t, "tools/call", "prepare-site-forged-workspace", map[string]any{
-		"name": "prepare_static_site_deploy",
+		"name":      "prepare_static_site_deploy",
 		"arguments": map[string]any{"expected_sha256": strings.Repeat("a", 64), "content_length": 1234},
 	})
 	forgedWorkspaceRequest.Header.Set("X-Workspace-ID", "00000000-0000-0000-0000-000000000004")
