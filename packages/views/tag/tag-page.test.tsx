@@ -5,7 +5,7 @@ import { renderWithI18n } from "../test/i18n";
 import { TagPage } from "./tag-page";
 
 const { detailProps, navigation, tagQuery } = vi.hoisted(() => ({
-  detailProps: { current: null as null | { agentId: string; tagView?: { role: string } } },
+  detailProps: { current: null as null | { agentId: string; tagView?: { role: string; backHref?: string; backLabel?: string } } },
   navigation: { current: { pathname: "/acme/tag", searchParams: new URLSearchParams() } },
   tagQuery: { current: { data: undefined as TagState | undefined, isLoading: false } },
 }));
@@ -104,6 +104,9 @@ describe("TagPage", () => {
     expect(detail.getAttribute("data-role")).toBe("template");
     // The tenant switcher sits in the tab bar and starts on the shared view.
     expect(screen.getByText("Shared")).toBeTruthy();
+    // The breadcrumb leads back to the Tag page, not the agent list.
+    expect(detailProps.current?.tagView?.backHref).toBe("/acme/tag");
+    expect(detailProps.current?.tagView?.backLabel).toBe("Tag");
   });
 
   it("shows the selected tenant's employee", () => {

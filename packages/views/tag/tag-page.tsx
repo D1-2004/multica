@@ -152,6 +152,7 @@ export function TagPage() {
         tagView={{
           role: tenant ? "employee" : "template",
           backHref: paths.tag(),
+          backLabel: t(($) => $.tag_page.breadcrumb),
           tabBarExtra: (
             <TagTenantSwitcher
               state={state}

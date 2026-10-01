@@ -77,6 +77,7 @@ interface AgentDetailPageProps {
     tabBarExtra?: ReactNode;
     templateScenesNotice?: ReactNode;
     backHref?: string;
+    backLabel?: string;
   };
 }
 
@@ -378,6 +379,7 @@ export function AgentDetailPage({ agentId, tagView }: AgentDetailPageProps) {
         runtime={runtime}
         presence={presence}
         backHref={tagView?.backHref ?? paths.agents()}
+        backLabel={tagView?.backLabel}
         canAssign={canAssign.allowed}
         canArchive={canEdit.allowed}
         dmPending={permissionsLoading}
@@ -507,6 +509,7 @@ function DetailHeader({
   runtime,
   presence,
   backHref,
+  backLabel,
   canAssign,
   canArchive,
   dmPending,
@@ -519,6 +522,8 @@ function DetailHeader({
   runtime: AgentRuntime | null;
   presence: AgentPresenceDetail | null;
   backHref: string;
+  /** Breadcrumb label for backHref; defaults to the agents page title. */
+  backLabel?: string;
   canAssign: boolean;
   canArchive: boolean;
   dmPending: boolean;
@@ -544,7 +549,7 @@ function DetailHeader({
             href={backHref}
             className="rounded-sm transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {t(($) => $.page.title)}
+            {backLabel ?? t(($) => $.page.title)}
           </AppLink>
           <span aria-hidden="true">/</span>
           <span className="truncate text-foreground">{agent.name}</span>
