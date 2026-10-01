@@ -54,3 +54,8 @@
   binding eligibility, interval editor and actual run input example.
 - `autopilot-dialog.tsx`, `autopilot-detail-page.tsx` in that directory: trigger
   creation/editing and saved runtime statistics. No proactive setting changes.
+- `server/internal/handler/scene_routines.go`, `scene_routines_http.go`,
+  `server/internal/contextcap/routine.go`: scene routines (例行任务) — a
+  `run_only` autopilot bound to a group or 1:1 chat scene, its run context,
+  start and end notices; `requireAutopilotWrite` answers 409
+  `managed_by_scene` for them.

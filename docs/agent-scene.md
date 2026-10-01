@@ -126,7 +126,12 @@ returns nothing, bind is skipped (`assoc_outbound_bind_skipped`,
 - task context key `agent_scene` (`protocol.AgentSceneContextKey`), read by
   context capabilities, the task-finished loop and the outbound path;
 - `inboundcoord.Turn.SceneID`, `dingtalkresponse.ActionInput.SceneID`,
-  assoc `Event.SceneID` / `Query.SceneID` / `SceneNode`.
+  assoc `Event.SceneID` / `Query.SceneID` / `SceneNode`;
+- scene routines (`context_scope_routine.scene_id`) and their runs, which
+  carry `agent_scene` plus the frozen `scene_routine` binding and no inbound
+  message (`docs/context-capabilities.md` §9);
+- the config-qwen-tag-scene scene token (`auth.SceneTokenClaims.SceneID`),
+  which binds one task's MCP server to its scene (§10 there).
 
 Provider calls read the external locator back from the directory
 (`agent_scene.external_scene_id`); a scene_id is never sent as a DingTalk

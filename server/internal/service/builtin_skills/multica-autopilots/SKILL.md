@@ -66,6 +66,11 @@ For "why didn't it run":
 
 These mutate durable state or start work: `create`, `update`, `delete`, trigger add/update/delete/rotate, `trigger`, and webhook calls to `/api/webhooks/autopilots/{token}`.
 
+Scene routines (例行任务) are autopilots managed from a group or 1:1 chat
+scene's configuration: the autopilot routes refuse to change them with 409
+`managed_by_scene`. Change them on the configure page, in the agent's 场域
+tab, or from that conversation with the config-qwen-tag-scene tools.
+
 More source-backed details: `references/autopilots-source-map.md`.
 
 ## Proactive conversations

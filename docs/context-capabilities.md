@@ -1129,3 +1129,77 @@ updated_by_name, updated_at}`:
   sender's own-org staffId ever arrives, it could collide with an internal
   person's; keying person scopes by a globally unique id (unionId) is the
   follow-up.
+
+## 9. Scene routines (例行任务)
+
+A routine is work the agent does in one Agent work scene — a group or a 1:1
+chat (`docs/agent-scene.md`) — on a cron schedule or when a webhook request
+arrives. There are no org-level or person-level routines.
+
+- **Storage.** A routine is a `run_only` autopilot assigned to the agent plus a
+  `context_scope_routine` row (migrations 9520–9522) binding it to its
+  `scene_id`, tenant org and kind, with the 1:1 counterpart's
+  `openDingTalkId` (and staffId when proven) frozen at creation. The autopilot
+  keeps the trigger, schedule and run history; scene-managed autopilots
+  answer 409 `managed_by_scene` on the autopilot routes.
+- **Runs carry the scene.** Every run (cron, webhook, run now) carries
+  `agent_scene` plus the frozen `scene_routine` binding
+  (`protocol.SceneRoutineContextKey`) and no inbound message.
+  `ScopeFromTaskContext` reads it as the scene layer in the routine's org; a
+  group routine never carries a person layer (it runs with the scene's
+  capabilities, never its creator's), a 1:1 routine carries its counterpart
+  only when the creation proved the staffId. The scene is fenced when the
+  run is created (`scene.CheckTenant`): a routine of an org the agent left is
+  recorded as skipped, never run elsewhere. Reruns get no layers.
+- **Notices.** The Host posts a start notice when the run's task is queued
+  and an end notice from the task's terminal transaction (the clipped final
+  output, the failure reason, or 已取消), through `dingtalkresponse` routine
+  notices: no Router callback, request ids `routine:<run_id>:start|end`, no
+  @ in a group, the frozen counterpart in a 1:1 chat. The run's prompt asks
+  the agent not to post the result itself. Completion is not routed through
+  the Coordinator; the EmployeeLoop will take it over as a completion event.
+- **Rules.** Title and instructions are required; a schedule is a
+  five-field cron in an IANA timezone (default Asia/Shanghai) and runs at
+  most every 15 minutes. A routine with the same purpose (word set of the
+  title), trigger kind, cron and timezone as an existing routine of the
+  scene is updated instead of duplicated, and keeps its paused or running
+  state. A webhook URL is shown in full only in the create and rotate
+  responses.
+- **Who may change them.** `rights.edit_routines` follows the scene rights:
+  agent managers (configure page and admin Context Builder). From a
+  conversation, the config-qwen-tag-scene tools (§10) act for the scene
+  itself.
+- **API.** Configure page: `GET|POST /api/context-capabilities/agents/{agentId}/routines`
+  (`scene_id`, `org_id`), `PATCH|DELETE …/routines/{id}`,
+  `POST …/routines/{id}/run`, `POST …/routines/{id}/rotate-webhook`. Admin:
+  the same under `/api/agents/{id}/tenants/{orgId}/context/scene/{scene_id}/routines`.
+  Errors carry codes: `invalid_routine`, `routine_requires_dingtalk_identity`,
+  `dm_target_unknown`, `agent_runtime_required`, `routine_duplicate`,
+  `routine_paused`, `scene_kind_without_routines`.
+
+## 10. Scene configuration from a conversation (config-qwen-tag-scene)
+
+A task whose run belongs to a group or 1:1 chat scene gets the
+`config-qwen-tag-scene` skill and a managed MCP server of the same name; a
+task without a current scene (A2A, rerun, no dispatch, not a tenant, an
+earlier binding, an unknown scene) gets neither.
+
+- **Binding.** The claim issues a scene token (`auth.IssueSceneToken`: HMAC
+  keyed from `JWT_SECRET`, binding workspace, agent, task and scene_id, 24h)
+  into the server's route path `/api/scene-config/mcp/{sct_…}`; the
+  Authorization stays the task's task token. Each call verifies the token,
+  requires its task, agent and workspace to be the caller's, requires the
+  task to be running or dispatched, and re-resolves the task's scene, which
+  must still be the token's. The path segment is redacted in the access log
+  and the sandbox relay log.
+- **Tools** (no scene argument): `scene_config_get`, `scene_prompt_upsert`,
+  `scene_prompt_delete`, `scene_mcp_server_upsert` (remote servers only;
+  `multica`, `config-qwen-tag-scene` and `c<16 hex>` reserved),
+  `scene_mcp_server_delete`, `scene_capability_set` (offered items only),
+  `scene_connect_link` (accounts are never connected in chat),
+  `scene_routine_list|create|update|delete|run`.
+- **Guards.** A routine run is read-only (`routine_run_read_only`): its input
+  may come from a webhook. Every write posts a Host change notice into the
+  scene. Header values and full webhook URLs never enter the conversation.
+- **Skill.** Added at claim and accepted at bundle resolution by the same
+  check (`taskHasConfigScene`); a workspace skill of the same name gives way.
