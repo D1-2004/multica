@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/tag"
 )
 
 // Admin tenant and Context Builder API (docs/context-capabilities.md §1.3,
@@ -31,6 +32,7 @@ const (
 // Error codes of the tenant routes.
 const (
 	agentTenantErrExists      = "tenant_exists"
+	agentTenantErrTagManaged  = "tag_managed"
 	agentTenantErrIdentity    = "identity_tenant"
 	agentTenantErrInvalidOrg  = "invalid_org_id"
 	agentTenantErrInvalidName = "invalid_name"
@@ -126,6 +128,16 @@ func (h *Handler) CreateAgentTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// A Tag's enterprises are its tenants, each embodied by its own employee
+	// agent. Extra organizations on the template or on an employee would
+	// bypass that one-tenant-per-employee model.
+	if role, err := tag.AgentRole(ctx, h.DB, caller.workspaceID, caller.agentID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check the tag")
+		return
+	} else if role != tag.RoleNone {
+		writeErrorCode(w, http.StatusConflict, agentTenantErrTagManaged, "tenants of the tag are managed on the tag page")
+		return
+	}
 	tenant, err := contextcap.CreateTenant(ctx, h.DB, contextcap.TenantWrite{
 		WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: orgID, Name: input.Name, ActorID: requestUserID(r),
 	})

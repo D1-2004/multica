@@ -2803,6 +2803,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Delete("/reactions", h.RemoveReaction)
 			})
 
+			// The workspace Tag: one multi-tenant digital employee per
+			// workspace. Creating, hiding and removing it is reserved to
+			// platform operators; tenants and applies follow the template
+			// agent's manage rights.
+			r.Route("/api/tag", func(r chi.Router) {
+				r.Get("/", h.GetTag)
+				r.With(handler.RequireHumanActor).Post("/", h.CreateTag)
+				r.With(handler.RequireHumanActor).Patch("/", h.UpdateTag)
+				r.With(handler.RequireHumanActor).Delete("/", h.DeleteTag)
+				r.With(handler.RequireHumanActor).Post("/tenants", h.CreateTagTenant)
+				r.With(handler.RequireHumanActor).Post("/tenants/adopt", h.AdoptTagTenant)
+				r.With(handler.RequireHumanActor).Patch("/tenants/{tenantId}", h.RenameTagTenant)
+				r.With(handler.RequireHumanActor).Delete("/tenants/{tenantId}", h.DeleteTagTenant)
+				r.With(handler.RequireHumanActor).Post("/apply", h.ApplyTag)
+			})
+
 			// Agents
 			r.Get("/api/agent-schema", h.DownloadAgentSchema)
 			r.Route("/api/agents", func(r chi.Router) {

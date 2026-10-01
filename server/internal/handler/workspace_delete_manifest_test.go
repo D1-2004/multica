@@ -102,6 +102,8 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"skill_to_label":                  workspaceDelete,
 	"squad":                           workspaceDelete,
 	"squad_member":                    workspaceDelete,
+	"tag_config_revision":             workspaceDelete,
+	"tag_tenant":                      workspaceDelete,
 	"sys_cron_executions":             workspaceDeleteKeep,
 	"task_message":                    workspaceDelete,
 	"task_token":                      workspaceDelete,
@@ -118,6 +120,7 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"webhook_delivery":                workspaceDelete,
 	"workspace":                       workspaceDelete,
 	"workspace_invitation":            workspaceDelete,
+	"workspace_tag":                   workspaceDelete,
 }
 
 func TestWorkspaceDeletionManifestCoversPublicSchema(t *testing.T) {

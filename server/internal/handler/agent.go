@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/tag"
 	"io"
 	"log/slog"
 	"net/http"
@@ -2776,6 +2777,15 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	// unique index does not.
 	if agent.SystemKey.Valid && agent.SystemKey.String != "" {
 		writeError(w, http.StatusBadRequest, "this agent is built into Multica and cannot be archived")
+		return
+	}
+	// The Tag template carries the configuration every tenant applies;
+	// archiving it would orphan the Tag. Remove the Tag first.
+	if role, err := tag.AgentRole(r.Context(), h.DB, uuidToString(agent.WorkspaceID), uuidToString(agent.ID)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	} else if role == tag.RoleTemplate {
+		writeError(w, http.StatusConflict, "this agent is the tag template; remove the tag before archiving it")
 		return
 	}
 
