@@ -343,8 +343,20 @@ func TestContextCapabilitiesMobileGrantsGateReadsAndWrites(t *testing.T) {
 	}), http.StatusBadRequest, "missing enabled")
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, bindingPath, alice, map[string]any{
 		"scope_type": contextcap.ScopeScene, "scope_key": ctxcapScene, "resource_type": contextcap.ResourceSkill, "resource_id": f.skillScene,
-		"enabled": true, "org_id": "other",
+		"enabled": true, "tenant": "other",
 	}), http.StatusBadRequest, "unknown field")
+	// org_id selects a tenant org of the agent; any other org is unknown.
+	w = ctxcapMobile(t, router, http.MethodPut, bindingPath, alice, map[string]any{
+		"scope_type": contextcap.ScopeScene, "scope_key": ctxcapScene, "resource_type": contextcap.ResourceSkill, "resource_id": f.skillScene,
+		"enabled": true, "org_id": "other",
+	})
+	if w.Code != http.StatusNotFound || catalogErrorCode(t, w) != contextCapErrTenantNotFound {
+		t.Fatalf("org_id of a non-tenant: %d %s", w.Code, w.Body.String())
+	}
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, bindingPath, alice, map[string]any{
+		"scope_type": contextcap.ScopeScene, "scope_key": ctxcapScene, "resource_type": contextcap.ResourceSkill, "resource_id": f.skillScene,
+		"enabled": true, "org_id": ctxcapOrg,
+	}), http.StatusOK, "explicit identity org")
 }
 
 func TestContextCapabilitiesMobileCredentialsAreWriteOnly(t *testing.T) {
@@ -460,9 +472,17 @@ func TestContextCapabilitiesAdminOffersGateMobileBindings(t *testing.T) {
 			ConnectorIDs []string `json:"connector_ids"`
 			SkillIDs     []string `json:"skill_ids"`
 		} `json:"offers"`
+		Orgs         []contextCapScopeSummaryDTO `json:"orgs"`
 		Scenes       []contextCapScopeSummaryDTO `json:"scenes"`
 		Persons      []contextCapScopeSummaryDTO `json:"persons"`
 		ConfigureURL string                      `json:"configure_url"`
+	}
+	// An enterprise-level binding is summarised under orgs.
+	if _, err := contextcap.UpsertBinding(context.Background(), testPool, contextcap.BindingWrite{
+		WorkspaceID: testWorkspaceID, AgentID: agentID, ScopeType: contextcap.ScopeOrg, OrgID: ctxcapOrg, ScopeKey: ctxcapOrg,
+		ResourceType: contextcap.ResourceSkill, ResourceID: f.skillScene, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	w := admin(http.MethodGet, "/api/agents/"+agentID+"/context-capabilities", nil)
@@ -481,6 +501,9 @@ func TestContextCapabilitiesAdminOffersGateMobileBindings(t *testing.T) {
 	if len(view.Scenes) != 1 || view.Scenes[0].ScopeKey != ctxcapScene || ctxcapMentions(view.Scenes[0].Bindings, f.notOffered) ||
 		!ctxcapHasBinding(view.Scenes[0].Bindings, f.scene, true) || len(view.Persons) != 1 || view.Persons[0].ScopeKey != ctxcapStaff {
 		t.Fatalf("admin summaries scenes=%+v persons=%+v", view.Scenes, view.Persons)
+	}
+	if len(view.Orgs) != 1 || view.Orgs[0].ScopeKey != ctxcapOrg || !ctxcapHasBinding(view.Orgs[0].Bindings, f.skillScene, true) {
+		t.Fatalf("admin org summaries=%+v", view.Orgs)
 	}
 	if strings.Contains(w.Body.String(), "upstream_url") || strings.Contains(w.Body.String(), "workspace-secret") {
 		t.Fatalf("admin view leaks connector internals: %s", w.Body.String())

@@ -847,6 +847,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	coordinator.RouteProvider = h.Models.CoordinatorSnapshot
 	coordinator.SetIssueCommentWriter(handler.NewInboundCoordinatorIssueCommentWriter(h))
+	coordinator.ConfigLinks = handler.NewCoordinatorConfigLinkIssuer(h)
 	coordinator.DWSHistory = inboundcoord.NewDWSHistoryLoader(inboundcoord.DWSHistoryConfig{
 		MCPBaseURL:            strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL")),
 		CrossOrgRenewAgentIDs: strings.Split(os.Getenv("MULTICA_DWS_HISTORY_CROSS_ORG_RENEW_AGENT_IDS"), ","),
@@ -2786,15 +2787,23 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// catalog, connector, offer and credential routes.
 					r.With(handler.RequireHumanActor).Get("/connected-apps", h.ListAgentConnectedApps)
 					r.With(handler.RequireHumanActor).Get("/connected-apps/{slug}", h.GetAgentConnectedApp)
-					// IM scenes (group and 1:1 chats): scene list, scene
-					// prompt, scene bindings and custom MCP servers (a 1:1
-					// chat's are its person's). Configuration only; the
-					// scene key is a percent-encoded openConversationId.
-					r.With(handler.RequireHumanActor).Get("/scenes", h.ListAgentScenes)
-					r.With(handler.RequireHumanActor).Get("/scenes/{sceneKey}", h.GetAgentScene)
-					r.With(handler.RequireHumanActor).Put("/scenes/{sceneKey}/prompt", h.PutAgentScenePrompt)
-					r.With(handler.RequireHumanActor).Put("/scenes/{sceneKey}/bindings", h.PutAgentSceneBinding)
-					r.With(handler.RequireHumanActor).Put("/scenes/{sceneKey}/mcp-config", h.PutAgentSceneMCPConfig)
+					// Tenants (one per enterprise / DingTalk org) and the
+					// Context Builder of each node of the 场域 tree: org,
+					// group scene, person (a 1:1 chat is its person). Keys
+					// are percent-encoded.
+					r.With(handler.RequireHumanActor).Get("/tenants", h.ListAgentTenants)
+					r.With(handler.RequireHumanActor).Post("/tenants", h.CreateAgentTenant)
+					r.With(handler.RequireHumanActor).Patch("/tenants/{orgId}", h.RenameAgentTenant)
+					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}", h.DeleteAgentTenant)
+					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/groups", h.ListAgentTenantGroups)
+					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/persons", h.ListAgentTenantPersons)
+					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/context/{scopeType}/{scopeKey}", h.GetAgentContextNode)
+					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/bindings", h.PutAgentContextBinding)
+					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/prompts", h.PutAgentContextPrompts)
+					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/mcp-config", h.PutAgentContextMCPConfig)
+					r.With(handler.RequireHumanActor).Put("/tenants/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.PutAgentContextCredential)
+					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.DeleteAgentContextCredential)
+					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/connections/start", h.StartAgentContextConnection)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)

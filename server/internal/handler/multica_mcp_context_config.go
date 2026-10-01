@@ -5,9 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/contextcap"
@@ -135,73 +133,17 @@ func (h *Handler) createContextConfigLink(r *http.Request, requestedScope string
 	if task.Status != "running" && task.Status != "dispatched" {
 		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "source task is not active"}
 	}
-	origin := strings.TrimRight(firstNonEmpty(h.currentConfig().AppURL, h.currentConfig().FrontendOrigin), "/")
-	if origin == "" {
-		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "the app URL is not configured, so no configuration link can be issued"}
-	}
-
-	scope := h.taskContextScope(ctx, workspaceUUID, task)
-	// A personal link is single use but readable by everyone in the chat it
-	// is posted to, so it is only issued into a conversation that is
-	// positively 1:1 (the dispatcher's DM allow-list). Empty or unknown
-	// conversation types are treated as shared.
-	direct := contextcap.IsDirectConversationType(scope.ConversationType)
-	scopeType := requestedScope
-	if scopeType == "" {
-		scopeType = contextcap.ScopeScene
-		if direct {
-			scopeType = contextcap.ScopePerson
-		}
-	}
-	link := contextcap.Link{
-		WorkspaceID:  uuidToString(workspaceUUID),
-		AgentID:      agentID,
-		ScopeType:    scopeType,
-		OrgID:        scope.OrgID,
-		SourceTaskID: uuidToString(task.ID),
-	}
-	switch scopeType {
-	case contextcap.ScopeScene:
-		if !scope.HasScene() {
-			return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "This run did not come from a DingTalk group chat, so there is no group to configure. In a 1:1 chat with the user, use scope=person."}
-		}
-		link.ScopeKey = scope.SceneKey
-		link.ScopeTitle = scope.SceneTitle
-		if link.ScopeTitle == "" {
-			if title, found, err := h.contextCapGroupSceneTitle(ctx, link.WorkspaceID, agentID, scope.OrgID, scope.SceneKey); err == nil && found {
-				link.ScopeTitle = title
-			}
-		}
-	case contextcap.ScopePerson:
-		if !direct {
-			return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "Personal configuration links are only issued in a 1:1 chat, because everyone in a shared conversation could open them. Ask the user to message you privately (私聊) and request the personal link there."}
-		}
-		if !scope.HasPerson() {
-			return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "This run has no single identifiable DingTalk sender, so no personal configuration link can be issued. Ask the user to message you privately (私聊)."}
-		}
-		link.ScopeKey = scope.PersonKey
-		link.ScopeTitle = scope.PersonName
-		// A 1:1 chat is a scene too: redeeming this link also grants the
-		// person that DM scene (configuration only this round).
-		link.ExtraSceneKey = scope.DirectSceneKey
-	}
-
-	token, err := contextcap.NewLinkToken()
+	origin, err := h.contextConfigLinkOrigin()
 	if err != nil {
 		return multicaMCPContextConfigLinkResult{}, err
 	}
-	link.TokenHash = contextcap.HashLinkToken(token)
-	stored, err := contextcap.InsertLink(ctx, h.DB, link, contextcap.LinkTTL(scopeType))
-	if err != nil {
-		return multicaMCPContextConfigLinkResult{}, err
-	}
-	pageURL := origin + "/dingtalk/configure?link=" + url.QueryEscape(token)
-	slog.InfoContext(ctx, "context capabilities: configuration link issued",
-		"source_task_id", link.SourceTaskID, "agent_id", agentID, "workspace_id", link.WorkspaceID, "scope_type", scopeType)
-	return multicaMCPContextConfigLinkResult{
-		URL:         pageURL,
-		DingTalkURL: "dingtalk://dingtalkclient/page/link?url=" + url.QueryEscape(pageURL) + "&pc_slide=true",
-		Scope:       scopeType,
-		ExpiresAt:   stored.ExpiresAt.UTC().Format(time.RFC3339),
-	}, nil
+	return h.mintContextConfigLink(ctx, contextConfigLinkMint{
+		WorkspaceID:    uuidToString(workspaceUUID),
+		AgentID:        agentID,
+		Scope:          h.taskContextScope(ctx, workspaceUUID, task),
+		RequestedScope: requestedScope,
+		Origin:         origin,
+		SourceTaskID:   uuidToString(task.ID),
+		Issuer:         contextConfigLinkIssuerTaskTool,
+	})
 }

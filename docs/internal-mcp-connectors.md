@@ -159,8 +159,9 @@ new deployment. No API returns a saved credential.
 
 A task's connectors are the Agent's
 global grants plus connectors in the Agent's offer catalog that the task's
-DingTalk group (scene) or trigger person enabled on the mobile page
-`/dingtalk/configure` (see `docs/context-capabilities.md`). An enabled
+tenant (org), DingTalk group (scene) or trigger person enabled (web 场域
+tree or the mobile page `/dingtalk/configure`; see
+`docs/context-capabilities.md`). An enabled
 connector therefore no longer needs an Agent grant to be saved, and a Bearer
 connector may be enabled without a workspace credential (people and groups
 bring their own token; until one applies, the connector is not mounted).
@@ -171,14 +172,14 @@ personal credentials. Only workspace
 owners/admins can add a connector to an Agent's offer catalog. Claim-time
 injection and every relay call run the same task-aware resolver, so a
 toggle, offer removal or credential revoke applies to the next call; if the
-scene/person layers cannot be read, the task keeps its global connectors.
+org/scene/person layers cannot be read, the task keeps its global connectors.
 For a Bearer connector the relay sends the first usable credential of
-person > scene > workspace, where a scene credential only applies to an
-offered connector. Scene and personal credentials are sealed with the same
-connector key, bound to their full scope, and write-only (responses carry a
-`••••` hint). The call audit and its log line add `binding_layer`
-(`global`/`scene`/`person`) and `credential_layer`
-(`none`/`workspace`/`scene`/`person`).
+person > scene > org > workspace, where a scene or org credential only
+applies to an offered connector. Org, scene and personal credentials are
+sealed with the same connector key, bound to their full scope, and
+write-only (responses carry a `••••` hint). The call audit and its log line
+add `binding_layer` (`global`/`org`/`scene`/`person`) and `credential_layer`
+(`none`/`workspace`/`org`/`scene`/`person`).
 
 ## Official apps (catalog connectors)
 

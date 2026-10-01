@@ -14,8 +14,9 @@ import (
 const MaxScopeMCPConfigBytes = 64 << 10
 
 // ScopeMCPConfig is one row of context_scope_mcp_config: the custom MCP
-// servers of one scene or person scope, in the agent mcp_config format.
-// Configuration only: stored and shown, not applied at runtime yet.
+// servers of one org, scene or person scope, in the agent mcp_config
+// format. MergeContext merges them across layers, nearest layer wins by
+// server name.
 type ScopeMCPConfig struct {
 	ScopeType string
 	OrgID     string
@@ -66,14 +67,10 @@ func NormalizeScopeMCPConfig(raw json.RawMessage) (json.RawMessage, error) {
 	return json.RawMessage(compact.Bytes()), nil
 }
 
-func validScopeMCPConfigScope(scopeType, scopeKey string) bool {
-	return (scopeType == ScopeScene || scopeType == ScopePerson) && ValidScopeKey(scopeType, scopeKey)
-}
-
-// GetScopeMCPConfig returns the custom MCP servers of one scene or person
-// scope, or ErrNotFound when the scope has none.
+// GetScopeMCPConfig returns the custom MCP servers of one org, scene or
+// person scope, or ErrNotFound when the scope has none.
 func GetScopeMCPConfig(ctx context.Context, db DBTX, workspaceID, agentID, scopeType, orgID, scopeKey string) (ScopeMCPConfig, error) {
-	if !validScopeMCPConfigScope(scopeType, scopeKey) {
+	if !ValidConfigScope(scopeType, orgID, scopeKey) {
 		return ScopeMCPConfig{}, ErrInvalidInput
 	}
 	out := ScopeMCPConfig{}
@@ -93,13 +90,13 @@ func GetScopeMCPConfig(ctx context.Context, db DBTX, workspaceID, agentID, scope
 	return out, nil
 }
 
-// PutScopeMCPConfig stores the custom MCP servers of one scene or person
+// PutScopeMCPConfig stores the custom MCP servers of one org, scene or person
 // scope. The configuration goes through NormalizeScopeMCPConfig; one that
 // normalizes to nothing deletes the row instead (the returned config then
 // has a nil MCPConfig). A row of another workspace is never overwritten
 // (ErrNotFound).
 func PutScopeMCPConfig(ctx context.Context, db DBTX, in ScopeMCPConfigWrite) (ScopeMCPConfig, error) {
-	if !validScopeMCPConfigScope(in.ScopeType, in.ScopeKey) {
+	if !ValidConfigScope(in.ScopeType, in.OrgID, in.ScopeKey) {
 		return ScopeMCPConfig{}, ErrInvalidInput
 	}
 	for _, id := range []string{in.WorkspaceID, in.AgentID} {

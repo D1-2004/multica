@@ -130,18 +130,62 @@ func TestScopeFromTaskContext(t *testing.T) {
 			raw:  `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"staffId":"a\u0007b"}}}`,
 			want: Scope{ConversationType: "single"},
 		},
+		{
+			// Still a dispatch: the org layer may apply without scene or person.
+			name: "dispatch without conversation or sender",
+			raw:  `{"dispatch_event_data":{}}`,
+			want: Scope{Dispatched: true},
+		},
 		{name: "no dispatch data", raw: `{"issue_id":"x"}`, want: Scope{}},
 		{name: "malformed json", raw: `{"dispatch_event_data":`, want: Scope{}},
 		{name: "wrong field type", raw: `{"dispatch_event_data":{"conversation":{"type":7}}}`, want: Scope{}},
 		{name: "empty", raw: ``, want: Scope{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ScopeFromTaskContext([]byte(tc.raw))
-			if got != tc.want {
-				t.Fatalf("ScopeFromTaskContext() = %#v, want %#v", got, tc.want)
+			// Every parsed dispatch is Dispatched; the zero Scope never is.
+			want := tc.want
+			if want != (Scope{}) {
+				want.Dispatched = true
 			}
-			if got.OrgID != "" {
+			got := ScopeFromTaskContext([]byte(tc.raw))
+			if got != want {
+				t.Fatalf("ScopeFromTaskContext() = %#v, want %#v", got, want)
+			}
+			if got.OrgID != "" || got.HasOrg() {
 				t.Fatal("org id must be filled by the caller, never from the task context")
+			}
+		})
+	}
+}
+
+func TestScopeLayerSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		scope  Scope
+		layers bool
+		want   LayerSelection
+	}{
+		{name: "zero", scope: Scope{}, want: LayerSelection{}},
+		{name: "org only", scope: Scope{Dispatched: true, OrgID: "org-1"}, layers: true, want: LayerSelection{OrgID: "org-1", Org: true}},
+		{
+			name:   "org, scene and person",
+			scope:  Scope{Dispatched: true, OrgID: "org-1", SceneKey: "cidGroup", PersonKey: "staff-1"},
+			layers: true,
+			want:   LayerSelection{OrgID: "org-1", Org: true, SceneKey: "cidGroup", PersonKey: "staff-1"},
+		},
+		{
+			// An org id without a dispatch is not an org layer.
+			name:  "org id without dispatch",
+			scope: Scope{OrgID: "org-1"},
+			want:  LayerSelection{OrgID: "org-1"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.scope.HasLayers(); got != tc.layers {
+				t.Fatalf("HasLayers() = %v, want %v", got, tc.layers)
+			}
+			if got := tc.scope.Selection(); got != tc.want {
+				t.Fatalf("Selection() = %#v, want %#v", got, tc.want)
 			}
 		})
 	}

@@ -98,6 +98,9 @@ func newCtxcapFixture(t *testing.T) *ctxcapFixture {
 			`DELETE FROM context_capability_binding WHERE agent_id = $1`,
 			`DELETE FROM context_connector_credential WHERE agent_id = $1`,
 			`DELETE FROM agent_scene_config WHERE agent_id = $1`,
+			`DELETE FROM context_prompt_component WHERE agent_id = $1`,
+			`DELETE FROM context_scope_mcp_config WHERE agent_id = $1`,
+			`DELETE FROM agent_tenant WHERE agent_id = $1`,
 			`DELETE FROM internal_connector_call_audit WHERE agent_id = $1`,
 			`DELETE FROM internal_connector_agent WHERE agent_id = $1`,
 			`DELETE FROM agent_task_queue WHERE agent_id = $1`,
@@ -329,6 +332,17 @@ func (f *ctxcapFixture) resolve(t *testing.T, task db.AgentTaskQueue) map[string
 	return out
 }
 
+// contextSkillIDs is the skill part of a task's effective context, as the
+// claim adds it to the agent's own skills.
+func (f *ctxcapFixture) contextSkillIDs(t *testing.T, task db.AgentTaskQueue) []pgtype.UUID {
+	t.Helper()
+	effective, err := f.h.taskEffectiveContext(context.Background(), f.ws, task, contextcap.ContextLayer{Layer: contextcap.LayerGlobal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return effective.contextSkillIDs()
+}
+
 func TestContextCapabilitiesTaskScopeFromRealTaskContext(t *testing.T) {
 	f := newCtxcapFixture(t)
 	ctx := context.Background()
@@ -541,7 +555,7 @@ func TestContextCapabilitiesClaimSkillsLayering(t *testing.T) {
 	}
 
 	group := f.task(t, ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff))
-	extra := f.h.taskContextSkillIDs(ctx, f.ws, group)
+	extra := f.contextSkillIDs(t, group)
 	if len(extra) != 1 || uuidToString(extra[0]) != f.skillScene {
 		t.Fatalf("context skill ids = %v, want only the offered scene skill", extra)
 	}
@@ -561,7 +575,7 @@ func TestContextCapabilitiesClaimSkillsLayering(t *testing.T) {
 	}
 
 	other := f.task(t, ctxcapDispatch("group", ctxcapOtherScene, ctxcapOtherStaff))
-	if ids := f.h.taskContextSkillIDs(ctx, f.ws, other); len(ids) != 0 {
+	if ids := f.contextSkillIDs(t, other); len(ids) != 0 {
 		t.Fatalf("non-matching task got context skills %v", ids)
 	}
 	baseline := skillIDs(f.h.TaskService.LoadAgentExecutionSkills(ctx, f.agent, runtime, ""))

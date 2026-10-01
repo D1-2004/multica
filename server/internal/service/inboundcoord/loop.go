@@ -30,6 +30,7 @@ type Completer interface {
 
 func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) {
 	ensureTurnTraceID(&turn)
+	turn.configLinkOffered = c.configLinkEligible(turn)
 	lt := langfuse.TraceFromContext(ctx)
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(buildSystemPrompt(turn)), openai.UserMessage(buildUserPrompt(turn)),
@@ -262,10 +263,18 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 						}
 					}
 					if callErr == nil {
+						userDecision := turn.UserDecisionEnabled && turn.Loop != LoopTaskFinished && decision.Action != ActionSilence
+						if !userDecision {
+							// Reviewed and not yet durable: the checkpoint and every
+							// redelivery carry the same capability answer and link.
+							for _, step := range c.attachConfigLink(ctx, turn, &decision) {
+								appendStep(step)
+							}
+						}
 						decision.Steps = steps
 						decision.ToolRounds = round + 1
 						decision.ToolsUsed = append([]string(nil), used...)
-						if turn.UserDecisionEnabled && turn.Loop != LoopTaskFinished && decision.Action != ActionSilence {
+						if userDecision {
 							return c.proposeUserDecision(ctx, turn, messages, recalls, recalledIssues, decision)
 						}
 						if saveErr := SavePlan(ctx, decision); saveErr != nil {
@@ -361,9 +370,9 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 func finishToolOutput(decision Decision) string {
 	raw, err := json.Marshal(map[string]any{
 		"action":               string(decision.Action),
-		"coordination_actions": decision.CoordinationActions,
+		"coordination_actions": redactConfigLinkActions(decision.CoordinationActions, decision.configLinkURL),
 		"issue_id":             strings.TrimSpace(decision.IssueID),
-		"text":                 clipRunes(strings.TrimSpace(decision.UserText), traceOutputTextBudget),
+		"text":                 clipRunes(strings.TrimSpace(redactConfigLink(decision.UserText, decision.configLinkURL)), traceOutputTextBudget),
 		"look_into":            clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
 		"purpose":              clipRunes(strings.TrimSpace(decision.Purpose), llmLogFieldBudget),
 		"intent":               strings.TrimSpace(decision.Intent),
@@ -730,10 +739,10 @@ func logCoordinatorLLMFinish(turn Turn, round int, arguments string, decision De
 			"round", round,
 			"arguments", clipRunes(strings.TrimSpace(arguments), llmLogToolBudget),
 			"action", string(decision.Action),
-			"coordination_actions", decision.CoordinationActions,
+			"coordination_actions", redactConfigLinkActions(decision.CoordinationActions, decision.configLinkURL),
 			"coordination_kinds", decision.CoordinationKinds(),
 			"issue_id", strings.TrimSpace(decision.IssueID),
-			"text", clipRunes(strings.TrimSpace(decision.UserText), llmLogFieldBudget),
+			"text", clipRunes(strings.TrimSpace(redactConfigLink(decision.UserText, decision.configLinkURL)), llmLogFieldBudget),
 			"look_into", clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
 			"reason", clipRunes(strings.TrimSpace(decision.Reason), llmLogFieldBudget),
 		)...)

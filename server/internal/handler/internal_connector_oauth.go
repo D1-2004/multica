@@ -116,10 +116,11 @@ type connectorOAuthScope struct {
 	WorkspaceID string
 	ConnectorID string
 	UserID      string
-	// ScopeType is "workspace", "scene" or "person".
+	// ScopeType is "workspace", "org", "scene" or "person".
 	ScopeType string
-	// AgentID, OrgID and ScopeKey identify a scene or person scope (the
-	// agent's current DingTalk org); they are empty for the workspace scope.
+	// AgentID, OrgID and ScopeKey identify an org, scene or person scope
+	// (OrgID is a tenant org of the agent; an org scope's key is the org);
+	// they are empty for the workspace scope.
 	AgentID  string
 	OrgID    string
 	ScopeKey string
@@ -369,13 +370,13 @@ func normalizeConnectorOAuthScope(in connectorOAuthScope) (connectorOAuthScope, 
 	switch out.ScopeType {
 	case connectorOAuthScopeWorkspace:
 		out.AgentID, out.OrgID, out.ScopeKey, out.SceneKey = "", "", "", ""
-	case contextcap.ScopeScene, contextcap.ScopePerson:
+	case contextcap.ScopeOrg, contextcap.ScopeScene, contextcap.ScopePerson:
 		id, err := canonicalOAuthUUID(out.AgentID)
 		if err != nil {
 			return out, err
 		}
 		out.AgentID = id
-		if !contextcap.ValidScopeKey(out.ScopeType, out.ScopeKey) {
+		if !contextcap.ValidConfigScope(out.ScopeType, out.OrgID, out.ScopeKey) {
 			return out, errors.New("invalid scope key")
 		}
 		if out.SceneKey != "" && (out.ScopeType != contextcap.ScopePerson || !contextcap.ValidOpenConversationID(out.SceneKey)) {
@@ -416,11 +417,22 @@ func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connec
 		return nil
 	}
 	agent, err := h.loadContextCapAgent(ctx, scope.AgentID)
-	if errors.Is(err, contextcap.ErrNotFound) || (err == nil && (agent.WorkspaceID != scope.WorkspaceID || agent.OrgID != scope.OrgID)) {
+	if errors.Is(err, contextcap.ErrNotFound) || (err == nil && agent.WorkspaceID != scope.WorkspaceID) {
 		return forbidden
 	}
 	if err != nil {
 		return oauthStartError(http.StatusInternalServerError, "internal", "agent lookup failed")
+	}
+	// The scope's org must (still) be a tenant of the agent, or "" for an
+	// agent without a DingTalk identity.
+	if orgless := scope.OrgID == "" && agent.IdentityOrgID == ""; !orgless {
+		agent, err = h.contextCapAgentInOrg(ctx, agent, scope.OrgID)
+		if errors.Is(err, errContextCapUnknownTenant) || (err == nil && agent.OrgID != scope.OrgID) {
+			return forbidden
+		}
+		if err != nil {
+			return oauthStartError(http.StatusInternalServerError, "internal", "tenant lookup failed")
+		}
 	}
 	// The mobile routes' authority (contextCapResolveScope) for the request
 	// the caller made; a malformed scope and a manager's unknown scene are
@@ -797,7 +809,7 @@ func (h *Handler) storeConnectorOAuthCredential(ctx context.Context, scope conne
 // unoffered connector already gets it through the global grant. Failures are
 // logged: the credential is stored and the toggle stays available.
 func (h *Handler) enableConnectedScopeBinding(ctx context.Context, scope connectorOAuthScope) {
-	if scope.ScopeType != contextcap.ScopeScene && scope.ScopeType != contextcap.ScopePerson {
+	if scope.ScopeType != contextcap.ScopeOrg && scope.ScopeType != contextcap.ScopeScene && scope.ScopeType != contextcap.ScopePerson {
 		return
 	}
 	_, err := contextcap.UpsertBinding(ctx, h.DB, contextcap.BindingWrite{

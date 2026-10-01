@@ -49,30 +49,20 @@ func TestSceneStoreValidatesBeforeQuerying(t *testing.T) {
 			t.Errorf("%s: err=%v", name, err)
 		}
 	}
-	for name, in := range map[string]SceneConfigWrite{
-		"bad key":  {SceneKey: "group-1", SceneKind: SceneKindGroup, ActorID: uuid.NewString()},
-		"bad kind": {SceneKey: "cidGroup", SceneKind: "channel", ActorID: uuid.NewString()},
-		"too long": {SceneKey: "cidGroup", SceneKind: SceneKindGroup, Prompt: strings.Repeat("a", MaxScenePrompt+1), ActorID: uuid.NewString()},
-		"no actor": {SceneKey: "cidGroup", SceneKind: SceneKindGroup},
-	} {
-		if _, err := UpsertScenePrompt(ctx, nil, in); !errors.Is(err, ErrInvalidInput) {
-			t.Errorf("%s: err=%v", name, err)
-		}
-	}
 	if err := RegisterDirectScene(ctx, nil, uuid.NewString(), uuid.NewString(), "", "staff-1", "Alice"); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("register non-cid: err=%v", err)
 	}
-	if _, err := GetScene(ctx, nil, uuid.NewString(), uuid.NewString(), "", "not-a-cid"); !errors.Is(err, ErrInvalidInput) {
+	if _, err := GetScene(ctx, nil, uuid.NewString(), uuid.NewString(), "", "", "not-a-cid"); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("get non-cid: err=%v", err)
 	}
 }
 
-func TestStoreScenePromptShareInGroupsAndDirectLinks(t *testing.T) {
+func TestStoreDirectSceneShareInGroupsAndDirectLinks(t *testing.T) {
 	f := openStoreTx(t)
 	ctx := context.Background()
 	var migrated bool
-	if err := f.tx.QueryRow(ctx, `SELECT to_regclass('agent_scene_config') IS NOT NULL`).Scan(&migrated); err != nil || !migrated {
-		t.Skip("agent_scene_config is not migrated")
+	if err := f.tx.QueryRow(ctx, `SELECT to_regclass('context_prompt_component') IS NOT NULL`).Scan(&migrated); err != nil || !migrated {
+		t.Skip("context_prompt_component is not migrated")
 	}
 	var actor string
 	if err := f.tx.QueryRow(ctx, `INSERT INTO "user" (name, email) VALUES ('Scene Admin', 'scene-admin-' || $1 || '@example.test') RETURNING id::text`,
@@ -80,19 +70,15 @@ func TestStoreScenePromptShareInGroupsAndDirectLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A 1:1 link redemption registers the DM scene without a prompt write.
+	// A 1:1 link redemption registers the DM scene.
 	if err := RegisterDirectScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "cidDirect", " Alice "); err != nil {
 		t.Fatal(err)
 	}
-	registered, err := GetSceneConfig(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "cidDirect")
-	if err != nil || registered.SceneKind != SceneKindDM || registered.SceneTitle != "Alice" || registered.Prompt != "" || registered.UpdatedBy != "" {
-		t.Fatalf("registered=%+v err=%v", registered, err)
-	}
-	scene, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "cidDirect")
+	scene, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "org-1", "cidDirect")
 	if err != nil || scene.Kind != SceneKindDM || scene.ConfigTitle != "Alice" || scene.HasPrompt {
 		t.Fatalf("scene=%+v err=%v", scene, err)
 	}
-	if _, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-2", "cidDirect"); !errors.Is(err, ErrNotFound) {
+	if _, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-2", "org-1", "cidDirect"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("scene under another org: %v", err)
 	}
 	if _, err := f.tx.Exec(ctx, `INSERT INTO scene_memory (workspace_id, agent_id, platform, org_id, scene_key, scene_kind)
@@ -109,31 +95,22 @@ func TestStoreScenePromptShareInGroupsAndDirectLinks(t *testing.T) {
 	if kinds, err := SceneKinds(ctx, f.tx, f.workspaceID, f.agentID, "org-2", []string{"cidDirect"}); err != nil || kinds["cidDirect"] != SceneKindGroup {
 		t.Fatalf("kinds under another org=%v err=%v", kinds, err)
 	}
-
-	stored, err := UpsertScenePrompt(ctx, f.tx, SceneConfigWrite{
-		WorkspaceID: f.workspaceID, AgentID: f.agentID, OrgID: "org-1", SceneKey: "cidDirect", SceneKind: SceneKindDM,
-		Prompt: "Answer briefly.", ActorID: actor,
-	})
-	if err != nil || stored.Prompt != "Answer briefly." || stored.UpdatedBy != actor || stored.UpdatedByName != "Scene Admin" || stored.SceneTitle != "Alice" {
-		t.Fatalf("stored=%+v err=%v", stored, err)
-	}
-	// Registering again keeps the prompt and its update stamp.
+	// Registering again keeps the title; a scene prompt component makes
+	// has_prompt true and lists a scene nothing else mentions.
 	if err := RegisterDirectScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "cidDirect", "Renamed"); err != nil {
 		t.Fatal(err)
 	}
-	kept, err := GetSceneConfig(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "cidDirect")
-	if err != nil || kept.Prompt != "Answer briefly." || kept.UpdatedBy != actor || kept.SceneTitle != "Alice" {
-		t.Fatalf("after re-register=%+v err=%v", kept, err)
+	if _, err := ReplacePromptComponents(ctx, f.tx, PromptComponentsWrite{
+		WorkspaceID: f.workspaceID, AgentID: f.agentID, ScopeType: ScopeScene, OrgID: "org-1", ScopeKey: "cidPromptOnly",
+		Components: []PromptComponentInput{{Name: "Tone", Text: "Answer briefly."}}, ActorID: actor,
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if scene, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "cidDirect"); err != nil || !scene.HasPrompt {
-		t.Fatalf("scene after prompt=%+v err=%v", scene, err)
+	if scene, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "org-1", "cidPromptOnly"); err != nil || !scene.HasPrompt || scene.Kind != SceneKindGroup {
+		t.Fatalf("prompt-only scene=%+v err=%v", scene, err)
 	}
-	// Another workspace never overwrites the row.
-	if _, err := UpsertScenePrompt(ctx, f.tx, SceneConfigWrite{
-		WorkspaceID: uuid.NewString(), AgentID: f.agentID, OrgID: "org-1", SceneKey: "cidDirect", SceneKind: SceneKindDM,
-		Prompt: "hijack", ActorID: actor,
-	}); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("foreign workspace prompt write: %v", err)
+	if scene, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "org-1", "cidDirect"); err != nil || scene.HasPrompt || scene.ConfigTitle != "Alice" {
+		t.Fatalf("scene after re-register=%+v err=%v", scene, err)
 	}
 
 	// share_in_groups: default false, set, kept when omitted.
@@ -188,7 +165,7 @@ func TestListAllAgentScenesBeyondOnePage(t *testing.T) {
 		FROM generate_series(1, $3::int) AS n`, f.workspaceID, f.agentID, total); err != nil {
 		t.Fatal(err)
 	}
-	q := SceneListQuery{WorkspaceID: f.workspaceID, AgentID: f.agentID, OrgID: "org-1", Limit: MaxAllScenes}
+	q := SceneListQuery{WorkspaceID: f.workspaceID, AgentID: f.agentID, OrgID: "org-1", IdentityOrgID: "org-1", Limit: MaxAllScenes}
 	page, more, err := ListAgentScenes(ctx, f.tx, q)
 	if err != nil || len(page) != maxScenesPerPage || !more {
 		t.Fatalf("paged listing: %d scenes, more=%v, err=%v", len(page), more, err)
@@ -222,11 +199,11 @@ func TestSceneWithOnlyACredentialIsListed(t *testing.T) {
 		f.workspaceID, f.agentID); err != nil {
 		t.Fatal(err)
 	}
-	scene, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "cidCredOnly==")
+	scene, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "org-1", "cidCredOnly==")
 	if err != nil || scene.SceneKey != "cidCredOnly==" || scene.Kind != SceneKindGroup {
 		t.Fatalf("credential-only scene = %+v, %v", scene, err)
 	}
-	if _, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "cidOtherOrg=="); !errors.Is(err, ErrNotFound) {
+	if _, err := GetScene(ctx, f.tx, f.workspaceID, f.agentID, "org-1", "org-1", "cidOtherOrg=="); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("another org's credential scene: err = %v, want ErrNotFound", err)
 	}
 }

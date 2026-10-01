@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS context_prompt_component_name_idx;

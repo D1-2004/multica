@@ -189,12 +189,7 @@ func TestAgentConnectedAppsStatusAndUsage(t *testing.T) {
 	if err := contextcap.RegisterDirectScene(ctx, testPool, testWorkspaceID, f.agentID, catalogTestOrg, appsSceneDirect, "Direct chat"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := contextcap.UpsertScenePrompt(ctx, testPool, contextcap.SceneConfigWrite{
-		WorkspaceID: testWorkspaceID, AgentID: f.agentID, OrgID: catalogTestOrg, SceneKey: appsSceneConnected,
-		SceneKind: contextcap.SceneKindGroup, SceneTitle: "Connected group", ActorID: testUserID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	registerGroupScene(t, f.agentID, catalogTestOrg, appsSceneConnected, "Connected group")
 
 	dcrApp = connectedAppBySlug(t, f.listConnectedApps(t, router, testUserID).Apps, f.dcr.Slug)
 	wantUsage := connectedAppUsageDTO{ScenesEnabled: 1, ScenesConnected: 1, PersonsEnabled: 1, PersonsConnected: 2}
@@ -421,12 +416,7 @@ func TestContextConfigConnectionStartAcceptsManagerForScenes(t *testing.T) {
 	dcr := f.create(t, f.dcr)
 	f.offer(t, dcr.ID)
 	// A group scene the agent has seen (its configuration row).
-	if _, err := contextcap.UpsertScenePrompt(ctx, testPool, contextcap.SceneConfigWrite{
-		WorkspaceID: testWorkspaceID, AgentID: f.agentID, OrgID: catalogTestOrg, SceneKey: catalogTestScene,
-		SceneKind: contextcap.SceneKindGroup, SceneTitle: "Known scene", ActorID: testUserID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	registerGroupScene(t, f.agentID, catalogTestOrg, catalogTestScene, "Known scene")
 	startPath := "/api/context-capabilities/agents/" + f.agentID + "/connections/start"
 	start := func(userID, scopeType, key string) *httptest.ResponseRecorder {
 		return ctxcapMobile(t, router, http.MethodPost, startPath, userID, map[string]string{"scope_type": scopeType, "scope_key": key, "connector_id": dcr.ID})
@@ -460,9 +450,46 @@ func TestContextConfigConnectionStartAcceptsManagerForScenes(t *testing.T) {
 	if err := f.h.authorizeConnectorOAuthScope(ctx, plain, c); !forbidden(err) {
 		t.Fatalf("callback re-check, plain member: %v", err)
 	}
+	// The enterprise (org) scope of a tenant: managers connect its account;
+	// the state names the tenant org, and the callback re-checks that the
+	// org is still a tenant.
+	f.takeAuthorizeURL(t, start(testUserID, contextcap.ScopeOrg, catalogTestOrg))
+	ctxcapExpectStatus(t, start(member, contextcap.ScopeOrg, catalogTestOrg), http.StatusForbidden, "plain member, org scope")
+	orgScope := f.scope(dcr.ID, contextcap.ScopeOrg, catalogTestOrg)
+	if err := f.h.authorizeConnectorOAuthScope(ctx, orgScope, c); err != nil {
+		t.Fatalf("callback re-check, org scope: %v", err)
+	}
+	if _, err := contextcap.CreateTenant(ctx, testPool, contextcap.TenantWrite{WorkspaceID: testWorkspaceID, AgentID: f.agentID, OrgID: "org-catalog-b", Name: "B"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_tenant WHERE agent_id = $1`, f.agentID)
+	})
+	tenantScope := orgScope
+	tenantScope.OrgID, tenantScope.ScopeKey = "org-catalog-b", "org-catalog-b"
+	w := ctxcapMobile(t, router, http.MethodPost, startPath, testUserID, map[string]string{"scope_type": contextcap.ScopeOrg, "scope_key": "org-catalog-b", "connector_id": dcr.ID})
+	f.takeAuthorizeURL(t, w)
+	var stored string
+	if err := testPool.QueryRow(ctx, `SELECT org_id FROM connector_oauth_state WHERE agent_id = $1 AND scope_type = 'org' ORDER BY created_at DESC LIMIT 1`, f.agentID).Scan(&stored); err != nil || stored != "org-catalog-b" {
+		t.Fatalf("org connect state org=%q err=%v", stored, err)
+	}
+	if err := f.h.authorizeConnectorOAuthScope(ctx, tenantScope, c); err != nil {
+		t.Fatalf("callback re-check, tenant org scope: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `DELETE FROM agent_tenant WHERE agent_id = $1`, f.agentID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.h.authorizeConnectorOAuthScope(ctx, tenantScope, c); !forbidden(err) {
+		t.Fatalf("callback re-check after the tenant was deleted: %v", err)
+	}
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPost, startPath, testUserID,
+		map[string]string{"scope_type": contextcap.ScopeOrg, "scope_key": "org-catalog-b", "connector_id": dcr.ID}), http.StatusNotFound, "org of a deleted tenant")
 	// The offer gate still applies to managers.
 	f.offer(t)
 	if err := f.h.authorizeConnectorOAuthScope(ctx, scene, c); !forbidden(err) {
 		t.Fatalf("callback re-check without the offer: %v", err)
+	}
+	if err := f.h.authorizeConnectorOAuthScope(ctx, orgScope, c); !forbidden(err) {
+		t.Fatalf("callback re-check without the offer, org scope: %v", err)
 	}
 }

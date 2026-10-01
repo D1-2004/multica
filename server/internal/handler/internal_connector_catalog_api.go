@@ -258,10 +258,14 @@ func (h *Handler) StartContextConfigConnection(w http.ResponseWriter, r *http.Re
 	var input struct {
 		ScopeType   string `json:"scope_type"`
 		ScopeKey    string `json:"scope_key"`
+		OrgID       string `json:"org_id"`
 		ConnectorID string `json:"connector_id"`
 		ReturnTo    string `json:"return_to"`
 	}
 	if !decodeContextCapBody(w, r, contextCapBodyLimit, &input) {
+		return
+	}
+	if a, ok = h.contextCapRequestOrg(w, r, a, userID, contextCapScopeOrg(input.ScopeType, input.ScopeKey, input.OrgID)); !ok {
 		return
 	}
 	connectorUUID, err := util.ParseUUID(strings.TrimSpace(input.ConnectorID))

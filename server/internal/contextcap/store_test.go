@@ -116,30 +116,47 @@ func TestStoreOffersGateTaskBindings(t *testing.T) {
 		t.Fatalf("invalid scene key: %v", err)
 	}
 
-	full := Scope{OrgID: "org-1", SceneKey: "cidGroup", PersonKey: "staff-1"}
-	bindings, err := TaskBindings(ctx, f.tx, f.workspaceID, f.agentID, full)
-	if err != nil || len(bindings) != 2 {
-		t.Fatalf("task bindings = %#v err=%v", bindings, err)
+	// layerResources lists the resources the layers of sel switch on.
+	layerResources := func(sel LayerSelection) []string {
+		t.Helper()
+		layers, err := LoadLayers(ctx, f.tx, f.workspaceID, f.agentID, sel)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := []string{}
+		for _, layer := range layers {
+			for _, id := range layer.ConnectorIDs {
+				out = append(out, ResourceConnector+":"+id)
+			}
+			for _, id := range layer.SkillIDs {
+				out = append(out, ResourceSkill+":"+id)
+			}
+		}
+		return out
 	}
-	for _, scope := range []Scope{
+	full := Scope{Dispatched: true, OrgID: "org-1", SceneKey: "cidGroup", PersonKey: "staff-1"}.Selection()
+	if got := layerResources(full); len(got) != 2 {
+		t.Fatalf("task layer resources = %v", got)
+	}
+	for _, sel := range []LayerSelection{
 		{OrgID: "org-2", SceneKey: "cidGroup", PersonKey: "staff-1"},
 		{OrgID: "org-1", SceneKey: "cidOther", PersonKey: "staff-2"},
-		{OrgID: "org-1"},
+		{OrgID: "org-1", Org: true},
 	} {
-		if got, err := TaskBindings(ctx, f.tx, f.workspaceID, f.agentID, scope); err != nil || len(got) != 0 {
-			t.Fatalf("scope %#v leaked bindings %#v err=%v", scope, got, err)
+		if got := layerResources(sel); len(got) != 0 {
+			t.Fatalf("selection %#v leaked bindings %v", sel, got)
 		}
 	}
-	if got, _ := TaskBindings(ctx, f.tx, f.workspaceID, f.agentID, Scope{OrgID: "org-1", SceneKey: "cidGroup"}); len(got) != 1 || got[0].ResourceID != f.connectorID {
-		t.Fatalf("scene-only bindings = %#v", got)
+	if got := layerResources(LayerSelection{OrgID: "org-1", SceneKey: "cidGroup"}); len(got) != 1 || got[0] != ResourceConnector+":"+f.connectorID {
+		t.Fatalf("scene-only resources = %v", got)
 	}
 
 	// Removing the connector offer disables its scene binding at once.
 	if err := ReplaceOffers(ctx, f.tx, f.workspaceID, f.agentID, nil, []string{f.skillID}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := TaskBindings(ctx, f.tx, f.workspaceID, f.agentID, full); len(got) != 1 || got[0].ResourceType != ResourceSkill {
-		t.Fatalf("offer removal did not disable binding: %#v", got)
+	if got := layerResources(full); len(got) != 1 || got[0] != ResourceSkill+":"+f.skillID {
+		t.Fatalf("offer removal did not disable binding: %v", got)
 	}
 	rows, err := ListScopeBindings(ctx, f.tx, f.workspaceID, f.agentID, ScopeScene, "org-1", "cidGroup")
 	if err != nil || len(rows) != 2 {
@@ -178,11 +195,11 @@ func TestStoreCredentialsAndSummaries(t *testing.T) {
 	if err != nil || len(list) != 1 || list[0].Ciphertext != nil {
 		t.Fatalf("list must not load ciphertext: %#v %v", list, err)
 	}
-	task, err := TaskCredentials(ctx, f.tx, f.workspaceID, f.agentID, Scope{OrgID: "org-1", SceneKey: "cidGroup", PersonKey: "staff-1"})
-	if err != nil || len(task) != 2 {
+	task, err := LayerCredentials(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-1", SceneKey: "cidGroup", PersonKey: "staff-1"})
+	if err != nil || len(task) != 2 || task[0].ScopeType != ScopePerson || len(task[0].Ciphertext) == 0 {
 		t.Fatalf("task credentials: %#v %v", task, err)
 	}
-	if task, _ := TaskCredentials(ctx, f.tx, f.workspaceID, f.agentID, Scope{OrgID: "org-1", PersonKey: "staff-2"}); len(task) != 0 {
+	if task, _ := LayerCredentials(ctx, f.tx, f.workspaceID, f.agentID, LayerSelection{OrgID: "org-1", PersonKey: "staff-2"}); len(task) != 0 {
 		t.Fatalf("other person reached credential: %#v", task)
 	}
 

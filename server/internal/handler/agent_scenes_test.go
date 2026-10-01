@@ -36,11 +36,22 @@ func scenesRouter(h *Handler) http.Handler {
 		r.Put("/agents/{agentId}/credentials", h.PutContextConfigCredential)
 		r.Delete("/agents/{agentId}/credentials", h.DeleteContextConfigCredential)
 	})
-	r.With(RequireHumanActor).Get("/api/agents/{id}/scenes", h.ListAgentScenes)
-	r.With(RequireHumanActor).Get("/api/agents/{id}/scenes/{sceneKey}", h.GetAgentScene)
-	r.With(RequireHumanActor).Put("/api/agents/{id}/scenes/{sceneKey}/prompt", h.PutAgentScenePrompt)
-	r.With(RequireHumanActor).Put("/api/agents/{id}/scenes/{sceneKey}/bindings", h.PutAgentSceneBinding)
-	r.With(RequireHumanActor).Put("/api/agents/{id}/scenes/{sceneKey}/mcp-config", h.PutAgentSceneMCPConfig)
+	r.Route("/api/agents/{id}/tenants", func(r chi.Router) {
+		r.Use(RequireHumanActor)
+		r.Get("/", h.ListAgentTenants)
+		r.Post("/", h.CreateAgentTenant)
+		r.Patch("/{orgId}", h.RenameAgentTenant)
+		r.Delete("/{orgId}", h.DeleteAgentTenant)
+		r.Get("/{orgId}/groups", h.ListAgentTenantGroups)
+		r.Get("/{orgId}/persons", h.ListAgentTenantPersons)
+		r.Get("/{orgId}/context/{scopeType}/{scopeKey}", h.GetAgentContextNode)
+		r.Put("/{orgId}/context/{scopeType}/{scopeKey}/bindings", h.PutAgentContextBinding)
+		r.Put("/{orgId}/context/{scopeType}/{scopeKey}/prompts", h.PutAgentContextPrompts)
+		r.Put("/{orgId}/context/{scopeType}/{scopeKey}/mcp-config", h.PutAgentContextMCPConfig)
+		r.Put("/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.PutAgentContextCredential)
+		r.Delete("/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.DeleteAgentContextCredential)
+		r.Post("/{orgId}/context/{scopeType}/{scopeKey}/connections/start", h.StartAgentContextConnection)
+	})
 	return r
 }
 
@@ -49,18 +60,71 @@ type scenesListResponse struct {
 	HasMore bool            `json:"has_more"`
 }
 
-type scenesDetailResponse struct {
-	Scene    agentSceneDTO          `json:"scene"`
-	Prompt   agentScenePromptDTO    `json:"prompt"`
-	Scope    *contextCapScopeRef    `json:"scope"`
-	Bindings []agentSceneBindingDTO `json:"bindings"`
-	Offers   struct {
-		Connectors []agentSceneOfferedConnectorDTO `json:"connectors"`
-		Skills     []contextCapSkillDTO            `json:"skills"`
-	} `json:"offers"`
-	MCPConfig         json.RawMessage `json:"mcp_config"`
-	MCPConfigRedacted bool            `json:"mcp_config_redacted"`
-	CanConnect        bool            `json:"can_connect"`
+// tenantGroupsPath is the group list route of one tenant of agentID.
+func tenantGroupsPath(agentID, orgID string) string {
+	return "/api/agents/" + agentID + "/tenants/" + url.PathEscape(orgID) + "/groups"
+}
+
+// tenantGroups lists the group scenes of the fixture's identity tenant as
+// the handler test user (a workspace owner); query is an optional
+// "limit=&offset=" string.
+func tenantGroups(t *testing.T, router http.Handler, agentID, query string) scenesListResponse {
+	t.Helper()
+	path := tenantGroupsPath(agentID, ctxcapOrg)
+	if query != "" {
+		path += "?" + query
+	}
+	w := scenesAs(t, router, "", http.MethodGet, path, nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "tenant groups "+query)
+	var list scenesListResponse
+	ctxcapDecode(t, w, &list)
+	return list
+}
+
+// ctxNodePath is the Context Builder path of one node of the fixture org,
+// with the key escaped like the web client's encodeURIComponent.
+func ctxNodePath(agentID, orgID, scopeType, key string) string {
+	escape := func(v string) string { return strings.ReplaceAll(url.QueryEscape(v), "+", "%20") }
+	return "/api/agents/" + agentID + "/tenants/" + escape(orgID) + "/context/" + scopeType + "/" + escape(key)
+}
+
+// ctxNode reads one Context Builder node as userID ("" = the handler test
+// user, a workspace owner).
+func ctxNode(t *testing.T, router http.Handler, userID, agentID, scopeType, key string) agentContextNodeResponse {
+	t.Helper()
+	w := scenesAs(t, router, userID, http.MethodGet, ctxNodePath(agentID, ctxcapOrg, scopeType, key), nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "context node "+scopeType+" "+key)
+	var node agentContextNodeResponse
+	ctxcapDecode(t, w, &node)
+	return node
+}
+
+// ctxNodeConnector returns the offered connector id of a node.
+func ctxNodeConnector(t *testing.T, node agentContextNodeResponse, connectorID string) agentContextConnectorDTO {
+	t.Helper()
+	for _, c := range node.Connectors {
+		if c.ID == connectorID {
+			return c
+		}
+	}
+	t.Fatalf("connector %s not offered in %+v", connectorID, node.Connectors)
+	return agentContextConnectorDTO{}
+}
+
+// ctxNodeEnabled lists the ids a node switches on (connectors and skills).
+func ctxNodeEnabled(node agentContextNodeResponse) map[string]bool {
+	out := map[string]bool{}
+	for _, c := range node.Connectors {
+		if c.Enabled {
+			out[c.ID] = true
+		}
+	}
+	for _, s := range node.Skills {
+		if s.Enabled {
+			out[s.ID] = true
+		}
+	}
+	return out
 }
 
 func scenesAs(t *testing.T, router http.Handler, userID, method, path string, body any) *httptest.ResponseRecorder {
@@ -72,11 +136,6 @@ func scenesAs(t *testing.T, router http.Handler, userID, method, path string, bo
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 	return w
-}
-
-// scenesPath encodes the scene key like the web client's encodeURIComponent.
-func scenesPath(agentID, sceneKey string) string {
-	return "/api/agents/" + agentID + "/scenes/" + strings.ReplaceAll(url.QueryEscape(sceneKey), "+", "%20")
 }
 
 // sceneMemoryRow plants a scene_memory row updated age ago.
@@ -149,6 +208,9 @@ func (f *ctxcapFixture) cleanupScenes(t *testing.T) {
 			`DELETE FROM chat_session WHERE agent_id = $1`,
 			`DELETE FROM scene_memory WHERE agent_id = $1`,
 			`DELETE FROM agent_scene_config WHERE agent_id = $1`,
+			`DELETE FROM context_prompt_component WHERE agent_id = $1`,
+			`DELETE FROM context_scope_mcp_config WHERE agent_id = $1`,
+			`DELETE FROM agent_tenant WHERE agent_id = $1`,
 		} {
 			_, _ = testPool.Exec(bg, statement, agentID)
 		}
@@ -180,20 +242,18 @@ func TestAgentScenesListMergesSourcesUnderCurrentOrg(t *testing.T) {
 	f.coordinatorJob(t, scenesOtherJob, "group", "Old org job", "Bob", "org-other", time.Minute)
 	// ctxcapScene is known only from its fixture bindings (updated just now).
 
-	w := scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scenes", nil)
-	ctxcapExpectStatus(t, w, http.StatusOK, "list scenes")
-	var list scenesListResponse
-	ctxcapDecode(t, w, &list)
-	if list.HasMore || len(list.Scenes) != 3 {
-		t.Fatalf("scenes=%+v has_more=%v", list.Scenes, list.HasMore)
+	// The tenant's group list leaves the 1:1 chat out.
+	list := tenantGroups(t, router, agentID, "")
+	if list.HasMore || len(list.Scenes) != 2 {
+		t.Fatalf("groups=%+v has_more=%v", list.Scenes, list.HasMore)
 	}
-	if list.Scenes[0].SceneKey != ctxcapScene || list.Scenes[1].SceneKey != scenesMemoryKey || list.Scenes[2].SceneKey != scenesDirectKey {
-		t.Fatalf("scenes not ordered by last activity: %+v", list.Scenes)
+	if list.Scenes[0].SceneKey != ctxcapScene || list.Scenes[1].SceneKey != scenesMemoryKey {
+		t.Fatalf("groups not ordered by last activity: %+v", list.Scenes)
 	}
 	byKey := scenesByKey(list.Scenes)
 	bound := byKey[ctxcapScene]
-	// Known from its bindings alone (TestAgentScenePromptAndAdminBindings
-	// covers which bindings the detail lists).
+	// Known from its bindings alone (TestAgentContextNodePromptsAndBindings
+	// covers which bindings the node lists).
 	if bound.Kind != "group" || bound.MemoryID != "" || bound.InboundSessionID != "" || bound.InboundCount != 0 ||
 		bound.HasPrompt || bound.OrgID != ctxcapOrg || bound.LastActiveAt == "" {
 		t.Fatalf("binding-only scene=%+v", bound)
@@ -203,24 +263,32 @@ func TestAgentScenesListMergesSourcesUnderCurrentOrg(t *testing.T) {
 		memory.InboundCount != 1 {
 		t.Fatalf("memory scene=%+v", memory)
 	}
-	direct := byKey[scenesDirectKey]
-	if direct.Kind != "dm" || direct.Title != "Alice" || direct.InboundSessionID != directSession || direct.InboundCount != 2 || direct.MemoryID != "" {
-		t.Fatalf("direct scene=%+v", direct)
+	// The 1:1 chat is still a scene of the tenant: its node reads it (its
+	// person is unknown, so it has no configuration).
+	directNode := ctxNode(t, router, "", agentID, contextcap.ScopeScene, scenesDirectKey)
+	direct := directNode.Scene
+	if direct == nil || direct.Kind != "dm" || direct.Title != "Alice" || direct.InboundSessionID != directSession || direct.InboundCount != 2 ||
+		direct.MemoryID != "" || directNode.Scope != nil {
+		t.Fatalf("direct scene=%+v scope=%+v", direct, directNode.Scope)
+	}
+	// Scenes of another org are not scenes of this tenant.
+	for _, key := range []string{scenesStaleKey, scenesOtherJob} {
+		ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, key), nil),
+			http.StatusNotFound, "scene of another org "+key)
 	}
 
 	// Pagination.
-	w = scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scenes?limit=2", nil)
-	ctxcapDecode(t, w, &list)
-	if !list.HasMore || len(list.Scenes) != 2 {
+	list = tenantGroups(t, router, agentID, "limit=1")
+	if !list.HasMore || len(list.Scenes) != 1 || list.Scenes[0].SceneKey != ctxcapScene {
 		t.Fatalf("first page=%+v has_more=%v", list.Scenes, list.HasMore)
 	}
-	w = scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scenes?limit=2&offset=2", nil)
-	ctxcapDecode(t, w, &list)
-	if list.HasMore || len(list.Scenes) != 1 || list.Scenes[0].SceneKey != scenesDirectKey {
+	list = tenantGroups(t, router, agentID, "limit=1&offset=1")
+	if list.HasMore || len(list.Scenes) != 1 || list.Scenes[0].SceneKey != scenesMemoryKey {
 		t.Fatalf("second page=%+v has_more=%v", list.Scenes, list.HasMore)
 	}
+	groupsPath := tenantGroupsPath(agentID, ctxcapOrg)
 	for _, bad := range []string{"limit=0", "limit=201", "limit=x", "offset=-1"} {
-		ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scenes?"+bad, nil), http.StatusBadRequest, bad)
+		ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, groupsPath+"?"+bad, nil), http.StatusBadRequest, bad)
 	}
 
 	// The inbound session opens that conversation's transcript.
@@ -230,87 +298,91 @@ func TestAgentScenesListMergesSourcesUnderCurrentOrg(t *testing.T) {
 		"/api/agents/"+agentID+"/coordinator-conversations/"+directSession+"/messages", nil), http.StatusOK, "scene transcript")
 
 	// Only human workspace owners/admins or the agent owner.
-	if w := scenesAs(t, router, uuid.NewString(), http.MethodGet, "/api/agents/"+agentID+"/scenes", nil); w.Code == http.StatusOK {
+	if w := scenesAs(t, router, uuid.NewString(), http.MethodGet, groupsPath, nil); w.Code == http.StatusOK {
 		t.Fatalf("outsider listed scenes: %s", w.Body.String())
 	}
 	member := createPermissionTestMember(t, "scenes-member-"+uuid.NewString()[:8]+"@example.test")
 	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE user_id = $1`, member) })
-	ctxcapExpectStatus(t, scenesAs(t, router, member, http.MethodGet, "/api/agents/"+agentID+"/scenes", nil), http.StatusForbidden, "plain member")
-	taskActor := newRequest(http.MethodGet, "/api/agents/"+agentID+"/scenes", nil)
+	ctxcapExpectStatus(t, scenesAs(t, router, member, http.MethodGet, groupsPath, nil), http.StatusForbidden, "plain member")
+	taskActor := newRequest(http.MethodGet, groupsPath, nil)
 	taskActor.Header.Set("X-Actor-Source", "task_token")
-	w = httptest.NewRecorder()
-	router.ServeHTTP(w, taskActor)
-	ctxcapExpectStatus(t, w, http.StatusForbidden, "task token")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, taskActor)
+	ctxcapExpectStatus(t, rec, http.StatusForbidden, "task token")
 }
 
-func TestAgentScenePromptAndAdminBindings(t *testing.T) {
+func TestAgentContextNodePromptsAndBindings(t *testing.T) {
 	f := newCtxcapFixture(t)
 	f.cleanupScenes(t)
 	router := scenesRouter(f.h)
 	agentID := uuidToString(f.agent)
-	detailPath := scenesPath(agentID, ctxcapScene)
+	nodePath := ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, ctxcapScene)
 
-	w := scenesAs(t, router, "", http.MethodGet, detailPath, nil)
-	ctxcapExpectStatus(t, w, http.StatusOK, "scene detail")
-	var detail scenesDetailResponse
-	ctxcapDecode(t, w, &detail)
-	if detail.Scene.SceneKey != ctxcapScene || detail.Prompt != (agentScenePromptDTO{}) {
-		t.Fatalf("detail scene=%+v prompt=%+v", detail.Scene, detail.Prompt)
+	w := scenesAs(t, router, "", http.MethodGet, nodePath, nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "scene node")
+	var node agentContextNodeResponse
+	ctxcapDecode(t, w, &node)
+	if node.Scene == nil || node.Scene.SceneKey != ctxcapScene || len(node.Prompts) != 0 || node.Scope == nil ||
+		*node.Scope != (agentContextScopeDTO{Type: contextcap.ScopeScene, OrgID: ctxcapOrg, Key: ctxcapScene, Title: node.Scene.Title}) {
+		t.Fatalf("node scene=%+v scope=%+v prompts=%+v", node.Scene, node.Scope, node.Prompts)
 	}
-	bindingIDs := map[string]bool{}
-	for _, binding := range detail.Bindings {
-		bindingIDs[binding.ResourceID] = binding.Enabled
-		if binding.UpdatedAt == "" {
-			t.Fatalf("binding without updated_at: %+v", binding)
-		}
+	if enabled := ctxNodeEnabled(node); len(enabled) != 2 || !enabled[f.scene] || !enabled[f.skillScene] {
+		t.Fatalf("node switches=%v, want only the offered scene connector and skill", enabled)
 	}
-	if len(bindingIDs) != 2 || !bindingIDs[f.scene] || !bindingIDs[f.skillScene] {
-		t.Fatalf("detail bindings=%+v, want only the offered scene connector and skill", detail.Bindings)
-	}
-	offered := map[string]agentSceneOfferedConnectorDTO{}
-	for _, c := range detail.Offers.Connectors {
-		offered[c.ID] = c
-	}
-	if len(offered) != 2 || offered[f.scene].AuthMode != "bearer" || offered[f.person].AuthMode != "none" ||
-		len(detail.Offers.Skills) != 1 || detail.Offers.Skills[0].ID != f.skillScene {
-		t.Fatalf("detail offers=%+v", detail.Offers)
+	if len(node.Connectors) != 2 || ctxNodeConnector(t, node, f.scene).AuthMode != "bearer" || ctxNodeConnector(t, node, f.person).AuthMode != "none" ||
+		len(node.Skills) != 1 || node.Skills[0].ID != f.skillScene {
+		t.Fatalf("node offers connectors=%+v skills=%+v", node.Connectors, node.Skills)
 	}
 	if strings.Contains(w.Body.String(), "upstream_url") || strings.Contains(w.Body.String(), "workspace-secret") {
-		t.Fatalf("scene detail leaks connector internals: %s", w.Body.String())
+		t.Fatalf("context node leaks connector internals: %s", w.Body.String())
 	}
 
-	// Prompt: trimmed, stored with the actor's name, reflected in the list.
-	promptPath := detailPath + "/prompt"
-	w = scenesAs(t, router, "", http.MethodPut, promptPath, map[string]any{"prompt": "  Be concise in this group.  "})
-	ctxcapExpectStatus(t, w, http.StatusOK, "put prompt")
-	var promptResp struct {
-		Prompt agentScenePromptDTO `json:"prompt"`
+	// Prompt components: trimmed, stored with the actor's name, reflected in
+	// the list; the whole list is replaced on every save.
+	promptsPath := nodePath + "/prompts"
+	w = scenesAs(t, router, "", http.MethodPut, promptsPath, map[string]any{"prompts": []map[string]any{
+		{"name": " 语气 ", "order": 1, "text": "  Be concise in this group.  "},
+		{"name": "规则", "order": 0, "text": "Cite sources."},
+	}})
+	ctxcapExpectStatus(t, w, http.StatusOK, "put prompts")
+	var promptsResp struct {
+		Prompts []agentContextPromptDTO `json:"prompts"`
 	}
-	ctxcapDecode(t, w, &promptResp)
-	if promptResp.Prompt.Text != "Be concise in this group." || promptResp.Prompt.UpdatedAt == "" || promptResp.Prompt.UpdatedByName != handlerTestName {
-		t.Fatalf("prompt=%+v", promptResp.Prompt)
+	ctxcapDecode(t, w, &promptsResp)
+	if len(promptsResp.Prompts) != 2 || promptsResp.Prompts[0].Name != "规则" || promptsResp.Prompts[1].Name != "语气" ||
+		promptsResp.Prompts[1].Text != "Be concise in this group." || promptsResp.Prompts[1].UpdatedByName != handlerTestName ||
+		promptsResp.Prompts[1].UpdatedAt == "" || promptsResp.Prompts[1].ID == "" {
+		t.Fatalf("prompts=%+v", promptsResp.Prompts)
 	}
-	w = scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scenes", nil)
-	var list scenesListResponse
-	ctxcapDecode(t, w, &list)
-	if !scenesByKey(list.Scenes)[ctxcapScene].HasPrompt {
-		t.Fatalf("list does not report the prompt: %+v", list.Scenes)
+	if list := tenantGroups(t, router, agentID, ""); !scenesByKey(list.Scenes)[ctxcapScene].HasPrompt {
+		t.Fatalf("list does not report the prompts: %+v", list.Scenes)
 	}
-	var kind, stored string
-	if err := testPool.QueryRow(context.Background(), `SELECT scene_kind, prompt FROM agent_scene_config WHERE agent_id = $1 AND org_id = $2 AND scene_key = $3`,
-		agentID, ctxcapOrg, ctxcapScene).Scan(&kind, &stored); err != nil || kind != "group" || stored != "Be concise in this group." {
-		t.Fatalf("stored config kind=%q prompt=%q err=%v", kind, stored, err)
+	for name, body := range map[string]any{
+		"8001 characters": map[string]any{"prompts": []map[string]any{{"name": "a", "text": strings.Repeat("a", contextcap.MaxScenePrompt+1)}}},
+		"NUL byte":        map[string]any{"prompts": []map[string]any{{"name": "a", "text": "a\x00b"}}},
+		"empty text":      map[string]any{"prompts": []map[string]any{{"name": "a", "text": " "}}},
+		"empty name":      map[string]any{"prompts": []map[string]any{{"name": "", "text": "x"}}},
+		"missing prompts": map[string]any{},
+		"unknown field":   map[string]any{"prompts": []map[string]any{}, "kind": "dm"},
+	} {
+		ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptsPath, body), http.StatusBadRequest, name)
 	}
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptPath, map[string]any{"prompt": strings.Repeat("场", contextcap.MaxScenePrompt)}), http.StatusOK, "8000 characters")
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptPath, map[string]any{"prompt": strings.Repeat("a", contextcap.MaxScenePrompt+1)}), http.StatusBadRequest, "8001 characters")
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptPath, map[string]any{"prompt": "a\x00b"}), http.StatusBadRequest, "NUL byte")
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptPath, map[string]any{}), http.StatusBadRequest, "missing prompt")
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptPath, map[string]any{"prompt": "x", "kind": "dm"}), http.StatusBadRequest, "unknown field")
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenesPath(agentID, "cidNeverSeen==")+"/prompt", map[string]any{"prompt": "x"}), http.StatusNotFound, "unknown scene")
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, "/api/agents/"+agentID+"/scenes/not-a-cid/prompt", map[string]any{"prompt": "x"}), http.StatusBadRequest, "malformed scene key")
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptPath, map[string]any{"prompt": ""}), http.StatusOK, "clear prompt")
+	w = scenesAs(t, router, "", http.MethodPut, promptsPath, map[string]any{"prompts": []map[string]any{{"name": "a", "text": "x"}, {"name": "a", "text": "y"}}})
+	if w.Code != http.StatusBadRequest || catalogErrorCode(t, w) != agentContextErrDuplicate {
+		t.Fatalf("duplicate names: %d %s", w.Code, w.Body.String())
+	}
+	tooMany := []map[string]any{}
+	for i := 0; i <= contextcap.MaxPromptComponents; i++ {
+		tooMany = append(tooMany, map[string]any{"name": "p" + strings.Repeat("x", i), "text": "t"})
+	}
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptsPath, map[string]any{"prompts": tooMany}), http.StatusBadRequest, "21 prompts")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptsPath, map[string]any{"prompts": []map[string]any{{"name": "a", "text": strings.Repeat("场", contextcap.MaxScenePrompt)}}}), http.StatusOK, "8000 characters")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, "cidNeverSeen==")+"/prompts", map[string]any{"prompts": []map[string]any{}}), http.StatusNotFound, "unknown scene")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, "/api/agents/"+agentID+"/tenants/"+ctxcapOrg+"/context/scene/not-a-cid/prompts", map[string]any{"prompts": []map[string]any{}}), http.StatusBadRequest, "malformed scene key")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, "org-not-a-tenant", contextcap.ScopeScene, ctxcapScene)+"/prompts", map[string]any{"prompts": []map[string]any{}}), http.StatusNotFound, "unknown tenant")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptsPath, map[string]any{"prompts": []map[string]any{}}), http.StatusOK, "clear prompts")
 
-	// The agent owner may write it; a plain member may not.
+	// The agent owner may write them; a plain member may not.
 	owner := createPermissionTestMember(t, "scenes-owner-"+uuid.NewString()[:8]+"@example.test")
 	member := createPermissionTestMember(t, "scenes-plain-"+uuid.NewString()[:8]+"@example.test")
 	t.Cleanup(func() {
@@ -319,16 +391,17 @@ func TestAgentScenePromptAndAdminBindings(t *testing.T) {
 	if _, err := testPool.Exec(context.Background(), `UPDATE agent SET owner_id = $1 WHERE id = $2`, owner, agentID); err != nil {
 		t.Fatal(err)
 	}
-	ctxcapExpectStatus(t, scenesAs(t, router, member, http.MethodPut, promptPath, map[string]any{"prompt": "member"}), http.StatusForbidden, "plain member prompt")
-	w = scenesAs(t, router, owner, http.MethodPut, promptPath, map[string]any{"prompt": "owner"})
-	ctxcapExpectStatus(t, w, http.StatusOK, "agent owner prompt")
-	ctxcapDecode(t, w, &promptResp)
-	if promptResp.Prompt.Text != "owner" || !strings.HasPrefix(promptResp.Prompt.UpdatedByName, "scenes-owner-") {
-		t.Fatalf("owner prompt=%+v", promptResp.Prompt)
+	ownerPrompts := map[string]any{"prompts": []map[string]any{{"name": "owner", "text": "owner"}}}
+	ctxcapExpectStatus(t, scenesAs(t, router, member, http.MethodPut, promptsPath, ownerPrompts), http.StatusForbidden, "plain member prompts")
+	w = scenesAs(t, router, owner, http.MethodPut, promptsPath, ownerPrompts)
+	ctxcapExpectStatus(t, w, http.StatusOK, "agent owner prompts")
+	ctxcapDecode(t, w, &promptsResp)
+	if len(promptsResp.Prompts) != 1 || !strings.HasPrefix(promptsResp.Prompts[0].UpdatedByName, "scenes-owner-") {
+		t.Fatalf("owner prompts=%+v", promptsResp.Prompts)
 	}
 
-	// Admin binding toggles are offer-gated like the mobile PUT.
-	bindingsPath := detailPath + "/bindings"
+	// Binding toggles are offer-gated like the mobile PUT.
+	bindingsPath := nodePath + "/bindings"
 	w = scenesAs(t, router, "", http.MethodPut, bindingsPath, map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true})
 	ctxcapExpectStatus(t, w, http.StatusOK, "admin enables an offered connector")
 	var bindingResp struct {
@@ -348,7 +421,7 @@ func TestAgentScenePromptAndAdminBindings(t *testing.T) {
 	}
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, bindingsPath, map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true, "share_in_groups": true}), http.StatusBadRequest, "share_in_groups on a scene")
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, bindingsPath, map[string]any{"resource_type": "connector", "resource_id": "nope", "enabled": true}), http.StatusBadRequest, "malformed resource id")
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenesPath(agentID, "cidNeverSeen==")+"/bindings", map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true}), http.StatusNotFound, "unknown scene binding")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, "cidNeverSeen==")+"/bindings", map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true}), http.StatusNotFound, "unknown scene binding")
 	ctxcapExpectStatus(t, scenesAs(t, router, member, http.MethodPut, bindingsPath, map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": false}), http.StatusForbidden, "plain member binding")
 
 	// The mobile page of the group sees the admin's toggles.
@@ -371,22 +444,20 @@ func TestAgentScenesEscapedKeyAndMemoryOnlyScene(t *testing.T) {
 	// scene_memory records "dm" for any chat type that is not "group", so a
 	// memory-only scene is not proof of a 1:1 chat.
 	f.sceneMemoryRow(t, ctxcapOrg, slashy, "dm", "", time.Minute)
-	path := scenesPath(agentID, slashy)
+	path := ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, slashy)
 	if !strings.Contains(path, "%2F") || !strings.Contains(path, "%2B") {
 		t.Fatalf("path %q does not exercise escaping", path)
 	}
-	w := scenesAs(t, router, "", http.MethodGet, path, nil)
-	ctxcapExpectStatus(t, w, http.StatusOK, "escaped scene key")
-	var detail scenesDetailResponse
-	ctxcapDecode(t, w, &detail)
-	if detail.Scene.SceneKey != slashy || detail.Scene.Kind != "group" || detail.Scene.MemoryID == "" {
-		t.Fatalf("scene=%+v", detail.Scene)
+	node := ctxNode(t, router, "", agentID, contextcap.ScopeScene, slashy)
+	if node.Scene == nil || node.Scene.SceneKey != slashy || node.Scene.Kind != "group" || node.Scene.MemoryID == "" {
+		t.Fatalf("scene=%+v", node.Scene)
 	}
-	w = scenesAs(t, router, "", http.MethodPut, path+"/prompt", map[string]any{"prompt": "简短回答"})
-	ctxcapExpectStatus(t, w, http.StatusOK, "memory-only prompt")
-	var kind string
-	if err := testPool.QueryRow(context.Background(), `SELECT scene_kind FROM agent_scene_config WHERE agent_id = $1 AND scene_key = $2`, agentID, slashy).Scan(&kind); err != nil || kind != "group" {
-		t.Fatalf("stored kind=%q err=%v", kind, err)
+	w := scenesAs(t, router, "", http.MethodPut, path+"/prompts", map[string]any{"prompts": []map[string]any{{"name": "语气", "text": "简短回答"}}})
+	ctxcapExpectStatus(t, w, http.StatusOK, "memory-only prompts")
+	var stored string
+	if err := testPool.QueryRow(context.Background(), `SELECT text FROM context_prompt_component WHERE agent_id = $1 AND scope_type = 'scene' AND scope_key = $2`,
+		agentID, slashy).Scan(&stored); err != nil || stored != "简短回答" {
+		t.Fatalf("stored prompt=%q err=%v", stored, err)
 	}
 }
 
@@ -422,31 +493,26 @@ func TestAgentScenesKindEvidenceAndInboundPartition(t *testing.T) {
 	f.coordinatorJob(t, splitKey, "group", "Split group", "Bob", ctxcapOrg, 2*time.Hour)
 	newest := f.coordinatorJob(t, splitKey, "group", "Split group", "Bob", ctxcapOrg, time.Minute)
 
-	w := scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scenes", nil)
-	ctxcapExpectStatus(t, w, http.StatusOK, "list scenes")
-	var list scenesListResponse
-	ctxcapDecode(t, w, &list)
-	byKey := scenesByKey(list.Scenes)
+	// The group list holds the groups only; every scene's node reads its kind.
+	byKey := scenesByKey(tenantGroups(t, router, agentID, "").Scenes)
 	for key, want := range map[string]string{untypedKey: "group", singleKey: "dm", linkedKey: "dm", splitKey: "group"} {
-		if got := byKey[key].Kind; got != want {
-			t.Errorf("%s kind=%q want %q", key, got, want)
+		if _, listed := byKey[key]; listed != (want == "group") {
+			t.Errorf("%s listed=%v as a group, want kind %q", key, listed, want)
+		}
+		if node := ctxNode(t, router, "", agentID, contextcap.ScopeScene, key); node.Scene == nil || node.Scene.Kind != want {
+			t.Errorf("%s node scene=%+v, want kind %q", key, node.Scene, want)
 		}
 	}
 	if split := byKey[splitKey]; split.InboundSessionID != newest || split.InboundCount != 2 {
 		t.Fatalf("split scene=%+v, want the newest session and the 2 sessions of its partition", split)
 	}
-	// The single-key lookup behind detail and writes agrees with the list.
-	w = scenesAs(t, router, "", http.MethodGet, scenesPath(agentID, splitKey), nil)
-	ctxcapExpectStatus(t, w, http.StatusOK, "split detail")
-	var detail scenesDetailResponse
-	ctxcapDecode(t, w, &detail)
-	if detail.Scene.InboundSessionID != newest || detail.Scene.InboundCount != 2 || detail.Scene.Kind != "group" {
-		t.Fatalf("split detail=%+v", detail.Scene)
+	// The single-key lookup behind nodes and writes agrees with the list.
+	node := ctxNode(t, router, "", agentID, contextcap.ScopeScene, splitKey)
+	if node.Scene == nil || node.Scene.InboundSessionID != newest || node.Scene.InboundCount != 2 || node.Scene.Kind != "group" {
+		t.Fatalf("split node=%+v", node.Scene)
 	}
-	w = scenesAs(t, router, "", http.MethodGet, scenesPath(agentID, untypedKey), nil)
-	ctxcapDecode(t, w, &detail)
-	if detail.Scene.Kind != "group" {
-		t.Fatalf("untyped detail=%+v", detail.Scene)
+	if node = ctxNode(t, router, "", agentID, contextcap.ScopeScene, untypedKey); node.Scene == nil || node.Scene.Kind != "group" {
+		t.Fatalf("untyped node=%+v", node.Scene)
 	}
 }
 
@@ -657,24 +723,19 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 	if stored, err := contextcap.ListScopeBindings(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopeScene, ctxcapOrg, dmKey); err != nil || len(stored) != 0 {
 		t.Fatalf("dm scene scope rows=%+v err=%v", stored, err)
 	}
-	w = scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scenes", nil)
-	var list scenesListResponse
-	ctxcapDecode(t, w, &list)
-	dm, ok := scenesByKey(list.Scenes)[dmKey]
-	if !ok || dm.Kind != "dm" || dm.Title != "Alice" {
-		t.Fatalf("admin scenes=%+v", list.Scenes)
+	dmNode := ctxNode(t, router, "", agentID, contextcap.ScopeScene, dmKey)
+	if dm := dmNode.Scene; dm == nil || dm.Kind != "dm" || dm.Title != "Alice" {
+		t.Fatalf("admin dm scene=%+v", dm)
 	}
-	w = scenesAs(t, router, "", http.MethodGet, scenesPath(agentID, dmKey), nil)
-	ctxcapExpectStatus(t, w, http.StatusOK, "admin dm scene detail")
-	var dmDetail scenesDetailResponse
-	ctxcapDecode(t, w, &dmDetail)
-	adminBindings := map[string]bool{}
-	for _, binding := range dmDetail.Bindings {
-		adminBindings[binding.ResourceID] = binding.Enabled
-	}
-	if dmDetail.Scope == nil || dmDetail.Scope.Type != contextcap.ScopePerson || dmDetail.Scope.Key != ctxcapStaff ||
+	adminBindings := ctxNodeEnabled(dmNode)
+	if dmNode.Scope == nil || dmNode.Scope.Type != contextcap.ScopePerson || dmNode.Scope.Key != ctxcapStaff ||
 		len(adminBindings) != 2 || !adminBindings[dmOnly] || !adminBindings[f.person] {
-		t.Fatalf("admin dm scene scope=%+v bindings=%+v", dmDetail.Scope, dmDetail.Bindings)
+		t.Fatalf("admin dm node scope=%+v switches=%+v", dmNode.Scope, adminBindings)
+	}
+	// The person node is the same configuration, with the DM as its scene.
+	personNode := ctxNode(t, router, "", agentID, contextcap.ScopePerson, ctxcapStaff)
+	if personNode.Scene == nil || personNode.Scene.SceneKey != dmKey || len(ctxNodeEnabled(personNode)) != 2 || personNode.CanConnect {
+		t.Fatalf("person node scene=%+v switches=%v can_connect=%v", personNode.Scene, ctxNodeEnabled(personNode), personNode.CanConnect)
 	}
 
 	// A DM's configuration is the person's, and the person's layer already

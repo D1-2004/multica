@@ -18,14 +18,15 @@ import (
 //   - the newest inbound Coordinator job of the conversation that carries a
 //     sender staffId (command event.data.sender.staffId, the same
 //     server-written dispatch sender ScopeFromTaskContext reads as
-//     PersonKey), skipping jobs that recorded a different agent org;
+//     PersonKey), recorded under orgID (a job that recorded no agent org
+//     belongs to identityOrgID, the agent's DingTalk identity org);
 //   - a live person grant redeemed from a personal link minted in that 1:1
 //     chat (context_config_link.extra_scene_key = sceneKey): a DM link grants
 //     both the person and the DM scene.
 //
 // The title is the sender's display name or the grant's title. staffID is ""
 // (with a nil error) when neither source names a person.
-func DirectScenePerson(ctx context.Context, db DBTX, workspaceID, agentID, orgID, sceneKey string) (string, string, error) {
+func DirectScenePerson(ctx context.Context, db DBTX, workspaceID, agentID, orgID, identityOrgID, sceneKey string) (string, string, error) {
 	if !ValidOpenConversationID(sceneKey) {
 		return "", "", ErrInvalidInput
 	}
@@ -37,10 +38,10 @@ func DirectScenePerson(ctx context.Context, db DBTX, workspaceID, agentID, orgID
 		WHERE job.agent_id = $2::uuid AND job.workspace_id = $1::uuid
 		  AND BTRIM(job.command #>> '{event,data,conversation,openConversationId}') = $4::text
 		  AND lower(COALESCE(NULLIF(BTRIM(job.command #>> '{source,platform}'), ''), 'dingtalk')) = 'dingtalk'
-		  AND ($3::text = '' OR COALESCE(NULLIF(BTRIM(job.command #>> '{externalIdentity,dws,orgId}'), ''), $3::text) = $3::text)
+		  AND ($3::text = '' OR `+jobOrgExpr("$5")+` = $3::text)
 		  AND NULLIF(BTRIM(job.command #>> '{event,data,sender,staffId}'), '') IS NOT NULL
 		ORDER BY job.created_at DESC, job.id DESC
-		LIMIT 1`, workspaceID, agentID, orgID, sceneKey).Scan(&jobStaff, &jobTitle)
+		LIMIT 1`, workspaceID, agentID, orgID, sceneKey, identityOrgID).Scan(&jobStaff, &jobTitle)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return "", "", err
 	}

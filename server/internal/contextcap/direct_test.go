@@ -70,10 +70,10 @@ func TestDirectScenePersonSources(t *testing.T) {
 		otherOrg  = "cidDirectOtherOrg=="
 		untouched = "cidDirectNothing=="
 	)
-	if _, _, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, "staff-1"); !errors.Is(err, ErrInvalidInput) {
+	if _, _, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, org, "staff-1"); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("non-cid key: %v", err)
 	}
-	staff, title, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, untouched)
+	staff, title, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, org, untouched)
 	if err != nil || staff != "" || title != "" {
 		t.Fatalf("unknown DM = %q %q %v", staff, title, err)
 	}
@@ -81,17 +81,17 @@ func TestDirectScenePersonSources(t *testing.T) {
 	// A redeemed personal link minted in the DM with a live person grant.
 	alice := uuid.NewString()
 	f.directLink(t, org, linked, "staff-alice", "Alice", alice, time.Hour)
-	staff, title, err = DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, linked)
+	staff, title, err = DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, org, linked)
 	if err != nil || staff != "staff-alice" || title != "Alice" {
 		t.Fatalf("linked DM = %q %q %v", staff, title, err)
 	}
 	// Only under the link's org.
-	if staff, _, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, "org-other", linked); err != nil || staff != "" {
+	if staff, _, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, "org-other", org, linked); err != nil || staff != "" {
 		t.Fatalf("linked DM under another org = %q %v", staff, err)
 	}
 	// A link whose grant expired proves nothing any more.
 	f.directLink(t, org, expired, "staff-gone", "Gone", uuid.NewString(), -time.Minute)
-	if staff, _, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, expired); err != nil || staff != "" {
+	if staff, _, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, org, expired); err != nil || staff != "" {
 		t.Fatalf("DM of an expired grant = %q %v", staff, err)
 	}
 
@@ -100,21 +100,30 @@ func TestDirectScenePersonSources(t *testing.T) {
 	f.directJob(t, jobbed, "staff-old", "Old", org, 2*time.Hour)
 	f.directJob(t, jobbed, "staff-bob", "Bob", "", time.Hour)
 	f.directJob(t, jobbed, "", "No staff", org, time.Minute)
-	staff, title, err = DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, jobbed)
+	staff, title, err = DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, org, jobbed)
 	if err != nil || staff != "staff-bob" || title != "Bob" {
 		t.Fatalf("job DM = %q %q %v", staff, title, err)
 	}
 	// A job's sender beats a link, and the link's title only fills a
 	// missing name of the same person.
 	f.directJob(t, linked, "staff-alice", "", org, time.Minute)
-	staff, title, err = DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, linked)
+	staff, title, err = DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, org, linked)
 	if err != nil || staff != "staff-alice" || title != "Alice" {
 		t.Fatalf("linked DM with an unnamed job = %q %q %v", staff, title, err)
 	}
 	// Jobs recorded under another agent org are skipped.
 	f.directJob(t, otherOrg, "staff-foreign", "Foreign", "org-other", time.Minute)
-	if staff, _, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, otherOrg); err != nil || staff != "" {
+	if staff, _, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, org, org, otherOrg); err != nil || staff != "" {
 		t.Fatalf("DM of another org's job = %q %v", staff, err)
+	}
+	// ...but found under that org when it is a tenant of the agent.
+	if staff, _, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, "org-other", org, otherOrg); err != nil || staff != "staff-foreign" {
+		t.Fatalf("DM under its own tenant org = %q %v", staff, err)
+	}
+	// A job that recorded no org belongs to the identity org only: under
+	// another tenant only the jobs recorded there count.
+	if staff, _, err := DirectScenePerson(ctx, f.tx, f.workspaceID, f.agentID, "org-tenant", org, jobbed); err != nil || staff != "" {
+		t.Fatalf("unrecorded job under another tenant = %q %v", staff, err)
 	}
 }
 
