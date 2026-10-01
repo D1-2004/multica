@@ -496,6 +496,9 @@ const (
 	// already require managing the agent), not one of the rights; it only
 	// needs the scope to be known.
 	contextCapNeedRevoke
+	// contextCapNeedRoutines creates, edits, runs or deletes the routines of
+	// a scene: contextCapRights.EditRoutines.
+	contextCapNeedRoutines
 )
 
 // contextCapRights is what one caller may change in one org, scene or person
@@ -512,10 +515,16 @@ type contextCapRights struct {
 	EditPrompts bool `json:"edit_prompts"`
 	// EditMCP: add, edit, delete and switch custom MCP servers.
 	EditMCP bool `json:"edit_mcp"`
+	// EditRoutines: create, edit, run and delete the scene's routines
+	// (例行任务). Only group and 1:1 chat scenes have routines.
+	EditRoutines bool `json:"edit_routines"`
 }
 
-// contextCapAllRights may change everything in a scope.
+// contextCapAllRights may change everything in an org or person scope.
 var contextCapAllRights = contextCapRights{Toggle: true, Connect: true, EditPrompts: true, EditMCP: true}
+
+// contextCapSceneRights may change everything in a scene, its routines too.
+var contextCapSceneRights = contextCapRights{Toggle: true, Connect: true, EditPrompts: true, EditMCP: true, EditRoutines: true}
 
 // contextCapScopeRights is the one edit-rights policy of the Context Builder
 // (docs/context-capabilities.md §5 "Who may change what"). Every write path
@@ -536,9 +545,13 @@ var contextCapAllRights = contextCapRights{Toggle: true, Connect: true, EditProm
 // the person.
 func contextCapScopeRights(scopeType string, manages, self bool) contextCapRights {
 	switch scopeType {
-	case contextcap.ScopeOrg, contextcap.ScopeScene:
+	case contextcap.ScopeOrg:
 		if manages {
 			return contextCapAllRights
+		}
+	case contextcap.ScopeScene:
+		if manages {
+			return contextCapSceneRights
 		}
 	case contextcap.ScopePerson:
 		if self {
@@ -839,6 +852,8 @@ func contextCapScopeAllows(w http.ResponseWriter, scope contextCapScope, need co
 		allowed = scope.Rights.Connect
 	case contextCapNeedRevoke:
 		allowed = true
+	case contextCapNeedRoutines:
+		allowed = scope.Rights.EditRoutines
 	}
 	if allowed {
 		return true

@@ -646,6 +646,10 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		)
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+	// Scene routines: runs carry their scene, the Host posts start and end
+	// notices (scene_routines.go).
+	h.AutopilotService.SceneRoutines = h
+	taskSvc.SceneRoutines = h
 
 	// GitHub API snapshot pipeline for PR cards (MUL-5265). Built
 	// unconditionally but inert (every trigger no-ops) when the App private key

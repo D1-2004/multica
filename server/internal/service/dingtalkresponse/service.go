@@ -49,6 +49,10 @@ type ActionInput struct {
 	CloseState           string `json:"close_state,omitempty"`
 	// Set only by EnqueueCoordinatorWait, never by a caller-supplied send flag.
 	CoordinatorWaitJobID string `json:"coordinator_wait_job_id,omitempty"`
+	// RoutineRunID is set only by EnqueueRoutineNotice: a Host notice of a
+	// scene routine run (start or end), sent into the routine's scene with
+	// no dispatch to close and no Router callback.
+	RoutineRunID string `json:"routine_run_id,omitempty"`
 	// DWSEnvironment pins the DWS gateway ("production" or "staging") the
 	// send goes through. Empty keeps the provider's configured gateway; native
 	// subscriptions set "production", where their events come from.
@@ -152,6 +156,39 @@ func (s *Service) EnqueueCoordinatorWait(ctx context.Context, tx DBTX, in Action
 	in.RequestID = "coordinator-wait:" + jobID
 	in.ActionID = ""
 	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState = "", "", "", ""
+	return s.enqueue(ctx, tx, in)
+}
+
+// Routine notice phases (EnqueueRoutineNotice).
+const (
+	RoutineNoticeStart = "start"
+	RoutineNoticeEnd   = "end"
+)
+
+// routineNoticeTarget fills CallbackTarget for routine notices, which have
+// no Router callback to receipt.
+const routineNoticeTarget = "scene-routine"
+
+// EnqueueRoutineNotice records the start or end notice of a scene routine run
+// (docs/context-capabilities.md §9). The request id is derived from the run
+// and phase, so a retried dispatch or terminal transition enqueues the same
+// action once. There is no dispatch to close and no Router callback: the
+// worker sends it and keeps its delivery state without a receipt.
+func (s *Service) EnqueueRoutineNotice(ctx context.Context, tx DBTX, in ActionInput, runID, phase string) (string, error) {
+	if _, err := uuid.Parse(runID); err != nil {
+		return "", errors.New("routine run id is invalid")
+	}
+	if phase != RoutineNoticeStart && phase != RoutineNoticeEnd {
+		return "", errors.New("routine notice phase is invalid")
+	}
+	in.RoutineRunID = runID
+	in.RequestID = "routine:" + runID + ":" + phase
+	in.ActionID = ""
+	in.CoordinatorWaitJobID = ""
+	// No task or issue id: a notice is not a task's reply, so nothing that
+	// reads a task's responses (delivery evidence, close states) sees it.
+	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState, in.ReplyToOpenMsgID = "", "", "", "", ""
+	in.CallbackTarget = routineNoticeTarget
 	return s.enqueue(ctx, tx, in)
 }
 
@@ -326,15 +363,25 @@ func validateScope(in ActionInput) error {
 }
 
 func validateInput(in ActionInput) error {
-	if in.CoordinatorWaitJobID != "" {
+	switch {
+	case in.CoordinatorWaitJobID != "":
 		if _, err := uuid.Parse(in.CoordinatorWaitJobID); err != nil {
 			return errors.New("coordinator wait job id is invalid")
 		}
 		if in.CallbackURL != "" || in.TaskID != "" || in.IssueID != "" || in.CloseState != "" || in.Text == "" {
 			return errors.New("coordinator wait cannot close a dispatch or claim a task")
 		}
-	} else if _, err := parseCallback(in.CallbackURL, true); err != nil {
-		return err
+	case in.RoutineRunID != "":
+		if _, err := uuid.Parse(in.RoutineRunID); err != nil {
+			return errors.New("routine run id is invalid")
+		}
+		if in.CallbackURL != "" || in.TaskID != "" || in.IssueID != "" || in.CloseState != "" || in.ReplyToOpenMsgID != "" || in.Text == "" {
+			return errors.New("routine notice cannot close a dispatch, claim a task or quote a message")
+		}
+	default:
+		if _, err := parseCallback(in.CallbackURL, true); err != nil {
+			return err
+		}
 	}
 	if err := validateScope(in); err != nil {
 		return err

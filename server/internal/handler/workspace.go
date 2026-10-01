@@ -1066,6 +1066,7 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 					`DELETE FROM agent_scene WHERE workspace_id=$1`,
 					`DELETE FROM context_scope_mcp_config WHERE workspace_id=$1`,
 					`DELETE FROM context_prompt_component WHERE workspace_id=$1`,
+					`DELETE FROM context_scope_routine WHERE workspace_id=$1`,
 					`DELETE FROM agent_tenant WHERE workspace_id=$1`,
 					`DELETE FROM tag_config_revision WHERE workspace_id=$1`,
 					`DELETE FROM tag_tenant WHERE workspace_id=$1`,

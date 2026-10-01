@@ -97,7 +97,10 @@ func (s *Service) processOne(ctx context.Context) (bool, error) {
 		return true, err
 	}
 
-	if !progress && isReceiptState(a.State) && a.ReceiptState != a.State {
+	// Coordinator wait progress and routine notices close no dispatch: they
+	// have no Router callback to receipt.
+	noReceipt := progress || a.Input.RoutineRunID != ""
+	if !noReceipt && isReceiptState(a.State) && a.ReceiptState != a.State {
 		if s.receipts == nil {
 			return true, s.release(ctx, a, time.Now().Add(time.Minute))
 		}

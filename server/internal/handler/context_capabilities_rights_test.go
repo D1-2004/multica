@@ -18,7 +18,7 @@ import (
 // The one edit-rights policy: managers edit org and group scopes, only the
 // person edits a person scope, link holders and everyone else only view.
 func TestContextCapScopeRightsTable(t *testing.T) {
-	none, all := contextCapRights{}, contextCapAllRights
+	none, all, sceneAll := contextCapRights{}, contextCapAllRights, contextCapSceneRights
 	for _, tc := range []struct {
 		scopeType     string
 		manages, self bool
@@ -28,8 +28,8 @@ func TestContextCapScopeRightsTable(t *testing.T) {
 		{contextcap.ScopeOrg, true, true, all},
 		{contextcap.ScopeOrg, false, false, none},
 		{contextcap.ScopeOrg, false, true, none},
-		{contextcap.ScopeScene, true, false, all},
-		{contextcap.ScopeScene, true, true, all},
+		{contextcap.ScopeScene, true, false, sceneAll},
+		{contextcap.ScopeScene, true, true, sceneAll},
 		{contextcap.ScopeScene, false, false, none},
 		{contextcap.ScopeScene, false, true, none},
 		{contextcap.ScopePerson, true, false, none},
@@ -157,7 +157,7 @@ func TestContextCapStrictRightsOnTheConfigurePage(t *testing.T) {
 
 	// A manager edits the group: prompt components (one switched off) and
 	// remote MCP servers; the link holder then reads them.
-	if view = sceneOf(manager, ctxcapScene); view.Rights != contextCapAllRights || !view.CanConnect {
+	if view = sceneOf(manager, ctxcapScene); view.Rights != contextCapSceneRights || !view.CanConnect {
 		t.Fatalf("group view for a manager = %+v", view)
 	}
 	w := call(manager, http.MethodPut, "/prompts", prompts("scene", ctxcapScene,
@@ -205,7 +205,7 @@ func TestContextCapStrictRightsOnTheConfigurePage(t *testing.T) {
 	dm := f.sceneFor(t, ctxcapOrg, "dm", "cidCtxcapRightsDirect==", "", time.Minute)
 	view = sceneOf(manager, dm)
 	if view.Scope == nil || view.Scope.Type != contextcap.ScopeScene || view.Scope.Key != dm || view.Scene.Kind != "dm" ||
-		view.Rights != contextCapAllRights || !view.CanConnect {
+		view.Rights != contextCapSceneRights || !view.CanConnect {
 		t.Fatalf("1:1 scene view for a manager = %+v", view)
 	}
 	ctxcapExpectStatus(t, call(manager, http.MethodPut, "/prompts", prompts("scene", dm, map[string]any{"name": "dm", "text": "1:1 tone"})),
@@ -386,7 +386,7 @@ func TestContextBuilderDisabledComponentsAndNodeRights(t *testing.T) {
 		want           contextCapRights
 	}{
 		{contextcap.ScopeOrg, ctxcapOrg, contextCapAllRights},
-		{contextcap.ScopeScene, ctxcapScene, contextCapAllRights},
+		{contextcap.ScopeScene, ctxcapScene, contextCapSceneRights},
 		{contextcap.ScopePerson, ctxcapStaff, contextCapRights{}},
 	} {
 		node := ctxNode(t, b.router, "", b.agentID, tc.scopeType, tc.key)

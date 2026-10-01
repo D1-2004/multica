@@ -35,6 +35,11 @@ const (
 	// AgentSceneContextKey holds the task's SceneRef ({"scene_id": …}), the
 	// server-resolved Agent work scene of the dispatch (docs/agent-scene.md).
 	AgentSceneContextKey = "agent_scene"
+	// SceneRoutineContextKey marks a scene routine run: the Host-frozen
+	// binding of a cron or webhook routine to its Agent work scene
+	// ({"routine_id", "tenant_org_id", "kind", "person_staff_id", ...}). It
+	// travels with AgentSceneContextKey and carries no inbound message.
+	SceneRoutineContextKey = "scene_routine"
 )
 
 // DingTalkMessagePolicy is trusted per-task state, not agent custom_env.

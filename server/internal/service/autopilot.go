@@ -37,6 +37,9 @@ type AutopilotService struct {
 	TxStarter      TxStarter
 	Bus            *events.Bus
 	TaskSvc        *TaskService
+	// SceneRoutines binds scene routine autopilots to their Agent work
+	// scene; nil leaves every autopilot ordinary.
+	SceneRoutines SceneRoutines
 }
 
 // DefaultAutopilotTriggerTimezone is the timezone used to render Autopilot
@@ -172,9 +175,17 @@ func (s *AutopilotService) AdmitAutopilotWebhookDelivery(
 		return nil, fmt.Errorf("admit webhook delivery: lookup existing run: %w", err)
 	}
 
+	s, routineSkip, err := s.withSceneRoutine(ctx, autopilot)
+	if err != nil {
+		return nil, fmt.Errorf("admit webhook delivery: scene routine context: %w", err)
+	}
 	// Webhook admission has no member actor → automation principal (rule_owner);
 	// the per-run reason code is not surfaced to a human here, so it is dropped.
-	if reason, _, skip := s.shouldSkipDispatch(ctx, autopilot, pgtype.UUID{}); skip {
+	reason, _, skip := s.shouldSkipDispatch(ctx, autopilot, pgtype.UUID{})
+	if routineSkip != "" {
+		reason, skip = routineSkip, true
+	}
+	if skip {
 		run, err := s.recordSkippedRun(
 			ctx,
 			autopilot,
@@ -466,6 +477,14 @@ func (s *AutopilotService) dispatchAutopilot(
 	webhookDeliveryID pgtype.UUID,
 	actorUserID pgtype.UUID,
 ) (*db.AutopilotRun, dispatch.ReasonCode, error) {
+	s, routineSkip, err := s.withSceneRoutine(ctx, autopilot)
+	if err != nil {
+		return nil, dispatch.ReasonInternalError, fmt.Errorf("scene routine context: %w", err)
+	}
+	if routineSkip != "" {
+		run, err := s.recordSkippedRun(ctx, autopilot, triggerID, source, payload, plannedAt, webhookDeliveryID, routineSkip)
+		return run, dispatch.ReasonTargetUnavailable, err
+	}
 	if reason, code, skip := s.shouldSkipDispatch(ctx, autopilot, actorUserID); skip {
 		run, err := s.recordSkippedRun(ctx, autopilot, triggerID, source, payload, plannedAt, webhookDeliveryID, reason)
 		return run, code, err
@@ -956,6 +975,9 @@ func (s *AutopilotService) dispatchRunOnlyTask(ctx context.Context, ap db.Autopi
 	// stall the task until the TTL expired.
 	if notify {
 		s.TaskSvc.NotifyTaskEnqueued(ctx, task)
+	}
+	if s.SceneRoutines != nil && IsSceneRoutineContext(run.RuntimeContext) {
+		s.SceneRoutines.RoutineTaskQueued(ctx, ap, *run, task)
 	}
 
 	slog.Info("autopilot dispatched (run_only)",

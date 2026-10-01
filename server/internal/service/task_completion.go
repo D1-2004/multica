@@ -159,12 +159,20 @@ func taskCompletionRequestID(target taskCompletionTarget) string {
 func (s *TaskService) enqueueTaskCompletionInTx(
 	ctx context.Context,
 	qtx *db.Queries,
+	tx pgx.Tx,
 	task db.AgentTaskQueue,
 	status string,
 	result []byte,
 	errMessage string,
 	failureReason string,
 ) (bool, error) {
+	// A scene routine run posts its end notice into its scene in the same
+	// terminal transaction (docs/context-capabilities.md §9).
+	if s.SceneRoutines != nil && task.AutopilotRunID.Valid && IsSceneRoutineContext(task.Context) {
+		if err := s.SceneRoutines.RoutineTaskFinished(ctx, tx, task, status, result, errMessage); err != nil {
+			return false, fmt.Errorf("scene routine end notice: %w", err)
+		}
+	}
 	commentRows, err := qtx.ListTaskCommentCompletionTargets(ctx, task.ID)
 	if err != nil {
 		return false, err
@@ -307,7 +315,7 @@ func (s *TaskService) finalizeFailedTask(
 		}
 	}
 
-	err = s.runInTx(ctx, func(qtx *db.Queries) error {
+	err = s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
 		locked, lockErr := qtx.GetAgentTaskForCompletionFinalization(ctx, taskID)
 		if lockErr != nil {
 			return lockErr
@@ -350,6 +358,7 @@ func (s *TaskService) finalizeFailedTask(
 		queued, enqueueErr := s.enqueueTaskCompletionInTx(
 			ctx,
 			qtx,
+			terminalTx,
 			locked,
 			"failed",
 			locked.Result,
@@ -419,7 +428,7 @@ func (s *TaskService) ReconcileTaskCompletions(
 			}
 			continue
 		}
-		if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		if err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
 			task, err := qtx.GetAgentTask(ctx, taskID)
 			if err != nil {
 				return err
@@ -453,6 +462,7 @@ func (s *TaskService) ReconcileTaskCompletions(
 			queued, enqueueErr = s.enqueueTaskCompletionInTx(
 				ctx,
 				qtx,
+				terminalTx,
 				task,
 				status,
 				task.Result,

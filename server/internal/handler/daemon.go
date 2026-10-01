@@ -2850,6 +2850,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				if ap.Description.Valid {
 					resp.AutopilotDescription = ap.Description.String
 				}
+				if service.IsSceneRoutineContext(task.Context) {
+					// The Host posts this run's start and end notices into
+					// its scene (scene_routines.go); a send of its own would
+					// repeat the result.
+					resp.AutopilotDescription = strings.TrimSpace(resp.AutopilotDescription + "\n\n" + sceneRoutineRunNote)
+				}
 				if resp.WorkspaceID == "" {
 					resp.WorkspaceID = uuidToString(ap.WorkspaceID)
 				}

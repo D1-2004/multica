@@ -159,7 +159,7 @@ func TestContextCapabilitiesManagerAccess(t *testing.T) {
 	scene = ctxcapSceneDetail{}
 	ctxcapDecode(t, w, &scene)
 	if scene.Scope == nil || *scene.Scope != (contextCapScopeRef{Type: contextcap.ScopeScene, Key: ctxcapManagerDirect, Title: "Direct with Bob"}) ||
-		!scene.CanConnect || scene.Rights != contextCapAllRights || scene.Scene.Kind != "dm" || scene.Scene.Source != contextCapSourceManager {
+		!scene.CanConnect || scene.Rights != contextCapSceneRights || scene.Scene.Kind != "dm" || scene.Scene.Source != contextCapSourceManager {
 		t.Fatalf("manager DM scene = %+v", scene)
 	}
 	bob := uuid.NewString()

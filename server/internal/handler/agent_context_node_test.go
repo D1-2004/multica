@@ -121,7 +121,7 @@ func TestAgentContextNodeLivesInTheScopeOfTheScene(t *testing.T) {
 	registerFixedScene(t, agentID, ctxcapOrg, "dm", nodeDirect, nodeDirectCID, "Dora", time.Minute)
 	node = ctxNode(t, router, "", agentID, contextcap.ScopeScene, nodeDirect)
 	if node.Scope == nil || *node.Scope != (agentContextScopeDTO{Type: contextcap.ScopeScene, OrgID: ctxcapOrg, Key: nodeDirect, Title: "Dora"}) ||
-		!node.CanConnect || node.Rights != contextCapAllRights || node.Scene == nil || node.Scene.Kind != "dm" || node.Scene.SceneID != nodeDirect {
+		!node.CanConnect || node.Rights != contextCapSceneRights || node.Scene == nil || node.Scene.Kind != "dm" || node.Scene.SceneID != nodeDirect {
 		t.Fatalf("DM scene node = %+v", node)
 	}
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, scenePath(nodeDirect)+"/prompts",
