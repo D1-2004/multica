@@ -1601,7 +1601,7 @@
       ],
       "context_a": "start_work schema",
       "context_b": "report_status schema",
-      "expected_effects": "前者不展示state_refs，后者保留state_refs；Host依旧拒绝start_work携带state_refs",
+      "expected_effects": "前者不展示state_refs（任何分组、任何模型），后者保留state_refs；工作动作误带state_refs时Host丢弃该字段而不拒绝整份计划，非工作动作携带及其他未允许字段仍拒绝",
       "verification": "not_run"
     },
     {

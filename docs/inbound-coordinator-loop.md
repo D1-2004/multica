@@ -516,7 +516,7 @@ collect 在是否启用选择不同的请求之间拆窗；所有人和指定名
 `thinking.type=disabled`（省略不兼容的reasoning_effort）；关闭恢复1536与原参数。
 截断或JSON不完整时，在同一证据快照内最多两次只提供finish工具重新序列化，
 不重做读取、不扩大总decision deadline、不提交旧候选；修复结果仍走全部Host与review。
-模型schema按kind使用与Host相同的允许字段，避免start_work被展示state_refs。
+模型schema按kind使用与Host相同的允许字段，避免start_work被展示state_refs；state_refs的这条剪枝对所有模型、所有finish schema实验分组都生效（`withholdStateRefs`）。工作动作（start_work/continue_work）误带state_refs时，Host窄规范化丢弃该字段而不是拒绝整份计划，它也不计入重复计划指纹；非工作动作携带它仍拒绝，因为那多半是标错kind的report_status：2026-10-01预发 deepseek-v4.1-flash 曾在start_work上反复附带state_refs，连拒3次后只能兜底回复。其他未允许字段仍拒绝。
 依据：https://api-docs.deepseek.com/guides/thinking_mode/ 。
 结构检查、脚本Host测试、模型回放和真实投递证据分别报告。
 

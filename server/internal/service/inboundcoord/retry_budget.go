@@ -144,6 +144,11 @@ func proposalShape(arguments string) string {
 		fields := append([]string(nil), a.MissingFields...)
 		sort.Strings(fields)
 		states := append([]string(nil), a.StateRefs...)
+		if workCoordinationKind(a.Kind) {
+			// The Host drops a stray state_refs from work: it does not make a
+			// new plan.
+			states = nil
+		}
 		sort.Strings(states)
 		parts = append(parts, strings.Join([]string{a.Kind, strings.Join(refs, ","), normalizeRepeatKey(a.Purpose), a.IssueID, a.Basis, a.Intent, strings.Join(fields, ","), strings.Join(states, ","), a.AckKind, a.ReasonCode, normalizeRepeatKey(a.Quote)}, "\x1f"))
 	}
