@@ -234,8 +234,11 @@ export function AgentOverviewPane({
       const params = new URLSearchParams(navigation.searchParams);
       if (next === "overview") params.delete("view");
       else params.set("view", next);
-      // The selected scene only means something inside the scenes section.
+      // The selected tenant, group or person only means something inside
+      // the scenes section.
       if (next !== "scenes") {
+        params.delete("tenant");
+        params.delete("node");
         params.delete("scene");
         params.delete("scene_tab");
       }

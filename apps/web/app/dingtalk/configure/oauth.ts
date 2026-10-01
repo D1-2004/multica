@@ -5,6 +5,8 @@
  * page's own parameters survive the redirect the same way with a short TTL.
  */
 
+import { isOrgId } from "@multica/core/context-capabilities";
+
 export const CONFIGURE_PATH = "/dingtalk/configure";
 
 const OAUTH_STATE_KEY = "multica_context_config_oauth_state";
@@ -152,8 +154,10 @@ const ERROR_CODE_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/;
 
 export interface ConnectTarget {
   agentId: string;
-  scopeType: "scene" | "person";
+  scopeType: "org" | "scene" | "person";
   scopeKey: string;
+  /** Tenant (DingTalk OrgId) of the scope; omitted for the server's default. */
+  orgId?: string;
 }
 
 export type ConnectResult =
@@ -174,9 +178,9 @@ export function readConnectResult(params: Pick<URLSearchParams, "get">): Connect
     : { kind: "error", code: "unknown" };
 }
 
-/** Remembers which scope a connection was started from, so the page reopens
- * it when the provider redirects back (the server's return URL only carries
- * the agent). */
+/** Remembers which scope (and tenant) a connection was started from, so the
+ * page reopens it when the provider redirects back (the server's return URL
+ * only carries the agent). */
 export function savePendingConnect(
   target: ConnectTarget,
   storages: StorageLike[] = browserStorages(),
@@ -186,6 +190,7 @@ export function savePendingConnect(
     agent: target.agentId,
     scope_type: target.scopeType,
     scope_key: target.scopeKey,
+    org_id: target.orgId ?? "",
     saved_at: now,
   });
   for (const storage of storages) safeSet(storage, CONNECT_KEY, value);
@@ -206,13 +211,29 @@ export function takePendingConnect(
         agent?: unknown;
         scope_type?: unknown;
         scope_key?: unknown;
+        org_id?: unknown;
         saved_at?: unknown;
       };
       if (typeof parsed.saved_at !== "number" || now - parsed.saved_at > CONNECT_TTL_MS) continue;
       if (typeof parsed.agent !== "string" || !parsed.agent) continue;
-      if (parsed.scope_type !== "scene" && parsed.scope_type !== "person") continue;
+      if (
+        parsed.scope_type !== "org" &&
+        parsed.scope_type !== "scene" &&
+        parsed.scope_type !== "person"
+      ) {
+        continue;
+      }
       if (typeof parsed.scope_key !== "string" || !parsed.scope_key) continue;
-      result = { agentId: parsed.agent, scopeType: parsed.scope_type, scopeKey: parsed.scope_key };
+      // A malformed tenant reads as the server's default.
+      const orgId = isOrgId(parsed.org_id) ? parsed.org_id : "";
+      // The enterprise level is only meaningful with its tenant.
+      if (parsed.scope_type === "org" && !orgId) continue;
+      result = {
+        agentId: parsed.agent,
+        scopeType: parsed.scope_type,
+        scopeKey: parsed.scope_key,
+        ...(orgId ? { orgId } : {}),
+      };
     } catch {
       // Ignore corrupt entries.
     }

@@ -156,7 +156,15 @@ func (b CredentialBinding) normalized() (CredentialBinding, error) {
 		}
 		*field = parsed.String()
 	}
-	if (out.ScopeType != ScopeScene && out.ScopeType != ScopePerson) || out.ScopeKey == "" {
+	switch {
+	case out.ScopeKey == "":
+		return CredentialBinding{}, ErrInvalidCredentialBinding
+	case out.ScopeType == ScopeOrg:
+		// An org credential's scope key is the org itself.
+		if out.ScopeKey != out.OrgID {
+			return CredentialBinding{}, ErrInvalidCredentialBinding
+		}
+	case out.ScopeType != ScopeScene && out.ScopeType != ScopePerson:
 		return CredentialBinding{}, ErrInvalidCredentialBinding
 	}
 	return out, nil

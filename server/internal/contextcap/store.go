@@ -146,8 +146,8 @@ func LockOffers(ctx context.Context, tx DBTX, agentID string) error {
 // and skillIDs. Run it inside a transaction. It verifies that the agent and
 // every id belong to the workspace (ErrNotFound / ErrUnknownResource) and
 // serializes concurrent replacements for the same agent. Removing an offer
-// leaves scene/person binding rows in place; TaskBindings ignores them until
-// the resource is offered again. actorID may be empty.
+// leaves org/scene/person binding rows in place; LoadLayers ignores them
+// until the resource is offered again. actorID may be empty.
 func ReplaceOffers(ctx context.Context, tx DBTX, workspaceID, agentID string, connectorIDs, skillIDs []string, actorID string) error {
 	connectors, err := canonicalUUIDSet(connectorIDs)
 	if err != nil {
@@ -218,38 +218,11 @@ func ReplaceOffers(ctx context.Context, tx DBTX, workspaceID, agentID string, co
 	return nil
 }
 
-// TaskBindings returns the effective scene and personal bindings of one task:
-// enabled rows under scope.OrgID whose scene key equals scope.SceneKey (when
-// HasScene) or whose person key equals scope.PersonKey (when HasPerson), and
-// whose resource is still in the agent's enabled offer catalog. A scope with
-// neither layer returns nil without querying.
-func TaskBindings(ctx context.Context, db DBTX, workspaceID, agentID string, scope Scope) ([]Binding, error) {
-	if !scope.HasScene() && !scope.HasPerson() {
-		return nil, nil
-	}
-	rows, err := db.Query(ctx, `SELECT `+bindingColumns+`
-		FROM context_capability_binding b
-		WHERE b.workspace_id = $1::uuid AND b.agent_id = $2::uuid AND b.enabled AND b.org_id = $3
-		  AND ((b.scope_type = 'scene' AND $4::text <> '' AND b.scope_key = $4::text)
-		    OR (b.scope_type = 'person' AND $5::text <> '' AND b.scope_key = $5::text))
-		  AND EXISTS (
-		    SELECT 1 FROM context_capability_binding o
-		    WHERE o.workspace_id = b.workspace_id AND o.agent_id = b.agent_id AND o.scope_type = 'offer'
-		      AND o.org_id = '' AND o.scope_key = '' AND o.resource_type = b.resource_type
-		      AND o.resource_id = b.resource_id AND o.enabled)
-		ORDER BY b.resource_type, b.resource_id, b.scope_type`,
-		workspaceID, agentID, scope.OrgID, scope.SceneKey, scope.PersonKey)
-	if err != nil {
-		return nil, err
-	}
-	return collectBindings(rows)
-}
-
 // ListScopeBindings returns every binding row (enabled or not) of one scene or
 // person scope. Rows are not filtered by the offer catalog; callers that
 // render them should cross-check ListOffers.
 func ListScopeBindings(ctx context.Context, db DBTX, workspaceID, agentID, scopeType, orgID, scopeKey string) ([]Binding, error) {
-	if scopeType != ScopeScene && scopeType != ScopePerson {
+	if !ValidConfigScope(scopeType, orgID, scopeKey) {
 		return nil, ErrInvalidInput
 	}
 	rows, err := db.Query(ctx, `SELECT `+bindingColumns+`
@@ -281,12 +254,26 @@ type BindingWrite struct {
 	ActorID       string
 }
 
-// UpsertBinding creates or updates one scene or person binding. Enabling a
-// resource that is not in the agent's enabled offer catalog returns
-// ErrNotOffered (checked atomically with the write); disabling is always
-// allowed. A non-empty ScopeTitle refreshes the stored title snapshot.
+// ValidConfigScope reports whether (scopeType, orgID, scopeKey) names one
+// configurable scope: an org scope (scope key = orgID), or a scene or person
+// scope with a valid key.
+func ValidConfigScope(scopeType, orgID, scopeKey string) bool {
+	switch scopeType {
+	case ScopeOrg:
+		return ValidOrgID(scopeKey) && scopeKey == orgID
+	case ScopeScene, ScopePerson:
+		return ValidScopeKey(scopeType, scopeKey)
+	default:
+		return false
+	}
+}
+
+// UpsertBinding creates or updates one org, scene or person binding.
+// Enabling a resource that is not in the agent's enabled offer catalog
+// returns ErrNotOffered (checked atomically with the write); disabling is
+// always allowed. A non-empty ScopeTitle refreshes the stored title snapshot.
 func UpsertBinding(ctx context.Context, db DBTX, in BindingWrite) (Binding, error) {
-	if (in.ScopeType != ScopeScene && in.ScopeType != ScopePerson) || !ValidScopeKey(in.ScopeType, in.ScopeKey) ||
+	if !ValidConfigScope(in.ScopeType, in.OrgID, in.ScopeKey) ||
 		(in.ResourceType != ResourceConnector && in.ResourceType != ResourceSkill) {
 		return Binding{}, ErrInvalidInput
 	}
@@ -331,7 +318,7 @@ func UpsertBinding(ctx context.Context, db DBTX, in BindingWrite) (Binding, erro
 	return out, err
 }
 
-// ScopeSummary aggregates one scene or person scope for the admin view.
+// ScopeSummary aggregates one org, scene or person scope for the admin view.
 type ScopeSummary struct {
 	ScopeType       string
 	OrgID           string
@@ -341,9 +328,10 @@ type ScopeSummary struct {
 	CredentialCount int
 }
 
-// ListScopeSummaries returns every scene and person scope of the agent that
-// has a binding or a credential, with its bindings and credential count.
-// Titles come from the newest binding snapshot, falling back to grants.
+// ListScopeSummaries returns every org, scene and person scope of the agent
+// that has a binding or a credential, with its bindings and credential
+// count. Titles come from the newest binding snapshot, falling back to
+// grants (scenes and persons).
 func ListScopeSummaries(ctx context.Context, db DBTX, workspaceID, agentID string) ([]ScopeSummary, error) {
 	type scopeID struct{ scopeType, orgID, key string }
 	byScope := map[scopeID]*ScopeSummary{}
@@ -358,7 +346,7 @@ func ListScopeSummaries(ctx context.Context, db DBTX, workspaceID, agentID strin
 
 	rows, err := db.Query(ctx, `SELECT `+bindingColumns+`
 		FROM context_capability_binding b
-		WHERE b.workspace_id = $1::uuid AND b.agent_id = $2::uuid AND b.scope_type IN ('scene', 'person')
+		WHERE b.workspace_id = $1::uuid AND b.agent_id = $2::uuid AND b.scope_type IN ('org', 'scene', 'person')
 		ORDER BY b.updated_at DESC, b.resource_type, b.resource_id`, workspaceID, agentID)
 	if err != nil {
 		return nil, err
@@ -377,7 +365,7 @@ func ListScopeSummaries(ctx context.Context, db DBTX, workspaceID, agentID strin
 
 	rows, err = db.Query(ctx, `SELECT scope_type, org_id, scope_key, count(*)
 		FROM context_connector_credential
-		WHERE workspace_id = $1::uuid AND agent_id = $2::uuid
+		WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type IN ('org', 'scene', 'person')
 		GROUP BY scope_type, org_id, scope_key`, workspaceID, agentID)
 	if err != nil {
 		return nil, err
@@ -450,7 +438,7 @@ func eachNewestGrantTitle(ctx context.Context, db DBTX, workspaceID, agentID str
 }
 
 // Credential is one row of context_connector_credential. Ciphertext is nil in
-// listing results; only GetCredential and TaskCredentials load it.
+// listing results; only GetCredential and LayerCredentials load it.
 type Credential struct {
 	CredentialBinding
 	Ciphertext []byte
@@ -485,7 +473,7 @@ func UpsertCredential(ctx context.Context, db DBTX, key CredentialBinding, ciphe
 	if err != nil {
 		return Credential{}, ErrInvalidInput
 	}
-	if !ValidScopeKey(normalized.ScopeType, normalized.ScopeKey) || len(ciphertext) == 0 {
+	if !ValidConfigScope(normalized.ScopeType, normalized.OrgID, normalized.ScopeKey) || len(ciphertext) == 0 {
 		return Credential{}, ErrInvalidInput
 	}
 	actor, err := optionalUUID(actorID)
@@ -541,36 +529,6 @@ func ListScopeCredentials(ctx context.Context, db DBTX, workspaceID, agentID, sc
 	for rows.Next() {
 		var c Credential
 		if err := rows.Scan(&c.WorkspaceID, &c.AgentID, &c.ConnectorID, &c.ScopeType, &c.OrgID, &c.ScopeKey, &c.Hint, &c.UpdatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
-}
-
-// TaskCredentials returns, with ciphertext, every scene credential of
-// scope.SceneKey and person credential of scope.PersonKey under scope.OrgID.
-// A scope with neither layer returns nil without querying. Callers open each
-// with OpenCredential and apply person > scene > workspace precedence.
-func TaskCredentials(ctx context.Context, db DBTX, workspaceID, agentID string, scope Scope) ([]Credential, error) {
-	if !scope.HasScene() && !scope.HasPerson() {
-		return nil, nil
-	}
-	rows, err := db.Query(ctx, `SELECT workspace_id::text, agent_id::text, connector_id::text, scope_type, org_id, scope_key, ciphertext, hint, updated_at
-		FROM context_connector_credential
-		WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND org_id = $3
-		  AND ((scope_type = 'scene' AND $4::text <> '' AND scope_key = $4::text)
-		    OR (scope_type = 'person' AND $5::text <> '' AND scope_key = $5::text))
-		ORDER BY connector_id, scope_type`,
-		workspaceID, agentID, scope.OrgID, scope.SceneKey, scope.PersonKey)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []Credential{}
-	for rows.Next() {
-		var c Credential
-		if err := rows.Scan(&c.WorkspaceID, &c.AgentID, &c.ConnectorID, &c.ScopeType, &c.OrgID, &c.ScopeKey, &c.Ciphertext, &c.Hint, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

@@ -152,7 +152,11 @@ function DingTalkConfigureContent() {
         const pending = takePendingConnect();
         if (!initial.agentId && pending) initial.agentId = pending.agentId;
         if (pending && pending.agentId === initial.agentId) {
-          setInitialScope({ scopeType: pending.scopeType, scopeKey: pending.scopeKey });
+          setInitialScope({
+            scopeType: pending.scopeType,
+            scopeKey: pending.scopeKey,
+            ...(pending.orgId ? { orgId: pending.orgId } : {}),
+          });
         }
         setConnectResult(returned);
       }

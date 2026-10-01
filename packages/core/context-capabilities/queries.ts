@@ -1,5 +1,6 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
+import type { ContextNodeRef } from "../types/context-capability";
 
 /**
  * Mobile configuration keys. The `/api/context-capabilities/*` routes are
@@ -11,6 +12,12 @@ export const contextConfigKeys = {
   agents: () => [...contextConfigKeys.all(), "agents"] as const,
   agent: (agentId: string) =>
     [...contextConfigKeys.agents(), agentId] as const,
+  /** The agent's detail per tenant (the enterprise and personal levels and
+   * the scene list live there). */
+  details: (agentId: string) =>
+    [...contextConfigKeys.agent(agentId), "detail"] as const,
+  detail: (agentId: string, orgId: string) =>
+    [...contextConfigKeys.details(agentId), orgId] as const,
   scenes: (agentId: string) =>
     [...contextConfigKeys.agent(agentId), "scenes"] as const,
   scene: (agentId: string, sceneKey: string) =>
@@ -19,18 +26,34 @@ export const contextConfigKeys = {
 
 /**
  * Admin keys (agent detail → offer sections and the 场域 section),
- * workspace-scoped. Scenes nest under the agent, so invalidating the agent
- * key (e.g. after an offer change) also refreshes the scene list and every
- * scene detail.
+ * workspace-scoped. Everything nests under the agent, so invalidating the
+ * agent key (e.g. after an offer change) also refreshes the tenants, their
+ * groups and people, and every Context Builder node.
  */
 export const contextCapabilityKeys = {
   all: (wsId: string) => ["workspaces", wsId, "context-capabilities"] as const,
   agent: (wsId: string, agentId: string) =>
     [...contextCapabilityKeys.all(wsId), agentId] as const,
-  scenes: (wsId: string, agentId: string) =>
-    [...contextCapabilityKeys.agent(wsId, agentId), "scenes"] as const,
-  scene: (wsId: string, agentId: string, sceneKey: string) =>
-    [...contextCapabilityKeys.scenes(wsId, agentId), sceneKey] as const,
+  /** The agent's tenants and unassigned orgs. */
+  tenants: (wsId: string, agentId: string) =>
+    [...contextCapabilityKeys.agent(wsId, agentId), "tenants"] as const,
+  tenant: (wsId: string, agentId: string, orgId: string) =>
+    [...contextCapabilityKeys.tenants(wsId, agentId), orgId] as const,
+  tenantGroups: (wsId: string, agentId: string, orgId: string) =>
+    [...contextCapabilityKeys.tenant(wsId, agentId, orgId), "groups"] as const,
+  tenantPersons: (wsId: string, agentId: string, orgId: string) =>
+    [...contextCapabilityKeys.tenant(wsId, agentId, orgId), "persons"] as const,
+  /** Every Context Builder node of the agent. A write at one level changes
+   * the effective preview of the levels below it. */
+  contextNodes: (wsId: string, agentId: string) =>
+    [...contextCapabilityKeys.agent(wsId, agentId), "context"] as const,
+  contextNode: (wsId: string, agentId: string, node: ContextNodeRef) =>
+    [
+      ...contextCapabilityKeys.contextNodes(wsId, agentId),
+      node.orgId,
+      node.scopeType,
+      node.scopeKey,
+    ] as const,
   /** Official apps with this agent's status (连接应用). Nested under the
    * agent, so offer changes refresh them too. */
   connectedApps: (wsId: string, agentId: string) =>
@@ -39,7 +62,7 @@ export const contextCapabilityKeys = {
     [...contextCapabilityKeys.connectedApps(wsId, agentId), slug] as const,
 };
 
-/** Page size of the admin scene list. */
+/** Page size of a tenant's group list. */
 export const AGENT_SCENES_PAGE_SIZE = 50;
 
 export function contextConfigAgentsOptions() {
@@ -49,18 +72,22 @@ export function contextConfigAgentsOptions() {
   });
 }
 
-export function contextConfigAgentOptions(agentId: string) {
+/** The agent's detail in one tenant; "" lets the server choose. */
+export function contextConfigAgentOptions(agentId: string, orgId = "") {
   return queryOptions({
-    queryKey: contextConfigKeys.agent(agentId),
-    queryFn: () => api.getContextConfigAgent(agentId),
+    queryKey: contextConfigKeys.detail(agentId, orgId),
+    queryFn: () => api.getContextConfigAgent(agentId, orgId),
     enabled: Boolean(agentId),
   });
 }
 
-export function contextConfigSceneOptions(agentId: string, sceneKey: string) {
+/** One scene of the configure page. `orgId` is the scene's tenant ("" for
+ * the agent's own org); a cid is unique across orgs, so it is not part of
+ * the key. */
+export function contextConfigSceneOptions(agentId: string, sceneKey: string, orgId = "") {
   return queryOptions({
     queryKey: contextConfigKeys.scene(agentId, sceneKey),
-    queryFn: () => api.getContextConfigScene(agentId, sceneKey),
+    queryFn: () => api.getContextConfigScene(agentId, sceneKey, orgId),
     enabled: Boolean(agentId && sceneKey),
   });
 }
@@ -73,13 +100,22 @@ export function agentContextCapabilitiesOptions(wsId: string, agentId: string) {
   });
 }
 
-/** The agent's IM scenes (group chats and 1:1 chats), newest activity
- * first, paged by offset. */
-export function agentScenesOptions(wsId: string, agentId: string) {
+/** The agent's tenants (企业) and the orgs seen without one. */
+export function agentTenantsOptions(wsId: string, agentId: string) {
+  return queryOptions({
+    queryKey: contextCapabilityKeys.tenants(wsId, agentId),
+    queryFn: () => api.listAgentTenants(wsId, agentId),
+    enabled: Boolean(wsId && agentId),
+    staleTime: 15_000,
+  });
+}
+
+/** A tenant's group chats, newest activity first, paged by offset. */
+export function agentTenantGroupsOptions(wsId: string, agentId: string, orgId: string) {
   return infiniteQueryOptions({
-    queryKey: contextCapabilityKeys.scenes(wsId, agentId),
+    queryKey: contextCapabilityKeys.tenantGroups(wsId, agentId, orgId),
     queryFn: ({ pageParam }) =>
-      api.listAgentScenes(wsId, agentId, {
+      api.listAgentTenantGroups(wsId, agentId, orgId, {
         limit: AGENT_SCENES_PAGE_SIZE,
         offset: pageParam,
       }),
@@ -88,18 +124,32 @@ export function agentScenesOptions(wsId: string, agentId: string) {
       lastPage.hasMore && lastPage.scenes.length > 0
         ? lastOffset + lastPage.scenes.length
         : undefined,
-    enabled: Boolean(wsId && agentId),
+    enabled: Boolean(wsId && agentId && orgId),
     staleTime: 15_000,
   });
 }
 
-export function agentSceneOptions(wsId: string, agentId: string, sceneKey: string) {
+/** People known under a tenant. */
+export function agentTenantPersonsOptions(wsId: string, agentId: string, orgId: string) {
   return queryOptions({
-    queryKey: contextCapabilityKeys.scene(wsId, agentId, sceneKey),
-    queryFn: () => api.getAgentScene(wsId, agentId, sceneKey),
-    enabled: Boolean(wsId && agentId && sceneKey),
+    queryKey: contextCapabilityKeys.tenantPersons(wsId, agentId, orgId),
+    queryFn: () => api.listAgentTenantPersons(wsId, agentId, orgId),
+    enabled: Boolean(wsId && agentId && orgId),
     staleTime: 15_000,
-    // A scene account connected in the system browser (desktop), by a group
+  });
+}
+
+/** One level's Context Builder. */
+export function contextNodeOptions(wsId: string, agentId: string, node: ContextNodeRef) {
+  return queryOptions({
+    queryKey: contextCapabilityKeys.contextNode(wsId, agentId, node),
+    queryFn: () => api.getContextNode(wsId, agentId, node),
+    enabled: Boolean(wsId && agentId && node.orgId && node.scopeKey),
+    // Refetch whenever the builder opens: its 生效预览 includes the agent's
+    // own skills and MCP servers, which other tabs change without touching
+    // these keys.
+    staleTime: 0,
+    // An account connected in the system browser (desktop), by a group
     // member or by the person on their phone shows when the admin comes back.
     refetchOnWindowFocus: "always",
   });

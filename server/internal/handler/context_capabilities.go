@@ -23,21 +23,32 @@ import (
 // Mobile context capability API (docs/context-capabilities.md §5-§6). Every
 // route is wrapped with RequireDingTalkHumanActor in the router. Authority
 // comes from a live context_config_grant for the exact (agent, org, scope)
-// the caller reads or writes, or, for the agent's scenes only, from managing
-// the agent (workspace owner/admin of its workspace, or the agent owner: the
-// agent-manage permission of the admin routes). Plain workspace membership
-// grants nothing, and a manager is never the person of a personal scope.
+// the caller reads or writes, or, for the agent's scenes and org
+// (enterprise) scopes, from managing the agent (workspace owner/admin of its
+// workspace, or the agent owner: the agent-manage permission of the admin
+// routes). A request works in one tenant org of the agent (its optional
+// org_id, else the identity org); any live grant under that org lets the
+// caller read its org scope. Plain workspace membership grants nothing, and
+// a manager is never the person of a personal scope.
 
 const contextCapBodyLimit = 8 << 10
 
 // contextCapAgent is an agent resolved for a context capability call. OrgID
-// is the agent's current DingTalk org (agent_dingtalk_identity.org_id, "" when
-// it has none); grants and bindings only apply under that org.
+// is the org the call works in: the agent's current DingTalk org
+// (agent_dingtalk_identity.org_id, "" when it has none) unless the request
+// named another tenant of the agent (contextCapAgentInOrg). Grants,
+// bindings and scenes are read and written under OrgID only.
+// IdentityOrgID is always the agent's DingTalk identity org: Coordinator
+// jobs that recorded no org belong to it.
 type contextCapAgent struct {
-	Agent       db.Agent
-	ID          string
-	WorkspaceID string
-	OrgID       string
+	Agent         db.Agent
+	ID            string
+	WorkspaceID   string
+	OrgID         string
+	IdentityOrgID string
+	// OrgName is the tenant name of OrgID when contextCapAgentInOrg resolved
+	// it ("" otherwise).
+	OrgName string
 }
 
 type contextCapAgentDTO struct {
@@ -71,6 +82,8 @@ type contextCapGrantDTO struct {
 	ScopeTitle string `json:"scope_title"`
 	Source     string `json:"source"`
 	ExpiresAt  string `json:"expires_at"`
+	// OrgID is the tenant org the scope lives in.
+	OrgID string `json:"org_id"`
 }
 
 type contextCapSceneDTO struct {
@@ -80,6 +93,28 @@ type contextCapSceneDTO struct {
 	ExpiresAt  string `json:"expires_at"`
 	// Kind is "group" for a group chat and "dm" for a 1:1 chat.
 	Kind string `json:"kind"`
+	// OrgID is the tenant org the scene lives in.
+	OrgID string `json:"org_id"`
+}
+
+// contextCapTenantRefDTO names one tenant of an agent on the configure page.
+type contextCapTenantRefDTO struct {
+	OrgID  string `json:"org_id"`
+	Name   string `json:"name"`
+	Source string `json:"source"`
+}
+
+// contextCapOrgLayerDTO is the enterprise (org) layer of the configure
+// page's org: its bindings (offered resources only) and credentials.
+// Credential hints are blank for a caller who cannot edit it.
+type contextCapOrgLayerDTO struct {
+	ScopeKey    string                    `json:"scope_key"`
+	ScopeTitle  string                    `json:"scope_title"`
+	Bindings    []contextCapBindingDTO    `json:"bindings"`
+	Credentials []contextCapCredentialDTO `json:"credentials"`
+	// CanEdit: the caller manages the agent (bindings, credentials and
+	// connects of the org scope); otherwise the layer is read-only.
+	CanEdit bool `json:"can_edit"`
 }
 
 type contextCapPersonDTO struct {
@@ -147,6 +182,17 @@ type contextCapAgentDetailResponse struct {
 	// lists every scene of the agent), else "grant".
 	Access         string `json:"access"`
 	JSAPIAvailable bool   `json:"jsapi_available"`
+	// Tenant is the org this detail describes (the request's org_id, else
+	// the agent's identity org); null for an agent without a DingTalk
+	// identity when none was named.
+	Tenant *contextCapTenantRefDTO `json:"tenant"`
+	// Tenants are the orgs the caller may open: every tenant for a manager,
+	// else the tenants the caller holds a live grant under.
+	Tenants []contextCapTenantRefDTO `json:"tenants"`
+	// Org is the enterprise layer of Tenant; null when the caller may not
+	// read it (no grant under that org and not a manager) or there is no
+	// tenant.
+	Org *contextCapOrgLayerDTO `json:"org"`
 }
 
 func contextCapTime(t time.Time) string {
@@ -161,14 +207,14 @@ func contextCapAgentView(a contextCapAgent) contextCapAgentDTO {
 }
 
 func contextCapGrantView(g contextcap.Grant) contextCapGrantDTO {
-	return contextCapGrantDTO{ScopeType: g.ScopeType, ScopeKey: g.ScopeKey, ScopeTitle: g.ScopeTitle, Source: g.Source, ExpiresAt: contextCapTime(g.ExpiresAt)}
+	return contextCapGrantDTO{ScopeType: g.ScopeType, ScopeKey: g.ScopeKey, ScopeTitle: g.ScopeTitle, Source: g.Source, ExpiresAt: contextCapTime(g.ExpiresAt), OrgID: g.OrgID}
 }
 
 func contextCapSceneView(g contextcap.Grant, kind string) contextCapSceneDTO {
 	if kind != contextcap.SceneKindDM {
 		kind = contextcap.SceneKindGroup
 	}
-	return contextCapSceneDTO{ScopeKey: g.ScopeKey, ScopeTitle: g.ScopeTitle, Source: g.Source, ExpiresAt: contextCapTime(g.ExpiresAt), Kind: kind}
+	return contextCapSceneDTO{ScopeKey: g.ScopeKey, ScopeTitle: g.ScopeTitle, Source: g.Source, ExpiresAt: contextCapTime(g.ExpiresAt), Kind: kind, OrgID: g.OrgID}
 }
 
 func contextCapBindingView(b contextcap.Binding) contextCapBindingDTO {
@@ -256,7 +302,101 @@ func (h *Handler) loadContextCapAgent(ctx context.Context, rawID string) (contex
 	default:
 		return contextCapAgent{}, err
 	}
+	out.IdentityOrgID = out.OrgID
 	return out, nil
+}
+
+// errContextCapUnknownTenant: a request named an org that is not a tenant
+// of the agent.
+var errContextCapUnknownTenant = errors.New("not a tenant of the agent")
+
+// contextCapAgentInOrg returns a working in orgID, a tenant of the agent
+// (contextcap.AgentTenants), with OrgName set. An empty orgID selects the
+// agent's identity org. errContextCapUnknownTenant when orgID is not a
+// tenant.
+func (h *Handler) contextCapAgentInOrg(ctx context.Context, a contextCapAgent, orgID string) (contextCapAgent, error) {
+	orgID = strings.TrimSpace(orgID)
+	if orgID == "" {
+		orgID = a.IdentityOrgID
+	}
+	if orgID == "" {
+		// An agent without a DingTalk identity keeps its org "" scope.
+		a.OrgID, a.OrgName = "", ""
+		return a, nil
+	}
+	if !contextcap.ValidOrgID(orgID) {
+		return a, errContextCapUnknownTenant
+	}
+	tenant, err := contextcap.AgentTenant(ctx, h.DB, a.WorkspaceID, a.ID, orgID)
+	if errors.Is(err, contextcap.ErrNotFound) {
+		return a, errContextCapUnknownTenant
+	}
+	if err != nil {
+		return a, err
+	}
+	a.OrgID, a.OrgName = tenant.OrgID, tenant.Name
+	return a, nil
+}
+
+// Refusals of a mobile request by a caller without any access to the agent.
+const (
+	contextCapForbiddenAgent = "you are not allowed to configure this agent"
+	contextCapForbiddenScope = "you are not allowed to configure this scope"
+)
+
+// contextCapRequestOrg applies the optional org_id of a mobile scope request
+// (contextCapRequestOrgFor, refusing with contextCapForbiddenScope).
+func (h *Handler) contextCapRequestOrg(w http.ResponseWriter, r *http.Request, a contextCapAgent, userID, orgID string) (contextCapAgent, bool) {
+	return h.contextCapRequestOrgFor(w, r, a, userID, orgID, contextCapForbiddenScope)
+}
+
+// contextCapRequestOrgFor applies the optional org_id of a mobile request
+// (contextCapAgentInOrg) and writes the error: 404 tenant_not_found for an
+// org that is not a tenant of the agent, but only to a caller who manages
+// the agent or holds a live grant for it. Anyone else gets the 403
+// (forbidden) a tenant org would give them, so the routes do not tell which
+// org ids are tenants.
+func (h *Handler) contextCapRequestOrgFor(w http.ResponseWriter, r *http.Request, a contextCapAgent, userID, orgID, forbidden string) (contextCapAgent, bool) {
+	out, err := h.contextCapAgentInOrg(r.Context(), a, orgID)
+	if errors.Is(err, errContextCapUnknownTenant) {
+		var access bool
+		if access, err = h.contextCapHasAccess(r.Context(), a, userID); err == nil {
+			if !access {
+				writeError(w, http.StatusForbidden, forbidden)
+				return contextCapAgent{}, false
+			}
+			err = errContextCapUnknownTenant
+		}
+	}
+	switch {
+	case err == nil:
+		return out, true
+	case errors.Is(err, errContextCapUnknownTenant):
+		writeErrorCode(w, http.StatusNotFound, contextCapErrTenantNotFound, "this organization is not a tenant of the agent")
+	default:
+		slog.ErrorContext(r.Context(), "context capabilities: tenant lookup failed", "agent_id", a.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "tenant lookup failed")
+	}
+	return contextCapAgent{}, false
+}
+
+// contextCapHasAccess reports whether userID manages agent a or holds a
+// live grant for it in any org.
+func (h *Handler) contextCapHasAccess(ctx context.Context, a contextCapAgent, userID string) (bool, error) {
+	manages, err := h.contextCapManages(ctx, a, userID)
+	if err != nil || manages {
+		return manages, err
+	}
+	grants, err := contextcap.ListLiveGrantsForUser(ctx, h.DB, userID, a.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, grant := range grants {
+		if grant.WorkspaceID == a.WorkspaceID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // contextCapAgentOr404 loads the agent named by the {agentId} route param.
@@ -318,6 +458,9 @@ type contextCapScope struct {
 	// read it and write its bindings and custom MCP servers, but not connect
 	// someone else's account.
 	CanConnect bool
+	// ReadOnly: the caller may only read the scope (a member of an org who
+	// is not an agent manager reading the org scope).
+	ReadOnly bool
 }
 
 // contextCapNeed is what a scope request intends to do with the scope.
@@ -409,17 +552,27 @@ type contextCapResolveOptions struct {
 	Scene *contextcap.SceneSummary
 	// Manages is the caller's agent-manage permission when already known.
 	Manages *bool
+	// ManagerPersons lets a manager read a person scope and write its
+	// bindings, prompt components and custom MCP servers without that
+	// person's grant (CanConnect false), as for a 1:1 chat. The admin
+	// Context Builder sets it; the mobile routes never do.
+	ManagerPersons bool
 }
 
-// contextCapResolveScope is the single place that maps a scene or person
-// request of userID on agent a (under the agent's current org) to the
-// effective scope and the caller's authority on it (contextCapScope). The
-// mobile routes (contextCapRequireScope), the admin scene routes and the
-// OAuth connect (authorizeConnectorOAuthScope, at start and at the callback)
-// all use it.
+// contextCapResolveScope is the single place that maps an org, scene or
+// person request of userID on agent a (under a.OrgID, a tenant org of the
+// agent) to the effective scope and the caller's authority on it
+// (contextCapScope). The mobile routes (contextCapRequireScope), the admin
+// Context Builder routes and the OAuth connect (authorizeConnectorOAuthScope,
+// at start and at the callback) all use it.
 //
+//   - Org request (scope key = a.OrgID): managing the agent gives full
+//     access (connect included); any live grant of the caller under that
+//     org gives read-only access (ReadOnly).
 //   - Person request: the caller's live person grant for exactly that
-//     staffId (a manager is not the person). Full access.
+//     staffId (a manager is not the person). Full access. With
+//     ManagerPersons (admin routes only), a manager reads it and writes its
+//     bindings, prompt components and custom MCP servers (CanConnect false).
 //   - Group scene request: the caller's live scene grant (full access), or
 //     managing the agent (contextCapManages) and the scene being one the
 //     agent has seen (the admin scene union: memory, Coordinator
@@ -465,15 +618,59 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 		return manages, nil
 	}
 
+	if scopeType == contextcap.ScopeOrg {
+		// The org (enterprise) scope of the org the call works in: agent
+		// managers configure it; people holding any live grant under that
+		// org may read it.
+		if scopeKey != a.OrgID {
+			return contextCapScope{}, contextcap.ErrInvalidInput
+		}
+		scope := contextCapScope{Grant: contextcap.Grant{
+			UserID: userID, WorkspaceID: a.WorkspaceID, AgentID: a.ID, ScopeType: contextcap.ScopeOrg, OrgID: a.OrgID,
+			ScopeKey: a.OrgID, ScopeTitle: firstNonEmpty(a.OrgName, a.OrgID), Source: contextCapSourceManager,
+		}}
+		isManager, err := manages()
+		if err != nil {
+			return contextCapScope{}, err
+		}
+		if isManager {
+			scope.Manager, scope.CanConnect = true, true
+			return scope, nil
+		}
+		grants, err := contextcap.ListLiveGrantsForUser(ctx, h.DB, userID, a.ID)
+		if err != nil {
+			return contextCapScope{}, fmt.Errorf("grant lookup: %w", err)
+		}
+		for _, grant := range grants {
+			if grant.WorkspaceID == a.WorkspaceID && grant.OrgID == a.OrgID {
+				scope.Source, scope.ExpiresAt, scope.ReadOnly = grant.Source, grant.ExpiresAt, true
+				return scope, nil
+			}
+		}
+		return contextCapScope{}, errContextCapForbidden
+	}
+
 	if scopeType == contextcap.ScopePerson {
 		grant, ok, err := liveGrant(contextcap.ScopePerson, scopeKey)
 		if err != nil {
 			return contextCapScope{}, err
 		}
-		if !ok {
-			return contextCapScope{}, errContextCapForbidden
+		if ok {
+			return contextCapScope{Grant: grant, CanConnect: true}, nil
 		}
-		return contextCapScope{Grant: grant, CanConnect: true}, nil
+		if opts.ManagerPersons {
+			isManager, err := manages()
+			if err != nil {
+				return contextCapScope{}, err
+			}
+			if isManager {
+				return contextCapScope{Grant: contextcap.Grant{
+					UserID: userID, WorkspaceID: a.WorkspaceID, AgentID: a.ID, ScopeType: contextcap.ScopePerson, OrgID: a.OrgID,
+					ScopeKey: scopeKey, Source: contextCapSourceManager,
+				}, Manager: true}, nil
+			}
+		}
+		return contextCapScope{}, errContextCapForbidden
 	}
 
 	// A scene request.
@@ -482,7 +679,7 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 	if opts.Scene != nil {
 		scene, found = *opts.Scene, true
 	} else {
-		loaded, err := contextcap.GetScene(ctx, h.DB, a.WorkspaceID, a.ID, a.OrgID, scopeKey)
+		loaded, err := contextcap.GetScene(ctx, h.DB, a.WorkspaceID, a.ID, a.OrgID, a.IdentityOrgID, scopeKey)
 		switch {
 		case err == nil:
 			scene, found = loaded, true
@@ -512,7 +709,7 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 	}
 
 	// A 1:1 chat: its configuration is its person's.
-	staffID, personTitle, err := contextcap.DirectScenePerson(ctx, h.DB, a.WorkspaceID, a.ID, a.OrgID, scopeKey)
+	staffID, personTitle, err := contextcap.DirectScenePerson(ctx, h.DB, a.WorkspaceID, a.ID, a.OrgID, a.IdentityOrgID, scopeKey)
 	if err != nil {
 		return contextCapScope{}, fmt.Errorf("%w: %w", errContextCapSceneLookup, err)
 	}
@@ -579,7 +776,7 @@ func (h *Handler) contextCapRequireScopeWith(w http.ResponseWriter, r *http.Requ
 	case errors.Is(err, contextcap.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "invalid scope")
 	case errors.Is(err, errContextCapForbidden):
-		writeError(w, http.StatusForbidden, "you are not allowed to configure this scope")
+		writeError(w, http.StatusForbidden, contextCapForbiddenScope)
 	case errors.Is(err, contextcap.ErrNotFound):
 		writeError(w, http.StatusNotFound, "scene not found")
 	case errors.Is(err, errContextCapSceneLookup):
@@ -598,6 +795,11 @@ func (h *Handler) contextCapRequireScopeWith(w http.ResponseWriter, r *http.Requ
 func contextCapScopeAllows(w http.ResponseWriter, scope contextCapScope, need contextCapNeed) bool {
 	if need == contextCapNeedRead {
 		return true
+	}
+	if scope.ReadOnly {
+		writeErrorCode(w, http.StatusForbidden, contextCapErrManagerOnly,
+			"only an agent manager can change the enterprise configuration")
+		return false
 	}
 	if scope.PersonUnknown {
 		writeErrorCode(w, http.StatusConflict, contextCapErrDMPersonUnknown,
@@ -620,10 +822,43 @@ const (
 	// contextCapErrPersonOnly: a credential write or connect on a person's
 	// scope (a 1:1 chat scene) by a manager who is not that person.
 	contextCapErrPersonOnly = "person_only"
+	// contextCapErrManagerOnly: a write to an org scope by someone who may
+	// only read it.
+	contextCapErrManagerOnly = "manager_only"
+	// contextCapErrTenantNotFound: the request named an org that is not a
+	// tenant of the agent.
+	contextCapErrTenantNotFound = "tenant_not_found"
 )
 
-// contextCapLiveGrants returns the caller's live grants for agent a under its
-// current org, newest first.
+// contextCapScopeOrg is the org a mobile scope request works in: its org_id,
+// or, for an org scope without one, the org the scope key names.
+func contextCapScopeOrg(scopeType, scopeKey, orgID string) string {
+	if strings.TrimSpace(orgID) == "" && scopeType == contextcap.ScopeOrg {
+		return scopeKey
+	}
+	return orgID
+}
+
+// contextCapGrantOrgs returns the orgs a grant of agent a counts under: the
+// agent's tenants (contextcap.AgentTenants), plus "" for an agent without a
+// DingTalk identity (its scopes live under the org "").
+func (h *Handler) contextCapGrantOrgs(ctx context.Context, a contextCapAgent) (map[string]contextcap.Tenant, error) {
+	tenants, err := contextcap.AgentTenants(ctx, h.DB, a.WorkspaceID, a.ID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]contextcap.Tenant, len(tenants)+1)
+	for _, tenant := range tenants {
+		out[tenant.OrgID] = tenant
+	}
+	if a.IdentityOrgID == "" {
+		out[""] = contextcap.Tenant{Source: contextcap.TenantSourceIdentity}
+	}
+	return out, nil
+}
+
+// contextCapLiveGrants returns the caller's live grants for agent a under the
+// org the call works in (a.OrgID), newest first.
 func (h *Handler) contextCapLiveGrants(ctx context.Context, a contextCapAgent, userID string) ([]contextcap.Grant, error) {
 	grants, err := contextcap.ListLiveGrantsForUser(ctx, h.DB, userID, a.ID)
 	if err != nil {
@@ -781,6 +1016,7 @@ func (h *Handler) RedeemContextConfigLink(w http.ResponseWriter, r *http.Request
 		"scope_type":   grant.ScopeType,
 		"scope_key":    grant.ScopeKey,
 		"scope_title":  grant.ScopeTitle,
+		"org_id":       grant.OrgID,
 	})
 }
 
@@ -818,6 +1054,7 @@ func (h *Handler) ListContextConfigAgents(w http.ResponseWriter, r *http.Request
 	agents := []*agentEntry{}
 	byID := map[string]*agentEntry{}
 	loaded := map[string]*contextCapAgent{}
+	orgs := map[string]map[string]contextcap.Tenant{}
 	for _, grant := range grants {
 		agent, seen := loaded[grant.AgentID]
 		if !seen {
@@ -828,10 +1065,17 @@ func (h *Handler) ListContextConfigAgents(w http.ResponseWriter, r *http.Request
 			}
 			if err == nil {
 				agent = &a
+				if orgs[a.ID], err = h.contextCapGrantOrgs(ctx, a); err != nil {
+					writeError(w, http.StatusInternalServerError, "tenant lookup failed")
+					return
+				}
 			}
 			loaded[grant.AgentID] = agent
 		}
-		if agent == nil || grant.WorkspaceID != agent.WorkspaceID || grant.OrgID != agent.OrgID {
+		if agent == nil || grant.WorkspaceID != agent.WorkspaceID {
+			continue
+		}
+		if _, tenant := orgs[agent.ID][grant.OrgID]; !tenant {
 			continue
 		}
 		entry, ok := byID[agent.ID]
@@ -880,10 +1124,13 @@ func (h *Handler) contextCapManagedAgents(ctx context.Context, userID string) ([
 }
 
 // GetContextConfigAgent returns what the caller may see and configure for one
-// agent: global items (read-only), the offer catalog, the caller's person
-// scope and scenes: the granted ones, plus, for a manager of the agent, every
-// scene the agent has seen (source "manager"). It needs at least one live
-// grant for the agent or the agent-manage permission. Upstream URLs,
+// agent in one of its tenant orgs (?org_id=, else the identity org, or, for
+// a caller without a grant there who does not manage the agent, the org of
+// the caller's newest grant): global items (read-only), the offer catalog,
+// the org (enterprise) layer, the caller's person scope and scenes: the
+// granted ones, plus, for a manager of the agent, every scene the agent has
+// seen in that org (source "manager"). It needs at least one live grant for
+// the agent in that org or the agent-manage permission. Upstream URLs,
 // credential references and workspace credential material are never
 // returned.
 func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) {
@@ -896,19 +1143,47 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	ctx := r.Context()
-	grants, err := h.contextCapLiveGrants(ctx, a, userID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "grant lookup failed")
-		return
-	}
 	manages, err := h.contextCapManages(ctx, a, userID)
 	if err != nil {
 		slog.ErrorContext(ctx, "context capabilities: manager lookup failed", "agent_id", a.ID, "error", err)
 		writeError(w, http.StatusInternalServerError, "grant lookup failed")
 		return
 	}
+	tenantOrgs, err := h.contextCapGrantOrgs(ctx, a)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "tenant lookup failed")
+		return
+	}
+	allGrants, err := contextcap.ListLiveGrantsForUser(ctx, h.DB, userID, a.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "grant lookup failed")
+		return
+	}
+	grantOrgs := map[string]bool{}
+	newestGrantOrg := ""
+	for _, grant := range allGrants {
+		if _, tenant := tenantOrgs[grant.OrgID]; grant.WorkspaceID != a.WorkspaceID || !tenant {
+			continue
+		}
+		if len(grantOrgs) == 0 {
+			newestGrantOrg = grant.OrgID
+		}
+		grantOrgs[grant.OrgID] = true
+	}
+	requestedOrg := strings.TrimSpace(r.URL.Query().Get("org_id"))
+	if requestedOrg == "" && !manages && !grantOrgs[a.IdentityOrgID] && len(grantOrgs) > 0 {
+		requestedOrg = newestGrantOrg
+	}
+	if a, ok = h.contextCapRequestOrgFor(w, r, a, userID, requestedOrg, contextCapForbiddenAgent); !ok {
+		return
+	}
+	grants, err := h.contextCapLiveGrants(ctx, a, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "grant lookup failed")
+		return
+	}
 	if len(grants) == 0 && !manages {
-		writeError(w, http.StatusForbidden, "you are not allowed to configure this agent")
+		writeError(w, http.StatusForbidden, contextCapForbiddenAgent)
 		return
 	}
 	offers, err := h.contextCapVisibleOffers(ctx, a)
@@ -928,6 +1203,52 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 	resp.Offers.Connectors = []contextCapOfferedConnectorDTO{}
 	resp.Offers.Skills = []contextCapSkillDTO{}
 	resp.Scenes = []contextCapSceneDTO{}
+	resp.Tenants = []contextCapTenantRefDTO{}
+	tenants, err := contextcap.AgentTenants(ctx, h.DB, a.WorkspaceID, a.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "tenant lookup failed")
+		return
+	}
+	for _, tenant := range tenants {
+		ref := contextCapTenantRefDTO{OrgID: tenant.OrgID, Name: tenant.Name, Source: tenant.Source}
+		if tenant.OrgID == a.OrgID {
+			current := ref
+			resp.Tenant = &current
+		}
+		if manages || grantOrgs[tenant.OrgID] {
+			resp.Tenants = append(resp.Tenants, ref)
+		}
+	}
+	if resp.Tenant != nil {
+		orgScope, err := h.contextCapResolveScopeWith(ctx, a, userID, contextcap.ScopeOrg, a.OrgID, contextCapResolveOptions{Manages: &manages})
+		switch {
+		case err == nil:
+			bindings, err := contextcap.ListScopeBindings(ctx, h.DB, a.WorkspaceID, a.ID, contextcap.ScopeOrg, a.OrgID, a.OrgID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "binding lookup failed")
+				return
+			}
+			credentials, err := contextcap.ListScopeCredentials(ctx, h.DB, a.WorkspaceID, a.ID, contextcap.ScopeOrg, a.OrgID, a.OrgID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "credential lookup failed")
+				return
+			}
+			layer := &contextCapOrgLayerDTO{
+				ScopeKey: a.OrgID, ScopeTitle: orgScope.ScopeTitle, Bindings: contextCapBindingViews(bindings, offers),
+				Credentials: contextCapCredentialViews(credentials), CanEdit: !orgScope.ReadOnly,
+			}
+			if orgScope.ReadOnly {
+				for i := range layer.Credentials {
+					layer.Credentials[i].Hint = ""
+				}
+			}
+			resp.Org = layer
+		case !errors.Is(err, errContextCapForbidden):
+			slog.ErrorContext(ctx, "context capabilities: org scope lookup failed", "agent_id", a.ID, "error", err)
+			writeError(w, http.StatusInternalServerError, "grant lookup failed")
+			return
+		}
+	}
 
 	global, err := h.authorizedConnectors(ctx, a.WorkspaceID, a.ID)
 	if err != nil {
@@ -991,7 +1312,7 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 	managedKinds := map[string]string{}
 	if manages {
 		if managed, _, err = contextcap.ListAllAgentScenes(ctx, h.DB, contextcap.SceneListQuery{
-			WorkspaceID: a.WorkspaceID, AgentID: a.ID, OrgID: a.OrgID,
+			WorkspaceID: a.WorkspaceID, AgentID: a.ID, OrgID: a.OrgID, IdentityOrgID: a.IdentityOrgID,
 		}, contextcap.MaxAllScenes); err != nil {
 			slog.ErrorContext(ctx, "context capabilities: scene list failed", "agent_id", a.ID, "error", err)
 			writeError(w, http.StatusInternalServerError, "scene lookup failed")
@@ -1095,6 +1416,9 @@ func (h *Handler) GetContextConfigScene(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "invalid scope")
 		return
 	}
+	if a, ok = h.contextCapRequestOrg(w, r, a, userID, r.URL.Query().Get("org_id")); !ok {
+		return
+	}
 	scope, ok := h.contextCapRequireScope(w, r, a, userID, contextcap.ScopeScene, sceneKey, contextCapNeedRead)
 	if !ok {
 		return
@@ -1161,12 +1485,16 @@ func (h *Handler) PutContextConfigBinding(w http.ResponseWriter, r *http.Request
 	var input struct {
 		ScopeType     string `json:"scope_type"`
 		ScopeKey      string `json:"scope_key"`
+		OrgID         string `json:"org_id"`
 		ResourceType  string `json:"resource_type"`
 		ResourceID    string `json:"resource_id"`
 		Enabled       *bool  `json:"enabled"`
 		ShareInGroups *bool  `json:"share_in_groups"`
 	}
 	if !decodeContextCapBody(w, r, contextCapBodyLimit, &input) {
+		return
+	}
+	if a, ok = h.contextCapRequestOrg(w, r, a, userID, contextCapScopeOrg(input.ScopeType, input.ScopeKey, input.OrgID)); !ok {
 		return
 	}
 	if input.Enabled == nil || (input.ResourceType != contextcap.ResourceConnector && input.ResourceType != contextcap.ResourceSkill) {
@@ -1291,10 +1619,14 @@ func (h *Handler) PutContextConfigCredential(w http.ResponseWriter, r *http.Requ
 	var input struct {
 		ScopeType   string `json:"scope_type"`
 		ScopeKey    string `json:"scope_key"`
+		OrgID       string `json:"org_id"`
 		ConnectorID string `json:"connector_id"`
 		Bearer      string `json:"bearer"`
 	}
 	if !decodeContextCapBody(w, r, contextCapBodyLimit, &input) {
+		return
+	}
+	if a, ok = h.contextCapRequestOrg(w, r, a, userID, contextCapScopeOrg(input.ScopeType, input.ScopeKey, input.OrgID)); !ok {
 		return
 	}
 	connectorUUID, err := util.ParseUUID(strings.TrimSpace(input.ConnectorID))
@@ -1364,6 +1696,9 @@ func (h *Handler) DeleteContextConfigCredential(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "invalid connector_id")
 		return
 	}
+	if a, ok = h.contextCapRequestOrg(w, r, a, userID, contextCapScopeOrg(query.Get("scope_type"), query.Get("scope_key"), query.Get("org_id"))); !ok {
+		return
+	}
 	grant, ok := h.contextCapRequireScope(w, r, a, userID, query.Get("scope_type"), query.Get("scope_key"), contextCapNeedCredential)
 	if !ok {
 		return
@@ -1382,8 +1717,10 @@ func (h *Handler) DeleteContextConfigCredential(w http.ResponseWriter, r *http.R
 }
 
 // ResolveContextConfigScene grants the caller a scene picked with the
-// DingTalk JSAPI group picker. It requires a live person grant for the agent
-// (a verified DingTalk identity), converts chat_id with the corp app, and
+// DingTalk JSAPI group picker, in the tenant the optional org_id query names
+// (default: the agent's identity org). It requires a live person grant for
+// the agent in that tenant (a verified DingTalk identity), converts chat_id
+// with the corp app, and
 // accepts only a known group scene of this agent (scene_memory, kind group).
 // DingTalk offers no general membership check, so the server trusts that only
 // group members can obtain a group's chatId from the picker. chat_id is
@@ -1405,6 +1742,12 @@ func (h *Handler) ResolveContextConfigScene(w http.ResponseWriter, r *http.Reque
 		OpenConversationID string `json:"open_conversation_id"`
 	}
 	if !decodeContextCapBody(w, r, contextCapBodyLimit, &input) {
+		return
+	}
+	// The tenant the page works in (org_id query, default the agent's
+	// identity org): the caller's person grant must be in it and the scene
+	// grant is stored under it.
+	if a, ok = h.contextCapRequestOrg(w, r, a, userID, r.URL.Query().Get("org_id")); !ok {
 		return
 	}
 	chatID, cid := strings.TrimSpace(input.ChatID), strings.TrimSpace(input.OpenConversationID)

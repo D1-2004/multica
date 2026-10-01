@@ -99,7 +99,10 @@ function agentDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
       bindings: [],
       credentials: [],
     },
-    scenes: [{ scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group" }],
+    scenes: [{ scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" }],
+    tenant: null,
+    tenants: [],
+    org: null,
     jsapiAvailable: false,
     access: "grant",
     ...overrides,
@@ -107,7 +110,7 @@ function agentDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
 }
 
 const sceneDetail: ContextConfigSceneDetail = {
-  scene: { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group" },
+  scene: { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
   bindings: [{ resourceType: "connector", resourceId: "conn-wiki", enabled: true, shareInGroups: false }],
   credentials: [{ connectorId: "conn-wiki", hint: "••••abcd", updatedAt: "", kind: "bearer" }],
   scope: { type: "scene", key: "cid-1", title: "Sales team" },
@@ -184,7 +187,7 @@ describe("ContextConfigPage", () => {
     expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
     expect(api.redeemContextConfigLink).toHaveBeenCalledTimes(1);
     expect(api.redeemContextConfigLink).toHaveBeenCalledWith("link-token");
-    expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", "cid-1");
+    expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", "cid-1", "");
 
     const wikiToggle = screen.getByRole("switch", { name: "Turn Wiki on or off" });
     expect(wikiToggle).toBeChecked();
@@ -332,6 +335,31 @@ describe("ContextConfigPage", () => {
     );
   });
 
+  it("links a picked group in the page's tenant", async () => {
+    const beta = { orgId: "ding2", name: "Beta", source: "created" };
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({ scenes: [], jsapiAvailable: true, tenant: beta, tenants: [beta] }),
+    );
+    api.resolveContextConfigScene.mockResolvedValue({
+      scopeKey: "cid-2",
+      scopeTitle: "Ops",
+      source: "jsapi",
+      expiresAt: "",
+      kind: "group",
+      orgId: "ding2",
+    });
+    const pickGroup = vi.fn().mockResolvedValue({ chatId: "chat-9" });
+    const user = userEvent.setup();
+    renderPage({ initialAgentId: "agent-1", pickGroup });
+
+    await user.click(await screen.findByRole("tab", { name: copy.tab_scene }));
+    await user.click(screen.getByRole("button", { name: copy.pick_group }));
+
+    await waitFor(() =>
+      expect(api.resolveContextConfigScene).toHaveBeenCalledWith("agent-1", { chatId: "chat-9", orgId: "ding2" }),
+    );
+  });
+
   it("needs a picked chatId; a bare openConversationId proves nothing", async () => {
     api.getContextConfigAgent.mockResolvedValue(agentDetail({ scenes: [], jsapiAvailable: true }));
     const pickGroup = vi.fn().mockResolvedValue({ openConversationId: "cid-guess" });
@@ -405,7 +433,7 @@ describe("ContextConfigPage", () => {
     expect(await screen.findByText(copy.no_access_title)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: copy.switch_agent }));
 
-    await waitFor(() => expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-2"));
+    await waitFor(() => expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-2", ""));
   });
 
   it("hides the DingTalk picker outside the DingTalk client", async () => {
@@ -648,15 +676,15 @@ describe("ContextConfigPage", () => {
     api.getContextConfigAgent.mockResolvedValue(
       agentDetail({
         scenes: [
-          { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group" },
-          { scopeKey: "cid-dm", scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm" },
+          { scopeKey: "cid-1", scopeTitle: "Sales team", source: "agent_link", expiresAt: "", kind: "group", orgId: "" },
+          { scopeKey: "cid-dm", scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
         ],
       }),
     );
     api.getContextConfigScene.mockImplementation(async (_agentId: string, sceneKey: string) =>
       sceneKey === "cid-dm"
         ? {
-            scene: { scopeKey: "cid-dm", scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm" },
+            scene: { scopeKey: "cid-dm", scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
             bindings: [],
             credentials: [],
             scope: { type: "person", key: "staff-1", title: "" },
@@ -688,11 +716,11 @@ describe("ContextConfigPage", () => {
   it("says when the person of a 1:1 chat is not known and shows no settings", async () => {
     api.getContextConfigAgent.mockResolvedValue(
       agentDetail({
-        scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm" }],
+        scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" }],
       }),
     );
     api.getContextConfigScene.mockResolvedValue({
-      scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm" },
+      scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
       bindings: [],
       credentials: [],
       scope: null,
@@ -799,8 +827,8 @@ describe("ContextConfigPage", () => {
           person: null,
           access: "manager",
           scenes: [
-            { scopeKey: "cid-1", scopeTitle: "Sales team", source: "manager", expiresAt: "", kind: "group" },
-            { scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm" },
+            { scopeKey: "cid-1", scopeTitle: "Sales team", source: "manager", expiresAt: "", kind: "group", orgId: "" },
+            { scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" },
           ],
         }),
       );
@@ -820,11 +848,11 @@ describe("ContextConfigPage", () => {
         oauthDetail({
           person: null,
           access: "manager",
-          scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm" }],
+          scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" }],
         }),
       );
       api.getContextConfigScene.mockResolvedValue({
-        scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm" },
+        scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" },
         bindings: [],
         credentials: [{ connectorId: "conn-github", hint: "@bob", updatedAt: "", kind: "oauth" }],
         scope: { type: "person", key: "staff-bob", title: "Bob Li" },
@@ -844,11 +872,11 @@ describe("ContextConfigPage", () => {
     it("hides connecting whenever the server says the caller may not connect", async () => {
       api.getContextConfigAgent.mockResolvedValue(
         oauthDetail({
-          scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm" }],
+          scenes: [{ scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" }],
         }),
       );
       api.getContextConfigScene.mockResolvedValue({
-        scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm" },
+        scene: { scopeKey: "cid-dm", scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
         bindings: [],
         credentials: [],
         scope: { type: "person", key: "staff-bob", title: "Bob Li" },
@@ -911,6 +939,296 @@ describe("ContextConfigPage", () => {
     });
   });
 
+  describe("three levels", () => {
+    const acme = { orgId: "dingA", name: "Acme", source: "identity" };
+    const beta = { orgId: "dingB", name: "Beta", source: "created" };
+    const orgLevel = {
+      scopeKey: "dingA",
+      scopeTitle: "Acme",
+      bindings: [{ resourceType: "skill" as const, resourceId: "skill-report", enabled: true, shareInGroups: false }],
+      credentials: [{ connectorId: "conn-wiki", hint: "", updatedAt: "", kind: "bearer" as const }],
+      canEdit: false,
+    };
+
+    it("shows the enterprise level read-only to members", async () => {
+      api.getContextConfigAgent.mockResolvedValue(
+        agentDetail({ tenant: acme, tenants: [acme], org: orgLevel }),
+      );
+      const user = userEvent.setup();
+      renderPage({ initialAgentId: "agent-1" });
+
+      await user.click(await screen.findByRole("tab", { name: copy.tab_org }));
+      const region = await screen.findByRole("region", { name: "Acme" });
+      expect(within(region).getByText(copy.org_read_only)).toBeInTheDocument();
+      expect(within(region).getByRole("switch", { name: "Turn Weekly report on or off" })).toBeChecked();
+      // Base UI marks a disabled switch with aria-disabled.
+      for (const toggle of within(region).getAllByRole("switch")) {
+        expect(toggle).toHaveAttribute("aria-disabled", "true");
+      }
+      // A stored enterprise token shows, but nothing can be changed.
+      expect(within(region).getByText(copy.credential_set.replace("{{hint}}", "••••"))).toBeInTheDocument();
+      expect(within(region).queryByRole("button")).not.toBeInTheDocument();
+    });
+
+    it("says when there is no enterprise level to show", async () => {
+      const user = userEvent.setup();
+      renderPage({ initialAgentId: "agent-1" });
+
+      await user.click(await screen.findByRole("tab", { name: copy.tab_org }));
+      expect(await screen.findByText(copy.org_unavailable)).toBeInTheDocument();
+    });
+
+    it("lets a manager switch and store tokens at the enterprise level", async () => {
+      api.getContextConfigAgent.mockResolvedValue(
+        agentDetail({
+          person: null,
+          access: "manager",
+          tenant: acme,
+          tenants: [acme],
+          org: { ...orgLevel, bindings: [], credentials: [], canEdit: true },
+        }),
+      );
+      api.setContextConnectorCredential.mockResolvedValue({
+        connectorId: "conn-wiki",
+        hint: "••••cret",
+        updatedAt: "",
+        kind: "bearer",
+      });
+      const user = userEvent.setup();
+      renderPage({ initialAgentId: "agent-1" });
+
+      await user.click(await screen.findByRole("tab", { name: copy.tab_org }));
+      const region = await screen.findByRole("region", { name: "Acme" });
+      expect(within(region).getByText(copy.org_scope_hint)).toBeInTheDocument();
+      await user.click(within(region).getByRole("switch", { name: "Turn Weekly report on or off" }));
+      await waitFor(() =>
+        expect(api.setContextCapabilityBinding).toHaveBeenCalledWith("agent-1", {
+          scopeType: "org",
+          scopeKey: "dingA",
+          orgId: "dingA",
+          resourceType: "skill",
+          resourceId: "skill-report",
+          enabled: true,
+        }),
+      );
+
+      await user.click(within(region).getByRole("button", { name: copy.set_credential }));
+      expect(within(region).getByText(copy.credential_org_note)).toBeInTheDocument();
+      await user.type(within(region).getByLabelText("Bearer token for Wiki"), "secret");
+      await user.click(within(region).getByRole("button", { name: copy.save }));
+      await waitFor(() =>
+        expect(api.setContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
+          scopeType: "org",
+          scopeKey: "dingA",
+          orgId: "dingA",
+          connectorId: "conn-wiki",
+          bearer: "secret",
+        }),
+      );
+    });
+
+    it("reopens the enterprise level of a tenant and connects an app there", async () => {
+      api.getContextConfigAgent.mockResolvedValue(
+        agentDetail({
+          person: null,
+          access: "manager",
+          tenant: beta,
+          tenants: [acme, beta],
+          org: { ...orgLevel, scopeKey: "dingB", scopeTitle: "Beta", bindings: [], credentials: [], canEdit: true },
+          offers: {
+            connectors: [...agentDetail().offers.connectors, githubConnector],
+            skills: agentDetail().offers.skills,
+          },
+        }),
+      );
+      api.startContextConnectorConnection.mockResolvedValue("https://github.com/login/oauth/authorize?state=y");
+      const openAuthorizeUrl = vi.fn();
+      const user = userEvent.setup();
+      renderPage({
+        initialAgentId: "agent-1",
+        initialScope: { scopeType: "org", scopeKey: "dingB", orgId: "dingB" },
+        openAuthorizeUrl,
+      });
+
+      const region = await screen.findByRole("region", { name: "Beta" });
+      expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "dingB");
+      expect(screen.getByRole("tab", { name: copy.tab_org })).toHaveAttribute("aria-selected", "true");
+
+      await user.click(within(region).getByRole("button", { name: copy.connect }));
+      await waitFor(() =>
+        expect(openAuthorizeUrl).toHaveBeenCalledWith("https://github.com/login/oauth/authorize?state=y", {
+          agentId: "agent-1",
+          scopeType: "org",
+          scopeKey: "dingB",
+          orgId: "dingB",
+        }),
+      );
+      expect(api.startContextConnectorConnection).toHaveBeenCalledWith("agent-1", {
+        scopeType: "org",
+        scopeKey: "dingB",
+        orgId: "dingB",
+        connectorId: "conn-github",
+      });
+    });
+
+    it("marks what the enterprise turned on in a chat", async () => {
+      api.getContextConfigAgent.mockResolvedValue(
+        agentDetail({ tenant: acme, tenants: [acme], org: orgLevel }),
+      );
+      renderPage({ initialAgentId: "agent-1" });
+
+      const region = await screen.findByRole("region", { name: "Sales team" });
+      const skill = within(region).getByText("Weekly report").closest("li");
+      expect(skill).not.toBeNull();
+      expect(within(skill as HTMLElement).getByText(copy.on_for_org)).toBeInTheDocument();
+      // The chat's own switch stays its own.
+      expect(within(skill as HTMLElement).getByRole("switch")).not.toBeChecked();
+    });
+
+    it("switches the tenant and sends it with every request there", async () => {
+      api.getContextConfigAgent.mockImplementation(async (_agentId: string, orgId = "") =>
+        orgId === "dingB"
+          ? agentDetail({
+              tenant: beta,
+              tenants: [acme, beta],
+              scenes: [
+                { scopeKey: "cid-b", scopeTitle: "Partner", source: "agent_link", expiresAt: "", kind: "group", orgId: "dingB" },
+              ],
+            })
+          : agentDetail({ tenant: acme, tenants: [acme, beta] }),
+      );
+      api.getContextConfigScene.mockImplementation(async (_agentId: string, sceneKey: string) =>
+        sceneKey === "cid-b"
+          ? {
+              ...sceneDetail,
+              scene: { scopeKey: "cid-b", scopeTitle: "Partner", source: "agent_link", expiresAt: "", kind: "group", orgId: "dingB" },
+              scope: { type: "scene", key: "cid-b", title: "Partner" },
+              bindings: [],
+            }
+          : sceneDetail,
+      );
+      const user = userEvent.setup();
+      renderPage({ initialAgentId: "agent-1" });
+
+      await screen.findByRole("region", { name: "Sales team" });
+      expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "");
+      const picker = screen.getByRole("combobox", { name: copy.tab_org });
+      expect(picker).toHaveValue("dingA");
+      await user.selectOptions(picker, "dingB");
+
+      const region = await screen.findByRole("region", { name: "Partner" });
+      expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "dingB");
+      expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", "cid-b", "dingB");
+      await user.click(within(region).getByRole("switch", { name: "Turn Weekly report on or off" }));
+      await waitFor(() =>
+        expect(api.setContextCapabilityBinding).toHaveBeenCalledWith("agent-1", {
+          scopeType: "scene",
+          scopeKey: "cid-b",
+          orgId: "dingB",
+          resourceType: "skill",
+          resourceId: "skill-report",
+          enabled: true,
+        }),
+      );
+    });
+
+    it("falls back to the server's tenant when the link's tenant is gone", async () => {
+      api.redeemContextConfigLink.mockResolvedValue({
+        agentId: "agent-1",
+        workspaceId: "ws-1",
+        scopeType: "scene",
+        scopeKey: "cid-1",
+        scopeTitle: "Sales team",
+        orgId: "dingGone",
+      });
+      api.getContextConfigAgent.mockImplementation(async (_agentId: string, orgId = "") => {
+        if (orgId === "dingGone") throw new ApiError("tenant not found", 404);
+        return agentDetail({ tenant: acme, tenants: [acme] });
+      });
+      renderPage({ linkToken: "group" });
+
+      expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
+      expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "dingGone");
+      expect(api.getContextConfigAgent).toHaveBeenLastCalledWith("agent-1", "");
+    });
+
+    it("opens 我的 in the link's tenant after a personal link and switches, stores a token and connects there", async () => {
+      api.redeemContextConfigLink.mockResolvedValue({
+        agentId: "agent-1",
+        workspaceId: "ws-1",
+        scopeType: "person",
+        scopeKey: "staff-1",
+        scopeTitle: "Alice",
+        orgId: "dingB",
+      });
+      api.getContextConfigAgent.mockResolvedValue(
+        agentDetail({
+          tenant: beta,
+          tenants: [beta],
+          offers: {
+            connectors: [...agentDetail().offers.connectors, githubConnector],
+            skills: agentDetail().offers.skills,
+          },
+        }),
+      );
+      api.setContextConnectorCredential.mockResolvedValue({
+        connectorId: "conn-wiki",
+        hint: "••••cret",
+        updatedAt: "",
+        kind: "bearer",
+      });
+      api.startContextConnectorConnection.mockResolvedValue("https://github.com/login/oauth/authorize?state=x");
+      const openAuthorizeUrl = vi.fn();
+      const user = userEvent.setup();
+      renderPage({ linkToken: "personal", openAuthorizeUrl });
+
+      const region = await screen.findByRole("region", { name: "Alice" });
+      expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "dingB");
+      expect(screen.getByRole("tab", { name: copy.tab_person })).toHaveAttribute("aria-selected", "true");
+
+      await user.click(within(region).getByRole("switch", { name: "Turn Weekly report on or off" }));
+      await waitFor(() =>
+        expect(api.setContextCapabilityBinding).toHaveBeenCalledWith("agent-1", {
+          scopeType: "person",
+          scopeKey: "staff-1",
+          orgId: "dingB",
+          resourceType: "skill",
+          resourceId: "skill-report",
+          enabled: true,
+        }),
+      );
+
+      await user.click(within(region).getByRole("button", { name: copy.set_credential }));
+      await user.type(within(region).getByLabelText("Bearer token for Wiki"), "secret");
+      await user.click(within(region).getByRole("button", { name: copy.save }));
+      await waitFor(() =>
+        expect(api.setContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
+          scopeType: "person",
+          scopeKey: "staff-1",
+          orgId: "dingB",
+          connectorId: "conn-wiki",
+          bearer: "secret",
+        }),
+      );
+
+      await user.click(within(region).getByRole("button", { name: copy.connect }));
+      await waitFor(() =>
+        expect(openAuthorizeUrl).toHaveBeenCalledWith("https://github.com/login/oauth/authorize?state=x", {
+          agentId: "agent-1",
+          scopeType: "person",
+          scopeKey: "staff-1",
+          orgId: "dingB",
+        }),
+      );
+      expect(api.startContextConnectorConnection).toHaveBeenCalledWith("agent-1", {
+        scopeType: "person",
+        scopeKey: "staff-1",
+        orgId: "dingB",
+        connectorId: "conn-github",
+      });
+    });
+  });
+
   it("lets a person with several agents choose one", async () => {
     api.listContextConfigAgents.mockResolvedValue([
       agentSummary,
@@ -921,7 +1239,7 @@ describe("ContextConfigPage", () => {
 
     await user.click(await screen.findByRole("button", { name: /Helper/ }));
 
-    await waitFor(() => expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1"));
+    await waitFor(() => expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", ""));
     expect(await screen.findByRole("button", { name: copy.switch_agent })).toBeInTheDocument();
   });
 });

@@ -2,12 +2,9 @@ package contextcap
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // Scene kinds. A DingTalk 1:1 chat is a scene exactly like a group chat for
@@ -17,7 +14,8 @@ import (
 const (
 	SceneKindGroup = "group"
 	SceneKindDM    = "dm"
-	// MaxScenePrompt is the scene prompt limit in characters (code points).
+	// MaxScenePrompt is the prompt component text limit in characters
+	// (code points), inherited from the scene prompt it replaced.
 	MaxScenePrompt   = 8000
 	maxScenesPerPage = 200
 )
@@ -67,18 +65,23 @@ type SceneSummary struct {
 	BindingTitle      string
 }
 
-// SceneListQuery selects scenes of one agent under OrgID (the agent's current
-// DingTalk org, "" without an identity). Keys, when non-nil, restricts the
-// result to those scene keys; such a lookup is bounded by its key set and not
-// paged (Limit and Offset are ignored, every matching scene is returned).
-// Otherwise ListAgentScenes clamps Limit to 1..200.
+// SceneListQuery selects scenes of one agent under OrgID (a tenant org of
+// the agent; "" for an agent without a DingTalk identity, which matches the
+// agent's scene memory of any org). IdentityOrgID is the agent's DingTalk
+// identity org ("" without one): Coordinator jobs that recorded no agent
+// org belong to it. Keys, when non-nil, restricts the result to those scene
+// keys; such a lookup is bounded by its key set and not paged (Limit and
+// Offset are ignored, every matching scene is returned). Otherwise
+// ListAgentScenes clamps Limit to 1..200. GroupsOnly drops 1:1 chats.
 type SceneListQuery struct {
-	WorkspaceID string
-	AgentID     string
-	OrgID       string
-	Keys        []string
-	Limit       int
-	Offset      int
+	WorkspaceID   string
+	AgentID       string
+	OrgID         string
+	IdentityOrgID string
+	Keys          []string
+	Limit         int
+	Offset        int
+	GroupsOnly    bool
 }
 
 // ListAgentScenes returns the agent's IM scenes ordered by last activity
@@ -88,11 +91,13 @@ type SceneListQuery struct {
 // openConversationId): the whole agent for a page, one conversation per key
 // for a Keys lookup.
 //
-// Org scoping follows scene memory: rows of scene_memory match the agent's
-// org, or any org while the agent has no DingTalk identity (scene memory then
-// records the dispatch's DWS org); configuration rows and bindings match the
-// org exactly; Coordinator jobs that recorded a different agent org are
-// skipped. Only keys shaped like an openConversationId are returned.
+// Org scoping follows scene memory: rows of scene_memory match q.OrgID, or
+// any org while OrgID is "" (an agent without a DingTalk identity; scene
+// memory then records the dispatch's DWS org); configuration rows, bindings,
+// credentials and prompt components match the org exactly; Coordinator jobs
+// match their recorded agent org, and jobs that recorded none belong to
+// q.IdentityOrgID. Only keys shaped like an openConversationId are
+// returned. HasPrompt reports scene-scope prompt components.
 //
 // The inbound session is the newest Coordinator chat session of the
 // conversation, and InboundCount counts the sessions its transcript shows:
@@ -101,8 +106,8 @@ type SceneListQuery struct {
 //
 // Kind is dm only on positive evidence: the newest job's conversation type is
 // a 1:1 type (IsDirectConversationType), or, when that job carries no type or
-// there is no job, the configuration row says dm (RegisterDirectScene or a
-// prompt save). scene_memory.scene_kind is not used: scenememory.KindFromChatType
+// there is no job, the configuration row says dm (RegisterDirectScene).
+// scene_memory.scene_kind is not used: scenememory.KindFromChatType
 // records dm for every type that is not "group", an empty or unknown type
 // included.
 func ListAgentScenes(ctx context.Context, db DBTX, q SceneListQuery) ([]SceneSummary, bool, error) {
@@ -137,18 +142,23 @@ func listAgentScenes(ctx context.Context, db DBTX, q SceneListQuery, limit, offs
 	if q.Keys != nil {
 		limit, offset = max(len(q.Keys), 1), 0
 	}
-	args := []any{q.WorkspaceID, q.AgentID, q.OrgID, limit + 1, offset}
+	args := []any{q.WorkspaceID, q.AgentID, q.OrgID, limit + 1, offset, q.IdentityOrgID}
 	// A Keys lookup filters every source by key inside its own scan, as a
 	// plain predicate (never "$n IS NULL OR ..."), so a cached generic plan
 	// still probes the indexes by key.
-	memKeys, jobKeys, cfgKeys, bindKeys, credKeys := "", "", "", "", ""
+	memKeys, jobKeys, cfgKeys, bindKeys, credKeys, promptKeys := "", "", "", "", "", ""
 	if q.Keys != nil {
 		args = append(args, q.Keys)
-		memKeys = ` AND m.scene_key = ANY($6::text[])`
-		jobKeys = ` AND BTRIM(job.command #>> '{event,data,conversation,openConversationId}') = ANY($6::text[])`
-		cfgKeys = ` AND c.scene_key = ANY($6::text[])`
-		bindKeys = ` AND b.scope_key = ANY($6::text[])`
-		credKeys = ` AND k.scope_key = ANY($6::text[])`
+		memKeys = ` AND m.scene_key = ANY($7::text[])`
+		jobKeys = ` AND BTRIM(job.command #>> '{event,data,conversation,openConversationId}') = ANY($7::text[])`
+		cfgKeys = ` AND c.scene_key = ANY($7::text[])`
+		bindKeys = ` AND b.scope_key = ANY($7::text[])`
+		credKeys = ` AND k.scope_key = ANY($7::text[])`
+		promptKeys = ` AND p.scope_key = ANY($7::text[])`
+	}
+	kindFilter := ""
+	if q.GroupsOnly {
+		kindFilter = ` AND listed.kind = 'group'`
 	}
 	rows, err := db.Query(ctx, `WITH mem AS (
 		  SELECT DISTINCT ON (m.scene_key) m.scene_key, m.scene_title, m.memory_text, m.org_id, m.id::text AS memory_id, m.updated_at
@@ -169,7 +179,7 @@ func listAgentScenes(ctx context.Context, db DBTX, q SceneListQuery, limit, offs
 		    AND cs.workspace_id = job.workspace_id AND cs.agent_id = job.agent_id
 		  WHERE job.agent_id = $2::uuid AND job.workspace_id = $1::uuid`+jobKeys+`
 		    AND lower(COALESCE(NULLIF(BTRIM(job.command #>> '{source,platform}'), ''), 'dingtalk')) = 'dingtalk'
-		    AND ($3::text = '' OR COALESCE(NULLIF(BTRIM(job.command #>> '{externalIdentity,dws,orgId}'), ''), $3::text) = $3::text)
+		    AND ($3::text = '' OR `+jobOrgExpr("$6")+` = $3::text)
 		    AND NULLIF(BTRIM(job.command #>> '{event,data,conversation,openConversationId}'), '') IS NOT NULL
 		), conv AS (
 		  SELECT DISTINCT ON (jobs.scene_key) jobs.scene_key, jobs.conversation_type, jobs.conversation_title, jobs.sender_name,
@@ -178,7 +188,7 @@ func listAgentScenes(ctx context.Context, db DBTX, q SceneListQuery, limit, offs
 		  FROM jobs
 		  ORDER BY jobs.scene_key, jobs.updated_at DESC, jobs.session_id DESC
 		), cfg AS (
-		  SELECT c.scene_key, c.scene_kind, c.scene_title, c.prompt <> '' AS has_prompt, c.updated_at
+		  SELECT c.scene_key, c.scene_kind, c.scene_title, c.updated_at
 		  FROM agent_scene_config c
 		  WHERE c.workspace_id = $1::uuid AND c.agent_id = $2::uuid AND c.platform = 'dingtalk' AND c.org_id = $3::text`+cfgKeys+`
 		), bind AS (
@@ -193,29 +203,41 @@ func listAgentScenes(ctx context.Context, db DBTX, q SceneListQuery, limit, offs
 		  FROM context_connector_credential k
 		  WHERE k.workspace_id = $1::uuid AND k.agent_id = $2::uuid AND k.scope_type = 'scene' AND k.org_id = $3::text`+credKeys+`
 		  GROUP BY k.scope_key
+		), prm AS (
+		  SELECT p.scope_key AS scene_key, max(p.updated_at) AS updated_at
+		  FROM context_prompt_component p
+		  WHERE p.workspace_id = $1::uuid AND p.agent_id = $2::uuid AND p.scope_type = 'scene' AND p.org_id = $3::text`+promptKeys+`
+		  GROUP BY p.scope_key
 		), keys AS (
 		  SELECT scene_key FROM mem UNION SELECT scene_key FROM conv UNION SELECT scene_key FROM cfg UNION SELECT scene_key FROM bind
-		  UNION SELECT scene_key FROM cred
+		  UNION SELECT scene_key FROM cred UNION SELECT scene_key FROM prm
+		), listed AS (
+		  SELECT k.scene_key,
+		    CASE WHEN NULLIF(BTRIM(conv.conversation_type), '') IS NOT NULL
+		      THEN CASE WHEN lower(BTRIM(conv.conversation_type)) IN ('single', 'p2p', 'private', 'direct') THEN 'dm' ELSE 'group' END
+		      ELSE COALESCE(cfg.scene_kind, 'group') END AS kind,
+		    COALESCE(mem.org_id, $3::text) AS org_id,
+		    GREATEST(mem.updated_at, conv.updated_at, cfg.updated_at, bind.updated_at, cred.updated_at, prm.updated_at) AS last_active_at,
+		    COALESCE(conv.session_id, '') AS session_id, COALESCE(conv.session_count, 0) AS session_count,
+		    COALESCE(mem.memory_id, '') AS memory_id, prm.scene_key IS NOT NULL AS has_prompt,
+		    COALESCE(mem.scene_title, '') AS memory_title, COALESCE(mem.memory_text, '') AS memory_text,
+		    COALESCE(conv.conversation_title, '') AS conversation_title, COALESCE(conv.sender_name, '') AS sender_name,
+		    COALESCE(cfg.scene_title, '') AS config_title, COALESCE(bind.scope_title, '') AS binding_title
+		  FROM keys k
+		  LEFT JOIN mem ON mem.scene_key = k.scene_key
+		  LEFT JOIN conv ON conv.scene_key = k.scene_key
+		  LEFT JOIN cfg ON cfg.scene_key = k.scene_key
+		  LEFT JOIN bind ON bind.scene_key = k.scene_key
+		  LEFT JOIN cred ON cred.scene_key = k.scene_key
+		  LEFT JOIN prm ON prm.scene_key = k.scene_key
+		  WHERE k.scene_key LIKE 'cid%' AND octet_length(k.scene_key) <= 256 AND k.scene_key !~ '[[:space:][:cntrl:]]'
 		)
-		SELECT k.scene_key,
-		  CASE WHEN NULLIF(BTRIM(conv.conversation_type), '') IS NOT NULL
-		    THEN CASE WHEN lower(BTRIM(conv.conversation_type)) IN ('single', 'p2p', 'private', 'direct') THEN 'dm' ELSE 'group' END
-		    ELSE COALESCE(cfg.scene_kind, 'group') END,
-		  COALESCE(mem.org_id, $3::text),
-		  GREATEST(mem.updated_at, conv.updated_at, cfg.updated_at, bind.updated_at, cred.updated_at),
-		  COALESCE(conv.session_id, ''), COALESCE(conv.session_count, 0),
-		  COALESCE(mem.memory_id, ''), COALESCE(cfg.has_prompt, FALSE),
-		  COALESCE(mem.scene_title, ''), COALESCE(mem.memory_text, ''),
-		  COALESCE(conv.conversation_title, ''), COALESCE(conv.sender_name, ''),
-		  COALESCE(cfg.scene_title, ''), COALESCE(bind.scope_title, '')
-		FROM keys k
-		LEFT JOIN mem ON mem.scene_key = k.scene_key
-		LEFT JOIN conv ON conv.scene_key = k.scene_key
-		LEFT JOIN cfg ON cfg.scene_key = k.scene_key
-		LEFT JOIN bind ON bind.scene_key = k.scene_key
-		LEFT JOIN cred ON cred.scene_key = k.scene_key
-		WHERE k.scene_key LIKE 'cid%' AND octet_length(k.scene_key) <= 256 AND k.scene_key !~ '[[:space:][:cntrl:]]'
-		ORDER BY 4 DESC NULLS LAST, k.scene_key
+		SELECT listed.scene_key, listed.kind, listed.org_id, listed.last_active_at, listed.session_id, listed.session_count,
+		  listed.memory_id, listed.has_prompt, listed.memory_title, listed.memory_text, listed.conversation_title,
+		  listed.sender_name, listed.config_title, listed.binding_title
+		FROM listed
+		WHERE TRUE`+kindFilter+`
+		ORDER BY listed.last_active_at DESC NULLS LAST, listed.scene_key
 		LIMIT $4 OFFSET $5`, args...)
 	if err != nil {
 		return nil, false, err
@@ -277,14 +299,15 @@ func SceneKinds(ctx context.Context, db DBTX, workspaceID, agentID, orgID string
 	return kinds, rows.Err()
 }
 
-// GetScene returns one scene of the agent (see ListAgentScenes), or
-// ErrNotFound when the agent never saw it.
-func GetScene(ctx context.Context, db DBTX, workspaceID, agentID, orgID, sceneKey string) (SceneSummary, error) {
+// GetScene returns one scene of the agent under orgID (see
+// ListAgentScenes; identityOrgID is the agent's DingTalk identity org), or
+// ErrNotFound when the agent never saw it there.
+func GetScene(ctx context.Context, db DBTX, workspaceID, agentID, orgID, identityOrgID, sceneKey string) (SceneSummary, error) {
 	if !ValidOpenConversationID(sceneKey) {
 		return SceneSummary{}, ErrInvalidInput
 	}
 	scenes, _, err := ListAgentScenes(ctx, db, SceneListQuery{
-		WorkspaceID: workspaceID, AgentID: agentID, OrgID: orgID, Keys: []string{sceneKey},
+		WorkspaceID: workspaceID, AgentID: agentID, OrgID: orgID, IdentityOrgID: identityOrgID, Keys: []string{sceneKey},
 	})
 	if err != nil {
 		return SceneSummary{}, err
@@ -293,85 +316,6 @@ func GetScene(ctx context.Context, db DBTX, workspaceID, agentID, orgID, sceneKe
 		return SceneSummary{}, ErrNotFound
 	}
 	return scenes[0], nil
-}
-
-// SceneConfig is one row of agent_scene_config.
-type SceneConfig struct {
-	WorkspaceID string
-	AgentID     string
-	Platform    string
-	OrgID       string
-	SceneKey    string
-	SceneKind   string
-	SceneTitle  string
-	Prompt      string
-	// UpdatedBy is the user who last wrote the prompt ("" when the row was
-	// only registered, for example by a 1:1 link redemption).
-	UpdatedBy     string
-	UpdatedByName string
-	UpdatedAt     time.Time
-}
-
-const sceneConfigColumns = `c.workspace_id::text, c.agent_id::text, c.platform, c.org_id, c.scene_key, c.scene_kind, c.scene_title, c.prompt,
-	COALESCE(c.updated_by::text, ''), COALESCE((SELECT u.name FROM "user" u WHERE u.id = c.updated_by), ''), c.updated_at`
-
-func scanSceneConfig(row pgx.Row) (SceneConfig, error) {
-	var c SceneConfig
-	err := row.Scan(&c.WorkspaceID, &c.AgentID, &c.Platform, &c.OrgID, &c.SceneKey, &c.SceneKind, &c.SceneTitle, &c.Prompt,
-		&c.UpdatedBy, &c.UpdatedByName, &c.UpdatedAt)
-	return c, err
-}
-
-// GetSceneConfig loads the configuration of one scene, or ErrNotFound.
-func GetSceneConfig(ctx context.Context, db DBTX, workspaceID, agentID, orgID, sceneKey string) (SceneConfig, error) {
-	out, err := scanSceneConfig(db.QueryRow(ctx, `SELECT `+sceneConfigColumns+`
-		FROM agent_scene_config c
-		WHERE c.workspace_id = $1::uuid AND c.agent_id = $2::uuid AND c.platform = 'dingtalk' AND c.org_id = $3 AND c.scene_key = $4`,
-		workspaceID, agentID, orgID, sceneKey))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SceneConfig{}, ErrNotFound
-	}
-	return out, err
-}
-
-// SceneConfigWrite is the input of UpsertScenePrompt. ActorID is required.
-type SceneConfigWrite struct {
-	WorkspaceID string
-	AgentID     string
-	OrgID       string
-	SceneKey    string
-	SceneKind   string
-	SceneTitle  string
-	Prompt      string
-	ActorID     string
-}
-
-// UpsertScenePrompt stores the scene prompt of one scene with the scene's
-// kind and title snapshot. The prompt must already be trimmed and pass
-// ValidScenePrompt. A row of another workspace is never overwritten
-// (ErrNotFound).
-func UpsertScenePrompt(ctx context.Context, db DBTX, in SceneConfigWrite) (SceneConfig, error) {
-	if !ValidOpenConversationID(in.SceneKey) || (in.SceneKind != SceneKindGroup && in.SceneKind != SceneKindDM) || !ValidScenePrompt(in.Prompt) {
-		return SceneConfig{}, ErrInvalidInput
-	}
-	actor, err := canonicalUUID(in.ActorID)
-	if err != nil {
-		return SceneConfig{}, err
-	}
-	out, err := scanSceneConfig(db.QueryRow(ctx, `INSERT INTO agent_scene_config AS c
-		(workspace_id, agent_id, platform, org_id, scene_key, scene_kind, scene_title, prompt, updated_by)
-		VALUES ($1::uuid, $2::uuid, 'dingtalk', $3, $4, $5, $6, $7, $8::uuid)
-		ON CONFLICT (agent_id, platform, org_id, scene_key)
-		DO UPDATE SET prompt = EXCLUDED.prompt, scene_kind = EXCLUDED.scene_kind,
-		  scene_title = CASE WHEN EXCLUDED.scene_title <> '' THEN EXCLUDED.scene_title ELSE c.scene_title END,
-		  updated_by = EXCLUDED.updated_by, updated_at = now()
-		WHERE c.workspace_id = EXCLUDED.workspace_id
-		RETURNING `+sceneConfigColumns,
-		in.WorkspaceID, in.AgentID, in.OrgID, in.SceneKey, in.SceneKind, in.SceneTitle, in.Prompt, actor))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SceneConfig{}, ErrNotFound
-	}
-	return out, err
 }
 
 // RegisterDirectScene records a 1:1 conversation as a known dm scene of the

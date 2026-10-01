@@ -49,6 +49,9 @@ type contextCapAdminResponse struct {
 		ConnectorIDs []string `json:"connector_ids"`
 		SkillIDs     []string `json:"skill_ids"`
 	} `json:"offers"`
+	// Orgs are the enterprise (tenant) levels with configuration; ScopeKey
+	// is the org id.
+	Orgs         []contextCapScopeSummaryDTO `json:"orgs"`
 	Scenes       []contextCapScopeSummaryDTO `json:"scenes"`
 	Persons      []contextCapScopeSummaryDTO `json:"persons"`
 	ConfigureURL string                      `json:"configure_url"`
@@ -61,6 +64,7 @@ func newContextCapAdminResponse(enabled bool) contextCapAdminResponse {
 	resp.Library.Skills = []contextCapSkillDTO{}
 	resp.Offers.ConnectorIDs = []string{}
 	resp.Offers.SkillIDs = []string{}
+	resp.Orgs = []contextCapScopeSummaryDTO{}
 	resp.Scenes = []contextCapScopeSummaryDTO{}
 	resp.Persons = []contextCapScopeSummaryDTO{}
 	return resp
@@ -159,6 +163,8 @@ func (h *Handler) buildContextCapAdmin(ctx context.Context, caller contextCapAdm
 			Bindings: contextCapBindingViews(summary.Bindings, offers), CredentialCount: summary.CredentialCount,
 		}
 		switch summary.ScopeType {
+		case contextcap.ScopeOrg:
+			resp.Orgs = append(resp.Orgs, view)
 		case contextcap.ScopeScene:
 			resp.Scenes = append(resp.Scenes, view)
 		case contextcap.ScopePerson:
@@ -170,7 +176,7 @@ func (h *Handler) buildContextCapAdmin(ctx context.Context, caller contextCapAdm
 }
 
 // GetAgentContextCapabilities returns the agent's offer catalog, the
-// workspace library to pick from, and scene/person summaries. While the
+// workspace library to pick from, and org/scene/person summaries. While the
 // context_capabilities flag is off it returns {"enabled": false} with empty
 // collections.
 func (h *Handler) GetAgentContextCapabilities(w http.ResponseWriter, r *http.Request) {

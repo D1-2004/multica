@@ -168,7 +168,7 @@ func (h *Handler) refreshConnectorCredential(ctx context.Context, c *internalCon
 		if current, err = h.openWorkspaceConnectorSecret(c.WorkspaceID, c.ID, ciphertext); err != nil {
 			return contextcap.Secret{}, err
 		}
-	case connectorCredentialScene, connectorCredentialPerson:
+	case connectorCredentialOrg, connectorCredentialScene, connectorCredentialPerson:
 		credential, err := contextcap.LockCredential(ctx, tx, c.credentialKey)
 		if errors.Is(err, contextcap.ErrNotFound) {
 			return contextcap.Secret{}, errConnectorReconnectRequired

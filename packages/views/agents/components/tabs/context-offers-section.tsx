@@ -19,7 +19,8 @@ import { SkillIcon } from "../../../skills/lib/skill-icon";
 import { useT } from "../../../i18n";
 import { ConfirmDialog, ConnectorNotice, errorMessage } from "./connectors-ui";
 
-/** How many scenes and people turned one offered resource on. */
+/** How many scenes (enterprise and group levels) and people turned one
+ * offered resource on. */
 export interface OfferUsage {
   scenes: number;
   people: number;
@@ -31,8 +32,9 @@ export function usageKey(resourceType: ContextResourceType, resourceId: string):
   return `${resourceType}:${resourceId}`;
 }
 
-/** Counts, per offered resource (`<resource_type>:<id>`), the scenes and
- * people with an enabled binding. Only literal `true` bindings count. */
+/** Counts, per offered resource (`<resource_type>:<id>`), the scenes
+ * (enterprise and group levels) and people with an enabled binding. Only
+ * literal `true` bindings count. */
 export function offerUsageByResource(
   data: AgentContextCapabilities,
 ): ReadonlyMap<string, OfferUsage> {
@@ -42,7 +44,7 @@ export function offerUsageByResource(
     current[field] += 1;
     usage.set(key, current);
   };
-  for (const scene of data.scenes) {
+  for (const scene of [...(data.orgs ?? []), ...data.scenes]) {
     for (const binding of scene.bindings) {
       if (binding.enabled === true) add(usageKey(binding.resourceType, binding.resourceId), "scenes");
     }

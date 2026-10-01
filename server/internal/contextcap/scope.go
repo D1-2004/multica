@@ -1,7 +1,9 @@
-// Package contextcap implements the scene and personal capability layers of
-// an agent: the offer catalog, scene/person bindings of offered connectors and
-// skills, scene/person connector credentials, configuration grants and
-// agent-issued configuration links.
+// Package contextcap implements the context layers of an agent: its tenants
+// (AgentTenants), the offer catalog, org/scene/person bindings of offered
+// connectors and skills, org/scene/person connector credentials, prompt
+// components and custom MCP servers, the merge of those layers into one
+// effective context (MergeContext), configuration grants and agent-issued
+// configuration links.
 //
 // The package is storage and policy only. It never imports the HTTP handler
 // layer; callers pass a DBTX (a pgx pool, connection or transaction) and are
@@ -18,10 +20,12 @@ import (
 	"unicode/utf8"
 )
 
-// Scope types stored in context_capability_binding.scope_type. Credentials,
-// grants and links only ever use ScopeScene and ScopePerson.
+// Scope types stored in context_capability_binding.scope_type. ScopeOrg is
+// the enterprise (tenant) level: its scope key is the org id itself. Grants
+// and links only ever use ScopeScene and ScopePerson.
 const (
 	ScopeOffer  = "offer"
+	ScopeOrg    = "org"
 	ScopeScene  = "scene"
 	ScopePerson = "person"
 )
@@ -98,11 +102,21 @@ const ReplayedDispatchContextKey = "replayed_dispatch_context"
 
 const maxScopeKeyLength = 256
 
-// Scope is the DingTalk scene and trigger person of one task. It is derived
-// only from the server-written dispatch context, never from the prompt.
+// Scope is the DingTalk tenant org, scene and trigger person of one task. It
+// is derived only from the server-written dispatch context, never from the
+// prompt.
 type Scope struct {
-	// OrgID is the agent's DingTalk org (agent_dingtalk_identity.org_id). It is
-	// not part of the task context; the caller fills it.
+	// Dispatched reports that the task carries a DingTalk dispatch context
+	// (dispatch_event_data, not a replay). Only such a task has context
+	// layers; whether they apply depends on its org being a tenant.
+	Dispatched bool
+	// OrgID is the tenant org the task's layers live under: the dispatch org
+	// (DispatchOrgID), else the agent's DingTalk identity org. It is not set
+	// by ScopeFromTaskContext; the caller fills it only after checking that
+	// the org is one of the agent's tenants (AgentTenants), and leaves the
+	// whole Scope zero otherwise. It stays "" for an agent with neither a
+	// DingTalk identity nor a recorded dispatch org: its scene and person
+	// layers live under org "" and it has no org layer.
 	OrgID string
 	// SceneKey is the group's openConversationId; empty outside a valid group.
 	SceneKey   string
@@ -122,16 +136,29 @@ type Scope struct {
 	ConversationType string
 	// DispatchOrgID is external_identity.dws.orgId: the agent's own DingTalk
 	// org recorded when the message was dispatched ("" when absent). The
-	// caller compares it with the agent's current org so a task dispatched
-	// under an earlier binding is never read under a different org.
+	// caller resolves OrgID from it, so a staffId or openConversationId is
+	// only ever read under the org it was dispatched in.
 	DispatchOrgID string
 }
+
+// HasOrg reports whether the task carries the org (tenant) layer: a
+// dispatched task whose OrgID the caller resolved to a tenant.
+func (s Scope) HasOrg() bool { return s.Dispatched && s.OrgID != "" }
 
 // HasScene reports whether the task carries a scene layer.
 func (s Scope) HasScene() bool { return s.SceneKey != "" }
 
 // HasPerson reports whether the task carries a personal layer.
 func (s Scope) HasPerson() bool { return s.PersonKey != "" }
+
+// HasLayers reports whether an org, scene or personal layer applies.
+func (s Scope) HasLayers() bool { return s.HasOrg() || s.HasScene() || s.HasPerson() }
+
+// Selection returns the layers of the scope for LoadLayers and
+// LayerCredentials.
+func (s Scope) Selection() LayerSelection {
+	return LayerSelection{OrgID: s.OrgID, Org: s.HasOrg(), SceneKey: s.SceneKey, PersonKey: s.PersonKey}
+}
 
 // ValidOpenConversationID accepts a DingTalk openConversationId: non-empty,
 // starting with "cid", at most 256 bytes, with no whitespace or control
@@ -145,10 +172,21 @@ func ValidStaffID(id string) bool {
 	return validScopeKey(id)
 }
 
-// ValidScopeKey reports whether key is acceptable for scopeType: a valid
-// openConversationId for scenes and a valid staffId for persons.
+// ValidOrgID accepts a DingTalk org id used as an org scope key or as the org
+// of a scene or person scope: non-empty, at most 256 bytes, no whitespace or
+// control characters. It is looser than ValidTenantOrgID, which a new tenant
+// must pass, because an agent's identity org is a tenant as recorded.
+func ValidOrgID(id string) bool {
+	return validScopeKey(id)
+}
+
+// ValidScopeKey reports whether key is acceptable for scopeType: a valid org
+// id for the org scope, a valid openConversationId for scenes and a valid
+// staffId for persons.
 func ValidScopeKey(scopeType, key string) bool {
 	switch scopeType {
+	case ScopeOrg:
+		return ValidOrgID(key)
 	case ScopeScene:
 		return ValidOpenConversationID(key)
 	case ScopePerson:
@@ -220,11 +258,12 @@ type taskContextEnvelope struct {
 //     that one person (see singleTriggerPerson), so one person's credentials
 //     never serve a merged run that contains someone else's message.
 //
-// A context marked with ReplayedDispatchContextKey (a manual rerun) yields the
-// zero Scope: the copied sender did not trigger the new run. OrgID is never
-// set here; the caller fills it from the agent's DingTalk identity. Malformed
-// or empty context yields the zero Scope. A2A-origin tasks must be excluded by
-// the caller (service.IsA2ATaskOrigin).
+// Dispatched is set for every context with dispatch_event_data. A context
+// marked with ReplayedDispatchContextKey (a manual rerun) yields the zero
+// Scope: the copied sender did not trigger the new run. OrgID is never set
+// here; the caller resolves the tenant org. Malformed or empty context
+// yields the zero Scope. A2A-origin tasks must be excluded by the caller
+// (service.IsA2ATaskOrigin).
 func ScopeFromTaskContext(raw []byte) Scope {
 	if len(raw) == 0 {
 		return Scope{}
@@ -236,6 +275,7 @@ func ScopeFromTaskContext(raw []byte) Scope {
 	data := envelope.EventData
 	conversation := data.Conversation
 	scope := Scope{
+		Dispatched:       true,
 		ConversationType: strings.TrimSpace(conversation.Type),
 		DispatchOrgID:    strings.TrimSpace(envelope.ExternalIdentity.DWS.OrgID),
 	}

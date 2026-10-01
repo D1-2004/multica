@@ -90,6 +90,7 @@ function caps(connectorIds: string[]): AgentContextCapabilities {
         credentialCount: 0,
       },
     ],
+    orgs: [],
     persons: [],
     configureUrl: "",
   };

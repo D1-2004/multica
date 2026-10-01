@@ -150,6 +150,7 @@ function caps(connectorIds: string[]): AgentContextCapabilities {
     enabled: true,
     library: { connectors: [], skills: [] },
     offers: { connectorIds, skillIds: ["skill-1"] },
+    orgs: [],
     scenes: [],
     persons: [],
     configureUrl: "https://app.example/dingtalk/configure?agent=agent-1",

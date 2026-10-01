@@ -148,6 +148,8 @@ func validateConnectorInput(in connectorInput) error {
 	// An enabled connector may have no global Agent grant: it can be offered
 	// to agents' scene and personal layers only (context capabilities).
 	if in.catalogSlug != "" {
+		// Official apps keep their pinned tools (read-only unless writes are
+		// enabled), so the pinned names must stay unambiguous.
 		seen := map[string]bool{}
 		presentedSeen := map[string]bool{}
 		for _, tool := range in.AllowedTools {
@@ -418,7 +420,8 @@ func (h *Handler) authorizedConnectors(ctx context.Context, workspaceID, agentID
 	}
 	out := []internalConnector{}
 	for _, c := range granted {
-		// Official app connectors count only once their tools are known.
+		// Official app connectors count only once their tools are known;
+		// custom connectors expose the live upstream list, so no snapshot gate.
 		if (c.CatalogSlug == "" || len(c.AllowedTools) > 0) && h.connectorCredentialReady(c) {
 			out = append(out, c)
 		}

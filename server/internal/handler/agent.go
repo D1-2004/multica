@@ -1034,6 +1034,11 @@ type TaskAgentData struct {
 	// (issue #3260). Other providers ignore the payload entirely. Sent
 	// raw so the daemon can evolve its schema without a server roundtrip.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
+	// contextMCPServers names the custom MCP servers the task's context
+	// layers put into McpConfig (taskEffectiveContext.scopeMCPServerNames).
+	// injectRunnerMCP leaves out the ones a Runner MCP server of the agent
+	// also defines. Never serialized.
+	contextMCPServers []string
 }
 
 type MCPRelayRoute = mcpprotocol.RelayRoute

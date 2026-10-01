@@ -11,17 +11,16 @@ package handler
 //
 // DCR apps redirect to <app origin>/api/connector-oauth/callback and reuse
 // one dynamic client registration per connector (connector_oauth_client),
-// registered with the configured client_name
-// (MULTICA_CONNECTOR_OAUTH_CLIENT_NAME, default "Multica").
+// registered with the client_name connectorOAuthClientName picks.
 // GitHub uses the deployment's GitHub App and its registered callback
 // <githubFrontend()>/api/github/authorize: its states carry the
 // connectorOAuthStatePrefix, and GitHubAuthorizeCallback hands those to
 // completeConnectorOAuth (Via connectorOAuthViaGitHub). States are 32 random
 // bytes, stored only as SHA-256 hashes, single use, valid for 10 minutes.
-// MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN moves both redirect URIs to another
-// deployment's origin, which forwards the callbacks back
-// (internal_connector_oauth_forward.go); the state then also names this
-// deployment's origin.
+// A pre-release deployment sends both redirect URIs to the production
+// origin, which forwards the callbacks back
+// (internal_connector_oauth_forward.go); the state then also names the
+// pre-release origin.
 //
 // Browser binding: a state only completes in the browser that started it.
 // The start response sets an HttpOnly, SameSite=Lax cookie holding a random
@@ -51,10 +50,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
@@ -120,10 +116,11 @@ type connectorOAuthScope struct {
 	WorkspaceID string
 	ConnectorID string
 	UserID      string
-	// ScopeType is "workspace", "scene" or "person".
+	// ScopeType is "workspace", "org", "scene" or "person".
 	ScopeType string
-	// AgentID, OrgID and ScopeKey identify a scene or person scope (the
-	// agent's current DingTalk org); they are empty for the workspace scope.
+	// AgentID, OrgID and ScopeKey identify an org, scene or person scope
+	// (OrgID is a tenant org of the agent; an org scope's key is the org);
+	// they are empty for the workspace scope.
 	AgentID  string
 	OrgID    string
 	ScopeKey string
@@ -230,11 +227,10 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp {
 		via = connectorOAuthViaGitHub
 	}
-	// The provider redirects to the configured callback origin
-	// (MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN) or to this deployment. When
-	// that is another deployment, the state names this deployment's origin
-	// so the other one forwards the callback here, where the binding cookie
-	// lives (internal_connector_oauth_forward.go).
+	// The provider redirects to this deployment or, from pre-release, to
+	// production. Then the state names this deployment's origin so
+	// production forwards the callback here, where the binding cookie lives
+	// (internal_connector_oauth_forward.go).
 	homeOrigin, _ := h.connectorOAuthCallbackTarget(via)
 	redirectOrigin := h.connectorOAuthRedirectOrigin(via)
 	state, err := randomOAuthValue()
@@ -262,7 +258,7 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 		authorizeURL, err = githubConnectorAuthorizeURL(app, payload.RedirectURI, state, verifier)
 	case connectorcatalog.AuthOAuthDCR:
 		var record connectorOAuthClientRecord
-		record, err = h.ensureConnectorOAuthClient(ctx, c, app, redirectOrigin+connectorOAuthCallbackPath, connectorOAuthClientName())
+		record, err = h.ensureConnectorOAuthClient(ctx, c, app, redirectOrigin+connectorOAuthCallbackPath, h.connectorOAuthClientName())
 		if err == nil {
 			payload.Via, payload.ClientID, payload.RedirectURI = connectorOAuthViaDCR, record.Registration.ClientID, record.RedirectURI
 			authorizeURL, err = remotemcp.BuildAuthorizationURL(remotemcp.OAuthMetadata{
@@ -283,7 +279,7 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	payload.BrowserHash = hashConnectorOAuthState(nonce)
 	// The cookie belongs to this deployment's own origin (where the start
 	// response is served and a forwarded callback lands), never to the
-	// callback origin override.
+	// production callback origin a pre-release sends providers.
 	_, callbackPath := h.connectorOAuthCallbackTarget(payload.Via)
 	started := connectorOAuthStarted{
 		AuthorizeURL: authorizeURL,
@@ -302,7 +298,7 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 // path of the callback of a connect of the given route: the GitHub App
 // callback on FRONTEND_ORIGIN, or the DCR callback on the app origin. The
 // start response is served there, so the browser binding cookie lives there,
-// and a callback forwarded from the callback origin override lands there.
+// and a callback production forwards to a pre-release lands there.
 func (h *Handler) connectorOAuthCallbackTarget(via string) (string, string) {
 	if via == connectorOAuthViaGitHub {
 		return h.githubFrontend(), connectorOAuthGitHubCallback
@@ -310,64 +306,33 @@ func (h *Handler) connectorOAuthCallbackTarget(via string) (string, string) {
 	return h.connectorOAuthAppOrigin(), connectorOAuthCallbackPath
 }
 
-// connectorOAuthCallbackOriginEnv optionally moves every connector OAuth
-// redirect URI to another deployment's origin (pre-release completing its
-// provider callbacks through production). Unset keeps this deployment's own
-// origin.
-const connectorOAuthCallbackOriginEnv = "MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN"
-
 // connectorOAuthRedirectOrigin is the origin of the redirect URI a connect
 // of the given route sends to the provider (and exchanges its code with):
-// MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN when it is set to a valid origin,
-// else this deployment's own callback origin (connectorOAuthCallbackTarget).
-// Changing it changes the DCR redirect URI, so the next connect registers a
-// new client (ensureConnectorOAuthClient).
+// the production origin on a pre-release deployment
+// (connectorOAuthProductionOrigin), else this deployment's own callback
+// origin (connectorOAuthCallbackTarget). A new redirect URI makes the next
+// connect register a new client (ensureConnectorOAuthClient).
 func (h *Handler) connectorOAuthRedirectOrigin(via string) string {
-	if override, ok := connectorOAuthCallbackOriginOverride(); ok {
-		return override
-	}
 	origin, _ := h.connectorOAuthCallbackTarget(via)
+	if production, pre := connectorOAuthProductionOrigin(origin); pre {
+		return production
+	}
 	return origin
 }
 
-// connectorOAuthCallbackOriginOverride returns the normalized callback
-// origin override, or false when it is unset or not an http(s) origin (a
-// malformed value is ignored with a warning rather than sending providers a
-// broken redirect URI).
-func connectorOAuthCallbackOriginOverride() (string, bool) {
-	raw := strings.TrimSpace(os.Getenv(connectorOAuthCallbackOriginEnv))
-	if raw == "" {
-		return "", false
+// connectorOAuthLegacyClientName is the client_name every registration was
+// made with before the name followed the deployment; registrations stored
+// without a name were made with it.
+const connectorOAuthLegacyClientName = "Multica"
+
+// connectorOAuthClientName is the DCR client_name providers show on their
+// consent screens: QwenTagPre on a pre-release deployment, QwenTag
+// elsewhere.
+func (h *Handler) connectorOAuthClientName() string {
+	if _, pre := connectorOAuthProductionOrigin(h.connectorOAuthAppOrigin()); pre {
+		return "QwenTagPre"
 	}
-	origin, ok := normalizeConnectorOAuthOrigin(raw)
-	if !ok {
-		connectorOAuthBadCallbackOriginOnce.Do(func() {
-			slog.Warn("ignoring malformed connector OAuth callback origin", "env", connectorOAuthCallbackOriginEnv)
-		})
-		return "", false
-	}
-	return origin, true
-}
-
-var connectorOAuthBadCallbackOriginOnce sync.Once
-
-// connectorOAuthClientNameEnv names the OAuth client on provider consent
-// screens (the dynamic client registration's client_name).
-const connectorOAuthClientNameEnv = "MULTICA_CONNECTOR_OAUTH_CLIENT_NAME"
-
-// connectorOAuthDefaultClientName is the client_name used before it was
-// configurable; registrations stored without a name were made with it.
-const connectorOAuthDefaultClientName = "Multica"
-
-// connectorOAuthClientName is the configured DCR client_name
-// (MULTICA_CONNECTOR_OAUTH_CLIENT_NAME), or "Multica" when it is unset or
-// unusable (longer than 100 characters, or containing control characters).
-func connectorOAuthClientName() string {
-	name := strings.TrimSpace(os.Getenv(connectorOAuthClientNameEnv))
-	if name == "" || len([]rune(name)) > 100 || !utf8.ValidString(name) || strings.IndexFunc(name, unicode.IsControl) >= 0 {
-		return connectorOAuthDefaultClientName
-	}
-	return name
+	return "QwenTag"
 }
 
 // connectorOAuthCookieName is the name of the browser binding cookie of the
@@ -405,13 +370,13 @@ func normalizeConnectorOAuthScope(in connectorOAuthScope) (connectorOAuthScope, 
 	switch out.ScopeType {
 	case connectorOAuthScopeWorkspace:
 		out.AgentID, out.OrgID, out.ScopeKey, out.SceneKey = "", "", "", ""
-	case contextcap.ScopeScene, contextcap.ScopePerson:
+	case contextcap.ScopeOrg, contextcap.ScopeScene, contextcap.ScopePerson:
 		id, err := canonicalOAuthUUID(out.AgentID)
 		if err != nil {
 			return out, err
 		}
 		out.AgentID = id
-		if !contextcap.ValidScopeKey(out.ScopeType, out.ScopeKey) {
+		if !contextcap.ValidConfigScope(out.ScopeType, out.OrgID, out.ScopeKey) {
 			return out, errors.New("invalid scope key")
 		}
 		if out.SceneKey != "" && (out.ScopeType != contextcap.ScopePerson || !contextcap.ValidOpenConversationID(out.SceneKey)) {
@@ -452,11 +417,22 @@ func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connec
 		return nil
 	}
 	agent, err := h.loadContextCapAgent(ctx, scope.AgentID)
-	if errors.Is(err, contextcap.ErrNotFound) || (err == nil && (agent.WorkspaceID != scope.WorkspaceID || agent.OrgID != scope.OrgID)) {
+	if errors.Is(err, contextcap.ErrNotFound) || (err == nil && agent.WorkspaceID != scope.WorkspaceID) {
 		return forbidden
 	}
 	if err != nil {
 		return oauthStartError(http.StatusInternalServerError, "internal", "agent lookup failed")
+	}
+	// The scope's org must (still) be a tenant of the agent, or "" for an
+	// agent without a DingTalk identity.
+	if orgless := scope.OrgID == "" && agent.IdentityOrgID == ""; !orgless {
+		agent, err = h.contextCapAgentInOrg(ctx, agent, scope.OrgID)
+		if errors.Is(err, errContextCapUnknownTenant) || (err == nil && agent.OrgID != scope.OrgID) {
+			return forbidden
+		}
+		if err != nil {
+			return oauthStartError(http.StatusInternalServerError, "internal", "tenant lookup failed")
+		}
 	}
 	// The mobile routes' authority (contextCapResolveScope) for the request
 	// the caller made; a malformed scope and a manager's unknown scene are
@@ -612,10 +588,9 @@ type connectorSealedVerifier struct {
 	// is exchanged with that client.
 	ClientID string `json:"client_id"`
 	// RedirectURI is the redirect URI the authorize URL carried; the code
-	// is exchanged with it (providers require the same value), even when
-	// MULTICA_CONNECTOR_OAUTH_CALLBACK_ORIGIN changed in between. Empty in
-	// states started by an older binary, which exchange with the current
-	// one.
+	// is exchanged with it (providers require the same value), even when a
+	// deploy in between changed the redirect origin. Empty in states started
+	// by an older binary, which exchange with the current one.
 	RedirectURI string `json:"redirect_uri,omitempty"`
 	// BrowserHash is the SHA-256 (hex) of the browser binding nonce.
 	BrowserHash string `json:"browser_hash,omitempty"`
@@ -834,7 +809,7 @@ func (h *Handler) storeConnectorOAuthCredential(ctx context.Context, scope conne
 // unoffered connector already gets it through the global grant. Failures are
 // logged: the credential is stored and the toggle stays available.
 func (h *Handler) enableConnectedScopeBinding(ctx context.Context, scope connectorOAuthScope) {
-	if scope.ScopeType != contextcap.ScopeScene && scope.ScopeType != contextcap.ScopePerson {
+	if scope.ScopeType != contextcap.ScopeOrg && scope.ScopeType != contextcap.ScopeScene && scope.ScopeType != contextcap.ScopePerson {
 		return
 	}
 	_, err := contextcap.UpsertBinding(ctx, h.DB, contextcap.BindingWrite{
@@ -879,7 +854,7 @@ type connectorOAuthRegistration struct {
 
 // registeredName is the client_name the registration was made with.
 func (r connectorOAuthRegistration) registeredName() string {
-	return firstNonEmpty(r.ClientName, connectorOAuthDefaultClientName)
+	return firstNonEmpty(r.ClientName, connectorOAuthLegacyClientName)
 }
 
 // serves reports whether the registration was made for redirectURI and
@@ -1011,8 +986,8 @@ func (h *Handler) loadConnectorOAuthClientWith(ctx context.Context, q contextcap
 // client once. Registration is serialized per connector with an advisory
 // lock so concurrent starts on any replica register once.
 //
-// When the redirect URI (the app origin or the callback origin override) or
-// the configured client name changed, the registration for the new pair
+// When the redirect URI (connectorOAuthRedirectOrigin) or the client name
+// (connectorOAuthClientName) changed, the registration for the new pair
 // becomes current: a kept earlier registration for that pair is promoted
 // back, otherwise a new client is registered. The replaced registration is
 // kept (connectorOAuthClientHistory), because every token it issued can only

@@ -1,0 +1,5195 @@
+{
+  "snapshot_version": 1,
+  "captured_on": "2026-10-01",
+  "purpose": "Read-only DWS event schema evidence for EmployeeLoop design; not a runtime implementation or business event capture.",
+  "cli": {
+    "cli_version": "v1.0.61",
+    "commit": "50eb73a0",
+    "build_time": "2026-08-31T14:46:17Z",
+    "binary_sha256": "b41b5d3250fc809dbb80e1471b9a3768e0df3af088e296b457bd381f5e1df3de"
+  },
+  "catalog": {
+    "command": "dws event list --include-pending --format json",
+    "export_sha256": "e419d344782aa5f2b09f3bd4cc22c7c0525b4f4161c35aa94c4bc6d69a5d79ec",
+    "document": [
+      {
+        "event_key": "user_im_message_receive_at",
+        "display_name": "@我的消息",
+        "description": "当前用户被 @ 的消息",
+        "category": "im",
+        "rule_type": "at",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_message_receive_o2o",
+        "display_name": "指定单聊消息",
+        "description": "当前用户与指定用户的单聊消息",
+        "category": "im",
+        "rule_type": "singleChat",
+        "status": "enabled",
+        "required_params": null,
+        "constraints": {
+          "require_one_of": [
+            [
+              "user",
+              "open-dingtalk-id"
+            ]
+          ],
+          "mutually_exclusive": [
+            [
+              "user",
+              "open-dingtalk-id"
+            ]
+          ]
+        },
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_message_receive_group",
+        "display_name": "指定群消息",
+        "description": "当前用户所在指定会话的消息",
+        "category": "im",
+        "rule_type": "group",
+        "status": "enabled",
+        "required_params": [
+          "group"
+        ],
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_message_receive_user",
+        "display_name": "指定发送人消息",
+        "description": "当前用户收到的指定用户发送的消息",
+        "category": "im",
+        "rule_type": "sender",
+        "status": "enabled",
+        "required_params": null,
+        "constraints": {
+          "require_one_of": [
+            [
+              "user",
+              "open-dingtalk-id"
+            ]
+          ],
+          "mutually_exclusive": [
+            [
+              "user",
+              "open-dingtalk-id"
+            ]
+          ]
+        },
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_message_receive_o2o_all",
+        "display_name": "全部单聊消息",
+        "description": "当前用户收到的所有单聊消息",
+        "category": "im",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_message_receive_group_all",
+        "display_name": "全部群消息",
+        "description": "当前用户收到的所有群聊消息",
+        "category": "im",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_message_read_o2o",
+        "display_name": "指定单聊消息已读",
+        "description": "当前用户在指定单聊中发送的消息被对方已读",
+        "category": "im",
+        "rule_type": "singleChat",
+        "status": "enabled",
+        "required_params": null,
+        "constraints": {
+          "require_one_of": [
+            [
+              "user",
+              "open-dingtalk-id"
+            ]
+          ],
+          "mutually_exclusive": [
+            [
+              "user",
+              "open-dingtalk-id"
+            ]
+          ]
+        },
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_message_read_group",
+        "display_name": "指定群消息已读",
+        "description": "当前用户在指定群聊中发送的消息被已读",
+        "category": "im",
+        "rule_type": "group",
+        "status": "enabled",
+        "required_params": [
+          "group"
+        ],
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_message_recall_o2o",
+        "display_name": "指定单聊消息撤回",
+        "description": "指定单聊中的消息被撤回",
+        "category": "im",
+        "rule_type": "singleChat",
+        "status": "enabled",
+        "required_params": null,
+        "constraints": {
+          "require_one_of": [
+            [
+              "user",
+              "open-dingtalk-id"
+            ]
+          ],
+          "mutually_exclusive": [
+            [
+              "user",
+              "open-dingtalk-id"
+            ]
+          ]
+        },
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_message_recall_group",
+        "display_name": "指定群消息撤回",
+        "description": "指定群聊中的消息被撤回",
+        "category": "im",
+        "rule_type": "group",
+        "status": "enabled",
+        "required_params": [
+          "group"
+        ],
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_message_reaction_o2o",
+        "display_name": "指定单聊消息表情回应",
+        "description": "指定单聊中的消息收到表情回应（贴表情）",
+        "category": "im",
+        "rule_type": "singleChat",
+        "status": "enabled",
+        "required_params": null,
+        "constraints": {
+          "require_one_of": [
+            [
+              "user",
+              "open-dingtalk-id"
+            ]
+          ],
+          "mutually_exclusive": [
+            [
+              "user",
+              "open-dingtalk-id"
+            ]
+          ]
+        },
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_message_reaction_group",
+        "display_name": "指定群消息表情回应",
+        "description": "指定群聊中的消息收到表情回应（贴表情）",
+        "category": "im",
+        "rule_type": "group",
+        "status": "enabled",
+        "required_params": [
+          "group"
+        ],
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_group_updated",
+        "display_name": "群标题变更",
+        "description": "指定群聊的标题发生变更",
+        "category": "im",
+        "rule_type": "group",
+        "status": "enabled",
+        "required_params": [
+          "group"
+        ],
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_group_member_added",
+        "display_name": "群成员加入",
+        "description": "指定群聊有成员加入",
+        "category": "im",
+        "rule_type": "group",
+        "status": "enabled",
+        "required_params": [
+          "group"
+        ],
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_group_member_exited",
+        "display_name": "群成员退出",
+        "description": "指定群聊有成员退出",
+        "category": "im",
+        "rule_type": "group",
+        "status": "enabled",
+        "required_params": [
+          "group"
+        ],
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_im_group_disbanded",
+        "display_name": "群解散",
+        "description": "指定群聊被解散",
+        "category": "im",
+        "rule_type": "group",
+        "status": "enabled",
+        "required_params": [
+          "group"
+        ],
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_oa_approval_task_created",
+        "display_name": "审批任务创建",
+        "description": "审批任务创建，发送给审批人",
+        "category": "oa",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_oa_approval_task_finished",
+        "display_name": "审批任务完成",
+        "description": "审批任务已完成",
+        "category": "oa",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_oa_approval_task_redirected",
+        "display_name": "审批人任务转交",
+        "description": "审批任务已转交",
+        "category": "oa",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_oa_approval_instance_started",
+        "display_name": "发起审批单",
+        "description": "审批实例已发起",
+        "category": "oa",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_oa_approval_instance_cc",
+        "display_name": "审批单抄送",
+        "description": "审批实例到达抄送节点，发送给被抄送人",
+        "category": "oa",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_oa_approval_instance_terminated",
+        "display_name": "审批单终止",
+        "description": "审批实例已终止",
+        "category": "oa",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_oa_approval_instance_finished",
+        "display_name": "审批单完成",
+        "description": "审批实例完成，发送给审批单发起人",
+        "category": "oa",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_voip_call_receive_invite",
+        "display_name": "语音通话接收邀请",
+        "description": "被叫用户收到语音通话邀请，通话已切换为会议模式",
+        "category": "voip",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_todo_task_create",
+        "display_name": "待办创建",
+        "description": "当前用户作为创建者、执行者或参与者的待办被创建",
+        "category": "todo",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_todo_task_update",
+        "display_name": "待办更新",
+        "description": "当前用户作为创建者、执行者或参与者的待办被更新",
+        "category": "todo",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      },
+      {
+        "event_key": "user_todo_task_delete",
+        "display_name": "待办删除",
+        "description": "当前用户作为创建者、执行者或参与者的待办被删除",
+        "category": "todo",
+        "rule_type": "all",
+        "status": "enabled",
+        "required_params": null,
+        "auth": {
+          "identity": "user"
+        }
+      }
+    ]
+  },
+  "events": [
+    {
+      "event_key": "user_im_message_receive_at",
+      "raw": {
+        "command": "dws event schema user_im_message_receive_at --format json",
+        "export_sha256": "71d4804cabbfe73180fd5cbd4e32a1975834a1458f709cceb81074b4c5d43136",
+        "document": {
+          "event_key": "user_im_message_receive_at",
+          "display_name": "@我的消息",
+          "description": "当前用户被 @ 的消息",
+          "category": "im",
+          "rule_type": "at",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_receive_at"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_receive_at --flatten --format json",
+        "export_sha256": "c9f9b1141a7f4a489f8df1530c1f91ef49e2f02e90ac5fd3e886b25c221251c9",
+        "document": {
+          "event_key": "user_im_message_receive_at",
+          "display_name": "@我的消息",
+          "description": "当前用户被 @ 的消息",
+          "category": "im",
+          "rule_type": "at",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "content": {
+                "description": "消息正文",
+                "type": "string"
+              },
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "create_time": {
+                "description": "消息创建时间",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "forward_messages": {
+                "description": "合并转发包含的原消息列表；非合并转发时不输出",
+                "items": {
+                  "properties": {
+                    "content": {
+                      "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                      "type": "string"
+                    },
+                    "conversation_id": {
+                      "description": "内部消息原来所在的会话 ID",
+                      "format": "open_conversation_id",
+                      "type": "string"
+                    },
+                    "create_time": {
+                      "description": "内部消息创建时间",
+                      "type": "string"
+                    },
+                    "message_id": {
+                      "description": "内部消息的开放消息 ID",
+                      "format": "open_message_id",
+                      "type": "string"
+                    },
+                    "sender": {
+                      "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                      "type": "string"
+                    },
+                    "sender_open_dingtalk_id": {
+                      "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                      "format": "open_dingtalk_id",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "message_id": {
+                "description": "开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "quoted_message": {
+                "description": "引用回复所引用的原消息；非引用回复时不输出",
+                "properties": {
+                  "content": {
+                    "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                    "type": "string"
+                  },
+                  "conversation_id": {
+                    "description": "内部消息原来所在的会话 ID",
+                    "format": "open_conversation_id",
+                    "type": "string"
+                  },
+                  "create_time": {
+                    "description": "内部消息创建时间",
+                    "type": "string"
+                  },
+                  "message_id": {
+                    "description": "内部消息的开放消息 ID",
+                    "format": "open_message_id",
+                    "type": "string"
+                  },
+                  "sender": {
+                    "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                    "type": "string"
+                  },
+                  "sender_open_dingtalk_id": {
+                    "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                    "format": "open_dingtalk_id",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "sender": {
+                "description": "发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_receive_at"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_message_receive_o2o",
+      "raw": {
+        "command": "dws event schema user_im_message_receive_o2o --format json",
+        "export_sha256": "5b50bc00dc4e9edd4bbb5e228eae1a0ca436ed342bfb2649a63fb1eec5d85db7",
+        "document": {
+          "event_key": "user_im_message_receive_o2o",
+          "display_name": "指定单聊消息",
+          "description": "当前用户与指定用户的单聊消息",
+          "category": "im",
+          "rule_type": "singleChat",
+          "required_params": [],
+          "constraints": {
+            "require_one_of": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ],
+            "mutually_exclusive": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ]
+          },
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_receive_o2o"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_receive_o2o --flatten --format json",
+        "export_sha256": "a251f562a606487df60a228df5ce831d358d6a6df1552be0f7156275a9566e0c",
+        "document": {
+          "event_key": "user_im_message_receive_o2o",
+          "display_name": "指定单聊消息",
+          "description": "当前用户与指定用户的单聊消息",
+          "category": "im",
+          "rule_type": "singleChat",
+          "required_params": [],
+          "constraints": {
+            "require_one_of": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ],
+            "mutually_exclusive": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ]
+          },
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "content": {
+                "description": "消息正文",
+                "type": "string"
+              },
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "create_time": {
+                "description": "消息创建时间",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "forward_messages": {
+                "description": "合并转发包含的原消息列表；非合并转发时不输出",
+                "items": {
+                  "properties": {
+                    "content": {
+                      "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                      "type": "string"
+                    },
+                    "conversation_id": {
+                      "description": "内部消息原来所在的会话 ID",
+                      "format": "open_conversation_id",
+                      "type": "string"
+                    },
+                    "create_time": {
+                      "description": "内部消息创建时间",
+                      "type": "string"
+                    },
+                    "message_id": {
+                      "description": "内部消息的开放消息 ID",
+                      "format": "open_message_id",
+                      "type": "string"
+                    },
+                    "sender": {
+                      "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                      "type": "string"
+                    },
+                    "sender_open_dingtalk_id": {
+                      "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                      "format": "open_dingtalk_id",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "message_id": {
+                "description": "开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "quoted_message": {
+                "description": "引用回复所引用的原消息；非引用回复时不输出",
+                "properties": {
+                  "content": {
+                    "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                    "type": "string"
+                  },
+                  "conversation_id": {
+                    "description": "内部消息原来所在的会话 ID",
+                    "format": "open_conversation_id",
+                    "type": "string"
+                  },
+                  "create_time": {
+                    "description": "内部消息创建时间",
+                    "type": "string"
+                  },
+                  "message_id": {
+                    "description": "内部消息的开放消息 ID",
+                    "format": "open_message_id",
+                    "type": "string"
+                  },
+                  "sender": {
+                    "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                    "type": "string"
+                  },
+                  "sender_open_dingtalk_id": {
+                    "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                    "format": "open_dingtalk_id",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "sender": {
+                "description": "发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_receive_o2o"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_message_receive_group",
+      "raw": {
+        "command": "dws event schema user_im_message_receive_group --format json",
+        "export_sha256": "e670caffd6b7cd7ac2db333ee1f26ed7e96f7f761f294af571fb0432799a8628",
+        "document": {
+          "event_key": "user_im_message_receive_group",
+          "display_name": "指定群消息",
+          "description": "当前用户所在指定会话的消息",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_receive_group"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_receive_group --flatten --format json",
+        "export_sha256": "b8293aa45c3a3b63f4286c90d252d5b46a2e496454ad0f5d7aa1b11fe3c09658",
+        "document": {
+          "event_key": "user_im_message_receive_group",
+          "display_name": "指定群消息",
+          "description": "当前用户所在指定会话的消息",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "content": {
+                "description": "消息正文",
+                "type": "string"
+              },
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "create_time": {
+                "description": "消息创建时间",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "forward_messages": {
+                "description": "合并转发包含的原消息列表；非合并转发时不输出",
+                "items": {
+                  "properties": {
+                    "content": {
+                      "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                      "type": "string"
+                    },
+                    "conversation_id": {
+                      "description": "内部消息原来所在的会话 ID",
+                      "format": "open_conversation_id",
+                      "type": "string"
+                    },
+                    "create_time": {
+                      "description": "内部消息创建时间",
+                      "type": "string"
+                    },
+                    "message_id": {
+                      "description": "内部消息的开放消息 ID",
+                      "format": "open_message_id",
+                      "type": "string"
+                    },
+                    "sender": {
+                      "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                      "type": "string"
+                    },
+                    "sender_open_dingtalk_id": {
+                      "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                      "format": "open_dingtalk_id",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "message_id": {
+                "description": "开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "quoted_message": {
+                "description": "引用回复所引用的原消息；非引用回复时不输出",
+                "properties": {
+                  "content": {
+                    "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                    "type": "string"
+                  },
+                  "conversation_id": {
+                    "description": "内部消息原来所在的会话 ID",
+                    "format": "open_conversation_id",
+                    "type": "string"
+                  },
+                  "create_time": {
+                    "description": "内部消息创建时间",
+                    "type": "string"
+                  },
+                  "message_id": {
+                    "description": "内部消息的开放消息 ID",
+                    "format": "open_message_id",
+                    "type": "string"
+                  },
+                  "sender": {
+                    "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                    "type": "string"
+                  },
+                  "sender_open_dingtalk_id": {
+                    "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                    "format": "open_dingtalk_id",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "sender": {
+                "description": "发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_receive_group"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_message_receive_user",
+      "raw": {
+        "command": "dws event schema user_im_message_receive_user --format json",
+        "export_sha256": "fadabd7c8086263c2f9109de400764430b081fa7898b07e8f77db846b9592778",
+        "document": {
+          "event_key": "user_im_message_receive_user",
+          "display_name": "指定发送人消息",
+          "description": "当前用户收到的指定用户发送的消息",
+          "category": "im",
+          "rule_type": "sender",
+          "required_params": [],
+          "constraints": {
+            "require_one_of": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ],
+            "mutually_exclusive": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ]
+          },
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_receive_user"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_receive_user --flatten --format json",
+        "export_sha256": "5e5ae8e2302a651fcf2f1d3e61ecad7d47b02421b55b6cdb783640e9de2832d4",
+        "document": {
+          "event_key": "user_im_message_receive_user",
+          "display_name": "指定发送人消息",
+          "description": "当前用户收到的指定用户发送的消息",
+          "category": "im",
+          "rule_type": "sender",
+          "required_params": [],
+          "constraints": {
+            "require_one_of": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ],
+            "mutually_exclusive": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ]
+          },
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "content": {
+                "description": "消息正文",
+                "type": "string"
+              },
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "create_time": {
+                "description": "消息创建时间",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "forward_messages": {
+                "description": "合并转发包含的原消息列表；非合并转发时不输出",
+                "items": {
+                  "properties": {
+                    "content": {
+                      "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                      "type": "string"
+                    },
+                    "conversation_id": {
+                      "description": "内部消息原来所在的会话 ID",
+                      "format": "open_conversation_id",
+                      "type": "string"
+                    },
+                    "create_time": {
+                      "description": "内部消息创建时间",
+                      "type": "string"
+                    },
+                    "message_id": {
+                      "description": "内部消息的开放消息 ID",
+                      "format": "open_message_id",
+                      "type": "string"
+                    },
+                    "sender": {
+                      "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                      "type": "string"
+                    },
+                    "sender_open_dingtalk_id": {
+                      "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                      "format": "open_dingtalk_id",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "message_id": {
+                "description": "开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "quoted_message": {
+                "description": "引用回复所引用的原消息；非引用回复时不输出",
+                "properties": {
+                  "content": {
+                    "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                    "type": "string"
+                  },
+                  "conversation_id": {
+                    "description": "内部消息原来所在的会话 ID",
+                    "format": "open_conversation_id",
+                    "type": "string"
+                  },
+                  "create_time": {
+                    "description": "内部消息创建时间",
+                    "type": "string"
+                  },
+                  "message_id": {
+                    "description": "内部消息的开放消息 ID",
+                    "format": "open_message_id",
+                    "type": "string"
+                  },
+                  "sender": {
+                    "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                    "type": "string"
+                  },
+                  "sender_open_dingtalk_id": {
+                    "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                    "format": "open_dingtalk_id",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "sender": {
+                "description": "发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_receive_user"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_message_receive_o2o_all",
+      "raw": {
+        "command": "dws event schema user_im_message_receive_o2o_all --format json",
+        "export_sha256": "a07b3a56138c67de83bdefec804c60db662281835294f2b0e3ff39eb3d1d4b0c",
+        "document": {
+          "event_key": "user_im_message_receive_o2o_all",
+          "display_name": "全部单聊消息",
+          "description": "当前用户收到的所有单聊消息",
+          "category": "im",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_receive_o2o_all"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_receive_o2o_all --flatten --format json",
+        "export_sha256": "49503d4ecdf9a4a4e381a61cd761f8cdec0ddf1c1ffdea7e0bd146275568af5e",
+        "document": {
+          "event_key": "user_im_message_receive_o2o_all",
+          "display_name": "全部单聊消息",
+          "description": "当前用户收到的所有单聊消息",
+          "category": "im",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "content": {
+                "description": "消息正文",
+                "type": "string"
+              },
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "create_time": {
+                "description": "消息创建时间",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "forward_messages": {
+                "description": "合并转发包含的原消息列表；非合并转发时不输出",
+                "items": {
+                  "properties": {
+                    "content": {
+                      "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                      "type": "string"
+                    },
+                    "conversation_id": {
+                      "description": "内部消息原来所在的会话 ID",
+                      "format": "open_conversation_id",
+                      "type": "string"
+                    },
+                    "create_time": {
+                      "description": "内部消息创建时间",
+                      "type": "string"
+                    },
+                    "message_id": {
+                      "description": "内部消息的开放消息 ID",
+                      "format": "open_message_id",
+                      "type": "string"
+                    },
+                    "sender": {
+                      "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                      "type": "string"
+                    },
+                    "sender_open_dingtalk_id": {
+                      "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                      "format": "open_dingtalk_id",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "message_id": {
+                "description": "开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "quoted_message": {
+                "description": "引用回复所引用的原消息；非引用回复时不输出",
+                "properties": {
+                  "content": {
+                    "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                    "type": "string"
+                  },
+                  "conversation_id": {
+                    "description": "内部消息原来所在的会话 ID",
+                    "format": "open_conversation_id",
+                    "type": "string"
+                  },
+                  "create_time": {
+                    "description": "内部消息创建时间",
+                    "type": "string"
+                  },
+                  "message_id": {
+                    "description": "内部消息的开放消息 ID",
+                    "format": "open_message_id",
+                    "type": "string"
+                  },
+                  "sender": {
+                    "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                    "type": "string"
+                  },
+                  "sender_open_dingtalk_id": {
+                    "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                    "format": "open_dingtalk_id",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "sender": {
+                "description": "发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_receive_o2o_all"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_message_receive_group_all",
+      "raw": {
+        "command": "dws event schema user_im_message_receive_group_all --format json",
+        "export_sha256": "ca0b4d8e83e54dada9708dc094649f6af01680f5802f169b4fc96f6ed97be61b",
+        "document": {
+          "event_key": "user_im_message_receive_group_all",
+          "display_name": "全部群消息",
+          "description": "当前用户收到的所有群聊消息",
+          "category": "im",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_receive_group_all"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_receive_group_all --flatten --format json",
+        "export_sha256": "9733d8e7253853b5ead9548135eb65368abfcfefe0a0c6329d45cf8493e37d21",
+        "document": {
+          "event_key": "user_im_message_receive_group_all",
+          "display_name": "全部群消息",
+          "description": "当前用户收到的所有群聊消息",
+          "category": "im",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "content": {
+                "description": "消息正文",
+                "type": "string"
+              },
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "create_time": {
+                "description": "消息创建时间",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "forward_messages": {
+                "description": "合并转发包含的原消息列表；非合并转发时不输出",
+                "items": {
+                  "properties": {
+                    "content": {
+                      "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                      "type": "string"
+                    },
+                    "conversation_id": {
+                      "description": "内部消息原来所在的会话 ID",
+                      "format": "open_conversation_id",
+                      "type": "string"
+                    },
+                    "create_time": {
+                      "description": "内部消息创建时间",
+                      "type": "string"
+                    },
+                    "message_id": {
+                      "description": "内部消息的开放消息 ID",
+                      "format": "open_message_id",
+                      "type": "string"
+                    },
+                    "sender": {
+                      "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                      "type": "string"
+                    },
+                    "sender_open_dingtalk_id": {
+                      "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                      "format": "open_dingtalk_id",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "message_id": {
+                "description": "开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "quoted_message": {
+                "description": "引用回复所引用的原消息；非引用回复时不输出",
+                "properties": {
+                  "content": {
+                    "description": "内部消息正文；媒体消息可能包含 mediaId 等下载定位信息",
+                    "type": "string"
+                  },
+                  "conversation_id": {
+                    "description": "内部消息原来所在的会话 ID",
+                    "format": "open_conversation_id",
+                    "type": "string"
+                  },
+                  "create_time": {
+                    "description": "内部消息创建时间",
+                    "type": "string"
+                  },
+                  "message_id": {
+                    "description": "内部消息的开放消息 ID",
+                    "format": "open_message_id",
+                    "type": "string"
+                  },
+                  "sender": {
+                    "description": "内部消息发送人展示名；服务端未提供时可能为空或为 null 字符串",
+                    "type": "string"
+                  },
+                  "sender_open_dingtalk_id": {
+                    "description": "内部消息发送人开放 ID；服务端未提供时为空",
+                    "format": "open_dingtalk_id",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "sender": {
+                "description": "发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_receive_group_all"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_message_read_o2o",
+      "raw": {
+        "command": "dws event schema user_im_message_read_o2o --format json",
+        "export_sha256": "606f316837790cfbbb23fd3084cedd28cceed629c9cdfc6b19511625c8f608b5",
+        "document": {
+          "event_key": "user_im_message_read_o2o",
+          "display_name": "指定单聊消息已读",
+          "description": "当前用户在指定单聊中发送的消息被对方已读",
+          "category": "im",
+          "rule_type": "singleChat",
+          "required_params": [],
+          "constraints": {
+            "require_one_of": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ],
+            "mutually_exclusive": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ]
+          },
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_read_o2o"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_read_o2o --flatten --format json",
+        "export_sha256": "1defa43aa76b23abc0d080435aafea060d962b27726e677ccb9837297fbdcdb9",
+        "document": {
+          "event_key": "user_im_message_read_o2o",
+          "display_name": "指定单聊消息已读",
+          "description": "当前用户在指定单聊中发送的消息被对方已读",
+          "category": "im",
+          "rule_type": "singleChat",
+          "required_params": [],
+          "constraints": {
+            "require_one_of": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ],
+            "mutually_exclusive": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ]
+          },
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "message_id": {
+                "description": "被读取消息的开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "read_time": {
+                "description": "消息读取时间",
+                "type": "string"
+              },
+              "reader": {
+                "description": "读取消息的用户展示名",
+                "type": "string"
+              },
+              "reader_open_dingtalk_id": {
+                "description": "读取消息的用户开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "sender": {
+                "description": "原消息发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "原消息发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_read_o2o"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_message_read_group",
+      "raw": {
+        "command": "dws event schema user_im_message_read_group --format json",
+        "export_sha256": "b19874aa612fb2ed427088730ab55347e882fa21a1a16a707aba12c0c7e736ab",
+        "document": {
+          "event_key": "user_im_message_read_group",
+          "display_name": "指定群消息已读",
+          "description": "当前用户在指定群聊中发送的消息被已读",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_read_group"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_read_group --flatten --format json",
+        "export_sha256": "7e0dc2ae04c9d76f36c9cd23d4b1088fea3a91838a2580da966a88db7c32947c",
+        "document": {
+          "event_key": "user_im_message_read_group",
+          "display_name": "指定群消息已读",
+          "description": "当前用户在指定群聊中发送的消息被已读",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "message_id": {
+                "description": "被读取消息的开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "read_time": {
+                "description": "消息读取时间",
+                "type": "string"
+              },
+              "reader": {
+                "description": "读取消息的用户展示名",
+                "type": "string"
+              },
+              "reader_open_dingtalk_id": {
+                "description": "读取消息的用户开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "sender": {
+                "description": "原消息发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "原消息发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_read_group"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_message_recall_o2o",
+      "raw": {
+        "command": "dws event schema user_im_message_recall_o2o --format json",
+        "export_sha256": "20753d371a397ea9a2250cae34ae531fe7a938a30a705e758e4e8aa4a9957af0",
+        "document": {
+          "event_key": "user_im_message_recall_o2o",
+          "display_name": "指定单聊消息撤回",
+          "description": "指定单聊中的消息被撤回",
+          "category": "im",
+          "rule_type": "singleChat",
+          "required_params": [],
+          "constraints": {
+            "require_one_of": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ],
+            "mutually_exclusive": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ]
+          },
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_recall_o2o"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_recall_o2o --flatten --format json",
+        "export_sha256": "5affafd5ca9b92547285961de97dc867f958235618102aedd8473337254f1c9d",
+        "document": {
+          "event_key": "user_im_message_recall_o2o",
+          "display_name": "指定单聊消息撤回",
+          "description": "指定单聊中的消息被撤回",
+          "category": "im",
+          "rule_type": "singleChat",
+          "required_params": [],
+          "constraints": {
+            "require_one_of": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ],
+            "mutually_exclusive": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ]
+          },
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "message_id": {
+                "description": "被撤回消息的开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "recall_time": {
+                "description": "消息撤回时间",
+                "type": "string"
+              },
+              "recaller": {
+                "description": "撤回消息的用户展示名",
+                "type": "string"
+              },
+              "recaller_open_dingtalk_id": {
+                "description": "撤回消息的用户开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "sender": {
+                "description": "原消息发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "原消息发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_recall_o2o"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_message_recall_group",
+      "raw": {
+        "command": "dws event schema user_im_message_recall_group --format json",
+        "export_sha256": "9d562db41acad0b18dfa0ab124722064a53905e0c1b4059d8eb225d66fb0435e",
+        "document": {
+          "event_key": "user_im_message_recall_group",
+          "display_name": "指定群消息撤回",
+          "description": "指定群聊中的消息被撤回",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_recall_group"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_recall_group --flatten --format json",
+        "export_sha256": "61611558accae6ecdff246475652e1359a273e7d4ec349045577cd44f7bd91fd",
+        "document": {
+          "event_key": "user_im_message_recall_group",
+          "display_name": "指定群消息撤回",
+          "description": "指定群聊中的消息被撤回",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "message_id": {
+                "description": "被撤回消息的开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "recall_time": {
+                "description": "消息撤回时间",
+                "type": "string"
+              },
+              "recaller": {
+                "description": "撤回消息的用户展示名",
+                "type": "string"
+              },
+              "recaller_open_dingtalk_id": {
+                "description": "撤回消息的用户开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "sender": {
+                "description": "原消息发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "原消息发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_recall_group"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_message_reaction_o2o",
+      "raw": {
+        "command": "dws event schema user_im_message_reaction_o2o --format json",
+        "export_sha256": "1ff4347e2925aca6e4d3e33f9a3d577abcb64a3e55b892ef61c7624fae9e070f",
+        "document": {
+          "event_key": "user_im_message_reaction_o2o",
+          "display_name": "指定单聊消息表情回应",
+          "description": "指定单聊中的消息收到表情回应（贴表情）",
+          "category": "im",
+          "rule_type": "singleChat",
+          "required_params": [],
+          "constraints": {
+            "require_one_of": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ],
+            "mutually_exclusive": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ]
+          },
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_reaction_o2o"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_reaction_o2o --flatten --format json",
+        "export_sha256": "bf3ef0b43b6d3937f6dc17616c0c9d88df33b1ec8eae7f7377dec4fe7b729002",
+        "document": {
+          "event_key": "user_im_message_reaction_o2o",
+          "display_name": "指定单聊消息表情回应",
+          "description": "指定单聊中的消息收到表情回应（贴表情）",
+          "category": "im",
+          "rule_type": "singleChat",
+          "required_params": [],
+          "constraints": {
+            "require_one_of": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ],
+            "mutually_exclusive": [
+              [
+                "user",
+                "open-dingtalk-id"
+              ]
+            ]
+          },
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "message_id": {
+                "description": "收到表情回应的开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "operation_time": {
+                "description": "表情回应操作时间",
+                "type": "string"
+              },
+              "operation_type": {
+                "description": "表情回应操作类型",
+                "type": "string"
+              },
+              "operator": {
+                "description": "执行表情回应操作的用户展示名",
+                "type": "string"
+              },
+              "operator_open_dingtalk_id": {
+                "description": "执行表情回应操作的用户开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "reaction_name": {
+                "description": "表情回应名称",
+                "type": "string"
+              },
+              "reaction_text": {
+                "description": "表情回应文本",
+                "type": "string"
+              },
+              "sender": {
+                "description": "原消息发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "原消息发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_reaction_o2o"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_message_reaction_group",
+      "raw": {
+        "command": "dws event schema user_im_message_reaction_group --format json",
+        "export_sha256": "248b01f4f033934077b627e02f4bfd1555e2510c1a757c58b11256fc96955031",
+        "document": {
+          "event_key": "user_im_message_reaction_group",
+          "display_name": "指定群消息表情回应",
+          "description": "指定群聊中的消息收到表情回应（贴表情）",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_message_reaction_group"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_message_reaction_group --flatten --format json",
+        "export_sha256": "bcb138df2c5005116b69c508b314ccb99acd034b54cd949ab1ac81d99199c93b",
+        "document": {
+          "event_key": "user_im_message_reaction_group",
+          "display_name": "指定群消息表情回应",
+          "description": "指定群聊中的消息收到表情回应（贴表情）",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "conversation_id": {
+                "description": "会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "消息事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "message_id": {
+                "description": "收到表情回应的开放消息 ID",
+                "format": "open_message_id",
+                "type": "string"
+              },
+              "operation_time": {
+                "description": "表情回应操作时间",
+                "type": "string"
+              },
+              "operation_type": {
+                "description": "表情回应操作类型",
+                "type": "string"
+              },
+              "operator": {
+                "description": "执行表情回应操作的用户展示名",
+                "type": "string"
+              },
+              "operator_open_dingtalk_id": {
+                "description": "执行表情回应操作的用户开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "reaction_name": {
+                "description": "表情回应名称",
+                "type": "string"
+              },
+              "reaction_text": {
+                "description": "表情回应文本",
+                "type": "string"
+              },
+              "sender": {
+                "description": "原消息发送人展示名",
+                "type": "string"
+              },
+              "sender_open_dingtalk_id": {
+                "description": "原消息发送人开放 ID",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_message_reaction_group"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_group_updated",
+      "raw": {
+        "command": "dws event schema user_im_group_updated --format json",
+        "export_sha256": "0e02a5a499d5d2ac2ae4fb71d8b7300e94bd9bd9fd830c65fa27aa132e1d2f9d",
+        "document": {
+          "event_key": "user_im_group_updated",
+          "display_name": "群标题变更",
+          "description": "指定群聊的标题发生变更",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_group_updated"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_group_updated --flatten --format json",
+        "export_sha256": "dec7d74f9262e908427e04e93ac9741106da6836ef9dcc73d4e7a1e29ff3d4cb",
+        "document": {
+          "event_key": "user_im_group_updated",
+          "display_name": "群标题变更",
+          "description": "指定群聊的标题发生变更",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "payload": {
+                "additionalProperties": true,
+                "description": "群生命周期事件业务数据，字段以服务端实际推送为准",
+                "type": "object"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_group_updated"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_group_member_added",
+      "raw": {
+        "command": "dws event schema user_im_group_member_added --format json",
+        "export_sha256": "4ebcd2b64a8be879d70cc807a0283995a0192e6c8f113735d5269c6f3d7c3e07",
+        "document": {
+          "event_key": "user_im_group_member_added",
+          "display_name": "群成员加入",
+          "description": "指定群聊有成员加入",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_group_member_added"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_group_member_added --flatten --format json",
+        "export_sha256": "29cc20d257a794cf08edb5302a5a3d6a1e12ffa059a5eaa3eb23a95d65471a75",
+        "document": {
+          "event_key": "user_im_group_member_added",
+          "display_name": "群成员加入",
+          "description": "指定群聊有成员加入",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "conversation_id": {
+                "description": "发生成员变更的群会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "群成员变更事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "members": {
+                "description": "本次加入或退出的成员列表",
+                "items": {
+                  "properties": {
+                    "nick": {
+                      "description": "成员展示名",
+                      "type": "string"
+                    },
+                    "open_dingtalk_id": {
+                      "description": "成员开放 ID",
+                      "format": "open_dingtalk_id",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "operator": {
+                "description": "执行成员变更操作的用户展示名，系统操作或成员自行退出时可能为空",
+                "type": "string"
+              },
+              "operator_open_dingtalk_id": {
+                "description": "执行成员变更操作的用户开放 ID，系统操作或成员自行退出时可能为空",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_group_member_added"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_group_member_exited",
+      "raw": {
+        "command": "dws event schema user_im_group_member_exited --format json",
+        "export_sha256": "a2b816424b2623492c190e89a5b58f74d8ba802273d03233120cac99e8dfb005",
+        "document": {
+          "event_key": "user_im_group_member_exited",
+          "display_name": "群成员退出",
+          "description": "指定群聊有成员退出",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_group_member_exited"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_group_member_exited --flatten --format json",
+        "export_sha256": "39b12fefe12be603c489eb217dc04b6af2d1e2ec9f0ece3f129b3ff56f5379c4",
+        "document": {
+          "event_key": "user_im_group_member_exited",
+          "display_name": "群成员退出",
+          "description": "指定群聊有成员退出",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "conversation_id": {
+                "description": "发生成员变更的群会话 ID",
+                "format": "open_conversation_id",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "群成员变更事件时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "members": {
+                "description": "本次加入或退出的成员列表",
+                "items": {
+                  "properties": {
+                    "nick": {
+                      "description": "成员展示名",
+                      "type": "string"
+                    },
+                    "open_dingtalk_id": {
+                      "description": "成员开放 ID",
+                      "format": "open_dingtalk_id",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "operator": {
+                "description": "执行成员变更操作的用户展示名，系统操作或成员自行退出时可能为空",
+                "type": "string"
+              },
+              "operator_open_dingtalk_id": {
+                "description": "执行成员变更操作的用户开放 ID，系统操作或成员自行退出时可能为空",
+                "format": "open_dingtalk_id",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_group_member_exited"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_im_group_disbanded",
+      "raw": {
+        "command": "dws event schema user_im_group_disbanded --format json",
+        "export_sha256": "698342aa689a31b56e407869b9df7ae7b30046e4aded7bceb8d0e57054bd9626",
+        "document": {
+          "event_key": "user_im_group_disbanded",
+          "display_name": "群解散",
+          "description": "指定群聊被解散",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_im_group_disbanded"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_im_group_disbanded --flatten --format json",
+        "export_sha256": "47a4e4df60d0b9974e32ac5f7e981eb06ad1273769f52ec29b569827ed8ad048",
+        "document": {
+          "event_key": "user_im_group_disbanded",
+          "display_name": "群解散",
+          "description": "指定群聊被解散",
+          "category": "im",
+          "rule_type": "group",
+          "required_params": [
+            "group"
+          ],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "payload": {
+                "additionalProperties": true,
+                "description": "群生命周期事件业务数据，字段以服务端实际推送为准",
+                "type": "object"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_im_group_disbanded"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_oa_approval_task_created",
+      "raw": {
+        "command": "dws event schema user_oa_approval_task_created --format json",
+        "export_sha256": "65a5c8b5a2f12d517ee106d490a74cfea5453154d3049bc0b368ca7c0444d745",
+        "document": {
+          "event_key": "user_oa_approval_task_created",
+          "display_name": "审批任务创建",
+          "description": "审批任务创建，发送给审批人",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_oa_approval_task_created"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_oa_approval_task_created --flatten --format json",
+        "export_sha256": "a87ba8f47ac73dcc0f18933b6a4bad5acc8114e213ce2f4c04f1ad4900c793a7",
+        "document": {
+          "event_key": "user_oa_approval_task_created",
+          "display_name": "审批任务创建",
+          "description": "审批任务创建，发送给审批人",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "create_time": {
+                "description": "审批任务创建时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "审批任务事件业务时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "process_code": {
+                "description": "审批流程模板编码",
+                "type": "string"
+              },
+              "process_instance_id": {
+                "description": "审批实例 ID",
+                "type": "string"
+              },
+              "status": {
+                "description": "审批任务状态",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "task_id": {
+                "description": "审批任务 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "title": {
+                "description": "审批标题",
+                "type": "string"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_oa_approval_task_created"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_oa_approval_task_finished",
+      "raw": {
+        "command": "dws event schema user_oa_approval_task_finished --format json",
+        "export_sha256": "29c6aa832d7dbd540dbed6c6e9646d21129ca0b5a2af0f85bc9e6c4f456f702f",
+        "document": {
+          "event_key": "user_oa_approval_task_finished",
+          "display_name": "审批任务完成",
+          "description": "审批任务已完成",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_oa_approval_task_finished"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_oa_approval_task_finished --flatten --format json",
+        "export_sha256": "dfec6dc8199e18f109fb29bc1606118b549589f7b13be6571142ca4259a8304a",
+        "document": {
+          "event_key": "user_oa_approval_task_finished",
+          "display_name": "审批任务完成",
+          "description": "审批任务已完成",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "create_time": {
+                "description": "审批任务创建时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "审批任务事件业务时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "finish_time": {
+                "description": "审批任务完成时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "process_code": {
+                "description": "审批流程模板编码",
+                "type": "string"
+              },
+              "process_instance_id": {
+                "description": "审批实例 ID",
+                "type": "string"
+              },
+              "result": {
+                "description": "审批任务处理结果，值以服务端实际推送为准",
+                "type": "string"
+              },
+              "status": {
+                "description": "审批任务状态",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "task_id": {
+                "description": "审批任务 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "title": {
+                "description": "审批标题",
+                "type": "string"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_oa_approval_task_finished"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_oa_approval_task_redirected",
+      "raw": {
+        "command": "dws event schema user_oa_approval_task_redirected --format json",
+        "export_sha256": "322c602f3a542fd60c88b1171481af05351b6e7811dea5b7bad1ff483652245d",
+        "document": {
+          "event_key": "user_oa_approval_task_redirected",
+          "display_name": "审批人任务转交",
+          "description": "审批任务已转交",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_oa_approval_task_redirected"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_oa_approval_task_redirected --flatten --format json",
+        "export_sha256": "9c05db68ce2c2a26d1ab3a3476637c2f5e9c217128535c08c1fc4e9e078da20e",
+        "document": {
+          "event_key": "user_oa_approval_task_redirected",
+          "display_name": "审批人任务转交",
+          "description": "审批任务已转交",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "create_time": {
+                "description": "原审批任务创建时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "审批任务转交事件业务时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "finish_time": {
+                "description": "原审批任务转交完成时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "process_code": {
+                "description": "审批流程模板编码",
+                "type": "string"
+              },
+              "process_instance_id": {
+                "description": "审批实例 ID",
+                "type": "string"
+              },
+              "result": {
+                "description": "审批任务转交结果，值以服务端实际推送为准",
+                "type": "string"
+              },
+              "status": {
+                "description": "原审批任务状态",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "task_id": {
+                "description": "原审批任务 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "title": {
+                "description": "审批标题",
+                "type": "string"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_oa_approval_task_redirected"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_oa_approval_instance_started",
+      "raw": {
+        "command": "dws event schema user_oa_approval_instance_started --format json",
+        "export_sha256": "61609ebde566e158040929dfb3570bd79d4c9385f6b3cc57a4b7427d72581309",
+        "document": {
+          "event_key": "user_oa_approval_instance_started",
+          "display_name": "发起审批单",
+          "description": "审批实例已发起",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_oa_approval_instance_started"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_oa_approval_instance_started --flatten --format json",
+        "export_sha256": "e709d6dbab4cd3199182291e0ec988998ade8d1672549d8526852cabae832e25",
+        "document": {
+          "event_key": "user_oa_approval_instance_started",
+          "display_name": "发起审批单",
+          "description": "审批实例已发起",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "create_time": {
+                "description": "审批实例创建时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "审批实例事件业务时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "process_code": {
+                "description": "审批流程模板编码",
+                "type": "string"
+              },
+              "process_instance_id": {
+                "description": "审批实例 ID",
+                "type": "string"
+              },
+              "status": {
+                "description": "审批实例状态",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "title": {
+                "description": "审批标题",
+                "type": "string"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_oa_approval_instance_started"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_oa_approval_instance_cc",
+      "raw": {
+        "command": "dws event schema user_oa_approval_instance_cc --format json",
+        "export_sha256": "ae9703c22c109b6a50fcc27312a3f6917ed8e8d57b15be90899fef04e1e59e89",
+        "document": {
+          "event_key": "user_oa_approval_instance_cc",
+          "display_name": "审批单抄送",
+          "description": "审批实例到达抄送节点，发送给被抄送人",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_oa_approval_instance_cc"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_oa_approval_instance_cc --flatten --format json",
+        "export_sha256": "eb0a875399a169fdc4580901f79bbdbb036ff388ca0e5dc823524cc0c33e12f2",
+        "document": {
+          "event_key": "user_oa_approval_instance_cc",
+          "display_name": "审批单抄送",
+          "description": "审批实例到达抄送节点，发送给被抄送人",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "create_time": {
+                "description": "审批实例创建时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "审批抄送事件业务时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "process_code": {
+                "description": "审批流程模板编码",
+                "type": "string"
+              },
+              "process_instance_id": {
+                "description": "审批实例 ID",
+                "type": "string"
+              },
+              "status": {
+                "description": "审批实例到达抄送节点时的状态",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "title": {
+                "description": "审批标题",
+                "type": "string"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_oa_approval_instance_cc"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_oa_approval_instance_terminated",
+      "raw": {
+        "command": "dws event schema user_oa_approval_instance_terminated --format json",
+        "export_sha256": "ba8bf2be3ea379aab1f2ab6f69ac1614fa4aced2f1d3887f70240686b43630fc",
+        "document": {
+          "event_key": "user_oa_approval_instance_terminated",
+          "display_name": "审批单终止",
+          "description": "审批实例已终止",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_oa_approval_instance_terminated"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_oa_approval_instance_terminated --flatten --format json",
+        "export_sha256": "2e1f1384e30bd9f6bc09489e261eda2a2f095c1d11089f4ef8cdbeac73791766",
+        "document": {
+          "event_key": "user_oa_approval_instance_terminated",
+          "display_name": "审批单终止",
+          "description": "审批实例已终止",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "create_time": {
+                "description": "审批实例创建时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "审批实例终止事件业务时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "finish_time": {
+                "description": "审批实例终止时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "process_code": {
+                "description": "审批流程模板编码",
+                "type": "string"
+              },
+              "process_instance_id": {
+                "description": "审批实例 ID",
+                "type": "string"
+              },
+              "status": {
+                "description": "审批实例状态",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "title": {
+                "description": "审批标题",
+                "type": "string"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_oa_approval_instance_terminated"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_oa_approval_instance_finished",
+      "raw": {
+        "command": "dws event schema user_oa_approval_instance_finished --format json",
+        "export_sha256": "c08b75ef3e83b2dc811661ebb94a7ab933fedc74b08a253c89eaaa1d249b62fb",
+        "document": {
+          "event_key": "user_oa_approval_instance_finished",
+          "display_name": "审批单完成",
+          "description": "审批实例完成，发送给审批单发起人",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_oa_approval_instance_finished"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_oa_approval_instance_finished --flatten --format json",
+        "export_sha256": "2e310c719f03fa4e1d48c969e7f864091bb2f505e3d3383229e9ce9217853a39",
+        "document": {
+          "event_key": "user_oa_approval_instance_finished",
+          "display_name": "审批单完成",
+          "description": "审批实例完成，发送给审批单发起人",
+          "category": "oa",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "create_time": {
+                "description": "审批实例创建时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "审批实例事件业务时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "finish_time": {
+                "description": "审批实例完成时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "process_code": {
+                "description": "审批流程模板编码",
+                "type": "string"
+              },
+              "process_instance_id": {
+                "description": "审批实例 ID",
+                "type": "string"
+              },
+              "result": {
+                "description": "审批实例处理结果，值以服务端实际推送为准",
+                "type": "string"
+              },
+              "status": {
+                "description": "审批实例状态",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "title": {
+                "description": "审批标题",
+                "type": "string"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_oa_approval_instance_finished"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_voip_call_receive_invite",
+      "raw": {
+        "command": "dws event schema user_voip_call_receive_invite --format json",
+        "export_sha256": "3f3f196edb54a08a9fa646719fcd0d99282a0eb14bf2bb03d5a0cf3b537a2deb",
+        "document": {
+          "event_key": "user_voip_call_receive_invite",
+          "display_name": "语音通话接收邀请",
+          "description": "被叫用户收到语音通话邀请，通话已切换为会议模式",
+          "category": "voip",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_voip_call_receive_invite"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_voip_call_receive_invite --flatten --format json",
+        "export_sha256": "66877c03ae2f9eb04c41852ec9f19be4e761c88694599b29e50a00bdc755794b",
+        "document": {
+          "event_key": "user_voip_call_receive_invite",
+          "display_name": "语音通话接收邀请",
+          "description": "被叫用户收到语音通话邀请，通话已切换为会议模式",
+          "category": "voip",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "biz_id": {
+                "description": "业务事件唯一 ID；同一事件重试时保持不变，可用于业务去重",
+                "type": "string"
+              },
+              "call_id": {
+                "description": "通话会话 ID",
+                "type": "string"
+              },
+              "call_type": {
+                "description": "通话类型；值以服务端实际推送为准",
+                "type": "string"
+              },
+              "callee_corp_id": {
+                "description": "被叫用户所属组织 corpId",
+                "type": "string"
+              },
+              "callee_uid": {
+                "description": "被叫用户标识，按上游协议保留字符串原值",
+                "type": "string"
+              },
+              "caller_corp_id": {
+                "description": "主叫用户所属组织 corpId",
+                "type": "string"
+              },
+              "caller_uid": {
+                "description": "主叫用户标识，按上游协议保留字符串原值",
+                "type": "string"
+              },
+              "corp_id": {
+                "description": "事件所属组织的 corpId",
+                "type": "string"
+              },
+              "create_time": {
+                "description": "通话邀请创建时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "event_id": {
+                "description": "transport 事件 ID，可用于传输层去重",
+                "type": "string"
+              },
+              "event_time": {
+                "description": "通话邀请事件业务时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "org_id": {
+                "description": "事件所属组织 ID",
+                "type": "integer"
+              },
+              "room_id": {
+                "description": "会议房间 ID",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "target_uid": {
+                "description": "订阅并接收邀请的目标用户 UID",
+                "type": "integer"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_voip_call_receive_invite"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_todo_task_create",
+      "raw": {
+        "command": "dws event schema user_todo_task_create --format json",
+        "export_sha256": "d8ed9481e105c5f42e03042e0e75789b2a73615aa885ef105cddae0c1917602a",
+        "document": {
+          "event_key": "user_todo_task_create",
+          "display_name": "待办创建",
+          "description": "当前用户作为创建者、执行者或参与者的待办被创建",
+          "category": "todo",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_todo_task_create"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_todo_task_create --flatten --format json",
+        "export_sha256": "7697732aa01442265dc54190da85bf9b4ffab041bc1d8888e8ea8a3a5953ee6b",
+        "document": {
+          "event_key": "user_todo_task_create",
+          "display_name": "待办创建",
+          "description": "当前用户作为创建者、执行者或参与者的待办被创建",
+          "category": "todo",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "biz_tag": {
+                "description": "业务标识",
+                "type": "string"
+              },
+              "create_time": {
+                "description": "待办创建时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "creator_id": {
+                "description": "创建者 staffId",
+                "type": "string"
+              },
+              "description": {
+                "description": "待办描述",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "executor_ids": {
+                "description": "执行者 staffId 列表",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "finish_date": {
+                "description": "实际结束时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "is_multi_executor": {
+                "description": "是否多执行者待办",
+                "type": "boolean"
+              },
+              "parent_id": {
+                "description": "父任务 ID",
+                "type": "string"
+              },
+              "participant_ids": {
+                "description": "参与者 staffId 列表",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "plan_finish_date": {
+                "description": "计划结束时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "plan_start_date": {
+                "description": "计划开始时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "priority": {
+                "description": "待办优先级",
+                "type": "integer"
+              },
+              "scene_type": {
+                "description": "待办场景类型",
+                "type": "string"
+              },
+              "source": {
+                "description": "待办来源",
+                "type": "string"
+              },
+              "source_id": {
+                "description": "来源业务 ID",
+                "type": "string"
+              },
+              "start_date": {
+                "description": "实际开始时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "status_stage": {
+                "description": "状态阶段：0 未开始、1 进行中、2 正常完成、3 异常完成",
+                "type": "integer"
+              },
+              "subject": {
+                "description": "待办标题",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "task_id": {
+                "description": "待办任务 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_todo_task_create"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_todo_task_update",
+      "raw": {
+        "command": "dws event schema user_todo_task_update --format json",
+        "export_sha256": "3069199dabbbcba0cdc2b11df219370d7b9552618eea802b7dc6d73a4d915ad2",
+        "document": {
+          "event_key": "user_todo_task_update",
+          "display_name": "待办更新",
+          "description": "当前用户作为创建者、执行者或参与者的待办被更新",
+          "category": "todo",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_todo_task_update"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_todo_task_update --flatten --format json",
+        "export_sha256": "40f21eb85e78b9e542cfbd6cc3d694954597e5bc99732e313428071507f0c460",
+        "document": {
+          "event_key": "user_todo_task_update",
+          "display_name": "待办更新",
+          "description": "当前用户作为创建者、执行者或参与者的待办被更新",
+          "category": "todo",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "biz_tag": {
+                "description": "业务标识",
+                "type": "string"
+              },
+              "create_time": {
+                "description": "待办创建时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "creator_id": {
+                "description": "创建者 staffId",
+                "type": "string"
+              },
+              "description": {
+                "description": "待办描述",
+                "type": "string"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "executor_ids": {
+                "description": "执行者 staffId 列表",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "finish_date": {
+                "description": "实际结束时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "is_multi_executor": {
+                "description": "是否多执行者待办",
+                "type": "boolean"
+              },
+              "old_status_stage": {
+                "description": "更新前状态阶段",
+                "type": "integer"
+              },
+              "parent_id": {
+                "description": "父任务 ID",
+                "type": "string"
+              },
+              "participant_ids": {
+                "description": "参与者 staffId 列表",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "plan_finish_date": {
+                "description": "计划结束时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "plan_start_date": {
+                "description": "计划开始时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "priority": {
+                "description": "待办优先级",
+                "type": "integer"
+              },
+              "scene_type": {
+                "description": "待办场景类型",
+                "type": "string"
+              },
+              "source": {
+                "description": "待办来源",
+                "type": "string"
+              },
+              "source_id": {
+                "description": "来源业务 ID",
+                "type": "string"
+              },
+              "start_date": {
+                "description": "实际开始时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "status_stage": {
+                "description": "新状态阶段：0 未开始、1 进行中、2 正常完成、3 异常完成",
+                "type": "integer"
+              },
+              "subject": {
+                "description": "待办标题",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "task_id": {
+                "description": "待办任务 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_todo_task_update"
+                ],
+                "type": "string"
+              },
+              "update_time": {
+                "description": "待办更新时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+    {
+      "event_key": "user_todo_task_delete",
+      "raw": {
+        "command": "dws event schema user_todo_task_delete --format json",
+        "export_sha256": "7bc03fb3e69ff1749d0856e9f1b1e94d00e2757b5823a6d9c6ee65fa805e766d",
+        "document": {
+          "event_key": "user_todo_task_delete",
+          "display_name": "待办删除",
+          "description": "当前用户作为创建者、执行者或参与者的待办被删除",
+          "category": "todo",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".data | fromjson",
+          "schema": {
+            "properties": {
+              "data": {
+                "content_media_type": "application/json",
+                "description": "服务端业务 payload JSON 字符串",
+                "type": "string"
+              },
+              "event_born_time": {
+                "type": "integer"
+              },
+              "event_corp_id": {
+                "type": "string"
+              },
+              "event_id": {
+                "description": "transport 事件 ID",
+                "type": "string"
+              },
+              "event_scope": {
+                "type": "string"
+              },
+              "event_type": {
+                "description": "事件类型",
+                "enum": [
+                  "user_todo_task_delete"
+                ],
+                "type": "string"
+              },
+              "event_unified_app_id": {
+                "type": "string"
+              },
+              "headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Stream transport headers",
+                "type": "object"
+              },
+              "received_at_unix_ms": {
+                "type": "integer"
+              },
+              "rule_type": {
+                "type": "string"
+              },
+              "seq": {
+                "type": "integer"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "个人事件订阅 ID",
+                "type": "string"
+              },
+              "type": {
+                "description": "transport frame 类型",
+                "enum": [
+                  "event"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      },
+      "flatten": {
+        "command": "dws event schema user_todo_task_delete --flatten --format json",
+        "export_sha256": "98e418ab04f5c01f8e0f5e9653afae50c32daf6955950b16262d1c2c5791abd4",
+        "document": {
+          "event_key": "user_todo_task_delete",
+          "display_name": "待办删除",
+          "description": "当前用户作为创建者、执行者或参与者的待办被删除",
+          "category": "todo",
+          "rule_type": "all",
+          "required_params": [],
+          "jq_root_path": ".",
+          "schema": {
+            "properties": {
+              "create_time": {
+                "description": "待办创建时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "creator_id": {
+                "description": "创建者 staffId",
+                "type": "string"
+              },
+              "delete_time": {
+                "description": "待办删除时间",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "event_id": {
+                "description": "事件 ID，可用于去重",
+                "type": "string"
+              },
+              "subject": {
+                "description": "被删除的待办标题",
+                "type": "string"
+              },
+              "subscribe_id": {
+                "description": "订阅 ID",
+                "type": "string"
+              },
+              "task_id": {
+                "description": "待办任务 ID",
+                "type": "string"
+              },
+              "timestamp": {
+                "description": "事件发生时间戳",
+                "format": "timestamp_ms",
+                "type": "integer"
+              },
+              "type": {
+                "description": "事件类型，固定为当前 event_key",
+                "enum": [
+                  "user_todo_task_delete"
+                ],
+                "type": "string"
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    }
+  ],
+  "known_scope": {
+    "published_event_count": 27,
+    "categories": {
+      "im": 16,
+      "oa": 7,
+      "voip": 1,
+      "todo": 3
+    },
+    "calendar_event_schema": "not present in this CLI catalog",
+    "document_mention_event_schema": "not present in this CLI catalog",
+    "catalog_is_not_all_DWS_product_capabilities": true,
+    "raw_payload_inner_schema_not_declared": true,
+    "required_properties_not_declared": true
+  }
+}

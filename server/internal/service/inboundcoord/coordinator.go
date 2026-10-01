@@ -153,6 +153,9 @@ type Turn struct {
 	// AlreadyToldScene is set by Host on task_finished when this sandbox
 	// run already sent IM on the inbound conversation. Decide silences.
 	AlreadyToldScene bool
+	// configLinkOffered is set by runLoop when a capability answer of this
+	// turn will end with the Host-minted configuration link (config_link.go).
+	configLinkOffered bool
 }
 
 // HistoryLine is one already-persisted Multica chat message or a DingTalk row.
@@ -197,6 +200,10 @@ type Decision struct {
 	// TraceTags are the Langfuse trace tags of that turn. A task that joins
 	// the turn's trace repeats them so the trace keeps one consistent tag set.
 	TraceTags []string
+	// configLinkURL is the bearer URL Host appended to the capability answer;
+	// logs and traces replace it. It is not serialized: the reply text in the
+	// checkpoint is what carries the link.
+	configLinkURL string
 }
 
 type decisionObserverKey struct{}
@@ -294,6 +301,10 @@ type Coordinator struct {
 	Assoc         *assoc.Service
 	DWSHistory    DingTalkHistoryLoader
 	SceneMemory   sceneMemoryReader
+	// ConfigLinks mints the context configuration link that ends a capability
+	// answer on inbound DingTalk turns. Nil leaves capability answers as the
+	// model wrote them.
+	ConfigLinks ConfigLinkIssuer
 	// Langfuse exports one trace per Decide call. Nil disables tracing.
 	Langfuse *langfuse.Client
 }
@@ -601,7 +612,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 			"tool_rounds", decision.ToolRounds,
 			"tools_used", decision.ToolsUsed,
 			"issue_id", strings.TrimSpace(decision.IssueID),
-			"text", clipRunes(strings.TrimSpace(decision.UserText), llmLogFieldBudget),
+			"text", clipRunes(strings.TrimSpace(redactConfigLink(decision.UserText, decision.configLinkURL)), llmLogFieldBudget),
 			"look_into", clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
 			"look_into_runes", utf8.RuneCountInString(decision.LookInto),
 			"reply_runes", utf8.RuneCountInString(decision.UserText),

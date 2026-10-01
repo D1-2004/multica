@@ -9,6 +9,10 @@
  * appears in mobile responses. */
 export type ContextScopeType = "scene" | "person";
 
+/** Scope of a configuration-page write: a scene, a person, or (managers
+ * only) the enterprise level of the tenant. */
+export type ContextWriteScopeType = ContextScopeType | "org";
+
 export type ContextResourceType = "connector" | "skill";
 
 /** Kind of an IM scene: a DingTalk group chat or a 1:1 chat (a 1:1 chat is a
@@ -66,6 +70,9 @@ export interface ContextConfigSceneGrant {
   expiresAt: string;
   /** Group chat or 1:1 chat. */
   kind: ContextSceneKind;
+  /** DingTalk org (tenant) of the scene; "" when the server does not say,
+   * which means the agent's own org. Sent back on every write. */
+  orgId: string;
 }
 
 export interface ContextConfigRedeemResult {
@@ -74,6 +81,9 @@ export interface ContextConfigRedeemResult {
   scopeType: ContextScopeType | null;
   scopeKey: string;
   scopeTitle: string;
+  /** Tenant (DingTalk org) of the granted scope; "" when the server does not
+   * say. The page opens that tenant. */
+  orgId: string;
 }
 
 /** Why the caller may configure an agent on the configuration page: live
@@ -146,6 +156,25 @@ export interface ContextPersonScope {
   credentials: ContextConnectorCredential[];
 }
 
+/** A tenant (企业) of the agent on the configuration page. */
+export interface ContextConfigTenantRef {
+  orgId: string;
+  name: string;
+  /** "identity" for the agent's own DingTalk org. */
+  source: string;
+}
+
+/** The enterprise level of the page's tenant: its switches and accounts.
+ * Read-only unless `canEdit` (the caller manages the agent). */
+export interface ContextConfigOrgScope {
+  /** The OrgId. */
+  scopeKey: string;
+  scopeTitle: string;
+  bindings: ContextCapabilityBinding[];
+  credentials: ContextConnectorCredential[];
+  canEdit: boolean;
+}
+
 export interface ContextConfigAgentDetail {
   agent: ContextConfigAgentIdentity;
   global: {
@@ -158,6 +187,14 @@ export interface ContextConfigAgentDetail {
   };
   person: ContextPersonScope | null;
   scenes: ContextConfigSceneGrant[];
+  /** The tenant this detail describes (the requested one, else the agent's
+   * own org); null when the server names none. Person and enterprise
+   * writes carry its OrgId. */
+  tenant: ContextConfigTenantRef | null;
+  /** The tenants the caller may open. */
+  tenants: ContextConfigTenantRef[];
+  /** The tenant's enterprise level; null when the caller may not read it. */
+  org: ContextConfigOrgScope | null;
   jsapiAvailable: boolean;
   /** "manager" when the caller manages the agent (scenes then lists every
    * scene of the agent); "grant" otherwise and from older backends. */
@@ -189,8 +226,10 @@ export interface ContextConfigSceneDetail {
 }
 
 export interface SetContextCapabilityBindingInput {
-  scopeType: ContextScopeType;
+  scopeType: ContextWriteScopeType;
   scopeKey: string;
+  /** Tenant of the scope; omitted or "" means the agent's own org. */
+  orgId?: string;
   resourceType: ContextResourceType;
   resourceId: string;
   enabled: boolean;
@@ -199,23 +238,29 @@ export interface SetContextCapabilityBindingInput {
 }
 
 export interface SetContextConnectorCredentialInput {
-  scopeType: ContextScopeType;
+  scopeType: ContextWriteScopeType;
   scopeKey: string;
+  /** Tenant of the scope; omitted or "" means the agent's own org. */
+  orgId?: string;
   connectorId: string;
   bearer: string;
 }
 
 export interface DeleteContextConnectorCredentialInput {
-  scopeType: ContextScopeType;
+  scopeType: ContextWriteScopeType;
   scopeKey: string;
+  /** Tenant of the scope; omitted or "" means the agent's own org. */
+  orgId?: string;
   connectorId: string;
 }
 
 /** Starts connecting an OAuth connector for one scope. `returnTo` must be on
  * the app origin; the server defaults to the configuration page. */
 export interface StartContextConnectorConnectionInput {
-  scopeType: ContextScopeType;
+  scopeType: ContextWriteScopeType;
   scopeKey: string;
+  /** Tenant of the scope; omitted or "" means the agent's own org. */
+  orgId?: string;
   connectorId: string;
   returnTo?: string;
 }
@@ -225,6 +270,9 @@ export interface StartContextConnectorConnectionInput {
 export interface ResolveContextConfigSceneInput {
   chatId?: string;
   openConversationId?: string;
+  /** The tenant the page works in ("" or omitted: the agent's own org).
+   * The person grant must be there and the group is granted there. */
+  orgId?: string;
 }
 
 /** `dd.config` signature parameters for the DingTalk H5 JSAPI. */
@@ -267,6 +315,9 @@ export interface AgentContextCapabilities {
     connectorIds: string[];
     skillIds: string[];
   };
+  /** Enterprise (tenant) levels with configuration; `scopeKey` is the
+   * OrgId. Empty from older backends. */
+  orgs: ContextScopeSummary[];
   scenes: ContextScopeSummary[];
   persons: ContextScopeSummary[];
   configureUrl: string;
@@ -278,11 +329,12 @@ export interface SetAgentContextCapabilityOffersInput {
 }
 
 // ---------------------------------------------------------------------------
-// Admin scenes (agent detail → 场域 section)
+// Admin 场域 (agent detail → 场域 section): tenants, their group chats and
+// people, and the Context Builder of each level
 // ---------------------------------------------------------------------------
 
 /** One IM scene of an agent (a DingTalk group chat or 1:1 chat) as listed
- * by `GET /api/agents/{id}/scenes`. */
+ * by `GET /api/agents/{id}/tenants/{orgId}/groups`. */
 export interface AgentSceneSummary {
   /** openConversationId of the conversation. */
   sceneKey: string;
@@ -297,7 +349,6 @@ export interface AgentSceneSummary {
   inboundCount: number;
   /** scene_memory row id, "" when the scene has no memory. */
   memoryId: string;
-  hasPrompt: boolean;
 }
 
 export interface AgentScenesPage {
@@ -305,32 +356,107 @@ export interface AgentScenesPage {
   hasMore: boolean;
 }
 
-/** Scene prompt (场域提示词). Stored per scene; not yet applied at runtime. */
-export interface AgentScenePrompt {
+export interface ListAgentScenesParams {
+  limit?: number;
+  offset?: number;
+}
+
+/** Where a tenant comes from: created by a manager with its OrgId, or the
+ * agent's own DingTalk identity org (which cannot be deleted). */
+export type AgentTenantSource = "created" | "identity";
+
+/** One enterprise (tenant) the agent serves, keyed by its DingTalk OrgId. */
+export interface AgentTenant {
+  orgId: string;
+  name: string;
+  source: AgentTenantSource;
+  groupCount: number;
+  personCount: number;
+}
+
+/** An org seen in scene or person data that has no tenant yet. Its
+ * configuration does not apply until a tenant is created for it. */
+export interface AgentUnassignedOrg {
+  orgId: string;
+  groupCount: number;
+  personCount: number;
+}
+
+export interface AgentTenantsList {
+  tenants: AgentTenant[];
+  unassignedOrgs: AgentUnassignedOrg[];
+}
+
+export interface CreateAgentTenantInput {
+  orgId: string;
+  name: string;
+}
+
+/** A person known under a tenant (a 1:1 chat is its person). */
+export interface AgentTenantPerson {
+  staffId: string;
+  title: string;
+  /** openConversationId of the person's 1:1 chat, "" when none. */
+  dmSceneKey: string;
+  lastActiveAt: string;
+}
+
+/** Level of a Context Builder node. */
+export type ContextNodeScopeType = "org" | "scene" | "person";
+
+/** Layer an effective component comes from, nearest last. */
+export type ContextLayer = "global" | "org" | "scene" | "person";
+
+/** The layer of an effective component as the server names it: a known
+ * ContextLayer, or the raw name of a level this build does not know yet
+ * (levels may grow, e.g. departments), so the preview never drops it. */
+export type ContextEffectiveLayer = ContextLayer | (string & {});
+
+/** Address of one Context Builder node: the tenant itself (`org`, key =
+ * OrgId), one of its group chats (`scene`, key = openConversationId; a 1:1
+ * chat key maps to its person) or one of its people (`person`, key =
+ * staffId). */
+export interface ContextNodeRef {
+  orgId: string;
+  scopeType: ContextNodeScopeType;
+  scopeKey: string;
+}
+
+export interface ContextNodeScope {
+  type: ContextNodeScopeType;
+  orgId: string;
+  key: string;
+  title: string;
+}
+
+/** One prompt component of a level. A lower level's component replaces an
+ * upper one with the same name. */
+export interface ContextPromptComponent {
+  id: string;
+  name: string;
+  order: number;
   text: string;
-  /** "" when the scene has no stored prompt. */
-  updatedAt: string;
-  updatedByName: string;
-}
-
-/** A scene binding as the admin sees it, with who changed it last. */
-export interface AgentSceneBinding {
-  resourceType: ContextResourceType;
-  resourceId: string;
-  enabled: boolean;
   updatedByName: string;
   updatedAt: string;
 }
 
-/** Credential of an offered connector in the scene page's scope. */
-export interface AgentSceneConnectorCredential {
+/** A prompt component as written: the list PUT replaces the whole list. */
+export interface ContextPromptComponentInput {
+  name: string;
+  order: number;
+  text: string;
+}
+
+/** Credential of an offered connector in the node's scope. */
+export interface ContextNodeConnectorCredential {
   connected: boolean;
   /** Hint ("@octocat", "OAuth", "••••abcd"); "" when not connected or not
    * shown to this caller. */
   account: string;
 }
 
-export interface AgentSceneOfferedConnector {
+/** An offered connector with this node's switch and credential. */
+export interface ContextNodeConnector {
   id: string;
   name: string;
   /** Official app catalog slug ("github", ...), "" for custom connectors. */
@@ -345,59 +471,90 @@ export interface AgentSceneOfferedConnector {
   oauthAvailable: boolean;
   /** Provider installation page (GitHub App), "" when none. */
   installUrl: string;
-  credential: AgentSceneConnectorCredential;
+  /** Switched on at this level. */
+  enabled: boolean;
+  credential: ContextNodeConnectorCredential;
 }
 
-export interface AgentSceneDetail {
-  scene: AgentSceneSummary;
-  prompt: AgentScenePrompt;
-  /** Bindings of `scope`. */
-  bindings: AgentSceneBinding[];
-  offers: {
-    connectors: AgentSceneOfferedConnector[];
-    skills: ContextSkillItem[];
-  };
-  /** Where this page's configuration lives (the person for a 1:1 chat).
-   * Older backends send none: the scene itself. null when a 1:1 chat's
-   * person is unknown, so nothing can be configured there. */
-  scope: ContextSceneScope | null;
-  /** Custom MCP servers of `scope` (the agent `mcp_config` document shape),
-   * null when none. Stored only; not applied at runtime yet. */
+/** An offered skill with this node's switch. */
+export interface ContextNodeSkill {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+}
+
+export interface ContextEffectivePrompt {
+  name: string;
+  text: string;
+  layer: ContextEffectiveLayer;
+  /** A nearer layer's component with the same name replaces this one. */
+  overridden: boolean;
+  /** That nearer layer, null when the server did not say which. */
+  overriddenBy: ContextLayer | null;
+}
+
+export interface ContextEffectiveItem {
+  id: string;
+  name: string;
+  layer: ContextEffectiveLayer;
+}
+
+export interface ContextEffectiveMcpServer {
+  name: string;
+  layer: ContextEffectiveLayer;
+  overridden: boolean;
+  overriddenBy: ContextLayer | null;
+}
+
+/** What a run at this node gets, as the runtime builds it: global, then
+ * enterprise, then group or person. */
+export interface ContextNodeEffective {
+  prompts: ContextEffectivePrompt[];
+  connectors: ContextEffectiveItem[];
+  skills: ContextEffectiveItem[];
+  mcpServers: ContextEffectiveMcpServer[];
+}
+
+export interface ContextNodeDetail {
+  /** Where this node's configuration lives (a 1:1 chat key reads its
+   * person). null for a 1:1 chat whose person is unknown, so nothing is
+   * writable there. */
+  scope: ContextNodeScope | null;
+  /** The node's chat: the group of a group node, the 1:1 chat of a person
+   * (its inbound session and memory). null for a tenant, a person without a
+   * 1:1 chat, and from a server that does not say. */
+  scene: AgentSceneSummary | null;
+  prompts: ContextPromptComponent[];
+  connectors: ContextNodeConnector[];
+  skills: ContextNodeSkill[];
+  /** Custom MCP servers of the node (the agent `mcp_config` document
+   * shape), null when none. */
   mcpConfig: Record<string, unknown> | null;
-  /** The backend knows custom MCP servers of a scope (it sent
-   * `mcp_config`, null included). An older backend sends none and has no
-   * route to save them, so the page hides the editor. */
-  mcpConfigSupported: boolean;
   /** The workspace always redacts secrets, so an existing `mcpConfig` is
    * withheld (null). The page must not save over it. */
   mcpConfigRedacted: boolean;
-  /** The caller may store and connect credentials for `scope`. */
+  /** The caller may store, remove or connect credentials here (false for a
+   * manager on someone's personal level). */
   canConnect: boolean;
+  effective: ContextNodeEffective;
 }
 
-export interface ListAgentScenesParams {
-  limit?: number;
-  offset?: number;
-}
-
-export interface SetAgentSceneBindingInput {
+export interface SetContextNodeBindingInput {
   resourceType: ContextResourceType;
   resourceId: string;
   enabled: boolean;
 }
 
-/** Scene credential writes from the admin scene page. They use the
- * configure-page credential routes with the scene key; the server maps a 1:1
- * chat to its person. */
-export interface SetAgentSceneCredentialInput {
-  sceneKey: string;
+export interface SetContextNodeCredentialInput {
   connectorId: string;
   bearer: string;
 }
 
-export interface DeleteAgentSceneCredentialInput {
-  sceneKey: string;
+export interface StartContextNodeConnectionInput {
   connectorId: string;
+  /** Must be on the app origin; the server has a default. */
+  returnTo?: string;
 }
 
 // ---------------------------------------------------------------------------

@@ -189,7 +189,7 @@ func (h *Handler) loadConnectedApps(ctx context.Context, caller agentSceneCaller
 	direct := map[string]bool{}
 	if len(sceneKeys) > 0 {
 		scenes, _, err := contextcap.ListAgentScenes(ctx, h.DB, contextcap.SceneListQuery{
-			WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: caller.orgID, Keys: sceneKeys,
+			WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: caller.orgID, IdentityOrgID: caller.orgID, Keys: sceneKeys,
 		})
 		if err != nil {
 			return state, err

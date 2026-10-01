@@ -350,8 +350,9 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 			h.writeMulticaMCPError(w, request.ID, -32602, "tool name or arguments are invalid")
 			return
 		}
-		// Resolve compact aliases against live metadata, never a saved allowlist.
 		if c.CatalogSlug != "" {
+			// External official apps keep their pinned tools (read-only unless
+			// writes are enabled).
 			original, allowed := connectorOriginalTool(c.AllowedTools, params.Name)
 			if !allowed {
 				h.writeMulticaMCPError(w, request.ID, -32602, "tool is not allowed")
@@ -359,6 +360,7 @@ func (h *Handler) CallInternalConnector(w http.ResponseWriter, r *http.Request) 
 			}
 			params.Name = original
 		} else if strings.HasPrefix(params.Name, "t_") && len(params.Name) == 18 {
+			// Resolve compact aliases against live metadata, never a saved allowlist.
 			names, listErr := h.discoverInternalConnectorTools(r.Context(), *c)
 			if listErr != nil {
 				h.writeMulticaMCPError(w, request.ID, -32603, "upstream tool names unavailable")

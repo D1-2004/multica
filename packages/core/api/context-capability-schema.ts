@@ -1,12 +1,12 @@
 import { z } from "zod";
 import type {
   AgentContextCapabilities,
-  AgentSceneBinding,
-  AgentSceneDetail,
-  AgentSceneOfferedConnector,
-  AgentScenePrompt,
   AgentScenesPage,
   AgentSceneSummary,
+  AgentTenant,
+  AgentTenantPerson,
+  AgentTenantsList,
+  AgentUnassignedOrg,
   ConnectedApp,
   ConnectedAppDetail,
   ConnectedAppPersonUsage,
@@ -17,6 +17,8 @@ import type {
   ContextCapabilityBinding,
   ContextConfigAccess,
   ContextConfigAgentDetail,
+  ContextConfigOrgScope,
+  ContextConfigTenantRef,
   ContextConfigAgentSummary,
   ContextConfigGrant,
   ContextConfigRedeemResult,
@@ -25,6 +27,15 @@ import type {
   ContextConnectorAuthMode,
   ContextConnectorCredential,
   ContextCredentialKind,
+  ContextEffectiveItem,
+  ContextEffectiveMcpServer,
+  ContextEffectivePrompt,
+  ContextLayer,
+  ContextNodeConnector,
+  ContextNodeDetail,
+  ContextNodeScope,
+  ContextNodeScopeType,
+  ContextPromptComponent,
   ContextResourceType,
   ContextSceneKind,
   ContextSceneScope,
@@ -54,6 +65,30 @@ function list<T extends z.ZodType>(item: T) {
 }
 
 const strictTrue = z.unknown().transform((value) => value === true);
+
+/** The OrgId a new tenant must have (the create-tenant rule). */
+export const ORG_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+const ORG_ID_FORBIDDEN = /[\s\p{Cc}]/u;
+
+/**
+ * Whether `value` is an OrgId the server reads and writes scopes under
+ * (contextcap.ValidOrgID): non-empty, at most 256 UTF-8 bytes, without
+ * whitespace or control characters. Looser than ORG_ID_PATTERN, because the
+ * agent's own org and the orgs seen in chats are kept as DingTalk sent them.
+ */
+export function isOrgId(value: unknown): value is string {
+  if (typeof value !== "string" || value === "" || ORG_ID_FORBIDDEN.test(value)) return false;
+  let bytes = 0;
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+    if (bytes > 256) return false;
+  }
+  return true;
+}
+
+const orgIdString = z.string().refine(isOrgId);
 
 const count = z
   .number()
@@ -190,6 +225,10 @@ export const ContextConnectorCredentialResponseSchema = z
   .object({ credential: CredentialWireSchema })
   .transform((value) => value.credential);
 
+// A DingTalk OrgId (corp id). Anything else reads as "" (the agent's own
+// org), so a malformed value is never sent back as a scope.
+const orgIdOf = z.unknown().transform((value) => (isOrgId(value) ? value : ""));
+
 const SceneGrantSchema = z
   .object({
     scope_key: id,
@@ -197,6 +236,7 @@ const SceneGrantSchema = z
     source: text,
     expires_at: text,
     kind: sceneKind,
+    org_id: orgIdOf,
   })
   .transform(
     (value): ContextConfigSceneGrant => ({
@@ -205,6 +245,7 @@ const SceneGrantSchema = z
       source: value.source,
       expiresAt: value.expires_at,
       kind: value.kind,
+      orgId: value.org_id,
     }),
   );
 
@@ -237,6 +278,7 @@ export const ContextConfigRedeemSchema = z
     scope_type: z.string(),
     scope_key: text,
     scope_title: text,
+    org_id: orgIdOf,
   })
   .transform(
     (value): ContextConfigRedeemResult => ({
@@ -245,6 +287,7 @@ export const ContextConfigRedeemSchema = z
       scopeType: scopeTypeOf(value.scope_type),
       scopeKey: value.scope_key,
       scopeTitle: value.scope_title,
+      orgId: value.org_id,
     }),
   );
 
@@ -254,6 +297,7 @@ export const EMPTY_CONTEXT_CONFIG_REDEEM: ContextConfigRedeemResult = {
   scopeType: null,
   scopeKey: "",
   scopeTitle: "",
+  orgId: "",
 };
 
 const AgentSummaryWireSchema = z.object({
@@ -309,12 +353,47 @@ const SkillItemSchema = z
     description: value.description,
   }));
 
+const GlobalConnectorSchema = z
+  .object({ id, name: text, catalog_slug: catalogSlug })
+  .transform((connector) => ({
+    id: connector.id,
+    name: connector.name,
+    catalogSlug: connector.catalog_slug,
+  }));
+
+const TenantRefSchema = z
+  .object({ org_id: orgIdString, name: text, source: text })
+  .transform(
+    (value): ContextConfigTenantRef => ({ orgId: value.org_id, name: value.name, source: value.source }),
+  );
+
+/** The enterprise level of the page's tenant. A malformed value reads as
+ * none, so nothing is written to a guessed scope; only a literal true
+ * allows editing it. */
+const ConfigOrgScopeSchema = z
+  .object({
+    scope_key: orgIdString,
+    scope_title: text,
+    bindings: BindingListSchema,
+    credentials: list(CredentialWireSchema),
+    can_edit: strictTrue,
+  })
+  .transform(
+    (value): ContextConfigOrgScope => ({
+      scopeKey: value.scope_key,
+      scopeTitle: value.scope_title,
+      bindings: value.bindings,
+      credentials: value.credentials,
+      canEdit: value.can_edit,
+    }),
+  );
+
 export const ContextConfigAgentDetailSchema = z
   .object({
     agent: AgentSummaryWireSchema,
     global: z
       .object({
-        connectors: list(z.object({ id, name: text, catalog_slug: catalogSlug })),
+        connectors: list(GlobalConnectorSchema),
         skills: list(SkillItemSchema),
       })
       .nullish(),
@@ -348,6 +427,9 @@ export const ContextConfigAgentDetailSchema = z
       })
       .nullish(),
     scenes: list(SceneGrantSchema),
+    tenant: TenantRefSchema.nullish().catch(null),
+    tenants: tolerantList(TenantRefSchema),
+    org: ConfigOrgScopeSchema.nullish().catch(null),
     jsapi_available: strictTrue,
     access: configAccess,
   })
@@ -360,11 +442,7 @@ export const ContextConfigAgentDetailSchema = z
         workspaceId: value.agent.workspace_id,
       },
       global: {
-        connectors: (value.global?.connectors ?? []).map((connector) => ({
-          id: connector.id,
-          name: connector.name,
-          catalogSlug: connector.catalog_slug,
-        })),
+        connectors: value.global?.connectors ?? [],
         skills: value.global?.skills ?? [],
       },
       offers: {
@@ -404,6 +482,9 @@ export const ContextConfigAgentDetailSchema = z
           }
         : null,
       scenes: value.scenes,
+      tenant: value.tenant ?? null,
+      tenants: [...new Map(value.tenants.map((tenant) => [tenant.orgId, tenant])).values()],
+      org: value.org ?? null,
       jsapiAvailable: value.jsapi_available,
       access: value.access,
     }),
@@ -501,6 +582,8 @@ export const AgentContextCapabilitiesSchema = z
         skill_ids: list(id),
       })
       .nullish(),
+    // Enterprise levels with configuration; older backends omit it.
+    orgs: list(ScopeSummarySchema),
     scenes: list(ScopeSummarySchema),
     persons: list(ScopeSummarySchema),
     configure_url: text,
@@ -522,6 +605,7 @@ export const AgentContextCapabilitiesSchema = z
         connectorIds: value.offers?.connector_ids ?? [],
         skillIds: value.offers?.skill_ids ?? [],
       },
+      orgs: value.orgs,
       scenes: value.scenes,
       persons: value.persons,
       configureUrl: value.configure_url,
@@ -529,7 +613,8 @@ export const AgentContextCapabilitiesSchema = z
   );
 
 // ---------------------------------------------------------------------------
-// Admin scenes (GET/PUT /api/agents/{id}/scenes...)
+// Admin 场域: tenants, their groups and people, and Context Builder nodes
+// (/api/agents/{id}/tenants...)
 // ---------------------------------------------------------------------------
 
 const AgentSceneSummaryWireSchema = z
@@ -542,7 +627,6 @@ const AgentSceneSummaryWireSchema = z
     inbound_session_id: text,
     inbound_count: count,
     memory_id: text,
-    has_prompt: strictTrue,
   })
   .transform(
     (value): AgentSceneSummary => ({
@@ -554,7 +638,6 @@ const AgentSceneSummaryWireSchema = z
       inboundSessionId: value.inbound_session_id,
       inboundCount: value.inbound_count,
       memoryId: value.memory_id,
-      hasPrompt: value.has_prompt,
     }),
   );
 
@@ -570,49 +653,135 @@ export const AgentScenesPageSchema = z
     hasMore: value.has_more,
   }));
 
-const AgentScenePromptWireSchema = z
+// Read side: the agent's own org is a tenant as DingTalk recorded it.
+const tenantOrgId = orgIdString;
+
+const AgentTenantWireSchema = z
   .object({
-    text: text,
-    updated_at: text,
-    updated_by_name: text,
+    org_id: tenantOrgId,
+    name: text,
+    // Only the agent's own identity org is protected from deletion; any
+    // other or unknown source is a created tenant.
+    source: z.unknown().transform((value) => (value === "identity" ? "identity" : "created")),
+    group_count: count,
+    person_count: count,
   })
   .transform(
-    (value): AgentScenePrompt => ({
-      text: value.text,
-      updatedAt: value.updated_at,
-      updatedByName: value.updated_by_name,
+    (value): AgentTenant => ({
+      orgId: value.org_id,
+      name: value.name,
+      source: value.source,
+      groupCount: value.group_count,
+      personCount: value.person_count,
     }),
   );
 
-export const EMPTY_AGENT_SCENE_PROMPT: AgentScenePrompt = {
-  text: "",
-  updatedAt: "",
-  updatedByName: "",
-};
+const AgentUnassignedOrgWireSchema = z
+  .object({ org_id: tenantOrgId, group_count: count, person_count: count })
+  .transform(
+    (value): AgentUnassignedOrg => ({
+      orgId: value.org_id,
+      groupCount: value.group_count,
+      personCount: value.person_count,
+    }),
+  );
 
-const AgentSceneBindingWireSchema = z.object({
-  resource_type: z.string(),
-  resource_id: id,
-  enabled: strictTrue,
-  updated_by_name: text,
-  updated_at: text,
-});
+export const EMPTY_AGENT_TENANTS: AgentTenantsList = { tenants: [], unassignedOrgs: [] };
 
-function toAgentSceneBinding(
-  wire: z.output<typeof AgentSceneBindingWireSchema>,
-): AgentSceneBinding | null {
-  const resourceType = resourceTypeOf(wire.resource_type);
-  if (!resourceType) return null;
-  return {
-    resourceType,
-    resourceId: wire.resource_id,
-    enabled: wire.enabled,
-    updatedByName: wire.updated_by_name,
-    updatedAt: wire.updated_at,
-  };
+export const AgentTenantsListSchema = z
+  .object({
+    tenants: tolerantList(AgentTenantWireSchema),
+    unassigned_orgs: tolerantList(AgentUnassignedOrgWireSchema),
+  })
+  .transform((value): AgentTenantsList => {
+    // One entry per org; an org with a tenant is never also unassigned.
+    const tenants = [...new Map(value.tenants.map((tenant) => [tenant.orgId, tenant])).values()];
+    const tenantOrgs = new Set(tenants.map((tenant) => tenant.orgId));
+    const unassignedOrgs = [
+      ...new Map(
+        value.unassigned_orgs
+          .filter((org) => !tenantOrgs.has(org.orgId))
+          .map((org) => [org.orgId, org]),
+      ).values(),
+    ];
+    return { tenants, unassignedOrgs };
+  });
+
+/** Echo of a tenant create or rename: `{tenant: T}` or the bare tenant.
+ * null when neither parses; the caller refetches the list. */
+export const AgentTenantResponseSchema = z
+  .union([z.object({ tenant: AgentTenantWireSchema }).transform((value) => value.tenant), AgentTenantWireSchema])
+  .nullable()
+  .catch(null);
+
+const AgentTenantPersonWireSchema = z
+  .object({
+    staff_id: id,
+    title: text,
+    dm_scene_key: text,
+    last_active_at: text,
+  })
+  .transform(
+    (value): AgentTenantPerson => ({
+      staffId: value.staff_id,
+      title: value.title,
+      dmSceneKey: value.dm_scene_key,
+      lastActiveAt: value.last_active_at,
+    }),
+  );
+
+export const AgentTenantPersonsSchema = z
+  .object({ persons: tolerantList(AgentTenantPersonWireSchema) })
+  .transform((value): AgentTenantPerson[] => [
+    ...new Map(value.persons.map((person) => [person.staffId, person])).values(),
+  ]);
+
+function nodeScopeTypeOf(value: unknown): ContextNodeScopeType | null {
+  return value === "org" || value === "scene" || value === "person" ? value : null;
 }
 
-const AgentSceneOfferedConnectorWireSchema = z
+function layerOf(value: unknown): ContextLayer | null {
+  return value === "global" || value === "org" || value === "scene" || value === "person" ? value : null;
+}
+
+/** `scope` of a node read. A malformed or missing value reads as null, so
+ * nothing is ever written to a guessed scope. */
+function nodeScopeOf(value: unknown): ContextNodeScope | null {
+  const parsed = z
+    .object({ type: z.unknown(), org_id: text, key: id, title: text })
+    .safeParse(value);
+  if (!parsed.success) return null;
+  const type = nodeScopeTypeOf(parsed.data.type);
+  return type ? { type, orgId: parsed.data.org_id, key: parsed.data.key, title: parsed.data.title } : null;
+}
+
+const PromptComponentWireSchema = z
+  .object({
+    id: text,
+    name: z.string().min(1),
+    order: z.number().int().nullish().catch(0).transform((value) => value ?? 0),
+    text: text,
+    updated_by_name: text,
+    updated_at: text,
+  })
+  .transform(
+    (value): ContextPromptComponent => ({
+      id: value.id,
+      name: value.name,
+      order: value.order,
+      text: value.text,
+      updatedByName: value.updated_by_name,
+      updatedAt: value.updated_at,
+    }),
+  );
+
+/** Prompt components in the order the runtime composes them: by `order`,
+ * then by name. */
+function sortPrompts(prompts: ContextPromptComponent[]): ContextPromptComponent[] {
+  return [...prompts].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
+}
+
+const NodeConnectorWireSchema = z
   .object({
     id,
     name: text,
@@ -622,12 +791,13 @@ const AgentSceneOfferedConnectorWireSchema = z
     accepts_pat: strictTrue,
     oauth_available: strictTrue,
     install_url: z.unknown().optional(),
+    enabled: strictTrue,
     credential: z
       .object({ connected: strictTrue, account: text.catch("") })
       .nullish()
       .catch(null),
   })
-  .transform((connector): AgentSceneOfferedConnector => {
+  .transform((connector): ContextNodeConnector => {
     const authMode = connectorAuthModeOf(connector.auth_mode, connector.accepts_credential);
     const connected = connector.credential?.connected === true;
     return {
@@ -642,66 +812,113 @@ const AgentSceneOfferedConnectorWireSchema = z
       // the start endpoint would reject.
       oauthAvailable: authMode === "oauth" && connector.oauth_available,
       installUrl: safeExternalUrl(connector.install_url),
+      enabled: connector.enabled,
       credential: { connected, account: connected ? (connector.credential?.account ?? "") : "" },
     };
   });
 
-export const AgentSceneDetailSchema = z
-  .object({
-    scene: AgentSceneSummaryWireSchema,
-    prompt: AgentScenePromptWireSchema.nullish().catch(null),
-    bindings: tolerantList(AgentSceneBindingWireSchema),
-    offers: z
-      .object({
-        connectors: tolerantList(AgentSceneOfferedConnectorWireSchema),
-        skills: tolerantList(SkillItemSchema),
-      })
-      .nullish()
-      .catch(null),
-    scope: z.unknown().optional(),
-    mcp_config: z.unknown().optional(),
-    mcp_config_redacted: strictTrue,
-    can_connect: strictTrue,
-  })
+const NodeSkillWireSchema = z
+  .object({ id, name: text, description: text, enabled: strictTrue })
+  .transform((value) => ({
+    id: value.id,
+    name: value.name,
+    description: value.description,
+    enabled: value.enabled,
+  }));
+
+// A layer this build does not know (a newer backend's level) is kept by
+// name rather than dropping the entry from the preview.
+const layer = z.string().min(1);
+
+// `overridden_by` names the nearer layer whose component replaces this one.
+// Any non-empty value marks the entry overridden, even a layer this build
+// does not know.
+const overriddenBy = z.unknown().transform((value) => ({
+  overridden: typeof value === "string" ? value !== "" : value != null && value !== false,
+  overriddenBy: layerOf(value),
+}));
+
+const EffectivePromptWireSchema = z
+  .object({ name: z.string().min(1), text: text, layer, overridden_by: overriddenBy })
   .transform(
-    (value): AgentSceneDetail => ({
-      scene: value.scene,
-      prompt: value.prompt ?? EMPTY_AGENT_SCENE_PROMPT,
-      bindings: value.bindings
-        .map(toAgentSceneBinding)
-        .filter((binding): binding is AgentSceneBinding => binding !== null),
-      offers: {
-        connectors: value.offers?.connectors ?? [],
-        skills: value.offers?.skills ?? [],
-      },
-      scope: sceneScopeOf(value.scope, {
-        type: "scene",
-        key: value.scene.sceneKey,
-        title: value.scene.title,
-      }),
-      mcpConfig: isRecord(value.mcp_config) ? value.mcp_config : null,
-      // Every backend with the mcp-config route sends the field (null when
-      // none); an older one omits it.
-      mcpConfigSupported: value.mcp_config !== undefined,
-      mcpConfigRedacted: value.mcp_config_redacted,
-      canConnect: value.can_connect,
+    (value): ContextEffectivePrompt => ({
+      name: value.name,
+      text: value.text,
+      layer: value.layer,
+      overridden: value.overridden_by.overridden,
+      overriddenBy: value.overridden_by.overriddenBy,
     }),
   );
 
-/** Echo of `PUT /api/agents/{id}/scenes/{sceneKey}/mcp-config`. The field is
- * required (an object, or null once cleared), so a body without it fails and
- * the caller keeps what it sent. */
-export const AgentSceneMcpConfigResponseSchema = z
+const EffectiveItemWireSchema = z
+  .object({ id, name: text, layer })
+  .transform((value): ContextEffectiveItem => ({ id: value.id, name: value.name, layer: value.layer }));
+
+const EffectiveMcpServerWireSchema = z
+  .object({ name: z.string().min(1), layer, overridden_by: overriddenBy })
+  .transform(
+    (value): ContextEffectiveMcpServer => ({
+      name: value.name,
+      layer: value.layer,
+      overridden: value.overridden_by.overridden,
+      overriddenBy: value.overridden_by.overriddenBy,
+    }),
+  );
+
+export const ContextNodeDetailSchema = z
+  .object({
+    scope: z.unknown().optional(),
+    // The node's chat (S). A malformed value reads as none.
+    scene: AgentSceneSummaryWireSchema.nullish().catch(null),
+    prompts: tolerantList(PromptComponentWireSchema),
+    connectors: tolerantList(NodeConnectorWireSchema),
+    skills: tolerantList(NodeSkillWireSchema),
+    mcp_config: z.unknown().optional(),
+    mcp_config_redacted: strictTrue,
+    can_connect: strictTrue,
+    effective: z
+      .object({
+        prompts: tolerantList(EffectivePromptWireSchema),
+        connectors: tolerantList(EffectiveItemWireSchema),
+        skills: tolerantList(EffectiveItemWireSchema),
+        mcp_servers: tolerantList(EffectiveMcpServerWireSchema),
+      })
+      .nullish()
+      .catch(null),
+  })
+  .transform(
+    (value): ContextNodeDetail => ({
+      scope: nodeScopeOf(value.scope),
+      scene: value.scene ?? null,
+      prompts: sortPrompts(value.prompts),
+      connectors: value.connectors,
+      skills: value.skills,
+      mcpConfig: isRecord(value.mcp_config) ? value.mcp_config : null,
+      mcpConfigRedacted: value.mcp_config_redacted,
+      canConnect: value.can_connect,
+      effective: {
+        prompts: value.effective?.prompts ?? [],
+        connectors: value.effective?.connectors ?? [],
+        skills: value.effective?.skills ?? [],
+        mcpServers: value.effective?.mcp_servers ?? [],
+      },
+    }),
+  );
+
+/** Echo of the prompts PUT. null when malformed; the caller keeps what it
+ * sent and refetches the node. */
+export const ContextPromptComponentsResponseSchema = z
+  .object({ prompts: z.array(PromptComponentWireSchema) })
+  .transform((value) => sortPrompts(value.prompts))
+  .nullable()
+  .catch(null);
+
+/** Echo of the mcp-config PUT. The field is required (an object, or null
+ * once cleared), so a body without it fails and the caller keeps what it
+ * sent. */
+export const ContextNodeMcpConfigResponseSchema = z
   .object({ mcp_config: z.union([z.record(z.string(), z.unknown()), z.null()]) })
   .transform((value): Record<string, unknown> | null => value.mcp_config);
-
-export const AgentScenePromptResponseSchema = z
-  .object({ prompt: AgentScenePromptWireSchema })
-  .transform((value) => value.prompt);
-
-export const AgentSceneBindingResponseSchema = z
-  .object({ binding: AgentSceneBindingWireSchema })
-  .transform((value) => toAgentSceneBinding(value.binding));
 
 // ---------------------------------------------------------------------------
 // Admin connected apps (GET /api/agents/{id}/connected-apps[/{slug}])

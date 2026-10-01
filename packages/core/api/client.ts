@@ -7,12 +7,15 @@ import {
 } from "./internal-connector-schema";
 import {
   AgentContextCapabilitiesSchema,
-  AgentSceneBindingResponseSchema,
-  AgentSceneDetailSchema,
-  AgentSceneMcpConfigResponseSchema,
-  AgentScenePromptResponseSchema,
   AgentScenesPageSchema,
+  AgentTenantPersonsSchema,
+  AgentTenantResponseSchema,
+  AgentTenantsListSchema,
+  ContextNodeDetailSchema,
+  ContextNodeMcpConfigResponseSchema,
+  ContextPromptComponentsResponseSchema,
   EMPTY_AGENT_SCENES_PAGE,
+  EMPTY_AGENT_TENANTS,
   ConnectedAppDetailSchema,
   ConnectedAppsListSchema,
   ContextCapabilityBindingResponseSchema,
@@ -27,10 +30,10 @@ import {
 } from "./context-capability-schema";
 import type {
   AgentContextCapabilities,
-  AgentSceneBinding,
-  AgentSceneDetail,
-  AgentScenePrompt,
   AgentScenesPage,
+  AgentTenant,
+  AgentTenantPerson,
+  AgentTenantsList,
   ConnectedAppDetail,
   ConnectedAppsList,
   ContextCapabilityBinding,
@@ -40,15 +43,22 @@ import type {
   ContextConfigSceneDetail,
   ContextConfigSceneGrant,
   ContextConnectorCredential,
+  ContextNodeDetail,
+  ContextNodeRef,
+  ContextPromptComponent,
+  ContextPromptComponentInput,
+  CreateAgentTenantInput,
   DeleteContextConnectorCredentialInput,
   DingTalkJsapiConfig,
   ListAgentScenesParams,
   ResolveContextConfigSceneInput,
   SetAgentContextCapabilityOffersInput,
-  SetAgentSceneBindingInput,
   SetContextCapabilityBindingInput,
   SetContextConnectorCredentialInput,
+  SetContextNodeBindingInput,
+  SetContextNodeCredentialInput,
   StartContextConnectorConnectionInput,
+  StartContextNodeConnectionInput,
 } from "../types/context-capability";
 import { SemanticaMCPStatusSchema, EMPTY_SEMANTICA_MCP_STATUS, type SemanticaMCPStatus } from "./semantica-mcp-schema";
 import { WorkspaceMCPConnectionsSchema, WorkspaceMCPLinkSchema, type WorkspaceMCPConnection, type CreateWorkspaceMCPConnection } from "./workspace-mcp-schema";
@@ -4282,9 +4292,13 @@ export class ApiClient {
     });
   }
 
-  async getContextConfigAgent(agentId: string): Promise<ContextConfigAgentDetail | null> {
+  /** What the caller may configure for one agent in one tenant: `orgId`,
+   * else the server's default (the agent's own org, or the tenant of the
+   * caller's newest grant). */
+  async getContextConfigAgent(agentId: string, orgId = ""): Promise<ContextConfigAgentDetail | null> {
+    const query = orgId ? `?${new URLSearchParams({ org_id: orgId }).toString()}` : "";
     const raw = await this.fetch<unknown>(
-      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}`,
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}${query}`,
       { headers: NO_WORKSPACE_HEADER },
     );
     return parseWithFallback<ContextConfigAgentDetail | null>(raw, ContextConfigAgentDetailSchema, null, {
@@ -4293,9 +4307,16 @@ export class ApiClient {
     });
   }
 
-  async getContextConfigScene(agentId: string, sceneKey: string): Promise<ContextConfigSceneDetail | null> {
+  /** One scene the caller may configure. `orgId` names the scene's tenant
+   * when it is not the agent's own org. */
+  async getContextConfigScene(
+    agentId: string,
+    sceneKey: string,
+    orgId = "",
+  ): Promise<ContextConfigSceneDetail | null> {
+    const query = orgId ? `?${new URLSearchParams({ org_id: orgId }).toString()}` : "";
     const raw = await this.fetch<unknown>(
-      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}`,
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}${query}`,
       { headers: NO_WORKSPACE_HEADER },
     );
     return parseWithFallback<ContextConfigSceneDetail | null>(raw, ContextConfigSceneDetailSchema, null, {
@@ -4315,6 +4336,7 @@ export class ApiClient {
       resource_id: input.resourceId,
       enabled: input.enabled,
     };
+    if (input.orgId) body.org_id = input.orgId;
     // Only sent when the caller changes it; the server rejects it outside
     // person connector bindings.
     if (input.shareInGroups !== undefined) body.share_in_groups = input.shareInGroups;
@@ -4353,6 +4375,7 @@ export class ApiClient {
         body: JSON.stringify({
           scope_type: input.scopeType,
           scope_key: input.scopeKey,
+          ...(input.orgId ? { org_id: input.orgId } : {}),
           connector_id: input.connectorId,
           bearer: input.bearer,
         }),
@@ -4379,6 +4402,7 @@ export class ApiClient {
       scope_key: input.scopeKey,
       connector_id: input.connectorId,
     });
+    if (input.orgId) params.set("org_id", input.orgId);
     await this.fetch<void>(
       `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/credentials?${params.toString()}`,
       { method: "DELETE", headers: NO_WORKSPACE_HEADER },
@@ -4398,6 +4422,7 @@ export class ApiClient {
       scope_key: input.scopeKey,
       connector_id: input.connectorId,
     };
+    if (input.orgId) body.org_id = input.orgId;
     if (input.returnTo) body.return_to = input.returnTo;
     const raw = await this.fetch<unknown>(
       `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/connections/start`,
@@ -4416,8 +4441,10 @@ export class ApiClient {
     const body: Record<string, string> = {};
     if (input.chatId) body.chat_id = input.chatId;
     if (input.openConversationId) body.open_conversation_id = input.openConversationId;
+    // The tenant goes in the query: the body takes only the picker's ids.
+    const query = input.orgId ? `?${new URLSearchParams({ org_id: input.orgId }).toString()}` : "";
     const raw = await this.fetch<unknown>(
-      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/resolve`,
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/scenes/resolve${query}`,
       { method: "POST", body: JSON.stringify(body), headers: NO_WORKSPACE_HEADER },
     );
     return parseWithFallback<ContextConfigSceneGrant | null>(raw, ContextConfigSceneResolveSchema, null, {
@@ -4477,13 +4504,72 @@ export class ApiClient {
     });
   }
 
-  // Admin scenes (agent detail → 场域). Workspace-scoped like the context
+  // Admin 场域 (agent detail → 场域): tenants, their group chats and people,
+  // and the Context Builder of each level. Workspace-scoped like the context
   // capability admin routes: the workspace is pinned explicitly so the query
   // key's wsId and the request always agree.
 
-  async listAgentScenes(
+  async listAgentTenants(workspaceId: string, agentId: string): Promise<AgentTenantsList> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/tenants`, {
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<AgentTenantsList>(raw, AgentTenantsListSchema, EMPTY_AGENT_TENANTS, {
+      endpoint: "GET /api/agents/{id}/tenants",
+    });
+  }
+
+  /** Creates a tenant (企业) for a DingTalk OrgId. Resolves to the echoed
+   * tenant, or to what was sent when the echo is malformed. */
+  async createAgentTenant(
     workspaceId: string,
     agentId: string,
+    input: CreateAgentTenantInput,
+  ): Promise<AgentTenant> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/tenants`, {
+      method: "POST",
+      body: JSON.stringify({ org_id: input.orgId, name: input.name }),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return (
+      parseWithFallback<AgentTenant | null>(raw, AgentTenantResponseSchema, null, {
+        endpoint: "POST /api/agents/{id}/tenants",
+      }) ?? { orgId: input.orgId, name: input.name, source: "created", groupCount: 0, personCount: 0 }
+    );
+  }
+
+  async renameAgentTenant(
+    workspaceId: string,
+    agentId: string,
+    orgId: string,
+    name: string,
+  ): Promise<AgentTenant | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/tenants/${encodeURIComponent(orgId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+      },
+    );
+    return parseWithFallback<AgentTenant | null>(raw, AgentTenantResponseSchema, null, {
+      endpoint: "PATCH /api/agents/{id}/tenants/{orgId}",
+    });
+  }
+
+  /** Deletes a tenant and its enterprise-level configuration. Its group and
+   * person data stay (the org then shows as unassigned). */
+  async deleteAgentTenant(workspaceId: string, agentId: string, orgId: string): Promise<void> {
+    await this.fetch<void>(
+      `/api/agents/${encodeURIComponent(agentId)}/tenants/${encodeURIComponent(orgId)}`,
+      { method: "DELETE", headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
+    );
+  }
+
+  /** Group chats of one tenant, newest activity first. */
+  async listAgentTenantGroups(
+    workspaceId: string,
+    agentId: string,
+    orgId: string,
     params: ListAgentScenesParams = {},
   ): Promise<AgentScenesPage> {
     const search = new URLSearchParams();
@@ -4491,108 +4577,158 @@ export class ApiClient {
     if (params.offset !== undefined) search.set("offset", String(params.offset));
     const query = search.toString();
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scenes${query ? `?${query}` : ""}`,
+      `/api/agents/${encodeURIComponent(agentId)}/tenants/${encodeURIComponent(orgId)}/groups${query ? `?${query}` : ""}`,
       { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
     );
     return parseWithFallback<AgentScenesPage>(raw, AgentScenesPageSchema, EMPTY_AGENT_SCENES_PAGE, {
-      endpoint: "GET /api/agents/{id}/scenes",
+      endpoint: "GET /api/agents/{id}/tenants/{orgId}/groups",
     });
   }
 
-  async getAgentScene(
+  /** People known under one tenant (a 1:1 chat is its person). */
+  async listAgentTenantPersons(
     workspaceId: string,
     agentId: string,
-    sceneKey: string,
-  ): Promise<AgentSceneDetail | null> {
+    orgId: string,
+  ): Promise<AgentTenantPerson[]> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}`,
+      `/api/agents/${encodeURIComponent(agentId)}/tenants/${encodeURIComponent(orgId)}/persons`,
       { headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId } },
     );
-    return parseWithFallback<AgentSceneDetail | null>(raw, AgentSceneDetailSchema, null, {
-      endpoint: "GET /api/agents/{id}/scenes/{sceneKey}",
+    return parseWithFallback<AgentTenantPerson[]>(raw, AgentTenantPersonsSchema, [], {
+      endpoint: "GET /api/agents/{id}/tenants/{orgId}/persons",
     });
   }
 
-  /** Saves the scene prompt (trimmed by the server, at most 8000
-   * characters). A malformed echo falls back to the text that was sent; the
-   * caller refetches the scene for the authoritative value. */
-  async setAgentScenePrompt(
-    workspaceId: string,
-    agentId: string,
-    sceneKey: string,
-    prompt: string,
-  ): Promise<AgentScenePrompt> {
-    const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}/prompt`,
-      {
-        method: "PUT",
-        body: JSON.stringify({ prompt }),
-        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
-      },
-    );
-    return parseWithFallback<AgentScenePrompt>(
-      raw,
-      AgentScenePromptResponseSchema,
-      { text: prompt.trim(), updatedAt: "", updatedByName: "" },
-      { endpoint: "PUT /api/agents/{id}/scenes/{sceneKey}/prompt" },
+  private contextNodePath(agentId: string, node: ContextNodeRef): string {
+    return (
+      `/api/agents/${encodeURIComponent(agentId)}/tenants/${encodeURIComponent(node.orgId)}` +
+      `/context/${encodeURIComponent(node.scopeType)}/${encodeURIComponent(node.scopeKey)}`
     );
   }
 
-  async setAgentSceneBinding(
+  /** One level's Context Builder: its prompt components, connector and
+   * skill switches, custom MCP servers and the effective preview. */
+  async getContextNode(
     workspaceId: string,
     agentId: string,
-    sceneKey: string,
-    input: SetAgentSceneBindingInput,
-  ): Promise<AgentSceneBinding> {
-    const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}/bindings`,
-      {
-        method: "PUT",
-        body: JSON.stringify({
-          resource_type: input.resourceType,
-          resource_id: input.resourceId,
-          enabled: input.enabled,
-        }),
-        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
-      },
-    );
-    // The write succeeded; a malformed echo falls back to what was sent and
-    // the caller's invalidation refetches the authoritative state.
-    const binding = parseWithFallback<AgentSceneBinding | null>(
-      raw,
-      AgentSceneBindingResponseSchema,
-      null,
-      { endpoint: "PUT /api/agents/{id}/scenes/{sceneKey}/bindings" },
-    );
-    return binding ?? {
-      resourceType: input.resourceType,
-      resourceId: input.resourceId,
-      enabled: input.enabled,
-      updatedByName: "",
-      updatedAt: "",
-    };
+    node: ContextNodeRef,
+  ): Promise<ContextNodeDetail | null> {
+    const raw = await this.fetch<unknown>(this.contextNodePath(agentId, node), {
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<ContextNodeDetail | null>(raw, ContextNodeDetailSchema, null, {
+      endpoint: "GET /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}",
+      // Custom MCP servers can carry headers and environment values.
+      includeReceived: false,
+    });
   }
 
-  /** Saves the custom MCP servers of the scene page's scope (the scene, or
-   * the person of a 1:1 chat); null clears them. Resolves to the stored
-   * document, or to what was sent when the echo is malformed. */
-  async setAgentSceneMcpConfig(
+  /** Switches one offered connector or skill on or off at a level. */
+  async setContextNodeBinding(
     workspaceId: string,
     agentId: string,
-    sceneKey: string,
+    node: ContextNodeRef,
+    input: SetContextNodeBindingInput,
+  ): Promise<void> {
+    await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/bindings`, {
+      method: "PUT",
+      body: JSON.stringify({
+        resource_type: input.resourceType,
+        resource_id: input.resourceId,
+        enabled: input.enabled,
+      }),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+  }
+
+  /** Replaces a level's prompt components. Resolves to the stored list, or
+   * null when the echo is malformed (the caller refetches). */
+  async setContextNodePrompts(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+    prompts: ContextPromptComponentInput[],
+  ): Promise<ContextPromptComponent[] | null> {
+    const raw = await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/prompts`, {
+      method: "PUT",
+      body: JSON.stringify({
+        prompts: prompts.map((prompt) => ({ name: prompt.name, order: prompt.order, text: prompt.text })),
+      }),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<ContextPromptComponent[] | null>(raw, ContextPromptComponentsResponseSchema, null, {
+      endpoint: "PUT /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}/prompts",
+      includeReceived: false,
+    });
+  }
+
+  /** Saves a level's custom MCP servers; null clears them. Resolves to the
+   * stored document, or to what was sent when the echo is malformed. */
+  async setContextNodeMcpConfig(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
     mcpConfig: Record<string, unknown> | null,
   ): Promise<Record<string, unknown> | null> {
-    const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scenes/${encodeURIComponent(sceneKey)}/mcp-config`,
-      {
-        method: "PUT",
-        body: JSON.stringify({ mcp_config: mcpConfig }),
-        headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
-      },
-    );
-    return parseWithFallback<Record<string, unknown> | null>(raw, AgentSceneMcpConfigResponseSchema, mcpConfig, {
-      endpoint: "PUT /api/agents/{id}/scenes/{sceneKey}/mcp-config",
+    const raw = await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/mcp-config`, {
+      method: "PUT",
+      body: JSON.stringify({ mcp_config: mcpConfig }),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<Record<string, unknown> | null>(raw, ContextNodeMcpConfigResponseSchema, mcpConfig, {
+      endpoint: "PUT /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}/mcp-config",
       // MCP server configs can carry headers and environment values.
+      includeReceived: false,
+    });
+  }
+
+  /** Stores a level's token for a connector (a Bearer, or a Personal Access
+   * Token for an app that allows one). */
+  async setContextNodeCredential(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+    input: SetContextNodeCredentialInput,
+  ): Promise<void> {
+    await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/credentials`, {
+      method: "PUT",
+      body: JSON.stringify({ connector_id: input.connectorId, bearer: input.bearer }),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+  }
+
+  /** Removes a level's token or disconnects its OAuth account. */
+  async deleteContextNodeCredential(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+    connectorId: string,
+  ): Promise<void> {
+    const params = new URLSearchParams({ connector_id: connectorId });
+    await this.fetch<void>(`${this.contextNodePath(agentId, node)}/credentials?${params.toString()}`, {
+      method: "DELETE",
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+  }
+
+  /** Starts connecting an official app account for a level. Resolves to the
+   * provider authorization URL, "" when the server sent no navigable URL. */
+  async startContextNodeConnection(
+    workspaceId: string,
+    agentId: string,
+    node: ContextNodeRef,
+    input: StartContextNodeConnectionInput,
+  ): Promise<string> {
+    const body: Record<string, string> = { connector_id: input.connectorId };
+    if (input.returnTo) body.return_to = input.returnTo;
+    const raw = await this.fetch<unknown>(`${this.contextNodePath(agentId, node)}/connections/start`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<string>(raw, ConnectorAuthorizeUrlSchema, "", {
+      endpoint: "POST /api/agents/{id}/tenants/{orgId}/context/{scopeType}/{scopeKey}/connections/start",
       includeReceived: false,
     });
   }

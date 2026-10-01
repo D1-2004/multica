@@ -83,6 +83,10 @@ var preMigrationHooks = map[string]preMigrationHook{
 	// One custom MCP server configuration per scene or person scope (ON
 	// CONFLICT arbiter).
 	"9419_context_scope_mcp_config_scope_idx": cleanupInvalidConcurrentIndexHook("context_scope_mcp_config_scope_idx"),
+	// One tenant row per agent and org, and one prompt component per scope
+	// and name (ON CONFLICT arbiters).
+	"9421_agent_tenant_org_idx":              cleanupInvalidConcurrentIndexHook("agent_tenant_org_idx"),
+	"9423_context_prompt_component_name_idx": cleanupInvalidConcurrentIndexHook("context_prompt_component_name_idx"),
 }
 
 func repairIssueOriginTypeConstraintHook(ctx context.Context, pool *pgxpool.Pool) error {

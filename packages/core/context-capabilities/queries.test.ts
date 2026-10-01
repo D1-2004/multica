@@ -4,10 +4,10 @@ import { createQueryClient } from "../query-client";
 import {
   agentConnectedAppOptions,
   agentConnectedAppsOptions,
-  agentSceneOptions,
-  agentScenesOptions,
+  agentTenantGroupsOptions,
   contextCapabilityKeys,
   contextConfigKeys,
+  contextNodeOptions,
 } from "./queries";
 
 describe("context capability query keys", () => {
@@ -30,24 +30,41 @@ describe("context capability query keys", () => {
     expect(contextConfigKeys.agent("agent-2")).not.toEqual(agentKey);
   });
 
-  it("nests the admin scene list and scene detail under the agent", () => {
+  it("nests tenants, their groups and people, and every Context Builder node under the agent", () => {
     const agentKey = contextCapabilityKeys.agent("ws-1", "agent-1");
-    const scenesKey = contextCapabilityKeys.scenes("ws-1", "agent-1");
-    const sceneKey = contextCapabilityKeys.scene("ws-1", "agent-1", "cid1");
-    expect(scenesKey.slice(0, agentKey.length)).toEqual([...agentKey]);
-    expect(sceneKey.slice(0, scenesKey.length)).toEqual([...scenesKey]);
-    expect(contextCapabilityKeys.scenes("ws-2", "agent-1")).not.toEqual(scenesKey);
+    const tenantsKey = contextCapabilityKeys.tenants("ws-1", "agent-1");
+    const groupsKey = contextCapabilityKeys.tenantGroups("ws-1", "agent-1", "ding1");
+    const personsKey = contextCapabilityKeys.tenantPersons("ws-1", "agent-1", "ding1");
+    const nodesKey = contextCapabilityKeys.contextNodes("ws-1", "agent-1");
+    const nodeKey = contextCapabilityKeys.contextNode("ws-1", "agent-1", {
+      orgId: "ding1",
+      scopeType: "scene",
+      scopeKey: "cid1",
+    });
+    expect(tenantsKey.slice(0, agentKey.length)).toEqual([...agentKey]);
+    expect(groupsKey.slice(0, tenantsKey.length)).toEqual([...tenantsKey]);
+    expect(personsKey.slice(0, tenantsKey.length)).toEqual([...tenantsKey]);
+    expect(nodeKey.slice(0, nodesKey.length)).toEqual([...nodesKey]);
+    expect(nodesKey.slice(0, agentKey.length)).toEqual([...agentKey]);
+    expect(contextCapabilityKeys.tenants("ws-2", "agent-1")).not.toEqual(tenantsKey);
+    // The same key under two tenants, or at two levels, is two nodes.
+    expect(
+      contextCapabilityKeys.contextNode("ws-1", "agent-1", { orgId: "ding2", scopeType: "scene", scopeKey: "cid1" }),
+    ).not.toEqual(nodeKey);
+    expect(
+      contextCapabilityKeys.contextNode("ws-1", "agent-1", { orgId: "ding1", scopeType: "person", scopeKey: "cid1" }),
+    ).not.toEqual(nodeKey);
   });
 });
 
-describe("admin scene list paging", () => {
+describe("tenant group paging", () => {
   const page = (count: number, hasMore: boolean) => ({
     scenes: Array.from({ length: count }, () => ({}) as never),
     hasMore,
   });
 
   it("continues after the loaded rows and stops without more rows", () => {
-    const { getNextPageParam } = agentScenesOptions("ws-1", "agent-1");
+    const { getNextPageParam } = agentTenantGroupsOptions("ws-1", "agent-1", "ding1");
     expect(getNextPageParam(page(50, true), [], 0, [])).toBe(50);
     expect(getNextPageParam(page(50, false), [], 50, [])).toBeUndefined();
     // A server that claims more but sends nothing must not loop.
@@ -55,14 +72,14 @@ describe("admin scene list paging", () => {
   });
 });
 
-describe("connected apps and scene detail refetch on focus", () => {
+describe("connected apps and Context Builder nodes refetch on focus", () => {
   it("refetches when the window regains focus under the shared Infinity staleTime", async () => {
     // A connect finished in the system browser (desktop) or on a phone must
     // show when the admin comes back, although nothing invalidates the keys.
     for (const makeOptions of [
       () => agentConnectedAppsOptions("ws-1", "agent-1"),
       () => agentConnectedAppOptions("ws-1", "agent-1", "github"),
-      () => agentSceneOptions("ws-1", "agent-1", "cid1"),
+      () => contextNodeOptions("ws-1", "agent-1", { orgId: "ding1", scopeType: "org", scopeKey: "ding1" }),
     ]) {
       const client: QueryClient = createQueryClient();
       client.mount();

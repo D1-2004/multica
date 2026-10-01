@@ -173,7 +173,7 @@ describe("context capability mobile responses", () => {
         scope_key: "cid1",
         scope_title: "Team",
       }),
-    ).toEqual({ agentId, workspaceId: "", scopeType: null, scopeKey: "cid1", scopeTitle: "Team" });
+    ).toEqual({ agentId, workspaceId: "", scopeType: null, scopeKey: "cid1", scopeTitle: "Team", orgId: "" });
     expect(
       parseWithFallback({ scope_type: "scene" }, ContextConfigRedeemSchema, EMPTY_CONTEXT_CONFIG_REDEEM, opts),
     ).toEqual(EMPTY_CONTEXT_CONFIG_REDEEM);
@@ -320,6 +320,7 @@ describe("context capability admin response", () => {
         skills: [],
       },
       offers: { connectorIds: [connectorId], skillIds: [] },
+      orgs: [],
       scenes: [
         {
           scopeKey: "cid1",
@@ -331,6 +332,31 @@ describe("context capability admin response", () => {
       persons: [],
       configureUrl: "https://app.example/dingtalk/configure?agent=a",
     });
+  });
+
+  it("maps enterprise level summaries (an older backend omits them)", () => {
+    const result = AgentContextCapabilitiesSchema.parse({
+      enabled: true,
+      orgs: [
+        {
+          scope_key: "ding1",
+          scope_title: "",
+          bindings: [{ resource_type: "skill", resource_id: connectorId, enabled: true }],
+          credential_count: null,
+        },
+      ],
+    });
+    expect(result.orgs).toEqual([
+      {
+        scopeKey: "ding1",
+        scopeTitle: "",
+        bindings: [{ resourceType: "skill", resourceId: connectorId, enabled: true, shareInGroups: false }],
+        credentialCount: 0,
+      },
+    ]);
+    expect(
+      parseWithFallback({ enabled: true, orgs: [{ scope_key: "" }] }, AgentContextCapabilitiesSchema, null, opts),
+    ).toBeNull();
   });
 
   it("treats a disabled flag response as disabled and malformed input as unavailable", () => {

@@ -35,7 +35,14 @@ describe("context capability mobile client", () => {
     expect(init.method).toBe("POST");
     expect(init.body).toBe(JSON.stringify({ token: "tok" }));
     expect(init.headers["X-Workspace-Slug"]).toBe("");
-    expect(result).toEqual({ agentId, workspaceId: "ws-1", scopeType: "scene", scopeKey: "cid1", scopeTitle: "Team" });
+    expect(result).toEqual({
+      agentId,
+      workspaceId: "ws-1",
+      scopeType: "scene",
+      scopeKey: "cid1",
+      scopeTitle: "Team",
+      orgId: "",
+    });
   });
 
   it("returns null for a malformed agent detail instead of an empty agent", async () => {
@@ -166,7 +173,24 @@ describe("context capability mobile client", () => {
     const fetch = stubFetch({ scene: { scope_key: "cid1", scope_title: "Team", source: "jsapi", expires_at: "" } });
     const scene = await new ApiClient(base).resolveContextConfigScene(agentId, { chatId: "chat-1" });
     expect(JSON.parse(requestOf(fetch).init.body as string)).toEqual({ chat_id: "chat-1" });
-    expect(scene).toEqual({ scopeKey: "cid1", scopeTitle: "Team", source: "jsapi", expiresAt: "", kind: "group" });
+    expect(scene).toEqual({
+      scopeKey: "cid1",
+      scopeTitle: "Team",
+      source: "jsapi",
+      expiresAt: "",
+      kind: "group",
+      orgId: "",
+    });
+    expect(new URL(requestOf(fetch).url).search).toBe("");
+  });
+
+  it("resolves a picked group in the page's tenant through the query", async () => {
+    const fetch = stubFetch({ scene: { scope_key: "cid1", scope_title: "Team", source: "jsapi", expires_at: "", org_id: "ding2" } });
+    const scene = await new ApiClient(base).resolveContextConfigScene(agentId, { chatId: "chat-1", orgId: "ding2" });
+    const { url, init } = requestOf(fetch);
+    expect(new URL(url).searchParams.get("org_id")).toBe("ding2");
+    expect(JSON.parse(init.body as string)).toEqual({ chat_id: "chat-1" });
+    expect(scene?.orgId).toBe("ding2");
   });
 
   it("asks for a JSAPI signature of the exact page URL", async () => {

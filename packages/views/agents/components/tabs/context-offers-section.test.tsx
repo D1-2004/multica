@@ -38,6 +38,7 @@ const body: AgentContextCapabilities = {
     ],
   },
   offers: { connectorIds: ["conn-wiki"], skillIds: ["skill-report"] },
+  orgs: [],
   scenes: [
     {
       scopeKey: "cid-1",
@@ -92,6 +93,22 @@ describe("offer usage", () => {
     expect(usage.get("connector:conn-wiki")).toEqual({ scenes: 1, people: 1 });
     expect(usage.get("skill:skill-report")).toEqual({ scenes: 1, people: 0 });
     expect(usage.get("connector:conn-jira")).toBeUndefined();
+  });
+
+  it("counts an enterprise level's switch as a scene", () => {
+    const usage = offerUsageByResource({
+      ...body,
+      orgs: [
+        {
+          scopeKey: "ding1",
+          scopeTitle: "",
+          bindings: [{ resourceType: "skill", resourceId: "skill-triage", enabled: true, shareInGroups: false }],
+          credentialCount: 0,
+        },
+      ],
+    });
+    expect(usage.get("skill:skill-triage")).toEqual({ scenes: 1, people: 0 });
+    expect(usage.get("skill:skill-report")).toEqual({ scenes: 1, people: 0 });
   });
 });
 

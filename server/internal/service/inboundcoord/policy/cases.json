@@ -1585,6 +1585,17 @@
       "verification": "local_host_and_ui_tests_passed; preproduction_off_and_invalid_mode_api_passed; native_all_mode_delivery_not_run"
     },
     {
+      "id": "f04_capability_answer_config_link",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F17"
+      ],
+      "context_a": "钉钉群聊或单聊里问「你有哪些能力」，Coordinator以describe_capabilities回答，派发上下文给出可信群场域或单一发信人。",
+      "context_b": "同一问题，但签发失败/超时/无可信场域（未知会话类型、多人合窗、重跑上下文）；或Web会话、A2UI选择卡、task_finished；或Agent未启用Coordinator；或本轮只有问候等其他动作。",
+      "expected_effects": "A的回复以Host固定一行结束：群聊为本群场域链接（30分钟、可复用），单聊为个人链接（15分钟、单次、兼授权该单聊场域）；链接随checkpoint保存，重投恢复同一回复不再铸造；模型与审查都看不到链接，日志/trace只记状态。B不附链接，模型回复逐字不变，不新增模型调用。",
+      "verification": "host_tests_passed_local_2026-09-30; model_replay_not_run; pre_e2e_not_run"
+    },
+    {
       "id": "f_finish_transport_recovery",
       "rule_ids": [
         "COORD.F13"
