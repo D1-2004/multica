@@ -318,8 +318,8 @@ func (h *Handler) completeConnectorOAuthCallback(w http.ResponseWriter, r *http.
 			callback.BrowserNonce = cookie.Value
 			origin, path := h.connectorOAuthCallbackTarget(via)
 			http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, path))
-			if via == connectorOAuthViaDCR && path != connectorOAuthCallbackAliasPath {
-				http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, connectorOAuthCallbackAliasPath))
+			if via == connectorOAuthViaDCR && path != connectorOAuthCallbackLegacyPath {
+				http.SetCookie(w, connectorOAuthBrowserCookie(stateHash, "", origin, connectorOAuthCallbackLegacyPath))
 			}
 		}
 	}

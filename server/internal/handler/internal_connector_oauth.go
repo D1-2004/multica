@@ -9,7 +9,7 @@ package handler
 //     the account label, run the first tool discovery, and compute the
 //     browser redirect.
 //
-// DCR apps redirect to <app origin>/api/connector-oauth/callback and reuse
+// DCR apps redirect to <production origin>/api/connectors/oauth/callback and reuse
 // one dynamic client registration per connector (connector_oauth_client),
 // registered with the client_name connectorOAuthClientName picks.
 // GitHub uses the deployment's GitHub App and its registered callback
@@ -148,7 +148,7 @@ type connectorOAuthStarted struct {
 
 // connectorOAuthCallback is the input of completeConnectorOAuth.
 type connectorOAuthCallback struct {
-	// Via is connectorOAuthViaDCR (GET /api/connector-oauth/callback) or
+	// Via is connectorOAuthViaDCR (GET /api/connectors/oauth/callback) or
 	// connectorOAuthViaGitHub (delegated from GitHubAuthorizeCallback).
 	Via   string
 	State string
@@ -274,13 +274,13 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 		AuthorizeURL: authorizeURL,
 		Cookie:       connectorOAuthBrowserCookie(payload.StateHash, nonce, homeOrigin, callbackPath),
 	}
-	// Provider consoles register the alias. The canonical path stays the
-	// redirect URI, so a forwarded callback still lands on it. A direct hit
-	// on the alias needs its own cookie: cookie path matching does not treat
-	// /api/connector-oauth/callback and /api/connectors/oauth/callback as one.
-	if payload.Via == connectorOAuthViaDCR && callbackPath != connectorOAuthCallbackAliasPath {
+	// Consoles register only the canonical path, and production forwards
+	// there. The legacy path stays mounted, so a client already registered
+	// with it can still present the binding cookie. Cookie path matching
+	// does not treat the two paths as one.
+	if payload.Via == connectorOAuthViaDCR && callbackPath != connectorOAuthCallbackLegacyPath {
 		started.ExtraCookies = []*http.Cookie{
-			connectorOAuthBrowserCookie(payload.StateHash, nonce, homeOrigin, connectorOAuthCallbackAliasPath),
+			connectorOAuthBrowserCookie(payload.StateHash, nonce, homeOrigin, connectorOAuthCallbackLegacyPath),
 		}
 	}
 	if err := h.insertConnectorOAuthState(ctx, payload, scope, returnTo); err != nil {

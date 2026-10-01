@@ -23,6 +23,7 @@ func catalogAPIRouter(h *Handler) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/api/github/authorize", h.GitHubAuthorizeCallback)
 	r.Get(ConnectorOAuthCallbackPath, h.ConnectorOAuthCallback)
+	r.Get(ConnectorOAuthCallbackLegacyPath, h.ConnectorOAuthCallback)
 	r.Route("/api/context-capabilities", func(r chi.Router) {
 		r.Use(RequireDingTalkHumanActor)
 		r.Get("/agents/{agentId}", h.GetContextConfigAgent)
