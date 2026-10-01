@@ -37,7 +37,7 @@ func TestDSHHostWaitingRecoveryUsesLatestAttempt(t *testing.T) {
 		if _, err := pool.Exec(ctx, `UPDATE agent_task_runtime_start_attempt SET finished_at=now()-interval '1 minute' WHERE id=$1`, attempt.ID); err != nil {
 			t.Fatal(err)
 		}
-		waiting, err := queries.ListDSHHostWaitingTasks(ctx)
+		waiting, err := queries.ListDSHHostWaitingTasks(ctx, db.ListDSHHostWaitingTasksParams{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func TestDSHHostWaitingRecoversAbandonedStartupWithoutStealingLiveLease(t *testi
 	}
 	check := func(want bool) {
 		t.Helper()
-		rows, err := queries.ListDSHHostWaitingTasks(ctx)
+		rows, err := queries.ListDSHHostWaitingTasks(ctx, db.ListDSHHostWaitingTasksParams{})
 		if err != nil {
 			t.Fatal(err)
 		}

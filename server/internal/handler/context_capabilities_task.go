@@ -480,8 +480,9 @@ func (h *Handler) authorizedTaskConnectors(ctx context.Context, workspaceID pgty
 		}
 		seen[c.ID] = true
 		// An official app connector is not mounted until its tools are
-		// known (an account was connected and discovery pinned them).
-		if len(c.AllowedTools) == 0 {
+		// known (an account was connected and discovery pinned them). A
+		// custom connector exposes the live upstream list instead.
+		if c.CatalogSlug != "" && len(c.AllowedTools) == 0 {
 			continue
 		}
 		c.bindingLayer = connectorBindingGlobal

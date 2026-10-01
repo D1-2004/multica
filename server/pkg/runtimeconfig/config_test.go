@@ -395,3 +395,151 @@ func TestCoordinatorModelStrictDocument(t *testing.T) {
 		t.Fatalf("model=%q", cfg.Runtime.LLM.CoordinatorModel)
 	}
 }
+
+func TestDiamondRuntimeRecoverySwitchesRollback(t *testing.T) {
+	client := &fakeDiamondClient{content: validJSON()}
+	service, err := newDiamondService(nil, true, func() (diamondClient, error) { return client, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	for _, enabled := range []bool{true, false} {
+		flags := `"recover_abandoned_launches": false, "bound_dsh_host_wait": false,`
+		if enabled {
+			flags = `"recover_abandoned_launches": true, "bound_dsh_host_wait": true,`
+		}
+		client.onChange(strings.Replace(validJSON(), `"fc_e2b": {`, `"fc_e2b": {`+flags, 1))
+		cfg := service.Current().Config.Runtime.FCE2B
+		if cfg.RecoverAbandonedLaunches != enabled || cfg.BoundDSHHostWait != enabled {
+			t.Fatalf("switch update not applied: %+v", cfg)
+		}
+	}
+}
+
+func TestDiamondQuickwinFlagsSwitchTogetherWithoutRestart(t *testing.T) {
+	client := &fakeDiamondClient{content: validJSON()}
+	service, err := newDiamondService(nil, true, func() (diamondClient, error) { return client, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	for _, value := range []string{"true", "false", "true"} {
+		flags := `"dsh_event_wakeup":` + value + `,"dingtalk_reply_command":` + value + `,"asb_event_wakeup":` + value + `,"startup_observability":` + value + `,"bounded_ready_exec":` + value + `,"coalesced_hot_exec":` + value + `,"batch_skill_resolve":` + value + `,`
+		client.onChange(strings.Replace(validJSON(), `"fc_e2b": {`, `"fc_e2b": {`+flags, 1))
+		cfg := service.Current().Config.Runtime.FCE2B
+		want := value == "true"
+		for _, got := range []bool{cfg.DSHEventWakeup, cfg.DingTalkReplyCommand, cfg.ASBEventWakeup, cfg.StartupObservability, cfg.BoundedReadyExec, cfg.CoalescedHotExec, cfg.BatchSkillResolve} {
+			if got != want {
+				t.Fatal("live flag update lost")
+			}
+		}
+	}
+}
+
+func TestDiamondPerformanceRolloutHotSelectionAndIsolation(t *testing.T) {
+	const selected = "e2293e9e-1e79-4926-b0e6-da4cb693add0"
+	const other = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	client := &fakeDiamondClient{content: validJSON()}
+	service, err := newDiamondService(nil, true, func() (diamondClient, error) { return client, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	for _, enabled := range []bool{true, false, true} {
+		value := "false"
+		if enabled {
+			value = "true"
+		}
+		rollout := `"performance_optimization":{"enabled":` + value + `,"agent_ids":["` + selected + `"]},`
+		client.onChange(strings.Replace(validJSON(), `"fc_e2b": {`, rollout+`"fc_e2b": {`, 1))
+		cfg := service.Current().Config.Runtime.PerformanceOptimization
+		if cfg == nil || cfg.AllowsAgent(selected) != enabled || cfg.AllowsAgent(other) {
+			t.Fatalf("rollout selection after hot update: %+v", cfg)
+		}
+	}
+	// Snapshot consumers cannot mutate the live allowlist.
+	snapshot := service.Current()
+	snapshot.Config.Runtime.PerformanceOptimization.AgentIDs[0] = other
+	if !service.Current().Config.Runtime.PerformanceOptimization.AllowsAgent(selected) {
+		t.Fatal("rollout allowlist escaped snapshot copy")
+	}
+}
+
+func TestPerformanceRolloutRejectsMalformedTargets(t *testing.T) {
+	for _, target := range []string{"not-a-uuid", "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA"} {
+		rollout := `"performance_optimization":{"enabled":true,"agent_ids":["` + target + `"]},`
+		if _, err := ParseStrict([]byte(strings.Replace(validJSON(), `"fc_e2b": {`, rollout+`"fc_e2b": {`, 1)), false); err == nil {
+			t.Fatalf("accepted malformed rollout agent %q", target)
+		}
+	}
+}
+
+func TestFinishSchemaExperimentConfig(t *testing.T) {
+	const agent = "7b1f0d3e-2c4a-4e5b-8f6a-9c0d1e2f3a4b"
+	with := func(experiment string) []byte {
+		rollout := `"performance_optimization":{"enabled":true,"agent_ids":["` + agent + `"],"finish_schema_experiment":` + experiment + `},`
+		return []byte(strings.Replace(validJSON(), `"fc_e2b": {`, rollout+`"fc_e2b": {`, 1))
+	}
+	cfg, err := ParseStrict(with(`{"enabled":true,"salt":"pri47-a"}`), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Runtime.PerformanceOptimization.FinishSchemaExperiment; got == nil || !got.Enabled || got.Salt != "pri47-a" {
+		t.Fatalf("experiment not parsed: %+v", got)
+	}
+	for _, bad := range []string{`{"enabled":true,"salt":""}`, `{"enabled":true,"salt":" x"}`, `{"enabled":true,"salt":"` + strings.Repeat("s", 65) + `"}`, `{"enabled":true,"salt":"x","percent":50}`, `{"enabled":true,"mode":"split","salt":""}`, `{"enabled":true,"mode":"pruned","salt":"x"}`} {
+		if _, err := ParseStrict(with(bad), false); err == nil {
+			t.Fatalf("accepted invalid experiment %s", bad)
+		}
+	}
+	if _, err := ParseStrict(with(`{"enabled":false,"salt":""}`), false); err != nil {
+		t.Fatalf("a disabled experiment needs no salt: %v", err)
+	}
+	stop, err := ParseStrict(with(`{"enabled":true,"mode":"expanded","salt":""}`), false)
+	if err != nil {
+		t.Fatalf("the stop-loss mode needs no salt: %v", err)
+	}
+	if got := stop.Runtime.PerformanceOptimization.FinishSchemaExperiment; got.Mode != FinishSchemaModeExpanded || got.SplitsGroups() {
+		t.Fatalf("the stop-loss mode must not split: %+v", got)
+	}
+	if !cfg.Runtime.PerformanceOptimization.FinishSchemaExperiment.SplitsGroups() {
+		t.Fatal("an enabled experiment without a mode splits the groups")
+	}
+}
+
+func TestFinishSchemaExperimentSnapshotIsACopy(t *testing.T) {
+	const agent = "7b1f0d3e-2c4a-4e5b-8f6a-9c0d1e2f3a4b"
+	client := &fakeDiamondClient{content: validJSON()}
+	service, err := newDiamondService(nil, true, func() (diamondClient, error) { return client, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	rollout := `"performance_optimization":{"enabled":true,"agent_ids":["` + agent + `"],"finish_schema_experiment":{"enabled":true,"salt":"pri47-a"}},`
+	client.onChange(strings.Replace(validJSON(), `"fc_e2b": {`, rollout+`"fc_e2b": {`, 1))
+	snapshot := service.Current()
+	snapshot.Config.Runtime.PerformanceOptimization.FinishSchemaExperiment.Enabled = false
+	if !service.Current().Config.Runtime.PerformanceOptimization.FinishSchemaExperiment.Enabled {
+		t.Fatal("experiment config escaped snapshot copy")
+	}
+}
+
+func TestPerformanceCollectQuietMS(t *testing.T) {
+	const agent = "7b1f0d3e-2c4a-4e5b-8f6a-9c0d1e2f3a4b"
+	with := func(quiet string) []byte {
+		rollout := `"performance_optimization":{"enabled":true,"agent_ids":["` + agent + `"]` + quiet + `},`
+		return []byte(strings.Replace(validJSON(), `"fc_e2b": {`, rollout+`"fc_e2b": {`, 1))
+	}
+	cfg, err := ParseStrict(with(`,"collect_quiet_ms":1000`), false)
+	if err != nil || cfg.Runtime.PerformanceOptimization.CollectQuietMS != 1000 {
+		t.Fatalf("a 1 s collect window must parse: %v", err)
+	}
+	if cfg, err := ParseStrict(with(``), false); err != nil || cfg.Runtime.PerformanceOptimization.CollectQuietMS != 0 {
+		t.Fatalf("an absent collect window keeps the default: %v", err)
+	}
+	for _, bad := range []string{`,"collect_quiet_ms":300`, `,"collect_quiet_ms":5000`, `,"collect_quiet_ms":-1`} {
+		if _, err := ParseStrict(with(bad), false); err == nil {
+			t.Fatalf("accepted %s", bad)
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/multica-ai/multica/server/pkg/dws"
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
@@ -123,7 +124,7 @@ func (c CLI) Send(ctx context.Context, configDir string, req SendRequest) (SendR
 	if err != nil {
 		return SendResult{}, err
 	}
-	raw, err := c.messageCommand(ctx, configDir, args)
+	raw, err := c.messageOp(ctx, configDir, args, func(client *dws.Client) ([]byte, error) { return sendSDK(ctx, client, req) })
 	if err != nil {
 		return SendResult{}, err
 	}
@@ -168,11 +169,25 @@ func (c CLI) QuerySendStatus(ctx context.Context, configDir, openTaskID string) 
 	if strings.TrimSpace(openTaskID) == "" {
 		return SendStatus{}, errors.New("DWS send task id is required")
 	}
-	raw, err := c.messageCommand(ctx, configDir, []string{"chat", "message", "query-send-status", "--open-task-id", openTaskID, "--format", "json"})
+	raw, err := c.messageOp(ctx, configDir, []string{"chat", "message", "query-send-status", "--open-task-id", openTaskID, "--format", "json"},
+		func(client *dws.Client) ([]byte, error) { return querySendStatusSDK(ctx, client, openTaskID) })
 	if err != nil {
 		return SendStatus{}, err
 	}
 	return ParseSendStatus(raw)
+}
+
+// messageOp runs a message command: through dir's SDK session when Exchange
+// made one, else the dws CLI with args.
+func (c CLI) messageOp(ctx context.Context, configDir string, args []string, viaSDK func(*dws.Client) ([]byte, error)) ([]byte, error) {
+	client, _, ok, err := sdkClient(configDir)
+	if !ok {
+		return c.messageCommand(ctx, configDir, args)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return viaSDK(client)
 }
 
 func (c CLI) messageCommand(ctx context.Context, configDir string, args []string) ([]byte, error) {

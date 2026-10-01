@@ -45,7 +45,7 @@ func TestCoordinatorCollectDeadline(t *testing.T) {
 		{0, 4 * time.Second}, {3 * time.Second, 7 * time.Second},
 		{10 * time.Second, 12 * time.Second}, {20 * time.Second, 12 * time.Second},
 	} {
-		if got := coordinatorCollectDeadline(start, start.Add(tc.elapsed)); !got.Equal(start.Add(tc.want)) {
+		if got := coordinatorCollectDeadline(start, start.Add(tc.elapsed), inboundCoordinatorCollectWindow); !got.Equal(start.Add(tc.want)) {
 			t.Fatalf("elapsed=%v deadline=%v, want %v", tc.elapsed, got.Sub(start), tc.want)
 		}
 	}

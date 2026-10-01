@@ -204,17 +204,21 @@ func finishCoordinatorTrace(t *langfuse.Trace, decision Decision, loopErr error)
 	t.End(langfuse.EndOptions{Output: output, Err: loopErr})
 }
 
-func traceRoundGeneration(t *langfuse.Trace, round int, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, model string) *langfuse.Observation {
+func traceRoundGeneration(t *langfuse.Trace, round int, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, model string, limit int64, recovery bool) *langfuse.Observation {
 	if t == nil {
 		return nil
 	}
 	params := map[string]any{
 		"temperature":           temperature,
-		"max_completion_tokens": maxCompletionTokens,
+		"max_completion_tokens": limit,
 		"reasoning_effort":      "none",
 		"enable_thinking":       false,
 		"tool_choice":           "required",
 		"tools":                 toolParamNames(tools),
+	}
+	if recovery && isDeepSeekFlash(model) {
+		delete(params, "reasoning_effort")
+		params["thinking"] = map[string]any{"type": "disabled"}
 	}
 	return t.StartObservation(langfuse.ObservationOptions{
 		Type:            langfuse.TypeGeneration,

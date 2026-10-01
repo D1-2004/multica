@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/startupobs"
 	"slices"
 	"strings"
 	"time"
@@ -100,7 +101,9 @@ type Provisioner struct {
 
 // Ensure advances a durable intent. It never retries an ambiguous cloud write.
 // The authenticated caller must first authorize this employee in its workspace.
-func (m Provisioner) Ensure(ctx context.Context, key Key, spec ProvisionSpec) (Host, error) {
+func (m Provisioner) Ensure(ctx context.Context, key Key, spec ProvisionSpec) (host Host, resultErr error) {
+	finish := startupobs.Start(ctx, "nas_provisioning")
+	defer func() { finish(resultErr) }()
 	if key.WorkspaceID == uuid.Nil || key.AgentID == uuid.Nil || !spec.valid() || m.Store == nil || m.Provider == nil {
 		return Host{}, errors.New("invalid DSH storage provisioning configuration")
 	}
@@ -113,25 +116,31 @@ func (m Provisioner) Ensure(ctx context.Context, key Key, spec ProvisionSpec) (H
 			return Host{}, err
 		}
 		var id string
+		finishStep := startupobs.Start(ctx, fmt.Sprintf("nas_step_%d", p.Step))
 		switch p.State {
 		case "planned":
 			create, prepareErr := m.Provider.PrepareStorageResource(ctx, p)
 			if prepareErr != nil {
+				finishStep(prepareErr)
 				return Host{}, prepareErr
 			}
 			if create == nil {
+				finishStep(errors.New("missing creation operation"))
 				return Host{}, errors.New("missing DSH storage creation operation")
 			}
 			p, err = m.Store.ClaimProvisionStep(ctx, p)
 			if err != nil {
+				finishStep(err)
 				return Host{}, err
 			}
 			id, err = create(ctx)
 		case "creating":
 			id, err = m.Provider.FindStorageResource(ctx, p)
 		default:
+			finishStep(errors.New("invalid provisioning state"))
 			return Host{}, errors.New("invalid DSH storage provisioning state")
 		}
+		finishStep(err)
 		if err != nil || id == "" {
 			return Host{}, fmt.Errorf("%w: storage creation outcome is unconfirmed", ErrPending)
 		}

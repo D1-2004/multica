@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/dshhost"
+	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/gitrepo"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
@@ -95,6 +96,11 @@ type Config struct {
 	// pre-release and production (MULTICA_A2A_FORWARD_REGISTRATION_SECRET);
 	// both deployments share it and it must be at least 32 characters.
 	A2AForwardRegistrationSecret string
+	// GitHubPreWebhookURL and GitHubPreWebhookSecret enable a dedicated ingress
+	// that verifies the pre-release App's deliveries and forwards them unchanged.
+	// This deployment never processes their installation or PR state locally.
+	GitHubPreWebhookURL    string
+	GitHubPreWebhookSecret string
 	// StableRuntimePublisherUserIDs is the deployment-owned UUID allow-list for
 	// promoting immutable FC/E2B templates and controlling their rollout.
 	StableRuntimePublisherUserIDs map[string]struct{}
@@ -221,6 +227,10 @@ type enterpriseIdentityService interface {
 }
 
 type Handler struct {
+	// githubPreWebhookTransport is the fixed pre-release webhook hop; nil uses
+	// the bounded, non-redirecting default transport.
+	githubPreWebhookTransport http.RoundTripper
+
 	// a2aForwardTransport overrides the transport used to forward inbound A2A
 	// JSON-RPC to another environment; nil uses the default.
 	a2aForwardTransport      http.RoundTripper
@@ -239,6 +249,7 @@ type Handler struct {
 	Bus                      *events.Bus
 	TaskService              *service.TaskService
 	InboundCoordinator       *inboundcoord.Coordinator
+	CoordinatorCollectQuiet  func(agentID pgtype.UUID) time.Duration
 	UserDecisions            *userdecision.Service
 	InboundCoordinatorWorker *InboundCoordinatorJobWorker
 	SceneMemoryStore         *scenememory.Store
@@ -350,6 +361,11 @@ type Handler struct {
 	// cleanly when the DB is healthy without blocking process exit if the
 	// pool is frozen — at worst the next replica waits the full TTL.
 	ChannelSupervisor *engine.Supervisor
+
+	// DWSEvents is the server's DingTalk personal event source
+	// (runtime.use_dws_for_tag): one DWS event stream per identity across
+	// replicas, handed over on shutdown. Nil without Redis.
+	DWSEvents *dwseventsource.Source
 	// ChannelRouter is the channel-agnostic inbound pipeline (the shared
 	// handler the Supervisor injects into every Channel). main.go calls
 	// Drain on it during shutdown, after the Supervisor has stopped

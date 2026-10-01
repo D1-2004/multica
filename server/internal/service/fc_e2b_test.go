@@ -834,7 +834,7 @@ func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {
 	}
 }
 
-// The cancelled-task stop proves ownership by FC_E2B_TASK_ID, so the runner
+// The aborted-task stop proves ownership by FC_E2B_TASK_ID, so the runner
 // carries it exactly where runtime.fc_e2b_sdk_rollout selects the task.
 func TestFCE2BRunnerTaskMarkerFollowsTheSDKRollout(t *testing.T) {
 	workspace, agent := uuid.New(), uuid.New()

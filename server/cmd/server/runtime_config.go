@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"os"
 	"slices"
 	"strings"
@@ -108,15 +109,61 @@ func (c *appRuntimeConfig) validateSnapshot(raw runtimeconfig.Config) error {
 }
 
 func (c *appRuntimeConfig) current() runtimeconfig.Config {
+	return c.snapshot().Config
+}
+
+func (c *appRuntimeConfig) snapshot() runtimeconfig.Snapshot {
 	if c == nil || c.remote == nil {
-		return runtimeconfig.Config{}
+		return runtimeconfig.Snapshot{}
 	}
-	return c.remote.Current().Config
+	return c.remote.Current()
+}
+
+// coordinatorDecisionConfig reads, from one runtime configuration snapshot,
+// the Coordinator model, whether the performance switch selects agentID,
+// and the finish schema experiment, which only applies under that switch.
+func (c *appRuntimeConfig) coordinatorDecisionConfig(agentID string) inboundcoord.DecisionConfig {
+	snapshot := c.snapshot()
+	cfg := inboundcoord.DecisionConfig{
+		Model:            snapshot.Config.Runtime.LLM.CoordinatorModel,
+		ConfigSHA256:     snapshot.SHA256,
+		ConfigGeneration: snapshot.Generation,
+	}
+	rollout := snapshot.Config.Runtime.PerformanceOptimization
+	if rollout == nil || !rollout.AllowsAgent(agentID) {
+		return cfg
+	}
+	cfg.Performance = true
+	if experiment := rollout.FinishSchemaExperiment; experiment != nil && experiment.Enabled {
+		cfg.FinishSchema = inboundcoord.FinishSchemaExperiment{Enabled: true, Mode: experiment.Mode, Salt: experiment.Salt}
+	}
+	return cfg
+}
+
+// coordinatorCollectQuiet is agentID's collect-window silence under the
+// performance switch; zero keeps the handler default.
+func (c *appRuntimeConfig) coordinatorCollectQuiet(agentID string) time.Duration {
+	rollout := c.current().Runtime.PerformanceOptimization
+	if rollout == nil || !rollout.AllowsAgent(agentID) || rollout.CollectQuietMS <= 0 {
+		return 0
+	}
+	return time.Duration(rollout.CollectQuietMS) * time.Millisecond
+}
+
+// useDWSForTag is the live runtime.use_dws_for_tag.
+func (c *appRuntimeConfig) useDWSForTag() bool {
+	if c == nil || c.remote == nil {
+		return false
+	}
+	return c.remote.UseDWSForTag()
 }
 
 // fcE2BSDKRollout is the live runtime.fc_e2b_sdk_rollout.
 func (c *appRuntimeConfig) fcE2BSDKRollout() runtimeconfig.FCE2BSDKRollout {
-	return fcE2BSDKRolloutOf(c.current().Runtime)
+	if c == nil || c.remote == nil {
+		return runtimeconfig.FCE2BSDKRollout{}
+	}
+	return c.remote.FCE2BSDKRollout()
 }
 
 // fcE2BSDKRolloutOf is the rollout of one runtime document; absent selects
@@ -135,6 +182,7 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 		runtimeProviders = c.remote.RuntimeProviders()
 	}
 	return service.FCE2BConfig{
+		QuickWins:                         quickWinsForRuntime(raw.Runtime),
 		TaskModelResolver:                 c.taskModelResolver(),
 		ModelResolver:                     c.modelResolver(),
 		Enabled:                           raw.Runtime.FCE2B.Enabled,

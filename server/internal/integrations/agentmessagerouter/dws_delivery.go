@@ -102,28 +102,44 @@ func (s *dwsReplySender) Open(ctx context.Context, d DWSDelivery) (DWSReplySessi
 	if s.config.AgentIdentity == nil {
 		return nil, errors.New("DWS reply identity issuer unavailable")
 	}
-	requestID := "dws-reply:" + uuid.NewString()
-	identity, err := s.config.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
-		RequestID: requestID, TaskID: d.IdempotencyKey, AgentID: d.AgentID,
-		RuntimeType: "SERVER", RuntimeID: requestID, Reason: "Multica Router callback DWS delivery",
-		UID: d.SenderUID, OrgID: d.SenderOrgID, TTLSeconds: 120,
-		Source: map[string]string{"app": "dt-fde-multica", "identity_source": "router_callback_reply"},
-	})
-	if err != nil {
-		return nil, errors.New("DWS reply identity issuance failed")
+	mint := func(ctx context.Context) (dwsclient.Credential, error) {
+		requestID := "dws-reply:" + uuid.NewString()
+		identity, err := s.config.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
+			RequestID: requestID, TaskID: d.IdempotencyKey, AgentID: d.AgentID,
+			RuntimeType: "SERVER", RuntimeID: requestID, Reason: "Multica Router callback DWS delivery",
+			UID: d.SenderUID, OrgID: d.SenderOrgID, TTLSeconds: 120,
+			Source: map[string]string{"app": "dt-fde-multica", "identity_source": "router_callback_reply"},
+		})
+		if err != nil {
+			return dwsclient.Credential{}, errors.New("DWS reply identity issuance failed")
+		}
+		credential, err := s.config.Redeemer.Redeem(ctx, identity.ContextToken)
+		if err != nil {
+			return dwsclient.Credential{}, err
+		}
+		if credential.UID != d.SenderUID {
+			return dwsclient.Credential{}, &dwsDeliveryPermanentError{"sender_identity_mismatch"}
+		}
+		return credential, nil
 	}
-	credential, err := s.config.Redeemer.Redeem(ctx, identity.ContextToken)
+	cli := dwsclient.CLI{Path: s.config.CLIPath, ClientSecret: s.config.ClientSecret, Environment: d.Environment}
+	// The SDK transport reuses the sender's shared token and mints only
+	// without one; the dws CLI exchanges a credential for this delivery.
+	if dir, cleanup, ok, err := (dwsclient.Shared{CLI: cli}).Open(ctx,
+		dwsclient.Identity{AgentID: d.AgentID, UID: d.SenderUID, OrgID: d.SenderOrgID}, mint); ok {
+		if err != nil {
+			return nil, err
+		}
+		return &dwsReplySession{cli: cli, dir: dir, cleanup: cleanup}, nil
+	}
+	credential, err := mint(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if credential.UID != d.SenderUID {
-		return nil, &dwsDeliveryPermanentError{"sender_identity_mismatch"}
 	}
 	dir, err := os.MkdirTemp("", "multica-dws-reply-")
 	if err != nil {
 		return nil, errors.New("create DWS reply config directory")
 	}
-	cli := dwsclient.CLI{Path: s.config.CLIPath, ClientSecret: s.config.ClientSecret, Environment: d.Environment}
 	if err = cli.Exchange(ctx, dir, credential); err != nil {
 		_ = os.RemoveAll(dir)
 		return nil, err
@@ -132,8 +148,9 @@ func (s *dwsReplySender) Open(ctx context.Context, d DWSDelivery) (DWSReplySessi
 }
 
 type dwsReplySession struct {
-	cli dwsclient.CLI
-	dir string
+	cli     dwsclient.CLI
+	dir     string
+	cleanup func()
 }
 
 func (s *dwsReplySession) Send(ctx context.Context, request dwsclient.SendRequest) (replyReceipt, error) {
@@ -144,7 +161,13 @@ func (s *dwsReplySession) Status(ctx context.Context, taskID string) (replyRecei
 	receipt, err := s.cli.QuerySendStatus(ctx, s.dir, taskID)
 	return replyReceipt{SendStatus: receipt.State, OpenMessageID: receipt.OpenMessageID, OpenConversationID: receipt.OpenConversationID}, err
 }
-func (s *dwsReplySession) Close() { _ = os.RemoveAll(s.dir) }
+func (s *dwsReplySession) Close() {
+	if s.cleanup != nil {
+		s.cleanup()
+		return
+	}
+	_ = os.RemoveAll(s.dir)
+}
 
 // resumeDWSDelivery checkpoints acceptance before querying delivery. A lost callback
 // response is replayed at Router. A lost send response can reuse the same key,

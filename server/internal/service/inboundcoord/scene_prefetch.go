@@ -70,6 +70,9 @@ func (c *Coordinator) prefetchSceneRecall(ctx context.Context, turn *Turn, seque
 		lt.AddMetadata(map[string]any{"scene_prefetch_status": status, "scene_prefetch_elapsed_ms": elapsed})
 	}
 	traceToolEnd(observation, result, err, "host_prefetch")
+	if hostQuiet(ctx) {
+		return call, result, err
+	}
 	slog.Info("inbound coordinator scene prefetch", append(coordinatorLogIndex(*turn),
 		"event", "inbound_coordinator_scene_prefetch", "origin", "host_prefetch", "status", status,
 		"elapsed_ms", elapsed, "read_snapshot_count", len(turn.CoordinationReads), "timeout_ms", scenePrefetchTimeout.Milliseconds(), "arguments", call.Arguments, "result", clipRunes(result, llmLogToolBudget))...)

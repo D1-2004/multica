@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/startupobs"
 	"io"
 	"net"
 	"net/http"
@@ -216,7 +217,9 @@ func (p *FCProvider) InspectSandbox(ctx context.Context, id string) (SandboxDeta
 
 // CreateSpec posts a generalized mount list. Employee Create remains the
 // single /mnt/multica specialization so existing DSH sandboxes are unchanged.
-func (p *FCProvider) CreateSpec(ctx context.Context, spec SandboxCreateSpec) (string, error) {
+func (p *FCProvider) CreateSpec(ctx context.Context, spec SandboxCreateSpec) (sandboxID string, resultErr error) {
+	finish := startupobs.Start(ctx, "fc_employee_host_create")
+	defer func() { finish(resultErr) }()
 	if err := spec.valid(); err != nil {
 		return "", err
 	}

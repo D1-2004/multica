@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -141,7 +142,7 @@ func (h *Handler) DeleteInternalConnectorCredential(w http.ResponseWriter, r *ht
 }
 
 // TestInternalConnector checks connectivity without invoking any upstream tool.
-// The response contains only allowlisted tool names and a generic failure.
+// The response contains discovered tool names and a sanitized failure category.
 func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	ws, id := chi.URLParam(r, "id"), chi.URLParam(r, "connectorId")
@@ -180,7 +181,7 @@ func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) 
 	more := false
 	attempts := 0
 	for page := 0; page < 8; page++ {
-		result, pageAttempts, callErr := h.connectorToolListWithRetry(ctx, c, cursor, true)
+		result, pageAttempts, callErr := h.connectorToolListWithRetry(ctx, c, cursor)
 		attempts += pageAttempts
 		if callErr != nil {
 			slog.InfoContext(r.Context(), "internal connector test failed", "connector_id", id, "workspace_id", ws, "duration_ms", time.Since(started).Milliseconds(), "attempts", attempts, "failure_class", connectorTestFailureMessage(callErr))
@@ -214,16 +215,13 @@ func (h *Handler) TestInternalConnector(w http.ResponseWriter, r *http.Request) 
 		seenCursors[next] = true
 		cursor, more = next, true
 	}
-	found := []string{}
-	missing := []string{}
-	for _, name := range c.AllowedTools {
-		if tools[connectorPresentedToolName(name)] {
-			found = append(found, name)
-		} else {
-			missing = append(missing, name)
-		}
+	found := make([]string, 0, len(tools))
+	for name := range tools {
+		found = append(found, name)
 	}
-	ready := len(missing) == 0
+	sort.Strings(found)
+	missing := []string{}
+	ready := true
 	slog.InfoContext(r.Context(), "internal connector test completed", "connector_id", id, "workspace_id", ws, "duration_ms", time.Since(started).Milliseconds(), "attempts", attempts, "found_tools", len(found), "missing_tools", len(missing))
 	writeJSON(w, 200, map[string]any{"reachable": true, "ready": ready, "tools": found, "missing_tools": missing, "has_more": more, "duration_ms": time.Since(started).Milliseconds()})
 }

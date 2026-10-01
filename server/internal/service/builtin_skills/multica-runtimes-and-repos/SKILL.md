@@ -46,8 +46,11 @@ task ends, a non-DSH sandbox that no later task can reuse (a task with
 neither an Issue nor a chat, such as a run-only autopilot) is released, and
 any other sandbox, DSH employee hosts included, keeps only a 10-minute idle
 window for the next turn on the same Issue or chat. `nohup` / `setsid` do not
-keep processes alive after the task ends. Persist patches, logs, and
-artifacts to Issue comments/attachments before exiting. Attachment upload
+make a process outlive the sandbox: when a task is cancelled or fails, the
+platform may end its processes within seconds; otherwise they run until the
+sandbox is released or idles out, and a later turn that reuses the sandbox may
+still find them. Do not leave work in background processes. Persist patches,
+logs, and artifacts to Issue comments/attachments before exiting. Attachment upload
 receipts include `size_bytes` and `sha256`; comment JSON uses `size_bytes`,
 not `size`.
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/startupobs"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -38,6 +39,8 @@ import (
 )
 
 type TaskService struct {
+	launchShutdown runtimeLaunchShutdown
+
 	Queries   *db.Queries
 	TxStarter TxStarter
 	Hub       *realtime.Hub
@@ -56,9 +59,10 @@ type TaskService struct {
 	EmptyClaim *EmptyClaimCache
 	// RuntimeLauncher is optional. When set, it may start server-managed
 	// runtimes for a newly queued task; local runtimes simply no-op there.
-	RuntimeLauncher    TaskRuntimeLauncher
-	CompletionNotifier TaskCompletionNotifier
-	A2AStateObserver   A2ATaskStateObserver
+	RuntimeStartRecoveryConfig func() RuntimeStartRecoveryConfig
+	RuntimeLauncher            TaskRuntimeLauncher
+	CompletionNotifier         TaskCompletionNotifier
+	A2AStateObserver           A2ATaskStateObserver
 	// Langfuse exports one trace per finished agent task (see
 	// task_langfuse.go). Nil disables the export.
 	Langfuse              *langfuse.Client
@@ -4346,7 +4350,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	s.triggerNextQueuedTaskForTerminal(ctx, task)
 	// Capacity is shared across ASB Runtimes, so a successful completion must
 	// also wake waiters outside this task's Runtime/Agent serialization lane.
-	s.notifyRuntimeCapacityMayBeAvailable()
+	s.notifyRuntimeCapacityMayBeAvailable(task)
 
 	return &task, nil
 }
@@ -6018,8 +6022,16 @@ func (s *TaskService) launchRuntimeForTaskWithContextAndCompletion(
 			launchParent = a2aintegration.WithInvocationIdentity(context.Background(), identity)
 		}
 	}
+	launchParent, finishLaunch, accepted := s.trackRuntimeLaunchForAgent(launchParent, task.AgentID)
+	if !accepted {
+		if done != nil {
+			done()
+		}
+		return
+	}
 	taskCopy := task
 	go func(parent context.Context) {
+		defer finishLaunch()
 		if done != nil {
 			defer done()
 		}
@@ -6072,13 +6084,17 @@ func (s *TaskService) launchRuntimeForTaskWithContextAndCompletion(
 			)
 		}
 		started := time.Now()
+		launchCtx = s.withStartupObservability(launchCtx, taskCopy)
+		finishStartup := startupobs.Start(launchCtx, "total")
 		err = s.RuntimeLauncher.LaunchTask(launchCtx, taskCopy)
+		finishStartup(err)
 		cancelLaunch(context.Canceled)
 		<-renewDone
 
 		releaseCtx, releaseCancel := context.WithTimeout(context.Background(), runtimeLaunchLeaseDBTimeout)
 		releaseErr := s.runtimeLaunchLeases.Release(releaseCtx, lease)
 		releaseCancel()
+		s.notifyRuntimeReadinessHint(context.Background())
 		if releaseErr != nil {
 			slog.Warn("runtime launcher lease release failed",
 				"task_id", taskKey,
@@ -6171,7 +6187,7 @@ func (s *TaskService) RecoverQueuedFCE2BTask(ctx context.Context, task db.AgentT
 	if task.Status != "queued" || !task.RuntimeID.Valid {
 		return
 	}
-	if task.CreatedAt.Valid && time.Since(task.CreatedAt.Time) < fcE2BQueuedRecoveryAge {
+	if !s.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).DSHEventWakeup && task.CreatedAt.Valid && time.Since(task.CreatedAt.Time) < fcE2BQueuedRecoveryAge {
 		return
 	}
 	rt, err := s.Queries.GetAgentRuntime(ctx, task.RuntimeID)
@@ -6308,7 +6324,7 @@ func (s *TaskService) NotifyTaskFinished(task db.AgentTaskQueue) {
 	// CompleteTask already sends the cross-Runtime capacity wake at its commit
 	// boundary. Failure/cancellation paths reach this method instead.
 	if task.Status != "completed" {
-		s.notifyRuntimeCapacityMayBeAvailable()
+		s.notifyRuntimeCapacityMayBeAvailable(task)
 	}
 }
 
@@ -6331,13 +6347,38 @@ func (s *TaskService) notifyTasksFinished(tasks []db.AgentTaskQueue) {
 		notifiedCapacity = true
 	}
 	if notifiedCapacity {
-		s.notifyRuntimeCapacityMayBeAvailable()
+		s.notifyRuntimeCapacityMayBeAvailable(tasks...)
 	}
 }
 
-func (s *TaskService) notifyRuntimeCapacityMayBeAvailable() {
+func (s *TaskService) notifyRuntimeCapacityMayBeAvailable(tasks ...db.AgentTaskQueue) {
 	if s == nil || s.RuntimeLauncher == nil {
 		return
+	}
+	// A terminal FC/local task is not evidence that ASB capacity changed.
+	// Preserve the historical broad hint when the new behavior is disabled.
+	if s.CurrentRuntimeStartRecoveryConfig().ASBEventWakeup {
+		if s.Queries == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), runtimeLaunchLeaseDBTimeout)
+		defer cancel()
+		available := false
+		for _, task := range tasks {
+			attempt, err := s.Queries.GetLatestAgentTaskRuntimeStartAttemptByTask(ctx, db.GetLatestAgentTaskRuntimeStartAttemptByTaskParams{TaskID: task.ID, RuntimeID: task.RuntimeID})
+			if err == nil {
+				available = attempt.Backend == string(SandboxBackendASB)
+			} else if errors.Is(err, pgx.ErrNoRows) {
+				runtime, loadErr := s.Queries.GetAgentRuntime(ctx, task.RuntimeID)
+				available = loadErr == nil && IsASBRuntime(runtime)
+			}
+			if available {
+				break
+			}
+		}
+		if !available {
+			return
+		}
 	}
 	if wakeup, ok := s.RuntimeLauncher.(TaskRuntimeCapacityWakeup); ok {
 		wakeup.NotifyRuntimeCapacityMayBeAvailable()

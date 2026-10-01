@@ -142,28 +142,27 @@ func validateConnectorInput(in connectorInput) error {
 		if len(in.AllowedTools) > maxPinnedConnectorTools {
 			return errors.New("allowed_tools must contain at most 64 tools")
 		}
-	} else {
-		if err := validateConnectorURL(in.UpstreamURL); err != nil {
-			return err
-		}
-		if len(in.AllowedTools) == 0 || len(in.AllowedTools) > maxPinnedConnectorTools {
-			return errors.New("allowed_tools must contain 1-64 tools")
-		}
+	} else if err := validateConnectorURL(in.UpstreamURL); err != nil {
+		return err
 	}
 	// An enabled connector may have no global Agent grant: it can be offered
 	// to agents' scene and personal layers only (context capabilities).
-	seen := map[string]bool{}
-	presentedSeen := map[string]bool{}
-	for _, tool := range in.AllowedTools {
-		if len(tool) == 0 || len(tool) > 128 || strings.ContainsAny(tool, ",\r\n") || seen[tool] {
-			return errors.New("invalid or duplicate allowed tool")
+	if in.catalogSlug != "" {
+		// Official apps keep their pinned tools (read-only unless writes are
+		// enabled), so the pinned names must stay unambiguous.
+		seen := map[string]bool{}
+		presentedSeen := map[string]bool{}
+		for _, tool := range in.AllowedTools {
+			if len(tool) == 0 || len(tool) > 128 || strings.ContainsAny(tool, ",\r\n") || seen[tool] {
+				return errors.New("invalid or duplicate allowed tool")
+			}
+			seen[tool] = true
+			presented := connectorPresentedToolName(tool)
+			if presentedSeen[presented] {
+				return errors.New("allowed tools collide after MCP name shortening")
+			}
+			presentedSeen[presented] = true
 		}
-		seen[tool] = true
-		presented := connectorPresentedToolName(tool)
-		if presentedSeen[presented] {
-			return errors.New("allowed tools collide after MCP name shortening")
-		}
-		presentedSeen[presented] = true
 	}
 	agentSeen := map[string]bool{}
 	for _, id := range in.AgentIDs {
@@ -421,8 +420,9 @@ func (h *Handler) authorizedConnectors(ctx context.Context, workspaceID, agentID
 	}
 	out := []internalConnector{}
 	for _, c := range granted {
-		// Official app connectors count only once their tools are known.
-		if len(c.AllowedTools) > 0 && h.connectorCredentialReady(c) {
+		// Official app connectors count only once their tools are known;
+		// custom connectors expose the live upstream list, so no snapshot gate.
+		if (c.CatalogSlug == "" || len(c.AllowedTools) > 0) && h.connectorCredentialReady(c) {
 			out = append(out, c)
 		}
 	}

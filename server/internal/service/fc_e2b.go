@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/startupobs"
 	"hash/fnv"
 	"io"
 	"log/slog"
@@ -118,6 +119,8 @@ const (
 )
 
 type FCE2BConfig struct {
+	QuickWins RuntimeStartRecoveryConfig
+
 	TaskModelResolver                 func(context.Context, string, string) (string, error)
 	ModelResolver                     func(string) (string, error)
 	Enabled                           bool
@@ -144,8 +147,8 @@ type FCE2BConfig struct {
 	SandboxReadyTimeout               time.Duration
 	ParseError                        error
 	// SDKRollout is runtime.fc_e2b_sdk_rollout of the snapshot this
-	// configuration came from; the zero value keeps the CLI and leaves a
-	// cancelled task's processes alone.
+	// configuration came from; the zero value keeps the CLI and leaves an
+	// aborted task's processes alone.
 	SDKRollout FCE2BSDKRollout
 }
 
@@ -669,6 +672,12 @@ func fcE2BRunnerLaunchForRuntime(rt db.AgentRuntime) (fcE2BRunnerLaunch, error) 
 // fixed absolute paths. Metadata can neither provide a path nor make a command
 // run as root.
 func (l *FCE2BLauncher) detectFCE2BRunnerLaunch(ctx context.Context, sandboxID string, rt db.AgentRuntime) (fcE2BRunnerLaunch, error) {
+	if l.Config.QuickWins.CoalescedHotExec {
+		if receipt, ok := ctx.Value(hotRunnerProbeKey{}).(*hotRunnerProbe); ok && receipt.sandboxID == sandboxID && (receipt.launch.Command != "" || receipt.err != nil) {
+			startupobs.Start(ctx, "fc_hot_probe_reused")(receipt.err)
+			return receipt.launch, receipt.err
+		}
+	}
 	hint, err := fcE2BRunnerLaunchForRuntime(rt)
 	if err != nil {
 		return fcE2BRunnerLaunch{}, err
@@ -759,6 +768,9 @@ type OSCommandRunner struct{}
 
 func (OSCommandRunner) Run(ctx context.Context, name string, args []string, env []string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	if bounded, _ := ctx.Value(boundedExecKey{}).(bool); bounded {
+		cmd.WaitDelay = 2 * time.Second
+	}
 	cmd.Env = append(os.Environ(), env...)
 	var output, diagnostics bytes.Buffer
 	cmd.Stdout = &output
@@ -979,9 +991,9 @@ type FCE2BLauncher struct {
 	sleep                 func(context.Context, time.Duration) error
 	jitter                func(time.Duration) time.Duration
 	dshProvider           func(dshhost.Storage) (dshhost.Provider, error)
-	// stopPass runs one pass of a cancelled-task stop; nil runs
-	// stopCancelledTaskProcesses.
-	stopPass func(ctx context.Context, frozen *FCE2BLauncher, taskID pgtype.UUID, pass int)
+	// stopPass runs one pass of an aborted-task stop and reports whether
+	// another pass may find more; nil runs stopAbortedTaskProcesses.
+	stopPass func(ctx context.Context, frozen *FCE2BLauncher, taskID pgtype.UUID, pass int) bool
 
 	// LLMTraceCaptureAlways turns on sandbox model request/response capture
 	// for every task on a capable runtime image, independent of Router
@@ -1363,6 +1375,14 @@ type fcE2BLaunchSubmission struct {
 func (l *FCE2BLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) error {
 	if configured := l.withCurrentConfig(); configured != l {
 		return configured.LaunchTask(ctx, task)
+	}
+	if l != nil && l.Config.QuickWins.Scoped {
+		selected := *l
+		selected.Config.QuickWins = l.Config.QuickWins.ForAgent(task.AgentID)
+		return selected.LaunchTask(ctx, task)
+	}
+	if l != nil && l.Config.QuickWins.CoalescedHotExec {
+		ctx = context.WithValue(ctx, hotRunnerProbeKey{}, &hotRunnerProbe{})
 	}
 	if l == nil || l.Queries == nil || l.Tasks == nil || !task.RuntimeID.Valid {
 		return nil
@@ -2716,7 +2736,7 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 		if coldStart {
 			readyErr = l.waitSandboxReady(ctx, sandboxID)
 		} else {
-			readyErr = l.checkSandboxReady(ctx, sandboxID)
+			readyErr = l.checkReusedSandboxReady(ctx, sandboxID, rt)
 		}
 		var expiresAt time.Time
 		if readyErr == nil {
@@ -2767,7 +2787,9 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 	return "", coldStart, lastErr
 }
 
-func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (string, error) {
+func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (sandboxID string, resultErr error) {
+	finish := startupobs.Start(ctx, "fc_create")
+	defer func() { finish(resultErr) }()
 	template = strings.TrimSpace(template)
 	if template == "" {
 		return "", errors.New("FC/E2B runtime has no template")
@@ -2851,16 +2873,28 @@ func sleepWithContext(ctx context.Context, delay time.Duration) error {
 	}
 }
 
+type boundedExecKey struct{}
+
 func (l *FCE2BLauncher) checkSandboxReady(ctx context.Context, sandboxID string) error {
+	if l.Config.QuickWins.BoundedReadyExec {
+		ctx = context.WithValue(ctx, boundedExecKey{}, true)
+		_, err := l.runE2BCommandWithTimeout(ctx, 5*time.Second, []string{"sandbox", "exec", sandboxID, "true"})
+		return err
+	}
 	_, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", sandboxID, "true"})
 	return err
 }
 
 func (l *FCE2BLauncher) waitSandboxReady(ctx context.Context, sandboxID string) error {
 	deadline := time.Now().Add(l.Config.SandboxReadyTimeout)
+	if l.Config.QuickWins.BoundedReadyExec {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
 	var lastErr error
 	for {
-		_, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", sandboxID, "true"})
+		err := l.checkSandboxReady(ctx, sandboxID)
 		if err == nil {
 			return nil
 		}
@@ -2926,7 +2960,7 @@ func (l *FCE2BLauncher) execRunOnce(ctx context.Context, sandboxID string, rt db
 		"-e", "OPENAI_BASE_URL="+llmURL,
 		"-e", "OPENAI_API_KEY="+llmKey,
 	)
-	// The cancelled-task stop proves ownership by this marker, so it follows
+	// The aborted-task stop proves ownership by this marker, so it follows
 	// the same switch.
 	if fcE2BRolloutSelects(l.Config.SDKRollout, fcE2BScopeFrom(ctx)) {
 		args = append(args, "-e", fcE2BTaskMarkerEnv+"="+util.UUIDToString(taskID))
@@ -2986,7 +3020,14 @@ func (l *FCE2BLauncher) runE2BCommandWithTimeout(ctx context.Context, timeout ti
 	}
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return l.Runner.Run(cmdCtx, l.Config.CLIPath, args, l.e2bEnv())
+	stage := "fc_command"
+	if len(args) > 1 {
+		stage += "_" + args[0] + "_" + args[1]
+	}
+	finish := startupobs.Start(ctx, stage)
+	out, err := l.Runner.Run(cmdCtx, l.Config.CLIPath, args, l.e2bEnv())
+	finish(err)
+	return out, err
 }
 
 func (l *FCE2BLauncher) e2bEnv() []string {
@@ -3111,7 +3152,7 @@ func (l *FCE2BLauncher) failLaunch(
 	attemptID pgtype.UUID,
 	failure RuntimeStartFailure,
 ) error {
-	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) {
+	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) || errors.Is(cause, errRuntimeLaunchShutdown) {
 		return cause
 	}
 	_, err := l.Tasks.FailTaskRuntimeStart(ctx, task.ID, task.RuntimeID, attemptID, failure)
@@ -3143,7 +3184,7 @@ func (s *TaskService) FailTaskRuntimeStart(
 	attemptID pgtype.UUID,
 	failure RuntimeStartFailure,
 ) (*db.AgentTaskQueue, error) {
-	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) {
+	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) || errors.Is(cause, errRuntimeLaunchShutdown) {
 		return nil, cause
 	}
 	// A request-scoped A2A identity intentionally cancels Runtime startup when

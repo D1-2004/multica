@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/startupobs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -449,6 +450,9 @@ func (l *ASBLauncher) SetPool(pool *pgxpool.Pool) {
 }
 
 func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) error {
+	if l != nil && l.Tasks != nil && l.Tasks.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).ASBEventWakeup {
+		ctx = context.WithValue(ctx, asbCapacityNotifyKey{}, l.NotifyRuntimeCapacityMayBeAvailable)
+	}
 	if configured := l.withCurrentConfig(); configured != l {
 		return configured.LaunchTask(ctx, task)
 	}
@@ -1188,6 +1192,9 @@ func (l *ASBLauncher) deleteSupersededASBSandboxForScope(
 		if err := waitForASBCapacityRelease(ctx, l.Client, superseded.SandboxID); err != nil {
 			return err
 		}
+		if l.Tasks != nil && l.Tasks.CurrentRuntimeStartRecoveryConfig().ASBEventWakeup {
+			l.NotifyRuntimeCapacityMayBeAvailable()
+		}
 	}
 	if err := l.Queries.MarkCloudSandboxSessionStale(
 		ctx,
@@ -1249,7 +1256,9 @@ func (l *ASBLauncher) deleteASBSandboxAfterIdentityFailure(
 	return nil
 }
 
-func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) error {
+func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) (resultErr error) {
+	finish := startupobs.Start(ctx, "asb_wait_running")
+	defer func() { finish(resultErr) }()
 	deadline := time.NewTimer(l.Config.ReadyTimeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(time.Second)
@@ -1284,7 +1293,9 @@ func (l *ASBLauncher) waitSandboxRunning(ctx context.Context, sandboxID string) 
 func (l *ASBLauncher) waitSandboxCommandReady(
 	ctx context.Context,
 	sandboxID string,
-) (*ASBEndpoint, error) {
+) (result *ASBEndpoint, resultErr error) {
+	finish := startupobs.Start(ctx, "asb_command_ready")
+	defer func() { finish(resultErr) }()
 	timeout := l.Config.CommandReadyTimeout
 	if timeout <= 0 {
 		return nil, errors.New("ASB command ready timeout is not configured")
@@ -1403,7 +1414,9 @@ func (l *ASBLauncher) waitSandboxTaskBUCIdentityReady(
 	sandboxID string,
 	employeeID string,
 	timeout time.Duration,
-) error {
+) (resultErr error) {
+	finish := startupobs.Start(ctx, "asb_wireguard_identity_ready")
+	defer func() { finish(resultErr) }()
 	if timeout <= 0 {
 		return errors.New("ASB WireGuard ready timeout is not configured")
 	}

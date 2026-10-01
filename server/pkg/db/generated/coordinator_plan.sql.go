@@ -21,3 +21,17 @@ func (q *Queries) SaveCoordinatorWindowPlan(ctx context.Context, arg SaveCoordin
 	}
 	return result.RowsAffected(), nil
 }
+
+type SaveCoordinatorFinishSchemaParams struct {
+	Record     []byte
+	ID         pgtype.UUID
+	LeaseToken pgtype.UUID
+}
+
+func (q *Queries) SaveCoordinatorFinishSchema(ctx context.Context, arg SaveCoordinatorFinishSchemaParams) (int64, error) {
+	result, err := q.db.Exec(ctx, `UPDATE inbound_coordinator_job SET command=jsonb_set(command,'{_finish_schema_experiment}',$1::jsonb),updated_at=now() WHERE id=$2 AND status='running' AND lease_token=$3 AND lease_expires_at>now()`, arg.Record, arg.ID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

@@ -23,7 +23,13 @@ import (
 // is read the way FC sandboxes allow: under that user's uid, without
 // CAP_SYS_PTRACE.
 func TestFCE2BTaskStopScriptEndsOnlyTheTaskProcesses(t *testing.T) {
-	for _, tool := range []string{"/bin/bash", "setsid", "sleep", "env", "sh"} {
+	tools := []string{"/bin/bash", "setsid", "sleep", "env", "sh"}
+	if os.Geteuid() == 0 {
+		// Root reads other users' environments only through setpriv; without
+		// it every marker is unreadable and nothing is proven.
+		tools = append(tools, "setpriv")
+	}
+	for _, tool := range tools {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s is unavailable", tool)
 		}
@@ -79,6 +85,15 @@ esac
 	runner := func(env, role, runtimeID string, port int) string {
 		return fmt.Sprintf("env %s bash %s %s --runtime-id %s --provider pi --health-port %d &", env, fixture, role, runtimeID, port)
 	}
+	// A runner on the task's runtime and port whose environment cannot be
+	// read, not even under its own uid: a non-dumpable process. It may be
+	// another task's on a colliding port, so it is not proven.
+	unreadableMarker := fmt.Sprintf("time.sleep(%d)", n(18))
+	unreadableRunner := ""
+	if _, err := exec.LookPath("python3"); err == nil {
+		unreadableRunner = fmt.Sprintf("env %s python3 -c 'import ctypes, time; ctypes.CDLL(None).prctl(4, 0, 0, 0, 0); %s' --runtime-id %s --provider pi --health-port %d &",
+			theirs, unreadableMarker, runtimeID, port)
+	}
 	harness := exec.Command("/bin/bash", "-c", strings.Join([]string{
 		// An orphan without a task id, left before the runners.
 		fmt.Sprintf("setsid bash -c 'sleep %d &'", n(1)),
@@ -88,6 +103,7 @@ esac
 		runner(theirs, "other", otherRuntimeID, otherPort),
 		// Another task's runner on a colliding health port.
 		runner(theirs, "collide", runtimeID, port),
+		unreadableRunner,
 		// A shared sandbox service that still carries this task's id.
 		fmt.Sprintf("env %s bash %s service", mine, fixture),
 		fmt.Sprintf("sleep %d &", n(7)),
@@ -102,8 +118,8 @@ esac
 	if os.Geteuid() == 0 {
 		harness.SysProcAttr.Credential = &syscall.Credential{Uid: 65534, Gid: 65534}
 	}
-	// livePIDs lists running processes started as `<prog> <arg>`.
-	livePIDs := func(arg int) []int {
+	// processes lists running processes whose command line matches.
+	processes := func(match func(argv []string) bool) []int {
 		entries, _ := os.ReadDir("/proc")
 		var pids []int
 		for _, entry := range entries {
@@ -112,7 +128,7 @@ esac
 				continue
 			}
 			line, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-			if argv := strings.Split(strings.TrimRight(string(line), "\x00"), "\x00"); err != nil || len(argv) != 2 || argv[1] != strconv.Itoa(arg) {
+			if err != nil || !match(strings.Split(strings.TrimRight(string(line), "\x00"), "\x00")) {
 				continue
 			}
 			stat, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
@@ -125,6 +141,13 @@ esac
 		}
 		return pids
 	}
+	// livePIDs lists running processes started as `<prog> <arg>`.
+	livePIDs := func(arg int) []int {
+		return processes(func(argv []string) bool { return len(argv) == 2 && argv[1] == strconv.Itoa(arg) })
+	}
+	unreadablePIDs := func() []int {
+		return processes(func(argv []string) bool { return len(argv) > 2 && strings.Contains(argv[2], unreadableMarker) })
+	}
 	alive := func(i int) bool { return len(livePIDs(n(i))) > 0 }
 	all := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 	defer func() {
@@ -132,6 +155,9 @@ esac
 			for _, pid := range livePIDs(n(i)) {
 				_ = syscall.Kill(pid, syscall.SIGKILL)
 			}
+		}
+		for _, pid := range unreadablePIDs() {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
 		}
 		_ = harness.Wait()
 	}()
@@ -145,7 +171,7 @@ esac
 				started++
 			}
 		}
-		if started == len(all) {
+		if started == len(all) && (unreadableRunner == "" || len(unreadablePIDs()) > 0) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -177,6 +203,11 @@ esac
 		if alive(i) != survive[i] {
 			t.Errorf("process %d alive=%v, want %v", i, alive(i), survive[i])
 		}
+	}
+	if unreadableRunner == "" {
+		t.Log("python3 is unavailable: the unreadable runner was not exercised")
+	} else if len(unreadablePIDs()) == 0 {
+		t.Error("a runner whose environment could not be read was ended")
 	}
 	t.Logf("receipt as uid %d: %s", os.Geteuid(), strings.TrimSpace(string(out)))
 }

@@ -33,6 +33,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/deploymentfence"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dwsclient"
+	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -65,6 +66,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/wsfs"
 	composiosdk "github.com/multica-ai/multica/server/pkg/composio"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/dws"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
@@ -409,6 +411,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		A2AForwardAllowedOrigins:      splitAndTrim(os.Getenv("MULTICA_A2A_FORWARD_ALLOWED_ORIGINS")),
 		A2AForwardRegistryURLs:        splitAndTrim(os.Getenv("MULTICA_A2A_FORWARD_REGISTRY_URLS")),
 		A2AForwardRegistrationSecret:  strings.TrimSpace(os.Getenv("MULTICA_A2A_FORWARD_REGISTRATION_SECRET")),
+		GitHubPreWebhookURL:           strings.TrimSpace(os.Getenv("GITHUB_PRE_WEBHOOK_URL")),
+		GitHubPreWebhookSecret:        strings.TrimSpace(os.Getenv("GITHUB_PRE_WEBHOOK_SECRET")),
 		StableRuntimePublisherUserIDs: stableRuntimePublishers,
 		DisableWorkspaceCreation:      os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 		VCSIntegrationEnabled:         os.Getenv("MULTICA_VCS_INTEGRATION_ENABLED") == "true",
@@ -451,11 +455,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	if provision, err := dshStorageProvisioning(opts.RuntimeConfig); err != nil {
 		slog.Error("DSH storage provisioning configuration unavailable", "error", err)
-	} else {
-		h.FCE2BLauncher.ProvisionDSHStorage = provision
+	} else if provision != nil {
+		h.FCE2BLauncher.ProvisionDSHStorage = func(ctx context.Context, database dshhost.Database, key dshhost.Key) (dshhost.Host, error) {
+			host, err := provision(ctx, database, key)
+			if err == nil {
+				h.TaskService.NotifyDSHReadiness(ctx, database, key, "provisioning_ready")
+			}
+			return host, err
+		}
 		if provision != nil {
 			h.ProvisionDSHStorage = func(ctx context.Context, key dshhost.Key) (dshhost.Host, error) {
-				return provision(ctx, pool, key)
+				return h.FCE2BLauncher.ProvisionDSHStorage(ctx, pool, key)
 			}
 		}
 	}
@@ -506,10 +516,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		setter.SetRunnerMachineDeliverer(h)
 	}
 	if opts.RuntimeConfig != nil {
+		// runtime.use_dws_for_tag moves DingTalk calls off the dws CLI live;
+		// replicas then share each identity's token through Redis.
+		dwsclient.SetTokenStore(dwsTokenStore(rdb))
+		dwsclient.SetSDKSelector(opts.RuntimeConfig.useDWSForTag)
 		h.FCE2BLauncher.Runner = service.NewFCE2BRolloutRunner(opts.RuntimeConfig.fcE2BSDKRollout)
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
 		h.FCE2BLauncher.ConfigProvider = opts.RuntimeConfig.fce2b
+		h.TaskService.RuntimeStartRecoveryConfig = func() service.RuntimeStartRecoveryConfig {
+			return opts.RuntimeConfig.quickWins()
+		}
 	}
 	h.FCE2BLauncher.SetSandboxRelaySigner(opts.SandboxRelaySigner)
 	asbRuntime, err := service.NewASBEnterpriseRuntimeFromConfig(
@@ -835,6 +852,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	coordinator := inboundcoord.New(h.LLM, queries, h.Assoc)
 	if opts.RuntimeConfig != nil {
 		coordinator.ModelProvider = func() string { return opts.RuntimeConfig.current().Runtime.LLM.CoordinatorModel }
+		performanceAgent := func(agentID pgtype.UUID) bool {
+			raw := opts.RuntimeConfig.current().Runtime
+			if raw.PerformanceOptimization != nil {
+				return raw.PerformanceOptimization.AllowsAgent(util.UUIDToString(agentID))
+			}
+			return false
+		}
+		// A collect-window read happens before the claim; the claimed
+		// decision takes the switch from its own single snapshot below.
+		coordinator.HistoryPrefetchAgentProvider = performanceAgent
+		coordinator.DecisionConfigProvider = func(agentID pgtype.UUID) inboundcoord.DecisionConfig {
+			return opts.RuntimeConfig.coordinatorDecisionConfig(util.UUIDToString(agentID))
+		}
+		coordinator.BuildID = version + "@" + commit
 	}
 	if opts.DeploymentFence != nil {
 		coordinator.Ready = func(ctx context.Context) (bool, error) {
@@ -867,6 +898,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}))
 	}
 	h.InboundCoordinator = coordinator
+	if opts.RuntimeConfig != nil {
+		h.CoordinatorCollectQuiet = func(agentID pgtype.UUID) time.Duration {
+			return opts.RuntimeConfig.coordinatorCollectQuiet(util.UUIDToString(agentID))
+		}
+	}
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
 	decisionMCP := strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL"))
 	decisionEnv := "production"
@@ -874,6 +910,38 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		decisionEnv = "staging"
 	}
 	h.UserDecisions = &userdecision.Service{Pool: pool, Store: &userdecision.Store{DB: pool, Environment: decisionEnv, Blobs: h.Storage}, Transport: dingtalkresponse.NewDecisionTransport(dingtalkresponse.DWSConfig{AgentIdentity: agentidentityhsf.NewClient(), BaseURL: signupConfig.FCE2B.AgentIdentityControlBaseURL, BaseURLProvider: agentIdentityControlBaseURLProvider, ClientSecret: signupConfig.FCE2B.DWSClientSecret}, decisionMCP), Wake: h.InboundCoordinatorWorker.Notify}
+	// With runtime.use_dws_for_tag, card actions arrive over the server's
+	// DWS event source: one event stream per identity across replicas.
+	if rdb != nil {
+		if sessions, mint, ok := dingtalkresponse.DecisionSessions(h.UserDecisions.Transport); ok {
+			decisions := h.UserDecisions
+			source, err := dwseventsource.New(dwseventsource.Config{
+				Redis: rdb, Sessions: sessions, Mint: mint,
+				Deployment: strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+				Enabled:    opts.RuntimeConfig.useDWSForTag,
+				Consumers: []dwseventsource.Consumer{{
+					EventKey: dws.EventCardAction,
+					Identities: func(ctx context.Context) ([]dwsclient.Identity, error) {
+						requests, err := decisions.ConsumerIdentities(ctx)
+						ids := make([]dwsclient.Identity, 0, len(requests))
+						for _, r := range requests {
+							ids = append(ids, dwsclient.Identity{AgentID: r.AgentID, UID: r.SenderUID, OrgID: r.SenderOrgID})
+						}
+						return ids, err
+					},
+					Handle: func(ctx context.Context, id dwsclient.Identity, line []byte) error {
+						return decisions.HandleCardEvent(ctx, id.AgentID, id.UID, id.OrgID, line)
+					},
+				}},
+			})
+			if err != nil {
+				slog.Error("DWS event source disabled", "event", "dws_event_source_disabled", "error", err)
+			} else {
+				h.DWSEvents = source
+				dingtalkresponse.SetDecisionEventConnections(h.UserDecisions.Transport, source)
+			}
+		}
+	}
 	h.UserDecisions.NotifyAlert = func(alert userdecision.Alert) {
 		var item map[string]any
 		if json.Unmarshal(alert.Item, &item) == nil {
@@ -1963,6 +2031,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// GitHub App webhook (no Multica auth — requests are authenticated via
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
+	r.Post("/api/webhooks/github/pre", h.ForwardGitHubPreWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
 	r.Get("/api/github/install", h.GitHubInstallStart)
 	// Also completes GitHub official app (MCP connector) connects: states with
