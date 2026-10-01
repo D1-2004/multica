@@ -127,14 +127,19 @@ func (p *dwsProvider) authenticateWith(ctx context.Context, cli dwsclient.CLI, i
 	if p == nil || p.issuer == nil {
 		return "", nil, errors.New("DWS response provider is not configured")
 	}
-	mint := func(ctx context.Context) (dwsclient.Credential, error) { return p.mint(ctx, in) }
+	mint := func(ctx context.Context, id dwsclient.Identity) (dwsclient.Credential, error) {
+		as := in
+		as.AgentID, as.DWSUID, as.DWSOrgID = id.AgentID, id.UID, id.OrgID
+		return p.mint(ctx, as)
+	}
+	identity := dwsclient.Identity{AgentID: in.AgentID, UID: in.DWSUID, OrgID: in.DWSOrgID}
+	shared := dwsclient.Shared{CLI: cli}
 	// The SDK transport reuses the identity's shared token and mints only
 	// without one; the dws CLI exchanges a credential per call.
-	if dir, cleanup, ok, err := (dwsclient.Shared{CLI: cli}).Open(ctx,
-		dwsclient.Identity{AgentID: in.AgentID, UID: in.DWSUID, OrgID: in.DWSOrgID}, mint); ok {
+	if dir, cleanup, ok, err := shared.Open(ctx, identity, mint); ok {
 		return dir, cleanup, err
 	}
-	credential, err := mint(ctx)
+	credential, err := shared.Mint(ctx, identity, mint)
 	if err != nil {
 		return "", nil, err
 	}

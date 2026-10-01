@@ -1475,7 +1475,7 @@
       "dingtalk_identity_native_subscription_unavailable": "当前环境未启用原生订阅，请联系管理员。",
       "dingtalk_identity_native_subscription_failed": "无法更新原生订阅。",
       "dingtalk_identity_deap_link_title": "数字员工换票（DEAP 主管）",
-      "dingtalk_identity_deap_link_description": "数字员工的消息只推送给它本人的凭证。配置员工的 DEAP ID 和主管 UID 后，服务端以主管身份向 DEAP 换取员工本人的凭证，只用于原生订阅收消息；回复和任务仍用智能体自己的身份。",
+      "dingtalk_identity_deap_link_description": "数字员工的消息只推送给它本人的凭证，也只有本人凭证能在它的会话里读写。配置员工的 DEAP ID 和主管 UID 后，服务端以主管身份向 DEAP 换取员工本人的凭证，用于原生订阅收消息、托管回复和读取会话；沙箱任务暂仍用智能体自己的身份。",
       "dingtalk_identity_deap_link_employee": "DEAP 员工 ID",
       "dingtalk_identity_deap_link_supervisor": "主管 UID",
       "dingtalk_identity_deap_link_invalid_employee": "请输入 DEAP 员工 ID（agentUuid）",

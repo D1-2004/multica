@@ -102,12 +102,12 @@ func (s *dwsReplySender) Open(ctx context.Context, d DWSDelivery) (DWSReplySessi
 	if s.config.AgentIdentity == nil {
 		return nil, errors.New("DWS reply identity issuer unavailable")
 	}
-	mint := func(ctx context.Context) (dwsclient.Credential, error) {
+	mint := func(ctx context.Context, id dwsclient.Identity) (dwsclient.Credential, error) {
 		requestID := "dws-reply:" + uuid.NewString()
 		identity, err := s.config.AgentIdentity.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
-			RequestID: requestID, TaskID: d.IdempotencyKey, AgentID: d.AgentID,
+			RequestID: requestID, TaskID: d.IdempotencyKey, AgentID: id.AgentID,
 			RuntimeType: "SERVER", RuntimeID: requestID, Reason: "Multica Router callback DWS delivery",
-			UID: d.SenderUID, OrgID: d.SenderOrgID, TTLSeconds: 120,
+			UID: id.UID, OrgID: id.OrgID, TTLSeconds: 120,
 			Source: map[string]string{"app": "dt-fde-multica", "identity_source": "router_callback_reply"},
 		})
 		if err != nil {
@@ -117,22 +117,22 @@ func (s *dwsReplySender) Open(ctx context.Context, d DWSDelivery) (DWSReplySessi
 		if err != nil {
 			return dwsclient.Credential{}, err
 		}
-		if credential.UID != d.SenderUID {
+		if credential.UID != id.UID {
 			return dwsclient.Credential{}, &dwsDeliveryPermanentError{"sender_identity_mismatch"}
 		}
 		return credential, nil
 	}
 	cli := dwsclient.CLI{Path: s.config.CLIPath, ClientSecret: s.config.ClientSecret, Environment: d.Environment}
+	sender := dwsclient.Identity{AgentID: d.AgentID, UID: d.SenderUID, OrgID: d.SenderOrgID}
 	// The SDK transport reuses the sender's shared token and mints only
 	// without one; the dws CLI exchanges a credential for this delivery.
-	if dir, cleanup, ok, err := (dwsclient.Shared{CLI: cli}).Open(ctx,
-		dwsclient.Identity{AgentID: d.AgentID, UID: d.SenderUID, OrgID: d.SenderOrgID}, mint); ok {
+	if dir, cleanup, ok, err := (dwsclient.Shared{CLI: cli}).Open(ctx, sender, mint); ok {
 		if err != nil {
 			return nil, err
 		}
 		return &dwsReplySession{cli: cli, dir: dir, cleanup: cleanup}, nil
 	}
-	credential, err := mint(ctx)
+	credential, err := (dwsclient.Shared{CLI: cli}).Mint(ctx, sender, mint)
 	if err != nil {
 		return nil, err
 	}

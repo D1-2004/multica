@@ -77,11 +77,6 @@ type CLI struct {
 	// StreamTicketMode is the SDK's personal event stream ticket mode ("" or
 	// "custom"); only event sources open streams.
 	StreamTicketMode string
-	// CredentialScope keeps an identity's credentials minted another way
-	// (native subscriptions exchange theirs through DEAP) apart from its
-	// usual ones, in this process and in the shared token store. Empty is
-	// the usual scope.
-	CredentialScope string
 }
 
 // IsCrossOrgPermissionDenied matches the server's typed scope rejection only.

@@ -1276,7 +1276,7 @@
       "dingtalk_identity_native_subscription_unavailable": "この環境ではネイティブ購読を利用できません。管理者に連絡してください。",
       "dingtalk_identity_native_subscription_failed": "ネイティブ購読を更新できません。",
       "dingtalk_identity_deap_link_title": "デジタル従業員の資格情報（DEAP 管理者）",
-      "dingtalk_identity_deap_link_description": "デジタル従業員のメッセージは本人の資格情報にのみ配信されます。従業員の DEAP ID と管理者 UID を設定すると、サーバーが管理者として DEAP から従業員本人の資格情報を取得し、ネイティブ購読の受信にのみ使います。返信とタスクはエージェント自身の ID を使います。",
+      "dingtalk_identity_deap_link_description": "デジタル従業員のメッセージは本人の資格情報にのみ配信され、その会話を読み書きできるのも本人の資格情報だけです。従業員の DEAP ID と管理者 UID を設定すると、サーバーが管理者として DEAP から従業員本人の資格情報を取得し、ネイティブ購読、マネージド返信、会話の読み取りに使います。サンドボックスのタスクは当面エージェント自身の ID を使います。",
       "dingtalk_identity_deap_link_employee": "DEAP 従業員 ID",
       "dingtalk_identity_deap_link_supervisor": "管理者 UID",
       "dingtalk_identity_deap_link_invalid_employee": "DEAP 従業員 ID（agentUuid）を入力してください",

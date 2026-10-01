@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
+	"github.com/multica-ai/multica/server/internal/dwsidentity"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -520,6 +521,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// replicas then share each identity's token through Redis.
 		dwsclient.SetTokenStore(dwsTokenStore(rdb))
 		dwsclient.SetSDKSelector(opts.RuntimeConfig.useDWSForTag)
+		// Every server path that acts as an execution identity issues its
+		// credential through the identity provider: Agent Identity, or DEAP
+		// through the supervisor for a linked digital employee.
+		dwsclient.SetIdentityProvider(&dwsidentity.Provider{Links: queries})
 		h.FCE2BLauncher.Runner = service.NewFCE2BRolloutRunner(opts.RuntimeConfig.fcE2BSDKRollout)
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
@@ -954,13 +959,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// The stream is registered for the app the subscriptions name
 			// (the dws CLI's custom ticket mode).
 			native.CLI.StreamTicketMode = "custom"
-			// Event credentials of a digital employee come from DEAP through
-			// its supervisor (a DEAP link); they live in their own scope, so
-			// replies, history and tasks keep the agent's own credentials.
-			native.CLI.CredentialScope = handler.NativeCredentialScope
+			// A digital employee's credential comes from DEAP through its
+			// supervisor (the DWS identity provider); identities carry the
+			// link's credential version, so a changed link restarts the stream.
 			identities := h.NativeSubscriptionIdentities
 			nativeSource, err := dwseventsource.New(dwseventsource.Config{
-				Redis: rdb, Sessions: native, Mint: h.NativeSubscriptionMint(mint, native),
+				Redis: rdb, Sessions: native, Mint: mint,
 				// v2: subscriptions name the token's app; the namespace is new so
 				// no record of an earlier app-less subscription is reused.
 				Deployment: "native-v2:" + strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),

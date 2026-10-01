@@ -22,16 +22,64 @@ type Identity struct {
 	AgentID string
 	UID     string
 	OrgID   string
-	// CredentialVersion names how the identity's credential is minted when
-	// that can change (a native subscription's DEAP link); a new version is
-	// minted afresh instead of reusing the shared token. Empty is the usual.
+	// CredentialVersion names how the identity's credential is issued when
+	// that is not the usual Agent Identity (set by the IdentityProvider); a
+	// new version is minted afresh instead of reusing the shared token.
 	CredentialVersion string
+}
+
+// IdentityMint issues id's credential through Agent Identity (a context and
+// its redeem); callers pass theirs, for any identity they name.
+type IdentityMint func(ctx context.Context, id Identity) (Credential, error)
+
+// IdentityProvider chooses how an execution identity's DWS credential is
+// issued. Usually that is base (Agent Identity); a provider may issue some
+// identities another way (a DingTalk digital employee through DEAP and its
+// supervisor). It returns the identity to key the credential by, carrying a
+// CredentialVersion that names any other way, and the mint to use.
+type IdentityProvider interface {
+	Resolve(ctx context.Context, s Shared, id Identity, base IdentityMint) (Identity, func(context.Context) (Credential, error), error)
+}
+
+var identityProvider atomic.Pointer[IdentityProvider]
+
+// SetIdentityProvider installs the provider every shared session and mint
+// consults; nil issues every identity through Agent Identity.
+func SetIdentityProvider(p IdentityProvider) {
+	if p == nil {
+		identityProvider.Store(nil)
+		return
+	}
+	identityProvider.Store(&p)
+}
+
+// resolve is how id's credential is keyed and minted.
+func (s Shared) resolve(ctx context.Context, id Identity, base IdentityMint) (Identity, func(context.Context) (Credential, error), error) {
+	if p := identityProvider.Load(); p != nil {
+		return (*p).Resolve(ctx, s, id, base)
+	}
+	id.CredentialVersion = ""
+	return id, func(ctx context.Context) (Credential, error) { return base(ctx, id) }, nil
+}
+
+// Mint issues id's credential the way the provider chooses, for the dws CLI
+// transport, which exchanges a credential per call.
+func (s Shared) Mint(ctx context.Context, id Identity, base IdentityMint) (Credential, error) {
+	resolved, mint, err := s.resolve(ctx, id, base)
+	if err != nil {
+		return Credential{}, err
+	}
+	credential, err := mint(ctx)
+	if err == nil && credential.UID != resolved.UID {
+		err = errors.New("DWS identity changed during redemption")
+	}
+	return credential, err
 }
 
 // Shared opens directories on identities' shared SDK clients. With the SDK
 // transport an identity is exchanged once and its token is reused by every
-// operation, and through the token store by every replica; mint (an Agent
-// Identity context and redeem) runs only when no usable token exists.
+// operation, and through the token store by every replica; the mint (as the
+// IdentityProvider chooses) runs only when no usable token exists.
 type Shared struct {
 	CLI CLI
 }
@@ -73,7 +121,7 @@ func (s Shared) pool(mcp, gateway string) *dws.Pool {
 // this package, and its cleanup. ok is false when the SDK transport is not
 // selected: the caller then exchanges a credential per call with the dws
 // CLI, as before.
-func (s Shared) Open(ctx context.Context, id Identity, mint func(context.Context) (Credential, error)) (dir string, cleanup func(), ok bool, err error) {
+func (s Shared) Open(ctx context.Context, id Identity, base IdentityMint) (dir string, cleanup func(), ok bool, err error) {
 	if !sdkSelected() {
 		return "", nil, false, nil
 	}
@@ -85,6 +133,10 @@ func (s Shared) Open(ctx context.Context, id Identity, mint func(context.Context
 	}
 	pruneSDKClients()
 	mcp, gateway, err := s.CLI.sdkEndpoints()
+	if err != nil {
+		return "", nil, true, err
+	}
+	id, mint, err := s.resolve(ctx, id, base)
 	if err != nil {
 		return "", nil, true, err
 	}
@@ -138,12 +190,9 @@ func (s Shared) Open(ctx context.Context, id Identity, mint func(context.Context
 }
 
 // identityKey names id's credentials in the pool and the shared token store.
-// The usual scope keeps the key it always had.
+// The usual Agent Identity credential keeps the key it always had.
 func (s Shared) identityKey(mcp string, id Identity) string {
 	key := mcp + "\x00" + id.AgentID + "\x00" + id.UID + "\x00" + id.OrgID
-	if scope := strings.TrimSpace(s.CLI.CredentialScope); scope != "" {
-		key += "\x00" + scope
-	}
 	if version := strings.TrimSpace(id.CredentialVersion); version != "" {
 		key += "\x00" + version
 	}
@@ -153,7 +202,7 @@ func (s Shared) identityKey(mcp string, id Identity) string {
 // Client returns id's shared SDK client, for long-lived work such as an
 // event connection; mint runs only when no usable token exists. It does
 // not depend on the switch: callers that hold a connection decide that.
-func (s Shared) Client(ctx context.Context, id Identity, mint func(context.Context) (Credential, error)) (*dws.Client, error) {
+func (s Shared) Client(ctx context.Context, id Identity, base IdentityMint) (*dws.Client, error) {
 	if strings.TrimSpace(s.CLI.ClientSecret) == "" {
 		return nil, errors.New("DWS client secret is not configured")
 	}
@@ -161,6 +210,10 @@ func (s Shared) Client(ctx context.Context, id Identity, mint func(context.Conte
 		return nil, errors.New("DWS identity is incomplete")
 	}
 	mcp, gateway, err := s.CLI.sdkEndpoints()
+	if err != nil {
+		return nil, err
+	}
+	id, mint, err := s.resolve(ctx, id, base)
 	if err != nil {
 		return nil, err
 	}

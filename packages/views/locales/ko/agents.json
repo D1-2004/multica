@@ -1284,7 +1284,7 @@
       "dingtalk_identity_native_subscription_unavailable": "이 환경에서는 네이티브 구독을 사용할 수 없습니다. 관리자에게 문의하세요.",
       "dingtalk_identity_native_subscription_failed": "네이티브 구독을 업데이트할 수 없습니다.",
       "dingtalk_identity_deap_link_title": "디지털 직원 자격 증명(DEAP 관리자)",
-      "dingtalk_identity_deap_link_description": "디지털 직원의 메시지는 본인 자격 증명으로만 전달됩니다. 직원의 DEAP ID와 관리자 UID를 설정하면 서버가 관리자로서 DEAP에서 직원 본인의 자격 증명을 받아 네이티브 구독 수신에만 사용합니다. 답장과 작업은 에이전트 자신의 신원을 사용합니다.",
+      "dingtalk_identity_deap_link_description": "디지털 직원의 메시지는 본인 자격 증명으로만 전달되며, 그 대화를 읽고 쓸 수 있는 것도 본인 자격 증명뿐입니다. 직원의 DEAP ID와 관리자 UID를 설정하면 서버가 관리자로서 DEAP에서 직원 본인의 자격 증명을 받아 네이티브 구독, 관리형 답장, 대화 읽기에 사용합니다. 샌드박스 작업은 당분간 에이전트 자신의 신원을 사용합니다.",
       "dingtalk_identity_deap_link_employee": "DEAP 직원 ID",
       "dingtalk_identity_deap_link_supervisor": "관리자 UID",
       "dingtalk_identity_deap_link_invalid_employee": "DEAP 직원 ID(agentUuid)를 입력하세요",

@@ -287,13 +287,25 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 **只用托管回复。** 原生命令恒带 `responsePolicy.mode=multica_coordinator`，资格与 Router 策略同步相同：入站判断与钉钉回复开关都开、策略 revision≥1、运行时具备 `dws_message_policy_v1`。开启原生订阅时校验不满足返回 409 `native_subscription_requires_managed_response`。回调属于服务端自己的派发任务 `dwsn-<hash>`，完成目标是 `agentmessagerouter.NativeTargetIdentity()`（与 Router 目标同形，outbox 原样路由）；有线请求不得使用该命名空间。回复语义与托管数字员工一致：冻结触发消息的 openMsgId，群聊引用回复并 @ 发信人，单聊同样引用回复。`response_route` 与等待说明冻结 `dws_environment=production`。原生完成 worker 只确认回调：托管出站已接手即完成，路由缺失且有话要说则死信；回执只关闭收集窗口，不调用 Router。
 
-**数字员工换票（DEAP 主管）。** 数字员工（DEAP）的 Agent Identity 凭证订阅时落在另一个主体上，收不到员工本人的任何消息（2026-10-01 实测：线上、预发网关都是零帧；普通账号「东翔测试」用同样的凭证能收到）。个人消息事件只投递给员工本人的主体，按 `filterSubId=<内部uid>_<组织>_11_<clientId>` 匹配。DEAP 能签发员工本人的 DWS auth code，但只签给员工的主管。所以原生订阅可以配一条 DEAP 关联（表 `agent_dws_native_deap_link`，只有部署运维可以 `PUT/DELETE …/native-subscription/deap-link`，其他人只读）：
-- 关联包含员工的 DEAP agentUuid 和主管 uid，组织取身份所在的组织。
-- 原生事件源换票时，先用我们的 Agent Identity 签发主管凭证，再调 DEAP MCP（`deap-dev`）：先用 `get_digital_employee_detail` 核对员工发布的 `profile.userId` 等于订阅身份，对不上就拒绝；再用 `get_dws_auth_code` 换出员工本人的 code。
-- 这个 code 只给事件流用。原生会话的凭证作用域是 `native-subscription`，与回复、历史、任务的凭证在本进程和 Redis 共享 token 中都互不相通；那些路径仍用智能体自己的 Agent Identity 凭证。
-- 关联改变后，身份的凭证版本（`dwsclient.Identity.CredentialVersion`，取关联的哈希）随之改变。事件流目标的指纹也跟着变，持有该流的副本会重新换票、订阅并连接。
+**DWS 身份提供方（Identity Provider）与数字员工换票。** 服务端每条以执行身份操作钉钉的路径都通过同一个 DWS 身份提供方（`internal/dwsidentity`，在 `dwsclient.SetIdentityProvider` 注册）拿凭证。这些路径包括：原生事件流、托管回复、用户决策卡片、Coordinator 历史预取、场域记忆，以及 Router 回调投递。提供方决定执行身份的 DWS 凭证由谁签发：
+- 默认由 Agent Identity 签发，即调用方自己的 mint。
+- DingTalk 数字员工（DEAP）由 DEAP 签发。
 
-没有关联的身份照旧使用 Agent Identity 凭证。
+**为什么数字员工要单独处理（2026-10-01 预发实测）。** 数字员工的 Agent Identity 凭证落在另一个主体上：
+- 订阅收不到员工的任何消息，线上、预发网关都是零帧；普通账号「东翔测试」用同样的凭证能收到。
+- 以员工身份引用回复返回 `PARAM_ERROR`，历史预取 `unavailable`。
+- 同一条引用回复命令改用员工本人的 DEAP 凭证就能成功。
+
+个人消息事件按 `filterSubId=<内部uid>_<组织>_11_<clientId>` 只投递给员工本人的主体。DEAP 能签发员工本人的 DWS auth code，但只签给员工的主管。
+
+**DEAP 关联。** 关联存在表 `agent_dws_native_deap_link`，只有部署运维（真人）可以 `PUT/DELETE …/native-subscription/deap-link`，其他人只读。关联包含员工的 DEAP agentUuid 和主管 uid，组织取身份所在的组织。有关联的身份这样签发凭证：
+1. 用调用方的 Agent Identity mint 签发主管凭证，主管是普通身份。
+2. 调 DEAP MCP（`deap-dev`，用 `CallRaw` 读取 `{success, data}`）：先用 `get_digital_employee_detail` 核对员工发布的 `profile.userId` 是不是这个身份，对不上就拒绝；再用 `get_dws_auth_code` 换出员工本人的 code。
+3. SDK 通道（`runtime.use_dws_for_tag`）换 token 时，要求结果确实是这个员工的 userId 和 corpId。dws CLI 通道只有第 2 步的发布详情核对。
+
+**凭证版本与缓存。** 关联的哈希就是凭证版本（`dwsclient.Identity.CredentialVersion`），它会进入共享 token 的键，所以 DEAP 签发的 token 和 Agent Identity token 互不复用。同一次关联读取同时决定这个键和 mint，两者不会错位。关联改变后版本随之改变：原生事件源的目标指纹跟着变，持有流的副本会重新换票、订阅并连接；其他路径在下次打开会话时换新 token。读不到关联时，这次会话直接失败，不会退回到错误的主体；因为所有身份都要读关联，这类失败会影响所有身份。决策卡片的事件流要等下次重连才会换上新凭证。没有关联的身份照旧使用 Agent Identity 凭证。
+
+**沙箱暂不覆盖。** 沙箱任务在沙箱内自行兑换 Agent Identity 凭证，暂不经过身份提供方；以后开沙箱时再在那里换票并复用。
 
 **连接指示灯。** 身份卡开关旁的指示灯读 `GET …/dingtalk/account-bindings/{agentId}/native-subscription`，开启期间每 10 秒轮询一次。返回的事件流状态如下：
 - `connected`：任一副本持有已连接的事件流（Redis ready 标记）。

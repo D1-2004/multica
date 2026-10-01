@@ -1494,7 +1494,7 @@
       "dingtalk_identity_native_subscription_unavailable": "Native subscription is not available in this environment. Contact your administrator.",
       "dingtalk_identity_native_subscription_failed": "Unable to update native subscription.",
       "dingtalk_identity_deap_link_title": "Digital employee credential (DEAP supervisor)",
-      "dingtalk_identity_deap_link_description": "A digital employee's messages are pushed only to its own credential. With the employee's DEAP ID and supervisor UID set, the server asks DEAP for the employee's credential as the supervisor and uses it only to receive native subscription messages; replies and tasks keep the agent's own identity.",
+      "dingtalk_identity_deap_link_description": "A digital employee's messages are pushed only to its own credential, and only that credential can read or write in its conversations. With the employee's DEAP ID and supervisor UID set, the server asks DEAP for the employee's credential as the supervisor and uses it for native subscription, managed replies and reading conversations; sandbox tasks still use the agent's own identity for now.",
       "dingtalk_identity_deap_link_employee": "DEAP employee ID",
       "dingtalk_identity_deap_link_supervisor": "Supervisor UID",
       "dingtalk_identity_deap_link_invalid_employee": "Enter the DEAP employee ID (agentUuid).",

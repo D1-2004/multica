@@ -64,7 +64,10 @@ type DWSHistoryConfig struct {
 // dwsSharedSessions opens directories on identities' shared SDK clients
 // (dwsclient.Shared); ok is false while the dws CLI serves DingTalk calls.
 type dwsSharedSessions interface {
-	Open(context.Context, dwsclient.Identity, func(context.Context) (dwsclient.Credential, error)) (string, func(), bool, error)
+	Open(context.Context, dwsclient.Identity, dwsclient.IdentityMint) (string, func(), bool, error)
+	// Mint issues a credential the way the IdentityProvider chooses, for
+	// the dws CLI transport.
+	Mint(context.Context, dwsclient.Identity, dwsclient.IdentityMint) (dwsclient.Credential, error)
 }
 
 type dwsHistoryLoader struct {
@@ -151,22 +154,28 @@ func (l *dwsHistoryLoader) Load(ctx context.Context, turn Turn) ([]HistoryLine, 
 // shared SDK client when the SDK transport is selected (minting only when
 // no shared token exists), else with a credential exchanged for this call.
 func (l *dwsHistoryLoader) openSession(ctx context.Context, turn Turn, uid, orgID string) (string, func(), error) {
-	mint := func(ctx context.Context) (dwsCredential, error) {
-		return l.mint(ctx, turn, uid, orgID)
+	identity := dwsclient.Identity{AgentID: util.UUIDToString(turn.AgentID), UID: uid, OrgID: orgID}
+	mint := func(ctx context.Context, id dwsclient.Identity) (dwsclient.Credential, error) {
+		c, err := l.mint(ctx, turn, id.UID, id.OrgID)
+		return dwsclient.Credential{UID: c.UID, ClientID: c.ClientID, AuthCode: c.AuthCode}, err
 	}
+	var credential dwsCredential
 	if l.shared != nil {
-		dir, cleanup, ok, err := l.shared.Open(ctx, dwsclient.Identity{AgentID: util.UUIDToString(turn.AgentID), UID: uid, OrgID: orgID},
-			func(ctx context.Context) (dwsclient.Credential, error) {
-				c, err := mint(ctx)
-				return dwsclient.Credential{UID: c.UID, ClientID: c.ClientID, AuthCode: c.AuthCode}, err
-			})
+		dir, cleanup, ok, err := l.shared.Open(ctx, identity, mint)
 		if ok {
 			return dir, cleanup, err
 		}
-	}
-	credential, err := mint(ctx)
-	if err != nil {
-		return "", nil, err
+		c, err := l.shared.Mint(ctx, identity, mint)
+		if err != nil {
+			return "", nil, err
+		}
+		credential = dwsCredential{UID: c.UID, ClientID: c.ClientID, AuthCode: c.AuthCode}
+	} else {
+		c, err := l.mint(ctx, turn, uid, orgID)
+		if err != nil {
+			return "", nil, err
+		}
+		credential = c
 	}
 	dir, err := l.mkdir("", "multica-inbound-dws-")
 	if err != nil {
