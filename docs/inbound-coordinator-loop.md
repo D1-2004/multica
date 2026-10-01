@@ -305,7 +305,7 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 **凭证版本与缓存。** 关联的哈希就是凭证版本（`dwsclient.Identity.CredentialVersion`），它会进入共享 token 的键，所以 DEAP 签发的 token 和 Agent Identity token 互不复用。同一次关联读取同时决定这个键和 mint，两者不会错位。关联改变后版本随之改变：原生事件源的目标指纹跟着变，持有流的副本会重新换票、订阅并连接；其他路径在下次打开会话时换新 token。读不到关联时，这次会话直接失败，不会退回到错误的主体；因为所有身份都要读关联，这类失败会影响所有身份。决策卡片的事件流要等下次重连才会换上新凭证。没有关联的身份照旧使用 Agent Identity 凭证。
 
-**沙箱暂不覆盖。** 沙箱任务在沙箱内自行兑换 Agent Identity 凭证，暂不经过身份提供方；以后开沙箱时再在那里换票并复用。
+**沙箱同样经过身份提供方。** FC 启动任务时，若身份提供方拥有该智能体绑定的 DWS 身份（有主管关联的数字员工），服务端用同一个 `Shared.Issue` 换出 AuthCode，经 `MULTICA_DWS_AUTH_CODE` / `MULTICA_DWS_AUTH_CLIENT_ID` 交给沙箱；runner 用它执行 `dws auth exchange`，替代 Agent Identity 兑出的 AuthCode，ContextToken 只再用于 GitHub。签发失败直接让启动失败，不回退到 Agent Identity（那条路对数字员工会在换票后的身份核对处失败）。旧镜像不认识这两个变量，仍走 Agent Identity。
 
 **连接指示灯。** 身份卡开关旁的指示灯读 `GET …/dingtalk/account-bindings/{agentId}/native-subscription`，开启期间每 10 秒轮询一次。返回的事件流状态如下：
 - `connected`：任一副本持有已连接的事件流（Redis ready 标记）。

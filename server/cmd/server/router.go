@@ -963,6 +963,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// supervisor (the DWS identity provider); identities carry the
 			// link's credential version, so a changed link restarts the stream.
 			identities := h.NativeSubscriptionIdentities
+			// A task sandbox of a digital employee exchanges the AuthCode the
+			// same identity provider issues, not Agent Identity's.
+			if h.FCE2BLauncher != nil {
+				h.FCE2BLauncher.DWSAuthCodeIssuer = func(ctx context.Context, agentID, uid, orgID string) (string, string, bool, error) {
+					credential, ok, err := native.Issue(ctx, dwsclient.Identity{AgentID: agentID, UID: uid, OrgID: orgID}, mint)
+					return credential.ClientID, credential.AuthCode, ok, err
+				}
+			}
 			nativeSource, err := dwseventsource.New(dwseventsource.Config{
 				Redis: rdb, Sessions: native, Mint: mint,
 				// v2: subscriptions name the token's app; the namespace is new so

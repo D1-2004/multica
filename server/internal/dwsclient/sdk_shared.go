@@ -62,6 +62,27 @@ func (s Shared) resolve(ctx context.Context, id Identity, base IdentityMint) (Id
 	return id, func(ctx context.Context) (Credential, error) { return base(ctx, id) }, nil
 }
 
+// Issue returns the AuthCode an identity provider issues for id, for a
+// caller that hands it to another process to exchange (a task sandbox). ok is
+// false when no provider owns id: the caller keeps its own credential path.
+func (s Shared) Issue(ctx context.Context, id Identity, base IdentityMint) (Credential, bool, error) {
+	resolved, mint, err := s.resolve(ctx, id, base)
+	if err != nil {
+		return Credential{}, false, err
+	}
+	if resolved.CredentialVersion == "" {
+		return Credential{}, false, nil
+	}
+	credential, err := mint(ctx)
+	if err != nil {
+		return Credential{}, true, err
+	}
+	if credential.UID != resolved.UID {
+		return Credential{}, true, errors.New("DWS identity changed during redemption")
+	}
+	return credential, true, nil
+}
+
 // Mint issues id's credential the way the provider chooses, for the dws CLI
 // transport, which exchanges a credential per call.
 func (s Shared) Mint(ctx context.Context, id Identity, base IdentityMint) (Credential, error) {

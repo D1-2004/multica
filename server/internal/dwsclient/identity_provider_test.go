@@ -80,3 +80,29 @@ func TestIdentityProviderChoosesHowIdentitiesAreIssued(t *testing.T) {
 		t.Fatalf("provider failure on mint = %v", err)
 	}
 }
+
+// Issue hands out the provider's AuthCode only for an identity the provider
+// owns; for any other, the caller keeps its own credential path.
+func TestIssueReturnsOnlyProviderOwnedAuthCodes(t *testing.T) {
+	t.Cleanup(func() { SetIdentityProvider(nil) })
+	shared := Shared{CLI: CLI{ClientSecret: "secret"}}
+	base := func(_ context.Context, id Identity) (Credential, error) {
+		return Credential{UID: id.UID, ClientID: "client-1", AuthCode: "agent-identity"}, nil
+	}
+	linked := Identity{AgentID: "agent-1", UID: "42", OrgID: "org-1"}
+	if _, ok, err := shared.Issue(context.Background(), linked, base); ok || err != nil {
+		t.Fatalf("no provider: ok=%v err=%v", ok, err)
+	}
+	SetIdentityProvider(versionProvider{uid: "42", version: "deap-1"})
+	credential, ok, err := shared.Issue(context.Background(), linked, base)
+	if !ok || err != nil || credential.AuthCode != "other-way" || credential.ClientID != "client-1" {
+		t.Fatalf("linked: %+v ok=%v err=%v", credential, ok, err)
+	}
+	if _, ok, err := shared.Issue(context.Background(), Identity{AgentID: "agent-2", UID: "7", OrgID: "org-1"}, base); ok || err != nil {
+		t.Fatalf("unlinked: ok=%v err=%v", ok, err)
+	}
+	SetIdentityProvider(versionProvider{err: errors.New("link unreadable")})
+	if _, _, err := shared.Issue(context.Background(), linked, base); err == nil {
+		t.Fatal("a provider failure was swallowed")
+	}
+}

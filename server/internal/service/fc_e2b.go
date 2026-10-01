@@ -958,10 +958,13 @@ type FCE2BLauncher struct {
 	// A2AOperatorIdentities reads the operator-bound DEAP employee identity
 	// that A2A turns marked with a2a_operator_dws_identity run as.
 	A2AOperatorIdentities A2AOperatorIdentityReader
-	SandboxRelaySigner    SandboxRelayTokenSigner
-	sleep                 func(context.Context, time.Duration) error
-	jitter                func(time.Duration) time.Duration
-	dshProvider           func(dshhost.Storage) (dshhost.Provider, error)
+	// DWSAuthCodeIssuer issues the DWS AuthCode a task sandbox exchanges when
+	// an identity provider owns the agent's bound DWS identity.
+	DWSAuthCodeIssuer  FCE2BDWSAuthCodeIssuer
+	SandboxRelaySigner SandboxRelayTokenSigner
+	sleep              func(context.Context, time.Duration) error
+	jitter             func(time.Duration) time.Duration
+	dshProvider        func(dshhost.Storage) (dshhost.Provider, error)
 	// stopPass runs one pass of an aborted-task stop and reports whether
 	// another pass may find more; nil runs stopAbortedTaskProcesses.
 	stopPass func(ctx context.Context, frozen *FCE2BLauncher, taskID pgtype.UUID, pass int) bool
@@ -2141,10 +2144,63 @@ func (l *FCE2BLauncher) identityEnvForTask(
 	if err != nil {
 		return nil, err
 	}
-	if resolved.ContextToken == "" {
+	env := map[string]string{}
+	if resolved.ContextToken != "" {
+		if env, err = fcE2BAgentIdentityEnvForToken(resolved.ContextToken, l.Config); err != nil {
+			return nil, err
+		}
+	}
+	issued, err := l.issuedDWSAuthCodeEnv(ctx, task, resolved.DWS)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range issued {
+		env[key] = value
+	}
+	if len(env) == 0 {
 		return nil, nil
 	}
-	return fcE2BAgentIdentityEnvForToken(resolved.ContextToken, l.Config)
+	return env, nil
+}
+
+// FCE2BDWSAuthCodeIssuer issues the DWS AuthCode for an agent's bound DWS
+// identity when an identity provider owns it (a digital employee's
+// supervisor through DEAP). ok is false when Agent Identity's own AuthCode
+// applies.
+type FCE2BDWSAuthCodeIssuer func(ctx context.Context, agentID, uid, orgID string) (clientID, authCode string, ok bool, err error)
+
+// issuedDWSAuthCodeEnv hands the sandbox the AuthCode the identity provider
+// issues for the agent's bound DWS identity. The runner exchanges it in place
+// of the one Agent Identity redeems, which for a digital employee names a
+// principal DingTalk does not know as the employee. A failure stops the
+// launch: Agent Identity's AuthCode would fail the same identity later.
+func (l *FCE2BLauncher) issuedDWSAuthCodeEnv(ctx context.Context, task db.AgentTaskQueue, dws fcE2BDWSIdentity) (map[string]string, error) {
+	if l.DWSAuthCodeIssuer == nil || dws.UID == "" || dws.OrgID == "" {
+		return nil, nil
+	}
+	clientID, code, ok, err := l.DWSAuthCodeIssuer(ctx, util.UUIDToString(task.AgentID), dws.UID, dws.OrgID)
+	if err != nil {
+		return nil, fmt.Errorf("issue the task's DWS AuthCode: %w", err)
+	}
+	if !ok {
+		return nil, nil
+	}
+	if strings.TrimSpace(clientID) == "" || strings.TrimSpace(code) == "" {
+		return nil, errors.New("the identity provider issued an empty DWS AuthCode")
+	}
+	if l.Config.DWSClientSecret == "" {
+		return nil, errors.New("an issued DWS AuthCode needs MULTICA_AGENT_IDENTITY_DWS_CLIENT_SECRET")
+	}
+	slog.Info("FC/E2B task DWS AuthCode issued",
+		"task_id", util.UUIDToString(task.ID),
+		"agent_id", util.UUIDToString(task.AgentID),
+		"issuer", "identity_provider",
+	)
+	return map[string]string{
+		protocol.DWSAuthCodeEnvKey:         code,
+		protocol.DWSAuthCodeClientIDEnvKey: clientID,
+		"DWS_CLIENT_SECRET":                l.Config.DWSClientSecret,
+	}, nil
 }
 
 // a2aOperatorIdentityEnv mints the runner ContextToken for an A2A turn that
@@ -2198,6 +2254,8 @@ func (l *FCE2BLauncher) a2aOperatorIdentityEnv(
 type fcE2BResolvedIdentity struct {
 	ContextToken string
 	Source       string
+	// DWS is the agent's bound DWS identity, when one was found.
+	DWS fcE2BDWSIdentity
 }
 
 type fcE2BDWSIdentity struct {
@@ -2248,7 +2306,9 @@ func (l *FCE2BLauncher) resolveIdentityForTask(
 		}
 	}
 	if stableDWS.Source != "" {
-		return l.createResolvedIdentityContext(ctx, task, sandboxID, stableDWS, githubConnection, hasGithubConnection)
+		resolved, err := l.createResolvedIdentityContext(ctx, task, sandboxID, stableDWS, githubConnection, hasGithubConnection)
+		resolved.DWS = stableDWS
+		return resolved, err
 	}
 
 	prepared, err := fcE2BAgentIdentityExtraEnv(task, l.Config)
@@ -3060,6 +3120,8 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 		protocol.DingTalkStreamConnectionIDEnvKey,
 		protocol.AgentIdentityContextTokenEnvKey,
 		protocol.DEAPDWSTokenEnvKey,
+		protocol.DWSAuthCodeEnvKey,
+		protocol.DWSAuthCodeClientIDEnvKey,
 		protocol.SandboxRelayTokenEnvKey,
 		"MULTICA_AGENT_IDENTITY_BASE_URL",
 		"MULTICA_AGENT_IDENTITY_TIMEOUT_SECONDS",
