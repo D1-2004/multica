@@ -10,8 +10,6 @@ import {
   ChevronDown,
   Copy,
   List,
-  PanelLeftClose,
-  PanelLeftOpen,
   Plus,
   RefreshCw,
   Settings2,
@@ -22,6 +20,7 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
+import { runtimeListOptions } from "@multica/core/runtimes";
 import {
   useAdoptTagTenant,
   useApplyTag,
@@ -32,6 +31,16 @@ import {
   type TagState,
   type TagTenant,
 } from "@multica/core/tag";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@multica/ui/components/ui/alert-dialog";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {
@@ -57,19 +66,40 @@ import { NativeSelect, NativeSelectOption } from "@multica/ui/components/ui/nati
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { cn } from "@multica/ui/lib/utils";
 import { AgentDetailPage } from "../agents/components/agent-detail-page";
+import type { DetailTab } from "../agents/components/agent-overview-pane";
 import { TagTenantConfig } from "./tenant-config";
 import { AppLink, useNavigation } from "../navigation";
 import { useT } from "../i18n";
 
-/** URL query param holding the selected tenant id; absent means the shared
- * (template) configuration. Distinct from the scenes tab's `tenant` param. */
+/** URL query param holding the selected tenant id. Distinct from the scenes
+ * tab's `tenant` param (an org inside the employee's scenes). */
 const TENANT_PARAM = "tag_tenant";
 
-/** View param of the tenant pane; the shared pane keeps `view`. */
-const TENANT_VIEW_PARAM = "tview";
+/** URL query param holding the selected tab of the Tag page. */
+const TAB_PARAM = "tab";
 
-/** Params that only mean something inside one tenant's pane. */
+/** Params that only mean something inside one tenant's scenes. */
 const AGENT_SCOPED_PARAMS = ["tenant", "node", "scene", "scene_tab", "app"];
+
+/** Left of the tab bar: the shared configuration every tenant inherits. */
+type SharedTab = "instructions" | "skills" | "mcp_config" | "general" | "dsh";
+/** Right of the tab bar: the selected tenant. */
+type TenantTab = "tenant_config" | "scenes" | "recent_work";
+type TagTab = SharedTab | TenantTab;
+
+const SHARED_TABS: readonly SharedTab[] = ["instructions", "skills", "mcp_config", "general", "dsh"];
+const TENANT_TABS: readonly TenantTab[] = ["tenant_config", "scenes", "recent_work"];
+
+/** The employee pane's view behind each tenant tab. */
+const TENANT_TAB_VIEW: Record<TenantTab, DetailTab> = {
+  tenant_config: "digital_employee",
+  scenes: "scenes",
+  recent_work: "overview",
+};
+
+function isTenantTab(tab: TagTab): tab is TenantTab {
+  return (TENANT_TABS as readonly string[]).includes(tab);
+}
 
 type TagDialog = "new" | "adopt" | "apply" | "manage" | null;
 
@@ -78,11 +108,11 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * The workspace Tag, laid out left and right: the shared configuration every
- * tenant inherits (the template agent's instructions, skills, connectors and
- * runtime) on the left; the selected tenant on the right, with its identity,
- * event perception, scenes and recent work. Without a tenant the right side
- * lists the tenants.
+ * The workspace Tag. One tab bar, split left and right: on the left the
+ * shared configuration every tenant inherits (the template agent's
+ * instructions, skills, connectors and runtime); on the right the tenant
+ * switcher and the selected tenant's configuration, scenes and recent work.
+ * The selected tab fills the page.
  */
 export function TagPage() {
   const { t } = useT("agents");
@@ -90,24 +120,54 @@ export function TagPage() {
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
   const { data: state, isLoading } = useWorkspaceTag(wsId);
+  const { data: agents = [] } = useQuery(agentListOptions(wsId));
+  const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
   const [dialog, setDialog] = useState<TagDialog>(null);
   const [deleting, setDeleting] = useState<TagTenant | null>(null);
-  const [sharedCollapsed, setSharedCollapsed] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [pending, setPending] = useState<{ tab: TagTab; tenantId?: string | null } | null>(null);
 
   const selectedId = navigation.searchParams.get(TENANT_PARAM);
   const tag = state?.tag ?? null;
   const tenants = state?.tenants ?? [];
   const tenant = selectedId ? (tenants.find((item) => item.id === selectedId) ?? null) : null;
 
-  const selectTenant = (id: string | null, view?: string) => {
+  // DSH configuration only applies to a template on a DSH runtime.
+  const templateAgent = agents.find((agent) => agent.id === tag?.agentId) ?? null;
+  const templateRuntime = runtimes.find((runtime) => runtime.id === templateAgent?.runtime_id) ?? null;
+  const sharedTabs = SHARED_TABS.filter((tab) => tab !== "dsh" || templateRuntime?.provider === "dsh");
+  const rawTab = navigation.searchParams.get(TAB_PARAM) as TagTab | null;
+  const activeTab: TagTab =
+    rawTab && ((sharedTabs as readonly string[]).includes(rawTab) || isTenantTab(rawTab))
+      ? rawTab
+      : tenant
+        ? "tenant_config"
+        : "instructions";
+
+  const commit = (tab: TagTab, tenantId?: string | null) => {
     const params = new URLSearchParams(navigation.searchParams);
-    if (id) params.set(TENANT_PARAM, id);
-    else params.delete(TENANT_PARAM);
-    for (const key of [...AGENT_SCOPED_PARAMS, TENANT_VIEW_PARAM]) params.delete(key);
-    if (view) params.set(TENANT_VIEW_PARAM, view);
-    const query = params.toString();
-    navigation.replace(`${navigation.pathname}${query ? `?${query}` : ""}`);
+    params.set(TAB_PARAM, tab);
+    const tenantChanges = tenantId !== undefined && tenantId !== selectedId;
+    if (tenantId !== undefined) {
+      if (tenantId) params.set(TENANT_PARAM, tenantId);
+      else params.delete(TENANT_PARAM);
+    }
+    // A scene selection belongs to one tenant's scenes tab.
+    if (tenantChanges || tab !== "scenes") for (const key of AGENT_SCOPED_PARAMS) params.delete(key);
+    navigation.replace(`${navigation.pathname}?${params.toString()}`);
+    setDirty(false);
   };
+
+  const go = (tab: TagTab, tenantId?: string | null) => {
+    if (tab === activeTab && (tenantId === undefined || tenantId === selectedId)) return;
+    if (dirty) {
+      setPending({ tab, tenantId });
+      return;
+    }
+    commit(tab, tenantId);
+  };
+
+  const selectTenant = (id: string | null) => go(isTenantTab(activeTab) ? activeTab : "tenant_config", id);
 
   if (isLoading) {
     return (
@@ -145,6 +205,13 @@ export function TagPage() {
   const behind =
     tag.latestRevision != null && tenants.some((item) => item.appliedRevision !== tag.latestRevision);
   const showBanner = state.canManage && tenants.length > 0 && (tag.hasUnpublishedChanges || behind);
+  const sharedLabel = (tab: SharedTab) => t(($) => $.tabs[tab]);
+  const tenantLabel = (tab: TenantTab) =>
+    tab === "tenant_config"
+      ? t(($) => $.tag_tenant.tab_tenant_config)
+      : tab === "scenes"
+        ? t(($) => $.tabs.scenes)
+        : t(($) => $.tag_tenant.tab_recent_work);
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -167,7 +234,7 @@ export function TagPage() {
         </div>
       ) : null}
 
-      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-3 sm:px-6">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-4 pt-3 pb-1 sm:px-6">
         <TagIcon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
         <h1 className="text-title-sm font-semibold">{t(($) => $.tag_page.title)}</h1>
         {tag.latestRevision != null ? (
@@ -204,67 +271,91 @@ export function TagPage() {
         ) : null}
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
-        <section
-          aria-label={t(($) => $.tag_page.shared_title)}
-          className={cn(
-            "flex flex-col border-b lg:min-h-0 lg:border-b-0 lg:border-r",
-            sharedCollapsed ? "lg:w-12 lg:shrink-0" : "min-h-[560px] lg:w-[44%] lg:shrink-0",
-          )}
-        >
-          <PaneHeader
-            collapsed={sharedCollapsed}
-            title={t(($) => $.tag_page.shared_title)}
-            hint={t(($) => $.tag_page.shared_hint)}
-            action={
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                aria-label={sharedCollapsed ? t(($) => $.tag_page.shared_expand) : t(($) => $.tag_page.shared_collapse)}
-                aria-expanded={!sharedCollapsed}
-                onClick={() => setSharedCollapsed((value) => !value)}
-              >
-                {sharedCollapsed ? (
-                  <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
-                ) : (
-                  <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
-                )}
-              </Button>
-            }
-          />
-          {sharedCollapsed ? null : (
-            <AgentDetailPage key={tag.agentId} agentId={tag.agentId} tagView={{ role: "template", embedded: true }} />
-          )}
-        </section>
+      <div
+        role="tablist"
+        aria-label={t(($) => $.tag_page.tabs_aria)}
+        className="flex shrink-0 items-center gap-5 overflow-x-auto border-b px-4 sm:px-6"
+      >
+        <span className="shrink-0 text-caption text-muted-foreground">{t(($) => $.tag_page.shared_group)}</span>
+        {sharedTabs.map((tab) => (
+          <TagTabButton key={tab} selected={activeTab === tab} onClick={() => go(tab)}>
+            {sharedLabel(tab)}
+          </TagTabButton>
+        ))}
+        <div className="min-w-6 flex-1" aria-hidden="true" />
+        <div className="shrink-0 py-2">
+          <TagTenantSwitcher state={state} selected={tenant} onSelect={selectTenant} />
+        </div>
+        {TENANT_TABS.map((tab) => (
+          <TagTabButton key={tab} selected={activeTab === tab} onClick={() => go(tab)}>
+            {tenantLabel(tab)}
+          </TagTabButton>
+        ))}
+      </div>
 
-        <section aria-label={t(($) => $.tag_page.tenant_pane_title)} className="flex min-h-[560px] min-w-0 flex-1 flex-col lg:min-h-0">
-          <PaneHeader
-            title={t(($) => $.tag_page.tenant_pane_title)}
-            hint={tenant ? <AgentIdChip agentId={tenant.employeeAgentId} /> : t(($) => $.tag_page.tenant_pane_hint)}
-            action={<TagTenantSwitcher state={state} selected={tenant} onSelect={(id) => selectTenant(id)} />}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {!isTenantTab(activeTab) ? (
+          <AgentDetailPage
+            key={tag.agentId}
+            agentId={tag.agentId}
+            tagView={{ role: "template", embedded: true, tab: activeTab, onDirtyChange: setDirty }}
           />
-          {tenant ? (
+        ) : tenant ? (
+          <>
+            <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b bg-muted/30 px-4 py-2 text-caption text-muted-foreground sm:px-6">
+              <Building2 className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="font-medium text-foreground">{tenant.name}</span>
+              {tenant.orgId ? <span className="font-mono">{tenant.orgId}</span> : null}
+              <TenantStatus tenant={tenant} />
+              <span className="ml-auto">
+                <AgentIdChip agentId={tenant.employeeAgentId} />
+              </span>
+            </div>
             <AgentDetailPage
               key={tenant.employeeAgentId}
               agentId={tenant.employeeAgentId}
               tagView={{
                 role: "employee",
                 embedded: true,
-                viewParam: TENANT_VIEW_PARAM,
+                tab: TENANT_TAB_VIEW[activeTab],
+                onDirtyChange: setDirty,
                 renderTenantConfig: (props) => <TagTenantConfig {...props} />,
               }}
             />
-          ) : (
-            <TenantOverview
-              tenants={tenants}
-              canManage={state.canManage}
-              onSelect={(id) => selectTenant(id)}
-              onNew={() => setDialog("new")}
-            />
-          )}
-        </section>
+          </>
+        ) : (
+          <TenantOverview
+            tenants={tenants}
+            canManage={state.canManage}
+            onSelect={(id) => selectTenant(id)}
+            onNew={() => setDialog("new")}
+          />
+        )}
       </div>
+
+      {pending ? (
+        <AlertDialog open onOpenChange={(open) => (!open ? setPending(null) : undefined)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t(($) => $.tabs.discard_dialog_title)}</AlertDialogTitle>
+              <AlertDialogDescription>{t(($) => $.tabs.discard_dialog_description)}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t(($) => $.tabs.discard_keep)}</AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                onClick={() => {
+                  const next = pending;
+                  setPending(null);
+                  commit(next.tab, next.tenantId);
+                }}
+              >
+                {t(($) => $.tabs.discard_confirm)}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      ) : null}
 
       {dialog === "new" ? (
         <NewTenantDialog
@@ -273,7 +364,7 @@ export function TagPage() {
           onCreated={(id) => {
             setDialog(null);
             // A new tenant starts by issuing its digital employee's identity.
-            selectTenant(id);
+            commit("tenant_config", id);
           }}
         />
       ) : null}
@@ -284,7 +375,7 @@ export function TagPage() {
           onClose={() => setDialog(null)}
           onAdopted={(id) => {
             setDialog(null);
-            selectTenant(id);
+            commit("tenant_config", id);
           }}
         />
       ) : null}
@@ -299,7 +390,7 @@ export function TagPage() {
           onClose={() => setDeleting(null)}
           onDeleted={() => {
             // Leave the deleted tenant's page; the manage dialog stays open.
-            if (deleting.id === tenant?.id) selectTenant(null);
+            if (deleting.id === tenant?.id) commit(activeTab, null);
             setDeleting(null);
           }}
         />
@@ -308,28 +399,30 @@ export function TagPage() {
   );
 }
 
-function PaneHeader({
-  title,
-  hint,
-  action,
-  collapsed = false,
+function TagTabButton({
+  selected,
+  onClick,
+  children,
 }: {
-  title: string;
-  hint: ReactNode;
-  action?: ReactNode;
-  collapsed?: boolean;
+  selected: boolean;
+  onClick: () => void;
+  children: ReactNode;
 }) {
-  if (collapsed) {
-    return <div className="flex shrink-0 justify-center border-b px-2 py-2">{action}</div>;
-  }
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b bg-muted/30 px-4 py-2.5 sm:px-6">
-      <div className="min-w-0 flex-1">
-        <h2 className="text-body font-semibold">{title}</h2>
-        <div className="truncate text-caption text-muted-foreground">{hint}</div>
-      </div>
-      {action}
-    </div>
+    <button
+      type="button"
+      role="tab"
+      aria-selected={selected}
+      onClick={onClick}
+      className={cn(
+        "relative shrink-0 py-3 text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+        selected
+          ? "text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground"
+          : "text-muted-foreground hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

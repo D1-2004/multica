@@ -84,8 +84,9 @@ interface AgentDetailPageProps {
      * the pane itself. */
     embedded?: boolean;
     renderTenantConfig?: TagTenantConfigRenderer;
-    /** URL param of this pane's view (two panes share the Tag page). */
-    viewParam?: string;
+    /** The view the Tag page's tab bar selected. */
+    tab?: DetailTab;
+    onDirtyChange?: (dirty: boolean) => void;
   };
 }
 
@@ -495,7 +496,8 @@ export function AgentDetailPage({ agentId, tagView }: AgentDetailPageProps) {
           agent={agent}
           tagRole={tagView?.role}
           renderTenantConfig={tagView?.renderTenantConfig}
-          viewParam={tagView?.viewParam}
+          tagTab={tagView?.tab}
+          onDirtyChange={tagView?.onDirtyChange}
           runtime={runtime}
           owner={owner}
           runtimes={runtimes}

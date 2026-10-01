@@ -110,9 +110,13 @@ interface AgentOverviewPaneProps {
   tagRole?: AgentTagRole;
   /** Renders a Tag employee's 租户配置. */
   renderTenantConfig?: TagTenantConfigRenderer;
-  /** URL search param holding the selected view (default "view"); the Tag
-   * page shows two panes and gives each its own. */
+  /** URL search param holding the selected view (default "view"). */
   viewParam?: string;
+  /** Set by the Tag page, which owns the tab bar: the pane shows exactly
+   * this view, with no tab bar, config nav or URL view of its own. */
+  tagTab?: DetailTab;
+  /** Unsaved edits in the shown view, for a guard owned by the caller. */
+  onDirtyChange?: (dirty: boolean) => void;
   runtime: AgentRuntime | null;
   owner: MemberWithUser | null;
   runtimes: AgentRuntime[];
@@ -144,6 +148,8 @@ export function AgentOverviewPane({
   tagRole,
   renderTenantConfig,
   viewParam = "view",
+  tagTab,
+  onDirtyChange,
   runtime,
   owner,
   runtimes,
@@ -174,6 +180,7 @@ export function AgentOverviewPane({
   const defaultView: DetailTab =
     tagRole === "template" ? "instructions" : tagRole === "employee" ? "digital_employee" : "overview";
   const ownsSceneParams = tagRole !== "template";
+  const controlled = tagTab !== undefined;
   const initialView = normalizeDetailView(urlView) ?? defaultView;
   const [activeView, setActiveView] = useState<DetailTab>(() => initialView);
   const lastConfigViewRef = useRef<DetailTab>(
@@ -270,7 +277,9 @@ export function AgentOverviewPane({
   );
 
   const defaultConfigView = visibleConfigGroups[0]?.items[0]?.id;
-  const effectiveView = visibleViews.has(activeView)
+  const effectiveView: DetailTab = tagTab !== undefined
+    ? tagTab
+    : visibleViews.has(activeView)
     ? activeView
     : (isConfigView(activeView) || tagRole === "template") && defaultConfigView
       ? defaultConfigView
@@ -337,6 +346,7 @@ export function AgentOverviewPane({
   };
 
   useEffect(() => {
+    if (controlled) return;
     if (urlView === lastUrlViewRef.current) return;
     lastUrlViewRef.current = urlView;
     const nextView =
@@ -356,20 +366,20 @@ export function AgentOverviewPane({
     }
     if (isConfigView(nextView)) lastConfigViewRef.current = nextView;
     setActiveView(nextView);
-  }, [activeDirty, defaultView, effectiveView, navigation, urlView, viewParam, visibleViews]);
+  }, [activeDirty, controlled, defaultView, effectiveView, navigation, urlView, viewParam, visibleViews]);
 
   // Legacy view names keep working and are rewritten to their new home.
   useEffect(() => {
-    if (urlView === null) return;
+    if (controlled || urlView === null) return;
     const normalized = normalizeDetailView(urlView);
     if (normalized === null || normalized === urlView) return;
     const params = new URLSearchParams(navigation.searchParams);
     params.set(viewParam, normalized);
     navigation.replace(`${navigation.pathname}?${params.toString()}`);
-  }, [navigation, urlView, viewParam]);
+  }, [controlled, navigation, urlView, viewParam]);
 
   useEffect(() => {
-    if (urlView === null || normalizeDetailView(urlView) !== null) {
+    if (controlled || urlView === null || normalizeDetailView(urlView) !== null) {
       return;
     }
     const params = new URLSearchParams(navigation.searchParams);
@@ -378,13 +388,17 @@ export function AgentOverviewPane({
     navigation.replace(
       `${navigation.pathname}${query ? `?${query}` : ""}`,
     );
-  }, [navigation, urlView, viewParam]);
+  }, [controlled, navigation, urlView, viewParam]);
 
   useEffect(() => {
     if (navIntent == null) return;
     if (visibleViews.has(navIntent)) requestView(navIntent);
     onNavIntentHandled?.();
   }, [navIntent, onNavIntentHandled, requestView, visibleViews]);
+
+  useEffect(() => {
+    onDirtyChange?.(activeDirty);
+  }, [activeDirty, onDirtyChange]);
 
   useEffect(() => {
     if (!activeDirty) return;
@@ -433,7 +447,7 @@ export function AgentOverviewPane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
-      {topTabs.length > 0 ? (
+      {topTabs.length > 0 && !controlled ? (
         <div
           className="shrink-0 overflow-x-auto border-b px-4 sm:px-6"
           role="tablist"
@@ -533,19 +547,23 @@ export function AgentOverviewPane({
 
         {secondaryTabs.length > 0 && activeSecondaryTab && tagRole !== "employee" && (
           <div className="flex min-h-full flex-col md:h-full md:flex-row">
-            <AgentConfigNav
-              groups={visibleConfigGroups}
-              activeView={effectiveView}
-              onSelect={requestView}
-            />
+            {controlled ? null : (
+              <AgentConfigNav
+                groups={visibleConfigGroups}
+                activeView={effectiveView}
+                onSelect={requestView}
+              />
+            )}
 
             <section className="min-w-0 flex-1 md:overflow-y-auto">
               <div className="mx-auto w-full max-w-3xl p-4 sm:p-6 md:p-8">
-                <header>
-                  <h2 className="text-title-sm font-medium text-balance">
-                    {t(($) => $.tabs[activeSecondaryTab.labelKey])}
-                  </h2>
-                </header>
+                {controlled ? null : (
+                  <header>
+                    <h2 className="text-title-sm font-medium text-balance">
+                      {t(($) => $.tabs[activeSecondaryTab.labelKey])}
+                    </h2>
+                  </header>
+                )}
 
                 {tagRole === "template" && (effectiveView === "skills" || effectiveView === "mcp_config") ? (
                   <section
