@@ -946,11 +946,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			}
 			// Native subscriptions: execution identities that receive their
 			// own messages (group @-mentions and single chats) over DWS
-			// personal event subscriptions, always on the production DWS
-			// gateway whatever this deployment is. runtime.use_dws_for_tag
-			// gates the source; the per-agent switch selects identities.
+			// personal event subscriptions, on the gateway of the Agent
+			// Identity that issues their credentials (production, or staging
+			// for a deployment that reaches only the staging Agent Identity).
+			// runtime.use_dws_for_tag gates the source; the per-agent switch
+			// selects identities.
+			identityBase := signupConfig.FCE2B.AgentIdentityControlBaseURL
+			if agentIdentityControlBaseURLProvider != nil {
+				if live := agentIdentityControlBaseURLProvider(); live != "" {
+					identityBase = live
+				}
+			}
+			nativeEnvironment := handler.NativeDWSEnvironmentFor(identityBase)
+			handler.SetNativeDWSEnvironment(nativeEnvironment)
+			slog.Info("DWS native subscription gateway", "event", "dws_native_environment", "environment", nativeEnvironment)
 			native := sessions
-			native.CLI.MCPBaseURL, native.CLI.Environment = "", "production"
+			native.CLI.MCPBaseURL, native.CLI.Environment = "", nativeEnvironment
 			// The stream is registered for the app the subscriptions name
 			// (the dws CLI's custom ticket mode).
 			native.CLI.StreamTicketMode = "custom"
@@ -965,9 +976,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			nativeSource, err := dwseventsource.New(dwseventsource.Config{
 				Redis: rdb, Sessions: native, Mint: mint,
 				// v2: subscriptions name the token's app; the namespace is new so
-				// no record of an earlier app-less subscription is reused.
-				Deployment: "native-v2:" + strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
-				// Native streams are new on production DWS: log what arrives.
+				// no record of an earlier app-less subscription is reused. A
+				// staging gateway keeps its records apart from production's.
+				Deployment: nativeSourceNamespace(nativeEnvironment) + strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+				// Native streams are new on DWS: log what arrives.
 				LogFrames: true,
 				Enabled:   opts.RuntimeConfig.useDWSForTag,
 				Consumers: []dwseventsource.Consumer{
@@ -3330,6 +3342,15 @@ func cloudRuntimeFleetURLFromEnv() string {
 		return url
 	}
 	return strings.TrimSpace(os.Getenv("MULTICA_FLEET_URL"))
+}
+
+// nativeSourceNamespace prefixes the native event source's Redis namespace:
+// production keeps the one its records already live in.
+func nativeSourceNamespace(environment string) string {
+	if environment == "production" {
+		return "native-v2:"
+	}
+	return "native-v2-" + environment + ":"
 }
 
 func agentIdentityControlBaseURLFromEnv() string {

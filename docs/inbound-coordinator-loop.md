@@ -257,7 +257,7 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 ### 原生订阅入站（DWS native subscription，2026-10-01）
 
-执行身份开启「原生订阅」后，不经 Agent Message Router，由服务端自己的 DWS 个人事件流收它本人的钉钉消息：`user_im_message_receive_at`（群里 @ 本账号）与 `user_im_message_receive_o2o_all`（全部单聊）。事件源 `h.DWSNativeEvents` 由运行时键 `runtime.use_dws_for_tag` 开关，事件源没有运行时不能开启（409 `native_subscription_unavailable`）。事件流与原生回复始终走生产 DWS 网关（`mcp.dingtalk.com`），不论本部署是预发还是正式。
+执行身份开启「原生订阅」后，不经 Agent Message Router，由服务端自己的 DWS 个人事件流收它本人的钉钉消息：`user_im_message_receive_at`（群里 @ 本账号）与 `user_im_message_receive_o2o_all`（全部单聊）。事件源 `h.DWSNativeEvents` 由运行时键 `runtime.use_dws_for_tag` 开关，事件源没有运行时不能开启（409 `native_subscription_unavailable`）。事件流与原生回复走**签发其凭证的 Agent Identity 所在环境**的 DWS 网关（`handler.NativeDWSEnvironmentFor`）：正式部署走生产网关（`mcp.dingtalk.com`）；预发部署只能经 HSF 访问预发 Agent Identity（兑换地址 `pre-agent-identity.*`），所以走预发网关（`pre-mcp.dingtalk.com`），事件源的 Redis 命名空间也与生产分开（`native-v2-staging:`）。原因（2026-10-01 实测）：预发签发的 code 能在生产网关换出 token，但生产网关不把它当作该身份——`get_current_user_profile` 返回业务错误，建的订阅不在该账号名下，个人事件按 `filterSubId=<内部uid>_<组织>_11_<clientId>` 匹配不到，事件流一帧都收不到；同一账号用生产签发的身份在生产网关订阅则立即收到。
 
 **账号归属，逐条消息生效。** 一个钉钉账号（dws uid + org）归原生订阅，当且仅当存在它的 `agent_dws_native_subscription` 行、该行的 Agent 未归档、且该 Agent 当前绑定的身份仍是这个账号；否则归 Router。两条入口对每条消息都用这一条规则（`GetDWSNativeAccountOwner`，`server/internal/handler/dws_native_ownership.go`），所以即使开关层的防护被绕过，一条消息也只会被处理一次，账号也不会无人认领：
 
@@ -285,7 +285,7 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 3. 单聊事件、且该账号的 openDingTalkId 尚未学到时，本 Agent 10 分钟内在同一会话发过、去掉首尾空白后正文相同的托管回复：丢弃（`echo_of_own_reply`）。群事件只在有人 @ 本账号时到达，本账号自己的回复不会 @ 自己，所以群里有人复述回复不会被当回声；学到 openDingTalkId 后由第 2 条精确判断，不再按正文丢弃真人消息。
 4. 进程内滑动窗口：同一 Agent、同一会话、同一发信人 60 秒内超过 10 条不同的原生投递视为回环，丢弃并记 Warn `dws_native_loop_suspected`。按发信人计数：回环只会重复同一发信人，真人连发或群里多人 @ 不会触发。同一消息的重投不重复计数；该计数随事件流换副本而重置，最多推迟一个窗口生效。
 
-**只用托管回复。** 原生命令恒带 `responsePolicy.mode=multica_coordinator`，资格与 Router 策略同步相同：入站判断与钉钉回复开关都开、策略 revision≥1、运行时具备 `dws_message_policy_v1`。开启原生订阅时校验不满足返回 409 `native_subscription_requires_managed_response`。回调属于服务端自己的派发任务 `dwsn-<hash>`，完成目标是 `agentmessagerouter.NativeTargetIdentity()`（与 Router 目标同形，outbox 原样路由）；有线请求不得使用该命名空间。回复语义与托管数字员工一致：冻结触发消息的 openMsgId，群聊引用回复并 @ 发信人，单聊同样引用回复。`response_route` 与等待说明冻结 `dws_environment=production`。原生完成 worker 只确认回调：托管出站已接手即完成，路由缺失且有话要说则死信；回执只关闭收集窗口，不调用 Router。
+**只用托管回复。** 原生命令恒带 `responsePolicy.mode=multica_coordinator`，资格与 Router 策略同步相同：入站判断与钉钉回复开关都开、策略 revision≥1、运行时具备 `dws_message_policy_v1`。开启原生订阅时校验不满足返回 409 `native_subscription_requires_managed_response`。回调属于服务端自己的派发任务 `dwsn-<hash>`，完成目标是 `agentmessagerouter.NativeTargetIdentity()`（与 Router 目标同形，outbox 原样路由）；有线请求不得使用该命名空间。回复语义与托管数字员工一致：冻结触发消息的 openMsgId，群聊引用回复并 @ 发信人，单聊同样引用回复。`response_route` 与等待说明冻结原生网关（正式为 `dws_environment=production`，预发为 `staging`）。原生完成 worker 只确认回调：托管出站已接手即完成，路由缺失且有话要说则死信；回执只关闭收集窗口，不调用 Router。
 
 **连接指示灯。** 身份卡开关旁的指示灯读 `GET …/dingtalk/account-bindings/{agentId}/native-subscription`，开启期间每 10 秒轮询一次。返回的事件流状态如下：
 - `connected`：任一副本持有已连接的事件流（Redis ready 标记）。
@@ -296,7 +296,7 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 `last_event_at` 只记真正交给消费方的事件，不含 SYSTEM ping。所以「已连接但从未收到消息」说明问题在推送而不在连接。
 
-**其他 DWS 流量不变。** 历史预取、场域记忆、用户决策卡片与沙箱内的 DWS 调用仍走本部署配置的网关。预发上的原生 Agent 因此混用网关，读历史与发卡是否可用须以预发 E2E 为准。
+**其他 DWS 流量不变。** 历史预取、场域记忆、用户决策卡片与沙箱内的 DWS 调用仍走本部署配置的网关（`MULTICA_DWS_HISTORY_MCP_URL`）。原生网关跟随 Agent Identity 的签发环境；预发上两者都是预发网关，正式上都是生产网关。原生网关在启动时确定，运行中改 `control_base_url` 要重启后才会同步。
 
 **已知缺口。**
 

@@ -1486,7 +1486,7 @@
       "dingtalk_identity_reuse_retry": "Retry",
       "dingtalk_identity_reuse_failed": "Unable to reuse this identity. Refresh and try again.",
       "dingtalk_identity_native_subscription": "Native subscription",
-      "dingtalk_identity_native_subscription_hint": "When on, direct messages to this identity and group messages that @mention it reach the agent through the production DWS native subscription. Use either this or the digital employee message binding above, not both.",
+      "dingtalk_identity_native_subscription_hint": "When on, direct messages to this identity and group messages that @mention it reach the agent through the DWS native subscription. Use either this or the digital employee message binding above, not both.",
       "dingtalk_identity_native_subscription_blocked": "The digital employee message binding is active. Unbind it before turning on native subscription.",
       "dingtalk_identity_native_subscription_requires_identity": "Bind an execution identity before turning on native subscription.",
       "dingtalk_identity_native_subscription_requires_managed_response": "Native subscription needs the Coordinator on and DingTalk replies managed by Multica. Turn them on in the reply settings first.",
