@@ -153,9 +153,12 @@ state of the old org:
 - Admin and mobile scene routes resolve `{scene_id}` within the requested
   tenant org; a scene of another org or agent is 404.
 - A managed DingTalk reply targets the dispatch scene's conversation and
-  kind from the directory. Without a scene it never assumes a 1:1 chat: an
-  unknown conversation type with no message to quote registers no managed
-  route, and the Coordinator's chat type is `unknown`, not `p2p`.
+  kind from the directory. Without a scene it only quote-replies into the
+  event's own conversation; with nothing to quote no managed route is
+  registered (no send to the sender chosen by the event type). The
+  Coordinator's chat type of an unknown conversation is `unknown`, not `p2p`.
+- Inside a task, a `scene_id` a tool names (assoc recall) passes the same
+  fence for the task's org.
 
 ## 7. API surface
 
@@ -183,11 +186,13 @@ state of the old org:
   only on positive evidence (a personal link's extra scene, or a stored dm
   kind); otherwise group. Rows without an org or with a malformed key are left
   untouched and no longer apply. Re-running it changes nothing.
-- `9511` adds `kind_source`. Scenes 9510 registered from stored
-  configuration that no inbound event has referenced are `migrated`; those
-  whose retired Scene Memory kind and inbound Coordinator job conversation
-  types agree on one kind take it and become `observed`. The rest are
-  settled by their next trusted inbound event (§1).
+- `9511` adds `kind_source`; `9512` marks the scenes stored configuration
+  names that no inbound Coordinator job carries as `migrated` (association
+  events prove no kind), then settles each one whose trusted records for the
+  same workspace, agent, tenant org and conversation all name one kind (the
+  retired Scene Memory kind, inbound job conversation types). The rest are
+  settled by their next trusted inbound event (§1). 9512 re-evaluates, so a
+  database that ran an earlier 9511 with org-blind evidence is corrected.
 - Scene connector credentials are sealed with their scope key, so
   `ReconcileSceneCredentials` reseals them under the scene_id at server start:
   per row, compare-and-swap on the old key and ciphertext (an older replica's

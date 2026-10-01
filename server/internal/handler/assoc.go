@@ -310,9 +310,14 @@ func (h *Handler) recallAssoc(ctx context.Context, workspaceID, agentID string, 
 			node  assoc.SceneNode
 			found bool
 		)
-		if sceneRef != "" {
+		switch {
+		case sceneRef != "" && strings.TrimSpace(in.TaskID) != "":
+			// Inside a task a scene_id passes the use-time fence for the
+			// task's org, like the scene the task itself runs in.
+			node, found = h.fencedSceneNode(ctx, workspaceID, agentID, sceneRef, h.taskDispatchOrg(ctx, workspaceID, in.TaskID))
+		case sceneRef != "":
 			node, found = h.sceneNodeByID(ctx, workspaceID, agentID, sceneRef)
-		} else {
+		default:
 			var lookupErr error
 			node, found, lookupErr = h.conversationSceneNode(ctx, workspaceID, agentID, cid, "", h.taskDispatchOrg(ctx, workspaceID, in.TaskID), false, false)
 			if lookupErr != nil {

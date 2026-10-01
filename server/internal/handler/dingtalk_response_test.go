@@ -528,6 +528,17 @@ func TestManagedDingTalkResponseRouteNeverGuessesADirectChat(t *testing.T) {
 	if route, err := f.h.DingTalkResponses.FindRoute(ctx, unknown.CompletionCallback.URL); err != nil || route != nil {
 		t.Fatalf("route for an unknown kind with nothing to quote = %+v err=%v", route, err)
 	}
+	// A stated 1:1 type without a scene behind it does not answer by a
+	// send to the sender either.
+	single := responseTestCommand(f.agentID, testRouterTargetIdentity)
+	single.Event.Data.Conversation.Type = "single"
+	single.Event.Data.Messages = []DispatchMessage{{Text: "hello"}}
+	if err := f.h.registerDingTalkResponseRoute(ctx, testPool, single, scope); err != nil {
+		t.Fatal(err)
+	}
+	if route, err := f.h.DingTalkResponses.FindRoute(ctx, single.CompletionCallback.URL); err != nil || route != nil {
+		t.Fatalf("route for a 1:1 type without a scene = %+v err=%v", route, err)
+	}
 	quoted := responseTestCommand(f.agentID, testRouterTargetIdentity)
 	quoted.Event.Data.Conversation.Type = "channel"
 	if err := f.h.registerDingTalkResponseRoute(ctx, testPool, quoted, scope); err != nil {

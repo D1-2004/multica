@@ -64,11 +64,13 @@ func TestSceneScopeMigrationAndCredentialRekey(t *testing.T) {
 			t.Fatalf("run %d: %v", run, err)
 		}
 	}
-	// 9511: the two scenes came from stored configuration only, so their
-	// kinds are migrated; the retired Scene Memory says the group key is
-	// really a 1:1 chat, and that evidence settles it.
+	// 9511/9512: the scenes came from stored configuration only, so their
+	// kinds are migrated. Retired Scene Memory of the same org says one key
+	// is really a 1:1 chat, and that settles it; the same evidence under
+	// another org, or an association event, proves nothing for org-1.
 	if _, err := f.tx.Exec(ctx, `INSERT INTO scene_memory (workspace_id, agent_id, org_id, scene_key, scene_kind, scene_title)
-		VALUES ($1::uuid, $2::uuid, 'org-1', 'cidLegacyEvidence==', 'dm', 'Bob')`, f.workspaceID, f.agentID); err != nil {
+		VALUES ($1::uuid, $2::uuid, 'org-1', 'cidLegacyEvidence==', 'dm', 'Bob'),
+		       ($1::uuid, $2::uuid, 'org-2', 'cidLegacyGroup==', 'dm', 'Other org')`, f.workspaceID, f.agentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.tx.Exec(ctx, `INSERT INTO context_capability_binding
@@ -80,13 +82,20 @@ func TestSceneScopeMigrationAndCredentialRekey(t *testing.T) {
 	if _, err := f.tx.Exec(ctx, string(migration)); err != nil {
 		t.Fatal(err)
 	}
-	kindSource, err := os.ReadFile("../../migrations/9511_agent_scene_kind_source.up.sql")
-	if err != nil {
+	if _, err := f.tx.Exec(ctx, `INSERT INTO assoc_event (workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_id)
+		SELECT workspace_id, agent_id, 'outbound_im', 'outbound', 'msg-bound-out', now(), id FROM agent_scene
+		WHERE agent_id = $1::uuid AND external_scene_id = 'cidLegacyDirect=='`, f.agentID); err != nil {
 		t.Fatal(err)
 	}
-	for run := 0; run < 2; run++ {
-		if _, err := f.tx.Exec(ctx, string(kindSource)); err != nil {
-			t.Fatalf("9511 run %d: %v", run, err)
+	for _, name := range []string{"9511_agent_scene_kind_source", "9512_agent_scene_kind_settle"} {
+		sql, err := os.ReadFile("../../migrations/" + name + ".up.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for run := 0; run < 2; run++ {
+			if _, err := f.tx.Exec(ctx, string(sql)); err != nil {
+				t.Fatalf("%s run %d: %v", name, run, err)
+			}
 		}
 	}
 	kinds := map[string]string{}
@@ -103,7 +112,10 @@ func TestSceneScopeMigrationAndCredentialRekey(t *testing.T) {
 	}
 	kindRows.Close()
 	if kinds["cidLegacyEvidence=="] != "dm:observed" || kinds["cidLegacyGroup=="] != "group:migrated" || kinds["cidLegacyDirect=="] != "dm:migrated" {
-		t.Fatalf("kinds after 9511=%v", kinds)
+		t.Fatalf("kinds after 9511/9512=%v", kinds)
+	}
+	if _, err := f.tx.Exec(ctx, `DELETE FROM assoc_event WHERE agent_id = $1::uuid AND evidence_id = 'msg-bound-out'`, f.agentID); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := f.tx.Exec(ctx, `DELETE FROM agent_scene WHERE agent_id = $1::uuid AND external_scene_id = 'cidLegacyEvidence=='`, f.agentID); err != nil {
 		t.Fatal(err)

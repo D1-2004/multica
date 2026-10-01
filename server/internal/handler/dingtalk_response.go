@@ -77,12 +77,13 @@ func (h *Handler) registerDingTalkResponseRoute(ctx context.Context, tx db.DBTX,
 		in.SceneID = uuidToString(sc.ID)
 		in.ConversationID = sc.ExternalSceneID
 		in.IsGroup = sc.SceneKind == scene.KindGroup
-	} else if _, known := scene.KindFromConversationType(c.Event.Data.Conversation.Type); !known && in.ReplyToOpenMsgID == "" {
-		// Without a scene and a known kind, the only way to answer would be
-		// a 1:1 send to the sender, which guesses the conversation kind. A
-		// quote reply into the event's own conversation needs no guess; with
-		// nothing to quote no managed route is registered.
-		slog.InfoContext(ctx, "managed DingTalk response route skipped; conversation kind unknown",
+	} else if in.ReplyToOpenMsgID == "" {
+		// Without a scene the only way to answer would be a send chosen by
+		// the event's conversation type (a 1:1 send to the sender), which no
+		// scene backs (docs/agent-scene.md §3). A quote reply into the
+		// event's own conversation needs no scene; with nothing to quote no
+		// managed route is registered.
+		slog.InfoContext(ctx, "managed DingTalk response route skipped; no scene to answer in",
 			"event", "dingtalk_response_route_skipped",
 			"agent_id", uuidToString(scope.AgentID),
 			"conversation_type", c.Event.Data.Conversation.Type,

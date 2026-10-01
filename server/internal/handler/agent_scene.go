@@ -369,6 +369,27 @@ func (h *Handler) AssociateChannelConversation(ctx context.Context, in assoc.Ass
 	return h.Assoc.AssociateIssueConversation(ctx, in)
 }
 
+// fencedSceneNode loads an agent's scene by scene_id through the use-time
+// fence for dispatchOrg (fencedScene) as a graph node.
+func (h *Handler) fencedSceneNode(ctx context.Context, workspaceID, agentID, sceneID, dispatchOrg string) (assoc.SceneNode, bool) {
+	if h == nil || h.Queries == nil {
+		return assoc.SceneNode{}, false
+	}
+	ws, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return assoc.SceneNode{}, false
+	}
+	agent, err := util.ParseUUID(agentID)
+	if err != nil {
+		return assoc.SceneNode{}, false
+	}
+	sc, err := fencedScene(ctx, h.Queries, &scene.Ref{SceneID: sceneID}, scene.Owner{WorkspaceID: ws, AgentID: agent}, dispatchOrg)
+	if err != nil {
+		return assoc.SceneNode{}, false
+	}
+	return sceneNodeOf(sc), true
+}
+
 // sceneNodeByID loads an agent's scene by scene_id as a graph node.
 func (h *Handler) sceneNodeByID(ctx context.Context, workspaceID, agentID, sceneID string) (assoc.SceneNode, bool) {
 	if h == nil || h.Queries == nil {

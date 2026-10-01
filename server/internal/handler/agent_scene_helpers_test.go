@@ -151,7 +151,9 @@ func TestFenceSceneRefAfterTheAgentIsReBound(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `INSERT INTO agent_tenant (workspace_id, agent_id, org_id, name) VALUES ($1, $2, $3, 'Old org')`, f.ws, f.agentID, f.orgID); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM agent_tenant WHERE agent_id = $1`, f.agentID) })
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_tenant WHERE agent_id = $1`, f.agentID)
+	})
 	if got := f.h.fenceSceneRef(ctx, ref, owner, f.orgID); got == nil {
 		t.Fatal("a scene of a served tenant org was fenced")
 	}
@@ -165,5 +167,42 @@ func TestCoordinatorChatTypeNeverAssumesADirectChat(t *testing.T) {
 		if got := coordinatorChatType(raw); got != want {
 			t.Errorf("coordinatorChatType(%q) = %q, want %q", raw, got, want)
 		}
+	}
+}
+
+// Inside a task a scene_id names a scene only through the fence for the
+// task's org: a task of an org the agent does not serve reads nothing, a
+// member reading the agent's scenes is not a task.
+func TestRecallBySceneIDInsideATaskPassesTheFence(t *testing.T) {
+	f := newAssocSceneFixture(t)
+	ctx := context.Background()
+	sc := f.scene(t, "group", "cid-fenced-recall==")
+	if _, err := f.store.InsertEvent(ctx, assoc.Event{WorkspaceID: f.ws, AgentID: f.agentID, Source: "inbound_im", Direction: assoc.DirInbound,
+		EvidenceID: "msg-fenced-recall", SceneID: uuidToString(sc.ID), OccurredAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	foreign := parseUUID(createHandlerTestTaskForAgentOnIssue(t, f.agentID, f.issueID))
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET context = '{"external_identity":{"dws":{"orgId":"org-not-served"}}}'::jsonb WHERE id = $1`, foreign); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET context = jsonb_build_object('external_identity', jsonb_build_object('dws', jsonb_build_object('orgId', $2::text))) WHERE id = $1`, parseUUID(f.taskID), f.orgID); err != nil {
+		t.Fatal(err)
+	}
+	recall := func(taskID string) assoc.Result {
+		t.Helper()
+		got, err := f.h.recallAssoc(ctx, f.ws, f.agentID, assocRecallParams{Since: "1h", SceneID: uuidToString(sc.ID), TaskID: taskID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	if got := recall(uuidToString(foreign)); got.SceneID != "" || len(got.Events) != 0 {
+		t.Fatalf("a task of an org the agent does not serve read the scene: %+v", got)
+	}
+	if got := recall(f.taskID); got.SceneID != uuidToString(sc.ID) {
+		t.Fatalf("the task's own org: %+v", got)
+	}
+	if got := recall(""); got.SceneID != uuidToString(sc.ID) {
+		t.Fatalf("a member's read: %+v", got)
 	}
 }
