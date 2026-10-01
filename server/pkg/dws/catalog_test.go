@@ -155,8 +155,13 @@ func TestSubscribeSendsFilterAndExpiry(t *testing.T) {
 	}
 	ext := body["ext"].(map[string]any)
 	filter, _ := json.Marshal(ext["filter"])
+	// The subscription names the token's app, and the app scopes the
+	// idempotency key so an app-less subscription of the spec is not reused.
+	appKey := sha256.Sum256([]byte("client-1"))
 	if string(filter) != `{"field":"payload.body.content","op":"contains_any","value":["上线"]}` ||
-		ext["idempotencyKey"] != "dws-for-tag-"+spec.Fingerprint() || body["expiresAt"] != "2026-09-30T13:00:00Z" {
+		body["clientId"] != "client-1" ||
+		ext["idempotencyKey"] != "dws-for-tag-"+spec.Fingerprint()+"-"+hex.EncodeToString(appKey[:4]) ||
+		body["expiresAt"] != "2026-09-30T13:00:00Z" {
 		t.Fatalf("body = %v", body)
 	}
 	if _, err := c.Events.Subscribe(context.Background(), SubscriptionSpec{EventKey: EventIMGroup}); !errors.Is(err, ErrInvalidRequest) {
