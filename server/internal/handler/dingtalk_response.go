@@ -9,6 +9,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/util"
+	"log/slog"
 	"regexp"
 	"strings"
 
@@ -295,15 +296,30 @@ func (h *Handler) BindVerifiedDingTalkSend(ctx context.Context, in dingtalkrespo
 		}
 		title = issue.Title
 	}
-	kind := scene.KindDM
-	if in.IsGroup {
-		kind = scene.KindGroup
+	// The reply into the dispatch's own conversation binds the dispatch's
+	// scene. A delivery into any other conversation binds only a scene the
+	// agent already has: the provider receipt does not say whether that
+	// conversation is a group or a 1:1 chat, and a kind is never guessed.
+	var node assoc.SceneNode
+	found := false
+	if in.SceneID != "" && cid == in.ConversationID {
+		node, found = h.sceneNodeByID(ctx, in.WorkspaceID, in.AgentID, in.SceneID)
+	} else {
+		var err error
+		node, found, err = h.conversationSceneNode(ctx, in.WorkspaceID, in.AgentID, cid, "", in.DWSOrgID, false)
+		if err != nil {
+			return err
+		}
 	}
-	node, _, err := h.conversationSceneNode(ctx, in.WorkspaceID, in.AgentID, cid, kind, in.DWSOrgID, true)
-	if err != nil {
-		return err
+	if !found {
+		slog.InfoContext(ctx, "dingtalk response outbound bind skipped; conversation has no scene",
+			"event", "assoc_outbound_bind_skipped",
+			"agent_id", in.AgentID,
+			"reason", "scene_unresolved",
+		)
+		return nil
 	}
-	_, err = h.Assoc.BindOutbound(ctx, assoc.BindOutboundInput{
+	_, err := h.Assoc.BindOutbound(ctx, assoc.BindOutboundInput{
 		WorkspaceID: in.WorkspaceID, AgentID: in.AgentID, IssueID: in.IssueID, IssueTitle: title,
 		RunID: in.TaskID, Scene: node, EvidenceID: messageID,
 	})

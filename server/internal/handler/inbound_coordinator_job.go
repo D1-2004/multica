@@ -180,6 +180,12 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if err != nil {
 		return true, w.fail(ctx, job, command, "invalid persisted dispatch command")
 	}
+	if command.AgentScene == nil && strings.TrimSpace(command.TaskFinishedTaskID) == "" {
+		// A job an older replica admitted during the rollout carries no
+		// SceneRef: resolve it from the persisted command with the same
+		// resolver the dispatch uses (docs/agent-scene.md, rolling window).
+		w.handler.attachDispatchScene(ctx, &command, agentDispatchContext{WorkspaceID: job.WorkspaceID, AgentID: job.AgentID})
+	}
 	if parked, parkErr := w.parkIfSceneWindowBusy(ctx, job, command); parkErr != nil {
 		return true, parkErr
 	} else if parked {

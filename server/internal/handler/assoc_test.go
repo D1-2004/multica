@@ -11,6 +11,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -607,5 +608,37 @@ func TestDispatchAssocIDsPrefersDecimalUID(t *testing.T) {
 	}
 	if ids.Kind != "group" {
 		t.Fatalf("kind=%q", ids.Kind)
+	}
+}
+
+// A verified sandbox delivery binds the dispatch's own scene; a delivery
+// into another conversation binds only a scene the agent already has, and
+// never registers one, because the receipt does not say its kind.
+func TestBindVerifiedDingTalkSendNeverGuessesAKind(t *testing.T) {
+	f := newAssocSceneFixture(t)
+	ctx := context.Background()
+	own := f.scene(t, "group", "cid-own-group==")
+	known := f.scene(t, "dm", "cid-known-dm==")
+	in := dingtalkresponse.ActionInput{
+		WorkspaceID: f.ws, AgentID: f.agentID, IssueID: f.issueID, TaskID: f.taskID,
+		SceneID: uuidToString(own.ID), ConversationID: "cid-own-group==", DWSOrgID: f.orgID,
+	}
+	for cid, msg := range map[string]string{"cid-own-group==": "msg-own", "cid-known-dm==": "msg-known", "cid-unknown==": "msg-unknown"} {
+		if err := f.h.BindVerifiedDingTalkSend(ctx, in, cid, msg); err != nil {
+			t.Fatalf("%s: %v", cid, err)
+		}
+	}
+	for msg, want := range map[string]string{"msg-own": uuidToString(own.ID), "msg-known": uuidToString(known.ID)} {
+		ev, err := f.store.GetEventByEvidence(ctx, f.ws, f.agentID, msg)
+		if err != nil || ev.SceneID != want {
+			t.Fatalf("%s: event=%+v err=%v", msg, ev, err)
+		}
+	}
+	if _, err := f.store.GetEventByEvidence(ctx, f.ws, f.agentID, "msg-unknown"); err == nil {
+		t.Fatal("a delivery into an unknown conversation was bound")
+	}
+	var n int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_scene WHERE agent_id = $1 AND external_scene_id = 'cid-unknown=='`, f.agentID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("unknown conversation registered: n=%d err=%v", n, err)
 	}
 }

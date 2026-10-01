@@ -16,6 +16,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -87,7 +88,9 @@ func (r *DWSRangeReader) Read(ctx context.Context, row Memory) (HistoryPage, err
 		}
 		return HistoryPage{}, fmt.Errorf("resolve DWS identity: %w", err)
 	}
-	if strings.TrimSpace(identity.OrgID) != strings.TrimSpace(row.OrgID()) {
+	// The use-time fence: the scene's history is read only while the agent
+	// still serves the scene's tenant org (docs/agent-scene.md).
+	if err := scene.CheckTenant(row.Scene, identity.OrgID); err != nil {
 		return HistoryPage{}, &FlushError{
 			Code: ErrorRouteInactive,
 			Err:  fmt.Errorf("DWS identity org does not match scene"),
