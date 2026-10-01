@@ -28,6 +28,9 @@ import {
   PrioritizeQueuedChatTaskResponseSchema,
   CreateFeedbackResponseSchema,
   DingTalkAccountBindingsResponseSchema,
+  DingTalkNativeSubscriptionResponseSchema,
+  DingTalkNativeSubscriptionStatusSchema,
+  UNKNOWN_DINGTALK_NATIVE_SUBSCRIPTION_STATUS,
   DuplicateIssueErrorBodySchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
   EMPTY_AGENT_ENTERPRISE_IDENTITY_STATUS_RESPONSE,
@@ -472,6 +475,7 @@ describe("DingTalk account binding schemas", () => {
             accountDisplayName: "Zhang San",
             accountAvatarUrl: "https://example.test/avatar.png",
             boundAt: "2026-07-14T09:30:00Z",
+            nativeSubscription: false,
           },
           messageRoute: {
             status: "active",
@@ -498,7 +502,132 @@ describe("DingTalk account binding schemas", () => {
         },
       ],
       configured: true,
+      manualBindingAllowed: false,
     });
+  });
+
+  it("parses native subscription and the operator manual-binding flag", () => {
+    const parsed = DingTalkAccountBindingsResponseSchema.parse({
+      bindings: [
+        {
+          id: "installation-1",
+          workspace_id: "workspace-1",
+          agent_id: "agent-1",
+          dws_identity: { status: "active", native_subscription: true },
+          message_route: { status: "unbound" },
+        },
+        {
+          id: "installation-2",
+          workspace_id: "workspace-1",
+          agent_id: "agent-2",
+          dws_identity: { status: "active" },
+          message_route: { status: "active" },
+        },
+      ],
+      configured: true,
+      manual_binding_allowed: true,
+    });
+
+    expect(parsed.manualBindingAllowed).toBe(true);
+    expect(parsed.bindings[0]?.dwsIdentity.nativeSubscription).toBe(true);
+    // Absent means off, and older servers omit the operator flag entirely.
+    expect(parsed.bindings[1]?.dwsIdentity.nativeSubscription).toBe(false);
+    expect(
+      DingTalkAccountBindingsResponseSchema.parse({ bindings: [], configured: true })
+        .manualBindingAllowed,
+    ).toBe(false);
+  });
+
+  it("treats malformed native subscription and manual-binding flags as off", () => {
+    expect(
+      parseWithFallback(
+        {
+          bindings: [
+            {
+              id: "installation-1",
+              workspace_id: "workspace-1",
+              agent_id: "agent-1",
+              dws_identity: { status: "active", native_subscription: "true" },
+              message_route: { status: "unbound" },
+            },
+          ],
+          configured: true,
+          manual_binding_allowed: "yes",
+        },
+        DingTalkAccountBindingsResponseSchema,
+        EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
+        { endpoint: "GET /api/workspaces/:id/dingtalk/account-bindings" },
+      ),
+    ).toMatchObject({
+      bindings: [
+        {
+          id: "installation-1",
+          dwsIdentity: { status: "active", nativeSubscription: false },
+        },
+      ],
+      configured: true,
+      manualBindingAllowed: false,
+    });
+  });
+
+  it("parses the native subscription switch response and falls back when it drifts", () => {
+    expect(
+      DingTalkNativeSubscriptionResponseSchema.parse({ native_subscription: true }),
+    ).toEqual({ nativeSubscription: true });
+    expect(
+      parseWithFallback(
+        { native_subscription: "on" },
+        DingTalkNativeSubscriptionResponseSchema,
+        { nativeSubscription: false },
+        {
+          endpoint:
+            "PUT /api/workspaces/:id/dingtalk/account-bindings/:agentId/native-subscription",
+        },
+      ),
+    ).toEqual({ nativeSubscription: false });
+  });
+
+  it("parses the native stream status and degrades drift to an unknown state", () => {
+    expect(
+      DingTalkNativeSubscriptionStatusSchema.parse({
+        native_subscription: true,
+        stream: {
+          state: "connected",
+          last_connected_at: "2026-10-01T07:19:29Z",
+          last_event_at: "2026-10-01T07:20:00Z",
+        },
+      }),
+    ).toEqual({
+      nativeSubscription: true,
+      stream: {
+        state: "connected",
+        lastConnectedAt: "2026-10-01T07:19:29Z",
+        lastEventAt: "2026-10-01T07:20:00Z",
+        lastError: null,
+        failures: 0,
+      },
+    });
+    // A state this client predates, and drifted fields, never throw.
+    expect(
+      DingTalkNativeSubscriptionStatusSchema.parse({
+        native_subscription: true,
+        stream: { state: "paused", last_error: 42, failures: "3" },
+      }).stream,
+    ).toMatchObject({ state: "unknown", lastError: null, failures: 0 });
+    expect(
+      DingTalkNativeSubscriptionStatusSchema.parse({ native_subscription: false }).stream.state,
+    ).toBe("unknown");
+    expect(
+      parseWithFallback(
+        "not json",
+        DingTalkNativeSubscriptionStatusSchema,
+        UNKNOWN_DINGTALK_NATIVE_SUBSCRIPTION_STATUS,
+        {
+          endpoint:
+            "GET /api/workspaces/:id/dingtalk/account-bindings/:agentId/native-subscription",
+        },
+      ),
+    ).toEqual(UNKNOWN_DINGTALK_NATIVE_SUBSCRIPTION_STATUS);
   });
 
   it("preserves the auto processing surface from binding responses", () => {
@@ -738,7 +867,7 @@ describe("DingTalk account binding schemas", () => {
         EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
         { endpoint: "GET /api/workspaces/:id/dingtalk/account-bindings" },
       ),
-    ).toEqual({ bindings: [], configured: false });
+    ).toEqual({ bindings: [], configured: false, manualBindingAllowed: false });
   });
 
   it("falls back safely when the binding list is malformed", () => {
@@ -749,7 +878,7 @@ describe("DingTalk account binding schemas", () => {
         EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
         { endpoint: "GET /api/workspaces/:id/dingtalk/account-bindings" },
       ),
-    ).toEqual({ bindings: [], configured: false });
+    ).toEqual({ bindings: [], configured: false, manualBindingAllowed: false });
   });
 
   it("parses begin and falls back when a credential-bearing response drifts", () => {

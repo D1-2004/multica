@@ -337,6 +337,9 @@ func TestConnectorOAuthBeginRouteIsNotRegistered(t *testing.T) {
 	if status, body := get("/api/connector-oauth/callback"); status == http.StatusNotFound || status == http.StatusUnauthorized {
 		t.Fatalf("DCR callback route answered %d: %s", status, body)
 	}
+	if status, body := get("/api/connectors/oauth/callback"); status == http.StatusNotFound || status == http.StatusUnauthorized {
+		t.Fatalf("DCR callback alias answered %d: %s", status, body)
+	}
 }
 
 // The agent's connected-apps routes are wired under the workspace agent

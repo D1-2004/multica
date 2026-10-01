@@ -366,6 +366,17 @@ type Handler struct {
 	// (runtime.use_dws_for_tag): one DWS event stream per identity across
 	// replicas, handed over on shutdown. Nil without Redis.
 	DWSEvents *dwseventsource.Source
+	// DWSNativeEvents is the native subscription event source: the IM
+	// messages of execution identities with native subscription on, always
+	// on the production DWS gateway. Nil without Redis.
+	DWSNativeEvents *dwseventsource.Source
+	// NativeCompletionWorker drains the callbacks of native dispatches
+	// (agentmessagerouter.NativeTargetIdentity); their replies are managed
+	// responses, so it only acknowledges.
+	NativeCompletionWorker *agentmessagerouter.CompletionWorker
+	// DispatchEndpoints ensures an agent's dispatch endpoint namespace when
+	// native subscription is switched on. Nil without the dispatch keyring.
+	DispatchEndpoints DispatchEndpointEnsurer
 	// ChannelRouter is the channel-agnostic inbound pipeline (the shared
 	// handler the Supervisor injects into every Channel). main.go calls
 	// Drain on it during shutdown, after the Supervisor has stopped
@@ -405,6 +416,12 @@ type Handler struct {
 	dingTalkAccountBindingOriginProvider func() string
 	dingTalkAccountBindingMetadata       dingTalkAccountBindingMetadataStore
 	dingTalkIdentityReuse                dingTalkIdentityReuseStore
+	dwsNativeSubscriptions               dwsNativeSubscriptionStore
+	dwsNativeDispatch                    nativeDispatchStore
+	dwsNativeOwnership                   nativeOwnershipStore
+	nativeSourceActive                   func() bool
+	nativeStreamStatus                   nativeStreamSource
+	operatorUsers                        operatorUserStore
 	dingTalkAccountBindingPermissions    agentInvocationPermissionStore
 	multicaMCPBindingTasks               multicaMCPBindingTaskStore
 	multicaMCPAgents                     multicaMCPAgentQueryStore

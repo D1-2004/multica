@@ -53,6 +53,9 @@ type Options struct {
 	DedupeTTL time.Duration
 	// Alert is called on outages and recoveries.
 	Alert func(ctx context.Context, a Alert)
+	// OnFrame, when set, is told the type and topic of every frame read
+	// (diagnostics: what a gateway actually sends).
+	OnFrame func(frameType, topic string)
 	// Holder names this replica in Status and leases (default host:pid).
 	Holder string
 	Dialer *websocket.Dialer
@@ -308,8 +311,13 @@ func (l *Listener) connect(ctx context.Context, st *Status) (int, error) {
 			// reconnecting would not make it readable.
 			ok, err = l.deliver(ctx, unreadableEvent(r.raw), nil)
 		} else {
-			switch f.Type {
-			case "SYSTEM":
+			if l.OnFrame != nil {
+				l.OnFrame(f.Type, f.header("topic"))
+			}
+			// Every frame that is not a system frame carries an event, as
+			// dingtalk-stream-sdk-go and the dws CLI read them: a type label
+			// other than EVENT/CALLBACK must not drop events unacknowledged.
+			if strings.EqualFold(f.Type, "SYSTEM") {
 				switch f.header("topic") {
 				case "ping":
 					err = reply(conn, f, 200, "ok", f.Data)
@@ -319,7 +327,7 @@ func (l *Listener) connect(ctx context.Context, st *Status) (int, error) {
 				default:
 					err = reply(conn, f, 404, "unknown system topic", "")
 				}
-			case "EVENT", "CALLBACK":
+			} else {
 				ok, err = l.deliver(ctx, frameEvent(f), func() error { return reply(conn, f, 200, "", ackSuccess) })
 			}
 		}

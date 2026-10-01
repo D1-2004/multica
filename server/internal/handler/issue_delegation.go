@@ -448,8 +448,8 @@ func (h *Handler) createDelegatedIssue(
 		writeError(w, http.StatusInternalServerError, "issue created but delegated task was not enqueued")
 		return
 	}
-	if command.CompletionCallback != nil && h.TaskCompletionWorker != nil {
-		h.TaskCompletionWorker.NotifyTaskExecutionUpdate()
+	if command.CompletionCallback != nil {
+		h.notifyTaskExecutionUpdates()
 	}
 	slog.Info(
 		"issue dispatch handoff created",
@@ -563,8 +563,8 @@ func (h *Handler) continueDelegatedIssue(
 		writeError(w, http.StatusInternalServerError, "failed to create delegated issue follow-up")
 		return
 	}
-	if command.CompletionCallback != nil && h.TaskCompletionWorker != nil {
-		h.TaskCompletionWorker.NotifyTaskExecutionUpdate()
+	if command.CompletionCallback != nil {
+		h.notifyTaskExecutionUpdates()
 	}
 	slog.Info(
 		"issue dispatch handoff continued",

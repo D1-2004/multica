@@ -56,7 +56,8 @@ var pools sync.Map
 
 func (s Shared) pool(mcp, gateway string) *dws.Pool {
 	secret := sha256.Sum256([]byte(strings.TrimSpace(s.CLI.ClientSecret)))
-	poolKey := mcp + "\x00" + gateway + "\x00" + hex.EncodeToString(secret[:8])
+	// The ticket mode is part of the pool's Config, so pools differ by it.
+	poolKey := mcp + "\x00" + gateway + "\x00" + hex.EncodeToString(secret[:8]) + "\x00" + s.CLI.StreamTicketMode
 	if p, ok := pools.Load(poolKey); ok {
 		return p.(*dws.Pool)
 	}
