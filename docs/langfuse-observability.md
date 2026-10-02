@@ -190,6 +190,30 @@ messages, usage, and completion to the server, and FC runtime images with the
   runtime's retries of one pair upsert the same generation, and a task with no
   dispatch context (a web-created Issue) is accepted with 204 once the
   observer has it instead of being rejected with 503.
+- Tool inventory is separate from the message input. `modelParameters.tools`
+  counts tool entries in the captured request; `tool_names_total`,
+  `tool_names_recorded`, `tool_names_unresolved`, and `tool_names_truncated`
+  explain how many names were extracted and exported. There is no 40-name cap:
+  names retain request order up to a 32 KiB JSON budget, with explicit omission
+  counts when exceeded. `tool_names_complete=true` requires a complete request
+  capture, valid tool entries, and no omitted names. `tool_capture_status`
+  distinguishes `complete`, `tools_absent`, `request_missing`,
+  `request_unparseable`, `tools_invalid`, and `request_truncated`;
+  `tool_count_known=false` means the total available tool count is unknown.
+  Counts on a truncated capture describe only the captured entries.
+- Full tool schemas are **not exported as a structured schema artifact**:
+  `tool_schemas_recorded=false` and `tool_schemas_status=not_exported` make this
+  limitation explicit. For recognized APIs, generation input retains messages
+  and instructions, not the tool schemas. Unknown/malformed request fallbacks
+  can contain raw schema fragments, which are not proof of a complete schema.
+  The proxy's `request_truncated=false` only describes body capture; it does not
+  prove that Langfuse contains full tool definitions. The existing 64 KiB
+  attribute limit is unchanged. If other model parameters would exceed it,
+  the largest parameter values are omitted first while preserving inventory;
+  `model_parameters_truncated` and `model_parameters_omitted` report this.
+  Messages retain their own unchanged input attribute and budget. This is a
+  server relay change: existing `llm_trace_v1` runtimes need no rebuild. Older
+  exported observations are not retroactively repaired.
 - The root observation (type `agent`) is emitted once the terminal status
   commits, from `TaskService.captureTaskCompleted/Failed/Cancelled`, on a
   detached goroutine: issue title and trigger as input, result or error as

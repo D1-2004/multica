@@ -70,7 +70,7 @@ func (o *langfuseLLMTraceObserver) ObserveTaskLLMTrace(ctx context.Context, task
 	if strings.TrimSpace(event.Request.Body) == "" && strings.TrimSpace(event.Response.Body) == "" {
 		return errors.New("paired LLM trace carries no bodies")
 	}
-	exchange := langfuse.ParseExchange([]byte(event.Request.Body), []byte(event.Response.Body))
+	exchange := langfuse.ParseExchange([]byte(event.Request.Body), []byte(event.Response.Body), event.Request.Truncated)
 
 	var agentPtr *db.Agent
 	if agent.ID.Valid {

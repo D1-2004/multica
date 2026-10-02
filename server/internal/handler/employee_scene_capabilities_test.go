@@ -425,8 +425,8 @@ func TestEmployeeSceneCapabilitiesGlobalMCPDisabledIsNotEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, label := range input.Config.Persona.Expertise {
-		if strings.Contains(label, "disabled-remote") && strings.Contains(label, "configuration_enabled=true") {
-			t.Fatal("disabled global MCP was advertised enabled")
+		if strings.Contains(label, "disabled-remote") && !strings.Contains(label, "disabled in configuration") {
+			t.Fatal("disabled global MCP was not identified as disabled")
 		}
 	}
 }
@@ -513,5 +513,71 @@ func TestEmployeeSceneCapabilityMintRestoresTimeoutAndJournal(t *testing.T) {
 				t.Fatalf("mint leaked pooled session setting: %s", timeout)
 			}
 		})
+	}
+}
+
+// These are model-input contracts, not evidence that a real model will obey
+// the requested route or voice; the real capability traces need a new canary.
+func TestEmployeeCapabilityIntroductionContract(t *testing.T) {
+	f := newCtxcapFixture(t)
+	input, err := employeeCapabilityInput(t, f, []DispatchMessage{{OpenMsgID: "capabilities", SenderUID: "alice", Text: "请简短介绍能力并给配置入口，只介绍。"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := employeeloop.BuildPrompt(input.Config.Persona)
+	for _, rule := range []string{"describe_capabilities on the first model call", "Only use scene_config_get when the user explicitly asks for configuration details", "1–3 short sentences", "not internal tool names", "DWS/dws-shortcuts", "Employee-triggered execution is unverified"} {
+		if !strings.Contains(prompt, rule) {
+			t.Errorf("capability introduction contract missing %q", rule)
+		}
+	}
+	for _, label := range input.Config.Persona.Expertise {
+		if !strings.HasPrefix(label, "skill ") && !strings.HasPrefix(label, "connector ") && !strings.HasPrefix(label, "remote MCP ") {
+			continue
+		}
+		for _, field := range []string{"configuration_enabled=", "runtime_availability=", "layer="} {
+			if strings.Contains(label, field) {
+				t.Errorf("executor label invites field echo: %s", label)
+			}
+		}
+	}
+	for _, tool := range input.Config.Tools {
+		switch tool.Name {
+		case "describe_capabilities":
+			if !strings.Contains(tool.Description, "first model call") || !strings.Contains(tool.Description, "brief") {
+				t.Error("introduction tool does not prefer a brief first-call answer")
+			}
+		case "scene_config_get":
+			if !strings.Contains(tool.Description, "explicit configuration-detail") || !strings.Contains(tool.Description, "not a prerequisite") {
+				t.Error("config read tool still invites unconditional inspection")
+			}
+		}
+	}
+	if !strings.Contains(prompt, "at most three model calls") {
+		t.Fatal("foreground budget contract disappeared")
+	}
+}
+
+func TestEmployeeCapabilityExplicitConfigurationContract(t *testing.T) {
+	f := newCtxcapFixture(t)
+	input, err := employeeCapabilityInput(t, f, []DispatchMessage{{OpenMsgID: "config-details", SenderUID: "alice", Text: "列出技能准确名称、开关和提示词原文，并给配置链接。"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := employeeloop.BuildPrompt(input.Config.Persona)
+	for _, rule := range []string{"For ordinary introductions,", "For explicit configuration questions, preserve exact skill names, switch states, and stored prompt text", "link-only requests"} {
+		if !strings.Contains(prompt, rule) {
+			t.Errorf("explicit detail route missing %q", rule)
+		}
+	}
+	if strings.Contains(prompt, "never quote its labels or fields") {
+		t.Fatal("unconditional catalog hiding contradicts requested exact configuration")
+	}
+	for _, tool := range input.Config.Tools {
+		if tool.Name == "describe_capabilities" {
+			field := tool.Schema["properties"].(map[string]any)["reply"].(map[string]any)["description"].(string)
+			if !strings.Contains(tool.Description, "configuration details plus a link") || !strings.Contains(field, "requested exact names, states, and prompt text") {
+				t.Fatal("terminal link tool prevents detailed configuration answers")
+			}
+		}
 	}
 }
