@@ -247,6 +247,7 @@ func cloneSnapshot(in Snapshot) Snapshot {
 		out.Config.Runtime.PerformanceOptimization = &rollout
 	}
 	out.Config.Runtime.FCE2B.StablePublisherUserIDs = append([]string(nil), in.Config.Runtime.FCE2B.StablePublisherUserIDs...)
+	out.Config.Runtime.FCE2B.ConnectionReuse = in.Config.Runtime.FCE2B.ConnectionReuse.clone()
 	out.Config.AgentIdentity.DebugContextTokenAgents = append([]string(nil), in.Config.AgentIdentity.DebugContextTokenAgents...)
 	out.Config.EnterpriseIdentity.BUCAuthorizeApps = append([]string(nil), in.Config.EnterpriseIdentity.BUCAuthorizeApps...)
 	out.Config.Runtime.FCE2BSDKRollout = in.Config.Runtime.FCE2BSDKRollout.clone()

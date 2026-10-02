@@ -252,7 +252,21 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 		TimeoutSeconds:                    raw.Runtime.FCE2B.TimeoutSeconds,
 		SandboxReadyTimeout:               raw.Runtime.FCE2B.SandboxReadyTimeout.Duration,
 		SDKRollout:                        fcE2BSDKRolloutOf(raw.Runtime),
+		ConnectionReuse:                   connectionReuseOf(raw.Runtime.FCE2B),
 	}
+}
+
+// connectionReuseOf copies runtime.fc_e2b.connection_reuse into the launcher
+// config. Nil is off. Target slices are copied so the launcher does not share
+// the snapshot's lists.
+func connectionReuseOf(cfg runtimeconfig.FCE2BConfig) runtimeconfig.FCE2BConnectionReuse {
+	if cfg.ConnectionReuse == nil {
+		return runtimeconfig.FCE2BConnectionReuse{}
+	}
+	out := *cfg.ConnectionReuse
+	out.WorkspaceIDs = append([]string(nil), cfg.ConnectionReuse.WorkspaceIDs...)
+	out.AgentIDs = append([]string(nil), cfg.ConnectionReuse.AgentIDs...)
+	return out
 }
 
 func (c *appRuntimeConfig) asb() service.ASBConfig {
