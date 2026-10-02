@@ -3182,7 +3182,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	}
 	claimContext.logClaim(r.Context(), *task)
 
-	if supportsTaskInstruction && h.TaskService.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).DingTalkReplyCommand {
+	// Employee Direct results are delivered by the Host notice outbox. Do not
+	// append the foreground source-send shortcut after its policy was excluded.
+	if supportsTaskInstruction && resp.DirectTaskPrompt == "" && h.TaskService.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).DingTalkReplyCommand {
 		resp.Instruction = appendTaskReplyCommand(resp.Instruction, taskDingTalkReplyCommand(task.Context, uuidToString(task.ID)))
 	}
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
