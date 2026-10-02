@@ -103,6 +103,19 @@ func CreateSceneApp(ctx context.Context, db DBTX, key SceneAppKey, clientID stri
 	return nil
 }
 
+// DeleteSceneApp removes the scene's OAuth application of key's provider;
+// false when none was saved.
+func DeleteSceneApp(ctx context.Context, db DBTX, key SceneAppKey) (bool, error) {
+	tag, err := db.Exec(ctx, `DELETE FROM context_connector_app
+		WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type = 'scene' AND org_id = $3
+		  AND scope_key = $4 AND provider = $5`,
+		key.WorkspaceID, key.AgentID, key.OrgID, key.SceneID, key.Provider)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // UpdateSceneApp changes the scene's saved OAuth application: its client id,
 // and its secret when secretCiphertext is not empty. ErrNotFound when none
 // is saved.

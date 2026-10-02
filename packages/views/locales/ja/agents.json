@@ -2569,6 +2569,11 @@
     "oauth_app_scene_locked": "この会話は専用の {{name}} OAuth アプリを使います。保存後はエージェントの管理者のみ変更できます。",
     "oauth_app_workspace": "この会話はワークスペースの {{name}} OAuth アプリを使います",
     "oauth_app_own": "この会話専用に設定",
+    "oauth_app_remove": "この会話のアプリを削除",
+    "oauth_app_remove_title": "この会話の {{name}} OAuth アプリを削除しますか？",
+    "oauth_app_remove_description": "削除すると、この会話はワークスペースの OAuth アプリを使います。このアプリで認可したアカウントは再認可が必要です。",
+    "oauth_app_removed": "この会話の {{name}} OAuth アプリを削除しました",
+    "oauth_app_remove_failed": "OAuth アプリを削除できませんでした。もう一度お試しください。",
     "oauth_app_saved": "{{name}} の OAuth アプリを保存しました。",
     "oauth_app_failed": "OAuth アプリを保存できませんでした。確認してもう一度お試しください。",
     "skill_no_description": "説明なし"

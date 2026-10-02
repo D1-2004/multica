@@ -2577,6 +2577,11 @@
     "oauth_app_scene_locked": "本会话使用自己的 {{name}} OAuth 应用，保存后只有智能体管理员可以修改。",
     "oauth_app_workspace": "本会话使用工作区的 {{name}} OAuth 应用",
     "oauth_app_own": "为本会话单独配置",
+    "oauth_app_remove": "删除本会话的应用",
+    "oauth_app_remove_title": "删除本会话的 {{name}} OAuth 应用？",
+    "oauth_app_remove_description": "删除后本会话改用工作区的 OAuth 应用，用它授权的账号需要重新授权。",
+    "oauth_app_removed": "已删除本会话的 {{name}} OAuth 应用",
+    "oauth_app_remove_failed": "无法删除 OAuth 应用，请重试。",
     "oauth_app_saved": "{{name}} OAuth 应用已保存。",
     "oauth_app_failed": "无法保存 OAuth 应用，请检查后重试。",
     "skill_no_description": "暂无说明"

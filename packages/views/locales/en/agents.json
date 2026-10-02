@@ -2604,6 +2604,11 @@
     "oauth_app_scene_locked": "This chat uses its own {{name}} OAuth app; once saved, only the agent's managers can change it.",
     "oauth_app_workspace": "This chat uses the workspace's {{name}} OAuth app",
     "oauth_app_own": "Use one for this chat",
+    "oauth_app_remove": "Remove this chat's app",
+    "oauth_app_remove_title": "Remove this chat's {{name}} OAuth app?",
+    "oauth_app_remove_description": "This chat then uses the workspace's OAuth app; accounts authorized with this one need to authorize again.",
+    "oauth_app_removed": "Removed this chat's {{name}} OAuth app",
+    "oauth_app_remove_failed": "Couldn't remove the OAuth app. Try again.",
     "oauth_app_saved": "{{name}} OAuth app saved.",
     "oauth_app_failed": "Couldn't save the OAuth app. Check it and try again.",
     "skill_no_description": "No description"

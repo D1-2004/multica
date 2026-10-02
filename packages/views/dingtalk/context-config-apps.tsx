@@ -8,6 +8,7 @@ import { errorCode } from "@multica/core/api";
 import {
   contextConfigOAuthAppOptions,
   useAddContextConfigApp,
+  useDeleteContextConfigOAuthApp,
   useDeleteContextConnectorCredential,
   useSetContextConfigOAuthApp,
   useSetContextConnectorCredential,
@@ -25,7 +26,7 @@ import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/di
 import { Input } from "@multica/ui/components/ui/input";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { cn } from "@multica/ui/lib/utils";
-import { StatusPill, type StatusTone } from "../agents/components/tabs/connectors-ui";
+import { ConfirmDialog, StatusPill, type StatusTone } from "../agents/components/tabs/connectors-ui";
 import { ConnectorLogo } from "../common/connector-logo";
 import { MAX_BEARER_LENGTH, isValidBearer, useResetOnBackForwardRestore } from "../common/connector-credential";
 import { useT } from "../i18n";
@@ -628,7 +629,8 @@ function oauthFieldLabel(key: string): string {
  * (Slack, Asana, GitHub), filled in on this page: the callback URL to
  * register in the provider's console, then the client. The scene signs in
  * with it; without one it uses the workspace's (the admin console's). The
- * scene's members save the first one, only the agent's managers change it.
+ * scene's members save the first one, only the agent's managers change or
+ * remove it.
  */
 function OAuthAppSetup({
   agentId,
@@ -646,7 +648,9 @@ function OAuthAppSetup({
   const { t } = useT("agents");
   const query = useQuery(contextConfigOAuthAppOptions(agentId, slug, scope));
   const save = useSetContextConfigOAuthApp(agentId);
+  const remove = useDeleteContextConfigOAuthApp(agentId);
   const [editing, setEditing] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({});
   const [invalid, setInvalid] = useState("");
   const app = query.data ?? null;
@@ -694,11 +698,12 @@ function OAuthAppSetup({
     }
   };
 
+  // A stored secret belongs to the stored client: a new client ID needs its own.
+  const secretKept = app.clientSecretSet && valueOf("client_id").trim() === app.clientId;
   const submit = async () => {
     // Required values: present, or (the secret) already stored.
     const missing = app.fields.find(
-      (field) =>
-        !field.optional && !valueOf(field.key).trim() && !(field.key === "client_secret" && app.clientSecretSet),
+      (field) => !field.optional && !valueOf(field.key).trim() && !(field.key === "client_secret" && secretKept),
     );
     if (missing) {
       setInvalid(oauthFieldLabel(missing.key));
@@ -724,8 +729,21 @@ function OAuthAppSetup({
         toast.error(t(($) => $.context_config.oauth_app_failed));
       }
     } finally {
-      // Drop the submitted secret from the mutation state right away.
+      // Drop the submitted secret from the form and the mutation state.
+      setValues(({ client_secret: _secret, ...rest }) => rest);
       save.reset();
+    }
+  };
+
+  const confirmRemove = async () => {
+    try {
+      await remove.mutateAsync({ slug, scope });
+      setRemoving(false);
+      setValues({});
+      setEditing(false);
+      toast.success(t(($) => $.context_config.oauth_app_removed, { name }));
+    } catch (error) {
+      if (!reportError(error)) toast.error(t(($) => $.context_config.oauth_app_remove_failed));
     }
   };
 
@@ -765,7 +783,7 @@ function OAuthAppSetup({
       {app.fields.map((field) => {
         const id = `context-oauth-app-${slug}-${field.key}`;
         const secret = field.key === "client_secret";
-        const placeholder = secret && app.clientSecretSet ? t(($) => $.context_config.oauth_app_secret_kept) : "";
+        const placeholder = secret && secretKept ? t(($) => $.context_config.oauth_app_secret_kept) : "";
         return (
           <div key={field.key} className="space-y-1">
             <label htmlFor={id} className="block text-caption font-medium">
@@ -811,6 +829,28 @@ function OAuthAppSetup({
           {t(($) => $.context_config.save)}
         </Button>
       </div>
+      {app.saved ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full text-muted-foreground hover:text-destructive"
+          disabled={save.isPending || remove.isPending}
+          onClick={() => setRemoving(true)}
+        >
+          {t(($) => $.context_config.oauth_app_remove)}
+        </Button>
+      ) : null}
+      <ConfirmDialog
+        open={removing}
+        onOpenChange={(next) => {
+          if (!next) setRemoving(false);
+        }}
+        title={t(($) => $.context_config.oauth_app_remove_title, { name })}
+        description={t(($) => $.context_config.oauth_app_remove_description)}
+        confirmLabel={t(($) => $.context_config.oauth_app_remove)}
+        pending={remove.isPending}
+        onConfirm={() => void confirmRemove()}
+      />
     </div>
   );
 }

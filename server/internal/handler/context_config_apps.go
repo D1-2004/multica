@@ -23,14 +23,15 @@ import (
 //     offered to (or owned by) the agent is only switched on; another
 //     catalog app is installed in the workspace and offered to the agent's
 //     scopes first. An app an admin switched off is refused (409).
-//   - GET|PUT …/apps/{slug}/oauth-app reads and saves a scene's own OAuth
-//     application of an app without dynamic registration (Slack, Asana,
-//     GitHub), with the callback URL to register in the provider's console.
-//     A connection started at that scene signs in with it, and its tokens
-//     are exchanged and refreshed with it; without one the scene uses the
-//     workspace's. 冬翔 (2026-10-02): a scene's members save the first one,
-//     only the agent's managers change it, and the workspace's and the
-//     enterprise's OAuth applications stay in the admin console.
+//   - GET|PUT|DELETE …/apps/{slug}/oauth-app reads, saves and removes a
+//     scene's own OAuth application of an app without dynamic registration
+//     (Slack, Asana, GitHub), with the callback URL to register in the
+//     provider's console. A connection started at that scene signs in with
+//     it, and its tokens are exchanged and refreshed with it; without one
+//     the scene uses the workspace's. 冬翔 (2026-10-02): a scene's members
+//     save the first one, only the agent's managers change or remove it, and
+//     the workspace's and the enterprise's OAuth applications stay in the
+//     admin console.
 
 const contextConfigAppBodyLimit = 64 << 10
 
@@ -338,7 +339,9 @@ func (h *Handler) PutContextConfigOAuthApp(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	if clientID == "" || (secret == "" && !(exists && len(saved.SecretCiphertext) > 0)) {
+	// A new client ID needs its own secret: a stored one belongs to the
+	// previous client.
+	if clientID == "" || (secret == "" && !(exists && len(saved.SecretCiphertext) > 0 && clientID == saved.ClientID)) {
 		writeErrorCode(w, http.StatusBadRequest, "oauth_app_field_required", "client_id and client_secret are required")
 		return
 	}
@@ -373,4 +376,38 @@ func (h *Handler) PutContextConfigOAuthApp(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, view)
+}
+
+// DeleteContextConfigOAuthApp removes a scene's own OAuth application, so the
+// scene signs in with the workspace's again:
+// DELETE /api/context-capabilities/agents/{agentId}/apps/{slug}/oauth-app?scope_type=scene&scope_key=&org_id=
+// The agent's managers only (403 oauth_app_locked). Accounts it authorized
+// keep their tokens until a refresh needs the removed client, then ask to
+// reconnect. 204 also when none was saved.
+func (h *Handler) DeleteContextConfigOAuthApp(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	userID, a, scope, app, _, ok := h.contextConfigOAuthAppRequest(w, r, query.Get("scope_type"), query.Get("scope_key"), query.Get("org_id"), contextCapNeedRead)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	manages, err := h.contextCapManages(ctx, a, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "manager lookup failed")
+		return
+	}
+	if !manages {
+		writeErrorCode(w, http.StatusForbidden, contextConfigErrOAuthAppLocked, "only the agent's managers remove a scene's OAuth application")
+		return
+	}
+	removed, err := contextcap.DeleteSceneApp(ctx, h.DB, contextConfigSceneAppKey(a, scope, app.Slug))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to remove the OAuth application")
+		return
+	}
+	if removed {
+		slog.InfoContext(ctx, "context capabilities: scene OAuth application removed", "agent_id", a.ID, "workspace_id", a.WorkspaceID,
+			"catalog_slug", app.Slug, "scene_id", scope.ScopeKey, "user_id", userID)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

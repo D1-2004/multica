@@ -107,7 +107,8 @@ func BrowserRoute(method, p string) bool {
 		}
 	}
 	if len(parts) == 5 && parts[2] == "apps" && parts[3] != "" && parts[4] == "oauth-app" {
-		return method == http.MethodGet || method == http.MethodPut
+		// A scene's own OAuth application: read, save, remove.
+		return method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete
 	}
 	if len(parts) == 5 && parts[2] == "routines" && parts[3] != "" {
 		if parts[4] == "runs" {

@@ -2386,6 +2386,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/agents/{agentId}/apps/{slug}", h.AddContextConfigApp)
 			r.Get("/agents/{agentId}/apps/{slug}/oauth-app", h.GetContextConfigOAuthApp)
 			r.Put("/agents/{agentId}/apps/{slug}/oauth-app", h.PutContextConfigOAuthApp)
+			r.Delete("/agents/{agentId}/apps/{slug}/oauth-app", h.DeleteContextConfigOAuthApp)
 			// Scene routines (例行任务) of a group or 1:1 chat scene.
 			r.Get("/agents/{agentId}/routines", h.ListContextConfigRoutines)
 			r.Post("/agents/{agentId}/routines", h.CreateContextConfigRoutine)

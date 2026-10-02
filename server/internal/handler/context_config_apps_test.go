@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
+	"github.com/multica-ai/multica/server/internal/connectorconfig"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 )
 
@@ -23,6 +24,7 @@ func ctxcapAppsRouter(h *Handler) http.Handler {
 		r.Post("/agents/{agentId}/apps/{slug}", h.AddContextConfigApp)
 		r.Get("/agents/{agentId}/apps/{slug}/oauth-app", h.GetContextConfigOAuthApp)
 		r.Put("/agents/{agentId}/apps/{slug}/oauth-app", h.PutContextConfigOAuthApp)
+		r.Delete("/agents/{agentId}/apps/{slug}/oauth-app", h.DeleteContextConfigOAuthApp)
 		r.Get("/agents/{agentId}/scenes/{sceneKey}", h.GetContextConfigScene)
 		r.Post("/agents/{agentId}/connections/start", h.StartContextConfigConnection)
 	})
@@ -215,12 +217,31 @@ func TestContextConfigSceneOAuthApplication(t *testing.T) {
 	if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextConfigErrOAuthAppLocked {
 		t.Fatalf("holder change: %d %s", w.Code, w.Body.String())
 	}
+	// A new client ID needs its own secret; the same one keeps the stored one.
 	w = ctxcapMobile(t, router, http.MethodPut, path+"slack/oauth-app", testUserID, sceneBody(map[string]any{"client_id": "ctxcap-scene-client-2"}))
+	if w.Code != http.StatusBadRequest || catalogErrorCode(t, w) != "oauth_app_field_required" {
+		t.Fatalf("new client without its secret: %d %s", w.Code, w.Body.String())
+	}
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, path+"slack/oauth-app", testUserID,
+		sceneBody(map[string]any{"client_id": "ctxcap-scene-client"})), http.StatusOK, "manager keeps the secret")
+	w = ctxcapMobile(t, router, http.MethodPut, path+"slack/oauth-app", testUserID,
+		sceneBody(map[string]any{"client_id": "ctxcap-scene-client-2", "client_secret": "ctxcap-scene-secret-2"}))
 	ctxcapExpectStatus(t, w, http.StatusOK, "manager change")
 	ctxcapDecode(t, w, &view)
 	if view.ClientID != "ctxcap-scene-client-2" || !view.ClientSecretSet || !view.CanEdit {
 		t.Fatalf("changed view = %+v", view)
 	}
+
+	// Another scene of the agent has none, and its members cannot reach this one.
+	w = ctxcapMobile(t, router, http.MethodGet, path+"slack/oauth-app?scope_type=scene&scope_key="+ctxcapOtherScene, testUserID, nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "manager reads another scene")
+	var other contextConfigOAuthAppView
+	ctxcapDecode(t, w, &other)
+	if other.Saved || other.ClientID != "" {
+		t.Fatalf("another scene sees this one's application: %+v", other)
+	}
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, path+"slack/oauth-app?scope_type=scene&scope_key="+ctxcapOtherScene, holder, nil),
+		http.StatusForbidden, "holder reads another scene")
 
 	// The scene detail names the apps it signs in to with its own application.
 	var scene struct {
@@ -257,6 +278,18 @@ func TestContextConfigSceneOAuthApplication(t *testing.T) {
 	authorize, err := url.Parse(started.AuthorizeURL)
 	if err != nil || authorize.Query().Get("client_id") != "ctxcap-scene-client-2" {
 		t.Fatalf("authorize_url = %q", started.AuthorizeURL)
+	}
+
+	// Removing it, back to the workspace's: the agent's managers only.
+	w = ctxcapMobile(t, router, http.MethodDelete, path+"slack/oauth-app"+sceneQuery, holder, nil)
+	if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextConfigErrOAuthAppLocked {
+		t.Fatalf("holder remove: %d %s", w.Code, w.Body.String())
+	}
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodDelete, path+"slack/oauth-app"+sceneQuery, testUserID, nil), http.StatusNoContent, "manager remove")
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodDelete, path+"slack/oauth-app"+sceneQuery, testUserID, nil), http.StatusNoContent, "remove again")
+	ctxcapDecode(t, ctxcapMobile(t, router, http.MethodGet, path+"slack/oauth-app"+sceneQuery, holder, nil), &view)
+	if view.Saved || !view.CanEdit {
+		t.Fatalf("after removal = %+v", view)
 	}
 }
 
@@ -317,5 +350,16 @@ func TestSceneOAuthApplicationTokenEndpoint(t *testing.T) {
 	// with the workspace's client, which this workspace lacks.
 	if _, err := f.h.connectorTokenEndpoint(ctx, c, "workspace-client"); err == nil {
 		t.Fatal("a token of another client used the scene's application")
+	}
+
+	// A scene secret that cannot be opened fails only the tokens it issued.
+	if _, err := testPool.Exec(ctx, `UPDATE context_connector_app SET client_secret_ciphertext = '\x00' WHERE agent_id = $1`, agentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.h.connectorTokenEndpoint(ctx, c, "scene-client"); !errors.Is(err, connectorconfig.ErrSecretUnavailable) {
+		t.Fatalf("scene token with a broken secret: %v", err)
+	}
+	if _, err := f.h.connectorTokenEndpoint(ctx, c, "workspace-client"); err == nil || errors.Is(err, connectorconfig.ErrSecretUnavailable) {
+		t.Fatalf("workspace token blocked by the scene's broken secret: %v", err)
 	}
 }
