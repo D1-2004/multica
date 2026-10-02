@@ -12,6 +12,12 @@ An authenticated dispatch uses `control.action=dispatch`,
 Issue continuations support this mode. Omitted control preserves enqueue.
 Fresh-session steer is rejected: it cannot promise continuity.
 
+Human Issue clients can also `POST /api/issues/{id}/steer` with
+`{"content":"the correction"}` and a stable `Idempotency-Key` header. The
+endpoint checks workspace membership and permission to invoke the Issue's
+assigned agent, and uses the same transaction and replay receipt. It creates a
+member comment as the explicit next input. No second Issue is created.
+
 The Issue/Chat and agent claim locks serialize cancellation, pending-input
 coalescing and claim. Steer commits a cancellation and one explicit successor.
 New corrections in the cancellation window join that unclaimed successor.
