@@ -236,12 +236,10 @@ type taskContextEnvelope struct {
 	} `json:"agent_scene"`
 	// SceneRoutine is the Host-frozen binding of a scene routine run
 	// (protocol.SceneRoutineContextKey). Such a run has no dispatch event:
-	// it is scoped by AgentScene, the routine's tenant org and, for a 1:1
-	// chat routine, the counterpart its creation proved.
+	// it is scoped by AgentScene and the routine's tenant org.
 	SceneRoutine *struct {
-		TenantOrgID   string `json:"tenant_org_id"`
-		Kind          string `json:"kind"`
-		PersonStaffID string `json:"person_staff_id"`
+		TenantOrgID string `json:"tenant_org_id"`
+		Kind        string `json:"kind"`
 	} `json:"scene_routine"`
 	// FollowUpCommentIDs lists the Coordinator follow-up comments coalesced
 	// into one issue task (service/coordinator_follow_up.go); more than one
@@ -320,11 +318,12 @@ func ScopeFromTaskContext(raw []byte) Scope {
 	return scope
 }
 
-// routineScope is the scope of a scene routine run: the routine's scene,
-// its tenant org as the dispatch org, and for a 1:1 chat routine the
-// counterpart its creation proved. A group routine never carries a person:
-// it runs with the scene's capabilities, never its creator's. Anything
-// incomplete yields the zero Scope (no layers), never a guessed scene.
+// routineScope is the scope of a scene routine run: the routine's scene and
+// its tenant org as the dispatch org. A routine never carries a person, in a
+// group or a 1:1 chat, whoever created it: it runs with the scene's
+// capabilities only (a person_staff_id left in an older run context is
+// ignored). Anything incomplete yields the zero Scope (no layers), never a
+// guessed scene.
 func routineScope(envelope taskContextEnvelope) Scope {
 	routine := envelope.SceneRoutine
 	if routine == nil || envelope.AgentScene == nil {
@@ -341,9 +340,6 @@ func routineScope(envelope taskContextEnvelope) Scope {
 		scope.ConversationType = ConversationTypeGroup
 	case SceneKindDM:
 		scope.ConversationType = "single"
-		if staffID := strings.TrimSpace(routine.PersonStaffID); ValidStaffID(staffID) {
-			scope.PersonKey = staffID
-		}
 	default:
 		return Scope{}
 	}

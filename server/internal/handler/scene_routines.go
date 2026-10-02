@@ -101,10 +101,6 @@ type sceneRoutineActor struct {
 	UserID  pgtype.UUID
 	AgentID pgtype.UUID
 	TaskID  pgtype.UUID
-	// PersonKey is the proven DingTalk staffId of the person who asked: the
-	// dispatch sender of an agent actor's task. A member on a configure page
-	// has none (a manager is not the person).
-	PersonKey string
 }
 
 func (a sceneRoutineActor) id() pgtype.UUID {
@@ -127,7 +123,6 @@ func (a sceneRoutineActor) memberUserID() pgtype.UUID {
 // frozen at creation.
 type sceneRoutineCounterpart struct {
 	OpenDingTalkID string
-	StaffID        string
 }
 
 type sceneRoutineTriggerView struct {
@@ -153,22 +148,19 @@ type sceneRoutineRunView struct {
 }
 
 type sceneRoutineView struct {
-	ID           string `json:"id"`
-	SceneID      string `json:"scene_id"`
-	SceneKind    string `json:"scene_kind"`
-	AutopilotID  string `json:"autopilot_id"`
-	Title        string `json:"title"`
-	Instructions string `json:"instructions"`
-	Enabled      bool   `json:"enabled"`
-	PauseReason  string `json:"pause_reason,omitempty"`
-	// PersonCapabilities: runs carry the 1:1 counterpart's personal layer
-	// (the person created it in the chat and nobody else changed it since).
-	PersonCapabilities bool                    `json:"person_capabilities"`
-	Trigger            sceneRoutineTriggerView `json:"trigger"`
-	LastRun            *sceneRoutineRunView    `json:"last_run"`
-	CreatedByType      string                  `json:"created_by_type"`
-	CreatedAt          string                  `json:"created_at"`
-	UpdatedAt          string                  `json:"updated_at"`
+	ID            string                  `json:"id"`
+	SceneID       string                  `json:"scene_id"`
+	SceneKind     string                  `json:"scene_kind"`
+	AutopilotID   string                  `json:"autopilot_id"`
+	Title         string                  `json:"title"`
+	Instructions  string                  `json:"instructions"`
+	Enabled       bool                    `json:"enabled"`
+	PauseReason   string                  `json:"pause_reason,omitempty"`
+	Trigger       sceneRoutineTriggerView `json:"trigger"`
+	LastRun       *sceneRoutineRunView    `json:"last_run"`
+	CreatedByType string                  `json:"created_by_type"`
+	CreatedAt     string                  `json:"created_at"`
+	UpdatedAt     string                  `json:"updated_at"`
 }
 
 // sceneRoutineResult is a write's outcome. Updated is true when a create
@@ -286,10 +278,9 @@ func (h *Handler) routineIdentity(ctx context.Context, q *db.Queries, workspaceI
 
 // sceneRoutineDMCounterpart finds who a configure-page routine of a dm scene
 // sends to: the sender of the scene's newest trusted inbound Coordinator job
-// (the server-written dispatch sender). It never carries that person's
-// staffId: a manager's routine must not run with the counterpart's personal
-// connectors and credentials. A task in the 1:1 chat passes its own sender
-// instead, who is that person.
+// (the server-written dispatch sender). A task in the 1:1 chat passes its own
+// sender instead. Only delivery uses it: a routine never runs with anyone's
+// personal layer.
 func (h *Handler) sceneRoutineDMCounterpart(ctx context.Context, a contextCapAgent, sceneID string) (sceneRoutineCounterpart, error) {
 	var cp sceneRoutineCounterpart
 	err := h.DB.QueryRow(ctx, `SELECT
@@ -341,10 +332,6 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 	if sc.SceneKind != scene.KindDM {
 		cp = sceneRoutineCounterpart{}
 	}
-	if !contextcap.ValidStaffID(cp.StaffID) || cp.StaffID != actor.PersonKey {
-		// The personal layer is attached only when the person asked.
-		cp.StaffID = ""
-	}
 
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
@@ -382,7 +369,7 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 	}
 	routine, err := contextcap.InsertRoutine(ctx, tx, contextcap.Routine{
 		WorkspaceID: a.WorkspaceID, AgentID: a.ID, SceneID: sceneID, TenantOrgID: sc.TenantOrgID, SceneKind: sc.SceneKind,
-		AutopilotID: util.UUIDToString(ap.ID), DeliveryOpenDingTalkID: cp.OpenDingTalkID, PersonStaffID: cp.StaffID,
+		AutopilotID: util.UUIDToString(ap.ID), DeliveryOpenDingTalkID: cp.OpenDingTalkID,
 		DedupeKey: key, CreatedByType: actor.Type, CreatedByID: util.UUIDToString(actor.id()),
 		CreatedTaskID: util.UUIDToString(actor.TaskID),
 	})
@@ -506,12 +493,6 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 			return sceneRoutineResult{}, err
 		}
 	}
-	// A routine that runs with its 1:1 counterpart's personal layer keeps it
-	// only while that person decides what it runs and when: anyone else who
-	// changes its title, instructions or schedule, or resumes it, detaches the
-	// layer (pausing does not).
-	dropPerson := routine.PersonStaffID != "" && actor.PersonKey != routine.PersonStaffID &&
-		(title != ap.Title || instructions != ap.Description.String || scheduleChanged || (status == "active" && ap.Status != "active"))
 
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
@@ -550,12 +531,6 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 		if err := service.RecordAutopilotRuleVersion(ctx, qtx, updated, actor.Type, actor.id()); err != nil {
 			return sceneRoutineResult{}, err
 		}
-	}
-	if dropPerson {
-		if err := contextcap.ClearRoutinePerson(ctx, tx, routine.ID); err != nil {
-			return sceneRoutineResult{}, err
-		}
-		routine.PersonStaffID = ""
 	}
 	if key := routineDedupeKey(title, schedule); key != routine.DedupeKey {
 		if err := contextcap.SetRoutineDedupeKey(ctx, tx, routine.ID, key); err != nil {
@@ -730,7 +705,7 @@ func (h *Handler) sceneRoutineView(ctx context.Context, routine contextcap.Routi
 	view := sceneRoutineView{
 		ID: routine.ID, SceneID: routine.SceneID, SceneKind: routine.SceneKind, AutopilotID: routine.AutopilotID,
 		Title: ap.Title, Instructions: ap.Description.String, Enabled: ap.Status == "active",
-		PauseReason: ap.PauseReason.String, PersonCapabilities: routine.PersonStaffID != "", CreatedByType: routine.CreatedByType,
+		PauseReason: ap.PauseReason.String, CreatedByType: routine.CreatedByType,
 		CreatedAt: routine.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: timestampToString(ap.UpdatedAt),
 		Trigger: sceneRoutineTriggerView{ID: util.UUIDToString(trigger.ID), Kind: trigger.Kind, NextRuns: []string{}},
 	}
@@ -818,11 +793,10 @@ var _ service.SceneRoutines = (*Handler)(nil)
 // sceneRoutineContext is the scene_routine task context key: the binding a
 // run carries next to agent_scene.
 type sceneRoutineContext struct {
-	RoutineID     string `json:"routine_id"`
-	TenantOrgID   string `json:"tenant_org_id"`
-	Kind          string `json:"kind"`
-	PersonStaffID string `json:"person_staff_id,omitempty"`
-	Title         string `json:"title"`
+	RoutineID   string `json:"routine_id"`
+	TenantOrgID string `json:"tenant_org_id"`
+	Kind        string `json:"kind"`
+	Title       string `json:"title"`
 }
 
 // RoutineRuntimeContext implements service.SceneRoutines: the scene a run of
@@ -842,8 +816,7 @@ func (h *Handler) RoutineRuntimeContext(ctx context.Context, ap db.Autopilot) ([
 	return json.Marshal(map[string]any{
 		protocol.AgentSceneContextKey: scene.Ref{SceneID: routine.SceneID},
 		protocol.SceneRoutineContextKey: sceneRoutineContext{
-			RoutineID: routine.ID, TenantOrgID: routine.TenantOrgID, Kind: routine.SceneKind,
-			PersonStaffID: routine.PersonStaffID, Title: ap.Title,
+			RoutineID: routine.ID, TenantOrgID: routine.TenantOrgID, Kind: routine.SceneKind, Title: ap.Title,
 		},
 	})
 }

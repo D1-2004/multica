@@ -29,9 +29,8 @@ type Routine struct {
 	// DeliveryOpenDingTalkID is the 1:1 counterpart's openDingTalkId ("" for
 	// a group): a dm send needs it.
 	DeliveryOpenDingTalkID string
-	// PersonStaffID is the 1:1 counterpart's staffId when the creation proved
-	// it; a run then carries that person's capability layer.
-	PersonStaffID string
+	// The person_staff_id column is no longer written or read: a routine
+	// never runs with anyone's personal layer.
 	DedupeKey     string
 	CreatedByType string
 	CreatedByID   string
@@ -51,13 +50,13 @@ const (
 var ErrRoutineDuplicate = errors.New("a routine with the same purpose and schedule exists in this scene")
 
 const routineColumns = `id::text, workspace_id::text, agent_id::text, scene_id::text, tenant_org_id, scene_kind,
-	autopilot_id::text, delivery_open_dingtalk_id, person_staff_id, dedupe_key, created_by_type,
+	autopilot_id::text, delivery_open_dingtalk_id, dedupe_key, created_by_type,
 	COALESCE(created_by_id::text, ''), COALESCE(created_task_id::text, ''), created_at, updated_at`
 
 func scanRoutine(row pgx.Row) (Routine, error) {
 	var r Routine
 	err := row.Scan(&r.ID, &r.WorkspaceID, &r.AgentID, &r.SceneID, &r.TenantOrgID, &r.SceneKind,
-		&r.AutopilotID, &r.DeliveryOpenDingTalkID, &r.PersonStaffID, &r.DedupeKey, &r.CreatedByType,
+		&r.AutopilotID, &r.DeliveryOpenDingTalkID, &r.DedupeKey, &r.CreatedByType,
 		&r.CreatedByID, &r.CreatedTaskID, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Routine{}, ErrNotFound
@@ -109,12 +108,12 @@ func InsertRoutine(ctx context.Context, db DBTX, r Routine) (Routine, error) {
 	}
 	created, err := scanRoutine(db.QueryRow(ctx, `INSERT INTO context_scope_routine (
 			workspace_id, agent_id, scene_id, tenant_org_id, scene_kind, autopilot_id,
-			delivery_open_dingtalk_id, person_staff_id, dedupe_key, created_by_type, created_by_id, created_task_id
-		) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid, $7, $8, $9, $10, NULLIF($11, '')::uuid, NULLIF($12, '')::uuid)
+			delivery_open_dingtalk_id, dedupe_key, created_by_type, created_by_id, created_task_id
+		) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6::uuid, $7, $8, $9, NULLIF($10, '')::uuid, NULLIF($11, '')::uuid)
 		ON CONFLICT (scene_id, dedupe_key) DO NOTHING
 		RETURNING `+routineColumns,
 		r.WorkspaceID, r.AgentID, r.SceneID, strings.TrimSpace(r.TenantOrgID), r.SceneKind, r.AutopilotID,
-		r.DeliveryOpenDingTalkID, r.PersonStaffID, r.DedupeKey, r.CreatedByType, r.CreatedByID, r.CreatedTaskID))
+		r.DeliveryOpenDingTalkID, r.DedupeKey, r.CreatedByType, r.CreatedByID, r.CreatedTaskID))
 	if errors.Is(err, ErrNotFound) {
 		return Routine{}, ErrRoutineDuplicate
 	}
@@ -183,15 +182,6 @@ func SetRoutineDedupeKey(ctx context.Context, db DBTX, id, dedupeKey string) err
 		return ErrRoutineDuplicate
 	}
 	return err
-}
-
-// ClearRoutinePerson drops the 1:1 counterpart's personal layer from a
-// routine: someone other than that person changed what it runs.
-func ClearRoutinePerson(ctx context.Context, db DBTX, id string) error {
-	if _, err := db.Exec(ctx, `UPDATE context_scope_routine SET person_staff_id = '', updated_at = now() WHERE id = $1::uuid`, id); err != nil {
-		return fmt.Errorf("clear scene routine person: %w", err)
-	}
-	return nil
 }
 
 // validUUID accepts a canonical lowercase UUID (a routine or autopilot id).

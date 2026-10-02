@@ -58,6 +58,9 @@ type sceneConfigTarget struct {
 	// senderOpenDingTalkID is the 1:1 counterpart of a dm task (its
 	// dispatch sender), "" otherwise.
 	senderOpenDingTalkID string
+	// requester is the display name of the dispatch sender who asked, for
+	// the change notices ("" when the context names none).
+	requester string
 }
 
 // taskConfigScene resolves the scene task may configure: its context scope's
@@ -89,6 +92,7 @@ func (h *Handler) taskConfigScene(ctx context.Context, workspaceID pgtype.UUID, 
 	if summary.Kind == scene.KindDM {
 		target.senderOpenDingTalkID = dispatchSenderOpenID(task.Context)
 	}
+	target.requester = firstNonEmpty(scope.PersonName, dispatchSenderName(task.Context))
 	return target, true, nil
 }
 
@@ -119,6 +123,22 @@ func dispatchSenderOpenID(raw []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(firstNonEmpty(envelope.EventData.Sender.OpenDingTalkID, envelope.EventData.Sender.SenderOpenDingTalkID))
+}
+
+// dispatchSenderName is the dispatch sender's display name of a task context
+// ("" when absent).
+func dispatchSenderName(raw []byte) string {
+	var envelope struct {
+		EventData *struct {
+			Sender struct {
+				DisplayName string `json:"displayName"`
+			} `json:"sender"`
+		} `json:"dispatch_event_data"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil || envelope.EventData == nil {
+		return ""
+	}
+	return strings.TrimSpace(envelope.EventData.Sender.DisplayName)
 }
 
 // sceneConfigMCPRoute is the route path of the task's config-qwen-tag-scene
@@ -328,13 +348,11 @@ func sceneConfigToolDefinitions(kind string) []any {
 		"required": []string{"kind"},
 	}
 	where := "this group chat"
-	mcpUpsertTitle := "Switch a remote MCP server on or off"
-	mcpUpsertDescription := "Switch an existing remote MCP server of " + where + " on or off with disabled. Adding a server or changing its url or headers in a group is done by an agent manager on the configuration page (scene_connect_link); tell the person so."
 	if kind == scene.KindDM {
 		where = "this 1:1 chat"
-		mcpUpsertTitle = "Add or change a remote MCP server"
-		mcpUpsertDescription = "Add a remote MCP server to " + where + ", or change the fields you pass of the one of that name (omitted fields keep their values). http(s) url only; never local commands. Put no secrets in headers: connect accounts through scene_connect_link instead."
 	}
+	mcpUpsertTitle := "Add or change a remote MCP server"
+	mcpUpsertDescription := "Add a remote MCP server to " + where + ", or change the fields you pass of the one of that name (omitted fields keep their values); disabled switches it off or on. http(s) url only; never local commands. Every run here calls it, so restate the address and wait for confirmation first. Put no secrets in headers: connect accounts through scene_connect_link instead."
 	return []any{
 		sceneConfigTool(sceneConfigToolGet, "Read this scene's configuration",
 			"Return the configuration of "+where+": its prompts, routines, offered skills and connectors with their switches, remote MCP servers (header values hidden), and whether this run may change them. Call it before answering or changing anything.",
@@ -802,10 +820,10 @@ func (h *Handler) writeSceneConfigPrompts(ctx context.Context, target sceneConfi
 
 // sceneConfigMCPUpsert adds a remote MCP server or changes the fields the
 // call passes; omitted fields (headers above all, whose values the agent
-// never sees) keep their stored values. In a group only an existing server
-// can be switched on or off: every member's runs there call the group's
-// servers, so adding one or pointing it elsewhere is left to an agent
-// manager on the configuration page.
+// never sees) keep their stored values. A group may add and re-point servers
+// from the chat (冬翔's call, 2026-10-02): the guards are remote URLs only,
+// masked secrets, a change notice naming who asked and the address, and
+// switching off or deleting any time; a routine run changes nothing.
 func (h *Handler) sceneConfigMCPUpsert(ctx context.Context, target sceneConfigTarget, raw json.RawMessage) (any, string, error) {
 	var args struct {
 		Name     string             `json:"name"`
@@ -858,25 +876,25 @@ func (h *Handler) sceneConfigMCPUpsert(ctx context.Context, target sceneConfigTa
 	if url == "" {
 		return nil, "", toolRefusal("invalid_mcp_config", "url is required to add a server")
 	}
-	if target.scene.Kind == scene.KindGroup && (!existed || url != storedURL || args.Headers != nil || args.Type != nil) {
-		return nil, "", toolRefusal("mcp_server_needs_config_page",
-			"in a group chat, adding a remote MCP server or changing its address or headers is done by an agent manager on the configuration page, because every member's runs here call it; this chat can only switch an existing server on or off, or delete it")
-	}
 	encoded, _ := json.Marshal(server)
 	servers[name] = encoded
 	if err := h.writeSceneConfigMCPServers(ctx, target, servers); err != nil {
 		return nil, "", err
 	}
 	disabled, _ := server["disabled"].(bool)
-	verb := "更新"
+	masked := maskMCPServerURL(url)
+	var notice string
 	switch {
 	case !existed:
-		verb = "新增"
+		notice = fmt.Sprintf("新增 MCP 服务器「%s」，地址 %s。如需撤销，可以让我停用或删除它", name, masked)
 	case args.URL == nil && args.Headers == nil && args.Type == nil && args.Disabled != nil:
-		verb = map[bool]string{true: "停用", false: "启用"}[disabled]
+		notice = fmt.Sprintf("%s MCP 服务器「%s」（%s）", map[bool]string{true: "停用", false: "启用"}[disabled], name, masked)
+	case url != storedURL:
+		notice = fmt.Sprintf("修改 MCP 服务器「%s」的地址：%s → %s", name, maskMCPServerURL(storedURL), masked)
+	default:
+		notice = fmt.Sprintf("修改 MCP 服务器「%s」（%s）", name, masked)
 	}
-	return map[string]any{"name": name, "url": maskMCPServerURL(url), "disabled": disabled},
-		fmt.Sprintf("%s MCP 服务器「%s」", verb, name), nil
+	return map[string]any{"name": name, "url": masked, "disabled": disabled}, notice, nil
 }
 
 // maskMCPServerURL hides what may carry a credential in a server URL (user
@@ -905,14 +923,19 @@ func (h *Handler) sceneConfigMCPDelete(ctx context.Context, target sceneConfigTa
 	if err != nil {
 		return nil, "", err
 	}
-	if _, ok := servers[name]; !ok {
+	stored, ok := servers[name]
+	if !ok {
 		return nil, "", toolRefusal("mcp_server_not_found", "this scene has no MCP server named "+name)
 	}
+	var server struct {
+		URL string `json:"url"`
+	}
+	_ = json.Unmarshal(stored, &server)
 	delete(servers, name)
 	if err := h.writeSceneConfigMCPServers(ctx, target, servers); err != nil {
 		return nil, "", err
 	}
-	return map[string]any{"deleted": name}, fmt.Sprintf("删除 MCP 服务器「%s」", name), nil
+	return map[string]any{"deleted": name}, fmt.Sprintf("删除 MCP 服务器「%s」（%s）", name, maskMCPServerURL(server.URL)), nil
 }
 
 func (h *Handler) writeSceneConfigMCPServers(ctx context.Context, target sceneConfigTarget, servers map[string]json.RawMessage) error {
@@ -991,7 +1014,7 @@ func (h *Handler) sceneConfigResourceName(ctx context.Context, workspaceID, kind
 // ── Routines ────────────────────────────────────────────────────────────────
 
 func sceneConfigActor(target sceneConfigTarget) sceneRoutineActor {
-	return sceneRoutineActor{Type: contextcap.RoutineCreatedByAgent, AgentID: target.task.AgentID, TaskID: target.task.ID, PersonKey: target.scope.PersonKey}
+	return sceneRoutineActor{Type: contextcap.RoutineCreatedByAgent, AgentID: target.task.AgentID, TaskID: target.task.ID}
 }
 
 // sceneConfigRoutineView keeps a full webhook URL out of the conversation:
@@ -1020,7 +1043,7 @@ func (h *Handler) sceneConfigRoutineCreate(ctx context.Context, target sceneConf
 	}
 	var cp sceneRoutineCounterpart
 	if sc.SceneKind == scene.KindDM {
-		cp = sceneRoutineCounterpart{OpenDingTalkID: target.senderOpenDingTalkID, StaffID: target.scope.PersonKey}
+		cp = sceneRoutineCounterpart{OpenDingTalkID: target.senderOpenDingTalkID}
 	}
 	result, err := h.createSceneRoutine(ctx, target.agent, sc, sceneConfigActor(target), cp, args)
 	if err != nil {
@@ -1107,6 +1130,16 @@ func (h *Handler) sceneConfigRoutineRun(ctx context.Context, target sceneConfigT
 
 // ── Change notices ──────────────────────────────────────────────────────────
 
+// sceneConfigNoticeText is a change notice: who asked (the dispatch sender)
+// and what changed.
+func sceneConfigNoticeText(requester, change string) string {
+	by := ""
+	if requester != "" {
+		by = "（" + requester + " 提出）"
+	}
+	return "场域配置已更新" + by + "：" + change + "。可以在配置页的「QwenTag配置」里查看。"
+}
+
 // postSceneConfigNotice tells the scene a configuration change was made from
 // a conversation (best effort): members see every change, whatever the
 // model says about it.
@@ -1122,7 +1155,7 @@ func (h *Handler) postSceneConfigNotice(ctx context.Context, target sceneConfigT
 	in := dingtalkresponse.ActionInput{
 		WorkspaceID: target.agent.WorkspaceID, AgentID: target.agent.ID, DWSUID: identity.DwsUid, DWSOrgID: identity.OrgID,
 		SceneID: target.scene.SceneID, ConversationID: target.scene.ConversationID, IsGroup: target.scene.Kind == scene.KindGroup,
-		Text:           "场域配置已更新：" + change + "。可以在配置页的「QwenTag配置」里查看。",
+		Text:           sceneConfigNoticeText(target.requester, change),
 		DWSEnvironment: h.routineDWSEnvironment(ctx, h.Queries, owner, identity),
 	}
 	if !in.IsGroup {

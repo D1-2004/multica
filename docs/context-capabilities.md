@@ -1139,21 +1139,18 @@ arrives. There are no org-level or person-level routines.
 - **Storage.** A routine is a `run_only` autopilot assigned to the agent plus a
   `context_scope_routine` row (migrations 9520–9522) binding it to its
   `scene_id`, tenant org and kind, with the 1:1 counterpart's
-  `openDingTalkId` frozen at creation (and its staffId when that person
-  created the routine in the chat, see below). The autopilot
+  `openDingTalkId` frozen at creation for delivery (the `person_staff_id`
+  column is no longer written or read). The autopilot
   keeps the trigger, schedule and run history; scene-managed autopilots
   answer 409 `managed_by_scene` on the autopilot routes.
 - **Runs carry the scene.** Every run (cron, webhook, run now) carries
   `agent_scene` plus the frozen `scene_routine` binding
   (`protocol.SceneRoutineContextKey`) and no inbound message.
-  `ScopeFromTaskContext` reads it as the scene layer in the routine's org; a
-  group routine never carries a person layer (it runs with the scene's
-  capabilities, never its creator's). A 1:1 routine carries its
-  counterpart's personal layer only when that person created it in the
-  chat (the task's proven dispatch sender); a routine created on the
-  configure page never does, and anyone else who changes its title,
-  instructions or schedule, or resumes it, detaches the layer for good
-  (pausing keeps it). Views report it as `person_capabilities`. The scene is fenced when the
+  `ScopeFromTaskContext` reads it as the scene layer in the routine's org.
+  A routine never carries a personal layer, in a group or a 1:1 chat,
+  whoever created or changed it (冬翔, 2026-10-02): it runs with the
+  scene's capabilities only, and a `person_staff_id` left in an older run
+  context is ignored. The scene is fenced when the
   run is created (`scene.CheckTenant`): a routine of an org the agent left is
   recorded as skipped, never run elsewhere. Reruns get no layers.
 - **Notices.** The Host posts a start notice when the run's task is queued
@@ -1215,13 +1212,16 @@ earlier binding, an unknown scene) gets neither.
   - A routine run is read-only (`routine_run_read_only`): its input may come
     from a webhook. It also issues no configuration link, from
     `scene_connect_link` or the multica `create_context_config_link` tool.
-  - In a group, the chat can only switch an existing remote MCP server on or
-    off or delete it; adding one or changing its URL, type or headers answers
-    `mcp_server_needs_config_page` (every member's runs there call it, and
-    the chat cannot tell who is asking). A 1:1 chat changes its own servers.
+  - Remote MCP servers can be added, re-pointed, switched and deleted from
+    a group or a 1:1 chat (冬翔, 2026-10-02, knowing the chat cannot tell
+    whether the requester manages the agent). The guards: `http(s)` URLs
+    only, header values and URL secrets masked everywhere, a change notice
+    in the scene naming who asked (the dispatch sender) and the masked
+    address, switching off or deleting any time, and no change from a
+    routine run. No manager approval card yet.
   - `scene_routine_run` from the chat keeps the 15-minute minimum after the
     routine's previous run (`routine_run_too_soon`).
-  - Refusals (`routine_run_read_only`, `mcp_server_needs_config_page`,
+  - Refusals (`routine_run_read_only`, `routine_run_too_soon`,
     `task_not_active`, …) are ordinary tool results
     `{"ok": false, "refused": <code>, "message": …}`, not `isError`: the
     sandbox MCP bridge (pi-mcp-extension) replaces an `isError` result's text

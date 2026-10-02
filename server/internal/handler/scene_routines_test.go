@@ -297,8 +297,7 @@ func TestSceneRoutineDMNeedsItsCounterpart(t *testing.T) {
 	if _, err := f.h.sceneRoutineDMCounterpart(ctx, a, ctxcapDirectScene); routineCode(err) != "dm_target_unknown" {
 		t.Fatalf("no inbound message yet: %v", err)
 	}
-	alice := sceneRoutineCounterpart{OpenDingTalkID: "$:LWCP_v1:$alice", StaffID: ctxcapStaff}
-	created, err := f.h.createSceneRoutine(ctx, a, sc, routineMember(), alice, in)
+	created, err := f.h.createSceneRoutine(ctx, a, sc, routineMember(), sceneRoutineCounterpart{OpenDingTalkID: "$:LWCP_v1:$alice"}, in)
 	if err != nil || created.Routine.SceneKind != "dm" {
 		t.Fatalf("dm routine = %+v %v", created, err)
 	}
@@ -307,17 +306,12 @@ func TestSceneRoutineDMNeedsItsCounterpart(t *testing.T) {
 	if err != nil || notice.IsGroup || notice.SenderOpenDingTalkID != "$:LWCP_v1:$alice" || notice.ConversationID != ctxcapCoordinatorDirect {
 		t.Fatalf("dm notice = %+v %v", notice, err)
 	}
-	// A manager's routine in Alice's 1:1 chat sends to her but never runs
-	// with her personal connectors and credentials.
-	if created.Routine.PersonCapabilities || routineScope(t, f, created).PersonKey != "" {
-		t.Fatalf("a manager's dm routine carries the counterpart's personal layer: %+v", created.Routine)
-	}
 }
 
-// A dm routine carries its counterpart's personal layer only when that
-// person created it in the chat, and only until someone else changes what it
-// runs or resumes it; pausing keeps it.
-func TestSceneRoutineDMPersonalLayerFollowsThePerson(t *testing.T) {
+// A routine never runs with anyone's personal layer, whatever its source:
+// created on the configure page, created by the person in their 1:1 chat,
+// edited by someone else, or a row an older binary stored a staffId on.
+func TestSceneRoutineNeverCarriesAPersonalLayer(t *testing.T) {
 	f, a := routineFixture(t)
 	f.registerDirectScene(t)
 	ctx := context.Background()
@@ -325,33 +319,53 @@ func TestSceneRoutineDMPersonalLayerFollowsThePerson(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	asAlice := sceneRoutineActor{Type: contextcap.RoutineCreatedByAgent, AgentID: f.agent, PersonKey: ctxcapStaff}
-	asBob := sceneRoutineActor{Type: contextcap.RoutineCreatedByAgent, AgentID: f.agent, PersonKey: ctxcapOtherStaff}
-	alice := sceneRoutineCounterpart{OpenDingTalkID: "$:LWCP_v1:$alice", StaffID: ctxcapStaff}
-	in := sceneRoutineInput{Title: "Calendar check", Instructions: "Check my calendar.", Trigger: sceneRoutineTrigger{Kind: "schedule", Cron: "0 21 * * *"}}
-	if created, err := f.h.createSceneRoutine(ctx, a, sc, asBob, alice, sceneRoutineInput{
-		Title: "Other", Instructions: "x", Trigger: in.Trigger,
-	}); err != nil || created.Routine.PersonCapabilities {
-		t.Fatalf("someone else's create = %+v %v", created.Routine, err)
+	trigger := sceneRoutineTrigger{Kind: "schedule", Cron: "0 21 * * *"}
+	noPerson := func(source string, created sceneRoutineResult) {
+		t.Helper()
+		ap, err := f.h.Queries.GetAutopilot(ctx, parseUUID(created.Routine.AutopilotID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := f.h.RoutineRuntimeContext(ctx, ap)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scope := contextcap.ScopeFromTaskContext(raw)
+		if scope.SceneID != ctxcapDirectScene || scope.PersonKey != "" || strings.Contains(string(raw), "person_staff_id") {
+			t.Errorf("%s: run context %s gives scope %+v", source, raw, scope)
+		}
 	}
-	created, err := f.h.createSceneRoutine(ctx, a, sc, asAlice, alice, in)
-	if err != nil || !created.Routine.PersonCapabilities || routineScope(t, f, created).PersonKey != ctxcapStaff {
-		t.Fatalf("Alice's own routine = %+v %v", created.Routine, err)
+
+	page, err := f.h.createSceneRoutine(ctx, a, sc, routineMember(), sceneRoutineCounterpart{OpenDingTalkID: "$:LWCP_v1:$alice"}, sceneRoutineInput{
+		Title: "Page routine", Instructions: "x", Trigger: trigger,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	routine := func() contextcap.Routine { return mustRoutine(t, f, a, created.Routine.ID) }
-	paused := false
-	if got, err := f.h.updateSceneRoutine(ctx, a, routine(), routineMember(), sceneRoutinePatch{Enabled: &paused}); err != nil || !got.Routine.PersonCapabilities {
-		t.Fatalf("pause by a manager = %+v %v", got.Routine, err)
+	noPerson("configure page", page)
+
+	dm := f.sceneConfigDMTask(t)
+	got, refusal := f.sceneConfigTool(t, f.sceneConfigPath(t, dm), dm, sceneConfigToolRoutineCreate, map[string]any{
+		"title": "Alice's routine", "instructions": "Check my calendar.", "trigger": map[string]any{"kind": "schedule", "cron": "0 8 * * *"},
+	})
+	if refusal != "" {
+		t.Fatal(refusal)
 	}
-	resumed := true
-	if got, err := f.h.updateSceneRoutine(ctx, a, routine(), asAlice, sceneRoutinePatch{Enabled: &resumed}); err != nil || !got.Routine.PersonCapabilities {
-		t.Fatalf("resume by Alice = %+v %v", got.Routine, err)
-	}
+	chatID := got["routine"].(map[string]any)["id"].(string)
+	chat := sceneRoutineResult{Routine: sceneRoutineView{ID: chatID, AutopilotID: got["routine"].(map[string]any)["autopilot_id"].(string)}}
+	noPerson("the person in their 1:1 chat", chat)
+
 	instructions := "Check my calendar and email my boss."
-	got, err := f.h.updateSceneRoutine(ctx, a, routine(), routineMember(), sceneRoutinePatch{Instructions: &instructions})
-	if err != nil || got.Routine.PersonCapabilities || routine().PersonStaffID != "" || routineScope(t, f, created).PersonKey != "" {
-		t.Fatalf("instructions changed by a manager = %+v %v", got.Routine, err)
+	edited, err := f.h.updateSceneRoutine(ctx, a, mustRoutine(t, f, a, chatID), routineMember(), sceneRoutinePatch{Instructions: &instructions})
+	if err != nil {
+		t.Fatal(err)
 	}
+	noPerson("edited by someone else", edited)
+
+	if _, err := testPool.Exec(ctx, `UPDATE context_scope_routine SET person_staff_id = $2 WHERE id = $1`, chatID, ctxcapStaff); err != nil {
+		t.Fatal(err)
+	}
+	noPerson("a row an older binary stored a staffId on", chat)
 }
 
 // routineScope is the context scope a run of the routine gets.

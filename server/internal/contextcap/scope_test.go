@@ -146,13 +146,13 @@ func TestScopeFromTaskContext(t *testing.T) {
 			want: Scope{SceneID: "11111111-1111-4111-8111-111111111111", ConversationType: "group", DispatchOrgID: "5001"},
 		},
 		{
-			name: "dm scene routine carries its proven counterpart",
+			name: "dm scene routine never carries a person, even one an older context named",
 			raw: `{"agent_scene":{"scene_id":"22222222-2222-4222-8222-222222222222"},
 				"scene_routine":{"routine_id":"r2","tenant_org_id":"5001","kind":"dm","person_staff_id":"staff-7"}}`,
-			want: Scope{SceneID: "22222222-2222-4222-8222-222222222222", ConversationType: "single", DispatchOrgID: "5001", PersonKey: "staff-7"},
+			want: Scope{SceneID: "22222222-2222-4222-8222-222222222222", ConversationType: "single", DispatchOrgID: "5001"},
 		},
 		{
-			name: "dm scene routine without a proven counterpart has no person",
+			name: "dm scene routine has no person",
 			raw: `{"agent_scene":{"scene_id":"22222222-2222-4222-8222-222222222222"},
 				"scene_routine":{"routine_id":"r2","tenant_org_id":"5001","kind":"dm"}}`,
 			want: Scope{SceneID: "22222222-2222-4222-8222-222222222222", ConversationType: "single", DispatchOrgID: "5001"},

@@ -23,12 +23,12 @@ this run has no scene to configure; say so instead of improvising.
 - **Skills and connectors (Skill / 连接器)** — the agent's own ones always
   apply. Items the manager offered (「公开给场域」) can be switched on here.
 - **Remote MCP servers** — `http(s)` servers only; local commands are refused.
-  In a group you can only switch an existing server on or off (`disabled`) or
-  delete it: adding a server or changing its URL or headers is done by an
-  agent manager on the configuration page (`mcp_server_needs_config_page`),
-  because every member's runs in the group call it. In a 1:1 chat the person
-  adds and changes their chat's servers; fields you leave out of a change
-  (headers above all, whose values you never see) keep their stored values.
+  Every later run in this scene calls them, so restate the name and address
+  and wait for confirmation before adding one or changing its address. The
+  platform posts who asked and the address in the chat; anyone can ask you
+  to switch one off (`disabled`) or delete it. Fields you leave out of a
+  change (headers above all, whose values you never see) keep their stored
+  values.
 - **Accounts** — never handled in chat. Send a configuration link instead.
 
 ## How to work
@@ -65,10 +65,9 @@ this run has no scene to configure; say so instead of improvising.
 - `scene_routine_run` from the chat waits 15 minutes after the routine's
   previous run (`routine_run_too_soon`); a manager can run it sooner from the
   configuration page.
-- In a 1:1 chat, a routine the person creates here runs with their own
-  connected accounts (`person_capabilities: true`). If someone else later
-  changes what it does or when, or a manager edits it on the configuration
-  page, it runs with the chat's configuration only.
+- A routine never uses anyone's personal accounts, not even in a 1:1 chat:
+  it runs with this scene's configuration only. If a routine needs an
+  account, connect it to the scene through `scene_connect_link`.
 
 ## Limits
 
