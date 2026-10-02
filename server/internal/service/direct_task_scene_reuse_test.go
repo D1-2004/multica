@@ -15,8 +15,6 @@ func TestDirectConnectionReuseFollowsConversationSceneDatabase(t *testing.T) {
 	f := directDatabase(t)
 	ctx := context.Background()
 	owner := scene.Owner{WorkspaceID: util.MustParseUUID(f.request.Task.Scope.WorkspaceID), AgentID: util.MustParseUUID(f.request.Task.Scope.AgentID)}
-	runtime := reuseRuntime(t, SandboxConnectionReuseCapability)
-	runtime.WorkspaceID = owner.WorkspaceID
 	resolve := func(org, kind, conversation, uid, staff string) fcE2BTaskScope {
 		t.Helper()
 		registered, err := scene.Resolve(ctx, f.service.Queries, owner, scene.DingTalkConversation(org, kind, conversation), scene.Observation{KindStated: true})
@@ -43,7 +41,7 @@ func TestDirectConnectionReuseFollowsConversationSceneDatabase(t *testing.T) {
 		if _, valid := ParseDirectTaskContext(queue); !valid {
 			t.Fatal("fixture is not a valid Direct execution")
 		}
-		scope, selected, reason := connectionReuseScope(queue, runtime, true)
+		scope, selected, reason := connectionReuseScope(queue, true)
 		if !selected || reason != "" || scope.typ != fcE2BScopeTypeScene || scope.sceneID != util.UUIDToString(registered.ID) {
 			t.Fatalf("Direct should retain the conversation's scene scope: %+v selected=%v reason=%s", scope, selected, reason)
 		}

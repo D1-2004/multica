@@ -96,10 +96,23 @@ not drop the cid. Coordinator recall JSON is a short card (`read_this` /
 `issue_id` / `purpose` / `why` / `on_this_scene`); continue only after
 comparing purpose to the current message.
 
-An inbound `/reset-memory` (first token, optional leading @mention) closes this
-scene's Issue associations and clears its Scene Memory, and does not start a
-sandbox. It is not `/reset`. After that, recall for the cid should be empty of
-items. Recall for a conversation you have no scene for is empty too.
+`/reset-memory` follows the inbound receipt's frozen Loop owner. It is not
+`/reset`; do not call association cleanup as a substitute for Employee memory reset.
+
+- Coordinator: the command (first token, optional leading @mention) closes this
+  scene's Issue associations and clears Coordinator Scene Memory. It does not
+  start a sandbox; subsequent association recall for this scene is empty.
+- Employee: send `/reset-memory` alone (an optional leading @mention is allowed).
+  The Host clears Employee shared memory for this scene and the verified command
+  sender's private memory in this scene. Other people's private memory,
+  Coordinator memory and Issue associations remain. Unknown senders cannot reset.
+  The reset itself uses no model or sandbox. Other messages in the same collected
+  window keep their own processing and replies; a reset never discards their work.
+
+The Employee management page resets only the shared scene memory it displays;
+it does not clear any person's private memory. A replayed command does not clear
+new memory recorded after the original reset. Recall for a conversation you have
+no scene for is empty.
 
 ## Purpose
 

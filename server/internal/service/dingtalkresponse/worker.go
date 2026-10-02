@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -99,7 +100,10 @@ func (s *Service) processOne(ctx context.Context) (bool, error) {
 
 	// Coordinator wait progress and routine and scene notices close no
 	// dispatch: they have no Router callback to receipt.
-	noReceipt := progress || a.Input.RoutineRunID != "" || a.Input.SceneNoticeID != ""
+	// A revoked Host send has no delivery receipt to report. Keep receipt_state
+	// empty and stop instead of retrying an obsolete Router callback forever.
+	suppressed := a.State == "cancelled" && strings.HasPrefix(a.ErrorCode, suppressedSendCodePrefix)
+	noReceipt := progress || a.Input.RoutineRunID != "" || a.Input.SceneNoticeID != "" || suppressed
 	if !noReceipt && isReceiptState(a.State) && a.ReceiptState != a.State {
 		if s.receipts == nil {
 			return true, s.release(ctx, a, time.Now().Add(time.Minute))
@@ -136,6 +140,17 @@ func (s *Service) processOne(ctx context.Context) (bool, error) {
 }
 
 func (s *Service) send(ctx context.Context, a *action) error {
+	if s.BeforeSend != nil {
+		guardInput := a.Input
+		guardInput.ActionID = a.ID
+		if err := s.BeforeSend(ctx, guardInput); err != nil {
+			var suppressed *SuppressSendError
+			if errors.As(err, &suppressed) {
+				return s.saveState(ctx, a, "cancelled", "", "", "", suppressedSendCodePrefix+suppressed.Reason)
+			}
+			return s.release(ctx, a, time.Now().Add(retryDelay(a.Attempts)))
+		}
+	}
 	if s.provider == nil {
 		return s.saveState(ctx, a, "failed", "", "", "", "provider_not_configured")
 	}

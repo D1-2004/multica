@@ -45,6 +45,11 @@ func mergeSteerCorrectionContext(previous, correction []byte) ([]byte, error) {
 		_ = json.Unmarshal(private["steer_completion_callbacks"], &extras)
 		callbacks = append(callbacks, extras...)
 	}
+	// A correction carries its own launch identity. Never retain an earlier
+	// author's credentials, including when the new human input has no token.
+	for _, key := range []string{"agent_identity_context_token", "agent_identity_context_token_expires_at", "agent_identity_context_token_source"} {
+		delete(old, key)
+	}
 	for k, v := range next {
 		old[k] = v
 	}

@@ -50,9 +50,10 @@ WHERE comment_id = $1;
 -- name: LinkAttachmentsToComment :exec
 UPDATE attachment
 SET comment_id = $1
-WHERE issue_id = $2
-  AND comment_id IS NULL
-  AND id = ANY($3::uuid[]);
+WHERE NOT EXISTS (SELECT 1 FROM employee_task_artifact private_artifact WHERE private_artifact.attachment_id = attachment.id)
+  AND attachment.issue_id = $2
+  AND attachment.comment_id IS NULL
+  AND attachment.id = ANY($3::uuid[]);
 
 -- name: ReplaceCommentAttachments :exec
 UPDATE attachment
@@ -60,27 +61,29 @@ SET comment_id = CASE
   WHEN id = ANY(sqlc.arg(attachment_ids)::uuid[]) THEN $1
   ELSE NULL
 END
-WHERE issue_id = $2
+WHERE NOT EXISTS (SELECT 1 FROM employee_task_artifact private_artifact WHERE private_artifact.attachment_id = attachment.id)
+  AND attachment.issue_id = $2
   AND (
-    comment_id = $1
-    OR (comment_id IS NULL AND id = ANY(sqlc.arg(attachment_ids)::uuid[]))
+    attachment.comment_id = $1
+    OR (attachment.comment_id IS NULL AND attachment.id = ANY(sqlc.arg(attachment_ids)::uuid[]))
   );
 
 -- name: LinkAttachmentsToChatMessage :many
 UPDATE attachment
 SET chat_message_id = sqlc.arg(chat_message_id),
     chat_session_id = sqlc.arg(chat_session_id)
-WHERE workspace_id = sqlc.arg(workspace_id)
-  AND issue_id IS NULL
-  AND comment_id IS NULL
-  AND chat_message_id IS NULL
+WHERE NOT EXISTS (SELECT 1 FROM employee_task_artifact private_artifact WHERE private_artifact.attachment_id = attachment.id)
+  AND attachment.workspace_id = sqlc.arg(workspace_id)
+  AND attachment.issue_id IS NULL
+  AND attachment.comment_id IS NULL
+  AND attachment.chat_message_id IS NULL
   AND (
-    chat_session_id IS NULL
-    OR chat_session_id = sqlc.arg(chat_session_id)
+    attachment.chat_session_id IS NULL
+    OR attachment.chat_session_id = sqlc.arg(chat_session_id)
   )
-  AND uploader_type = sqlc.arg(uploader_type)
-  AND uploader_id = sqlc.arg(uploader_id)
-  AND id = ANY(sqlc.arg(attachment_ids)::uuid[])
+  AND attachment.uploader_type = sqlc.arg(uploader_type)
+  AND attachment.uploader_id = sqlc.arg(uploader_id)
+  AND attachment.id = ANY(sqlc.arg(attachment_ids)::uuid[])
 RETURNING id;
 
 -- name: DetachAttachmentsFromUserChatMessageByTask :many
@@ -134,9 +137,10 @@ ORDER BY created_at ASC, id ASC;
 -- name: LinkAttachmentsToIssue :exec
 UPDATE attachment
 SET issue_id = $1
-WHERE workspace_id = $2
-  AND issue_id IS NULL
-  AND id = ANY($3::uuid[]);
+WHERE NOT EXISTS (SELECT 1 FROM employee_task_artifact private_artifact WHERE private_artifact.attachment_id = attachment.id)
+  AND attachment.workspace_id = $2
+  AND attachment.issue_id IS NULL
+  AND attachment.id = ANY($3::uuid[]);
 
 -- name: DeleteAttachment :exec
 DELETE FROM attachment WHERE id = $1 AND workspace_id = $2;

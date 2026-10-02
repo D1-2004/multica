@@ -247,24 +247,32 @@ if (( ${#target[@]} > 0 )); then
     killed=$(( $(count "$left") - remaining ))
   fi
 fi
-runners=0
-for p in "${!runner[@]}"; do provenrunner "$p" && runners=$((runners + 1)); done
-printf '{"version":3,"runners":%d,"marked":%d,"unreadable":%d,"found":%d,"terminated":%d,"killed":%d,"remaining":%d}\n' "$runners" "${#marked[@]}" "${#unreadable[@]}" "$found" "$terminated" "$killed" "$remaining"
+runners=0 unresolved_runners=0 quiescent=false
+for p in "${!runner[@]}"; do
+  provenrunner "$p" && runners=$((runners + 1))
+  # A matching runtime/port with unreadable ownership remains ambiguous.
+  # Unreadable unrelated sandbox services do not own this task's writer lane.
+  [[ -n ${unreadable[$p]:-} && -z ${foreign[$p]:-} ]] && unresolved_runners=$((unresolved_runners + 1))
+done
+(( remaining == 0 && unresolved_runners == 0 )) && quiescent=true
+printf '{"version":4,"quiescent":%s,"unresolved_runners":%d,"runners":%d,"marked":%d,"unreadable":%d,"found":%d,"terminated":%d,"killed":%d,"remaining":%d}\n' "$quiescent" "$unresolved_runners" "$runners" "${#marked[@]}" "${#unreadable[@]}" "$found" "$terminated" "$killed" "$remaining"
 `
 
 // fcE2BTaskStopReceipt is the script's report for one sandbox. Unreadable
 // counts processes whose environment could not be read and so could not be
 // proven to be anyone's.
 type fcE2BTaskStopReceipt struct {
-	Version    int    `json:"version"`
-	Runners    int    `json:"runners"`
-	Marked     int    `json:"marked"`
-	Unreadable int    `json:"unreadable"`
-	Found      int    `json:"found"`
-	Terminated int    `json:"terminated"`
-	Killed     int    `json:"killed"`
-	Remaining  int    `json:"remaining"`
-	Error      string `json:"error"`
+	Quiescent         bool   `json:"quiescent"`
+	UnresolvedRunners int    `json:"unresolved_runners"`
+	Version           int    `json:"version"`
+	Runners           int    `json:"runners"`
+	Marked            int    `json:"marked"`
+	Unreadable        int    `json:"unreadable"`
+	Found             int    `json:"found"`
+	Terminated        int    `json:"terminated"`
+	Killed            int    `json:"killed"`
+	Remaining         int    `json:"remaining"`
+	Error             string `json:"error"`
 }
 
 // fcE2BTaskStopArgs ends the task's processes as root with the same loader
@@ -289,7 +297,7 @@ func fcE2BTaskStopArgs(sandboxID, runtimeID string, healthPort int, taskID strin
 func parseFCE2BTaskStopReceipt(out string) (fcE2BTaskStopReceipt, error) {
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	var receipt fcE2BTaskStopReceipt
-	if err := json.Unmarshal([]byte(strings.TrimSpace(lines[len(lines)-1])), &receipt); err != nil || receipt.Version != 3 {
+	if err := json.Unmarshal([]byte(strings.TrimSpace(lines[len(lines)-1])), &receipt); err != nil || (receipt.Version != 3 && receipt.Version != 4) {
 		return fcE2BTaskStopReceipt{}, errors.New("FC/E2B task stop returned no receipt")
 	}
 	if receipt.Error != "" {
@@ -415,7 +423,7 @@ func (l *FCE2BLauncher) stopAbortedTaskProcesses(ctx context.Context, taskID pgt
 	confirmed := len(sandboxes) > 0 && pass >= 2
 	for _, sandboxID := range sandboxes {
 		receipt, stopErr := l.stopTaskProcessesInSandbox(ctx, task, runtime, sandboxID, pass)
-		confirmed = confirmed && stopErr == nil && receipt.Version == 3 && receipt.Remaining == 0 && receipt.Unreadable == 0
+		confirmed = confirmed && stopErr == nil && receipt.Version == 4 && receipt.Quiescent && receipt.Remaining == 0 && receipt.UnresolvedRunners == 0
 	}
 	// A server-side receipt is also positive exit proof for older sandbox
 	// daemons. Never infer it from an empty, disabled or failed stop response.

@@ -38,10 +38,14 @@ var attachmentUploadCmd = &cobra.Command{
 	Long: `Upload a local file as a durable artifact of the current task.
 
 For a chat task, the server binds the file to the assistant reply when the task
-completes. For an Issue task, the file is attached directly to that Issue so it
-remains available after the runtime workspace disappears. The command also
-returns a markdown snippet you may paste into a chat or Issue comment: files
-use !file[name](url) (a card), images use ![name](url) (inline).
+completes. For an Issue task, the file is attached directly to that Issue. An
+Employee Direct task stores the file against its own Run without creating an
+Issue or Chat. Direct files keep the task's private access policy and are returned
+only after upload and metadata commit; a local path alone is not an artifact.
+
+The command returns the durable attachment id and an authenticated markdown URL.
+Files use !file[name](url) (a card), images use ![name](url) (inline). A Direct URL
+requires authorized access; it is not a native external-channel file receipt.
 
 The task id is read from MULTICA_TASK_ID (set by the daemon inside a task);
 override it with --task when needed.`,

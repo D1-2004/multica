@@ -27,6 +27,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
+	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/forwarding"
 	"github.com/multica-ai/multica/server/internal/gitrepo"
@@ -265,6 +266,7 @@ type Handler struct {
 	EmployeeLoopReady               func(context.Context, pgtype.UUID, pgtype.UUID) error
 	EmployeeSceneWorker             *EmployeeSceneWorker
 	EmployeeMemory                  *employeememory.Store
+	EmployeeRunNoticeArtifacts      func(context.Context, employeetask.Scope, string, string) ([]EmployeeTaskArtifactRef, error)
 	EventReceiptVerificationEnabled bool
 	SceneMemoryStore                *scenememory.Store
 	SceneMemoryWorker               *scenememory.Worker
