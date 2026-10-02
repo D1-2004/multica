@@ -51,7 +51,7 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 		t.Fatal(err)
 	}
 	// The executable is a test-owned stub, including when CI runs as root.
-	task := Task{ID: "direct-fake-run", WorkspaceID: "direct-workspace", RuntimeID: "rt-leader", DirectTaskPrompt: "Return DIRECT_EXECUTED after checking the provided task", AuthToken: "mat_direct_fixture", Agent: &AgentData{ID: "direct-agent", Name: "Direct Employee", CustomEnv: map[string]string{"DIRECT_CAPTURE": capture, "IS_SANDBOX": "1"}}}
+	task := Task{ID: "direct-fake-run", WorkspaceID: "direct-workspace", RuntimeID: "rt-leader", DirectTaskPrompt: "Return DIRECT_EXECUTED after checking the provided task", AuthToken: "mat_direct_fixture", Agent: &AgentData{ID: "direct-agent", Name: "Direct Employee", Instructions: "ROLE_SENTINEL\nSCENE_SENTINEL\nUser-authored multica issue instructions stay verbatim.", CustomEnv: map[string]string{"DIRECT_CAPTURE": capture, "IS_SANDBOX": "1"}}}
 	result, err := d.runTask(context.Background(), task, "claude", 0, d.logger)
 	if err != nil {
 		t.Fatal(err)
@@ -72,6 +72,14 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 	}
 	if !strings.Contains(string(brief), "Direct employee task") {
 		t.Fatalf("wrong runtime brief: %s", brief)
+	}
+	if !strings.Contains(string(brief), task.Agent.Instructions) {
+		t.Fatal("prepared Direct brief lost role/scene instructions")
+	}
+	for _, forbidden := range []string{"# Multica Agent Runtime", "## Available Commands", "## Important: Always Use", "multica attachment upload"} {
+		if strings.Contains(string(brief), forbidden) {
+			t.Errorf("prepared Direct brief leaked %q", forbidden)
+		}
 	}
 }
 

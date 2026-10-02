@@ -817,7 +817,7 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 	switch kind {
 	case kindEmployeeDirect:
 		b.WriteString("This is a Direct employee task. Your final assistant output is captured automatically as the run result. State the outcome concisely; the host owns delivery to the originating scene.\n\n")
-		b.WriteString("**Delivering files here:** the run result is text-only. Describe produced files without linking runtime-local paths.\n")
+		b.WriteString("**Delivering files here:** use the installed DingTalk file tools and report delivery only from verified receipts. Never present runtime-local paths as delivered files.\n")
 	case kindAutopilotRunOnly:
 		b.WriteString("This is a run-only autopilot task, so there may be no issue comment to post. Your final assistant output is captured automatically as the autopilot run result. Keep it concise and state the outcome.\n\n")
 		b.WriteString("**Delivering files here:** this surface is text-only — the run result carries no attachments. Describe what you produced; do not link its path.\n")
@@ -880,6 +880,20 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 	writeDeliveryInvariant(b)
 }
 
+// buildDirectTaskBrief keeps the execution surface separate from platform
+// workflows. Agent and context instructions are preserved without text filtering.
+func buildDirectTaskBrief(provider string, ctx TaskContextForEnv) string {
+	var b strings.Builder
+	b.WriteString("# Direct Employee Execution\n\n")
+	writeAgentIdentity(&b, ctx)
+	writeWorkspaceContext(&b, ctx)
+	writeSkills(&b, provider, ctx)
+	b.WriteString("## Background Task Safety\n\n")
+	b.WriteString("Your run ends when your top-level turn exits. Collect required work and tool results before returning; do not leave run-owned work in the background or promise a later wakeup.\n\n")
+	writeOutput(&b, kindEmployeeDirect, ctx)
+	return b.String()
+}
+
 // buildMetaSkillContentSlim is the post-MUL-3560 brief assembler.
 // Called from buildMetaSkillContent (runtime_config.go). The
 // `runtime_brief_slim` flag that once gated it was retired in MUL-4297.
@@ -909,6 +923,9 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	var b strings.Builder
 	kind := classifyTask(ctx)
+	if kind == kindEmployeeDirect {
+		return buildDirectTaskBrief(provider, ctx)
+	}
 
 	// Session Continuity Notice, Task Initiator and Connected Apps used to be
 	// rendered here. They are per-run values, so emitting them into this file
@@ -970,8 +987,6 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 		}
 	case kindQuickCreate:
 		writeWorkflowQuickCreate(&b)
-	case kindEmployeeDirect:
-		b.WriteString("**This is a Direct employee task.** Execute the current prompt without creating an issue or an Autopilot rule. There is no assigned Multica issue; do not fetch an empty issue or post an issue comment. Only operate on an existing issue when the task explicitly names it.\n\n")
 	case kindAutopilotRunOnly:
 		writeWorkflowAutopilot(&b, ctx)
 	case kindIssue:

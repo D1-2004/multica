@@ -2073,9 +2073,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// migration and no client upgrade. agent.Instructions holds only the
 		// workspace's own notes, so a release can never overwrite them.
 		//
-		// Composing here covers every task kind, because this is the single
-		// place a claimed task's agent payload is assembled.
-		if agent.SystemKey.String == service.MikaSystemKey {
+		// Platform tasks receive the system layer here. Direct keeps the
+		// agent-authored instructions and the effective context layers only.
+		if resp.DirectTaskPrompt == "" && agent.SystemKey.String == service.MikaSystemKey {
 			resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
 		}
 		// Skills the org, scene and person layers switch on extend the
@@ -2085,7 +2085,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// config-qwen-tag-scene skill (the resolve path decides the same).
 		sceneConfig := h.taskHasConfigScene(r.Context(), runtime.WorkspaceID, *task)
 		if useSkillRefs {
-			skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
+			skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, service.ExecutionSurfaceForTask(*task), messagePolicy)
 			if sceneConfig {
 				skillList = service.WithSceneConfigSkill(skillList)
 			}
@@ -2100,13 +2100,14 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 		} else {
-			skills := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
+			skills := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, service.ExecutionSurfaceForTask(*task), messagePolicy)
 			if sceneConfig {
 				skills = service.WithSceneConfigSkill(skills)
 			}
 			agentSkillCount = len(skills)
-			builtinSkills := h.TaskService.BuiltinSkills()
-			builtinSkillCount = len(builtinSkills)
+			if resp.DirectTaskPrompt == "" {
+				builtinSkillCount = len(h.TaskService.BuiltinSkills())
+			}
 			resp.Agent.Skills = skills
 		}
 	}
@@ -3098,8 +3099,8 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	// OKR tagging catalog. Appended to the agent's own instructions so it
 	// reaches every task kind through the runtime brief, the same way the squad
 	// briefing does — the dispatch instruction only covers DingTalk runs, and
-	// tagging applies to all work the agent owns.
-	if resp.Agent != nil {
+	// Direct execution omits this platform-owned tagging layer.
+	if resp.Agent != nil && resp.DirectTaskPrompt == "" {
 		if okrInstructions := h.agentOKRInstructionsFor(r.Context(), task.AgentID, parseUUID(resp.WorkspaceID)); okrInstructions != "" {
 			if strings.TrimSpace(resp.Agent.Instructions) == "" {
 				resp.Agent.Instructions = okrInstructions
@@ -3628,7 +3629,7 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 	for _, ref := range req.Skills {
 		requestedSkillIDs = append(requestedSkillIDs, ref.ID)
 	}
-	skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, h.resolvableContextSkillIDs(r.Context(), runtime.WorkspaceID, task, requestedSkillIDs), runtime, taskBackend)
+	skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, h.resolvableContextSkillIDs(r.Context(), runtime.WorkspaceID, task, requestedSkillIDs), runtime, taskBackend, service.ExecutionSurfaceForTask(task))
 	// The scene configuration skill is static documentation: serve it to any
 	// task whose claim listed it, so a scene lookup failing now cannot fail
 	// the whole resolve. Claim alone decides whether a task gets it (and its
