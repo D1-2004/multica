@@ -72,3 +72,11 @@ func TestRecordValidationBoundsAndHostEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestBriefIncludesRecordIdentityForTargetedCorrectionAndForget(t *testing.T) {
+	record := LearningSearchResult{LearningRecord: LearningRecord{ID: "00112233-4455-6677-8899-aabbccddeeff", Type: LearningTypePreference, Key: "color", Insight: "BLUE", Source: LearningSourceObserved}, EffectiveConfidence: 4}
+	brief := formatLearningBrief([]LearningSearchResult{record})
+	if !strings.Contains(brief, record.ID) || !strings.Contains(brief, "type preference") {
+		t.Fatal("private brief cannot identify an exact record/type")
+	}
+}

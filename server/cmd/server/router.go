@@ -965,7 +965,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return err
 		}
 		if !ready {
-			return errors.New("live server replicas do not all support employee-loop:4")
+			return errors.New("live server replicas do not all support employee-loop:5")
 		}
 		return nil
 	}

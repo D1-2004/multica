@@ -55,25 +55,27 @@ func ValidLearningSources() []LearningSource {
 }
 
 type LearningRecord struct {
-	Workflow     *MemoryWorkflow `json:"workflow,omitempty"`
-	ID           string          `json:"id"`
-	SourceID     string          `json:"source_id"`
-	EvidenceID   string          `json:"evidence_id"`
-	Type         LearningType    `json:"type"`
-	Key          string          `json:"key"`
-	Insight      string          `json:"insight"`
-	Confidence   int             `json:"confidence"`
-	Source       LearningSource  `json:"source"`
-	Trusted      bool            `json:"trusted"`
-	Scope        string          `json:"scope"`
-	PlaybookSlug string          `json:"playbook_slug,omitempty"`
-	ExecutionID  string          `json:"execution_id,omitempty"`
-	TaskID       string          `json:"task_id,omitempty"`
-	Files        []string        `json:"files,omitempty"`
-	Entities     []string        `json:"entities,omitempty"`
-	CreatedBy    string          `json:"created_by"`
-	CreatedAt    time.Time       `json:"created_at"`
-	Supersedes   string          `json:"supersedes,omitempty"`
+	// EvidenceOccurredAt is a Host timestamp used only by ordered private observations.
+	EvidenceOccurredAt time.Time       `json:"evidence_occurred_at,omitempty,omitzero"`
+	Workflow           *MemoryWorkflow `json:"workflow,omitempty"`
+	ID                 string          `json:"id"`
+	SourceID           string          `json:"source_id"`
+	EvidenceID         string          `json:"evidence_id"`
+	Type               LearningType    `json:"type"`
+	Key                string          `json:"key"`
+	Insight            string          `json:"insight"`
+	Confidence         int             `json:"confidence"`
+	Source             LearningSource  `json:"source"`
+	Trusted            bool            `json:"trusted"`
+	Scope              string          `json:"scope"`
+	PlaybookSlug       string          `json:"playbook_slug,omitempty"`
+	ExecutionID        string          `json:"execution_id,omitempty"`
+	TaskID             string          `json:"task_id,omitempty"`
+	Files              []string        `json:"files,omitempty"`
+	Entities           []string        `json:"entities,omitempty"`
+	CreatedBy          string          `json:"created_by"`
+	CreatedAt          time.Time       `json:"created_at"`
+	Supersedes         string          `json:"supersedes,omitempty"`
 }
 
 func dedupeLearnings(records []LearningRecord) []LearningRecord {

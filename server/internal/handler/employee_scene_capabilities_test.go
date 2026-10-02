@@ -468,7 +468,7 @@ func TestEmployeeSceneCapabilityMintRestoresTimeoutAndJournal(t *testing.T) {
 			}
 			host := &employeeSceneHost{worker: f.h.EmployeeSceneWorker, job: job}
 			const answer = "原答保留，后续工具日志仍可提交。"
-			raw, err := store.ExecuteTool(ctx, job, "mint-timeout-probe", json.RawMessage(`{"name":"describe_capabilities"}`), func(tx pgx.Tx) (json.RawMessage, error) {
+			raw, err := store.ExecuteTool(ctx, job, "mint-timeout-probe", json.RawMessage(`{"name":"describe_capabilities"}`), nil, func(tx pgx.Tx) (json.RawMessage, error) {
 				var before, after string
 				if e := tx.QueryRow(ctx, `SELECT set_config('statement_timeout',$1,true)`, tc.prior).Scan(&before); e != nil {
 					return nil, e

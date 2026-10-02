@@ -73,3 +73,14 @@
 - queue `1e98e9bb-c487-43eb-80a9-e2de6af66d6b` 在沙箱实际读取 `final_text_owner=host`，调用 `dws-rpc final` 后真实返回 `host_owned / sent=false`，没有原生发送；05:21:14 仅由 Host 返回一行探针结果。
 - group queue `6f7e6a92-d09c-4f2a-b930-68413457f17c` 在 05:20:52 发出文件消息 `msgNvmZ4KDc3/oFs3B91/DvKQ==`，05:20:57 完成，无追加总结。冬翔账号下载 `employee-loop-owner.txt`，28 字节内容精确匹配标记加换行，SHA256 `47e9a5a5401a1d8bf25f0672cc8e8e5f2c89f3f1cca6f0501603b95c966edf00`。
 - failure queue `330d0b9c-9c66-4014-9e0f-a0ca2af36b0b` 不再重复发送；执行器真实调用原生 DWS 文件发送，返回 code 5 / no such file or directory，未重试。具体错误已保存在 result.output，但 Host 以未确认回执状态覆盖成泛化文案。接下来保留“送达未确认”的准确边界，同时带回有明确归属的原始执行报告，并补通知提交状态日志；不根据客户端退出码猜测上游是否已经产生效果。
+
+## 基础闭环验收结论（06:10）
+
+当前服务器 `c36e6baeb1aa257af4700335fbfedc45bec1fa07` 经预发 `3110326429` 成功。Task/EmployeeLoop 本轮要求的基础闭环已通过，可进入记忆的明确写入与纠正增量；Execution Event、Cron、Webhook 和完整恢复继续作为后续阶段，不据此称全部路线已完成。持久本地 Daemon 的真实滚动矩阵及 H5 钉钉登录页面仍未作本轮验收。
+
+- SDK 缺文件 queue `23164ecc-eb5d-49a9-bc69-a52d91b75638` 仅一次错误回报，消息 `msgjM//uiEyEkZ57P97lNYNHg==` 保留真实 `send-file needs an existing regular file inside the current workdir`。
+- 原生命令缺文件 queue `646bfe3d-76e1-49e2-bec8-42483b564f21` 仅一次回报，消息 `msgiXRuD7AVqzoiiggf/rZuAQ==` 同时保留送达未确认边界与 `code:5 / no such file or directory` 原始执行输出，未把未知发送误称为已送达。
+- 群文件 queue `18a873b8-9abb-4fbd-a0ae-ea85a668c630` / job `393536e5-6f5c-45d7-8320-adfeac4f00f5` / Run `12086250-2c94-4366-a52d-86c0d98411e9` 实际送达消息 `msg/F6J1Ho+gNo0POeekEiddg==`。新日志直接确认 `employee_run_notice_recorded state=suppressed reason=native_file_delivered`，没有额外总结。
+- 冬翔下载该 `employee-loop-log.txt`，33 字节精确匹配标记与换行，SHA256 `4884602e1ffa1d0f38216cc0b9e12a7132bb2ab3cdb0328467c6428fd0da7395`。第一次下载上游临时 500，读取重试成功；没有重复发文件。
+
+记忆下一增量保存“发送者账户明确要求保留的内容”，仅当前场域与请求者 private namespace。当前入站字段不能证明真人或语义原创，因此不设置 `HumanStated` 或 `VerifiedExecution`，使用已有非可信观察记录和 supersedes，保留原话、Host 时间与可追溯来源。不会冒充 verified 学习或提前启用 Distill/promotion。

@@ -145,3 +145,40 @@ Employee inbound `handler/employee_scene_entry_memory.go` handles an exact stand
 It does not change Coordinator associations/memory or another requester's private
 records. Other messages in a collected window still reach the Loop. The management
 page's existing shared-only reset contract remains unchanged.
+
+
+## Requester-private source capture (Multica Host extension)
+
+`handler/employee_memory_tools.go` connects the adapted record/search/correction
+mechanisms to Employee native tools. Only a unique source in a single-known-
+requester window is eligible. The journal transaction binds the authenticated
+platform principal separately from the provider-attributed requester; scope,
+evidence identity and receipt-created timestamp are Host-owned. Outer-message
+exact quotes produce observed confidence-4, untrusted records. Quoted background
+and reactions cannot supply the quote; quoted replies may carry a new outer
+correction. The wire protocol does not attest a human sender or originality,
+and native forwards are not fully represented in DispatchMessage.
+
+`RecordPrivateObservationTx` adds ordering only for this new path. It persists
+Host `evidence_occurred_at` and compares all same-key/type records, including
+inactive tombstones. Earlier/equal sources are recorded inactive, so changing a
+proposal's key/type cannot reuse their evidence. Legacy records without that
+field use their Host `created_at` as a conservative fence. Existing background
+Record/RecordTx correction behavior is unchanged. Trusted active facts still
+reject untrusted replacement.
+
+`SearchTx`, `PrivateEntryTx`, and `ForgetPrivateTx` use the caller's transaction;
+no pool connection is borrowed while the journal holds one. Exact forget retains
+its replay tombstone and never deletes a replacement. Capture responses expose
+active/forgotten/superseded state, including after evidence replay. The
+employeeentry journal supports an effect-free replay projection for current
+source authorization and record state. Unchanged lookup records retain frozen
+confidence values; changed state can cause the following model-journal request
+to conflict and end the wake through its existing failure checkpoint.
+
+Tests in employee_memory_tools_test.go exercise real admission, provider-visible
+next-turn memory, correction/forget, trust and source boundaries, mixed-window
+isolation, one-connection execution, atomic journal rollback, source ordering,
+same-native-call replay, and old-schema recovery. private_entry_test.go covers
+store ordering, legacy evidence times and exact transaction rollback. These are
+local PostgreSQL checks, not a claim of pre-release acceptance.

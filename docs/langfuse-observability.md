@@ -1,8 +1,8 @@
 # Langfuse observability
 
-The server exports LLM traces to a Langfuse project for the three loops that
-call or drive models: the inbound Coordinator short loop, the Scene Memory
-flush loop, and agent task execution (the Daemon side). The exporter lives in
+The server exports LLM traces to a Langfuse project for the loops that
+call or drive models: the inbound Coordinator short loop, EmployeeLoop,
+the Scene Memory flush loop, and agent task execution (the Daemon side). The exporter lives in
 `server/internal/langfuse` and speaks OTLP/HTTP to
 `<LANGFUSE_BASE_URL>/api/public/otel/v1/traces`; Langfuse marks its legacy
 `/api/public/ingestion` batch API as deprecated, so OTLP is the only path used.
@@ -67,6 +67,40 @@ Metadata keys present on every span of a trace include `coord_trace_id`,
 `status`, and `failure_reason`. A coordinator-created Issue task carries the
 coordinator's `coord_trace_id` (stamped into `task.context.coordinator_trace_id`),
 so the two traces can be joined in either direction.
+
+### Employee turn (`employee_loop`)
+
+`server/internal/handler/employee_scene_trace.go` exports each Employee job as
+its own trace. The trace ID is the job UUID without dashes; its session is the
+canonical `agent_scene.scene_id`, not the provider conversation ID. Metadata
+contains the workspace, agent, tenant org, receipt IDs, and lease generation.
+The user ID identifies the authenticated job principal, not proof of the
+individual message speaker or a human sender.
+
+- `employee_model` is a real provider request, with the redacted messages,
+  tool schemas, model, response, timing, and token usage. Check
+  `input_truncated` / `output_truncated` before treating the payload as complete;
+  each attribute has a 64 KiB budget. A journal replay does not manufacture a
+  generation or token usage for a request that was not made.
+- Tool observations carry actual arguments and Host results. Rejected batches
+  emit `tool_batch_rejected`. A committed reply produces root state
+  `outbox_committed`; this is not proof that DingTalk delivered the message.
+  Confirm delivery using the outbound receipt and actual IM readback.
+- `dispatch_task` indexes `employee_task_id`, `employee_run_id`, and
+  `queue_task_id`. Use the queue ID to inspect the separate `agent_task` trace
+  and its `llm.call.N` generations. Background tool names and schemas follow
+  the explicit capture limitations below; frontend schema export does not
+  imply background schema export.
+- Capability bearer links and recognized credentials are redacted. The trace
+  retains sensitive conversation context and is intended for authorized
+  debugging, not as a public transcript.
+
+For an exact job or queue UUID, use `langfuse_lookup.py trace <uuid> --json`.
+For discovery, use `recent employee_loop 20 --environment pre` or the canonical
+scene session. On 2026-10-03, some agent-tag queries returned no rows despite
+the exact Employee traces being readable; an empty filtered list therefore
+does not prove the job was untraced. Actual IM evidence and trace IDs are in
+`docs/plans/2026-10-03/employee-loop-parity-acceptance.md`.
 
 ### Coordinator turn (`inbound_coordinator`)
 

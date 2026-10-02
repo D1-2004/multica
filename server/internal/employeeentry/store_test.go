@@ -295,7 +295,7 @@ func TestEntryToolJournalReplaysCommittedResult(t *testing.T) {
 		return json.RawMessage(`{"receipt":"run-one","text":"accepted"}`), nil
 	}
 	input := json.RawMessage(`{"name":"dispatch_task","goal":"work"}`)
-	first, err := f.store.ExecuteTool(ctx, job, "native-one", input, execute)
+	first, err := f.store.ExecuteTool(ctx, job, "native-one", input, nil, execute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func TestEntryToolJournalReplaysCommittedResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	job = claim(t, f)
-	second, err := f.store.ExecuteTool(ctx, job, "native-one", input, execute)
+	second, err := f.store.ExecuteTool(ctx, job, "native-one", input, nil, execute)
 	var same bool
 	if compareErr := f.pool.QueryRow(ctx, `SELECT $1::jsonb=$2::jsonb`, first, second).Scan(&same); compareErr != nil {
 		t.Fatal(compareErr)
@@ -311,7 +311,7 @@ func TestEntryToolJournalReplaysCommittedResult(t *testing.T) {
 	if err != nil || !same || calls != 1 {
 		t.Fatalf("tool replay: %s %s calls=%d %v", first, second, calls, err)
 	}
-	if _, err = f.store.ExecuteTool(ctx, job, "native-one", json.RawMessage(`{"goal":"other"}`), execute); !errors.Is(err, ErrConflict) {
+	if _, err = f.store.ExecuteTool(ctx, job, "native-one", json.RawMessage(`{"goal":"other"}`), nil, execute); !errors.Is(err, ErrConflict) {
 		t.Fatalf("same call changed effect: %v", err)
 	}
 }
