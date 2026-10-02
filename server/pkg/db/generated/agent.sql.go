@@ -1161,6 +1161,9 @@ SET status = 'dispatched',
 WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.agent_id = $1 AND atq.status = 'queued'
+      AND (atq.runtime_id = ANY($3::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
           WHERE active.agent_id = atq.agent_id
@@ -1169,12 +1172,21 @@ WHERE id = (
               (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
               OR (
+                atq.context->>'type' = 'employee_direct'
+                AND active.context->>'type' = 'employee_direct'
+                AND NULLIF(atq.context->>'employee_task_id', '') = active.context->>'employee_task_id'
+              )
+              OR (
                 atq.issue_id IS NULL
                 AND atq.chat_session_id IS NULL
                 AND atq.autopilot_run_id IS NULL
+                AND COALESCE(atq.context->>'type', '') <> 'employee_direct'
+                AND COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'
                 AND active.issue_id IS NULL
                 AND active.chat_session_id IS NULL
                 AND active.autopilot_run_id IS NULL
+                AND COALESCE(active.context->>'type', '') <> 'employee_direct'
+                AND COALESCE(active.trigger_evidence_kind, '') <> 'employee_task'
               )
             )
       )
@@ -1186,8 +1198,9 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 `
 
 type ClaimAgentTaskParams struct {
-	AgentID          pgtype.UUID `json:"agent_id"`
-	PrepareLeaseSecs float64     `json:"prepare_lease_secs"`
+	AgentID                  pgtype.UUID   `json:"agent_id"`
+	PrepareLeaseSecs         float64       `json:"prepare_lease_secs"`
+	EmployeeDirectRuntimeIds []pgtype.UUID `json:"employee_direct_runtime_ids"`
 }
 
 // Claims the next queued task for an agent, enforcing per-(issue, agent) serialization:
@@ -1195,12 +1208,13 @@ type ClaimAgentTaskParams struct {
 // already dispatched or running. This allows different agents to work on the same
 // issue in parallel while preventing a single agent from running duplicate tasks.
 // Chat tasks (issue_id IS NULL) use chat_session_id for serialization instead.
+// Employee Direct tasks serialize only with the same EmployeeTask identity.
 // Quick-create tasks have no issue / chat / autopilot link, so they serialize on
-// "any other quick-create-shaped task" (all four FKs NULL) for the same agent —
+// other unlinked, non-Direct tasks for the same agent —
 // otherwise a user mashing the create button could fire concurrent quick-creates
 // whose completion lookup would race over "most recent issue by this agent".
 func (q *Queries) ClaimAgentTask(ctx context.Context, arg ClaimAgentTaskParams) (AgentTaskQueue, error) {
-	row := q.db.QueryRow(ctx, claimAgentTask, arg.AgentID, arg.PrepareLeaseSecs)
+	row := q.db.QueryRow(ctx, claimAgentTask, arg.AgentID, arg.PrepareLeaseSecs, arg.EmployeeDirectRuntimeIds)
 	var i AgentTaskQueue
 	err := row.Scan(
 		&i.ID,
@@ -1269,6 +1283,9 @@ SET status = 'dispatched',
 WHERE atq.id = $2
   AND atq.runtime_id = $3
   AND atq.status = 'queued'
+      AND (atq.runtime_id = ANY($4::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
   AND NOT EXISTS (
       SELECT 1 FROM agent_task_queue active
       WHERE active.agent_id = atq.agent_id
@@ -1277,12 +1294,21 @@ WHERE atq.id = $2
           (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
           OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
           OR (
+            atq.context->>'type' = 'employee_direct'
+            AND active.context->>'type' = 'employee_direct'
+            AND NULLIF(atq.context->>'employee_task_id', '') = active.context->>'employee_task_id'
+          )
+          OR (
             atq.issue_id IS NULL
             AND atq.chat_session_id IS NULL
             AND atq.autopilot_run_id IS NULL
+            AND COALESCE(atq.context->>'type', '') <> 'employee_direct'
+            AND COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'
             AND active.issue_id IS NULL
             AND active.chat_session_id IS NULL
             AND active.autopilot_run_id IS NULL
+            AND COALESCE(active.context->>'type', '') <> 'employee_direct'
+            AND COALESCE(active.trigger_evidence_kind, '') <> 'employee_task'
           )
         )
   )
@@ -1290,9 +1316,10 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 `
 
 type ClaimAgentTaskByIDParams struct {
-	PrepareLeaseSecs float64     `json:"prepare_lease_secs"`
-	ID               pgtype.UUID `json:"id"`
-	RuntimeID        pgtype.UUID `json:"runtime_id"`
+	PrepareLeaseSecs         float64       `json:"prepare_lease_secs"`
+	ID                       pgtype.UUID   `json:"id"`
+	RuntimeID                pgtype.UUID   `json:"runtime_id"`
+	EmployeeDirectRuntimeIds []pgtype.UUID `json:"employee_direct_runtime_ids"`
 }
 
 // Claims one specific queued task for a run-once runtime. This is used by
@@ -1300,7 +1327,12 @@ type ClaimAgentTaskByIDParams struct {
 // the launch; claiming any other queued task can run the wrong chat inside the
 // wrong warm sandbox.
 func (q *Queries) ClaimAgentTaskByID(ctx context.Context, arg ClaimAgentTaskByIDParams) (AgentTaskQueue, error) {
-	row := q.db.QueryRow(ctx, claimAgentTaskByID, arg.PrepareLeaseSecs, arg.ID, arg.RuntimeID)
+	row := q.db.QueryRow(ctx, claimAgentTaskByID,
+		arg.PrepareLeaseSecs,
+		arg.ID,
+		arg.RuntimeID,
+		arg.EmployeeDirectRuntimeIds,
+	)
 	var i AgentTaskQueue
 	err := row.Scan(
 		&i.ID,
@@ -7620,8 +7652,11 @@ WHERE id = (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.runtime_id = $1
       AND atq.status = 'dispatched'
+      AND (atq.runtime_id = ANY($3::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
       AND atq.started_at IS NULL
-      AND atq.dispatched_at < now() - make_interval(secs => $3::double precision)
+      AND atq.dispatched_at < now() - make_interval(secs => $4::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
     ORDER BY atq.priority DESC, atq.dispatched_at ASC
     LIMIT 1
@@ -7631,9 +7666,10 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 `
 
 type ReclaimStaleDispatchedTaskForRuntimeParams struct {
-	RuntimeID         pgtype.UUID `json:"runtime_id"`
-	PrepareLeaseSecs  float64     `json:"prepare_lease_secs"`
-	ClaimRecoverySecs float64     `json:"claim_recovery_secs"`
+	RuntimeID                pgtype.UUID   `json:"runtime_id"`
+	PrepareLeaseSecs         float64       `json:"prepare_lease_secs"`
+	EmployeeDirectRuntimeIds []pgtype.UUID `json:"employee_direct_runtime_ids"`
+	ClaimRecoverySecs        float64       `json:"claim_recovery_secs"`
 }
 
 // Re-delivers a task whose previous claim likely succeeded server-side but
@@ -7642,7 +7678,12 @@ type ReclaimStaleDispatchedTaskForRuntimeParams struct {
 // Refresh dispatched_at so the server-side dispatch timeout measures from the
 // recovered delivery attempt.
 func (q *Queries) ReclaimStaleDispatchedTaskForRuntime(ctx context.Context, arg ReclaimStaleDispatchedTaskForRuntimeParams) (AgentTaskQueue, error) {
-	row := q.db.QueryRow(ctx, reclaimStaleDispatchedTaskForRuntime, arg.RuntimeID, arg.PrepareLeaseSecs, arg.ClaimRecoverySecs)
+	row := q.db.QueryRow(ctx, reclaimStaleDispatchedTaskForRuntime,
+		arg.RuntimeID,
+		arg.PrepareLeaseSecs,
+		arg.EmployeeDirectRuntimeIds,
+		arg.ClaimRecoverySecs,
+	)
 	var i AgentTaskQueue
 	err := row.Scan(
 		&i.ID,
@@ -7710,21 +7751,25 @@ WHERE id IN (
     SELECT atq.id FROM agent_task_queue atq
     WHERE atq.runtime_id = ANY($2::uuid[])
       AND atq.status = 'dispatched'
+      AND (atq.runtime_id = ANY($3::uuid[]) OR
+           (COALESCE(atq.context->>'type', '') <> 'employee_direct' AND
+            COALESCE(atq.trigger_evidence_kind, '') <> 'employee_task'))
       AND atq.started_at IS NULL
-      AND atq.dispatched_at < now() - make_interval(secs => $3::double precision)
+      AND atq.dispatched_at < now() - make_interval(secs => $4::double precision)
       AND (atq.prepare_lease_expires_at IS NULL OR atq.prepare_lease_expires_at < now())
     ORDER BY atq.priority DESC, atq.dispatched_at ASC
-    LIMIT $4::int
+    LIMIT $5::int
     FOR UPDATE SKIP LOCKED
 )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, runtime_launch_lease_token, runtime_launch_lease_expires_at
 `
 
 type ReclaimStaleDispatchedTasksForRuntimesParams struct {
-	PrepareLeaseSecs  float64       `json:"prepare_lease_secs"`
-	RuntimeIds        []pgtype.UUID `json:"runtime_ids"`
-	ClaimRecoverySecs float64       `json:"claim_recovery_secs"`
-	MaxTasks          int32         `json:"max_tasks"`
+	PrepareLeaseSecs         float64       `json:"prepare_lease_secs"`
+	RuntimeIds               []pgtype.UUID `json:"runtime_ids"`
+	EmployeeDirectRuntimeIds []pgtype.UUID `json:"employee_direct_runtime_ids"`
+	ClaimRecoverySecs        float64       `json:"claim_recovery_secs"`
+	MaxTasks                 int32         `json:"max_tasks"`
 }
 
 // Batch variant of ReclaimStaleDispatchedTaskForRuntime (MUL-4257): re-delivers
@@ -7738,6 +7783,7 @@ func (q *Queries) ReclaimStaleDispatchedTasksForRuntimes(ctx context.Context, ar
 	rows, err := q.db.Query(ctx, reclaimStaleDispatchedTasksForRuntimes,
 		arg.PrepareLeaseSecs,
 		arg.RuntimeIds,
+		arg.EmployeeDirectRuntimeIds,
 		arg.ClaimRecoverySecs,
 		arg.MaxTasks,
 	)
@@ -7822,8 +7868,16 @@ SET status = 'failed',
     wait_reason = NULL,
     prepare_lease_expires_at = NULL
 WHERE runtime_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_directory')
+  AND ($2::boolean OR
+       (COALESCE(context->>'type', '') <> 'employee_direct' AND
+        COALESCE(trigger_evidence_kind, '') <> 'employee_task'))
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, runtime_launch_lease_token, runtime_launch_lease_expires_at
 `
+
+type RecoverOrphanedTasksForRuntimeParams struct {
+	RuntimeID           pgtype.UUID `json:"runtime_id"`
+	AllowEmployeeDirect bool        `json:"allow_employee_direct"`
+}
 
 // Called by the daemon at startup. Atomically fails any dispatched/running/
 // waiting_local_directory task that the prior incarnation of this runtime
@@ -7831,8 +7885,8 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 // them to the auto-retry path. waiting_local_directory rows are included
 // because the daemon holding the path lock is the same process that just
 // died — without us, the row would sit waiting forever.
-func (q *Queries) RecoverOrphanedTasksForRuntime(ctx context.Context, runtimeID pgtype.UUID) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, recoverOrphanedTasksForRuntime, runtimeID)
+func (q *Queries) RecoverOrphanedTasksForRuntime(ctx context.Context, arg RecoverOrphanedTasksForRuntimeParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, recoverOrphanedTasksForRuntime, arg.RuntimeID, arg.AllowEmployeeDirect)
 	if err != nil {
 		return nil, err
 	}

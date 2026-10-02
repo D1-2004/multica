@@ -1107,6 +1107,9 @@ func WriteManagedSkills(skillsDir string, skills []SkillContextForEnv) error {
 
 // renderIssueContext builds the markdown content for issue_context.md.
 func renderIssueContext(provider string, ctx TaskContextForEnv) string {
+	if ctx.DirectTaskPrompt != "" {
+		return "# Direct Employee Task\n\n" + ctx.DirectTaskPrompt + "\n"
+	}
 	if ctx.AutopilotRunID != "" {
 		return renderAutopilotContext(ctx)
 	}

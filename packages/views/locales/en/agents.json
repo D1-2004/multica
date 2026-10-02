@@ -276,7 +276,12 @@
     "labels_hint": "Workspace labels used to classify this agent.",
     "github_managed_profile": "Instructions and repository skills are managed by GitHub; name and description remain editable in Multica.",
     "prop_event_trigger": "Proactively process all new conversation messages",
-    "prop_event_trigger_hint": "Read all new messages in monitored conversations, including messages without a mention. Use your role and context to decide whether to respond or act. Group consecutive messages and stay quiet when no response is needed. Enabling this also enables inbound judging."
+    "prop_event_trigger_hint": "Read all new messages in monitored conversations, including messages without a mention. Use your role and context to decide whether to respond or act. Group consecutive messages and stay quiet when no response is needed. Enabling this also enables inbound judging.",
+    "prop_coordination_mode": "Handling mode",
+    "prop_coordination_mode_hint": "Choose how new work is coordinated. The enabled switch is independent.",
+    "prop_employee_loop_unavailable": "EmployeeLoop is not ready for this agent yet.",
+    "prop_coordination_mode_unknown": "This mode is not supported by this app version. Update the app before editing.",
+    "prop_coordination_mode_confirmed": "Saved mode applies to new work. Existing tasks retain their original handling mode."
   },
   "overview": {
     "agent_context": "Agent",
@@ -691,7 +696,8 @@
       "voice_title": "Communication style",
       "voice_hint": "Control how this digital employee speaks in chat without changing task instructions.",
       "message_title": "Conversation & follow-up",
-      "message_hint": "Control whether task context continues and what happens after delegated work finishes."
+      "message_hint": "Control whether task context continues and what happens after delegated work finishes.",
+      "employee_scope_hint": "EmployeeLoop handles new work in supported DingTalk scenes. Web chat and other sources keep their existing entry."
     },
     "runner": {
       "execution_title": "Use My Computer",

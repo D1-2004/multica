@@ -259,6 +259,9 @@ type Handler struct {
 	// EventRouteConfig returns a single runtime snapshot's choice and version.
 	EventRouteConfig                func(workspaceID, agentID, orgID string) (route, version string)
 	EventRouteReady                 func(context.Context) (bool, error)
+	// EmployeeLoopReady checks whether this agent can admit new Employee work.
+	// Nil keeps the new mode unavailable while its consumer is not installed.
+	EmployeeLoopReady               func(context.Context, pgtype.UUID, pgtype.UUID) error
 	EventReceiptVerificationEnabled bool
 	SceneMemoryStore                *scenememory.Store
 	SceneMemoryWorker               *scenememory.Worker

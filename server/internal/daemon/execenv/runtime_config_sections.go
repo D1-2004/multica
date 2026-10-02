@@ -815,6 +815,9 @@ func writeDeliveryInvariant(b *strings.Builder) {
 func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 	b.WriteString("## Output\n\n")
 	switch kind {
+	case kindEmployeeDirect:
+		b.WriteString("This is a Direct employee task. Your final assistant output is captured automatically as the run result. State the outcome concisely; the host owns delivery to the originating scene.\n\n")
+		b.WriteString("**Delivering files here:** the run result is text-only. Describe produced files without linking runtime-local paths.\n")
 	case kindAutopilotRunOnly:
 		b.WriteString("This is a run-only autopilot task, so there may be no issue comment to post. Your final assistant output is captured automatically as the autopilot run result. Keep it concise and state the outcome.\n\n")
 		b.WriteString("**Delivering files here:** this surface is text-only — the run result carries no attachments. Describe what you produced; do not link its path.\n")
@@ -967,6 +970,8 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 		}
 	case kindQuickCreate:
 		writeWorkflowQuickCreate(&b)
+	case kindEmployeeDirect:
+		b.WriteString("**This is a Direct employee task.** Execute the current prompt without creating an issue or an Autopilot rule. There is no assigned Multica issue; do not fetch an empty issue or post an issue comment. Only operate on an existing issue when the task explicitly names it.\n\n")
 	case kindAutopilotRunOnly:
 		writeWorkflowAutopilot(&b, ctx)
 	case kindIssue:

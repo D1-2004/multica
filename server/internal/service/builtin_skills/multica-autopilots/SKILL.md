@@ -77,12 +77,13 @@ More source-backed details: `references/autopilots-source-map.md`.
 
 `agent update <id> --event-trigger-enabled[=false]` controls the default-off
 “Proactively process all new conversation messages” setting under Digital Employee,
-immediately below inbound judging. Enabling it enables inbound judging atomically;
-disabling inbound judging disables proactive processing. Existing bindings and
+in the message-routing settings. Enabling it enables coordination atomically for
+the saved handling mode; it never changes EmployeeLoop back to Coordinator.
+Disabling inbound judging disables proactive processing. Existing bindings and
 subscription scopes are unchanged. Router synchronization normally takes up to five
 seconds plus request latency.
 
-Observed group messages use the normal durable Coordinator window (4 seconds quiet,
+For Coordinator-owned work, observed group messages use the durable Coordinator window (4 seconds quiet,
 12 seconds maximum collection, at most 100 messages). No Autopilot is created, and
 there is no extra 30-second task interval or wait for the sandbox to finish before
 judging new messages. Configure the employee's behavior through Agent instructions.
@@ -91,7 +92,16 @@ Authorized additions to a busy Issue are durably queued and combined for its nex
 Read decisions in Coordinator conversations and execution in the associated Issues.
 Legacy event Autopilots are retained as history and only drain previously admitted work.
 
-The task-finished follow-up setting still controls automatic completion reports.
+The handling selector saves `coordination_mode=coordinator|employee` through the
+existing authorized Agent update API. It defaults to Coordinator and is independent
+of `inbound_coordinator`, which remains the total enabled switch. Switching modes
+never enables a previously disabled Agent. Older clients that only send the enabled
+field retain the saved mode. The Host rejects selecting or enabling EmployeeLoop
+when its readiness callback is absent or fails; `employee_loop_ready` exposes that
+readiness to the UI. A saved mode is not proof that every Runtime or event source
+has passed acceptance. Already admitted work retains its saved owner.
+
+The task-finished follow-up setting controls Coordinator completion reports.
 Configuration and implementation map to `event_trigger.go`, `agent_event_trigger.go`,
 `proactive_conversation.go`, `inbound_coordinator_job.go`, and `coordinator_follow_up.go`.
 

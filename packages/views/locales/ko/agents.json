@@ -268,7 +268,12 @@
     "labels_hint": "이 에이전트를 분류하는 워크스페이스 레이블입니다.",
     "github_managed_profile": "지침과 저장소 스킬은 GitHub에서 관리하며, 이름과 설명은 Multica에서 편집할 수 있습니다.",
     "prop_event_trigger": "이벤트 트리거",
-    "prop_event_trigger_hint": "구독한 대화에 새 이벤트가 도착하면 자동 실행합니다. 연속 이벤트는 묶어서 처리하고 같은 대화는 최소 30초 간격으로 실행합니다. 기본값은 꺼짐입니다。 설정은 보통 약 5초 후 반영됩니다."
+    "prop_event_trigger_hint": "구독한 대화에 새 이벤트가 도착하면 자동 실행합니다. 연속 이벤트는 묶어서 처리하고 같은 대화는 최소 30초 간격으로 실행합니다. 기본값은 꺼짐입니다。 설정은 보통 약 5초 후 반영됩니다.",
+    "prop_coordination_mode": "처리 방식",
+    "prop_coordination_mode_hint": "새 작업의 처리 방식을 선택합니다. 활성화 스위치는 별도로 제어합니다.",
+    "prop_employee_loop_unavailable": "이 에이전트의 EmployeeLoop가 아직 준비되지 않았습니다.",
+    "prop_coordination_mode_unknown": "지원하지 않는 처리 방식입니다. 앱을 업데이트한 후 수정하세요.",
+    "prop_coordination_mode_confirmed": "저장된 방식은 새 작업에 적용됩니다. 기존 작업은 원래 처리 방식을 유지합니다."
   },
   "overview": {
     "agent_context": "에이전트",
@@ -491,7 +496,8 @@
       "voice_title": "커뮤니케이션 스타일",
       "voice_hint": "작업 지침을 바꾸지 않고 채팅에서 말하는 방식을 설정합니다.",
       "message_title": "대화 및 후속 처리",
-      "message_hint": "작업 컨텍스트를 이어갈지와 위임한 작업 완료 후 처리 방식을 설정합니다."
+      "message_hint": "작업 컨텍스트를 이어갈지와 위임한 작업 완료 후 처리 방식을 설정합니다.",
+      "employee_scope_hint": "EmployeeLoop는 지원되는 DingTalk 공간의 새 작업에 적용됩니다. 웹 채팅과 기타 소스는 기존 경로를 사용합니다."
     },
     "runner": {
       "execution_title": "내 컴퓨터 사용",

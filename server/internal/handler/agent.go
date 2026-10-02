@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
+	"github.com/multica-ai/multica/server/internal/employeeloopconfig"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -92,10 +93,12 @@ type AgentResponse struct {
 	// agent's instructions, skills, and runtime have not changed. Off by
 	// default; local chats and issue comments already resume without it.
 	ChatSessionResume bool `json:"chat_session_resume"`
-	// InboundCoordinator runs the server-side assoc tool loop that replies
-	// immediately or opens an Issue. Off by default for new and existing
-	// agents; only an explicit owner on switch enables it.
+	// InboundCoordinator is the total enabled switch for message coordination.
+	// CoordinationMode selects the owner of new supported work independently;
+	// changing the mode never enables a disabled agent.
 	InboundCoordinator                  bool     `json:"inbound_coordinator"`
+	CoordinationMode                    string   `json:"coordination_mode"`
+	EmployeeLoopReady                   bool     `json:"employee_loop_ready"`
 	InboundCoordinatorUserDecisionMode  string   `json:"inbound_coordinator_user_decision_mode"`
 	InboundCoordinatorUserDecision      bool     `json:"inbound_coordinator_user_decision"`
 	InboundCoordinatorUserDecisionNames []string `json:"inbound_coordinator_user_decision_names"`
@@ -214,6 +217,7 @@ func (h *Handler) hydrateTaskFinishedLoop(ctx context.Context, resp *AgentRespon
 }
 
 func (h *Handler) hydrateDingTalkResponsePolicy(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
+	h.hydrateAgentCoordination(ctx, resp)
 	if resp == nil {
 		return
 	}
@@ -382,6 +386,7 @@ func (h *Handler) hydrateAgentsSceneMemoryFlags(ctx context.Context, resps []Age
 }
 
 func (h *Handler) hydrateAgentsDingTalkResponsePolicy(ctx context.Context, resps []AgentResponse) {
+	h.hydrateAgentsCoordination(ctx, resps)
 	if len(resps) == 0 {
 		return
 	}
@@ -515,6 +520,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 	contract, contractState := coordinatorcontract.Resolve(a.CoordinatorContract, a.Instructions)
 	return AgentResponse{
 		InboundCoordinatorUserDecisionMode: "off",
+		CoordinationMode:                   "coordinator",
 		ID:                                 uuidToString(a.ID),
 		WorkspaceID:                        uuidToString(a.WorkspaceID),
 		RuntimeID:                          uuidToString(a.RuntimeID),
@@ -639,6 +645,7 @@ type ProjectResourceData struct {
 type ConnectedAppData = runtimeapps.ConnectedApp
 
 type AgentTaskResponse struct {
+	DirectTaskPrompt     string                    `json:"direct_task_prompt,omitempty"`
 	DSHNativePrompt      *protocol.DSHNativePrompt `json:"dsh_native_prompt,omitempty"`
 	ID                   string                    `json:"id"`
 	AgentID              string                    `json:"agent_id"`
@@ -1849,6 +1856,7 @@ type UpdateAgentRequest struct {
 	DispatchAlwaysNewIssue              *bool              `json:"dispatch_always_new_issue"`
 	ChatSessionResume                   *bool              `json:"chat_session_resume"`
 	InboundCoordinator                  *bool              `json:"inbound_coordinator"`
+	CoordinationMode                    *string            `json:"coordination_mode"`
 	InboundCoordinatorUserDecisionMode  *string            `json:"inbound_coordinator_user_decision_mode"`
 	InboundCoordinatorUserDecision      *bool              `json:"inbound_coordinator_user_decision"`
 	InboundCoordinatorUserDecisionNames *[]string          `json:"inbound_coordinator_user_decision_names"`
@@ -2097,6 +2105,21 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	rawFields, err := decodeJSONBodyWithRawFields(r.Body, &req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if _, present := rawFields["coordination_mode"]; present {
+		if req.CoordinationMode == nil {
+			writeError(w, http.StatusBadRequest, employeeloopconfig.ErrInvalidMode.Error())
+			return
+		}
+		if err := employeeloopconfig.Validate(*req.CoordinationMode); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	normalizeCoordinationUpdate(&req)
+	if req.EventTriggerEnabled != nil && h.EventTriggers == nil {
+		writeError(w, http.StatusServiceUnavailable, "event triggers are unavailable")
 		return
 	}
 	if _, present := rawFields["inbound_coordinator_user_decision_mode"]; present && req.InboundCoordinatorUserDecisionMode == nil {
@@ -2493,6 +2516,10 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := h.checkAgentCoordinationUpdate(r.Context(), existing, req); err != nil {
+		writeCoordinationError(w, err)
+		return
+	}
 	updated, err := h.Queries.UpdateAgent(r.Context(), params)
 	if err != nil {
 		// Unique constraint on (workspace_id, name) — mirror CreateAgent and
@@ -2562,27 +2589,6 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Disabling inbound judging also disables proactive processing. Conflicting
-	// fields fail closed; enabling proactive processing enables judging in one transaction.
-	if req.EventTriggerEnabled != nil && req.InboundCoordinator != nil && !*req.InboundCoordinator {
-		disabled := false
-		req.EventTriggerEnabled = &disabled
-	}
-	if req.EventTriggerEnabled != nil && *req.EventTriggerEnabled {
-		enabled := true
-		req.InboundCoordinator = &enabled
-	}
-	if req.EventTriggerEnabled != nil {
-		if h.EventTriggers == nil {
-			writeError(w, http.StatusServiceUnavailable, "event triggers are unavailable")
-			return
-		}
-		if err := h.EventTriggers.SetEnabledAndInbound(r.Context(), updated, parseUUID(requestUserID(r)), *req.EventTriggerEnabled, req.InboundCoordinator); err != nil {
-			slog.Error("update event trigger failed", "agent_id", id, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to update event trigger")
-			return
-		}
-	}
 	if req.ChatSessionResume != nil {
 		if err := h.Queries.UpdateAgentChatSessionResume(r.Context(), updated.ID, *req.ChatSessionResume); err != nil {
 			slog.Warn("update agent chat_session_resume failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
@@ -2590,31 +2596,10 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.InboundCoordinatorUserDecisionMode != nil || req.InboundCoordinatorUserDecisionNames != nil || req.InboundCoordinatorUserDecision != nil || req.InboundCoordinator != nil || req.DingTalkShowAITag != nil || req.DingTalkResponseEnabled != nil {
-		policyParams := db.UpdateAgentDingTalkResponsePolicyParams{ID: updated.ID}
-		if req.InboundCoordinatorUserDecisionNames != nil {
-			policyParams.UserDecisionNames = normalizeUserDecisionNames(*req.InboundCoordinatorUserDecisionNames)
-		}
-		if req.InboundCoordinatorUserDecision != nil {
-			policyParams.UserDecision = pgtype.Bool{Bool: *req.InboundCoordinatorUserDecision, Valid: true}
-		}
-		applyUserDecisionMode(req, &policyParams)
-		if req.InboundCoordinator != nil {
-			policyParams.InboundCoordinator = pgtype.Bool{Bool: *req.InboundCoordinator, Valid: true}
-		}
-		if req.DingTalkShowAITag != nil {
-			policyParams.ShowAiTag = pgtype.Bool{Bool: *req.DingTalkShowAITag, Valid: true}
-		}
-		if req.DingTalkResponseEnabled != nil {
-			policyParams.ResponseEnabled = pgtype.Bool{Bool: *req.DingTalkResponseEnabled, Valid: true}
-		}
-		if _, err := h.Queries.UpdateAgentDingTalkResponsePolicy(r.Context(), policyParams); err != nil {
-			slog.Warn("update agent DingTalk response policy failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to update DingTalk response policy")
+	if req.CoordinationMode != nil || req.EventTriggerEnabled != nil || req.InboundCoordinatorUserDecisionMode != nil || req.InboundCoordinatorUserDecisionNames != nil || req.InboundCoordinatorUserDecision != nil || req.InboundCoordinator != nil || req.DingTalkShowAITag != nil || req.DingTalkResponseEnabled != nil {
+		if err := h.updateAgentCoordinationPolicy(r.Context(), updated, parseUUID(requestUserID(r)), req); err != nil {
+			writeCoordinationError(w, err)
 			return
-		}
-		if h.DingTalkResponsePolicyNotifier != nil {
-			h.DingTalkResponsePolicyNotifier.NotifyResponsePolicyChanged()
 		}
 	}
 	if req.TaskFinishedLoopEnabled != nil {
@@ -2955,10 +2940,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	// 403 semantics as GetAgent.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
-		return
-	}
+	canViewOrdinary := h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID)
 
 	tasks, err := h.Queries.ListHumanVisibleAgentTasks(r.Context(), agent.ID)
 	if err != nil {
@@ -2966,9 +2948,20 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]AgentTaskResponse, len(tasks))
-	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
+	resp := make([]AgentTaskResponse, 0, len(tasks))
+	for _, t := range tasks {
+		if service.IsEmployeeDirectTask(t) {
+			if !h.canReadEmployeeDirectTask(r, t, agent) {
+				continue
+			}
+		} else if !canViewOrdinary {
+			continue
+		}
+		resp = append(resp, taskToResponse(t, workspaceID))
+	}
+	if !canViewOrdinary && len(resp) == 0 {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		return
 	}
 	h.hydrateTaskAttributions(r.Context(), attributionsOf(resp))
 	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
@@ -3242,7 +3235,11 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 
 	resp := make([]AgentTaskResponse, 0, len(tasks))
 	for _, t := range tasks {
-		if _, ok := allowed[uuidToString(t.AgentID)]; !ok {
+		if service.IsEmployeeDirectTask(t) {
+			if !h.canReadEmployeeDirectTaskByID(r, t) {
+				continue
+			}
+		} else if _, ok := allowed[uuidToString(t.AgentID)]; !ok {
 			continue
 		}
 		resp = append(resp, taskToResponse(t, workspaceID))

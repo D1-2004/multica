@@ -49,6 +49,7 @@ func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
 	h.DaemonHub.HandleWebSocket(w, r, daemonws.ClientIdentity{
 		DaemonID:      middleware.DaemonIDFromContext(r.Context()),
 		UserID:        userID,
+		AuthPath:      middleware.DaemonAuthPathFromContext(r.Context()),
 		WorkspaceID:   primaryWorkspaceID,
 		WorkspaceIDs:  workspaceIDs,
 		RuntimeIDs:    runtimeIDs,

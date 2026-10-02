@@ -166,6 +166,9 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 	errMessage string,
 	failureReason string,
 ) (bool, error) {
+	if err := s.recordEmployeeRunInTx(ctx, tx, task, status, result, errMessage); err != nil {
+		return false, fmt.Errorf("record employee run: %w", err)
+	}
 	// A scene routine run posts its end notice into its scene in the same
 	// terminal transaction (docs/context-capabilities.md §9).
 	if s.SceneRoutines != nil && task.AutopilotRunID.Valid && IsSceneRoutineContext(task.Context) {
@@ -316,6 +319,11 @@ func (s *TaskService) finalizeFailedTask(
 	}
 
 	err = s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
+		if IsEmployeeDirectTask(parent) {
+			if err := lockEmployeeRunWorkspace(ctx, terminalTx, taskID); err != nil {
+				return err
+			}
+		}
 		locked, lockErr := qtx.GetAgentTaskForCompletionFinalization(ctx, taskID)
 		if lockErr != nil {
 			return lockErr

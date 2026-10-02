@@ -296,6 +296,21 @@ describe("AgentDetailPage audience saves", () => {
     agentsRef.current = [{ ...baseAgent, owner_id: "user-1", inbound_coordinator: true, inbound_coordinator_user_decision_mode: "named", inbound_coordinator_user_decision_names: ["Alice"] }];
   });
 
+  it("keeps the saved coordination mode in React Query until confirmation", async () => {
+    agentsRef.current = [{ ...agentsRef.current[0] as Agent, coordination_mode: "coordinator", employee_loop_ready: true }];
+    let resolveUpdate!: (agent: Agent) => void;
+    mockUpdateAgent.mockImplementation(() => new Promise<Agent>((resolve) => { resolveUpdate = resolve; }));
+    const { queryClient } = renderPage();
+    fireEvent.click(await screen.findByRole("radio", { name: "EmployeeLoop" }));
+    expect(mockUpdateAgent).toHaveBeenCalledWith("agent-1", { coordination_mode: "employee" });
+    expect(queryClient.getQueryData<Agent[]>(["agents", "ws-1"])?.[0]?.coordination_mode).toBe("coordinator");
+    expect(screen.getByRole("radio", { name: "Coordinator" })).toBeChecked();
+    const updated = { ...agentsRef.current[0] as Agent, coordination_mode: "employee" as const };
+    agentsRef.current = [updated];
+    await act(async () => { resolveUpdate(updated); });
+    await waitFor(() => expect(screen.getByRole("radio", { name: "EmployeeLoop" })).toBeChecked());
+  });
+
   it("waits for the server before showing a new audience", async () => {
     let resolveUpdate!: (agent: Agent) => void;
     mockUpdateAgent.mockImplementation(() => new Promise<Agent>((resolve) => { resolveUpdate = resolve; }));

@@ -1,12 +1,42 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { AgentMessageSettings, InboundCoordinatorSetting } from "./agent-message-settings";
 
 const agent = { id: "agent-1" } as Agent;
+
+describe("Coordination mode", () => {
+  it("keeps the confirmed mode until the server responds", async () => {
+    let finish!: () => void;
+    const onUpdate = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const initial = { ...agent, coordination_mode: "coordinator" as const, employee_loop_ready: true, inbound_coordinator: false };
+    const { rerender } = renderWithI18n(<InboundCoordinatorSetting agent={initial} canEdit onUpdate={onUpdate} />);
+    fireEvent.click(screen.getByRole("radio", { name: "EmployeeLoop" }));
+    expect(onUpdate).toHaveBeenCalledExactlyOnceWith({ coordination_mode: "employee" });
+    expect(screen.getByRole("radio", { name: "Coordinator" })).toBeChecked();
+    finish();
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Coordinator" })).not.toHaveAttribute("data-disabled"));
+    expect(screen.getByRole("radio", { name: "Coordinator" })).toBeChecked();
+    rerender(<InboundCoordinatorSetting agent={{ ...initial, coordination_mode: "employee" }} canEdit onUpdate={onUpdate} />);
+    expect(screen.getByRole("radio", { name: "EmployeeLoop" })).toBeChecked();
+  });
+  it("disables unsupported Employee mode and explains readiness", () => {
+    renderWithI18n(<InboundCoordinatorSetting agent={agent} canEdit onUpdate={vi.fn(async () => {})} />);
+    expect(screen.getByRole("radio", { name: "EmployeeLoop" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("EmployeeLoop is not ready for this agent yet.")).toBeInTheDocument();
+  });
+  it("keeps Employee mode when proactive processing is enabled", async () => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(<InboundCoordinatorSetting agent={{ ...agent, coordination_mode: "employee", employee_loop_ready: true }} canEdit onUpdate={onUpdate} />);
+    fireEvent.click(screen.getByLabelText("Proactively process all new conversation messages"));
+    expect(onUpdate).toHaveBeenCalledExactlyOnceWith({ event_trigger_enabled: true, inbound_coordinator: true });
+    expect(screen.queryByRole("radio", { name: "Named people" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Proactively process all new conversation messages")).not.toHaveAttribute("aria-disabled"));
+  });
+});
 
 describe("AgentMessageSettings", () => {
   it("saves each employee communication behavior independently", () => {
@@ -162,7 +192,7 @@ describe("User decision audience", () => {
   it.each(["off", "all", "named"] as const)("shows the saved %s mode and its consequences", (mode) => {
     const onUpdate = vi.fn(async () => {});
     renderWithI18n(<InboundCoordinatorSetting agent={{ ...agent, inbound_coordinator: true, inbound_coordinator_user_decision_mode: mode }} canEdit onUpdate={onUpdate} />);
-    expect(screen.getAllByRole("radio")).toHaveLength(3);
+    expect(within(screen.getByRole("radiogroup", { name: "Choice cards (A2UI)" })).getAllByRole("radio")).toHaveLength(3);
     expect(screen.getByRole("radio", { name: { off: "Off", all: "Everyone", named: "Named people" }[mode] })).toBeChecked();
     expect(screen.getByText("Handle all requests automatically, without choice cards.")).toBeInTheDocument();
     expect(screen.getByText("Everyone receives a choice card; handling waits for their submission.")).toBeInTheDocument();

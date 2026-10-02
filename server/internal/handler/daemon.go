@@ -146,6 +146,9 @@ func (h *Handler) requireDaemonTaskAccessWithWorkspace(w http.ResponseWriter, r 
 	if !h.requireDaemonWorkspaceAccess(w, r, wsID) {
 		return db.AgentTaskQueue{}, "", false
 	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead && !h.requireEmployeeDirectExecution(w, r, task) {
+		return db.AgentTaskQueue{}, "", false
+	}
 	return task, wsID, true
 }
 
@@ -1654,6 +1657,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	runtimeByID := make(map[string]db.AgentRuntime, len(runtimes))
 	authorized := make([]pgtype.UUID, 0, len(runtimes))
+	directAuthorization := service.TaskClaimAuthorization{}
 	for _, rt := range runtimes {
 		if !h.verifyDaemonWorkspaceAccess(r, uuidToString(rt.WorkspaceID)) {
 			continue
@@ -1667,13 +1671,16 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 		runtimeByID[uuidToString(rt.ID)] = rt
 		authorized = append(authorized, rt.ID)
+		if h.canExecuteEmployeeDirectRuntime(r, rt) {
+			directAuthorization.EmployeeDirectRuntimeIDs = append(directAuthorization.EmployeeDirectRuntimeIDs, rt.ID)
+		}
 	}
 	if len(authorized) == 0 {
 		writeMeasuredJSON(w, http.StatusOK, map[string]any{"tasks": []AgentTaskResponse{}})
 		return
 	}
 
-	claimed, err := h.TaskService.ClaimTasksForRuntimes(r.Context(), authorized, maxTasks)
+	claimed, err := h.TaskService.ClaimTasksForRuntimes(r.Context(), authorized, maxTasks, directAuthorization)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to claim tasks: "+err.Error())
 		return
@@ -1888,6 +1895,12 @@ func (h *Handler) latestTaskSandboxBackend(ctx context.Context, task db.AgentTas
 func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, taskBackend service.SandboxBackendKind, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
+	if failure := h.applyEmployeeRunClaim(r, *task, runtime, &resp); failure != nil {
+		if err := h.TaskService.DeferDirectTaskAfterClaimFailure(r.Context(), *task, failure.message); err != nil {
+			slog.Error("employee Direct claim: defer failed", "task_id", uuidToString(task.ID), "error", err)
+		}
+		return resp, nil, 0, 0, failure
+	}
 	// Claim-only capability: this server resolves the squad-leader role on the
 	// wire (is_leader_task / squad_id), so the daemon must not re-derive it
 	// from the briefing text. Set unconditionally — on every claim, leader or
@@ -3239,6 +3252,10 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	runtimeWorkspaceID := uuidToString(runtime.WorkspaceID)
 	authMs = time.Since(start).Milliseconds()
+	directAuthorization := service.TaskClaimAuthorization{}
+	if h.canExecuteEmployeeDirectRuntime(r, runtime) {
+		directAuthorization.EmployeeDirectRuntimeIDs = []pgtype.UUID{runtime.ID}
+	}
 
 	// The body is optional: a plain daemon poll sends none, an FC/E2B sandbox
 	// sends target_task_id + fc_e2b_cold_start.
@@ -3279,9 +3296,9 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			outcome = "error_request"
 			return
 		}
-		task, err = h.TaskService.ClaimTaskByIDForRuntime(r.Context(), runtime.ID, targetTaskUUID)
+		task, err = h.TaskService.ClaimTaskByIDForRuntime(r.Context(), runtime.ID, targetTaskUUID, directAuthorization)
 	} else {
-		task, err = h.TaskService.ClaimTaskForRuntime(r.Context(), runtime.ID)
+		task, err = h.TaskService.ClaimTaskForRuntime(r.Context(), runtime.ID, directAuthorization)
 	}
 	claimMs = time.Since(claimStart).Milliseconds()
 	if err != nil {
@@ -3947,9 +3964,12 @@ func (h *Handler) ListPendingTasksByRuntime(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	resp := make([]AgentTaskResponse, len(tasks))
-	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
+	resp := make([]AgentTaskResponse, 0, len(tasks))
+	for _, t := range tasks {
+		if !h.canReadDaemonEmployeeTask(r, t) {
+			continue
+		}
+		resp = append(resp, taskToResponse(t, workspaceID))
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -4830,6 +4850,9 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !h.requireDaemonEmployeeTaskRead(w, r, task) {
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": task.Status})
 }
@@ -4969,7 +4992,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			workspaceID = uuidToString(cs.WorkspaceID)
 		}
 	}
-	suppressHumanRealtime := h.TaskService.ShouldSuppressA2AHumanRealtime(r.Context(), task)
+	suppressHumanRealtime := service.IsEmployeeDirectTask(task) || h.TaskService.ShouldSuppressA2AHumanRealtime(r.Context(), task)
 
 	for _, msg := range req.Messages {
 		// Redact sensitive information before persisting or broadcasting.
@@ -5169,6 +5192,9 @@ func (h *Handler) ListTaskMessages(w http.ResponseWriter, r *http.Request) {
 	// Verify the caller owns this task's workspace.
 	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
 	if !ok {
+		return
+	}
+	if !h.requireDaemonEmployeeTaskRead(w, r, task) {
 		return
 	}
 
@@ -5450,7 +5476,11 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	actorType, actorID := h.resolveActor(r, requestUserID(r), wsID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, wsID) {
+	allowed := h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, wsID)
+	if service.IsEmployeeDirectTask(task) {
+		allowed = h.canReadEmployeeDirectTask(r, task, agent)
+	}
+	if !allowed {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
@@ -5729,6 +5759,9 @@ func (h *Handler) GetTaskGCCheck(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
 	if !ok {
+		return
+	}
+	if !h.requireDaemonEmployeeTaskRead(w, r, task) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

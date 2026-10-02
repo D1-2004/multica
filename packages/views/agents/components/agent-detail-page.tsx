@@ -185,7 +185,8 @@ export function AgentDetailPage({ agentId, tagView }: AgentDetailPageProps) {
     // Audience changes wait for the server so failed saves preserve name drafts
     // and the UI never presents an unconfirmed audience as active.
     const optimistic = !("inbound_coordinator_user_decision_mode" in data
-      || "inbound_coordinator_user_decision_names" in data);
+      || "inbound_coordinator_user_decision_names" in data
+      || "coordination_mode" in data);
     const optimisticData =
       typeof data.runtime_id === "string"
         ? { ...data, runtime_bound: data.runtime_id.trim().length > 0 }

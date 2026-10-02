@@ -2703,12 +2703,18 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 		// across two statements, the `cancelled` status becomes visible to every
 		// other connection while the pointer still names the previous turn's
 		// session, and a queued follow-up can resume that older session.
-		err = s.runInTx(ctx, func(qtx *db.Queries) error {
+		err = s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
+			if err := lockEmployeeRunWorkspace(ctx, terminalTx, taskID); err != nil {
+				return err
+			}
 			if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 				return err
 			}
 			cancelled, err := qtx.CancelAgentTask(ctx, taskID)
 			if err != nil {
+				return err
+			}
+			if err := s.recordEmployeeRunInTx(ctx, terminalTx, cancelled, "cancelled", nil, cancelled.Error.String); err != nil {
 				return err
 			}
 			task = cancelled
@@ -3342,7 +3348,7 @@ func (s *TaskService) broadcastChatCancelFinalized(ctx context.Context, task db.
 
 // ClaimTask atomically claims the next queued task for an agent,
 // respecting max_concurrent_tasks.
-func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.AgentTaskQueue, error) {
+func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID, authorization ...TaskClaimAuthorization) (*db.AgentTaskQueue, error) {
 	start := time.Now()
 	outcome := "unknown"
 	var getAgentMs, countRunningMs, claimAgentMs, reanchorMs, updateStatusMs, dispatchMs int64
@@ -3375,8 +3381,9 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 
 		t0 = time.Now()
 		task, err := qtx.ClaimAgentTask(ctx, db.ClaimAgentTaskParams{
-			AgentID:          agentID,
-			PrepareLeaseSecs: prepareLeaseDuration.Seconds(),
+			EmployeeDirectRuntimeIds: employeeDirectClaimRuntimeIDs(authorization),
+			AgentID:                  agentID,
+			PrepareLeaseSecs:         prepareLeaseDuration.Seconds(),
 		})
 		claimAgentMs = time.Since(t0).Milliseconds()
 		if err != nil {
@@ -3447,7 +3454,7 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 // ClaimTaskByIDForRuntime claims a specific queued task for a run-once runtime.
 // FC/E2B launches choose a sandbox from the triggering task's chat/issue scope,
 // so the daemon must not claim a different queued task on the same runtime.
-func (s *TaskService) ClaimTaskByIDForRuntime(ctx context.Context, runtimeID, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
+func (s *TaskService) ClaimTaskByIDForRuntime(ctx context.Context, runtimeID, taskID pgtype.UUID, authorization ...TaskClaimAuthorization) (*db.AgentTaskQueue, error) {
 	start := time.Now()
 	var (
 		outcome                                                              = "unknown"
@@ -3500,9 +3507,10 @@ func (s *TaskService) ClaimTaskByIDForRuntime(ctx context.Context, runtimeID, ta
 
 		t0 = time.Now()
 		task, err := qtx.ClaimAgentTaskByID(ctx, db.ClaimAgentTaskByIDParams{
-			ID:               taskID,
-			RuntimeID:        runtimeID,
-			PrepareLeaseSecs: prepareLeaseDuration.Seconds(),
+			EmployeeDirectRuntimeIds: employeeDirectClaimRuntimeIDs(authorization),
+			ID:                       taskID,
+			RuntimeID:                runtimeID,
+			PrepareLeaseSecs:         prepareLeaseDuration.Seconds(),
 		})
 		claimAgentMs = time.Since(t0).Milliseconds()
 		if err != nil {
@@ -3552,7 +3560,7 @@ func (s *TaskService) ClaimTaskByIDForRuntime(ctx context.Context, runtimeID, ta
 // without touching Postgres. The cache is invalidated synchronously on
 // every enqueue (notifyTaskAvailable), so a queued task becomes
 // claimable on the next call rather than waiting for the TTL.
-func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.UUID) (*db.AgentTaskQueue, error) {
+func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.UUID, authorization ...TaskClaimAuthorization) (*db.AgentTaskQueue, error) {
 	start := time.Now()
 	var (
 		outcome          = "no_task"
@@ -3586,9 +3594,10 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 	// Check this before EmptyClaim: a lost claim response moves the task out of
 	// `queued`, so the empty-queued cache cannot represent recoverability.
 	stale, err := s.Queries.ReclaimStaleDispatchedTaskForRuntime(ctx, db.ReclaimStaleDispatchedTaskForRuntimeParams{
-		RuntimeID:         runtimeID,
-		ClaimRecoverySecs: claimResponseRecoveryWindow.Seconds(),
-		PrepareLeaseSecs:  prepareLeaseDuration.Seconds(),
+		EmployeeDirectRuntimeIds: employeeDirectClaimRuntimeIDs(authorization),
+		RuntimeID:                runtimeID,
+		ClaimRecoverySecs:        claimResponseRecoveryWindow.Seconds(),
+		PrepareLeaseSecs:         prepareLeaseDuration.Seconds(),
 	})
 	if err == nil {
 		outcome = "reclaimed_dispatched"
@@ -3644,7 +3653,7 @@ func (s *TaskService) ClaimTaskForRuntime(ctx context.Context, runtimeID pgtype.
 		triedAgents[agentKey] = struct{}{}
 		tried++
 
-		task, err := s.ClaimTask(ctx, candidate.AgentID)
+		task, err := s.ClaimTask(ctx, candidate.AgentID, authorization...)
 		if err != nil {
 			loopMs = time.Since(loopStart).Milliseconds()
 			outcome = "error_claim"
@@ -3790,7 +3799,7 @@ func (s *TaskService) RequeueTaskAfterClaimFailure(ctx context.Context, task db.
 // The returned slice contains both reclaimed and freshly-claimed tasks, each
 // already carrying its runtime_id so the daemon routes it to the matching
 // runtime locally.
-func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pgtype.UUID, maxTasks int) ([]db.AgentTaskQueue, error) {
+func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pgtype.UUID, maxTasks int, authorization ...TaskClaimAuthorization) ([]db.AgentTaskQueue, error) {
 	if len(runtimeIDs) == 0 || maxTasks <= 0 {
 		return nil, nil
 	}
@@ -3837,10 +3846,11 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 
 	// 2. Reclaim lost-response dispatched tasks across the set, up to maxTasks.
 	reclaimed, err := s.Queries.ReclaimStaleDispatchedTasksForRuntimes(ctx, db.ReclaimStaleDispatchedTasksForRuntimesParams{
-		RuntimeIds:        uniqueIDs,
-		ClaimRecoverySecs: claimResponseRecoveryWindow.Seconds(),
-		PrepareLeaseSecs:  prepareLeaseDuration.Seconds(),
-		MaxTasks:          int32(maxTasks),
+		EmployeeDirectRuntimeIds: employeeDirectClaimRuntimeIDs(authorization),
+		RuntimeIds:               uniqueIDs,
+		ClaimRecoverySecs:        claimResponseRecoveryWindow.Seconds(),
+		PrepareLeaseSecs:         prepareLeaseDuration.Seconds(),
+		MaxTasks:                 int32(maxTasks),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reclaim stale dispatched tasks: %w", err)
@@ -3920,7 +3930,7 @@ func (s *TaskService) ClaimTasksForRuntimes(ctx context.Context, runtimeIDs []pg
 		}
 		triedAgents[agentKey] = struct{}{}
 
-		task, err := s.ClaimTask(ctx, candidates[i].AgentID)
+		task, err := s.ClaimTask(ctx, candidates[i].AgentID, authorization...)
 		if err != nil {
 			// Each ClaimTask commits in its own transaction, so earlier
 			// iterations (and step-2 reclaims) are already dispatched
@@ -4135,6 +4145,9 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// only after the transaction commits.
 	var chatAssistantMsg *db.ChatMessage
 	if err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
+		if err := lockEmployeeRunWorkspace(ctx, terminalTx, taskID); err != nil {
+			return err
+		}
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
@@ -4691,6 +4704,9 @@ func (s *TaskService) failTask(
 	var completionQueued bool
 	var executionUpdateReady bool
 	if err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
+		if err := lockEmployeeRunWorkspace(ctx, terminalTx, taskID); err != nil {
+			return err
+		}
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
@@ -5672,16 +5688,24 @@ func (s *TaskService) runInTxWithHandle(ctx context.Context, fn func(*db.Queries
 
 // ReportProgress broadcasts a progress update via the event bus.
 func (s *TaskService) ReportProgress(ctx context.Context, task db.AgentTaskQueue, workspaceID string, summary string, step, total int) {
-	if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
+	recipientUserID := ""
+	if IsEmployeeDirectTask(task) {
+		route, ok := s.humanRealtimeRouteForTask(ctx, task)
+		if !ok {
+			return
+		}
+		workspaceID, recipientUserID = route.workspaceID, route.recipientUserID
+	} else if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
 		return
 	}
 	taskID := util.UUIDToString(task.ID)
 	s.Bus.Publish(events.Event{
-		Type:        protocol.EventTaskProgress,
-		WorkspaceID: workspaceID,
-		ActorType:   "system",
-		ActorID:     "",
-		TaskID:      taskID,
+		Type:            protocol.EventTaskProgress,
+		WorkspaceID:     workspaceID,
+		RecipientUserID: recipientUserID,
+		ActorType:       "system",
+		ActorID:         "",
+		TaskID:          taskID,
 		Payload: protocol.TaskProgressPayload{
 			TaskID:  taskID,
 			Summary: summary,
@@ -6306,6 +6330,14 @@ func nextQueuedTaskForTerminal(terminal db.AgentTaskQueue, candidates []db.Agent
 }
 
 func sameTaskSerializationGroup(a, b db.AgentTaskQueue) bool {
+	// Keep the Direct/quick-create boundary aligned with ClaimAgentTask and
+	// ClaimAgentTaskByID. Queue rows for independent EmployeeTasks may execute
+	// together; only the same durable task identity needs this writer barrier.
+	if IsEmployeeDirectTask(a) || IsEmployeeDirectTask(b) {
+		directA, okA := ParseDirectTaskContext(a)
+		directB, okB := ParseDirectTaskContext(b)
+		return okA && okB && directA.EmployeeTaskID == directB.EmployeeTaskID
+	}
 	if a.IssueID.Valid {
 		return b.IssueID.Valid && b.IssueID == a.IssueID
 	}
@@ -6463,10 +6495,29 @@ type humanRealtimeRoute struct {
 }
 
 // humanRealtimeRouteForTask keeps ordinary events on their existing workspace
-// fanout while routing visible A2A chat events only to the endpoint owner who
+// fanout while routing Direct events only to a verified current originator,
+// and visible A2A chat events only to the endpoint owner who
 // owns the backing chat_session. A2A tasks without a visible chat session, or
 // any failed owner lookup, remain suppressed.
 func (s *TaskService) humanRealtimeRouteForTask(ctx context.Context, task db.AgentTaskQueue) (humanRealtimeRoute, bool) {
+	if IsEmployeeDirectTask(task) {
+		direct, ok := ParseDirectTaskContext(task)
+		if !ok || s == nil || s.Queries == nil || !task.OriginatorUserID.Valid {
+			return humanRealtimeRoute{}, false
+		}
+		workspaceID, parseErr := util.ParseUUID(direct.WorkspaceID)
+		if parseErr != nil {
+			return humanRealtimeRoute{}, false
+		}
+		agent, agentErr := s.Queries.GetAgent(ctx, task.AgentID)
+		if agentErr != nil || agent.WorkspaceID != workspaceID {
+			return humanRealtimeRoute{}, false
+		}
+		if _, err := s.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{WorkspaceID: workspaceID, UserID: task.OriginatorUserID}); err != nil {
+			return humanRealtimeRoute{}, false
+		}
+		return humanRealtimeRoute{workspaceID: direct.WorkspaceID, recipientUserID: util.UUIDToString(task.OriginatorUserID)}, true
+	}
 	isA2A, err := s.isA2AHumanProjectionTask(ctx, task)
 	if err != nil {
 		slog.Error("A2A task realtime route lookup failed; suppressing human projection",
@@ -6711,6 +6762,9 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 				return util.UUIDToString(ap.WorkspaceID)
 			}
 		}
+	}
+	if direct, ok := ParseDirectTaskContext(task); ok {
+		return direct.WorkspaceID
 	}
 	// Quick-create tasks have no issue / chat / autopilot link — workspace
 	// lives in the context JSONB. Returning "" here is what blocked

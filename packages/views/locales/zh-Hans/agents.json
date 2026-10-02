@@ -268,7 +268,12 @@
     "labels_hint": "用于分类这个智能体的工作区标签。",
     "github_managed_profile": "指令和仓库 skill 由 GitHub 管理；名称和描述可在 Multica 中编辑。",
     "prop_event_trigger": "主动处理会话所有新消息",
-    "prop_event_trigger_hint": "主动阅读监听范围内会话的新消息，即使没有 @ 也会结合岗位和上下文判断是否需要回应或处理。连续消息合并判断，无需回应时保持安静。开启时会同时打开“入站先判断”。"
+    "prop_event_trigger_hint": "主动阅读监听范围内会话的新消息，即使没有 @ 也会结合岗位和上下文判断是否需要回应或处理。连续消息合并判断，无需回应时保持安静。开启时会同时打开“入站先判断”。",
+    "prop_coordination_mode": "处理方式",
+    "prop_coordination_mode_hint": "选择新任务的处理方式，启用开关单独控制是否开启。",
+    "prop_employee_loop_unavailable": "此智能体的 EmployeeLoop 尚未就绪。",
+    "prop_coordination_mode_unknown": "当前应用版本不支持此处理方式，请更新应用后再修改。",
+    "prop_coordination_mode_confirmed": "已保存的方式用于新任务，进行中的任务继续使用原处理方式。"
   },
   "overview": {
     "agent_context": "智能体",
@@ -681,7 +686,8 @@
       "voice_title": "沟通风格",
       "voice_hint": "控制数字员工在聊天中的表达方式，不改变任务指令。",
       "message_title": "会话与跟进",
-      "message_hint": "控制任务会话是否延续，以及事情完成后是否再次判断。"
+      "message_hint": "控制任务会话是否延续，以及事情完成后是否再次判断。",
+      "employee_scope_hint": "EmployeeLoop 用于已支持的钉钉场域新任务。网页聊天和其他来源继续使用现有入口。"
     },
     "runner": {
       "execution_title": "使用我的电脑",
