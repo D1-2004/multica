@@ -76,6 +76,8 @@ capture 的 quote 必须原样出现在选定消息的外层 Text；引用背景
 
 SourceID 固定为 `employee-message:<receipt_id>`，EvidenceID 为该消息 OpenMsgID。一条源消息仅消费一次 learning identity；换 key/type/quote 不会创建第二条。OccurredAt 使用 receipt 首次 Host created_at，不使用重试时间。更早或同时间的来源不能替换同 type/key 的较新记忆，时间栅栏包含 forgotten/superseded 墓碑；晚到来源得到 superseded 回执。旧记录没有 evidence_occurred_at 时，以 Host 创建该记录的 created_at 作保守栅栏。后台 Run 的原 RecordTx 策略保持不变。首次在 reset 后才送达、又没有可验证源时间的历史消息无法由本协议判定为旧事件。
 
+新输入快照只在可信场域目录明确为 DM、且窗口只有一个已知 requester 时自动注入最多四条 private brief。group 的单一发言人不代表听众只有该人，因此不自动注入其最近 private 记录；用户明确询问时仍通过原有 memory_lookup 在同一 scene/requester 范围按需读取。scene-shared brief 保持原合同，未知 kind 不猜作 DM。此规则只作用于新快照，已冻结的旧 group 上下文及 model journal 保持字节兼容；marker 5 和最多三次调用不变。
+
 lookup 在同一事务内复用 Search 的授权、排序及衰减，最多八条；brief 带 record ID/type 供定向纠正与忘记。forget 仅更新本 namespace 的精确记录 ID，保留回执墓碑，不删除替代记录或其他人的记忆；重复忘记不推进 revision。
 
 工具缓存重放不重做效果：同事务只读复核来源和状态，失效记录不再通过缓存 lookup 返回。底层记录未变化时保留原 lookup 快照，不因读时置信度衰减制造模型请求冲突。真正状态变化导致后续已冻结模型请求不一致时，现有失败 outcome 路径终结该 wake，不修改历史 journal、不追加模型调用。记忆工具 trace 在 journal 事务结束后关闭；`journal_committed` 表示事务提交，业务拒绝仍可为 ERROR 并有已提交的失败回执，rollback 不作为写入成功证据。

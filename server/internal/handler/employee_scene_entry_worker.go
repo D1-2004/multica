@@ -333,7 +333,11 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 		for i, item := range job.Items {
 			originalMessages = append(originalMessages, employeeSourceMessages(item, originalEnvelopes[i])...)
 		}
-		if requester, unique := employeeUniqueRequester(originalMessages); unique {
+		registered, e := employeeSceneFence(ctx, w.handler, job)
+		if e != nil {
+			return employeeSavedInput{}, e
+		}
+		if requester, unique := employeeAutomaticPrivateRequester(registered, originalMessages); unique {
 			private, e := w.handler.EmployeeMemory.Brief(ctx, employeememory.Scope{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, Kind: employeememory.ScopePrivate, PrincipalID: requester}, "", 4)
 			if e == nil && private != "" {
 				input.Input.Memory += "\nRequester-private background context for this source only; do not disclose it to other participants.\n" + private
