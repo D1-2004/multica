@@ -1,0 +1,12 @@
+EmployeeLoop contains source copied and modified from Nex / Wuphf (gawkbot).
+Copyright (c) 2026 Nex.
+
+Original source commit: 71e82a1809565281cbd0bf8185d3c125b715d934
+Original source files and modifications are recorded in SOURCE_MAP.md.
+
+This is a modified copy. Multica adaptations replace local bot execution and
+file persistence with injected Model and Host boundaries, correct completion
+and native tool batching, and impose a bounded foreground wake.
+
+The original Sustainable Use License is included in LICENSE and applies to
+these portions. Original licensing and copyright notices are preserved.
