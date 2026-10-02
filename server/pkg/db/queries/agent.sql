@@ -135,6 +135,9 @@ RETURNING *;
 -- name: GetAgentChatSessionResume :one
 SELECT chat_session_resume FROM agent WHERE id = $1;
 
+-- name: GetAgentSandboxConnectionReuse :one
+SELECT sandbox_connection_reuse FROM agent WHERE id = $1;
+
 -- name: ListAgentChatSessionResumeByIDs :many
 SELECT id, chat_session_resume FROM agent WHERE id = ANY(sqlc.arg('ids')::uuid[]);
 
@@ -163,6 +166,7 @@ UPDATE agent SET
     instructions = COALESCE(sqlc.narg('instructions'), instructions),
     dispatch_prompt_overrides = COALESCE(sqlc.narg('dispatch_prompt_overrides'), dispatch_prompt_overrides),
     dispatch_always_new_issue = COALESCE(sqlc.narg('dispatch_always_new_issue'), dispatch_always_new_issue),
+    sandbox_connection_reuse = COALESCE(sqlc.narg('sandbox_connection_reuse'), sandbox_connection_reuse),
     custom_env = COALESCE(sqlc.narg('custom_env'), custom_env),
     custom_args = COALESCE(sqlc.narg('custom_args'), custom_args),
     mcp_config = COALESCE(sqlc.narg('mcp_config'), mcp_config),

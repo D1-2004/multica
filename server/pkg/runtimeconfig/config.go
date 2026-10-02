@@ -233,8 +233,8 @@ type FCE2BConfig struct {
 	Domain                       string   `json:"domain"`
 	TimeoutSeconds               int      `json:"timeout_seconds"`
 	SandboxReadyTimeout          Duration `json:"sandbox_ready_timeout"`
-	// ConnectionReuse lets one scene and trigger share a sandbox. Nil keeps
-	// one sandbox per chat or issue.
+	// ConnectionReuse carries the per-sandbox task cap. Nil uses the default
+	// of 6. The agent switch decides whether reuse is on.
 	ConnectionReuse *FCE2BConnectionReuse `json:"connection_reuse,omitempty"`
 }
 

@@ -257,8 +257,8 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 }
 
 // connectionReuseOf copies runtime.fc_e2b.connection_reuse into the launcher
-// config. Nil is off. Target slices are copied so the launcher does not share
-// the snapshot's lists.
+// config. Nil uses the default cap. Target slices are copied so the launcher
+// does not share the snapshot's lists.
 func connectionReuseOf(cfg runtimeconfig.FCE2BConfig) runtimeconfig.FCE2BConnectionReuse {
 	if cfg.ConnectionReuse == nil {
 		return runtimeconfig.FCE2BConnectionReuse{}

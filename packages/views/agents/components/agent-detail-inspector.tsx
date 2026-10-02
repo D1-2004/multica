@@ -7,9 +7,10 @@ import {
   AGENT_MAX_CONCURRENT_TASKS_MAX,
   AGENT_MAX_CONCURRENT_TASKS_MIN,
 } from "@multica/core/agents";
-import { isASBRuntime, runtimeModelsOptions } from "@multica/core/runtimes";
+import { isASBRuntime, isFCE2BRuntime, runtimeModelsOptions } from "@multica/core/runtimes";
 import { isImeComposing } from "@multica/core/utils";
 import { Input } from "@multica/ui/components/ui/input";
+import { Switch } from "@multica/ui/components/ui/switch";
 import {
   SettingsCard,
   SettingsRow,
@@ -191,6 +192,22 @@ export function AgentDetailInspector({
               onSave={(next) => update({ max_concurrent_tasks: next })}
             />
           </SettingsRow>
+          {isFCE2BRuntime(runtime) ? (
+            <SettingsRow
+              label={t(($) => $.inspector.prop_sandbox_reuse)}
+              description={t(($) => $.inspector.prop_sandbox_reuse_hint)}
+              align="start"
+            >
+              <Switch
+                checked={agent.sandbox_connection_reuse !== false}
+                disabled={!canEdit}
+                aria-label={t(($) => $.inspector.prop_sandbox_reuse)}
+                onCheckedChange={(checked) => {
+                  void update({ sandbox_connection_reuse: checked });
+                }}
+              />
+            </SettingsRow>
+          ) : null}
         </SettingsCard>
       </SettingsSection>
       <GitHubIdentityBindingCard agentId={agent.id} canManage={canEdit} />

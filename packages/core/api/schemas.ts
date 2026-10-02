@@ -3005,6 +3005,8 @@ const AgentResponseBaseSchema = z
       .safe()
       .catch(1)
       .default(1),
+    // Older backends omit the switch. Missing or malformed means on.
+    sandbox_connection_reuse: z.boolean().catch(true).default(true),
   })
   .loose();
 
@@ -3036,6 +3038,7 @@ export const EMPTY_AGENT_RESPONSE: Agent = {
   invocation_targets: [],
   status: "offline",
   max_concurrent_tasks: 1,
+  sandbox_connection_reuse: true,
   model: "",
   owner_id: null,
   skills: [],

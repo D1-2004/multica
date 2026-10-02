@@ -216,6 +216,8 @@
     "prop_speed": "속도",
     "prop_visibility": "공개 범위",
     "prop_concurrency": "동시 실행",
+    "prop_sandbox_reuse": "샌드박스 재사용",
+    "prop_sandbox_reuse_hint": "켜면 같은 장면과 같은 트리거의 작업이 클라우드 샌드박스 하나를 공유합니다. 직원 파일시스템을 쓰는 에이전트와 이 기능이 없는 이미지는 각자 별도 샌드박스를 사용합니다. 기본값은 켜짐입니다.",
     "prop_dingtalk_response_enabled": "응답 통합",
     "prop_dingtalk_response_enabled_hint": "플랫폼이 DingTalk 답장을 보내고 생각 중 반응을 관리합니다. 기본값은 꺼짐입니다. 수신 시 판단과 호환되는 런타임이 필요합니다. 변경 사항은 새로 수신하는 메시지부터 적용됩니다.",
     "prop_dingtalk_show_ai_tag": "AI 발신 표시",

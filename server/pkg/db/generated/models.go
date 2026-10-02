@@ -212,6 +212,7 @@ type Agent struct {
 	DispatchAlwaysNewIssue  bool        `json:"dispatch_always_new_issue"`
 	DispatchPromptOverrides []byte      `json:"dispatch_prompt_overrides"`
 	CoordinatorContract     []byte      `json:"coordinator_contract"`
+	SandboxConnectionReuse  bool        `json:"sandbox_connection_reuse"`
 }
 
 type AgentA2aEndpoint struct {

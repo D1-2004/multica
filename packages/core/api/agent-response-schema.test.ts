@@ -9,6 +9,22 @@ import {
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe("sandbox connection reuse", () => {
+  it("stays on when an older backend omits or malforms the switch", () => {
+    expect(AgentResponseSchema.parse({ id: "agent-1" }).sandbox_connection_reuse).toBe(true);
+    expect(AgentResponseSchema.parse({ id: "agent-1", sandbox_connection_reuse: "no" }).sandbox_connection_reuse).toBe(true);
+  });
+
+  it("preserves an explicit off and sends it", async () => {
+    expect(AgentResponseSchema.parse({ id: "agent-1", sandbox_connection_reuse: false }).sandbox_connection_reuse).toBe(false);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "agent-1", sandbox_connection_reuse: false }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await new ApiClient("https://api.example.test").updateAgent("agent-1", { sandbox_connection_reuse: false });
+    expect(result.sandbox_connection_reuse).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/api/agents/agent-1", expect.objectContaining({ body: JSON.stringify({ sandbox_connection_reuse: false }) }));
+  });
+});
+
 describe("Agent response policy compatibility", () => {
   it("defaults old agents to Coordinator without enabling coordination", () => {
     expect(AgentResponseSchema.parse({ id: "agent-1", inbound_coordinator: false })).toMatchObject({ coordination_mode: "coordinator", employee_loop_ready: false, inbound_coordinator: false });

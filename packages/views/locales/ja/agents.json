@@ -208,6 +208,8 @@
     "prop_speed": "速度",
     "prop_visibility": "公開範囲",
     "prop_concurrency": "同時実行数",
+    "prop_sandbox_reuse": "サンドボックス再利用",
+    "prop_sandbox_reuse_hint": "オンにすると、同じシーンと同じトリガーのタスクは 1 台のクラウドサンドボックスを共有します。従業員ファイルシステムを使うエージェントと、この機能のないイメージは、それぞれ別のサンドボックスを使います。初期設定はオンです。",
     "prop_dingtalk_response_enabled": "返信を統一",
     "prop_dingtalk_response_enabled_hint": "DingTalk の返信と考え中のリアクションをプラットフォームで管理します。初期設定はオフです。受信時の判断と対応するランタイムが必要です。変更は新しく受信するメッセージから適用されます。",
     "prop_dingtalk_show_ai_tag": "AI 送信ラベルを表示",

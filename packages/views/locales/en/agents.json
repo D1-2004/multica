@@ -224,6 +224,8 @@
     "prop_speed": "Speed",
     "prop_visibility": "Visibility",
     "prop_concurrency": "Concurrency",
+    "prop_sandbox_reuse": "Sandbox reuse",
+    "prop_sandbox_reuse_hint": "When on, tasks in the same scene from the same trigger share one cloud sandbox. Agents on the employee filesystem, and runtimes whose image lacks this capability, still get their own sandbox. On by default.",
     "prop_dingtalk_response_enabled": "Unified responses",
     "prop_dingtalk_response_enabled_hint": "Let the platform send DingTalk replies and manage thinking reactions. Off by default. Requires inbound judging and a compatible runtime. Changes apply to new incoming messages.",
     "prop_dingtalk_show_ai_tag": "Show AI sender label",

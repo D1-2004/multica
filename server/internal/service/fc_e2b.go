@@ -155,8 +155,9 @@ type FCE2BConfig struct {
 	// configuration came from; the zero value keeps the CLI and leaves an
 	// aborted task's processes alone.
 	SDKRollout FCE2BSDKRollout
-	// ConnectionReuse is runtime.fc_e2b.connection_reuse. The zero value
-	// keeps one sandbox per chat or issue.
+	// ConnectionReuse carries the per-sandbox task cap from
+	// runtime.fc_e2b.connection_reuse. The zero value uses the default of 6.
+	// agent.sandbox_connection_reuse decides whether reuse is on.
 	ConnectionReuse runtimeconfig.FCE2BConnectionReuse
 }
 
@@ -1655,7 +1656,11 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	scope, scoped := fcE2BScopeForTask(task)
 	sceneReuseRecorded := false
 	if !useEmployeeFilesystem {
-		if sceneScope, selected, skip := connectionReuseScope(task, runtime, l.Config.ConnectionReuse); selected {
+		reuseEnabled, err := l.Queries.GetAgentSandboxConnectionReuse(ctx, task.AgentID)
+		if err != nil {
+			return fcE2BLaunchSubmission{}, false, fmt.Errorf("read sandbox connection reuse: %w", err)
+		}
+		if sceneScope, selected, skip := connectionReuseScope(task, runtime, reuseEnabled); selected {
 			scope, scoped = sceneScope, true
 			ctx = withFCE2BConnectionAdmit(ctx, fcE2BConnectionAdmit{
 				AttemptID: attempt.ID,

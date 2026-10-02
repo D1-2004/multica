@@ -15,14 +15,11 @@ func TestConnectionReuseParsesBesideTheConcurrencyCap(t *testing.T) {
       },`, 1)
 	cfg := mustParseConfig(t, raw)
 	reuse := cfg.Runtime.FCE2B.ConnectionReuse
-	if reuse == nil || !reuse.Allows("019fcfda-70bb-7830-acee-61d95e68668b", "other") || !reuse.Allows("other", "11111111-1111-4111-8111-111111111111") {
+	if reuse == nil || !reuse.Enabled || len(reuse.WorkspaceIDs) != 1 || len(reuse.AgentIDs) != 1 {
 		t.Fatalf("reuse = %#v", reuse)
 	}
 	if reuse.Concurrency() != 6 {
 		t.Fatalf("concurrency = %d", reuse.Concurrency())
-	}
-	if reuse.Allows("other", "other") {
-		t.Fatal("an unlisted workspace and agent was selected")
 	}
 }
 
@@ -40,12 +37,15 @@ func TestConnectionReuseRejectsABadTargetAndCap(t *testing.T) {
 	}
 }
 
-func TestConnectionReuseZeroCapMeansSixAndEmptyListsSelectNobody(t *testing.T) {
-	raw := strings.Replace(validJSON(), `"fc_e2b": {`, `"fc_e2b": {"connection_reuse": {"enabled": true},`, 1)
+func TestConnectionReuseZeroCapMeansSix(t *testing.T) {
+	raw := strings.Replace(validJSON(), `"fc_e2b": {`, `"fc_e2b": {"connection_reuse": {"enabled": false},`, 1)
 	cfg := mustParseConfig(t, raw)
 	reuse := cfg.Runtime.FCE2B.ConnectionReuse
-	if reuse == nil || reuse.Concurrency() != DefaultFCE2BConnectionReuseTasks || reuse.Allows("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb") {
+	if reuse == nil || reuse.Concurrency() != DefaultFCE2BConnectionReuseTasks || reuse.Enabled {
 		t.Fatalf("reuse = %#v", reuse)
+	}
+	if (FCE2BConnectionReuse{}).Concurrency() != DefaultFCE2BConnectionReuseTasks {
+		t.Fatal("an absent connection_reuse must keep the default cap")
 	}
 }
 

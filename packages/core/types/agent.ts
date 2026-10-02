@@ -630,6 +630,13 @@ export interface Agent {
   invocation_targets: AgentInvocationTarget[];
   status: AgentStatus;
   max_concurrent_tasks: number;
+  /**
+   * Share one FC/E2B sandbox across tasks in the same scene and trigger.
+   * Older backends omit it; treat `undefined` as on. An explicit false turns
+   * reuse off for this agent. Employee filesystems and images without the
+   * capability still use a private sandbox.
+   */
+  sandbox_connection_reuse?: boolean;
   model: string;
   /**
    * Runtime-native reasoning/effort token (e.g. Claude's
@@ -908,6 +915,8 @@ export interface UpdateAgentRequest {
   coordinator_contract?: CoordinatorContract | null;
   dispatch_prompt_overrides?: Record<string, string>;
   dispatch_always_new_issue?: boolean;
+  /** See `Agent.sandbox_connection_reuse`. Omitted leaves the stored value. */
+  sandbox_connection_reuse?: boolean;
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
   coordination_mode?: "coordinator" | "employee";

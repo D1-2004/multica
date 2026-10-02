@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/multica-ai/multica/server/internal/contextcap"
-	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
@@ -53,12 +52,11 @@ func fcE2BSceneScopeID(sceneID, actorKey string) pgtype.UUID {
 }
 
 // connectionReuseScope chooses the scene bucket for this task.
-// selected is false and skipReason is empty when the switch does not name
-// this workspace or agent. A selected task that cannot reuse returns a
-// skipReason of a2a, capability, or no_scene.
-func connectionReuseScope(task db.AgentTaskQueue, runtime db.AgentRuntime, reuse runtimeconfig.FCE2BConnectionReuse) (fcE2BTaskScope, bool, string) {
-	if !reuse.Allows(util.UUIDToString(runtime.WorkspaceID), util.UUIDToString(task.AgentID)) {
-		return fcE2BTaskScope{}, false, ""
+// enabled is agent.sandbox_connection_reuse. Off returns skipReason
+// disabled. A task that cannot reuse returns a2a, capability, or no_scene.
+func connectionReuseScope(task db.AgentTaskQueue, runtime db.AgentRuntime, enabled bool) (fcE2BTaskScope, bool, string) {
+	if !enabled {
+		return fcE2BTaskScope{}, false, "disabled"
 	}
 	if IsA2ATaskOrigin(task.Context) {
 		return fcE2BTaskScope{}, false, "a2a"
