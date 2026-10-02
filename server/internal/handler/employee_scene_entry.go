@@ -6,6 +6,7 @@ import (
 	"errors"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/util"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -221,6 +222,18 @@ func (h *Handler) admitEmployeeScene(w http.ResponseWriter, r *http.Request, c *
 		}
 		h.EmployeeSceneWorker.Notify()
 	}
+	// Lookup above observes the committed consumer; duplicate ingress may log the
+	// same IDs and does not imply that a second job was created.
+	messageIDs := make([]string, 0, len(c.Event.Data.Messages))
+	for _, message := range c.Event.Data.Messages {
+		if message.OpenMsgID != "" {
+			messageIDs = append(messageIDs, message.OpenMsgID)
+		}
+		if len(messageIDs) >= employeeentry.MaxWindowMessages {
+			break
+		}
+	}
+	slog.InfoContext(r.Context(), "employee scene entry admitted", "event", "employee_scene_entry_admitted", "workspace_id", scope.WorkspaceID, "agent_id", scope.AgentID, "tenant_org_id", scope.TenantOrgID, "scene_id", scope.SceneID, "receipt_id", c.EventReceiptID, "source_message_ids", messageIDs, "job_id", consumption.JobID, "state", consumption.State)
 	writeJSON(w, http.StatusAccepted, map[string]string{"event_receipt_id": c.EventReceiptID, "employee_job_id": consumption.JobID, "owner_loop": consumption.Owner, "state": consumption.State, "reason": consumption.Reason})
 	return true
 }

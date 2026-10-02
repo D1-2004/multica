@@ -261,6 +261,7 @@ func TestEmployeeSceneTaskReadNeedsRequesterAndExplicitAnchor(t *testing.T) {
 
 func TestEmployeeSceneRuntimeReadinessRequiresAuthenticatedCapability(t *testing.T) {
 	f, _, dc := employeeFixture(t)
+	configureEmployeeReadyDependencies(f)
 	ctx := context.Background()
 	if err := f.h.EmployeeSceneWorker.Ready(ctx, dc.WorkspaceID, dc.AgentID); err != nil {
 		t.Fatalf("verified runtime rejected: %v", err)
