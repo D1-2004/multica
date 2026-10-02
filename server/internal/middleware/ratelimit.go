@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -88,7 +89,15 @@ func RateLimit(rdb *redis.Client, limit int, window time.Duration, trustedProxie
 
 // extractIP determines the client IP for rate limiting purposes.
 // It only honors X-Forwarded-For when RemoteAddr is from a trusted proxy.
+// RateLimitClientIP exposes the same trusted-proxy extraction to the gateway.
+func RateLimitClientIP(r *http.Request, trustedProxies []*net.IPNet) string {
+	return extractIP(r, trustedProxies)
+}
+
 func extractIP(r *http.Request, trustedProxies []*net.IPNet) string {
+	if verified := forwarding.ClientIP(r.Context()); verified != "" {
+		return verified
+	}
 	remoteHost, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		remoteHost = r.RemoteAddr

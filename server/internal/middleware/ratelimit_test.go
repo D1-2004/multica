@@ -2,9 +2,11 @@ package middleware
 
 import (
 	"encoding/json"
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -241,5 +243,49 @@ func TestParseTrustedProxies_InvalidSkipped(t *testing.T) {
 	nets := ParseTrustedProxies("10.0.0.0/8, not-a-cidr, 172.16.0.0/12")
 	if len(nets) != 2 {
 		t.Fatalf("expected 2 valid CIDRs (invalid skipped), got %d", len(nets))
+	}
+}
+
+func TestForwardedLoginRateLimitKeepsSeparateClientBuckets(t *testing.T) {
+	secret := []byte(strings.Repeat("s", 32))
+	ips := make(chan string, 2)
+	target := httptest.NewTLSServer(forwarding.AcceptClientIP(secret, "pre")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ips <- extractIP(r, nil)
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	defer target.Close()
+	trusted := ParseTrustedProxies("127.0.0.1/32")
+	gateway, err := forwarding.New(forwarding.Config{Targets: map[string]string{"pre": target.URL}, Transport: target.Client().Transport, RegistrationSecret: secret, ClientIP: func(r *http.Request) string { return RateLimitClientIP(r, trusted) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{}
+	for _, ip := range []string{"192.0.2.1", "192.0.2.2"} {
+		r := httptest.NewRequest("POST", "/forward/pre/auth/fde/dingtalk", nil)
+		r.RemoteAddr = "127.0.0.1:1234"
+		r.Header.Set("X-Forwarded-For", "8.8.8.8, "+ip)
+		w := httptest.NewRecorder()
+		gateway.Middleware(http.NotFoundHandler()).ServeHTTP(w, r)
+		if w.Code != 204 {
+			t.Fatalf("status=%d", w.Code)
+		}
+		select {
+		case got := <-ips:
+			if got != ip {
+				t.Fatalf("client=%s want=%s", got, ip)
+			}
+			keys = append(keys, rateLimitKey("/auth/fde/dingtalk", got))
+		case <-time.After(time.Second):
+			t.Fatal("no target request")
+		}
+	}
+	if keys[0] == keys[1] {
+		t.Fatal("forwarded users share one login bucket")
+	}
+	direct := httptest.NewRequest("POST", "/auth/fde/dingtalk", nil)
+	direct.RemoteAddr = "192.0.2.3:1234"
+	direct.Header.Set("X-Forwarded-For", "8.8.8.8")
+	if got := RateLimitClientIP(direct, trusted); got != "192.0.2.3" {
+		t.Fatalf("untrusted XFF accepted: %s", got)
 	}
 }

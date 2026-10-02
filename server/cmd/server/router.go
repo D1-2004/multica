@@ -37,6 +37,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/dwsidentity"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	"github.com/multica-ai/multica/server/internal/handler"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
@@ -412,6 +413,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		A2AForwardAllowedOrigins:      splitAndTrim(os.Getenv("MULTICA_A2A_FORWARD_ALLOWED_ORIGINS")),
 		A2AForwardRegistryURLs:        splitAndTrim(os.Getenv("MULTICA_A2A_FORWARD_REGISTRY_URLS")),
 		A2AForwardRegistrationSecret:  strings.TrimSpace(os.Getenv("MULTICA_A2A_FORWARD_REGISTRATION_SECRET")),
+		ForwardPublicBaseURL:          strings.TrimSpace(os.Getenv("MULTICA_FORWARD_PUBLIC_BASE_URL")),
 		GitHubPreWebhookURL:           strings.TrimSpace(os.Getenv("GITHUB_PRE_WEBHOOK_URL")),
 		GitHubPreWebhookSecret:        strings.TrimSpace(os.Getenv("GITHUB_PRE_WEBHOOK_SECRET")),
 		StableRuntimePublisherUserIDs: stableRuntimePublishers,
@@ -454,6 +456,27 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		agentIdentityControlBaseURLProvider = opts.RuntimeConfig.agentIdentityControlBaseURL
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	forwardTargets, forwardErr := forwarding.ParseTargets(os.Getenv("MULTICA_FORWARD_TARGETS"))
+	if forwardErr != nil {
+		panic(forwardErr)
+	}
+	forwardSecret := []byte(signupConfig.A2AForwardRegistrationSecret)
+	if (len(forwardTargets) > 0 || signupConfig.ForwardPublicBaseURL != "") && len(forwardSecret) < 32 {
+		panic("environment forwarding requires a shared registration secret of at least 32 characters")
+	}
+	forwardTrustedProxies := middleware.ParseTrustedProxies(os.Getenv("RATE_LIMIT_TRUSTED_PROXIES"))
+	h.Forwarding, forwardErr = forwarding.New(forwarding.Config{
+		Targets: forwardTargets, RegistrationSecret: forwardSecret,
+		ClientIP: func(r *http.Request) string { return middleware.RateLimitClientIP(r, forwardTrustedProxies) },
+	})
+	if forwardErr != nil {
+		panic(forwardErr)
+	}
+	localAssetTarget, forwardErr := forwarding.AssetTarget(os.Getenv("MULTICA_FORWARD_ASSET_PREFIX"), signupConfig.ForwardPublicBaseURL)
+	if forwardErr != nil {
+		panic(forwardErr)
+	}
+
 	if provision, err := dshStorageProvisioning(opts.RuntimeConfig); err != nil {
 		slog.Error("DSH storage provisioning configuration unavailable", "error", err)
 	} else if provision != nil {
@@ -1866,6 +1889,24 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Use(opts.HTTPMetrics.Middleware)
 	}
 	r.Use(chimw.Recoverer)
+	// Environment selection precedes local authentication: sessions belong to
+	// the target database. The gateway transports only target-scoped cookies.
+	if localAssetTarget != "" {
+		frontendPort := strings.TrimSpace(os.Getenv("FRONTEND_PORT"))
+		if frontendPort == "" {
+			frontendPort = "3000"
+		}
+		r.Use(func(next http.Handler) http.Handler {
+			assets, err := forwarding.LocalAssets(localAssetTarget, "http://127.0.0.1:"+frontendPort, next)
+			if err != nil {
+				panic(err)
+			}
+			return assets
+		})
+	}
+	r.Use(forwarding.AcceptClientIP(forwardSecret, localAssetTarget))
+	r.Use(h.Forwarding.Middleware)
+
 	if opts.SandboxRelay != nil {
 		r.Use(opts.SandboxRelay)
 	}

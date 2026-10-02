@@ -327,7 +327,7 @@ func (h *Handler) completeConnectorOAuthCallback(w http.ResponseWriter, r *http.
 	defer cancel()
 	outcome := h.completeConnectorOAuth(ctx, callback)
 	if outcome.RedirectURL == "" {
-		h.writeConnectorOAuthInvalidPage(w)
+		h.writeConnectorOAuthInvalidPage(w, r)
 		return
 	}
 	http.Redirect(w, r, outcome.RedirectURL, http.StatusFound)

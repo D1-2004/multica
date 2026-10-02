@@ -29,6 +29,8 @@ RUNTIME_CONFIG_KEYS=(
   MULTICA_A2A_FORWARD_ALLOWED_ORIGINS
   MULTICA_A2A_FORWARD_REGISTRY_URLS
   MULTICA_A2A_FORWARD_REGISTRATION_SECRET
+  MULTICA_FORWARD_TARGETS
+  MULTICA_FORWARD_PUBLIC_BASE_URL
   CORS_ALLOWED_ORIGINS
   COOKIE_DOMAIN
   LOGIN_DINGTALK_ONLY
@@ -255,6 +257,13 @@ load_antx_runtime_config() {
 }
 
 load_antx_runtime_config
+
+# Asset routing must use the prefix baked into this exact frontend build,
+# independently of whether new public links are currently enabled.
+if [[ -f "$APP_ROOT/forward-asset-prefix" ]]; then
+  MULTICA_FORWARD_ASSET_PREFIX="$(cat "$APP_ROOT/forward-asset-prefix")"
+  export MULTICA_FORWARD_ASSET_PREFIX
+fi
 
 required_runtime_keys=(DATABASE_URL JWT_SECRET)
 if [[ "${MULTICA_RUNTIME_CONFIG_SOURCE:-}" == "diamond" ]]; then
