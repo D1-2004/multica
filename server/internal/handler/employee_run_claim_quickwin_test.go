@@ -56,6 +56,9 @@ func TestEmployeeDirectClaimSkipsReplyQuickwinAndKeepsOrdinaryTask(t *testing.T)
 	if failure != nil || direct.DirectTaskPrompt == "" {
 		t.Fatal("Direct claim failed", failure)
 	}
+	if direct.DingTalkMessagePolicy == nil || direct.DingTalkMessagePolicy.FinalTextOwner != protocol.DingTalkFinalTextOwnerHost {
+		t.Fatal("Direct final text is not Host-owned")
+	}
 	if strings.Contains(direct.Instruction, "dws chat +messages-reply") {
 		t.Fatal("Direct claim received a second source-delivery owner from quickwin")
 	}
@@ -66,6 +69,9 @@ func TestEmployeeDirectClaimSkipsReplyQuickwinAndKeepsOrdinaryTask(t *testing.T)
 	normal, _, _, _, failure := f.h.buildClaimedTaskResponse(req, &ordinary, runtime, "", uuidToString(runtime.ID), testWorkspaceID)
 	if failure != nil {
 		t.Fatal("ordinary claim failed", failure)
+	}
+	if normal.DingTalkMessagePolicy != nil && normal.DingTalkMessagePolicy.FinalTextOwner != "" {
+		t.Fatal("ordinary task acquired Direct final ownership")
 	}
 	if normal.DirectTaskPrompt != "" || !strings.Contains(normal.Instruction, "dws chat +messages-reply") {
 		t.Fatal("ordinary task lost its enabled reply quickwin")

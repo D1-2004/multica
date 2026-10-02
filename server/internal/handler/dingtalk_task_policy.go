@@ -112,6 +112,9 @@ func resolveDingTalkTaskPolicy(ctx context.Context, reader dingTalkTaskPolicyRea
 		return nil, nil
 	}
 	policy := &protocol.DingTalkMessagePolicy{PlatformManagedLifecycle: managed}
+	if _, direct := service.ParseDirectTaskContext(task); direct {
+		policy.FinalTextOwner = protocol.DingTalkFinalTextOwnerHost
+	}
 	if stored.ResponsePolicy != nil {
 		policy.ShowAITag = stored.ResponsePolicy.ShowAITag
 		applyDingTalkOriginReply(policy, stored)
