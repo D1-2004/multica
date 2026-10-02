@@ -19,12 +19,13 @@ import (
 )
 
 type employeeTestModel struct {
-	calls      int
-	sourceRef  string
-	dispatch   bool
-	partial    bool
-	quiet      bool
-	definition *employeetask.Definition
+	calls            int
+	sourceRef        string
+	dispatch         bool
+	partial          bool
+	quiet            bool
+	definition       *employeetask.Definition
+	completionNotice map[string]any
 }
 
 func (m *employeeTestModel) Chat(ctx context.Context, p openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
@@ -33,6 +34,9 @@ func (m *employeeTestModel) Chat(ctx context.Context, p openai.ChatCompletionNew
 	finish := "stop"
 	if m.dispatch {
 		arguments := map[string]any{"goal": "Analyze feedback", "prompt": "Analyze feedback and report the evidence", "reply": "我来分析这些反馈。", "source_ref": m.sourceRef}
+		if m.completionNotice != nil {
+			arguments["completion_notice_policy"] = m.completionNotice
+		}
 		if m.definition != nil {
 			arguments["deliverables"] = m.definition.Deliverables
 			arguments["success_criteria"] = m.definition.SuccessCriteria

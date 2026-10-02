@@ -184,9 +184,13 @@ func startEmployeeNoticeDelivery(t *testing.T, f employeeNoticeFixture, p *emplo
 	return actionID
 }
 
-func waitEmployeeNoticeAction(t *testing.T, id, want string) {
+func waitEmployeeNoticeAction(t *testing.T, id, want string, timeout ...time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	budget := 5 * time.Second
+	if len(timeout) > 0 {
+		budget = timeout[0]
+	}
+	deadline := time.Now().Add(budget)
 	for {
 		var state string
 		if err := testPool.QueryRow(context.Background(), `SELECT state FROM response_action WHERE id=$1`, id).Scan(&state); err != nil {

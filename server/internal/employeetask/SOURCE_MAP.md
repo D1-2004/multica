@@ -67,3 +67,8 @@ go vet ./internal/employeetask
 
 Database Store tests remain owned by the task-domain validation suite; no database
 is needed to compile a Work Packet.
+
+The WorkPacket now also carries a Host-validated completion-notice policy and
+its exact selected-source quote. The Host's deterministic completion hook adapts
+GawkBot completion delivery to Multica's verified native-file receipts; receipt
+and provider checks remain outside the kernel, with no extra model call.

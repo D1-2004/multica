@@ -18,10 +18,10 @@
 | 项目 | 必须取得的证据 | 当前状态 |
 | --- | --- | --- |
 | 只回答不派工 | 同一随机记忆问题返回正确值，job 为 reply、无新 Task/Run、没有第二条矛盾结果 | 已通过 EL3-RECALL-011456：正确返回已有验收码，无新 Task/Run 和第二条矛盾回复 |
-| 纯 Direct | Langfuse 实际 system 无通用平台操作段；岗位和场域 sentinel 保留；工具面仍有场域 MCP | 新镜像真实 system 无平台段；场域 MCP 执行仍待专项验证 |
-| 场域能力对齐 | 单聊/群的能力介绍给当前 scene 的有效配置链接；有效能力目录准确；执行器自管理 MCP 可用 | 单聊/群链接已送达，场域只读已通过；自管理执行待验收 |
-| 钉钉文件交付 | 新任务产生原生文件消息，发送回执与真实消息匹配，文件内容可读回 | 原生文件发送在身份资料读取处失败，任务已取消；修复中 |
-| 前台 Langfuse | reply、真实 dispatch、拒绝及 journal 恢复均有准确 trace，敏感字段脱敏，无额外 LLM | 真实 reply trace 已验证两次 generation、模型/schema/usage/工具齐全；dispatch 关联继续核验 |
+| 纯 Direct | Langfuse 实际 system 无通用平台操作段；岗位和场域 sentinel 保留；工具面仍有场域 MCP | 新镜像真实 system 无平台段；64 个工具名完整，12 个场域 MCP 保留，真实执行通过 |
+| 场域能力对齐 | 单聊/群的能力介绍给当前 scene 的有效配置链接；有效能力目录准确；执行器自管理 MCP 可用 | 单聊/群链接已送达；新镜像场域读取、测试项创建/禁用/清理均通过，H5 页面仍未验 |
+| 钉钉文件交付 | 新任务产生原生文件消息，发送回执与真实消息匹配，文件内容可读回 | 身份衔接修复后原生文件已送达且内容读回匹配；多余总结仍修复中 |
+| 前台 Langfuse | reply、真实 dispatch、拒绝及 journal 恢复均有准确 trace，敏感字段脱敏，无额外 LLM | 真实 reply/dispatch 均首轮完成并有 job→Task/Run/queue 关联；journal/拒绝由回归覆盖 |
 | 控制与隔离 | 后台工作期间前台可回复；不同 scene 私有资料不混用；任务/产物权限不扩大 | 已有部分真实证据，集成后复验 |
 
 既有真实证据：单聊直接回复约 5 秒、群聊 @ 回复约 9 秒；运行中的 Python 任务期间前台约 7 秒回复；真实计算结果 333833500 已回传。文件已成功存储且授权下载内容/SHA 匹配，但这不等于钉钉原生文件交付。记忆查询曾多派任务，EL3 回归已修复并通过；这只证明已有结果的私有召回，不是完整记忆演化验收。
@@ -46,3 +46,14 @@
 03:09 旧模板对照任务 `25ddc355-bdf9-4162-a519-4d298113f5c2` 实际调用 `mcp_config_qwen_tag_scene_scene_config_get`，返回正确单聊 scene_id 与常开技能；场域 MCP 不是缺失。随后钉钉身份查询仍失败，且旧执行面诱导了多余的 final/reply 尝试，均被上游拒绝；最终 Host 通道成功回传结果。因此须以新纯执行模板再次核验。
 
 身份故障根因是 Host/Runtime 版本衔接：Host 已通过 `MULTICA_DWS_AUTH_CODE` / `MULTICA_DWS_AUTH_CLIENT_ID` 提供原生数字员工凭据，当前 Runtime 脚本却忽略这两个变量并使用另一来源的 Agent Identity code。修复须显式消费 Host 的成对注入，不通过忽略 `success:false`、伪造 userId 或改用别人的账号恢复文件发送。
+
+## 第二轮实测（03:30 起）
+
+服务器 `c476ba23fe29eeae663f7500ef6ab307d24de9de` 已经预发 `3110324009` 构建、部署、集成通过。Runtime `6edbded38990c06408c4007e7c3fef4ca411797d` 的自动 PUSH 构建 `77188406` 成功，模板 `eyq6tw0p1jcjayewwtxr` 已切换并读回；Daemon pin 不变。
+
+- 普通能力介绍：单聊 job `b056094e-8f47-45b5-9364-07a62a3acd7f`，群聊 job `0d3f422a-ba47-4cbd-b6d1-a38594db4c92`，均首轮 `describe_capabilities` 终态、无 Task/Run。实际 IM 分别 03:30:15→03:30:20、03:30:29→03:30:39，回复精简且附各自场域链接；Langfuse 各一个真实 generation。
+- 文件 queue `f9e5fb90-601d-4c48-a1cf-9aee752ca6d7`，前台 job `6e845715-3cc7-4d1e-a167-dcc0235f1647`、Run `addf6e08-fd38-45cd-9ad8-64ce1cd36553`。03:31:59 原生文件消息 `msgleiPa1N1ruPZ5MndM6FTHA==` 送达；provider 回执 SUCCESS，冬翔账号定向读取并下载 `employee-e2e.txt` 成功，26 字节内容精确等于 `EL5-DM-NATIVE-FILE-031511` 加换行，SHA256 `3c411ffa31dce9fa7ca13d28c24c32436bc5223445597e6c3360b078681c2244`。
+- 新后台 trace 记录 tools=64、recorded=64、complete=true、truncated=false，包含 12 个 `config_qwen_tag_scene` 工具，无通用 `mcp_multica_`；完整 schema 仍明确为未导出。
+- 新缺陷：文件用户明确要求不再发总结，Host 在 03:32:11 仍追加长摘要（消息 `msgYDdpolk4VhRn4Hh/LMNmhw==`）。原生文件运输已通过，完整交付体验仍未通过；需修 Run 终态通知策略后继续真实 IM 回归。
+
+新纯执行模板的专项验收：task `b1cdd611-6a5a-41ea-b0f3-00bf95755ff1` 真实执行 Python 得到 `338350`，并调用场域 MCP 返回“冬翔 / dws-shortcuts”，03:35:42 Host 仅回传一行结果。task `44f0bf1d-1e3e-4f7e-b17c-ac58f69acaad` 实际完成 config_get → prompt_upsert(enabled=false) → config_get → 删除自己新建的测试提示词 → config_get；管理 API 独立比较前后 prompts、skills、connectors、mcp_config 完全一致。测试项未启用、无残留。此证据说明自我场域管理执行链已通，不只是在工具列表里出现。

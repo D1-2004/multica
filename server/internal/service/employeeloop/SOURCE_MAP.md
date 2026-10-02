@@ -146,3 +146,7 @@ links in a private delivery record outside model-facing tool results.
 parameters. Existing Direct scene-management MCP handles actual configuration
 changes. These are application adapters; the copied GawkBot kernel gains no
 storage, permission, or provider-specific implementation.
+
+The Host adapts the deterministic completion hook with an explicit, source-bound
+file-delivery notice policy and provider-verified receipts. This delivery policy
+is not kernel inference, does not inspect final prose, and adds no model request.

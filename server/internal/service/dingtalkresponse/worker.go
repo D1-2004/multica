@@ -67,6 +67,8 @@ func (s *Service) claim(ctx context.Context) (*action, error) {
 	return &a, nil
 }
 
+var errBeforeSendDeferred = errors.New("response action deferred before submission")
+
 func (s *Service) processOne(ctx context.Context) (bool, error) {
 	a, err := s.claim(ctx)
 	if err != nil || a == nil {
@@ -93,6 +95,9 @@ func (s *Service) processOne(ctx context.Context) (bool, error) {
 		}
 	} else if (a.State == "provider_accepted" || a.State == "unknown") && a.ProviderTaskID != "" {
 		err = s.query(ctx, a)
+	}
+	if errors.Is(err, errBeforeSendDeferred) {
+		return true, nil
 	}
 	if err != nil {
 		return true, err
@@ -148,7 +153,10 @@ func (s *Service) send(ctx context.Context, a *action) error {
 			if errors.As(err, &suppressed) {
 				return s.saveState(ctx, a, "cancelled", "", "", "", suppressedSendCodePrefix+suppressed.Reason)
 			}
-			return s.release(ctx, a, time.Now().Add(retryDelay(a.Attempts)))
+			if err := s.release(ctx, a, time.Now().Add(retryDelay(a.Attempts))); err != nil {
+				return err
+			}
+			return errBeforeSendDeferred
 		}
 	}
 	if s.provider == nil {
