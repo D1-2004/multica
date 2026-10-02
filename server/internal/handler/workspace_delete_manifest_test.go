@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/scene"
+	"github.com/multica-ai/multica/server/internal/service/employeememory"
 )
 
 type workspaceDeleteAction string
@@ -75,6 +76,8 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"context_scope_routine":           workspaceDelete,
 	"daemon_connection":               workspaceDelete,
 	"daemon_token":                    workspaceDelete,
+	"employee_learning":               workspaceDelete,
+	"employee_memory_state":           workspaceDelete,
 	"employee_task":                   workspaceDelete,
 	"employee_task_entry":             workspaceDelete,
 	"employee_task_run":               workspaceDelete,
@@ -230,7 +233,7 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		for _, table := range []string{"employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
+		for _, table := range []string{"employee_learning", "employee_memory_state", "employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
 			if _, err := testPool.Exec(context.Background(), `DELETE FROM `+table+` WHERE workspace_id=$1`, workspaceID); err != nil {
 				t.Errorf("cleanup %s: %v", table, err)
 			}
@@ -266,12 +269,15 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 	if _, err = store.StartRun(ctx, task.Scope, task.ID, employeetask.StartRunParams{Source: employeetask.Source{Namespace: "test", Key: "run"}, QueueTaskID: uuid.NewString(), ExpectedVersion: task.Version}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = employeememory.NewStore(testPool).Record(ctx, employeememory.Scope{WorkspaceID: parseUUID(workspaceID), AgentID: parseUUID(agentID), TenantOrgID: task.Scope.TenantOrgID, Scene: task.Scope.Scene, Kind: employeememory.ScopeScene}, employeememory.LearningRecord{Type: employeememory.LearningTypePreference, Key: "delete-fixture", Insight: "Keep updates concise", Confidence: 8}, employeememory.TrustedEvidence{SourceID: "delete-fixture", EvidenceID: workspaceID, ActorID: testUserID, HumanStated: true}); err != nil {
+		t.Fatal(err)
+	}
 	return workspaceID
 }
 
 func assertWorkspaceEmployeeRecords(t *testing.T, workspaceID string, tasks int) {
 	t.Helper()
-	for table, multiplier := range map[string]int{"employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1} {
+	for table, multiplier := range map[string]int{"employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1, "employee_learning": 1, "employee_memory_state": 1} {
 		var count int
 		if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM `+table+` WHERE workspace_id=$1`, workspaceID).Scan(&count); err != nil {
 			t.Fatal(err)
