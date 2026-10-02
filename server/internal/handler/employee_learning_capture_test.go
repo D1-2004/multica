@@ -27,7 +27,13 @@ type employeeLearningFixture struct {
 
 func newEmployeeLearningFixture(t *testing.T) employeeLearningFixture {
 	t.Helper()
+	return newEmployeeLearningFixtureInConversation(t, "group")
+}
+
+func newEmployeeLearningFixtureInConversation(t *testing.T, conversationType string) employeeLearningFixture {
+	t.Helper()
 	f, model, dc := employeeFixture(t)
+	f.command.Event.Data.Conversation.Type = conversationType
 	ctx := context.Background()
 	if _, err := testPool.Exec(ctx, `INSERT INTO agent_dingtalk_identity(agent_id,workspace_id,dws_uid,org_id,bound_by) VALUES($1,$2,'123','456',$3)`, f.agentID, testWorkspaceID, testUserID); err != nil {
 		t.Fatal(err)
@@ -140,7 +146,7 @@ func TestEmployeeLearningCaptureSkipsStaleRevisionDurably(t *testing.T) {
 }
 
 func TestEmployeePrivateBriefOnlyForOneKnownRequester(t *testing.T) {
-	f := newEmployeeLearningFixture(t)
+	f := newEmployeeLearningFixtureInConversation(t, "single")
 	ctx := context.Background()
 	if _, err := f.response.h.ReconcileEmployeeLearnings(ctx, 100); err != nil {
 		t.Fatal(err)

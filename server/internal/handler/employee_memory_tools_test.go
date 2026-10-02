@@ -22,6 +22,7 @@ import (
 func employeeMemoryFixture(t *testing.T) (*dingTalkResponseFixture, agentDispatchContext) {
 	t.Helper()
 	f, _, dc := employeeFixture(t)
+	f.command.Event.Data.Conversation.Type = "single"
 	f.command.CompletionCallback = nil
 	f.command.ResponsePolicy = nil
 	f.h.EmployeeMemory = employeememory.NewStore(testPool)

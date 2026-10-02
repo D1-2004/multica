@@ -94,3 +94,14 @@ Execution Event、Cron、Webhook 继续使用既有事件 admission、scheduler 
 写入记录 `ae3feafd-9073-4436-accf-08d96bd30ae1`，纠正记录 `5766fe46-f481-4e1e-ad70-8475b1369695` 的 supersedes 指向前者，两次 capture 与 forget 的 Langfuse tool 均 `journal_committed=true`。纠正后的下一轮 memory snapshot 只有新值，当前问句没有答案；群里的 snapshot 新旧值均不存在且 lookup 为空。定向忘记后 snapshot 不再出现探针或新旧值，lookup 为空。原有其他记忆仍保留；未使用 reset。
 
 表达验收仍有缺口：精确值回复多加解释；空结果列举无关记忆并主动建议查询其他群；忘记确认复述被忘值并输出内部 forgotten 状态。机制通过不代表表达通过。小补丁仅在新 input snapshot 冻结输出约束及工具说明，保持历史 journal、权限与三轮预算；部署后另跑表达回归。
+
+## 表达复测（07:36—07:43）
+
+小补丁目标 `166b3381a13862f54e6cf369de52f4fbc0a4686e` 经 `3110328677` 构建、部署、集成测试通过。实际 generation 确认 `MEMORY REPLIES` 与新的工具描述已生效。
+
+- 单聊只输出值：job `6d08253f-8d1e-47f4-8d45-5f176bce9942`，一个 generation，消息 `msgrINwWLXRfLI420gafeQnfw==` 仅返回代号；07:37:57→07:38:01。
+- 定向忘记：job `4c7784ec-9c75-4a7c-83e1-f1574821c85b`，两次 generation，只忘记 `420aa421-0301-499e-ba12-8dbc0c525b9a`。消息 `msgWNNYxIscZNoD5ORzwrgaSQ==` 自然确认，不再重复值或内部 state。
+- 忘记后：job `34d3ae70-a569-4752-9650-9e5a624e5cb7`，两次 generation，有效 snapshot 无探针，lookup 为空；消息 `msg9PW1ruisYtT54WFORMX2xA==` 不再旁列其他记忆。任务仍为 69 条，无新增。
+- 尚未通过：群聊 job `0f88cb06-45a8-47d8-a58c-8a964c7e4f18` 虽然 lookup 为空，仍列举旧 EL2/6/7/8。两轮请求均确实带有新规则；不能解释为部署未生效。
+
+根因接缝：新群聊 snapshot 无条件取 `Brief(query="")` 的最近四条 requester-private 记录，工具空结果并没有移除初始背景。Gawk 原设计有基于当前 notification 的检索；直接接全文 query 又会被 @mention 等非业务文本干扰，本次不扩大排名器。下一窄改按可信 scene.Kind：DM 保留私有 brief 首轮召回，group 不自动注入私有背景，当前问题通过既有 memory_lookup 按需查询；shared 层和旧冻结快照不变。必须再验证群里仍能写入、按需召回、三轮内忘记及未知项不旁列。

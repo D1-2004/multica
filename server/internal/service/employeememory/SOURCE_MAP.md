@@ -182,3 +182,13 @@ isolation, one-connection execution, atomic journal rollback, source ordering,
 same-native-call replay, and old-schema recovery. private_entry_test.go covers
 store ordering, legacy evidence times and exact transaction rollback. These are
 local PostgreSQL checks, not a claim of pre-release acceptance.
+
+
+Automatic private brief injection is limited to new snapshots whose fenced
+agent_scene row explicitly says dm and whose original window has one known
+requester. A group does not automatically receive recent private records;
+explicit memory_lookup still searches its authorized scene/requester namespace.
+The shared-scene layer, stored records and ranking are unchanged. Unknown kinds
+are not treated as dm. Previously frozen group snapshots retain their historical
+input and journal identity. Regression tests cover provider-visible group input,
+scoped explicit lookup, DM first-call answers and historical group replay.
