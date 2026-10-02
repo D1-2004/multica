@@ -95,3 +95,28 @@ func (r *ToolRegistry) Validate(toolName string, params map[string]any) (bool, [
 	}
 	return true, nil
 }
+
+// ValidateBatch rejects known terminal conflicts before executing any Host tool.
+// Reads may accompany terminals, and multiple effect calls retain their existing
+// per-call commit semantics. A no-effect terminal cannot share an effect batch.
+func (r *ToolRegistry) ValidateBatch(calls []ToolCall) error {
+	var terminal Disposition
+	hasEffect := false
+	for _, call := range calls {
+		tool, ok := r.Get(call.Name)
+		if !ok {
+			continue
+		}
+		hasEffect = hasEffect || tool.Effect
+		if !tool.Effect && tool.Terminal != "" {
+			if terminal != "" && terminal != tool.Terminal {
+				return ErrTerminalConflict
+			}
+			terminal = tool.Terminal
+		}
+	}
+	if hasEffect && terminal != "" {
+		return ErrTerminalConflict
+	}
+	return nil
+}

@@ -148,6 +148,9 @@ func (l *Loop) callModel(ctx context.Context) error {
 		l.decision = Decision{Kind: Reply, Reply: strings.TrimSpace(msg.Content)}
 	case "tool_calls":
 		calls, err := parseToolCalls(msg)
+		if err == nil {
+			err = l.tools.ValidateBatch(calls)
+		}
 		if err != nil {
 			l.modelFailure(err)
 			return nil

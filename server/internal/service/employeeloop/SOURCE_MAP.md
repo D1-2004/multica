@@ -38,6 +38,14 @@ terms remain applicable. See [NOTICE](NOTICE).
 - One wake context reaches both Model.Chat and Host.Execute. State/cancellation
   locks are never held around either slow call. An interrupted loop can accept
   the next wake after the canceled run exits.
+- Host tools may declare a terminal disposition. The kernel rejects a batch
+  combining any effect with a no-effect terminal before executing any Host call.
+  The invalid batch uses the existing three-call format-repair budget; valid
+  reads and multiple dispatches keep their original semantics. The scene Host
+  exposes `reply` as an explicit no-task terminal alongside normal text replies;
+  `dispatch_task.reply` is only the acknowledgement of real background work.
+  PostgreSQL regressions observed both call orders creating a task before this
+  guard; they now verify no EmployeeTask, run, or new queue row is created.
 - Only Host receipts prove irreversible effects. An effect tool without a
   receipt fails. An accepted dispatch may return its terminal disposition and
   human reply together; no second model call is needed. Full tool batches still
