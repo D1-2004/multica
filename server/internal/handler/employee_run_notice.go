@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 
@@ -417,7 +418,7 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 		if held != nil {
 			state, reason = "suppressed", held.reason
 		} else {
-			body = employeeNoticeDeliveryBody(deliveryDecision)
+			body = employeeNoticeDeliveryBody(deliveryDecision, b.Result)
 			if body == "" {
 				body = employeeNoticeBody(b)
 			}
@@ -451,6 +452,7 @@ func (h *Handler) enqueueEmployeeRunNotice(ctx context.Context, workspaceID, run
 		if err = tx.Commit(ctx); err != nil {
 			return false, err
 		}
+		logEmployeeRunNotice(ctx, "employee_run_notice_recorded", b, state, reason, actionID)
 		return true, nil
 	}
 }
@@ -463,7 +465,8 @@ func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkre
 		return errors.New("employee notice authority is unavailable")
 	}
 	var runID, workspaceID, state, reason, body string
-	err := h.DB.QueryRow(ctx, `SELECT run_id::text,workspace_id::text,state,reason,body FROM employee_run_notice WHERE action_id=$1`, in.ActionID).Scan(&runID, &workspaceID, &state, &reason, &body)
+	var recorded employeeNoticeBinding
+	err := h.DB.QueryRow(ctx, `SELECT run_id::text,workspace_id::text,state,reason,body,agent_id::text,scene_id::text,task_id::text,queue_task_id::text,COALESCE(job_id::text,''),result_state FROM employee_run_notice WHERE action_id=$1`, in.ActionID).Scan(&runID, &workspaceID, &state, &reason, &body, &recorded.Scope.AgentID, &recorded.Scope.Scene.SceneID, &recorded.TaskID, &recorded.QueueID, &recorded.JobID, &recorded.ResultState)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if in.EmployeeRunNoticeID != "" {
 			return &dingtalkresponse.SuppressSendError{Reason: "notice_binding_removed"}
@@ -476,6 +479,7 @@ func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkre
 	if state == "suppressed" {
 		return &dingtalkresponse.SuppressSendError{Reason: reason}
 	}
+	recorded.RunID, recorded.Scope.WorkspaceID = runID, workspaceID
 	checkedFiles := employeeFileChecks{}
 	for {
 		if err := h.employeeNoticeReplicasReady(ctx); err != nil {
@@ -526,7 +530,7 @@ func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkre
 				}
 				continue
 			}
-			if newBody := employeeNoticeDeliveryBody(decision); newBody != "" && newBody != body {
+			if newBody := employeeNoticeDeliveryBody(decision, b.Result); newBody != "" && newBody != body {
 				if err = refreshEmployeeNoticeBody(ctx, tx, in, runID, body, newBody); err != nil {
 					return err
 				}
@@ -543,11 +547,15 @@ func (h *Handler) BeforeEmployeeRunNoticeSend(ctx context.Context, in dingtalkre
 			return tx.Commit(ctx)
 		}
 
-		if _, err = tx.Exec(ctx, `UPDATE employee_run_notice SET state='suppressed',reason=$2,updated_at=now() WHERE run_id=$1::uuid`, runID, held.reason); err != nil {
+		changed, err := tx.Exec(ctx, `UPDATE employee_run_notice SET state='suppressed',reason=$2,updated_at=now() WHERE run_id=$1::uuid AND state='enqueued'`, runID, held.reason)
+		if err != nil {
 			return err
 		}
 		if err = tx.Commit(ctx); err != nil {
 			return err
+		}
+		if changed.RowsAffected() == 1 {
+			logEmployeeRunNotice(ctx, "employee_run_notice_state_changed", recorded, "suppressed", held.reason, in.ActionID)
 		}
 		return &dingtalkresponse.SuppressSendError{Reason: held.reason}
 
@@ -571,4 +579,15 @@ func employeeNoticeActionMatches(in, target dingtalkresponse.ActionInput, runID,
 	}
 	return in.SceneNoticeID == runID && in.RequestID == "scene-notice:"+runID &&
 		in.CallbackURL == "" && in.TaskID == "" && in.ReplyToOpenMsgID == ""
+}
+
+// Log only committed state and correlation IDs. Task output, source quotes and
+// artifact URLs stay in their existing access-controlled records.
+func logEmployeeRunNotice(ctx context.Context, event string, b employeeNoticeBinding, state, reason, actionID string) {
+	slog.InfoContext(ctx, "employee run notice", "event", event,
+		"state", state, "reason", reason, "result_state", b.ResultState,
+		"workspace_id", b.Scope.WorkspaceID, "agent_id", b.Scope.AgentID,
+		"scene_id", b.Scope.Scene.SceneID, "job_id", b.JobID,
+		"task_id", b.TaskID, "run_id", b.RunID, "queue_task_id", b.QueueID,
+		"action_id", actionID)
 }

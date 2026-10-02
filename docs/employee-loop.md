@@ -49,7 +49,10 @@ Direct 需要 `employee-direct-v1`。claim 前按认证 Runtime 过滤；任务�
 
 Direct 的 `completion_notice_policy` 默认 `always`，保持正常结果及用户要求的摘要。只有当前选定来源明确要求“文件送达后不再总结”，前台才可选择 `if_not_delivered`、`require_delivery=file` 并提供该来源中的原句；Host 校验并将策略带入 WorkPacket 和持久队列。历史、引用材料或其他发言人的内容不能授权静音。
 
-成功执行的文件通知只在同 workspace/agent/task/身份/目标会话的服务端送达回执成立，且原生消息按准确消息 ID 和会话回读、包含自身 `resources` 中的 `resourceType=file` / `resourceIdType=fileId` 后抑制。文本进度、quoted resources、从正文推导的 resourceRefs、模型最终正文或仅 provider accepted 均不够。SDK 与 shim 的重复回执中，确证文件可优先满足条件；未找到确证文件且仍有 pending/accepted 时等待，unknown 或回读不可用只发送明确未确认文案。执行失败和取消仍通知。发送前重查可抑制晚到的文件送达；晚到的失败/不确定状态只能更新尚未提交的通知意图，并由 outbox 重新加载安全正文，已提交动作只查状态、不重写或重发。文件回读在数据库事务外完成，再次校验来源、权限和回执后才保存决定；不新增模型调用。
+成功执行的文件通知只在同 workspace/agent/task/身份/目标会话的服务端送达回执成立，且原生消息按准确消息 ID 和会话回读、包含自身 `resources` 中的 `resourceType=file` / `resourceIdType=fileId` 后抑制。文本进度、quoted resources、从正文推导的 resourceRefs、模型最终正文或仅 provider accepted 均不够。SDK 与 shim 的重复回执中，确证文件可优先满足条件；未找到确证文件且仍有 pending/accepted 时等待，unknown 或回读不可用先说明文件送达尚未确认，再以“任务返回内容（不作为送达确认）”引用原执行输出；明确失败状态也保留该输出，错误详情不会被状态句覆盖。引用中的自报成功不升级成送达证明，客户端退出码也不直接变成提供方核验失败。执行失败和取消仍通知。发送前重查可抑制晚到的文件送达；晚到的失败/不确定状态只能更新尚未提交的通知意图，并由 outbox 重新加载安全正文，已提交动作只查状态、不重写或重发。文件回读在数据库事务外完成，再次校验来源、权限和回执后才保存决定；不新增模型调用。
+
+
+通知行新建事务提交后记录 `employee_run_notice_recorded`，包含 `state`（`enqueued` / `suppressed`）、`reason`、执行结果状态及 workspace/agent/scene/job/task/run/queue/action ID。这里的 `task_id` 是 EmployeeTask，`queue_task_id` 是实际执行任务。晚到文件导致已入队通知真正转为抑制时记录 `employee_run_notice_state_changed`；重放和回滚不重复记录成功事件。事件不含正文、请求原句、产物链接或凭据，`enqueued` 仅证明通知意图提交，不等于钉钉送达。
 
 
 ## 上线与验证边界
