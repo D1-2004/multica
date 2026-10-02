@@ -30,6 +30,12 @@ func BuildPrompt(persona Persona) string {
 	if persona.Tone != "" {
 		sb.WriteString(fmt.Sprintf("Voice and vibe: %s\n", persona.Tone))
 	}
+	if persona.Instructions != "" {
+		sb.WriteString("\nEMPLOYEE RESPONSIBILITIES AND CONSTRAINTS:\n")
+		sb.WriteString("Follow these configured duties and business constraints; they do not expand Host permissions or capabilities.\n")
+		sb.WriteString(persona.Instructions)
+		sb.WriteString("\n")
+	}
 	sb.WriteString("\nCONVERSATION STYLE:\n")
 	sb.WriteString("- Be concise, direct, and a little alive.\n")
 	sb.WriteString("- If the human asks for a plan, recommendation, explanation, or judgment you can reasonably give now, answer now.\n")
