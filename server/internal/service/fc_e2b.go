@@ -61,12 +61,18 @@ const (
 	// DSHTrajectoryCapability declares that a DSH runner persists its native
 	// JSONL event ledger through the authenticated task trajectory endpoint.
 	DSHTrajectoryCapability = "dsh_trajectory_v1"
+	// SandboxConnectionReuseCapability declares that this runtime image can
+	// run several tasks in one sandbox. Operators set it on runtime metadata
+	// when publishing a compatible image. Catalogued templates are not stamped
+	// with it, so an older image keeps one sandbox per chat or issue.
+	SandboxConnectionReuseCapability = "sandbox_connection_reuse_v1"
 	// FCE2BProvider is the first provider selected when the Diamond template
 	// directory declares Hermes support and the request omits a provider.
 	FCE2BProvider = "hermes"
 
 	fcE2BScopeTypeChat  = "chat"
 	fcE2BScopeTypeIssue = "issue"
+	fcE2BScopeTypeScene = "scene"
 
 	defaultFCE2BCLIPath = "e2b"
 	// defaultFCE2BTimeoutSeconds is the FC/E2B sandbox lifetime used for both
@@ -149,6 +155,9 @@ type FCE2BConfig struct {
 	// configuration came from; the zero value keeps the CLI and leaves an
 	// aborted task's processes alone.
 	SDKRollout FCE2BSDKRollout
+	// ConnectionReuse is runtime.fc_e2b.connection_reuse. The zero value
+	// keeps one sandbox per chat or issue.
+	ConnectionReuse runtimeconfig.FCE2BConnectionReuse
 }
 
 func FCE2BConfigFromEnv() FCE2BConfig {
@@ -1125,6 +1134,11 @@ func fcE2BRuntimeLockKey(runtimeID pgtype.UUID) int32 {
 type fcE2BTaskScope struct {
 	typ string
 	id  pgtype.UUID
+	// sceneID and actorKey are the real scene and trigger behind a scene
+	// bucket. id is an opaque hash so the existing unique key can store it.
+	// actorKey is empty for the public scene bucket. Locking uses typ and id.
+	sceneID  string
+	actorKey string
 }
 
 func NewFCE2BLauncher(q *db.Queries, tasks *TaskService, cfg FCE2BConfig, runner CommandRunner) *FCE2BLauncher {
@@ -1633,6 +1647,29 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	}
 
 	scope, scoped := fcE2BScopeForTask(task)
+	sceneReuseRecorded := false
+	if !useEmployeeFilesystem {
+		if sceneScope, selected, skip := connectionReuseScope(task, runtime, l.Config.ConnectionReuse); selected {
+			scope, scoped = sceneScope, true
+			ctx = withFCE2BConnectionAdmit(ctx, fcE2BConnectionAdmit{
+				AttemptID: attempt.ID,
+				TaskID:    task.ID,
+				RuntimeID: task.RuntimeID,
+				Limit:     l.Config.ConnectionReuse.Concurrency(),
+				Recorded:  &sceneReuseRecorded,
+			})
+			slog.Info("FC/E2B connection reuse selected",
+				"task_id", taskID,
+				"runtime_id", runtimeID,
+				"scene_id", sceneScope.sceneID,
+				"actor_key", sceneScope.actorKey,
+				"scope_id", util.UUIDToString(sceneScope.id),
+				"max_concurrent_tasks", l.Config.ConnectionReuse.Concurrency(),
+			)
+		} else {
+			l.logSceneReuseSkip(taskID, runtimeID, skip)
+		}
+	}
 	sandboxResolveStarted := time.Now()
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "sandbox_resolving"); err != nil {
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B sandbox stage: %w", err)
@@ -1654,6 +1691,11 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		scoped = false
 	} else {
 		sandboxID, coldStart, err = l.resolveSandboxOnConnection(ctx, runtime, scope, scoped, template, runtimeLockConn, trace)
+		// A full scene sandbox starts a private one and keeps the shared pointer.
+		// Release then follows this task's own chat or issue.
+		if scope.typ == fcE2BScopeTypeScene && !sceneReuseRecorded {
+			scope, scoped = fcE2BScopeForTask(task)
+		}
 	}
 	if err != nil {
 		chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_resolve", "failed",
@@ -1677,6 +1719,8 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		"cold_start", coldStart,
 		"scope_type", scopeType,
 		"scope_id", scopeID,
+		"scene_id", scope.sceneID,
+		"actor_key", scope.actorKey,
 	)
 	lifecycleScope := "task"
 	if useEmployeeFilesystem {
@@ -2720,14 +2764,25 @@ func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, 
 func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string, runtimeLockConn *pgxpool.Conn, trace chattrace.Trace) (string, bool, error) {
 	var sandboxID string
 	coldStart := true
+	recordSession := scoped
+	var release func()
+	locked := false
+	unlock := func() {
+		if locked {
+			release()
+			locked = false
+		}
+	}
 	if scoped {
 		// Serialize the lookup-or-create with the other replicas before reading:
 		// a check outside the lock is exactly the race that orphans sandboxes.
-		release, err := l.lockSandboxScopeOnConnection(ctx, rt, scope, runtimeLockConn)
+		var err error
+		release, err = l.lockSandboxScopeOnConnection(ctx, rt, scope, runtimeLockConn)
 		if err != nil {
 			return "", false, err
 		}
-		defer release()
+		locked = true
+		defer unlock()
 
 		session, err := l.Queries.GetActiveFCE2BSandboxSession(ctx, db.GetActiveFCE2BSandboxSessionParams{
 			RuntimeID: rt.ID,
@@ -2736,7 +2791,33 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 			Template:  template,
 		})
 		if err == nil {
-			sandboxID, coldStart = session.SandboxID, false
+			if scope.typ == fcE2BScopeTypeScene {
+				active, countErr := l.countActiveSandboxTasks(ctx, runtimeLockConn, rt.ID, sceneReuseExcludeTask(ctx), session.SandboxID)
+				if countErr != nil {
+					return "", false, countErr
+				}
+				if fcE2BSceneSandboxOverflow(active, sceneReuseLimit(ctx)) {
+					// The shared pointer stays on the full sandbox. Creating the
+					// overflow sandbox happens after this lock is released.
+					slog.Info("FC/E2B connection reuse at capacity; starting a private sandbox",
+						"runtime_id", util.UUIDToString(rt.ID),
+						"sandbox_id", session.SandboxID,
+						"active_tasks", active,
+						"max_concurrent_tasks", sceneReuseLimit(ctx),
+						"scene_id", scope.sceneID,
+						"actor_key", scope.actorKey,
+						"scope_id", util.UUIDToString(scope.id),
+					)
+					recordSession = false
+					sandboxID = ""
+					coldStart = true
+					unlock()
+				} else {
+					sandboxID, coldStart = session.SandboxID, false
+				}
+			} else {
+				sandboxID, coldStart = session.SandboxID, false
+			}
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return "", false, fmt.Errorf("load FC/E2B sandbox session: %w", err)
 		}
@@ -2785,7 +2866,30 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 				}
 				return "", coldStart, err
 			}
-			if scoped && !coldStart {
+			// Other tasks may still be running in a shared scene sandbox.
+			// Leave that sandbox and its session row alone and start a private one.
+			if recordSession && !coldStart && scope.typ == fcE2BScopeTypeScene {
+				active, countErr := l.countActiveSandboxTasks(ctx, runtimeLockConn, rt.ID, sceneReuseExcludeTask(ctx), sandboxID)
+				if countErr != nil {
+					return "", false, countErr
+				}
+				if active > 0 {
+					slog.Warn("FC/E2B shared sandbox was not reusable; leaving it for its other tasks",
+						"sandbox_id", sandboxID,
+						"active_tasks", active,
+						"scene_id", scope.sceneID,
+						"actor_key", scope.actorKey,
+						"error", readyErr,
+					)
+					lastErr = fmt.Errorf("prepare FC/E2B sandbox %s: %w", sandboxID, readyErr)
+					recordSession = false
+					sandboxID = ""
+					coldStart = true
+					unlock()
+					continue
+				}
+			}
+			if recordSession && !coldStart {
 				if err := l.Queries.MarkFCE2BSandboxSessionStale(ctx, db.MarkFCE2BSandboxSessionStaleParams{
 					RuntimeID: rt.ID, ScopeType: scope.typ, ScopeID: scope.id, SandboxID: sandboxID,
 				}); err != nil {
@@ -2800,7 +2904,7 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 			sandboxID = ""
 			continue
 		}
-		if scoped {
+		if recordSession {
 			_, err := l.Queries.UpsertFCE2BSandboxSession(ctx, db.UpsertFCE2BSandboxSessionParams{
 				WorkspaceID: rt.WorkspaceID, RuntimeID: rt.ID, ScopeType: scope.typ, ScopeID: scope.id,
 				SandboxID: sandboxID, Template: template,
@@ -2812,6 +2916,17 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 				}
 				return "", coldStart, fmt.Errorf("record FC/E2B sandbox session: %w", err)
 			}
+		}
+		if err := l.reserveSceneSandbox(ctx, sandboxID, coldStart); err != nil {
+			// The shared session stays. A private overflow sandbox has no
+			// session row, so a failed reservation must not leave it running.
+			if !recordSession && coldStart {
+				l.releaseUnusedSandbox(ctx, sandboxID, trace)
+			}
+			return "", coldStart, err
+		}
+		if admit, ok := fcE2BConnectionAdmitFrom(ctx); ok && admit.Recorded != nil {
+			*admit.Recorded = recordSession
 		}
 		return sandboxID, coldStart, nil
 	}
@@ -3048,6 +3163,11 @@ func (l *FCE2BLauncher) runE2BCommandWithTimeout(ctx context.Context, timeout ti
 		// A frozen snapshot routes every command it sends, so one launch or
 		// stop never mixes two generations of the switch.
 		ctx = withFCE2BFrozenRollout(ctx, l.Config.SDKRollout)
+	}
+	// Connect renews the sandbox. Pin the task lifetime so a ready probe or
+	// run-once cannot shrink a sandbox that HTTP renewal just set to 4800s.
+	if _, pinned := ctx.Value(fcE2BConnectTimeoutKey{}).(int); !pinned {
+		ctx = withFCE2BConnectTimeout(ctx, l.sandboxTaskTimeoutSeconds())
 	}
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

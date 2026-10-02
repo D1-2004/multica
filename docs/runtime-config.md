@@ -135,6 +135,29 @@ This key replaces the separate Data ID `dt-fde-multica-fc-e2b-sdk-rollout.json` 
 
 Rollout order: binaries older than this key reject a runtime document that carries it. Follow "Adding a runtime-document key" under the release procedure: every replica runs the supporting binary before the key is published, and the key is removed before an older binary is released.
 
+## FC/E2B scene sandbox reuse
+
+`runtime.fc_e2b.connection_reuse` lets tasks that share one scene and one trigger run in the same FC/E2B sandbox. It sits next to the per-sandbox concurrency cap. The default cap is 6. A seventh concurrent task starts a private sandbox and does not move the shared pointer.
+
+```json
+"connection_reuse": {
+  "enabled": true,
+  "max_concurrent_tasks": 6,
+  "workspace_ids": ["<workspace uuid>"],
+  "agent_ids": ["<agent uuid>"]
+}
+```
+
+- `enabled` is the master switch. `false`, or the whole key absent, selects nothing. Switch-off value: `{"enabled": false}`.
+- A task is selected only when its agent or its runtime's workspace is listed. `enabled: true` with both lists empty selects nobody.
+- `max_concurrent_tasks` omitted or `0` means 6. Any other value must be 1–50. Identifiers must be canonical lowercase UUIDs without duplicates.
+- The runtime image must declare capability `sandbox_connection_reuse_v1` in its metadata. Catalogued templates are not stamped with that capability. An older image, an A2A task, or a task with no scene keeps one sandbox per chat or issue.
+- A scheduled or other scene task with no single trigger uses the scene's public bucket. Several speakers in one run do too. One person's sandbox is never used for someone else's run.
+- Employee filesystem and DSH host sandboxes stay on their own scope and do not join this bucket.
+- SDK `ConnectSandbox` renews to the task lifetime (4800 seconds unless `timeout_seconds` is higher). A connect must not shrink a sandbox that task start just renewed.
+
+Publish this key only after every replica runs a binary that knows it. See "Adding a runtime-document key". Behavior rollback is `{"enabled": false}`.
+
 ## DingTalk calls through the DWS SDK
 
 `runtime.use_dws_for_tag` (boolean, default false) sends the server's DingTalk calls through the in-process DWS gateway SDK (`server/pkg/dws`, synced from dws-for-tag by `scripts/sync-dws.sh`) instead of spawning the `dws` CLI:
@@ -203,6 +226,7 @@ Never reuse a pre-release document in production. Publish and verify each unit i
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-10-02 | Added `runtime.fc_e2b.connection_reuse`. | Tasks in the same scene and trigger can share one sandbox, capped at 6, behind an explicit workspace or agent gray list. |
 | 2026-10-01 | `runtime.use_dws_for_tag` also gates the native subscription event source. | Native subscription reuses the DWS SDK event streams; no separate Diamond key or environment variable. |
 | 2026-09-30 | Added `runtime.use_dws_for_tag`. | Move the server's DingTalk calls from the dws subprocess to the in-process SDK behind a live switch. |
 | 2026-09-30 | The process stop also covers failed tasks; its second pass runs 10 seconds after the task ended; moved the references to `runtime.performance_optimization` out of this document. | A failed task leaves the same orphans as a cancelled one; that key is implemented and documented by the PRI-47 change, which is not on this branch yet. |

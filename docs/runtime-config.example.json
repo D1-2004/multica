@@ -44,7 +44,11 @@
       "api_url": "",
       "domain": "",
       "timeout_seconds": 4800,
-      "sandbox_ready_timeout": "5m"
+      "sandbox_ready_timeout": "5m",
+      "connection_reuse": {
+        "enabled": false,
+        "max_concurrent_tasks": 6
+      }
     },
     "asb": {
       "enabled": false,
