@@ -39,7 +39,7 @@ SELECT (
 -- the account, the agent is not archived, and the agent's current identity
 -- is still that account. No row means the Router owns the account. The
 -- (org_id, dws_uid) unique index allows at most one row per account.
-SELECT sub.agent_id, sub.workspace_id, sub.self_open_dingtalk_id
+SELECT sub.agent_id, sub.workspace_id, sub.self_open_dingtalk_id, sub.enabled_at
 FROM agent_dws_native_subscription sub
 JOIN agent_dingtalk_identity identity
   ON identity.agent_id = sub.agent_id

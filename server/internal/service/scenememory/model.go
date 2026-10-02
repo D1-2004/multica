@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/dwsclient"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const (
@@ -53,23 +54,33 @@ const (
 // Evidence: 口香糖小队 reached attempt 130 on 2026-09-10 (trace 4aceb4ae).
 const MaxHistoryBusinessErrorAttempts int32 = 12
 
-// KindFromChatType maps a DingTalk/dispatch chat type onto a Scene kind.
-func KindFromChatType(chatType string) string {
-	if strings.EqualFold(strings.TrimSpace(chatType), "group") {
-		return KindGroup
-	}
-	return KindDM
+// Memory is the Scene Memory of one Agent work scene (docs/agent-scene.md):
+// its state row, keyed by scene_id, and the scene directory row that says
+// which conversation of which tenant org it is. There is no separate memory
+// id; every reference is the scene_id.
+type Memory struct {
+	db.AgentSceneMemory
+	Scene db.AgentScene
 }
 
-// Identity is the exact Scene key. chat_session_id is never part of it.
-type Identity struct {
-	WorkspaceID pgtype.UUID
-	AgentID     pgtype.UUID
-	Platform    string
-	OrgID       string
-	SceneKey    string
-	SceneKind   string
-	SceneTitle  string
+// ConversationID is the scene's DingTalk openConversationId.
+func (m Memory) ConversationID() string { return m.Scene.ExternalSceneID }
+
+// OrgID is the scene's tenant org.
+func (m Memory) OrgID() string { return m.Scene.TenantOrgID }
+
+// Kind is the scene kind (group or dm).
+func (m Memory) Kind() string { return m.Scene.SceneKind }
+
+// Title is the scene's directory title.
+func (m Memory) Title() string { return m.Scene.Title }
+
+// validScene accepts a conversation scene of an agent: Scene Memory is kept
+// for group and 1:1 conversations only.
+func validScene(sc db.AgentScene) bool {
+	return sc.ID.Valid && sc.WorkspaceID.Valid && sc.AgentID.Valid &&
+		strings.TrimSpace(sc.TenantOrgID) != "" && strings.TrimSpace(sc.ExternalSceneID) != "" &&
+		(sc.SceneKind == KindGroup || sc.SceneKind == KindDM)
 }
 
 type DirtyTrigger struct {
@@ -88,26 +99,6 @@ type CommitBatch struct {
 	SourceCursorEvidenceID string
 	FlushMeta              []byte
 	ExpectedMemoryRevision int64
-}
-
-func (id Identity) normalized() Identity {
-	out := id
-	out.Platform = strings.TrimSpace(out.Platform)
-	if out.Platform == "" {
-		out.Platform = PlatformDingTalk
-	}
-	out.OrgID = strings.TrimSpace(out.OrgID)
-	out.SceneKey = strings.TrimSpace(out.SceneKey)
-	out.SceneKind = strings.TrimSpace(out.SceneKind)
-	out.SceneTitle = strings.TrimSpace(out.SceneTitle)
-	return out
-}
-
-func (id Identity) valid() bool {
-	id = id.normalized()
-	return id.WorkspaceID.Valid && id.AgentID.Valid &&
-		id.OrgID != "" && id.SceneKey != "" &&
-		(id.SceneKind == KindGroup || id.SceneKind == KindDM)
 }
 
 func ValidateMemoryText(text string) bool {

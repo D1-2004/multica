@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -15,10 +14,11 @@ import (
 	"github.com/multica-ai/multica/server/internal/contextcap"
 )
 
-// The one edit-rights policy: managers edit org and group scopes, only the
-// person edits a person scope, link holders and everyone else only view.
+// The one edit-rights policy: managers edit the org scope, whoever may open
+// a scene (manager or link holder) edits it, only the person edits a person
+// scope.
 func TestContextCapScopeRightsTable(t *testing.T) {
-	none, all := contextCapRights{}, contextCapAllRights
+	none, all, sceneAll := contextCapRights{}, contextCapAllRights, contextCapSceneRights
 	for _, tc := range []struct {
 		scopeType     string
 		manages, self bool
@@ -28,10 +28,10 @@ func TestContextCapScopeRightsTable(t *testing.T) {
 		{contextcap.ScopeOrg, true, true, all},
 		{contextcap.ScopeOrg, false, false, none},
 		{contextcap.ScopeOrg, false, true, none},
-		{contextcap.ScopeScene, true, false, all},
-		{contextcap.ScopeScene, true, true, all},
-		{contextcap.ScopeScene, false, false, none},
-		{contextcap.ScopeScene, false, true, none},
+		{contextcap.ScopeScene, true, false, sceneAll},
+		{contextcap.ScopeScene, true, true, sceneAll},
+		{contextcap.ScopeScene, false, false, sceneAll},
+		{contextcap.ScopeScene, false, true, sceneAll},
 		{contextcap.ScopePerson, true, false, none},
 		{contextcap.ScopePerson, false, true, all},
 		{contextcap.ScopePerson, true, true, all},
@@ -63,7 +63,6 @@ func TestContextCapScopeRightsTable(t *testing.T) {
 		{"person with rights", scope(contextcap.ScopePerson, all), contextCapNeedMCP, http.StatusOK, ""},
 		{"only prompts", scope(contextcap.ScopeScene, contextCapRights{EditPrompts: true}), contextCapNeedToggle, http.StatusForbidden, contextCapErrManagerOnly},
 		{"revoke needs no right", scope(contextcap.ScopePerson, none), contextCapNeedRevoke, http.StatusOK, ""},
-		{"unknown person", contextCapScope{PersonUnknown: true}, contextCapNeedPrompts, http.StatusConflict, contextCapErrDMPersonUnknown},
 	} {
 		w := httptest.NewRecorder()
 		allowed := contextCapScopeAllows(w, tc.scope, tc.need)
@@ -135,30 +134,24 @@ func TestContextCapStrictRightsOnTheConfigurePage(t *testing.T) {
 		}
 	}
 
-	// The group's link holder views the group and changes nothing in it.
+	// The group's link holder changes the group like a manager (冬翔,
+	// 2026-10-02): the same rights, connecting accounts included.
 	view := sceneOf(holder, ctxcapScene)
-	if view.Rights != (contextCapRights{}) || view.CanConnect || view.Prompts == nil || len(view.Prompts) != 0 || !jsonNull(view.MCPConfig) {
+	if view.Rights != contextCapSceneRights || !view.CanConnect || view.Prompts == nil || len(view.Prompts) != 0 || !jsonNull(view.MCPConfig) {
 		t.Fatalf("group view for its link holder = %+v", view)
 	}
-	expectRefused(contextCapErrManagerOnly, map[string]*httptest.ResponseRecorder{
-		"holder binding": call(holder, http.MethodPut, "/bindings", map[string]any{"scope_type": "scene", "scope_key": ctxcapScene,
-			"resource_type": "skill", "resource_id": f.skillScene, "enabled": false}),
-		"holder credential": call(holder, http.MethodPut, "/credentials", map[string]any{"scope_type": "scene", "scope_key": ctxcapScene,
-			"connector_id": f.global, "bearer": "holder-token-1234"}),
-		"holder credential delete": call(holder, http.MethodDelete, "/credentials?scope_type=scene&scope_key="+url.QueryEscape(ctxcapScene)+"&connector_id="+f.scene, nil),
-		"holder connect": call(holder, http.MethodPost, "/connections/start", map[string]any{"scope_type": "scene", "scope_key": ctxcapScene,
-			"connector_id": f.scene}),
-		"holder prompts":    call(holder, http.MethodPut, "/prompts", prompts("scene", ctxcapScene, map[string]any{"name": "tone", "text": "x"})),
-		"holder mcp config": call(holder, http.MethodPut, "/mcp-config", mcp("scene", ctxcapScene)),
-	})
+	for _, enabled := range []bool{false, true} {
+		ctxcapExpectStatus(t, call(holder, http.MethodPut, "/bindings", map[string]any{"scope_type": "scene", "scope_key": ctxcapScene,
+			"resource_type": "skill", "resource_id": f.skillScene, "enabled": enabled}), http.StatusOK, "holder binding")
+	}
 	if stored, err := contextcap.ListScopeBindings(context.Background(), testPool, testWorkspaceID, agentID, contextcap.ScopeScene, ctxcapOrg, ctxcapScene); err != nil ||
-		!ctxcapStoredBinding(stored, f.skillScene, true, "") {
-		t.Fatalf("group bindings after the holder's refused write = %+v %v", stored, err)
+		!ctxcapStoredBinding(stored, f.skillScene, true, holder) {
+		t.Fatalf("group bindings after the holder's writes = %+v %v", stored, err)
 	}
 
 	// A manager edits the group: prompt components (one switched off) and
 	// remote MCP servers; the link holder then reads them.
-	if view = sceneOf(manager, ctxcapScene); view.Rights != contextCapAllRights || !view.CanConnect {
+	if view = sceneOf(manager, ctxcapScene); view.Rights != contextCapSceneRights || !view.CanConnect {
 		t.Fatalf("group view for a manager = %+v", view)
 	}
 	w := call(manager, http.MethodPut, "/prompts", prompts("scene", ctxcapScene,
@@ -178,11 +171,10 @@ func TestContextCapStrictRightsOnTheConfigurePage(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "https://docs.example.test/mcp") {
 		t.Fatalf("put MCP config = %s", w.Body.String())
 	}
-	// The holder reads the prompts; the MCP servers (whose headers and URLs
-	// often carry tokens) are withheld from a caller who may not edit them.
+	// The holder reads the prompts and, as an editor, the MCP servers.
 	view = sceneOf(holder, ctxcapScene)
 	if len(view.Prompts) != 2 || view.Prompts[0].Name != "tone" || !view.Prompts[0].Enabled || view.Prompts[1].Name != "draft" || view.Prompts[1].Enabled ||
-		!jsonNull(view.MCPConfig) || !view.MCPConfigRedacted {
+		!strings.Contains(string(view.MCPConfig), "docs.example.test") || view.MCPConfigRedacted {
 		t.Fatalf("group view after the manager's edits = %+v", view)
 	}
 	if view = sceneOf(manager, ctxcapScene); !strings.Contains(string(view.MCPConfig), "docs.example.test") || view.MCPConfigRedacted {
@@ -199,31 +191,31 @@ func TestContextCapStrictRightsOnTheConfigurePage(t *testing.T) {
 		t.Fatalf("person detail = %+v org=%+v", detail.Person, detail.Org)
 	}
 
-	// A manager views the person through their 1:1 chat and changes nothing.
-	const dm = "cidCtxcapRightsDirect=="
-	f.coordinatorDMJob(t, dm, "Alice", ctxcapStaff, time.Minute)
+	// A 1:1 chat is a scene like a group (docs/agent-scene.md): a manager
+	// and the person holding its link edit it; the person keeps their own
+	// person level, which a manager still may not write.
+	f.coordinatorDMJob(t, "cidCtxcapRightsDirect==", "Alice", ctxcapStaff, time.Minute)
+	dm := f.sceneFor(t, ctxcapOrg, "dm", "cidCtxcapRightsDirect==", "", time.Minute)
 	view = sceneOf(manager, dm)
-	if view.Scope == nil || view.Scope.Type != contextcap.ScopePerson || view.Scope.Key != ctxcapStaff || view.Rights != (contextCapRights{}) ||
-		view.CanConnect || len(view.Prompts) != 1 || !jsonNull(view.MCPConfig) || !view.MCPConfigRedacted {
-		t.Fatalf("person view for a manager = %+v", view)
+	if view.Scope == nil || view.Scope.Type != contextcap.ScopeScene || view.Scope.Key != dm || view.Scene.Kind != "dm" ||
+		view.Rights != contextCapSceneRights || !view.CanConnect {
+		t.Fatalf("1:1 scene view for a manager = %+v", view)
 	}
-	expectRefused(contextCapErrPersonOnly, map[string]*httptest.ResponseRecorder{
-		"manager binding": call(manager, http.MethodPut, "/bindings", map[string]any{"scope_type": "scene", "scope_key": dm,
-			"resource_type": "connector", "resource_id": f.person, "enabled": false}),
-		"manager credential": call(manager, http.MethodPut, "/credentials", map[string]any{"scope_type": "scene", "scope_key": dm,
-			"connector_id": f.scene, "bearer": "manager-token-1234"}),
-		"manager prompts":    call(manager, http.MethodPut, "/prompts", prompts("scene", dm, map[string]any{"name": "me", "text": "overwritten"})),
-		"manager mcp config": call(manager, http.MethodPut, "/mcp-config", mcp("scene", dm)),
-	})
+	ctxcapExpectStatus(t, call(manager, http.MethodPut, "/prompts", prompts("scene", dm, map[string]any{"name": "dm", "text": "1:1 tone"})),
+		http.StatusOK, "manager 1:1 scene prompts")
 	ctxcapExpectStatus(t, call(manager, http.MethodPut, "/prompts", prompts("person", ctxcapStaff, map[string]any{"name": "me", "text": "overwritten"})),
 		http.StatusForbidden, "manager names the person scope")
 	if stored, err := contextcap.ListPromptComponents(context.Background(), testPool, testWorkspaceID, agentID, contextcap.ScopePerson, ctxcapOrg, ctxcapStaff); err != nil ||
 		len(stored) != 1 || stored[0].Text != "person note" {
-		t.Fatalf("person prompts after the manager's refused writes = %+v %v", stored, err)
+		t.Fatalf("person prompts after the manager's refused write = %+v %v", stored, err)
 	}
-	if view = sceneOf(alice, dm); view.Rights != contextCapAllRights {
-		t.Fatalf("person view of the 1:1 chat for the person = %+v", view)
+	// The person's link also granted the 1:1 scene, which she edits.
+	f.grant(t, alice, contextcap.ScopeScene, dm, "Alice")
+	if view = sceneOf(alice, dm); view.Rights != contextCapSceneRights || len(view.Prompts) != 1 || view.Prompts[0].Text != "1:1 tone" {
+		t.Fatalf("1:1 scene view for the person = %+v", view)
 	}
+	ctxcapExpectStatus(t, call(alice, http.MethodPut, "/prompts", prompts("scene", dm, map[string]any{"name": "dm", "text": "mine"})),
+		http.StatusOK, "person 1:1 scene prompts")
 
 	// The enterprise level: managers only, and nobody else sees it.
 	ctxcapExpectStatus(t, call(manager, http.MethodPut, "/prompts", prompts("org", ctxcapOrg, map[string]any{"name": "rules", "text": "org rules"})),
@@ -386,7 +378,7 @@ func TestContextBuilderDisabledComponentsAndNodeRights(t *testing.T) {
 		want           contextCapRights
 	}{
 		{contextcap.ScopeOrg, ctxcapOrg, contextCapAllRights},
-		{contextcap.ScopeScene, ctxcapScene, contextCapAllRights},
+		{contextcap.ScopeScene, ctxcapScene, contextCapSceneRights},
 		{contextcap.ScopePerson, ctxcapStaff, contextCapRights{}},
 	} {
 		node := ctxNode(t, b.router, "", b.agentID, tc.scopeType, tc.key)

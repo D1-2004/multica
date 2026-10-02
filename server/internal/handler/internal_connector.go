@@ -392,6 +392,14 @@ func (h *Handler) saveInternalConnector(w http.ResponseWriter, r *http.Request, 
 		writeError(w, 500, "failed to save connector")
 		return
 	}
+	if changed, e := tagEmployeeConnectorGrantsChanged(r.Context(), tx, ws, id, in.AgentIDs); e != nil {
+		writeError(w, 500, "failed to update grants")
+		return
+	} else if changed {
+		writeErrorCode(w, http.StatusConflict, tagEmployeeInheritedCode,
+			"a tag tenant's employee gets its connectors from the tag; grant the connector to the tag instead")
+		return
+	}
 	if _, err = tx.Exec(r.Context(), `DELETE FROM internal_connector_agent WHERE connector_id=$1::uuid AND workspace_id=$2::uuid`, id, ws); err != nil {
 		writeError(w, 500, "failed to update grants")
 		return

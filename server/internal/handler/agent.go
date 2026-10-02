@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/tag"
 	"io"
 	"log/slog"
 	"net/http"
@@ -2156,10 +2157,34 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A Tag employee's instructions, MCP, runtime, model and profile come
+	// from the Tag; only its tenant-owned settings (inbound coordinator,
+	// dispatch) are written here.
+	if req.Name != nil || req.Description != nil || req.AvatarURL != nil || req.Instructions != nil ||
+		req.McpConfig != nil || req.RuntimeID != nil || req.RuntimeConfig != nil || req.CustomArgs != nil ||
+		req.MaxConcurrentTasks != nil || req.Model != nil || req.ThinkingLevel != nil || req.ServiceTier != nil ||
+		req.ComposioToolkitAllowlist != nil {
+		if h.refuseTagEmployeeWrite(w, r, uuidToString(existing.WorkspaceID), uuidToString(existing.ID)) {
+			return
+		}
+	}
+
 	params := db.UpdateAgentParams{
 		ID: existing.ID,
 	}
 	if req.Name != nil {
+		// The workspace Tag is always called "Tag".
+		if *req.Name != existing.Name && h.DB != nil {
+			role, err := tag.AgentRole(r.Context(), h.DB, uuidToString(existing.WorkspaceID), uuidToString(existing.ID))
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to check the tag")
+				return
+			}
+			if role == tag.RoleTemplate {
+				writeError(w, http.StatusConflict, "the tag's name is fixed")
+				return
+			}
+		}
 		params.Name = pgtype.Text{String: *req.Name, Valid: true}
 	}
 	if req.Description != nil {
@@ -2776,6 +2801,15 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	// unique index does not.
 	if agent.SystemKey.Valid && agent.SystemKey.String != "" {
 		writeError(w, http.StatusBadRequest, "this agent is built into Multica and cannot be archived")
+		return
+	}
+	// The Tag template carries the configuration every tenant applies;
+	// archiving it would orphan the Tag. Remove the Tag first.
+	if role, err := tag.AgentRole(r.Context(), h.DB, uuidToString(agent.WorkspaceID), uuidToString(agent.ID)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	} else if role == tag.RoleTemplate {
+		writeError(w, http.StatusConflict, "this agent is the tag template; remove the tag before archiving it")
 		return
 	}
 

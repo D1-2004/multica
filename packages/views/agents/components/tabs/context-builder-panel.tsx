@@ -22,6 +22,7 @@ import {
   type ContextNodeScopeType,
   type ContextPromptComponent,
   type ContextResourceType,
+  type ContextSceneKind,
   type ContextScopeRights,
 } from "@multica/core/context-capabilities";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -37,6 +38,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
+import { AtlassianDomainNote } from "../../../common/atlassian-domain-note";
 import { ConnectorLogo } from "../../../common/connector-logo";
 import { useResetOnBackForwardRestore } from "../../../common/connector-credential";
 import {
@@ -89,9 +91,9 @@ export interface ContextBuilderConnect {
   handOff?: (returnPath: string) => boolean;
 }
 
-/** Localized layer names: 全局 / 企业 / 群聊 / 个人; a level this build
- * does not know shows its raw name. */
-export function useLayerLabel(): (layer: ContextEffectiveLayer) => string {
+/** Localized layer names: 全局 / 企业 / 群聊 (单聊 for a 1:1 chat scene) /
+ * 个人; a level this build does not know shows its raw name. */
+export function useLayerLabel(sceneKind: ContextSceneKind = "group"): (layer: ContextEffectiveLayer) => string {
   const { t } = useT("agents");
   return (layer) => {
     switch (layer) {
@@ -100,13 +102,22 @@ export function useLayerLabel(): (layer: ContextEffectiveLayer) => string {
       case "org":
         return t(($) => $.tab_body.context_builder.layer_org);
       case "scene":
-        return t(($) => $.tab_body.context_builder.layer_scene);
+        return sceneKind === "dm"
+          ? t(($) => $.context_config.kind_dm)
+          : t(($) => $.tab_body.context_builder.layer_scene);
       case "person":
         return t(($) => $.tab_body.context_builder.layer_person);
       default:
         return String(layer);
     }
   };
+}
+
+/** Kind of a scene node's chat. A 1:1 chat is a scene of its own (keyed by
+ * its scene_id), named so only on the node's own word; a person node's chat
+ * never makes the node a 1:1 chat. */
+function nodeSceneKind(node: ContextNodeRef, detail: ContextNodeDetail): ContextSceneKind {
+  return node.scopeType === "scene" && detail.scene?.kind === "dm" ? "dm" : "group";
 }
 
 /** What the caller may change at a level. The server's rights decide; a
@@ -117,17 +128,18 @@ export function contextLevelRights(detail: ContextNodeDetail, canEdit: boolean):
   if (detail.rights) return detail.rights;
   const canConnect = detail.canConnect === true;
   const allowed = canEdit && (detail.scope?.type !== "person" || canConnect);
-  return { toggle: allowed, connect: canConnect, editPrompts: allowed, editMcp: allowed };
+  // A server without rights has no routine routes either.
+  return { toggle: allowed, connect: canConnect, editPrompts: allowed, editMcp: allowed, editRoutines: false };
 }
 
 /**
- * Context Builder of one level (企业, 群聊 or 个人): its prompt components,
- * its MCP (offered Aone FaaS connectors and its own custom MCP servers), its
- * 连接应用 (offered official apps, each in a dialog) and its skills, then the
- * 生效预览 of what a run there gets. A lower level's prompt or custom MCP
- * server replaces an upper one with the same name; connectors and skills add
- * up. Platform-free: the host injects the connect plumbing and where the
- * open app dialog lives.
+ * Context Builder of one level (企业, a scene — 群聊 or 单聊 — or 个人): its
+ * prompt components, its MCP (offered Aone FaaS connectors and its own
+ * custom MCP servers), its 连接应用 (offered official apps, each in a
+ * dialog) and its skills, then the 生效预览 of what a run there gets. A
+ * lower level's prompt or custom MCP server replaces an upper one with the
+ * same name; connectors and skills add up. Platform-free: the host injects
+ * the connect plumbing and where the open app dialog lives.
  */
 export function ContextBuilderPanel({
   wsId,
@@ -139,11 +151,16 @@ export function ContextBuilderPanel({
   onOpenAppChange,
   onDirtyChange,
   footer,
+  tagFraming = false,
 }: {
   wsId: string;
   agentId: string;
   node: ContextNodeRef;
   canEdit: boolean;
+  /** A Tag tenant's scene: show where this level sits under the Tag's default
+   * access bundle, and frame its skills, connectors and credentials as the
+   * access bundle of this level. */
+  tagFraming?: boolean;
   connect: ContextBuilderConnect;
   /** Catalog slug of the open app dialog, "" when closed. */
   openApp: string;
@@ -170,14 +187,23 @@ export function ContextBuilderPanel({
       </ConnectorNotice>
     );
   }
-  if (detail.scope === null && node.scopeType === "scene") {
-    // A chat key may be a 1:1 chat whose person is unknown: without a scope
-    // nothing is written there. A tenant or a person is its own address.
-    return <ConnectorNotice>{t(($) => $.tab_body.context_builder.scope_unknown)}</ConnectorNotice>;
-  }
   const rights = contextLevelRights(detail, canEdit);
+  const sceneKind = nodeSceneKind(node, detail);
+  const capabilities = (
+    <NodeCapabilities
+      wsId={wsId}
+      agentId={agentId}
+      node={node}
+      detail={detail}
+      rights={rights}
+      connect={connect}
+      openApp={openApp}
+      onOpenAppChange={onOpenAppChange}
+    />
+  );
   return (
     <div className="space-y-8">
+      {tagFraming ? <TagLevelPath level={detail.scope?.type ?? node.scopeType} sceneKind={sceneKind} /> : null}
       <PromptSection
         // A new level starts with a fresh draft.
         key={`${node.orgId}/${node.scopeType}/${node.scopeKey}`}
@@ -188,20 +214,58 @@ export function ContextBuilderPanel({
         canEdit={rights.editPrompts}
         onDirtyChange={onDirtyChange}
       />
-      <NodeCapabilities
-        wsId={wsId}
-        agentId={agentId}
-        node={node}
-        detail={detail}
-        rights={rights}
-        connect={connect}
-        openApp={openApp}
-        onOpenAppChange={onOpenAppChange}
-      />
-      <EffectiveSection detail={detail} />
+      {tagFraming ? (
+        <section className="space-y-4 rounded-xl border px-4 py-4">
+          <header>
+            <h3 className="text-body font-semibold">{t(($) => $.tag_tenant.level_bundle_title)}</h3>
+            <p className="text-caption text-muted-foreground">{t(($) => $.tag_tenant.level_bundle_hint)}</p>
+          </header>
+          {capabilities}
+        </section>
+      ) : (
+        capabilities
+      )}
+      <EffectiveSection detail={detail} sceneKind={sceneKind} />
       {canEdit ? <AccessSection wsId={wsId} agentId={agentId} node={node} detail={detail} /> : null}
       {footer}
     </div>
+  );
+}
+
+/** Tag 默认能力包 → 企业 → 群聊 / 单聊 / 个人, with this level marked: each
+ * level inherits the one before and adds its own prompt and access bundle. */
+function TagLevelPath({ level, sceneKind }: { level: string; sceneKind: ContextSceneKind }) {
+  const { t } = useT("agents");
+  const leaf =
+    level === "person"
+      ? t(($) => $.tag_tenant.level_person)
+      : sceneKind === "dm"
+        ? t(($) => $.context_config.kind_dm)
+        : t(($) => $.tag_tenant.level_scene);
+  const steps: { id: string; label: string }[] = [
+    { id: "tag", label: t(($) => $.tag_tenant.level_tag) },
+    { id: "org", label: t(($) => $.tag_tenant.level_org) },
+    { id: "leaf", label: leaf },
+  ];
+  const current = level === "org" ? "org" : "leaf";
+  const visible = current === "org" ? steps.slice(0, 2) : steps;
+  return (
+    <nav aria-label={t(($) => $.tag_tenant.level_aria)} className="flex flex-wrap items-center gap-1.5 text-caption">
+      {visible.map((step, index) => (
+        <span key={step.id} className="flex items-center gap-1.5">
+          {index > 0 ? <span aria-hidden="true" className="text-muted-foreground">→</span> : null}
+          <span
+            aria-current={step.id === current ? "step" : undefined}
+            className={cn(
+              "rounded-full border px-2 py-0.5",
+              step.id === current ? "border-foreground font-medium text-foreground" : "text-muted-foreground",
+            )}
+          >
+            {step.label}
+          </span>
+        </span>
+      ))}
+    </nav>
   );
 }
 
@@ -209,7 +273,7 @@ export function ContextBuilderPanel({
 // Configure-page access
 // ---------------------------------------------------------------------------
 
-/** Who may configure a group or person level from the DingTalk configure
+/** Who may configure a scene or person level from the DingTalk configure
  * page (configuration links, the group picker), and the manager's revoke:
  * a person whose forwarded link handed their scope to someone else gets it
  * back by asking for a new personal link. */
@@ -261,7 +325,9 @@ function AccessSection({
         description={
           level === "person"
             ? t(($) => $.tab_body.context_builder.access_revoke_person)
-            : t(($) => $.tab_body.context_builder.access_revoke_scene)
+            : nodeSceneKind(node, detail) === "dm"
+              ? t(($) => $.tab_body.context_builder.access_revoke_dm)
+              : t(($) => $.tab_body.context_builder.access_revoke_scene)
         }
         confirmLabel={t(($) => $.tab_body.context_builder.access_revoke)}
         pending={revoke.isPending}
@@ -703,7 +769,7 @@ function BindingSwitch({
 }
 
 /** Label of the level's switch in an app dialog. */
-function useEnableLabel(type: ContextNodeScopeType): string {
+function useEnableLabel(type: ContextNodeScopeType, sceneKind: ContextSceneKind): string {
   const { t } = useT("agents");
   switch (type) {
     case "org":
@@ -711,7 +777,9 @@ function useEnableLabel(type: ContextNodeScopeType): string {
     case "person":
       return t(($) => $.tab_body.context_builder.enable_person);
     default:
-      return t(($) => $.tab_body.context_builder.enable_scene);
+      return sceneKind === "dm"
+        ? t(($) => $.tab_body.context_builder.enable_dm)
+        : t(($) => $.tab_body.context_builder.enable_scene);
   }
 }
 
@@ -1133,7 +1201,10 @@ function AppDialog({
 }) {
   const { t } = useT("agents");
   const { detail, canEdit, bindings } = context;
-  const enableLabel = useEnableLabel(detail.scope?.type ?? context.node.scopeType);
+  const enableLabel = useEnableLabel(
+    detail.scope?.type ?? context.node.scopeType,
+    nodeSceneKind(context.node, detail),
+  );
   // Keep showing the last app while the dialog animates closed.
   const [shown, setShown] = useState(app);
   if (app && app !== shown) setShown(app);
@@ -1250,6 +1321,14 @@ function AppAccount({ context, app }: { context: NodeContext; app: ContextNodeCo
 
   return (
     <DialogSection id={`context-app-account-${app.id}`} title={t(($) => $.tab_body.context_builder.account_title)}>
+      {app.catalogSlug === "atlassian" ? (
+        <AtlassianDomainNote
+          body={t(($) => $.tab_body.connected_apps.atlassian_domain)}
+          copyLabel={t(($) => $.tab_body.connected_apps.domain_copy)}
+          copiedLabel={t(($) => $.tab_body.connected_apps.domain_copied)}
+          docsLabel={t(($) => $.tab_body.connected_apps.atlassian_docs)}
+        />
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <span className={connected ? "text-body" : "text-body text-muted-foreground"}>{status}</span>
         {canConnect ? (
@@ -1373,8 +1452,8 @@ function SkillsSection({ context }: { context: NodeContext }) {
 // 生效预览
 // ---------------------------------------------------------------------------
 
-function LayerBadge({ layer }: { layer: ContextEffectiveLayer }) {
-  const label = useLayerLabel();
+function LayerBadge({ layer, sceneKind }: { layer: ContextEffectiveLayer; sceneKind: ContextSceneKind }) {
+  const label = useLayerLabel(sceneKind);
   return (
     <Badge variant={layer === "global" ? "outline" : "secondary"} className="shrink-0">
       {label(layer)}
@@ -1398,7 +1477,7 @@ function EffectiveGroup({ title, children, empty }: { title: string; children: R
 
 /** What a run at this level gets, as the runtime builds it, with the layer
  * each component comes from and the ones a nearer layer replaces. */
-function EffectiveSection({ detail }: { detail: ContextNodeDetail }) {
+function EffectiveSection({ detail, sceneKind }: { detail: ContextNodeDetail; sceneKind: ContextSceneKind }) {
   const { t } = useT("agents");
   const { prompts, mcpServers, connectors, skills } = detail.effective;
   const overriddenLabel = t(($) => $.tab_body.context_builder.overridden);
@@ -1412,7 +1491,7 @@ function EffectiveSection({ detail }: { detail: ContextNodeDetail }) {
             key={`${prompt.layer}:${prompt.name}:${index}`}
             className={cn("flex items-start gap-2 px-3 py-2", prompt.overridden && "text-muted-foreground")}
           >
-            <LayerBadge layer={prompt.layer} />
+            <LayerBadge layer={prompt.layer} sceneKind={sceneKind} />
             <div className="min-w-0 flex-1">
               <p className={cn("truncate text-body font-medium", prompt.overridden && "line-through")}>
                 {prompt.name}
@@ -1433,7 +1512,7 @@ function EffectiveSection({ detail }: { detail: ContextNodeDetail }) {
             key={`${server.layer}:${server.name}:${index}`}
             className={cn("flex items-center gap-2 px-3 py-2", server.overridden && "text-muted-foreground")}
           >
-            <LayerBadge layer={server.layer} />
+            <LayerBadge layer={server.layer} sceneKind={sceneKind} />
             <span className={cn("min-w-0 flex-1 truncate text-body", server.overridden && "line-through")}>
               {server.name}
             </span>
@@ -1444,7 +1523,7 @@ function EffectiveSection({ detail }: { detail: ContextNodeDetail }) {
       <EffectiveGroup title={t(($) => $.tab_body.context_builder.connectors_title)} empty={connectors.length === 0}>
         {connectors.map((connector) => (
           <li key={`${connector.layer}:${connector.id}`} className="flex items-center gap-2 px-3 py-2">
-            <LayerBadge layer={connector.layer} />
+            <LayerBadge layer={connector.layer} sceneKind={sceneKind} />
             <span className="min-w-0 flex-1 truncate text-body">{connector.name}</span>
           </li>
         ))}
@@ -1452,7 +1531,7 @@ function EffectiveSection({ detail }: { detail: ContextNodeDetail }) {
       <EffectiveGroup title={t(($) => $.tab_body.context_builder.skills_title)} empty={skills.length === 0}>
         {skills.map((skill) => (
           <li key={`${skill.layer}:${skill.id}`} className="flex items-center gap-2 px-3 py-2">
-            <LayerBadge layer={skill.layer} />
+            <LayerBadge layer={skill.layer} sceneKind={sceneKind} />
             <span className="min-w-0 flex-1 truncate text-body">{skill.name}</span>
           </li>
         ))}

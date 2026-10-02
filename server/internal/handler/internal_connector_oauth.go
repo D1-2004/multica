@@ -48,12 +48,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
+	"github.com/multica-ai/multica/server/internal/connectorconfig"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/pkg/remotemcp"
 )
@@ -115,12 +115,6 @@ type connectorOAuthScope struct {
 	AgentID  string
 	OrgID    string
 	ScopeKey string
-	// SceneKey is the 1:1 chat scene the caller asked to connect when the
-	// scope is that scene's person (contextCapResolveScope maps a dm scene
-	// to its person); "" otherwise. Authority is re-checked for that
-	// request, and the credential lands in the person scope. It travels in
-	// the sealed part of the state.
-	SceneKey string
 }
 
 // connectorOAuthStart is the input of startConnectorOAuth.
@@ -205,7 +199,7 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	}
 	// Deployment configuration is reported only to callers allowed to
 	// connect this scope.
-	if err := h.connectorOAuthDeploymentError(app); err != nil {
+	if err := h.connectorOAuthDeploymentErrorFor(ctx, scope.WorkspaceID, app); err != nil {
 		return connectorOAuthStarted{}, err
 	}
 	returnTo, err := h.connectorOAuthReturnTo(ctx, in.ReturnTo, scope)
@@ -222,6 +216,30 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	// (internal_connector_oauth_forward.go).
 	homeOrigin, _ := h.connectorOAuthCallbackTarget(via)
 	redirectOrigin := h.connectorOAuthRedirectOrigin(via)
+	var ghClient githubOAuthClient
+	var preregistered githubOAuthClient
+	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp {
+		ghClient, err = h.githubOAuthClient(ctx, scope.WorkspaceID)
+		if err != nil {
+			return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
+		}
+		// A GitHub App saved on the settings page registers the same console
+		// callback as every other app. The environment client keeps the
+		// GitHub App callback its existing registration already uses.
+		if ghClient.Source == connectorconfig.SourceWorkspace {
+			via = connectorOAuthViaDCR
+			homeOrigin, _ = h.connectorOAuthCallbackTarget(via)
+			redirectOrigin = h.connectorOAuthRedirectOrigin(via)
+		}
+		redirectOrigin = githubOAuthRedirectOrigin(homeOrigin, redirectOrigin, ghClient.CallbackMode)
+	}
+	if app.AuthKind == connectorcatalog.AuthOAuthPreregistered {
+		preregistered, err = h.preregisteredOAuthClient(ctx, scope.WorkspaceID, app)
+		if err != nil || strings.TrimSpace(preregistered.ClientID) == "" || preregistered.ClientSecret == "" {
+			return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
+		}
+		redirectOrigin = githubOAuthRedirectOrigin(homeOrigin, redirectOrigin, preregistered.CallbackMode)
+	}
 	state, err := randomOAuthValue()
 	if err != nil {
 		return connectorOAuthStarted{}, internalErr
@@ -238,13 +256,39 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	if err != nil {
 		return connectorOAuthStarted{}, internalErr
 	}
-	payload := connectorSealedVerifier{StateHash: hashConnectorOAuthState(state), ConnectorID: scope.ConnectorID, Verifier: verifier, SceneKey: scope.SceneKey}
+	payload := connectorSealedVerifier{StateHash: hashConnectorOAuthState(state), ConnectorID: scope.ConnectorID, Verifier: verifier}
 	var authorizeURL string
 	switch app.AuthKind {
 	case connectorcatalog.AuthOAuthGitHubApp:
-		payload.Via, payload.ClientID = connectorOAuthViaGitHub, strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID"))
-		payload.RedirectURI = redirectOrigin + connectorOAuthGitHubCallback
-		authorizeURL, err = githubConnectorAuthorizeURL(app, payload.RedirectURI, state, verifier)
+		payload.ClientID = ghClient.ClientID
+		if ghClient.Source == connectorconfig.SourceWorkspace {
+			payload.Via = connectorOAuthViaDCR
+			payload.RedirectURI = redirectOrigin + connectorOAuthCallbackPath
+		} else {
+			payload.Via = connectorOAuthViaGitHub
+			payload.RedirectURI = redirectOrigin + connectorOAuthGitHubCallback
+		}
+		endpoint := ghClient.AuthorizationEndpoint
+		if endpoint == "" {
+			endpoint = app.AuthorizationEndpoint
+		}
+		requestedScope := ghClient.Scopes
+		if requestedScope == "" {
+			requestedScope = app.Scope
+		}
+		authorizeURL, err = githubConnectorAuthorizeURL(endpoint, ghClient.ClientID, requestedScope, payload.RedirectURI, state, verifier)
+	case connectorcatalog.AuthOAuthPreregistered:
+		payload.Via, payload.ClientID = connectorOAuthViaDCR, preregistered.ClientID
+		payload.RedirectURI = redirectOrigin + connectorOAuthCallbackPath
+		endpoint := preregistered.AuthorizationEndpoint
+		if endpoint == "" {
+			endpoint = app.AuthorizationEndpoint
+		}
+		requestedScope := preregistered.Scopes
+		if requestedScope == "" {
+			requestedScope = app.Scope
+		}
+		authorizeURL, err = preregisteredAuthorizeURL(endpoint, preregistered.ClientID, requestedScope, payload.RedirectURI, state, verifier, app.Resource)
 	case connectorcatalog.AuthOAuthDCR:
 		var record connectorOAuthClientRecord
 		record, err = h.ensureConnectorOAuthClient(ctx, c, app, redirectOrigin+connectorOAuthCallbackPath, h.connectorOAuthClientName())
@@ -368,7 +412,7 @@ func normalizeConnectorOAuthScope(in connectorOAuthScope) (connectorOAuthScope, 
 	}
 	switch out.ScopeType {
 	case connectorOAuthScopeWorkspace:
-		out.AgentID, out.OrgID, out.ScopeKey, out.SceneKey = "", "", "", ""
+		out.AgentID, out.OrgID, out.ScopeKey = "", "", ""
 	case contextcap.ScopeOrg, contextcap.ScopeScene, contextcap.ScopePerson:
 		id, err := canonicalOAuthUUID(out.AgentID)
 		if err != nil {
@@ -377,9 +421,6 @@ func normalizeConnectorOAuthScope(in connectorOAuthScope) (connectorOAuthScope, 
 		out.AgentID = id
 		if !contextcap.ValidConfigScope(out.ScopeType, out.OrgID, out.ScopeKey) {
 			return out, errors.New("invalid scope key")
-		}
-		if out.SceneKey != "" && (out.ScopeType != contextcap.ScopePerson || !contextcap.ValidOpenConversationID(out.SceneKey)) {
-			return out, errors.New("invalid scene key")
 		}
 	default:
 		return out, errors.New("invalid scope type")
@@ -398,9 +439,8 @@ func canonicalOAuthUUID(raw string) (string, error) {
 // authorizeConnectorOAuthScope re-checks, at start and again at callback,
 // that scope.UserID may store a credential for the scope: a workspace
 // owner/admin for the workspace scope; for a scene or person scope the
-// mobile routes' authority (contextCapResolveScope, for the request the
-// caller made: scope.SceneKey when a 1:1 chat scene was asked for) must
-// still resolve to exactly this scope and allow connecting there
+// mobile routes' authority (contextCapResolveScope) must still resolve to
+// exactly this scope and allow connecting there
 // (contextCapRights.Connect from contextCapScopeRights: managing the agent
 // for an org or group scope, being the person for a person scope; never a
 // configure-link holder of a group), and the connector must be enabled and offered to
@@ -436,12 +476,8 @@ func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connec
 	// The mobile routes' authority (contextCapResolveScope) for the request
 	// the caller made; a malformed scope and a manager's unknown scene are
 	// forbidden here, and so is a request that no longer resolves to this
-	// scope (a 1:1 chat now bound to someone else) or may not connect.
-	requestType, requestKey := scope.ScopeType, scope.ScopeKey
-	if scope.SceneKey != "" {
-		requestType, requestKey = contextcap.ScopeScene, scope.SceneKey
-	}
-	resolved, err := h.contextCapResolveScope(ctx, agent, scope.UserID, requestType, requestKey)
+	// scope or may not connect.
+	resolved, err := h.contextCapResolveScope(ctx, agent, scope.UserID, scope.ScopeType, scope.ScopeKey)
 	if err != nil {
 		switch {
 		case errors.Is(err, errContextCapForbidden), errors.Is(err, contextcap.ErrInvalidInput), errors.Is(err, contextcap.ErrNotFound):
@@ -452,7 +488,7 @@ func (h *Handler) authorizeConnectorOAuthScope(ctx context.Context, scope connec
 			return oauthStartError(http.StatusInternalServerError, "internal", "grant lookup failed")
 		}
 	}
-	if resolved.PersonUnknown || !resolved.Rights.Connect || resolved.ScopeType != scope.ScopeType || resolved.ScopeKey != scope.ScopeKey {
+	if !resolved.Rights.Connect || resolved.ScopeType != scope.ScopeType || resolved.ScopeKey != scope.ScopeKey {
 		return forbidden
 	}
 	if !c.Enabled {
@@ -546,23 +582,47 @@ func hashConnectorOAuthState(state string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func githubConnectorAuthorizeURL(app connectorcatalog.App, redirectURI, state, verifier string) (string, error) {
-	endpoint, err := url.Parse(app.AuthorizationEndpoint)
-	if err != nil {
+func githubConnectorAuthorizeURL(endpoint, clientID, scope, redirectURI, state, verifier string) (string, error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		if err == nil {
+			err = errors.New("invalid authorization endpoint")
+		}
 		return "", err
 	}
 	challenge := sha256.Sum256([]byte(verifier))
-	query := endpoint.Query()
-	query.Set("client_id", strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID")))
+	query := parsed.Query()
+	query.Set("client_id", strings.TrimSpace(clientID))
 	query.Set("redirect_uri", redirectURI)
 	query.Set("state", state)
 	query.Set("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:]))
 	query.Set("code_challenge_method", "S256")
-	if app.Scope != "" {
-		query.Set("scope", app.Scope)
+	if scope != "" {
+		query.Set("scope", scope)
 	}
-	endpoint.RawQuery = query.Encode()
-	return endpoint.String(), nil
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
+}
+
+// preregisteredAuthorizeURL is the confidential-client authorize URL. It
+// sets response_type, which providers such as Asana require and GitHub's
+// authorize URL does not.
+func preregisteredAuthorizeURL(endpoint, clientID, scope, redirectURI, state, verifier, resource string) (string, error) {
+	built, err := githubConnectorAuthorizeURL(endpoint, clientID, scope, redirectURI, state, verifier)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := url.Parse(built)
+	if err != nil {
+		return "", err
+	}
+	query := parsed.Query()
+	query.Set("response_type", "code")
+	if strings.TrimSpace(resource) != "" {
+		query.Set("resource", resource)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String(), nil
 }
 
 // connectorSealedVerifier is the sealed part of one state: the PKCE
@@ -584,9 +644,6 @@ type connectorSealedVerifier struct {
 	RedirectURI string `json:"redirect_uri,omitempty"`
 	// BrowserHash is the SHA-256 (hex) of the browser binding nonce.
 	BrowserHash string `json:"browser_hash,omitempty"`
-	// SceneKey is connectorOAuthScope.SceneKey: the 1:1 chat scene the
-	// connect was requested for when the state's scope is its person.
-	SceneKey string `json:"scene_key,omitempty"`
 }
 
 func (h *Handler) sealConnectorOAuthVerifier(payload connectorSealedVerifier) ([]byte, error) {
@@ -689,13 +746,18 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	out.Slug = app.Slug
 	wantVia := connectorOAuthViaDCR
 	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp {
-		wantVia = connectorOAuthViaGitHub
+		client, clientErr := h.githubOAuthClient(ctx, scope.WorkspaceID)
+		if clientErr != nil {
+			return fail(connectOAuthErrExchangeFailed)
+		}
+		if client.Source != connectorconfig.SourceWorkspace {
+			wantVia = connectorOAuthViaGitHub
+		}
 	}
 	verifier, ok := h.openConnectorOAuthVerifier(state.verifier, state.stateHash, scope.ConnectorID)
 	if !ok || in.Via != wantVia || verifier.Via != wantVia {
 		return fail(connectOAuthErrInvalidState)
 	}
-	scope.SceneKey = verifier.SceneKey
 	if _, err := normalizeConnectorOAuthScope(scope); err != nil {
 		return fail(connectOAuthErrInvalidState)
 	}
@@ -757,6 +819,7 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	}
 	out.ErrorCode = ""
 	out.RedirectURL = withOAuthResult(state.returnTo, "connected", app.Slug)
+	h.attachOAuthTokenToAuthInstance(ctx, scope.WorkspaceID, app.Slug, token.Account, token.AccessToken)
 	slog.InfoContext(ctx, "official app OAuth connected", "connector_id", c.ID, "catalog_slug", app.Slug, "scope_type", scope.ScopeType, "user_id", scope.UserID)
 	return out
 }

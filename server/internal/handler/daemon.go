@@ -30,12 +30,14 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
+	"github.com/multica-ai/multica/server/pkg/skillbundle"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
@@ -2066,8 +2068,15 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		// Skills the org, scene and person layers switch on extend the
 		// agent's own skills (nil when no layer applies).
 		contextSkillIDs := claimContext.contextSkillIDs()
+		// A task with a current scene to configure also gets the
+		// config-qwen-tag-scene skill (the resolve path decides the same).
+		sceneConfig := h.taskHasConfigScene(r.Context(), runtime.WorkspaceID, *task)
 		if useSkillRefs {
-			bundles, skillRefs := h.TaskService.LoadTaskSkillBundles(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
+			skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
+			if sceneConfig {
+				skillList = service.WithSceneConfigSkill(skillList)
+			}
+			bundles, skillRefs := service.BuildAgentSkillBundles(skillList)
 			agentSkillCount = len(skillRefs)
 			resp.Agent.SkillRefs = skillRefs
 			if h.TaskService.CurrentRuntimeStartRecoveryConfig().ForAgent(task.AgentID).BatchSkillResolve && inlineSmallSkillSet(bundles) {
@@ -2079,6 +2088,9 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			}
 		} else {
 			skills := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, contextSkillIDs, runtime, taskBackend, messagePolicy)
+			if sceneConfig {
+				skills = service.WithSceneConfigSkill(skills)
+			}
 			agentSkillCount = len(skills)
 			builtinSkills := h.TaskService.BuiltinSkills()
 			builtinSkillCount = len(builtinSkills)
@@ -2849,6 +2861,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				if ap.Description.Valid {
 					resp.AutopilotDescription = ap.Description.String
 				}
+				if service.IsSceneRoutineContext(task.Context) {
+					// The Host posts this run's start and end notices into
+					// its scene (scene_routines.go); a send of its own would
+					// repeat the result.
+					resp.AutopilotDescription = strings.TrimSpace(resp.AutopilotDescription + "\n\n" + sceneRoutineRunNote)
+				}
 				if resp.WorkspaceID == "" {
 					resp.WorkspaceID = uuidToString(ap.WorkspaceID)
 				}
@@ -3591,7 +3609,18 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 	for _, ref := range req.Skills {
 		requestedSkillIDs = append(requestedSkillIDs, ref.ID)
 	}
-	bundles, _ := h.TaskService.LoadTaskSkillBundles(r.Context(), task.AgentID, h.resolvableContextSkillIDs(r.Context(), runtime.WorkspaceID, task, requestedSkillIDs), runtime, taskBackend)
+	skillList := h.TaskService.LoadTaskExecutionSkills(r.Context(), task.AgentID, h.resolvableContextSkillIDs(r.Context(), runtime.WorkspaceID, task, requestedSkillIDs), runtime, taskBackend)
+	// The scene configuration skill is static documentation: serve it to any
+	// task whose claim listed it, so a scene lookup failing now cannot fail
+	// the whole resolve. Claim alone decides whether a task gets it (and its
+	// MCP server).
+	for _, ref := range req.Skills {
+		if ref.Source == skillbundle.SourceBuiltin && ref.ID == skillbundle.SourceBuiltin+":"+service.SceneConfigSkillName {
+			skillList = service.WithSceneConfigSkill(skillList)
+			break
+		}
+	}
+	bundles, _ := service.BuildAgentSkillBundles(skillList)
 	var policyBundle *service.AgentSkillData
 	if dingTalkTaskPolicyCapable(r, runtime) && !service.IsA2ATaskOrigin(task.Context) {
 		// There are exactly two DWS documents. Preserve the static policy-aware
@@ -5026,19 +5055,10 @@ func (h *Handler) bindAssocOutboundFromTools(ctx context.Context, task db.AgentT
 	}
 	agentID := uuidToString(task.AgentID)
 	for _, outbound := range execenv.FilterOutboundChat(events) {
+		// A 1:1 chat is identified by its conversation, never by its person:
+		// a send whose receipt names no conversation binds nothing.
 		cid := outbound.ConversationID
-		if cid == "" && outbound.PersonID != "" {
-			if resolved, err := h.Assoc.RecentPersonOutreachScene(ctx, workspaceID, agentID, outbound.PersonID); err != nil {
-				slog.Warn("assoc outbound person scene lookup failed",
-					"event", "assoc_outbound_bind_skipped",
-					"task_id", uuidToString(task.ID),
-					"person_id", outbound.PersonID,
-					"error", err,
-				)
-			} else {
-				cid = resolved
-			}
-		}
+		var node assoc.SceneNode
 		if cid == "" {
 			slog.Info("assoc outbound bind skipped; no conversation in tool output",
 				"event", "assoc_outbound_bind_skipped",
@@ -5054,17 +5074,36 @@ func (h *Handler) bindAssocOutboundFromTools(ctx context.Context, task db.AgentT
 		if evidence == "" {
 			evidence = outbound.OpenTaskID
 		}
+		if node.SceneID == "" {
+			// A send to a person is a 1:1 chat; any other send binds only a
+			// conversation the agent already has a scene for.
+			kind := ""
+			if outbound.PersonID != "" {
+				kind = scene.KindDM
+			}
+			resolved, found, err := h.conversationSceneNode(ctx, workspaceID, agentID, cid, kind, contextDispatchOrg(task.Context), kind != "", kind != "")
+			if err != nil || !found {
+				slog.Info("assoc outbound bind skipped; conversation has no scene",
+					"event", "assoc_outbound_bind_skipped",
+					"task_id", uuidToString(task.ID),
+					"reason", "scene_unresolved",
+					"conversation_id", cid,
+					"error", err,
+				)
+				continue
+			}
+			node = resolved
+		}
 		result, bindErr := h.Assoc.BindOutbound(ctx, assoc.BindOutboundInput{
-			WorkspaceID:    workspaceID,
-			AgentID:        agentID,
-			IssueID:        issueID,
-			IssueTitle:     title,
-			RunID:          uuidToString(task.ID),
-			ConversationID: cid,
-			EvidenceID:     evidence,
-			PersonID:       outbound.PersonID,
-			Kind:           "dm",
-			Purpose:        purpose,
+			WorkspaceID: workspaceID,
+			AgentID:     agentID,
+			IssueID:     issueID,
+			IssueTitle:  title,
+			RunID:       uuidToString(task.ID),
+			Scene:       node,
+			EvidenceID:  evidence,
+			PersonID:    outbound.PersonID,
+			Purpose:     purpose,
 		})
 		if bindErr != nil {
 			slog.Error("assoc outbound bind from tool failed",

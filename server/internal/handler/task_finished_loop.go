@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -144,6 +145,7 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 		AgentName:            agent.Name,
 		Instructions:         agent.Instructions,
 		WorkspaceID:          uuidToString(agent.WorkspaceID),
+		SceneID:              sceneRefID(h.envelopeSceneRef(ctx, envelope, agent.WorkspaceID, task.AgentID)),
 		ConversationID:       cid,
 		IssueID:              uuidToString(task.IssueID),
 		TaskResult:           fullResult,
@@ -263,11 +265,37 @@ func parseTaskFinishedEnvelope(raw []byte) (persistedDispatchContext, bool) {
 	return envelope, true
 }
 
-func coordinatorChatType(raw string) string {
-	if strings.EqualFold(strings.TrimSpace(raw), "group") {
-		return "group"
+// envelopeSceneRef is the task's SceneRef from its dispatch context, through
+// the use-time fence (fenceSceneRef); nil when the task has no scene or the
+// agent no longer serves the scene's org.
+func (h *Handler) envelopeSceneRef(ctx context.Context, envelope persistedDispatchContext, workspaceID, agentID pgtype.UUID) *scene.Ref {
+	dispatchOrg := ""
+	if envelope.ExternalIdentity != nil && envelope.ExternalIdentity.DWS != nil {
+		dispatchOrg = envelope.ExternalIdentity.DWS.OrgID
 	}
-	return "p2p"
+	return h.fenceSceneRef(ctx, envelope.AgentScene, scene.Owner{WorkspaceID: workspaceID, AgentID: agentID}, dispatchOrg)
+}
+
+// sceneRefID is a SceneRef's scene_id, "" for nil.
+func sceneRefID(ref *scene.Ref) string {
+	if ref == nil {
+		return ""
+	}
+	return strings.TrimSpace(ref.SceneID)
+}
+
+// coordinatorChatType maps a dispatch conversation type onto the
+// Coordinator's chat type: "group", "p2p" for a 1:1 chat, and "unknown"
+// for anything else, which is never assumed to be a 1:1 chat.
+func coordinatorChatType(raw string) string {
+	switch kind, known := scene.KindFromConversationType(raw); {
+	case !known:
+		return "unknown"
+	case kind == scene.KindGroup:
+		return "group"
+	default:
+		return "p2p"
+	}
 }
 
 func clipTaskCompleteOutput(raw []byte, n int) string {
@@ -332,6 +360,7 @@ func (h *Handler) enqueueTaskFinishedLoop(ctx context.Context, task *db.AgentTas
 	cid := strings.TrimSpace(envelope.EventData.Conversation.OpenConversationID)
 	command := DispatchCommand{
 		TaskFinishedTaskID: uuidToString(task.ID),
+		AgentScene:         h.envelopeSceneRef(ctx, envelope, agent.WorkspaceID, task.AgentID),
 		Source:             DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
 		Event: DispatchEvent{
 			Domain: "channel",

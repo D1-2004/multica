@@ -220,10 +220,15 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 			}
 		}
 	}
-	// A 1:1 run has no scene, and a merged multi-sender run has no person.
+	// A 1:1 chat gets no reusable scene link, with or without its scene:
+	// the personal link is the way in and also grants the chat. A merged
+	// multi-sender run has no person.
 	dmTask := f.task(t, ctxcapDispatch("single", "", ctxcapStaff, ctxcapStaff))
-	if _, isError, _ := ctxcapToolResult(t, f.ctxcapToolCall(t, dmTask, map[string]any{"scope": "scene"})); !isError {
-		t.Fatal("scene link minted in a 1:1 chat")
+	f.registerDirectScene(t)
+	for _, task := range []db.AgentTaskQueue{dmTask, f.task(t, ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff))} {
+		if _, isError, _ := ctxcapToolResult(t, f.ctxcapToolCall(t, task, map[string]any{"scope": "scene"})); !isError {
+			t.Fatal("scene link minted in a 1:1 chat")
+		}
 	}
 	mixedTask := f.task(t, ctxcapDispatch("single", "", ctxcapStaff, ctxcapStaff, ctxcapOtherStaff))
 	if _, isError, _ := ctxcapToolResult(t, f.ctxcapToolCall(t, mixedTask, nil)); !isError {
@@ -300,4 +305,24 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 	}
 	ctxcapExpectStatus(t, redeem(uuid.NewString(), sceneToken), http.StatusGone, "expired scene link")
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPost, "/api/context-capabilities/links/redeem", alice, `{"token":"x","extra":1}`), http.StatusBadRequest, "unknown field")
+}
+
+// A link may open one of the configure page's tabs: the tab follows the
+// token (so link redaction still covers the token) and the page reads it;
+// an unknown tab is refused. Redaction still hides the token.
+func TestContextCapabilitiesLinkOpensATab(t *testing.T) {
+	f := newCtxcapFixture(t)
+	f.h.cfg.AppURL = "https://app.multica.example/"
+	f.cleanupGrantsAndLinks(t)
+	groupTask := f.task(t, ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff))
+	link, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, groupTask, map[string]any{"tab": "routines"}))
+	if isError || !strings.HasPrefix(link.URL, "https://app.multica.example/dingtalk/configure?link=") || !strings.HasSuffix(link.URL, "&tab=routines") {
+		t.Fatalf("tabbed link isError=%v url=%q text=%q", isError, link.URL, text)
+	}
+	if redacted := redactContextConfigLinks("open " + link.URL); strings.Contains(redacted, strings.TrimSuffix(strings.TrimPrefix(link.URL, "https://app.multica.example/dingtalk/configure?link="), "&tab=routines")) {
+		t.Fatalf("token survives redaction: %q", redacted)
+	}
+	if _, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, groupTask, map[string]any{"tab": "settings"})); !isError || !strings.Contains(text, "tab must be one of") {
+		t.Fatalf("unknown tab isError=%v text=%q", isError, text)
+	}
 }

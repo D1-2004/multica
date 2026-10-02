@@ -30,24 +30,42 @@ function requestOf(fetch: ReturnType<typeof vi.fn>) {
   return { url, init };
 }
 
+// An Agent work scene: its scene_id is its identity (scene_key repeats it);
+// the DingTalk conversation id is display-only.
+const groupSceneId = "66666666-6666-4666-8666-666666666666";
+const dmSceneId = "77777777-7777-4777-8777-777777777777";
+
 const groupScene = {
-  scene_key: "cidGroup==",
+  scene_id: groupSceneId,
+  scene_key: groupSceneId,
+  conversation_id: "cidGroup==",
   kind: "group",
   title: "Release crew",
   org_id: "ding-org",
   last_active_at: "2026-09-30T08:00:00Z",
   inbound_session_id: "44444444-4444-4444-8444-444444444444",
   inbound_count: 3,
-  memory_id: "55555555-5555-4555-8555-555555555555",
+  memory_id: groupSceneId,
+  has_memory: true,
+  has_prompt: true,
 };
 
 describe("tenant group list", () => {
-  it("maps group and 1:1 scenes to camelCase", () => {
+  it("maps group and 1:1 scenes to camelCase, keyed by scene_id", () => {
     const page = parseWithFallback<AgentScenesPage>(
       {
         scenes: [
           groupScene,
-          { scene_key: "cidDm==", kind: "dm", title: null },
+          {
+            scene_id: dmSceneId,
+            scene_key: dmSceneId,
+            conversation_id: "cidDm==",
+            kind: "dm",
+            title: null,
+            memory_id: "",
+            has_memory: false,
+            has_prompt: false,
+          },
         ],
         has_more: true,
       },
@@ -57,22 +75,68 @@ describe("tenant group list", () => {
     );
     expect(page.hasMore).toBe(true);
     expect(page.scenes[0]).toEqual({
-      sceneKey: "cidGroup==",
+      sceneId: groupSceneId,
+      sceneKey: groupSceneId,
+      conversationId: "cidGroup==",
       kind: "group",
       title: "Release crew",
       orgId: "ding-org",
       lastActiveAt: "2026-09-30T08:00:00Z",
       inboundSessionId: "44444444-4444-4444-8444-444444444444",
       inboundCount: 3,
-      memoryId: "55555555-5555-4555-8555-555555555555",
+      memoryId: groupSceneId,
+      hasMemory: true,
+      hasPrompt: true,
     });
     expect(page.scenes[1]).toMatchObject({
-      sceneKey: "cidDm==",
+      sceneId: dmSceneId,
+      conversationId: "cidDm==",
       kind: "dm",
       title: "",
       inboundSessionId: "",
       inboundCount: 0,
       memoryId: "",
+      hasMemory: false,
+      hasPrompt: false,
+    });
+  });
+
+  it("falls back safely when scene_id, conversation_id or the memory flags are missing", () => {
+    const page = AgentScenesPageSchema.parse({
+      scenes: [
+        // No scene_id: scene_key carries the same scene_id.
+        { scene_key: groupSceneId, kind: "group", memory_id: groupSceneId },
+        // No scene_key: scene_id alone; malformed conversation and flags.
+        { scene_id: dmSceneId, kind: "dm", conversation_id: 42, has_memory: "true", has_prompt: 1 },
+        // has_memory without a memory_id: the memory is opened by scene_id.
+        { scene_id: "88888888-8888-4888-8888-888888888888", has_memory: true },
+        // Neither id: dropped, never keyed by a guess.
+        { conversation_id: "cidOrphan==", kind: "group", title: "Orphan" },
+        { scene_id: "", scene_key: null, title: "Empty ids" },
+      ],
+    });
+    expect(page.scenes).toHaveLength(3);
+    expect(page.scenes[0]).toMatchObject({
+      sceneId: groupSceneId,
+      sceneKey: groupSceneId,
+      conversationId: "",
+      memoryId: groupSceneId,
+      hasMemory: true,
+      hasPrompt: false,
+    });
+    expect(page.scenes[1]).toMatchObject({
+      sceneId: dmSceneId,
+      sceneKey: dmSceneId,
+      conversationId: "",
+      kind: "dm",
+      memoryId: "",
+      hasMemory: false,
+      hasPrompt: false,
+    });
+    expect(page.scenes[2]).toMatchObject({
+      sceneId: "88888888-8888-4888-8888-888888888888",
+      memoryId: "88888888-8888-4888-8888-888888888888",
+      hasMemory: true,
     });
   });
 
@@ -130,22 +194,25 @@ describe("share_in_groups and scene kinds on the mobile API", () => {
 });
 
 describe("configure-page scene scope", () => {
-  const scene = { scope_key: "cidDm", scope_title: "Chat", source: "manager", expires_at: "", kind: "dm" };
+  const scene = { scope_key: dmSceneId, scope_title: "Chat", source: "manager", expires_at: "", kind: "dm" };
 
-  it("maps the person a 1:1 chat is bound to", () => {
+  it("reads a 1:1 chat as its own scene scope, keyed by its scene_id", () => {
     const detail = ContextConfigSceneDetailSchema.parse({
       scene,
       bindings: [],
       credentials: [],
-      scope: { type: "person", key: "staff-1", title: "Ada" },
+      scope: { type: "scene", key: dmSceneId, title: "Chat" },
+      rights: { toggle: true, connect: true, edit_prompts: true, edit_mcp: true },
     });
-    expect(detail.scope).toEqual({ type: "person", key: "staff-1", title: "Ada" });
+    expect(detail.scene).toMatchObject({ scopeKey: dmSceneId, kind: "dm" });
+    expect(detail.scope).toEqual({ type: "scene", key: dmSceneId, title: "Chat" });
+    expect(detail.rights).toEqual({ toggle: true, connect: true, editPrompts: true, editMcp: true, editRoutines: false });
   });
 
   it("reads a missing scope as the scene and a null or malformed one as unknown", () => {
     expect(ContextConfigSceneDetailSchema.parse({ scene }).scope).toEqual({
       type: "scene",
-      key: "cidDm",
+      key: dmSceneId,
       title: "Chat",
     });
     expect(ContextConfigSceneDetailSchema.parse({ scene, scope: null }).scope).toBeNull();

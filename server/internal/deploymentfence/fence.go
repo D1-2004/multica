@@ -395,7 +395,7 @@ func queryWorkCounts(ctx context.Context, q rowQuerier) (WorkCounts, error) {
 			(SELECT count(*) FROM webhook_delivery
 			 WHERE status = 'queued' AND lease_token IS NOT NULL),
 			(SELECT count(*) FROM agent_dispatch_acceptance WHERE status = 'pending'),
-			(SELECT count(*) FROM scene_memory
+			(SELECT count(*) FROM agent_scene_memory
 			 WHERE lease_token IS NOT NULL AND lease_expires_at > now()),
 			(SELECT count(*) FROM response_action
 			 WHERE next_attempt_at IS NOT NULL OR lease_token IS NOT NULL),

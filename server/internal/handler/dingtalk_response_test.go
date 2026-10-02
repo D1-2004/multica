@@ -510,3 +510,42 @@ func TestTaskFinishedManagedPendingParksThenVerifiedFailureResumes(t *testing.T)
 		t.Fatalf("follow-up text=%q", text)
 	}
 }
+
+// Without a scene, a managed reply never guesses a 1:1 chat: an unknown
+// conversation type with nothing to quote registers no route, while a quote
+// reply into the event's own conversation needs no guess.
+func TestManagedDingTalkResponseRouteNeverGuessesADirectChat(t *testing.T) {
+	f := newDingTalkResponseFixture(t, testRouterTargetIdentity)
+	ctx := context.Background()
+	scope := agentDispatchContext{WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(f.agentID)}
+	unknown := f.command
+	unknown.AgentScene = nil
+	unknown.Event.Data.Conversation.Type = "channel"
+	unknown.Event.Data.Messages = []DispatchMessage{{Text: "hello"}}
+	if err := f.h.registerDingTalkResponseRoute(ctx, testPool, unknown, scope); err != nil {
+		t.Fatal(err)
+	}
+	if route, err := f.h.DingTalkResponses.FindRoute(ctx, unknown.CompletionCallback.URL); err != nil || route != nil {
+		t.Fatalf("route for an unknown kind with nothing to quote = %+v err=%v", route, err)
+	}
+	// A stated 1:1 type without a scene behind it does not answer by a
+	// send to the sender either.
+	single := responseTestCommand(f.agentID, testRouterTargetIdentity)
+	single.Event.Data.Conversation.Type = "single"
+	single.Event.Data.Messages = []DispatchMessage{{Text: "hello"}}
+	if err := f.h.registerDingTalkResponseRoute(ctx, testPool, single, scope); err != nil {
+		t.Fatal(err)
+	}
+	if route, err := f.h.DingTalkResponses.FindRoute(ctx, single.CompletionCallback.URL); err != nil || route != nil {
+		t.Fatalf("route for a 1:1 type without a scene = %+v err=%v", route, err)
+	}
+	quoted := responseTestCommand(f.agentID, testRouterTargetIdentity)
+	quoted.Event.Data.Conversation.Type = "channel"
+	if err := f.h.registerDingTalkResponseRoute(ctx, testPool, quoted, scope); err != nil {
+		t.Fatal(err)
+	}
+	route, err := f.h.DingTalkResponses.FindRoute(ctx, quoted.CompletionCallback.URL)
+	if err != nil || route == nil || route.Input.ReplyToOpenMsgID != "message-1" || route.Input.IsGroup {
+		t.Fatalf("quote route = %+v err=%v", route, err)
+	}
+}

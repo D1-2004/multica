@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 )
 
@@ -140,14 +141,38 @@ func scenesAs(t *testing.T, router http.Handler, userID, method, path string, bo
 }
 
 // sceneMemoryRow plants a scene_memory row updated age ago.
-func (f *ctxcapFixture) sceneMemoryRow(t *testing.T, orgID, key, kind, title string, age time.Duration) {
+// sceneMemoryRow gives a scene Scene Memory, registering the scene first
+// when key is a conversation id rather than a fixture scene id, and returns
+// the scene id.
+func (f *ctxcapFixture) sceneMemoryRow(t *testing.T, orgID, key, kind, title string, age time.Duration) string {
 	t.Helper()
-	if _, err := testPool.Exec(context.Background(), `INSERT INTO scene_memory
-		(workspace_id, agent_id, platform, org_id, scene_key, scene_kind, scene_title, memory_text, updated_at)
-		VALUES ($1, $2, 'dingtalk', $3, $4, $5, $6, 'notes', now() - make_interval(secs => $7::double precision))`,
-		testWorkspaceID, uuidToString(f.agent), orgID, key, kind, title, age.Seconds()); err != nil {
+	sceneID := key
+	if _, fixture := ctxcapSceneCIDs[key]; !fixture {
+		sceneID = f.sceneFor(t, orgID, kind, key, title, age)
+	}
+	if _, err := testPool.Exec(context.Background(), `INSERT INTO agent_scene_memory
+		(scene_id, workspace_id, agent_id, memory_text, updated_at)
+		VALUES ($1, $2, $3, 'notes', now() - make_interval(secs => $4::double precision))`,
+		sceneID, testWorkspaceID, uuidToString(f.agent), age.Seconds()); err != nil {
 		t.Fatal(err)
 	}
+	return sceneID
+}
+
+// sceneFor registers (or finds) the agent's scene of conversation cid in
+// orgID, active age ago, and returns its scene id.
+func (f *ctxcapFixture) sceneFor(t *testing.T, orgID, kind, cid, title string, age time.Duration) string {
+	t.Helper()
+	var id string
+	if err := testPool.QueryRow(context.Background(), `INSERT INTO agent_scene
+		(workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title, last_active_at)
+		VALUES ($1, $2, 'dingtalk', $3, 'dingtalk.open_conversation_id', $4, $5, $6, now() - make_interval(secs => $7::double precision))
+		ON CONFLICT (workspace_id, agent_id, provider, tenant_org_id, source_namespace, external_scene_id)
+		DO UPDATE SET last_active_at = GREATEST(agent_scene.last_active_at, EXCLUDED.last_active_at)
+		RETURNING id::text`, testWorkspaceID, uuidToString(f.agent), orgID, kind, cid, title, age.Seconds()).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 // coordinatorJob plants one inbound Coordinator job with its chat session
@@ -183,6 +208,18 @@ func (f *ctxcapFixture) insertCoordinatorJob(t *testing.T, endpointNamespace, so
 		}},
 		"externalIdentity": map[string]any{"dws": map[string]any{"orgId": dispatchOrg}},
 	}
+	// The dispatch registered (or found) the conversation's scene, active
+	// when the job ran, and carries its SceneRef. A job of an unknown
+	// conversation type or without an org has no scene.
+	if kind, known := scene.KindFromConversationType(conversationType); known && dispatchOrg != "" {
+		owner := scene.Owner{WorkspaceID: parseUUID(testWorkspaceID), AgentID: f.agent}
+		sc, err := scene.Resolve(ctx, f.h.Queries, owner, scene.DingTalkConversation(dispatchOrg, kind, cid),
+			scene.Observation{Title: title, ActiveAt: time.Now().Add(-age)})
+		if err != nil {
+			t.Fatalf("register scene %s: %v", cid, err)
+		}
+		command["agent_scene"] = map[string]any{"scene_id": uuidToString(sc.ID)}
+	}
 	raw, _ := json.Marshal(command)
 	var sessionID string
 	if err := testPool.QueryRow(ctx, `INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, updated_at)
@@ -207,7 +244,8 @@ func (f *ctxcapFixture) cleanupScenes(t *testing.T) {
 		for _, statement := range []string{
 			`DELETE FROM inbound_coordinator_job WHERE agent_id = $1`,
 			`DELETE FROM chat_session WHERE agent_id = $1`,
-			`DELETE FROM scene_memory WHERE agent_id = $1`,
+			`DELETE FROM agent_scene_memory WHERE agent_id = $1`,
+			`DELETE FROM agent_scene WHERE agent_id = $1`,
 			`DELETE FROM agent_scene_config WHERE agent_id = $1`,
 			`DELETE FROM context_prompt_component WHERE agent_id = $1`,
 			`DELETE FROM context_scope_mcp_config WHERE agent_id = $1`,
@@ -226,65 +264,71 @@ func scenesByKey(scenes []agentSceneDTO) map[string]agentSceneDTO {
 	return out
 }
 
-func TestAgentScenesListMergesSourcesUnderCurrentOrg(t *testing.T) {
+// The scene list is the agent's scene directory in the tenant org: groups
+// and 1:1 chats alike, newest activity first, with memory and the inbound
+// session joined by scene_id (docs/agent-scene.md).
+func TestAgentScenesListReadsTheSceneDirectory(t *testing.T) {
 	f := newCtxcapFixture(t)
 	f.cleanupScenes(t)
 	router := scenesRouter(f.h)
 	agentID := uuidToString(f.agent)
-
-	// Group scene known from scene memory and a Coordinator conversation.
-	f.sceneMemoryRow(t, ctxcapOrg, scenesMemoryKey, "group", "Memory group", 3*time.Hour)
-	memorySession := f.coordinatorJob(t, scenesMemoryKey, "group", "Memory group", "Bob", ctxcapOrg, 30*time.Minute)
-	// 1:1 scene known only from two Coordinator sessions.
-	f.coordinatorJob(t, scenesDirectKey, "single", "", "Alice", "", 2*time.Hour)
-	directSession := f.coordinatorJob(t, scenesDirectKey, "single", "", "Alice", "", time.Hour)
-	// Rows of another org are not scenes of the agent's current binding.
-	f.sceneMemoryRow(t, "org-other", scenesStaleKey, "group", "Old org group", time.Minute)
-	f.coordinatorJob(t, scenesOtherJob, "group", "Old org job", "Bob", "org-other", time.Minute)
-	// ctxcapScene is known only from its fixture bindings (updated just now).
-
-	// The tenant's group list leaves the 1:1 chat out.
-	list := tenantGroups(t, router, agentID, "")
-	if list.HasMore || len(list.Scenes) != 2 {
-		t.Fatalf("groups=%+v has_more=%v", list.Scenes, list.HasMore)
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent_scene SET last_active_at = now() - interval '5 hours' WHERE agent_id = $1`, agentID); err != nil {
+		t.Fatal(err)
 	}
-	if list.Scenes[0].SceneKey != ctxcapScene || list.Scenes[1].SceneKey != scenesMemoryKey {
-		t.Fatalf("groups not ordered by last activity: %+v", list.Scenes)
+
+	memoryScene := f.sceneMemoryRow(t, ctxcapOrg, scenesMemoryKey, "group", "Memory group", 3*time.Hour)
+	memorySession := f.coordinatorJob(t, scenesMemoryKey, "group", "Memory group", "Bob", ctxcapOrg, 30*time.Minute)
+	directScene := f.sceneFor(t, ctxcapOrg, "dm", scenesDirectKey, "Alice", time.Hour)
+	f.coordinatorJob(t, scenesDirectKey, "single", "", "Alice", ctxcapOrg, 2*time.Hour)
+	directSession := f.coordinatorJob(t, scenesDirectKey, "single", "", "Alice", ctxcapOrg, time.Hour)
+	// A scene of another org is not a scene of this tenant.
+	otherScene := f.sceneMemoryRow(t, "org-other", scenesStaleKey, "group", "Old org group", time.Minute)
+
+	list := tenantGroups(t, router, agentID, "")
+	if list.HasMore || len(list.Scenes) != 4 {
+		t.Fatalf("scenes=%+v has_more=%v", list.Scenes, list.HasMore)
+	}
+	if list.Scenes[0].SceneID != memoryScene || list.Scenes[1].SceneID != directScene {
+		t.Fatalf("scenes not ordered by last activity: %+v", list.Scenes)
 	}
 	byKey := scenesByKey(list.Scenes)
-	bound := byKey[ctxcapScene]
-	// Known from its bindings alone (TestAgentContextNodePromptsAndBindings
-	// covers which bindings the node lists).
-	if bound.Kind != "group" || bound.MemoryID != "" || bound.InboundSessionID != "" || bound.InboundCount != 0 ||
-		bound.HasPrompt || bound.OrgID != ctxcapOrg || bound.LastActiveAt == "" {
-		t.Fatalf("binding-only scene=%+v", bound)
-	}
-	memory := byKey[scenesMemoryKey]
-	if memory.Kind != "group" || memory.Title != "Memory group" || memory.MemoryID == "" || memory.InboundSessionID != memorySession ||
-		memory.InboundCount != 1 {
+	memory := byKey[memoryScene]
+	if memory.Kind != "group" || memory.Title != "Memory group" || memory.SceneKey != memoryScene || memory.ConversationID != scenesMemoryKey ||
+		memory.MemoryID != memoryScene || !memory.HasMemory || memory.InboundSessionID != memorySession || memory.InboundCount != 1 {
 		t.Fatalf("memory scene=%+v", memory)
 	}
-	// The 1:1 chat is still a scene of the tenant: its node reads it (its
-	// person is unknown, so it has no configuration).
-	directNode := ctxNode(t, router, "", agentID, contextcap.ScopeScene, scenesDirectKey)
-	direct := directNode.Scene
-	if direct == nil || direct.Kind != "dm" || direct.Title != "Alice" || direct.InboundSessionID != directSession || direct.InboundCount != 2 ||
-		direct.MemoryID != "" || directNode.Scope != nil {
-		t.Fatalf("direct scene=%+v scope=%+v", direct, directNode.Scope)
+	direct := byKey[directScene]
+	if direct.Kind != "dm" || direct.Title != "Alice" || direct.InboundSessionID != directSession || direct.InboundCount != 2 || direct.HasMemory {
+		t.Fatalf("direct scene=%+v", direct)
 	}
-	// Scenes of another org are not scenes of this tenant.
-	for _, key := range []string{scenesStaleKey, scenesOtherJob} {
-		ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, key), nil),
-			http.StatusNotFound, "scene of another org "+key)
+	if fixture := byKey[ctxcapScene]; fixture.Kind != "group" || fixture.ConversationID != ctxcapSceneCID {
+		t.Fatalf("fixture scene=%+v", fixture)
 	}
+	groups := tenantGroups(t, router, agentID, "groups_only=true")
+	if len(groups.Scenes) != 3 || scenesByKey(groups.Scenes)[directScene].SceneID != "" {
+		t.Fatalf("groups only=%+v", groups.Scenes)
+	}
+	// A 1:1 chat's node is its own scene configuration.
+	directNode := ctxNode(t, router, "", agentID, contextcap.ScopeScene, directScene)
+	if directNode.Scene == nil || directNode.Scene.Kind != "dm" || directNode.Scope == nil || directNode.Scope.Key != directScene {
+		t.Fatalf("direct node=%+v", directNode)
+	}
+	// Another org's scene, a conversation id and an unknown id are not nodes
+	// of this tenant.
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, otherScene), nil),
+		http.StatusNotFound, "scene of another org")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, uuid.NewString()), nil),
+		http.StatusNotFound, "unknown scene")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, scenesMemoryKey), nil),
+		http.StatusBadRequest, "conversation id as a scene key")
 
 	// Pagination.
 	list = tenantGroups(t, router, agentID, "limit=1")
-	if !list.HasMore || len(list.Scenes) != 1 || list.Scenes[0].SceneKey != ctxcapScene {
+	if !list.HasMore || len(list.Scenes) != 1 || list.Scenes[0].SceneID != memoryScene {
 		t.Fatalf("first page=%+v has_more=%v", list.Scenes, list.HasMore)
 	}
 	list = tenantGroups(t, router, agentID, "limit=1&offset=1")
-	if list.HasMore || len(list.Scenes) != 1 || list.Scenes[0].SceneKey != scenesMemoryKey {
+	if !list.HasMore || len(list.Scenes) != 1 || list.Scenes[0].SceneID != directScene {
 		t.Fatalf("second page=%+v has_more=%v", list.Scenes, list.HasMore)
 	}
 	groupsPath := tenantGroupsPath(agentID, ctxcapOrg)
@@ -380,7 +424,7 @@ func TestAgentContextNodePromptsAndBindings(t *testing.T) {
 	}
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptsPath, map[string]any{"prompts": tooMany}), http.StatusBadRequest, "21 prompts")
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptsPath, map[string]any{"prompts": []map[string]any{{"name": "a", "text": strings.Repeat("场", contextcap.MaxScenePrompt)}}}), http.StatusOK, "8000 characters")
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, "cidNeverSeen==")+"/prompts", map[string]any{"prompts": []map[string]any{}}), http.StatusNotFound, "unknown scene")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, ctxcapUnknownScene)+"/prompts", map[string]any{"prompts": []map[string]any{}}), http.StatusNotFound, "unknown scene")
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, "/api/agents/"+agentID+"/tenants/"+ctxcapOrg+"/context/scene/not-a-cid/prompts", map[string]any{"prompts": []map[string]any{}}), http.StatusBadRequest, "malformed scene key")
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, "org-not-a-tenant", contextcap.ScopeScene, ctxcapScene)+"/prompts", map[string]any{"prompts": []map[string]any{}}), http.StatusNotFound, "unknown tenant")
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, promptsPath, map[string]any{"prompts": []map[string]any{}}), http.StatusOK, "clear prompts")
@@ -424,7 +468,7 @@ func TestAgentContextNodePromptsAndBindings(t *testing.T) {
 	}
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, bindingsPath, map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true, "share_in_groups": true}), http.StatusBadRequest, "share_in_groups on a scene")
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, bindingsPath, map[string]any{"resource_type": "connector", "resource_id": "nope", "enabled": true}), http.StatusBadRequest, "malformed resource id")
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, "cidNeverSeen==")+"/bindings", map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true}), http.StatusNotFound, "unknown scene binding")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, ctxcapUnknownScene)+"/bindings", map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": true}), http.StatusNotFound, "unknown scene binding")
 	ctxcapExpectStatus(t, scenesAs(t, router, member, http.MethodPut, bindingsPath, map[string]any{"resource_type": "connector", "resource_id": f.person, "enabled": false}), http.StatusForbidden, "plain member binding")
 
 	// The mobile page of the group sees the admin's toggles.
@@ -438,114 +482,28 @@ func TestAgentContextNodePromptsAndBindings(t *testing.T) {
 	}
 }
 
-func TestAgentScenesEscapedKeyAndMemoryOnlyScene(t *testing.T) {
-	f := newCtxcapFixture(t)
-	f.cleanupScenes(t)
-	router := scenesRouter(f.h)
-	agentID := uuidToString(f.agent)
-	const slashy = "cidScenes+Ab/Cd=="
-	// scene_memory records "dm" for any chat type that is not "group", so a
-	// memory-only scene is not proof of a 1:1 chat.
-	f.sceneMemoryRow(t, ctxcapOrg, slashy, "dm", "", time.Minute)
-	path := ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, slashy)
-	if !strings.Contains(path, "%2F") || !strings.Contains(path, "%2B") {
-		t.Fatalf("path %q does not exercise escaping", path)
-	}
-	node := ctxNode(t, router, "", agentID, contextcap.ScopeScene, slashy)
-	if node.Scene == nil || node.Scene.SceneKey != slashy || node.Scene.Kind != "group" || node.Scene.MemoryID == "" {
-		t.Fatalf("scene=%+v", node.Scene)
-	}
-	w := scenesAs(t, router, "", http.MethodPut, path+"/prompts", map[string]any{"prompts": []map[string]any{{"name": "语气", "text": "简短回答"}}})
-	ctxcapExpectStatus(t, w, http.StatusOK, "memory-only prompts")
-	var stored string
-	if err := testPool.QueryRow(context.Background(), `SELECT text FROM context_prompt_component WHERE agent_id = $1 AND scope_type = 'scene' AND scope_key = $2`,
-		agentID, slashy).Scan(&stored); err != nil || stored != "简短回答" {
-		t.Fatalf("stored prompt=%q err=%v", stored, err)
-	}
-}
-
-// Scene kind is dm only on positive evidence, and the inbound count matches
-// the transcript the inbound session opens.
-func TestAgentScenesKindEvidenceAndInboundPartition(t *testing.T) {
-	f := newCtxcapFixture(t)
-	f.cleanupScenes(t)
-	router := scenesRouter(f.h)
-	agentID := uuidToString(f.agent)
-	const (
-		untypedKey = "cidScenesUntyped=="
-		singleKey  = "cidScenesSingle=="
-		linkedKey  = "cidScenesLinkedDM=="
-		splitKey   = "cidScenesSplit=="
-	)
-	// A dispatch without a conversation type left a "dm" memory row.
-	f.sceneMemoryRow(t, ctxcapOrg, untypedKey, "dm", "", time.Hour)
-	f.coordinatorJob(t, untypedKey, "", "Untyped group", "Bob", ctxcapOrg, time.Hour)
-	// A positively 1:1 conversation.
-	f.sceneMemoryRow(t, ctxcapOrg, singleKey, "dm", "", time.Hour)
-	f.coordinatorJob(t, singleKey, "single", "", "Carol", ctxcapOrg, time.Hour)
-	// A 1:1 chat registered by a personal link, known from memory only.
-	f.sceneMemoryRow(t, ctxcapOrg, linkedKey, "dm", "", time.Hour)
-	if err := contextcap.RegisterDirectScene(context.Background(), testPool, testWorkspaceID, agentID, ctxcapOrg, linkedKey, "Dora"); err != nil {
-		t.Fatal(err)
-	}
-	// One group reached through two endpoint namespaces: the newest session's
-	// transcript covers only its own partition.
-	otherNamespace := uuid.NewString()
-	f.coordinatorJobFrom(t, otherNamespace, "robot", splitKey, "group", "Split group", "Bob", ctxcapOrg, 4*time.Hour)
-	f.coordinatorJobFrom(t, otherNamespace, "robot", splitKey, "group", "Split group", "Bob", ctxcapOrg, 3*time.Hour)
-	f.coordinatorJob(t, splitKey, "group", "Split group", "Bob", ctxcapOrg, 2*time.Hour)
-	newest := f.coordinatorJob(t, splitKey, "group", "Split group", "Bob", ctxcapOrg, time.Minute)
-
-	// The group list holds the groups only; every scene's node reads its kind.
-	byKey := scenesByKey(tenantGroups(t, router, agentID, "").Scenes)
-	for key, want := range map[string]string{untypedKey: "group", singleKey: "dm", linkedKey: "dm", splitKey: "group"} {
-		if _, listed := byKey[key]; listed != (want == "group") {
-			t.Errorf("%s listed=%v as a group, want kind %q", key, listed, want)
-		}
-		if node := ctxNode(t, router, "", agentID, contextcap.ScopeScene, key); node.Scene == nil || node.Scene.Kind != want {
-			t.Errorf("%s node scene=%+v, want kind %q", key, node.Scene, want)
-		}
-	}
-	if split := byKey[splitKey]; split.InboundSessionID != newest || split.InboundCount != 2 {
-		t.Fatalf("split scene=%+v, want the newest session and the 2 sessions of its partition", split)
-	}
-	// The single-key lookup behind nodes and writes agrees with the list.
-	node := ctxNode(t, router, "", agentID, contextcap.ScopeScene, splitKey)
-	if node.Scene == nil || node.Scene.InboundSessionID != newest || node.Scene.InboundCount != 2 || node.Scene.Kind != "group" {
-		t.Fatalf("split node=%+v", node.Scene)
-	}
-	if node = ctxNode(t, router, "", agentID, contextcap.ScopeScene, untypedKey); node.Scene == nil || node.Scene.Kind != "group" {
-		t.Fatalf("untyped node=%+v", node.Scene)
-	}
-}
-
-// The scene detail opens its memory row by id, whatever its position in the
-// capped agent-wide list.
-func TestAgentSceneMemoryByID(t *testing.T) {
+// The scene detail opens its memory by scene id, whatever its position in
+// the capped agent-wide list; there is no separate memory id.
+func TestAgentSceneMemoryBySceneID(t *testing.T) {
 	f := newCtxcapFixture(t)
 	f.cleanupScenes(t)
 	f.h.SceneMemoryStore = scenememory.NewStore(f.h.Queries)
 	router := chi.NewRouter()
-	router.Get("/api/agents/{id}/scene-memory/{memoryId}", f.h.GetAgentSceneMemory)
+	router.Get("/api/agents/{id}/scene-memory/{sceneId}", f.h.GetAgentSceneMemory)
 	agentID := uuidToString(f.agent)
 	const key = "cidScenesMemoryByID=="
-	f.sceneMemoryRow(t, "org-previous", key, "group", "Old group", 400*time.Hour)
-	var memoryID string
-	if err := testPool.QueryRow(context.Background(), `SELECT id::text FROM scene_memory WHERE agent_id = $1 AND scene_key = $2`, agentID, key).Scan(&memoryID); err != nil {
-		t.Fatal(err)
-	}
-	w := scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scene-memory/"+memoryID, nil)
-	ctxcapExpectStatus(t, w, http.StatusOK, "memory by id")
+	sceneID := f.sceneMemoryRow(t, "org-previous", key, "group", "Old group", 400*time.Hour)
+	w := scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scene-memory/"+sceneID, nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "memory by scene id")
 	var memory sceneMemoryResponse
 	ctxcapDecode(t, w, &memory)
-	if memory.ID != memoryID || memory.SceneKey != key || memory.OrgID != "org-previous" || memory.MemoryText != "notes" {
+	if memory.ID != sceneID || memory.SceneID != sceneID || memory.SceneKey != sceneID || memory.ConversationID != key || memory.OrgID != "org-previous" || memory.MemoryText != "notes" {
 		t.Fatalf("memory=%+v", memory)
 	}
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scene-memory/"+uuid.NewString(), nil), http.StatusNotFound, "unknown memory")
-	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scene-memory/not-a-uuid", nil), http.StatusBadRequest, "malformed memory id")
-	member := createPermissionTestMember(t, "scenes-memory-"+uuid.NewString()[:8]+"@example.test")
-	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE user_id = $1`, member) })
-	ctxcapExpectStatus(t, scenesAs(t, router, member, http.MethodGet, "/api/agents/"+agentID+"/scene-memory/"+memoryID, nil), http.StatusForbidden, "plain member")
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, "/api/agents/"+agentID+"/scene-memory/"+uuid.NewString(), nil), http.StatusNotFound, "unknown scene")
+	// Another agent's scene id does not open this agent's memory.
+	other := createHandlerTestAgent(t, "scene-memory-other-"+uuid.NewString()[:8], nil)
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, "/api/agents/"+other+"/scene-memory/"+sceneID, nil), http.StatusNotFound, "another agent's scene")
 }
 
 func TestContextCapabilitiesPersonShareInGroups(t *testing.T) {
@@ -594,10 +552,10 @@ func TestContextCapabilitiesPersonShareInGroups(t *testing.T) {
 	}
 	ctxcapExpectStatus(t, put(map[string]any{"scope_type": "person", "scope_key": ctxcapStaff, "resource_type": "skill", "resource_id": f.skillScene, "enabled": true, "share_in_groups": true}),
 		http.StatusBadRequest, "share_in_groups on a skill")
-	// A group takes no share_in_groups. Its link holder may not toggle the
-	// group at all (403); a manager, who may, gets the 400.
+	// A group takes no share_in_groups: its link holder and a manager (who
+	// both may toggle the group) get the 400.
 	sceneShare := map[string]any{"scope_type": "scene", "scope_key": ctxcapScene, "resource_type": "connector", "resource_id": f.scene, "enabled": true, "share_in_groups": true}
-	ctxcapExpectStatus(t, put(sceneShare), http.StatusForbidden, "share_in_groups on a scene by its link holder")
+	ctxcapExpectStatus(t, put(sceneShare), http.StatusBadRequest, "share_in_groups on a scene by its link holder")
 	f.sceneMemoryRow(t, ctxcapOrg, ctxcapScene, "group", "Ctxcap group", time.Minute)
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, bindingPath, testUserID, sceneShare), http.StatusBadRequest, "share_in_groups on a scene")
 	ctxcapExpectStatus(t, put(personConnector(map[string]any{"share_in_groups": "yes"})), http.StatusBadRequest, "non-boolean share_in_groups")
@@ -638,6 +596,10 @@ func TestContextCapabilitiesPersonShareInGroups(t *testing.T) {
 	}
 }
 
+// A personal link minted in a 1:1 chat grants the person scope and the
+// chat's own scene (its scene_id). The chat's configuration is the scene's,
+// configured by managers; the person's own configuration stays the person
+// scope, and both layers apply to the chat's runs (docs/agent-scene.md).
 func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 	f := newCtxcapFixture(t)
 	f.h.cfg.AppURL = "https://app.multica.example"
@@ -645,20 +607,21 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 	f.cleanupScenes(t)
 	router := scenesRouter(f.h)
 	agentID := uuidToString(f.agent)
-	const dmKey = "cidCtxcapDirect=="
+	const dmCID = "cidCtxcapDirect=="
+	dmScene := f.sceneFor(t, ctxcapOrg, "dm", dmCID, "Alice", time.Minute)
 	ctx := context.Background()
 
-	// A group scene link and a DM link without a conversation id carry no
-	// extra scene.
+	// A group scene link and a DM dispatch without a scene carry no extra
+	// scene.
 	groupLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, f.task(t, ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff)), nil))
 	if isError {
 		t.Fatalf("group mint: %s", text)
 	}
-	noCidLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, f.task(t, ctxcapDispatch("single", "", ctxcapStaff, ctxcapStaff)), nil))
+	noSceneLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, f.task(t, ctxcapDispatch("single", "", ctxcapStaff, ctxcapStaff)), nil))
 	if isError {
-		t.Fatalf("dm mint without cid: %s", text)
+		t.Fatalf("dm mint without a scene: %s", text)
 	}
-	for _, link := range []ctxcapLinkResult{groupLink, noCidLink} {
+	for _, link := range []ctxcapLinkResult{groupLink, noSceneLink} {
 		var extra string
 		if err := testPool.QueryRow(ctx, `SELECT extra_scene_key FROM context_config_link WHERE token_hash = $1`,
 			contextcap.HashLinkToken(ctxcapLinkToken(t, link))).Scan(&extra); err != nil || extra != "" {
@@ -666,14 +629,23 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 		}
 	}
 
-	dmTask := f.task(t, ctxcapDispatch("single", dmKey, ctxcapStaff, ctxcapStaff))
+	dmContext, _ := json.Marshal(map[string]any{
+		"agent_scene":     map[string]any{"scene_id": dmScene},
+		"dispatch_source": map[string]any{"platform": "dingtalk"},
+		"dispatch_event_data": map[string]any{
+			"conversation": map[string]any{"openConversationId": dmCID, "type": "single"},
+			"sender":       map[string]any{"staffId": ctxcapStaff, "displayName": "Alice"},
+			"messages":     []map[string]any{{"openMsgId": "ma", "senderStaffId": ctxcapStaff}},
+		},
+	})
+	dmTask := f.task(t, dmContext)
 	dmLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, dmTask, nil))
 	if isError || dmLink.Scope != contextcap.ScopePerson {
 		t.Fatalf("dm mint isError=%v text=%q", isError, text)
 	}
 	token := ctxcapLinkToken(t, dmLink)
 	var extra string
-	if err := testPool.QueryRow(ctx, `SELECT extra_scene_key FROM context_config_link WHERE token_hash = $1`, contextcap.HashLinkToken(token)).Scan(&extra); err != nil || extra != dmKey {
+	if err := testPool.QueryRow(ctx, `SELECT extra_scene_key FROM context_config_link WHERE token_hash = $1`, contextcap.HashLinkToken(token)).Scan(&extra); err != nil || extra != dmScene {
 		t.Fatalf("dm link extra_scene_key=%q err=%v", extra, err)
 	}
 
@@ -685,7 +657,7 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 	if redeemed["scope_type"] != contextcap.ScopePerson || redeemed["scope_key"] != ctxcapStaff {
 		t.Fatalf("redeem=%v", redeemed)
 	}
-	sceneGrant, err := contextcap.GetLiveGrant(ctx, testPool, alice, agentID, contextcap.ScopeScene, ctxcapOrg, dmKey)
+	sceneGrant, err := contextcap.GetLiveGrant(ctx, testPool, alice, agentID, contextcap.ScopeScene, ctxcapOrg, dmScene)
 	if err != nil || sceneGrant.ScopeTitle != "Alice" {
 		t.Fatalf("dm scene grant=%+v err=%v", sceneGrant, err)
 	}
@@ -695,59 +667,46 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 	w = ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID, alice, nil)
 	var detail ctxcapAgentDetail
 	ctxcapDecode(t, w, &detail)
-	if detail.Person == nil || len(detail.Scenes) != 1 || detail.Scenes[0].ScopeKey != dmKey || detail.Scenes[0].Kind != "dm" {
+	if detail.Person == nil || len(detail.Scenes) != 1 || detail.Scenes[0].ScopeKey != dmScene || detail.Scenes[0].Kind != "dm" {
 		t.Fatalf("agent detail person=%+v scenes=%+v", detail.Person, detail.Scenes)
 	}
-	w = ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, dmKey), alice, nil)
+	// The DM scene is its own scope: the link holder reads and changes it
+	// like a manager.
+	w = ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, dmScene), alice, nil)
 	ctxcapExpectStatus(t, w, http.StatusOK, "dm scene detail")
 	var scene ctxcapSceneDetail
 	ctxcapDecode(t, w, &scene)
-	// A 1:1 chat's configuration is its person's: the link's staffId.
-	if scene.Scene.Kind != "dm" || scene.Scene.ScopeKey != dmKey || scene.Scope == nil ||
-		*scene.Scope != (contextCapScopeRef{Type: contextcap.ScopePerson, Key: ctxcapStaff, Title: "Alice"}) || !scene.CanConnect ||
-		!ctxcapHasBinding(scene.Bindings, f.person, true) {
+	if scene.Scene.Kind != "dm" || scene.Scene.ScopeKey != dmScene || scene.Scope == nil ||
+		*scene.Scope != (contextCapScopeRef{Type: contextcap.ScopeScene, Key: dmScene, Title: "Alice"}) || !scene.CanConnect || scene.Rights != contextCapSceneRights {
 		t.Fatalf("dm scene=%+v", scene)
 	}
-
-	// The person turns a connector on in the DM: it lands in the person
-	// scope; admins see the DM scene with that configuration.
 	dmOnly := f.insertConnector(t, "none", "")
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM internal_connector WHERE id = $1`, dmOnly)
 	})
 	f.offer(t, f.scene, f.person, dmOnly)
 	w = ctxcapMobile(t, router, http.MethodPut, "/api/context-capabilities/agents/"+agentID+"/bindings", alice, map[string]any{
-		"scope_type": "scene", "scope_key": dmKey, "resource_type": "connector", "resource_id": dmOnly, "enabled": true,
+		"scope_type": "scene", "scope_key": dmScene, "resource_type": "connector", "resource_id": dmOnly, "enabled": true,
 	})
-	ctxcapExpectStatus(t, w, http.StatusOK, "dm scene binding")
-	var bindingResp struct {
-		Binding contextCapBindingDTO `json:"binding"`
+	if w.Code != http.StatusOK {
+		t.Fatalf("link holder write to the dm scene: %d %s", w.Code, w.Body.String())
 	}
-	ctxcapDecode(t, w, &bindingResp)
-	if bindingResp.Binding.ShareInGroups == nil || *bindingResp.Binding.ShareInGroups {
-		t.Fatalf("dm binding is not a personal connector binding: %+v", bindingResp.Binding)
-	}
-	if stored, err := contextcap.ListScopeBindings(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopeScene, ctxcapOrg, dmKey); err != nil || len(stored) != 0 {
+	// A manager configures the DM scene; the person configures herself.
+	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPut, ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, dmScene)+"/bindings",
+		map[string]any{"resource_type": "connector", "resource_id": dmOnly, "enabled": true}), http.StatusOK, "manager dm binding")
+	if stored, err := contextcap.ListScopeBindings(ctx, testPool, testWorkspaceID, agentID, contextcap.ScopeScene, ctxcapOrg, dmScene); err != nil || len(stored) != 1 {
 		t.Fatalf("dm scene scope rows=%+v err=%v", stored, err)
 	}
-	dmNode := ctxNode(t, router, "", agentID, contextcap.ScopeScene, dmKey)
-	if dm := dmNode.Scene; dm == nil || dm.Kind != "dm" || dm.Title != "Alice" {
-		t.Fatalf("admin dm scene=%+v", dm)
+	dmNode := ctxNode(t, router, "", agentID, contextcap.ScopeScene, dmScene)
+	if dmNode.Scene == nil || dmNode.Scene.Kind != "dm" || dmNode.Scope == nil || dmNode.Scope.Type != contextcap.ScopeScene || !ctxNodeEnabled(dmNode)[dmOnly] {
+		t.Fatalf("admin dm node=%+v", dmNode)
 	}
-	adminBindings := ctxNodeEnabled(dmNode)
-	if dmNode.Scope == nil || dmNode.Scope.Type != contextcap.ScopePerson || dmNode.Scope.Key != ctxcapStaff ||
-		len(adminBindings) != 2 || !adminBindings[dmOnly] || !adminBindings[f.person] {
-		t.Fatalf("admin dm node scope=%+v switches=%+v", dmNode.Scope, adminBindings)
+	// The DM's runs get the DM scene layer and the person's layer.
+	resolved := f.resolve(t, dmTask)
+	if got, mounted := resolved[dmOnly]; !mounted || got.binding != contextcap.LayerScene {
+		t.Fatalf("the DM scene's connector was not mounted from the scene layer: %+v", resolved)
 	}
-	// The person node is the same configuration, with the DM as its scene.
-	personNode := ctxNode(t, router, "", agentID, contextcap.ScopePerson, ctxcapStaff)
-	if personNode.Scene == nil || personNode.Scene.SceneKey != dmKey || len(ctxNodeEnabled(personNode)) != 2 || personNode.CanConnect {
-		t.Fatalf("person node scene=%+v switches=%v can_connect=%v", personNode.Scene, ctxNodeEnabled(personNode), personNode.CanConnect)
-	}
-
-	// A DM's configuration is the person's, and the person's layer already
-	// applies to the DM's runs.
-	if _, mounted := f.resolve(t, dmTask)[dmOnly]; !mounted {
-		t.Fatal("the DM's configuration was not mounted through the person layer")
+	if got, mounted := resolved[f.person]; !mounted || got.binding != contextcap.LayerPerson {
+		t.Fatalf("the person's connector was not mounted from the person layer: %+v", resolved)
 	}
 }

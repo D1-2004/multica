@@ -1321,16 +1321,19 @@ func TestRouter_IssueCommand_ActiveDuplicateIsTerminalProductOutcome(t *testing.
 }
 
 type fakeSceneAssociator struct {
-	mu    sync.Mutex
-	calls int
-	last  assoc.AssociateInput
+	mu               sync.Mutex
+	calls            int
+	last             assoc.AssociateInput
+	lastConversation string
+	lastChatType     string
 }
 
-func (f *fakeSceneAssociator) AssociateIssueConversation(_ context.Context, in assoc.AssociateInput) error {
+func (f *fakeSceneAssociator) AssociateChannelConversation(_ context.Context, in assoc.AssociateInput, conversationID, chatType string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	f.last = in
+	f.lastConversation, f.lastChatType = conversationID, chatType
 	return nil
 }
 
@@ -1362,8 +1365,8 @@ func TestRouter_DurableIssueCommand_AssociatesConversation(t *testing.T) {
 	if associator.calls != 1 {
 		t.Fatalf("associate calls=%d in=%+v", associator.calls, associator.last)
 	}
-	if associator.last.ConversationID != "cid-robot" {
-		t.Fatalf("conversation=%q", associator.last.ConversationID)
+	if associator.lastConversation != "cid-robot" || associator.lastChatType == "" {
+		t.Fatalf("conversation=%q chat type=%q", associator.lastConversation, associator.lastChatType)
 	}
 	if associator.last.IssueID != uuidString(issueID) {
 		t.Fatalf("issue=%q", associator.last.IssueID)

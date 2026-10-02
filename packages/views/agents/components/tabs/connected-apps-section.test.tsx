@@ -115,8 +115,24 @@ const figma = app({
 const githubDetail: ConnectedAppDetail = {
   ...github,
   scenes: [
-    { sceneKey: "cidGroup==", title: "Release crew", kind: "group", enabled: true, connected: false, account: "" },
-    { sceneKey: "cidDm==", title: "", kind: "dm", enabled: false, connected: true, account: "@team" },
+    {
+      sceneId: "66666666-6666-4666-8666-666666666666",
+      sceneKey: "66666666-6666-4666-8666-666666666666",
+      title: "Release crew",
+      kind: "group",
+      enabled: true,
+      connected: false,
+      account: "",
+    },
+    {
+      sceneId: "77777777-7777-4777-8777-777777777777",
+      sceneKey: "77777777-7777-4777-8777-777777777777",
+      title: "",
+      kind: "dm",
+      enabled: false,
+      connected: true,
+      account: "@team",
+    },
   ],
   persons: [{ scopeKey: "staff-1", title: "Ada", enabled: true, connected: true, account: "@ada", shareInGroups: true }],
   toolList: [

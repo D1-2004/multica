@@ -15,7 +15,7 @@ func oauthTestBinding() CredentialBinding {
 		ConnectorID: "33333333-3333-4333-8333-333333333333",
 		ScopeType:   ScopeScene,
 		OrgID:       "org-1",
-		ScopeKey:    "cidScene==",
+		ScopeKey:    "aaaaaaaa-0000-4000-8000-000000000005",
 	}
 }
 
@@ -49,7 +49,7 @@ func TestSealOAuthCredentialRoundTripAndLegacyBearer(t *testing.T) {
 	}
 	// The binding is still enforced.
 	other := binding
-	other.ScopeKey = "cidOther=="
+	other.ScopeKey = "aaaaaaaa-0000-4000-8000-000000000006"
 	if _, err := OpenCredentialSecret(box, other, sealed); !errors.Is(err, ErrCredentialUnavailable) {
 		t.Fatalf("foreign scope opened: %v", err)
 	}

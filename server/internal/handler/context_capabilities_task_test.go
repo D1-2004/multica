@@ -22,13 +22,31 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// Scene scope keys are Agent work scene ids (docs/agent-scene.md). The
+// fixture registers ctxcapScene and ctxcapOtherScene for its agent as the
+// scenes of the group conversations ctxcapSceneCID and ctxcapOtherCID.
 const (
 	ctxcapOrg        = "org-ctxcap"
-	ctxcapScene      = "cidCtxcapScene=="
-	ctxcapOtherScene = "cidCtxcapOther=="
-	ctxcapStaff      = "staff-ctxcap-1"
-	ctxcapOtherStaff = "staff-ctxcap-2"
+	ctxcapScene      = "c7c7c7c7-0000-4000-8000-000000000001"
+	ctxcapOtherScene = "c7c7c7c7-0000-4000-8000-000000000002"
+	// ctxcapUnknownScene is a well-formed scene id the agent never had.
+	ctxcapUnknownScene = "c7c7c7c7-0000-4000-8000-0000000000ff"
+	// ctxcapDirectScene is the 1:1 chat scene of ctxcapCoordinatorDirect;
+	// tests that use it register it (registerDirectScene).
+	ctxcapDirectScene = "c7c7c7c7-0000-4000-8000-000000000010"
+	ctxcapSceneCID    = "cidCtxcapScene=="
+	ctxcapOtherCID    = "cidCtxcapOther=="
+	ctxcapStaff       = "staff-ctxcap-1"
+	ctxcapOtherStaff  = "staff-ctxcap-2"
 )
+
+// ctxcapSceneCIDs maps the fixture scene ids to their conversations.
+var ctxcapSceneCIDs = map[string]string{ctxcapScene: ctxcapSceneCID, ctxcapOtherScene: ctxcapOtherCID}
+
+// ctxcapDispatchCIDs adds the scenes tests register on demand to
+// ctxcapSceneCIDs for the dispatch contexts of ctxcapDispatch.
+var ctxcapDispatchCIDs = map[string]string{ctxcapScene: ctxcapSceneCID, ctxcapOtherScene: ctxcapOtherCID, ctxcapDirectScene: ctxcapCoordinatorDirect,
+	ctxBuilderOtherScene: ctxcapSceneCID}
 
 // ctxcapFixture is one isolated agent with global, scene and personal
 // connectors/skills. Rows are removed in t.Cleanup.
@@ -98,6 +116,8 @@ func newCtxcapFixture(t *testing.T) *ctxcapFixture {
 			`DELETE FROM context_capability_binding WHERE agent_id = $1`,
 			`DELETE FROM context_connector_credential WHERE agent_id = $1`,
 			`DELETE FROM agent_scene_config WHERE agent_id = $1`,
+			`DELETE FROM agent_scene_memory WHERE agent_id = $1`,
+			`DELETE FROM agent_scene WHERE agent_id = $1`,
 			`DELETE FROM context_prompt_component WHERE agent_id = $1`,
 			`DELETE FROM context_scope_mcp_config WHERE agent_id = $1`,
 			`DELETE FROM agent_tenant WHERE agent_id = $1`,
@@ -120,6 +140,10 @@ func newCtxcapFixture(t *testing.T) *ctxcapFixture {
 	if _, err := testPool.Exec(ctx, `INSERT INTO agent_dingtalk_identity (agent_id, workspace_id, dws_uid, org_id, bound_by)
 		VALUES ($1, $2, $3, $4, $5)`, agentID, testWorkspaceID, "dws-"+agentID, ctxcapOrg, testUserID); err != nil {
 		t.Fatal(err)
+	}
+
+	for id, cid := range ctxcapSceneCIDs {
+		f.registerScene(t, id, ctxcapOrg, "group", cid, "Ctxcap group")
 	}
 
 	f.global = f.insertConnector(t, "bearer", "workspace-secret")
@@ -297,20 +321,47 @@ func (ctxcapErrRow) Scan(...any) error {
 	return errors.New("relation context_capability_binding does not exist")
 }
 
-func ctxcapDispatch(conversationType, cid, sender string, messageSenders ...string) []byte {
+// ctxcapDispatch is the dispatch context of a task in a conversation. A
+// fixture scene id resolves as a dispatch would: the context carries that
+// scene's SceneRef and its conversation id; any other value is used as the
+// raw conversation id, without a scene.
+func ctxcapDispatch(conversationType, sceneOrCID, sender string, messageSenders ...string) []byte {
 	messages := make([]map[string]any, 0, len(messageSenders))
 	for i, staff := range messageSenders {
 		messages = append(messages, map[string]any{"openMsgId": "m" + string(rune('a'+i)), "senderStaffId": staff})
 	}
-	raw, _ := json.Marshal(map[string]any{
-		"dispatch_source": map[string]any{"platform": "dingtalk"},
-		"dispatch_event_data": map[string]any{
-			"conversation": map[string]any{"openConversationId": cid, "type": conversationType, "title": "Ctxcap group"},
-			"sender":       map[string]any{"staffId": sender, "displayName": "Alice"},
-			"messages":     messages,
-		},
-	})
+	cid := sceneOrCID
+	payload := map[string]any{"dispatch_source": map[string]any{"platform": "dingtalk"}}
+	if registered, ok := ctxcapDispatchCIDs[sceneOrCID]; ok {
+		cid = registered
+		payload["agent_scene"] = map[string]any{"scene_id": sceneOrCID}
+	}
+	payload["dispatch_event_data"] = map[string]any{
+		"conversation": map[string]any{"openConversationId": cid, "type": conversationType, "title": "Ctxcap group"},
+		"sender":       map[string]any{"staffId": sender, "displayName": "Alice"},
+		"messages":     messages,
+	}
+	raw, _ := json.Marshal(payload)
 	return raw
+}
+
+// registerDirectScene registers ctxcapDirectScene, the 1:1 chat with
+// ctxcapStaff (Alice) in the fixture org.
+func (f *ctxcapFixture) registerDirectScene(t *testing.T) {
+	t.Helper()
+	f.registerScene(t, ctxcapDirectScene, ctxcapOrg, "dm", ctxcapCoordinatorDirect, "Alice")
+}
+
+// registerScene stores an Agent work scene of the fixture agent with a fixed
+// scene id.
+func (f *ctxcapFixture) registerScene(t *testing.T, sceneID, orgID, kind, cid, title string) {
+	t.Helper()
+	if _, err := testPool.Exec(context.Background(), `INSERT INTO agent_scene
+		(id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title)
+		VALUES ($1, $2, $3, 'dingtalk', $4, 'dingtalk.open_conversation_id', $5, $6, $7)`,
+		sceneID, testWorkspaceID, uuidToString(f.agent), orgID, kind, cid, title); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type ctxcapResolved struct{ binding, credential, bearer string }
@@ -348,12 +399,13 @@ func TestContextCapabilitiesTaskScopeFromRealTaskContext(t *testing.T) {
 	ctx := context.Background()
 	group := f.task(t, ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff))
 	scope := f.h.taskContextScope(ctx, f.ws, group)
-	if scope.OrgID != ctxcapOrg || scope.SceneKey != ctxcapScene || scope.PersonKey != ctxcapStaff || scope.SceneTitle != "Ctxcap group" || scope.ConversationType != "group" {
+	if scope.OrgID != ctxcapOrg || scope.SceneID != ctxcapScene || scope.PersonKey != ctxcapStaff || scope.SceneTitle != "Ctxcap group" || scope.ConversationType != "group" {
 		t.Fatalf("group scope = %#v", scope)
 	}
 	a2aContext, _ := json.Marshal(map[string]any{
 		"multica_origin":      "a2a",
-		"dispatch_event_data": map[string]any{"conversation": map[string]any{"openConversationId": ctxcapScene, "type": "group"}, "sender": map[string]any{"staffId": ctxcapStaff}},
+		"agent_scene":         map[string]any{"scene_id": ctxcapScene},
+		"dispatch_event_data": map[string]any{"conversation": map[string]any{"openConversationId": ctxcapSceneCID, "type": "group"}, "sender": map[string]any{"staffId": ctxcapStaff}},
 	})
 	if !service.IsA2ATaskOrigin(a2aContext) {
 		t.Fatal("test fixture is not an A2A-origin context")
@@ -396,7 +448,7 @@ func TestContextCapabilitiesConnectorLayeringAndCredentialPrecedence(t *testing.
 		},
 		{
 			name:    "unstamped messages of a merged window get no personal layer",
-			context: []byte(`{"dispatch_event_data":{"conversation":{"openConversationId":"` + ctxcapScene + `","type":"group"},"sender":{"staffId":"` + ctxcapStaff + `"},"messages":[{"openMsgId":"x"},{"openMsgId":"y"}]}}`),
+			context: []byte(`{"agent_scene":{"scene_id":"` + ctxcapScene + `"},"dispatch_event_data":{"conversation":{"openConversationId":"` + ctxcapSceneCID + `","type":"group"},"sender":{"staffId":"` + ctxcapStaff + `"},"messages":[{"openMsgId":"x"},{"openMsgId":"y"}]}}`),
 			want: map[string]ctxcapResolved{
 				f.global: {connectorBindingGlobal, connectorCredentialScene, "scene-global-secret"},
 				f.scene:  {connectorBindingScene, connectorCredentialScene, "scene-connector-secret"},
@@ -468,7 +520,8 @@ func TestContextCapabilitiesConnectorLayeringAndCredentialPrecedence(t *testing.
 	t.Run("A2A task gets the global layer only", func(t *testing.T) {
 		raw, _ := json.Marshal(map[string]any{
 			"multica_origin":      "a2a",
-			"dispatch_event_data": map[string]any{"conversation": map[string]any{"openConversationId": ctxcapScene, "type": "group"}, "sender": map[string]any{"staffId": ctxcapStaff}},
+			"agent_scene":         map[string]any{"scene_id": ctxcapScene},
+			"dispatch_event_data": map[string]any{"conversation": map[string]any{"openConversationId": ctxcapSceneCID, "type": "group"}, "sender": map[string]any{"staffId": ctxcapStaff}},
 		})
 		got := f.resolve(t, f.task(t, raw))
 		if len(got) != 1 || got[f.global] != (ctxcapResolved{connectorBindingGlobal, connectorCredentialWorkspace, "workspace-secret"}) {
@@ -723,7 +776,8 @@ func TestContextCapabilitiesRelayRejectsForeignScopes(t *testing.T) {
 
 	a2aContext, _ := json.Marshal(map[string]any{
 		"multica_origin":      "a2a",
-		"dispatch_event_data": map[string]any{"conversation": map[string]any{"openConversationId": ctxcapScene, "type": "group"}, "sender": map[string]any{"staffId": ctxcapStaff}},
+		"agent_scene":         map[string]any{"scene_id": ctxcapScene},
+		"dispatch_event_data": map[string]any{"conversation": map[string]any{"openConversationId": ctxcapSceneCID, "type": "group"}, "sender": map[string]any{"staffId": ctxcapStaff}},
 	})
 	a2a := f.task(t, a2aContext)
 	for _, id := range []string{f.scene, f.person} {

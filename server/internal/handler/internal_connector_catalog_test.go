@@ -27,7 +27,8 @@ import (
 const (
 	catalogTestOrg   = "org-catalog"
 	catalogTestStaff = "staff-catalog-1"
-	catalogTestScene = "cidCatalogScene=="
+	// catalogTestScene is the scene id of a group the catalog agent serves.
+	catalogTestScene = "ca7a1095-0000-4000-8000-000000000001"
 	catalogAppOrigin = "https://app.example.test"
 	catalogWebOrigin = "https://web.example.test"
 )
@@ -336,6 +337,7 @@ func newCatalogFixture(t *testing.T) *catalogFixture {
 		VALUES ($1, $2, $3, $4, $5, now() - interval '1 hour')`, f.agentID, testWorkspaceID, "dws-"+f.agentID, catalogTestOrg, testUserID); err != nil {
 		t.Fatal(err)
 	}
+	registerFixedScene(t, f.agentID, catalogTestOrg, "group", catalogTestScene, "cidCatalogScene==", "Known scene", time.Hour)
 	return f
 }
 
@@ -1144,8 +1146,12 @@ func TestCatalogConnectorWorkspaceDeleteSweepsOAuthTables(t *testing.T) {
 		t.Fatal(err)
 	}
 	deleted, kept := uuid.NewString(), uuid.NewString()
+	seeded := map[string][2]string{}
 	t.Cleanup(func() {
 		bg := context.Background()
+		for _, table := range []string{"connector_auth_binding", "connector_auth_instance", "connector_app"} {
+			_, _ = testPool.Exec(bg, `DELETE FROM `+table+` WHERE workspace_id = ANY($1::uuid[])`, []string{wsID, testWorkspaceID})
+		}
 		_, _ = testPool.Exec(bg, `DELETE FROM workspace WHERE id = $1`, wsID)
 		for _, table := range []string{"connector_oauth_state", "connector_oauth_client"} {
 			_, _ = testPool.Exec(bg, `DELETE FROM `+table+` WHERE connector_id = ANY($1::uuid[])`, []string{deleted, kept})
@@ -1163,6 +1169,21 @@ func TestCatalogConnectorWorkspaceDeleteSweepsOAuthTables(t *testing.T) {
 			VALUES (md5(random()::text) || md5(random()::text), $1, $2, 'workspace', $3, '\x00'::bytea, now() + interval '10 minutes')`, row.workspace, row.connector, testUserID); err != nil {
 			t.Fatal(err)
 		}
+		var appID string
+		if err := testPool.QueryRow(ctx, `INSERT INTO connector_app (workspace_id, provider, client_id)
+			VALUES ($1, 'github', $2) RETURNING id::text`, row.workspace, row.connector).Scan(&appID); err != nil {
+			t.Fatal(err)
+		}
+		var instanceID string
+		if err := testPool.QueryRow(ctx, `INSERT INTO connector_auth_instance (app_id, workspace_id, label)
+			VALUES ($1, $2, 'account') RETURNING id::text`, appID, row.workspace).Scan(&instanceID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := testPool.Exec(ctx, `INSERT INTO connector_auth_binding (instance_id, app_id, workspace_id, scope_kind)
+			VALUES ($1, $2, $3, 'workspace')`, instanceID, appID, row.workspace); err != nil {
+			t.Fatal(err)
+		}
+		seeded[row.workspace] = [2]string{appID, instanceID}
 	}
 	rec := httptest.NewRecorder()
 	testHandler.DeleteWorkspace(rec, withURLParam(newRequest(http.MethodDelete, "/api/workspaces/"+wsID, nil), "id", wsID))
@@ -1177,6 +1198,22 @@ func TestCatalogConnectorWorkspaceDeleteSweepsOAuthTables(t *testing.T) {
 		}
 		if gone != 0 || stays != 1 {
 			t.Errorf("%s: deleted-workspace rows=%d other-workspace rows=%d", table, gone, stays)
+		}
+	}
+	for workspace, ids := range seeded {
+		want := 0
+		if workspace == testWorkspaceID {
+			want = 1
+		}
+		var apps, instances, bindings int
+		if err := testPool.QueryRow(ctx, `SELECT
+			(SELECT count(*) FROM connector_app WHERE id = $1),
+			(SELECT count(*) FROM connector_auth_instance WHERE id = $2),
+			(SELECT count(*) FROM connector_auth_binding WHERE instance_id = $2)`, ids[0], ids[1]).Scan(&apps, &instances, &bindings); err != nil {
+			t.Fatal(err)
+		}
+		if apps != want || instances != want || bindings != want {
+			t.Errorf("workspace %s connector rows app=%d instance=%d binding=%d, want %d", workspace, apps, instances, bindings, want)
 		}
 	}
 }

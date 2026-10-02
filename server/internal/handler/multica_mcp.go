@@ -378,7 +378,7 @@ func multicaMCPAssocBindDefinition() map[string]any {
 				"conversation_id": map[string]any{"type": "string", "minLength": 1, "description": "DingTalk openConversationId from the send receipt."},
 				"evidence_id":     map[string]any{"type": "string", "description": "Optional openMsgId for dedup."},
 				"person_id":       map[string]any{"type": "string", "description": "Optional DingTalk uid. Omit when inbound identity is incomplete."},
-				"kind":            map[string]any{"type": "string", "description": "dm or group. Defaults to dm."},
+				"kind":            map[string]any{"type": "string", "description": "dm or group. Required when the conversation is new to you; a conversation you already have keeps its kind. Never guess it."},
 				"purpose":         map[string]any{"type": "string", "description": "Optional precise purpose when creating the Issue task node."},
 			},
 			"required": []string{"conversation_id"},

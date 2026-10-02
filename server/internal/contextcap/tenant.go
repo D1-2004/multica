@@ -311,38 +311,13 @@ type OrgActivity struct {
 }
 
 // ListAgentOrgActivity returns, for every non-empty org the agent's scene
-// and person data mentions, how many group scenes and people it has. Data
-// sources: inbound Coordinator jobs (jobs without a recorded org belong to
-// identityOrgID), scene_memory, agent_scene_config, and every stored scope
-// row (bindings, credentials, grants, prompt components, custom MCP
-// servers). A scene counts as a group unless it is positively a 1:1 chat
-// (the kind rule of ListAgentScenes); people are 1:1 chat senders and
-// person scopes.
+// and person data mentions, how many group scenes and people it has. Scenes
+// are the agent's registered work scenes (agent_scene); people are 1:1 chat
+// senders of inbound Coordinator jobs (jobs without a recorded org belong to
+// identityOrgID) and person scopes with stored configuration or grants.
 func ListAgentOrgActivity(ctx context.Context, db DBTX, workspaceID, agentID, identityOrgID string) (map[string]OrgActivity, error) {
-	type sceneState struct {
-		jobType   string
-		hasJob    bool
-		cfgKind   string
-		hasConfig bool
-	}
-	scenes := map[string]map[string]*sceneState{}
+	out := map[string]OrgActivity{}
 	persons := map[string]map[string]bool{}
-	scene := func(org, key string) *sceneState {
-		if org == "" || !ValidOpenConversationID(key) {
-			return nil
-		}
-		byKey, ok := scenes[org]
-		if !ok {
-			byKey = map[string]*sceneState{}
-			scenes[org] = byKey
-		}
-		state, ok := byKey[key]
-		if !ok {
-			state = &sceneState{}
-			byKey[key] = state
-		}
-		return state
-	}
 	person := func(org, staffID string) {
 		if org == "" || !ValidStaffID(staffID) {
 			return
@@ -353,42 +328,30 @@ func ListAgentOrgActivity(ctx context.Context, db DBTX, workspaceID, agentID, id
 		persons[org][staffID] = true
 	}
 
-	// The newest job of every conversation decides its kind; a 1:1 job with
-	// a sender names a person.
-	rows, err := db.Query(ctx, `SELECT DISTINCT ON (j.org, j.cid) j.org, j.cid, j.conversation_type, j.staff_id
-		FROM (
-		  SELECT `+jobOrgExpr("$3")+` AS org,
-		    BTRIM(job.command #>> '{event,data,conversation,openConversationId}') AS cid,
-		    BTRIM(COALESCE(job.command #>> '{event,data,conversation,type}', '')) AS conversation_type,
-		    BTRIM(COALESCE(job.command #>> '{event,data,sender,staffId}', '')) AS staff_id,
-		    job.created_at, job.id
-		  FROM inbound_coordinator_job job
-		  WHERE job.agent_id = $2::uuid AND job.workspace_id = $1::uuid
-		    AND lower(COALESCE(NULLIF(BTRIM(job.command #>> '{source,platform}'), ''), 'dingtalk')) = 'dingtalk'
-		    AND NULLIF(BTRIM(job.command #>> '{event,data,conversation,openConversationId}'), '') IS NOT NULL
-		) j
-		ORDER BY j.org, j.cid, j.created_at DESC, j.id DESC`, workspaceID, agentID, identityOrgID)
+	rows, err := db.Query(ctx, `SELECT tenant_org_id, count(*) FILTER (WHERE scene_kind = 'group')
+		FROM agent_scene
+		WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scene_kind IN ('group', 'dm')
+		GROUP BY tenant_org_id`, workspaceID, agentID)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var org, cid, conversationType, staffID string
-		if err := rows.Scan(&org, &cid, &conversationType, &staffID); err != nil {
+		var org string
+		var groups int64
+		if err := rows.Scan(&org, &groups); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		if state := scene(org, cid); state != nil {
-			state.hasJob, state.jobType = true, conversationType
-		}
-		if IsDirectConversationType(conversationType) {
-			person(org, staffID)
+		if org != "" {
+			out[org] = OrgActivity{OrgID: org, GroupCount: int(groups)}
 		}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Every 1:1 sender, not only the newest job's.
+
+	// Every 1:1 sender names a person.
 	rows, err = db.Query(ctx, `SELECT DISTINCT `+jobOrgExpr("$3")+`, BTRIM(job.command #>> '{event,data,sender,staffId}')
 		FROM inbound_coordinator_job job
 		WHERE job.agent_id = $2::uuid AND job.workspace_id = $1::uuid
@@ -411,75 +374,32 @@ func ListAgentOrgActivity(ctx context.Context, db DBTX, workspaceID, agentID, id
 		return nil, err
 	}
 
-	rows, err = db.Query(ctx, `SELECT org_id, scene_key, scene_kind FROM agent_scene_config
-		WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND platform = 'dingtalk'`, workspaceID, agentID)
+	rows, err = db.Query(ctx, `SELECT org_id, scope_key FROM context_capability_binding
+		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type = 'person'
+		UNION SELECT org_id, scope_key FROM context_connector_credential
+		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type = 'person'
+		UNION SELECT org_id, scope_key FROM context_config_grant
+		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type = 'person' AND expires_at > now()
+		UNION SELECT org_id, scope_key FROM context_prompt_component
+		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type = 'person'
+		UNION SELECT org_id, scope_key FROM context_scope_mcp_config
+		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type = 'person'`, workspaceID, agentID)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var org, key, kind string
-		if err := rows.Scan(&org, &key, &kind); err != nil {
+		var org, key string
+		if err := rows.Scan(&org, &key); err != nil {
 			rows.Close()
 			return nil, err
 		}
-		if state := scene(org, key); state != nil {
-			state.hasConfig, state.cfgKind = true, kind
-		}
+		person(org, key)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	rows, err = db.Query(ctx, `SELECT 'scene', org_id, scene_key FROM scene_memory
-		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND platform = 'dingtalk'
-		UNION SELECT scope_type, org_id, scope_key FROM context_capability_binding
-		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type IN ('scene', 'person')
-		UNION SELECT scope_type, org_id, scope_key FROM context_connector_credential
-		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type IN ('scene', 'person')
-		UNION SELECT scope_type, org_id, scope_key FROM context_config_grant
-		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type IN ('scene', 'person') AND expires_at > now()
-		UNION SELECT scope_type, org_id, scope_key FROM context_prompt_component
-		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type IN ('scene', 'person')
-		UNION SELECT scope_type, org_id, scope_key FROM context_scope_mcp_config
-		  WHERE workspace_id = $1::uuid AND agent_id = $2::uuid AND scope_type IN ('scene', 'person')`, workspaceID, agentID)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var scopeType, org, key string
-		if err := rows.Scan(&scopeType, &org, &key); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		if scopeType == ScopePerson {
-			person(org, key)
-		} else {
-			scene(org, key)
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	out := map[string]OrgActivity{}
-	for org, byKey := range scenes {
-		activity := OrgActivity{OrgID: org}
-		for _, state := range byKey {
-			kind := SceneKindGroup
-			switch {
-			case state.hasJob && state.jobType != "":
-				kind = SceneKindForConversationType(state.jobType)
-			case state.hasConfig:
-				kind = state.cfgKind
-			}
-			if kind == SceneKindGroup {
-				activity.GroupCount++
-			}
-		}
-		out[org] = activity
-	}
 	for org, staff := range persons {
 		activity := out[org]
 		activity.OrgID = org
@@ -495,18 +415,19 @@ type PersonSummary struct {
 	// Title is the newest 1:1 sender display name, else the person grant's
 	// title, else the binding title snapshot.
 	Title string
-	// DMSceneKey is the person's 1:1 chat with the agent (the newest one
-	// that names them, else the chat a personal link was redeemed from), ""
-	// when unknown.
-	DMSceneKey   string
+	// DMSceneID is the scene_id of the person's 1:1 chat with the agent (the
+	// newest one that names them, else the chat a personal link was redeemed
+	// from), "" when unknown. It is a scene of its own, not this person.
+	DMSceneID    string
 	LastActiveAt time.Time
 }
 
 // ListOrgPersons returns the people known for orgID of the agent, newest
-// activity first: 1:1 chat senders (the DirectScenePerson job source; jobs
-// without a recorded org belong to identityOrgID), live person grants and the
-// 1:1 chats of personal links, and every person scope with stored configuration
-// (bindings, credentials, prompt components, custom MCP servers).
+// activity first: 1:1 chat senders (Coordinator jobs of the agent's dm
+// scenes; jobs without a recorded org belong to identityOrgID), live person
+// grants and the 1:1 chats of personal links, and every person scope with
+// stored configuration (bindings, credentials, prompt components, custom MCP
+// servers).
 func ListOrgPersons(ctx context.Context, db DBTX, workspaceID, agentID, orgID, identityOrgID string) ([]PersonSummary, error) {
 	if !ValidOrgID(orgID) {
 		return nil, ErrInvalidInput
@@ -532,11 +453,11 @@ func ListOrgPersons(ctx context.Context, db DBTX, workspaceID, agentID, orgID, i
 		}
 	}
 
-	rows, err := db.Query(ctx, `SELECT DISTINCT ON (staff_id) staff_id, sender_name, cid, created_at
+	rows, err := db.Query(ctx, `SELECT DISTINCT ON (staff_id) staff_id, sender_name, scene_id, created_at
 		FROM (
 		  SELECT BTRIM(job.command #>> '{event,data,sender,staffId}') AS staff_id,
 		    BTRIM(COALESCE(job.command #>> '{event,data,sender,displayName}', '')) AS sender_name,
-		    BTRIM(job.command #>> '{event,data,conversation,openConversationId}') AS cid,
+		    BTRIM(COALESCE(job.command #>> '{agent_scene,scene_id}', '')) AS scene_id,
 		    job.created_at, job.id
 		  FROM inbound_coordinator_job job
 		  WHERE job.agent_id = $2::uuid AND job.workspace_id = $1::uuid
@@ -550,16 +471,16 @@ func ListOrgPersons(ctx context.Context, db DBTX, workspaceID, agentID, orgID, i
 		return nil, err
 	}
 	for rows.Next() {
-		var staffID, senderName, cid string
+		var staffID, senderName, sceneID string
 		var at time.Time
-		if err := rows.Scan(&staffID, &senderName, &cid, &at); err != nil {
+		if err := rows.Scan(&staffID, &senderName, &sceneID, &at); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		if p := get(staffID); p != nil {
 			p.Title = senderName
-			if ValidOpenConversationID(cid) {
-				p.DMSceneKey = cid
+			if ValidSceneID(sceneID) {
+				p.DMSceneID = sceneID
 			}
 			touch(p, at)
 		}
@@ -593,8 +514,8 @@ func ListOrgPersons(ctx context.Context, db DBTX, workspaceID, agentID, orgID, i
 			if title = strings.TrimSpace(title); title != "" {
 				grantTitles[p.StaffID] = title
 			}
-			if p.DMSceneKey == "" && ValidOpenConversationID(dmKey) {
-				p.DMSceneKey = dmKey
+			if p.DMSceneID == "" && ValidSceneID(dmKey) {
+				p.DMSceneID = dmKey
 			}
 			touch(p, at)
 		}

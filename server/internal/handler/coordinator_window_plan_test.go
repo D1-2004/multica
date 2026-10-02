@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +24,7 @@ type coordinatorPlanFixture struct {
 	agent   db.Agent
 	dc      agentDispatchContext
 	command DispatchCommand
+	scene   db.AgentScene
 	job     db.InboundCoordinatorJob
 	baseKey string
 }
@@ -46,6 +48,10 @@ func newCoordinatorPlanFixture(t *testing.T, texts ...string) coordinatorPlanFix
 		baseKey: uuid.NewString(),
 	}
 	f.command = DispatchCommand{SchemaVersion: "2.0", AgentID: agentID, DispatchEndpointID: uuidToString(namespace), Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"}, Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{Conversation: DispatchConversation{OpenConversationID: "cid-plan-" + uuid.NewString(), Type: "group"}, Sender: DispatchSender{DisplayName: "甲", UID: "uid-a"}}}}
+	// The dispatch records the agent's org; its scene lives there.
+	f.command.ExternalIdentity = AgentDispatchExternalIdentity{DWS: &AgentDispatchDWSIdentity{UID: "plan-fixture", OrgID: "org-plan"}}
+	f.scene = registerTestScene(t, agentID, "org-plan", scene.KindGroup, f.command.Event.Data.Conversation.OpenConversationID)
+	f.command.AgentScene = testSceneRef(f.scene)
 	for i, text := range texts {
 		name := "甲"
 		uid := "uid-a"
@@ -152,7 +158,7 @@ func (f coordinatorPlanFixture) existingIssue(t *testing.T) string {
 	if err := f.h.Assoc.AssociateIssueConversation(context.Background(), assoc.AssociateInput{
 		WorkspaceID: testWorkspaceID, AgentID: uuidToString(f.agent.ID), IssueID: id,
 		IssueTitle: "确认线上开会时间及参会安排", Purpose: "确认线上开会时间及参会安排",
-		ConversationID: f.command.Event.Data.Conversation.OpenConversationID,
+		Scene: testSceneNode(f.scene),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +388,7 @@ func TestCoordinatorWindowPlanRecoversCommittedEffectWithoutCheckpoint(t *testin
 	if count != 1 {
 		t.Fatalf("crash recovery duplicated %d tasks", count)
 	}
-	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, ConversationID: f.command.Event.Data.Conversation.OpenConversationID, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
+	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, SceneID: f.command.AgentScene.SceneID, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
 	if err != nil || active != 1 {
 		t.Fatalf("recovered work must repair scene binding for recall and capacity: active=%d err=%v", active, err)
 	}
@@ -412,13 +418,13 @@ func TestCoordinatorWindowPlanContinuationAlsoConsumesSceneCapacity(t *testing.T
 	if err := f.h.Assoc.AssociateIssueConversation(context.Background(), assoc.AssociateInput{
 		WorkspaceID: testWorkspaceID, AgentID: uuidToString(f.agent.ID), IssueID: other,
 		IssueTitle: "已有工作正在查询另一份资料", Purpose: "查询另一份资料供用户审阅", RunID: busyTask,
-		ConversationID: f.command.Event.Data.Conversation.OpenConversationID,
+		Scene: testSceneNode(f.scene),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	f.plan(t, "", old)
 	first := f.dispatch(t)
-	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, ConversationID: f.command.Event.Data.Conversation.OpenConversationID, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
+	active, err := f.h.Queries.CountActiveTasksForConversation(context.Background(), db.CountActiveTasksForConversationParams{WorkspaceID: f.dc.WorkspaceID, AgentID: f.agent.ID, SceneID: f.command.AgentScene.SceneID, StaleAfterSecs: sceneCapacityStaleAfter.Seconds()})
 	if first.Code != http.StatusConflict || err != nil || active > 2 {
 		t.Fatalf("new work plus an idle-Issue continuation need two execution slots: status=%d active=%d err=%v body=%s", first.Code, active, err, first.Body.String())
 	}

@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -117,6 +120,48 @@ func (c *appRuntimeConfig) snapshot() runtimeconfig.Snapshot {
 		return runtimeconfig.Snapshot{}
 	}
 	return c.remote.Current()
+}
+
+// The deployment override is immutable for a process. It lets pre-release
+// select canaries without adding a key to a Diamond document shared with
+// an older production binary.
+func newEventRouteConfigProvider(c *appRuntimeConfig, raw string) (func(string, string, string) (string, string), error) {
+	if strings.TrimSpace(raw) == "" {
+		return c.eventRouteConfig, nil
+	}
+	if len(raw) > 65536 {
+		return nil, fmt.Errorf("event router override too large")
+	}
+	var rollout runtimeconfig.EventSceneRouterConfig
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rollout); err != nil {
+		return nil, fmt.Errorf("invalid event router override: %w", err)
+	}
+	if err := dec.Decode(new(any)); err != io.EOF {
+		return nil, fmt.Errorf("event router override has trailing JSON")
+	}
+	if err := rollout.Validate(); err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256([]byte(raw))
+	return func(ws, agent, org string) (string, string) {
+		_, version := c.eventRouteConfig(ws, agent, org)
+		route := "legacy"
+		if rollout.Allows(ws, agent, org) {
+			route = "unified"
+		}
+		return route, fmt.Sprintf("%s:env:%x", version, digest)
+	}, nil
+}
+
+func (c *appRuntimeConfig) eventRouteConfig(workspaceID, agentID, orgID string) (string, string) {
+	snapshot := c.snapshot()
+	route := "legacy"
+	if rollout := snapshot.Config.Runtime.EventSceneRouter; rollout != nil && rollout.Allows(workspaceID, agentID, orgID) {
+		route = "unified"
+	}
+	return route, fmt.Sprintf("%s:%d", snapshot.SHA256, snapshot.Generation)
 }
 
 // coordinatorDecisionConfig reads, from one runtime configuration snapshot,

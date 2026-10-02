@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/contextcap"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -594,6 +595,15 @@ func (h *Handler) requireAutopilotWrite(w http.ResponseWriter, r *http.Request, 
 			writeError(w, http.StatusConflict, "this automation is managed by the agent event-trigger setting; retry failed work through the agent event-batches API")
 			return false
 		}
+	}
+	// A scene routine (例行任务) is managed from its scene's configuration,
+	// which keeps the routine row, its scene binding and dedupe key in step.
+	if _, err := contextcap.GetRoutineByAutopilot(r.Context(), h.DB, uuidToString(ap.ID)); err == nil {
+		writeErrorCode(w, http.StatusConflict, "managed_by_scene", "this autopilot is a scene routine; change it from the scene's 例行任务 configuration")
+		return false
+	} else if !errors.Is(err, contextcap.ErrNotFound) {
+		writeError(w, http.StatusServiceUnavailable, "scene routine configuration is unavailable")
+		return false
 	}
 	return true
 }

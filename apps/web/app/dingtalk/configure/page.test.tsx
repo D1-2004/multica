@@ -71,6 +71,8 @@ import DingTalkConfigurePage from "./page";
 
 const resources = { en: { common: enCommon, agents: enAgents } };
 const web = enAgents.context_config.web;
+// A scene's scope key is its scene_id.
+const SCENE_ID = "66666666-6666-4666-8666-666666666666";
 
 function renderPage() {
   return render(
@@ -188,7 +190,7 @@ describe("DingTalk configure route", () => {
       pageProps.current?.openAuthorizeUrl?.("https://github.com/login/oauth/authorize?state=mcpc.x", {
         agentId: "agent-1",
         scopeType: "scene",
-        scopeKey: "cid-1",
+        scopeKey: SCENE_ID,
       });
     });
 
@@ -198,7 +200,7 @@ describe("DingTalk configure route", () => {
     expect(JSON.parse(localStorage.getItem("multica_context_config_connect") ?? "{}")).toMatchObject({
       agent: "agent-1",
       scope_type: "scene",
-      scope_key: "cid-1",
+      scope_key: SCENE_ID,
     });
   });
 
@@ -337,7 +339,7 @@ describe("DingTalk configure route", () => {
       agent: "agent-1",
       org: "dingB",
       scope_type: "scene",
-      scope_key: "cid-1",
+      scope_key: SCENE_ID,
       connected: "github",
     });
     renderPage();
@@ -346,10 +348,10 @@ describe("DingTalk configure route", () => {
     expect(replaceState).toHaveBeenCalledWith(
       {},
       "",
-      "/dingtalk/configure?agent=agent-1&org=dingB&scope_type=scene&scope_key=cid-1",
+      `/dingtalk/configure?agent=agent-1&org=dingB&scope_type=scene&scope_key=${SCENE_ID}`,
     );
     expect(pageProps.current).toMatchObject({
-      binding: { agentId: "agent-1", scopeType: "scene", scopeKey: "cid-1", orgId: "dingB" },
+      binding: { agentId: "agent-1", scopeType: "scene", scopeKey: SCENE_ID, orgId: "dingB" },
       connectResult: { kind: "connected", slug: "github" },
     });
   });

@@ -324,6 +324,15 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	routes := map[string]MCPRelayRoute{
 		"multica": {Path: "/api/mcp", Authorization: "Bearer " + taskToken},
 	}
+	// The current scene's configuration server, bound to this task and scene
+	// by the scene token in its path (scene_config_mcp.go).
+	if path, ok := h.sceneConfigMCPRoute(ctx, runtime.WorkspaceID, task); ok {
+		managedServers[sceneConfigMCPServerName] = map[string]any{
+			"type": "http", "url": publicURL + path,
+			"headers": map[string]string{"Authorization": "Bearer " + taskToken},
+		}
+		routes[sceneConfigMCPServerName] = MCPRelayRoute{Path: path, Authorization: "Bearer " + taskToken}
+	}
 	connectors, err := h.authorizedTaskConnectors(ctx, runtime.WorkspaceID, task)
 	if err != nil {
 		slog.WarnContext(ctx, "internal MCP connector discovery failed; continuing task claim without connectors", "agent_id", uuidToString(agentID), "runtime_id", uuidToString(runtime.ID), "error", err)

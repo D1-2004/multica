@@ -8,21 +8,23 @@ import (
 	"time"
 )
 
+// AssociateInput links an Issue to the scene it came from. Scene is the
+// Host-resolved scene (zero when the source had none); WaitingOn, when set,
+// is another resolved scene the Issue waits on.
 type AssociateInput struct {
-	WorkspaceID    string
-	AgentID        string
-	IssueID        string
-	IssueTitle     string
-	RunID          string
-	ConversationID string
-	EvidenceID     string
-	PersonID       string
-	PersonAliases  []string
-	DisplayName    string
-	Intent         string
-	Kind           string
-	Purpose        string
-	WaitingOn      string
+	WorkspaceID   string
+	AgentID       string
+	IssueID       string
+	IssueTitle    string
+	RunID         string
+	Scene         SceneNode
+	EvidenceID    string
+	PersonID      string
+	PersonAliases []string
+	DisplayName   string
+	Intent        string
+	Purpose       string
+	WaitingOn     *SceneNode
 }
 
 func AssociateIssueConversation(ctx context.Context, store Store, in AssociateInput) error {
@@ -38,38 +40,34 @@ func associateIssueConversation(ctx context.Context, store Store, in AssociateIn
 	if strings.TrimSpace(in.IssueID) == "" {
 		return fmt.Errorf("%w: issue_id is required", ErrInvalidQuery)
 	}
-	cid := NormalizeConversationID(in.ConversationID)
-	if cid != "" && !ValidSceneID(cid) {
-		return fmt.Errorf("%w: conversation_id is not a scene id", ErrInvalidQuery)
+	sceneID := strings.TrimSpace(in.Scene.SceneID)
+	if sceneID != "" && !in.Scene.valid() {
+		return fmt.Errorf("%w: scene_id is not a scene id", ErrInvalidQuery)
 	}
-	kind := normalizeSceneKind(in.Kind)
 	now := time.Now().UTC()
 	personKey, personAliases := CanonicalPersonKey(append([]string{in.PersonID}, in.PersonAliases...)...)
 	task, err := ensureIssueTask(ctx, store, BindOutboundInput{
-		WorkspaceID:    in.WorkspaceID,
-		AgentID:        in.AgentID,
-		IssueID:        in.IssueID,
-		IssueTitle:     in.IssueTitle,
-		Purpose:        in.Purpose,
-		RunID:          in.RunID,
-		ConversationID: cid,
-		Intent:         in.Intent,
-		DisplayName:    in.DisplayName,
-		WaitingOn:      in.WaitingOn,
+		WorkspaceID: in.WorkspaceID,
+		AgentID:     in.AgentID,
+		IssueID:     in.IssueID,
+		IssueTitle:  in.IssueTitle,
+		Purpose:     in.Purpose,
+		RunID:       in.RunID,
+		Scene:       in.Scene,
+		Intent:      in.Intent,
+		DisplayName: in.DisplayName,
+		WaitingOn:   in.WaitingOn,
 	}, now)
 	if err != nil {
 		return err
 	}
 	actor := graphActor{WorkspaceID: in.WorkspaceID, AgentID: in.AgentID, RunID: in.RunID}
-	if cid != "" {
-		if err := store.EnsureScene(ctx, in.WorkspaceID, in.AgentID, cid, kind, now); err != nil {
+	if sceneID != "" {
+		props := sceneProps(in.Scene)
+		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, sceneID, RelTaskScene, props, now); err != nil {
 			return err
 		}
-		props := map[string]any{"kind": kind, "conversation_id": cid}
-		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, cid, RelTaskScene, props, now); err != nil {
-			return err
-		}
-		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, cid, RelSpawnedFrom, props, now); err != nil {
+		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, sceneID, RelSpawnedFrom, props, now); err != nil {
 			return err
 		}
 	}
@@ -85,12 +83,8 @@ func associateIssueConversation(ctx context.Context, store Store, in AssociateIn
 			return err
 		}
 	}
-	if wait := NormalizeConversationID(in.WaitingOn); wait != "" && wait != cid {
-		if err := store.EnsureScene(ctx, in.WorkspaceID, in.AgentID, wait, "dm", now); err != nil {
-			return err
-		}
-		waitProps := map[string]any{"kind": "dm", "conversation_id": wait}
-		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, wait, RelWaitingOn, waitProps, now); err != nil {
+	if wait := in.WaitingOn; wait != nil && wait.valid() && wait.SceneID != sceneID {
+		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, wait.SceneID, RelWaitingOn, sceneProps(*wait), now); err != nil {
 			return err
 		}
 	}

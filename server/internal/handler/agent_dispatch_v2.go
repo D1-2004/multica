@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
@@ -241,6 +242,13 @@ type DispatchCommand struct {
 	ExtraCompletionCallbacks []DispatchCompletionCallback     `json:"extraCompletionCallbacks,omitempty"`
 	TaskFinishedTaskID       string                           `json:"taskFinishedTaskId,omitempty"`
 	DispatchEndpointID       string                           `json:"-"`
+	// AgentScene is the server-resolved Agent work scene of the event
+	// (docs/agent-scene.md). Persisted with Coordinator jobs; never read from
+	// the Router request (AgentDispatchV2Request does not expose it).
+	AgentScene *scene.Ref `json:"agent_scene,omitempty"`
+	// EventReceiptID distinguishes a frozen admission with no scene from
+	// an old replica's command that still needs resolution at claim.
+	EventReceiptID string `json:"event_receipt_id,omitempty"`
 }
 
 type DispatchPrompt struct {
@@ -775,6 +783,7 @@ type persistedDispatchContext struct {
 	CoordinatorIssueTrigger  inboundcoord.CoordinatorIssueTrigger `json:"coordinator_issue_trigger,omitempty"`
 	ContextPrompt            string                               `json:"dispatch_context_prompt"`
 	ReplyToOpenMsgID         string                               `json:"dingtalk_reply_to_open_msg_id,omitempty"`
+	AgentScene               *scene.Ref                           `json:"agent_scene,omitempty"`
 }
 
 type persistedDispatchExternalIdentity struct {

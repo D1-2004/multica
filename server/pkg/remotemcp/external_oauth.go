@@ -377,7 +377,7 @@ func (c *ExternalClient) requestToken(ctx context.Context, rawEndpoint string, v
 	if err := c.doJSON(request, &response); err != nil {
 		return OAuthTokenResponse{}, err
 	}
-	if response.AccessToken == "" || (response.TokenType != "" && !strings.EqualFold(response.TokenType, "Bearer")) {
+	if response.AccessToken == "" || !oauthBearerTokenType(response.TokenType) {
 		return OAuthTokenResponse{}, errors.New("token endpoint did not return a Bearer access token")
 	}
 	expiresIn := int64(0)
@@ -393,4 +393,17 @@ func (c *ExternalClient) requestToken(ctx context.Context, rawEndpoint string, v
 		AccessToken: response.AccessToken, TokenType: "Bearer", ExpiresIn: expiresIn,
 		RefreshToken: response.RefreshToken, Scope: response.Scope,
 	}, nil
+}
+
+// oauthBearerTokenType reports whether tokenType is sent as
+// Authorization: Bearer. Empty and "bearer" follow RFC 6749. Slack's user
+// token endpoint (oauth.v2.user.access) returns "user", and its bot endpoint
+// returns "bot"; both tokens are still bearer credentials.
+func oauthBearerTokenType(tokenType string) bool {
+	switch strings.ToLower(strings.TrimSpace(tokenType)) {
+	case "", "bearer", "user", "bot":
+		return true
+	default:
+		return false
+	}
 }

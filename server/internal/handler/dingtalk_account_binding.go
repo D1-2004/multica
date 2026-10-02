@@ -178,6 +178,9 @@ func (h *Handler) BeginDingTalkAccountBinding(w http.ResponseWriter, r *http.Req
 		}
 		return
 	}
+	if !h.rejectTagTemplateBinding(w, r, workspaceID, agent.ID) {
+		return
+	}
 	result, err := h.DingTalkAccountBindings.Begin(r.Context(), agentmessagerouter.BeginParams{
 		Agent: agentmessagerouter.BeginAgent{
 			ID:   agent.ID,

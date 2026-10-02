@@ -70,7 +70,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 | --- | --- | --- |
 | 可信入站及原文引用 | 谁说了什么、当前限制 | 评论账号就是委托人 |
 | `agent_skills` | 已提供的安装能力目录 | 未展示即未安装、已有所有权限 |
-| `scene_memory` 与 revision | 本场景已提交的稳定知识 | 合法 issue_id、当前未完成工作、待写已生效 |
+| 场域记忆（`agent_scene_memory`，按 `scene_id`）与 revision | 本场域已提交的稳定知识 | 合法 issue_id、当前未完成工作、待写已生效 |
 | 有水位的历史 | 上一问、对象、短答的上下文 | 新消息替旧消息授权、外群事实属于本群 |
 | 召回与任务证据 | 有限范围内的工作及状态 | 空 48h 结果等于全部历史无事、外部查询结果 |
 | 当前运行送达上下文 | 哪个结果已覆盖哪个接收场域 | 同任务任意旧出站已送达新答案 |
@@ -86,6 +86,8 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 审查Reason始终保留具体缺陷诊断，引文不能替换Reason。constraint_quote字段必填：allow或无规则依据填空；规则驱动revise须提供最多200字符的逐字指令/所需固定话术，避免要求主模型猜不可见SOP。对非空 `constraint_quote` 原文，Host逐个来源验证它是当前限制、已加载岗位约束或实际可见persona/reply_tone的逐字子串，不跨字段拼接，再供主循环decline引用。真实引文只供修复，不构成额外授权。revise的非空摘录若伪改写、去Markdown或不匹配来源，复用现有一次、共用12秒截止的审核协议修正；仍失败则停止提交，不静默清空并缓存无依据revise。allow夹带无效附加引文仍丢弃并记录 `finish_check_boundary_quote_discarded=true`，不阻塞合法裁决；必填quote ref及verdict仍严格校验。该短摘录只证明这条限制，不是运行时生成的新合同或长SOP摘要。读取失败/缺失不得描述为无约束。
 
 数字员工Tab的人格和语气通过 `GetAgentVoice` 读取；主prompt、Host引用校验与侧审核共用persona400/reply_tone200字符的同一投影，审核同时注明各字段是否截断。逐字出处不等于限制适用：配置仅可收窄，不覆盖岗位或当前授权，decline仍需独立审核；记忆、旧报告、旧工具结果及不可见尾部不新增边界来源。已启用技能通过 `ListEnabledAgentSkillCardMetadata` 提供名称与简介。网页、机器人及数字员工 Dispatch 都由 `FillVoice` 调用 `FillSkills`，延续预发已有的技能快照链路。快循环仍最多展示24条、1200字符，单条描述80字符并注明覆盖范围。元描述为空或仅Managed by标记时，只从最多4096字符前缀内完整frontmatter的已声明description补充能力简介；普通已有描述保持不变，前缀不完整不猜测。模型不加载正文/SOP，简介不等于权限或执行结果；明确请求技能对应工作时，仍按新建/续接计划进入沙箱，不能仅复述能力。
+
+场域身份（`docs/agent-scene.md`）：一个场域 = 一个 Agent 在一个租户企业里的一个群或单聊，唯一标识是服务端登记的 `scene_id`。入站命令在受理前由 Host 解析并带 `agent_scene`（SceneRef），Turn、记忆预读、召回、绑定、容量与出站目标都按它；单聊按会话、不按人。模型在工具里写的 `conversation_id` 只经场域目录查找：未登记的会话没有关联（召回为空，`assoc_bind` 拒绝，`waiting_on` 记为未解析），从不按会话类型或发言人猜一个新场域。旧副本入队、命令无 SceneRef 的 job 在认领时用同一解析器补齐。
 
 记忆读取保留预发的员工自述清洗：`prefetchSceneMemory` 同时使用智能体名称与绑定钉钉身份的 `AccountDisplayName`，避免数字员工自己的发言被当作人的稳定记忆。`scene_memory_status` 根据清洗后的实际快照区分 `loaded/empty`，不会把被清除的自述当作有效知识。
 
@@ -265,7 +267,7 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 - Router 的数字员工渠道投递（`source=digital_employee`、`event.domain=channel`）若账号归原生，在记录 assoc 与受理之前丢弃：记 `MULTICA_AGENT_DISPATCH_REQUEST outcome=skipped_native_owned`，记一次 Silence 决策，按自发消息分支同样静默关闭 Router 回调（否则 202），Router 不重试也不回复。机器人、日程、审批投递不受影响，原生订阅只收账号的 IM 消息。归属读不到时返回 503 让 Router 重试，不两边都处理。
 - 原生事件只在本 Agent 的行拥有该账号时处理；数字员工消息路由的存在不再影响原生流，事件源按归属列出账号。
-- 行记录开启时的账号；`(org_id, dws_uid)` 唯一索引（迁移 9461）保证一个账号只有一个 Agent，冲突返回 409 `native_subscription_account_in_use`。身份换绑到别的账号后，旧行不再拥有任何账号，需对新身份重新开启。
+- 行记录开启时的账号和开启时间（换账号时重置，见「不补答积压」）；`(org_id, dws_uid)` 唯一索引（迁移 9461）保证一个账号只有一个 Agent，冲突返回 409 `native_subscription_account_in_use`。身份换绑到别的账号后，旧行不再拥有任何账号，需对新身份重新开启。
 - 开关层防护按账号：任一活跃的数字员工消息路由（Router tenant/account 等于该身份）时拒绝开启原生（409 `native_subscription_conflicts_with_message_binding`）；手动消息绑定的账号已归原生时拒绝。扫码绑定可能存其他 ID 格式，正确性以逐条消息规则为准。
 - 解绑执行身份时先关闭原生订阅；关闭失败则解绑整体失败（500 `native_subscription_cleanup_failed`），不留下孤行在同账号重新绑定时被复活。
 
@@ -286,6 +288,13 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 2. 发信人等于已学到的 `self_open_dingtalk_id`：丢弃（`self_sender`）。
 3. 单聊事件、且该账号的 openDingTalkId 尚未学到时，本 Agent 10 分钟内在同一会话发过、去掉首尾空白后正文相同的托管回复：丢弃（`echo_of_own_reply`）。群事件只在有人 @ 本账号时到达，本账号自己的回复不会 @ 自己，所以群里有人复述回复不会被当回声；学到 openDingTalkId 后由第 2 条精确判断，不再按正文丢弃真人消息。
 4. 进程内滑动窗口：同一 Agent、同一会话、同一发信人 60 秒内超过 10 条不同的原生投递视为回环，丢弃并记 Warn `dws_native_loop_suspected`。按发信人计数：回环只会重复同一发信人，真人连发或群里多人 @ 不会触发。同一消息的重投不重复计数；该计数随事件流换副本而重置，最多推迟一个窗口生效。
+
+**不补答积压。** 账号没有事件流消费时，DWS 会保留它的事件，事件流一连上就把积压一次补推过来。原生入口按消息自身的发送时间（`event_time`，缺省用投递的 `occurredAtMs`），把两类旧消息确认后丢弃，记 Warn `dws_native_event_skipped`，不建窗、不回复：
+
+- 发送早于本 Agent 为该账号开启原生订阅的时间（`agent_dws_native_subscription.enabled_at`，容忍 30 秒时钟偏差）：`sent_before_subscription`。同一账号重复开启时保留原时间；换绑到别的账号后再开启，时间从这次开启算起。关闭订阅会删掉行，所以关闭期间、换绑期间收到的消息都不补答。
+- 送达时已超过 10 分钟：`stale_message`。短暂断流（重连、滚动发布）期间几分钟内的消息照常处理。
+
+这是投递层的新鲜度规则，不是对话延续的时间阈值。事件没有发送时间时，不按时间丢弃。来源：2026-10-02 预发「Tag · 钉钉」事件流修复连通后，01:27–01:42 的 4 条旧消息在 01:49–01:53 被补推。每条都单独建窗，并回了排队、开工和结果三轮回复。
 
 **只用托管回复。** 原生命令恒带 `responsePolicy.mode=multica_coordinator`，资格与 Router 策略同步相同：入站判断与钉钉回复开关都开、策略 revision≥1、运行时具备 `dws_message_policy_v1`。开启原生订阅时校验不满足返回 409 `native_subscription_requires_managed_response`。回调属于服务端自己的派发任务 `dwsn-<hash>`，完成目标是 `agentmessagerouter.NativeTargetIdentity()`（与 Router 目标同形，outbox 原样路由）；有线请求不得使用该命名空间。回复语义与托管数字员工一致：冻结触发消息的 openMsgId，群聊引用回复并 @ 发信人，单聊同样引用回复。`response_route` 与等待说明冻结 `dws_environment=production`。原生完成 worker 只确认回调：托管出站已接手即完成，路由缺失且有话要说则死信；回执只关闭收集窗口，不调用 Router。
 
@@ -534,3 +543,17 @@ finish-only恢复耗尽后按确定性停止生成一次固定失败回执，不
 首个 `included` 决策把 `{arm, salt_digest, config_sha256, config_generation}` 持租约写入job的 `command._finish_schema_experiment`；同一job再次认领时读取该记录：salt不变则沿用同组（`record=reused`），salt变更或实验已关闭则按当前配置执行并记 `excluded_config_changed`。恢复的plan checkpoint不发首轮请求，记 `excluded_checkpoint`；没有job UUID记 `excluded_no_job_id`，分裂模式下非入站循环记 `excluded_loop`。
 
 任何模型请求之前先写 `inbound_coordinator_finish_schema_assigned`（arm、reason、mode、job_id、record、route_error、build、config_sha256/generation、model）；模型路由解析失败被延后的决策同样记录（`route_error=true`）。每次携带finish工具的请求发出前写 `inbound_coordinator_finish_schema_request`（kind=`route`/`finish_repair`、round、实际finish schema哈希与字节数、工具数），同时写入Langfuse trace metadata。未发出请求或失败的决策仍在分母内。新键要求新二进制：先部署代码再写Diamond，回滚二进制前先删键。实验结论由真实流量统计给出，本节只约束分组与参数隔离。
+
+
+## Provider event admission (PRI-78)
+
+`handler/event_admission.go` adapts verified MessageRouter and native DWS inputs
+through `internal/eventrouter` before the existing scene entry. It freezes the
+scene and route in `scene_event_receipt` (docs/event-scene-router.md). The existing
+business acceptance/job transaction, model policies and native ownership guards
+remain authoritative. A persisted `event_receipt_id` marks an admission that has
+already resolved its scene, including an intentionally missing scene; only jobs
+from an older replica without this marker resolve at claim. New unified events
+with unknown locators are held before any Coordinator call. Boundary tests are
+`TestEventAdmissionHeldBeforeHandlerDatabase` and the receipt database tests;
+they do not certify model, execution or channel output.

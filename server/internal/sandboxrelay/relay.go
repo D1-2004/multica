@@ -153,7 +153,7 @@ func (relay *Relay) Middleware(next http.Handler) http.Handler {
 			"runtime_id", claims.RuntimeID,
 			"sandbox_id", claims.SandboxID,
 			"method", req.Method,
-			"path", req.URL.Path,
+			"path", protocol.RedactSceneConfigMCPPath(req.URL.Path),
 		)
 		proxy.ServeHTTP(w, req)
 	})
@@ -224,7 +224,7 @@ func (relay *Relay) newProxy(upstream *url.URL, target string) *httputil.Reverse
 			"event", "sandbox_relay_upstream_failed",
 			"target", target,
 			"method", req.Method,
-			"path", req.URL.Path,
+			"path", protocol.RedactSceneConfigMCPPath(req.URL.Path),
 			"error", err,
 		)
 		writeRelayError(w, http.StatusBadGateway, "sandbox relay upstream failed")
@@ -259,7 +259,7 @@ func (relay *Relay) reject(w http.ResponseWriter, req *http.Request, status int,
 		"event", "sandbox_relay_rejected",
 		"reason", reason,
 		"method", req.Method,
-		"path", req.URL.Path,
+		"path", protocol.RedactSceneConfigMCPPath(req.URL.Path),
 	)
 	writeRelayError(w, status, "sandbox relay request rejected")
 }

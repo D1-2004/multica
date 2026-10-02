@@ -9,7 +9,7 @@ import (
 )
 
 func TestFinishCheckWorkWindowCannotSettleOnSpeakOnly(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-work", Message: "@VOC决策助理 帮我给岚调新建一个aone，内容是支持semantica的能力"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-work"), ConversationID: "cid-work", Message: "@VOC决策助理 帮我给岚调新建一个aone，内容是支持semantica的能力"}
 	candidate := Decision{Action: ActionReply, UserText: "收到，我记一下这个能力。", CoordinationActions: []CoordinationAction{{Kind: "acknowledge", SourceRefs: []string{"u1"}, AckKind: "correction", Reply: "收到，我记一下这个能力。"}}}
 	chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("revise", "Use start_work or continue_work; speaking kinds cannot settle a work request.")}}
 	result, err := (&Coordinator{Chat: chat}).checkFinish(context.Background(), turn, candidate, nil, 0, nil)

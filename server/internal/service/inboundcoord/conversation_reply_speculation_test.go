@@ -12,7 +12,7 @@ import (
 )
 
 func speculationTurn(texts ...string) Turn {
-	turn := Turn{Source: SourceDigitalEmployee, ChatType: "p2p", DWSUID: "24710833", ConversationID: "cid-spec", HistoryStatus: "loaded"}
+	turn := Turn{Source: SourceDigitalEmployee, ChatType: "p2p", DWSUID: "24710833", SceneID: testSceneID("cid-spec"), ConversationID: "cid-spec", HistoryStatus: "loaded"}
 	for _, text := range texts {
 		turn.Utterances = append(turn.Utterances, WindowUtterance{Text: text})
 	}

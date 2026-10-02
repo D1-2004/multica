@@ -841,13 +841,21 @@ export interface CreateAgentFromTemplateFailure {
   failed_urls: string[];
 }
 
-/** One exact Scene Memory row for a bound digital-employee conversation. */
+/** The Scene Memory of one Agent work scene (docs/agent-scene.md). */
 export interface AgentSceneMemory {
+  /** Same as scene_id (the server sends it as id, scene_id and scene_key). */
   id: string;
+  /** The scene's identity: the path key of the scene memory routes and of
+   * its relations. */
+  scene_id: string;
   workspace_id: string;
   agent_id: string;
   org_id: string;
+  /** Same as scene_id (the server sends both). */
   scene_key: string;
+  /** DingTalk openConversationId of the scene, for display only; "" when
+   * the server does not say. */
+  conversation_id: string;
   scene_kind: string;
   scene_title: string;
   memory_text: string;

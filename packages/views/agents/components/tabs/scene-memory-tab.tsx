@@ -72,13 +72,14 @@ export function SceneMemoryTab({
     isError,
     refetch,
   } = useQuery(agentSceneMemoryOptions(wsId, agent.id, showList));
+  // The selected scene's scene_id.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: "multica_agent_memory_layout",
   });
 
   useEffect(() => {
-    if (selectedId && !memories.some((memory) => memory.id === selectedId)) {
+    if (selectedId && !memories.some((memory) => memory.scene_id === selectedId)) {
       setSelectedId(null);
     }
   }, [selectedId, memories]);
@@ -88,11 +89,11 @@ export function SceneMemoryTab({
     if (!showList || selectedId || !firstMemory) {
       return;
     }
-    setSelectedId(firstMemory.id);
+    setSelectedId(firstMemory.scene_id);
   }, [showList, selectedId, memories]);
 
   const selected =
-    memories.find((memory) => memory.id === selectedId) ?? null;
+    memories.find((memory) => memory.scene_id === selectedId) ?? null;
 
   if (!showList) {
     return (
@@ -114,7 +115,7 @@ export function SceneMemoryTab({
       isLoading={isLoading}
       isError={isError}
       onRetry={() => void refetch()}
-      onSelect={(memory) => setSelectedId(memory.id)}
+      onSelect={(memory) => setSelectedId(memory.scene_id)}
     />
   );
 
@@ -403,9 +404,9 @@ function SceneMemoryList({
           <ul>
             {dms.map((memory) => (
               <SceneMemoryRow
-                key={memory.id}
+                key={memory.scene_id}
                 memory={memory}
-                selected={memory.id === selectedId}
+                selected={memory.scene_id === selectedId}
                 onSelect={onSelect}
               />
             ))}
@@ -420,9 +421,9 @@ function SceneMemoryList({
           <ul>
             {groups.map((memory) => (
               <SceneMemoryRow
-                key={memory.id}
+                key={memory.scene_id}
                 memory={memory}
-                selected={memory.id === selectedId}
+                selected={memory.scene_id === selectedId}
                 onSelect={onSelect}
               />
             ))}
@@ -524,13 +525,13 @@ export function SceneMemoryDetail({
   useEffect(() => {
     setDraft(memory.memory_text);
     setEditing(false);
-  }, [memory.id, memory.memory_revision, memory.memory_text]);
+  }, [memory.scene_id, memory.memory_revision, memory.memory_text]);
   const { data: relations = [], isLoading: relationsLoading } = useQuery(
-    agentSceneRelationOptions(wsId, agent.id, memory.scene_key, true),
+    agentSceneRelationOptions(wsId, agent.id, memory.scene_id, true),
   );
   const save = useMutation({
     mutationFn: () =>
-      api.updateAgentSceneMemory(agent.id, memory.id, {
+      api.updateAgentSceneMemory(agent.id, memory.scene_id, {
         memory_text: draft,
         expected_revision: memory.memory_revision,
       }),
@@ -546,7 +547,7 @@ export function SceneMemoryDetail({
     },
   });
   const reset = useMutation({
-    mutationFn: () => api.resetAgentSceneMemory(agent.id, memory.id),
+    mutationFn: () => api.resetAgentSceneMemory(agent.id, memory.scene_id),
     onSuccess: async () => {
       setConfirm(null);
       await Promise.all([
@@ -554,7 +555,7 @@ export function SceneMemoryDetail({
           queryKey: agentSceneMemoryKeys.list(wsId, agent.id),
         }),
         queryClient.invalidateQueries({
-          queryKey: agentSceneRelationKeys.list(wsId, agent.id, memory.scene_key),
+          queryKey: agentSceneRelationKeys.list(wsId, agent.id, memory.scene_id),
         }),
       ]);
       toast.success(t(($) => $.tab_body.inbound.memory_reset_done));
@@ -564,11 +565,11 @@ export function SceneMemoryDetail({
     },
   });
   const clearRelations = useMutation({
-    mutationFn: () => api.clearAgentSceneRelations(agent.id, memory.id),
+    mutationFn: () => api.clearAgentSceneRelations(agent.id, memory.scene_id),
     onSuccess: async () => {
       setConfirm(null);
       await queryClient.invalidateQueries({
-        queryKey: agentSceneRelationKeys.list(wsId, agent.id, memory.scene_key),
+        queryKey: agentSceneRelationKeys.list(wsId, agent.id, memory.scene_id),
       });
       toast.success(t(($) => $.tab_body.inbound.relations_cleared));
     },

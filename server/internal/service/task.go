@@ -48,6 +48,9 @@ type TaskService struct {
 	Analytics analytics.Client
 	Metrics   *obsmetrics.BusinessMetrics
 	Wakeup    TaskWakeupNotifier
+	// SceneRoutines posts a scene routine run's end notice from the terminal
+	// transaction; nil leaves every task ordinary.
+	SceneRoutines SceneRoutines
 	// FeatureFlags is the server-side toggle router. Nil is valid and returns
 	// each call site's default.
 	FeatureFlags *featureflag.Service
@@ -4131,7 +4134,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// task inside the completion transaction below. It is broadcast (chat:done)
 	// only after the transaction commits.
 	var chatAssistantMsg *db.ChatMessage
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
@@ -4203,7 +4206,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			}
 			chatAssistantMsg = msg
 		}
-		queued, err := s.enqueueTaskCompletionInTx(ctx, qtx, t, "completed", result, "", "")
+		queued, err := s.enqueueTaskCompletionInTx(ctx, qtx, terminalTx, t, "completed", result, "", "")
 		if err != nil {
 			return fmt.Errorf("enqueue task completion: %w", err)
 		}
@@ -4687,7 +4690,7 @@ func (s *TaskService) failTask(
 	var retried *db.AgentTaskQueue
 	var completionQueued bool
 	var executionUpdateReady bool
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
@@ -4823,6 +4826,7 @@ func (s *TaskService) failTask(
 			queued, completionErr := s.enqueueTaskCompletionInTx(
 				ctx,
 				qtx,
+				terminalTx,
 				t,
 				"failed",
 				nil,

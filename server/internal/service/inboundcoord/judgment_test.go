@@ -12,7 +12,7 @@ import (
 // These checks preserve the disclosure and Host-tool contracts behind earlier
 // incidents. They do not substitute for real-model judgment replays.
 func TestRoutingContractUsesToolLoop(t *testing.T) {
-	inbound := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", HistoryStatus: "not_loaded", Message: "你会什么"}
+	inbound := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", HistoryStatus: "not_loaded", Message: "你会什么"}
 	inbound.Skills = []SkillSnapshot{{Name: "dingtalk-minutes", Description: "查询听记并整理行动项"}}
 	recalledInbound := inbound
 	recalledInbound.recalledIssueIDs = []string{"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}

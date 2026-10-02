@@ -5,6 +5,7 @@ import {
   AlertCircle,
   ArrowLeftRight,
   Building2,
+  CalendarClock,
   CheckCircle2,
   ExternalLink,
   Globe,
@@ -58,6 +59,7 @@ import { SkillIcon } from "../skills/lib/skill-icon";
 import { useT } from "../i18n";
 import { ScopeMcpServers } from "./context-config-mcp";
 import { ScopePrompts } from "./context-config-prompts";
+import { ScopeRoutines } from "./context-config-routines";
 import { PublicCapabilities } from "./context-config-public";
 import { ItemGroup, ToggleControl } from "./context-config-ui";
 
@@ -71,10 +73,10 @@ export interface ContextConfigScopeRef {
   orgId?: string;
 }
 
-/** The one scope a page opened from a configuration link shows: a group
- * chat (`scene`) or a person (`person`; a 1:1 chat is its person). The
- * page then offers no way to browse or switch to another agent, tenant or
- * scope. */
+/** The one scope a page opened from a configuration link shows: a chat
+ * (`scene`, key = its scene_id; a group chat or a 1:1 chat) or a person
+ * (`person`, key = staffId). The page then offers no way to browse or
+ * switch to another agent, tenant or scope. */
 export interface ContextConfigBinding {
   agentId: string;
   scopeType: ContextScopeType;
@@ -190,6 +192,12 @@ export const CONTEXT_CONFIG_TABS = [
     icon: Globe,
     render: ({ detail }: ContextConfigTabProps) => <PublicCapabilities detail={detail} />,
   },
+  {
+    id: "routines",
+    label: (t: AgentsT) => t(($) => $.context_config.tab_routines),
+    icon: CalendarClock,
+    render: (props: ContextConfigTabProps) => <RoutinesTab {...props} />,
+  },
 ] as const satisfies readonly ContextConfigTab[];
 
 export type ContextConfigTabId = (typeof CONTEXT_CONFIG_TABS)[number]["id"];
@@ -249,12 +257,13 @@ function statusOf(error: unknown): number | null {
 
 /**
  * Configuration page (DingTalk H5, also usable in a desktop browser). A page
- * opened from a configuration link is bound to that link's scope: a group
- * chat, or a person (a 1:1 chat is its person), plus the enterprise level
- * for the agent's managers. Opened without a scope (the admin `?agent=`
- * link) it browses three levels: 企业 (the tenant: edited by the agent's
- * managers), 本会话 (a group chat or a 1:1 chat) and 我的. Platform-free: the
- * web route injects sign-in, the URL plumbing and the JSAPI group picker.
+ * opened from a configuration link is bound to that link's scope: a chat
+ * (a group chat or a 1:1 chat, each its own scene), or a person, plus the
+ * enterprise level for the agent's managers. Opened without a scope (the
+ * admin `?agent=` link) it browses three levels: 企业 (the tenant: edited by
+ * the agent's managers), 本会话 (a group chat or a 1:1 chat) and 我的.
+ * Platform-free: the web route injects sign-in, the URL plumbing and the
+ * JSAPI group picker.
  */
 export function ContextConfigPage({
   linkToken,
@@ -697,6 +706,73 @@ function AgentView({
   );
 }
 
+/** 例行任务: the routines of the bound chat (for a personal link, the 1:1
+ * chat it came from), or of the chat picked while browsing (the same pick as
+ * 场域能力). A person or enterprise level has none. Who may change them
+ * comes from the scene's rights. */
+function RoutinesTab({ detail, binding, browse, reportError }: ContextConfigTabProps) {
+  const { t } = useT("agents");
+  const sceneKindLabel = useSceneKindLabel();
+  const sceneUntitled = useSceneUntitled();
+  const pageOrg = detail.tenant?.orgId ?? "";
+  const boundSceneKey =
+    binding?.scopeType === "scene"
+      ? binding.scopeKey
+      : binding?.scopeType === "person" && detail.person?.scopeKey === binding.scopeKey
+        ? (boundDMScene(detail)?.scopeKey ?? "")
+        : "";
+  const wantedSceneKey = binding
+    ? boundSceneKey
+    : browse.sceneKey || (browse.preferredScope?.scopeType === "scene" ? browse.preferredScope.scopeKey : "");
+  const scene =
+    detail.scenes.find((entry) => entry.scopeKey === wantedSceneKey) ??
+    (binding === null ? detail.scenes[0] : undefined);
+  const sceneKey = binding ? boundSceneKey : (scene?.scopeKey ?? "");
+  const orgId = scene?.orgId || pageOrg || (binding?.orgId ?? "");
+  const sceneDetail = useQuery({
+    ...contextConfigSceneOptions(detail.agent.id, sceneKey, orgId),
+    enabled: Boolean(sceneKey),
+  });
+
+  if (!sceneKey) {
+    return (
+      <EmptyState
+        icon={<CalendarClock className="size-6" />}
+        title={t(($) => $.context_config.routines.not_scene_title)}
+        hint={t(($) => $.context_config.routines.not_scene_hint)}
+      />
+    );
+  }
+  return (
+    <div className="space-y-4">
+      {binding === null && detail.scenes.length > 1 ? (
+        <label className="block space-y-1.5">
+          <span className="text-caption font-medium text-muted-foreground">
+            {t(($) => $.context_config.scene_label)}
+          </span>
+          <NativeSelect
+            className="w-full"
+            value={sceneKey}
+            onChange={(event) => browse.onSceneKeyChange(event.target.value)}
+          >
+            {detail.scenes.map((entry) => (
+              <NativeSelectOption key={entry.scopeKey} value={entry.scopeKey}>
+                {`${sceneKindLabel(entry.kind)} · ${entry.scopeTitle || sceneUntitled(entry.kind)}`}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </label>
+      ) : null}
+      <ScopeRoutines
+        key={sceneKey}
+        target={{ kind: "config", agentId: detail.agent.id, sceneId: sceneKey, orgId }}
+        canEdit={sceneDetail.data?.rights?.editRoutines === true}
+        reportError={reportError}
+      />
+    </div>
+  );
+}
+
 /** 场域能力: the bound scope, or the three browsable levels. */
 function ScopeTab({ detail, binding, browse, reportError }: ContextConfigTabProps) {
   return binding ? (
@@ -706,8 +782,15 @@ function ScopeTab({ detail, binding, browse, reportError }: ContextConfigTabProp
   );
 }
 
-/** A bound page: only the bound group chat or person, and the enterprise
- * level for the agent's managers. */
+/** The 1:1 chat a personal link was minted in: redeeming the link also
+ * granted that chat's scene, listed as the page's dm scene. */
+function boundDMScene(detail: ContextConfigAgentDetail) {
+  return detail.scenes.find((entry) => entry.kind === "dm");
+}
+
+/** A bound page: only the bound group chat, or the bound person with the
+ * 1:1 chat their link came from, and the enterprise level for the agent's
+ * managers. */
 function BoundScope({
   detail,
   binding,
@@ -735,7 +818,33 @@ function BoundScope({
       />
     );
   } else if (detail.person && detail.person.scopeKey === binding.scopeKey) {
-    scope = <PersonScope detail={detail} person={detail.person} orgId={pageOrg} reportError={reportError} />;
+    const person = <PersonScope detail={detail} person={detail.person} orgId={pageOrg} reportError={reportError} />;
+    const dm = boundDMScene(detail);
+    scope = dm ? (
+      <div className="space-y-8">
+        <section className="space-y-3" aria-labelledby="context-config-dm-section">
+          <h2 id="context-config-dm-section" className="text-body font-semibold">
+            {t(($) => $.context_config.dm_section_title)}
+          </h2>
+          <SceneScope
+            agentId={detail.agent.id}
+            sceneKey={dm.scopeKey}
+            sceneKind="dm"
+            orgId={dm.orgId || pageOrg || binding.orgId}
+            detail={detail}
+            reportError={reportError}
+          />
+        </section>
+        <section className="space-y-3" aria-labelledby="context-config-person-section">
+          <h2 id="context-config-person-section" className="text-body font-semibold">
+            {t(($) => $.context_config.person_section_title)}
+          </h2>
+          {person}
+        </section>
+      </div>
+    ) : (
+      person
+    );
   } else {
     scope = (
       <EmptyState icon={<User className="size-6" />} title={t(($) => $.context_config.scene_no_access)} />
@@ -990,8 +1099,8 @@ function BrowseScopes({
           title={t(($) => $.context_config.person_empty_title)}
           hint={t(($) => $.context_config.person_empty_hint)}
         >
-          {/* Managing the agent covers its scenes (a 1:1 chat's switches
-              are its person's), never another person's accounts. */}
+          {/* Managing the agent covers its scenes, 1:1 chats included,
+              never another person's personal level or accounts. */}
           {isManager && (
             <p className="text-caption text-muted-foreground text-pretty">
               {t(($) => $.context_config.person_manager_note)}
@@ -1050,26 +1159,9 @@ function SceneScope({
   // An older scene detail omits the kind (parsed as "group"); the agent
   // detail may already know the chat is a 1:1 chat.
   const kind: ContextSceneKind = scene.scene.kind === "dm" || sceneKind === "dm" ? "dm" : "group";
-  // A 1:1 chat's configuration is its person's configuration; the server
-  // cannot always tell who that is yet.
-  if (scene.scope === null) {
-    return (
-      <EmptyState
-        icon={<MessageCircle className="size-6" />}
-        title={t(($) => $.context_config.dm_person_unknown)}
-      />
-    );
-  }
-  const person = scene.scope?.type === "person" ? scene.scope : null;
-  // A manager may switch things on in someone's 1:1 chat but never store or
-  // connect that person's account (the server answers 403); the person's
-  // own grant (their 1:1 chat link, or their personal link) may. Either the
-  // server's can_connect or the manager-in-a-1:1-chat shape hides connecting.
-  const ownerOnly =
-    scene.canConnect === false ||
-    (kind === "dm" &&
-      scene.scene.source === "manager" &&
-      !(person !== null && detail.person?.scopeKey === person.key));
+  // A group chat and a 1:1 chat alike are their own scene: the scene_id is
+  // the scope of every write here, and the server's rights say what the
+  // caller may change (an agent manager everything, a link holder nothing).
   return (
     <ScopeEditor
       agentId={agentId}
@@ -1077,13 +1169,15 @@ function SceneScope({
       scopeKey={scene.scene.scopeKey}
       orgId={scene.scene.orgId || orgId}
       sceneKind={kind}
-      title={person?.title || scene.scene.scopeTitle || sceneUntitled(kind)}
+      title={scene.scene.scopeTitle || sceneUntitled(kind)}
       expiresAt={scene.scene.expiresAt}
       detail={detail}
       bindings={scene.bindings}
       credentials={scene.credentials}
       content={scene}
-      ownerOnly={ownerOnly}
+      // An older backend without rights: its can_connect alone hides
+      // connecting.
+      ownerOnly={scene.canConnect === false}
       reportError={reportError}
     />
   );
@@ -1119,8 +1213,8 @@ function ScopeEditor({
   credentials: ContextConnectorCredential[];
   /** The scope's rights, prompts and MCP servers. */
   content: ContextConfigScopeContent;
-  /** Older backends (no `rights`): only the person connects accounts and
-   * tokens here (a manager viewing someone's 1:1 chat). */
+  /** Older backends (no `rights`): the caller may switch things here but
+   * not connect accounts or store tokens (the server's can_connect). */
   ownerOnly?: boolean;
   /** Older backends (no `rights`): nothing can be changed here (the
    * enterprise level for a member). */
@@ -1136,7 +1230,7 @@ function ScopeEditor({
   const canToggle = rights ? rights.toggle : !readOnly;
   const canConnect = rights ? rights.connect : !readOnly && !ownerOnly;
   // Accounts are shown, but who connects them is said only when the rest of
-  // the scope stays editable (a manager in someone's 1:1 chat).
+  // the scope stays editable (switching allowed, connecting not).
   const credentialReadOnly = !canConnect && !canToggle;
   const credentialOwnerOnly = !canConnect && canToggle;
   const scopeInput = { scopeType, scopeKey, ...orgField(orgId) };
@@ -1265,8 +1359,10 @@ function ScopeEditor({
               ? t(($) => $.context_config.org_read_only)
               : t(($) => $.context_config.org_scope_hint)
             : rights && !canToggle
-              ? scopeType === "scene" && sceneKind !== "dm"
-                ? t(($) => $.context_config.scene_read_only)
+              ? scopeType === "scene"
+                ? sceneKind === "dm"
+                  ? t(($) => $.context_config.scene_read_only_dm)
+                  : t(($) => $.context_config.scene_read_only)
                 : t(($) => $.context_config.person_read_only)
               : scopeType === "scene"
                 ? sceneKind === "dm"

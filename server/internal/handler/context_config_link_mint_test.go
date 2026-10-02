@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 )
 
@@ -83,20 +84,21 @@ func TestCoordinatorConfigLinkIssuerMintsConversationLinks(t *testing.T) {
 	}
 
 	// 1:1 chat: the single-use personal link, which also grants the DM scene.
-	person, err := issue(ctxcapDispatch("single", ctxcapCoordinatorDirect, ctxcapStaff, ctxcapStaff))
+	f.registerDirectScene(t)
+	person, err := issue(ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff))
 	if err != nil || person.Scope != contextcap.ScopePerson || person.ValidFor != contextcap.LinkTTLPerson || !person.SingleUse {
 		t.Fatalf("1:1 link=%+v err=%v", person, err)
 	}
 	ctxcapExpiresWithin(t, person.ExpiresAt.UTC().Format(time.RFC3339), contextcap.LinkTTLPerson)
 	personToken := coordinatorLinkToken(t, person)
 	if got := coordinatorStoredLinkFor(t, personToken); got != (coordinatorStoredLink{
-		scopeType: contextcap.ScopePerson, orgID: ctxcapOrg, scopeKey: ctxcapStaff, title: "Alice", extraScene: ctxcapCoordinatorDirect,
+		scopeType: contextcap.ScopePerson, orgID: ctxcapOrg, scopeKey: ctxcapStaff, title: "Alice", extraScene: ctxcapDirectScene,
 	}) {
 		t.Fatalf("stored person link=%+v", got)
 	}
 	ctxcapExpectStatus(t, redeem(alice, personToken), http.StatusOK, "coordinator person link redeem")
 	ctxcapExpectStatus(t, redeem(alice, personToken), http.StatusGone, "coordinator person link reuse")
-	if _, err := contextcap.GetLiveGrant(context.Background(), testPool, alice, agentID, contextcap.ScopeScene, ctxcapOrg, ctxcapCoordinatorDirect); err != nil {
+	if _, err := contextcap.GetLiveGrant(context.Background(), testPool, alice, agentID, contextcap.ScopeScene, ctxcapOrg, ctxcapDirectScene); err != nil {
 		t.Fatalf("personal link did not grant the 1:1 scene: %v", err)
 	}
 }
@@ -108,12 +110,14 @@ func TestCoordinatorConfigLinkIssuerReadsTheDispatchEnvelope(t *testing.T) {
 	f := newCtxcapFixture(t)
 	f.h.cfg.AppURL = "https://app.multica.example"
 	f.cleanupGrantsAndLinks(t)
-	command := func(conversationType, cid, orgID string) DispatchCommand {
+	f.registerDirectScene(t)
+	command := func(conversationType, sceneID, orgID string) DispatchCommand {
 		return DispatchCommand{
 			SchemaVersion: "2.0",
+			AgentScene:    &scene.Ref{SceneID: sceneID},
 			Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
 			Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
-				Conversation: DispatchConversation{OpenConversationID: cid, Type: conversationType, Title: "Envelope group"},
+				Conversation: DispatchConversation{OpenConversationID: ctxcapDispatchCIDs[sceneID], Type: conversationType, Title: "Envelope group"},
 				Sender:       DispatchSender{StaffID: ctxcapStaff, DisplayName: "Alice", UID: "uid-alice"},
 				Messages:     []DispatchMessage{{OpenMsgID: "msg-1", Text: "你有哪些能力？", SenderStaffID: ctxcapStaff, SenderUID: "uid-alice"}},
 			}},
@@ -132,11 +136,11 @@ func TestCoordinatorConfigLinkIssuerReadsTheDispatchEnvelope(t *testing.T) {
 	if got := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, group)); got.scopeKey != ctxcapScene || got.title != "Envelope group" || got.orgID != ctxcapOrg {
 		t.Fatalf("group envelope stored=%+v", got)
 	}
-	direct, err := issue(command("single", ctxcapCoordinatorDirect, ctxcapOrg))
+	direct, err := issue(command("single", ctxcapDirectScene, ctxcapOrg))
 	if err != nil || direct.Scope != contextcap.ScopePerson {
 		t.Fatalf("1:1 envelope link=%+v err=%v", direct, err)
 	}
-	if got := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, direct)); got.scopeKey != ctxcapStaff || got.extraScene != ctxcapCoordinatorDirect {
+	if got := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, direct)); got.scopeKey != ctxcapStaff || got.extraScene != ctxcapDirectScene {
 		t.Fatalf("1:1 envelope stored=%+v", got)
 	}
 	if link, err := issue(command("group", ctxcapScene, "org-someone-else")); err == nil {
@@ -162,7 +166,7 @@ func TestCoordinatorConfigLinkIssuerFailsClosed(t *testing.T) {
 	// Unknown or shared conversation types, merged senders, replayed
 	// contexts and missing context never yield a link.
 	refuse("unknown conversation type", request(ctxcapDispatch("", "", ctxcapStaff, ctxcapStaff)))
-	refuse("channel conversation", request(ctxcapDispatch("channel", ctxcapScene, ctxcapStaff, ctxcapStaff)))
+	refuse("channel conversation", request(ctxcapDispatch("channel", "cidCtxcapChannel==", ctxcapStaff, ctxcapStaff)))
 	refuse("multi-sender 1:1", request(ctxcapDispatch("single", ctxcapCoordinatorDirect, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff)))
 	refuse("replayed dispatch", request(ctxcapReplayed(ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff))))
 	refuse("no dispatch context", request(nil))

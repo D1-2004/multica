@@ -232,6 +232,11 @@ func cloneSnapshot(in Snapshot) Snapshot {
 	out.Config.Web.CORSAllowedOrigins = append([]string(nil), in.Config.Web.CORSAllowedOrigins...)
 	out.Config.Web.LoginProviders = append([]string(nil), in.Config.Web.LoginProviders...)
 	out.Config.Runtime.LLM.Models = append([]string(nil), in.Config.Runtime.LLM.Models...)
+	if in.Config.Runtime.EventSceneRouter != nil {
+		rollout := *in.Config.Runtime.EventSceneRouter
+		rollout.Targets = append([]EventSceneRouterTarget(nil), rollout.Targets...)
+		out.Config.Runtime.EventSceneRouter = &rollout
+	}
 	if in.Config.Runtime.PerformanceOptimization != nil {
 		rollout := *in.Config.Runtime.PerformanceOptimization
 		rollout.AgentIDs = append([]string(nil), rollout.AgentIDs...)

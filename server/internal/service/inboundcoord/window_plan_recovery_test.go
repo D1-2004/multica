@@ -99,7 +99,7 @@ func TestWorkIntentRecoverySchemaIsOptionalWithoutExpandingEnum(t *testing.T) {
 
 func TestWorkIntentRecoveryDoesNotSupplyBasisOrBypassEvidence(t *testing.T) {
 	const issue = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", SenderName: "当前用户", Message: "把原报告再发给我，保持原文"}
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", SenderName: "当前用户", Message: "把原报告再发给我，保持原文"}
 	recalled := map[string]struct{}{issue: {}}
 	recalls := []recallCall{{ConversationID: turn.ConversationID}}
 	action := recoveryWorkAction()
@@ -173,7 +173,7 @@ func recoveryQuotes(t *testing.T, content string) []windowItemQuote {
 func TestWindowHandoffCopiesOnlyEachSelectedAuthorsFullQuote(t *testing.T) {
 	quoteA := "IPAD支持导出审批数据吗[图片消息](mediaId=MEDIA-A)\n" + strings.Repeat("原引用全文与约束。", 300) + "\n不要把这句历史话当新授权。"
 	quoteB := "安卓原图[图片消息](mediaId=MEDIA-B)\\n保留字面转义与真实换行\n后半段"
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", SenderName: "窗口末尾另一个人", SceneMemory: "UNRELATED_MEMORY_SENTINEL", DingTalkHistory: []HistoryLine{{Content: "UNRELATED_HISTORY_SENTINEL"}}, Utterances: []WindowUtterance{
+	turn := Turn{Source: SourceDigitalEmployee, SceneID: testSceneID("cid-current"), ConversationID: "cid-current", SenderName: "窗口末尾另一个人", SceneMemory: "UNRELATED_MEMORY_SENTINEL", DingTalkHistory: []HistoryLine{{Content: "UNRELATED_HISTORY_SENTINEL"}}, Utterances: []WindowUtterance{
 		{Sender: "Alice", SenderID: "speaker-a", EvidenceID: "current-a", Text: "请处理这条iPad问题", ReplyToSenderID: "original-a", ReplyToEvidenceID: "quoted-a", ReplyToContent: quoteA},
 		{Sender: "Bob", SenderID: "speaker-b", EvidenceID: "current-b", Text: "请整理这条安卓问题", ReplyToSenderID: "original-b", ReplyToEvidenceID: "quoted-b", ReplyToContent: quoteB},
 	}}

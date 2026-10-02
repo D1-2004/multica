@@ -30,12 +30,11 @@ type Store interface {
 	InsertEdge(ctx context.Context, edge Edge) (Edge, error)
 	ListEdgesByDst(ctx context.Context, workspaceID, agentID, dstType, dstID string, since time.Time) ([]Edge, error)
 	ListEdgesBySrc(ctx context.Context, workspaceID, agentID, srcType, srcID string) ([]Edge, error)
-	CloseSceneAssociations(ctx context.Context, workspaceID, agentID, sceneKey string) (CloseSceneResult, error)
+	CloseSceneAssociations(ctx context.Context, workspaceID, agentID, sceneID string) (CloseSceneResult, error)
 	InsertEvent(ctx context.Context, event Event) (Event, error)
 	GetEventByEvidence(ctx context.Context, workspaceID, agentID, evidenceID string) (Event, error)
-	ListEventsByScene(ctx context.Context, workspaceID, agentID, sceneKey string, since time.Time, limit int) ([]Event, error)
+	ListEventsByScene(ctx context.Context, workspaceID, agentID, sceneID string, since time.Time, limit int) ([]Event, error)
 	UpdateEventTask(ctx context.Context, workspaceID, agentID, evidenceID, taskID string) error
-	EnsureScene(ctx context.Context, workspaceID, agentID, sceneKey, kind string, at time.Time) error
 	EnsurePerson(ctx context.Context, workspaceID, agentID, personKey, displayName string, aliases []string) error
 	ResolvePersonKey(ctx context.Context, workspaceID, agentID, identifier string) (string, error)
 }
@@ -46,7 +45,6 @@ type Memory struct {
 	tasks   map[string]Task
 	edges   map[string]Edge
 	events  map[string]Event
-	scenes  map[string]string
 	persons map[string]string
 	aliases map[string]string
 }
@@ -56,7 +54,6 @@ func NewMemory() *Memory {
 		tasks:   map[string]Task{},
 		edges:   map[string]Edge{},
 		events:  map[string]Event{},
-		scenes:  map[string]string{},
 		persons: map[string]string{},
 		aliases: map[string]string{},
 	}
@@ -296,8 +293,8 @@ func (m *Memory) ListEdgesBySrc(_ context.Context, workspaceID, agentID, srcType
 
 func (m *Memory) CloseSceneAssociations(_ context.Context, workspaceID, agentID, sceneKey string) (CloseSceneResult, error) {
 	sceneKey = strings.TrimSpace(sceneKey)
-	if sceneKey == "" {
-		return CloseSceneResult{}, fmt.Errorf("%w: conversation_id is required", ErrInvalidQuery)
+	if !validSceneNodeID(sceneKey) {
+		return CloseSceneResult{}, fmt.Errorf("%w: scene_id is required", ErrInvalidQuery)
 	}
 	now := time.Now().UTC()
 	m.mu.Lock()
@@ -305,7 +302,7 @@ func (m *Memory) CloseSceneAssociations(_ context.Context, workspaceID, agentID,
 	eventIDs := map[string]struct{}{}
 	var result CloseSceneResult
 	for id, event := range m.events {
-		if event.WorkspaceID != workspaceID || event.AgentID != agentID || event.SceneKey != sceneKey {
+		if event.WorkspaceID != workspaceID || event.AgentID != agentID || event.SceneID != sceneKey {
 			continue
 		}
 		eventIDs[event.ID] = struct{}{}
@@ -407,7 +404,7 @@ func (m *Memory) ListEventsByScene(_ context.Context, workspaceID, agentID, scen
 		if existing.WorkspaceID != workspaceID || existing.AgentID != agentID {
 			continue
 		}
-		if existing.SceneKey != sceneKey {
+		if existing.SceneID != sceneKey {
 			continue
 		}
 		if !since.IsZero() && existing.OccurredAt.Before(since) {
@@ -432,20 +429,6 @@ func (m *Memory) ListEventsByScene(_ context.Context, workspaceID, agentID, scen
 
 func catalogKey(workspaceID, agentID, id string) string {
 	return workspaceID + "\x1f" + agentID + "\x1f" + id
-}
-
-func (m *Memory) EnsureScene(_ context.Context, workspaceID, agentID, sceneKey, kind string, at time.Time) error {
-	sceneKey = strings.TrimSpace(sceneKey)
-	if sceneKey == "" {
-		return nil
-	}
-	if kind == "" {
-		kind = "dm"
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.scenes[catalogKey(workspaceID, agentID, sceneKey)] = kind
-	return nil
 }
 
 func (m *Memory) EnsurePerson(_ context.Context, workspaceID, agentID, personKey, displayName string, aliases []string) error {

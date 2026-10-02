@@ -2548,13 +2548,18 @@ export const AgentTaskSchema = z
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
 
+// One Agent work scene's memory (docs/agent-scene.md). id, scene_id and
+// scene_key all carry the scene_id; conversation_id (the DingTalk chat id)
+// is display-only, so a missing or malformed one reads as "".
 export const AgentSceneMemorySchema = z
   .object({
     id: z.string(),
+    scene_id: z.string().catch(""),
     workspace_id: z.string().default(""),
     agent_id: z.string().default(""),
     org_id: z.string().default(""),
-    scene_key: z.string(),
+    scene_key: z.string().catch(""),
+    conversation_id: z.string().catch(""),
     scene_kind: z.string().default(""),
     scene_title: z.string().default(""),
     memory_text: z.string().default(""),
@@ -2566,15 +2571,20 @@ export const AgentSceneMemorySchema = z
     bootstrapped_at: z.string().optional().default(""),
     last_flushed_at: z.string().optional().default(""),
   })
-  .loose();
+  .loose()
+  // A backend that omits scene_id still names the scene by scene_key or
+  // the row id, which carry the same scene_id.
+  .transform((row) => ({ ...row, scene_id: row.scene_id || row.scene_key || row.id }));
 
 export const AgentSceneMemoryListSchema = z.array(AgentSceneMemorySchema);
 export const EMPTY_AGENT_SCENE_MEMORY: AgentSceneMemory = {
   id: "",
+  scene_id: "",
   workspace_id: "",
   agent_id: "",
   org_id: "",
   scene_key: "",
+  conversation_id: "",
   scene_kind: "",
   scene_title: "",
   memory_text: "",

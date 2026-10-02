@@ -29,8 +29,11 @@ tree before trusting any line number.
 | Fact | Source |
 | --- | --- |
 | Outbound bind writes outreach / waiting_on / task_scene | `server/internal/assoc/bind.go` `bindOutbound` |
-| Inbound Event tags `scene_key` | `server/internal/handler/assoc.go` `recordAssocInboundEvent` |
-| `/reset-memory` closes scene edges and unlinks events | `server/internal/handler/agent_dispatch_v2_handler.go` `tryDispatchResetMemory` → `assoc.Service.CloseSceneAssociations` |
+| Inbound Event tags `scene_id` | `server/internal/handler/assoc.go` `recordAssocInboundEvent` |
+| Conversation id → scene (lookup; register only with a stated kind) | `server/internal/handler/agent_scene.go` `conversationSceneNode` → `server/internal/scene` `Lookup` / `Resolve` (docs/agent-scene.md) |
+| `--kind` has no default; MCP `kind` "never guess" | `server/cmd/multica/cmd_assoc.go`; `server/internal/handler/multica_mcp.go` `assoc_bind` schema |
+| Recall by `scene_id` | `server/internal/handler/assoc.go` `recallAssoc` |
+| `/reset-memory` closes scene edges, unlinks events and resets Scene Memory by `scene_id` | `server/internal/handler/agent_dispatch_v2_handler.go` `tryDispatchResetMemory` → `assoc.Service.CloseSceneAssociations`, `scenememory.Store.Reset` |
 | Issue associate writes spawned_from | `server/internal/assoc/associate.go` |
 | Purpose fallback from user message | `server/internal/assoc/purpose.go` `ResolvePurpose` |
 

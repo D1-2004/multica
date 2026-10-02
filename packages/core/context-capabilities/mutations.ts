@@ -2,7 +2,6 @@ import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-q
 import { api } from "../api";
 import type {
   AgentContextCapabilities,
-  ContextConfigSceneDetail,
   ContextConfigScopeInput,
   ContextNodeDetail,
   ContextNodeRef,
@@ -10,7 +9,11 @@ import type {
   CreateAgentTenantInput,
   DeleteContextConnectorCredentialInput,
   ContextResourceType,
+  ContextRoutine,
+  ContextRoutineInput,
+  ContextRoutinePatch,
   ResolveContextConfigSceneInput,
+  SceneRoutinesTarget,
   SetContextCapabilityBindingInput,
   SetContextConnectorCredentialInput,
   SetContextNodeBindingInput,
@@ -19,7 +22,7 @@ import type {
   StartContextNodeConnectionInput,
 } from "../types/context-capability";
 import { invalidateConnectorViews, patchInternalConnector } from "../internal-connectors/mutations";
-import { contextCapabilityKeys, contextConfigKeys } from "./queries";
+import { contextCapabilityKeys, contextConfigKeys, sceneRoutinesKey } from "./queries";
 
 /** Redeems an agent-issued configuration link and refreshes every grant-
  * derived view (agent list, agent detail, scenes). */
@@ -50,24 +53,14 @@ function scopeWriteKey(agentId: string, input: { scopeType: string; scopeKey: st
   }
 }
 
-/** Refreshes what a scope write changed. A 1:1 chat scene is its person's
- * configuration (the server writes the person scope), so a write there also
- * refreshes the agent details, which hold the caller's personal scope; not
- * every scene under the agent. */
+/** Refreshes what a scope write changed. A scene, a group or a 1:1 chat
+ * alike, is its own scope, so a scene write refreshes that scene only. */
 function invalidateScopeWrite(
   queryClient: QueryClient,
   agentId: string,
   input: { scopeType: string; scopeKey: string },
 ) {
-  const key = scopeWriteKey(agentId, input);
-  const scene =
-    input.scopeType === "scene" ? queryClient.getQueryData<ContextConfigSceneDetail | null>(key) : null;
-  return Promise.all([
-    queryClient.invalidateQueries({ queryKey: key }),
-    scene?.scene.kind === "dm"
-      ? queryClient.invalidateQueries({ queryKey: contextConfigKeys.details(agentId) })
-      : undefined,
-  ]);
+  return queryClient.invalidateQueries({ queryKey: scopeWriteKey(agentId, input) });
 }
 
 export function useSetContextCapabilityBinding(agentId: string) {
@@ -457,5 +450,74 @@ export function useRemoveAgentConnector(wsId: string, agentId: string) {
       await writeOffer(wsId, agentId, { resourceType: "connector", resourceId: connectorId, offered: false });
     },
     onSettled: () => invalidateConnectorViews(queryClient, wsId),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Scene routines (例行任务). Not optimistic: the server validates schedules,
+// dedupes by purpose and schedule, and mints webhook URLs; every write
+// refreshes the scene's list when it settles.
+
+function invalidateSceneRoutines(queryClient: QueryClient, target: SceneRoutinesTarget) {
+  return queryClient.invalidateQueries({ queryKey: sceneRoutinesKey(target) });
+}
+
+/** Creates a routine (or updates the scene's routine with the same purpose
+ * and schedule). The result of a webhook routine carries its full URL once,
+ * so the mutation is dropped as soon as nothing observes it. */
+export function useCreateSceneRoutine(target: SceneRoutinesTarget) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ContextRoutineInput) => api.createSceneRoutine(target, input),
+    gcTime: 0,
+    onSettled: () => invalidateSceneRoutines(queryClient, target),
+  });
+}
+
+export interface UpdateSceneRoutineInput {
+  routineId: string;
+  patch: ContextRoutinePatch;
+}
+
+export function useUpdateSceneRoutine(target: SceneRoutinesTarget) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ routineId, patch }: UpdateSceneRoutineInput) =>
+      api.updateSceneRoutine(target, routineId, patch),
+    onSuccess: (result) => {
+      if (!result) return;
+      queryClient.setQueryData<ContextRoutine[]>(sceneRoutinesKey(target), (current) =>
+        current?.map((routine) => (routine.id === result.routine.id ? result.routine : routine)),
+      );
+    },
+    onSettled: () => invalidateSceneRoutines(queryClient, target),
+  });
+}
+
+/** Deletes a routine after the server confirms; never removed from the
+ * cache optimistically. */
+export function useDeleteSceneRoutine(target: SceneRoutinesTarget) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (routineId: string) => api.deleteSceneRoutine(target, routineId),
+    onSettled: () => invalidateSceneRoutines(queryClient, target),
+  });
+}
+
+export function useRunSceneRoutine(target: SceneRoutinesTarget) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (routineId: string) => api.runSceneRoutine(target, routineId),
+    onSettled: () => invalidateSceneRoutines(queryClient, target),
+  });
+}
+
+/** Mints a new webhook URL; the result carries it once (gcTime 0). */
+export function useRotateSceneRoutineWebhook(target: SceneRoutinesTarget) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (routineId: string) => api.rotateSceneRoutineWebhook(target, routineId),
+    gcTime: 0,
+    onSettled: () => invalidateSceneRoutines(queryClient, target),
   });
 }

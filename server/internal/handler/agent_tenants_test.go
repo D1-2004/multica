@@ -48,13 +48,14 @@ func TestAgentTenantsLifecycle(t *testing.T) {
 	// is unassigned.
 	f.coordinatorJob(t, "cidTenantsForeign==", "group", "Foreign group", "Bob", "org-foreign", time.Minute)
 	f.coordinatorDMJob(t, "cidTenantsDirect==", "Ann", "staff-tenants-ann", time.Minute)
+	annDM := f.sceneFor(t, ctxcapOrg, "dm", "cidTenantsDirect==", "", time.Minute)
 	got := list()
 	if len(got.Tenants) != 1 || got.Tenants[0].OrgID != ctxcapOrg || got.Tenants[0].Source != contextcap.TenantSourceIdentity {
 		t.Fatalf("tenants = %+v", got.Tenants)
 	}
-	// ctxcapScene (fixture bindings) is a group; staffs are the person
-	// binding and the 1:1 sender.
-	if identity := got.Tenants[0]; identity.GroupCount != 1 || identity.PersonCount != 2 {
+	// The fixture's two group scenes; staffs are the person binding and the
+	// 1:1 sender.
+	if identity := got.Tenants[0]; identity.GroupCount != 2 || identity.PersonCount != 2 {
 		t.Fatalf("identity counts = %+v", identity)
 	}
 	if len(got.UnassignedOrgs) != 1 || got.UnassignedOrgs[0] != (agentUnassignedOrgDTO{OrgID: "org-foreign", GroupCount: 1}) {
@@ -96,12 +97,12 @@ func TestAgentTenantsLifecycle(t *testing.T) {
 	ctxcapExpectStatus(t, w, http.StatusOK, "foreign groups")
 	var groups scenesListResponse
 	ctxcapDecode(t, w, &groups)
-	if len(groups.Scenes) != 1 || groups.Scenes[0].SceneKey != "cidTenantsForeign==" || groups.Scenes[0].Kind != "group" || groups.HasMore {
+	if len(groups.Scenes) != 1 || groups.Scenes[0].ConversationID != "cidTenantsForeign==" || groups.Scenes[0].Kind != "group" || groups.HasMore {
 		t.Fatalf("foreign groups = %+v", groups)
 	}
-	w = scenesAs(t, router, "", http.MethodGet, base+"/"+ctxcapOrg+"/groups?limit=1", nil)
+	w = scenesAs(t, router, "", http.MethodGet, base+"/"+ctxcapOrg+"/groups?groups_only=true", nil)
 	ctxcapDecode(t, w, &groups)
-	if len(groups.Scenes) != 1 || groups.Scenes[0].SceneKey != ctxcapScene {
+	if got := scenesByKey(groups.Scenes); len(got) != 2 || got[ctxcapScene].Kind != "group" || got[ctxcapOtherScene].Kind != "group" {
 		t.Fatalf("identity groups (no 1:1 chats) = %+v", groups)
 	}
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodGet, base+"/"+ctxcapOrg+"/groups?limit=0", nil), http.StatusBadRequest, "bad limit")
@@ -115,7 +116,7 @@ func TestAgentTenantsLifecycle(t *testing.T) {
 	for _, p := range persons.Persons {
 		byStaff[p.StaffID] = p
 	}
-	if len(byStaff) != 2 || byStaff["staff-tenants-ann"].DMSceneKey != "cidTenantsDirect==" || byStaff["staff-tenants-ann"].Title != "Ann" ||
+	if len(byStaff) != 2 || byStaff["staff-tenants-ann"].DMSceneKey != annDM || byStaff["staff-tenants-ann"].Title != "Ann" ||
 		byStaff[ctxcapStaff].LastActiveAt == "" {
 		t.Fatalf("identity persons = %+v", persons.Persons)
 	}
@@ -197,10 +198,11 @@ func TestContextConfigMobileTenantOrg(t *testing.T) {
 	router := ctxcapRouter(f.h)
 	agentID := uuidToString(f.agent)
 	ctx := context.Background()
-	const betaOrg, betaScene = "org-ctxcap-beta", "cidCtxcapBeta=="
+	const betaOrg = "org-ctxcap-beta"
 	if _, err := contextcap.CreateTenant(ctx, testPool, contextcap.TenantWrite{WorkspaceID: testWorkspaceID, AgentID: agentID, OrgID: betaOrg, Name: "Beta"}); err != nil {
 		t.Fatal(err)
 	}
+	betaScene := f.sceneFor(t, betaOrg, "group", "cidCtxcapBeta==", "Beta group", time.Minute)
 	// Bob holds a scene grant in the beta tenant only.
 	bob := uuid.NewString()
 	if _, err := contextcap.UpsertGrant(ctx, testPool, contextcap.Grant{
@@ -212,7 +214,7 @@ func TestContextConfigMobileTenantOrg(t *testing.T) {
 	// A grant under an org that is not a tenant is ignored everywhere.
 	if _, err := contextcap.UpsertGrant(ctx, testPool, contextcap.Grant{
 		UserID: bob, WorkspaceID: testWorkspaceID, AgentID: agentID, ScopeType: contextcap.ScopeScene, OrgID: "org-not-tenant",
-		ScopeKey: "cidCtxcapNotTenant==", Source: contextcap.GrantSourceAgentLink,
+		ScopeKey: f.sceneFor(t, "org-not-tenant", "group", "cidCtxcapNotTenant==", "", time.Minute), Source: contextcap.GrantSourceAgentLink,
 	}, contextcap.GrantTTLScene); err != nil {
 		t.Fatal(err)
 	}
@@ -325,15 +327,12 @@ func TestContextConfigSceneResolveInTenantOrg(t *testing.T) {
 	router := ctxcapRouter(f.h)
 	agentID := uuidToString(f.agent)
 	ctx := context.Background()
-	const betaOrg, betaScene = "org-ctxcap-beta", "cidCtxcapBetaPicked=="
+	const betaOrg, betaCID = "org-ctxcap-beta", "cidCtxcapBetaPicked=="
 	if _, err := contextcap.CreateTenant(ctx, testPool, contextcap.TenantWrite{WorkspaceID: testWorkspaceID, AgentID: agentID, OrgID: betaOrg, Name: "Beta"}); err != nil {
 		t.Fatal(err)
 	}
-	f.h.DingTalk = &ctxcapFakeDingTalk{supported: true, ticket: "ticket", chats: map[string]string{"chat-beta": betaScene}}
-	if _, err := testPool.Exec(ctx, `INSERT INTO scene_memory (workspace_id, agent_id, org_id, scene_key, scene_kind, scene_title)
-		VALUES ($1, $2, $3, $4, 'group', 'Beta group')`, testWorkspaceID, agentID, betaOrg, betaScene); err != nil {
-		t.Fatal(err)
-	}
+	f.h.DingTalk = &ctxcapFakeDingTalk{supported: true, ticket: "ticket", chats: map[string]string{"chat-beta": betaCID}}
+	betaScene := f.sceneFor(t, betaOrg, "group", betaCID, "Beta group", time.Minute)
 	// Alice redeemed a personal link in the beta tenant only.
 	alice := uuid.NewString()
 	if _, err := contextcap.UpsertGrant(ctx, testPool, contextcap.Grant{

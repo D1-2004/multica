@@ -15,10 +15,12 @@ import (
 )
 
 const (
-	appsSceneEnabled   = "cidAppsEnabled=="
-	appsSceneConnected = "cidAppsConnected=="
-	appsSceneOff       = "cidAppsOff=="
-	appsSceneDirect    = "cidAppsDirect=="
+	// Scene scope keys are scene ids (docs/agent-scene.md).
+	appsSceneEnabled   = "a9a9a9a9-0000-4000-8000-000000000001"
+	appsSceneConnected = "a9a9a9a9-0000-4000-8000-000000000002"
+	appsSceneOff       = "a9a9a9a9-0000-4000-8000-000000000003"
+	appsSceneDirect    = "a9a9a9a9-0000-4000-8000-000000000004"
+	appsSceneUnknown   = "a9a9a9a9-0000-4000-8000-0000000000ff"
 	appsPersonBoth     = "staff-apps-both"
 	appsPersonCred     = "staff-apps-cred"
 )
@@ -163,7 +165,11 @@ func TestAgentConnectedAppsStatusAndUsage(t *testing.T) {
 	f.storeTools(t, dcr)
 	f.sealWorkspaceOAuth(t, dcr.ID, contextcap.OAuthToken{AccessToken: "acc-shared-token", RefreshToken: "ref-shared", ExpiresAt: time.Now().Add(-time.Hour).Unix(), Account: "octo"})
 
-	// Scene and person uses under the agent's org.
+	// Scene and person uses under the agent's org, on the agent's scenes.
+	registerFixedScene(t, f.agentID, catalogTestOrg, "group", appsSceneEnabled, "cidAppsEnabled==", "Memory title", 3*time.Minute)
+	registerFixedScene(t, f.agentID, catalogTestOrg, "group", appsSceneOff, "cidAppsOff==", "Off group", 3*time.Minute)
+	registerFixedScene(t, f.agentID, catalogTestOrg, "dm", appsSceneDirect, "cidAppsDirect==", "Direct chat", 2*time.Minute)
+	registerFixedScene(t, f.agentID, catalogTestOrg, "group", appsSceneConnected, "cidAppsConnected==", "Connected group", time.Minute)
 	share := true
 	f.bindScope(t, contextcap.ScopeScene, appsSceneEnabled, "Enabled group", dcr.ID, true, nil)
 	f.storeScopeCredential(t, contextcap.ScopeScene, catalogTestOrg, appsSceneConnected, dcr.ID, "")
@@ -177,22 +183,16 @@ func TestAgentConnectedAppsStatusAndUsage(t *testing.T) {
 		ScopeType: contextcap.ScopePerson, OrgID: catalogTestOrg, ScopeKey: appsPersonCred, ScopeTitle: "Alice", Source: contextcap.GrantSourceAgentLink}, time.Hour); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := testPool.Exec(ctx, `INSERT INTO scene_memory (workspace_id, agent_id, platform, org_id, scene_key, scene_kind, scene_title, memory_text)
-		VALUES ($1, $2, 'dingtalk', $3, $4, 'group', 'Memory title', 'notes')`, testWorkspaceID, f.agentID, catalogTestOrg, appsSceneEnabled); err != nil {
+	if _, err := testPool.Exec(ctx, `INSERT INTO agent_scene_memory (scene_id, workspace_id, agent_id, memory_text)
+		VALUES ($1, $2, $3, 'notes')`, appsSceneEnabled, testWorkspaceID, f.agentID); err != nil {
 		t.Fatal(err)
 	}
-	// Rows an earlier release stored on a 1:1 chat's own key: the runtime
-	// ignores them (the chat's configuration is its person's), so they do
-	// not count either.
+	// A 1:1 chat is a scene like a group: its own configuration counts.
 	f.bindScope(t, contextcap.ScopeScene, appsSceneDirect, "Direct chat", dcr.ID, true, nil)
 	f.storeScopeCredential(t, contextcap.ScopeScene, catalogTestOrg, appsSceneDirect, dcr.ID, "")
-	if err := contextcap.RegisterDirectScene(ctx, testPool, testWorkspaceID, f.agentID, catalogTestOrg, appsSceneDirect, "Direct chat"); err != nil {
-		t.Fatal(err)
-	}
-	registerGroupScene(t, f.agentID, catalogTestOrg, appsSceneConnected, "Connected group")
 
 	dcrApp = connectedAppBySlug(t, f.listConnectedApps(t, router, testUserID).Apps, f.dcr.Slug)
-	wantUsage := connectedAppUsageDTO{ScenesEnabled: 1, ScenesConnected: 1, PersonsEnabled: 1, PersonsConnected: 2}
+	wantUsage := connectedAppUsageDTO{ScenesEnabled: 2, ScenesConnected: 2, PersonsEnabled: 1, PersonsConnected: 2}
 	if !dcrApp.Added || !dcrApp.GlobalEnabled || !dcrApp.Offered || dcrApp.WriteEnabled || dcrApp.Usage != wantUsage ||
 		dcrApp.Tools != (connectedAppToolsDTO{Discovered: 2, Allowed: 1, ReadOnly: 1}) {
 		t.Fatalf("configured DCR app = %+v", dcrApp)
@@ -212,15 +212,18 @@ func TestAgentConnectedAppsStatusAndUsage(t *testing.T) {
 	for _, scene := range detail.Scenes {
 		scenes[scene.SceneKey] = scene
 	}
-	if len(scenes) != 2 {
-		t.Fatalf("detail scenes = %+v, want the enabled and the connected scene only", detail.Scenes)
+	if len(scenes) != 3 {
+		t.Fatalf("detail scenes = %+v, want the enabled, the 1:1 and the connected scene", detail.Scenes)
 	}
-	// Newest activity first: the group's configuration is the latest write.
-	if detail.Scenes[0].SceneKey != appsSceneConnected || detail.Scenes[1].SceneKey != appsSceneEnabled {
+	// Newest scene activity first.
+	if detail.Scenes[0].SceneKey != appsSceneConnected || detail.Scenes[1].SceneKey != appsSceneDirect || detail.Scenes[2].SceneKey != appsSceneEnabled {
 		t.Fatalf("detail scene order = %+v", detail.Scenes)
 	}
-	if got := scenes[appsSceneEnabled]; got != (connectedAppSceneDTO{SceneKey: appsSceneEnabled, Title: "Memory title", Kind: "group", Enabled: true}) {
+	if got := scenes[appsSceneEnabled]; got != (connectedAppSceneDTO{SceneKey: appsSceneEnabled, SceneID: appsSceneEnabled, Title: "Memory title", Kind: "group", Enabled: true}) {
 		t.Fatalf("enabled scene = %+v", got)
+	}
+	if got := scenes[appsSceneDirect]; got.Kind != "dm" || !got.Enabled || !got.Connected {
+		t.Fatalf("1:1 scene = %+v", got)
 	}
 	if got := scenes[appsSceneConnected]; got.Title != "Connected group" || got.Kind != "group" || got.Enabled || !got.Connected || !strings.HasPrefix(got.Account, "••••") {
 		t.Fatalf("connected scene = %+v", got)
@@ -239,11 +242,12 @@ func TestAgentConnectedAppsStatusAndUsage(t *testing.T) {
 	// stored credentials still count as connected.
 	f.offer(t)
 	dcrApp = connectedAppBySlug(t, f.listConnectedApps(t, router, testUserID).Apps, f.dcr.Slug)
-	if dcrApp.Offered || !dcrApp.Added || dcrApp.Usage != (connectedAppUsageDTO{ScenesConnected: 1, PersonsConnected: 2}) {
+	if dcrApp.Offered || !dcrApp.Added || dcrApp.Usage != (connectedAppUsageDTO{ScenesConnected: 2, PersonsConnected: 2}) {
 		t.Fatalf("unoffered DCR app = %+v", dcrApp)
 	}
 	detail = f.connectedApp(t, router, f.dcr.Slug)
-	if len(detail.Scenes) != 1 || detail.Scenes[0].SceneKey != appsSceneConnected || len(detail.Persons) != 2 || detail.Persons[1].Enabled {
+	if len(detail.Scenes) != 2 || detail.Scenes[0].SceneKey != appsSceneConnected || detail.Scenes[1].SceneKey != appsSceneDirect ||
+		detail.Scenes[0].Enabled || detail.Scenes[1].Enabled || len(detail.Persons) != 2 || detail.Persons[1].Enabled {
 		t.Fatalf("unoffered detail = %+v", detail)
 	}
 	// Removed from the agent (no grant, no offer): not added, the workspace
@@ -415,8 +419,7 @@ func TestContextConfigConnectionStartAcceptsManagerForScenes(t *testing.T) {
 	ctx := context.Background()
 	dcr := f.create(t, f.dcr)
 	f.offer(t, dcr.ID)
-	// A group scene the agent has seen (its configuration row).
-	registerGroupScene(t, f.agentID, catalogTestOrg, catalogTestScene, "Known scene")
+	// catalogTestScene is a group scene of the agent (the fixture registers it).
 	startPath := "/api/context-capabilities/agents/" + f.agentID + "/connections/start"
 	start := func(userID, scopeType, key string) *httptest.ResponseRecorder {
 		return ctxcapMobile(t, router, http.MethodPost, startPath, userID, map[string]string{"scope_type": scopeType, "scope_key": key, "connector_id": dcr.ID})
@@ -425,7 +428,7 @@ func TestContextConfigConnectionStartAcceptsManagerForScenes(t *testing.T) {
 
 	// testUserID owns the workspace and holds no grant.
 	f.takeAuthorizeURL(t, start(testUserID, contextcap.ScopeScene, catalogTestScene))
-	ctxcapExpectStatus(t, start(testUserID, contextcap.ScopeScene, "cidAppsNeverSeen=="), http.StatusNotFound, "manager, unknown scene")
+	ctxcapExpectStatus(t, start(testUserID, contextcap.ScopeScene, uuid.NewString()), http.StatusNotFound, "manager, unknown scene")
 	ctxcapExpectStatus(t, start(testUserID, contextcap.ScopePerson, catalogTestStaff), http.StatusForbidden, "manager, person scope")
 	ctxcapExpectStatus(t, start(member, contextcap.ScopeScene, catalogTestScene), http.StatusForbidden, "plain member")
 
@@ -441,7 +444,7 @@ func TestContextConfigConnectionStartAcceptsManagerForScenes(t *testing.T) {
 	if err := f.h.authorizeConnectorOAuthScope(ctx, scene, c); err != nil {
 		t.Fatalf("callback re-check for a manager: %v", err)
 	}
-	unknown := f.scope(dcr.ID, contextcap.ScopeScene, "cidAppsNeverSeen==")
+	unknown := f.scope(dcr.ID, contextcap.ScopeScene, appsSceneUnknown)
 	if err := f.h.authorizeConnectorOAuthScope(ctx, unknown, c); !forbidden(err) {
 		t.Fatalf("callback re-check, unknown scene: %v", err)
 	}

@@ -232,10 +232,7 @@ func buildNativeDispatchCommand(in nativeMessageInput) (DispatchCommand, error) 
 		return DispatchCommand{}, nativeSkip("unsupported_event_key")
 	}
 	senderName := nativeDisplayName(m.Sender)
-	occurredAt := m.EventTime
-	if occurredAt <= 0 {
-		occurredAt = m.Timestamp
-	}
+	occurredAt := nativeMessageSentAt(m)
 	message := DispatchMessage{
 		Mentions:             mentions,
 		OpenMsgID:            messageID,
@@ -378,6 +375,17 @@ func (h *Handler) acceptNativeMessage(ctx context.Context, id dwsclient.Identity
 			return skip("echo_of_own_reply")
 		}
 	}
+	// A backlog DWS replays after a reconnect or rebind is acknowledged
+	// unanswered: the asker has moved on, and each old message would draw
+	// its own replies.
+	sentAt := nativeMessageSentAt(m)
+	if reason := nativeStaleReason(sentAt, owner.EnabledAt.Time, nativeClock()); reason != "" {
+		slog.Warn("DWS native event skipped: message too old to answer", "event", "dws_native_event_skipped",
+			"agent_id", id.AgentID, "event_key", ev.Key, "event_id", ev.ID, "reason", reason,
+			"sent_at", time.UnixMilli(sentAt).UTC().Format(time.RFC3339),
+			"subscribed_at", owner.EnabledAt.Time.UTC().Format(time.RFC3339))
+		return nil
+	}
 	policy, reason, err := nativeManagedResponsePolicy(ctx, store, agent)
 	if err != nil {
 		return fmt.Errorf("load native response policy: %w", err)
@@ -437,7 +445,7 @@ func (h *Handler) acceptNativeMessage(ctx context.Context, id dwsclient.Identity
 		AgentID:             agent.ID,
 	}
 	key := nativeDispatchIdempotencyKey(id.OrgID, command.Event.Data.Conversation.OpenConversationID, command.Event.Data.Messages[0].OpenMsgID)
-	status, body, err := h.submitNativeDispatch(ctx, command, dispatchContext, key)
+	status, body, err := h.submitNativeDispatch(withNativeEvent(ctx, ev), command, dispatchContext, key)
 	if err != nil {
 		return err
 	}

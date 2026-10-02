@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/deploymentfence"
 	"github.com/multica-ai/multica/server/internal/dshschedule"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
+	"github.com/multica-ai/multica/server/internal/eventrouter"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/langfuse"
@@ -454,7 +455,7 @@ func main() {
 		slog.Error("deployment fence instance identity failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
-	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker)
+	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker+" "+eventrouter.ReplicaMarker)
 	if err != nil {
 		slog.Error("deployment fence initialization failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
@@ -480,6 +481,12 @@ func main() {
 		slog.Info("langfuse tracing disabled", "event", "langfuse_disabled")
 	}
 
+	eventRouteConfig, err := newEventRouteConfigProvider(appRuntimeConfig, os.Getenv("MULTICA_EVENT_SCENE_ROUTER_CONFIG"))
+	if err != nil {
+		slog.Error("event router deployment configuration is invalid", "error", err)
+		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
+	}
+
 	r, h := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
 		Langfuse:           langfuseClient,
 		HTTPMetrics:        httpMetrics,
@@ -493,6 +500,7 @@ func main() {
 		SandboxRelaySigner: sandboxRelaySigner,
 		SandboxRelay:       sandboxRelayMiddleware,
 		RuntimeConfig:      appRuntimeConfig,
+		EventRouteConfig:   eventRouteConfig,
 		DeploymentFence:    deploymentFence,
 	})
 
@@ -576,6 +584,7 @@ func main() {
 	if h.SceneMemoryWorker != nil {
 		go h.SceneMemoryWorker.Run(sweepCtx)
 	}
+	go h.ReconcileSceneCredentials(sweepCtx)
 	if h.DingTalkStreamInbox != nil {
 		go h.DingTalkStreamInbox.Run(sweepCtx)
 	}

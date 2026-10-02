@@ -14,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	dwsevents "github.com/multica-ai/multica/server/pkg/dws/events"
 )
 
 // Message-level mutual exclusivity between the Agent Message Router and
@@ -132,6 +133,48 @@ const (
 // conversation's stream runs on one replica at a time, and losing the count
 // on a handover only delays the breaker by a window.
 var nativeDispatchLoops = newNativeLoopBreaker(nativeLoopLimit, nativeLoopWindow)
+
+const (
+	// nativeMessageMaxAge bounds how late a native message may arrive and
+	// still be answered. DWS holds an account's events while no stream
+	// consumes them and replays the backlog once one connects; answering
+	// questions asked long ago reads as the employee replying several times
+	// to nothing.
+	nativeMessageMaxAge = 10 * time.Minute
+	// nativeSubscriptionSkew tolerates DingTalk's clock running ahead of ours
+	// when a message is compared with the moment its subscription began.
+	nativeSubscriptionSkew = 30 * time.Second
+)
+
+// nativeClock is the time native ingress judges message age by.
+var nativeClock = time.Now
+
+// nativeMessageSentAt is when a native message was sent, in Unix ms: the
+// event's event_time, else the delivery's occurredAtMs; 0 when neither is set.
+func nativeMessageSentAt(m *dwsevents.MessageEvent) int64 {
+	if m.EventTime > 0 {
+		return m.EventTime
+	}
+	return m.Timestamp
+}
+
+// nativeStaleReason names why a native message is too old to answer, or "".
+// A message sent before this agent subscribed the account was never this
+// subscription's; one older than nativeMessageMaxAge is a replayed backlog.
+// A message without a send time is never judged stale.
+func nativeStaleReason(sentAtMs int64, subscribedAt, now time.Time) string {
+	if sentAtMs <= 0 {
+		return ""
+	}
+	sentAt := time.UnixMilli(sentAtMs)
+	if !subscribedAt.IsZero() && sentAt.Before(subscribedAt.Add(-nativeSubscriptionSkew)) {
+		return "sent_before_subscription"
+	}
+	if now.Sub(sentAt) > nativeMessageMaxAge {
+		return "stale_message"
+	}
+	return ""
+}
 
 type nativeLoopEntry struct {
 	at        time.Time

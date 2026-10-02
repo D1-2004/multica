@@ -21,6 +21,10 @@ const (
 	ctxBuilderAgentInstructions = "Agent base instructions."
 	ctxBuilderAgentMCPConfig    = `{"mcpServers":{"docs":{"url":"https://agent.example.test"},"base":{"command":"agent-base"}}}`
 	ctxBuilderOtherOrg          = "org-ctxcap-other"
+	// ctxBuilderOtherScene is the agent's scene of ctxcapSceneCID in
+	// ctxBuilderOtherOrg: the same group seen in another org is another
+	// scene.
+	ctxBuilderOtherScene = "c7c7c7c7-0000-4000-8000-0000000000a0"
 )
 
 // ctxBuilder is a ctxcap fixture whose agent has instructions, its own MCP
@@ -321,7 +325,7 @@ func TestContextBuilderPreviewMatchesRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.Scope.OrgID != ctxcapOrg || !runtime.Scope.HasOrg() || runtime.Scope.SceneKey != ctxcapScene || runtime.Scope.HasPerson() || len(runtime.Layers) != 2 {
+	if runtime.Scope.OrgID != ctxcapOrg || !runtime.Scope.HasOrg() || runtime.Scope.SceneID != ctxcapScene || runtime.Scope.HasPerson() || len(runtime.Layers) != 2 {
 		t.Fatalf("runtime scope = %#v layers=%d", runtime.Scope, len(runtime.Layers))
 	}
 	// A group server named like a managed server is left out of both.
@@ -385,18 +389,21 @@ func TestContextBuilderOrgLayerWithoutSceneOrPerson(t *testing.T) {
 func TestContextBuilderTasksWithoutScopeAreUnchanged(t *testing.T) {
 	b := newCtxBuilder(t)
 	ctx := context.Background()
+	b.registerScene(t, ctxBuilderOtherScene, ctxBuilderOtherOrg, "group", ctxcapSceneCID, "Ctxcap group")
 	group := ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff)
+	otherGroup := ctxcapDispatch("group", ctxBuilderOtherScene, ctxcapStaff, ctxcapStaff)
 	a2a, _ := json.Marshal(map[string]any{
 		"multica_origin":      "a2a",
 		"external_identity":   map[string]any{"dws": map[string]string{"orgId": ctxcapOrg}},
-		"dispatch_event_data": map[string]any{"conversation": map[string]any{"openConversationId": ctxcapScene, "type": "group"}, "sender": map[string]any{"staffId": ctxcapStaff}},
+		"agent_scene":         map[string]any{"scene_id": ctxcapScene},
+		"dispatch_event_data": map[string]any{"conversation": map[string]any{"openConversationId": ctxcapSceneCID, "type": "group"}, "sender": map[string]any{"staffId": ctxcapStaff}},
 	})
 	tasks := map[string]db.AgentTaskQueue{
 		"A2A":                 b.task(t, a2a),
 		"no dispatch context": b.task(t, []byte(`{"issue_id":"x"}`)),
 		"manual rerun":        b.rerunTask(t, ctxcapReplayed(ctxcapWithDispatchOrg(group, ctxcapOrg))),
 		"rerun lineage":       b.rerunTask(t, ctxcapWithDispatchOrg(group, ctxcapOrg)),
-		"org not a tenant":    b.task(t, ctxcapWithDispatchOrg(group, ctxBuilderOtherOrg)),
+		"org not a tenant":    b.task(t, ctxcapWithDispatchOrg(otherGroup, ctxBuilderOtherOrg)),
 	}
 	baseline := map[string]string{}
 	for name, task := range tasks {
@@ -411,7 +418,7 @@ func TestContextBuilderTasksWithoutScopeAreUnchanged(t *testing.T) {
 	// the other org (as a deleted tenant leaves its groups and people).
 	b.configureIdentityTenant(t)
 	for _, scope := range []struct{ scopeType, key string }{
-		{contextcap.ScopeOrg, ctxBuilderOtherOrg}, {contextcap.ScopeScene, ctxcapScene}, {contextcap.ScopePerson, ctxcapStaff},
+		{contextcap.ScopeOrg, ctxBuilderOtherOrg}, {contextcap.ScopeScene, ctxBuilderOtherScene}, {contextcap.ScopePerson, ctxcapStaff},
 	} {
 		if _, err := contextcap.ReplacePromptComponents(ctx, testPool, contextcap.PromptComponentsWrite{
 			WorkspaceID: testWorkspaceID, AgentID: b.agentID, ScopeType: scope.scopeType, OrgID: ctxBuilderOtherOrg, ScopeKey: scope.key,
@@ -492,10 +499,12 @@ func ctxBuilderStoredMCPConfig(t *testing.T, agentID string) string {
 	return string(raw)
 }
 
-// An agent without a DingTalk identity (a robot channel) keeps its scene and
-// personal configuration under org "", where its configure page and links
-// write it: a task without a recorded dispatch org gets those layers (no
-// org layer), and the Coordinator still mints its configuration links.
+// An agent without a DingTalk identity (a robot channel) keeps its personal
+// configuration under org "", where its configure page and links write it:
+// a task without a recorded dispatch org gets that person layer and no org
+// layer. It gets no scene layer either: every Agent work scene belongs to a
+// tenant org (docs/agent-scene.md), so a scene stored under org "" never
+// applies and the Coordinator mints no group link there.
 func TestContextBuilderAgentWithoutIdentityUsesOrglessLayers(t *testing.T) {
 	b := newCtxBuilder(t)
 	b.cleanupGrantsAndLinks(t)
@@ -504,26 +513,31 @@ func TestContextBuilderAgentWithoutIdentityUsesOrglessLayers(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `DELETE FROM agent_dingtalk_identity WHERE agent_id = $1`, b.agentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := contextcap.ReplacePromptComponents(ctx, testPool, contextcap.PromptComponentsWrite{
-		WorkspaceID: testWorkspaceID, AgentID: b.agentID, ScopeType: contextcap.ScopeScene, OrgID: "", ScopeKey: ctxcapScene,
-		Components: []contextcap.PromptComponentInput{{Name: "tone", Order: 1, Text: "orgless group tone"}},
-	}); err != nil {
-		t.Fatal(err)
+	for _, scope := range []struct{ scopeType, key, text string }{
+		{contextcap.ScopeScene, ctxcapScene, "orgless group tone"},
+		{contextcap.ScopePerson, ctxcapStaff, "orgless person note"},
+	} {
+		if _, err := contextcap.ReplacePromptComponents(ctx, testPool, contextcap.PromptComponentsWrite{
+			WorkspaceID: testWorkspaceID, AgentID: b.agentID, ScopeType: scope.scopeType, OrgID: "", ScopeKey: scope.key,
+			Components: []contextcap.PromptComponentInput{{Name: "tone", Order: 1, Text: scope.text}},
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if _, err := contextcap.UpsertBinding(ctx, testPool, contextcap.BindingWrite{
-		WorkspaceID: testWorkspaceID, AgentID: b.agentID, ScopeType: contextcap.ScopeScene, OrgID: "", ScopeKey: ctxcapScene,
+		WorkspaceID: testWorkspaceID, AgentID: b.agentID, ScopeType: contextcap.ScopePerson, OrgID: "", ScopeKey: ctxcapStaff,
 		ResourceType: contextcap.ResourceSkill, ResourceID: b.orgSkill, Enabled: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
-
 	task := b.task(t, ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff))
 	scope, skipped := b.h.resolveTaskContextScope(ctx, b.ws, task)
-	if skipped != "" || scope.OrgID != "" || scope.HasOrg() || scope.SceneKey != ctxcapScene || scope.PersonKey != ctxcapStaff {
+	if skipped != "" || scope.OrgID != "" || scope.HasOrg() || scope.SceneID != "" || scope.PersonKey != ctxcapStaff {
 		t.Fatalf("orgless scope = %+v skipped=%q", scope, skipped)
 	}
 	agent := b.claim(t, task)
-	if !strings.HasSuffix(agent.Instructions, "\n\n"+contextcap.ContextPromptHeading+"\n\n### tone\n\norgless group tone") {
+	if !strings.HasSuffix(agent.Instructions, "\n\n"+contextcap.ContextPromptHeading+"\n\n### tone\n\norgless person note") ||
+		strings.Contains(agent.Instructions, "orgless group tone") {
 		t.Fatalf("orgless claim instructions = %q", agent.Instructions)
 	}
 	if !ctxBuilderSkillIDs(agent)[b.orgSkill] {
@@ -536,14 +550,10 @@ func TestContextBuilderAgentWithoutIdentityUsesOrglessLayers(t *testing.T) {
 		t.Fatalf("foreign org skipped=%q", skipped)
 	}
 
-	link, err := NewCoordinatorConfigLinkIssuer(b.h).IssueConfigLink(ctx, inboundcoord.ConfigLinkRequest{
+	if link, err := NewCoordinatorConfigLinkIssuer(b.h).IssueConfigLink(ctx, inboundcoord.ConfigLinkRequest{
 		WorkspaceID: testWorkspaceID, AgentID: b.agentID, DispatchContext: ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff),
-	})
-	if err != nil || link.Scope != contextcap.ScopeScene {
-		t.Fatalf("orgless Coordinator link = %+v err=%v", link, err)
-	}
-	if stored := coordinatorStoredLinkFor(t, coordinatorLinkToken(t, link)); stored.orgID != "" || stored.scopeKey != ctxcapScene {
-		t.Fatalf("orgless stored link = %+v", stored)
+	}); err == nil {
+		t.Fatalf("orgless Coordinator group link = %+v", link)
 	}
 }
 

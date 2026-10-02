@@ -87,6 +87,9 @@ func (h *Handler) ReuseDingTalkIdentity(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	if !h.rejectTagTemplateBinding(w, r, a.WorkspaceID, a.ID) {
+		return
+	}
 	_, err := h.identityReuseStore().ReuseDingTalkIdentity(r.Context(), db.ReuseDingTalkIdentityParams{WorkspaceID: a.WorkspaceID, UserID: user, SourceAgentID: source, TargetAgentID: a.ID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusConflict, "identity is no longer reusable or the agent already has a different identity; refresh and try again")

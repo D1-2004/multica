@@ -16,13 +16,17 @@ func (q Query) validate() error {
 	if q.Since.IsZero() {
 		return fmt.Errorf("%w: since is required", ErrInvalidQuery)
 	}
-	if strings.TrimSpace(q.ConversationID) == "" && strings.TrimSpace(q.IssueID) == "" && strings.TrimSpace(q.Q) == "" {
+	if strings.TrimSpace(q.SceneID) == "" && strings.TrimSpace(q.IssueID) == "" && strings.TrimSpace(q.Q) == "" {
 		return fmt.Errorf("%w: conversation_id, issue, or q is required", ErrInvalidQuery)
+	}
+	if q.SceneID != "" && !validSceneNodeID(q.SceneID) {
+		return fmt.Errorf("%w: scene_id is not a scene id", ErrInvalidQuery)
 	}
 	return nil
 }
 
 func (q Query) normalized() Query {
+	q.SceneID = strings.TrimSpace(q.SceneID)
 	q.ConversationID = NormalizeConversationID(q.ConversationID)
 	q.IssueID = strings.TrimSpace(q.IssueID)
 	q.Q = strings.TrimSpace(q.Q)
@@ -59,7 +63,7 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
-	} else if q.ConversationID == "" && strings.TrimSpace(q.Q) != "" {
+	} else if q.SceneID == "" && strings.TrimSpace(q.Q) != "" {
 		tasks, err = store.ListTasksInWindow(ctx, q.WorkspaceID, q.AgentID, q.Since, until)
 		if err != nil {
 			return Result{}, err
@@ -67,9 +71,9 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 	}
 	fromScene := map[string]struct{}{}
 	fromEvent := map[string]struct{}{}
-	fromWindow := q.ConversationID == "" && strings.TrimSpace(q.Q) != ""
+	fromWindow := q.SceneID == "" && strings.TrimSpace(q.Q) != ""
 	var sceneEvents []Event
-	if q.ConversationID != "" {
+	if q.SceneID != "" {
 		cidTasks, cidErr := tasksForConversation(ctx, store, q)
 		if cidErr != nil {
 			return Result{}, cidErr
@@ -78,7 +82,7 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 			fromScene[task.ID] = struct{}{}
 		}
 		var evErr error
-		sceneEvents, evErr = store.ListEventsByScene(ctx, q.WorkspaceID, q.AgentID, q.ConversationID, q.Since, MaxLimit)
+		sceneEvents, evErr = store.ListEventsByScene(ctx, q.WorkspaceID, q.AgentID, q.SceneID, q.Since, MaxLimit)
 		if evErr != nil {
 			return Result{}, evErr
 		}
@@ -106,8 +110,8 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 			personHit[task.ID] = struct{}{}
 		}
 		// A known scene is enough to recall. Person is a rank signal so a
-		// uid/staffId/openDingTalkId mismatch cannot hide an outreach cid.
-		if q.ConversationID == "" {
+		// uid/staffId/openDingTalkId mismatch cannot hide an outreach scene.
+		if q.SceneID == "" {
 			tasks = intersectTasks(tasks, personTasks)
 		}
 	}
@@ -134,7 +138,7 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 			item.Score *= 1.35
 		}
 		item.MatchedVia = matchedVia(task.ID, fromScene, fromEvent, fromWindow)
-		annotateItem(&item, q.ConversationID)
+		annotateItem(&item, q.SceneID)
 		items = append(items, item)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -154,20 +158,21 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 		ReadThis:       RecallReadThis,
 		Since:          q.Since,
 		Until:          until,
+		SceneID:        q.SceneID,
 		ConversationID: strings.TrimSpace(q.ConversationID),
 		Q:              strings.TrimSpace(q.Q),
 		Items:          items,
 		Events:         events,
-		EventsNote:     eventsNote(q.ConversationID, items, events),
+		EventsNote:     eventsNote(q.SceneID, items, events),
 	}, nil
 }
 
-func annotateItem(item *Item, sceneCID string) {
+func annotateItem(item *Item, sceneID string) {
 	if item == nil {
 		return
 	}
 	item.IssueID = strings.TrimSpace(item.Issue)
-	item.OnThisScene = itemOnThisScene(*item, sceneCID)
+	item.OnThisScene = itemOnThisScene(*item, sceneID)
 	item.WhyListed = whyListed(*item)
 	for i := range item.People {
 		if item.People[i].Name == "" {
@@ -176,16 +181,16 @@ func annotateItem(item *Item, sceneCID string) {
 	}
 }
 
-func itemOnThisScene(item Item, sceneCID string) bool {
-	cid := NormalizeConversationID(sceneCID)
-	if cid == "" {
+func itemOnThisScene(item Item, sceneID string) bool {
+	sceneID = strings.TrimSpace(sceneID)
+	if sceneID == "" {
 		return false
 	}
 	// waiting_on alone is a side channel for another scene's matter
 	// (G2 排期 waiting on R9B must not look like R9B's own work).
 	// Outreach / task_scene / spawned_from live on Conversations.
 	for _, conversation := range item.Conversations {
-		if NormalizeConversationID(conversation.ConversationID) == cid {
+		if conversation.SceneID == sceneID {
 			return true
 		}
 	}
@@ -208,8 +213,8 @@ func whyListed(item Item) string {
 	}
 }
 
-func eventsNote(sceneCID string, items []Item, events []EventRef) string {
-	if strings.TrimSpace(sceneCID) == "" {
+func eventsNote(sceneID string, items []Item, events []EventRef) string {
+	if strings.TrimSpace(sceneID) == "" {
 		return ""
 	}
 	if len(items) == 0 {
@@ -230,7 +235,7 @@ func eventCards(events []Event, now time.Time) []EventRef {
 }
 
 func tasksForConversation(ctx context.Context, store Store, q Query) ([]Task, error) {
-	edges, err := store.ListEdgesByDst(ctx, q.WorkspaceID, q.AgentID, NodeScene, q.ConversationID, q.Since)
+	edges, err := store.ListEdgesByDst(ctx, q.WorkspaceID, q.AgentID, NodeScene, q.SceneID, q.Since)
 	if err != nil {
 		return nil, err
 	}
@@ -429,10 +434,11 @@ func hydrateItem(ctx context.Context, store Store, q Query, task Task, now time.
 		}
 		switch edge.Rel {
 		case RelOutreach, RelTaskScene, RelSpawnedFrom:
-			if edge.DstType == NodeScene {
-				dstID := NormalizeConversationID(edge.DstID)
+			if edge.DstType == NodeScene && validSceneNodeID(edge.DstID) {
+				dstID := edge.DstID
 				ref := ConversationRef{
-					ConversationID: dstID,
+					SceneID:        dstID,
+					ConversationID: stringProp(edge.Props, "conversation_id"),
 					Kind:           kindFromProps(edge.Props),
 					Rel:            edge.Rel,
 					Rels:           []string{edge.Rel},
@@ -444,7 +450,7 @@ func hydrateItem(ctx context.Context, store Store, q Query, task Task, now time.
 					item.Conversations = append(item.Conversations, ref)
 				}
 				if edge.Rel == RelSpawnedFrom && item.Origin == nil {
-					item.Origin = &OriginRef{ConversationID: dstID, Rel: RelSpawnedFrom}
+					item.Origin = &OriginRef{SceneID: dstID, ConversationID: ref.ConversationID, Rel: RelSpawnedFrom}
 				}
 			}
 		case RelTaskPerson:
@@ -467,7 +473,11 @@ func hydrateItem(ctx context.Context, store Store, q Query, task Task, now time.
 		case RelWaitingOn:
 			ref := WaitingRef{}
 			if edge.DstType == NodeScene {
-				ref.ConversationID = NormalizeConversationID(edge.DstID)
+				if !validSceneNodeID(edge.DstID) {
+					continue
+				}
+				ref.SceneID = edge.DstID
+				ref.ConversationID = stringProp(edge.Props, "conversation_id")
 			}
 			if edge.DstType == NodePerson {
 				ref.PersonID = edge.DstID

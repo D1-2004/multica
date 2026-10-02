@@ -110,37 +110,33 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	}
 	var present bool
 	if err := pool.QueryRow(ctx, `SELECT EXISTS (
-		SELECT 1 FROM information_schema.tables WHERE table_name = 'scene_memory'
+		SELECT 1 FROM information_schema.tables WHERE table_name = 'agent_scene_memory'
 	)`).Scan(&present); err != nil || !present {
 		pool.Close()
-		t.Skip("scene_memory table is not migrated")
-	}
-	var hasTriggerAt bool
-	if err := pool.QueryRow(ctx, `SELECT EXISTS (
-		SELECT 1 FROM information_schema.columns
-		WHERE table_name = 'scene_memory' AND column_name = 'pending_from_at'
-	)`).Scan(&hasTriggerAt); err != nil || !hasTriggerAt {
-		pool.Close()
-		t.Skip("scene_memory pending_from_at is not migrated")
+		t.Skip("agent_scene_memory table is not migrated")
 	}
 	t.Cleanup(pool.Close)
 	return pool
 }
 
-func testIdentity(t *testing.T) Identity {
+// testIdentity is a fresh Agent work scene (docs/agent-scene.md) of a
+// fresh workspace and agent. seedAgentWrite stores its directory row.
+func testIdentity(t *testing.T) db.AgentScene {
 	t.Helper()
-	return Identity{
-		WorkspaceID: util.MustParseUUID(uuid.NewString()),
-		AgentID:     util.MustParseUUID(uuid.NewString()),
-		Platform:    PlatformDingTalk,
-		OrgID:       "org-" + uuid.NewString()[:8],
-		SceneKey:    "cid" + uuid.NewString(),
-		SceneKind:   KindGroup,
-		SceneTitle:  "test scene",
+	return db.AgentScene{
+		ID:              util.MustParseUUID(uuid.NewString()),
+		WorkspaceID:     util.MustParseUUID(uuid.NewString()),
+		AgentID:         util.MustParseUUID(uuid.NewString()),
+		Provider:        PlatformDingTalk,
+		TenantOrgID:     "org-" + uuid.NewString()[:8],
+		SourceNamespace: "dingtalk.open_conversation_id",
+		ExternalSceneID: "cid" + uuid.NewString(),
+		SceneKind:       KindGroup,
+		Title:           "test scene",
 	}
 }
 
-func seedAgentWrite(t *testing.T, pool *pgxpool.Pool, id Identity, enabled bool) {
+func seedAgentWrite(t *testing.T, pool *pgxpool.Pool, id db.AgentScene, enabled bool) {
 	t.Helper()
 	ctx := context.Background()
 	var hasFlag bool
@@ -170,8 +166,16 @@ func seedAgentWrite(t *testing.T, pool *pgxpool.Pool, id Identity, enabled bool)
 	`, id.AgentID, id.WorkspaceID, enabled); err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agent_scene (id, workspace_id, agent_id, provider, tenant_org_id, source_namespace, scene_kind, external_scene_id, title)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT DO NOTHING
+	`, id.ID, id.WorkspaceID, id.AgentID, id.Provider, id.TenantOrgID, id.SourceNamespace, id.SceneKind, id.ExternalSceneID, id.Title); err != nil {
+		t.Fatalf("seed scene: %v", err)
+	}
 	t.Cleanup(func() {
-		_, _ = pool.Exec(ctx, `DELETE FROM scene_memory WHERE workspace_id = $1`, id.WorkspaceID)
+		_, _ = pool.Exec(ctx, `DELETE FROM agent_scene_memory WHERE workspace_id = $1`, id.WorkspaceID)
+		_, _ = pool.Exec(ctx, `DELETE FROM agent_scene WHERE workspace_id = $1`, id.WorkspaceID)
 		_, _ = pool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, id.AgentID)
 		_, _ = pool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, id.WorkspaceID)
 	})
@@ -234,7 +238,7 @@ func TestClaimTwoReplicas(t *testing.T) {
 	if _, err := store.MarkDirty(ctx, id, DirtyTrigger{OccurredAt: time.Now().UTC(), EvidenceID: "m1", IdempotencyKey: "k1"}); err != nil {
 		t.Fatalf("dirty: %v", err)
 	}
-	_, err := pool.Exec(ctx, `UPDATE scene_memory SET available_at = now() - interval '1 second' WHERE scene_key = $1`, id.SceneKey)
+	_, err := pool.Exec(ctx, `UPDATE agent_scene_memory SET available_at = now() - interval '1 second' WHERE scene_id = $1`, id.ID)
 	if err != nil {
 		t.Fatalf("nudge available_at: %v", err)
 	}
@@ -253,7 +257,7 @@ func TestClaimTwoReplicas(t *testing.T) {
 	storeB := NewStore(db.New(connB.Conn()))
 
 	type result struct {
-		row db.SceneMemory
+		row Memory
 		err error
 	}
 	out := make(chan result, 2)
@@ -315,7 +319,7 @@ func TestCommitBatchResetsAttemptCount(t *testing.T) {
 	if row.AttemptCount < 1 {
 		t.Fatalf("claim should increment attempt, got %d", row.AttemptCount)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET attempt_count = 800 WHERE id = $1`, row.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE agent_scene_memory SET attempt_count = 800 WHERE scene_id = $1`, row.SceneID); err != nil {
 		t.Fatalf("inflate attempts: %v", err)
 	}
 	updated, err := store.CommitBatch(ctx, row, CommitBatch{
@@ -396,7 +400,7 @@ func TestExpiredLeaseCannotWrite(t *testing.T) {
 	pool := openPool(t)
 	store := NewStore(db.New(pool))
 	row := claimReady(t, pool, store, testIdentity(t))
-	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET lease_expires_at = now() - interval '1 second' WHERE id = $1`, row.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE agent_scene_memory SET lease_expires_at = now() - interval '1 second' WHERE scene_id = $1`, row.SceneID); err != nil {
 		t.Fatalf("expire lease: %v", err)
 	}
 	if _, err := store.CommitBatch(ctx, row, CommitBatch{
@@ -440,16 +444,18 @@ func TestBlockedCanBeAwakened(t *testing.T) {
 	}
 }
 
-func TestGetIsolatesSceneKeys(t *testing.T) {
+func TestGetIsolatesScenes(t *testing.T) {
 	ctx := context.Background()
 	pool := openPool(t)
 	store := NewStore(db.New(pool))
 	a := testIdentity(t)
 	a.SceneKind = KindGroup
 	b := a
-	b.SceneKey = "cid-b-" + uuid.NewString()
+	b.ID = util.MustParseUUID(uuid.NewString())
+	b.ExternalSceneID = "cid-b-" + uuid.NewString()
 	b.SceneKind = KindGroup
 	seedAgentWrite(t, pool, a, true)
+	seedAgentWrite(t, pool, b, true)
 	t.Cleanup(func() { _ = store.DeleteByWorkspace(ctx, a.WorkspaceID) })
 
 	commitSceneText(t, pool, store, a, "GAMMA-A-881 是报表工具")
@@ -486,23 +492,23 @@ func TestGetIsolatesSceneKeys(t *testing.T) {
 	}
 }
 
-func commitSceneText(t *testing.T, pool *pgxpool.Pool, store *Store, id Identity, text string) {
+func commitSceneText(t *testing.T, pool *pgxpool.Pool, store *Store, id db.AgentScene, text string) {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := store.MarkDirty(ctx, id, DirtyTrigger{
-		OccurredAt: time.Now().UTC(), EvidenceID: "m-" + id.SceneKey, IdempotencyKey: "k-" + id.SceneKey,
+		OccurredAt: time.Now().UTC(), EvidenceID: "m-" + id.ExternalSceneID, IdempotencyKey: "k-" + id.ExternalSceneID,
 	}); err != nil {
-		t.Fatalf("dirty %s: %v", id.SceneKey, err)
+		t.Fatalf("dirty %s: %v", id.ExternalSceneID, err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET available_at = now() - interval '1 second' WHERE scene_key = $1`, id.SceneKey); err != nil {
-		t.Fatalf("nudge %s: %v", id.SceneKey, err)
+	if _, err := pool.Exec(ctx, `UPDATE agent_scene_memory SET available_at = now() - interval '1 second' WHERE scene_id = $1`, id.ID); err != nil {
+		t.Fatalf("nudge %s: %v", id.ExternalSceneID, err)
 	}
 	row, err := store.Claim(ctx)
 	if err != nil {
-		t.Fatalf("claim %s: %v", id.SceneKey, err)
+		t.Fatalf("claim %s: %v", id.ExternalSceneID, err)
 	}
-	if row.SceneKey != id.SceneKey {
-		t.Fatalf("claimed %s, want %s", row.SceneKey, id.SceneKey)
+	if row.ConversationID() != id.ExternalSceneID {
+		t.Fatalf("claimed %s, want %s", row.ConversationID(), id.ExternalSceneID)
 	}
 	if _, err := store.CommitBatch(ctx, row, CommitBatch{
 		ReplaceText:            true,
@@ -511,10 +517,10 @@ func commitSceneText(t *testing.T, pool *pgxpool.Pool, store *Store, id Identity
 		SourceCursorEvidenceID: row.LeaseTargetThroughEvidenceID,
 		ExpectedMemoryRevision: row.MemoryRevision,
 	}); err != nil {
-		t.Fatalf("commit %s: %v", id.SceneKey, err)
+		t.Fatalf("commit %s: %v", id.ExternalSceneID, err)
 	}
 	if err := store.FinishClaim(ctx, row); err != nil {
-		t.Fatalf("finish %s: %v", id.SceneKey, err)
+		t.Fatalf("finish %s: %v", id.ExternalSceneID, err)
 	}
 }
 
@@ -603,7 +609,7 @@ func TestWorkspaceCleanup(t *testing.T) {
 	}
 }
 
-func dirtyReady(t *testing.T, pool *pgxpool.Pool, store *Store, id Identity) {
+func dirtyReady(t *testing.T, pool *pgxpool.Pool, store *Store, id db.AgentScene) {
 	t.Helper()
 	ctx := context.Background()
 	seedAgentWrite(t, pool, id, true)
@@ -613,12 +619,12 @@ func dirtyReady(t *testing.T, pool *pgxpool.Pool, store *Store, id Identity) {
 	}); err != nil {
 		t.Fatalf("dirty: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET available_at = now() - interval '1 second' WHERE scene_key = $1`, id.SceneKey); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE agent_scene_memory SET available_at = now() - interval '1 second' WHERE scene_id = $1`, id.ID); err != nil {
 		t.Fatalf("nudge: %v", err)
 	}
 }
 
-func claimReady(t *testing.T, pool *pgxpool.Pool, store *Store, id Identity) db.SceneMemory {
+func claimReady(t *testing.T, pool *pgxpool.Pool, store *Store, id db.AgentScene) Memory {
 	t.Helper()
 	dirtyReady(t, pool, store, id)
 	row, err := store.Claim(context.Background())
@@ -628,15 +634,8 @@ func claimReady(t *testing.T, pool *pgxpool.Pool, store *Store, id Identity) db.
 	return row
 }
 
-func testIdentityFromRow(row db.SceneMemory) Identity {
-	return Identity{
-		WorkspaceID: row.WorkspaceID,
-		AgentID:     row.AgentID,
-		Platform:    row.Platform,
-		OrgID:       row.OrgID,
-		SceneKey:    row.SceneKey,
-		SceneKind:   row.SceneKind,
-	}
+func testIdentityFromRow(row Memory) db.AgentScene {
+	return row.Scene
 }
 
 func errorsIsNoRows(err error) bool {
@@ -652,7 +651,7 @@ func TestClaimRequiresWriteEnabled(t *testing.T) {
 	if _, err := store.MarkDirty(ctx, id, DirtyTrigger{OccurredAt: time.Now().UTC(), EvidenceID: "m1", IdempotencyKey: "k1"}); err != nil {
 		t.Fatalf("dirty: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET available_at = now() - interval '1 second' WHERE scene_key = $1`, id.SceneKey); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE agent_scene_memory SET available_at = now() - interval '1 second' WHERE scene_id = $1`, id.ID); err != nil {
 		t.Fatalf("nudge: %v", err)
 	}
 	if _, err := store.Claim(ctx); !errorsIsNoRows(err) {
@@ -690,7 +689,7 @@ func TestExpiredLeaseIsExcludedFromFenceCount(t *testing.T) {
 	if before < 1 {
 		t.Fatalf("valid leases = %d", before)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET lease_expires_at = now() - interval '1 second' WHERE id = $1`, row.ID); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE agent_scene_memory SET lease_expires_at = now() - interval '1 second' WHERE scene_id = $1`, row.SceneID); err != nil {
 		t.Fatalf("expire: %v", err)
 	}
 	after, err := store.CountValidLeases(ctx)
@@ -843,7 +842,7 @@ func TestMarkDirtyThenPlanFlushIncludesEarlierTrigger(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("later dirty: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET available_at = now() - interval '1 second' WHERE scene_key = $1`, id.SceneKey); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE agent_scene_memory SET available_at = now() - interval '1 second' WHERE scene_id = $1`, id.ID); err != nil {
 		t.Fatalf("nudge later: %v", err)
 	}
 	row, err := store.Claim(ctx)
@@ -865,7 +864,7 @@ func TestMarkDirtyThenPlanFlushIncludesEarlierTrigger(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("earlier dirty: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET available_at = now() - interval '1 second' WHERE scene_key = $1`, id.SceneKey); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE agent_scene_memory SET available_at = now() - interval '1 second' WHERE scene_id = $1`, id.ID); err != nil {
 		t.Fatalf("nudge early: %v", err)
 	}
 	row, err = store.Claim(ctx)

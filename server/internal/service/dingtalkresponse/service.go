@@ -26,14 +26,18 @@ import (
 // ActionInput is a frozen dispatch snapshot. Credential material must never be
 // included here: this value is persisted before any external operation.
 type ActionInput struct {
-	ActionID             string `json:"action_id,omitempty"`
-	WorkspaceID          string `json:"workspace_id"`
-	AgentID              string `json:"agent_id"`
-	TaskID               string `json:"task_id,omitempty"`
-	IssueID              string `json:"issue_id,omitempty"`
-	RequestID            string `json:"request_id"`
-	DWSUID               string `json:"dws_uid"`
-	DWSOrgID             string `json:"dws_org_id"`
+	ActionID    string `json:"action_id,omitempty"`
+	WorkspaceID string `json:"workspace_id"`
+	AgentID     string `json:"agent_id"`
+	TaskID      string `json:"task_id,omitempty"`
+	IssueID     string `json:"issue_id,omitempty"`
+	RequestID   string `json:"request_id"`
+	DWSUID      string `json:"dws_uid"`
+	DWSOrgID    string `json:"dws_org_id"`
+	// SceneID is the Agent work scene the response goes to
+	// (docs/agent-scene.md); ConversationID is that scene's external
+	// conversation id as the scene directory records it.
+	SceneID              string `json:"scene_id,omitempty"`
 	ConversationID       string `json:"conversation_id"`
 	SenderOpenDingTalkID string `json:"sender_open_dingtalk_id"`
 	IsGroup              bool   `json:"is_group"`
@@ -45,6 +49,14 @@ type ActionInput struct {
 	CloseState           string `json:"close_state,omitempty"`
 	// Set only by EnqueueCoordinatorWait, never by a caller-supplied send flag.
 	CoordinatorWaitJobID string `json:"coordinator_wait_job_id,omitempty"`
+	// RoutineRunID is set only by EnqueueRoutineNotice: a Host notice of a
+	// scene routine run (start or end), sent into the routine's scene with
+	// no dispatch to close and no Router callback.
+	RoutineRunID string `json:"routine_run_id,omitempty"`
+	// SceneNoticeID is set only by EnqueueSceneNotice: a Host notice that a
+	// conversation changed its scene's configuration, sent into that scene
+	// with no dispatch to close and no Router callback.
+	SceneNoticeID string `json:"scene_notice_id,omitempty"`
 	// DWSEnvironment pins the DWS gateway ("production" or "staging") the
 	// send goes through. Empty keeps the provider's configured gateway; native
 	// subscriptions set "production", where their events come from.
@@ -148,6 +160,62 @@ func (s *Service) EnqueueCoordinatorWait(ctx context.Context, tx DBTX, in Action
 	in.RequestID = "coordinator-wait:" + jobID
 	in.ActionID = ""
 	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState = "", "", "", ""
+	return s.enqueue(ctx, tx, in)
+}
+
+// Routine notice phases (EnqueueRoutineNotice).
+const (
+	RoutineNoticeStart = "start"
+	RoutineNoticeEnd   = "end"
+)
+
+// routineNoticeTarget fills CallbackTarget for routine notices, which have
+// no Router callback to receipt.
+const routineNoticeTarget = "scene-routine"
+
+// RoutineNoticeRequestID is the idempotency key of a routine run's start or
+// end notice.
+func RoutineNoticeRequestID(runID, phase string) string {
+	return "routine:" + runID + ":" + phase
+}
+
+// EnqueueRoutineNotice records the start or end notice of a scene routine run
+// (docs/context-capabilities.md §9). The request id is derived from the run
+// and phase, so a retried dispatch or terminal transition enqueues the same
+// action once. There is no dispatch to close and no Router callback: the
+// worker sends it and keeps its delivery state without a receipt.
+func (s *Service) EnqueueRoutineNotice(ctx context.Context, tx DBTX, in ActionInput, runID, phase string) (string, error) {
+	if _, err := uuid.Parse(runID); err != nil {
+		return "", errors.New("routine run id is invalid")
+	}
+	if phase != RoutineNoticeStart && phase != RoutineNoticeEnd {
+		return "", errors.New("routine notice phase is invalid")
+	}
+	in.RoutineRunID = runID
+	in.RequestID = RoutineNoticeRequestID(runID, phase)
+	in.ActionID = ""
+	in.CoordinatorWaitJobID = ""
+	// No task or issue id: a notice is not a task's reply, so nothing that
+	// reads a task's responses (delivery evidence, close states) sees it.
+	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState, in.ReplyToOpenMsgID = "", "", "", "", ""
+	in.CallbackTarget = routineNoticeTarget
+	return s.enqueue(ctx, tx, in)
+}
+
+// EnqueueSceneNotice records a Host notice into a scene (a configuration
+// change made from a conversation). noticeID makes it idempotent; like a
+// routine notice it closes no dispatch and has no Router callback.
+func (s *Service) EnqueueSceneNotice(ctx context.Context, tx DBTX, in ActionInput, noticeID string) (string, error) {
+	if _, err := uuid.Parse(noticeID); err != nil {
+		return "", errors.New("scene notice id is invalid")
+	}
+	in.SceneNoticeID = noticeID
+	in.RoutineRunID = ""
+	in.RequestID = "scene-notice:" + noticeID
+	in.ActionID = ""
+	in.CoordinatorWaitJobID = ""
+	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState, in.ReplyToOpenMsgID = "", "", "", "", ""
+	in.CallbackTarget = routineNoticeTarget
 	return s.enqueue(ctx, tx, in)
 }
 
@@ -322,15 +390,28 @@ func validateScope(in ActionInput) error {
 }
 
 func validateInput(in ActionInput) error {
-	if in.CoordinatorWaitJobID != "" {
+	switch {
+	case in.CoordinatorWaitJobID != "":
 		if _, err := uuid.Parse(in.CoordinatorWaitJobID); err != nil {
 			return errors.New("coordinator wait job id is invalid")
 		}
 		if in.CallbackURL != "" || in.TaskID != "" || in.IssueID != "" || in.CloseState != "" || in.Text == "" {
 			return errors.New("coordinator wait cannot close a dispatch or claim a task")
 		}
-	} else if _, err := parseCallback(in.CallbackURL, true); err != nil {
-		return err
+	case in.RoutineRunID != "" || in.SceneNoticeID != "":
+		if in.RoutineRunID != "" && in.SceneNoticeID != "" {
+			return errors.New("a notice is a routine notice or a scene notice, not both")
+		}
+		if _, err := uuid.Parse(in.RoutineRunID + in.SceneNoticeID); err != nil {
+			return errors.New("notice id is invalid")
+		}
+		if in.CallbackURL != "" || in.TaskID != "" || in.IssueID != "" || in.CloseState != "" || in.ReplyToOpenMsgID != "" || in.Text == "" {
+			return errors.New("routine notice cannot close a dispatch, claim a task or quote a message")
+		}
+	default:
+		if _, err := parseCallback(in.CallbackURL, true); err != nil {
+			return err
+		}
 	}
 	if err := validateScope(in); err != nil {
 		return err

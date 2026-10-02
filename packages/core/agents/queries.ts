@@ -198,22 +198,22 @@ export const agentSceneMemoryKeys = {
     [...agentSceneMemoryKeys.all(wsId), agentId] as const,
   // Nested under list so the memory mutations' list invalidation refreshes
   // it too.
-  detail: (wsId: string, agentId: string, memoryId: string) =>
-    [...agentSceneMemoryKeys.list(wsId, agentId), "memory", memoryId] as const,
+  detail: (wsId: string, agentId: string, sceneId: string) =>
+    [...agentSceneMemoryKeys.list(wsId, agentId), "memory", sceneId] as const,
 };
 
-/** One scene memory row by id; the scene detail uses it because the list
- * endpoint returns at most the 200 newest rows. */
+/** One scene's memory by its scene_id; the scene detail uses it because the
+ * list endpoint returns at most the 200 newest rows. */
 export function agentSceneMemoryDetailOptions(
   wsId: string,
   agentId: string,
-  memoryId: string,
+  sceneId: string,
   enabled = true,
 ) {
-  const active = enabled && !!wsId && !!agentId && !!memoryId;
+  const active = enabled && !!wsId && !!agentId && !!sceneId;
   return queryOptions({
-    queryKey: agentSceneMemoryKeys.detail(wsId, agentId, memoryId),
-    queryFn: () => api.getAgentSceneMemory(agentId, memoryId),
+    queryKey: agentSceneMemoryKeys.detail(wsId, agentId, sceneId),
+    queryFn: () => api.getAgentSceneMemory(agentId, sceneId),
     enabled: active,
     staleTime: 15 * 1000,
     gcTime: 5 * 60 * 1000,
@@ -239,20 +239,21 @@ export function agentSceneMemoryOptions(
 }
 
 export const agentSceneRelationKeys = {
-  list: (wsId: string, agentId: string, conversationId: string) =>
-    [...agentSceneMemoryKeys.all(wsId), agentId, "relations", conversationId] as const,
+  list: (wsId: string, agentId: string, sceneId: string) =>
+    [...agentSceneMemoryKeys.all(wsId), agentId, "relations", sceneId] as const,
 };
 
+/** Issues linked to one scene, by its scene_id. */
 export function agentSceneRelationOptions(
   wsId: string,
   agentId: string,
-  conversationId: string,
+  sceneId: string,
   enabled = true,
 ) {
   return queryOptions({
-    queryKey: agentSceneRelationKeys.list(wsId, agentId, conversationId),
-    queryFn: () => api.listAgentSceneRelations(agentId, conversationId),
-    enabled: enabled && !!wsId && !!agentId && !!conversationId,
+    queryKey: agentSceneRelationKeys.list(wsId, agentId, sceneId),
+    queryFn: () => api.listAgentSceneRelations(agentId, sceneId),
+    enabled: enabled && !!wsId && !!agentId && !!sceneId,
     staleTime: 15 * 1000,
     gcTime: 5 * 60 * 1000,
     refetchOnWindowFocus: true,

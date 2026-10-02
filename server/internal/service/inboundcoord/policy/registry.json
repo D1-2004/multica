@@ -366,7 +366,8 @@
         "user_decision_three_modes",
         "f01_native_ingress_trusted_facts",
         "f01_native_own_output_not_reentered",
-        "f01_native_account_owned_by_one_path"
+        "f01_native_account_owned_by_one_path",
+        "f01_native_backlog_not_answered"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -395,7 +396,7 @@
         "user_decision_send_rejection": "Definite DWS rejection atomically resumes reply-only error feedback with sanitized provider message; ambiguous sends remain reconciliation-only. Local four-package tests, vet, server build and structural policy check passed; preproduction transaction and live delivery pending.",
         "user_decision_audience_trace_listener": "2026-09-24: local scoped tests/typechecks/build/vet/race passed. Pre run3109734020 deploy161891040 SUCCESS/allEnd=true; migrations9304/9305 and three PostgreSQL projection tests passed. Live API normalization/clear/preserve/revision passed; two enabled agents limited to 冬翔. Actual Langfuse traces2326de29f86d464d825c84d7f252e07e and30d30a33d5394ee689cf647d81ef568c each contain one matching historical choice; original trace/root I/O unchanged. New native click loop blocked by DWS CONTEXT_PROCESSING_ERROR.",
         "user_decision_three_modes": "2026-09-24: Host mode/API mapping tests, core62+views36, typecheck/build/vet/sqlc/structural checks passed. Pre run3109768297 deploy161907060 SUCCESS/allEnd=true; migration9306 applied. Targete2293e9e modeoff/revision14 confirmed in details/list; invalid/null/conflicting request live400 and no policy mutation. Three DB integration tests not run; direct rollback probe was terminated. Native IM and browser verification not run (browser under user control).",
-        "native_dws_ingress_host_tests": "passed_local_2026-10-01: handler unit tests (projection, target binding, wire namespace guard, ownership, self-loop guards, loop breaker, fingerprint, switch guards) and DB tests TestNativeMessageRunsTheRouterPipeline/TestNativeMessageOwnOutputAndQuotes/TestNativeOwnershipIsExclusivePerMessage/TestNativeSubscriptionAccountIsUnique/TestNativeEchoOfOwnReplyIsDropped on a migrated local copy; no model replay",
+        "native_dws_ingress_host_tests": "passed_local_2026-10-01: handler unit tests (projection, target binding, wire namespace guard, ownership, self-loop guards, loop breaker, fingerprint, switch guards) and DB tests TestNativeMessageRunsTheRouterPipeline/TestNativeMessageOwnOutputAndQuotes/TestNativeOwnershipIsExclusivePerMessage/TestNativeSubscriptionAccountIsUnique/TestNativeEchoOfOwnReplyIsDropped on a migrated local copy; no model replay. passed_local_2026-10-02: TestAcceptNativeMessageSkipsReplayedBacklog (sent before subscription, older than 10 minutes, short outage, clock skew, no send time) and TestNativeSubscriptionAccountIsUnique enabled_at kept for the same account and restarted for a rebound one",
         "native_dws_ingress_live_delivery": "not_run"
       },
       "implementation_refs": [
@@ -880,7 +881,8 @@
         "server/internal/handler/coordinator_issue_relay_test.go",
         "docs/agent-dispatch-v2-execution-contract.md",
         "docs/plans/2026-09-14-coordinator-invented-access-limit.md",
-        "server/internal/service/inboundcoord/finish_invented_capability_test.go"
+        "server/internal/service/inboundcoord/finish_invented_capability_test.go",
+        "server/internal/handler/agent_scene.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -942,7 +944,7 @@
     {
       "id": "COORD.F09",
       "family": "F09",
-      "obligation": "收集有4秒静默及12秒上限；封窗后不吸收；先判断后容量等待，忙时聊天及时；真实处理前不结完成。 执行容量按「场景×委托人」计，一个人的在飞事项不占同场景其他人的名额；在飞只含queued/dispatched/running/waiting_local_directory，定时待触发与超期未推进的非running事项不占名额，无人归属的事项计入每个委托人；身份按assoc_person_alias双向归一，续办他人事项按当前委托人补建归属。 一个窗口等待容量有上限，到期后本轮豁免容量直接执行并记录；重试前置检查按未完成计划项的委托人判断；同Issue busy不因等待时长豁免。 已判断且持久化的未提交工作因容量/同Issue busy停放时可一次Host等待反馈；等待说明只讲已记下、尚未开始及所等对象，不用名额/槽位等内部说法；不改变先判断后等待、不提前关闭原callback，notice失败仍可继续park恢复。 等待IM资格按入站response_enabled/revision和可信目标独立冻结；collect资格变化拆窗，同群换发言人保留原接收目标。旧legacy无快照不补资格，显式disabled不回退旧managed路径。",
+      "obligation": "收集有4秒静默及12秒上限；封窗后不吸收；先判断后容量等待，忙时聊天及时；真实处理前不结完成。 执行容量按「场景×委托人」计，一个人的在飞事项不占同场景其他人的名额；在飞只含queued/dispatched/running/waiting_local_directory，定时待触发与超期未推进的非running事项不占名额，无人归属的事项计入每个委托人；身份按assoc_person_alias双向归一，续办他人事项按当前委托人补建归属。 一个窗口等待容量有上限，到期后本轮豁免容量直接执行并记录；重试前置检查按未完成计划项的委托人判断；同Issue busy不因等待时长豁免。 已判断且持久化的未提交工作因容量/同Issue busy停放时可一次Host等待反馈；等待说明只讲已记下、尚未开始及所等对象，不用名额/槽位等内部说法；不改变先判断后等待、不提前关闭原callback，notice失败仍可继续park恢复。 等待IM资格按入站response_enabled/revision和可信目标独立冻结；collect资格变化拆窗，同群换发言人保留原接收目标。旧legacy无快照不补资格，显式disabled不回退旧managed路径。 场景即 Agent 工作场域 scene_id（docs/agent-scene.md）：容量、窗口、记忆脏标记都按命令里的 agent_scene 计；旧副本入队、命令无 SceneRef 的 job 在认领时用入站同一解析器补齐，解析不了就不做依赖场域的效果。",
       "status": "active",
       "runtime_modules": [
         "inbound"
@@ -967,7 +969,8 @@
         "waiting_admission_and_direct_relay_live_delivery": "not_run",
         "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
         "scene_capacity_per_delegator_host_tests": "passed_local_2026-09-16: handler capacity/wait tests; full ./internal/handler failure set identical to HEAD baseline",
-        "scene_capacity_per_delegator_live_delivery": "pre_verified_2026-09-16: 预发群 cidVaO557dsSgYcgnvRNbwY4g== 真实对话；冬翔两件在飞后第三条 park 并收到新等待文案（coord_trace eef25125-53a8-4404-9e8f-489925abb925），dxxh 同群新请求不受影响直接受理（bfe2f1b2），dxxh 的任务完成不释放冬翔名额、冬翔自己的任务完成后排队窗口 15:19:21 自动开跑。等待上限豁免、deferred/fire_at 与 alias 归一仍只有本地数据库用例。"
+        "scene_capacity_per_delegator_live_delivery": "pre_verified_2026-09-16: 预发群 cidVaO557dsSgYcgnvRNbwY4g== 真实对话；冬翔两件在飞后第三条 park 并收到新等待文案（coord_trace eef25125-53a8-4404-9e8f-489925abb925），dxxh 同群新请求不受影响直接受理（bfe2f1b2），dxxh 的任务完成不释放冬翔名额、冬翔自己的任务完成后排队窗口 15:19:21 自动开跑。等待上限豁免、deferred/fire_at 与 alias 归一仍只有本地数据库用例。",
+        "agent_scene_id_host_tests": "passed_local_2026-10-02 (PRI-91): handler/inboundcoord/assoc/contextcap/scenememory 用例按 scene_id 改写；./internal/handler 失败集合与基线 6a8c66428 相同；live delivery 见 PRI-91 预发证据"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/inbound.md",
@@ -983,7 +986,10 @@
         "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery",
         "server/internal/handler/coordinator_capacity.go",
         "server/pkg/db/queries/inbound_coordinator_job.sql",
-        "server/internal/handler/inbound_coordinator_window_integration_test.go"
+        "server/internal/handler/inbound_coordinator_window_integration_test.go",
+        "docs/agent-scene.md",
+        "server/internal/scene/scene.go",
+        "server/internal/handler/agent_scene.go"
       ],
       "case_file": "cases.json"
     },
@@ -1061,7 +1067,9 @@
         "server/internal/service/scenememory/flush.go",
         "server/internal/service/scenememory/trace.go",
         "server/internal/service/inboundcoord/policy/finish_check.md",
-        "server/internal/service/inboundcoord/finish_check.go"
+        "server/internal/service/inboundcoord/finish_check.go",
+        "docs/agent-scene.md",
+        "server/internal/service/scenememory/store.go"
       ],
       "case_file": "cases.json"
     },
@@ -1857,6 +1865,20 @@
         "COORD.F19"
       ],
       "reason": "Global provider routing replaces required-to-auto retries. Each decision freezes a versioned provider chain; each model attempt is recorded separately. Model failures never replay committed tools or bypass plan review."
+    },
+    {
+      "id": "LEGACY.CONVERSATION_ID_SCENE_KEY",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F07",
+        "COORD.F09",
+        "COORD.F11"
+      ],
+      "reason": "PRI-84/PRI-91：场域只有一个 ID、一个语义——Agent+租户企业+类型+稳定会话 → scene_id。assoc_scene、scene_memory 以裸 openConversationId 作场景键、单聊按 staffId 找人级配置的做法退出业务读写；Coordinator 召回、绑定、记忆、容量都按 scene_id，模型给出的会话 ID 只经场域目录查找，未登记即无关联。",
+      "incident_refs": [
+        "PRI-84",
+        "PRI-91"
+      ]
     }
   ]
 }

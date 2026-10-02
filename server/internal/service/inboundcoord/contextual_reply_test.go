@@ -10,7 +10,7 @@ import (
 )
 
 func TestDirectIgnoreIsRepairedToConversation(t *testing.T) {
-	turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", DWSUID: "6899376218", EmployeeAccountName: "Old role title", ConversationID: "cid", HistoryStatus: "loaded", Utterances: []WindowUtterance{{Text: "@New name 反复就一句话？", Mentions: []MessageMention{{OpenDingTalkID: "6899376218"}}}}}
+	turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", DWSUID: "6899376218", EmployeeAccountName: "Old role title", SceneID: testSceneID("cid"), ConversationID: "cid", HistoryStatus: "loaded", Utterances: []WindowUtterance{{Text: "@New name 反复就一句话？", Mentions: []MessageMention{{OpenDingTalkID: "6899376218"}}}}}
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("ignore", toolFinish, `{"actions":[{"kind":"ignore","source_refs":["u1"],"reason":"Different persona name"}]}`),
 		assistantTool("conversation", toolFinish, `{"actions":[{"kind":"acknowledge","ack_kind":"conversation","source_refs":["u1"],"reply":"你说得对，刚才一直重复确认，没回答到你的问题。"}]}`),

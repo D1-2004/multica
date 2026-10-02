@@ -6,6 +6,8 @@ afterEach(() => vi.unstubAllGlobals());
 const base = "https://pre.example.test";
 const agentId = "11111111-1111-4111-8111-111111111111";
 const connectorId = "22222222-2222-4222-8222-222222222222";
+// A scene's scope key is its scene_id.
+const sceneId = "66666666-6666-4666-8666-666666666666";
 
 function stubFetch(body: unknown, status = 200) {
   const fetch = vi.fn().mockResolvedValue(
@@ -26,7 +28,7 @@ describe("context capability mobile client", () => {
       agent_id: agentId,
       workspace_id: "ws-1",
       scope_type: "scene",
-      scope_key: "cid1",
+      scope_key: sceneId,
       scope_title: "Team",
     });
     const result = await new ApiClient(base).redeemContextConfigLink("tok");
@@ -39,7 +41,7 @@ describe("context capability mobile client", () => {
       agentId,
       workspaceId: "ws-1",
       scopeType: "scene",
-      scopeKey: "cid1",
+      scopeKey: sceneId,
       scopeTitle: "Team",
       orgId: "",
     });
@@ -50,16 +52,19 @@ describe("context capability mobile client", () => {
     expect(await new ApiClient(base).getContextConfigAgent(agentId)).toBeNull();
   });
 
-  it("encodes scene keys in the scene path", async () => {
+  it("reads a scene by its scene_id, encoded in the path", async () => {
     const fetch = stubFetch({
-      scene: { scope_key: "cid+/=", scope_title: "Team", source: "agent_link", expires_at: "" },
+      scene: { scope_key: sceneId, scope_title: "Team", source: "agent_link", expires_at: "" },
       bindings: [],
       credentials: [],
     });
-    await new ApiClient(base).getContextConfigScene(agentId, "cid+/=");
-    expect(requestOf(fetch).url).toBe(
-      `${base}/api/context-capabilities/agents/${agentId}/scenes/cid%2B%2F%3D`,
-    );
+    const scene = await new ApiClient(base).getContextConfigScene(agentId, sceneId);
+    expect(requestOf(fetch).url).toBe(`${base}/api/context-capabilities/agents/${agentId}/scenes/${sceneId}`);
+    expect(scene?.scene.scopeKey).toBe(sceneId);
+
+    const odd = stubFetch({ scene: { scope_key: "a+/=" } });
+    await new ApiClient(base).getContextConfigScene(agentId, "a+/=");
+    expect(requestOf(odd).url).toBe(`${base}/api/context-capabilities/agents/${agentId}/scenes/a%2B%2F%3D`);
   });
 
   it("sends snake_case binding writes and falls back to the request on a malformed echo", async () => {
@@ -93,7 +98,7 @@ describe("context capability mobile client", () => {
     stubFetch({ credential: { connector_id: connectorId, hint: "••••cret", updated_at: "t", bearer: "super-secret" } });
     const result = await new ApiClient(base).setContextConnectorCredential(agentId, {
       scopeType: "scene",
-      scopeKey: "cid1",
+      scopeKey: sceneId,
       connectorId,
       bearer: "super-secret",
     });
@@ -123,7 +128,7 @@ describe("context capability mobile client", () => {
     const fetch = stubFetch({ authorize_url: "https://mcp.notion.com/authorize" });
     await new ApiClient(base).startContextConnectorConnection(agentId, {
       scopeType: "scene",
-      scopeKey: "cid1",
+      scopeKey: sceneId,
       connectorId,
       returnTo: "/dingtalk/configure?agent=a",
     });
@@ -155,7 +160,7 @@ describe("context capability mobile client", () => {
     const fetch = stubFetch(null, 204);
     await new ApiClient(base).deleteContextConnectorCredential(agentId, {
       scopeType: "scene",
-      scopeKey: "cid1",
+      scopeKey: sceneId,
       connectorId,
     });
     const { url, init } = requestOf(fetch);
@@ -164,17 +169,17 @@ describe("context capability mobile client", () => {
     expect(parsed.pathname).toBe(`/api/context-capabilities/agents/${agentId}/credentials`);
     expect(Object.fromEntries(parsed.searchParams)).toEqual({
       scope_type: "scene",
-      scope_key: "cid1",
+      scope_key: sceneId,
       connector_id: connectorId,
     });
   });
 
   it("sends only the ids the JSAPI picker returned", async () => {
-    const fetch = stubFetch({ scene: { scope_key: "cid1", scope_title: "Team", source: "jsapi", expires_at: "" } });
+    const fetch = stubFetch({ scene: { scope_key: sceneId, scope_title: "Team", source: "jsapi", expires_at: "" } });
     const scene = await new ApiClient(base).resolveContextConfigScene(agentId, { chatId: "chat-1" });
     expect(JSON.parse(requestOf(fetch).init.body as string)).toEqual({ chat_id: "chat-1" });
     expect(scene).toEqual({
-      scopeKey: "cid1",
+      scopeKey: sceneId,
       scopeTitle: "Team",
       source: "jsapi",
       expiresAt: "",
@@ -185,7 +190,7 @@ describe("context capability mobile client", () => {
   });
 
   it("resolves a picked group in the page's tenant through the query", async () => {
-    const fetch = stubFetch({ scene: { scope_key: "cid1", scope_title: "Team", source: "jsapi", expires_at: "", org_id: "ding2" } });
+    const fetch = stubFetch({ scene: { scope_key: sceneId, scope_title: "Team", source: "jsapi", expires_at: "", org_id: "ding2" } });
     const scene = await new ApiClient(base).resolveContextConfigScene(agentId, { chatId: "chat-1", orgId: "ding2" });
     const { url, init } = requestOf(fetch);
     expect(new URL(url).searchParams.get("org_id")).toBe("ding2");

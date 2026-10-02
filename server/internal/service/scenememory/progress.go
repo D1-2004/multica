@@ -3,8 +3,6 @@ package scenememory
 import (
 	"encoding/json"
 	"time"
-
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // historyProgress belongs to a dirty revision, not to a worker or a lease.
@@ -18,14 +16,14 @@ type historyProgress struct {
 	PendingSeen   bool      `json:"pending_seen"`
 }
 
-func claimedDirtyRevision(row db.SceneMemory) int64 {
+func claimedDirtyRevision(row Memory) int64 {
 	if row.LeaseTargetDirtyRevision.Valid {
 		return row.LeaseTargetDirtyRevision.Int64
 	}
 	return row.DirtyRevision
 }
 
-func storedHistoryProgress(row db.SceneMemory) (historyProgress, bool) {
+func storedHistoryProgress(row Memory) (historyProgress, bool) {
 	var meta struct {
 		Progress *historyProgress `json:"history_progress"`
 	}
@@ -36,7 +34,7 @@ func storedHistoryProgress(row db.SceneMemory) (historyProgress, bool) {
 	return *meta.Progress, true
 }
 
-func restoredHistoryProgress(row db.SceneMemory) (historyProgress, bool) {
+func restoredHistoryProgress(row Memory) (historyProgress, bool) {
 	progress, ok := storedHistoryProgress(row)
 	return progress, ok && progress.DirtyRevision == claimedDirtyRevision(row)
 }

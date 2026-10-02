@@ -33,6 +33,12 @@ VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (agent_id) DO UPDATE
 SET dws_uid = EXCLUDED.dws_uid,
     org_id = EXCLUDED.org_id,
+    enabled_at = CASE
+        WHEN agent_dws_native_subscription.dws_uid = EXCLUDED.dws_uid
+         AND agent_dws_native_subscription.org_id = EXCLUDED.org_id
+        THEN agent_dws_native_subscription.enabled_at
+        ELSE now()
+    END,
     self_open_dingtalk_id = CASE
         WHEN agent_dws_native_subscription.dws_uid = EXCLUDED.dws_uid
          AND agent_dws_native_subscription.org_id = EXCLUDED.org_id
@@ -54,6 +60,8 @@ type EnableAgentDWSNativeSubscriptionParams struct {
 // Enabling names the account; re-enabling after a rebind moves the row to
 // the new account and forgets the old account's learned openDingTalkId. The
 // (org_id, dws_uid) unique index rejects an account another agent holds.
+// A new account also restarts enabled_at: messages it received before belong
+// to no subscription of this agent and are not answered.
 func (q *Queries) EnableAgentDWSNativeSubscription(ctx context.Context, arg EnableAgentDWSNativeSubscriptionParams) (AgentDwsNativeSubscription, error) {
 	row := q.db.QueryRow(ctx, enableAgentDWSNativeSubscription,
 		arg.AgentID,

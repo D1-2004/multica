@@ -91,6 +91,14 @@ var preMigrationHooks = map[string]preMigrationHook{
 	// and name (ON CONFLICT arbiters).
 	"9421_agent_tenant_org_idx":              cleanupInvalidConcurrentIndexHook("agent_tenant_org_idx"),
 	"9423_context_prompt_component_name_idx": cleanupInvalidConcurrentIndexHook("context_prompt_component_name_idx"),
+	// Unique connector-app indexes. An interrupted build leaves an INVALID
+	// index that IF NOT EXISTS would accept, so uniqueness would not hold.
+	"9435_connector_app_workspace_provider_client_idx": cleanupInvalidConcurrentIndexHook("connector_app_workspace_provider_client_idx"),
+	"9438_connector_auth_binding_app_scope_idx":        cleanupInvalidConcurrentIndexHook("connector_auth_binding_app_scope_idx"),
+	// One scene routine per autopilot, and one per scene and dedupe key (ON
+	// CONFLICT arbiters).
+	"9521_context_scope_routine_autopilot_idx":    cleanupInvalidConcurrentIndexHook("context_scope_routine_autopilot_idx"),
+	"9522_context_scope_routine_scene_dedupe_idx": cleanupInvalidConcurrentIndexHook("context_scope_routine_scene_dedupe_idx"),
 }
 
 func repairIssueOriginTypeConstraintHook(ctx context.Context, pool *pgxpool.Pool) error {

@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS connector_auth_binding_instance_idx

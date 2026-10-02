@@ -703,30 +703,30 @@ type Link struct {
 	ScopeKey     string
 	ScopeTitle   string
 	SourceTaskID string
-	// ExtraSceneKey is set only on a person link minted in a 1:1 chat: the
-	// DM's openConversationId. Redeeming the link also grants that DM scene.
-	ExtraSceneKey string
-	ExpiresAt     time.Time
+	// ExtraSceneID is set only on a person link minted in a 1:1 chat: the
+	// DM's scene_id (column extra_scene_key). Redeeming the link also grants
+	// that DM scene.
+	ExtraSceneID string
+	ExpiresAt    time.Time
 }
 
 const linkColumns = `token_hash, workspace_id::text, agent_id::text, scope_type, org_id, scope_key, scope_title, COALESCE(source_task_id::text, ''), extra_scene_key, expires_at`
 
 func scanLink(row pgx.Row) (Link, error) {
 	var l Link
-	err := row.Scan(&l.TokenHash, &l.WorkspaceID, &l.AgentID, &l.ScopeType, &l.OrgID, &l.ScopeKey, &l.ScopeTitle, &l.SourceTaskID, &l.ExtraSceneKey, &l.ExpiresAt)
+	err := row.Scan(&l.TokenHash, &l.WorkspaceID, &l.AgentID, &l.ScopeType, &l.OrgID, &l.ScopeKey, &l.ScopeTitle, &l.SourceTaskID, &l.ExtraSceneID, &l.ExpiresAt)
 	return l, err
 }
 
 // InsertLink stores a configuration link that expires ttl from now (use
 // LinkTTL(l.ScopeType)). l.ExpiresAt is ignored; the stored row is returned.
-// ExtraSceneKey must be empty or, on a person link, a valid
-// openConversationId.
+// ExtraSceneID must be empty or, on a person link, a scene_id.
 func InsertLink(ctx context.Context, db DBTX, l Link, ttl time.Duration) (Link, error) {
 	if (l.ScopeType != ScopeScene && l.ScopeType != ScopePerson) || !ValidScopeKey(l.ScopeType, l.ScopeKey) ||
 		len(l.TokenHash) != 64 || ttl <= 0 {
 		return Link{}, ErrInvalidInput
 	}
-	if l.ExtraSceneKey != "" && (l.ScopeType != ScopePerson || !ValidOpenConversationID(l.ExtraSceneKey)) {
+	if l.ExtraSceneID != "" && (l.ScopeType != ScopePerson || !ValidSceneID(l.ExtraSceneID)) {
 		return Link{}, ErrInvalidInput
 	}
 	sourceTask, err := optionalUUID(l.SourceTaskID)
@@ -737,7 +737,7 @@ func InsertLink(ctx context.Context, db DBTX, l Link, ttl time.Duration) (Link, 
 		(token_hash, workspace_id, agent_id, scope_type, org_id, scope_key, scope_title, source_task_id, extra_scene_key, expires_at)
 		VALUES ($1, $2::uuid, $3::uuid, $4, $5, $6, $7, $8::uuid, $10, now() + make_interval(secs => $9::double precision))
 		RETURNING `+linkColumns,
-		l.TokenHash, l.WorkspaceID, l.AgentID, l.ScopeType, l.OrgID, l.ScopeKey, l.ScopeTitle, sourceTask, ttl.Seconds(), l.ExtraSceneKey))
+		l.TokenHash, l.WorkspaceID, l.AgentID, l.ScopeType, l.OrgID, l.ScopeKey, l.ScopeTitle, sourceTask, ttl.Seconds(), l.ExtraSceneID))
 }
 
 // RedeemLink atomically redeems a link by token hash. Scene links stay

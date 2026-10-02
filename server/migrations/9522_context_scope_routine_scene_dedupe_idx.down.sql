@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS context_scope_routine_scene_dedupe_idx;

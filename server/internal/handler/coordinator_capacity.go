@@ -69,8 +69,10 @@ func coordinatorCapacityWaitExpired(job db.InboundCoordinatorJob) bool {
 // canonical person key and aliases assoc binds to a matter (task_person), so
 // capacity follows the person across uid / staffId / openDingTalkId.
 type sceneDelegator struct {
-	ConversationID string
-	Keys           []string
+	// SceneID is the dispatch's Agent work scene; capacity counts the open
+	// matters linked to that scene node.
+	SceneID string
+	Keys    []string
 	// resolved is true once Keys is the alias closure from the database, so
 	// two utterances of one person group onto one budget even when each
 	// message carries a different identifier.
@@ -79,7 +81,7 @@ type sceneDelegator struct {
 
 func dispatchSceneDelegator(command DispatchCommand) sceneDelegator {
 	ids := dispatchAssocIDs(command)
-	d := sceneDelegator{ConversationID: ids.ConversationID}
+	d := sceneDelegator{SceneID: dispatchSceneID(command)}
 	if key := strings.TrimSpace(ids.PersonID); key != "" {
 		d.Keys = append(d.Keys, key)
 	}
@@ -177,7 +179,7 @@ func sceneCapacitySlots(ctx context.Context, h *Handler, workspaceID, agentID pg
 	if sceneCapacityWaived(ctx) {
 		return limit
 	}
-	if h == nil || h.Queries == nil || strings.TrimSpace(d.ConversationID) == "" {
+	if h == nil || h.Queries == nil || strings.TrimSpace(d.SceneID) == "" {
 		return limit
 	}
 	var (
@@ -188,14 +190,14 @@ func sceneCapacitySlots(ctx context.Context, h *Handler, workspaceID, agentID pg
 		active, err = h.Queries.CountActiveTasksForConversation(ctx, db.CountActiveTasksForConversationParams{
 			WorkspaceID:    workspaceID,
 			AgentID:        agentID,
-			ConversationID: d.ConversationID,
+			SceneID:        d.SceneID,
 			StaleAfterSecs: sceneCapacityStaleAfter.Seconds(),
 		})
 	} else {
 		active, err = h.Queries.CountActiveDelegatorTasksForConversation(ctx, db.CountActiveDelegatorTasksForConversationParams{
 			WorkspaceID:    workspaceID,
 			AgentID:        agentID,
-			ConversationID: d.ConversationID,
+			SceneID:        d.SceneID,
 			StaleAfterSecs: sceneCapacityStaleAfter.Seconds(),
 			PersonKeys:     d.Keys,
 		})

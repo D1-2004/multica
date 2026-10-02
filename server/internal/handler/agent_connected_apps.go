@@ -80,8 +80,11 @@ type connectedAppDTO struct {
 	Usage              connectedAppUsageDTO         `json:"usage"`
 }
 
+// connectedAppSceneDTO is one scene using an app; scene_key carries the
+// scene_id (docs/agent-scene.md).
 type connectedAppSceneDTO struct {
 	SceneKey string `json:"scene_key"`
+	SceneID  string `json:"scene_id"`
 	Title    string `json:"title"`
 	// Kind is "group" or "dm".
 	Kind      string `json:"kind"`
@@ -122,8 +125,8 @@ type connectedAppsState struct {
 	granted    map[string]bool              // connector id → globally granted to the agent
 	offers     contextcap.Offers
 	uses       map[string][]contextcap.ConnectorScopeUse // connector id → scopes
-	// scenes are the used scenes the agent has seen (the admin scene
-	// union), newest activity first, for their title, kind and order.
+	// scenes are the used scenes of the agent's scene directory, newest
+	// activity first, for their title, kind and order.
 	scenes []contextcap.SceneSummary
 }
 
@@ -178,42 +181,30 @@ func (h *Handler) loadConnectedApps(ctx context.Context, caller agentSceneCaller
 	sceneKeys := []string{}
 	seen := map[string]bool{}
 	for _, use := range uses {
-		if use.ScopeType == contextcap.ScopeScene && contextcap.ValidOpenConversationID(use.ScopeKey) && !seen[use.ScopeKey] {
+		if use.ScopeType == contextcap.ScopeScene && contextcap.ValidSceneID(use.ScopeKey) && !seen[use.ScopeKey] {
 			seen[use.ScopeKey] = true
 			sceneKeys = append(sceneKeys, use.ScopeKey)
 		}
 	}
-	// A 1:1 chat's own scene key is skipped: its configuration is its
-	// person's, and the runtime ignores rows an earlier release stored there
-	// (docs/context-capabilities.md §1.1). A key lookup is not paged.
-	direct := map[string]bool{}
+	// An id lookup is not paged.
 	if len(sceneKeys) > 0 {
 		scenes, _, err := contextcap.ListAgentScenes(ctx, h.DB, contextcap.SceneListQuery{
-			WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: caller.orgID, IdentityOrgID: caller.orgID, Keys: sceneKeys,
+			WorkspaceID: caller.workspaceID, AgentID: caller.agentID, OrgID: caller.orgID, IDs: sceneKeys,
 		})
 		if err != nil {
 			return state, err
 		}
-		for _, scene := range scenes {
-			if scene.Kind == contextcap.SceneKindDM {
-				direct[scene.SceneKey] = true
-				continue
-			}
-			state.scenes = append(state.scenes, scene)
-		}
+		state.scenes = scenes
 	}
 	for _, use := range uses {
-		if use.ScopeType == contextcap.ScopeScene && direct[use.ScopeKey] {
-			continue
-		}
 		state.uses[use.ConnectorID] = append(state.uses[use.ConnectorID], use)
 	}
 	return state, nil
 }
 
 // connectedAppView builds the status row of one official app.
-func (h *Handler) connectedAppView(app connectorcatalog.App, state connectedAppsState) connectedAppDTO {
-	view := connectedAppDTO{catalogAppFacts: h.catalogAppFactsView(app), InstallURL: catalogAppInstallURL(app)}
+func (h *Handler) connectedAppView(ctx context.Context, app connectorcatalog.App, state connectedAppsState) connectedAppDTO {
+	view := connectedAppDTO{catalogAppFacts: h.catalogAppFactsFor(ctx, state.caller.workspaceID, app), InstallURL: catalogAppInstallURL(app)}
 	c, ok := state.connectors[app.Slug]
 	if !ok {
 		return view
@@ -308,7 +299,7 @@ func (h *Handler) ListAgentConnectedApps(w http.ResponseWriter, r *http.Request)
 	}
 	apps := []connectedAppDTO{}
 	for _, app := range connectorCatalog.Apps() {
-		apps = append(apps, h.connectedAppView(app, state))
+		apps = append(apps, h.connectedAppView(r.Context(), app, state))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"apps": apps, "can_admin": caller.workspaceAdmin})
 }
@@ -345,7 +336,7 @@ func (h *Handler) GetAgentConnectedApp(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) buildConnectedAppDetail(ctx context.Context, app connectorcatalog.App, state connectedAppsState) (connectedAppDetailDTO, error) {
 	detail := connectedAppDetailDTO{
-		connectedAppDTO: h.connectedAppView(app, state),
+		connectedAppDTO: h.connectedAppView(ctx, app, state),
 		Scenes:          []connectedAppSceneDTO{}, Persons: []connectedAppPersonDTO{}, ToolList: []connectedAppToolDTO{},
 		CanAdmin: state.caller.workspaceAdmin,
 	}
@@ -380,7 +371,7 @@ func (h *Handler) buildConnectedAppDetail(ctx context.Context, app connectorcata
 	}
 	known := make(map[string]contextcap.SceneSummary, len(state.scenes))
 	for _, scene := range state.scenes {
-		known[scene.SceneKey] = scene
+		known[scene.SceneID] = scene
 	}
 	entries := make(map[string]connectedAppSceneDTO, len(state.scenes))
 	unknown := []connectedAppSceneDTO{}
@@ -389,7 +380,7 @@ func (h *Handler) buildConnectedAppDetail(ctx context.Context, app connectorcata
 		title := firstNonEmpty(use.ScopeTitle, titles[contextcap.ScopeRef{ScopeType: use.ScopeType, ScopeKey: use.ScopeKey}])
 		switch use.ScopeType {
 		case contextcap.ScopeScene:
-			entry := connectedAppSceneDTO{SceneKey: use.ScopeKey, Title: title, Kind: contextcap.SceneKindGroup, Enabled: enabled, Connected: use.Connected, Account: use.Hint}
+			entry := connectedAppSceneDTO{SceneKey: use.ScopeKey, SceneID: use.ScopeKey, Title: title, Kind: contextcap.SceneKindGroup, Enabled: enabled, Connected: use.Connected, Account: use.Hint}
 			scene, found := known[use.ScopeKey]
 			if !found {
 				unknown = append(unknown, entry)
@@ -415,7 +406,7 @@ func (h *Handler) buildConnectedAppDetail(ctx context.Context, app connectorcata
 	// Scenes in activity order (newest first), unknown ones last by key;
 	// people by name.
 	for _, scene := range state.scenes {
-		if entry, ok := entries[scene.SceneKey]; ok {
+		if entry, ok := entries[scene.SceneID]; ok {
 			detail.Scenes = append(detail.Scenes, entry)
 		}
 	}

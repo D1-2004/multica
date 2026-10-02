@@ -35,6 +35,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/dwsidentity"
+	"github.com/multica-ai/multica/server/internal/eventrouter"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -338,9 +339,10 @@ type RouterOptions struct {
 	// SandboxRelay is nil on ordinary deployments. Production injects the
 	// signed pre-release sandbox relay here so requests carrying the routing
 	// assertion are intercepted before local authentication and routing.
-	SandboxRelay    func(http.Handler) http.Handler
-	RuntimeConfig   *appRuntimeConfig
-	DeploymentFence *deploymentfence.Service
+	SandboxRelay     func(http.Handler) http.Handler
+	EventRouteConfig func(string, string, string) (string, string)
+	RuntimeConfig    *appRuntimeConfig
+	DeploymentFence  *deploymentfence.Service
 	// Langfuse is the LLM trace exporter shared by the inbound coordinator,
 	// the scene memory flusher, and the agent task lifecycle. Nil disables
 	// every export.
@@ -527,12 +529,23 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		dwsclient.SetIdentityProvider(&dwsidentity.Provider{Links: queries})
 		h.FCE2BLauncher.Runner = service.NewFCE2BRolloutRunner(opts.RuntimeConfig.fcE2BSDKRollout)
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
+		h.EventRouteConfig = opts.RuntimeConfig.eventRouteConfig
+		h.EventReceiptVerificationEnabled = os.Getenv("MULTICA_EVENT_RECEIPT_VERIFY") == "1" && opts.RuntimeConfig.current().Web.PublicURL == "https://pre-fde-workbench.dingtalk.com"
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
 		h.FCE2BLauncher.ConfigProvider = opts.RuntimeConfig.fce2b
 		h.TaskService.RuntimeStartRecoveryConfig = func() service.RuntimeStartRecoveryConfig {
 			return opts.RuntimeConfig.quickWins()
 		}
 	}
+	if opts.EventRouteConfig != nil {
+		h.EventRouteConfig = opts.EventRouteConfig
+	}
+	if opts.DeploymentFence != nil {
+		h.EventRouteReady = func(ctx context.Context) (bool, error) {
+			return opts.DeploymentFence.AllLiveReplicasSupport(ctx, eventrouter.ReplicaMarker)
+		}
+	}
+
 	h.FCE2BLauncher.SetSandboxRelaySigner(opts.SandboxRelaySigner)
 	asbRuntime, err := service.NewASBEnterpriseRuntimeFromConfig(
 		queries,
@@ -1050,6 +1063,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	h.SceneMemoryStore = scenememory.NewStore(queries)
 	coordinator.SceneMemory = h.SceneMemoryStore
+	coordinator.SetSceneLookup(handler.CoordinatorSceneLookup(h))
 	sceneFlusher := &scenememory.MemoryFlusher{
 		Store: h.SceneMemoryStore,
 		History: scenememory.NewDWSRangeReader(scenememory.DWSRangeConfig{
@@ -1083,7 +1097,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		return opts.DeploymentFence.Snapshot().State == deploymentfence.StateNormal
 	})
 	channelRouter.SetInboundCoordinator(coordinator)
-	channelRouter.SetSceneAssociator(h.Assoc)
+	channelRouter.SetSceneAssociator(h)
 	// So an inbound DingTalk/Slack/Lark message appears in a web client
 	// watching the same chat without a reload: the engine writes through the
 	// service layer and inherits no handler broadcast of its own.
@@ -2304,6 +2318,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/agents/{agentId}/connections/start", h.StartContextConfigConnection)
 			r.Put("/agents/{agentId}/prompts", h.PutContextConfigPrompts)
 			r.Put("/agents/{agentId}/mcp-config", h.PutContextConfigMCPConfig)
+			// Scene routines (例行任务) of a group or 1:1 chat scene.
+			r.Get("/agents/{agentId}/routines", h.ListContextConfigRoutines)
+			r.Post("/agents/{agentId}/routines", h.CreateContextConfigRoutine)
+			r.Patch("/agents/{agentId}/routines/{routineId}", h.UpdateContextConfigRoutine)
+			r.Delete("/agents/{agentId}/routines/{routineId}", h.DeleteContextConfigRoutine)
+			r.Post("/agents/{agentId}/routines/{routineId}/run", h.RunContextConfigRoutine)
+			r.Post("/agents/{agentId}/routines/{routineId}/rotate-webhook", h.RotateContextConfigRoutineWebhook)
 		})
 		r.With(handler.RequireHumanActor).Get("/api/dingtalk/jsapi-config", h.GetDingTalkJSAPIConfig)
 		r.With(handler.RequireHumanActor).Post("/api/client-usage", h.UpsertClientUsage)
@@ -2333,6 +2354,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// session_id or agent_id, then enforce membership and Agent permissions in
 		// the handler, so generic MCP clients need no custom workspace header.
 		r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
+		// config-qwen-tag-scene: one task's current scene, bound by the scene
+		// token in the path (task token only).
+		r.Handle("/api/scene-config/mcp/{sceneToken}", http.HandlerFunc(h.SceneConfigMCP))
 		r.Post("/api/internal-connectors/{connectorId}/mcp", h.CallInternalConnector)
 		r.Post("/api/mcp/workspaces/{workspaceId}", h.WorkspaceMCP)
 		r.Handle("/api/runner-mcp", http.HandlerFunc(h.RunnerMCP))
@@ -2427,6 +2451,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/test", h.TestInternalConnector)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/oauth/start", h.StartInternalConnectorOAuth)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/internal-connectors/{connectorId}/tools/refresh", h.RefreshInternalConnectorTools)
+					r.Route("/connector-apps", func(r chi.Router) {
+						r.Get("/", h.ListConnectorApps)
+						r.Post("/", h.CreateConnectorApp)
+						r.Post("/resolve", h.ResolveConnectorApp)
+						r.Route("/{appId}", func(r chi.Router) {
+							r.Get("/", h.GetConnectorApp)
+							r.Patch("/", h.UpdateConnectorApp)
+							r.Delete("/", h.DeleteConnectorApp)
+							r.Post("/instances", h.CreateConnectorAuthInstance)
+							r.Patch("/instances/{instanceId}", h.UpdateConnectorAuthInstance)
+							r.Delete("/instances/{instanceId}", h.DeleteConnectorAuthInstance)
+							r.Put("/instances/{instanceId}/bindings", h.ReplaceConnectorAuthBindings)
+						})
+					})
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Get("/connector-catalog", h.ListConnectorCatalog)
 					r.With(handler.RequireWorkspaceMCPHumanIssuer).Post("/connector-catalog/{slug}", h.AddCatalogConnector)
 					r.Get("/dingtalk/users/search", h.SearchDingTalkUsers)
@@ -2876,6 +2914,22 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Delete("/reactions", h.RemoveReaction)
 			})
 
+			// The workspace Tag: one multi-tenant digital employee per
+			// workspace. Creating, hiding and removing it is reserved to
+			// platform operators; tenants and applies follow the template
+			// agent's manage rights.
+			r.Route("/api/tag", func(r chi.Router) {
+				r.Get("/", h.GetTag)
+				r.With(handler.RequireHumanActor).Post("/", h.CreateTag)
+				r.With(handler.RequireHumanActor).Patch("/", h.UpdateTag)
+				r.With(handler.RequireHumanActor).Delete("/", h.DeleteTag)
+				r.With(handler.RequireHumanActor).Post("/tenants", h.CreateTagTenant)
+				r.With(handler.RequireHumanActor).Post("/tenants/adopt", h.AdoptTagTenant)
+				r.With(handler.RequireHumanActor).Patch("/tenants/{tenantId}", h.RenameTagTenant)
+				r.With(handler.RequireHumanActor).Delete("/tenants/{tenantId}", h.DeleteTagTenant)
+				r.With(handler.RequireHumanActor).Post("/apply", h.ApplyTag)
+			})
+
 			// Agents
 			r.Get("/api/agent-schema", h.DownloadAgentSchema)
 			r.Route("/api/agents", func(r chi.Router) {
@@ -2915,20 +2969,23 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/restore", h.RestoreAgent)
 					r.Post("/cancel-tasks", h.CancelAgentTasks)
 					r.Get("/event-batches", h.ListAgentEventBatches)
+					r.With(handler.RequireHumanActor).Get("/event-ingress", h.GetAgentEventIngress)
+					r.With(handler.RequireHumanActor).Get("/event-receipts", h.ListAgentEventReceipts)
+					r.With(handler.RequireHumanActor).Post("/event-receipts/{receiptId}/verify", h.VerifyAgentEventReceipt)
 					r.Post("/event-batches/{batchId}/retry", h.RetryAgentEventBatch)
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/coordinator-sessions", h.ListAgentCoordinatorSessions)
 					r.Get("/coordinator-conversations", h.ListAgentCoordinatorConversations)
 					r.Get("/coordinator-conversations/{sessionId}/messages", h.ListAgentCoordinatorConversationMessages)
 					r.Get("/scene-memory", h.ListAgentSceneMemory)
-					r.Get("/scene-memory/{memoryId}", h.GetAgentSceneMemory)
-					r.Put("/scene-memory/{memoryId}", h.UpdateAgentSceneMemory)
-					r.Post("/scene-memory/{memoryId}/reset", h.ResetAgentSceneMemory)
-					r.Post("/scene-memory/{memoryId}/relations/clear", h.ClearAgentSceneRelations)
+					r.Get("/scene-memory/{sceneId}", h.GetAgentSceneMemory)
+					r.Put("/scene-memory/{sceneId}", h.UpdateAgentSceneMemory)
+					r.Post("/scene-memory/{sceneId}/reset", h.ResetAgentSceneMemory)
+					r.Post("/scene-memory/{sceneId}/relations/clear", h.ClearAgentSceneRelations)
 					// Scene and personal capability layers: offer catalog and
 					// read-only scope summaries (docs/context-capabilities.md).
 					r.With(handler.RequireHumanActor).Get("/context-capabilities", h.GetAgentContextCapabilities)
-					r.With(handler.RequireHumanActor).Put("/context-capabilities/offers", h.PutAgentContextCapabilityOffers)
+					r.With(handler.RequireHumanActor, h.RefuseTagEmployeeConfigWrites).Put("/context-capabilities/offers", h.PutAgentContextCapabilityOffers)
 					// Official apps of the agent's 连接器 tab (连接应用): status,
 					// usage and tools per app. Read-only; actions use the
 					// catalog, connector, offer and credential routes.
@@ -2952,14 +3009,20 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/credentials", h.DeleteAgentContextCredential)
 					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/connections/start", h.StartAgentContextConnection)
 					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/grants", h.RevokeAgentContextGrants)
+					r.With(handler.RequireHumanActor).Get("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines", h.ListAgentContextRoutines)
+					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines", h.CreateAgentContextRoutine)
+					r.With(handler.RequireHumanActor).Patch("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}", h.UpdateAgentContextRoutine)
+					r.With(handler.RequireHumanActor).Delete("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}", h.DeleteAgentContextRoutine)
+					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/run", h.RunAgentContextRoutine)
+					r.With(handler.RequireHumanActor).Post("/tenants/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/rotate-webhook", h.RotateAgentContextRoutineWebhook)
 					r.Get("/skills", h.ListAgentSkills)
-					r.Put("/skills", h.SetAgentSkills)
-					r.Post("/skills/add", h.AddAgentSkills)
+					r.With(h.RefuseTagEmployeeConfigWrites).Put("/skills", h.SetAgentSkills)
+					r.With(h.RefuseTagEmployeeConfigWrites).Post("/skills/add", h.AddAgentSkills)
 					// Which DSH plugins this agent boots with. The daemon
 					// composes these into the profile the sandbox builds.
 					r.Get("/dsh-plugins", h.ListAgentDshPlugins)
 					r.With(handler.RequireHumanActor).Get("/dsh-plugins/{pluginId}/config", h.GetAgentDshPluginConfig)
-					r.With(handler.RequireHumanActor).Put("/dsh-plugins/{pluginId}/config", h.UpdateAgentDshPluginConfig)
+					r.With(handler.RequireHumanActor, h.RefuseTagEmployeeConfigWrites).Put("/dsh-plugins/{pluginId}/config", h.UpdateAgentDshPluginConfig)
 					r.With(handler.RequireHumanActor).Get("/dsh-profile", h.GetDSHProfile)
 					r.With(handler.RequireHumanActor).Post("/dsh-profile", h.PrepareDSHProfile)
 					r.With(handler.RequireHumanActor).Post("/dsh-profile/retry", h.RetryDSHProfileBuild)
@@ -2967,8 +3030,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Post("/dsh-home", h.EnsureDSHHome)
 					r.With(handler.RequireHumanActor).Get("/filesystem", h.GetDSHHome)
 					r.With(handler.RequireHumanActor).Post("/filesystem", h.EnsureDSHHome)
-					r.Put("/dsh-plugins", h.SetAgentDshPlugins)
-					r.Delete("/dsh-plugins/{pluginId}", h.RemoveAgentDshPlugin)
+					r.With(h.RefuseTagEmployeeConfigWrites).Put("/dsh-plugins", h.SetAgentDshPlugins)
+					r.With(h.RefuseTagEmployeeConfigWrites).Delete("/dsh-plugins/{pluginId}", h.RemoveAgentDshPlugin)
 					// OKRs materialize as workspace labels the agent tags
 					// issues with; the catalog is injected into its prompt.
 					r.Get("/okrs", h.ListAgentOKRs)
@@ -2976,9 +3039,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/labels", h.ListLabelsForAgent)
 					r.Post("/labels", h.AttachLabelToAgent)
 					r.Delete("/labels/{labelId}", h.DetachLabelFromAgent)
-					r.Put("/skills/{skillId}/enabled", h.SetAgentSkillEnabled)
-					r.Put("/runtime-skills/enabled", h.SetAgentRuntimeSkillEnabled)
-					r.Delete("/skills/{skillId}", h.RemoveAgentSkill)
+					r.With(h.RefuseTagEmployeeConfigWrites).Put("/skills/{skillId}/enabled", h.SetAgentSkillEnabled)
+					r.With(h.RefuseTagEmployeeConfigWrites).Put("/runtime-skills/enabled", h.SetAgentRuntimeSkillEnabled)
+					r.With(h.RefuseTagEmployeeConfigWrites).Delete("/skills/{skillId}", h.RemoveAgentSkill)
 					r.Route("/a2a", func(r chi.Router) {
 						r.Use(handler.RequireHumanActor)
 						r.Get("/", h.GetAgentA2AConfig)
@@ -2998,7 +3061,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// activity_log. See MUL-2600, MUL-5438 and
 					// internal/handler/agent_env.go.
 					r.Get("/env", h.GetAgentEnv)
-					r.Put("/env", h.UpdateAgentEnv)
+					r.With(h.RefuseTagEmployeeConfigWrites).Put("/env", h.UpdateAgentEnv)
 					r.With(handler.RequireHumanActor).Get("/runner-bindings", h.ListAgentRunnerBindings)
 					r.With(handler.RequireHumanActor).Put("/runner-mount", h.MountAgentRunnerMachine)
 					r.With(handler.RequireHumanActor).Post("/runner-pairings", h.CreateAgentRunnerPairing)

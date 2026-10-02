@@ -128,7 +128,7 @@ WHERE workspace_id=$1 AND agent_id=$2 AND status='running' AND lease_expires_at>
 type CountActiveTasksForConversationParams struct {
 	WorkspaceID    pgtype.UUID `json:"workspace_id"`
 	AgentID        pgtype.UUID `json:"agent_id"`
-	ConversationID string      `json:"conversation_id"`
+	SceneID        string      `json:"scene_id"`
 	StaleAfterSecs float64     `json:"stale_after_secs"`
 }
 
@@ -163,7 +163,7 @@ WHERE assoc_edge.workspace_id=$1
     (assoc_edge.dst_type='scene' AND assoc_edge.dst_id=$3)
     OR (assoc_edge.src_type='scene' AND assoc_edge.src_id=$3)
   )`+sceneInFlightTaskPredicate,
-		arg.WorkspaceID, arg.AgentID, arg.ConversationID, arg.StaleAfterSecs)
+		arg.WorkspaceID, arg.AgentID, arg.SceneID, arg.StaleAfterSecs)
 	var n int64
 	err := row.Scan(&n)
 	return n, err
@@ -172,7 +172,7 @@ WHERE assoc_edge.workspace_id=$1
 type CountActiveDelegatorTasksForConversationParams struct {
 	WorkspaceID    pgtype.UUID `json:"workspace_id"`
 	AgentID        pgtype.UUID `json:"agent_id"`
-	ConversationID string      `json:"conversation_id"`
+	SceneID        string      `json:"scene_id"`
 	StaleAfterSecs float64     `json:"stale_after_secs"`
 	PersonKeys     []string    `json:"person_keys"`
 }
@@ -279,7 +279,7 @@ WHERE scene_edge.workspace_id=$1
         )
     )
   )`+sceneInFlightTaskPredicate,
-		arg.WorkspaceID, arg.AgentID, arg.ConversationID, arg.StaleAfterSecs, arg.PersonKeys)
+		arg.WorkspaceID, arg.AgentID, arg.SceneID, arg.StaleAfterSecs, arg.PersonKeys)
 	var n int64
 	err := row.Scan(&n)
 	return n, err
@@ -305,7 +305,7 @@ WHERE assoc_edge.workspace_id=$1
     (assoc_edge.dst_type='scene' AND assoc_edge.dst_id=$3)
     OR (assoc_edge.src_type='scene' AND assoc_edge.src_id=$3)
   )`,
-		arg.WorkspaceID, arg.AgentID, arg.ConversationID)
+		arg.WorkspaceID, arg.AgentID, arg.SceneID)
 	var n int64
 	err := row.Scan(&n)
 	return n, err

@@ -1062,9 +1062,15 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 					`DELETE FROM context_connector_credential WHERE workspace_id=$1`,
 					`DELETE FROM context_capability_binding WHERE workspace_id=$1`,
 					`DELETE FROM agent_scene_config WHERE workspace_id=$1`,
+					`DELETE FROM agent_scene_memory WHERE workspace_id=$1`,
+					`DELETE FROM agent_scene WHERE workspace_id=$1`,
 					`DELETE FROM context_scope_mcp_config WHERE workspace_id=$1`,
 					`DELETE FROM context_prompt_component WHERE workspace_id=$1`,
+					`DELETE FROM context_scope_routine WHERE workspace_id=$1`,
 					`DELETE FROM agent_tenant WHERE workspace_id=$1`,
+					`DELETE FROM tag_config_revision WHERE workspace_id=$1`,
+					`DELETE FROM tag_tenant WHERE workspace_id=$1`,
+					`DELETE FROM workspace_tag WHERE workspace_id=$1`,
 				} {
 					if _, err := tx.Exec(ctx, statement, requester.WorkspaceID); err != nil {
 						return err
@@ -1074,11 +1080,14 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
-			// Official app OAuth tables (pending states, DCR client
-			// registrations) have no FKs; sweep them explicitly.
+			// Connector app rows and official OAuth state have no foreign
+			// keys. Bindings and instances go before the application row.
 			name: "delete connector OAuth state",
 			run: func() error {
 				for _, statement := range []string{
+					`DELETE FROM connector_auth_binding WHERE workspace_id=$1`,
+					`DELETE FROM connector_auth_instance WHERE workspace_id=$1`,
+					`DELETE FROM connector_app WHERE workspace_id=$1`,
 					`DELETE FROM connector_oauth_state WHERE workspace_id=$1`,
 					`DELETE FROM connector_oauth_client WHERE workspace_id=$1`,
 				} {

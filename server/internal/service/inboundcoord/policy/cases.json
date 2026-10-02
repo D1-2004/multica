@@ -1644,6 +1644,16 @@
       "context_b": "同一 Agent 关闭原生订阅，或身份换绑到别的账号之后，再收到这条消息",
       "expected_effects": "前者只由原生入口建窗回复，Router 投递在受理前静默关闭且不回复；后者只由 Router 入口处理，原生事件确认后丢弃；任何时候一条消息只有一个入口处理，账号不会无人认领",
       "verification": "not_run"
+    },
+    {
+      "id": "f01_native_backlog_not_answered",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "原生事件流连上后 DWS 补推积压：消息发送于本 Agent 为该账号开启原生订阅之前（换绑或订阅关闭期间），或送达时已超过 10 分钟",
+      "context_b": "同一会话里事件流短暂断开（重连、滚动发布）后几分钟内补到的消息，以及开启订阅之后新发的消息",
+      "expected_effects": "前者确认并丢弃（sent_before_subscription / stale_message），不建 Coordinator 窗口、不回复；后者正常入窗回复；这是投递层新鲜度规则，不作为对话延续的时间阈值",
+      "verification": "not_run"
     }
   ]
 }

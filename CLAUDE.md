@@ -240,10 +240,24 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 
 ## Domain Reminders
 
+- Provider event admission (`docs/event-scene-router.md`): `internal/eventrouter`
+  persists one `scene_event_receipt` envelope/routing receipt per owner/source/id before
+  scene business handling. Host supplies authenticated owner/principal/tenant;
+  payload actors or SceneRefs grant no authority. Resolve once via `scene.Resolve`,
+  retain route/ref on retries and fence the current tenant at entry. Unknown
+  locators are unmapped, never guessed. `runtime.event_scene_router` selects exact
+  workspace/agent/tenant triples and defaults off; no dual handling. EmployeeLoop,
+  Task execution and connector binding models are outside this layer.
+
 - Workspace shared disk and the employee private disk are separate stores. The shared-disk grant does not change `/mnt/multica` or the DSH profile. See `docs/workspace-storage-boundaries.md`.
 
 - Before any Coordinator-related change in `inboundcoord`, handlers/dispatch/callbacks, assoc, scenememory, or trace, read `docs/inbound-coordinator-loop.md` (current behavior contract) and `server/internal/service/inboundcoord/policy/registry.json` (versioned obligations, modules, and superseded incident safeguards). Update source mapping, relevant tool/Host contracts, contrast cases, and evidence status together; run `python3 scripts/check-coordinator-policy.py`. Historical Plans are evidence, not a competing current contract.
 
+- Agent work scene (`scene_id`, `docs/agent-scene.md`) is the ONE scene identity: one agent + tenant org + kind (`group` / `dm` / `enterprise`) + stable scene instance → one server-minted `scene_id` in `agent_scene`. These are hard rules:
+  - Association graph scene nodes, `assoc_event.scene_id`, scene configuration (`scope_type='scene'` scope keys, `extra_scene_key`), Scene Memory (`agent_scene_memory`), Coordinator jobs and task context (`agent_scene` = `scene.Ref`), outbound reply targets and every new event carry the `scene_id`. Never key anything per scene by openConversationId, staffId, UID, chat title, message id or session id. A 1:1 chat is keyed by its conversation, never by its person; the person scope (staffId) is personal configuration, not a scene.
+  - Register or find a scene only through `scene.Resolve` / `scene.Lookup` in `server/internal/scene`, with the tenant org from trusted data only: the org the dispatch recorded for the agent (else its identity org), and only while the agent serves that org (identity org or a created tenant). Unknown kinds are rejected; a kind is never guessed (no defaults, no "not a group, so dm"). Provider calls read the external id back from the directory; a `scene_id` is never sent as a conversation id.
+  - Future event sources (calendar, approvals, documents, other providers) build a typed `scene.Locator` from trusted data, resolve once at admission, persist `scene.Ref`, and apply the use-time fence (`scene.CheckTenant` / directory lookup in the current org) before reading private state or sending. Resource events without a conversation use the enterprise scene. A new kind needs a constant, a widened `agent_scene_kind_check` migration and tests (`docs/agent-scene.md` §9).
+  - `assoc_scene` and `scene_memory` are retired: no business reads, writes, dual writes or fallbacks (workspace deletion still cleans them up). API responses expose `scene_id`; `scene_key` and `memory_id` carry the same id, `conversation_id` is for display only.
 - All queries filter by `workspace_id`; membership gates access; `X-Workspace-ID` selects the workspace.
 - Issue assignees are polymorphic: `assignee_type` plus `assignee_id` can reference a member or an agent.
 - Coordinator Scene Memory e2e plays and next-turn SLS checks: `docs/plans/2026-09-02-coordinator-scene-memory-e2e.md`. How to send/query: skill `scene-memory-e2e`.
