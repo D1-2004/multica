@@ -1,5 +1,5 @@
 ALTER TABLE task_completion_outbox
-    DROP CONSTRAINT task_completion_outbox_execution_status_check;
+    DROP CONSTRAINT IF EXISTS task_completion_outbox_execution_status_check;
 
 ALTER TABLE task_completion_outbox
     ADD CONSTRAINT task_completion_outbox_execution_status_check
