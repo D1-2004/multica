@@ -2,6 +2,7 @@ package langfuse
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,7 @@ func mustJSON(t *testing.T, v any) string {
 func TestParseExchangeChatCompletionJSON(t *testing.T) {
 	request := `{"model":"qwen3.7-plus","messages":[{"role":"system","content":"s"},{"role":"user","content":"hi"}],"temperature":0.3,"max_completion_tokens":512,"tools":[{"type":"function","function":{"name":"assoc_recall"}}],"tool_choice":"required"}`
 	response := `{"id":"c1","object":"chat.completion","model":"qwen3.7-plus-0903","choices":[{"index":0,"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"assoc_recall","arguments":"{\"since\":\"48h\"}"}}]}}],"usage":{"prompt_tokens":120,"completion_tokens":30,"total_tokens":150,"prompt_tokens_details":{"cached_tokens":100}}}`
-	ex := ParseExchange([]byte(request), []byte(response))
+	ex := ParseExchange([]byte(request), []byte(response), false)
 	if ex.API != "chat.completions" || ex.Model != "qwen3.7-plus-0903" || ex.Streamed {
 		t.Fatalf("exchange = %+v", ex)
 	}
@@ -55,7 +56,7 @@ func TestParseExchangeChatCompletionSSE(t *testing.T) {
 		`data: [DONE]`,
 		``,
 	}, "\n")
-	ex := ParseExchange([]byte(request), []byte(response))
+	ex := ParseExchange([]byte(request), []byte(response), false)
 	if !ex.Streamed || ex.API != "chat.completions" || ex.FinishReason != "tool_calls" {
 		t.Fatalf("exchange = %+v", ex)
 	}
@@ -81,7 +82,7 @@ func TestParseExchangeResponsesSSE(t *testing.T) {
 		`data: {"type":"response.completed","response":{"id":"r1","status":"completed","model":"gpt-5.6-codex","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial done"}]}],"usage":{"input_tokens":50,"output_tokens":20,"total_tokens":70,"input_tokens_details":{"cached_tokens":40},"output_tokens_details":{"reasoning_tokens":8}}}}`,
 		``,
 	}, "\n")
-	ex := ParseExchange([]byte(request), []byte(response))
+	ex := ParseExchange([]byte(request), []byte(response), false)
 	if ex.API != "responses" || ex.Model != "gpt-5.6-codex" || ex.FinishReason != "completed" {
 		t.Fatalf("exchange = %+v", ex)
 	}
@@ -117,7 +118,7 @@ func TestParseExchangeAnthropicSSE(t *testing.T) {
 		`event: message_stop`,
 		`data: {"type":"message_stop"}`,
 	}, "\n")
-	ex := ParseExchange([]byte(request), []byte(response))
+	ex := ParseExchange([]byte(request), []byte(response), false)
 	if ex.API != "anthropic.messages" || ex.FinishReason != "tool_use" || !ex.Streamed {
 		t.Fatalf("exchange = %+v", ex)
 	}
@@ -135,27 +136,98 @@ func TestParseExchangeAnthropicSSE(t *testing.T) {
 
 func TestParseExchangeAnthropicJSON(t *testing.T) {
 	response := `{"id":"m2","type":"message","role":"assistant","model":"claude-opus-5","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn","usage":{"input_tokens":3,"output_tokens":2,"cache_creation_input_tokens":1}}`
-	ex := ParseExchange([]byte(`{"model":"claude-opus-5","system":"s","messages":[]}`), []byte(response))
+	ex := ParseExchange([]byte(`{"model":"claude-opus-5","system":"s","messages":[]}`), []byte(response), false)
 	if ex.API != "anthropic.messages" || ex.FinishReason != "end_turn" || ex.Usage == nil || ex.Usage.CacheWrite != 1 {
 		t.Fatalf("exchange = %+v usage=%+v", ex, ex.Usage)
 	}
 }
 
 func TestParseExchangeErrorAndFallbacks(t *testing.T) {
-	ex := ParseExchange([]byte(`{"model":"m","messages":[]}`), []byte(`{"error":{"message":"rate limited","type":"rate_limit"}}`))
+	ex := ParseExchange([]byte(`{"model":"m","messages":[]}`), []byte(`{"error":{"message":"rate limited","type":"rate_limit"}}`), false)
 	if ex.Error == nil || !strings.Contains(mustJSON(t, ex.Output), "rate limited") {
 		t.Fatalf("error exchange = %+v", ex)
 	}
-	raw := ParseExchange([]byte("not json"), []byte("<html>bad gateway</html>"))
+	raw := ParseExchange([]byte("not json"), []byte("<html>bad gateway</html>"), false)
 	if raw.API != "unknown" || raw.Input != "not json" || raw.Output != "<html>bad gateway</html>" {
 		t.Fatalf("raw exchange = %+v", raw)
 	}
-	empty := ParseExchange(nil, nil)
-	if empty.Input != nil || empty.Output != nil || empty.ModelParameters != nil {
+	empty := ParseExchange(nil, nil, false)
+	if empty.Input != nil || empty.Output != nil || empty.ModelParameters["tool_capture_status"] != "request_missing" {
 		t.Fatalf("empty exchange = %+v", empty)
 	}
-	stream := ParseExchange([]byte(`{"model":"m","messages":[]}`), []byte("data: {\"error\":{\"message\":\"upstream closed\"}}\n\n"))
+	stream := ParseExchange([]byte(`{"model":"m","messages":[]}`), []byte("data: {\"error\":{\"message\":\"upstream closed\"}}\n\n"), false)
 	if stream.Error == nil || !strings.Contains(mustJSON(t, stream.Output), "upstream closed") {
 		t.Fatalf("stream error exchange = %+v", stream)
+	}
+}
+
+func exchangeTools(count int) []any {
+	tools := make([]any, 0, count)
+	for i := 0; i < count; i++ {
+		tools = append(tools, map[string]any{"type": "function", "function": map[string]any{"name": fmt.Sprintf("scene_tool_%03d", i), "parameters": map[string]any{"type": "object", "properties": map[string]any{"goal": map[string]any{"type": "string"}}}}})
+	}
+	return tools
+}
+func TestParseExchangeKeepsToolNamesBeyondForty(t *testing.T) {
+	ex := ParseExchange([]byte(mustJSON(t, map[string]any{"messages": []any{map[string]any{"role": "user", "content": "exact prompt"}}, "tools": exchangeTools(64)})), nil, false)
+	names, _ := ex.ModelParameters["tool_names"].([]string)
+	if len(names) != 64 || names[63] != "scene_tool_063" {
+		t.Fatalf("names=%d, expected all 64", len(names))
+	}
+	for key, want := range map[string]any{"tools": 64, "tool_names_total": 64, "tool_names_recorded": 64, "tool_names_unresolved": 0, "tool_names_truncated": false, "tool_names_complete": true, "tool_schemas_recorded": false, "tool_schemas_status": "not_exported", "tool_capture_status": "complete"} {
+		if ex.ModelParameters[key] != want {
+			t.Fatalf("%s=%v want %v", key, ex.ModelParameters[key], want)
+		}
+	}
+	if got := mustJSON(t, ex.Input); got != `[{"content":"exact prompt","role":"user"}]` {
+		t.Fatalf("tool details displaced input: %s", got)
+	}
+}
+func TestParseExchangeToolCaptureUnavailableIsExplicit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		request []byte
+		status  string
+	}{{"missing", nil, "request_missing"}, {"broken", []byte(`{"tools":[`), "request_unparseable"}, {"invalid_tools", []byte(`{"messages":[],"tools":"unknown"}`), "tools_invalid"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ex := ParseExchange(tc.request, nil, false)
+			if ex.ModelParameters["tool_capture_status"] != tc.status || ex.ModelParameters["tool_names_complete"] != false || ex.ModelParameters["tool_count_known"] != false {
+				t.Fatalf("unknown tool capture appears complete: %+v", ex.ModelParameters)
+			}
+		})
+	}
+}
+func TestParseExchangeToolNamesBudgetIsExplicit(t *testing.T) {
+	tools := exchangeTools(2)
+	tools = append(tools, map[string]any{"name": strings.Repeat("long_name", 5000)}, map[string]any{"unexpected": "unnamed tool"})
+	ex := ParseExchange([]byte(mustJSON(t, map[string]any{"messages": []any{}, "tools": tools})), nil, false)
+	for key, want := range map[string]any{"tools": 4, "tool_names_total": 3, "tool_names_recorded": 2, "tool_names_unresolved": 1, "tool_names_truncated": true, "tool_names_complete": false} {
+		if ex.ModelParameters[key] != want {
+			t.Fatalf("%s=%v want %v", key, ex.ModelParameters[key], want)
+		}
+	}
+	if raw := encodePayload(ex.ModelParameters); !json.Valid([]byte(raw)) || len(raw) > maxPayloadBytes {
+		t.Fatal("tool list still clips whole parameters attribute")
+	}
+}
+func TestParseExchangeLargeParametersDoNotHideToolInventory(t *testing.T) {
+	ex := ParseExchange([]byte(mustJSON(t, map[string]any{"messages": []any{map[string]any{"content": "prompt unchanged"}}, "tools": exchangeTools(64), "response_format": map[string]any{"json_schema": strings.Repeat("schema", 15000)}})), nil, false)
+	raw := encodePayload(ex.ModelParameters)
+	if !json.Valid([]byte(raw)) || len(raw) > maxPayloadBytes || !strings.Contains(raw, "scene_tool_063") {
+		t.Fatal("large parameter silently clipped tool inventory")
+	}
+	if ex.ModelParameters["model_parameters_truncated"] != true || !strings.Contains(mustJSON(t, ex.ModelParameters["model_parameters_omitted"]), "response_format") {
+		t.Fatal("omitted model parameters are not explicit")
+	}
+	if !strings.Contains(mustJSON(t, ex.Input), "prompt unchanged") {
+		t.Fatal("inventory budget changed messages")
+	}
+}
+
+func TestParseExchangeCountsUnnamedFunctionToolsAsUnresolved(t *testing.T) {
+	request := `{"messages":[],"tools":[{"type":"function","function":{"name":"named"}},{"type":"web_search"},{"type":"function","function":{}},{"type":"function"},null]}`
+	ex := ParseExchange([]byte(request), nil, false)
+	if ex.ModelParameters["tool_names_unresolved"] != 3 || ex.ModelParameters["tool_names_complete"] != false || mustJSON(t, ex.ModelParameters["tool_names"]) != `["named","web_search"]` {
+		t.Fatalf("unnamed function appears resolved: %+v", ex.ModelParameters)
 	}
 }

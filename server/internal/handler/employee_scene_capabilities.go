@@ -43,10 +43,13 @@ func employeeSceneCapabilities(ctx context.Context, h *Handler, job employeeentr
 	}
 	effective, _ := mergeTaskContext(append([]contextcap.ContextLayer{global}, layers...)...)
 	out := employeeCapabilityContext{Prompt: effective.PromptBlock(), Directory: []string{
-		"Capability directory: enabled configuration, not runtime availability or authority. Unlisted/unloaded tools are not proof that a capability is absent. Actual access, credentials and tools are checked by the Direct executor.",
-		"config-qwen-tag-scene: this scene can manage prompts, offered skills/connectors and remote MCP configuration through a Direct task. Use scene_config_get to inspect; dispatch_task for requested management. Never infer inability to manage from foreground tool count.",
-		"For capability introductions or a requested configuration link use describe_capabilities with your answer; Host appends this scene's configuration link. Do not invent or include configuration URLs yourself.",
+		"Internal execution catalog. Skills/connectors/MCP, including DWS/dws-shortcuts, run in background tasks, not this foreground. Configured entries do not prove access; verify when executing. Missing entries do not prove absence.",
+		"For ordinary capability introductions or link-only requests, use this directory and call describe_capabilities on the first model call. Do not call scene_config_get merely for a more accurate introduction; it cannot verify runtime access. Host appends the link; never invent a URL.",
+		"Only use scene_config_get when the user explicitly asks for configuration details (exact switches, stored prompts, or existing routines) not already in context. For explicit configuration questions, preserve exact skill names, switch states, and stored prompt text as requested; answer fully, including when a link is also requested.",
+		"For ordinary introductions, reply like a colleague: normally 1–3 short sentences, not a configuration inventory. Describe useful work, not internal tool names, skill package names, Direct, or configuration fields. Say you can arrange executor work; never claim you can call DWS or shell here. Mention access uncertainty briefly only when material.",
+		"config-qwen-tag-scene supports requested scene prompt/skill/connector/MCP management through dispatch_task. Existing Cron/Webhook settings are configuration only: Employee-triggered execution is unverified; do not advertise or promise it.",
 	}}
+	catalogLimit := len(out.Directory) + 64
 	add := func(label string) { out.Directory = append(out.Directory, label) }
 	for _, kind := range []struct {
 		name, query string
@@ -56,15 +59,15 @@ func employeeSceneCapabilities(ctx context.Context, h *Handler, job employeeentr
 		{"connector", `SELECT name,'','',enabled FROM internal_connector WHERE workspace_id=$1::uuid AND id=$2::uuid`, effective.Connectors},
 	} {
 		for _, resource := range kind.resources {
-			if len(out.Directory) >= 67 {
-				add("Additional capabilities omitted; catalog_complete=false. Omission does not mean unavailable.")
+			if len(out.Directory) >= catalogLimit {
+				add("Additional capabilities omitted; this directory is incomplete. Omission does not mean unavailable.")
 				return out, nil
 			}
 			var name, description, head string
 			var enabled bool
 			err = h.DB.QueryRow(ctx, kind.query, job.Scope.WorkspaceID, resource.ID).Scan(&name, &description, &head, &enabled)
 			if errors.Is(err, pgx.ErrNoRows) {
-				add(kind.name + " metadata unavailable; catalog_complete=false")
+				add(kind.name + " metadata unavailable; this directory is incomplete")
 				continue
 			}
 			if err != nil {
@@ -73,18 +76,25 @@ func employeeSceneCapabilities(ctx context.Context, h *Handler, job employeeentr
 			if kind.name == "skill" {
 				description = inboundcoord.SkillCatalogDescription(description, head)
 			}
-			add(fmt.Sprintf("%s %s: %s [layer=%s; configuration_enabled=%t; runtime_availability=unverified]", kind.name, employeeCatalogLabel(name, 100), employeeCatalogLabel(description, 200), resource.Layer, enabled))
+			status := "disabled in configuration"
+			if enabled {
+				status = "enabled in configuration"
+			}
+			add(fmt.Sprintf("%s %s: %s [%s; background use; access unverified]", kind.name, employeeCatalogLabel(name, 100), employeeCatalogLabel(description, 200), status))
 		}
 	}
 	for _, server := range effective.AppliedMCPServers() {
 		var config struct {
 			Disabled bool `json:"disabled"`
 		}
-		status := "unavailable"
+		status := "configuration unavailable"
 		if json.Unmarshal(server.Config, &config) == nil {
-			status = fmt.Sprint(!config.Disabled)
+			status = "enabled in configuration"
+			if config.Disabled {
+				status = "disabled in configuration"
+			}
 		}
-		add("remote MCP " + employeeCatalogLabel(server.Name, 100) + " [configuration_enabled=" + status + "; runtime_availability=unverified]")
+		add("remote MCP " + employeeCatalogLabel(server.Name, 100) + " [" + status + "; background use; access unverified]")
 	}
 	return out, nil
 }
