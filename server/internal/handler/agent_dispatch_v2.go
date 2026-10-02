@@ -1281,6 +1281,7 @@ func applyTaskInstructionForClaim(
 	segments := composeDispatchInstructionSegments(dispatchInstructionInputs{
 		Stored:                     stored,
 		Present:                    present,
+		EmployeeDirect:             response.DirectTaskPrompt != "",
 		DingTalkContext:            isDingTalkTaskContext(rawContext),
 		Flags:                      flags,
 		Overrides:                  overrides,

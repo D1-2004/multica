@@ -59,6 +59,7 @@ const (
 // needs to reach people, so the dispatch-mode policy, reply-decision fence and
 // short-loop delivery facts would only contradict the follow-up instruction.
 const dispatchExcludedCoordinatorIssue = "coordinator_issue"
+const dispatchExcludedEmployeeDirect = "employee_direct"
 
 // DispatchPromptSegment is one row of the composed instruction, carrying enough
 // for the settings UI to render the real structure: where the text comes from,
@@ -117,6 +118,9 @@ type dispatchInstructionInputs struct {
 	// task carried one at all.
 	Stored  persistedDispatchContext
 	Present bool
+	// EmployeeDirect is set from the validated claim response, never from a
+	// provider event. Its accepted task and result delivery belong to the Host.
+	EmployeeDirect bool
 	// DingTalkContext is broader than Present: a DingTalk stream task has no
 	// dispatch envelope but still gets reply formatting.
 	DingTalkContext bool
@@ -206,10 +210,13 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 	// was already handled by the short loop, so the dispatch-mode policy does not
 	// apply either (see dispatchExcludedCoordinatorIssue).
 	coordinatorIssue := in.Present && in.Stored.CoordinatorIssueFollowUp
-	dispatchApplies := in.Present && !coordinatorIssue
+	dispatchApplies := in.Present && !coordinatorIssue && !in.EmployeeDirect
 	dispatchGateReason := "no_dispatch_context"
 	if coordinatorIssue {
 		dispatchGateReason = dispatchExcludedCoordinatorIssue
+	}
+	if in.EmployeeDirect {
+		dispatchGateReason = dispatchExcludedEmployeeDirect
 	}
 	managedPolicy := ""
 	if dispatchApplies {
@@ -241,7 +248,7 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 	// Facts, not policy: the locators come from the dispatch envelope, so this
 	// segment is composed here rather than configured, and cannot be overridden.
 	conversation := ""
-	if in.Present {
+	if in.Present && !in.EmployeeDirect {
 		conversation = buildDispatchConversationInstruction(in.Stored, in.ResumedSession)
 	}
 	segments = append(segments, DispatchPromptSegment{
@@ -256,7 +263,7 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 		EffectiveText:  conversation,
 	})
 
-	assocApplies := in.Present && in.Stored.Source.Platform == "dingtalk" && in.Stored.Domain == "channel"
+	assocApplies := in.Present && !in.EmployeeDirect && in.Stored.Source.Platform == "dingtalk" && in.Stored.Domain == "channel"
 	segments = append(segments, dispatchSegment(
 		DispatchSegmentSceneGraph, dispatchSegmentSourceBuiltin, dispatchDeliveryRuntimeBrief,
 		dingTalkPolicyInstruction(dispatchSceneGraphInstruction, in.Stored.ResponsePolicy), in.Overrides,
