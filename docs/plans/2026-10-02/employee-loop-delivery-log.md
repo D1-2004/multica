@@ -7,7 +7,7 @@
 | 批次 | 内容 | 状态 |
 | --- | --- | --- |
 | B0 | R2 方案归档；修复新库历史迁移依赖顺序 | 本地验证与两阶段审查通过，准备部署 |
-| B1 | EmployeeTask 目标/追加记录/Run 持久化 | TDD 实施中 |
+| B1 | EmployeeTask 目标/追加记录/Run 持久化 | 真实 PG race 与两阶段审查通过，准备交付 |
 | B2 | Work Packet、Issue/Direct 接缝 | 未实施 |
 | B3 | GawkBot 内核、首轮回复与 3 调用上限 | 未实施 |
 | B4 | 隔离 memory/learning、入口及回报闭环 | 未实施 |
@@ -26,3 +26,19 @@
 后续每批记录确切 commit、测试命令/结果、审查结果、预发实例/发布 SHA、健康与业务验收。未发生的模型、Runtime、真实发送验证保持未完成。
 
 - B0 两阶段审查通过；真实 9540 SQL 在本地事务内执行 down/up 后回滚，约束从 completed/failed 恢复到 completed/failed/canceled。
+
+## B1 本地验证
+
+- 新增 `employeetask` 目标、追加账本、Run/队列映射与可选 Issue 绑定；9600–9609 为独立并发索引迁移，无 FK。
+- 先在已连通并迁移的隔离 schema 中观察 8 项明确行为断言失败，再实现到通过。最终覆盖 12 项顶层用例及 7 项删除竞争子例。
+- `go test -race ./internal/employeetask -count=1 -v`、`go vet ./internal/employeetask` 通过，无跳过。
+- 工作区删除新增真实记录夹具，先复现 Task/entry/Run 残留，再加同事务清理。清理隔离、事务回滚和两个已有工作区用例共 4 项 race 通过。
+- 独立审查发现删除竞争：没有 FK 的新表不会自动获得父行锁。已补全部写入先取 workspace FOR KEY SHARE，并用两连接验证删除先行/写入先行，复审通过。
+- 本机原 55439 是另一个会话的进程，期间关闭。本任务已创建自己的 PostgreSQL 17 cluster `/private/tmp/employee-loop-r2-pg`，端口 55462；重新全量迁移及全部定向测试通过。
+- 本批还没有用户入口、实际派发或运行流量；同 revision retry/完整控制/等待属于后续接线。
+
+## 预发交付进展
+
+- B0 已推送目标分支，commit `685f68c73`；基线同时保留其他人的 `d11fe440b`（FC 场域/触发者复用）。
+- 触发 pipeline 66 / CR 36355253，实例 `3110299956` 后被外部操作取消。新实例 `3110300031` 正在构建，最终验收需核对实际 revision。
+- 预发 DB 直连演练因网络超时未完成；没有执行或提交预发迁移 SQL。正式迁移仅由既有 Aone release order 自动执行；后续以部署及服务日志验证。
