@@ -20,8 +20,8 @@ import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/di
 import { Input } from "@multica/ui/components/ui/input";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { cn } from "@multica/ui/lib/utils";
-import { AppTile, AppTileGrid, StatusPill } from "../agents/components/tabs/connectors-ui";
-import { ConnectorLogo } from "../common/connector-logo";
+import { AppTile, AppTileGrid, StatusPill, type StatusTone } from "../agents/components/tabs/connectors-ui";
+import { ConnectorLogo, ConnectorMark } from "../common/connector-logo";
 import { MAX_BEARER_LENGTH, isValidBearer, useResetOnBackForwardRestore } from "../common/connector-credential";
 import { useT } from "../i18n";
 import type { ContextConfigConnectTarget } from "./context-config-page";
@@ -190,17 +190,11 @@ export function ConnectorsTiles(props: ConnectorsSlotProps) {
       .filter((binding) => binding.resourceType === "connector" && binding.enabled === true)
       .map((binding) => binding.resourceId),
   );
-  const orgEnabledIds = new Set(
-    scopeType === "org"
-      ? []
-      : (detail.org?.bindings ?? [])
-          .filter((binding) => binding.resourceType === "connector" && binding.enabled === true)
-          .map((binding) => binding.resourceId),
-  );
+  // What the enterprise level turns on and holds accounts for applies at
+  // the levels below it.
+  const orgEnabledIds = new Set(scopeType === "org" ? [] : (detail.orgEffect?.connectorIds ?? []));
   const credentialByConnector = new Map(credentials.map((credential) => [credential.connectorId, credential]));
-  const orgCredentialIds = new Set(
-    scopeType === "org" ? [] : (detail.org?.credentials ?? []).map((credential) => credential.connectorId),
-  );
+  const orgCredentialIds = new Set(scopeType === "org" ? [] : (detail.orgEffect?.credentialConnectorIds ?? []));
   const stateOf = (entry: ConnectorEntry) =>
     entryState(
       entry,
@@ -209,35 +203,67 @@ export function ConnectorsTiles(props: ConnectorsSlotProps) {
       entry.id ? (credentialByConnector.get(entry.id) ?? null) : null,
       entry.id !== null && orgCredentialIds.has(entry.id),
     );
+  // The tile's accessible name carries its state, which its content would
+  // otherwise lose.
+  const tileLabel = (entry: ConnectorEntry, state: EntryState) =>
+    [t(($) => $.context_config.app_open_aria, { name: entry.name }), ...entryStatuses(t, entry, state).map((status) => status.text)].join(" · ");
   const shown = entries.find((entry) => entry.key === shownKey) ?? null;
+  // GitHub, Slack and Notion keep a full tile even before anyone opens them;
+  // the other apps not opened for the agent fold into one compact row.
+  const tiles = entries.filter((entry) => entry.id !== null || FEATURED_APP_SLUGS.includes(entry.slug));
+  const more = entries.filter((entry) => entry.id === null && !FEATURED_APP_SLUGS.includes(entry.slug));
+  const open = (key: string) => {
+    setOpenKey(key);
+    setShownKey(key);
+  };
 
   if (entries.length === 0) {
     return <p className="text-caption text-muted-foreground">{t(($) => $.context_config.none)}</p>;
   }
   return (
     <>
-      <AppTileGrid label={t(($) => $.context_config.slot_connectors)}>
-        {entries.map((entry) => (
-          <AppTile
-            key={entry.key}
-            slug={entry.slug}
-            name={entry.name}
-            ariaLabel={t(($) => $.context_config.app_open_aria, { name: entry.name })}
-            onOpen={() => {
-              setOpenKey(entry.key);
-              setShownKey(entry.key);
-            }}
-          >
-            <EntryPills entry={entry} state={stateOf(entry)} />
-          </AppTile>
-        ))}
-      </AppTileGrid>
+      {tiles.length > 0 ? (
+        <AppTileGrid label={t(($) => $.context_config.slot_connectors)}>
+          {tiles.map((entry) => (
+            <AppTile
+              key={entry.key}
+              slug={entry.slug}
+              name={entry.name}
+              ariaLabel={tileLabel(entry, stateOf(entry))}
+              onOpen={() => open(entry.key)}
+            >
+              <EntryPills entry={entry} state={stateOf(entry)} />
+            </AppTile>
+          ))}
+        </AppTileGrid>
+      ) : null}
+      {more.length > 0 ? (
+        <div className="space-y-1.5">
+          <p className="text-caption text-muted-foreground">{t(($) => $.context_config.more_apps)}</p>
+          <ul aria-label={t(($) => $.context_config.more_apps)} className="flex flex-wrap gap-1.5">
+            {more.map((entry) => (
+              <li key={entry.key}>
+                <button
+                  type="button"
+                  onClick={() => open(entry.key)}
+                  aria-label={tileLabel(entry, stateOf(entry))}
+                  className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-caption text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <ConnectorMark slug={entry.slug} className="size-3.5" />
+                  {entry.name}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <ConnectorDialog
         {...props}
         open={openKey !== "" && shown !== null}
         entry={shown}
         state={shown ? stateOf(shown) : null}
         credential={shown?.id ? (credentialByConnector.get(shown.id) ?? null) : null}
+        orgAccount={shown?.id ? orgCredentialIds.has(shown.id) : false}
         shared={
           shown?.id
             ? bindings.some(
@@ -255,32 +281,43 @@ export function ConnectorsTiles(props: ConnectorsSlotProps) {
   );
 }
 
+type AgentsT = ReturnType<typeof useT<"agents">>["t"];
+
+/** The state of a tile in words: whether it applies here, then its account. */
+function entryStatuses(t: AgentsT, entry: ConnectorEntry, state: EntryState): { tone: StatusTone; text: string }[] {
+  if (entry.id === null) return [{ tone: "muted", text: t(($) => $.context_config.status_unavailable) }];
+  const statuses: { tone: StatusTone; text: string }[] = [
+    entry.defaultOn
+      ? { tone: "success", text: t(($) => $.context_config.always_on) }
+      : state.added
+        ? { tone: "success", text: t(($) => $.context_config.status_added) }
+        : state.byOrg
+          ? { tone: "success", text: t(($) => $.context_config.on_for_org) }
+          : { tone: "muted", text: t(($) => $.context_config.status_not_added) },
+  ];
+  if (state.inEffect && state.auth === "unauthorized") {
+    statuses.push({ tone: "warning", text: t(($) => $.context_config.status_unauthorized) });
+  }
+  if (state.inEffect && state.auth === "authorized") {
+    statuses.push({
+      tone: "success",
+      text: state.account
+        ? t(($) => $.context_config.connected_as, { account: state.account })
+        : t(($) => $.context_config.connected),
+    });
+  }
+  return statuses;
+}
+
 function EntryPills({ entry, state }: { entry: ConnectorEntry; state: EntryState }) {
   const { t } = useT("agents");
-  if (entry.id === null) {
-    return <StatusPill tone="muted">{t(($) => $.context_config.status_unavailable)}</StatusPill>;
-  }
   return (
     <>
-      {entry.defaultOn ? (
-        <StatusPill tone="success">{t(($) => $.context_config.always_on)}</StatusPill>
-      ) : state.added ? (
-        <StatusPill tone="success">{t(($) => $.context_config.status_added)}</StatusPill>
-      ) : state.byOrg ? (
-        <StatusPill tone="success">{t(($) => $.context_config.on_for_org)}</StatusPill>
-      ) : (
-        <StatusPill tone="muted">{t(($) => $.context_config.status_not_added)}</StatusPill>
-      )}
-      {state.inEffect && state.auth === "unauthorized" ? (
-        <StatusPill tone="warning">{t(($) => $.context_config.status_unauthorized)}</StatusPill>
-      ) : null}
-      {state.inEffect && state.auth === "authorized" ? (
-        <StatusPill tone="success">
-          {state.account
-            ? t(($) => $.context_config.connected_as, { account: state.account })
-            : t(($) => $.context_config.connected)}
+      {entryStatuses(t, entry, state).map((status) => (
+        <StatusPill key={status.text} tone={status.tone}>
+          {status.text}
         </StatusPill>
-      ) : null}
+      ))}
     </>
   );
 }
@@ -317,6 +354,7 @@ function ConnectorDialog({
   entry,
   state,
   credential,
+  orgAccount,
   shared,
   onClose,
   ...props
@@ -326,6 +364,8 @@ function ConnectorDialog({
   entry: ConnectorEntry | null;
   state: EntryState | null;
   credential: ContextConnectorCredential | null;
+  /** The enterprise level holds an account for it. */
+  orgAccount: boolean;
   shared: boolean;
   onClose: () => void;
 }) {
@@ -413,8 +453,16 @@ function ConnectorDialog({
                   {current.entry.offered && current.state.auth !== "none" ? (
                     <section className="space-y-2">
                       <StepHeading step={2} title={t(($) => $.context_config.step_auth)} />
-                      {current.state.inEffect ? (
-                        <ConnectorAccount {...props} connector={current.entry.offered} credential={credential} />
+                      {/* A stored account stays manageable even when the
+                          connector no longer applies here: it still serves
+                          runs where another level switches it on. */}
+                      {current.state.inEffect || credential ? (
+                        <ConnectorAccount
+                          {...props}
+                          connector={current.entry.offered}
+                          credential={credential}
+                          orgAccount={orgAccount}
+                        />
                       ) : (
                         <p className="text-caption text-muted-foreground">{t(($) => $.context_config.auth_after_add)}</p>
                       )}
@@ -498,6 +546,8 @@ function ShareInGroupsSwitch({
 type AccountProps = ConnectorsSlotProps & {
   connector: ContextOfferedConnector;
   credential: ContextConnectorCredential | null;
+  /** The enterprise level holds an account that serves here. */
+  orgAccount: boolean;
 };
 
 /** The level's own account of a connector in effect here. */
@@ -519,6 +569,7 @@ function OAuthConnectionControl({
   sceneKind,
   connector,
   credential,
+  orgAccount,
   ownerOnly,
   credentialReadOnly: readOnly,
   reportError,
@@ -597,10 +648,12 @@ function OAuthConnectionControl({
         ? t(($) => $.context_config.connected_as, { account: credential.hint })
         : t(($) => $.context_config.connected)
       : t(($) => $.context_config.pat_set, { hint: credential.hint || "••••" })
-    : connector.credentialRequired
-      ? t(($) => $.context_config.connect_required)
-      : t(($) => $.context_config.connect_optional);
-  const missing = !credential && connector.credentialRequired;
+    : orgAccount
+      ? t(($) => $.context_config.account_from_org)
+      : connector.credentialRequired
+        ? t(($) => $.context_config.connect_required)
+        : t(($) => $.context_config.connect_optional);
+  const missing = !credential && !orgAccount && connector.credentialRequired;
 
   return (
     <div className="space-y-2 rounded-md bg-muted/40 px-3 py-2.5">
@@ -741,6 +794,7 @@ function CredentialControl({
   sceneKind,
   connector,
   credential,
+  orgAccount,
   ownerOnly,
   credentialReadOnly: readOnly,
   reportError,
@@ -761,12 +815,14 @@ function CredentialControl({
     }
   };
 
-  const missing = !credential && connector.credentialRequired;
+  const missing = !credential && !orgAccount && connector.credentialRequired;
   const status = credential
     ? t(($) => $.context_config.credential_set, { hint: credential.hint || "••••" })
-    : connector.credentialRequired
-      ? t(($) => $.context_config.credential_required)
-      : t(($) => $.context_config.credential_optional);
+    : orgAccount
+      ? t(($) => $.context_config.account_from_org)
+      : connector.credentialRequired
+        ? t(($) => $.context_config.credential_required)
+        : t(($) => $.context_config.credential_optional);
 
   return (
     <div className="space-y-2 rounded-md bg-muted/40 px-3 py-2.5">

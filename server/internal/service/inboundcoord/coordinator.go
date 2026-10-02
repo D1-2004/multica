@@ -206,9 +206,9 @@ type Decision struct {
 	// TraceTags are the Langfuse trace tags of that turn. A task that joins
 	// the turn's trace repeats them so the trace keeps one consistent tag set.
 	TraceTags []string
-	// configLinkURL is the bearer URL Host appended to the capability answer;
-	// logs and traces replace it. It is not serialized: the reply text in the
-	// checkpoint is what carries the link.
+	// configLinkURL is the DingTalk deep link (carrying the bearer URL) Host
+	// appended to the capability answer; logs and traces replace it. It is
+	// not serialized: the reply text in the checkpoint is what carries it.
 	configLinkURL string
 }
 

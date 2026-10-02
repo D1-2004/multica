@@ -40,7 +40,7 @@ import {
   NativeSelect,
   NativeSelectOption,
 } from "@multica/ui/components/ui/native-select";
-import { Tabs, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
 import { connectorBrandName } from "../common/connector-logo";
 import { SkillIcon } from "../skills/lib/skill-icon";
 import { useT } from "../i18n";
@@ -764,7 +764,7 @@ function LevelTabs({
     >
       <TabsList
         aria-label={t(($) => $.context_config.levels_aria)}
-        className="sticky top-3 w-16 shrink-0 gap-1 sm:w-28"
+        className="sticky top-3 w-[4.75rem] shrink-0 gap-1 sm:w-28"
       >
         {levels.map((level) => (
           <TabsTrigger
@@ -773,11 +773,13 @@ function LevelTabs({
             className="h-auto w-full flex-col gap-1 px-1 py-2 text-caption whitespace-normal group-data-vertical/tabs:justify-center sm:flex-row sm:px-2 sm:text-body sm:group-data-vertical/tabs:justify-start"
           >
             <level.icon className="size-4" />
-            <span className="text-center leading-tight sm:text-left">{level.label}</span>
+            <span className="min-w-0 break-words text-center leading-tight sm:text-left">{level.label}</span>
           </TabsTrigger>
         ))}
       </TabsList>
-      <div className="min-w-0 flex-1">{active.render()}</div>
+      <TabsContent value={active.id} className="min-w-0">
+        {active.render()}
+      </TabsContent>
     </Tabs>
   );
 }
@@ -882,8 +884,8 @@ function BoundScope({
   } else {
     levels.push({
       id: binding.scopeType,
-      label: sceneLabel,
-      icon: MessageCircle,
+      label: binding.scopeType === "person" ? t(($) => $.context_config.level_person) : sceneLabel,
+      icon: binding.scopeType === "person" ? User : MessageCircle,
       render: () => (
         <EmptyState icon={<User className="size-6" />} title={t(($) => $.context_config.scene_no_access)} />
       ),
@@ -1253,15 +1255,8 @@ function ScopeEditor({
   // Skills the enterprise level turned on: they apply here whatever this
   // level's switch says (switches add up across levels).
   const orgEnabledKeys = useMemo(
-    () =>
-      new Set(
-        scopeType === "org"
-          ? []
-          : (detail.org?.bindings ?? [])
-              .filter((binding) => binding.enabled === true)
-              .map((binding) => `${binding.resourceType}:${binding.resourceId}`),
-      ),
-    [detail.org, scopeType],
+    () => new Set(scopeType === "org" ? [] : (detail.orgEffect?.skillIds ?? []).map((id) => `skill:${id}`)),
+    [detail.orgEffect, scopeType],
   );
 
   const markBusy = (key: string, busy: boolean) =>

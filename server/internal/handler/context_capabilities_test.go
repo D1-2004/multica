@@ -175,6 +175,8 @@ type ctxcapAgentDetail struct {
 	Scenes         []contextCapSceneDTO      `json:"scenes"`
 	JSAPIAvailable bool                      `json:"jsapi_available"`
 	Apps           []contextCapCatalogAppDTO `json:"apps"`
+	OrgEffect      *contextCapOrgEffectDTO   `json:"org_effect"`
+	Org            json.RawMessage           `json:"org"`
 }
 
 type ctxcapSceneDetail struct {
@@ -263,6 +265,13 @@ func TestContextCapabilitiesMobileGrantsGateReadsAndWrites(t *testing.T) {
 	ctxcapExpectStatus(t, w, http.StatusForbidden, "bob detail")
 	w = ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+uuid.NewString(), alice, nil)
 	ctxcapExpectStatus(t, w, http.StatusNotFound, "unknown agent")
+	// The enterprise level turns a skill on.
+	if _, err := contextcap.UpsertBinding(context.Background(), testPool, contextcap.BindingWrite{
+		WorkspaceID: testWorkspaceID, AgentID: agentID, ScopeType: contextcap.ScopeOrg, OrgID: ctxcapOrg, ScopeKey: ctxcapOrg,
+		ResourceType: contextcap.ResourceSkill, ResourceID: f.skillScene, Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	w = ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID, alice, nil)
 	ctxcapExpectStatus(t, w, http.StatusOK, "alice detail")
 	for _, forbidden := range []string{"upstream_url", "credential_ref", "safe.example.test", "workspace-secret", "credential_source"} {
@@ -298,6 +307,12 @@ func TestContextCapabilitiesMobileGrantsGateReadsAndWrites(t *testing.T) {
 	}
 	if len(offered) != 3 || !offered[f.scene] || !offered[f.person] || !offered[f.global] || len(detail.Offers.Skills) != 1 || detail.Offers.Skills[0].ID != f.skillScene {
 		t.Fatalf("offers=%+v", detail.Offers)
+	}
+	// A member gets the enterprise level's effect (ids) but not the level.
+	if detail.OrgEffect == nil || len(detail.OrgEffect.SkillIDs) != 1 || detail.OrgEffect.SkillIDs[0] != f.skillScene ||
+		len(detail.OrgEffect.ConnectorIDs) != 0 || len(detail.OrgEffect.CredentialConnectorIDs) != 0 ||
+		(len(detail.Org) != 0 && string(detail.Org) != "null") {
+		t.Fatalf("org effect=%+v org=%s", detail.OrgEffect, detail.Org)
 	}
 	// Every catalog app is listed, in catalog order, opened for the agent or
 	// not.
