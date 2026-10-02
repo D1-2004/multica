@@ -218,6 +218,47 @@ func ReplaceOffers(ctx context.Context, tx DBTX, workspaceID, agentID string, co
 	return nil
 }
 
+// AddOffer offers one connector or skill of the workspace to the agent's
+// scopes (「公开给场域」), keeping the rest of the catalog. It serializes with
+// ReplaceOffers and re-enables a switched-off offer. actorID may be empty.
+func AddOffer(ctx context.Context, tx DBTX, workspaceID, agentID, resourceType, resourceID, actorID string) error {
+	if resourceType != ResourceConnector && resourceType != ResourceSkill {
+		return ErrInvalidInput
+	}
+	id, err := canonicalUUID(resourceID)
+	if err != nil {
+		return err
+	}
+	actor, err := optionalUUID(actorID)
+	if err != nil {
+		return err
+	}
+	if err := LockOffers(ctx, tx, agentID); err != nil {
+		return err
+	}
+	table := "internal_connector"
+	if resourceType == ResourceSkill {
+		table = "skill"
+	}
+	var known bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agent WHERE id = $1::uuid AND workspace_id = $2::uuid)
+		AND EXISTS(SELECT 1 FROM `+table+` WHERE id = $3::uuid AND workspace_id = $2::uuid)`, agentID, workspaceID, id).Scan(&known); err != nil {
+		return err
+	}
+	if !known {
+		return ErrUnknownResource
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO context_capability_binding
+		(workspace_id, agent_id, scope_type, org_id, scope_key, resource_type, resource_id, enabled, created_by, updated_by)
+		VALUES ($1::uuid, $2::uuid, 'offer', '', '', $3::text, $4::uuid, TRUE, $5::uuid, $5::uuid)
+		ON CONFLICT (agent_id, scope_type, org_id, scope_key, resource_type, resource_id)
+		DO UPDATE SET enabled = TRUE, updated_by = EXCLUDED.updated_by, updated_at = now()
+		WHERE context_capability_binding.workspace_id = EXCLUDED.workspace_id
+		  AND NOT context_capability_binding.enabled`,
+		workspaceID, agentID, resourceType, id, actor)
+	return err
+}
+
 // ListScopeBindings returns every binding row (enabled or not) of one scene or
 // person scope. Rows are not filtered by the offer catalog; callers that
 // render them should cross-check ListOffers.

@@ -213,3 +213,17 @@ func TestRoutineRunHistoryUsesReadOnlyForwardingRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestOfficialAppRoutesOnTheConfigurePage(t *testing.T) {
+	add := "/api/context-capabilities/agents/agent/apps/slack"
+	if !BrowserRoute(http.MethodPost, add) || BrowserRoute(http.MethodGet, add) || BrowserRoute(http.MethodDelete, add) {
+		t.Fatal("adding an app is forwarded as POST only")
+	}
+	oauthApp := add + "/oauth-app"
+	if !BrowserRoute(http.MethodGet, oauthApp) || !BrowserRoute(http.MethodPut, oauthApp) || BrowserRoute(http.MethodDelete, oauthApp) {
+		t.Fatal("an app's OAuth application is forwarded as GET and PUT only")
+	}
+	if BrowserRoute(http.MethodPost, "/api/context-capabilities/agents/agent/apps/") || BrowserRoute(http.MethodGet, add+"/other") {
+		t.Fatal("unknown app paths are forwarded")
+	}
+}

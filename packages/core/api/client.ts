@@ -17,6 +17,8 @@ import {
   ContextPromptComponentsResponseSchema,
   ContextRoutineEnvelopeSchema,
   ContextRoutineRunEnvelopeSchema,
+  ContextConfigOAuthAppSchema,
+  AddContextConfigAppResponseSchema,
   ContextRoutineRunsListSchema,
   ContextRoutineWriteSchema,
   ContextRoutinesListSchema,
@@ -54,6 +56,10 @@ import type {
   ContextNodeRef,
   ContextPromptComponent,
   ContextPromptComponentInput,
+  AddContextConfigAppInput,
+  AddContextConfigAppResult,
+  ContextConfigOAuthApp,
+  ContextConfigOAuthAppInput,
   ContextRoutine,
   ContextRoutineInput,
   ContextRoutinePatch,
@@ -4382,6 +4388,54 @@ export class ApiClient {
     );
     return parseWithFallback<ContextConfigSceneDetail | null>(raw, ContextConfigSceneDetailSchema, null, {
       endpoint: "GET /api/context-capabilities/agents/{agentId}/scenes/{sceneId}",
+      includeReceived: false,
+    });
+  }
+
+  /** Adds an official app at a level: the workspace installs it when
+   * missing, the agent offers it, and the level switches it on. null when
+   * the echo is malformed (the caller refetches). */
+  async addContextConfigApp(agentId: string, input: AddContextConfigAppInput): Promise<AddContextConfigAppResult | null> {
+    const body: Record<string, string> = { scope_type: input.scopeType, scope_key: input.scopeKey };
+    if (input.orgId) body.org_id = input.orgId;
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/apps/${encodeURIComponent(input.slug)}`,
+      { method: "POST", body: JSON.stringify(body), headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<AddContextConfigAppResult | null>(raw, AddContextConfigAppResponseSchema, null, {
+      endpoint: "POST /api/context-capabilities/agents/{agentId}/apps/{slug}",
+    });
+  }
+
+  /** An app's OAuth application (agent managers only); null when malformed. */
+  async getContextConfigOAuthApp(agentId: string, slug: string): Promise<ContextConfigOAuthApp | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/apps/${encodeURIComponent(slug)}/oauth-app`,
+      { headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextConfigOAuthApp | null>(raw, ContextConfigOAuthAppSchema, null, {
+      endpoint: "GET /api/context-capabilities/agents/{agentId}/apps/{slug}/oauth-app",
+    });
+  }
+
+  /** Saves an app's OAuth application; omitted secrets keep the stored ones. */
+  async setContextConfigOAuthApp(
+    agentId: string,
+    slug: string,
+    input: ContextConfigOAuthAppInput,
+  ): Promise<ContextConfigOAuthApp | null> {
+    const body: Record<string, string> = { client_id: input.clientId };
+    if (input.clientSecret) body.client_secret = input.clientSecret;
+    if (input.appId) body.app_id = input.appId;
+    if (input.appSlug) body.app_slug = input.appSlug;
+    if (input.privateKey) body.private_key = input.privateKey;
+    if (input.optionalSecret) body.optional_secret = input.optionalSecret;
+    const raw = await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/apps/${encodeURIComponent(slug)}/oauth-app`,
+      { method: "PUT", body: JSON.stringify(body), headers: NO_WORKSPACE_HEADER },
+    );
+    return parseWithFallback<ContextConfigOAuthApp | null>(raw, ContextConfigOAuthAppSchema, null, {
+      endpoint: "PUT /api/context-capabilities/agents/{agentId}/apps/{slug}/oauth-app",
       includeReceived: false,
     });
   }

@@ -221,9 +221,76 @@ export interface ContextConfigOrgScope extends ContextConfigScopeContent {
 }
 
 /** An official app of the connector catalog (GitHub, Notion, ...). */
+/** How an official app's sign-in gets ready: by itself ("automatic":
+ * dynamic registration or a deployment client), after the workspace saves
+ * an OAuth application ("oauth_app"), or not at all ("unsupported"). Unknown
+ * values from a newer backend read as "automatic". */
+export type ContextConfigAppSetup = "automatic" | "oauth_app" | "unsupported";
+
 export interface ContextConfigCatalogApp {
   slug: string;
   name: string;
+  setup: ContextConfigAppSetup;
+  /** A sign-in can start on this deployment now. */
+  ready: boolean;
+}
+
+/** One value of an app's OAuth application (Slack, Asana, GitHub). */
+export interface ContextConfigOAuthAppField {
+  /** "client_id", "client_secret", "app_id", "app_slug", "private_key",
+   * "signing_secret", "webhook_secret", … */
+  key: string;
+  optional: boolean;
+  /** Pasted as a file's content (a private key). */
+  file: boolean;
+}
+
+/** An app's OAuth application as the configure page shows it to the
+ * agent's managers. Secrets are never returned, only whether they are set. */
+export interface ContextConfigOAuthApp {
+  slug: string;
+  name: string;
+  fields: ContextConfigOAuthAppField[];
+  /** Where the OAuth application is created in the provider's console. */
+  docsUrl: string;
+  /** The callback URL to register there. */
+  callbackUrl: string;
+  /** A sign-in can start now. */
+  ready: boolean;
+  clientId: string;
+  clientSecretSet: boolean;
+  appId: string;
+  appSlug: string;
+  privateKeySet: boolean;
+  optionalSecretSet: boolean;
+  /** The deployment provides a client (GitHub App env); saving one here
+   * takes precedence for the workspace. */
+  deploymentClient: boolean;
+}
+
+/** Saves an app's OAuth application; an omitted secret keeps the stored one. */
+export interface ContextConfigOAuthAppInput {
+  clientId: string;
+  clientSecret?: string;
+  appId?: string;
+  appSlug?: string;
+  privateKey?: string;
+  optionalSecret?: string;
+}
+
+/** Adds an official app at a level from the configure page. */
+export interface AddContextConfigAppInput {
+  slug: string;
+  scopeType: ContextWriteScopeType;
+  scopeKey: string;
+  /** Tenant of the scope; omitted or "" means the agent's own org. */
+  orgId?: string;
+}
+
+export interface AddContextConfigAppResult {
+  connectorId: string;
+  /** The agent's own connector: on at every level already. */
+  defaultOn: boolean;
 }
 
 export interface ContextConfigAgentDetail {
@@ -256,6 +323,9 @@ export interface ContextConfigAgentDetail {
    * is usable here only once `global` or `offers` lists its connector;
    * older backends send none. */
   apps: ContextConfigCatalogApp[];
+  /** The caller may save an app's OAuth application on this page (the
+   * agent's managers). */
+  canConfigureApps: boolean;
 }
 
 /** Where the configuration of one scene page lives: the scene itself, a

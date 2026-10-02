@@ -208,6 +208,77 @@ describe("context capability mobile client", () => {
   });
 });
 
+describe("official apps on the configure page", () => {
+  it("adds an app at a level without a workspace header", async () => {
+    const fetch = stubFetch({ connector_id: connectorId, default_on: false });
+    const result = await new ApiClient(base).addContextConfigApp(agentId, {
+      slug: "notion",
+      scopeType: "scene",
+      scopeKey: sceneId,
+      orgId: "dingB",
+    });
+    const { url, init } = requestOf(fetch);
+    expect(url).toBe(`${base}/api/context-capabilities/agents/${agentId}/apps/notion`);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ scope_type: "scene", scope_key: sceneId, org_id: "dingB" });
+    expect(init.headers["X-Workspace-Slug"]).toBe("");
+    expect(result).toEqual({ connectorId, defaultOn: false });
+  });
+
+  it("returns null for a malformed add echo", async () => {
+    stubFetch({ default_on: "yes" });
+    expect(
+      await new ApiClient(base).addContextConfigApp(agentId, { slug: "notion", scopeType: "scene", scopeKey: sceneId }),
+    ).toBeNull();
+  });
+
+  it("reads an OAuth application without secrets and saves only the values given", async () => {
+    const wire = {
+      slug: "slack",
+      name: "Slack",
+      fields: [
+        { key: "client_id", optional: false, file: false },
+        { key: "client_secret", optional: false, file: false },
+        { key: "signing_secret", optional: true, file: false },
+        { optional: true },
+      ],
+      docs_url: "https://api.slack.com/apps",
+      callback_url: "https://fde-workbench.dingtalk.com/api/connectors/oauth/callback",
+      ready: true,
+      client_id: "cid",
+      client_secret_set: true,
+      app_id: "",
+      app_slug: "",
+      private_key_set: false,
+      optional_secret_set: false,
+      deployment_client: false,
+    };
+    stubFetch(wire);
+    const app = await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack");
+    expect(app?.fields.map((field) => field.key)).toEqual(["client_id", "client_secret", "signing_secret"]);
+    expect(app?.callbackUrl).toBe("https://fde-workbench.dingtalk.com/api/connectors/oauth/callback");
+    expect(app?.ready).toBe(true);
+
+    const fetch = stubFetch(wire);
+    await new ApiClient(base).setContextConfigOAuthApp(agentId, "slack", { clientId: "cid", clientSecret: "" });
+    const { url, init } = requestOf(fetch);
+    expect(url).toBe(`${base}/api/context-capabilities/agents/${agentId}/apps/slack/oauth-app`);
+    expect(init.method).toBe("PUT");
+    // An empty secret is left out, so the stored one stays.
+    expect(JSON.parse(String(init.body))).toEqual({ client_id: "cid" });
+  });
+
+  it("reads a malformed OAuth application as null and an unsafe docs URL as none", async () => {
+    stubFetch({ name: "no slug" });
+    expect(await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack")).toBeNull();
+    stubFetch({ slug: "slack", docs_url: "javascript:alert(1)", callback_url: "http://evil.example/cb" });
+    const app = await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack");
+    expect(app?.docsUrl).toBe("");
+    expect(app?.callbackUrl).toBe("");
+    expect(app?.ready).toBe(false);
+  });
+});
+
 describe("context capability admin client", () => {
   it("pins the workspace and replaces offers with snake_case ids", async () => {
     const fetch = stubFetch({ enabled: true, offers: { connector_ids: [connectorId], skill_ids: [] } });
