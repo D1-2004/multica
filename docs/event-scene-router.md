@@ -131,6 +131,18 @@ for an explicit owner inspection of business evidence. Agent actors and other
 members are denied; persisted refs still pass the scene fence. These reads
 do not register a scene, release an unmapped event or replay execution.
 
+For controlled pre-release validation only, `MULTICA_EVENT_RECEIPT_VERIFY=1`
+enables the human manage-gated `POST .../event-receipts/{receiptId}/verify`.
+It loads an existing resolved real-provider receipt, rechecks owner/tenant,
+and runs the deployed admission code on the actual PostgreSQL backend inside
+a transaction that is always rolled back. It verifies immutable replay,
+fingerprint/principal/tenant conflicts and an unknown-locator fault followed
+by a disabled-config retry. No business handler, Task or external send runs.
+The configured public origin must be exactly the pre-release origin; production
+and the default reject the probe. Clear the flag after validation. Report this
+as a contract/fault-injection probe on a real event, separately from actual IM
+delivery, business execution and service restart evidence.
+
 Protocol tests cover native payload preservation, actor/principal separation,
 unknown kinds, version rejection and exact canary targets. PostgreSQL tests
 cover concurrent receipt identity, atomic resolve/receipt, changed-payload

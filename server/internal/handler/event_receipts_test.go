@@ -57,3 +57,42 @@ func TestEventReceiptReadsAreManageAndOwnerScopedDatabase(t *testing.T) {
 		t.Fatal("receipt crossed agent boundary")
 	}
 }
+
+func TestEventReceiptVerificationRollsBackAndNeverExecutesDatabase(t *testing.T) {
+	f := newCoordinatorPlanFixture(t, "real retained fixture")
+	f.h.DB = testPool
+	raw, _ := json.Marshal(f.command)
+	req := newRequest(http.MethodPost, "/dispatch", nil)
+	req.Header.Set("Idempotency-Key", f.baseKey)
+	f.h.EventRouteConfig = func(string, string, string) (string, string) { return eventrouter.Unified, "probe-v1" }
+	f.h.admitDispatchEvent(newBufferedDispatchResponse(), req, raw, &f.command, f.dc)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM scene_event_receipt WHERE agent_id=$1`, f.agent.ID)
+	})
+	router := chi.NewRouter()
+	router.Post("/api/agents/{id}/event-receipts/{receiptId}/verify", f.h.VerifyAgentEventReceipt)
+	path := "/api/agents/" + uuidToString(f.agent.ID) + "/event-receipts/" + f.command.EventReceiptID + "/verify"
+	w := scenesAs(t, router, "", http.MethodPost, path, nil)
+	if w.Code != http.StatusNotFound {
+		t.Fatal("probe enabled by default")
+	}
+	f.h.EventReceiptVerificationEnabled = true
+	w = scenesAs(t, router, "", http.MethodPost, path, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("probe: %d %s", w.Code, w.Body.String())
+	}
+	var result struct {
+		Passed     bool `json:"passed"`
+		RolledBack bool `json:"writes_rolled_back"`
+		Business   bool `json:"business_execution"`
+	}
+	ctxcapDecode(t, w, &result)
+	if !result.Passed || !result.RolledBack || result.Business {
+		t.Fatalf("probe result: %+v", result)
+	}
+	var count int
+	err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM scene_event_receipt WHERE agent_id=$1`, f.agent.ID).Scan(&count)
+	if err != nil || count != 1 {
+		t.Fatal("probe persisted synthetic receipts")
+	}
+}

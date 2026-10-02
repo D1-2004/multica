@@ -530,6 +530,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.FCE2BLauncher.Runner = service.NewFCE2BRolloutRunner(opts.RuntimeConfig.fcE2BSDKRollout)
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
 		h.EventRouteConfig = opts.RuntimeConfig.eventRouteConfig
+		h.EventReceiptVerificationEnabled = os.Getenv("MULTICA_EVENT_RECEIPT_VERIFY") == "1" && opts.RuntimeConfig.current().Web.PublicURL == "https://pre-fde-workbench.dingtalk.com"
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
 		h.FCE2BLauncher.ConfigProvider = opts.RuntimeConfig.fce2b
 		h.TaskService.RuntimeStartRecoveryConfig = func() service.RuntimeStartRecoveryConfig {
@@ -2956,6 +2957,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/event-batches", h.ListAgentEventBatches)
 					r.With(handler.RequireHumanActor).Get("/event-ingress", h.GetAgentEventIngress)
 					r.With(handler.RequireHumanActor).Get("/event-receipts", h.ListAgentEventReceipts)
+					r.With(handler.RequireHumanActor).Post("/event-receipts/{receiptId}/verify", h.VerifyAgentEventReceipt)
 					r.Post("/event-batches/{batchId}/retry", h.RetryAgentEventBatch)
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/coordinator-sessions", h.ListAgentCoordinatorSessions)
