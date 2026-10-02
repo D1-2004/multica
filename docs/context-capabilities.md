@@ -33,7 +33,7 @@ layer wins.
 | Global (智能体, 「通用能力」: on for every tenant and scene) | agent | workspace admin / agent manager | web: agent detail → 配置 → 能力 → 连接器 (official apps: 「通用能力」 switch, set by 添加, no shared account needed; Aone FaaS grants, no offer switch) / Skills (section 「通用能力」) | `internal_connector_agent`, `agent_skill` (existing) |
 | Offer catalog (「公开给场域」) | agent | agent manager | web: agent detail → 配置 → 能力 → 连接器 (official app dialog switch 「公开给场域」, shown only while the app is not a 通用能力; Aone FaaS row switch 「公开给场域」 on offer-only rows) / Skills, section 「公开给场域」 (skills not assigned to the agent) | `context_capability_binding` (`scope_type='offer'`) |
 | Enterprise (企业级, a tenant) | agent + org_id (scope key = org_id) | agent managers, in the web Context Builder; the configure page shows it read-only to everyone who may open the agent there (managers included) | web agent detail → 场域 → tenant → 配置; mobile 场域能力 → 企业能力 (display only) | `agent_tenant` (the tenant), `context_capability_binding` / `context_connector_credential` / `context_scope_mcp_config` / `context_prompt_component` with `scope_type='org'` |
-| Scene (场域: 群聊 or 单聊) | agent + org_id + `scene_id` (the Agent work scene, `docs/agent-scene.md`) | whoever may open it: agent managers (web and configure page), members holding a group's configure link, and the person of a 1:1 chat (through their personal link) | web and mobile `/dingtalk/configure` 场域能力 → 当前会话; web agent detail → 场域 → tenant → 群聊和单聊 → 配置 | `context_capability_binding` (`scope_type='scene'`, `scope_key` = scene_id), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
+| Scene (场域: 群聊 or 单聊) | agent + org_id + `scene_id` (the Agent work scene, `docs/agent-scene.md`) | whoever may open it: agent managers (web and configure page), members holding the conversation's configure link (a group's or a 1:1 chat's, minted the same way, §5) | web and mobile `/dingtalk/configure` 场域能力 → 当前会话; web agent detail → 场域 → tenant → 群聊和单聊 → 配置 | `context_capability_binding` (`scope_type='scene'`, `scope_key` = scene_id), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
 | Personal (个人) | agent + org_id + staffId | that DingTalk person only; agent managers only view it | web and mobile `/dingtalk/configure` 场域能力 → 个人能力; web agent detail → 场域 → tenant → 个人 → 配置 | `context_capability_binding` (`scope_type='person'`), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
 
 - Resources are library items only: `resource_type='connector'` (an
@@ -207,10 +207,10 @@ scene list does not cover (no registered scene: no openConversationId,
 another DingTalk org or robot endpoint) and Scene Memory of another org's
 scenes stay reachable. On the configure page a 1:1 chat scene is labelled
 「单聊 · {title}」 and edited like a group: agent managers and its person
-(through the personal link) change it (§5 "Who may change what"). A page
-opened from a personal link opens on that 1:1 chat (当前会话) with the
-person's own settings beside it (个人能力), and its 「例行任务」 tab lists that
-chat's routines.
+(through the chat's configure link) change it (§5 "Who may change what").
+A page opened from a 1:1 chat's link opens on that chat (当前会话), and its
+「例行任务」 tab lists that chat's routines; a personal link stored before
+2026-10-02 still opens the chat beside the person's own settings (个人能力).
 
 ### 1.2 配置 vs 生效 (stored vs applied at runtime)
 
@@ -480,44 +480,41 @@ The mobile page signs in with the existing DingTalk OAuth flow (a normal
 `context_config_grant(user_id, agent_id, org_id, scope_type, scope_key)`.
 
 - Agent-issued link (primary, works without JSAPI signing). The built-in
-  `multica` MCP tool `create_context_config_link` mints a token from the
-  trusted task context of the current run. It is listed only for task tokens,
-  refuses personal access tokens, and requires the
-  calling Agent's own active (`dispatched`/`running`) task. Input
-  `{"scope": "scene" | "person"}` is optional; the default is `person` when the
-  dispatch conversation type is positively 1:1 (`single`, `p2p`, `private`,
-  `direct`, the dispatcher's DM allow-list), otherwise `scene`. Manual reruns
-  cannot mint links (§2):
-  - in a group chat → a scene link bound to (agent, org_id, the group's
-    scene_id, title); it needs the run's scene (§2), so an orgless agent
-    cannot mint one. Anyone who opens it within 30 minutes gets a 30-day
-    scene grant (it was posted in the group, so its readers are group
-    members);
-  - in a 1:1 chat → a personal link bound to (agent, org_id, sender staffId).
-    Single use, 15 minutes, 365-day person grant. A 1:1 chat is also a scene:
-    when the run carries its 1:1 chat's scene (§2), the link stores that
-    scene_id as `extra_scene_key` and redemption also grants that scene for
-    the same 365 days, in the same transaction (only the person takes part
-    in it; the grant lets them view the chat's configuration, which agent
-    managers edit). The scene itself was registered when the chat's message
-    arrived (`docs/agent-scene.md` §4). The first account to
-    redeem a person's link holds that personal scope: while its grant is live,
-    a later personal link for the same person redeemed by a different account
-    answers 409 and stays unconsumed, so a forwarded or leaked link cannot take
-    over (redemptions for one person serialize on an advisory lock). Personal links are only
-    minted in a positively 1:1 conversation, never in a group or a
-    conversation of empty/unknown type (the tool tells the Agent to ask the
-    user to 私聊 it), because everyone there could open them, nor for a merged
-    multi-sender run.
+  `multica` MCP tool `create_context_config_link` (and `scene_connect_link`
+  of config-qwen-tag-scene, §10) mints a token from the trusted task context
+  of the current run. It is listed only for task tokens, refuses personal
+  access tokens, and requires the calling Agent's own active
+  (`dispatched`/`running`) task. It takes no scope: **a group and a 1:1
+  chat get the same link, minted the same way** (PRI-98, 冬翔 2026-10-02):
+  a scene link bound to (agent, org_id, the conversation's scene_id,
+  title). The scene_id is the SceneRef the dispatch resolved from the
+  conversation's openConversationId (`scene.Resolve`, `docs/agent-scene.md`
+  §1, §5) and that still passes the use-time fence (§2); the sender plays
+  no part, so a digital employee's dispatch, which names the sender only by
+  openDingTalkId (no staffId), gets its link like any other. A run without
+  such a scene (no SceneRef, another org, an orgless agent, an A2A run,
+  manual reruns, routine runs) cannot mint one. Anyone who opens the link
+  within 30 minutes gets a 30-day grant of that scene (it was posted in the
+  conversation, so its readers are the conversation's members; in a 1:1
+  chat, the person). The title is the dispatch's conversation title, else
+  the scene directory's.
+  No run mints personal links any more. Until 2026-10-02 a 1:1 chat got a
+  personal link instead (bound to the sender staffId, single use, 15
+  minutes, 365-day person grant, `extra_scene_key` = the chat's scene_id),
+  which a dispatch without a sender staffId could never get. Redemption
+  still honours a stored one by its rules (single use; while a person's
+  grant is live, a different account answers 409 and leaves it unconsumed)
+  until it expires.
   The tool returns (as `structuredContent` and as JSON text)
-  `{url, dingtalk_url, scope, expires_at}`: `url` is
+  `{url, dingtalk_url, scope, scene_kind, expires_at}` (`scope` is always
+  `scene`, `scene_kind` the directory kind, `group` or `dm`): `url` is
   `<app origin>/dingtalk/configure?link=<token>` (app origin = `MULTICA_APP_URL`,
   else `FRONTEND_ORIGIN`), `dingtalk_url` is
   `dingtalk://dingtalkclient/page/link?url=<urlencoded url>&pc_slide=true`
   (`inboundcoord.ConfigLinkDeepLink`). Replies carry a link only as a
-  Markdown link to `dingtalk_url` (`[配置本群能力](dingtalk_url)`), never the
-  bare URL; the Coordinator's capability answer ends with the same Markdown
-  link.
+  Markdown link to `dingtalk_url` (`[配置本群能力](dingtalk_url)`, in a 1:1
+  chat `[配置本单聊能力](dingtalk_url)`), never the bare URL; the
+  Coordinator's capability answer ends with the same Markdown link.
   Tokens are 32 random bytes (base64url) stored only as SHA-256 hashes
   (`context_config_link`, with `source_task_id`). The Coordinator mints the
   same links for its capability answer (「你有哪些能力」,
@@ -533,7 +530,7 @@ The mobile page signs in with the existing DingTalk OAuth flow (a normal
   from them, the failed-run fallback reply reads the task messages back, and
   the task_finished wrap-up compares the sent text with the result to see
   that the reply already went out; members who can see the run can see the
-  link (personal links are single use for 15 minutes and can be revoked).
+  link (it expires after 30 minutes, and its grants can be revoked).
 - JSAPI group picker (secondary). With a person grant for the agent in the
   page's tenant (a verified DingTalk identity; `org_id` names the tenant),
   the page signs `dd.config` through
@@ -598,7 +595,7 @@ of a person scope (their live person grant).
 | Level | Agent manager | The person | Anyone else (configure-link holders) |
 | --- | --- | --- | --- |
 | 企业级 (`org`) | everything | — | nothing, and the configure page does not show the level |
-| 群聊级 / 单聊级 (`scene`: a group or a 1:1 chat) | everything, routines included | everything (the person of a 1:1 chat, through their personal link) | everything (configure-link holders) |
+| 群聊级 / 单聊级 (`scene`: a group or a 1:1 chat) | everything, routines included | everything (the person of a 1:1 chat, through the chat's configure link) | everything (configure-link holders) |
 | 个人级 (`person`) | view only (configure page and admin Context Builder) | everything | — |
 
 Since 2026-10-02 (冬翔: keep permissions simple until people use the
@@ -663,7 +660,7 @@ know) and the tenant org they live in.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/api/context-capabilities/links/redeem` | `{token}` → grant (source `agent_link`); returns `{agent_id, workspace_id, scope_type, scope_key, scope_title, org_id}` (`org_id` is the org the link was minted in; pass it on the next calls when it is not the identity org; for a 1:1 personal link with `extra_scene_key` the grant of that 1:1 chat's scene_id is added as well, §5); 410 when unknown, malformed, expired or (person) already consumed; 409 when a different account already holds that person's live grant. The link and the grant commit in one transaction |
+| POST | `/api/context-capabilities/links/redeem` | `{token}` → grant (source `agent_link`); returns `{agent_id, workspace_id, scope_type, scope_key, scope_title, org_id}` (`org_id` is the org the link was minted in; pass it on the next calls when it is not the identity org; a group's or a 1:1 chat's link grants that conversation's scene; a personal link stored before 2026-10-02 with `extra_scene_key` also grants that 1:1 chat's scene_id, §5); 410 when unknown, malformed, expired or (stored person link) already consumed; 409 when a different account already holds that person's live grant. The link and the grant commit in one transaction |
 | GET | `/api/context-capabilities/agents` | `{agents: [{id, name, avatar_url, workspace_id, access, scopes: [{scope_type, scope_key, scope_title, source, expires_at, org_id}]}]}`: agents with a live grant for the caller under one of the agent's tenant orgs (`access: "grant"`, newest grant first; grants under an org that is not a tenant are left out), then the other non-archived user agents the caller manages (`access: "manager"`, `scopes: []`, by name). An agent both granted and managed is listed once with `access: "manager"` and its grants. Older backends send no `access` (read it as `grant`) |
 | GET | `/api/context-capabilities/agents/{agentId}?org_id=` | `{agent, global: {connectors: [{id, name, catalog_slug}], skills: [{id, name, description}]}, offers: {connectors: [{id, name, tools, accepts_credential, credential_required, catalog_slug, auth_mode, accepts_pat, oauth_available, install_url?}], skills}, apps: [{slug, name}], person: null \| {scope_key, scope_title, source, expires_at, bindings: [B], credentials: [C], rights: R, prompts: [P], mcp_config: M, mcp_config_redacted}, scenes: [{scope_key, scope_title, source, expires_at, kind, org_id}], access, jsapi_available, tenant: null \| {org_id, name, source}, tenants: [{org_id, name, source}], org: null \| {scope_key, scope_title, bindings: [B], credentials: [C], rights: R, can_edit, prompts: [P], mcp_config: M, mcp_config_redacted}}` for one tenant org: `org_id`, else the identity org, else (a caller who does not manage the agent and holds no grant there) the org of the caller's newest grant. `tenant` is that org (null for an agent without a DingTalk identity when none was named), `tenants` the orgs the caller may switch to (every tenant for a manager, else those holding a grant of the caller), `org` its enterprise layer for every caller (rights only for a manager; for anyone else credential hints are blank, the MCP document is withheld, switched-off prompts and the accounts of connectors that are neither offered nor the agent's own are left out; null without a tenant); `can_edit` is `rights.toggle`, kept for older clients. `person.rights` is the person's own (everything). Needs any grant for the agent in that org or managing it (else 403). `access` is `manager` or `grant`. `scenes` lists the granted scenes and, for a manager, every other scene of the agent in that org, groups and 1:1 chats (newest activity first, at most 1000, `source: "manager"`, `expires_at: ""`, titles and kinds from the scene directory; none for an orgless agent). `global.connectors` are the agent's granted, enabled connectors with a ready workspace credential (and, for official apps, discovered tools). `catalog_slug` names the official app (`""` for custom connectors). `auth_mode` is `none`, `bearer` or `oauth`. `accepts_credential` means the connector accepts a pasted token: a Bearer connector, or an official app that allows a PAT. `accepts_pat = auth_mode == 'oauth' && accepts_credential`. `credential_required` means the connector uses a credential (Bearer or OAuth) and has no workspace credential. `oauth_available` means the server can run the app's OAuth sign-in (GitHub needs `GITHUB_APP_CLIENT_ID` and `GITHUB_APP_CLIENT_SECRET`; every app needs the connector credential key and an app origin, the other deployment checks of the start endpoint); the page shows 连接 only for a literal `true` (a missing field from an older backend hides it too) and offers the PAT form when `accepts_pat`. `install_url` is the GitHub App installation page (omitted when there is none). `apps` is the official app catalog in catalog order, opened for the agent or not (the page lists every supported app). `jsapi_available` is true only when H5 signing is configured and the caller has a person grant (the resolve endpoint needs one) |
 | GET | `/api/context-capabilities/agents/{agentId}/scenes/{sceneKey}?org_id=` | `{scene: {scope_key, scope_title, source, expires_at, kind, org_id}, scope: {type, key, title}, bindings: [B], credentials: [C], rights: R, can_connect, prompts: [P], mcp_config: M, mcp_config_redacted}` for one scene, a group or a 1:1 chat: `{sceneKey}` is its scene_id (a conversation id is 400). Scene grant or manager required; a manager without a grant gets `source: "manager"`. `scope` is the scene itself (`{type: "scene", key: <scene_id>, title}`); `bindings`, `credentials`, `prompts` and `mcp_config` are the scene's. `rights` is what the caller may change there (everything for a manager, nothing for a link holder: a group member, or the person of a 1:1 chat); `can_connect` is `rights.connect`, kept for older clients. A caller without `rights.connect` gets the credentials with `hint: ""` (the connected state, `kind` and `updated_at` stay). `kind` comes from the scene directory (an id it does not know is `group`) |

@@ -983,9 +983,9 @@ func contextCapPathParam(r *http.Request, name string) (string, bool) {
 }
 
 // RedeemContextConfigLink redeems an agent-issued configuration link into a
-// grant for the caller. Scene links stay reusable until they expire; person
-// links are consumed atomically by the first redemption. The link and the
-// grant commit together.
+// grant for the caller. Scene links (a group's or a 1:1 chat's) stay
+// reusable until they expire; a stored person link is consumed atomically by
+// the first redemption. The link and the grant commit together.
 func (h *Handler) RedeemContextConfigLink(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {
@@ -1055,10 +1055,11 @@ func (h *Handler) RedeemContextConfigLink(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if link.ScopeType == contextcap.ScopePerson && link.ExtraSceneID != "" {
-		// A personal link minted in a 1:1 chat also grants that 1:1 chat's
-		// scene (its scene_id, registered when the chat's message arrived),
-		// for as long as the person grant: nobody but the person takes part
-		// in it.
+		// A personal link minted in a 1:1 chat before 1:1 chats got scene
+		// links (2026-10-02; no run mints one now) also grants that 1:1
+		// chat's scene (its scene_id, registered when the chat's message
+		// arrived), for as long as the person grant: nobody but the person
+		// takes part in it.
 		if _, err := contextcap.UpsertGrant(ctx, tx, contextcap.Grant{
 			UserID: userID, WorkspaceID: link.WorkspaceID, AgentID: link.AgentID, ScopeType: contextcap.ScopeScene,
 			OrgID: link.OrgID, ScopeKey: link.ExtraSceneID, ScopeTitle: link.ScopeTitle, Source: contextcap.GrantSourceAgentLink,
