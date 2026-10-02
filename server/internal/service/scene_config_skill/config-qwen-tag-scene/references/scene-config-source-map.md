@@ -13,5 +13,5 @@
 | Chat runs keep the 15-minute minimum (`routine_run_too_soon`) | `server/internal/handler/scene_config_mcp.go` (`sceneConfigRoutineRun`) |
 | A routine never carries a personal layer | `server/internal/contextcap/scope.go` (`routineScope`), `server/internal/handler/scene_routines.go` (`RoutineRuntimeContext`) |
 | Only offered skills and connectors can be switched | `server/internal/contextcap/store.go` (`UpsertBinding`) |
-| Account connection goes through a configuration link, replied as a Markdown link to its `dingtalk_url` | `server/internal/handler/context_config_link_mint.go`, `server/internal/service/inboundcoord/config_link.go` (`ConfigLinkDeepLink`), `server/internal/handler/scene_config_mcp.go` (`scene_connect_link` description) |
+| Account connection uses the host-selected configuration link unchanged, replied as a Markdown link to its `dingtalk_url` | `server/internal/handler/context_config_link_mint.go`, `server/internal/service/inboundcoord/config_link.go` (`ConfigLinkDeepLink`), `server/internal/handler/scene_config_mcp.go` (`scene_connect_link` description), `docs/environment-forwarding.md` |
 | The skill is injected at claim and resolved by the same check | `server/internal/handler/daemon.go` (claim and `ResolveTaskSkillBundles`), `server/internal/service/scene_config_skill.go` |

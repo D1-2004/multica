@@ -91,6 +91,8 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 
 记忆读取保留预发的员工自述清洗：`prefetchSceneMemory` 同时使用智能体名称与绑定钉钉身份的 `AccountDisplayName`，避免数字员工自己的发言被当作人的稳定记忆。`scene_memory_status` 根据清洗后的实际快照区分 `loaded/empty`，不会把被清除的自述当作有效知识。
 
+配置链接的部署入口由 Host 配置决定：启用 `MULTICA_FORWARD_PUBLIC_BASE_URL` 后，Coordinator 与执行器共用签发器返回线上 `/forward/{target}/dingtalk/configure?link=...`，目标仍是原来的场域和数据库。模型不选择环境、不改写链接；TTL、兑换权限与链接脱敏规则保持不变。实现与回滚见 `docs/environment-forwarding.md`，覆盖对照见 `TestConfigurationLinkUsesPublicForwardBase`、`TestForwardedConfigurationLinksRemainRedacted`。
+
 ## 5. 工具与提交边界
 
 有可信当前CID的正常入站，除主动会话中未@本员工的群消息外，Host在首次模型调用前执行一次无q、48h/3项 `assoc_recall`，读取timeout为2秒。复用现有归一化、8000字符内读快照及合法事项记录，不额外引入业务读取或权限。成功结果可直接满足本场景召回前置，模型无需重复同一机械读取；失败保留unavailable，不解锁工作前置，模型仍可按需重试。明确其他CID、更早范围、关键词、工作状态或历史缺口仍需对应读取，不能由当前预取代替。

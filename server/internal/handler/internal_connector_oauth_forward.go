@@ -1,58 +1,15 @@
 package handler
 
-// Connector OAuth callback forwarding between deployments
-// (docs/internal-mcp-connectors.md "Callback origin and forwarding").
-//
-// A pre-release deployment serves the production host with a "pre-" prefix
-// (https://pre-fde-workbench.dingtalk.com is the pre-release of
-// https://fde-workbench.dingtalk.com). Its connects send providers the
-// production callback, and its states name the deployment the connect
-// belongs to:
-//
-//	mcpc.<43 base64url random>.<base64url(home origin)>
-//
-// The full state is still what the home deployment hashes and looks up, and
-// the "mcpc." prefix still routes GitHub callbacks to the connector flow.
-// Every other deployment (production, local) uses its own callback.
-//
-// Production forwards only connects its pre-release registered, the same
-// shape as the A2A forward registrations (agent_a2a_forward_registration.go):
-// pre-release signs, production verifies. When a pre-release starts a
-// connect it registers it with production before the browser leaves:
-// {sha256(state), its origin, workspace, agent, connector, scope, expiry},
-// signed with HMAC-SHA256 over the timestamp and body using
-// MULTICA_A2A_FORWARD_REGISTRATION_SECRET, which both deployments already
-// share (signAgentA2AForwardRegistration). Production keeps the
-// registration in Redis until the state expires. On a callback, production's
-// callback routes (/api/connectors/oauth/callback, the legacy
-// /api/connector-oauth/callback, and the "mcpc." branch of
-// /api/github/authorize) take the registration of the state (single use)
-// and send the callback to that pre-release. Provider consoles register only
-// https://fde-workbench.dingtalk.com/api/connectors/oauth/callback, so both
-// DCR routes forward to that path on the pre-release with the raw query
-// (302). The GitHub route forwards to its own path. A state naming this
-// deployment is completed here. Anything else naming a foreign origin gets
-// the invalid-connection page (400). Only "https://pre-" + an own host below its registrable domain
-// can register (connectorOAuthProductionOrigin), so production is no open
-// redirect, and a callback no pre-release Workspace/Agent connect started is
-// never forwarded. Without the secret or Redis it fails closed: the
-// pre-release refuses to start such a connect, and production forwards
-// nothing. The home deployment completes the forwarded callback in the
-// browser that started it: the binding cookie was set on its own origin by
-// the start response.
-//
-// This file is self-contained: it holds the callback routes' entry points
-// and everything the forwarder needs, so a build without the connector flow
-// (a forwarder-only production release cut from develop) compiles it
-// unchanged. The connector flow plugs its local completion in through
-// connectorOAuthCompleteLocal; without it, a callback of this deployment's
-// own state gets the invalid-connection page. Keep this file identical on
-// every branch that carries it.
+// Connector OAuth is an adapter of internal/forwarding. The home deployment
+// registers each state using the shared timestamp/body signature; production
+// atomically consumes that registration before forwarding. A forward_target
+// selects transparent proxying through the fixed configured origin. Direct
+// pre-release browser flows retain their legacy 302 and binding-cookie origin.
+// See docs/environment-forwarding.md for routing and deployment contracts.
 
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -69,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/net/publicsuffix"
 )
@@ -220,17 +178,26 @@ func (h *Handler) forwardConnectorOAuthCallback(w http.ResponseWriter, r *http.R
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	if production, pre := connectorOAuthProductionOrigin(home); !pre || !h.connectorOAuthOwnOrigin(production) {
-		h.writeConnectorOAuthInvalidPage(w)
-		return true
-	}
 	// Only a connect the pre-release registered for one of its Workspaces
 	// and Agents is forwarded, once.
 	registration, err := h.takeConnectorOAuthForward(r.Context(), r.URL.Query().Get("state"))
 	if err != nil || registration.HomeOrigin != home {
 		slog.WarnContext(r.Context(), "connector OAuth callback forward refused", "event", "connector_oauth_forward_refused",
 			"home_origin", home, "via", via, "registered", err == nil, "error", err)
-		h.writeConnectorOAuthInvalidPage(w)
+		h.writeConnectorOAuthInvalidPage(w, r)
+		return true
+	}
+	if registration.ForwardTarget != "" {
+		if !h.Forwarding.Matches(registration.ForwardTarget, home) {
+			h.writeConnectorOAuthInvalidPage(w, r)
+			return true
+		}
+		_, callbackPath := h.connectorOAuthCallbackTarget(via)
+		h.Forwarding.Callback(w, r, registration.ForwardTarget, callbackPath, "multica_mcpc_"+registration.StateSHA256[:16])
+		return true
+	}
+	if production, pre := connectorOAuthProductionOrigin(home); !pre || !h.connectorOAuthOwnOrigin(production) {
+		h.writeConnectorOAuthInvalidPage(w, r)
 		return true
 	}
 	_, path := h.connectorOAuthCallbackTarget(via)
@@ -282,13 +249,14 @@ var errConnectorOAuthForwardUnavailable = errors.New("connector OAuth forwarding
 // connectorOAuthForwardRegistration is one pre-release connect production
 // may forward the callback of. AgentID is "" for a workspace connect.
 type connectorOAuthForwardRegistration struct {
-	StateSHA256 string `json:"state_sha256"`
-	HomeOrigin  string `json:"home_origin"`
-	WorkspaceID string `json:"workspace_id"`
-	AgentID     string `json:"agent_id"`
-	ConnectorID string `json:"connector_id"`
-	ScopeType   string `json:"scope_type"`
-	ExpiresAtMs int64  `json:"expires_at_ms"`
+	ForwardTarget string `json:"forward_target,omitempty"`
+	StateSHA256   string `json:"state_sha256"`
+	HomeOrigin    string `json:"home_origin"`
+	WorkspaceID   string `json:"workspace_id"`
+	AgentID       string `json:"agent_id"`
+	ConnectorID   string `json:"connector_id"`
+	ScopeType     string `json:"scope_type"`
+	ExpiresAtMs   int64  `json:"expires_at_ms"`
 }
 
 func connectorOAuthForwardStateSHA256(state string) string {
@@ -340,7 +308,7 @@ func (h *Handler) registerConnectorOAuthForward(ctx context.Context, production,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(connectorOAuthForwardTimestampHeader, timestamp)
-	req.Header.Set(connectorOAuthForwardSignatureHeader, signAgentA2AForwardRegistration(secret, timestamp, body))
+	req.Header.Set(connectorOAuthForwardSignatureHeader, forwarding.SignRegistration(secret, timestamp, body))
 	resp, err := connectorOAuthForwardHTTPClient.Do(req)
 	if err != nil {
 		return err
@@ -369,12 +337,11 @@ func (h *Handler) HandleConnectorOAuthForwardRegistration(w http.ResponseWriter,
 		return
 	}
 	timestamp := strings.TrimSpace(r.Header.Get(connectorOAuthForwardTimestampHeader))
-	signedAtMs, err := strconv.ParseInt(timestamp, 10, 64)
-	if err != nil || absDuration(time.Since(time.UnixMilli(signedAtMs))) > connectorOAuthForwardMaxSkew ||
-		!hmac.Equal([]byte(signAgentA2AForwardRegistration(secret, timestamp, body)), []byte(strings.TrimSpace(r.Header.Get(connectorOAuthForwardSignatureHeader)))) {
+	if !forwarding.VerifyRegistration(secret, timestamp, strings.TrimSpace(r.Header.Get(connectorOAuthForwardSignatureHeader)), body, time.Now(), connectorOAuthForwardMaxSkew) {
 		writeError(w, http.StatusUnauthorized, "invalid registration signature")
 		return
 	}
+
 	var reg connectorOAuthForwardRegistration
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
@@ -388,7 +355,12 @@ func (h *Handler) HandleConnectorOAuthForwardRegistration(w http.ResponseWriter,
 		writeError(w, http.StatusBadRequest, "invalid registration")
 		return
 	}
-	if production, pre := connectorOAuthProductionOrigin(home); !pre || !h.connectorOAuthOwnOrigin(production) {
+	if reg.ForwardTarget != "" {
+		if !h.Forwarding.Matches(reg.ForwardTarget, home) {
+			writeError(w, http.StatusForbidden, "forwarding target is not registered")
+			return
+		}
+	} else if production, pre := connectorOAuthProductionOrigin(home); !pre || !h.connectorOAuthOwnOrigin(production) {
 		writeError(w, http.StatusForbidden, "not this deployment's pre-release")
 		return
 	}
@@ -497,7 +469,7 @@ func (h *Handler) serveConnectorOAuthCallback(w http.ResponseWriter, r *http.Req
 	if connectorOAuthCompleteLocal == nil {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		h.writeConnectorOAuthInvalidPage(w)
+		h.writeConnectorOAuthInvalidPage(w, r)
 		return
 	}
 	connectorOAuthCompleteLocal(h, w, r, via)
@@ -508,8 +480,15 @@ func (h *Handler) serveConnectorOAuthCallback(w http.ResponseWriter, r *http.Req
 // JSON body: the browser, often the DingTalk WebView, shows the response
 // directly. It links to the app's pages; nothing in it comes from the
 // request.
-func (h *Handler) writeConnectorOAuthInvalidPage(w http.ResponseWriter) {
-	origin := html.EscapeString(h.connectorOAuthAppOrigin())
+func (h *Handler) writeConnectorOAuthInvalidPage(w http.ResponseWriter, r *http.Request) {
+	origin := h.connectorOAuthAppOrigin()
+	workbenchOrigin := origin
+	if publicOrigin, target, err := forwarding.ParsePublicBase(h.currentConfig().ForwardPublicBaseURL); err == nil && r.Header.Get(forwarding.HopHeader) == target {
+		origin = h.currentConfig().ForwardPublicBaseURL
+		workbenchOrigin = publicOrigin
+	}
+	origin = html.EscapeString(origin)
+	workbenchOrigin = html.EscapeString(workbenchOrigin)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
@@ -521,7 +500,7 @@ func (h *Handler) writeConnectorOAuthInvalidPage(w http.ResponseWriter) {
 <h1 style="font-size:1.25rem;margin:0 0 .5rem">连接已失效</h1>
 <p style="margin:0 0 .5rem">这次连接已过期或已被使用。请回到原页面重新连接。</p>
 <p lang="en" style="margin:0 0 1.5rem;color:#59636e">This connection attempt is invalid or has expired. Go back and connect again.</p>
-<p style="margin:0"><a href="`+origin+`/dingtalk/configure">返回连接配置页</a> · <a href="`+origin+`/">返回工作台</a></p>
+<p style="margin:0"><a href="`+origin+`/dingtalk/configure">返回连接配置页</a> · <a href="`+workbenchOrigin+`/">返回工作台</a></p>
 </body>
 </html>
 `)

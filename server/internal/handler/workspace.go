@@ -1053,10 +1053,13 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
-			// Context capability tables have no FKs; sweep them explicitly.
+			// Context and employee task tables have no FKs; sweep children before roots.
 			name: "delete context capabilities",
 			run: func() error {
 				for _, statement := range []string{
+					`DELETE FROM employee_task_run WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_entry WHERE workspace_id=$1`,
+					`DELETE FROM employee_task WHERE workspace_id=$1`,
 					`DELETE FROM context_config_link WHERE workspace_id=$1`,
 					`DELETE FROM context_config_grant WHERE workspace_id=$1`,
 					`DELETE FROM context_connector_credential WHERE workspace_id=$1`,

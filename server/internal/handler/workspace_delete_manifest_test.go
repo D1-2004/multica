@@ -2,8 +2,15 @@ package handler
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"sort"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/employeetask"
+	"github.com/multica-ai/multica/server/internal/scene"
 )
 
 type workspaceDeleteAction string
@@ -68,6 +75,9 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"context_scope_routine":           workspaceDelete,
 	"daemon_connection":               workspaceDelete,
 	"daemon_token":                    workspaceDelete,
+	"employee_task":                   workspaceDelete,
+	"employee_task_entry":             workspaceDelete,
+	"employee_task_run":               workspaceDelete,
 	"feedback":                        workspaceDeleteDetach,
 	"git_connection":                  workspaceDelete,
 	"github_pending_check_suite":      workspaceDelete,
@@ -210,4 +220,106 @@ WHERE table_schema = 'public'
 			}
 		}
 	}
+}
+
+func seedWorkspaceEmployeeTask(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	var workspaceID, runtimeID, agentID string
+	if err := testPool.QueryRow(ctx, `INSERT INTO workspace(name,slug) VALUES('EmployeeTask deletion test',$1) RETURNING id::text`, "employee-delete-"+uuid.NewString()).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for _, table := range []string{"employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
+			if _, err := testPool.Exec(context.Background(), `DELETE FROM `+table+` WHERE workspace_id=$1`, workspaceID); err != nil {
+				t.Errorf("cleanup %s: %v", table, err)
+			}
+		}
+		if _, err := testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id=$1`, workspaceID); err != nil {
+			t.Error(err)
+		}
+	})
+	if _, err := testPool.Exec(ctx, `INSERT INTO member(workspace_id,user_id,role) VALUES($1,$2,'owner')`, workspaceID, testUserID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx, `INSERT INTO agent_runtime(workspace_id,name,runtime_mode,provider,status,device_info,metadata,owner_id,last_seen_at)
+ VALUES($1,'EmployeeTask test','cloud','employee-task-test','online','test','{}'::jsonb,$2,now()) RETURNING id::text`, workspaceID, testUserID).Scan(&runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx, `INSERT INTO agent(workspace_id,name,description,runtime_mode,runtime_config,runtime_id,visibility,max_concurrent_tasks,owner_id)
+ VALUES($1,'EmployeeTask test','','cloud','{}'::jsonb,$2,'workspace',1,$3) RETURNING id::text`, workspaceID, runtimeID, testUserID).Scan(&agentID); err != nil {
+		t.Fatal(err)
+	}
+	registered, err := scene.Resolve(ctx, testHandler.Queries, scene.Owner{WorkspaceID: parseUUID(workspaceID), AgentID: parseUUID(agentID)}, scene.DingTalkConversation("employee-delete-org", scene.KindGroup, "cid-"+uuid.NewString()), scene.Observation{KindStated: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := employeetask.NewStore(testPool)
+	task, err := store.Create(ctx, employeetask.CreateParams{
+		Scope:     employeetask.Scope{WorkspaceID: workspaceID, AgentID: agentID, TenantOrgID: "employee-delete-org", Kind: employeetask.ScopeScene, Scene: scene.RefOf(registered)},
+		OwnerLoop: employeetask.LoopEmployee, DispatchMode: employeetask.DispatchDirect, RequesterRef: testUserID,
+		Definition: employeetask.Definition{Goal: "Preserve until workspace deletion"}, Source: employeetask.Source{Namespace: "test", Key: "request"}, Input: "Preserve until workspace deletion",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.StartRun(ctx, task.Scope, task.ID, employeetask.StartRunParams{Source: employeetask.Source{Namespace: "test", Key: "run"}, QueueTaskID: uuid.NewString(), ExpectedVersion: task.Version}); err != nil {
+		t.Fatal(err)
+	}
+	return workspaceID
+}
+
+func assertWorkspaceEmployeeRecords(t *testing.T, workspaceID string, tasks int) {
+	t.Helper()
+	for table, multiplier := range map[string]int{"employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1} {
+		var count int
+		if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM `+table+` WHERE workspace_id=$1`, workspaceID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != tasks*multiplier {
+			t.Errorf("%s rows for workspace %s = %d, want %d", table, workspaceID, count, tasks*multiplier)
+		}
+	}
+}
+
+func TestDeleteWorkspace_CleansEmployeeTasksAndPreservesNeighbor(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	target, neighbor := seedWorkspaceEmployeeTask(t), seedWorkspaceEmployeeTask(t)
+	assertWorkspaceEmployeeRecords(t, target, 1)
+	assertWorkspaceEmployeeRecords(t, neighbor, 1)
+	response := httptest.NewRecorder()
+	testHandler.DeleteWorkspace(response, withURLParam(newRequest(http.MethodDelete, "/api/workspaces/"+target, nil), "id", target))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("DeleteWorkspace: %d %s", response.Code, response.Body.String())
+	}
+	assertWorkspaceEmployeeRecords(t, target, 0)
+	assertWorkspaceEmployeeRecords(t, neighbor, 1)
+}
+
+func TestDeleteWorkspace_RollsBackEmployeeTaskCleanup(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	workspaceID := seedWorkspaceEmployeeTask(t)
+	setWorkspaceDeleteLockTimeoutForTest(t, 100*time.Millisecond)
+	blocker, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = blocker.Rollback(context.Background()) })
+	if _, err = blocker.Exec(ctx, `SELECT id FROM member WHERE workspace_id=$1 FOR UPDATE`, workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	testHandler.DeleteWorkspace(response, withURLParam(newRequest(http.MethodDelete, "/api/workspaces/"+workspaceID, nil), "id", workspaceID))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("DeleteWorkspace: %d %s", response.Code, response.Body.String())
+	}
+	if err = blocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertWorkspaceEmployeeRecords(t, workspaceID, 1)
 }

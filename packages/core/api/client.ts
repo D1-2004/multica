@@ -681,6 +681,8 @@ export interface ApiClientIdentity {
 }
 
 export interface ApiClientOptions {
+  /** CSRF cookie belonging to this API session. Defaults to multica_csrf. */
+  csrfCookieName?: string;
   logger?: Logger;
   onUnauthorized?: () => void;
   /** Identifies the client to the server. Sent as X-Client-* headers. */
@@ -862,10 +864,12 @@ export class ApiClient {
 
   private readCsrfToken(): string | null {
     if (typeof document === "undefined") return null;
+    const prefix = `${this.options.csrfCookieName ?? "multica_csrf"}=`;
     const match = document.cookie
-      .split("; ")
-      .find((c) => c.startsWith("multica_csrf="));
-    return match ? (match.split("=")[1] ?? null) : null;
+      .split(";")
+      .map((cookie) => cookie.trim())
+      .find((cookie) => cookie.startsWith(prefix));
+    return match ? match.slice(prefix.length) : null;
   }
 
   private authHeaders(): Record<string, string> {

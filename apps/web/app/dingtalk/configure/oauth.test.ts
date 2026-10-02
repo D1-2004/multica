@@ -243,3 +243,47 @@ describe("connector OAuth round trip helpers", () => {
     expect(takePendingConnectResult([local], 1)).toBeNull();
   });
 });
+
+describe("forwarded configure OAuth isolation", () => {
+  it("preserves the forward prefix through cleaning and the DingTalk callback", () => {
+    window.history.replaceState({}, "", "/forward/pre/dingtalk/configure?link=secret");
+    try {
+      expect(cleanConfigureUrl({ agentId: "preview-agent", tab: "public" })).toBe(
+        "/forward/pre/dingtalk/configure?agent=preview-agent&tab=public",
+      );
+      const url = new URL(buildDingTalkOAuthUrl("preview-client", "https://prod.example", "state"));
+      expect(url.searchParams.get("redirect_uri")).toBe("https://prod.example/forward/pre/dingtalk/configure");
+    } finally {
+      window.history.replaceState({}, "", "/dingtalk/configure");
+    }
+  });
+
+  it("keeps OAuth state and all pending records separate across environments", () => {
+    const storage = memoryStorage();
+    const direct = { agentId: "production-agent" };
+    const preview = { agentId: "preview-agent" };
+    window.history.replaceState({}, "", "/dingtalk/configure");
+    const productionState = beginOAuthState([storage]);
+    savePendingParams(direct, [storage]);
+    savePendingConnect({ agentId: "production-agent", scopeType: "person", scopeKey: "staff" }, [storage]);
+    savePendingConnectResult({ kind: "connected", slug: "production" }, [storage]);
+    window.history.replaceState({}, "", "/forward/pre/dingtalk/configure");
+    try {
+      expect(oauthStateMatches(productionState, [storage])).toBe(false);
+      expect(takePendingParams([storage])).toEqual({});
+      expect(takePendingConnect([storage])).toBeNull();
+      expect(takePendingConnectResult([storage])).toBeNull();
+      const previewState = beginOAuthState([storage]);
+      savePendingParams(preview, [storage]);
+      expect(oauthStateMatches(previewState, [storage])).toBe(true);
+      expect(takePendingParams([storage])).toMatchObject(preview);
+      clearOAuthState([storage]);
+    } finally {
+      window.history.replaceState({}, "", "/dingtalk/configure");
+    }
+    expect(oauthStateMatches(productionState, [storage])).toBe(true);
+    expect(takePendingParams([storage])).toMatchObject(direct);
+    expect(takePendingConnect([storage])?.agentId).toBe("production-agent");
+    expect(takePendingConnectResult([storage])).toEqual({ kind: "connected", slug: "production" });
+  });
+});

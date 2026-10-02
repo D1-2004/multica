@@ -12,6 +12,7 @@ import {
   type ContextConfigPageProps,
 } from "@multica/views/dingtalk";
 import { useT } from "@multica/views/i18n";
+import { browserForwarding } from "@/platform/forwarding";
 import { createGroupPicker, isDingTalk, type PickedGroup } from "./jsapi";
 import {
   beginOAuthState,
@@ -164,7 +165,8 @@ function DingTalkConfigureContent() {
         setStage({ kind: "auth" });
         try {
           const login = await api.fdeDingtalkLogin(code ?? "");
-          api.setToken(login.token);
+          // Forwarded sessions use the gateway-scoped HttpOnly cookie.
+          if (!browserForwarding()) api.setToken(login.token);
           setUser(login.user);
           completedOAuth.current = true;
         } catch {
@@ -255,8 +257,9 @@ function DingTalkConfigureContent() {
         }
       : null;
   // A provider sign-in returns to the bound scope (on the default tab).
-  const connectReturnTo =
-    params.agentId && params.binding
+  const connectReturnTo = browserForwarding()
+    ? `${window.location.origin}${cleanConfigureUrl({ agentId: params.agentId, binding: params.binding })}`
+    : params.agentId && params.binding
       ? cleanConfigureUrl({ agentId: params.agentId, binding: params.binding })
       : undefined;
 

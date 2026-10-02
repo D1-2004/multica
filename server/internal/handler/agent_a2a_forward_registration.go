@@ -3,7 +3,6 @@ package handler
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -23,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -108,14 +108,6 @@ func (h *Handler) agentA2AForwardRegistry() bool {
 		h.A2AService != nil && h.A2AService.PushSecrets != nil
 }
 
-func signAgentA2AForwardRegistration(secret []byte, timestamp string, body []byte) string {
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(timestamp))
-	mac.Write([]byte("\n"))
-	mac.Write(body)
-	return hex.EncodeToString(mac.Sum(nil))
-}
-
 func agentA2AForwardTokenSHA256(token string) string {
 	digest := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(digest[:])
@@ -148,11 +140,11 @@ func (h *Handler) HandleA2AForwardRegistration(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusUnauthorized, "invalid registration signature")
 		return
 	}
-	expected := signAgentA2AForwardRegistration(h.agentA2AForwardSecret(), timestamp, body)
-	if !hmac.Equal([]byte(expected), []byte(strings.TrimSpace(r.Header.Get(agentA2AForwardSignatureHeader)))) {
+	if !forwarding.VerifyRegistration(h.agentA2AForwardSecret(), timestamp, strings.TrimSpace(r.Header.Get(agentA2AForwardSignatureHeader)), body, time.Now(), agentA2AForwardRegistrationMaxSkew) {
 		writeError(w, http.StatusUnauthorized, "invalid registration signature")
 		return
 	}
+
 	var req agentA2AForwardRegistrationRequest
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
@@ -756,7 +748,7 @@ func (h *Handler) postAgentA2AForwardRegistration(ctx context.Context, registry 
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(agentA2AForwardTimestampHeader, timestamp)
-	request.Header.Set(agentA2AForwardSignatureHeader, signAgentA2AForwardRegistration(h.agentA2AForwardSecret(), timestamp, body))
+	request.Header.Set(agentA2AForwardSignatureHeader, forwarding.SignRegistration(h.agentA2AForwardSecret(), timestamp, body))
 	response, err := agentA2AForwardRegistrationHTTPClient.Do(request)
 	if err != nil {
 		return registry + ": " + err.Error(), false

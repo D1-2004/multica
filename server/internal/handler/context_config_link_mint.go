@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -82,6 +83,12 @@ func contextConfigLinkTab(tab string) (string, error) {
 // contextConfigLinkOrigin returns the app origin configuration pages are
 // served from.
 func (h *Handler) contextConfigLinkOrigin() (string, error) {
+	if base := h.currentConfig().ForwardPublicBaseURL; base != "" {
+		if _, _, err := forwarding.ParsePublicBase(base); err != nil {
+			return "", err
+		}
+		return base, nil
+	}
 	origin := strings.TrimRight(firstNonEmpty(h.currentConfig().AppURL, h.currentConfig().FrontendOrigin), "/")
 	if origin == "" {
 		return "", &multicaMCPToolCallError{message: "the app URL is not configured, so no configuration link can be issued"}
