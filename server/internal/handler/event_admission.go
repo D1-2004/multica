@@ -39,7 +39,7 @@ func withNativeEvent(ctx context.Context, ev dwsevents.Event) context.Context {
 }
 
 func dispatchEventCategory(c DispatchCommand) string {
-	if c.Control != nil {
+	if c.Control != nil && c.Control.Action == "cancel" {
 		return eventrouter.Control
 	}
 	if c.Event.Domain == "channel" && c.Event.Type == "message.created" {
@@ -189,7 +189,7 @@ func (h *Handler) admitDispatchEvent(w http.ResponseWriter, r *http.Request, raw
 	// Event-only admission ends at the durable scene entry. Dispatches with a
 	// callback continue through the existing idempotent business admission.
 	// A callback-less consumer cannot safely execute a replayed business effect.
-	if receipt.Route == eventrouter.Unified && c.CompletionCallback == nil && c.Control == nil {
+	if receipt.Route == eventrouter.Unified && c.CompletionCallback == nil && (c.Control == nil || c.Control.Action != "cancel") {
 		writeJSON(w, http.StatusAccepted, map[string]string{"event_receipt_id": uuidToString(receipt.ID), "scene_id": uuidToString(receipt.SceneID), "state": receipt.State})
 		return true
 	}

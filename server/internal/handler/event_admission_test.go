@@ -38,6 +38,12 @@ func TestProviderEventPayloadAndCategory(t *testing.T) {
 	if dispatchEventCategory(c) != eventrouter.Control {
 		t.Fatal("control became message")
 	}
+	c.Event.Domain = "channel"
+	c.Event.Type = "message.created"
+	c.Control.Action = "dispatch"
+	if dispatchEventCategory(c) != eventrouter.UserMessage {
+		t.Fatal("Router dispatch directive hid the user-message category")
+	}
 	if eventPayloadFingerprint("base", []byte(`{"a":1,"b":2}`)) != eventPayloadFingerprint("base", []byte(`{ "b":2,"a":1 }`)) {
 		t.Fatal("JSON formatting caused conflict")
 	}
