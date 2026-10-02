@@ -161,3 +161,13 @@ scheduler or generic kernel memory authority. Host evidence/scope is resolved
 from frozen sources and current authorization. The journal can project cached
 memory results through current state without repeating effects. Old Config.Tools
 snapshots remain frozen during rolling upgrades (Employee replica marker 5).
+
+
+New scene input snapshots also freeze narrow memory-reply guidance: obey explicit
+output constraints, answer only the requested fact, avoid unrelated memory lists
+or offers to read another scene's private memory, and confirm forgetting without
+repeating forgotten content or internal state fields unless audit details were
+requested. This is Host Persona/tool-description content, not a change to the
+shared BuildPrompt renderer or the copied kernel. Existing snapshots and model
+journals retain their original bytes; authority, tool results and call limits are
+unchanged (replica marker remains 5).

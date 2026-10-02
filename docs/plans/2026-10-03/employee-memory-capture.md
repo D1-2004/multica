@@ -76,3 +76,21 @@ Execution Event、Cron、Webhook 继续使用既有事件 admission、scheduler 
 实现已完成，独立复审 APPROVE。补齐同 NativeToolCallID 状态重验、遗忘墓碑时间栅栏、重复 source_ref 拒绝、正常 lookup/forget 的冻结结果恢复，以及状态变化后的有限失败收束。工具 trace 区分已提交的业务失败与事务回滚；marker 为 5，旧 job 工具 schema 不变。
 
 真实 PostgreSQL race：作者 handler 相关集合 24.852s，root 独立数据库 24.166s；employeememory、employeeloop、employeeentry 通过。server build、相关 go vet、diff-check 通过。Coordinator policy 检查为 PASS_STRUCTURAL_ONLY，不代替行为验收。预发与下面 7 条 IM 剧本尚待执行，不宣称线上记忆闭环已验收。
+
+## 预发真实 IM 第一轮（07:11—07:20）
+
+服务器 `0a367d4f91fbf78e237307facd34bd35413514ad`、预发流水线 `3110328443` 的构建/部署/集成测试成功，两个在线副本均为 marker 5。冬翔 → Qwen-DWS 单聊与各种TAG群共 7 条真实 IM 的记忆机制通过；后台任务数 69 → 69，无新增 Task。
+
+| 步骤 | Employee job | 模型调用 | 实际回复消息 |
+|---|---|---:|---|
+| 写入 | `ba7793d7-9e77-492c-ae18-af0ed4e6400d` | 2 | `msgLoHPA/Fs7zgpbE0LJQ0qMg==` |
+| 下一轮召回 | `3981f6ae-18b8-4405-8b49-14a2ee7c4ad4` | 1 | `msguPM5hKrEVF/wFNTlthgbJQ==` |
+| 纠正 | `3262ee85-a01a-48cb-8526-1cc29cacbb6e` | 2 | `msgzyz0oIbP9Ra2Ft/sd7SVZg==` |
+| 纠正后召回 | `6d1f0c3b-1b87-4f5d-90fc-74e4b954b482` | 1 | `msgbfmMpyxiHoobEZnLS/P9TA==` |
+| 群聊隔离 | `53a6e6a1-9f0b-4772-8430-2a1542d448fb` | 2 | `msg8e0rbtzqi5N2w/Btv9fEWw==` |
+| 定向忘记 | `90d2e4ff-a4c5-4028-9944-0fd6a9a961e1` | 2 | `msgZPJO0Yyff6USBKcGRK9aVQ==` |
+| 遗忘后查询 | `62a40264-c174-4150-ae79-d4708f310fe1` | 2 | `msgqHabr/UKKNOhtxCf/HROQg==` |
+
+写入记录 `ae3feafd-9073-4436-accf-08d96bd30ae1`，纠正记录 `5766fe46-f481-4e1e-ad70-8475b1369695` 的 supersedes 指向前者，两次 capture 与 forget 的 Langfuse tool 均 `journal_committed=true`。纠正后的下一轮 memory snapshot 只有新值，当前问句没有答案；群里的 snapshot 新旧值均不存在且 lookup 为空。定向忘记后 snapshot 不再出现探针或新旧值，lookup 为空。原有其他记忆仍保留；未使用 reset。
+
+表达验收仍有缺口：精确值回复多加解释；空结果列举无关记忆并主动建议查询其他群；忘记确认复述被忘值并输出内部 forgotten 状态。机制通过不代表表达通过。小补丁仅在新 input snapshot 冻结输出约束及工具说明，保持历史 journal、权限与三轮预算；部署后另跑表达回归。
