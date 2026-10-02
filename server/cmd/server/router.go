@@ -59,6 +59,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
+	"github.com/multica-ai/multica/server/internal/service/employeememory"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/service/userdecision"
@@ -71,6 +72,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/dws"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
+	"github.com/multica-ai/multica/server/pkg/llm"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
@@ -950,6 +952,28 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 	}
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
+	employeeModel := llm.New(llm.Config{APIKey: signupConfig.LLMAPIKey, BaseURL: signupConfig.LLMBaseURL, DefaultModel: signupConfig.LLMDefaultModel, MaxRetries: -1})
+	h.EmployeeMemory = employeememory.NewStore(pool)
+	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, employeeModel)
+	h.EmployeeSceneWorker.ReplicaReady = func(ctx context.Context) error {
+		if opts.DeploymentFence == nil {
+			return errors.New("employee replica capability verification is unavailable")
+		}
+		ready, err := opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeLoopReplicaMarker)
+		if err != nil {
+			return err
+		}
+		if !ready {
+			return errors.New("live server replicas do not all support employee-loop:1")
+		}
+		return nil
+	}
+	// Keep the production switch closed until the separate terminal-result
+	// notice consumer is installed and verified. Runtime capability alone does
+	// not complete the accepted-work delivery contract.
+	h.EmployeeLoopReady = func(context.Context, pgtype.UUID, pgtype.UUID) error {
+		return errors.New("EmployeeLoop final result delivery is not ready")
+	}
 	decisionMCP := strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL"))
 	decisionEnv := "production"
 	if strings.Contains(decisionMCP, "pre-mcp.") {

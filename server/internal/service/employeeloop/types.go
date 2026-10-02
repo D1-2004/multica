@@ -61,7 +61,10 @@ type Input struct {
 // Persona contains trusted employee configuration, separate from conversation data.
 type Persona struct {
 	Name, Personality, Tone string
-	Expertise               []string
+	// Instructions contains trusted configured duties and business constraints.
+	// It does not grant Host permissions or capabilities.
+	Instructions string
+	Expertise    []string
 }
 type Config struct {
 	Persona Persona

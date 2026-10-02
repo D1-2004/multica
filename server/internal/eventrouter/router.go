@@ -87,6 +87,12 @@ type Beginner interface {
 // Admit commits the scene and routing receipt together. An existing receipt
 // is immutable: retries do not register, touch or remap a scene.
 func Admit(ctx context.Context, pool Beginner, e Event, host Host) (db.SceneEventReceipt, bool, error) {
+	return AdmitWithHook(ctx, pool, e, host, nil)
+}
+
+// AdmitWithHook applies the storage-only hook only to a new receipt. Historical
+// replays never acquire a newly installed business consumer implicitly.
+func AdmitWithHook(ctx context.Context, pool Beginner, e Event, host Host, hook ReceiptHook) (db.SceneEventReceipt, bool, error) {
 	if err := e.Validate(); err != nil {
 		return db.SceneEventReceipt{}, false, err
 	}
@@ -100,6 +106,13 @@ func Admit(ctx context.Context, pool Beginner, e Event, host Host) (db.SceneEven
 		return db.SceneEventReceipt{}, false, err
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
+	// Workspace teardown holds FOR UPDATE before sweeping scenes and receipts.
+	// Take the parent lock before source or scene locks so an admission either
+	// commits before that sweep or observes that the workspace was deleted.
+	var workspace pgtype.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM workspace WHERE id=$1 FOR KEY SHARE`, host.Owner.WorkspaceID).Scan(&workspace); err != nil {
+		return db.SceneEventReceipt{}, false, err
+	}
 	key := strings.Join([]string{util.UUIDToString(host.Owner.WorkspaceID),
 		util.UUIDToString(host.Owner.AgentID), e.Source, e.ID}, "\x1f")
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 78))`, key); err != nil {
@@ -158,6 +171,11 @@ func Admit(ctx context.Context, pool Beginner, e Event, host Host) (db.SceneEven
 	if err != nil {
 		return db.SceneEventReceipt{}, false, err
 	}
+	if hook != nil {
+		if err := hook(ctx, tx, row); err != nil {
+			return db.SceneEventReceipt{}, false, err
+		}
+	}
 	return row, false, tx.Commit(ctx)
 }
 
@@ -178,3 +196,7 @@ func UnmappedReason(err error) string {
 		return ""
 	}
 }
+
+// ReceiptHook stores application-owned consumption in the receipt transaction.
+// It must not perform model, provider or network calls.
+type ReceiptHook func(context.Context, pgx.Tx, db.SceneEventReceipt) error

@@ -50,7 +50,8 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"session_id
 	if err := os.WriteFile(d.cfg.Agents["claude"].Path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	task := Task{ID: "direct-fake-run", WorkspaceID: "direct-workspace", RuntimeID: "rt-leader", DirectTaskPrompt: "Return DIRECT_EXECUTED after checking the provided task", AuthToken: "mat_direct_fixture", Agent: &AgentData{ID: "direct-agent", Name: "Direct Employee", CustomEnv: map[string]string{"DIRECT_CAPTURE": capture}}}
+	// The executable is a test-owned stub, including when CI runs as root.
+	task := Task{ID: "direct-fake-run", WorkspaceID: "direct-workspace", RuntimeID: "rt-leader", DirectTaskPrompt: "Return DIRECT_EXECUTED after checking the provided task", AuthToken: "mat_direct_fixture", Agent: &AgentData{ID: "direct-agent", Name: "Direct Employee", CustomEnv: map[string]string{"DIRECT_CAPTURE": capture, "IS_SANDBOX": "1"}}}
 	result, err := d.runTask(context.Background(), task, "claude", 0, d.logger)
 	if err != nil {
 		t.Fatal(err)

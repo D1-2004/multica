@@ -148,10 +148,14 @@ func (h *Handler) admitDispatchEvent(w http.ResponseWriter, r *http.Request, raw
 	if transport == "messagerouter" {
 		fingerprint = eventPayloadFingerprint(fingerprint, e.Payload)
 	}
-	receipt, replay, err := eventrouter.Admit(r.Context(), h.TxStarter, e, eventrouter.Host{
+	hook, stop := h.prepareEmployeeReceipt(w, r, *c, dc, org, reason, e)
+	if stop {
+		return true
+	}
+	receipt, replay, err := eventrouter.AdmitWithHook(r.Context(), h.TxStarter, e, eventrouter.Host{
 		Owner: owner, PrincipalID: dc.UserID, TenantOrgID: org, Locator: loc, Observation: obs,
 		UnmappedReason: reason, Route: route, ConfigVersion: version, Fingerprint: fingerprint,
-	})
+	}, hook)
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		message := "event admission failed"
@@ -186,6 +190,9 @@ func (h *Handler) admitDispatchEvent(w http.ResponseWriter, r *http.Request, raw
 		"agent_id", uuidToString(dc.AgentID), "scene_id", uuidToString(receipt.SceneID),
 		"route", receipt.Route, "state", receipt.State, "reason", receipt.Reason,
 		"config_version", receipt.ConfigVersion, "provider", transport, "replay", replay)
+	if h.admitEmployeeScene(w, r, c, dc, receipt) {
+		return true
+	}
 	if receipt.State == eventrouter.Unmapped {
 		writeJSON(w, http.StatusAccepted, map[string]string{"event_receipt_id": uuidToString(receipt.ID), "state": receipt.State, "reason": receipt.Reason})
 		return true

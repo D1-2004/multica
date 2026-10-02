@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -9,7 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
+	"github.com/multica-ai/multica/server/internal/eventrouter"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service/employeememory"
 )
@@ -76,6 +79,9 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"context_scope_routine":           workspaceDelete,
 	"daemon_connection":               workspaceDelete,
 	"daemon_token":                    workspaceDelete,
+	"scene_event_receipt":             workspaceDelete,
+	"employee_event_consumption":      workspaceDelete,
+	"employee_scene_job":              workspaceDelete,
 	"employee_learning":               workspaceDelete,
 	"employee_memory_state":           workspaceDelete,
 	"employee_task":                   workspaceDelete,
@@ -233,7 +239,7 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		for _, table := range []string{"employee_learning", "employee_memory_state", "employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
+		for _, table := range []string{"employee_event_consumption", "employee_scene_job", "employee_learning", "employee_memory_state", "scene_event_receipt", "employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
 			if _, err := testPool.Exec(context.Background(), `DELETE FROM `+table+` WHERE workspace_id=$1`, workspaceID); err != nil {
 				t.Errorf("cleanup %s: %v", table, err)
 			}
@@ -269,6 +275,13 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 	if _, err = store.StartRun(ctx, task.Scope, task.ID, employeetask.StartRunParams{Source: employeetask.Source{Namespace: "test", Key: "run"}, QueueTaskID: uuid.NewString(), ExpectedVersion: task.Version}); err != nil {
 		t.Fatal(err)
 	}
+	receipt, _, err := eventrouter.Admit(ctx, testPool, eventrouter.Event{Version: 1, ID: "delete-fixture", Source: "employee-test", Type: "channel.message.created", Category: eventrouter.UserMessage, OccurredAt: time.Now(), PayloadSchema: "test", Payload: json.RawMessage(`{"text":"work"}`)}, eventrouter.Host{Owner: scene.Owner{WorkspaceID: parseUUID(workspaceID), AgentID: parseUUID(agentID)}, PrincipalID: parseUUID(testUserID), TenantOrgID: task.Scope.TenantOrgID, Locator: scene.DingTalkConversation(task.Scope.TenantOrgID, scene.KindGroup, registered.ExternalSceneID), Observation: scene.Observation{KindStated: true}, Route: eventrouter.Unified, ConfigVersion: "test", Fingerprint: "delete-fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = employeeentry.NewStore(testPool).Admit(ctx, employeeentry.Admission{Scope: employeeentry.Scope{WorkspaceID: workspaceID, AgentID: agentID, TenantOrgID: task.Scope.TenantOrgID, SceneID: task.Scope.Scene.SceneID}, Item: employeeentry.Item{ReceiptID: uuidToString(receipt.ID), PrincipalID: testUserID, Payload: json.RawMessage(`{"trusted":"delete fixture"}`), MessageCount: 1}, Owner: employeeentry.Employee, ConfigRevision: "test"}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = employeememory.NewStore(testPool).Record(ctx, employeememory.Scope{WorkspaceID: parseUUID(workspaceID), AgentID: parseUUID(agentID), TenantOrgID: task.Scope.TenantOrgID, Scene: task.Scope.Scene, Kind: employeememory.ScopeScene}, employeememory.LearningRecord{Type: employeememory.LearningTypePreference, Key: "delete-fixture", Insight: "Keep updates concise", Confidence: 8}, employeememory.TrustedEvidence{SourceID: "delete-fixture", EvidenceID: workspaceID, ActorID: testUserID, HumanStated: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +290,7 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 
 func assertWorkspaceEmployeeRecords(t *testing.T, workspaceID string, tasks int) {
 	t.Helper()
-	for table, multiplier := range map[string]int{"employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1, "employee_learning": 1, "employee_memory_state": 1} {
+	for table, multiplier := range map[string]int{"employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1, "employee_event_consumption": 1, "employee_scene_job": 1, "scene_event_receipt": 1, "employee_learning": 1, "employee_memory_state": 1} {
 		var count int
 		if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM `+table+` WHERE workspace_id=$1`, workspaceID).Scan(&count); err != nil {
 			t.Fatal(err)
