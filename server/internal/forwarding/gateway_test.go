@@ -201,3 +201,15 @@ func TestAssetMountSurvivesDisablingPublicLinks(t *testing.T) {
 		t.Fatal("mismatched build accepted")
 	}
 }
+
+func TestRoutineRunHistoryUsesReadOnlyForwardingRoute(t *testing.T) {
+	p := "/api/context-capabilities/agents/agent/routines/routine/runs"
+	if !BrowserRoute(http.MethodGet, p) {
+		t.Fatal("routine history is not forwarded")
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		if BrowserRoute(method, p) {
+			t.Fatalf("history accepts %s", method)
+		}
+	}
+}

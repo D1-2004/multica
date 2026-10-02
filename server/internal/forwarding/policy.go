@@ -103,7 +103,13 @@ func BrowserRoute(method, p string) bool {
 			return parts[3] != "" && (method == http.MethodPatch || method == http.MethodDelete)
 		}
 	}
-	return len(parts) == 5 && parts[2] == "routines" && parts[3] != "" && (parts[4] == "run" || parts[4] == "rotate-webhook") && method == http.MethodPost
+	if len(parts) == 5 && parts[2] == "routines" && parts[3] != "" {
+		if parts[4] == "runs" {
+			return method == http.MethodGet
+		}
+		return (parts[4] == "run" || parts[4] == "rotate-webhook") && method == http.MethodPost
+	}
+	return false
 }
 
 func callbackPath(p string) bool {
