@@ -397,7 +397,8 @@
         "user_decision_audience_trace_listener": "2026-09-24: local scoped tests/typechecks/build/vet/race passed. Pre run3109734020 deploy161891040 SUCCESS/allEnd=true; migrations9304/9305 and three PostgreSQL projection tests passed. Live API normalization/clear/preserve/revision passed; two enabled agents limited to 冬翔. Actual Langfuse traces2326de29f86d464d825c84d7f252e07e and30d30a33d5394ee689cf647d81ef568c each contain one matching historical choice; original trace/root I/O unchanged. New native click loop blocked by DWS CONTEXT_PROCESSING_ERROR.",
         "user_decision_three_modes": "2026-09-24: Host mode/API mapping tests, core62+views36, typecheck/build/vet/sqlc/structural checks passed. Pre run3109768297 deploy161907060 SUCCESS/allEnd=true; migration9306 applied. Targete2293e9e modeoff/revision14 confirmed in details/list; invalid/null/conflicting request live400 and no policy mutation. Three DB integration tests not run; direct rollback probe was terminated. Native IM and browser verification not run (browser under user control).",
         "native_dws_ingress_host_tests": "passed_local_2026-10-01: handler unit tests (projection, target binding, wire namespace guard, ownership, self-loop guards, loop breaker, fingerprint, switch guards) and DB tests TestNativeMessageRunsTheRouterPipeline/TestNativeMessageOwnOutputAndQuotes/TestNativeOwnershipIsExclusivePerMessage/TestNativeSubscriptionAccountIsUnique/TestNativeEchoOfOwnReplyIsDropped on a migrated local copy; no model replay. passed_local_2026-10-02: TestAcceptNativeMessageSkipsReplayedBacklog (sent before subscription, older than 10 minutes, short outage, clock skew, no send time) and TestNativeSubscriptionAccountIsUnique enabled_at kept for the same account and restarted for a rebound one",
-        "native_dws_ingress_live_delivery": "not_run"
+        "native_dws_ingress_live_delivery": "not_run",
+        "employee_issue_backend_host_tests": "local PostgreSQL race regressions cover atomic Task/Issue/queue commits, source attribution, busy follow-up association, accepted legacy retries and existing receipt/plan recovery; live Runtime/IM acceptance not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -449,7 +450,13 @@
         "server/internal/dwsclient/sdk_events.go",
         "server/internal/dwseventsource/source.go",
         "server/internal/handler/dws_native_dispatch.go",
-        "server/internal/handler/dws_native_ownership.go"
+        "server/internal/handler/dws_native_ownership.go",
+        "server/internal/handler/coordinator_issue_backend.go",
+        "server/internal/service/employee_issue_backend.go",
+        "server/internal/service/employee_issue_backend_lifecycle.go",
+        "server/internal/service/employee_issue_backend_test.go",
+        "server/internal/handler/coordinator_window_plan_test.go",
+        "server/internal/handler/chat_coordinator_plan_test.go"
       ],
       "case_file": "cases.json"
     },
@@ -1478,7 +1485,8 @@
         "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
         "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
         "concise_acceptance_host_checks": "passed: go test ./internal/service/inboundcoord -count=1 (0.504s after prompt change); package/Host checks, not real-model wording or DingTalk delivery",
-        "concise_acceptance_live_delivery": "passed pre 2026-09-10: 14:45:07 actual DingTalk reply same second as task admission; goal/command retained, sandbox omitted; end-to-end 18s"
+        "concise_acceptance_live_delivery": "passed pre 2026-09-10: 14:45:07 actual DingTalk reply same second as task admission; goal/command retained, sandbox omitted; end-to-end 18s",
+        "employee_issue_backend_host_tests": "local PostgreSQL race regressions cover atomic Task/Issue/queue commits, source attribution, busy follow-up association, accepted legacy retries and existing receipt/plan recovery; live Runtime/IM acceptance not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1506,7 +1514,13 @@
         "server/internal/service/dingtalkresponse/service.go",
         "server/internal/service/dingtalkresponse/worker.go",
         "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
-        "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery"
+        "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery",
+        "server/internal/handler/coordinator_issue_backend.go",
+        "server/internal/service/employee_issue_backend.go",
+        "server/internal/service/employee_issue_backend_lifecycle.go",
+        "server/internal/service/employee_issue_backend_test.go",
+        "server/internal/handler/coordinator_window_plan_test.go",
+        "server/internal/handler/chat_coordinator_plan_test.go"
       ],
       "case_file": "cases.json"
     },

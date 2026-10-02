@@ -53,16 +53,16 @@ func fcE2BSceneScopeID(sceneID, actorKey string) pgtype.UUID {
 
 // connectionReuseScope chooses the scene bucket for this task.
 // enabled is agent.sandbox_connection_reuse. Off returns skipReason
-// disabled. A task that cannot reuse returns a2a, capability, or no_scene.
-func connectionReuseScope(task db.AgentTaskQueue, runtime db.AgentRuntime, enabled bool) (fcE2BTaskScope, bool, string) {
+// disabled. A task that cannot reuse returns a2a or no_scene.
+// Image metadata is not a gate: catalogued templates never carried
+// sandbox_connection_reuse_v1, and the current images already run a
+// later task in a sandbox the server kept alive.
+func connectionReuseScope(task db.AgentTaskQueue, enabled bool) (fcE2BTaskScope, bool, string) {
 	if !enabled {
 		return fcE2BTaskScope{}, false, "disabled"
 	}
 	if IsA2ATaskOrigin(task.Context) {
 		return fcE2BTaskScope{}, false, "a2a"
-	}
-	if !CloudSandboxRuntimeHasCapability(runtime, SandboxConnectionReuseCapability) {
-		return fcE2BTaskScope{}, false, "capability"
 	}
 	scope := contextcap.ScopeFromTaskContext(task.Context)
 	if !contextcap.ValidSceneID(scope.SceneID) {

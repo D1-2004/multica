@@ -466,7 +466,7 @@
         },
         "sandbox_connection_reuse": {
           "type": "boolean",
-          "description": "Share one FC/E2B sandbox across tasks in the same scene and trigger. Omitted means on. Employee filesystems and images without sandbox_connection_reuse_v1 still use a private sandbox."
+          "description": "Share one FC/E2B sandbox across tasks in the same scene and trigger. Omitted means on. Employee filesystems and A2A tasks still use a private sandbox."
         },
         "custom_args": {
           "type": "array",

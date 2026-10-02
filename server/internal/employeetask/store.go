@@ -344,21 +344,63 @@ func (s *Store) getRun(ctx context.Context, scope Scope, taskID, runID string) (
 	return scanRun(s.db.QueryRow(ctx, `SELECT `+runColumns+` FROM employee_task_run WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND task_id=$4::uuid AND id=$5::uuid`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, taskID, runID))
 }
 
+// Resume permits an explicit continuation only after successful completion.
+// Failure/cancellation alone is not evidence that the old external writer exited.
+func (s *Store) Resume(ctx context.Context, scope Scope, id string, p ResumeParams) (Task, Entry, error) {
+	if p.ExpectedVersion <= 0 || strings.TrimSpace(p.ActorRef) == "" || strings.TrimSpace(p.Body) == "" {
+		return Task{}, Entry{}, ErrInvalid
+	}
+	return s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, func(_ pgx.Tx, task *Task) (Entry, error) {
+		if task.ActiveRunID != "" {
+			return Entry{}, ErrActiveRun
+		}
+		if task.State == StateFailed || task.State == StateCancelled {
+			return Entry{}, ErrRunNotReady
+		}
+		if task.State != StateSucceeded {
+			return Entry{}, ErrConflict
+		}
+		task.State = StateReady
+		return Entry{Kind: "resumed", ActorRef: p.ActorRef, Body: p.Body}, nil
+	})
+}
+
 // StartRun records a queue mapping supplied by the host. Passing NewStore(tx)
 // lets the host insert the existing queue row in the same outer transaction.
 func (s *Store) StartRun(ctx context.Context, scope Scope, id string, p StartRunParams) (Run, error) {
-	if p.ExpectedVersion <= 0 || !validUUID(p.QueueTaskID) {
+	if p.ExpectedVersion <= 0 || !validUUID(p.QueueTaskID) || p.InputSeq < 0 {
 		return Run{}, ErrInvalid
 	}
 	_, e, err := s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, func(tx pgx.Tx, task *Task) (Entry, error) {
+		if task.DispatchMode == DispatchDirect {
+			// A correction or late result can change the goal snapshot to ready,
+			// but neither proves that a failed/cancelled external writer exited.
+			// Until explicit termination evidence exists, the durable Run history
+			// is the final fence for every new Direct execution.
+			var unresolvedWriter bool
+			err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_task_run WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND task_id=$4::uuid AND state IN ('failed','cancelled'))`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id).Scan(&unresolvedWriter)
+			if err != nil {
+				return Entry{}, err
+			}
+			if unresolvedWriter {
+				return Entry{}, ErrRunNotReady
+			}
+		}
 		if task.ActiveRunID != "" {
 			return Entry{}, ErrActiveRun
 		}
 		if task.State != StateReady {
 			return Entry{}, ErrConflict
 		}
+		inputSeq := p.InputSeq
+		if inputSeq == 0 {
+			inputSeq = task.LastEntrySeq
+		}
+		if inputSeq > task.LastEntrySeq {
+			return Entry{}, ErrInvalid
+		}
 		run, err := scanRun(tx.QueryRow(ctx, `INSERT INTO employee_task_run(workspace_id,agent_id,tenant_org_id,task_id,queue_task_id,goal_revision,input_seq)
-  VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,$7) RETURNING `+runColumns, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id, p.QueueTaskID, task.GoalRevision, task.LastEntrySeq))
+	  VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,$7) RETURNING `+runColumns, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id, p.QueueTaskID, task.GoalRevision, inputSeq))
 		if err != nil {
 			return Entry{}, err
 		}
@@ -370,6 +412,49 @@ func (s *Store) StartRun(ctx context.Context, scope Scope, id string, p StartRun
 		return Run{}, err
 	}
 	return s.getRun(ctx, scope, id, e.RunID)
+}
+
+// ObserveIssueRun preserves actual legacy execution facts, including retries.
+// It cannot dispatch, cannot apply to Direct/Employee-owned work, and verifies
+// the queue's authoritative Issue/agent/workspace binding before recording it.
+func (s *Store) ObserveIssueRun(ctx context.Context, scope Scope, id string, p ObserveIssueRunParams) (Run, error) {
+	if p.ExpectedVersion <= 0 || !validUUID(p.QueueTaskID) || p.InputSeq <= 0 || p.GoalRevision <= 0 {
+		return Run{}, ErrInvalid
+	}
+	current, err := s.Get(ctx, scope, id)
+	if err != nil {
+		return Run{}, err
+	}
+	if current.OwnerLoop != LoopCoordinator || current.DispatchMode != DispatchIssue || current.IssueID == "" {
+		return Run{}, ErrInvalid
+	}
+	_, entry, err := s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, func(tx pgx.Tx, task *Task) (Entry, error) {
+		if task.ActiveRunID != "" {
+			return Entry{}, ErrActiveRun
+		}
+		if p.InputSeq > task.LastEntrySeq || p.GoalRevision > task.GoalRevision {
+			return Entry{}, ErrInvalid
+		}
+		var accepted bool
+		err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agent_task_queue q JOIN issue i ON i.id=q.issue_id WHERE q.id=$1::uuid AND q.agent_id=$2::uuid AND q.issue_id=$3::uuid AND i.workspace_id=$4::uuid)`, p.QueueTaskID, scope.AgentID, task.IssueID, scope.WorkspaceID).Scan(&accepted)
+		if err != nil {
+			return Entry{}, err
+		}
+		if !accepted {
+			return Entry{}, ErrNotFound
+		}
+		run, err := scanRun(tx.QueryRow(ctx, `INSERT INTO employee_task_run(workspace_id,agent_id,tenant_org_id,task_id,queue_task_id,goal_revision,input_seq) VALUES($1::uuid,$2::uuid,$3,$4::uuid,$5::uuid,$6,$7) RETURNING `+runColumns, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id, p.QueueTaskID, p.GoalRevision, p.InputSeq))
+		if err != nil {
+			return Entry{}, err
+		}
+		task.ActiveRunID = run.ID
+		task.State = StateRunning
+		return Entry{Kind: "run_started", RunID: run.ID, GoalRevision: p.GoalRevision}, nil
+	})
+	if err != nil {
+		return Run{}, err
+	}
+	return s.getRun(ctx, scope, id, entry.RunID)
 }
 
 // RecordResult retains results against the definition used by that run. A late

@@ -74,6 +74,7 @@ func database(t *testing.T) fixture {
 	for _, path := range owned {
 		applyMigration(t, pool, path)
 	}
+	applyMigration(t, pool, filepath.Join(dir, "9650_employee_task_resume.up.sql"))
 	ws, agent := uuid.NewString(), uuid.NewString()
 	// The production workspace owns the parent-row lock shared with teardown.
 	if _, err := pool.Exec(ctx, `CREATE TABLE workspace (id uuid NOT NULL)`); err != nil {
@@ -96,6 +97,39 @@ func database(t *testing.T) fixture {
 	}
 	p := CreateParams{Scope: Scope{WorkspaceID: ws, AgentID: agent, TenantOrgID: "org-a", Kind: ScopeScene, Scene: scene.RefOf(row)}, OwnerLoop: LoopEmployee, DispatchMode: DispatchDirect, RequesterRef: "human:a", Definition: Definition{Goal: "Analyze feedback"}, Source: Source{"dispatch", "event-1/action-1"}, Input: "Analyze feedback"}
 	return fixture{pool, NewStore(pool), p}
+}
+
+func TestTaskExplicitResumeRequiresCompletedRun(t *testing.T) {
+	for _, terminal := range []State{StateSucceeded, StateFailed, StateCancelled} {
+		t.Run(string(terminal), func(t *testing.T) {
+			f := database(t)
+			ctx := context.Background()
+			task := createTask(t, f)
+			run, err := f.store.StartRun(ctx, task.Scope, task.ID, StartRunParams{Source: Source{"host", "start"}, QueueTaskID: uuid.NewString(), ExpectedVersion: task.Version})
+			if err != nil {
+				t.Fatal(err)
+			}
+			task, _, err = f.store.RecordResult(ctx, task.Scope, task.ID, ResultParams{Source: Source{"runtime", "terminal"}, RunID: run.ID, State: terminal})
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := ResumeParams{Source: Source{"human", "continuation"}, ActorRef: "dingtalk:requester", Body: "Continue with delivery dates", ExpectedVersion: task.Version}
+			resumed, entry, err := f.store.Resume(ctx, task.Scope, task.ID, p)
+			if terminal != StateSucceeded {
+				if !errors.Is(err, ErrRunNotReady) {
+					t.Fatalf("unproven runner termination: %v", err)
+				}
+				return
+			}
+			if err != nil || resumed.State != StateReady || resumed.GoalRevision != task.GoalRevision || entry.Kind != "resumed" {
+				t.Fatalf("resume: %+v %+v %v", resumed, entry, err)
+			}
+			again, replayed, err := f.store.Resume(ctx, task.Scope, task.ID, p)
+			if err != nil || again.Version != resumed.Version || replayed.Seq != entry.Seq {
+				t.Fatalf("replay: %+v %v", again, err)
+			}
+		})
+	}
 }
 func applyMigration(t *testing.T, pool *pgxpool.Pool, path string) {
 	t.Helper()
@@ -654,5 +688,148 @@ func TestTaskOuterWriteTransactionBlocksWorkspaceDeletion(t *testing.T) {
 				t.Fatalf("task escaped concurrent teardown: %d %v", count, err)
 			}
 		})
+	}
+}
+
+func TestRunRetainsAcceptedInputBoundary(t *testing.T) {
+	f := database(t)
+	ctx := context.Background()
+	task := createTask(t, f)
+	task, _, err := f.store.AppendInput(ctx, task.Scope, task.ID, InputParams{Source: Source{"event", "later"}, Body: "Not part of the already accepted queue", ExpectedVersion: task.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := f.store.StartRun(ctx, task.Scope, task.ID, StartRunParams{Source: Source{"host", "accepted"}, QueueTaskID: uuid.NewString(), InputSeq: 1, ExpectedVersion: task.Version})
+	if err != nil || run.InputSeq != 1 {
+		t.Fatalf("accepted boundary: %+v %v", run, err)
+	}
+}
+
+func TestObserveIssueRunRejectsDirectAndUnacceptedQueue(t *testing.T) {
+	f := database(t)
+	ctx := context.Background()
+	direct := createTask(t, f)
+	params := ObserveIssueRunParams{Source: Source{"legacy", "observed"}, QueueTaskID: uuid.NewString(), GoalRevision: 1, InputSeq: 1, ExpectedVersion: direct.Version}
+	if _, err := f.store.ObserveIssueRun(ctx, direct.Scope, direct.ID, params); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Direct accepted legacy observation: %v", err)
+	}
+	if _, err := f.pool.Exec(ctx, `CREATE TABLE issue(id uuid,workspace_id uuid);CREATE TABLE agent_task_queue(id uuid,issue_id uuid,agent_id uuid)`); err != nil {
+		t.Fatal(err)
+	}
+	f.params.Source.Key = "coordinator-goal"
+	f.params.OwnerLoop = LoopCoordinator
+	f.params.DispatchMode = DispatchIssue
+	task := createTask(t, f)
+	issueID := uuid.NewString()
+	task, err := f.store.BindIssue(ctx, task.Scope, task.ID, BindIssueParams{Source: Source{"host", "issue"}, IssueID: issueID, ExpectedVersion: task.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	params.ExpectedVersion = task.Version
+	if _, err = f.store.ObserveIssueRun(ctx, task.Scope, task.ID, params); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unaccepted queue observed: %v", err)
+	}
+	if _, err = f.pool.Exec(ctx, `INSERT INTO issue VALUES($1,$2)`, issueID, task.Scope.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.pool.Exec(ctx, `INSERT INTO agent_task_queue VALUES($1,$2,$3)`, params.QueueTaskID, issueID, uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.store.ObserveIssueRun(ctx, task.Scope, task.ID, params); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign queue observed: %v", err)
+	}
+	if _, err = f.pool.Exec(ctx, `UPDATE agent_task_queue SET agent_id=$1 WHERE id=$2`, task.Scope.AgentID, params.QueueTaskID); err != nil {
+		t.Fatal(err)
+	}
+	observed, err := f.store.ObserveIssueRun(ctx, task.Scope, task.ID, params)
+	if err != nil || observed.QueueTaskID != params.QueueTaskID {
+		t.Fatalf("accepted queue observation: %+v %v", observed, err)
+	}
+	again, err := f.store.ObserveIssueRun(ctx, task.Scope, task.ID, params)
+	if err != nil || again.ID != observed.ID {
+		t.Fatalf("observation replay: %+v %v", again, err)
+	}
+}
+
+func TestDirectStartRetainsRunnerFenceAcrossCorrectionsAndLateResults(t *testing.T) {
+	for _, terminal := range []State{StateFailed, StateCancelled} {
+		for _, correctionFirst := range []bool{false, true} {
+			name := string(terminal) + "_then_correction"
+			if correctionFirst {
+				name = string(terminal) + "_after_correction"
+			}
+			t.Run(name, func(t *testing.T) {
+				f := database(t)
+				ctx := context.Background()
+				task := createTask(t, f)
+				firstStart := StartRunParams{Source: Source{"host", "first"}, QueueTaskID: uuid.NewString(), ExpectedVersion: task.Version}
+				first, err := f.store.StartRun(ctx, task.Scope, task.ID, firstStart)
+				if err != nil {
+					t.Fatal(err)
+				}
+				task, err = f.store.Get(ctx, task.Scope, task.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				correct := func() {
+					updated := Definition{Goal: "The corrected goal"}
+					task, _, err = f.store.AppendInput(ctx, task.Scope, task.ID, InputParams{Source: Source{"human", "correction"}, ActorRef: "member:requester", Body: "Use the corrected goal", Correction: &updated, ExpectedVersion: task.Version})
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if correctionFirst {
+					correct()
+				}
+				task, _, err = f.store.RecordResult(ctx, task.Scope, task.ID, ResultParams{Source: Source{"runtime", "terminal"}, RunID: first.ID, State: terminal, Result: "No confirmed process termination"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !correctionFirst {
+					correct()
+				}
+				before := task
+				if _, _, err = f.store.RecordResult(ctx, task.Scope, task.ID, ResultParams{Source: Source{"runtime", "late-success"}, RunID: first.ID, State: StateSucceeded, Result: "Late success"}); !errors.Is(err, ErrConflict) {
+					t.Fatalf("late success rewrote terminal Run: %v", err)
+				}
+				if _, err = f.store.StartRun(ctx, task.Scope, task.ID, StartRunParams{Source: Source{"host", "second"}, QueueTaskID: uuid.NewString(), ExpectedVersion: task.Version}); !errors.Is(err, ErrRunNotReady) {
+					t.Fatalf("new Direct writer admitted after %s and correction: %v", terminal, err)
+				}
+				replay, err := f.store.StartRun(ctx, task.Scope, task.ID, firstStart)
+				if err != nil || replay.ID != first.ID {
+					t.Fatalf("existing Run replay was blocked: %+v %v", replay, err)
+				}
+				got, err := f.store.Get(ctx, task.Scope, task.ID)
+				if err != nil || got.Version != before.Version || got.State != before.State || got.ActiveRunID != "" {
+					t.Fatalf("rejected start changed snapshot: %+v %v", got, err)
+				}
+				var runs int
+				if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM employee_task_run WHERE task_id=$1::uuid`, task.ID).Scan(&runs); err != nil || runs != 1 {
+					t.Fatalf("second writer persisted: runs=%d %v", runs, err)
+				}
+			})
+		}
+	}
+}
+
+func TestDirectCompletedRunCanExplicitlyResumeAndStartAgain(t *testing.T) {
+	f := database(t)
+	ctx := context.Background()
+	task := createTask(t, f)
+	run, err := f.store.StartRun(ctx, task.Scope, task.ID, StartRunParams{Source: Source{"host", "first"}, QueueTaskID: uuid.NewString(), ExpectedVersion: task.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _, err = f.store.RecordResult(ctx, task.Scope, task.ID, ResultParams{Source: Source{"runtime", "completed"}, RunID: run.ID, State: StateSucceeded, Result: "Execution completed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _, err = f.store.Resume(ctx, task.Scope, task.ID, ResumeParams{Source: Source{"human", "continue"}, ActorRef: "member:requester", Body: "Continue this goal", ExpectedVersion: task.Version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := f.store.StartRun(ctx, task.Scope, task.ID, StartRunParams{Source: Source{"host", "second"}, QueueTaskID: uuid.NewString(), ExpectedVersion: task.Version})
+	if err != nil || next.ID == run.ID || next.GoalRevision != run.GoalRevision {
+		t.Fatalf("completed continuation rejected: %+v %v", next, err)
 	}
 }

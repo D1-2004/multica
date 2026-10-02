@@ -19,7 +19,7 @@ func (s *TaskService) recordEmployeeRunInTx(ctx context.Context, tx pgx.Tx, task
 		if IsEmployeeDirectTask(task) {
 			return ErrDirectTaskAccessDenied
 		}
-		return nil
+		return recordEmployeeIssueResult(ctx, tx, task, status, result, errMessage)
 	}
 	if tx == nil {
 		return errors.New("employee run terminal transition requires transaction")
@@ -71,7 +71,7 @@ func (s *TaskService) ReconcileEmployeeRuns(ctx context.Context, limit int) (int
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT q.id FROM employee_task_run r JOIN employee_task t ON t.id=r.task_id JOIN agent_task_queue q ON q.id=r.queue_task_id WHERE t.dispatch_mode='direct' AND r.state='running' AND q.status IN ('completed','failed','cancelled') ORDER BY q.created_at LIMIT $1`, limit)
+	rows, err := tx.Query(ctx, `SELECT q.id FROM employee_task_run r JOIN employee_task t ON t.id=r.task_id JOIN agent_task_queue q ON q.id=r.queue_task_id WHERE t.dispatch_mode IN ('direct','issue') AND r.state='running' AND q.status IN ('completed','failed','cancelled') ORDER BY q.created_at LIMIT $1`, limit)
 	if err != nil {
 		return 0, err
 	}
@@ -111,7 +111,12 @@ func (s *TaskService) ReconcileEmployeeRuns(ctx context.Context, limit int) (int
 		}
 		count++
 	}
-	return count, nil
+	associated, err := s.reconcileEmployeeIssueQueues(ctx, limit)
+	if err != nil {
+		return count + associated, err
+	}
+	retries, err := s.reconcileEmployeeIssueRetries(ctx, limit)
+	return count + associated + retries, err
 }
 
 // Lock the parent before mutating the queue. Workspace teardown locks the same
@@ -121,7 +126,7 @@ func lockEmployeeRunWorkspace(ctx context.Context, tx pgx.Tx, queueID pgtype.UUI
 		return nil
 	}
 	var id pgtype.UUID
-	err := tx.QueryRow(ctx, `SELECT w.id FROM workspace w JOIN agent_task_queue q ON w.id::text=q.context->>'workspace_id' WHERE q.id=$1 AND q.context->>'type'='employee_direct' FOR KEY SHARE OF w`, queueID).Scan(&id)
+	err := tx.QueryRow(ctx, `SELECT w.id FROM workspace w JOIN employee_task t ON t.workspace_id=w.id JOIN employee_task_run r ON r.task_id=t.id AND r.workspace_id=t.workspace_id AND r.agent_id=t.agent_id WHERE r.queue_task_id=$1 FOR KEY SHARE OF w`, queueID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
