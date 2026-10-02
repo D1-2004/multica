@@ -33,11 +33,14 @@ func employeeSceneTools() []employeeloop.Tool {
 	stringField := func(description string) map[string]any {
 		return map[string]any{"type": "string", "description": description}
 	}
+	stringArray := func(description string) map[string]any {
+		return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": description}
+	}
 	source := stringField("Exact source_ref from the current window; the Host resolves its original requester.")
 	readSchema := map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "task_id": stringField("A known EmployeeTask UUID belonging to this requester in this scene.")}, "required": []string{"source_ref", "task_id"}, "additionalProperties": false}
 	return []employeeloop.Tool{
 		{Name: "stay_quiet", Description: "Record that this window does not require a response from this employee. No message is sent and no task is created or cancelled.", Schema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}},
-		{Name: "dispatch_task", Description: "Accept only self-contained new work explicitly requested in the selected source message. If it refers to previous work without a concrete new goal, clarify instead; continuation is not registered. Include the acknowledgement to send after the queue commit. Continuation, control, reactions and quoted work are not supported by this tool.", Effect: true, Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "goal": stringField("The complete user goal, without inventing requirements."), "prompt": stringField("Complete execution instruction, preserving user constraints and material references."), "reply": stringField("Brief acknowledgement of accepted work, never a completed result.")}, "required": []string{"source_ref", "goal", "prompt", "reply"}, "additionalProperties": false}},
+		{Name: "dispatch_task", Description: "Accept only self-contained new work explicitly requested in the selected source message. If it refers to previous work without a concrete new goal, clarify instead; continuation is not registered. Include the acknowledgement to send after the queue commit. Continuation, control, reactions and quoted work are not supported by this tool.", Effect: true, Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "goal": stringField("The complete user goal, without inventing requirements."), "prompt": stringField("Complete execution instruction, preserving user constraints and material references."), "reply": stringField("Brief acknowledgement of accepted work, never a completed result."), "deliverables": stringArray("Optional concrete outputs explicitly required by the requester. Omit when unspecified; do not invent deliverables."), "success_criteria": stringArray("Optional acceptance conditions explicitly required by the requester. Omit when unspecified."), "access_needed": stringArray("Optional access the request says is needed. This is a request only and never grants access or capabilities.")}, "required": []string{"source_ref", "goal", "prompt", "reply"}, "additionalProperties": false}},
 		{Name: "read_task", Description: "Read the requester's own explicitly identified task. A task UUID does not grant access.", Schema: readSchema},
 		{Name: "read_task_history", Description: "Read up to twenty entries of the requester's own explicitly identified task.", Schema: readSchema},
 	}
@@ -59,6 +62,29 @@ func argument(args map[string]any, key string) (string, error) {
 	}
 	return s, nil
 }
+func optionalStringArray(args map[string]any, key string) ([]string, error) {
+	raw, present := args[key]
+	if !present {
+		return nil, nil
+	}
+	if values, ok := raw.([]string); ok {
+		return append([]string(nil), values...), nil
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array of strings", key)
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		text, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s must be an array of strings", key)
+		}
+		out = append(out, text)
+	}
+	return out, nil
+}
+
 func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.Identity, call employeeloop.ToolCall) (employeeloop.ToolResult, error) {
 	if identity.WorkspaceID != h.job.Scope.WorkspaceID || identity.AgentID != h.job.Scope.AgentID || identity.TenantOrgID != h.job.Scope.TenantOrgID || identity.Scene.SceneID != h.job.Scope.SceneID || identity.ReceiptID != h.job.Items[0].ReceiptID {
 		return employeeloop.ToolResult{}, errors.New("employee Host identity mismatch")
@@ -161,6 +187,16 @@ func (h *employeeSceneHost) dispatch(ctx context.Context, source employeeSourceM
 	if len(goal) > 16000 || len(prompt) > 64000 || len(reply) > 8000 {
 		return employeeloop.ToolResult{}, errors.New("employee task instruction exceeds bounds")
 	}
+	definition := employeetask.Definition{Goal: goal}
+	if definition.Deliverables, err = optionalStringArray(call.Arguments, "deliverables"); err != nil {
+		return employeeloop.ToolResult{}, err
+	}
+	if definition.SuccessCriteria, err = optionalStringArray(call.Arguments, "success_criteria"); err != nil {
+		return employeeloop.ToolResult{}, err
+	}
+	if definition.AccessNeeded, err = optionalStringArray(call.Arguments, "access_needed"); err != nil {
+		return employeeloop.ToolResult{}, err
+	}
 	storeDB, ok := employeeEntryDB(h.worker.handler)
 	if !ok {
 		return employeeloop.ToolResult{}, errors.New("employee task storage is unavailable")
@@ -170,7 +206,7 @@ func (h *employeeSceneHost) dispatch(ctx context.Context, source employeeSourceM
 		return employeeloop.ToolResult{}, err
 	}
 	packet, err := employeetask.Compile(employeetask.CompileInput{
-		Scope: h.taskScope(), PrincipalID: env.PrincipalID, Definition: employeetask.Definition{Goal: goal}, Prompt: prompt,
+		Scope: h.taskScope(), PrincipalID: env.PrincipalID, Definition: definition, Prompt: prompt,
 		Source:        employeetask.PacketMaterial{Ref: source.SourceRef, Scope: h.taskScope(), PrincipalID: env.PrincipalID, Body: string(evidence)},
 		History:       employeetask.PacketHistory{State: employeetask.HistoryUnavailable},
 		ReturnAddress: "scene:" + h.job.Scope.SceneID + "; source_ref:" + source.SourceRef,
@@ -256,7 +292,13 @@ func employeePrincipalAllowed(ctx context.Context, h *Handler, scope employeeent
 	if err != nil {
 		return err
 	}
-	if _, err = util.ParseUUID(principal); err != nil {
+	principalID, err := util.ParseUUID(principal)
+	if err != nil {
+		return err
+	}
+	// An Agent owner shortcut is an invocation rule, not proof that the
+	// original admission principal still belongs to this workspace.
+	if _, err = h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{UserID: principalID, WorkspaceID: workspaceID}); err != nil {
 		return err
 	}
 	agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceID})

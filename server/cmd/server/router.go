@@ -964,7 +964,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return err
 		}
 		if !ready {
-			return errors.New("live server replicas do not all support employee-loop:1")
+			return errors.New("live server replicas do not all support employee-loop:2")
 		}
 		return nil
 	}
@@ -1096,6 +1096,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			h.TaskCompletionWorker.ResponseActions = h
 		}
 		h.DingTalkResponses.OnSandboxDelivered = h.BindVerifiedDingTalkSend
+		h.DingTalkResponses.BeforeSend = h.BeforeEmployeeRunNoticeSend
+		h.EmployeeRunNoticeArtifacts = h.ListEmployeeTaskArtifacts
 		// Native dispatches complete to their own target. The worker exists
 		// whenever managed responses do, so queued native callbacks drain
 		// even after runtime.use_dws_for_tag is switched off.
@@ -2823,6 +2825,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// User-readable task artifacts plus the task-token-only DSH upload.
 			// Each handler re-applies its own transcript/trajectory authorization.
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.Get("/api/tasks/{taskId}/artifacts", h.ListEmployeeTaskArtifactsByUser)
 			r.Put("/api/tasks/{taskId}/dsh-trajectory", h.UploadDSHTrajectory)
 			r.Get("/api/tasks/{taskId}/dsh/schedules", h.DSHSchedules)
 			r.Get("/api/tasks/{taskId}/dsh/schedules/{scheduleId}", h.GetDSHSchedule)

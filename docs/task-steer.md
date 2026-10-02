@@ -46,8 +46,10 @@ before retrying the acknowledgement. Windows lacks process-group ownership and
 cannot provide this proof yet.
 
 For existing FC/E2B images, the server also uses the task-owned stop script's
-second scan. All sandboxes must return a version-3 receipt with zero remaining
-and zero unreadable processes. Disabled stops, missing receipts and errors do
+second scan. All sandboxes must return a version-4 receipt with positive
+`quiescent` proof, zero remaining owned processes and zero unresolved matching
+runtime/port runners. Unreadable unrelated services are diagnostic only;
+unreadable matching runners still hold the barrier. Missing receipts and errors do
 not clear the barrier. Pending steer requires the stop even when
 `runtime.fc_e2b_sdk_rollout` is off; that switch still selects SDK or CLI
 transport. No timer or logical cancellation substitutes for exit proof.
@@ -71,6 +73,10 @@ the latest author supplies attribution and task identity context. Cancelling an
 Issue task also reconciles undelivered comments, including comments arriving
 before cancellation acknowledgement. Existing routing, explicit-agent mentions,
 owner authorization and note/agent-loop suppression remain authoritative.
+
+Human input without a transport identity token omits all token/expiry/source
+fields and clears an earlier merged input's credentials. A new correction also
+rearms the predecessor's stop observation if the first exit proof was missing.
 
 ## Limits and validation
 

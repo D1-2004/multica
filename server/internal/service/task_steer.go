@@ -155,7 +155,13 @@ func (s *IssueCommentService) createSteeredExternalFollowUp(ctx context.Context,
 	if preempted != nil {
 		private["steer_predecessor_task_id"], _ = json.Marshal(util.UUIDToString(preempted.ID))
 	}
-	private["agent_identity_context_token"], _ = json.Marshal(strings.TrimSpace(params.AgentIdentityContextToken))
+	if token := strings.TrimSpace(params.AgentIdentityContextToken); token != "" {
+		private[protocol.AgentIdentityContextTokenJSONKey], _ = json.Marshal(token)
+	} else {
+		delete(private, protocol.AgentIdentityContextTokenJSONKey)
+		delete(private, protocol.AgentIdentityContextTokenExpiresAtJSONKey)
+		delete(private, protocol.AgentIdentityContextTokenSourceJSONKey)
+	}
 	correctionContext, err := json.Marshal(private)
 	if err != nil {
 		return IssueCommentCreateResult{}, err
@@ -222,6 +228,8 @@ func (s *IssueCommentService) createSteeredExternalFollowUp(ctx context.Context,
 		s.TaskService.captureTaskCancelled(ctx, *preempted)
 		s.TaskService.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, *preempted)
 		s.TaskService.NotifyTaskFinished(*preempted)
+	} else {
+		s.TaskService.NotifySteerPredecessor(ctx, task)
 	}
 	s.TaskService.publishIssueTaskEnqueued(ctx, task)
 	return IssueCommentCreateResult{Comment: comment, Attachments: attachments, Task: task, PreemptedTask: preempted}, nil

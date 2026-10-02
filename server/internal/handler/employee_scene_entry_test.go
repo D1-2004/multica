@@ -19,11 +19,12 @@ import (
 )
 
 type employeeTestModel struct {
-	calls     int
-	sourceRef string
-	dispatch  bool
-	partial   bool
-	quiet     bool
+	calls      int
+	sourceRef  string
+	dispatch   bool
+	partial    bool
+	quiet      bool
+	definition *employeetask.Definition
 }
 
 func (m *employeeTestModel) Chat(ctx context.Context, p openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
@@ -31,7 +32,13 @@ func (m *employeeTestModel) Chat(ctx context.Context, p openai.ChatCompletionNew
 	message := map[string]any{"role": "assistant", "content": "在，需要我帮你做什么？"}
 	finish := "stop"
 	if m.dispatch {
-		args, _ := json.Marshal(map[string]any{"goal": "Analyze feedback", "prompt": "Analyze feedback and report the evidence", "reply": "我来分析这些反馈。", "source_ref": m.sourceRef})
+		arguments := map[string]any{"goal": "Analyze feedback", "prompt": "Analyze feedback and report the evidence", "reply": "我来分析这些反馈。", "source_ref": m.sourceRef}
+		if m.definition != nil {
+			arguments["deliverables"] = m.definition.Deliverables
+			arguments["success_criteria"] = m.definition.SuccessCriteria
+			arguments["access_needed"] = m.definition.AccessNeeded
+		}
+		args, _ := json.Marshal(arguments)
 		calls := []any{map[string]any{"id": "call-first", "type": "function", "function": map[string]any{"name": "dispatch_task", "arguments": string(args)}}}
 		if m.partial {
 			bad, _ := json.Marshal(map[string]any{"goal": " ", "prompt": "missing real goal", "reply": "Second accepted", "source_ref": m.sourceRef})
@@ -697,5 +704,62 @@ func TestEmployeeSceneOversizedWindowGetsOneExplicitResponse(t *testing.T) {
 	var count int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM response_action WHERE agent_id=$1`, f.agentID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("repeat/missing oversized response: %d %v", count, err)
+	}
+}
+
+func TestEmployeeSceneDispatchPreservesStructuredDefinition(t *testing.T) {
+	f, model, dc := employeeFixture(t)
+	ctx := context.Background()
+	f.command.CompletionCallback = nil
+	f.command.ResponsePolicy = nil
+	f.command.Event.Data.Messages = []DispatchMessage{{OpenMsgID: "structured-request", Text: "Analyze feedback; deliver a CSV report, preserve every original row; request finance.read only if needed."}}
+	model.dispatch = true
+	model.definition = &employeetask.Definition{Deliverables: []string{" CSV report "}, SuccessCriteria: []string{" Preserve every original row "}, AccessNeeded: []string{" finance.read "}}
+	response := employeeHTTP(t, f, dc, uuid.NewString())
+	if response.Code != http.StatusAccepted {
+		t.Fatal(response.Body.String())
+	}
+	var receipt string
+	if err := testPool.QueryRow(ctx, `SELECT receipt_id::text FROM employee_event_consumption WHERE agent_id=$1`, f.agentID).Scan(&receipt); err != nil {
+		t.Fatal(err)
+	}
+	model.sourceRef = receipt + "/structured-request"
+	if _, err := f.h.EmployeeSceneWorker.ProcessNext(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var definitionRaw, contextRaw []byte
+	if err := testPool.QueryRow(ctx, `SELECT t.definition,q.context FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id JOIN agent_task_queue q ON q.id=r.queue_task_id WHERE t.agent_id=$1`, f.agentID).Scan(&definitionRaw, &contextRaw); err != nil {
+		t.Fatal(err)
+	}
+	var definition employeetask.Definition
+	var queueContext map[string]any
+	if err := json.Unmarshal(definitionRaw, &definition); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(contextRaw, &queueContext); err != nil {
+		t.Fatal(err)
+	}
+	if len(definition.Deliverables) != 1 || definition.Deliverables[0] != "CSV report" || len(definition.SuccessCriteria) != 1 || definition.SuccessCriteria[0] != "Preserve every original row" || len(definition.AccessNeeded) != 1 || definition.AccessNeeded[0] != "finance.read" {
+		t.Fatalf("structured user contract lost: %s", definitionRaw)
+	}
+	prompt, _ := queueContext["direct_task_prompt"].(string)
+	for _, expected := range []string{"Deliverables: CSV report", "Preserve every original row", "Access needed (requested, not granted): finance.read", "ACTUAL CAPABILITIES (Host verified): none declared"} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("compiled packet lacks %q: %s", expected, prompt)
+		}
+	}
+	if model.calls != 1 {
+		t.Fatalf("structured dispatch needed another model call: %d", model.calls)
+	}
+}
+
+func TestEmployeeDefinitionArrayArgumentsRejectWrongTypes(t *testing.T) {
+	for _, value := range []any{nil, "report", true, []any{"report", 7}} {
+		if _, err := optionalStringArray(map[string]any{"deliverables": value}, "deliverables"); err == nil {
+			t.Fatalf("accepted non-string-array: %#v", value)
+		}
+	}
+	if values, err := optionalStringArray(map[string]any{}, "deliverables"); err != nil || len(values) != 0 {
+		t.Fatal("optional omission forced a contract", values, err)
 	}
 }

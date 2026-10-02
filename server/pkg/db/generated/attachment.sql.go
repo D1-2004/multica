@@ -276,17 +276,18 @@ const linkAttachmentsToChatMessage = `-- name: LinkAttachmentsToChatMessage :man
 UPDATE attachment
 SET chat_message_id = $1,
     chat_session_id = $2
-WHERE workspace_id = $3
-  AND issue_id IS NULL
-  AND comment_id IS NULL
-  AND chat_message_id IS NULL
+WHERE NOT EXISTS (SELECT 1 FROM employee_task_artifact private_artifact WHERE private_artifact.attachment_id = attachment.id)
+  AND attachment.workspace_id = $3
+  AND attachment.issue_id IS NULL
+  AND attachment.comment_id IS NULL
+  AND attachment.chat_message_id IS NULL
   AND (
-    chat_session_id IS NULL
-    OR chat_session_id = $2
+    attachment.chat_session_id IS NULL
+    OR attachment.chat_session_id = $2
   )
-  AND uploader_type = $4
-  AND uploader_id = $5
-  AND id = ANY($6::uuid[])
+  AND attachment.uploader_type = $4
+  AND attachment.uploader_id = $5
+  AND attachment.id = ANY($6::uuid[])
 RETURNING id
 `
 
@@ -329,9 +330,10 @@ func (q *Queries) LinkAttachmentsToChatMessage(ctx context.Context, arg LinkAtta
 const linkAttachmentsToComment = `-- name: LinkAttachmentsToComment :exec
 UPDATE attachment
 SET comment_id = $1
-WHERE issue_id = $2
-  AND comment_id IS NULL
-  AND id = ANY($3::uuid[])
+WHERE NOT EXISTS (SELECT 1 FROM employee_task_artifact private_artifact WHERE private_artifact.attachment_id = attachment.id)
+  AND attachment.issue_id = $2
+  AND attachment.comment_id IS NULL
+  AND attachment.id = ANY($3::uuid[])
 `
 
 type LinkAttachmentsToCommentParams struct {
@@ -348,9 +350,10 @@ func (q *Queries) LinkAttachmentsToComment(ctx context.Context, arg LinkAttachme
 const linkAttachmentsToIssue = `-- name: LinkAttachmentsToIssue :exec
 UPDATE attachment
 SET issue_id = $1
-WHERE workspace_id = $2
-  AND issue_id IS NULL
-  AND id = ANY($3::uuid[])
+WHERE NOT EXISTS (SELECT 1 FROM employee_task_artifact private_artifact WHERE private_artifact.attachment_id = attachment.id)
+  AND attachment.workspace_id = $2
+  AND attachment.issue_id IS NULL
+  AND attachment.id = ANY($3::uuid[])
 `
 
 type LinkAttachmentsToIssueParams struct {
@@ -703,10 +706,11 @@ SET comment_id = CASE
   WHEN id = ANY($3::uuid[]) THEN $1
   ELSE NULL
 END
-WHERE issue_id = $2
+WHERE NOT EXISTS (SELECT 1 FROM employee_task_artifact private_artifact WHERE private_artifact.attachment_id = attachment.id)
+  AND attachment.issue_id = $2
   AND (
-    comment_id = $1
-    OR (comment_id IS NULL AND id = ANY($3::uuid[]))
+    attachment.comment_id = $1
+    OR (attachment.comment_id IS NULL AND attachment.id = ANY($3::uuid[]))
   )
 `
 

@@ -83,7 +83,10 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"employee_event_consumption":      workspaceDelete,
 	"employee_scene_job":              workspaceDelete,
 	"employee_learning":               workspaceDelete,
+	"employee_learning_consumption":   workspaceDelete,
 	"employee_memory_state":           workspaceDelete,
+	"employee_run_notice":             workspaceDelete,
+	"employee_task_artifact":          workspaceDeleteSettle,
 	"employee_task":                   workspaceDelete,
 	"employee_task_entry":             workspaceDelete,
 	"employee_task_run":               workspaceDelete,
@@ -239,7 +242,7 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		for _, table := range []string{"employee_event_consumption", "employee_scene_job", "employee_learning", "employee_memory_state", "scene_event_receipt", "employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
+		for _, table := range []string{"employee_run_notice", "employee_learning_consumption", "employee_event_consumption", "employee_scene_job", "employee_learning", "employee_memory_state", "scene_event_receipt", "employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
 			if _, err := testPool.Exec(context.Background(), `DELETE FROM `+table+` WHERE workspace_id=$1`, workspaceID); err != nil {
 				t.Errorf("cleanup %s: %v", table, err)
 			}
@@ -285,12 +288,18 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 	if _, err = employeememory.NewStore(testPool).Record(ctx, employeememory.Scope{WorkspaceID: parseUUID(workspaceID), AgentID: parseUUID(agentID), TenantOrgID: task.Scope.TenantOrgID, Scene: task.Scope.Scene, Kind: employeememory.ScopeScene}, employeememory.LearningRecord{Type: employeememory.LearningTypePreference, Key: "delete-fixture", Insight: "Keep updates concise", Confidence: 8}, employeememory.TrustedEvidence{SourceID: "delete-fixture", EvidenceID: workspaceID, ActorID: testUserID, HumanStated: true}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = testPool.Exec(ctx, `INSERT INTO employee_learning_consumption(workspace_id,agent_id,tenant_org_id,scene_id,task_id,run_id,queue_task_id,requester_ref,state,reason) SELECT t.workspace_id,t.agent_id,t.tenant_org_id,t.scene_id,t.id,r.id,r.queue_task_id,t.requester_ref,'skipped','delete_fixture' FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id WHERE t.id=$1`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = testPool.Exec(ctx, `INSERT INTO employee_run_notice(workspace_id,agent_id,tenant_org_id,scene_id,task_id,run_id,queue_task_id,requester_ref,source_ref,result_state,state,reason) SELECT t.workspace_id,t.agent_id,t.tenant_org_id,t.scene_id,t.id,r.id,r.queue_task_id,t.requester_ref,'delete-fixture','cancelled','suppressed','delete_fixture' FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id WHERE t.id=$1`, task.ID); err != nil {
+		t.Fatal(err)
+	}
 	return workspaceID
 }
 
 func assertWorkspaceEmployeeRecords(t *testing.T, workspaceID string, tasks int) {
 	t.Helper()
-	for table, multiplier := range map[string]int{"employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1, "employee_event_consumption": 1, "employee_scene_job": 1, "scene_event_receipt": 1, "employee_learning": 1, "employee_memory_state": 1} {
+	for table, multiplier := range map[string]int{"employee_run_notice": 1, "employee_learning_consumption": 1, "employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1, "employee_event_consumption": 1, "employee_scene_job": 1, "scene_event_receipt": 1, "employee_learning": 1, "employee_memory_state": 1} {
 		var count int
 		if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM `+table+` WHERE workspace_id=$1`, workspaceID).Scan(&count); err != nil {
 			t.Fatal(err)

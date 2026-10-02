@@ -22,7 +22,7 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-const EmployeeLoopReplicaMarker = "[employee-loop:1]"
+const EmployeeLoopReplicaMarker = "[employee-loop:2]"
 
 var errEmployeeWindowTooLarge = errors.New("employee window exceeds context bounds")
 
@@ -63,6 +63,27 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 					slog.WarnContext(ctx, "employee run reconciliation failed", "error", err)
 				}
 			}
+			learningCtx, learningCancel := context.WithTimeout(ctx, 10*time.Second)
+			if _, err := w.handler.ReconcileEmployeeLearnings(learningCtx, 100); err != nil && !errors.Is(err, context.Canceled) {
+				slog.WarnContext(ctx, "employee learning capture failed", "error", err)
+			}
+			learningCancel()
+			// The notice protocol requires every response worker to understand
+			// its before-send fence, including while new admission is disabled.
+			if w.ReplicaReady != nil {
+				noticeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				if readyErr := w.ReplicaReady(noticeCtx); readyErr == nil {
+					if _, err := w.handler.ReconcileEmployeeRunNotices(noticeCtx, 100); err != nil && !errors.Is(err, context.Canceled) {
+						slog.WarnContext(ctx, "employee run notice reconciliation failed", "error", err)
+					}
+				}
+				cancel()
+			}
+			cleanupCtx, cleanupCancel := context.WithTimeout(ctx, 10*time.Second)
+			if _, err := w.handler.ReconcileEmployeeTaskArtifacts(cleanupCtx, 100); err != nil && !errors.Is(err, context.Canceled) {
+				slog.WarnContext(ctx, "employee artifact cleanup failed", "error", err)
+			}
+			cleanupCancel()
 			select {
 			case <-ctx.Done():
 				return
@@ -112,8 +133,10 @@ type employeeSavedInput struct {
 	Config employeeloop.Config `json:"config"`
 }
 type employeeSavedOutcome struct {
-	Outcome employeeloop.Outcome `json:"outcome"`
-	Failure string               `json:"failure,omitempty"`
+	Outcome        employeeloop.Outcome `json:"outcome"`
+	Failure        string               `json:"failure,omitempty"`
+	SourceReplies  map[string]string    `json:"source_replies,omitempty"`
+	ReplyReceiptID string               `json:"reply_receipt_id,omitempty"`
 }
 
 func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (bool, error) {
@@ -177,40 +200,50 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (bool, error) {
 			return true, err
 		}
 	} else {
-		var input employeeSavedInput
-		if len(job.InputSnapshot) > 0 {
-			err = json.Unmarshal(job.InputSnapshot, &input)
+		workEnvelopes, replies, replyReceipt, commandErr := w.memoryCommands(runCtx, job, envelopes)
+		if commandErr != nil {
+			return true, w.store.Retry(ctx, job, commandErr.Error())
+		}
+		saved.SourceReplies, saved.ReplyReceiptID = replies, replyReceipt
+		if replyReceipt == "" {
+			saved.Outcome.Kind = employeeloop.Quiet
 		} else {
-			input, err = w.buildInput(runCtx, job, envelopes)
-			if err == nil {
-				var raw []byte
-				raw, err = json.Marshal(input)
+			var input employeeSavedInput
+			if len(job.InputSnapshot) > 0 {
+				err = json.Unmarshal(job.InputSnapshot, &input)
+			} else {
+				input, err = w.buildInput(runCtx, job, workEnvelopes, envelopes)
 				if err == nil {
-					_, err = w.store.SaveInput(runCtx, job, raw)
+					var raw []byte
+					raw, err = json.Marshal(input)
+					if err == nil {
+						_, err = w.store.SaveInput(runCtx, job, raw)
+					}
 				}
 			}
-		}
-		if errors.Is(err, errEmployeeWindowTooLarge) {
-			saved = employeeSavedOutcome{Outcome: employeeloop.Outcome{Decision: employeeloop.Decision{Kind: employeeloop.Reply, Reply: "本次消息内容过长，暂未开始处理。请分段发送或改为文件。"}}, Failure: err.Error()}
-		} else {
-			if err != nil {
-				return true, w.store.Retry(ctx, job, err.Error())
-			}
-			host := &employeeSceneHost{worker: w, job: job, envelopes: envelopes, abort: cancel}
-			durableModel := &employeeJournalModel{store: w.store, job: job, delegate: w.model, abort: cancel}
-			saved.Outcome, err = employeeloop.New(input.Config, durableModel, host).Run(runCtx, input.Input)
-			if err != nil {
+			if errors.Is(err, errEmployeeWindowTooLarge) {
+				saved.Outcome = employeeloop.Outcome{Decision: employeeloop.Decision{Kind: employeeloop.Reply, Reply: "本次消息内容过长，暂未开始处理。请分段发送或改为文件。"}}
 				saved.Failure = err.Error()
-				replies, unresolved := employeeAcceptedReplies(saved.Outcome)
-				if len(replies) > 0 {
-					saved.Outcome.Kind = employeeloop.Dispatched
-					saved.Outcome.Reply = strings.Join(replies, "\n")
-					if unresolved {
-						saved.Outcome.Reply += "\n其余请求暂未完成受理。"
+			} else {
+				if err != nil {
+					return true, w.store.Retry(ctx, job, err.Error())
+				}
+				host := &employeeSceneHost{worker: w, job: job, envelopes: workEnvelopes, abort: cancel}
+				durableModel := &employeeJournalModel{store: w.store, job: job, delegate: w.model, abort: cancel}
+				saved.Outcome, err = employeeloop.New(input.Config, durableModel, host).Run(runCtx, input.Input)
+				if err != nil {
+					saved.Failure = err.Error()
+					replies, unresolved := employeeAcceptedReplies(saved.Outcome)
+					if len(replies) > 0 {
+						saved.Outcome.Kind = employeeloop.Dispatched
+						saved.Outcome.Reply = strings.Join(replies, "\n")
+						if unresolved {
+							saved.Outcome.Reply += "\n其余请求暂未完成受理。"
+						}
+					} else {
+						saved.Outcome.Kind = employeeloop.Reply
+						saved.Outcome.Reply = "这次没能完成受理，请稍后再试。"
 					}
-				} else {
-					saved.Outcome.Kind = employeeloop.Reply
-					saved.Outcome.Reply = "这次没能完成受理，请稍后再试。"
 				}
 			}
 		}
@@ -232,7 +265,7 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope) (employeeSavedInput, error) {
+func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.Job, envelopes, originalEnvelopes []employeeDispatchEnvelope) (employeeSavedInput, error) {
 	messages := []employeeSourceMessage{}
 	for i, item := range job.Items {
 		messages = append(messages, employeeSourceMessages(item, envelopes[i])...)
@@ -272,6 +305,16 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 			input.Input.Memory = brief
 		} else {
 			input.Input.Memory = "Scene memory unavailable."
+		}
+		originalMessages := []employeeSourceMessage{}
+		for i, item := range job.Items {
+			originalMessages = append(originalMessages, employeeSourceMessages(item, originalEnvelopes[i])...)
+		}
+		if requester, unique := employeeUniqueRequester(originalMessages); unique {
+			private, e := w.handler.EmployeeMemory.Brief(ctx, employeememory.Scope{WorkspaceID: parseUUID(job.Scope.WorkspaceID), AgentID: agentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, Kind: employeememory.ScopePrivate, PrincipalID: requester}, "", 4)
+			if e == nil && private != "" {
+				input.Input.Memory += "\nRequester-private background context for this source only; do not disclose it to other participants.\n" + private
+			}
 		}
 	}
 	return input, nil
@@ -366,17 +409,24 @@ func employeeAcceptedReplies(outcome employeeloop.Outcome) ([]string, bool) {
 func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope, saved employeeSavedOutcome) error {
 	h := w.handler
 	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
-		registered, err := employeeSceneFence(ctx, h, job)
+		// Reuse this transaction for the use-time fences; borrowing the pool here
+		// deadlocks a single-connection deployment while Complete holds its lease.
+		permissionView := &Handler{Queries: db.New(tx)}
+		registered, err := employeeSceneFence(ctx, permissionView, job)
 		if err != nil {
 			return err
 		}
 		for i, env := range envelopes {
-			if err := employeePrincipalAllowed(ctx, h, job.Scope, env.PrincipalID); err != nil {
+			if err := employeePrincipalAllowed(ctx, permissionView, job.Scope, env.PrincipalID); err != nil {
 				return err
 			}
-			text := ""
-			if i == 0 && saved.Outcome.Kind != employeeloop.Quiet {
-				text = strings.TrimSpace(saved.Outcome.Reply)
+			text := saved.SourceReplies[env.Command.EventReceiptID]
+			ownsReply := saved.ReplyReceiptID == env.Command.EventReceiptID || (saved.ReplyReceiptID == "" && i == 0)
+			if ownsReply && saved.Outcome.Kind != employeeloop.Quiet {
+				if text != "" {
+					text += "\n"
+				}
+				text += strings.TrimSpace(saved.Outcome.Reply)
 			}
 			command := env.Command
 			if command.CompletionCallback != nil {
@@ -405,7 +455,7 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 				if command.ResponsePolicy != nil {
 					in.ShowAITag = command.ResponsePolicy.ShowAITag
 				}
-				if _, err = h.DingTalkResponses.EnqueueSceneNotice(ctx, tx, in, job.ID); err != nil {
+				if _, err = h.DingTalkResponses.EnqueueSceneNotice(ctx, tx, in, employeeJobReplyID(job, saved, command.EventReceiptID)); err != nil {
 					return fmt.Errorf("employee response: %w", err)
 				}
 			}
