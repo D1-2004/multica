@@ -216,6 +216,8 @@
     "prop_speed": "速度",
     "prop_visibility": "可见性",
     "prop_concurrency": "并发",
+    "prop_sandbox_reuse": "沙箱复用",
+    "prop_sandbox_reuse_hint": "打开后，同一场景、同一触发者的任务共用一台云沙箱。使用员工文件系统的智能体，以及镜像里没有该能力的运行时，仍各自使用独立沙箱。默认打开。",
     "prop_dingtalk_response_enabled": "统一响应",
     "prop_dingtalk_response_enabled_hint": "由平台统一回复钉钉消息并管理\"思考中\"表情。默认关闭，需要开启\"入站先判断\"并使用兼容的运行环境。修改后对新收到的消息生效。",
     "prop_dingtalk_show_ai_tag": "显示 AI 发送标识",
@@ -1767,6 +1769,9 @@
       "refresh": "刷新"
     },
     "memory": {
+      "employee_hint": "此场域的 Employee 学习记录，私人记忆单独保存。",
+      "employee_reset_confirm": "清除此场域的 Employee 学习记录？私人记忆和 Coordinator 记忆不受影响。",
+      "employee_truncated": "当前显示最近 200 条学习记录。",
       "flags_hint": "写入、召回和预热控制后台怎么记；显示列表控制这里看不看得见。",
       "flag_write": "写入",
       "flag_recall": "召回",

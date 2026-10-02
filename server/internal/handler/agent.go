@@ -153,7 +153,11 @@ type AgentResponse struct {
 	InvocationTargets  []AgentInvocationTargetDTO `json:"invocation_targets"`
 	Status             string                     `json:"status"`
 	MaxConcurrentTasks int32                      `json:"max_concurrent_tasks"`
-	Model              string                     `json:"model"`
+	// SandboxConnectionReuse shares one FC/E2B sandbox across tasks in the
+	// same scene and trigger. On for existing agents. The runtime document
+	// only sets how many tasks may share that sandbox.
+	SandboxConnectionReuse bool   `json:"sandbox_connection_reuse"`
+	Model                  string `json:"model"`
 	// ThinkingLevel is the runtime-native reasoning/effort token persisted
 	// for this agent (empty = use runtime default). The picker is per-runtime
 	// per-model; the API never normalizes across providers. See MUL-2339.
@@ -548,6 +552,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		InvocationTargets:                  []AgentInvocationTargetDTO{},
 		Status:                             a.Status,
 		MaxConcurrentTasks:                 a.MaxConcurrentTasks,
+		SandboxConnectionReuse:             a.SandboxConnectionReuse,
 		Model:                              a.Model.String,
 		ThinkingLevel:                      a.ThinkingLevel.String,
 		ServiceTier:                        a.ServiceTier.String,
@@ -1854,6 +1859,7 @@ type UpdateAgentRequest struct {
 	// removed key is an unambiguous "restore the managed text".
 	DispatchPromptOverrides             *map[string]string `json:"dispatch_prompt_overrides"`
 	DispatchAlwaysNewIssue              *bool              `json:"dispatch_always_new_issue"`
+	SandboxConnectionReuse              *bool              `json:"sandbox_connection_reuse"`
 	ChatSessionResume                   *bool              `json:"chat_session_resume"`
 	InboundCoordinator                  *bool              `json:"inbound_coordinator"`
 	CoordinationMode                    *string            `json:"coordination_mode"`
@@ -2182,7 +2188,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 	// A Tag employee's instructions, MCP, runtime, model and profile come
 	// from the Tag; only its tenant-owned settings (inbound coordinator,
-	// dispatch) are written here.
+	// dispatch, sandbox connection reuse) are written here.
 	if req.Name != nil || req.Description != nil || req.AvatarURL != nil || req.Instructions != nil ||
 		req.McpConfig != nil || req.RuntimeID != nil || req.RuntimeConfig != nil || req.CustomArgs != nil ||
 		req.MaxConcurrentTasks != nil || req.Model != nil || req.ThinkingLevel != nil || req.ServiceTier != nil ||
@@ -2245,6 +2251,9 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DispatchAlwaysNewIssue != nil {
 		params.DispatchAlwaysNewIssue = pgtype.Bool{Bool: *req.DispatchAlwaysNewIssue, Valid: true}
+	}
+	if req.SandboxConnectionReuse != nil {
+		params.SandboxConnectionReuse = pgtype.Bool{Bool: *req.SandboxConnectionReuse, Valid: true}
 	}
 
 	if req.AvatarURL != nil {

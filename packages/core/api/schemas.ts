@@ -2553,6 +2553,19 @@ export const AgentTaskListSchema = z.array(AgentTaskSchema);
 // is display-only, so a missing or malformed one reads as "".
 export const AgentSceneMemorySchema = z
   .object({
+    loop: z.enum(["coordinator", "employee", "unknown"])
+      .optional().default("coordinator").catch("unknown"),
+    scope_kind: z.literal("scene").optional(),
+    learnings: z.array(z.object({
+      id: z.string(),
+      key: z.string(),
+      insight: z.string(),
+      source: z.string().catch(""),
+      evidence_id: z.string().catch(""),
+      confidence: z.number().catch(0),
+      trusted: z.boolean().catch(false),
+    }).loose()).optional().catch([]),
+    truncated: z.boolean().optional().catch(false),
     id: z.string(),
     scene_id: z.string().catch(""),
     workspace_id: z.string().default(""),
@@ -2992,6 +3005,8 @@ const AgentResponseBaseSchema = z
       .safe()
       .catch(1)
       .default(1),
+    // Older backends omit the switch. Missing or malformed means on.
+    sandbox_connection_reuse: z.boolean().catch(true).default(true),
   })
   .loose();
 
@@ -3023,6 +3038,7 @@ export const EMPTY_AGENT_RESPONSE: Agent = {
   invocation_targets: [],
   status: "offline",
   max_concurrent_tasks: 1,
+  sandbox_connection_reuse: true,
   model: "",
   owner_id: null,
   skills: [],

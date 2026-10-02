@@ -126,6 +126,7 @@ func exportPackageConfiguration(ctx context.Context, q *db.Queries, agent db.Age
 	config := map[string]any{
 		"avatar_url": agent.AvatarUrl.String, "model": agent.Model.String, "thinking_level": agent.ThinkingLevel.String, "service_tier": agent.ServiceTier.String,
 		"max_concurrent_tasks": agent.MaxConcurrentTasks, "dispatch_always_new_issue": agent.DispatchAlwaysNewIssue,
+		"sandbox_connection_reuse":   agent.SandboxConnectionReuse,
 		"composio_toolkit_allowlist": agent.ComposioToolkitAllowlist,
 	}
 	for _, field := range []struct {

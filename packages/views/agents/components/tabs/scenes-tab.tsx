@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Brain, Building2, Loader2, MessageSquare, RefreshCw, User, Users } from "lucide-react";
 import type { Agent } from "@multica/core/types";
-import { agentCoordinatorConversationsKeys, agentSceneMemoryDetailOptions } from "@multica/core/agents";
+import { agentCoordinatorConversationsKeys, agentSceneMemoryDetailOptions, agentSceneMemoryLoop } from "@multica/core/agents";
 import {
   agentContextCapabilitiesOptions,
   agentTenantGroupsOptions,
@@ -489,7 +489,7 @@ function NodeDetail({
     enabled: canEdit && Boolean(wsId),
   });
   const configureUrl = capabilities.data?.configureUrl ?? "";
-  const summary = useNodeSummary(wsId, agent.id, selection);
+  const summary = useNodeSummary(wsId, agent.id, selection, agent.coordination_mode === "employee");
   const labels: Record<SceneSubTab, string> = {
     inbound: t(($) => $.tab_body.scenes.tab_inbound),
     memory: t(($) => $.tab_body.scenes.tab_memory),
@@ -683,7 +683,7 @@ interface NodeSummary {
  * and its chat's kind, newest inbound session and memory. The node's own
  * read (shared with the builder) names the chat, a person's 1:1 chat scene
  * included; a scene's list row answers first when the tree has it. */
-function useNodeSummary(wsId: string, agentId: string, selection: SceneSelection): NodeSummary {
+function useNodeSummary(wsId: string, agentId: string, selection: SceneSelection, employeeMemory = false): NodeSummary {
   const leaf = selection.type !== "org";
   const node = useQuery({
     ...contextNodeOptions(wsId, agentId, nodeOf(selection)),
@@ -705,7 +705,7 @@ function useNodeSummary(wsId: string, agentId: string, selection: SceneSelection
     title: listedScene?.title || listedPerson?.title || node.data?.scope?.title || scene?.title || "",
     kind: scene?.kind ?? "group",
     inboundSessionId: scene?.inboundSessionId ?? "",
-    memorySceneId: scene?.hasMemory === true ? scene.sceneId : "",
+    memorySceneId: scene && (employeeMemory || scene.hasMemory === true) ? scene.sceneId : "",
   };
 }
 
@@ -724,8 +724,9 @@ function SceneMemoryPanel({
 }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
-  const uiEnabled = agent.scene_memory_ui_enabled === true;
-  const query = useQuery(agentSceneMemoryDetailOptions(wsId, agent.id, sceneId, uiEnabled));
+  const loop = agentSceneMemoryLoop(agent.coordination_mode);
+  const uiEnabled = loop !== null && (loop === "employee" || agent.scene_memory_ui_enabled === true);
+  const query = useQuery(agentSceneMemoryDetailOptions(wsId, agent.id, sceneId, uiEnabled && canEdit, loop ?? "coordinator"));
   if (!uiEnabled) {
     return <PanelNotice>{t(($) => $.tab_body.scenes.memory_ui_off)}</PanelNotice>;
   }

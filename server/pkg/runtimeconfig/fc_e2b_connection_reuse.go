@@ -13,14 +13,13 @@ const (
 	maxFCE2BConnectionReuseTasks     = 50
 )
 
-// FCE2BConnectionReuse is runtime.fc_e2b.connection_reuse. It lets tasks that
-// share a scene and trigger reuse one sandbox. Enabled with empty target
-// lists selects nobody: a gray target must be named. Absent, or enabled
-// false, keeps one sandbox per chat or issue.
+// FCE2BConnectionReuse is runtime.fc_e2b.connection_reuse. Only
+// MaxConcurrentTasks is consulted. Whether an agent reuses a sandbox is
+// agent.sandbox_connection_reuse, which defaults on.
 //
-// The runtime document rejects unknown fields, so a binary that predates
-// this key refuses a document that carries it. Publish the key only after
-// every replica runs a binary that knows it.
+// Enabled, WorkspaceIDs and AgentIDs are the earlier gray list. They stay
+// decoded, and still validated, so a document published for that list keeps
+// parsing. They do not select anyone.
 type FCE2BConnectionReuse struct {
 	Enabled bool `json:"enabled"`
 	// MaxConcurrentTasks is how many tasks may share the sandbox. Zero uses
@@ -28,28 +27,6 @@ type FCE2BConnectionReuse struct {
 	MaxConcurrentTasks int      `json:"max_concurrent_tasks,omitempty"`
 	WorkspaceIDs       []string `json:"workspace_ids,omitempty"`
 	AgentIDs           []string `json:"agent_ids,omitempty"`
-}
-
-// Allows reports whether this workspace or agent is in the gray set.
-func (r FCE2BConnectionReuse) Allows(workspaceID, agentID string) bool {
-	if !r.Enabled {
-		return false
-	}
-	if agentID != "" {
-		for _, id := range r.AgentIDs {
-			if id == agentID {
-				return true
-			}
-		}
-	}
-	if workspaceID != "" {
-		for _, id := range r.WorkspaceIDs {
-			if id == workspaceID {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // Concurrency is the per-sandbox task cap. Zero means the default.

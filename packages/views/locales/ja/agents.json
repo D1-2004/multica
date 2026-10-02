@@ -208,6 +208,8 @@
     "prop_speed": "速度",
     "prop_visibility": "公開範囲",
     "prop_concurrency": "同時実行数",
+    "prop_sandbox_reuse": "サンドボックス再利用",
+    "prop_sandbox_reuse_hint": "オンにすると、同じシーンと同じトリガーのタスクは 1 台のクラウドサンドボックスを共有します。従業員ファイルシステムを使うエージェントと、この機能のないイメージは、それぞれ別のサンドボックスを使います。初期設定はオンです。",
     "prop_dingtalk_response_enabled": "返信を統一",
     "prop_dingtalk_response_enabled_hint": "DingTalk の返信と考え中のリアクションをプラットフォームで管理します。初期設定はオフです。受信時の判断と対応するランタイムが必要です。変更は新しく受信するメッセージから適用されます。",
     "prop_dingtalk_show_ai_tag": "AI 送信ラベルを表示",
@@ -1568,6 +1570,9 @@
       "refresh": "更新"
     },
     "memory": {
+      "employee_hint": "このシーンの Employee 学習記録です。個人メモリは別に保存されます。",
+      "employee_reset_confirm": "このシーンの Employee 学習記録を消去しますか？個人メモリと Coordinator メモリは変更されません。",
+      "employee_truncated": "最新の学習記録を 200 件表示しています。",
       "flags_hint": "書き込み・召還・ウォームアップは記憶の保持方法、表示リストはこの画面に出すかどうかです。",
       "flag_write": "書き込み",
       "flag_recall": "召還",

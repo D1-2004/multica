@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, screen } from "@testing-library/react";
-import type { Agent } from "@multica/core/types";
+import userEvent from "@testing-library/user-event";
+import type { Agent, AgentRuntime } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 
@@ -49,6 +50,13 @@ const agent = {
   description: "Test agent",
   runtime_id: "runtime-1",
 } as Agent;
+
+const fcRuntime = {
+  id: "runtime-1",
+  runtime_mode: "cloud",
+  provider: "pi",
+  metadata: { kind: "fc-e2b" },
+} as AgentRuntime;
 
 describe("AgentDetailInspector labels", () => {
   afterEach(cleanup);
@@ -127,5 +135,29 @@ describe("AgentDetailInspector labels", () => {
     expect(screen.queryByLabelText("Write")).toBeNull();
     expect(screen.queryByLabelText("Recall")).toBeNull();
     expect(screen.queryByLabelText("Show list")).toBeNull();
+    expect(screen.queryByRole("switch", { name: "Sandbox reuse" })).toBeNull();
+  });
+
+  it("turns sandbox reuse off from beside concurrency", async () => {
+    const user = userEvent.setup();
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(
+      <AgentDetailInspector
+        agent={agent}
+        runtime={fcRuntime}
+        runtimes={[]}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const toggle = screen.getByRole("switch", { name: "Sandbox reuse" });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    expect(onUpdate).toHaveBeenCalledWith("agent-1", {
+      sandbox_connection_reuse: false,
+    });
   });
 });

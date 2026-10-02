@@ -93,3 +93,39 @@ a52522932758ce33b4f4014e1525884e844817ea7d89c3c6a950f2d4f863cb86  internal/team/
 9a1481df5c3e0556e39b68e220339c99d694d23901d527ecd0d782685ed544f6  internal/team/memory_workflow.go
 fc468cc42d61e463265c07994c99161a11cbede8ea48d5ef45a5981bcdb5cad0  LICENSE
 ```
+
+## Scene memory management (D10, Multica Host extension)
+
+`management.go` is a Multica database adapter, not copied GawkBot code. It lists
+and reads only the shared scene namespace, preserves the learning evidence model,
+and resets one exact scene with an optional expected revision. Private principal
+namespaces are never merged into these views or reset by a scene manager. Existing
+replay tombstones remain, so a previously forgotten source cannot repopulate the
+scene merely by replaying.
+
+The management HTTP seam is `handler/employee_memory_management.go`, reached from
+the existing scene-memory routes with explicit `loop=coordinator|employee`. New UI
+requests always send loop; query keys include it. Writes additionally carry
+`scene_id`, `org_id`, and `expected_revision`, and lock workspace → selected agent
+mode → memory revision in one transaction. A changed mode, tenant or revision is
+rejected; Employee PUT/association-clear is unavailable because learning is not an
+editable Coordinator text blob. Coordinator association cleanup is transactional
+with its own reset and never runs for Employee memory.
+
+Omitted-loop legacy reads retain the Coordinator API namespace. Omitted-loop
+writes also require the agent to still select Coordinator, preventing an old page
+from editing/resetting Coordinator memory after switching the agent to Employee.
+Current explicit management reads check the current tenant directory. The initial
+management surface intentionally does not expose private memory; a manager role
+alone never authorizes reading or combining other principals' records.
+
+`ResetScene(ctx, scope, expectedRevision)` is reusable by the separately owned
+inbound `/reset-memory` Host. Its nil-revision option is for an already-authorized
+command with a frozen loop/source; it neither parses inbound actors nor chooses a
+loop. `ResetSceneTx` supports the caller's existing transaction.
+
+Evidence: local PostgreSQL management tests cover namespace/private isolation,
+CAS reset, tombstones, stale selection, unsupported free editing and old-tenant
+rejection. UI/API tests cover loop-aware keys, explicit selectors, scope/revision
+submission, hidden legacy controls and dropping a confirmation across a loop
+switch. No live model or pre-release service is required.

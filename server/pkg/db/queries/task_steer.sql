@@ -1,3 +1,14 @@
+-- name: CancelAgentTaskForSteer :one
+-- Steer opts into an exit-proof barrier; ordinary cancellation keeps its
+-- existing compatibility contract with installed runtimes.
+UPDATE agent_task_queue
+SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL,
+    context = CASE WHEN status IN ('dispatched','running','waiting_local_directory')
+      THEN COALESCE(context,'{}'::jsonb) || '{"process_stop_pending":true}'::jsonb
+      ELSE context END
+WHERE id=$1 AND status IN ('queued','deferred','dispatched','running','waiting_local_directory')
+RETURNING *;
+
 -- name: AckAgentTaskProcessStopped :one
 -- Only the owning daemon's positive process-group acknowledgement may open
 -- this barrier. Logical terminal state and elapsed time prove nothing.

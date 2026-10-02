@@ -63,6 +63,7 @@ var seededAgentColumns = []string{
 	"description",
 	"avatar_url",
 	"dispatch_always_new_issue",
+	"sandbox_connection_reuse",
 	"dispatch_prompt_overrides",
 	"coordinator_contract",
 	"chat_session_resume",

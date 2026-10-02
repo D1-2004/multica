@@ -630,6 +630,13 @@ export interface Agent {
   invocation_targets: AgentInvocationTarget[];
   status: AgentStatus;
   max_concurrent_tasks: number;
+  /**
+   * Share one FC/E2B sandbox across tasks in the same scene and trigger.
+   * Older backends omit it; treat `undefined` as on. An explicit false turns
+   * reuse off for this agent. Employee filesystems and images without the
+   * capability still use a private sandbox.
+   */
+  sandbox_connection_reuse?: boolean;
   model: string;
   /**
    * Runtime-native reasoning/effort token (e.g. Claude's
@@ -845,8 +852,29 @@ export interface CreateAgentFromTemplateFailure {
   failed_urls: string[];
 }
 
+export type AgentMemoryLoop = "coordinator" | "employee";
+export interface AgentMemorySelection {
+  loop: AgentMemoryLoop;
+  scene_id: string;
+  org_id: string;
+  expected_revision: number;
+}
+export interface AgentMemoryLearning {
+  id: string;
+  key: string;
+  insight: string;
+  source: string;
+  evidence_id: string;
+  confidence: number;
+  trusted: boolean;
+}
+
 /** The Scene Memory of one Agent work scene (docs/agent-scene.md). */
 export interface AgentSceneMemory {
+  loop?: AgentMemoryLoop | "unknown";
+  scope_kind?: "scene";
+  learnings?: AgentMemoryLearning[];
+  truncated?: boolean;
   /** Same as scene_id (the server sends it as id, scene_id and scene_key). */
   id: string;
   /** The scene's identity: the path key of the scene memory routes and of
@@ -887,6 +915,8 @@ export interface UpdateAgentRequest {
   coordinator_contract?: CoordinatorContract | null;
   dispatch_prompt_overrides?: Record<string, string>;
   dispatch_always_new_issue?: boolean;
+  /** See `Agent.sandbox_connection_reuse`. Omitted leaves the stored value. */
+  sandbox_connection_reuse?: boolean;
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
   coordination_mode?: "coordinator" | "employee";

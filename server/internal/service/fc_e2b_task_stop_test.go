@@ -146,6 +146,18 @@ func TestFCE2BLauncherStopsTaskProcessesOnlyWhenTheRolloutSelectsTheTask(t *test
 	}
 }
 
+func TestSteerExitProofUsesCLIWhenSDKRolloutIsDisabled(t *testing.T) {
+	cli := &stopRecordingRunner{out: `{"version":3,"remaining":0,"unreadable":0}`}
+	sdk := &stopRecordingRunner{out: cli.out}
+	l := &FCE2BLauncher{Config: FCE2BConfig{}, Runner: FCE2BRolloutRunner{CLI: cli, SDK: sdk, Rollout: func() FCE2BSDKRollout { return FCE2BSDKRollout{} }}}
+	task := db.AgentTaskQueue{ID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, AgentID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, RuntimeID: pgtype.UUID{Bytes: uuid.New(), Valid: true}, Status: "cancelled", Context: []byte(`{"process_stop_pending":true}`)}
+	rt := db.AgentRuntime{ID: task.RuntimeID, WorkspaceID: pgtype.UUID{Bytes: uuid.New(), Valid: true}}
+	receipt, err := l.stopTaskProcessesInSandbox(context.Background(), task, rt, "sbx_steer", 2)
+	if err != nil || receipt.Version != 3 || len(cli.calls) != 1 || len(sdk.calls) != 0 {
+		t.Fatalf("stop proof must use enabled transport: receipt=%+v err=%v cli=%d sdk=%d", receipt, err, len(cli.calls), len(sdk.calls))
+	}
+}
+
 // A sandbox counts as gone only on the SDK's typed not-found, a lifetime 404,
 // or CLI text that says so; a "404" elsewhere in command output does not.
 func TestFCE2BSandboxMissing(t *testing.T) {
