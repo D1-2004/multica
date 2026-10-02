@@ -1568,6 +1568,9 @@
       "refresh": "更新"
     },
     "memory": {
+      "employee_hint": "このシーンの Employee 学習記録です。個人メモリは別に保存されます。",
+      "employee_reset_confirm": "このシーンの Employee 学習記録を消去しますか？個人メモリと Coordinator メモリは変更されません。",
+      "employee_truncated": "最新の学習記録を 200 件表示しています。",
       "flags_hint": "書き込み・召還・ウォームアップは記憶の保持方法、表示リストはこの画面に出すかどうかです。",
       "flag_write": "書き込み",
       "flag_recall": "召還",

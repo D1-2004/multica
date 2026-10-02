@@ -1789,6 +1789,9 @@
       "refresh": "Refresh"
     },
     "memory": {
+      "employee_hint": "Employee learning for this scene. Private memory stays separate.",
+      "employee_reset_confirm": "Clear this scene’s Employee learning? Private memory and Coordinator memory will stay unchanged.",
+      "employee_truncated": "Showing the most recent 200 learning records.",
       "flags_hint": "Write, recall, and warm-up control how memory is kept. Show list controls whether it appears here.",
       "flag_write": "Write",
       "flag_recall": "Recall",

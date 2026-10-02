@@ -127,6 +127,8 @@ import type {
   IssueTableRowsResponse,
   Agent,
   AgentSceneMemory,
+  AgentMemoryLoop,
+  AgentMemorySelection,
   AgentSceneRelation,
   MikaBootstrapResponse,
   CreateAgentRequest,
@@ -3164,9 +3166,9 @@ export class ApiClient {
     return this.fetch(`/api/agents/${agentId}/coordinator-sessions`);
   }
 
-  async listAgentSceneMemory(agentId: string): Promise<AgentSceneMemory[]> {
+  async listAgentSceneMemory(agentId: string, loop?: AgentMemoryLoop): Promise<AgentSceneMemory[]> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory`,
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory${loop ? `?loop=${loop}` : ""}`,
     );
     return parseWithFallback(
       raw,
@@ -3178,9 +3180,9 @@ export class ApiClient {
 
   /** One scene's memory by its scene_id (the scene detail's 记忆
    * sub-tab). A malformed response parses to a row with an empty id. */
-  async getAgentSceneMemory(agentId: string, sceneId: string): Promise<AgentSceneMemory> {
+  async getAgentSceneMemory(agentId: string, sceneId: string, loop?: AgentMemoryLoop): Promise<AgentSceneMemory> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}`,
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}${loop ? `?loop=${loop}` : ""}`,
     );
     return parseWithFallback(
       raw,
@@ -3193,10 +3195,11 @@ export class ApiClient {
   async updateAgentSceneMemory(
     agentId: string,
     sceneId: string,
-    body: { memory_text: string; expected_revision: number },
+    body: { memory_text: string; expected_revision: number; scene_id?: string; org_id?: string; loop?: AgentMemoryLoop },
+    loop?: AgentMemoryLoop,
   ): Promise<AgentSceneMemory> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}`,
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}${loop ? `?loop=${loop}` : ""}`,
       { method: "PUT", body: JSON.stringify(body) },
     );
     return parseWithFallback(
@@ -3210,10 +3213,11 @@ export class ApiClient {
   async resetAgentSceneMemory(
     agentId: string,
     sceneId: string,
+    selection?: AgentMemorySelection,
   ): Promise<AgentSceneMemory> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}/reset`,
-      { method: "POST" },
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}/reset${selection ? `?loop=${selection.loop}` : ""}`,
+      { method: "POST", ...(selection ? { body: JSON.stringify(selection) } : {}) },
     );
     return parseWithFallback(
       raw,
@@ -3226,10 +3230,11 @@ export class ApiClient {
   async clearAgentSceneRelations(
     agentId: string,
     sceneId: string,
+    selection?: AgentMemorySelection,
   ): Promise<void> {
     await this.fetch(
-      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}/relations/clear`,
-      { method: "POST" },
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(sceneId)}/relations/clear${selection ? `?loop=${selection.loop}` : ""}`,
+      { method: "POST", ...(selection ? { body: JSON.stringify(selection) } : {}) },
     );
   }
 

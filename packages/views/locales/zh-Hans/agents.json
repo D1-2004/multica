@@ -1767,6 +1767,9 @@
       "refresh": "刷新"
     },
     "memory": {
+      "employee_hint": "此场域的 Employee 学习记录，私人记忆单独保存。",
+      "employee_reset_confirm": "清除此场域的 Employee 学习记录？私人记忆和 Coordinator 记忆不受影响。",
+      "employee_truncated": "当前显示最近 200 条学习记录。",
       "flags_hint": "写入、召回和预热控制后台怎么记；显示列表控制这里看不看得见。",
       "flag_write": "写入",
       "flag_recall": "召回",

@@ -845,8 +845,29 @@ export interface CreateAgentFromTemplateFailure {
   failed_urls: string[];
 }
 
+export type AgentMemoryLoop = "coordinator" | "employee";
+export interface AgentMemorySelection {
+  loop: AgentMemoryLoop;
+  scene_id: string;
+  org_id: string;
+  expected_revision: number;
+}
+export interface AgentMemoryLearning {
+  id: string;
+  key: string;
+  insight: string;
+  source: string;
+  evidence_id: string;
+  confidence: number;
+  trusted: boolean;
+}
+
 /** The Scene Memory of one Agent work scene (docs/agent-scene.md). */
 export interface AgentSceneMemory {
+  loop?: AgentMemoryLoop | "unknown";
+  scope_kind?: "scene";
+  learnings?: AgentMemoryLearning[];
+  truncated?: boolean;
   /** Same as scene_id (the server sends it as id, scene_id and scene_key). */
   id: string;
   /** The scene's identity: the path key of the scene memory routes and of

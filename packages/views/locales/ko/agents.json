@@ -1576,6 +1576,9 @@
       "refresh": "새로고침"
     },
     "memory": {
+      "employee_hint": "이 장면의 Employee 학습 기록입니다. 개인 메모리는 별도로 보관됩니다.",
+      "employee_reset_confirm": "이 장면의 Employee 학습 기록을 지울까요? 개인 메모리와 Coordinator 메모리는 변경되지 않습니다.",
+      "employee_truncated": "최근 학습 기록 200개를 표시합니다.",
       "flags_hint": "쓰기·호출·워밍업은 기억을 어떻게 유지할지, 목록 표시는 여기에 보일지를 정합니다.",
       "flag_write": "쓰기",
       "flag_recall": "호출",

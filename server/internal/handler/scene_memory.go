@@ -2,11 +2,7 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -81,6 +77,9 @@ func sceneMemoryToResponse(row scenememory.Memory, selfNames ...string) sceneMem
 }
 
 func (h *Handler) ListAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
+	if h.handleSelectedSceneMemory(w, r, "list") {
+		return
+	}
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
 	if !ok {
@@ -116,6 +115,9 @@ func (h *Handler) ListAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
 // 记忆) opens the scene it lists, which the list above may not contain once
 // the agent has more than 200 rows.
 func (h *Handler) GetAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
+	if h.handleSelectedSceneMemory(w, r, "get") {
+		return
+	}
 	agent, row, ok := h.loadManagedSceneMemory(w, r)
 	if !ok {
 		return
@@ -154,112 +156,11 @@ func (h *Handler) loadManagedSceneMemory(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) UpdateAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
-	agent, row, ok := h.loadManagedSceneMemory(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		MemoryText       string `json:"memory_text"`
-		ExpectedRevision int64  `json:"expected_revision"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json")
-		return
-	}
-	names := h.sceneMemorySelfNames(r.Context(), agent)
-	body.MemoryText = scenememory.SanitizeMemoryTextForAgent(body.MemoryText, names...)
-	updated, err := h.SceneMemoryStore.ReplaceText(r.Context(), row, body.ExpectedRevision, body.MemoryText)
-	if errors.Is(err, scenememory.ErrMemoryText) {
-		writeError(w, http.StatusBadRequest, "memory_text exceeds 1600 code points")
-		return
-	}
-	if errors.Is(err, scenememory.ErrStaleRevision) {
-		writeError(w, http.StatusConflict, "scene memory revision is stale")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update scene memory")
-		return
-	}
-	slog.Info("scene memory owner replace",
-		"event", "scene_memory_owner_replace",
-		"scene_id", uuidToString(updated.SceneID),
-		"memory_revision", updated.MemoryRevision,
-	)
-	writeJSON(w, http.StatusOK, sceneMemoryToResponse(updated, names...))
+	h.handleSelectedSceneMemory(w, r, "update")
 }
-
 func (h *Handler) ResetAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
-	agent, row, ok := h.loadManagedSceneMemory(w, r)
-	if !ok {
-		return
-	}
-	updated, err := h.SceneMemoryStore.Reset(r.Context(), row.Scene, scenememory.DirtyTrigger{
-		OccurredAt: time.Now().UTC(),
-		EvidenceID: "owner-reset",
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reset scene memory")
-		return
-	}
-	closedEdges := 0
-	unlinkedEvents := 0
-	if h.Assoc != nil {
-		result, closeErr := h.Assoc.CloseSceneAssociations(
-			r.Context(),
-			uuidToString(agent.WorkspaceID),
-			uuidToString(agent.ID),
-			uuidToString(row.SceneID),
-		)
-		if closeErr != nil {
-			slog.Error("scene memory owner reset assoc failed",
-				"event", "scene_memory_owner_reset",
-				"scene_id", uuidToString(row.SceneID),
-				"error", closeErr,
-			)
-			writeError(w, http.StatusInternalServerError, "failed to clear scene associations")
-			return
-		}
-		closedEdges = result.ClosedEdges
-		unlinkedEvents = result.UnlinkedEvents
-	}
-	slog.Info("scene memory owner reset",
-		"event", "scene_memory_reset",
-		"scene_id", uuidToString(updated.SceneID),
-		"memory_revision", updated.MemoryRevision,
-		"closed_edges", closedEdges,
-		"unlinked_events", unlinkedEvents,
-	)
-	writeJSON(w, http.StatusOK, sceneMemoryToResponse(updated, h.sceneMemorySelfNames(r.Context(), agent)...))
+	h.handleSelectedSceneMemory(w, r, "reset")
 }
-
 func (h *Handler) ClearAgentSceneRelations(w http.ResponseWriter, r *http.Request) {
-	agent, row, ok := h.loadManagedSceneMemory(w, r)
-	if !ok {
-		return
-	}
-	if h.Assoc == nil {
-		writeError(w, http.StatusServiceUnavailable, "association store is not configured")
-		return
-	}
-	result, err := h.Assoc.CloseSceneAssociations(
-		r.Context(),
-		uuidToString(agent.WorkspaceID),
-		uuidToString(agent.ID),
-		uuidToString(row.SceneID),
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to clear scene associations")
-		return
-	}
-	slog.Info("scene memory owner clear relations",
-		"event", "scene_memory_owner_clear_relations",
-		"scene_id", uuidToString(row.SceneID),
-		"closed_edges", result.ClosedEdges,
-		"unlinked_events", result.UnlinkedEvents,
-	)
-	writeJSON(w, http.StatusOK, map[string]int{
-		"closed_edges":    result.ClosedEdges,
-		"unlinked_events": result.UnlinkedEvents,
-	})
+	h.handleSelectedSceneMemory(w, r, "clear")
 }

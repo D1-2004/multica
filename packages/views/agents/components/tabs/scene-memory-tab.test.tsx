@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, queryOptions } from "@tanstack/react-query";
 import type { Agent, AgentSceneMemory } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../../locales/en/common.json";
 import enAgents from "../../../locales/en/agents.json";
-import { SceneMemoryTab } from "./scene-memory-tab";
+import { SceneMemoryTab, SceneMemoryDetail } from "./scene-memory-tab";
 
 const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
 
@@ -36,11 +36,12 @@ vi.mock("sonner", () => ({
 }));
 
 const updateMemory = vi.fn();
+const resetMemory = vi.fn();
 const relationsFor = vi.hoisted(() => vi.fn());
 vi.mock("@multica/core/api", () => ({
   api: {
     updateAgentSceneMemory: (...args: unknown[]) => updateMemory(...args),
-    resetAgentSceneMemory: vi.fn(),
+    resetAgentSceneMemory: (...args: unknown[]) => resetMemory(...args),
     clearAgentSceneRelations: vi.fn(),
     listAgentSceneRelations: vi.fn(async () => []),
   },
@@ -54,9 +55,10 @@ vi.mock("@multica/core/agents", async (importOriginal) => {
       wsId: string,
       agentId: string,
       enabled = true,
+      loop = "coordinator",
     ) =>
       queryOptions({
-        queryKey: ["mem", wsId, agentId, enabled],
+        queryKey: ["mem", wsId, agentId, enabled, loop],
         queryFn: async () => (enabled ? memoriesRef.current : []),
         enabled,
       }),
@@ -127,6 +129,7 @@ describe("SceneMemoryTab", () => {
     cleanup();
     onUpdate.mockClear();
     updateMemory.mockReset();
+    resetMemory.mockReset();
     relationsFor.mockClear();
   });
 
@@ -174,7 +177,10 @@ describe("SceneMemoryTab", () => {
       expect(updateMemory).toHaveBeenCalledWith("agent-1", SCENE_DM, {
         memory_text: "edited",
         expected_revision: 2,
-      }),
+        loop: "coordinator",
+        scene_id: SCENE_DM,
+        org_id: "org",
+      }, "coordinator"),
     );
   });
 
@@ -212,5 +218,63 @@ describe("SceneMemoryTab", () => {
     expect(onUpdate).toHaveBeenCalledWith("agent-1", {
       scene_memory_write_enabled: true,
     });
+  });
+});
+
+function memoryDetailView(next: Agent, memory: AgentSceneMemory, client: QueryClient) {
+  return <I18nProvider locale="en" resources={TEST_RESOURCES}><QueryClientProvider client={client}><SceneMemoryDetail agent={next} memory={memory} canEdit /></QueryClientProvider></I18nProvider>;
+}
+
+describe("selected loop memory controls", () => {
+  it("preserves Employee learning text even when it names a legacy locating section", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const memory = memoryRow(SCENE_DM, { loop: "employee", memory_text: "scene-location (user-stated; evidence source-1):\n## 场域定位\n这是本场域明确记录的协作范围。" });
+    render(memoryDetailView({ ...agent, coordination_mode: "employee" }, memory, client));
+    const body = await screen.findByText(/这是本场域明确记录的协作范围/);
+    expect(body.textContent).toContain("scene-location");
+    expect(body.textContent).toContain("source-1");
+  });
+  it("does not list Coordinator summaries returned by an old server for Employee requests", async () => {
+    memoriesRef.current = [memoryRow(SCENE_DM, { loop: "coordinator", scene_title: "Old Coordinator scene", memory_text: "OLD_COORDINATOR_PREVIEW" })];
+    renderTab({ ...agent, coordination_mode: "employee" }, true);
+    await screen.findAllByText(enAgents.tab_body.inbound.memory_empty);
+    expect(screen.queryByText("Old Coordinator scene")).toBeNull();
+    expect(screen.queryByText("OLD_COORDINATOR_PREVIEW")).toBeNull();
+  });
+
+  it("shows enterprise Employee memory without labelling it as a DM", async () => {
+    memoriesRef.current = [memoryRow(SCENE_DM, { loop: "employee", scene_kind: "enterprise", scene_title: "Example enterprise" })];
+    renderTab({ ...agent, coordination_mode: "employee" }, true);
+    expect(await screen.findByRole("button", { name: `${enAgents.tab_body.context_builder.layer_org} Example enterprise` })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Direct message Example enterprise" })).toBeNull();
+    expect(screen.queryByLabelText("Write")).toBeNull();
+  });
+
+  afterEach(() => { cleanup(); resetMemory.mockReset(); updateMemory.mockReset(); });
+  it("shows Employee learning without Coordinator edit or relation controls", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(memoryDetailView({ ...agent, coordination_mode: "employee" }, memoryRow(SCENE_DM, { loop: "employee", memory_text: "Employee learning" }), client));
+    expect(await screen.findByText("Employee learning")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByText("Issue links")).toBeNull();
+  });
+  it("submits the selected loop, tenant, scene and displayed revision when resetting", async () => {
+    resetMemory.mockResolvedValue(memoryRow(SCENE_DM, { loop: "employee", memory_revision: 8 }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(memoryDetailView({ ...agent, coordination_mode: "employee" }, memoryRow(SCENE_DM, { loop: "employee", memory_revision: 7 }), client));
+    fireEvent.click(screen.getByRole("button", { name: enAgents.tab_body.inbound.memory_reset }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: enAgents.tab_body.inbound.memory_reset }));
+    await waitFor(() => expect(resetMemory).toHaveBeenCalledWith("agent-1", SCENE_DM, { loop: "employee", scene_id: SCENE_DM, org_id: "org", expected_revision: 7 }));
+  });
+  it("drops an open confirmation when the selected loop changes", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const memory = memoryRow(SCENE_DM, { loop: "coordinator" });
+    const view = render(memoryDetailView({ ...agent, coordination_mode: "coordinator" }, memory, client));
+    fireEvent.click(screen.getByRole("button", { name: enAgents.tab_body.inbound.memory_reset }));
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    view.rerender(memoryDetailView({ ...agent, coordination_mode: "employee" }, memory, client));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(resetMemory).not.toHaveBeenCalled();
   });
 });

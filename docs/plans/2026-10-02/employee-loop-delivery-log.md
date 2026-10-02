@@ -98,3 +98,12 @@
 - 独立审查通过；干净索引快照在实际 PostgreSQL 执行 employeeentry/eventrouter/handler 定向 race 全部通过，无跳过；server 构建及范围 vet 通过。公开合同新增 `docs/employee-loop.md`。
 - Direct 预发实例 `3110305603` 构建、部署、集成测试 SUCCESS；回读 `/api/config` 200、fence=normal，两活副本状态正常；bootstrap 确认 9620 与 9630 已应用。
 - Runtime 初次构建 `77158514` 在 Linux root 下的假执行器测试失败；已以开发提交 `0339c0333` / 交付 `e65efb8f5754dab67875b55a4a504b9b874e5799` 修复仅测试环境。专用候选继续以新的不可变 pin 重建，未使用失败产物切换。
+
+## D10 双 Loop 记忆管理
+
+- 新界面 list/detail/reset 显式指定 Loop，缓存键含 Loop；切换会关闭旧确认框，陈旧模式或 tenant/revision 写入返回冲突。
+- Employee 页面只展示 scene 学习条目，不聚合私人记忆、不走 Coordinator 的整段编辑或关联清理；旧省略 loop GET 保持 Coordinator API 兼容。
+- 重置在 workspace→agent mode→memory revision 的同事务中执行，保留去重墓碑；两个 Loop 的内容和 reset 互不影响。
+- 独立审查发现并修复两个界面反例：旧章节过滤隐藏合法 Employee 内容、滚动旧响应把其他 Loop 摘要放入列表。
+- 独立复审及干净索引快照真实 PG 管理/重置 race 通过；42 个界面、新 core 3 个及旧 client 7 个测试通过，core/views typecheck 和范围 vet 通过。
+- 无新增 CLI `--loop` 标志；当前管理能力沿既有 HTTP 路由显式 query 参数提供。入站 `/reset-memory` 的新 Loop 分派在后续消费批次接线。
