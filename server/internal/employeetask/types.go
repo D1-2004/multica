@@ -10,10 +10,11 @@ import (
 )
 
 var (
-	ErrInvalid   = errors.New("invalid employee task input")
-	ErrNotFound  = errors.New("employee task not found in scope")
-	ErrConflict  = errors.New("employee task version or source payload conflict")
-	ErrActiveRun = errors.New("employee task already has an active run")
+	ErrInvalid     = errors.New("invalid employee task input")
+	ErrNotFound    = errors.New("employee task not found in scope")
+	ErrConflict    = errors.New("employee task version or source payload conflict")
+	ErrActiveRun   = errors.New("employee task already has an active run")
+	ErrRunNotReady = errors.New("employee task runner termination is not confirmed")
 )
 
 type ScopeKind string
@@ -136,8 +137,30 @@ type InputParams struct {
 }
 
 type StartRunParams struct {
+	Source      Source `json:"source"`
+	QueueTaskID string `json:"queue_task_id"`
+	// InputSeq freezes the accepted input boundary when a durable follow-up launches later.
+	// Zero captures the current ledger boundary for immediate execution.
+	InputSeq        int64 `json:"input_seq,omitempty"`
+	ExpectedVersion int64 `json:"-"`
+}
+
+// ResumeParams is an explicit host-authorized continuation of a completed goal.
+// It does not change the definition or assert that an unreachable worker stopped.
+type ResumeParams struct {
+	Source          Source `json:"source"`
+	ActorRef        string `json:"actor_ref"`
+	Body            string `json:"body"`
+	ExpectedVersion int64  `json:"-"`
+}
+
+// ObserveIssueRunParams records a queue already accepted by the Coordinator's
+// existing Issue backend. It is never an instruction to dispatch a worker.
+type ObserveIssueRunParams struct {
 	Source          Source `json:"source"`
 	QueueTaskID     string `json:"queue_task_id"`
+	GoalRevision    int64  `json:"goal_revision"`
+	InputSeq        int64  `json:"input_seq"`
 	ExpectedVersion int64  `json:"-"`
 }
 

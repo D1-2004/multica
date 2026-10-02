@@ -209,6 +209,14 @@ response worker在发送前复核该Coordinator job仍pending/running、关联ac
 
 故障与预算不足不扩大执行权限。不把错误当成功静默，也不在失败后自动派出含糊任务。已确认效果、未决请求和真实错误状态分别保留。
 
+### Task 领域与 Issue 执行适配
+
+Coordinator 的受审工作计划通过 `EmployeeIssueBackend` 调用原有 `IssueService.Create`、`CreateExternalFollowUp` 或 `QueueCoordinatorFollowUp`。每项的 EmployeeTask、Issue/评论和即时 queue→Run 映射共用外层事务，提交后才释放事件、分析记录和运行唤醒；Web 的整批计划继续与聊天记录一起提交。Task 的 requester 来自原入站发言人，追加记录保留本次真实 actor，不能把代写评论的 Multica 操作账号冒充委托人。无已登记场域时只使用真实 Issue/Chat locator，不伪造 SceneRef；历史 Issue 首次续接只采用其原作者来源与当前定义，不重新执行旧请求。
+
+忙时追加先保留真实的 pending follow-up，没有 queue ID 就没有 Run。实际合并入队时，用已保存的 follow-up source key 和 task_id 精确建立一个 Run，并冻结实际接受输入的水位；后台使用同一事实关系恢复遗漏的映射。Coordinator 既有自动 retry 预算与调度保持不变：窄 `ObserveIssueRun` 只记录已经存在且属于同一 workspace/agent/Issue 的 queue；retry 关联还核对原 Run、`retry_of_task_id`、`parent_task_id` 和 attempt 递增，不猜最近任务，也不再派一份执行。若较新的 Run 仍活动，观察层只延后关联，不回滚旧后端已经接受的 retry；原 queue 与父子谱系保留为持久待关联事实，活动 Run 结束后自动补齐，包括届时已经终态的 retry child。Direct/Employee 自有任务不使用这个观察接口，其显式 Resume 仍只接受已成功完成、无 active Run 的情形。
+
+Issue-backed Run 的终态写入复用 queue 事实；它不新增 Employee notice，Coordinator 仍沿原 `task_finished`、Router 回执和最终输出合同回报。实现与本地 PG 回归在 `service/employee_issue_backend*.go`、`service/employee_task_lifecycle.go`、`handler/coordinator_issue_backend.go`、`chat_coordinator_plan_test.go`、`coordinator_window_plan_test.go`。这些数据库/兼容性回归不代表真实模型、Runtime 或渠道送达已验收；policy/assembly 版本和提示词保持不变。
+
 ## 7. 每次修改的守则
 
 1. 写明真实触发上下文、错误效果和期望行为，关联 `COORD.*` 义务和历史证据；区分口吻、语义、取数、工具与状态机变化。

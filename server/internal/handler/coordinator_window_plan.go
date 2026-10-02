@@ -125,12 +125,7 @@ func (h *Handler) materializeWindowContinuation(ctx context.Context, c DispatchC
 		return issue, db.AgentTaskQueue{}, protocol.ChatCoordinatorIssueResult{}, fmt.Errorf("comment service unavailable")
 	}
 	params := service.IssueCommentCreateParams{Issue: issue, AuthorID: dc.UserID, Content: inboundcoord.ContinuationContent(item), AgentIdentityContextToken: c.ExternalIdentity.ContextToken, DispatchContext: raw, IdempotencyKey: key}
-	var result service.IssueCommentCreateResult
-	if c.ProactiveConversation {
-		result, err = h.IssueCommentService.QueueCoordinatorFollowUp(ctx, params)
-	} else {
-		result, err = h.IssueCommentService.CreateExternalFollowUp(ctx, params, service.IssueCommentCreateOpts{})
-	}
+	result, err := service.NewEmployeeIssueBackend(h.IssueService, h.IssueCommentService).Continue(ctx, service.EmployeeIssueContinueParams{Comment: params, ActorRef: coordinatorTaskActor(c), Proactive: c.ProactiveConversation})
 	if err != nil {
 		return issue, result.Task, protocol.ChatCoordinatorIssueResult{}, err
 	}
