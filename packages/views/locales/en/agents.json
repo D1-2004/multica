@@ -2550,7 +2550,6 @@
       "error_manager_only": "Only agent managers can change routines.",
       "error_invalid": "Invalid setting: {{detail}}",
       "error_generic": "That didn't work. Try again in a moment.",
-      "open_detail": "View details and runs of \"{{name}}\"",
       "status_completed": "Completed",
       "status_failed": "Failed",
       "status_running": "Running",
@@ -2564,7 +2563,10 @@
       "history_loading": "Loading runs…",
       "history_failed": "Couldn't load the runs.",
       "history_span": "{{start}} – {{end}}",
-      "upcoming_title": "Next runs"
+      "upcoming_title": "Next runs",
+      "open_detail_hint": "View details and runs",
+      "source_api": "API",
+      "source_message": "Message"
     }
   },
   "tag_page": {

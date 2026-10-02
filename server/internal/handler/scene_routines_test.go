@@ -587,3 +587,43 @@ func TestSceneRoutineAdminRoutes(t *testing.T) {
 	// The admin node is the agent's managers': a plain member reads nothing.
 	ctxcapExpectStatus(t, scenesAs(t, router, member, http.MethodGet, runsPath, nil), http.StatusForbidden, "plain member runs")
 }
+
+// The configure page reads a routine's run history with access to its
+// scene; anyone else is refused, and an unknown routine is not found.
+func TestSceneRoutineRunsOnTheConfigurePage(t *testing.T) {
+	f, a := routineFixture(t)
+	created := createGroupRoutine(t, f, a, sceneRoutineInput{
+		Title: "Daily digest", Instructions: "Digest the day.", Trigger: sceneRoutineTrigger{Kind: "schedule", Cron: "0 18 * * *"},
+	})
+	router := chi.NewRouter()
+	router.Route("/api/context-capabilities", func(r chi.Router) {
+		r.Use(RequireDingTalkHumanActor)
+		r.Get("/agents/{agentId}/routines/{routineId}/runs", f.h.ListContextConfigRoutineRuns)
+	})
+	holder, stranger := uuid.NewString(), uuid.NewString()
+	f.grant(t, holder, contextcap.ScopeScene, ctxcapScene, "Ctxcap group")
+	path := "/api/context-capabilities/agents/" + uuidToString(f.agent) + "/routines/"
+
+	ap, err := f.h.Queries.GetAutopilot(context.Background(), parseUUID(created.Routine.AutopilotID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _, err := f.h.AutopilotService.DispatchAutopilotManual(context.Background(), ap, pgtype.UUID{}, nil, parseUUID(testUserID))
+	if err != nil || run == nil {
+		t.Fatalf("manual run = %+v %v", run, err)
+	}
+	w := ctxcapMobile(t, router, http.MethodGet, path+created.Routine.ID+"/runs", holder, nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "holder runs")
+	var history struct {
+		Runs []sceneRoutineRunView `json:"runs"`
+	}
+	ctxcapDecode(t, w, &history)
+	if len(history.Runs) != 1 || history.Runs[0].ID != uuidToString(run.ID) {
+		t.Fatalf("runs = %+v", history.Runs)
+	}
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, path+created.Routine.ID+"/runs", stranger, nil),
+		http.StatusForbidden, "stranger runs")
+	if w := ctxcapMobile(t, router, http.MethodGet, path+uuid.NewString()+"/runs", holder, nil); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown routine: %d %s", w.Code, w.Body.String())
+	}
+}

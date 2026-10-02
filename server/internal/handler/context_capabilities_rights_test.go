@@ -187,8 +187,19 @@ func TestContextCapStrictRightsOnTheConfigurePage(t *testing.T) {
 	ctxcapExpectStatus(t, call(alice, http.MethodPut, "/mcp-config", mcp("person", ctxcapStaff)), http.StatusOK, "person MCP config")
 	detail := detailOf(alice)
 	if detail.Person == nil || detail.Person.Rights != contextCapAllRights || len(detail.Person.Prompts) != 1 || !detail.Person.Prompts[0].Enabled ||
-		!strings.Contains(string(detail.Person.MCPConfig), "docs.example.test") || detail.Org != nil {
-		t.Fatalf("person detail = %+v org=%+v", detail.Person, detail.Org)
+		!strings.Contains(string(detail.Person.MCPConfig), "docs.example.test") {
+		t.Fatalf("person detail = %+v", detail.Person)
+	}
+	// The enterprise level is shown to her read-only: no rights, no MCP
+	// document, no switched-off prompt.
+	if detail.Org == nil || detail.Org.Rights != (contextCapRights{}) || detail.Org.CanEdit ||
+		(len(detail.Org.MCPConfig) != 0 && string(detail.Org.MCPConfig) != "null") {
+		t.Fatalf("org for the person = %+v", detail.Org)
+	}
+	for _, prompt := range detail.Org.Prompts {
+		if !prompt.Enabled {
+			t.Fatalf("a switched-off enterprise prompt reached a member: %+v", detail.Org.Prompts)
+		}
 	}
 
 	// A 1:1 chat is a scene like a group (docs/agent-scene.md): a manager
@@ -217,12 +228,15 @@ func TestContextCapStrictRightsOnTheConfigurePage(t *testing.T) {
 	ctxcapExpectStatus(t, call(alice, http.MethodPut, "/prompts", prompts("scene", dm, map[string]any{"name": "dm", "text": "mine"})),
 		http.StatusOK, "person 1:1 scene prompts")
 
-	// The enterprise level: managers only, and nobody else sees it.
-	ctxcapExpectStatus(t, call(manager, http.MethodPut, "/prompts", prompts("org", ctxcapOrg, map[string]any{"name": "rules", "text": "org rules"})),
+	// The enterprise level: managers change it; everyone else sees it
+	// read-only, without its switched-off drafts or its MCP document.
+	ctxcapExpectStatus(t, call(manager, http.MethodPut, "/prompts", prompts("org", ctxcapOrg,
+		map[string]any{"name": "rules", "order": 1, "text": "org rules"},
+		map[string]any{"name": "draft", "order": 2, "text": "internal draft", "enabled": false})),
 		http.StatusOK, "manager org prompts")
 	ctxcapExpectStatus(t, call(manager, http.MethodPut, "/mcp-config", mcp("org", ctxcapOrg)), http.StatusOK, "manager org MCP config")
 	detail = detailOf(manager)
-	if detail.Org == nil || detail.Org.Rights != contextCapAllRights || !detail.Org.CanEdit || len(detail.Org.Prompts) != 1 ||
+	if detail.Org == nil || detail.Org.Rights != contextCapAllRights || !detail.Org.CanEdit || len(detail.Org.Prompts) != 2 ||
 		detail.Org.Prompts[0].Text != "org rules" || !strings.Contains(string(detail.Org.MCPConfig), "docs.example.test") {
 		t.Fatalf("manager org layer = %+v", detail.Org)
 	}
@@ -233,8 +247,10 @@ func TestContextCapStrictRightsOnTheConfigurePage(t *testing.T) {
 			"org binding": call(user, http.MethodPut, "/bindings", map[string]any{"scope_type": "org", "scope_key": ctxcapOrg,
 				"resource_type": "skill", "resource_id": f.skillScene, "enabled": true}),
 		})
-		if detail = detailOf(user); detail.Org != nil {
-			t.Fatalf("org layer shown to a non-manager: %+v", detail.Org)
+		detail = detailOf(user)
+		if detail.Org == nil || detail.Org.Rights != (contextCapRights{}) || detail.Org.CanEdit || len(detail.Org.Prompts) != 1 ||
+			detail.Org.Prompts[0].Name != "rules" || strings.Contains(string(detail.Org.MCPConfig), "docs.example.test") || !detail.Org.MCPConfigRedacted {
+			t.Fatalf("org layer for a non-manager = %+v", detail.Org)
 		}
 	}
 
