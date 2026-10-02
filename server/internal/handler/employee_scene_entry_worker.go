@@ -408,6 +408,7 @@ func employeeAcceptedReplies(outcome employeeloop.Outcome) ([]string, bool) {
 
 func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope, saved employeeSavedOutcome) error {
 	h := w.handler
+	actionIDs := []string{}
 	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
 		// Reuse this transaction for the use-time fences; borrowing the pool here
 		// deadlocks a single-connection deployment while Complete holds its lease.
@@ -455,9 +456,11 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 				if command.ResponsePolicy != nil {
 					in.ShowAITag = command.ResponsePolicy.ShowAITag
 				}
-				if _, err = h.DingTalkResponses.EnqueueSceneNotice(ctx, tx, in, employeeJobReplyID(job, saved, command.EventReceiptID)); err != nil {
-					return fmt.Errorf("employee response: %w", err)
+				actionID, enqueueErr := h.DingTalkResponses.EnqueueSceneNotice(ctx, tx, in, employeeJobReplyID(job, saved, command.EventReceiptID))
+				if enqueueErr != nil {
+					return fmt.Errorf("employee response: %w", enqueueErr)
 				}
+				actionIDs = append(actionIDs, actionID)
 			}
 		}
 		return nil
@@ -469,8 +472,43 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 		if h.TaskService != nil && h.TaskService.CompletionNotifier != nil {
 			h.TaskService.CompletionNotifier.NotifyTaskCompletion()
 		}
+		w.logCompleted(ctx, job, saved, actionIDs)
 	}
 	return err
+}
+
+// logCompleted observes only committed metadata. model_attempts is the durable
+// pre-provider reservation count; response/failure counts distinguish completed
+// provider outcomes without exporting prompts, completions or private memory.
+func (w *EmployeeSceneWorker) logCompleted(ctx context.Context, job employeeentry.Job, saved employeeSavedOutcome, actionIDs []string) {
+	receipts := make([]string, 0, len(job.Items))
+	for _, item := range job.Items {
+		receipts = append(receipts, item.ReceiptID)
+	}
+	runs := []string{}
+	for _, receipt := range saved.Outcome.Receipts {
+		if _, err := scene.ParseID(receipt.ID); err == nil {
+			runs = append(runs, receipt.ID)
+		}
+	}
+	fields := []any{"event", "employee_scene_job_completed", "workspace_id", job.Scope.WorkspaceID, "agent_id", job.Scope.AgentID, "tenant_org_id", job.Scope.TenantOrgID, "scene_id", job.Scope.SceneID, "job_id", job.ID, "receipt_ids", receipts, "state", "completed", "kind", saved.Outcome.Kind, "run_ids", runs, "action_ids", actionIDs}
+	database, ok := employeeEntryDB(w.handler)
+	if !ok {
+		slog.InfoContext(ctx, "employee scene job completed", append(fields, "model_counts_known", false)...)
+		return
+	}
+	observeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	var attempts, responses, failures int
+	err := database.QueryRow(observeCtx, `SELECT model_attempts,
+ (SELECT count(*) FROM jsonb_array_elements(model_journal) turn WHERE jsonb_typeof(turn->'response')='object'),
+ (SELECT count(*) FROM jsonb_array_elements(model_journal) turn WHERE COALESCE(turn->>'failure','')<>'')
+ FROM employee_scene_job WHERE id=$1::uuid AND workspace_id=$2::uuid AND agent_id=$3::uuid AND tenant_org_id=$4 AND scene_id=$5::uuid AND state='completed'`, job.ID, job.Scope.WorkspaceID, job.Scope.AgentID, job.Scope.TenantOrgID, job.Scope.SceneID).Scan(&attempts, &responses, &failures)
+	fields = append(fields, "model_counts_known", err == nil)
+	if err == nil {
+		fields = append(fields, "model_attempts", attempts, "model_response_count", responses, "model_failure_count", failures)
+	}
+	slog.InfoContext(ctx, "employee scene job completed", fields...)
 }
 
 // Ready verifies the configured services, live replica protocol and current
