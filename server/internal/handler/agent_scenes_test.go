@@ -552,10 +552,10 @@ func TestContextCapabilitiesPersonShareInGroups(t *testing.T) {
 	}
 	ctxcapExpectStatus(t, put(map[string]any{"scope_type": "person", "scope_key": ctxcapStaff, "resource_type": "skill", "resource_id": f.skillScene, "enabled": true, "share_in_groups": true}),
 		http.StatusBadRequest, "share_in_groups on a skill")
-	// A group takes no share_in_groups. Its link holder may not toggle the
-	// group at all (403); a manager, who may, gets the 400.
+	// A group takes no share_in_groups: its link holder and a manager (who
+	// both may toggle the group) get the 400.
 	sceneShare := map[string]any{"scope_type": "scene", "scope_key": ctxcapScene, "resource_type": "connector", "resource_id": f.scene, "enabled": true, "share_in_groups": true}
-	ctxcapExpectStatus(t, put(sceneShare), http.StatusForbidden, "share_in_groups on a scene by its link holder")
+	ctxcapExpectStatus(t, put(sceneShare), http.StatusBadRequest, "share_in_groups on a scene by its link holder")
 	f.sceneMemoryRow(t, ctxcapOrg, ctxcapScene, "group", "Ctxcap group", time.Minute)
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodPut, bindingPath, testUserID, sceneShare), http.StatusBadRequest, "share_in_groups on a scene")
 	ctxcapExpectStatus(t, put(personConnector(map[string]any{"share_in_groups": "yes"})), http.StatusBadRequest, "non-boolean share_in_groups")
@@ -670,14 +670,14 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 	if detail.Person == nil || len(detail.Scenes) != 1 || detail.Scenes[0].ScopeKey != dmScene || detail.Scenes[0].Kind != "dm" {
 		t.Fatalf("agent detail person=%+v scenes=%+v", detail.Person, detail.Scenes)
 	}
-	// The DM scene is its own scope: the link holder reads it, only
-	// managers change it.
+	// The DM scene is its own scope: the link holder reads and changes it
+	// like a manager.
 	w = ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, dmScene), alice, nil)
 	ctxcapExpectStatus(t, w, http.StatusOK, "dm scene detail")
 	var scene ctxcapSceneDetail
 	ctxcapDecode(t, w, &scene)
 	if scene.Scene.Kind != "dm" || scene.Scene.ScopeKey != dmScene || scene.Scope == nil ||
-		*scene.Scope != (contextCapScopeRef{Type: contextcap.ScopeScene, Key: dmScene, Title: "Alice"}) || scene.CanConnect {
+		*scene.Scope != (contextCapScopeRef{Type: contextcap.ScopeScene, Key: dmScene, Title: "Alice"}) || !scene.CanConnect || scene.Rights != contextCapSceneRights {
 		t.Fatalf("dm scene=%+v", scene)
 	}
 	dmOnly := f.insertConnector(t, "none", "")
@@ -688,7 +688,7 @@ func TestContextCapabilitiesDirectLinkGrantsDMScene(t *testing.T) {
 	w = ctxcapMobile(t, router, http.MethodPut, "/api/context-capabilities/agents/"+agentID+"/bindings", alice, map[string]any{
 		"scope_type": "scene", "scope_key": dmScene, "resource_type": "connector", "resource_id": dmOnly, "enabled": true,
 	})
-	if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextCapErrManagerOnly {
+	if w.Code != http.StatusOK {
 		t.Fatalf("link holder write to the dm scene: %d %s", w.Code, w.Body.String())
 	}
 	// A manager configures the DM scene; the person configures herself.

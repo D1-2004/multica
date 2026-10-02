@@ -1342,6 +1342,18 @@ describe("bound configuration page", () => {
     expect(screen.queryByRole("region", { name: "Sales team" })).not.toBeInTheDocument();
   });
 
+  it("shows a personal link's 1:1 chat above the person's own settings", async () => {
+    const dmScene = { scopeKey: DM_SCENE, scopeTitle: "Alice", source: "agent_link", expiresAt: "", kind: "dm" as const, orgId: "" };
+    api.getContextConfigAgent.mockResolvedValue(agentDetail({ scenes: [dmScene] }));
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, scene: dmScene });
+    renderPage({ binding: personBinding });
+
+    expect(await screen.findByRole("heading", { name: copy.dm_section_title })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: copy.person_section_title })).toBeInTheDocument();
+    await waitFor(() => expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", DM_SCENE, ""));
+    expect(screen.queryByRole("region", { name: "Sales team" })).not.toBeInTheDocument();
+  });
+
   it("opens no other person's scope", async () => {
     renderPage({ binding: { ...personBinding, scopeKey: "staff-2" } });
 
@@ -1791,9 +1803,20 @@ describe("routines tab", () => {
     );
   });
 
-  it("says a person level has no routines", async () => {
+  it("says a person level without its 1:1 chat has no routines", async () => {
     renderPage({ binding: personBinding, initialTab: "routines" });
     expect(await screen.findByText(routineCopy.not_scene_title)).toBeInTheDocument();
     expect(api.listSceneRoutines).not.toHaveBeenCalled();
+  });
+
+  it("opens the routines of the 1:1 chat a personal link came from", async () => {
+    const dmScene = { scopeKey: DM_SCENE, scopeTitle: "Alice", source: "agent_link", expiresAt: "", kind: "dm" as const, orgId: "" };
+    api.getContextConfigAgent.mockResolvedValue(agentDetail({ scenes: [dmScene] }));
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, scene: dmScene, rights: { ...allRights, editRoutines: true } });
+    api.listSceneRoutines.mockResolvedValue([standupRoutine]);
+    renderPage({ binding: personBinding, initialTab: "routines" });
+
+    expect(await screen.findByText("Weekday standup")).toBeInTheDocument();
+    expect(api.listSceneRoutines).toHaveBeenCalledWith({ kind: "config", agentId: "agent-1", sceneId: DM_SCENE, orgId: "" });
   });
 });

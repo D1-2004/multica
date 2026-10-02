@@ -29,7 +29,8 @@ this run has no scene to configure; say so instead of improvising.
   to switch one off (`disabled`) or delete it. Fields you leave out of a
   change (headers above all, whose values you never see) keep their stored
   values.
-- **Accounts** — never handled in chat. Send a configuration link instead.
+- **Accounts** — never handled in chat. Send a configuration link instead
+  (`scene_connect_link`; pass `tab: "routines"` to open the routines tab).
 
 ## How to work
 

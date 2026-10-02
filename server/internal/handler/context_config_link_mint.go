@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -56,6 +57,22 @@ type contextConfigLinkMint struct {
 	SourceTaskID string
 	Issuer       string
 	CoordTraceID string
+	// Tab is the configure page tab the link opens ("" for the default).
+	Tab string
+}
+
+// contextConfigLinkTabs are the configure page tabs a link may open
+// (CONTEXT_CONFIG_TABS in packages/views/dingtalk/context-config-page.tsx).
+var contextConfigLinkTabs = []string{"scope", "public", "routines"}
+
+// contextConfigLinkTab checks a requested tab: "" or one of
+// contextConfigLinkTabs.
+func contextConfigLinkTab(tab string) (string, error) {
+	tab = strings.TrimSpace(tab)
+	if tab == "" || slices.Contains(contextConfigLinkTabs, tab) {
+		return tab, nil
+	}
+	return "", &multicaMCPToolCallError{message: "tab must be one of " + strings.Join(contextConfigLinkTabs, ", ")}
 }
 
 // contextConfigLinkOrigin returns the app origin configuration pages are
@@ -132,6 +149,11 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 		return multicaMCPContextConfigLinkResult{}, err
 	}
 	pageURL := in.Origin + contextConfigLinkPagePath + url.QueryEscape(token)
+	if in.Tab != "" {
+		// After the token, so link redaction (the path prefix + token)
+		// still matches.
+		pageURL += "&tab=" + url.QueryEscape(in.Tab)
+	}
 	slog.InfoContext(ctx, "context capabilities: configuration link issued",
 		"source_task_id", link.SourceTaskID, "agent_id", in.AgentID, "workspace_id", link.WorkspaceID, "scope_type", scopeType,
 		"issuer", in.Issuer, "coord_trace_id", in.CoordTraceID)

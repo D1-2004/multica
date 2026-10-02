@@ -386,7 +386,8 @@ func sceneConfigToolDefinitions(kind string) []any {
 			}, []string{"kind", "id", "enabled"}, false),
 		sceneConfigTool(sceneConfigToolConnectLink, "Create a configuration link",
 			"Create a configuration link for connecting accounts or managing "+where+" on the configuration page. Post the returned url verbatim. Accounts are never connected in chat.",
-			map[string]any{}, nil, false),
+			map[string]any{"tab": map[string]any{"type": "string", "enum": contextConfigLinkTabs,
+				"description": `Page tab to open: "scope" (场域能力, default), "public" (公开能力) or "routines" (例行任务).`}}, nil, false),
 		sceneConfigTool(sceneConfigToolRoutineList, "List routines", "List the routines (例行任务) of "+where+" with their schedule, next run and last result.",
 			map[string]any{}, nil, true),
 		sceneConfigTool(sceneConfigToolRoutineCreate, "Create a routine",
@@ -454,8 +455,11 @@ func (h *Handler) handleSceneConfigToolCall(w http.ResponseWriter, r *http.Reque
 	case sceneConfigToolCapabilitySet:
 		result, notice, err = h.sceneConfigCapabilitySet(ctx, target, params.Arguments)
 	case sceneConfigToolConnectLink:
-		if err = decodeMulticaMCPArguments(params.Arguments, &struct{}{}); err == nil {
-			result, err = h.createContextConfigLink(r, "")
+		var args struct {
+			Tab string `json:"tab"`
+		}
+		if err = decodeSceneConfigArguments(params.Arguments, &args); err == nil {
+			result, err = h.createContextConfigLink(r, "", args.Tab)
 		}
 	case sceneConfigToolRoutineList:
 		if err = decodeMulticaMCPArguments(params.Arguments, &struct{}{}); err == nil {

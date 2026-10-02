@@ -26,6 +26,7 @@ Requires a task token of a run dispatched from DingTalk. Scene and person identi
 
 type multicaMCPContextConfigLinkArguments struct {
 	Scope string `json:"scope"`
+	Tab   string `json:"tab"`
 }
 
 type multicaMCPContextConfigLinkResult struct {
@@ -55,6 +56,11 @@ func multicaMCPContextConfigLinkDefinition() map[string]any {
 					"enum":        []string{contextcap.ScopeScene, contextcap.ScopePerson},
 					"description": `"scene" configures the current group chat; "person" configures the current 1:1 sender. Omit to use the current conversation.`,
 				},
+				"tab": map[string]any{
+					"type":        "string",
+					"enum":        contextConfigLinkTabs,
+					"description": `Page tab to open: "scope" (场域能力, default), "public" (公开能力) or "routines" (例行任务).`,
+				},
 			},
 		},
 		"outputSchema": map[string]any{
@@ -83,7 +89,7 @@ func (h *Handler) handleMulticaMCPContextConfigLink(w http.ResponseWriter, r *ht
 		h.writeMulticaMCPError(w, id, -32602, "invalid create_context_config_link arguments")
 		return
 	}
-	result, err := h.createContextConfigLink(r, strings.TrimSpace(args.Scope))
+	result, err := h.createContextConfigLink(r, strings.TrimSpace(args.Scope), args.Tab)
 	if err != nil {
 		var toolErr *multicaMCPToolCallError
 		if !errors.As(err, &toolErr) {
@@ -104,13 +110,17 @@ func (h *Handler) handleMulticaMCPContextConfigLink(w http.ResponseWriter, r *ht
 // createContextConfigLink mints a configuration link for the scene or trigger
 // person of the authenticated active task. The scope comes only from the
 // task's server-written dispatch context.
-func (h *Handler) createContextConfigLink(r *http.Request, requestedScope string) (multicaMCPContextConfigLinkResult, error) {
+func (h *Handler) createContextConfigLink(r *http.Request, requestedScope, tab string) (multicaMCPContextConfigLinkResult, error) {
 	ctx := r.Context()
 	if h.Queries == nil || h.DB == nil {
 		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "configuration links are not available"}
 	}
 	if requestedScope != "" && requestedScope != contextcap.ScopeScene && requestedScope != contextcap.ScopePerson {
 		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: `scope must be "scene" or "person"`}
+	}
+	tab, err := contextConfigLinkTab(tab)
+	if err != nil {
+		return multicaMCPContextConfigLinkResult{}, err
 	}
 	workspaceUUID, err := util.ParseUUID(strings.TrimSpace(r.Header.Get("X-Workspace-ID")))
 	if err != nil {
@@ -148,6 +158,7 @@ func (h *Handler) createContextConfigLink(r *http.Request, requestedScope string
 		AgentID:        agentID,
 		Scope:          h.taskContextScope(ctx, workspaceUUID, task),
 		RequestedScope: requestedScope,
+		Tab:            tab,
 		Origin:         origin,
 		SourceTaskID:   uuidToString(task.ID),
 		Issuer:         contextConfigLinkIssuerTaskTool,

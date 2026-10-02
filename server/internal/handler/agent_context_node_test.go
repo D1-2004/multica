@@ -161,12 +161,12 @@ func TestAgentContextNodeLivesInTheScopeOfTheScene(t *testing.T) {
 		len(prompts) != 1 || prompts[0].Text != "Mine." {
 		t.Fatalf("Dora's prompts: %+v %v", prompts, err)
 	}
-	// Holding the DM's scene through her link does not let Dora change the
-	// DM's scene configuration.
+	// Holding the DM's scene through her link lets Dora change the DM's
+	// scene configuration too (whoever may open a scene changes it).
 	f.grant(t, dora, contextcap.ScopeScene, nodeDirect, "Dora")
 	w = ctxcapMobile(t, mobile, http.MethodPut, "/api/context-capabilities/agents/"+agentID+"/prompts", dora,
 		map[string]any{"scope_type": contextcap.ScopeScene, "scope_key": nodeDirect, "prompts": []map[string]any{{"name": "x", "text": "y"}}})
-	if w.Code != http.StatusForbidden {
+	if w.Code != http.StatusOK {
 		t.Fatalf("link holder write to the DM scene: %d %s", w.Code, w.Body.String())
 	}
 

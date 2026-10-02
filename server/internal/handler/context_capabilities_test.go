@@ -349,12 +349,9 @@ func TestContextCapabilitiesMobileGrantsGateReadsAndWrites(t *testing.T) {
 	ctxcapExpectStatus(t, write(alice, contextcap.ScopePerson, ctxcapStaff, contextcap.ResourceConnector, f.notOffered, true), http.StatusForbidden, "non-offered connector")
 	ctxcapExpectStatus(t, write(alice, contextcap.ScopePerson, ctxcapStaff, contextcap.ResourceSkill, f.skillFree, false), http.StatusForbidden, "non-offered skill disable")
 	ctxcapExpectStatus(t, write(alice, contextcap.ScopePerson, ctxcapStaff, contextcap.ResourceSkill, f.skillAgent, true), http.StatusForbidden, "global-only skill")
-	// Alice holds the group's link: she reads the group, only agent managers
-	// change it (contextCapScopeRights).
-	if w = write(alice, contextcap.ScopeScene, ctxcapScene, contextcap.ResourceSkill, f.skillScene, true); w.Code != http.StatusForbidden ||
-		catalogErrorCode(t, w) != contextCapErrManagerOnly {
-		t.Fatalf("group link holder toggles the group: %d %s", w.Code, w.Body.String())
-	}
+	// Alice holds the group's link: she changes the group like a manager
+	// (contextCapScopeRights).
+	ctxcapExpectStatus(t, write(alice, contextcap.ScopeScene, ctxcapScene, contextcap.ResourceSkill, f.skillScene, true), http.StatusOK, "group link holder toggles the group")
 	ctxcapExpectStatus(t, write(bob, contextcap.ScopeScene, ctxcapScene, contextcap.ResourceSkill, f.skillScene, true), http.StatusForbidden, "bob write")
 	ctxcapExpectStatus(t, write(alice, contextcap.ScopeScene, ctxcapOtherScene, contextcap.ResourceSkill, f.skillScene, true), http.StatusForbidden, "ungranted scene write")
 	ctxcapExpectStatus(t, write(alice, contextcap.ScopePerson, ctxcapOtherStaff, contextcap.ResourceSkill, f.skillScene, true), http.StatusForbidden, "other person write")
@@ -433,13 +430,10 @@ func TestContextCapabilitiesMobileCredentialsAreWriteOnly(t *testing.T) {
 	}
 
 	// A globally granted Bearer connector (通用能力) that is not offered
-	// takes a personal token and a group token alike. A group's tokens are
-	// the agent managers' (contextCapScopeRights): Alice, who holds the
-	// group's link, may not replace the group's account.
+	// takes a personal token and a group token alike. Alice, who holds the
+	// group's link, may set the group's account like a manager.
 	ctxcapExpectStatus(t, put(alice, contextcap.ScopePerson, ctxcapStaff, f.global, "person-secret-for-global"), http.StatusOK, "global connector person credential")
-	if w = put(alice, contextcap.ScopeScene, ctxcapScene, f.global, "alice-secret-for-global"); w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextCapErrManagerOnly {
-		t.Fatalf("group link holder stores a group token: %d %s", w.Code, w.Body.String())
-	}
+	ctxcapExpectStatus(t, put(alice, contextcap.ScopeScene, ctxcapScene, f.global, "alice-secret-for-global"), http.StatusOK, "group link holder stores a group token")
 	manager := testUserID
 	ctxcapExpectStatus(t, put(manager, contextcap.ScopeScene, ctxcapScene, f.global, "scene-secret-for-global"), http.StatusOK, "global connector scene credential")
 	ctxcapExpectStatus(t, put(manager, contextcap.ScopeScene, ctxcapScene, f.scene, "scene-secret-for-scene"), http.StatusOK, "offered connector scene credential")
@@ -468,9 +462,9 @@ func TestContextCapabilitiesMobileCredentialsAreWriteOnly(t *testing.T) {
 		}
 		return hints
 	}
-	// The link holder, who may not connect here, sees which accounts are
-	// connected but not their hints; the manager sees the hints.
-	if hints := hintsOf(alice); len(hints) != 2 || hints[f.scene] != "" || hints[f.global] != "" {
+	// The link holder, who may connect here too, sees the hints like the
+	// manager.
+	if hints := hintsOf(alice); len(hints) != 2 || hints[f.scene] != "••••cene" || hints[f.global] != "••••obal" {
 		t.Fatalf("scene credentials for the link holder = %+v", hints)
 	}
 	if hints := hintsOf(manager); len(hints) != 2 || hints[f.scene] != "••••cene" || hints[f.global] != "••••obal" {

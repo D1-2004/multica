@@ -2430,6 +2430,8 @@
     "public_org_title": "Published capabilities",
     "none": "None",
     "org_section_title": "Enterprise settings",
+    "dm_section_title": "This 1:1 chat",
+    "person_section_title": "My personal settings",
     "scene_read_only": "Group chat settings are maintained by the agent admins.",
     "scene_read_only_dm": "1:1 chat settings are maintained by the agent admins.",
     "person_read_only": "Personal settings are maintained by that person.",

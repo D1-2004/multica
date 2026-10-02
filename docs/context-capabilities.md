@@ -33,7 +33,7 @@ layer wins.
 | Global (智能体, 「通用能力」: on for every tenant and scene) | agent | workspace admin / agent manager | web: agent detail → 配置 → 能力 → 连接器 (official apps: 「通用能力」 switch, set by 添加, no shared account needed; Aone FaaS grants, no offer switch) / Skills (section 「通用能力」) | `internal_connector_agent`, `agent_skill` (existing) |
 | Offer catalog (「公开给场域」) | agent | agent manager | web: agent detail → 配置 → 能力 → 连接器 (official app dialog switch 「公开给场域」, shown only while the app is not a 通用能力; Aone FaaS row switch 「公开给场域」 on offer-only rows) / Skills, section 「公开给场域」 (skills not assigned to the agent) | `context_capability_binding` (`scope_type='offer'`) |
 | Enterprise (企业级, a tenant) | agent + org_id (scope key = org_id) | agent managers only (web and configure page); nobody else sees it | web agent detail → 场域 → tenant → 配置; mobile 「企业」 | `agent_tenant` (the tenant), `context_capability_binding` / `context_connector_credential` / `context_scope_mcp_config` / `context_prompt_component` with `scope_type='org'` |
-| Scene (场域: 群聊 or 单聊) | agent + org_id + `scene_id` (the Agent work scene, `docs/agent-scene.md`) | agent managers (web and configure page); members holding a group's configure link, and the person of a 1:1 chat (through their personal link), only view it | web and mobile `/dingtalk/configure` tab 「本会话」; web agent detail → 场域 → tenant → 群聊和单聊 → 配置 | `context_capability_binding` (`scope_type='scene'`, `scope_key` = scene_id), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
+| Scene (场域: 群聊 or 单聊) | agent + org_id + `scene_id` (the Agent work scene, `docs/agent-scene.md`) | whoever may open it: agent managers (web and configure page), members holding a group's configure link, and the person of a 1:1 chat (through their personal link) | web and mobile `/dingtalk/configure` tab 「本会话」; web agent detail → 场域 → tenant → 群聊和单聊 → 配置 | `context_capability_binding` (`scope_type='scene'`, `scope_key` = scene_id), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
 | Personal (个人) | agent + org_id + staffId | that DingTalk person only; agent managers only view it | web and mobile `/dingtalk/configure` tab 「我的」; web agent detail → 场域 → tenant → 个人 → 配置 | `context_capability_binding` (`scope_type='person'`), custom MCP servers in `context_scope_mcp_config`, prompt components in `context_prompt_component` |
 
 - Resources are library items only: `resource_type='connector'` (an
@@ -134,9 +134,9 @@ layer wins.
     configuration: scene connectors and skills, scene credentials
     (accounts and tokens connected for that chat), prompt components and
     custom MCP servers. Agent managers change it, from the web and from
-    the configure page (§5 "Managers"); members holding a group's
-    configure link, and the person of a 1:1 chat (whose personal link also
-    grants the chat, §5), only view it (§5 "Who may change what"). Two 1:1
+    the configure page (§5 "Managers"), and so do members holding a
+    group's configure link and the person of a 1:1 chat (whose personal
+    link also grants the chat, §5) (§5 "Who may change what"). Two 1:1
     chats with the same person are two scenes. A 1:1 chat is never mapped
     to its counterpart person: the person's own configuration is the
     separate person scope (「我的」), which only that person changes.
@@ -174,8 +174,11 @@ level). Under the tree, 其他记录 opens the full inbound conversation list
 scene list does not cover (no registered scene: no openConversationId,
 another DingTalk org or robot endpoint) and Scene Memory of another org's
 scenes stay reachable. On the configure page a 1:1 chat scene is labelled
-「单聊 · {title}」 and edited like a group: agent managers change it, and
-its person only views it (`rights` all false, §5 "Who may change what").
+「单聊 · {title}」 and edited like a group: agent managers and its person
+(through the personal link) change it (§5 "Who may change what"). A page
+opened from a personal link shows that 1:1 chat (「这个单聊」) above the
+person's own settings (「我的个人配置」), and its 「例行任务」 tab lists that
+chat's routines.
 
 ### 1.2 配置 vs 生效 (stored vs applied at runtime)
 
@@ -549,8 +552,9 @@ One server function decides every write, on the configure page and on the
 admin Context Builder alike: `contextCapScopeRights(scopeType, manages,
 self) contextCapRights` in
 `server/internal/handler/context_capabilities.go`. `contextCapRights` is
-`{Toggle, Connect, EditPrompts, EditMCP}` (JSON `rights: {toggle, connect,
-edit_prompts, edit_mcp}`); `scopeType` is the scope (a 1:1 chat is a
+`{Toggle, Connect, EditPrompts, EditMCP, EditRoutines}` (JSON `rights:
+{toggle, connect, edit_prompts, edit_mcp, edit_routines}`; routines exist on
+scenes only, §9); `scopeType` is the scope (a 1:1 chat is a
 `scene`, like a group), `manages` the agent-manage permission (workspace
 owner/admin or the agent owner) and `self` whether the caller is the person
 of a person scope (their live person grant).
@@ -558,11 +562,15 @@ of a person scope (their live person grant).
 | Level | Agent manager | The person | Anyone else (configure-link holders) |
 | --- | --- | --- | --- |
 | 企业级 (`org`) | everything | — | nothing, and the configure page does not show the level |
-| 群聊级 / 单聊级 (`scene`: a group or a 1:1 chat) | everything | view only (the person of a 1:1 chat, through their personal link) | view only |
+| 群聊级 / 单聊级 (`scene`: a group or a 1:1 chat) | everything, routines included | everything (the person of a 1:1 chat, through their personal link) | everything (configure-link holders) |
 | 个人级 (`person`) | view only (configure page and admin Context Builder) | everything | — |
 
-A manager who also holds the person's grant edits that person level as the
-person. `contextCapResolveScope` decides who may read a scope and fills in
+Since 2026-10-02 (冬翔: keep permissions simple until people use the
+feature) a scene is changed by whoever may open it, the same rule as
+changing it from the conversation (§10): a group's link holders and a 1:1
+chat's person edit it like a manager, see its custom MCP servers and connect
+its accounts. A manager who also holds the person's grant edits that person
+level as the person. `contextCapResolveScope` decides who may read a scope and fills in
 `Rights`; `contextCapScopeAllows` refuses a write whose right is missing with
 403 `person_only` on a person level and 403 `manager_only` on an org or
 scene level. Every write path goes through it: the configure page's bindings
@@ -1206,7 +1214,11 @@ earlier binding, an unknown scene) gets neither.
   `multica`, `config-qwen-tag-scene` and `c<16 hex>` reserved; fields left
   out keep their stored values),
   `scene_mcp_server_delete`, `scene_capability_set` (offered items only),
-  `scene_connect_link` (accounts are never connected in chat),
+  `scene_connect_link` (accounts are never connected in chat; an optional
+  `tab` — `scope`, `public` or `routines` — opens that page tab, as does
+  `tab` on the multica `create_context_config_link` tool: the URL becomes
+  `/dingtalk/configure?link=<token>&tab=<tab>`, the tab after the token so
+  link redaction still covers the token),
   `scene_routine_list|create|update|delete|run`.
 - **Guards.**
   - A routine run is read-only (`routine_run_read_only`): its input may come

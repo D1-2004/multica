@@ -538,11 +538,14 @@ var contextCapSceneRights = contextCapRights{Toggle: true, Connect: true, EditPr
 //
 //	scope         agent manager      the person   anyone else (link holders)
 //	org           everything         -            nothing (not shown either)
-//	scene         everything         -            nothing (view only)
+//	scene         everything         -            everything
 //	person        nothing (view)     everything   nothing
 //
-// A caller who is both a manager and the person edits the person scope as
-// the person.
+// A scene (a group or a 1:1 chat) is changed by whoever may open it: a
+// holder of its link like a manager, the same rule as changing it from the
+// conversation (冬翔, 2026-10-02: keep it simple until people use it). A
+// caller who is both a manager and the person edits the person scope as the
+// person.
 func contextCapScopeRights(scopeType string, manages, self bool) contextCapRights {
 	switch scopeType {
 	case contextcap.ScopeOrg:
@@ -550,9 +553,7 @@ func contextCapScopeRights(scopeType string, manages, self bool) contextCapRight
 			return contextCapAllRights
 		}
 	case contextcap.ScopeScene:
-		if manages {
-			return contextCapSceneRights
-		}
+		return contextCapSceneRights
 	case contextcap.ScopePerson:
 		if self {
 			return contextCapAllRights

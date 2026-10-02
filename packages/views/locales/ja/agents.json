@@ -2394,6 +2394,8 @@
     "public_org_title": "企業の公開機能",
     "none": "なし",
     "org_section_title": "企業設定",
+    "dm_section_title": "この 1 対 1 チャット",
+    "person_section_title": "個人設定",
     "scene_read_only": "グループチャットの設定はエージェント管理者が管理しています。",
     "scene_read_only_dm": "1対1チャットの設定はエージェント管理者が管理しています。",
     "person_read_only": "個人設定は本人が管理しています。",

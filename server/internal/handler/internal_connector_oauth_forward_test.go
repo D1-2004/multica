@@ -378,7 +378,8 @@ func TestContextConfigConnectionDMSceneConnectsTheScene(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if rec := start(dora, contextcap.ScopeScene, dmScene); rec.Code != http.StatusForbidden || catalogErrorCode(t, rec) != contextCapErrManagerOnly {
+	// Holding the DM scene's grant, Dora may connect the DM scene too.
+	if rec := start(dora, contextcap.ScopeScene, dmScene); rec.Code != http.StatusOK {
 		t.Fatalf("Dora connects the DM scene: %d %s", rec.Code, rec.Body.String())
 	}
 	// Managing the agent reaches no one's person scope: the 1:1 chat is not

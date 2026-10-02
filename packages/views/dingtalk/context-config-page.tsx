@@ -706,23 +706,28 @@ function AgentView({
   );
 }
 
-/** 例行任务: the routines of the bound chat, or of the chat picked while
- * browsing (the same pick as 场域能力). A person or enterprise level has
- * none. Who may change them comes from the scene's rights. */
+/** 例行任务: the routines of the bound chat (for a personal link, the 1:1
+ * chat it came from), or of the chat picked while browsing (the same pick as
+ * 场域能力). A person or enterprise level has none. Who may change them
+ * comes from the scene's rights. */
 function RoutinesTab({ detail, binding, browse, reportError }: ContextConfigTabProps) {
   const { t } = useT("agents");
   const sceneKindLabel = useSceneKindLabel();
   const sceneUntitled = useSceneUntitled();
   const pageOrg = detail.tenant?.orgId ?? "";
-  const wantedSceneKey =
+  const boundSceneKey =
     binding?.scopeType === "scene"
       ? binding.scopeKey
-      : browse.sceneKey ||
-        (browse.preferredScope?.scopeType === "scene" ? browse.preferredScope.scopeKey : "");
+      : binding?.scopeType === "person" && detail.person?.scopeKey === binding.scopeKey
+        ? (boundDMScene(detail)?.scopeKey ?? "")
+        : "";
+  const wantedSceneKey = binding
+    ? boundSceneKey
+    : browse.sceneKey || (browse.preferredScope?.scopeType === "scene" ? browse.preferredScope.scopeKey : "");
   const scene =
     detail.scenes.find((entry) => entry.scopeKey === wantedSceneKey) ??
     (binding === null ? detail.scenes[0] : undefined);
-  const sceneKey = binding?.scopeType === "scene" ? binding.scopeKey : (scene?.scopeKey ?? "");
+  const sceneKey = binding ? boundSceneKey : (scene?.scopeKey ?? "");
   const orgId = scene?.orgId || pageOrg || (binding?.orgId ?? "");
   const sceneDetail = useQuery({
     ...contextConfigSceneOptions(detail.agent.id, sceneKey, orgId),
@@ -777,8 +782,15 @@ function ScopeTab({ detail, binding, browse, reportError }: ContextConfigTabProp
   );
 }
 
-/** A bound page: only the bound group chat or person, and the enterprise
- * level for the agent's managers. */
+/** The 1:1 chat a personal link was minted in: redeeming the link also
+ * granted that chat's scene, listed as the page's dm scene. */
+function boundDMScene(detail: ContextConfigAgentDetail) {
+  return detail.scenes.find((entry) => entry.kind === "dm");
+}
+
+/** A bound page: only the bound group chat, or the bound person with the
+ * 1:1 chat their link came from, and the enterprise level for the agent's
+ * managers. */
 function BoundScope({
   detail,
   binding,
@@ -806,7 +818,33 @@ function BoundScope({
       />
     );
   } else if (detail.person && detail.person.scopeKey === binding.scopeKey) {
-    scope = <PersonScope detail={detail} person={detail.person} orgId={pageOrg} reportError={reportError} />;
+    const person = <PersonScope detail={detail} person={detail.person} orgId={pageOrg} reportError={reportError} />;
+    const dm = boundDMScene(detail);
+    scope = dm ? (
+      <div className="space-y-8">
+        <section className="space-y-3" aria-labelledby="context-config-dm-section">
+          <h2 id="context-config-dm-section" className="text-body font-semibold">
+            {t(($) => $.context_config.dm_section_title)}
+          </h2>
+          <SceneScope
+            agentId={detail.agent.id}
+            sceneKey={dm.scopeKey}
+            sceneKind="dm"
+            orgId={dm.orgId || pageOrg || binding.orgId}
+            detail={detail}
+            reportError={reportError}
+          />
+        </section>
+        <section className="space-y-3" aria-labelledby="context-config-person-section">
+          <h2 id="context-config-person-section" className="text-body font-semibold">
+            {t(($) => $.context_config.person_section_title)}
+          </h2>
+          {person}
+        </section>
+      </div>
+    ) : (
+      person
+    );
   } else {
     scope = (
       <EmptyState icon={<User className="size-6" />} title={t(($) => $.context_config.scene_no_access)} />
