@@ -2079,7 +2079,7 @@ describe("routines tab", () => {
 
     // The history is fetched only when a routine is opened.
     await user.click(
-      await screen.findByRole("button", { name: routineCopy.open_detail.replace("{{name}}", "Weekday standup") }),
+      await screen.findByRole("button", { name: /^Weekday standup/ }),
     );
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("heading", { name: "Weekday standup" })).toBeInTheDocument();
@@ -2105,7 +2105,7 @@ describe("routines tab", () => {
     renderPage({ binding: groupBinding, initialTab: "routines" });
 
     await user.click(
-      await screen.findByRole("button", { name: routineCopy.open_detail.replace("{{name}}", "Weekday standup") }),
+      await screen.findByRole("button", { name: /^Weekday standup/ }),
     );
     expect(await within(await screen.findByRole("dialog")).findByText(routineCopy.history_empty)).toBeInTheDocument();
     expect(api.listSceneRoutineRuns).toHaveBeenCalledTimes(1);

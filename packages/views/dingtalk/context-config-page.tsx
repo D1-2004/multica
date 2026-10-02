@@ -469,7 +469,7 @@ function AgentPicker({
                       .map((scope) =>
                         scope.scopeType === "person"
                           ? t(($) => $.context_config.tab_person)
-                          : scope.scopeTitle || t(($) => $.context_config.scene_untitled),
+                          : scope.scopeTitle || t(($) => $.context_config.scene_label),
                       ),
                   ].join(" · ")}
                 </span>

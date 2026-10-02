@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -549,7 +550,7 @@ var contextCapSceneRights = contextCapRights{Toggle: true, Connect: true, EditPr
 // whether the caller is the person of a person scope (contextCapScope.Self).
 //
 //	scope         agent manager      the person   anyone else (link holders)
-//	org           everything         -            nothing (not shown either)
+//	org           everything         -            nothing (shown read-only)
 //	scene         everything         -            everything
 //	person        nothing (view)     everything   nothing
 //
@@ -723,7 +724,7 @@ func (h *Handler) contextCapResolveScopeWith(ctx context.Context, a contextCapAg
 		// The org (enterprise) scope of the org the call works in: agent
 		// managers configure it; people holding any live grant under that
 		// org resolve it without rights (so their writes answer
-		// manager_only), and the configure page does not show it to them.
+		// manager_only); the configure page shows it to them read-only.
 		if scopeKey != a.OrgID {
 			return contextCapScope{}, contextcap.ErrInvalidInput
 		}
@@ -1190,7 +1191,7 @@ func (h *Handler) contextCapManagedAgents(ctx context.Context, userID string) ([
 // agent in one of its tenant orgs (?org_id=, else the identity org, or, for
 // a caller without a grant there who does not manage the agent, the org of
 // the caller's newest grant): global items (read-only), the offer catalog,
-// the org (enterprise) layer (agent managers only), the caller's person
+// the org (enterprise) layer (rights for agent managers only), the caller's person
 // scope and scenes: the granted ones, plus, for a manager of the agent,
 // every scene the agent has seen in that org (source "manager"). The org
 // layer and the person scope carry their rights (contextCapScopeRights),
@@ -1328,6 +1329,17 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 				layer.Credentials[i].Hint = ""
 			}
 		}
+		// A switched-off component is a draft: only those who may edit the
+		// enterprise prompts see it.
+		if !orgScope.Rights.EditPrompts {
+			enabled := make([]contextCapPromptDTO, 0, len(layer.Prompts))
+			for _, prompt := range layer.Prompts {
+				if prompt.Enabled {
+					enabled = append(enabled, prompt)
+				}
+			}
+			layer.Prompts = enabled
+		}
 		resp.Org = layer
 	}
 
@@ -1342,6 +1354,18 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 	for _, c := range global {
 		resp.Global.Connectors = append(resp.Global.Connectors, contextCapConnectorRefDTO{ID: c.ID, Name: c.Name, CatalogSlug: c.CatalogSlug})
 		grantedIDs = append(grantedIDs, c.ID)
+	}
+	// Without connect rights, the enterprise accounts listed are those of
+	// connectors this page can show (offered or the agent's own), as the
+	// bindings are.
+	if resp.Org != nil && !resp.Org.Rights.Connect {
+		shown := make([]contextCapCredentialDTO, 0, len(resp.Org.Credentials))
+		for _, credential := range resp.Org.Credentials {
+			if offers.Contains(contextcap.ResourceConnector, credential.ConnectorID) || slices.Contains(grantedIDs, credential.ConnectorID) {
+				shown = append(shown, credential)
+			}
+		}
+		resp.Org.Credentials = shown
 	}
 	if resp.Global.Skills, err = h.contextCapSkills(ctx, `SELECT s.id::text, s.name, s.description
 		FROM skill s JOIN agent_skill ask ON ask.skill_id = s.id

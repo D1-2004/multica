@@ -294,52 +294,53 @@ function RoutineRow({
 
   return (
     <li className="flex items-start gap-1 p-1.5 sm:p-2" aria-label={routine.title}>
-      {/* The routine's summary opens its detail and run history. */}
+      {/* The routine's summary opens its detail and run history; its text
+          is the button's name. */}
       <button
         type="button"
         onClick={() => setDetailOpen(true)}
-        aria-label={t(($) => $.context_config.routines.open_detail, { name: routine.title })}
         className="flex min-w-0 flex-1 items-start gap-3 rounded-md p-1.5 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-2"
       >
-      <span
-        className={cn(
-          "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground",
-          routine.enabled && "bg-accent text-accent-foreground",
-        )}
-        aria-hidden="true"
-      >
-        <Icon className="size-4" />
-      </span>
-      <div className={cn("min-w-0 flex-1 space-y-1", !routine.enabled && "opacity-70")}>
-        <p className="text-body font-medium break-words">{routine.title}</p>
-        <p className="text-label text-foreground/90">{rhythm(routine)}</p>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-muted-foreground">
-          {!routine.enabled ? (
-            <span className="font-medium text-warning">
-              {routine.pauseReason
-                ? t(($) => $.context_config.routines.system_paused, { reason: routine.pauseReason })
-                : t(($) => $.context_config.routines.paused)}
+        <span
+          className={cn(
+            "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground",
+            routine.enabled && "bg-accent text-accent-foreground",
+          )}
+          aria-hidden="true"
+        >
+          <Icon className="size-4" />
+        </span>
+        <span className={cn("block min-w-0 flex-1 space-y-1", !routine.enabled && "opacity-70")}>
+          <span className="block text-body font-medium break-words">{routine.title}</span>
+          <span className="block text-label text-foreground/90">{rhythm(routine)}</span>
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-caption text-muted-foreground">
+            {!routine.enabled ? (
+              <span className="font-medium text-warning">
+                {routine.pauseReason
+                  ? t(($) => $.context_config.routines.system_paused, { reason: routine.pauseReason })
+                  : t(($) => $.context_config.routines.paused)}
+              </span>
+            ) : routine.trigger.nextRunAt ? (
+              <span>{t(($) => $.context_config.routines.next_run, { time: when(routine.trigger.nextRunAt) })}</span>
+            ) : null}
+            <span className="inline-flex items-center gap-1.5">
+              <span className={cn("size-1.5 shrink-0 rounded-full", lastTone)} aria-hidden="true" />
+              {lastText}
             </span>
-          ) : routine.trigger.nextRunAt ? (
-            <span>{t(($) => $.context_config.routines.next_run, { time: when(routine.trigger.nextRunAt) })}</span>
-          ) : null}
-          <span className="inline-flex items-center gap-1.5">
-            <span className={cn("size-1.5 shrink-0 rounded-full", lastTone)} aria-hidden="true" />
-            {lastText}
+            {routine.createdByType === "agent" ? (
+              <span>{t(($) => $.context_config.routines.created_in_chat)}</span>
+            ) : null}
           </span>
-          {routine.createdByType === "agent" ? (
-            <span>{t(($) => $.context_config.routines.created_in_chat)}</span>
+          {isWebhook && routine.trigger.webhookUrlMasked ? (
+            <span className="block truncate font-mono text-micro text-muted-foreground" title={routine.trigger.webhookUrlMasked}>
+              {routine.trigger.webhookUrlMasked}
+            </span>
           ) : null}
-        </div>
-        {isWebhook && routine.trigger.webhookUrlMasked ? (
-          <p className="truncate font-mono text-micro text-muted-foreground" title={routine.trigger.webhookUrlMasked}>
-            {routine.trigger.webhookUrlMasked}
-          </p>
-        ) : null}
-        {last?.status === "failed" && last.failureReason ? (
-          <p className="line-clamp-2 text-caption text-destructive break-words">{last.failureReason}</p>
-        ) : null}
-      </div>
+          {last?.status === "failed" && last.failureReason ? (
+            <span className="line-clamp-2 text-caption text-destructive break-words">{last.failureReason}</span>
+          ) : null}
+          <span className="sr-only">{t(($) => $.context_config.routines.open_detail_hint)}</span>
+        </span>
       </button>
       {canEdit ? (
         <div className="flex shrink-0 items-center gap-0.5 pt-1.5 sm:pt-2">
@@ -470,6 +471,10 @@ function useRunSourceLabel(): (run: ContextRoutineRun) => string {
         return t(($) => $.context_config.routines.source_webhook);
       case "manual":
         return t(($) => $.context_config.routines.source_manual);
+      case "api":
+        return t(($) => $.context_config.routines.source_api);
+      case "dingtalk_message":
+        return t(($) => $.context_config.routines.source_message);
       default:
         return run.source;
     }
@@ -508,7 +513,9 @@ function RoutineDetailDialog({
   const rhythm = useRoutineRhythm();
   const statusLabel = useRunStatusLabel();
   const sourceLabel = useRunSourceLabel();
-  const runs = useQuery({ ...sceneRoutineRunsOptions(target, routine.id), enabled: open });
+  const runsOptions = sceneRoutineRunsOptions(target, routine.id);
+  // Fetched only while the detail is open.
+  const runs = useQuery({ ...runsOptions, enabled: open && runsOptions.enabled !== false });
   const timezone = routine.trigger.timezone || ROUTINE_DEFAULT_TIMEZONE;
   const when = (iso: string) => formatInTimeZone(iso, timezone, i18n.language);
   const upcoming = routine.enabled ? routine.trigger.nextRuns.slice(0, 3) : [];

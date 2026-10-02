@@ -2523,7 +2523,6 @@
       "error_manager_only": "只有智能体管理员能修改例行任务。",
       "error_invalid": "设置有误：{{detail}}",
       "error_generic": "操作没有完成，请稍后重试。",
-      "open_detail": "查看「{{name}}」的详情和运行记录",
       "status_completed": "已完成",
       "status_failed": "失败",
       "status_running": "运行中",
@@ -2537,7 +2536,10 @@
       "history_loading": "正在加载运行记录…",
       "history_failed": "运行记录没有加载出来。",
       "history_span": "{{start}} – {{end}}",
-      "upcoming_title": "接下来的运行"
+      "upcoming_title": "接下来的运行",
+      "open_detail_hint": "查看详情和运行记录",
+      "source_api": "API 触发",
+      "source_message": "消息触发"
     }
   },
   "tag_page": {
