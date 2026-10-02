@@ -330,9 +330,24 @@ func Get(ctx context.Context, db DB, workspaceID, appID string) (App, error) {
 	return scanApp(db.QueryRow(ctx, `SELECT `+appColumns+` FROM connector_app WHERE workspace_id = $1::uuid AND id = $2::uuid`, workspaceID, appID))
 }
 
-// Delete removes an application and, by cascade, its instances and bindings.
+// Delete removes an application's bindings and instances, then the
+// application. The statements reference one another so PostgreSQL runs
+// them in that order inside one statement. There is no foreign key to
+// cascade this.
 func Delete(ctx context.Context, db DB, workspaceID, appID string) error {
-	tag, err := db.Exec(ctx, `DELETE FROM connector_app WHERE workspace_id = $1::uuid AND id = $2::uuid`, workspaceID, appID)
+	tag, err := db.Exec(ctx, `WITH deleted_bindings AS (
+		DELETE FROM connector_auth_binding
+		WHERE workspace_id = $1::uuid AND app_id = $2::uuid
+		RETURNING app_id
+	), deleted_instances AS (
+		DELETE FROM connector_auth_instance
+		WHERE workspace_id = $1::uuid AND app_id = $2::uuid
+		  AND app_id IN (SELECT $2::uuid UNION SELECT app_id FROM deleted_bindings)
+		RETURNING app_id
+	)
+	DELETE FROM connector_app
+	WHERE workspace_id = $1::uuid AND id = $2::uuid
+	  AND id IN (SELECT $2::uuid UNION SELECT app_id FROM deleted_instances)`, workspaceID, appID)
 	if err != nil {
 		return mapDB(err)
 	}
@@ -467,10 +482,16 @@ func GetInstance(ctx context.Context, db DB, workspaceID, appID, instanceID stri
 	return rec, mapDB(err)
 }
 
-// DeleteInstance removes an instance and its bindings.
+// DeleteInstance removes an instance and its bindings in one statement.
 func DeleteInstance(ctx context.Context, db DB, workspaceID, appID, instanceID string) error {
-	tag, err := db.Exec(ctx, `DELETE FROM connector_auth_instance
-		WHERE workspace_id = $1::uuid AND app_id = $2::uuid AND id = $3::uuid`, workspaceID, appID, instanceID)
+	tag, err := db.Exec(ctx, `WITH deleted_bindings AS (
+		DELETE FROM connector_auth_binding
+		WHERE workspace_id = $1::uuid AND instance_id = $3::uuid
+		RETURNING instance_id
+	)
+	DELETE FROM connector_auth_instance
+	WHERE workspace_id = $1::uuid AND app_id = $2::uuid AND id = $3::uuid
+	  AND id IN (SELECT $3::uuid UNION SELECT instance_id FROM deleted_bindings)`, workspaceID, appID, instanceID)
 	if err != nil {
 		return mapDB(err)
 	}

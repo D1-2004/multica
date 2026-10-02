@@ -1,10 +1,12 @@
 -- Workspace-managed OAuth application registrations and the authorization
 -- instances bound to a workspace, agent, project, or environment.
 -- client_secret and instance tokens are ciphertext only.
+-- Relationships are enforced in application code. Indexes are built in
+-- their own concurrent migrations.
 
-CREATE TABLE connector_app (
+CREATE TABLE IF NOT EXISTS connector_app (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id uuid NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    workspace_id uuid NOT NULL,
     provider text NOT NULL,
     display_name text NOT NULL DEFAULT '',
     client_id text NOT NULL,
@@ -27,16 +29,10 @@ CREATE TABLE connector_app (
     CONSTRAINT connector_app_token_endpoint_chk CHECK (char_length(token_endpoint) <= 512)
 );
 
-CREATE UNIQUE INDEX connector_app_workspace_provider_client_idx
-    ON connector_app (workspace_id, provider, client_id);
-
-CREATE INDEX connector_app_workspace_provider_idx
-    ON connector_app (workspace_id, provider, created_at, id);
-
-CREATE TABLE connector_auth_instance (
+CREATE TABLE IF NOT EXISTS connector_auth_instance (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    app_id uuid NOT NULL REFERENCES connector_app(id) ON DELETE CASCADE,
-    workspace_id uuid NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    app_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
     label text NOT NULL,
     external_subject text NOT NULL DEFAULT '',
     external_login text NOT NULL DEFAULT '',
@@ -53,14 +49,11 @@ CREATE TABLE connector_auth_instance (
     CONSTRAINT connector_auth_instance_status_chk CHECK (status IN ('pending', 'active', 'disabled', 'needs_reauth'))
 );
 
-CREATE INDEX connector_auth_instance_app_idx
-    ON connector_auth_instance (app_id, created_at, id);
-
-CREATE TABLE connector_auth_binding (
+CREATE TABLE IF NOT EXISTS connector_auth_binding (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    instance_id uuid NOT NULL REFERENCES connector_auth_instance(id) ON DELETE CASCADE,
-    app_id uuid NOT NULL REFERENCES connector_app(id) ON DELETE CASCADE,
-    workspace_id uuid NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
+    instance_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
     scope_kind text NOT NULL,
     scope_id text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -70,10 +63,3 @@ CREATE TABLE connector_auth_binding (
         OR (scope_kind <> 'workspace' AND char_length(scope_id) BETWEEN 1 AND 128)
     )
 );
-
--- One scope target belongs to one instance of an app.
-CREATE UNIQUE INDEX connector_auth_binding_app_scope_idx
-    ON connector_auth_binding (app_id, scope_kind, scope_id);
-
-CREATE INDEX connector_auth_binding_instance_idx
-    ON connector_auth_binding (instance_id);
