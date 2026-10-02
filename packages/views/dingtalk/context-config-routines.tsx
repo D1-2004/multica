@@ -83,10 +83,14 @@ type RoutineKind = "schedule" | "webhook";
 export function ScopeRoutines({
   target,
   canEdit,
+  bare = false,
   reportError,
 }: {
   target: SceneRoutinesTarget;
   canEdit: boolean;
+  /** Just the list and its add button: no heading or explanation (the
+   * configure page, whose tab already names it). */
+  bare?: boolean;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
@@ -122,9 +126,11 @@ export function ScopeRoutines({
       <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed px-4 py-6">
         <div className="space-y-1">
           <p className="text-body font-medium">{t(($) => $.context_config.routines.empty_title)}</p>
-          <p className="text-caption text-muted-foreground text-pretty">
-            {t(($) => $.context_config.routines.empty_hint)}
-          </p>
+          {bare ? null : (
+            <p className="text-caption text-muted-foreground text-pretty">
+              {t(($) => $.context_config.routines.empty_hint)}
+            </p>
+          )}
         </div>
         {canEdit ? (
           <Button size="sm" onClick={() => setEditing("new")}>
@@ -143,6 +149,7 @@ export function ScopeRoutines({
             routine={routine}
             target={target}
             canEdit={canEdit}
+            bare={bare}
             onEdit={() => setEditing(routine)}
             onRotated={(url) => setRevealUrl({ title: routine.title, url })}
             onError={fail}
@@ -153,7 +160,17 @@ export function ScopeRoutines({
   }
 
   return (
-    <section className="space-y-3" aria-labelledby="scene-routines-title">
+    <section className="space-y-3" aria-labelledby={bare ? undefined : "scene-routines-title"} aria-label={bare ? t(($) => $.context_config.routines.title) : undefined}>
+      {bare ? (
+        canEdit && list.length > 0 ? (
+          <div className="flex justify-end">
+            <Button size="sm" variant="outline" onClick={() => setEditing("new")}>
+              <Plus className="size-4" />
+              {t(($) => $.context_config.routines.add)}
+            </Button>
+          </div>
+        ) : null
+      ) : (
       <div className="flex min-h-8 items-start justify-between gap-3">
         <div className="min-w-0 space-y-0.5">
           <h3 id="scene-routines-title" className="text-body font-semibold">
@@ -172,6 +189,7 @@ export function ScopeRoutines({
           </Button>
         ) : null}
       </div>
+      )}
       {body}
       {editing !== null ? (
         <RoutineEditor
@@ -231,6 +249,7 @@ function RoutineRow({
   routine,
   target,
   canEdit,
+  bare,
   onEdit,
   onRotated,
   onError,
@@ -238,6 +257,8 @@ function RoutineRow({
   routine: ContextRoutine;
   target: SceneRoutinesTarget;
   canEdit: boolean;
+  /** No secondary labels beyond rhythm and status. */
+  bare: boolean;
   onEdit: () => void;
   onRotated: (url: string) => void;
   onError: (error: unknown) => void;
@@ -327,7 +348,7 @@ function RoutineRow({
               <span className={cn("size-1.5 shrink-0 rounded-full", lastTone)} aria-hidden="true" />
               {lastText}
             </span>
-            {routine.createdByType === "agent" ? (
+            {routine.createdByType === "agent" && !bare ? (
               <span>{t(($) => $.context_config.routines.created_in_chat)}</span>
             ) : null}
           </span>
