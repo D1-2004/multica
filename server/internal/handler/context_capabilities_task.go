@@ -569,6 +569,9 @@ func (h *Handler) resolveTaskConnectorCredential(ctx context.Context, c *interna
 		c.setResolvedCredential("", connectorCredentialNone)
 		return true
 	}
+	if decided, ok := h.applyAuthInstanceCredential(ctx, c, task); decided {
+		return ok
+	}
 	now := time.Now()
 	orgKey := ""
 	if scope.HasOrg() {

@@ -1,11 +1,17 @@
 package connectorcatalog
 
+// slackUserScopes are the user-token scopes Slack's MCP server documents
+// for search, history and sending. The user authorize endpoint takes them
+// comma-separated. A bot token cannot call mcp.slack.com.
+const slackUserScopes = "search:read.public,search:read.private,search:read.im,search:read.mpim,search:read.files,search:read.users,channels:history,groups:history,im:history,mpim:history,channels:read,groups:read,im:read,mpim:read,chat:write,files:read,users:read,emoji:read,reactions:read"
+
 // defaultApps are the official remote MCP servers offered to every
 // workspace. Endpoints and OAuth hosts were probed on 2026-09-30: every DCR
 // server answers an unauthenticated initialize with 401 + WWW-Authenticate
 // and advertises S256 PKCE; GitHub's authorization server
 // (https://github.com/login/oauth) has no dynamic registration, so it uses
-// the deployment's GitHub App.
+// the deployment's GitHub App. Slack's MCP server also has no dynamic
+// registration; the workspace settings hold its confidential client.
 var defaultApps = []App{
 	{
 		Slug: "github", Name: "GitHub", MCPURL: "https://api.githubcopilot.com/mcp/",
@@ -14,6 +20,16 @@ var defaultApps = []App{
 		AuthorizationEndpoint: "https://github.com/login/oauth/authorize",
 		TokenEndpoint:         "https://github.com/login/oauth/access_token",
 		AccountURL:            "https://api.github.com/user",
+	},
+	{
+		// User tokens only. oauth.v2.access returns a bot token and is not
+		// a standard token response; oauth.v2.user.access is.
+		Slug: "slack", Name: "Slack", MCPURL: "https://mcp.slack.com/mcp",
+		AuthKind:              AuthOAuthPreregistered,
+		Scope:                 slackUserScopes,
+		Hosts:                 []string{"mcp.slack.com", "slack.com"},
+		AuthorizationEndpoint: "https://slack.com/oauth/v2_user/authorize",
+		TokenEndpoint:         "https://slack.com/api/oauth.v2.user.access",
 	},
 	{
 		Slug: "notion", Name: "Notion", MCPURL: "https://mcp.notion.com/mcp",
@@ -34,9 +50,17 @@ var defaultApps = []App{
 		AuthKind: AuthOAuthDCR, Hosts: []string{"mcp.sentry.dev"},
 	},
 	{
-		// The protected resource is the origin (https://mcp.asana.com).
-		Slug: "asana", Name: "Asana", MCPURL: "https://mcp.asana.com/mcp",
-		AuthKind: AuthOAuthDCR, Hosts: []string{"mcp.asana.com"},
+		// Asana MCP v2 has no dynamic registration. The pre-registered MCP app
+		// uses app.asana.com, and both authorize and token must carry
+		// resource=https://mcp.asana.com/v2. A token issued without it is an
+		// API token, which the MCP server rejects. Calls go to /v2/mcp;
+		// an existing connector still on /mcp is moved when it is loaded.
+		Slug: "asana", Name: "Asana", MCPURL: "https://mcp.asana.com/v2/mcp",
+		AuthKind:              AuthOAuthPreregistered,
+		Hosts:                 []string{"mcp.asana.com", "app.asana.com"},
+		AuthorizationEndpoint: "https://app.asana.com/-/oauth_authorize",
+		TokenEndpoint:         "https://app.asana.com/-/oauth_token",
+		Resource:              "https://mcp.asana.com/v2",
 	},
 	{
 		// Authorization server api.figma.com, browser consent on

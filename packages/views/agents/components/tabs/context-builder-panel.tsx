@@ -38,6 +38,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
+import { AtlassianDomainNote } from "../../../common/atlassian-domain-note";
 import { ConnectorLogo } from "../../../common/connector-logo";
 import { useResetOnBackForwardRestore } from "../../../common/connector-credential";
 import {
@@ -1320,6 +1321,14 @@ function AppAccount({ context, app }: { context: NodeContext; app: ContextNodeCo
 
   return (
     <DialogSection id={`context-app-account-${app.id}`} title={t(($) => $.tab_body.context_builder.account_title)}>
+      {app.catalogSlug === "atlassian" ? (
+        <AtlassianDomainNote
+          body={t(($) => $.tab_body.connected_apps.atlassian_domain)}
+          copyLabel={t(($) => $.tab_body.connected_apps.domain_copy)}
+          copiedLabel={t(($) => $.tab_body.connected_apps.domain_copied)}
+          docsLabel={t(($) => $.tab_body.connected_apps.atlassian_docs)}
+        />
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <span className={connected ? "text-body" : "text-body text-muted-foreground"}>{status}</span>
         {canConnect ? (

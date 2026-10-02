@@ -11,6 +11,16 @@ export type {
   ClientRuntimeSnapshot,
   ClientUsageRequest,
 } from "./client";
+export type {
+  ConnectorApp,
+  ConnectorAppInput,
+  ConnectorAppList,
+  SettingsConnectorSpec,
+  ConnectorAuthInstance,
+  ConnectorBinding,
+  ConnectorInstanceInput,
+  ConnectorResolveResult,
+} from "./connector-apps";
 export { parseWithFallback, setSchemaLogger } from "./schema";
 export type { ParseOptions } from "./schema";
 export type {

@@ -7,7 +7,7 @@ import (
 
 func TestDefaultCatalogHasGitHubAndValidEntries(t *testing.T) {
 	apps := Default().Apps()
-	want := []string{"github", "notion", "linear", "atlassian", "sentry", "asana", "figma", "stripe"}
+	want := []string{"github", "slack", "notion", "linear", "atlassian", "sentry", "asana", "figma", "stripe"}
 	if len(apps) != len(want) {
 		t.Fatalf("apps = %d, want %d", len(apps), len(want))
 	}
@@ -26,6 +26,23 @@ func TestDefaultCatalogHasGitHubAndValidEntries(t *testing.T) {
 	notion, _ := Default().Lookup("notion")
 	if !notion.OAuthAvailable(false) || notion.AllowsPAT {
 		t.Fatalf("notion entry = %+v", notion)
+	}
+	asana, ok := Default().Lookup("asana")
+	if !ok || asana.AuthKind != AuthOAuthPreregistered || asana.AuthorizationEndpoint == "" || asana.TokenEndpoint == "" ||
+		asana.MCPURL != "https://mcp.asana.com/v2/mcp" || asana.Resource != "https://mcp.asana.com/v2" || asana.Scope != "" {
+		t.Fatalf("asana entry = %+v", asana)
+	}
+	if asana.OAuthAvailable(true) {
+		t.Fatal("Asana OAuth availability is per workspace, not the process environment")
+	}
+	slack, ok := Default().Lookup("slack")
+	if !ok || slack.AuthKind != AuthOAuthPreregistered || slack.MCPURL != "https://mcp.slack.com/mcp" ||
+		slack.AuthorizationEndpoint != "https://slack.com/oauth/v2_user/authorize" ||
+		slack.TokenEndpoint != "https://slack.com/api/oauth.v2.user.access" || slack.Scope == "" || len(slack.Scope) > 512 {
+		t.Fatalf("slack entry = %+v", slack)
+	}
+	if slack.OAuthAvailable(true) {
+		t.Fatal("Slack OAuth availability is per workspace, not the process environment")
 	}
 	for _, app := range apps {
 		if slug, ok := Default().SlugForURL(app.MCPURL); !ok || slug != app.Slug {

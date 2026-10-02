@@ -188,11 +188,12 @@ contact for it:
 | Slug | MCP URL | Authorization |
 | --- | --- | --- |
 | `github` | `https://api.githubcopilot.com/mcp/` | the deployment's GitHub App (`oauth_github_app`); a Personal Access Token is also accepted |
+| `slack` | `https://mcp.slack.com/mcp` | pre-registered Slack app (`oauth_preregistered`); user token via `oauth.v2.user.access`. No dynamic registration |
 | `notion` | `https://mcp.notion.com/mcp` | MCP OAuth with dynamic client registration and S256 PKCE (`oauth_dcr`) |
 | `linear` | `https://mcp.linear.app/mcp` | `oauth_dcr` |
 | `atlassian` | `https://mcp.atlassian.com/v1/mcp` | `oauth_dcr` (authorization server metadata at the MCP origin) |
 | `sentry` | `https://mcp.sentry.dev/mcp` | `oauth_dcr` |
-| `asana` | `https://mcp.asana.com/mcp` | `oauth_dcr` |
+| `asana` | `https://mcp.asana.com/v2/mcp` | pre-registered MCP app (`oauth_preregistered`); authorize and token send `resource=https://mcp.asana.com/v2` |
 | `figma` | `https://mcp.figma.com/mcp` | `oauth_dcr` (confidential client) |
 | `stripe` | `https://mcp.stripe.com/` | `oauth_dcr` |
 
@@ -348,6 +349,30 @@ desktop list refetches on focus, so the new account shows up on return.
   GitHub App user tokens only see repositories where the App is installed,
   so the UI links `https://github.com/apps/<GITHUB_APP_SLUG>/installations/new`
   (`install_url`, omitted when `GITHUB_APP_SLUG` is unset).
+
+  A workspace owner or admin can register that client on Settings →
+  连接器配置, or with the same admin API
+  (`/api/workspaces/{id}/connector-apps`, including a `wmcp_` token bound
+  to that workspace). The client secret and each authorization instance's
+  token are sealed with the internal connector secret box and are never
+  returned; an empty secret on update keeps the stored one. Dynamic client
+  registration does not read this table. When the workspace has no enabled
+  GitHub application, `GITHUB_APP_CLIENT_ID` /
+  `GITHUB_APP_CLIENT_SECRET` remain the fallback and can be removed after
+  the workspace application is in use.
+
+  One application has many authorization instances (accounts, orgs, or
+  installations). Each instance binds to a workspace, an agent, a project,
+  or a deployment environment (`AONE_ENV_TYPE`, else `ENV_TYPE`, else
+  `APP_ENV`). A call uses the most specific enabled binding: agent, then
+  project, then environment, then workspace. A disabled instance is
+  skipped. An enabled match with no usable token does not fall through to
+  another account. No match keeps the existing person, scene, org, and
+  workspace credentials. Several enabled applications for one provider use
+  the oldest as the catalog client; further accounts are instances of that
+  application. `callback_mode` `production_forward` (the default) keeps a
+  pre-release connect on the production callback. `self` uses this
+  deployment's own callback. The callback path does not change.
 
 ### Callback origin and forwarding
 

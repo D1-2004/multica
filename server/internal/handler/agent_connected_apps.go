@@ -203,8 +203,8 @@ func (h *Handler) loadConnectedApps(ctx context.Context, caller agentSceneCaller
 }
 
 // connectedAppView builds the status row of one official app.
-func (h *Handler) connectedAppView(app connectorcatalog.App, state connectedAppsState) connectedAppDTO {
-	view := connectedAppDTO{catalogAppFacts: h.catalogAppFactsView(app), InstallURL: catalogAppInstallURL(app)}
+func (h *Handler) connectedAppView(ctx context.Context, app connectorcatalog.App, state connectedAppsState) connectedAppDTO {
+	view := connectedAppDTO{catalogAppFacts: h.catalogAppFactsFor(ctx, state.caller.workspaceID, app), InstallURL: catalogAppInstallURL(app)}
 	c, ok := state.connectors[app.Slug]
 	if !ok {
 		return view
@@ -299,7 +299,7 @@ func (h *Handler) ListAgentConnectedApps(w http.ResponseWriter, r *http.Request)
 	}
 	apps := []connectedAppDTO{}
 	for _, app := range connectorCatalog.Apps() {
-		apps = append(apps, h.connectedAppView(app, state))
+		apps = append(apps, h.connectedAppView(r.Context(), app, state))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"apps": apps, "can_admin": caller.workspaceAdmin})
 }
@@ -336,7 +336,7 @@ func (h *Handler) GetAgentConnectedApp(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) buildConnectedAppDetail(ctx context.Context, app connectorcatalog.App, state connectedAppsState) (connectedAppDetailDTO, error) {
 	detail := connectedAppDetailDTO{
-		connectedAppDTO: h.connectedAppView(app, state),
+		connectedAppDTO: h.connectedAppView(ctx, app, state),
 		Scenes:          []connectedAppSceneDTO{}, Persons: []connectedAppPersonDTO{}, ToolList: []connectedAppToolDTO{},
 		CanAdmin: state.caller.workspaceAdmin,
 	}
