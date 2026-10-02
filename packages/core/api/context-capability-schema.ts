@@ -494,7 +494,7 @@ const CatalogAppSchema = z
 /** An app's OAuth application; null when malformed. */
 export const ContextConfigOAuthAppSchema = z
   .object({
-    slug: catalogSlug,
+    slug: text,
     name: text,
     fields: tolerantList(
       z
@@ -503,15 +503,12 @@ export const ContextConfigOAuthAppSchema = z
     ),
     docs_url: z.unknown().optional(),
     callback_url: text,
-    ready: strictTrue,
+    saved: strictTrue,
     client_id: text,
     client_secret_set: strictTrue,
-    app_id: text,
-    app_slug: text,
-    private_key_set: strictTrue,
-    optional_secret_set: strictTrue,
-    deployment_client: strictTrue,
-    saved: strictTrue,
+    workspace_ready: strictTrue,
+    ready: strictTrue,
+    can_edit: strictTrue,
   })
   .refine((value) => value.slug !== "")
   .transform(
@@ -521,15 +518,12 @@ export const ContextConfigOAuthAppSchema = z
       fields: value.fields,
       docsUrl: safeExternalUrl(value.docs_url),
       callbackUrl: safeExternalUrl(value.callback_url),
-      ready: value.ready,
+      saved: value.saved,
       clientId: value.client_id,
       clientSecretSet: value.client_secret_set,
-      appId: value.app_id,
-      appSlug: value.app_slug,
-      privateKeySet: value.private_key_set,
-      optionalSecretSet: value.optional_secret_set,
-      deploymentClient: value.deployment_client,
-      saved: value.saved,
+      workspaceReady: value.workspace_ready,
+      ready: value.ready,
+      canEdit: value.can_edit,
     }),
   )
   .nullable()
@@ -588,7 +582,6 @@ export const ContextConfigAgentDetailSchema = z
     jsapi_available: strictTrue,
     access: configAccess,
     apps: tolerantList(CatalogAppSchema),
-    can_configure_apps: strictTrue,
   })
   .transform(
     (value): ContextConfigAgentDetail => ({
@@ -646,7 +639,6 @@ export const ContextConfigAgentDetailSchema = z
       jsapiAvailable: value.jsapi_available,
       access: value.access,
       apps: [...new Map(value.apps.map((app) => [app.slug, app])).values()],
-      canConfigureApps: value.can_configure_apps,
     }),
   );
 
@@ -657,6 +649,7 @@ export const ContextConfigSceneDetailSchema = z
     credentials: list(CredentialWireSchema),
     scope: z.unknown().optional(),
     can_connect: z.unknown().optional(),
+    scene_oauth_apps: tolerantList(z.string().min(1)),
     ...scopeContentWire,
   })
   .transform(
@@ -672,6 +665,7 @@ export const ContextConfigSceneDetailSchema = z
       }),
       // Only a literal true allows connecting; an older backend sends none.
       canConnect: value.can_connect === undefined ? null : value.can_connect === true,
+      sceneOAuthApps: value.scene_oauth_apps,
     }),
   );
 

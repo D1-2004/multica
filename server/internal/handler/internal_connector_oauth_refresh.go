@@ -419,12 +419,16 @@ type connectorTokenEndpointConfig struct {
 	resource     string
 	redirectURI  string
 	registration remotemcp.OAuthClientRegistration
+	// scene: the client is the scene's own OAuth application.
+	scene bool
 }
 
 // connectorTokenEndpoint returns the token endpoint of a catalog connector
 // for the OAuth client clientID ("" = the current one): the deployment's
 // GitHub App client for GitHub, the connector's dynamic registration (the
-// current one or a kept earlier one) for DCR apps.
+// current one or a kept earlier one) for DCR apps. A scene credential
+// (c.credentialKey) whose token was issued by the scene's own OAuth
+// application uses that application.
 // errConnectorOAuthClientReplaced when clientID is no longer known.
 func (h *Handler) connectorTokenEndpoint(ctx context.Context, c internalConnector, clientID string) (connectorTokenEndpointConfig, error) {
 	app, ok := catalogApp(c.CatalogSlug)
@@ -432,6 +436,30 @@ func (h *Handler) connectorTokenEndpoint(ctx context.Context, c internalConnecto
 		return connectorTokenEndpointConfig{}, errConnectorNotCatalog
 	}
 	out := connectorTokenEndpointConfig{client: catalogExternalClient(app)}
+	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp || app.AuthKind == connectorcatalog.AuthOAuthPreregistered {
+		scene, own, err := h.sceneOAuthClient(ctx, c.credentialKey, app)
+		if err != nil {
+			return connectorTokenEndpointConfig{}, err
+		}
+		// Tokens issued before the scene saved its application stay with the
+		// workspace client that issued them.
+		if own && clientID != "" && clientID == scene.ClientID {
+			out.tokenURL = scene.TokenEndpoint
+			homeOrigin, _ := h.connectorOAuthCallbackTarget(connectorOAuthViaDCR)
+			forwarded := h.connectorOAuthRedirectOrigin(connectorOAuthViaDCR)
+			out.redirectURI = githubOAuthRedirectOrigin(homeOrigin, forwarded, scene.CallbackMode) + connectorOAuthCallbackPath
+			if app.AuthKind == connectorcatalog.AuthOAuthPreregistered {
+				out.resource = app.Resource
+			}
+			out.registration = remotemcp.OAuthClientRegistration{
+				ClientID:                scene.ClientID,
+				ClientSecret:            scene.ClientSecret,
+				TokenEndpointAuthMethod: "client_secret_post",
+			}
+			out.scene = true
+			return out, nil
+		}
+	}
 	switch app.AuthKind {
 	case connectorcatalog.AuthOAuthGitHubApp:
 		ghClient, err := h.githubOAuthClient(ctx, c.WorkspaceID)

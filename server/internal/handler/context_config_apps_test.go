@@ -2,7 +2,9 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -21,6 +23,8 @@ func ctxcapAppsRouter(h *Handler) http.Handler {
 		r.Post("/agents/{agentId}/apps/{slug}", h.AddContextConfigApp)
 		r.Get("/agents/{agentId}/apps/{slug}/oauth-app", h.GetContextConfigOAuthApp)
 		r.Put("/agents/{agentId}/apps/{slug}/oauth-app", h.PutContextConfigOAuthApp)
+		r.Get("/agents/{agentId}/scenes/{sceneKey}", h.GetContextConfigScene)
+		r.Post("/agents/{agentId}/connections/start", h.StartContextConfigConnection)
 	})
 	return router
 }
@@ -139,12 +143,11 @@ func TestContextConfigAddsAnOfficialAppAtALevel(t *testing.T) {
 	}
 }
 
-// An app without dynamic registration takes its OAuth application on the
-// configure page: anyone who may open the agent saves the first one; the
-// saved one is the workspace's client, which only workspace admins change
-// (an agent owner who is a plain member included). Secrets never come back,
-// and an admin's callback mode stays.
-func TestContextConfigOAuthApplicationOnThePage(t *testing.T) {
+// A scene takes its own OAuth application of an app without dynamic
+// registration on the configure page: its members save the first one, only
+// the agent's managers change it, and the workspace's application is not
+// touched (it stays in the admin console). Secrets never come back.
+func TestContextConfigSceneOAuthApplication(t *testing.T) {
 	f := newCtxcapFixture(t)
 	// A sign-in needs the app origin it returns to.
 	f.h.cfg.AppURL = "https://app.multica.example"
@@ -152,95 +155,167 @@ func TestContextConfigOAuthApplicationOnThePage(t *testing.T) {
 	agentID := uuidToString(f.agent)
 	holder, stranger := uuid.NewString(), uuid.NewString()
 	f.grant(t, holder, contextcap.ScopeScene, ctxcapScene, "Ctxcap group")
-	before := ctxcapConnectorApps(t, "slack")
-	if len(before) > 0 {
+	if len(ctxcapConnectorApps(t, "slack")) > 0 {
 		t.Skip("the test workspace already has a Slack OAuth application")
 	}
 	t.Cleanup(func() {
-		for id := range ctxcapConnectorApps(t, "slack") {
-			_, _ = testPool.Exec(context.Background(), `DELETE FROM connector_app WHERE id = $1`, id)
-		}
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM context_connector_app WHERE agent_id = $1`, agentID)
 	})
 	path := "/api/context-capabilities/agents/" + agentID + "/apps/"
-	ctx := context.Background()
+	sceneQuery := "?scope_type=scene&scope_key=" + ctxcapScene
+	sceneBody := func(extra map[string]any) map[string]any {
+		body := map[string]any{"scope_type": "scene", "scope_key": ctxcapScene}
+		for k, v := range extra {
+			body[k] = v
+		}
+		return body
+	}
 
-	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, path+"slack/oauth-app", stranger, nil), http.StatusForbidden, "stranger read")
+	// The workspace's and the enterprise's applications are the admin console's.
+	for _, query := range []string{"", "?scope_type=org&scope_key=" + ctxcapOrg, "?scope_type=person&scope_key=staff"} {
+		w := ctxcapMobile(t, router, http.MethodGet, path+"slack/oauth-app"+query, testUserID, nil)
+		if w.Code != http.StatusBadRequest || catalogErrorCode(t, w) != contextConfigErrOAuthAppSceneOnly {
+			t.Fatalf("GET %q: %d %s", query, w.Code, w.Body.String())
+		}
+	}
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, path+"slack/oauth-app"+sceneQuery, stranger, nil), http.StatusForbidden, "stranger read")
 	// A dynamic-registration app needs none.
-	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, path+"notion/oauth-app", holder, nil), http.StatusNotFound, "notion")
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, path+"notion/oauth-app"+sceneQuery, holder, nil), http.StatusNotFound, "notion")
 
-	w := ctxcapMobile(t, router, http.MethodGet, path+"slack/oauth-app", holder, nil)
+	w := ctxcapMobile(t, router, http.MethodGet, path+"slack/oauth-app"+sceneQuery, holder, nil)
 	ctxcapExpectStatus(t, w, http.StatusOK, "holder read")
 	var view contextConfigOAuthAppView
 	ctxcapDecode(t, w, &view)
-	if view.CallbackURL != connectorcatalog.ProductionCallbackURL || len(view.Fields) == 0 || view.Saved || view.Ready {
+	if view.CallbackURL != connectorcatalog.ProductionCallbackURL || len(view.Fields) != 2 || view.Saved || view.Ready || view.WorkspaceReady || !view.CanEdit {
 		t.Fatalf("view = %+v", view)
 	}
-	w = ctxcapMobile(t, router, http.MethodPut, path+"slack/oauth-app", holder, map[string]any{"client_id": "ctxcap-slack-client"})
+	w = ctxcapMobile(t, router, http.MethodPut, path+"slack/oauth-app", holder, sceneBody(map[string]any{"client_id": "ctxcap-scene-client"}))
 	if w.Code != http.StatusBadRequest || catalogErrorCode(t, w) != "oauth_app_field_required" {
 		t.Fatalf("save without the secret: %d %s", w.Code, w.Body.String())
 	}
 
-	// The first one: a scene's link holder fills it in.
+	// The first one: a member of the scene fills it in.
 	w = ctxcapMobile(t, router, http.MethodPut, path+"slack/oauth-app", holder,
-		map[string]any{"client_id": "ctxcap-slack-client", "client_secret": "ctxcap-slack-secret"})
+		sceneBody(map[string]any{"client_id": "ctxcap-scene-client", "client_secret": "ctxcap-scene-secret"}))
 	ctxcapExpectStatus(t, w, http.StatusOK, "holder saves the first one")
-	if strings.Contains(w.Body.String(), "ctxcap-slack-secret") {
+	if strings.Contains(w.Body.String(), "ctxcap-scene-secret") {
 		t.Fatalf("the secret came back: %s", w.Body.String())
 	}
 	ctxcapDecode(t, w, &view)
-	if !view.Ready || !view.Saved || view.ClientID != "ctxcap-slack-client" || !view.ClientSecretSet {
+	if !view.Saved || !view.Ready || view.ClientID != "ctxcap-scene-client" || !view.ClientSecretSet || view.CanEdit {
 		t.Fatalf("saved view = %+v", view)
 	}
+	// The workspace's application is not written.
+	if apps := ctxcapConnectorApps(t, "slack"); len(apps) != 0 {
+		t.Fatalf("workspace Slack applications = %v", apps)
+	}
 
-	// Changing it: workspace admins only, not the holder nor an agent owner
-	// who is a plain member.
-	w = ctxcapMobile(t, router, http.MethodPut, path+"slack/oauth-app", holder, map[string]any{"client_id": "other", "client_secret": "other"})
-	if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextConfigErrAppRequiresAdmin {
+	// Changing it: the agent's managers only.
+	w = ctxcapMobile(t, router, http.MethodPut, path+"slack/oauth-app", holder, sceneBody(map[string]any{"client_id": "other", "client_secret": "other"}))
+	if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextConfigErrOAuthAppLocked {
 		t.Fatalf("holder change: %d %s", w.Code, w.Body.String())
 	}
-	member := createWorkspaceMemberUser(t, "Ctxcap owner", "ctxcap-owner-"+uuid.NewString()[:8]+"@example.test")
-	if _, err := testPool.Exec(ctx, `UPDATE agent SET owner_id = $1 WHERE id = $2`, member, agentID); err != nil {
-		t.Fatal(err)
-	}
-	w = ctxcapMobile(t, router, http.MethodPut, path+"slack/oauth-app", member, map[string]any{"client_id": "other", "client_secret": "other"})
-	if w.Code != http.StatusForbidden || catalogErrorCode(t, w) != contextConfigErrAppRequiresAdmin {
-		t.Fatalf("plain-member agent owner change: %d %s", w.Code, w.Body.String())
-	}
-	if _, err := testPool.Exec(ctx, `UPDATE agent SET owner_id = $1 WHERE id = $2`, testUserID, agentID); err != nil {
-		t.Fatal(err)
-	}
-
-	// An admin changes it; an omitted secret and the callback mode stay.
-	if _, err := testPool.Exec(ctx, `UPDATE connector_app SET callback_mode = 'self' WHERE workspace_id = $1 AND provider = 'slack'`, testWorkspaceID); err != nil {
-		t.Fatal(err)
-	}
-	w = ctxcapMobile(t, router, http.MethodPut, path+"slack/oauth-app", testUserID, map[string]any{"client_id": "ctxcap-slack-client-2"})
-	ctxcapExpectStatus(t, w, http.StatusOK, "admin change")
+	w = ctxcapMobile(t, router, http.MethodPut, path+"slack/oauth-app", testUserID, sceneBody(map[string]any{"client_id": "ctxcap-scene-client-2"}))
+	ctxcapExpectStatus(t, w, http.StatusOK, "manager change")
 	ctxcapDecode(t, w, &view)
-	if view.ClientID != "ctxcap-slack-client-2" || !view.ClientSecretSet || view.CallbackURL != "https://app.multica.example"+connectorOAuthCallbackPath {
+	if view.ClientID != "ctxcap-scene-client-2" || !view.ClientSecretSet || !view.CanEdit {
 		t.Fatalf("changed view = %+v", view)
 	}
-	var mode string
-	if err := testPool.QueryRow(ctx, `SELECT callback_mode FROM connector_app WHERE workspace_id = $1 AND provider = 'slack'`, testWorkspaceID).Scan(&mode); err != nil || mode != "self" {
-		t.Fatalf("callback mode = %q %v", mode, err)
+
+	// The scene detail names the apps it signs in to with its own application.
+	var scene struct {
+		SceneOAuthApps []string `json:"scene_oauth_apps"`
+	}
+	ctxcapDecode(t, ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID+"/scenes/"+ctxcapScene, holder, nil), &scene)
+	if len(scene.SceneOAuthApps) != 1 || scene.SceneOAuthApps[0] != "slack" {
+		t.Fatalf("scene_oauth_apps = %v", scene.SceneOAuthApps)
 	}
 
-	// The detail says Slack is ready, and who may change saved applications.
-	type detailApps struct {
-		Apps             []contextCapCatalogAppDTO `json:"apps"`
-		CanConfigureApps bool                      `json:"can_configure_apps"`
+	// A connection started at the scene authorizes with the scene's client.
+	before := ctxcapCatalogConnectors(t, "slack")
+	t.Cleanup(func() {
+		for id := range ctxcapCatalogConnectors(t, "slack") {
+			if !before[id] {
+				_, _ = testPool.Exec(context.Background(), `DELETE FROM internal_connector WHERE id = $1`, id)
+			}
+		}
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM connector_oauth_state WHERE agent_id = $1`, agentID)
+	})
+	w = ctxcapMobile(t, router, http.MethodPost, path+"slack", holder, sceneBody(nil))
+	ctxcapExpectStatus(t, w, http.StatusOK, "add slack")
+	var added struct {
+		ConnectorID string `json:"connector_id"`
 	}
-	var adminDetail, holderDetail detailApps
-	ctxcapDecode(t, ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID, testUserID, nil), &adminDetail)
-	ctxcapDecode(t, ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID, holder, nil), &holderDetail)
-	if !adminDetail.CanConfigureApps || holderDetail.CanConfigureApps {
-		t.Fatalf("can configure: admin %v holder %v", adminDetail.CanConfigureApps, holderDetail.CanConfigureApps)
+	ctxcapDecode(t, w, &added)
+	w = ctxcapMobile(t, router, http.MethodPost, "/api/context-capabilities/agents/"+agentID+"/connections/start", holder,
+		sceneBody(map[string]any{"connector_id": added.ConnectorID}))
+	ctxcapExpectStatus(t, w, http.StatusOK, "start at the scene")
+	var started struct {
+		AuthorizeURL string `json:"authorize_url"`
 	}
-	setup := map[string]contextCapCatalogAppDTO{}
-	for _, app := range adminDetail.Apps {
-		setup[app.Slug] = app
+	ctxcapDecode(t, w, &started)
+	authorize, err := url.Parse(started.AuthorizeURL)
+	if err != nil || authorize.Query().Get("client_id") != "ctxcap-scene-client-2" {
+		t.Fatalf("authorize_url = %q", started.AuthorizeURL)
 	}
-	if setup["slack"].Setup != "oauth_app" || !setup["slack"].Ready || setup["notion"].Setup != "automatic" {
-		t.Fatalf("apps = %+v", adminDetail.Apps)
+}
+
+// A scene's own OAuth application exchanges and refreshes the tokens it
+// issued; tokens of another client stay with the workspace's, and other
+// scopes never see it.
+func TestSceneOAuthApplicationTokenEndpoint(t *testing.T) {
+	f := newCtxcapFixture(t)
+	f.h.cfg.AppURL = "https://app.multica.example"
+	agentID := uuidToString(f.agent)
+	if len(ctxcapConnectorApps(t, "slack")) > 0 {
+		t.Skip("the test workspace already has a Slack OAuth application")
+	}
+	ctx := context.Background()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM context_connector_app WHERE agent_id = $1`, agentID)
+	})
+	app, ok := catalogApp("slack")
+	if !ok {
+		t.Fatal("slack is not in the catalog")
+	}
+	binding := contextcap.CredentialBinding{WorkspaceID: testWorkspaceID, AgentID: agentID, ConnectorID: uuid.NewString(), ScopeType: contextcap.ScopeScene, OrgID: ctxcapOrg, ScopeKey: ctxcapScene}
+	key, _ := contextcap.SceneAppKeyOf(binding, "slack")
+	sealed, hint, err := f.h.sealConnectorAppSecret("scene-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := contextcap.CreateSceneApp(ctx, testPool, key, "scene-client", sealed, hint, testUserID); err != nil {
+		t.Fatal(err)
+	}
+	if err := contextcap.CreateSceneApp(ctx, testPool, key, "again", sealed, hint, testUserID); !errors.Is(err, contextcap.ErrSceneAppExists) {
+		t.Fatalf("second create = %v", err)
+	}
+
+	client, own, err := f.h.sceneOAuthClient(ctx, binding, app)
+	if err != nil || !own || client.ClientID != "scene-client" || client.ClientSecret != "scene-secret" || !client.Scene {
+		t.Fatalf("scene client = %+v %v %v", client, own, err)
+	}
+	person := binding
+	person.ScopeType, person.ScopeKey = contextcap.ScopePerson, "staff-1"
+	if _, own, err := f.h.sceneOAuthClient(ctx, person, app); own || err != nil {
+		t.Fatalf("person scope sees the scene application: %v %v", own, err)
+	}
+	if err := f.h.connectorOAuthDeploymentErrorForScope(ctx, binding, app); err != nil {
+		t.Fatalf("scene sign-in not ready: %v", err)
+	}
+	if err := f.h.connectorOAuthDeploymentErrorForScope(ctx, person, app); err == nil {
+		t.Fatal("a person scope signs in without the workspace's application")
+	}
+
+	c := internalConnector{CatalogSlug: "slack", WorkspaceID: testWorkspaceID, credentialKey: binding}
+	endpoint, err := f.h.connectorTokenEndpoint(ctx, c, "scene-client")
+	if err != nil || !endpoint.scene || endpoint.registration.ClientID != "scene-client" || endpoint.registration.ClientSecret != "scene-secret" ||
+		!strings.HasSuffix(endpoint.redirectURI, connectorOAuthCallbackPath) {
+		t.Fatalf("scene token endpoint = %+v %v", endpoint, err)
+	}
+	// A token another client issued (before the scene saved its own) stays
+	// with the workspace's client, which this workspace lacks.
+	if _, err := f.h.connectorTokenEndpoint(ctx, c, "workspace-client"); err == nil {
+		t.Fatal("a token of another client used the scene's application")
 	}
 }

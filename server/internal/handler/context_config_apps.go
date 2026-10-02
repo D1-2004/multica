@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
-	"github.com/multica-ai/multica/server/internal/connectorconfig"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 )
 
@@ -24,20 +23,26 @@ import (
 //     offered to (or owned by) the agent is only switched on; another
 //     catalog app is installed in the workspace and offered to the agent's
 //     scopes first. An app an admin switched off is refused (409).
-//   - GET|PUT …/apps/{slug}/oauth-app reads and saves the OAuth application
-//     an app without dynamic registration needs (Slack, Asana, GitHub when
-//     the deployment has no GitHub App), with the callback URL to register
-//     in the provider's console. Anyone who may open the agent here reads
-//     it and saves the first one. It is the workspace's client, shared by
-//     every connection and token refresh, so changing (or re-enabling) a
-//     saved one is for workspace owners and admins (403 app_requires_admin).
+//   - GET|PUT …/apps/{slug}/oauth-app reads and saves a scene's own OAuth
+//     application of an app without dynamic registration (Slack, Asana,
+//     GitHub), with the callback URL to register in the provider's console.
+//     A connection started at that scene signs in with it, and its tokens
+//     are exchanged and refreshed with it; without one the scene uses the
+//     workspace's. 冬翔 (2026-10-02): a scene's members save the first one,
+//     only the agent's managers change it, and the workspace's and the
+//     enterprise's OAuth applications stay in the admin console.
 
 const contextConfigAppBodyLimit = 64 << 10
 
 // Refusal codes of the configure page's official app routes.
 const (
-	contextConfigErrAppRequiresAdmin = "app_requires_admin"
-	contextConfigErrAppDisabled      = "app_disabled"
+	contextConfigErrAppDisabled = "app_disabled"
+	// contextConfigErrOAuthAppSceneOnly: the page saves only a scene's own
+	// OAuth application.
+	contextConfigErrOAuthAppSceneOnly = "oauth_app_scene_only"
+	// contextConfigErrOAuthAppLocked: a saved scene OAuth application is
+	// changed by the agent's managers only.
+	contextConfigErrOAuthAppLocked = "oauth_app_locked"
 )
 
 // contextCapOfferedCatalogConnector returns the id of the agent's own or
@@ -179,253 +184,192 @@ func (h *Handler) addContextConfigApp(ctx context.Context, a contextCapAgent, sc
 	return tx.Commit(ctx)
 }
 
-// contextConfigOAuthAppView is an app's OAuth application on the configure
-// page. Secrets are never returned, only whether they are set.
+// contextConfigOAuthAppView is a scene's own OAuth application of an app on
+// the configure page. Secrets are never returned, only whether they are set.
 type contextConfigOAuthAppView struct {
-	Slug             string                           `json:"slug"`
-	Name             string                           `json:"name"`
-	Fields           []connectorcatalog.SettingsField `json:"fields"`
-	DocsURL          string                           `json:"docs_url"`
-	CallbackURL      string                           `json:"callback_url"`
-	Ready            bool                             `json:"ready"`
-	ClientID         string                           `json:"client_id"`
-	ClientSecretSet  bool                             `json:"client_secret_set"`
-	AppID            string                           `json:"app_id"`
-	AppSlug          string                           `json:"app_slug"`
-	PrivateKeySet    bool                             `json:"private_key_set"`
-	OptionalSecret   bool                             `json:"optional_secret_set"`
-	DeploymentClient bool                             `json:"deployment_client"`
-	// Saved: the workspace has one (changing it is for workspace admins).
-	Saved bool `json:"saved"`
+	Slug        string                           `json:"slug"`
+	Name        string                           `json:"name"`
+	Fields      []connectorcatalog.SettingsField `json:"fields"`
+	DocsURL     string                           `json:"docs_url"`
+	CallbackURL string                           `json:"callback_url"`
+	// Saved: the scene has its own application.
+	Saved           bool   `json:"saved"`
+	ClientID        string `json:"client_id"`
+	ClientSecretSet bool   `json:"client_secret_set"`
+	// WorkspaceReady: without its own, the scene signs in with the
+	// workspace's application (saved in the admin console).
+	WorkspaceReady bool `json:"workspace_ready"`
+	// Ready: a sign-in can start at the scene now.
+	Ready bool `json:"ready"`
+	// CanEdit: the caller may save it now: the first one with the scene's
+	// connect right, a saved one only as the agent's manager.
+	CanEdit bool `json:"can_edit"`
 }
 
-// contextConfigOAuthAppScope authorizes a caller who may open the agent on
-// the configure page (a grant, or managing it) for the {slug} app that needs
-// an OAuth application, and says whether the caller is a workspace admin.
-func (h *Handler) contextConfigOAuthAppScope(w http.ResponseWriter, r *http.Request) (string, bool, contextCapAgent, connectorcatalog.App, connectorcatalog.SettingsSpec, bool) {
+// contextConfigOAuthAppFields are the values a scene's OAuth application
+// takes: the client the sign-in uses.
+var contextConfigOAuthAppFields = []connectorcatalog.SettingsField{{Key: "client_id"}, {Key: "client_secret"}}
+
+// contextConfigOAuthAppRequest resolves a scene OAuth application request:
+// the {slug} app must need one, and the scope must be a scene the caller
+// may open (need). Only a scene has its own application; the workspace's
+// and the enterprise's are the admin console's.
+func (h *Handler) contextConfigOAuthAppRequest(w http.ResponseWriter, r *http.Request, scopeType, scopeKey, orgID string, need contextCapNeed) (string, contextCapAgent, contextCapScope, connectorcatalog.App, connectorcatalog.SettingsSpec, bool) {
+	fail := func() (string, contextCapAgent, contextCapScope, connectorcatalog.App, connectorcatalog.SettingsSpec, bool) {
+		return "", contextCapAgent{}, contextCapScope{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+	}
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {
-		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+		return fail()
 	}
 	a, ok := h.contextCapAgentOr404(w, r)
 	if !ok {
-		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+		return fail()
 	}
 	slug := strings.TrimSpace(chi.URLParam(r, "slug"))
 	app, known := catalogApp(slug)
 	spec, hasSpec := connectorcatalog.SettingsSpecFor(slug)
 	if !known || !hasSpec || spec.Mode != "preregistered" {
 		writeError(w, http.StatusNotFound, "this app needs no OAuth application")
-		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+		return fail()
 	}
-	access, err := h.contextCapHasAccess(r.Context(), a, userID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "grant lookup failed")
-		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+	if scopeType != contextcap.ScopeScene {
+		writeErrorCode(w, http.StatusBadRequest, contextConfigErrOAuthAppSceneOnly,
+			"only a scene has its own OAuth application here; the workspace's and the enterprise's are configured in the admin console")
+		return fail()
 	}
-	if !access {
-		writeError(w, http.StatusForbidden, contextCapForbiddenAgent)
-		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+	if a, ok = h.contextCapRequestOrg(w, r, a, userID, contextCapScopeOrg(scopeType, scopeKey, orgID)); !ok {
+		return fail()
 	}
-	admin, err := h.contextCapWorkspaceAdmin(r.Context(), a, userID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "member lookup failed")
-		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+	scope, ok := h.contextCapRequireScope(w, r, a, userID, scopeType, scopeKey, need)
+	if !ok {
+		return fail()
 	}
-	return userID, admin, a, app, spec, true
+	return userID, a, scope, app, spec, true
 }
 
-// contextConfigOAuthAppRecord is the workspace's OAuth application of the
-// app: the enabled one sign-ins use, else the newest disabled one, else
-// none (ErrNotFound).
-func (h *Handler) contextConfigOAuthAppRecord(ctx context.Context, workspaceID, slug string) (connectorconfig.App, error) {
-	if saved, err := connectorconfig.OldestEnabled(ctx, h.DB, workspaceID, slug); err == nil {
-		return saved, nil
-	} else if !errors.Is(err, connectorconfig.ErrNotFound) {
-		return connectorconfig.App{}, err
-	}
-	apps, err := connectorconfig.List(ctx, h.DB, workspaceID)
-	if err != nil {
-		return connectorconfig.App{}, err
-	}
-	for i := len(apps) - 1; i >= 0; i-- {
-		if apps[i].Provider == slug {
-			return apps[i], nil
-		}
-	}
-	return connectorconfig.App{}, connectorconfig.ErrNotFound
+// contextConfigSceneAppKey is the scene application key of scope.
+func contextConfigSceneAppKey(a contextCapAgent, scope contextCapScope, slug string) contextcap.SceneAppKey {
+	return contextcap.SceneAppKey{WorkspaceID: a.WorkspaceID, AgentID: a.ID, OrgID: a.OrgID, SceneID: scope.ScopeKey, Provider: slug}
 }
 
-func (h *Handler) contextConfigOAuthAppView(ctx context.Context, workspaceID string, app connectorcatalog.App, spec connectorcatalog.SettingsSpec) (contextConfigOAuthAppView, error) {
+func (h *Handler) contextConfigOAuthAppView(ctx context.Context, a contextCapAgent, scope contextCapScope, userID string, app connectorcatalog.App, spec connectorcatalog.SettingsSpec) (contextConfigOAuthAppView, error) {
 	view := contextConfigOAuthAppView{
-		Slug: app.Slug, Name: app.Name, Fields: spec.Fields, DocsURL: spec.DocsURL,
-		CallbackURL: connectorcatalog.ProductionCallbackURL, Ready: h.catalogOAuthAvailableFor(ctx, workspaceID, app),
-		DeploymentClient: connectorAppEnvConfigured(app.Slug),
+		Slug: app.Slug, Name: app.Name, Fields: contextConfigOAuthAppFields, DocsURL: spec.DocsURL,
+		CallbackURL:    connectorcatalog.ProductionCallbackURL,
+		WorkspaceReady: h.catalogOAuthAvailableFor(ctx, a.WorkspaceID, app),
 	}
-	if view.Fields == nil {
-		view.Fields = []connectorcatalog.SettingsField{}
-	}
-	saved, err := h.contextConfigOAuthAppRecord(ctx, workspaceID, app.Slug)
+	saved, err := contextcap.GetSceneApp(ctx, h.DB, contextConfigSceneAppKey(a, scope, app.Slug))
 	switch {
-	case errors.Is(err, connectorconfig.ErrNotFound) || errors.Is(err, connectorconfig.ErrSchemaMissing):
-		if view.ClientID == "" {
-			view.ClientID = spec.KnownClientID
-		}
-		return view, nil
+	case errors.Is(err, contextcap.ErrNotFound):
+		view.CanEdit = scope.Rights.Connect
 	case err != nil:
 		return view, err
+	default:
+		view.Saved, view.ClientID, view.ClientSecretSet = true, saved.ClientID, len(saved.SecretCiphertext) > 0
+		manages, err := h.contextCapManages(ctx, a, userID)
+		if err != nil {
+			return view, err
+		}
+		view.CanEdit = manages
 	}
-	view.Saved = true
-	if saved.CallbackMode == connectorconfig.CallbackSelf {
-		// A self callback is registered on this deployment's own origin.
-		view.CallbackURL = h.connectorOAuthAppOrigin() + connectorOAuthCallbackPath
-	}
-	view.ClientID, view.ClientSecretSet = saved.ClientID, len(saved.SecretCiphertext) > 0
-	view.AppID, view.AppSlug = saved.AppIdentifier, saved.InstallSlug
-	view.PrivateKeySet, view.OptionalSecret = len(saved.PrivateKeyCiphertext) > 0, len(saved.OptionalCiphertext) > 0
+	// The binding a connection at this scene stores into (see
+	// StartContextConfigConnection).
+	binding := contextcap.CredentialBinding{WorkspaceID: a.WorkspaceID, AgentID: a.ID, ScopeType: contextcap.ScopeScene, OrgID: a.OrgID, ScopeKey: scope.ScopeKey}
+	view.Ready = h.connectorOAuthDeploymentErrorForScope(ctx, binding, app) == nil
 	return view, nil
 }
 
-// GetContextConfigOAuthApp: GET /api/context-capabilities/agents/{agentId}/apps/{slug}/oauth-app.
+// GetContextConfigOAuthApp: GET /api/context-capabilities/agents/{agentId}/apps/{slug}/oauth-app?scope_type=scene&scope_key=&org_id=
 func (h *Handler) GetContextConfigOAuthApp(w http.ResponseWriter, r *http.Request) {
-	_, _, a, app, spec, ok := h.contextConfigOAuthAppScope(w, r)
+	query := r.URL.Query()
+	userID, a, scope, app, spec, ok := h.contextConfigOAuthAppRequest(w, r, query.Get("scope_type"), query.Get("scope_key"), query.Get("org_id"), contextCapNeedRead)
 	if !ok {
 		return
 	}
-	view, err := h.contextConfigOAuthAppView(r.Context(), a.WorkspaceID, app, spec)
+	view, err := h.contextConfigOAuthAppView(r.Context(), a, scope, userID, app, spec)
 	if err != nil {
-		writeConnectorConfigErrorStatus(w, err)
+		writeError(w, http.StatusInternalServerError, "OAuth application lookup failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, view)
 }
 
-// PutContextConfigOAuthApp saves the app's OAuth application and enables it:
+// PutContextConfigOAuthApp saves a scene's own OAuth application of the app:
 // PUT /api/context-capabilities/agents/{agentId}/apps/{slug}/oauth-app
-// {client_id, client_secret?, app_id?, app_slug?, private_key?,
-// optional_secret?}. An omitted secret keeps the stored one.
+// {scope_type: "scene", scope_key, org_id?, client_id, client_secret?}.
+// The first one needs the scene's connect right (冬翔, 2026-10-02: a scene's
+// members configure its OAuth application); changing a saved one is for the
+// agent's managers only (403 oauth_app_locked). An omitted secret keeps the
+// stored one.
 func (h *Handler) PutContextConfigOAuthApp(w http.ResponseWriter, r *http.Request) {
-	userID, admin, a, app, spec, ok := h.contextConfigOAuthAppScope(w, r)
-	if !ok {
-		return
-	}
 	var input struct {
-		ClientID       string `json:"client_id"`
-		ClientSecret   string `json:"client_secret"`
-		AppID          string `json:"app_id"`
-		AppSlug        string `json:"app_slug"`
-		PrivateKey     string `json:"private_key"`
-		OptionalSecret string `json:"optional_secret"`
+		ScopeType    string `json:"scope_type"`
+		ScopeKey     string `json:"scope_key"`
+		OrgID        string `json:"org_id"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
 	}
 	if !decodeContextCapBody(w, r, contextConfigAppBodyLimit, &input) {
 		return
 	}
+	userID, a, scope, app, spec, ok := h.contextConfigOAuthAppRequest(w, r, input.ScopeType, input.ScopeKey, input.OrgID, contextCapNeedCredential)
+	if !ok {
+		return
+	}
 	ctx := r.Context()
-	saved, savedErr := h.contextConfigOAuthAppRecord(ctx, a.WorkspaceID, app.Slug)
-	if savedErr != nil && !errors.Is(savedErr, connectorconfig.ErrNotFound) {
-		writeConnectorConfigErrorStatus(w, savedErr)
+	clientID, secret := strings.TrimSpace(input.ClientID), strings.TrimSpace(input.ClientSecret)
+	key := contextConfigSceneAppKey(a, scope, app.Slug)
+	saved, err := contextcap.GetSceneApp(ctx, h.DB, key)
+	if err != nil && !errors.Is(err, contextcap.ErrNotFound) {
+		writeError(w, http.StatusInternalServerError, "OAuth application lookup failed")
 		return
 	}
-	exists := savedErr == nil
-	if exists && !admin {
-		writeErrorCode(w, http.StatusForbidden, contextConfigErrAppRequiresAdmin,
-			"the workspace already has this app's OAuth application; only workspace owners and admins change it")
-		return
-	}
-	// Every value the app requires: given now, or stored before.
-	for _, field := range spec.Fields {
-		if field.Optional {
-			continue
+	exists := err == nil
+	if exists {
+		manages, err := h.contextCapManages(ctx, a, userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "manager lookup failed")
+			return
 		}
-		given, stored := "", ""
-		switch field.Key {
-		case "client_id":
-			given, stored = input.ClientID, saved.ClientID
-		case "client_secret":
-			given = input.ClientSecret
-			if exists && len(saved.SecretCiphertext) > 0 {
-				stored = "set"
-			}
-		case "app_id":
-			given, stored = input.AppID, saved.AppIdentifier
-		case "app_slug":
-			given, stored = input.AppSlug, saved.InstallSlug
-		case "private_key":
-			given = input.PrivateKey
-			if exists && len(saved.PrivateKeyCiphertext) > 0 {
-				stored = "set"
-			}
-		default:
-			continue
-		}
-		if strings.TrimSpace(given) == "" && stored == "" {
-			writeErrorCode(w, http.StatusBadRequest, "oauth_app_field_required", field.Key+" is required")
+		if !manages {
+			writeErrorCode(w, http.StatusForbidden, contextConfigErrOAuthAppLocked,
+				"this scene's OAuth application is saved; only the agent's managers change it")
 			return
 		}
 	}
-	enabled := true
-	in := connectorconfig.AppInput{
-		Provider: app.Slug, DisplayName: app.Name, ClientID: strings.TrimSpace(input.ClientID), Enabled: &enabled,
-		AppIdentifier: strings.TrimSpace(input.AppID), InstallSlug: strings.TrimSpace(input.AppSlug),
+	if clientID == "" || (secret == "" && !(exists && len(saved.SecretCiphertext) > 0)) {
+		writeErrorCode(w, http.StatusBadRequest, "oauth_app_field_required", "client_id and client_secret are required")
+		return
+	}
+	var ciphertext []byte
+	var hint string
+	if secret != "" {
+		if ciphertext, hint, err = h.sealConnectorAppSecret(secret); err != nil {
+			writeConnectorConfigErrorStatus(w, err)
+			return
+		}
 	}
 	if exists {
-		// An admin's callback mode stays; the preset only fills an empty one.
-		in.CallbackMode = saved.CallbackMode
+		err = contextcap.UpdateSceneApp(ctx, h.DB, key, clientID, ciphertext, hint, userID)
+	} else {
+		err = contextcap.CreateSceneApp(ctx, h.DB, key, clientID, ciphertext, hint, userID)
 	}
-	applySettingsPreset(&in)
-	if err := h.sealConnectorAppExtras(&in, input.PrivateKey, input.OptionalSecret); err != nil {
-		writeConnectorConfigErrorStatus(w, err)
+	switch {
+	case errors.Is(err, contextcap.ErrSceneAppExists):
+		// Someone saved it first; it is the managers' to change now.
+		writeErrorCode(w, http.StatusConflict, contextConfigErrOAuthAppLocked, "this scene's OAuth application was just saved")
+		return
+	case err != nil:
+		slog.ErrorContext(ctx, "context capabilities: scene OAuth application save failed", "agent_id", a.ID, "catalog_slug", app.Slug, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save the OAuth application")
 		return
 	}
-	secret := strings.TrimSpace(input.ClientSecret)
-	in.ClientSecret = secret
-	var err error
-	switch {
-	case !exists:
-		if in.ClientID == "" || secret == "" {
-			writeError(w, http.StatusBadRequest, "client_id and client_secret are required")
-			return
-		}
-		ciphertext, hint, sealErr := h.sealConnectorAppSecret(secret)
-		if sealErr != nil {
-			writeConnectorConfigErrorStatus(w, sealErr)
-			return
-		}
-		if _, err := connectorconfig.Create(ctx, h.DB, a.WorkspaceID, userID, in, ciphertext, hint); err != nil {
-			writeConnectorConfigErrorStatus(w, err)
-			return
-		}
-	default:
-		if in.ClientID == "" {
-			in.ClientID = saved.ClientID
-		}
-		if in.AppIdentifier == "" {
-			in.AppIdentifier = saved.AppIdentifier
-		}
-		if in.InstallSlug == "" {
-			in.InstallSlug = saved.InstallSlug
-		}
-		var ciphertext []byte
-		var hint string
-		if secret != "" {
-			if ciphertext, hint, err = h.sealConnectorAppSecret(secret); err != nil {
-				writeConnectorConfigErrorStatus(w, err)
-				return
-			}
-		} else if len(saved.SecretCiphertext) == 0 {
-			writeError(w, http.StatusBadRequest, "client_secret is required")
-			return
-		}
-		if _, err := connectorconfig.Update(ctx, h.DB, a.WorkspaceID, saved.ID, in, ciphertext, hint, secret != ""); err != nil {
-			writeConnectorConfigErrorStatus(w, err)
-			return
-		}
-	}
-	slog.InfoContext(ctx, "context capabilities: OAuth application saved on the configure page", "agent_id", a.ID, "workspace_id", a.WorkspaceID,
-		"catalog_slug", app.Slug, "user_id", userID)
-	view, err := h.contextConfigOAuthAppView(ctx, a.WorkspaceID, app, spec)
+	slog.InfoContext(ctx, "context capabilities: scene OAuth application saved", "agent_id", a.ID, "workspace_id", a.WorkspaceID,
+		"catalog_slug", app.Slug, "scene_id", scope.ScopeKey, "changed", exists, "user_id", userID)
+	view, err := h.contextConfigOAuthAppView(ctx, a, scope, userID, app, spec)
 	if err != nil {
-		writeConnectorConfigErrorStatus(w, err)
+		writeError(w, http.StatusInternalServerError, "OAuth application lookup failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, view)

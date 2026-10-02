@@ -46,6 +46,16 @@ describe("configure-page scope rights, prompts and MCP servers", () => {
     expect(detail.mcpConfigRedacted).toBe(false);
   });
 
+  it("lists the apps a scene signs in to with its own OAuth application, tolerating drift", () => {
+    expect(ContextConfigSceneDetailSchema.parse({ scene, scene_oauth_apps: ["slack", "", 3, "asana"] }).sceneOAuthApps).toEqual([
+      "slack",
+      "asana",
+    ]);
+    // An older backend sends none; a malformed value reads as none.
+    expect(ContextConfigSceneDetailSchema.parse({ scene }).sceneOAuthApps).toEqual([]);
+    expect(ContextConfigSceneDetailSchema.parse({ scene, scene_oauth_apps: "slack" }).sceneOAuthApps).toEqual([]);
+  });
+
   it("grants a right only for a literal true and reads missing or malformed rights as none sent", () => {
     const parse = (rights: unknown) => ContextConfigSceneDetailSchema.parse({ scene, rights }).rights;
     expect(parse({ toggle: "true", connect: 1, edit_prompts: null })).toEqual({

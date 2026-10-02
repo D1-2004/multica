@@ -136,7 +136,6 @@ function agentDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
       { slug: "notion", name: "Notion", setup: "automatic" as const, ready: true },
       { slug: "linear", name: "Linear", setup: "automatic" as const, ready: true },
     ],
-    canConfigureApps: false,
     ...overrides,
   };
 }
@@ -147,6 +146,7 @@ const sceneDetail: ContextConfigSceneDetail = {
   credentials: [{ connectorId: "conn-wiki", hint: "••••abcd", updatedAt: "", kind: "bearer" }],
   scope: { type: "scene", key: SALES_SCENE, title: "Sales team" },
   canConnect: true,
+  sceneOAuthApps: [],
   ...noContent,
 };
 
@@ -543,51 +543,53 @@ describe("ContextConfigPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("lets anyone in the scene fill in an app's first OAuth application here, with the callback URL to register", async () => {
-    const slackId = "conn-slack";
-    const slack = { ...githubConnector, id: slackId, name: "Slack", catalogSlug: "slack", acceptsPat: false, oauthAvailable: false, installUrl: "" };
-    // A link holder, not a workspace admin.
-    api.getContextConfigAgent.mockResolvedValue(
-      agentDetail({
-        apps: [{ slug: "slack", name: "Slack", setup: "oauth_app", ready: false }],
-        offers: { connectors: [slack], skills: [] },
-      }),
-    );
-    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: allRights, bindings: [connectorOn(slackId)], credentials: [] });
-    const oauthApp = {
-      slug: "slack",
-      name: "Slack",
-      fields: [
-        { key: "client_id", optional: false, file: false },
-        { key: "client_secret", optional: false, file: false },
-        { key: "signing_secret", optional: true, file: false },
-      ],
-      docsUrl: "https://api.slack.com/apps",
-      callbackUrl: "https://fde-workbench.dingtalk.com/api/connectors/oauth/callback",
-      ready: false,
-      clientId: "",
-      clientSecretSet: false,
-      appId: "",
-      appSlug: "",
-      privateKeySet: false,
-      optionalSecretSet: false,
-      deploymentClient: false,
-      saved: false,
-    };
-    api.getContextConfigOAuthApp.mockResolvedValue(oauthApp);
-    api.setContextConfigOAuthApp.mockResolvedValue({ ...oauthApp, ready: true, saved: true, clientId: "cid", clientSecretSet: true });
+  const slackConnector = {
+    ...githubConnector,
+    id: "conn-slack",
+    name: "Slack",
+    catalogSlug: "slack",
+    acceptsPat: false,
+    oauthAvailable: false,
+    installUrl: "",
+  };
+  const slackApps = [{ slug: "slack", name: "Slack", setup: "oauth_app" as const, ready: false }];
+  const sceneOAuthApp = {
+    slug: "slack",
+    name: "Slack",
+    fields: [
+      { key: "client_id", optional: false, file: false },
+      { key: "client_secret", optional: false, file: false },
+    ],
+    docsUrl: "https://api.slack.com/apps",
+    callbackUrl: "https://fde-workbench.dingtalk.com/api/connectors/oauth/callback",
+    saved: false,
+    clientId: "",
+    clientSecretSet: false,
+    workspaceReady: false,
+    ready: false,
+    canEdit: true,
+  };
+  const sceneScope = { scopeType: "scene", scopeKey: SALES_SCENE };
+
+  it("lets a member fill in the chat's own OAuth application here, with the callback URL to register", async () => {
+    // A link holder, not a manager.
+    api.getContextConfigAgent.mockResolvedValue(agentDetail({ apps: slackApps, offers: { connectors: [slackConnector], skills: [] } }));
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: allRights, bindings: [connectorOn("conn-slack")], credentials: [] });
+    api.getContextConfigOAuthApp.mockResolvedValue(sceneOAuthApp);
+    api.setContextConfigOAuthApp.mockResolvedValue({ ...sceneOAuthApp, saved: true, ready: true, clientId: "cid", clientSecretSet: true, canEdit: false });
     const user = userEvent.setup();
     renderPage({ binding: groupBinding, openAuthorizeUrl: vi.fn() });
 
     const region = await screen.findByRole("region", { name: "Sales team" });
     await user.click(within(region).getByRole("button", { name: copy.app_configure_aria.replace("{{name}}", "Slack") }));
     const dialog = await screen.findByRole("dialog");
-    // No sign-in until the OAuth application exists; it is filled in here.
+    // No sign-in until an OAuth application exists; this chat's is filled in here.
     expect(within(dialog).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
-    expect(await within(dialog).findByText(oauthApp.callbackUrl)).toBeInTheDocument();
+    expect(await within(dialog).findByText(sceneOAuthApp.callbackUrl)).toBeInTheDocument();
+    expect(api.getContextConfigOAuthApp).toHaveBeenCalledWith("agent-1", "slack", sceneScope);
     expect(within(dialog).getByRole("link", { name: copy.oauth_app_console.replace("{{name}}", "Slack") })).toHaveAttribute(
       "href",
-      oauthApp.docsUrl,
+      sceneOAuthApp.docsUrl,
     );
     await user.click(within(dialog).getByRole("button", { name: copy.save }));
     expect(within(dialog).getByRole("alert")).toHaveTextContent("Client ID");
@@ -597,40 +599,62 @@ describe("ContextConfigPage", () => {
     await user.type(within(dialog).getByLabelText("Client Secret"), "csecret");
     await user.click(within(dialog).getByRole("button", { name: copy.save }));
     await waitFor(() =>
-      expect(api.setContextConfigOAuthApp).toHaveBeenCalledWith("agent-1", "slack", { clientId: "cid", clientSecret: "csecret" }),
+      expect(api.setContextConfigOAuthApp).toHaveBeenCalledWith("agent-1", "slack", sceneScope, { clientId: "cid", clientSecret: "csecret" }),
     );
     expect(screen.queryByDisplayValue("csecret")).not.toBeInTheDocument();
   });
 
-  it("leaves a saved OAuth application to workspace admins", async () => {
-    const slack = { ...githubConnector, id: "conn-slack", name: "Slack", catalogSlug: "slack", acceptsPat: false, oauthAvailable: false, installUrl: "" };
-    api.getContextConfigAgent.mockResolvedValue(
-      agentDetail({ apps: [{ slug: "slack", name: "Slack", setup: "oauth_app", ready: false }], offers: { connectors: [slack], skills: [] } }),
-    );
-    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: allRights, bindings: [connectorOn("conn-slack")], credentials: [] });
-    api.getContextConfigOAuthApp.mockResolvedValue({
-      slug: "slack",
-      name: "Slack",
-      fields: [{ key: "client_id", optional: false, file: false }],
-      docsUrl: "",
-      callbackUrl: "https://fde-workbench.dingtalk.com/api/connectors/oauth/callback",
-      ready: false,
-      clientId: "cid",
-      clientSecretSet: true,
-      appId: "",
-      appSlug: "",
-      privateKeySet: false,
-      optionalSecretSet: false,
-      deploymentClient: false,
-      saved: true,
+  it("signs in with the chat's own OAuth application, which only the agent's managers change", async () => {
+    api.getContextConfigAgent.mockResolvedValue(agentDetail({ apps: slackApps, offers: { connectors: [slackConnector], skills: [] } }));
+    api.getContextConfigScene.mockResolvedValue({
+      ...sceneDetail,
+      rights: allRights,
+      bindings: [connectorOn("conn-slack")],
+      credentials: [],
+      sceneOAuthApps: ["slack"],
     });
+    api.getContextConfigOAuthApp.mockResolvedValue({ ...sceneOAuthApp, saved: true, ready: true, clientId: "cid", clientSecretSet: true, canEdit: false });
     const user = userEvent.setup();
     renderPage({ binding: groupBinding, openAuthorizeUrl: vi.fn() });
 
     const region = await screen.findByRole("region", { name: "Sales team" });
     const dialog = await openConnector(user, region, "Slack");
-    expect(await within(dialog).findByText(copy.oauth_app_admin_only.replace("{{name}}", "Slack"))).toBeInTheDocument();
+    // The workspace has none, yet this chat signs in with its own.
+    expect(within(dialog).getByRole("button", { name: copy.connect })).toBeEnabled();
+    expect(await within(dialog).findByText(copy.oauth_app_scene_locked.replace("{{name}}", "Slack"))).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: copy.action_edit })).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Client ID")).not.toBeInTheDocument();
+  });
+
+  it("uses the workspace's OAuth application and offers one of the chat's own", async () => {
+    const ready = { ...slackConnector, oauthAvailable: true };
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({ apps: [{ ...slackApps[0]!, ready: true }], offers: { connectors: [ready], skills: [] } }),
+    );
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: allRights, bindings: [connectorOn("conn-slack")], credentials: [] });
+    api.getContextConfigOAuthApp.mockResolvedValue({ ...sceneOAuthApp, workspaceReady: true, ready: true });
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, openAuthorizeUrl: vi.fn() });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    const dialog = await openConnector(user, region, "Slack");
+    expect(await within(dialog).findByText(copy.oauth_app_workspace.replace("{{name}}", "Slack"))).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Client ID")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: copy.oauth_app_own }));
+    expect(within(dialog).getByLabelText("Client ID")).toBeInTheDocument();
+  });
+
+  it("keeps OAuth applications off the personal level", async () => {
+    const base = personDetail({ bindings: [connectorOn("conn-slack")], credentials: [], rights: allRights });
+    api.getContextConfigAgent.mockResolvedValue({ ...base, apps: slackApps, offers: { connectors: [slackConnector], skills: [] } });
+    const user = userEvent.setup();
+    renderPage({ binding: personBinding, openAuthorizeUrl: vi.fn() });
+
+    const region = await screen.findByRole("region", { name: "Alice" });
+    const dialog = await openConnector(user, region, "Slack");
+    expect(within(dialog).getByText(copy.connect_unavailable.replace("{{name}}", "Slack"))).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Client ID")).not.toBeInTheDocument();
+    expect(api.getContextConfigOAuthApp).not.toHaveBeenCalled();
   });
 
   it("says when an admin switched an app off instead of adding it silently", async () => {
