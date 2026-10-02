@@ -123,8 +123,9 @@ func (h *Handler) preregisteredOAuthClient(ctx context.Context, workspaceID stri
 // sceneOAuthClient is the scene's own OAuth application of app for a
 // connection or credential at binding. ok is false outside a scene scope,
 // for an app that registers dynamically, and when the scene saved none. A
-// saved secret that cannot be opened is an error: the workspace client is a
-// different registration and must not be substituted.
+// saved secret that cannot be opened is an error (with ok and the client ID
+// set, so a caller can tell whether it concerns the client it needs): the
+// workspace client is a different registration and must not be substituted.
 func (h *Handler) sceneOAuthClient(ctx context.Context, binding contextcap.CredentialBinding, app connectorcatalog.App) (githubOAuthClient, bool, error) {
 	key, ok := contextcap.SceneAppKeyOf(binding, app.Slug)
 	if !ok {
@@ -141,12 +142,13 @@ func (h *Handler) sceneOAuthClient(ctx context.Context, binding contextcap.Crede
 	if err != nil {
 		return githubOAuthClient{}, false, err
 	}
+	unavailable := githubOAuthClient{Source: connectorconfig.SourceWorkspace, Scene: true, AppID: saved.ID, ClientID: saved.ClientID}
 	if h.InternalConnectorSecretBox == nil {
-		return githubOAuthClient{}, false, connectorconfig.ErrSecretUnavailable
+		return unavailable, true, connectorconfig.ErrSecretUnavailable
 	}
 	secret, err := connectorconfig.OpenString(h.InternalConnectorSecretBox, saved.SecretCiphertext)
 	if err != nil {
-		return githubOAuthClient{}, false, connectorconfig.ErrSecretUnavailable
+		return unavailable, true, connectorconfig.ErrSecretUnavailable
 	}
 	client := githubOAuthClient{
 		Source: connectorconfig.SourceWorkspace, Scene: true, AppID: saved.ID, ClientID: saved.ClientID, ClientSecret: secret,

@@ -265,6 +265,14 @@ describe("official apps on the configure page", () => {
     expect(JSON.parse(String(init.body))).toEqual({ scope_type: "scene", scope_key: sceneId, org_id: "ding-org", client_id: "cid" });
   });
 
+  it("removes a scene's OAuth application by its scope", async () => {
+    const fetch = stubFetch(null, 204);
+    await new ApiClient(base).deleteContextConfigOAuthApp(agentId, "slack", { scopeType: "scene", scopeKey: sceneId });
+    const { url, init } = requestOf(fetch);
+    expect(url).toBe(`${base}/api/context-capabilities/agents/${agentId}/apps/slack/oauth-app?scope_type=scene&scope_key=${sceneId}`);
+    expect(init.method).toBe("DELETE");
+  });
+
   it("reads a malformed OAuth application as null and an unsafe docs URL as none", async () => {
     const scope = { scopeType: "scene" as const, scopeKey: sceneId };
     stubFetch({ name: "no slug" });

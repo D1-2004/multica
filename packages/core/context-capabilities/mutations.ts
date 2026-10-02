@@ -87,6 +87,17 @@ export function useSetContextConfigOAuthApp(agentId: string) {
   });
 }
 
+/** Removes a scene's own OAuth application; the scene and its OAuth
+ * application queries refetch. */
+export function useDeleteContextConfigOAuthApp(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, scope }: { slug: string; scope: ContextConfigScopeInput }) =>
+      api.deleteContextConfigOAuthApp(agentId, slug, scope),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: contextConfigKeys.agent(agentId) }),
+  });
+}
+
 export function useSetContextCapabilityBinding(agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({

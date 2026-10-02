@@ -4424,6 +4424,17 @@ export class ApiClient {
     });
   }
 
+  /** Removes a scene's own OAuth application (the agent's managers), so the
+   * scene signs in with the workspace's again. */
+  async deleteContextConfigOAuthApp(agentId: string, slug: string, scope: ContextConfigScopeInput): Promise<void> {
+    const query = new URLSearchParams({ scope_type: scope.scopeType, scope_key: scope.scopeKey });
+    if (scope.orgId) query.set("org_id", scope.orgId);
+    await this.fetch<unknown>(
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/apps/${encodeURIComponent(slug)}/oauth-app?${query.toString()}`,
+      { method: "DELETE", headers: NO_WORKSPACE_HEADER },
+    );
+  }
+
   /** Saves a scene's own OAuth application; an omitted secret keeps the stored one. */
   async setContextConfigOAuthApp(
     agentId: string,

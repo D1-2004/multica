@@ -33,6 +33,7 @@ const api = vi.hoisted(() => ({
   addContextConfigApp: vi.fn(),
   getContextConfigOAuthApp: vi.fn(),
   setContextConfigOAuthApp: vi.fn(),
+  deleteContextConfigOAuthApp: vi.fn(),
   createSceneRoutine: vi.fn(),
   updateSceneRoutine: vi.fn(),
   deleteSceneRoutine: vi.fn(),
@@ -624,6 +625,41 @@ describe("ContextConfigPage", () => {
     expect(await within(dialog).findByText(copy.oauth_app_scene_locked.replace("{{name}}", "Slack"))).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: copy.action_edit })).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText("Client ID")).not.toBeInTheDocument();
+  });
+
+  it("lets a manager change the chat's OAuth application, with a new secret for a new client, or remove it", async () => {
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({ access: "manager", apps: slackApps, offers: { connectors: [slackConnector], skills: [] } }),
+    );
+    api.getContextConfigScene.mockResolvedValue({
+      ...sceneDetail,
+      rights: allRights,
+      bindings: [connectorOn("conn-slack")],
+      credentials: [],
+      sceneOAuthApps: ["slack"],
+    });
+    api.getContextConfigOAuthApp.mockResolvedValue({ ...sceneOAuthApp, saved: true, ready: true, clientId: "cid", clientSecretSet: true });
+    api.deleteContextConfigOAuthApp.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, openAuthorizeUrl: vi.fn() });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    const dialog = await openConnector(user, region, "Slack");
+    expect(await within(dialog).findByText(copy.oauth_app_scene_ready.replace("{{name}}", "Slack"))).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: copy.action_edit }));
+    const clientId = within(dialog).getByLabelText("Client ID");
+    expect(clientId).toHaveValue("cid");
+    await user.clear(clientId);
+    await user.type(clientId, "cid-2");
+    await user.click(within(dialog).getByRole("button", { name: copy.save }));
+    // The stored secret belongs to the old client.
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Client Secret");
+    expect(api.setContextConfigOAuthApp).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole("button", { name: copy.oauth_app_remove }));
+    const confirm = await screen.findByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: copy.oauth_app_remove }));
+    await waitFor(() => expect(api.deleteContextConfigOAuthApp).toHaveBeenCalledWith("agent-1", "slack", sceneScope));
   });
 
   it("uses the workspace's OAuth application and offers one of the chat's own", async () => {

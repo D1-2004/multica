@@ -438,12 +438,13 @@ func (h *Handler) connectorTokenEndpoint(ctx context.Context, c internalConnecto
 	out := connectorTokenEndpointConfig{client: catalogExternalClient(app)}
 	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp || app.AuthKind == connectorcatalog.AuthOAuthPreregistered {
 		scene, own, err := h.sceneOAuthClient(ctx, c.credentialKey, app)
-		if err != nil {
-			return connectorTokenEndpointConfig{}, err
-		}
 		// Tokens issued before the scene saved its application stay with the
-		// workspace client that issued them.
+		// workspace client that issued them; a broken scene application only
+		// fails the tokens it issued.
 		if own && clientID != "" && clientID == scene.ClientID {
+			if err != nil {
+				return connectorTokenEndpointConfig{}, err
+			}
 			out.tokenURL = scene.TokenEndpoint
 			homeOrigin, _ := h.connectorOAuthCallbackTarget(connectorOAuthViaDCR)
 			forwarded := h.connectorOAuthRedirectOrigin(connectorOAuthViaDCR)
@@ -458,6 +459,9 @@ func (h *Handler) connectorTokenEndpoint(ctx context.Context, c internalConnecto
 			}
 			out.scene = true
 			return out, nil
+		}
+		if err != nil && !own {
+			slog.WarnContext(ctx, "scene OAuth application lookup failed; using the workspace client", "connector_id", c.ID, "error", err)
 		}
 	}
 	switch app.AuthKind {
