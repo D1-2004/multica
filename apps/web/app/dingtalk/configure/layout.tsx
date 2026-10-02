@@ -5,6 +5,10 @@ import type { ReactNode } from "react";
 // the document title: name the page itself, without the workbench suffix.
 export const metadata: Metadata = {
   title: { absolute: "QwenTag配置" },
+  icons: {
+    icon: `${process.env.MULTICA_FORWARD_ASSET_PREFIX ?? ""}/favicon.svg`,
+    shortcut: `${process.env.MULTICA_FORWARD_ASSET_PREFIX ?? ""}/favicon.svg`,
+  },
 };
 
 export default function ContextConfigureLayout({ children }: { children: ReactNode }) {

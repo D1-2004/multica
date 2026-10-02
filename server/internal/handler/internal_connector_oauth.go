@@ -240,6 +240,10 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 		}
 		redirectOrigin = githubOAuthRedirectOrigin(homeOrigin, redirectOrigin, preregistered.CallbackMode)
 	}
+	publicOrigin, forwardTarget := h.connectorOAuthPublicReturn(returnTo)
+	if forwardTarget != "" {
+		redirectOrigin = publicOrigin
+	}
 	state, err := randomOAuthValue()
 	if err != nil {
 		return connectorOAuthStarted{}, internalErr
@@ -336,7 +340,7 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	if redirectOrigin != homeOrigin {
 		home, _ := normalizeConnectorOAuthOrigin(homeOrigin)
 		if err := h.registerConnectorOAuthForward(ctx, redirectOrigin, state, connectorOAuthForwardRegistration{
-			HomeOrigin: home, WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID, ConnectorID: scope.ConnectorID,
+			ForwardTarget: forwardTarget, HomeOrigin: home, WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID, ConnectorID: scope.ConnectorID,
 			ScopeType: scope.ScopeType, ExpiresAtMs: time.Now().Add(connectorOAuthStateTTL).UnixMilli(),
 		}); err != nil {
 			slog.ErrorContext(ctx, "official app OAuth forward registration failed", "connector_id", c.ID, "production", redirectOrigin, "error", err)
@@ -543,6 +547,10 @@ func (h *Handler) connectorOAuthReturnTo(ctx context.Context, raw string, scope 
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil || u.Opaque != "" {
 		return "", errors.New("invalid return_to")
+	}
+	if _, target := h.connectorOAuthPublicReturn(u.String()); target != "" {
+		u.Fragment = ""
+		return u.String(), nil
 	}
 	candidate := strings.ToLower(u.Scheme + "://" + u.Host)
 	for _, allowed := range h.dingTalkJSAPIAppOrigins() {

@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	"github.com/redis/go-redis/v9"
 )
 
-// This file must stay identical on the forwarder-only branch (cut from
-// develop) and the connector flow branch.
+// Existing redirect registrations retain their wire contract during rollout.
 
 const connectorOAuthForwardTestSecret = "connector-oauth-forward-test-secret-0123456789"
 
@@ -149,7 +149,7 @@ func TestConnectorOAuthForwarderRoutes(t *testing.T) {
 		timestamp := strconv.FormatInt(at.UnixMilli(), 10)
 		req := httptest.NewRequest(http.MethodPost, ConnectorOAuthForwardRegistrationPath, bytes.NewReader(body))
 		req.Header.Set(connectorOAuthForwardTimestampHeader, timestamp)
-		req.Header.Set(connectorOAuthForwardSignatureHeader, signAgentA2AForwardRegistration([]byte(secret), timestamp, body))
+		req.Header.Set(connectorOAuthForwardSignatureHeader, forwarding.SignRegistration([]byte(secret), timestamp, body))
 		rec := httptest.NewRecorder()
 		prod.HandleConnectorOAuthForwardRegistration(rec, req)
 		return rec

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   resolveBrowserApiBaseUrl,
+  resolveForwardAssetPrefix,
   resolveBrowserWsUrl,
   resolveDevDocsUrl,
   resolveDevRemoteApiUrl,
@@ -315,5 +316,15 @@ describe("dev-only fallbacks", () => {
 
   it("falls back to the local docs port", () => {
     expect(resolveDevDocsUrl({})).toBe("http://localhost:4000");
+  });
+});
+
+describe("resolveForwardAssetPrefix", () => {
+  it("only accepts a local forwarding namespace", () => {
+    expect(resolveForwardAssetPrefix({})).toBeUndefined();
+    expect(resolveForwardAssetPrefix({ MULTICA_FORWARD_ASSET_PREFIX: "/forward/pre" })).toBe("/forward/pre");
+    for (const value of ["https://pre.example", "/forward/pre/", "/forward/pre/../../", "/forward/", "/forward/Pre", "/forward/pre_blue"]) {
+      expect(() => resolveForwardAssetPrefix({ MULTICA_FORWARD_ASSET_PREFIX: value })).toThrow();
+    }
   });
 });

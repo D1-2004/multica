@@ -13,6 +13,7 @@ import {
   clearLoggedInCookie,
 } from "@/features/auth/auth-cookie";
 import { detectWebOS } from "@/platform/client-os";
+import { browserForwarding, createForwardStorage } from "@/platform/forwarding";
 
 // Legacy token in localStorage → keep this session in token mode so users who
 // logged in before the cookie-auth migration stay authed. They migrate to
@@ -57,7 +58,12 @@ export function WebProviders({
   apiBaseUrl?: string;
   wsUrl?: string;
 }) {
-  const cookieAuth = !hasLegacyToken();
+  const forwarding = useMemo(() => browserForwarding(), []);
+  const storage = useMemo(
+    () => forwarding ? createForwardStorage(forwarding.namespace) : undefined,
+    [forwarding],
+  );
+  const cookieAuth = Boolean(forwarding) || !hasLegacyToken();
   // Stable identity reference so downstream effects keyed on it don't see a
   // new object on every parent render.
   const identity = useMemo(
@@ -67,11 +73,14 @@ export function WebProviders({
   const localeAdapter = useMemo(() => createBrowserCookieLocaleAdapter(), []);
   return (
     <CoreProvider
-      apiBaseUrl={apiBaseUrl}
+      apiBaseUrl={forwarding?.basePath ?? apiBaseUrl}
+      storage={storage}
+      standalone={Boolean(forwarding)}
+      csrfCookieName={forwarding?.csrfCookieName}
       wsUrl={wsUrl || deriveWsUrl()}
       cookieAuth={cookieAuth}
-      onLogin={setLoggedInCookie}
-      onLogout={() => {
+      onLogin={forwarding ? undefined : setLoggedInCookie}
+      onLogout={forwarding ? undefined : () => {
         // welcome-store holds the transient post-onboarding signal. Must
         // clear on logout so user B logging into the same browser doesn't
         // inherit user A's signal and have <WelcomeAfterOnboarding /> fire
@@ -84,7 +93,7 @@ export function WebProviders({
       identity={identity}
       locale={locale}
       resources={resources}
-      localeAdapter={localeAdapter}
+      localeAdapter={forwarding ? undefined : localeAdapter}
     >
       <WebNavigationProvider>
         <WebScrollRestorationProvider>{children}</WebScrollRestorationProvider>

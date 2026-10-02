@@ -28,6 +28,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	"github.com/multica-ai/multica/server/internal/dwseventsource"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/forwarding"
 	"github.com/multica-ai/multica/server/internal/gitrepo"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
@@ -96,6 +97,8 @@ type Config struct {
 	// pre-release and production (MULTICA_A2A_FORWARD_REGISTRATION_SECRET);
 	// both deployments share it and it must be at least 32 characters.
 	A2AForwardRegistrationSecret string
+	// ForwardPublicBaseURL is the externally visible configuration-page mount.
+	ForwardPublicBaseURL string
 	// GitHubPreWebhookURL and GitHubPreWebhookSecret enable a dedicated ingress
 	// that verifies the pre-release App's deliveries and forwards them unchanged.
 	// This deployment never processes their installation or PR state locally.
@@ -227,6 +230,7 @@ type enterpriseIdentityService interface {
 }
 
 type Handler struct {
+	Forwarding *forwarding.Gateway
 	// githubPreWebhookTransport is the fixed pre-release webhook hop; nil uses
 	// the bounded, non-redirecting default transport.
 	githubPreWebhookTransport http.RoundTripper

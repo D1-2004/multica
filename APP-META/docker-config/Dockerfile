@@ -51,9 +51,12 @@ RUN corepack enable && corepack prepare pnpm@10.28.2 --activate && \
     pnpm config set "@ali:registry" "https://registry.anpm.alibaba-inc.com"
 ENV REMOTE_API_URL=http://127.0.0.1:8080
 ENV NEXT_PUBLIC_APP_VERSION=dev
+ARG MULTICA_FORWARD_ASSET_PREFIX=
+ENV MULTICA_FORWARD_ASSET_PREFIX=${MULTICA_FORWARD_ASSET_PREFIX}
 ENV STANDALONE=true
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @multica/web build
+RUN printf '%s' "$MULTICA_FORWARD_ASSET_PREFIX" > /workspace/forward-asset-prefix
 
 FROM hub.docker.alibaba-inc.com/aone-base-global/alios8-nodejs:2.0
 ARG APP_NAME=dt-fde-multica
@@ -122,6 +125,7 @@ COPY --from=backend-builder /workspace/src/ /home/admin/${APP_NAME}/target/${APP
 COPY --from=backend-builder /workspace/server/bin/ /home/admin/${APP_NAME}/target/${APP_NAME}/bin/
 COPY --from=backend-builder /workspace/server/migrations/ /home/admin/${APP_NAME}/target/${APP_NAME}/migrations/
 COPY --from=backend-builder /workspace/${APP_NAME}.release /home/admin/${APP_NAME}/target/${APP_NAME}/${APP_NAME}.release
+COPY --from=web-builder /workspace/forward-asset-prefix /home/admin/${APP_NAME}/target/${APP_NAME}/forward-asset-prefix
 COPY --from=web-builder /workspace/apps/web/.next/standalone/ /home/admin/${APP_NAME}/target/${APP_NAME}/web/
 COPY --from=web-builder /workspace/apps/web/.next/static/ /home/admin/${APP_NAME}/target/${APP_NAME}/web/apps/web/.next/static/
 COPY --from=web-builder /workspace/apps/web/public/ /home/admin/${APP_NAME}/target/${APP_NAME}/web/apps/web/public/

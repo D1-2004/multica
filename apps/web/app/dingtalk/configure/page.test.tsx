@@ -1,5 +1,5 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "@multica/views/locales/en/common.json";
 import enAgents from "@multica/views/locales/en/agents.json";
@@ -85,7 +85,9 @@ function renderPage() {
 let replaceState: ReturnType<typeof vi.spyOn>;
 
 describe("DingTalk configure route", () => {
+  afterEach(() => window.history.replaceState({}, "", "/dingtalk/configure"));
   beforeEach(() => {
+    window.history.replaceState({}, "", "/dingtalk/configure");
     vi.clearAllMocks();
     localStorage.clear();
     sessionStorage.clear();
@@ -396,4 +398,43 @@ describe("DingTalk configure route", () => {
     expect(await screen.findByText(web.auth_loop)).toBeInTheDocument();
     expect(mockReplaceCurrentPage).not.toHaveBeenCalled();
   });
+});
+
+
+it("keeps a forwarded login and connector return on the same target", async () => {
+  vi.clearAllMocks();
+  localStorage.clear();
+  sessionStorage.clear();
+  window.history.replaceState({}, "", "/forward/pre/dingtalk/configure?code=auth-code&state=pre-state");
+  localStorage.setItem("multica_token", "production-token");
+  sessionStorage.setItem("mf_pre_multica_context_config_oauth_state", "pre-state");
+  sessionStorage.setItem("mf_pre_multica_context_config_pending", JSON.stringify({
+    agent: "pre-agent", scope_type: "scene", scope_key: SCENE_ID, saved_at: Date.now(),
+  }));
+  mockSearchParams.current = new URLSearchParams({ code: "auth-code", state: "pre-state" });
+  mockDingTalkLogin.mockResolvedValue({ token: "preview-token", user: { id: "pre-user" } });
+  try {
+    renderPage();
+    await waitFor(() => expect(pageProps.current?.initialAgentId).toBe("pre-agent"));
+    expect(mockDingTalkLogin).toHaveBeenCalledWith("auth-code");
+    expect(mockSetToken).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/forward/pre/dingtalk/configure");
+    expect(pageProps.current?.connectReturnTo).toBe(`${window.location.origin}/forward/pre/dingtalk/configure?agent=pre-agent&scope_type=scene&scope_key=${SCENE_ID}`);
+    expect(localStorage.getItem("multica_token")).toBe("production-token");
+  } finally {
+    window.history.replaceState({}, "", "/dingtalk/configure");
+  }
+});
+
+
+it("provides a forwarded connector return URL for an unbound admin page", async () => {
+  window.history.replaceState({}, "", "/forward/pre/dingtalk/configure?agent=pre-admin");
+  mockSearchParams.current = new URLSearchParams({ agent: "pre-admin" });
+  try {
+    renderPage();
+    await waitFor(() => expect(pageProps.current?.initialAgentId).toBe("pre-admin"));
+    expect(pageProps.current?.connectReturnTo).toBe(`${window.location.origin}/forward/pre/dingtalk/configure?agent=pre-admin`);
+  } finally {
+    window.history.replaceState({}, "", "/dingtalk/configure");
+  }
 });
