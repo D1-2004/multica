@@ -51,7 +51,9 @@ identity or routing receipts. A transaction locks
 the source/id key, looks up an existing receipt, or resolves the scene with
 `scene.Resolve` and inserts the row. Scene and receipt commit atomically.
 Concurrent redelivery returns the same row. A changed fingerprint at the same
-key is a conflict. Configuration changes, kind corrections, renames and tenant
+key is a conflict. The Dispatch adapter preserves the existing HTTP 409 error
+`idempotency key conflicts with another dispatch`, distinct from an active
+pending acceptance. Configuration changes, kind corrections, renames and tenant
 rebinds never remap an existing receipt. Every use of a resolved ref checks
 current tenant/owner; stale receipts cannot enter another org's scene.
 

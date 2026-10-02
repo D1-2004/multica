@@ -154,13 +154,17 @@ func (h *Handler) admitDispatchEvent(w http.ResponseWriter, r *http.Request, raw
 	})
 	if err != nil {
 		status := http.StatusServiceUnavailable
+		message := "event admission failed"
 		if errors.Is(err, eventrouter.ErrInvalidEvent) {
 			status = http.StatusBadRequest
 		}
 		if errors.Is(err, eventrouter.ErrConflict) || errors.Is(err, scene.ErrStaleTenant) {
 			status = http.StatusConflict
 		}
-		writeError(w, status, "event admission failed")
+		if errors.Is(err, eventrouter.ErrConflict) {
+			message = "idempotency key conflicts with another dispatch"
+		}
+		writeError(w, status, message)
 		return true
 	}
 	c.AgentScene = nil

@@ -250,6 +250,8 @@ func TestBindAssocOutboundRequiresTaskToken(t *testing.T) {
 	h := &Handler{Assoc: assoc.NewService(assoc.NewMemory())}
 	req := httptest.NewRequest(http.MethodPost, "/api/assoc/bind-outbound", strings.NewReader(`{"conversation_id":"cid-a"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Workspace-ID", "11111111-1111-4111-8111-111111111111")
+	req.Header.Set("X-Agent-ID", "22222222-2222-4222-8222-222222222222")
 	rec := httptest.NewRecorder()
 	h.BindAssocOutbound(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -465,7 +467,7 @@ func TestDispatchAssocIDsPrefersEventDataOverRouterContext(t *testing.T) {
 			Data: DispatchEventData{
 				Conversation: DispatchConversation{OpenConversationID: "cid-from-event", Type: "group"},
 				Sender:       DispatchSender{OpenDingTalkID: "open-from-event"},
-				Messages:     []DispatchMessage{{OpenMsgID: "msg-from-event"}},
+				Messages:     []DispatchMessage{{OpenMsgID: "msg-from-event", Text: "current message"}},
 			},
 		},
 		ContextPrompt: `{"openConversationId":"cid-from-context","openMsgId":"msg-from-context","senderOpenDingTalkId":"open-from-context"}`,
