@@ -63,7 +63,7 @@ type contextConfigLinkMint struct {
 
 // contextConfigLinkTabs are the configure page tabs a link may open
 // (CONTEXT_CONFIG_TABS in packages/views/dingtalk/context-config-page.tsx).
-var contextConfigLinkTabs = []string{"scope", "public", "routines"}
+var contextConfigLinkTabs = []string{"scope", "routines"}
 
 // contextConfigLinkTab checks a requested tab: "" or one of
 // contextConfigLinkTabs.
@@ -159,7 +159,7 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 		"issuer", in.Issuer, "coord_trace_id", in.CoordTraceID)
 	return multicaMCPContextConfigLinkResult{
 		URL:         pageURL,
-		DingTalkURL: "dingtalk://dingtalkclient/page/link?url=" + url.QueryEscape(pageURL) + "&pc_slide=true",
+		DingTalkURL: inboundcoord.ConfigLinkDeepLink(pageURL),
 		Scope:       scopeType,
 		ExpiresAt:   stored.ExpiresAt.UTC().Format(time.RFC3339),
 	}, nil
