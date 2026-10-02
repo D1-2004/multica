@@ -204,13 +204,13 @@ func (h *Handler) SceneConfigMCP(w http.ResponseWriter, r *http.Request) {
 	case "ping":
 		h.writeMulticaMCPResult(w, req.ID, map[string]any{})
 	case "tools/list":
-		target, ok := h.sceneConfigMCPTarget(w, r, req.ID, claims)
+		target, ok := h.sceneConfigMCPTarget(w, r, req.ID, claims, false)
 		if !ok {
 			return
 		}
 		h.writeMulticaMCPResult(w, req.ID, map[string]any{"tools": sceneConfigToolDefinitions(target.scene.Kind)})
 	case "tools/call":
-		target, ok := h.sceneConfigMCPTarget(w, r, req.ID, claims)
+		target, ok := h.sceneConfigMCPTarget(w, r, req.ID, claims, true)
 		if !ok {
 			return
 		}
@@ -222,42 +222,55 @@ func (h *Handler) SceneConfigMCP(w http.ResponseWriter, r *http.Request) {
 
 // sceneConfigMCPTarget loads the calling task and its scene and checks they
 // are still the token's: an active task of the agent whose scene re-resolves
-// to the same scene_id.
-func (h *Handler) sceneConfigMCPTarget(w http.ResponseWriter, r *http.Request, id json.RawMessage, claims auth.SceneTokenClaims) (sceneConfigTarget, bool) {
+// to the same scene_id. A refusal answers a tools/call with a readable
+// ok=false result and tools/list with a JSON-RPC error.
+func (h *Handler) sceneConfigMCPTarget(w http.ResponseWriter, r *http.Request, id json.RawMessage, claims auth.SceneTokenClaims, call bool) (sceneConfigTarget, bool) {
 	ctx := r.Context()
-	refuse := func(message string) (sceneConfigTarget, bool) {
-		h.writeMulticaMCPToolError(w, id, message)
+	refuse := func(code, message string) (sceneConfigTarget, bool) {
+		if call {
+			h.writeSceneConfigRefusal(w, id, code, message)
+		} else {
+			h.writeMulticaMCPError(w, id, -32000, code+": "+message)
+		}
+		return sceneConfigTarget{}, false
+	}
+	unavailable := func() (sceneConfigTarget, bool) {
+		if call {
+			h.writeMulticaMCPToolError(w, id, "scene configuration is unavailable")
+		} else {
+			h.writeMulticaMCPError(w, id, -32603, "scene configuration is unavailable")
+		}
 		return sceneConfigTarget{}, false
 	}
 	workspaceID, err := util.ParseUUID(claims.WorkspaceID)
 	if err != nil {
-		return refuse("scene_token_invalid")
+		return refuse("scene_token_invalid", "the scene token is invalid")
 	}
 	taskID, err := util.ParseUUID(claims.TaskID)
 	if err != nil {
-		return refuse("scene_token_invalid")
+		return refuse("scene_token_invalid", "the scene token is invalid")
 	}
 	task, err := h.Queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{ID: taskID, WorkspaceID: workspaceID})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return refuse("task_not_found")
+		return refuse("task_not_found", "this run was not found")
 	}
 	if err != nil {
 		slog.ErrorContext(ctx, "scene config MCP: task lookup failed", "task_id", claims.TaskID, "error", err)
-		return refuse("scene configuration is unavailable")
+		return unavailable()
 	}
 	if uuidToString(task.AgentID) != claims.AgentID {
-		return refuse("scene_token_invalid")
+		return refuse("scene_token_invalid", "the scene token is invalid")
 	}
 	if task.Status != "running" && task.Status != "dispatched" {
-		return refuse("task_not_active: this run has ended; its scene token no longer works")
+		return refuse("task_not_active", "this run has ended; its scene token no longer works")
 	}
 	target, ok, err := h.taskConfigScene(ctx, workspaceID, task)
 	if err != nil {
 		slog.ErrorContext(ctx, "scene config MCP: scene lookup failed", "task_id", claims.TaskID, "error", err)
-		return refuse("scene configuration is unavailable")
+		return unavailable()
 	}
 	if !ok || target.scene.SceneID != claims.SceneID {
-		return refuse("scene_changed: this run's scene can no longer be configured")
+		return refuse("scene_changed", "this run's scene can no longer be configured")
 	}
 	return target, true
 }
@@ -400,7 +413,7 @@ func (h *Handler) handleSceneConfigToolCall(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if sceneConfigWriteTools[params.Name] && target.routineRun {
-		h.writeMulticaMCPToolError(w, req.ID, "routine_run_read_only: a routine run cannot change its scene's configuration")
+		h.writeSceneConfigRefusal(w, req.ID, "routine_run_read_only", "a routine run cannot change its scene's configuration or issue configuration links")
 		return
 	}
 	ctx := r.Context()
@@ -461,6 +474,11 @@ func (h *Handler) handleSceneConfigToolCall(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// writeSceneConfigToolFailure answers a failed call. Refusals (a code and a
+// message written for the agent to relay) are ordinary results with
+// ok=false: the sandbox MCP bridge replaces the text of an isError result
+// with a generic line, so an isError refusal would never reach the agent.
+// Only unexpected failures stay isError, with a generic text.
 func (h *Handler) writeSceneConfigToolFailure(w http.ResponseWriter, r *http.Request, id json.RawMessage, tool string, target sceneConfigTarget, err error) {
 	var (
 		toolErr    *sceneConfigToolError
@@ -469,18 +487,34 @@ func (h *Handler) writeSceneConfigToolFailure(w http.ResponseWriter, r *http.Req
 	)
 	switch {
 	case errors.As(err, &toolErr):
-		h.writeMulticaMCPToolError(w, id, toolErr.code+": "+toolErr.message)
+		h.writeSceneConfigRefusal(w, id, toolErr.code, toolErr.message)
 	case errors.As(err, &routineErr):
-		h.writeMulticaMCPToolError(w, id, routineErr.Code+": "+routineErr.Message)
+		h.writeSceneConfigRefusal(w, id, routineErr.Code, routineErr.Message)
 	case errors.As(err, &linkErr):
-		h.writeMulticaMCPToolError(w, id, linkErr.message)
+		h.writeSceneConfigRefusal(w, id, "link_refused", linkErr.message)
 	case errors.Is(err, errMulticaMCPInvalidArguments):
-		h.writeMulticaMCPError(w, id, -32602, "invalid "+tool+" arguments")
+		h.writeSceneConfigRefusal(w, id, "invalid_arguments", "the arguments do not match the input schema of "+tool)
 	default:
 		slog.ErrorContext(r.Context(), "scene config MCP: tool failed", "tool", tool, "task_id", uuidToString(target.task.ID),
 			"scene_id", target.scene.SceneID, "error", err)
 		h.writeMulticaMCPToolError(w, id, tool+" failed")
 	}
+}
+
+// sceneConfigRefusal is the result of a refused call.
+type sceneConfigRefusal struct {
+	OK      bool   `json:"ok"`
+	Refused string `json:"refused"`
+	Message string `json:"message"`
+}
+
+func (h *Handler) writeSceneConfigRefusal(w http.ResponseWriter, id json.RawMessage, code, message string) {
+	refusal := sceneConfigRefusal{Refused: code, Message: message}
+	payload, _ := json.Marshal(refusal)
+	h.writeMulticaMCPResult(w, id, multicaMCPToolResult{
+		Content:           []multicaMCPContent{{Type: "text", Text: string(payload)}},
+		StructuredContent: refusal,
+	})
 }
 
 var errMulticaMCPInvalidArguments = errors.New("invalid tool arguments")

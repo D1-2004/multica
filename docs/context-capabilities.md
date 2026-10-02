@@ -1221,6 +1221,12 @@ earlier binding, an unknown scene) gets neither.
     the chat cannot tell who is asking). A 1:1 chat changes its own servers.
   - `scene_routine_run` from the chat keeps the 15-minute minimum after the
     routine's previous run (`routine_run_too_soon`).
+  - Refusals (`routine_run_read_only`, `mcp_server_needs_config_page`,
+    `task_not_active`, …) are ordinary tool results
+    `{"ok": false, "refused": <code>, "message": …}`, not `isError`: the
+    sandbox MCP bridge (pi-mcp-extension) replaces an `isError` result's text
+    with a generic line, so the agent could not relay why. Only unexpected
+    failures stay `isError`.
   - Every write posts a Host change notice into the scene. Header values,
     URL user info and query strings, and full webhook URLs never enter the
     conversation.

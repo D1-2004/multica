@@ -41,6 +41,9 @@ this run has no scene to configure; say so instead of improvising.
    unrelated changes into one confirmation.
 3. Make the change with the matching tool, then tell the requester what the
    tool returned. When a tool returns `tell_the_human`, relay it faithfully.
+   A refused call returns `ok: false` with a `refused` code and a `message`:
+   do not retry it unchanged; tell the requester the message in plain words
+   (for example, that a manager has to do it on the configuration page).
    The platform also posts a short change notice in this chat.
 4. Never put secrets (tokens, passwords, API keys) into prompts, routine
    instructions or MCP server headers. For an account, call

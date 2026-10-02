@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,9 +52,12 @@ func (f *ctxcapFixture) sceneConfigTool(t *testing.T, path string, task db.Agent
 	}
 	text := result["content"].([]any)[0].(map[string]any)["text"].(string)
 	if isError, _ := result["isError"].(bool); isError {
-		return nil, text
+		t.Fatalf("%s: isError result %q (refusals must be ok=false results the agent can read)", tool, text)
 	}
 	structured, _ := result["structuredContent"].(map[string]any)
+	if ok, present := structured["ok"]; present && ok == false {
+		return nil, fmt.Sprintf("%v: %v", structured["refused"], structured["message"])
+	}
 	return structured, ""
 }
 
