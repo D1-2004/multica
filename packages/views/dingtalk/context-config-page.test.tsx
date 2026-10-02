@@ -543,13 +543,12 @@ describe("ContextConfigPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("lets a manager fill in an app's OAuth application here, with the callback URL to register", async () => {
+  it("lets anyone in the scene fill in an app's first OAuth application here, with the callback URL to register", async () => {
     const slackId = "conn-slack";
     const slack = { ...githubConnector, id: slackId, name: "Slack", catalogSlug: "slack", acceptsPat: false, oauthAvailable: false, installUrl: "" };
+    // A link holder, not a workspace admin.
     api.getContextConfigAgent.mockResolvedValue(
       agentDetail({
-        access: "manager",
-        canConfigureApps: true,
         apps: [{ slug: "slack", name: "Slack", setup: "oauth_app", ready: false }],
         offers: { connectors: [slack], skills: [] },
       }),
@@ -573,9 +572,10 @@ describe("ContextConfigPage", () => {
       privateKeySet: false,
       optionalSecretSet: false,
       deploymentClient: false,
+      saved: false,
     };
     api.getContextConfigOAuthApp.mockResolvedValue(oauthApp);
-    api.setContextConfigOAuthApp.mockResolvedValue({ ...oauthApp, ready: true, clientId: "cid", clientSecretSet: true });
+    api.setContextConfigOAuthApp.mockResolvedValue({ ...oauthApp, ready: true, saved: true, clientId: "cid", clientSecretSet: true });
     const user = userEvent.setup();
     renderPage({ binding: groupBinding, openAuthorizeUrl: vi.fn() });
 
@@ -602,19 +602,48 @@ describe("ContextConfigPage", () => {
     expect(screen.queryByDisplayValue("csecret")).not.toBeInTheDocument();
   });
 
-  it("tells a member that an agent manager sets up an app's OAuth application on this page", async () => {
+  it("leaves a saved OAuth application to workspace admins", async () => {
     const slack = { ...githubConnector, id: "conn-slack", name: "Slack", catalogSlug: "slack", acceptsPat: false, oauthAvailable: false, installUrl: "" };
     api.getContextConfigAgent.mockResolvedValue(
       agentDetail({ apps: [{ slug: "slack", name: "Slack", setup: "oauth_app", ready: false }], offers: { connectors: [slack], skills: [] } }),
     );
     api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: allRights, bindings: [connectorOn("conn-slack")], credentials: [] });
+    api.getContextConfigOAuthApp.mockResolvedValue({
+      slug: "slack",
+      name: "Slack",
+      fields: [{ key: "client_id", optional: false, file: false }],
+      docsUrl: "",
+      callbackUrl: "https://fde-workbench.dingtalk.com/api/connectors/oauth/callback",
+      ready: false,
+      clientId: "cid",
+      clientSecretSet: true,
+      appId: "",
+      appSlug: "",
+      privateKeySet: false,
+      optionalSecretSet: false,
+      deploymentClient: false,
+      saved: true,
+    });
     const user = userEvent.setup();
     renderPage({ binding: groupBinding, openAuthorizeUrl: vi.fn() });
 
     const region = await screen.findByRole("region", { name: "Sales team" });
     const dialog = await openConnector(user, region, "Slack");
-    expect(within(dialog).getByText(copy.oauth_app_manager_only.replace("{{name}}", "Slack"))).toBeInTheDocument();
-    expect(api.getContextConfigOAuthApp).not.toHaveBeenCalled();
+    expect(await within(dialog).findByText(copy.oauth_app_admin_only.replace("{{name}}", "Slack"))).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Client ID")).not.toBeInTheDocument();
+  });
+
+  it("says when an admin switched an app off instead of adding it silently", async () => {
+    const { toast } = await import("sonner");
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: allRights });
+    api.addContextConfigApp.mockRejectedValue(new ApiError("off", 409, "", { code: "app_disabled" }));
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, openAuthorizeUrl: vi.fn() });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    await user.click(within(region).getByRole("button", { name: copy.app_add_aria.replace("{{name}}", "Notion") }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(copy.app_disabled.replace("{{name}}", "Notion")));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("confirms before removing a group credential", async () => {

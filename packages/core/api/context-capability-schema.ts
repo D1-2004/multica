@@ -511,6 +511,7 @@ export const ContextConfigOAuthAppSchema = z
     private_key_set: strictTrue,
     optional_secret_set: strictTrue,
     deployment_client: strictTrue,
+    saved: strictTrue,
   })
   .refine((value) => value.slug !== "")
   .transform(
@@ -528,6 +529,7 @@ export const ContextConfigOAuthAppSchema = z
       privateKeySet: value.private_key_set,
       optionalSecretSet: value.optional_secret_set,
       deploymentClient: value.deployment_client,
+      saved: value.saved,
     }),
   )
   .nullable()

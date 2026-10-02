@@ -2552,6 +2552,7 @@
     "app_add_aria": "{{name}} を追加",
     "app_configure_aria": "{{name}} を設定",
     "app_add_failed": "{{name}} を追加できませんでした。もう一度お試しください。",
+    "app_disabled": "{{name}} はワークスペース管理者によって無効化されているため、現在は追加できません。",
     "app_new_note": "{{name}} はこのエージェントでまだ使われていません。追加すると、ここで認可できます。",
     "app_unsupported": "{{name}} はここからの接続に対応していません。",
     "oauth_app_title": "{{name}} OAuth アプリ",
@@ -2566,10 +2567,10 @@
     "optional": "任意",
     "oauth_app_secret_kept": "設定済み。空欄なら変更しません",
     "oauth_app_required": "{{field}} を入力してください。",
-    "oauth_app_saved": "{{name}} OAuth アプリを保存しました。認可できます。",
+    "oauth_app_saved": "{{name}} の OAuth アプリを保存しました。",
     "oauth_app_failed": "OAuth アプリを保存できませんでした。確認してもう一度お試しください。",
     "oauth_app_ready": "{{name}} OAuth アプリは設定済み",
-    "oauth_app_manager_only": "{{name}} には先に OAuth アプリが必要です。エージェントの管理者がこのページで設定できます。",
+    "oauth_app_admin_only": "{{name}} の OAuth アプリはワークスペースで設定済みです。変更できるのはワークスペース管理者のみです。",
     "skill_no_description": "説明なし"
   },
   "tag_page": {

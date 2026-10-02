@@ -22,7 +22,7 @@ export const contextConfigKeys = {
     [...contextConfigKeys.agent(agentId), "scenes"] as const,
   scene: (agentId: string, sceneId: string) =>
     [...contextConfigKeys.scenes(agentId), sceneId] as const,
-  /** An official app's OAuth application (agent managers only). */
+  /** An official app's OAuth application. */
   oauthApp: (agentId: string, slug: string) =>
     [...contextConfigKeys.agent(agentId), "oauth-app", slug] as const,
   /** A scene's routines (例行任务). */

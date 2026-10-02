@@ -252,12 +252,14 @@ describe("official apps on the configure page", () => {
       private_key_set: false,
       optional_secret_set: false,
       deployment_client: false,
+      saved: true,
     };
     stubFetch(wire);
     const app = await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack");
     expect(app?.fields.map((field) => field.key)).toEqual(["client_id", "client_secret", "signing_secret"]);
     expect(app?.callbackUrl).toBe("https://fde-workbench.dingtalk.com/api/connectors/oauth/callback");
     expect(app?.ready).toBe(true);
+    expect(app?.saved).toBe(true);
 
     const fetch = stubFetch(wire);
     await new ApiClient(base).setContextConfigOAuthApp(agentId, "slack", { clientId: "cid", clientSecret: "" });
@@ -276,6 +278,8 @@ describe("official apps on the configure page", () => {
     expect(app?.docsUrl).toBe("");
     expect(app?.callbackUrl).toBe("");
     expect(app?.ready).toBe(false);
+    // An older server without the flag reads as none saved.
+    expect(app?.saved).toBe(false);
   });
 });
 
