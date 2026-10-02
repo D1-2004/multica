@@ -50,13 +50,13 @@ make a process outlive the sandbox: when a task is cancelled or fails, the
 platform may end its processes within seconds; otherwise they run until the
 sandbox is released or idles out, and a later turn that reuses the sandbox may
 still find them. Sandbox reuse is on for each agent unless its execution
-setting `sandbox_connection_reuse` is off. When that switch is on and the
-runtime image declares `sandbox_connection_reuse_v1`, tasks in the same scene
-and from the same trigger share one sandbox, up to 6 at a time (or
-`runtime.fc_e2b.connection_reuse.max_concurrent_tasks`). A scheduled scene
+setting `sandbox_connection_reuse` is off. When that switch is on, tasks in
+the same scene and from the same trigger share one sandbox, up to 6 at a time
+(or `runtime.fc_e2b.connection_reuse.max_concurrent_tasks`). The runtime image
+does not have to declare `sandbox_connection_reuse_v1`. A scheduled scene
 task with no single trigger shares the scene's public sandbox. A seventh
-concurrent task, an older image, an A2A task, and an agent on the employee
-filesystem each keep a private sandbox. Do not leave work in background
+concurrent task, an A2A task, and an agent on the employee filesystem each
+keep a private sandbox. Do not leave work in background
 processes. Persist patches,
 logs, and artifacts to Issue comments/attachments before exiting. Attachment upload
 receipts include `size_bytes` and `sha256`; comment JSON uses `size_bytes`,

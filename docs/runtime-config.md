@@ -149,7 +149,7 @@ Tasks that share one scene and one trigger can run in the same FC/E2B sandbox. E
 
 - `max_concurrent_tasks` omitted or `0` means 6. Any other value must be 1–50. The whole key may be omitted; the cap is still 6 and the agent switch still decides.
 - `enabled`, `workspace_ids` and `agent_ids` are leftover gray-list fields. They are still parsed, and identifiers must still be canonical lowercase UUIDs without duplicates, so a document published for the earlier list keeps loading. They do not select anyone.
-- The runtime image must declare capability `sandbox_connection_reuse_v1` in its metadata. Catalogued templates are not stamped with that capability. An older image, an A2A task, or a task with no scene keeps one sandbox per chat or issue.
+- Image metadata is not consulted. Catalogued templates are not stamped with `sandbox_connection_reuse_v1`, and a runtime without that capability still reuses. An A2A task or a task with no scene keeps one sandbox per chat or issue.
 - A scheduled or other scene task with no single trigger uses the scene's public bucket. Several speakers in one run do too. One person's sandbox is never used for someone else's run.
 - Employee filesystem and DSH host sandboxes stay on their own scope and do not join this bucket.
 - SDK `ConnectSandbox` renews to the task lifetime (4800 seconds unless `timeout_seconds` is higher). A connect must not shrink a sandbox that task start just renewed.
@@ -224,6 +224,7 @@ Never reuse a pre-release document in production. Publish and verify each unit i
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-10-02 | Scene reuse no longer requires capability `sandbox_connection_reuse_v1`. | Catalogued images never carried that name, so the check kept every current runtime on a fresh sandbox. The agent switch remains the on/off control. |
 | 2026-10-02 | `runtime.fc_e2b.connection_reuse` keeps only `max_concurrent_tasks`. | The on/off switch is `agent.sandbox_connection_reuse`, on by default. `enabled`, `workspace_ids` and `agent_ids` stay in the parser so an older document still loads, and they no longer select anyone. |
 | 2026-10-02 | Added `runtime.fc_e2b.connection_reuse`. | Tasks in the same scene and trigger can share one sandbox, capped at 6, behind an explicit workspace or agent gray list. |
 | 2026-10-01 | `runtime.use_dws_for_tag` also gates the native subscription event source. | Native subscription reuses the DWS SDK event streams; no separate Diamond key or environment variable. |
