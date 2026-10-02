@@ -2,6 +2,9 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"github.com/multica-ai/multica/server/internal/connectorcatalog"
+	"github.com/multica-ai/multica/server/internal/connectorconfig"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/forwarding"
 	"net/http"
@@ -65,7 +68,7 @@ func TestConnectorCallbackTransparentForwarding(t *testing.T) {
 	prod := &Handler{cfg: Config{AppURL: "https://prod.example.test", FrontendOrigin: "https://prod.example.test"}}
 	useConnectorOAuthForward(t, prod)
 	var err error
-	prod.Forwarding, err = forwarding.New(map[string]string{"pre": upstream.URL}, upstream.Client().Transport)
+	prod.Forwarding, err = forwarding.New(forwarding.Config{Targets: map[string]string{"pre": upstream.URL}, Transport: upstream.Client().Transport})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +119,7 @@ func TestConnectorOAuthPublicOriginRoundTrip(t *testing.T) {
 	pre.cfg.FrontendOrigin = target.URL
 	pre.cfg.ForwardPublicBaseURL = catalogAppOrigin + "/forward/pre"
 	var err error
-	f.h.Forwarding, err = forwarding.New(map[string]string{"pre": target.URL}, target.Client().Transport)
+	f.h.Forwarding, err = forwarding.New(forwarding.Config{Targets: map[string]string{"pre": target.URL}, Transport: target.Client().Transport})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,5 +167,65 @@ func TestInvalidProxiedOAuthKeepsPublicRecoveryLinks(t *testing.T) {
 	h.ConnectorOAuthCallback(w, r)
 	if strings.Contains(w.Body.String(), "https://pre-app.example.test") || !strings.Contains(w.Body.String(), "https://app.example.test/forward/pre/dingtalk/configure") {
 		t.Fatalf("recovery links leave public origin: %s", w.Body.String())
+	}
+}
+
+func TestPublicConfigRejectsSelfCallbackWithoutChangingDirectFlow(t *testing.T) {
+	for _, kind := range []connectorcatalog.AuthKind{connectorcatalog.AuthOAuthGitHubApp, connectorcatalog.AuthOAuthPreregistered} {
+		t.Run(string(kind), func(t *testing.T) {
+			f := newCatalogFixture(t)
+			provider := "github"
+			if kind == connectorcatalog.AuthOAuthPreregistered {
+				f.gh.AuthKind = kind
+				provider = f.gh.Slug
+				var err error
+				connectorCatalog, err = connectorcatalog.New(f.dcr, f.gh)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			c := f.create(t, f.gh)
+			f.offer(t, c.ID)
+			f.grant(t, contextcap.ScopePerson, catalogTestStaff)
+			sealed, err := connectorconfig.SealString(f.box, "configured-client-secret")
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := connectorconfig.Create(context.Background(), testPool, testWorkspaceID, testUserID, connectorconfig.AppInput{
+				Provider: provider, DisplayName: "Self callback", ClientID: "configured-client", ClientSecret: "configured-client-secret", CallbackMode: connectorconfig.CallbackSelf,
+			}, sealed, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := connectorconfig.Delete(context.Background(), testPool, testWorkspaceID, app.ID); err != nil {
+					t.Error(err)
+				}
+			})
+			f.h.cfg.ForwardPublicBaseURL = catalogAppOrigin + "/forward/pre"
+			f.h.cfg.AppURL = preReleaseOf(catalogAppOrigin)
+			f.h.cfg.FrontendOrigin = f.h.cfg.AppURL
+			scope := f.scope(c.ID, contextcap.ScopePerson, catalogTestStaff)
+			_, err = f.h.startConnectorOAuth(context.Background(), connectorOAuthStart{connectorOAuthScope: scope, ReturnTo: f.h.cfg.ForwardPublicBaseURL + "/dingtalk/configure"})
+			var oauthErr *connectorOAuthError
+			if !errors.As(err, &oauthErr) || oauthErr.Code != "public_callback_required" {
+				t.Fatalf("self callback was overridden: %v", err)
+			}
+			var states int
+			if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM connector_oauth_state WHERE connector_id=$1`, c.ID).Scan(&states); err != nil || states != 0 {
+				t.Fatalf("rejected connect created state: %d %v", states, err)
+			}
+			started, err := f.h.startConnectorOAuth(context.Background(), connectorOAuthStart{connectorOAuthScope: scope})
+			if err != nil {
+				t.Fatal(err)
+			}
+			u, err := url.Parse(started.AuthorizeURL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if u.Query().Get("redirect_uri") != f.h.cfg.AppURL+connectorOAuthCallbackPath {
+				t.Fatalf("direct self callback changed: %s", u.Query().Get("redirect_uri"))
+			}
+		})
 	}
 }

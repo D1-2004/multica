@@ -18,17 +18,28 @@ type Gateway struct {
 	targets   map[string]*url.URL
 	transport http.RoundTripper
 	slots     chan struct{}
+	secret    []byte
+	clientIP  func(*http.Request) string
 }
 
-func New(targets map[string]string, transport http.RoundTripper) (*Gateway, error) {
+type Config struct {
+	Targets            map[string]string
+	Transport          http.RoundTripper
+	RegistrationSecret []byte
+	ClientIP           func(*http.Request) string
+}
+
+func New(cfg Config) (*Gateway, error) {
 	g := &Gateway{targets: make(map[string]*url.URL), slots: make(chan struct{}, 128), transport: &http.Transport{
 		Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 90 * time.Second,
 	}}
-	if transport != nil {
-		g.transport = transport
+	g.secret = append([]byte(nil), cfg.RegistrationSecret...)
+	g.clientIP = cfg.ClientIP
+	if cfg.Transport != nil {
+		g.transport = cfg.Transport
 	}
-	for name, raw := range targets {
+	for name, raw := range cfg.Targets {
 		if !targetName.MatchString(name) {
 			return nil, errors.New("invalid forwarding target name")
 		}
@@ -49,7 +60,7 @@ func ParseTargets(raw string) (map[string]string, error) {
 	if err := json.Unmarshal([]byte(raw), &targets); err != nil || targets == nil {
 		return nil, errors.New("invalid MULTICA_FORWARD_TARGETS object")
 	}
-	_, err := New(targets, nil)
+	_, err := New(Config{Targets: targets})
 	return targets, err
 }
 
@@ -150,6 +161,9 @@ func (g *Gateway) proxy(w http.ResponseWriter, r *http.Request, name, p, binding
 				}
 			}
 			pr.Out.Header.Set(HopHeader, name)
+			if g.clientIP != nil {
+				signClientIP(pr.Out, g.secret, name, g.clientIP(pr.In), time.Now())
+			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			cookies := resp.Cookies()

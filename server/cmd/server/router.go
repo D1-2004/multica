@@ -462,7 +462,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if forwardErr != nil {
 		panic(forwardErr)
 	}
-	h.Forwarding, forwardErr = forwarding.New(forwardTargets, nil)
+	forwardSecret := []byte(signupConfig.A2AForwardRegistrationSecret)
+	if (len(forwardTargets) > 0 || signupConfig.ForwardPublicBaseURL != "") && len(forwardSecret) < 32 {
+		panic("environment forwarding requires a shared registration secret of at least 32 characters")
+	}
+	forwardTrustedProxies := middleware.ParseTrustedProxies(os.Getenv("RATE_LIMIT_TRUSTED_PROXIES"))
+	h.Forwarding, forwardErr = forwarding.New(forwarding.Config{
+		Targets: forwardTargets, RegistrationSecret: forwardSecret,
+		ClientIP: func(r *http.Request) string { return middleware.RateLimitClientIP(r, forwardTrustedProxies) },
+	})
 	if forwardErr != nil {
 		panic(forwardErr)
 	}
@@ -1910,6 +1918,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return assets
 		})
 	}
+	r.Use(forwarding.AcceptClientIP(forwardSecret, localAssetTarget))
 	r.Use(h.Forwarding.Middleware)
 
 	if opts.SandboxRelay != nil {

@@ -21,6 +21,8 @@ https://fde-workbench.dingtalk.com/forward/pre/dingtalk/configure?link=...
 
 新业务应增加明确的 policy 和对应测试，复用目标映射、签名与传输基础设施。不要默认放行整个 `/api/`。A2A 仍保留专用 credential 替换、身份注册和流式响应规则；sandbox relay 的任务令牌和调度协议不变。两者不是浏览器会话，不能改用 H5 Cookie 策略。
 
+登录限流复用 `RATE_LIMIT_TRUSTED_PROXIES` 配置的可信代理链解析客户端地址，再用注册共享密钥签名 target、method、完整 URI、IP 和时间戳。目标仅将一分钟窗口内验证通过的地址用于限流，不将它当作用户身份；重放仍命中同一 IP 桶。启用入口前必须核对可信代理 CIDR，不能信任浏览器自行填写的 XFF。
+
 目标必须来自部署配置，只接受 HTTPS origin；请求中的任意 URL 不能成为 upstream。目标不可用返回 502/503，未登记目标和路径返回 404，转发环路返回 508。已选中的预发请求不回落到线上执行。
 
 ## 配置与构建
@@ -67,6 +69,8 @@ Next 的 assetPrefix 会写入 JS/CSS/字体资源引用，不能只在运行时
 3. 线上验证共享密钥、时间戳、TTL 和 `forward_target -> home_origin` 的精确映射，用 Redis 保存登记。目标未部署、映射不匹配或注册失败时 start 明确失败。
 4. 供应商仍回到固定线上 `/api/connectors/oauth/callback`，GitHub 为 `/api/github/authorize`。线上原子消费登记，用同一个 gateway 代理回调，只转发与该 state 对应的浏览器 nonce Cookie。
 5. 预发再次校验自己的 state/PKCE/nonce，保存凭证，再返回线上前缀页面。固定 callback 与配置页 Cookie 不混用；回调 URL 重放失败。
+
+工作区 GitHub 或预注册应用若使用 `callback_mode=self`，公共页面发起授权会在创建 state 前返回 409 `public_callback_required`；需要先在应用控制台登记线上固定回调并改为 `production_forward`，不能覆盖原登记地址。
 
 直接从预发原生页面发起、`return_to` 仍为预发的已有 OAuth 流程维持原 302 跳转语义。非 `mcpc.` GitHub 安装回调保持原行为。
 

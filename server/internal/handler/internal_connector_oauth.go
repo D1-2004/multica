@@ -242,6 +242,10 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	}
 	publicOrigin, forwardTarget := h.connectorOAuthPublicReturn(returnTo)
 	if forwardTarget != "" {
+		if ghClient.CallbackMode == connectorconfig.CallbackSelf || preregistered.CallbackMode == connectorconfig.CallbackSelf {
+			return connectorOAuthStarted{}, oauthStartError(http.StatusConflict, "public_callback_required", "this app uses a self callback; configure its production callback before connecting through the public page")
+		}
+
 		redirectOrigin = publicOrigin
 	}
 	state, err := randomOAuthValue()

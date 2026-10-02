@@ -12,7 +12,7 @@ func testGateway(t *testing.T, handler http.HandlerFunc) (*Gateway, *httptest.Se
 	t.Helper()
 	upstream := httptest.NewTLSServer(handler)
 	t.Cleanup(upstream.Close)
-	g, err := New(map[string]string{"pre": upstream.URL}, upstream.Client().Transport)
+	g, err := New(Config{Targets: map[string]string{"pre": upstream.URL}, Transport: upstream.Client().Transport})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,11 +126,11 @@ func TestGatewayPreventsLoopsAndNetworkFallback(t *testing.T) {
 
 func TestConfigurationRejectsUnsafeTargets(t *testing.T) {
 	for _, origin := range []string{"http://pre.test", "https://user:pass@pre.test", "https://pre.test/path", "https://pre.test?secret=x", "https://pre.test#x", "https://pre.test:bad"} {
-		if _, err := New(map[string]string{"pre": origin}, nil); err == nil {
+		if _, err := New(Config{Targets: map[string]string{"pre": origin}}); err == nil {
 			t.Errorf("accepted %q", origin)
 		}
 	}
-	if _, err := New(map[string]string{"../pre": "https://pre.test"}, nil); err == nil {
+	if _, err := New(Config{Targets: map[string]string{"../pre": "https://pre.test"}}); err == nil {
 		t.Error("accepted unsafe key")
 	}
 	for _, base := range []string{"https://prod.test/forward/pre", "https://prod.test/forward/candidate-1"} {
