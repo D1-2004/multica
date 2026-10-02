@@ -85,6 +85,9 @@ type Tool struct {
 	Description string
 	Schema      map[string]any
 	Effect      bool
+	// Terminal declares a known disposition so incompatible batches can be
+	// rejected before any Host effect. Empty means the result is not fixed.
+	Terminal Disposition
 }
 
 // ToolCall preserves the provider's correlation ID for the entire native batch.

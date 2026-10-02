@@ -546,3 +546,39 @@ func TestInvalidEffectParamsCannotFinishPreviouslyAcceptedBatch(t *testing.T) {
 		t.Fatalf("invalid B missing: %+v", result.ToolOutcomes[1])
 	}
 }
+
+func TestNoEffectTerminalBatchRepairsBeforeAnyHostExecution(t *testing.T) {
+	for _, effectName := range []string{"dispatch_task", "another_effect"} {
+		t.Run(effectName, func(t *testing.T) {
+			config := testConfig()
+			config.Tools = append(config.Tools, Tool{Name: "answer", Terminal: Reply, Schema: map[string]any{"properties": map[string]any{}}}, Tool{Name: "another_effect", Effect: true, Schema: map[string]any{"properties": map[string]any{}}})
+			calls, executed := 0, 0
+			model := modelFunc(func(context.Context, openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+				calls++
+				if calls < MaxModelCalls {
+					args := `{}`
+					if effectName == "dispatch_task" {
+						args = `{"reply":"queued"}`
+					}
+					return completion(t, "", "tool_calls", nativeCall("effect", effectName, args), nativeCall("answer", "answer", `{}`)), nil
+				}
+				return completion(t, "", "tool_calls", nativeCall("read", "read_context", `{}`), nativeCall("answer", "answer", `{}`)), nil
+			})
+			host := hostFunc(func(_ context.Context, _ Identity, call ToolCall) (ToolResult, error) {
+				executed++
+				if call.Name == "read_context" {
+					return ToolResult{Content: "existing context"}, nil
+				}
+				if call.Name == "answer" {
+					return ToolResult{Content: "reply", Terminal: &Decision{Kind: Reply, Reply: "已有答案"}}, nil
+				}
+				t.Fatalf("rejected batch executed effect: %s", call.Name)
+				return ToolResult{}, nil
+			})
+			out, err := New(config, model, host).Run(context.Background(), testInput())
+			if err != nil || out.Kind != Reply || out.Reply != "已有答案" || calls != MaxModelCalls || executed != 2 || len(out.Receipts) != 0 || len(out.ToolOutcomes) != 2 {
+				t.Fatalf("out=%+v calls=%d executed=%d err=%v", out, calls, executed, err)
+			}
+		})
+	}
+}
