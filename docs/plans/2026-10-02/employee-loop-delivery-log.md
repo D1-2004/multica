@@ -9,7 +9,7 @@
 | B0 | R2 方案归档；修复新库历史迁移依赖顺序 | 本地验证与两阶段审查通过，准备部署 |
 | B1 | EmployeeTask 目标/追加记录/Run 持久化 | 真实 PG race 与两阶段审查通过，准备交付 |
 | B2 | Work Packet、Issue/Direct 接缝 | 未实施 |
-| B3 | GawkBot 内核、首轮回复与 3 调用上限 | 未实施 |
+| B3 | GawkBot 内核、首轮回复与 3 调用上限 | 内核两阶段审查通过；生产消费另批接线 |
 | B4 | 隔离 memory/learning、入口及回报闭环 | 未实施 |
 | B5 | 配置开关、预发真实场景与 Runtime 验证 | 未实施 |
 
@@ -42,3 +42,12 @@
 - B0 已推送目标分支，commit `685f68c73`；基线同时保留其他人的 `d11fe440b`（FC 场域/触发者复用）。
 - 触发 pipeline 66 / CR 36355253，实例 `3110299956` 后被外部操作取消。新实例 `3110300031` 正在构建，最终验收需核对实际 revision。
 - 预发 DB 直连演练因网络超时未完成；没有执行或提交预发迁移 SQL。正式迁移仅由既有 Aone release order 自动执行；后续以部署及服务日志验证。
+
+## B1 预发与 B3 内核证据
+
+- B1 干净交付分支 rebase 后提交为 `97cb044ae`，目标 `feat/tag-multitenant` 已推送。pipeline 66 实例 `3110300728` 的构建、部署、集成测试均 SUCCESS，停在人工预发验证；bootstrap 回读 `9600_employee_task` 已应用。
+- GawkBot 固定提交的内核、队列、工具注册、会话和 prompt/voice 片段实际移植，LICENSE/NOTICE/SOURCE_MAP 随代码保留。
+- 内核支持首轮直接回复、首轮 Host 已受理派发后回复、原生工具 ID 与完整批次、3 次真实请求预算、ctx 取消；不调用旧 finish_check/composer。
+- 独立审查两次捕获并复现部分成功问题：多个 terminal 提前退出、后续 effect 无 receipt 错误被整体成功覆盖。均新增行为反例红绿修复，逐项 outcome/receipt 保留；独立 overlay、race/vet 复审通过。
+- 可选 `employeeintegration` 模型 smoke 需要显式环境开关，默认不联网；本地 HTTP fixture 验证两场景与真实请求总数上限。尚未声称真实模型或 Host 副作用验收。
+- Runtime 预检：默认预发 profile 返回 401 invalid token，已请用户本机刷新登录；私有 canary/真实 FC 与本地 Daemon 验证待有效 PAT。
