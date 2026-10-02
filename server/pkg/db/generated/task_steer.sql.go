@@ -513,7 +513,8 @@ func (q *Queries) MergeSteerIssueComment(ctx context.Context, arg MergeSteerIssu
 
 const setSteerSuccessorContext = `-- name: SetSteerSuccessorContext :exec
 UPDATE agent_task_queue
-SET context = COALESCE(context, '{}'::jsonb) || COALESCE($1::jsonb, '{}'::jsonb) || '{"task_steer":true}'::jsonb,
+SET context = (COALESCE(context, '{}'::jsonb) - 'agent_identity_context_token' - 'agent_identity_context_token_expires_at' - 'agent_identity_context_token_source')
+      || COALESCE($1::jsonb, '{}'::jsonb) || '{"task_steer":true}'::jsonb,
     priority = 4
 WHERE id = $2 AND status = 'queued'
 `

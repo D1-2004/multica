@@ -54,6 +54,22 @@ func TestParseFCE2BTaskStopReceipt(t *testing.T) {
 	}
 }
 
+func TestSteerStopProofSeparatesUnreadableServicesFromMatchingRunners(t *testing.T) {
+	for _, tc := range []struct {
+		raw       string
+		quiescent bool
+	}{
+		{`{"version":4,"quiescent":true,"unresolved_runners":0,"unreadable":1,"remaining":0}`, true},
+		{`{"version":4,"quiescent":false,"unresolved_runners":1,"unreadable":1,"remaining":0}`, false},
+		{`{"version":4,"remaining":0}`, false},
+	} {
+		r, err := parseFCE2BTaskStopReceipt(tc.raw)
+		if err != nil || r.Quiescent != tc.quiescent {
+			t.Fatalf("receipt %s: %+v %v", tc.raw, r, err)
+		}
+	}
+}
+
 type stopRecordingRunner struct {
 	mu     sync.Mutex
 	calls  [][]string

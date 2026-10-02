@@ -114,6 +114,31 @@ func TestSteerIssueConcurrentCorrectionsWaitForProcessExit(t *testing.T) {
 	}
 }
 
+func TestSteerHumanInputHasNoPhantomOrPreviousIdentityToken(t *testing.T) {
+	f := newIssueFollowUpFixture(t)
+	ctx := context.Background()
+	previous := f.params
+	previous.QueueMode = "steer"
+	previous.IdempotencyKey = "external-input"
+	previous.DispatchContext = []byte(`{"agent_identity_context_token_expires_at":4102444800000,"agent_identity_context_token_source":"external"}`)
+	if _, err := f.svc.CreateExternalFollowUp(ctx, previous, IssueCommentCreateOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	human := f.params
+	human.QueueMode = "steer"
+	human.IdempotencyKey = "human-input"
+	human.AgentIdentityContextToken = ""
+	human.DispatchContext = nil
+	result, err := f.svc.CreateExternalFollowUp(ctx, human, IssueCommentCreateOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env, err := fcE2BAgentIdentityExtraEnv(result.Task, FCE2BConfig{})
+	if err != nil || len(env) != 0 {
+		t.Fatalf("human steer retained an invalid/earlier token: env keys=%d err=%v", len(env), err)
+	}
+}
+
 func TestSteerIssueMergedCallbacksAllReceiveOneExecutionResult(t *testing.T) {
 	f := newIssueFollowUpFixture(t)
 	ctx := context.Background()
