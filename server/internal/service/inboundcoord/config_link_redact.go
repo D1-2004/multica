@@ -12,13 +12,25 @@ const ConfigLinkPagePath = "/dingtalk/configure?link="
 // ConfigLinkPlaceholder replaces a configuration link in stored text.
 const ConfigLinkPlaceholder = "[configuration link]"
 
+// configLinkEncoded is a configuration link URL percent-encoded once or
+// twice, or partly (the separators of the query alone): the optional origin,
+// the page path and the token.
+const configLinkEncoded = `(?:https?(?:%3A|%253A)(?:%2F|%252F){2}[A-Za-z0-9._~%-]*?)?` +
+	`(?:%2F|%252F)dingtalk(?:%2F|%252F)configure(?:%3F|%253F)link(?:=|%3D|%253D)[A-Za-z0-9_%-]+`
+
 var (
+	// configLinkDeepLinkPattern matches the whole DingTalk deep link around
+	// an encoded configuration link (ConfigLinkDeepLink), so a redacted
+	// Markdown link keeps no live-looking target. The trailing pc_slide may
+	// be JSON-escaped.
+	configLinkDeepLinkPattern = regexp.MustCompile(`(?i)dingtalk://dingtalkclient/page/link\?url=` + configLinkEncoded +
+		`(?:(?:&|\\u0026)pc_slide=true)?`)
 	// configLinkURLPattern matches a configuration link URL: the optional
 	// origin, the page path and the token.
 	configLinkURLPattern = regexp.MustCompile(`(?:https?://\S*?)?` + regexp.QuoteMeta(ConfigLinkPagePath) + `[A-Za-z0-9_%-]+`)
-	// configLinkEncodedPattern matches the same URL percent-encoded once, as
-	// it appears inside the dingtalk://…?url= deep link.
-	configLinkEncodedPattern = regexp.MustCompile(`(?i)(?:https?%3A%2F%2F[A-Za-z0-9._~%-]*?)?%2Fdingtalk%2Fconfigure%3Flink%3D[A-Za-z0-9_%-]+`)
+	// configLinkEncodedPattern matches the same URL percent-encoded, as it
+	// appears inside a deep link or a URL parameter.
+	configLinkEncodedPattern = regexp.MustCompile(`(?i)` + configLinkEncoded)
 )
 
 // RedactConfigLinks replaces every configuration link URL in text, plain or
@@ -32,6 +44,7 @@ func RedactConfigLinks(text string) string {
 	if !strings.Contains(text, "configure") {
 		return text
 	}
+	text = configLinkDeepLinkPattern.ReplaceAllString(text, ConfigLinkPlaceholder)
 	text = configLinkURLPattern.ReplaceAllString(text, ConfigLinkPlaceholder)
 	return configLinkEncodedPattern.ReplaceAllString(text, ConfigLinkPlaceholder)
 }

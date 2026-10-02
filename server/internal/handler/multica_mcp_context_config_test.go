@@ -325,4 +325,9 @@ func TestContextCapabilitiesLinkOpensATab(t *testing.T) {
 	if _, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, groupTask, map[string]any{"tab": "settings"})); !isError || !strings.Contains(text, "tab must be one of") {
 		t.Fatalf("unknown tab isError=%v text=%q", isError, text)
 	}
+	// The removed 公开能力 tab opens the default tab instead of failing a run
+	// that listed the tools before it went away.
+	if link, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, groupTask, map[string]any{"tab": "public"})); isError || strings.Contains(link.URL, "&tab=") {
+		t.Fatalf("public tab isError=%v url=%q text=%q", isError, link.URL, text)
+	}
 }

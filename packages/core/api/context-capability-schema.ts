@@ -18,6 +18,7 @@ import type {
   ContextConfigAccess,
   ContextConfigAgentDetail,
   ContextConfigCatalogApp,
+  ContextConfigOrgEffect,
   ContextConfigOrgScope,
   ContextConfigScopeContent,
   ContextConfigTenantRef,
@@ -480,6 +481,33 @@ const CatalogAppSchema = z
   .refine((app) => app.slug !== "")
   .transform((app): ContextConfigCatalogApp => ({ slug: app.slug, name: app.name || app.slug }));
 
+const nonEmptyId = z.string().min(1);
+
+const OrgEffectSchema = z
+  .object({
+    connector_ids: tolerantList(nonEmptyId),
+    skill_ids: tolerantList(nonEmptyId),
+    credential_connector_ids: tolerantList(nonEmptyId),
+  })
+  .transform(
+    (value): ContextConfigOrgEffect => ({
+      connectorIds: value.connector_ids,
+      skillIds: value.skill_ids,
+      credentialConnectorIds: value.credential_connector_ids,
+    }),
+  );
+
+/** The enterprise effect an older backend did not send, read from the
+ * managers-only enterprise level when there is one. */
+function orgEffectOf(org: ContextConfigOrgScope | null | undefined): ContextConfigOrgEffect {
+  const enabled = (org?.bindings ?? []).filter((binding) => binding.enabled === true);
+  return {
+    connectorIds: enabled.filter((binding) => binding.resourceType === "connector").map((binding) => binding.resourceId),
+    skillIds: enabled.filter((binding) => binding.resourceType === "skill").map((binding) => binding.resourceId),
+    credentialConnectorIds: (org?.credentials ?? []).map((credential) => credential.connectorId),
+  };
+}
+
 export const ContextConfigAgentDetailSchema = z
   .object({
     agent: AgentSummaryWireSchema,
@@ -526,6 +554,7 @@ export const ContextConfigAgentDetailSchema = z
     jsapi_available: strictTrue,
     access: configAccess,
     apps: tolerantList(CatalogAppSchema),
+    org_effect: OrgEffectSchema.nullish().catch(null),
   })
   .transform(
     (value): ContextConfigAgentDetail => ({
@@ -583,6 +612,7 @@ export const ContextConfigAgentDetailSchema = z
       jsapiAvailable: value.jsapi_available,
       access: value.access,
       apps: [...new Map(value.apps.map((app) => [app.slug, app])).values()],
+      orgEffect: value.org_effect ?? orgEffectOf(value.org),
     }),
   );
 

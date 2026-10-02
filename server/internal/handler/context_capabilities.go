@@ -174,6 +174,17 @@ type contextCapOfferedConnectorDTO struct {
 	InstallURL string `json:"install_url,omitempty"`
 }
 
+// contextCapOrgEffectDTO is what the enterprise level of the page's tenant
+// turns on and holds accounts for, as ids only. Every caller who may open the
+// detail gets it, because those items apply in their scopes too (switches add
+// up across levels; credentials resolve person > scene > org > workspace).
+// The editable enterprise layer itself (Org) stays managers-only.
+type contextCapOrgEffectDTO struct {
+	ConnectorIDs           []string `json:"connector_ids"`
+	SkillIDs               []string `json:"skill_ids"`
+	CredentialConnectorIDs []string `json:"credential_connector_ids"`
+}
+
 // contextCapCatalogAppDTO is one official app of the connector catalog: the
 // configure page lists every app it supports, including the ones not yet
 // opened for this agent.
@@ -211,6 +222,9 @@ type contextCapAgentDetailResponse struct {
 	// Apps is the connector catalog in its order; an app becomes usable once
 	// the agent's manager adds it (Global or Offers then lists it).
 	Apps []contextCapCatalogAppDTO `json:"apps"`
+	// OrgEffect is the enterprise level's effect on Tenant for every caller;
+	// null when there is no tenant.
+	OrgEffect *contextCapOrgEffectDTO `json:"org_effect"`
 }
 
 func contextCapTime(t time.Time) string {
@@ -1287,8 +1301,38 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 			resp.Tenants = append(resp.Tenants, ref)
 		}
 	}
-	// The enterprise layer is for agent managers only: nobody else may
-	// change it (contextCapScopeRights), and it is not shown to them either.
+	// Everyone who may open the detail sees what the enterprise level turns
+	// on and holds accounts for (ids only): it applies in their scopes too.
+	if resp.Tenant != nil {
+		bindings, err := contextcap.ListScopeBindings(ctx, h.DB, a.WorkspaceID, a.ID, contextcap.ScopeOrg, a.OrgID, a.OrgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "binding lookup failed")
+			return
+		}
+		credentials, err := contextcap.ListScopeCredentials(ctx, h.DB, a.WorkspaceID, a.ID, contextcap.ScopeOrg, a.OrgID, a.OrgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "credential lookup failed")
+			return
+		}
+		effect := &contextCapOrgEffectDTO{ConnectorIDs: []string{}, SkillIDs: []string{}, CredentialConnectorIDs: []string{}}
+		for _, binding := range contextCapBindingViews(bindings, offers) {
+			if !binding.Enabled {
+				continue
+			}
+			switch binding.ResourceType {
+			case contextcap.ResourceConnector:
+				effect.ConnectorIDs = append(effect.ConnectorIDs, binding.ResourceID)
+			case contextcap.ResourceSkill:
+				effect.SkillIDs = append(effect.SkillIDs, binding.ResourceID)
+			}
+		}
+		for _, credential := range credentials {
+			effect.CredentialConnectorIDs = append(effect.CredentialConnectorIDs, credential.ConnectorID)
+		}
+		resp.OrgEffect = effect
+	}
+	// The editable enterprise layer is for agent managers only: nobody else
+	// may change it (contextCapScopeRights), and it is not shown to them.
 	if resp.Tenant != nil && manages {
 		orgScope, err := h.contextCapResolveScopeWith(ctx, a, userID, contextcap.ScopeOrg, a.OrgID, contextCapResolveOptions{Manages: &manages})
 		if err != nil {

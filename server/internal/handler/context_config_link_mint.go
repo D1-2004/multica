@@ -66,9 +66,13 @@ type contextConfigLinkMint struct {
 var contextConfigLinkTabs = []string{"scope", "routines"}
 
 // contextConfigLinkTab checks a requested tab: "" or one of
-// contextConfigLinkTabs.
+// contextConfigLinkTabs. "public" (the removed 公开能力 tab) still opens the
+// default tab, so a run that listed the tools before the change does not fail.
 func contextConfigLinkTab(tab string) (string, error) {
 	tab = strings.TrimSpace(tab)
+	if tab == "public" {
+		return "", nil
+	}
 	if tab == "" || slices.Contains(contextConfigLinkTabs, tab) {
 		return tab, nil
 	}
