@@ -2794,6 +2794,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/unsubscribe/subtree", h.UnsubscribeFromIssueSubtree)
 					r.Get("/active-task", h.GetActiveTaskForIssue)
 					r.Post("/tasks/{taskId}/cancel", h.CancelTask)
+					r.With(handler.RequireHumanActor).Post("/steer", h.SteerIssue)
 					r.Post("/rerun", h.RerunIssue)
 					r.Post("/quick-actions/{quickActionId}/run", h.RunQuickAction)
 					r.Post("/quick-actions/{quickActionId}/render", h.RenderQuickAction)

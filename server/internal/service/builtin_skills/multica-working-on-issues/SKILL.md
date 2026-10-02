@@ -239,6 +239,10 @@ on it. These are the contracts, not advice:
   into the next run. Authenticated dispatch `queueMode=steer` cancels the old
   attempt and queues the correction; inputs arriving during termination merge
   into one successor. Do not equate `cancelled` with a stopped process.
+  A human API client can `POST /api/issues/{id}/steer` with a correction in
+  `content` and a stable `Idempotency-Key` header. This checks permission to
+  invoke the assigned agent and creates the next member-comment input on the
+  same Issue. Ordinary comments keep their existing enqueue behavior.
 - **Failed issue-triggered tasks** may roll an issue from `in_progress` back to
   `todo` when no active task / retry remains — that is the main server-owned
   status write on the agent-run path.

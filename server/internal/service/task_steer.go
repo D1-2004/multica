@@ -135,6 +135,14 @@ func (s *IssueCommentService) createSteeredExternalFollowUp(ctx context.Context,
 		}
 	}
 	private := map[string]json.RawMessage{}
+	if len(params.DispatchContext) == 0 && activeErr == nil {
+		var previous map[string]json.RawMessage
+		if json.Unmarshal(active.Context, &previous) == nil {
+			if ref, ok := previous[protocol.AgentSceneContextKey]; ok {
+				private[protocol.AgentSceneContextKey] = ref
+			}
+		}
+	}
 	if len(params.DispatchContext) > 0 {
 		if err = json.Unmarshal(params.DispatchContext, &private); err != nil {
 			return IssueCommentCreateResult{}, err
@@ -144,6 +152,9 @@ func (s *IssueCommentService) createSteeredExternalFollowUp(ctx context.Context,
 		private = map[string]json.RawMessage{}
 	}
 	private["task_steer"] = json.RawMessage("true")
+	if preempted != nil {
+		private["steer_predecessor_task_id"], _ = json.Marshal(util.UUIDToString(preempted.ID))
+	}
 	private["agent_identity_context_token"], _ = json.Marshal(strings.TrimSpace(params.AgentIdentityContextToken))
 	correctionContext, err := json.Marshal(private)
 	if err != nil {
@@ -214,4 +225,25 @@ func (s *IssueCommentService) createSteeredExternalFollowUp(ctx context.Context,
 	}
 	s.TaskService.publishIssueTaskEnqueued(ctx, task)
 	return IssueCommentCreateResult{Comment: comment, Attachments: attachments, Task: task, PreemptedTask: preempted}, nil
+}
+
+// NotifySteerPredecessor restores post-commit stop observation when an outer
+// Coordinator transaction used a buffered TaskService without a launcher.
+func (s *TaskService) NotifySteerPredecessor(ctx context.Context, successor db.AgentTaskQueue) {
+	var private struct {
+		Predecessor string `json:"steer_predecessor_task_id"`
+	}
+	if json.Unmarshal(successor.Context, &private) != nil || private.Predecessor == "" {
+		return
+	}
+	id, err := util.ParseUUID(private.Predecessor)
+	if err != nil {
+		return
+	}
+	old, err := s.Queries.GetAgentTask(ctx, id)
+	if err != nil || old.AgentID != successor.AgentID || old.IssueID != successor.IssueID || !taskProcessStopPending(old) {
+		return
+	}
+	s.CaptureCancelledTasks(ctx, []db.AgentTaskQueue{old})
+	s.NotifyTaskFinished(old)
 }

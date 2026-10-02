@@ -1,6 +1,8 @@
 # working-on-issues source map
 
 Task cancellation and steer: `docs/task-steer.md`;
+human API: `server/internal/handler/task_steer.go` (`SteerIssue`) and
+`server/cmd/server/router.go` (`POST /api/issues/{id}/steer`);
 `server/internal/service/task_steer.go` (`createSteeredExternalFollowUp`,
 `AcknowledgeTaskProcessStopped`); `server/internal/handler/daemon.go`
 (`CancelTask`, `AckTaskCancelled`); `server/pkg/db/queries/agent.sql`
