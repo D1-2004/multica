@@ -22,7 +22,7 @@ type employeeNoticeFixture struct {
 	runID, queueID, jobID string
 }
 
-func employeeNoticeDatabase(t *testing.T, state string, router bool, multi bool) employeeNoticeFixture {
+func employeeNoticeDatabase(t *testing.T, state string, router bool, multi bool, configure ...func(*dingTalkResponseFixture, *employeeTestModel)) employeeNoticeFixture {
 	t.Helper()
 	f, model, dc := employeeFixture(t)
 	ctx := context.Background()
@@ -45,6 +45,9 @@ func employeeNoticeDatabase(t *testing.T, state string, router bool, multi bool)
 	})
 	if multi {
 		f.command.Event.Data.Messages = []DispatchMessage{{OpenMsgID: "bob-message", Text: "Bob request", SenderUID: "bob", SenderOpenDingTalkID: "bob-open"}, {OpenMsgID: "alice-message", Text: "Alice request", SenderUID: "alice", SenderOpenDingTalkID: "alice-open"}}
+	}
+	for _, option := range configure {
+		option(f, model)
 	}
 	if w := employeeHTTP(t, f, dc, uuid.NewString()); w.Code != http.StatusAccepted {
 		t.Fatal(w.Code, w.Body.String())

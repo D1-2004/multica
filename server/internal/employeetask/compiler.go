@@ -51,9 +51,13 @@ func Compile(input CompileInput) (WorkPacket, error) {
 	default:
 		return WorkPacket{}, fmt.Errorf("%w: explicit history state is required", ErrInvalid)
 	}
+	input.CompletionNotice, err = NormalizeCompletionNoticePolicy(input.CompletionNotice, input.Source.Ref)
+	if err != nil {
+		return WorkPacket{}, err
+	}
 	input.Definition = definition
 	text, contextUsed := buildTaskExecutionPacketWithContext(input)
-	return WorkPacket{Scope: input.Scope, PrincipalID: input.PrincipalID, Definition: definition, Text: text, ContextUsed: contextUsed}, nil
+	return WorkPacket{Scope: input.Scope, PrincipalID: input.PrincipalID, Definition: definition, Text: text, ContextUsed: contextUsed, CompletionNotice: input.CompletionNotice}, nil
 }
 
 func validatePacketMaterial(input CompileInput, material PacketMaterial) error {
