@@ -337,7 +337,8 @@ ORDER BY created_at DESC;
 -- rows can be large and must not be fetched on every launch or recovery tick.
 SELECT * FROM agent_task_queue
 WHERE agent_id = $1
-  AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND (status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+       OR (status = 'cancelled' AND context->>'process_stop_pending' = 'true'))
 ORDER BY created_at DESC;
 
 -- name: ListHumanVisibleAgentTasks :many
@@ -851,7 +852,8 @@ WHERE id = (
       AND NOT EXISTS (
           SELECT 1 FROM agent_task_queue active
           WHERE active.agent_id = atq.agent_id
-            AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
+            AND (active.status IN ('dispatched', 'running', 'waiting_local_directory')
+                 OR (active.status = 'cancelled' AND active.context->>'process_stop_pending' = 'true'))
             AND (
               (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
               OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
@@ -899,7 +901,8 @@ WHERE atq.id = @id
   AND NOT EXISTS (
       SELECT 1 FROM agent_task_queue active
       WHERE active.agent_id = atq.agent_id
-        AND active.status IN ('dispatched', 'running', 'waiting_local_directory')
+        AND (active.status IN ('dispatched', 'running', 'waiting_local_directory')
+             OR (active.status = 'cancelled' AND active.context->>'process_stop_pending' = 'true'))
         AND (
           (atq.issue_id IS NOT NULL AND active.issue_id = atq.issue_id)
           OR (atq.chat_session_id IS NOT NULL AND active.chat_session_id = atq.chat_session_id)
@@ -1606,9 +1609,20 @@ LIMIT @max_per_tick::int;
 
 -- name: CancelAgentTask :one
 UPDATE agent_task_queue
-SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
+SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL,
+    context = CASE WHEN status IN ('dispatched', 'running', 'waiting_local_directory')
+      THEN COALESCE(context, '{}'::jsonb) || '{"process_stop_pending":true}'::jsonb
+      ELSE context END
 WHERE id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
 RETURNING *;
+
+
+
+
+
+
+
+
 
 -- name: CancelQueuedAgentTask :one
 -- Queue editing is a compare-and-set: never cancel a task that the daemon

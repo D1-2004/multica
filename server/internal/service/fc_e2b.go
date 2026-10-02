@@ -2016,7 +2016,7 @@ func fcE2BTaskHasActiveBlocker(target db.AgentTaskQueue, tasks []db.AgentTaskQue
 		if active.ID == target.ID || active.AgentID != target.AgentID {
 			continue
 		}
-		if !fcE2BTaskStatusBlocksClaim(active.Status) {
+		if !fcE2BTaskStatusBlocksClaim(active.Status) && !taskProcessStopPending(active) {
 			continue
 		}
 		if sameTaskSerializationGroup(target, active) {
@@ -2032,7 +2032,7 @@ func fcE2BTaskLaunchBlocker(target db.AgentTaskQueue, tasks []db.AgentTaskQueue)
 			!sameTaskSerializationGroup(target, candidate) {
 			continue
 		}
-		if fcE2BTaskStatusBlocksClaim(candidate.Status) {
+		if fcE2BTaskStatusBlocksClaim(candidate.Status) || taskProcessStopPending(candidate) {
 			return candidate, "active_task", true
 		}
 	}

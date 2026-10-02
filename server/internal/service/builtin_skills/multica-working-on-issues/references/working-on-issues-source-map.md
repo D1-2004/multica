@@ -1,5 +1,12 @@
 # working-on-issues source map
 
+Task cancellation and steer: `docs/task-steer.md`;
+`server/internal/service/task_steer.go` (`createSteeredExternalFollowUp`,
+`AcknowledgeTaskProcessStopped`); `server/internal/handler/daemon.go`
+(`CancelTask`, `AckTaskCancelled`); `server/pkg/db/queries/agent.sql`
+(`CancelAgentTask`, both claim queries); `server/internal/service/fc_e2b_task_stop.go`
+(`stopAbortedTaskProcesses`). Logical cancellation is not process-exit evidence.
+
 Evidence layer for `SKILL.md`. Every contract the skill states is traced to a
 current `file:line` here. Lines were re-derived against `feat/builtin-skills`
 after the latest `main` merge; the prior skill cited pre-merge lines that have

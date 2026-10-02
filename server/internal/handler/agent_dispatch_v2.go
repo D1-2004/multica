@@ -511,8 +511,13 @@ func (c DispatchCommand) validateControl() error {
 	}
 	if c.Event.Domain != "channel" || c.Event.Type != "message.created" ||
 		(c.Surface.Type != protocol.DispatchSurfaceTypeChat &&
-			c.Surface.Type != protocol.DispatchSurfaceTypeAuto) {
-		return errors.New("control is supported only for IM chat message.created dispatches")
+			c.Surface.Type != protocol.DispatchSurfaceTypeAuto &&
+			c.Surface.Type != protocol.DispatchSurfaceTypeIssue) {
+		return errors.New("control requires a channel message.created dispatch")
+	}
+	issueContinuation := c.Continuation != nil && c.Continuation.Kind == "issue" && strings.TrimSpace(c.Continuation.IssueID) != ""
+	if c.Surface.Type == protocol.DispatchSurfaceTypeIssue && !issueContinuation {
+		return errors.New("issue control requires an issue continuation")
 	}
 	switch c.Control.Action {
 	case "dispatch":
@@ -521,6 +526,9 @@ func (c DispatchCommand) validateControl() error {
 		}
 		if c.Control.QueueMode != "enqueue" && c.Control.QueueMode != "steer" {
 			return errors.New("control.queueMode must be enqueue or steer")
+		}
+		if c.Control.QueueMode == "steer" && c.Control.SessionMode != "continue" {
+			return errors.New("steer requires sessionMode continue")
 		}
 		if c.Control.TargetExternalTaskID != "" {
 			return errors.New("control.targetExternalTaskId is valid only for cancel")
@@ -532,8 +540,8 @@ func (c DispatchCommand) validateControl() error {
 		if c.CompletionCallback != nil {
 			return errors.New("cancel control cannot create a completion callback")
 		}
-		if c.Continuation == nil || c.Continuation.Kind != "chat" || strings.TrimSpace(c.Continuation.ChatSessionID) == "" {
-			return errors.New("cancel control requires an IM chat continuation")
+		if !issueContinuation && (c.Continuation == nil || c.Continuation.Kind != "chat" || strings.TrimSpace(c.Continuation.ChatSessionID) == "") {
+			return errors.New("cancel control requires a chat or issue continuation")
 		}
 		target := strings.TrimSpace(c.Control.TargetExternalTaskID)
 		parsed, err := uuid.Parse(target)

@@ -100,6 +100,10 @@ func buildAgentDispatchIssueFollowUpParams(
 	if len(privateContext) == 0 {
 		privateContext = dispatchRuntimeContext(command, idempotencyKey)
 	}
+	queueMode := ""
+	if command.Control != nil && command.Control.Action == "dispatch" {
+		queueMode = command.Control.QueueMode
+	}
 	return service.IssueCommentCreateParams{
 		Issue:                     issue,
 		AuthorID:                  dispatchContext.UserID,
@@ -107,6 +111,8 @@ func buildAgentDispatchIssueFollowUpParams(
 		AgentIdentityContextToken: command.ExternalIdentity.ContextToken,
 		DispatchContext:           privateContext,
 		ParentTaskID:              parentTaskID,
+		QueueMode:                 queueMode,
+		IdempotencyKey:            idempotencyKey,
 	}
 }
 
@@ -880,8 +886,14 @@ func (h *Handler) cancelAgentDispatchIMTask(
 		}
 		return
 	}
-	if task.AgentID != dispatchContext.AgentID || !task.ChatSessionID.Valid ||
-		uuidToString(task.ChatSessionID) != command.Continuation.ChatSessionID {
+	belongs := task.ChatSessionID.Valid && uuidToString(task.ChatSessionID) == command.Continuation.ChatSessionID
+	if command.Continuation.Kind == "issue" {
+		issue, loadErr := h.Queries.GetIssue(r.Context(), task.IssueID)
+		belongs = loadErr == nil && issue.WorkspaceID == dispatchContext.WorkspaceID &&
+			issue.AssigneeType.String == "agent" && issue.AssigneeID == dispatchContext.AgentID &&
+			uuidToString(issue.ID) == command.Continuation.IssueID
+	}
+	if task.AgentID != dispatchContext.AgentID || !belongs {
 		writeError(w, http.StatusForbidden, "target task does not belong to the IM dispatch session")
 		return
 	}
@@ -914,6 +926,7 @@ func (h *Handler) cancelAgentDispatchIMTask(
 	if cancelled.Task.Status == "cancelled" {
 		status = "cancelled"
 	}
+	h.reconcileCommentsOnCompletion(r.Context(), &cancelled.Task)
 	writeJSON(w, http.StatusOK, AgentDispatchControlResponse{ControlResult: AgentDispatchControlResult{
 		Action:               "cancel",
 		Status:               status,
@@ -2161,6 +2174,9 @@ func (h *Handler) createAgentDispatchCommentWithCoordinatorV2(
 	keepAttachments = true
 	issueIDString := uuidToString(issue.ID)
 	commentID := uuidToString(result.Comment.ID)
+	if result.PreemptedTask != nil {
+		h.reconcileCommentsOnCompletion(r.Context(), result.PreemptedTask)
+	}
 	taskID := uuidToString(result.Task.ID)
 	if coordinatorDecision != nil {
 		coordinatorDecision.IssueResults = []protocol.ChatCoordinatorIssueResult{{
@@ -2199,5 +2215,12 @@ func (h *Handler) createAgentDispatchCommentWithCoordinatorV2(
 		"commentFingerprint", agentDispatchIdentifierFingerprint(commentID),
 		"taskFingerprint", agentDispatchIdentifierFingerprint(taskID),
 	)
-	writeJSON(w, http.StatusCreated, AgentDispatchResponse{Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: issueIDString}, CommentID: commentID, TaskID: taskID})
+	response := AgentDispatchResponse{Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: issueIDString}, CommentID: commentID, TaskID: taskID}
+	if followUpParams.QueueMode == "steer" {
+		response.ControlResult = &AgentDispatchControlResult{Action: "steer", Status: "queued", TargetExternalTaskID: taskID}
+		if result.PreemptedTask != nil {
+			response.ControlResult.PreemptedExternalTaskID = uuidToString(result.PreemptedTask.ID)
+		}
+	}
+	writeJSON(w, http.StatusCreated, response)
 }

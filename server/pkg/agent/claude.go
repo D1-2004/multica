@@ -137,6 +137,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	// procDone closes once cmd.Wait() returns, letting the cancellation handler
 	// skip a process that already exited and avoid signalling a dead/reused pid.
 	procDone := make(chan struct{})
+	cancelDone := make(chan struct{})
 
 	// writeClaudeInput runs in its own goroutine so it cannot deadlock
 	// against the stdout reader. With --verbose --output-format stream-json
@@ -193,6 +194,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		// last-resort unblock for a scanner a wedged descendant still keeps
 		// open. WaitDelay is the final backstop (#5918).
 		go func() {
+			defer close(cancelDone)
 			select {
 			case <-procDone:
 				return // finished on its own; nothing to terminate
@@ -284,6 +286,8 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		// Wait for process exit, then release the cancellation handler.
 		exitErr := cmd.Wait()
 		close(procDone)
+		<-cancelDone
+		processGroupStopped := finishProcessGroup(cmd.Process)
 		duration := time.Since(startTime)
 		// writeDone is buffered (cap 1) and the writer always sends — by the
 		// time cmd has exited, the prompt write has either succeeded, hit a
@@ -355,13 +359,14 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 
 		resCh <- Result{
-			Status:         finalStatus,
-			Output:         finalOutput,
-			Error:          finalError,
-			DurationMs:     duration.Milliseconds(),
-			SessionID:      reportedSessionID,
-			Usage:          usage,
-			ResumeRejected: resumeRejected,
+			ProcessGroupStopped: processGroupStopped,
+			Status:              finalStatus,
+			Output:              finalOutput,
+			Error:               finalError,
+			DurationMs:          duration.Milliseconds(),
+			SessionID:           reportedSessionID,
+			Usage:               usage,
+			ResumeRejected:      resumeRejected,
 		}
 	}()
 

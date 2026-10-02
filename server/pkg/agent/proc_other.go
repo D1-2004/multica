@@ -57,3 +57,16 @@ func waitProcessGroupGone(p *os.Process, timeout time.Duration) bool {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// finishProcessGroup is called after Wait and before publishing a result.
+// A dead leader does not prove that tool or MCP descendants have exited.
+func finishProcessGroup(p *os.Process) bool {
+	if p == nil {
+		return true
+	}
+	if waitProcessGroupGone(p, 0) {
+		return true
+	}
+	signalProcessGroup(p, syscall.SIGKILL)
+	return waitProcessGroupGone(p, 2*time.Second)
+}

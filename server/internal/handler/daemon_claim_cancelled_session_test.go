@@ -381,6 +381,10 @@ func TestCancelTask_PointerAdvanceIsAtomicWithStatusFlip(t *testing.T) {
 		t.Fatalf("task status = %q, want cancelled", got)
 	}
 
+	// Database cancellation alone must not release the writer barrier.
+	if err := testHandler.TaskService.AcknowledgeTaskProcessStopped(ctx, parseUUID(taskID)); err != nil {
+		t.Fatalf("acknowledge old process exit: %v", err)
+	}
 	// The queued follow-up now claims onto the cancelled turn's session.
 	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
 	if task.PriorSessionID != "turn2-session" {

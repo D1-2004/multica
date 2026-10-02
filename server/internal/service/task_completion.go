@@ -206,8 +206,12 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 			})
 		}
 	}
+	aliasesQueued, aliasErr := enqueueSteerCallbackCompletions(ctx, qtx, task, status, result, errMessage, failureReason)
+	if aliasErr != nil {
+		return false, aliasErr
+	}
 	if len(targets) == 0 {
-		return false, nil
+		return aliasesQueued, nil
 	}
 	executionSummary, err := BuildTaskExecutionSummary(ctx, qtx, task)
 	if err != nil {
@@ -225,7 +229,7 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 			return false, replyErr
 		}
 	}
-	queued := false
+	queued := aliasesQueued
 	for _, target := range targets {
 		lastReply := fallbackReply
 		if target.CommentID.Valid {

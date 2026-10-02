@@ -167,6 +167,7 @@ func (b *devecoBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	// procDone closes once cmd.Wait() returns, letting the cancellation handler
 	// skip a process that already exited and avoid signalling a dead pid.
 	procDone := make(chan struct{})
+	cancelDone := make(chan struct{})
 
 	// On cancellation / timeout, terminate deveco (and the tool subprocesses it
 	// spawned) BEFORE unblocking the scanner. Closing the stdout read end
@@ -176,6 +177,7 @@ func (b *devecoBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	// Only then is it safe to close the stdout read end as a last-resort
 	// unblock for a scanner that a wedged descendant still keeps open.
 	go func() {
+		defer close(cancelDone)
 		select {
 		case <-procDone:
 			return // finished on its own; nothing to terminate
@@ -183,9 +185,7 @@ func (b *devecoBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 		if cmd.Process != nil {
 			signalProcessGroup(cmd.Process, syscall.SIGTERM)
-			select {
-			case <-procDone: // exited within the grace window
-			case <-time.After(devecoTerminateGrace()):
+			if !waitProcessGroupGone(cmd.Process, devecoTerminateGrace()) {
 				signalProcessGroup(cmd.Process, syscall.SIGKILL)
 			}
 		}
@@ -202,6 +202,8 @@ func (b *devecoBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 		exitErr := cmd.Wait()
 		close(procDone)
+		<-cancelDone
+		processGroupStopped := finishProcessGroup(cmd.Process)
 		duration := time.Since(startTime)
 
 		if runCtx.Err() == context.DeadlineExceeded {
@@ -230,12 +232,13 @@ func (b *devecoBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		}
 
 		resCh <- Result{
-			Status:     scanResult.status,
-			Output:     scanResult.output,
-			Error:      scanResult.errMsg,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  scanResult.sessionID,
-			Usage:      usage,
+			ProcessGroupStopped: processGroupStopped,
+			Status:              scanResult.status,
+			Output:              scanResult.output,
+			Error:               scanResult.errMsg,
+			DurationMs:          duration.Milliseconds(),
+			SessionID:           scanResult.sessionID,
+			Usage:               usage,
 		}
 	}()
 

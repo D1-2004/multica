@@ -411,8 +411,17 @@ func (l *FCE2BLauncher) stopAbortedTaskProcesses(ctx context.Context, taskID pgt
 		slog.Warn("FC/E2B task stop could not list sandboxes", "task_id", util.UUIDToString(taskID), "error", err)
 		return true
 	}
+	confirmed := len(sandboxes) > 0 && pass >= 2
 	for _, sandboxID := range sandboxes {
-		l.stopTaskProcessesInSandbox(ctx, task, runtime, sandboxID, pass)
+		receipt, stopErr := l.stopTaskProcessesInSandbox(ctx, task, runtime, sandboxID, pass)
+		confirmed = confirmed && stopErr == nil && receipt.Version == 3 && receipt.Remaining == 0 && receipt.Unreadable == 0
+	}
+	// A server-side receipt is also positive exit proof for older sandbox
+	// daemons. Never infer it from an empty, disabled or failed stop response.
+	if confirmed && taskProcessStopPending(task) && l.Tasks != nil {
+		if err := l.Tasks.AcknowledgeTaskProcessStopped(ctx, task.ID); err != nil {
+			slog.Warn("FC/E2B process-stop acknowledgement failed", "task_id", util.UUIDToString(task.ID), "error", err)
+		}
 	}
 	return len(sandboxes) > 0
 }
