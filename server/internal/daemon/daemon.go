@@ -5861,6 +5861,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		A2AInvocation:                    task.A2AInvocation,
 		ChatChannelType:                  task.ChatChannelType,
 		ChatChannelDeliversFiles:         task.ChatChannelDeliversFiles,
+		DirectTaskPrompt:                 task.DirectTaskPrompt,
 		AutopilotRunID:                   task.AutopilotRunID,
 		AutopilotID:                      task.AutopilotID,
 		AutopilotTitle:                   task.AutopilotTitle,

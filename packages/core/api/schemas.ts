@@ -2977,6 +2977,8 @@ const AgentResponseBaseSchema = z
     id: z.string(),
     coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     coordinator_contract_state: z.enum(["loaded", "not_configured", "stale", "unavailable"]).catch("unavailable").default("not_configured"),
+    coordination_mode: z.enum(["coordinator", "employee", "unknown"]).catch("unknown").default("coordinator"),
+    employee_loop_ready: z.boolean().catch(false).default(false),
     inbound_coordinator_user_decision: z.boolean().catch(false).default(false),
     inbound_coordinator_user_decision_mode: z.enum(["off", "all", "named"]).optional().catch("off"),
     inbound_coordinator_user_decision_names: z.array(z.string()).catch([]).default([]),
@@ -2996,6 +2998,7 @@ const AgentResponseBaseSchema = z
 function normalizeUserDecisionMode<T extends z.infer<typeof AgentResponseBaseSchema>>(agent: T) {
   return {
     ...agent,
+    employee_loop_ready: agent.coordination_mode !== "unknown" && agent.employee_loop_ready === true,
     inbound_coordinator_user_decision_mode: agent.inbound_coordinator_user_decision_mode
       ?? (agent.inbound_coordinator_user_decision === true ? "named" as const : "off" as const),
   };

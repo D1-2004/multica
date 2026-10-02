@@ -375,3 +375,26 @@ old native sessions and their schedules retain their original epoch. The schema
 expansion release must reach every replica before removing the legacy scope
 uniqueness index and enabling epochs. Do not roll back to pre-epoch binaries after
 activation; use a forward repair that preserves all epochs.
+
+
+## Employee Direct tasks
+
+Employee Direct runs an independent EmployeeTask through the existing task queue
+without an Issue or permanent Autopilot. Its queue ID, EmployeeTask ID, and Run ID
+are distinct. Read the persisted task result/messages/trajectory using the task's
+authorized identity; a shared workspace or public Agent does not make Direct
+content public.
+
+A local daemon must authenticate its runtime binding and advertise
+`employee-direct-v1`. FC candidate templates declare that protocol with the
+recognized `multica-m7-v<fingerprint>-r2-<commit>` alias only after the candidate
+build verifies its embedded daemon. The immutable template ID remains execution
+identity. An r1 template or an older local daemon cannot consume the Direct
+prompt; ordinary Issue, chat and Autopilot work retains its existing behavior.
+Human management/read permission alone does not authorize claiming or completing
+a task. Do not forge capability headers or edit runtime metadata to enable it.
+
+The current Direct increment supports text output and persisted execution traces.
+It does not yet supply standalone file artifacts or prove restoration of an old
+execution. A database cancellation records the request; it does not prove that
+the provider process has exited.

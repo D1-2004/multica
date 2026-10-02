@@ -260,7 +260,12 @@
     "labels_hint": "このエージェントを分類するワークスペースラベルです。",
     "github_managed_profile": "指示とリポジトリスキルは GitHub で管理され、名前と説明は Multica で編集できます。",
     "prop_event_trigger": "会話のすべての新着メッセージを能動的に処理",
-    "prop_event_trigger_hint": "監視対象の会話の新着メッセージを、メンションがなくても役割と文脈に応じて判断します。連続したメッセージはまとめて判断し、不要な返信はしません。有効にすると受信時の判断も有効になります。"
+    "prop_event_trigger_hint": "監視対象の会話の新着メッセージを、メンションがなくても役割と文脈に応じて判断します。連続したメッセージはまとめて判断し、不要な返信はしません。有効にすると受信時の判断も有効になります。",
+    "prop_coordination_mode": "処理方式",
+    "prop_coordination_mode_hint": "新しいタスクの処理方式を選択します。有効化は別のスイッチで制御します。",
+    "prop_employee_loop_unavailable": "このエージェントの EmployeeLoop はまだ利用できません。",
+    "prop_coordination_mode_unknown": "この処理方式には対応していません。アプリを更新してから編集してください。",
+    "prop_coordination_mode_confirmed": "保存した方式は新しいタスクに適用されます。既存のタスクは元の方式を維持します。"
   },
   "overview": {
     "agent_context": "エージェント",
@@ -483,7 +488,8 @@
       "voice_title": "コミュニケーションスタイル",
       "voice_hint": "タスク指示を変えずに、チャットでの話し方を設定します。",
       "message_title": "会話とフォローアップ",
-      "message_hint": "作業コンテキストを継続するか、委任した作業の完了後にどう処理するかを設定します。"
+      "message_hint": "作業コンテキストを継続するか、委任した作業の完了後にどう処理するかを設定します。",
+      "employee_scope_hint": "EmployeeLoop は対応する DingTalk シーンの新しいタスクに適用されます。Web チャットなどは既存の経路を使用します。"
     },
     "runner": {
       "execution_title": "マイコンピューターを使用",

@@ -25,6 +25,12 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 - [9 月 7 日 collect 事故](plans/2026-09-07-coordinator-collect-window.md) 保留原事故及红绿证据；其真实 IM 0/3、权限阻塞的旧结果不能因本次结构检查而变成通过。
 - 历史 Plan 是当时的设计/复盘记录。遇到冲突按本现行合同和明确的 `superseded_by` 关系处理，不能从旧计划恢复“先等容量再判断”“排队就静默结单”等已撤回行为。
 
+### Agent 处理方式配置
+
+Agent 的 `coordination_mode=coordinator|employee` 选择新工作的默认 owner，初始值为 `coordinator`；`inbound_coordinator` 保留为独立的总启用开关，修改模式不自动开启已停用的 Agent。旧客户端只写启用字段时保留已保存的模式，主动参与开关也不改变模式。选择或开启 Employee 必须通过 Host 的 `EmployeeLoopReady(workspaceID, agentID)` 校验，未装配或未就绪返回 409；列表与详情返回 `employee_loop_ready`。保存配置本身不代表所有 Runtime 或入站来源已验收，已受理工作仍按其冻结 owner 继续处理。
+
+配置实现和证据：`internal/employeeloopconfig/config.go`、`handler/agent_coordination.go`、`handler/agent_coordination_test.go`、迁移 `9630_agent_coordination_mode`，以及共享 Agent 设置/API schema 测试。模式、总启用开关、响应策略和主动参与设置在同一 Agent 行锁事务中提交。此配置层新增没有修改 Coordinator 的模型协议、提示词或业务裁决义务，policy/assembly 版本保持不变。
+
 ## 2. 每轮的行为义务
 
 1. **认人和场景。** 可信入站消息决定说话人、对象和来源；评论的 Multica 作者只是执行账号。缺失的 uid 不补造，显示名不当稳定身份。数字员工接收名只来自绑定账号；缺失时标name_unavailable，配置标签只留在运维日志，不投影为会话身份或模型账号别名。按当前群参与规则逐句判断资格；主动群中的明确求助不只看@，不接管指向他人的工作，员工自己的出站不重新触发自身。

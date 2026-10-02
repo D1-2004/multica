@@ -28,10 +28,30 @@
 - Read-only verification: `multica agent get <id> --output json`,
   `multica autopilot runs <id> --output json`, and `GET /api/agents/{id}/event-batches`.
 
+## Agent handling-mode configuration
+
+- `server/migrations/9630_agent_coordination_mode.up.sql`: default Coordinator;
+  the migration does not enable Agents.
+- `server/internal/employeeloopconfig/config.go`: scoped `Load`, row-locked
+  `ResolveUpdate`, and same-transaction mode persistence. Omitted mode preserves
+  the current owner; the enabled switch stays independent.
+- `server/internal/handler/agent.go`, `agent_coordination.go`: existing manage
+  authorization, list/detail hydration, `coordination_mode` update, and the
+  `EmployeeLoopReady(workspaceID, agentID)` Host callback. Missing/failed readiness
+  rejects Employee selection or enable with 409. Mode, response policy and proactive
+  settings share one Agent-row transaction.
+- `packages/core/api/schemas.ts`: old responses default to Coordinator; unknown
+  modes disable ambiguous writes. `agent-message-settings.tsx` and
+  `agent-detail-page.tsx` display server-confirmed mode via React Query.
+- Verification: `server/internal/handler/agent_coordination_test.go`,
+  `packages/core/api/agent-response-schema.test.ts`, and the shared Agent settings
+  and detail-page tests. These are configuration/compatibility checks, not full
+  EmployeeLoop Runtime or production-scene acceptance.
+
 ## Proactive conversation admission
 
 - `server/internal/service/event_trigger.go`: toggle dependency and legacy-only draining.
-- `server/internal/handler/agent_event_trigger.go`, `proactive_conversation.go`: observed messages enter Coordinator; durable dedup covers the former inbox.
+- `server/internal/handler/agent_event_trigger.go`, `proactive_conversation.go`: Coordinator-owned observed messages enter Coordinator; durable dedup covers the former inbox.
 - `server/internal/handler/inbound_coordinator_job.go`: single collection window and persisted decisions.
 - `server/internal/service/coordinator_follow_up.go`: busy Issue additions, identity-isolated batching, and actual comment delivery receipts.
 - Read-only verification: `GET /api/agents/{id}` and the Agent Coordinator conversations; historical Autopilot runs do not describe new proactive messages.

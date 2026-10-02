@@ -871,6 +871,12 @@ func parseFCE2BTemplates(output string, providerFingerprints map[string][]string
 			// there is no per-fingerprint attestation. An image without it
 			// sends from its sandbox outside the response ledger.
 			t.Capabilities = append(runtimeconfig.CapabilitiesForProviders(providers), protocol.DWSMessagePolicyCapability)
+			// r2 is published only by a candidate image build that verifies the
+			// embedded daemon supports Employee Direct. r1 keeps its old contract;
+			// a provider fingerprint alone proves no daemon protocol upgrade.
+			if matches[2] == "2" {
+				t.Capabilities = append(t.Capabilities, protocol.DaemonCapabilityEmployeeDirectV1)
+			}
 			break
 		}
 		t.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
@@ -879,7 +885,7 @@ func parseFCE2BTemplates(output string, providerFingerprints map[string][]string
 	return templates, nil
 }
 
-var fcE2BTemplateProviderFingerprintAliasPattern = regexp.MustCompile(`^multica-m7-v([0-9a-f]{16})-r1-[0-9a-f]{6}$`)
+var fcE2BTemplateProviderFingerprintAliasPattern = regexp.MustCompile(`^multica-m7-v([0-9a-f]{16})-r([12])-[0-9a-f]{6}$`)
 var runtimeProviderFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func stringValues(obj map[string]any, keys ...string) []string {
@@ -2013,14 +2019,7 @@ func fcE2BTaskHasActiveBlocker(target db.AgentTaskQueue, tasks []db.AgentTaskQue
 		if !fcE2BTaskStatusBlocksClaim(active.Status) {
 			continue
 		}
-		if target.IssueID.Valid && active.IssueID == target.IssueID {
-			return true
-		}
-		if target.ChatSessionID.Valid && active.ChatSessionID == target.ChatSessionID {
-			return true
-		}
-		if !target.IssueID.Valid && !target.ChatSessionID.Valid && !target.AutopilotRunID.Valid &&
-			!active.IssueID.Valid && !active.ChatSessionID.Valid && !active.AutopilotRunID.Valid {
+		if sameTaskSerializationGroup(target, active) {
 			return true
 		}
 	}

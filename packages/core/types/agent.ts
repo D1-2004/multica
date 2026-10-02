@@ -509,11 +509,15 @@ export interface Agent {
    */
   chat_session_resume?: boolean;
   /**
-   * When true, DingTalk and web chat first decide whether to reply immediately
-   * or open an Issue. Optional because older backends omit it; treat
-   * `undefined` as false. Only an explicit true turns it on.
+   * Total enabled switch for message coordination. The mode independently
+   * selects the owner for supported new work. Older backends omit this;
+   * only an explicit true turns it on.
    */
   inbound_coordinator?: boolean;
+  /** Selected owner for new work; unknown server values disable mode editing. */
+  coordination_mode?: "coordinator" | "employee" | "unknown";
+  /** Host readiness is independent of the saved mode and the enabled switch. */
+  employee_loop_ready?: boolean;
   inbound_coordinator_user_decision?: boolean;
   inbound_coordinator_user_decision_mode?: "off" | "all" | "named";
   inbound_coordinator_user_decision_names?: string[];
@@ -885,6 +889,7 @@ export interface UpdateAgentRequest {
   dispatch_always_new_issue?: boolean;
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
+  coordination_mode?: "coordinator" | "employee";
   inbound_coordinator_user_decision?: boolean;
   inbound_coordinator_user_decision_mode?: "off" | "all" | "named";
   inbound_coordinator_user_decision_names?: string[];

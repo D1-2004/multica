@@ -185,6 +185,7 @@ func (c *Client) setIdentityHeaders(req *http.Request) {
 // WS request/response support (MUL-4257).
 func daemonClientCapabilities() string {
 	capabilities := []string{
+		protocol.DaemonCapabilityEmployeeDirectV1,
 		protocol.DaemonCapabilitySkillBundlesV1,
 		protocol.DaemonCapabilityCoalescedCommentsV1,
 		protocol.DaemonCapabilityTaskInstructionV1,

@@ -58,6 +58,7 @@ type ConnectedAppData = runtimeapps.ConnectedApp
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
+	DirectTaskPrompt     string                    `json:"direct_task_prompt,omitempty"`
 	DSHNativePrompt      *protocol.DSHNativePrompt `json:"dsh_native_prompt,omitempty"`
 	ID                   string                    `json:"id"`
 	AgentID              string                    `json:"agent_id"`

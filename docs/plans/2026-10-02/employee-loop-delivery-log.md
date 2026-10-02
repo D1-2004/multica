@@ -60,3 +60,16 @@
 - 独立提交快照在新建 `employee_memory_delivery_test` 数据库完成全量迁移；记忆整包真实 PG race、vet，以及 workspace 删除隔离/回滚回归通过。新增表的删除跟随 workspace 锁和事务。
 - 扩展执行的全库 deletion manifest 检查暴露原分支大量已有未分类表；本批新增两表均已登记。该总表审计没有通过，不把定向通过描述成全库通过。
 - 当前批次是存储及机制基础，不代表后台消费、模型提炼、实际内容晋级或真实发送已完成。实际模型、FC canary、持久设备滚动验证仍单独记录。
+
+## B2 Direct 文本执行与配置基础
+
+- Direct 采用独立 EmployeeTask/Run 加既有 queue，没有 Issue 或永久 Autopilot；幂等键恢复同一执行，按 Task 串行而不同 Task 可并发。排队输入只保留最小重放事实，不冻结完整 Autopilot 配置。
+- claim/reclaim/recover 在选队列前校验服务器生成的 Runtime 白名单；Direct 回调验证 mdt 的真实 Runtime 绑定或真实 PAT Runtime owner。WebSocket 保留服务端认证种类；管理员读取权不能升级为执行权。
+- 读取、列表、轨迹与实时事件遵守 Direct 私有范围；机器凭据不能借关联用户权限。已接受的执行结果保存在队列和 Run，未映射用户不向 workspace 广播原文。
+- 能力 `employee-direct-v1` 为新增 wire gate，旧 Daemon/FC r1 不消费 Direct prompt；旧 Issue/Chat/Autopilot 语义保留。FC r2 候选仍待精确源码构建及真实账户 canary。
+- API/UI 新增 Coordinator/Employee 处理方式；旧启用字段保留独立语义，未知值拒绝，模式和响应/主动参与设置同事务保存。此批 `EmployeeLoopReady` 尚未装配，因此 Employee 不可启用，生产入口将另批交付。
+- 独立审查和干净索引快照验证：服务端与 CLI 构建成功；handler Direct/claim/配置/WS、service Direct/claim/实时、daemon/execenv/middleware 的定向 race 通过，无跳过；daemonws 整包及六个受影响包 vet 通过。首轮构建的公共 Go proxy 超时，通过镜像下载缺失依赖后构建成功。
+- core 全量 1,895 测试通过；设置和详情页 40 项定向测试通过；core/views typecheck 通过。Coordinator checker 为 `PASS_STRUCTURAL_ONLY`，没有冒充模型行为验收。
+- 一次扩大执行的 views 全量结果为 4,496 通过 / 8 失败：原有 Builder payload 断言 2 项、DSH 状态 2 项、ja/ko DSH 与 ASB locale parity 4 项。对应组件/测试源码与本批前 HEAD 相同，缺词在 HEAD 也存在；该全量套件未通过。
+- 全量 sqlc 仍被既有 `agent.sql` 中 ambiguous id 阻塞；本批 claim/recovery 完整查询通过官方 sqlc 的窄配置生成受影响块。未手写生成 SQL，也不宣称全量生成门禁通过。
+- 当前交付边界为文本执行、结果/轨迹与不可启用的配置入口。Compiler、IssueBackend、场域消费、最终回报、文件产物、等待及连续控制仍在后续批次；真实模型/真实 FC/本地设备滚动验收待完成。

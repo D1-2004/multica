@@ -26,11 +26,15 @@ import (
 // knows the moment it comes back up, so we let it report orphan recovery.
 func (h *Handler) RecoverOrphanedTasks(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	if _, ok := h.requireDaemonRuntimeAccess(w, r, runtimeID); !ok {
+	runtime, ok := h.requireDaemonRuntimeAccess(w, r, runtimeID)
+	if !ok {
 		return
 	}
 
-	rows, err := h.Queries.RecoverOrphanedTasksForRuntime(r.Context(), parseUUID(runtimeID))
+	rows, err := h.Queries.RecoverOrphanedTasksForRuntime(r.Context(), db.RecoverOrphanedTasksForRuntimeParams{
+		RuntimeID:           runtime.ID,
+		AllowEmployeeDirect: h.canExecuteEmployeeDirectRuntime(r, runtime),
+	})
 	if err != nil {
 		slog.Warn("recover-orphans failed", "runtime_id", runtimeID, "error", err)
 		writeError(w, http.StatusInternalServerError, "recover orphans failed")

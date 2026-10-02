@@ -183,3 +183,32 @@
 - `server/internal/service/fc_e2b_dsh_profile.go`: saved configuration prepares build intents; application occurs at ordinary task startup. No employee Host is started by a Profile worker.
 - `packages/core/agents/dsh-home.ts`, `packages/views/agents/components/tabs/dsh-home-tab.tsx`: filesystem preparation only, with no native-page API or navigation.
 - `packages/views/agents/components/tabs/dsh-plugins-tab.tsx`: configuration save is confirmed by the persisted desired revision, independently of task/Host execution.
+
+
+## Employee Direct execution
+
+- `server/internal/service/direct_task.go`: issue-free admission, source replay,
+  atomic queue/Run mapping and capability checks; `employee_task_lifecycle.go`
+  persists terminal evidence and repairs terminal queue transitions.
+- `server/internal/service/task_claim_authorization.go` and
+  `server/pkg/db/queries/agent.sql`: server-owned runtime allowlist filters Direct
+  claim/reclaim/recovery before queue mutation. Ordinary tasks keep prior rules.
+- `server/internal/handler/employee_task_execution_access.go`: verified mdt
+  runtime binding or genuine runtime-owner PAT; exact task tokens are scoped to
+  their existing task. `daemon_ws.go`, `daemon_rpc.go` and `daemonws/hub.go` retain
+  the server-derived authentication path for WebSocket claims.
+- `server/internal/handler/employee_task_access.go`: private Direct reads for
+  genuine human managers/originators, exact task credentials, and the verified
+  executor. `service/task.go` sends Direct realtime payload only to a current
+  originator and preserves the runtime terminal observer.
+- `server/pkg/protocol/messages.go`, `internal/daemon/{client,daemon,prompt}.go`
+  and `internal/daemon/execenv`: `employee-direct-v1` transports the task-owned
+  prompt to the normal provider execution path without a fabricated Issue.
+- `server/internal/service/fc_e2b.go` and `direct_task_template_test.go`: recognized
+  provider fingerprint plus r2 advertises Direct; r1 behavior is unchanged,
+  unknown fingerprints and unsupported protocol versions do not grant it.
+- Real PostgreSQL tests in `direct_task*_test.go`,
+  `employee_direct_privacy_test.go`, `employee_run_claim_test.go`, and
+  `employee_task_*access_test.go` cover replay, parallel tasks, usage/results,
+  HTTP authentication boundaries and WebSocket claims. Local transport/fake CLI
+  tests do not substitute for a real FC canary or persistent-device verification.

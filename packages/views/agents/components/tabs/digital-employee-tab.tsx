@@ -57,6 +57,12 @@ export function DigitalEmployeeTab({
         onUpdate={update}
       />
 
+      {agent.coordination_mode === "employee" ? (
+        <p role="note" className="text-caption leading-5 text-muted-foreground">
+          {t(($) => $.tab_body.digital_employee.employee_scope_hint)}
+        </p>
+      ) : null}
+
       {agent.inbound_coordinator !== true ? (
         <section
           role="note"
