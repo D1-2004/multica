@@ -4870,6 +4870,9 @@ func (s *TaskService) failTask(
 			if cerr != nil {
 				return fmt.Errorf("create retry task: %w", cerr)
 			}
+			if err := observeOrDeferEmployeeIssueRetryInTx(ctx, terminalTx, child); err != nil {
+				return err
+			}
 			retried = &child
 		} else {
 			if t.ChatSessionID.Valid {
@@ -5214,12 +5217,23 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	if delay := retryDelayForAttempt(reason, parent.Attempt); delay > 0 {
 		retryFireAt = pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true}
 	}
-	child, err := s.Queries.CreateRetryTask(ctx, db.CreateRetryTaskParams{
-		ID:                   parent.ID,
-		FireAt:               retryFireAt,
-		MaxAttempts:          pgtype.Int4{Int32: retryAttemptCeiling(reason, parent.MaxAttempts), Valid: true},
-		RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
-		RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
+	var child db.AgentTaskQueue
+	err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
+		if err := lockEmployeeRunWorkspace(ctx, terminalTx, parent.ID); err != nil {
+			return err
+		}
+		var err error
+		child, err = qtx.CreateRetryTask(ctx, db.CreateRetryTaskParams{
+			ID:                   parent.ID,
+			FireAt:               retryFireAt,
+			MaxAttempts:          pgtype.Int4{Int32: retryAttemptCeiling(reason, parent.MaxAttempts), Valid: true},
+			RuntimeMcpOverlay:    runtimeMCPOverlay.Overlay,
+			RuntimeConnectedApps: runtimeMCPOverlay.ConnectedApps,
+		})
+		if err != nil {
+			return err
+		}
+		return observeOrDeferEmployeeIssueRetryInTx(ctx, terminalTx, child)
 	})
 	if err != nil {
 		slog.Warn("task auto-retry failed",

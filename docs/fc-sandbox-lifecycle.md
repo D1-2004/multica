@@ -219,7 +219,7 @@ lifecycle 日志归属。
 
 运行时配置 `runtime.fc_e2b.connection_reuse` 只保留每台沙箱的并发上限，默认 6。`max_concurrent_tasks` 省略或为 0 也是 6，其他值必须在 1 到 50。第 7 个任务另开一台私有沙箱，不改共享记录指向的那台。没有明确触发者的定时任务和其他场景任务进该场景的公共桶。一次运行里有多个说话人时也进公共桶，不会进某一个人的沙箱。
 
-`enabled`、`workspace_ids`、`agent_ids` 是以前的灰度字段。文档里带着它们仍能解析，但不再决定谁复用。镜像元数据没有 `sandbox_connection_reuse_v1` 的 runtime、A2A 任务、没有场景的任务，仍按原来的聊天或 Issue 各用一台沙箱。目录里的模板不会自动带上这个能力。员工文件系统和 DSH Host 不走这条复用。
+`enabled`、`workspace_ids`、`agent_ids` 是以前的灰度字段。文档里带着它们仍能解析，但不再决定谁复用。镜像元数据里的 `sandbox_connection_reuse_v1` 也不再决定谁复用；目录模板没有这个能力时照样进入场景桶。A2A 任务和没有场景的任务，仍按原来的聊天或 Issue 各用一台沙箱。员工文件系统和 DSH Host 不走这条复用。
 
 场景桶的 `scope_id` 是场景 ID 与触发者 ID 的哈希，存在已有的 `fc_e2b_sandbox_session` 里。迁移 `9523_fc_e2b_sandbox_session_scene_scope` 只把 `scope_type` 扩成 `chat`、`issue`、`scene`。启动在放下场景锁之前，把沙箱 ID 写进本次 start attempt，这样下一趟才能数到它。释放时先锁这台沙箱的场景记录；锁被启动占用就保留沙箱，理由是 `scope_admitting`。
 

@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeftRight,
-  Building2,
   CalendarClock,
   CheckCircle2,
   Loader2,
@@ -41,6 +40,7 @@ import {
   NativeSelectOption,
 } from "@multica/ui/components/ui/native-select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { connectorBrandName } from "../common/connector-logo";
 import { SkillIcon } from "../skills/lib/skill-icon";
 import { useT } from "../i18n";
@@ -48,7 +48,7 @@ import { ConnectPlumbingContext, ConnectorsList, orgField, type OpenAuthorizeUrl
 import { ScopeMcpServers } from "./context-config-mcp";
 import { ScopePrompts } from "./context-config-prompts";
 import { ScopeRoutines } from "./context-config-routines";
-import { ItemGroup, SlotHeading, ToggleControl } from "./context-config-ui";
+import { ConfigList, ConfigRow, SlotHeading, ToggleControl } from "./context-config-ui";
 
 /** One configurable scope of one agent: a chat, a person, or the
  * enterprise level of a tenant (its key is the OrgId). */
@@ -713,6 +713,7 @@ function RoutinesTab({ detail, binding, browse, reportError }: ContextConfigTabP
         key={sceneKey}
         target={{ kind: "config", agentId: detail.agent.id, sceneId: sceneKey, orgId }}
         canEdit={sceneDetail.data?.rights?.editRoutines === true}
+        bare
         reportError={reportError}
       />
     </div>
@@ -723,7 +724,6 @@ function RoutinesTab({ detail, binding, browse, reportError }: ContextConfigTabP
 interface LevelEntry {
   id: ConfigLevel;
   label: string;
-  icon: LucideIcon;
   render: () => React.ReactNode;
 }
 
@@ -737,8 +737,8 @@ function defaultLevel(levels: LevelEntry[], wanted: ConfigLevel | null | undefin
   );
 }
 
-/** 场域能力's levels as vertical tabs: a compact rail (icon over label on a
- * phone) beside the open level. A single level shows without the rail. */
+/** 场域能力's levels as one segmented control above the open level, which
+ * keeps the full width. A single level shows without the control. */
 function LevelTabs({
   levels,
   value,
@@ -754,26 +754,17 @@ function LevelTabs({
   if (levels.length === 1) return <>{active.render()}</>;
   return (
     <Tabs
-      orientation="vertical"
       value={active.id}
       onValueChange={(next) => {
         const level = levels.find((entry) => entry.id === next);
         if (level) onChange(level.id);
       }}
-      className="items-start gap-3 sm:gap-5"
+      className="gap-5"
     >
-      <TabsList
-        aria-label={t(($) => $.context_config.levels_aria)}
-        className="sticky top-3 w-[4.75rem] shrink-0 gap-1 sm:w-28"
-      >
+      <TabsList aria-label={t(($) => $.context_config.levels_aria)} className="!h-9 w-full">
         {levels.map((level) => (
-          <TabsTrigger
-            key={level.id}
-            value={level.id}
-            className="h-auto w-full flex-col gap-1 px-1 py-2 text-caption whitespace-normal group-data-vertical/tabs:justify-center sm:flex-row sm:px-2 sm:text-body sm:group-data-vertical/tabs:justify-start"
-          >
-            <level.icon className="size-4" />
-            <span className="min-w-0 break-words text-center leading-tight sm:text-left">{level.label}</span>
+          <TabsTrigger key={level.id} value={level.id}>
+            {level.label}
           </TabsTrigger>
         ))}
       </TabsList>
@@ -811,7 +802,6 @@ function useOrgLevel(
   return {
     id: "org",
     label: t(($) => $.context_config.level_org),
-    icon: Building2,
     render: () => <OrgScope detail={detail} org={org} reportError={reportError} />,
   };
 }
@@ -840,7 +830,6 @@ function BoundScope({
     levels.push({
       id: "scene",
       label: sceneLabel,
-      icon: MessageCircle,
       render: () => (
         <SceneScope
           agentId={detail.agent.id}
@@ -861,7 +850,6 @@ function BoundScope({
       levels.push({
         id: "scene",
         label: sceneLabel,
-        icon: MessageCircle,
         render: () => (
           <SceneScope
             agentId={detail.agent.id}
@@ -877,14 +865,12 @@ function BoundScope({
     levels.push({
       id: "person",
       label: t(($) => $.context_config.level_person),
-      icon: User,
       render: () => <PersonScope detail={detail} person={person} orgId={pageOrg} reportError={reportError} />,
     });
   } else {
     levels.push({
       id: binding.scopeType,
       label: binding.scopeType === "person" ? t(($) => $.context_config.level_person) : sceneLabel,
-      icon: binding.scopeType === "person" ? User : MessageCircle,
       render: () => (
         <EmptyState icon={<User className="size-6" />} title={t(($) => $.context_config.scene_no_access)} />
       ),
@@ -1099,8 +1085,8 @@ function BrowseScopes({
 
   const levels: LevelEntry[] = [
     ...(orgLevel ? [orgLevel] : []),
-    { id: "scene", label: t(($) => $.context_config.level_scene), icon: MessageCircle, render: () => scenePanel },
-    { id: "person", label: t(($) => $.context_config.level_person), icon: User, render: () => personPanel },
+    { id: "scene", label: t(($) => $.context_config.level_scene), render: () => scenePanel },
+    { id: "person", label: t(($) => $.context_config.level_person), render: () => personPanel },
   ];
   const wanted: ConfigLevel | undefined =
     level ??
@@ -1332,41 +1318,35 @@ function ScopeEditor({
       .map((skill) => ({ skill, defaultOn: false })),
   ];
   const expiry = formatDate(expiresAt);
-  const hint = displayOnly
+  // The level's one note: who changes it when the caller cannot.
+  const note = displayOnly
     ? t(($) => $.context_config.org_read_only)
-    : scopeType === "org"
-      ? !canToggle
-        ? t(($) => $.context_config.org_read_only)
-        : t(($) => $.context_config.org_scope_hint)
-      : rights && !canToggle
-        ? scopeType === "scene"
-          ? sceneKind === "dm"
-            ? t(($) => $.context_config.scene_read_only_dm)
-            : t(($) => $.context_config.scene_read_only)
+    : rights && !canToggle
+      ? scopeType === "scene"
+        ? sceneKind === "dm"
+          ? t(($) => $.context_config.scene_read_only_dm)
+          : t(($) => $.context_config.scene_read_only)
+        : scopeType === "org"
+          ? t(($) => $.context_config.org_read_only)
           : t(($) => $.context_config.person_read_only)
-        : scopeType === "scene"
-          ? sceneKind === "dm"
-            ? t(($) => $.context_config.scene_scope_hint_dm)
-            : t(($) => $.context_config.scene_scope_hint)
-          : t(($) => $.context_config.person_scope_hint);
+      : expiry
+        ? t(($) => $.context_config.access_until, { date: expiry })
+        : null;
+  const [openSkill, setOpenSkill] = useState<ContextSkillItem | null>(null);
 
   return (
     <section className="space-y-6" aria-label={title}>
-      <div className="space-y-1">
+      <div className="space-y-0.5">
         <div className="flex min-w-0 items-center gap-2">
-          <p className="truncate text-body font-medium">{title}</p>
+          <p className="truncate text-body font-semibold">{title}</p>
           {scopeType === "scene" && !untitled && (
             <Badge variant="outline" className="shrink-0">
               {sceneKindLabel(sceneKind)}
             </Badge>
           )}
         </div>
-        <p className="text-caption text-muted-foreground text-pretty">{hint}</p>
-        {expiry && (
-          <p className="text-caption text-muted-foreground">
-            {t(($) => $.context_config.access_until, { date: expiry })}
-          </p>
-        )}
+        {/* Only what changes how the level is used: who changes it. */}
+        {note ? <p className="text-caption text-muted-foreground text-pretty">{note}</p> : null}
       </div>
 
       {/* Prompts need a backend that reports rights. */}
@@ -1381,21 +1361,26 @@ function ScopeEditor({
         />
       ) : null}
 
-      <ItemGroup label={t(($) => $.context_config.skills_title)} size="slot" empty={t(($) => $.context_config.none)}>
-        {skills.map(({ skill, defaultOn }) => (
-          <SkillRow
-            key={skill.id}
-            skill={skill}
-            enabled={enabledKeys.has(`skill:${skill.id}`)}
-            alwaysOn={defaultOn}
-            byOrg={orgEnabledKeys.has(`skill:${skill.id}`)}
-            busy={busyKeys.has(`skill:${skill.id}`)}
-            readOnly={!canToggle}
-            displayOnly={displayOnly}
-            onToggle={(enabled) => void toggle("skill", skill.id, enabled)}
-          />
-        ))}
-      </ItemGroup>
+      <section className="space-y-2" aria-label={t(($) => $.context_config.skills_title)}>
+        <SlotHeading label={t(($) => $.context_config.skills_title)} />
+        <ConfigList label={t(($) => $.context_config.skills_title)} empty={t(($) => $.context_config.none)}>
+          {skills.map(({ skill, defaultOn }) => (
+            <SkillRow
+              key={skill.id}
+              skill={skill}
+              enabled={enabledKeys.has(`skill:${skill.id}`)}
+              alwaysOn={defaultOn}
+              byOrg={orgEnabledKeys.has(`skill:${skill.id}`)}
+              busy={busyKeys.has(`skill:${skill.id}`)}
+              readOnly={!canToggle}
+              displayOnly={displayOnly}
+              onOpen={() => setOpenSkill(skill)}
+              onToggle={(enabled) => void toggle("skill", skill.id, enabled)}
+            />
+          ))}
+        </ConfigList>
+        <SkillDialog skill={openSkill} onClose={() => setOpenSkill(null)} />
+      </section>
 
       <section className="space-y-2" aria-label={t(($) => $.context_config.slot_connectors)}>
         <SlotHeading label={t(($) => $.context_config.slot_connectors)} />
@@ -1417,18 +1402,19 @@ function ScopeEditor({
           reportError={reportError}
           inEffectOnly={displayOnly}
         />
-        {/* MCP servers need a backend that reports rights. */}
-        {rights ? (
-          <ScopeMcpServers
-            agentId={agentId}
-            scope={scopeInput}
-            mcpConfig={content.mcpConfig}
-            redacted={content.mcpConfigRedacted}
-            canEdit={!displayOnly && rights.editMcp}
-            reportError={reportError}
-          />
-        ) : null}
       </section>
+
+      {/* MCP servers need a backend that reports rights. */}
+      {rights ? (
+        <ScopeMcpServers
+          agentId={agentId}
+          scope={scopeInput}
+          mcpConfig={content.mcpConfig}
+          redacted={content.mcpConfigRedacted}
+          canEdit={!displayOnly && rights.editMcp}
+          reportError={reportError}
+        />
+      ) : null}
     </section>
   );
 }
@@ -1441,6 +1427,7 @@ function SkillRow({
   busy,
   readOnly,
   displayOnly = false,
+  onOpen,
   onToggle,
 }: {
   skill: ContextSkillItem;
@@ -1452,47 +1439,73 @@ function SkillRow({
   readOnly: boolean;
   /** A display-only level lists only what is on: a label, no switch. */
   displayOnly?: boolean;
+  onOpen: () => void;
   onToggle: (enabled: boolean) => void;
 }) {
   const { t } = useT("agents");
+  const status = alwaysOn
+    ? t(($) => $.context_config.always_on)
+    : byOrg
+      ? t(($) => $.context_config.on_for_org)
+      : displayOnly && enabled
+        ? t(($) => $.context_config.status_added)
+        : "";
   return (
-    <li className="flex items-center gap-3 p-3">
-      <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-        <SkillIcon className="size-4" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <span className="truncate text-body font-medium">{skill.name}</span>
-          {alwaysOn && (
-            <Badge variant="secondary" className="text-micro">
-              {t(($) => $.context_config.always_on)}
-            </Badge>
-          )}
-          {byOrg && !alwaysOn && (
-            <Badge variant="secondary" className="text-micro">
-              {t(($) => $.context_config.on_for_org)}
-            </Badge>
-          )}
-          {displayOnly && enabled && !alwaysOn && (
-            <Badge variant="secondary" className="text-micro">
-              {t(($) => $.context_config.status_added)}
-            </Badge>
-          )}
-        </div>
-        {skill.description ? (
-          <p className="line-clamp-2 text-caption text-muted-foreground">{skill.description}</p>
+    <ConfigRow
+      icon={
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+          <SkillIcon className="size-4" />
+        </span>
+      }
+      name={skill.name}
+      status={
+        status ? (
+          <Badge variant="secondary" className="text-micro">
+            {status}
+          </Badge>
+        ) : null
+      }
+      openLabel={skill.name}
+      onOpen={onOpen}
+      action={
+        alwaysOn || displayOnly ? null : (
+          <ToggleControl
+            busy={busy}
+            checked={enabled}
+            disabled={readOnly}
+            label={t(($) => $.context_config.toggle_aria, { name: skill.name })}
+            onToggle={onToggle}
+          />
+        )
+      }
+    />
+  );
+}
+
+/** A skill opened from its row: its name and what it does. */
+function SkillDialog({ skill, onClose }: { skill: ContextSkillItem | null; onClose: () => void }) {
+  const { t } = useT("agents");
+  // Keep showing the last skill while the dialog animates closed.
+  const [shown, setShown] = useState<ContextSkillItem | null>(skill);
+  if (skill && skill !== shown) setShown(skill);
+  return (
+    <Dialog
+      open={skill !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        {shown ? (
+          <DialogHeader>
+            <DialogTitle className="break-words">{shown.name}</DialogTitle>
+            <DialogDescription className="whitespace-pre-wrap break-words">
+              {shown.description || t(($) => $.context_config.skill_no_description)}
+            </DialogDescription>
+          </DialogHeader>
         ) : null}
-      </div>
-      {!alwaysOn && !displayOnly && (
-        <ToggleControl
-          busy={busy}
-          checked={enabled}
-          disabled={readOnly}
-          label={t(($) => $.context_config.toggle_aria, { name: skill.name })}
-          onToggle={onToggle}
-        />
-      )}
-    </li>
+      </DialogContent>
+    </Dialog>
   );
 }
 

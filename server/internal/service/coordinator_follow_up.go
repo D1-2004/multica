@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -134,20 +135,15 @@ func (s *IssueCommentService) ProcessCoordinatorFollowUp(ctx context.Context) (b
 	}
 	defer tx.Rollback(ctx)
 	q := s.Queries.WithTx(tx)
-	var issueID, agentID pgtype.UUID
-	err = tx.QueryRow(ctx, `SELECT i.id,i.assignee_id FROM issue i JOIN agent a ON a.id=i.assignee_id AND a.workspace_id=i.workspace_id
- WHERE i.assignee_type='agent' AND a.archived_at IS NULL
- AND EXISTS(SELECT 1 FROM coordinator_issue_follow_up f WHERE f.issue_id=i.id AND f.workspace_id=i.workspace_id AND f.agent_id=i.assignee_id AND f.task_id IS NULL)
- AND NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=i.id AND t.agent_id=i.assignee_id AND t.status IN ('queued','dispatched','running','waiting_local_directory','deferred'))
- ORDER BY i.updated_at LIMIT 1 FOR UPDATE OF i SKIP LOCKED`).Scan(&issueID, &agentID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
+	issue, claimed, err := claimCoordinatorFollowUpIssue(ctx, tx)
+	if err != nil || !claimed {
 		return false, err
 	}
-	issue, err := q.GetIssue(ctx, issueID)
-	if err != nil {
+	agentID := issue.AssigneeID
+	if err := prepareEmployeeIssueFollowUp(ctx, tx, issue); err != nil {
+		if errors.Is(err, employeetask.ErrRunNotReady) {
+			return false, tx.Commit(ctx)
+		}
 		return false, err
 	}
 	rows, err := tx.Query(ctx, `SELECT f.id,f.comment_id,f.dispatch_context,c.content FROM coordinator_issue_follow_up f JOIN comment c ON c.id=f.comment_id AND c.workspace_id=f.workspace_id
@@ -233,6 +229,9 @@ func (s *IssueCommentService) ProcessCoordinatorFollowUp(ctx context.Context) (b
 		}
 	}
 	if _, err = tx.Exec(ctx, `UPDATE coordinator_issue_follow_up SET task_id=$2,dispatched_at=now(),last_error=NULL WHERE id=ANY($1::uuid[]) AND workspace_id=$3 AND task_id IS NULL`, ids, task.ID, issue.WorkspaceID); err != nil {
+		return false, err
+	}
+	if err = mapEmployeeIssueFollowUpQueue(ctx, tx, issue, task); err != nil {
 		return false, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -326,4 +325,72 @@ func (s *IssueCommentService) ReconcileCoordinatorFollowUpReceipts(ctx context.C
 		return nil, err
 	}
 	return owned, tx.Commit(ctx)
+}
+
+// Candidate discovery takes no row locks. Each attempt acquires workspace then
+// Issue, and a savepoint rollback releases both locks when the candidate is busy.
+// Skipping a locked oldest Issue must not suppress unrelated ready work.
+func claimCoordinatorFollowUpIssue(ctx context.Context, tx pgx.Tx) (db.Issue, bool, error) {
+	excluded := []pgtype.UUID{}
+	for {
+		var issueID, agentID, workspaceID pgtype.UUID
+		err := tx.QueryRow(ctx, `SELECT i.id,i.assignee_id,i.workspace_id FROM issue i JOIN agent a ON a.id=i.assignee_id AND a.workspace_id=i.workspace_id
+ WHERE i.assignee_type='agent' AND a.archived_at IS NULL AND NOT(i.id=ANY($1::uuid[]))
+ AND EXISTS(SELECT 1 FROM coordinator_issue_follow_up f WHERE f.issue_id=i.id AND f.workspace_id=i.workspace_id AND f.agent_id=i.assignee_id AND f.task_id IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=i.id AND t.agent_id=i.assignee_id AND t.status IN ('queued','dispatched','running','waiting_local_directory','deferred'))
+ AND NOT EXISTS(SELECT 1 FROM employee_task et WHERE et.workspace_id=i.workspace_id AND et.agent_id=i.assignee_id AND et.issue_id=i.id AND et.owner_loop='employee' AND et.state IN ('failed','cancelled'))
+ ORDER BY i.updated_at,i.id LIMIT 1`, excluded).Scan(&issueID, &agentID, &workspaceID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.Issue{}, false, nil
+		}
+		if err != nil {
+			return db.Issue{}, false, err
+		}
+		excluded = append(excluded, issueID)
+		issue, claimed, err := tryClaimCoordinatorFollowUpIssue(ctx, tx, workspaceID, issueID, agentID)
+		if err != nil || claimed {
+			return issue, claimed, err
+		}
+	}
+}
+
+func tryClaimCoordinatorFollowUpIssue(ctx context.Context, outer pgx.Tx, workspaceID, issueID, agentID pgtype.UUID) (db.Issue, bool, error) {
+	tx, err := outer.Begin(ctx)
+	if err != nil {
+		return db.Issue{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	var locked pgtype.UUID
+	err = tx.QueryRow(ctx, `SELECT id FROM workspace WHERE id=$1 FOR KEY SHARE SKIP LOCKED`, workspaceID).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.Issue{}, false, nil
+	}
+	if err != nil {
+		return db.Issue{}, false, err
+	}
+	err = tx.QueryRow(ctx, `SELECT id FROM issue WHERE id=$1 AND workspace_id=$2 AND assignee_id=$3 AND assignee_type='agent' FOR UPDATE SKIP LOCKED`, issueID, workspaceID, agentID).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.Issue{}, false, nil
+	}
+	if err != nil {
+		return db.Issue{}, false, err
+	}
+	q := db.New(tx)
+	active, err := q.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{IssueID: issueID, AgentID: agentID})
+	if err != nil || active {
+		return db.Issue{}, false, err
+	}
+	var pending bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM coordinator_issue_follow_up WHERE issue_id=$1 AND workspace_id=$2 AND agent_id=$3 AND task_id IS NULL)`, issueID, workspaceID, agentID).Scan(&pending)
+	if err != nil || !pending {
+		return db.Issue{}, false, err
+	}
+	issue, err := q.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: workspaceID})
+	if err != nil {
+		return db.Issue{}, false, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return db.Issue{}, false, err
+	}
+	return issue, true, nil
 }

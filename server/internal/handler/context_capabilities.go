@@ -182,6 +182,11 @@ type contextCapOfferedConnectorDTO struct {
 type contextCapCatalogAppDTO struct {
 	Slug string `json:"slug"`
 	Name string `json:"name"`
+	// Setup is how its sign-in gets ready (contextConfigAppSetup):
+	// "automatic", "oauth_app" or "unsupported".
+	Setup string `json:"setup"`
+	// Ready: an OAuth connect can start on this deployment now.
+	Ready bool `json:"ready"`
 }
 
 type contextCapAgentDetailResponse struct {
@@ -213,6 +218,9 @@ type contextCapAgentDetailResponse struct {
 	// Apps is the connector catalog in its order; an app becomes usable once
 	// the agent's manager adds it (Global or Offers then lists it).
 	Apps []contextCapCatalogAppDTO `json:"apps"`
+	// CanConfigureApps: the caller may save an app's OAuth application here
+	// (the agent's managers).
+	CanConfigureApps bool `json:"can_configure_apps"`
 }
 
 func contextCapTime(t time.Time) string {
@@ -1273,8 +1281,12 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 	resp.Tenants = []contextCapTenantRefDTO{}
 	resp.Apps = []contextCapCatalogAppDTO{}
 	for _, app := range connectorCatalog.Apps() {
-		resp.Apps = append(resp.Apps, contextCapCatalogAppDTO{Slug: app.Slug, Name: app.Name})
+		resp.Apps = append(resp.Apps, contextCapCatalogAppDTO{
+			Slug: app.Slug, Name: app.Name, Setup: contextConfigAppSetup(app.Slug),
+			Ready: h.catalogOAuthAvailableFor(ctx, a.WorkspaceID, app),
+		})
 	}
+	resp.CanConfigureApps = manages
 	tenants, err := contextcap.AgentTenants(ctx, h.DB, a.WorkspaceID, a.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "tenant lookup failed")

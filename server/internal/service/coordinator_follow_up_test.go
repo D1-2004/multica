@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -112,5 +113,44 @@ func TestProactiveFollowUpDurableBusyBatchAndReceipts(t *testing.T) {
 	var pending int
 	if err = f.pool.QueryRow(ctx, `SELECT count(*) FROM coordinator_issue_follow_up WHERE issue_id=$1 AND task_id IS NULL`, f.params.Issue.ID).Scan(&pending); err != nil || pending != 1 {
 		t.Fatalf("omitted comment not retained: %d %v", pending, err)
+	}
+}
+
+func TestProactiveFollowUpSkipsLockedOldestIssue(t *testing.T) {
+	a := newIssueFollowUpFixture(t)
+	b := newIssueFollowUpFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, f := range []issueFollowUpFixture{a, b} {
+		p := f.params
+		p.DispatchContext = []byte(`{"external_identity":{"dws":{"uid":"u1","orgId":"org"}},"dispatch_event_data":{"conversation":{"openConversationId":"cid"}}}`)
+		if _, err := f.svc.QueueCoordinatorFollowUp(ctx, p); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_, _ = f.pool.Exec(context.Background(), `DELETE FROM coordinator_issue_follow_up WHERE issue_id=$1`, f.params.Issue.ID)
+		})
+	}
+	if _, err := a.pool.Exec(ctx, `UPDATE issue SET updated_at='2001-01-01' WHERE id=$1`, a.params.Issue.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.pool.Exec(ctx, `UPDATE issue SET updated_at='2002-01-01' WHERE id=$1`, b.params.Issue.ID); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := a.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Rollback(context.Background())
+	if _, err := lock.Exec(ctx, `SELECT id FROM issue WHERE id=$1 FOR UPDATE`, a.params.Issue.ID); err != nil {
+		t.Fatal(err)
+	}
+	worked, err := b.svc.ProcessCoordinatorFollowUp(ctx)
+	if err != nil || !worked {
+		t.Fatalf("locked oldest Issue prevented independent ready follow-up: worked=%v err=%v", worked, err)
+	}
+	var count int
+	if err := b.pool.QueryRow(ctx, `SELECT count(*) FROM coordinator_issue_follow_up WHERE issue_id=$1 AND task_id IS NOT NULL`, b.params.Issue.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("unlocked Issue was not dispatched: count=%d err=%v", count, err)
 	}
 }

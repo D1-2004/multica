@@ -22,6 +22,9 @@ export const contextConfigKeys = {
     [...contextConfigKeys.agent(agentId), "scenes"] as const,
   scene: (agentId: string, sceneId: string) =>
     [...contextConfigKeys.scenes(agentId), sceneId] as const,
+  /** An official app's OAuth application (agent managers only). */
+  oauthApp: (agentId: string, slug: string) =>
+    [...contextConfigKeys.agent(agentId), "oauth-app", slug] as const,
   /** A scene's routines (例行任务). */
   sceneRoutines: (agentId: string, sceneId: string) =>
     [...contextConfigKeys.scene(agentId, sceneId), "routines"] as const,
@@ -198,6 +201,15 @@ function sceneRoutinesTargetReady(target: SceneRoutinesTarget): boolean {
   return target.kind === "node"
     ? Boolean(target.wsId && target.agentId && target.node.orgId && target.node.scopeKey)
     : Boolean(target.agentId && target.sceneId);
+}
+
+/** An official app's OAuth application, for the agent's managers. */
+export function contextConfigOAuthAppOptions(agentId: string, slug: string) {
+  return queryOptions({
+    queryKey: contextConfigKeys.oauthApp(agentId, slug),
+    queryFn: () => api.getContextConfigOAuthApp(agentId, slug),
+    enabled: Boolean(agentId && slug),
+  });
 }
 
 /** A routine's run history, under its scene's routines key so every

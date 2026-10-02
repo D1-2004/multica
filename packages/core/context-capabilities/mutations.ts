@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type {
+  AddContextConfigAppInput,
+  ContextConfigOAuthAppInput,
   AgentContextCapabilities,
   ContextConfigScopeInput,
   ContextNodeDetail,
@@ -61,6 +63,28 @@ function invalidateScopeWrite(
   input: { scopeType: string; scopeKey: string },
 ) {
   return queryClient.invalidateQueries({ queryKey: scopeWriteKey(agentId, input) });
+}
+
+/** Adds an official app at a level. The agent's offers change too, so every
+ * level of the agent refreshes. */
+export function useAddContextConfigApp(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AddContextConfigAppInput) => api.addContextConfigApp(agentId, input),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: contextConfigKeys.agent(agentId) }),
+  });
+}
+
+/** Saves an app's OAuth application. The variables hold secrets, so the
+ * mutation is dropped as soon as nothing observes it (gcTime 0). */
+export function useSetContextConfigOAuthApp(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, ...input }: ContextConfigOAuthAppInput & { slug: string }) =>
+      api.setContextConfigOAuthApp(agentId, slug, input),
+    gcTime: 0,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: contextConfigKeys.agent(agentId) }),
+  });
 }
 
 export function useSetContextCapabilityBinding(agentId: string) {

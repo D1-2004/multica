@@ -33,6 +33,9 @@ func webCoordinatorFixture(t *testing.T) (*Handler, db.ChatSession) {
 	t.Cleanup(func() {
 		ctx := context.Background()
 		for _, query := range []string{
+			`DELETE FROM employee_task_entry WHERE agent_id=$1`,
+			`DELETE FROM employee_task_run WHERE agent_id=$1`,
+			`DELETE FROM employee_task WHERE agent_id=$1`,
 			`DELETE FROM agent_task_queue WHERE agent_id = $1`,
 			`DELETE FROM comment WHERE issue_id IN (SELECT id FROM issue WHERE assignee_id = $1)`,
 			`DELETE FROM issue WHERE assignee_id = $1`,
@@ -159,6 +162,10 @@ func TestWebCoordinatorPlanRollsBackEarlierNewItemWhenContinuationBusy(t *testin
 		t.Fatalf("busy continuation must reject the complete uncommitted plan: turn=%#v err=%v", turn, err)
 	}
 	assertWebCoordinatorCounts(t, session, 1, 1, 0, 0)
+	var domainTasks int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM employee_task WHERE workspace_id=$1 AND agent_id=$2`, session.WorkspaceID, session.AgentID).Scan(&domainTasks); err != nil || domainTasks != 0 {
+		t.Fatalf("task escaped plan rollback: %d %v", domainTasks, err)
+	}
 	if broadcasts.Load() != 0 {
 		t.Fatalf("rollback emitted %d product events", broadcasts.Load())
 	}
@@ -178,4 +185,19 @@ func TestSendChatMessageCoordinatorDeferredDoesNotExecute(t *testing.T) {
 		t.Fatalf("deferred coordinator verdict must not enqueue a chat task: status=%d body=%s", w.Code, w.Body.String())
 	}
 	assertWebCoordinatorCounts(t, session, 0, 0, 0, 0)
+}
+
+func TestWebCoordinatorPlanPersistsEmployeeTaskMappings(t *testing.T) {
+	h, session := webCoordinatorFixture(t)
+	decision := inboundcoord.Decision{Action: inboundcoord.ActionIssue, PlanVersion: "window-plan-v1", UserText: "已受理", Items: []inboundcoord.WindowItem{{ActionKey: "item-1", Content: "整理预算", Purpose: "整理预算", Intent: "other"}}}
+	_, committed, err := h.persistWebCoordinatorPlan(context.Background(), session, parseUUID(testUserID), "整理预算", decision, chattrace.New("web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var owner, kind, requester string
+	var count int
+	err = testPool.QueryRow(context.Background(), `SELECT t.owner_loop,t.scope_kind,t.requester_ref,count(r.id) FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id WHERE t.workspace_id=$1 AND t.agent_id=$2 AND t.issue_id=$3::uuid GROUP BY t.owner_loop,t.scope_kind,t.requester_ref`, session.WorkspaceID, session.AgentID, committed.IssueResults[0].IssueID).Scan(&owner, &kind, &requester, &count)
+	if err != nil || owner != "coordinator" || kind != "legacy_chat" || requester != "member:"+testUserID || count != 1 {
+		t.Fatalf("mapping %s/%s/%s/%d: %v", owner, kind, requester, count, err)
+	}
 }

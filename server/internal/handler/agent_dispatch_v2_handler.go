@@ -1414,7 +1414,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			if i == 0 {
 				createParams.AttachmentIDs = attachmentIDs(imported)
 			}
-			result, err := h.IssueService.Create(r.Context(), createParams, service.IssueCreateOpts{
+			result, err := h.createCoordinatorIssue(r.Context(), itemCommand, dispatchContext, itemKey, createParams, service.IssueCreateOpts{
 				ActorID:          uuidToString(dispatchContext.UserID),
 				AnalyticsAgentID: uuidToString(agent.ID),
 				Platform:         "webhook",
@@ -1555,7 +1555,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		overrides,
 	)
 	createParams.AttachmentIDs = attachmentIDs(imported)
-	result, err := h.IssueService.Create(r.Context(), createParams, service.IssueCreateOpts{
+	result, err := h.createCoordinatorIssue(r.Context(), c, dispatchContext, idempotencyKey, createParams, service.IssueCreateOpts{
 		ActorID:          uuidToString(dispatchContext.UserID),
 		AnalyticsAgentID: uuidToString(agent.ID),
 		Platform:         "webhook",

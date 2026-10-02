@@ -30,6 +30,9 @@ const api = vi.hoisted(() => ({
   setContextConfigMcpConfig: vi.fn(),
   listSceneRoutines: vi.fn(),
   listSceneRoutineRuns: vi.fn(),
+  addContextConfigApp: vi.fn(),
+  getContextConfigOAuthApp: vi.fn(),
+  setContextConfigOAuthApp: vi.fn(),
   createSceneRoutine: vi.fn(),
   updateSceneRoutine: vi.fn(),
   deleteSceneRoutine: vi.fn(),
@@ -129,10 +132,11 @@ function agentDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
     jsapiAvailable: false,
     access: "grant",
     apps: [
-      { slug: "github", name: "GitHub" },
-      { slug: "notion", name: "Notion" },
-      { slug: "linear", name: "Linear" },
+      { slug: "github", name: "GitHub", setup: "automatic" as const, ready: true },
+      { slug: "notion", name: "Notion", setup: "automatic" as const, ready: true },
+      { slug: "linear", name: "Linear", setup: "automatic" as const, ready: true },
     ],
+    canConfigureApps: false,
     ...overrides,
   };
 }
@@ -243,9 +247,10 @@ describe("ContextConfigPage", () => {
     expect(onBind).toHaveBeenCalledWith({ agentId: "agent-1", scopeType: "scene", scopeKey: SALES_SCENE, orgId: "" });
 
     // Wiki is added to the group and authorized with the group's token.
+    // One line: its account status, and 配置 once it is added.
     const wiki = tile(region, "Wiki");
-    expect(within(wiki).getByText(copy.status_added)).toBeInTheDocument();
     expect(within(wiki).getByText(copy.connected)).toBeInTheDocument();
+    expect(within(region).getByRole("button", { name: copy.app_configure_aria.replace("{{name}}", "Wiki") })).toBeInTheDocument();
     const dialog = await openConnector(user, region, "Wiki");
     expect(within(dialog).getByText(copy.added_scene)).toBeInTheDocument();
     expect(within(dialog).getByText("Credential saved (••••abcd)")).toBeInTheDocument();
@@ -346,11 +351,11 @@ describe("ContextConfigPage", () => {
     api.getContextConfigAgent.mockResolvedValue(
       agentDetail({
         apps: [
-          { slug: "linear", name: "Linear" },
-          { slug: "notion", name: "Notion" },
-          { slug: "figma", name: "Figma" },
-          { slug: "github", name: "GitHub" },
-          { slug: "slack", name: "Slack" },
+          { slug: "linear", name: "Linear", setup: "automatic" as const, ready: true },
+          { slug: "notion", name: "Notion", setup: "automatic" as const, ready: true },
+          { slug: "figma", name: "Figma", setup: "automatic" as const, ready: true },
+          { slug: "github", name: "GitHub", setup: "automatic" as const, ready: true },
+          { slug: "slack", name: "Slack", setup: "automatic" as const, ready: true },
         ],
         offers: {
           connectors: [
@@ -366,26 +371,19 @@ describe("ContextConfigPage", () => {
     renderPage({ binding: groupBinding });
 
     const region = await screen.findByRole("region", { name: "Sales team" });
-    const tiles = within(region)
-      .getByRole("list", { name: copy.slot_connectors })
-      .querySelectorAll("li button");
-    expect([...tiles].map((button) => button.getAttribute("aria-label")?.split(" · ")[0])).toEqual(
-      ["GitHub", "Slack", "Notion", "Figma", "Wiki", "Docs"].map(tileName),
+    // One row each, apps nobody opened for the agent included.
+    const rows = within(within(region).getByRole("list", { name: copy.slot_connectors })).getAllByRole("listitem");
+    expect(rows.map((row) => row.querySelector("button")?.getAttribute("aria-label")?.split(" · ")[0])).toEqual(
+      ["GitHub", "Slack", "Notion", "Figma", "Wiki", "Docs", "Linear"].map(tileName),
     );
-    // Other apps nobody opened fold into one compact row.
-    const more = within(region).getByRole("list", { name: copy.more_apps }).querySelectorAll("li button");
-    expect([...more].map((app) => app.getAttribute("aria-label"))).toEqual([
-      `${tileName("Linear")} · ${copy.status_unavailable}`,
-    ]);
     // The agent's own connector is on by default.
     const docs = tile(region, "Docs");
     expect(within(docs).getByText(copy.always_on)).toBeInTheDocument();
-    // An app nobody opened for the agent says so and points to its manager.
-    const github = tile(region, "GitHub");
-    expect(within(github).getByText(copy.status_unavailable)).toBeInTheDocument();
+    // An app nobody opened for the agent is added right here.
+    expect(within(region).getByRole("button", { name: copy.app_add_aria.replace("{{name}}", "GitHub") })).toBeEnabled();
     const dialog = await openConnector(user, region, "GitHub");
-    expect(within(dialog).getByText(copy.app_unavailable_note.replace("{{name}}", "GitHub"))).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: copy.app_add })).not.toBeInTheDocument();
+    expect(within(dialog).getByText(copy.app_new_note.replace("{{name}}", "GitHub"))).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: copy.app_add })).toBeEnabled();
   });
 
   it("saves a personal credential write-only and clears the input", async () => {
@@ -435,8 +433,8 @@ describe("ContextConfigPage", () => {
 
     const region = await screen.findByRole("region", { name: "Sales team" });
     const wikiTile = tile(region, "Wiki");
-    expect(within(wikiTile).getByText(copy.status_not_added)).toBeInTheDocument();
-    // Not in effect yet: no 未授权 until it is added.
+    // Not added yet: its button says 添加, and no 未授权 until it is added.
+    expect(within(region).getByRole("button", { name: copy.app_add_aria.replace("{{name}}", "Wiki") })).toBeInTheDocument();
     expect(within(wikiTile).queryByText(copy.status_unauthorized)).not.toBeInTheDocument();
     const dialog = await openConnector(user, region, "Wiki");
     expect(within(dialog).getByText(copy.auth_after_add)).toBeInTheDocument();
@@ -510,6 +508,113 @@ describe("ContextConfigPage", () => {
     expect(tile(region, "Wiki")).toHaveAccessibleName(
       `${tileName("Wiki")} · ${copy.status_added} · ${copy.connected}`,
     );
+  });
+
+  it("adds an app nobody opened for the agent from its row, then opens its settings", async () => {
+    const notionId = "conn-notion";
+    const notion = { ...githubConnector, id: notionId, name: "Notion", catalogSlug: "notion", acceptsPat: false, installUrl: "" };
+    // Before: Notion is only in the catalog; after the add, offered and on.
+    api.getContextConfigAgent
+      .mockResolvedValueOnce(agentDetail())
+      .mockResolvedValue(agentDetail({ offers: { connectors: [...agentDetail().offers.connectors, notion], skills: [] } }));
+    api.getContextConfigScene
+      .mockResolvedValueOnce({ ...sceneDetail, rights: allRights })
+      .mockResolvedValue({ ...sceneDetail, rights: allRights, bindings: [...sceneDetail.bindings, connectorOn(notionId)] });
+    api.addContextConfigApp.mockResolvedValue({ connectorId: notionId, defaultOn: false });
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, openAuthorizeUrl: vi.fn() });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    await user.click(within(region).getByRole("button", { name: copy.app_add_aria.replace("{{name}}", "Notion") }));
+    await waitFor(() =>
+      expect(api.addContextConfigApp).toHaveBeenCalledWith("agent-1", {
+        slug: "notion",
+        scopeType: "scene",
+        scopeKey: SALES_SCENE,
+      }),
+    );
+    // Its settings open on the added connector, ready to authorize.
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "Notion" })).toBeInTheDocument();
+    expect(await within(dialog).findByRole("button", { name: copy.connect })).toBeInTheDocument();
+    // Behind the dialog, its row now offers 配置.
+    expect(
+      within(region).getByRole("button", { name: copy.app_configure_aria.replace("{{name}}", "Notion"), hidden: true }),
+    ).toBeInTheDocument();
+  });
+
+  it("lets a manager fill in an app's OAuth application here, with the callback URL to register", async () => {
+    const slackId = "conn-slack";
+    const slack = { ...githubConnector, id: slackId, name: "Slack", catalogSlug: "slack", acceptsPat: false, oauthAvailable: false, installUrl: "" };
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        access: "manager",
+        canConfigureApps: true,
+        apps: [{ slug: "slack", name: "Slack", setup: "oauth_app", ready: false }],
+        offers: { connectors: [slack], skills: [] },
+      }),
+    );
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: allRights, bindings: [connectorOn(slackId)], credentials: [] });
+    const oauthApp = {
+      slug: "slack",
+      name: "Slack",
+      fields: [
+        { key: "client_id", optional: false, file: false },
+        { key: "client_secret", optional: false, file: false },
+        { key: "signing_secret", optional: true, file: false },
+      ],
+      docsUrl: "https://api.slack.com/apps",
+      callbackUrl: "https://fde-workbench.dingtalk.com/api/connectors/oauth/callback",
+      ready: false,
+      clientId: "",
+      clientSecretSet: false,
+      appId: "",
+      appSlug: "",
+      privateKeySet: false,
+      optionalSecretSet: false,
+      deploymentClient: false,
+    };
+    api.getContextConfigOAuthApp.mockResolvedValue(oauthApp);
+    api.setContextConfigOAuthApp.mockResolvedValue({ ...oauthApp, ready: true, clientId: "cid", clientSecretSet: true });
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, openAuthorizeUrl: vi.fn() });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    await user.click(within(region).getByRole("button", { name: copy.app_configure_aria.replace("{{name}}", "Slack") }));
+    const dialog = await screen.findByRole("dialog");
+    // No sign-in until the OAuth application exists; it is filled in here.
+    expect(within(dialog).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
+    expect(await within(dialog).findByText(oauthApp.callbackUrl)).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: copy.oauth_app_console.replace("{{name}}", "Slack") })).toHaveAttribute(
+      "href",
+      oauthApp.docsUrl,
+    );
+    await user.click(within(dialog).getByRole("button", { name: copy.save }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("Client ID");
+    expect(api.setContextConfigOAuthApp).not.toHaveBeenCalled();
+
+    await user.type(within(dialog).getByLabelText("Client ID"), "cid");
+    await user.type(within(dialog).getByLabelText("Client Secret"), "csecret");
+    await user.click(within(dialog).getByRole("button", { name: copy.save }));
+    await waitFor(() =>
+      expect(api.setContextConfigOAuthApp).toHaveBeenCalledWith("agent-1", "slack", { clientId: "cid", clientSecret: "csecret" }),
+    );
+    expect(screen.queryByDisplayValue("csecret")).not.toBeInTheDocument();
+  });
+
+  it("tells a member that an agent manager sets up an app's OAuth application on this page", async () => {
+    const slack = { ...githubConnector, id: "conn-slack", name: "Slack", catalogSlug: "slack", acceptsPat: false, oauthAvailable: false, installUrl: "" };
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({ apps: [{ slug: "slack", name: "Slack", setup: "oauth_app", ready: false }], offers: { connectors: [slack], skills: [] } }),
+    );
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: allRights, bindings: [connectorOn("conn-slack")], credentials: [] });
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, openAuthorizeUrl: vi.fn() });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    const dialog = await openConnector(user, region, "Slack");
+    expect(within(dialog).getByText(copy.oauth_app_manager_only.replace("{{name}}", "Slack"))).toBeInTheDocument();
+    expect(api.getContextConfigOAuthApp).not.toHaveBeenCalled();
   });
 
   it("confirms before removing a group credential", async () => {
@@ -769,8 +874,7 @@ describe("ContextConfigPage", () => {
 
       await user.click(await screen.findByRole("tab", { name: copy.level_person }));
       const region = await screen.findByRole("region", { name: "Alice" });
-      const authorized = copy.connected_as.replace("{{account}}", "@octocat");
-      expect(within(tile(region, "GitHub")).getByText(authorized)).toBeInTheDocument();
+      expect(within(tile(region, "GitHub")).getByText(copy.connected)).toBeInTheDocument();
       const dialog = await openConnector(user, region, "GitHub");
       expect(within(dialog).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
 
@@ -962,7 +1066,6 @@ describe("ContextConfigPage", () => {
     expect(await screen.findByRole("tab", { name: copy.level_scene })).toBeInTheDocument();
     const groupRegion = await screen.findByRole("region", { name: "Sales team" });
     expect(within(groupRegion).getByText(copy.kind_group)).toBeInTheDocument();
-    expect(within(groupRegion).getByText(copy.scene_scope_hint)).toBeInTheDocument();
 
     const picker = screen.getByRole("combobox");
     // A chat without a known name is named by its kind alone.
@@ -972,7 +1075,6 @@ describe("ContextConfigPage", () => {
     const dmRegion = await screen.findByRole("region", { name: copy.scene_untitled_dm });
     // The title is the kind, so no second kind badge.
     expect(within(dmRegion).getAllByText(copy.kind_dm)).toHaveLength(1);
-    expect(within(dmRegion).getByText(copy.scene_scope_hint_dm)).toBeInTheDocument();
     // An older backend without rights that lets the caller connect: the
     // chat's own token is set here.
     const dialog = await openConnector(user, dmRegion, "Wiki");
@@ -1004,7 +1106,6 @@ describe("ContextConfigPage", () => {
 
     const region = await screen.findByRole("region", { name: "Bob" });
     expect(within(region).getByText(copy.kind_dm)).toBeInTheDocument();
-    expect(within(region).getByText(copy.scene_scope_hint_dm)).toBeInTheDocument();
     const dialog = await openConnector(user, region, "Wiki");
     expect(within(dialog).queryByText(copy.owner_connects)).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: copy.app_add }));
@@ -1036,9 +1137,7 @@ describe("ContextConfigPage", () => {
     const region = await screen.findByRole("region", { name: "Alice" });
     // Skills never get the switch.
     expect(within(region).queryByRole("switch", { name: copy.share_in_groups })).not.toBeInTheDocument();
-    // The runtime does not read the switch yet, so the page says so and the
-    // person scope hint does not claim group chats are excluded.
-    expect(within(region).getByText(copy.person_scope_hint)).toBeInTheDocument();
+    // The runtime does not read the switch yet, so the page says so.
     const dialog = await openConnector(user, region, "Wiki");
     const share = within(dialog).getByRole("switch", { name: copy.share_in_groups });
     expect(share).not.toBeChecked();
@@ -1099,11 +1198,11 @@ describe("ContextConfigPage", () => {
     expect(column?.className).toContain("sm:max-w-2xl");
   });
 
-  it("lists the levels as vertical tabs", async () => {
+  it("switches levels with one segmented control above the level", async () => {
     renderPage({ initialAgentId: "agent-1" });
     await screen.findByRole("region", { name: "Sales team" });
     const levels = screen.getByRole("tablist", { name: copy.levels_aria });
-    expect(levels.closest('[data-orientation="vertical"]')).not.toBeNull();
+    expect(levels.closest('[data-orientation="horizontal"]')).not.toBeNull();
     expect(within(levels).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       copy.level_scene,
       copy.level_person,
@@ -1307,14 +1406,13 @@ describe("ContextConfigPage", () => {
       expect(within(region).getByText(copy.org_read_only)).toBeInTheDocument();
       // Only what applies there: the enabled instruction, no skill the
       // enterprise did not turn on, the added connector.
-      expect(within(region).getByRole("listitem", { name: "Tone" })).toBeInTheDocument();
-      expect(within(region).queryByRole("listitem", { name: "Off" })).not.toBeInTheDocument();
+      expect(within(region).getByRole("button", { name: "Tone" })).toBeInTheDocument();
+      expect(within(region).queryByRole("button", { name: "Off" })).not.toBeInTheDocument();
       expect(within(region).queryByText("Weekly report")).not.toBeInTheDocument();
       expect(within(region).queryByRole("button", { name: copy.prompt_add })).not.toBeInTheDocument();
       expect(within(region).queryByRole("button", { name: copy.mcp_add })).not.toBeInTheDocument();
       expect(within(region).queryByRole("switch")).not.toBeInTheDocument();
       expect(within(region).queryByRole("button", { name: tileName("GitHub") })).not.toBeInTheDocument();
-      expect(within(region).queryByRole("list", { name: copy.more_apps })).not.toBeInTheDocument();
       const dialog = await openConnector(user, region, "Wiki");
       expect(within(dialog).queryByRole("button", { name: copy.app_remove })).not.toBeInTheDocument();
       expect(within(dialog).queryByRole("button", { name: copy.set_credential })).not.toBeInTheDocument();
@@ -1379,8 +1477,9 @@ describe("ContextConfigPage", () => {
       // The chat's own switch stays its own.
       expect(within(skill as HTMLElement).getByRole("switch")).not.toBeChecked();
       // A connector the enterprise added and authorized applies here too.
+      // The enterprise's account covers it here: authorized, with 配置.
       const wiki = tile(region, "Wiki");
-      expect(within(wiki).getByText(copy.on_for_org)).toBeInTheDocument();
+      expect(within(wiki).getByText(copy.connected)).toBeInTheDocument();
       expect(within(wiki).queryByText(copy.status_unauthorized)).not.toBeInTheDocument();
       const dialog = await openConnector(user, region, "Wiki");
       expect(within(dialog).getByText(copy.org_on_note)).toBeInTheDocument();
@@ -1623,7 +1722,7 @@ describe("bound configuration page", () => {
     expect(await screen.findByText(copy.kind_dm)).toBeInTheDocument();
 
     await user.click(within(levels).getByRole("tab", { name: copy.level_person }));
-    expect(await screen.findByText(copy.person_scope_hint)).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Alice" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Sales team" })).not.toBeInTheDocument();
   });
 
@@ -1677,8 +1776,9 @@ describe("bound configuration page", () => {
     for (const toggle of within(region).getAllByRole("switch")) {
       expect(toggle).toHaveAttribute("aria-disabled", "true");
     }
-    expect(within(region).getByRole("listitem", { name: "Tone" })).toBeInTheDocument();
-    expect(within(region).getByRole("listitem", { name: "docs" })).toBeInTheDocument();
+    expect(within(region).getByRole("button", { name: "Tone" })).toBeInTheDocument();
+    expect(within(region).getByText("docs")).toBeInTheDocument();
+    expect(within(region).queryByRole("button", { name: copy.mcp_edit.replace("{{name}}", "docs") })).not.toBeInTheDocument();
     expect(within(region).queryByRole("button", { name: copy.prompt_add })).not.toBeInTheDocument();
     expect(within(region).queryByRole("button", { name: copy.mcp_add })).not.toBeInTheDocument();
     // The stored account shows; nothing can be stored, removed or added.
@@ -1770,45 +1870,47 @@ describe("scope prompts", () => {
     api.setContextConfigPrompts.mockResolvedValue([]);
   });
 
-  it("adds a prompt after checking it, saving the whole list", async () => {
+  it("adds a prompt in a dialog after checking it, saving the whole list", async () => {
     const user = userEvent.setup();
     renderPage({ binding: groupBinding });
 
     const region = await screen.findByRole("region", { name: "Sales team" });
     await user.click(within(region).getByRole("button", { name: copy.prompt_add }));
-    await user.click(within(region).getByRole("button", { name: copy.save }));
-    expect(within(region).getByRole("alert")).toHaveTextContent(
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: copy.save }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
       enAgents.tab_body.context_builder.prompt_name_required,
     );
-    await user.type(within(region).getByLabelText(copy.prompt_name), "Tone");
-    await user.type(within(region).getByLabelText(copy.prompt_text), "x");
-    await user.click(within(region).getByRole("button", { name: copy.save }));
-    expect(within(region).getByRole("alert")).toHaveTextContent(
+    await user.type(within(dialog).getByLabelText(copy.prompt_name), "Tone");
+    await user.type(within(dialog).getByLabelText(copy.prompt_text), "x");
+    await user.click(within(dialog).getByRole("button", { name: copy.save }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
       enAgents.tab_body.context_builder.prompt_name_duplicate,
     );
     expect(api.setContextConfigPrompts).not.toHaveBeenCalled();
 
-    await user.clear(within(region).getByLabelText(copy.prompt_name));
-    await user.type(within(region).getByLabelText(copy.prompt_name), "Format");
-    await user.clear(within(region).getByLabelText(copy.prompt_text));
-    await user.type(within(region).getByLabelText(copy.prompt_text), "Use lists.");
-    await user.click(within(region).getByRole("button", { name: copy.save }));
+    await user.clear(within(dialog).getByLabelText(copy.prompt_name));
+    await user.type(within(dialog).getByLabelText(copy.prompt_name), "Format");
+    await user.clear(within(dialog).getByLabelText(copy.prompt_text));
+    await user.type(within(dialog).getByLabelText(copy.prompt_text), "Use lists.");
+    await user.click(within(dialog).getByRole("button", { name: copy.save }));
     await waitFor(() =>
       expect(api.setContextConfigPrompts).toHaveBeenCalledWith("agent-1", { scopeType: "scene", scopeKey: SALES_SCENE }, [
         { name: "Tone", order: 1, text: "Be brief.", enabled: true },
         { name: "Format", order: 2, text: "Use lists.", enabled: true },
       ]),
     );
-    await waitFor(() => expect(within(region).queryByLabelText(copy.prompt_name)).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
-  it("switches, edits and deletes a prompt", async () => {
+  it("switches a prompt on its row and opens it to edit or delete", async () => {
     const user = userEvent.setup();
     renderPage({ binding: groupBinding });
 
     const region = await screen.findByRole("region", { name: "Sales team" });
-    const row = within(region).getByRole("listitem", { name: "Tone" });
-    await user.click(within(row).getByRole("switch", { name: "Turn Tone on or off" }));
+    // One line: no text on the row.
+    expect(within(region).queryByText("Be brief.")).not.toBeInTheDocument();
+    await user.click(within(region).getByRole("switch", { name: "Turn Tone on or off" }));
     await waitFor(() =>
       expect(api.setContextConfigPrompts).toHaveBeenLastCalledWith(
         "agent-1",
@@ -1817,14 +1919,15 @@ describe("scope prompts", () => {
       ),
     );
 
-    await user.click(
-      await within(region).findByRole("button", { name: copy.prompt_edit.replace("{{name}}", "Tone") }),
-    );
-    const text = within(region).getByLabelText(copy.prompt_text);
+    await user.click(await within(region).findByRole("button", { name: "Tone" }));
+    let dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Be brief.")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: copy.action_edit }));
+    const text = within(dialog).getByLabelText(copy.prompt_text);
     expect(text).toHaveValue("Be brief.");
     await user.clear(text);
     await user.type(text, "Be very brief.");
-    await user.click(within(region).getByRole("button", { name: copy.save }));
+    await user.click(within(dialog).getByRole("button", { name: copy.save }));
     await waitFor(() =>
       expect(api.setContextConfigPrompts).toHaveBeenLastCalledWith(
         "agent-1",
@@ -1832,10 +1935,11 @@ describe("scope prompts", () => {
         [{ name: "Tone", order: 1, text: "Be very brief.", enabled: true }],
       ),
     );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
-    await user.click(
-      await within(region).findByRole("button", { name: copy.prompt_delete.replace("{{name}}", "Tone") }),
-    );
+    await user.click(within(region).getByRole("button", { name: "Tone" }));
+    dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: copy.action_delete }));
     const confirm = await screen.findByRole("alertdialog");
     await user.click(within(confirm).getByRole("button", { name: copy.prompt_delete.replace("{{name}}", "Tone") }));
     await waitFor(() =>
@@ -1865,35 +1969,36 @@ describe("scope MCP servers", () => {
     );
   });
 
-  it("adds a remote URL server only", async () => {
+  it("adds a remote URL server only, in a dialog", async () => {
     const user = userEvent.setup();
     renderPage({ binding: personBinding });
 
     const region = await screen.findByRole("region", { name: "Alice" });
     await user.click(within(region).getByRole("button", { name: copy.mcp_add }));
+    const dialog = await screen.findByRole("dialog");
     // A remote server only: no command, arguments or environment.
-    expect(within(region).queryByLabelText(/command/i)).not.toBeInTheDocument();
-    expect(within(region).getByText(copy.mcp_remote_only)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText(/command/i)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(copy.mcp_remote_only)).toBeInTheDocument();
 
-    await user.type(within(region).getByLabelText(copy.mcp_name), "multica");
-    await user.type(within(region).getByLabelText(copy.mcp_url), "https://mcp.example/docs");
-    await user.click(within(region).getByRole("button", { name: copy.save }));
-    expect(within(region).getByRole("alert")).toHaveTextContent(copy.mcp_name_reserved);
+    await user.type(within(dialog).getByLabelText(copy.mcp_name), "multica");
+    await user.type(within(dialog).getByLabelText(copy.mcp_url), "https://mcp.example/docs");
+    await user.click(within(dialog).getByRole("button", { name: copy.save }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(copy.mcp_name_reserved);
 
-    await user.clear(within(region).getByLabelText(copy.mcp_name));
-    await user.type(within(region).getByLabelText(copy.mcp_name), "docs");
-    await user.clear(within(region).getByLabelText(copy.mcp_url));
-    await user.type(within(region).getByLabelText(copy.mcp_url), "file:///usr/bin/server");
-    await user.click(within(region).getByRole("button", { name: copy.save }));
-    expect(within(region).getByRole("alert")).toHaveTextContent(copy.mcp_url_invalid);
+    await user.clear(within(dialog).getByLabelText(copy.mcp_name));
+    await user.type(within(dialog).getByLabelText(copy.mcp_name), "docs");
+    await user.clear(within(dialog).getByLabelText(copy.mcp_url));
+    await user.type(within(dialog).getByLabelText(copy.mcp_url), "file:///usr/bin/server");
+    await user.click(within(dialog).getByRole("button", { name: copy.save }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(copy.mcp_url_invalid);
     expect(api.setContextConfigMcpConfig).not.toHaveBeenCalled();
 
-    await user.clear(within(region).getByLabelText(copy.mcp_url));
-    await user.type(within(region).getByLabelText(copy.mcp_url), "https://mcp.example/docs");
-    await user.click(within(region).getByRole("button", { name: copy.mcp_header_add }));
-    await user.type(within(region).getByLabelText(copy.mcp_header_name), "Authorization");
-    await user.type(within(region).getByLabelText(copy.mcp_header_value), "Bearer t");
-    await user.click(within(region).getByRole("button", { name: copy.save }));
+    await user.clear(within(dialog).getByLabelText(copy.mcp_url));
+    await user.type(within(dialog).getByLabelText(copy.mcp_url), "https://mcp.example/docs");
+    await user.click(within(dialog).getByRole("button", { name: copy.mcp_header_add }));
+    await user.type(within(dialog).getByLabelText(copy.mcp_header_name), "Authorization");
+    await user.type(within(dialog).getByLabelText(copy.mcp_header_value), "Bearer t");
+    await user.click(within(dialog).getByRole("button", { name: copy.save }));
     await waitFor(() =>
       expect(api.setContextConfigMcpConfig).toHaveBeenCalledWith(
         "agent-1",
@@ -1907,7 +2012,7 @@ describe("scope MCP servers", () => {
     );
   });
 
-  it("switches a server off and deletes it", async () => {
+  it("configures a server from its row: switch it off and delete it", async () => {
     api.getContextConfigAgent.mockResolvedValue(
       personDetail({ rights: allRights, mcpConfig: { mcpServers: { docs: { url: "https://mcp.example/docs" } } } }),
     );
@@ -1915,7 +2020,11 @@ describe("scope MCP servers", () => {
     renderPage({ binding: personBinding });
 
     const region = await screen.findByRole("region", { name: "Alice" });
-    await user.click(within(region).getByRole("switch", { name: "Turn docs on or off" }));
+    // One line: its name and host, then 配置.
+    expect(within(region).getByText("mcp.example")).toBeInTheDocument();
+    await user.click(within(region).getByRole("button", { name: copy.mcp_edit.replace("{{name}}", "docs") }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("switch", { name: "Turn docs on or off" }));
     await waitFor(() =>
       expect(api.setContextConfigMcpConfig).toHaveBeenLastCalledWith(
         "agent-1",
@@ -1924,9 +2033,7 @@ describe("scope MCP servers", () => {
       ),
     );
 
-    await user.click(
-      await within(region).findByRole("button", { name: copy.mcp_delete.replace("{{name}}", "docs") }),
-    );
+    await user.click(within(dialog).getByRole("button", { name: copy.mcp_delete.replace("{{name}}", "docs") }));
     const confirm = await screen.findByRole("alertdialog");
     await user.click(within(confirm).getByRole("button", { name: copy.mcp_delete.replace("{{name}}", "docs") }));
     await waitFor(() =>
@@ -1950,13 +2057,10 @@ describe("scope MCP servers", () => {
     renderPage({ binding: personBinding });
 
     const region = await screen.findByRole("region", { name: "Alice" });
-    expect(within(region).getByRole("listitem", { name: "local" })).toBeInTheDocument();
+    expect(within(region).getByText("local")).toBeInTheDocument();
     expect(within(region).getByText(copy.mcp_locked)).toBeInTheDocument();
     expect(within(region).queryByRole("button", { name: copy.mcp_add })).not.toBeInTheDocument();
-    expect(within(region).getByRole("switch", { name: "Turn docs on or off" })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(within(region).queryByRole("button", { name: copy.mcp_edit.replace("{{name}}", "docs") })).not.toBeInTheDocument();
   });
 });
 
@@ -1994,8 +2098,10 @@ describe("routines tab", () => {
 
     expect(await screen.findByText("Weekday standup")).toBeInTheDocument();
     expect(api.listSceneRoutines).toHaveBeenCalledWith({ kind: "config", agentId: "agent-1", sceneId: SALES_SCENE, orgId: "" });
-    expect(screen.getByText(routineCopy.read_only)).toBeInTheDocument();
-    expect(screen.getByText(routineCopy.created_in_chat)).toBeInTheDocument();
+    // Just the list: no heading or explanation.
+    expect(screen.queryByText(routineCopy.read_only)).not.toBeInTheDocument();
+    expect(screen.queryByText(routineCopy.subtitle)).not.toBeInTheDocument();
+    expect(screen.queryByText(routineCopy.created_in_chat)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: routineCopy.add })).not.toBeInTheDocument();
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
   });

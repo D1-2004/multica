@@ -17,7 +17,10 @@ import type {
   ContextCapabilityBinding,
   ContextConfigAccess,
   ContextConfigAgentDetail,
+  ContextConfigAppSetup,
   ContextConfigCatalogApp,
+  ContextConfigOAuthApp,
+  AddContextConfigAppResult,
   ContextConfigOrgScope,
   ContextConfigScopeContent,
   ContextConfigTenantRef,
@@ -475,10 +478,67 @@ const ConfigOrgScopeSchema = z
     }),
   );
 
+const appSetup = z
+  .unknown()
+  .transform((value): ContextConfigAppSetup =>
+    value === "oauth_app" || value === "unsupported" ? value : "automatic",
+  );
+
 const CatalogAppSchema = z
-  .object({ slug: catalogSlug, name: text })
+  .object({ slug: catalogSlug, name: text, setup: appSetup, ready: strictTrue })
   .refine((app) => app.slug !== "")
-  .transform((app): ContextConfigCatalogApp => ({ slug: app.slug, name: app.name || app.slug }));
+  .transform(
+    (app): ContextConfigCatalogApp => ({ slug: app.slug, name: app.name || app.slug, setup: app.setup, ready: app.ready }),
+  );
+
+/** An app's OAuth application; null when malformed. */
+export const ContextConfigOAuthAppSchema = z
+  .object({
+    slug: catalogSlug,
+    name: text,
+    fields: tolerantList(
+      z
+        .object({ key: z.string().min(1), optional: strictTrue, file: strictTrue })
+        .transform((field) => ({ key: field.key, optional: field.optional, file: field.file })),
+    ),
+    docs_url: z.unknown().optional(),
+    callback_url: text,
+    ready: strictTrue,
+    client_id: text,
+    client_secret_set: strictTrue,
+    app_id: text,
+    app_slug: text,
+    private_key_set: strictTrue,
+    optional_secret_set: strictTrue,
+    deployment_client: strictTrue,
+  })
+  .refine((value) => value.slug !== "")
+  .transform(
+    (value): ContextConfigOAuthApp => ({
+      slug: value.slug,
+      name: value.name || value.slug,
+      fields: value.fields,
+      docsUrl: safeExternalUrl(value.docs_url),
+      callbackUrl: safeExternalUrl(value.callback_url),
+      ready: value.ready,
+      clientId: value.client_id,
+      clientSecretSet: value.client_secret_set,
+      appId: value.app_id,
+      appSlug: value.app_slug,
+      privateKeySet: value.private_key_set,
+      optionalSecretSet: value.optional_secret_set,
+      deploymentClient: value.deployment_client,
+    }),
+  )
+  .nullable()
+  .catch(null);
+
+/** POST …/apps/{slug}: the connector the level now has; null when malformed. */
+export const AddContextConfigAppResponseSchema = z
+  .object({ connector_id: id, default_on: strictTrue })
+  .transform((value): AddContextConfigAppResult => ({ connectorId: value.connector_id, defaultOn: value.default_on }))
+  .nullable()
+  .catch(null);
 
 export const ContextConfigAgentDetailSchema = z
   .object({
@@ -526,6 +586,7 @@ export const ContextConfigAgentDetailSchema = z
     jsapi_available: strictTrue,
     access: configAccess,
     apps: tolerantList(CatalogAppSchema),
+    can_configure_apps: strictTrue,
   })
   .transform(
     (value): ContextConfigAgentDetail => ({
@@ -583,6 +644,7 @@ export const ContextConfigAgentDetailSchema = z
       jsapiAvailable: value.jsapi_available,
       access: value.access,
       apps: [...new Map(value.apps.map((app) => [app.slug, app])).values()],
+      canConfigureApps: value.can_configure_apps,
     }),
   );
 

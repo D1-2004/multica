@@ -323,7 +323,7 @@ func (s *TaskService) finalizeFailedTask(
 	}
 
 	err = s.runInTxWithHandle(ctx, func(qtx *db.Queries, terminalTx pgx.Tx) error {
-		if IsEmployeeDirectTask(parent) {
+		if IsEmployeeDirectTask(parent) || parent.IssueID.Valid {
 			if err := lockEmployeeRunWorkspace(ctx, terminalTx, taskID); err != nil {
 				return err
 			}
@@ -338,6 +338,9 @@ func (s *TaskService) finalizeFailedTask(
 		}
 		child, childErr := qtx.GetRetryChildByParent(ctx, locked.ID)
 		if childErr == nil {
+			if err := observeOrDeferEmployeeIssueRetryInTx(ctx, terminalTx, child); err != nil {
+				return err
+			}
 			result.Retry = &child
 			return nil
 		}
@@ -354,6 +357,9 @@ func (s *TaskService) finalizeFailedTask(
 			})
 			if createErr != nil {
 				return fmt.Errorf("create retry task: %w", createErr)
+			}
+			if err := observeOrDeferEmployeeIssueRetryInTx(ctx, terminalTx, child); err != nil {
+				return err
 			}
 			result.Retry = &child
 			result.RetryCreated = true

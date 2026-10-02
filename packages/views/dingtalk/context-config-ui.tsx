@@ -3,6 +3,7 @@
 import { Children } from "react";
 import { Loader2 } from "lucide-react";
 import { Switch } from "@multica/ui/components/ui/switch";
+import { cn } from "@multica/ui/lib/utils";
 
 /** Heading of one capability slot (指令, Skills, 连接器和插件) of a level, or
  * of a list inside a slot (`size="group"`). */
@@ -84,5 +85,76 @@ export function ToggleControl({
         <Switch checked={checked} disabled={disabled} onCheckedChange={(next) => onToggle(next)} aria-label={label} />
       )}
     </span>
+  );
+}
+
+/** A list of one-line rows (ConfigRow), or `empty` when there are none. */
+export function ConfigList({
+  label,
+  empty,
+  children,
+}: {
+  label: string;
+  empty?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  if (Children.toArray(children).length === 0) {
+    return empty ? <p className="text-caption text-muted-foreground">{empty}</p> : null;
+  }
+  return (
+    <ul aria-label={label} className="divide-y rounded-lg border bg-card">
+      {children}
+    </ul>
+  );
+}
+
+/**
+ * One item on one line: its icon, its name (truncated) and one status,
+ * opening its detail; `action` (a switch or a button) sits on the right,
+ * outside the name's button.
+ */
+export function ConfigRow({
+  icon,
+  name,
+  status,
+  openLabel,
+  onOpen,
+  action,
+  muted = false,
+}: {
+  icon?: React.ReactNode;
+  name: string;
+  /** One short status next to the name. */
+  status?: React.ReactNode;
+  /** Accessible name of the row's open button; defaults to its text. */
+  openLabel?: string;
+  onOpen?: () => void;
+  action?: React.ReactNode;
+  /** Switched off: the name is dimmed. */
+  muted?: boolean;
+}) {
+  const body = (
+    <>
+      {icon}
+      <span className={cn("min-w-0 truncate text-body font-medium", muted && "text-muted-foreground")}>{name}</span>
+      {status ? <span className="flex shrink-0 items-center">{status}</span> : null}
+    </>
+  );
+  return (
+    <li className="flex min-h-12 items-center gap-2 py-1.5 pr-2 pl-1.5">
+      {onOpen ? (
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={openLabel}
+          className="flex min-w-0 flex-1 items-center gap-2.5 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {body}
+        </button>
+      ) : (
+        <span className="flex min-w-0 flex-1 items-center gap-2.5 px-1.5 py-1">{body}</span>
+      )}
+      {action ? <span className="flex shrink-0 items-center">{action}</span> : null}
+    </li>
   );
 }

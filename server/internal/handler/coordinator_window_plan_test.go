@@ -71,6 +71,9 @@ func newCoordinatorPlanFixture(t *testing.T, texts ...string) coordinatorPlanFix
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		for _, table := range []string{"employee_task_entry", "employee_task_run", "employee_task"} {
+			_, _ = testPool.Exec(context.Background(), `DELETE FROM `+table+` WHERE agent_id=$1`, agent.ID)
+		}
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM inbound_coordinator_job WHERE id=$1`, f.job.ID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM assoc_edge WHERE agent_id=$1`, agent.ID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM assoc_event WHERE agent_id=$1`, agent.ID)
@@ -832,5 +835,29 @@ func TestCoordinatorJobFinishSchemaComesOnlyFromTheJob(t *testing.T) {
 	encoded, _ := json.Marshal(req.DispatchCommand())
 	if record := coordinatorJobFinishSchema(encoded); record != nil {
 		t.Fatalf("a wire field became a trusted group: %s", encoded)
+	}
+}
+
+func TestCoordinatorWindowPlanPersistsActualRequesterInTask(t *testing.T) {
+	f := newCoordinatorPlanFixture(t, "为甲整理预算", "为乙改会议")
+	old := f.existingIssue(t)
+	f.plan(t, "", old)
+	response := f.dispatch(t)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("dispatch: %d %s", response.Code, response.Body.String())
+	}
+	_, saved := f.stored(t)
+	var requester, actor string
+	if err := testPool.QueryRow(context.Background(), `SELECT requester_ref FROM employee_task WHERE workspace_id=$1 AND agent_id=$2 AND issue_id=$3::uuid`, f.dc.WorkspaceID, f.agent.ID, saved.IssueResults[0].IssueID).Scan(&requester); err != nil {
+		t.Fatal(err)
+	}
+	if requester != "dingtalk:uid:uid-a" {
+		t.Fatalf("requester replaced by operator: %s", requester)
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT e.actor_ref FROM employee_task_entry e JOIN employee_task t ON t.id=e.task_id WHERE t.workspace_id=$1 AND t.agent_id=$2 AND t.issue_id=$3::uuid AND e.kind='input'`, f.dc.WorkspaceID, f.agent.ID, old).Scan(&actor); err != nil {
+		t.Fatal(err)
+	}
+	if actor != "dingtalk:uid:uid-2" {
+		t.Fatalf("continuation actor replaced by operator: %s", actor)
 	}
 }

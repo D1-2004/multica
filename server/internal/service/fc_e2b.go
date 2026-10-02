@@ -61,10 +61,9 @@ const (
 	// DSHTrajectoryCapability declares that a DSH runner persists its native
 	// JSONL event ledger through the authenticated task trajectory endpoint.
 	DSHTrajectoryCapability = "dsh_trajectory_v1"
-	// SandboxConnectionReuseCapability declares that this runtime image can
-	// run several tasks in one sandbox. Operators set it on runtime metadata
-	// when publishing a compatible image. Catalogued templates are not stamped
-	// with it, so an older image keeps one sandbox per chat or issue.
+	// SandboxConnectionReuseCapability is the historical image-metadata name.
+	// Scene reuse does not read it. Catalogued templates are not stamped
+	// with it, and an image without it still joins the scene bucket.
 	SandboxConnectionReuseCapability = "sandbox_connection_reuse_v1"
 	// FCE2BProvider is the first provider selected when the Diamond template
 	// directory declares Hermes support and the request omits a provider.
@@ -1660,7 +1659,7 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		if err != nil {
 			return fcE2BLaunchSubmission{}, false, fmt.Errorf("read sandbox connection reuse: %w", err)
 		}
-		if sceneScope, selected, skip := connectionReuseScope(task, runtime, reuseEnabled); selected {
+		if sceneScope, selected, skip := connectionReuseScope(task, reuseEnabled); selected {
 			scope, scoped = sceneScope, true
 			ctx = withFCE2BConnectionAdmit(ctx, fcE2BConnectionAdmit{
 				AttemptID: attempt.ID,

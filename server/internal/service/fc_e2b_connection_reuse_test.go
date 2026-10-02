@@ -13,27 +13,10 @@ import (
 )
 
 const (
-	reuseWorkspaceID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-	reuseAgentID     = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-	reuseOtherAgent  = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
-	reuseSceneID     = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+	reuseAgentID    = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	reuseOtherAgent = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	reuseSceneID    = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
 )
-
-func reuseRuntime(t *testing.T, capabilities ...string) db.AgentRuntime {
-	t.Helper()
-	metadata, err := json.Marshal(map[string]any{
-		"kind":         "fc-e2b",
-		"capabilities": capabilities,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return db.AgentRuntime{
-		RuntimeMode: "cloud",
-		WorkspaceID: util.MustParseUUID(reuseWorkspaceID),
-		Metadata:    metadata,
-	}
-}
 
 func reuseTask(agentID string, contextJSON string) db.AgentTaskQueue {
 	return db.AgentTaskQueue{
@@ -68,50 +51,45 @@ func sceneDispatch(sceneID, staffID string, messages ...string) string {
 }
 
 func TestConnectionReuseScope(t *testing.T) {
-	capable := reuseRuntime(t, SandboxConnectionReuseCapability)
-	oldImage := reuseRuntime(t)
 	personal := sceneDispatch(reuseSceneID, "staff-1")
 	public := sceneDispatch(reuseSceneID, "staff-1", "staff-1", "staff-2")
 	routine := `{"agent_scene":{"scene_id":"` + reuseSceneID + `"},"scene_routine":{"tenant_org_id":"org-1","kind":"group"}}`
 	replayed := `{"replayed_dispatch_context":true,"agent_scene":{"scene_id":"` + reuseSceneID + `"},"dispatch_event_data":{"sender":{"staffId":"staff-1"}}}`
 	a2a := `{"multica_origin":"a2a","agent_scene":{"scene_id":"` + reuseSceneID + `"},"dispatch_event_data":{"sender":{"staffId":"staff-1"}}}`
 
-	personalScope, selectedPersonal, reason := connectionReuseScope(reuseTask(reuseAgentID, personal), capable, true)
+	personalScope, selectedPersonal, reason := connectionReuseScope(reuseTask(reuseAgentID, personal), true)
 	if !selectedPersonal || reason != "" || personalScope.typ != fcE2BScopeTypeScene || personalScope.sceneID != reuseSceneID || personalScope.actorKey != "staff-1" {
 		t.Fatalf("personal scope = %+v selected=%v reason=%s", personalScope, selectedPersonal, reason)
 	}
-	again, _, _ := connectionReuseScope(reuseTask(reuseAgentID, personal), capable, true)
+	again, _, _ := connectionReuseScope(reuseTask(reuseAgentID, personal), true)
 	if again.id != personalScope.id {
 		t.Fatal("scene+actor scope id is not stable")
 	}
 
-	publicScope, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, public), capable, true)
+	publicScope, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, public), true)
 	if !ok || reason != "" || publicScope.actorKey != "" || publicScope.id == personalScope.id {
 		t.Fatalf("mixed speakers = %+v selected=%v reason=%s", publicScope, ok, reason)
 	}
-	routineScope, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, routine), capable, true)
+	routineScope, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, routine), true)
 	if !ok || reason != "" || routineScope.actorKey != "" || routineScope.id != publicScope.id {
 		t.Fatalf("routine = %+v selected=%v reason=%s public=%v", routineScope, ok, reason, publicScope.id)
 	}
 
-	otherScope, ok, reason := connectionReuseScope(reuseTask(reuseOtherAgent, personal), capable, true)
+	otherScope, ok, reason := connectionReuseScope(reuseTask(reuseOtherAgent, personal), true)
 	if !ok || reason != "" || otherScope.id != personalScope.id {
 		t.Fatalf("another agent in the same scene = %+v selected=%v reason=%s", otherScope, ok, reason)
 	}
 
-	if _, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, personal), capable, false); ok || reason != "disabled" {
+	if _, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, personal), false); ok || reason != "disabled" {
 		t.Fatalf("switch off selected=%v reason=%s", ok, reason)
 	}
-	if _, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, a2a), capable, true); ok || reason != "a2a" {
+	if _, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, a2a), true); ok || reason != "a2a" {
 		t.Fatalf("a2a selected=%v reason=%s", ok, reason)
 	}
-	if _, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, personal), oldImage, true); ok || reason != "capability" {
-		t.Fatalf("old image selected=%v reason=%s", ok, reason)
-	}
-	if _, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, replayed), capable, true); ok || reason != "no_scene" {
+	if _, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, replayed), true); ok || reason != "no_scene" {
 		t.Fatalf("replayed selected=%v reason=%s", ok, reason)
 	}
-	if _, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, `{}`), capable, true); ok || reason != "no_scene" {
+	if _, ok, reason := connectionReuseScope(reuseTask(reuseAgentID, `{}`), true); ok || reason != "no_scene" {
 		t.Fatalf("empty context selected=%v reason=%s", ok, reason)
 	}
 }

@@ -107,3 +107,20 @@
 - 独立审查发现并修复两个界面反例：旧章节过滤隐藏合法 Employee 内容、滚动旧响应把其他 Loop 摘要放入列表。
 - 独立复审及干净索引快照真实 PG 管理/重置 race 通过；42 个界面、新 core 3 个及旧 client 7 个测试通过，core/views typecheck 和范围 vet 通过。
 - 无新增 CLI `--loop` 标志；当前管理能力沿既有 HTTP 路由显式 query 参数提供。入站 `/reset-memory` 的新 Loop 分派在后续消费批次接线。
+
+## 场域复用纠正与同步要求
+
+- 用户明确要求按会话作为场域复用。核对远端：统一目录按 workspace/agent/provider/tenant/namespace/openConversationId 解析 scene_id；d11fe440b 以 scene 加可选个人维度复用，d97927ad6 将单聊配置链接也统一到场域。
+- staffId 缺失时使用该场域的公共桶；同群共享符合现行合同，不意味着跨会话混用。此前拟议的 Direct 全部退出场域复用未提交，已撤回。
+- 新增真实 PG 回归：同群不同 UID 保留场域复用、不同单聊 cid 分离、相同外部 cid 的不同租户分离、已核实 staffId 作为附加个人维度。测试通过；只读 overlay 恢复被撤回方案时观察到明确失败，证明该回归能保护用户确认的行为。
+- 用户要求每批提交后由子代理核对/同步目标分支。branch_sync 已交付 D10 为 0e0a3d0630b983473a748ef02dfdf5454b2e626e，并保留 d97927ad6、934ffd146、246fdf0c5；原始 checkout 已快进，未跟踪 .omx/ 保留。
+- 最终验收按用户指定冬翔→Qwen-DWS 单聊及冬翔→各种TAG群做真实 IM 测试。当前仅完成账号/会话只读定位，尚未发送新测试消息或完成 Employee E2E；旧历史消息不作为本次验收证据。
+
+## D03 Coordinator IssueBackend
+
+- Coordinator 的新建/续接复用原 Issue/Comment 服务，Task 定义、Issue 绑定与实际 queue/Run 记录同事务；提交后广播与唤醒，不增加第二次派单。
+- 忙时 follow-up 合并与已有自动重试按真实队列、parent/retry lineage 恢复对应关系，保留原重试预算。观察层遇到尚在运行的较新 Run 只延后映射，不能撤销旧后端已合法接受的队列。
+- 独立审查捕获并修复三项并发反例：最老 Issue 被锁后其他候选饥饿；较新 Run 活跃时观察器回滚旧重试；等待 Task 锁期间旧 version 引发 CAS 冲突。最后一项由主线程在真实两连接测试中复验。
+- Direct 新 Run 的最终门保留在 StartRun：失败/取消的旧执行缺少终止证据时，修正或迟到结果也不能绕过恢复边界；成功后明确 Resume 和已存在 Run 重放正常。
+- 干净提交快照的真实 PG task-domain 整包、IssueBackend/FollowUp/Coordinator plan 定向 race、server build 和范围 vet 通过。Policy checker 为结构检查通过，不是模型行为认证。
+- 新远端另加入 human Issue steer、专用 CancelAgentTaskForSteer 与进程停止确认屏障；交付子代理会在最新基线保留合并回调和提交后 NotifySteerPredecessor→NotifyTaskEnqueued 顺序，并重新验证，不能用旧分支测试替代整合验证。

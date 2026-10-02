@@ -1,11 +1,15 @@
 "use client";
 
 import { createContext, useContext, useState } from "react";
-import { ChevronRight, ExternalLink, KeyRound, Link2, Loader2 } from "lucide-react";
+import { Copy, ExternalLink, KeyRound, Link2, Loader2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { errorCode } from "@multica/core/api";
 import {
+  contextConfigOAuthAppOptions,
+  useAddContextConfigApp,
   useDeleteContextConnectorCredential,
+  useSetContextConfigOAuthApp,
   useSetContextConnectorCredential,
   useStartContextConnectorConnection,
   type ContextCapabilityBinding,
@@ -19,12 +23,14 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
 import { Switch } from "@multica/ui/components/ui/switch";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
 import { StatusPill, type StatusTone } from "../agents/components/tabs/connectors-ui";
-import { ConnectorLogo, ConnectorMark } from "../common/connector-logo";
+import { ConnectorLogo } from "../common/connector-logo";
 import { MAX_BEARER_LENGTH, isValidBearer, useResetOnBackForwardRestore } from "../common/connector-credential";
 import { useT } from "../i18n";
 import type { ContextConfigConnectTarget } from "./context-config-page";
+import { ConfigList, ConfigRow } from "./context-config-ui";
 
 export type OpenAuthorizeUrl = (url: string, target: ContextConfigConnectTarget) => void;
 
@@ -219,68 +225,92 @@ export function ConnectorsList(props: ConnectorsSlotProps) {
   const rowLabel = (entry: ConnectorEntry, state: EntryState) =>
     [t(($) => $.context_config.app_open_aria, { name: entry.name }), ...entryStatuses(t, entry, state).map((status) => status.text)].join(" · ");
   const shown = entries.find((entry) => entry.key === shownKey) ?? null;
-  // GitHub, Slack and Notion keep a full row even before anyone opens them;
-  // the other apps not opened for the agent fold into one compact row. The
-  // read-only enterprise level lists only what applies there.
-  const rows = inEffectOnly
-    ? entries.filter((entry) => entry.id !== null && stateOf(entry).inEffect)
-    : entries.filter((entry) => entry.id !== null || FEATURED_APP_SLUGS.includes(entry.slug));
-  const more = inEffectOnly
-    ? []
-    : entries.filter((entry) => entry.id === null && !FEATURED_APP_SLUGS.includes(entry.slug));
+  // Every app and connector, one line each; the read-only enterprise level
+  // lists only what applies there.
+  const rows = inEffectOnly ? entries.filter((entry) => entry.id !== null && stateOf(entry).inEffect) : entries;
   const open = (key: string) => {
     setOpenKey(key);
     setShownKey(key);
   };
+  const addApp = useAddContextConfigApp(props.agentId);
+  const [addingSlug, setAddingSlug] = useState("");
 
-  if (rows.length === 0 && more.length === 0) {
+  // 添加: switch an offered connector on here, or bring an app nobody opened
+  // for the agent into the workspace and the agent's offers first. Then its
+  // settings open, to connect the account.
+  const add = async (entry: ConnectorEntry) => {
+    if (entry.id !== null) {
+      props.onToggle(entry.id, true);
+      if (entry.offered && entry.offered.authMode !== "none") open(entry.key);
+      return;
+    }
+    setAddingSlug(entry.slug);
+    try {
+      const added = await addApp.mutateAsync({
+        slug: entry.slug,
+        scopeType: props.scopeType,
+        scopeKey: props.scopeKey,
+        ...orgField(props.orgId),
+      });
+      if (added?.connectorId) open(added.connectorId);
+    } catch (error) {
+      if (!props.reportError(error)) toast.error(t(($) => $.context_config.app_add_failed, { name: entry.name }));
+    } finally {
+      setAddingSlug("");
+    }
+  };
+
+  if (rows.length === 0) {
     return <p className="text-caption text-muted-foreground">{t(($) => $.context_config.none)}</p>;
   }
   return (
     <>
-      {rows.length > 0 ? (
-        <ul aria-label={t(($) => $.context_config.slot_connectors)} className="divide-y rounded-lg border bg-card">
-          {rows.map((entry) => (
-            <li key={entry.key}>
-              <button
-                type="button"
+      <ConfigList label={t(($) => $.context_config.slot_connectors)}>
+        {rows.map((entry) => {
+          const state = stateOf(entry);
+          const status = rowStatus(t, entry, state);
+          const busy = entry.id === null ? addingSlug === entry.slug : props.isBusy(`connector:${entry.id}`);
+          let action: React.ReactNode = null;
+          if (inEffectOnly) {
+            action = null;
+          } else if (state.inEffect) {
+            action = (
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label={t(($) => $.context_config.app_configure_aria, { name: entry.name })}
                 onClick={() => open(entry.key)}
-                aria-label={rowLabel(entry, stateOf(entry))}
-                className="flex w-full min-w-0 items-center gap-3 p-3 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               >
-                <ConnectorLogo slug={entry.slug} />
-                <span className="min-w-0 flex-1 space-y-1">
-                  <span className="block truncate text-body font-medium">{entry.name}</span>
-                  <span className="flex min-w-0 flex-wrap gap-1">
-                    <EntryPills entry={entry} state={stateOf(entry)} />
-                  </span>
-                </span>
-                <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      {more.length > 0 ? (
-        <div className="space-y-1.5">
-          <p className="text-caption text-muted-foreground">{t(($) => $.context_config.more_apps)}</p>
-          <ul aria-label={t(($) => $.context_config.more_apps)} className="flex flex-wrap gap-1.5">
-            {more.map((entry) => (
-              <li key={entry.key}>
-                <button
-                  type="button"
-                  onClick={() => open(entry.key)}
-                  aria-label={rowLabel(entry, stateOf(entry))}
-                  className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-caption text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <ConnectorMark slug={entry.slug} className="size-3.5" />
-                  {entry.name}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+                {t(($) => $.context_config.app_configure)}
+              </Button>
+            );
+          } else if (props.canToggle && (entry.id === null || entry.offered)) {
+            action = (
+              <Button
+                size="sm"
+                variant="secondary"
+                aria-label={t(($) => $.context_config.app_add_aria, { name: entry.name })}
+                disabled={busy}
+                onClick={() => void add(entry)}
+              >
+                {busy && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
+                {t(($) => $.context_config.app_add)}
+              </Button>
+            );
+          }
+          return (
+            <ConfigRow
+              key={entry.key}
+              icon={<ConnectorLogo slug={entry.slug} />}
+              name={entry.name}
+              status={status ? <StatusPill tone={status.tone}>{status.text}</StatusPill> : null}
+              openLabel={rowLabel(entry, state)}
+              onOpen={() => open(entry.key)}
+              action={action}
+            />
+          );
+        })}
+      </ConfigList>
       <ConnectorDialog
         {...props}
         open={openKey !== "" && shown !== null}
@@ -299,10 +329,25 @@ export function ConnectorsList(props: ConnectorsSlotProps) {
               )
             : false
         }
+        adding={shown ? addingSlug === shown.slug && shown.id === null : false}
+        onAdd={() => {
+          if (shown) void add(shown);
+        }}
         onClose={() => setOpenKey("")}
       />
     </>
   );
+}
+
+/** The one status a row shows: its account once it applies here, else
+ * where it is on; nothing before it is added (its button says 添加). */
+function rowStatus(t: AgentsT, entry: ConnectorEntry, state: EntryState): { tone: StatusTone; text: string } | null {
+  if (entry.id === null || !state.inEffect) return null;
+  if (state.auth === "unauthorized") return { tone: "warning", text: t(($) => $.context_config.status_unauthorized) };
+  if (state.auth === "authorized") return { tone: "success", text: t(($) => $.context_config.connected) };
+  if (entry.defaultOn) return { tone: "success", text: t(($) => $.context_config.always_on) };
+  if (state.byOrg && !state.added) return { tone: "success", text: t(($) => $.context_config.on_for_org) };
+  return { tone: "success", text: t(($) => $.context_config.status_added) };
 }
 
 type AgentsT = ReturnType<typeof useT<"agents">>["t"];
@@ -380,6 +425,8 @@ function ConnectorDialog({
   credential,
   orgAccount,
   shared,
+  adding,
+  onAdd,
   onClose,
   ...props
 }: ConnectorsSlotProps & {
@@ -391,12 +438,16 @@ function ConnectorDialog({
   /** The enterprise level holds an account for it. */
   orgAccount: boolean;
   shared: boolean;
+  /** The app nobody opened is being added. */
+  adding: boolean;
+  onAdd: () => void;
   onClose: () => void;
 }) {
   const { t } = useT("agents");
-  const { scopeType, sceneKind, canToggle, isBusy, onToggle, onToggleShare } = props;
+  const { scopeType, sceneKind, canToggle, isBusy, onToggle, onToggleShare, detail } = props;
   const addedLabel = useAddedLabel(scopeType, sceneKind);
   const current = entry && state ? { entry, state } : null;
+  const catalogApp = current?.entry.slug ? detail.apps?.find((app) => app.slug === current.entry.slug) : undefined;
 
   return (
     <Dialog
@@ -419,9 +470,20 @@ function ConnectorDialog({
             </div>
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
               {current.entry.id === null ? (
-                <p className="text-caption text-muted-foreground text-pretty">
-                  {t(($) => $.context_config.app_unavailable_note, { name: current.entry.name })}
-                </p>
+                <section className="space-y-2">
+                  <StepHeading step={1} title={t(($) => $.context_config.step_add)} />
+                  <p className="text-caption text-muted-foreground text-pretty">
+                    {t(($) => $.context_config.app_new_note, { name: current.entry.name })}
+                  </p>
+                  {canToggle && !props.inEffectOnly ? (
+                    <Button className="h-9 w-full" disabled={adding} onClick={onAdd}>
+                      {adding && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
+                      {t(($) => $.context_config.app_add)}
+                    </Button>
+                  ) : (
+                    <p className="text-caption text-muted-foreground">{t(($) => $.context_config.app_add_read_only)}</p>
+                  )}
+                </section>
               ) : (
                 <>
                   <section className="space-y-2">
@@ -481,12 +543,29 @@ function ConnectorDialog({
                           connector no longer applies here: it still serves
                           runs where another level switches it on. */}
                       {current.state.inEffect || credential ? (
-                        <ConnectorAccount
-                          {...props}
-                          connector={current.entry.offered}
-                          credential={credential}
-                          orgAccount={orgAccount}
-                        />
+                        <>
+                          {catalogApp?.setup === "unsupported" ? (
+                            <p className="text-caption text-muted-foreground">
+                              {t(($) => $.context_config.app_unsupported, { name: current.entry.name })}
+                            </p>
+                          ) : null}
+                          {catalogApp?.setup === "oauth_app" && !props.inEffectOnly ? (
+                            <OAuthAppSetup
+                              agentId={props.agentId}
+                              slug={catalogApp.slug}
+                              name={current.entry.name}
+                              ready={current.entry.offered.oauthAvailable}
+                              canConfigure={detail.canConfigureApps === true}
+                              reportError={props.reportError}
+                            />
+                          ) : null}
+                          <ConnectorAccount
+                            {...props}
+                            connector={current.entry.offered}
+                            credential={credential}
+                            orgAccount={orgAccount}
+                          />
+                        </>
                       ) : (
                         <p className="text-caption text-muted-foreground">{t(($) => $.context_config.auth_after_add)}</p>
                       )}
@@ -516,6 +595,237 @@ function ConnectorDialog({
         ) : null}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The label of one OAuth application value. */
+function useOAuthFieldLabel(): (key: string) => string {
+  const { t } = useT("agents");
+  return (key) => {
+    switch (key) {
+      case "client_id":
+        return "Client ID";
+      case "client_secret":
+        return "Client Secret";
+      case "app_id":
+        return "App ID";
+      case "app_slug":
+        return t(($) => $.context_config.oauth_app_field_slug);
+      case "private_key":
+        return t(($) => $.context_config.oauth_app_field_private_key);
+      case "signing_secret":
+        return "Signing Secret";
+      case "webhook_secret":
+        return "Webhook Secret";
+      default:
+        return key;
+    }
+  };
+}
+
+/** Values of the OAuth application form, by field key. */
+type OAuthAppValues = Record<string, string>;
+
+const OAUTH_SECRET_KEYS = new Set(["client_secret", "private_key", "signing_secret", "webhook_secret"]);
+
+/**
+ * The OAuth application an app without dynamic registration needs (Slack,
+ * Asana, GitHub without a deployment app), filled in on this page: the
+ * callback URL to register in the provider's console, then the app's
+ * values. The agent's managers save it; anyone else learns a manager can.
+ */
+function OAuthAppSetup({
+  agentId,
+  slug,
+  name,
+  ready,
+  canConfigure,
+  reportError,
+}: {
+  agentId: string;
+  slug: string;
+  name: string;
+  ready: boolean;
+  canConfigure: boolean;
+  reportError: (error: unknown) => boolean;
+}) {
+  const { t } = useT("agents");
+  const fieldLabel = useOAuthFieldLabel();
+  const query = useQuery({ ...contextConfigOAuthAppOptions(agentId, slug), enabled: canConfigure });
+  const save = useSetContextConfigOAuthApp(agentId);
+  const [expanded, setExpanded] = useState(!ready);
+  const [values, setValues] = useState<OAuthAppValues>({});
+  const [invalid, setInvalid] = useState("");
+  const app = query.data ?? null;
+
+  if (!canConfigure) {
+    return ready ? null : (
+      <p className="text-caption text-muted-foreground text-pretty">{t(($) => $.context_config.oauth_app_manager_only, { name })}</p>
+    );
+  }
+  if (!expanded) {
+    return (
+      <div className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
+        <span className="min-w-0 truncate text-caption text-muted-foreground">
+          {t(($) => $.context_config.oauth_app_ready, { name })}
+        </span>
+        <Button variant="ghost" size="sm" onClick={() => setExpanded(true)}>
+          {t(($) => $.context_config.action_edit)}
+        </Button>
+      </div>
+    );
+  }
+  if (query.isPending) {
+    return (
+      <p className="flex items-center gap-2 text-caption text-muted-foreground" role="status">
+        <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />
+        {t(($) => $.context_config.loading)}
+      </p>
+    );
+  }
+  if (!app) {
+    return <p className="text-caption text-muted-foreground">{t(($) => $.context_config.load_failed)}</p>;
+  }
+
+  const storedSecret = (key: string): boolean =>
+    key === "client_secret"
+      ? app.clientSecretSet
+      : key === "private_key"
+        ? app.privateKeySet
+        : OAUTH_SECRET_KEYS.has(key)
+          ? app.optionalSecretSet
+          : false;
+  const storedValue = (key: string): string =>
+    key === "client_id" ? app.clientId : key === "app_id" ? app.appId : key === "app_slug" ? app.appSlug : "";
+  const valueOf = (key: string): string => values[key] ?? (OAUTH_SECRET_KEYS.has(key) ? "" : storedValue(key));
+
+  const copyCallback = async () => {
+    try {
+      await navigator.clipboard.writeText(app.callbackUrl);
+      toast.success(t(($) => $.context_config.copied));
+    } catch {
+      toast.error(t(($) => $.context_config.copy_failed));
+    }
+  };
+
+  const submit = async () => {
+    // Required values: present, or (a secret) already stored.
+    const missing = app.fields.find(
+      (field) => !field.optional && !valueOf(field.key).trim() && !(OAUTH_SECRET_KEYS.has(field.key) && storedSecret(field.key)),
+    );
+    if (missing) {
+      setInvalid(fieldLabel(missing.key));
+      return;
+    }
+    setInvalid("");
+    const optionalSecret = valueOf("signing_secret") || valueOf("webhook_secret");
+    try {
+      await save.mutateAsync({
+        slug,
+        clientId: valueOf("client_id").trim(),
+        ...(valueOf("client_secret") ? { clientSecret: valueOf("client_secret").trim() } : {}),
+        ...(valueOf("app_id") ? { appId: valueOf("app_id").trim() } : {}),
+        ...(valueOf("app_slug") ? { appSlug: valueOf("app_slug").trim() } : {}),
+        ...(valueOf("private_key") ? { privateKey: valueOf("private_key") } : {}),
+        ...(optionalSecret ? { optionalSecret: optionalSecret.trim() } : {}),
+      });
+      setValues({});
+      setExpanded(false);
+      toast.success(t(($) => $.context_config.oauth_app_saved, { name }));
+    } catch (error) {
+      if (!reportError(error)) toast.error(t(($) => $.context_config.oauth_app_failed));
+    } finally {
+      // Drop the submitted secrets from the mutation state right away.
+      save.reset();
+    }
+  };
+
+  return (
+    <div className="space-y-3 rounded-md border px-3 py-3">
+      <div className="space-y-1">
+        <p className="text-caption font-medium">{t(($) => $.context_config.oauth_app_title, { name })}</p>
+        <p className="text-caption text-muted-foreground text-pretty">{t(($) => $.context_config.oauth_app_hint, { name })}</p>
+      </div>
+      <div className="space-y-1">
+        <p className="text-caption font-medium">{t(($) => $.context_config.oauth_app_callback)}</p>
+        <div className="flex items-center gap-1.5">
+          <code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 font-mono text-micro" title={app.callbackUrl}>
+            {app.callbackUrl}
+          </code>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={t(($) => $.context_config.copy_callback)}
+            onClick={() => void copyCallback()}
+          >
+            <Copy className="size-3.5" />
+          </Button>
+        </div>
+        {app.docsUrl ? (
+          <a
+            href={app.docsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-caption font-medium text-foreground underline-offset-4 hover:underline"
+          >
+            {t(($) => $.context_config.oauth_app_console, { name })}
+            <ExternalLink className="size-3" />
+          </a>
+        ) : null}
+      </div>
+      {app.fields.map((field) => {
+        const id = `context-oauth-app-${slug}-${field.key}`;
+        const secret = OAUTH_SECRET_KEYS.has(field.key);
+        const placeholder = secret && storedSecret(field.key) ? t(($) => $.context_config.oauth_app_secret_kept) : "";
+        return (
+          <div key={field.key} className="space-y-1">
+            <label htmlFor={id} className="block text-caption font-medium">
+              {fieldLabel(field.key)}
+              {field.optional ? <span className="text-muted-foreground"> · {t(($) => $.context_config.optional)}</span> : null}
+            </label>
+            {field.file ? (
+              <Textarea
+                id={id}
+                value={valueOf(field.key)}
+                placeholder={placeholder || "-----BEGIN PRIVATE KEY-----"}
+                rows={3}
+                spellCheck={false}
+                onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
+                className="font-mono text-micro"
+              />
+            ) : (
+              <Input
+                id={id}
+                type={secret ? "password" : "text"}
+                autoComplete="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                value={valueOf(field.key)}
+                placeholder={placeholder}
+                onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
+                className="h-9"
+              />
+            )}
+          </div>
+        );
+      })}
+      {invalid ? (
+        <p role="alert" className="text-caption text-destructive">
+          {t(($) => $.context_config.oauth_app_required, { field: invalid })}
+        </p>
+      ) : null}
+      <div className="flex gap-2">
+        {ready ? (
+          <Button variant="ghost" className="h-9 flex-1" disabled={save.isPending} onClick={() => setExpanded(false)}>
+            {t(($) => $.context_config.cancel)}
+          </Button>
+        ) : null}
+        <Button className="h-9 flex-1" disabled={save.isPending} onClick={() => void submit()}>
+          {save.isPending && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
+          {t(($) => $.context_config.save)}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -587,6 +897,7 @@ function ConnectorAccount(props: AccountProps) {
  */
 function OAuthConnectionControl({
   agentId,
+  detail,
   scopeType,
   scopeKey,
   orgId,
@@ -615,6 +926,8 @@ function OAuthConnectionControl({
   // GitHub App client credentials); without it a Personal Access Token is
   // the only way to connect.
   const oauthReady = Boolean(openAuthorizeUrl) && connector.oauthAvailable;
+  // An app waiting for its OAuth application says so in the setup above.
+  const awaitsOAuthApp = detail.apps?.find((app) => app.slug === connector.catalogSlug)?.setup === "oauth_app";
 
   const connect = async () => {
     if (!openAuthorizeUrl || connecting) return;
@@ -768,7 +1081,7 @@ function OAuthConnectionControl({
               </Button>
             )}
           </div>
-          {!connector.oauthAvailable && (
+          {!connector.oauthAvailable && !awaitsOAuthApp && (
             <p className="text-caption text-muted-foreground">
               {connector.acceptsPat
                 ? t(($) => $.context_config.connect_unavailable_pat, { name: connector.name })

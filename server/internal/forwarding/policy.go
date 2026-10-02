@@ -101,7 +101,13 @@ func BrowserRoute(method, p string) bool {
 			return parts[3] == "start" && method == http.MethodPost
 		case "routines":
 			return parts[3] != "" && (method == http.MethodPatch || method == http.MethodDelete)
+		case "apps":
+			// Adds an official app at a level.
+			return parts[3] != "" && method == http.MethodPost
 		}
+	}
+	if len(parts) == 5 && parts[2] == "apps" && parts[3] != "" && parts[4] == "oauth-app" {
+		return method == http.MethodGet || method == http.MethodPut
 	}
 	if len(parts) == 5 && parts[2] == "routines" && parts[3] != "" {
 		if parts[4] == "runs" {
