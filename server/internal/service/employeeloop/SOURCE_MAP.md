@@ -150,3 +150,14 @@ storage, permission, or provider-specific implementation.
 The Host adapts the deterministic completion hook with an explicit, source-bound
 file-delivery notice policy and provider-verified receipts. This delivery policy
 is not kernel inference, does not inspect final prose, and adds no model request.
+
+
+## Requester-private memory Host tools
+
+The Multica scene Host now registers memory_capture and memory_forget as
+nonterminal effects, plus read-only memory_lookup. This reuses the existing
+native-tool/result loop and three-call cap; it introduces no model pass, Task,
+scheduler or generic kernel memory authority. Host evidence/scope is resolved
+from frozen sources and current authorization. The journal can project cached
+memory results through current state without repeating effects. Old Config.Tools
+snapshots remain frozen during rolling upgrades (Employee replica marker 5).

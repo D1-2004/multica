@@ -64,7 +64,7 @@ func formatLearningBrief(records []LearningSearchResult) string {
 		for _, marker := range []string{open, close, "== EMPLOYEE MEMORY =="} {
 			text = strings.ReplaceAll(text, marker, "[ "+strings.ReplaceAll(marker, "=", "\u003d ")+" ]")
 		}
-		lines = append(lines, fmt.Sprintf("- %s (%s; confidence %d; evidence %s): %s", r.Key, r.Source, r.EffectiveConfidence, r.EvidenceID, truncate(text, 300)))
+		lines = append(lines, fmt.Sprintf("- %s (id %s; type %s; %s; confidence %d; evidence %s): %s", r.Key, r.ID, r.Type, r.Source, r.EffectiveConfidence, r.EvidenceID, truncate(text, 300)))
 	}
 	lines = append(lines, close)
 	return strings.Join(lines, "\n")

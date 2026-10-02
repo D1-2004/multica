@@ -57,10 +57,27 @@ Direct 的 `completion_notice_policy` 默认 `always`，保持正常结果及用
 
 ## 上线与验证边界
 
-处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前显式文件完成通知策略、场域工具与私有投递 journal 使用 `[employee-loop:4]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 解释新工具或遗漏私有附链。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
+处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前私有记忆工具、显式文件完成通知策略、场域工具与私有投递 journal 使用 `[employee-loop:5]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 解释新工具或遗漏私有附链。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
 
 首批已验证真实 PostgreSQL 的原子回执/消费、重投、lease 抢占、三请求累计预算、部分成功回执恢复、Quiet、自发消息过滤、身份缺失、超限收束及工作区删除竞争；fake 模型测试证明调用次数和队列事实。真实模型时延、真实发送回执、FC canary 和持久设备滚动兼容必须单独记录，不能用这些测试替代。
 
 源码入口：`internal/employeeentry`、`internal/eventrouter`、
 `handler/employee_scene_entry*`、`internal/employeetask`、
 `service/direct_task.go`、`service/employeeloop`、`service/employeememory`。
+
+
+## 请求者私有记忆
+
+`memory_capture`、`memory_lookup`、`memory_forget` 使用现有 Employee 工具循环，不创建后台 Task、不添加提炼模型，仍最多三次模型调用。capture 后普通回复通常两次；已有 brief 直接回答一次；lookup → forget → reply 最多三次。新工具由 marker 5 门禁保护；已有 job 保留冻结的 Config.Tools 和 model journal，不在恢复时追加工具 schema。
+
+三项操作均要求整个原始收集窗口只有一个已知 requester，且所选 source_ref 唯一。Host 在 journal 事务内重验当前 scene/tenant、平台调用主体权限及 receipt → consumption → job 绑定。平台 endpoint principal 不是发言人；作用域固定当前 scene 的 requester-private，模型不能指定 actor、scope、trust 或 confidence。
+
+capture 的 quote 必须原样出现在选定消息的外层 Text；引用背景和 Reaction 不能提供陈述。带引用的外层纠正可以处理。协议未提供可信 human/bot 类型，native 的 ForwardMessages 当前未映射到 DispatchMessage；手工复制内容也无法证明原创。因此记录只表示该账户归属的观察：Observed、confidence 4、Trusted/HumanStated/VerifiedExecution 均为 false，不提供真人、原作或验证成功保证。
+
+SourceID 固定为 `employee-message:<receipt_id>`，EvidenceID 为该消息 OpenMsgID。一条源消息仅消费一次 learning identity；换 key/type/quote 不会创建第二条。OccurredAt 使用 receipt 首次 Host created_at，不使用重试时间。更早或同时间的来源不能替换同 type/key 的较新记忆，时间栅栏包含 forgotten/superseded 墓碑；晚到来源得到 superseded 回执。旧记录没有 evidence_occurred_at 时，以 Host 创建该记录的 created_at 作保守栅栏。后台 Run 的原 RecordTx 策略保持不变。首次在 reset 后才送达、又没有可验证源时间的历史消息无法由本协议判定为旧事件。
+
+lookup 在同一事务内复用 Search 的授权、排序及衰减，最多八条；brief 带 record ID/type 供定向纠正与忘记。forget 仅更新本 namespace 的精确记录 ID，保留回执墓碑，不删除替代记录或其他人的记忆；重复忘记不推进 revision。
+
+工具缓存重放不重做效果：同事务只读复核来源和状态，失效记录不再通过缓存 lookup 返回。底层记录未变化时保留原 lookup 快照，不因读时置信度衰减制造模型请求冲突。真正状态变化导致后续已冻结模型请求不一致时，现有失败 outcome 路径终结该 wake，不修改历史 journal、不追加模型调用。记忆工具 trace 在 journal 事务结束后关闭；`journal_committed` 表示事务提交，业务拒绝仍可为 ERROR 并有已提交的失败回执，rollback 不作为写入成功证据。
+
+本批不接 HumanStated、verified Distill、跨场域共享、promotion 或周期合成。真实 IM 证据与发布状态单独记录于验收计划。

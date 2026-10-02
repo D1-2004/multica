@@ -366,7 +366,9 @@ func (s *Store) Lookup(ctx context.Context, scope Scope, receiptID string) (Cons
 }
 
 // ExecuteTool journals a Host result with its exact native call identity.
-func (s *Store) ExecuteTool(ctx context.Context, j Job, key string, input json.RawMessage, execute func(pgx.Tx) (json.RawMessage, error)) (json.RawMessage, error) {
+// revalidate may project cached data through current authorization/state. It
+// must not perform effects or rewrite the historical journal.
+func (s *Store) ExecuteTool(ctx context.Context, j Job, key string, input json.RawMessage, revalidate func(pgx.Tx, json.RawMessage) (json.RawMessage, error), execute func(pgx.Tx) (json.RawMessage, error)) (json.RawMessage, error) {
 	if key == "" || len(key) > 256 || !json.Valid(input) || execute == nil {
 		return nil, ErrInvalid
 	}
@@ -392,6 +394,11 @@ func (s *Store) ExecuteTool(ctx context.Context, j Job, key string, input json.R
 				return ErrConflict
 			}
 			result = saved.Result
+			if revalidate != nil {
+				var err error
+				result, err = revalidate(tx, result)
+				return err
+			}
 			return nil
 		}
 		var err error

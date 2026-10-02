@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
+	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
@@ -41,7 +42,7 @@ func employeeSceneTools() []employeeloop.Tool {
 	source := stringField("Exact source_ref from the current window; the Host resolves its original requester.")
 	noticeSchema := map[string]any{"type": "object", "description": "Default is always: deliver the final result, including an explicitly requested summary. Select if_not_delivered only when this selected source explicitly asks for a native file and says not to send a separate completion summary after delivery. Quote that exact instruction from this message; never infer it from history, quoted material or the execution result.", "properties": map[string]any{"mode": map[string]any{"type": "string", "enum": []string{"always", "if_not_delivered"}}, "require_delivery": map[string]any{"type": "string", "enum": []string{"file"}}, "instruction_quote": stringField("Exact wording in the selected source that asks for no additional summary after file delivery; required with if_not_delivered.")}, "required": []string{"mode"}, "additionalProperties": false}
 	readSchema := map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "task_id": stringField("A known EmployeeTask UUID belonging to this requester in this scene.")}, "required": []string{"source_ref", "task_id"}, "additionalProperties": false}
-	return []employeeloop.Tool{
+	tools := []employeeloop.Tool{
 		{Name: "describe_capabilities", Terminal: employeeloop.Reply, Description: "For an ordinary capability introduction or link-only request, answer from the supplied directory on the first model call; no configuration read is needed. Keep ordinary introductions brief and natural, normally 1–3 short sentences about useful work, without internal tool names or fields. For configuration details plus a link, read missing details first and preserve requested exact names, states, and prompt text; give the complete requested answer. Skills and connectors require background execution; do not claim foreground access. Host appends the scene link; write no URL and start no work. Do not combine with other terminal or effect tools.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "reply": stringField("For ordinary introductions, use 1–3 natural short sentences about useful work, without internal names or inventories. For explicit configuration questions, preserve requested exact names, states, and prompt text in enough detail, including requests for details plus a link. Never write a configuration URL.")}, "required": []string{"source_ref", "reply"}, "additionalProperties": false}},
 		{Name: "scene_config_get", Description: "Read current scene configuration only for explicit configuration-detail questions about switches, stored prompts, or existing routines not already in context. This is not a prerequisite for a general capability introduction or link-only request, and does not verify runtime access. Explain naturally while preserving requested exact names, states, and prompt text. Existing Cron/Webhook switches do not prove Employee-triggered execution. This grants no write permission.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source}, "required": []string{"source_ref"}, "additionalProperties": false}},
 		{Name: "reply", Terminal: employeeloop.Reply, Description: "Reply directly using the current conversation and available facts, then finish without creating a task. Use for answers, explanations, clarifications and memory recall that need no background execution. Do not combine with dispatch_task or another effect tool in one batch.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "reply": stringField("The complete answer to send now, not an acknowledgement of future work.")}, "required": []string{"source_ref", "reply"}, "additionalProperties": false}},
@@ -50,6 +51,7 @@ func employeeSceneTools() []employeeloop.Tool {
 		{Name: "read_task", Description: "Read the requester's own explicitly identified task. A task UUID does not grant access.", Schema: readSchema},
 		{Name: "read_task_history", Description: "Read up to twenty entries of the requester's own explicitly identified task.", Schema: readSchema},
 	}
+	return append(tools, employeeMemoryTools()...)
 }
 func (h *employeeSceneHost) source(ref string) (employeeSourceMessage, employeeDispatchEnvelope, error) {
 	for i, item := range h.job.Items {
@@ -91,7 +93,17 @@ func optionalStringArray(args map[string]any, key string) ([]string, error) {
 	return out, nil
 }
 
-func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.Identity, call employeeloop.ToolCall) (employeeloop.ToolResult, error) {
+func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.Identity, call employeeloop.ToolCall) (returned employeeloop.ToolResult, returnedErr error) {
+	var memoryObservation *langfuse.Observation
+	memoryJournalCommitted := false
+	defer func() {
+		// Memory spans start only inside real execution and end after the journal
+		// transaction. A result computed before a failed commit is not durable proof.
+		if memoryObservation != nil {
+			memoryObservation.End(langfuse.EndOptions{Output: employeeTraceSafe(returned), Err: employeeTraceError(returnedErr), Metadata: map[string]any{"journal_committed": memoryJournalCommitted}})
+		}
+	}()
+
 	if identity.WorkspaceID != h.job.Scope.WorkspaceID || identity.AgentID != h.job.Scope.AgentID || identity.TenantOrgID != h.job.Scope.TenantOrgID || identity.Scene.SceneID != h.job.Scope.SceneID || identity.ReceiptID != h.job.Items[0].ReceiptID {
 		return employeeloop.ToolResult{}, errors.New("employee Host identity mismatch")
 	}
@@ -117,12 +129,22 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 	if err != nil {
 		return employeeloop.ToolResult{}, err
 	}
-	raw, err := h.worker.store.ExecuteTool(ctx, h.job, call.NativeToolCallID, encoded, func(tx pgx.Tx) (json.RawMessage, error) {
+	var revalidate func(pgx.Tx, json.RawMessage) (json.RawMessage, error)
+	if isEmployeeMemoryTool(call.Name) {
+		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
+			return h.memoryReplay(ctx, tx, call, raw)
+		}
+	}
+	raw, err := h.worker.store.ExecuteTool(ctx, h.job, call.NativeToolCallID, encoded, revalidate, func(tx pgx.Tx) (json.RawMessage, error) {
 		observation := employeeTraceTool(ctx, h.job, call)
 		var result employeeloop.ToolResult
 		var deliveryReply string
 		var err error
-		defer func() { employeeTraceToolResult(ctx, observation, call, result, err) }()
+		if isEmployeeMemoryTool(call.Name) {
+			memoryObservation = observation
+		} else {
+			defer func() { employeeTraceToolResult(ctx, observation, call, result, err) }()
+		}
 		switch call.Name {
 		case "stay_quiet":
 			if len(call.Arguments) != 0 {
@@ -148,6 +170,8 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			} else {
 				result.Content, err = h.sceneConfiguration(ctx, tx)
 			}
+		case "memory_capture", "memory_lookup", "memory_forget":
+			result, err = h.memoryTool(ctx, tx, call)
 		case "dispatch_task":
 			result, err = h.dispatch(ctx, source, env, call)
 		case "read_task", "read_task_history":
@@ -161,6 +185,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		}
 		return json.Marshal(record)
 	})
+	memoryJournalCommitted = err == nil
 	var record employeeToolRecord
 	if len(raw) > 0 {
 		if decodeErr := json.Unmarshal(raw, &record); decodeErr != nil {
