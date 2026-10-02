@@ -171,8 +171,8 @@ func NewAPIClient(baseURL, workspaceID, token string) *APIClient {
 // /api/attachments/{id}/download path instead of a ~800-char CloudFront
 // signature that is re-minted on every request (MUL-5372 / GitHub #5999). The
 // CLI never hands an attachment URL to a native loader — `multica attachment
-// download <id>` fetches a fresh signature from the single-attachment endpoint,
-// which keeps signing regardless of this capability — so the signature in list
+// download <id>` uses the authenticated download endpoint, which can redirect
+// to a fresh storage signature — so the signature in list
 // payloads was pure cost: raw bytes, a per-attachment RSA sign, and bytes that
 // differ on every read and therefore defeat agent prompt caching.
 const clientCapabilities = "stable_attachment_urls"
@@ -774,7 +774,7 @@ func (c *APIClient) ImportSkillFile(ctx context.Context, fileData []byte, filena
 }
 
 // DownloadFile downloads a file from the given URL and returns the response body.
-// This is used for downloading attachments via their signed download_url.
+// Attachment IDs use the authenticated API path; callers may also supply signed URLs.
 // Downloads are limited to 100 MB to match the upload size limit.
 //
 // The URL may be absolute (a signed CloudFront/S3 URL) or relative
@@ -782,7 +782,8 @@ func (c *APIClient) ImportSkillFile(ctx context.Context, fileData []byte, filena
 // "/uploads/...") depending on how the
 // server is configured. Relative URLs are resolved against the client's
 // BaseURL and sent with the standard auth headers; absolute URLs are
-// used as-is so that their query-string signatures are not disturbed.
+// used as-is so that their query-string signatures are not disturbed. Redirects
+// outside the initial origin never receive API auth or execution identity headers.
 func (c *APIClient) DownloadFile(ctx context.Context, downloadURL string) ([]byte, error) {
 	isRelative := !strings.HasPrefix(downloadURL, "http://") && !strings.HasPrefix(downloadURL, "https://")
 	if isRelative {
@@ -800,7 +801,7 @@ func (c *APIClient) DownloadFile(ctx context.Context, downloadURL string) ([]byt
 		c.setHeaders(req)
 	}
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.downloadHTTPClient().Do(req)
 	err = wrapTransport(req, err)
 	if err != nil {
 		return nil, err
@@ -839,7 +840,7 @@ func (c *APIClient) DownloadFileLimited(ctx context.Context, downloadURL string,
 		c.setHeaders(req)
 	}
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.downloadHTTPClient().Do(req)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, context.Canceled
@@ -865,6 +866,30 @@ func (c *APIClient) DownloadFileLimited(ctx context.Context, downloadURL string,
 		return nil, fmt.Errorf("attachment download exceeds %d bytes", maxBytes)
 	}
 	return data, nil
+}
+
+// Go's default redirect policy may forward credentials to the same hostname on
+// another port. Downloads may redirect to signed storage, so use exact origins
+// and retain the caller's redirect policy without changing its shared client.
+func (c *APIClient) downloadHTTPClient() *http.Client {
+	client := *c.HTTPClient
+	previous := client.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if previous != nil {
+			if err := previous(req, via); err != nil {
+				return err
+			}
+		} else if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if len(via) > 0 && (req.URL.Scheme != via[0].URL.Scheme || !strings.EqualFold(req.URL.Host, via[0].URL.Host)) {
+			for _, header := range []string{"Authorization", "Cookie", "Cookie2", "X-Workspace-ID", "X-Agent-ID", "X-Task-ID"} {
+				req.Header.Del(header)
+			}
+		}
+		return nil
+	}
+	return &client
 }
 
 // HealthCheck hits the /health endpoint and returns the response body.

@@ -561,3 +561,52 @@ func TestSetHeaders_AdvertisesStableAttachmentURLs(t *testing.T) {
 		}
 	})
 }
+
+func TestDownloadFileRedirectKeepsCredentialsAtConfiguredOrigin(t *testing.T) {
+	for _, limited := range []bool{false, true} {
+		name := "download"
+		if limited {
+			name = "limited"
+		}
+		t.Run(name, func(t *testing.T) {
+			const content = "signed-storage-body"
+			external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for _, header := range []string{"Authorization", "X-Workspace-ID", "X-Agent-ID", "X-Task-ID"} {
+					if r.Header.Get(header) != "" {
+						t.Errorf("API credential %s reached another origin", header)
+					}
+				}
+				if r.URL.RawQuery != "signature=fixture" {
+					t.Errorf("storage signature changed: %q", r.URL.RawQuery)
+				}
+				_, _ = io.WriteString(w, content)
+			}))
+			defer external.Close()
+			var relay *httptest.Server
+			relay = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Authorization") != "Bearer mat_fixture" || r.Header.Get("X-Task-ID") != "task-1" {
+					t.Error("same-origin download lost authentication")
+				}
+				if r.URL.Path == "/api/attachments/att-1/download" {
+					http.Redirect(w, r, relay.URL+"/authorized-download", http.StatusFound)
+					return
+				}
+				http.Redirect(w, r, external.URL+"/object?signature=fixture", http.StatusFound)
+			}))
+			defer relay.Close()
+			client := NewAPIClient(relay.URL, "workspace-1", "mat_fixture")
+			client.AgentID = "agent-1"
+			client.TaskID = "task-1"
+			var data []byte
+			var err error
+			if limited {
+				data, err = client.DownloadFileLimited(context.Background(), "/api/attachments/att-1/download", 100)
+			} else {
+				data, err = client.DownloadFile(context.Background(), "/api/attachments/att-1/download")
+			}
+			if err != nil || string(data) != content {
+				t.Fatalf("download=%q error=%v", data, err)
+			}
+		})
+	}
+}
