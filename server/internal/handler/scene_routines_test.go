@@ -529,6 +529,7 @@ func TestSceneRoutineAdminRoutes(t *testing.T) {
 		r.Get("/{orgId}/context/{scopeType}/{scopeKey}/routines", f.h.ListAgentContextRoutines)
 		r.Post("/{orgId}/context/{scopeType}/{scopeKey}/routines", f.h.CreateAgentContextRoutine)
 		r.Patch("/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}", f.h.UpdateAgentContextRoutine)
+		r.Get("/{orgId}/context/{scopeType}/{scopeKey}/routines/{routineId}/runs", f.h.ListAgentContextRoutineRuns)
 	})
 	agentID := uuidToString(f.agent)
 	base := ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeScene, ctxcapScene) + "/routines"
@@ -557,4 +558,32 @@ func TestSceneRoutineAdminRoutes(t *testing.T) {
 	}
 	orgPath := ctxNodePath(agentID, ctxcapOrg, contextcap.ScopeOrg, ctxcapOrg) + "/routines"
 	ctxcapExpectStatus(t, scenesAs(t, router, "", http.MethodPost, orgPath, body), http.StatusBadRequest, "org node")
+
+	// Run history: newest first, status and times only.
+	runsPath := base + "/" + created.Routine.ID + "/runs"
+	var history struct {
+		Runs []sceneRoutineRunView `json:"runs"`
+	}
+	w = scenesAs(t, router, "", http.MethodGet, runsPath, nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "runs")
+	ctxcapDecode(t, w, &history)
+	if len(history.Runs) != 0 {
+		t.Fatalf("runs before any = %+v", history.Runs)
+	}
+	ap, err := f.h.Queries.GetAutopilot(context.Background(), parseUUID(created.Routine.AutopilotID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _, err := f.h.AutopilotService.DispatchAutopilotManual(context.Background(), ap, pgtype.UUID{}, nil, parseUUID(testUserID))
+	if err != nil || run == nil {
+		t.Fatalf("manual run = %+v %v", run, err)
+	}
+	w = scenesAs(t, router, "", http.MethodGet, runsPath, nil)
+	ctxcapExpectStatus(t, w, http.StatusOK, "runs after one")
+	ctxcapDecode(t, w, &history)
+	if len(history.Runs) != 1 || history.Runs[0].ID != uuidToString(run.ID) || history.Runs[0].Status != run.Status || history.Runs[0].CreatedAt == "" {
+		t.Fatalf("runs = %+v, want run %s", history.Runs, uuidToString(run.ID))
+	}
+	// The admin node is the agent's managers': a plain member reads nothing.
+	ctxcapExpectStatus(t, scenesAs(t, router, member, http.MethodGet, runsPath, nil), http.StatusForbidden, "plain member runs")
 }

@@ -98,6 +98,30 @@ func (h *Handler) ListContextConfigRoutines(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"routines": routines})
 }
 
+// ListContextConfigRoutineRuns lists a routine's newest runs:
+// GET /api/context-capabilities/agents/{agentId}/routines/{routineId}/runs?org_id=
+// → {runs: [{id, status, source, failure_reason?, created_at, completed_at}]}.
+func (h *Handler) ListContextConfigRoutineRuns(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.contextCapMobileUser(w, r)
+	if !ok {
+		return
+	}
+	_, routine, ok := h.sceneRoutineMobileRoutine(w, r, userID, r.URL.Query().Get("org_id"), contextCapNeedRead)
+	if !ok {
+		return
+	}
+	h.writeSceneRoutineRuns(w, r, routine)
+}
+
+func (h *Handler) writeSceneRoutineRuns(w http.ResponseWriter, r *http.Request, routine contextcap.Routine) {
+	runs, err := h.listSceneRoutineRuns(r.Context(), routine)
+	if err != nil {
+		writeSceneRoutineError(w, r, err, "list runs of")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+}
+
 // CreateContextConfigRoutine creates a routine in a group or 1:1 chat scene:
 // POST /api/context-capabilities/agents/{agentId}/routines
 // {scene_id, org_id?, title, instructions, trigger: {kind, cron?, timezone?}}
@@ -333,6 +357,19 @@ func (h *Handler) DeleteAgentContextRoutine(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListAgentContextRoutineRuns: GET .../context/scene/{scene_id}/routines/{routineId}/runs.
+func (h *Handler) ListAgentContextRoutineRuns(w http.ResponseWriter, r *http.Request) {
+	node, ok := h.agentRoutineNode(w, r, contextCapNeedRead)
+	if !ok {
+		return
+	}
+	routine, ok := h.agentRoutineFromNode(w, r, node)
+	if !ok {
+		return
+	}
+	h.writeSceneRoutineRuns(w, r, routine)
 }
 
 // RunAgentContextRoutine: POST .../context/scene/{scene_id}/routines/{routineId}/run.

@@ -17,6 +17,7 @@ import {
   ContextPromptComponentsResponseSchema,
   ContextRoutineEnvelopeSchema,
   ContextRoutineRunEnvelopeSchema,
+  ContextRoutineRunsListSchema,
   ContextRoutineWriteSchema,
   ContextRoutinesListSchema,
   EMPTY_AGENT_SCENES_PAGE,
@@ -4955,6 +4956,17 @@ export class ApiClient {
   async deleteSceneRoutine(target: SceneRoutinesTarget, routineId: string): Promise<void> {
     const request = this.sceneRoutinesRequest(target, `/${encodeURIComponent(routineId)}`);
     await this.fetch<unknown>(this.sceneRoutinesUrl(request), { method: "DELETE", headers: request.headers });
+  }
+
+  /** A routine's newest runs (status and times only). */
+  async listSceneRoutineRuns(target: SceneRoutinesTarget, routineId: string): Promise<ContextRoutineRun[]> {
+    const request = this.sceneRoutinesRequest(target, `/${encodeURIComponent(routineId)}/runs`);
+    const raw = await this.fetch<unknown>(this.sceneRoutinesUrl(request), { headers: request.headers });
+    return parseWithFallback<ContextRoutineRun[]>(raw, ContextRoutineRunsListSchema, [], {
+      endpoint: "GET …/routines/{routineId}/runs",
+      // Failure reasons can quote run output.
+      includeReceived: false,
+    });
   }
 
   /** Runs a routine now; resolves to the run it started (null when none). */

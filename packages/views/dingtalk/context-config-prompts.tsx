@@ -49,12 +49,15 @@ export function ScopePrompts({
   scope,
   prompts,
   canEdit,
+  displayOnly = false,
   reportError,
 }: {
   agentId: string;
   scope: ContextConfigScopeInput;
   prompts: ContextPromptComponent[];
   canEdit: boolean;
+  /** Lists the components that apply, without their switches. */
+  displayOnly?: boolean;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
@@ -150,18 +153,20 @@ export function ScopePrompts({
                   </Button>
                 </div>
               ) : null}
-              <ToggleControl
-                busy={busyKey === row.key}
-                checked={row.enabled}
-                disabled={!canEdit || save.isPending}
-                label={t(($) => $.context_config.toggle_aria, { name: row.name })}
-                onToggle={(enabled) =>
-                  void write(
-                    rows.map((entry) => (entry.key === row.key ? { ...entry, enabled } : entry)),
-                    row.key,
-                  )
-                }
-              />
+              {displayOnly ? null : (
+                <ToggleControl
+                  busy={busyKey === row.key}
+                  checked={row.enabled}
+                  disabled={!canEdit || save.isPending}
+                  label={t(($) => $.context_config.toggle_aria, { name: row.name })}
+                  onToggle={(enabled) =>
+                    void write(
+                      rows.map((entry) => (entry.key === row.key ? { ...entry, enabled } : entry)),
+                      row.key,
+                    )
+                  }
+                />
+              )}
             </li>
           ),
         )}

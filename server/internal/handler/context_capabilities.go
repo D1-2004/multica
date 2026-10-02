@@ -107,9 +107,10 @@ type contextCapTenantRefDTO struct {
 
 // contextCapOrgLayerDTO is the enterprise (org) layer of the configure
 // page's org: its bindings (offered resources only), credentials, prompt
-// components and custom MCP servers. Only agent managers get it
-// (contextCapScopeRights). Credential hints are blank for a caller who
-// cannot connect there.
+// components and custom MCP servers. Every caller who may open the detail
+// gets it; only agent managers have rights there (contextCapScopeRights).
+// Credential hints are blank, and the MCP document withheld, for a caller
+// without them.
 type contextCapOrgLayerDTO struct {
 	ScopeKey    string                    `json:"scope_key"`
 	ScopeTitle  string                    `json:"scope_title"`
@@ -174,17 +175,6 @@ type contextCapOfferedConnectorDTO struct {
 	InstallURL string `json:"install_url,omitempty"`
 }
 
-// contextCapOrgEffectDTO is what the enterprise level of the page's tenant
-// turns on and holds accounts for, as ids only. Every caller who may open the
-// detail gets it, because those items apply in their scopes too (switches add
-// up across levels; credentials resolve person > scene > org > workspace).
-// The editable enterprise layer itself (Org) stays managers-only.
-type contextCapOrgEffectDTO struct {
-	ConnectorIDs           []string `json:"connector_ids"`
-	SkillIDs               []string `json:"skill_ids"`
-	CredentialConnectorIDs []string `json:"credential_connector_ids"`
-}
-
 // contextCapCatalogAppDTO is one official app of the connector catalog: the
 // configure page lists every app it supports, including the ones not yet
 // opened for this agent.
@@ -216,15 +206,12 @@ type contextCapAgentDetailResponse struct {
 	// Tenants are the orgs the caller may open: every tenant for a manager,
 	// else the tenants the caller holds a live grant under.
 	Tenants []contextCapTenantRefDTO `json:"tenants"`
-	// Org is the enterprise layer of Tenant; null unless the caller manages
-	// the agent (contextCapScopeRights), and when there is no tenant.
+	// Org is the enterprise layer of Tenant (read-only unless the caller
+	// manages the agent); null when there is no tenant.
 	Org *contextCapOrgLayerDTO `json:"org"`
 	// Apps is the connector catalog in its order; an app becomes usable once
 	// the agent's manager adds it (Global or Offers then lists it).
 	Apps []contextCapCatalogAppDTO `json:"apps"`
-	// OrgEffect is the enterprise level's effect on Tenant for every caller;
-	// null when there is no tenant.
-	OrgEffect *contextCapOrgEffectDTO `json:"org_effect"`
 }
 
 func contextCapTime(t time.Time) string {
@@ -678,7 +665,7 @@ type contextCapResolveOptions struct {
 //
 //   - Org request (scope key = a.OrgID): managing the agent, or any live
 //     grant of the caller under that org (no rights; the configure page
-//     shows the org layer to managers only).
+//     shows the org layer read-only to everyone).
 //   - Person request: the caller's live person grant for exactly that
 //     staffId (Self; a manager is not the person). With ManagerPersons
 //     (admin routes only), a manager reads it too.
@@ -1301,39 +1288,14 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 			resp.Tenants = append(resp.Tenants, ref)
 		}
 	}
-	// Everyone who may open the detail sees what the enterprise level turns
-	// on and holds accounts for (ids only): it applies in their scopes too.
+	// The enterprise layer: every caller who may open the detail sees it,
+	// since its items apply in their scopes too (switches add up across
+	// levels; credentials resolve person > scene > org > workspace). Only
+	// agent managers have rights there (contextCapScopeRights), and the
+	// configure page shows it read-only to everyone: managers change it in
+	// the admin Context Builder. Without rights, credential hints are blank
+	// and the MCP document is withheld (contextCapScopeComponents).
 	if resp.Tenant != nil {
-		bindings, err := contextcap.ListScopeBindings(ctx, h.DB, a.WorkspaceID, a.ID, contextcap.ScopeOrg, a.OrgID, a.OrgID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "binding lookup failed")
-			return
-		}
-		credentials, err := contextcap.ListScopeCredentials(ctx, h.DB, a.WorkspaceID, a.ID, contextcap.ScopeOrg, a.OrgID, a.OrgID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "credential lookup failed")
-			return
-		}
-		effect := &contextCapOrgEffectDTO{ConnectorIDs: []string{}, SkillIDs: []string{}, CredentialConnectorIDs: []string{}}
-		for _, binding := range contextCapBindingViews(bindings, offers) {
-			if !binding.Enabled {
-				continue
-			}
-			switch binding.ResourceType {
-			case contextcap.ResourceConnector:
-				effect.ConnectorIDs = append(effect.ConnectorIDs, binding.ResourceID)
-			case contextcap.ResourceSkill:
-				effect.SkillIDs = append(effect.SkillIDs, binding.ResourceID)
-			}
-		}
-		for _, credential := range credentials {
-			effect.CredentialConnectorIDs = append(effect.CredentialConnectorIDs, credential.ConnectorID)
-		}
-		resp.OrgEffect = effect
-	}
-	// The editable enterprise layer is for agent managers only: nobody else
-	// may change it (contextCapScopeRights), and it is not shown to them.
-	if resp.Tenant != nil && manages {
 		orgScope, err := h.contextCapResolveScopeWith(ctx, a, userID, contextcap.ScopeOrg, a.OrgID, contextCapResolveOptions{Manages: &manages})
 		if err != nil {
 			slog.ErrorContext(ctx, "context capabilities: org scope lookup failed", "agent_id", a.ID, "error", err)

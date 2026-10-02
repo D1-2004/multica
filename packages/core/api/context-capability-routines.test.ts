@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { parseWithFallback } from "./schema";
-import type { ContextRoutine, ContextRoutineWriteResult } from "../types/context-capability";
+import type { ContextRoutine, ContextRoutineRun, ContextRoutineWriteResult } from "../types/context-capability";
 import {
   ContextConfigSceneDetailSchema,
   ContextRoutineEnvelopeSchema,
   ContextRoutineRunEnvelopeSchema,
+  ContextRoutineRunsListSchema,
   ContextRoutineWriteSchema,
   ContextRoutinesListSchema,
 } from "./context-capability-schema";
@@ -92,6 +93,28 @@ describe("scene routine schemas", () => {
     expect(ContextRoutineEnvelopeSchema.parse({})).toBeNull();
     expect(ContextRoutineRunEnvelopeSchema.parse({ run: null })).toBeNull();
     expect(ContextRoutineRunEnvelopeSchema.parse({ run: wireRoutine.last_run })?.status).toBe("completed");
+  });
+
+  it("reads a run history, dropping malformed rows, and an empty list for a malformed body", () => {
+    const runs = parseWithFallback<ContextRoutineRun[]>(
+      {
+        runs: [
+          wireRoutine.last_run,
+          { id: "55555555-5555-4555-8555-555555555555", status: "failed", source: "manual", failure_reason: "boom", created_at: "2026-10-02T01:00:00Z", completed_at: null },
+          { status: "completed" },
+          "x",
+        ],
+      },
+      ContextRoutineRunsListSchema,
+      [],
+      opts,
+    );
+    expect(runs.map((run) => [run.status, run.source, run.failureReason, run.completedAt])).toEqual([
+      ["completed", "schedule", "", "2026-10-01T01:02:00Z"],
+      ["failed", "manual", "boom", null],
+    ]);
+    expect(parseWithFallback<ContextRoutineRun[]>({ runs: "nope" }, ContextRoutineRunsListSchema, [], opts)).toEqual([]);
+    expect(parseWithFallback<ContextRoutineRun[]>(null, ContextRoutineRunsListSchema, [], opts)).toEqual([]);
   });
 
   it("grants routine editing only for a literal true", () => {

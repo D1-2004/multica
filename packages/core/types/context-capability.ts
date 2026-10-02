@@ -220,17 +220,6 @@ export interface ContextConfigOrgScope extends ContextConfigScopeContent {
   canEdit: boolean;
 }
 
-/** What the enterprise level of the page's tenant turns on and holds
- * accounts for, as ids only. Sent to everyone who may open the page, since
- * those items apply in their scopes too. */
-export interface ContextConfigOrgEffect {
-  connectorIds: string[];
-  skillIds: string[];
-  /** Connectors with an enterprise account (credentials resolve person >
-   * scene > enterprise > workspace). */
-  credentialConnectorIds: string[];
-}
-
 /** An official app of the connector catalog (GitHub, Notion, ...). */
 export interface ContextConfigCatalogApp {
   slug: string;
@@ -255,7 +244,9 @@ export interface ContextConfigAgentDetail {
   tenant: ContextConfigTenantRef | null;
   /** The tenants the caller may open. */
   tenants: ContextConfigTenantRef[];
-  /** The tenant's enterprise level; null when the caller may not read it. */
+  /** The tenant's enterprise level, read-only unless the caller manages the
+   * agent; null when there is none (and from older backends, for a caller
+   * who does not manage the agent). */
   org: ContextConfigOrgScope | null;
   jsapiAvailable: boolean;
   /** "manager" when the caller manages the agent (scenes then lists every
@@ -265,9 +256,6 @@ export interface ContextConfigAgentDetail {
    * is usable here only once `global` or `offers` lists its connector;
    * older backends send none. */
   apps: ContextConfigCatalogApp[];
-  /** The enterprise level's effect on the tenant; empty when there is none
-   * (older backends: read from `org` when the caller manages the agent). */
-  orgEffect: ContextConfigOrgEffect;
 }
 
 /** Where the configuration of one scene page lives: the scene itself, a

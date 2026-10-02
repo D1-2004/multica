@@ -732,6 +732,27 @@ func (h *Handler) sceneRoutineView(ctx context.Context, routine contextcap.Routi
 	return view, nil
 }
 
+// sceneRoutineRunHistoryLimit is how many runs a routine's history lists.
+const sceneRoutineRunHistoryLimit = 30
+
+// listSceneRoutineRuns lists a routine's newest runs (status and times
+// only, no run detail).
+func (h *Handler) listSceneRoutineRuns(ctx context.Context, routine contextcap.Routine) ([]sceneRoutineRunView, error) {
+	ap, _, err := h.loadRoutineAutopilot(ctx, routine)
+	if err != nil {
+		return nil, err
+	}
+	runs, err := h.Queries.ListAutopilotRuns(ctx, db.ListAutopilotRunsParams{AutopilotID: ap.ID, Limit: sceneRoutineRunHistoryLimit})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sceneRoutineRunView, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, *routineRunView(run))
+	}
+	return out, nil
+}
+
 func routineRunView(run db.AutopilotRun) *sceneRoutineRunView {
 	return &sceneRoutineRunView{
 		ID: util.UUIDToString(run.ID), Status: run.Status, Source: run.Source,
