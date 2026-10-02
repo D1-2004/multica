@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 type employeeFileCheck struct{ File, Unconfirmed bool }
@@ -99,15 +100,22 @@ func (h *Handler) verifyEmployeeNoticeFiles(ctx context.Context, in dingtalkresp
 
 	return nil
 }
-func employeeNoticeDeliveryBody(decision string) string {
+func employeeNoticeDeliveryBody(decision, output string) string {
+	var status string
 	switch decision {
 	case "unconfirmed":
-		return "本次执行已结束，但文件是否送达尚未确认。"
+		status = "本次执行已结束，但文件是否送达尚未确认。"
 	case "delivery_failed":
-		return "本次执行已结束，但文件发送失败。"
+		status = "本次执行已结束，但文件发送失败。"
 	default:
 		return ""
 	}
+	// Execution text is retained as attributed output, never interpreted as
+	// provider evidence. The receipt alone determines the status above.
+	if output = strings.TrimSpace(redact.Text(output)); output != "" {
+		status += "\n\n任务返回内容（不作为送达确认）：\n> " + strings.ReplaceAll(output, "\n", "\n> ")
+	}
+	return status
 }
 
 func (h *Handler) employeeNoticeReplicasReady(ctx context.Context) error {

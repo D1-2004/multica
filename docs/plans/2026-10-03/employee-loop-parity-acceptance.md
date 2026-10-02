@@ -65,3 +65,11 @@
 群文件 queue `765b2147-3f96-4bc7-8259-09d8eb0551b5` / job `f05367ce-5008-410e-82ab-c2029c9ec8f9` / Run `d896d383-4891-4188-974d-1ba608fe7cbe` 首轮派发，真实模型参数选择 `if_not_delivered`、`require_delivery=file`，原句为“文件发出后不用再发总结。”。04:43:18 文件消息 `msgjJThi1OIJqNbzwibLpLDhQ==` 已到各种TAG群，04:43:31 queue 完成；后续回读没有追加总结。冬翔账号下载 `employee-loop-final.txt`，28 字节精确匹配验收标记加换行，SHA256 `9385caa13120e8cb6169d9797711695cb0a63099dc5972ef266b9e82c7d2d138`。此为行为验收；当前没有只读 API 暴露 notice 抑制行，也未直接观测 `suppressed` 数据库记录。
 
 失败对照 queue `93a9a1ff-586b-4d60-b1f8-af5dd024dbaf` / job `4e1e3e18-1db8-4f5e-adc1-03582aac94a0` 确实调用发送工具，被不存在文件的本地校验拒绝。错误可见，但执行器先用 `dws-rpc final` 自行发送，Host 又回传了一次长结果（04:44:14 与 04:44:33）。正在补明确的 Direct 最终文字归属：Host 专属标志需穿过 Daemon typed policy，SDK 在原会话 `final` 时不再发送，普通任务与显式其它目标行为保留；不能用任意文本回执冒充完成来静音 Host。
+
+## 第四轮最终文字归属验收（05:19 起）
+
+服务器 `889e9b2df22ff0418ea0b3bcdebbf99f6eb3d09a` 经预发 `3110326028` 成功；候选 Runtime `53b4e29f83a4fb10452178c081005f524e1b84e1` / CI `77194622` 成功，模板 `0j2u5s2j4qozfrt5r3lo` 已切换并读回。shortcuts 来源 `d262250ee58743c3e7492d04fca4b8f21fbcb7b0` 已原子发布、内容与全部文件核对一致。
+
+- queue `1e98e9bb-c487-43eb-80a9-e2de6af66d6b` 在沙箱实际读取 `final_text_owner=host`，调用 `dws-rpc final` 后真实返回 `host_owned / sent=false`，没有原生发送；05:21:14 仅由 Host 返回一行探针结果。
+- group queue `6f7e6a92-d09c-4f2a-b930-68413457f17c` 在 05:20:52 发出文件消息 `msgNvmZ4KDc3/oFs3B91/DvKQ==`，05:20:57 完成，无追加总结。冬翔账号下载 `employee-loop-owner.txt`，28 字节内容精确匹配标记加换行，SHA256 `47e9a5a5401a1d8bf25f0672cc8e8e5f2c89f3f1cca6f0501603b95c966edf00`。
+- failure queue `330d0b9c-9c66-4014-9e0f-a0ca2af36b0b` 不再重复发送；执行器真实调用原生 DWS 文件发送，返回 code 5 / no such file or directory，未重试。具体错误已保存在 result.output，但 Host 以未确认回执状态覆盖成泛化文案。接下来保留“送达未确认”的准确边界，同时带回有明确归属的原始执行报告，并补通知提交状态日志；不根据客户端退出码猜测上游是否已经产生效果。

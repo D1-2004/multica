@@ -320,7 +320,7 @@ func TestEmployeeFileNoticeLateUncertaintyRefreshesOnlyUnsubmittedText(t *testin
 			if err := testPool.QueryRow(context.Background(), `SELECT a.input,n.body FROM response_action a JOIN employee_run_notice n ON n.action_id=a.id WHERE n.run_id=$1::uuid`, f.runID).Scan(&current, &body); err != nil {
 				t.Fatal(err)
 			}
-			if body == in.Text || current.Text != body || strings.Contains(body, "真实已存结果") {
+			if body == in.Text || current.Text != body || !strings.Contains(body, "任务返回内容（不作为送达确认）：\n> 真实已存结果") {
 				t.Fatal("both durable bodies must change before retry", body)
 			}
 			if state == "unknown" && !strings.Contains(body, "尚未确认") || state == "failed" && !strings.Contains(body, "发送失败") {
@@ -367,6 +367,7 @@ func TestEmployeeFileNoticeWorkerReloadsChangedTextWithoutResending(t *testing.T
 	for _, submitted := range []bool{false, true} {
 		t.Run(map[bool]string{false: "pending-reloads", true: "accepted-only-queries"}[submitted], func(t *testing.T) {
 			f := employeeNoticeDatabase(t, "succeeded", false, false, fileOnlyNotice)
+			setNoticeExecutionOutput(t, f, noticeFileReadError)
 			if _, err := f.h.ReconcileEmployeeRunNotices(context.Background(), 100); err != nil {
 				t.Fatal(err)
 			}
@@ -411,7 +412,7 @@ func TestEmployeeFileNoticeWorkerReloadsChangedTextWithoutResending(t *testing.T
 			}
 			select {
 			case sent := <-p.sent:
-				if sent.Text == oldBody || !strings.Contains(sent.Text, "尚未确认") {
+				if sent.Text == oldBody || !strings.Contains(sent.Text, "尚未确认") || !strings.Contains(sent.Text, "任务返回内容（不作为送达确认）") || !strings.Contains(sent.Text, "cannot read: no such file or directory") {
 					t.Fatal("worker sent stale text", sent.Text)
 				}
 			default:
