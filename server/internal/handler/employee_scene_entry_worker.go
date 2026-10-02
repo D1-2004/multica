@@ -473,13 +473,23 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 	return err
 }
 
-// Ready verifies the currently bound runtime before the settings API enables Employee.
+// Ready verifies the configured services, live replica protocol and current
+// runtime before the settings API enables Employee.
 func (w *EmployeeSceneWorker) Ready(ctx context.Context, workspaceID, agentID pgtype.UUID) error {
-	if w == nil || w.handler == nil || w.model == nil || w.handler.TaskService == nil || w.handler.DingTalkResponses == nil {
+	if w == nil || w.handler == nil || w.model == nil || w.store == nil || w.handler.Queries == nil || w.handler.TxStarter == nil || w.handler.TaskService == nil || w.handler.DingTalkResponses == nil {
 		return errors.New("employee services are not configured")
 	}
 	if enabled, ok := w.model.(interface{ Enabled() bool }); ok && !enabled.Enabled() {
 		return errors.New("employee model is not configured")
+	}
+	if w.handler.DingTalkResponses.BeforeSend == nil || w.handler.EmployeeRunNoticeArtifacts == nil || w.handler.EmployeeMemory == nil {
+		return errors.New("employee delivery and memory services are not configured")
+	}
+	if w.ReplicaReady == nil {
+		return errors.New("employee replica capability verification is unavailable")
+	}
+	if err := w.ReplicaReady(ctx); err != nil {
+		return err
 	}
 	agent, err := w.handler.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceID})
 	if err != nil {

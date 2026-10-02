@@ -968,12 +968,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 		return nil
 	}
-	// Keep the production switch closed until the separate terminal-result
-	// notice consumer is installed and verified. Runtime capability alone does
-	// not complete the accepted-work delivery contract.
-	h.EmployeeLoopReady = func(context.Context, pgtype.UUID, pgtype.UUID) error {
-		return errors.New("EmployeeLoop final result delivery is not ready")
-	}
+	// Readiness is evaluated against the completed wiring at use time, including
+	// final delivery dependencies and every live replica's protocol marker.
+	h.EmployeeLoopReady = h.EmployeeSceneWorker.Ready
 	decisionMCP := strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL"))
 	decisionEnv := "production"
 	if strings.Contains(decisionMCP, "pre-mcp.") {
