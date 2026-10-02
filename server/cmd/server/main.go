@@ -455,7 +455,7 @@ func main() {
 		slog.Error("deployment fence instance identity failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
-	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker+" "+eventrouter.ReplicaMarker)
+	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker+" "+eventrouter.ReplicaMarker+" "+handler.EmployeeLoopReplicaMarker)
 	if err != nil {
 		slog.Error("deployment fence initialization failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
@@ -580,6 +580,9 @@ func main() {
 	}
 	if h.InboundCoordinatorWorker != nil {
 		go h.InboundCoordinatorWorker.Run(sweepCtx)
+	}
+	if h.EmployeeSceneWorker != nil {
+		go h.EmployeeSceneWorker.Run(sweepCtx)
 	}
 	if h.SceneMemoryWorker != nil {
 		go h.SceneMemoryWorker.Run(sweepCtx)
@@ -765,6 +768,9 @@ func main() {
 	}
 	if h.InboundCoordinatorWorker != nil && !h.InboundCoordinatorWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("inbound coordinator worker did not exit within shutdown timeout")
+	}
+	if h.EmployeeSceneWorker != nil && !h.EmployeeSceneWorker.WaitWithTimeout(5*time.Second) {
+		slog.Warn("employee scene worker did not exit within shutdown timeout")
 	}
 	if h.SceneMemoryWorker != nil && !h.SceneMemoryWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("scene memory worker did not exit within shutdown timeout")

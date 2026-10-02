@@ -47,6 +47,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/runnerws"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
+	"github.com/multica-ai/multica/server/internal/service/employeememory"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/service/userdecision"
@@ -257,11 +258,13 @@ type Handler struct {
 	UserDecisions            *userdecision.Service
 	InboundCoordinatorWorker *InboundCoordinatorJobWorker
 	// EventRouteConfig returns a single runtime snapshot's choice and version.
-	EventRouteConfig                func(workspaceID, agentID, orgID string) (route, version string)
-	EventRouteReady                 func(context.Context) (bool, error)
+	EventRouteConfig func(workspaceID, agentID, orgID string) (route, version string)
+	EventRouteReady  func(context.Context) (bool, error)
 	// EmployeeLoopReady checks whether this agent can admit new Employee work.
 	// Nil keeps the new mode unavailable while its consumer is not installed.
 	EmployeeLoopReady               func(context.Context, pgtype.UUID, pgtype.UUID) error
+	EmployeeSceneWorker             *EmployeeSceneWorker
+	EmployeeMemory                  *employeememory.Store
 	EventReceiptVerificationEnabled bool
 	SceneMemoryStore                *scenememory.Store
 	SceneMemoryWorker               *scenememory.Worker

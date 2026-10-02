@@ -1057,6 +1057,9 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			name: "delete context capabilities",
 			run: func() error {
 				for _, statement := range []string{
+					`DELETE FROM employee_event_consumption WHERE workspace_id=$1`,
+					`DELETE FROM employee_scene_job WHERE workspace_id=$1`,
+					`DELETE FROM scene_event_receipt WHERE workspace_id=$1`,
 					`DELETE FROM employee_learning WHERE workspace_id=$1`,
 					`DELETE FROM employee_memory_state WHERE workspace_id=$1`,
 					`DELETE FROM employee_task_run WHERE workspace_id=$1`,

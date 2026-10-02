@@ -87,3 +87,14 @@
 - Direct 已推送为 `7781227e119b93646bbd6c0b309dfcf2318d74dd`，预发实例 `3110305603` 已启动。隔离记忆实例 `3110304772` 的构建、部署和集成测试均成功，停在人工验证。
 - Runtime 专用分支 `codex/employee-loop-runtime-20261002` 新增独立候选 YAML，固定上述 Multica commit；35 项离线构建契约/SDK 桩测试通过。后续记录真实 Aone 构建、Template 和 sandbox smoke，不将离线测试当作 canary。
 - 本机安装 CLI 为 0.3.43，不支持 `daemon probe-runtimes`，既有 compare helper 因非 JSON 输出终止。当前源码编译的 arm64 CLI 构建成功，但执行被 AMFI 签名校验终止（exit 137），对本任务临时产物重新 ad-hoc 签名仍未解除。没有关闭系统保护或替换用户已安装 CLI；本地真实 Daemon 验证尚未通过。
+
+## B4 场域入口消费基础
+
+- 新 `employeeentry` 保存 owner、窗口、lease/generation、模型请求/成功或失败、工具回执及结果；9640–9646 与工作区清理同批交付。
+- EventRouter 首次 receipt 与消费记录通过 storage-only hook 同事务提交；旧 receipt 不因模式切换重新交给 Employee。父 workspace 锁覆盖事件写入与删除竞争。
+- GawkBot 内核经真实 worker 调用：首轮回复/派发，3 次累计请求预算跨进程保留，Quiet 明确落账，自发消息零模型。逐句身份和可信场域/租户按当前证据校验。
+- 独立复现并修复：失败模型轮未记账导致恢复路径漂移、Direct commit 后 journal 取消丢失 receipt、300 KiB 合法输入永久 pending。超限现在无需模型只生成一次明确反馈。
+- Compiler 已接入真实 Direct 入队：原消息证据、完整 packet 和实际 ContextUsed 入库。生产 `EmployeeLoopReady` 仍关闭，等待最终结果通知链；不会仅凭 Runtime capability 放开开关。
+- 独立审查通过；干净索引快照在实际 PostgreSQL 执行 employeeentry/eventrouter/handler 定向 race 全部通过，无跳过；server 构建及范围 vet 通过。公开合同新增 `docs/employee-loop.md`。
+- Direct 预发实例 `3110305603` 构建、部署、集成测试 SUCCESS；回读 `/api/config` 200、fence=normal，两活副本状态正常；bootstrap 确认 9620 与 9630 已应用。
+- Runtime 初次构建 `77158514` 在 Linux root 下的假执行器测试失败；已以开发提交 `0339c0333` / 交付 `e65efb8f5754dab67875b55a4a504b9b874e5799` 修复仅测试环境。专用候选继续以新的不可变 pin 重建，未使用失败产物切换。
