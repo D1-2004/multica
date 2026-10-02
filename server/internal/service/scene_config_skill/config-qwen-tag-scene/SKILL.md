@@ -31,10 +31,13 @@ this run has no scene to configure; say so instead of improvising.
   values.
 - **Accounts** — never handled in chat. Send a configuration link instead
   (`scene_connect_link`; pass `tab: "routines"` to open the routines tab) as
-  a Markdown link to its `dingtalk_url`, e.g. `[配置本群能力](dingtalk_url)`;
-  never paste the bare URL. Keep the returned URL unchanged: the host selects
-  its environment and may keep the production origin while forwarding to
-  the scene's home deployment.
+  a Markdown link to its `dingtalk_url`, e.g. `[配置本群能力](dingtalk_url)`
+  in a group or `[配置本单聊能力](dingtalk_url)` in a 1:1 chat; never paste
+  the bare URL. The same tool answers a request for the configuration link
+  (场域配置链接) in a group and in a 1:1 chat alike: it is this scene's link.
+  Keep the returned URL unchanged: the host selects its environment and may
+  keep the production origin while forwarding to the scene's home
+  deployment.
 
 ## How to work
 

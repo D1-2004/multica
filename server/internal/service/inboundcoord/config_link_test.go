@@ -59,11 +59,15 @@ func (s *configLinkIssuerStub) calls() int {
 }
 
 func sceneConfigLink() ConfigLink {
-	return ConfigLink{URL: testConfigLinkURL, Scope: "scene", ValidFor: 30 * time.Minute, ExpiresAt: time.Now().Add(30 * time.Minute)}
+	return ConfigLink{URL: testConfigLinkURL, Scope: "scene", SceneKind: "group", ValidFor: 30 * time.Minute, ExpiresAt: time.Now().Add(30 * time.Minute)}
 }
 
-func personConfigLink() ConfigLink {
-	return ConfigLink{URL: testConfigLinkURL, Scope: "person", ValidFor: 15 * time.Minute, SingleUse: true, ExpiresAt: time.Now().Add(15 * time.Minute)}
+// dmConfigLink is the scene link of a 1:1 chat: minted exactly like a
+// group's, only its label differs.
+func dmConfigLink() ConfigLink {
+	link := sceneConfigLink()
+	link.SceneKind = "dm"
+	return link
 }
 
 func capabilityTurn(chatType string) Turn {
@@ -108,7 +112,7 @@ func TestCapabilityAnswerEndsWithConversationConfigLink(t *testing.T) {
 		wantLine string
 	}{
 		{name: "group gets the reusable scene link", chatType: "group", link: sceneConfigLink(), wantLine: "[本群能力配置](" + testConfigDeepLink + ")（30 分钟内有效）"},
-		{name: "1:1 gets the single-use personal link", chatType: "p2p", link: personConfigLink(), wantLine: "[你的个人能力配置](" + testConfigDeepLink + ")（15 分钟内有效，限用一次）"},
+		{name: "1:1 gets its own scene link, like a group", chatType: "p2p", link: dmConfigLink(), wantLine: "[本单聊能力配置](" + testConfigDeepLink + ")（30 分钟内有效）"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -190,8 +194,6 @@ func TestCapabilityAnswerEndsWithConversationConfigLink(t *testing.T) {
 func TestCapabilityAnswerStaysUnchangedWhenLinkFails(t *testing.T) {
 	bad := sceneConfigLink()
 	bad.URL = "not a url"
-	shared := personConfigLink()
-	shared.SingleUse = false
 	cases := map[string]*configLinkIssuerStub{
 		"issuer error":                  {err: errors.New("This run did not come from a DingTalk group chat, so there is no group to configure.")},
 		"issuer panic":                  {panicMsg: "nil pointer"},
@@ -199,8 +201,8 @@ func TestCapabilityAnswerStaysUnchangedWhenLinkFails(t *testing.T) {
 		"malformed url":                 {link: bad},
 		"unknown scope":                 {link: ConfigLink{URL: testConfigLinkURL, Scope: "org", ValidFor: time.Minute}},
 		"no lifetime":                   {link: ConfigLink{URL: testConfigLinkURL, Scope: "scene"}},
-		"personal link not single use":  {link: shared},
-		"unknown conversation, no link": {err: errors.New("This run has no single identifiable DingTalk sender")},
+		"retired personal scope":        {link: ConfigLink{URL: testConfigLinkURL, Scope: "person", ValidFor: time.Minute}},
+		"unknown conversation, no link": {err: errors.New("This run did not come from a DingTalk group or 1:1 chat of this agent")},
 	}
 	for name, issuer := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -323,14 +325,20 @@ func TestConfigLinkLineLanguages(t *testing.T) {
 		"ja": "[このグループの機能設定](" + testConfigDeepLink + ")（30 分間有効）",
 		"ko": "[이 그룹의 기능 설정](" + testConfigDeepLink + ") (30분간 유효)",
 	} {
-		line, deepLink, err := configLinkLine(language, sceneConfigLink())
-		if err != nil || line != want || deepLink != testConfigDeepLink {
-			t.Fatalf("%s line=%q deepLink=%q err=%v", language, line, deepLink, err)
+		line, deepLink := configLinkLine(language, sceneConfigLink())
+		if line != want || deepLink != testConfigDeepLink {
+			t.Fatalf("%s line=%q deepLink=%q", language, line, deepLink)
 		}
 	}
-	line, _, err := configLinkLine("en", personConfigLink())
-	if err != nil || line != "[Configure your personal capabilities]("+testConfigDeepLink+") (valid for 15 min, single use)" {
-		t.Fatalf("personal line=%q err=%v", line, err)
+	for language, want := range map[string]string{
+		"zh": "[本单聊能力配置](" + testConfigDeepLink + ")（30 分钟内有效）",
+		"en": "[Configure this chat's capabilities](" + testConfigDeepLink + ") (valid for 30 min)",
+		"ja": "[この個別チャットの機能設定](" + testConfigDeepLink + ")（30 分間有効）",
+		"ko": "[이 1:1 채팅의 기능 설정](" + testConfigDeepLink + ") (30분간 유효)",
+	} {
+		if line, _ := configLinkLine(language, dmConfigLink()); line != want {
+			t.Fatalf("%s 1:1 line=%q", language, line)
+		}
 	}
 	if testConfigDeepLink != "dingtalk://dingtalkclient/page/link?url="+url.QueryEscape(testConfigLinkURL)+"&pc_slide=true" {
 		t.Fatalf("deep link=%q", testConfigDeepLink)

@@ -119,7 +119,7 @@ func TestFirstRoundShadowMatchesTheClaimWhenConfigLinksAreOn(t *testing.T) {
 	logs := captureLogs(t)
 	loader := sameHistory(2)
 	c, recorder := shadowCoordinator(t, loader)
-	c.ConfigLinks = &configLinkIssuerStub{link: personConfigLink()}
+	c.ConfigLinks = &configLinkIssuerStub{link: dmConfigLink()}
 	cutoff := time.Date(2026, 9, 29, 1, 0, 0, 0, time.UTC)
 	turn := shadowTurn(cutoff)
 	turn.WorkspaceID = "11111111-1111-1111-1111-111111111111"

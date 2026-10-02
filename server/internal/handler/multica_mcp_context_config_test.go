@@ -39,6 +39,7 @@ type ctxcapLinkResult struct {
 	URL         string `json:"url"`
 	DingTalkURL string `json:"dingtalk_url"`
 	Scope       string `json:"scope"`
+	SceneKind   string `json:"scene_kind"`
 	ExpiresAt   string `json:"expires_at"`
 }
 
@@ -123,12 +124,13 @@ func TestContextCapabilitiesLinkToolListingAndGating(t *testing.T) {
 	}
 
 	task := f.task(t, ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff))
-	if _, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, task, map[string]any{"scope": "everyone"})); !isError || !strings.Contains(text, "scope") {
-		t.Fatalf("bad scope isError=%v text=%q", isError, text)
-	}
-	got := f.ctxcapToolCall(t, task, map[string]any{"scope": "scene", "extra": true})
-	if errObj, ok := got["error"].(map[string]any); !ok || errObj["code"].(float64) != -32602 {
-		t.Fatalf("unknown argument accepted: %#v", got)
+	// The link always configures the current conversation: there is no scope
+	// argument to ask for anything else (the personal scope included).
+	for _, args := range []map[string]any{{"scope": "person"}, {"scope": "scene"}, {"extra": true}} {
+		got := f.ctxcapToolCall(t, task, args)
+		if errObj, ok := got["error"].(map[string]any); !ok || errObj["code"].(float64) != -32602 {
+			t.Fatalf("argument %v accepted: %#v", args, got)
+		}
 	}
 
 	// Another agent's token cannot mint for this task.
@@ -172,7 +174,7 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 	// Group run: the default is a scene link bound to the dispatch scene.
 	groupTask := f.task(t, ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff))
 	sceneLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, groupTask, nil))
-	if isError || sceneLink.Scope != contextcap.ScopeScene {
+	if isError || sceneLink.Scope != contextcap.ScopeScene || sceneLink.SceneKind != contextcap.SceneKindGroup {
 		t.Fatalf("group mint isError=%v text=%q", isError, text)
 	}
 	ctxcapExpiresWithin(t, sceneLink.ExpiresAt, contextcap.LinkTTLScene)
@@ -192,54 +194,56 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 		t.Fatalf("token stored in plaintext: rows=%d err=%v", plaintextRows, err)
 	}
 
-	// A personal link is never issued in a group.
-	if _, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, groupTask, map[string]any{"scope": "person"})); !isError || !strings.Contains(text, "私聊") {
-		t.Fatalf("person in group isError=%v text=%q", isError, text)
-	}
-	oddCaseGroup := f.task(t, ctxcapDispatch("Group", ctxcapScene, ctxcapStaff, ctxcapStaff))
-	if _, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, oddCaseGroup, map[string]any{"scope": "person"})); !isError || !strings.Contains(text, "私聊") {
-		t.Fatalf("person in odd-case group isError=%v text=%q", isError, text)
-	}
-	// Only a positively 1:1 conversation gets a personal link: an empty or
-	// unknown conversation type may be shared, so both the default and an
-	// explicit person scope are refused there.
-	for _, kind := range []string{"", "channel"} {
-		unknownTask := f.task(t, ctxcapDispatch(kind, "", ctxcapStaff, ctxcapStaff))
-		for _, args := range []map[string]any{nil, {"scope": "person"}} {
-			if _, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, unknownTask, args)); !isError {
-				t.Fatalf("person link minted for conversation type %q (args %v): %s", kind, args, text)
-			}
+	// A conversation without a scene of this agent gets no link: an empty
+	// or unknown conversation type without a SceneRef, a 1:1 chat that
+	// never resolved one.
+	for _, dispatch := range [][]byte{
+		ctxcapDispatch("", "", ctxcapStaff, ctxcapStaff),
+		ctxcapDispatch("channel", "", ctxcapStaff, ctxcapStaff),
+		ctxcapDispatch("single", "", ctxcapStaff, ctxcapStaff),
+		ctxcapDWSDispatch("single", ctxcapCoordinatorDirect),
+	} {
+		if _, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, f.task(t, dispatch), nil)); !isError || !strings.Contains(text, "no conversation to configure") {
+			t.Fatalf("link minted without a scene (%s): isError=%v text=%q", dispatch, isError, text)
 		}
 	}
 	// A manual rerun copies the source task's dispatch context but is
-	// triggered by whoever reran it, so it can mint no link for that sender.
+	// triggered by whoever reran it, so it can mint no link for that chat.
 	for _, rerun := range []db.AgentTaskQueue{f.rerunTask(t, ctxcapDispatch("single", "", ctxcapStaff, ctxcapStaff)), f.task(t, ctxcapReplayed(ctxcapDispatch("group", ctxcapScene, ctxcapStaff, ctxcapStaff)))} {
-		for _, args := range []map[string]any{nil, {"scope": "person"}, {"scope": "scene"}} {
-			if _, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, rerun, args)); !isError {
-				t.Fatalf("rerun task minted a link (args %v): %s", args, text)
-			}
+		if _, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, rerun, nil)); !isError {
+			t.Fatalf("rerun task minted a link: %s", text)
 		}
 	}
-	// A 1:1 chat gets no reusable scene link, with or without its scene:
-	// the personal link is the way in and also grants the chat. A merged
-	// multi-sender run has no person.
-	dmTask := f.task(t, ctxcapDispatch("single", "", ctxcapStaff, ctxcapStaff))
+	// A 1:1 chat is minted exactly like a group: the scene link of its own
+	// scene (the scene_id its openConversationId resolved to), whoever
+	// speaks. A digital employee's dispatch has no sender staffId, a merged
+	// window several speakers; neither matters.
 	f.registerDirectScene(t)
-	for _, task := range []db.AgentTaskQueue{dmTask, f.task(t, ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff))} {
-		if _, isError, _ := ctxcapToolResult(t, f.ctxcapToolCall(t, task, map[string]any{"scope": "scene"})); !isError {
-			t.Fatal("scene link minted in a 1:1 chat")
+	dmTask := f.task(t, ctxcapDWSDispatch("single", ctxcapDirectScene))
+	var dmToken string
+	for name, task := range map[string]db.AgentTaskQueue{
+		"digital employee": dmTask,
+		"robot with staff": f.task(t, ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff)),
+		"several speakers": f.task(t, ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff)),
+	} {
+		dmLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, task, nil))
+		if isError || dmLink.Scope != contextcap.ScopeScene || dmLink.SceneKind != contextcap.SceneKindDM {
+			t.Fatalf("%s: 1:1 mint isError=%v text=%q", name, isError, text)
+		}
+		ctxcapExpiresWithin(t, dmLink.ExpiresAt, contextcap.LinkTTLScene)
+		token := ctxcapLinkToken(t, dmLink)
+		var scopeType, scopeKey, extraScene string
+		if err := testPool.QueryRow(context.Background(), `SELECT scope_type, scope_key, extra_scene_key FROM context_config_link WHERE token_hash = $1`,
+			contextcap.HashLinkToken(token)).Scan(&scopeType, &scopeKey, &extraScene); err != nil {
+			t.Fatal(err)
+		}
+		if scopeType != contextcap.ScopeScene || scopeKey != ctxcapDirectScene || extraScene != "" {
+			t.Fatalf("%s: stored 1:1 link scope=%s key=%s extra=%q", name, scopeType, scopeKey, extraScene)
+		}
+		if task.ID == dmTask.ID {
+			dmToken = token
 		}
 	}
-	mixedTask := f.task(t, ctxcapDispatch("single", "", ctxcapStaff, ctxcapStaff, ctxcapOtherStaff))
-	if _, isError, _ := ctxcapToolResult(t, f.ctxcapToolCall(t, mixedTask, nil)); !isError {
-		t.Fatal("person link minted for a multi-sender run")
-	}
-	personLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, dmTask, nil))
-	if isError || personLink.Scope != contextcap.ScopePerson {
-		t.Fatalf("dm mint isError=%v text=%q", isError, text)
-	}
-	ctxcapExpiresWithin(t, personLink.ExpiresAt, contextcap.LinkTTLPerson)
-	personToken := ctxcapLinkToken(t, personLink)
 
 	// Scene links are reusable by every group member until expiry.
 	alice, bob := uuid.NewString(), uuid.NewString()
@@ -259,38 +263,41 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 	}
 	ctxcapExpiresWithin(t, grant.ExpiresAt.UTC().Format(time.RFC3339), contextcap.GrantTTLScene)
 
-	// Person links are single use.
-	w := redeem(alice, personToken)
-	ctxcapExpectStatus(t, w, http.StatusOK, "person redeem")
-	var personGot map[string]string
-	ctxcapDecode(t, w, &personGot)
-	if personGot["scope_type"] != contextcap.ScopePerson || personGot["scope_key"] != ctxcapStaff || personGot["scope_title"] != "Alice" {
-		t.Fatalf("person redeem=%+v", personGot)
+	// The 1:1 chat's link is reusable too and grants that chat's scene, not
+	// a personal scope.
+	for _, user := range []string{alice, bob} {
+		w := redeem(user, dmToken)
+		ctxcapExpectStatus(t, w, http.StatusOK, "1:1 scene redeem")
+		var got map[string]string
+		ctxcapDecode(t, w, &got)
+		if got["scope_type"] != contextcap.ScopeScene || got["scope_key"] != ctxcapDirectScene || got["scope_title"] != "Alice" || got["org_id"] != ctxcapOrg {
+			t.Fatalf("1:1 scene redeem=%+v", got)
+		}
+		if _, err := contextcap.GetLiveGrant(context.Background(), testPool, user, agentID, contextcap.ScopePerson, ctxcapOrg, ctxcapStaff); err == nil {
+			t.Fatal("a 1:1 scene link granted a personal scope")
+		}
 	}
-	ctxcapExpectStatus(t, redeem(bob, personToken), http.StatusGone, "person link reuse")
-	ctxcapExpectStatus(t, redeem(alice, personToken), http.StatusGone, "person link reuse by redeemer")
-	if _, err := contextcap.GetLiveGrant(context.Background(), testPool, bob, agentID, contextcap.ScopePerson, ctxcapOrg, ctxcapStaff); err == nil {
-		t.Fatal("second redeemer received a person grant")
-	}
-	personGrant, err := contextcap.GetLiveGrant(context.Background(), testPool, alice, agentID, contextcap.ScopePerson, ctxcapOrg, ctxcapStaff)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctxcapExpiresWithin(t, personGrant.ExpiresAt.UTC().Format(time.RFC3339), contextcap.GrantTTLPerson)
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, ctxcapDirectScene), bob, nil), http.StatusOK, "bob 1:1 scene via link")
 
-	// Once Alice holds her personal scope, a later personal link for the same
-	// person that reaches another account (forwarded, leaked) cannot take it
-	// over; it stays unconsumed, and Alice can still redeem it herself.
-	forwardedLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, dmTask, nil))
-	if isError || forwardedLink.Scope != contextcap.ScopePerson {
-		t.Fatalf("second dm mint isError=%v text=%q", isError, text)
+	// No run mints personal links any more; one stored before (single use,
+	// 15 minutes) still redeems by the stored rules until it expires.
+	legacyPersonLink := func() string {
+		token, err := contextcap.NewLinkToken()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := contextcap.InsertLink(context.Background(), testPool, contextcap.Link{
+			TokenHash: contextcap.HashLinkToken(token), WorkspaceID: testWorkspaceID, AgentID: agentID, ScopeType: contextcap.ScopePerson,
+			OrgID: ctxcapOrg, ScopeKey: ctxcapStaff, ScopeTitle: "Alice", ExtraSceneID: ctxcapDirectScene,
+		}, contextcap.LinkTTLPerson); err != nil {
+			t.Fatal(err)
+		}
+		return token
 	}
-	forwardedToken := ctxcapLinkToken(t, forwardedLink)
-	ctxcapExpectStatus(t, redeem(bob, forwardedToken), http.StatusConflict, "person link redeemed by another account")
-	if _, err := contextcap.GetLiveGrant(context.Background(), testPool, bob, agentID, contextcap.ScopePerson, ctxcapOrg, ctxcapStaff); err == nil {
-		t.Fatal("another account took over the personal scope")
-	}
-	ctxcapExpectStatus(t, redeem(alice, forwardedToken), http.StatusOK, "person link redeemed by its holder")
+	personToken := legacyPersonLink()
+	ctxcapExpectStatus(t, redeem(alice, personToken), http.StatusOK, "stored person link redeem")
+	ctxcapExpectStatus(t, redeem(bob, personToken), http.StatusGone, "stored person link reuse")
+	ctxcapExpectStatus(t, redeem(bob, legacyPersonLink()), http.StatusConflict, "stored person link redeemed by another account")
 
 	// Grants from the links authorize the mobile page.
 	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, ctxcapScene), bob, nil), http.StatusOK, "bob scene via link")

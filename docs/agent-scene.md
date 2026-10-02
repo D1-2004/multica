@@ -29,7 +29,8 @@ agent + tenant org + scene kind + stable scene instance → one scene_id
 - **A 1:1 chat is keyed by its conversation, not by a person.** Two 1:1 chats
   with the same person are two scenes; a staffId/UID never creates, finds or
   stands in for a dm scene. The person scope (staffId) still exists for
-  personal preferences (context capabilities §1.1) and is a separate thing.
+  personal preferences (context capabilities §1.1) and is a separate thing;
+  a 1:1 chat's configuration link is its scene link, like a group's.
 - Renames, membership changes, credential rotation and model/session restarts
   do not change a scene_id. Holding a scene_id grants nothing by itself; every
   read and write still checks workspace, agent, tenant org and the caller's
@@ -64,7 +65,7 @@ every other mismatch stays a conflict.
 | `agent_scene_memory` | Scene Memory state keyed by `scene_id` (revision, cursor, lease, flush). It never mints a second id; APIs address it by `scene_id`. Only `group`/`dm` scenes have memory. |
 | `assoc_edge` (`dst_type='scene'`) | graph scene nodes: `dst_id` is the `scene_id`; edge props carry `{scene_id, conversation_id, kind}` for display. |
 | `assoc_event.scene_id` | the scene an inbound/outbound event happened in. |
-| `context_*` (`scope_type='scene'`) | scene configuration: `scope_key` is the `scene_id`; `context_config_link.extra_scene_key` (the 1:1 scene a personal link also grants) is a `scene_id`. |
+| `context_*` (`scope_type='scene'`) | scene configuration: `scope_key` is the `scene_id`. Configuration links of a group and of a 1:1 chat are minted the same way, as scene links keyed by the conversation's `scene_id` (never by the sender, no staffId needed; `docs/context-capabilities.md` §5). `context_config_link.extra_scene_key` (the 1:1 scene a personal link minted before 2026-10-02 also grants) is a `scene_id`; nothing writes it any more. |
 | `inbound_coordinator_job.command.agent_scene` | SceneRef of a persisted dispatch (`inbound_coordinator_job_agent_scene_idx`). |
 
 No FK/cascade (repo rule). Workspace deletion removes `agent_scene` and

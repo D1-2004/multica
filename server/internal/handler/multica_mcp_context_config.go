@@ -16,24 +16,26 @@ import (
 
 const multicaMCPContextConfigLinkTool = "create_context_config_link"
 
-const multicaMCPContextConfigLinkToolDescription = `为当前钉钉群或当前私聊用户生成「能力配置」链接。Create a link that lets DingTalk users turn on this Agent's offered connectors and skills (连接器 / 技能 / 能力) for the current group chat or for themselves.
+const multicaMCPContextConfigLinkToolDescription = `为当前钉钉会话（群聊或单聊）生成「场域能力配置」链接。Create a link that lets DingTalk users configure this Agent's capabilities (连接器 / 技能 / 能力 / 提示词 / 例行任务) for the current conversation: this group chat (本群) or this 1:1 chat (本单聊).
 
-Call it when a user asks to configure, enable or connect connectors, skills or capabilities for this group (本群) or for themselves (我的 / 个人). Reply with a Markdown link whose target is the returned dingtalk_url, e.g. [配置本群能力](dingtalk_url); never show the bare url, and never shorten or rewrite the link target.
+Call it when a user asks to configure, enable or connect connectors, skills or capabilities here, or asks for the configuration link (场域配置链接). Reply with a Markdown link whose target is the returned dingtalk_url, e.g. [配置本群能力](dingtalk_url) in a group or [配置本单聊能力](dingtalk_url) in a 1:1 chat (scene_kind "group" or "dm"); never show the bare url, and never shorten or rewrite the link target.
 
-scope defaults to "scene" in a group chat and to "person" in a 1:1 chat. A scene link lets any member of this group who opens it within 30 minutes configure the group's capabilities. A person link is single-use, valid for 15 minutes, and is only issued in a 1:1 chat; it also lets the user configure this 1:1 chat (本会话). In a group, ask the user to message you privately (私聊) and request it there.
+The link is bound to the current conversation's scene, the same way in a group and in a 1:1 chat: whoever opens it within 30 minutes can configure that conversation's capabilities.
 
-Requires a task token of a run dispatched from DingTalk. Scene and person identities are taken from the server-side dispatch context, never from arguments.`
+Requires a task token of a run dispatched from DingTalk. The conversation is taken from the server-side dispatch context, never from arguments.`
 
 type multicaMCPContextConfigLinkArguments struct {
-	Scope string `json:"scope"`
-	Tab   string `json:"tab"`
+	Tab string `json:"tab"`
 }
 
 type multicaMCPContextConfigLinkResult struct {
 	URL         string `json:"url"`
 	DingTalkURL string `json:"dingtalk_url"`
 	Scope       string `json:"scope"`
-	ExpiresAt   string `json:"expires_at"`
+	// SceneKind is the conversation's kind in the scene directory: "group"
+	// or "dm" (a 1:1 chat).
+	SceneKind string `json:"scene_kind"`
+	ExpiresAt string `json:"expires_at"`
 }
 
 // multicaMCPContextConfigLinkVisible lists the tool only for task tokens while
@@ -51,11 +53,6 @@ func multicaMCPContextConfigLinkDefinition() map[string]any {
 			"type":                 "object",
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"scope": map[string]any{
-					"type":        "string",
-					"enum":        []string{contextcap.ScopeScene, contextcap.ScopePerson},
-					"description": `"scene" configures the current group chat; "person" configures the current 1:1 sender. Omit to use the current conversation.`,
-				},
 				"tab": map[string]any{
 					"type":        "string",
 					"enum":        contextConfigLinkTabs,
@@ -68,10 +65,11 @@ func multicaMCPContextConfigLinkDefinition() map[string]any {
 			"properties": map[string]any{
 				"url":          map[string]any{"type": "string"},
 				"dingtalk_url": map[string]any{"type": "string"},
-				"scope":        map[string]any{"type": "string", "enum": []string{contextcap.ScopeScene, contextcap.ScopePerson}},
+				"scope":        map[string]any{"type": "string", "enum": []string{contextcap.ScopeScene}},
+				"scene_kind":   map[string]any{"type": "string", "enum": []string{contextcap.SceneKindGroup, contextcap.SceneKindDM}},
 				"expires_at":   map[string]any{"type": "string"},
 			},
-			"required": []string{"url", "dingtalk_url", "scope", "expires_at"},
+			"required": []string{"url", "dingtalk_url", "scope", "scene_kind", "expires_at"},
 		},
 		"annotations": map[string]any{
 			"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false,
@@ -89,7 +87,7 @@ func (h *Handler) handleMulticaMCPContextConfigLink(w http.ResponseWriter, r *ht
 		h.writeMulticaMCPError(w, id, -32602, "invalid create_context_config_link arguments")
 		return
 	}
-	result, err := h.createContextConfigLink(r, strings.TrimSpace(args.Scope), args.Tab)
+	result, err := h.createContextConfigLink(r, args.Tab)
 	if err != nil {
 		var toolErr *multicaMCPToolCallError
 		if !errors.As(err, &toolErr) {
@@ -107,16 +105,13 @@ func (h *Handler) handleMulticaMCPContextConfigLink(w http.ResponseWriter, r *ht
 	})
 }
 
-// createContextConfigLink mints a configuration link for the scene or trigger
-// person of the authenticated active task. The scope comes only from the
-// task's server-written dispatch context.
-func (h *Handler) createContextConfigLink(r *http.Request, requestedScope, tab string) (multicaMCPContextConfigLinkResult, error) {
+// createContextConfigLink mints a configuration link for the conversation
+// scene (group or 1:1 chat) of the authenticated active task. The scene comes
+// only from the task's server-written dispatch context.
+func (h *Handler) createContextConfigLink(r *http.Request, tab string) (multicaMCPContextConfigLinkResult, error) {
 	ctx := r.Context()
 	if h.Queries == nil || h.DB == nil {
 		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "configuration links are not available"}
-	}
-	if requestedScope != "" && requestedScope != contextcap.ScopeScene && requestedScope != contextcap.ScopePerson {
-		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: `scope must be "scene" or "person"`}
 	}
 	tab, err := contextConfigLinkTab(tab)
 	if err != nil {
@@ -146,7 +141,7 @@ func (h *Handler) createContextConfigLink(r *http.Request, requestedScope, tab s
 	}
 	if service.IsSceneRoutineContext(task.Context) {
 		// A routine run acts on cron or webhook input with nobody asking in
-		// the chat, so it never hands out access to a scene or a person.
+		// the chat, so it never hands out access to its scene.
 		return multicaMCPContextConfigLinkResult{}, &multicaMCPToolCallError{message: "a routine run cannot issue configuration links; ask in the chat instead"}
 	}
 	origin, err := h.contextConfigLinkOrigin()
@@ -154,13 +149,12 @@ func (h *Handler) createContextConfigLink(r *http.Request, requestedScope, tab s
 		return multicaMCPContextConfigLinkResult{}, err
 	}
 	return h.mintContextConfigLink(ctx, contextConfigLinkMint{
-		WorkspaceID:    uuidToString(workspaceUUID),
-		AgentID:        agentID,
-		Scope:          h.taskContextScope(ctx, workspaceUUID, task),
-		RequestedScope: requestedScope,
-		Tab:            tab,
-		Origin:         origin,
-		SourceTaskID:   uuidToString(task.ID),
-		Issuer:         contextConfigLinkIssuerTaskTool,
+		WorkspaceID:  uuidToString(workspaceUUID),
+		AgentID:      agentID,
+		Scope:        h.taskContextScope(ctx, workspaceUUID, task),
+		Tab:          tab,
+		Origin:       origin,
+		SourceTaskID: uuidToString(task.ID),
+		Issuer:       contextConfigLinkIssuerTaskTool,
 	})
 }

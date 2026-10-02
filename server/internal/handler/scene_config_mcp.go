@@ -347,9 +347,9 @@ func sceneConfigToolDefinitions(kind string) []any {
 		},
 		"required": []string{"kind"},
 	}
-	where := "this group chat"
+	where, linkLabel := "this group chat", "配置本群能力"
 	if kind == scene.KindDM {
-		where = "this 1:1 chat"
+		where, linkLabel = "this 1:1 chat", "配置本单聊能力"
 	}
 	mcpUpsertTitle := "Add or change a remote MCP server"
 	mcpUpsertDescription := "Add a remote MCP server to " + where + ", or change the fields you pass of the one of that name (omitted fields keep their values); disabled switches it off or on. http(s) url only; never local commands. Every run here calls it, so restate the address and wait for confirmation first. Put no secrets in headers: connect accounts through scene_connect_link instead."
@@ -385,7 +385,7 @@ func sceneConfigToolDefinitions(kind string) []any {
 				"enabled": map[string]any{"type": "boolean"},
 			}, []string{"kind", "id", "enabled"}, false),
 		sceneConfigTool(sceneConfigToolConnectLink, "Create a configuration link",
-			"Create a configuration link for connecting accounts or managing "+where+" on the configuration page. Reply with a Markdown link whose target is the returned dingtalk_url, e.g. [配置本群能力](dingtalk_url); never show the bare url. Accounts are never connected in chat.",
+			"Create the configuration link of "+where+" (场域配置链接), for connecting accounts or managing it on the configuration page; whoever opens it within 30 minutes can configure "+where+". Reply with a Markdown link whose target is the returned dingtalk_url, e.g. ["+linkLabel+"](dingtalk_url); never show the bare url. Accounts are never connected in chat.",
 			map[string]any{"tab": map[string]any{"type": "string", "enum": contextConfigLinkTabs,
 				"description": `Page tab to open: "scope" (场域能力, default) or "routines" (例行任务).`}}, nil, false),
 		sceneConfigTool(sceneConfigToolRoutineList, "List routines", "List the routines (例行任务) of "+where+" with their schedule, next run and last result.",
@@ -459,7 +459,7 @@ func (h *Handler) handleSceneConfigToolCall(w http.ResponseWriter, r *http.Reque
 			Tab string `json:"tab"`
 		}
 		if err = decodeSceneConfigArguments(params.Arguments, &args); err == nil {
-			result, err = h.createContextConfigLink(r, "", args.Tab)
+			result, err = h.createContextConfigLink(r, args.Tab)
 		}
 	case sceneConfigToolRoutineList:
 		if err = decodeMulticaMCPArguments(params.Arguments, &struct{}{}); err == nil {
