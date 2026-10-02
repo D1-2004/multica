@@ -2718,6 +2718,9 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 				return err
 			}
 			task = cancelled
+			if _, err := enqueueSteerCallbackCompletions(ctx, qtx, cancelled, "canceled", nil, "", ""); err != nil {
+				return err
+			}
 			if !cancelled.ChatSessionID.Valid {
 				return nil
 			}
@@ -2820,6 +2823,37 @@ func (s *TaskService) SteerAgentDispatchChatTask(
 			(targetBefore.Status != "deferred" && targetBefore.Status != "queued") {
 			return errors.New("steer target is not a pending task in the IM chat")
 		}
+		pending, err := qtx.HasUnacknowledgedTaskCancellation(ctx, db.HasUnacknowledgedTaskCancellationParams{AgentID: agentID, ChatSessionID: chatSessionID})
+		if err != nil {
+			return err
+		}
+		if pending {
+			successor, lookupErr := qtx.GetSteerChatSuccessor(ctx, db.GetSteerChatSuccessorParams{ChatSessionID: chatSessionID, AgentID: agentID, ExcludeTaskID: targetTaskID})
+			if lookupErr == nil {
+				mergedContext, mergeErr := mergeSteerCorrectionContext(successor.Context, targetBefore.Context)
+				if mergeErr != nil {
+					return mergeErr
+				}
+				if err = qtx.MergeSteerChatInput(ctx, db.MergeSteerChatInputParams{SuccessorID: successor.ID, CorrectionTaskID: targetTaskID}); err != nil {
+					return err
+				}
+				if err = qtx.DetachSteerCorrectionCallback(ctx, targetTaskID); err != nil {
+					return err
+				}
+				if _, err = qtx.CancelAgentTask(ctx, targetTaskID); err != nil {
+					return err
+				}
+				if err = qtx.SetSteerSuccessorContext(ctx, db.SetSteerSuccessorContextParams{ID: successor.ID, CorrectionContext: mergedContext}); err != nil {
+					return err
+				}
+				targetTaskID = successor.ID
+				targetBefore = successor
+				return nil
+			}
+			if !errors.Is(lookupErr, pgx.ErrNoRows) {
+				return lookupErr
+			}
+		}
 
 		activeID, activeErr := qtx.GetActiveAgentDispatchChatTaskForSteer(
 			ctx,
@@ -2841,6 +2875,9 @@ func (s *TaskService) SteerAgentDispatchChatTask(
 		); err != nil {
 			return fmt.Errorf("promote steer target: %w", err)
 		}
+		if err := qtx.SetSteerSuccessorContext(ctx, db.SetSteerSuccessorContextParams{ID: targetTaskID, CorrectionContext: []byte(`{}`)}); err != nil {
+			return err
+		}
 		if errors.Is(activeErr, pgx.ErrNoRows) {
 			return nil
 		}
@@ -2850,6 +2887,9 @@ func (s *TaskService) SteerAgentDispatchChatTask(
 			return fmt.Errorf("cancel active IM task for steer: %w", err)
 		}
 		cancelled = &active
+		if _, err := enqueueSteerCallbackCompletions(ctx, qtx, active, "canceled", nil, "", ""); err != nil {
+			return err
+		}
 		_, err = freezeTaskExecutionUpdateResultMessage(ctx, qtx, active.ID, nil)
 		if err != nil {
 			return fmt.Errorf("freeze steered task execution update: %w", err)

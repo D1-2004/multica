@@ -5039,6 +5039,43 @@ func (h *Handler) AckTaskCancelled(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var ack struct {
+		ProcessGroupStopped bool `json:"process_group_stopped"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&ack); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid cancellation acknowledgement")
+		return
+	}
+	if ack.ProcessGroupStopped {
+		runtime, err := h.Queries.GetAgentRuntime(r.Context(), task.RuntimeID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load cancellation runtime")
+			return
+		}
+		daemonID := middleware.DaemonIDFromContext(r.Context())
+		ownsDaemon := daemonID != "" && runtime.DaemonID.Valid && daemonID == runtime.DaemonID.String
+		if !ownsDaemon && !h.canExecuteEmployeeDirectRuntime(r, runtime) {
+			writeError(w, http.StatusForbidden, "process exit must be acknowledged by the task runtime daemon")
+			return
+		}
+	}
+	if task.Status != "cancelled" {
+		writeError(w, http.StatusConflict, "task is not canceled")
+		return
+	}
+	var private struct {
+		Pending bool `json:"process_stop_pending"`
+	}
+	if json.Unmarshal(task.Context, &private) == nil && private.Pending {
+		// Reconcile while the claim barrier is closed, once per cancellation.
+		h.reconcileCommentsOnCompletion(r.Context(), &task)
+	}
+	if ack.ProcessGroupStopped {
+		if err := h.TaskService.AcknowledgeTaskProcessStopped(r.Context(), task.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to acknowledge process exit")
+			return
+		}
+	}
 	h.TaskService.FinalizeDeferredCancelledChat(r.Context(), task.ID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -5290,6 +5327,7 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("task cancelled by user", "task_id", taskID, "issue_id", uuidToString(task.IssueID))
+	h.reconcileCommentsOnCompletion(r.Context(), task)
 	resp := taskToResponse(*task, uuidToString(issue.WorkspaceID))
 	// Keep this issue-scoped surface consistent with the list endpoints so a
 	// cancelled row keeps its resolved "on behalf of" name in the UI.

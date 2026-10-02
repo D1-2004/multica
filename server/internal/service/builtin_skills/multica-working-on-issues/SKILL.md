@@ -233,6 +233,12 @@ on it. These are the contracts, not advice:
   `done` it enqueues no new agent work, but it does **not** stop tasks already in
   flight — a run in progress keeps going (MUL-4465). To stop a running task,
   cancel the task itself.
+  Task cancellation is a logical state change: a claimed task keeps its writer
+  barrier until its daemon positively acknowledges process-group exit (or the
+  FC/E2B task-stop receipt proves it). Deferred Issue comments are reconciled
+  into the next run. Authenticated dispatch `queueMode=steer` cancels the old
+  attempt and queues the correction; inputs arriving during termination merge
+  into one successor. Do not equate `cancelled` with a stopped process.
 - **Failed issue-triggered tasks** may roll an issue from `in_progress` back to
   `todo` when no active task / retry remains — that is the main server-owned
   status write on the agent-run path.

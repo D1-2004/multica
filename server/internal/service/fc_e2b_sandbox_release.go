@@ -190,6 +190,13 @@ func fcE2BTaskIsTerminal(status string) bool {
 }
 
 func (l *FCE2BLauncher) releaseTaskSandbox(ctx context.Context, conn *pgxpool.Conn, task db.AgentTaskQueue, rt db.AgentRuntime, sandboxID string) (fcE2BSandboxLifecycleAction, string, string, error) {
+	var stopPending bool
+	if err := conn.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM agent_task_queue WHERE id=$1 AND status='cancelled' AND context->>'process_stop_pending'='true')`, task.ID).Scan(&stopPending); err != nil {
+		return "", "", "task", err
+	}
+	if stopPending {
+		return fcE2BSandboxRetained, "in_use", "task", nil
+	}
 	key := dshhost.Key{WorkspaceID: uuid.UUID(rt.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}
 	var scopeID uuid.UUID
 	err := conn.QueryRow(ctx, `SELECT scope_id FROM employee_filesystem_sandbox

@@ -198,6 +198,7 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	// procDone closes once cmd.Wait() returns, letting the cancellation handler
 	// skip a process that already exited and avoid signalling a dead pid.
 	procDone := make(chan struct{})
+	cancelDone := make(chan struct{})
 
 	// Write the prompt from its own goroutine so it cannot deadlock against the
 	// stdout reader below: a prompt larger than the OS pipe buffer (~64 KiB)
@@ -223,6 +224,7 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	// last-resort unblock for a scanner that a wedged descendant still keeps
 	// open. WaitDelay is the final backstop (#4533).
 	go func() {
+		defer close(cancelDone)
 		select {
 		case <-procDone:
 			return // finished on its own; nothing to terminate
@@ -234,9 +236,7 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		closeStdin()
 		if cmd.Process != nil {
 			signalProcessGroup(cmd.Process, syscall.SIGTERM)
-			select {
-			case <-procDone: // exited within the grace window
-			case <-time.After(opencodeTerminateGrace()):
+			if !waitProcessGroupGone(cmd.Process, opencodeTerminateGrace()) {
 				signalProcessGroup(cmd.Process, syscall.SIGKILL)
 			}
 		}
@@ -283,6 +283,8 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		// Wait for process exit, then release the cancellation handler.
 		exitErr := cmd.Wait()
 		close(procDone)
+		<-cancelDone
+		processGroupStopped := finishProcessGroup(cmd.Process)
 		duration := time.Since(startTime)
 
 		// Wait closes the process pipes, so a prompt write still blocked when
@@ -344,12 +346,13 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		}
 
 		resCh <- Result{
-			Status:     scanResult.status,
-			Output:     scanResult.output,
-			Error:      scanResult.errMsg,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  scanResult.sessionID,
-			Usage:      usage,
+			ProcessGroupStopped: processGroupStopped,
+			Status:              scanResult.status,
+			Output:              scanResult.output,
+			Error:               scanResult.errMsg,
+			DurationMs:          duration.Milliseconds(),
+			SessionID:           scanResult.sessionID,
+			Usage:               usage,
 		}
 	}()
 

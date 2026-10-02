@@ -4729,6 +4729,10 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// without racing the daemon's os.MkdirAll.
 	localRelease, abort := d.acquireLocalDirectoryLockIfNeeded(ctx, task, taskLog)
 	if abort {
+		// No provider has been spawned while waiting for the local directory.
+		if status, err := d.client.GetTaskStatus(ctx, task.ID); err == nil && status == "cancelled" {
+			_ = d.client.AckTaskCancelled(ctx, task.ID, true)
+		}
 		return
 	}
 	if localRelease != nil {
@@ -4796,10 +4800,16 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	select {
 	case <-cancelledByPoll:
 		taskLog.Info("task cancelled during execution, discarding result")
+		if result.SessionID != "" {
+			if pinErr := d.client.PinTaskSession(ctx, task.ID, result.SessionID, result.WorkDir); pinErr != nil {
+				taskLog.Warn("cancel session pin failed; keeping barrier closed", "error", pinErr)
+				return
+			}
+		}
 		// runner.run has returned, so the transcript flush is complete —
 		// tell the server it can settle its deferred chat finalization
 		// (#5219). Best-effort: the sweeper grace period covers a lost ack.
-		if ackErr := d.client.AckTaskCancelled(ctx, task.ID); ackErr != nil {
+		if ackErr := d.client.AckTaskCancelled(ctx, task.ID, result.ProcessGroupStopped); ackErr != nil {
 			taskLog.Warn("cancel ack failed; server sweeper will finalize", "error", ackErr)
 		}
 		return
@@ -4834,9 +4844,15 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// signals as the in-flight watcher.
 	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status, err) {
 		taskLog.Info("task cancelled during execution, discarding result", "status", status, "error", err)
+		if result.SessionID != "" {
+			if pinErr := d.client.PinTaskSession(ctx, task.ID, result.SessionID, result.WorkDir); pinErr != nil {
+				taskLog.Warn("cancel session pin failed; keeping barrier closed", "error", pinErr)
+				return
+			}
+		}
 		// Same contract as the poll-cancelled path above: the transcript is
 		// flushed, so let the server settle its deferred chat finalization.
-		if ackErr := d.client.AckTaskCancelled(ctx, task.ID); ackErr != nil {
+		if ackErr := d.client.AckTaskCancelled(ctx, task.ID, result.ProcessGroupStopped); ackErr != nil {
 			taskLog.Warn("cancel ack failed; server sweeper will finalize", "error", ackErr)
 		}
 		return
@@ -5708,6 +5724,12 @@ func skillRefFromBundle(bundle SkillData) SkillRefData {
 }
 
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (taskResult TaskResult, returnErr error) {
+	providerStarted := false
+	defer func() {
+		if !providerStarted {
+			taskResult.ProcessGroupStopped = true
+		}
+	}()
 	// An inbound A2A grant is bound to the claimed Agent configuration. If the
 	// server could not load that Agent, continuing with defaults would discard
 	// the managed empty MCP boundary and let the provider inherit host state.
@@ -6656,6 +6678,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Shared across the resume-retry below so the retry's transcript rows
 	// keep ascending seq values for the same task.
 	var msgSeq atomic.Int32
+	providerStarted = true
 	result, tools, err := d.executeAndDrain(ctx, backend, prompt, execOpts, taskLog, task.ID, env.CodexHome, &msgSeq)
 	if err != nil {
 		return TaskResult{}, err
@@ -6776,6 +6799,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// returns (SessionID is already blanked above); reportTaskResult forwards it
 	// as session_rollout_missing on the terminal callback (MUL-5305).
 	defer func() { taskResult.SessionRolloutMissing = sessionRolloutMissing }()
+	defer func() { taskResult.ProcessGroupStopped = result.ProcessGroupStopped }()
 
 	switch result.Status {
 	case "completed":
@@ -7480,6 +7504,18 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		}
 		return result, toolCount.Load(), nil
 	case <-drainCtx.Done():
+		// Context cancellation is not process termination. Join the provider's
+		// cleanup result before reporting a cancel acknowledgement. Preserve the
+		// session and usage from that result for the resumed successor.
+		agentCancel()
+		var stoppedResult agent.Result
+		if errors.Is(ctx.Err(), context.Canceled) {
+			select {
+			case stoppedResult = <-session.Result:
+			case <-time.After(30 * time.Second):
+				taskLog.Warn("provider cleanup unconfirmed; cancellation barrier remains closed")
+			}
+		}
 		// The drain loop is exiting on this same Done signal; wait for its
 		// final flush so the timeout/watchdog/cancel terminals below cannot
 		// hand back (and let runTask fail-and-broadcast) a still-flushing
@@ -7501,10 +7537,9 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		// upstream runCtx fired runCancel(); context.DeadlineExceeded is the
 		// drain deadline expiring on its own.
 		if errors.Is(drainCtx.Err(), context.Canceled) {
-			return agent.Result{
-				Status: "cancelled",
-				Error:  "task cancelled by upstream context (server cancel or daemon shutdown)",
-			}, toolCount.Load(), nil
+			stoppedResult.Status = "cancelled"
+			stoppedResult.Error = "task cancelled by upstream context (server cancel or daemon shutdown)"
+			return stoppedResult, toolCount.Load(), nil
 		}
 		return agent.Result{
 			Status: "timeout",

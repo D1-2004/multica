@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -264,6 +265,8 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 
 	cmd := exec.CommandContext(runCtx, argv0, cmdArgs...)
 	hideAgentWindow(cmd)
+	configureProcessGroup(cmd)
+	cmd.Cancel = func() error { signalProcessGroup(cmd.Process, syscall.SIGKILL); return nil }
 	b.cfg.Logger.Info("agent command", "exec", argv0, "args", cmdArgs)
 	cmd.WaitDelay = 10 * time.Second
 	if opts.Cwd != "" {
@@ -439,6 +442,7 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		}
 
 		waitErr := cmd.Wait()
+		processGroupStopped := finishProcessGroup(cmd.Process)
 		duration := time.Since(startTime)
 
 		// Wait closes the process pipes, so a prompt write still blocked when the
@@ -471,12 +475,13 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		}
 
 		resCh <- Result{
-			Status:     finalStatus,
-			Output:     output.String(),
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionPath,
-			Usage:      usage,
+			ProcessGroupStopped: processGroupStopped,
+			Status:              finalStatus,
+			Output:              output.String(),
+			Error:               finalError,
+			DurationMs:          duration.Milliseconds(),
+			SessionID:           sessionPath,
+			Usage:               usage,
 		}
 	}()
 

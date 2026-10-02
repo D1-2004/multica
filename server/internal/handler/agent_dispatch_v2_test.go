@@ -331,7 +331,7 @@ func TestDispatchCommandValidateIMControl(t *testing.T) {
 			command := valid
 			command.Control = &DispatchControl{Action: "dispatch", SessionMode: "fresh", QueueMode: "enqueue"}
 			mutate(&command)
-			if err := command.validate(); err == nil || !strings.Contains(err.Error(), "IM chat") {
+			if err := command.validate(); err == nil || !strings.Contains(err.Error(), "control") {
 				t.Fatalf("out-of-scope control error = %v", err)
 			}
 		}
