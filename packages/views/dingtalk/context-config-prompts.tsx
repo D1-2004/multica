@@ -39,9 +39,10 @@ function rowsOf(prompts: ContextPromptComponent[]): PromptRow[] {
 }
 
 /**
- * The scope's own prompt components: add, edit, delete and switch. Every
- * change saves the whole list at once (the server replaces it), so one write
- * runs at a time. Read-only without `canEdit`.
+ * 指令: the scope's own prompt components, the level's first capability
+ * slot. Add, edit, delete and switch; every change saves the whole list at
+ * once (the server replaces it), so one write runs at a time. Read-only
+ * without `canEdit`.
  */
 export function ScopePrompts({
   agentId,
@@ -64,8 +65,6 @@ export function ScopePrompts({
   const [deleting, setDeleting] = useState<PromptRow | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const idPrefix = `context-prompt-${scope.scopeType}-${scope.scopeKey}`;
-
-  if (!canEdit && rows.length === 0) return null;
 
   const write = async (next: PromptRow[], busy: string): Promise<boolean> => {
     setBusyKey(busy);
@@ -98,6 +97,7 @@ export function ScopePrompts({
     <>
       <ItemGroup
         label={t(($) => $.context_config.prompts_title)}
+        size="slot"
         action={
           canEdit && editing === null && rows.length < PROMPT_COMPONENT_MAX ? (
             <Button size="sm" variant="ghost" disabled={save.isPending} onClick={() => setEditing("new")}>

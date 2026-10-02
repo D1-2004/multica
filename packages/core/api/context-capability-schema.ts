@@ -17,6 +17,7 @@ import type {
   ContextCapabilityBinding,
   ContextConfigAccess,
   ContextConfigAgentDetail,
+  ContextConfigCatalogApp,
   ContextConfigOrgScope,
   ContextConfigScopeContent,
   ContextConfigTenantRef,
@@ -474,6 +475,11 @@ const ConfigOrgScopeSchema = z
     }),
   );
 
+const CatalogAppSchema = z
+  .object({ slug: catalogSlug, name: text })
+  .refine((app) => app.slug !== "")
+  .transform((app): ContextConfigCatalogApp => ({ slug: app.slug, name: app.name || app.slug }));
+
 export const ContextConfigAgentDetailSchema = z
   .object({
     agent: AgentSummaryWireSchema,
@@ -519,6 +525,7 @@ export const ContextConfigAgentDetailSchema = z
     org: ConfigOrgScopeSchema.nullish().catch(null),
     jsapi_available: strictTrue,
     access: configAccess,
+    apps: tolerantList(CatalogAppSchema),
   })
   .transform(
     (value): ContextConfigAgentDetail => ({
@@ -575,6 +582,7 @@ export const ContextConfigAgentDetailSchema = z
       org: value.org ?? null,
       jsapiAvailable: value.jsapi_available,
       access: value.access,
+      apps: [...new Map(value.apps.map((app) => [app.slug, app])).values()],
     }),
   );
 

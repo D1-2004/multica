@@ -308,9 +308,9 @@ describe("DingTalk configure route", () => {
     );
 
     act(() => {
-      pageProps.current?.onTabChange?.("public");
+      pageProps.current?.onTabChange?.("routines");
     });
-    expect(replaceState).toHaveBeenLastCalledWith({}, "", `${bound}&tab=public`);
+    expect(replaceState).toHaveBeenLastCalledWith({}, "", `${bound}&tab=routines`);
   });
 
   it("reopens the bound scope and tab from the URL on reload", async () => {
@@ -318,7 +318,7 @@ describe("DingTalk configure route", () => {
       agent: "agent-1",
       scope_type: "person",
       scope_key: "staff-1",
-      tab: "public",
+      tab: "routines",
     });
     renderPage();
 
@@ -326,7 +326,7 @@ describe("DingTalk configure route", () => {
     expect(pageProps.current).toMatchObject({
       initialAgentId: "agent-1",
       binding: { agentId: "agent-1", scopeType: "person", scopeKey: "staff-1", orgId: "" },
-      initialTab: "public",
+      initialTab: "routines",
       connectReturnTo: "/dingtalk/configure?agent=agent-1&scope_type=person&scope_key=staff-1",
     });
     expect(pageProps.current?.linkToken).toBeUndefined();
