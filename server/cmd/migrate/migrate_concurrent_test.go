@@ -396,6 +396,45 @@ func TestRunMigrationsReconcilesRenumberedForkMigrations(t *testing.T) {
 	}
 }
 
+func TestRunMigrationsRenumberedDownThenUp(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	table := pgx.Identifier{f.schema, "renumbered_effect"}.Sanitize()
+	versions := pgx.Identifier{f.schema, "schema_migrations"}.Sanitize()
+	legacy, current := "271_task_completion_canceled_status", "9540_task_completion_canceled_status"
+	if _, err := f.pool.Exec(ctx, "CREATE TABLE "+versions+" (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now()); CREATE TABLE "+table+" (id int)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(ctx, "INSERT INTO "+versions+" (version) VALUES ($1)", legacy); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	up := filepath.Join(dir, current+".up.sql")
+	down := filepath.Join(dir, current+".down.sql")
+	if err := os.WriteFile(up, []byte("CREATE TABLE "+table+" (id int)"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(down, []byte("DROP TABLE "+table), 0600); err != nil {
+		t.Fatal(err)
+	}
+	run := func(direction, file string) {
+		t.Helper()
+		if err := runMigrations(ctx, f.pool, runOptions{Direction: direction, Files: []string{file}, SchemaMigrationsTable: f.tableFQN, AdvisoryLockKey: f.lockKey}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run("up", up)
+	run("down", down)
+	if got := f.appliedVersions(t); len(got) != 0 {
+		t.Fatalf("down must remove both names of the reverted migration, got %v", got)
+	}
+	run("up", up)
+	var present bool
+	if err := f.pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", table).Scan(&present); err != nil || !present {
+		t.Fatalf("up did not restore the reverted schema: present=%v error=%v", present, err)
+	}
+}
+
 func TestRunMigrationsUpIgnoresAppliedVersionWhoseSourceFileWasRemoved(t *testing.T) {
 	f := newFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), raceTestTimeout)
