@@ -5,6 +5,7 @@ const (
 	DingTalkResponseModeCoordinator = "multica_coordinator"
 	DingTalkResponseModeLegacy      = "legacy"
 	DWSMessagePolicyCapability      = "dws_message_policy_v1"
+	DingTalkFinalTextOwnerHost      = "host"
 )
 
 // DingTalkResponsePolicy is frozen at ingress and never inferred from surface.
@@ -59,6 +60,9 @@ func RedactSceneConfigMCPPath(path string) string {
 
 // DingTalkMessagePolicy is trusted per-task state, not agent custom_env.
 type DingTalkMessagePolicy struct {
+	// FinalTextOwner is an additive Host declaration for Direct completion text.
+	// Empty and unrecognized values preserve the existing tool behavior.
+	FinalTextOwner           string `json:"final_text_owner,omitempty"`
 	ShowAITag                bool   `json:"show_ai_tag"`
 	PlatformManagedLifecycle bool   `json:"platform_managed_lifecycle"`
 	ReplyToOpenMsgID         string `json:"reply_to_open_msg_id,omitempty"`

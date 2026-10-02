@@ -57,3 +57,11 @@
 - 新缺陷：文件用户明确要求不再发总结，Host 在 03:32:11 仍追加长摘要（消息 `msgYDdpolk4VhRn4Hh/LMNmhw==`）。原生文件运输已通过，完整交付体验仍未通过；需修 Run 终态通知策略后继续真实 IM 回归。
 
 新纯执行模板的专项验收：task `b1cdd611-6a5a-41ea-b0f3-00bf95755ff1` 真实执行 Python 得到 `338350`，并调用场域 MCP 返回“冬翔 / dws-shortcuts”，03:35:42 Host 仅回传一行结果。task `44f0bf1d-1e3e-4f7e-b17c-ac58f69acaad` 实际完成 config_get → prompt_upsert(enabled=false) → config_get → 删除自己新建的测试提示词 → config_get；管理 API 独立比较前后 prompts、skills、connectors、mcp_config 完全一致。测试项未启用、无残留。此证据说明自我场域管理执行链已通，不只是在工具列表里出现。
+
+## 第三轮通知验收（04:42 起）
+
+提交 `e773b700f4d8ce006f4f2acdd34c1bdf6c8410a9` 经预发 `3110325210` 成功，两个在线副本均为 `employee-loop:4`。
+
+群文件 queue `765b2147-3f96-4bc7-8259-09d8eb0551b5` / job `f05367ce-5008-410e-82ab-c2029c9ec8f9` / Run `d896d383-4891-4188-974d-1ba608fe7cbe` 首轮派发，真实模型参数选择 `if_not_delivered`、`require_delivery=file`，原句为“文件发出后不用再发总结。”。04:43:18 文件消息 `msgjJThi1OIJqNbzwibLpLDhQ==` 已到各种TAG群，04:43:31 queue 完成；后续回读没有追加总结。冬翔账号下载 `employee-loop-final.txt`，28 字节精确匹配验收标记加换行，SHA256 `9385caa13120e8cb6169d9797711695cb0a63099dc5972ef266b9e82c7d2d138`。此为行为验收；当前没有只读 API 暴露 notice 抑制行，也未直接观测 `suppressed` 数据库记录。
+
+失败对照 queue `93a9a1ff-586b-4d60-b1f8-af5dd024dbaf` / job `4e1e3e18-1db8-4f5e-adc1-03582aac94a0` 确实调用发送工具，被不存在文件的本地校验拒绝。错误可见，但执行器先用 `dws-rpc final` 自行发送，Host 又回传了一次长结果（04:44:14 与 04:44:33）。正在补明确的 Direct 最终文字归属：Host 专属标志需穿过 Daemon typed policy，SDK 在原会话 `final` 时不再发送，普通任务与显式其它目标行为保留；不能用任意文本回执冒充完成来静音 Host。

@@ -235,7 +235,7 @@ func TestEmployeeDirectExecutionAuthenticatedRuntimeClaimsAndCompletes(t *testin
 			var claimed struct {
 				Task *AgentTaskResponse `json:"task"`
 			}
-			if err := json.Unmarshal(w.Body.Bytes(), &claimed); err != nil || w.Code != http.StatusOK || claimed.Task == nil || claimed.Task.DirectTaskPrompt != "PRIVATE_EXECUTION_PROMPT" || claimed.Task.AuthToken == "" {
+			if err := json.Unmarshal(w.Body.Bytes(), &claimed); err != nil || w.Code != http.StatusOK || claimed.Task == nil || claimed.Task.DirectTaskPrompt != employeeDirectPrompt("PRIVATE_EXECUTION_PROMPT") || claimed.Task.AuthToken == "" {
 				t.Fatalf("authorized claim failed: HTTP %d error=%v", w.Code, err)
 			}
 			w = employeeExecutorRequest(t, token, http.MethodPost, nil, testHandler.StartTask, "taskId", f.external)

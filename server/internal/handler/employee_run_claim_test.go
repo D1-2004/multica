@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -75,7 +76,7 @@ func TestEmployeeRunClaimCapabilityAndInput(t *testing.T) {
 	if failure = testHandler.applyEmployeeRunClaim(req, admitted.Task, rt, &resp); failure != nil {
 		t.Fatal(failure)
 	}
-	if resp.DirectTaskPrompt != "Return CLAIM_OK" || resp.WorkspaceID != testWorkspaceID || resp.AutopilotRunID != "" || resp.QuickCreatePrompt != "" {
+	if !strings.HasPrefix(resp.DirectTaskPrompt, "Return CLAIM_OK\n\n") || resp.WorkspaceID != testWorkspaceID || resp.AutopilotRunID != "" || resp.QuickCreatePrompt != "" {
 		t.Fatalf("bad claim %+v", resp)
 	}
 	raw, _ := json.Marshal(resp)
@@ -136,7 +137,7 @@ func TestEmployeeRunClaimCapabilityAndInput(t *testing.T) {
 		t.Fatal(claimed, err)
 	}
 	full, _, _, _, failure := testHandler.buildClaimedTaskResponse(req, claimed, rt, "", uuidToString(rt.ID), testWorkspaceID)
-	if failure != nil || full.DirectTaskPrompt != "Return CLAIM_OK" {
+	if failure != nil || !strings.HasPrefix(full.DirectTaskPrompt, "Return CLAIM_OK\n\n") {
 		t.Fatal("candidate daemon claim", failure)
 	}
 	queueID := uuidToString(claimed.ID)

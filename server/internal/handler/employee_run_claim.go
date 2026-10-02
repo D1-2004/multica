@@ -37,7 +37,7 @@ func (h *Handler) applyEmployeeRunClaim(r *http.Request, task db.AgentTaskQueue,
 	if !valid {
 		return invalid()
 	}
-	resp.DirectTaskPrompt = c.Prompt
+	resp.DirectTaskPrompt = employeeDirectPrompt(c.Prompt)
 	resp.WorkspaceID = c.WorkspaceID
 	resp.ThreadName = task.TriggerSummary.String
 	if len(resp.Repos) == 0 {
@@ -46,4 +46,17 @@ func (h *Handler) applyEmployeeRunClaim(r *http.Request, task db.AgentTaskQueue,
 		}
 	}
 	return nil
+}
+
+// The server appends the delivery owner after the frozen work packet. This is
+// claim-time execution guidance; it never changes persisted input or replay keys.
+const employeeDirectOutputInstruction = `## Output
+
+Your final assistant text is the user-facing reply. The Host sends it to the originating conversation for both success and failure, applying the requester's explicit file-only/no-summary policy after verifying delivery.
+Do not call dws-rpc final or reply, or send another DWS message to post this same completion/error text before returning it. A tool send followed by final assistant text would produce two replies.
+Continue to deliver explicitly requested files and proactive messages to their requested destinations; this ownership rule does not prohibit those actions.
+Keep it concise: state the requested result or actionable failure. Do not list internal tools, commands, local paths, receipt IDs or debugging steps unless the requester explicitly asks for them.`
+
+func employeeDirectPrompt(compiled string) string {
+	return compiled + "\n\n" + employeeDirectOutputInstruction
 }
