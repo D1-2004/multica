@@ -29,6 +29,7 @@ const api = vi.hoisted(() => ({
   setContextConfigPrompts: vi.fn(),
   setContextConfigMcpConfig: vi.fn(),
   listSceneRoutines: vi.fn(),
+  listSceneRoutineRuns: vi.fn(),
   createSceneRoutine: vi.fn(),
   updateSceneRoutine: vi.fn(),
   deleteSceneRoutine: vi.fn(),
@@ -132,7 +133,6 @@ function agentDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
       { slug: "notion", name: "Notion" },
       { slug: "linear", name: "Linear" },
     ],
-    orgEffect: { connectorIds: [], skillIds: [], credentialConnectorIds: [] },
     ...overrides,
   };
 }
@@ -965,11 +965,13 @@ describe("ContextConfigPage", () => {
     expect(within(groupRegion).getByText(copy.scene_scope_hint)).toBeInTheDocument();
 
     const picker = screen.getByRole("combobox");
-    expect(within(picker).getByRole("option", { name: `${copy.kind_dm} · ${copy.scene_untitled_dm}` })).toBeInTheDocument();
+    // A chat without a known name is named by its kind alone.
+    expect(within(picker).getByRole("option", { name: copy.scene_untitled_dm })).toBeInTheDocument();
     await user.selectOptions(picker, DM_SCENE);
 
     const dmRegion = await screen.findByRole("region", { name: copy.scene_untitled_dm });
-    expect(within(dmRegion).getByText(copy.kind_dm)).toBeInTheDocument();
+    // The title is the kind, so no second kind badge.
+    expect(within(dmRegion).getAllByText(copy.kind_dm)).toHaveLength(1);
     expect(within(dmRegion).getByText(copy.scene_scope_hint_dm)).toBeInTheDocument();
     // An older backend without rights that lets the caller connect: the
     // chat's own token is set here.
@@ -1262,11 +1264,10 @@ describe("ContextConfigPage", () => {
       await user.click(await screen.findByRole("tab", { name: copy.level_org }));
       const region = await screen.findByRole("region", { name: "Acme" });
       expect(within(region).getByText(copy.org_read_only)).toBeInTheDocument();
-      expect(within(region).getByRole("switch", { name: "Turn Weekly report on or off" })).toBeChecked();
-      // Base UI marks a disabled switch with aria-disabled.
-      for (const toggle of within(region).getAllByRole("switch")) {
-        expect(toggle).toHaveAttribute("aria-disabled", "true");
-      }
+      // Shown, not switched: what is on carries a label instead.
+      const skill = within(region).getByText("Weekly report").closest("li") as HTMLElement;
+      expect(within(skill).getByText(copy.status_added)).toBeInTheDocument();
+      expect(within(region).queryByRole("switch")).not.toBeInTheDocument();
       // A stored enterprise token shows, but nothing can be changed.
       const dialog = await openConnector(user, region, "Wiki");
       expect(within(dialog).getByText(copy.credential_set.replace("{{hint}}", "••••"))).toBeInTheDocument();
@@ -1281,58 +1282,46 @@ describe("ContextConfigPage", () => {
       expect(screen.queryByRole("tab", { name: copy.level_org })).not.toBeInTheDocument();
     });
 
-    it("lets a manager switch and store tokens at the enterprise level", async () => {
+    it("shows the enterprise level read-only to managers too: it is configured in the admin console", async () => {
       api.getContextConfigAgent.mockResolvedValue(
         agentDetail({
           person: null,
           access: "manager",
           tenant: acme,
           tenants: [acme],
-          org: { ...orgLevel, bindings: [connectorOn("conn-wiki")], credentials: [], canEdit: true },
+          org: {
+            ...orgLevel,
+            bindings: [connectorOn("conn-wiki")],
+            credentials: [],
+            canEdit: true,
+            rights: allRights,
+            prompts: [toneprompt, { ...toneprompt, id: "p2", name: "Off", enabled: false }],
+          },
         }),
       );
-      api.setContextConnectorCredential.mockResolvedValue({
-        connectorId: "conn-wiki",
-        hint: "••••cret",
-        updatedAt: "",
-        kind: "bearer",
-      });
       const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1" });
 
       await user.click(await screen.findByRole("tab", { name: copy.level_org }));
       const region = await screen.findByRole("region", { name: "Acme" });
-      expect(within(region).getByText(copy.org_scope_hint)).toBeInTheDocument();
-      await user.click(within(region).getByRole("switch", { name: "Turn Weekly report on or off" }));
-      await waitFor(() =>
-        expect(api.setContextCapabilityBinding).toHaveBeenCalledWith("agent-1", {
-          scopeType: "org",
-          scopeKey: "dingA",
-          orgId: "dingA",
-          resourceType: "skill",
-          resourceId: "skill-report",
-          enabled: true,
-        }),
-      );
-
+      expect(within(region).getByText(copy.org_read_only)).toBeInTheDocument();
+      // Only what applies there: the enabled instruction, no skill the
+      // enterprise did not turn on, the added connector.
+      expect(within(region).getByRole("listitem", { name: "Tone" })).toBeInTheDocument();
+      expect(within(region).queryByRole("listitem", { name: "Off" })).not.toBeInTheDocument();
+      expect(within(region).queryByText("Weekly report")).not.toBeInTheDocument();
+      expect(within(region).queryByRole("button", { name: copy.prompt_add })).not.toBeInTheDocument();
+      expect(within(region).queryByRole("button", { name: copy.mcp_add })).not.toBeInTheDocument();
+      expect(within(region).queryByRole("switch")).not.toBeInTheDocument();
+      expect(within(region).queryByRole("button", { name: tileName("GitHub") })).not.toBeInTheDocument();
+      expect(within(region).queryByRole("list", { name: copy.more_apps })).not.toBeInTheDocument();
       const dialog = await openConnector(user, region, "Wiki");
-      expect(within(dialog).getByText(copy.added_org)).toBeInTheDocument();
-      await user.click(within(dialog).getByRole("button", { name: copy.set_credential }));
-      expect(within(dialog).getByText(copy.credential_org_note)).toBeInTheDocument();
-      await user.type(within(dialog).getByLabelText("Bearer token for Wiki"), "secret");
-      await user.click(within(dialog).getByRole("button", { name: copy.save }));
-      await waitFor(() =>
-        expect(api.setContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
-          scopeType: "org",
-          scopeKey: "dingA",
-          orgId: "dingA",
-          connectorId: "conn-wiki",
-          bearer: "secret",
-        }),
-      );
+      expect(within(dialog).queryByRole("button", { name: copy.app_remove })).not.toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: copy.set_credential })).not.toBeInTheDocument();
+      expect(api.setContextCapabilityBinding).not.toHaveBeenCalled();
     });
 
-    it("reopens the enterprise level of a tenant and connects an app there", async () => {
+    it("reopens the enterprise level of a tenant, where nothing is connected from this page", async () => {
       api.getContextConfigAgent.mockResolvedValue(
         agentDetail({
           person: null,
@@ -1346,6 +1335,7 @@ describe("ContextConfigPage", () => {
             bindings: [connectorOn("conn-github")],
             credentials: [],
             canEdit: true,
+            rights: allRights,
           },
           offers: {
             connectors: [...agentDetail().offers.connectors, githubConnector],
@@ -1353,45 +1343,29 @@ describe("ContextConfigPage", () => {
           },
         }),
       );
-      api.startContextConnectorConnection.mockResolvedValue("https://github.com/login/oauth/authorize?state=y");
-      const openAuthorizeUrl = vi.fn();
       const user = userEvent.setup();
       renderPage({
         initialAgentId: "agent-1",
         initialScope: { scopeType: "org", scopeKey: "dingB", orgId: "dingB" },
-        openAuthorizeUrl,
+        openAuthorizeUrl: vi.fn(),
       });
 
       const region = await screen.findByRole("region", { name: "Beta" });
       expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "dingB");
       expect(screen.getByRole("tab", { name: copy.level_org })).toHaveAttribute("aria-selected", "true");
-
       const dialog = await openConnector(user, region, "GitHub");
-      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
-      await waitFor(() =>
-        expect(openAuthorizeUrl).toHaveBeenCalledWith("https://github.com/login/oauth/authorize?state=y", {
-          agentId: "agent-1",
-          scopeType: "org",
-          scopeKey: "dingB",
-          orgId: "dingB",
-        }),
-      );
-      expect(api.startContextConnectorConnection).toHaveBeenCalledWith("agent-1", {
-        scopeType: "org",
-        scopeKey: "dingB",
-        orgId: "dingB",
-        connectorId: "conn-github",
-      });
+      expect(within(dialog).getByText(copy.connect_required)).toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
+      expect(api.startContextConnectorConnection).not.toHaveBeenCalled();
     });
 
     it("marks what the enterprise turned on in a chat, for members too", async () => {
-      // A member gets no enterprise level, only its effect (ids).
+      // A member gets the enterprise level read-only.
       api.getContextConfigAgent.mockResolvedValue(
         agentDetail({
           tenant: acme,
           tenants: [acme],
-          org: null,
-          orgEffect: { connectorIds: ["conn-wiki"], skillIds: ["skill-report"], credentialConnectorIds: ["conn-wiki"] },
+          org: { ...orgLevel, bindings: [...orgLevel.bindings], rights: noRights },
         }),
       );
       api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, bindings: [], credentials: [], rights: allRights });
@@ -1660,11 +1634,11 @@ describe("bound configuration page", () => {
     expect(screen.queryByRole("region", { name: "Alice" })).not.toBeInTheDocument();
   });
 
-  it("adds 企业能力 above 当前会话 for the agent's managers only", async () => {
+  it("adds a read-only 企业能力 above 当前会话 for everyone who gets the enterprise level", async () => {
     const acme = { orgId: "dingA", name: "Acme", source: "identity" };
-    const org = { scopeKey: "dingA", scopeTitle: "Acme", bindings: [], credentials: [], canEdit: true, ...noContent };
+    const org = { scopeKey: "dingA", scopeTitle: "Acme", bindings: [], credentials: [], canEdit: false, ...noContent };
     api.getContextConfigAgent.mockResolvedValue(
-      agentDetail({ access: "manager", tenant: acme, tenants: [acme], org: { ...org, rights: allRights } }),
+      agentDetail({ tenant: acme, tenants: [acme], org: { ...org, rights: noRights } }),
     );
     const user = userEvent.setup();
     renderPage({ binding: groupBinding });
@@ -1677,23 +1651,15 @@ describe("bound configuration page", () => {
     // The chat opens first.
     expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
     await user.click(within(levels).getByRole("tab", { name: copy.level_org }));
-    expect(await screen.findByRole("region", { name: "Acme" })).toBeInTheDocument();
+    const region = await screen.findByRole("region", { name: "Acme" });
+    expect(within(region).getByText(copy.org_read_only)).toBeInTheDocument();
   });
 
-  it("never shows the enterprise level to a member", async () => {
-    const acme = { orgId: "dingA", name: "Acme", source: "identity" };
-    api.getContextConfigAgent.mockResolvedValue(
-      agentDetail({
-        tenant: acme,
-        tenants: [acme],
-        org: { scopeKey: "dingA", scopeTitle: "Acme", bindings: [], credentials: [], canEdit: false, ...noContent },
-      }),
-    );
+  it("offers no 企业能力 when the server sends no enterprise level", async () => {
     renderPage({ binding: groupBinding });
 
     expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: copy.level_org })).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Acme" })).not.toBeInTheDocument();
   });
 
   it("lets a group link holder only view when the server says so", async () => {
@@ -2093,6 +2059,56 @@ describe("routines tab", () => {
         { enabled: false },
       ),
     );
+  });
+
+  it("opens a routine on click with its run history", async () => {
+    api.listSceneRoutines.mockResolvedValue([standupRoutine]);
+    api.listSceneRoutineRuns.mockResolvedValue([
+      {
+        id: "run-2",
+        status: "failed",
+        source: "manual",
+        failureReason: "agent offline",
+        createdAt: "2026-10-02T01:00:00Z",
+        completedAt: "2026-10-02T01:01:00Z",
+      },
+      { id: "run-1", status: "completed", source: "schedule", failureReason: "", createdAt: "2026-10-01T01:00:00Z", completedAt: "2026-10-01T01:03:00Z" },
+    ]);
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, initialTab: "routines" });
+
+    // The history is fetched only when a routine is opened.
+    await user.click(
+      await screen.findByRole("button", { name: routineCopy.open_detail.replace("{{name}}", "Weekday standup") }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: "Weekday standup" })).toBeInTheDocument();
+    expect(within(dialog).getByText("Remind the team.")).toBeInTheDocument();
+    const history = await within(dialog).findByRole("list", { name: routineCopy.history_title });
+    const rows = within(history).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent(routineCopy.status_failed);
+    expect(rows[0]).toHaveTextContent(routineCopy.source_manual);
+    expect(rows[0]).toHaveTextContent("agent offline");
+    expect(rows[1]).toHaveTextContent(routineCopy.status_completed);
+    expect(rows[1]).toHaveTextContent(routineCopy.source_schedule);
+    expect(api.listSceneRoutineRuns).toHaveBeenCalledWith(
+      { kind: "config", agentId: "agent-1", sceneId: SALES_SCENE, orgId: "" },
+      "routine-1",
+    );
+  });
+
+  it("says a routine has no runs yet", async () => {
+    api.listSceneRoutines.mockResolvedValue([standupRoutine]);
+    api.listSceneRoutineRuns.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding, initialTab: "routines" });
+
+    await user.click(
+      await screen.findByRole("button", { name: routineCopy.open_detail.replace("{{name}}", "Weekday standup") }),
+    );
+    expect(await within(await screen.findByRole("dialog")).findByText(routineCopy.history_empty)).toBeInTheDocument();
+    expect(api.listSceneRoutineRuns).toHaveBeenCalledTimes(1);
   });
 
   it("says a person level without its 1:1 chat has no routines", async () => {

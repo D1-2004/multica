@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState } from "react";
-import { ExternalLink, KeyRound, Link2, Loader2 } from "lucide-react";
+import { ChevronRight, ExternalLink, KeyRound, Link2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { errorCode } from "@multica/core/api";
 import {
@@ -20,7 +20,7 @@ import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/di
 import { Input } from "@multica/ui/components/ui/input";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { cn } from "@multica/ui/lib/utils";
-import { AppTile, AppTileGrid, StatusPill, type StatusTone } from "../agents/components/tabs/connectors-ui";
+import { StatusPill, type StatusTone } from "../agents/components/tabs/connectors-ui";
 import { ConnectorLogo, ConnectorMark } from "../common/connector-logo";
 import { MAX_BEARER_LENGTH, isValidBearer, useResetOnBackForwardRestore } from "../common/connector-credential";
 import { useT } from "../i18n";
@@ -42,7 +42,7 @@ export const ConnectPlumbingContext = createContext<ConnectPlumbing>({});
 export const FEATURED_APP_SLUGS: readonly string[] = ["github", "slack", "notion"];
 
 /**
- * One tile of 连接器和插件: a connector of the agent (an official app or a
+ * One row of 连接器和插件: a connector of the agent (an official app or a
  * custom connector), or a catalog app nobody has opened for the agent yet
  * (`id` null). Which bundle a connector comes from (the agent's own, or
  * offered to scenes) stays behind the page: it only decides whether the
@@ -62,7 +62,7 @@ export interface ConnectorEntry {
 }
 
 /**
- * The tiles of 连接器和插件, in display order: GitHub, Slack and Notion first,
+ * The rows of 连接器和插件, in display order: GitHub, Slack and Notion first,
  * then the other official apps in catalog order, then custom connectors, then
  * the catalog apps not opened for the agent.
  */
@@ -170,17 +170,20 @@ export interface ConnectorsSlotProps {
   onToggle: (connectorId: string, enabled: boolean) => void;
   onToggleShare: (connectorId: string, shareInGroups: boolean) => void;
   reportError: (error: unknown) => boolean;
+  /** Show only what applies at this level (the read-only enterprise level):
+   * no apps to add, none not opened. */
+  inEffectOnly?: boolean;
 }
 
 /**
- * 连接器和插件: every app and connector as a tile with its state at this
- * level. A tile opens a dialog with the current configuration: first 添加
+ * 连接器和插件: every app and connector as a row with its state at this
+ * level. A row opens a dialog with the current configuration: first 添加
  * (switch it on here), then 授权 (connect an account or store a token).
  */
-export function ConnectorsTiles(props: ConnectorsSlotProps) {
+export function ConnectorsList(props: ConnectorsSlotProps) {
   const { t } = useT("agents");
-  const { detail, scopeType, bindings, credentials } = props;
-  // The open tile, and the last one opened: the dialog keeps showing it
+  const { detail, scopeType, bindings, credentials, inEffectOnly = false } = props;
+  // The open row, and the last one opened: the dialog keeps showing it
   // while it animates closed.
   const [openKey, setOpenKey] = useState("");
   const [shownKey, setShownKey] = useState("");
@@ -192,9 +195,17 @@ export function ConnectorsTiles(props: ConnectorsSlotProps) {
   );
   // What the enterprise level turns on and holds accounts for applies at
   // the levels below it.
-  const orgEnabledIds = new Set(scopeType === "org" ? [] : (detail.orgEffect?.connectorIds ?? []));
+  const orgEnabledIds = new Set(
+    scopeType === "org"
+      ? []
+      : (detail.org?.bindings ?? [])
+          .filter((binding) => binding.resourceType === "connector" && binding.enabled === true)
+          .map((binding) => binding.resourceId),
+  );
   const credentialByConnector = new Map(credentials.map((credential) => [credential.connectorId, credential]));
-  const orgCredentialIds = new Set(scopeType === "org" ? [] : (detail.orgEffect?.credentialConnectorIds ?? []));
+  const orgCredentialIds = new Set(
+    scopeType === "org" ? [] : (detail.org?.credentials ?? []).map((credential) => credential.connectorId),
+  );
   const stateOf = (entry: ConnectorEntry) =>
     entryState(
       entry,
@@ -203,39 +214,52 @@ export function ConnectorsTiles(props: ConnectorsSlotProps) {
       entry.id ? (credentialByConnector.get(entry.id) ?? null) : null,
       entry.id !== null && orgCredentialIds.has(entry.id),
     );
-  // The tile's accessible name carries its state, which its content would
+  // The row's accessible name carries its state, which its content would
   // otherwise lose.
-  const tileLabel = (entry: ConnectorEntry, state: EntryState) =>
+  const rowLabel = (entry: ConnectorEntry, state: EntryState) =>
     [t(($) => $.context_config.app_open_aria, { name: entry.name }), ...entryStatuses(t, entry, state).map((status) => status.text)].join(" · ");
   const shown = entries.find((entry) => entry.key === shownKey) ?? null;
-  // GitHub, Slack and Notion keep a full tile even before anyone opens them;
-  // the other apps not opened for the agent fold into one compact row.
-  const tiles = entries.filter((entry) => entry.id !== null || FEATURED_APP_SLUGS.includes(entry.slug));
-  const more = entries.filter((entry) => entry.id === null && !FEATURED_APP_SLUGS.includes(entry.slug));
+  // GitHub, Slack and Notion keep a full row even before anyone opens them;
+  // the other apps not opened for the agent fold into one compact row. The
+  // read-only enterprise level lists only what applies there.
+  const rows = inEffectOnly
+    ? entries.filter((entry) => entry.id !== null && stateOf(entry).inEffect)
+    : entries.filter((entry) => entry.id !== null || FEATURED_APP_SLUGS.includes(entry.slug));
+  const more = inEffectOnly
+    ? []
+    : entries.filter((entry) => entry.id === null && !FEATURED_APP_SLUGS.includes(entry.slug));
   const open = (key: string) => {
     setOpenKey(key);
     setShownKey(key);
   };
 
-  if (entries.length === 0) {
+  if (rows.length === 0 && more.length === 0) {
     return <p className="text-caption text-muted-foreground">{t(($) => $.context_config.none)}</p>;
   }
   return (
     <>
-      {tiles.length > 0 ? (
-        <AppTileGrid label={t(($) => $.context_config.slot_connectors)}>
-          {tiles.map((entry) => (
-            <AppTile
-              key={entry.key}
-              slug={entry.slug}
-              name={entry.name}
-              ariaLabel={tileLabel(entry, stateOf(entry))}
-              onOpen={() => open(entry.key)}
-            >
-              <EntryPills entry={entry} state={stateOf(entry)} />
-            </AppTile>
+      {rows.length > 0 ? (
+        <ul aria-label={t(($) => $.context_config.slot_connectors)} className="divide-y rounded-lg border bg-card">
+          {rows.map((entry) => (
+            <li key={entry.key}>
+              <button
+                type="button"
+                onClick={() => open(entry.key)}
+                aria-label={rowLabel(entry, stateOf(entry))}
+                className="flex w-full min-w-0 items-center gap-3 p-3 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                <ConnectorLogo slug={entry.slug} />
+                <span className="min-w-0 flex-1 space-y-1">
+                  <span className="block truncate text-body font-medium">{entry.name}</span>
+                  <span className="flex min-w-0 flex-wrap gap-1">
+                    <EntryPills entry={entry} state={stateOf(entry)} />
+                  </span>
+                </span>
+                <ChevronRight className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              </button>
+            </li>
           ))}
-        </AppTileGrid>
+        </ul>
       ) : null}
       {more.length > 0 ? (
         <div className="space-y-1.5">
@@ -246,7 +270,7 @@ export function ConnectorsTiles(props: ConnectorsSlotProps) {
                 <button
                   type="button"
                   onClick={() => open(entry.key)}
-                  aria-label={tileLabel(entry, stateOf(entry))}
+                  aria-label={rowLabel(entry, stateOf(entry))}
                   className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-caption text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <ConnectorMark slug={entry.slug} className="size-3.5" />
@@ -283,7 +307,7 @@ export function ConnectorsTiles(props: ConnectorsSlotProps) {
 
 type AgentsT = ReturnType<typeof useT<"agents">>["t"];
 
-/** The state of a tile in words: whether it applies here, then its account. */
+/** The state of a row in words: whether it applies here, then its account. */
 function entryStatuses(t: AgentsT, entry: ConnectorEntry, state: EntryState): { tone: StatusTone; text: string }[] {
   if (entry.id === null) return [{ tone: "muted", text: t(($) => $.context_config.status_unavailable) }];
   const statuses: { tone: StatusTone; text: string }[] = [
@@ -360,7 +384,7 @@ function ConnectorDialog({
   ...props
 }: ConnectorsSlotProps & {
   open: boolean;
-  /** The tile shown (kept while the dialog closes); null before any. */
+  /** The row shown (kept while the dialog closes); null before any. */
   entry: ConnectorEntry | null;
   state: EntryState | null;
   credential: ContextConnectorCredential | null;

@@ -345,39 +345,6 @@ describe("configure-page tenants", () => {
     expect(ContextConfigAgentDetailSchema.parse({ agent: { id: agentId }, apps: "github" }).apps).toEqual([]);
   });
 
-  it("reads the enterprise effect, falling back to the enterprise level of an older backend", () => {
-    const detail = ContextConfigAgentDetailSchema.parse({
-      agent: { id: agentId },
-      org_effect: { connector_ids: [connectorId, "", 7], skill_ids: [skillId], credential_connector_ids: [connectorId] },
-    });
-    expect(detail.orgEffect).toEqual({
-      connectorIds: [connectorId],
-      skillIds: [skillId],
-      credentialConnectorIds: [connectorId],
-    });
-    // No effect from an older backend: read the managers-only level.
-    const older = ContextConfigAgentDetailSchema.parse({
-      agent: { id: agentId },
-      org: {
-        scope_key: "dingA",
-        scope_title: "Acme",
-        bindings: [
-          { resource_type: "connector", resource_id: connectorId, enabled: true },
-          { resource_type: "skill", resource_id: skillId, enabled: false },
-        ],
-        credentials: [{ connector_id: connectorId, hint: "", updated_at: "", kind: "oauth" }],
-        can_edit: true,
-      },
-    });
-    expect(older.orgEffect).toEqual({ connectorIds: [connectorId], skillIds: [], credentialConnectorIds: [connectorId] });
-    // A malformed effect reads as none.
-    expect(ContextConfigAgentDetailSchema.parse({ agent: { id: agentId }, org_effect: "x" }).orgEffect).toEqual({
-      connectorIds: [],
-      skillIds: [],
-      credentialConnectorIds: [],
-    });
-  });
-
   it("reads the tenant of a redeemed link", () => {
     const base = { agent_id: agentId, workspace_id: "ws", scope_type: "person", scope_key: "staff-1" };
     expect(ContextConfigRedeemSchema.parse({ ...base, org_id: "dingB" }).orgId).toBe("dingB");

@@ -44,7 +44,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components
 import { connectorBrandName } from "../common/connector-logo";
 import { SkillIcon } from "../skills/lib/skill-icon";
 import { useT } from "../i18n";
-import { ConnectPlumbingContext, ConnectorsTiles, orgField, type OpenAuthorizeUrl } from "./context-config-apps";
+import { ConnectPlumbingContext, ConnectorsList, orgField, type OpenAuthorizeUrl } from "./context-config-apps";
 import { ScopeMcpServers } from "./context-config-mcp";
 import { ScopePrompts } from "./context-config-prompts";
 import { ScopeRoutines } from "./context-config-routines";
@@ -703,7 +703,7 @@ function RoutinesTab({ detail, binding, browse, reportError }: ContextConfigTabP
           >
             {detail.scenes.map((entry) => (
               <NativeSelectOption key={entry.scopeKey} value={entry.scopeKey}>
-                {`${sceneKindLabel(entry.kind)} · ${entry.scopeTitle || sceneUntitled(entry.kind)}`}
+                {entry.scopeTitle ? `${sceneKindLabel(entry.kind)} · ${entry.scopeTitle}` : sceneUntitled(entry.kind)}
               </NativeSelectOption>
             ))}
           </NativeSelect>
@@ -799,16 +799,15 @@ function boundDMScene(detail: ContextConfigAgentDetail) {
   return detail.scenes.find((entry) => entry.kind === "dm");
 }
 
-/** The enterprise level as a vertical tab, when the server sends it (to the
- * agent's managers). A bound page also checks the caller manages the agent. */
+/** The enterprise level as a vertical tab, shown read-only whenever the
+ * server sends it: its administrators configure it elsewhere. */
 function useOrgLevel(
   detail: ContextConfigAgentDetail,
   reportError: (error: unknown) => boolean,
-  managersOnly: boolean,
 ): LevelEntry | null {
   const { t } = useT("agents");
   const org = detail.org;
-  if (!org || (managersOnly && detail.access !== "manager")) return null;
+  if (!org) return null;
   return {
     id: "org",
     label: t(($) => $.context_config.level_org),
@@ -833,7 +832,7 @@ function BoundScope({
 }) {
   const { t } = useT("agents");
   const pageOrg = detail.tenant?.orgId ?? "";
-  const orgLevel = useOrgLevel(detail, reportError, true);
+  const orgLevel = useOrgLevel(detail, reportError);
   const levels: LevelEntry[] = orgLevel ? [orgLevel] : [];
   const sceneLabel = t(($) => $.context_config.level_scene);
   if (binding.scopeType === "scene") {
@@ -918,7 +917,7 @@ function OrgScope({
       bindings={org.bindings}
       credentials={org.credentials}
       content={org}
-      readOnly={org.canEdit !== true}
+      displayOnly
       reportError={reportError}
     />
   );
@@ -981,7 +980,7 @@ function BrowseScopes({
   const resolveScene = useResolveContextConfigScene(agentId);
   const sceneKindLabel = useSceneKindLabel();
   const sceneUntitled = useSceneUntitled();
-  const orgLevel = useOrgLevel(detail, reportError, false);
+  const orgLevel = useOrgLevel(detail, reportError);
   const [picking, setPicking] = useState(false);
   const canPickGroup =
     pickGroup !== undefined && detail.jsapiAvailable === true && detail.person !== null;
@@ -1061,7 +1060,7 @@ function BrowseScopes({
             >
               {detail.scenes.map((scene) => (
                 <NativeSelectOption key={scene.scopeKey} value={scene.scopeKey}>
-                  {`${sceneKindLabel(scene.kind)} · ${scene.scopeTitle || sceneUntitled(scene.kind)}`}
+                  {scene.scopeTitle ? `${sceneKindLabel(scene.kind)} · ${scene.scopeTitle}` : sceneUntitled(scene.kind)}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
@@ -1168,6 +1167,7 @@ function SceneScope({
       orgId={scene.scene.orgId || orgId}
       sceneKind={kind}
       title={scene.scene.scopeTitle || sceneUntitled(kind)}
+      untitled={!scene.scene.scopeTitle}
       expiresAt={scene.scene.expiresAt}
       detail={detail}
       bindings={scene.bindings}
@@ -1202,6 +1202,8 @@ function ScopeEditor({
   content,
   ownerOnly = false,
   readOnly = false,
+  displayOnly = false,
+  untitled = false,
   reportError,
 }: {
   agentId: string;
@@ -1221,9 +1223,13 @@ function ScopeEditor({
   /** Older backends (no `rights`): the caller may switch things here but
    * not connect accounts or store tokens (the server's can_connect). */
   ownerOnly?: boolean;
-  /** Older backends (no `rights`): nothing can be changed here (the
-   * enterprise level for a member). */
+  /** Older backends (no `rights`): nothing can be changed here. */
   readOnly?: boolean;
+  /** Shown, never changed here, and only what applies (the enterprise
+   * level: its administrators configure it in the admin console). */
+  displayOnly?: boolean;
+  /** The scene has no known name: the title is its kind, so no badge. */
+  untitled?: boolean;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
@@ -1232,8 +1238,8 @@ function ScopeEditor({
   // The server's rights decide; an older backend sends none and the page
   // keeps its own reading of who may change what.
   const rights = content.rights;
-  const canToggle = rights ? rights.toggle : !readOnly;
-  const canConnect = rights ? rights.connect : !readOnly && !ownerOnly;
+  const canToggle = !displayOnly && (rights ? rights.toggle : !readOnly);
+  const canConnect = !displayOnly && (rights ? rights.connect : !readOnly && !ownerOnly);
   // Accounts are shown, but who connects them is said only when the rest of
   // the scope stays editable (switching allowed, connecting not).
   const credentialReadOnly = !canConnect && !canToggle;
@@ -1255,8 +1261,15 @@ function ScopeEditor({
   // Skills the enterprise level turned on: they apply here whatever this
   // level's switch says (switches add up across levels).
   const orgEnabledKeys = useMemo(
-    () => new Set(scopeType === "org" ? [] : (detail.orgEffect?.skillIds ?? []).map((id) => `skill:${id}`)),
-    [detail.orgEffect, scopeType],
+    () =>
+      new Set(
+        scopeType === "org"
+          ? []
+          : (detail.org?.bindings ?? [])
+              .filter((binding) => binding.enabled === true)
+              .map((binding) => `${binding.resourceType}:${binding.resourceId}`),
+      ),
+    [detail.org, scopeType],
   );
 
   const markBusy = (key: string, busy: boolean) =>
@@ -1314,11 +1327,14 @@ function ScopeEditor({
     ...detail.global.skills.map((skill) => ({ skill, defaultOn: true })),
     ...detail.offers.skills
       .filter((skill) => !defaultSkillIds.has(skill.id))
+      // A display-only level lists what applies there, nothing to add.
+      .filter((skill) => !displayOnly || enabledKeys.has(`skill:${skill.id}`))
       .map((skill) => ({ skill, defaultOn: false })),
   ];
   const expiry = formatDate(expiresAt);
-  const hint =
-    scopeType === "org"
+  const hint = displayOnly
+    ? t(($) => $.context_config.org_read_only)
+    : scopeType === "org"
       ? !canToggle
         ? t(($) => $.context_config.org_read_only)
         : t(($) => $.context_config.org_scope_hint)
@@ -1339,7 +1355,7 @@ function ScopeEditor({
       <div className="space-y-1">
         <div className="flex min-w-0 items-center gap-2">
           <p className="truncate text-body font-medium">{title}</p>
-          {scopeType === "scene" && (
+          {scopeType === "scene" && !untitled && (
             <Badge variant="outline" className="shrink-0">
               {sceneKindLabel(sceneKind)}
             </Badge>
@@ -1358,8 +1374,9 @@ function ScopeEditor({
         <ScopePrompts
           agentId={agentId}
           scope={scopeInput}
-          prompts={content.prompts}
-          canEdit={rights.editPrompts}
+          prompts={displayOnly ? content.prompts.filter((prompt) => prompt.enabled !== false) : content.prompts}
+          canEdit={!displayOnly && rights.editPrompts}
+          displayOnly={displayOnly}
           reportError={reportError}
         />
       ) : null}
@@ -1374,6 +1391,7 @@ function ScopeEditor({
             byOrg={orgEnabledKeys.has(`skill:${skill.id}`)}
             busy={busyKeys.has(`skill:${skill.id}`)}
             readOnly={!canToggle}
+            displayOnly={displayOnly}
             onToggle={(enabled) => void toggle("skill", skill.id, enabled)}
           />
         ))}
@@ -1381,7 +1399,7 @@ function ScopeEditor({
 
       <section className="space-y-2" aria-label={t(($) => $.context_config.slot_connectors)}>
         <SlotHeading label={t(($) => $.context_config.slot_connectors)} />
-        <ConnectorsTiles
+        <ConnectorsList
           agentId={agentId}
           scopeType={scopeType}
           scopeKey={scopeKey}
@@ -1397,6 +1415,7 @@ function ScopeEditor({
           onToggle={(connectorId, enabled) => void toggle("connector", connectorId, enabled)}
           onToggleShare={(connectorId, shareInGroups) => void toggleShare(connectorId, shareInGroups)}
           reportError={reportError}
+          inEffectOnly={displayOnly}
         />
         {/* MCP servers need a backend that reports rights. */}
         {rights ? (
@@ -1405,7 +1424,7 @@ function ScopeEditor({
             scope={scopeInput}
             mcpConfig={content.mcpConfig}
             redacted={content.mcpConfigRedacted}
-            canEdit={rights.editMcp}
+            canEdit={!displayOnly && rights.editMcp}
             reportError={reportError}
           />
         ) : null}
@@ -1421,6 +1440,7 @@ function SkillRow({
   byOrg,
   busy,
   readOnly,
+  displayOnly = false,
   onToggle,
 }: {
   skill: ContextSkillItem;
@@ -1430,6 +1450,8 @@ function SkillRow({
   byOrg: boolean;
   busy: boolean;
   readOnly: boolean;
+  /** A display-only level lists only what is on: a label, no switch. */
+  displayOnly?: boolean;
   onToggle: (enabled: boolean) => void;
 }) {
   const { t } = useT("agents");
@@ -1451,12 +1473,17 @@ function SkillRow({
               {t(($) => $.context_config.on_for_org)}
             </Badge>
           )}
+          {displayOnly && enabled && !alwaysOn && (
+            <Badge variant="secondary" className="text-micro">
+              {t(($) => $.context_config.status_added)}
+            </Badge>
+          )}
         </div>
         {skill.description ? (
           <p className="line-clamp-2 text-caption text-muted-foreground">{skill.description}</p>
         ) : null}
       </div>
-      {!alwaysOn && (
+      {!alwaysOn && !displayOnly && (
         <ToggleControl
           busy={busy}
           checked={enabled}

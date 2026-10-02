@@ -200,6 +200,18 @@ function sceneRoutinesTargetReady(target: SceneRoutinesTarget): boolean {
     : Boolean(target.agentId && target.sceneId);
 }
 
+/** A routine's run history, under its scene's routines key so every
+ * routine write refreshes it too. */
+export function sceneRoutineRunsOptions(target: SceneRoutinesTarget, routineId: string) {
+  return queryOptions({
+    queryKey: [...sceneRoutinesKey(target), routineId, "runs"] as const,
+    queryFn: () => api.listSceneRoutineRuns(target, routineId),
+    enabled: sceneRoutinesTargetReady(target) && Boolean(routineId),
+    staleTime: 15_000,
+    refetchInterval: 60_000,
+  });
+}
+
 /** A scene's routines with their next runs and last result. Refetched on
  * focus and every minute while shown, so a run started elsewhere (cron,
  * webhook, the agent) shows its result. */

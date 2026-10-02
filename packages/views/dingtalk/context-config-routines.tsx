@@ -16,6 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError, errorCode } from "@multica/core/api";
 import {
+  sceneRoutineRunsOptions,
   sceneRoutinesOptions,
   useCreateSceneRoutine,
   useDeleteSceneRoutine,
@@ -24,6 +25,7 @@ import {
   useUpdateSceneRoutine,
   type ContextRoutine,
   type ContextRoutineInput,
+  type ContextRoutineRun,
   type SceneRoutinesTarget,
 } from "@multica/core/context-capabilities";
 import { Button } from "@multica/ui/components/ui/button";
@@ -247,6 +249,7 @@ function RoutineRow({
   const remove = useDeleteSceneRoutine(target);
   const rotate = useRotateSceneRoutineWebhook(target);
   const [confirm, setConfirm] = useState<"delete" | "rotate" | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const isWebhook = routine.trigger.kind === "webhook";
   const timezone = routine.trigger.timezone || ROUTINE_DEFAULT_TIMEZONE;
   const when = (iso: string) => formatInTimeZone(iso, timezone, i18n.language);
@@ -290,7 +293,14 @@ function RoutineRow({
             : t(($) => $.context_config.routines.last_status, { status: last.status, time: when(last.createdAt) });
 
   return (
-    <li className="flex items-start gap-3 p-3 sm:p-4" aria-label={routine.title}>
+    <li className="flex items-start gap-1 p-1.5 sm:p-2" aria-label={routine.title}>
+      {/* The routine's summary opens its detail and run history. */}
+      <button
+        type="button"
+        onClick={() => setDetailOpen(true)}
+        aria-label={t(($) => $.context_config.routines.open_detail, { name: routine.title })}
+        className="flex min-w-0 flex-1 items-start gap-3 rounded-md p-1.5 text-left transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:p-2"
+      >
       <span
         className={cn(
           "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground",
@@ -330,8 +340,9 @@ function RoutineRow({
           <p className="line-clamp-2 text-caption text-destructive break-words">{last.failureReason}</p>
         ) : null}
       </div>
+      </button>
       {canEdit ? (
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-0.5 pt-1.5 sm:pt-2">
           <ToggleControl
             busy={update.isPending}
             checked={routine.enabled}
@@ -378,6 +389,12 @@ function RoutineRow({
           </DropdownMenu>
         </div>
       ) : null}
+      <RoutineDetailDialog
+        routine={routine}
+        target={target}
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+      />
       <ConfirmDialog
         open={confirm === "delete"}
         onOpenChange={(open) => !open && setConfirm(null)}
@@ -416,6 +433,171 @@ function RoutineRow({
         }
       />
     </li>
+  );
+}
+
+
+/** A run's status in words. */
+function useRunStatusLabel(): (run: ContextRoutineRun) => string {
+  const { t } = useT("agents");
+  return (run) => {
+    switch (run.status) {
+      case "completed":
+        return t(($) => $.context_config.routines.status_completed);
+      case "failed":
+        return t(($) => $.context_config.routines.status_failed);
+      case "running":
+      case "issue_created":
+        return t(($) => $.context_config.routines.status_running);
+      case "skipped":
+        return t(($) => $.context_config.routines.status_skipped);
+      case "pending":
+        return t(($) => $.context_config.routines.status_pending);
+      default:
+        return run.status;
+    }
+  };
+}
+
+/** What started a run, in words. */
+function useRunSourceLabel(): (run: ContextRoutineRun) => string {
+  const { t } = useT("agents");
+  return (run) => {
+    switch (run.source) {
+      case "schedule":
+        return t(($) => $.context_config.routines.source_schedule);
+      case "webhook":
+        return t(($) => $.context_config.routines.source_webhook);
+      case "manual":
+        return t(($) => $.context_config.routines.source_manual);
+      default:
+        return run.source;
+    }
+  };
+}
+
+function runTone(status: string): string {
+  switch (status) {
+    case "completed":
+      return "bg-success";
+    case "failed":
+      return "bg-destructive";
+    case "running":
+    case "issue_created":
+      return "bg-info";
+    default:
+      return "bg-muted-foreground/40";
+  }
+}
+
+/** A routine opened from its row: what it does, when it runs and its run
+ * history (status and times only; a run's own output is posted in the
+ * chat). */
+function RoutineDetailDialog({
+  routine,
+  target,
+  open,
+  onOpenChange,
+}: {
+  routine: ContextRoutine;
+  target: SceneRoutinesTarget;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { t, i18n } = useT("agents");
+  const rhythm = useRoutineRhythm();
+  const statusLabel = useRunStatusLabel();
+  const sourceLabel = useRunSourceLabel();
+  const runs = useQuery({ ...sceneRoutineRunsOptions(target, routine.id), enabled: open });
+  const timezone = routine.trigger.timezone || ROUTINE_DEFAULT_TIMEZONE;
+  const when = (iso: string) => formatInTimeZone(iso, timezone, i18n.language);
+  const upcoming = routine.enabled ? routine.trigger.nextRuns.slice(0, 3) : [];
+
+  let history: React.ReactNode;
+  if (runs.isPending) {
+    history = (
+      <p className="flex items-center gap-2 text-caption text-muted-foreground" role="status">
+        <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        {t(($) => $.context_config.routines.history_loading)}
+      </p>
+    );
+  } else if (runs.isError) {
+    history = (
+      <div className="flex items-center gap-2">
+        <p className="text-caption text-muted-foreground">{t(($) => $.context_config.routines.history_failed)}</p>
+        <Button size="sm" variant="ghost" onClick={() => void runs.refetch()}>
+          {t(($) => $.context_config.routines.retry)}
+        </Button>
+      </div>
+    );
+  } else if (runs.data.length === 0) {
+    history = <p className="text-caption text-muted-foreground">{t(($) => $.context_config.routines.history_empty)}</p>;
+  } else {
+    history = (
+      <ol className="divide-y rounded-lg border" aria-label={t(($) => $.context_config.routines.history_title)}>
+        {runs.data.map((run) => (
+          <li key={run.id} className="flex items-start gap-2.5 px-3 py-2.5">
+            <span className={cn("mt-1.5 size-2 shrink-0 rounded-full", runTone(run.status))} aria-hidden="true" />
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <p className="text-body">
+                {statusLabel(run)}
+                <span className="text-muted-foreground"> · {sourceLabel(run)}</span>
+              </p>
+              <p className="text-caption text-muted-foreground tabular-nums">
+                {run.completedAt
+                  ? t(($) => $.context_config.routines.history_span, { start: when(run.createdAt), end: when(run.completedAt) })
+                  : when(run.createdAt)}
+              </p>
+              {run.failureReason ? (
+                <p className="line-clamp-2 text-caption text-destructive break-words">{run.failureReason}</p>
+              ) : null}
+            </div>
+          </li>
+        ))}
+      </ol>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[85vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
+        <DialogHeader className="space-y-1 border-b p-4 pr-12 text-left">
+          <DialogTitle className="break-words">{routine.title}</DialogTitle>
+          <DialogDescription>
+            {rhythm(routine)}
+            {!routine.enabled ? ` · ${t(($) => $.context_config.routines.paused)}` : ""}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4">
+          {routine.instructions ? (
+            <section className="space-y-1.5">
+              <h3 className="text-caption font-medium text-muted-foreground">
+                {t(($) => $.context_config.routines.field_instructions)}
+              </h3>
+              <p className="whitespace-pre-wrap break-words text-body">{routine.instructions}</p>
+            </section>
+          ) : null}
+          {upcoming.length > 0 ? (
+            <section className="space-y-1.5">
+              <h3 className="text-caption font-medium text-muted-foreground">
+                {t(($) => $.context_config.routines.upcoming_title)}
+              </h3>
+              <ul className="space-y-0.5 text-body tabular-nums">
+                {upcoming.map((time) => (
+                  <li key={time}>{when(time)}</li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          <section className="space-y-1.5">
+            <h3 className="text-caption font-medium text-muted-foreground">
+              {t(($) => $.context_config.routines.history_title)}
+            </h3>
+            {history}
+          </section>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

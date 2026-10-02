@@ -175,8 +175,7 @@ type ctxcapAgentDetail struct {
 	Scenes         []contextCapSceneDTO      `json:"scenes"`
 	JSAPIAvailable bool                      `json:"jsapi_available"`
 	Apps           []contextCapCatalogAppDTO `json:"apps"`
-	OrgEffect      *contextCapOrgEffectDTO   `json:"org_effect"`
-	Org            json.RawMessage           `json:"org"`
+	Org            *contextCapOrgLayerDTO    `json:"org"`
 }
 
 type ctxcapSceneDetail struct {
@@ -308,11 +307,11 @@ func TestContextCapabilitiesMobileGrantsGateReadsAndWrites(t *testing.T) {
 	if len(offered) != 3 || !offered[f.scene] || !offered[f.person] || !offered[f.global] || len(detail.Offers.Skills) != 1 || detail.Offers.Skills[0].ID != f.skillScene {
 		t.Fatalf("offers=%+v", detail.Offers)
 	}
-	// A member gets the enterprise level's effect (ids) but not the level.
-	if detail.OrgEffect == nil || len(detail.OrgEffect.SkillIDs) != 1 || detail.OrgEffect.SkillIDs[0] != f.skillScene ||
-		len(detail.OrgEffect.ConnectorIDs) != 0 || len(detail.OrgEffect.CredentialConnectorIDs) != 0 ||
-		(len(detail.Org) != 0 && string(detail.Org) != "null") {
-		t.Fatalf("org effect=%+v org=%s", detail.OrgEffect, detail.Org)
+	// A member sees the enterprise level read-only: no rights, no MCP
+	// document, no credential hints.
+	if detail.Org == nil || detail.Org.ScopeKey != ctxcapOrg || !ctxcapHasBinding(detail.Org.Bindings, f.skillScene, true) ||
+		detail.Org.CanEdit || detail.Org.Rights != (contextCapRights{}) || (len(detail.Org.MCPConfig) != 0 && string(detail.Org.MCPConfig) != "null") {
+		t.Fatalf("member org layer=%+v", detail.Org)
 	}
 	// Every catalog app is listed, in catalog order, opened for the agent or
 	// not.

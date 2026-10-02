@@ -244,8 +244,9 @@ func TestContextConfigMobileTenantOrg(t *testing.T) {
 	w = ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID, bob, nil)
 	ctxcapExpectStatus(t, w, http.StatusOK, "bob detail")
 	ctxcapDecode(t, w, &got)
-	// The enterprise layer is for agent managers only: Bob does not see it.
-	if got.Tenant == nil || got.Tenant.OrgID != betaOrg || len(got.Tenants) != 1 || got.Org != nil ||
+	// Bob sees his tenant's enterprise layer read-only.
+	if got.Tenant == nil || got.Tenant.OrgID != betaOrg || len(got.Tenants) != 1 ||
+		got.Org == nil || got.Org.ScopeKey != betaOrg || got.Org.CanEdit || got.Org.Rights != (contextCapRights{}) ||
 		len(got.Scenes) != 1 || got.Scenes[0].ScopeKey != betaScene || got.Scenes[0].OrgID != betaOrg {
 		t.Fatalf("bob detail = %+v", got)
 	}
@@ -297,8 +298,11 @@ func TestContextConfigMobileTenantOrg(t *testing.T) {
 	w = ctxcapMobile(t, router, http.MethodGet, "/api/context-capabilities/agents/"+agentID+"?org_id="+betaOrg, bob, nil)
 	got.Org = nil
 	ctxcapDecode(t, w, &got)
-	if got.Org != nil {
-		t.Fatalf("bob org layer = %+v, want none", got.Org)
+	// Bob reads the beta enterprise layer the manager changed, read-only and
+	// without the credential hint.
+	if got.Org == nil || got.Org.CanEdit || got.Org.Rights != (contextCapRights{}) ||
+		!ctxcapHasBinding(got.Org.Bindings, f.skillScene, true) || len(got.Org.Credentials) != 1 || got.Org.Credentials[0].Hint != "" {
+		t.Fatalf("bob org layer = %+v", got.Org)
 	}
 	// The manager sees every tenant, the identity org by default, and the
 	// enterprise layer as editable.
