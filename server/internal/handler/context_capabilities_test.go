@@ -172,8 +172,9 @@ type ctxcapAgentDetail struct {
 		Bindings    []contextCapBindingDTO    `json:"bindings"`
 		Credentials []contextCapCredentialDTO `json:"credentials"`
 	} `json:"person"`
-	Scenes         []contextCapSceneDTO `json:"scenes"`
-	JSAPIAvailable bool                 `json:"jsapi_available"`
+	Scenes         []contextCapSceneDTO      `json:"scenes"`
+	JSAPIAvailable bool                      `json:"jsapi_available"`
+	Apps           []contextCapCatalogAppDTO `json:"apps"`
 }
 
 type ctxcapSceneDetail struct {
@@ -297,6 +298,12 @@ func TestContextCapabilitiesMobileGrantsGateReadsAndWrites(t *testing.T) {
 	}
 	if len(offered) != 3 || !offered[f.scene] || !offered[f.person] || !offered[f.global] || len(detail.Offers.Skills) != 1 || detail.Offers.Skills[0].ID != f.skillScene {
 		t.Fatalf("offers=%+v", detail.Offers)
+	}
+	// Every catalog app is listed, in catalog order, opened for the agent or
+	// not.
+	if catalog := connectorCatalog.Apps(); len(detail.Apps) != len(catalog) || len(catalog) == 0 ||
+		detail.Apps[0].Slug != catalog[0].Slug || detail.Apps[0].Name != catalog[0].Name {
+		t.Fatalf("apps=%+v", detail.Apps)
 	}
 	if detail.Person == nil || detail.Person.ScopeKey != ctxcapStaff || detail.Person.Source != contextcap.GrantSourceAgentLink ||
 		!ctxcapHasBinding(detail.Person.Bindings, f.person, true) || detail.Person.ExpiresAt == "" {

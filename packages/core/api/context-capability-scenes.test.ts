@@ -324,6 +324,27 @@ describe("configure-page tenants", () => {
     ).toBeNull();
   });
 
+  it("lists the catalog apps, dropping malformed and duplicate rows", () => {
+    const detail = ContextConfigAgentDetailSchema.parse({
+      agent: { id: agentId, name: "Helper" },
+      apps: [
+        { slug: "github", name: "GitHub" },
+        { slug: "notion" },
+        { slug: "Bad Slug!", name: "x" },
+        { name: "no slug" },
+        "slack",
+        { slug: "github", name: "GitHub again" },
+      ],
+    });
+    expect(detail.apps).toEqual([
+      { slug: "github", name: "GitHub again" },
+      { slug: "notion", name: "notion" },
+    ]);
+    // An older backend sends no catalog; a malformed one reads as empty.
+    expect(ContextConfigAgentDetailSchema.parse({ agent: { id: agentId } }).apps).toEqual([]);
+    expect(ContextConfigAgentDetailSchema.parse({ agent: { id: agentId }, apps: "github" }).apps).toEqual([]);
+  });
+
   it("reads the tenant of a redeemed link", () => {
     const base = { agent_id: agentId, workspace_id: "ws", scope_type: "person", scope_key: "staff-1" };
     expect(ContextConfigRedeemSchema.parse({ ...base, org_id: "dingB" }).orgId).toBe("dingB");

@@ -220,6 +220,12 @@ export interface ContextConfigOrgScope extends ContextConfigScopeContent {
   canEdit: boolean;
 }
 
+/** An official app of the connector catalog (GitHub, Notion, ...). */
+export interface ContextConfigCatalogApp {
+  slug: string;
+  name: string;
+}
+
 export interface ContextConfigAgentDetail {
   agent: ContextConfigAgentIdentity;
   global: {
@@ -244,6 +250,10 @@ export interface ContextConfigAgentDetail {
   /** "manager" when the caller manages the agent (scenes then lists every
    * scene of the agent); "grant" otherwise and from older backends. */
   access: ContextConfigAccess;
+  /** Every official app the deployment supports, in catalog order. An app
+   * is usable here only once `global` or `offers` lists its connector;
+   * older backends send none. */
+  apps: ContextConfigCatalogApp[];
 }
 
 /** Where the configuration of one scene page lives: the scene itself, a

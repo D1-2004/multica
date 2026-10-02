@@ -30,7 +30,9 @@ this run has no scene to configure; say so instead of improvising.
   change (headers above all, whose values you never see) keep their stored
   values.
 - **Accounts** — never handled in chat. Send a configuration link instead
-  (`scene_connect_link`; pass `tab: "routines"` to open the routines tab).
+  (`scene_connect_link`; pass `tab: "routines"` to open the routines tab) as
+  a Markdown link to its `dingtalk_url`, e.g. `[配置本群能力](dingtalk_url)`;
+  never paste the bare URL.
 
 ## How to work
 
@@ -48,7 +50,8 @@ this run has no scene to configure; say so instead of improvising.
    The platform also posts a short change notice in this chat.
 4. Never put secrets (tokens, passwords, API keys) into prompts, routine
    instructions or MCP server headers. For an account, call
-   `scene_connect_link` and post the returned link verbatim.
+   `scene_connect_link` and reply with a Markdown link to the returned
+   `dingtalk_url`.
 
 ## Routines
 

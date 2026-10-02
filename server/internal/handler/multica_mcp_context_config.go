@@ -18,7 +18,7 @@ const multicaMCPContextConfigLinkTool = "create_context_config_link"
 
 const multicaMCPContextConfigLinkToolDescription = `为当前钉钉群或当前私聊用户生成「能力配置」链接。Create a link that lets DingTalk users turn on this Agent's offered connectors and skills (连接器 / 技能 / 能力) for the current group chat or for themselves.
 
-Call it when a user asks to configure, enable or connect connectors, skills or capabilities for this group (本群) or for themselves (我的 / 个人). Post the returned url to the user verbatim in your reply; never shorten, rewrite or paraphrase it.
+Call it when a user asks to configure, enable or connect connectors, skills or capabilities for this group (本群) or for themselves (我的 / 个人). Reply with a Markdown link whose target is the returned dingtalk_url, e.g. [配置本群能力](dingtalk_url); never show the bare url, and never shorten or rewrite the link target.
 
 scope defaults to "scene" in a group chat and to "person" in a 1:1 chat. A scene link lets any member of this group who opens it within 30 minutes configure the group's capabilities. A person link is single-use, valid for 15 minutes, and is only issued in a 1:1 chat; it also lets the user configure this 1:1 chat (本会话). In a group, ask the user to message you privately (私聊) and request it there.
 
@@ -59,7 +59,7 @@ func multicaMCPContextConfigLinkDefinition() map[string]any {
 				"tab": map[string]any{
 					"type":        "string",
 					"enum":        contextConfigLinkTabs,
-					"description": `Page tab to open: "scope" (场域能力, default), "public" (公开能力) or "routines" (例行任务).`,
+					"description": `Page tab to open: "scope" (场域能力, default) or "routines" (例行任务).`,
 				},
 			},
 		},

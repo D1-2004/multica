@@ -127,6 +127,11 @@ function agentDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
     org: null,
     jsapiAvailable: false,
     access: "grant",
+    apps: [
+      { slug: "github", name: "GitHub" },
+      { slug: "notion", name: "Notion" },
+      { slug: "linear", name: "Linear" },
+    ],
     ...overrides,
   };
 }
@@ -160,6 +165,22 @@ function oauthDetail(overrides: Partial<ContextConfigAgentDetail> = {}): Context
     offers: { connectors: [githubConnector], skills: [] },
     ...overrides,
   };
+}
+
+/** Accessible name of a connector tile. */
+function tileName(name: string): string {
+  return copy.app_open_aria.replace("{{name}}", name);
+}
+
+/** Opens the dialog of the connector tile `name` inside `region`. */
+async function openConnector(user: ReturnType<typeof userEvent.setup>, region: HTMLElement, name: string) {
+  await user.click(within(region).getByRole("button", { name: tileName(name) }));
+  return screen.findByRole("dialog");
+}
+
+/** A binding that switches connector `id` on. */
+function connectorOn(id: string, shareInGroups = false) {
+  return { resourceType: "connector" as const, resourceId: id, enabled: true, shareInGroups };
 }
 
 function renderPage(props: Partial<ContextConfigPageProps> = {}) {
@@ -209,17 +230,22 @@ describe("ContextConfigPage", () => {
     const onBind = vi.fn();
     renderPage({ linkToken: "link-token", onBind });
 
-    expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
+    const region = await screen.findByRole("region", { name: "Sales team" });
     expect(api.redeemContextConfigLink).toHaveBeenCalledTimes(1);
     expect(api.redeemContextConfigLink).toHaveBeenCalledWith("link-token");
     expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", SALES_SCENE, "");
     expect(onBind).toHaveBeenCalledWith({ agentId: "agent-1", scopeType: "scene", scopeKey: SALES_SCENE, orgId: "" });
 
-    const wikiToggle = screen.getByRole("switch", { name: "Turn Wiki on or off" });
-    expect(wikiToggle).toBeChecked();
-    expect(screen.getByText("Credential saved (••••abcd)")).toBeInTheDocument();
+    // Wiki is added to the group and authorized with the group's token.
+    const wiki = within(region).getByRole("button", { name: tileName("Wiki") });
+    expect(within(wiki).getByText(copy.status_added)).toBeInTheDocument();
+    expect(within(wiki).getByText(copy.connected)).toBeInTheDocument();
+    const dialog = await openConnector(user, region, "Wiki");
+    expect(within(dialog).getByText(copy.added_scene)).toBeInTheDocument();
+    expect(within(dialog).getByText("Credential saved (••••abcd)")).toBeInTheDocument();
+    await user.keyboard("{Escape}");
 
-    await user.click(screen.getByRole("switch", { name: "Turn Weekly report on or off" }));
+    await user.click(within(region).getByRole("switch", { name: "Turn Weekly report on or off" }));
 
     await waitFor(() =>
       expect(api.setContextCapabilityBinding).toHaveBeenCalledWith("agent-1", {
@@ -230,6 +256,16 @@ describe("ContextConfigPage", () => {
         enabled: true,
       }),
     );
+  });
+
+  it("shows no page title or agent header, only the tabs", async () => {
+    renderPage({ binding: groupBinding });
+
+    await screen.findByRole("region", { name: "Sales team" });
+    expect(screen.queryByRole("heading", { level: 1 })).not.toBeInTheDocument();
+    expect(screen.queryByText(copy.page_title)).not.toBeInTheDocument();
+    expect(screen.queryByText("Helper")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([copy.tab_scope, copy.tab_routines]);
   });
 
   it("asks the platform to sign in when the session is rejected", async () => {
@@ -274,7 +310,75 @@ describe("ContextConfigPage", () => {
     expect(screen.queryByText(copy.link_failed)).not.toBeInTheDocument();
   });
 
+  it("lays a level out as 指令, Skills, then 连接器和插件", async () => {
+    api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, rights: allRights, prompts: [toneprompt] });
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        global: {
+          connectors: [{ id: "conn-global", name: "Docs", catalogSlug: "" }],
+          skills: [{ id: "skill-own", name: "Own skill", description: "" }],
+        },
+      }),
+    );
+    renderPage({ binding: groupBinding });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    const headings = within(region)
+      .getAllByRole("heading", { level: 3 })
+      .map((heading) => heading.textContent);
+    expect(headings.slice(0, 3)).toEqual([copy.prompts_title, copy.skills_title, copy.slot_connectors]);
+    // The agent's own skill is on by default; an offered one is added here.
+    const own = within(region).getByText("Own skill").closest("li") as HTMLElement;
+    expect(within(own).getByText(copy.always_on)).toBeInTheDocument();
+    expect(within(own).queryByRole("switch")).not.toBeInTheDocument();
+    expect(within(region).getByRole("switch", { name: "Turn Weekly report on or off" })).toBeInTheDocument();
+    // Which bundle an item comes from is never named.
+    expect(screen.queryByText(/bundle/i)).not.toBeInTheDocument();
+  });
+
+  it("lists GitHub, Slack and Notion first, then the other apps, connectors and apps not opened", async () => {
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        apps: [
+          { slug: "linear", name: "Linear" },
+          { slug: "notion", name: "Notion" },
+          { slug: "figma", name: "Figma" },
+          { slug: "github", name: "GitHub" },
+          { slug: "slack", name: "Slack" },
+        ],
+        offers: {
+          connectors: [
+            ...agentDetail().offers.connectors,
+            { ...githubConnector, id: "conn-figma", name: "Figma", catalogSlug: "figma", acceptsPat: false, installUrl: "" },
+            { ...githubConnector, id: "conn-notion", name: "Notion", catalogSlug: "notion", acceptsPat: false, installUrl: "" },
+          ],
+          skills: [],
+        },
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    const tiles = within(region)
+      .getByRole("list", { name: copy.slot_connectors })
+      .querySelectorAll("li button");
+    expect([...tiles].map((tile) => tile.getAttribute("aria-label"))).toEqual(
+      ["GitHub", "Slack", "Notion", "Figma", "Wiki", "Docs", "Linear"].map(tileName),
+    );
+    // The agent's own connector is on by default.
+    const docs = within(region).getByRole("button", { name: tileName("Docs") });
+    expect(within(docs).getByText(copy.always_on)).toBeInTheDocument();
+    // An app nobody opened for the agent says so and points to its manager.
+    const github = within(region).getByRole("button", { name: tileName("GitHub") });
+    expect(within(github).getByText(copy.status_unavailable)).toBeInTheDocument();
+    const dialog = await openConnector(user, region, "GitHub");
+    expect(within(dialog).getByText(copy.app_unavailable_note.replace("{{name}}", "GitHub"))).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: copy.app_add })).not.toBeInTheDocument();
+  });
+
   it("saves a personal credential write-only and clears the input", async () => {
+    api.getContextConfigAgent.mockResolvedValue(personDetail({ bindings: [connectorOn("conn-wiki")] }));
     api.setContextConnectorCredential.mockResolvedValue({
       connectorId: "conn-wiki",
       hint: "••••cret",
@@ -283,15 +387,18 @@ describe("ContextConfigPage", () => {
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1" });
 
-    await user.click(await screen.findByRole("tab", { name: copy.tab_person }));
+    await user.click(await screen.findByRole("tab", { name: copy.level_person }));
     const region = await screen.findByRole("region", { name: "Alice" });
-    expect(within(region).getByText(copy.credential_required)).toBeInTheDocument();
+    const tile = within(region).getByRole("button", { name: tileName("Wiki") });
+    expect(within(tile).getByText(copy.status_unauthorized)).toBeInTheDocument();
+    const dialog = await openConnector(user, region, "Wiki");
+    expect(within(dialog).getByText(copy.credential_required)).toBeInTheDocument();
 
-    await user.click(within(region).getByRole("button", { name: copy.set_credential }));
-    const input = within(region).getByLabelText("Bearer token for Wiki");
+    await user.click(within(dialog).getByRole("button", { name: copy.set_credential }));
+    const input = within(dialog).getByLabelText("Bearer token for Wiki");
     expect(input).toHaveAttribute("type", "password");
     await user.type(input, "  super-secret  ");
-    await user.click(within(region).getByRole("button", { name: copy.save }));
+    await user.click(within(dialog).getByRole("button", { name: copy.save }));
 
     await waitFor(() =>
       expect(api.setContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
@@ -302,9 +409,53 @@ describe("ContextConfigPage", () => {
       }),
     );
     await waitFor(() =>
-      expect(within(region).queryByLabelText("Bearer token for Wiki")).not.toBeInTheDocument(),
+      expect(within(dialog).queryByLabelText("Bearer token for Wiki")).not.toBeInTheDocument(),
     );
     expect(screen.queryByDisplayValue(/super-secret/)).not.toBeInTheDocument();
+  });
+
+  it("adds a connector first, then authorizes it", async () => {
+    const notAdded = { ...sceneDetail, bindings: [], credentials: [], rights: allRights };
+    api.getContextConfigScene
+      .mockResolvedValueOnce(notAdded)
+      .mockResolvedValue({ ...notAdded, bindings: [connectorOn("conn-wiki")] });
+    const user = userEvent.setup();
+    renderPage({ binding: groupBinding });
+
+    const region = await screen.findByRole("region", { name: "Sales team" });
+    const tile = within(region).getByRole("button", { name: tileName("Wiki") });
+    expect(within(tile).getByText(copy.status_not_added)).toBeInTheDocument();
+    // Not in effect yet: no 未授权 until it is added.
+    expect(within(tile).queryByText(copy.status_unauthorized)).not.toBeInTheDocument();
+    const dialog = await openConnector(user, region, "Wiki");
+    expect(within(dialog).getByText(copy.auth_after_add)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: copy.set_credential })).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: copy.app_add }));
+    await waitFor(() =>
+      expect(api.setContextCapabilityBinding).toHaveBeenCalledWith("agent-1", {
+        scopeType: "scene",
+        scopeKey: SALES_SCENE,
+        resourceType: "connector",
+        resourceId: "conn-wiki",
+        enabled: true,
+      }),
+    );
+    expect(await within(dialog).findByText(copy.added_scene)).toBeInTheDocument();
+    expect(within(dialog).getByText(copy.credential_required)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: copy.set_credential })).toBeInTheDocument();
+    expect(within(tile).getByText(copy.status_unauthorized)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: copy.app_remove }));
+    await waitFor(() =>
+      expect(api.setContextCapabilityBinding).toHaveBeenLastCalledWith("agent-1", {
+        scopeType: "scene",
+        scopeKey: SALES_SCENE,
+        resourceType: "connector",
+        resourceId: "conn-wiki",
+        enabled: false,
+      }),
+    );
   });
 
   it("confirms before removing a group credential", async () => {
@@ -313,9 +464,10 @@ describe("ContextConfigPage", () => {
     renderPage({ initialAgentId: "agent-1" });
 
     const region = await screen.findByRole("region", { name: "Sales team" });
-    await user.click(within(region).getByRole("button", { name: copy.remove_credential }));
+    const dialog = await openConnector(user, region, "Wiki");
+    await user.click(within(dialog).getByRole("button", { name: copy.remove_credential }));
     expect(api.deleteContextConnectorCredential).not.toHaveBeenCalled();
-    await user.click(within(region).getByRole("button", { name: copy.confirm_remove }));
+    await user.click(within(dialog).getByRole("button", { name: copy.confirm_remove }));
 
     await waitFor(() =>
       expect(api.deleteContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
@@ -331,7 +483,7 @@ describe("ContextConfigPage", () => {
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1" });
 
-    await user.click(await screen.findByRole("tab", { name: copy.tab_person }));
+    await user.click(await screen.findByRole("tab", { name: copy.level_person }));
 
     expect(screen.getByText(copy.person_empty_title)).toBeInTheDocument();
     expect(screen.getByText(copy.person_empty_hint)).toBeInTheDocument();
@@ -349,8 +501,9 @@ describe("ContextConfigPage", () => {
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1", pickGroup });
 
-    // With only a personal grant the page opens on "Mine".
-    await user.click(await screen.findByRole("tab", { name: copy.tab_scene }));
+    // With only a personal grant the page opens on 个人能力.
+    expect(await screen.findByRole("tab", { name: copy.level_person })).toHaveAttribute("aria-selected", "true");
+    await user.click(screen.getByRole("tab", { name: copy.level_scene }));
     expect(screen.getByText(copy.scene_empty_title)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: copy.pick_group }));
 
@@ -376,7 +529,7 @@ describe("ContextConfigPage", () => {
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1", pickGroup });
 
-    await user.click(await screen.findByRole("tab", { name: copy.tab_scene }));
+    await user.click(await screen.findByRole("tab", { name: copy.level_scene }));
     await user.click(screen.getByRole("button", { name: copy.pick_group }));
 
     await waitFor(() =>
@@ -390,7 +543,7 @@ describe("ContextConfigPage", () => {
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1", pickGroup });
 
-    await user.click(await screen.findByRole("tab", { name: copy.tab_scene }));
+    await user.click(await screen.findByRole("tab", { name: copy.level_scene }));
     await user.click(screen.getByRole("button", { name: copy.pick_group }));
 
     await waitFor(() => expect(pickGroup).toHaveBeenCalledTimes(1));
@@ -405,13 +558,24 @@ describe("ContextConfigPage", () => {
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1", pickGroup });
 
-    await user.click(await screen.findByRole("tab", { name: copy.tab_scene }));
+    await user.click(await screen.findByRole("tab", { name: copy.level_scene }));
     await user.click(screen.getByRole("button", { name: copy.pick_group }));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(copy.pick_group_reload));
   });
 
   it("keeps each row pending until its own write settles", async () => {
+    api.getContextConfigAgent.mockResolvedValue(
+      agentDetail({
+        offers: {
+          connectors: agentDetail().offers.connectors,
+          skills: [
+            { id: "skill-report", name: "Weekly report", description: "" },
+            { id: "skill-digest", name: "Digest", description: "" },
+          ],
+        },
+      }),
+    );
     const pending = new Map<string, () => void>();
     api.setContextCapabilityBinding.mockImplementation(
       (_agentId: string, input: { resourceType: string; resourceId: string; enabled: boolean }) =>
@@ -426,16 +590,16 @@ describe("ContextConfigPage", () => {
 
     await screen.findByRole("region", { name: "Sales team" });
     await user.click(screen.getByRole("switch", { name: "Turn Weekly report on or off" }));
-    await user.click(screen.getByRole("switch", { name: "Turn Wiki on or off" }));
+    await user.click(screen.getByRole("switch", { name: "Turn Digest on or off" }));
     await waitFor(() => expect(pending.size).toBe(2));
     expect(screen.queryByRole("switch", { name: "Turn Weekly report on or off" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("switch", { name: "Turn Wiki on or off" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Turn Digest on or off" })).not.toBeInTheDocument();
 
-    pending.get("conn-wiki")!();
+    pending.get("skill-digest")!();
     await waitFor(() =>
-      expect(screen.getByRole("switch", { name: "Turn Wiki on or off" })).toBeInTheDocument(),
+      expect(screen.getByRole("switch", { name: "Turn Digest on or off" })).toBeInTheDocument(),
     );
-    // The skill write is still in flight, so its row stays busy.
+    // The other write is still in flight, so its row stays busy.
     expect(screen.queryByRole("switch", { name: "Turn Weekly report on or off" })).not.toBeInTheDocument();
 
     pending.get("skill-report")!();
@@ -465,16 +629,17 @@ describe("ContextConfigPage", () => {
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1" });
 
-    await user.click(await screen.findByRole("tab", { name: copy.tab_scene }));
+    await user.click(await screen.findByRole("tab", { name: copy.level_scene }));
     expect(screen.getByText(copy.scene_empty_title)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: copy.pick_group })).not.toBeInTheDocument();
   });
 
   describe("official app (OAuth) connectors", () => {
     const person = agentDetail().person!;
+    const githubOn = { ...sceneDetail, bindings: [connectorOn("conn-github")], credentials: [] };
 
     beforeEach(() => {
-      api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, bindings: [], credentials: [] });
+      api.getContextConfigScene.mockResolvedValue(githubOn);
     });
 
     it("connects through the provider sign-in for the open scope", async () => {
@@ -487,16 +652,20 @@ describe("ContextConfigPage", () => {
       renderPage({ initialAgentId: "agent-1", openAuthorizeUrl });
 
       const region = await screen.findByRole("region", { name: "Sales team" });
-      expect(within(region).getByText(copy.connect_required)).toBeInTheDocument();
       expect(region.querySelector('[data-connector-mark="github"]')).not.toBeNull();
+      const tile = within(region).getByRole("button", { name: tileName("GitHub") });
+      expect(within(tile).getByText(copy.status_unauthorized)).toBeInTheDocument();
+      const dialog = await openConnector(user, region, "GitHub");
+      expect(within(dialog).getByText(copy.connect_required)).toBeInTheDocument();
       // OAuth connectors never show the raw Bearer input.
-      expect(within(region).queryByRole("button", { name: copy.set_credential })).not.toBeInTheDocument();
-      expect(within(region).getByRole("link", { name: copy.install_link })).toHaveAttribute(
+      expect(within(dialog).queryByRole("button", { name: copy.set_credential })).not.toBeInTheDocument();
+      expect(within(dialog).getByRole("link", { name: copy.install_link })).toHaveAttribute(
         "href",
         githubConnector.installUrl,
       );
+      expect(within(dialog).getByText("get_me")).toBeInTheDocument();
 
-      await user.click(within(region).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
 
       await waitFor(() =>
         expect(openAuthorizeUrl).toHaveBeenCalledWith(
@@ -510,7 +679,7 @@ describe("ContextConfigPage", () => {
         connectorId: "conn-github",
       });
       // The page is leaving for the provider; a second tap cannot start another flow.
-      expect(within(region).getByRole("button", { name: copy.connecting })).toBeDisabled();
+      expect(within(dialog).getByRole("button", { name: copy.connecting })).toBeDisabled();
     });
 
     it("does not navigate when the server returns no usable authorization URL", async () => {
@@ -522,11 +691,12 @@ describe("ContextConfigPage", () => {
       renderPage({ initialAgentId: "agent-1", openAuthorizeUrl });
 
       const region = await screen.findByRole("region", { name: "Sales team" });
-      await user.click(within(region).getByRole("button", { name: copy.connect }));
+      const dialog = await openConnector(user, region, "GitHub");
+      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
 
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith(copy.connect_failed));
       expect(openAuthorizeUrl).not.toHaveBeenCalled();
-      expect(within(region).getByRole("button", { name: copy.connect })).toBeEnabled();
+      expect(within(dialog).getByRole("button", { name: copy.connect })).toBeEnabled();
     });
 
     it("shows the connected account and disconnects only after confirmation", async () => {
@@ -534,6 +704,7 @@ describe("ContextConfigPage", () => {
         oauthDetail({
           person: {
             ...person,
+            bindings: [connectorOn("conn-github")],
             credentials: [{ connectorId: "conn-github", hint: "@octocat", updatedAt: "", kind: "oauth" }],
           },
         }),
@@ -542,14 +713,16 @@ describe("ContextConfigPage", () => {
       const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1", openAuthorizeUrl: vi.fn() });
 
-      await user.click(await screen.findByRole("tab", { name: copy.tab_person }));
+      await user.click(await screen.findByRole("tab", { name: copy.level_person }));
       const region = await screen.findByRole("region", { name: "Alice" });
-      expect(within(region).getByText("Connected @octocat")).toBeInTheDocument();
-      expect(within(region).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
+      const authorized = copy.connected_as.replace("{{account}}", "@octocat");
+      expect(within(within(region).getByRole("button", { name: tileName("GitHub") })).getByText(authorized)).toBeInTheDocument();
+      const dialog = await openConnector(user, region, "GitHub");
+      expect(within(dialog).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
 
-      await user.click(within(region).getByRole("button", { name: copy.disconnect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.disconnect }));
       expect(api.deleteContextConnectorCredential).not.toHaveBeenCalled();
-      await user.click(within(region).getByRole("button", { name: copy.confirm_disconnect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.confirm_disconnect }));
 
       await waitFor(() =>
         expect(api.deleteContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
@@ -565,6 +738,7 @@ describe("ContextConfigPage", () => {
         oauthDetail({
           person: {
             ...person,
+            bindings: [connectorOn("conn-github")],
             credentials: [{ connectorId: "conn-github", hint: "OAuth", updatedAt: "", kind: "oauth" }],
           },
         }),
@@ -572,13 +746,17 @@ describe("ContextConfigPage", () => {
       const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1" });
 
-      await user.click(await screen.findByRole("tab", { name: copy.tab_person }));
+      await user.click(await screen.findByRole("tab", { name: copy.level_person }));
       const region = await screen.findByRole("region", { name: "Alice" });
-      expect(within(region).getByText(copy.connected)).toBeInTheDocument();
+      const dialog = await openConnector(user, region, "GitHub");
+      expect(within(dialog).getAllByText(copy.connected).length).toBeGreaterThan(0);
+      expect(within(dialog).queryByText(/OAuth$/)).not.toBeInTheDocument();
     });
 
     it("offers a Personal Access Token for GitHub as a secondary option", async () => {
-      api.getContextConfigAgent.mockResolvedValue(oauthDetail());
+      api.getContextConfigAgent.mockResolvedValue(
+        oauthDetail({ person: { ...person, bindings: [connectorOn("conn-github")] } }),
+      );
       api.setContextConnectorCredential.mockResolvedValue({
         connectorId: "conn-github",
         hint: "••••1234",
@@ -590,15 +768,16 @@ describe("ContextConfigPage", () => {
       // but the token path still works.
       renderPage({ initialAgentId: "agent-1" });
 
-      await user.click(await screen.findByRole("tab", { name: copy.tab_person }));
+      await user.click(await screen.findByRole("tab", { name: copy.level_person }));
       const region = await screen.findByRole("region", { name: "Alice" });
-      expect(within(region).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
+      const dialog = await openConnector(user, region, "GitHub");
+      expect(within(dialog).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
 
-      await user.click(within(region).getByRole("button", { name: copy.pat_connect }));
-      const input = within(region).getByLabelText("Personal Access Token for GitHub");
+      await user.click(within(dialog).getByRole("button", { name: copy.pat_connect }));
+      const input = within(dialog).getByLabelText("Personal Access Token for GitHub");
       expect(input).toHaveAttribute("type", "password");
       await user.type(input, "ghp_example");
-      await user.click(within(region).getByRole("button", { name: copy.save }));
+      await user.click(within(dialog).getByRole("button", { name: copy.save }));
 
       await waitFor(() =>
         expect(api.setContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
@@ -609,7 +788,7 @@ describe("ContextConfigPage", () => {
         }),
       );
       await waitFor(() =>
-        expect(within(region).queryByLabelText("Personal Access Token for GitHub")).not.toBeInTheDocument(),
+        expect(within(dialog).queryByLabelText("Personal Access Token for GitHub")).not.toBeInTheDocument(),
       );
     });
 
@@ -622,12 +801,15 @@ describe("ContextConfigPage", () => {
           },
         }),
       );
+      api.getContextConfigScene.mockResolvedValue({ ...githubOn, bindings: [connectorOn("conn-notion")] });
+      const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1", openAuthorizeUrl: vi.fn() });
 
       const region = await screen.findByRole("region", { name: "Sales team" });
-      expect(within(region).getByRole("button", { name: copy.connect })).toBeInTheDocument();
-      expect(within(region).queryByRole("button", { name: copy.use_pat })).not.toBeInTheDocument();
-      expect(within(region).queryByText(copy.install_hint)).not.toBeInTheDocument();
+      const dialog = await openConnector(user, region, "Notion");
+      expect(within(dialog).getByRole("button", { name: copy.connect })).toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: copy.use_pat })).not.toBeInTheDocument();
+      expect(within(dialog).queryByText(copy.install_hint)).not.toBeInTheDocument();
     });
 
     it("reopens the scope a connection started from and reports the outcome", async () => {
@@ -639,7 +821,8 @@ describe("ContextConfigPage", () => {
       });
 
       expect(await screen.findByRole("region", { name: "Alice" })).toBeInTheDocument();
-      expect(screen.getByText("GitHub is connected.")).toBeInTheDocument();
+      expect(screen.getByRole("tab", { name: copy.level_person })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByText(copy.returned_connected.replace("{{name}}", "GitHub"))).toBeInTheDocument();
     });
 
     it("explains a cancelled provider sign-in", async () => {
@@ -660,13 +843,15 @@ describe("ContextConfigPage", () => {
       api.getContextConfigAgent.mockResolvedValue(
         oauthDetail({ offers: { connectors: [{ ...githubConnector, oauthAvailable: false }], skills: [] } }),
       );
+      const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1", openAuthorizeUrl: vi.fn() });
 
       const region = await screen.findByRole("region", { name: "Sales team" });
-      expect(within(region).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
-      expect(within(region).getByRole("button", { name: copy.pat_connect })).toBeInTheDocument();
+      const dialog = await openConnector(user, region, "GitHub");
+      expect(within(dialog).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: copy.pat_connect })).toBeInTheDocument();
       expect(
-        within(region).getByText("Sign-in for GitHub isn't available on this server. You can use a Personal Access Token instead."),
+        within(dialog).getByText(copy.connect_unavailable_pat.replace("{{name}}", "GitHub")),
       ).toBeInTheDocument();
     });
 
@@ -683,13 +868,12 @@ describe("ContextConfigPage", () => {
       renderPage({ initialAgentId: "agent-1", openAuthorizeUrl });
 
       const region = await screen.findByRole("region", { name: "Sales team" });
-      await user.click(within(region).getByRole("button", { name: copy.connect }));
+      const dialog = await openConnector(user, region, "GitHub");
+      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
       await waitFor(() =>
-        expect(toast.error).toHaveBeenCalledWith(
-          "Sign-in for GitHub isn't available on this server. You can use a Personal Access Token instead.",
-        ),
+        expect(toast.error).toHaveBeenCalledWith(copy.connect_unavailable_pat.replace("{{name}}", "GitHub")),
       );
-      await user.click(within(region).getByRole("button", { name: copy.connect }));
+      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith(copy.connect_forbidden));
       expect(toast.error).not.toHaveBeenCalledWith(copy.connect_failed);
       expect(openAuthorizeUrl).not.toHaveBeenCalled();
@@ -709,7 +893,7 @@ describe("ContextConfigPage", () => {
       sceneId === DM_SCENE
         ? {
             scene: { scopeKey: DM_SCENE, scopeTitle: "", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
-            bindings: [],
+            bindings: [connectorOn("conn-wiki")],
             credentials: [],
             // A 1:1 chat is its own scene, never its person's scope.
             scope: { type: "scene", key: DM_SCENE, title: "" },
@@ -721,7 +905,7 @@ describe("ContextConfigPage", () => {
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1" });
 
-    expect(await screen.findByRole("tab", { name: copy.tab_scene })).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: copy.level_scene })).toBeInTheDocument();
     const groupRegion = await screen.findByRole("region", { name: "Sales team" });
     expect(within(groupRegion).getByText(copy.kind_group)).toBeInTheDocument();
     expect(within(groupRegion).getByText(copy.scene_scope_hint)).toBeInTheDocument();
@@ -733,11 +917,13 @@ describe("ContextConfigPage", () => {
     const dmRegion = await screen.findByRole("region", { name: copy.scene_untitled_dm });
     expect(within(dmRegion).getByText(copy.kind_dm)).toBeInTheDocument();
     expect(within(dmRegion).getByText(copy.scene_scope_hint_dm)).toBeInTheDocument();
-    expect(within(dmRegion).getByText(copy.credential_required)).toBeInTheDocument();
     // An older backend without rights that lets the caller connect: the
     // chat's own token is set here.
-    expect(within(dmRegion).getByRole("button", { name: copy.set_credential })).toBeInTheDocument();
-    expect(within(dmRegion).queryByText(copy.owner_connects)).not.toBeInTheDocument();
+    const dialog = await openConnector(user, dmRegion, "Wiki");
+    expect(within(dialog).getByText(copy.added_dm)).toBeInTheDocument();
+    expect(within(dialog).getByText(copy.credential_required)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: copy.set_credential })).toBeInTheDocument();
+    expect(within(dialog).queryByText(copy.owner_connects)).not.toBeInTheDocument();
     expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", DM_SCENE, "");
   });
 
@@ -763,9 +949,9 @@ describe("ContextConfigPage", () => {
     const region = await screen.findByRole("region", { name: "Bob" });
     expect(within(region).getByText(copy.kind_dm)).toBeInTheDocument();
     expect(within(region).getByText(copy.scene_scope_hint_dm)).toBeInTheDocument();
-    expect(within(region).queryByText(copy.owner_connects)).not.toBeInTheDocument();
-    expect(within(region).getByRole("button", { name: copy.set_credential })).toBeInTheDocument();
-    await user.click(within(region).getByRole("switch", { name: "Turn Wiki on or off" }));
+    const dialog = await openConnector(user, region, "Wiki");
+    expect(within(dialog).queryByText(copy.owner_connects)).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: copy.app_add }));
 
     await waitFor(() =>
       expect(api.setContextCapabilityBinding).toHaveBeenCalledWith("agent-1", {
@@ -779,35 +965,32 @@ describe("ContextConfigPage", () => {
   });
 
   it("saves the group-chat switch of a personal connector and says it is not applied yet", async () => {
-    const person = agentDetail().person!;
     api.getContextConfigAgent.mockResolvedValue(
-      agentDetail({
-        person: {
-          ...person,
-          bindings: [
-            { resourceType: "connector", resourceId: "conn-wiki", enabled: true, shareInGroups: false },
-            { resourceType: "skill", resourceId: "skill-report", enabled: true, shareInGroups: false },
-          ],
-        },
+      personDetail({
+        bindings: [
+          connectorOn("conn-wiki"),
+          { resourceType: "skill", resourceId: "skill-report", enabled: true, shareInGroups: false },
+        ],
       }),
     );
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1" });
 
-    await user.click(await screen.findByRole("tab", { name: copy.tab_person }));
+    await user.click(await screen.findByRole("tab", { name: copy.level_person }));
     const region = await screen.findByRole("region", { name: "Alice" });
-    // One switch per enabled personal connector; skills never get one.
-    const share = within(region).getByRole("switch", { name: copy.share_in_groups });
-    expect(share).not.toBeChecked();
-    expect(within(region).getAllByRole("switch", { name: copy.share_in_groups })).toHaveLength(1);
-    expect(within(region).getByText(copy.share_in_groups_hint)).toBeInTheDocument();
+    // Skills never get the switch.
+    expect(within(region).queryByRole("switch", { name: copy.share_in_groups })).not.toBeInTheDocument();
     // The runtime does not read the switch yet, so the page says so and the
     // person scope hint does not claim group chats are excluded.
-    expect(within(region).getByText(copy.share_in_groups_pending_note)).toBeInTheDocument();
+    expect(within(region).getByText(copy.person_scope_hint)).toBeInTheDocument();
+    const dialog = await openConnector(user, region, "Wiki");
+    const share = within(dialog).getByRole("switch", { name: copy.share_in_groups });
+    expect(share).not.toBeChecked();
+    expect(within(dialog).getByText(copy.share_in_groups_hint)).toBeInTheDocument();
+    expect(within(dialog).getByText(copy.share_in_groups_pending_note)).toBeInTheDocument();
     expect(share).toHaveAccessibleDescription(
       `${copy.share_in_groups_hint} ${copy.share_in_groups_pending_note}`,
     );
-    expect(within(region).getByText(copy.person_scope_hint)).toBeInTheDocument();
 
     await user.click(share);
 
@@ -823,36 +1006,33 @@ describe("ContextConfigPage", () => {
     );
   });
 
-  it("shows the group-chat switch only for enabled personal connectors", async () => {
+  it("shows the group-chat switch only for added personal connectors", async () => {
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1" });
 
     // The scene editor never offers it.
     const sceneRegion = await screen.findByRole("region", { name: "Sales team" });
-    expect(within(sceneRegion).queryByRole("switch", { name: copy.share_in_groups })).not.toBeInTheDocument();
+    let dialog = await openConnector(user, sceneRegion, "Wiki");
+    expect(within(dialog).queryByRole("switch", { name: copy.share_in_groups })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
-    // A personal connector that is off has nothing to share.
-    await user.click(screen.getByRole("tab", { name: copy.tab_person }));
+    // A personal connector that is not added has nothing to share.
+    await user.click(screen.getByRole("tab", { name: copy.level_person }));
     const region = await screen.findByRole("region", { name: "Alice" });
-    expect(within(region).queryByRole("switch", { name: copy.share_in_groups })).not.toBeInTheDocument();
+    dialog = await openConnector(user, region, "Wiki");
+    expect(within(dialog).queryByRole("switch", { name: copy.share_in_groups })).not.toBeInTheDocument();
   });
 
   it("reflects a connector already shared with group chats", async () => {
-    const person = agentDetail().person!;
-    api.getContextConfigAgent.mockResolvedValue(
-      agentDetail({
-        person: {
-          ...person,
-          bindings: [{ resourceType: "connector", resourceId: "conn-wiki", enabled: true, shareInGroups: true }],
-        },
-      }),
-    );
+    api.getContextConfigAgent.mockResolvedValue(personDetail({ bindings: [connectorOn("conn-wiki", true)] }));
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1" });
 
-    await user.click(await screen.findByRole("tab", { name: copy.tab_person }));
+    await user.click(await screen.findByRole("tab", { name: copy.level_person }));
     const region = await screen.findByRole("region", { name: "Alice" });
-    expect(within(region).getByRole("switch", { name: copy.share_in_groups })).toBeChecked();
+    const dialog = await openConnector(user, region, "Wiki");
+    expect(within(dialog).getByRole("switch", { name: copy.share_in_groups })).toBeChecked();
   });
 
   it("uses a centered column that widens on desktop screens", async () => {
@@ -861,6 +1041,18 @@ describe("ContextConfigPage", () => {
     const column = screen.getByRole("main").firstElementChild;
     expect(column?.className).toContain("mx-auto");
     expect(column?.className).toContain("sm:max-w-2xl");
+  });
+
+  it("lists the levels as vertical tabs", async () => {
+    renderPage({ initialAgentId: "agent-1" });
+    await screen.findByRole("region", { name: "Sales team" });
+    const levels = screen.getByRole("tablist", { name: copy.levels_aria });
+    expect(levels.closest('[data-orientation="vertical"]')).not.toBeNull();
+    expect(within(levels).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      copy.level_scene,
+      copy.level_person,
+    ]);
+    expect(within(levels).getByRole("tab", { name: copy.level_scene })).toHaveAttribute("aria-selected", "true");
   });
 
   describe("agent managers", () => {
@@ -880,13 +1072,14 @@ describe("ContextConfigPage", () => {
       );
       renderPage({ initialAgentId: "agent-1" });
 
-      expect(await screen.findByText(copy.manager_hint)).toBeInTheDocument();
-      expect(screen.getByText(copy.manager_badge)).toBeInTheDocument();
+      expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
       expect(screen.queryByText(copy.no_access_title)).not.toBeInTheDocument();
+      // No agent header: neither the name nor the manager label.
+      expect(screen.queryByText("Helper")).not.toBeInTheDocument();
+      expect(screen.queryByText(copy.manager_badge)).not.toBeInTheDocument();
       const picker = screen.getByRole("combobox");
       expect(within(picker).getByRole("option", { name: `${copy.kind_group} · Sales team` })).toBeInTheDocument();
       expect(within(picker).getByRole("option", { name: `${copy.kind_dm} · Bob` })).toBeInTheDocument();
-      expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
     });
 
     it("lets a manager connect a 1:1 chat's own account: nothing is left to its person", async () => {
@@ -899,20 +1092,22 @@ describe("ContextConfigPage", () => {
       );
       api.getContextConfigScene.mockResolvedValue({
         scene: { scopeKey: DM_SCENE, scopeTitle: "Bob", source: "manager", expiresAt: "", kind: "dm", orgId: "" },
-        bindings: [],
+        bindings: [connectorOn("conn-github")],
         credentials: [{ connectorId: "conn-github", hint: "@bob", updatedAt: "", kind: "oauth" }],
         scope: { type: "scene", key: DM_SCENE, title: "Bob" },
         canConnect: true,
         ...noContent,
         rights: allRights,
       });
+      const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1" });
 
       const region = await screen.findByRole("region", { name: "Bob" });
-      expect(within(region).queryByText(copy.owner_connects)).not.toBeInTheDocument();
-      expect(within(region).getByText("Connected @bob")).toBeInTheDocument();
-      expect(within(region).getByRole("button", { name: copy.disconnect })).toBeInTheDocument();
-      expect(within(region).getByRole("switch", { name: "Turn GitHub on or off" })).toBeInTheDocument();
+      const dialog = await openConnector(user, region, "GitHub");
+      expect(within(dialog).queryByText(copy.owner_connects)).not.toBeInTheDocument();
+      expect(within(dialog).getAllByText(copy.connected_as.replace("{{account}}", "@bob")).length).toBeGreaterThan(0);
+      expect(within(dialog).getByRole("button", { name: copy.disconnect })).toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: copy.app_remove })).toBeInTheDocument();
     });
 
     it("hides connecting whenever the server says the caller may not connect", async () => {
@@ -923,16 +1118,18 @@ describe("ContextConfigPage", () => {
       );
       api.getContextConfigScene.mockResolvedValue({
         scene: { scopeKey: DM_SCENE, scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" },
-        bindings: [],
+        bindings: [connectorOn("conn-github")],
         credentials: [],
         scope: { type: "scene", key: DM_SCENE, title: "Bob" },
         canConnect: false,
       });
+      const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1" });
 
       const region = await screen.findByRole("region", { name: "Bob" });
-      expect(within(region).getByText(copy.owner_connects)).toBeInTheDocument();
-      expect(within(region).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
+      const dialog = await openConnector(user, region, "GitHub");
+      expect(within(dialog).getByText(copy.owner_connects)).toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: copy.connect })).not.toBeInTheDocument();
     });
 
     it("takes manager access from the agent detail, even when the agent list fails", async () => {
@@ -941,20 +1138,21 @@ describe("ContextConfigPage", () => {
       const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1" });
 
-      expect(await screen.findByText(copy.manager_hint)).toBeInTheDocument();
-      expect(screen.getByText(copy.scene_empty_manager_title)).toBeInTheDocument();
-      await user.click(screen.getByRole("tab", { name: copy.tab_person }));
+      expect(await screen.findByText(copy.scene_empty_manager_title)).toBeInTheDocument();
+      await user.click(screen.getByRole("tab", { name: copy.level_person }));
       expect(screen.getByText(copy.person_manager_note)).toBeInTheDocument();
     });
 
     it("does not show manager copy for a grant-only detail", async () => {
       // The list claims manager access, but the detail is authoritative.
       api.listContextConfigAgents.mockResolvedValue([managed]);
-      api.getContextConfigAgent.mockResolvedValue(agentDetail());
+      api.getContextConfigAgent.mockResolvedValue(agentDetail({ scenes: [] }));
+      const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1" });
 
-      expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
-      expect(screen.queryByText(copy.manager_hint)).not.toBeInTheDocument();
+      await user.click(await screen.findByRole("tab", { name: copy.level_scene }));
+      expect(screen.getByText(copy.scene_empty_title)).toBeInTheDocument();
+      expect(screen.queryByText(copy.scene_empty_manager_title)).not.toBeInTheDocument();
     });
 
     it("lists managed agents in the picker with the manager label", async () => {
@@ -971,7 +1169,7 @@ describe("ContextConfigPage", () => {
       expect(within(planner).queryByText(copy.manager_badge)).not.toBeInTheDocument();
     });
 
-    it("explains an empty scene list and that 我的 still needs a personal link", async () => {
+    it("explains an empty scene list and that 个人能力 still needs a personal link", async () => {
       api.listContextConfigAgents.mockResolvedValue([managed]);
       api.getContextConfigAgent.mockResolvedValue(agentDetail({ person: null, scenes: [], access: "manager" }));
       const user = userEvent.setup();
@@ -979,7 +1177,7 @@ describe("ContextConfigPage", () => {
 
       expect(await screen.findByText(copy.scene_empty_manager_title)).toBeInTheDocument();
       expect(screen.getByText(copy.scene_empty_manager_hint)).toBeInTheDocument();
-      await user.click(screen.getByRole("tab", { name: copy.tab_person }));
+      await user.click(screen.getByRole("tab", { name: copy.level_person }));
       expect(screen.getByText(copy.person_empty_hint)).toBeInTheDocument();
       expect(screen.getByText(copy.person_manager_note)).toBeInTheDocument();
     });
@@ -991,20 +1189,23 @@ describe("ContextConfigPage", () => {
     const orgLevel = {
       scopeKey: "dingA",
       scopeTitle: "Acme",
-      bindings: [{ resourceType: "skill" as const, resourceId: "skill-report", enabled: true, shareInGroups: false }],
+      bindings: [
+        { resourceType: "skill" as const, resourceId: "skill-report", enabled: true, shareInGroups: false },
+        connectorOn("conn-wiki"),
+      ],
       credentials: [{ connectorId: "conn-wiki", hint: "", updatedAt: "", kind: "bearer" as const }],
       canEdit: false,
       ...noContent,
     };
 
-    it("shows the enterprise level read-only to members", async () => {
+    it("shows the enterprise level read-only when it cannot be changed", async () => {
       api.getContextConfigAgent.mockResolvedValue(
         agentDetail({ tenant: acme, tenants: [acme], org: orgLevel }),
       );
       const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1" });
 
-      await user.click(await screen.findByRole("tab", { name: copy.tab_org }));
+      await user.click(await screen.findByRole("tab", { name: copy.level_org }));
       const region = await screen.findByRole("region", { name: "Acme" });
       expect(within(region).getByText(copy.org_read_only)).toBeInTheDocument();
       expect(within(region).getByRole("switch", { name: "Turn Weekly report on or off" })).toBeChecked();
@@ -1013,16 +1214,17 @@ describe("ContextConfigPage", () => {
         expect(toggle).toHaveAttribute("aria-disabled", "true");
       }
       // A stored enterprise token shows, but nothing can be changed.
-      expect(within(region).getByText(copy.credential_set.replace("{{hint}}", "••••"))).toBeInTheDocument();
-      expect(within(region).queryByRole("button")).not.toBeInTheDocument();
+      const dialog = await openConnector(user, region, "Wiki");
+      expect(within(dialog).getByText(copy.credential_set.replace("{{hint}}", "••••"))).toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: copy.app_remove })).not.toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: copy.replace_credential })).not.toBeInTheDocument();
     });
 
-    it("says when there is no enterprise level to show", async () => {
-      const user = userEvent.setup();
+    it("offers no enterprise level when there is none to show", async () => {
       renderPage({ initialAgentId: "agent-1" });
 
-      await user.click(await screen.findByRole("tab", { name: copy.tab_org }));
-      expect(await screen.findByText(copy.org_unavailable)).toBeInTheDocument();
+      await screen.findByRole("region", { name: "Sales team" });
+      expect(screen.queryByRole("tab", { name: copy.level_org })).not.toBeInTheDocument();
     });
 
     it("lets a manager switch and store tokens at the enterprise level", async () => {
@@ -1032,7 +1234,7 @@ describe("ContextConfigPage", () => {
           access: "manager",
           tenant: acme,
           tenants: [acme],
-          org: { ...orgLevel, bindings: [], credentials: [], canEdit: true },
+          org: { ...orgLevel, bindings: [connectorOn("conn-wiki")], credentials: [], canEdit: true },
         }),
       );
       api.setContextConnectorCredential.mockResolvedValue({
@@ -1044,7 +1246,7 @@ describe("ContextConfigPage", () => {
       const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1" });
 
-      await user.click(await screen.findByRole("tab", { name: copy.tab_org }));
+      await user.click(await screen.findByRole("tab", { name: copy.level_org }));
       const region = await screen.findByRole("region", { name: "Acme" });
       expect(within(region).getByText(copy.org_scope_hint)).toBeInTheDocument();
       await user.click(within(region).getByRole("switch", { name: "Turn Weekly report on or off" }));
@@ -1059,10 +1261,12 @@ describe("ContextConfigPage", () => {
         }),
       );
 
-      await user.click(within(region).getByRole("button", { name: copy.set_credential }));
-      expect(within(region).getByText(copy.credential_org_note)).toBeInTheDocument();
-      await user.type(within(region).getByLabelText("Bearer token for Wiki"), "secret");
-      await user.click(within(region).getByRole("button", { name: copy.save }));
+      const dialog = await openConnector(user, region, "Wiki");
+      expect(within(dialog).getByText(copy.added_org)).toBeInTheDocument();
+      await user.click(within(dialog).getByRole("button", { name: copy.set_credential }));
+      expect(within(dialog).getByText(copy.credential_org_note)).toBeInTheDocument();
+      await user.type(within(dialog).getByLabelText("Bearer token for Wiki"), "secret");
+      await user.click(within(dialog).getByRole("button", { name: copy.save }));
       await waitFor(() =>
         expect(api.setContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
           scopeType: "org",
@@ -1081,7 +1285,14 @@ describe("ContextConfigPage", () => {
           access: "manager",
           tenant: beta,
           tenants: [acme, beta],
-          org: { ...orgLevel, scopeKey: "dingB", scopeTitle: "Beta", bindings: [], credentials: [], canEdit: true },
+          org: {
+            ...orgLevel,
+            scopeKey: "dingB",
+            scopeTitle: "Beta",
+            bindings: [connectorOn("conn-github")],
+            credentials: [],
+            canEdit: true,
+          },
           offers: {
             connectors: [...agentDetail().offers.connectors, githubConnector],
             skills: agentDetail().offers.skills,
@@ -1099,9 +1310,10 @@ describe("ContextConfigPage", () => {
 
       const region = await screen.findByRole("region", { name: "Beta" });
       expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "dingB");
-      expect(screen.getByRole("tab", { name: copy.tab_org })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByRole("tab", { name: copy.level_org })).toHaveAttribute("aria-selected", "true");
 
-      await user.click(within(region).getByRole("button", { name: copy.connect }));
+      const dialog = await openConnector(user, region, "GitHub");
+      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
       await waitFor(() =>
         expect(openAuthorizeUrl).toHaveBeenCalledWith("https://github.com/login/oauth/authorize?state=y", {
           agentId: "agent-1",
@@ -1122,6 +1334,8 @@ describe("ContextConfigPage", () => {
       api.getContextConfigAgent.mockResolvedValue(
         agentDetail({ tenant: acme, tenants: [acme], org: orgLevel }),
       );
+      api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, bindings: [], credentials: [] });
+      const user = userEvent.setup();
       renderPage({ initialAgentId: "agent-1" });
 
       const region = await screen.findByRole("region", { name: "Sales team" });
@@ -1130,6 +1344,13 @@ describe("ContextConfigPage", () => {
       expect(within(skill as HTMLElement).getByText(copy.on_for_org)).toBeInTheDocument();
       // The chat's own switch stays its own.
       expect(within(skill as HTMLElement).getByRole("switch")).not.toBeChecked();
+      // A connector the enterprise added and authorized applies here too.
+      const wiki = within(region).getByRole("button", { name: tileName("Wiki") });
+      expect(within(wiki).getByText(copy.on_for_org)).toBeInTheDocument();
+      expect(within(wiki).queryByText(copy.status_unauthorized)).not.toBeInTheDocument();
+      const dialog = await openConnector(user, region, "Wiki");
+      expect(within(dialog).getByText(copy.org_on_note)).toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: copy.app_add })).not.toBeInTheDocument();
     });
 
     it("switches the tenant and sends it with every request there", async () => {
@@ -1199,7 +1420,7 @@ describe("ContextConfigPage", () => {
       expect(api.getContextConfigAgent).toHaveBeenLastCalledWith("agent-1", "");
     });
 
-    it("opens 我的 in the link's tenant after a personal link and switches, stores a token and connects there", async () => {
+    it("opens 个人能力 in the link's tenant after a personal link and switches, stores a token and connects there", async () => {
       api.redeemContextConfigLink.mockResolvedValue({
         agentId: "agent-1",
         workspaceId: "ws-1",
@@ -1212,6 +1433,7 @@ describe("ContextConfigPage", () => {
         agentDetail({
           tenant: beta,
           tenants: [beta],
+          person: { ...agentDetail().person!, bindings: [connectorOn("conn-wiki"), connectorOn("conn-github")] },
           offers: {
             connectors: [...agentDetail().offers.connectors, githubConnector],
             skills: agentDetail().offers.skills,
@@ -1231,8 +1453,9 @@ describe("ContextConfigPage", () => {
 
       const region = await screen.findByRole("region", { name: "Alice" });
       expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "dingB");
-      // Bound to the person: no other level to open.
-      expect(screen.queryByRole("tab", { name: copy.tab_person })).not.toBeInTheDocument();
+      // Bound to the person, with no 1:1 chat and no enterprise level: no
+      // other level to open.
+      expect(screen.queryByRole("tablist", { name: copy.levels_aria })).not.toBeInTheDocument();
 
       await user.click(within(region).getByRole("switch", { name: "Turn Weekly report on or off" }));
       await waitFor(() =>
@@ -1246,9 +1469,10 @@ describe("ContextConfigPage", () => {
         }),
       );
 
-      await user.click(within(region).getByRole("button", { name: copy.set_credential }));
-      await user.type(within(region).getByLabelText("Bearer token for Wiki"), "secret");
-      await user.click(within(region).getByRole("button", { name: copy.save }));
+      let dialog = await openConnector(user, region, "Wiki");
+      await user.click(within(dialog).getByRole("button", { name: copy.set_credential }));
+      await user.type(within(dialog).getByLabelText("Bearer token for Wiki"), "secret");
+      await user.click(within(dialog).getByRole("button", { name: copy.save }));
       await waitFor(() =>
         expect(api.setContextConnectorCredential).toHaveBeenCalledWith("agent-1", {
           scopeType: "person",
@@ -1258,8 +1482,11 @@ describe("ContextConfigPage", () => {
           bearer: "secret",
         }),
       );
+      await user.keyboard("{Escape}");
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
-      await user.click(within(region).getByRole("button", { name: copy.connect }));
+      dialog = await openConnector(user, region, "GitHub");
+      await user.click(within(dialog).getByRole("button", { name: copy.connect }));
       await waitFor(() =>
         expect(openAuthorizeUrl).toHaveBeenCalledWith("https://github.com/login/oauth/authorize?state=x", {
           agentId: "agent-1",
@@ -1325,9 +1552,8 @@ describe("bound configuration page", () => {
     expect(api.redeemContextConfigLink).not.toHaveBeenCalled();
     expect(api.listContextConfigAgents).not.toHaveBeenCalled();
     expect(api.getContextConfigAgent).toHaveBeenCalledWith("agent-1", "");
-    for (const level of [copy.tab_org, copy.tab_scene, copy.tab_person]) {
-      expect(screen.queryByRole("tab", { name: level })).not.toBeInTheDocument();
-    }
+    // A member's group link has a single level: no level tabs at all.
+    expect(screen.queryByRole("tablist", { name: copy.levels_aria })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: copy.switch_agent })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: copy.pick_group })).not.toBeInTheDocument();
@@ -1342,15 +1568,24 @@ describe("bound configuration page", () => {
     expect(screen.queryByRole("region", { name: "Sales team" })).not.toBeInTheDocument();
   });
 
-  it("shows a personal link's 1:1 chat above the person's own settings", async () => {
+  it("opens a personal link on its 1:1 chat, with the person's own level beside it", async () => {
     const dmScene = { scopeKey: DM_SCENE, scopeTitle: "Alice", source: "agent_link", expiresAt: "", kind: "dm" as const, orgId: "" };
     api.getContextConfigAgent.mockResolvedValue(agentDetail({ scenes: [dmScene] }));
     api.getContextConfigScene.mockResolvedValue({ ...sceneDetail, scene: dmScene });
+    const user = userEvent.setup();
     renderPage({ binding: personBinding });
 
-    expect(await screen.findByRole("heading", { name: copy.dm_section_title })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: copy.person_section_title })).toBeInTheDocument();
+    const levels = await screen.findByRole("tablist", { name: copy.levels_aria });
+    expect(within(levels).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      copy.level_scene,
+      copy.level_person,
+    ]);
+    expect(within(levels).getByRole("tab", { name: copy.level_scene })).toHaveAttribute("aria-selected", "true");
     await waitFor(() => expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", DM_SCENE, ""));
+    expect(await screen.findByText(copy.kind_dm)).toBeInTheDocument();
+
+    await user.click(within(levels).getByRole("tab", { name: copy.level_person }));
+    expect(await screen.findByText(copy.person_scope_hint)).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Sales team" })).not.toBeInTheDocument();
   });
 
@@ -1361,17 +1596,24 @@ describe("bound configuration page", () => {
     expect(screen.queryByRole("region", { name: "Alice" })).not.toBeInTheDocument();
   });
 
-  it("adds the enterprise level for the agent's managers only", async () => {
+  it("adds 企业能力 above 当前会话 for the agent's managers only", async () => {
     const acme = { orgId: "dingA", name: "Acme", source: "identity" };
     const org = { scopeKey: "dingA", scopeTitle: "Acme", bindings: [], credentials: [], canEdit: true, ...noContent };
     api.getContextConfigAgent.mockResolvedValue(
       agentDetail({ access: "manager", tenant: acme, tenants: [acme], org: { ...org, rights: allRights } }),
     );
+    const user = userEvent.setup();
     renderPage({ binding: groupBinding });
 
-    expect(await screen.findByRole("heading", { name: copy.org_section_title })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Acme" })).toBeInTheDocument();
+    const levels = await screen.findByRole("tablist", { name: copy.levels_aria });
+    expect(within(levels).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      copy.level_org,
+      copy.level_scene,
+    ]);
+    // The chat opens first.
     expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
+    await user.click(within(levels).getByRole("tab", { name: copy.level_org }));
+    expect(await screen.findByRole("region", { name: "Acme" })).toBeInTheDocument();
   });
 
   it("never shows the enterprise level to a member", async () => {
@@ -1386,17 +1628,18 @@ describe("bound configuration page", () => {
     renderPage({ binding: groupBinding });
 
     expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: copy.org_section_title })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: copy.level_org })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Acme" })).not.toBeInTheDocument();
   });
 
-  it("lets a group link holder only view: the agent's managers maintain group settings", async () => {
+  it("lets a group link holder only view when the server says so", async () => {
     api.getContextConfigScene.mockResolvedValue({
       ...sceneDetail,
       rights: noRights,
       prompts: [toneprompt],
       mcpConfig: { mcpServers: { docs: { url: "https://mcp.example/docs" } } },
     });
+    const user = userEvent.setup();
     renderPage({ binding: groupBinding });
 
     const region = await screen.findByRole("region", { name: "Sales team" });
@@ -1404,14 +1647,18 @@ describe("bound configuration page", () => {
     for (const toggle of within(region).getAllByRole("switch")) {
       expect(toggle).toHaveAttribute("aria-disabled", "true");
     }
-    // The stored account shows; nothing can be stored, removed or added.
-    expect(within(region).getByText("Credential saved (••••abcd)")).toBeInTheDocument();
-    expect(within(region).queryByRole("button")).not.toBeInTheDocument();
     expect(within(region).getByRole("listitem", { name: "Tone" })).toBeInTheDocument();
     expect(within(region).getByRole("listitem", { name: "docs" })).toBeInTheDocument();
+    expect(within(region).queryByRole("button", { name: copy.prompt_add })).not.toBeInTheDocument();
+    expect(within(region).queryByRole("button", { name: copy.mcp_add })).not.toBeInTheDocument();
+    // The stored account shows; nothing can be stored, removed or added.
+    const dialog = await openConnector(user, region, "Wiki");
+    expect(within(dialog).getByText("Credential saved (••••abcd)")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: copy.app_remove })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: copy.replace_credential })).not.toBeInTheDocument();
   });
 
-  it("lets a 1:1 chat link holder only view: the agent's managers maintain the chat", async () => {
+  it("lets a 1:1 chat link holder only view when the server says so", async () => {
     api.getContextConfigAgent.mockResolvedValue(
       agentDetail({
         scenes: [{ scopeKey: DM_SCENE, scopeTitle: "Bob", source: "agent_link", expiresAt: "", kind: "dm", orgId: "" }],
@@ -1426,17 +1673,22 @@ describe("bound configuration page", () => {
       ...noContent,
       rights: noRights,
     });
+    const user = userEvent.setup();
     renderPage({ binding: { ...groupBinding, scopeKey: DM_SCENE } });
 
     const region = await screen.findByRole("region", { name: "Bob" });
     expect(within(region).getByText(copy.scene_read_only_dm)).toBeInTheDocument();
     expect(within(region).queryByText(copy.person_read_only)).not.toBeInTheDocument();
-    expect(within(region).queryByRole("button")).not.toBeInTheDocument();
     expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", DM_SCENE, "");
+    const dialog = await openConnector(user, region, "Wiki");
+    expect(within(dialog).getByRole("button", { name: copy.app_add })).toBeDisabled();
+    expect(within(dialog).getByText(copy.app_add_read_only)).toBeInTheDocument();
   });
 
   it("returns a provider sign-in to the bound page", async () => {
-    api.getContextConfigAgent.mockResolvedValue(oauthDetail({ person: { ...personDetail().person!, rights: allRights } }));
+    api.getContextConfigAgent.mockResolvedValue(
+      oauthDetail({ person: { ...personDetail().person!, rights: allRights, bindings: [connectorOn("conn-github")] } }),
+    );
     api.startContextConnectorConnection.mockResolvedValue("https://github.com/login/oauth/authorize?state=b");
     const openAuthorizeUrl = vi.fn();
     const returnTo = "/dingtalk/configure?agent=agent-1&scope_type=person&scope_key=staff-1";
@@ -1444,7 +1696,8 @@ describe("bound configuration page", () => {
     renderPage({ binding: personBinding, openAuthorizeUrl, connectReturnTo: returnTo });
 
     const region = await screen.findByRole("region", { name: "Alice" });
-    await user.click(within(region).getByRole("button", { name: copy.connect }));
+    const dialog = await openConnector(user, region, "GitHub");
+    await user.click(within(dialog).getByRole("button", { name: copy.connect }));
     await waitFor(() =>
       expect(api.startContextConnectorConnection).toHaveBeenCalledWith("agent-1", {
         scopeType: "person",
@@ -1457,40 +1710,15 @@ describe("bound configuration page", () => {
 });
 
 describe("top-level tabs", () => {
-  it("opens 公开能力 from the tab parameter with common and published capabilities", async () => {
-    api.getContextConfigAgent.mockResolvedValue(
-      agentDetail({
-        global: {
-          connectors: [{ id: "conn-global", name: "Docs", catalogSlug: "" }],
-          skills: [{ id: "skill-report", name: "Weekly report", description: "Writes reports" }],
-        },
-      }),
-    );
-    renderPage({ binding: groupBinding, initialTab: "public" });
-
-    const common = await screen.findByRole("region", { name: copy.public_common_title });
-    const published = screen.getByRole("region", { name: copy.public_org_title });
-    expect(screen.getByRole("tab", { name: copy.tab_public })).toHaveAttribute("aria-selected", "true");
-    expect(within(common).getByText("Docs")).toBeInTheDocument();
-    expect(within(common).getByText("Weekly report")).toBeInTheDocument();
-    // An offer that is also granted is a common capability, listed once.
-    expect(within(published).getByText("Wiki")).toBeInTheDocument();
-    expect(within(published).queryByText("Weekly report")).not.toBeInTheDocument();
-    expect(within(published).queryByText("Docs")).not.toBeInTheDocument();
-    // Read-only: no switches on this tab.
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-  });
-
-  it("opens the default tab for an unknown id and reports switching", async () => {
+  it("has no 公开能力 tab: an old public link opens 场域能力", async () => {
     const onTabChange = vi.fn();
     const user = userEvent.setup();
-    renderPage({ binding: groupBinding, initialTab: "no-such-tab", onTabChange });
+    renderPage({ binding: groupBinding, initialTab: "public", onTabChange });
 
     expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: copy.tab_scope })).toHaveAttribute("aria-selected", "true");
-    await user.click(screen.getByRole("tab", { name: copy.tab_public }));
-    expect(onTabChange).toHaveBeenLastCalledWith("public");
-    expect(await screen.findByRole("region", { name: copy.public_common_title })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: copy.tab_routines }));
+    expect(onTabChange).toHaveBeenLastCalledWith("routines");
     expect(screen.queryByRole("region", { name: "Sales team" })).not.toBeInTheDocument();
   });
 
@@ -1498,9 +1726,9 @@ describe("top-level tabs", () => {
     const user = userEvent.setup();
     renderPage({ initialAgentId: "agent-1" });
 
-    expect(await screen.findByRole("tab", { name: copy.tab_scene })).toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: copy.tab_public }));
-    expect(screen.queryByRole("tab", { name: copy.tab_scene })).not.toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: copy.level_scene })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: copy.tab_routines }));
+    expect(screen.queryByRole("tab", { name: copy.level_scene })).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: copy.tab_scope }));
     expect(await screen.findByRole("region", { name: "Sales team" })).toBeInTheDocument();
   });

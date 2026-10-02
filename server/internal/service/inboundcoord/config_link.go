@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
 	"strings"
 	"time"
 
@@ -105,9 +106,9 @@ func (c *Coordinator) attachConfigLink(ctx context.Context, turn Turn, decision 
 		TraceID:         strings.TrimSpace(turn.TraceID),
 	})
 	cancel()
-	line := ""
+	line, deepLink := "", ""
 	if err == nil {
-		line, err = configLinkLine(workReceiptLanguage(turn, decision.CoordinationActions[target]), link)
+		line, deepLink, err = configLinkLine(workReceiptLanguage(turn, decision.CoordinationActions[target]), link)
 	}
 	elapsed := time.Since(started).Milliseconds()
 	status := "issued"
@@ -122,7 +123,9 @@ func (c *Coordinator) attachConfigLink(ctx context.Context, turn Turn, decision 
 		actions[target].Reply = strings.TrimSpace(actions[target].Reply) + "\n\n" + line
 		decision.CoordinationActions = actions
 		decision.UserText = ComposeDecisionReplies(actions)
-		decision.configLinkURL = link.URL
+		// The reply carries the link only inside the DingTalk deep link, so
+		// that exact string is what logs and traces replace.
+		decision.configLinkURL = deepLink
 	}
 	output, _ := json.Marshal(summary)
 	if lt != nil {
@@ -169,11 +172,20 @@ func issueConfigLink(ctx context.Context, issuer ConfigLinkIssuer, req ConfigLin
 	return link, nil
 }
 
-// configLinkLine is the fixed Host line that ends the capability answer. The
-// URL comes last so the answer ends with the link itself.
-func configLinkLine(language string, link ConfigLink) (string, error) {
+// ConfigLinkDeepLink wraps a configuration page URL in the DingTalk client
+// link that opens it inside DingTalk: the side panel on desktop
+// (pc_slide=true), the in-app browser on mobile.
+func ConfigLinkDeepLink(pageURL string) string {
+	return "dingtalk://dingtalkclient/page/link?url=" + url.QueryEscape(pageURL) + "&pc_slide=true"
+}
+
+// configLinkLine is the fixed Host line that ends the capability answer: a
+// Markdown link to the DingTalk deep link (the reply is sent as Markdown, so
+// people see the label, never the bearer URL), then its lifetime. It returns
+// the line and the deep link it carries.
+func configLinkLine(language string, link ConfigLink) (string, string, error) {
 	if link.Scope == "person" && !link.SingleUse {
-		return "", errors.New("personal configuration link must be single use")
+		return "", "", errors.New("personal configuration link must be single use")
 	}
 	minutes := int(math.Round(link.ValidFor.Minutes()))
 	if minutes < 1 {
@@ -182,27 +194,28 @@ func configLinkLine(language string, link ConfigLink) (string, error) {
 	var format string
 	switch language {
 	case "en":
-		format = "Configure this group's capabilities (valid for %d min): %s"
+		format = "[Configure this group's capabilities](%s) (valid for %d min)"
 		if link.Scope == "person" {
-			format = "Configure your personal capabilities (valid for %d min, single use): %s"
+			format = "[Configure your personal capabilities](%s) (valid for %d min, single use)"
 		}
 	case "ja":
-		format = "このグループの機能設定（%d 分間有効）：%s"
+		format = "[このグループの機能設定](%s)（%d 分間有効）"
 		if link.Scope == "person" {
-			format = "あなた個人の機能設定（%d 分間有効、1 回限り）：%s"
+			format = "[あなた個人の機能設定](%s)（%d 分間有効、1 回限り）"
 		}
 	case "ko":
-		format = "이 그룹의 기능 설정 (%d분간 유효): %s"
+		format = "[이 그룹의 기능 설정](%s) (%d분간 유효)"
 		if link.Scope == "person" {
-			format = "개인 기능 설정 (%d분간 유효, 1회용): %s"
+			format = "[개인 기능 설정](%s) (%d분간 유효, 1회용)"
 		}
 	default:
-		format = "本群能力配置（%d 分钟内有效）：%s"
+		format = "[本群能力配置](%s)（%d 分钟内有效）"
 		if link.Scope == "person" {
-			format = "你的个人能力配置（%d 分钟内有效，限用一次）：%s"
+			format = "[你的个人能力配置](%s)（%d 分钟内有效，限用一次）"
 		}
 	}
-	return fmt.Sprintf(format, minutes, link.URL), nil
+	deepLink := ConfigLinkDeepLink(link.URL)
+	return fmt.Sprintf(format, deepLink, minutes), deepLink, nil
 }
 
 // redactConfigLink removes the bearer URL of an attached configuration link

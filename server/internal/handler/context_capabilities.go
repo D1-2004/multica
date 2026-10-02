@@ -174,6 +174,14 @@ type contextCapOfferedConnectorDTO struct {
 	InstallURL string `json:"install_url,omitempty"`
 }
 
+// contextCapCatalogAppDTO is one official app of the connector catalog: the
+// configure page lists every app it supports, including the ones not yet
+// opened for this agent.
+type contextCapCatalogAppDTO struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
 type contextCapAgentDetailResponse struct {
 	Agent  contextCapAgentDTO `json:"agent"`
 	Global struct {
@@ -200,6 +208,9 @@ type contextCapAgentDetailResponse struct {
 	// Org is the enterprise layer of Tenant; null unless the caller manages
 	// the agent (contextCapScopeRights), and when there is no tenant.
 	Org *contextCapOrgLayerDTO `json:"org"`
+	// Apps is the connector catalog in its order; an app becomes usable once
+	// the agent's manager adds it (Global or Offers then lists it).
+	Apps []contextCapCatalogAppDTO `json:"apps"`
 }
 
 func contextCapTime(t time.Time) string {
@@ -1257,6 +1268,10 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 	resp.Offers.Skills = []contextCapSkillDTO{}
 	resp.Scenes = []contextCapSceneDTO{}
 	resp.Tenants = []contextCapTenantRefDTO{}
+	resp.Apps = []contextCapCatalogAppDTO{}
+	for _, app := range connectorCatalog.Apps() {
+		resp.Apps = append(resp.Apps, contextCapCatalogAppDTO{Slug: app.Slug, Name: app.Name})
+	}
 	tenants, err := contextcap.AgentTenants(ctx, h.DB, a.WorkspaceID, a.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "tenant lookup failed")
