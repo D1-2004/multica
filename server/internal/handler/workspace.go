@@ -977,6 +977,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 		{
+			name: "prepare employee artifact cleanup",
+			run:  func() error { return h.MarkWorkspaceEmployeeArtifactsDeleting(ctx, tx, requester.WorkspaceID) },
+		},
+		{
 			name: "delete leaf data",
 			run:  func() error { return qtx.DeleteWorkspaceLeafData(ctx, requester.WorkspaceID) },
 		},
@@ -1060,8 +1064,10 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 					`DELETE FROM employee_event_consumption WHERE workspace_id=$1`,
 					`DELETE FROM employee_scene_job WHERE workspace_id=$1`,
 					`DELETE FROM scene_event_receipt WHERE workspace_id=$1`,
+					`DELETE FROM employee_learning_consumption WHERE workspace_id=$1`,
 					`DELETE FROM employee_learning WHERE workspace_id=$1`,
 					`DELETE FROM employee_memory_state WHERE workspace_id=$1`,
+					`DELETE FROM employee_run_notice WHERE workspace_id=$1`,
 					`DELETE FROM employee_task_run WHERE workspace_id=$1`,
 					`DELETE FROM employee_task_entry WHERE workspace_id=$1`,
 					`DELETE FROM employee_task WHERE workspace_id=$1`,

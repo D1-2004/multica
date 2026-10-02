@@ -57,6 +57,9 @@ type ActionInput struct {
 	// conversation changed its scene's configuration, sent into that scene
 	// with no dispatch to close and no Router callback.
 	SceneNoticeID string `json:"scene_notice_id,omitempty"`
+	// EmployeeRunNoticeID is Host provenance retained even if workspace teardown
+	// removes the notice row while a worker already holds the action payload.
+	EmployeeRunNoticeID string `json:"employee_run_notice_id,omitempty"`
 	// DWSEnvironment pins the DWS gateway ("production" or "staging") the
 	// send goes through. Empty keeps the provider's configured gateway; native
 	// subscriptions set "production", where their events come from.
@@ -80,6 +83,9 @@ type DBTX interface {
 }
 
 type Service struct {
+	// BeforeSend is an optional Host authority fence immediately before a new
+	// provider submission. Configure before Run; ordinary actions may return nil.
+	BeforeSend func(context.Context, ActionInput) error
 	// OnSandboxDelivered must be configured before Run. Implementations must
 	// tolerate repetition after a crash between their commit and our ack.
 	OnSandboxDelivered func(context.Context, ActionInput, string, string) error
@@ -390,6 +396,11 @@ func validateScope(in ActionInput) error {
 }
 
 func validateInput(in ActionInput) error {
+	if in.EmployeeRunNoticeID != "" {
+		if _, err := uuid.Parse(in.EmployeeRunNoticeID); err != nil {
+			return errors.New("employee run notice id is invalid")
+		}
+	}
 	switch {
 	case in.CoordinatorWaitJobID != "":
 		if _, err := uuid.Parse(in.CoordinatorWaitJobID); err != nil {

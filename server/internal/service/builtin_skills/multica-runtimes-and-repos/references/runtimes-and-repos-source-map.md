@@ -212,3 +212,26 @@
   `employee_task_*access_test.go` cover replay, parallel tasks, usage/results,
   HTTP authentication boundaries and WebSocket claims. Local transport/fake CLI
   tests do not substitute for a real FC canary or persistent-device verification.
+
+### Direct file artifacts
+
+- `server/internal/handler/employee_task_artifact*.go`: queue/Run/Task/scene
+  provenance, pending/ready upload receipts, immutable deduplication, private
+  metadata/list/download/content/delete, and deletion retries/tombstones.
+  Object ciphertext uses the existing internal connector secretbox master key;
+  no plaintext per-object key is persisted.
+- `server/internal/handler/file.go`, `server/pkg/db/queries/attachment.sql`:
+  Direct-only seams preserve the existing upload/download API and prevent
+  implicit Issue/Chat rebinding. `server/cmd/multica/cmd_attachment.go` and
+  `server/internal/cli/client.go` continue using the existing task-id multipart
+  protocol and authenticated attachment download.
+- `server/migrations/9660`–`9664`: explicit provenance/intent ledger, no foreign
+  keys, one concurrent index per migration. Workspace teardown removes attachment
+  references and leaves only deleting/tombstoned cleanup bookkeeping until the
+  object store has settled.
+- `server/internal/handler/employee_task_artifact*_test.go`: real isolated
+  PostgreSQL plus local fake Storage cover publication, replay, private reads,
+  wrong task credentials/scope, ciphertext tampering, old attachment compatibility,
+  failed uploads/deletes, workspace deletion during PUT, and late-object cleanup.
+  These tests do not certify production storage, key configuration, or external
+  channel delivery.

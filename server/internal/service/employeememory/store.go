@@ -47,8 +47,11 @@ type Scope struct {
 // agent's completion claim or model-selected task identifiers. There is
 // intentionally no JSON/tool endpoint for this argument.
 type TrustedEvidence struct {
-	SourceID, EvidenceID, ActorID  string
-	TaskID, ExecutionID            string
+	SourceID, EvidenceID, ActorID string
+	TaskID, ExecutionID           string
+	// OccurredAt is an optional Host event time. Nonzero evidence older than the
+	// namespace reset is rejected while holding the namespace write lock.
+	OccurredAt                     time.Time
 	HumanStated, VerifiedExecution bool
 }
 
@@ -56,6 +59,7 @@ var (
 	ErrInvalidScope        = errors.New("employee memory: invalid scope")
 	ErrInvalidLearning     = errors.New("employee memory: invalid learning")
 	ErrUntrustedCorrection = errors.New("employee memory: untrusted correction of trusted learning")
+	ErrPreResetEvidence    = errors.New("employee memory: evidence predates reset")
 	ErrUnverified          = errors.New("employee memory: run has no verified outcome")
 	learningKeyPattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 )
@@ -105,29 +109,33 @@ func (s *Store) beginWrite(ctx context.Context, scope Scope) (pgx.Tx, error) {
 	if s == nil || s.pool == nil {
 		return nil, ErrInvalidScope
 	}
-	if err := scope.validate(); err != nil {
-		return nil, err
-	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	fail := func(err error) (pgx.Tx, error) { _ = tx.Rollback(ctx); return nil, err }
-	var id pgtype.UUID
-	if err := tx.QueryRow(ctx, "SELECT id FROM workspace WHERE id=$1 FOR KEY SHARE", scope.WorkspaceID).Scan(&id); err != nil {
-		return fail(err)
-	}
-	if err := authorize(ctx, db.New(tx), scope); err != nil {
-		return fail(err)
-	}
-	if _, err := tx.Exec(ctx, `INSERT INTO employee_memory_state(workspace_id,agent_id,tenant_org_id,scene_id,scope_kind,principal_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, scope.args()...); err != nil {
-		return fail(err)
-	}
-	var revision int64
-	if err := tx.QueryRow(ctx, `SELECT revision FROM employee_memory_state WHERE `+scopePredicate+` FOR UPDATE`, scope.args()...).Scan(&revision); err != nil {
-		return fail(err)
+	if err = lockWriteScope(ctx, tx, scope); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
 	}
 	return tx, nil
+}
+
+func lockWriteScope(ctx context.Context, tx pgx.Tx, scope Scope) error {
+	if err := scope.validate(); err != nil {
+		return err
+	}
+	var id pgtype.UUID
+	if err := tx.QueryRow(ctx, "SELECT id FROM workspace WHERE id=$1 FOR KEY SHARE", scope.WorkspaceID).Scan(&id); err != nil {
+		return err
+	}
+	if err := authorize(ctx, db.New(tx), scope); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO employee_memory_state(workspace_id,agent_id,tenant_org_id,scene_id,scope_kind,principal_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, scope.args()...); err != nil {
+		return err
+	}
+	var revision int64
+	return tx.QueryRow(ctx, `SELECT revision FROM employee_memory_state WHERE `+scopePredicate+` FOR UPDATE`, scope.args()...).Scan(&revision)
 }
 
 // Record performs bounded synchronous database I/O only. It never calls a model,
@@ -138,20 +146,53 @@ func (s *Store) Record(ctx context.Context, scope Scope, rec LearningRecord, e T
 	if err != nil {
 		return LearningRecord{}, err
 	}
-	replay := replayKey(e)
 	tx, err := s.beginWrite(ctx, scope)
 	if err != nil {
 		return LearningRecord{}, err
 	}
 	defer tx.Rollback(ctx)
+	rec, err = recordLocked(ctx, tx, scope, rec, e)
+	if err != nil {
+		return LearningRecord{}, err
+	}
+	return rec, tx.Commit(ctx)
+}
+
+// RecordTx joins a Host transaction, retaining the workspace and namespace locks
+// until the caller commits its learning and source-consumption receipt together.
+func (s *Store) RecordTx(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecord, e TrustedEvidence) (LearningRecord, error) {
+	rec, err := normalizeRecord(rec, scope, e)
+	if err != nil {
+		return LearningRecord{}, err
+	}
+	if tx == nil {
+		return LearningRecord{}, ErrInvalidScope
+	}
+	if err = lockWriteScope(ctx, tx, scope); err != nil {
+		return LearningRecord{}, err
+	}
+	return recordLocked(ctx, tx, scope, rec, e)
+}
+
+func recordLocked(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecord, e TrustedEvidence) (LearningRecord, error) {
+	if !e.OccurredAt.IsZero() {
+		var resetAt *time.Time
+		if err := tx.QueryRow(ctx, `SELECT reset_at FROM employee_memory_state WHERE `+scopePredicate, scope.args()...).Scan(&resetAt); err != nil {
+			return LearningRecord{}, err
+		}
+		if resetAt != nil && !e.OccurredAt.After(*resetAt) {
+			return LearningRecord{}, ErrPreResetEvidence
+		}
+	}
+	replay := replayKey(e)
 	var raw []byte
-	err = tx.QueryRow(ctx, `SELECT record FROM employee_learning WHERE `+scopePredicate+` AND replay_key=$7`, append(scope.args(), replay)...).Scan(&raw)
+	err := tx.QueryRow(ctx, `SELECT record FROM employee_learning WHERE `+scopePredicate+` AND replay_key=$7`, append(scope.args(), replay)...).Scan(&raw)
 	if err == nil {
 		var existing LearningRecord
 		if err = json.Unmarshal(raw, &existing); err != nil {
 			return LearningRecord{}, err
 		}
-		return existing, tx.Commit(ctx)
+		return existing, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return LearningRecord{}, err
@@ -199,9 +240,6 @@ func (s *Store) Record(ctx context.Context, scope Scope, rec LearningRecord, e T
 		}
 	}
 	if _, err = tx.Exec(ctx, `UPDATE employee_memory_state SET revision=revision+1,updated_at=now() WHERE `+scopePredicate, scope.args()...); err != nil {
-		return LearningRecord{}, err
-	}
-	if err = tx.Commit(ctx); err != nil {
 		return LearningRecord{}, err
 	}
 	return rec, nil

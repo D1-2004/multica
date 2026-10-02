@@ -58,9 +58,10 @@ task with no single trigger shares the scene's public sandbox. A seventh
 concurrent task, an A2A task, and an agent on the employee filesystem each
 keep a private sandbox. Do not leave work in background
 processes. Persist patches,
-logs, and artifacts to Issue comments/attachments before exiting. Attachment upload
-receipts include `size_bytes` and `sha256`; comment JSON uses `size_bytes`,
-not `size`.
+logs, and artifacts with `multica attachment upload <path>` before exiting.
+Issue and chat tasks retain their existing bindings; Employee Direct files remain
+private artifacts of their own Run. Server upload receipts include `size_bytes`
+and `sha256`; comment JSON uses `size_bytes`, not `size`.
 
 The chain is:
 
@@ -396,7 +397,23 @@ prompt; ordinary Issue, chat and Autopilot work retains its existing behavior.
 Human management/read permission alone does not authorize claiming or completing
 a task. Do not forge capability headers or edit runtime metadata to enable it.
 
-The current Direct increment supports text output and persisted execution traces.
-It does not yet supply standalone file artifacts or prove restoration of an old
-execution. A database cancellation records the request; it does not prove that
-the provider process has exited.
+Direct supports text, persisted execution traces, and task-scoped file artifacts.
+Use the existing `multica attachment upload <path>` command while the current
+queue task's token is active. The server resolves the EmployeeTask and Run from
+that queue; do not supply an Issue/Chat binding or use another task's credentials.
+Wait for a successful receipt with a non-empty attachment id. A local path, an
+upload still in progress, or a failed metadata commit is not a published artifact.
+Repeating the same filename and bytes within that queue returns the same ready
+reference; an in-progress attempt may ask the caller to retry.
+
+Use `multica attachment download <attachment-id>` for authenticated reads.
+Direct files are encrypted in the existing object store and served through the
+private attachment API. The returned URL is an authorized-access link, not a
+public CDN link or proof of native DingTalk file delivery. A completion notice
+may reference only persisted ready artifacts. A DingTalk requester who has not
+been mapped to an authorized workspace identity does not gain download access
+because a manager can inspect the file. Direct artifacts cannot be implicitly
+rebound to an Issue or Chat.
+
+This does not prove restoration of an old execution. A database cancellation
+records the request; it does not prove that the provider process has exited.

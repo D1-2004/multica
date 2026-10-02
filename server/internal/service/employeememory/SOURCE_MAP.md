@@ -129,3 +129,19 @@ CAS reset, tombstones, stale selection, unsupported free editing and old-tenant
 rejection. UI/API tests cover loop-aware keys, explicit selectors, scope/revision
 submission, hidden legacy controls and dropping a confirmation across a loop
 switch. No live model or pre-release service is required.
+
+
+## Background capture and inbound reset
+
+`handler/employee_learning_capture.go` consumes terminal Employee-owned Run evidence
+through `internal/employeelearning`. Ordinary queue outcomes remain inferred,
+confidence-3 requester-private candidates; they never supply verified execution.
+`RecordTx` and Host `TrustedEvidence.OccurredAt` make capture+source receipt atomic
+and reject evidence predating a namespace reset while holding its write lock.
+
+Employee inbound `handler/employee_scene_entry_memory.go` handles an exact standalone
+`/reset-memory` per frozen source. In one journaled transaction it calls
+`ResetSceneTx` for shared memory and `ResetPrivateTx` for only that verified sender.
+It does not change Coordinator associations/memory or another requester's private
+records. Other messages in a collected window still reach the Loop. The management
+page's existing shared-only reset contract remains unchanged.

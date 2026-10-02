@@ -33,7 +33,10 @@ tree before trusting any line number.
 | Conversation id → scene (lookup; register only with a stated kind) | `server/internal/handler/agent_scene.go` `conversationSceneNode` → `server/internal/scene` `Lookup` / `Resolve` (docs/agent-scene.md) |
 | `--kind` has no default; MCP `kind` "never guess" | `server/cmd/multica/cmd_assoc.go`; `server/internal/handler/multica_mcp.go` `assoc_bind` schema |
 | Recall by `scene_id` | `server/internal/handler/assoc.go` `recallAssoc` |
-| `/reset-memory` closes scene edges, unlinks events and resets Scene Memory by `scene_id` | `server/internal/handler/agent_dispatch_v2_handler.go` `tryDispatchResetMemory` → `assoc.Service.CloseSceneAssociations`, `scenememory.Store.Reset` |
+| Coordinator `/reset-memory` closes scene edges, unlinks events and resets Coordinator Scene Memory by `scene_id` | `server/internal/handler/agent_dispatch_v2_handler.go` `tryDispatchResetMemory` → `assoc.Service.CloseSceneAssociations`, `scenememory.Store.Reset` |
+| Employee standalone `/reset-memory` clears shared scene and only the frozen sender's private namespace, with no LLM; other window messages continue | `server/internal/handler/employee_scene_entry_memory.go` `memoryCommands`; `employee_scene_entry_worker.go` per-receipt outcomes; `service/employeememory/private_reset.go` `ResetPrivateTx` |
+| Employee reset journal prevents replay from clearing newer memory; unknown sender leaves memory unchanged | `handler/employee_scene_entry_memory_test.go` real PostgreSQL reset/replay, actor and mixed-window tests |
+| Employee management page resets shared scene only | `handler/employee_memory_management.go`; `service/employeememory/management.go` `ResetSceneTx` |
 | Issue associate writes spawned_from | `server/internal/assoc/associate.go` |
 | Purpose fallback from user message | `server/internal/assoc/purpose.go` `ResolvePurpose` |
 

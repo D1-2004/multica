@@ -124,3 +124,21 @@
 - Direct 新 Run 的最终门保留在 StartRun：失败/取消的旧执行缺少终止证据时，修正或迟到结果也不能绕过恢复边界；成功后明确 Resume 和已存在 Run 重放正常。
 - 干净提交快照的真实 PG task-domain 整包、IssueBackend/FollowUp/Coordinator plan 定向 race、server build 和范围 vet 通过。Policy checker 为结构检查通过，不是模型行为认证。
 - 新远端另加入 human Issue steer、专用 CancelAgentTaskForSteer 与进程停止确认屏障；交付子代理会在最新基线保留合并回调和提交后 NotifySteerPredecessor→NotifyTaskEnqueued 顺序，并重新验证，不能用旧分支测试替代整合验证。
+
+## 结果回报、正式文件与异步学习闭环基础
+
+- Native/Router 分别按真实目标投递；每个 Run 保存唯一通知与 action，在同事务提交。发送前复核当前作用域、成员、接收身份和目标版本；已提交的未知结果只查询对账。
+- 旧 revision 的迟到结果保留在 Run/账本中，不冒充新目标完成；同 revision 的后续 Run 不被旧通知改变状态。取消只记录请求，不把数据库状态当作进程退出。
+- 正式产物复用 attachment 和 Storage，以真实 Task/Run/queue 来源绑定并加密保存；对象与附件均成功后返回鉴权引用。普通请求的必需 task_id 校验前移，避免选择错误存储路径；Direct PUT 有 60 秒 context，有限尾随清理有明确边界。
+- 完成后在后台原子保存低可信私有学习及消费回执，不把 completed 当作 verified。RecordTx 在 namespace 锁内检查 reset cutoff，重复证据或重放不会恢复已清记忆。
+- `/reset-memory` 逐句以零模型方式处理，清共享 scene 与请求者本人 private，其余消息继续执行；检查当前成员并复用同一事务连接。可选交付物/成功标准/访问请求已进入真实 Work Packet。
+- 独立审查及主线程干净快照验证：Employee handler 联合真实 PG race 19.190s 通过，memory 和 response 整包 race 通过，server/CLI 构建、范围 vet 通过。employeelearning 的行为测试位于 handler 集成用例，不把包无测试文件算额外覆盖。
+- 两条附件子代理会话因自动内容检查中止，没有计入通过；最终普通上传、事务和生命周期另经独立窄审及现有合法 fixture 通过。真实 OSS/FC/IM 文件交付仍待验收。
+- 生产 Ready 保持关闭；此批 worker 标记升为 :2，等所有在线副本支持 :2 后才生成新通知，防止旧副本漏掉发送前检查。
+
+## 镜像路径选择（用户确认后）
+
+- 镜像一直由内网 Runtime 仓库提交触发 CI，本地没有构建 Docker 镜像。第二次 run 77159654 因依赖下载超过 120 分钟而超时。
+- 复用远端已验证缓存层顺序后，Runtime commit b0dc45082a14778ce70eda9949be3121de88f31d 自动触发 run 77166765，6分44秒完成 SUCCESS。inspect-build 核对精确 Multica e65efb8f5754dab67875b55a4a504b9b874e5799、provider fingerprint a2eb67817f146ef4 与 Template o4w6e3r9mlqqp6xc8kej；真实镜像 sandbox smoke 已通过。
+- 用户允许镜像慢时先用 Autopilot；镜像就绪后比较路径，选择已经实现的 Direct 更快。Autopilot 仅有未交付 RED 草稿，已完整备份并从活动树移走；没有伪造 Autopilot/Issue ID，也未新增永久规则。
+- build_verified 不等于 Runtime 已切换或 Employee IM E2E 完成；后续使用该不可变候选做实际任务和 IM 闭环验收。
