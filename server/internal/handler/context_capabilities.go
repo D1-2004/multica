@@ -218,8 +218,9 @@ type contextCapAgentDetailResponse struct {
 	// Apps is the connector catalog in its order; an app becomes usable once
 	// the agent's manager adds it (Global or Offers then lists it).
 	Apps []contextCapCatalogAppDTO `json:"apps"`
-	// CanConfigureApps: the caller may save an app's OAuth application here
-	// (the agent's managers).
+	// CanConfigureApps: the caller may change an app's saved OAuth
+	// application here (workspace owners and admins); anyone who may open
+	// the agent saves the first one.
 	CanConfigureApps bool `json:"can_configure_apps"`
 }
 
@@ -1286,7 +1287,11 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 			Ready: h.catalogOAuthAvailableFor(ctx, a.WorkspaceID, app),
 		})
 	}
-	resp.CanConfigureApps = manages
+	// Changing a saved OAuth application is a workspace change.
+	if resp.CanConfigureApps, err = h.contextCapWorkspaceAdmin(ctx, a, userID); err != nil {
+		writeError(w, http.StatusInternalServerError, "member lookup failed")
+		return
+	}
 	tenants, err := contextcap.AgentTenants(ctx, h.DB, a.WorkspaceID, a.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "tenant lookup failed")

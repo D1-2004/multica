@@ -2587,6 +2587,7 @@
     "app_add_aria": "Add {{name}}",
     "app_configure_aria": "Configure {{name}}",
     "app_add_failed": "Couldn't add {{name}}. Try again.",
+    "app_disabled": "A workspace admin turned {{name}} off, so it can't be added right now.",
     "app_new_note": "{{name}} has not been used with this agent yet. Add it, then authorize it here.",
     "app_unsupported": "{{name}} doesn't support connecting from here.",
     "oauth_app_title": "{{name}} OAuth app",
@@ -2601,10 +2602,10 @@
     "optional": "optional",
     "oauth_app_secret_kept": "Set; leave empty to keep it",
     "oauth_app_required": "Enter {{field}}.",
-    "oauth_app_saved": "{{name}} OAuth app saved. You can authorize it now.",
+    "oauth_app_saved": "{{name}} OAuth app saved.",
     "oauth_app_failed": "Couldn't save the OAuth app. Check it and try again.",
     "oauth_app_ready": "{{name}} OAuth app is set up",
-    "oauth_app_manager_only": "{{name}} needs an OAuth app first: an agent manager can set it up on this page.",
+    "oauth_app_admin_only": "{{name}}'s OAuth app is already set up for the workspace; only workspace admins can change it.",
     "skill_no_description": "No description"
   },
   "tag_page": {

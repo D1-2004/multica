@@ -266,6 +266,9 @@ export interface ContextConfigOAuthApp {
   /** The deployment provides a client (GitHub App env); saving one here
    * takes precedence for the workspace. */
   deploymentClient: boolean;
+  /** The workspace has one: anyone who may open the agent saves the first
+   * one, and only workspace admins (`canConfigureApps`) change it. */
+  saved: boolean;
 }
 
 /** Saves an app's OAuth application; an omitted secret keeps the stored one. */
@@ -323,8 +326,8 @@ export interface ContextConfigAgentDetail {
    * is usable here only once `global` or `offers` lists its connector;
    * older backends send none. */
   apps: ContextConfigCatalogApp[];
-  /** The caller may save an app's OAuth application on this page (the
-   * agent's managers). */
+  /** The caller may change an app's saved OAuth application on this page
+   * (workspace owners and admins); anyone may save the first one. */
   canConfigureApps: boolean;
 }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/multica-ai/multica/server/internal/connectorcatalog"
 	"github.com/multica-ai/multica/server/internal/connectorconfig"
@@ -17,17 +18,45 @@ import (
 // Official apps on the configure page: a level adds any catalog app and
 // completes its connection there, without the admin console.
 //
-//   - POST …/apps/{slug} adds the app at a level: the workspace's catalog
-//     connector is installed when missing, offered to the agent's scopes
-//     when it is not the agent's own, and switched on at the level. It needs
-//     the level's switch right, as switching an offered item does.
+//   - POST …/apps/{slug} adds the app at a level and needs only the level's
+//     switch right (冬翔, 2026-10-02: a scene's members configure their
+//     scene; the enterprise level stays with its managers). An app already
+//     offered to (or owned by) the agent is only switched on; another
+//     catalog app is installed in the workspace and offered to the agent's
+//     scopes first. An app an admin switched off is refused (409).
 //   - GET|PUT …/apps/{slug}/oauth-app reads and saves the OAuth application
 //     an app without dynamic registration needs (Slack, Asana, GitHub when
 //     the deployment has no GitHub App), with the callback URL to register
-//     in the provider's console. It is the workspace's confidential client,
-//     so only the agent's managers read or change it here.
+//     in the provider's console. Anyone who may open the agent here reads
+//     it and saves the first one. It is the workspace's client, shared by
+//     every connection and token refresh, so changing (or re-enabling) a
+//     saved one is for workspace owners and admins (403 app_requires_admin).
 
 const contextConfigAppBodyLimit = 64 << 10
+
+// Refusal codes of the configure page's official app routes.
+const (
+	contextConfigErrAppRequiresAdmin = "app_requires_admin"
+	contextConfigErrAppDisabled      = "app_disabled"
+)
+
+// contextCapOfferedCatalogConnector returns the id of the agent's own or
+// offered connector of the catalog app slug, "" when there is none.
+func (h *Handler) contextCapOfferedCatalogConnector(ctx context.Context, a contextCapAgent, slug string) (string, error) {
+	var id string
+	err := h.DB.QueryRow(ctx, `SELECT c.id::text FROM internal_connector c
+		WHERE c.workspace_id = $1::uuid AND c.catalog_slug = $3
+		  AND (EXISTS (SELECT 1 FROM internal_connector_agent g
+		               WHERE g.connector_id = c.id AND g.workspace_id = c.workspace_id AND g.agent_id = $2::uuid)
+		    OR EXISTS (SELECT 1 FROM context_capability_binding o
+		               WHERE o.workspace_id = c.workspace_id AND o.agent_id = $2::uuid AND o.scope_type = 'offer'
+		                 AND o.resource_type = 'connector' AND o.resource_id = c.id AND o.enabled))
+		ORDER BY c.created_at ASC LIMIT 1`, a.WorkspaceID, a.ID, slug).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
+}
 
 // contextConfigAppSetup is how an app's OAuth sign-in gets ready:
 // "automatic" (dynamic registration, or a deployment client), "oauth_app"
@@ -40,6 +69,11 @@ func contextConfigAppSetup(slug string) string {
 	}
 	switch spec.Mode {
 	case "preregistered":
+		// The deployment's own client (the GitHub App env) needs nothing
+		// from the workspace.
+		if connectorAppEnvConfigured(slug) {
+			return "automatic"
+		}
 		return "oauth_app"
 	case "limited":
 		return "unsupported"
@@ -81,10 +115,26 @@ func (h *Handler) AddContextConfigApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	connector, created, err := h.createCatalogConnector(ctx, a.WorkspaceID, slug)
+	offered, err := h.contextCapOfferedCatalogConnector(ctx, a, slug)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "offer lookup failed")
+		return
+	}
+	var connector internalConnector
+	created := false
+	if offered != "" {
+		// Already the agent's own or offered: only this level switches it on.
+		connector, err = h.loadInternalConnector(ctx, a.WorkspaceID, offered)
+	} else {
+		connector, created, err = h.createCatalogConnector(ctx, a.WorkspaceID, slug)
+	}
 	if err != nil {
 		slog.ErrorContext(ctx, "context capabilities: official app install failed", "agent_id", a.ID, "catalog_slug", slug, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to add the official app")
+		return
+	}
+	if !connector.Enabled {
+		writeErrorCode(w, http.StatusConflict, contextConfigErrAppDisabled, "a workspace admin switched this app off")
 		return
 	}
 	granted, err := h.grantedConnectors(ctx, a.WorkspaceID, a.ID)
@@ -145,36 +195,44 @@ type contextConfigOAuthAppView struct {
 	PrivateKeySet    bool                             `json:"private_key_set"`
 	OptionalSecret   bool                             `json:"optional_secret_set"`
 	DeploymentClient bool                             `json:"deployment_client"`
+	// Saved: the workspace has one (changing it is for workspace admins).
+	Saved bool `json:"saved"`
 }
 
-// contextConfigOAuthAppScope authorizes a manager of the agent for the
-// {slug} app that needs an OAuth application.
-func (h *Handler) contextConfigOAuthAppScope(w http.ResponseWriter, r *http.Request) (string, contextCapAgent, connectorcatalog.App, connectorcatalog.SettingsSpec, bool) {
+// contextConfigOAuthAppScope authorizes a caller who may open the agent on
+// the configure page (a grant, or managing it) for the {slug} app that needs
+// an OAuth application, and says whether the caller is a workspace admin.
+func (h *Handler) contextConfigOAuthAppScope(w http.ResponseWriter, r *http.Request) (string, bool, contextCapAgent, connectorcatalog.App, connectorcatalog.SettingsSpec, bool) {
 	userID, ok := h.contextCapMobileUser(w, r)
 	if !ok {
-		return "", contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
 	}
 	a, ok := h.contextCapAgentOr404(w, r)
 	if !ok {
-		return "", contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
 	}
 	slug := strings.TrimSpace(chi.URLParam(r, "slug"))
 	app, known := catalogApp(slug)
 	spec, hasSpec := connectorcatalog.SettingsSpecFor(slug)
 	if !known || !hasSpec || spec.Mode != "preregistered" {
 		writeError(w, http.StatusNotFound, "this app needs no OAuth application")
-		return "", contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
 	}
-	manages, err := h.contextCapManages(r.Context(), a, userID)
+	access, err := h.contextCapHasAccess(r.Context(), a, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "manager lookup failed")
-		return "", contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+		writeError(w, http.StatusInternalServerError, "grant lookup failed")
+		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
 	}
-	if !manages {
-		writeErrorCode(w, http.StatusForbidden, contextCapErrManagerOnly, "only the agent's managers configure an app's OAuth application")
-		return "", contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+	if !access {
+		writeError(w, http.StatusForbidden, contextCapForbiddenAgent)
+		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
 	}
-	return userID, a, app, spec, true
+	admin, err := h.contextCapWorkspaceAdmin(r.Context(), a, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "member lookup failed")
+		return "", false, contextCapAgent{}, connectorcatalog.App{}, connectorcatalog.SettingsSpec{}, false
+	}
+	return userID, admin, a, app, spec, true
 }
 
 // contextConfigOAuthAppRecord is the workspace's OAuth application of the
@@ -217,6 +275,11 @@ func (h *Handler) contextConfigOAuthAppView(ctx context.Context, workspaceID str
 	case err != nil:
 		return view, err
 	}
+	view.Saved = true
+	if saved.CallbackMode == connectorconfig.CallbackSelf {
+		// A self callback is registered on this deployment's own origin.
+		view.CallbackURL = h.connectorOAuthAppOrigin() + connectorOAuthCallbackPath
+	}
 	view.ClientID, view.ClientSecretSet = saved.ClientID, len(saved.SecretCiphertext) > 0
 	view.AppID, view.AppSlug = saved.AppIdentifier, saved.InstallSlug
 	view.PrivateKeySet, view.OptionalSecret = len(saved.PrivateKeyCiphertext) > 0, len(saved.OptionalCiphertext) > 0
@@ -225,7 +288,7 @@ func (h *Handler) contextConfigOAuthAppView(ctx context.Context, workspaceID str
 
 // GetContextConfigOAuthApp: GET /api/context-capabilities/agents/{agentId}/apps/{slug}/oauth-app.
 func (h *Handler) GetContextConfigOAuthApp(w http.ResponseWriter, r *http.Request) {
-	_, a, app, spec, ok := h.contextConfigOAuthAppScope(w, r)
+	_, _, a, app, spec, ok := h.contextConfigOAuthAppScope(w, r)
 	if !ok {
 		return
 	}
@@ -242,7 +305,7 @@ func (h *Handler) GetContextConfigOAuthApp(w http.ResponseWriter, r *http.Reques
 // {client_id, client_secret?, app_id?, app_slug?, private_key?,
 // optional_secret?}. An omitted secret keeps the stored one.
 func (h *Handler) PutContextConfigOAuthApp(w http.ResponseWriter, r *http.Request) {
-	userID, a, app, spec, ok := h.contextConfigOAuthAppScope(w, r)
+	userID, admin, a, app, spec, ok := h.contextConfigOAuthAppScope(w, r)
 	if !ok {
 		return
 	}
@@ -258,10 +321,56 @@ func (h *Handler) PutContextConfigOAuthApp(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	ctx := r.Context()
+	saved, savedErr := h.contextConfigOAuthAppRecord(ctx, a.WorkspaceID, app.Slug)
+	if savedErr != nil && !errors.Is(savedErr, connectorconfig.ErrNotFound) {
+		writeConnectorConfigErrorStatus(w, savedErr)
+		return
+	}
+	exists := savedErr == nil
+	if exists && !admin {
+		writeErrorCode(w, http.StatusForbidden, contextConfigErrAppRequiresAdmin,
+			"the workspace already has this app's OAuth application; only workspace owners and admins change it")
+		return
+	}
+	// Every value the app requires: given now, or stored before.
+	for _, field := range spec.Fields {
+		if field.Optional {
+			continue
+		}
+		given, stored := "", ""
+		switch field.Key {
+		case "client_id":
+			given, stored = input.ClientID, saved.ClientID
+		case "client_secret":
+			given = input.ClientSecret
+			if exists && len(saved.SecretCiphertext) > 0 {
+				stored = "set"
+			}
+		case "app_id":
+			given, stored = input.AppID, saved.AppIdentifier
+		case "app_slug":
+			given, stored = input.AppSlug, saved.InstallSlug
+		case "private_key":
+			given = input.PrivateKey
+			if exists && len(saved.PrivateKeyCiphertext) > 0 {
+				stored = "set"
+			}
+		default:
+			continue
+		}
+		if strings.TrimSpace(given) == "" && stored == "" {
+			writeErrorCode(w, http.StatusBadRequest, "oauth_app_field_required", field.Key+" is required")
+			return
+		}
+	}
 	enabled := true
 	in := connectorconfig.AppInput{
 		Provider: app.Slug, DisplayName: app.Name, ClientID: strings.TrimSpace(input.ClientID), Enabled: &enabled,
 		AppIdentifier: strings.TrimSpace(input.AppID), InstallSlug: strings.TrimSpace(input.AppSlug),
+	}
+	if exists {
+		// An admin's callback mode stays; the preset only fills an empty one.
+		in.CallbackMode = saved.CallbackMode
 	}
 	applySettingsPreset(&in)
 	if err := h.sealConnectorAppExtras(&in, input.PrivateKey, input.OptionalSecret); err != nil {
@@ -270,9 +379,9 @@ func (h *Handler) PutContextConfigOAuthApp(w http.ResponseWriter, r *http.Reques
 	}
 	secret := strings.TrimSpace(input.ClientSecret)
 	in.ClientSecret = secret
-	saved, err := h.contextConfigOAuthAppRecord(ctx, a.WorkspaceID, app.Slug)
+	var err error
 	switch {
-	case errors.Is(err, connectorconfig.ErrNotFound):
+	case !exists:
 		if in.ClientID == "" || secret == "" {
 			writeError(w, http.StatusBadRequest, "client_id and client_secret are required")
 			return
@@ -286,9 +395,6 @@ func (h *Handler) PutContextConfigOAuthApp(w http.ResponseWriter, r *http.Reques
 			writeConnectorConfigErrorStatus(w, err)
 			return
 		}
-	case err != nil:
-		writeConnectorConfigErrorStatus(w, err)
-		return
 	default:
 		if in.ClientID == "" {
 			in.ClientID = saved.ClientID

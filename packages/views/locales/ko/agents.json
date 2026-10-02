@@ -2552,6 +2552,7 @@
     "app_add_aria": "{{name}} 추가",
     "app_configure_aria": "{{name}} 설정",
     "app_add_failed": "{{name}}을(를) 추가하지 못했습니다. 다시 시도하세요.",
+    "app_disabled": "워크스페이스 관리자가 {{name}}을(를) 꺼 두어 지금은 추가할 수 없습니다.",
     "app_new_note": "{{name}}은(는) 아직 이 에이전트에서 사용되지 않았습니다. 추가하면 여기서 승인할 수 있습니다.",
     "app_unsupported": "{{name}}은(는) 여기서의 연결을 지원하지 않습니다.",
     "oauth_app_title": "{{name}} OAuth 앱",
@@ -2566,10 +2567,10 @@
     "optional": "선택",
     "oauth_app_secret_kept": "설정됨. 비워 두면 유지됩니다",
     "oauth_app_required": "{{field}}을(를) 입력하세요.",
-    "oauth_app_saved": "{{name}} OAuth 앱을 저장했습니다. 이제 승인할 수 있습니다.",
+    "oauth_app_saved": "{{name}} OAuth 앱을 저장했습니다.",
     "oauth_app_failed": "OAuth 앱을 저장하지 못했습니다. 확인 후 다시 시도하세요.",
     "oauth_app_ready": "{{name}} OAuth 앱 설정됨",
-    "oauth_app_manager_only": "{{name}}에는 먼저 OAuth 앱이 필요합니다. 에이전트 관리자가 이 페이지에서 설정할 수 있습니다.",
+    "oauth_app_admin_only": "{{name}}의 OAuth 앱은 워크스페이스에 이미 설정되어 있습니다. 워크스페이스 관리자만 변경할 수 있습니다.",
     "skill_no_description": "설명 없음"
   },
   "tag_page": {

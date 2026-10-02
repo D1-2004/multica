@@ -233,7 +233,8 @@ export function ConnectorsList(props: ConnectorsSlotProps) {
     setShownKey(key);
   };
   const addApp = useAddContextConfigApp(props.agentId);
-  const [addingSlug, setAddingSlug] = useState("");
+  // Apps being added, each with its own spinner.
+  const [addingSlugs, setAddingSlugs] = useState<ReadonlySet<string>>(() => new Set());
 
   // 添加: switch an offered connector on here, or bring an app nobody opened
   // for the agent into the workspace and the agent's offers first. Then its
@@ -244,7 +245,7 @@ export function ConnectorsList(props: ConnectorsSlotProps) {
       if (entry.offered && entry.offered.authMode !== "none") open(entry.key);
       return;
     }
-    setAddingSlug(entry.slug);
+    setAddingSlugs((current) => new Set(current).add(entry.slug));
     try {
       const added = await addApp.mutateAsync({
         slug: entry.slug,
@@ -254,9 +255,17 @@ export function ConnectorsList(props: ConnectorsSlotProps) {
       });
       if (added?.connectorId) open(added.connectorId);
     } catch (error) {
-      if (!props.reportError(error)) toast.error(t(($) => $.context_config.app_add_failed, { name: entry.name }));
+      if (errorCode(error) === "app_disabled") {
+        toast.error(t(($) => $.context_config.app_disabled, { name: entry.name }));
+      } else if (!props.reportError(error)) {
+        toast.error(t(($) => $.context_config.app_add_failed, { name: entry.name }));
+      }
     } finally {
-      setAddingSlug("");
+      setAddingSlugs((current) => {
+        const next = new Set(current);
+        next.delete(entry.slug);
+        return next;
+      });
     }
   };
 
@@ -269,7 +278,7 @@ export function ConnectorsList(props: ConnectorsSlotProps) {
         {rows.map((entry) => {
           const state = stateOf(entry);
           const status = rowStatus(t, entry, state);
-          const busy = entry.id === null ? addingSlug === entry.slug : props.isBusy(`connector:${entry.id}`);
+          const busy = entry.id === null ? addingSlugs.has(entry.slug) : props.isBusy(`connector:${entry.id}`);
           let action: React.ReactNode = null;
           if (inEffectOnly) {
             action = null;
@@ -329,7 +338,7 @@ export function ConnectorsList(props: ConnectorsSlotProps) {
               )
             : false
         }
-        adding={shown ? addingSlug === shown.slug && shown.id === null : false}
+        adding={shown ? addingSlugs.has(shown.slug) && shown.id === null : false}
         onAdd={() => {
           if (shown) void add(shown);
         }}
@@ -632,7 +641,8 @@ const OAUTH_SECRET_KEYS = new Set(["client_secret", "private_key", "signing_secr
  * The OAuth application an app without dynamic registration needs (Slack,
  * Asana, GitHub without a deployment app), filled in on this page: the
  * callback URL to register in the provider's console, then the app's
- * values. The agent's managers save it; anyone else learns a manager can.
+ * values. Anyone here saves the first one; the saved one is the workspace's
+ * client, which only workspace admins (`canConfigure`) change.
  */
 function OAuthAppSetup({
   agentId,
@@ -651,19 +661,16 @@ function OAuthAppSetup({
 }) {
   const { t } = useT("agents");
   const fieldLabel = useOAuthFieldLabel();
-  const query = useQuery({ ...contextConfigOAuthAppOptions(agentId, slug), enabled: canConfigure });
-  const save = useSetContextConfigOAuthApp(agentId);
+  // A ready app shows collapsed; only admins open it to change it.
   const [expanded, setExpanded] = useState(!ready);
+  const query = useQuery({ ...contextConfigOAuthAppOptions(agentId, slug), enabled: expanded });
+  const save = useSetContextConfigOAuthApp(agentId);
   const [values, setValues] = useState<OAuthAppValues>({});
   const [invalid, setInvalid] = useState("");
   const app = query.data ?? null;
 
-  if (!canConfigure) {
-    return ready ? null : (
-      <p className="text-caption text-muted-foreground text-pretty">{t(($) => $.context_config.oauth_app_manager_only, { name })}</p>
-    );
-  }
   if (!expanded) {
+    if (!canConfigure) return null;
     return (
       <div className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
         <span className="min-w-0 truncate text-caption text-muted-foreground">
@@ -685,6 +692,11 @@ function OAuthAppSetup({
   }
   if (!app) {
     return <p className="text-caption text-muted-foreground">{t(($) => $.context_config.load_failed)}</p>;
+  }
+  if (app.saved && !canConfigure) {
+    return (
+      <p className="text-caption text-muted-foreground text-pretty">{t(($) => $.context_config.oauth_app_admin_only, { name })}</p>
+    );
   }
 
   const storedSecret = (key: string): boolean =>
@@ -720,7 +732,7 @@ function OAuthAppSetup({
     setInvalid("");
     const optionalSecret = valueOf("signing_secret") || valueOf("webhook_secret");
     try {
-      await save.mutateAsync({
+      const saved = await save.mutateAsync({
         slug,
         clientId: valueOf("client_id").trim(),
         ...(valueOf("client_secret") ? { clientSecret: valueOf("client_secret").trim() } : {}),
@@ -730,10 +742,15 @@ function OAuthAppSetup({
         ...(optionalSecret ? { optionalSecret: optionalSecret.trim() } : {}),
       });
       setValues({});
-      setExpanded(false);
+      // Collapse once a sign-in can start; otherwise the values stay here.
+      setExpanded(saved?.ready !== true);
       toast.success(t(($) => $.context_config.oauth_app_saved, { name }));
     } catch (error) {
-      if (!reportError(error)) toast.error(t(($) => $.context_config.oauth_app_failed));
+      if (errorCode(error) === "app_requires_admin") {
+        toast.error(t(($) => $.context_config.oauth_app_admin_only, { name }));
+      } else if (!reportError(error)) {
+        toast.error(t(($) => $.context_config.oauth_app_failed));
+      }
     } finally {
       // Drop the submitted secrets from the mutation state right away.
       save.reset();
