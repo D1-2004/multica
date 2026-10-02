@@ -122,6 +122,15 @@ handling changes are not part of this delivery.
 
 ## Verification gates
 
+Human agent managers can inspect the existing locator with
+`GET /api/agents/{id}/event-ingress` (it neither creates an endpoint nor returns
+its delivery credential). `GET /api/agents/{id}/event-receipts` is scoped by
+workspace, agent and a currently served `org_id`; filter by `source_event_id`
+or `receipt_id`. The default is metadata only, with `include_payload=true`
+for an explicit owner inspection of business evidence. Agent actors and other
+members are denied; persisted refs still pass the scene fence. These reads
+do not register a scene, release an unmapped event or replay execution.
+
 Protocol tests cover native payload preservation, actor/principal separation,
 unknown kinds, version rejection and exact canary targets. PostgreSQL tests
 cover concurrent receipt identity, atomic resolve/receipt, changed-payload

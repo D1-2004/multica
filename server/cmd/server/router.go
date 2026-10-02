@@ -2954,6 +2954,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/restore", h.RestoreAgent)
 					r.Post("/cancel-tasks", h.CancelAgentTasks)
 					r.Get("/event-batches", h.ListAgentEventBatches)
+					r.With(handler.RequireHumanActor).Get("/event-ingress", h.GetAgentEventIngress)
+					r.With(handler.RequireHumanActor).Get("/event-receipts", h.ListAgentEventReceipts)
 					r.Post("/event-batches/{batchId}/retry", h.RetryAgentEventBatch)
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/coordinator-sessions", h.ListAgentCoordinatorSessions)
