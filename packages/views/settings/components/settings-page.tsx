@@ -22,6 +22,7 @@ import {
   Laptop,
   Zap,
   Globe2,
+  Link2,
   Tag as TagIcon,
 } from "lucide-react";
 import {
@@ -46,6 +47,7 @@ import { WorkspaceTab } from "./workspace-tab";
 import { MembersTab } from "./members-tab";
 import { RepositorySettings } from "./repository-settings";
 import { IntegrationsTab } from "./integrations-tab";
+import { ConnectorsTab } from "./connectors-tab";
 import { LabsTab } from "./labs-tab";
 import { NotificationsTab } from "./notifications-tab";
 import { LabelsTab } from "./labels-tab";
@@ -87,6 +89,7 @@ const WORKSPACE_TAB_KEYS = [
   "general",
   "repositories",
   "integrations",
+  "connectors",
   "labs",
   "members",
   "labels",
@@ -100,6 +103,7 @@ const WORKSPACE_TAB_VALUES = {
   general: "workspace",
   repositories: "repositories",
   integrations: "integrations",
+  connectors: "connectors",
   labs: "labs",
   members: "members",
   labels: "labels",
@@ -113,6 +117,7 @@ const WORKSPACE_TAB_ICONS = {
   general: Settings,
   repositories: FolderGit2,
   integrations: Plug,
+  connectors: Link2,
   labs: FlaskConical,
   members: Users,
   labels: Tags,
@@ -166,9 +171,16 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   // Settings → Tag exists only for platform operators.
   const tagOperator = useWorkspaceTag(workspace?.id ?? "").data?.canOperate === true;
   const workspaceTabVisible = React.useCallback(
-    (key: (typeof WORKSPACE_TAB_KEYS)[number]) =>
-      (key !== "workspace_access" || (workspaceAccessEnabled && role === "owner")) &&
-      (key !== "tag" || tagOperator),
+    (key: (typeof WORKSPACE_TAB_KEYS)[number]) => {
+      if (key === "workspace_access") {
+        return workspaceAccessEnabled && role === "owner";
+      }
+      if (key === "connectors") {
+        return role === "owner" || role === "admin";
+      }
+      if (key === "tag") return tagOperator;
+      return true;
+    },
     [role, tagOperator, workspaceAccessEnabled],
   );
 
@@ -345,6 +357,11 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="integrations">
             <IntegrationsTab />
           </TabsContent>
+          {role === "owner" || role === "admin" ? (
+            <TabsContent value="connectors">
+              <ConnectorsTab />
+            </TabsContent>
+          ) : null}
           <TabsContent value="labs">
             <LabsTab />
           </TabsContent>

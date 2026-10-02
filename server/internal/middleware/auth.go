@@ -233,7 +233,7 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_mcp_disabled")
 					return
 				}
-				if !strings.HasPrefix(r.URL.Path, "/api/mcp/workspaces/") && !IsWorkspaceMCPDispatch(r.Context()) {
+				if !strings.HasPrefix(r.URL.Path, "/api/mcp/workspaces/") && !IsWorkspaceMCPDispatch(r.Context()) && !IsConnectorAppConfigPath(r.URL.Path) {
 					writeWorkspaceAccessAuthError(w, http.StatusForbidden, "workspace_mcp_endpoint_only")
 					return
 				}

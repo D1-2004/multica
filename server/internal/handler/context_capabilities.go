@@ -1371,7 +1371,7 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 			}
 			if app, ok := catalogApp(c.CatalogSlug); ok {
 				item.InstallURL = catalogAppInstallURL(app)
-				item.OAuthAvailable = c.AuthMode == "oauth" && h.catalogOAuthAvailable(app)
+				item.OAuthAvailable = c.AuthMode == "oauth" && h.catalogOAuthAvailableFor(ctx, a.WorkspaceID, app)
 			}
 			resp.Offers.Connectors = append(resp.Offers.Connectors, item)
 		}

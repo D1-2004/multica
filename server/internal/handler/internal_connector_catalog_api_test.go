@@ -107,16 +107,44 @@ func (f *catalogFixture) takeAuthorizeURL(t *testing.T, rec *httptest.ResponseRe
 
 // assertBindingCookie checks the browser binding cookie a start response
 // set for state: HttpOnly, SameSite=Lax, Secure on an https origin, scoped
-// to the callback path.
+// to the callback path. A DCR connect also sets the same binding on the
+// legacy callback path, because cookie path matching does not treat
+// /api/connectors/oauth/callback and /api/connector-oauth/callback as one.
 func assertBindingCookie(t *testing.T, cookies []*http.Cookie, state, path string) {
 	t.Helper()
-	if len(cookies) != 1 {
+	check := func(cookie *http.Cookie) {
+		t.Helper()
+		if cookie == nil || cookie.Name != connectorOAuthCookieName(hashConnectorOAuthState(state)) || cookie.Value == "" ||
+			!cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode || cookie.MaxAge != int(connectorOAuthStateTTL.Seconds()) {
+			t.Fatalf("binding cookie = %+v", cookie)
+		}
+	}
+	var match *http.Cookie
+	for _, cookie := range cookies {
+		if cookie.Path == path {
+			match = cookie
+			break
+		}
+	}
+	check(match)
+	if path != ConnectorOAuthCallbackPath {
+		if len(cookies) != 1 {
+			t.Fatalf("start cookies = %v", cookies)
+		}
+		return
+	}
+	if len(cookies) != 2 {
 		t.Fatalf("start cookies = %v", cookies)
 	}
-	cookie := cookies[0]
-	if cookie.Name != connectorOAuthCookieName(hashConnectorOAuthState(state)) || cookie.Value == "" || cookie.Path != path ||
-		!cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode || cookie.MaxAge != int(connectorOAuthStateTTL.Seconds()) {
-		t.Fatalf("binding cookie = %+v", cookie)
+	var legacy *http.Cookie
+	for _, cookie := range cookies {
+		if cookie.Path == connectorOAuthCallbackLegacyPath {
+			legacy = cookie
+		}
+	}
+	check(legacy)
+	if legacy.Value != match.Value || legacy.Name != match.Name {
+		t.Fatalf("legacy binding cookie = %+v, canonical = %+v", legacy, match)
 	}
 }
 

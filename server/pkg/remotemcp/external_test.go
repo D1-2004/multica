@@ -297,6 +297,7 @@ type oauthServer struct {
 	authMethods    []string
 	tokenRequests  atomic.Int32
 	refreshAnswer  string // "invalid_grant", "github" or "" (success)
+	tokenType      string // token_type of a successful answer; "" means bearer
 	lastChallenge  string
 	registeredWith string
 }
@@ -356,7 +357,11 @@ func newOAuthServer(t *testing.T) *oauthServer {
 				return
 			}
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access-2", "token_type": "bearer", "expires_in": "3600", "refresh_token": "refresh-2"})
+		tokenType := s.tokenType
+		if tokenType == "" {
+			tokenType = "bearer"
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "access-2", "token_type": tokenType, "expires_in": "3600", "refresh_token": "refresh-2"})
 	})
 	s.Server = httptest.NewTLSServer(mux)
 	t.Cleanup(s.Close)
@@ -433,6 +438,22 @@ func TestExternalTokenErrorsAreTyped(t *testing.T) {
 	}
 	if _, err = server.client().ExchangeOAuthCode(context.Background(), server.URL+"/token", "", "wrong", "https://app.example/cb", "verifier-1", registration); !IsInvalidGrant(err) {
 		t.Fatalf("bad code err = %v", err)
+	}
+}
+
+func TestExternalTokenAcceptsSlackUserAndBotTypes(t *testing.T) {
+	server := newOAuthServer(t)
+	registration := OAuthClientRegistration{ClientID: "client-1", ClientSecret: "secret-1", TokenEndpointAuthMethod: "client_secret_post"}
+	for _, tokenType := range []string{"user", "bot", ""} {
+		server.tokenType = tokenType
+		token, err := server.client().ExchangeOAuthCode(context.Background(), server.URL+"/token", "", "code-1", "https://app.example/cb", "verifier-1", registration)
+		if err != nil || token.AccessToken != "access-2" || token.TokenType != "Bearer" {
+			t.Fatalf("token_type %q = %+v %v", tokenType, token, err)
+		}
+	}
+	server.tokenType = "mac"
+	if _, err := server.client().ExchangeOAuthCode(context.Background(), server.URL+"/token", "", "code-1", "https://app.example/cb", "verifier-1", registration); err == nil {
+		t.Fatal("non-bearer token type accepted")
 	}
 }
 

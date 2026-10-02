@@ -25,6 +25,7 @@ vi.mock("./members-tab", stub("MembersTab"));
 vi.mock("./repositories-tab", stub("RepositoriesTab"));
 vi.mock("./repository-settings", stub("RepositorySettings"));
 vi.mock("./integrations-tab", stub("IntegrationsTab"));
+vi.mock("./connectors-tab", stub("ConnectorsTab"));
 vi.mock("./labs-tab", stub("LabsTab"));
 vi.mock("./notifications-tab", stub("NotificationsTab"));
 vi.mock("./labels-tab", stub("LabelsTab"));
