@@ -130,3 +130,19 @@ The optional tagged local fixtures can be verified without a live model account:
 go test -tags employeeintegration ./internal/service/employeeloop \
   -run '^TestEmployeeModelSmoke(WithLocalProvider|HTTPBudget)$' -count=1
 ```
+
+## Host observability and scene capabilities (2026-10-03)
+
+`Config.OnBatchRejected` is an optional observer called after the existing pure
+batch validation rejects a request. It does not change validation, execute a
+Host tool, add a model call, or persist domain effects. The Host owns Langfuse
+integration in `handler/employee_scene_trace.go`; real model and tool I/O is
+observed at the durable journal boundaries, not on cached replay.
+
+The scene Host reuses the application's `contextcap` merger and configuration
+link issuer. `describe_capabilities` remains a no-task terminal and keeps bearer
+links in a private delivery record outside model-facing tool results.
+`scene_config_get` takes its identity from the admitted job, never model scope
+parameters. Existing Direct scene-management MCP handles actual configuration
+changes. These are application adapters; the copied GawkBot kernel gains no
+storage, permission, or provider-specific implementation.

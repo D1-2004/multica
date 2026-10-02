@@ -27,6 +27,7 @@ import (
 const (
 	contextConfigLinkIssuerTaskTool    = "task_tool"
 	contextConfigLinkIssuerCoordinator = "coordinator"
+	contextConfigLinkIssuerEmployee    = "employee"
 )
 
 // contextConfigLinkPagePath is the configure page a link opens; the bearer
@@ -53,9 +54,10 @@ type contextConfigLinkMint struct {
 	// Origin is the app origin without a trailing slash.
 	Origin string
 	// SourceTaskID is the minting task; the Coordinator has none.
-	SourceTaskID string
-	Issuer       string
-	CoordTraceID string
+	SourceTaskID  string
+	Issuer        string
+	CoordTraceID  string
+	EmployeeJobID string
 	// Tab is the configure page tab the link opens ("" for the default).
 	Tab string
 }
@@ -140,7 +142,7 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 	}
 	slog.InfoContext(ctx, "context capabilities: configuration link issued",
 		"source_task_id", link.SourceTaskID, "agent_id", in.AgentID, "workspace_id", link.WorkspaceID, "scope_type", link.ScopeType,
-		"scene_id", link.ScopeKey, "scene_kind", summary.Kind, "issuer", in.Issuer, "coord_trace_id", in.CoordTraceID)
+		"scene_id", link.ScopeKey, "scene_kind", summary.Kind, "issuer", in.Issuer, "coord_trace_id", in.CoordTraceID, "employee_job_id", in.EmployeeJobID)
 	return multicaMCPContextConfigLinkResult{
 		URL:         pageURL,
 		DingTalkURL: inboundcoord.ConfigLinkDeepLink(pageURL),

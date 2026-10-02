@@ -152,6 +152,9 @@ func (l *Loop) callModel(ctx context.Context) error {
 			err = l.tools.ValidateBatch(calls)
 		}
 		if err != nil {
+			if l.config.OnBatchRejected != nil {
+				l.config.OnBatchRejected(calls, err)
+			}
 			l.modelFailure(err)
 			return nil
 		}

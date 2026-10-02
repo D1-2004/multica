@@ -18,15 +18,17 @@ import (
 )
 
 type employeeToolRecord struct {
-	Result  employeeloop.ToolResult `json:"result"`
-	Failure string                  `json:"failure,omitempty"`
+	Result        employeeloop.ToolResult `json:"result"`
+	Failure       string                  `json:"failure,omitempty"`
+	DeliveryReply string                  `json:"delivery_reply,omitempty"`
 }
 
 type employeeSceneHost struct {
-	worker    *EmployeeSceneWorker
-	job       employeeentry.Job
-	envelopes []employeeDispatchEnvelope
-	abort     context.CancelFunc
+	worker          *EmployeeSceneWorker
+	job             employeeentry.Job
+	envelopes       []employeeDispatchEnvelope
+	abort           context.CancelFunc
+	deliveryReplies map[string]string
 }
 
 func employeeSceneTools() []employeeloop.Tool {
@@ -39,6 +41,8 @@ func employeeSceneTools() []employeeloop.Tool {
 	source := stringField("Exact source_ref from the current window; the Host resolves its original requester.")
 	readSchema := map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "task_id": stringField("A known EmployeeTask UUID belonging to this requester in this scene.")}, "required": []string{"source_ref", "task_id"}, "additionalProperties": false}
 	return []employeeloop.Tool{
+		{Name: "describe_capabilities", Terminal: employeeloop.Reply, Description: "Answer a capability question or a request for this scene configuration link, then finish. Host appends the current scene link; provide only the answer, never a URL. Configuration management can be delegated via dispatch_task to Direct. Do not combine with other terminal or effect tools.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "reply": stringField("Your complete capability answer or configuration introduction, without a URL.")}, "required": []string{"source_ref", "reply"}, "additionalProperties": false}},
+		{Name: "scene_config_get", Description: "Read the frozen current scene configuration, with offered switches and enabled global capabilities. This grants no write permission. Use dispatch_task for requested configuration changes through Direct.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source}, "required": []string{"source_ref"}, "additionalProperties": false}},
 		{Name: "reply", Terminal: employeeloop.Reply, Description: "Reply directly using the current conversation and available facts, then finish without creating a task. Use for answers, explanations, clarifications and memory recall that need no background execution. Do not combine with dispatch_task or another effect tool in one batch.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "reply": stringField("The complete answer to send now, not an acknowledgement of future work.")}, "required": []string{"source_ref", "reply"}, "additionalProperties": false}},
 		{Name: "stay_quiet", Terminal: employeeloop.Quiet, Description: "Record that this window does not require a response from this employee. No message is sent and no task is created or cancelled.", Schema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}},
 		{Name: "dispatch_task", Description: "Create a real background task only for self-contained new work explicitly requested in the selected source message that requires background execution. For an answer already available from context or memory, use reply or normal text instead; never dispatch merely to send a reply. If it refers to previous work without a concrete new goal, clarify instead; continuation is not registered. Include the acknowledgement to send after the queue commit. Continuation, control, reactions and quoted work are not supported by this tool.", Effect: true, Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "goal": stringField("The complete user goal, without inventing requirements."), "prompt": stringField("Complete execution instruction, preserving user constraints and material references."), "reply": stringField("Brief acknowledgement of accepted work, never a completed result."), "deliverables": stringArray("Optional concrete outputs explicitly required by the requester. Omit when unspecified; do not invent deliverables."), "success_criteria": stringArray("Optional acceptance conditions explicitly required by the requester. Omit when unspecified."), "access_needed": stringArray("Optional access the request says is needed. This is a request only and never grants access or capabilities.")}, "required": []string{"source_ref", "goal", "prompt", "reply"}, "additionalProperties": false}},
@@ -113,8 +117,11 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		return employeeloop.ToolResult{}, err
 	}
 	raw, err := h.worker.store.ExecuteTool(ctx, h.job, call.NativeToolCallID, encoded, func(tx pgx.Tx) (json.RawMessage, error) {
+		observation := employeeTraceTool(ctx, h.job, call)
 		var result employeeloop.ToolResult
+		var deliveryReply string
 		var err error
+		defer func() { employeeTraceToolResult(ctx, observation, call, result, err) }()
 		switch call.Name {
 		case "stay_quiet":
 			if len(call.Arguments) != 0 {
@@ -122,7 +129,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			} else {
 				result = employeeloop.ToolResult{Content: "Quiet decision recorded.", Terminal: &employeeloop.Decision{Kind: employeeloop.Quiet}}
 			}
-		case "reply":
+		case "reply", "describe_capabilities":
 			var reply string
 			reply, err = argument(call.Arguments, "reply")
 			if err == nil && len(reply) > 8000 {
@@ -130,6 +137,15 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			}
 			if err == nil {
 				result = employeeloop.ToolResult{Content: "Reply recorded.", Terminal: &employeeloop.Decision{Kind: employeeloop.Reply, Reply: strings.TrimSpace(reply)}}
+				if call.Name == "describe_capabilities" {
+					deliveryReply = h.capabilityReply(ctx, tx, strings.TrimSpace(reply))
+				}
+			}
+		case "scene_config_get":
+			if len(call.Arguments) != 1 {
+				err = errors.New("scene_config_get accepts only source_ref")
+			} else {
+				result.Content, err = h.sceneConfiguration(ctx, tx)
 			}
 		case "dispatch_task":
 			result, err = h.dispatch(ctx, source, env, call)
@@ -138,7 +154,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		default:
 			err = errors.New("employee tool is not registered")
 		}
-		record := employeeToolRecord{Result: result}
+		record := employeeToolRecord{Result: result, DeliveryReply: deliveryReply}
 		if err != nil {
 			record.Failure = err.Error()
 		}
@@ -161,6 +177,12 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 	}
 	if record.Failure != "" {
 		return record.Result, errors.New(record.Failure)
+	}
+	if record.DeliveryReply != "" {
+		if h.deliveryReplies == nil {
+			h.deliveryReplies = map[string]string{}
+		}
+		h.deliveryReplies[call.NativeToolCallID] = record.DeliveryReply
 	}
 	return record.Result, nil
 }
