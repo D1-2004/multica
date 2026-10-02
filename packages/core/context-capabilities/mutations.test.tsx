@@ -154,6 +154,7 @@ describe("context capability mutations", () => {
       prompts: [],
       mcpConfig: null,
       mcpConfigRedacted: false,
+      sceneOAuthApps: [],
     } satisfies ContextConfigSceneDetail);
     const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const { result } = renderHook(() => useSetContextCapabilityBinding("agent-1"), {

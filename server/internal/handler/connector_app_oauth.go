@@ -29,6 +29,9 @@ type githubOAuthClient struct {
 	AuthorizationEndpoint string
 	TokenEndpoint         string
 	CallbackMode          string
+	// Scene: the scene's own application (context_connector_app), saved on
+	// the configure page. Its Source reads as a saved workspace application.
+	Scene bool
 }
 
 func (h *Handler) githubOAuthClient(ctx context.Context, workspaceID string) (githubOAuthClient, error) {
@@ -115,6 +118,81 @@ func (h *Handler) preregisteredOAuthClient(ctx context.Context, workspaceID stri
 		client.CallbackMode = connectorconfig.CallbackProductionForward
 	}
 	return client, nil
+}
+
+// sceneOAuthClient is the scene's own OAuth application of app for a
+// connection or credential at binding. ok is false outside a scene scope,
+// for an app that registers dynamically, and when the scene saved none. A
+// saved secret that cannot be opened is an error: the workspace client is a
+// different registration and must not be substituted.
+func (h *Handler) sceneOAuthClient(ctx context.Context, binding contextcap.CredentialBinding, app connectorcatalog.App) (githubOAuthClient, bool, error) {
+	key, ok := contextcap.SceneAppKeyOf(binding, app.Slug)
+	if !ok {
+		return githubOAuthClient{}, false, nil
+	}
+	spec, ok := connectorcatalog.SettingsSpecFor(app.Slug)
+	if !ok || spec.Mode != "preregistered" {
+		return githubOAuthClient{}, false, nil
+	}
+	saved, err := contextcap.GetSceneApp(ctx, h.DB, key)
+	if errors.Is(err, contextcap.ErrNotFound) {
+		return githubOAuthClient{}, false, nil
+	}
+	if err != nil {
+		return githubOAuthClient{}, false, err
+	}
+	if h.InternalConnectorSecretBox == nil {
+		return githubOAuthClient{}, false, connectorconfig.ErrSecretUnavailable
+	}
+	secret, err := connectorconfig.OpenString(h.InternalConnectorSecretBox, saved.SecretCiphertext)
+	if err != nil {
+		return githubOAuthClient{}, false, connectorconfig.ErrSecretUnavailable
+	}
+	client := githubOAuthClient{
+		Source: connectorconfig.SourceWorkspace, Scene: true, AppID: saved.ID, ClientID: saved.ClientID, ClientSecret: secret,
+		Scopes: spec.Scopes, AuthorizationEndpoint: spec.AuthorizationEndpoint, TokenEndpoint: spec.TokenEndpoint,
+		CallbackMode: connectorconfig.CallbackProductionForward,
+	}
+	if client.AuthorizationEndpoint == "" {
+		client.AuthorizationEndpoint = app.AuthorizationEndpoint
+	}
+	if client.TokenEndpoint == "" {
+		client.TokenEndpoint = app.TokenEndpoint
+	}
+	if client.Scopes == "" {
+		client.Scopes = app.Scope
+	}
+	return client, true, nil
+}
+
+// connectorOAuthScopeBinding is the credential binding a connection at scope
+// stores into (empty for the workspace scope).
+func connectorOAuthScopeBinding(scope connectorOAuthScope) contextcap.CredentialBinding {
+	if scope.ScopeType == connectorOAuthScopeWorkspace {
+		return contextcap.CredentialBinding{}
+	}
+	return contextcap.CredentialBinding{
+		WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID, ConnectorID: scope.ConnectorID,
+		ScopeType: scope.ScopeType, OrgID: scope.OrgID, ScopeKey: scope.ScopeKey,
+	}
+}
+
+// connectorOAuthDeploymentErrorForScope is connectorOAuthDeploymentErrorFor
+// for a connection at binding: a scene with its own OAuth application of
+// app needs only credential storage and the app origin.
+func (h *Handler) connectorOAuthDeploymentErrorForScope(ctx context.Context, binding contextcap.CredentialBinding, app connectorcatalog.App) error {
+	if _, ok, err := h.sceneOAuthClient(ctx, binding, app); err != nil {
+		return oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "the scene's OAuth application is unavailable")
+	} else if ok {
+		if h.InternalConnectorSecretBox == nil {
+			return oauthStartError(http.StatusServiceUnavailable, "credential_storage_unavailable", "connector credential storage is not configured")
+		}
+		if h.connectorOAuthAppOrigin() == "" {
+			return oauthStartError(http.StatusServiceUnavailable, "app_origin_missing", "no app origin is configured")
+		}
+		return nil
+	}
+	return h.connectorOAuthDeploymentErrorFor(ctx, binding.WorkspaceID, app)
 }
 
 func (h *Handler) connectorOAuthDeploymentErrorFor(ctx context.Context, workspaceID string, app connectorcatalog.App) error {

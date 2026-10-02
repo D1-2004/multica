@@ -80,8 +80,8 @@ export function useAddContextConfigApp(agentId: string) {
 export function useSetContextConfigOAuthApp(agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ slug, ...input }: ContextConfigOAuthAppInput & { slug: string }) =>
-      api.setContextConfigOAuthApp(agentId, slug, input),
+    mutationFn: ({ slug, scope, ...input }: ContextConfigOAuthAppInput & { slug: string; scope: ContextConfigScopeInput }) =>
+      api.setContextConfigOAuthApp(agentId, slug, scope, input),
     gcTime: 0,
     onSettled: () => queryClient.invalidateQueries({ queryKey: contextConfigKeys.agent(agentId) }),
   });

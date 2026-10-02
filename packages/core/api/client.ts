@@ -4407,10 +4407,16 @@ export class ApiClient {
     });
   }
 
-  /** An app's OAuth application (agent managers only); null when malformed. */
-  async getContextConfigOAuthApp(agentId: string, slug: string): Promise<ContextConfigOAuthApp | null> {
+  /** A scene's own OAuth application of an app; null when malformed. */
+  async getContextConfigOAuthApp(
+    agentId: string,
+    slug: string,
+    scope: ContextConfigScopeInput,
+  ): Promise<ContextConfigOAuthApp | null> {
+    const query = new URLSearchParams({ scope_type: scope.scopeType, scope_key: scope.scopeKey });
+    if (scope.orgId) query.set("org_id", scope.orgId);
     const raw = await this.fetch<unknown>(
-      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/apps/${encodeURIComponent(slug)}/oauth-app`,
+      `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/apps/${encodeURIComponent(slug)}/oauth-app?${query.toString()}`,
       { headers: NO_WORKSPACE_HEADER },
     );
     return parseWithFallback<ContextConfigOAuthApp | null>(raw, ContextConfigOAuthAppSchema, null, {
@@ -4418,18 +4424,16 @@ export class ApiClient {
     });
   }
 
-  /** Saves an app's OAuth application; omitted secrets keep the stored ones. */
+  /** Saves a scene's own OAuth application; an omitted secret keeps the stored one. */
   async setContextConfigOAuthApp(
     agentId: string,
     slug: string,
+    scope: ContextConfigScopeInput,
     input: ContextConfigOAuthAppInput,
   ): Promise<ContextConfigOAuthApp | null> {
-    const body: Record<string, string> = { client_id: input.clientId };
+    const body: Record<string, string> = { scope_type: scope.scopeType, scope_key: scope.scopeKey, client_id: input.clientId };
+    if (scope.orgId) body.org_id = scope.orgId;
     if (input.clientSecret) body.client_secret = input.clientSecret;
-    if (input.appId) body.app_id = input.appId;
-    if (input.appSlug) body.app_slug = input.appSlug;
-    if (input.privateKey) body.private_key = input.privateKey;
-    if (input.optionalSecret) body.optional_secret = input.optionalSecret;
     const raw = await this.fetch<unknown>(
       `/api/context-capabilities/agents/${encodeURIComponent(agentId)}/apps/${encodeURIComponent(slug)}/oauth-app`,
       { method: "PUT", body: JSON.stringify(body), headers: NO_WORKSPACE_HEADER },

@@ -1,6 +1,6 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
-import type { ContextNodeRef, SceneRoutinesTarget } from "../types/context-capability";
+import type { ContextConfigScopeInput, ContextNodeRef, SceneRoutinesTarget } from "../types/context-capability";
 
 /**
  * Mobile configuration keys. The `/api/context-capabilities/*` routes are
@@ -22,9 +22,9 @@ export const contextConfigKeys = {
     [...contextConfigKeys.agent(agentId), "scenes"] as const,
   scene: (agentId: string, sceneId: string) =>
     [...contextConfigKeys.scenes(agentId), sceneId] as const,
-  /** An official app's OAuth application. */
-  oauthApp: (agentId: string, slug: string) =>
-    [...contextConfigKeys.agent(agentId), "oauth-app", slug] as const,
+  /** A scene's own OAuth application of an official app. */
+  oauthApp: (agentId: string, slug: string, scopeKey: string, orgId: string) =>
+    [...contextConfigKeys.agent(agentId), "oauth-app", slug, scopeKey, orgId] as const,
   /** A scene's routines (例行任务). */
   sceneRoutines: (agentId: string, sceneId: string) =>
     [...contextConfigKeys.scene(agentId, sceneId), "routines"] as const,
@@ -203,12 +203,12 @@ function sceneRoutinesTargetReady(target: SceneRoutinesTarget): boolean {
     : Boolean(target.agentId && target.sceneId);
 }
 
-/** An official app's OAuth application, for the agent's managers. */
-export function contextConfigOAuthAppOptions(agentId: string, slug: string) {
+/** A scene's own OAuth application of an official app. */
+export function contextConfigOAuthAppOptions(agentId: string, slug: string, scope: ContextConfigScopeInput) {
   return queryOptions({
-    queryKey: contextConfigKeys.oauthApp(agentId, slug),
-    queryFn: () => api.getContextConfigOAuthApp(agentId, slug),
-    enabled: Boolean(agentId && slug),
+    queryKey: contextConfigKeys.oauthApp(agentId, slug, scope.scopeKey, scope.orgId ?? ""),
+    queryFn: () => api.getContextConfigOAuthApp(agentId, slug, scope),
+    enabled: Boolean(agentId && slug && scope.scopeKey),
   });
 }
 

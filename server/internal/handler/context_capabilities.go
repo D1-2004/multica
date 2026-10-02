@@ -218,10 +218,6 @@ type contextCapAgentDetailResponse struct {
 	// Apps is the connector catalog in its order; an app becomes usable once
 	// the agent's manager adds it (Global or Offers then lists it).
 	Apps []contextCapCatalogAppDTO `json:"apps"`
-	// CanConfigureApps: the caller may change an app's saved OAuth
-	// application here (workspace owners and admins); anyone who may open
-	// the agent saves the first one.
-	CanConfigureApps bool `json:"can_configure_apps"`
 }
 
 func contextCapTime(t time.Time) string {
@@ -1287,11 +1283,6 @@ func (h *Handler) GetContextConfigAgent(w http.ResponseWriter, r *http.Request) 
 			Ready: h.catalogOAuthAvailableFor(ctx, a.WorkspaceID, app),
 		})
 	}
-	// Changing a saved OAuth application is a workspace change.
-	if resp.CanConfigureApps, err = h.contextCapWorkspaceAdmin(ctx, a, userID); err != nil {
-		writeError(w, http.StatusInternalServerError, "member lookup failed")
-		return
-	}
 	tenants, err := contextcap.AgentTenants(ctx, h.DB, a.WorkspaceID, a.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "tenant lookup failed")
@@ -1608,7 +1599,18 @@ func (h *Handler) GetContextConfigScene(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
+	// The apps this scene signs in to with its own OAuth application.
+	sceneOAuthApps := []string{}
+	if scope.ScopeType == contextcap.ScopeScene {
+		providers, err := contextcap.ListSceneAppProviders(ctx, h.DB, a.WorkspaceID, a.ID, a.OrgID, scope.ScopeKey)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "OAuth application lookup failed")
+			return
+		}
+		sceneOAuthApps = providers
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
+		"scene_oauth_apps":    sceneOAuthApps,
 		"scene":               contextCapSceneView(scope.Scene, scope.Kind),
 		"scope":               scope.ref(),
 		"bindings":            bindingViews,

@@ -91,6 +91,8 @@ var preMigrationHooks = map[string]preMigrationHook{
 	// and name (ON CONFLICT arbiters).
 	"9421_agent_tenant_org_idx":              cleanupInvalidConcurrentIndexHook("agent_tenant_org_idx"),
 	"9423_context_prompt_component_name_idx": cleanupInvalidConcurrentIndexHook("context_prompt_component_name_idx"),
+	// One OAuth application per scene and provider (ON CONFLICT arbiter).
+	"9741_context_connector_app_scope_idx": cleanupInvalidConcurrentIndexHook("context_connector_app_scope_idx"),
 	// Unique connector-app indexes. An interrupted build leaves an INVALID
 	// index that IF NOT EXISTS would accept, so uniqueness would not hold.
 	"9435_connector_app_workspace_provider_client_idx": cleanupInvalidConcurrentIndexHook("connector_app_workspace_provider_client_idx"),

@@ -1158,6 +1158,7 @@ function SceneScope({
       detail={detail}
       bindings={scene.bindings}
       credentials={scene.credentials}
+      sceneOAuthApps={scene.sceneOAuthApps}
       content={scene}
       // An older backend without rights: its can_connect alone hides
       // connecting.
@@ -1190,6 +1191,7 @@ function ScopeEditor({
   readOnly = false,
   displayOnly = false,
   untitled = false,
+  sceneOAuthApps,
   reportError,
 }: {
   agentId: string;
@@ -1216,6 +1218,9 @@ function ScopeEditor({
   displayOnly?: boolean;
   /** The scene has no known name: the title is its kind, so no badge. */
   untitled?: boolean;
+  /** Scene levels: the apps the scene signs in to with its own OAuth
+   * application. */
+  sceneOAuthApps?: readonly string[];
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
@@ -1401,6 +1406,7 @@ function ScopeEditor({
           onToggleShare={(connectorId, shareInGroups) => void toggleShare(connectorId, shareInGroups)}
           reportError={reportError}
           inEffectOnly={displayOnly}
+          sceneOAuthApps={sceneOAuthApps}
         />
       </section>
 

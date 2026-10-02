@@ -199,8 +199,13 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	}
 	// Deployment configuration is reported only to callers allowed to
 	// connect this scope.
-	if err := h.connectorOAuthDeploymentErrorFor(ctx, scope.WorkspaceID, app); err != nil {
+	if err := h.connectorOAuthDeploymentErrorForScope(ctx, connectorOAuthScopeBinding(scope), app); err != nil {
 		return connectorOAuthStarted{}, err
+	}
+	// A scene with its own OAuth application authorizes with it.
+	sceneClient, sceneOwn, err := h.sceneOAuthClient(ctx, connectorOAuthScopeBinding(scope), app)
+	if err != nil {
+		return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "the scene's OAuth application is unavailable")
 	}
 	returnTo, err := h.connectorOAuthReturnTo(ctx, in.ReturnTo, scope)
 	if err != nil {
@@ -220,6 +225,9 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	var preregistered githubOAuthClient
 	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp {
 		ghClient, err = h.githubOAuthClient(ctx, scope.WorkspaceID)
+		if sceneOwn {
+			ghClient, err = sceneClient, nil
+		}
 		if err != nil {
 			return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
 		}
@@ -235,6 +243,9 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	}
 	if app.AuthKind == connectorcatalog.AuthOAuthPreregistered {
 		preregistered, err = h.preregisteredOAuthClient(ctx, scope.WorkspaceID, app)
+		if sceneOwn {
+			preregistered, err = sceneClient, nil
+		}
 		if err != nil || strings.TrimSpace(preregistered.ClientID) == "" || preregistered.ClientSecret == "" {
 			return connectorOAuthStarted{}, oauthStartError(http.StatusServiceUnavailable, connectOAuthErrOAuthNotEnabled, "OAuth is not configured for this app")
 		}
@@ -759,6 +770,11 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	wantVia := connectorOAuthViaDCR
 	if app.AuthKind == connectorcatalog.AuthOAuthGitHubApp {
 		client, clientErr := h.githubOAuthClient(ctx, scope.WorkspaceID)
+		if scene, own, sceneErr := h.sceneOAuthClient(ctx, connectorOAuthScopeBinding(scope), app); sceneErr != nil {
+			clientErr = sceneErr
+		} else if own {
+			client = scene
+		}
 		if clientErr != nil {
 			return fail(connectOAuthErrExchangeFailed)
 		}
@@ -789,6 +805,9 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	if err := h.authorizeConnectorOAuthScope(ctx, scope, c); err != nil {
 		return fail(connectOAuthErrForbidden)
 	}
+	// The exchange uses the client the connect started with: the scene's
+	// own application or the workspace's.
+	c.credentialKey = connectorOAuthScopeBinding(scope)
 	endpoint, err := h.connectorTokenEndpoint(ctx, c, verifier.ClientID)
 	if err != nil {
 		slog.WarnContext(ctx, "official app OAuth token endpoint unavailable", "connector_id", c.ID, "catalog_slug", app.Slug, "error", err)
@@ -831,7 +850,11 @@ func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthC
 	}
 	out.ErrorCode = ""
 	out.RedirectURL = withOAuthResult(state.returnTo, "connected", app.Slug)
-	h.attachOAuthTokenToAuthInstance(ctx, scope.WorkspaceID, app.Slug, token.Account, token.AccessToken)
+	// A token of a scene's own application serves that scene only; the
+	// workspace's authorization instances hold the workspace client's.
+	if !endpoint.scene {
+		h.attachOAuthTokenToAuthInstance(ctx, scope.WorkspaceID, app.Slug, token.Account, token.AccessToken)
+	}
 	slog.InfoContext(ctx, "official app OAuth connected", "connector_id", c.ID, "catalog_slug", app.Slug, "scope_type", scope.ScopeType, "user_id", scope.UserID)
 	return out
 }

@@ -349,15 +349,12 @@ describe("configure-page tenants", () => {
         { slug: "figma", name: "Figma", setup: "unsupported", ready: "true" },
         { slug: "linear", name: "Linear", setup: "someday" },
       ],
-      can_configure_apps: true,
     });
     expect(typed.apps.map((app) => [app.slug, app.setup, app.ready])).toEqual([
       ["slack", "oauth_app", true],
       ["figma", "unsupported", false],
       ["linear", "automatic", false],
     ]);
-    expect(typed.canConfigureApps).toBe(true);
-    expect(ContextConfigAgentDetailSchema.parse({ agent: { id: agentId }, can_configure_apps: "yes" }).canConfigureApps).toBe(false);
     // An older backend sends no catalog; a malformed one reads as empty.
     expect(ContextConfigAgentDetailSchema.parse({ agent: { id: agentId } }).apps).toEqual([]);
     expect(ContextConfigAgentDetailSchema.parse({ agent: { id: agentId }, apps: "github" }).apps).toEqual([]);

@@ -232,54 +232,49 @@ describe("official apps on the configure page", () => {
     ).toBeNull();
   });
 
-  it("reads an OAuth application without secrets and saves only the values given", async () => {
+  it("reads a scene's OAuth application without secrets and saves only the values given", async () => {
+    const scope = { scopeType: "scene" as const, scopeKey: sceneId, orgId: "ding-org" };
     const wire = {
       slug: "slack",
       name: "Slack",
-      fields: [
-        { key: "client_id", optional: false, file: false },
-        { key: "client_secret", optional: false, file: false },
-        { key: "signing_secret", optional: true, file: false },
-        { optional: true },
-      ],
+      fields: [{ key: "client_id", optional: false, file: false }, { key: "client_secret", optional: false, file: false }, { optional: true }],
       docs_url: "https://api.slack.com/apps",
       callback_url: "https://fde-workbench.dingtalk.com/api/connectors/oauth/callback",
-      ready: true,
+      saved: true,
       client_id: "cid",
       client_secret_set: true,
-      app_id: "",
-      app_slug: "",
-      private_key_set: false,
-      optional_secret_set: false,
-      deployment_client: false,
-      saved: true,
+      workspace_ready: false,
+      ready: true,
+      can_edit: false,
     };
-    stubFetch(wire);
-    const app = await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack");
-    expect(app?.fields.map((field) => field.key)).toEqual(["client_id", "client_secret", "signing_secret"]);
+    let fetch = stubFetch(wire);
+    const app = await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack", scope);
+    expect(requestOf(fetch).url).toBe(
+      `${base}/api/context-capabilities/agents/${agentId}/apps/slack/oauth-app?scope_type=scene&scope_key=${sceneId}&org_id=ding-org`,
+    );
+    expect(app?.fields.map((field) => field.key)).toEqual(["client_id", "client_secret"]);
     expect(app?.callbackUrl).toBe("https://fde-workbench.dingtalk.com/api/connectors/oauth/callback");
-    expect(app?.ready).toBe(true);
-    expect(app?.saved).toBe(true);
+    expect([app?.saved, app?.ready, app?.workspaceReady, app?.canEdit]).toEqual([true, true, false, false]);
 
-    const fetch = stubFetch(wire);
-    await new ApiClient(base).setContextConfigOAuthApp(agentId, "slack", { clientId: "cid", clientSecret: "" });
+    fetch = stubFetch(wire);
+    await new ApiClient(base).setContextConfigOAuthApp(agentId, "slack", scope, { clientId: "cid", clientSecret: "" });
     const { url, init } = requestOf(fetch);
     expect(url).toBe(`${base}/api/context-capabilities/agents/${agentId}/apps/slack/oauth-app`);
     expect(init.method).toBe("PUT");
     // An empty secret is left out, so the stored one stays.
-    expect(JSON.parse(String(init.body))).toEqual({ client_id: "cid" });
+    expect(JSON.parse(String(init.body))).toEqual({ scope_type: "scene", scope_key: sceneId, org_id: "ding-org", client_id: "cid" });
   });
 
   it("reads a malformed OAuth application as null and an unsafe docs URL as none", async () => {
+    const scope = { scopeType: "scene" as const, scopeKey: sceneId };
     stubFetch({ name: "no slug" });
-    expect(await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack")).toBeNull();
-    stubFetch({ slug: "slack", docs_url: "javascript:alert(1)", callback_url: "http://evil.example/cb" });
-    const app = await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack");
+    expect(await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack", scope)).toBeNull();
+    stubFetch({ slug: "slack", docs_url: "javascript:alert(1)", callback_url: "http://evil.example/cb", can_edit: "yes" });
+    const app = await new ApiClient(base).getContextConfigOAuthApp(agentId, "slack", scope);
     expect(app?.docsUrl).toBe("");
     expect(app?.callbackUrl).toBe("");
-    expect(app?.ready).toBe(false);
-    // An older server without the flag reads as none saved.
-    expect(app?.saved).toBe(false);
+    // Missing or malformed flags read as false.
+    expect([app?.saved, app?.ready, app?.workspaceReady, app?.canEdit]).toEqual([false, false, false, false]);
   });
 });
 

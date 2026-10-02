@@ -235,18 +235,18 @@ export interface ContextConfigCatalogApp {
   ready: boolean;
 }
 
-/** One value of an app's OAuth application (Slack, Asana, GitHub). */
+/** One value of a scene's OAuth application: "client_id" or "client_secret". */
 export interface ContextConfigOAuthAppField {
-  /** "client_id", "client_secret", "app_id", "app_slug", "private_key",
-   * "signing_secret", "webhook_secret", … */
   key: string;
   optional: boolean;
-  /** Pasted as a file's content (a private key). */
+  /** Pasted as a file's content. */
   file: boolean;
 }
 
-/** An app's OAuth application as the configure page shows it to the
- * agent's managers. Secrets are never returned, only whether they are set. */
+/** A scene's own OAuth application of an app without dynamic registration
+ * (Slack, Asana, GitHub), as the configure page shows it. Connections at
+ * the scene sign in with it; without one the scene uses the workspace's
+ * (saved in the admin console). Secrets are never returned. */
 export interface ContextConfigOAuthApp {
   slug: string;
   name: string;
@@ -255,30 +255,23 @@ export interface ContextConfigOAuthApp {
   docsUrl: string;
   /** The callback URL to register there. */
   callbackUrl: string;
-  /** A sign-in can start now. */
-  ready: boolean;
+  /** The scene has its own. */
+  saved: boolean;
   clientId: string;
   clientSecretSet: boolean;
-  appId: string;
-  appSlug: string;
-  privateKeySet: boolean;
-  optionalSecretSet: boolean;
-  /** The deployment provides a client (GitHub App env); saving one here
-   * takes precedence for the workspace. */
-  deploymentClient: boolean;
-  /** The workspace has one: anyone who may open the agent saves the first
-   * one, and only workspace admins (`canConfigureApps`) change it. */
-  saved: boolean;
+  /** Without its own, the scene signs in with the workspace's application. */
+  workspaceReady: boolean;
+  /** A sign-in can start at the scene now. */
+  ready: boolean;
+  /** The caller may save it now: the first one with the scene's connect
+   * right, a saved one only as the agent's manager. */
+  canEdit: boolean;
 }
 
-/** Saves an app's OAuth application; an omitted secret keeps the stored one. */
+/** Saves a scene's OAuth application; an omitted secret keeps the stored one. */
 export interface ContextConfigOAuthAppInput {
   clientId: string;
   clientSecret?: string;
-  appId?: string;
-  appSlug?: string;
-  privateKey?: string;
-  optionalSecret?: string;
 }
 
 /** Adds an official app at a level from the configure page. */
@@ -326,9 +319,6 @@ export interface ContextConfigAgentDetail {
    * is usable here only once `global` or `offers` lists its connector;
    * older backends send none. */
   apps: ContextConfigCatalogApp[];
-  /** The caller may change an app's saved OAuth application on this page
-   * (workspace owners and admins); anyone may save the first one. */
-  canConfigureApps: boolean;
 }
 
 /** Where the configuration of one scene page lives: the scene itself, a
@@ -351,6 +341,9 @@ export interface ContextConfigSceneDetail extends ContextConfigScopeContent {
   /** The caller may store, remove or connect credentials in `scope`. null
    * when an older backend does not say. */
   canConnect: boolean | null;
+  /** Apps (catalog slugs) the scene signs in to with its own OAuth
+   * application; [] from an older backend. */
+  sceneOAuthApps: string[];
 }
 
 export interface SetContextCapabilityBindingInput {

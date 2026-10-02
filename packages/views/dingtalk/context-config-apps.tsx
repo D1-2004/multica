@@ -14,6 +14,7 @@ import {
   useStartContextConnectorConnection,
   type ContextCapabilityBinding,
   type ContextConfigAgentDetail,
+  type ContextConfigScopeInput,
   type ContextConnectorCredential,
   type ContextOfferedConnector,
   type ContextSceneKind,
@@ -23,7 +24,6 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { Input } from "@multica/ui/components/ui/input";
 import { Switch } from "@multica/ui/components/ui/switch";
-import { Textarea } from "@multica/ui/components/ui/textarea";
 import { cn } from "@multica/ui/lib/utils";
 import { StatusPill, type StatusTone } from "../agents/components/tabs/connectors-ui";
 import { ConnectorLogo } from "../common/connector-logo";
@@ -179,6 +179,8 @@ export interface ConnectorsSlotProps {
   /** Show only what applies at this level (the read-only enterprise level):
    * no apps to add, none not opened. */
   inEffectOnly?: boolean;
+  /** Apps a scene signs in to with its own OAuth application. */
+  sceneOAuthApps?: readonly string[];
 }
 
 /**
@@ -558,13 +560,15 @@ function ConnectorDialog({
                               {t(($) => $.context_config.app_unsupported, { name: current.entry.name })}
                             </p>
                           ) : null}
-                          {catalogApp?.setup === "oauth_app" && !props.inEffectOnly ? (
+                          {/* Only a scene has its own OAuth application here;
+                              the workspace's and the enterprise's are the
+                              admin console's. */}
+                          {catalogApp?.setup === "oauth_app" && scopeType === "scene" && !props.inEffectOnly ? (
                             <OAuthAppSetup
                               agentId={props.agentId}
                               slug={catalogApp.slug}
                               name={current.entry.name}
-                              ready={current.entry.offered.oauthAvailable}
-                              canConfigure={detail.canConfigureApps === true}
+                              scope={{ scopeType, scopeKey: props.scopeKey, ...orgField(props.orgId) }}
                               reportError={props.reportError}
                             />
                           ) : null}
@@ -608,80 +612,45 @@ function ConnectorDialog({
 }
 
 /** The label of one OAuth application value. */
-function useOAuthFieldLabel(): (key: string) => string {
-  const { t } = useT("agents");
-  return (key) => {
-    switch (key) {
-      case "client_id":
-        return "Client ID";
-      case "client_secret":
-        return "Client Secret";
-      case "app_id":
-        return "App ID";
-      case "app_slug":
-        return t(($) => $.context_config.oauth_app_field_slug);
-      case "private_key":
-        return t(($) => $.context_config.oauth_app_field_private_key);
-      case "signing_secret":
-        return "Signing Secret";
-      case "webhook_secret":
-        return "Webhook Secret";
-      default:
-        return key;
-    }
-  };
+function oauthFieldLabel(key: string): string {
+  switch (key) {
+    case "client_id":
+      return "Client ID";
+    case "client_secret":
+      return "Client Secret";
+    default:
+      return key;
+  }
 }
 
-/** Values of the OAuth application form, by field key. */
-type OAuthAppValues = Record<string, string>;
-
-const OAUTH_SECRET_KEYS = new Set(["client_secret", "private_key", "signing_secret", "webhook_secret"]);
-
 /**
- * The OAuth application an app without dynamic registration needs (Slack,
- * Asana, GitHub without a deployment app), filled in on this page: the
- * callback URL to register in the provider's console, then the app's
- * values. Anyone here saves the first one; the saved one is the workspace's
- * client, which only workspace admins (`canConfigure`) change.
+ * A scene's own OAuth application of an app without dynamic registration
+ * (Slack, Asana, GitHub), filled in on this page: the callback URL to
+ * register in the provider's console, then the client. The scene signs in
+ * with it; without one it uses the workspace's (the admin console's). The
+ * scene's members save the first one, only the agent's managers change it.
  */
 function OAuthAppSetup({
   agentId,
   slug,
   name,
-  ready,
-  canConfigure,
+  scope,
   reportError,
 }: {
   agentId: string;
   slug: string;
   name: string;
-  ready: boolean;
-  canConfigure: boolean;
+  scope: ContextConfigScopeInput;
   reportError: (error: unknown) => boolean;
 }) {
   const { t } = useT("agents");
-  const fieldLabel = useOAuthFieldLabel();
-  // A ready app shows collapsed; only admins open it to change it.
-  const [expanded, setExpanded] = useState(!ready);
-  const query = useQuery({ ...contextConfigOAuthAppOptions(agentId, slug), enabled: expanded });
+  const query = useQuery(contextConfigOAuthAppOptions(agentId, slug, scope));
   const save = useSetContextConfigOAuthApp(agentId);
-  const [values, setValues] = useState<OAuthAppValues>({});
+  const [editing, setEditing] = useState(false);
+  const [values, setValues] = useState<Record<string, string>>({});
   const [invalid, setInvalid] = useState("");
   const app = query.data ?? null;
 
-  if (!expanded) {
-    if (!canConfigure) return null;
-    return (
-      <div className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
-        <span className="min-w-0 truncate text-caption text-muted-foreground">
-          {t(($) => $.context_config.oauth_app_ready, { name })}
-        </span>
-        <Button variant="ghost" size="sm" onClick={() => setExpanded(true)}>
-          {t(($) => $.context_config.action_edit)}
-        </Button>
-      </div>
-    );
-  }
   if (query.isPending) {
     return (
       <p className="flex items-center gap-2 text-caption text-muted-foreground" role="status">
@@ -693,24 +662,29 @@ function OAuthAppSetup({
   if (!app) {
     return <p className="text-caption text-muted-foreground">{t(($) => $.context_config.load_failed)}</p>;
   }
-  if (app.saved && !canConfigure) {
+  // Without its own and without the workspace's, the scene needs one now.
+  const open = app.canEdit && (editing || (!app.saved && !app.workspaceReady));
+  if (!open) {
+    if (!app.saved && !app.workspaceReady) return null;
     return (
-      <p className="text-caption text-muted-foreground text-pretty">{t(($) => $.context_config.oauth_app_admin_only, { name })}</p>
+      <div className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
+        <span className="min-w-0 text-caption text-muted-foreground text-pretty">
+          {app.saved
+            ? app.canEdit
+              ? t(($) => $.context_config.oauth_app_scene_ready, { name })
+              : t(($) => $.context_config.oauth_app_scene_locked, { name })
+            : t(($) => $.context_config.oauth_app_workspace, { name })}
+        </span>
+        {app.canEdit ? (
+          <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setEditing(true)}>
+            {app.saved ? t(($) => $.context_config.action_edit) : t(($) => $.context_config.oauth_app_own)}
+          </Button>
+        ) : null}
+      </div>
     );
   }
 
-  const storedSecret = (key: string): boolean =>
-    key === "client_secret"
-      ? app.clientSecretSet
-      : key === "private_key"
-        ? app.privateKeySet
-        : OAUTH_SECRET_KEYS.has(key)
-          ? app.optionalSecretSet
-          : false;
-  const storedValue = (key: string): string =>
-    key === "client_id" ? app.clientId : key === "app_id" ? app.appId : key === "app_slug" ? app.appSlug : "";
-  const valueOf = (key: string): string => values[key] ?? (OAUTH_SECRET_KEYS.has(key) ? "" : storedValue(key));
-
+  const valueOf = (key: string): string => values[key] ?? (key === "client_id" ? app.clientId : "");
   const copyCallback = async () => {
     try {
       await navigator.clipboard.writeText(app.callbackUrl);
@@ -721,38 +695,36 @@ function OAuthAppSetup({
   };
 
   const submit = async () => {
-    // Required values: present, or (a secret) already stored.
+    // Required values: present, or (the secret) already stored.
     const missing = app.fields.find(
-      (field) => !field.optional && !valueOf(field.key).trim() && !(OAUTH_SECRET_KEYS.has(field.key) && storedSecret(field.key)),
+      (field) =>
+        !field.optional && !valueOf(field.key).trim() && !(field.key === "client_secret" && app.clientSecretSet),
     );
     if (missing) {
-      setInvalid(fieldLabel(missing.key));
+      setInvalid(oauthFieldLabel(missing.key));
       return;
     }
     setInvalid("");
-    const optionalSecret = valueOf("signing_secret") || valueOf("webhook_secret");
+    const secret = valueOf("client_secret").trim();
     try {
       const saved = await save.mutateAsync({
         slug,
+        scope,
         clientId: valueOf("client_id").trim(),
-        ...(valueOf("client_secret") ? { clientSecret: valueOf("client_secret").trim() } : {}),
-        ...(valueOf("app_id") ? { appId: valueOf("app_id").trim() } : {}),
-        ...(valueOf("app_slug") ? { appSlug: valueOf("app_slug").trim() } : {}),
-        ...(valueOf("private_key") ? { privateKey: valueOf("private_key") } : {}),
-        ...(optionalSecret ? { optionalSecret: optionalSecret.trim() } : {}),
+        ...(secret ? { clientSecret: secret } : {}),
       });
       setValues({});
       // Collapse once a sign-in can start; otherwise the values stay here.
-      setExpanded(saved?.ready !== true);
+      setEditing(saved?.ready !== true);
       toast.success(t(($) => $.context_config.oauth_app_saved, { name }));
     } catch (error) {
-      if (errorCode(error) === "app_requires_admin") {
-        toast.error(t(($) => $.context_config.oauth_app_admin_only, { name }));
+      if (errorCode(error) === "oauth_app_locked") {
+        toast.error(t(($) => $.context_config.oauth_app_scene_locked, { name }));
       } else if (!reportError(error)) {
         toast.error(t(($) => $.context_config.oauth_app_failed));
       }
     } finally {
-      // Drop the submitted secrets from the mutation state right away.
+      // Drop the submitted secret from the mutation state right away.
       save.reset();
     }
   };
@@ -792,37 +764,25 @@ function OAuthAppSetup({
       </div>
       {app.fields.map((field) => {
         const id = `context-oauth-app-${slug}-${field.key}`;
-        const secret = OAUTH_SECRET_KEYS.has(field.key);
-        const placeholder = secret && storedSecret(field.key) ? t(($) => $.context_config.oauth_app_secret_kept) : "";
+        const secret = field.key === "client_secret";
+        const placeholder = secret && app.clientSecretSet ? t(($) => $.context_config.oauth_app_secret_kept) : "";
         return (
           <div key={field.key} className="space-y-1">
             <label htmlFor={id} className="block text-caption font-medium">
-              {fieldLabel(field.key)}
+              {oauthFieldLabel(field.key)}
               {field.optional ? <span className="text-muted-foreground"> · {t(($) => $.context_config.optional)}</span> : null}
             </label>
-            {field.file ? (
-              <Textarea
-                id={id}
-                value={valueOf(field.key)}
-                placeholder={placeholder || "-----BEGIN PRIVATE KEY-----"}
-                rows={3}
-                spellCheck={false}
-                onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
-                className="font-mono text-micro"
-              />
-            ) : (
-              <Input
-                id={id}
-                type={secret ? "password" : "text"}
-                autoComplete="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                value={valueOf(field.key)}
-                placeholder={placeholder}
-                onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
-                className="h-9"
-              />
-            )}
+            <Input
+              id={id}
+              type={secret ? "password" : "text"}
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              value={valueOf(field.key)}
+              placeholder={placeholder}
+              onChange={(event) => setValues((current) => ({ ...current, [field.key]: event.target.value }))}
+              className="h-9"
+            />
           </div>
         );
       })}
@@ -832,8 +792,17 @@ function OAuthAppSetup({
         </p>
       ) : null}
       <div className="flex gap-2">
-        {ready ? (
-          <Button variant="ghost" className="h-9 flex-1" disabled={save.isPending} onClick={() => setExpanded(false)}>
+        {app.saved || app.workspaceReady ? (
+          <Button
+            variant="ghost"
+            className="h-9 flex-1"
+            disabled={save.isPending}
+            onClick={() => {
+              setValues({});
+              setInvalid("");
+              setEditing(false);
+            }}
+          >
             {t(($) => $.context_config.cancel)}
           </Button>
         ) : null}
@@ -915,6 +884,7 @@ function ConnectorAccount(props: AccountProps) {
 function OAuthConnectionControl({
   agentId,
   detail,
+  sceneOAuthApps,
   scopeType,
   scopeKey,
   orgId,
@@ -942,9 +912,12 @@ function OAuthConnectionControl({
   // The server says whether it can run this app's sign-in (GitHub needs the
   // GitHub App client credentials); without it a Personal Access Token is
   // the only way to connect.
-  const oauthReady = Boolean(openAuthorizeUrl) && connector.oauthAvailable;
-  // An app waiting for its OAuth application says so in the setup above.
-  const awaitsOAuthApp = detail.apps?.find((app) => app.slug === connector.catalogSlug)?.setup === "oauth_app";
+  // A scene with its own OAuth application signs in with it.
+  const sceneOwnApp = scopeType === "scene" && (sceneOAuthApps ?? []).includes(connector.catalogSlug);
+  const oauthReady = Boolean(openAuthorizeUrl) && (connector.oauthAvailable || sceneOwnApp);
+  // A scene waiting for its OAuth application says so in the setup above.
+  const awaitsOAuthApp =
+    scopeType === "scene" && detail.apps?.find((app) => app.slug === connector.catalogSlug)?.setup === "oauth_app";
 
   const connect = async () => {
     if (!openAuthorizeUrl || connecting) return;
@@ -1098,7 +1071,7 @@ function OAuthConnectionControl({
               </Button>
             )}
           </div>
-          {!connector.oauthAvailable && !awaitsOAuthApp && (
+          {!connector.oauthAvailable && !sceneOwnApp && !awaitsOAuthApp && (
             <p className="text-caption text-muted-foreground">
               {connector.acceptsPat
                 ? t(($) => $.context_config.connect_unavailable_pat, { name: connector.name })
