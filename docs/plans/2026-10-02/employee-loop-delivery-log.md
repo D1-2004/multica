@@ -6,12 +6,12 @@
 
 | 批次 | 内容 | 状态 |
 | --- | --- | --- |
-| B0 | R2 方案归档；修复新库历史迁移依赖顺序 | 本地验证与两阶段审查通过，准备部署 |
-| B1 | EmployeeTask 目标/追加记录/Run 持久化 | 真实 PG race 与两阶段审查通过，准备交付 |
-| B2 | Work Packet、Issue/Direct 接缝 | 未实施 |
-| B3 | GawkBot 内核、首轮回复与 3 调用上限 | 内核两阶段审查通过；生产消费另批接线 |
-| B4 | 隔离 memory/learning、入口及回报闭环 | 未实施 |
-| B5 | 配置开关、预发真实场景与 Runtime 验证 | 未实施 |
+| B0 | R2 方案归档；修复新库历史迁移依赖顺序 | 已推送并完成预发部署 |
+| B1 | EmployeeTask 目标/追加记录/Run 持久化 | 已推送并完成预发部署 |
+| B2 | Work Packet、Issue/Direct 接缝 | Direct 文本执行及权限回归通过、复审中；Compiler / IssueBackend 开发中 |
+| B3 | GawkBot 内核、首轮回复与 3 调用上限 | 内核已推送并完成预发部署；生产消费另批接线 |
+| B4 | 隔离 memory/learning、入口及回报闭环 | 隔离记忆基础验证通过、准备交付；入口及回报开发中 |
+| B5 | 配置开关、预发真实场景与 Runtime 验证 | 配置开关本地验证通过；真实账户验证等待预发 PAT 刷新 |
 
 ## B0 已观察的证据
 
@@ -51,3 +51,12 @@
 - 独立审查两次捕获并复现部分成功问题：多个 terminal 提前退出、后续 effect 无 receipt 错误被整体成功覆盖。均新增行为反例红绿修复，逐项 outcome/receipt 保留；独立 overlay、race/vet 复审通过。
 - 可选 `employeeintegration` 模型 smoke 需要显式环境开关，默认不联网；本地 HTTP fixture 验证两场景与真实请求总数上限。尚未声称真实模型或 Host 副作用验收。
 - Runtime 预检：默认预发 profile 返回 401 invalid token，已请用户本机刷新登录；私有 canary/真实 FC 与本地 Daemon 验证待有效 PAT。
+
+## B3 部署及 B4 隔离记忆基础
+
+- B3 开发提交 `54c4afe33` 经干净交付分支集成为 `6e1cf1fce`，已推送目标分支。实例 `3110304218` 的构建、部署和集成测试均 SUCCESS，后在人工验证阶段被外部取消；后继实例 `3110304361` 同样完成上述三阶段，停在人工验证。没有把取消状态误记成整条流水线成功。
+- 新记忆包实际移植固定 GawkBot 的 learning、scope matching、recovery、distill 和 lookup/capture/promote 记录逻辑；独立表 9620–9624，与旧 Coordinator memory 无共享内容、revision 或 reset。
+- 两阶段审查中的三个反例已修复：中文标题碰撞、reset 后改变模型 key 重放复活、模型冒充 Host Task/Run 来源；真实 PG race 回归通过。
+- 独立提交快照在新建 `employee_memory_delivery_test` 数据库完成全量迁移；记忆整包真实 PG race、vet，以及 workspace 删除隔离/回滚回归通过。新增表的删除跟随 workspace 锁和事务。
+- 扩展执行的全库 deletion manifest 检查暴露原分支大量已有未分类表；本批新增两表均已登记。该总表审计没有通过，不把定向通过描述成全库通过。
+- 当前批次是存储及机制基础，不代表后台消费、模型提炼、实际内容晋级或真实发送已完成。实际模型、FC canary、持久设备滚动验证仍单独记录。
