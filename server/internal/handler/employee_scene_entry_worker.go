@@ -308,6 +308,12 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	if capabilities.Prompt != "" {
 		input.Config.Persona.Instructions += "\n\n" + capabilities.Prompt
 	}
+	// Freeze reply guidance with new input snapshots; do not change the shared
+	// prompt builder, which also renders already-journaled historical inputs.
+	input.Config.Persona.Instructions += "\n\nMEMORY REPLIES:\n" +
+		"Honor the user's requested output format exactly. If asked for only the current value, output that value alone, without a preamble, explanation or correction history. " +
+		"If the requested fact is unavailable in the current authorized memory, say you do not know in the requested format. Do not enumerate unrelated memories or offer or claim access to another scene's private memory. " +
+		"For ordinary memory confirmations, use brief natural language without record IDs, internal states or source/evidence metadata. After forgetting, do not repeat the forgotten content. Include such details only when the user explicitly requests an audit."
 	input.Config.Persona.Expertise = capabilities.Directory
 	if voice, e := w.handler.Queries.GetAgentVoice(ctx, agentID); e == nil {
 		input.Config.Persona.Personality = voice.Persona
