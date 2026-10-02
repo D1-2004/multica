@@ -233,6 +233,9 @@ type FCE2BConfig struct {
 	Domain                       string   `json:"domain"`
 	TimeoutSeconds               int      `json:"timeout_seconds"`
 	SandboxReadyTimeout          Duration `json:"sandbox_ready_timeout"`
+	// ConnectionReuse lets one scene and trigger share a sandbox. Nil keeps
+	// one sandbox per chat or issue.
+	ConnectionReuse *FCE2BConnectionReuse `json:"connection_reuse,omitempty"`
 }
 
 type ASBConfig struct {
@@ -532,6 +535,11 @@ func (c RuntimeConfig) validate() error {
 		}
 		if strings.TrimSpace(c.ASB.ResourceCPU) == "" || strings.TrimSpace(c.ASB.ResourceMemory) == "" {
 			return fmt.Errorf("asb resource_cpu and resource_memory are required when enabled")
+		}
+	}
+	if c.FCE2B.ConnectionReuse != nil {
+		if err := c.FCE2B.ConnectionReuse.validate(); err != nil {
+			return err
 		}
 	}
 	if c.FCE2BSDKRollout != nil {

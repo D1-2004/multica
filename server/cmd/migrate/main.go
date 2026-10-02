@@ -169,6 +169,7 @@ type migrationVersionAlias struct {
 // both stems: the new binary skips replaying the migration, while a binary
 // rollback still sees the historical stem it understands.
 var migrationVersionAliases = []migrationVersionAlias{
+	{Legacy: "271_task_completion_canceled_status", Current: "9540_task_completion_canceled_status"},
 	{Legacy: "175_webhook_delivery_worker", Current: "176_webhook_delivery_worker"},
 	{Legacy: "176_autopilot_run_webhook_delivery_index", Current: "177_autopilot_run_webhook_delivery_index"},
 	{Legacy: "177_webhook_delivery_queue_index", Current: "178_webhook_delivery_queue_index"},
@@ -451,7 +452,7 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 
 	existsSQL := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE version = $1)", tableIdent)
 	insertSQL := fmt.Sprintf("INSERT INTO %s (version) VALUES ($1)", tableIdent)
-	deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE version = $1", tableIdent)
+	deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE version = ANY($1::text[])", tableIdent)
 
 	for _, file := range opts.Files {
 		version := migrations.ExtractVersion(file)
@@ -500,7 +501,15 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 		if opts.Direction == "up" {
 			_, err = conn.Exec(ctx, insertSQL, version)
 		} else {
-			_, err = conn.Exec(ctx, deleteSQL, version)
+			// A reverted migration must lose every historical name too;
+			// otherwise up would reconcile an alias and skip restoring it.
+			versions := []string{version}
+			for _, alias := range migrationVersionAliases {
+				if alias.Current == version {
+					versions = append(versions, alias.Legacy)
+				}
+			}
+			_, err = conn.Exec(ctx, deleteSQL, versions)
 		}
 		if err != nil {
 			return fmt.Errorf("record migration %q: %w", version, err)

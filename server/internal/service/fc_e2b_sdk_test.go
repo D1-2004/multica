@@ -356,8 +356,8 @@ func TestFCE2BLauncherSDKTransportEndToEnd(t *testing.T) {
 	if !reflect.DeepEqual(creates[0], wantCreate) {
 		t.Fatalf("create body = %#v, want %#v", creates[0], wantCreate)
 	}
-	if want := []string{`sbx_123 {"timeout":300}`, `sbx_123 {"timeout":300}`, `sbx_123 {"timeout":300}`}; !reflect.DeepEqual(connects, want) {
-		t.Fatalf("connects = %#v, want the CLI's per-exec 300s attach %#v", connects, want)
+	if want := []string{`sbx_123 {"timeout":4800}`, `sbx_123 {"timeout":4800}`, `sbx_123 {"timeout":4800}`}; !reflect.DeepEqual(connects, want) {
+		t.Fatalf("connects = %#v, want the task lifetime on every launcher connect %#v", connects, want)
 	}
 	if len(starts) != 3 {
 		t.Fatalf("starts = %d", len(starts))
