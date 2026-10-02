@@ -116,7 +116,7 @@ func (s *IssueCommentService) createSteeredExternalFollowUp(ctx context.Context,
 	}
 	var preempted *db.AgentTaskQueue
 	if activeErr == nil {
-		cancelled, err := q.CancelAgentTask(ctx, active.ID)
+		cancelled, err := q.CancelAgentTaskForSteer(ctx, active.ID)
 		if err != nil {
 			return IssueCommentCreateResult{}, err
 		}

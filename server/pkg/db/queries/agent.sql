@@ -1613,10 +1613,7 @@ LIMIT @max_per_tick::int;
 
 -- name: CancelAgentTask :one
 UPDATE agent_task_queue
-SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL,
-    context = CASE WHEN status IN ('dispatched', 'running', 'waiting_local_directory')
-      THEN COALESCE(context, '{}'::jsonb) || '{"process_stop_pending":true}'::jsonb
-      ELSE context END
+SET status = 'cancelled', completed_at = now(), prepare_lease_expires_at = NULL
 WHERE id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')
 RETURNING *;
 

@@ -26,7 +26,8 @@ func TestCancelAckReconcilesDeferredCommentsAndRequiresProcessExit(t *testing.T)
 	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET status='running',dispatched_at=now(),started_at=now(),created_at=now()-interval '10 minutes',delivered_comment_ids=ARRAY[trigger_comment_id] WHERE id=$1`, f.taskID); err != nil {
 		t.Fatal(err)
 	}
-	old, err := testHandler.TaskService.CancelTask(ctx, parseUUID(f.taskID))
+	canceled, err := testHandler.Queries.CancelAgentTaskForSteer(ctx, parseUUID(f.taskID))
+	old := &canceled
 	if err != nil {
 		t.Fatal(err)
 	}

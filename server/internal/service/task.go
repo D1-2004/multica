@@ -2882,7 +2882,7 @@ func (s *TaskService) SteerAgentDispatchChatTask(
 			return nil
 		}
 
-		active, err := qtx.CancelAgentTask(ctx, activeID)
+		active, err := qtx.CancelAgentTaskForSteer(ctx, activeID)
 		if err != nil {
 			return fmt.Errorf("cancel active IM task for steer: %w", err)
 		}

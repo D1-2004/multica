@@ -29,7 +29,7 @@ relinquishes its callback before its inert row is canceled.
 Unrelated queued work and other agents are preserved. Message replay uses the
 existing dispatch deduplication receipt; it must not cancel a later run.
 
-Cancellation of a claimed task sets `context.process_stop_pending=true` in
+Steer cancellation of a claimed task sets `context.process_stop_pending=true` in
 the same transaction as `status=cancelled`. Cancelled is a logical terminal
 state, not evidence that a process exited. Both claim paths and cloud launch
 arbitration treat this marker as an occupied serialization lane. No elapsed
@@ -48,8 +48,9 @@ cannot provide this proof yet.
 For existing FC/E2B images, the server also uses the task-owned stop script's
 second scan. All sandboxes must return a version-3 receipt with zero remaining
 and zero unreadable processes. Disabled stops, missing receipts and errors do
-not clear the barrier. This uses the existing `runtime.fc_e2b_sdk_rollout`
-selection; no timer or logical cancellation is substituted for exit proof.
+not clear the barrier. Pending steer requires the stop even when
+`runtime.fc_e2b_sdk_rollout` is off; that switch still selects SDK or CLI
+transport. No timer or logical cancellation substitutes for exit proof.
 
 Explicit Chat steer can resume the canceled first turn when the sandbox is
 warm and the stored agent/runtime configuration identity still matches. It

@@ -27,9 +27,10 @@ import (
 // aborted task's processes inside each sandbox the task used. A completed
 // task's processes are left to the sandbox release.
 //
-// runtime.fc_e2b_sdk_rollout gates the stop and the runner marker together
+// For legacy aborts, runtime.fc_e2b_sdk_rollout gates the stop and runner marker together
 // with the SDK transport, by the task's workspace, agent and runtime: a scope
 // it does not select keeps the behavior from before the SDK change.
+// Explicit steer cancellation requires exit proof through either transport.
 //
 // Only processes provably owned by the task are ended; a process whose owner
 // cannot be proven is left alone (PRI-61: a start-time window took another
@@ -317,7 +318,7 @@ func (l *FCE2BLauncher) scheduleAbortedTaskStop(task db.AgentTaskQueue) bool {
 	// not.
 	rollout := frozen.Config.SDKRollout
 	scope := FCE2BScope{AgentID: pgFCE2BScopeID(task.AgentID), RuntimeID: pgFCE2BScopeID(task.RuntimeID)}
-	if !frozen.Config.Enabled || !(fcE2BRolloutSelects(rollout, scope) || rollout.Enabled && len(rollout.WorkspaceIDs) > 0) {
+	if !frozen.Config.Enabled || !(fcE2BRolloutSelects(rollout, scope) || rollout.Enabled && len(rollout.WorkspaceIDs) > 0 || taskProcessStopPending(task)) {
 		return false
 	}
 	taskKey := util.UUIDToString(task.ID)
@@ -442,7 +443,7 @@ func (l *FCE2BLauncher) stopTaskProcessesInSandbox(ctx context.Context, task db.
 		AgentID:     pgFCE2BScopeID(task.AgentID),
 		RuntimeID:   pgFCE2BScopeID(task.RuntimeID),
 	}
-	if !fcE2BRolloutSelects(l.Config.SDKRollout, scope) {
+	if !fcE2BRolloutSelects(l.Config.SDKRollout, scope) && !taskProcessStopPending(task) {
 		slog.Info("FC/E2B task processes not stopped", append(attrs, "outcome", "disabled")...)
 		return fcE2BTaskStopReceipt{}, nil
 	}
