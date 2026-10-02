@@ -5827,27 +5827,46 @@ func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) 
 	return result
 }
 
+// TaskExecutionSurface controls platform-owned skill injection. It does not
+// filter explicitly bound skills, which remain owned by workspace/context authors.
+type TaskExecutionSurface string
+
+const (
+	TaskExecutionSurfacePlatform TaskExecutionSurface = "platform"
+	TaskExecutionSurfaceDirect   TaskExecutionSurface = "employee_direct"
+)
+
+// ExecutionSurfaceForTask is shared by claim and subsequent bundle resolution.
+func ExecutionSurfaceForTask(task db.AgentTaskQueue) TaskExecutionSurface {
+	if IsEmployeeDirectTask(task) {
+		return TaskExecutionSurfaceDirect
+	}
+	return TaskExecutionSurfacePlatform
+}
+
 // LoadAgentExecutionSkills returns every skill that should be visible to an
 // agent during task execution: runtime-compatible workspace-bound skills,
 // platform built-ins, and runtime-specific skills implied by the exact Runtime
 // that claimed the task.
 func (s *TaskService) LoadAgentExecutionSkills(ctx context.Context, agentID pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) []AgentSkillData {
-	return s.LoadTaskExecutionSkills(ctx, agentID, nil, runtime, taskBackend, messagePolicy...)
+	return s.LoadTaskExecutionSkills(ctx, agentID, nil, runtime, taskBackend, TaskExecutionSurfacePlatform, messagePolicy...)
 }
 
 // LoadTaskExecutionSkills is LoadAgentExecutionSkills for one claimed task:
 // the agent's enabled skills plus extraSkillIDs (scene / personal context
 // skills), deduplicated by skill id with agent rows first. Extra skills are
 // loaded only from the runtime's workspace and pass the same runtime filter;
-// unknown or foreign ids are skipped. Built-ins and the DWS skill follow as
-// usual.
-func (s *TaskService) LoadTaskExecutionSkills(ctx context.Context, agentID pgtype.UUID, extraSkillIDs []pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) []AgentSkillData {
+// unknown or foreign ids are skipped. Direct omits automatic platform built-ins;
+// runtime DWS identity/message rules still apply on either execution surface.
+func (s *TaskService) LoadTaskExecutionSkills(ctx context.Context, agentID pgtype.UUID, extraSkillIDs []pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, surface TaskExecutionSurface, messagePolicy ...*protocol.DingTalkMessagePolicy) []AgentSkillData {
 	workspaceSkills := s.LoadAgentSkills(ctx, agentID)
 	if len(extraSkillIDs) > 0 {
 		workspaceSkills = append(workspaceSkills, s.loadWorkspaceSkillsByID(ctx, runtime.WorkspaceID, extraSkillIDs, workspaceSkills)...)
 	}
 	skills := filterAgentSkillsForRuntime(workspaceSkills, runtime, taskBackend)
-	skills = append(skills, s.BuiltinSkills()...)
+	if surface != TaskExecutionSurfaceDirect {
+		skills = append(skills, s.BuiltinSkills()...)
+	}
 	if CloudSandboxRuntimeHasCapability(runtime, "dws") {
 		var policy *protocol.DingTalkMessagePolicy
 		if len(messagePolicy) > 0 {
@@ -5861,12 +5880,12 @@ func (s *TaskService) LoadTaskExecutionSkills(ctx context.Context, agentID pgtyp
 // LoadAgentSkillBundles returns every skill visible to an agent, including
 // built-ins, with stable bundle hashes and lightweight refs for slim claims.
 func (s *TaskService) LoadAgentSkillBundles(ctx context.Context, agentID pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) ([]AgentSkillData, []AgentSkillRefData) {
-	return s.LoadTaskSkillBundles(ctx, agentID, nil, runtime, taskBackend, messagePolicy...)
+	return s.LoadTaskSkillBundles(ctx, agentID, nil, runtime, taskBackend, TaskExecutionSurfacePlatform, messagePolicy...)
 }
 
 // LoadTaskSkillBundles is LoadAgentSkillBundles over LoadTaskExecutionSkills.
-func (s *TaskService) LoadTaskSkillBundles(ctx context.Context, agentID pgtype.UUID, extraSkillIDs []pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) ([]AgentSkillData, []AgentSkillRefData) {
-	return BuildAgentSkillBundles(s.LoadTaskExecutionSkills(ctx, agentID, extraSkillIDs, runtime, taskBackend, messagePolicy...))
+func (s *TaskService) LoadTaskSkillBundles(ctx context.Context, agentID pgtype.UUID, extraSkillIDs []pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, surface TaskExecutionSurface, messagePolicy ...*protocol.DingTalkMessagePolicy) ([]AgentSkillData, []AgentSkillRefData) {
+	return BuildAgentSkillBundles(s.LoadTaskExecutionSkills(ctx, agentID, extraSkillIDs, runtime, taskBackend, surface, messagePolicy...))
 }
 
 // loadWorkspaceSkillsByID loads skills of workspaceID by id with their files,

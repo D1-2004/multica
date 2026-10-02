@@ -19,9 +19,23 @@ GawkBot 固定提交的内核和 prompt/voice 负责判断与表达；岗位 Ins
 
 Direct commit 已成功时，即使外层工具 journal 写失败或调用被取消，返回的 Run receipt 仍保留，不能错误地说未受理。确定性上下文超限保存一次无需模型的明确反馈，不截掉尾部约束，也不永久重试。
 
+## 场域能力与前台观测
+
+前台复用 contextcap 的全局与组织/场域配置、可信单一请求者的个人配置和合并规则。多人或未知请求者窗口不能借用一个人的个人配置。能力目录展示实际生效配置和简短描述，配置启用不代表上游连接已经可用，也不授予新权限。全局启用能力与场域 offered 开关是并集；关闭本层 offered 不撤销全局授予。
+
+`reply` 是不派任务的明确终态；`describe_capabilities` 由 Host 给能力说明附上当前场域配置链接，`scene_config_get` 只读取目录已验证的当前场域。链接复用 Coordinator/执行器的签发规则，群聊和单聊均绑定 scene_id，单聊不依赖 staffId。链接仅进入 Host 私有回执、回复 checkpoint 和发送正文，不作为工具结果交给模型；重放不重复签发。mint 失败保留原答；数据库超时在 savepoint 内使用可恢复的 statement_timeout，不关闭外层日志事务的连接。实际场域管理继续通过 Direct 的场域 MCP 完成。
+
+Langfuse 前台 trace 名为 `employee_loop`，持久 job ID 用作 trace ID；后台仍为 `agent_task`，通过 job、EmployeeTask、Run 和 queue ID 关联。Generation 仅包围实际 provider I/O，记录有效模型、真实消息与完整工具 schema、响应、usage 和耗时；保存结果/失败的 journal 重放不新增 generation，重新认领后实际重发使用不同 span。工具 span 只记录实际执行，缓存重放不覆盖旧 timing；批次预检拒绝单独记录事件，不增加模型预算。
+
+追踪输出递归脱敏凭据和配置 bearer 链接。Generation 沿用既有 64 KiB 内容上限，明确 bytes/truncated；截断数据不能作为完整提示词证据。根 trace 的 accepted/enqueued 只表示业务提交或通知入队，不表示钉钉送达。导出关闭或失败不能改变业务裁决、任务效果或模型调用次数。
+
 ## Task 与执行
 
 EmployeeTask、Run 与 agent_task_queue ID 独立。Task 保留定义和追加记录；Direct 使用已有队列、执行器、消息、usage 和轨迹，不创建 Issue 或永久 Autopilot。Work Object Compiler 使用真实 source、Host scope/principal、完整约束和实际 ContextUsed 组装执行输入，不新增模型请求或通用配置快照。
+
+Direct 的模型可见执行面只装配岗位原文、工作区与组织/场域/个人上下文、实际技能以及简短执行和结果约束。不会自动加入通用 Multica Runtime 命令目录、Issue/Chat/Autopilot 工作流、Mika 系统层或 OKR 标签指令。显式绑定的工作区与场域技能保留原名和内容，包括用户自定义的 `multica-` 名称；claim 内联技能和 bundle 补拉共用执行面策略，DWS 身份规则与 `config-qwen-tag-scene` 仍保留。
+
+Direct 不自动挂载通用 `multica` MCP；场域配置 MCP、内部连接器、Agent 与 Runner 自定义 MCP 继续按原权限装配。Host token、claim finalize、取消、租约、轨迹与用量通路不变。文件通过已装配的钉钉文件工具交付，只有验证过的回执才可称为已送达，不能把沙箱本地路径当成用户可打开的文件。
 
 Direct 需要 `employee-direct-v1`。claim 前按认证 Runtime 过滤；任务回调再次检查执行身份。读取和实时原文按可信 originator/管理者以及确切任务凭据控制。数据库取消表示取消请求，不能证明远端进程已经退出。
 
@@ -29,7 +43,7 @@ Direct 需要 `employee-direct-v1`。claim 前按认证 Runtime 过滤；任务�
 
 ## 上线与验证边界
 
-生产处理方式开关保持不可启用，直到独立结果通知链装配并验收；具备 Runtime capability 不等于整个工作闭环已完成。每个在线副本必须具备 `[employee-loop:2]` 标记才生成新结果通知；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
+处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。新增场域工具与私有投递 journal 使用 `[employee-loop:3]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 解释新工具或遗漏私有附链。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
 
 首批已验证真实 PostgreSQL 的原子回执/消费、重投、lease 抢占、三请求累计预算、部分成功回执恢复、Quiet、自发消息过滤、身份缺失、超限收束及工作区删除竞争；fake 模型测试证明调用次数和队列事实。真实模型时延、真实发送回执、FC canary 和持久设备滚动兼容必须单独记录，不能用这些测试替代。
 

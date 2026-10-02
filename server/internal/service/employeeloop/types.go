@@ -67,9 +67,11 @@ type Persona struct {
 	Expertise    []string
 }
 type Config struct {
-	Persona Persona
-	Model   string
-	Tools   []Tool
+	// OnBatchRejected observes validation failures before Host effects.
+	OnBatchRejected func([]ToolCall, error) `json:"-"`
+	Persona         Persona
+	Model           string
+	Tools           []Tool
 }
 
 // State holds the runtime state of a foreground wake.

@@ -603,11 +603,11 @@ func TestContextCapabilitiesClaimSkillsLayering(t *testing.T) {
 	if len(extra) != 1 || uuidToString(extra[0]) != f.skillScene {
 		t.Fatalf("context skill ids = %v, want only the offered scene skill", extra)
 	}
-	loaded := skillIDs(f.h.TaskService.LoadTaskExecutionSkills(ctx, f.agent, append(extra, extra[0], parseUUID(uuid.NewString())), runtime, ""))
+	loaded := skillIDs(f.h.TaskService.LoadTaskExecutionSkills(ctx, f.agent, append(extra, extra[0], parseUUID(uuid.NewString())), runtime, "", service.TaskExecutionSurfacePlatform))
 	if !loaded[f.skillAgent] || !loaded[f.skillScene] || loaded[f.skillFree] {
 		t.Fatalf("group task skills = %v", loaded)
 	}
-	_, refs := f.h.TaskService.LoadTaskSkillBundles(ctx, f.agent, extra, runtime, "")
+	_, refs := f.h.TaskService.LoadTaskSkillBundles(ctx, f.agent, extra, runtime, "", service.TaskExecutionSurfacePlatform)
 	sceneRefs := 0
 	for _, ref := range refs {
 		if ref.ID == f.skillScene {

@@ -270,3 +270,16 @@ func TestTaskTraceResultAndClip(t *testing.T) {
 		t.Fatalf("clip = %q", got)
 	}
 }
+
+func TestEmployeeTaskTracePreservesOwnNameAndIndexesForeground(t *testing.T) {
+	task := db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{9}, Valid: true}, Context: []byte(`{"employee_job_id":"job-123","employee_task_id":"employee-task-456"}`)}
+	opts := TaskLangfuseTraceOptions(task, nil, nil)
+	if opts.Name != "agent_task" || opts.TraceName != "" {
+		t.Fatalf("employee task disguised as coordinator: %+v", opts)
+	}
+	for key, want := range map[string]string{"employee_job_id": "job-123", "employee_task_id": "employee-task-456"} {
+		if opts.Metadata[key] != want || TaskIndexKeys(task)[key] != want {
+			t.Fatalf("missing %s backlink: %+v %+v", key, opts.Metadata, TaskIndexKeys(task))
+		}
+	}
+}

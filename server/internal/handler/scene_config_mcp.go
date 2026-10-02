@@ -628,15 +628,21 @@ func (h *Handler) sceneConfigGet(ctx context.Context, target sceneConfigTarget) 
 		offeredSkills[i].Enabled = on[contextcap.ResourceSkill+":"+offeredSkills[i].ID]
 	}
 	alwaysConnectors, err := h.sceneConfigNames(ctx, `SELECT ic.id::text, ic.name FROM internal_connector_agent ica
-		JOIN internal_connector ic ON ic.id = ica.connector_id
-		WHERE ica.workspace_id = $1::uuid AND ica.agent_id = ANY($2::uuid[])`, a.WorkspaceID, []string{a.ID})
+		JOIN internal_connector ic ON ic.id = ica.connector_id AND ic.workspace_id = ica.workspace_id
+		WHERE ica.workspace_id = $1::uuid AND ica.agent_id = ANY($2::uuid[]) AND ic.enabled`, a.WorkspaceID, []string{a.ID})
 	if err != nil {
 		return nil, err
 	}
 	alwaysSkills, err := h.sceneConfigNames(ctx, `SELECT s.id::text, s.name FROM agent_skill ags JOIN skill s ON s.id = ags.skill_id
-		WHERE s.workspace_id = $1::uuid AND ags.agent_id = ANY($2::uuid[])`, a.WorkspaceID, []string{a.ID})
+		WHERE s.workspace_id = $1::uuid AND ags.agent_id = ANY($2::uuid[]) AND ags.enabled`, a.WorkspaceID, []string{a.ID})
 	if err != nil {
 		return nil, err
+	}
+	for i := range alwaysConnectors {
+		alwaysConnectors[i].Enabled = true
+	}
+	for i := range alwaysSkills {
+		alwaysSkills[i].Enabled = true
 	}
 	routines, err := h.listSceneRoutines(ctx, a, sceneID)
 	if err != nil {

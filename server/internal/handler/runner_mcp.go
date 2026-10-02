@@ -315,14 +315,16 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	if err != nil {
 		return errors.New("managed MCP requires MULTICA_PUBLIC_URL")
 	}
-	managedServers := map[string]any{
-		"multica": map[string]any{
+	managedServers := make(map[string]any)
+	routes := make(map[string]MCPRelayRoute)
+	// Direct execution retains scene and bound tools without advertising the
+	// generic platform workflow. Task credentials still authorize Host controls.
+	if !service.IsEmployeeDirectTask(task) {
+		managedServers["multica"] = map[string]any{
 			"type": "http", "url": publicURL + "/api/mcp",
 			"headers": map[string]string{"Authorization": "Bearer " + taskToken},
-		},
-	}
-	routes := map[string]MCPRelayRoute{
-		"multica": {Path: "/api/mcp", Authorization: "Bearer " + taskToken},
+		}
+		routes["multica"] = MCPRelayRoute{Path: "/api/mcp", Authorization: "Bearer " + taskToken}
 	}
 	// The current scene's configuration server, bound to this task and scene
 	// by the scene token in its path (scene_config_mcp.go).

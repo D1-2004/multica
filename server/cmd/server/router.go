@@ -955,6 +955,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	employeeModel := llm.New(llm.Config{APIKey: signupConfig.LLMAPIKey, BaseURL: signupConfig.LLMBaseURL, DefaultModel: signupConfig.LLMDefaultModel, MaxRetries: -1})
 	h.EmployeeMemory = employeememory.NewStore(pool)
 	h.EmployeeSceneWorker = handler.NewEmployeeSceneWorker(h, employeeModel)
+	h.EmployeeSceneWorker.Langfuse = opts.Langfuse
 	h.EmployeeSceneWorker.ReplicaReady = func(ctx context.Context) error {
 		if opts.DeploymentFence == nil {
 			return errors.New("employee replica capability verification is unavailable")
@@ -964,7 +965,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return err
 		}
 		if !ready {
-			return errors.New("live server replicas do not all support employee-loop:2")
+			return errors.New("live server replicas do not all support employee-loop:3")
 		}
 		return nil
 	}

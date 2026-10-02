@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/employeeentry"
+	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
@@ -22,11 +23,12 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-const EmployeeLoopReplicaMarker = "[employee-loop:2]"
+const EmployeeLoopReplicaMarker = "[employee-loop:3]"
 
 var errEmployeeWindowTooLarge = errors.New("employee window exceeds context bounds")
 
 type EmployeeSceneWorker struct {
+	Langfuse     *langfuse.Client
 	ReplicaReady func(context.Context) error
 	handler      *Handler
 	store        *employeeentry.Store
@@ -139,7 +141,7 @@ type employeeSavedOutcome struct {
 	ReplyReceiptID string               `json:"reply_receipt_id,omitempty"`
 }
 
-func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (bool, error) {
+func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (worked bool, returnErr error) {
 	if w == nil || w.handler == nil || w.model == nil {
 		return false, nil
 	}
@@ -150,6 +152,11 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	var saved employeeSavedOutcome
+	committed := false
+	trace := employeeTraceStart(ctx, w.Langfuse, job)
+	ctx = langfuse.ContextWithTrace(ctx, trace)
+	defer func() { employeeTraceFinish(trace, saved, committed, returnErr) }()
 	h := w.handler
 	agent, agentErr := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: parseUUID(job.Scope.AgentID), WorkspaceID: parseUUID(job.Scope.WorkspaceID)})
 	if errors.Is(agentErr, pgx.ErrNoRows) || agent.ArchivedAt.Valid {
@@ -194,7 +201,6 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (bool, error) {
 			return true, w.store.Retry(ctx, job, "invalid persisted callback target")
 		}
 	}
-	var saved employeeSavedOutcome
 	if len(job.Outcome) > 0 {
 		if err = json.Unmarshal(job.Outcome, &saved); err != nil {
 			return true, err
@@ -230,7 +236,11 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (bool, error) {
 				}
 				host := &employeeSceneHost{worker: w, job: job, envelopes: workEnvelopes, abort: cancel}
 				durableModel := &employeeJournalModel{store: w.store, job: job, delegate: w.model, abort: cancel}
+				input.Config.OnBatchRejected = func(calls []employeeloop.ToolCall, err error) { employeeTraceBatchRejected(runCtx, calls, err) }
 				saved.Outcome, err = employeeloop.New(input.Config, durableModel, host).Run(runCtx, input.Input)
+				if err == nil {
+					host.attachCapabilityReplies(&saved.Outcome)
+				}
 				if err != nil {
 					saved.Failure = err.Error()
 					replies, unresolved := employeeAcceptedReplies(saved.Outcome)
@@ -262,6 +272,7 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (bool, error) {
 	if err = w.complete(ctx, job, envelopes, saved); err != nil {
 		return true, w.store.Retry(ctx, job, err.Error())
 	}
+	committed = true
 	return true, nil
 }
 
@@ -278,6 +289,9 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 		return employeeSavedInput{}, errEmployeeWindowTooLarge
 	}
 	input := employeeSavedInput{Input: employeeloop.Input{Identity: employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID}, CurrentWindow: string(window)}, Config: employeeloop.Config{Tools: employeeSceneTools()}}
+	if defaults, ok := w.model.(interface{ DefaultModel() string }); ok {
+		input.Config.Model = defaults.DefaultModel()
+	}
 	agentID := parseUUID(job.Scope.AgentID)
 	agent, err := w.handler.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: parseUUID(job.Scope.WorkspaceID)})
 	if err != nil {
@@ -287,11 +301,14 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	if err != nil {
 		return employeeSavedInput{}, err
 	}
-	if skills, e := employeeSkillDirectory(ctx, w.handler, job.Scope); e == nil {
-		input.Config.Persona.Expertise = skills
-	} else {
-		input.Input.TaskBrief = "Skill catalog unavailable; unavailable does not mean no skills are installed."
+	capabilities, err := employeeSceneCapabilities(ctx, w.handler, job, originalEnvelopes)
+	if err != nil {
+		return employeeSavedInput{}, err
 	}
+	if capabilities.Prompt != "" {
+		input.Config.Persona.Instructions += "\n\n" + capabilities.Prompt
+	}
+	input.Config.Persona.Expertise = capabilities.Directory
 	if voice, e := w.handler.Queries.GetAgentVoice(ctx, agentID); e == nil {
 		input.Config.Persona.Personality = voice.Persona
 		input.Config.Persona.Tone = voice.ReplyTone
@@ -358,10 +375,30 @@ func (m *employeeJournalModel) Chat(ctx context.Context, request openai.ChatComp
 		}
 		return &out, nil
 	}
+	// Keep journal identity unchanged across upgrades, including old snapshots
+	// with a blank model or user-provided configuration URLs. Only real I/O
+	// applies provider normalization; cached responses and failures bypass it.
+	clean, err := employeeModelConfigLinks(raw)
+	if err != nil {
+		return failJournal(err)
+	}
+	if string(clean) != string(raw) {
+		if err = json.Unmarshal(clean, &request); err != nil {
+			return failJournal(err)
+		}
+	}
+	// New snapshots already freeze their effective model in Config.
+	if strings.TrimSpace(string(request.Model)) == "" {
+		if defaults, ok := m.delegate.(interface{ DefaultModel() string }); ok {
+			request.Model = defaults.DefaultModel()
+		}
+	}
+	generation := employeeTraceGeneration(ctx, m.job, ordinal, request)
 	out, err := m.delegate.Chat(ctx, request)
 	if err == nil && out == nil {
 		err = errors.New("empty employee model completion")
 	}
+	employeeTraceEndGeneration(generation, out, err)
 	if err != nil {
 		message := err.Error()
 		if message == "" {
