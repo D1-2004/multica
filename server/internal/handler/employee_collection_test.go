@@ -695,6 +695,9 @@ func TestCollectionAmbiguousDMNeedsSendersOwnReference(t *testing.T) {
 	first := c.origin("问 Carol 本周签了几单", collectionParticipants[0])
 	c.deliver(first.ID, map[string]string{"Carol": "cid-carol-dm"})
 	second := c.origin("再问 Carol 下周计划拜访几家", collectionParticipants[0])
+	if _, err := testPool.Exec(context.Background(), `UPDATE employee_task_invitation SET question='下周计划拜访几家客户？' WHERE collection_id=$1::uuid`, second.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := testPool.Exec(context.Background(), `UPDATE response_action SET state='delivered',provider_task_id='task-'||id,provider_message_id='pm-Carol-2',provider_conversation_id='cid-carol-dm' WHERE id=$1`, c.invitations(second.ID)["Carol"].DeliveryActionID); err != nil {
 		t.Fatal(err)
 	}
@@ -710,6 +713,24 @@ func TestCollectionAmbiguousDMNeedsSendersOwnReference(t *testing.T) {
 	}
 	if n := c.count(`SELECT count(*) FROM employee_task_input WHERE agent_id=$1::uuid`, c.f.agentID); n != 0 {
 		t.Fatalf("an ambiguous answer was recorded without the sender naming the question: %d", n)
+	}
+	// 预发 COL-02: the model picked one and passed the whole message as the
+	// quote. That names no question; it is refused and the model clarifies.
+	guess := c.send(collectionMessage{conversation: "cid-carol-dm", kind: "single", name: "Carol", openID: "carol-open", messageID: "carol-guess", text: "COL02 3"})
+	calls := 0
+	c.model.set(func(string) (string, map[string]any) {
+		calls++
+		if calls == 1 {
+			return collectionCall("call-guess", "accept_collection_input", map[string]any{"source_ref": guess, "invitation_ref": "i2", "reference_quote": "COL02 3", "reply": "收到"})
+		}
+		return collectionCall("call-ask", "reply", map[string]any{"source_ref": guess, "reply": "你说的 3 是哪一个问题？"})
+	})
+	c.process()
+	if n := c.count(`SELECT count(*) FROM employee_task_input WHERE agent_id=$1::uuid`, c.f.agentID); n != 0 || calls != 2 {
+		t.Fatalf("a guessed quote was recorded or ended the turn: inputs=%d calls=%d", n, calls)
+	}
+	if n := c.count(`SELECT count(*) FROM response_action WHERE agent_id=$1::uuid AND input->>'text'='你说的 3 是哪一个问题？'`, c.f.agentID); n != 1 {
+		t.Fatalf("clarification after the refusal: %d", n)
 	}
 	named := c.send(collectionMessage{conversation: "cid-carol-dm", kind: "single", name: "Carol", openID: "carol-open", messageID: "carol-named", text: "本周签单是 7 单"})
 	c.model.set(func(request string) (string, map[string]any) {
@@ -774,5 +795,26 @@ func TestCollectionParticipantPartialNameMustBeUnique(t *testing.T) {
 	c.process()
 	if n := c.count(`SELECT count(*) FROM employee_task_collection WHERE agent_id=$1::uuid`, c.f.agentID); n != 1 {
 		t.Fatalf("an ambiguous partial name created a collection: %d", n)
+	}
+}
+
+// A late answer after the collection closed has no invitation context, so the
+// record tool is not offered and the model replies normally (预发 COL-03).
+func TestCollectionLateAnswerIsNotOfferedTheRecordTool(t *testing.T) {
+	c := newCollectionHarness(t)
+	c.seed()
+	col := c.origin("问 Carol 本周签了几单", collectionParticipants[0])
+	c.deliver(col.ID, map[string]string{"Carol": "cid-carol-dm"})
+	if _, _, err := taskinput.NewStore(testPool).CloseCollectionTx(context.Background(), c.scope(), taskinput.CloseParams{CollectionID: col.ID, Mode: taskinput.CloseCancel,
+		Source: taskinput.Source{Namespace: "test", Key: "cancel"}, Authority: taskinput.Authority{ActorRef: col.RequesterRef, SceneID: col.OriginSceneID, ReceiptRef: "r", VerifiedAt: time.Now()}, ExpectedRevision: col.Revision}); err != nil {
+		t.Fatal(err)
+	}
+	c.send(collectionMessage{conversation: "cid-carol-dm", kind: "single", name: "Carol", openID: "carol-open", messageID: "carol-late", text: "7 单", quoted: "pm-Carol"})
+	c.model.set(collectionQuiet)
+	before := c.model.count()
+	c.process()
+	request := c.model.requests[before]
+	if strings.Contains(request, `"name":"accept_collection_input"`) || strings.Contains(request, "invitation_context") {
+		t.Fatal("a late answer was offered the record tool or an invitation binding")
 	}
 }

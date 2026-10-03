@@ -28,6 +28,7 @@ type employeeToolRecord struct {
 	TaskRead      *employeeCurrentTaskRead `json:"task_read,omitempty"`
 	// Refused marks a Failure the Host refused before any effect, inside the
 	// journal transaction; the model may correct it like a pre-journal refusal.
+	// Collection refusals (errEmployeeCollectionRefused) count as refused.
 	Refused bool `json:"refused,omitempty"`
 }
 
@@ -282,7 +283,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 				record.Result = employeeStopRefusal(err)
 			}
 			record.Failure = err.Error()
-			record.Refused = errors.Is(err, employeeloop.ErrToolRefused)
+			record.Refused = errors.Is(err, employeeloop.ErrToolRefused) || errors.Is(err, errEmployeeCollectionRefused)
 		}
 		return json.Marshal(record)
 	})
