@@ -177,8 +177,12 @@ func TestEmployeeTaskWakeRunsLoopOnceAndDeliversToTaskOrigin(t *testing.T) {
 			}
 			if message.Role == "user" && strings.Contains(text, "Task wake from the Host") {
 				wakeData++
-				if !strings.HasPrefix(text, "Background follow-up (data):") || !strings.Contains(text, "Analyze feedback") || !strings.Contains(text, f.task.ID) {
+				if !strings.HasPrefix(text, "Background follow-up (data):") || !strings.Contains(text, "Analyze feedback") || !strings.Contains(text, `"task_ref":"t1"`) {
 					t.Fatalf("wake context not rendered as Task data: %s", text)
+				}
+				// The Task UUID stays Host-private (employeeTaskWakeTarget).
+				if strings.Contains(text, f.task.ID) || employeeUUIDPattern.MatchString(text) {
+					t.Fatalf("wake context exposes a raw UUID: %s", text)
 				}
 			}
 			for _, call := range message.ToolCalls {

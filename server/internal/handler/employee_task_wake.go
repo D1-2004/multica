@@ -388,16 +388,20 @@ func (w *EmployeeSceneWorker) taskWakeBinding(ctx context.Context, database empl
 
 // employeeTaskWakeContext is rendered as data. It is a Host snapshot of the
 // Task, never a human instruction, and it grants no authority.
+// employeeTaskWakeContext is the model-visible Task snapshot of a new wake.
+// Raw Task, Run, plan and queue UUIDs stay in Host-private fields (the wake
+// item and employeeTaskWakeTarget); the model sees a short task_ref and the
+// kind of the wake's authority and evidence only.
 type employeeTaskWakeContext struct {
 	Wake struct {
 		Kind         string `json:"kind"`
 		GoalRevision int64  `json:"goal_revision"`
 		InputSeq     int64  `json:"input_boundary_seq"`
-		AuthorityRef string `json:"authority_ref"`
-		EvidenceRef  string `json:"evidence_ref"`
+		AuthorityRef string `json:"authority"`
+		EvidenceRef  string `json:"evidence"`
 	} `json:"wake"`
 	Task struct {
-		ID           string                  `json:"id"`
+		Ref          string                  `json:"task_ref"`
 		State        string                  `json:"state"`
 		GoalRevision int64                   `json:"goal_revision"`
 		Definition   employeetask.Definition `json:"definition"`
@@ -550,9 +554,9 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 		return employeeSavedInput{}, holdTaskWake("unsupported_scene_kind")
 	}
 	var snapshot employeeTaskWakeContext
-	snapshot.Wake.Kind, snapshot.Wake.GoalRevision, snapshot.Wake.InputSeq, snapshot.Wake.AuthorityRef, snapshot.Wake.EvidenceRef = wake.Kind, wake.GoalRevision, wake.InputSeq, wake.AuthorityRef, wake.EvidenceRef
-	snapshot.Task.ID, snapshot.Task.State, snapshot.Task.GoalRevision, snapshot.Task.Definition, snapshot.Task.RequesterRef = current.Task.ID, string(current.Task.State), current.Task.GoalRevision, current.Task.Definition, current.Task.RequesterRef
-	snapshot.OriginalRequest.SourceRef = origin.SourceRef
+	snapshot.Wake.Kind, snapshot.Wake.GoalRevision, snapshot.Wake.InputSeq, snapshot.Wake.AuthorityRef, snapshot.Wake.EvidenceRef = wake.Kind, wake.GoalRevision, wake.InputSeq, employeeModelRefKind(wake.AuthorityRef), employeeModelRefKind(wake.EvidenceRef)
+	snapshot.Task.Ref, snapshot.Task.State, snapshot.Task.GoalRevision, snapshot.Task.Definition, snapshot.Task.RequesterRef = "t1", string(current.Task.State), current.Task.GoalRevision, current.Task.Definition, current.Task.RequesterRef
+	snapshot.OriginalRequest.SourceRef = employeeModelScrubIDs(origin.SourceRef)
 	snapshot.OriginalRequest.Speaker = clipTaskWakeText(origin.RequestSpeaker, 128)
 	snapshot.OriginalRequest.Text = clipTaskWakeText(origin.RequestText, 4096)
 	snapshot.LedgerTruncated = current.Truncated
@@ -566,7 +570,7 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 		if entry.Kind == "request" {
 			body = ""
 		}
-		snapshot.Ledger = append(snapshot.Ledger, employeeTaskWakeEntry{Seq: entry.Seq, Kind: entry.Kind, ActorRef: entry.ActorRef, GoalRevision: entry.GoalRevision, Body: clipTaskWakeText(body, 2048)})
+		snapshot.Ledger = append(snapshot.Ledger, employeeTaskWakeEntry{Seq: entry.Seq, Kind: entry.Kind, ActorRef: employeeModelScrubIDs(entry.ActorRef), GoalRevision: entry.GoalRevision, Body: clipTaskWakeText(body, 2048)})
 	}
 	if current.LatestRun != nil {
 		snapshot.LatestRun = &employeeTaskWakeRun{State: string(current.LatestRun.State), Result: clipTaskWakeText(current.LatestRun.Result, 4096)}
