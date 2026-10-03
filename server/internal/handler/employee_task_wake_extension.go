@@ -23,8 +23,9 @@ type employeeTaskWakeExtension interface {
 	afterComplete(ctx context.Context, w *EmployeeSceneWorker, job employeeentry.Job)
 }
 
-// employeeTaskWakeExtensionFor returns the extension of a wake kind; kinds
-// without one keep the generic reply/quiet wake unchanged.
 func employeeTaskWakeExtensionFor(kind string) employeeTaskWakeExtension {
+	if kind == employeeentry.TaskWakeRoutineDecision {
+		return employeeRoutineDecisionExtension{}
+	}
 	return nil
 }

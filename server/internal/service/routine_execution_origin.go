@@ -211,41 +211,37 @@ func SceneRoutineOccurrenceOf(origin AutomationOrigin) (RoutineOccurrenceFacts, 
 	return o.routineFacts(), true
 }
 
-// loadSceneRoutineOrigin cross-checks one accepted routine receipt with the
-// AutopilotRun it mapped, the EmployeeTask it created from the same source,
-// that Task's Run and the exact queue row.
-func loadSceneRoutineOrigin(ctx context.Context, q AutomationOriginQuerier, ref AutomationOriginRef, queue db.AgentTaskQueue) (AutomationOrigin, error) {
-	if !validAutomationOriginRef(&ref, queue) {
-		return nil, ErrAutomationOriginInvalid
-	}
-	o := &sceneRoutineOrigin{}
-	var plannedAt pgtype.Timestamptz
-	var creatorKind string
-	o.scope.Kind = employeetask.ScopeScene
-	err := q.QueryRow(ctx, `SELECT o.id::text,o.workspace_id::text,o.agent_id::text,o.tenant_org_id,o.scene_id::text,
+// routineReceiptColumns reads a routine receipt with the EmployeeTask it
+// created from the same source. A decision receipt takes its Run and queue
+// from its dispatched decision, if any.
+const routineReceiptColumns = `o.id::text,o.workspace_id::text,o.agent_id::text,o.tenant_org_id,o.scene_id::text,
  o.routine_id::text,o.autopilot_id::text,COALESCE(o.trigger_id::text,''),o.source,o.source_event_id,o.planned_at,o.timezone,o.occurred_at,
  o.creator_kind,o.creator_id::text,COALESCE(o.manual_actor_id::text,''),o.requester_ref,
- o.employee_task_id::text,o.employee_run_id::text,o.queue_task_id::text,o.autopilot_run_id::text,o.prompt_sha256
+ o.employee_task_id::text,COALESCE(o.employee_run_id,d.employee_run_id)::text,COALESCE(o.queue_task_id,d.queue_task_id)::text,o.autopilot_run_id::text,o.prompt_sha256,o.state
  FROM employee_routine_occurrence o
- JOIN autopilot_run ar ON ar.id=o.autopilot_run_id AND ar.autopilot_id=o.autopilot_id AND ar.task_id=o.queue_task_id
+ LEFT JOIN employee_routine_decision d ON d.occurrence_id=o.id AND d.state='dispatched'
  JOIN employee_task t ON t.id=o.employee_task_id AND t.workspace_id=o.workspace_id AND t.agent_id=o.agent_id
   AND t.tenant_org_id=o.tenant_org_id AND t.scope_kind='scene' AND t.scene_id=o.scene_id AND t.owner_loop='employee'
   AND t.dispatch_mode='direct' AND t.requester_ref=o.requester_ref AND t.source_namespace=o.source
-  AND t.source_key=o.source_event_id||'/definition'
- JOIN employee_task_run r ON r.id=o.employee_run_id AND r.task_id=t.id AND r.workspace_id=t.workspace_id
-  AND r.agent_id=t.agent_id AND r.queue_task_id=o.queue_task_id
- WHERE o.id=$1::uuid AND o.state='accepted' AND o.queue_task_id=$2 AND o.autopilot_run_id=$3::uuid AND o.agent_id=$4`,
-		ref.ReceiptID, queue.ID, ref.AutopilotRunID, queue.AgentID).Scan(
-		&o.receiptID, &o.scope.WorkspaceID, &o.scope.AgentID, &o.scope.TenantOrgID, &o.scope.Scene.SceneID,
+  AND t.source_key=o.source_event_id||'/definition'`
+
+func scanRoutineReceipt(row pgx.Row) (*sceneRoutineOrigin, string, error) {
+	o := &sceneRoutineOrigin{}
+	var plannedAt pgtype.Timestamptz
+	var creatorKind, state string
+	var runID, queueID pgtype.Text
+	o.scope.Kind = employeetask.ScopeScene
+	err := row.Scan(&o.receiptID, &o.scope.WorkspaceID, &o.scope.AgentID, &o.scope.TenantOrgID, &o.scope.Scene.SceneID,
 		&o.facts.RoutineID, &o.facts.AutopilotID, &o.facts.TriggerID, &o.source.Namespace, &o.source.Key, &plannedAt, &o.facts.Timezone, &o.occurredAt,
 		&creatorKind, &o.principal.ID, &o.facts.ManualActorID, &o.requesterRef,
-		&o.taskID, &o.runID, &o.queueTaskID, &o.autopilotRunID, &o.promptSHA)
+		&o.taskID, &runID, &queueID, &o.autopilotRunID, &o.promptSHA, &state)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrAutomationOriginInvalid
+		return nil, "", ErrAutomationOriginInvalid
 	}
 	if err != nil {
-		return nil, fmt.Errorf("load scene routine origin: %w", err)
+		return nil, "", fmt.Errorf("load scene routine origin: %w", err)
 	}
+	o.runID, o.queueTaskID = runID.String, queueID.String
 	if plannedAt.Valid {
 		at := plannedAt.Time.UTC()
 		o.facts.PlannedAt = &at
@@ -257,7 +253,25 @@ func loadSceneRoutineOrigin(ctx context.Context, q AutomationOriginQuerier, ref 
 	}
 	if o.requesterRef != routineRequesterRef(o.facts.RoutineID) || o.principal.ID == "" ||
 		(o.principal.Kind != AutomationPrincipalMember && o.principal.Kind != AutomationPrincipalAgent) {
+		return nil, "", ErrAutomationOriginInvalid
+	}
+	return o, state, nil
+}
+
+// loadSceneRoutineOrigin cross-checks one routine receipt with the
+// AutopilotRun it mapped, the EmployeeTask it created from the same source,
+// that Task's Run and the exact queue row.
+func loadSceneRoutineOrigin(ctx context.Context, q AutomationOriginQuerier, ref AutomationOriginRef, queue db.AgentTaskQueue) (AutomationOrigin, error) {
+	if !validAutomationOriginRef(&ref, queue) {
 		return nil, ErrAutomationOriginInvalid
+	}
+	o, _, err := scanRoutineReceipt(q.QueryRow(ctx, `SELECT `+routineReceiptColumns+`
+ WHERE o.id=$1::uuid AND o.state IN ('accepted','decision') AND COALESCE(o.queue_task_id,d.queue_task_id)=$2 AND o.autopilot_run_id=$3::uuid AND o.agent_id=$4
+ AND EXISTS(SELECT 1 FROM autopilot_run ar WHERE ar.id=o.autopilot_run_id AND ar.autopilot_id=o.autopilot_id AND ar.task_id=$2)
+ AND EXISTS(SELECT 1 FROM employee_task_run r WHERE r.id=COALESCE(o.employee_run_id,d.employee_run_id) AND r.task_id=t.id AND r.workspace_id=t.workspace_id AND r.agent_id=t.agent_id AND r.queue_task_id=$2)`,
+		ref.ReceiptID, queue.ID, ref.AutopilotRunID, queue.AgentID))
+	if err != nil {
+		return nil, err
 	}
 	return o, nil
 }
@@ -285,7 +299,8 @@ var AutomationTaskSourceNamespaces = []string{routineSourceSchedule, routineSour
 
 // automationTaskReceiptTables are the receipt tables of the automation kinds
 // whose Tasks a later wake may load. They share the identity columns used by
-// LoadAutomationTaskOrigin; the table names are constants, never input.
+// LoadAutomationTaskOrigin; the table names are constants, never input. The
+// routine occurrence table comes first.
 var automationTaskReceiptTables = []string{"employee_routine_occurrence", "employee_webhook_occurrence"}
 
 // AutomationHistoryPolicyKind selects how a later wake of an automation Task
@@ -343,32 +358,51 @@ func LoadAutomationTaskOrigin(ctx context.Context, q AutomationOriginQuerier, sc
 	if q == nil || scope.Kind != employeetask.ScopeScene {
 		return out, ErrAutomationOriginInvalid
 	}
+	// A schedule or run-now Task has a routine receipt (accepted, or decision
+	// before its Loop dispatched a Run); a webhook Task has a webhook receipt.
 	var queueID, receiptID, runID, table string
-	for _, candidate := range automationTaskReceiptTables {
-		err := q.QueryRow(ctx, `SELECT o.queue_task_id::text,o.id::text,o.autopilot_run_id::text FROM `+candidate+` o
+	var origin AutomationOrigin
+	receipt, state, err := scanRoutineReceipt(q.QueryRow(ctx, `SELECT `+routineReceiptColumns+`
+ WHERE o.employee_task_id=$1::uuid AND o.workspace_id=$2::uuid AND o.agent_id=$3::uuid AND o.tenant_org_id=$4 AND o.scene_id=$5::uuid AND o.state IN ('accepted','decision')`,
+		taskID, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, scope.Scene.SceneID))
+	switch {
+	case err == nil:
+		table, origin = "employee_routine_occurrence", receipt
+		queueID, receiptID, runID = receipt.queueTaskID, receipt.receiptID, receipt.autopilotRunID
+		if queueID == "" && state != routineOccurrenceDecision {
+			return out, ErrAutomationOriginInvalid
+		}
+	case errors.Is(err, ErrAutomationOriginInvalid):
+		for _, candidate := range automationTaskReceiptTables[1:] {
+			err := q.QueryRow(ctx, `SELECT o.queue_task_id::text,o.id::text,o.autopilot_run_id::text FROM `+candidate+` o
  JOIN employee_task t ON t.id=o.employee_task_id AND t.source_namespace=o.source AND t.source_key=o.source_event_id||'/definition'
  WHERE o.employee_task_id=$1::uuid AND o.workspace_id=$2::uuid AND o.agent_id=$3::uuid AND o.tenant_org_id=$4 AND o.scene_id=$5::uuid AND o.state='accepted'`,
-			taskID, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, scope.Scene.SceneID).Scan(&queueID, &receiptID, &runID)
-		if err == nil {
-			table = candidate
-			break
+				taskID, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, scope.Scene.SceneID).Scan(&queueID, &receiptID, &runID)
+			if err == nil {
+				table = candidate
+				break
+			}
+			if !errors.Is(err, pgx.ErrNoRows) {
+				return out, fmt.Errorf("load automation task origin: %w", err)
+			}
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return out, fmt.Errorf("load automation task origin: %w", err)
+		if table == "" {
+			return out, ErrAutomationOriginInvalid
 		}
-	}
-	if table == "" {
-		return out, ErrAutomationOriginInvalid
-	}
-	var queue db.AgentTaskQueue
-	if err := q.QueryRow(ctx, `SELECT id,agent_id,autopilot_run_id,context FROM agent_task_queue WHERE id=$1::uuid`, queueID).Scan(&queue.ID, &queue.AgentID, &queue.AutopilotRunID, &queue.Context); errors.Is(err, pgx.ErrNoRows) {
-		return out, ErrAutomationOriginInvalid
-	} else if err != nil {
-		return out, fmt.Errorf("load automation task queue: %w", err)
-	}
-	origin, err := LoadAutomationOrigin(ctx, q, queue)
-	if err != nil {
+	default:
 		return out, err
+	}
+	if queueID != "" {
+		// A Run exists: the queue row must agree with the receipt as well.
+		var queue db.AgentTaskQueue
+		if err := q.QueryRow(ctx, `SELECT id,agent_id,autopilot_run_id,context FROM agent_task_queue WHERE id=$1::uuid`, queueID).Scan(&queue.ID, &queue.AgentID, &queue.AutopilotRunID, &queue.Context); errors.Is(err, pgx.ErrNoRows) {
+			return out, ErrAutomationOriginInvalid
+		} else if err != nil {
+			return out, fmt.Errorf("load automation task queue: %w", err)
+		}
+		if origin, err = LoadAutomationOrigin(ctx, q, queue); err != nil {
+			return out, err
+		}
 	}
 	if origin.ReceiptID() != receiptID || origin.EmployeeTaskID() != taskID || origin.Scope() != scope {
 		return out, ErrAutomationOriginInvalid
@@ -413,7 +447,11 @@ type RoutineOccurrenceOutcome struct {
 	State  string `json:"state"`
 	Reason string `json:"reason,omitempty"`
 	// RunStatus is the AutopilotRun status; ExecutionState the Run state.
-	RunStatus      string     `json:"run_status"`
+	RunStatus string `json:"run_status"`
+	// Decision is the employee_decide outcome (pending, quiet, waited,
+	// replied, dispatched, failed); empty for run_only occurrences.
+	Decision       string     `json:"decision,omitempty"`
+	DecisionReason string     `json:"decision_reason,omitempty"`
 	ExecutionState string     `json:"execution_state,omitempty"`
 	FinishedAt     *time.Time `json:"finished_at,omitempty"`
 	// NoticeState is the end notice's outbox state; Sent means the provider
@@ -434,12 +472,16 @@ func ListRoutineOccurrenceOutcomes(ctx context.Context, q interface {
 	if q == nil || limit < 1 || limit > 50 {
 		return nil, ErrAutomationOriginInvalid
 	}
+	// The sent result is the routine's end notice, or the decision's single
+	// scene reply (request scene-notice:<job>).
 	rows, err := q.Query(ctx, `SELECT o.id::text,o.source,o.source_event_id,o.planned_at,o.occurred_at,o.state,o.reason,ar.status,
- COALESCE(r.state,''),r.finished_at,COALESCE(r.result,''),COALESCE(n.state,''),COALESCE(n.input->>'text','')
+ COALESCE(d.state,''),COALESCE(d.reason,''),COALESCE(r.state,''),r.finished_at,COALESCE(r.result,''),COALESCE(n.state,rn.state,''),COALESCE(n.input->>'text',rn.input->>'text','')
  FROM employee_routine_occurrence o
  JOIN autopilot_run ar ON ar.id=o.autopilot_run_id
- LEFT JOIN employee_task_run r ON r.id=o.employee_run_id
+ LEFT JOIN employee_routine_decision d ON d.occurrence_id=o.id
+ LEFT JOIN employee_task_run r ON r.id=COALESCE(o.employee_run_id,d.employee_run_id)
  LEFT JOIN response_action n ON n.workspace_id=o.workspace_id AND n.agent_id=o.agent_id AND n.request_id=$3||o.autopilot_run_id::text||$4 AND n.kind='message.send'
+ LEFT JOIN response_action rn ON d.state='replied' AND rn.workspace_id=o.workspace_id AND rn.agent_id=o.agent_id AND rn.request_id='scene-notice:'||d.job_id::text AND rn.kind='message.send'
  WHERE o.workspace_id=$1::uuid AND o.routine_id=$2::uuid
  ORDER BY o.created_at DESC,o.id DESC LIMIT $5`, workspaceID, routineID, "routine:", ":"+dingtalkresponse.RoutineNoticeEnd, limit)
 	if err != nil {
@@ -452,7 +494,7 @@ func ListRoutineOccurrenceOutcomes(ctx context.Context, q interface {
 		var planned, finished pgtype.Timestamptz
 		var result, notice string
 		if err := rows.Scan(&o.OccurrenceID, &o.Source, &o.EventID, &planned, &o.OccurredAt, &o.State, &o.Reason, &o.RunStatus,
-			&o.ExecutionState, &finished, &result, &o.NoticeState, &notice); err != nil {
+			&o.Decision, &o.DecisionReason, &o.ExecutionState, &finished, &result, &o.NoticeState, &notice); err != nil {
 			return nil, err
 		}
 		if planned.Valid {

@@ -88,6 +88,9 @@ func NewEmployeeSceneWorker(h *Handler, model employeeloop.Model) *EmployeeScene
 	database, _ := employeeEntryDB(h)
 	origins := employeeentry.NewTaskOriginRegistry()
 	origins.MustRegister(employeeentry.TaskOriginNamespace, employeeSceneTaskOriginReader{})
+	for _, namespace := range service.AutomationTaskSourceNamespaces {
+		origins.MustRegister(namespace, employeeRoutineTaskOriginReader{h: h})
+	}
 	return &EmployeeSceneWorker{handler: h, store: employeeentry.NewStore(database), model: model, origins: origins, wake: make(chan struct{}, 1), done: make(chan struct{})}
 }
 func (w *EmployeeSceneWorker) Notify() {

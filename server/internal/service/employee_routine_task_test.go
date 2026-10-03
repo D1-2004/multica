@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/scene"
@@ -31,6 +32,39 @@ type routineHostFake struct {
 	noticeErr error
 	notices   []string
 	notified  int
+	// routine.decision wake admission
+	decisionReady error
+	admitErr      error
+	wakes         []employeeentry.TaskWakeAdmission
+	wakeNotified  int
+}
+
+func (f *routineHostFake) RoutineDecisionReady(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.decisionReady
+}
+
+// AdmitRoutineDecisionWakeTx records the admission; it checks it runs in the
+// occurrence transaction (the receipt and Task are visible) and returns a job id.
+func (f *routineHostFake) AdmitRoutineDecisionWakeTx(ctx context.Context, tx pgx.Tx, a employeeentry.TaskWakeAdmission) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.admitErr != nil {
+		return "", f.admitErr
+	}
+	var visible bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_routine_occurrence o JOIN employee_task t ON t.id=o.employee_task_id WHERE o.id=$1::uuid AND t.id=$2::uuid AND o.state='decision')`, a.EventID, a.Wake.TaskID).Scan(&visible); err != nil || !visible {
+		return "", errors.New("decision wake admitted outside the occurrence transaction")
+	}
+	f.wakes = append(f.wakes, a)
+	return uuid.NewString(), nil
+}
+
+func (f *routineHostFake) NotifyRoutineDecisionWake() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.wakeNotified++
 }
 
 func (f *routineHostFake) RoutineRuntimeContext(context.Context, db.Autopilot) ([]byte, error) {
