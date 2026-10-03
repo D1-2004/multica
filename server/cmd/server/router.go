@@ -978,6 +978,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 		return nil
 	}
+	// Memory tools v2 are frozen into new chat inputs only once every live
+	// replica can execute them; until then new inputs keep v1.
+	h.EmployeeSceneWorker.MemoryToolsReady = func(ctx context.Context) (bool, error) {
+		if opts.DeploymentFence == nil {
+			return false, nil
+		}
+		return opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeMemoryReplicaMarker)
+	}
 	// Readiness is evaluated against the completed wiring at use time, including
 	// final delivery dependencies and every live replica's protocol marker.
 	h.EmployeeLoopReady = h.EmployeeSceneWorker.Ready

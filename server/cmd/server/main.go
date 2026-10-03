@@ -455,7 +455,7 @@ func main() {
 		slog.Error("deployment fence instance identity failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
-	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker+" "+eventrouter.ReplicaMarker+" "+handler.EmployeeLoopReplicaMarker)
+	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker+" "+eventrouter.ReplicaMarker+" "+handler.EmployeeLoopReplicaMarker+" "+handler.EmployeeMemoryReplicaMarker)
 	if err != nil {
 		slog.Error("deployment fence initialization failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
