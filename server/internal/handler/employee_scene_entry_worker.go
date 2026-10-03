@@ -51,7 +51,9 @@ import (
 // Marker 16 adds cancel_collection to newly frozen native tool tables.
 // Exact-marker mixed deployments pause admission/recovery until every replica
 // is upgraded; the new reader resumes older snapshots without rewriting tools.
-const EmployeeLoopReplicaMarker = "[employee-loop:16]"
+// Marker 17 reads same-owner private tombstones across source scenes in a DM.
+// Mixed 16/17 readers pause admission, recovery and sending at the existing gate.
+const EmployeeLoopReplicaMarker = "[employee-loop:17]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only

@@ -345,7 +345,7 @@ func (s *Store) SceneTranscriptEvidence(ctx context.Context, scope Scope, since,
 	if err != nil {
 		return out, err
 	}
-	replies, err := s.withdrawnMemoryReplyIDs(ctx, scope, since, before)
+	replies, err := s.withdrawnMemoryReplyIDs(ctx, scope, "", since, before)
 	if err != nil {
 		return out, err
 	}

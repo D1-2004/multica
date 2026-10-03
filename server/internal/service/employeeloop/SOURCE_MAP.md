@@ -385,3 +385,13 @@ answering independent arithmetic remains direct. Current progress uses read_task
 frozen state is not a current read. Host has no language matcher, hidden model,
 new tool, execution path, or expanded permission. Old snapshots and native tools
 keep their accepted strings. See Plan26 and original-scope actual-IM verification.
+
+Same-owner cross-origin private withdrawal is a history-only projection:
+`RecentConversationRequest.MemoryPrincipal` flows to the entry withdrawal reader,
+which selects only exact-owner private tombstone IDs/originScene under the current
+trusted DM directory. It reads no foreign contents/public corpus, does not require
+an origin directory still to exist and never exports foreign human evidence IDs
+into current-scene filtering. Frozen manifests match ID plus actual originScene;
+existing tool IDs/ancestor closure retain their authorization and bounds. Lookup
+scope and stored snapshots/journals are unchanged; canonical EmployeeLoop epoch17
+pauses mixed privacy readers. See employee-private-withdrawal.md.
