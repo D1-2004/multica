@@ -519,6 +519,13 @@ func (h *Handler) GitHubConnect(w http.ResponseWriter, r *http.Request) {
 // GitHub-tab split would land users on the default profile tab instead of
 // the place that shows the connection they just completed.
 func (h *Handler) GitHubSetupCallback(w http.ResponseWriter, r *http.Request) {
+	// The App setup URL lands here. A connector install (mcpc state, or the
+	// resume cookie when GitHub omitted state) is not a workspace install.
+	restoreGitHubInstallState(r)
+	if isConnectorOAuthState(r.URL.Query().Get("state")) {
+		h.serveConnectorOAuthCallback(w, r, connectorOAuthViaGitHub)
+		return
+	}
 	q := r.URL.Query()
 	installationIDStr := q.Get("installation_id")
 	state := q.Get("state")
