@@ -76,7 +76,7 @@ func database(t *testing.T) fixture {
 	for _, name := range []string{"9500_agent_scene.up.sql", "9501_agent_scene_id_idx.up.sql", "9502_agent_scene_locator_idx.up.sql", "9511_agent_scene_kind_source.up.sql"} {
 		applyMigration(t, pool, filepath.Join(dir, name))
 	}
-	for _, pattern := range []string{"960*.up.sql", "9650_*.up.sql", "9760_*.up.sql", "992*.up.sql"} {
+	for _, pattern := range []string{"960*.up.sql", "9650_*.up.sql", "9760_*.up.sql", "990*.up.sql", "992*.up.sql"} {
 		paths, err := filepath.Glob(filepath.Join(dir, pattern))
 		if err != nil || len(paths) == 0 {
 			t.Fatalf("migrations %s: %v %v", pattern, paths, err)
