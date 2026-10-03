@@ -10,6 +10,21 @@
 
 编写日期：2026-10-03（Asia/Shanghai）。这是开发与交付计划，不是新增能力已完成声明。核对的目标分支基线为 `29ec9c49988c4f9274a1f4ba4b383418eebe5599`，开工时必须 fetch 最新 `feat/tag-multitenant`。最近有完整发布及 IM 证据的本会话版本是 `7074cd29ea844552bda1682d04887e7d4e2965c1` / 预发流水线 `3110341321`；后续目标提交不能自动视为已部署。
 
+## 设计沿革与阅读顺序
+
+本分工接续之前的 GawkBot / Employee 架构设计，以下文档应随任务包一起阅读：
+
+| 文档 | 作用 | 本轮对应 |
+| --- | --- | --- |
+| [R5 方案导读](../../2026-09-30/employee-loop-overview.md) | 从 GawkBot Go BotLoop 到持续办事员工的整体思路 | Loop、Builder、Task、等待与队列的职责 |
+| [R5 详细架构设计](../../2026-09-30/employee-loop-design.md) / [HTML 阅读版](../../2026-09-30/employee-loop-design.html) | 事件/场域、独立 Loop、轻量 HostGate、Task/Run、输出与权限边界 | P 的共享合同及各包接线；保留原设计背景 |
+| [R5 十三任务实施拆解](../../2026-10-01/employee-loop-delivery-plan.md) | 最初的迁入、mailbox、执行、通知及验证路径 | 核对已落地部分，避免重建入口/内核/队列 |
+| [R2 EmployeeLoop 与 Task Service 设计](../../2026-10-02/employee-loop-task-service-design.md) | 独立目标与追加账本、Issue/Direct 双后端、新旧记忆隔离、三次模型预算 | 本轮 Task 生命周期、Compiler、自动化、记忆的直接设计依据 |
+| [R2 Task Service 交付路线](../../2026-10-02/employee-loop-task-service-delivery.md) | 把 R2 拆为可验证、可部署的增量 | 本轮按 reader/producer/E2E 切片继续交付 |
+| [当前实现合同](../../../employee-loop.md) / [真实验收记录](../employee-loop-e2e-results.md) | 已实现行为和实际交付证据 | 判断哪些无需重写、哪些仍需完成 |
+
+推荐顺序：R5 导读 → R2 Task Service 设计 → 当前合同/验收 → 本总控与自己的任务包；遇到对象关系或移植细节再查 R5 全文和 SOURCE_MAP。旧方案中的“未实施”、旧 SHA、personal 场域等是当时状态，不覆盖现行 AgentScene/scene_id 合同和后续已通过的验收。
+
 ## 1. 原 A–G 分工怎样调整
 
 | 原包 | 调整 | 原因 |

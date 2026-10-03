@@ -8,6 +8,7 @@
 你在 dt-fde-multica 仓库开发 EmployeeLoop 后端。
 目标 origin/feat/tag-multitenant 持续更新；先 fetch，记录实际 base SHA，创建自己的 codex/employee-包名 工作树和独立本地测试DB。
 先读 AGENTS.md / CLAUDE.md、docs/employee-loop.md，以及 docs/plans/2026-10-03/employee-loop-backend-delivery/README.md、00-context-and-contracts.md、自己包的文档。
+架构前情先读 docs/plans/2026-09-30/employee-loop-overview.md 和 docs/plans/2026-10-02/employee-loop-task-service-design.md；按总控“设计沿革”查R5全文与实施拆解，旧文档完成状态以最新代码/验收纠正。
 你不是独占仓库，不覆盖、回滚别的智能体修改，不清除 .omx/，不强推目标分支。
 Task 独立于Issue；PG为事实，Redis为通知/加速；复用现有queue/executor/scheduler/outbox。
 先写有业务价值的RED反例，再做最小实现、真实PG/并发/重投/故障回归；默认测试不执行用户安装的agent CLI。

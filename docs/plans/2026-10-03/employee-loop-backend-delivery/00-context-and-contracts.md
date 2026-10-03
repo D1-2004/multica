@@ -23,6 +23,8 @@ git remote -v
 
 必须阅读：`AGENTS.md`、`CLAUDE.md`、`docs/employee-loop.md`、`docs/agent-scene.md`、`docs/event-scene-router.md`、本目录及自己的任务包。涉及 Coordinator/assoc 共用代码时，再读 `docs/inbound-coordinator-loop.md` 和 `server/internal/service/inboundcoord/policy/registry.json`；跑政策检查只证明结构一致。
 
+之前的架构上下文：先读 [R5 方案导读](../../2026-09-30/employee-loop-overview.md) 和 [R2 EmployeeLoop / Task Service 设计](../../2026-10-02/employee-loop-task-service-design.md)，按需查 [R5 详细架构](../../2026-09-30/employee-loop-design.md)、[HTML 版](../../2026-09-30/employee-loop-design.html)、[十三任务拆解](../../2026-10-01/employee-loop-delivery-plan.md) 与 [R2 交付路线](../../2026-10-02/employee-loop-task-service-delivery.md)。它们说明设计为何形成；当前已实现/验收状态以 [实现合同](../../../employee-loop.md) 和 [真实验收记录](../employee-loop-e2e-results.md) 为准。不要用旧方案的未实施标签重写已完成模块。
+
 ## 2. 已完成，优先复用
 
 | 已完成事项 | 主要源码入口 | 最有价值的现有测试/证据 |
