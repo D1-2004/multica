@@ -32,6 +32,59 @@ PRI-78 最初也在讨论整套 Employee 架构，但经过 P7/P8 调整，其�
 
 **本次补充只增加背景与资料导读。**下文原始审查结论仍有自己的冻结时点；后续新代码和新方案未自动纳入其完成判断。需要最新进度时，由主代理在明确的新 SHA 上追加核对，而不是把这份历史差距报告当实时看板。
 
+## 原始设计来源：仓库网页链接
+
+以下链接可从仓库网页打开，不依赖某台机器的工作树路径。主仓以 Code 页面为入口，[GitLab同库入口](https://gitlab.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica)可作备用。固定提交用于追溯原稿；[当前交付分支](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/tree/feat/tag-multitenant)用于看后续进展，两者不能混作同一次验收版本。
+
+### 本仓设计、配套材料与移植映射
+
+| 来源资料 | 固定版本 | 仓库链接 |
+| --- | --- | --- |
+| 设计最初稿 | `6db59d05c5` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/6db59d05c510ddccc7ed0297e1d28c949ca0d7e8/docs/plans/2026-09-30/employee-loop-design.md) |
+| 独立内核/HTML修订 | `056d9c8c90` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/056d9c8c90e33f24e1824509a2d596a055652248/docs/plans/2026-09-30/employee-loop-design.md) |
+| R5 方案导读 | `843d918328` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/843d918328fce7587a47990f6a4a5b62ade0ad00/docs/plans/2026-09-30/employee-loop-overview.md) |
+| R5 完整架构设计 | `843d918328` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/843d918328fce7587a47990f6a4a5b62ade0ad00/docs/plans/2026-09-30/employee-loop-design.md) |
+| R5 HTML阅读版 | `843d918328` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/843d918328fce7587a47990f6a4a5b62ade0ad00/docs/plans/2026-09-30/employee-loop-design.html) |
+| R5 十三任务实施拆解 | `843d918328` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/843d918328fce7587a47990f6a4a5b62ade0ad00/docs/plans/2026-10-01/employee-loop-delivery-plan.md) |
+| 原始DWS事件Schema快照 | `843d918328` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/843d918328fce7587a47990f6a4a5b62ade0ad00/docs/plans/2026-09-30/dws-event-schema-snapshot.json) |
+| 当时的DWS SDK同步来源 | `843d918328` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/843d918328fce7587a47990f6a4a5b62ade0ad00/server/pkg/dws/SYNC.md) |
+| R2 EmployeeLoop / Task Service设计 | `685f68c73b` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/685f68c73b072d76779da0ffc71e502e6f4ea24d/docs/plans/2026-10-02/employee-loop-task-service-design.md) |
+| R2 Task Service交付路线 | `685f68c73b` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/685f68c73b072d76779da0ffc71e502e6f4ea24d/docs/plans/2026-10-02/employee-loop-task-service-delivery.md) |
+| 审查时Loop移植映射 | `26fdabc600` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/26fdabc60052a1912f1259d1d2f029eb3c7a0255/server/internal/service/employeeloop/SOURCE_MAP.md) |
+| 审查时Task移植映射 | `26fdabc600` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/26fdabc60052a1912f1259d1d2f029eb3c7a0255/server/internal/employeetask/SOURCE_MAP.md) |
+| 审查时Memory移植映射 | `26fdabc600` | [查看原文件](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/blob/26fdabc60052a1912f1259d1d2f029eb3c7a0255/server/internal/service/employeememory/SOURCE_MAP.md) |
+
+版本演进也可直接查看：[初稿提交](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/commit/6db59d05c510ddccc7ed0297e1d28c949ca0d7e8)、[R5修订提交](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/commit/843d918328fce7587a47990f6a4a5b62ade0ad00)、[R2归档提交](https://code.alibaba-inc.com/dingtalk-ai-lab/dt-fde-multica/commit/685f68c73b072d76779da0ffc71e502e6f4ea24d)。其中R2归档提交同时包含其他改动，以文档文件为设计来源，不将整个提交都当成架构实现。
+
+### GawkBot 固定参考源
+
+[上游仓库](https://github.com/najmuzzaman-mohammad/gawkbot) / [固定源码树](https://github.com/najmuzzaman-mohammad/gawkbot/tree/71e82a1809565281cbd0bf8185d3c125b715d934)，版本为 `71e82a1809565281cbd0bf8185d3c125b715d934`。这是机制和代码的原始来源；本仓怎样适配见上面的三个SOURCE_MAP。
+
+| 机制/资料 | 固定版本源码链接 |
+| --- | --- |
+| Go BotLoop内核 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/bot/loop.go) |
+| 队列优先级 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/bot/queues.go) |
+| Session历史 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/bot/session.go) |
+| TaskDefinition | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/task_definition.go) |
+| Work Packet组装 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/notification_context.go) |
+| Task账本 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/task_ledger.go) |
+| 事项定位 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/task_addressing.go) |
+| 表达与提示词 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/prompt_builder.go) |
+| 记忆记录/去重/衰减 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/learnings.go) |
+| 作用域记忆 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/scoped_memory.go) |
+| 完成后经验提炼 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/task_distill.go) |
+| 记忆工作流 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/memory_workflow.go) |
+| 记忆产物恢复 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/memory_workflow_reconciler.go) |
+| 例行任务注册 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/broker_scheduler_routines.go) |
+| 例行任务运行与结算 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/scheduler_runtime.go) |
+| 停滞观测 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/broker_task_stall.go) |
+| 执行资源lane | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/internal/team/headless_codex_queue.go) |
+| 原始许可 | [查看源码](https://github.com/najmuzzaman-mohammad/gawkbot/blob/71e82a1809565281cbd0bf8185d3c125b715d934/LICENSE) |
+
+DWS上游可对照 [dws-for-tag固定版本](https://github.com/xdxer/dws-for-tag/tree/ae29c2914dd9108e7ce451329bceeca411464b6b)，其引用已由R5中的SDK同步记录核对；原Schema快照只证明当时公开协议，不代表今天所有事件key都已接通。
+
+**访问与核验说明：**本仓链接的提交/路径已通过实际Git对象核对；GawkBot及DWS引用也已按本地固定Git对象核对。内部页面需要集团网络/登录；本次网页工具无法读取内部页面，GawkBot远端网络查询超时，未声称这些链接可匿名访问。PRI-78附件仍以原单为入口，未编造它们的仓库地址；原始对话链接保留在R5/R2文档中，不用仓库材料冒充完整对话。
+
 **阅读时点：**初次审查固定 `727a7e38f`；同步期间目标又推进到 `26fdabc60`，已补做 [第11节更新](#11-同步期间新增实现已改变的判断26fdabc60)。第3节的PRI-78记录与第7节的Golden基线不因新代码自动变成通过；第4–8节明确描述初次快照，当前实现进展优先看第11节，避免重复开发已补的功能。
 
 ## 1. 核对来源与证据边界
