@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_webhook_occurrence_workspace_idx;

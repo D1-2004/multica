@@ -93,20 +93,32 @@ type routineFire struct {
 	// ManualActorID is the member who ran the routine now; invalid for a
 	// schedule and for a run requested by an agent.
 	ManualActorID pgtype.UUID
+	// WebhookDeliveryID is the accepted webhook delivery of a webhook
+	// occurrence (employee_webhook_task.go); invalid otherwise.
+	WebhookDeliveryID pgtype.UUID
 }
 
 func (f routineFire) scheduled() bool { return !f.PlannedAt.IsZero() }
 
+// webhook reports an occurrence admitted from an accepted webhook delivery.
+func (f routineFire) webhook() bool { return f.WebhookDeliveryID.Valid }
+
 func (f routineFire) source() string {
-	if f.scheduled() {
+	switch {
+	case f.scheduled():
 		return routineSourceSchedule
+	case f.webhook():
+		return routineSourceWebhook
 	}
 	return routineSourceManual
 }
 
 func (f routineFire) runSource() string {
-	if f.scheduled() {
+	switch {
+	case f.scheduled():
 		return "schedule"
+	case f.webhook():
+		return "webhook"
 	}
 	return "manual"
 }
@@ -405,7 +417,9 @@ func (s *AutopilotService) verifyRoutineOccurrence(ctx context.Context, tx pgx.T
 	}
 	adm.ap = ap
 	adm.creator = AutomationPrincipal{Kind: AutomationPrincipalKind(routine.CreatedByType), ID: routine.CreatedByID}
-	if ap.Status != "active" {
+	// A webhook delivery was accepted while the routine was active; pausing
+	// stops new deliveries at the endpoint, not an accepted one.
+	if ap.Status != "active" && !fire.webhook() {
 		return adm, skipRoutine(dispatch.ReasonTargetUnavailable, "routine is paused"), nil
 	}
 	// The routine row and its autopilot must describe the same binding; any
@@ -424,6 +438,15 @@ func (s *AutopilotService) verifyRoutineOccurrence(ctx context.Context, tx pgx.T
 	for i := range triggers {
 		if triggers[i].Kind == "schedule" && (!fire.scheduled() || triggers[i].ID == fire.TriggerID) {
 			trigger = &triggers[i]
+		}
+	}
+	if fire.webhook() {
+		belongs := false
+		for i := range triggers {
+			belongs = belongs || (triggers[i].Kind == "webhook" && triggers[i].ID == fire.TriggerID)
+		}
+		if !belongs {
+			return adm, failRoutine("routine webhook trigger does not belong to its autopilot"), nil
 		}
 	}
 	if trigger != nil {
@@ -532,17 +555,20 @@ func (s *AutopilotService) verifyRoutineOccurrence(ctx context.Context, tx pgx.T
 	} else if err != nil {
 		return adm, nil, fmt.Errorf("employee routine: delivery target: %w", err)
 	}
-	// Overlap: the previous accepted occurrence still has an active Run.
-	var overlap string
-	err = tx.QueryRow(ctx, `SELECT o.id::text FROM employee_routine_occurrence o
+	// Overlap: the previous accepted occurrence still has an active Run. A
+	// webhook delivery is its own event, never a cadence slot: it always runs.
+	if !fire.webhook() {
+		var overlap string
+		err = tx.QueryRow(ctx, `SELECT o.id::text FROM employee_routine_occurrence o
  JOIN employee_task_run r ON r.id=o.employee_run_id AND r.workspace_id=o.workspace_id
  WHERE o.routine_id=$1::uuid AND o.workspace_id=$2 AND o.state='accepted' AND r.state='running'
  ORDER BY o.created_at DESC LIMIT 1`, routine.ID, workspaceID).Scan(&overlap)
-	if err == nil {
-		return adm, &routineRefusal{state: routineOccurrenceSkippedOverlap, reason: "previous occurrence of this routine is still running", code: dispatch.ReasonAlreadyActive, overlap: overlap}, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return adm, nil, fmt.Errorf("employee routine: overlap check: %w", err)
+		if err == nil {
+			return adm, &routineRefusal{state: routineOccurrenceSkippedOverlap, reason: "previous occurrence of this routine is still running", code: dispatch.ReasonAlreadyActive, overlap: overlap}, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return adm, nil, fmt.Errorf("employee routine: overlap check: %w", err)
+		}
 	}
 	var revision string
 	err = tx.QueryRow(ctx, `SELECT id::text FROM autopilot_rule_version WHERE workspace_id=$1 AND autopilot_id=$2 ORDER BY created_at DESC, id DESC LIMIT 1`, workspaceID, ap.ID).Scan(&revision)
@@ -627,7 +653,55 @@ func (s *AutopilotService) acceptRoutineOccurrenceTx(ctx context.Context, tx pgx
 	if err := s.routineFault("autopilot_run"); err != nil {
 		return out, nil, err
 	}
+	eventID := routineManualEventID(run.ID)
+	if fire.scheduled() {
+		eventID = routineScheduleEventID(fire.TriggerID, fire.PlannedAt)
+	}
+	input := s.routineOccurrenceInput(adm, fire, eventID)
+	scope := routineTaskScope(adm.routine)
+	packet, err := compileRoutinePacket(scope, input)
+	if err != nil {
+		return out, nil, fmt.Errorf("employee routine: compile: %w", err)
+	}
+	return s.startRoutineDirectTx(ctx, tx, qtx, host, adm, fire, run, routineDirectSpec{
+		eventID: eventID, input: input, packet: packet, originKind: AutomationOriginSceneRoutine,
+		recordRefusal: func(run db.AutopilotRun, refusal routineRefusal) error {
+			return s.insertRoutineOccurrenceTx(ctx, tx, adm, fire, run, refusal.state, refusal.reason, "", routineOccurrenceInput{}, nil)
+		},
+		recordAccepted: func(run db.AutopilotRun, ids *routineAcceptedIDs) error {
+			return s.insertRoutineOccurrenceTx(ctx, tx, adm, fire, run, routineOccurrenceAccepted, "", "", input, ids)
+		},
+	})
+}
+
+// routineTaskScope is the scene scope of a routine's EmployeeTasks.
+func routineTaskScope(routine contextcap.Routine) employeetask.Scope {
+	return employeetask.Scope{WorkspaceID: routine.WorkspaceID, AgentID: routine.AgentID, TenantOrgID: routine.TenantOrgID, Kind: employeetask.ScopeScene, Scene: scene.Ref{SceneID: routine.SceneID}}
+}
+
+// routineDirectSpec is what one routine occurrence kind contributes to the
+// shared Direct admission: its event identity, frozen input and compiled
+// packet, its automation origin kind, and the writer of its receipt table.
+type routineDirectSpec struct {
+	eventID        string
+	input          any
+	packet         employeetask.WorkPacket
+	originKind     AutomationOriginKind
+	recordRefusal  func(run db.AutopilotRun, refusal routineRefusal) error
+	recordAccepted func(run db.AutopilotRun, ids *routineAcceptedIDs) error
+}
+
+// startRoutineDirectTx is the single Direct admission core of routine
+// occurrences (schedule, run now, webhook): for the occurrence's running
+// AutopilotRun it resolves attribution, creates the EmployeeTask, the queue
+// row, the Run and the AutopilotRun -> queue mapping, records the receipt and
+// the start notice intent, all in tx. A refusal returned here (no accountable
+// human under a fail-closed workspace) has already settled the run as skipped
+// in tx and recorded its receipt.
+func (s *AutopilotService) startRoutineDirectTx(ctx context.Context, tx pgx.Tx, qtx *db.Queries, host EmployeeRoutineHost, adm routineAdmission, fire routineFire, run db.AutopilotRun, spec routineDirectSpec) (routineAccepted, *routineRefusal, error) {
+	out := routineAccepted{run: run}
 	var attr attribution.Result
+	var err error
 	if fire.ManualActorID.Valid {
 		attr = attribution.DirectHumanRun(fire.ManualActorID, attribution.EvidenceAutopilotRun, run.ID)
 	} else {
@@ -639,25 +713,16 @@ func (s *AutopilotService) acceptRoutineOccurrenceTx(ctx context.Context, tx pgx
 		if out.run, err = qtx.UpdateAutopilotRunSkipped(ctx, db.UpdateAutopilotRunSkippedParams{ID: run.ID, FailureReason: pgtype.Text{String: refusal.reason, Valid: true}}); err != nil {
 			return out, nil, err
 		}
-		if err := s.insertRoutineOccurrenceTx(ctx, tx, adm, fire, out.run, refusal.state, refusal.reason, "", routineOccurrenceInput{}, nil); err != nil {
+		if err := spec.recordRefusal(out.run, *refusal); err != nil {
 			return out, nil, err
 		}
 		return out, refusal, nil
 	}
 
-	eventID := routineManualEventID(run.ID)
-	if fire.scheduled() {
-		eventID = routineScheduleEventID(fire.TriggerID, fire.PlannedAt)
-	}
+	eventID, packet, scope := spec.eventID, spec.packet, routineTaskScope(adm.routine)
 	occurrenceID := uuid.NewString()
-	input := s.routineOccurrenceInput(adm, fire, eventID)
-	scope := employeetask.Scope{WorkspaceID: adm.routine.WorkspaceID, AgentID: adm.routine.AgentID, TenantOrgID: adm.routine.TenantOrgID, Kind: employeetask.ScopeScene, Scene: scene.Ref{SceneID: adm.routine.SceneID}}
 	source := fire.source()
-	packet, err := compileRoutinePacket(scope, input)
-	if err != nil {
-		return out, nil, fmt.Errorf("employee routine: compile: %w", err)
-	}
-	inputJSON, err := json.Marshal(input)
+	inputJSON, err := json.Marshal(spec.input)
 	if err != nil {
 		return out, nil, err
 	}
@@ -673,7 +738,7 @@ func (s *AutopilotService) acceptRoutineOccurrenceTx(ctx context.Context, tx pgx
 	if err := s.routineFault("employee_task"); err != nil {
 		return out, nil, err
 	}
-	contextJSON, err := directTaskContext(DirectTaskRequest{Task: task, Prompt: packet.Text, Context: routineQueueContext(adm, occurrenceID, run.ID, packet.ContextUsed)})
+	contextJSON, err := directTaskContext(DirectTaskRequest{Task: task, Prompt: packet.Text, Context: routineQueueContext(adm, spec.originKind, occurrenceID, run.ID, packet.ContextUsed)})
 	if err != nil {
 		return out, nil, err
 	}
@@ -704,7 +769,7 @@ func (s *AutopilotService) acceptRoutineOccurrenceTx(ctx context.Context, tx pgx
 		return out, nil, err
 	}
 	accepted := &routineAcceptedIDs{occurrenceID: occurrenceID, taskID: task.ID, runID: out.erun.ID, queueID: util.UUIDToString(queueID), promptSHA: promptSHA256(packet.Text)}
-	if err := s.insertRoutineOccurrenceTx(ctx, tx, adm, fire, out.run, routineOccurrenceAccepted, "", "", input, accepted); err != nil {
+	if err := spec.recordAccepted(out.run, accepted); err != nil {
 		return out, nil, fmt.Errorf("employee routine: record occurrence: %w", err)
 	}
 	if err := s.routineFault("occurrence"); err != nil {
@@ -826,9 +891,9 @@ func compileRoutinePacket(scope employeetask.Scope, in routineOccurrenceInput) (
 // routineQueueContext is the Host context of a routine Direct execution. It
 // carries no dispatch event, so no personal layer applies, and its delivery
 // owner keeps the message Run notice away from it.
-func routineQueueContext(adm routineAdmission, occurrenceID string, runID pgtype.UUID, contextUsed []string) json.RawMessage {
+func routineQueueContext(adm routineAdmission, kind AutomationOriginKind, occurrenceID string, runID pgtype.UUID, contextUsed []string) json.RawMessage {
 	raw, _ := json.Marshal(map[string]any{
-		AutomationOriginContextKey:      AutomationOriginRef{Kind: AutomationOriginSceneRoutine, ReceiptID: occurrenceID, AutopilotRunID: util.UUIDToString(runID)},
+		AutomationOriginContextKey:      AutomationOriginRef{Kind: kind, ReceiptID: occurrenceID, AutopilotRunID: util.UUIDToString(runID)},
 		protocol.SceneRoutineContextKey: routineSceneContext{RoutineID: adm.routine.ID, TenantOrgID: adm.routine.TenantOrgID, Kind: adm.routine.SceneKind, Title: adm.ap.Title},
 		"employee_delivery_owner":       AutomationDeliveryOwnerSceneRoutine,
 		"employee_context_used":         contextUsed,
