@@ -6,7 +6,8 @@
   e2e.py env gate --run-id R              block until no 预发 deploy is pending
   e2e.py read <conversation> [--as A] [--limit N]
   e2e.py send <conversation> --as A --text T [--at employee,<actor>] [--marker M]
-  e2e.py run <cases.json> --run-id R [--only ID,...]       driver (never grades)
+  e2e.py run <cases.json> --run-id R [--only ID,...] [--max-idle-wait S]   driver (never grades)
+  e2e.py conv new-group <conversation> [--title T] [--dry-run]           fresh group for a clean scene
   e2e.py collect --run-id R [--only ID,...]                Langfuse / SLS evidence
   e2e.py grade --run-id R [--baseline R0]                  grader (separate step)
 
@@ -91,7 +92,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     from el2e import driver
     roles = dict(r.split("=", 1) for r in (args.role or []))
     return driver.run(Path(args.cases), args.run_id, only=[x for x in (args.only or "").split(",") if x],
-                      skip_gate=args.skip_gate, conversation=args.conversation, roles=roles or None)
+                      skip_gate=args.skip_gate, conversation=args.conversation, roles=roles or None,
+                      max_idle_wait_s=args.max_idle_wait)
+
+
+def cmd_conv(args: argparse.Namespace) -> int:
+    from el2e import conv
+    print(json.dumps(conv.new_group(args.conversation, title=args.title, dry_run=args.dry_run), ensure_ascii=False, indent=1))
+    return 0
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
@@ -137,7 +145,15 @@ def main(argv: list[str] | None = None) -> int:
     ru.add_argument("--skip-gate", action="store_true")
     ru.add_argument("--conversation", help="override the case conversation (rerun elsewhere)")
     ru.add_argument("--role", action="append", help="override a role, e.g. 主管=zhujue")
+    ru.add_argument("--max-idle-wait", type=int, default=0,
+                    help="seconds the driver may wait for a DM to reach a case's idle_before_min; otherwise deferred")
     ru.set_defaults(fn=cmd_run)
+    cv = sub.add_parser("conv")
+    cv.add_argument("action", choices=["new-group"])
+    cv.add_argument("conversation")
+    cv.add_argument("--title")
+    cv.add_argument("--dry-run", action="store_true")
+    cv.set_defaults(fn=cmd_conv)
     c = sub.add_parser("collect")
     c.add_argument("--run-id", required=True)
     c.add_argument("--only")

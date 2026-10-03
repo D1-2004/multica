@@ -164,6 +164,133 @@
       "created_at": "2026-10-03T18:17:03+08:00",
       "note": "DEAP-actor probe group (Director + Qwen-Real + 红楼·林黛玉); used to test DE-sent group lines and quote-reply auto-@",
       "probe_result": "2026-10-03: plain DEAP line (EL-DE-PROBE-1) never reached EmployeeLoop; quote-reply to a Qwen-Real message rendered '@Qwen-Real …', admitted as a native @ event (trace 3d14c06e89204c7d9d678745609bedde, 2 calls) and answered in 5 s"
+    },
+    "group_mem_g1": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "回执核对",
+        "creator": "director",
+        "members": [
+          "zhujue",
+          "director",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_g1); reset cid to null before the next run"
+    },
+    "group_mem_g2": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "周报对齐",
+        "creator": "director",
+        "members": [
+          "director",
+          "zhujue",
+          "daiyu",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_g2); reset cid to null before the next run"
+    },
+    "group_mem_w1": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "发版沟通",
+        "creator": "director",
+        "members": [
+          "director",
+          "zhujue",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_w1); reset cid to null before the next run"
+    },
+    "group_mem_g4": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "评审会准备",
+        "creator": "director",
+        "members": [
+          "zhujue",
+          "director",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_g4); reset cid to null before the next run"
+    },
+    "group_mem_l1": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "上线值班",
+        "creator": "director",
+        "members": [
+          "director",
+          "zhujue",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_l1); reset cid to null before the next run"
+    },
+    "group_mem_x": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "周会",
+        "creator": "director",
+        "members": [
+          "zhujue",
+          "director",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_x); reset cid to null before the next run"
+    },
+    "group_mem_base": {
+      "kind": "group",
+      "cid": null,
+      "scene_id": null,
+      "readers": [
+        "director"
+      ],
+      "fresh": {
+        "title": "会议安排",
+        "creator": "director",
+        "members": [
+          "zhujue",
+          "director",
+          "employee"
+        ]
+      },
+      "allocation": "M7 memory cases: a new group per run (e2e.py conv new-group group_mem_base); reset cid to null before the next run"
     }
   }
 }

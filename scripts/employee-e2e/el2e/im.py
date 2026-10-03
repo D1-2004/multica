@@ -77,6 +77,38 @@ def send(*, profile: str, cid: str, text: str, marker: str, at_ids: list[str] | 
     args = ["chat", "+messages-send", "--as", "user", "--chat-id", cid, "--text", body, "--uuid", key, "--yes"]
     if at_ids:
         args += ["--at-open-dingtalk-ids", ",".join(at_ids)]
+    return _deliver(profile=profile, cid=cid, args=args, body=body, text=text, marker=marker, key=key, at_ids=at_ids,
+                    match_key=match_key, readback_timeout=readback_timeout,
+                    exclude_sender_ids=exclude_sender_ids, not_before=not_before)
+
+
+def reply(*, profile: str, cid: str, quoted_message_id: str, text: str, marker: str,
+          at_ids: list[str] | None = None, match_key: str | None = None, readback_timeout: int = 40,
+          exclude_sender_ids: set[str] | None = None) -> dict[str, Any]:
+    """Quote-reply to one exact message (how colleagues point at a line in DingTalk).
+
+    A quote reply to an employee message also addresses the employee: DingTalk
+    renders it as `@<employee> …` and delivers a native @ event (measured
+    2026-10-03 with a DEAP actor). The CLI verifies the source message and its
+    conversation before sending; the same idempotency and readback rules apply.
+    """
+    at_ids = at_ids or []
+    key = stable_uuid(marker)
+    body = render_text(text, at_ids)
+    args = ["chat", "+messages-reply", "--group", cid, "--message-id", quoted_message_id, "--content", body,
+            "--uuid", key, "--yes"]
+    if at_ids:
+        args += ["--at-open-dingtalk-ids", ",".join(at_ids)]
+    rec = _deliver(profile=profile, cid=cid, args=args, body=body, text=text, marker=marker, key=key, at_ids=at_ids,
+                   match_key=match_key, readback_timeout=readback_timeout, exclude_sender_ids=exclude_sender_ids)
+    rec["quoted_message_id"] = quoted_message_id
+    rec["landed_quotes_source"] = [m.get("quotedMessageId") == quoted_message_id for m in rec["landed"]]
+    return rec
+
+
+def _deliver(*, profile: str, cid: str, args: list[str], body: str, text: str, marker: str, key: str,
+             at_ids: list[str], match_key: str | None, readback_timeout: int,
+             exclude_sender_ids: set[str] | None, not_before: _dt.datetime | None = None) -> dict[str, Any]:
     t0 = now()
     floor = min(t0, not_before) if not_before is not None else t0
     floor = floor.replace(microsecond=0) - _dt.timedelta(seconds=5)
@@ -115,7 +147,8 @@ def send(*, profile: str, cid: str, text: str, marker: str, at_ids: list[str] | 
         "marker": marker, "uuid": key, "profile": profile, "cid": cid, "text": body, "match_key": key_text,
         "at_ids": at_ids, "sent_at": iso(t0), "attempts": attempts, "landing_count": len(landed),
         "landed": [{"messageId": m.get("messageId"), "createTime": m.get("createTime"),
-                    "senderId": m.get("senderId"), "sender": m.get("sender"), "text": m.get("text")} for m in landed],
+                    "senderId": m.get("senderId"), "sender": m.get("sender"), "text": m.get("text"),
+                    "quotedMessageId": (m.get("quotedMessage") or {}).get("messageId")} for m in landed],
     }
     record["ok"] = len(landed) == 1
     return record

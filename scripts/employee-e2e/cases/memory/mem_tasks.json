@@ -1,0 +1,92 @@
+{
+  "schema": "el2e.cases.v1",
+  "suite": "MEM-TASK",
+  "source": "12-memory-design §10 MEM-01..04; 07-memory-evolution MEM-01..04; M7",
+  "notes": [
+    "dm_director is shared with G1's own MEM-01 run: never interleave. MEM-02/04 continue MEM-01 (vars_from) and run right after it.",
+    "PG facts of private learnings are not readable on 预发 through the API; the verified learning is proven by the employee_verified_distill trace and its reuse by the work packet (agent_task trace input: MEMORY section, employee_context_used)."
+  ],
+  "defaults": {
+    "wait": {"reply": {"timeout_s": 180, "settle_s": 20}, "silence": {"window_s": 60}, "optional": {"window_s": 50, "settle_s": 15}}
+  },
+  "cases": [
+    {
+      "id": "MEM-01", "title": "后台任务按完成标准验证通过后，留下一条可信经验", "scene": "dm", "conversation": "dm_director",
+      "roles": {"主管": "director"}, "idle_before_min": 30,
+      "steps": [
+        {"id": "make", "actor": "主管", "text": "帮我在后台生成一个 {FILE_A}：恰好 {ROWS} 行数据，表头是 {COLS}。做完的标准就是 {FILE_A} 有 {ROWS} 行、表头是 {COLS}。", "wait": {"mode": "reply", "timeout_s": 120, "settle_s": 10}},
+        {"id": "done", "observe": {"since_step": "make", "until_regex": "{FILE_A}", "timeout_s": 600}}
+      ],
+      "judge": {
+        "criteria": "任务完成并告知；Host 验证通过后出现 employee_verified_distill。",
+        "checks": [
+          {"steps": ["make"], "replies": [1, 3]},
+          {"evidence": "named_trace", "name": "employee_verified_distill"}
+        ],
+        "semantic": ["结果说明生成了 {FILE_A}，{ROWS} 行、表头 {COLS}"]
+      }
+    },
+    {
+      "id": "MEM-01N", "title": "产出不符合完成标准时，不产生可信经验", "scene": "dm", "conversation": "dm_director",
+      "roles": {"主管": "director"}, "idle_before_min": 30,
+      "steps": [
+        {"id": "make", "actor": "主管", "text": "再帮我生成一个 {FILE_C}，写 {ROWS_MORE} 行数据，表头 {COLS}。做完的标准是 {FILE_C} 恰好 {ROWS} 行。", "wait": {"mode": "reply", "timeout_s": 120, "settle_s": 10}},
+        {"id": "done", "observe": {"since_step": "make", "until_regex": "{FILE_C}", "timeout_s": 600}}
+      ],
+      "judge": {
+        "criteria": "行数与完成标准不符时没有 verified distill；员工可以指出要求自相矛盾。",
+        "checks": [
+          {"evidence": "named_trace", "name": "employee_verified_distill", "present": false}
+        ],
+        "semantic": ["没有把不符合完成标准的结果说成已达标"]
+      }
+    },
+    {
+      "id": "MEM-02", "title": "下一个相关任务用上这条经验，无关任务不用", "scene": "dm", "conversation": "dm_director",
+      "roles": {"主管": "director"}, "vars_from": "MEM-01",
+      "steps": [
+        {"id": "reuse", "actor": "主管", "text": "再生成一个 {FILE_B}，格式要求跟 {FILE_A} 一样。", "wait": {"mode": "reply", "timeout_s": 120, "settle_s": 10}},
+        {"id": "done", "observe": {"since_step": "reuse", "until_regex": "{FILE_B}", "timeout_s": 600}},
+        {"id": "cold", "actor": "主管", "text": "顺手把今天的日期写进 today.txt。", "wait": {"mode": "reply", "timeout_s": 120, "settle_s": 10}},
+        {"id": "done2", "observe": {"since_step": "cold", "until_regex": "today", "timeout_s": 600}}
+      ],
+      "judge": {
+        "criteria": "{FILE_B} 也是 {ROWS} 行、表头 {COLS}；相关任务的工作包 MEMORY 段带上这条已验证经验，无关任务不带。",
+        "checks": [
+          {"evidence": "packet", "step": "reuse", "include": ["MEMORY (", "Verified outcome", "memory:"]},
+          {"evidence": "packet", "step": "cold", "exclude": ["Verified outcome"]}
+        ],
+        "semantic": ["{FILE_B} 的结果符合 {ROWS} 行、表头 {COLS}"]
+      }
+    },
+    {
+      "id": "MEM-03", "title": "本人同意且管理者批准后，经验在别的场景可用（C 阶段）", "scene": "dm+group", "conversation": "dm_director",
+      "roles": {"主管": "director", "管理者": null}, "vars_from": "MEM-01",
+      "steps": [
+        {"id": "share", "actor": "主管", "text": "刚才生成 {FILE_A} 那条经验，共享给所有场景吧。", "wait": {"mode": "reply"}}
+      ],
+      "judge": {
+        "criteria": "批准后晋级行 active、target=agent；群里相似任务的工作包带上它；其他私人记录不出现。需要 M9 与管理页审批，暂不可跑。",
+        "checks": [{"steps": ["share"], "replies": [1, 1]}],
+        "semantic": ["只共享这一条，其他私人记录不出现"]
+      }
+    },
+    {
+      "id": "MEM-04", "title": "本人删掉经验后，新任务不再用它", "scene": "dm", "conversation": "dm_director",
+      "roles": {"主管": "director"}, "vars_from": "MEM-01",
+      "steps": [
+        {"id": "forget", "actor": "主管", "text": "{FILE_A} 那条经验不用记了。", "wait": {"mode": "reply"}},
+        {"id": "again", "actor": "主管", "text": "再生成一个 {FILE_D}，跟 {FILE_A} 一样的格式。", "wait": {"mode": "reply", "timeout_s": 120, "settle_s": 10}},
+        {"id": "done", "observe": {"since_step": "again", "until_regex": "{FILE_D}", "timeout_s": 600}}
+      ],
+      "judge": {
+        "criteria": "删掉后，新任务工作包不再带这条已验证经验。",
+        "checks": [
+          {"steps": ["forget"], "replies": [1, 1]},
+          {"evidence": "packet", "step": "again", "exclude": ["Verified outcome"]}
+        ],
+        "semantic": ["删除时简短确认，不复述内容"]
+      }
+    }
+  ]
+}

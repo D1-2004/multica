@@ -77,6 +77,53 @@ def _gen_summary(obs: dict[str, Any]) -> dict[str, Any]:
             "status_message": obs.get("statusMessage")}
 
 
+MEMORY_PREFIX = "Existing memory snapshot (data):"
+HISTORY_PREFIXES = ("Recent conversation snapshot", "Recent conversation (temporary dialogue data", "[History ")
+WINDOW_PREFIX = "Current conversation window:"
+# employee_loop trace metadata the memory design adds (12-memory-design §7.4).
+MEMORY_METADATA_KEYS = ("employee_job_id", "memory_manifest", "memory_query_terms", "memory_hits", "memory_pinned",
+                        "memory_bytes_by_section", "transcript_status", "transcript_reason", "transcript_lines",
+                        "transcript_bytes", "transcript_elapsed_ms", "history_lower_bound", "history_segments",
+                        "history_collapsed", "host_facts_bytes")
+
+
+def _text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(p.get("text", "") for p in content if isinstance(p, dict))
+    return json.dumps(content, ensure_ascii=False) if content is not None else ""
+
+
+def first_request(trace: dict[str, Any]) -> dict[str, str]:
+    """What the model was shown on the wake's first request, split by role:
+    the frozen persona (system), the memory block, the recent conversation
+    (history snapshot, history turns, Host-ledgered assistant turns) and the
+    current window. Assertions on memory/history read these, never replies."""
+    obs = sorted(trace.get("observations") or [], key=lambda o: o.get("startTime") or "")
+    gen = next((o for o in obs if o.get("type") == "GENERATION"), None)
+    out = {"system": "", "memory": "", "history": "", "current_window": ""}
+    if not gen:
+        return out
+    inp = gen.get("input")
+    messages = inp.get("messages") if isinstance(inp, dict) else (inp if isinstance(inp, list) else [])
+    history: list[str] = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        role, text = m.get("role"), _text(m.get("content"))
+        if role in ("system", "developer"):
+            out["system"] += text
+        elif text.startswith(MEMORY_PREFIX):
+            out["memory"] = text[len(MEMORY_PREFIX):].lstrip("\n")
+        elif text.startswith(WINDOW_PREFIX):
+            out["current_window"] = text
+        elif role == "assistant" or text.startswith(HISTORY_PREFIXES):
+            history.append(f"[{role}] {text}")
+    out["history"] = "\n".join(history)
+    return {k: v[:40000] for k, v in out.items()}
+
+
 def summarize(trace: dict[str, Any]) -> dict[str, Any]:
     obs = sorted(trace.get("observations") or [], key=lambda o: o.get("startTime") or "")
     idx = {}
@@ -97,6 +144,10 @@ def summarize(trace: dict[str, Any]) -> dict[str, Any]:
             "session": trace.get("sessionId"), "latency_s": trace.get("latency"),
             "job_id": meta.get("employee_job_id") or meta.get("job_id"), "receipt_ids": meta.get("receipt_ids"),
             "scene_id": meta.get("scene_id"), "output": trace.get("output"), "generation_count": len(gens),
+            "request": first_request(trace) if trace.get("name") == "employee_loop" else None,
+            "metadata": {k: meta[k] for k in MEMORY_METADATA_KEYS if k in meta},
+            "observation_names": sorted({str(o.get("name")) for o in trace.get("observations") or []}),
+            "input_text": json.dumps(trace.get("input"), ensure_ascii=False)[:60000] if trace.get("name") == "agent_task" else None,
             "generations": gens, "tools": tools, "errors": errors, "idx": idx,
             "langfuse_url_hint": f"traces/{trace.get('id')}"}
 
@@ -174,6 +225,17 @@ def agent_config_snapshot() -> dict[str, Any]:
     return snap
 
 
+def scene_memory_snapshot(scene_id: str) -> dict[str, Any]:
+    """Shared scene-layer learnings as the management API reports them (the
+    private layer is never readable here, by design)."""
+    reg = registry()
+    status, body = pre_api("GET", f"/api/agents/{reg['employee']['agent_id']}/scene-memory/{scene_id}?loop=employee")
+    if status != 200 or not isinstance(body, dict):
+        return {"status": status, "error": str(body)[:300]}
+    return {"status": status, "scene_id": scene_id, "revision": body.get("memory_revision"),
+            "learnings": body.get("learnings") or [], "memory_text": body.get("memory_text") or ""}
+
+
 def case_window(rec: dict[str, Any]) -> tuple[_dt.datetime, _dt.datetime]:
     start = parse_iso(rec["started_at"]) - _dt.timedelta(seconds=10)
     end = parse_iso(rec.get("ended_at") or rec["started_at"]) + _dt.timedelta(seconds=90)
@@ -236,8 +298,24 @@ def collect_case(rd: Path, rec: dict[str, Any], scene_ids: dict[str, str]) -> di
             summ["matched_by"] = "employee_job_id"
             traces.append(summ)
     traces.sort(key=lambda t: t.get("timestamp") or "")
-    return {"case_id": rec["case_id"], "attempt": rec["attempt"], "window": [iso(start), iso(end)],
-            "listed": len(listed), "step_message_ids": msg_ids, "traces": traces}
+    # Spans that are their own traces (verified distill, transcript reads) are
+    # kept by name so cases can assert they happened inside the window.
+    named = [s for s in summaries if s.get("name") in ("employee_verified_distill", "employee_scene_transcript",
+                                                         "employee_agent_profile_refresh", "employee_scene_digest")]
+    out = {"case_id": rec["case_id"], "attempt": rec["attempt"], "window": [iso(start), iso(end)],
+           "listed": len(listed), "step_message_ids": msg_ids, "traces": traces, "named_traces": named}
+    scene_memory = {}
+    reg = registry()
+    for conv_name in (rec.get("collect") or {}).get("scene_memory", []):
+        sid = scene_ids.get(conv_name) or (reg["conversations"].get(conv_name) or {}).get("scene_id")
+        if not sid:
+            for t in traces:
+                if t.get("name") == "employee_loop" and t.get("session") and any(
+                        s["conversation"] == conv_name for s in rec["steps"] if s["id"] in (t.get("matched_steps") or [])):
+                    sid = t["session"]
+        scene_memory[conv_name] = scene_memory_snapshot(sid) if sid else {"error": "scene id unknown"}
+    out["scene_memory"] = scene_memory
+    return out
 
 
 def discover_scene_ids(rd: Path) -> dict[str, str]:

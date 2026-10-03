@@ -19,6 +19,8 @@ Python 3.11, stdlib only. No secrets live in this directory.
 | `el2e/evidence.py` | Langfuse traces (exact attribution), SLS lines, Multica API reads |
 | `el2e/leak.py` | user-visible text checks: internal tool/enum names, UUIDs, raw JSON, stack/signal, secrets, sentinels |
 | `el2e/grader.py` | the grader: applies 判定 to evidence, writes per-case JSON, run summary and baseline diff |
+| `cases/memory/*.json` | Memory suite (M7): MEMX-*, MEM-01..04, BASE-MEMORY, its own `known_gaps.json` (merged by the grader) |
+| `el2e/conv.py` | `e2e.py conv new-group <conv>`: a fresh group (new scene) from a registry `fresh` template |
 | `tests/test_harness.py` | offline unit tests (`python3 -m unittest discover -s scripts/employee-e2e/tests -v`) |
 
 Evidence goes to `~/d1/employee-e2e-evidence/<run-id>/` (mode 0700, outside the repo and `/tmp`):
@@ -111,3 +113,17 @@ conversation, so late messages (a background task's result) are graded too:
   are vacuous under this transport; record that, do not count them as judgement.
 - `normandy` (SLS) can fail admission for long stretches; the grader then relies on the pipeline-66
   deploy timeline and `GET /api/internal/logs/tail?contains=server%20starting` (repeat ≥6× to hit both pods).
+
+## Memory suite (M7)
+
+- Clean scenes, no visible markers: each group case family gets a new group (`e2e.py conv new-group group_mem_g2`,
+  reset its `cid` to null before the next run); DM cases declare `idle_before_min: 30` so the Host's segmentation
+  separates them (`run --max-idle-wait 1900` to wait instead of deferring). Values are randomized per run
+  (`{WEEKDAY}`, `{ROOM}`, `{SECRET}` …); chained cases reuse their parent's values with `vars_from`.
+- Steps can quote-reply (`reply_to`, how a DEAP actor addresses the employee), send background chatter (`burst`),
+  pause (`pause_s`) and clean up after grading (`teardown`). A role mapped to `null` (e.g. a third human) makes the
+  case `not_run`.
+- Evidence checks read what the model was shown on the wake's first request: `memory_block`, `history`,
+  `system_prompt`, `trace_metadata` (memory_manifest, transcript_status …), `packet` (agent_task input: MEMORY
+  section, `memory:` context), `named_trace` (employee_verified_distill) and `scene_memory` (management API, scene
+  layer only). Sentinels accept several `conversations`; `lang: zh` requires Chinese replies.
