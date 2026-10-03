@@ -156,3 +156,34 @@ func TestEmployeeSteerTargetRequiresSingleCandidate(t *testing.T) {
 		t.Fatalf("a stopped task is never an implicit target: %+v %v %v", only, candidates, err)
 	}
 }
+
+// A lifecycle v2 goal waiting on its dependencies is active work: it stays an
+// implicit steer candidate however long the wait lasts, like a running task.
+func TestEmployeeSteerTargetIncludesWaitingGoal(t *testing.T) {
+	f := employeeNoticeDatabase(t, "running", false, false)
+	ctx := context.Background()
+	task := employeeNoticeTask(t, f)
+	host := &employeeSceneHost{worker: f.h.EmployeeSceneWorker, job: employeeentry.Job{Scope: employeeentry.Scope{WorkspaceID: task.Scope.WorkspaceID, AgentID: task.Scope.AgentID, TenantOrgID: task.Scope.TenantOrgID, SceneID: task.Scope.Scene.SceneID}}}
+	if _, err := testPool.Exec(ctx, `UPDATE employee_task SET state='cancelled', active_run_id=NULL WHERE id=$1::uuid`, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	store := employeetask.NewStore(testPool)
+	goal, err := store.Create(ctx, employeetask.CreateParams{Scope: task.Scope, OwnerLoop: employeetask.LoopEmployee, DispatchMode: employeetask.DispatchDirect, RequesterRef: task.RequesterRef, Definition: employeetask.Definition{Goal: "Collect three answers"}, Source: employeetask.Source{Namespace: "steer_target_test", Key: uuid.NewString()}, Input: "Collect three answers", Lifecycle: employeetask.LifecycleV2, CompletionMode: employeetask.CompletionExplicitGoal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM employee_task_wait WHERE task_id=$1::uuid`, goal.ID)
+	})
+	goal, _, err = store.WaitTask(ctx, goal.Scope, goal.ID, employeetask.WaitParams{Source: employeetask.Source{Namespace: "collection", Key: "c1/open"}, Kind: employeetask.WaitCollection, RefID: "c1", Mandatory: true, AuthorityRef: "employee_task_entry:" + goal.ID + "/1"})
+	if err != nil || goal.State != employeetask.StateWaiting {
+		t.Fatalf("waiting goal: %+v %v", goal, err)
+	}
+	if _, err = testPool.Exec(ctx, `UPDATE employee_task SET updated_at=now()-interval '2 days' WHERE id=$1::uuid`, goal.ID); err != nil {
+		t.Fatal(err)
+	}
+	only, candidates, err := host.steerTarget(ctx, task.RequesterRef, "")
+	if err != nil || only.ID != goal.ID || candidates != nil {
+		t.Fatalf("waiting goal is not an active candidate: %+v %+v %v", only, candidates, err)
+	}
+}
