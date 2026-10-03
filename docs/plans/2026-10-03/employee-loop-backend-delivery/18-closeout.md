@@ -48,3 +48,14 @@
 - COL03当版执行取消正确，迟到无consume/无origin汇总，但Director收到‘我汇总给冬翔’不实承诺。LF证明新输入只有旧历史邀请、没有该已关闭邀请事实。新增当前sender/scene自己的近期关闭邀请数据，保持封闭绑定/工具门禁，模型只说明已关闭、不承诺转发；不能暴露其他对象/答案/来源私信息。
 - MF33min后回答正确，[m1]检索注入成立，无[O]；原句仍在History，因此仅写入/Host检索/召回用户效果通过，排除原History后的纯记忆使用证据partial，不降低标准签收。
 - WD04需发起人之外三真人，当前winter/Director/dxxh共三人仍缺第四人。已向用户异步询问授权号池，其余推进；不得把自邀或DEAP凑人数。
+
+
+## 06:45 第三候选与Runtime观测修复
+
+第二版fa8302已部署run3110367125/releasebf54，04:55:09部署成功、两backend04:53:32.381/04:54:40.125；M5同scene权限/遗忘/available历史严格硬门通过，R1同fa真实双binary+TaskWake补证通过并保留滚动暂停known_limit。BASE实际Task未开新Run、G02未交混已交、C03歧义与矛盾结论、G3历史归因和COL迟到记下暗示保留真实失败。
+
+第三候选已集成trusted Task方法继承/现在进度read、按active/closed/mixed拆guidance、证据时态/筛选/比较规则。新增cross-source私有withdraw实际来源链漏(旧DM回答未含value，所以完整泄漏not_verified)已真实DB RED→GREEN：仅Host可信DM本人/samews-agent-tenant、ID+origin tombstone撤销，不扩lookup/me公共权限、不读内容、外源消息ID不擦DM人话，epoch17保护旧新隐私reader混版。组合private race2/handler4/Persona5与server-migrate build通过，独立review待收口后发布。
+
+Langfuse后台gzip损坏已定位自有Runtime代理UTF8替换与AE大小写重复，不是helper。按fc-runtime-dev-loop在内网Runtime独立分支制作有界遥测解码、wire流式不变候选；publisher只读true、provider保持pi、CLI pin authoritative develop32feed40，私有canary和READY/template/readback后才切本次Agent，另租户与formal master不动。旧损坏不可恢复；新的完整generation必须真实检验。
+
+wave优先22已执行11：7权威语义pass、2真实fail(G02/C03)、1softreview(G05)、1partial(T03UI/时间)。88不加Golden/R0，MF42独立memory仍partial(旧admittedassistant还在且空lookup)，G15第二段最早10-05 05:18:38，WD04缺第四真人；用户异步未答不假设授权或造pass。hourly仍临时paused，最终恢复责任归root。
