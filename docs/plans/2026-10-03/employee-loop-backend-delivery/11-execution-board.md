@@ -76,6 +76,30 @@
 | G1 | `g1-verification` | 验证规格来源、验证记录、持久提炼意图、中文词法召回 |
 | Q | `q-harness` | `scripts/employee-e2e`、真实场域、GoldenCase-20 与 BASE-TASK 基线 |
 
-## 7. 待补资源
+## 7. 测试参与者
 
-跨场域收集（COL）需要三位同组织真人参与者。目前只有 Director 和冬翔两人，COL 的真实验收标为 pending，等待补充 RealNiubility 真人账号（需要本人扫码登录）。领域开发不受影响。
+- 跨场域收集（COL）至少需要三位参与者：
+  - 真人：Director、冬翔。
+  - `dws dingtalk-tag` 号池里的 RealNiubility 数字员工演员：可以用自己的 dws 身份在群里发消息作答（用户 2026-10-03 确认）。
+- 演员的限制：
+  - 不能 @ 人；
+  - 两个数字员工之间不能互发单聊；
+  - 入群会自动发介绍卡，判定时要过滤，不能把卡片当作答复。
+- 单聊用例仍然尽量用真人号。
+
+## 8. 场域、事项关系与历史快照：核对结论与补充项
+
+核对日期 2026-10-03。完整证据见 `_shared/scene-relations-history-synthesis.md`。总体结论如下：
+
+- 本交付不新增场域种类，仍只用 AgentScene 的 `scene_id`。
+- 交付包写具体的只有三块：跨场域收集（A）、Cron/Webhook 与场域的绑定（B/F）、同一 Task 内的等待与后续步骤（P1/P3）。
+- 「推进事情的关系网」和「新唤醒路径的场域历史」原计划没有覆盖，现补充如下。
+
+| 编号 | 缺口 | 处理 | 归属 / 时机 |
+| --- | --- | --- | --- |
+| G1 | 内部唤醒的快照口径没有写进计划；Host 主动发出的消息（唤醒回复、邀请、停滞提醒）不进入后续近期历史，用户接着追问时缺少指代对象 | 唤醒快照的规则是：origin 场域、原受理 principal、截止到唤醒受理时刻、Task 快照作为数据。新增 `employee_host_notice` 事实表，近期历史可以纳入已送达的 Host 主动消息 | P2（第一波，已通知）；A2、C2 写入各自的记录 |
+| G2 | 自动化来源的 Task 没有 origin reader；用配置者 principal 读历史会静默为空；enterprise 场域的 builder 会报错 | `ReadTaskOrigin` 按来源 namespace 注册，返回明确的 `history_policy`（`scene_principal` / `scene_endpoint_principal` / `not_applicable`）；B 的 AutomationOrigin 接入这个注册表 | P2 与 B 对齐接口（第一波，已通知）；实现在 B3/F3 |
+| G3 | dispatch 时 Direct 工作包的历史为 `unavailable`，执行器看不到群里刚讨论的内容 | 把本次唤醒已冻结的近期对话原样填进工作包，ContextUsed 中记录 | 第二波，P 小项 |
+| G4 | 同一人在群里发起的 Task，在私聊里查不到也停不了；群里看不到他人正在办的事项 | 在 TaskBrief 中只读追加两类信息：同一请求者其他场域的事项（仅限私聊、请求者唯一时）；群内他人的在办摘要（不附授权） | 第二波，P4 扩展 |
+| G5 | Task 之间没有关系（builds_on / blocked_by），上游结果进不了下游工作包 | 新增 `employee_task_link`，Compiler 注入上游结果；blocked_by 映射到 P1 的 `task` 等待 | 第二波；P1 现在预留 `task` 等待类型（已通知） |
+| G7 | 首次联系某人时，对方还没有私聊场域，邀请无法建立 | 邀请先记为 `pending_scene`，送达回执拿到会话后用 `scene.Resolve(kind=dm)` 回填；禁止按人造场域 | A1 表结构（第一波，已通知）；A2 接线 |

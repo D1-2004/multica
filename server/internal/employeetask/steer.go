@@ -89,8 +89,9 @@ func (s *Store) Steer(ctx context.Context, scope Scope, id string, p SteerParams
 	if (p.MergeRunID != "" && !validUUID(p.MergeRunID)) || (p.InterruptedRunID != "" && (!validUUID(p.InterruptedRunID) || p.MergeRunID != "")) {
 		return Task{}, Entry{}, ErrInvalid
 	}
-	return s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, func(tx pgx.Tx, task *Task) (Entry, error) {
+	return s.mutate(ctx, scope, id, p.Source, p, p.ExpectedVersion, causeSteer, func(tx pgx.Tx, task *Task) (Entry, error) {
 		e := Entry{Kind: "steer", ActorRef: p.ActorRef, Body: p.Body, RunID: p.MergeRunID}
+		noteHumanInput(task, p.ActorRef)
 		if p.MergeRunID != "" {
 			if task.ActiveRunID != p.MergeRunID || task.State != StateRunning {
 				return Entry{}, ErrConflict
@@ -108,6 +109,9 @@ func (s *Store) Steer(ctx context.Context, scope Scope, id string, p SteerParams
 		}
 		if task.ActiveRunID != "" {
 			return Entry{}, ErrActiveRun
+		}
+		if task.Lifecycle() == LifecycleV2 {
+			return e, steerGoal(ctx, tx, scope, id, task, p.InterruptedRunID)
 		}
 		if task.State == StateCancelled {
 			// Like AppendInput, a correction never lifts a human stop. The only
@@ -140,7 +144,7 @@ func (s *Store) FenceRunWriter(ctx context.Context, scope Scope, id string, p Fe
 	default:
 		return Task{}, Entry{}, ErrInvalid
 	}
-	return s.mutate(ctx, scope, id, p.Source, p, 0, func(tx pgx.Tx, task *Task) (Entry, error) {
+	return s.mutate(ctx, scope, id, p.Source, p, 0, causeFenceWriter, func(tx pgx.Tx, task *Task) (Entry, error) {
 		var state State
 		err := tx.QueryRow(ctx, `SELECT state FROM employee_task_run WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND task_id=$4::uuid AND id=$5::uuid`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id, p.RunID).Scan(&state)
 		if err != nil {

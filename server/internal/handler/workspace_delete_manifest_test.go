@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/eventrouter"
 	"github.com/multica-ai/multica/server/internal/scene"
 	"github.com/multica-ai/multica/server/internal/service/employeememory"
+	"github.com/multica-ai/multica/server/internal/taskinput"
 )
 
 type workspaceDeleteAction string
@@ -89,8 +90,13 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"employee_run_notice":             workspaceDelete,
 	"employee_task_artifact":          workspaceDeleteSettle,
 	"employee_task":                   workspaceDelete,
+	"employee_task_collection":        workspaceDelete,
 	"employee_task_entry":             workspaceDelete,
+	"employee_task_input":             workspaceDelete,
+	"employee_task_invitation":        workspaceDelete,
+	"employee_task_ready_intent":      workspaceDelete,
 	"employee_task_run":               workspaceDelete,
+	"employee_task_wait":              workspaceDelete,
 	"feedback":                        workspaceDeleteDetach,
 	"git_connection":                  workspaceDelete,
 	"github_pending_check_suite":      workspaceDelete,
@@ -243,7 +249,7 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		for _, table := range []string{"employee_run_notice", "employee_learning_consumption", "employee_event_consumption", "employee_scene_job", "employee_learning", "employee_memory_state", "scene_event_receipt", "employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
+		for _, table := range []string{"employee_task_ready_intent", "employee_task_input", "employee_task_invitation", "employee_task_collection", "employee_run_notice", "employee_learning_consumption", "employee_event_consumption", "employee_scene_job", "employee_learning", "employee_memory_state", "scene_event_receipt", "employee_task_wait", "employee_task_run", "employee_task_entry", "employee_task", "agent_scene", "agent", "agent_runtime", "member"} {
 			if _, err := testPool.Exec(context.Background(), `DELETE FROM `+table+` WHERE workspace_id=$1`, workspaceID); err != nil {
 				t.Errorf("cleanup %s: %v", table, err)
 			}
@@ -279,6 +285,10 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 	if _, err = store.StartRun(ctx, task.Scope, task.ID, employeetask.StartRunParams{Source: employeetask.Source{Namespace: "test", Key: "run"}, QueueTaskID: uuid.NewString(), ExpectedVersion: task.Version}); err != nil {
 		t.Fatal(err)
 	}
+	// Teardown coverage only: a wait row keyed by this workspace.
+	if _, err = testPool.Exec(ctx, `INSERT INTO employee_task_wait(workspace_id,agent_id,tenant_org_id,task_id,kind,ref_id,mandatory,goal_revision,opened_seq) VALUES($1::uuid,$2::uuid,$3,$4::uuid,'collection','delete-fixture',true,1,1)`, workspaceID, agentID, task.Scope.TenantOrgID, task.ID); err != nil {
+		t.Fatal(err)
+	}
 	receipt, _, err := eventrouter.Admit(ctx, testPool, eventrouter.Event{Version: 1, ID: "delete-fixture", Source: "employee-test", Type: "channel.message.created", Category: eventrouter.UserMessage, OccurredAt: time.Now(), PayloadSchema: "test", Payload: json.RawMessage(`{"text":"work"}`)}, eventrouter.Host{Owner: scene.Owner{WorkspaceID: parseUUID(workspaceID), AgentID: parseUUID(agentID)}, PrincipalID: parseUUID(testUserID), TenantOrgID: task.Scope.TenantOrgID, Locator: scene.DingTalkConversation(task.Scope.TenantOrgID, scene.KindGroup, registered.ExternalSceneID), Observation: scene.Observation{KindStated: true}, Route: eventrouter.Unified, ConfigVersion: "test", Fingerprint: "delete-fixture"})
 	if err != nil {
 		t.Fatal(err)
@@ -292,15 +302,45 @@ func seedWorkspaceEmployeeTask(t *testing.T) string {
 	if _, err = testPool.Exec(ctx, `INSERT INTO employee_learning_consumption(workspace_id,agent_id,tenant_org_id,scene_id,task_id,run_id,queue_task_id,requester_ref,state,reason) SELECT t.workspace_id,t.agent_id,t.tenant_org_id,t.scene_id,t.id,r.id,r.queue_task_id,t.requester_ref,'skipped','delete_fixture' FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id WHERE t.id=$1`, task.ID); err != nil {
 		t.Fatal(err)
 	}
+	seedWorkspaceTaskInput(t, task)
 	if _, err = testPool.Exec(ctx, `INSERT INTO employee_run_notice(workspace_id,agent_id,tenant_org_id,scene_id,task_id,run_id,queue_task_id,requester_ref,source_ref,result_state,state,reason) SELECT t.workspace_id,t.agent_id,t.tenant_org_id,t.scene_id,t.id,r.id,r.queue_task_id,t.requester_ref,'delete-fixture','cancelled','suppressed','delete_fixture' FROM employee_task t JOIN employee_task_run r ON r.task_id=t.id WHERE t.id=$1`, task.ID); err != nil {
 		t.Fatal(err)
 	}
 	return workspaceID
 }
 
+// seedWorkspaceTaskInput adds a cross-scene collection with one answered
+// invitation and its ready intent, through the real taskinput store.
+func seedWorkspaceTaskInput(t *testing.T, task employeetask.Task) {
+	t.Helper()
+	ctx := context.Background()
+	scope := taskinput.Scope{WorkspaceID: task.Scope.WorkspaceID, AgentID: task.Scope.AgentID, TenantOrgID: task.Scope.TenantOrgID}
+	sceneID := task.Scope.Scene.SceneID
+	authority := taskinput.Authority{ActorRef: testUserID, SceneID: sceneID, ReceiptRef: "delete-fixture", VerifiedAt: time.Now()}
+	store := taskinput.NewStore(testPool)
+	col, invitations, err := store.CreateCollectionTx(ctx, scope, taskinput.CreateCollectionParams{TaskID: task.ID, OriginSceneID: sceneID,
+		AuthorityRef: "delete-fixture", RequesterRef: testUserID, DeliveryAnchorRef: "delete-fixture", GoalRevision: task.GoalRevision,
+		Invitations: []taskinput.InvitationSpec{{TargetSceneID: sceneID, ParticipantRef: "participant", Question: "Number?"}},
+		Source:      taskinput.Source{Namespace: "test", Key: "collection"}, Authority: authority})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inv, err := store.RecordInviteDeliveryTx(ctx, scope, taskinput.RecordDeliveryParams{InvitationID: invitations[0].ID, ActionID: invitations[0].DeliveryActionID,
+		Outcome: taskinput.DeliverySent, ProviderMessageID: "delete-fixture-msg", RenderedHash: taskinput.CheckEgress(taskinput.EgressInput{Rendered: "Number?"}).RenderedHash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.AcceptInputTx(ctx, scope, taskinput.AcceptInputParams{CollectionID: col.ID, InvitationID: inv.ID, Source: taskinput.Source{Namespace: "test", Key: "answer"},
+		Authority:  taskinput.Authority{ActorRef: "participant", SceneID: sceneID, ReceiptRef: "delete-fixture-answer", VerifiedAt: time.Now()},
+		SenderKind: taskinput.SenderPerson, MessageKind: taskinput.MessageText, Binding: taskinput.BindReplyChain, OccurredAt: inv.CreatedAt.Add(time.Second), Body: "7", ExpectedRevision: col.Revision})
+	if err != nil || result.Ready == nil {
+		t.Fatalf("seed collection input: %+v %v", result, err)
+	}
+}
+
 func assertWorkspaceEmployeeRecords(t *testing.T, workspaceID string, tasks int) {
 	t.Helper()
-	for table, multiplier := range map[string]int{"employee_run_notice": 1, "employee_learning_consumption": 1, "employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1, "employee_event_consumption": 1, "employee_scene_job": 1, "scene_event_receipt": 1, "employee_learning": 1, "employee_memory_state": 1} {
+	for table, multiplier := range map[string]int{"employee_task_collection": 1, "employee_task_invitation": 1, "employee_task_input": 1, "employee_task_ready_intent": 1, "employee_run_notice": 1, "employee_learning_consumption": 1, "employee_task": 1, "employee_task_entry": 2, "employee_task_run": 1, "employee_task_wait": 1, "employee_event_consumption": 1, "employee_scene_job": 1, "scene_event_receipt": 1, "employee_learning": 1, "employee_memory_state": 1} {
 		var count int
 		if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM `+table+` WHERE workspace_id=$1`, workspaceID).Scan(&count); err != nil {
 			t.Fatal(err)

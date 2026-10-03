@@ -31,7 +31,7 @@ func (s *Store) Stop(ctx context.Context, scope Scope, id string, p StopParams) 
 	if p.ExpectedVersion <= 0 || strings.TrimSpace(p.ActorRef) == "" || strings.TrimSpace(p.Body) == "" || (p.RunID == "") != (p.QueueTaskID == "") || p.RunID != "" && (!validUUID(p.RunID) || !validUUID(p.QueueTaskID)) {
 		return Task{}, Entry{}, ErrInvalid
 	}
-	return s.mutate(ctx, scope, id, p.Source, stopPayload{Operation: "stop", StopParams: p}, p.ExpectedVersion, func(tx pgx.Tx, task *Task) (Entry, error) {
+	return s.mutate(ctx, scope, id, p.Source, stopPayload{Operation: "stop", StopParams: p}, p.ExpectedVersion, causeStop, func(tx pgx.Tx, task *Task) (Entry, error) {
 		if task.OwnerLoop != LoopEmployee || task.DispatchMode != DispatchDirect || task.Scope.Kind != ScopeScene || task.IssueID != "" || task.RequesterRef != p.ActorRef {
 			return Entry{}, ErrInvalid
 		}
@@ -53,6 +53,12 @@ func (s *Store) Stop(ctx context.Context, scope Scope, id string, p StopParams) 
 		}
 		if task.ActiveRunID != "" && task.ActiveRunID != p.RunID {
 			return Entry{}, ErrConflict
+		}
+		if task.Lifecycle() == LifecycleV2 {
+			// A stopped goal has no live dependency; its open waits close with it.
+			if err := closeOpenWaits(ctx, tx, *task, WaitCancelled, "stop"); err != nil {
+				return Entry{}, err
+			}
 		}
 		task.State, task.ActiveRunID = StateCancelled, ""
 		return Entry{Kind: "input", ActorRef: p.ActorRef, Body: p.Body, RunID: p.RunID}, nil

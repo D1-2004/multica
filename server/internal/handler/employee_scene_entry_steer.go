@@ -121,8 +121,8 @@ func (h *employeeSceneHost) steerTarget(ctx context.Context, requester, explicit
 	rows, err := storeDB.Query(ctx, `SELECT id::text, definition->>'goal', state FROM employee_task
  WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND scope_kind='scene' AND scene_id=$4::uuid
    AND owner_loop='employee' AND dispatch_mode='direct' AND requester_ref=$5
-   AND (state='running' OR (state IN ('ready','succeeded') AND updated_at > now() - $6::interval))
- ORDER BY (state='running') DESC, updated_at DESC LIMIT 5`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, scope.Scene.SceneID, requester, employeeSteerRecentWindow)
+   AND (state IN ('running','waiting') OR (state IN ('ready','succeeded') AND updated_at > now() - $6::interval))
+ ORDER BY (state IN ('running','waiting')) DESC, updated_at DESC LIMIT 5`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, scope.Scene.SceneID, requester, employeeSteerRecentWindow)
 	if err != nil {
 		return employeetask.Task{}, nil, err
 	}
