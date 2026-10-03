@@ -116,7 +116,7 @@ func TestEmployeeCoordinatorPlanUsesSameEffectiveChainWithoutSecrets(t *testing.
 			}
 			var keys map[string]any
 			_ = json.Unmarshal(raw, &keys)
-			if len(keys) != 3 || keys["candidate_refs"] == nil {
+			if len(keys) != 4 || keys["candidate_refs"] == nil || keys["request_profile"] != "employee-fast-v1" {
 				t.Fatalf("plan contains non-reference snapshot data: %s", raw)
 			}
 			original := plan.Candidates[0]
@@ -176,14 +176,16 @@ func TestEmployeeCoordinatorAttemptUsesFrozenRefAndCurrentAuthorization(t *testi
 	defer lf.Shutdown(ctx)
 	trace := lf.StartTrace(ctx, langfuse.TraceOptions{Name: "employee_loop"})
 	ctx = langfuse.ContextWithTrace(ctx, trace)
-	params := openai.ChatCompletionNewParams{Model: "caller-model", Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("unchanged message")}}
-	params.SetExtraFields(map[string]any{"model": "extra-caller-model", "enable_thinking": false})
+	params := openai.ChatCompletionNewParams{Model: "model-a", Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("unchanged message")}}
+	params.SetExtraFields(map[string]any{"enable_thinking": false})
+	before, _ := json.Marshal(params)
 	out, err := attempt.Chat(ctx, params)
 	trace.End(langfuse.EndOptions{})
 	if err != nil || requests.Load() != 1 || out.Usage.PromptTokens != 31 || out.Usage.CompletionTokens != 7 || out.Model != "model-a-version" {
 		t.Fatalf("attempt changed usage/model response or repeated HTTP: requests=%d err=%v out=%+v", requests.Load(), err, out)
 	}
-	if params.Model != "caller-model" || params.ExtraFields()["model"] != "extra-caller-model" {
+	after, _ := json.Marshal(params)
+	if string(before) != string(after) {
 		t.Fatal("attempt mutated caller request")
 	}
 	if len(exporter.GetSpans()) != 1 {
@@ -261,10 +263,52 @@ func TestEmployeeCoordinatorAttemptHasOneHTTPAndNoFallback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err = attempt.Chat(context.Background(), openai.ChatCompletionNewParams{Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("hello")}}); err == nil || !Retryable(err) || count.Load() != 1 {
+			if _, err = attempt.Chat(context.Background(), openai.ChatCompletionNewParams{Model: plan.Candidates[0].Model, Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("hello")}}); err == nil || !Retryable(err) || count.Load() != 1 {
 				t.Fatalf("SDK retry or fallback occurred: count=%d err=%v", count.Load(), err)
 			}
 		})
+	}
+}
+
+func TestEmployeeCoordinatorAttemptRejectsModelDriftInsteadOfRewritingPayload(t *testing.T) {
+	r, _ := employeeConfiguredRegistry(t)
+	plan, err := r.CoordinatorPlan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var count atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		count.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+	}))
+	defer server.Close()
+	r.coordinatorTransport = employeeTestTransport(t, server, "first.example.test")
+	attempt, err := r.PrepareCoordinatorAttempt(context.Background(), plan, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"typed_model", "extra_model", "missing_model"} {
+		params := openai.ChatCompletionNewParams{Model: "model-a", Messages: []openai.ChatCompletionMessageParamUnion{openai.UserMessage("frozen request")}}
+		switch kind {
+		case "typed_model":
+			params.Model = "other"
+		case "extra_model":
+			params.SetExtraFields(map[string]any{"model": "other"})
+		case "missing_model":
+			params.Model = ""
+		}
+		before, _ := json.Marshal(params)
+		if _, err := attempt.Chat(context.Background(), params); err == nil {
+			t.Errorf("%s silently rewrote recorded payload", kind)
+		}
+		after, _ := json.Marshal(params)
+		if string(before) != string(after) {
+			t.Errorf("%s mutated caller", kind)
+		}
+	}
+	if count.Load() != 0 {
+		t.Fatal("model drift reached HTTP", count.Load())
 	}
 }
 

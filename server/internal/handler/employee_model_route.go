@@ -8,6 +8,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/employeeentry"
 	"github.com/multica-ai/multica/server/internal/modelregistry"
 	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 // employeeModelRoutes separates frozen selection from current provider
@@ -47,6 +48,9 @@ func (m *employeeJournalModel) routeSelection(request *openai.ChatCompletionNewP
 	if m.routes == nil || plan.Version != 1 || plan.Revision < 0 || m.candidate < 0 || m.candidate >= len(plan.Candidates) {
 		return nil, errors.New("employee model route snapshot is unavailable")
 	}
+	if plan.RequestProfile != "" && plan.RequestProfile != modelregistry.EmployeeFastRequestProfile {
+		return nil, errors.New("employee model request profile is unsupported")
+	}
 	ref := plan.Candidates[m.candidate]
 	if strings.TrimSpace(ref.Provider) == "" || strings.TrimSpace(ref.Model) == "" {
 		return nil, errors.New("employee model route has an invalid candidate")
@@ -60,6 +64,27 @@ func (m *employeeJournalModel) routeSelection(request *openai.ChatCompletionNewP
 			}
 		}
 		request.SetExtraFields(copy)
+	}
+	if plan.RequestProfile == modelregistry.EmployeeFastRequestProfile {
+		// Match Coordinator's bounded, non-thinking request without its forced
+		// tool choice: Employee must retain normal first-turn replies and Quiet.
+		request.MaxCompletionTokens = openai.Int(4096)
+		request.ReasoningEffort = shared.ReasoningEffortNone
+		extra := make(map[string]any, len(request.ExtraFields())+2)
+		for key, value := range request.ExtraFields() {
+			if key != "max_completion_tokens" && key != "reasoning_effort" && key != "thinking" {
+				extra[key] = value
+			}
+		}
+		extra["enable_thinking"] = false
+		model := strings.ToLower(ref.Model)
+		if strings.Contains(model, "deepseek") && strings.Contains(model, "flash") {
+			// DeepSeek's native switch disables thinking; "none" is not a
+			// supported reasoning_effort value for this Chat Completions API.
+			request.ReasoningEffort = ""
+			extra["thinking"] = map[string]any{"type": "disabled"}
+		}
+		request.SetExtraFields(extra)
 	}
 	return []employeeentry.ModelRouteSelection{{Revision: plan.Revision, Ref: ref.String(), Candidate: m.candidate, NextCandidate: m.candidate}}, nil
 }

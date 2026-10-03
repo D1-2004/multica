@@ -8,15 +8,17 @@ import (
 
 	"github.com/multica-ai/multica/server/pkg/llm"
 	openai "github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/shared"
 )
 
-// CoordinatorPlan freezes routing identity only. Provider URLs and credentials
-// are deliberately absent; each real request must prepare its candidate anew.
+const EmployeeFastRequestProfile = "employee-fast-v1"
+
+// CoordinatorPlan freezes routing identity and a versioned request profile.
+// URLs and credentials are absent; each real request prepares its candidate anew.
 type CoordinatorPlan struct {
-	Version    int   `json:"version"`
-	Revision   int64 `json:"revision"`
-	Candidates []Ref `json:"candidate_refs"`
+	Version        int    `json:"version"`
+	Revision       int64  `json:"revision"`
+	Candidates     []Ref  `json:"candidate_refs"`
+	RequestProfile string `json:"request_profile,omitempty"`
 }
 
 // ErrCandidateUnavailable identifies a frozen candidate whose current provider,
@@ -41,7 +43,7 @@ func (r *Registry) CoordinatorPlan(ctx context.Context) (CoordinatorPlan, error)
 	if len(route.Snapshot.Config.Coordinator) == 0 {
 		return CoordinatorPlan{}, errors.New("coordinator model chain is empty")
 	}
-	return CoordinatorPlan{Version: 1, Revision: route.Snapshot.Config.Revision, Candidates: append([]Ref(nil), route.Snapshot.Config.Coordinator...)}, nil
+	return CoordinatorPlan{Version: 1, Revision: route.Snapshot.Config.Revision, Candidates: append([]Ref(nil), route.Snapshot.Config.Coordinator...), RequestProfile: EmployeeFastRequestProfile}, nil
 }
 
 // PrepareCoordinatorAttempt checks authorization and binds one atomically loaded
@@ -50,6 +52,9 @@ func (r *Registry) CoordinatorPlan(ctx context.Context) (CoordinatorPlan, error)
 func (r *Registry) PrepareCoordinatorAttempt(ctx context.Context, plan CoordinatorPlan, index int) (CoordinatorAttempt, error) {
 	if plan.Version != 1 {
 		return nil, errors.New("unsupported coordinator plan version")
+	}
+	if plan.RequestProfile != "" && plan.RequestProfile != EmployeeFastRequestProfile {
+		return nil, errors.New("unsupported coordinator request profile")
 	}
 	if index < 0 || index >= len(plan.Candidates) {
 		return nil, errors.New("coordinator candidate index is outside the frozen plan")
@@ -90,18 +95,14 @@ func (a *preparedCoordinatorAttempt) Ref() Ref                     { return a.re
 func (a *preparedCoordinatorAttempt) ConfigurationRevision() int64 { return a.revision }
 
 // Chat performs one SDK request with no route fallback or nested generation.
-// The caller owns deadlines and tracing; provider usage is preserved verbatim.
+// The caller normalizes before journaling and owns deadlines/tracing. Never
+// rewrite a recorded payload here; a mismatched model is a contract violation.
 func (a *preparedCoordinatorAttempt) Chat(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
-	params.Model = shared.ChatModel(a.ref.Model)
-	if fields := params.ExtraFields(); fields != nil {
-		// ExtraFields can override typed fields. Copy it so enforcing the frozen
-		// model cannot mutate the caller's journal request or its other parameters.
-		copied := make(map[string]any, len(fields))
-		for key, value := range fields {
-			copied[key] = value
-		}
-		delete(copied, "model")
-		params.SetExtraFields(copied)
+	if string(params.Model) != a.ref.Model {
+		return nil, errors.New("prepared coordinator request model differs from frozen selection")
+	}
+	if _, overridden := params.ExtraFields()["model"]; overridden {
+		return nil, errors.New("prepared coordinator request overrides frozen model")
 	}
 	return a.client.Chat(ctx, params)
 }
