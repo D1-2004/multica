@@ -1,6 +1,6 @@
 # EmployeeLoop 预发验收记录
 
-环境：Qwen-DWS 对应预发 Tag；冬翔单聊及「各种 Tag」测试群。本记录只确认列出的真实场景，不代表跨场域收集、独立停止、Cron/Webhook 已验收。
+环境：Qwen-DWS 对应预发 Tag；冬翔单聊及「各种 Tag」测试群。本记录只确认列出的真实场景，不代表跨场域收集、Cron/Webhook 已验收。
 
 ## 发布与架构
 
@@ -85,6 +85,19 @@ Task：`9bc15452-eeda-4667-a3cd-0d4832f6a538`，Run：`f99d5729-525d-4678-91f7-c
 2. v13 指代轮三个候选按 20 / 20 / 5 秒超时，历史证据完整。补齐非 thinking 请求和 4096 输出预算；这是确定参数缺口，不认定为所有超时的唯一原因。
 3. v14、v16 已无超时，但单 JSON 历史加时序提示仍取旧紫色。改成逐轮角色后，保留旧紫色种子的 v18 才通过。保留失败证据，不把本地桩测试当作语义验收。
 4. 回归发现并修复了旧记忆借历史复活、callback URL 错误关联、registry 故障阻断缓存恢复、纠正后交付源错配及仅文件策略丢失，并做了独立 PostgreSQL race 与真实 IM 对照。
+
+## PG 与 Redis 恢复回归
+
+`TestDirectTaskCommitBeforeNotifyRecovery` 使用真实 PostgreSQL 和独立本地 Redis 7.4.2。先由实际 claim 写入空队列缓存，再提交 Direct Run 与队列但故意不发通知；用新连接池和新 TaskService 接手。覆盖：
+
+- 同源重放两次：找回原 Task / Run / queue，并使旧缓存失效。
+- 删除缓存键：从 PG 找回执行，不依赖 Redis 保存 Task。
+- 缓存过期：先核验实际 TTL 不超过三分钟，再将该键的截止时间提前，验证到期后可恢复；没有声称测量了三分钟墙钟等待。
+- Redis 客户端关闭：真实缓存 API 返回错误，领取回退 PG；这是客户端不可用测试，不是网络分区或 Tair 故障演练。
+
+每条随后并发发起两次领取，只有一次成功；最终仍为一个 Run、一个队列和一条 run_started 账本，不产生 Issue / Autopilot / ChatSession。测试在丢通知且缓存仍有效时也断言任务暂时不可领取，避免把 TTL 恢复误报为即时恢复。Redis 过期之后仍需下一次正常 poll，不能把三分钟缓存 TTL 当作端到端延迟承诺。
+
+新增四条 race 回归通过（1.374 秒）；相关 Task 域回归 2.975 秒、Direct / steer / stop / 缓存与通知服务回归 5.321 秒通过。使用 Go overlay 临时移除重放时的缓存失效通知后，source_replay 按预期失败于“source replay did not invalidate the stale cache”；生产文件未被改写。该测试补充前述真实 IM 验收，不替代多副本预发故障演练。
 
 ## 尚未验收或未完成
 
