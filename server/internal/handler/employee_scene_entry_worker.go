@@ -24,7 +24,7 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-// EmployeeLoopReplicaMarker 12 adds typed scene jobs: claim filters by kind,
+// EmployeeLoopReplicaMarker 12 added typed scene jobs: claim filters by kind,
 // human input precedes Task wakes, and only this worker executes task_wake.
 // Marker 13 adds the scene_routine_webhook automation origin (a replica
 // without it fails the claim of a webhook routine's Direct execution closed,
@@ -32,7 +32,10 @@ import (
 // have 13) and cross-scene collections: the create/read/accept collection
 // tools and invitation bindings in chat snapshots, invitation sends whose
 // action id is the invitation's, and collection.ready wakes that carry the
-// authorized answers and complete the collection with their summary.
+// authorized answers and complete the collection with their summary; plus
+// work plans (dispatch_task follow_up_steps, continue_plan, Host-dispatched
+// plan steps and their execution proof), refused tool calls that the model may
+// correct, and the autonomous-round governor.
 const EmployeeLoopReplicaMarker = "[employee-loop:13]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
@@ -163,6 +166,17 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 				slog.WarnContext(ctx, "employee execution event reconciliation failed", "error", err)
 			}
 			executionCancel()
+			// Planned Runs advance only from recorded terminal facts above.
+			followUpCtx, followUpCancel := context.WithTimeout(ctx, 10*time.Second)
+			if _, err := w.handler.ReconcileEmployeeTaskFollowUps(followUpCtx, 50); err != nil && !errors.Is(err, context.Canceled) {
+				slog.WarnContext(ctx, "employee task follow-up reconciliation failed", "error", err)
+			}
+			followUpCancel()
+			releaseCtx, releaseCancel := context.WithTimeout(ctx, 5*time.Second)
+			if _, err := w.handler.ReconcileEmployeeUpstreamReleases(releaseCtx, 50); err != nil && !errors.Is(err, context.Canceled) {
+				slog.WarnContext(ctx, "employee upstream release reconciliation failed", "error", err)
+			}
+			releaseCancel()
 			select {
 			case <-ctx.Done():
 				return
