@@ -232,3 +232,48 @@ func TestGroupWakeStoresTranscriptAfterSnapshot(t *testing.T) {
 		t.Fatalf("snapshot not frozen: %v", err)
 	}
 }
+
+// The [O] verbatim recall is frozen through the memory hook: an older group
+// line sharing the window's topic is recalled, a line the frozen group
+// transcript already shows is not.
+func TestGroupWakeVerbatimRecallSkipsTranscriptLines(t *testing.T) {
+	f, dc := employeeMemoryFixture(t)
+	f.command.Event.Data.Conversation.Type = "group"
+	ctx := context.Background()
+	now := time.Now()
+	f.h.EmployeeSceneWorker.SceneTranscript = &fakeTranscriptLoader{page: func(inboundcoord.RangeRequest) inboundcoord.RangePage {
+		return inboundcoord.RangePage{Messages: []inboundcoord.RangeMessage{
+			{ID: "tr-release", SentAt: now.Add(-time.Hour), Sender: "李四", SenderID: "open-li", SenderOpenID: "open-li", SendType: "user", Content: "发版窗口改到周四晚上"},
+		}}
+	}}
+	host, _, _ := employeeMemoryHost(t, f, dc, []DispatchMessage{{OpenMsgID: "m-now", Text: "@Qwen 发版哪天？", SenderOpenDingTalkID: "requester-open-id"}})
+	key := host.job.Scope
+	t.Cleanup(func() {
+		if _, err := testPool.Exec(context.Background(), `DELETE FROM employee_scene_message WHERE agent_id=$1::uuid`, f.agentID); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := f.h.storeEmployeeSceneMessages(ctx, testPool, key, employeeentry.SceneMessageSourceWakeRead, []employeeentry.SceneMessageRow{
+		{SceneMessageInput: employeeentry.SceneMessageInput{ProviderMessageID: "old-release", SentAt: now.Add(-48 * time.Hour), SenderClass: employeeentry.SceneSenderHuman, SenderRef: "dingtalk:" + key.TenantOrgID + ":open_id:open-boss", SenderName: "主管", Body: "发版定在周四"}},
+		{SceneMessageInput: employeeentry.SceneMessageInput{ProviderMessageID: "tr-release", SentAt: now.Add(-time.Hour), SenderClass: employeeentry.SceneSenderHuman, SenderRef: "dingtalk:" + key.TenantOrgID + ":open_id:open-li", SenderName: "李四", Body: "发版窗口改到周四晚上"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	input, err := host.worker.buildInput(ctx, host.job, host.envelopes, host.envelopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shown := false
+	for _, ref := range input.TranscriptRefs {
+		shown = shown || ref.MessageID == "tr-release"
+	}
+	if !shown {
+		t.Fatalf("transcript did not freeze the recent line: %+v", input.TranscriptRefs)
+	}
+	if !strings.Contains(input.Input.Memory, "[O] ") || !strings.Contains(input.Input.Memory, "发版定在周四") {
+		t.Fatalf("older group line not recalled: %q", input.Input.Memory)
+	}
+	if strings.Contains(input.Input.Memory, "发版窗口改到周四晚上") {
+		t.Fatalf("transcript line recalled again: %q", input.Input.Memory)
+	}
+}

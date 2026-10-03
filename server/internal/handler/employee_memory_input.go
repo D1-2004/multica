@@ -38,6 +38,8 @@ type employeeMemoryWake struct {
 	task *employeeMemoryTaskWake
 	// stops cancels reads a step started early; release runs them.
 	stops []func()
+	// chatScene is the chat wake's fenced directory row, set by freezeBrief.
+	chatScene *db.AgentScene
 }
 
 type employeeMemoryTaskWake struct {
@@ -69,6 +71,7 @@ func (m *employeeMemoryWake) freeze(ctx context.Context, input *employeeSavedInp
 	if err := m.freezeBrief(ctx, input); err != nil {
 		return err
 	}
+	m.freezeVerbatimRecall(ctx, input)
 	// Persona facts (self profile, language, scene status, group members) are
 	// frozen into the same new snapshot.
 	wake := employeePersonaChatWake(m.job, m.work)
@@ -114,6 +117,7 @@ func (m *employeeMemoryWake) freezeBrief(ctx context.Context, input *employeeSav
 		if registered, err = employeeSceneFence(ctx, h, m.job); err != nil {
 			return err
 		}
+		m.chatScene = &registered
 		original := []employeeSourceMessage{}
 		for i, item := range m.job.Items {
 			original = append(original, employeeSourceMessages(item, m.original[i])...)
@@ -144,6 +148,22 @@ func (m *employeeMemoryWake) freezeBrief(ctx context.Context, input *employeeSav
 	input.MemoryStats = &brief.Stats
 	employeeTraceMemory(ctx, brief)
 	return nil
+}
+
+// freezeVerbatimRecall appends the [O] section of a chat group wake: older
+// human lines of the 14-day group transcript that share topical units with
+// the current window. Lines already in front of the model (the window, the
+// recent conversation and the frozen group transcript) are excluded. It runs
+// after the brief replaced Input.Memory and never fails the wake.
+func (m *employeeMemoryWake) freezeVerbatimRecall(ctx context.Context, input *employeeSavedInput) {
+	if m.task != nil || m.chatScene == nil {
+		return
+	}
+	messages := []employeeSourceMessage{}
+	for i, item := range m.job.Items {
+		messages = append(messages, employeeSourceMessages(item, m.work[i])...)
+	}
+	m.worker.handler.appendEmployeeVerbatimRecall(ctx, input, m.job, *m.chatScene, messages)
 }
 
 // employeeTraceMemory records what was injected: ids, sections and sizes,

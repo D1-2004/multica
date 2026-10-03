@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -275,6 +276,14 @@ func (h *Handler) appendEmployeeVerbatimRecall(ctx context.Context, input *emplo
 		return
 	}
 	exclude := employeeRecallExclusions(messages, input.Input.RecentConversation)
+	// The frozen group transcript block carries no per-line message ids;
+	// its g<N> refs name the provider lines already shown.
+	for _, ref := range input.TranscriptRefs {
+		if ref.MessageID != "" {
+			exclude = append(exclude, ref.MessageID)
+		}
+	}
+	sort.Strings(exclude)
 	recall, err := h.employeeSceneVerbatimRecall(ctx, job.Scope, registered.SceneKind, employeeRecallQuery(messages), exclude, job.CreatedAt)
 	if err != nil {
 		slog.WarnContext(ctx, "employee verbatim recall unavailable", "event", "employee_verbatim_recall_failed", "job_id", job.ID, "error", err)
