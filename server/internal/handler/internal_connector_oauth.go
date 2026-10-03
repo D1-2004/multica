@@ -455,6 +455,10 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 	}
 	if payload.Via == connectorOAuthViaGitHub && payload.AuthFlow == connectorOAuthFlowInstall {
 		started.ExtraCookies = append(started.ExtraCookies, connectorOAuthActiveInstallCookieValue(state, homeOrigin))
+		// Production reads this on the App setup URL, which carries no state.
+		if envCookie := h.githubEnvForwardCookie(homeOrigin); envCookie != nil {
+			started.ExtraCookies = append(started.ExtraCookies, envCookie)
+		}
 	}
 	if err := h.insertConnectorOAuthState(ctx, payload, scope, returnTo); err != nil {
 		slog.ErrorContext(ctx, "official app OAuth state insert failed", "connector_id", c.ID, "error", err)
