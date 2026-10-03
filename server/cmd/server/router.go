@@ -1131,7 +1131,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			employeeWatchdog.Ready = h.EmployeeSceneWorker.ReplicaReady
 		}
 		h.EmployeeWatchdog = employeeWatchdog
-		h.DingTalkResponses.BeforeSend = h.BeforeEmployeeResponseSend(employeeWatchdog)
+		// Collection invitations pass their own fence; every other action keeps
+		// the watchdog and Run notice chain.
+		h.DingTalkResponses.BeforeSend = h.BeforeCollectionInviteSend(h.BeforeEmployeeResponseSend(employeeWatchdog))
 		h.EmployeeRunNoticeArtifacts = h.ListEmployeeTaskArtifacts
 		// Native dispatches complete to their own target. The worker exists
 		// whenever managed responses do, so queued native callbacks drain
