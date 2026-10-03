@@ -314,3 +314,13 @@ admission and BeforeSend consult the stop ledger before new submissions, while
 already-submitted provider actions keep their original reconciliation path.
 Marker 11 gates the new tool and execution-state projection; no kernel executor,
 scheduler, message-text classifier or additional model pass is added.
+
+G5 new-deliverable selection is expressed in the Host foreground boundary
+(`employee_scene_capabilities.go`), dispatch_task description and source-bound
+TaskBrief (`employee_current_tasks.go`). Questions interpreting existing reports
+remain direct replies (DS01); explicitly requested new retrospectives/reports use
+new Tasks with builds_on even without new data or with a short output limit.
+The Persona reply contract applies format after that work selection. All changes
+freeze only with new inputs; existing snapshots/journals, shared BuildPrompt,
+Host authorization and native tool effects are unchanged. See
+`docs/plans/2026-10-04/employee-g5-deliverable.md` and the exact failing LF trace.
