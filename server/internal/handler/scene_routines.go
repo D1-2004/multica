@@ -85,6 +85,9 @@ type sceneRoutineInput struct {
 	Title        string              `json:"title"`
 	Instructions string              `json:"instructions"`
 	Trigger      sceneRoutineTrigger `json:"trigger"`
+	// EmployeeExecution is run_only (default) or employee_decide; it applies
+	// when the agent runs in employee mode.
+	EmployeeExecution string `json:"employee_execution,omitempty"`
 }
 
 // sceneRoutinePatch edits a routine; nil fields stay. The trigger kind never
@@ -99,6 +102,9 @@ type sceneRoutinePatch struct {
 	// PayloadFields replaces a webhook's payload allowlist ([] restores the
 	// default). Not settable from a chat.
 	PayloadFields *[]string `json:"payload_fields"`
+	// EmployeeExecution switches run_only / employee_decide for new
+	// occurrences; accepted occurrences keep their frozen choice.
+	EmployeeExecution *string `json:"employee_execution"`
 }
 
 // sceneRoutineActor is who writes a routine: a configure-page member, or the
@@ -171,8 +177,10 @@ type sceneRoutineView struct {
 	Trigger       sceneRoutineTriggerView `json:"trigger"`
 	LastRun       *sceneRoutineRunView    `json:"last_run"`
 	CreatedByType string                  `json:"created_by_type"`
-	CreatedAt     string                  `json:"created_at"`
-	UpdatedAt     string                  `json:"updated_at"`
+	// EmployeeExecution is run_only or employee_decide.
+	EmployeeExecution string `json:"employee_execution"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
 }
 
 // sceneRoutineResult is a write's outcome. Updated is true when a create
@@ -236,6 +244,9 @@ func normalizeRoutineInput(in sceneRoutineInput) (sceneRoutineInput, error) {
 	if in.Instructions, err = normalizeRoutineText("instructions", in.Instructions, sceneRoutineMaxPrompt); err != nil {
 		return in, err
 	}
+	if in.EmployeeExecution, err = normalizeRoutineEmployeeExecution(in.EmployeeExecution); err != nil {
+		return in, err
+	}
 	switch in.Trigger.Kind = strings.TrimSpace(in.Trigger.Kind); in.Trigger.Kind {
 	case sceneRoutineTriggerCron:
 		if len(in.Trigger.PayloadFields) > 0 {
@@ -257,6 +268,31 @@ func normalizeRoutineInput(in sceneRoutineInput) (sceneRoutineInput, error) {
 		return in, routineInvalid("trigger.kind must be schedule or webhook")
 	}
 	return in, nil
+}
+
+// normalizeRoutineEmployeeExecution defaults an empty choice to run_only.
+func normalizeRoutineEmployeeExecution(choice string) (string, error) {
+	choice = strings.TrimSpace(choice)
+	if choice == "" {
+		return contextcap.RoutineRunOnly, nil
+	}
+	if !contextcap.ValidRoutineEmployeeExecution(choice) {
+		return "", routineInvalid("employee_execution must be run_only or employee_decide")
+	}
+	return choice, nil
+}
+
+// routineDecisionAvailable gates employee_decide: every live replica must run
+// the routine.decision reader, or an occurrence could reach a server that
+// cannot decide it.
+func (h *Handler) routineDecisionAvailable(ctx context.Context, choice string) error {
+	if choice != contextcap.RoutineEmployeeDecide {
+		return nil
+	}
+	if err := h.EmployeeRoutineReady(ctx); err != nil {
+		return routineRefusal(http.StatusConflict, "routine_decision_unavailable", "employee decisions for routines are not available on every server yet; keep run_only for now")
+	}
+	return nil
 }
 
 func routineDedupeKey(title string, trigger sceneRoutineTrigger) string {
@@ -411,6 +447,9 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 	if _, err := h.routineIdentity(ctx, h.Queries, sc.WorkspaceID, sc.AgentID, sc.TenantOrgID); err != nil {
 		return sceneRoutineResult{}, err
 	}
+	if err := h.routineDecisionAvailable(ctx, in.EmployeeExecution); err != nil {
+		return sceneRoutineResult{}, err
+	}
 	if sc.SceneKind == scene.KindDM && cp.OpenDingTalkID == "" {
 		return sceneRoutineResult{}, routineRefusal(http.StatusConflict, "dm_target_unknown", "the 1:1 chat counterpart is unknown")
 	}
@@ -461,7 +500,7 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 		WorkspaceID: a.WorkspaceID, AgentID: a.ID, SceneID: sceneID, TenantOrgID: sc.TenantOrgID, SceneKind: sc.SceneKind,
 		AutopilotID: util.UUIDToString(ap.ID), DeliveryOpenDingTalkID: cp.OpenDingTalkID,
 		DedupeKey: key, CreatedByType: actor.Type, CreatedByID: util.UUIDToString(actor.id()),
-		CreatedTaskID: util.UUIDToString(actor.TaskID),
+		CreatedTaskID: util.UUIDToString(actor.TaskID), EmployeeExecution: in.EmployeeExecution,
 	})
 	if errors.Is(err, contextcap.ErrRoutineDuplicate) {
 		// A concurrent create of the same routine won; update that one.
@@ -526,7 +565,11 @@ func (h *Handler) createRoutineTrigger(ctx context.Context, qtx *db.Queries, ap 
 // refreshDuplicateRoutine applies a re-registration of an existing routine:
 // title and instructions are refreshed; enabled state, scene and trigger stay.
 func (h *Handler) refreshDuplicateRoutine(ctx context.Context, a contextCapAgent, routine contextcap.Routine, actor sceneRoutineActor, in sceneRoutineInput) (sceneRoutineResult, error) {
-	result, err := h.updateSceneRoutine(ctx, a, routine, actor, sceneRoutinePatch{Title: &in.Title, Instructions: &in.Instructions})
+	patch := sceneRoutinePatch{Title: &in.Title, Instructions: &in.Instructions}
+	if in.EmployeeExecution != routine.EmployeeExecution {
+		patch.EmployeeExecution = &in.EmployeeExecution
+	}
+	result, err := h.updateSceneRoutine(ctx, a, routine, actor, patch)
 	if err != nil {
 		return sceneRoutineResult{}, err
 	}
@@ -580,6 +623,17 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 			return sceneRoutineResult{}, routineInvalid(err.Error())
 		}
 	}
+	execution := routine.EmployeeExecution
+	if patch.EmployeeExecution != nil {
+		if execution, err = normalizeRoutineEmployeeExecution(*patch.EmployeeExecution); err != nil {
+			return sceneRoutineResult{}, err
+		}
+		if execution != routine.EmployeeExecution {
+			if err := h.routineDecisionAvailable(ctx, execution); err != nil {
+				return sceneRoutineResult{}, err
+			}
+		}
+	}
 	status := ap.Status
 	if patch.Enabled != nil {
 		status = "paused"
@@ -631,7 +685,14 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 			return sceneRoutineResult{}, fmt.Errorf("store payload fields: %w", err)
 		}
 	}
-	if status != ap.Status || scheduleChanged || instructions != ap.Description.String {
+	executionChanged := execution != routine.EmployeeExecution
+	if executionChanged {
+		if err := contextcap.SetRoutineEmployeeExecution(ctx, tx, routine.ID, execution); err != nil {
+			return sceneRoutineResult{}, err
+		}
+		routine.EmployeeExecution = execution
+	}
+	if status != ap.Status || scheduleChanged || instructions != ap.Description.String || executionChanged {
 		if err := service.RecordAutopilotRuleVersion(ctx, qtx, updated, actor.Type, actor.id()); err != nil {
 			return sceneRoutineResult{}, err
 		}
@@ -854,7 +915,7 @@ func (h *Handler) sceneRoutineView(ctx context.Context, routine contextcap.Routi
 	view := sceneRoutineView{
 		ID: routine.ID, SceneID: routine.SceneID, SceneKind: routine.SceneKind, AutopilotID: routine.AutopilotID,
 		Title: ap.Title, Instructions: ap.Description.String, Enabled: ap.Status == "active",
-		PauseReason: ap.PauseReason.String, CreatedByType: routine.CreatedByType,
+		PauseReason: ap.PauseReason.String, CreatedByType: routine.CreatedByType, EmployeeExecution: routine.EmployeeExecution,
 		CreatedAt: routine.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: timestampToString(ap.UpdatedAt),
 		Trigger: sceneRoutineTriggerView{ID: util.UUIDToString(trigger.ID), Kind: trigger.Kind, NextRuns: []string{}},
 	}

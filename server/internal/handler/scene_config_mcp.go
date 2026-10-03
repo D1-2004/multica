@@ -347,6 +347,8 @@ func sceneConfigToolDefinitions(kind string) []any {
 		},
 		"required": []string{"kind"},
 	}
+	execution := map[string]any{"type": "string", "enum": []string{contextcap.RoutineRunOnly, contextcap.RoutineEmployeeDecide},
+		"description": "run_only (default) runs the instructions on every occurrence. employee_decide first lets you look at this scene and the last results and decide per occurrence: run the instructions, reply once here, wait for the next occurrence, or stay quiet. Use employee_decide only when the requester asked for a conditional routine (for example only remind when something is missing)."}
 	where, linkLabel := "this group chat", "配置本群能力"
 	if kind == scene.KindDM {
 		where, linkLabel = "this 1:1 chat", "配置本单聊能力"
@@ -393,19 +395,21 @@ func sceneConfigToolDefinitions(kind string) []any {
 		sceneConfigTool(sceneConfigToolRoutineCreate, "Create a routine",
 			"Create a routine in "+where+": work you do here on a cron schedule or when a webhook request arrives, with this scene's configuration. The platform posts a start and an end message here. The same purpose and schedule as an existing routine updates it instead and keeps its paused or running state.",
 			map[string]any{
-				"title":        str("Short name of the routine."),
-				"instructions": str("What to do on each run and what the result should contain. Do not ask to post it; the platform does."),
-				"trigger":      trigger,
+				"title":              str("Short name of the routine."),
+				"instructions":       str("What to do on each run and what the result should contain. Do not ask to post it; the platform does. For employee_decide, state the condition and what to do when it holds."),
+				"trigger":            trigger,
+				"employee_execution": execution,
 			}, []string{"title", "instructions", "trigger"}, false),
 		sceneConfigTool(sceneConfigToolRoutineUpdate, "Change, pause or resume a routine",
 			"Change a routine of "+where+". enabled=false pauses it, true resumes it. A schedule can change its cron and timezone; the trigger kind cannot change.",
 			map[string]any{
-				"routine_id":   routineID,
-				"title":        str("New name."),
-				"instructions": str("New instructions."),
-				"enabled":      map[string]any{"type": "boolean"},
-				"cron":         str("New five-field cron."),
-				"timezone":     str("New IANA timezone."),
+				"routine_id":         routineID,
+				"title":              str("New name."),
+				"instructions":       str("New instructions."),
+				"enabled":            map[string]any{"type": "boolean"},
+				"cron":               str("New five-field cron."),
+				"timezone":           str("New IANA timezone."),
+				"employee_execution": execution,
 			}, []string{"routine_id"}, false),
 		sceneConfigTool(sceneConfigToolRoutineDelete, "Delete a routine", "Delete a routine of "+where+"; its run history stays.",
 			map[string]any{"routine_id": routineID}, []string{"routine_id"}, false),
