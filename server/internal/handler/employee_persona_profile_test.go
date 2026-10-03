@@ -122,6 +122,10 @@ func TestPersonaOldSnapshotReplaysWithoutM3Sections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// buildInput now freezes the M3 sections into new snapshots; emulate a
+	// snapshot frozen before M3 by restoring its persona and memory bytes.
+	old.Config.Persona.Instructions = "Pre-M3 role instructions."
+	old.Input.Memory = "Pre-M3 memory brief."
 	raw, _ := json.Marshal(old)
 	requests := [2][]byte{}
 	for i := range requests {
@@ -308,7 +312,6 @@ func TestPersonaDirectoryFactsFromM6(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.applyEmployeePersonaInput(context.Background(), job, employeePersonaChatWake(job, envs), &input)
 	if len(*requests) != 1 {
 		t.Fatalf("directory reads = %d", len(*requests))
 	}
