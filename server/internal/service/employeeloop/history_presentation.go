@@ -96,3 +96,11 @@ func historyEntries(version, raw string) ([]SessionEntry, error) {
 	}
 	return entries, nil
 }
+
+// ValidateRecentConversation applies the exact parse and render bounds every
+// binary enforces when it replays a frozen snapshot. A builder must call it
+// before freezing a new snapshot, so an older replica can still replay it.
+func ValidateRecentConversation(version, raw string) error {
+	_, err := historyEntries(version, raw)
+	return err
+}
