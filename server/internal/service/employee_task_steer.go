@@ -40,8 +40,7 @@ type EmployeeTaskSteerRequest struct {
 	// The Issue backend requires it to author the member comment.
 	AuthorID pgtype.UUID
 	// Context is optional host-owned dispatch context for the correction's own
-	// launch identity (for example a fresh identity token). Direct ownership
-	// keys and the scene reference cannot be overridden through it.
+	// launch identity. Only identity token keys are taken from it.
 	Context json.RawMessage
 	// SameRequester is the host's verified claim that the correction comes from
 	// the task's original requester. Otherwise the successor runs without the
@@ -168,167 +167,193 @@ func (s *TaskService) readEmployeeTask(ctx context.Context, scope employeetask.S
 // fence, and queues one successor that resumes the predecessor's session.
 // Corrections arriving before that successor is claimed join it.
 func (s *TaskService) steerDirectEmployeeTask(ctx context.Context, req EmployeeTaskSteerRequest) (EmployeeTaskSteerResult, error) {
-	var out EmployeeTaskSteerResult
 	agentID, err := util.ParseUUID(req.Task.Scope.AgentID)
 	if err != nil {
-		return out, employeetask.ErrInvalid
+		return EmployeeTaskSteerResult{}, employeetask.ErrInvalid
 	}
 	// Personal connector resolution may call external services, so it runs
 	// before any aggregate lock, like EnqueueDirectTask. A terminal row has its
 	// overlay cleared, so the successor's overlay is always recomputed.
 	overlay := s.directSteerOverlay(ctx, req, agentID)
+	for attempt := 0; ; attempt++ {
+		out, moved, err := s.steerDirectEmployeeTaskOnce(ctx, req, agentID, overlay)
+		if !moved {
+			return out, err
+		}
+		if attempt == 2 {
+			return EmployeeTaskSteerResult{}, employeetask.ErrConflict
+		}
+	}
+}
+
+// steerDirectEmployeeTaskOnce reports moved=true when a new Run appeared
+// between reading the latest Run and locking the task; the caller retries.
+func (s *TaskService) steerDirectEmployeeTaskOnce(ctx context.Context, req EmployeeTaskSteerRequest, agentID pgtype.UUID, overlay runtimeMCPOverlayData) (EmployeeTaskSteerResult, bool, error) {
+	var out EmployeeTaskSteerResult
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
-		return out, err
+		return out, false, err
 	}
 	defer tx.Rollback(ctx)
-	// Lock order matches the domain and teardown: workspace -> task, then the
-	// agent claim lock so no runtime claims a row between these transitions.
+	// Lock order matches completion, failure and cancellation: workspace, then
+	// the queue row, then the EmployeeTask (RecordResult). The agent claim lock
+	// comes last; claims skip locked queue rows, so they never wait on us.
 	var locked string
 	if err = tx.QueryRow(ctx, `SELECT id::text FROM workspace WHERE id=$1::uuid FOR KEY SHARE`, req.Task.Scope.WorkspaceID).Scan(&locked); err != nil {
-		return out, err
-	}
-	if err = tx.QueryRow(ctx, `SELECT id::text FROM employee_task WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`, req.Task.ID, req.Task.Scope.WorkspaceID).Scan(&locked); err != nil {
-		return out, mapEmployeeTaskSteerError(err)
-	}
-	qtx := s.Queries.WithTx(tx)
-	agent, err := qtx.GetAgentForClaimUpdate(ctx, agentID)
-	if err != nil {
-		return out, err
+		return out, false, err
 	}
 	store := employeetask.NewStore(tx)
 	task, err := store.Get(ctx, req.Task.Scope, req.Task.ID)
 	if err != nil {
-		return out, err
+		return out, false, err
 	}
 	if task.DispatchMode != employeetask.DispatchDirect {
-		return out, employeetask.ErrConflict
+		return out, false, employeetask.ErrConflict
 	}
 	content := strings.TrimSpace(req.Content)
+	// Ledger entries are append-only, so an exact replay needs no lock.
 	if entry, err := store.EntryBySource(ctx, task.Scope, task.ID, req.Source); err == nil {
-		return s.replayDirectEmployeeTaskSteer(ctx, tx, store, task, entry, content, req.ActorRef)
+		out, err = s.replayDirectEmployeeTaskSteer(ctx, tx, store, task, entry, content, req.ActorRef)
+		return out, false, err
 	} else if !errors.Is(err, employeetask.ErrNotFound) {
-		return out, err
+		return out, false, err
 	}
 	latest, err := store.LatestRun(ctx, task.Scope, task.ID)
 	if errors.Is(err, employeetask.ErrNotFound) {
 		// Nothing has executed, so there is no session or input to resume.
-		return out, employeetask.ErrConflict
+		return out, false, employeetask.ErrConflict
 	}
 	if err != nil {
-		return out, err
+		return out, false, err
 	}
 	latestQueue, err := lockEmployeeSteerQueue(ctx, tx, latest.QueueTaskID)
 	if err != nil {
-		return out, err
+		return out, false, err
+	}
+	if err = tx.QueryRow(ctx, `SELECT id::text FROM employee_task WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`, req.Task.ID, req.Task.Scope.WorkspaceID).Scan(&locked); err != nil {
+		return out, false, mapEmployeeTaskSteerError(err)
+	}
+	qtx := s.Queries.WithTx(tx)
+	agent, err := qtx.GetAgentForClaimUpdate(ctx, agentID)
+	if err != nil {
+		return out, false, err
+	}
+	if task, err = store.Get(ctx, task.Scope, task.ID); err != nil {
+		return out, false, err
+	}
+	if current, err := store.LatestRun(ctx, task.Scope, task.ID); err != nil || current.ID != latest.ID {
+		return out, err == nil, err
 	}
 	// A Run whose queue row already reached a terminal state but was not yet
 	// reconciled is settled first; it is history, not an active writer.
 	if task.ActiveRunID == latest.ID && fcE2BTaskIsTerminal(latestQueue.Status) {
 		if err = s.recordEmployeeRunInTx(ctx, tx, latestQueue, latestQueue.Status, latestQueue.Result, latestQueue.Error.String); err != nil {
-			return out, err
+			return out, false, err
 		}
 		if task, err = store.Get(ctx, task.Scope, task.ID); err != nil {
-			return out, err
+			return out, false, err
 		}
 		if latest, err = store.LatestRun(ctx, task.Scope, task.ID); err != nil {
-			return out, err
+			return out, false, err
 		}
 	}
 	steer := employeetask.SteerParams{Source: req.Source, ActorRef: req.ActorRef, Body: content}
 	if task.ActiveRunID != "" && task.ActiveRunID != latest.ID {
-		return out, employeetask.ErrConflict
+		return out, false, employeetask.ErrConflict
 	}
 	if task.ActiveRunID != "" && (latestQueue.Status == "queued" || latestQueue.Status == "deferred") {
 		// The active Run has not been claimed: the correction joins it.
 		steer.MergeRunID = latest.ID
 		if out.Task, out.Entry, err = store.Steer(ctx, task.Scope, task.ID, steer); err != nil {
-			return out, err
+			return out, false, err
 		}
 		next, err := directSteerSuccessorContext(latestQueue, req.Context, latestQueue.ID, s.steerCorrections(ctx, store, task))
 		if err != nil {
-			return out, err
+			return out, false, err
 		}
 		// A correction is the newest human input; keep the predecessor link of
 		// an earlier steer successor so its session lookup is unchanged.
 		next, err = keepSteerPredecessor(next, latestQueue)
 		if err != nil {
-			return out, err
+			return out, false, err
 		}
 		if _, err = tx.Exec(ctx, `UPDATE agent_task_queue SET context=$2, priority=GREATEST(priority,4),
- runtime_mcp_overlay=CASE WHEN $3 THEN runtime_mcp_overlay END, runtime_connected_apps=CASE WHEN $3 THEN runtime_connected_apps END
- WHERE id=$1 AND status IN ('queued','deferred')`, latestQueue.ID, next, req.SameRequester); err != nil {
-			return out, err
+ runtime_mcp_overlay=CASE WHEN $3 THEN COALESCE(runtime_mcp_overlay,$4) END, runtime_connected_apps=CASE WHEN $3 THEN COALESCE(runtime_connected_apps,$5) END
+ WHERE id=$1 AND status IN ('queued','deferred')`, latestQueue.ID, next, req.SameRequester, overlay.Overlay, overlay.ConnectedApps); err != nil {
+			return out, false, err
 		}
 		if out.Queue, err = qtx.GetAgentTask(ctx, latestQueue.ID); err != nil {
-			return out, err
+			return out, false, err
 		}
 		out.Run, err = store.LatestRun(ctx, task.Scope, task.ID)
 		if err != nil {
-			return out, err
+			return out, false, err
 		}
 		out.Outcome = employeetask.SteerMerged
 		if err = tx.Commit(ctx); err != nil {
-			return EmployeeTaskSteerResult{}, err
+			return EmployeeTaskSteerResult{}, false, err
 		}
-		// The row was already enqueued once; wake it without recounting it.
+		// The row was already enqueued once; wake it without recounting it, and
+		// rearm the predecessor's stop observation in case its proof was lost.
+		s.NotifySteerPredecessor(ctx, out.Queue)
 		s.wakeQueuedEmployeeSteer(ctx, out.Queue)
-		return out, nil
+		return out, false, nil
 	}
 	// Admission is checked before anything is cancelled: a correction that
 	// cannot run must not stop the current execution.
 	if err = directSteerAdmission(ctx, qtx, agent); err != nil {
-		return out, err
+		return out, false, err
 	}
 	out.Outcome = employeetask.SteerContinued
 	if task.ActiveRunID != "" {
 		cancelled, err := qtx.CancelAgentTaskForSteer(ctx, latestQueue.ID)
 		if err != nil {
-			return out, fmt.Errorf("cancel steered execution: %w", err)
+			return out, false, fmt.Errorf("cancel steered execution: %w", err)
 		}
 		out.Interrupted = &cancelled
 		out.Outcome = employeetask.SteerInterrupted
 		if err = s.recordEmployeeRunInTx(ctx, tx, cancelled, "cancelled", nil, ""); err != nil {
-			return out, err
+			return out, false, err
 		}
 		if _, err = enqueueSteerCallbackCompletions(ctx, qtx, cancelled, "canceled", nil, "", ""); err != nil {
-			return out, err
+			return out, false, err
 		}
 		latestQueue = cancelled
+		steer.InterruptedRunID = latest.ID
 		if latest, err = store.LatestRun(ctx, task.Scope, task.ID); err != nil {
-			return out, err
+			return out, false, err
 		}
 	}
 	if latest.State == employeetask.StateFailed || latest.State == employeetask.StateCancelled {
 		if evidence := directWriterFenceEvidence(latestQueue); evidence != "" {
 			if _, _, err = store.FenceRunWriter(ctx, task.Scope, task.ID, employeetask.FenceWriterParams{Source: employeetask.Source{Namespace: employeeTaskSteerFenceSpace, Key: latest.ID + "/" + evidence}, RunID: latest.ID, Evidence: evidence}); err != nil {
-				return out, err
+				return out, false, err
 			}
 		}
 	}
 	if task, out.Entry, err = store.Steer(ctx, task.Scope, task.ID, steer); err != nil {
-		return out, err
+		return out, false, err
 	}
 	next, err := directSteerSuccessorContext(latestQueue, req.Context, latestQueue.ID, s.steerCorrections(ctx, store, task))
 	if err != nil {
-		return out, err
+		return out, false, err
 	}
 	queueID := pgtype.UUID{Bytes: uuid.New(), Valid: true}
 	if _, err = tx.Exec(ctx, `INSERT INTO agent_task_queue(id,agent_id,runtime_id,status,priority,context,originator_user_id,accountable_user_id,originator_source,trigger_evidence_kind,trigger_evidence_ref_id,trigger_summary,runtime_mcp_overlay,runtime_connected_apps,max_attempts)
  SELECT $1,p.agent_id,$3,'queued',4,$4,p.originator_user_id,p.accountable_user_id,p.originator_source,p.trigger_evidence_kind,p.trigger_evidence_ref_id,p.trigger_summary,$5,$6,1 FROM agent_task_queue p WHERE p.id=$2`, queueID, latestQueue.ID, agent.RuntimeID, next, overlay.Overlay, overlay.ConnectedApps); err != nil {
-		return out, err
+		return out, false, err
 	}
 	if out.Run, err = store.StartRun(ctx, task.Scope, task.ID, employeetask.StartRunParams{Source: employeetask.Source{Namespace: req.Source.Namespace, Key: req.Source.Key + employeeTaskSteerRunSuffix}, QueueTaskID: util.UUIDToString(queueID), ExpectedVersion: task.Version}); err != nil {
-		return out, err
+		return out, false, err
 	}
 	if out.Queue, err = qtx.GetAgentTask(ctx, queueID); err != nil {
-		return out, err
+		return out, false, err
 	}
 	if out.Task, err = store.Get(ctx, task.Scope, task.ID); err != nil {
-		return out, err
+		return out, false, err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return EmployeeTaskSteerResult{}, err
+		return EmployeeTaskSteerResult{}, false, err
 	}
 	if out.Interrupted != nil {
 		s.captureTaskCancelled(ctx, *out.Interrupted)
@@ -342,7 +367,7 @@ func (s *TaskService) steerDirectEmployeeTask(ctx context.Context, req EmployeeT
 	// The successor is claimable only after the barrier opens; the claim SQL and
 	// cloud launch arbitration both enforce it, so waking early is harmless.
 	s.NotifyTaskEnqueued(ctx, out.Queue)
-	return out, nil
+	return out, false, nil
 }
 
 func (s *TaskService) replayDirectEmployeeTaskSteer(ctx context.Context, tx pgx.Tx, store *employeetask.Store, task employeetask.Task, entry employeetask.Entry, content, actor string) (EmployeeTaskSteerResult, error) {
@@ -372,6 +397,7 @@ func (s *TaskService) replayDirectEmployeeTaskSteer(ctx context.Context, tx pgx.
 		return EmployeeTaskSteerResult{}, err
 	}
 	// Recover a commit-before-notify crash; wakeups are idempotent.
+	s.NotifySteerPredecessor(ctx, out.Queue)
 	s.wakeQueuedEmployeeSteer(ctx, out.Queue)
 	return out, nil
 }
@@ -469,13 +495,14 @@ func (s *TaskService) steerCorrections(ctx context.Context, store *employeetask.
 	return out
 }
 
-// directSteerContextOwned lists keys the Host stamps for a Direct execution;
-// a correction's dispatch context cannot replace them.
-var directSteerContextOwned = map[string]bool{
-	"type": true, "workspace_id": true, "employee_task_id": true, "direct_task_prompt": true,
-	"direct_principal_id": true, "direct_originator_user_id": true, "employee_direct_input": true,
-	"direct_steer_base_prompt": true, "task_steer": true, "steer_predecessor_task_id": true,
-	protocol.AgentSceneContextKey: true,
+// directSteerOverlayKeys are the only keys a correction's own dispatch context
+// may contribute: its launch identity. Everything else (ownership, scene,
+// delivery job/source, notice policy) stays on the task's frozen input, so the
+// successor keeps reporting to the original request.
+var directSteerOverlayKeys = map[string]bool{
+	protocol.AgentIdentityContextTokenJSONKey:          true,
+	protocol.AgentIdentityContextTokenExpiresAtJSONKey: true,
+	protocol.AgentIdentityContextTokenSourceJSONKey:    true,
 }
 
 // directSteerSuccessorContext rebuilds a successor from the predecessor's
@@ -504,7 +531,7 @@ func directSteerSuccessorContext(predecessor db.AgentTaskQueue, overlay json.Raw
 			return nil, employeetask.ErrInvalid
 		}
 		for k, v := range extra {
-			if !directSteerContextOwned[k] {
+			if directSteerOverlayKeys[k] {
 				next[k] = v
 			}
 		}

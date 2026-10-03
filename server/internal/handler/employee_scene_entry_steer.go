@@ -15,15 +15,16 @@ import (
 )
 
 // employeeSteerRecentWindow bounds implicit target selection: a correction
-// without a task_id applies only to the requester's running task or one that
-// finished recently in this scene.
+// without a task_id considers the requester's running tasks and tasks that
+// became ready or succeeded recently in this scene. Stopped and failed tasks
+// are never implicit targets.
 const employeeSteerRecentWindow = "30 minutes"
 
 func employeeSteerTool(source map[string]any, stringField func(string) map[string]any) employeeloop.Tool {
 	return employeeloop.Tool{
 		Name:        "steer_task",
 		Effect:      true,
-		Description: "Apply the requester's correction to their own background task in this conversation that is running or just finished: the Host interrupts the current run and resumes the same task with the correction as the next input. Use it instead of dispatch_task when the selected message corrects, narrows, redirects or adds a constraint to work already dispatched. Omit task_id when the requester has one such task; if the Host lists several candidates, call again with the intended task_id. It never creates a new task. Include the acknowledgement to send after the correction is committed.",
+		Description: "Apply the requester's correction to their own background task in this conversation that is running or just finished: the Host interrupts the current run and resumes the same task with the correction as the next input. Use it instead of dispatch_task when the selected message corrects, narrows, redirects or adds a constraint to work already dispatched. Omit task_id when the requester has exactly one such task; if the Host lists several candidates, call again with the intended task_id or ask which task to correct. It never creates a new task. Include the acknowledgement to send after the correction is committed.",
 		Schema: map[string]any{"type": "object", "properties": map[string]any{
 			"source_ref": source,
 			"correction": stringField("The requester's correction as complete instructions, preserving their wording and constraints."),
@@ -71,7 +72,7 @@ func (h *employeeSceneHost) steer(ctx context.Context, source employeeSourceMess
 		return employeeloop.ToolResult{Content: string(listed)}, nil
 	}
 	sourceKey := source.ReceiptID + "/" + call.NativeToolCallID
-	overlay, err := employeeCorrectionContext(env, source, sourceKey, h.job.ID)
+	overlay, err := employeeCorrectionContext(env, source, sourceKey)
 	if err != nil {
 		return employeeloop.ToolResult{}, err
 	}
@@ -120,7 +121,7 @@ func (h *employeeSceneHost) steerTarget(ctx context.Context, requester, explicit
 	rows, err := storeDB.Query(ctx, `SELECT id::text, definition->>'goal', state FROM employee_task
  WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND scope_kind='scene' AND scene_id=$4::uuid
    AND owner_loop='employee' AND dispatch_mode='direct' AND requester_ref=$5
-   AND (state IN ('running','ready') OR updated_at > now() - $6::interval)
+   AND (state='running' OR (state IN ('ready','succeeded') AND updated_at > now() - $6::interval))
  ORDER BY (state='running') DESC, updated_at DESC LIMIT 5`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, scope.Scene.SceneID, requester, employeeSteerRecentWindow)
 	if err != nil {
 		return employeetask.Task{}, nil, err
@@ -133,16 +134,12 @@ func (h *employeeSceneHost) steerTarget(ctx context.Context, requester, explicit
 	if err != nil {
 		return employeetask.Task{}, nil, err
 	}
-	running := 0
-	for _, c := range candidates {
-		if c.State == string(employeetask.StateRunning) {
-			running++
-		}
-	}
+	// Pick implicitly only when the requester has exactly one candidate: a
+	// correction meant for a finished task must never interrupt a running one.
 	switch {
 	case len(candidates) == 0:
 		return employeetask.Task{}, nil, errors.New("the requester has no running or recent task here to correct; use dispatch_task for new work")
-	case running == 1 || len(candidates) == 1:
+	case len(candidates) == 1:
 		task, err := store.Get(ctx, scope, candidates[0].TaskID)
 		return task, nil, err
 	default:
@@ -150,22 +147,17 @@ func (h *employeeSceneHost) steerTarget(ctx context.Context, requester, explicit
 	}
 }
 
-// employeeCorrectionContext gives the successor the correction's own launch
-// identity and delivery source, so its result answers the correction.
-func employeeCorrectionContext(env employeeDispatchEnvelope, source employeeSourceMessage, sourceKey, jobID string) (json.RawMessage, error) {
+// employeeCorrectionContext carries the correction's own launch identity. The
+// Task Service keeps only identity keys from it; delivery stays bound to the
+// task's original request, which is what the Employee notice verifies.
+func employeeCorrectionContext(env employeeDispatchEnvelope, source employeeSourceMessage, sourceKey string) (json.RawMessage, error) {
 	command := env.Command
 	command.Event.Data.Messages = []DispatchMessage{source.Message}
-	command.Event.Data.Sender = DispatchSender{UID: source.Message.SenderUID, StaffID: source.Message.SenderStaffID, OpenDingTalkID: source.Message.SenderOpenDingTalkID, DisplayName: source.Message.SenderDisplayName}
 	command.CompletionCallback = nil
 	command.ExtraCompletionCallbacks = nil
 	var fields map[string]any
 	if err := json.Unmarshal(dispatchRuntimeContext(command, sourceKey), &fields); err != nil {
 		return nil, fmt.Errorf("correction context: %w", err)
 	}
-	delete(fields, "completion_callback")
-	delete(fields, "execution_update_callback")
-	fields["employee_delivery_owner"] = "employee"
-	fields["employee_job_id"] = jobID
-	fields["employee_source_ref"] = source.SourceRef
 	return json.Marshal(fields)
 }

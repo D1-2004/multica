@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -290,30 +291,38 @@ func TestEmployeeTaskSteerContinuesCompletedTask(t *testing.T) {
 	}
 }
 
-// A cancellation without exit evidence (an older row without the barrier)
-// keeps the task closed; the failed steer changes nothing.
+// A human stop is never lifted by a correction, and a failed Run without exit
+// evidence keeps the writer fence closed. Neither failed steer leaves records.
 func TestEmployeeTaskSteerFailsClosedWithoutWriterEvidence(t *testing.T) {
-	f := newDirectSteerFixture(t)
-	ctx := context.Background()
-	f.claim(t, f.first.Task, "provider-session-1")
-	if err := f.service.runInTxWithHandle(ctx, func(q *db.Queries, tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `UPDATE agent_task_queue SET status='cancelled', completed_at=now() WHERE id=$1`, f.first.Task.ID); err != nil {
-			return err
-		}
-		done, err := q.GetAgentTask(ctx, f.first.Task.ID)
-		if err != nil {
-			return err
-		}
-		return f.service.recordEmployeeRunInTx(ctx, tx, done, "cancelled", nil, "")
-	}); err != nil {
-		t.Fatal(err)
-	}
-	before := f.entryKinds(t)
-	if _, err := f.steer("c1", "continue anyway"); !errors.Is(err, employeetask.ErrRunNotReady) {
-		t.Fatalf("unproven writer exit must fail closed: %v", err)
-	}
-	if after := f.entryKinds(t); strings.Join(after, "|") != strings.Join(before, "|") {
-		t.Fatalf("failed steer left records: %v -> %v", before, after)
+	for _, terminal := range []string{"cancelled", "failed"} {
+		t.Run(terminal, func(t *testing.T) {
+			f := newDirectSteerFixture(t)
+			ctx := context.Background()
+			f.claim(t, f.first.Task, "provider-session-1")
+			if err := f.service.runInTxWithHandle(ctx, func(q *db.Queries, tx pgx.Tx) error {
+				if _, err := tx.Exec(ctx, `UPDATE agent_task_queue SET status=$2, completed_at=now() WHERE id=$1`, f.first.Task.ID, terminal); err != nil {
+					return err
+				}
+				done, err := q.GetAgentTask(ctx, f.first.Task.ID)
+				if err != nil {
+					return err
+				}
+				return f.service.recordEmployeeRunInTx(ctx, tx, done, terminal, nil, "provider error")
+			}); err != nil {
+				t.Fatal(err)
+			}
+			before := f.entryKinds(t)
+			want := employeetask.ErrStopped
+			if terminal == "failed" {
+				want = employeetask.ErrRunNotReady
+			}
+			if _, err := f.steer("c1", "continue anyway"); !errors.Is(err, want) {
+				t.Fatalf("steer after %s: got %v, want %v", terminal, err, want)
+			}
+			if after := f.entryKinds(t); strings.Join(after, "|") != strings.Join(before, "|") {
+				t.Fatalf("failed steer left records: %v -> %v", before, after)
+			}
+		})
 	}
 }
 
@@ -404,5 +413,42 @@ func TestEmployeeTaskSteerIssueBackendMapsSuccessorRun(t *testing.T) {
 	again, err := control.Steer(ctx, request)
 	if err != nil || again.Queue.ID != got.Queue.ID || again.CommentID != got.CommentID {
 		t.Fatalf("issue steer replay: %+v %v", again, err)
+	}
+}
+
+// A completion holding the queue row and then taking the EmployeeTask (the
+// RecordResult order) must not deadlock with a concurrent steer: steer takes
+// the same order, waits, and then continues the finished task.
+func TestEmployeeTaskSteerSharesCompletionLockOrder(t *testing.T) {
+	f := newDirectSteerFixture(t)
+	ctx := context.Background()
+	f.claim(t, f.first.Task, "provider-session-1")
+	tx, err := f.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `SELECT id FROM workspace WHERE id=$1::uuid FOR KEY SHARE`, f.request.Task.Scope.WorkspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(ctx, `UPDATE agent_task_queue SET status='completed', completed_at=now() WHERE id=$1`, f.first.Task.ID); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, e := f.steer("concurrent", "add totals"); done <- e }()
+	time.Sleep(300 * time.Millisecond)
+	if _, err = tx.Exec(ctx, `SELECT id FROM employee_task WHERE id=$1::uuid FOR UPDATE`, f.request.Task.ID); err != nil {
+		t.Fatalf("completion lost a lock-order race: %v", err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("steer did not finish after the completion committed")
+	}
+	if err != nil {
+		t.Fatalf("steer after the concurrent completion: %v", err)
 	}
 }

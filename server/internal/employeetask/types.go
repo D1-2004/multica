@@ -15,6 +15,7 @@ var (
 	ErrConflict    = errors.New("employee task version or source payload conflict")
 	ErrActiveRun   = errors.New("employee task already has an active run")
 	ErrRunNotReady = errors.New("employee task runner termination is not confirmed")
+	ErrStopped     = errors.New("employee task was stopped by a human; a correction does not restart it")
 )
 
 type ScopeKind string

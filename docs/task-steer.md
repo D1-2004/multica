@@ -91,14 +91,16 @@ cancel plus resume, never input written into a running process.
 
 - Issue backend: the Issue steer above, through `EmployeeIssueBackend.Continue`
   with `queueMode=steer`. The successor queue row is mapped to a new Run.
-- Direct backend: one transaction locks workspace, EmployeeTask, agent claim and
-  the current queue row. An unclaimed active Run (including an earlier steer
+- Direct backend: one transaction locks workspace, the latest Run's queue row,
+  EmployeeTask and agent claim, the order completion and cancellation use, and
+  retries if a new Run appeared meanwhile. An unclaimed active Run (including an earlier steer
   successor) absorbs the correction: its prompt is rebuilt and its Run input
   boundary moves. A claimed Run is cancelled with `CancelAgentTaskForSteer`, its
   Run is recorded `cancelled`, the host records `writer_fenced` evidence, and one
   successor queue row plus Run is created with `priority=4`, `task_steer=true`
-  and `steer_predecessor_task_id`. A finished task continues the same way
-  without a cancellation.
+  and `steer_predecessor_task_id`. A succeeded task continues the same way
+  without a cancellation. A task a human stopped is never reopened by a
+  correction (409); only the cancellation the same steer made may reopen it.
 
 The ledger records the correction as a `steer` entry. `StartRun` treats a failed
 or cancelled Run as an unresolved writer until a `writer_fenced` entry exists.
@@ -113,11 +115,13 @@ A Direct successor is rebuilt from the predecessor's frozen
 prompt is the original work packet with every recorded correction rendered as
 the compiler's `CURRENT CORRECTIONS` block, so a cold start still has the whole
 goal and a resumed session sees the correction first. Identity tokens never
-carry over; the correction's own dispatch context may supply new ones.
+carry over; the correction's own dispatch context may supply new identity
+token keys and nothing else, so delivery (`employee_job_id`,
+`employee_source_ref`, notice policy) stays bound to the original request.
 Personal connectors are recomputed only when the host verified that the
 correction comes from the task's own requester. At claim, a successor receives
 the predecessor's pinned provider session and workdir when the runtime matches
-(walking at most five predecessors without a session); the daemon's workdir and
+(walking past at most five predecessors that never started); the daemon's workdir and
 context compatibility gates still decide whether it resumes. A cancelled Run
 that was replaced by a successor never produces an Employee cancellation
 notice; the successor reports the outcome.
@@ -131,10 +135,11 @@ Entry points:
   response carries `outcome` (`interrupted`, `merged`, `continued`), the
   successor's queue task and whether it awaits exit proof.
 - EmployeeLoop: the `steer_task` tool corrects the requester's own Direct task
-  in the same scene. The Host selects the target: the requester's single
-  running task, or the only one finished within 30 minutes; otherwise it returns
-  candidates and the model must name `task_id`. The successor answers the
-  correction message (`employee_job_id`/`employee_source_ref` of the new job).
+  in the same scene. The Host selects the target only when the requester has
+  exactly one candidate (running, or ready/succeeded within 30 minutes; stopped
+  and failed tasks never qualify); otherwise it returns the candidates and the
+  model must name `task_id` or ask. The successor's result is delivered as the
+  answer to the original request.
   The tool requires replica marker `[employee-loop:7]`.
 
 FC sandboxes need no special handling: the post-commit terminal observer runs

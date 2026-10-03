@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/employeeentry"
+	"github.com/multica-ai/multica/server/internal/employeetask"
 	openai "github.com/openai/openai-go/v3"
 )
 
@@ -77,8 +78,8 @@ func TestEmployeeLoopSteerTaskToolInterruptsRequesterTask(t *testing.T) {
 	if err = json.Unmarshal(successorContext, &private); err != nil {
 		t.Fatal(err)
 	}
-	if private["employee_job_id"] != jobID || private["employee_source_ref"] != model.sourceRef || !strings.Contains(private["direct_task_prompt"].(string), "不对，只统计已签约客户") {
-		t.Fatalf("successor does not answer the correction: %s", successorContext)
+	if private["employee_job_id"] != f.jobID || !strings.Contains(private["direct_task_prompt"].(string), "不对，只统计已签约客户") {
+		t.Fatalf("successor must keep the original delivery binding and carry the correction: %s", successorContext)
 	}
 	var outcome []byte
 	if err = testPool.QueryRow(ctx, `SELECT outcome FROM employee_scene_job WHERE id=$1::uuid`, jobID).Scan(&outcome); err != nil {
@@ -86,5 +87,72 @@ func TestEmployeeLoopSteerTaskToolInterruptsRequesterTask(t *testing.T) {
 	}
 	if !strings.Contains(string(outcome), "收到，已按新要求调整") {
 		t.Fatalf("acknowledgement not recorded: %s", outcome)
+	}
+	// The requester receives the corrected result: the replaced run is silent
+	// and the successor's notice is enqueued for the original request.
+	var successorQueue, successorRun string
+	if err = testPool.QueryRow(ctx, `SELECT q.id::text,r.id::text FROM agent_task_queue q JOIN employee_task_run r ON r.queue_task_id=q.id WHERE q.context->>'steer_predecessor_task_id'=$1`, f.queueID).Scan(&successorQueue, &successorRun); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.h.TaskService.AcknowledgeTaskProcessStopped(ctx, parseUUID(f.queueID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = testPool.Exec(ctx, `UPDATE agent_task_queue SET status='running',dispatched_at=now(),started_at=now() WHERE id=$1::uuid`, successorQueue); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.h.TaskService.CompleteTask(ctx, parseUUID(successorQueue), []byte(`{"output":"已签约客户统计完成"}`), "", "", false, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = reconcileEmployeeNotice(t, f.h); err != nil {
+		t.Fatal(err)
+	}
+	notices := map[string][2]string{}
+	rows, err := testPool.Query(ctx, `SELECT run_id::text,state,COALESCE(reason,'') FROM employee_run_notice WHERE agent_id=$1::uuid`, f.agentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var run, state, reason string
+		if err = rows.Scan(&run, &state, &reason); err != nil {
+			t.Fatal(err)
+		}
+		notices[run] = [2]string{state, reason}
+	}
+	rows.Close()
+	if notices[f.runID] != [2]string{"suppressed", "steered"} || notices[successorRun][0] != "enqueued" {
+		t.Fatalf("notices: replaced=%v successor=%v", notices[f.runID], notices[successorRun])
+	}
+}
+
+// With a running task and a recently finished one, the Host never guesses:
+// it returns both candidates instead of interrupting the running task.
+func TestEmployeeSteerTargetRequiresSingleCandidate(t *testing.T) {
+	f := employeeNoticeDatabase(t, "running", false, false)
+	ctx := context.Background()
+	task := employeeNoticeTask(t, f)
+	host := &employeeSceneHost{worker: f.h.EmployeeSceneWorker, job: employeeentry.Job{Scope: employeeentry.Scope{WorkspaceID: task.Scope.WorkspaceID, AgentID: task.Scope.AgentID, TenantOrgID: task.Scope.TenantOrgID, SceneID: task.Scope.Scene.SceneID}}}
+	only, candidates, err := host.steerTarget(ctx, task.RequesterRef, "")
+	if err != nil || only.ID != task.ID || candidates != nil {
+		t.Fatalf("single running task: %+v %v %v", only, candidates, err)
+	}
+	other, err := employeetask.NewStore(testPool).Create(ctx, employeetask.CreateParams{Scope: task.Scope, OwnerLoop: employeetask.LoopEmployee, DispatchMode: employeetask.DispatchDirect, RequesterRef: task.RequesterRef, Definition: employeetask.Definition{Goal: "Earlier report"}, Source: employeetask.Source{Namespace: "steer_target_test", Key: uuid.NewString()}, Input: "Earlier report"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = testPool.Exec(ctx, `UPDATE employee_task SET state='succeeded', updated_at=now() WHERE id=$1::uuid`, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	none, candidates, err := host.steerTarget(ctx, task.RequesterRef, "")
+	if err != nil || none.ID != "" || len(candidates) != 2 {
+		t.Fatalf("ambiguous targets must be listed: %+v %+v %v", none, candidates, err)
+	}
+	if _, _, err = host.steerTarget(ctx, "dingtalk:other:uid:someone", task.ID); err == nil {
+		t.Fatal("explicit task_id of another requester accepted")
+	}
+	if _, err = testPool.Exec(ctx, `UPDATE employee_task SET state='cancelled' WHERE id=$1::uuid`, other.ID); err != nil {
+		t.Fatal(err)
+	}
+	if only, candidates, err = host.steerTarget(ctx, task.RequesterRef, ""); err != nil || only.ID != task.ID || candidates != nil {
+		t.Fatalf("a stopped task is never an implicit target: %+v %v %v", only, candidates, err)
 	}
 }

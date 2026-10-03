@@ -101,8 +101,12 @@ func (h *Handler) applyEmployeeSteerResume(r *http.Request, task db.AgentTaskQue
 			}
 			return
 		}
-		// A predecessor that never established a session (cancelled before its
-		// first turn) defers to the execution it replaced.
+		// Only a predecessor that never started defers to the execution it
+		// replaced. A started run without a session withheld or retired it, so
+		// an older session is not offered.
+		if prior.StartedAt.Valid {
+			return
+		}
 		current = prior
 	}
 }

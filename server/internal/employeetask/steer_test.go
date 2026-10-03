@@ -25,7 +25,10 @@ func TestSteerInterruptRequiresWriterFence(t *testing.T) {
 	if _, _, err = f.store.RecordResult(ctx, task.Scope, task.ID, ResultParams{Source: Source{"queue_terminal", run.QueueTaskID}, RunID: run.ID, State: StateCancelled, Result: "task cancelled"}); err != nil {
 		t.Fatal(err)
 	}
-	steered, entry, err := f.store.Steer(ctx, task.Scope, task.ID, SteerParams{Source: Source{"steer", "c1"}, ActorRef: "human:a", Body: "use the signed date"})
+	if _, _, err = f.store.Steer(ctx, task.Scope, task.ID, SteerParams{Source: Source{"steer", "c0"}, ActorRef: "human:a", Body: "use the signed date"}); !errors.Is(err, ErrStopped) {
+		t.Fatalf("a correction must not reopen a cancellation it did not make: %v", err)
+	}
+	steered, entry, err := f.store.Steer(ctx, task.Scope, task.ID, SteerParams{Source: Source{"steer", "c1"}, ActorRef: "human:a", Body: "use the signed date", InterruptedRunID: run.ID})
 	if err != nil || steered.State != StateReady || entry.Kind != "steer" || entry.RunID != "" {
 		t.Fatalf("steer: %+v %+v %v", steered, entry, err)
 	}

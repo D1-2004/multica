@@ -122,6 +122,8 @@ func writeEmployeeTaskSteerError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid correction")
 	case errors.Is(err, employeetask.ErrNotFound):
 		writeError(w, http.StatusNotFound, "employee task not found")
+	case errors.Is(err, employeetask.ErrStopped):
+		writeError(w, http.StatusConflict, "the task was stopped; start new work instead of steering it")
 	case errors.Is(err, employeetask.ErrRunNotReady):
 		writeError(w, http.StatusConflict, "the previous execution has not proven that it stopped")
 	case errors.Is(err, employeetask.ErrConflict), errors.Is(err, employeetask.ErrActiveRun):

@@ -57,9 +57,9 @@ Direct 的 `completion_notice_policy` 默认 `always`，保持正常结果及用
 
 ## 纠正在途任务（steer）
 
-`steer_task` 是 Task Service steer 的前台入口（合同见 [task-steer.md](task-steer.md#task-service-steer)）。它只纠正同一场域内、同一请求者自己的 Direct 任务：Host 选目标，请求者只有一个运行中的任务、或 30 分钟内只结束过一个任务时直接作用于它；有多个候选时把候选列表交回模型，由模型带 `task_id` 再调用或追问请求者，不新建 Task。
+`steer_task` 是 Task Service steer 的前台入口（合同见 [task-steer.md](task-steer.md#task-service-steer)）。它只纠正同一场域内、同一请求者自己的 Direct 任务：Host 选目标，只有请求者恰好一个候选（运行中，或 30 分钟内 ready/成功）时才直接作用于它；有多个候选时把候选列表交回模型，由模型带 `task_id` 再调用或追问请求者，不新建 Task。被人工停止或失败的任务不作为隐式目标，纠正也不会重启被人工停止的任务。
 
-执行中的 Run 被取消并挂上退出门闩，进程确认退出后续跑才能被认领；续跑带着全部纠正和原工作包，在同一 runtime 上接回原 provider session 与 workdir。尚未认领的 Run 直接吸收纠正。续跑的结果回复到纠正这条消息；被替换的旧 Run 不发取消通知。前台调用预算不变，一次模型调用即可完成纠正与接单回复。
+执行中的 Run 被取消并挂上退出门闩，进程确认退出后续跑才能被认领；续跑带着全部纠正和原工作包，在同一 runtime 上接回原 provider session 与 workdir。尚未认领的 Run 直接吸收纠正。纠正只带来自己的身份令牌，续跑的结果仍作为原请求的回复送达；被替换的旧 Run 不发取消通知。前台调用预算不变，一次模型调用即可完成纠正与接单回复。
 
 带结构锚点（continuation、task_finished 任务引用或 `control.targetExternalTaskID`）进入 Employee 的事件仍保持 `employee_continuation_not_ready` held；本工具处理没有这类锚点、由模型判断为纠正的普通消息（包括普通引用回复）。
 
