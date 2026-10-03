@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS employee_watchdog_notice_action_idx;
