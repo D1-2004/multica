@@ -13,6 +13,12 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
+// The DM person view has no production gate (it is on for every
+// employee-mode agent), so the eval binding is unconditional.
+func init() {
+	memoryEvalEnable[memoryEvalPersonView] = func(*testing.T, memoryEvalTarget) bool { return true }
+}
+
 func employeeObserved(kind employeememory.LearningType, key, text string) employeememory.LearningRecord {
 	return employeememory.LearningRecord{Type: kind, Key: key, Insight: text, Confidence: 4, Source: employeememory.LearningSourceObserved}
 }

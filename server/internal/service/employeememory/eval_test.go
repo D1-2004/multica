@@ -26,15 +26,6 @@ import (
 )
 
 var storeEvalKnownGaps = map[string]string{
-	"instruction-filter/chinese-ignore-previous": "M1: Chinese instruction filter",
-	"instruction-filter/chinese-role-change":     "M1: Chinese instruction filter",
-	"instruction-filter/chinese-system-identity": "M1: Chinese instruction filter",
-	"instruction-filter/chinese-skip-review":     "M1: Chinese instruction filter",
-	"instruction-filter/chinese-approve-all":     "M1: Chinese instruction filter",
-	"instruction-filter/chinese-no-approval":     "M1: Chinese instruction filter",
-	"instruction-filter/chinese-no-confirmation": "M1: Chinese instruction filter",
-	"instruction-filter/chinese-system-prompt":   "M1: Chinese instruction filter",
-	"deep-corpus/older-relevant-record-recalled": "M1: retrieval corpus is not cut to the 100 newest before ranking",
 	"scene-conflict/cross-author-both-active":    "M5: cross-author conflict kept",
 	"scene-conflict/conflict-points-at-previous": "M5: conflicts_with",
 	"learning-types/fact-accepted":               "M5: LearningType fact",

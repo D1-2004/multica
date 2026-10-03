@@ -50,21 +50,6 @@ import (
 // memoryEvalKnownGaps maps "<job>/<check>" to the work package expected to
 // turn it green. Remove an entry in the change that makes its check pass.
 var memoryEvalKnownGaps = map[string]string{
-	// M1 foreground brief v2 (retrieval, pinned, verified section, denoise, person view, manifest).
-	"brief-retrieval/warm-recalls-older-relevant-record":    "M1: query-ranked retrieval block",
-	"brief-retrieval/cold-injects-no-unrelated-record":      "M1: forced retrieval block, no recency dump",
-	"brief-retrieval/cold-states-what-was-searched":         "M1: retrieval block names the searched terms",
-	"brief-retrieval/pinned-preference-without-overlap":     "M1: [P] pinned preferences",
-	"brief-retrieval/no-cross-case-pollution":               "M1: query-ranked retrieval block",
-	"brief-retrieval/hides-internal-record-fields":          "M1: brief renders without evidence/confidence/source_id",
-	"brief-retrieval/manifest-lists-injected-ids":           "M1: MemoryManifest in the frozen input",
-	"brief-retrieval/langfuse-manifest-metadata":            "M1: employee_loop trace metadata memory_manifest",
-	"brief-retrieval/langfuse-query-terms":                  "M1: employee_loop trace metadata memory_query_terms",
-	"denoise/run-candidate-not-written":                     "M1: W4 retires run-* inferred candidates",
-	"denoise/greeting-brief-has-no-inferred-candidate":      "M1: brief excludes inferred records",
-	"denoise/greeting-brief-says-no-searchable-terms":       "M1: retrieval block with fewer than two terms",
-	"privacy/person-view-dm-recalls-own-group-preference":   "M1: person view (D2)",
-	"experience-reuse/brief-marks-verified-experience":      "M1: [V] verified section",
 	"experience-reuse/packet-has-separate-memory-section":   "M4: work packet MEMORY section",
 	"experience-reuse/context-used-lists-memory-id":         "M4: ContextUsed memory:<id>",
 	"experience-reuse/context-used-lists-history-job":       "M4: ContextUsed history:<job_id>",
