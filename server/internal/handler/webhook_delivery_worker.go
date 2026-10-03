@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -149,32 +148,30 @@ func (w *WebhookDeliveryWorker) ProcessNext(ctx context.Context) (bool, error) {
 		return true, w.complete(ctx, delivery, deliveryStatusFailed, pgtype.UUID{}, "delivery ownership mismatch")
 	}
 
-	headers := headersFromSelected(delivery.SelectedHeaders)
-	if delivery.ContentType.Valid {
-		headers.Set("Content-Type", delivery.ContentType.String)
-	}
-	envelope, err := normalizeWebhookPayload(delivery.RawBody, headers)
-	if err != nil {
-		return true, w.complete(ctx, delivery, deliveryStatusFailed, pgtype.UUID{}, "normalize stored body: "+err.Error())
-	}
-	if delivery.ReceivedAt.Valid {
-		envelope.Request.ReceivedAt = delivery.ReceivedAt.Time.UTC().Format(time.RFC3339)
-	}
-	payload, err := json.Marshal(envelope)
-	if err != nil {
-		return true, w.retryOrFail(ctx, delivery, fmt.Errorf("encode envelope: %w", err))
-	}
-
 	// Once ingress has synchronously admitted a run and returned accepted or
-	// skipped, that decision is durable. Re-check mutable trigger/autopilot
-	// state only for deliveries recovered from the pre-admission crash window;
-	// otherwise a pause immediately after the response could strand the run.
-	_, admissionErr := w.h.Queries.GetAutopilotRunByWebhookDelivery(ctx, delivery.ID)
+	// skipped, that decision is durable: the run keeps the payload and route
+	// it was admitted with. Re-check mutable trigger/autopilot state only for
+	// deliveries recovered from the pre-admission crash window; otherwise a
+	// pause immediately after the response could strand the run.
+	admitted, admissionErr := w.h.Queries.GetAutopilotRunByWebhookDelivery(ctx, delivery.ID)
 	hasAdmittedRun := admissionErr == nil
 	if admissionErr != nil && !errors.Is(admissionErr, pgx.ErrNoRows) {
 		return true, w.retryOrFail(ctx, delivery, fmt.Errorf("load admitted run: %w", admissionErr))
 	}
+	payload := admitted.TriggerPayload
 	if !hasAdmittedRun {
+		// Rebuild the accepted input from the delivery row: the first
+		// receivedAt and the stored body, proven by the frozen digest.
+		source, err := w.h.loadWebhookFrozenSource(ctx, delivery)
+		switch {
+		case errors.Is(err, errWebhookSourceDrift):
+			return true, w.complete(ctx, delivery, deliveryStatusFailed, pgtype.UUID{}, webhookSourceDigestMismatch)
+		case errors.Is(err, errWebhookStoredBodyInvalid):
+			return true, w.complete(ctx, delivery, deliveryStatusFailed, pgtype.UUID{}, err.Error())
+		case err != nil:
+			return true, w.retryOrFail(ctx, delivery, err)
+		}
+		payload = source.Payload
 		switch {
 		case !trigger.Enabled:
 			return true, w.complete(ctx, delivery, deliveryStatusIgnored, pgtype.UUID{}, "trigger_disabled")
@@ -182,8 +179,18 @@ func (w *WebhookDeliveryWorker) ProcessNext(ctx context.Context) (bool, error) {
 			return true, w.complete(ctx, delivery, deliveryStatusIgnored, pgtype.UUID{}, "autopilot_archived")
 		case autopilot.Status != "active":
 			return true, w.complete(ctx, delivery, deliveryStatusIgnored, pgtype.UUID{}, "autopilot_paused")
-		case !webhookEventAllowedByTriggerScope(trigger.EventFilters, envelope):
+		case !webhookEventAllowedByTriggerScope(trigger.EventFilters, source.Envelope):
 			return true, w.complete(ctx, delivery, deliveryStatusIgnored, pgtype.UUID{}, "event_filtered")
+		}
+		current, problem, err := w.h.resolveWebhookEndpointBinding(ctx, autopilot, trigger.ID, delivery.Provider, trigger.SigningSecret.String)
+		if err != nil {
+			return true, w.retryOrFail(ctx, delivery, err)
+		}
+		if problem != "" {
+			return true, w.complete(ctx, delivery, deliveryStatusIgnored, pgtype.UUID{}, problem)
+		}
+		if source.Binding.Version > 0 && current.routeKey() != source.Binding.routeKey() {
+			return true, w.complete(ctx, delivery, deliveryStatusIgnored, pgtype.UUID{}, webhookBindingChanged)
 		}
 	}
 
