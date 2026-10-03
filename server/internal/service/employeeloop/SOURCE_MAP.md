@@ -233,3 +233,20 @@ preparation consumes a reservation but creates no generation; cached responses
 create neither new requests nor effects. Historical snapshots keep their original
 request bytes. This model plan and the bounded recent-history snapshot share
 marker 6; no copied-kernel scheduler, model router, or follow-up pass is added.
+
+
+## Current tasks and successful continuation
+
+The fixed source's `task_addressing.go` binds work to a thread, source task or
+explicit task ID; a bare mention is not an address. Multica's bounded `t1`
+candidates are a Host adaptation, scoped to the admitted source/requester and
+scene, not a copied upstream implicit "latest task" resolver. `read_task` loads
+current PostgreSQL state before `continue_task` may resume a successful goal.
+`task_ledger.go` and `notification_context.go` supply the retained mechanism:
+assemble a new work packet from recorded actions, the current request and prior
+reports without a summary model. PostgreSQL retains the full ledger while only
+its injected projection is bounded; executor reports remain attributed reports.
+Resume, existing queue, Run and tool journal commit together. Existing dispatch,
+Redis wakeups and runtime claim remain the single execution path. Per-Run notice
+and terminal-fact proof follow the newly accepted source. Marker 8 gates these
+new tools and candidate snapshots; historical snapshots are replayed unchanged.

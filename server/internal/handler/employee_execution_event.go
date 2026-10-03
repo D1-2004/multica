@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"strings"
 	"time"
 
@@ -27,10 +28,11 @@ const employeeExecutionSource = "employee.execution"
 const employeeExecutionSchema = "employee.execution/1"
 
 // Keep the version-1 storage wrapper recognizable to old readers. Proof version
-// 2 accepts resolved legacy receipts as well as unified receipts. Old readers
+// 3 also verifies explicit continuations using their committed resume input.
+// Version 2 accepts resolved legacy receipts as well as unified receipts. Old readers
 // skip either wrapper; new readers reassess only older proofs, never downgrade
 // a newer proof or require a foreground replica-marker change.
-const employeeExecutionProofVersion = 2
+const employeeExecutionProofVersion = 3
 
 // employeeExecutionTerminal is a fact, never a continuation or a user message.
 // The output remains on Run/queue; the envelope contains only durable references.
@@ -56,6 +58,8 @@ type employeeExecutionBinding struct {
 	PrincipalID         pgtype.UUID
 	SourceRef           string
 	Original            db.SceneEventReceipt
+	Source              employeeSourceMessage
+	Continuation        bool
 }
 
 type employeeExecutionContext struct {
@@ -309,17 +313,7 @@ func (h *Handler) employeeExecutionOrigin(ctx context.Context, tx pgx.Tx, b *emp
 	if job.State != "completed" {
 		return "source_job_pending", nil
 	}
-	var saved struct {
-		Input json.RawMessage `json:"employee_direct_input"`
-	}
-	if json.Unmarshal(b.Queue.Context, &saved) != nil {
-		return "execution_input_mismatch", nil
-	}
-	var original employeeExecutionContext
-	frozenQueue := b.Queue
-	frozenQueue.Context = saved.Input
-	frozenDirect, valid := service.ParseDirectTaskContext(frozenQueue)
-	if !valid || frozenDirect != c || json.Unmarshal(saved.Input, &original) != nil || original != metadata {
+	if !employeeExecutionInputMatches(b.Queue, c, metadata) {
 		return "execution_input_mismatch", nil
 	}
 	for _, item := range job.Items {
@@ -362,7 +356,7 @@ func (h *Handler) employeeExecutionOrigin(ctx context.Context, tx pgx.Tx, b *emp
 			if original.PrincipalID != principal || util.UUIDToString(original.SceneID) != b.SceneID || original.Reason != "" || !resolvedRoute {
 				return "source_receipt_mismatch", nil
 			}
-			b.SourceReceiptID, b.PrincipalID, b.Original = item.ReceiptID, principal, original
+			b.SourceReceiptID, b.PrincipalID, b.Original, b.Source = item.ReceiptID, principal, original, message
 		}
 	}
 	if b.SourceReceiptID == "" {
@@ -371,8 +365,22 @@ func (h *Handler) employeeExecutionOrigin(ctx context.Context, tx pgx.Tx, b *emp
 	return employeeExecutionDispatchProof(ctx, tx, b)
 }
 
+func employeeExecutionInputMatches(queue db.AgentTaskQueue, direct service.DirectTaskContext, metadata employeeExecutionContext) bool {
+	var saved struct {
+		Input json.RawMessage `json:"employee_direct_input"`
+	}
+	if json.Unmarshal(queue.Context, &saved) != nil {
+		return false
+	}
+	var original employeeExecutionContext
+	queue.Context = saved.Input
+	frozenDirect, valid := service.ParseDirectTaskContext(queue)
+	return valid && frozenDirect == direct && json.Unmarshal(saved.Input, &original) == nil && original == metadata
+}
+
 // A self-consistent mutable queue context is not provenance. Match the original
-// run_started ledger key and the Host's committed dispatch tool checkpoint.
+// run_started ledger key and the Host's committed dispatch tool checkpoint. A
+// continuation additionally proves the exact accepted resume input boundary.
 func employeeExecutionDispatchProof(ctx context.Context, tx pgx.Tx, b *employeeExecutionBinding) (string, error) {
 	var key, queue string
 	var revision int64
@@ -399,7 +407,7 @@ func employeeExecutionDispatchProof(ctx context.Context, tx pgx.Tx, b *employeeE
 		Input  employeeloop.ToolCall `json:"input"`
 		Result employeeToolRecord    `json:"result"`
 	}
-	if json.Unmarshal(raw, &saved) != nil || saved.Input.NativeToolCallID != callID || saved.Input.Name != "dispatch_task" || saved.Input.Arguments["source_ref"] != b.SourceRef || saved.Result.Failure != "" || saved.Result.Result.Receipt != b.RunID {
+	if json.Unmarshal(raw, &saved) != nil || saved.Input.NativeToolCallID != callID || saved.Input.Arguments["source_ref"] != b.SourceRef || saved.Result.Failure != "" || saved.Result.Result.Receipt != b.RunID {
 		return "source_dispatch_missing", nil
 	}
 	var ids struct {
@@ -410,6 +418,36 @@ func employeeExecutionDispatchProof(ctx context.Context, tx pgx.Tx, b *employeeE
 	if json.Unmarshal([]byte(saved.Result.Result.Content), &ids) != nil || ids.TaskID != b.TaskID || ids.RunID != b.RunID || ids.QueueTaskID != b.QueueTaskID {
 		return "source_dispatch_missing", nil
 	}
+	if saved.Input.Name == "dispatch_task" {
+		return "", nil
+	}
+	if saved.Input.Name != "continue_task" || saved.Result.Result.Terminal == nil || saved.Result.Result.Terminal.Kind != employeeloop.Dispatched {
+		return "source_dispatch_missing", nil
+	}
+	// The queue may acquire runtime fields after dispatch. Its frozen Host input
+	// must still identify the same current source, principal and execution.
+	direct, valid := service.ParseDirectTaskContext(b.Queue)
+	metadata := employeeExecutionContext{JobID: b.JobID, SourceRef: b.SourceRef, Owner: "employee", Scene: scene.Ref{SceneID: b.SceneID}}
+	if !valid || !employeeExecutionInputMatches(b.Queue, direct, metadata) {
+		return "execution_input_mismatch", nil
+	}
+	var body, actor string
+	var resumedRevision int64
+	err = tx.QueryRow(ctx, `SELECT e.body,e.actor_ref,e.goal_revision FROM employee_task_entry e
+ JOIN employee_task_run r ON r.task_id=e.task_id AND r.workspace_id=e.workspace_id AND r.agent_id=e.agent_id AND r.tenant_org_id=e.tenant_org_id AND r.input_seq=e.seq
+ WHERE e.workspace_id=$1::uuid AND e.agent_id=$2::uuid AND e.tenant_org_id=$3 AND e.task_id=$4::uuid AND r.id=$5::uuid
+ AND e.kind='resumed' AND e.source_namespace='employee_scene' AND e.source_key=$6 AND e.run_id IS NULL`, b.Scope.WorkspaceID, b.Scope.AgentID, b.Scope.TenantOrgID, b.TaskID, b.RunID, prefix+callID+"/resume").Scan(&body, &actor, &resumedRevision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "source_continuation_missing", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var accepted employeeSourceMessage
+	if resumedRevision != b.GoalRevision || actor != b.Requester || actor != b.Source.RequesterRef || json.Unmarshal([]byte(body), &accepted) != nil || !reflect.DeepEqual(accepted, b.Source) {
+		return "source_continuation_mismatch", nil
+	}
+	b.Continuation = true
 	return "", nil
 }
 

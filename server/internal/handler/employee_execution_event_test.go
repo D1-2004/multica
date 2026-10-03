@@ -393,7 +393,7 @@ func TestEmployeeExecutionEventSkipIsVersionedAndPreservesDirectReplay(t *testin
 	if err := json.Unmarshal(state, &skip); err != nil {
 		t.Fatal(err)
 	}
-	if !unchanged || skip["version"] != float64(1) || skip["proof_version"] != float64(2) || skip["run_id"] != f.runID || skip["reason"] != "source_job_missing" || len(skip) != 4 {
+	if !unchanged || skip["version"] != float64(1) || skip["proof_version"] != float64(employeeExecutionProofVersion) || skip["run_id"] != f.runID || skip["reason"] != "source_job_missing" || len(skip) != 4 {
 		t.Fatal(unchanged, string(state))
 	}
 	if n, err := f.h.ReconcileEmployeeExecutionEvents(ctx, 100); err != nil || n != 0 {
@@ -410,7 +410,7 @@ func TestEmployeeExecutionEventSkipIsVersionedAndPreservesDirectReplay(t *testin
 }
 
 func TestEmployeeExecutionEventDoesNotDowngradeSettledProof(t *testing.T) {
-	for _, proof := range []int{2, 3} {
+	for _, proof := range []int{employeeExecutionProofVersion, employeeExecutionProofVersion + 1} {
 		t.Run(fmt.Sprint(proof), func(t *testing.T) {
 			f := employeeNoticeDatabase(t, "succeeded", false, false)
 			ctx := context.Background()

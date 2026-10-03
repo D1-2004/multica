@@ -141,9 +141,10 @@ func (w *EmployeeSceneWorker) WaitWithTimeout(timeout time.Duration) bool {
 }
 
 type employeeSavedInput struct {
-	Input      employeeloop.Input             `json:"input"`
-	Config     employeeloop.Config            `json:"config"`
-	ModelRoute *modelregistry.CoordinatorPlan `json:"model_route,omitempty"`
+	Input        employeeloop.Input             `json:"input"`
+	Config       employeeloop.Config            `json:"config"`
+	ModelRoute   *modelregistry.CoordinatorPlan `json:"model_route,omitempty"`
+	CurrentTasks []employeeCurrentTaskBinding   `json:"current_tasks,omitempty"`
 }
 type employeeSavedOutcome struct {
 	Outcome        employeeloop.Outcome `json:"outcome"`
@@ -267,7 +268,10 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (worked bool, ret
 						}
 					} else {
 						saved.Outcome.Kind = employeeloop.Reply
-						saved.Outcome.Reply = "这次没能完成受理，请稍后再试。"
+						saved.Outcome.Reply = employeeContinuationFailureReply(saved.Outcome)
+						if saved.Outcome.Reply == "" {
+							saved.Outcome.Reply = "这次没能完成受理，请稍后再试。"
+						}
 					}
 				}
 			}
@@ -317,6 +321,10 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 		}
 		input.ModelRoute = &plan
 		input.Config.Model = plan.Candidates[0].Model
+	}
+	input.CurrentTasks, input.Input.TaskBrief, err = w.currentTasks(ctx, job, envelopes)
+	if err != nil {
+		return employeeSavedInput{}, err
 	}
 	input.Input.RecentConversation, err = w.recentConversation(ctx, job)
 	if err != nil {

@@ -69,7 +69,7 @@ Direct 的 `completion_notice_policy` 默认 `always`，保持正常结果及用
 
 Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_started` 账本来源和已提交 `dispatch_task` tool journal 的来源及三个结果 ID。provider route 与 Loop owner 独立：具有原目录 scene、空 reason 及完整来源证明的 `legacy/legacy` 和 `unified/ready` receipt 均可承载 Employee 消费，后续事实保留原 route；unmapped、主体或来源错配不能据此通过。当前处理模式或成员资格变化不替换原 principal/owner，不授权新工作。租户围栏复用 `fencedScene/agentTenantOrg`，认可身份组织和已为该 Agent 创建的 tenant；原 DWS 身份缺失仍 held，不借用 robot 的无身份回退。正常事实和旧目标事实写 `completed`，已确认的场域缺失或 tenant 不再匹配写 `held`；临时数据库错误和取消返回可重试错误，回滚不保存 held。两种消费均 `job_id=NULL`，不进入消息窗口或模型。
 
-缺少可信来源的历史记录仅在同 queue/run 终态上 CAS 追加 `employee_execution_event_skip`，保留 `employee_direct_input` 和其他 context。`version=1` 表示兼容存储格式，`proof_version=2` 表示本次来源校验版本，另有 run_id 和固定 reason；此标记不证明事件消费或消息送达。新扫描会重评缺少 proof_version 的旧误判，只将同 Run 的当前或更高 proof_version 作为最终 skip，不降级较新证明。旧副本仍识别 version=1，故不会覆盖新证明而形成滚动降级循环；该事实增量本身不提升 IM marker。合法旧 Run 通过重评后，由原子提交的新事实 receipt 阻止重复消费，历史旧 skip 不再控制结果。原 job 尚未完成时等待恢复，暂时性数据库错误不记永久 skip。
+缺少可信来源的历史记录仅在同 queue/run 终态上 CAS 追加 `employee_execution_event_skip`，保留 `employee_direct_input` 和其他 context。`version=1` 表示兼容存储格式，`proof_version=3` 表示当前来源校验版本（增加成功续接证明），另有 run_id 和固定 reason；此标记不证明事件消费或消息送达。新扫描会重评缺少 proof_version 的旧误判，只将同 Run 的当前或更高 proof_version 作为最终 skip，不降级较新证明。旧副本仍识别 version=1，故不会覆盖新证明而形成滚动降级循环；该事实增量本身不提升 IM marker。合法旧 Run 通过重评后，由原子提交的新事实 receipt 阻止重复消费，历史旧 skip 不再控制结果。原 job 尚未完成时等待恢复，暂时性数据库错误不记永久 skip。
 
 事实及消费同事务提交。提交后 SLS 记录 `employee_execution_event_recorded` 的状态、原因和关联 ID；已受理事实在原 `employee_loop` job trace 中记录零时长 Event，并复用 Langfuse index 关联 Run、queue、新旧 receipt。重投不重复记录成功，回滚不导出成功；观测导出仍是尽力而为，PostgreSQL 记录是事实依据。没有 generation、token usage、新模型 job 或重复通知，结果通知及文件静音继续由既有 notice 路径决定。
 
@@ -83,17 +83,25 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 已有私有 memory 被 supersede 或 forget 后，新历史投影按同 scope/requester 的 `employee-message:<receipt_id>` 与 `evidence_id` 精确撤销对应源消息，并保守隐藏该原 job 的关联整条回复（含多 receipt 派生 notice、确切同步 callback 与 Run notice）。同窗其他用户消息和没有写入 memory 的普通临时纠正仍按时间保留；审计原文不删除，且输出 `withdrawn_memory_evidence_omitted`，不冒充完整对话。不扫描 insight 或按值全场域擦除；后续没有结构化来源引用的独立复述无法据此关联，不宣称全局擦除。
 
+## 当前事项与成功续接
+
+新 wake 为每条可信 source 单独提供最多五个同 workspace/agent/tenant/scene/requester 的 Employee Direct Task 候选。`t1` 等引用只在该源的冻结快照中定位事项，不是权限凭据；候选状态只是快照，询问进度须 `read_task` 实时读取 Task/version、Run 状态和执行报告。多个可能事项应澄清，不能把最近一个自动当作当前事项。普通致谢可首轮简答或 Quiet，Host 不用关键词替模型派发或停止工作。
+
+`continue_task` 只接受当前源明确要求的成功事项续接，引用本 wake 的 `read_task.read_ref`，并在提交时重验 requester、scope、当前权限和版本。同一个 Task 保留目标与 goal_revision，PG 同事务执行 Resume、新 queue、新 Run 及 tool journal；业务失败也通过 savepoint 回滚所有 Task 写入，进程在提交后中断则重放同一回执，不再派发。外部 connector 准备在事务外，提交后复用既有 Runtime 唤醒；Redis 通知和缓存不是唯一事实来源。运行中、失败、取消、目标纠正和真正停止均不由本续接工具开放，不能把取消字段或租约到期当成外部进程已退出。
+
+续接工作包保留本次原话与约束、原目标、追加账本和前次 Run 报告；前次报告明确标为执行方返回内容，不是文件送达或新要求已完成的证明。通知按每次 Run 的受理 job/source 返回，ExecutionEvent 同时核对该 Run 的 resumed 输入边界、run_started 与已提交 continue_task 回执。旧 dispatch 证据链保持原约束。来源 proof_version 为 3，skip 的兼容存储 version 仍为 1，旧 proof 可重评且不覆盖较新 proof。以上新快照和工具由 marker 8 门禁保护；旧快照不补候选或改工具 schema。Task 与 Issue 独立，续接不创建 Issue、不引入另一执行器或额外模型轮。
+
 ## Coordinator / EmployeeLoop 共用模型配置
 
 新 Employee wake 从 Coordinator 的全局配置读取有效主模型与降级链，未配置时沿用相同 Diamond 默认值。输入快照只冻结配置 revision、候选 provider/model 引用和计划版本，不保存 URL 或密钥。每次实际请求使用单次 adapter，重新核验当前 provider/model 是否启用并读取当前密钥和地址；密钥轮换不修改冻结选择，禁用或删除候选不能借旧快照重新授权。配置变更只改变之后的新 wake，不把恢复中的候选替换成新链。
 
 模型 journal 在 I/O 前保存当前候选及预算预留，失败后原子保存下一候选；可降级失败沿冻结链前进，成功后的工具轮继续使用同一候选。provider 的 SDK 重试关闭，不调用 Coordinator 内部可多次请求的 Route.Chat。整个 wake 最多三次预留，因此实际 HTTP 不超过三次；当前候选已不可用的准备失败也占一个预留，但不创建 generation。每个实际请求只有一个 generation，记录真实 provider/model、候选序号、冻结配置 revision 和当前 provider 配置 revision。
 
-旧快照不增补模型计划或近期历史，原请求字节和已提交效果保持重放，尚需 I/O 时仍使用原 signup transport。恢复已保存 outcome 或 response/effect journal 不依赖当前新模型链就绪；当前权限、租户、服务、在线副本及 Runtime 门禁仍检查，新的实际请求仍验证凭据。新模型计划与近期对话快照共用 marker 6，旧 worker 不领取这些新语义。
+旧快照不增补模型计划或近期历史，原请求字节和已提交效果保持重放，尚需 I/O 时仍使用原 signup transport。恢复已保存 outcome 或 response/effect journal 不依赖当前新模型链就绪；当前权限、租户、服务、在线副本及 Runtime 门禁仍检查，新的实际请求仍验证凭据。模型计划与近期对话快照最初共用 marker 6；当前统一门禁见下文。
 
 ## 上线与验证边界
 
-处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前 `steer_task`、共享模型计划、近期对话快照及原私有记忆/通知协议使用 `[employee-loop:8]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 解释新工具、错解冻结模型选择或近期对话输入。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
+处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前事项候选、`continue_task` 与 `steer_task`、共享模型计划及原历史/通知协议使用 `[employee-loop:8]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 解释新工具、错解冻结模型选择或近期对话输入。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
 
 首批已验证真实 PostgreSQL 的原子回执/消费、重投、lease 抢占、三请求累计预算、部分成功回执恢复、Quiet、自发消息过滤、身份缺失、超限收束及工作区删除竞争；fake 模型测试证明调用次数和队列事实。真实模型时延、真实发送回执、FC canary 和持久设备滚动兼容必须单独记录，不能用这些测试替代。
 

@@ -158,7 +158,7 @@ func (h *Handler) loadEmployeeNoticeBinding(ctx context.Context, tx pgx.Tx, work
 	return b, nil
 }
 
-// employeeNoticeTarget resolves only the originally selected source. It uses
+// employeeNoticeTarget resolves this Run's accepted source. It uses
 // current membership, invocation, identity and scene fences, never current mode.
 func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employeeNoticeBinding) (dingtalkresponse.ActionInput, bool, error) {
 	var in dingtalkresponse.ActionInput
@@ -213,17 +213,31 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 	if !ok || direct.PrincipalID != env.PrincipalID {
 		return in, false, holdEmployeeNotice("queue_principal_mismatch")
 	}
-	var requestBody string
-	err = tx.QueryRow(ctx, `SELECT body FROM employee_task_entry WHERE task_id=$1::uuid AND kind='request' ORDER BY seq LIMIT 1`, b.TaskID).Scan(&requestBody)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return in, false, holdEmployeeNotice("task_request_missing")
+	proof := employeeExecutionBinding{
+		employeeExecutionTerminal: employeeExecutionTerminal{TaskID: b.TaskID, RunID: b.RunID, QueueTaskID: b.QueueID, GoalRevision: b.RunGoalRevision, SceneID: b.Scope.Scene.SceneID, JobID: b.JobID, SourceReceiptID: source.ReceiptID},
+		Scope:                     employeeentry.Scope{WorkspaceID: b.Scope.WorkspaceID, AgentID: b.Scope.AgentID, TenantOrgID: b.Scope.TenantOrgID, SceneID: b.Scope.Scene.SceneID},
+		Requester:                 b.Requester, Queue: b.Queue, SourceRef: b.SourceRef, Source: source,
 	}
+	reason, err := employeeExecutionDispatchProof(ctx, tx, &proof)
 	if err != nil {
 		return in, false, err
 	}
-	var original employeeSourceMessage
-	if json.Unmarshal([]byte(requestBody), &original) != nil || !reflect.DeepEqual(original, source) {
-		return in, false, holdEmployeeNotice("task_source_mismatch")
+	if reason != "" {
+		return in, false, holdEmployeeNotice(reason)
+	}
+	if !proof.Continuation {
+		var requestBody string
+		err = tx.QueryRow(ctx, `SELECT body FROM employee_task_entry WHERE task_id=$1::uuid AND kind='request' ORDER BY seq LIMIT 1`, b.TaskID).Scan(&requestBody)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return in, false, holdEmployeeNotice("task_request_missing")
+		}
+		if err != nil {
+			return in, false, err
+		}
+		var original employeeSourceMessage
+		if json.Unmarshal([]byte(requestBody), &original) != nil || !reflect.DeepEqual(original, source) {
+			return in, false, holdEmployeeNotice("task_source_mismatch")
+		}
 	}
 	if _, err := validateEmployeeCompletionNoticePolicy(b.CompletionNotice, source); err != nil {
 		return in, false, holdEmployeeNotice("completion_notice_source_mismatch")
