@@ -144,13 +144,14 @@ def act(sid, kind, actor, wait=None, conv=None, **kw):
     return s
 
 
-def obs(sid, regex, since=None, timeout=300, conv=None, optional=False, negative=False):
+def obs(sid, regex, since=None, timeout=300, conv=None, optional=False, negative=False, segment=None):
     o = {"until_regex": regex, "timeout_s": timeout}
     if since: o["since_step"] = since
     if optional: o["optional"] = True
     if negative: o["negative"] = True
     s = {"id": sid, "observe": o}
     if conv: s["conversation"] = conv
+    if segment: s["segment"] = segment
     return s
 
 

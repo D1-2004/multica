@@ -14,6 +14,7 @@ Differences from the v1 driver (harness-gaps §2):
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import re
 import time
@@ -163,118 +164,242 @@ def speak(step: dict[str, Any], case: dict[str, Any], spec: dict[str, Any], rec:
     return sent
 
 
+def latest_attempt(cases_dir: Path, case_id: str) -> tuple[Path, dict[str, Any]] | None:
+    found = sorted(cases_dir.glob(f"{case_id}.a*.driver.json"), key=lambda x: int(x.name.split(".a")[-1].split(".")[0]))
+    return (found[-1], load_json(found[-1])) if found else None
+
+
+class CaseRun:
+    """One case attempt (or one segment of it) as the driver plays it."""
+
+    def __init__(self, case: dict[str, Any], spec: dict[str, Any], rec: dict[str, Any], out_path: Path,
+                 rd: Path, log=print) -> None:
+        self.case, self.spec, self.rec, self.out_path, self.rd, self.log = case, spec, rec, out_path, rd, log
+        self.vars = rec["vars"]
+        self.aliases = spec["defaults"].get("aliases") or {}
+        self.defaults = spec["defaults"].get("wait", {})
+        self.landed_by_step: dict[str, dict[str, Any]] = {}
+        self.claimed: set[str] = set()
+        for step in rec["steps"]:  # resume: earlier segments' landings stay referable
+            landed = (step.get("send") or {}).get("landed") or []
+            if landed:
+                self.landed_by_step[step["id"]] = landed[0]
+                self.claimed.add(landed[0]["messageId"])
+
+    # -- plumbing
+    def reg(self) -> dict[str, Any]:
+        reg = registry()
+        reg["conversations"].update(self.rec.get("conversations_overlay") or {})
+        return reg
+
+    def save(self) -> None:
+        write_json(self.out_path, self.rec)
+
+    def render(self, value: Any) -> Any:
+        return cases_v2.render(value, self.vars, self.aliases)
+
+    def emp_ids(self, reg: dict[str, Any]) -> set[str]:
+        return set(reg["employee"]["open_ids"].values())
+
+    # -- steps
+    def run_steps(self, steps: list[dict[str, Any]]) -> None:
+        for step in steps:
+            reg = self.reg()
+            conv_name = step.get("conversation", self.case["conversation"])
+            if "observe" in step:
+                self.observe(step, reg, conv_name)
+            elif step.get("kind"):
+                self.action(step, reg, conv_name)
+            else:
+                self.say(step, reg, conv_name)
+            if self.rec["status"] != "running":
+                return
+
+    def observe(self, step: dict[str, Any], reg: dict[str, Any], conv_name: str) -> None:
+        obs = step["observe"]
+        conv = reg["conversations"][conv_name]
+        ref = self.landed_by_step[obs["since_step"]] if obs.get("since_step") else list(self.landed_by_step.values())[-1]
+        poll_rec = observe_v2(reg, conv, ref["createTime"], self.render(obs["until_regex"]),
+                              obs.get("timeout_s", 300), bool(obs.get("include_placeholders")))
+        self.rec["steps"].append({"id": step["id"], "observe": obs, "conversation": conv_name, "cid": conv["cid"],
+                                  "segment": step.get("segment"), "poll": poll_rec, "actor": None, "role": None})
+        self.save()
+        self.log(f"[{self.case['id']}] {step['id']} observe matched={poll_rec['matched']} in {poll_rec['waited_s']}s")
+
+    def action(self, step: dict[str, Any], reg: dict[str, Any], conv_name: str) -> None:
+        handler = ACTIONS.get(step["kind"])
+        if handler is None:
+            raise StepError(f"action kind {step['kind']} is not implemented")
+        handler(self, step, reg, conv_name)
+
+    def say(self, step: dict[str, Any], reg: dict[str, Any], conv_name: str) -> None:
+        conv = reg["conversations"][conv_name]
+        marker = f"{self.rec['run_id']}:{self.case['id']}:a{self.rec['attempt']}:{step['id']}"
+        if not conv.get("cid"):
+            actor = self.case["roles"][step["actor"]]
+            opened = ensure_dm(reg, conv_name, actor, self.render(step["text"]), marker)
+            self.rec.setdefault("opened_conversations", []).append({"conversation": conv_name, **opened})
+            reg = self.reg()
+            conv = reg["conversations"][conv_name]
+        sent = speak(step, self.case, self.spec, self.rec, reg, conv_name, conv, self.vars, self.landed_by_step,
+                     self.claimed, marker)
+        self.record_send(step, conv_name, conv, sent)
+
+    def record_send(self, step: dict[str, Any], conv_name: str, conv: dict[str, Any], sent: dict[str, Any]) -> None:
+        step_rec: dict[str, Any] = {"id": step["id"], "role": step.get("actor"), "actor": sent["actor"],
+                                    "conversation": conv_name, "cid": conv["cid"], "at": step.get("at", []),
+                                    "segment": step.get("segment"), "kind": step.get("kind"), "send": sent}
+        self.rec["steps"].append(step_rec)
+        self.save()
+        self.log(f"[{self.case['id']}] {step['id']} as {sent['actor']}: landing={sent['landing_count']} "
+                 f"{str(sent.get('text', ''))[:50]!r}")
+        if not sent["ok"]:
+            self.rec["status"] = "send_failed" if sent["landing_count"] == 0 else "send_duplicated"
+            return
+        landed = sent["landed"][0]
+        self.landed_by_step[step["id"]] = landed
+        self.claimed.add(landed["messageId"])
+        self.wait(step, step_rec, landed, sent["reader"], conv)
+
+    def wait(self, step: dict[str, Any], step_rec: dict[str, Any], landed: dict[str, Any], reader: str,
+             conv: dict[str, Any]) -> None:
+        if not step.get("wait"):
+            return
+        reg = self.reg()
+        emp_ids = self.emp_ids(reg)
+        wait = dict(self.defaults.get(step["wait"]["mode"], {}))
+        wait.update(step["wait"])
+        mode = wait.pop("mode")
+        if mode == "none":
+            time.sleep(wait.get("pause_s", 5))
+            return
+        since_step = wait.pop("since_step", None)
+        since = self.landed_by_step[since_step]["createTime"] if since_step else landed["createTime"]
+        common = dict(profile=reg["actors"][reader]["profile"], cid=conv["cid"], since=since, employee_ids=emp_ids,
+                      employee_name=reg["employee"]["name"], source_message_id=landed["messageId"])
+        if mode == "optional":
+            poll_rec = im.poll(mode="reply", timeout_s=wait.get("window_s", 45), settle_s=wait.get("settle_s", 15),
+                               **common)
+            poll_rec["mode"] = "optional"
+        else:
+            kwargs = {k: wait[k] for k in ("timeout_s", "settle_s", "window_s", "min_replies") if k in wait}
+            poll_rec = im.poll(mode="reply" if mode == "reply" else "silence", **kwargs, **common)
+        poll_rec["reader"] = reader
+        step_rec["wait"] = {"mode": mode, **wait, "since_step": since_step}
+        step_rec["poll"] = poll_rec
+        self.save()
+        self.log(f"[{self.case['id']}] {step['id']} {mode}: {len(poll_rec['replies'])} employee msg(s)")
+        if poll_rec.get("gateway_offline_seen"):
+            self.rec["status"] = "gateway_offline"
+
+    def snapshot(self, since: _dt.datetime, label: str) -> None:
+        reg = self.reg()
+        for conv_name in sorted({s["conversation"] for s in self.rec["steps"] if s.get("conversation")}):
+            conv = reg["conversations"][conv_name]
+            reader = conv["readers"][0]
+            snap = im.read_window(reg["actors"][reader]["profile"], conv["cid"], since - im.CLOCK_TOLERANCE)
+            self.rec.setdefault("transcripts", {})[f"{conv_name}@{reader}{label}"] = {
+                "covered": snap["covered"], "pages": snap["pages"], "messages": snap["messages"]}
+
+
+ACTIONS: dict[str, Any] = {}
+
+
+def segment_ids(case: dict[str, Any]) -> list[str]:
+    return [s["id"] for s in case.get("segments") or []]
+
+
+def renew_access(case: dict[str, Any], reg: dict[str, Any]) -> dict[str, Any]:
+    """Before a later segment: refresh every actor token; renew 主角's 24 h cross-org grant."""
+    actors = sorted({a for a in case["roles"].values() if a})
+    out = {"refresh": dwsgw.refresh([reg["actors"][a]["profile"] for a in actors])}
+    dwsgw.prepare()
+    if "zhujue" in actors:
+        res = dwsgw.dws(reg["actors"]["zhujue"]["profile"],
+                        ["chat", "data-auth", "cross-org", "--all", "--grant-type", "timed", "--ttl", "24h", "--yes"])
+        out["cross_org_grant"] = {"rc": res["rc"]}
+    return out
+
+
 def run_case_v2(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Path,
                 caps: dict[str, dict[str, bool]], *, skip_gate: bool = False, use_lease: bool = True,
-                log=print) -> dict[str, Any]:
+                segment: str | None = None, redo: bool = False, log=print) -> dict[str, Any]:
     from . import grader_v2
     reg = registry()
     cases_dir = rd / "cases"
     cases_dir.mkdir(parents=True, exist_ok=True)
-    attempt = next_attempt(cases_dir, case["id"])
-    out_path = cases_dir / f"{case['id']}.a{attempt}.driver.json"
-    vars_, row = cases_v2.select_vars(case, run_id, attempt)
-    rec: dict[str, Any] = {
-        "schema": "el2e.driver.v2", "case_id": case["id"], "title": case["title"], "attempt": attempt,
-        "run_id": run_id, "suite": spec.get("suite"), "scene": case.get("scene"), "roles": case["roles"],
-        "vars": vars_, "var_row": row, "capabilities": caps, "started_at": iso(now()), "steps": [],
-        "status": "running", "employee": {"agent_id": reg["employee"]["agent_id"], "name": reg["employee"]["name"]},
-    }
-    plan = cases_v2.classify(case, spec, caps, reg)
-    rec["plan"] = plan
-    if plan["state"] not in ("runnable", "runnable_partial"):
-        rec.update(status=f"not_run:{plan['state']}", ended_at=iso(now()))
-        write_json(out_path, rec)
-        return rec
+    segs = segment_ids(case)
+    if segment and segment not in segs:
+        raise SystemExit(f"{case['id']} has no segment {segment} (segments: {segs})")
+    resuming = bool(segs) and segment not in (None, segs[0])
+    if resuming:
+        prev = latest_attempt(cases_dir, case["id"])
+        if not prev:
+            raise SystemExit(f"{case['id']}: run segment {segs[0]} first")
+        out_path, rec = prev
+        done = [k for k, v in (rec.get("segments") or {}).items() if v.get("status") == "done"]
+        need = segs[:segs.index(segment)]
+        if [x for x in need if x not in done]:
+            raise SystemExit(f"{case['id']}: segments {need} must be done before {segment} (done: {done})")
+        if segment in done and not redo:
+            raise SystemExit(f"{case['id']}: segment {segment} already done; pass --redo to rerun it")
+        spec_seg = next(x for x in case["segments"] if x["id"] == segment)
+        last_end = parse_iso(rec["segments"][need[-1]]["ended_at"])
+        not_before = last_end + _dt.timedelta(hours=float(spec_seg.get("not_before_hours") or 0))
+        if now() < not_before:
+            log(f"[{case['id']}] segment {segment} not before {iso(not_before)}")
+            return {**rec, "status": f"waiting_segment:{segment}", "not_before": iso(not_before)}
+        if redo:
+            rec.setdefault("discarded_steps", []).extend(s for s in rec["steps"] if s.get("segment") == segment)
+            rec["steps"] = [s for s in rec["steps"] if s.get("segment") != segment]
+        rec["status"] = "running"
+        rec["access_renewal"] = renew_access(case, reg)
+    else:
+        attempt = next_attempt(cases_dir, case["id"])
+        out_path = cases_dir / f"{case['id']}.a{attempt}.driver.json"
+        vars_, row = cases_v2.select_vars(case, run_id, attempt)
+        rec = {
+            "schema": "el2e.driver.v2", "case_id": case["id"], "title": case["title"], "attempt": attempt,
+            "run_id": run_id, "suite": spec.get("suite"), "scene": case.get("scene"), "roles": case["roles"],
+            "vars": vars_, "var_row": row, "capabilities": caps, "started_at": iso(now()), "steps": [],
+            "status": "running", "employee": {"agent_id": reg["employee"]["agent_id"], "name": reg["employee"]["name"]},
+        }
+        plan = cases_v2.classify(case, spec, caps, reg)
+        rec["plan"] = plan
+        if plan["state"] not in ("runnable", "runnable_partial"):
+            rec.update(status=f"not_run:{plan['state']}", ended_at=iso(now()))
+            write_json(out_path, rec)
+            return rec
+    segment = segment or (segs[0] if segs else None)
     if not cases_v2.in_run_window(case.get("x_run_window")):
-        rec.update(status="skipped_window", ended_at=iso(now()))
-        write_json(out_path, rec)
-        return rec
+        if not resuming:
+            rec.update(status="skipped_window", ended_at=iso(now()))
+            write_json(out_path, rec)
+        return {**rec, "status": "skipped_window"}
     deap = sorted({a for a in case["roles"].values() if reg["actors"][a].get("kind") == "deap_actor"})
     holder = f"el2e:{run_id}:{case['id']}"
     if deap and use_lease:
         from . import lease
         rec["lease"] = lease.acquire(deap, holder)
         if not rec["lease"].get("ok"):
-            rec.update(status="not_run:actor_leased", ended_at=iso(now()))
+            if not resuming:
+                rec.update(status="not_run:actor_leased", ended_at=iso(now()))
             write_json(out_path, rec)
-            return rec
+            return {**rec, "status": "not_run:actor_leased"}
     rec["gate"] = None if skip_gate else envguard.gate(rd, log=log)
     needs_reset = "memory_reset" in case["requires"].get("harness", [])
-    if needs_reset:
+    final = not segs or segment == segs[-1]
+    if needs_reset and not resuming:
         from . import memory
         rec["memory_before"] = memory.snapshot(case)
-    rec["started_at"] = iso(now())
+    seg_start = now()
+    if not resuming:
+        rec["started_at"] = iso(seg_start)
     write_json(out_path, rec)
-    defaults = spec["defaults"].get("wait", {})
-    aliases = spec["defaults"].get("aliases") or {}
-    landed_by_step: dict[str, dict[str, Any]] = {}
-    claimed: set[str] = set()
-    emp_ids = set(reg["employee"]["open_ids"].values())
+    run = CaseRun(case, spec, rec, out_path, rd, log)
+    steps = [s for s in case["steps"] if not segs or s.get("segment") == segment]
     try:
-        for step in case["steps"]:
-            reg = registry()
-            conv_name = step.get("conversation", case["conversation"])
-            conv = reg["conversations"][conv_name]
-            if "observe" in step:
-                obs = step["observe"]
-                ref = landed_by_step[obs["since_step"]] if obs.get("since_step") else list(landed_by_step.values())[-1]
-                poll_rec = observe_v2(reg, conv, ref["createTime"], cases_v2.render(obs["until_regex"], vars_, aliases),
-                                      obs.get("timeout_s", 300), bool(obs.get("include_placeholders")))
-                rec["steps"].append({"id": step["id"], "observe": obs, "conversation": conv_name, "cid": conv["cid"],
-                                     "poll": poll_rec, "actor": None, "role": None})
-                write_json(out_path, rec)
-                log(f"[{case['id']}] {step['id']} observe matched={poll_rec['matched']} in {poll_rec['waited_s']}s")
-                continue
-            marker = f"{run_id}:{case['id']}:a{attempt}:{step['id']}"
-            if not conv.get("cid"):
-                actor = case["roles"][step["actor"]]
-                text = cases_v2.render(step["text"], vars_, aliases)
-                opened = ensure_dm(reg, conv_name, actor, text, marker)
-                rec.setdefault("opened_conversations", []).append({"conversation": conv_name, **opened})
-                reg = registry()
-                conv = reg["conversations"][conv_name]
-            sent = speak(step, case, spec, rec, reg, conv_name, conv, vars_, landed_by_step, claimed, marker)
-            step_rec: dict[str, Any] = {"id": step["id"], "role": step["actor"], "actor": sent["actor"],
-                                        "conversation": conv_name, "cid": conv["cid"], "at": step.get("at", []),
-                                        "send": sent}
-            rec["steps"].append(step_rec)
-            write_json(out_path, rec)
-            log(f"[{case['id']}] {step['id']} as {sent['actor']}: landing={sent['landing_count']} {sent['text'][:50]!r}")
-            if not sent["ok"]:
-                rec["status"] = "send_failed" if sent["landing_count"] == 0 else "send_duplicated"
-                break
-            landed = sent["landed"][0]
-            landed_by_step[step["id"]] = landed
-            claimed.add(landed["messageId"])
-            wait = dict(defaults.get(step["wait"]["mode"], {}))
-            wait.update(step["wait"])
-            mode = wait.pop("mode")
-            if mode == "none":
-                time.sleep(wait.get("pause_s", 5))
-                continue
-            since_step = wait.pop("since_step", None)
-            since = landed_by_step[since_step]["createTime"] if since_step else landed["createTime"]
-            reader = sent["reader"]
-            kwargs = {k: wait[k] for k in ("timeout_s", "settle_s", "window_s", "min_replies") if k in wait}
-            if mode == "optional":
-                poll_rec = im.poll(profile=reg["actors"][reader]["profile"], cid=conv["cid"], since=since,
-                                   employee_ids=emp_ids, employee_name=reg["employee"]["name"],
-                                   source_message_id=landed["messageId"], mode="reply",
-                                   timeout_s=wait.get("window_s", 45), settle_s=wait.get("settle_s", 15))
-                poll_rec["mode"] = "optional"
-            else:
-                poll_rec = im.poll(profile=reg["actors"][reader]["profile"], cid=conv["cid"], since=since,
-                                   employee_ids=emp_ids, employee_name=reg["employee"]["name"],
-                                   source_message_id=landed["messageId"],
-                                   mode="reply" if mode == "reply" else "silence", **kwargs)
-            poll_rec["reader"] = reader
-            step_rec["wait"] = {"mode": mode, **wait, "since_step": since_step}
-            step_rec["poll"] = poll_rec
-            write_json(out_path, rec)
-            log(f"[{case['id']}] {step['id']} {mode}: {len(poll_rec['replies'])} employee msg(s)")
-            if poll_rec.get("gateway_offline_seen"):
-                rec["status"] = "gateway_offline"
-                break
+        run.run_steps(steps)
     except StepError as exc:
         rec["status"] = "harness_error"
         rec["harness_error"] = str(exc)
@@ -282,25 +407,24 @@ def run_case_v2(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Pat
         if deap and use_lease and (rec.get("lease") or {}).get("ok"):
             from . import lease
             rec["lease_release"] = lease.release(deap, holder)
-    if rec["status"] == "running":
-        rec["status"] = "completed"
     time.sleep(10)  # late replies (task results) still land in the snapshot
-    rec["ended_at"] = iso(now())
-    rec["transcripts"] = {}
-    since = min((parse_dws_time(s["send"]["landed"][0]["createTime"]) for s in rec["steps"]
-                 if (s.get("send") or {}).get("landed")), default=parse_iso(rec["started_at"]))
-    for conv_name in sorted({s["conversation"] for s in rec["steps"]}):
-        conv = registry()["conversations"][conv_name]
-        reader = conv["readers"][0]
-        snap = im.read_window(reg["actors"][reader]["profile"], conv["cid"], since - im.CLOCK_TOLERANCE)
-        rec["transcripts"][f"{conv_name}@{reader}"] = {"covered": snap["covered"], "pages": snap["pages"],
-                                                       "messages": snap["messages"]}
+    seg_end = now()
+    landed_here = [parse_dws_time(s["send"]["landed"][0]["createTime"]) for s in rec["steps"]
+                   if (s.get("send") or {}).get("landed") and (not segs or s.get("segment") == segment)]
+    run.snapshot(min(landed_here, default=seg_start), f"#{segment}" if segs else "")
+    if segs:
+        rec.setdefault("segments", {})[segment] = {
+            "started_at": iso(seg_start), "ended_at": iso(seg_end),
+            "status": "done" if rec["status"] == "running" else rec["status"]}
+    if rec["status"] == "running":
+        rec["status"] = "completed" if final else f"segment_done:{segment}"
+    rec["ended_at"] = iso(seg_end)
     write_json(out_path, rec)
-    if needs_reset and any((s.get("send") or {}).get("landed") for s in rec["steps"]):
+    if final and needs_reset and any((s.get("send") or {}).get("landed") for s in rec["steps"]):
         # Cleanup after the window snapshot, so the reset lines are never graded as case content.
         from . import memory
         rec["memory_after"] = memory.snapshot(case)
-        rec["memory_reset"] = memory.reset(case, f"{run_id}:{case['id']}:a{attempt}")
+        rec["memory_reset"] = memory.reset(case, f"{run_id}:{case['id']}:a{rec['attempt']}")
         write_json(out_path, rec)
         log(f"[{case['id']}] memory reset ok={rec['memory_reset']['ok']}")
     grader_v2.grade_and_write(rd, rec, case, spec, caps)
@@ -308,7 +432,7 @@ def run_case_v2(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Pat
 
 
 def run_v2(paths: list[Path], run_id: str, *, only: list[str], caps: dict[str, dict[str, bool]],
-           skip_gate: bool = False, use_lease: bool = True) -> int:
+           skip_gate: bool = False, use_lease: bool = True, segment: str | None = None, redo: bool = False) -> int:
     rd = run_dir(run_id)
     manifest = load_json(rd / "manifest.json", {}) or {}
     manifest.setdefault("run_id", run_id)
@@ -321,11 +445,14 @@ def run_v2(paths: list[Path], run_id: str, *, only: list[str], caps: dict[str, d
     if only:
         order = {cid: i for i, cid in enumerate(only)}
         pairs = sorted([p for p in pairs if p[1]["id"] in order], key=lambda p: order[p[1]["id"]])
+    if segment and len(pairs) != 1:
+        raise SystemExit("--segment needs exactly one case (--only)")
     rc = 0
     for spec, case in pairs:
-        rec = run_case_v2(case, spec, run_id, rd, caps, skip_gate=skip_gate, use_lease=use_lease)
+        rec = run_case_v2(case, spec, run_id, rd, caps, skip_gate=skip_gate, use_lease=use_lease,
+                          segment=segment, redo=redo)
         print(json.dumps({"case": case["id"], "attempt": rec["attempt"], "status": rec["status"]}, ensure_ascii=False),
               flush=True)
-        if rec["status"] != "completed":
+        if rec["status"] != "completed" and not rec["status"].startswith("segment_done"):
             rc = 1
     return rc

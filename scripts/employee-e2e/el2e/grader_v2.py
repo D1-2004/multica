@@ -185,6 +185,34 @@ def pending_result(check: dict[str, Any], ev: dict[str, Any], api: dict[str, Any
     return {**out, "status": "unsupported"}
 
 
+def segment_validity(rd: Path, rec: dict[str, Any], attributed: dict[str, Any]) -> dict[str, Any]:
+    """Each segment is judged on its own window; inside a window, list the steps whose wait it hit."""
+    def affected(v: dict[str, Any]) -> list[str]:
+        times = [parse_iso(r["time"]) for r in v.get("restarts") or []] + \
+                [parse_iso(d["deploy_started"]) for d in v.get("deploys_overlapping") or []]
+        out = []
+        for step in rec["steps"]:
+            poll = step.get("poll") or {}
+            start = (step.get("msg") or {}).get("createTime") or poll.get("since")
+            if not start:
+                continue
+            lo = parse_dws_time(start)
+            hi = lo + _dt.timedelta(seconds=float(poll.get("waited_s") or 0) + 30)
+            if any(lo <= t <= hi for t in times):
+                out.append(step["id"])
+        return out
+    segments = rec.get("segments") or {}
+    if not segments:
+        v = grader.validity(rd, rec, attributed)
+        v["invalid_steps"] = affected(v) if not v["valid"] else []
+        return v
+    per = {sid: grader.validity(rd, {**rec, "started_at": seg["started_at"], "ended_at": seg["ended_at"]},
+                                {"by_step": {}}) for sid, seg in segments.items()}
+    bad = [sid for sid, v in per.items() if not v["valid"]]
+    return {"valid": not bad, "segments": per, "invalid_segments": bad,
+            "live_code": {sid: v.get("live_code") for sid, v in per.items()}}
+
+
 def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dict[str, Any],
                   caps: dict[str, dict[str, bool]], fresh: dict[str, list] | None = None,
                   judgements: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -232,12 +260,14 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
     at_bad = [s["id"] for s in rec["steps"] if len(s.get("at") or []) >= 2
               and not ((s.get("send") or {}).get("at_render") or {}).get("ok", True)]
     missing = [s["id"] for s in rec["steps"] if s.get("send") and not s.get("msg")]
-    valid = grader.validity(rd, rec, attributed)
+    valid = segment_validity(rd, rec, attributed)
     hard = [r for r in results if r["tier"] == "hard"]
     target = [r for r in results if r["tier"] == "target"]
     status = rec.get("status", "")
     if status.startswith("not_run") or status == "skipped_window":
         verdict, reason = "not_run", status
+    elif status.startswith("segment_done") or status.startswith("waiting_segment"):
+        verdict, reason = "in_progress", f"{status}; resume with `e2e.py v2 run --only {rec['case_id']} --segment <next>`"
     elif status == "harness_error" or missing or uncovered or at_bad or any(r["status"] == "unsupported" for r in results):
         verdict = "harness_error"
         reason = rec.get("harness_error") or (f"steps not landed {missing}" if missing else
@@ -246,7 +276,10 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
     elif status != "completed":
         verdict, reason = "invalid_env", f"driver status {status}"
     elif not valid["valid"]:
-        verdict, reason = "invalid_env", "restart or deploy inside the case window"
+        verdict = "invalid_env"
+        reason = (f"restart or deploy inside segment(s) {valid['invalid_segments']}; rerun them with --segment X --redo"
+                  if valid.get("invalid_segments") else
+                  f"restart or deploy inside the case window (affected steps {valid.get('invalid_steps')})")
     elif any(r["status"] == "fail" for r in hard) or leaks:
         verdict = "fail"
         reason = "; ".join([r["check"] for r in hard if r["status"] == "fail"] +

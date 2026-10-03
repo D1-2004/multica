@@ -55,7 +55,7 @@ EVIDENCE_IMPLEMENTED = {"max_calls_per_wake", "no_effect_for_step", "same_task_r
 JUDGE_KEYS = {"criteria", "checks", "semantic"}
 REQUIRES_CATEGORIES = ("harness", "platform", "release", "ops")
 # P0 harness capabilities implemented here; everything else in requires.harness blocks a case.
-HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2", "memory_reset", "pg_read"}
+HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2", "memory_reset", "pg_read", "segments"}
 
 VAR_REF = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
 ALIAS_REF = re.compile(r"\{=([A-Z][A-Z0-9_]*)\}")
@@ -273,6 +273,13 @@ def validate_case(case: dict[str, Any], spec: dict[str, Any], caps: dict[str, di
                 errors.append(f"{sid}: DEAP actor {actor_key} cannot speak in a 1:1 chat")
         seen.append(step["id"])
     step_ids = set(seen)
+    seg_ids = [x.get("id") for x in case.get("segments") or []]
+    for x in case.get("segments") or []:
+        _unknown(errors, f"{cid}.segments", x, {"id", "not_before_hours", "note"})
+    if seg_ids:
+        for step in case["steps"]:
+            if step.get("segment") not in seg_ids:
+                errors.append(f"{cid}.{step.get('id')}: segment {step.get('segment')!r} not in {seg_ids}")
     _unknown(errors, f"{cid}.judge", case["judge"], JUDGE_KEYS)
     for i, check in enumerate(case["judge"].get("checks", [])):
         errors.extend(validate_check(check, f"{cid}.checks[{i}]", step_ids, pattern_sets, caps))

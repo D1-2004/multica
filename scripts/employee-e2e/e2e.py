@@ -11,7 +11,7 @@
   e2e.py collect --run-id R [--only ID,...]                Langfuse / SLS evidence
   e2e.py grade --run-id R [--baseline R0]                  grader (separate step)
   e2e.py v2 dry-run [--suite G,M,...] [--capabilities k=on,...] [--json OUT]   parse+validate, no send
-  e2e.py v2 run --run-id R [--suite G] [--only G-01,...] [--capabilities ...] [--no-lease]
+  e2e.py v2 run --run-id R [--suite G] [--only G-01,...] [--capabilities ...] [--no-lease] [--segment S [--redo]]
   e2e.py v2 grade --run-id R [--baseline R0] [--capabilities ...]   regrade after `collect`
   e2e.py v2 sync-gaps                                       cases/v2/known_gaps.json from known_gap fields
 
@@ -145,7 +145,8 @@ def cmd_v2(args: argparse.Namespace) -> int:
         from el2e import driver_v2
         return driver_v2.run_v2(_v2_paths(args.suite) or [cases_v2.V2_DIR / n for n in cases_v2.SUITE_FILES],
                                 args.run_id, only=[x for x in (args.only or "").split(",") if x], caps=caps,
-                                skip_gate=args.skip_gate, use_lease=not args.no_lease)
+                                skip_gate=args.skip_gate, use_lease=not args.no_lease,
+                                segment=args.segment, redo=args.redo)
     from el2e import grader_v2
     return grader_v2.grade_run_v2(args.run_id, baseline=args.baseline,
                                   caps=caps if args.capabilities else None)
@@ -211,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
     v2.add_argument("--json")
     v2.add_argument("--skip-gate", action="store_true")
     v2.add_argument("--no-lease", action="store_true")
+    v2.add_argument("--segment", help="run one segment of a segmented case (later segments resume the latest attempt)")
+    v2.add_argument("--redo", action="store_true", help="rerun a segment that already ran (e.g. after invalid_env)")
     v2.set_defaults(fn=cmd_v2)
     args = p.parse_args(argv)
     return args.fn(args)

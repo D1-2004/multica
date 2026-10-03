@@ -80,5 +80,72 @@ class PgReadTests(unittest.TestCase):
         self.assertEqual(res["status"], "pending_evidence")
 
 
+class SegmentTests(unittest.TestCase):
+    def setUp(self) -> None:
+        import tempfile
+        from el2e import cases_v2, driver_v2
+        self.dv, self.cv = driver_v2, cases_v2
+        self.tmp = tempfile.TemporaryDirectory()
+        self.rd = Path(self.tmp.name)
+        self.case = {"id": "S-01", "title": "t", "conversation": "dm_director", "roles": {"D总": "director"},
+                     "segments": [{"id": "d1"}, {"id": "d2", "not_before_hours": 25}],
+                     "requires": {"harness": ["segments"], "platform": [], "release": [], "ops": []},
+                     "status": {"now": "ready", "reason": ""},
+                     "steps": [{"id": "a", "actor": "D总", "text": "x", "segment": "d1", "wait": {"mode": "none"}},
+                               {"id": "b", "actor": "D总", "text": "y", "segment": "d2", "wait": {"mode": "none"}}],
+                     "judge": {"criteria": "", "checks": [], "semantic": []}}
+        self.spec = {"suite": "S", "defaults": {"wait": {"none": {"pause_s": 0}}}}
+        self.caps = cases_v2.load_capabilities()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def fake_run_steps(self, run, steps):
+        for st in steps:
+            run.rec["steps"].append({"id": st["id"], "segment": st.get("segment"), "conversation": "dm_director",
+                                     "send": {"landed": [{"messageId": "m-" + st["id"], "createTime": "2026-10-03 22:00:00"}]}})
+
+    def run_seg(self, segment=None, redo=False):
+        with mock.patch.object(self.dv.CaseRun, "run_steps", new=lambda run, steps: self.fake_run_steps(run, steps)), \
+                mock.patch.object(self.dv.CaseRun, "snapshot"), mock.patch.object(self.dv.time, "sleep"), \
+                mock.patch.object(self.dv.cases_v2, "classify", return_value={"state": "runnable", "reasons": []}), \
+                mock.patch.object(self.dv, "renew_access", return_value={}), \
+                mock.patch("el2e.grader_v2.grade_and_write"):
+            return self.dv.run_case_v2(self.case, self.spec, "R", self.rd, self.caps, skip_gate=True, use_lease=False,
+                                       segment=segment, redo=redo)
+
+    def test_first_segment_then_not_before_then_resume(self) -> None:
+        rec = self.run_seg()
+        self.assertEqual(rec["status"], "segment_done:d1")
+        self.assertEqual([s["id"] for s in rec["steps"]], ["a"])
+        waiting = self.run_seg("d2")
+        self.assertTrue(waiting["status"].startswith("waiting_segment"))
+        path = self.rd / "cases" / "S-01.a1.driver.json"
+        import json
+        saved = json.loads(path.read_text())
+        saved["segments"]["d1"]["ended_at"] = "2026-10-01T00:00:00+08:00"
+        path.write_text(json.dumps(saved))
+        rec = self.run_seg("d2")
+        self.assertEqual(rec["status"], "completed")
+        self.assertEqual([s["id"] for s in rec["steps"]], ["a", "b"])
+        self.assertEqual(rec["vars"], saved["vars"])  # variables shared across segments
+        with self.assertRaises(SystemExit):
+            self.run_seg("d2")  # already done without --redo
+        rec = self.run_seg("d2", redo=True)
+        self.assertEqual([s["id"] for s in rec["steps"]], ["a", "b"])
+        self.assertEqual([s["id"] for s in rec["discarded_steps"]], ["b"])
+
+    def test_segment_validity_is_per_segment(self) -> None:
+        from el2e import grader_v2
+        rec = {"steps": [], "segments": {"d1": {"started_at": "2026-10-03T10:00:00+08:00", "ended_at": "2026-10-03T10:10:00+08:00"},
+                                          "d2": {"started_at": "2026-10-04T11:00:00+08:00", "ended_at": "2026-10-04T11:10:00+08:00"}},
+               "started_at": "2026-10-03T10:00:00+08:00"}
+        (self.rd / "evidence").mkdir()
+        (self.rd / "evidence" / "sls_server_starting.json").write_text(
+            '{"ok": true, "starts": [{"host": "a", "time": "2026-10-04T11:05:00+08:00"}]}')
+        v = grader_v2.segment_validity(self.rd, rec, {"by_step": {}})
+        self.assertEqual(v["invalid_segments"], ["d2"])
+
+
 if __name__ == "__main__":
     unittest.main()
