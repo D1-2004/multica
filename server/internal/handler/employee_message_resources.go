@@ -53,6 +53,9 @@ type employeeMessageResourceReader struct {
 	provider employeeResourceProvider
 	limits   employeeresource.Limits
 	timeout  time.Duration
+	// vision: a verified background vision executor can read images, so
+	// they are Deferred rather than unsupported.
+	vision bool
 }
 
 func newEmployeeMessageResourceReader(w *EmployeeSceneWorker, provider employeeResourceProvider) *employeeMessageResourceReader {
@@ -152,6 +155,9 @@ func (r *employeeMessageResourceReader) Read(ctx context.Context, job employeeen
 			row := employeeResourceRow{key: key, requester: source.RequesterRef, relation: relation, idType: resource.IDType, kind: kinds[i]}
 			if !verdicts[i].Fetch {
 				row.extraction = employeeresource.Extraction{State: verdicts[i].State, Reason: verdicts[i].Reason}
+				if r.vision && verdicts[i].Reason == employeeresource.ReasonVisionUnavailable {
+					row.extraction = employeeresource.Extraction{State: employeeresource.Deferred, Reason: employeeresource.ReasonBackgroundVision}
+				}
 				pending = append(pending, row)
 				continue
 			}
@@ -165,6 +171,10 @@ func (r *employeeMessageResourceReader) Read(ctx context.Context, job employeeen
 					State: employeeresource.Unavailable, Reason: employeeresource.ReasonProviderUnavailable, Retryable: true}}
 				continue
 			default:
+				if image, ok := employeeresource.ExtractImage(file.Name, file.Data, r.limits); ok && r.vision {
+					row.extraction = image
+					break
+				}
 				row.extraction = employeeresource.Extract(file.Name, file.ContentType, file.Data, textLeft, r.limits)
 				textLeft -= len(row.extraction.Text)
 			}
@@ -249,7 +259,9 @@ func (w *EmployeeSceneWorker) resourceContext(ctx context.Context, job employeee
 	if provider == nil && w.handler.DingTalkResponses != nil {
 		provider = w.handler.DingTalkResponses
 	}
-	resources, err := newEmployeeMessageResourceReader(w, provider).Read(ctx, job, envelopes)
+	reader := newEmployeeMessageResourceReader(w, provider)
+	reader.vision = w.visionReady(ctx, job)
+	resources, err := reader.Read(ctx, job, envelopes)
 	if errors.Is(err, employeeentry.ErrLease) || ctx.Err() != nil {
 		return "", err
 	}

@@ -1,0 +1,1 @@
+ALTER TABLE employee_message_resource VALIDATE CONSTRAINT employee_message_resource_state_check;

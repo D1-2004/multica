@@ -400,8 +400,13 @@ func (h *employeeSceneHost) dispatch(ctx context.Context, tx pgx.Tx, source empl
 	if err != nil {
 		return employeeloop.ToolResult{}, err
 	}
+	references, err := employeeResourceReferences(ctx, storeDB, h.job, h.taskScope(), env.PrincipalID, source, env.Command.Event.Data.Conversation.OpenConversationID)
+	if err != nil {
+		return employeeloop.ToolResult{}, err
+	}
 	packet, err := employeetask.Compile(employeetask.CompileInput{
 		Scope: h.taskScope(), PrincipalID: env.PrincipalID, Definition: definition, Prompt: stepPrompt, CompletionNotice: noticePolicy,
+		References:    references,
 		Source:        employeetask.PacketMaterial{Ref: source.SourceRef, Scope: h.taskScope(), PrincipalID: env.PrincipalID, Body: string(evidence)},
 		Upstream:      upstream,
 		History:       employeetask.PacketHistory{State: employeetask.HistoryUnavailable},
