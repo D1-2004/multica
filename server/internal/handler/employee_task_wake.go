@@ -919,7 +919,7 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 		text = employeeCollectionFallbackSummary(view)
 	}
 	actionIDs := []string{}
-	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
+	deliver := func(tx pgx.Tx) error {
 		if wake.Kind == employeeentry.TaskWakeExecutionFollowUp {
 			if err := w.pauseEmployeePlanAfterWake(ctx, tx, job); err != nil {
 				return err
@@ -962,6 +962,12 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 		}
 		actionIDs = append(actionIDs, actionID)
 		return nil
+	}
+	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
+		if err := deliver(tx); err != nil {
+			return err
+		}
+		return w.recordWakeLedgerTx(ctx, tx, job, employeeWakeLedgerEntry(job, nil, string(wake.Kind), saved, actionIDs))
 	})
 	if err == nil {
 		if len(actionIDs) > 0 && h.DingTalkResponses != nil {

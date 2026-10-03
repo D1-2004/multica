@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
+	"github.com/multica-ai/multica/server/internal/service/employeememory/digest"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	openai "github.com/openai/openai-go/v3"
 )
@@ -75,6 +76,8 @@ type EmployeeSceneWorker struct {
 	// CollectionReminders persists a requester-authorized reminder plan in the
 	// collection's creation transaction; nil refuses reminder requests.
 	CollectionReminders CollectionReminderRecorder
+	// MemoryDigest is the scene digest writer (memory M11); nil disables it.
+	MemoryDigest *digest.Writer
 	// origins resolves Tasks for task wakes; producers register their readers.
 	origins *employeeentry.TaskOriginRegistry
 	wake    chan struct{}
@@ -103,7 +106,7 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 	group.Go(func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
-		var lastWatchdogScan time.Time
+		var lastWatchdogScan, lastTaskLedger time.Time
 		for {
 			if w.handler.TaskService != nil {
 				reconcileCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -188,6 +191,15 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 				slog.WarnContext(ctx, "employee task follow-up reconciliation failed", "error", err)
 			}
 			followUpCancel()
+			// Deterministic task_terminal scene ledger entries (no model).
+			if time.Since(lastTaskLedger) >= 30*time.Second {
+				lastTaskLedger = time.Now()
+				ledgerCtx, ledgerCancel := context.WithTimeout(ctx, 5*time.Second)
+				if _, err := w.handler.ReconcileEmployeeSceneTaskLedger(ledgerCtx, 100); err != nil && !errors.Is(err, context.Canceled) {
+					slog.WarnContext(ctx, "employee scene task ledger failed", "error", err)
+				}
+				ledgerCancel()
+			}
 			releaseCtx, releaseCancel := context.WithTimeout(ctx, 5*time.Second)
 			if _, err := w.handler.ReconcileEmployeeUpstreamReleases(releaseCtx, 50); err != nil && !errors.Is(err, context.Canceled) {
 				slog.WarnContext(ctx, "employee upstream release reconciliation failed", "error", err)
@@ -200,6 +212,7 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 			}
 		}
 	})
+	group.Go(func() { runEmployeeMemoryDigest(ctx, w.MemoryDigest) })
 	for range 4 {
 		group.Go(func() {
 			ticker := time.NewTicker(500 * time.Millisecond)
@@ -835,7 +848,7 @@ func (w *EmployeeSceneWorker) complete(ctx context.Context, job employeeentry.Jo
 				actionIDs = append(actionIDs, actionID)
 			}
 		}
-		return nil
+		return w.recordWakeLedgerTx(ctx, tx, job, employeeWakeLedgerEntry(job, employeeWakeLedgerRequests(envelopes), "", saved, actionIDs))
 	})
 	if err == nil {
 		if h.DingTalkResponses != nil {
