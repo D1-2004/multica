@@ -192,7 +192,10 @@ func TestBuildNativeDispatchCommandSkips(t *testing.T) {
 		{"no message id", dws.EventIMAt, func(m *dwsevents.MessageEvent) { m.MessageID = "" }, "missing_message_reference"},
 		{"no conversation", dws.EventIMAllSingleChats, func(m *dwsevents.MessageEvent) { m.ConversationID = "" }, "missing_message_reference"},
 		{"single chat without sender", dws.EventIMAllSingleChats, func(m *dwsevents.MessageEvent) { m.SenderOpenDingTalkID = "" }, "missing_sender"},
-		{"unsubscribed key", dws.EventIMAllGroups, func(*dwsevents.MessageEvent) {}, "unsupported_event_key"},
+		// receive_group_all builds only the Host's proactive wakes; a key
+		// nothing subscribes is still skipped.
+		{"unsubscribed key", dws.EventIMGroup, func(*dwsevents.MessageEvent) {}, "unsupported_event_key"},
+		{"proactive group line without sender", dws.EventIMAllGroups, func(m *dwsevents.MessageEvent) { m.SenderOpenDingTalkID = "" }, "missing_sender"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			m := nativeUnitMessage()

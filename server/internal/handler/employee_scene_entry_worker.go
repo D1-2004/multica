@@ -558,6 +558,9 @@ func (w *EmployeeSceneWorker) buildInput(ctx context.Context, job employeeentry.
 	if invitations != "" {
 		input.Input.FollowUps = append(input.Input.FollowUps, "Collection invitations of the current senders (Host data):\n"+invitations)
 	}
+	if note := employeeUnaddressedWindowNote(envelopes); note != "" {
+		input.Input.FollowUps = append(input.Input.FollowUps, note)
+	}
 	var recent employeeRecentSnapshot
 	recent, err = w.recentConversationSnapshot(ctx, job, transcript)
 	if err != nil {

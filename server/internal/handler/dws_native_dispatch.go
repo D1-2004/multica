@@ -242,6 +242,15 @@ func buildNativeDispatchCommand(in nativeMessageInput) (DispatchCommand, error) 
 		if senderOpenID == "" {
 			return DispatchCommand{}, nativeSkip("missing_sender")
 		}
+	case dws.EventIMAllGroups:
+		// A proactive wake the Host gate admitted for an unaddressed group
+		// line (employee_proactive_wake.go): a known empty mention list, so
+		// the line never counts as addressing this account.
+		if senderOpenID == "" {
+			return DispatchCommand{}, nativeSkip("missing_sender")
+		}
+		conversationType = "group"
+		conversationTitle = strings.TrimSpace(in.ConversationTitle)
 	default:
 		return DispatchCommand{}, nativeSkip("unsupported_event_key")
 	}
