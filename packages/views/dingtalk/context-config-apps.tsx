@@ -1098,7 +1098,11 @@ function OAuthConnectionControl({
             {oauthReady && (
               <Button size="sm" onClick={() => void connect()} disabled={connecting}>
                 {connecting && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
-                {connecting ? t(($) => $.context_config.connecting) : t(($) => $.context_config.connect)}
+                {connecting
+                  ? t(($) => $.context_config.connecting)
+                  : connector.catalogSlug === "github"
+                    ? t(($) => $.context_config.connect_github)
+                    : t(($) => $.context_config.connect)}
               </Button>
             )}
             {connector.acceptsPat && (
@@ -1139,10 +1143,11 @@ function OAuthConnectionControl({
             scopeKey={scopeKey}
             orgId={orgId}
             connectorId={connector.id}
-            installUrl={connector.installUrl}
+            onAdd={oauthReady ? () => void connect() : undefined}
+            adding={connecting}
           />
         ) : (
-          <GitHubInstallHint installUrl={connector.installUrl} />
+          <GitHubInstallHint />
         ))}
     </div>
   );
@@ -1163,15 +1168,10 @@ function GitHubInstallLink({ url, label }: { url: string; label: string }) {
   );
 }
 
-/** Shown before a GitHub account is connected: where the app has to be installed. */
-function GitHubInstallHint({ installUrl }: { installUrl: string }) {
+/** Shown before a GitHub account is connected. The connect button itself opens the install page. */
+function GitHubInstallHint() {
   const { t } = useT("agents");
-  return (
-    <p className="text-caption text-muted-foreground">
-      {t(($) => $.context_config.install_hint)}{" "}
-      <GitHubInstallLink url={installUrl} label={t(($) => $.context_config.install_link)} />
-    </p>
-  );
+  return <p className="text-caption text-muted-foreground">{t(($) => $.context_config.install_hint)}</p>;
 }
 
 /**
@@ -1185,14 +1185,16 @@ function GitHubAppInstallations({
   scopeKey,
   orgId,
   connectorId,
-  installUrl,
+  onAdd,
+  adding,
 }: {
   agentId: string;
   scopeType: ContextWriteScopeType;
   scopeKey: string;
   orgId: string;
   connectorId: string;
-  installUrl: string;
+  onAdd?: () => void;
+  adding: boolean;
 }) {
   const { t } = useT("agents");
   const query = useQuery(
@@ -1248,11 +1250,13 @@ function GitHubAppInstallations({
   }
   return (
     <div className="space-y-1.5 text-caption text-muted-foreground">
-      <p>
-        {t(($) => $.context_config.install_hint)}{" "}
-        <GitHubInstallLink url={installUrl} label={t(($) => $.context_config.install_link)} />
-      </p>
       {body}
+      {onAdd ? (
+        <Button size="sm" variant="outline" onClick={onAdd} disabled={adding}>
+          {adding && <Loader2 className="size-3.5 animate-spin motion-reduce:animate-none" />}
+          {t(($) => $.context_config.install_add)}
+        </Button>
+      ) : null}
     </div>
   );
 }

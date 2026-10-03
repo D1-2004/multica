@@ -351,14 +351,28 @@ desktop list refetches on focus, so the new account shows up on return.
   does not grant them). A token sees a repository only when this App is
   installed on that account or organization and the signed-in user can
   access it. One authorization already covers every installation of the
-  App. The configure page lists them
-  (`GET /api/context-capabilities/agents/{agentId}/github-installations`)
-  and links `https://github.com/apps/<GITHUB_APP_SLUG>/installations/new`
-  (`install_url`, omitted when `GITHUB_APP_SLUG` is unset) so a private
-  repository or another organization's repository is included by installing
-  the App there and selecting those repositories. A personal access token
-  cannot list installations (GitHub returns 403); the page says so instead
-  of pretending the token is an App installation.
+  App. Connecting the environment app opens
+  `https://github.com/apps/<GITHUB_APP_SLUG>/installations/new?state=`
+  (the page where the person picks the account or organization, then all
+  repositories or selected repositories). `GITHUB_APP_SLUG` must be set;
+  an empty slug refuses the start instead of falling back to
+  `/login/oauth/authorize`. A workspace-saved GitHub OAuth client keeps
+  that user authorize URL. The callback accepts `code`, `installation_id`
+  and `setup_action` together. A code that arrives with the installation
+  is exchanged without PKCE. A post-install redirect that has
+  `installation_id` and `setup_action` but no `code` continues, on the
+  same unconsumed state and the same browser cookie, to the user
+  authorization endpoint when the scope has no credential yet; when a
+  credential is already stored it returns to the configure page and does
+  not replace the token. The configure page lists each installation as
+  all repositories or selected repositories
+  (`GET /api/context-capabilities/agents/{agentId}/github-installations`,
+  refetched when the window regains focus). Adding an account goes through
+  the same start. Changing repositories links to the installation's
+  GitHub settings page. `install_url` (omitted when `GITHUB_APP_SLUG` is
+  unset) remains that installation page without a state, for display.
+  A personal access token cannot list installations (GitHub returns 403);
+  the page says so instead of pretending the token is an App installation.
 
   A workspace owner or admin can register that client on Settings →
   连接器配置, or with the same admin API

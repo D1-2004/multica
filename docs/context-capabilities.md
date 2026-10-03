@@ -1225,7 +1225,16 @@ updated_by_name, updated_at}`:
 - Robot Stream path tasks get only the global layer.
 - Per-user OAuth exists only for the official apps in the catalog; custom
   connectors take pasted Bearer tokens. GitHub App user tokens only see
-  repositories where the App is installed.
+  repositories where the App is installed. The configure page's Connect
+  GitHub button opens `https://github.com/apps/<GITHUB_APP_SLUG>/installations/new?state=`.
+  The callback accepts `code`, `installation_id` and `setup_action`. A code
+  from the install page is exchanged without PKCE. A post-install redirect
+  without a code continues into user authorization when no credential is
+  stored yet (the state is not consumed), or returns to the configure page
+  when a credential is already stored. The page lists each covered account
+  or organization as all repositories or selected repositories, and offers
+  add-account and change-repositories. The list refreshes when the window
+  regains focus.
 - A manager's scene list on the configure page is capped at the 1000 most
   recently active scenes of the selected tenant; older scenes stay
   configurable from the web 场域 tree and by scene_id. It is read in one
