@@ -7,6 +7,8 @@
 | Tools take no scene argument | `server/internal/handler/scene_config_mcp.go` (tool definitions) |
 | Routine runs are read-only | `server/internal/handler/scene_config_mcp.go` (`routine_run_read_only`), `server/internal/service/scene_routine.go` (`IsSceneRoutineContext`) |
 | Routines: dedupe, pause kept, 15-minute floor, Asia/Shanghai default, start/end notices | `server/internal/handler/scene_routines.go` |
+| A webhook routine's signing secret is set only by agent managers on the admin route, never from a chat (no MCP tool); views show only `has_signing_secret` | `server/internal/handler/scene_routines.go` (`setSceneRoutineWebhookSecret`), `server/internal/handler/scene_routines_http.go` (`SetAgentContextRoutineWebhookSecret`) |
+| A 1:1 routine created on the configure page sends to the one counterpart named by the scene's Coordinator jobs and Employee messages (`dm_target_unknown`, `dm_target_ambiguous`) | `server/internal/handler/scene_routines.go` (`sceneRoutineDMCounterpart`, `employeeDMSenders`) |
 | Remote MCP servers only; reserved names refused | `server/internal/contextcap/mcp_config.go` (`NormalizeRemoteMCPConfig`), `server/internal/handler/context_capabilities_task.go` (`reservedMCPServerName`) |
 | Groups and 1:1 chats add, re-point, switch and delete remote servers; omitted fields keep stored values; URLs shown masked; notices name who asked and the address | `server/internal/handler/scene_config_mcp.go` (`sceneConfigMCPUpsert`, `maskMCPServerURL`, `sceneConfigNoticeText`) |
 | Routine runs issue no configuration link | `server/internal/handler/scene_config_mcp.go` (`sceneConfigWriteTools`), `server/internal/handler/multica_mcp_context_config.go` (`createContextConfigLink`) |

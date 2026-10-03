@@ -1340,7 +1340,11 @@ arrives. There are no org-level or person-level routines.
   title), trigger kind, cron and timezone as an existing routine of the
   scene is updated instead of duplicated, and keeps its paused or running
   state. A webhook URL is shown in full only in the create and rotate
-  responses.
+  responses. A webhook routine may also require an HMAC signature
+  (`X-Hub-Signature-256` over the raw body): agent managers set or clear
+  its signing secret (16–256 printable characters) on a route of its own;
+  the secret is never returned or logged, views show only
+  `trigger.has_signing_secret`, and a chat cannot set it (no MCP tool).
 - **Who may change them.** `rights.edit_routines` follows the scene rights:
   agent managers (configure page and admin Context Builder). From a
   conversation, the config-qwen-tag-scene tools (§10) act for the scene
@@ -1351,7 +1355,9 @@ arrives. There are no org-level or person-level routines.
   `GET …/routines/{id}/runs` (`{runs: [{id, status, source, failure_reason?,
   created_at, completed_at}]}`, newest 30; reading needs only access to the
   scene). Admin:
-  the same under `/api/agents/{id}/tenants/{orgId}/context/scene/{scene_id}/routines`.
+  the same under `/api/agents/{id}/tenants/{orgId}/context/scene/{scene_id}/routines`,
+  plus `PUT …/routines/{id}/webhook-signing-secret` (`{signing_secret}`,
+  `""` clears; admin only).
   Errors carry codes: `invalid_routine`, `routine_requires_dingtalk_identity`,
   `dm_target_unknown`, `dm_target_ambiguous`, `agent_runtime_required`, `routine_duplicate`,
   `routine_paused`, `scene_kind_without_routines`, `routine_gone` (the

@@ -133,6 +133,9 @@ type sceneRoutineTriggerView struct {
 	NextRunAt        *string  `json:"next_run_at"`
 	NextRuns         []string `json:"next_runs"`
 	WebhookURLMasked string   `json:"webhook_url_masked,omitempty"`
+	// HasSigningSecret tells whether webhook requests must carry an
+	// X-Hub-Signature-256 HMAC; the secret itself is never returned.
+	HasSigningSecret bool `json:"has_signing_secret,omitempty"`
 	// WebhookURL is the full URL, returned only when the token was just
 	// minted (create, rotate).
 	WebhookURL string `json:"webhook_url,omitempty"`
@@ -697,6 +700,51 @@ func (h *Handler) rotateSceneRoutineWebhook(ctx context.Context, routine context
 	return view, nil
 }
 
+// Bounds of a routine webhook signing secret, matching the autopilot
+// trigger API's floor.
+const (
+	sceneRoutineSecretMin = 16
+	sceneRoutineSecretMax = 256
+)
+
+// setSceneRoutineWebhookSecret sets or, with an empty secret, clears the HMAC
+// signing secret of a webhook routine. Webhook requests then need a valid
+// X-Hub-Signature-256 over their raw body. The secret is never returned or
+// logged; accepted deliveries record only its revision fingerprint. The URL
+// token is unchanged.
+func (h *Handler) setSceneRoutineWebhookSecret(ctx context.Context, a contextCapAgent, routine contextcap.Routine, actor sceneRoutineActor, secret string) (sceneRoutineView, error) {
+	ap, trigger, err := h.loadRoutineAutopilot(ctx, routine)
+	if err != nil {
+		return sceneRoutineView{}, err
+	}
+	if trigger.Kind != sceneRoutineTriggerHook {
+		return sceneRoutineView{}, routineInvalid("only a webhook routine has a signing secret")
+	}
+	secret = strings.TrimSpace(secret)
+	if secret != "" {
+		if len(secret) < sceneRoutineSecretMin || len(secret) > sceneRoutineSecretMax {
+			return sceneRoutineView{}, routineInvalid(fmt.Sprintf("signing_secret must be %d to %d characters", sceneRoutineSecretMin, sceneRoutineSecretMax))
+		}
+		for _, r := range secret {
+			if r < 0x21 || r == 0x7f {
+				return sceneRoutineView{}, routineInvalid("signing_secret must be printable without spaces")
+			}
+		}
+	}
+	params := db.SetAutopilotTriggerSigningSecretParams{ID: trigger.ID}
+	if secret != "" {
+		params.SigningSecret = pgtype.Text{String: secret, Valid: true}
+	}
+	updated, err := h.Queries.SetAutopilotTriggerSigningSecret(ctx, params)
+	if err != nil {
+		return sceneRoutineView{}, fmt.Errorf("set webhook signing secret: %w", err)
+	}
+	slog.InfoContext(ctx, "scene routine webhook signing secret changed", "routine_id", routine.ID, "actor_type", actor.Type,
+		"has_signing_secret", secret != "")
+	h.publish(protocol.EventAutopilotUpdated, a.WorkspaceID, actor.Type, util.UUIDToString(actor.id()), map[string]any{"autopilot": autopilotToResponse(ap, nil)})
+	return h.sceneRoutineView(ctx, routine, &ap, &updated)
+}
+
 // listSceneRoutines lists the routines of one scene.
 func (h *Handler) listSceneRoutines(ctx context.Context, a contextCapAgent, sceneID string) ([]sceneRoutineView, error) {
 	routines, err := contextcap.ListSceneRoutines(ctx, h.DB, a.WorkspaceID, a.ID, sceneID)
@@ -782,6 +830,7 @@ func (h *Handler) sceneRoutineView(ctx context.Context, routine contextcap.Routi
 		}
 	} else {
 		view.Trigger.WebhookURLMasked = h.routineWebhookURLMasked(*trigger)
+		view.Trigger.HasSigningSecret = trigger.SigningSecret.Valid && trigger.SigningSecret.String != ""
 	}
 	runs, err := h.Queries.ListAutopilotRuns(ctx, db.ListAutopilotRunsParams{AutopilotID: ap.ID, Limit: 1})
 	if err != nil {

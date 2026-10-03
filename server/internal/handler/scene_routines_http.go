@@ -407,3 +407,32 @@ func (h *Handler) RotateAgentContextRoutineWebhook(w http.ResponseWriter, r *htt
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"routine": view})
 }
+
+// SetAgentContextRoutineWebhookSecret sets or clears a webhook routine's HMAC
+// signing secret, on its own route so the secret never shares a body with
+// other fields:
+// PUT .../context/scene/{scene_id}/routines/{routineId}/webhook-signing-secret
+// {signing_secret} ("" clears) → {routine} with trigger.has_signing_secret.
+// The in-scene MCP has no counterpart: a chat never sees or sets the secret.
+func (h *Handler) SetAgentContextRoutineWebhookSecret(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		SigningSecret string `json:"signing_secret"`
+	}
+	if !decodeContextCapBody(w, r, sceneRoutineBodyLimit, &input) {
+		return
+	}
+	node, ok := h.agentRoutineNode(w, r, contextCapNeedRoutines)
+	if !ok {
+		return
+	}
+	routine, ok := h.agentRoutineFromNode(w, r, node)
+	if !ok {
+		return
+	}
+	view, err := h.setSceneRoutineWebhookSecret(r.Context(), node.agent, routine, memberRoutineActor(requestUserID(r)), input.SigningSecret)
+	if err != nil {
+		writeSceneRoutineError(w, r, err, "set signing secret")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"routine": view})
+}
