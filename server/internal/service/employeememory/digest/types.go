@@ -145,12 +145,13 @@ type TranscriptMessage struct {
 	Truncated         bool
 }
 
-// Transcript reads M8's persisted, non-withdrawn scene transcript.
+// Transcript reads M8's persisted, non-withdrawn scene transcript inside the
+// writer's read transaction.
 type Transcript interface {
 	// After returns lines strictly after (afterAt, afterID), ascending.
-	After(ctx context.Context, q Queryer, key SceneKey, afterAt time.Time, afterID string, limit int) ([]TranscriptMessage, error)
+	After(ctx context.Context, tx pgx.Tx, key SceneKey, afterAt time.Time, afterID string, limit int) ([]TranscriptMessage, error)
 	// Before returns lines strictly before (beforeAt, beforeID), oldest first.
-	Before(ctx context.Context, q Queryer, key SceneKey, beforeAt time.Time, beforeID string, limit int) ([]TranscriptMessage, error)
+	Before(ctx context.Context, tx pgx.Tx, key SceneKey, beforeAt time.Time, beforeID string, limit int) ([]TranscriptMessage, error)
 }
 
 // Fact is one active scene-layer memory record as the writer sees it.

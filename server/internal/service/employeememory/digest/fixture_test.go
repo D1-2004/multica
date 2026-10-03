@@ -120,7 +120,7 @@ func less(a, b TranscriptMessage) bool {
 	return a.ProviderMessageID < b.ProviderMessageID
 }
 
-func (m *memTranscript) After(_ context.Context, _ Queryer, key SceneKey, at time.Time, id string, limit int) ([]TranscriptMessage, error) {
+func (m *memTranscript) After(_ context.Context, _ pgx.Tx, key SceneKey, at time.Time, id string, limit int) ([]TranscriptMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.err != nil {
@@ -139,7 +139,7 @@ func (m *memTranscript) After(_ context.Context, _ Queryer, key SceneKey, at tim
 	return out, nil
 }
 
-func (m *memTranscript) Before(_ context.Context, _ Queryer, key SceneKey, at time.Time, id string, limit int) ([]TranscriptMessage, error) {
+func (m *memTranscript) Before(_ context.Context, _ pgx.Tx, key SceneKey, at time.Time, id string, limit int) ([]TranscriptMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cursor := TranscriptMessage{SentAt: at, ProviderMessageID: id}
