@@ -60,6 +60,12 @@ type contextConfigLinkMint struct {
 	EmployeeJobID string
 	// Tab is the configure page tab the link opens ("" for the default).
 	Tab string
+	// HostAppended: the Host itself appends the link to the reply (the
+	// Coordinator's and the Employee foreground's capability answers) and
+	// keeps it out of every stored transcript. Only such a link of a 1:1
+	// chat carries the chat's person: an executor's tool result lands in its
+	// task messages, which members who may read the run can see.
+	HostAppended bool
 }
 
 // contextConfigLinkTabs are the configure page tabs a link may open
@@ -99,12 +105,13 @@ func (h *Handler) contextConfigLinkOrigin() (string, error) {
 // mintContextConfigLink stores a configuration link for the conversation
 // scene of a dispatch scope and returns its page URL. The link is keyed by
 // the scene_id the dispatch resolved from the conversation's
-// openConversationId (docs/agent-scene.md §1, §5). A 1:1 chat's link also
-// carries the chat's person (the scope's trigger person, keyed by
-// contextcap.TriggerPersonKey: the staffId, else the openDingTalkId) and
-// opens their own level (个人能力) for the first DingTalk account that opens
-// it: only the person reads the chat it is posted in. A group's link never
-// carries a person. The scope must come from the server-written dispatch
+// openConversationId (docs/agent-scene.md §1, §5). A 1:1 chat's link that
+// the Host appends itself (in.HostAppended) also carries the chat's person
+// (the scope's trigger person, keyed by contextcap.TriggerPersonKey: the
+// staffId, else the openDingTalkId) and opens their own level (个人能力) for
+// the first DingTalk account that opens it within LinkTTLPerson: only the
+// person reads the chat it is posted in. A group's link never carries a
+// person, nor does a link an executor's tool returns. The scope must come from the server-written dispatch
 // context, never from a model or a prompt, and its scene has already passed
 // the use-time fence (taskContextScope).
 func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLinkMint) (multicaMCPContextConfigLinkResult, error) {
@@ -128,7 +135,8 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 		ScopeTitle:   firstNonEmpty(scope.SceneTitle, agentSceneTitle(summary)),
 		SourceTaskID: in.SourceTaskID,
 	}
-	includesPerson := summary.Kind == contextcap.SceneKindDM && scope.HasPerson()
+	includesPerson := in.HostAppended && summary.Kind == contextcap.SceneKindDM && scope.HasPerson() &&
+		(contextcap.IsDirectConversationType(scope.ConversationType) || scope.ConversationType == contextcap.SceneKindDM)
 	personHash := ""
 	if includesPerson {
 		// The chat's link as a person link with the chat as its extra
@@ -144,7 +152,7 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 		return multicaMCPContextConfigLinkResult{}, err
 	}
 	link.TokenHash = contextcap.HashLinkToken(token)
-	stored, err := contextcap.InsertLink(ctx, h.DB, link, contextcap.LinkTTLScene)
+	stored, err := contextcap.InsertLink(ctx, h.DB, link, contextcap.LinkTTL(link.ScopeType))
 	if err != nil {
 		return multicaMCPContextConfigLinkResult{}, err
 	}
@@ -216,6 +224,7 @@ func (i coordinatorConfigLinkIssuer) IssueConfigLink(ctx context.Context, req in
 		Scope:        scope,
 		Origin:       origin,
 		Issuer:       contextConfigLinkIssuerCoordinator,
+		HostAppended: true,
 		CoordTraceID: strings.TrimSpace(req.TraceID),
 	})
 	if err != nil {
@@ -233,7 +242,16 @@ func (i coordinatorConfigLinkIssuer) IssueConfigLink(ctx context.Context, req in
 		URL:       result.URL,
 		Scope:     result.Scope,
 		SceneKind: result.SceneKind,
-		ValidFor:  contextcap.LinkTTL(result.Scope),
+		ValidFor:  configLinkValidFor(result),
 		ExpiresAt: expiresAt,
 	}, nil
+}
+
+// configLinkValidFor is how long a minted link stays usable: a 1:1 chat's
+// link that carries its person lives as long as a person link.
+func configLinkValidFor(result multicaMCPContextConfigLinkResult) time.Duration {
+	if result.IncludesPerson {
+		return contextcap.LinkTTLPerson
+	}
+	return contextcap.LinkTTL(result.Scope)
 }

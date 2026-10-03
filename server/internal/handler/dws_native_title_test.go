@@ -322,3 +322,51 @@ func TestNativeDispatchCarriesSenderStaffID(t *testing.T) {
 		t.Fatal("a staffId was attached to an anonymous sender")
 	}
 }
+
+// A kept staffId serves without a lookup until it is due to be proved
+// again; one the address book no longer proves is dropped, and a failed
+// lookup keeps it.
+func TestNativeSenderStaffIDRevalidatesKeptMapping(t *testing.T) {
+	if testPool == nil {
+		t.Skip("database unavailable")
+	}
+	ctx := context.Background()
+	nativeStaffMisses = &nativeTTLCache{entries: map[string]nativeTTLEntry{}}
+	t.Cleanup(func() {
+		nativeClock = time.Now
+		nativeStaffMisses = &nativeTTLCache{entries: map[string]nativeTTLEntry{}}
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM dws_open_identity_staff WHERE org_id = $1`, nativeUnitOrg)
+	})
+	identity := dwsclient.Identity{AgentID: nativeUnitAgent, UID: nativeUnitUID, OrgID: nativeUnitOrg}
+	m := nativeUnitMessage()
+	calls := 0
+	var answer string
+	var failure error
+	h := &Handler{DB: testPool, DWSNativeStaffID: func(context.Context, dwsclient.Identity, string, []string, string) (string, error) {
+		calls++
+		return answer, failure
+	}}
+	if err := contextcap.RememberOpenIDStaff(ctx, testPool, nativeUnitOrg, nativeUnitUID, "open-user-1", "staff-1"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	nativeClock = func() time.Time { return now }
+	if got := h.nativeSenderStaffID(ctx, identity, m, ""); got != "staff-1" || calls != 0 {
+		t.Fatalf("fresh kept staffId: %q calls=%d", got, calls)
+	}
+	// Due again, and the lookup fails: the kept staffId stands.
+	now = now.Add(nativeStaffRevalidateAfter + time.Minute)
+	failure = errors.New("DWS down")
+	if got := h.nativeSenderStaffID(ctx, identity, m, ""); got != "staff-1" || calls != 1 {
+		t.Fatalf("failed revalidation: %q calls=%d", got, calls)
+	}
+	// The address book no longer proves it: dropped, the openDingTalkId only.
+	now = now.Add(nativeStaffFailureTTL)
+	failure, answer = nil, ""
+	if got := h.nativeSenderStaffID(ctx, identity, m, ""); got != "" || calls != 2 {
+		t.Fatalf("unproved staffId: %q calls=%d", got, calls)
+	}
+	if kept, _, err := contextcap.LookupOpenIDStaff(ctx, testPool, nativeUnitOrg, nativeUnitUID, "open-user-1"); err != nil || kept != "" {
+		t.Fatalf("an unproved staffId is still kept: %q %v", kept, err)
+	}
+}

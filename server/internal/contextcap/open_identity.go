@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -20,19 +21,30 @@ func validOpenIdentity(orgID, viewerUID, openDingTalkID string) bool {
 }
 
 // LookupOpenIDStaff returns the staffId kept for the person viewerUID sees
-// as openDingTalkID in orgID, "" when none is known.
-func LookupOpenIDStaff(ctx context.Context, db DBTX, orgID, viewerUID, openDingTalkID string) (string, error) {
+// as openDingTalkID in orgID and when it was last proved, "" when none is
+// known.
+func LookupOpenIDStaff(ctx context.Context, db DBTX, orgID, viewerUID, openDingTalkID string) (string, time.Time, error) {
 	orgID, viewerUID, openDingTalkID = strings.TrimSpace(orgID), strings.TrimSpace(viewerUID), strings.TrimSpace(openDingTalkID)
 	if !validOpenIdentity(orgID, viewerUID, openDingTalkID) {
-		return "", nil
+		return "", time.Time{}, nil
 	}
 	var staffID string
-	err := db.QueryRow(ctx, `SELECT staff_id FROM dws_open_identity_staff
-		WHERE org_id = $1 AND viewer_uid = $2 AND open_dingtalk_id = $3`, orgID, viewerUID, openDingTalkID).Scan(&staffID)
+	var resolvedAt time.Time
+	err := db.QueryRow(ctx, `SELECT staff_id, resolved_at FROM dws_open_identity_staff
+		WHERE org_id = $1 AND viewer_uid = $2 AND open_dingtalk_id = $3`, orgID, viewerUID, openDingTalkID).Scan(&staffID, &resolvedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return "", time.Time{}, nil
 	}
-	return staffID, err
+	return staffID, resolvedAt, err
+}
+
+// ForgetOpenIDStaff drops the staffId kept for the person viewerUID sees as
+// openDingTalkID in orgID: the address book no longer proves it (the person
+// left the org, the staffId was reassigned).
+func ForgetOpenIDStaff(ctx context.Context, db DBTX, orgID, viewerUID, openDingTalkID string) error {
+	_, err := db.Exec(ctx, `DELETE FROM dws_open_identity_staff WHERE org_id = $1 AND viewer_uid = $2 AND open_dingtalk_id = $3`,
+		strings.TrimSpace(orgID), strings.TrimSpace(viewerUID), strings.TrimSpace(openDingTalkID))
+	return err
 }
 
 // RememberOpenIDStaff keeps the staffId proved for the person viewerUID

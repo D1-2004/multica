@@ -194,6 +194,7 @@ describe("context capability mobile responses", () => {
     expect(
       ContextConfigRedeemSchema.parse({ agent_id: agentId, scope_type: "person", scope_key: "103262", extra_scene_id: null }),
     ).toMatchObject({ extraSceneId: "" });
+    // The link is spent by now: a non-string extra scene keeps the redeem.
     expect(
       parseWithFallback(
         { agent_id: agentId, scope_type: "person", scope_key: "103262", extra_scene_id: 7 },
@@ -201,7 +202,7 @@ describe("context capability mobile responses", () => {
         EMPTY_CONTEXT_CONFIG_REDEEM,
         opts,
       ),
-    ).toEqual(EMPTY_CONTEXT_CONFIG_REDEEM);
+    ).toMatchObject({ agentId, scopeType: "person", scopeKey: "103262", extraSceneId: "" });
   });
 
   it("returns null for a binding echo of an unknown resource type", () => {

@@ -367,7 +367,9 @@ export const ContextConfigRedeemSchema = z
     scope_key: text,
     scope_title: text,
     org_id: orgIdOf,
-    extra_scene_id: text,
+    // The link was already spent when this arrives: a malformed value is no
+    // scene rather than a lost redemption.
+    extra_scene_id: z.unknown().transform((value) => (typeof value === "string" ? value.trim() : "")),
   })
   .transform(
     (value): ContextConfigRedeemResult => ({
