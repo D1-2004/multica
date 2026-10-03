@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -20,7 +21,7 @@ import (
 func employeeCapabilityInput(t *testing.T, f *ctxcapFixture, messages []DispatchMessage) (employeeSavedInput, error) {
 	t.Helper()
 	envs := []employeeDispatchEnvelope{{PrincipalID: testUserID, Command: DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{Messages: messages}}}}}
-	job := employeeentry.Job{Scope: employeeentry.Scope{WorkspaceID: testWorkspaceID, AgentID: uuidToString(f.agent), TenantOrgID: ctxcapOrg, SceneID: ctxcapScene}, Items: []employeeentry.Item{{ReceiptID: uuid.NewString(), PrincipalID: testUserID}}}
+	job := employeeentry.Job{CreatedAt: time.Now(), Scope: employeeentry.Scope{WorkspaceID: testWorkspaceID, AgentID: uuidToString(f.agent), TenantOrgID: ctxcapOrg, SceneID: ctxcapScene}, Items: []employeeentry.Item{{ReceiptID: uuid.NewString(), PrincipalID: testUserID}}}
 	return NewEmployeeSceneWorker(f.h, &employeeTestModel{}).buildInput(context.Background(), job, envs, envs)
 }
 

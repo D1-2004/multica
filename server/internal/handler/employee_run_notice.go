@@ -151,6 +151,11 @@ func (h *Handler) loadEmployeeNoticeBinding(ctx context.Context, tx pgx.Tx, work
 	if !ok || metadata.Owner != "employee" || c.EmployeeTaskID != b.TaskID || c.WorkspaceID != workspaceID || metadata.Scene.SceneID != b.Scope.Scene.SceneID || uuidToString(b.Queue.AgentID) != b.Scope.AgentID || b.Queue.Status != states[b.ResultState] {
 		return b, holdEmployeeNotice("run_queue_binding_mismatch")
 	}
+	if stopped, err := employeeNoticeStopped(ctx, tx, b); err != nil {
+		return b, err
+	} else if stopped {
+		return b, holdEmployeeNotice("task_stop_requested")
+	}
 	// Keep the old Run and its result for audit, but never deliver it as the
 	// answer to a subsequently corrected goal. Both enqueue and BeforeSend
 	// load these revisions under the same Task/Run locks.

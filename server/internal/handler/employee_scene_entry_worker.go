@@ -24,7 +24,7 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-const EmployeeLoopReplicaMarker = "[employee-loop:10]"
+const EmployeeLoopReplicaMarker = "[employee-loop:11]"
 
 var errEmployeeWindowTooLarge = errors.New("employee window exceeds context bounds")
 
@@ -67,6 +67,13 @@ func (w *EmployeeSceneWorker) Run(ctx context.Context) {
 				if err != nil && !errors.Is(err, context.Canceled) {
 					slog.WarnContext(ctx, "employee run reconciliation failed", "error", err)
 				}
+			}
+			if w.handler.TaskService != nil {
+				stopCtx, stopCancel := context.WithTimeout(ctx, 5*time.Second)
+				if _, err := w.handler.TaskService.ReconcileEmployeeTaskStops(stopCtx, 100); err != nil && !errors.Is(err, context.Canceled) {
+					slog.WarnContext(ctx, "employee task stop reconciliation failed", "error", err)
+				}
+				stopCancel()
 			}
 			learningCtx, learningCancel := context.WithTimeout(ctx, 10*time.Second)
 			if _, err := w.handler.ReconcileEmployeeLearnings(learningCtx, 100); err != nil && !errors.Is(err, context.Canceled) {
@@ -269,6 +276,9 @@ func (w *EmployeeSceneWorker) ProcessNext(ctx context.Context) (worked bool, ret
 					} else {
 						saved.Outcome.Kind = employeeloop.Reply
 						saved.Outcome.Reply = employeeContinuationFailureReply(saved.Outcome)
+						if saved.Outcome.Reply == "" {
+							saved.Outcome.Reply = employeeStopFailureReply(saved.Outcome)
+						}
 						if saved.Outcome.Reply == "" {
 							saved.Outcome.Reply = "这次没能完成受理，请稍后再试。"
 						}

@@ -139,7 +139,13 @@ func (h *employeeSceneHost) readCurrentTask(ctx context.Context, tx pgx.Tx, sour
 	if err != nil {
 		return employeeloop.ToolResult{}, nil, err
 	}
+	execution, err := h.worker.handler.TaskService.ReadDirectTaskExecutionState(ctx, tx, h.taskScope(), binding.TaskID)
+	if err != nil {
+		return employeeloop.ToolResult{}, nil, err
+	}
 	output := map[string]any{"task_ref": ref, "read_ref": call.NativeToolCallID, "state": snapshot.Task.State, "version": snapshot.Task.Version, "goal_revision": snapshot.Task.GoalRevision, "goal": employeeTaskData(snapshot.Task.Definition.Goal, 4000), "has_active_run": snapshot.Task.ActiveRunID != "", "history_truncated": snapshot.Truncated}
+	output["execution_state"], output["queue_state"], output["process_exit_confirmed"], output["stop_requested"], output["pending_predecessor"] = execution.State, execution.QueueState, execution.ExitConfirmed, execution.StopRequested, execution.PendingPredecessor
+	output["execution_attribution"] = "Workflow/run state does not prove process activity. Use execution_state and process_exit_confirmed; a recorded cancellation or timeout alone is not exit proof."
 	if snapshot.LatestRun != nil {
 		output["run_state"] = snapshot.LatestRun.State
 		output["run_goal_revision"] = snapshot.LatestRun.GoalRevision

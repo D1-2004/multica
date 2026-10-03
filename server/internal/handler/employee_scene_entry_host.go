@@ -59,6 +59,7 @@ func employeeSceneTools() []employeeloop.Tool {
 	}
 	continueNoticeSchema["description"] = "Omit to inherit the existing Task delivery constraint. An earlier file-only instruction stays effective; always does not revoke it. Set if_not_delivered only for a new explicit file-only instruction quoted from this selected source."
 	tools = append(tools, employeeloop.Tool{Name: "continue_task", Effect: true, Description: "Continue the same successfully completed task only when this source explicitly requests a further step of that goal. First read_task on its source-bound task_ref, then use the returned read_ref. Do not change the goal contract, start while running, retry failed/cancelled work, or treat thanks as work. With multiple plausible candidates clarify. A new Run is queued under the same Task; include its acceptance reply so no extra model call is required. Omit completion_notice_policy to preserve the Task delivery constraint; always cannot revoke an earlier file-only instruction without new requester authorization.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "task_ref": stringField("Exact candidate read this wake"), "read_ref": stringField("read_ref from this wake's successful read_task"), "instruction_quote": stringField("Exact outer-message excerpt explicitly requesting this continuation"), "prompt": stringField("Current requested step preserving user constraints; do not replace the stored goal"), "reply": stringField("Briefly confirm acceptance of the requested next step and intent to handle it. The previous run and this acceptance do not prove the new execution has started. Without separate observed evidence for the new execution, do not claim it has started, is running, has stopped, or has completed. Use natural wording such as 我来继续处理，跑完发你; do not narrate internal queue or sandbox states."), "completion_notice_policy": continueNoticeSchema}, "required": []string{"source_ref", "task_ref", "read_ref", "instruction_quote", "prompt", "reply"}, "additionalProperties": false}})
+	tools = append(tools, employeeStopTool())
 	return append(tools, employeeMemoryTools()...)
 }
 func (h *employeeSceneHost) source(ref string) (employeeSourceMessage, employeeDispatchEnvelope, error) {
@@ -143,13 +144,14 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		return employeeloop.ToolResult{}, err
 	}
 	var acceptedContinuation *service.DirectTaskResult
+	var acceptedStop *service.DirectTaskStopResult
 	var revalidate func(pgx.Tx, json.RawMessage) (json.RawMessage, error)
 	if isEmployeeMemoryTool(call.Name) {
 		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
 			return h.memoryReplay(ctx, tx, call, raw)
 		}
 	}
-	if call.Name == "continue_task" || ((call.Name == "read_task" || call.Name == "read_task_history") && call.Arguments["task_ref"] != nil) {
+	if call.Name == "continue_task" || call.Name == "stop_task" || ((call.Name == "read_task" || call.Name == "read_task_history") && call.Arguments["task_ref"] != nil) {
 		revalidate = func(tx pgx.Tx, raw json.RawMessage) (json.RawMessage, error) {
 			return h.currentTaskReplay(ctx, tx, source, call, raw)
 		}
@@ -160,7 +162,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		var deliveryReply string
 		var taskRead *employeeCurrentTaskRead
 		var err error
-		if isEmployeeMemoryTool(call.Name) || call.Name == "continue_task" {
+		if isEmployeeMemoryTool(call.Name) || call.Name == "continue_task" || call.Name == "stop_task" {
 			journalObservation = observation
 		} else {
 			defer func() { employeeTraceToolResult(ctx, observation, call, result, err) }()
@@ -202,6 +204,8 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			} else {
 				result, err = h.read(ctx, source, call)
 			}
+		case "stop_task":
+			result, acceptedStop, err = h.stopTask(ctx, tx, source, call)
 		case "continue_task":
 			if preparationErr != nil {
 				err = preparationErr
@@ -215,6 +219,9 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		if err != nil {
 			if call.Name == "continue_task" {
 				record.Result = employeeContinuationRefusalResult(err)
+			}
+			if call.Name == "stop_task" {
+				record.Result = employeeStopRefusal(err)
 			}
 			record.Failure = err.Error()
 		}
@@ -234,7 +241,7 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		if h.abort != nil {
 			h.abort()
 		}
-		if call.Name == "continue_task" {
+		if call.Name == "continue_task" || call.Name == "stop_task" {
 			return employeeloop.ToolResult{}, err
 		}
 		return record.Result, err
@@ -248,6 +255,9 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 		} else if record.Result.Receipt != "" {
 			h.notifyContinuedTask(ctx, record.Result)
 		}
+	}
+	if acceptedStop != nil {
+		h.observeTaskStop(ctx, *acceptedStop)
 	}
 	if record.DeliveryReply != "" {
 		if h.deliveryReplies == nil {
