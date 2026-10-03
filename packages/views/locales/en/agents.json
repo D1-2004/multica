@@ -2326,7 +2326,7 @@
     "page_title": "QwenTag settings",
     "loading": "Loading...",
     "redeeming": "Opening your configuration link...",
-    "link_expired": "This link has expired or was already used. Ask the agent for a new one.",
+    "link_expired": "This link is no longer valid. Ask the agent in DingTalk for a new one.",
     "link_taken": "This personal configuration already belongs to another DingTalk account. Open the link from your own 1:1 chat with the agent.",
     "link_failed": "This link couldn't be opened. Ask the agent for a new one.",
     "load_failed": "Couldn't load the configuration.",
