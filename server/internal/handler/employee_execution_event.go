@@ -33,7 +33,9 @@ const employeeExecutionSchema = "employee.execution/1"
 // Version 2 accepts resolved legacy receipts as well as unified receipts. Old readers
 // skip either wrapper; new readers reassess only older proofs, never downgrade
 // a newer proof or require a foreground replica-marker change.
-const employeeExecutionProofVersion = 4
+// Version 5 also verifies Host-dispatched plan steps; a replica without it
+// recorded their skips under version 4, which version 5 reassesses.
+const employeeExecutionProofVersion = 5
 
 // employeeExecutionTerminal is a fact, never a continuation or a user message.
 // The output remains on Run/queue; the envelope contains only durable references.
@@ -411,6 +413,9 @@ func employeeExecutionDispatchProof(ctx context.Context, tx pgx.Tx, b *employeeE
 			return reason, err
 		}
 		return employeeExecutionSteerProof(ctx, tx, b, e)
+	}
+	if reason, handled, err := employeeExecutionPlanProof(ctx, tx, b); err != nil || handled {
+		return reason, err
 	}
 	var key, queue string
 	var revision int64

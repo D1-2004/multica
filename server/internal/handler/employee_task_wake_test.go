@@ -331,7 +331,7 @@ func TestEmployeeTaskWakeProducerGateAndUnknownKindsHold(t *testing.T) {
 	f := employeeWakeDatabase(t)
 	ctx := context.Background()
 	f.h.EmployeeSceneWorker.ReplicaReady = func(context.Context) error {
-		return errors.New("live server replicas do not all support employee-loop:12")
+		return errors.New("live server replicas do not all support employee-loop:13")
 	}
 	if ready, err := f.h.EmployeeSceneWorker.TaskWakeProducerReady(ctx); ready || err == nil {
 		t.Fatalf("mixed replicas reported ready: %v %v", ready, err)

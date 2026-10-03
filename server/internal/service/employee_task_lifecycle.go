@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -61,8 +62,42 @@ func (s *TaskService) recordEmployeeRunInTx(ctx context.Context, tx pgx.Tx, task
 	default:
 		return nil
 	}
-	_, _, err = employeetask.NewStore(tx).RecordResult(ctx, scope, run.TaskID, employeetask.ResultParams{Source: employeetask.Source{Namespace: "queue_terminal", Key: util.UUIDToString(task.ID)}, RunID: run.ID, State: state, Result: body, ResultRef: "agent_task_queue:" + util.UUIDToString(task.ID)})
-	return err
+	recorded, _, err := employeetask.NewStore(tx).RecordResult(ctx, scope, run.TaskID, employeetask.ResultParams{Source: employeetask.Source{Namespace: "queue_terminal", Key: util.UUIDToString(task.ID)}, RunID: run.ID, State: state, Result: body, ResultRef: "agent_task_queue:" + util.UUIDToString(task.ID)})
+	if err != nil {
+		return err
+	}
+	releaseEmployeeDependentsTx(ctx, tx, recorded, employeetask.Source{Namespace: "queue_terminal", Key: util.UUIDToString(task.ID)})
+	return nil
+}
+
+// releaseEmployeeDependentsTx applies a Task's terminal fact to goals blocked
+// by it, inside the transaction that recorded the fact. Only a v1 Task ends
+// with its Run; a v2 goal ends by explicit completion or a human stop, whose
+// writers release it the same way. A savepoint keeps a dependent's refusal
+// from failing the queue transition; the Host's release reconciler retries.
+func releaseEmployeeDependentsTx(ctx context.Context, tx pgx.Tx, task employeetask.Task, source employeetask.Source) {
+	if task.Lifecycle() != employeetask.LifecycleV1 || (task.State != employeetask.StateSucceeded && task.State != employeetask.StateFailed && task.State != employeetask.StateCancelled) {
+		return
+	}
+	if _, err := ReleaseEmployeeDependentsTx(ctx, tx, task, source); err != nil {
+		slog.WarnContext(ctx, "employee dependent release deferred", "task_id", task.ID, "error", err)
+	}
+}
+
+// ReleaseEmployeeDependentsTx runs employeetask.ReleaseUpstreamWaitTx for a
+// terminal Task inside a savepoint of tx. A refusal or failure rolls back only
+// the savepoint.
+func ReleaseEmployeeDependentsTx(ctx context.Context, tx pgx.Tx, task employeetask.Task, source employeetask.Source) (employeetask.UpstreamRelease, error) {
+	savepoint, err := tx.Begin(ctx)
+	if err != nil {
+		return employeetask.UpstreamRelease{}, err
+	}
+	defer savepoint.Rollback(ctx)
+	release, err := employeetask.ReleaseUpstreamWaitTx(ctx, savepoint, task.Scope, task.ID, source)
+	if err != nil {
+		return release, err
+	}
+	return release, savepoint.Commit(ctx)
 }
 
 // ReconcileEmployeeRuns repairs terminal queue rows from cancel, launch failure

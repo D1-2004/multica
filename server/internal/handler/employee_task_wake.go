@@ -13,12 +13,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/contextcap"
 	"github.com/multica-ai/multica/server/internal/employeeentry"
+	"github.com/multica-ai/multica/server/internal/employeeplan"
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/scene"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
 	"github.com/multica-ai/multica/server/internal/service/employeememory"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -110,12 +113,45 @@ func (w *EmployeeSceneWorker) AdmitTaskWake(ctx context.Context, a employeeentry
 type employeeSceneTaskOriginReader struct{}
 
 func (employeeSceneTaskOriginReader) ReadTaskOrigin(ctx context.Context, database employeeentry.DB, scope employeeentry.Scope, task employeetask.Task, request employeetask.Entry) (employeeentry.TaskOrigin, error) {
-	hold := func(reason string) (employeeentry.TaskOrigin, error) {
-		return employeeentry.TaskOrigin{}, &employeeentry.TaskOriginHold{Reason: reason}
+	parts, err := employeeSceneOriginParts(ctx, database, scope, task, request)
+	if err != nil {
+		return employeeentry.TaskOrigin{}, err
+	}
+	source, command := parts.source, parts.envelope.Command
+	anchor := employeeentry.DeliveryAnchor{Conversation: true, SceneID: scope.SceneID, RequesterRef: source.RequesterRef, SenderOpenDingTalkID: source.Message.SenderOpenDingTalkID, DWSUID: command.ExternalIdentity.DWS.UID, DWSEnvironment: commandDWSEnvironment(command)}
+	if command.ResponsePolicy != nil {
+		anchor.ShowAITag = command.ResponsePolicy.ShowAITag
+	}
+	if employeeRequesterRef(scope.TenantOrgID, source.Message) != "" {
+		anchor.PersonKey = contextcap.TriggerPersonKey(source.Message.SenderStaffID, source.Message.SenderOpenDingTalkID)
+	}
+	return employeeentry.TaskOrigin{
+		PrincipalID: parts.admission.PrincipalID, PrincipalKind: employeeentry.PrincipalMember, ReceiptID: parts.admission.ReceiptID, JobID: parts.admission.JobID,
+		SourceRef: source.SourceRef, RequestSpeaker: source.Message.SenderDisplayName, RequestText: source.Message.Text,
+		History: employeeentry.HistoryScenePrincipal, HistoryPrincipalID: parts.admission.PrincipalID, Anchor: anchor,
+	}, nil
+}
+
+// employeeSceneOrigin is the verified admission of a scene dispatch Task:
+// the frozen consumption, the request's source message and its envelope.
+type employeeSceneOrigin struct {
+	admission employeeentry.SceneMessageAdmission
+	source    employeeSourceMessage
+	envelope  employeeDispatchEnvelope
+}
+
+// employeeSceneOriginParts rebuilds a scene dispatch Task's origin from
+// PostgreSQL and checks the origin principal's current authority: membership,
+// invocation and the endpoint route it arrived through. Mismatches are
+// *employeeentry.TaskOriginHold; storage failures are plain errors.
+func employeeSceneOriginParts(ctx context.Context, database employeeentry.DB, scope employeeentry.Scope, task employeetask.Task, request employeetask.Entry) (employeeSceneOrigin, error) {
+	var out employeeSceneOrigin
+	hold := func(reason string) (employeeSceneOrigin, error) {
+		return employeeSceneOrigin{}, &employeeentry.TaskOriginHold{Reason: reason}
 	}
 	admission, err := employeeentry.ReadSceneMessageAdmission(ctx, database, scope, request)
 	if err != nil {
-		return employeeentry.TaskOrigin{}, err
+		return out, err
 	}
 	var source employeeSourceMessage
 	if json.Unmarshal([]byte(request.Body), &source) != nil || source.ReceiptID != admission.ReceiptID || source.SourceRef == "" || source.RequesterRef == "" || source.RequesterRef != task.RequesterRef {
@@ -127,7 +163,7 @@ func (employeeSceneTaskOriginReader) ReadTaskOrigin(ctx context.Context, databas
 		return hold("source_job_missing")
 	}
 	if err != nil {
-		return employeeentry.TaskOrigin{}, err
+		return out, err
 	}
 	if originJob.Scope != scope || originJob.Kind != employeeentry.KindMessage {
 		return hold("source_job_scope_mismatch")
@@ -152,8 +188,6 @@ func (employeeSceneTaskOriginReader) ReadTaskOrigin(ctx context.Context, databas
 	if matches != 1 {
 		return hold("task_source_mismatch")
 	}
-	// Current authority of the original admission: membership, invocation and
-	// the endpoint route it arrived through.
 	view := &Handler{Queries: db.New(database)}
 	if err = employeePrincipalAllowed(ctx, view, scope, admission.PrincipalID); err != nil {
 		return hold("admission_principal_revoked")
@@ -163,27 +197,15 @@ func (employeeSceneTaskOriginReader) ReadTaskOrigin(ctx context.Context, databas
 		return hold("endpoint_revoked")
 	}
 	if err != nil {
-		return employeeentry.TaskOrigin{}, err
+		return out, err
 	}
 	if uuidToString(ep.ID) != envelope.EndpointNamespaceID || uuidToString(ep.WorkspaceID) != scope.WorkspaceID || uuidToString(ep.AgentID) != scope.AgentID || uuidToString(ep.ActorUserID) != admission.PrincipalID {
 		return hold("endpoint_binding_changed")
 	}
-	command := envelope.Command
-	if command.ExternalIdentity.DWS == nil || command.ExternalIdentity.DWS.UID == "" {
+	if envelope.Command.ExternalIdentity.DWS == nil || envelope.Command.ExternalIdentity.DWS.UID == "" {
 		return hold("identity_changed")
 	}
-	anchor := employeeentry.DeliveryAnchor{Conversation: true, SceneID: scope.SceneID, RequesterRef: source.RequesterRef, SenderOpenDingTalkID: source.Message.SenderOpenDingTalkID, DWSUID: command.ExternalIdentity.DWS.UID, DWSEnvironment: commandDWSEnvironment(command)}
-	if command.ResponsePolicy != nil {
-		anchor.ShowAITag = command.ResponsePolicy.ShowAITag
-	}
-	if employeeRequesterRef(scope.TenantOrgID, source.Message) != "" {
-		anchor.PersonKey = contextcap.TriggerPersonKey(source.Message.SenderStaffID, source.Message.SenderOpenDingTalkID)
-	}
-	return employeeentry.TaskOrigin{
-		PrincipalID: admission.PrincipalID, PrincipalKind: employeeentry.PrincipalMember, ReceiptID: admission.ReceiptID, JobID: admission.JobID,
-		SourceRef: source.SourceRef, RequestSpeaker: source.Message.SenderDisplayName, RequestText: source.Message.Text,
-		History: employeeentry.HistoryScenePrincipal, HistoryPrincipalID: admission.PrincipalID, Anchor: anchor,
-	}, nil
+	return employeeSceneOrigin{admission: admission, source: source, envelope: envelope}, nil
 }
 
 type employeeTaskWakeHold struct{ reason string }
@@ -224,6 +246,7 @@ func (w *EmployeeSceneWorker) processTaskWake(ctx context.Context, job employeee
 			return false, w.retryPersisted(ctx, job, err.Error(), "task_wake_binding_failed")
 		}
 		var input employeeSavedInput
+		limited := false
 		if len(job.InputSnapshot) > 0 {
 			err = json.Unmarshal(job.InputSnapshot, &input)
 			if err == nil && (input.TaskWake == nil || *input.TaskWake != binding.target) {
@@ -231,11 +254,16 @@ func (w *EmployeeSceneWorker) processTaskWake(ctx context.Context, job employeee
 				return false, w.store.Hold(ctx, job, "task_wake_target_changed")
 			}
 		} else {
-			input, err = w.buildTaskWakeInput(runCtx, job, wake, binding)
-			if err == nil {
-				var raw []byte
-				if raw, err = json.Marshal(input); err == nil {
-					_, err = w.store.SaveInput(runCtx, job, raw)
+			// Every non-human wake is one autonomous round of its Task; past the
+			// governor's limit the Task waits for a human instead of the model.
+			limited, err = w.noteTaskWakeRound(runCtx, database, job, wake, binding)
+			if err == nil && !limited {
+				input, err = w.buildTaskWakeInput(runCtx, job, wake, binding)
+				if err == nil {
+					var raw []byte
+					if raw, err = json.Marshal(input); err == nil {
+						_, err = w.store.SaveInput(runCtx, job, raw)
+					}
 				}
 			}
 		}
@@ -245,15 +273,22 @@ func (w *EmployeeSceneWorker) processTaskWake(ctx context.Context, job employeee
 		if err != nil {
 			return false, w.retryPersisted(ctx, job, err.Error(), "task_wake_build_failed")
 		}
-		host := &employeeTaskWakeHost{worker: w, job: job, abort: cancel}
-		durableModel := &employeeJournalModel{store: w.store, job: job, delegate: w.model, abort: cancel, routes: w.ModelRoutes, routePlan: input.ModelRoute}
-		input.Config.OnBatchRejected = func(calls []employeeloop.ToolCall, err error) { employeeTraceBatchRejected(runCtx, calls, err) }
-		saved.Outcome, err = employeeloop.New(input.Config, durableModel, host).Run(runCtx, input.Input)
-		if err != nil {
-			// No human is waiting on this turn: record the failure without
-			// inventing an apology or another model request.
-			saved.Failure = err.Error()
-			saved.Outcome.Decision = employeeloop.Decision{Kind: employeeloop.Quiet}
+		if limited {
+			saved.Rescue, saved.Outcome.Decision = "autonomous_round_limit", employeeloop.Decision{Kind: employeeloop.Quiet}
+			if binding.origin.Anchor.Conversation {
+				saved.Outcome.Decision = employeeloop.Decision{Kind: employeeloop.Reply, Reply: employeeAutonomousLimitNote}
+			}
+		} else {
+			host := &employeeTaskWakeHost{worker: w, job: job, abort: cancel}
+			durableModel := &employeeJournalModel{store: w.store, job: job, delegate: w.model, abort: cancel, routes: w.ModelRoutes, routePlan: input.ModelRoute}
+			input.Config.OnBatchRejected = func(calls []employeeloop.ToolCall, err error) { employeeTraceBatchRejected(runCtx, calls, err) }
+			saved.Outcome, err = employeeloop.New(input.Config, durableModel, host).Run(runCtx, input.Input)
+			if err != nil {
+				// No human is waiting on this turn: record the failure without
+				// inventing an apology or another model request.
+				saved.Failure = err.Error()
+				saved.Outcome.Decision = employeeloop.Decision{Kind: employeeloop.Quiet}
+			}
 		}
 		checkpointCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		raw, encodeErr := json.Marshal(saved)
@@ -273,6 +308,38 @@ func (w *EmployeeSceneWorker) processTaskWake(ctx context.Context, job employeee
 	if err != nil {
 		// The outcome is saved; only the outbox write remains, as for chat.
 		return false, w.store.Retry(ctx, job, err.Error())
+	}
+	return true, nil
+}
+
+const employeeAutonomousLimitNote = "这个任务已经连续自动推进了多轮，先停下来了。需要继续的话告诉我。"
+
+// noteTaskWakeRound counts this wake once (its receipt is the source) and
+// reports whether the Task passed the governor's limit. A v2 goal past the
+// limit opens a human_input wait; nothing else runs.
+func (w *EmployeeSceneWorker) noteTaskWakeRound(ctx context.Context, database employeeentry.DB, job employeeentry.Job, wake employeeentry.TaskWake, b employeeTaskWakeBinding) (bool, error) {
+	store := employeetask.NewStore(database)
+	tscope := employeetask.Scope{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Kind: employeetask.ScopeScene, Scene: scene.Ref{SceneID: job.Scope.SceneID}}
+	source := employeetask.Source{Namespace: "employee_task_wake", Key: job.Items[0].ReceiptID}
+	task, _, err := store.NoteAutonomousRound(ctx, tscope, wake.TaskID, employeetask.AutonomousRoundParams{Source: source, WakeKind: wake.Kind, AuthorityRef: wake.AuthorityRef})
+	if errors.Is(err, employeetask.ErrStopped) {
+		return false, holdTaskWake("task_stopped")
+	}
+	if err != nil {
+		return false, err
+	}
+	if task.AutonomousRounds <= employeeAutonomousRoundLimit {
+		return false, nil
+	}
+	if task.Lifecycle() == employeetask.LifecycleV2 {
+		_, _, err = store.WaitTask(ctx, tscope, wake.TaskID, employeetask.WaitParams{Source: employeetask.Source{Namespace: "employee_task_wake", Key: job.Items[0].ReceiptID + "/governor"}, Kind: employeetask.WaitHumanInput, RefID: "autonomous_round_limit:" + job.Items[0].ReceiptID, Mandatory: true, AuthorityRef: wake.AuthorityRef, Body: "autonomous_round_limit"})
+		if errors.Is(err, employeetask.ErrStopped) {
+			return false, holdTaskWake("task_stopped")
+		}
+		var lifecycle *employeetask.LifecycleError
+		if err != nil && !errors.As(err, &lifecycle) {
+			return false, err
+		}
 	}
 	return true, nil
 }
@@ -354,7 +421,47 @@ type employeeTaskWakeContext struct {
 	// Collection carries a collection.ready wake's authorized answers at the
 	// wake's frozen revision (marker 13); absent for every other kind.
 	Collection *employeeCollectionWakeView `json:"collection,omitempty"`
+	// Plan is present when this wake reviews a planned step before it runs.
+	Plan *employeeTaskWakePlan `json:"plan,omitempty"`
 }
+
+type employeeTaskWakePlan struct {
+	Steps         []employeeTaskWakePlanStep `json:"steps"`
+	CompletedStep int                        `json:"completed_step"`
+	NextStep      int                        `json:"next_step"`
+	BudgetLeft    int                        `json:"follow_up_budget_left"`
+}
+type employeeTaskWakePlanStep struct {
+	Step   int    `json:"step"`
+	Prompt string `json:"prompt"`
+	Review bool   `json:"review_first,omitempty"`
+}
+
+// employeeTaskWakeAwaitingPlan returns the plan decision this wake was
+// admitted for, if its next step still awaits it.
+func employeeTaskWakeAwaitingPlan(ctx context.Context, database employeeentry.DB, job employeeentry.Job) (employeeplan.FollowUp, employeeplan.Plan, bool, error) {
+	pscope := employeePlanScope(job.Scope)
+	fu, err := employeeplan.FollowUpOfWake(ctx, database, pscope, job.ID, false)
+	if errors.Is(err, employeeplan.ErrNotFound) {
+		return fu, employeeplan.Plan{}, false, nil
+	}
+	if err != nil {
+		return fu, employeeplan.Plan{}, false, err
+	}
+	plan, err := employeeplan.ByID(ctx, database, pscope, fu.PlanID, false)
+	if err != nil {
+		return fu, plan, false, err
+	}
+	awaiting := fu.Decision == employeeplan.DecisionWoken && fu.NextRunID == "" && plan.State == employeeplan.StateActive && fu.StepIndex < len(plan.Steps)
+	return fu, plan, awaiting, nil
+}
+
+func employeeContinuePlanTool() employeeloop.Tool {
+	return employeeloop.Tool{Name: "continue_plan", Effect: true, Terminal: employeeloop.Dispatched,
+		Description: "Start the Task's next planned step now, exactly as the plan states, when the latest result supports it. The Host dispatches that step; you cannot change its instruction. Optionally include a short reply for the requester. If the result does not support continuing, reply or stay quiet instead and the plan pauses for the requester.",
+		Schema:      map[string]any{"type": "object", "properties": map[string]any{"reply": map[string]any{"type": "string", "description": "Optional short message to the requester about continuing."}}, "additionalProperties": false}}
+}
+
 type employeeTaskWakeEntry struct {
 	Seq          int64  `json:"seq"`
 	Kind         string `json:"kind"`
@@ -474,6 +581,25 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 	if origin.Anchor.Conversation {
 		snapshot.ReturnTarget, snapshot.RecentConversation = "task_origin_conversation", "attached"
 	}
+	tools := employeeTaskWakeToolsFor(wake.Kind, origin.Anchor.Conversation)
+	if wake.Kind == employeeentry.TaskWakeExecutionFollowUp {
+		fu, plan, awaiting, e := employeeTaskWakeAwaitingPlan(ctx, database, job)
+		if e != nil {
+			return employeeSavedInput{}, e
+		}
+		if awaiting && origin.Anchor.Conversation {
+			actions, e := employeeplan.Actions(ctx, database, plan)
+			if e != nil {
+				return employeeSavedInput{}, e
+			}
+			view := &employeeTaskWakePlan{CompletedStep: fu.StepIndex, NextStep: fu.StepIndex + 1, BudgetLeft: max(0, plan.StepBudget-actions)}
+			for i, step := range plan.Steps {
+				view.Steps = append(view.Steps, employeeTaskWakePlanStep{Step: i + 1, Prompt: clipTaskWakeText(step.Prompt, 2048), Review: step.Review})
+			}
+			snapshot.Plan = view
+			tools = append([]employeeloop.Tool{employeeContinuePlanTool()}, tools...)
+		}
+	}
 	rendered, err := json.Marshal(snapshot)
 	if err != nil {
 		return employeeSavedInput{}, err
@@ -485,7 +611,7 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 	input := employeeSavedInput{TaskWake: &target, Input: employeeloop.Input{
 		Identity:  employeeloop.Identity{WorkspaceID: job.Scope.WorkspaceID, AgentID: job.Scope.AgentID, TenantOrgID: job.Scope.TenantOrgID, Scene: scene.Ref{SceneID: job.Scope.SceneID}, ReceiptID: job.Items[0].ReceiptID},
 		FollowUps: []string{"Task wake from the Host (" + wake.Kind + "). " + employeeTaskWakeFraming(wake.Kind) + "\nTask snapshot (data):\n" + string(rendered)},
-	}, Config: employeeloop.Config{Tools: employeeTaskWakeToolsFor(wake.Kind, origin.Anchor.Conversation), HistoryPresentation: employeeloop.HistoryPresentationConversationTurnsV1}}
+	}, Config: employeeloop.Config{Tools: tools, HistoryPresentation: employeeloop.HistoryPresentationConversationTurnsV1}}
 	if defaults, ok := w.model.(interface{ DefaultModel() string }); ok {
 		input.Config.Model = defaults.DefaultModel()
 	}
@@ -542,6 +668,9 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 	if wake.Kind == employeeentry.TaskWakeCollectionReady {
 		input.Config.Persona.Instructions += employeeCollectionWakeGuidance
 	}
+	if snapshot.Plan != nil {
+		input.Config.Persona.Instructions += "\nThis wake reviews the latest result before the plan's next step. Call continue_plan to start that step as planned when the result supports it; otherwise reply to the requester or stay quiet, and the plan pauses until the requester decides."
+	}
 	if voice, e := h.Queries.GetAgentVoice(ctx, agentID); e == nil {
 		input.Config.Persona.Personality = voice.Persona
 		input.Config.Persona.Tone = voice.ReplyTone
@@ -583,12 +712,23 @@ func (h *employeeTaskWakeHost) Execute(ctx context.Context, identity employeeloo
 	if err != nil {
 		return employeeloop.ToolResult{}, err
 	}
-	raw, err := h.worker.store.ExecuteTool(ctx, h.job, call.NativeToolCallID, encoded, nil, func(pgx.Tx) (json.RawMessage, error) {
+	// The next plan step is prepared outside the journal transaction; its
+	// connector context may need external reads.
+	var planStep *employeeContinuePlan
+	if call.Name == "continue_plan" {
+		if planStep, err = h.prepareContinuePlan(ctx); err != nil {
+			return employeeloop.ToolResult{}, err
+		}
+	}
+	var accepted *service.DirectTaskResult
+	raw, err := h.worker.store.ExecuteTool(ctx, h.job, call.NativeToolCallID, encoded, nil, func(tx pgx.Tx) (json.RawMessage, error) {
 		observation := employeeTraceTool(ctx, h.job, call)
 		var result employeeloop.ToolResult
 		var err error
 		defer func() { employeeTraceToolResult(ctx, observation, call, result, err) }()
 		switch call.Name {
+		case "continue_plan":
+			result, accepted, err = h.continuePlan(ctx, tx, planStep, call)
 		case "stay_quiet":
 			if len(call.Arguments) != 0 {
 				err = errors.New("stay_quiet accepts no arguments")
@@ -625,7 +765,147 @@ func (h *employeeTaskWakeHost) Execute(ctx context.Context, identity employeeloo
 	if record.Failure != "" {
 		return record.Result, errors.New(record.Failure)
 	}
+	if accepted != nil {
+		h.worker.handler.TaskService.NotifyDirectTaskResult(ctx, *accepted)
+	}
 	return record.Result, nil
+}
+
+// employeeContinuePlan is the prepared next step a decision wake may start.
+type employeeContinuePlan struct {
+	followUp employeeplan.FollowUp
+	plan     employeeplan.Plan
+	prepared service.PreparedDirectTask
+}
+
+// prepareContinuePlan returns nil when the step was already started (the
+// tool journal replays it); a wake with no awaiting step is refused before
+// any effect so the model can choose another answer.
+func (h *employeeTaskWakeHost) prepareContinuePlan(ctx context.Context) (*employeeContinuePlan, error) {
+	database, ok := employeeEntryDB(h.worker.handler)
+	if !ok {
+		return nil, errors.New("employee plan storage is unavailable")
+	}
+	fu, plan, awaiting, err := employeeTaskWakeAwaitingPlan(ctx, database, h.job)
+	if err != nil {
+		return nil, err
+	}
+	if !awaiting {
+		if fu.NextRunID != "" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%w: no planned step awaits this decision", employeeloop.ErrToolRefused)
+	}
+	task, err := employeetask.NewStore(database).Get(ctx, employeeTaskScopeOf(plan.Scope), plan.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	run, err := employeeRunInScope(ctx, database, plan.Scope, plan.TaskID, fu.RunID)
+	if err != nil {
+		return nil, err
+	}
+	prepared, err := h.worker.handler.prepareEmployeePlanStep(ctx, database, plan, task, run, fu.StepIndex+1)
+	var hold *employeeentry.TaskOriginHold
+	if errors.As(err, &hold) {
+		return nil, fmt.Errorf("%w: the planned step cannot start: %s", employeeloop.ErrToolRefused, hold.Reason)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &employeeContinuePlan{followUp: fu, plan: plan, prepared: prepared}, nil
+}
+
+// continuePlan starts the awaiting step under the scene lease, the Task and
+// plan locks, and binds the new Run to this decision as its provenance.
+func (h *employeeTaskWakeHost) continuePlan(ctx context.Context, tx pgx.Tx, step *employeeContinuePlan, call employeeloop.ToolCall) (employeeloop.ToolResult, *service.DirectTaskResult, error) {
+	if step == nil {
+		return employeeloop.ToolResult{}, nil, errors.New("the planned step is no longer awaiting a decision")
+	}
+	reply := ""
+	if value, present := call.Arguments["reply"]; present {
+		text, ok := value.(string)
+		if !ok || len(text) > 8000 {
+			return employeeloop.ToolResult{}, nil, errors.New("continue_plan reply must be a short string")
+		}
+		reply = strings.TrimSpace(text)
+	}
+	pscope := employeePlanScope(h.job.Scope)
+	var locked string
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM employee_task WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`, step.plan.TaskID, h.job.Scope.WorkspaceID).Scan(&locked); err != nil {
+		return employeeloop.ToolResult{}, nil, err
+	}
+	fu, err := employeeplan.FollowUpOfWake(ctx, tx, pscope, h.job.ID, true)
+	if err != nil {
+		return employeeloop.ToolResult{}, nil, err
+	}
+	plan, err := employeeplan.ByID(ctx, tx, pscope, step.plan.ID, true)
+	if err != nil {
+		return employeeloop.ToolResult{}, nil, err
+	}
+	task, err := employeetask.NewStore(tx).Get(ctx, employeeTaskScopeOf(pscope), plan.TaskID)
+	if err != nil {
+		return employeeloop.ToolResult{}, nil, err
+	}
+	switch {
+	case fu.ID != step.followUp.ID || fu.Decision != employeeplan.DecisionWoken || fu.NextRunID != "" || plan.State != employeeplan.StateActive:
+		return employeeloop.ToolResult{}, nil, errors.New("the planned step is no longer awaiting a decision")
+	case task.State == employeetask.StateCancelled:
+		return employeeloop.ToolResult{}, nil, errors.New("the task was stopped")
+	case task.GoalRevision != plan.GoalRevision || task.Version != step.prepared.TaskVersion():
+		return employeeloop.ToolResult{}, nil, errors.New("the task changed after this review started")
+	}
+	out, err := h.worker.handler.TaskService.StartPreparedDirectTaskTx(ctx, tx, step.prepared)
+	if err != nil {
+		return employeeloop.ToolResult{}, nil, err
+	}
+	if err = employeeplan.AttachNextRun(ctx, tx, fu.ID, out.Run.ID, util.UUIDToString(out.Task.ID)); err != nil {
+		return employeeloop.ToolResult{}, nil, err
+	}
+	content, _ := json.Marshal(map[string]any{"task_id": plan.TaskID, "run_id": out.Run.ID, "queue_task_id": util.UUIDToString(out.Task.ID), "step": fu.StepIndex + 1})
+	return employeeloop.ToolResult{Content: string(content), Receipt: out.Run.ID, Terminal: &employeeloop.Decision{Kind: employeeloop.Dispatched, Reply: reply}}, &out, nil
+}
+
+// pauseEmployeePlanAfterWake pauses a plan whose decision wake ended without
+// starting the next step; the goal then waits for its requester.
+func (w *EmployeeSceneWorker) pauseEmployeePlanAfterWake(ctx context.Context, tx pgx.Tx, job employeeentry.Job) error {
+	pscope := employeePlanScope(job.Scope)
+	fu, err := employeeplan.FollowUpOfWake(ctx, tx, pscope, job.ID, false)
+	if errors.Is(err, employeeplan.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if fu.Decision != employeeplan.DecisionWoken || fu.NextRunID != "" {
+		return nil
+	}
+	var locked string
+	if err = tx.QueryRow(ctx, `SELECT id::text FROM employee_task WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`, fu.TaskID, job.Scope.WorkspaceID).Scan(&locked); err != nil {
+		return err
+	}
+	plan, err := employeeplan.ByID(ctx, tx, pscope, fu.PlanID, true)
+	if err != nil {
+		return err
+	}
+	if plan.State != employeeplan.StateActive {
+		return nil
+	}
+	if err = employeeplan.SetState(ctx, tx, plan, employeeplan.StatePaused, "decision_paused"); err != nil {
+		return err
+	}
+	task, err := employeetask.NewStore(tx).Get(ctx, employeeTaskScopeOf(pscope), plan.TaskID)
+	if err != nil {
+		return err
+	}
+	if task.Lifecycle() != employeetask.LifecycleV2 || task.State == employeetask.StateCancelled || task.State == employeetask.StateSucceeded {
+		return nil
+	}
+	_, _, err = employeetask.WaitTaskTx(ctx, tx, employeeTaskScopeOf(pscope), plan.TaskID, employeetask.WaitParams{Source: employeetask.Source{Namespace: employeePlanNamespace, Key: plan.ID + "/" + fu.RunID + "/wait"}, Kind: employeetask.WaitHumanInput, RefID: "plan:" + plan.ID + ":" + fu.RunID, Mandatory: true, AuthorityRef: plan.AuthorityRef, Body: "decision_paused"})
+	var lifecycle *employeetask.LifecycleError
+	if errors.As(err, &lifecycle) {
+		return nil
+	}
+	return err
 }
 
 // completeTaskWake commits at most one scene notice to the Task's delivery
@@ -649,6 +929,11 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 	}
 	actionIDs := []string{}
 	err := w.store.Complete(ctx, job, func(tx pgx.Tx) error {
+		if wake.Kind == employeeentry.TaskWakeExecutionFollowUp {
+			if err := w.pauseEmployeePlanAfterWake(ctx, tx, job); err != nil {
+				return err
+			}
+		}
 		if text == "" {
 			return nil
 		}
