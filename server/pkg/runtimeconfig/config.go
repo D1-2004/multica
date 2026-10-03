@@ -99,6 +99,10 @@ type RuntimeConfig struct {
 	// A single Diamond rollout controls the performance batch. Missing or
 	// empty targets never opt an agent into a newly deployed optimization.
 	PerformanceOptimization *PerformanceOptimizationConfig `json:"performance_optimization,omitempty"`
+	// EmployeeWatchdog holds the stall-notice thresholds. It stays raw here and
+	// is decoded strictly (unknown keys rejected) by the server, which owns the
+	// schema; absent keeps the built-in defaults.
+	EmployeeWatchdog json.RawMessage `json:"employee_watchdog,omitempty"`
 }
 
 // EventSceneRouterConfig selects exact tenant/agent targets, never a wildcard.

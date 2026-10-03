@@ -24,6 +24,15 @@ func (s *TaskService) recordEmployeeRunInTx(ctx context.Context, tx pgx.Tx, task
 	if tx == nil {
 		return errors.New("employee run terminal transition requires transaction")
 	}
+	// An automation-origin execution records its result only against the
+	// receipt it was admitted from; a forged locator fails closed.
+	if c.AutomationOrigin != nil {
+		if _, err := LoadAutomationOrigin(ctx, tx, task); errors.Is(err, ErrAutomationOriginInvalid) {
+			return ErrDirectTaskAccessDenied
+		} else if err != nil {
+			return err
+		}
+	}
 	run, err := directRunByQueue(ctx, tx, task.ID)
 	if err != nil {
 		return err

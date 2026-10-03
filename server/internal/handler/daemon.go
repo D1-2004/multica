@@ -2860,8 +2860,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 
 	// Autopilot run_only task: resolve workspace from autopilot_run →
 	// autopilot, and include the autopilot instructions because there is no
-	// issue for the agent to fetch.
-	if task.AutopilotRunID.Valid {
+	// issue for the agent to fetch. A Direct execution of a routine occurrence
+	// already carries its frozen packet; the current autopilot text never
+	// reaches it.
+	if task.AutopilotRunID.Valid && resp.DirectTaskPrompt == "" {
 		if run, err := h.Queries.GetAutopilotRun(r.Context(), task.AutopilotRunID); err == nil {
 			resp.AutopilotID = uuidToString(run.AutopilotID)
 			resp.AutopilotSource = run.Source

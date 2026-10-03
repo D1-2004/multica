@@ -12,6 +12,11 @@ const (
 	Employee          = "employee"
 	MaxWindowItems    = 16
 	MaxWindowMessages = 32
+
+	// KindMessage is a human message window; KindTaskWake is one internal,
+	// Host-derived Task wake. The kind is fixed when the job is created.
+	KindMessage  = "message"
+	KindTaskWake = "task_wake"
 )
 
 var (
@@ -74,6 +79,7 @@ type ModelRouteSelection struct {
 
 type Job struct {
 	ID            string
+	Kind          string
 	Scope         Scope
 	PrincipalID   string
 	Items         []Item

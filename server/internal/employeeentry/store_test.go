@@ -73,6 +73,24 @@ func database(t *testing.T) fixture {
 	for _, path := range owned {
 		apply(t, pool, path)
 	}
+	// Task wakes read Employee Tasks; 990* is the Task lifecycle range and 991*
+	// the typed scene job range. Both apply after the original tables.
+	tasks := []string{"9650_employee_task_resume.up.sql", "9760_employee_task_steer_entry.up.sql"}
+	for _, pattern := range []string{"960*.up.sql", "990*.up.sql", "991*.up.sql"} {
+		matched, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err != nil {
+			t.Fatal(err)
+		}
+		sort.Strings(matched)
+		if pattern == "990*.up.sql" {
+			for _, name := range tasks {
+				apply(t, pool, filepath.Join(dir, name))
+			}
+		}
+		for _, path := range matched {
+			apply(t, pool, path)
+		}
+	}
 	if _, err = pool.Exec(ctx, `CREATE TABLE workspace(id uuid NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}

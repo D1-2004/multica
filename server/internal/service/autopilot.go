@@ -38,8 +38,12 @@ type AutopilotService struct {
 	Bus            *events.Bus
 	TaskSvc        *TaskService
 	// SceneRoutines binds scene routine autopilots to their Agent work
-	// scene; nil leaves every autopilot ordinary.
+	// scene; nil leaves every autopilot ordinary. When it also implements
+	// EmployeeRoutineHost, routines of employee-mode agents run as
+	// EmployeeTask Direct executions (employee_routine_task.go).
 	SceneRoutines SceneRoutines
+	// employeeRoutineFault injects write-boundary failures in tests.
+	employeeRoutineFault func(stage string) error
 }
 
 // DefaultAutopilotTriggerTimezone is the timezone used to render Autopilot
@@ -383,6 +387,15 @@ func (s *AutopilotService) DispatchAutopilotForPlan(
 	}
 	plannedTS := pgtype.Timestamptz{Time: plannedAt.UTC(), Valid: true}
 
+	// A scene routine of an employee-mode agent admits the occurrence as an
+	// EmployeeTask with a frozen receipt; its replays read that receipt and
+	// never reach the partial-run recovery below.
+	if source == "schedule" {
+		if run, _, handled, err := s.dispatchEmployeeRoutine(ctx, autopilot, routineFire{TriggerID: triggerID, PlannedAt: plannedAt.UTC()}); handled {
+			return run, err
+		}
+	}
+
 	// Fast path: prior attempt already created a run for this exact
 	// occurrence. The partial unique index uq_autopilot_run_trigger_planned
 	// would also reject a duplicate INSERT, but doing the lookup up
@@ -477,6 +490,13 @@ func (s *AutopilotService) dispatchAutopilot(
 	webhookDeliveryID pgtype.UUID,
 	actorUserID pgtype.UUID,
 ) (*db.AutopilotRun, dispatch.ReasonCode, error) {
+	// A manual run of an employee-mode scene routine takes the same
+	// EmployeeTask path as its schedule, recorded as manual.
+	if source == "manual" && !plannedAt.Valid && !webhookDeliveryID.Valid {
+		if run, code, handled, err := s.dispatchEmployeeRoutine(ctx, autopilot, routineFire{TriggerID: triggerID, ManualActorID: actorUserID}); handled {
+			return run, code, err
+		}
+	}
 	s, routineSkip, err := s.withSceneRoutine(ctx, autopilot)
 	if err != nil {
 		return nil, dispatch.ReasonInternalError, fmt.Errorf("scene routine context: %w", err)

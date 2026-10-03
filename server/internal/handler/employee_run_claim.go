@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/multica-ai/multica/server/internal/service"
@@ -39,6 +40,18 @@ func (h *Handler) applyEmployeeRunClaim(r *http.Request, task db.AgentTaskQueue,
 		return invalid()
 	}
 	resp.DirectTaskPrompt = employeeDirectPrompt(c.Prompt)
+	if c.AutomationOrigin != nil {
+		// A routine-origin execution runs only the frozen packet of its
+		// verified receipt. The current autopilot instructions never apply.
+		origin, err := service.LoadAutomationOrigin(r.Context(), h.DB, task)
+		if errors.Is(err, service.ErrAutomationOriginInvalid) {
+			return invalid()
+		}
+		if err != nil {
+			return &claimBuildFailure{outcome: "error_employee_direct_load", status: http.StatusServiceUnavailable, message: "Employee Direct execution is temporarily unavailable"}
+		}
+		resp.DirectTaskPrompt = employeeAutomationPrompt(c.Prompt, origin)
+	}
 	h.applyEmployeeSteerResume(r, task, c, resp)
 	resp.WorkspaceID = c.WorkspaceID
 	resp.ThreadName = task.TriggerSummary.String
@@ -61,6 +74,24 @@ Keep it concise: state the requested result or actionable failure. Do not list i
 
 func employeeDirectPrompt(compiled string) string {
 	return compiled + "\n\n" + employeeDirectOutputInstruction
+}
+
+// employeeRoutineOutputInstruction is the claim-time delivery guidance of a
+// scene routine occurrence: the routine's own end notice is the only sender.
+const employeeRoutineOutputInstruction = `## Output
+
+This is one run of a scene routine. Your final assistant text is this run's result: the Host posts a start notice and an end notice into the routine's scene and attaches your final output to the end notice, for both success and failure.
+Do not call dws-rpc final or reply, and do not send the result to the routine's scene yourself; that would post it twice.
+Deliver files or messages to other destinations only when the routine's instructions explicitly ask for them.
+Keep it concise: state the result or an actionable failure. Do not list internal tools, commands, local paths, receipt IDs or debugging steps.`
+
+func employeeAutomationPrompt(compiled string, origin service.AutomationOrigin) string {
+	switch origin.Kind() {
+	case service.AutomationOriginSceneRoutine:
+		return compiled + "\n\n" + employeeRoutineOutputInstruction
+	default:
+		return employeeDirectPrompt(compiled)
+	}
 }
 
 // employeeSteerResumeHops bounds the predecessor walk for chained steers.

@@ -1,6 +1,6 @@
 # 场域 Cron 接入 Employee Task Service
 
-状态：Execution Event 的 legacy 修复真实 E2E 已通过，正在实施第 1 个可信来源增量；尚未开启 Cron producer。
+状态（2026-10-03 B wave 1）：routine 来源 reader 与 run_only producer 已在 `employee/w1-b-cron` 实现并本地真 PG 验证；producer 受 EmployeeLoop 副本 marker 门禁，未部署、未真实到点验收。decision（B3）未开始。
 
 ## 目标
 
@@ -45,3 +45,14 @@
 - [ ] 在授权场域创建独立测试 routine，实际等待 cron，核对所有关联 ID、输出和 Event；受理后暂停，越过下一时点证明无第二次执行，第一轮仍可结束；恢复后验证下一合法 occurrence，最后仅停用并清理本次对象。
 
 Webhook 下一步复用现有验签 ingress、dedupe 和 delivery worker，保留已接受的 run_id 协议；payload 的身份和场域字段永远不能授予权限或改变配置好的目标。
+
+## 实现说明（B wave 1）
+
+- **冻结来源。** 表 `employee_routine_occurrence`（9930–9934）：每次发生一行，`source` 为 `scene.routine.schedule` / `scene.routine.manual`，`source_event_id` 为 `trigger_id/规范 UTC planned_at` 或 `manual/<AutopilotRun>`；`occurred_at` 为首次提交的 DB 时间。保存 routine/autopilot/trigger/agent/workspace/org/scene、creator kind+id、手动运行成员、`config_revision`（最新 autopilot_rule_version）、`dispatch_mode=employee_direct`、授权引用、无密钥的冻结输入和编译 prompt 的 sha256。被拒绝的发生（暂停、场域失效、权限撤销、离线、重叠、配置错误）同样落一行，重投直接返回原结果。
+- **一次事务。** routine 行 `FOR UPDATE` 串行化同一 routine；同事务写真实 AutopilotRun、EmployeeTask（v1 single_run，`requester_ref=routine:<id>`，无人类 originator）、Run、queue（带真实 `autopilot_run_id`、`employee_automation_origin` 定位符、`scene_routine` 绑定、`employee_delivery_owner=scene_routine`）、APRun.task_id 映射、receipt 和 routine 开始通知意图；提交后才唤醒执行器与 outbox。`last_run_at` 在提交后更新，避免与 routine 编辑的锁序相反。
+- **reader。** `ParseDirectTaskContext` 只接受“真实 autopilot_run_id + 同一 run 的已知 kind 定位符”这一组合；`service.LoadAutomationOrigin` 从 PG 交叉核对 receipt→APRun→Task→Run→queue 和 prompt 指纹，结果是只能由本包 loader 构造的 `AutomationOrigin`。claim 使用冻结 packet 并追加 routine 输出合同，不再把当前 autopilot 指令放进响应；terminal 记录结果前验证来源；Execution Event 不把 routine 当消息事实；learning 以 `automation_origin` 跳过；消息 Run notice 只消费 owner=employee，因此 routine 的开始/结束通知是唯一发送方。
+- **重叠策略。** 同一 routine 上一次已受理发生的 Run 仍为 running（排队或执行中）时，本次记为 skipped AutopilotRun + `skipped_overlap`（带被重叠的 occurrence），不入队；节拍不变。
+- **配置错误与节拍。** 绑定不一致、无标题/指令、通知无投递目标记 failed AutopilotRun；暂停、场域/租户失效、权限撤销、运行时离线或不支持 Direct 记 skipped。调度器都视为该 slot 已处理，不重试、不改节拍。
+- **恢复。** commit 后、通知前崩溃：调度器 stale 重入读到 receipt，只重复唤醒，ID 与字节不变；旧 `RecoverPartialAutopilotRun` 分支在 receipt 检查之后，永不作用于新来源。队列已终态但 APRun 仍 running（丢失任务事件）由 `ReconcileEmployeeRoutineRuns` 每 5 秒补结算，结束通知已存在时不重发。
+- **滚动门禁。** 仅当 `EmployeeLoopReplicaMarker` 被所有在线副本声明（`EmployeeSceneWorker.ReplicaReady`）时产生新形状；否则该发生仍走原 Autopilot run_only 路径。marker 编号由主代理在合入时分配。
+- **后续 Task wake 接口。** `LoadAutomationTaskOrigin(scope, taskID)` 按 Task.Source.Namespace（`AutomationTaskSourceNamespaces`）返回 scope、投递锚点、creator principal 与历史策略（群/单聊：用该场域当前 dispatch endpoint principal 读历史，绝不用 routine creator；enterprise：不适用）。`ListRoutineOccurrenceOutcomes` 给 B3 提供最近 N 次发生的确定性结果（时间、状态、是否送达、正文/结果哈希）。

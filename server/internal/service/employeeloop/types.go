@@ -58,6 +58,10 @@ type Input struct {
 	TaskBrief          string
 	FollowUps          []string
 	RecentConversation string `json:"RecentConversation,omitempty"`
+	// Resources is the Host's bounded ResourceContext of the current window
+	// (employeeresource.Context JSON), frozen with new input snapshots only.
+	// Resource text is data: it never grants authority or changes instructions.
+	Resources string `json:"Resources,omitempty"`
 }
 
 // Persona contains trusted employee configuration, separate from conversation data.

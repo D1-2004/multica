@@ -324,6 +324,14 @@ type closePayload struct {
 // invitations are revoked and the collection becomes ready with a new ready
 // intent so the origin summarizes what arrived. Cancel/revoke/expire end the
 // collection; nothing reopens it, and later answers report ErrClosed.
+//
+// A partial close happens at most once, but it does not take away the
+// requester's or the Host's ability to stop: while the collection is still
+// ready or summarizing, cancel/revoke/expire end it at a new revision and
+// supersede the pending ready intent, so it can no longer be admitted and an
+// already admitted summary can no longer complete. The terminal close keeps
+// the partial-close record under "prior" in close_payload; replaying either
+// source stays idempotent.
 func (s *Store) CloseCollectionTx(ctx context.Context, scope Scope, p CloseParams) (Collection, *ReadyIntent, error) {
 	if err := validateScope(scope); err != nil {
 		return Collection{}, nil, err
@@ -363,8 +371,8 @@ func (s *Store) CloseCollectionTx(ctx context.Context, scope Scope, p CloseParam
 		return Collection{}, nil, err
 	}
 	if col.closeSource == p.Source {
-		equal, err := jsonEqual(ctx, tx, col.closePayload, payload)
-		if err != nil {
+		var equal bool
+		if err := tx.QueryRow(ctx, `SELECT ($1::jsonb - 'prior') = $2::jsonb`, col.closePayload, string(payload)).Scan(&equal); err != nil {
 			return Collection{}, nil, err
 		}
 		if !equal {
@@ -383,11 +391,31 @@ func (s *Store) CloseCollectionTx(ctx context.Context, scope Scope, p CloseParam
 		}
 		return col.Collection, ready, nil
 	}
+	if col.closePayload != "" {
+		// A partial close that a terminal close has since superseded: the
+		// same source and content is a replay of an applied action.
+		var priorNamespace, priorKey string
+		var equal bool
+		if err := tx.QueryRow(ctx, `SELECT COALESCE($1::jsonb->'prior'->'source'->>'namespace',''), COALESCE($1::jsonb->'prior'->'source'->>'key',''),
+ COALESCE(($1::jsonb->'prior') = $2::jsonb, false)`, col.closePayload, string(payload)).Scan(&priorNamespace, &priorKey, &equal); err != nil {
+			return Collection{}, nil, err
+		}
+		if (Source{Namespace: priorNamespace, Key: priorKey}) == p.Source {
+			if !equal {
+				return Collection{}, nil, ErrConflict
+			}
+			if err = tx.Commit(ctx); err != nil {
+				return Collection{}, nil, err
+			}
+			return col.Collection, nil, nil
+		}
+	}
 	if !col.State.Active() {
 		return Collection{}, nil, ErrClosed
 	}
-	if col.CloseMode != "" {
-		// A partial close already decided this collection's inputs.
+	if col.CloseMode != "" && p.Mode == ClosePartial {
+		// A partial close already decided this collection's inputs; only a
+		// terminal close (cancel/revoke/expire) can follow it.
 		return Collection{}, nil, ErrClosed
 	}
 	if col.Revision != p.ExpectedRevision {
@@ -431,8 +459,11 @@ func (s *Store) CloseCollectionTx(ctx context.Context, scope Scope, p CloseParam
 		scopeArgs(scope, col.ID, invitationEnd, string(p.Mode)+"_close", p.Source.Namespace, p.Source.Key)...); err != nil {
 		return Collection{}, nil, err
 	}
+	// A terminal close after a partial close keeps the partial-close audit
+	// (actor, reason, source) under "prior"; right-hand values read the old row.
 	updated, err := scanCollection(tx.QueryRow(ctx, `UPDATE employee_task_collection SET state=$5, revision=$6, close_mode=$7,
- close_actor_ref=$8, close_reason=$9, close_source_namespace=$10, close_source_key=$11, close_payload=$12::jsonb,
+ close_actor_ref=$8, close_reason=$9, close_source_namespace=$10, close_source_key=$11,
+ close_payload=$12::jsonb || CASE WHEN close_mode='partial' THEN jsonb_build_object('prior', close_payload) ELSE '{}'::jsonb END,
  close_revision=$6, closed_at=now(), updated_at=now() WHERE `+scopeWhere+` AND id=$4::uuid AND revision=$13 RETURNING `+collectionColumns,
 		scopeArgs(scope, col.ID, state, revision, string(p.Mode), p.Authority.ActorRef, p.Reason, p.Source.Namespace, p.Source.Key, payload, col.Revision)...))
 	if err != nil {

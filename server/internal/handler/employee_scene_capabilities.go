@@ -36,16 +36,26 @@ const employeeSceneSelfManagement = "Scene self-management is background work yo
 
 // The directory is a configuration projection, never a runtime or authority grant.
 func employeeSceneCapabilities(ctx context.Context, h *Handler, job employeeentry.Job, envelopes []employeeDispatchEnvelope) (employeeCapabilityContext, error) {
+	principals := make([]string, 0, len(envelopes))
+	for _, env := range envelopes {
+		principals = append(principals, env.PrincipalID)
+	}
+	return employeeSceneCapabilitiesFor(ctx, h, job, principals, employeeCapabilityPerson(job, envelopes))
+}
+
+// employeeSceneCapabilitiesFor resolves the directory for Host-verified
+// principals and an explicit person layer key; an empty key selects none.
+func employeeSceneCapabilitiesFor(ctx context.Context, h *Handler, job employeeentry.Job, principals []string, personKey string) (employeeCapabilityContext, error) {
 	target, err := employeeSceneConfigTarget(ctx, h, job)
 	if err != nil {
 		return employeeCapabilityContext{}, err
 	}
-	for _, env := range envelopes {
-		if err = employeePrincipalAllowed(ctx, h, job.Scope, env.PrincipalID); err != nil {
+	for _, principal := range principals {
+		if err = employeePrincipalAllowed(ctx, h, job.Scope, principal); err != nil {
 			return employeeCapabilityContext{}, err
 		}
 	}
-	target.scope.PersonKey = employeeCapabilityPerson(job, envelopes)
+	target.scope.PersonKey = personKey
 	global, err := contextcap.LoadGlobalLayer(ctx, h.DB, job.Scope.WorkspaceID, job.Scope.AgentID)
 	if err != nil {
 		return employeeCapabilityContext{}, err

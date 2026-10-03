@@ -969,7 +969,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return err
 		}
 		if !ready {
-			return errors.New("live server replicas do not all support employee-loop:11")
+			return errors.New("live server replicas do not all support employee-loop:12")
 		}
 		return nil
 	}
@@ -1109,7 +1109,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			h.TaskCompletionWorker.ResponseActions = h
 		}
 		h.DingTalkResponses.OnSandboxDelivered = h.BindVerifiedDingTalkSend
-		h.DingTalkResponses.BeforeSend = h.BeforeEmployeeRunNoticeSend
+		// Stall notices pass their own BeforeSend re-check; everything else keeps
+		// the Run notice gate. Wired on every replica so a notice queued by a
+		// new replica is never sent unchecked by any other.
+		employeeWatchdog := &service.EmployeeWatchdog{DB: pool, Targets: h, Outbox: h.DingTalkResponses}
+		if opts.RuntimeConfig != nil {
+			employeeWatchdog.LoadConfig = opts.RuntimeConfig.employeeWatchdog
+		}
+		if h.EmployeeSceneWorker != nil {
+			employeeWatchdog.Ready = h.EmployeeSceneWorker.ReplicaReady
+		}
+		h.EmployeeWatchdog = employeeWatchdog
+		h.DingTalkResponses.BeforeSend = h.BeforeEmployeeResponseSend(employeeWatchdog)
 		h.EmployeeRunNoticeArtifacts = h.ListEmployeeTaskArtifacts
 		// Native dispatches complete to their own target. The worker exists
 		// whenever managed responses do, so queued native callbacks drain
