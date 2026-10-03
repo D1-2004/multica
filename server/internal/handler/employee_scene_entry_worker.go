@@ -55,6 +55,11 @@ type EmployeeSceneWorker struct {
 	Langfuse      *langfuse.Client
 	ReplicaReady  func(context.Context) error
 	RecoveryReady func(context.Context, pgtype.UUID, pgtype.UUID) error
+
+	// SceneTranscript reads a group's bounded recent history as the agent;
+	// nil reuses the Coordinator's DWS history loader.
+	SceneTranscript employeeSceneTranscriptLoader
+
 	// ResourceProvider reads message resources as the agent; nil uses the
 	// handler's DingTalk response service.
 	ResourceProvider employeeResourceProvider
@@ -240,6 +245,12 @@ type employeeSavedInput struct {
 	// TaskWake is the typed return target of a task_wake job; nil for chat.
 	TaskWake *employeeTaskWakeTarget `json:"task_wake,omitempty"`
 	employeeMemoryInputMeta
+	// TranscriptRefs binds each g<N> label of the frozen group transcript to
+	// its provider line; memory tools ground transcript quotes in it.
+	TranscriptRefs map[string]employeeTranscriptRef `json:"transcript_refs,omitempty"`
+	// sceneMessages is the wake's provider read, handed to scene history
+	// storage after the snapshot is saved. Never serialized or replayed.
+	sceneMessages []employeeentry.SceneMessageInput
 }
 type employeeSavedOutcome struct {
 	Outcome employeeloop.Outcome `json:"outcome"`
