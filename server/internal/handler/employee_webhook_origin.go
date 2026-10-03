@@ -54,6 +54,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -61,6 +63,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/employeeloopconfig"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -80,9 +83,19 @@ const (
 	// eventPayload, receivedAt, contentType) within the ingress body cap.
 	webhookPayloadEnvelopeV1 = "envelope_v1"
 
-	// Dispatch selections. The Employee producer adds its own value.
+	// Dispatch selections. employee_direct runs a scene routine's delivery
+	// as an EmployeeTask Direct execution (service.DispatchEmployeeWebhookRoutine).
 	webhookDispatchAutopilotRunOnly     = "autopilot_run_only"
 	webhookDispatchAutopilotCreateIssue = "autopilot_create_issue"
+	webhookDispatchEmployeeDirect       = "employee_direct"
+
+	// webhookPayloadFieldsV1 hands an Employee execution only the frozen
+	// allowlist of JSON pointers into the envelope (PayloadFields).
+	webhookPayloadFieldsV1 = "fields_v1"
+
+	// Payload allowlist bounds.
+	maxWebhookPayloadFields       = 20
+	maxWebhookPayloadPointerBytes = 200
 
 	// webhookBindingInvalid is the ignored reason of an endpoint whose
 	// routine disagrees with its autopilot.
@@ -135,6 +148,8 @@ type WebhookEndpointBinding struct {
 	SignaturePolicy string `json:"signature_policy"`
 	SecretRevision  string `json:"secret_revision,omitempty"`
 	PayloadPolicy   string `json:"payload_policy"`
+	// PayloadFields is the allowlist an Employee execution reads (fields_v1).
+	PayloadFields []string `json:"payload_fields,omitempty"`
 }
 
 // routeKey is the part of a binding that decides where work goes.
@@ -205,6 +220,157 @@ func (h *Handler) resolveWebhookEndpointBinding(ctx context.Context, ap db.Autop
 		return b, webhookBindingInvalid, nil
 	}
 	return b, "", nil
+}
+
+// defaultWebhookPayloadFields is the allowlist of a routine that configured
+// none: the event name and its payload, never the request metadata.
+var defaultWebhookPayloadFields = []string{"/event", "/eventPayload"}
+
+// selectWebhookDispatch decides, at acceptance, which producer runs this
+// delivery and freezes it in the binding: a scene routine of an agent in
+// employee mode runs as an EmployeeTask once every live replica reads that
+// origin (EmployeeRoutineReady); anything else keeps the Autopilot path. A
+// readiness or mode lookup failure keeps the Autopilot path for this
+// delivery only.
+func (h *Handler) selectWebhookDispatch(ctx context.Context, ap db.Autopilot, b *WebhookEndpointBinding) {
+	if b.RoutineID == "" || ap.ExecutionMode != "run_only" || ap.AssigneeType != "agent" || h.DB == nil {
+		return
+	}
+	mode, err := employeeloopconfig.Load(ctx, h.DB, ap.WorkspaceID, ap.AssigneeID)
+	if err != nil || mode.Mode != employeeloopconfig.Employee {
+		return
+	}
+	if err := h.EmployeeRoutineReady(ctx); err != nil {
+		slog.InfoContext(ctx, "webhook: employee routine path not ready; delivery keeps the Autopilot path",
+			"trigger_id", b.TriggerID, "routine_id", b.RoutineID, "reason", err.Error())
+		return
+	}
+	fields, err := readTriggerPayloadFields(ctx, h.DB, b.TriggerID)
+	if err != nil {
+		slog.WarnContext(ctx, "webhook: payload fields unreadable; delivery keeps the Autopilot path", "trigger_id", b.TriggerID, "error", err)
+		return
+	}
+	b.Dispatch, b.PayloadPolicy, b.PayloadFields = webhookDispatchEmployeeDirect, webhookPayloadFieldsV1, fields
+}
+
+// readTriggerPayloadFields returns a trigger's effective payload allowlist.
+func readTriggerPayloadFields(ctx context.Context, q dbExecutor, triggerID string) ([]string, error) {
+	var raw []byte
+	if err := q.QueryRow(ctx, `SELECT payload_fields FROM autopilot_trigger WHERE id = $1::uuid`, triggerID).Scan(&raw); err != nil {
+		return nil, err
+	}
+	var fields []string
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return nil, fmt.Errorf("decode payload fields: %w", err)
+		}
+	}
+	if len(fields) == 0 {
+		return append([]string{}, defaultWebhookPayloadFields...), nil
+	}
+	return fields, nil
+}
+
+// writeTriggerPayloadFields stores a normalized allowlist; empty restores
+// the default.
+func writeTriggerPayloadFields(ctx context.Context, tx pgx.Tx, triggerID pgtype.UUID, fields []string) error {
+	var raw any
+	if len(fields) > 0 {
+		encoded, err := json.Marshal(fields)
+		if err != nil {
+			return err
+		}
+		raw = encoded
+	}
+	_, err := tx.Exec(ctx, `UPDATE autopilot_trigger SET payload_fields = $2::jsonb WHERE id = $1`, triggerID, raw)
+	return err
+}
+
+// normalizeWebhookPayloadFields validates an allowlist of JSON pointers
+// (RFC 6901) into the normalized envelope, e.g. /eventPayload/build/status.
+func normalizeWebhookPayloadFields(fields []string) ([]string, error) {
+	if len(fields) > maxWebhookPayloadFields {
+		return nil, fmt.Errorf("at most %d payload fields", maxWebhookPayloadFields)
+	}
+	out := make([]string, 0, len(fields))
+	seen := map[string]bool{}
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if !strings.HasPrefix(field, "/") || len(field) < 2 || len(field) > maxWebhookPayloadPointerBytes || !utf8.ValidString(field) {
+			return nil, fmt.Errorf("payload field %q must be a JSON pointer such as /eventPayload/status", field)
+		}
+		for i := 0; i < len(field); i++ {
+			if c := field[i]; c < 0x20 || c == 0x7f || (c == '~' && (i+1 >= len(field) || (field[i+1] != '0' && field[i+1] != '1'))) {
+				return nil, fmt.Errorf("payload field %q is not a valid JSON pointer", field)
+			}
+		}
+		if !seen[field] {
+			seen[field] = true
+			out = append(out, field)
+		}
+	}
+	return out, nil
+}
+
+// selectWebhookPayload returns the canonical JSON object {pointer: value} of
+// the allowlisted fields present in the envelope. Absent fields are left out.
+// problem is set when the selection exceeds the execution bound.
+func selectWebhookPayload(env WebhookEnvelope, fields []string) (json.RawMessage, string, error) {
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return nil, "", err
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var doc any
+	if err := dec.Decode(&doc); err != nil {
+		return nil, "", err
+	}
+	selected := map[string]any{}
+	for _, field := range fields {
+		if value, ok := jsonPointerLookup(doc, field); ok {
+			selected[field] = value
+		}
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(selected); err != nil {
+		return nil, "", err
+	}
+	out := bytes.TrimRight(buf.Bytes(), "\n")
+	if len(out) > service.MaxWebhookSelectedBytes {
+		return nil, fmt.Sprintf("selected webhook payload is %d bytes, above %d; narrow the routine's payload fields", len(out), service.MaxWebhookSelectedBytes), nil
+	}
+	return out, "", nil
+}
+
+// jsonPointerLookup resolves an RFC 6901 pointer in a decoded JSON value.
+func jsonPointerLookup(doc any, pointer string) (any, bool) {
+	if pointer == "" {
+		return doc, true
+	}
+	current := doc
+	for _, token := range strings.Split(pointer[1:], "/") {
+		token = strings.ReplaceAll(strings.ReplaceAll(token, "~1", "/"), "~0", "~")
+		switch node := current.(type) {
+		case map[string]any:
+			next, ok := node[token]
+			if !ok {
+				return nil, false
+			}
+			current = next
+		case []any:
+			index, err := strconv.Atoi(token)
+			if err != nil || index < 0 || index >= len(node) || strconv.Itoa(index) != token {
+				return nil, false
+			}
+			current = node[index]
+		default:
+			return nil, false
+		}
+	}
+	return current, true
 }
 
 // webhookSecretRevision fingerprints a signing secret so a delivery records
@@ -428,6 +594,23 @@ func (h *Handler) loadWebhookFrozenSource(ctx context.Context, delivery db.Webho
 		}
 	}
 	return src, nil
+}
+
+// frozenWebhookEmployeeDispatch reports whether the delivery's binding froze
+// the Employee path at acceptance.
+func (h *Handler) frozenWebhookEmployeeDispatch(ctx context.Context, id pgtype.UUID) (bool, error) {
+	frozen, err := h.readWebhookFrozenColumns(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("load frozen binding: %w", err)
+	}
+	if len(frozen.Binding) == 0 {
+		return false, nil
+	}
+	var b WebhookEndpointBinding
+	if err := json.Unmarshal(frozen.Binding, &b); err != nil {
+		return false, fmt.Errorf("decode frozen binding: %w", err)
+	}
+	return b.Dispatch == webhookDispatchEmployeeDirect, nil
 }
 
 // webhookSceneUnusable is the refusal of an admitted routine run whose scene

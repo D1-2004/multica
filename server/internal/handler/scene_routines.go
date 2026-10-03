@@ -74,6 +74,10 @@ type sceneRoutineTrigger struct {
 	Kind     string `json:"kind"`
 	Cron     string `json:"cron,omitempty"`
 	Timezone string `json:"timezone,omitempty"`
+	// PayloadFields is a webhook's allowlist of JSON pointers into the
+	// normalized envelope that an Employee run reads; empty means
+	// /event and /eventPayload. Not settable from a chat.
+	PayloadFields []string `json:"payload_fields,omitempty"`
 }
 
 // sceneRoutineInput creates a routine.
@@ -92,6 +96,9 @@ type sceneRoutinePatch struct {
 	Enabled      *bool   `json:"enabled"`
 	Cron         *string `json:"cron"`
 	Timezone     *string `json:"timezone"`
+	// PayloadFields replaces a webhook's payload allowlist ([] restores the
+	// default). Not settable from a chat.
+	PayloadFields *[]string `json:"payload_fields"`
 }
 
 // sceneRoutineActor is who writes a routine: a configure-page member, or the
@@ -136,6 +143,8 @@ type sceneRoutineTriggerView struct {
 	// HasSigningSecret tells whether webhook requests must carry an
 	// X-Hub-Signature-256 HMAC; the secret itself is never returned.
 	HasSigningSecret bool `json:"has_signing_secret,omitempty"`
+	// PayloadFields is a webhook's effective payload allowlist.
+	PayloadFields []string `json:"payload_fields,omitempty"`
 	// WebhookURL is the full URL, returned only when the token was just
 	// minted (create, rotate).
 	WebhookURL string `json:"webhook_url,omitempty"`
@@ -229,6 +238,9 @@ func normalizeRoutineInput(in sceneRoutineInput) (sceneRoutineInput, error) {
 	}
 	switch in.Trigger.Kind = strings.TrimSpace(in.Trigger.Kind); in.Trigger.Kind {
 	case sceneRoutineTriggerCron:
+		if len(in.Trigger.PayloadFields) > 0 {
+			return in, routineInvalid("payload_fields are only valid for a webhook")
+		}
 		in.Trigger.Cron, in.Trigger.Timezone, err = normalizeRoutineSchedule(in.Trigger.Cron, in.Trigger.Timezone)
 		if err != nil {
 			return in, err
@@ -238,6 +250,9 @@ func normalizeRoutineInput(in sceneRoutineInput) (sceneRoutineInput, error) {
 			return in, routineInvalid("cron and timezone are only valid for a schedule")
 		}
 		in.Trigger.Cron, in.Trigger.Timezone = "", ""
+		if in.Trigger.PayloadFields, err = normalizeWebhookPayloadFields(in.Trigger.PayloadFields); err != nil {
+			return in, routineInvalid(err.Error())
+		}
 	default:
 		return in, routineInvalid("trigger.kind must be schedule or webhook")
 	}
@@ -431,6 +446,11 @@ func (h *Handler) createSceneRoutine(ctx context.Context, a contextCapAgent, sc 
 	if err != nil {
 		return sceneRoutineResult{}, err
 	}
+	if len(in.Trigger.PayloadFields) > 0 {
+		if err := writeTriggerPayloadFields(ctx, tx, trigger.ID, in.Trigger.PayloadFields); err != nil {
+			return sceneRoutineResult{}, fmt.Errorf("store payload fields: %w", err)
+		}
+	}
 	routine, err := contextcap.InsertRoutine(ctx, tx, contextcap.Routine{
 		WorkspaceID: a.WorkspaceID, AgentID: a.ID, SceneID: sceneID, TenantOrgID: sc.TenantOrgID, SceneKind: sc.SceneKind,
 		AutopilotID: util.UUIDToString(ap.ID), DeliveryOpenDingTalkID: cp.OpenDingTalkID,
@@ -545,6 +565,15 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 		}
 		scheduleChanged = schedule.Cron != trigger.CronExpression.String || schedule.Timezone != trigger.Timezone.String
 	}
+	var payloadFields []string
+	if patch.PayloadFields != nil {
+		if trigger.Kind != sceneRoutineTriggerHook {
+			return sceneRoutineResult{}, routineInvalid("payload_fields are only valid for a webhook")
+		}
+		if payloadFields, err = normalizeWebhookPayloadFields(*patch.PayloadFields); err != nil {
+			return sceneRoutineResult{}, routineInvalid(err.Error())
+		}
+	}
 	status := ap.Status
 	if patch.Enabled != nil {
 		status = "paused"
@@ -589,6 +618,11 @@ func (h *Handler) updateSceneRoutine(ctx context.Context, a contextCapAgent, rou
 			ID: trigger.ID, PublishedByType: pgtype.Text{String: actor.Type, Valid: true}, PublishedByID: actor.id(),
 		}); err != nil {
 			return sceneRoutineResult{}, fmt.Errorf("stamp trigger publisher: %w", err)
+		}
+	}
+	if patch.PayloadFields != nil {
+		if err := writeTriggerPayloadFields(ctx, tx, trigger.ID, payloadFields); err != nil {
+			return sceneRoutineResult{}, fmt.Errorf("store payload fields: %w", err)
 		}
 	}
 	if status != ap.Status || scheduleChanged || instructions != ap.Description.String {
@@ -831,6 +865,13 @@ func (h *Handler) sceneRoutineView(ctx context.Context, routine contextcap.Routi
 	} else {
 		view.Trigger.WebhookURLMasked = h.routineWebhookURLMasked(*trigger)
 		view.Trigger.HasSigningSecret = trigger.SigningSecret.Valid && trigger.SigningSecret.String != ""
+		if h.DB != nil {
+			fields, err := readTriggerPayloadFields(ctx, h.DB, util.UUIDToString(trigger.ID))
+			if err != nil {
+				return sceneRoutineView{}, err
+			}
+			view.Trigger.PayloadFields = fields
+		}
 	}
 	runs, err := h.Queries.ListAutopilotRuns(ctx, db.ListAutopilotRunsParams{AutopilotID: ap.ID, Limit: 1})
 	if err != nil {

@@ -1334,6 +1334,22 @@ arrives. There are no org-level or person-level routines.
   @ in a group, the frozen counterpart in a 1:1 chat. The run's prompt asks
   the agent not to post the result itself. Completion is not routed through
   the Coordinator; the EmployeeLoop will take it over as a completion event.
+- **Webhook runs of an employee-mode agent.** When the agent is in employee
+  mode and every live replica advertises the EmployeeLoop marker, the
+  webhook ingress freezes `dispatch=employee_direct` in the delivery's
+  binding and the delivery worker runs it as one EmployeeTask Direct
+  execution (`service.DispatchEmployeeWebhookRoutine`, receipt
+  `employee_webhook_occurrence`, source `scene.routine.webhook`, event id
+  `delivery/<id>`), through the same admission core as schedule and run-now
+  occurrences. The delivery's own AutopilotRun is used (no planned_at, no
+  overlap rule); a retry replays the receipt. The packet carries only the
+  webhook's payload allowlist (`trigger.payload_fields`: JSON pointers into
+  the envelope, default `/event` and `/eventPayload`, frozen at acceptance,
+  at most 32 KiB selected, else the occurrence fails) as untrusted data.
+  The routine's notices stay the only sender. A delivery frozen for this
+  path never switches producer; while the marker is missing it waits.
+  `payload_fields` is set on the routine create/PATCH body by managers,
+  never from a chat.
 - **Rules.** Title and instructions are required; a schedule is a
   five-field cron in an IANA timezone (default Asia/Shanghai) and runs at
   most every 15 minutes. A routine with the same purpose (word set of the
