@@ -36,3 +36,11 @@
 
 本地实现完成，未 push/部署、未发送 IM、未访问真实模型凭据。真实产品质量仍待主代理当版 MF 原场景验收，不能把本地 fake native/事务通过当质量 pass。部署需特别核对所选 provider 接受 strict/单工具指定/parallel=false 参数，LF记录 finish_reason 与实际 token 上限，候选须是短主题和逐字人话；下一轮提问独立证实召回。
 
+
+## 独立复审补丁：结构失败不得消耗原话
+
+复审发现 generate 即使全轮 malformed/length，最终仍用统一 Advance=true 的 settle，虽正确记 rejected/no_progress，但游标和pending仍被消耗。补丁区别「至少一个完整原生结构（合法空ops也算）」与「没有完整结构」：后者不推进cursor、不扣pending、不标digested_revision，保留first_pending时间，按既有backoff/no_progress机制重试/阻塞。每轮响应/预算保持journal；完成失败run后下一次到期用fresh run，绝不在旧run追加第3请求。Host业务校验全拒的完整提案仍按现有合同consume。
+
+新增真实PG RED→GREEN：先消耗合法空ops建立非空游标，再加入新human；每失败claim两次malformed，原cursor/pending/first_pending/digested_revision保留，hold/backoff和no_progress增加，到6次blocked；前一failedrun journal不退款，nextclaim新run ≤2。完整业务拒绝与合法空ops作消费对照。
+
+补丁验证：`digest-pending-red`修前1 FAIL；`digest-pending-green`全包29 PASS/0 SKIP；`digest-pending-race`4 PASS/0 SKIP；定向build/vet退出0。日志仍在 `_shared/logs/codex-digest-output/`。结构失败的6次fresh-run重复读取均未追加旧journal，第6次blocked，合法emptyops与完整业务拒绝消费行为保留。真实MF仍由主代理复验。

@@ -174,12 +174,12 @@ func release(ctx context.Context, tx pgx.Tx, c claim, s settle) (blocked bool, e
 	if s.RunID != "" {
 		runID = s.RunID
 	}
-	args := append(c.Key.args(), cursorAt, cursorID, s.ConsumedHuman, s.MorePages, noProgress, block, s.HoldSeconds, c.DirtyRevision, runID)
+	args := append(c.Key.args(), cursorAt, cursorID, s.ConsumedHuman, s.MorePages, noProgress, block, s.HoldSeconds, c.DirtyRevision, runID, s.Advance || s.ConsumedHuman > 0)
 	if _, err = tx.Exec(ctx, `UPDATE employee_scene_digest_state SET
  cursor_sent_at=$5::timestamptz, cursor_message_id=$6,
  pending_human=CASE WHEN $8::bool THEN GREATEST(pending_human-$7,1) ELSE GREATEST(pending_human-$7,0) END,
- first_pending_at=CASE WHEN $8::bool OR pending_human-$7>0 THEN now() ELSE NULL END,
- digested_revision=GREATEST(digested_revision,$12::bigint), no_progress_count=$9,
+ first_pending_at=CASE WHEN $7>0 THEN CASE WHEN $8::bool OR pending_human-$7>0 THEN now() ELSE NULL END ELSE first_pending_at END,
+ digested_revision=CASE WHEN $14::bool THEN GREATEST(digested_revision,$12::bigint) ELSE digested_revision END, no_progress_count=$9,
  blocked_at=CASE WHEN $10<>'' THEN now() ELSE NULL END, blocked_reason=$10,
  hold_until=CASE WHEN $11::bigint>0 THEN now()+make_interval(secs=>$11::bigint)
   WHEN $11::bigint<0 THEN (((now() AT TIME ZONE 'Asia/Shanghai')::date+1)::timestamp AT TIME ZONE 'Asia/Shanghai')

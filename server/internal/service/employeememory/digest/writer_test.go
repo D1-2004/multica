@@ -743,3 +743,63 @@ func TestDigestNativeBoundaryRejectsTruncation(t *testing.T) {
 		t.Fatalf("truncation masked as no_change: %+v", r)
 	}
 }
+
+func TestDigestMalformedKeepsPendingPageUntilBlocked(t *testing.T) {
+	e := newEnv(t, `{"ops":[]}`)
+	key := newKey()
+	ctx := context.Background()
+	e.observe(t, key, human("old", time.Now().Add(-2*time.Hour), "Director", "定了：周四发版"))
+	e.makeDue(t, key)
+	mustProcess(t, e.writer)
+	e.model.mu.Lock()
+	e.model.script = []string{`{"ops":[{"subject":"坏参数`}
+	e.model.mu.Unlock()
+	e.observe(t, key, human("next", time.Now().Add(-time.Hour), "Director", "定了：周五回归"))
+	before := e.state(t, key)
+	var first time.Time
+	var dirty, digested int64
+	if err := e.pool.QueryRow(ctx, `SELECT first_pending_at,dirty_revision,digested_revision FROM employee_scene_digest_state WHERE scene_id=$1::uuid`, key.SceneID).Scan(&first, &dirty, &digested); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= BlockAfterNoProgress; i++ {
+		e.makeDue(t, key)
+		if !mustProcess(t, e.writer) {
+			t.Fatal("retry was not claimed", i)
+		}
+		st := e.state(t, key)
+		var hold time.Time
+		var currentFirst time.Time
+		var currentDigested int64
+		if err := e.pool.QueryRow(ctx, `SELECT hold_until,first_pending_at,digested_revision FROM employee_scene_digest_state WHERE scene_id=$1::uuid`, key.SceneID).Scan(&hold, &currentFirst, &currentDigested); err != nil {
+			t.Fatal(err)
+		}
+		if st.CursorID != before.CursorID || st.Pending != before.Pending || st.NoProgress != i || st.BudgetCalls != 1+2*i || !hold.After(time.Now()) || !currentFirst.Equal(first) || currentDigested != digested {
+			t.Fatalf("failed structure consumed evidence: before=%+v after=%+v first=%v/%v digested=%d/%d hold=%v", before, st, first, currentFirst, digested, currentDigested, hold)
+		}
+		runs := e.runs(t, key)
+		r := runs[len(runs)-1]
+		if len(runs) != 1+i || r.Outcome != OutcomeRejected || r.Calls != 2 || r.Accepted != 0 {
+			t.Fatalf("retry did not use fresh <=2-call run: %+v", runs)
+		}
+	}
+	if !e.state(t, key).Blocked {
+		t.Fatal("structural no progress did not block")
+	}
+	if e.model.requests.Load() != 1+2*BlockAfterNoProgress {
+		t.Fatal("budget/journal was refunded or appended a third call")
+	}
+}
+
+func TestDigestCompleteRejectedProposalStillConsumesPage(t *testing.T) {
+	bad := ops(map[string]string{"op": "upsert", "kind": "decision", "subject": "发版时间", "quote": "定了：周五发版", "evidence": "g1"})
+	e := newEnv(t, bad, bad)
+	key := newKey()
+	e.observe(t, key, human("m1", time.Now().Add(-time.Hour), "Director", "定了：周四发版"))
+	e.makeDue(t, key)
+	mustProcess(t, e.writer)
+	st := e.state(t, key)
+	r := e.runs(t, key)[0]
+	if st.CursorID != "m1" || st.Pending != 0 || r.Outcome != OutcomeRejected || r.Calls != 2 {
+		t.Fatalf("complete rejected proposal contract changed: state=%+v run=%+v", st, r)
+	}
+}

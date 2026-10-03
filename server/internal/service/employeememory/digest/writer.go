@@ -223,6 +223,7 @@ func (w *Writer) generate(ctx context.Context, c claim, run *runRow, p *page, tr
 	original := messages
 	failure := ""
 	exhausted := false
+	parsedAny := false
 	for ordinal := 0; ordinal < MaxCallsPerClaim; ordinal++ {
 		params := completionParams(messages)
 		raw, callFailure, err := w.call(ctx, c, run, ordinal, params, trace)
@@ -255,6 +256,7 @@ func (w *Writer) generate(ctx context.Context, c claim, run *runRow, p *page, tr
 			}
 			pl.Rejections = append(pl.Rejections, Rejection{Index: base, Reason: reason})
 		} else {
+			parsedAny = true
 			validate(pl, p, ops, w.Facts, base)
 		}
 		if ordinal+1 >= MaxCallsPerClaim || !pl.fixable() || msg == nil {
@@ -271,6 +273,12 @@ func (w *Writer) generate(ctx context.Context, c claim, run *runRow, p *page, tr
 			outcome = OutcomeTimeout
 		}
 		return w.finish(ctx, c, run, runResult{Outcome: outcome, Error: failure}, settle{HoldSeconds: backoffSeconds(c.NoProgress)}, nil)
+	}
+	// A structurally incomplete response has not digested this page. Keep its
+	// evidence for a fresh, budgeted claim after backoff; never salvage JSON or
+	// append a third call to the already settled journal.
+	if !parsedAny && len(pl.Rejections) > 0 {
+		return w.finish(ctx, c, run, runResult{Proposed: pl.Proposed}, settle{HoldSeconds: backoffSeconds(c.NoProgress)}, pl)
 	}
 	return w.finish(ctx, c, run, runResult{Proposed: pl.Proposed}, settle{Advance: true, CursorAt: p.Bounds.ToAt, CursorID: p.Bounds.ToID, ConsumedHuman: p.Bounds.Human, MorePages: p.Full}, pl)
 }
