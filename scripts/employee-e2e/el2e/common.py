@@ -14,7 +14,8 @@ from typing import Any
 
 HARNESS_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = HARNESS_DIR.parent.parent
-REGISTRY_PATH = HARNESS_DIR / "registry.json"
+# Other packages keep private registry copies (their own scenes) via EL2E_REGISTRY.
+REGISTRY_PATH = Path(os.environ.get("EL2E_REGISTRY", str(HARNESS_DIR / "registry.json")))
 EVIDENCE_ROOT = Path(os.environ.get("EL2E_EVIDENCE_ROOT", str(Path.home() / "d1" / "employee-e2e-evidence")))
 TZ = _dt.timezone(_dt.timedelta(hours=8), "Asia/Shanghai")
 PROXY_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")

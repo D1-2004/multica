@@ -91,3 +91,23 @@ conversation, so late messages (a background task's result) are graded too:
   Until then a case that passes the hard checks is `needs_review`, never `pass`.
 - Verdicts: `pass`, `fail`, `needs_review`, `invalid_env` (restart/deploy/gateway problem in the window,
   rerun), `harness_error`. `--baseline <run>` adds FIXED / IMPROVED / UNCHANGED / REGRESSED / NEW.
+
+## Sharing the harness
+
+- Other packages keep a private registry (their own groups/scenes): `EL2E_REGISTRY=/path/to/registry.json`.
+  Copy `registry.json`, add your conversation, and pass your own `--run-id`. The private DWS dir is shared.
+- Scene allocation on 2026-10-03: GoldenCase reruns use `group_e2e`; G1 owns `dm_director` (MEM-01),
+  P2 owns `dm_zhujue` for its regression case; B/C1/D1 create their own groups.
+
+## Lessons from the 2026-10-03 baseline
+
+- History pollution is real: EmployeeLoop reads the last 20 turns of the scene. Running several
+  GoldenCase DM cases back to back made 「三项候选」 ambiguous (DS-04 a1) and a repeated task text
+  produced two identical task candidates (BASE-TASK a2). Randomized codes are not enough for cases
+  that rely on "the" previous set; give such cases a fresh conversation (`--conversation`) or vary
+  the task content. The grader only judges inside the case span, but the model still sees older turns.
+- In groups the native subscription delivers only messages that @ the employee, so un-@ context lines
+  never reach EmployeeLoop and the group history contains only @ turns. Silence checks on un-@ lines
+  are vacuous under this transport; record that, do not count them as judgement.
+- `normandy` (SLS) can fail admission for long stretches; the grader then relies on the pipeline-66
+  deploy timeline and `GET /api/internal/logs/tail?contains=server%20starting` (repeat ≥6× to hit both pods).

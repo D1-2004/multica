@@ -3,33 +3,311 @@
   "suite": "BASE",
   "source": "docs/plans/2026-10-03/employee-loop-backend-delivery/08-integration-and-release.md §5 (BASE-TASK); proven before on Qwen-DWS in docs/plans/2026-10-03/employee-loop-e2e-results.md",
   "defaults": {
-    "wait": {"reply": {"timeout_s": 180, "settle_s": 20}, "silence": {"window_s": 60}, "optional": {"window_s": 50, "settle_s": 15}}
+    "wait": {
+      "reply": {
+        "timeout_s": 180,
+        "settle_s": 20
+      },
+      "silence": {
+        "window_s": 60
+      },
+      "optional": {
+        "window_s": 50,
+        "settle_s": 15
+      }
+    }
   },
   "cases": [
     {
-      "id": "BASE-TASK", "title": "Python 等待 12 秒算平方 → 查进度 → 续接求合计 → 致谢", "scene": "dm", "conversation": "dm_director",
-      "roles": {"主管": "director"},
+      "id": "BASE-TASK",
+      "title": "Python 等待 12 秒算平方 → 查进度 → 续接求合计 → 致谢",
+      "scene": "dm",
+      "conversation": "dm_director",
+      "roles": {
+        "主管": "director"
+      },
       "steps": [
-        {"id": "start", "actor": "主管", "text": "{MARK} 请用 Python 实际跑一下：先 time.sleep(12)，再算 1 到 5 每个数的平方。跑完告诉我实际等了几秒和平方结果。", "match_key": "{MARK} 请用 Python 实际跑一下", "wait": {"mode": "reply", "timeout_s": 120, "settle_s": 8}},
-        {"id": "progress", "actor": "主管", "text": "{MARK} 进度怎么样了？", "wait": {"mode": "reply", "timeout_s": 120, "settle_s": 10}},
-        {"id": "done1", "observe": {"since_step": "start", "until_regex": "16[^0-9]+25", "timeout_s": 420}},
-        {"id": "continue", "actor": "主管", "text": "{MARK} 继续：把刚才这些平方加起来，告诉我合计。", "match_key": "{MARK} 继续：把刚才这些平方加起来", "wait": {"mode": "reply", "timeout_s": 120, "settle_s": 8}},
-        {"id": "done2", "observe": {"since_step": "continue", "until_regex": "55", "timeout_s": 420}},
-        {"id": "thanks", "actor": "主管", "text": "谢谢", "wait": {"mode": "silence", "window_s": 60}}
+        {
+          "id": "start",
+          "actor": "主管",
+          "text": "{MARK} 请用 Python 实际跑一下：先 time.sleep(12)，再算 1 到 5 每个数的平方。跑完告诉我实际等了几秒和平方结果。",
+          "match_key": "{MARK} 请用 Python 实际跑一下",
+          "wait": {
+            "mode": "reply",
+            "timeout_s": 120,
+            "settle_s": 8
+          }
+        },
+        {
+          "id": "progress",
+          "actor": "主管",
+          "text": "{MARK} 进度怎么样了？",
+          "wait": {
+            "mode": "reply",
+            "timeout_s": 120,
+            "settle_s": 10
+          }
+        },
+        {
+          "id": "done1",
+          "observe": {
+            "since_step": "start",
+            "until_regex": "16[\\s\\S]{0,40}25",
+            "timeout_s": 420
+          }
+        },
+        {
+          "id": "continue",
+          "actor": "主管",
+          "text": "{MARK} 继续：把刚才这些平方加起来，告诉我合计。",
+          "match_key": "{MARK} 继续：把刚才这些平方加起来",
+          "wait": {
+            "mode": "reply",
+            "timeout_s": 120,
+            "settle_s": 8
+          }
+        },
+        {
+          "id": "done2",
+          "observe": {
+            "since_step": "continue",
+            "until_regex": "55",
+            "timeout_s": 420
+          }
+        },
+        {
+          "id": "thanks",
+          "actor": "主管",
+          "text": "谢谢",
+          "wait": {
+            "mode": "silence",
+            "window_s": 60
+          }
+        }
       ],
       "judge": {
         "criteria": "同一 Task、必要的新 Run、真实工具输出（实际等待约 12 秒、平方 1/4/9/16/25、合计 55）；查进度不编造；致谢零派发；每次唤醒真实模型请求 ≤3。",
         "checks": [
-          {"steps": ["start"], "replies": [1, 2]},
-          {"steps": ["progress"], "replies": [1, 2]},
-          {"steps": ["start", "progress", "done1"], "include_all": ["25"]},
-          {"steps": ["continue", "done2"], "include_all": ["55"]},
-          {"steps": ["thanks"], "replies": [0, 1], "max_chars": 30},
-          {"evidence": "max_calls_per_wake", "max": 3},
-          {"evidence": "no_effect_for_step", "step": "thanks"},
-          {"evidence": "same_task_runs", "min_runs": 2}
+          {
+            "steps": [
+              "start"
+            ],
+            "replies": [
+              1,
+              2
+            ]
+          },
+          {
+            "steps": [
+              "progress"
+            ],
+            "replies": [
+              1,
+              2
+            ]
+          },
+          {
+            "steps": [
+              "start",
+              "progress",
+              "done1"
+            ],
+            "include_all": [
+              "25"
+            ]
+          },
+          {
+            "steps": [
+              "continue",
+              "done2"
+            ],
+            "include_all": [
+              "55"
+            ]
+          },
+          {
+            "steps": [
+              "thanks"
+            ],
+            "replies": [
+              0,
+              1
+            ],
+            "max_chars": 30
+          },
+          {
+            "evidence": "max_calls_per_wake",
+            "max": 3
+          },
+          {
+            "evidence": "no_effect_for_step",
+            "step": "thanks"
+          },
+          {
+            "evidence": "same_task_runs",
+            "min_runs": 2
+          }
         ],
-        "semantic": ["受理回复不冒称已开始/已完成", "进度回答有依据（read_task），不编百分比/ETA", "结果来自实际执行输出（等待约 12 秒）", "续接沿用同一 Task 新 Run，不新建任务", "致谢不展开、不派发"]
+        "semantic": [
+          "受理回复不冒称已开始/已完成",
+          "进度回答有依据（read_task），不编百分比/ETA",
+          "结果来自实际执行输出（等待约 12 秒）",
+          "续接沿用同一 Task 新 Run，不新建任务",
+          "致谢不展开、不派发"
+        ]
+      }
+    },
+    {
+      "id": "BASE-TASK-G",
+      "title": "群内 @：Python 等待 9 秒算立方 → 查进度 → 续接求合计 → 致谢",
+      "scene": "group",
+      "conversation": "group_e2e",
+      "roles": {
+        "主管": "zhujue"
+      },
+      "notes": "Group variant with distinct content so no identical earlier candidate exists (BASE-TASK a2 met two identical candidates in the same DM).",
+      "steps": [
+        {
+          "id": "start",
+          "actor": "主管",
+          "at": [
+            "employee"
+          ],
+          "text": "{MARK} 请用 Python 实际跑一下：先 time.sleep(9)，再算 1 到 4 每个数的立方。跑完告诉我实际等了几秒和立方结果。",
+          "match_key": "{MARK} 请用 Python 实际跑一下",
+          "wait": {
+            "mode": "reply",
+            "timeout_s": 120,
+            "settle_s": 8
+          }
+        },
+        {
+          "id": "progress",
+          "actor": "主管",
+          "at": [
+            "employee"
+          ],
+          "text": "{MARK} 进度怎么样了？",
+          "match_key": "{MARK} 进度怎么样了？",
+          "wait": {
+            "mode": "reply",
+            "timeout_s": 120,
+            "settle_s": 10
+          }
+        },
+        {
+          "id": "done1",
+          "observe": {
+            "since_step": "start",
+            "until_regex": "27[\\s\\S]{0,40}64",
+            "timeout_s": 420
+          }
+        },
+        {
+          "id": "continue",
+          "actor": "主管",
+          "at": [
+            "employee"
+          ],
+          "text": "{MARK} 继续：把刚才这些立方加起来，告诉我合计。",
+          "match_key": "{MARK} 继续：把刚才这些立方加起来",
+          "wait": {
+            "mode": "reply",
+            "timeout_s": 120,
+            "settle_s": 8
+          }
+        },
+        {
+          "id": "done2",
+          "observe": {
+            "since_step": "continue",
+            "until_regex": "100",
+            "timeout_s": 420
+          }
+        },
+        {
+          "id": "thanks",
+          "actor": "主管",
+          "at": [
+            "employee"
+          ],
+          "text": "谢谢",
+          "wait": {
+            "mode": "silence",
+            "window_s": 60
+          }
+        }
+      ],
+      "judge": {
+        "criteria": "同一 Task、必要的新 Run、真实工具输出（实际等待约 9 秒、立方 1/8/27/64、合计 100）；查进度不编造；致谢零派发；每次唤醒真实模型请求 ≤3。",
+        "checks": [
+          {
+            "steps": [
+              "start"
+            ],
+            "replies": [
+              1,
+              2
+            ]
+          },
+          {
+            "steps": [
+              "progress"
+            ],
+            "replies": [
+              1,
+              2
+            ]
+          },
+          {
+            "steps": [
+              "start",
+              "progress",
+              "done1"
+            ],
+            "include_all": [
+              "64"
+            ]
+          },
+          {
+            "steps": [
+              "continue",
+              "done2"
+            ],
+            "include_all": [
+              "100"
+            ]
+          },
+          {
+            "steps": [
+              "thanks"
+            ],
+            "replies": [
+              0,
+              1
+            ],
+            "max_chars": 30
+          },
+          {
+            "evidence": "max_calls_per_wake",
+            "max": 3
+          },
+          {
+            "evidence": "no_effect_for_step",
+            "step": "thanks"
+          },
+          {
+            "evidence": "same_task_runs",
+            "min_runs": 2
+          }
+        ],
+        "semantic": [
+          "受理回复不冒称已开始/已完成",
+          "进度回答有依据（read_task）",
+          "结果来自实际执行输出",
+          "续接沿用同一 Task 新 Run",
+          "致谢不展开、不派发"
+        ]
       }
     }
   ]

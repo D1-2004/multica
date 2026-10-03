@@ -111,7 +111,8 @@
       ],
       "readers": [
         "zhujue"
-      ]
+      ],
+      "allocation": "P2 regression case from 2026-10-03 19:20; also the user's own DM and the hourly routine"
     },
     "dm_director": {
       "kind": "dm",
@@ -123,7 +124,8 @@
       "readers": [
         "director"
       ],
-      "opened_at": "2026-10-03T18:10:21+08:00"
+      "opened_at": "2026-10-03T18:10:21+08:00",
+      "allocation": "G1 (MEM-01) from 2026-10-03 19:20; GoldenCase DM reruns need a fresh conversation"
     },
     "group_e2e": {
       "kind": "group",
@@ -143,7 +145,8 @@
       "other_members": [
         "AI小钉 (default intelligent bot added by group creation)"
       ],
-      "note": "Qwen-Real posted its join introduction at 18:05:32; 主角 needs `chat data-auth cross-org --all --grant-type timed --ttl 24h` to read/send"
+      "note": "Qwen-Real posted its join introduction at 18:05:32; 主角 needs `chat data-auth cross-org --all --grant-type timed --ttl 24h` to read/send",
+      "allocation": "Q GoldenCase reruns"
     },
     "group_de_probe": {
       "kind": "group",
