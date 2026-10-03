@@ -174,6 +174,22 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	// openDingTalkId the agent's account sees: that id is the person.
 	deeDM := f.insertScene(t, "org-home", "dm", "cidHomeNative", "Dee", 30*time.Minute)
 	f.nativeDirectSceneJob(t, "cidHomeNative", deeDM, "DopenDee", "DopenDee", "Dee", "org-home", 30*time.Minute)
+	// A native sender first seen by openDingTalkId only, whose staffId was
+	// proved later, is that staffId's person: one person, one entry.
+	annNative := f.insertScene(t, "org-home", "dm", "cidHomeNativeAnn", "Ann", 50*time.Minute)
+	f.nativeDirectSceneJob(t, "cidHomeNativeAnn", annNative, "DopenAnn", "DopenAnn", "Ann", "org-home", 50*time.Minute)
+	if err := RememberOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenAnn", "staff-ann"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := LookupOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenAnn"); err != nil || got != "staff-ann" {
+		t.Fatalf("kept staff id = %q %v", got, err)
+	}
+	if got, _ := LookupOpenIDStaff(ctx, f.tx, "org-home", "viewer-2", "DopenAnn"); got != "" {
+		t.Fatalf("another viewer's openDingTalkId resolved to %q", got)
+	}
+	if err := RememberOpenIDStaff(ctx, f.tx, "org-home", "viewer-1", "DopenX", "odt:DopenX"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("a prefixed staff id was kept: %v", err)
+	}
 	// Two openDingTalkIds that disagree name nobody.
 	eveDM := f.insertScene(t, "org-home", "dm", "cidHomeNativeEve", "Eve", 40*time.Minute)
 	f.nativeDirectSceneJob(t, "cidHomeNativeEve", eveDM, "DopenEve", "DopenOther", "Eve", "org-home", 40*time.Minute)
@@ -212,13 +228,14 @@ func TestOrgActivityAndPersons(t *testing.T) {
 	if dee, ok := FindPerson(persons, "odt:DopenDee"); !ok || dee.Title != "Dee" || dee.DMSceneID != deeDM {
 		t.Fatalf("dee=%+v", dee)
 	}
-	for _, key := range []string{"odt:DopenEve", "odt:DopenOther", "DopenDee"} {
+	for _, key := range []string{"odt:DopenEve", "odt:DopenOther", "DopenDee", "odt:DopenAnn"} {
 		if _, ok := FindPerson(persons, key); ok {
 			t.Fatalf("%s listed: %+v", key, persons)
 		}
 	}
+	// Ann's newest 1:1 chat is the native one, now hers by the kept staffId.
 	ann, ok := FindPerson(persons, "staff-ann")
-	if !ok || ann.Title != "Ann" || ann.DMSceneID != annDM || ann.LastActiveAt.IsZero() {
+	if !ok || ann.Title != "Ann" || ann.DMSceneID != annNative || ann.LastActiveAt.IsZero() {
 		t.Fatalf("ann=%+v", ann)
 	}
 	if bo, ok := FindPerson(persons, "staff-bo"); !ok || bo.Title != "Bo" || bo.DMSceneID != "" {
@@ -269,7 +286,7 @@ func (f storeFixture) nativeDirectSceneJob(t *testing.T, cid, sceneID, openID, s
 			"conversation": map[string]any{"openConversationId": cid, "type": "single"},
 			"sender":       map[string]any{"displayName": name, "openDingTalkId": openID, "senderOpenDingTalkId": senderOpenID},
 		}},
-		"externalIdentity": map[string]any{"dws": map[string]any{"orgId": dispatchOrg}},
+		"externalIdentity": map[string]any{"dws": map[string]any{"orgId": dispatchOrg, "uid": "viewer-1"}},
 	})
 	if err != nil {
 		t.Fatal(err)

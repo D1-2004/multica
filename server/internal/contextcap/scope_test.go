@@ -214,6 +214,24 @@ func TestScopeFromTaskContext(t *testing.T) {
 			want: Scope{ConversationType: "single"},
 		},
 		{
+			// A native sender whose staffId the server proved keys the person
+			// by that staffId, like a Router delivery.
+			name: "native sender with a resolved staff id",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},
+				"sender":{"staffId":"103262","displayName":"冬翔","openDingTalkId":"DopenA","senderOpenDingTalkId":"DopenA"},
+				"messages":[{"openMsgId":"m1","senderStaffId":"103262","senderOpenDingTalkId":"DopenA"}]}}`,
+			want: Scope{PersonKey: "103262", PersonName: "冬翔", ConversationType: "group"},
+		},
+		{
+			// A work item cut from a merged native window keeps the window's
+			// resolved sender; its anonymous line proves nothing.
+			name: "native resolved sender does not cover an anonymous line",
+			raw: `{"dispatch_event_data":{"conversation":{"type":"group"},
+				"sender":{"staffId":"103262","openDingTalkId":"DopenA"},
+				"messages":[{"openMsgId":"anon","text":"who sent this?"}]}}`,
+			want: Scope{ConversationType: "group"},
+		},
+		{
 			name: "the literal null is no openDingTalkId",
 			raw:  `{"dispatch_event_data":{"conversation":{"type":"single"},"sender":{"openDingTalkId":"null"}}}`,
 			want: Scope{ConversationType: "single"},

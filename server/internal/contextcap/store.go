@@ -744,9 +744,9 @@ type Link struct {
 	ScopeKey     string
 	ScopeTitle   string
 	SourceTaskID string
-	// ExtraSceneID is set only on a person link minted in a 1:1 chat: the
-	// DM's scene_id (column extra_scene_key). Redeeming the link also grants
-	// that DM scene.
+	// ExtraSceneID is set only on a person link minted in a 1:1 chat (a 1:1
+	// chat's configuration link): the DM's scene_id (column
+	// extra_scene_key). Redeeming the link also grants that DM scene.
 	ExtraSceneID string
 	ExpiresAt    time.Time
 }
@@ -790,10 +790,13 @@ func RedeemLink(ctx context.Context, db DBTX, tokenHash, userID string) (Link, e
 	if err != nil {
 		return Link{}, err
 	}
+	// A person link is consumed by its first account; that account may open
+	// it again until it expires (a reloaded page), nobody else may.
 	out, err := scanLink(db.QueryRow(ctx, `UPDATE context_config_link
-		SET consumed_at = CASE WHEN scope_type = 'person' THEN now() ELSE consumed_at END,
-		    consumed_by = CASE WHEN scope_type = 'person' THEN $2::uuid ELSE consumed_by END
-		WHERE token_hash = $1 AND expires_at > now() AND (scope_type = 'scene' OR consumed_at IS NULL)
+		SET consumed_at = CASE WHEN scope_type = 'person' THEN COALESCE(consumed_at, now()) ELSE consumed_at END,
+		    consumed_by = CASE WHEN scope_type = 'person' THEN COALESCE(consumed_by, $2::uuid) ELSE consumed_by END
+		WHERE token_hash = $1 AND expires_at > now()
+		  AND (scope_type = 'scene' OR consumed_at IS NULL OR consumed_by = $2::uuid)
 		RETURNING `+linkColumns, tokenHash, user))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Link{}, ErrNotFound

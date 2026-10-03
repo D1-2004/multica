@@ -392,6 +392,11 @@ type Handler struct {
 	// identity sees it (native IM events carry none). Nil leaves native
 	// group scenes untitled.
 	DWSNativeConversationTitle func(ctx context.Context, id dwsclient.Identity, conversationID string) (string, error)
+	// DWSNativeStaffID looks up the staffId of the person the native
+	// identity sees as openDingTalkID in its own address book (names narrow
+	// the search; conversationID is the group of a group event). Nil leaves
+	// native senders without a staffId.
+	DWSNativeStaffID func(ctx context.Context, id dwsclient.Identity, openDingTalkID string, names []string, conversationID string) (string, error)
 	// NativeCompletionWorker drains the callbacks of native dispatches
 	// (agentmessagerouter.NativeTargetIdentity); their replies are managed
 	// responses, so it only acknowledges.

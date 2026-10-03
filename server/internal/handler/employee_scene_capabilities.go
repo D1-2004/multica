@@ -124,6 +124,18 @@ func employeeCapabilityPerson(job employeeentry.Job, envelopes []employeeDispatc
 	return staff
 }
 
+// employeeSenderName is the display name of the window's first message.
+func employeeSenderName(envelopes []employeeDispatchEnvelope) string {
+	for _, env := range envelopes {
+		for _, message := range env.Command.Event.Data.Messages {
+			if name := firstNonEmpty(message.SenderDisplayName, env.Command.Event.Data.Sender.DisplayName); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
 func employeeSceneConfigTarget(ctx context.Context, h *Handler, job employeeentry.Job) (sceneConfigTarget, error) {
 	registered, err := employeeSceneFence(ctx, h, job)
 	if err != nil {
@@ -185,6 +197,11 @@ func (h *employeeSceneHost) capabilityReply(ctx context.Context, tx pgx.Tx, repl
 	target, err := employeeSceneConfigTarget(ctx, &view, h.job)
 	if err != nil {
 		return reply
+	}
+	// A 1:1 chat's link also carries its person (mintContextConfigLink).
+	target.scope.PersonKey = employeeCapabilityPerson(h.job, h.envelopes)
+	if target.scope.PersonKey != "" {
+		target.scope.PersonName = employeeSenderName(h.envelopes)
 	}
 	origin, err := view.contextConfigLinkOrigin()
 	if err != nil {

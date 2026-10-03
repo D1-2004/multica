@@ -412,10 +412,17 @@ func routineScope(envelope taskContextEnvelope) Scope {
 //     message must not name anyone else (staffId, uid or openDingTalkId).
 //   - Otherwise every message must carry senderStaffId == staffID and must
 //     not name anyone else.
+//   - A sender with an openDingTalkId and no uid (DWS native) additionally
+//     needs every message stamped with that openDingTalkId.
 func singleTriggerPerson(staffID string, sender taskContextSender, messages []taskContextMessage, coalesced bool) bool {
 	senderUID := strings.TrimSpace(sender.UID)
 	senderOpenID := firstNonEmpty(sender.OpenDingTalkID, sender.SenderOpenDingTalkID)
 	requireStaffID := coalesced || len(messages) > 1
+	// A sender named by openDingTalkId without a uid (a DWS native
+	// subscription event, whose staffId the server looked up) is proved only
+	// by messages stamped with that id: a work item cut from a merged window
+	// keeps the window's sender, and an anonymous line must not inherit it.
+	requireOpenID := senderUID == "" && senderOpenID != ""
 	if coalesced && len(messages) == 0 {
 		return false
 	}
@@ -430,7 +437,11 @@ func singleTriggerPerson(staffID string, sender taskContextSender, messages []ta
 		if uid := strings.TrimSpace(message.SenderUID); uid != "" && senderUID != "" && uid != senderUID {
 			return false
 		}
-		if openID := strings.TrimSpace(message.SenderOpenDingTalkID); openID != "" && senderOpenID != "" && openID != senderOpenID {
+		openID := strings.TrimSpace(message.SenderOpenDingTalkID)
+		if openID != "" && senderOpenID != "" && openID != senderOpenID {
+			return false
+		}
+		if requireOpenID && openID == "" {
 			return false
 		}
 	}

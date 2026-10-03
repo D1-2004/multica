@@ -367,6 +367,7 @@ export const ContextConfigRedeemSchema = z
     scope_key: text,
     scope_title: text,
     org_id: orgIdOf,
+    extra_scene_id: text,
   })
   .transform(
     (value): ContextConfigRedeemResult => ({
@@ -376,6 +377,7 @@ export const ContextConfigRedeemSchema = z
       scopeKey: value.scope_key,
       scopeTitle: value.scope_title,
       orgId: value.org_id,
+      extraSceneId: value.extra_scene_id,
     }),
   );
 
@@ -386,6 +388,7 @@ export const EMPTY_CONTEXT_CONFIG_REDEEM: ContextConfigRedeemResult = {
   scopeKey: "",
   scopeTitle: "",
   orgId: "",
+  extraSceneId: "",
 };
 
 const AgentSummaryWireSchema = z.object({
