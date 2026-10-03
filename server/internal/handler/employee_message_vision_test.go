@@ -50,9 +50,17 @@ func TestEmployeeVisionDeferredImagesReachTheBackgroundPacket(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, cfg := range map[string]func() EmployeeVisionConfig{
-		"no config":      nil,
-		"other model":    func() EmployeeVisionConfig { c := verified; c.Executors = []EmployeeVisionExecutor{{RuntimeProvider: "codex", Model: "mass/glm-5"}}; return c },
-		"other executor": func() EmployeeVisionConfig { c := verified; c.Executors = []EmployeeVisionExecutor{{RuntimeProvider: "pi", Model: "mass/qwen3.8-max"}}; return c },
+		"no config": nil,
+		"other model": func() EmployeeVisionConfig {
+			c := verified
+			c.Executors = []EmployeeVisionExecutor{{RuntimeProvider: "codex", Model: "mass/glm-5"}}
+			return c
+		},
+		"other executor": func() EmployeeVisionConfig {
+			c := verified
+			c.Executors = []EmployeeVisionExecutor{{RuntimeProvider: "pi", Model: "mass/qwen3.8-max"}}
+			return c
+		},
 	} {
 		worker.VisionConfig = cfg
 		if worker.visionReady(ctx, r.job) {
