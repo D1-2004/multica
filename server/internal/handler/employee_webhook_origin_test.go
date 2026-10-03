@@ -883,3 +883,131 @@ func TestEmployeeWebhookInvalidBindingAcceptsNothing(t *testing.T) {
 		t.Fatalf("runs=%d tasks=%d", runs, tasks)
 	}
 }
+
+// An admitted run goes only to the target it was accepted for. Changing the
+// ordinary autopilot's assignee or mode between acceptance and dispatch
+// settles the run as skipped and ignores the delivery: nothing runs on agent
+// B, nothing runs in the other mode.
+func TestEmployeeWebhookAdmittedRunNeverReroutes(t *testing.T) {
+	ctx := context.Background()
+	for name, change := range map[string]func(t *testing.T, apID, other string){
+		"assignee": func(t *testing.T, apID, other string) {
+			if _, err := testPool.Exec(ctx, `UPDATE autopilot SET assignee_id = $1 WHERE id = $2`, other, apID); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"execution mode": func(t *testing.T, apID, other string) {
+			if _, err := testPool.Exec(ctx, `UPDATE autopilot SET execution_mode = 'create_issue' WHERE id = $1`, apID); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			agentA := createWebhookTestAgent(t, "F1 frozen A "+uuid.NewString()[:8])
+			agentB := createWebhookTestAgent(t, "F1 frozen B "+uuid.NewString()[:8])
+			apID := createWebhookTestAutopilot(t, agentA, "active", "run_only")
+			trig := createWebhookTriggerViaHandler(t, apID)
+			t.Cleanup(func() {
+				testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE agent_id IN ($1, $2)`, agentA, agentB)
+				testPool.Exec(context.Background(), `DELETE FROM issue WHERE origin_type = 'autopilot' AND origin_id IN (SELECT id FROM autopilot_run WHERE autopilot_id = $1)`, apID)
+				testPool.Exec(context.Background(), `DELETE FROM autopilot_run WHERE autopilot_id = $1`, apID)
+			})
+
+			deliveryID := requireAcceptedWebhookResponse(t, postWebhook(t, *trig.WebhookToken, map[string]any{"event": "frozen.target"}, nil))
+			change(t, apID, agentB)
+			delivery := processQueuedWebhookDelivery(t, deliveryID)
+			if delivery.Status != deliveryStatusIgnored || delivery.Error.String != webhookBindingChanged || !delivery.AutopilotRunID.Valid {
+				t.Fatalf("delivery = %s %q run=%v", delivery.Status, delivery.Error.String, delivery.AutopilotRunID.Valid)
+			}
+			run, err := testHandler.Queries.GetAutopilotRun(ctx, delivery.AutopilotRunID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if run.Status != "skipped" || run.TaskID.Valid || run.IssueID.Valid || !strings.Contains(run.FailureReason.String, webhookBindingChanged) {
+				t.Fatalf("run = %s task=%v issue=%v reason=%q", run.Status, run.TaskID.Valid, run.IssueID.Valid, run.FailureReason.String)
+			}
+			var tasks int
+			if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE agent_id IN ($1, $2) OR autopilot_run_id = $3`, agentA, agentB, run.ID).Scan(&tasks); err != nil {
+				t.Fatal(err)
+			}
+			if tasks != 0 {
+				t.Fatalf("tasks = %d", tasks)
+			}
+		})
+	}
+}
+
+// A routine run admitted before its agent left the routine's org fails the
+// use-time tenant fence: skipped, never dispatched with the old scene.
+func TestEmployeeWebhookAdmittedRoutineRunFencesTenant(t *testing.T) {
+	e := newEmployeeWebhookFixture(t)
+	accepted := requireWebhookStatus(t, e.post(t, []byte(`{"event":"deploy.finished"}`), nil), http.StatusOK, "accepted")
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent_dingtalk_identity SET org_id = 'org-elsewhere' WHERE agent_id = $1`, e.a.ID); err != nil {
+		t.Fatal(err)
+	}
+	delivery := e.process(t, accepted["delivery_id"].(string))
+	if delivery.Status != deliveryStatusIgnored || delivery.Error.String != webhookSceneUnusable {
+		t.Fatalf("delivery = %s %q", delivery.Status, delivery.Error.String)
+	}
+	if runs, tasks := e.counts(t); runs != 1 || tasks != 0 {
+		t.Fatalf("runs=%d tasks=%d", runs, tasks)
+	}
+}
+
+// The event identity outlives the delivery's dispatch: after the accepted
+// delivery ends as failed, the same id with other content is still a
+// conflict and the same content still returns the first receipt.
+func TestEmployeeWebhookEventIDSurvivesFailedDelivery(t *testing.T) {
+	e := newEmployeeWebhookFixture(t)
+	key := map[string]string{"Idempotency-Key": "evt-" + uuid.NewString()}
+	body := []byte(`{"event":"deploy.finished","eventPayload":{"build":1}}`)
+	first := requireWebhookStatus(t, e.post(t, body, key), http.StatusOK, "accepted")
+	e.process(t, first["delivery_id"].(string))
+	if _, err := testPool.Exec(context.Background(), `UPDATE webhook_delivery SET status = 'failed', error = 'forced final failure' WHERE id = $1`, first["delivery_id"]); err != nil {
+		t.Fatal(err)
+	}
+
+	conflict := requireWebhookStatus(t, e.post(t, []byte(`{"event":"deploy.finished","eventPayload":{"build":2}}`), key), http.StatusConflict, "conflict")
+	if conflict["delivery_id"] == first["delivery_id"] {
+		t.Fatalf("conflict = %v", conflict)
+	}
+	again := requireWebhookStatus(t, e.post(t, body, key), http.StatusOK, "duplicate")
+	if again["delivery_id"] != first["delivery_id"] || again["run_id"] != first["run_id"] {
+		t.Fatalf("duplicate = %v first = %v", again, first)
+	}
+	if runs, tasks := e.counts(t); runs != 1 || tasks != 1 {
+		t.Fatalf("runs=%d tasks=%d", runs, tasks)
+	}
+}
+
+// Rejected rows hold no identity: a signature failure does not reserve the
+// event id for the real sender, and a conflict audit row is never what a
+// later retry is compared against.
+func TestEmployeeWebhookRejectedAttemptsHoldNoIdentity(t *testing.T) {
+	e := newEmployeeWebhookFixture(t)
+	secret := "f1-secret-" + uuid.NewString()
+	e.setSecret(t, secret)
+	key := "evt-" + uuid.NewString()
+	real := []byte(`{"event":"deploy.finished","eventPayload":{"build":1}}`)
+	forged := []byte(`{"event":"deploy.finished","eventPayload":{"build":666}}`)
+	signed := func(b []byte, s string) map[string]string {
+		return map[string]string{"Idempotency-Key": key, "X-Hub-Signature-256": signBody(s, b)}
+	}
+
+	requireWebhookStatus(t, e.post(t, forged, signed(forged, "not-the-secret-0123456789")), http.StatusUnauthorized, "rejected")
+	first := requireWebhookStatus(t, e.post(t, real, signed(real, secret)), http.StatusOK, "accepted")
+
+	changed := []byte(`{"event":"deploy.finished","eventPayload":{"build":2}}`)
+	requireWebhookStatus(t, e.post(t, changed, signed(changed, secret)), http.StatusConflict, "conflict")
+	// The conflict audit row carries `changed`; a retry of `changed` is
+	// still a conflict with the accepted delivery, not a duplicate of the
+	// audit row, and a retry of `real` is the accepted delivery.
+	requireWebhookStatus(t, e.post(t, changed, signed(changed, secret)), http.StatusConflict, "conflict")
+	again := requireWebhookStatus(t, e.post(t, real, signed(real, secret)), http.StatusOK, "duplicate")
+	if again["delivery_id"] != first["delivery_id"] {
+		t.Fatalf("duplicate = %v first = %v", again, first)
+	}
+	if runs, _ := e.counts(t); runs != 1 {
+		t.Fatalf("runs = %d", runs)
+	}
+}

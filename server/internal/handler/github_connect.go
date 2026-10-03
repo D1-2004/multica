@@ -147,6 +147,7 @@ func (h *Handler) beginGitHubUserAuthorization(w http.ResponseWriter, r *http.Re
 func (h *Handler) GitHubAuthorizeCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
+	restoreGitHubInstallState(r)
 	value := r.URL.Query().Get("state")
 	// Official app (GitHub MCP) connects reuse this registered GitHub App
 	// callback. Their states carry connectorOAuthStatePrefix and never touch

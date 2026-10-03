@@ -463,6 +463,9 @@ var connectorOAuthCompleteLocal func(h *Handler, w http.ResponseWriter, r *http.
 // anything else is completed locally, or gets the invalid-connection page
 // when this build has no connector flow.
 func (h *Handler) serveConnectorOAuthCallback(w http.ResponseWriter, r *http.Request, via string) {
+	if via == connectorOAuthViaGitHub {
+		restoreGitHubInstallState(r)
+	}
 	if h.forwardConnectorOAuthCallback(w, r, via) {
 		return
 	}

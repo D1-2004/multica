@@ -48,6 +48,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runnerws"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/a2ui"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/employeememory"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
@@ -240,24 +241,27 @@ type Handler struct {
 
 	// a2aForwardTransport overrides the transport used to forward inbound A2A
 	// JSON-RPC to another environment; nil uses the default.
-	a2aForwardTransport      http.RoundTripper
-	WorkspaceMCPDispatcher   http.Handler
-	Models                   *modelregistry.Registry
-	Queries                  *db.Queries
-	Assoc                    *assoc.Service
-	DB                       dbExecutor
-	TxStarter                txStarter
-	Hub                      *realtime.Hub
-	DaemonHub                *daemonws.Hub
-	RunnerHub                *runnerws.Hub
-	RunnerRelay              realtime.Broadcaster
-	DaemonProfileRefresh     RuntimeProfileRefreshNotifier
-	DaemonWorkspaceRefresh   WorkspaceSetRefreshNotifier
-	Bus                      *events.Bus
-	TaskService              *service.TaskService
-	InboundCoordinator       *inboundcoord.Coordinator
-	CoordinatorCollectQuiet  func(agentID pgtype.UUID) time.Duration
-	UserDecisions            *userdecision.Service
+	a2aForwardTransport     http.RoundTripper
+	WorkspaceMCPDispatcher  http.Handler
+	Models                  *modelregistry.Registry
+	Queries                 *db.Queries
+	Assoc                   *assoc.Service
+	DB                      dbExecutor
+	TxStarter               txStarter
+	Hub                     *realtime.Hub
+	DaemonHub               *daemonws.Hub
+	RunnerHub               *runnerws.Hub
+	RunnerRelay             realtime.Broadcaster
+	DaemonProfileRefresh    RuntimeProfileRefreshNotifier
+	DaemonWorkspaceRefresh  WorkspaceSetRefreshNotifier
+	Bus                     *events.Bus
+	TaskService             *service.TaskService
+	InboundCoordinator      *inboundcoord.Coordinator
+	CoordinatorCollectQuiet func(agentID pgtype.UUID) time.Duration
+	UserDecisions           *userdecision.Service
+	// A2UI is the parameterized card loop (confirm, choose, person, chart,
+	// note, approval). Nil only before the router wires it.
+	A2UI                     *a2ui.Service
 	InboundCoordinatorWorker *InboundCoordinatorJobWorker
 	// EventRouteConfig returns a single runtime snapshot's choice and version.
 	EventRouteConfig func(workspaceID, agentID, orgID string) (route, version string)
@@ -387,8 +391,9 @@ type Handler struct {
 	// replicas, handed over on shutdown. Nil without Redis.
 	DWSEvents *dwseventsource.Source
 	// DWSNativeEvents is the native subscription event source: the IM
-	// messages of execution identities with native subscription on, always
-	// on the production DWS gateway. Nil without Redis.
+	// messages of execution identities with native subscription on, plus
+	// user_card_action_triggered for the A2UI loop, always on the production
+	// DWS gateway. Nil without Redis.
 	DWSNativeEvents *dwseventsource.Source
 	// DWSNativeConversationTitle reads a group's title as the native
 	// identity sees it (native IM events carry none). Nil leaves native

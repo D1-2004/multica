@@ -47,6 +47,14 @@ package handler
 // finishes it attaches their GitHub account to that scene. The callback
 // then returns to that scene's configure page with a signed, expiring
 // scene session so the page opens without a DingTalk login.
+//
+// GitHub's setup redirect is a different URL from that callback, and it is
+// only documented to include installation_id. The start response also sets
+// multica_mcpc_install (HttpOnly, SameSite=Lax, Path /api/github, same TTL
+// as the state) so a setup or authorize request that brings installation_id
+// and no code can resume the state. A request that already carries a code
+// never resumes from the cookie: the code exchange stays bound to the state
+// in the query.
 
 import (
 	"context"
@@ -80,6 +88,11 @@ const (
 	// connectorOAuthCookiePrefix names the browser binding cookie of one
 	// state: the prefix plus the first 16 hex characters of the state hash.
 	connectorOAuthCookiePrefix = "multica_mcpc_"
+	// connectorOAuthActiveInstallCookie is the setup-redirect resume cookie.
+	// Its value is the state. Path /api/github covers both the App setup URL
+	// and the user-authorization callback. See the file comment.
+	connectorOAuthActiveInstallCookie = "multica_mcpc_install"
+	connectorOAuthActiveInstallPath   = "/api/github"
 	// connectorOAuthClientHistory is how many replaced dynamic client
 	// registrations a connector keeps for refreshing the tokens they issued.
 	connectorOAuthClientHistory = 8
@@ -194,6 +207,21 @@ func parseConnectorOAuthInstallationID(raw string) int64 {
 		return 0
 	}
 	return id
+}
+
+// githubConnectorCallbackFromQuery reads a GitHub App redirect. About the
+// setup URL only promises installation_id, so a no-code return that omits
+// setup_action is an install. An explicit other value is not promoted.
+func githubConnectorCallbackFromQuery(via string, query url.Values) connectorOAuthCallback {
+	callback := connectorOAuthCallback{
+		Via: via, State: query.Get("state"), Code: query.Get("code"), Error: query.Get("error"),
+		InstallationID: parseConnectorOAuthInstallationID(query.Get("installation_id")),
+		SetupAction:    parseConnectorOAuthSetupAction(query.Get("setup_action")),
+	}
+	if callback.Code == "" && callback.Error == "" && callback.InstallationID > 0 && query.Get("setup_action") == "" {
+		callback.SetupAction = "install"
+	}
+	return callback
 }
 
 // parseConnectorOAuthSetupAction keeps only the two installation actions
@@ -425,6 +453,9 @@ func (h *Handler) startConnectorOAuth(ctx context.Context, in connectorOAuthStar
 			connectorOAuthBrowserCookie(payload.StateHash, nonce, homeOrigin, connectorOAuthCallbackLegacyPath),
 		}
 	}
+	if payload.Via == connectorOAuthViaGitHub && payload.AuthFlow == connectorOAuthFlowInstall {
+		started.ExtraCookies = append(started.ExtraCookies, connectorOAuthActiveInstallCookieValue(state, homeOrigin))
+	}
 	if err := h.insertConnectorOAuthState(ctx, payload, scope, returnTo); err != nil {
 		slog.ErrorContext(ctx, "official app OAuth state insert failed", "connector_id", c.ID, "error", err)
 		return connectorOAuthStarted{}, internalErr
@@ -483,6 +514,47 @@ func connectorOAuthCookieName(stateHash string) string {
 		stateHash = stateHash[:16]
 	}
 	return connectorOAuthCookiePrefix + stateHash
+}
+
+// connectorOAuthActiveInstallCookieValue is the setup-redirect resume
+// cookie. An empty value clears it. origin only decides Secure.
+func connectorOAuthActiveInstallCookieValue(state, origin string) *http.Cookie {
+	cookie := &http.Cookie{
+		Name: connectorOAuthActiveInstallCookie, Value: state, Path: connectorOAuthActiveInstallPath,
+		HttpOnly: true, Secure: strings.HasPrefix(origin, "https://"), SameSite: http.SameSiteLaxMode,
+		MaxAge: int(connectorOAuthStateTTL.Seconds()),
+	}
+	if state == "" {
+		cookie.MaxAge = -1
+	}
+	return cookie
+}
+
+// restoreGitHubInstallState copies the resume cookie into the query when
+// GitHub's setup redirect arrived without state and without a code. A code
+// stays bound to the query state. The workspace install cookie keeps an
+// empty state for itself.
+func restoreGitHubInstallState(r *http.Request) {
+	if r == nil || r.URL == nil {
+		return
+	}
+	query := r.URL.Query()
+	if query.Get("state") != "" || query.Get("code") != "" || query.Get("error") != "" {
+		return
+	}
+	if parseConnectorOAuthInstallationID(query.Get("installation_id")) <= 0 &&
+		parseConnectorOAuthSetupAction(query.Get("setup_action")) == "" {
+		return
+	}
+	if _, err := r.Cookie(githubConnectCookie); err == nil {
+		return
+	}
+	cookie, err := r.Cookie(connectorOAuthActiveInstallCookie)
+	if err != nil || !validConnectorOAuthState(cookie.Value) {
+		return
+	}
+	query.Set("state", cookie.Value)
+	r.URL.RawQuery = query.Encode()
 }
 
 // connectorOAuthBrowserCookie is the HttpOnly, SameSite=Lax binding cookie
@@ -983,32 +1055,6 @@ func (h *Handler) resealConnectorOAuthFlow(ctx context.Context, stateHash string
 	return tag.RowsAffected() == 1, nil
 }
 
-// connectorOAuthCredentialExists reports whether this scope already has a
-// connector credential. A post-install redirect with no code must not
-// replace that credential.
-func (h *Handler) connectorOAuthCredentialExists(ctx context.Context, scope connectorOAuthScope) (bool, error) {
-	if scope.ScopeType == connectorOAuthScopeWorkspace {
-		var ciphertext []byte
-		err := h.DB.QueryRow(ctx, `SELECT credential_ciphertext FROM internal_connector
-			WHERE id = $1::uuid AND workspace_id = $2::uuid`, scope.ConnectorID, scope.WorkspaceID).Scan(&ciphertext)
-		if err != nil {
-			return false, err
-		}
-		return len(ciphertext) > 0, nil
-	}
-	_, err := contextcap.GetCredential(ctx, h.DB, contextcap.CredentialBinding{
-		WorkspaceID: scope.WorkspaceID, AgentID: scope.AgentID, ConnectorID: scope.ConnectorID,
-		ScopeType: scope.ScopeType, OrgID: scope.OrgID, ScopeKey: scope.ScopeKey,
-	})
-	if errors.Is(err, contextcap.ErrNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
 // githubInstallCallback is an installation-page return that carries no
 // authorization code: GitHub sent installation_id and setup_action, and
 // the connect still expects the installation flow.
@@ -1020,10 +1066,11 @@ func githubInstallCallback(in connectorOAuthCallback, verifier connectorSealedVe
 		in.InstallationID > 0
 }
 
-// continueGitHubInstall handles that return. A scope that already has a
-// credential goes back to the configure page so the installation list
-// refreshes; the stored token is left as it is. A scope with no credential
-// keeps the state and continues to the user authorization endpoint.
+// continueGitHubInstall handles that return. The redirect has no user
+// token, and an installation id is not proof of who installed. The same
+// state always continues to the user authorization endpoint. The code
+// exchange is what stores the token, replacing any credential already on
+// the scope. Cancelling that page leaves the stored token as it was.
 func (h *Handler) continueGitHubInstall(ctx context.Context, state consumedConnectorOAuthState, verifier connectorSealedVerifier, in connectorOAuthCallback, app connectorcatalog.App) connectorOAuthOutcome {
 	scope := state.scope
 	out := connectorOAuthOutcome{ConnectorID: scope.ConnectorID, ScopeType: scope.ScopeType, Slug: app.Slug}
@@ -1041,23 +1088,6 @@ func (h *Handler) continueGitHubInstall(ctx context.Context, state consumedConne
 			return false
 		}
 		return true
-	}
-	exists, err := h.connectorOAuthCredentialExists(ctx, scope)
-	if err != nil {
-		slog.WarnContext(ctx, "github install callback: credential lookup failed", "connector_id", scope.ConnectorID, "error", err)
-		if !consumeOrUnknown() {
-			return connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
-		}
-		return fail(connectOAuthErrExchangeFailed)
-	}
-	if exists {
-		if !consumeOrUnknown() {
-			return connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
-		}
-		out.ErrorCode = ""
-		out.RedirectURL, out.SceneSession = h.finishSceneConnectReturn(ctx, scope, state.returnTo, app.Slug)
-		slog.InfoContext(ctx, "github install callback refreshed an existing connection", "connector_id", scope.ConnectorID, "scope_type", scope.ScopeType, "installation_id", in.InstallationID, "setup_action", in.SetupAction)
-		return out
 	}
 	client, clientErr := h.githubOAuthClient(ctx, scope.WorkspaceID)
 	if scene, own, sceneErr := h.sceneOAuthClient(ctx, connectorOAuthScopeBinding(scope), app); sceneErr != nil {
@@ -1105,8 +1135,8 @@ func (h *Handler) continueGitHubInstall(ctx context.Context, state consumedConne
 // completeConnectorOAuth finishes a connect. See connectorOAuthOutcome for
 // the result; no error is returned because every failure becomes a
 // connect_error redirect (or an unknown-state outcome). A refused callback
-// burns the state. A GitHub installation return with no code does not,
-// when the scope still needs a user token: the same state continues.
+// burns the state. A GitHub installation return with no code does not:
+// the same state continues to user authorization.
 func (h *Handler) completeConnectorOAuth(ctx context.Context, in connectorOAuthCallback) connectorOAuthOutcome {
 	out := connectorOAuthOutcome{ErrorCode: connectOAuthErrInvalidState}
 	if !validConnectorOAuthState(in.State) || h.InternalConnectorSecretBox == nil {

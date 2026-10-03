@@ -23,10 +23,17 @@ package handler
 //     fenced when the run is admitted.
 //   - Identity. With a provider event id (X-GitHub-Delivery for github;
 //     Idempotency-Key, else X-GitHub-Delivery for generic) the event is
-//     (trigger, exact id): the same id with the same effective payload
-//     returns the first receipt, a different effective payload is a 409
-//     conflict. Without an id every request is its own event (per_request);
-//     identical bodies are never collapsed by a content hash.
+//     (trigger, exact id), held by the first authenticated delivery whatever
+//     its later status (a failed delivery keeps it; Replay runs it again):
+//     the same id with the same effective payload returns that receipt, a
+//     different effective payload is a 409 conflict. Rejected rows
+//     (signature failures, conflict audits) never hold an identity. Without
+//     an id every request is its own event (per_request); identical bodies
+//     are never collapsed by a content hash.
+//   - Target. An admitted run is dispatched only to the target frozen at
+//     acceptance; if the assignee, mode, routine scene or tenant changed, or
+//     the routine scene fails the tenant fence, the run is skipped and the
+//     delivery ignored (binding_changed / scene_unusable), never re-routed.
 //   - Frozen input. The envelope's receivedAt is the delivery row's
 //     received_at and the effective payload digest is stored with the row, so
 //     a worker retry rebuilds byte-identical input or fails closed
@@ -50,9 +57,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/contextcap"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -291,8 +300,20 @@ type webhookFrozenColumns struct {
 	Binding        []byte
 }
 
+// webhookEventIDTaken reports that an authenticated delivery already holds
+// the event id; ID is that delivery.
+type webhookEventIDTaken struct{ ID pgtype.UUID }
+
+func (e *webhookEventIDTaken) Error() string { return "webhook event id already accepted" }
+
 // insertWebhookDelivery inserts a delivery and its frozen source in one
-// transaction. A unique violation on the event id is returned as is.
+// transaction. An authenticated delivery with an event id first claims the
+// identity: under a transaction advisory lock on (trigger, event id) it looks
+// for any earlier delivery with that id that was not rejected — whatever its
+// later dispatch status, failed included — and returns webhookEventIDTaken
+// instead of inserting. Rejected rows (signature failures, conflict audits)
+// never hold an identity. A unique violation from an older binary racing on
+// the partial dedupe index is returned as is.
 func (h *Handler) insertWebhookDelivery(ctx context.Context, params db.CreateWebhookDeliveryParams, frozen webhookFrozenColumns) (db.WebhookDelivery, error) {
 	if h.TxStarter == nil {
 		return db.WebhookDelivery{}, errors.New("webhook delivery: no transaction starter")
@@ -302,6 +323,23 @@ func (h *Handler) insertWebhookDelivery(ctx context.Context, params db.CreateWeb
 		return db.WebhookDelivery{}, err
 	}
 	defer tx.Rollback(ctx)
+	if params.DedupeKey.Valid && params.Status != deliveryStatusRejected {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('webhook_event_identity:' || $1::text || ':' || $2, 0))`,
+			params.TriggerID, params.DedupeKey.String); err != nil {
+			return db.WebhookDelivery{}, fmt.Errorf("lock event identity: %w", err)
+		}
+		var holder pgtype.UUID
+		err := tx.QueryRow(ctx, `SELECT id FROM webhook_delivery
+			WHERE trigger_id = $1 AND dedupe_key = $2 AND status <> 'rejected'
+			ORDER BY (status = 'failed'), created_at DESC
+			LIMIT 1`, params.TriggerID, params.DedupeKey.String).Scan(&holder)
+		if err == nil {
+			return db.WebhookDelivery{}, &webhookEventIDTaken{ID: holder}
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return db.WebhookDelivery{}, fmt.Errorf("look up event identity: %w", err)
+		}
+	}
 	delivery, err := h.Queries.WithTx(tx).CreateWebhookDelivery(ctx, params)
 	if err != nil {
 		return db.WebhookDelivery{}, err
@@ -390,6 +428,83 @@ func (h *Handler) loadWebhookFrozenSource(ctx context.Context, delivery db.Webho
 		}
 	}
 	return src, nil
+}
+
+// webhookSceneUnusable is the refusal of an admitted routine run whose scene
+// can no longer be used by the agent in the routine's tenant.
+const webhookSceneUnusable = "scene_unusable"
+
+// admittedWebhookRunAwaitsDispatch reports whether an admitted run has not
+// reached its downstream issue or task yet, so dispatching it would still
+// choose a target.
+func (h *Handler) admittedWebhookRunAwaitsDispatch(ctx context.Context, run db.AutopilotRun) (bool, error) {
+	switch run.Status {
+	case "completed", "failed", "skipped":
+		return false, nil
+	case "issue_created":
+		return !run.IssueID.Valid, nil
+	case "running":
+		if run.TaskID.Valid {
+			return false, nil
+		}
+		_, err := h.Queries.GetAutopilotTaskByRun(ctx, run.ID)
+		if err == nil {
+			return false, nil
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return true, nil
+		}
+		return false, fmt.Errorf("load admitted run task: %w", err)
+	}
+	return true, nil
+}
+
+// admittedWebhookRunRefusal decides whether an admitted, not yet dispatched
+// run may still run on the target frozen at acceptance. It returns
+// binding_changed when the current binding routes elsewhere (assignee, mode,
+// routine, scene, tenant) or became invalid, scene_unusable when the
+// routine's scene fails the use-time tenant fence, and "" when the current
+// target is the frozen one. A delivery accepted by an older binary has no
+// frozen binding and is dispatched as before.
+func (h *Handler) admittedWebhookRunRefusal(ctx context.Context, delivery db.WebhookDelivery, ap db.Autopilot, trigger db.AutopilotTrigger) (string, error) {
+	frozen, err := h.readWebhookFrozenColumns(ctx, delivery.ID)
+	if err != nil {
+		return "", fmt.Errorf("load frozen binding: %w", err)
+	}
+	if len(frozen.Binding) == 0 {
+		return "", nil
+	}
+	var accepted WebhookEndpointBinding
+	if err := json.Unmarshal(frozen.Binding, &accepted); err != nil {
+		return "", fmt.Errorf("decode frozen binding: %w", err)
+	}
+	if accepted.Version == 0 {
+		return "", nil
+	}
+	current, problem, err := h.resolveWebhookEndpointBinding(ctx, ap, trigger.ID, delivery.Provider, trigger.SigningSecret.String)
+	if err != nil {
+		return "", err
+	}
+	if problem != "" || current.routeKey() != accepted.routeKey() {
+		return webhookBindingChanged, nil
+	}
+	if accepted.RoutineID == "" {
+		return "", nil
+	}
+	routine, err := contextcap.GetRoutineByAutopilot(ctx, h.DB, accepted.AutopilotID)
+	if errors.Is(err, contextcap.ErrNotFound) {
+		return webhookBindingChanged, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("load scene routine: %w", err)
+	}
+	if err := h.routineSceneUsable(ctx, routine); err != nil {
+		if errors.Is(err, service.ErrSceneRoutineUnusable) {
+			return webhookSceneUnusable, nil
+		}
+		return "", err
+	}
+	return "", nil
 }
 
 // webhookConflictResponse is the 409 body of a reused event id with a

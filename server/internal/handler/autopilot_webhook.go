@@ -864,10 +864,11 @@ const (
 )
 
 // persistInboundDelivery INSERTs the delivery with its frozen source. On an
-// event id collision it compares effective payloads: the same one bumps
-// attempt_count on the prior row (duplicate); a different one records a
-// rejected audit row (conflict) and leaves the prior row untouched. Any
-// other error bubbles up so the handler can 500 cleanly.
+// event id already held by an earlier authenticated delivery (whatever its
+// later status, failed included) it compares effective payloads: the same
+// one bumps attempt_count on the prior row (duplicate); a different one
+// records a rejected audit row (conflict) and leaves the prior row
+// untouched. Any other error bubbles up so the handler can 500 cleanly.
 func (h *Handler) persistInboundDelivery(r *http.Request, in persistDeliveryInput) (db.WebhookDelivery, persistOutcome, error) {
 	ctx := r.Context()
 	params := db.CreateWebhookDeliveryParams{
@@ -896,15 +897,26 @@ func (h *Handler) persistInboundDelivery(r *http.Request, in persistDeliveryInpu
 	if err == nil {
 		return delivery, persistCreated, nil
 	}
-	if !isUniqueViolation(err) || in.DedupeKey == "" {
+	var existing db.WebhookDelivery
+	var taken *webhookEventIDTaken
+	switch {
+	case errors.As(err, &taken):
+		// The identity is held by an earlier authenticated delivery, also
+		// when that one later failed: the event id is durable.
+		existing, err = h.Queries.GetWebhookDelivery(ctx, taken.ID)
+		if err != nil {
+			return db.WebhookDelivery{}, persistCreated, fmt.Errorf("load identity holder: %w", err)
+		}
+	case isUniqueViolation(err) && in.DedupeKey != "":
+		existing, err = h.Queries.GetWebhookDeliveryByTriggerAndDedupe(ctx, db.GetWebhookDeliveryByTriggerAndDedupeParams{
+			TriggerID: in.TriggerID,
+			DedupeKey: pgtype.Text{String: in.DedupeKey, Valid: true},
+		})
+		if err != nil {
+			return db.WebhookDelivery{}, persistCreated, fmt.Errorf("lookup duplicate delivery: %w", err)
+		}
+	default:
 		return db.WebhookDelivery{}, persistCreated, err
-	}
-	existing, lookupErr := h.Queries.GetWebhookDeliveryByTriggerAndDedupe(ctx, db.GetWebhookDeliveryByTriggerAndDedupeParams{
-		TriggerID: in.TriggerID,
-		DedupeKey: pgtype.Text{String: in.DedupeKey, Valid: true},
-	})
-	if lookupErr != nil {
-		return db.WebhookDelivery{}, persistCreated, fmt.Errorf("lookup duplicate delivery: %w", lookupErr)
 	}
 	existingDigest, digestErr := h.webhookStoredDigest(ctx, existing)
 	if digestErr != nil && !errors.Is(digestErr, errWebhookSourceDrift) {

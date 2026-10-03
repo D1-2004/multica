@@ -73,7 +73,7 @@ Constraints on webhook requests:
 
 - the body must be a valid JSON object or array, up to 256 KiB;
 - `Idempotency-Key` prevents duplicate runs when the sender retries; GitHub deliveries are also deduplicated by `X-GitHub-Delivery`;
-- a retry with the same key and the same payload returns the original delivery (key order and whitespace don't matter); reusing a key with a different payload is a conflict and runs nothing;
+- a retry with the same key and the same payload returns the original delivery (key order and whitespace don't matter); reusing a key with a different payload is a conflict and runs nothing. This holds even if the original delivery later failed; to run it again, replay it from the delivery detail;
 - the key is at most 255 characters and can't contain control characters;
 - without a stable idempotency key, Multica can't guarantee that repeated requests run only once;
 - when the trigger is disabled or the event doesn't match, the delivery is recorded as ignored and no run is created.

@@ -305,11 +305,7 @@ func (h *Handler) completeConnectorOAuthCallback(w http.ResponseWriter, r *http.
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	query := r.URL.Query()
-	callback := connectorOAuthCallback{
-		Via: via, State: query.Get("state"), Code: query.Get("code"), Error: query.Get("error"),
-		InstallationID: parseConnectorOAuthInstallationID(query.Get("installation_id")),
-		SetupAction:    parseConnectorOAuthSetupAction(query.Get("setup_action")),
-	}
+	callback := githubConnectorCallbackFromQuery(via, query)
 	if len(callback.Code) > connectorOAuthMaxCode {
 		// Treated like a provider error: the state is still consumed.
 		callback.Code, callback.Error = "", "invalid_request"
@@ -333,6 +329,11 @@ func (h *Handler) completeConnectorOAuthCallback(w http.ResponseWriter, r *http.
 	outcome := h.completeConnectorOAuth(ctx, callback)
 	if !outcome.Continue && clearBinding != nil {
 		clearBinding()
+	}
+	if !outcome.Continue {
+		if _, err := r.Cookie(connectorOAuthActiveInstallCookie); err == nil {
+			http.SetCookie(w, connectorOAuthActiveInstallCookieValue("", h.githubFrontend()))
+		}
 	}
 	if outcome.SceneSession != "" && !outcome.Continue {
 		origin := h.connectorOAuthAppOrigin()

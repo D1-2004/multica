@@ -277,7 +277,7 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 ### 原生订阅入站（DWS native subscription，2026-10-01）
 
-执行身份开启「原生订阅」后，不经 Agent Message Router，由服务端自己的 DWS 个人事件流收它本人的钉钉消息：`user_im_message_receive_at`（群里 @ 本账号）与 `user_im_message_receive_o2o_all`（全部单聊）。事件源 `h.DWSNativeEvents` 由运行时键 `runtime.use_dws_for_tag` 开关，事件源没有运行时不能开启（409 `native_subscription_unavailable`）。事件流与原生回复始终走生产 DWS 网关（`mcp.dingtalk.com`），不论本部署是预发还是正式。
+执行身份开启「原生订阅」后，不经 Agent Message Router，由服务端自己的 DWS 个人事件流收它本人的钉钉消息：`user_im_message_receive_at`（群里 @ 本账号）与 `user_im_message_receive_o2o_all`（全部单聊）。同一条流也订阅 `user_card_action_triggered`，由 `server/internal/service/a2ui` 按 `ask:`、`show:`、`appr:` 号把点击写回交互记录。发卡回执里的 `openMessageId` 写入这一行的 `message_id`，和 dws 发出一条普通消息后拿到的消息号相同；网关只给了 `openTaskId` 时再查一次发送状态。点击回来后，用这个 `message_id` 能看到这条卡片消息收到的回复。行上还有开卡时的场域 `scene_id`、可选 `thread_id` 和 `source_ref`。这不是 IM 消息，不进 `HandleDWSNativeEvent`。事件源 `h.DWSNativeEvents` 由运行时键 `runtime.use_dws_for_tag` 开关，事件源没有运行时不能开启（409 `native_subscription_unavailable`）。事件流与原生回复始终走生产 DWS 网关（`mcp.dingtalk.com`），不论本部署是预发还是正式。
 
 **账号归属，逐条消息生效。** 一个钉钉账号（dws uid + org）归原生订阅，当且仅当存在它的 `agent_dws_native_subscription` 行、该行的 Agent 未归档、且该 Agent 当前绑定的身份仍是这个账号；否则归 Router。两条入口对每条消息都用这一条规则（`GetDWSNativeAccountOwner`，`server/internal/handler/dws_native_ownership.go`），所以即使开关层的防护被绕过，一条消息也只会被处理一次，账号也不会无人认领：
 
