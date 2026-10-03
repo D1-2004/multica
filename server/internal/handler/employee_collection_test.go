@@ -685,3 +685,40 @@ func TestCollectionAcceptResultHidesProgress(t *testing.T) {
 }
 
 var _ = employeeentry.HostNoticeInvitation
+
+// One person asked by two collections in the same DM: an unquoted answer is
+// ambiguous. The model cannot pick one without the sender's own words naming
+// it; with them, the answer is recorded as an explicit invitation reference.
+func TestCollectionAmbiguousDMNeedsSendersOwnReference(t *testing.T) {
+	c := newCollectionHarness(t)
+	c.seed()
+	first := c.origin("问 Carol 本周签了几单", collectionParticipants[0])
+	c.deliver(first.ID, map[string]string{"Carol": "cid-carol-dm"})
+	second := c.origin("再问 Carol 下周计划拜访几家", collectionParticipants[0])
+	if _, err := testPool.Exec(context.Background(), `UPDATE response_action SET state='delivered',provider_task_id='task-'||id,provider_message_id='pm-Carol-2',provider_conversation_id='cid-carol-dm' WHERE id=$1`, c.invitations(second.ID)["Carol"].DeliveryActionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.f.h.EmployeeSceneWorker.ReconcileEmployeeCollections(context.Background(), 50); err != nil {
+		t.Fatal(err)
+	}
+	unclear := c.send(collectionMessage{conversation: "cid-carol-dm", kind: "single", name: "Carol", openID: "carol-open", messageID: "carol-unclear", text: "7"})
+	c.model.set(c.accept(unclear, "i1"))
+	before := c.model.count()
+	c.process()
+	if !strings.Contains(c.model.requests[before], `\"binding\":\"ambiguous\"`) {
+		t.Fatalf("two pending invitations must be ambiguous: %s", c.model.requests[before])
+	}
+	if n := c.count(`SELECT count(*) FROM employee_task_input WHERE agent_id=$1::uuid`, c.f.agentID); n != 0 {
+		t.Fatalf("an ambiguous answer was recorded without the sender naming the question: %d", n)
+	}
+	named := c.send(collectionMessage{conversation: "cid-carol-dm", kind: "single", name: "Carol", openID: "carol-open", messageID: "carol-named", text: "本周签单是 7 单"})
+	c.model.set(func(request string) (string, map[string]any) {
+		// i1 is the first-created collection's question in this listing.
+		return collectionCall("call-accept", "accept_collection_input", map[string]any{"source_ref": named, "invitation_ref": "i1", "reference_quote": "本周签单", "reply": "收到"})
+	})
+	c.process()
+	var binding, collection string
+	if err := testPool.QueryRow(context.Background(), `SELECT binding,collection_id::text FROM employee_task_input WHERE agent_id=$1::uuid`, c.f.agentID).Scan(&binding, &collection); err != nil || binding != string(taskinput.BindInviteReference) || collection != first.ID {
+		t.Fatalf("named answer: binding=%s collection=%s err=%v", binding, collection, err)
+	}
+}
