@@ -18,11 +18,12 @@ type PendingOutcome struct {
 }
 
 // ProcessPending is the durable verification trigger: it discovers succeeded
-// Runs of the current goal whose Task has an active spec and no retained
-// result under the current spec digest, and verifies each. A crash between a
-// Run's terminal commit and its verification therefore only delays it.
-// Unknown results are retained, so a Run is not rediscovered until its spec
-// changes; a later delivery receipt needs an explicit VerifyRun call.
+// Runs of the current goal whose Task has an active spec and no committed
+// attempt of the current evidence generation under the current spec digest,
+// and verifies each. A crash between a Run's terminal commit and its
+// verification therefore only delays it. A Run whose provider sends are still
+// being confirmed is deferred (ErrEvidencePending) and retried. Once attempted,
+// a Run is not rediscovered until its spec or the evidence generation changes.
 func (v *Verifier) ProcessPending(ctx context.Context, limit int) ([]PendingOutcome, error) {
 	if v == nil || v.DB == nil || limit < 1 || limit > 500 {
 		return nil, ErrInvalid
@@ -37,8 +38,8 @@ JOIN employee_task t ON t.id=s.task_id AND t.workspace_id=s.workspace_id AND t.a
 JOIN employee_task_run r ON r.task_id=t.id AND r.workspace_id=t.workspace_id AND r.agent_id=t.agent_id AND r.tenant_org_id=t.tenant_org_id
 WHERE s.state='active' AND t.owner_loop='employee' AND t.scope_kind='scene' AND t.state<>'cancelled'
   AND r.state='succeeded' AND r.goal_revision=t.goal_revision AND r.finished_at > now() - interval '7 days'
-  AND NOT EXISTS (SELECT 1 FROM employee_task_verification v WHERE v.run_id=r.id AND v.spec_digest=s.spec_digest)
-ORDER BY r.finished_at,r.id LIMIT $1`, limit)
+  AND NOT EXISTS (SELECT 1 FROM employee_task_verification_attempt a WHERE a.run_id=r.id AND a.spec_digest=s.spec_digest AND a.evidence_generation>=$2)
+ORDER BY r.finished_at,r.id LIMIT $1`, limit, EvidenceGeneration)
 	if err != nil {
 		return nil, err
 	}

@@ -192,17 +192,20 @@ type Gate struct {
 }
 
 var (
-	ErrInvalid       = errors.New("employee verification: invalid input")
-	ErrNotFound      = errors.New("employee verification: task or run not found in scope")
-	ErrNoSpec        = errors.New("employee verification: task has no verification spec")
-	ErrConflict      = errors.New("employee verification: conflicting spec or result for the same identity")
-	ErrSpecChanged   = errors.New("employee verification: spec changed while the check ran; result discarded")
-	ErrEvidence      = errors.New("employee verification: evidence changed while the check ran; result discarded")
-	ErrNotVerifiable = errors.New("employee verification: only a succeeded run of an Employee scene task is verifiable")
-	ErrTaskCancelled = errors.New("employee verification: task was cancelled")
-	ErrStaleGoal     = errors.New("employee verification: run belongs to an older goal revision")
-	ErrStaleTenant   = errors.New("employee verification: scene no longer belongs to the task tenant")
-	ErrNotRequester  = errors.New("employee verification: only the task requester may author or confirm this spec")
+	ErrInvalid     = errors.New("employee verification: invalid input")
+	ErrNotFound    = errors.New("employee verification: task or run not found in scope")
+	ErrNoSpec      = errors.New("employee verification: task has no verification spec")
+	ErrConflict    = errors.New("employee verification: conflicting spec or result for the same identity")
+	ErrSpecChanged = errors.New("employee verification: spec changed while the check ran; result discarded")
+	ErrEvidence    = errors.New("employee verification: evidence changed while the check ran; result discarded")
+	// ErrEvidencePending: a provider send of this Run is still unconfirmed;
+	// verification waits rather than judging an incomplete delivery.
+	ErrEvidencePending = errors.New("employee verification: run delivery is still being confirmed")
+	ErrNotVerifiable   = errors.New("employee verification: only a succeeded run of an Employee scene task is verifiable")
+	ErrTaskCancelled   = errors.New("employee verification: task was cancelled")
+	ErrStaleGoal       = errors.New("employee verification: run belongs to an older goal revision")
+	ErrStaleTenant     = errors.New("employee verification: scene no longer belongs to the task tenant")
+	ErrNotRequester    = errors.New("employee verification: only the task requester may author or confirm this spec")
 )
 
 // DB accepts a pool or a transaction (Begin on a transaction is a savepoint).

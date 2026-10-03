@@ -167,6 +167,9 @@ var workspaceDeletionManifest = map[string]workspaceDeleteAction{
 	"workspace":                       workspaceDelete,
 	"workspace_invitation":            workspaceDelete,
 	"workspace_tag":                   workspaceDelete,
+
+	// A blank line keeps this longer name from realigning the block above.
+	"employee_task_verification_attempt": workspaceDelete,
 }
 
 func TestWorkspaceDeletionManifestCoversPublicSchema(t *testing.T) {

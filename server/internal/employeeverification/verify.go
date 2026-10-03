@@ -49,12 +49,19 @@ type runRow struct {
 }
 
 type snapshot struct {
-	task     taskRow
-	run      runRow
-	spec     Spec
-	evidence runEvidence
-	delivery string
+	task      taskRow
+	run       runRow
+	spec      Spec
+	evidence  runEvidence
+	delivery  string
+	delivered DeliveredSet
 }
+
+// EvidenceGeneration is recorded per verified (run, spec): generation 2 reads
+// provider-delivered files. Runs verified only by an older generation are
+// rediscovered once, so a replica that could not see deliveries never leaves
+// a Run judged without them.
+const EvidenceGeneration = 2
 
 // VerifyRun is idempotent: concurrent or repeated calls over the same
 // evidence converge on one record per (run, check, evidence) and at most one
@@ -94,6 +101,25 @@ func (v *Verifier) VerifyRun(ctx context.Context, scope employeetask.Scope, task
 			return RunResult{}, fmt.Errorf("read artifact %s: %w", a.AttachmentID, err)
 		}
 		snap.evidence.Bytes[a.AttachmentID] = data
+	}
+	if files, ok := v.Evidence.(DeliveredFileSource); ok && len(wanted) > 0 {
+		for _, m := range snap.delivered.Messages {
+			read, err := files.ReadDeliveredFiles(ctx, scope, taskID, runID, snap.run.QueueTaskID, m, MaxVerifiedArtifactBytes)
+			if err != nil {
+				return RunResult{}, fmt.Errorf("read delivered message %s: %w", m.MessageID, err)
+			}
+			for _, f := range read {
+				if f.Unreadable != "" || f.FileID == "" {
+					snap.evidence.Unreadable = append(snap.evidence.Unreadable, clip(m.MessageID+": "+f.Unreadable, 160))
+					continue
+				}
+				ref := "dws-message-file:" + m.MessageID + "/" + f.FileID
+				a := Artifact{Ref: ref, AttachmentID: ref, TaskID: snap.task.ID, RunID: snap.run.ID, QueueTaskID: snap.run.QueueTaskID, GoalRevision: snap.run.GoalRevision,
+					Filename: f.Name, SHA256: sha256Hex(f.Data), Size: int64(len(f.Data)), State: "ready"}
+				snap.evidence.Delivered = append(snap.evidence.Delivered, a)
+				snap.evidence.Bytes[ref] = f.Data
+			}
+		}
 	}
 	var observations []observation
 	for _, c := range snap.spec.Checks {
@@ -177,7 +203,29 @@ func (v *Verifier) snapshot(ctx context.Context, scope employeetask.Scope, taskI
 	if s.evidence, s.delivery, err = v.readEvidence(ctx, tx, scope, s); err != nil {
 		return snapshot{}, err
 	}
+	if s.delivered, err = v.readDelivered(ctx, tx, scope, s); err != nil {
+		return snapshot{}, err
+	}
+	if s.delivered.Pending {
+		return snapshot{}, ErrEvidencePending
+	}
+	s.evidence.DeliveredDigest = s.delivered.digest()
 	return s, nil
+}
+
+// readDelivered reads the delivered receipt set when a check names a file and
+// the evidence source can read provider deliveries.
+func (v *Verifier) readDelivered(ctx context.Context, q Querier, scope employeetask.Scope, s snapshot) (DeliveredSet, error) {
+	files, ok := v.Evidence.(DeliveredFileSource)
+	if !ok {
+		return DeliveredSet{}, nil
+	}
+	for _, c := range s.spec.Checks {
+		if c.File != "" {
+			return files.RunDeliveredMessages(ctx, q, scope, s.task.ID, s.run.ID)
+		}
+	}
+	return DeliveredSet{}, nil
 }
 
 func (v *Verifier) readEvidence(ctx context.Context, q Querier, scope employeetask.Scope, s snapshot) (runEvidence, string, error) {
@@ -255,11 +303,16 @@ func (v *Verifier) writeback(ctx context.Context, scope employeetask.Scope, snap
 	if err != nil || spec.Revision != snap.spec.Revision || spec.Digest != snap.spec.Digest || spec.State != SpecActive {
 		return RunResult{}, ErrSpecChanged
 	}
-	evidence, delivery, err := v.readEvidence(ctx, tx, scope, snapshot{task: task, run: run, spec: spec})
+	current := snapshot{task: task, run: run, spec: spec}
+	evidence, delivery, err := v.readEvidence(ctx, tx, scope, current)
 	if err != nil {
 		return RunResult{}, err
 	}
-	if evidence.manifestDigest() != snap.evidence.manifestDigest() || delivery != snap.delivery {
+	delivered, err := v.readDelivered(ctx, tx, scope, current)
+	if err != nil {
+		return RunResult{}, err
+	}
+	if evidence.hostManifestDigest() != snap.evidence.hostManifestDigest() || delivery != snap.delivery || delivered.Pending || delivered.digest() != snap.delivered.digest() {
 		return RunResult{}, ErrEvidence
 	}
 	written := make([]Record, 0, len(observations))
@@ -272,6 +325,11 @@ func (v *Verifier) writeback(ctx context.Context, scope employeetask.Scope, snap
 	}
 	all, err := runRecords(ctx, tx, scope, snap.task.ID, snap.run.ID)
 	if err != nil {
+		return RunResult{}, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO employee_task_verification_attempt(run_id,workspace_id,spec_digest,evidence_generation) VALUES($1::uuid,$2::uuid,$3,$4)
+ON CONFLICT (run_id,spec_digest) DO UPDATE SET evidence_generation=GREATEST(employee_task_verification_attempt.evidence_generation,EXCLUDED.evidence_generation),attempted_at=now()`,
+		snap.run.ID, scope.WorkspaceID, snap.spec.Digest, EvidenceGeneration); err != nil {
 		return RunResult{}, err
 	}
 	gate := gateFor(spec, all)

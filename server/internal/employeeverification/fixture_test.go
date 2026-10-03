@@ -31,6 +31,7 @@ const (
 type fixture struct {
 	pool    *pgxpool.Pool
 	scope   employeetask.Scope
+	cid     string
 	tasks   *employeetask.Store
 	store   *Store
 	memory  *employeememory.Store
@@ -76,7 +77,7 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	var files []string
-	for _, pattern := range []string{"950[0-2]_*.up.sql", "9511_*.up.sql", "960*.up.sql", "9650_*.up.sql", "9760_*.up.sql", "990*.up.sql", "962[0-4]_*.up.sql", "966[0-4]_*.up.sql", "964[7-9]_*.up.sql", "914[4-5]_*.up.sql", "997*.up.sql"} {
+	for _, pattern := range []string{"950[0-2]_*.up.sql", "9511_*.up.sql", "960*.up.sql", "9650_*.up.sql", "9760_*.up.sql", "990*.up.sql", "962[0-4]_*.up.sql", "966[0-4]_*.up.sql", "964[7-9]_*.up.sql", "914[4-5]_*.up.sql", "9153_*.up.sql", "997*.up.sql", "987[01]_*.up.sql"} {
 		matches, err := filepath.Glob(filepath.Join(dir, pattern))
 		if err != nil {
 			t.Fatal(err)
@@ -99,13 +100,15 @@ func newFixture(t *testing.T) *fixture {
 	}
 	wsID, _ := util.ParseUUID(ws)
 	agentID, _ := util.ParseUUID(agent)
-	row, err := scene.Resolve(ctx, db.New(pool), scene.Owner{WorkspaceID: wsID, AgentID: agentID}, scene.DingTalkConversation("org-a", scene.KindDM, "cid-"+uuid.NewString()), scene.Observation{KindStated: true})
+	cid := "cid-" + uuid.NewString()
+	row, err := scene.Resolve(ctx, db.New(pool), scene.Owner{WorkspaceID: wsID, AgentID: agentID}, scene.DingTalkConversation("org-a", scene.KindDM, cid), scene.Observation{KindStated: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return &fixture{
 		pool:    pool,
 		scope:   employeetask.Scope{WorkspaceID: ws, AgentID: agent, TenantOrgID: "org-a", Kind: employeetask.ScopeScene, Scene: scene.RefOf(row)},
+		cid:     cid,
 		tasks:   employeetask.NewStore(pool),
 		store:   NewStore(pool),
 		memory:  employeememory.NewStore(pool),
