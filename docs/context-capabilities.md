@@ -1305,9 +1305,11 @@ arrives. There are no org-level or person-level routines.
   `openDingTalkId` frozen at creation for delivery (the `person_staff_id`
   column is no longer written or read). The configure pages read the
   counterpart from server-written facts of that scene only: the sender of
-  its newest Coordinator job and the per-message senders of the newest 20
-  user messages the EmployeeLoop admitted there (an agent in employee mode
-  has no Coordinator jobs). They must name one person; otherwise creation
+  its newest Coordinator job and the senders of the newest 20 user
+  messages the EmployeeLoop admitted there (an agent in employee mode has
+  no Coordinator jobs): a message's own `senderOpenDingTalkId`, else the
+  envelope sender of a single-message window (DWS native messages carry the
+  address-book staffId on the message). They must name one person; otherwise creation
   answers `dm_target_ambiguous` (none yet: `dm_target_unknown`). A routine
   created from the chat itself uses that task's own sender. The autopilot
   keeps the trigger, schedule and run history; scene-managed autopilots
