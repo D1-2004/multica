@@ -319,7 +319,7 @@ func TestEmployeeSceneCapabilitiesReadUsesDirectoryAndRejectsModelScope(t *testi
 	if err = json.Unmarshal([]byte(result.Content), &value); err != nil {
 		t.Fatal(err)
 	}
-	if value["scene"].(map[string]any)["scene_id"] != job.Scope.SceneID || value["read_only"] != true || value["management_via"] == "" {
+	if value["scene"].(map[string]any)["scene_id"] != job.Scope.SceneID || value["read_only"] != nil || !strings.Contains(fmt.Sprint(value["how_to_change"]), "dispatch_task") {
 		t.Fatalf("read is not the Host directory scene: %s", result.Content)
 	}
 	if _, err = host.Execute(context.Background(), identity, employeeloop.ToolCall{Name: "scene_config_get", NativeToolCallID: "read-forged", Arguments: map[string]any{"source_ref": source.SourceRef, "scene_id": uuid.NewString()}}); err == nil {
@@ -531,7 +531,7 @@ func TestEmployeeCapabilityIntroductionContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	prompt := employeeloop.BuildPrompt(input.Config.Persona)
-	for _, rule := range []string{"describe_capabilities on the first model call", "Only use scene_config_get when the user explicitly asks for configuration details", "1–3 short sentences", "not internal tool names", "DWS/dws-shortcuts", "Employee-triggered execution is unverified"} {
+	for _, rule := range []string{"describe_capabilities on the first model call", "Only use scene_config_get when the user explicitly asks for configuration details", "1–3 short sentences", "not internal tool names", "DWS/dws-shortcuts", "Foreground boundary:", "Scene self-management is background work you arrange with dispatch_task"} {
 		if !strings.Contains(prompt, rule) {
 			t.Errorf("capability introduction contract missing %q", rule)
 		}
@@ -560,6 +560,49 @@ func TestEmployeeCapabilityIntroductionContract(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "at most three model calls") {
 		t.Fatal("foreground budget contract disappeared")
+	}
+}
+
+// A routine, prompt, switch or MCP server change is executor work. The
+// foreground once read "configuration only, do not promise" and a read_only
+// flag as "this cannot be done" and refused to dispatch (2026-10-03 Qwen-DWS).
+func TestEmployeeSceneSelfManagementDispatchContract(t *testing.T) {
+	f := newCtxcapFixture(t)
+	input, err := employeeCapabilityInput(t, f, []DispatchMessage{{OpenMsgID: "routine", SenderUID: "alice", Text: "每隔15分钟给我讲个笑话，建个例行任务。"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := employeeloop.BuildPrompt(input.Config.Persona)
+	for _, rule := range []string{"create, change, pause, resume, delete or run now a routine", "config-qwen-tag-scene", "never answer that you cannot do it", "Only a task result can show that something is impossible", "DWS lookups (contacts, managers"} {
+		if !strings.Contains(prompt, rule) {
+			t.Errorf("self-management boundary missing %q", rule)
+		}
+	}
+	for _, refusal := range []string{"do not advertise or promise", "Employee-triggered execution is unverified", "grants no write permission"} {
+		if strings.Contains(prompt, refusal) {
+			t.Errorf("prompt still tells the model to refuse: %q", refusal)
+		}
+	}
+	found := map[string]bool{}
+	for _, tool := range input.Config.Tools {
+		found[tool.Name] = true
+		switch tool.Name {
+		case "dispatch_task":
+			if !strings.Contains(tool.Description, "routine/定时任务") || !strings.Contains(tool.Description, "instead of declining") {
+				t.Error("dispatch_task does not cover scene self-management")
+			}
+		case "scene_config_get":
+			if strings.Contains(tool.Description, "no write permission") || !strings.Contains(tool.Description, "goes straight to dispatch_task") {
+				t.Error("scene_config_get still reads as a refusal")
+			}
+		case "describe_capabilities":
+			if !strings.Contains(tool.Description, "go through dispatch_task") {
+				t.Error("describe_capabilities does not route changes to dispatch_task")
+			}
+		}
+	}
+	if !found["dispatch_task"] || !found["scene_config_get"] || !found["describe_capabilities"] {
+		t.Fatalf("frozen tools missing: %v", found)
 	}
 }
 
