@@ -45,7 +45,7 @@ func validateCreate(scope Scope, p CreateCollectionParams) error {
 	}
 	participants := make(map[string]struct{}, len(p.Invitations))
 	for _, spec := range p.Invitations {
-		if !validRef(spec.ParticipantRef, maxActorBytes) {
+		if !validRef(spec.ParticipantRef, maxActorBytes) || !utf8.ValidString(spec.ParticipantLabel) || utf8.RuneCountInString(spec.ParticipantLabel) > 128 || strings.TrimSpace(spec.ParticipantLabel) != spec.ParticipantLabel {
 			return ErrInvalid
 		}
 		switch {
@@ -184,10 +184,10 @@ func (s *Store) CreateCollectionTx(ctx context.Context, scope Scope, p CreateCol
 			state = InvitationPendingScene
 		}
 		inv, err := scanInvitation(tx.QueryRow(ctx, `INSERT INTO employee_task_invitation
- (id,workspace_id,agent_id,tenant_org_id,task_id,collection_id,ordinal,collection_revision,target_scene_id,target_scene_kind,participant_ref,question,expires_at,delivery_action_id,delivery_state)
- VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6::uuid,$7,$8,NULLIF($9,'')::uuid,$10,$11,$12,$13,$14,$15) RETURNING `+invitationColumns,
+ (id,workspace_id,agent_id,tenant_org_id,task_id,collection_id,ordinal,collection_revision,target_scene_id,target_scene_kind,participant_ref,question,expires_at,delivery_action_id,delivery_state,participant_label)
+ VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5::uuid,$6::uuid,$7,$8,NULLIF($9,'')::uuid,$10,$11,$12,$13,$14,$15,$16) RETURNING `+invitationColumns,
 			id, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, p.TaskID, row.ID, i+1, row.Revision, spec.TargetSceneID,
-			kinds[i], spec.ParticipantRef, spec.Question, spec.ExpiresAt, DeliveryActionID(id, 1), string(state)))
+			kinds[i], spec.ParticipantRef, spec.Question, spec.ExpiresAt, DeliveryActionID(id, 1), string(state), spec.ParticipantLabel))
 		if err != nil {
 			return Collection{}, nil, err
 		}
