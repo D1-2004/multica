@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS employee_task_invitation_reminder_policy_idx ON employee_task_invitation_reminder_policy (invitation_id);

@@ -186,6 +186,9 @@ func (w *EmployeeWatchdog) Scan(ctx context.Context, limit int) (EmployeeWatchdo
 		}
 		out.add(r)
 	}
+	reminders, reminderErrs := w.scanReminders(ctx, now, limit)
+	out.add(reminders)
+	errs = append(errs, reminderErrs...)
 	if out.Enqueued > 0 {
 		if n, ok := w.Outbox.(interface{ Notify() }); ok {
 			n.Notify()
@@ -691,7 +694,8 @@ func (w *EmployeeWatchdog) BeforeSend(ctx context.Context, in dingtalkresponse.A
 	var workspaceID, taskID string
 	err := w.DB.QueryRow(ctx, `SELECT workspace_id::text,task_id::text FROM employee_watchdog_notice WHERE id=$1::uuid`, in.SceneNoticeID).Scan(&workspaceID, &taskID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		// Not a stall notice; it may be an invitation reminder.
+		return w.beforeReminderSend(ctx, in)
 	}
 	if err != nil {
 		return true, err
