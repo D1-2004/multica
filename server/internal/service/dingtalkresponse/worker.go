@@ -215,7 +215,10 @@ func (s *Service) query(ctx context.Context, a *action) error {
 		switch status.State {
 		case "delivered":
 			if status.OpenMessageID != "" && status.OpenConversationID != "" {
-				if status.OpenConversationID != a.Input.ConversationID {
+				// A DM invitation sent before its conversation was known adopts
+				// the conversation the provider delivered it to.
+				adopt := a.Input.InvitationActionID != "" && !a.Input.IsGroup && a.Input.ConversationID == ""
+				if !adopt && status.OpenConversationID != a.Input.ConversationID {
 					state, code = "unknown", "delivery_target_mismatch"
 				} else {
 					state, code = "delivered", ""

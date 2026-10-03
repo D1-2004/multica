@@ -57,6 +57,12 @@ type ActionInput struct {
 	// conversation changed its scene's configuration, sent into that scene
 	// with no dispatch to close and no Router callback.
 	SceneNoticeID string `json:"scene_notice_id,omitempty"`
+	// InvitationActionID is set only by EnqueueInvitationNotice: a cross-scene
+	// collection invitation whose response action id is the invitation's own
+	// delivery action id. A 1:1 invitation to a person without a known
+	// conversation leaves ConversationID empty and adopts the conversation
+	// the provider reports on delivery.
+	InvitationActionID string `json:"invitation_action_id,omitempty"`
 	// EmployeeRunNoticeID is Host provenance retained even if workspace teardown
 	// removes the notice row while a worker already holds the action payload.
 	EmployeeRunNoticeID string `json:"employee_run_notice_id,omitempty"`
@@ -219,6 +225,31 @@ func (s *Service) EnqueueSceneNotice(ctx context.Context, tx DBTX, in ActionInpu
 	in.RoutineRunID = ""
 	in.RequestID = "scene-notice:" + noticeID
 	in.ActionID = ""
+	in.CoordinatorWaitJobID = ""
+	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState, in.ReplyToOpenMsgID = "", "", "", "", ""
+	in.CallbackTarget = routineNoticeTarget
+	return s.enqueue(ctx, tx, in)
+}
+
+// invitationNoticeNamespace derives the scene notice id of an invitation from
+// its delivery action id, so older workers treat the action as a notice (no
+// Router callback) and a replay maps to the same row.
+var invitationNoticeNamespace = uuid.MustParse("3f6d1c2a-6a0e-4c2e-9e57-2f6a1d8b9c41")
+
+// EnqueueInvitationNotice records the send of one collection invitation. The
+// response action id is actionID itself (taskinput.DeliveryActionID), so the
+// invitation, its history fact and any later reminder name the same frozen
+// provider address. It closes no dispatch and has no Router callback.
+func (s *Service) EnqueueInvitationNotice(ctx context.Context, tx DBTX, in ActionInput, actionID string) (string, error) {
+	actionID = strings.TrimSpace(actionID)
+	if actionID == "" || len(actionID) > 128 || strings.ContainsAny(actionID, " \t\r\n") {
+		return "", errors.New("invitation action id is invalid")
+	}
+	in.InvitationActionID = actionID
+	in.SceneNoticeID = uuid.NewSHA1(invitationNoticeNamespace, []byte(actionID)).String()
+	in.RoutineRunID = ""
+	in.RequestID = "invitation:" + actionID
+	in.ActionID = actionID
 	in.CoordinatorWaitJobID = ""
 	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState, in.ReplyToOpenMsgID = "", "", "", "", ""
 	in.CallbackTarget = routineNoticeTarget
@@ -447,7 +478,13 @@ func validateInput(in ActionInput) error {
 	if strings.TrimSpace(in.Text) == "" || in.CloseState != "" {
 		return errors.New("response send content is invalid")
 	}
-	if in.DWSUID == "" || in.DWSOrgID == "" || in.ConversationID == "" || (!in.IsGroup && in.SenderOpenDingTalkID == "") {
+	if in.InvitationActionID != "" && (in.ActionID != in.InvitationActionID || in.SceneNoticeID == "") {
+		return errors.New("invitation notice identity is inconsistent")
+	}
+	// Only an invitation may reach a person by DM before their conversation
+	// is known; the provider reports the conversation on delivery.
+	pendingConversation := in.InvitationActionID != "" && !in.IsGroup && in.ConversationID == ""
+	if in.DWSUID == "" || in.DWSOrgID == "" || (in.ConversationID == "" && !pendingConversation) || (!in.IsGroup && in.SenderOpenDingTalkID == "") {
 		return errors.New("response send identity or target is incomplete")
 	}
 	return nil
