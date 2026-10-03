@@ -62,7 +62,7 @@ func TestRecentConversationWithdrawsDeliveredMemoryReadReplies(t *testing.T) {
 			if _, err := f.pool.Exec(ctx, `UPDATE employee_event_consumption SET payload=jsonb_set(payload,'{command,event,data,messages,0,senderOpenDingTalkId}','"different-member"'::jsonb) WHERE receipt_id=$1::uuid`, independentReceipt); err != nil {
 				t.Fatal(err)
 			}
-			historyReplyJob(t, f, independent, map[string]any{}, map[string]any{}, before.Add(-6*time.Minute))
+			historyReplyJob(t, f, independent, map[string]any{"input": map[string]any{"Memory": ""}}, map[string]any{}, before.Add(-6*time.Minute))
 			recentHistoryReply(t, f, scope, independent, "delivered", "另一项目周二 17 点", "independent-answer", "cid-test", before.Add(-5*time.Minute))
 			request := RecentConversationRequest{Scope: scope, PrincipalID: principal, Before: before}
 			active, err := f.store.RecentConversation(ctx, request)
@@ -131,7 +131,7 @@ func TestRecentConversationMemoryReplyProvenanceRejectsFalseAssociations(t *test
 	}
 	for index, kind := range []string{"foreign-record", "refused-lookup", "text-is-not-provenance"} {
 		_, job := recentHistoryInput(t, f, scope, principal, "普通问题", kind, before.Add(-time.Duration(10-index)*time.Minute))
-		snapshot, journal := map[string]any{}, map[string]any{}
+		snapshot, journal := map[string]any{"input": map[string]any{"Memory": ""}}, map[string]any{}
 		switch kind {
 		case "foreign-record":
 			snapshot["memory_manifest"] = []any{map[string]any{"id": foreign, "scope": "scene", "scene_id": scope.SceneID}}

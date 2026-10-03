@@ -101,6 +101,8 @@ M5 的后续问答回复同样按精确来源撤销：Host 以同场域 tombston
 
 祖先的非空 input 不能作为来源已知的证明。只认可显式 manifest、显式空 Memory、没有未关联 Memory 明文的合法结构化历史，或当版明确零记录的 memory_stats；旧非空 Memory 或未知字段没有这些证明时 unavailable，不扫描正文猜测记录 ID，也不改变旧 job 恢复的快照字节。
 
+M16 修订失败粒度：未知快照、缺失/冲突/未送达的精确 assistant 祖先只隔离该 assistant 与精确依赖的后继，不使独立真人历史和正常 DWS 转录一起消失。这些 assistant 仍不可回放，记录不含正文的原因/数量；SQL/取消/全图集合或深度超限仍整段 unavailable。参见 [22 局部隔离](plans/2026-10-03/employee-loop-backend-delivery/22-assistant-quarantine.md)。
+
 ## 纯停止当前事项
 
 `stop_task` 只处理同一 requester、场域和租户中，当前外层消息明确要求停止的 Direct Task。先 `read_task` 再用本 wake 的 `task_ref/read_ref`，提交时重验权限、来源、精确 Run/queue 与 Task version；普通致谢、进度询问不触发停止。reaction 与结构 continuation 不能停止任何事项，不推断其他场域的目标。
@@ -241,6 +243,7 @@ v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标�
 **作答（B 场域）**
 - 聊天快照为每条来源消息冻结 Host 绑定：回复链 8 跳内指向邀请才是强绑定；群里无引用一律不绑；单聊只有唯一待答邀请才绑；多于一个为 ambiguous。本员工自己的消息、卡片/系统占位文本永不绑定。模型只看到发言人自己的问题。
 - `accept_collection_input` 只记录被绑定的那条消息原文；ambiguous 时只有单聊发言人自己的原话点明是哪一题（`reference_quote`）才可记录，否则先澄清。工具结果不含人数或进度。
+- 迟到答复还可见本人同场域最近关闭的已送达问题，最多5条/24小时，只含问题、关闭状态和时间；不含其他参与者答案或origin私有上下文。关闭事实不产生accept binding，closed-only仍不提供收答工具，不授权转发/汇总/恢复承诺。见 `docs/employee-collection-late-context.md`。
 - 发送前 `BeforeCollectionInviteSend` 再核邀请仍有效、场域目录/租户/身份未变，并对最终字节再做外发检查；不通过的动作被抑制，由对账器记为 held 或 failed。
 
 **收齐与汇总**
@@ -365,3 +368,6 @@ Task 来源的读取按 source namespace 注册，`history_policy` 有三种显�
 
 
 **原生取消收集（`[employee-loop:16]`）。**请求人要取消自己的等待收集、停止询问/催问或不再汇总时，模型先 `read_task` 读本 wake 的 source-bound候选，再 `cancel_collection` 用当前 `read_ref` 与外层逐字请求。Host复验当前 principal/requester/scene/tenant、Task version CAS 与 active collection，复用 stop 事务关闭目标、waits、collections和pending ready intents；不新建后台取消Task。成功ACK来自事务内回读的cancelled receipt，迟答不形成新输入/汇总。已送达提问不宣称撤回，真实运行进程仍保留退出证据屏障。旧工具表冻结不热改；15/16精确marker混版会暂缓新受理与旧job恢复，记not_ready并可恢复，不宣称不中断；全部在线副本16后恢复旧snapshot/journal。独立memory marker仍按自己的累积规则。
+
+
+**同目标事项来源关联。**新冻结TaskBrief的候选除了概括goal，还包含Task时间、当前active-run与latestRun状态/时间，以及至多两条已通过本场域RecentConversation可见性过滤的人类来源关联（初始请求/最近输入）。用原请求中的命名、source与对话关系区分相似goal，信息不足仍澄清，不能默认最新或以相似goal当事项身份。不附执行report代替read_task；真实进度/续接保留source-bound读取、权限与CAS。旧冻结brief保持字节，缺字段按已有合同读或澄清；本次纯additive数据不升loop16。

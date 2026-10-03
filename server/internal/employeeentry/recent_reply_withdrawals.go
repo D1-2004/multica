@@ -3,6 +3,7 @@ package employeeentry
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 type withdrawnReplyIDs struct {
 	Actions, Messages map[string]bool
 	Sources           map[string]bool
+	Reasons           map[string]int
 }
 
 type replyMemoryProvenance struct {
@@ -21,6 +23,7 @@ type replyMemoryProvenance struct {
 	History          []RecentConversationMessage
 	Sources          []string
 	AssistantSources []string
+	QuarantineReason string
 }
 
 // withdrawnMemoryReplyIDs follows only Host-recorded references. It never
@@ -28,7 +31,7 @@ type replyMemoryProvenance struct {
 // record or an associated earlier reply loses its whole delivered reply;
 // splitting a reply into attributable words would require guessing.
 func (s *Store) withdrawnMemoryReplyIDs(ctx context.Context, scope Scope, since, before time.Time) (withdrawnReplyIDs, error) {
-	out := withdrawnReplyIDs{Actions: map[string]bool{}, Messages: map[string]bool{}, Sources: map[string]bool{}}
+	out := withdrawnReplyIDs{Actions: map[string]bool{}, Messages: map[string]bool{}, Sources: map[string]bool{}, Reasons: map[string]int{}}
 	retired, evidence := map[string]bool{}, map[string]bool{}
 	rows, err := s.db.Query(ctx, `SELECT id::text,CASE WHEN scope_kind='scene' AND record->>'source_id'='dingtalk-message:'||scene_id::text THEN COALESCE(record->>'evidence_id','') ELSE '' END
  FROM employee_learning WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND scene_id=$4::uuid
@@ -78,8 +81,11 @@ func (s *Store) withdrawnMemoryReplyIDs(ctx context.Context, scope Scope, since,
 		}
 		node, decodeErr := replyProvenance(id, scope.SceneID, snapshot, journal, retired)
 		if decodeErr != nil {
-			rows.Close()
-			return out, decodeErr
+			node = replyMemoryProvenance{ID: id, Withdrawn: true, QuarantineReason: "unsupported_snapshot"}
+			out.Reasons["unsupported_snapshot"]++
+		} else if !node.SnapshotKnown && !node.Withdrawn {
+			node.Withdrawn, node.QuarantineReason = true, "unknown_snapshot"
+			out.Reasons["unknown_snapshot"]++
 		}
 		nodes[id] = &node
 	}
@@ -164,9 +170,14 @@ func (s *Store) withdrawnMemoryReplyIDs(ctx context.Context, scope Scope, since,
 		}
 		return out, err
 	}
-	replies, err = s.closeReplyAncestors(ctx, scope, before, nodes, replies, retired)
+	replies, err = s.closeReplyAncestors(ctx, scope, before, nodes, replies, retired, &out)
 	if err != nil {
 		return out, err
+	}
+	for _, node := range nodes {
+		if node.QuarantineReason != "" {
+			slog.WarnContext(ctx, "employee assistant history quarantined", "event", "employee_history_assistant_quarantined", "workspace_id", scope.WorkspaceID, "agent_id", scope.AgentID, "scene_id", scope.SceneID, "job_id", node.ID, "reason", node.QuarantineReason)
+		}
 	}
 	for changed := true; changed; {
 		changed = false

@@ -229,6 +229,15 @@ and no person view. Arbitrary nonempty input and legacy plaintext Memory are
 unknown, not silently treated as an empty dependency set. No text-to-record-ID
 heuristic is used; old job replay bytes remain untouched.
 
+M16 narrows failure isolation: an unknown or unclosed assistant source and its
+exact dependents are quarantined, rather than failing independent human history
+and the DWS transcript. Unknown snapshots are never admitted. Unverified ref IDs
+cannot become global tombstones; only a scoped delivered assistant source's
+actual provider/action IDs may be omitted. Database/context failures and the
+separate collection/depth bound remain hard failures. Static reasons and counts
+plus scoped job IDs provide diagnostics without recording reply text. Plan22
+retains the production LF limitation and real DB reset/invalid-pair contrasts.
+
 ## Terminal execution facts outside the kernel
 
 The fixed source's `internal/bot/loop.go:handleDone` emits completion without
