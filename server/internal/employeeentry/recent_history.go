@@ -60,7 +60,9 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
 	if s == nil || s.db == nil || !validScope(request.Scope) || !validID(request.PrincipalID) || request.Before.IsZero() || len(request.ExcludeReceipts) > MaxWindowItems || len(request.ExcludeMessages) > MaxWindowMessages {
 		return RecentConversation{}, ErrInvalid
 	}
-	before := request.Before.UTC()
+	// Host timestamps reach the model as Asia/Shanghai with an explicit offset;
+	// a bare UTC clock was read as local time ("ends around 11:34" for 19:34).
+	before := HostTime(request.Before)
 	out := RecentConversation{Coverage: "admitted_user_text_and_verified_host_replies", Since: before.Add(-RecentConversationWindow), Before: before, MaxMessages: RecentConversationMessageLimit, MaxBytes: RecentConversationByteLimit, Messages: []RecentConversationMessage{}}
 	excludedReceipts := append([]string{}, request.ExcludeReceipts...)
 	excludedMessages := append([]string{}, request.ExcludeMessages...)
@@ -276,7 +278,7 @@ func recentReplyCallback(url string) (recentCallback, bool) {
 }
 
 func boundRecentMessage(message *RecentConversationMessage) {
-	message.At = message.At.UTC()
+	message.At = HostTime(message.At)
 	message.Text = clipRecentText(message.Text, 2048)
 	message.Speaker = clipRecentText(message.Speaker, 128)
 	message.Truncated = message.OriginalBytes > len(message.Text)
