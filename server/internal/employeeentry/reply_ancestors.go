@@ -18,7 +18,7 @@ type deliveredMemoryReply struct{ action, message, job string }
 
 // closeReplyAncestors reads only exact IDs referenced by frozen assistant
 // turns. The presentation window bounds candidates, not their provenance.
-func (s *Store) closeReplyAncestors(ctx context.Context, scope Scope, before time.Time, nodes map[string]*replyMemoryProvenance, replies []deliveredMemoryReply, retired map[string]bool, omitted *withdrawnReplyIDs) ([]deliveredMemoryReply, error) {
+func (s *Store) closeReplyAncestors(ctx context.Context, scope Scope, before time.Time, nodes map[string]*replyMemoryProvenance, replies []deliveredMemoryReply, retired map[string]string, omitted *withdrawnReplyIDs) ([]deliveredMemoryReply, error) {
 	for depth := 0; depth <= replyAncestorDepthLimit; depth++ {
 		byAction, byMessage := map[string]deliveredMemoryReply{}, map[string][]deliveredMemoryReply{}
 		for _, reply := range replies {
@@ -142,7 +142,7 @@ func (s *Store) closeReplyAncestors(ctx context.Context, scope Scope, before tim
 	return nil, errTranscriptEvidenceBound
 }
 
-func (s *Store) readReplyAncestor(ctx context.Context, scope Scope, before time.Time, ref RecentConversationMessage, retired map[string]bool) (deliveredMemoryReply, replyMemoryProvenance, error) {
+func (s *Store) readReplyAncestor(ctx context.Context, scope Scope, before time.Time, ref RecentConversationMessage, retired map[string]string) (deliveredMemoryReply, replyMemoryProvenance, error) {
 	var reply deliveredMemoryReply
 	var notice, callback, request, runJob, hostJob string
 	rows, err := s.db.Query(ctx, `SELECT a.id,a.provider_message_id,COALESCE(a.input->>'scene_notice_id',''),CASE WHEN a.input->>'request_id'=a.request_id THEN COALESCE(a.input->>'callback_url','') ELSE '' END,a.request_id,COALESCE(n.job_id::text,''),COALESCE(h.source_id,'')
@@ -213,7 +213,7 @@ func (s *Store) readReplyAncestor(ctx context.Context, scope Scope, before time.
 	if err != nil {
 		return reply, replyMemoryProvenance{}, err
 	}
-	node, err := replyProvenance(reply.job, scope.SceneID, snapshot, journal, retired)
+	node, err := replyProvenance(reply.job, snapshot, journal, retired)
 	if err != nil {
 		return reply, node, errReplyAncestorUnavailable
 	}

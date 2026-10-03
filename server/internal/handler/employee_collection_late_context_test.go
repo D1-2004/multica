@@ -33,6 +33,9 @@ func TestCollectionClosedOwnFactsKeepAcceptToolUnavailable(t *testing.T) {
 	if !strings.Contains(request, "closed_questions") || !strings.Contains(request, `\"state\":\"cancelled\"`) || !strings.Contains(request, "Do not collect, remind, forward, promise a summary") {
 		t.Fatalf("cancelled own invitation not projected: %s", request)
 	}
+	if strings.Contains(request, "If the message actually answers") || strings.Contains(request, "short acknowledgement only after") || !strings.Contains(request, "closed_only") || !strings.Contains(request, "receiving a chat message alone is not a recording or memory-write effect") {
+		t.Fatal("closed-only input mixed in active answer/acknowledgement instructions")
+	}
 	if strings.Contains(request, `"name":"accept_collection_input"`) || strings.Contains(request, "invitation_context") || strings.Contains(request, "SENTINEL-ORIGIN-NOTE-55") || strings.Contains(request, col.ID) || strings.Contains(request, inv.ID) {
 		t.Fatal("closed facts granted an accept binding or leaked origin/object data")
 	}
@@ -163,6 +166,9 @@ func TestCollectionMixedClosedAndOpenFactsKeepOnlyActiveBinding(t *testing.T) {
 	if !strings.Contains(request, "closed_questions") || !strings.Contains(request, "invitation_context") || !strings.Contains(request, `"name":"accept_collection_input"`) {
 		t.Fatal("closed facts suppressed the current open binding")
 	}
+	if !strings.Contains(request, "mixed") || !strings.Contains(request, "Only invitation_context carries active answer bindings") || !strings.Contains(request, "receiving a chat message alone is not a recording or memory-write effect") {
+		t.Fatal("mixed facts did not separate active authority from closed-question constraints")
+	}
 	var raw []byte
 	if err := testPool.QueryRow(context.Background(), `SELECT j.input_snapshot FROM employee_scene_job j JOIN employee_event_consumption e ON e.job_id=j.id WHERE e.agent_id=$1::uuid AND e.payload#>>'{command,event,data,messages,0,openMsgId}'='mixed-current-answer'`, c.f.agentID).Scan(&raw); err != nil {
 		t.Fatal(err)
@@ -173,5 +179,23 @@ func TestCollectionMixedClosedAndOpenFactsKeepOnlyActiveBinding(t *testing.T) {
 	}
 	if len(saved.Invitations) != 1 || len(saved.Invitations[0].Candidates) != 1 || saved.Invitations[0].Candidates[0].CollectionID != current.ID {
 		t.Fatal("closed context manufactured or replaced an active binding")
+	}
+}
+
+func TestCollectionActiveOnlyFactsKeepAnswerContractWithoutClosedMode(t *testing.T) {
+	c := newCollectionHarness(t)
+	c.seed()
+	col := c.origin("问Carol本周签了几单", collectionParticipants[0])
+	c.deliver(col.ID, map[string]string{"Carol": "cid-carol-dm"})
+	c.send(collectionMessage{conversation: "cid-carol-dm", kind: "single", name: "Carol", openID: "carol-open", messageID: "active-mode-answer", text: "7单"})
+	before := c.model.count()
+	c.model.set(collectionQuiet)
+	c.process()
+	request := c.model.requests[before]
+	if !strings.Contains(request, "active_only") || !strings.Contains(request, `"name":"accept_collection_input"`) || !strings.Contains(request, "Only invitation_context carries active answer bindings") {
+		t.Fatal("active-only input lost the existing answer authority")
+	}
+	if strings.Contains(request, "closed_questions") || strings.Contains(request, "receiving a chat message alone is not a recording or memory-write effect") {
+		t.Fatal("active-only input received an unrelated closed-question mode")
 	}
 }

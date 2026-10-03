@@ -9,3 +9,7 @@ Host为每条认证来源投影当前发言人在当前scene、当前workspace/a
 active invitation_context与closed_questions分开。只有active bindings才提供accept工具；closed-only的非空context不得重新打开工具。开放/关闭混合不影响仍有效的本人开放邀请。快照在原buildInput冻结，原write-time状态、scope和授权围栏继续裁决竞争中的真实效果。
 
 来源映射：employee_collection.go invitationContext与关闭事实helper；employee_scene_entry_worker.go buildInput依据len(input.Invitations)决定accept工具；employee_collection_late_context_test.go覆盖真实取消、source隔离与有界上下文。taskinput.ParticipantViewer的现有隔离边界是此投影的依据，不另建权限或来源解析器。
+
+## Guidance 的 active / closed 模式
+
+第二波真实反例54ba75a1已具备关闭事实和正确工具门禁，但普通回复仍暗示“我记下了”。开放作答提示不能灌给closed-only请求：closed-only仅说明旧问题已关闭及不得虚报收答/业务记录/记忆写入/汇总效果；active-only仅说明有效绑定与收答确认；mixed明确开放权限只属于invitation_context，关闭约束只属于closed_questions。新的独立实质请求按原授权执行，措辞由模型自然决定，不在Host按数字、关键词或固定中文句式分类。旧input snapshot继续沿原冻结字符串重放，不重建。

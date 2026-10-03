@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -183,7 +184,8 @@ func TestCollectionCancelToolContract(t *testing.T) {
 	if valid, _ := registry.Validate("cancel_collection", map[string]any{"source_ref": "s", "task_ref": "t1", "read_ref": "r"}); valid {
 		t.Fatal("missing current instruction accepted")
 	}
-	if EmployeeLoopReplicaMarker != "[employee-loop:16]" {
+	var epoch int
+	if _, err := fmt.Sscanf(EmployeeLoopReplicaMarker, "[employee-loop:%d]", &epoch); err != nil || epoch < 16 {
 		t.Fatal("new frozen tool has no reader gate")
 	}
 }

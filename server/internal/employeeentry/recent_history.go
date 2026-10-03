@@ -24,7 +24,8 @@ type RecentConversationRequest struct {
 	Before                           time.Time
 	ExcludeReceipts, ExcludeMessages []string
 	// MemoryPrincipal is the unique DM requester's org-qualified memory
-	// principal. Its private reset also bounds the history; leave it empty
+	// principal. It also selects exact-owner cross-origin private tombstones
+	// for DM withdrawal. Its private reset bounds history; leave it empty
 	// in groups, where a personal reset never hides shared dialogue.
 	MemoryPrincipal string
 }
@@ -153,7 +154,7 @@ func (s *Store) RecentConversation(ctx context.Context, request RecentConversati
 		}
 		out.Messages = kept
 	}
-	withdrawnReplies, err := s.withdrawnMemoryReplyIDs(ctx, request.Scope, out.Since, before)
+	withdrawnReplies, err := s.withdrawnMemoryReplyIDs(ctx, request.Scope, request.MemoryPrincipal, out.Since, before)
 	if err != nil {
 		return RecentConversation{}, err
 	}

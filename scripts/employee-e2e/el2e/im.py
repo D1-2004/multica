@@ -60,38 +60,99 @@ def read_window(profile: str, cid: str, since: _dt.datetime, *, limit: int = 100
     or the conversation has no older messages."""
     seen: dict[str, dict[str, Any]] = {}
     boundary = None
+    boundary_at = None
     covered = False
     pages = 0
     failures = []
+    page_ledger = []
+    stop_reason = "page_cap"
     for _ in range(max_pages):
         args = ["chat", "+chat-messages", "--chat-id", cid, "--limit", str(limit), "--no-reactions"]
         if boundary:
             args += ["--time", boundary]
         res = dwsgw.dws(profile, args, timeout=60, retries=2)
         pages += 1
-        body = res.get("json") or {}
-        if res["rc"] != 0 or "messages" not in body or body.get("failures") or body.get("complete") is False:
-            failures.append({"rc": res["rc"], "failures": body.get("failures"), "complete": body.get("complete")})
+        body = res.get("json")
+        if not isinstance(body, dict):
+            body = {}
+        has_more = body.get("hasMore")
+        complete = body.get("complete")
+        batch = body.get("messages")
+        ledger = {"page": pages, "time": boundary, "rc": res["rc"], "hasMore": has_more,
+                  "complete": complete, "failures": body.get("failures"),
+                  "partial": body.get("partial"), "truncated": body.get("truncated"),
+                  "source_stop_reason": body.get("stopReason"), "nextPage": body.get("nextPage")}
+        page_ledger.append(ledger)
+        bad = (res["rc"] != 0 or not isinstance(batch, list) or not isinstance(has_more, bool)
+               or not isinstance(complete, bool) or not isinstance(body.get("failures"), list)
+               or bool(body.get("failures")) or body.get("partial") is True
+               or body.get("truncated") is True or body.get("paginationKnown") is False
+               or (body.get("failedCount") or 0) != 0 or (body.get("decryptFailedCount") or 0) != 0
+               or (complete is False and has_more is False) or (complete is True and has_more is True)
+               or body.get("stopReason") not in (None, "single_page", "source_complete"))
+        if bad:
+            stop_reason = "unverified_page"
+            failures.append({**ledger, "reason": stop_reason})
             break
-        batch = body.get("messages") or []
         new = 0
+        times = []
+        invalid_message = False
         for msg in batch:
-            if msg.get("messageId") and msg["messageId"] not in seen:
-                seen[msg["messageId"]] = msg
+            try:
+                stamp = parse_dws_time(msg["createTime"])
+                mid = msg["messageId"]
+                if not isinstance(mid, str) or not mid:
+                    raise ValueError("message id missing")
+            except (AttributeError, KeyError, ValueError, TypeError):
+                invalid_message = True
+                continue
+            times.append(stamp)
+            if mid not in seen:
+                seen[mid] = msg
                 new += 1
+        if invalid_message:
+            stop_reason = "invalid_message"
+            failures.append({"page": pages, "reason": stop_reason})
+            break
         if not batch:
-            covered = body.get("hasMore") is False
+            covered = has_more is False and complete is True
+            stop_reason = "source_complete" if covered else "empty_more_page"
             break
-        oldest = min(msg["createTime"] for msg in batch)
-        if parse_dws_time(oldest) <= since or body.get("hasMore") is False:
+        oldest = min(times)
+        ledger["oldest"] = oldest.isoformat(timespec="seconds")
+        ledger["new_messages"] = new
+        # complete=false describes remaining history, not failure, when hasMore=true.
+        # A strict crossing avoids declaring the lower timestamp bucket complete.
+        if oldest < since or (has_more is False and complete is True):
             covered = True
+            stop_reason = "lower_bound_crossed" if oldest < since else "source_complete"
             break
-        if new == 0 or oldest == boundary:
+        if new == 0:
+            stop_reason = "no_new_messages"
             break
-        boundary = oldest
+        if len(batch) >= limit and len(set(times)) == 1:
+            stop_reason = "saturated_time_bucket"
+            break
+        next_page = body.get("nextPage") or {}
+        candidate = next_page.get("time") if isinstance(next_page, dict) else None
+        try:
+            next_at = _dt.datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+            if next_at.tzinfo is None or next_page.get("direction") != "older":
+                raise ValueError("unverified cursor")
+        except (AttributeError, ValueError, TypeError):
+            stop_reason = "next_cursor_unavailable"
+            break
+        if next_at < since <= oldest:
+            stop_reason = "cursor_crossed_unread_boundary"
+            break
+        if (boundary_at is not None and next_at >= boundary_at) or next_at >= oldest + _dt.timedelta(seconds=1):
+            stop_reason = "cursor_not_advancing"
+            break
+        boundary, boundary_at = candidate, next_at
     msgs = sorted(seen.values(), key=lambda m: (m.get("createTime") or "", m.get("messageId") or ""))
     return {"messages": [m for m in msgs if parse_dws_time(m["createTime"]) >= since - CLOCK_TOLERANCE],
             "covered": covered and not failures, "pages": pages, "failures": failures,
+            "page_ledger": page_ledger, "stop_reason": stop_reason,
             "since": since.isoformat(timespec="seconds")}
 
 

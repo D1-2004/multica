@@ -301,9 +301,9 @@ class PagingTests(unittest.TestCase):
     def test_read_window_pages_back_with_time_boundary(self) -> None:
         pages = [
             {"messages": [{"messageId": "c", "createTime": "2026-10-03 20:10:00"},
-                          {"messageId": "b", "createTime": "2026-10-03 20:05:00"}], "hasMore": True},
+                          {"messageId": "b", "createTime": "2026-10-03 20:05:00"}], "hasMore": True, "complete": False, "failures": [], "nextPage": {"direction": "older", "time": "2026-10-03T20:05:00+08:00"}},
             {"messages": [{"messageId": "b", "createTime": "2026-10-03 20:05:00"},
-                          {"messageId": "a", "createTime": "2026-10-03 19:50:00"}], "hasMore": True},
+                          {"messageId": "a", "createTime": "2026-10-03 19:50:00"}], "hasMore": True, "complete": False, "failures": []},
         ]
         calls = []
 
@@ -327,6 +327,63 @@ class PagingTests(unittest.TestCase):
                 out = im.read_window("p", "c", im.parse_dws_time("2026-10-03 20:00:00"))
                 self.assertFalse(out["covered"])
                 self.assertTrue(out["failures"])
+
+    def test_normal_partial_history_page_crossing_window_is_covered(self) -> None:
+        page = {"messages": [{"messageId": "old", "createTime": "2026-10-03 19:59:59"},
+                             {"messageId": "new", "createTime": "2026-10-03 20:00:01"}],
+                "complete": False, "hasMore": True, "failures": [], "partial": False, "truncated": False}
+        with mock.patch.object(im.dwsgw, "dws", return_value={"rc": 0, "json": page}):
+            result = im.read_window("p", "c", im.parse_dws_time("2026-10-03 20:00:00"))
+        self.assertTrue(result["covered"])
+        self.assertEqual(result["stop_reason"], "lower_bound_crossed")
+
+    def test_page_failure_missing_metadata_or_truncation_is_not_coverage(self) -> None:
+        page = {"messages": [{"messageId": "old", "createTime": "2026-10-03 19:59:59"}],
+                "complete": False, "hasMore": True, "failures": []}
+        for patch in ({"hasMore": None}, {"complete": None}, {"failures": ["read failed"]},
+                      {"partial": True}, {"truncated": True}, {"paginationKnown": False},
+                      {"hasMore": False}, {"complete": True}, {"decryptFailedCount": 1}, {"stopReason": "page_limit"}):
+            with self.subTest(patch=patch), mock.patch.object(im.dwsgw, "dws", return_value={"rc": 0, "json": page | patch}):
+                result = im.read_window("p", "c", im.parse_dws_time("2026-10-03 20:00:00"))
+            self.assertFalse(result["covered"])
+            self.assertTrue(result["failures"])
+
+    def test_second_page_failure_or_page_cap_never_proves_absence(self) -> None:
+        page = {"messages": [{"messageId": "new", "createTime": "2026-10-03 20:00:10"}],
+                "complete": False, "hasMore": True, "failures": [],
+                "nextPage": {"direction": "older", "time": "2026-10-03T20:00:10+08:00"}}
+        with mock.patch.object(im.dwsgw, "dws", side_effect=[{"rc": 0, "json": page}, {"rc": 1, "json": {}}]):
+            result = im.read_window("p", "c", im.parse_dws_time("2026-10-03 20:00:00"))
+        self.assertFalse(result["covered"])
+        self.assertEqual(result["pages"], 2)
+        with mock.patch.object(im.dwsgw, "dws", return_value={"rc": 0, "json": page}):
+            capped = im.read_window("p", "c", im.parse_dws_time("2026-10-03 20:00:00"), max_pages=1)
+        self.assertFalse(capped["covered"])
+        self.assertEqual(capped["stop_reason"], "page_cap")
+
+    def test_cursor_cannot_jump_past_an_unread_lower_boundary(self) -> None:
+        page = {"messages": [{"messageId": "new", "createTime": "2026-10-03 20:00:10"}],
+                "complete": False, "hasMore": True, "failures": [],
+                "nextPage": {"direction": "older", "time": "2026-10-03T19:55:00+08:00"}}
+        with mock.patch.object(im.dwsgw, "dws", return_value={"rc": 0, "json": page}) as call:
+            result = im.read_window("p", "c", im.parse_dws_time("2026-10-03 20:00:00"))
+        self.assertFalse(result["covered"])
+        self.assertEqual(result["stop_reason"], "cursor_crossed_unread_boundary")
+        self.assertEqual(call.call_count, 1)
+
+    def test_equal_lower_bucket_or_stagnating_cursor_stays_partial(self) -> None:
+        page = {"messages": [{"messageId": "same", "createTime": "2026-10-03 20:00:00"}],
+                "complete": False, "hasMore": True, "failures": [],
+                "nextPage": {"direction": "older", "time": "2026-10-03T20:00:00.100+08:00"}}
+        with mock.patch.object(im.dwsgw, "dws", return_value={"rc": 0, "json": page}):
+            result = im.read_window("p", "c", im.parse_dws_time("2026-10-03 20:00:00"), limit=1)
+        self.assertFalse(result["covered"])
+        self.assertEqual(result["stop_reason"], "saturated_time_bucket")
+        page2 = page | {"messages": [{"messageId": "another", "createTime": "2026-10-03 20:00:00"}]}
+        with mock.patch.object(im.dwsgw, "dws", side_effect=[{"rc": 0, "json": page}, {"rc": 0, "json": page2}]):
+            stuck = im.read_window("p", "c", im.parse_dws_time("2026-10-03 19:59:00"))
+        self.assertFalse(stuck["covered"])
+        self.assertEqual(stuck["stop_reason"], "cursor_not_advancing")
 
     def test_prefix_mentions(self) -> None:
         self.assertEqual(im.prefix_mentions("@冬翔  @Qwen-Real  请核对"), ["冬翔", "Qwen-Real"])

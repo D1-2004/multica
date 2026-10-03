@@ -272,7 +272,7 @@ v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标�
 
 ## 场域例行任务改走 Employee Direct（marker 12）
 
-**新路径的触发条件**：Agent 是 employee 模式，并且全部在线副本都具备当前 `EmployeeLoopReplicaMarker`（首次随 `[employee-loop:12]` 发布，现为 16）。
+**新路径的触发条件**：Agent 是 employee 模式，并且全部在线副本都具备当前 `EmployeeLoopReplicaMarker`（首次随 `[employee-loop:12]` 发布，现为 17）。
 
 **新路径的行为**
 - 每次定时触发或立即运行，都在一个事务内写入以下内容：真实 AutopilotRun、冻结来源 `employee_routine_occurrence`、独立 EmployeeTask（v1 single_run，`requester_ref=routine:<id>`，没有人类发起人）、Run、queue，以及开始通知。
@@ -367,7 +367,13 @@ Task 来源的读取按 source namespace 注册，`history_policy` 有三种显�
 **能力边界**：图片一律标注 `vision_unavailable`；当前模型链没有经过验证的视觉路径。
 
 
-**原生取消收集（`[employee-loop:16]`）。**请求人要取消自己的等待收集、停止询问/催问或不再汇总时，模型先 `read_task` 读本 wake 的 source-bound候选，再 `cancel_collection` 用当前 `read_ref` 与外层逐字请求。Host复验当前 principal/requester/scene/tenant、Task version CAS 与 active collection，复用 stop 事务关闭目标、waits、collections和pending ready intents；不新建后台取消Task。成功ACK来自事务内回读的cancelled receipt，迟答不形成新输入/汇总。已送达提问不宣称撤回，真实运行进程仍保留退出证据屏障。旧工具表冻结不热改；15/16精确marker混版会暂缓新受理与旧job恢复，记not_ready并可恢复，不宣称不中断；全部在线副本16后恢复旧snapshot/journal。独立memory marker仍按自己的累积规则。
+**原生取消收集（`[employee-loop:16]`）。**请求人要取消自己的等待收集、停止询问/催问或不再汇总时，模型先 `read_task` 读本 wake 的 source-bound候选，再 `cancel_collection` 用当前 `read_ref` 与外层逐字请求。Host复验当前 principal/requester/scene/tenant、Task version CAS 与 active collection，复用 stop 事务关闭目标、waits、collections和pending ready intents；不新建后台取消Task。成功ACK来自事务内回读的cancelled receipt，迟答不形成新输入/汇总。已送达提问不宣称撤回，真实运行进程仍保留退出证据屏障。旧工具表冻结不热改；15/16精确marker混版会暂缓新受理与旧job恢复，记not_ready并可恢复，不宣称不中断；当时全部在线副本16后恢复旧snapshot/journal；当前累计隐私reader门控需全部17。独立memory marker仍按自己的累积规则。
 
 
 **同目标事项来源关联。**新冻结TaskBrief的候选除了概括goal，还包含Task时间、当前active-run与latestRun状态/时间，以及至多两条已通过本场域RecentConversation可见性过滤的人类来源关联（初始请求/最近输入）。用原请求中的命名、source与对话关系区分相似goal，信息不足仍澄清，不能默认最新或以相似goal当事项身份。不附执行report代替read_task；真实进度/续接保留source-bound读取、权限与CAS。旧冻结brief保持字节，缺字段按已有合同读或澄清；本次纯additive数据不升loop16。
+
+
+**明确追加工作与方法继承。**当前source明确对既有Task追加一个工作步骤、扩展/调整/重做交付时，先source-bound `read_task`，再 `continue_task`；原请求的实际执行方法与约束（例如Python实际执行）继续约束新步骤，除非请求人明确改方法。已有数据、步骤短或可口算不免除真实执行；只执行新步骤，不无故重跑旧sleep。普通口算问题或解释已交付报告的数字含义仍direct，不按「继续/合计」词判派发。询问现在进度须read_task，冻结state/历史成功不是当前读取；复述已实际交付的报告内容可直接答，但不能当新执行证明。新独立产出仍dispatch_task+builds_on。一般选择规则进入现有trusted ForegroundBoundary，TaskBrief只给来源事实；新快照冻结该版本、旧快照不改，marker16保持。原失败及Why见26-task-execution-inheritance.md。
+
+
+**本人跨源私人记录撤销（`[employee-loop:17]`）。**可信DM唯一本人可见person_view的外源private记录退休后，新历史按同workspace/agent/tenant、exact owner、recordID及真实origin scene撤销依赖回复。只读墓碑ID/来源元数据，不读外源正文或别人的private/public内容，不要求退休源目录仍存在；外源group evidence消息ID不能擦DM独立人话。lookup/me的current-scene搜索不改变。16/17混版由canonical门控暂停新受理/恢复/发送，全部17后恢复，旧冻结input/journal不热改。完整真实跨源值复活反例仍需单独验证。

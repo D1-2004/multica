@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/service/employeememory"
 )
 
 type withdrawnReplyIDs struct {
@@ -30,22 +31,31 @@ type replyMemoryProvenance struct {
 // compares reply text with a learning's insight. A job that saw a withdrawn
 // record or an associated earlier reply loses its whole delivered reply;
 // splitting a reply into attributable words would require guessing.
-func (s *Store) withdrawnMemoryReplyIDs(ctx context.Context, scope Scope, since, before time.Time) (withdrawnReplyIDs, error) {
+func (s *Store) withdrawnMemoryReplyIDs(ctx context.Context, scope Scope, memoryPrincipal string, since, before time.Time) (withdrawnReplyIDs, error) {
 	out := withdrawnReplyIDs{Actions: map[string]bool{}, Messages: map[string]bool{}, Sources: map[string]bool{}, Reasons: map[string]int{}}
-	retired, evidence := map[string]bool{}, map[string]bool{}
-	rows, err := s.db.Query(ctx, `SELECT id::text,CASE WHEN scope_kind='scene' AND record->>'source_id'='dingtalk-message:'||scene_id::text THEN COALESCE(record->>'evidence_id','') ELSE '' END
- FROM employee_learning WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND scene_id=$4::uuid
- AND (forgotten_at IS NOT NULL OR superseded_by IS NOT NULL) LIMIT $5`, append(scopeArgs(scope), transcriptEvidenceCap+1)...)
+	retired, evidence := map[string]string{}, map[string]bool{}
+	// A cross-origin tombstone withdraws previously visible content only.
+	// The Host supplies one trusted DM requester; no source scene lookup or
+	// content read is needed, even if that original directory row was deleted.
+	owner := ""
+	if employeememory.PersonViewRef(scope.TenantOrgID, memoryPrincipal) {
+		owner = memoryPrincipal
+	}
+	rows, err := s.db.Query(ctx, `SELECT id::text,scene_id::text,CASE WHEN scene_id=$4::uuid AND scope_kind='scene' AND record->>'source_id'='dingtalk-message:'||scene_id::text THEN COALESCE(record->>'evidence_id','') ELSE '' END
+ FROM employee_learning WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3
+ AND (scene_id=$4::uuid OR (scope_kind='private' AND $5<>'' AND principal_id=$5
+  AND EXISTS(SELECT 1 FROM agent_scene s WHERE s.id=$4::uuid AND s.workspace_id=$1::uuid AND s.agent_id=$2::uuid AND s.tenant_org_id=$3 AND s.scene_kind='dm')))
+ AND (forgotten_at IS NOT NULL OR superseded_by IS NOT NULL) LIMIT $6`, append(scopeArgs(scope), owner, transcriptEvidenceCap+1)...)
 	if err != nil {
 		return out, err
 	}
 	for rows.Next() {
-		var id, message string
-		if err = rows.Scan(&id, &message); err != nil {
+		var id, originScene, message string
+		if err = rows.Scan(&id, &originScene, &message); err != nil {
 			rows.Close()
 			return out, err
 		}
-		retired[id] = true
+		retired[id] = originScene
 		if message != "" {
 			evidence[message] = true
 			out.Sources[message] = true
@@ -79,7 +89,7 @@ func (s *Store) withdrawnMemoryReplyIDs(ctx context.Context, scope Scope, since,
 			rows.Close()
 			return out, err
 		}
-		node, decodeErr := replyProvenance(id, scope.SceneID, snapshot, journal, retired)
+		node, decodeErr := replyProvenance(id, snapshot, journal, retired)
 		if decodeErr != nil {
 			node = replyMemoryProvenance{ID: id, Withdrawn: true, QuarantineReason: "unsupported_snapshot"}
 			out.Reasons["unsupported_snapshot"]++
@@ -206,7 +216,7 @@ func (s *Store) withdrawnMemoryReplyIDs(ctx context.Context, scope Scope, since,
 	return out, nil
 }
 
-func replyProvenance(id, sceneID string, snapshot, journal []byte, retired map[string]bool) (replyMemoryProvenance, error) {
+func replyProvenance(id string, snapshot, journal []byte, retired map[string]string) (replyMemoryProvenance, error) {
 	node := replyMemoryProvenance{ID: id, SnapshotKnown: knownReplySnapshot(snapshot)}
 	var saved struct {
 		Manifest []struct {
@@ -227,7 +237,7 @@ func replyProvenance(id, sceneID string, snapshot, journal []byte, retired map[s
 		}
 	}
 	for _, record := range saved.Manifest {
-		if record.SceneID == sceneID && retired[record.ID] {
+		if origin := retired[record.ID]; origin != "" && record.SceneID == origin {
 			node.Withdrawn = true
 		}
 	}
@@ -261,7 +271,7 @@ func replyProvenance(id, sceneID string, snapshot, journal []byte, retired map[s
 		if tool.Result.Failure != "" || tool.Result.Refused || (tool.Input.Name != "memory_lookup" && tool.Input.Name != "memory_capture" && tool.Input.Name != "memory_forget") {
 			continue
 		}
-		if retired[tool.Result.Result.Receipt] {
+		if retired[tool.Result.Result.Receipt] != "" {
 			node.Withdrawn = true
 		}
 		var result any
@@ -273,7 +283,7 @@ func replyProvenance(id, sceneID string, snapshot, journal []byte, retired map[s
 }
 
 // Inspect only typed result reference fields, never a result's text value.
-func memoryResultReferencesRetired(value any, retired map[string]bool) bool {
+func memoryResultReferencesRetired(value any, retired map[string]string) bool {
 	switch typed := value.(type) {
 	case []any:
 		for _, item := range typed {
@@ -283,7 +293,7 @@ func memoryResultReferencesRetired(value any, retired map[string]bool) bool {
 		}
 	case map[string]any:
 		for _, key := range []string{"id", "record_ref"} {
-			if id, ok := typed[key].(string); ok && retired[id] {
+			if id, ok := typed[key].(string); ok && retired[id] != "" {
 				return true
 			}
 		}
