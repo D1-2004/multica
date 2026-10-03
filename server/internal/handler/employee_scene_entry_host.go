@@ -66,14 +66,43 @@ func employeeSceneTools() []employeeloop.Tool {
 	return append(tools, employeeMemoryTools()...)
 }
 func (h *employeeSceneHost) source(ref string) (employeeSourceMessage, employeeDispatchEnvelope, error) {
+	valid := []string{}
 	for i, item := range h.job.Items {
 		for _, source := range employeeSourceMessages(item, h.envelopes[i]) {
-			if ref != "" && source.SourceRef == ref && source.RequesterRef != "" {
+			if source.RequesterRef == "" || source.SourceRef == "" {
+				continue
+			}
+			if ref != "" && source.SourceRef == ref {
 				return source, h.envelopes[i], nil
 			}
+			valid = append(valid, source.SourceRef)
 		}
 	}
-	return employeeSourceMessage{}, employeeDispatchEnvelope{}, errors.New("source_ref does not identify a frozen requester")
+	// Refused before any effect: the model may correct the reference within its
+	// budget. The valid references are already in its current window.
+	return employeeSourceMessage{}, employeeDispatchEnvelope{}, fmt.Errorf("%w: source_ref %q does not identify a frozen requester; valid source_ref values: %s", employeeloop.ErrToolRefused, clipTaskWakeText(ref, 200), strings.Join(valid, ", "))
+}
+
+// employeeRefQuotes are characters a model may copy around a Host reference.
+const employeeRefQuotes = "\"'`“”‘’「」『』 \t\r\n"
+
+// canonicalEmployeeRefs strips surrounding whitespace and quote characters
+// from Host references only. Inner characters are never changed, and no other
+// reference is ever guessed: the result must still match exactly. The
+// canonical call is what the tool journal records, so later provenance checks
+// compare against the real reference.
+func canonicalEmployeeRefs(call employeeloop.ToolCall) employeeloop.ToolCall {
+	args := make(map[string]any, len(call.Arguments))
+	for key, value := range call.Arguments {
+		args[key] = value
+	}
+	for _, key := range []string{"source_ref", "task_ref", "read_ref"} {
+		if ref, ok := args[key].(string); ok {
+			args[key] = strings.Trim(ref, employeeRefQuotes)
+		}
+	}
+	call.Arguments = args
+	return call
 }
 func argument(args map[string]any, key string) (string, error) {
 	s, ok := args[key].(string)
@@ -122,12 +151,13 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 	if _, err := employeeSceneFence(ctx, h.worker.handler, h.job); err != nil {
 		return employeeloop.ToolResult{}, err
 	}
+	call = canonicalEmployeeRefs(call)
 	var source employeeSourceMessage
 	var env employeeDispatchEnvelope
 	if call.Name != "stay_quiet" {
 		ref, err := argument(call.Arguments, "source_ref")
 		if err != nil {
-			return employeeloop.ToolResult{}, err
+			return employeeloop.ToolResult{}, fmt.Errorf("%w: %v", employeeloop.ErrToolRefused, err)
 		}
 		source, env, err = h.source(ref)
 		if err != nil {

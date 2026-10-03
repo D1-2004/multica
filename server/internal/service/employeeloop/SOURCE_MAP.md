@@ -58,6 +58,11 @@ terms remain applicable. See [NOTICE](NOTICE).
   Decision; their already committed facts remain in the returned Outcome. Any
   effect error, even without a receipt or from parameter validation, fails the
   overall batch explicitly while preserving accepted and rejected tool outcomes.
+  The one exception is a Host refusal wrapped in `ErrToolRefused` with no
+  receipt: the Host refused before attempting any effect (for example a
+  `source_ref` naming no frozen source), so the error is returned as the paired
+  native tool result and the next model call may correct it within the same
+  three-call budget.
   A previously accepted dispatch cannot turn a later rejected effect into success.
 - Identity is a separate typed parameter with a `scene.Ref`; model text never
   supplies tenant/scene permissions. Memory, task briefs and conversation windows
