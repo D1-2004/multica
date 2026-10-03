@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -146,7 +147,10 @@ func TestEmployeeHistoryPresentationWorkerFreezesVerifiedNativeTurns(t *testing.
 		t.Fatal("cached snapshot made another HTTP request", after)
 	}
 	assertEmployeeReplyNoTasks(t, f)
-	if EmployeeLoopReplicaMarker != "[employee-loop:10]" {
+	// Native-turn presentation first required protocol 10. Later tool protocols
+	// may advance the shared marker without removing that renderer boundary.
+	var protocolVersion int
+	if _, err := fmt.Sscanf(EmployeeLoopReplicaMarker, "[employee-loop:%d]", &protocolVersion); err != nil || protocolVersion < 10 {
 		t.Fatal("new renderer lacks rolling gate", EmployeeLoopReplicaMarker)
 	}
 }
