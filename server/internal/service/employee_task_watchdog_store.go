@@ -69,11 +69,14 @@ type EmployeeWatchdogOutbox interface {
 // notice again immediately before the provider send. It never invokes a model
 // and never creates Tasks, Runs, queue work or scene jobs.
 type EmployeeWatchdog struct {
-	DB      EmployeeWatchdogDB
-	Config  EmployeeWatchdogConfig
-	Waits   EmployeeTaskWaitReader
-	Targets EmployeeWatchdogTargetResolver
-	Outbox  EmployeeWatchdogOutbox
+	DB     EmployeeWatchdogDB
+	Config EmployeeWatchdogConfig
+	// LoadConfig, when set, returns the live configuration (for example the
+	// current Diamond snapshot) and takes precedence over Config.
+	LoadConfig func() EmployeeWatchdogConfig
+	Waits      EmployeeTaskWaitReader
+	Targets    EmployeeWatchdogTargetResolver
+	Outbox     EmployeeWatchdogOutbox
 	// Ready is the producer gate: it must fail until every live replica runs a
 	// binary whose outbox BeforeSend understands watchdog notices.
 	Ready func(context.Context) error
@@ -110,6 +113,13 @@ func (r *EmployeeWatchdogScanResult) add(o EmployeeWatchdogScanResult) {
 
 const employeeWatchdogRecipientTaskOrigin = "task_origin"
 
+func (w *EmployeeWatchdog) config() EmployeeWatchdogConfig {
+	if w.LoadConfig != nil {
+		return w.LoadConfig()
+	}
+	return w.Config
+}
+
 func (w *EmployeeWatchdog) now(ctx context.Context) (time.Time, error) {
 	if w.Now != nil {
 		return w.Now(), nil
@@ -129,7 +139,8 @@ func (w *EmployeeWatchdog) Scan(ctx context.Context, limit int) (EmployeeWatchdo
 	if limit < 1 || limit > 1000 {
 		return out, errors.New("employee watchdog scan limit is invalid")
 	}
-	if err := w.Config.Validate(); err != nil {
+	cfg := w.config()
+	if err := cfg.Validate(); err != nil {
 		return out, err
 	}
 	if err := w.Ready(ctx); err != nil {
@@ -142,14 +153,14 @@ func (w *EmployeeWatchdog) Scan(ctx context.Context, limit int) (EmployeeWatchdo
 	if err := w.enableAgents(ctx, now); err != nil {
 		return out, err
 	}
-	candidates, err := w.candidates(ctx, now, limit)
+	candidates, err := w.candidates(ctx, now.Add(-cfg.stoppingWindow()), limit)
 	if err != nil {
 		return out, err
 	}
 	out.Candidates = len(candidates)
 	var errs []error
 	for _, c := range candidates {
-		r, err := w.scanTask(ctx, now, c)
+		r, err := w.scanTask(ctx, cfg, now, c)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("employee watchdog task %s: %w", c.TaskID, err))
 			continue
@@ -246,7 +257,7 @@ func (c employeeWatchdogCandidate) scope() employeetask.Scope {
 
 // candidates lists Employee Direct scene Tasks that can be in a watched state,
 // plus any Task holding an open episode so it can be closed.
-func (w *EmployeeWatchdog) candidates(ctx context.Context, now time.Time, limit int) ([]employeeWatchdogCandidate, error) {
+func (w *EmployeeWatchdog) candidates(ctx context.Context, stoppedAfter time.Time, limit int) ([]employeeWatchdogCandidate, error) {
 	rows, err := w.DB.Query(ctx, `SELECT t.id::text,t.workspace_id::text,t.agent_id::text,t.tenant_org_id,t.scene_id::text FROM employee_task t
  WHERE t.owner_loop='employee' AND t.dispatch_mode='direct' AND t.scope_kind='scene' AND t.issue_id IS NULL
  AND EXISTS(SELECT 1 FROM employee_watchdog_cursor c WHERE c.workspace_id=t.workspace_id AND c.agent_id=t.agent_id)
@@ -254,7 +265,7 @@ func (w *EmployeeWatchdog) candidates(ctx context.Context, now time.Time, limit 
   OR t.state NOT IN ('ready','running','succeeded','failed','cancelled')
   OR (t.state='cancelled' AND t.updated_at > $1)
   OR EXISTS(SELECT 1 FROM employee_watchdog_episode e WHERE e.task_id=t.id AND e.state='open'))
- ORDER BY t.id LIMIT $2`, now.Add(-w.Config.stoppingWindow()), limit)
+ ORDER BY t.id LIMIT $2`, stoppedAfter, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -475,7 +486,7 @@ type employeeWatchdogEvent struct {
 	fields []any
 }
 
-func (w *EmployeeWatchdog) scanTask(ctx context.Context, now time.Time, c employeeWatchdogCandidate) (EmployeeWatchdogScanResult, error) {
+func (w *EmployeeWatchdog) scanTask(ctx context.Context, cfg EmployeeWatchdogConfig, now time.Time, c employeeWatchdogCandidate) (EmployeeWatchdogScanResult, error) {
 	var out EmployeeWatchdogScanResult
 	tx, err := w.DB.Begin(ctx)
 	if err != nil {
@@ -500,12 +511,12 @@ func (w *EmployeeWatchdog) scanTask(ctx context.Context, now time.Time, c employ
 	if err != nil {
 		return out, err
 	}
-	state := ClassifyEmployeeWatchdogState(loaded.facts, now, w.Config.credentialTTL())
+	state := ClassifyEmployeeWatchdogState(loaded.facts, now, cfg.credentialTTL())
 	open, err := loadOpenEmployeeWatchdogEpisode(ctx, tx, c.TaskID)
 	if err != nil {
 		return out, err
 	}
-	threshold := w.Config.Threshold(c.AgentID, state.Kind)
+	threshold := cfg.Threshold(c.AgentID, state.Kind)
 	d := decideEmployeeWatchdog(open, state, loaded.facts.Progress, enabledAt, threshold, now)
 	base := []any{"workspace_id", c.WorkspaceID, "agent_id", c.AgentID, "tenant_org_id", c.TenantOrgID, "scene_id", c.SceneID, "task_id", c.TaskID}
 	var events []employeeWatchdogEvent
@@ -524,7 +535,7 @@ func (w *EmployeeWatchdog) scanTask(ctx context.Context, now time.Time, c employ
 		out.Skipped = map[string]int{d.Skip: 1}
 	}
 	if d.Open {
-		episodeID, noticeEvents, r, err := w.openEpisode(ctx, tx, loaded, state, d, now)
+		episodeID, noticeEvents, r, err := w.openEpisode(ctx, tx, cfg, loaded, state, d, now)
 		if err != nil {
 			return out, err
 		}
@@ -547,7 +558,7 @@ func (w *EmployeeWatchdog) scanTask(ctx context.Context, now time.Time, c employ
 // enqueued into the response outbox in the same transaction, so a crash after
 // commit is recovered by the outbox poll and a crash before commit leaves
 // nothing behind.
-func (w *EmployeeWatchdog) openEpisode(ctx context.Context, tx pgx.Tx, loaded employeeWatchdogLoaded, state EmployeeWatchdogState, d employeeWatchdogDecision, now time.Time) (string, []employeeWatchdogEvent, EmployeeWatchdogScanResult, error) {
+func (w *EmployeeWatchdog) openEpisode(ctx context.Context, tx pgx.Tx, cfg EmployeeWatchdogConfig, loaded employeeWatchdogLoaded, state EmployeeWatchdogState, d employeeWatchdogDecision, now time.Time) (string, []employeeWatchdogEvent, EmployeeWatchdogScanResult, error) {
 	var out EmployeeWatchdogScanResult
 	task := loaded.task
 	var watermarkAt *time.Time
@@ -591,7 +602,7 @@ func (w *EmployeeWatchdog) openEpisode(ctx context.Context, tx pgx.Tx, loaded em
 		if err = tx.QueryRow(ctx, `SELECT count(*) FROM employee_watchdog_notice WHERE task_id=$1::uuid AND boundary_key=$2 AND state='enqueued'`, task.ID, state.Boundary).Scan(&sent); err != nil {
 			return "", nil, out, err
 		}
-		if sent >= w.Config.maxNotices() {
+		if sent >= cfg.maxNotices() {
 			noticeState, reason = "held", "notice_cap"
 		}
 	}
@@ -738,14 +749,15 @@ func (w *EmployeeWatchdog) BeforeSend(ctx context.Context, in dingtalkresponse.A
 	if err != nil {
 		return true, err
 	}
-	state := ClassifyEmployeeWatchdogState(loaded.facts, now, w.Config.credentialTTL())
+	cfg := w.config()
+	state := ClassifyEmployeeWatchdogState(loaded.facts, now, cfg.credentialTTL())
 	if state.Kind != open.Kind || state.Boundary != open.Boundary {
 		return suppress("state_changed", open, "closed", "superseded", EmployeeActivityWatermark{})
 	}
 	progress := loaded.facts.Progress.Merge(open.Watermark)
 	if since := state.SilentSince(progress); since.After(open.Since) {
 		closeState, closeReason := "closed", "superseded"
-		if threshold := w.Config.Threshold(n.scope.AgentID, state.Kind); threshold <= 0 || now.Sub(since) < threshold {
+		if threshold := cfg.Threshold(n.scope.AgentID, state.Kind); threshold <= 0 || now.Sub(since) < threshold {
 			closeState, closeReason = "cleared", "progress"
 		}
 		return suppress("newer_progress", open, closeState, closeReason, progress)

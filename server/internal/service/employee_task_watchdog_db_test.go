@@ -837,3 +837,33 @@ func TestWatchdogNoticeCapPerBoundary(t *testing.T) {
 		t.Fatalf("cap not applied: %+v", rows)
 	}
 }
+
+func TestWatchdogLiveConfigAndScopedOverride(t *testing.T) {
+	f := newWatchdogFixture(t)
+	var mu sync.Mutex
+	live := DefaultEmployeeWatchdogConfig()
+	live.RunningSilenceSeconds = 1200
+	f.w.LoadConfig = func() EmployeeWatchdogConfig { mu.Lock(); defer mu.Unlock(); return live }
+	f.at(16 * time.Minute)
+	if got := f.scan(nil); got.Opened != 0 {
+		t.Fatal("live configuration was ignored", got)
+	}
+	// Shortening one test agent's threshold leaves the shared default alone.
+	mu.Lock()
+	live.Agents = map[string]EmployeeWatchdogThresholds{f.agent: {RunningSilenceSeconds: 120}}
+	mu.Unlock()
+	f.at(17 * time.Minute)
+	if got := f.scan(nil); got.Opened != 1 {
+		t.Fatal("scoped override was ignored", got)
+	}
+	if live.Threshold(uuid.NewString(), EmployeeWatchdogExecutionRunning) != 20*time.Minute {
+		t.Fatal("override leaked into other agents")
+	}
+	// An invalid live snapshot stops the scan instead of using guessed values.
+	mu.Lock()
+	live.RunningSilenceSeconds = 5
+	mu.Unlock()
+	if _, err := f.w.Scan(f.ctx, 100); err == nil {
+		t.Fatal("invalid live configuration accepted")
+	}
+}
