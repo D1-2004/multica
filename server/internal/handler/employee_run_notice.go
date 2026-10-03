@@ -144,6 +144,17 @@ func (h *Handler) loadEmployeeNoticeBinding(ctx context.Context, tx pgx.Tx, work
 	if b.RunGoalRevision != b.TaskGoalRevision {
 		return b, holdEmployeeNotice("stale_goal_revision")
 	}
+	// A Run cancelled by steer was replaced, not abandoned: its successor
+	// reports the outcome, so the requester never sees a cancellation notice.
+	if b.ResultState == "cancelled" {
+		var steered bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM agent_task_queue WHERE agent_id=$1 AND context->>'steer_predecessor_task_id'=$2)`, b.Queue.AgentID, b.QueueID).Scan(&steered); err != nil {
+			return b, err
+		}
+		if steered {
+			return b, holdEmployeeNotice("steered")
+		}
+	}
 	return b, nil
 }
 

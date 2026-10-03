@@ -968,7 +968,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			return err
 		}
 		if !ready {
-			return errors.New("live server replicas do not all support employee-loop:6")
+			return errors.New("live server replicas do not all support employee-loop:7")
 		}
 		return nil
 	}
@@ -2835,6 +2835,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Each handler re-applies its own transcript/trajectory authorization.
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
 			r.Get("/api/tasks/{taskId}/artifacts", h.ListEmployeeTaskArtifactsByUser)
+			r.With(handler.RequireHumanActor).Post("/api/employee-tasks/{id}/steer", h.SteerEmployeeTask)
 			r.Put("/api/tasks/{taskId}/dsh-trajectory", h.UploadDSHTrajectory)
 			r.Get("/api/tasks/{taskId}/dsh/schedules", h.DSHSchedules)
 			r.Get("/api/tasks/{taskId}/dsh/schedules/{scheduleId}", h.GetDSHSchedule)

@@ -34,9 +34,42 @@ func refreshEmployeeIssueTerminal(ctx context.Context, tx pgx.Tx, task employeet
 	return employeetask.NewStore(tx).Get(ctx, task.Scope, task.ID)
 }
 
-func mapEmployeeIssueQueue(ctx context.Context, tx pgx.Tx, task employeetask.Task, queue db.AgentTaskQueue, actor, body string, inputSeq int64) error {
-	if util.UUIDToString(queue.IssueID) != task.IssueID || util.UUIDToString(queue.AgentID) != task.Scope.AgentID {
+// validateEmployeeIssueQueue reads authoritative bindings even for replays.
+// Keep this in the existing backend transaction, before recording aggregate
+// facts. Do not take an Issue row lock here: retry callers already hold queue
+// locks, and adding the inverse Issue-follow-up lock order would deadlock.
+func validateEmployeeIssueQueue(ctx context.Context, tx pgx.Tx, task employeetask.Task, queue db.AgentTaskQueue) error {
+	if tx == nil || !queue.ID.Valid {
+		return employeetask.ErrInvalid
+	}
+	current, err := employeetask.NewStore(tx).Get(ctx, task.Scope, task.ID)
+	if err != nil {
+		return err
+	}
+	if current.DispatchMode != employeetask.DispatchIssue || current.IssueID == "" || current.IssueID != task.IssueID ||
+		util.UUIDToString(queue.IssueID) != current.IssueID || util.UUIDToString(queue.AgentID) != current.Scope.AgentID {
 		return employeetask.ErrNotFound
+	}
+	var accepted bool
+	err = tx.QueryRow(ctx, `SELECT EXISTS(
+ SELECT 1 FROM agent_task_queue q
+ JOIN issue i ON i.id=q.issue_id
+ JOIN agent a ON a.id=q.agent_id
+ WHERE q.id=$1 AND q.agent_id=$2::uuid AND q.issue_id=$3::uuid
+   AND i.workspace_id=$4::uuid AND a.workspace_id=$4::uuid)`,
+		queue.ID, current.Scope.AgentID, current.IssueID, current.Scope.WorkspaceID).Scan(&accepted)
+	if err != nil {
+		return err
+	}
+	if !accepted {
+		return employeetask.ErrNotFound
+	}
+	return nil
+}
+
+func mapEmployeeIssueQueue(ctx context.Context, tx pgx.Tx, task employeetask.Task, queue db.AgentTaskQueue, actor, body string, inputSeq int64) error {
+	if err := validateEmployeeIssueQueue(ctx, tx, task, queue); err != nil {
+		return err
 	}
 	prior, err := directRunByQueue(ctx, tx, queue.ID)
 	if err == nil {
@@ -54,7 +87,7 @@ func mapEmployeeIssueQueue(ctx context.Context, tx pgx.Tx, task employeetask.Tas
 	}
 	store := employeetask.NewStore(tx)
 	if task.OwnerLoop == employeetask.LoopCoordinator && task.DispatchMode == employeetask.DispatchIssue {
-		_, err = store.ObserveIssueRun(ctx, task.Scope, task.ID, employeetask.ObserveIssueRunParams{Source: employeetask.Source{Namespace: "issue_queue", Key: util.UUIDToString(queue.ID)}, QueueTaskID: util.UUIDToString(queue.ID), GoalRevision: task.GoalRevision, InputSeq: inputSeq, ExpectedVersion: task.Version})
+		_, err = store.ObserveBackendRun(ctx, task.Scope, task.ID, employeetask.ObserveBackendRunParams{Source: employeetask.Source{Namespace: "issue_queue", Key: util.UUIDToString(queue.ID)}, QueueTaskID: util.UUIDToString(queue.ID), GoalRevision: task.GoalRevision, InputSeq: inputSeq, ExpectedVersion: task.Version})
 		if err != nil {
 			return err
 		}
@@ -107,6 +140,25 @@ func recordEmployeeIssueResult(ctx context.Context, tx pgx.Tx, queue db.AgentTas
 	if run.TaskID != task.ID || task.Scope.AgentID != util.UUIDToString(queue.AgentID) {
 		return employeetask.ErrNotFound
 	}
+	if err := validateEmployeeIssueQueue(ctx, tx, task, queue); err != nil {
+		return err
+	}
+	persisted, err := db.New(tx).GetAgentTask(ctx, queue.ID)
+	if err != nil {
+		return err
+	}
+	if persisted.AgentID != queue.AgentID || persisted.IssueID != queue.IssueID {
+		return employeetask.ErrNotFound
+	}
+	if status == "canceled" {
+		status = "cancelled"
+	}
+	if persisted.Status != status {
+		return employeetask.ErrConflict
+	}
+	// The callback signals which transition to observe; durable backend fields
+	// own the terminal fact, including when the caller holds an older snapshot.
+	result, errMessage = persisted.Result, persisted.Error.String
 	state := employeetask.StateFailed
 	body := redact.Text(errMessage)
 	if status == "completed" {
@@ -292,6 +344,15 @@ func observeEmployeeIssueRetryInTx(ctx context.Context, tx pgx.Tx, child db.Agen
 		return nil
 	}
 	q := db.New(tx)
+	persisted, err := q.GetAgentTask(ctx, child.ID)
+	if err != nil {
+		return err
+	}
+	if persisted.AgentID != child.AgentID || persisted.IssueID != child.IssueID ||
+		persisted.RetryOfTaskID != child.RetryOfTaskID || persisted.ParentTaskID != child.ParentTaskID || persisted.Attempt != child.Attempt {
+		return employeetask.ErrConflict
+	}
+	child = persisted
 	prior, err := directRunByQueue(ctx, tx, child.RetryOfTaskID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -332,6 +393,9 @@ func observeEmployeeIssueRetryInTx(ctx context.Context, tx pgx.Tx, child db.Agen
 	if prior.TaskID != task.ID {
 		return employeetask.ErrConflict
 	}
+	if err := validateEmployeeIssueQueue(ctx, tx, task, child); err != nil {
+		return err
+	}
 	if existing, err := directRunByQueue(ctx, tx, child.ID); err == nil {
 		if existing.TaskID != task.ID {
 			return employeetask.ErrConflict
@@ -344,7 +408,7 @@ func observeEmployeeIssueRetryInTx(ctx context.Context, tx pgx.Tx, child db.Agen
 	if err != nil {
 		return err
 	}
-	_, err = employeetask.NewStore(tx).ObserveIssueRun(ctx, task.Scope, task.ID, employeetask.ObserveIssueRunParams{Source: employeetask.Source{Namespace: "issue_queue", Key: util.UUIDToString(child.ID)}, QueueTaskID: util.UUIDToString(child.ID), GoalRevision: prior.GoalRevision, InputSeq: prior.InputSeq, ExpectedVersion: task.Version})
+	_, err = employeetask.NewStore(tx).ObserveBackendRun(ctx, task.Scope, task.ID, employeetask.ObserveBackendRunParams{Source: employeetask.Source{Namespace: "issue_queue", Key: util.UUIDToString(child.ID)}, QueueTaskID: util.UUIDToString(child.ID), GoalRevision: prior.GoalRevision, InputSeq: prior.InputSeq, ExpectedVersion: task.Version})
 	if err != nil {
 		return err
 	}

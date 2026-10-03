@@ -48,6 +48,7 @@ func employeeSceneTools() []employeeloop.Tool {
 		{Name: "reply", Terminal: employeeloop.Reply, Description: "Reply directly using the current conversation and available facts, then finish without creating a task. Use for answers, explanations, clarifications and memory recall that need no background execution. Do not combine with dispatch_task or another effect tool in one batch.", Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "reply": stringField("The complete answer to send now, not an acknowledgement of future work.")}, "required": []string{"source_ref", "reply"}, "additionalProperties": false}},
 		{Name: "stay_quiet", Terminal: employeeloop.Quiet, Description: "Record that this window does not require a response from this employee. No message is sent and no task is created or cancelled.", Schema: map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}},
 		{Name: "dispatch_task", Description: "Create a real background task only for self-contained new work explicitly requested in the selected source message that requires background execution. For an answer already available from context or memory, use reply or normal text instead; never dispatch merely to send a reply. If it refers to previous work without a concrete new goal, clarify instead; continuation is not registered. Include the acknowledgement to send after the queue commit. Continuation, control, reactions and quoted work are not supported by this tool.", Effect: true, Schema: map[string]any{"type": "object", "properties": map[string]any{"source_ref": source, "completion_notice_policy": noticeSchema, "goal": stringField("The complete user goal, without inventing requirements."), "prompt": stringField("Complete execution instruction, preserving user constraints and material references."), "reply": stringField("Brief acknowledgement of accepted work, never a completed result."), "deliverables": stringArray("Optional concrete outputs explicitly required by the requester. Omit when unspecified; do not invent deliverables."), "success_criteria": stringArray("Optional acceptance conditions explicitly required by the requester. Omit when unspecified."), "access_needed": stringArray("Optional access the request says is needed. This is a request only and never grants access or capabilities.")}, "required": []string{"source_ref", "goal", "prompt", "reply"}, "additionalProperties": false}},
+		employeeSteerTool(source, stringField),
 		{Name: "read_task", Description: "Read the requester's own explicitly identified task. A task UUID does not grant access.", Schema: readSchema},
 		{Name: "read_task_history", Description: "Read up to twenty entries of the requester's own explicitly identified task.", Schema: readSchema},
 	}
@@ -174,6 +175,8 @@ func (h *employeeSceneHost) Execute(ctx context.Context, identity employeeloop.I
 			result, err = h.memoryTool(ctx, tx, call)
 		case "dispatch_task":
 			result, err = h.dispatch(ctx, source, env, call)
+		case "steer_task":
+			result, err = h.steer(ctx, source, env, call)
 		case "read_task", "read_task_history":
 			result, err = h.read(ctx, source, call)
 		default:
