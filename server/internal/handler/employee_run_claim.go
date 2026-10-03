@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -38,6 +39,7 @@ func (h *Handler) applyEmployeeRunClaim(r *http.Request, task db.AgentTaskQueue,
 		return invalid()
 	}
 	resp.DirectTaskPrompt = employeeDirectPrompt(c.Prompt)
+	h.applyEmployeeSteerResume(r, task, c, resp)
 	resp.WorkspaceID = c.WorkspaceID
 	resp.ThreadName = task.TriggerSummary.String
 	if len(resp.Repos) == 0 {
@@ -59,4 +61,48 @@ Keep it concise: state the requested result or actionable failure. Do not list i
 
 func employeeDirectPrompt(compiled string) string {
 	return compiled + "\n\n" + employeeDirectOutputInstruction
+}
+
+// employeeSteerResumeHops bounds the predecessor walk for chained steers.
+const employeeSteerResumeHops = 5
+
+// applyEmployeeSteerResume offers a steer successor the provider session and
+// workdir of the execution it replaced. The claim barrier guarantees that the
+// predecessor's process has exited, so its pinned session is complete. Only
+// the same EmployeeTask and runtime qualify; the daemon's workdir and context
+// compatibility gates still decide whether the session is actually resumed.
+func (h *Handler) applyEmployeeSteerResume(r *http.Request, task db.AgentTaskQueue, c service.DirectTaskContext, resp *AgentTaskResponse) {
+	current := task
+	for range employeeSteerResumeHops {
+		var private struct {
+			Predecessor string `json:"steer_predecessor_task_id"`
+		}
+		if json.Unmarshal(current.Context, &private) != nil || private.Predecessor == "" {
+			return
+		}
+		id, err := util.ParseUUID(private.Predecessor)
+		if err != nil {
+			return
+		}
+		prior, err := h.Queries.GetAgentTask(r.Context(), id)
+		if err != nil || prior.AgentID != task.AgentID {
+			return
+		}
+		pc, ok := service.ParseDirectTaskContext(prior)
+		if !ok || pc.EmployeeTaskID != c.EmployeeTaskID || pc.WorkspaceID != c.WorkspaceID {
+			return
+		}
+		if prior.SessionID.Valid && prior.SessionID.String != "" {
+			if prior.RuntimeID == task.RuntimeID && !service.ResumeUnsafeFailure(prior.FailureReason.String, prior.Error.String) {
+				resp.PriorSessionID = prior.SessionID.String
+			}
+			if prior.WorkDir.Valid {
+				resp.PriorWorkDir = prior.WorkDir.String
+			}
+			return
+		}
+		// A predecessor that never established a session (cancelled before its
+		// first turn) defers to the execution it replaced.
+		current = prior
+	}
 }
