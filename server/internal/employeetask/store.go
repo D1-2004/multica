@@ -375,10 +375,11 @@ func (s *Store) StartRun(ctx context.Context, scope Scope, id string, p StartRun
 		if task.DispatchMode == DispatchDirect {
 			// A correction or late result can change the goal snapshot to ready,
 			// but neither proves that a failed/cancelled external writer exited.
-			// Until explicit termination evidence exists, the durable Run history
-			// is the final fence for every new Direct execution.
+			// Until the host records explicit fence evidence (FenceRunWriter), the
+			// durable Run history is the final fence for every new Direct execution.
 			var unresolvedWriter bool
-			err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_task_run WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND task_id=$4::uuid AND state IN ('failed','cancelled'))`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id).Scan(&unresolvedWriter)
+			err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM employee_task_run r WHERE r.workspace_id=$1::uuid AND r.agent_id=$2::uuid AND r.tenant_org_id=$3 AND r.task_id=$4::uuid AND r.state IN ('failed','cancelled')
+ AND NOT EXISTS(SELECT 1 FROM employee_task_entry e WHERE e.workspace_id=r.workspace_id AND e.agent_id=r.agent_id AND e.tenant_org_id=r.tenant_org_id AND e.task_id=r.task_id AND e.run_id=r.id AND e.kind='writer_fenced'))`, scope.WorkspaceID, scope.AgentID, scope.TenantOrgID, id).Scan(&unresolvedWriter)
 			if err != nil {
 				return Entry{}, err
 			}
