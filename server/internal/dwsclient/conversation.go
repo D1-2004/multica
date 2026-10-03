@@ -29,3 +29,16 @@ func (s Shared) ConversationTitle(ctx context.Context, id Identity, base Identit
 	}
 	return strings.TrimSpace(group.Title), nil
 }
+
+// StaffID returns the org userId (staffId) of the person id sees as
+// openDingTalkID, on id's shared SDK client (dws.ContactService.StaffIDOf),
+// "" when id's address book has no such colleague. A native IM event names
+// its sender only by openDingTalkId; this is how the sender gets the staffId
+// a Router delivery would carry.
+func (s Shared) StaffID(ctx context.Context, id Identity, base IdentityMint, openDingTalkID string, names []string, conversationID string) (string, error) {
+	client, err := s.Client(ctx, id, base)
+	if err != nil {
+		return "", err
+	}
+	return client.Contacts.StaffIDOf(ctx, openDingTalkID, names, conversationID)
+}

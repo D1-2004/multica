@@ -1057,6 +1057,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				h.DWSNativeConversationTitle = func(ctx context.Context, id dwsclient.Identity, conversationID string) (string, error) {
 					return native.ConversationTitle(ctx, id, mint, conversationID)
 				}
+				// Native events name the sender only by openDingTalkId: its
+				// staffId comes from the identity's own address book.
+				h.DWSNativeStaffID = func(ctx context.Context, id dwsclient.Identity, openDingTalkID string, names []string, conversationID string) (string, error) {
+					return native.StaffID(ctx, id, mint, openDingTalkID, names, conversationID)
+				}
 			}
 		}
 	}

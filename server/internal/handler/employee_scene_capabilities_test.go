@@ -164,18 +164,23 @@ func TestEmployeeSceneCapabilityLinkHostCheckpointAndReplay(t *testing.T) {
 			verify := func() string {
 				t.Helper()
 				var count int
-				var scope, key, sourceTask string
+				var scope, key, sourceTask, extraScene string
 				if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM context_config_link WHERE agent_id=$1`, f.agentID).Scan(&count); err != nil {
 					t.Fatal(err)
 				}
 				if count != 1 {
 					t.Fatalf("links=%d want exactly one", count)
 				}
-				if err := testPool.QueryRow(context.Background(), `SELECT scope_type,scope_key,COALESCE(source_task_id::text,'') FROM context_config_link WHERE agent_id=$1`, f.agentID).Scan(&scope, &key, &sourceTask); err != nil {
+				if err := testPool.QueryRow(context.Background(), `SELECT scope_type,scope_key,COALESCE(source_task_id::text,''),extra_scene_key FROM context_config_link WHERE agent_id=$1`, f.agentID).Scan(&scope, &key, &sourceTask, &extraScene); err != nil {
 					t.Fatal(err)
 				}
-				if scope != "scene" || key != sceneID || sourceTask != "" {
-					t.Fatalf("wrong scene or fictitious task: %s %s %s", scope, key, sourceTask)
+				// A 1:1 chat's link also carries its person (the requester).
+				wantScope, wantKey, wantExtra := "scene", sceneID, ""
+				if kind == "p2p" {
+					wantScope, wantKey, wantExtra = "person", "odt:requester-open-id", sceneID
+				}
+				if scope != wantScope || key != wantKey || extraScene != wantExtra || sourceTask != "" {
+					t.Fatalf("wrong scope or fictitious task: %s %s %s %s", scope, key, extraScene, sourceTask)
 				}
 				var outcome, journal, toolJournal []byte
 				if err := testPool.QueryRow(context.Background(), `SELECT outcome,model_journal,tool_journal FROM employee_scene_job WHERE agent_id=$1`, f.agentID).Scan(&outcome, &journal, &toolJournal); err != nil {

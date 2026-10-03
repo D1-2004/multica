@@ -56,8 +56,8 @@ export type ContextConnectorAuthMode = "none" | "bearer" | "oauth" | "unknown";
 /** A live grant that lets the caller configure one scope of an agent. */
 export interface ContextConfigGrant {
   scopeType: ContextScopeType;
-  /** The scene_id of a scene (a group or 1:1 chat), the staffId of a
-   * person. */
+  /** The scene_id of a scene (a group or 1:1 chat), the person key of a
+   * person (a staffId, or "odt:" + an openDingTalkId). */
   scopeKey: string;
   scopeTitle: string;
   source: ContextGrantSource;
@@ -88,6 +88,9 @@ export interface ContextConfigRedeemResult {
   /** Tenant (DingTalk org) of the granted scope; "" when the server does not
    * say. The page opens that tenant. */
   orgId: string;
+  /** The 1:1 chat (scene_id) a person link was minted in, also granted; ""
+   * for any other link or an older backend. */
+  extraSceneId: string;
 }
 
 /** Why the caller may configure an agent on the configuration page: live

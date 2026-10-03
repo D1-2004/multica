@@ -166,6 +166,40 @@ func (s *GroupService) Members(ctx context.Context, conversationID string) ([]Me
 	return members, nil
 }
 
+// MembersByIDs returns the members of a group named by their
+// openDingTalkIds (list_group_member_by_ids); members not in the group are
+// left out. Name is the member's nick.
+func (s *GroupService) MembersByIDs(ctx context.Context, conversationID string, openDingTalkIDs []string) ([]Member, error) {
+	if conversationID == "" || len(openDingTalkIDs) == 0 {
+		return nil, invalid("members by ids needs conversationId and openDingTalkIds")
+	}
+	raw, err := s.c.Call(ctx, ServerIM, "list_group_member_by_ids", map[string]any{
+		"openConversationId": conversationID, "memberOpenDingTalkIds": openDingTalkIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Members []struct {
+			OpenDingtalkID string `json:"openDingtalkId"`
+			Nick           string `json:"nick"`
+			GroupNick      string `json:"groupNick"`
+			RoleDesc       string `json:"roleDesc"`
+		} `json:"members"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("dws: decode members by ids: %w", err)
+	}
+	members := make([]Member, 0, len(out.Members))
+	for _, m := range out.Members {
+		if m.OpenDingtalkID == "" {
+			continue
+		}
+		members = append(members, Member{OpenDingTalkID: m.OpenDingtalkID, Name: m.Nick, GroupNick: m.GroupNick, Role: m.RoleDesc})
+	}
+	return members, nil
+}
+
 // Find searches the identity's groups by name.
 func (s *GroupService) Find(ctx context.Context, keyword string) ([]Group, error) {
 	if strings.TrimSpace(keyword) == "" {

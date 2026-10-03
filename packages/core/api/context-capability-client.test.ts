@@ -44,6 +44,7 @@ describe("context capability mobile client", () => {
       scopeKey: sceneId,
       scopeTitle: "Team",
       orgId: "",
+      extraSceneId: "",
     });
   });
 

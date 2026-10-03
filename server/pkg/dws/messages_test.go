@@ -313,3 +313,55 @@ func TestParseSince(t *testing.T) {
 		t.Error("bad since must be an invalid request")
 	}
 }
+
+// A staffId comes only from an address book entry with exactly the sender's
+// openDingTalkId; a namesake never decides, and a group member's nick is
+// tried after the sender name.
+func TestStaffIDOf(t *testing.T) {
+	g, c := newTestClient(t, func(tool string, args map[string]any) (int, string) {
+		switch tool {
+		case "search_contact_by_key_word":
+			switch args["keyword"] {
+			case "夏东翔":
+				// A namesake in the org and the person as an external friend.
+				return ok(`[{"userId":"0138","openDingTalkId":"open-namesake","name":"xdx"},{"userId":null,"openDingTalkId":"open-me","name":"夏东翔"}]`)
+			case "冬翔":
+				return ok(`[{"userId":"103262","openDingTalkId":"open-me","name":"夏东翔","nick":"冬翔"}]`)
+			}
+			return ok(`[]`)
+		case "list_group_member_by_ids":
+			if args["openConversationId"] != "cid-1" {
+				t.Fatalf("members of %v", args["openConversationId"])
+			}
+			return ok(`{"members":[{"openDingtalkId":"open-me","nick":"冬翔","groupNick":"群里的冬翔"}]}`)
+		}
+		return ok(`{}`)
+	})
+	id, err := c.Contacts.StaffIDOf(context.Background(), "open-me", []string{"冬翔"}, "")
+	if err != nil || id != "103262" {
+		t.Fatalf("by sender name: %q %v", id, err)
+	}
+	// The sender name finds only a namesake and the friend entry: the nick
+	// from the group settles it.
+	id, err = c.Contacts.StaffIDOf(context.Background(), "open-me", []string{"夏东翔", "null"}, "cid-1")
+	if err != nil || id != "103262" {
+		t.Fatalf("by group nick: %q %v", id, err)
+	}
+	// Outside a group, no entry with the id: nobody.
+	id, err = c.Contacts.StaffIDOf(context.Background(), "open-me", []string{"夏东翔"}, "")
+	if err != nil || id != "" {
+		t.Fatalf("namesake only: %q %v", id, err)
+	}
+	if _, err := c.Contacts.StaffIDOf(context.Background(), " ", nil, ""); err == nil {
+		t.Fatal("empty openDingTalkId accepted")
+	}
+	searches := 0
+	for _, call := range g.calls {
+		if call.Tool == "search_contact_by_key_word" {
+			searches++
+		}
+	}
+	if searches != 4 {
+		t.Fatalf("searches = %d, want 4 (the literal null and repeated names are not searched)", searches)
+	}
+}

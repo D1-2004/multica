@@ -303,15 +303,25 @@ func jobOrgExpr(identityParam string) string {
 }
 
 // jobPersonKeyExpr is the trigger person key of an inbound job's dispatch
-// command, as TriggerPersonKey derives it: sender.staffId, else "odt:" + the
-// sender's openDingTalkId (a DWS native subscription event names its sender
-// only so); NULL when the sender's two openDingTalkId fields disagree.
-const jobPersonKeyExpr = `COALESCE(NULLIF(BTRIM(job.command #>> '{event,data,sender,staffId}'), ''),
-	CASE WHEN lower(` + jobSenderOpenIDExpr + `) IN ('', 'null')
-	  OR (` + jobSenderOpenIDA + ` <> '' AND ` + jobSenderOpenIDB + ` <> '' AND ` + jobSenderOpenIDA + ` <> ` + jobSenderOpenIDB + `)
-	THEN NULL ELSE '` + PersonKeyOpenDingTalkPrefix + `' || ` + jobSenderOpenIDExpr + ` END)`
+// command, as TriggerPersonKey derives it, for a job whose org is orgExpr:
+// sender.staffId; else the staffId kept for the sender's openDingTalkId as
+// the job's DWS identity sees it (dws_open_identity_staff), so a native
+// sender seen before their staffId was proved joins that person; else
+// "odt:" + the openDingTalkId. NULL when the sender's two openDingTalkId
+// fields disagree.
+func jobPersonKeyExpr(orgExpr string) string {
+	return `(CASE WHEN ` + jobSenderStaffID + ` <> '' THEN ` + jobSenderStaffID + `
+	  WHEN lower(` + jobSenderOpenIDExpr + `) IN ('', 'null')
+	    OR (` + jobSenderOpenIDA + ` <> '' AND ` + jobSenderOpenIDB + ` <> '' AND ` + jobSenderOpenIDA + ` <> ` + jobSenderOpenIDB + `) THEN NULL
+	  ELSE COALESCE((SELECT kept.staff_id FROM dws_open_identity_staff kept
+	      WHERE kept.org_id = ` + orgExpr + `
+	        AND kept.viewer_uid = BTRIM(COALESCE(job.command #>> '{externalIdentity,dws,uid}', ''))
+	        AND kept.open_dingtalk_id = ` + jobSenderOpenIDExpr + `),
+	    '` + PersonKeyOpenDingTalkPrefix + `' || ` + jobSenderOpenIDExpr + `) END)`
+}
 
 const (
+	jobSenderStaffID    = `BTRIM(COALESCE(job.command #>> '{event,data,sender,staffId}', ''))`
 	jobSenderOpenIDA    = `BTRIM(COALESCE(job.command #>> '{event,data,sender,openDingTalkId}', ''))`
 	jobSenderOpenIDB    = `BTRIM(COALESCE(job.command #>> '{event,data,sender,senderOpenDingTalkId}', ''))`
 	jobSenderOpenIDExpr = `COALESCE(NULLIF(` + jobSenderOpenIDA + `, ''), ` + jobSenderOpenIDB + `)`
@@ -367,12 +377,12 @@ func ListAgentOrgActivity(ctx context.Context, db DBTX, workspaceID, agentID, id
 	}
 
 	// Every 1:1 sender names a person.
-	rows, err = db.Query(ctx, `SELECT DISTINCT `+jobOrgExpr("$3")+`, `+jobPersonKeyExpr+`
+	rows, err = db.Query(ctx, `SELECT DISTINCT `+jobOrgExpr("$3")+`, `+jobPersonKeyExpr(jobOrgExpr("$3"))+`
 		FROM inbound_coordinator_job job
 		WHERE job.agent_id = $2::uuid AND job.workspace_id = $1::uuid
 		  AND lower(COALESCE(NULLIF(BTRIM(job.command #>> '{source,platform}'), ''), 'dingtalk')) = 'dingtalk'
 		  AND lower(BTRIM(COALESCE(job.command #>> '{event,data,conversation,type}', ''))) IN ('single', 'p2p', 'private', 'direct')
-		  AND `+jobPersonKeyExpr+` IS NOT NULL`, workspaceID, agentID, identityOrgID)
+		  AND `+jobPersonKeyExpr(jobOrgExpr("$3"))+` IS NOT NULL`, workspaceID, agentID, identityOrgID)
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +480,7 @@ func ListOrgPersons(ctx context.Context, db DBTX, workspaceID, agentID, orgID, i
 
 	rows, err := db.Query(ctx, `SELECT DISTINCT ON (staff_id) staff_id, sender_name, scene_id, created_at
 		FROM (
-		  SELECT `+jobPersonKeyExpr+` AS staff_id,
+		  SELECT `+jobPersonKeyExpr(jobOrgExpr("$4"))+` AS staff_id,
 		    BTRIM(COALESCE(job.command #>> '{event,data,sender,displayName}', '')) AS sender_name,
 		    BTRIM(COALESCE(job.command #>> '{agent_scene,scene_id}', '')) AS scene_id,
 		    job.created_at, job.id
@@ -478,7 +488,7 @@ func ListOrgPersons(ctx context.Context, db DBTX, workspaceID, agentID, orgID, i
 		  WHERE job.agent_id = $2::uuid AND job.workspace_id = $1::uuid
 		    AND lower(COALESCE(NULLIF(BTRIM(job.command #>> '{source,platform}'), ''), 'dingtalk')) = 'dingtalk'
 		    AND lower(BTRIM(COALESCE(job.command #>> '{event,data,conversation,type}', ''))) IN ('single', 'p2p', 'private', 'direct')
-		    AND `+jobPersonKeyExpr+` IS NOT NULL
+		    AND `+jobPersonKeyExpr(jobOrgExpr("$4"))+` IS NOT NULL
 		    AND `+jobOrgExpr("$4")+` = $3::text
 		) j
 		ORDER BY staff_id, created_at DESC, id DESC`, workspaceID, agentID, orgID, identityOrgID)

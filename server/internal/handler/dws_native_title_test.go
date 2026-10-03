@@ -68,12 +68,12 @@ func TestNativeFingerprintIgnoresConversationTitle(t *testing.T) {
 }
 
 func TestNativeConversationTitleCachesAndDegrades(t *testing.T) {
-	nativeConversationTitles = &nativeTitleCache{entries: map[string]nativeTitleEntry{}}
+	nativeConversationTitles = &nativeTTLCache{entries: map[string]nativeTTLEntry{}}
 	now := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
 	nativeClock = func() time.Time { return now }
 	t.Cleanup(func() {
 		nativeClock = time.Now
-		nativeConversationTitles = &nativeTitleCache{entries: map[string]nativeTitleEntry{}}
+		nativeConversationTitles = &nativeTTLCache{entries: map[string]nativeTTLEntry{}}
 	})
 	identity := dwsclient.Identity{AgentID: nativeUnitAgent, UID: nativeUnitUID, OrgID: nativeUnitOrg}
 
@@ -108,7 +108,7 @@ func TestNativeConversationTitleCachesAndDegrades(t *testing.T) {
 	}
 
 	// A failed read dispatches untitled and is retried only after a minute.
-	nativeConversationTitles = &nativeTitleCache{entries: map[string]nativeTitleEntry{}}
+	nativeConversationTitles = &nativeTTLCache{entries: map[string]nativeTTLEntry{}}
 	failure = errors.New("FORBIDDEN")
 	if got := h.nativeConversationTitle(context.Background(), identity, "cid-1"); got != "" {
 		t.Fatalf("failed read title = %q", got)
@@ -124,7 +124,7 @@ func TestNativeConversationTitleCachesAndDegrades(t *testing.T) {
 	}
 
 	// A read that names no title is kept like a title.
-	nativeConversationTitles = &nativeTitleCache{entries: map[string]nativeTitleEntry{}}
+	nativeConversationTitles = &nativeTTLCache{entries: map[string]nativeTTLEntry{}}
 	answer = ""
 	h.nativeConversationTitle(context.Background(), identity, "cid-1")
 	now = now.Add(nativeTitleMissTTL)
@@ -133,7 +133,7 @@ func TestNativeConversationTitleCachesAndDegrades(t *testing.T) {
 	}
 
 	// The stream's cancellation does not reach the read.
-	nativeConversationTitles = &nativeTitleCache{entries: map[string]nativeTitleEntry{}}
+	nativeConversationTitles = &nativeTTLCache{entries: map[string]nativeTTLEntry{}}
 	answer = "项目群"
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -156,7 +156,7 @@ func TestAcceptNativeMessageReadsTitlesOfGroupsOnly(t *testing.T) {
 		{dws.EventIMAllSingleChats, 0},
 	} {
 		t.Run(tt.key, func(t *testing.T) {
-			nativeConversationTitles = &nativeTitleCache{entries: map[string]nativeTitleEntry{}}
+			nativeConversationTitles = &nativeTTLCache{entries: map[string]nativeTTLEntry{}}
 			nativeDispatchLoops = newNativeLoopBreaker(nativeLoopLimit, nativeLoopWindow)
 			now := time.UnixMilli(nativeUnitMessage().EventTime).Add(time.Minute)
 			nativeClock = func() time.Time { return now }
@@ -222,5 +222,103 @@ func TestEmployeeCapabilityPersonKeysNativeSenders(t *testing.T) {
 				t.Fatalf("person = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// A native sender's staffId is looked up once and dispatched like a Router
+// delivery's; a miss or a failure dispatches the openDingTalkId only and is
+// retried later.
+func TestNativeSenderStaffIDLookup(t *testing.T) {
+	nativeStaffMisses = &nativeTTLCache{entries: map[string]nativeTTLEntry{}}
+	now := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
+	nativeClock = func() time.Time { return now }
+	t.Cleanup(func() {
+		nativeClock = time.Now
+		nativeStaffMisses = &nativeTTLCache{entries: map[string]nativeTTLEntry{}}
+	})
+	identity := dwsclient.Identity{AgentID: nativeUnitAgent, UID: nativeUnitUID, OrgID: nativeUnitOrg}
+	m := nativeUnitMessage()
+	if got := (&Handler{}).nativeSenderStaffID(context.Background(), identity, m, "cid-1"); got != "" {
+		t.Fatalf("no lookup wired: %q", got)
+	}
+	calls := 0
+	var answer string
+	var failure error
+	h := &Handler{DWSNativeStaffID: func(_ context.Context, id dwsclient.Identity, openID string, names []string, cid string) (string, error) {
+		calls++
+		if id != identity || openID != "open-user-1" || len(names) != 1 || names[0] != "测试用户甲" || cid != "cid-1" {
+			t.Fatalf("lookup %+v %q %v %q", id, openID, names, cid)
+		}
+		return answer, failure
+	}}
+	answer = "staff-1"
+	if got := h.nativeSenderStaffID(context.Background(), identity, m, "cid-1"); got != "staff-1" || calls != 1 {
+		t.Fatalf("found: %q calls=%d", got, calls)
+	}
+	// Not in the address book: the openDingTalkId alone, asked again later.
+	answer = ""
+	h.nativeSenderStaffID(context.Background(), identity, m, "cid-1")
+	h.nativeSenderStaffID(context.Background(), identity, m, "cid-1")
+	if calls != 2 {
+		t.Fatalf("a miss is cached: calls=%d, want 2", calls)
+	}
+	now = now.Add(nativeStaffMissTTL)
+	answer = "odt:spoof"
+	if got := h.nativeSenderStaffID(context.Background(), identity, m, "cid-1"); got != "" || calls != 3 {
+		t.Fatalf("a prefixed staff id was accepted: %q calls=%d", got, calls)
+	}
+	now = now.Add(nativeStaffMissTTL)
+	failure = errors.New("DWS down")
+	if got := h.nativeSenderStaffID(context.Background(), identity, m, "cid-1"); got != "" || calls != 4 {
+		t.Fatalf("failure: %q calls=%d", got, calls)
+	}
+	now = now.Add(nativeStaffFailureTTL)
+	failure, answer = nil, "staff-1"
+	if got := h.nativeSenderStaffID(context.Background(), identity, m, "cid-1"); got != "staff-1" || calls != 5 {
+		t.Fatalf("retry after a failure: %q calls=%d", got, calls)
+	}
+	anonymous := nativeUnitMessage()
+	anonymous.SenderOpenDingTalkID = "null"
+	if got := h.nativeSenderStaffID(context.Background(), identity, anonymous, "cid-1"); got != "" || calls != 5 {
+		t.Fatalf("an anonymous sender was looked up: %q calls=%d", got, calls)
+	}
+}
+
+// A proved staffId rides on the native dispatch like a Router delivery's:
+// the same person key in groups and single chats, and no fingerprint change
+// when one delivery could not prove it.
+func TestNativeDispatchCarriesSenderStaffID(t *testing.T) {
+	for _, key := range []string{dws.EventIMAt, dws.EventIMAllSingleChats} {
+		in := nativeUnitInput(key, nativeUnitMessage())
+		in.SenderStaffID = " staff-1 "
+		command, err := buildNativeDispatchCommand(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data := command.Event.Data
+		if data.Sender.StaffID != "staff-1" || data.Messages[0].SenderStaffID != "staff-1" || data.Sender.OpenDingTalkID != "open-user-1" {
+			t.Fatalf("%s: sender %+v message staff %q", key, data.Sender, data.Messages[0].SenderStaffID)
+		}
+		scope := contextcap.ScopeFromTaskContext(dispatchRuntimeContext(command, "idem-1"))
+		if scope.PersonKey != "staff-1" || scope.PersonName != "测试用户甲" {
+			t.Fatalf("%s: scope = %+v", key, scope)
+		}
+		unresolved, _ := buildNativeDispatchCommand(nativeUnitInput(key, nativeUnitMessage()))
+		idem := nativeDispatchIdempotencyKey(nativeUnitOrg, "cid-1", "msg-1")
+		if dispatchRequestFingerprint(command, idem) != dispatchRequestFingerprint(unresolved, idem) {
+			t.Fatalf("%s: the staffId changed the native fingerprint", key)
+		}
+	}
+	// No openDingTalkId, no staffId: nothing is attributed to an unknown sender.
+	m := nativeUnitMessage()
+	m.SenderOpenDingTalkID = ""
+	in := nativeUnitInput(dws.EventIMAt, m)
+	in.SenderStaffID = "staff-1"
+	command, err := buildNativeDispatchCommand(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.Event.Data.Sender.StaffID != "" || command.Event.Data.Messages[0].SenderStaffID != "" {
+		t.Fatal("a staffId was attached to an anonymous sender")
 	}
 }

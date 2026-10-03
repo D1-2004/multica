@@ -97,12 +97,16 @@ func (h *Handler) contextConfigLinkOrigin() (string, error) {
 }
 
 // mintContextConfigLink stores a configuration link for the conversation
-// scene of a dispatch scope and returns its page URL. A group and a 1:1 chat
-// are minted the same way: the link is keyed by the scene_id the dispatch
-// resolved from the conversation's openConversationId (docs/agent-scene.md
-// §1, §5), never by the sender, so it needs no staffId. The scope must come
-// from the server-written dispatch context, never from a model or a prompt,
-// and its scene has already passed the use-time fence (taskContextScope).
+// scene of a dispatch scope and returns its page URL. The link is keyed by
+// the scene_id the dispatch resolved from the conversation's
+// openConversationId (docs/agent-scene.md §1, §5). A 1:1 chat's link also
+// carries the chat's person (the scope's trigger person, keyed by
+// contextcap.TriggerPersonKey: the staffId, else the openDingTalkId) and
+// opens their own level (个人能力) for the first DingTalk account that opens
+// it: only the person reads the chat it is posted in. A group's link never
+// carries a person. The scope must come from the server-written dispatch
+// context, never from a model or a prompt, and its scene has already passed
+// the use-time fence (taskContextScope).
 func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLinkMint) (multicaMCPContextConfigLinkResult, error) {
 	scope := in.Scope
 	if !scope.HasScene() {
@@ -124,13 +128,23 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 		ScopeTitle:   firstNonEmpty(scope.SceneTitle, agentSceneTitle(summary)),
 		SourceTaskID: in.SourceTaskID,
 	}
+	includesPerson := summary.Kind == contextcap.SceneKindDM && scope.HasPerson()
+	personHash := ""
+	if includesPerson {
+		// The chat's link as a person link with the chat as its extra
+		// scene: redeeming grants the chat and, for its first account, the
+		// person (RedeemContextConfigLink).
+		link.ScopeType, link.ScopeKey, link.ExtraSceneID = contextcap.ScopePerson, scope.PersonKey, scope.SceneID
+		link.ScopeTitle = firstNonEmpty(scope.PersonName, link.ScopeTitle)
+		personHash = personKeyHash(scope.PersonKey)
+	}
 
 	token, err := contextcap.NewLinkToken()
 	if err != nil {
 		return multicaMCPContextConfigLinkResult{}, err
 	}
 	link.TokenHash = contextcap.HashLinkToken(token)
-	stored, err := contextcap.InsertLink(ctx, h.DB, link, contextcap.LinkTTL(link.ScopeType))
+	stored, err := contextcap.InsertLink(ctx, h.DB, link, contextcap.LinkTTLScene)
 	if err != nil {
 		return multicaMCPContextConfigLinkResult{}, err
 	}
@@ -142,13 +156,16 @@ func (h *Handler) mintContextConfigLink(ctx context.Context, in contextConfigLin
 	}
 	slog.InfoContext(ctx, "context capabilities: configuration link issued",
 		"source_task_id", link.SourceTaskID, "agent_id", in.AgentID, "workspace_id", link.WorkspaceID, "scope_type", link.ScopeType,
-		"scene_id", link.ScopeKey, "scene_kind", summary.Kind, "issuer", in.Issuer, "coord_trace_id", in.CoordTraceID, "employee_job_id", in.EmployeeJobID)
+		"scene_id", scope.SceneID, "scene_kind", summary.Kind, "includes_person", includesPerson,
+		"person_key_hash", personHash,
+		"issuer", in.Issuer, "coord_trace_id", in.CoordTraceID, "employee_job_id", in.EmployeeJobID)
 	return multicaMCPContextConfigLinkResult{
-		URL:         pageURL,
-		DingTalkURL: inboundcoord.ConfigLinkDeepLink(pageURL),
-		Scope:       link.ScopeType,
-		SceneKind:   summary.Kind,
-		ExpiresAt:   stored.ExpiresAt.UTC().Format(time.RFC3339),
+		URL:            pageURL,
+		DingTalkURL:    inboundcoord.ConfigLinkDeepLink(pageURL),
+		Scope:          contextcap.ScopeScene,
+		SceneKind:      summary.Kind,
+		ExpiresAt:      stored.ExpiresAt.UTC().Format(time.RFC3339),
+		IncludesPerson: includesPerson,
 	}, nil
 }
 

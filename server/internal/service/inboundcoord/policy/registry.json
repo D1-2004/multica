@@ -454,6 +454,8 @@
         "server/internal/handler/dws_native_ownership.go",
         "server/internal/handler/dws_native_title.go",
         "server/internal/handler/dws_native_title_test.go",
+        "server/internal/handler/dws_native_person.go",
+        "server/internal/contextcap/open_identity.go",
         "server/internal/dwsclient/conversation.go",
         "server/internal/contextcap/scope.go",
         "server/internal/handler/coordinator_issue_backend.go",

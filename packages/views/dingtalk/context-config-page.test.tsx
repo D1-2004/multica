@@ -1792,6 +1792,43 @@ describe("ContextConfigPage", () => {
     });
   });
 
+  it("opens the 1:1 chat a personal link came from, not another one its manager sees", async () => {
+    const otherDM = "33333333-3333-4333-8333-333333333333";
+    const ownDM = "44444444-4444-4444-8444-444444444444";
+    const dmScene = (scopeKey: string, scopeTitle: string, source: string) => ({
+      scopeKey,
+      scopeTitle,
+      source,
+      expiresAt: "",
+      kind: "dm" as const,
+      orgId: "",
+    });
+    const detail = agentDetail({
+      access: "manager",
+      person: { ...agentDetail().person!, scopeKey: "odt:DpJnOpenSender", scopeTitle: "冬翔" },
+      scenes: [dmScene(otherDM, "Bob", "manager"), dmScene(ownDM, "冬翔", "agent_link"), dmScene(otherDM.replace("3333-4", "3333-5"), "Cy", "manager")],
+    });
+    api.getContextConfigAgent.mockResolvedValue(detail);
+    api.redeemContextConfigLink.mockResolvedValue({
+      agentId: "agent-1",
+      workspaceId: "ws-1",
+      scopeType: "person",
+      scopeKey: "odt:DpJnOpenSender",
+      scopeTitle: "冬翔",
+      orgId: "",
+      extraSceneId: ownDM,
+    });
+    const user = userEvent.setup();
+    const onBind = vi.fn();
+    renderPage({ linkToken: "dm-link", onBind });
+
+    const levels = await screen.findByRole("tablist", { name: copy.levels_aria });
+    await user.click(within(levels).getByRole("tab", { name: copy.level_scene }));
+    await waitFor(() => expect(api.getContextConfigScene).toHaveBeenCalledWith("agent-1", ownDM, expect.anything()));
+    expect(api.getContextConfigScene).not.toHaveBeenCalledWith("agent-1", otherDM, expect.anything());
+    expect(onBind).toHaveBeenCalledWith(expect.objectContaining({ scopeType: "person", extraSceneId: ownDM }));
+  });
+
   it("lets a person with several agents choose one", async () => {
     api.listContextConfigAgents.mockResolvedValue([
       agentSummary,

@@ -1087,6 +1087,9 @@ func (h *Handler) RedeemContextConfigLink(w http.ResponseWriter, r *http.Request
 		"scope_key":    grant.ScopeKey,
 		"scope_title":  grant.ScopeTitle,
 		"org_id":       grant.OrgID,
+		// The 1:1 chat a person link was minted in (also granted), so the
+		// page opens that chat, not another 1:1 chat a manager can see.
+		"extra_scene_id": link.ExtraSceneID,
 	})
 }
 

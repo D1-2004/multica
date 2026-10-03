@@ -41,6 +41,8 @@ type ctxcapLinkResult struct {
 	Scope       string `json:"scope"`
 	SceneKind   string `json:"scene_kind"`
 	ExpiresAt   string `json:"expires_at"`
+	// IncludesPerson: a 1:1 chat's link also opens its person's level.
+	IncludesPerson bool `json:"includes_person"`
 }
 
 func ctxcapToolResult(t *testing.T, got map[string]any) (ctxcapLinkResult, bool, string) {
@@ -214,21 +216,24 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 			t.Fatalf("rerun task minted a link: %s", text)
 		}
 	}
-	// A 1:1 chat is minted exactly like a group: the scene link of its own
-	// scene (the scene_id its openConversationId resolved to), whoever
-	// speaks. A digital employee's dispatch has no sender staffId, a merged
-	// window several speakers; neither matters.
+	// A 1:1 chat's link is the chat's link and also carries the chat's
+	// person (冬翔 2026-10-03): stored as a person link with the chat as its
+	// extra scene, keyed by TriggerPersonKey. A merged window of several
+	// speakers names no person and gets the plain scene link.
 	f.registerDirectScene(t)
 	dmTask := f.task(t, ctxcapDWSDispatch("single", ctxcapDirectScene))
 	var dmToken string
-	for name, task := range map[string]db.AgentTaskQueue{
-		"digital employee": dmTask,
-		"robot with staff": f.task(t, ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff)),
-		"several speakers": f.task(t, ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff)),
+	for _, tc := range []struct {
+		name, personKey string
+		task            db.AgentTaskQueue
+	}{
+		{"digital employee", "odt:DpJnOpenSender", dmTask},
+		{"robot with staff", ctxcapStaff, f.task(t, ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff))},
+		{"several speakers", "", f.task(t, ctxcapDispatch("single", ctxcapDirectScene, ctxcapStaff, ctxcapStaff, ctxcapOtherStaff))},
 	} {
-		dmLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, task, nil))
-		if isError || dmLink.Scope != contextcap.ScopeScene || dmLink.SceneKind != contextcap.SceneKindDM {
-			t.Fatalf("%s: 1:1 mint isError=%v text=%q", name, isError, text)
+		dmLink, isError, text := ctxcapToolResult(t, f.ctxcapToolCall(t, tc.task, nil))
+		if isError || dmLink.Scope != contextcap.ScopeScene || dmLink.SceneKind != contextcap.SceneKindDM || dmLink.IncludesPerson != (tc.personKey != "") {
+			t.Fatalf("%s: 1:1 mint isError=%v link=%+v text=%q", tc.name, isError, dmLink, text)
 		}
 		ctxcapExpiresWithin(t, dmLink.ExpiresAt, contextcap.LinkTTLScene)
 		token := ctxcapLinkToken(t, dmLink)
@@ -237,10 +242,14 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 			contextcap.HashLinkToken(token)).Scan(&scopeType, &scopeKey, &extraScene); err != nil {
 			t.Fatal(err)
 		}
-		if scopeType != contextcap.ScopeScene || scopeKey != ctxcapDirectScene || extraScene != "" {
-			t.Fatalf("%s: stored 1:1 link scope=%s key=%s extra=%q", name, scopeType, scopeKey, extraScene)
+		want := [3]string{contextcap.ScopePerson, tc.personKey, ctxcapDirectScene}
+		if tc.personKey == "" {
+			want = [3]string{contextcap.ScopeScene, ctxcapDirectScene, ""}
 		}
-		if task.ID == dmTask.ID {
+		if got := [3]string{scopeType, scopeKey, extraScene}; got != want {
+			t.Fatalf("%s: stored 1:1 link %v, want %v", tc.name, got, want)
+		}
+		if tc.task.ID == dmTask.ID {
 			dmToken = token
 		}
 	}
@@ -263,24 +272,26 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 	}
 	ctxcapExpiresWithin(t, grant.ExpiresAt.UTC().Format(time.RFC3339), contextcap.GrantTTLScene)
 
-	// The 1:1 chat's link is reusable too and grants that chat's scene, not
-	// a personal scope.
-	for _, user := range []string{alice, bob} {
+	// The 1:1 chat's link grants the chat and its person to the first
+	// account, which may open it again; it names the chat it came from.
+	for _, user := range []string{alice, alice} {
 		w := redeem(user, dmToken)
-		ctxcapExpectStatus(t, w, http.StatusOK, "1:1 scene redeem")
+		ctxcapExpectStatus(t, w, http.StatusOK, "1:1 link redeem")
 		var got map[string]string
 		ctxcapDecode(t, w, &got)
-		if got["scope_type"] != contextcap.ScopeScene || got["scope_key"] != ctxcapDirectScene || got["scope_title"] != "Alice" || got["org_id"] != ctxcapOrg {
-			t.Fatalf("1:1 scene redeem=%+v", got)
-		}
-		if _, err := contextcap.GetLiveGrant(context.Background(), testPool, user, agentID, contextcap.ScopePerson, ctxcapOrg, ctxcapStaff); err == nil {
-			t.Fatal("a 1:1 scene link granted a personal scope")
+		if got["scope_type"] != contextcap.ScopePerson || got["scope_key"] != "odt:DpJnOpenSender" || got["scope_title"] != "冬翔" ||
+			got["org_id"] != ctxcapOrg || got["extra_scene_id"] != ctxcapDirectScene {
+			t.Fatalf("1:1 link redeem=%+v", got)
 		}
 	}
-	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, ctxcapDirectScene), bob, nil), http.StatusOK, "bob 1:1 scene via link")
+	ctxcapExpectStatus(t, redeem(bob, dmToken), http.StatusGone, "1:1 link opened by another account")
+	if _, err := contextcap.GetLiveGrant(context.Background(), testPool, alice, agentID, contextcap.ScopePerson, ctxcapOrg, "odt:DpJnOpenSender"); err != nil {
+		t.Fatalf("the 1:1 link did not grant its person: %v", err)
+	}
+	ctxcapExpectStatus(t, ctxcapMobile(t, router, http.MethodGet, ctxcapScenePath(agentID, ctxcapDirectScene), alice, nil), http.StatusOK, "alice 1:1 scene via link")
 
-	// No run mints personal links any more; one stored before (single use,
-	// 15 minutes) still redeems by the stored rules until it expires.
+	// A person link stored before 2026-10-02 (single use, 15 minutes) still
+	// redeems by the same rules until it expires.
 	legacyPersonLink := func() string {
 		token, err := contextcap.NewLinkToken()
 		if err != nil {
@@ -296,6 +307,7 @@ func TestContextCapabilitiesLinkMintAndRedeem(t *testing.T) {
 	}
 	personToken := legacyPersonLink()
 	ctxcapExpectStatus(t, redeem(alice, personToken), http.StatusOK, "stored person link redeem")
+	ctxcapExpectStatus(t, redeem(alice, personToken), http.StatusOK, "stored person link reopened by its account")
 	ctxcapExpectStatus(t, redeem(bob, personToken), http.StatusGone, "stored person link reuse")
 	ctxcapExpectStatus(t, redeem(bob, legacyPersonLink()), http.StatusConflict, "stored person link redeemed by another account")
 

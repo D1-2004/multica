@@ -19,26 +19,27 @@ import (
 // scene directory is where the title lives.
 
 const (
-	nativeTitleTTL        = 10 * time.Minute
-	nativeTitleMissTTL    = time.Minute
-	nativeTitleTimeout    = 3 * time.Second
-	nativeTitleCacheLimit = 4096
+	nativeTitleTTL      = 10 * time.Minute
+	nativeTitleMissTTL  = time.Minute
+	nativeTitleTimeout  = 3 * time.Second
+	nativeTTLCacheLimit = 4096
 )
 
-type nativeTitleEntry struct {
+type nativeTTLEntry struct {
 	title   string
 	expires time.Time
 }
 
-// nativeTitleCache keeps recently read titles per process.
-type nativeTitleCache struct {
+// nativeTTLCache keeps recent native lookups (group titles, unresolved
+// senders) per process.
+type nativeTTLCache struct {
 	mu      sync.Mutex
-	entries map[string]nativeTitleEntry
+	entries map[string]nativeTTLEntry
 }
 
-var nativeConversationTitles = &nativeTitleCache{entries: map[string]nativeTitleEntry{}}
+var nativeConversationTitles = &nativeTTLCache{entries: map[string]nativeTTLEntry{}}
 
-func (c *nativeTitleCache) get(key string, now time.Time) (string, bool) {
+func (c *nativeTTLCache) get(key string, now time.Time) (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	entry, ok := c.entries[key]
@@ -48,20 +49,20 @@ func (c *nativeTitleCache) get(key string, now time.Time) (string, bool) {
 	return entry.title, true
 }
 
-func (c *nativeTitleCache) put(key, title string, ttl time.Duration, now time.Time) {
+func (c *nativeTTLCache) put(key, title string, ttl time.Duration, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.entries) >= nativeTitleCacheLimit {
+	if len(c.entries) >= nativeTTLCacheLimit {
 		for k, entry := range c.entries {
 			if !now.Before(entry.expires) {
 				delete(c.entries, k)
 			}
 		}
-		if len(c.entries) >= nativeTitleCacheLimit {
-			c.entries = map[string]nativeTitleEntry{}
+		if len(c.entries) >= nativeTTLCacheLimit {
+			c.entries = map[string]nativeTTLEntry{}
 		}
 	}
-	c.entries[key] = nativeTitleEntry{title: title, expires: now.Add(ttl)}
+	c.entries[key] = nativeTTLEntry{title: title, expires: now.Add(ttl)}
 }
 
 // nativeConversationTitle returns the title of a native group event's
