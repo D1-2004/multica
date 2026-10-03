@@ -374,10 +374,37 @@ func (s *Store) Reset(ctx context.Context, scope Scope) error {
 // Distill is invoked by a background consumer after Host verification commits.
 // Its text assembly is deterministic; no LLM or foreground waiting is involved.
 func (s *Store) Distill(ctx context.Context, scope Scope, run VerifiedRun) (LearningRecord, error) {
-	if !run.Passed || !validText(run.Proof, 2000) || !validText(run.ProofKind, 80) || !validText(run.TaskID, 128) || !validText(run.ExecutionID, 128) || !validText(run.Title, 512) || !validText(run.ActorID, 128) || !validText(run.EvidenceID, 256) || len(run.Details) > 8000 {
+	rec, e, err := verifiedLearning(run)
+	if err != nil {
+		return LearningRecord{}, err
+	}
+	return s.Record(ctx, scope, rec, e)
+}
+
+// DistillTx joins the durable consumer's transaction so the verified learning
+// and the consumption receipt commit together. It requires the Host work-end
+// time, so evidence that predates a namespace reset is rejected under the
+// namespace lock and a replay returns the original (possibly forgotten) record.
+func (s *Store) DistillTx(ctx context.Context, tx pgx.Tx, scope Scope, run VerifiedRun) (LearningRecord, error) {
+	if tx == nil {
+		return LearningRecord{}, ErrInvalidScope
+	}
+	if run.OccurredAt.IsZero() {
 		return LearningRecord{}, ErrUnverified
 	}
-	return s.Record(ctx, scope, LearningRecord{Type: LearningTypeOperational, Key: learningKeyForTask(run.Title, run.TaskID), Insight: taskDistillInsight(run), Confidence: 7}, TrustedEvidence{TaskID: run.TaskID, ExecutionID: run.ExecutionID, SourceID: "execution:" + run.ExecutionID, EvidenceID: run.EvidenceID, ActorID: run.ActorID, VerifiedExecution: true})
+	rec, e, err := verifiedLearning(run)
+	if err != nil {
+		return LearningRecord{}, err
+	}
+	return s.RecordTx(ctx, tx, scope, rec, e)
+}
+
+func verifiedLearning(run VerifiedRun) (LearningRecord, TrustedEvidence, error) {
+	if !run.Passed || !validText(run.Proof, 2000) || !validText(run.ProofKind, 80) || !validText(run.TaskID, 128) || !validText(run.ExecutionID, 128) || !validText(run.Title, 512) || !validText(run.ActorID, 128) || !validText(run.EvidenceID, 256) || len(run.Details) > 8000 {
+		return LearningRecord{}, TrustedEvidence{}, ErrUnverified
+	}
+	return LearningRecord{Type: LearningTypeOperational, Key: learningKeyForTask(run.Title, run.TaskID), Insight: taskDistillInsight(run), Confidence: 7},
+		TrustedEvidence{TaskID: run.TaskID, ExecutionID: run.ExecutionID, SourceID: "execution:" + run.ExecutionID, EvidenceID: run.EvidenceID, ActorID: run.ActorID, OccurredAt: run.OccurredAt, VerifiedExecution: true}, nil
 }
 func normalizeRecord(rec LearningRecord, scope Scope, e TrustedEvidence) (LearningRecord, error) {
 	bad := func(message string) (LearningRecord, error) {

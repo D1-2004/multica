@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const taskDistillInsightDetailClip = 400
@@ -68,9 +69,12 @@ func taskDistillInsight(task VerifiedRun) string {
 }
 
 // VerifiedRun must come from Host-owned verification results, never model arguments.
+// OccurredAt is the Host work-end time of the verified execution. It is the
+// reset fence: retries or late verification never refresh it.
 type VerifiedRun struct {
 	TaskID, ExecutionID, Title, Details, Proof, ProofKind, ActorID, EvidenceID string
 	Passed                                                                     bool
+	OccurredAt                                                                 time.Time
 }
 
 func tailClip(text string, limit int) string {

@@ -192,3 +192,29 @@ The shared-scene layer, stored records and ranking are unchanged. Unknown kinds
 are not treated as dm. Previously frozen group snapshots retain their historical
 input and journal identity. Regression tests cover provider-visible group input,
 scoped explicit lookup, DM first-call answers and historical group replay.
+
+
+## Verified distill transaction and Chinese-aware retrieval (G1)
+
+`DistillTx` lets the durable verified-distill consumer
+(`internal/employeeverification`) write the learning and its consumption
+receipt in one transaction. `VerifiedRun.OccurredAt` carries the Host work-end
+time of the verified Run; it is the reset fence and is never refreshed by
+retries or late verification. Replay identity stays the Host (task, execution)
+pair, so a re-verified Run returns the original (possibly forgotten) record.
+
+`retrieval.go` is a Multica re-implementation (no verbatim code) of the design
+of `internal/team/context_assembler.go`: IDF-weighted distinct-unit overlap
+with a minimum of two units, and a mandatory retrieval block that states what
+was searched when nothing matched. The upstream tokenizer splits on
+non-letters and drops tokens shorter than three bytes, which yields nothing
+usable for unspaced Chinese; here CJK runs become character bigrams (overlap
+units, with particle/function-character filtering) and trigrams (bonus
+weight), and ASCII words keep the three-character floor. `Retrieve` ranks only
+the exact authorized namespace. It is **not yet wired** into `Brief`,
+`Search`, `memory_lookup` or the work packet; tests pin the substring-search
+gap it closes.
+
+```text
+47b6cf75210a73bdc977b34a80637306aaa2a3a653c3e1db5901bd9f0bf7dda7  internal/team/context_assembler.go
+```
