@@ -23,6 +23,16 @@ type employeeCapabilityContext struct {
 	Directory []string
 }
 
+// The foreground talks and reads; the Direct executor acts. A foreground
+// without a tool for something is not evidence that the executor lacks it,
+// so the default for work it cannot do here is dispatch, not refusal.
+const employeeForegroundBoundary = "Foreground boundary: here you reply, read the current window, memory and tasks, read this scene's configuration with scene_config_get, and give the configuration link with describe_capabilities. Everything else runs in a background task through dispatch_task: DWS lookups (contacts, managers, org, calendar, docs, messages beyond this window), skills, connectors, MCP servers, scripts, files and scene configuration changes. When a request needs such work, dispatch it; never answer that you cannot do it, have no record, or lack a tool because this foreground has none. Only a task result can show that something is impossible. Never claim a change or lookup is done before a task result says so."
+
+// Scene changes are made by the executor's config-qwen-tag-scene MCP tools
+// (scene_routine_create and friends), mounted for every task with a current
+// group or 1:1 scene. The foreground hands the request over unchanged.
+const employeeSceneSelfManagement = "Scene self-management is background work you arrange with dispatch_task, not a missing capability: create, change, pause, resume, delete or run now a routine (例行任务/定时任务: a cron schedule at most every 15 minutes, default timezone Asia/Shanghai, or a webhook); add, change or delete scene prompts; switch offered skills or connectors on or off; add, change or remove remote MCP servers. The background executor changes this scene only, with its config-qwen-tag-scene tools; every routine run then executes in the background with this scene's configuration, and the platform posts its start and end messages here. Dispatch such a request with the requester's exact words (what each run does, when it runs, names) in goal and prompt. Never send the requester to an administrator or platform setting instead. Ask briefly before dispatching only when the request lacks what to do or when. Connecting an account or authorizing a connector happens on the configuration page: give the link with describe_capabilities."
+
 // The directory is a configuration projection, never a runtime or authority grant.
 func employeeSceneCapabilities(ctx context.Context, h *Handler, job employeeentry.Job, envelopes []employeeDispatchEnvelope) (employeeCapabilityContext, error) {
 	target, err := employeeSceneConfigTarget(ctx, h, job)
@@ -49,7 +59,8 @@ func employeeSceneCapabilities(ctx context.Context, h *Handler, job employeeentr
 		"For ordinary capability introductions or link-only requests, use this directory and call describe_capabilities on the first model call. Do not call scene_config_get merely for a more accurate introduction; it cannot verify runtime access. Host appends the link and how long it stays valid; never invent a URL or state its lifetime yourself.",
 		"Only use scene_config_get when the user explicitly asks for configuration details (exact switches, stored prompts, or existing routines) not already in context. For explicit configuration questions, preserve exact skill names, switch states, and stored prompt text as requested; answer fully, including when a link is also requested.",
 		"For ordinary introductions, reply like a colleague: normally 1–3 short sentences, not a configuration inventory. Describe useful work, not internal tool names, skill package names, Direct, or configuration fields. Say you can arrange executor work; never claim you can call DWS or shell here. Mention access uncertainty briefly only when material.",
-		"config-qwen-tag-scene supports requested scene prompt/skill/connector/MCP management through dispatch_task. Existing Cron/Webhook settings are configuration only: Employee-triggered execution is unverified; do not advertise or promise it.",
+		employeeForegroundBoundary,
+		employeeSceneSelfManagement,
 	}}
 	catalogLimit := len(out.Directory) + 64
 	add := func(label string) { out.Directory = append(out.Directory, label) }
@@ -162,11 +173,12 @@ func (h *employeeSceneHost) sceneConfiguration(ctx context.Context, tx pgx.Tx) (
 		return "", err
 	}
 	// Read access is a foreground capability; mutations remain on Direct's
-	// existing scene MCP. Do not pretend this read was a routine task.
+	// existing scene MCP. "read_only" in the executor result means a routine
+	// run; here it read as "this scene cannot be changed", so it is dropped.
 	value := result.(map[string]any)
-	value["read_only"] = true
-	value["management_via"] = "dispatch_task / Direct config-qwen-tag-scene"
-	value["runtime_availability"] = "unverified; configuration switches do not prove runtime access"
+	delete(value, "read_only")
+	value["how_to_change"] = "dispatch_task with the requester's exact request: the background executor changes this scene (routines, prompts, offered skill/connector switches, remote MCP servers) with config-qwen-tag-scene. This read changes nothing."
+	value["runtime_availability"] = "skill and connector switches are configuration; access is verified when a background task uses them"
 	raw, err := json.Marshal(value)
 	return string(raw), err
 }
