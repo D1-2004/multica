@@ -95,7 +95,36 @@ func (c *appRuntimeConfig) validateCurrent() error {
 			return fmt.Errorf("Diamond enterprise identity clients: %w", err)
 		}
 	}
+	if _, err := decodeEmployeeWatchdog(c.current().Runtime.EmployeeWatchdog); err != nil {
+		return fmt.Errorf("Diamond %w", err)
+	}
 	return nil
+}
+
+// employeeWatchdog is the live runtime.employee_watchdog; a snapshot that
+// fails to decode never becomes current (validateCurrent rejects it).
+func (c *appRuntimeConfig) employeeWatchdog() service.EmployeeWatchdogConfig {
+	cfg, err := decodeEmployeeWatchdog(c.current().Runtime.EmployeeWatchdog)
+	if err != nil {
+		return service.DefaultEmployeeWatchdogConfig()
+	}
+	return cfg
+}
+
+func decodeEmployeeWatchdog(raw json.RawMessage) (service.EmployeeWatchdogConfig, error) {
+	cfg := service.DefaultEmployeeWatchdogConfig()
+	if len(strings.TrimSpace(string(raw))) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return cfg, nil
+	}
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
+		return service.EmployeeWatchdogConfig{}, fmt.Errorf("runtime.employee_watchdog: %w", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return service.EmployeeWatchdogConfig{}, fmt.Errorf("runtime.employee_watchdog: %w", err)
+	}
+	return cfg, nil
 }
 
 func (c *appRuntimeConfig) validateSnapshot(raw runtimeconfig.Config) error {

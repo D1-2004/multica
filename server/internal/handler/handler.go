@@ -264,7 +264,9 @@ type Handler struct {
 	EventRouteReady  func(context.Context) (bool, error)
 	// EmployeeLoopReady checks whether this agent can admit new Employee work.
 	// Nil keeps the new mode unavailable while its consumer is not installed.
-	EmployeeLoopReady               func(context.Context, pgtype.UUID, pgtype.UUID) error
+	EmployeeLoopReady func(context.Context, pgtype.UUID, pgtype.UUID) error
+	// EmployeeWatchdog records stall episodes and fences their notices at send.
+	EmployeeWatchdog                *service.EmployeeWatchdog
 	EmployeeSceneWorker             *EmployeeSceneWorker
 	EmployeeMemory                  *employeememory.Store
 	EmployeeRunNoticeArtifacts      func(context.Context, employeetask.Scope, string, string) ([]EmployeeTaskArtifactRef, error)
