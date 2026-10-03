@@ -17,6 +17,12 @@ const (
 	LearningTypeArchitecture LearningType = "architecture"
 	LearningTypeTool         LearningType = "tool"
 	LearningTypeOperational  LearningType = "operational"
+	// Scene-shared memory types. They are validated only on write, so an older
+	// binary that reads them simply displays the stored value.
+	LearningTypeFact     LearningType = "fact"
+	LearningTypeDecision LearningType = "decision"
+	// LearningTypeOpenItem is proposed only by the Host flush writer.
+	LearningTypeOpenItem LearningType = "open_item"
 )
 
 func ValidLearningTypes() []LearningType {
@@ -27,6 +33,9 @@ func ValidLearningTypes() []LearningType {
 		LearningTypeArchitecture,
 		LearningTypeTool,
 		LearningTypeOperational,
+		LearningTypeFact,
+		LearningTypeDecision,
+		LearningTypeOpenItem,
 	}
 }
 
@@ -76,12 +85,27 @@ type LearningRecord struct {
 	CreatedBy          string          `json:"created_by"`
 	CreatedAt          time.Time       `json:"created_at"`
 	Supersedes         string          `json:"supersedes,omitempty"`
+	// Attribution of a captured statement. All of it is filled by the Host from
+	// frozen evidence, never from model arguments; older binaries ignore it.
+	Subject       string        `json:"subject,omitempty"`
+	SpeakerRef    string        `json:"speaker_ref,omitempty"`
+	SpeakerName   string        `json:"speaker_name,omitempty"`
+	SaidAt        time.Time     `json:"said_at,omitempty,omitzero"`
+	CaptureOrigin CaptureOrigin `json:"capture_origin,omitempty"`
+	// ConflictsWith names an active scene record with the same type and key
+	// written by another author. Both stay active as conflicting candidates.
+	ConflictsWith string `json:"conflicts_with,omitempty"`
 }
 
 func dedupeLearnings(records []LearningRecord) []LearningRecord {
 	byKey := make(map[string]LearningRecord, len(records))
 	for _, rec := range records {
 		key := rec.Scope + "|" + string(rec.Type) + "|" + rec.Key
+		if rec.Scope == string(ScopeScene) {
+			// Cross-author records with one key are conflict candidates, not
+			// versions of each other: keep one current record per author.
+			key += "|" + rec.CreatedBy
+		}
 		existing, ok := byKey[key]
 		if !ok || rec.CreatedAt.After(existing.CreatedAt) || (rec.CreatedAt.Equal(existing.CreatedAt) && rec.ID > existing.ID) {
 			byKey[key] = rec

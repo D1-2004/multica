@@ -76,11 +76,16 @@ func (s *Store) ForgetPrivateTx(ctx context.Context, tx pgx.Tx, scope Scope, id 
 // Late/equal evidence receives an inactive receipt rather than replacing newer
 // memory; its replay identity stays consumed even if the proposal changes keys.
 // Background Record/RecordTx callers retain their existing correction policy.
+// HumanStated is for a requester's own preference quoted from their own outer
+// message; the Host decides it, and the record becomes user-stated and trusted.
 func (s *Store) RecordPrivateObservationTx(ctx context.Context, tx pgx.Tx, scope Scope, rec LearningRecord, e TrustedEvidence) (LearningRecord, error) {
 	if tx == nil || scope.Kind != ScopePrivate {
 		return LearningRecord{}, ErrInvalidScope
 	}
-	if e.HumanStated || e.VerifiedExecution || e.OccurredAt.IsZero() || rec.Source != LearningSourceObserved {
+	if e.HumanStated && (rec.Type != LearningTypePreference || e.ActorID != scope.PrincipalID) {
+		return LearningRecord{}, ErrInvalidLearning
+	}
+	if e.VerifiedExecution || e.OccurredAt.IsZero() || rec.Source != LearningSourceObserved {
 		return LearningRecord{}, ErrInvalidLearning
 	}
 	normalized, err := normalizeRecord(rec, scope, e)
