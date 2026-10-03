@@ -611,8 +611,8 @@ func TestOpencodeProcessEventsHappyPath(t *testing.T) {
 	if len(msgs) != 6 {
 		t.Fatalf("expected 6 messages, got %d: %+v", len(msgs), msgs)
 	}
-	if msgs[0].Type != MessageStatus || msgs[0].Status != "running" {
-		t.Errorf("msg[0]: got %+v, want status=running", msgs[0])
+	if msgs[0].Type != MessageStatus || msgs[0].Status != "running" || msgs[0].SessionID != "ses_happy" {
+		t.Errorf("msg[0]: got %+v, want status=running carrying the session for the mid-flight pin", msgs[0])
 	}
 	if msgs[1].Type != MessageText || msgs[1].Content != "Analyzing the issue..." {
 		t.Errorf("msg[1]: got %+v", msgs[1])

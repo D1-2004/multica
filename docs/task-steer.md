@@ -156,6 +156,14 @@ Entry points:
   answer to the original request.
   The tool was introduced at marker 7; the combined current-task protocol now requires `[employee-loop:9]`.
 
+Session continuity needs the provider's resume pointer pinned while the run is
+still active: the daemon pins it when a backend reveals the session on a
+running status. Claude and Codex always did; Pi and OpenCode do since
+`68c2d6a213` (runtime-events). FC images
+built before that commit give a steer successor no prior session or workdir,
+so it restarts from the full packet with the corrections (verified on pre with
+FC Pi, 2026-10-03).
+
 FC sandboxes need no special handling: the post-commit terminal observer runs
 the task-owned stop collection, the acknowledgement launches the successor, and
 scene, Issue and Chat scopes reuse the warm sandbox. An unscoped Direct sandbox
