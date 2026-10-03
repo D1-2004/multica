@@ -529,6 +529,38 @@ func TestEmployeeRoutinePauseKeepsAcceptedWorkAndResumeRunsNext(t *testing.T) {
 	}
 }
 
+// CRON-03: a slot crossed while paused is not replayed when the routine is
+// resumed inside the scheduler's lateness window; the next slot runs.
+func TestEmployeeRoutineResumeDoesNotReplayTheCrossedSlot(t *testing.T) {
+	f := newEmployeeRoutineFixture(t)
+	ctx := context.Background()
+	version := func(status string, at time.Time) {
+		t.Helper()
+		if _, err := f.pool.Exec(ctx, `INSERT INTO autopilot_rule_version(autopilot_id,workspace_id,published_by_type,config_summary,created_at)
+ VALUES($1,$2,'member',jsonb_build_object('status',$3::text),$4)`, f.ap.ID, f.ap.WorkspaceID, status, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	version("active", f.slot(0).Add(-time.Hour))
+	first := f.fire(t, f.slot(0))
+	f.finish(t, f.occurrence(t, first.ID).QueueID, "completed")
+	// Paused after slot 0, resumed three minutes after slot 1 passed: the
+	// autopilot is active again when the late slot-1 dispatch arrives.
+	version("paused", f.slot(0).Add(time.Minute))
+	version("active", f.slot(1).Add(3*time.Minute))
+	crossed := f.fire(t, f.slot(1))
+	if crossed.Status != "skipped" || crossed.FailureReason.String != "routine was paused at its planned time" {
+		t.Fatalf("crossed slot = %+v", crossed)
+	}
+	if _, _, tasks, queues := f.slotRows(t, f.slot(1)); tasks != 0 || queues != 0 {
+		t.Fatal("crossed slot created work", tasks, queues)
+	}
+	next := f.fire(t, f.slot(2))
+	if o := f.occurrence(t, next.ID); next.Status != "running" || o.State != "accepted" {
+		t.Fatalf("next slot after resume = %+v", o)
+	}
+}
+
 func TestEmployeeRoutineTimezoneBoundaryKeepsCanonicalIdentity(t *testing.T) {
 	f := newEmployeeRoutineFixture(t)
 	// 2026-10-03T16:00Z is midnight of 2026-10-04 in Asia/Shanghai.

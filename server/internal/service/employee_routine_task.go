@@ -422,6 +422,22 @@ func (s *AutopilotService) verifyRoutineOccurrence(ctx context.Context, tx pgx.T
 	if ap.Status != "active" && !fire.webhook() {
 		return adm, skipRoutine(dispatch.ReasonTargetUnavailable, "routine is paused"), nil
 	}
+	// A slot whose planned time fell while the routine was paused stays
+	// unrun: the scheduler still dispatches a slot up to five minutes late,
+	// so a resume inside that window must not replay the crossed slot. The
+	// rule versions record every pause and resume with its time.
+	if fire.scheduled() {
+		var status string
+		err := tx.QueryRow(ctx, `SELECT COALESCE(config_summary->>'status','') FROM autopilot_rule_version
+ WHERE workspace_id=$1 AND autopilot_id=$2 AND created_at <= $3 ORDER BY created_at DESC, id DESC LIMIT 1`,
+			ap.WorkspaceID, ap.ID, fire.PlannedAt.UTC()).Scan(&status)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return adm, nil, fmt.Errorf("employee routine: status at planned time: %w", err)
+		}
+		if err == nil && status != "" && status != "active" {
+			return adm, skipRoutine(dispatch.ReasonTargetUnavailable, "routine was paused at its planned time"), nil
+		}
+	}
 	// The routine row and its autopilot must describe the same binding; any
 	// disagreement is a forged or corrupted source and never runs.
 	if ap.ExecutionMode != "run_only" || ap.AssigneeType != "agent" || util.UUIDToString(ap.AssigneeID) != routine.AgentID ||
