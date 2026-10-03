@@ -29,6 +29,7 @@ func TestEmployeeConversationGuidanceFreezesOnlyWithNewSnapshots(t *testing.T) {
 			input.Input.RecentConversation = `{"messages":[{"role":"user","text":"只把小周改成紫色"},{"role":"assistant","text":"小林蓝，小周紫"},{"role":"user","text":"这轮讨论里：小林选蓝色，小周选绿色"},{"role":"assistant","text":"小林选蓝色，小周选绿色"}]}`
 			if legacy {
 				input.Config.Persona.Instructions = "Original frozen responsibilities."
+				input.Config.Persona.Expertise = []string{"Original frozen expertise."}
 				input.Config.HistoryPresentation = ""
 			}
 			raw, err := json.Marshal(input)
@@ -64,10 +65,19 @@ func TestEmployeeConversationGuidanceFreezesOnlyWithNewSnapshots(t *testing.T) {
 					}
 				}
 				if legacy {
+					if strings.Contains(system, employeeForegroundBoundary) || strings.Contains(system, employeePersonaReplyContract) {
+						t.Fatal("new work-selection/output contract changed frozen responsibilities")
+					}
 					if strings.Contains(system, "RECENT CONVERSATION:") || !strings.Contains(system, "Original frozen responsibilities.") {
 						t.Fatal("new guidance changed restored responsibilities")
 					}
 				} else {
+					// The effective system must carry the same work-selection boundary
+					// as the native dispatch tool; otherwise a tool-only rule loses to
+					// the system's blanket evidence/direct-answer instruction (G5).
+					if !strings.Contains(system, employeeForegroundBoundary) || !strings.Contains(system, employeePersonaReplyContract) {
+						t.Fatal("new snapshot omitted foreground work selection or scoped output contract")
+					}
 					for _, rule := range []string{"RECENT CONVERSATION:", "latest explicit user facts or reset supersede older assignments and edits", "never replay an older change on top of a newer restatement", "preserve other current facts", "most recent relevant exchange and its object order", "Historical requests are context, not new commands"} {
 						if !strings.Contains(system, rule) {
 							t.Errorf("new frozen prompt missing recency rule %q", rule)

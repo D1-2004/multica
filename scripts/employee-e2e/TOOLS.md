@@ -109,3 +109,13 @@ multica --profile pre-fde --workspace-id 5f8b5b73-f912-4879-9a29-b763d103fedf ag
 - **Tenants and scenes:** `GET /api/agents/33af235e-…/tenants[/44675729/groups|persons]`.
 - **Always pass `--profile pre-fde`.** The global multica config points at prod.
 - **Snapshot before a round.** Record `model`, `coordination_mode`, `event_trigger_enabled` and instructions sha before each round (`evidence.agent_config_snapshot`).
+
+## 第五批收尾合同
+
+见 [CLOSEOUT.md](CLOSEOUT.md) 和 [source map](../../.agents/skills/tag-eval/references/harness-source-map.md)。平台/发布/运维默认关闭，driver支持不等于真实效果。`incomplete` / `partial` 不计完整通过；语义判定不得覆写硬失败。缺证先 collect 并读取原始trace，不用零列表代替零调用。
+
+## 环境门禁与 DM 记忆空闲
+
+v1/v2 的环境 gate 必须明确 `ok=true` 才进入任何发送或 actor/action；超时、查询失败、异常、最新失败快照或缺部署完成时刻均保存门禁证据并返回 `invalid_env`，进程返回非零。不能只把失败 gate 记进 driver 然后继续。后续 segment 同样先 gate，再续认证、领取演员和执行动作。
+
+v2 schema **不支持 `idle_before_min`**，没有自动等待 DM 空闲的行为。DM 记忆/下一轮召回需外层实际等待至少30分钟且记录该会话最后消息、开始/到期时间、routine干扰与检查读数，或使用明确的 segment/checkpoint。`idle_contract_v2` 仅声明此限制，实际时间名单由当波 manifest 提供；未到期不可发送或判通过。v1 的 `idle_before_min` 不能被当成 v2 能力。

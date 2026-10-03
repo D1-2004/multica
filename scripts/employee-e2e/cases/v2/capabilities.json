@@ -1,18 +1,53 @@
 {
   "schema": "el2e.capabilities.v1",
-  "note": "Default capability switches for cases-v2. harness: P0 entries are forced on by the code that implements them; the rest are P1/P2 and stay off until implemented. platform/release/ops reflect 预发 and must be flipped per run with `--capabilities name=on` once proven (e.g. G_memory after batch 5). A check whose `requires` is not met is graded vacuous; a case whose release/ops requirement is off is not run.",
+  "note": "Harness capabilities describe callable, offline-checked driver support only; they do not prove platform ingestion or delivery. recall/react remain out of scope. All platform/release/ops defaults are false and must be backed by a per-run manifest before override.",
   "harness": {
-    "var_sets": true, "quote_reply": true, "deap_multi": true, "grader_v2": true,
-    "memory_reset": false, "pg_read": false, "evidence_v2": false, "segments": false, "file_send": false,
-    "file_download": false, "recall": false, "react": false, "forward": false, "combine_forward": false,
-    "at_all": false, "setup_group": false, "burst": false, "negative_observe": false, "webhook": false,
-    "aitable_insert": false, "config_snapshot": false
+    "var_sets": true,
+    "quote_reply": true,
+    "deap_multi": true,
+    "grader_v2": true,
+    "memory_reset": true,
+    "pg_read": true,
+    "evidence_v2": true,
+    "segments": true,
+    "file_send": true,
+    "file_download": true,
+    "recall": false,
+    "react": false,
+    "forward": true,
+    "combine_forward": true,
+    "at_all": true,
+    "setup_group": true,
+    "burst": true,
+    "negative_observe": true,
+    "webhook": false,
+    "aitable_insert": false,
+    "config_snapshot": false
   },
   "platform": {
-    "group_all_delivery": false, "event_trigger": false, "at_all_probe": false, "resource_followup": false,
-    "vision": false, "recall_event": false, "forward_mapping": false, "reaction_event": false,
-    "cross_scene_self": false, "third_party_at": false, "person_memory": false, "member_event": false
+    "group_all_delivery": false,
+    "event_trigger": false,
+    "at_all_probe": false,
+    "resource_followup": false,
+    "vision": false,
+    "recall_event": false,
+    "forward_mapping": false,
+    "reaction_event": false,
+    "cross_scene_self": false,
+    "third_party_at": false,
+    "person_memory": false,
+    "member_event": false
   },
-  "release": {"G_memory": false, "marker13": false, "B3_decision": false, "F2_webhook": false},
-  "ops": {"probe_first": false, "routine_pause": false, "watchdog_override": false, "deploy_freeze": false}
+  "release": {
+    "G_memory": false,
+    "marker13": false,
+    "B3_decision": false,
+    "F2_webhook": false
+  },
+  "ops": {
+    "probe_first": false,
+    "routine_pause": false,
+    "watchdog_override": false,
+    "deploy_freeze": false
+  }
 }

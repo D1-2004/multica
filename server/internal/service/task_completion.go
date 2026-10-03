@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -298,6 +299,48 @@ type failedTaskFinalization struct {
 	ExecutionUpdateReady bool
 }
 
+// retryChildForLockedTask decides one parent's logical retry operation. Every
+// caller holds the parent row lock after its workspace/chat fences; overlays
+// are prepared outside the transaction. Existing children are replay results,
+// never another insertion or notification.
+func retryChildForLockedTask(ctx context.Context, qtx *db.Queries, tx pgx.Tx, parent db.AgentTaskQueue, overlay runtimeMCPOverlayData) (*db.AgentTaskQueue, bool, error) {
+	if parent.Status != "failed" {
+		return nil, false, nil
+	}
+	child, err := qtx.GetRetryChildByParent(ctx, parent.ID)
+	if err == nil {
+		if err := observeOrDeferEmployeeIssueRetryInTx(ctx, tx, child); err != nil {
+			return nil, false, err
+		}
+		return &child, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, err
+	}
+	reason := parent.FailureReason.String
+	if !retryEligible(reason, parent) {
+		return nil, false, nil
+	}
+	var fireAt pgtype.Timestamptz
+	if delay := retryDelayForAttempt(reason, parent.Attempt); delay > 0 {
+		fireAt = pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true}
+	}
+	child, err = qtx.CreateRetryTask(ctx, db.CreateRetryTaskParams{
+		ID:                   parent.ID,
+		FireAt:               fireAt,
+		MaxAttempts:          pgtype.Int4{Int32: retryAttemptCeiling(reason, parent.MaxAttempts), Valid: true},
+		RuntimeMcpOverlay:    overlay.Overlay,
+		RuntimeConnectedApps: overlay.ConnectedApps,
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("create retry task: %w", err)
+	}
+	if err := observeOrDeferEmployeeIssueRetryInTx(ctx, tx, child); err != nil {
+		return nil, false, err
+	}
+	return &child, true, nil
+}
+
 func (s *TaskService) finalizeFailedTask(
 	ctx context.Context,
 	taskID pgtype.UUID,
@@ -333,36 +376,16 @@ func (s *TaskService) finalizeFailedTask(
 			return lockErr
 		}
 		result.Task = locked
+		reason = locked.FailureReason.String
 		if locked.Status != "failed" {
 			return nil
 		}
-		child, childErr := qtx.GetRetryChildByParent(ctx, locked.ID)
-		if childErr == nil {
-			if err := observeOrDeferEmployeeIssueRetryInTx(ctx, terminalTx, child); err != nil {
-				return err
-			}
-			result.Retry = &child
-			return nil
+		child, created, retryErr := retryChildForLockedTask(ctx, qtx, terminalTx, locked, retryOverlay)
+		if retryErr != nil {
+			return retryErr
 		}
-		if !errors.Is(childErr, pgx.ErrNoRows) {
-			return childErr
-		}
-
-		reason = locked.FailureReason.String
-		if retryEligible(reason, locked) {
-			child, createErr := qtx.CreateRetryTask(ctx, db.CreateRetryTaskParams{
-				ID:                   locked.ID,
-				RuntimeMcpOverlay:    retryOverlay.Overlay,
-				RuntimeConnectedApps: retryOverlay.ConnectedApps,
-			})
-			if createErr != nil {
-				return fmt.Errorf("create retry task: %w", createErr)
-			}
-			if err := observeOrDeferEmployeeIssueRetryInTx(ctx, terminalTx, child); err != nil {
-				return err
-			}
-			result.Retry = &child
-			result.RetryCreated = true
+		if child != nil {
+			result.Retry, result.RetryCreated = child, created
 			return nil
 		}
 		if locked.ChatSessionID.Valid {
@@ -392,7 +415,7 @@ func (s *TaskService) finalizeFailedTask(
 	if err != nil {
 		return failedTaskFinalization{}, err
 	}
-	if result.RetryCreated && result.Retry != nil {
+	if result.RetryCreated && result.Retry != nil && result.Retry.Status == "queued" {
 		slog.Info("task auto-retry enqueued",
 			"parent_task_id", util.UUIDToString(result.Task.ID),
 			"child_task_id", util.UUIDToString(result.Retry.ID),

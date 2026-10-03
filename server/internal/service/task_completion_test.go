@@ -663,6 +663,89 @@ func TestFailTaskDefersCompletionUntilRetryChainTerminates(t *testing.T) {
 	}
 }
 
+func TestRetryProducersPreserveDeferredBudgetAndReplay(t *testing.T) {
+	for _, producer := range []string{"fail", "recovery", "reconciler"} {
+		t.Run(producer, func(t *testing.T) {
+			ctx := context.Background()
+			pool := newTaskClaimRacePool(t)
+			agentID := createClaimCapacityFixture(t, ctx, pool)
+			status := "failed"
+			if producer == "fail" {
+				status = "running"
+			}
+			var parentID pgtype.UUID
+			if err := pool.QueryRow(ctx, `UPDATE agent_task_queue SET status=$2, failure_reason='agent_error.provider_network',
+				attempt=2,max_attempts=2,completed_at=now(),session_id='retry-session',work_dir='/tmp/retry-fixture',
+				context=$3::jsonb WHERE id=(SELECT id FROM agent_task_queue WHERE agent_id=$1 ORDER BY created_at LIMIT 1) RETURNING id`,
+				agentID, status, `{"completion_callback":{"url":"/api/v1/dispatch-tasks/retry-budget/execution-result","target":"`+taskCompletionTestTarget+`"}}`).Scan(&parentID); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				_, _ = pool.Exec(context.Background(), `DELETE FROM task_completion_outbox WHERE root_task_id=$1`, parentID)
+			})
+			wakeups := &safeWakeupRecorder{}
+			svc := NewTaskService(db.New(pool), pool, nil, events.New(), wakeups)
+			parent, err := svc.Queries.GetAgentTask(ctx, parentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := time.Now()
+			switch producer {
+			case "fail":
+				_, err = svc.FailTask(ctx, parentID, "connection closed", "retry-session", "/tmp/retry-fixture", "agent_error.provider_network", false, "")
+			case "recovery":
+				_, err = svc.MaybeRetryFailedTask(ctx, parent)
+			case "reconciler":
+				_, err = svc.ReconcileTaskCompletions(ctx, taskCompletionTestTarget, 100)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			child, err := svc.Queries.GetRetryChildByParent(ctx, parentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if child.Status != "deferred" || child.Attempt != 3 || child.MaxAttempts != 3 || !child.FireAt.Valid || child.FireAt.Time.Before(before.Add(5*time.Second)) {
+				t.Fatalf("retry lost budget/backoff: status=%s attempt=%d max=%d fire_at=%v", child.Status, child.Attempt, child.MaxAttempts, child.FireAt)
+			}
+			if child.SessionID.String != "retry-session" || child.WorkDir.String != "/tmp/retry-fixture" {
+				t.Fatalf("retry lost resumable execution: %+v", child)
+			}
+			// Use the stale running snapshot for fail: recovery must re-read the row.
+			replay, err := svc.MaybeRetryFailedTask(ctx, parent)
+			if err != nil || replay == nil || replay.ID != child.ID || replay.FireAt != child.FireAt {
+				t.Fatalf("deferred retry replay changed identity/backoff: %+v, %v", replay, err)
+			}
+			if wakeups.count() != 0 {
+				t.Fatalf("deferred retry/replay woke the runtime %d times", wakeups.count())
+			}
+		})
+	}
+}
+
+func TestRetryRecoveryUsesCurrentParentState(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	agentID := createClaimCapacityFixture(t, ctx, pool)
+	var parentID pgtype.UUID
+	if err := pool.QueryRow(ctx, `UPDATE agent_task_queue SET status='failed',failure_reason='timeout',attempt=1,max_attempts=2
+		WHERE id=(SELECT id FROM agent_task_queue WHERE agent_id=$1 ORDER BY created_at LIMIT 1) RETURNING id`, agentID).Scan(&parentID); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewTaskService(db.New(pool), pool, nil, events.New())
+	stale, err := svc.Queries.GetAgentTask(ctx, parentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE agent_task_queue SET status='cancelled' WHERE id=$1`, parentID); err != nil {
+		t.Fatal(err)
+	}
+	child, err := svc.MaybeRetryFailedTask(ctx, stale)
+	if err != nil || child != nil {
+		t.Fatalf("stale failed snapshot retried a stopped parent: %+v, %v", child, err)
+	}
+}
+
 func TestFailedTaskFinalizationSerializesRetryAndReconciler(t *testing.T) {
 	ctx := context.Background()
 	pool := newTaskClaimRacePool(t)
@@ -688,7 +771,8 @@ func TestFailedTaskFinalizationSerializesRetryAndReconciler(t *testing.T) {
 		pool.Exec(context.Background(), `DELETE FROM task_completion_outbox WHERE root_task_id = $1`, rootTaskID)
 	})
 
-	svc := NewTaskService(db.New(pool), pool, nil, events.New())
+	wakeups := &safeWakeupRecorder{}
+	svc := NewTaskService(db.New(pool), pool, nil, events.New(), wakeups)
 	parent, err := svc.Queries.GetAgentTask(ctx, util.MustParseUUID(rootTaskID))
 	if err != nil {
 		t.Fatal(err)
@@ -736,6 +820,19 @@ func TestFailedTaskFinalizationSerializesRetryAndReconciler(t *testing.T) {
 	}
 	if childCount != 1 || outboxCount != 0 {
 		t.Fatalf("retry decision created children=%d outbox=%d", childCount, outboxCount)
+	}
+	if wakeups.count() != 1 {
+		t.Fatalf("retry wakeups = %d, want one", wakeups.count())
+	}
+	replayed, err := svc.MaybeRetryFailedTask(ctx, parent)
+	if err != nil || replayed == nil || util.UUIDToString(replayed.ID) != childTaskID {
+		t.Fatalf("retry replay = %+v, %v; want existing child %s", replayed, err, childTaskID)
+	}
+	if _, err := svc.ReconcileTaskCompletions(ctx, taskCompletionTestTarget, 100); err != nil {
+		t.Fatal(err)
+	}
+	if wakeups.count() != 1 {
+		t.Fatalf("replay emitted another wakeup: %d", wakeups.count())
 	}
 
 	if _, err := pool.Exec(ctx, `

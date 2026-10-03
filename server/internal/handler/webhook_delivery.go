@@ -64,7 +64,7 @@ func slimDeliveryToResponse(d db.ListWebhookDeliveriesByAutopilotRow) WebhookDel
 		DedupeKey:        textToPtr(d.DedupeKey),
 		DedupeSource:     textToPtr(d.DedupeSource),
 		SignatureStatus:  d.SignatureStatus,
-		Status:           d.Status,
+		Status:           publicWebhookDeliveryStatus(d.Status),
 		AttemptCount:     d.AttemptCount,
 		DispatchAttempts: d.DispatchAttempts,
 		AvailableAt:      timestampToString(d.AvailableAt),
@@ -103,7 +103,7 @@ func deliveryToResponse(d db.WebhookDelivery, detail bool) WebhookDeliveryRespon
 		DedupeKey:        textToPtr(d.DedupeKey),
 		DedupeSource:     textToPtr(d.DedupeSource),
 		SignatureStatus:  d.SignatureStatus,
-		Status:           d.Status,
+		Status:           publicWebhookDeliveryStatus(d.Status),
 		AttemptCount:     d.AttemptCount,
 		DispatchAttempts: d.DispatchAttempts,
 		AvailableAt:      timestampToString(d.AvailableAt),
@@ -418,4 +418,12 @@ func headersFromSelected(raw []byte) http.Header {
 		out.Set(header, s)
 	}
 	return out
+}
+
+// Queue isolation is internal; installed clients keep the existing status enum.
+func publicWebhookDeliveryStatus(status string) string {
+	if status == deliveryStatusFrozenQueued {
+		return deliveryStatusQueued
+	}
+	return status
 }

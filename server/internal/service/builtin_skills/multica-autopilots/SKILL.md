@@ -25,6 +25,8 @@ An autopilot is not an agent. It is a rule that dispatches work to an agent, or 
 
 The chain is: trigger fires (`schedule`, `webhook`, `dingtalk_message`, or `manual`) -> `autopilot_run` row -> `execution_mode` decides output -> assignee readiness check -> issue/task execution -> run status sync. Webhooks have a durable admission step in front: HTTP ingress stores a queued `webhook_delivery`, synchronously creates or reuses its idempotent run, and returns `200` with `status=accepted|skipped` plus `run_id`; a database-leased worker then resumes accepted runs and owns recoverable issue/task dispatch.
 
+During a rolling upgrade, authenticated webhook ingress returns `503` with `Retry-After` until every live server supports the frozen-source reader. The provider can retry the same event ID after the readers are ready. Frozen deliveries use an isolated internal queue; Deliveries API continues to show `queued`. A rollback must retain a compatible consumer or safely hold that queue, rather than handing frozen sources to an older worker.
+
 Execution modes:
 
 - `create_issue` creates a Multica issue, making the run visible as issue state.

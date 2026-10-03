@@ -112,7 +112,7 @@ const claimQueuedWebhookDelivery = `-- name: ClaimQueuedWebhookDelivery :one
 WITH candidate AS (
     SELECT id
     FROM webhook_delivery
-    WHERE status = 'queued'
+    WHERE status IN ('queued', 'queued_frozen')
       AND available_at <= now()
       AND (lease_expires_at IS NULL OR lease_expires_at <= now())
     ORDER BY available_at, created_at
@@ -177,7 +177,7 @@ SET status = $3,
     last_attempt_at = now()
 WHERE id = $1
   AND lease_token = $2
-  AND status = 'queued'
+  AND status IN ('queued', 'queued_frozen')
 RETURNING id, workspace_id, autopilot_id, trigger_id, provider, event, dedupe_key, dedupe_source, signature_status, status, attempt_count, selected_headers, content_type, raw_body, response_status, response_body, autopilot_run_id, replayed_from_delivery_id, error, received_at, last_attempt_at, created_at, available_at, lease_token, lease_expires_at, dispatch_attempts
 `
 
@@ -321,7 +321,7 @@ SET available_at = $3,
     lease_expires_at = NULL
 WHERE id = $1
   AND lease_token = $2
-  AND status = 'queued'
+  AND status IN ('queued', 'queued_frozen')
 RETURNING id, workspace_id, autopilot_id, trigger_id, provider, event, dedupe_key, dedupe_source, signature_status, status, attempt_count, selected_headers, content_type, raw_body, response_status, response_body, autopilot_run_id, replayed_from_delivery_id, error, received_at, last_attempt_at, created_at, available_at, lease_token, lease_expires_at, dispatch_attempts
 `
 
@@ -617,7 +617,7 @@ SET available_at = $3,
     last_attempt_at = now()
 WHERE id = $1
   AND lease_token = $2
-  AND status = 'queued'
+  AND status IN ('queued', 'queued_frozen')
 RETURNING id, workspace_id, autopilot_id, trigger_id, provider, event, dedupe_key, dedupe_source, signature_status, status, attempt_count, selected_headers, content_type, raw_body, response_status, response_body, autopilot_run_id, replayed_from_delivery_id, error, received_at, last_attempt_at, created_at, available_at, lease_token, lease_expires_at, dispatch_attempts
 `
 

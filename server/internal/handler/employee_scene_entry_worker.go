@@ -48,7 +48,10 @@ import (
 // occurrences are admitted only when every live replica has 15. Memory
 // snapshot fields (brief manifest, transcript refs, memory tools v2) stay on
 // their own [employee-memory:N] markers and the shared v1 history validator.
-const EmployeeLoopReplicaMarker = "[employee-loop:15]"
+// Marker 16 adds cancel_collection to newly frozen native tool tables.
+// Exact-marker mixed deployments pause admission/recovery until every replica
+// is upgraded; the new reader resumes older snapshots without rewriting tools.
+const EmployeeLoopReplicaMarker = "[employee-loop:16]"
 
 // employeePersistedRetryLimit bounds retries of a frozen command that fails
 // its own scope checks. The input cannot change, so retrying forever only

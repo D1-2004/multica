@@ -14,6 +14,9 @@ Everything lives in `scripts/employee-e2e/`:
 - `README.md` explains the harness.
 - `ROLES.md` says who plays whom.
 - `TOOLS.md` lists commands and gotchas.
+- `CLOSEOUT.md` fixes the fifth-batch capability boundaries and explicit default dry-run list.
+- `references/harness-source-map.md` maps each driver/grader capability to its source and evidence limits.
+- For continuation work, follow `docs/employee-delivery-workflow.md` and the current run manifest; historical actor/runtime/revision values here are not live facts.
 
 The cases are `cases/v2/*.json` (88 cases, read `cases/v2/SUITE.md`), `cases/golden20.{json,md}` and `cases/memory/`.
 
@@ -44,7 +47,7 @@ Keep briefs narrow. Do not re-run a case that is already verified. Hand off in 3
 ## 2. Pick cases
 
 - `e2e.py v2 dry-run [--capabilities name=on,…]` lists what is runnable. It reports `runnable`, `runnable_partial` (some checks vacuous), `waiting_ops` / `waiting_release`, and `blocked_harness` (P1/P2 harness features).
-- Turn on capabilities only for what is actually true on 预发 now. For example `G_memory=on` after the memory batch is deployed, and `routine_pause=on` after pausing routine e02d1d7b.
+- Harness switches follow registered driver support, not platform proof. recall/react remain excluded, including their preserved draft functions. Turn on platform/release/ops capabilities only for what is actually true on 预发 now. For example `G_memory=on` after the memory batch is deployed, and `routine_pause=on` after pausing routine e02d1d7b.
 - Run one case at a time per conversation. EmployeeLoop reads the scene's recent history.
 - Different conversations may run in parallel.
 
@@ -59,6 +62,7 @@ python3 scripts/employee-e2e/e2e.py v2 grade --run-id <R> [--baseline <R0>]
 - `invalid_env` (restart, deploy or wrong gateway in the window) means rerun the case. It is never pass or fail.
 - `harness_error` is a harness defect; fix the harness, do not grade the case.
 - `needs_review` means the hard checks passed. Judge the case's `semantic` rubric. Write `<R>/judgements.json` entries (`"<case>.a<N>": {verdict, rationale, evidence:[trace ids, message ids]}`).
+- `incomplete` is missing required evidence; `partial` is semantic success with vacuous/platform/pending checks or unproven restart windows. Neither counts as a full pass. A judgement cannot override a hard failure or missing evidence.
 - Send each verdict to Codex for an independent review before reporting it.
 
 ## 4. Analyse failures

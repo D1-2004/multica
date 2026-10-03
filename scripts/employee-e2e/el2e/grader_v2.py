@@ -117,22 +117,52 @@ def text_check(check: dict[str, Any], msgs: list[dict[str, Any]], ctx: dict[str,
         {"predicate": p, "status": s, "detail": d} for p, s, d in subs]})
 
 
-def evidence_check_v2(check: dict[str, Any], ev: dict[str, Any]) -> dict[str, Any]:
+def _step_wakes(loops: list[dict[str, Any]], steps: list[str]) -> list[dict[str, Any]]:
+    return [t for t in loops if set(steps) & set(t.get("matched_steps") or [])]
+
+
+def _executed(wakes: list[dict[str, Any]], names: set[str] | None = None) -> list[str]:
+    """Tools the Host executed (TOOL observations), not merely proposed by the model."""
+    out = []
+    for trace in wakes:
+        full = trace.get("tools_full") or []
+        actual = [tool["name"] for tool in full if tool.get("level") != "ERROR"] if full else trace.get("tools") or []
+        out.extend(name for name in actual if names is None or name in names)
+    return out
+
+
+def _tool_args(wakes: list[dict[str, Any]], tool: str) -> list[dict[str, Any]]:
+    """Arguments from non-error Host TOOL input only; proposed calls are not proof."""
+    out = []
+    for t in wakes:
+        for x in t.get("tools_full") or []:
+            if x.get("name") == tool and x.get("level") != "ERROR":
+                try:
+                    out.append(json.loads(x.get("input") or "{}"))
+                except ValueError:
+                    pass
+    return [a if isinstance(a, dict) else {} for a in out]
+
+
+def evidence_check_v2(check: dict[str, Any], ev: dict[str, Any], api: dict[str, Any] | None = None) -> dict[str, Any]:
     kind = check["evidence"]
-    label = f"evidence {kind}" + (f" @{check['step']}" if check.get("step") else "")
+    where = check.get("step") or "+".join(check.get("steps") or [])
+    label = f"evidence {kind}" + (f" @{where}" if where else "")
     if kind not in cases_v2.EVIDENCE_IMPLEMENTED:
-        return _result(check, label, "unsupported", "evidence_v2 (P1) not implemented")
+        return _result(check, label, "unsupported", f"evidence kind {kind} not implemented")
     if not ev.get("collected"):
         return _result(check, label, "pending_evidence", "run `e2e.py collect` then `e2e.py v2 grade`")
     loops = [t for t in ev["traces"] if t["name"] == "employee_loop"]
+    if kind != "task_count" and not loops:
+        return _result(check, label, "pending_evidence", "empty trace listing does not prove no model/effect")
     if kind == "max_calls_per_wake":
         worst = max([t["model_calls"] or 0 for t in loops], default=0)
         return _result(check, label, "pass" if worst <= check["max"] else "fail", {"max": worst})
     if kind == "no_effect_for_step":
-        hits = [t for t in loops if check["step"] in (t.get("matched_steps") or [])]
+        hits = _step_wakes(loops, [check["step"]])
         if not hits:
             return _result(check, label, "vacuous", "no employee_loop wake attributed to the step")
-        effects = [tc for t in hits for tc in t["tool_calls"] if tc in EFFECT_TOOLS]
+        effects = _executed(hits, set(EFFECT_TOOLS))
         return _result(check, label, "fail" if effects else "pass",
                        {"wakes": [t["trace_id"] for t in hits], "effects": effects})
     if kind == "same_task_runs":
@@ -142,6 +172,46 @@ def evidence_check_v2(check: dict[str, Any], ev: dict[str, Any]) -> dict[str, An
             return _result(check, label, "na", "nothing was dispatched")
         ok = len(tasks) == 1 and len(runs) >= check.get("min_runs", 2)
         return _result(check, label, "pass" if ok else "fail", {"tasks": tasks, "runs": runs})
+    if kind == "tool_called":
+        wakes = _step_wakes(loops, check["steps"])
+        if not wakes:
+            return _result(check, label, "vacuous", "no employee_loop wake attributed to the steps")
+        n = len(_executed(wakes, {check["tool"]}))
+        lo, hi = check["count"]
+        return _result(check, label, "pass" if lo <= n <= hi else "fail", {"count": n, "range": [lo, hi]})
+    if kind == "effect_for_step":
+        if check.get("if_dispatched_at"):
+            first = _step_wakes(loops, [check["if_dispatched_at"]])
+            if not _executed(first, {"dispatch_task", "continue_task"}):
+                return _result(check, label, "na", f"nothing was dispatched at {check['if_dispatched_at']}")
+        wakes = _step_wakes(loops, [check["step"]])
+        if not wakes:
+            return _result(check, label, "fail", "no employee_loop wake attributed to the step")
+        hit = _executed(wakes, set(check["tools"]))
+        return _result(check, label, "pass" if hit else "fail",
+                       {"executed": _executed(wakes), "wanted": check["tools"], "target_task": check.get("target_task")})
+    if kind in ("tool_arg_present", "tool_arg_contains"):
+        wakes = _step_wakes(loops, [check["step"]])
+        args = _tool_args(wakes, check["tool"])
+        if not args:
+            if _executed(wakes, {check["tool"]}):
+                return _result(check, label, "pending_evidence", "executed TOOL input unavailable; proposed args are not proof")
+            if check.get("if_dispatched"):
+                return _result(check, label, "na", f"{check['tool']} was not called at {check['step']}")
+            return _result(check, label, "fail", f"{check['tool']} was not called at {check['step']}")
+        if kind == "tool_arg_present":
+            ok = any(a.get(check["arg"]) not in (None, "", [], {}) for a in args)
+            return _result(check, label, "pass" if ok else "fail", {"calls": len(args)})
+        text = "\n".join(json.dumps(a.get(check["arg"]), ensure_ascii=False) for a in args)
+        missing = [v for v in check["values"] if v not in text]
+        return _result(check, label, "fail" if missing else "pass", {"missing": missing})
+    if kind == "task_count":
+        if not api or api.get("error") or not api.get("scenes"):
+            return _result(check, label, "pending_evidence", "complete scene-scoped task API read required")
+        ids = {x for t in ev["traces"] for x in (t.get("task_ids") or [])}
+        ids |= {t["summary"]["task_id"] for t in (api or {}).get("tasks") or []}
+        lo, hi = check.get("min", 0), check.get("max", 10 ** 6)
+        return _result(check, label, "pass" if lo <= len(ids) <= hi else "fail", {"tasks": sorted(ids)})
     return _result(check, label, "unsupported", None)
 
 
@@ -159,6 +229,78 @@ def sentinel_check(check: dict[str, Any], rec: dict[str, Any], transcripts: dict
                    {"whole": whole, "split": split, "messages_scanned": len(texts), "window": [iso(lo), iso(hi)]})
 
 
+def pending_result(check: dict[str, Any], ev: dict[str, Any], api: dict[str, Any] | None,
+                   ctx: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate a pending (unscored) check where the harness can, else say why not."""
+    from . import api_facts
+    kind = check.get("evidence") or check.get("check")
+    out = {"kind": kind, "why": check.get("why"), "scored": False}
+    if kind in ("pg_learning", "workpacket_ref"):
+        return {**out, "status": "api_gap", "detail": api_facts.API_GAPS[kind]}
+    if kind in ("pg_collection", "pg_occurrence", "process_exit_confirmed"):
+        if not api or api.get("error"):
+            return {**out, "status": "pending_evidence", "detail": (api or {}).get("error") or "run `e2e.py collect`"}
+        if kind == "pg_collection":
+            return {**out, "status": "recorded", "facts": api_facts.collections(api),
+                    "gap": api_facts.API_GAPS["pg_invitation"]}
+        if kind == "pg_occurrence":
+            return {**out, "status": "recorded", "facts": api_facts.routine_runs(api),
+                    "gap": api_facts.API_GAPS["pg_occurrence_planned_at"]}
+        return {**out, "status": "recorded", "facts": api_facts.exit_states(api)}
+    if kind == "file_download":
+        got = [{"step": sid, **(ctx["downloads"].get(sid) or {"ok": False, "error": "not downloaded"})}
+               for sid in check.get("steps") or []]
+        return {**out, "status": "recorded" if all(g.get("ok") for g in got) else "pending_evidence", "facts": got}
+    if kind == "negative_observe":
+        lo_step, hi_step = check["between"]
+        lo, hi = ctx["step_times"].get(lo_step), ctx["step_times"].get(hi_step)
+        if not lo or not hi:
+            return {**out, "status": "pending_evidence", "detail": "between-steps not landed"}
+        conv = ctx.get("step_conversations", {}).get(lo_step)
+        if not conv or conv != ctx.get("step_conversations", {}).get(hi_step):
+            return {**out, "status": "pending_evidence", "detail": "between-steps need the same conversation"}
+        if conv not in ctx.get("covered_conversations", set()):
+            return {**out, "status": "pending_evidence", "detail": "negative window not completely read"}
+        hits = [m["messageId"] for m in ctx["employee_messages"]
+                if m.get("conversation") == conv and lo <= m["createTime"] <= hi
+                and re.search(check["regex"], m.get("text") or "")]
+        return {**out, "status": "pass" if len(hits) == check.get("count", 0) else "fail", "detail": {"hits": hits}}
+    scored = ctx.get("evaluate_pending")
+    if scored:
+        res = scored(check)
+        if res is not None:
+            return {**out, "status": res["status"], "detail": res.get("detail")}
+    return {**out, "status": "unsupported"}
+
+
+def segment_validity(rd: Path, rec: dict[str, Any], attributed: dict[str, Any]) -> dict[str, Any]:
+    """Each segment is judged on its own window; inside a window, list the steps whose wait it hit."""
+    def affected(v: dict[str, Any]) -> list[str]:
+        times = [parse_iso(r["time"]) for r in v.get("restarts") or []] + \
+                [parse_iso(d["deploy_started"]) for d in v.get("deploys_overlapping") or []]
+        out = []
+        for step in rec["steps"]:
+            poll = step.get("poll") or {}
+            start = (step.get("msg") or {}).get("createTime") or poll.get("since")
+            if not start:
+                continue
+            lo = parse_dws_time(start)
+            hi = lo + _dt.timedelta(seconds=float(poll.get("waited_s") or 0) + 30)
+            if any(lo <= t <= hi for t in times):
+                out.append(step["id"])
+        return out
+    segments = rec.get("segments") or {}
+    if not segments:
+        v = grader.validity(rd, rec, attributed)
+        v["invalid_steps"] = affected(v) if not v["valid"] else []
+        return v
+    per = {sid: grader.validity(rd, {**rec, "started_at": seg["started_at"], "ended_at": seg["ended_at"]},
+                                {"by_step": {}}) for sid, seg in segments.items()}
+    bad = [sid for sid, v in per.items() if not v["valid"]]
+    return {"valid": not bad, "segments": per, "invalid_segments": bad,
+            "live_code": {sid: v.get("live_code") for sid, v in per.items()}}
+
+
 def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dict[str, Any],
                   caps: dict[str, dict[str, bool]], fresh: dict[str, list] | None = None,
                   judgements: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -173,8 +315,17 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
     attributed = grader.attribute(rec, transcripts, reg, spans)
     by_step = attributed["by_step"]
     ev = grader.evidence_summary(rd, rec)
+    api = load_json(rd / "evidence" / f"{rec['case_id']}.a{rec['attempt']}.api.json")
     ctx = {"pattern_sets": spec["defaults"].get("pattern_sets") or {},
-           "step_message_ids": {s["id"]: s["msg"]["messageId"] for s in rec["steps"] if s.get("msg")}}
+           "step_message_ids": {s["id"]: s["msg"]["messageId"] for s in rec["steps"] if s.get("msg")},
+           "evaluate_pending": lambda c: evidence_check_v2(c, ev, api)
+           if c.get("evidence") in cases_v2.EVIDENCE_IMPLEMENTED else None,
+           "downloads": {s["id"]: (s.get("poll") or {}).get("download") for s in rec["steps"] if "observe" in s},
+           "step_times": {s["id"]: s["msg"]["createTime"] for s in rec["steps"] if s.get("msg")},
+           "step_conversations": {s["id"]: s.get("conversation") for s in rec["steps"]},
+           "covered_conversations": set(transcripts) - set(uncovered),
+           "employee_messages": [{**m, "conversation": conv} for conv, msgs in transcripts.items() for m in msgs
+                                 if m.get("senderId") in set(reg["employee"]["open_ids"].values())]}
     results = []
     for check in rendered.get("checks", []):
         if check.get("requires") and not cases_v2.requires_ok(check["requires"], caps):
@@ -185,7 +336,7 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
             results.append(sentinel_check(check, rec, transcripts, reg))
             continue
         if "evidence" in check:
-            results.append(evidence_check_v2(check, ev))
+            results.append(evidence_check_v2(check, ev, api))
             continue
         cond = check.get("only_if")
         if cond:
@@ -197,20 +348,34 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
         results.append(text_check(check, msgs, ctx))
     for step in rec["steps"]:
         if "observe" in step and not step["observe"].get("optional"):
-            matched = (step.get("poll") or {}).get("matched")
-            results.append(_result({}, f"observe {step['id']} matched", "pass" if matched else "fail",
-                                   (step.get("poll") or {}).get("matched_message")))
+            matched = bool((step.get("poll") or {}).get("matched"))
+            if step["observe"].get("negative"):
+                result = "fail" if matched else ("pass" if (step.get("poll") or {}).get("covered") else "pending_evidence")
+                results.append(_result({}, f"observe {step['id']} never matched", result,
+                                       (step.get("poll") or {}).get("matched_message")))
+            else:
+                result = "pass" if matched else ("fail" if (step.get("poll") or {}).get("covered") else "pending_evidence")
+                results.append(_result({}, f"observe {step['id']} matched", result,
+                                       (step.get("poll") or {}).get("matched_message")))
     leaks = [{"step": sid, "messageId": m["messageId"], **f}
              for sid, msgs in by_step.items() for m in msgs for f in leak.scan(m["text"])]
     at_bad = [s["id"] for s in rec["steps"] if len(s.get("at") or []) >= 2
               and not ((s.get("send") or {}).get("at_render") or {}).get("ok", True)]
     missing = [s["id"] for s in rec["steps"] if s.get("send") and not s.get("msg")]
-    valid = grader.validity(rd, rec, attributed)
+    valid = segment_validity(rd, rec, attributed)
     hard = [r for r in results if r["tier"] == "hard"]
     target = [r for r in results if r["tier"] == "target"]
+    pending = [pending_result(cases_v2.render(c, vars_, aliases), ev, api, ctx)
+               for c in case.get("pending_checks") or []]
+    env_sources = list((valid.get("segments") or {}).values()) or [valid]
+    environment_complete = all(v.get("restart_source_ok") for v in env_sources)
+    evidence_complete = environment_complete and not any(r["status"] in ("pending_evidence", "vacuous", "unsupported") for r in results)
+    partial = (rec.get("plan") or {}).get("state") == "runnable_partial" or not evidence_complete or bool(pending)
     status = rec.get("status", "")
     if status.startswith("not_run") or status == "skipped_window":
         verdict, reason = "not_run", status
+    elif status.startswith("segment_done") or status.startswith("waiting_segment"):
+        verdict, reason = "in_progress", f"{status}; resume with `e2e.py v2 run --only {rec['case_id']} --segment <next>`"
     elif status == "harness_error" or missing or uncovered or at_bad or any(r["status"] == "unsupported" for r in results):
         verdict = "harness_error"
         reason = rec.get("harness_error") or (f"steps not landed {missing}" if missing else
@@ -219,19 +384,29 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
     elif status != "completed":
         verdict, reason = "invalid_env", f"driver status {status}"
     elif not valid["valid"]:
-        verdict, reason = "invalid_env", "restart or deploy inside the case window"
+        verdict = "invalid_env"
+        reason = (f"restart or deploy inside segment(s) {valid['invalid_segments']}; rerun them with --segment X --redo"
+                  if valid.get("invalid_segments") else
+                  f"restart or deploy inside the case window (affected steps {valid.get('invalid_steps')})")
     elif any(r["status"] == "fail" for r in hard) or leaks:
         verdict = "fail"
         reason = "; ".join([r["check"] for r in hard if r["status"] == "fail"] +
                            [f"leak:{l['kind']}:{l['match']}" for l in leaks])
     elif any(r["status"] == "fail" for r in target):
         verdict, reason = "degraded", "; ".join(r["check"] for r in target if r["status"] == "fail")
+    elif any(r["status"] == "pending_evidence" for r in hard):
+        verdict, reason = "incomplete", "required evidence missing"
     else:
         verdict, reason = "needs_review", "hard checks pass; semantic rubric pending"
     auto = verdict
     judged = (judgements or {}).get(f"{rec['case_id']}.a{rec['attempt']}") or {}
     if judged.get("verdict") and verdict in ("fail", "needs_review", "degraded"):
-        verdict, reason = judged["verdict"], judged.get("rationale", reason)
+        wanted = judged["verdict"]
+        allowed = wanted in {"pass", "fail", "degraded", "needs_review"}
+        if allowed and (wanted == "fail" or verdict == "needs_review" or (verdict == "degraded" and wanted == "degraded")):
+            verdict, reason = wanted, judged.get("rationale", reason)
+    if verdict == "pass" and partial:
+        verdict, reason = "partial", "semantic review passed; vacuous/platform/pending checks remain"
     counts: dict[str, int] = {}
     for r in results:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
@@ -240,6 +415,8 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
         "verdict": verdict, "auto_verdict": auto, "reason": reason, "check_counts": counts,
         "criteria": rendered.get("criteria"), "semantic_rubric": rendered.get("semantic", []),
         "known_gap": case.get("known_gap"), "pending_checks": case.get("pending_checks", []),
+        "pending_results": pending, "verification_scope": "partial" if partial else "full",
+        "api_facts": {"tasks": len((api or {}).get("tasks") or []), "error": (api or {}).get("error")} if api else None,
         "vars": vars_, "var_row": rec.get("var_row"), "roles": rec["roles"], "judgement": judged or None,
         "steps": [{"id": s["id"], "actor": s.get("actor"), "conversation": s.get("conversation"),
                    "sent": (s.get("msg") or {}).get("text"), "messageId": (s.get("msg") or {}).get("messageId"),
@@ -248,7 +425,9 @@ def grade_case_v2(rd: Path, rec: dict[str, Any], case: dict[str, Any], spec: dic
                    "observe": (s.get("poll") or {}).get("matched_message") if "observe" in s else None,
                    "replies": by_step.get(s["id"], [])} for s in rec["steps"]],
         "checks": results, "leaks": leaks, "ignored_messages": attributed["ignored"], "validity": valid,
-        "uncovered": uncovered, "evidence": ev, "graded_at": iso(now()),
+        "uncovered": uncovered, "evidence": ev, "graded_at": iso(now()), "recalled": rec.get("recalled"),
+        "memory_reset": {"ok": (rec.get("memory_reset") or {}).get("ok"),
+                         "commands": (rec.get("memory_reset") or {}).get("commands")} if rec.get("memory_reset") else None,
     }
 
 

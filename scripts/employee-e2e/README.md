@@ -163,3 +163,7 @@ python3 e2e.py v2 sync-gaps                                                 # ca
 - **Grader v2** (`el2e/grader_v2.py`): statuses pass / fail / vacuous / na / unsupported / pending_evidence;
   `tier: target` misses with all hard checks passing give `degraded`; unmatched non-optional observe
   steps fail; sentinels scan only the case span; an uncovered window is `harness_error`.
+
+## 第五批收尾合同
+
+见 [CLOSEOUT.md](CLOSEOUT.md) 和 [source map](../../.agents/skills/tag-eval/references/harness-source-map.md)。平台/发布/运维默认关闭，driver支持不等于真实效果。`incomplete` / `partial` 不计完整通过；语义判定不得覆写硬失败。缺证先 collect 并读取原始trace，不用零列表代替零调用。

@@ -2264,7 +2264,8 @@
       "until_regex": "49,?597\\.76",
       "timeout_s": 420,
       "since_step": "hx_ask"
-     }
+     },
+     "segment": "d1"
     },
     {
      "id": "hx_thanks",
@@ -2294,7 +2295,8 @@
       "until_regex": "42,?014\\.2[58]",
       "timeout_s": 420,
       "since_step": "rb_ask"
-     }
+     },
+     "segment": "d2"
     },
     {
      "id": "rb_thanks",

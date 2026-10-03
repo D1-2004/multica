@@ -48,14 +48,16 @@ TEXT_CHECK_KEYS = {"steps", "replies", "max_chars", "include_all", "include_any"
                    "tier", "note"}
 SENTINEL_KEYS = {"sentinel", "parts", "conversation", "scope", "requires", "tier", "note"}
 EVIDENCE_KEYS = {"evidence", "step", "steps", "max", "min", "min_runs", "if_dispatched", "if_dispatched_at", "tool",
-                 "tools", "arg", "requires", "tier", "note"}
+                 "tools", "arg", "values", "count", "target_task", "requires", "tier", "note"}
 EVIDENCE_KINDS = {"max_calls_per_wake", "no_effect_for_step", "same_task_runs", "tool_arg_present", "task_count",
-                  "effect_for_step"}
-EVIDENCE_IMPLEMENTED = {"max_calls_per_wake", "no_effect_for_step", "same_task_runs"}
+                  "effect_for_step", "tool_called", "tool_arg_contains"}
+EVIDENCE_IMPLEMENTED = set(EVIDENCE_KINDS)
 JUDGE_KEYS = {"criteria", "checks", "semantic"}
 REQUIRES_CATEGORIES = ("harness", "platform", "release", "ops")
 # P0 harness capabilities implemented here; everything else in requires.harness blocks a case.
-HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2"}
+HARNESS_IMPLEMENTED = {"var_sets", "quote_reply", "deap_multi", "grader_v2", "memory_reset", "pg_read", "segments", "evidence_v2", "file_send",
+                       "file_download", "forward", "combine_forward", "at_all", "setup_group",
+                       "burst", "negative_observe"}
 
 VAR_REF = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
 ALIAS_REF = re.compile(r"\{=([A-Z][A-Z0-9_]*)\}")
@@ -273,6 +275,13 @@ def validate_case(case: dict[str, Any], spec: dict[str, Any], caps: dict[str, di
                 errors.append(f"{sid}: DEAP actor {actor_key} cannot speak in a 1:1 chat")
         seen.append(step["id"])
     step_ids = set(seen)
+    seg_ids = [x.get("id") for x in case.get("segments") or []]
+    for x in case.get("segments") or []:
+        _unknown(errors, f"{cid}.segments", x, {"id", "not_before_hours", "note"})
+    if seg_ids:
+        for step in case["steps"]:
+            if step.get("segment") not in seg_ids:
+                errors.append(f"{cid}.{step.get('id')}: segment {step.get('segment')!r} not in {seg_ids}")
     _unknown(errors, f"{cid}.judge", case["judge"], JUDGE_KEYS)
     for i, check in enumerate(case["judge"].get("checks", [])):
         errors.extend(validate_check(check, f"{cid}.checks[{i}]", step_ids, pattern_sets, caps))
@@ -330,6 +339,14 @@ def render_errors(case: dict[str, Any], spec: dict[str, Any]) -> list[str]:
     base = code_vars("render-check")
     rows = case.get("var_sets") or [{}]
     errors: list[str] = []
+    for key, fx in (case.get("fixtures") or {}).items():
+        if "render" in fx:
+            suffix = Path(fx["name"]).suffix
+            for idx in range(len(rows)):
+                if not (V2_DIR / "fixtures" / case["id"] / f"{key}.row{idx}{suffix}").exists():
+                    errors.append(f"{case['id']}: pre-rendered fixture {key}.row{idx}{suffix} missing")
+        elif "by_row" in fx and len(fx["by_row"]) != len(rows):
+            errors.append(f"{case['id']}: fixture {key} by_row has {len(fx['by_row'])} rows, var_sets {len(rows)}")
     for idx, row in enumerate(rows):
         vars_ = {**base, **{k: str(v) for k, v in row.items()}}
         body = render({"steps": case["steps"], "checks": case["judge"].get("checks", []),
@@ -386,11 +403,12 @@ def classify(case: dict[str, Any], spec: dict[str, Any], caps: dict[str, dict[st
         return {"state": "blocked_harness", "reasons": missing_harness}
     resources = []
     convs = {case["conversation"]} | {s["conversation"] for s in case["steps"] if s.get("conversation")}
+    created = {s.get("conversation", case["conversation"]) for s in case["steps"] if s.get("create_group")}
     for name in sorted(convs):
         conv = reg["conversations"].get(name)
         if conv is None:
             resources.append(f"conversation {name} not registered")
-        elif not conv.get("cid"):
+        elif not conv.get("cid") and name not in created:
             resources.append(f"conversation {name} has no cid")
     for role, actor in case["roles"].items():
         info = reg["actors"].get(actor or "")
@@ -435,7 +453,7 @@ def dry_run(paths: list[Path] | None, caps: dict[str, dict[str, bool]], reg: dic
     for r in rows:
         counts[r["state"]] = counts.get(r["state"], 0) + 1
     return {"checked_at": now().isoformat(timespec="seconds"), "total": len(rows), "counts": counts,
-            "suite_errors": suite_errors, "cases": rows}
+            "suite_errors": suite_errors, "capabilities": caps, "cases": rows}
 
 
 def in_run_window(window: dict[str, str] | None, at: _dt.datetime | None = None) -> bool:

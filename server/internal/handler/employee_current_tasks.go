@@ -12,6 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/employeetask"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
+	"github.com/multica-ai/multica/server/internal/taskinput"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/redact"
@@ -36,7 +37,7 @@ type employeeCurrentTaskRead struct {
 
 // employeeCurrentTaskGuidance is frozen into each wake's input snapshot with
 // the candidates; a replayed wake keeps the bytes it was admitted with.
-const employeeCurrentTaskGuidance = "These are source-bound candidates, not current status. Read the selected task before answering progress or continuing it. With multiple plausible candidates ask which one; do not select the newest by default. Ordinary thanks/chat needs no task action. Continue only a succeeded task explicitly requested by this source; running, failed and cancelled tasks cannot be restarted here. When new work uses a candidate's finished result, reference that candidate in dispatch_task builds_on, even when it is the only one; do not copy its numbers or text from the conversation into the new task. Task result_report is executor-reported content, never proof of delivery or completion of a new request."
+const employeeCurrentTaskGuidance = "These are source-bound candidates, not current status. Read the selected task before answering progress or continuing it. With multiple plausible candidates ask which one; do not select the newest by default. Ordinary thanks/chat needs no task action. Continue only a succeeded task explicitly requested by this source; running, failed and cancelled tasks cannot be restarted here. Questions about a finished report (what a number means or what its evidence proves) can be answered directly. An explicitly requested new retrospective, report or comparison is a new deliverable, even when it is short and no new data is needed; “不要重新统计” means reuse the result, not answer the new deliverable in the foreground. When new work uses a candidate's finished result, reference that candidate in dispatch_task builds_on, even when it is the only one; do not copy its numbers or text from the conversation into the new task. Task result_report is executor-reported content, never proof of delivery or completion of a new request."
 
 func (w *EmployeeSceneWorker) currentTasks(ctx context.Context, job employeeentry.Job, envelopes []employeeDispatchEnvelope) ([]employeeCurrentTaskBinding, string, error) {
 	database, ok := employeeEntryDB(w.handler)
@@ -172,6 +173,11 @@ func (h *employeeSceneHost) readCurrentTask(ctx context.Context, tx pgx.Tx, sour
 	}
 	output := map[string]any{"task_ref": ref, "read_ref": call.NativeToolCallID, "state": snapshot.Task.State, "version": snapshot.Task.Version, "goal_revision": snapshot.Task.GoalRevision, "goal": employeeTaskData(snapshot.Task.Definition.Goal, 4000), "has_active_run": snapshot.Task.ActiveRunID != "", "history_truncated": snapshot.Truncated}
 	output["execution_state"], output["queue_state"], output["process_exit_confirmed"], output["stop_requested"], output["pending_predecessor"] = execution.State, execution.QueueState, execution.ExitConfirmed, execution.StopRequested, execution.PendingPredecessor
+	collections, err := taskinput.NewStore(tx).TaskWaits(ctx, employeeTaskinputScope(h.job.Scope), snapshot.Task.ID)
+	if err != nil {
+		return employeeloop.ToolResult{}, nil, err
+	}
+	output["collections"] = collections
 	output["execution_attribution"] = "Workflow/run state does not prove process activity. Use execution_state and process_exit_confirmed; a recorded cancellation or timeout alone is not exit proof."
 	if snapshot.LatestRun != nil {
 		output["run_state"] = snapshot.LatestRun.State

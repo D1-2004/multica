@@ -198,11 +198,41 @@ class GradeCaseTests(unittest.TestCase):
         self.assertEqual(self.grade(rec)["verdict"], "fail")
 
     def test_unmatched_observe_fails_and_uncovered_window_is_harness_error(self) -> None:
-        obs = {"id": "o1", "conversation": "g_team", "observe": {"until_regex": "55"}, "poll": {"matched": False}}
+        obs = {"id": "o1", "conversation": "g_team", "observe": {"until_regex": "55"}, "poll": {"matched": False, "covered": True}}
         rec = self.record([msg("e1", "2026-10-03 20:00:05", EMP, "找凤姐", quote="h1")], extra_steps=[obs])
         self.assertEqual(self.grade(rec)["verdict"], "fail")
         rec = self.record([msg("e1", "2026-10-03 20:00:05", EMP, "找凤姐", quote="h1")], covered=False)
         self.assertEqual(self.grade(rec)["verdict"], "harness_error")
+
+
+    def test_judgement_cannot_hide_pending_evidence_or_vacuous_checks(self) -> None:
+        rec = self.record([msg("e1", "2026-10-03 20:00:05", EMP, "找凤姐", quote="h1")])
+        judge = {"X-01.a1": {"verdict": "pass", "rationale": "looks good"}}
+        res = grader_v2.grade_case_v2(self.rd, rec, self.case(), SPEC, CAPS, judgements=judge)
+        self.assertEqual(res["verdict"], "partial")
+        case = self.case()
+        case["judge"]["checks"].append({"evidence": "max_calls_per_wake", "max": 3})
+        res = grader_v2.grade_case_v2(self.rd, rec, case, SPEC, CAPS, judgements=judge)
+        self.assertEqual(res["verdict"], "incomplete")
+
+    def test_judgement_cannot_override_a_hard_failure(self) -> None:
+        rec = self.record([msg("e1", "2026-10-03 20:00:05", EMP, "I don't know, 找凤姐", quote="h1")])
+        for wanted in ("pass", "degraded", "needs_review"):
+            with self.subTest(wanted=wanted):
+                res = grader_v2.grade_case_v2(self.rd, rec, self.case(), SPEC, CAPS,
+                                            judgements={"X-01.a1": {"verdict": wanted}})
+                self.assertEqual(res["verdict"], "fail")
+
+    def test_empty_trace_listing_is_missing_evidence_not_zero_calls(self) -> None:
+        res = grader_v2.evidence_check_v2({"evidence": "max_calls_per_wake", "max": 3},
+                                        {"collected": True, "traces": []})
+        self.assertEqual(res["status"], "pending_evidence")
+
+    def test_negative_observe_without_coverage_is_incomplete(self) -> None:
+        obs = {"id": "o1", "conversation": "g_team", "observe": {"until_regex": "执行", "negative": True},
+               "poll": {"matched": False, "covered": False}}
+        rec = self.record([msg("e1", "2026-10-03 20:00:05", EMP, "找凤姐", quote="h1")], extra_steps=[obs])
+        self.assertEqual(self.grade(rec)["verdict"], "incomplete")
 
 
 class SpeakTests(unittest.TestCase):
@@ -287,6 +317,16 @@ class PagingTests(unittest.TestCase):
         self.assertEqual([m["messageId"] for m in out["messages"]], ["b", "c"])
         self.assertIn("--time", calls[1])
         self.assertNotIn("--start", sum(calls, []))
+
+    def test_read_failure_or_incomplete_page_never_covers_a_negative_window(self) -> None:
+        for res in ({"rc": 1, "json": {"messages": []}},
+                    {"rc": 0, "json": {}},
+                    {"rc": 0, "json": {"messages": [], "complete": False}},
+                    {"rc": 0, "json": {"messages": [], "failures": ["permission denied"]}}):
+            with self.subTest(res=res), mock.patch.object(im.dwsgw, "dws", return_value=res):
+                out = im.read_window("p", "c", im.parse_dws_time("2026-10-03 20:00:00"))
+                self.assertFalse(out["covered"])
+                self.assertTrue(out["failures"])
 
     def test_prefix_mentions(self) -> None:
         self.assertEqual(im.prefix_mentions("@冬翔  @Qwen-Real  请核对"), ["冬翔", "Qwen-Real"])

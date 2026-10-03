@@ -332,6 +332,7 @@ type Handler struct {
 	WebhookIPRateLimiter           WebhookRateLimiter
 	WebhookAbsoluteIPRateLimiter   WebhookRateLimiter
 	WebhookDeliveryWorker          *WebhookDeliveryWorker
+	WebhookSourceReady             func(context.Context) error
 	TaskCompletionWorker           *agentmessagerouter.CompletionWorker
 	DingTalkResponses              *dingtalkresponse.Service
 	DingTalkResponsePolicySync     *agentmessagerouter.ResponsePolicySyncWorker

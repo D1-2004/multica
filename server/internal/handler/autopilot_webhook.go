@@ -70,11 +70,12 @@ const (
 // autopilot_run_id, because from the ingress's perspective we DID hand
 // the payload to the autopilot machinery.
 const (
-	deliveryStatusQueued     = "queued"
-	deliveryStatusDispatched = "dispatched"
-	deliveryStatusRejected   = "rejected"
-	deliveryStatusIgnored    = "ignored"
-	deliveryStatusFailed     = "failed"
+	deliveryStatusQueued       = "queued"
+	deliveryStatusFrozenQueued = "queued_frozen"
+	deliveryStatusDispatched   = "dispatched"
+	deliveryStatusRejected     = "rejected"
+	deliveryStatusIgnored      = "ignored"
+	deliveryStatusFailed       = "failed"
 )
 
 // ── Payload normalization ───────────────────────────────────────────────────
@@ -444,6 +445,15 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 	// 7. Signature over the raw bytes, decided before event identity.
 	sigStatus := verifyWebhookSignatureForProvider(provider, trigRow.SigningSecret.String, r.Header, body)
 	signatureFailed := sigStatus == sigStatusInvalid || sigStatus == sigStatusMissing
+	// The gate covers every frozen source, including ordinary Autopilot hooks.
+	// A missing or mixed reader set cannot silently choose the legacy queue.
+	if !signatureFailed {
+		if h.WebhookSourceReady == nil || h.WebhookSourceReady(r.Context()) != nil {
+			w.Header().Set("Retry-After", "5")
+			writeError(w, http.StatusServiceUnavailable, "webhook source readers are not ready")
+			return
+		}
+	}
 
 	// 8. Binding from PostgreSQL and the effective payload digest.
 	binding, bindingProblem, err := h.resolveWebhookEndpointBinding(r.Context(), autopilot, trigRow.ID, provider, trigRow.SigningSecret.String)
@@ -471,7 +481,7 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 
 	// 9. Persist (INSERT delivery + frozen source). Event id collision →
 	//    duplicate or conflict.
-	status := deliveryStatusQueued
+	status := deliveryStatusFrozenQueued
 	if signatureFailed {
 		status = deliveryStatusRejected
 	}
@@ -563,7 +573,7 @@ func (h *Handler) HandleAutopilotWebhook(w http.ResponseWriter, r *http.Request)
 		if runID.Valid {
 			resp["run_id"] = uuidToString(runID)
 		}
-		if delivery.Status == deliveryStatusQueued && h.WebhookDeliveryWorker != nil {
+		if webhookDeliveryPending(delivery.Status) && h.WebhookDeliveryWorker != nil {
 			h.WebhookDeliveryWorker.Notify()
 		}
 		respond(http.StatusOK, resp)

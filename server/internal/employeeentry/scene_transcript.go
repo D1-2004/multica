@@ -342,5 +342,15 @@ func (s *Store) SceneTranscriptEvidence(ctx context.Context, scope Scope, since,
 	err = read(out.WithdrawnEvidenceIDs, `SELECT DISTINCT record->>'evidence_id' FROM employee_learning
  WHERE workspace_id=$1::uuid AND agent_id=$2::uuid AND tenant_org_id=$3 AND scene_id=$4::uuid AND (superseded_by IS NOT NULL OR forgotten_at IS NOT NULL)
  AND COALESCE(record->>'evidence_id','')<>'' LIMIT $5`, append(scopeArgs(scope), transcriptEvidenceCap)...)
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	replies, err := s.withdrawnMemoryReplyIDs(ctx, scope, since, before)
+	if err != nil {
+		return out, err
+	}
+	for id := range replies.Messages {
+		out.WithdrawnEvidenceIDs[id] = true
+	}
+	return out, nil
 }

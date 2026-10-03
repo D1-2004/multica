@@ -414,17 +414,23 @@ func TestEmployeeCurrentTasksFrozenGuidanceReplaysStoredBytes(t *testing.T) {
 		t.Fatalf("new wake did not freeze the current guidance: requests=%d brief=%q", len(requests), brief)
 	}
 	// Recover the same wake from an older snapshot whose guidance predates builds_on.
-	old := strings.Replace(brief, " When new work uses a candidate's finished result, reference that candidate in dispatch_task builds_on, even when it is the only one; do not copy its numbers or text from the conversation into the new task.", "", 1)
-	if old == brief {
-		t.Fatal("fixture could not build the older guidance")
+	var prior map[string]any
+	if err := json.Unmarshal([]byte(brief), &prior); err != nil {
+		t.Fatal(err)
 	}
+	prior["guidance"] = "Previously frozen candidate rules; keep this request unchanged."
+	encoded, err := json.Marshal(prior)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := string(encoded)
 	if _, err := testPool.Exec(ctx, `UPDATE employee_scene_job SET input_snapshot=jsonb_set(input_snapshot,'{input,TaskBrief}',to_jsonb($2::text)),state='pending',outcome=NULL,model_journal='[]',model_attempts=0,tool_journal='{}',available_at=now() WHERE id=$1::uuid`, jobID, old); err != nil {
 		t.Fatal(err)
 	}
 	if worked, err := f.h.EmployeeSceneWorker.ProcessNext(ctx); !worked || err != nil {
 		t.Fatal(worked, err)
 	}
-	if len(requests) != 2 || strings.Contains(requests[1], "even when it is the only one") || !strings.Contains(requests[1], "cannot be restarted here. Task result_report") {
+	if len(requests) != 2 || strings.Contains(requests[1], "even when it is the only one") || !strings.Contains(requests[1], "Previously frozen candidate rules; keep this request unchanged.") {
 		t.Fatalf("replayed wake did not send its frozen guidance bytes")
 	}
 }

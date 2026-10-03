@@ -634,7 +634,7 @@ func TestWebhookDeliveryWorker_PerTriggerLimitDefersWithoutDropping(t *testing.T
 	}
 	queuedIndex := -1
 	for i, delivery := range deliveries {
-		if delivery.Status == deliveryStatusQueued {
+		if webhookDeliveryPending(delivery.Status) {
 			queuedIndex = i
 		}
 	}
@@ -650,7 +650,7 @@ func TestWebhookDeliveryWorker_PerTriggerLimitDefersWithoutDropping(t *testing.T
 	if err != nil {
 		t.Fatalf("load deferred delivery: %v", err)
 	}
-	if deferred.Status != deliveryStatusQueued || deferred.DispatchAttempts != 0 {
+	if !webhookDeliveryPending(deferred.Status) || deferred.DispatchAttempts != 0 {
 		t.Fatalf("pacing must preserve queued work without counting an attempt: status=%s attempts=%d", deferred.Status, deferred.DispatchAttempts)
 	}
 	if deferred.LeaseToken.Valid || deferred.LeaseExpiresAt.Valid || !deferred.AvailableAt.Valid || !deferred.AvailableAt.Time.After(time.Now()) {
@@ -786,7 +786,7 @@ func TestWebhookDeliveryWorker_LeaseOwnershipChangeIsBenign(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load current owner: %v", err)
 	}
-	if current.Status != deliveryStatusQueued || current.LeaseToken == staleClaim.LeaseToken {
+	if !webhookDeliveryPending(current.Status) || current.LeaseToken == staleClaim.LeaseToken {
 		t.Fatalf("stale worker mutated the new owner's delivery: %#v", current)
 	}
 }

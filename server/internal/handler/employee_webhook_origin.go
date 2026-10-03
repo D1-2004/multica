@@ -459,6 +459,13 @@ func webhookEnvelopeFromDelivery(delivery db.WebhookDelivery) (WebhookEnvelope, 
 	return env, nil
 }
 
+// WebhookSourceReplicaMarker advertises the isolated frozen-source queue reader.
+const WebhookSourceReplicaMarker = "[webhook-source:1]"
+
+func webhookDeliveryPending(status string) bool {
+	return status == deliveryStatusQueued || status == deliveryStatusFrozenQueued
+}
+
 // webhookFrozenColumns are the source columns written with a delivery.
 type webhookFrozenColumns struct {
 	Digest         string
@@ -514,6 +521,11 @@ func (h *Handler) insertWebhookDelivery(ctx context.Context, params db.CreateWeb
 		SET source_digest = $2, signing_secret_revision = NULLIF($3, ''), source_binding = $4::jsonb
 		WHERE id = $1`, delivery.ID, frozen.Digest, frozen.SecretRevision, frozen.Binding); err != nil {
 		return db.WebhookDelivery{}, fmt.Errorf("record frozen source: %w", err)
+	}
+	// Return the persisted status after the DB guard, not the INSERT snapshot.
+	delivery, err = h.Queries.WithTx(tx).GetWebhookDelivery(ctx, delivery.ID)
+	if err != nil {
+		return db.WebhookDelivery{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return db.WebhookDelivery{}, err

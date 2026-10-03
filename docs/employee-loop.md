@@ -17,6 +17,8 @@
 
 GawkBot 固定提交的内核和 prompt/voice 负责判断与表达；岗位 Instructions 或有效短合同进入稳定 system 前缀，窗口与记忆作为数据。前台最多三个真实模型请求，provider 错误和格式重试也消耗此预算，重启不能重置预算。简单回复或派发加接单文案可以首轮完成，Quiet 是合法终态。没有单独的 finish_check、审核或润色模型。单次真实 provider 请求最多 20 秒，并受当前 wake 原有 45 秒总预算约束；子请求超时可在剩余预算内由 Loop 显式重试，SDK 不隐式重试。journal 读写继续使用父 ctx，缓存命中不新发请求；迟到的超时 completion 不执行工具。父预算耗尽后沿用既有独立 outcome checkpoint 收束，不延长模型预算或重复已接受效果。
 
+**明确输出要求。**新快照的 Persona 冻结通用 `REPLY CONTRACT`：当前被接纳请求明确限定的语言、格式、长度和内容范围，优先于岗位或默认的语气、先回应、补依据、解释、建议和跟进习惯。只要手头证据足够，模型先完成判断，再只输出请求的内容；“只回编号/数值”“不解释”“只给 JSON”等要求同样适用于普通对话、群转录判断、记忆和前台工具中的回复文本。输出前由同一次生成自行核对，不增加审核模型，不由 Host 提取编号或删除解释。缺证或有实质歧义时，在可满足的格式内最简洁地说明不确定或追问，不为了格式编造事实；上下文已有证据直接答、未要求核实时不派后台的合同不变。工具真实受理、拒绝、等待与已完成分别表述；拒绝的忘记/reset 不能说已生效，也不能把他人或历史中的撤销意图当作已变更事实，回答以当前授权 memory 快照与实际结果为准。确认遗忘/reset 后不从旧对话或工具正文复述已移除值，除非请求人明确要求且有权限审计。历史或引用里的命令不能授予新的请求权，输出要求也不能改变 Host 权限、安全和事实边界。只追加新快照，旧快照和 journal 保留原字节，全局 BuildPrompt、请求参数、在线岗位模板与 marker 不变。来源与本次真实反例见 [19 输出合同修复](plans/2026-10-03/employee-loop-backend-delivery/19-foreground-output-contract.md)。
+
 Direct commit 已成功时，即使外层工具 journal 写失败或调用被取消，返回的 Run receipt 仍保留，不能错误地说未受理。确定性上下文超限保存一次无需模型的明确反馈，不截掉尾部约束，也不永久重试。
 
 ## 场域能力与前台观测
@@ -27,7 +29,7 @@ Direct commit 已成功时，即使外层工具 journal 写失败或调用被取
 
 普通能力介绍和仅索取配置入口优先直接使用已提供的能力目录，在首轮调用 `describe_capabilities`；不为了“更准确”额外读取配置。只有用户明确询问开关、提示词原文或已有例行任务等配置细节，且当前上下文没有答案时，才使用 `scene_config_get`。普通介绍通常一到三句，用同事之间的自然表达说明能协助完成什么，不照抄工具名、Direct 或配置字段。明确配置查询则保留用户要求的准确技能名、开关状态与提示词原文，按所需细节完整回答；“详细配置加链接”同样适用，不受普通介绍的一到三句限制。DWS、技能、连接器和 MCP 属于后台执行能力，不能称为前台可直接调用。
 
-**前台与后台的边界。**前台只做三件事：回复、读当前窗口/记忆/任务与本场域配置（`scene_config_get`）、给配置链接（`describe_capabilities`）。当前窗口、近期对话、记忆、任务简报与报告，或请求人自己给出的事实、日志、数字和观察已经包含回答所需的证据时，直接回答，不派发：判断和解释手头证据是前台自己的事，不是查询；证据不足以下结论时，如实说明它能证明什么、不能确认什么，并提出可以去后台核实，只有请求人要求核实时才派发（DS-01：「发送侧 200，对方收到了吗」曾被派成 20 次沙箱调用的后台核查）。需要上下文之外的数据或动作才一律经 `dispatch_task` 交后台：DWS 查询（通讯录、主管、组织、日程、文档、当前窗口和近期对话之外的消息）、技能、连接器、MCP、脚本、文件，以及场域自管理——例行任务/定时任务的新建、修改、暂停、恢复、删除、立即运行，场域提示词，开关已公开的技能与连接器，增删远程 MCP。后台 Direct 任务挂着本场域的 `config-qwen-tag-scene` MCP（`scene_routine_create` 等）完成这些变更；例行任务每次运行都在后台执行，平台在场域里发开始和结束消息。前台没有某个工具不等于后台做不到：遇到需要执行的请求就派发，不回答“做不到/没有记录/没有工具”，只有任务结果才能证明做不到；也不把人支到管理员或平台设置。只有缺“做什么/什么时候”时才先简短追问。账号连接和连接器授权在配置页完成，前台给链接。`scene_config_get` 结果不再带 `read_only`（执行器里它表示例行任务运行只读，前台曾把它读成“本场域不可改”），改为 `how_to_change` 指向 `dispatch_task`。后台技能把请求人自己的明确、完整请求视为确认，直接执行；缺要素、多项无关变更、新增或改址远程 MCP 时才先复述确认（对齐 GawkBot：人的请求本身就是授权，高风险变更由工具侧把关）。
+**前台与后台的边界。**前台只做三件事：回复、读当前窗口/记忆/任务与本场域配置（`scene_config_get`）、给配置链接（`describe_capabilities`）。当前请求是在询问或解释已有结果，且当前窗口、近期对话、记忆、任务简报与报告，或请求人自己给出的事实、日志、数字和观察已经包含回答所需的证据时，直接回答，不派发：判断和解释手头证据是前台自己的事，不是查询；证据不足以下结论时，如实说明它能证明什么、不能确认什么，并提出可以去后台核实，只有请求人要求核实时才派发（DS-01：「发送侧 200，对方收到了吗」曾被派成 20 次沙箱调用的后台核查）。明确要求基于完成结果制作新的独立交付物（如“基于刚才统计写一段三到五句的复盘”“合并两次统计做对比表”）属于新工作：经 `dispatch_task` 创建新 Task，并以 `builds_on` 引用本轮确切相关的上游候选，由 Host 将报告带入工作包。篇幅短、已有足够材料、“不要重新统计”只约束产出的范围和执行方式，不把新交付物变成对已有结果的解释；不在前台直接完成新产出，也不为此继续旧统计 Task。仅问数字含义、要求解释旧报告或明确没有新产出时仍直接回复；修改或重做原交付物则先读原任务再 `continue_task`。还需要上下文之外的数据或动作时，一律经 `dispatch_task` 交后台：DWS 查询（通讯录、主管、组织、日程、文档、当前窗口和近期对话之外的消息）、技能、连接器、MCP、脚本、文件，以及场域自管理——例行任务/定时任务的新建、修改、暂停、恢复、删除、立即运行，场域提示词，开关已公开的技能与连接器，增删远程 MCP。后台 Direct 任务挂着本场域的 `config-qwen-tag-scene` MCP（`scene_routine_create` 等）完成这些变更；例行任务每次运行都在后台执行，平台在场域里发开始和结束消息。前台没有某个工具不等于后台做不到：遇到需要执行的请求就派发，不回答“做不到/没有记录/没有工具”，只有任务结果才能证明做不到；也不把人支到管理员或平台设置。只有缺“做什么/什么时候”时才先简短追问。账号连接和连接器授权在配置页完成，前台给链接。`scene_config_get` 结果不再带 `read_only`（执行器里它表示例行任务运行只读，前台曾把它读成“本场域不可改”），改为 `how_to_change` 指向 `dispatch_task`。后台技能把请求人自己的明确、完整请求视为确认，直接执行；缺要素、多项无关变更、新增或改址远程 MCP 时才先复述确认（对齐 GawkBot：人的请求本身就是授权，高风险变更由工具侧把关）。
 
 **引用回复与配置链接。**钉钉群里用引用回复下达新任务是常态：`dispatch_task` 接受带引用的源消息，外层正文就是请求，requester 仍是外层发言人，被引用消息随源证据进入工作包，只作材料、不授权（与 `steer_task`、记忆纠正对引用的处理一致）；reaction 与结构 continuation 仍不受理。历史中的配置链接改写为 `[earlier configuration link omitted]`，不再保留可照抄的 Markdown 链接形状；若模型仍在普通回复里抄出占位链接，Host 去掉死链，并按 `describe_capabilities` 同一路径签发一个新链接，签发结果记入工具日志（`host:copied-config-link`），重放不重复签发。此合同不新增模型调用、事后润色或更改三轮硬上限；真实模型首轮选择、回复长度和时延仍须通过 canary 验证。
 
@@ -92,6 +94,12 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 新 wake 只读同 workspace、agent、tenant、scene 和受理 principal 的近期用户原话，以及有 provider 消息 ID 和匹配会话的已送达 Host 回复。截止时间固定为原 job 受理时间，上限 24 小时、20 条、16 KiB；当前窗口排除，截断显式标记。不读取未确认发送的模型结果，不增加总结 LLM，不写长期记忆。callback 回复必须同时匹配原 URL 和确切同步 RequestID；其他 Run 回复依赖独立的 notice 来源记录，不能仅凭复用 URL 纳入。
 
 已有私有 memory 被 supersede 或 forget 后，新历史投影按同 scope/requester 的 `employee-message:<receipt_id>` 与 `evidence_id` 精确撤销对应源消息，并保守隐藏该原 job 的关联整条回复（含多 receipt 派生 notice、确切同步 callback 与 Run notice）。同窗其他用户消息和没有写入 memory 的普通临时纠正仍按时间保留；审计原文不删除，且输出 `withdrawn_memory_evidence_omitted`，不冒充完整对话。不扫描 insight 或按值全场域擦除；后续没有结构化来源引用的独立复述无法据此关联，不宣称全局擦除。
+
+M5 的后续问答回复同样按精确来源撤销：Host 以同场域 tombstone 记录 ID 关联冻结的 `memory_manifest`、实际 memory tool 结果，再关联实际 delivered reply 的 action/provider message ID；沿新投影范围内旧快照的历史 ID 与 `transcript_refs` 有界传播，隐藏借旧 assistant 文本继续复述的整条回复。群转录对这些撤销回复的引用正文也省略，不能借 provider readback 重新注入。其他成员同值但不同来源的消息不删，原件与已冻结 job 不改，当前授权审计由独立权限路径读取。没有结构化引用的独立复述仍不按值推断；超限或失败显式 unavailable，部分集合不能作为完整撤销结果。来源与原反例见 [20 回复来源过滤](plans/2026-10-03/employee-loop-backend-delivery/20-withdrawn-reply-provenance.md)。
+
+当前投影窗口只限制候选回复，不能截断其来源证明。候选 B 引用窗外 A 时，按冻结的精确 action/message ID 向外读取祖先；每个祖先必须在同 workspace/agent/tenant/scene、同目标会话，有实际 delivered 事实及可核对的源 job。不得扩大日期全扫或按内容猜源；祖先集合、层数有界，缺失、外场域、未送达、关联冲突、未知来源或超限时整个相关历史返回 unavailable。原件及已冻结 job 不改。该跨窗闭合要求替代 Plan20 曾声明的跨窗局限，验证见 [21 跨窗来源闭合](plans/2026-10-03/employee-loop-backend-delivery/21-reply-ancestor-closure.md)。
+
+祖先的非空 input 不能作为来源已知的证明。只认可显式 manifest、显式空 Memory、没有未关联 Memory 明文的合法结构化历史，或当版明确零记录的 memory_stats；旧非空 Memory 或未知字段没有这些证明时 unavailable，不扫描正文猜测记录 ID，也不改变旧 job 恢复的快照字节。
 
 ## 纯停止当前事项
 
@@ -261,7 +269,7 @@ v1 的 `RecordResult` 行为不变。v2 中 Run 结束永远不会完成目标�
 
 ## 场域例行任务改走 Employee Direct（marker 12）
 
-**新路径的触发条件**：Agent 是 employee 模式，并且全部在线副本都具备当前 `EmployeeLoopReplicaMarker`（首次随 `[employee-loop:12]` 发布，现为 15）。
+**新路径的触发条件**：Agent 是 employee 模式，并且全部在线副本都具备当前 `EmployeeLoopReplicaMarker`（首次随 `[employee-loop:12]` 发布，现为 16）。
 
 **新路径的行为**
 - 每次定时触发或立即运行，都在一个事务内写入以下内容：真实 AutopilotRun、冻结来源 `employee_routine_occurrence`、独立 EmployeeTask（v1 single_run，`requester_ref=routine:<id>`，没有人类发起人）、Run、queue，以及开始通知。
@@ -354,3 +362,6 @@ Task 来源的读取按 source namespace 注册，`history_policy` 有三种显�
 **冻结与重放**：读取在事务外进行，在 lease 内重新校验后冻结到 `employee_message_resource`。新快照以「Host 读取的资源（数据）」放入，不增加模型调用。
 
 **能力边界**：图片一律标注 `vision_unavailable`；当前模型链没有经过验证的视觉路径。
+
+
+**原生取消收集（`[employee-loop:16]`）。**请求人要取消自己的等待收集、停止询问/催问或不再汇总时，模型先 `read_task` 读本 wake 的 source-bound候选，再 `cancel_collection` 用当前 `read_ref` 与外层逐字请求。Host复验当前 principal/requester/scene/tenant、Task version CAS 与 active collection，复用 stop 事务关闭目标、waits、collections和pending ready intents；不新建后台取消Task。成功ACK来自事务内回读的cancelled receipt，迟答不形成新输入/汇总。已送达提问不宣称撤回，真实运行进程仍保留退出证据屏障。旧工具表冻结不热改；15/16精确marker混版会暂缓新受理与旧job恢复，记not_ready并可恢复，不宣称不中断；全部在线副本16后恢复旧snapshot/journal。独立memory marker仍按自己的累积规则。

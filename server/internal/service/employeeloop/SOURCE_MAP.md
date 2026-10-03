@@ -177,6 +177,58 @@ shared BuildPrompt renderer or the copied kernel. Existing snapshots and model
 journals retain their original bytes; authority, tool results and call limits are
 unchanged (replica marker remains 5).
 
+The DS-09 correction adds a general `REPLY CONTRACT` in new Host Persona
+snapshots (`handler/employee_persona_profile.go`). It extends the output guidance
+beyond memory: the current admitted request's explicit format and scope override
+default persona/voice habits to add acknowledgements, explanations or follow-ups.
+The model checks its own answer within the same generation; unsupported facts
+and material ambiguity remain explicit, and output constraints confer no Host
+authority. This retains the fixed source's prompt/voice ownership and its
+question-versus-execution boundary (`prompt_builder.go:655/:919`, documented in
+`docs/plans/2026-10-03/employee-foreground-boundary.md`). No copied kernel, global
+BuildPrompt, online template, journal bytes, call budget or replica marker changes;
+Host does not extract a code or truncate prose to manufacture compliance.
+The same contract requires actual accepted/refused Host results before claiming
+an action or memory change; a withdrawal request or old assistant claim is not
+an applied effect. Confirmed forgetting/reset does not license repeating removed
+values from history, except for an explicit authorized audit. This extends the
+existing receipt and memory-reply contracts without changing memory storage or
+tombstone projection.
+
+M5 extends the Host-only withdrawal projection in
+`employeeentry/recent_reply_withdrawals.go`: exact retired record IDs resolve
+against frozen memory manifests and successful persisted memory tool results.
+Scoped, provider-confirmed reply actions bind those jobs to delivered message
+IDs; exact prior-history action/message IDs and transcript reference IDs carry
+withdrawal through later replies. The whole reply is the conservative unit;
+Host does not infer which words used which record. Independent same-value human
+messages and replies without these dependencies remain dialogue. Group quotes
+of those exact reply IDs are omitted too. This follows the fixed source's
+ordered session/bounded context separation and our existing provenance reader,
+not an LLM rewrite or a value-based history eraser. Original audit rows and old
+snapshots/journals stay intact; unknown legacy provenance is not guessed.
+Each scoped record/job/reply set is bounded at 2000 with explicit unavailability
+on overflow or read failure; the kernel, prompt, model budget, schema and replica
+marker are unchanged. Quality after deployment remains a separate M5 IM verdict.
+
+The cross-window correction in `employeeentry/reply_ancestors.go` treats the
+presentation window as a candidate bound, never a provenance cutoff. Exact
+frozen assistant action/message references read older delivered actions in the
+same workspace/agent/tenant/scene and target conversation, then resolve their
+source jobs and structured dependencies. No wider date scan or value matching is
+used. Missing, foreign, undelivered, conflicting or unknown ancestors fail the
+history read explicitly; closure is limited to 2000 nodes/actions and 64 levels.
+The original frozen snapshots and audit actions remain unchanged. Real DB
+cross-window counterexamples and the previous projection suite are recorded in
+Plan21; they do not replace deployment/real-model M5 acceptance.
+
+Ancestor snapshot recognition is explicit: a manifest, an explicitly empty
+Memory field, a valid user/assistant history array without unassociated Memory
+text, or current Host statistics proving zero pinned/retrieved/verified records
+and no person view. Arbitrary nonempty input and legacy plaintext Memory are
+unknown, not silently treated as an empty dependency set. No text-to-record-ID
+heuristic is used; old job replay bytes remain untouched.
+
 ## Terminal execution facts outside the kernel
 
 The fixed source's `internal/bot/loop.go:handleDone` emits completion without
@@ -296,3 +348,13 @@ admission and BeforeSend consult the stop ledger before new submissions, while
 already-submitted provider actions keep their original reconciliation path.
 Marker 11 gates the new tool and execution-state projection; no kernel executor,
 scheduler, message-text classifier or additional model pass is added.
+
+G5 new-deliverable selection is expressed in the Host foreground boundary
+(`employee_scene_capabilities.go`), dispatch_task description and source-bound
+TaskBrief (`employee_current_tasks.go`). Questions interpreting existing reports
+remain direct replies (DS01); explicitly requested new retrospectives/reports use
+new Tasks with builds_on even without new data or with a short output limit.
+The Persona reply contract applies format after that work selection. All changes
+freeze only with new inputs; existing snapshots/journals, shared BuildPrompt,
+Host authorization and native tool effects are unchanged. See
+`docs/plans/2026-10-04/employee-g5-deliverable.md` and the exact failing LF trace.

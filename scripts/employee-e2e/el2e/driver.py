@@ -226,7 +226,11 @@ def run_case(case: dict[str, Any], spec: dict[str, Any], run_id: str, rd: Path, 
         rec["ended_at"] = iso(now())
         write_json(out_path, rec)
         return rec
-    rec["gate"] = None if skip_gate else envguard.gate(rd, log=log)
+    rec["gate"] = envguard.case_gate(rd, skip=skip_gate, log=log)
+    if not skip_gate and (rec["gate"] or {}).get("ok") is not True:
+        rec.update(status="invalid_env", ended_at=iso(now()), gate_error="environment gate did not prove readiness")
+        write_json(out_path, rec)
+        return rec
     rec["started_at"] = iso(now())
     write_json(out_path, rec)
     defaults = spec.get("defaults", {}).get("wait", {})

@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/employeeloop"
+	"github.com/multica-ai/multica/server/internal/taskinput"
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
@@ -22,18 +23,21 @@ func employeeStopTool() employeeloop.Tool {
 }
 
 type employeeStopReceipt struct {
-	TaskID             string `json:"task_id"`
-	RunID              string `json:"run_id,omitempty"`
-	QueueTaskID        string `json:"queue_task_id,omitempty"`
-	EntrySeq           int64  `json:"stop_entry_seq"`
-	State              string `json:"execution_state"`
-	ExitConfirmed      bool   `json:"process_exit_confirmed"`
-	PendingPredecessor bool   `json:"pending_predecessor"`
+	TaskID               string   `json:"task_id"`
+	RunID                string   `json:"run_id,omitempty"`
+	QueueTaskID          string   `json:"queue_task_id,omitempty"`
+	EntrySeq             int64    `json:"stop_entry_seq"`
+	State                string   `json:"execution_state"`
+	ExitConfirmed        bool     `json:"process_exit_confirmed"`
+	PendingPredecessor   bool     `json:"pending_predecessor"`
+	TaskState            string   `json:"task_state"`
+	CancelledCollections []string `json:"cancelled_collections,omitempty"`
 }
 
 func (h *employeeSceneHost) stopTask(ctx context.Context, tx pgx.Tx, source employeeSourceMessage, call employeeloop.ToolCall) (employeeloop.ToolResult, *service.DirectTaskStopResult, error) {
 	registry := employeeloop.NewToolRegistry()
 	registry.Register(employeeStopTool())
+	registry.Register(employeeCancelCollectionTool())
 	if valid, problems := registry.Validate(call.Name, call.Arguments); !valid {
 		return employeeloop.ToolResult{}, nil, errors.New(strings.Join(problems, "; "))
 	}
@@ -95,6 +99,28 @@ func (h *employeeSceneHost) stopTask(ctx context.Context, tx pgx.Tx, source empl
 	if read.SourceRef != source.SourceRef || read.TaskRef != ref || task.ID != binding.TaskID || task.Scope != h.taskScope() || task.RequesterRef != source.RequesterRef {
 		return employeeloop.ToolResult{}, nil, errors.New("stop read scope mismatch")
 	}
+	var collectionIDs []string
+	if call.Name == "cancel_collection" {
+		store := taskinput.NewStore(tx)
+		scope := employeeTaskinputScope(h.job.Scope)
+		waits, err := store.TaskWaits(ctx, scope, task.ID)
+		if err != nil {
+			return employeeloop.ToolResult{}, nil, err
+		}
+		for _, wait := range waits {
+			col, err := store.GetCollection(ctx, scope, wait.CollectionID)
+			if err != nil {
+				return employeeloop.ToolResult{}, nil, err
+			}
+			if col.RequesterRef != source.RequesterRef || col.OriginSceneID != h.job.Scope.SceneID {
+				return employeeloop.ToolResult{}, nil, employeeloop.ErrToolRefused
+			}
+			collectionIDs = append(collectionIDs, col.ID)
+		}
+		if len(collectionIDs) == 0 {
+			return employeeloop.ToolResult{}, nil, fmt.Errorf("%w: this task has no active collection to cancel", employeeloop.ErrToolRefused)
+		}
+	}
 	principal, err := util.ParseUUID(env.PrincipalID)
 	if err != nil {
 		return employeeloop.ToolResult{}, nil, err
@@ -109,7 +135,19 @@ func (h *employeeSceneHost) stopTask(ctx context.Context, tx pgx.Tx, source empl
 	if err != nil {
 		return employeeloop.ToolResult{}, nil, err
 	}
-	receipt := employeeStopReceipt{TaskID: stopped.Task.ID, RunID: request.RunID, QueueTaskID: request.QueueTaskID, EntrySeq: stopped.Entry.Seq, State: stopped.State, ExitConfirmed: stopped.ExitConfirmed, PendingPredecessor: stopped.PendingPredecessor}
+	receipt := employeeStopReceipt{TaskID: stopped.Task.ID, TaskState: string(stopped.Task.State), RunID: request.RunID, QueueTaskID: request.QueueTaskID, EntrySeq: stopped.Entry.Seq, State: stopped.State, ExitConfirmed: stopped.ExitConfirmed, PendingPredecessor: stopped.PendingPredecessor}
+	if call.Name == "cancel_collection" {
+		for _, id := range collectionIDs {
+			col, err := taskinput.NewStore(tx).GetCollection(ctx, employeeTaskinputScope(h.job.Scope), id)
+			if err != nil {
+				return employeeloop.ToolResult{}, nil, err
+			}
+			if col.State != taskinput.CollectionCancelled {
+				return employeeloop.ToolResult{}, nil, employeetask.ErrConflict
+			}
+		}
+		receipt.CancelledCollections = collectionIDs
+	}
 	raw, _ = json.Marshal(receipt)
 	reply := "已请求停止这个任务。"
 	switch stopped.State {
@@ -119,6 +157,12 @@ func (h *employeeSceneHost) stopTask(ctx context.Context, tx pgx.Tx, source empl
 		reply = "上次执行已失败，不会再继续处理；目前还没有进程退出确认。"
 	case "unconfirmed":
 		reply = "已请求停止这个任务，目前还没有进程退出确认。"
+	}
+	if call.Name == "cancel_collection" {
+		reply = "已取消这次收集，不会再催问或汇总。"
+		if !stopped.ExitConfirmed {
+			reply += "任务执行已请求停止，尚未确认进程退出。"
+		}
 	}
 	return employeeloop.ToolResult{Content: string(raw), Receipt: fmt.Sprintf("employee-stop:%s:%d", stopped.Task.ID, stopped.Entry.Seq), Terminal: &employeeloop.Decision{Kind: employeeloop.Reply, Reply: reply}}, &stopped, nil
 }
@@ -148,7 +192,7 @@ func employeeStopFailureReply(outcome employeeloop.Outcome) string {
 		if effect.Error == "" {
 			continue
 		}
-		if found || effect.ToolName != "stop_task" {
+		if found || !isEmployeeStopTool(effect.ToolName) {
 			return ""
 		}
 		var denied struct {
