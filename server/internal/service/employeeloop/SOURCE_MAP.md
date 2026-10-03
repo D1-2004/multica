@@ -171,3 +171,16 @@ requested. This is Host Persona/tool-description content, not a change to the
 shared BuildPrompt renderer or the copied kernel. Existing snapshots and model
 journals retain their original bytes; authority, tool results and call limits are
 unchanged (replica marker remains 5).
+
+## Terminal execution facts outside the kernel
+
+The fixed source's `internal/bot/loop.go:handleDone` emits completion without
+creating a new follow-up; `internal/team/headless_event.go` separates terminal
+facts from subsequent work, and `internal/bot/queues.go:FollowUp` is explicit.
+Multica adapts that separation in `handler/employee_execution_event.go` and
+`employeeentry/execution_fact.go`: committed Direct Run facts get a durable
+admission/consumption, with no model job, generation, or additional delivery.
+Original receipt, run ledger, and committed dispatch checkpoint establish the
+source. Existing PostgreSQL reconciliation and notice ownership remain in the
+Host; no scheduler or event sink is added to the copied kernel. The additive
+no-job records are readable during marker-5 rolling upgrades.

@@ -432,7 +432,7 @@ func TestEmployeeSceneBuilderCarriesRoleAndSkillCatalog(t *testing.T) {
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Config.Persona.Instructions != instructions {
+	if !strings.HasPrefix(snapshot.Config.Persona.Instructions, instructions+"\n\n") {
 		t.Fatalf("agent constraints missing from model input: %+v", snapshot.Config.Persona)
 	}
 	catalog := strings.Join(snapshot.Config.Persona.Expertise, "\n")

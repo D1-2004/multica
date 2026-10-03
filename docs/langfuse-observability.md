@@ -102,6 +102,16 @@ the exact Employee traces being readable; an empty filtered list therefore
 does not prove the job was untraced. Actual IM evidence and trace IDs are in
 `docs/plans/2026-10-03/employee-loop-parity-acceptance.md`.
 
+Terminal Direct Run facts add an `employee_execution_event` Event to the
+original Employee job trace after the receipt and consumption commit. This
+adds no generation or token usage. `state` describes consumption
+(`completed` / `held`); `run_state` describes the actual Run terminal state.
+`result_ref` points to the durable result without exporting its body again.
+Indexes link the original source receipt, execution receipt, domain Task, Run,
+and queue task. Inspect the event separately from the frontend generations;
+its presence is not proof of DingTalk delivery. Invalid historical origins can
+be durably skipped without inventing a source job or a consumption event.
+
 ### Coordinator turn (`inbound_coordinator`)
 
 Policy `2026-09-09.2` keeps the full job policy in Host context instead of

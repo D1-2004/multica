@@ -41,3 +41,11 @@
 Cron 复用 `jobs_autopilot.go`、`sys_cron_executions` 和 `(trigger_id, planned_at)` 幂等；Webhook 复用现有验签 ingress、dedupe、delivery 租约 worker 及已受理 `run_id` 协议。先补自动化 owner/creator 授权适配，不能把 Agent 创建者填成管理员或伪装成真人 DirectRequest。事件 envelope 用 category/schema 区分 scheduled/webhook wake，必要的推理进入 `Input.FollowUps`。
 
 只有持久化、明确授权的后续工作才触发模型续行：原任务的条件后续步骤，或已启用且要求 Employee 作判断的 routine。普通成功、失败、取消、文件已送达都不自动增加一轮 LLM。自动化派发与现有 routine 通知须先确定唯一发送归属，再进入真实到点/验签 E2E。
+
+## 实现与验证状态
+
+实现已完成待预发。原来源同时核对持久 `run_started` 与原 job 已提交的 dispatch tool journal，queue context 不能单独证明归属。合法来源仍在提交时会等待，不永久跳过；已确认不合法的历史来源以 version/run_id/fixed reason 追加到 queue context，CAS 保留原字段与 `employee_direct_input`，不冒充消费成功。消费与 Run 终态在日志和 Langfuse 分别命名 `state`、`run_state`，并带 `result_ref`，无结果正文。
+
+独立复审通过；作者最终 handler race 6.522s、entry/router 全包 race 通过；root 独立 handler race 5.168s、entry/router 1.838s/1.320s。最后补齐终态观测字段的成功/失败/取消参数化回归 race 2.911s 通过，build 与 diff-check 通过。旧 role/skill 测试允许新快照追加 Host 表达指导，仍核对原 role 完整前缀及能力目录。
+
+真实 E2E 使用成功和取消两条隔离任务。现有 Direct 请求没有单任务 deadline/timeout/max-turns，执行超时是 daemon 全局配置；不为制造失败修改共享 Runtime。失败终态由 PG 回归覆盖，真实 failed E2E 尚未覆盖；错误命令被 agent 正常解释后返回 succeeded，不能当作 Run failed 的证据。取消使用已授权、精确 queue ID 的用户 API，并核对真实 daemon 停止。
