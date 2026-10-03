@@ -1068,6 +1068,7 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 					`DELETE FROM employee_learning WHERE workspace_id=$1`,
 					`DELETE FROM employee_memory_state WHERE workspace_id=$1`,
 					`DELETE FROM employee_run_notice WHERE workspace_id=$1`,
+					`DELETE FROM employee_task_wait WHERE workspace_id=$1`,
 					`DELETE FROM employee_task_run WHERE workspace_id=$1`,
 					`DELETE FROM employee_task_entry WHERE workspace_id=$1`,
 					`DELETE FROM employee_task WHERE workspace_id=$1`,

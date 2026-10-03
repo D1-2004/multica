@@ -76,6 +76,15 @@ func database(t *testing.T) fixture {
 	}
 	applyMigration(t, pool, filepath.Join(dir, "9650_employee_task_resume.up.sql"))
 	applyMigration(t, pool, filepath.Join(dir, "9760_employee_task_steer_entry.up.sql"))
+	// Lifecycle v2 (P1) owns 9900-9909; 991x+ belong to other packages.
+	lifecycle, err := filepath.Glob(filepath.Join(dir, "990*.up.sql"))
+	if err != nil || len(lifecycle) != 5 {
+		t.Fatalf("lifecycle v2 migrations: %v %v", lifecycle, err)
+	}
+	sort.Strings(lifecycle)
+	for _, path := range lifecycle {
+		applyMigration(t, pool, path)
+	}
 	ws, agent := uuid.NewString(), uuid.NewString()
 	// The production workspace owns the parent-row lock shared with teardown.
 	if _, err := pool.Exec(ctx, `CREATE TABLE workspace (id uuid NOT NULL)`); err != nil {

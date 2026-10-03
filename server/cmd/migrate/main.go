@@ -101,6 +101,11 @@ var preMigrationHooks = map[string]preMigrationHook{
 	// CONFLICT arbiters).
 	"9521_context_scope_routine_autopilot_idx":    cleanupInvalidConcurrentIndexHook("context_scope_routine_autopilot_idx"),
 	"9522_context_scope_routine_scene_dedupe_idx": cleanupInvalidConcurrentIndexHook("context_scope_routine_scene_dedupe_idx"),
+	// EmployeeTask lifecycle v2: one wait per task kind/ref, and at most one
+	// goal completion per goal revision.
+	"9902_employee_task_wait_id_idx":          cleanupInvalidConcurrentIndexHook("employee_task_wait_id_idx"),
+	"9903_employee_task_wait_ref_idx":         cleanupInvalidConcurrentIndexHook("employee_task_wait_ref_idx"),
+	"9904_employee_task_entry_completion_idx": cleanupInvalidConcurrentIndexHook("employee_task_entry_completion_idx"),
 }
 
 func repairIssueOriginTypeConstraintHook(ctx context.Context, pool *pgxpool.Pool) error {
