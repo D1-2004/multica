@@ -49,3 +49,15 @@ Cron 复用 `jobs_autopilot.go`、`sys_cron_executions` 和 `(trigger_id, planne
 独立复审通过；作者最终 handler race 6.522s、entry/router 全包 race 通过；root 独立 handler race 5.168s、entry/router 1.838s/1.320s。最后补齐终态观测字段的成功/失败/取消参数化回归 race 2.911s 通过，build 与 diff-check 通过。旧 role/skill 测试允许新快照追加 Host 表达指导，仍核对原 role 完整前缀及能力目录。
 
 真实 E2E 使用成功和取消两条隔离任务。现有 Direct 请求没有单任务 deadline/timeout/max-turns，执行超时是 daemon 全局配置；不为制造失败修改共享 Runtime。失败终态由 PG 回归覆盖，真实 failed E2E 尚未覆盖；错误命令被 agent 正常解释后返回 succeeded，不能当作 Run failed 的证据。取消使用已授权、精确 queue ID 的用户 API，并核对真实 daemon 停止。
+
+## 第一轮真实 E2E 与来源修复
+
+`1c867ee80d3dcc5df2ae78cce1647244195ff3fa` 经预发 `3110330026` 成功发布。真实 job `b463a322-98ac-438f-a6b5-0de26de61cd1` 派发 queue `7453a067-bad4-4c3c-93d6-02e8b346d946` / Run `33846107-0ee5-4971-b860-e9a4e42f1d9d`；08:36:11 的 bash transcript 证明 Python 运行，08:36:14 完成，08:36:17 Host 只发一次结果。前台只有一次 generation，但无终态 Event，本轮事件验收不通过。
+
+跨副本 SLS 证明该 Run 及 18 条历史 Run 被误判为 `source_receipt_mismatch`。读取真实原 receipt `3e63b6ea-4500-46ea-a051-932cde9dd934` 确认其 route/state 为合法 `legacy/legacy`，canonical scene 与已完成 Employee consumption 都存在。旧校验把 provider 路由错误等同于 Loop 所有权，只接受 unified/ready。单副本日志未命中不是事件未处理的证明；复查发布分支也确认实际包含本提交。
+
+修复通过真实 `HandleDWSNativeEvent` 解码、账户与 endpoint principal、默认 legacy admission、实际 dispatch journal 的 RED→GREEN 复现。接受 coherent legacy/legacy 与 unified/ready，场域、主体、原消费、run_started 和 journal 关联仍逐项校验，unmapped/错配仍拒绝。
+
+旧 skip 采用 `version=1` 存储格式加 `proof_version=2` 校验版本：旧副本继续识别兼容 marker，新副本重评旧无 proof 的误判；拿 scene 锁后再次尊重当前或更高 proof。身份行 FOR SHARE 覆盖 tenant fence 至提交，复用现有服务租户判断以支持合法 secondary tenant，避免解绑时进入机器人 fallback。缺失身份仍 held，数据库/取消错误回滚重试。
+
+作者最终 handler race 8.297s、root 独立 7.346s；entry/router race、build、独立复审通过。上线后先验证原 Run 自动补事实、无任务重执行和重复通知，再做新取消与成功输出实测；修复上线后的事件验收仍待完成。

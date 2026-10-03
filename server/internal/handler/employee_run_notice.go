@@ -324,14 +324,15 @@ func (h *Handler) employeeNoticeTarget(ctx context.Context, tx pgx.Tx, b employe
 }
 
 func employeeNoticeBody(b employeeNoticeBinding) string {
-	result := strings.TrimSpace(redact.Text(b.Result))
+	result := redact.Text(b.Result)
 	switch b.ResultState {
 	case "succeeded":
-		if result == "" {
+		if strings.TrimSpace(result) == "" {
 			return "本次执行已完成，未返回文本结果。"
 		}
-		return "本次执行结果：\n" + result
+		return result
 	case "failed":
+		result = strings.TrimSpace(result)
 		if result == "" {
 			return "本次执行失败，未返回失败详情。"
 		}

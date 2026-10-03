@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -182,12 +183,16 @@ func TestEmployeeExecutionEventKeepsOriginalOwnershipAndRevision(t *testing.T) {
 }
 
 func TestEmployeeExecutionEventHoldsUnusableSceneWithoutRemapping(t *testing.T) {
-	for _, change := range []string{"rebound", "missing_scene"} {
+	for _, change := range []string{"rebound", "missing_scene", "missing_identity"} {
 		t.Run(change, func(t *testing.T) {
 			f := employeeNoticeDatabase(t, "succeeded", false, false)
 			ctx := context.Background()
 			if change == "rebound" {
 				if _, err := testPool.Exec(ctx, `UPDATE agent_dingtalk_identity SET org_id='another-org' WHERE agent_id=$1::uuid`, f.agentID); err != nil {
+					t.Fatal(err)
+				}
+			} else if change == "missing_identity" {
+				if _, err := testPool.Exec(ctx, `DELETE FROM agent_dingtalk_identity WHERE agent_id=$1::uuid`, f.agentID); err != nil {
 					t.Fatal(err)
 				}
 			} else {
@@ -217,6 +222,121 @@ func TestEmployeeExecutionEventHoldsUnusableSceneWithoutRemapping(t *testing.T) 
 				t.Fatal(n, err)
 			}
 		})
+	}
+}
+
+func TestEmployeeExecutionEventUsesRegisteredSecondaryTenant(t *testing.T) {
+	f := employeeNoticeDatabase(t, "succeeded", false, false)
+	ctx := context.Background()
+	request := employeeExecutionReplayRequest(t, f)
+	if _, err := testPool.Exec(ctx, `UPDATE agent_dingtalk_identity SET org_id='another-primary-org' WHERE agent_id=$1::uuid`, f.agentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `INSERT INTO agent_tenant(workspace_id,agent_id,org_id,name) VALUES($1::uuid,$2::uuid,'456','Registered secondary tenant')`, testWorkspaceID, f.agentID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_tenant WHERE workspace_id=$1::uuid AND agent_id=$2::uuid`, testWorkspaceID, f.agentID)
+	})
+	// The same authoritative scene fence used by the foreground accepts this
+	// explicitly registered tenant even though it is not the primary identity org.
+	if _, err := fencedScene(ctx, f.h.Queries, &request.Task.Scope.Scene, scene.Owner{WorkspaceID: parseUUID(testWorkspaceID), AgentID: parseUUID(f.agentID)}, "456"); err != nil {
+		t.Fatal("invalid secondary tenant fixture", err)
+	}
+	if n, err := f.h.ReconcileEmployeeExecutionEvents(ctx, 100); err != nil || n != 1 {
+		t.Fatal(n, err)
+	}
+	var state, reason, sceneID string
+	if err := testPool.QueryRow(ctx, `SELECT c.state,c.reason,COALESCE(c.scene_id::text,'') FROM employee_event_consumption c JOIN scene_event_receipt e ON e.id=c.receipt_id WHERE e.source='employee.execution' AND e.source_event_id=$1`, f.runID).Scan(&state, &reason, &sceneID); err != nil {
+		t.Fatal(err)
+	}
+	if state != "completed" || reason != "current_goal_revision" || sceneID != request.Task.Scope.Scene.SceneID {
+		t.Fatal("registered secondary tenant was treated as a rebound", state, reason, sceneID)
+	}
+}
+
+func TestEmployeeExecutionEventTenantLookupCancellationRollsBack(t *testing.T) {
+	f := employeeNoticeDatabase(t, "succeeded", false, false)
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `UPDATE agent_dingtalk_identity SET org_id='another-primary-org' WHERE agent_id=$1::uuid`, f.agentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `INSERT INTO agent_tenant(workspace_id,agent_id,org_id,name) VALUES($1::uuid,$2::uuid,'456','Registered secondary tenant')`, testWorkspaceID, f.agentID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_tenant WHERE agent_id=$1::uuid`, f.agentID) })
+	holder, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Rollback(ctx)
+	if _, err := holder.Exec(ctx, `LOCK TABLE agent_tenant IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := testPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Release()
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	h := *f.h
+	h.TxStarter = writer
+	client, exporter := employeeTraceClient(t)
+	f.h.EmployeeSceneWorker.Langfuse = client
+	logs := captureNoticeLogs(t)
+	finished := make(chan error, 1)
+	go func() {
+		n, err := h.ReconcileEmployeeExecutionEvents(readCtx, 100)
+		if n != 0 {
+			err = fmt.Errorf("lookup failure committed %d facts: %w", n, err)
+		}
+		finished <- err
+	}()
+	for {
+		var blocked bool
+		var query string
+		if err := testPool.QueryRow(ctx, `SELECT cardinality(pg_blocking_pids(pid))>0,query FROM pg_stat_activity WHERE pid=$1`, writer.Conn().PgConn().PID()).Scan(&blocked, &query); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			if !strings.Contains(query, "FROM agent_tenant") {
+				t.Fatal("blocked before the authoritative tenant lookup", query)
+			}
+			break
+		}
+		select {
+		case err := <-finished:
+			t.Fatal("did not reach the tenant fence", err)
+		case <-time.After(5 * time.Millisecond):
+		case <-readCtx.Done():
+			t.Fatal(readCtx.Err())
+		}
+	}
+	// An unbind must not slip between the digital-employee existence check
+	// and fencedScene's second identity read (which also supports robots).
+	deleteCtx, deleteCancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	_, deleteErr := testPool.Exec(deleteCtx, `DELETE FROM agent_dingtalk_identity WHERE agent_id=$1::uuid`, f.agentID)
+	deleteCancel()
+	if !errors.Is(deleteErr, context.DeadlineExceeded) {
+		t.Fatal("identity was not protected during the tenant fence", deleteErr)
+	}
+	cancel()
+	if err := <-finished; !errors.Is(err, context.Canceled) {
+		t.Fatal("transient tenant failure became a disposition", err)
+	}
+	var count int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM scene_event_receipt WHERE source='employee.execution' AND source_event_id=$1`, f.runID).Scan(&count); err != nil || count != 0 {
+		t.Fatal("failure persisted a held receipt", count, err)
+	}
+	if len(employeeExecutionTraceEvents(exporter)) != 0 || len(noticeLogEvents(t, logs, "employee_execution_event_recorded")) != 0 {
+		t.Fatal("failure exported a committed fact")
+	}
+	if err := holder.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := f.h.ReconcileEmployeeExecutionEvents(ctx, 100); err != nil || n != 1 {
+		t.Fatal("tenant lookup could not recover", n, err)
 	}
 }
 
@@ -256,9 +376,9 @@ func TestEmployeeExecutionEventSkipIsVersionedAndPreservesDirectReplay(t *testin
 	if _, err := f.h.TaskService.EnqueueDirectTask(ctx, request); err != nil {
 		t.Fatal(err)
 	}
-	// A historical queue has lost its source job. A marker from another protocol
-	// version must not suppress this version's explicit, durable skip decision.
-	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET context=(context-'employee_job_id') || jsonb_build_object('keep_existing','sentinel','employee_execution_event_skip',jsonb_build_object('version',2,'run_id',$2::text,'reason','old')) WHERE id=$1::uuid`, f.queueID, f.runID); err != nil {
+	// A historical queue has lost its source job. Reassess the old proof without
+	// changing the wrapper that lets old replicas recognize a settled skip.
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET context=(context-'employee_job_id') || jsonb_build_object('keep_existing','sentinel','employee_execution_event_skip',jsonb_build_object('version',1,'run_id',$2::text,'reason','old')) WHERE id=$1::uuid`, f.queueID, f.runID); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := f.h.ReconcileEmployeeExecutionEvents(ctx, 100); err != nil || n != 1 {
@@ -273,7 +393,7 @@ func TestEmployeeExecutionEventSkipIsVersionedAndPreservesDirectReplay(t *testin
 	if err := json.Unmarshal(state, &skip); err != nil {
 		t.Fatal(err)
 	}
-	if !unchanged || skip["version"] != float64(1) || skip["run_id"] != f.runID || skip["reason"] != "source_job_missing" || len(skip) != 3 {
+	if !unchanged || skip["version"] != float64(1) || skip["proof_version"] != float64(2) || skip["run_id"] != f.runID || skip["reason"] != "source_job_missing" || len(skip) != 4 {
 		t.Fatal(unchanged, string(state))
 	}
 	if n, err := f.h.ReconcileEmployeeExecutionEvents(ctx, 100); err != nil || n != 0 {
@@ -286,6 +406,95 @@ func TestEmployeeExecutionEventSkipIsVersionedAndPreservesDirectReplay(t *testin
 	var receipts int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM scene_event_receipt WHERE source='employee.execution' AND source_event_id=$1`, f.runID).Scan(&receipts); err != nil || receipts != 0 {
 		t.Fatal("skip fabricated a source", receipts, err)
+	}
+}
+
+func TestEmployeeExecutionEventDoesNotDowngradeSettledProof(t *testing.T) {
+	for _, proof := range []int{2, 3} {
+		t.Run(fmt.Sprint(proof), func(t *testing.T) {
+			f := employeeNoticeDatabase(t, "succeeded", false, false)
+			ctx := context.Background()
+			if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET context=context || jsonb_build_object('employee_execution_event_skip',jsonb_build_object('version',1,'proof_version',$3::int,'run_id',$2::text,'reason','source_dispatch_missing')) WHERE id=$1::uuid`, f.queueID, f.runID, proof); err != nil {
+				t.Fatal(err)
+			}
+			if n, err := f.h.ReconcileEmployeeExecutionEvents(ctx, 100); err != nil || n != 0 {
+				t.Fatal("settled current/newer proof was reopened", n, err)
+			}
+			var preserved bool
+			if err := testPool.QueryRow(ctx, `SELECT context->'employee_execution_event_skip'->'proof_version'=to_jsonb($2::int) FROM agent_task_queue WHERE id=$1::uuid`, f.queueID, proof).Scan(&preserved); err != nil || !preserved {
+				t.Fatal("proof downgraded", preserved, err)
+			}
+		})
+	}
+}
+
+func TestEmployeeExecutionEventRechecksNewerProofAfterSceneWait(t *testing.T) {
+	f := employeeNoticeDatabase(t, "succeeded", false, false)
+	request := employeeExecutionReplayRequest(t, f)
+	ctx := context.Background()
+	holder, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer holder.Rollback(ctx)
+	if _, err := holder.Exec(ctx, `SELECT id FROM agent_scene WHERE id=$1::uuid FOR UPDATE`, request.Task.Scope.Scene.SceneID); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := testPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Release()
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	h := *f.h
+	h.TxStarter = writer
+	client, exporter := employeeTraceClient(t)
+	f.h.EmployeeSceneWorker.Langfuse = client
+	logs := captureNoticeLogs(t)
+	finished := make(chan error, 1)
+	go func() {
+		n, err := h.ReconcileEmployeeExecutionEvents(readCtx, 100)
+		if n != 0 {
+			err = fmt.Errorf("older proof created %d facts: %w", n, err)
+		}
+		finished <- err
+	}()
+	for {
+		var blocked bool
+		var query string
+		if err := testPool.QueryRow(ctx, `SELECT cardinality(pg_blocking_pids(pid))>0,query FROM pg_stat_activity WHERE pid=$1`, writer.Conn().PgConn().PID()).Scan(&blocked, &query); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			if !strings.Contains(query, "FROM agent_scene") {
+				t.Fatal("blocked before scene lock", query)
+			}
+			break
+		}
+		select {
+		case err := <-finished:
+			t.Fatal("candidate never reached scene lock", err)
+		case <-time.After(5 * time.Millisecond):
+		case <-readCtx.Done():
+			t.Fatal(readCtx.Err())
+		}
+	}
+	if _, err := holder.Exec(ctx, `UPDATE agent_task_queue SET context=context || jsonb_build_object('employee_execution_event_skip',jsonb_build_object('version',1,'proof_version',3,'run_id',$2::text,'reason','newer_proof_rejected')) WHERE id=$1::uuid`, f.queueID, f.runID); err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM scene_event_receipt WHERE source='employee.execution' AND source_event_id=$1`, f.runID).Scan(&count); err != nil || count != 0 {
+		t.Fatal("older proof bypassed newer rejection", count, err)
+	}
+	if len(employeeExecutionTraceEvents(exporter)) != 0 || len(noticeLogEvents(t, logs, "employee_execution_event_recorded")) != 0 {
+		t.Fatal("older proof exported a fact")
 	}
 }
 
