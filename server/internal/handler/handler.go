@@ -419,6 +419,9 @@ type Handler struct {
 	// human group transcript rows (the scene digest marks the scene dirty).
 	// Nil does nothing.
 	EmployeeSceneMessagesObserved func(ctx context.Context, tx pgx.Tx, key employeeentry.Scope, humanRows int, lastHumanAt time.Time) error
+	// EmployeeSceneMessageWorker runs the proactive wake gate and the group
+	// transcript retention purge.
+	EmployeeSceneMessageWorker *EmployeeSceneMessageWorker
 	// NativeCompletionWorker drains the callbacks of native dispatches
 	// (agentmessagerouter.NativeTargetIdentity); their replies are managed
 	// responses, so it only acknowledges.

@@ -989,6 +989,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Readiness is evaluated against the completed wiring at use time, including
 	// final delivery dependencies and every live replica's protocol marker.
 	h.EmployeeLoopReady = h.EmployeeSceneWorker.Ready
+	// The group transcript's all-groups subscription and proactive wakes start
+	// only when every live replica reads the transcript (same stream
+	// fingerprint on every replica); retention and the gate run everywhere.
+	h.EmployeeMemoryObserveReady = func(ctx context.Context) bool {
+		if opts.DeploymentFence == nil {
+			return false
+		}
+		ready, err := opts.DeploymentFence.AllLiveReplicasSupport(ctx, handler.EmployeeMemoryObserveMarker)
+		return err == nil && ready
+	}
+	h.EmployeeSceneMessageWorker = handler.NewEmployeeSceneMessageWorker(h)
 	h.EmployeeSceneWorker.RecoveryReady = h.EmployeeSceneWorker.ReadyForRecovery
 	if opts.RuntimeConfig != nil {
 		h.EmployeeSceneWorker.VisionConfig = opts.RuntimeConfig.employeeVision
@@ -1063,6 +1074,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				Consumers: []dwseventsource.Consumer{
 					{EventKey: dws.EventIMAt, Identities: identities, Handle: h.HandleDWSNativeEvent},
 					{EventKey: dws.EventIMAllSingleChats, Identities: identities, Handle: h.HandleDWSNativeEvent},
+					// Every group message of Employee-loop identities, observed into
+					// the group transcript; optional, so an account DingTalk
+					// refuses it for keeps its @ and single-chat stream.
+					{EventKey: dws.EventIMAllGroups, Identities: h.EmployeeObservationIdentities, Handle: h.HandleDWSNativeGroupObservation, Optional: true},
 					{EventKey: a2ui.NativeEventKey, Identities: identities, Handle: func(ctx context.Context, id dwsclient.Identity, line []byte) error {
 						return h.HandleDWSNativeCardAction(ctx, id, line, func(ctx context.Context, bizID, surfaceID string) error {
 							client, err := native.Client(ctx, id, mint)
