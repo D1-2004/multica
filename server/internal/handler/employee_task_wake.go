@@ -278,7 +278,7 @@ func (w *EmployeeSceneWorker) processTaskWake(ctx context.Context, job employeee
 				saved.Outcome.Decision = employeeloop.Decision{Kind: employeeloop.Reply, Reply: employeeAutonomousLimitNote}
 			}
 		} else {
-			host := &employeeTaskWakeHost{worker: w, job: job, abort: cancel}
+			host := &employeeTaskWakeHost{worker: w, job: job, abort: cancel, kind: wake.Kind}
 			durableModel := &employeeJournalModel{store: w.store, job: job, delegate: w.model, abort: cancel, routes: w.ModelRoutes, routePlan: input.ModelRoute}
 			input.Config.OnBatchRejected = func(calls []employeeloop.ToolCall, err error) { employeeTraceBatchRejected(runCtx, calls, err) }
 			saved.Outcome, err = employeeloop.New(input.Config, durableModel, host).Run(runCtx, input.Input)
@@ -674,6 +674,12 @@ func (w *EmployeeSceneWorker) buildTaskWakeInput(ctx context.Context, job employ
 	if snapshot.Plan != nil {
 		input.Config.Persona.Instructions += "\nThis wake reviews the latest result before the plan's next step. Call continue_plan to start that step as planned when the result supports it; otherwise reply to the requester or stay quiet, and the plan pauses until the requester decides."
 	}
+	if ext := employeeTaskWakeExtensionFor(wake.Kind); ext != nil {
+		// A kind's own Host data, tools and guidance join the frozen input.
+		if err := ext.extendInput(ctx, w, job, &input); err != nil {
+			return employeeSavedInput{}, err
+		}
+	}
 	if voice, e := h.Queries.GetAgentVoice(ctx, agentID); e == nil {
 		input.Config.Persona.Personality = voice.Persona
 		input.Config.Persona.Tone = voice.ReplyTone
@@ -693,6 +699,7 @@ type employeeTaskWakeHost struct {
 	worker *EmployeeSceneWorker
 	job    employeeentry.Job
 	abort  context.CancelFunc
+	kind   string
 }
 
 func (h *employeeTaskWakeHost) Execute(ctx context.Context, identity employeeloop.Identity, call employeeloop.ToolCall) (employeeloop.ToolResult, error) {
@@ -735,7 +742,13 @@ func (h *employeeTaskWakeHost) Execute(ctx context.Context, identity employeeloo
 				result = employeeloop.ToolResult{Content: "Reply recorded.", Terminal: &employeeloop.Decision{Kind: employeeloop.Reply, Reply: strings.TrimSpace(reply)}}
 			}
 		default:
-			err = errors.New("employee tool is not registered for task wakes")
+			handled := false
+			if ext := employeeTaskWakeExtensionFor(h.kind); ext != nil {
+				result, handled, err = ext.executeTool(ctx, tx, h.worker, h.job, call)
+			}
+			if !handled {
+				err = errors.New("employee tool is not registered for task wakes")
+			}
 		}
 		record := employeeToolRecord{Result: result}
 		if err != nil {
@@ -919,6 +932,7 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 		text = employeeCollectionFallbackSummary(view)
 	}
 	actionIDs := []string{}
+	ext := employeeTaskWakeExtensionFor(wake.Kind)
 	deliver := func(tx pgx.Tx) error {
 		if wake.Kind == employeeentry.TaskWakeExecutionFollowUp {
 			if err := w.pauseEmployeePlanAfterWake(ctx, tx, job); err != nil {
@@ -967,6 +981,13 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 		if err := deliver(tx); err != nil {
 			return err
 		}
+		// A kind extension settles its own records after the send is
+		// enqueued, in the same completion transaction.
+		if ext != nil {
+			if err := ext.completeTx(ctx, tx, w, job, saved, text); err != nil {
+				return err
+			}
+		}
 		return w.recordWakeLedgerTx(ctx, tx, job, employeeWakeLedgerEntry(job, nil, string(wake.Kind), saved, actionIDs))
 	})
 	if err == nil {
@@ -974,6 +995,9 @@ func (w *EmployeeSceneWorker) completeTaskWake(ctx context.Context, job employee
 			h.DingTalkResponses.Notify()
 		}
 		w.logCompleted(ctx, job, saved, actionIDs)
+		if ext != nil {
+			ext.afterComplete(ctx, w, job)
+		}
 	}
 	return err
 }
