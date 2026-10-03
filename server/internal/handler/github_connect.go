@@ -145,6 +145,11 @@ func (h *Handler) beginGitHubUserAuthorization(w http.ResponseWriter, r *http.Re
 // GitHubAuthorizeCallback proves that the GitHub user can access the selected
 // installation. An installation ID and an App JWT alone cannot prove that.
 func (h *Handler) GitHubAuthorizeCallback(w http.ResponseWriter, r *http.Request) {
+	// A valid pre-release install cookie forwards this request with the query
+	// unchanged. Without that cookie, a pre-release state still forwards below.
+	if h.forwardGitHubPreEnvCookie(w, r) {
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	value := r.URL.Query().Get("state")
