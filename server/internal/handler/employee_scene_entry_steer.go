@@ -28,7 +28,7 @@ func employeeSteerTool(source map[string]any, stringField func(string) map[strin
 		Schema: map[string]any{"type": "object", "properties": map[string]any{
 			"source_ref": source,
 			"correction": stringField("The requester's correction as complete instructions, preserving their wording and constraints."),
-			"reply":      stringField("Brief acknowledgement that the correction was applied to the running work, never a completed result."),
+			"reply":      stringField("Briefly confirm acceptance of the correction and intent to apply it. Acceptance does not prove the old executor has stopped or the next execution has started. Without separate observed execution evidence, do not claim work has started, is running, has stopped, or has completed. Use natural wording such as 收到，按新要求处理，跑完发你; do not narrate internal queue or sandbox states."),
 			"task_id":    stringField("Optional EmployeeTask UUID from a previous Host candidate list."),
 		}, "required": []string{"source_ref", "correction", "reply"}, "additionalProperties": false},
 	}

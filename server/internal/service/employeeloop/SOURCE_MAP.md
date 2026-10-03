@@ -191,9 +191,16 @@ no-job records are readable during marker-5 rolling upgrades.
 ordered recent dialogue; `internal/team/notification_context.go` builds bounded
 per-recipient context from broker reads. Multica keeps that separation with a
 read-only Host projection in `employeeentry/recent_history.go` and
-`handler/employee_recent_context.go`. New wakes may carry `Input.RecentConversation`
-as user-role data before the current window; empty historical snapshots keep
-their original prompt bytes. This is neither a summary-model call nor a write to
+`handler/employee_recent_context.go`. `Input.RecentConversation` retains the
+complete structured audit snapshot. New wakes freeze
+`Config.HistoryPresentation=conversation_turns_v1`: `history_presentation.go`
+restores verified user/assistant text through the existing SessionEntry and
+entriesToMessages path, without native tool calls on historical assistant turns.
+Short metadata labels preserve source/time and completeness; the current window
+is last. The empty legacy version retains its original single user JSON block,
+message order, and request bytes. Unknown versions/roles or malformed/oversized
+snapshots fail before model I/O. Marker 10 protects this new reader during
+rolling upgrades. This is neither a summary-model call nor a write to
 long-term memory. User text must have admitted scene/principal provenance;
 assistant text additionally requires a provider-confirmed Host response tied to
 that principal's source. The projection states its fixed watermark, 24-hour

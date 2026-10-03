@@ -77,6 +77,10 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 ## 近期对话临时上下文
 
+新快照冻结 `Config.HistoryPresentation=conversation_turns_v1`，复用 SessionEntry 与既有消息转换，把 Host 已验证的历史原话、本人已送达回复按原顺序分别呈现为 user/assistant 轮次。assistant 只含文本，不携带历史 tool calls；短元数据头保留截止、截断和撤销省略信息，每轮附最少时间/发言人/消息标识。当前窗口位于最后，历史请求不成为新的执行授权。完整结构化 `RecentConversation` 仍留在快照中供审计，不增加总结模型、Task 或长期记忆写入。
+
+该呈现版本由 marker 10 保护。版本为空的已受理快照继续生成原单条 user JSON 历史块及原消息顺序，缓存 request 不重写；未知版本、未知历史角色、损坏 JSON 或越界数据在模型调用前拒绝，显式 history unavailable 仍作为不可用数据呈现。原快照和新渲染均保持 20 条/16 KiB 边界，模型请求总预算仍为三次。未来若改变已冻结版本的字节呈现，应另设版本，不能热改旧 journal 的渲染规则。
+
 新 wake 的 Persona 冻结时序解释约束：同一对象的最新明确陈述或重设覆盖旧取值与旧更正，不能把旧更正再应用到更新的重设之上；单项修改保留其他当前事实。指代按最近相关交换中的对象顺序解释，旧 assistant 回复不覆盖更新的用户陈述，历史请求不当作新的执行命令。这只是新快照的提示约束，不改历史记录、全局 BuildPrompt、低延迟请求参数、长期记忆或已冻结快照；真实模型能否正确处理仍须单独验收。
 
 新 wake 只读同 workspace、agent、tenant、scene 和受理 principal 的近期用户原话，以及有 provider 消息 ID 和匹配会话的已送达 Host 回复。截止时间固定为原 job 受理时间，上限 24 小时、20 条、16 KiB；当前窗口排除，截断显式标记。不读取未确认发送的模型结果，不增加总结 LLM，不写长期记忆。callback 回复必须同时匹配原 URL 和确切同步 RequestID；其他 Run 回复依赖独立的 notice 来源记录，不能仅凭复用 URL 纳入。
@@ -105,7 +109,7 @@ Host 核对原 receipt → consumption → job、冻结 Direct 输入、`run_sta
 
 ## 上线与验证边界
 
-处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前事项候选、`continue_task` 与 `steer_task`、共享模型计划及原历史/通知协议使用 `[employee-loop:9]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 解释新工具、错解冻结模型选择或近期对话输入。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
+处理方式开关按实际模型、发送/记忆依赖、在线副本及 Runtime 能力校验就绪状态；预发已启用，缺失依赖时拒绝新受理，不静默回退其他 Loop。具备 Runtime capability 不等于所有业务验收已完成。当前逐轮历史呈现、事项候选、`continue_task` 与 `steer_task`、共享模型计划及原通知协议使用 `[employee-loop:10]` 副本标记；滚动混版期间暂缓新 Employee 受理和结果通知，避免旧 worker 忽略冻结的历史呈现版本、解释新工具或错解模型选择。所有在线副本兼容后恢复；发送前再次检查来源与当前范围，已提交的未知投递结果只查询对账。worker 启停跟随现有进程生命周期，PostgreSQL 是消费和恢复真相。
 
 首批已验证真实 PostgreSQL 的原子回执/消费、重投、lease 抢占、三请求累计预算、部分成功回执恢复、Quiet、自发消息过滤、身份缺失、超限收束及工作区删除竞争；fake 模型测试证明调用次数和队列事实。真实模型时延、真实发送回执、FC canary 和持久设备滚动兼容必须单独记录，不能用这些测试替代。
 

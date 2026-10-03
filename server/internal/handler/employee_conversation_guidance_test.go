@@ -29,6 +29,7 @@ func TestEmployeeConversationGuidanceFreezesOnlyWithNewSnapshots(t *testing.T) {
 			input.Input.RecentConversation = `{"messages":[{"role":"user","text":"只把小周改成紫色"},{"role":"assistant","text":"小林蓝，小周紫"},{"role":"user","text":"这轮讨论里：小林选蓝色，小周选绿色"},{"role":"assistant","text":"小林选蓝色，小周选绿色"}]}`
 			if legacy {
 				input.Config.Persona.Instructions = "Original frozen responsibilities."
+				input.Config.HistoryPresentation = ""
 			}
 			raw, err := json.Marshal(input)
 			if err != nil {
@@ -54,10 +55,12 @@ func TestEmployeeConversationGuidanceFreezesOnlyWithNewSnapshots(t *testing.T) {
 						system = message.Content
 					}
 					if strings.Contains(message.Content, "Recent conversation (temporary") {
-						history = message.Content
 						if message.Role != "user" {
 							t.Fatal("history promoted to authority")
 						}
+					}
+					if message.Role != "system" && !strings.HasPrefix(message.Content, "Current conversation window:") {
+						history += message.Content + "\n"
 					}
 				}
 				if legacy {

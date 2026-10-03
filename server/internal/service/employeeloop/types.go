@@ -49,7 +49,8 @@ type Identity struct {
 }
 
 // Input contains a single foreground wake and existing context snapshots.
-// All text fields are untrusted data and are sent as user messages, not authority.
+// Context never grants authority. A frozen presentation version may restore
+// verified prior user/assistant text turns; other text remains user-message data.
 type Input struct {
 	Identity           Identity
 	CurrentWindow      string
@@ -69,10 +70,11 @@ type Persona struct {
 }
 type Config struct {
 	// OnBatchRejected observes validation failures before Host effects.
-	OnBatchRejected func([]ToolCall, error) `json:"-"`
-	Persona         Persona
-	Model           string
-	Tools           []Tool
+	OnBatchRejected     func([]ToolCall, error) `json:"-"`
+	Persona             Persona
+	Model               string
+	Tools               []Tool
+	HistoryPresentation string `json:"HistoryPresentation,omitempty"`
 }
 
 // State holds the runtime state of a foreground wake.
